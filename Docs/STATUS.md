@@ -64,7 +64,7 @@ releases ALL**. Logs to `Data/SKSE/Plugins/APMF.log` (`[ctl]`/`[obs]`/`[test]`/`
 | Num7 | 1a | gait scale (x0.5) | source-block | `kSpeedMult` AV (arbitrary factor) |
 | Num8 | 16 | stealth (silent+keen) | source-block | `kMovementNoiseMult` + `kDetectLifeRange` |
 | Num9 | 3 | sneak/crouch | one-shot promote | `NotifyAnimationGraph(SneakStart/Stop)` |
-| Num- | 6 | combat-target STEER | promote (steer, not pin) | `StartCombat(player)` / `StopCombat` |
+| Num- | 6 | combat-target HOLD | drift re-assert (#2 fill) | `StartCombat(param.form)` + `Tick` re-assert on drift / `StopCombat` |
 | Num+ | 12 | idle/animation | one-shot | `NotifyAnimationGraph(IdleForceDefaultState)` |
 | Num* | 14 | shout select (Unrelenting Force) | one-shot (sticky) | `ActorEquipManager::EquipShout` |
 | Num. | 15 | unequip weapon | source-block | `GetEquippedObject`+`Unequip/EquipObject` |
@@ -116,7 +116,9 @@ facing is not a separate channel — it rides the movement gate.
 ## Post-first-release GAP work (do NOT attempt without a live probe)
 
 Marked GAP in `Docs/CHANNEL-MAP.md`; deliberately left for after the first release:
-- Combat-target PIN (ch.6, block the threat re-selector — we only STEER today).
+- Combat-target true PIN (ch.6, BLOCK the threat re-selector at the hook). Today ch.6
+  HOLDs the client's target via a drift-triggered `Tick` re-assert (known-incomplete
+  #2 fill) — good enough for MFO's owned-cast slice; the clean block is still a GAP.
 - Combat ACTIONS behavior tree (ch.7).
 - Casting TRIGGER suppression (ch.8, no documented suppressor).
 - Headtrack all-types FULL block (ch.5) — block the AI's headtrack write at the
