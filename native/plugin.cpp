@@ -65,6 +65,15 @@ namespace {
             REL::Relocation<func_t> func{ RELOCATION_ID(36490, 37489) };
             func(a_actor, a_dontMove);
         }
+        // Actor::StartCombat is NOT bound in this CommonLib rev -- use po3's
+        // published Address-Library ID (MFO/Probe.cpp uses the same). SE/AE only;
+        // no sourced VR id, so VR is refused upstream at InstallHooks.
+        bool StartCombatOn(RE::Actor* a_actor, RE::Actor* a_target) {
+            if (REL::Module::IsVR()) return false;
+            using func_t = bool (*)(RE::Actor*, RE::Actor*, void*);
+            static REL::Relocation<func_t> func{ REL::RelocationID(37608, 38561) };
+            return func(a_actor, a_target, nullptr);
+        }
     }
 
     // ---- Log ---------------------------------------------------------------
@@ -340,7 +349,7 @@ namespace {
         const char* foeSrc = "captured-foe";
         if (!foe) { foe = RE::PlayerCharacter::GetSingleton(); foeSrc = "player(default)"; }
         if (!foe) return;
-        const bool ok = fighter->StartCombat(foe);
+        const bool ok = Native::StartCombatOn(fighter, foe);
         g_combatLogOn.store(true);
         spdlog::info("[pin] StartCombat fighter=0x{:08X} -> foe=0x{:08X} ({}) returned {}. Per-tick "
                      "CombatController.targetHandle/cachedTarget log ON; HELD vs RESELECTED tells us if a "
@@ -396,10 +405,15 @@ namespace {
                      preL ? preL->GetFormID() : 0, preR ? preR->GetFormID() : 0);
         RE::SpellItem* spell = ResolveProbeSpell(target);
         if (!spell) { spdlog::warn("[cast] no usable probe spell resolved -- aborting own."); return; }
-        // OWN the right-hand selection two ways: the slot member + the caster's SetCurrentSpell.
+        // OWN the right-hand selection. SetCurrentSpell is NOT bound at this
+        // CommonLib rev (only the no-op SetCurrentSpellImpl), so we write the slot
+        // member AND the caster's currentSpell member directly. This probe wants
+        // exactly that write to see if the AI honors the selection (a clean gate)
+        // or overwrites it (the trigger-suppression gap). Bookkeeping-desync
+        // caveat noted -- fine for a throwaway observation.
         rt.selectedSpells[RE::Actor::SlotTypes::kRightHand] = spell;
         if (auto* caster = target->GetMagicCaster(RE::MagicSystem::CastingSource::kRightHand)) {
-            caster->SetCurrentSpell(spell);
+            caster->currentSpell = spell;
         }
         g_ownedSpell = spell->GetFormID();
         g_castOwnOn.store(true);
@@ -438,11 +452,12 @@ namespace {
             cur = caster->currentSpell;
         }
         const bool kept = (rightId != 0 && rightId == g_ownedSpell);
+        auto* as = a_actor->AsActorState();
         spdlog::info("[cast] observe: rightSel=0x{:08X}(ours=0x{:08X}) [{}] currentSpell=0x{:08X} attackState={} "
                      "weaponDrawn={}",
                      rightId, g_ownedSpell, kept ? "KEPT" : "AI-OVERWROTE",
-                     cur ? cur->GetFormID() : 0, AttackStateName(a_actor->GetAttackState()),
-                     a_actor->IsWeaponDrawn() ? 1 : 0);
+                     cur ? cur->GetFormID() : 0, as ? AttackStateName(as->GetAttackState()) : "?",
+                     (as && as->IsWeaponDrawn()) ? 1 : 0);
     }
 
     // ============================================================================
@@ -461,13 +476,15 @@ namespace {
         spdlog::info("[act] observe ON -- logging attack/block/power/bash state TRANSITIONS (passive).");
     }
     void ActObsTick(RE::Actor* a_actor) {
-        const std::uint32_t st = static_cast<std::uint32_t>(a_actor->GetAttackState());
+        auto* as = a_actor->AsActorState();
+        if (!as) return;
+        const std::uint32_t st = static_cast<std::uint32_t>(as->GetAttackState());
         const int blk = a_actor->IsBlocking() ? 1 : 0;
         if (st == g_lastAttackState && blk == g_lastBlocking) return;   // transitions only, no spam
         spdlog::info("[act] transition: attackState {} -> {} | blocking {} -> {} | weaponDrawn={}",
                      g_lastAttackState == 0xFF ? "?" : AttackStateName(static_cast<RE::ATTACK_STATE_ENUM>(g_lastAttackState)),
-                     AttackStateName(a_actor->GetAttackState()),
-                     g_lastBlocking < 0 ? -1 : g_lastBlocking, blk, a_actor->IsWeaponDrawn() ? 1 : 0);
+                     AttackStateName(as->GetAttackState()),
+                     g_lastBlocking < 0 ? -1 : g_lastBlocking, blk, as->IsWeaponDrawn() ? 1 : 0);
         g_lastAttackState = st;
         g_lastBlocking = blk;
     }
@@ -567,14 +584,15 @@ namespace {
             const bool same = (id == g_pkgAtCapture);
             float dist = 0.0f;
             if (auto* pc = RE::PlayerCharacter::GetSingleton()) dist = a_this->GetPosition().GetDistance(pc->GetPosition());
+            auto* as = a_this->AsActorState();
             spdlog::info("[obs] tgt=0x{:08X} pkg=0x{:08X}({}) [{}] chan[minj={} pin={} cast={} act={} kMove={} look={} crouch={}] "
-                         "moving[walk={} run={}] dist-to-player={:.1f}",
+                         "moving[walk={} sprint={}] dist-to-player={:.1f}",
                          a_this->GetFormID(), id, PkgTypeName(pkg),
                          same ? "PACKAGE STABLE" : "PACKAGE CHANGED!!",
                          g_minjOn.load() ? 1 : 0, g_combatLogOn.load() ? 1 : 0, g_castOwnOn.load() ? 1 : 0,
                          g_actObsOn.load() ? 1 : 0, g_moveOn.load() ? 1 : 0, g_lookUpOn.load() ? 1 : 0,
                          g_crouchOn.load() ? 1 : 0,
-                         a_this->IsWalking() ? 1 : 0, a_this->IsRunning() ? 1 : 0, dist);
+                         (as && as->IsWalking()) ? 1 : 0, (as && as->IsSprinting()) ? 1 : 0, dist);
         }
         static inline REL::Relocation<decltype(thunk)> func;
         static constexpr std::size_t idx = 0x0AD;   // Actor::Update(float)
