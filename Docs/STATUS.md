@@ -92,6 +92,15 @@ facing is not a separate channel — it rides the movement gate.
   statically isolable (typo/encoding/arg-type/config/formatter all ruled out). Robust
   fix (#16): all hex now formats via `apmf::log::Hex()` (manual ASCII hex, logged
   through the clean string path); no `{:X}` spec remains in any log call.
+  **ROOT-CAUSED to a runtime/deploy fault, not the build (2026-09-01):** binary + log
+  forensics (full detail under #16) proved the DLL correct and identical-deps to MFO;
+  in the garbled session fmt's uppercase hex digit table in APMF's mapped `.rdata`
+  read as 16 stable foreign bytes while floats/decimal/parse were clean and MFO's
+  identical table in the SAME process was fine. Remaining fork: corrupted deployed
+  file copy vs an in-process writer. `apmf::log::HexSelfTest` (branch
+  `fix/hex-rootcause`, probes at load/data-loaded/post-load-game + dumps the in-image
+  tables) returns the verdict on the next deck session; #16 relaxes only on repeated
+  PASS.
 - **AvLedger hardening:** `Load(intf, version)` threads the record version; `Save`
   checks `WriteRecordData` and logs on failure.
 - **Equipment save-safety:** decided + documented (#15) — only AV channels are

@@ -239,3 +239,19 @@ The robust fix, immune to whatever the trigger is: format hex BY HAND into an AS
 NEVER reintroduce a `{:X}`/`{:x}` presentation spec in a log call; use `Hex`. If the
 underlying cause is ever found and fixed, this rule can relax — until then it keeps the
 log (the primary field-validation channel) plain text.
+
+**Root-cause forensics (2026-09-01, post-workaround):** the BUILD is provably clean —
+APMF and MFO resolve byte-identical deps (fmt 12.2.0 / spdlog 1.17.0#1 /
+commonlibsse-ng 3.7.0, identical vcpkg package-ABI hashes), the garbling CI artifact
+contains exactly one fmt whose hex writer reads its intact `"0123456789ABCDEF"` table
+RIP-relative from read-only `.rdata`, and in the garbled deck session decimal, string,
+brace-parsing AND `{:.1f}` floats all rendered clean while every hex digit mapped
+through one stable bogus 16-byte table (reconstructed from the key-name/scancode lines:
+`a9 2b ?? 45 56 cb ?? 8a e7 8b 3e c6 d1 d4 85 94`) — and MFO, in the SAME game session
+8 seconds later, formatted `{:08X}` correctly with the same fmt bits. So the 16 bytes of
+fmt's uppercase digit table in APMF's MAPPED IMAGE were foreign at runtime: either that
+one deployed file copy was corrupted, or something in the deck process overwrote the
+page after load. `apmf::log::HexSelfTest` (called at load / data-loaded /
+post-load-game) decides between those on the next deck session; #16 stays in force
+until it returns a verdict (three PASSes across sessions = one-off file corruption →
+#16 can relax).

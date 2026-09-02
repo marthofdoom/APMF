@@ -43,6 +43,9 @@ namespace {
     void OnMessage(SKSE::MessagingInterface::Message* a_msg) {
         switch (a_msg->type) {
         case SKSE::MessagingInterface::kDataLoaded:
+            // Second hex probe: every other SKSE plugin has loaded and patched
+            // by now. "load" PASS + "data-loaded" FAIL = an in-process writer.
+            apmf::log::HexSelfTest("data-loaded");
             apmf::hook::Install();
             if (!REL::Module::IsVR()) {          // no drain seat on VR -> no test surface
                 apmf::input::Register();
@@ -55,6 +58,7 @@ namespace {
             apmf::Arbiter::Get().ReleaseAll("kPreLoadGame");
             break;
         case SKSE::MessagingInterface::kPostLoadGame:
+            apmf::log::HexSelfTest("post-load-game");
             apmf::av::ApplyPending();             // restore any stranded AV overrides
             break;
         default:
@@ -73,6 +77,11 @@ SKSEPluginLoad(const SKSE::LoadInterface* a_skse) {
     spdlog::info("=== APMF {}.{}.{} loading -- game {} ===",
                  ver.major(), ver.minor(), ver.patch(),
                  REL::Module::get().version().string());
+
+    // First hex probe, before any other plugin's kDataLoaded-era patching can
+    // touch this image. FAIL here = the mapped file/image was bad from the
+    // start; PASS here + later FAIL = something clobbered it in-process.
+    apmf::log::HexSelfTest("load");
 
     SKSE::GetMessagingInterface()->RegisterListener(OnMessage);
 
