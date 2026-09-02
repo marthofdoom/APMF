@@ -1,0 +1,64 @@
+name: native
+
+on:
+  push:
+    paths:
+      - "native/**"
+      - ".github/workflows/native.yml"
+  workflow_dispatch:
+
+# A newer push supersedes an in-flight build (cold vcpkg builds are ~30 min;
+# racing runs all try to populate the same cache and none wins).
+concurrency:
+  group: native-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: native
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ilammy/msvc-dev-cmd@v1
+
+      # SPLIT restore/save ON PURPOSE. The combined cache action only saves on
+      # job SUCCESS, so every compile error would throw away the ~30 min vcpkg
+      # build. Early development is mostly failed builds -- the cache matters
+      # MOST when the build is broken.
+      - name: Restore vcpkg cache
+        id: vcpkg-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ~\AppData\Local\vcpkg\archives
+          key: vcpkg-${{ hashFiles('native/vcpkg.json', 'native/vcpkg-configuration.json') }}
+          restore-keys: vcpkg-
+
+      - name: Configure
+        run: cmake --preset release
+        env:
+          VCPKG_ROOT: C:\vcpkg
+
+      # Right after Configure (which builds the vcpkg deps) and BEFORE the
+      # compile that might fail. if: always() so a cancelled/failing job still
+      # banks the expensive artifacts.
+      - name: Save vcpkg cache
+        if: always() && steps.vcpkg-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~\AppData\Local\vcpkg\archives
+          key: vcpkg-${{ hashFiles('native/vcpkg.json', 'native/vcpkg-configuration.json') }}
+
+      - name: Build
+        run: cmake --build build/release
+
+      - name: Upload DLL
+        uses: actions/upload-artifact@v4
+        with:
+          name: APMF-dll
+          path: |
+            native/build/release/APMF.dll
+            native/build/release/APMF.pdb
+          if-no-files-found: error
