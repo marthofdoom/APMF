@@ -153,7 +153,7 @@ parentheses.
 | `Stance.cpp` | 3 | sneak/crouch (Num9) | `NotifyAnimationGraph("SneakStart/Stop")` | one-shot promote |
 | `WeaponDraw.cpp` | 4 | draw/sheathe (Num5) | `DrawWeaponMagicHands(bool)` | one-shot (sticky) |
 | `Headtrack.cpp` | 5 | look-at (Num3) | `AIProcess::SetHeadtrackTarget` (own point slot) | **known-incomplete block (Tick re-assert; loses to a package-locked follower)** |
-| `CombatTarget.cpp` | 6 | combat-target HOLD (Num-) | Engage `StartCombat(param.form)`; `Tick` re-asserts on drift (reads `currentCombatTarget`, re-`StartCombat` only when drifted); `StopCombat()` on release | **known-incomplete PIN fill (#2)** — holds via drift-triggered re-assert, can lose 1 frame to the re-selector |
+| `CombatTarget.cpp` | 6 | combat-target HOLD (Num-) | Engage `StartCombat(param.form)`; `Tick` re-asserts on drift (reads `currentCombatTarget`, re-`StartCombat` only when drifted); release RELINQUISHES (stops re-asserting, **no `StopCombat`** — releases are constant) | **known-incomplete PIN fill (#2)** — holds via drift-triggered re-assert, can lose 1 frame to the re-selector |
 | `CastingSelect.cpp` | 8 | cast selection (Num4) | own `selectedSpells[kRightHand]` + `caster->currentSpell` | source-block |
 | `Dialogue.cpp` | 10 | dialogue (Num6) | `PauseCurrentDialogue()` | one-shot |
 | `Attribute.cpp` | 11 | disposition (Num2) | 4 AVs: aggression/confidence/assistance/morality | source-block |

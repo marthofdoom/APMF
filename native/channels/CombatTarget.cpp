@@ -24,6 +24,14 @@
 // hazard and it also INITIATES combat when there is none, which "make her fight this
 // foe" wants.)
 //
+// RELEASE RELINQUISHES, IT DOES NOT StopCombat. A client releases this claim
+// CONSTANTLY (its gambit yields to another rule, the client's expiry sweep, a target
+// switch), so StopCombat on release would repeatedly yank a follower out of an
+// ongoing fight and flicker Stop->Start on a switch. Instead Release just stops
+// re-asserting: the threat system keeps the fight if the foe is still hostile, and
+// ends it for its own reasons otherwise (which APMF must not override). This is the
+// release pattern for every "steer a facet" channel.
+//
 // Target = param.form (a specific Actor); with NO param (form == 0, e.g. the
 // NumpadMinus test hotkey) it falls back to the PLAYER as a self-evident demo target.
 // VR-refused (the StartCombat reloc IDs are SE/AE only).
@@ -89,11 +97,21 @@ namespace {
             Native::StartCombat(actor, want);   // drifted / not started -> re-seed
         }
 
-        void Release(RE::FormID id, RE::Actor* actor) override {
+        void Release(RE::FormID id, RE::Actor* /*actor*/) override {
             if (auto it = m_target.find(id); it != m_target.end()) {
-                if (actor) actor->StopCombat();   // engine write only when the actor is live
-                spdlog::info("[ch.6] 0x{} released -- StopCombat().", apmf::log::Hex(id));
-                m_target.erase(it);   // drop per-NPC state keyed by id, even if actor is null
+                // RELINQUISH the hold by ceasing to re-assert -- do NOT StopCombat.
+                // A client releases this claim CONSTANTLY (a cast gambit yields to
+                // another rule, the 500ms expiry sweep, a target switch), and
+                // StopCombat would yank the follower out of an ongoing fight every
+                // time and flicker StopCombat->StartCombat on a switch. The threat
+                // system keeps the fight going on its own if the foe is still
+                // hostile; if it is not, the engine ends combat for its own reasons
+                // (which APMF must not override -- "commanding WHICH foe is ours;
+                // commanding THAT there is a foe is not"). So we simply stop steering:
+                // drop the per-NPC target and the next tick no longer re-asserts.
+                // (This is the release pattern for every steer-a-facet gambit.)
+                spdlog::info("[ch.6] 0x{} released -- relinquished (no StopCombat).", apmf::log::Hex(id));
+                m_target.erase(it);   // drop per-NPC state keyed by id (actor may be null)
             }
         }
 

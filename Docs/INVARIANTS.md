@@ -52,6 +52,19 @@ engage and restore it in `Release`. `Arbiter::ReleaseAll` runs on disengage,
 target-unload, and `kPreLoadGame` — never skip or reorder it, or the actor keeps the
 mutated state across a save load.
 
+**#5a — a STEER channel RELINQUISHES on release; it does not "undo" a live decision.**
+A channel that steers a self-correcting engine decision the AI keeps re-making — the
+combat target (ch.6) is the case — must NOT try to reverse that decision in `Release`.
+`Release` there just stops re-asserting (drops the per-NPC steer entry); it must NOT
+`StopCombat`. Reason: clients release such a claim CONSTANTLY (a gambit yields, an
+expiry sweep, a target switch), so "undoing" on every release would yank the actor
+out of an ongoing fight and flicker Stop→Start on a switch. The engine keeps the
+decision if it is still valid (the foe is still hostile) and ends it for its own
+reasons otherwise — which APMF must not override ("commanding WHICH foe is ours;
+commanding THAT there is a foe is not"). This is #5's counterpart for steer channels:
+a channel that SETS a stored prior value restores it (#5); a channel that STEERS a
+live re-decision relinquishes it.
+
 ## Version robustness
 
 **#6 — Version-robust hooks only; VR-refused.** Hook VIRTUAL vtable indices

@@ -64,7 +64,7 @@ releases ALL**. Logs to `Data/SKSE/Plugins/APMF.log` (`[ctl]`/`[obs]`/`[test]`/`
 | Num7 | 1a | gait scale (x0.5) | source-block | `kSpeedMult` AV (arbitrary factor) |
 | Num8 | 16 | stealth (silent+keen) | source-block | `kMovementNoiseMult` + `kDetectLifeRange` |
 | Num9 | 3 | sneak/crouch | one-shot promote | `NotifyAnimationGraph(SneakStart/Stop)` |
-| Num- | 6 | combat-target HOLD | drift re-assert (#2 fill) | `StartCombat(param.form)` + `Tick` re-assert on drift / `StopCombat` |
+| Num- | 6 | combat-target HOLD | drift re-assert (#2 fill) | `StartCombat(param.form)` + `Tick` re-assert on drift / release RELINQUISHES (no `StopCombat`) |
 | Num+ | 12 | idle/animation | one-shot | `NotifyAnimationGraph(IdleForceDefaultState)` |
 | Num* | 14 | shout select (Unrelenting Force) | one-shot (sticky) | `ActorEquipManager::EquipShout` |
 | Num. | 15 | unequip weapon | source-block | `GetEquippedObject`+`Unequip/EquipObject` |
