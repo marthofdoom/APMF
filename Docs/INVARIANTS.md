@@ -165,3 +165,20 @@ is handed over by the exported query function `APMF_GetInterface` (chosen over t
 SKSE-messaging handshake: synchronous, no message-ordering/routing subtlety). APMF
 holds ZERO client-specific code — delete every client and APMF loses zero lines; the
 header + the query function are the ONLY seam.
+
+## Persistence
+
+**#15 — Persisted AV overrides are CO-SAVED; never stranded.** The AV channels
+(Attribute/Speed/Detection) mutate dynamic ActorValues that persist in the `.ess`. A
+RAM-only "prior value" would be STRANDED if the player saves while engaged and
+reloads (after a load the live control map is empty, so a plain Release restores
+nothing — MFO's "fix-forward never cleans old saves" class). So EVERY persisted-AV
+write goes through the co-saved ledger `core/AvLedger` (`av::Override`/`av::Restore`),
+NOT raw `SetActorValue`. The ledger records `(FormID, AV) -> captured prior value`
+and is co-saved via SKSE serialization (unique ID `'APMF'`, record `'AVOV'`): `OnSave`
+writes it, `OnLoad` reads it into a pending set (`ResolveFormID` for load-order
+remap), `kPostLoadGame` restores each AV regardless of live engaged-state and clears,
+`OnRevert` wipes ledger + control map (no restore — actors are being replaced). Any
+NEW channel that writes a persisted actor value MUST route it through the ledger.
+Transient facets (weapon draw, sneak, equip, combat, dialogue, idle, headtrack) are
+self-correcting and are not co-saved.

@@ -71,6 +71,20 @@ Every channel keeps the package coherent (no substitution) and restores state on
 release / disengage / pre-load-game. Only Headtrack re-asserts (flagged #2). ch.2
 facing is not a separate channel — it rides the movement gate.
 
+## Save/load safety + review fixes (folded into Phase 1)
+
+- **Persisted AV overrides are CO-SAVED (#15).** The AV channels (disposition, gait,
+  detection) route every write through `core/AvLedger` (co-saved via SKSE
+  serialization), so a save-while-engaged + reload restores the AV regardless of
+  live engaged-state and never strands it. `kPostLoadGame` sweeps + clears;
+  `OnRevert` wipes ledger + control map.
+- **No stale-pointer deref:** every Release resolves the actor FRESH by FormID
+  (`LookupByID`) / handle — never a cached raw pointer — so kPreLoadGame with a
+  torn-down actor is safe.
+- **VR:** input test surface is NOT armed on VR (hooks refuse; no drain seat).
+- **Headtrack Release** now actively CLEARS the point slot
+  (`ClearActionHeadtrackTarget`), not just stops re-asserting.
+
 ## Post-first-release GAP work (do NOT attempt without a live probe)
 
 Marked GAP in `Docs/CHANNEL-MAP.md`; deliberately left for after the first release:

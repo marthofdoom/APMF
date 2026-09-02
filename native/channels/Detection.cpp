@@ -1,16 +1,18 @@
 #include "PCH.h"
 #include "core/Registry.h"
+#include "core/AvLedger.h"
 
 // ============================================================================
 // Channel 16 -- DETECTION / STEALTH. Clean AV gate (CHANNEL-MAP ch.16): set the
 // detection-related ActorValues the engine reads. No re-assert, package-independent.
 // Test tuning: quiet her movement (kMovementNoiseMult -> 0, silent to detection)
-// and sharpen her own senses (kDetectLifeRange +50%). Per-NPC prior values captured.
+// and sharpen her own senses (kDetectLifeRange +50%).
+//
+// These AVs PERSIST in the .ess, so both writes go through the co-saved AV ledger
+// (core/AvLedger, INVARIANTS #15) -- restored even across a save/load, never stranded.
 // ============================================================================
 
 namespace {
-
-    struct Prev { float noise, detect; };
 
     class DetectionChannel final : public apmf::Channel {
     public:
@@ -29,32 +31,18 @@ namespace {
             if (!actor) return;
             auto* avo = actor->AsActorValueOwner();
             if (!avo) { spdlog::warn("[ch.16] 0x{:08X} no ActorValueOwner.", actor->GetFormID()); return; }
-            Prev p{
-                avo->GetActorValue(RE::ActorValue::kMovementNoiseMult),
-                avo->GetActorValue(RE::ActorValue::kDetectLifeRange),
-            };
-            m_prev[actor->GetFormID()] = p;
-            avo->SetActorValue(RE::ActorValue::kMovementNoiseMult, 0.0f);
-            avo->SetActorValue(RE::ActorValue::kDetectLifeRange, p.detect * 1.5f);
-            spdlog::info("[ch.16] 0x{:08X} stealth tuned (noise {:.2f}->0, detectRange {:.0f}->{:.0f}). Clean AV gate.",
-                         actor->GetFormID(), p.noise, p.detect, p.detect * 1.5f);
+            const float detect = avo->GetActorValue(RE::ActorValue::kDetectLifeRange);
+            apmf::av::Override(actor, RE::ActorValue::kMovementNoiseMult, 0.0f);
+            apmf::av::Override(actor, RE::ActorValue::kDetectLifeRange, detect * 1.5f);
+            spdlog::info("[ch.16] 0x{:08X} stealth tuned (noise->0, detectRange {:.0f}->{:.0f}). Co-saved AV gate.",
+                         actor->GetFormID(), detect, detect * 1.5f);
         }
 
         void Release(RE::Actor* actor) override {
-            if (actor) {
-                if (auto it = m_prev.find(actor->GetFormID()); it != m_prev.end()) {
-                    if (auto* avo = actor->AsActorValueOwner()) {
-                        avo->SetActorValue(RE::ActorValue::kMovementNoiseMult, it->second.noise);
-                        avo->SetActorValue(RE::ActorValue::kDetectLifeRange, it->second.detect);
-                    }
-                    spdlog::info("[ch.16] 0x{:08X} detection AVs restored.", actor->GetFormID());
-                }
-                m_prev.erase(actor->GetFormID());
-            }
+            apmf::av::Restore(actor, RE::ActorValue::kMovementNoiseMult);
+            apmf::av::Restore(actor, RE::ActorValue::kDetectLifeRange);
+            if (actor) spdlog::info("[ch.16] 0x{:08X} detection AVs restored.", actor->GetFormID());
         }
-
-    private:
-        std::unordered_map<RE::FormID, Prev> m_prev;   // game-thread only
     };
 
 }

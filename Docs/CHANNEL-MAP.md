@@ -14,7 +14,7 @@ OPEN (17 channels + sub-splits). Combat-target / combat-actions / casting (⭐) 
 
 | # | Channel | Source | DENY gate | PROMOTE | Verdict |
 |---|---------|--------|-----------|---------|---------|
-| 1 | **Movement / locomotion** | Package planner (`AIProcess.currentPackage`) → `MovementControllerNPC`→`ActorMover` | **TRUE:** `MovementControllerNPC::SetAIDriven`/`SetControlsDriven` vfunc 0x0C/0x0D — planner off, no re-assert | `IMovementDirectControl` feed (unnamed `Unk_01..08`) or `Actor::Move` 0xC8. `KeepOffsetFromActor` = manufacture (stand-in) | **deny DOCUMENTED; promote GAP** |
+| 1 | **Movement / locomotion** | Package planner (`AIProcess.currentPackage`) → `MovementControllerNPC`→`ActorMover` | **FULL BLOCK (built):** `KeepOffsetFromActor(self, 0)` nulls the move GOAL at the source + `SetDontMove` locks translation → clean stand-still (no run-in-place, no teleport-snap; `SetDontMove` ALONE was one layer too shallow). Both Address-Library bound | `IMovementDirectControl` feed (unnamed `Unk_01..08`) or `Actor::Move` 0xC8 (probe-gated) | **DENY/full-block DOCUMENTED; PROMOTE feed GAP** |
 | 1a | ↳ **Gait / speed** | `PreferredSpeed` walk/jog/run; `kSpeedMult` AV=30 | **TRUE:** set `kSpeedMult` AV | same AV / package speed flag | **DOCUMENTED, clean** |
 | 2 | **Facing / heading** | Same planner (rotation) | rides movement gate (`SetAIDriven`) | same direct-control feed | shared w/ movement; standalone = GAP |
 | 3 | **Stance / sneak** | Package flag → `actorState1.sneaking` | clean only via package flag; anim-event = additive | `NotifyAnimationGraph("SneakStart/Stop")` vfunc 01 | **DOCUMENTED (Tier A)**, re-assert caveat |

@@ -54,6 +54,11 @@ namespace apmf {
         // Restore + clear every controlled NPC (disengage-all / kPreLoadGame).
         void ReleaseAll(const char* why);
 
+        // Wipe all control state WITHOUT restoring (revert / new game): the actors
+        // are being replaced, so a restore is wrong -- the co-saved AV ledger
+        // (core/AvLedger) handles the incoming save's overrides on post-load.
+        void Clear();
+
         // Observability: how many NPCs are currently controlled (game thread).
         std::size_t ControlledCount() const { return m_map.size(); }
 

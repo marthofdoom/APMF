@@ -26,6 +26,12 @@
 
 namespace {
 
+    // Address Library IDs (SE, AE). None of these is bound in the pinned CommonLib
+    // rev (verified against the fork's Actor.h). Provenance: SetDontMove (36490,
+    // 37489) is the known-good calibration pair; KeepOffsetFromActor (36870, 37894)
+    // and ClearKeepOffsetFromActor (36871, 37895) were read from published SKSE
+    // source that carries the identical SetDontMove pair (consecutive Actor natives)
+    // -- see INVARIANTS #8. VR has no sourced IDs -> VR-refused.
     namespace Native {
         // Actor::SetDontMove(bool) -- suspend the mover's translation.
         void SetDontMove(RE::Actor* a_actor, bool a_dontMove) {

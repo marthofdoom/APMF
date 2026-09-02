@@ -208,7 +208,9 @@ namespace apmf {
         if (m_map.empty()) return;
         const std::size_t n = m_map.size();
         for (auto& [formID, npc] : m_map) {
-            auto* actor = RE::TESForm::LookupByID<RE::Actor>(formID);   // may be null
+            // Fresh lookup by FormID -- never a cached raw pointer, so no UAF even at
+            // kPreLoadGame with a torn-down actor (returns null for a deleted form).
+            auto* actor = RE::TESForm::LookupByID<RE::Actor>(formID);
             for (auto& cs : npc.channels) {
                 if (cs.channel) cs.channel->Release(actor);
             }
@@ -216,6 +218,13 @@ namespace apmf {
         m_map.clear();
         m_index.clear();
         spdlog::info("[ctl] ReleaseAll ({}) -- {} controlled NPC(s) restored and cleared.", why, n);
+    }
+
+    void ControlMap::Clear() {
+        std::scoped_lock lock(m_qmx);
+        m_queue.clear();
+        m_map.clear();
+        m_index.clear();
     }
 
 }

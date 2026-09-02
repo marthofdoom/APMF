@@ -36,8 +36,13 @@ Full design is in [design.md](design.md).
 
 ## Status
 
-Early. The mechanics are verified and the hook is found. The first prototype (the movement path)
-is next. This is a framework for other mods to build on, not a standalone gameplay mod.
+Phase 1 built (see [Docs/STATUS.md](Docs/STATUS.md)). The central `Actor::Update` (0xAD) hook drives
+a multi-NPC control map (keyed by FormID, scales to hundreds — an uncontrolled NPC pays one hash-miss),
+a real inter-plugin C-ABI client API ([`native/APMF_API.h`](native/APMF_API.h): `Request`/`Release`
+via `APMF_GetInterface`), and the full documented channel catalog (movement full-block, disposition,
+casting selection, headtrack, combat-target steer, equipment, gait, detection, and more) as a
+first-release baseline. Persisted AV overrides are co-saved so nothing strands across a save/load.
+This is a framework for other mods to build on (MFO is the first client), not a standalone gameplay mod.
 
 ## License
 

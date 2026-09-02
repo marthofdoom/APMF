@@ -57,7 +57,13 @@ namespace {
         void Tick(RE::Actor* actor) override { AssertLookUp(actor); }
 
         void Release(RE::Actor* actor) override {
-            spdlog::info("[ch.5] 0x{:08X} released -- stop the stopgap re-assert; AI resumes its headtrack.",
+            // Actively CLEAR the point slot we set (not just stop re-asserting), so
+            // the crane-up does not linger until the AI overwrites it.
+            if (actor) {
+                if (auto* proc = actor->GetActorRuntimeData().currentProcess)
+                    proc->ClearActionHeadtrackTarget(false);
+            }
+            spdlog::info("[ch.5] 0x{:08X} released -- headtrack slot cleared; AI resumes its headtrack.",
                          actor ? actor->GetFormID() : 0);
         }
     };

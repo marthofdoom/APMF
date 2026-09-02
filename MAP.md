@@ -60,6 +60,16 @@ atomic handle), `Drain` (game thread, once/frame: apply ops + sweep unloaded),
   an uncontrolled NPC — no allocation, no all-NPC scan, or you tax the whole game.
   Handles must stay atomic-allocated so `Request` returns before Drain; ops FIFO.
 
+### `native/core/AvLedger.{h,cpp}` — co-saved AV override ledger
+`(FormID, ActorValue) -> captured prior value`, co-saved via SKSE serialization
+(unique ID `'APMF'`, record `'AVOV'`). `av::Override`/`av::Restore` (the AV channels
+call these, not raw SetActorValue), `Save`/`Load`/`ApplyPending`/`Revert`.
+- **What breaks:** this is the ANTI-STRANDING backbone (#15). A persisted AV written
+  raw (bypassing the ledger) is stranded on save-while-engaged + reload. `OnSave`
+  writes it, `OnLoad`→pending, `kPostLoadGame`→`ApplyPending` restores + clears,
+  `OnRevert` wipes. Any new channel writing a PERSISTED actor value must use the
+  ledger. Game/main-thread only.
+
 ### `native/core/Hook.{h,cpp}` — the central seat
 `Character` + `PlayerCharacter` vtable patched once at index **`0x0AD`**
 (`Actor::Update(float)`); the thunk calls the original FIRST, then
