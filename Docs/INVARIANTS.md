@@ -37,13 +37,14 @@ time.
 
 ## Threading
 
-**#4 — The gated target is main-thread-only state.** `Arbiter`'s `target` /
-`handle` / `pkgAtCapture`, and every channel's engine mutation, run on the main
-thread: input events (`BSInputDeviceManager`) and the `0xAD` `Actor::Update` both
-dispatch there. The `engaged` flags are atomic as cheap defensive insurance, never
-as a lock. Do not touch this state from any other thread. `OnActorUpdate` runs for
-every actor every frame — keep the `AnyEngaged()` + `actor != target` early-outs
-first, or you tax the whole game.
+**#4 — The control map is game-thread-only state.** `ControlMap`'s `m_map` and
+`m_index`, and every channel's engine mutation + per-NPC state map, are mutated
+ONLY on the game/main thread — in `Drain()` (applying enqueued ops), `ReleaseAll()`,
+and the per-NPC `Tick`; the input sink (`BSInputDeviceManager`) and both `0xAD`
+seats all dispatch there and are serial. Do NOT mutate the map from any other
+thread. The ONLY shared-with-workers state is the request `m_queue` (guarded by
+`m_qmx`) and the atomic handle counter. The per-NPC hot path (`OnActorUpdate`) READS
+the map with no lock — see #12/#13.
 
 **#5 — Release restores what engage changed.** Any channel that writes engine state
 (AVs, the spell slot, weapon state, AI-driven flag) must capture the prior value at
@@ -76,8 +77,20 @@ rev does NOT bind some functions the design references:
 - Use `actor->AsActorState()` for attack/weapon/block state, not raw members.
 - `MovementControllerNPC` exposes NO named AI-driven setter in this rev — only
   unnamed `Unk_0C/0D` void(void) vfuncs (calling them blind is the documented
-  CTD roulette). Movement DENY (ch.1) therefore uses the Address-Library-bound
-  `SetDontMove` (`RELOCATION_ID(36490, 37489)`), not a `SetAIDriven` method.
+  CTD roulette). Movement FULL block (ch.1) therefore uses the Address-Library-bound
+  `SetDontMove` (`RELOCATION_ID(36490, 37489)`) to lock translation PLUS
+  `KeepOffsetFromActor` (`RELOCATION_ID(36870, 37894)`) / `ClearKeepOffsetFromActor`
+  (`RELOCATION_ID(36871, 37895)`) to null the move INTENT at the source — none is
+  bound in CommonLib (verified against the fork's `Actor.h`); the IDs are
+  calibration-checked against the known `SetDontMove` pair.
+- `Actor::StartCombat` — not bound; combat-target STEER (ch.6) uses
+  `RELOCATION_ID(37608, 38561)`, signature `void(Actor*, Actor* target)`. VR-refused
+  (SE/AE IDs). `StopCombat()` IS a bound vfunc (0xE5).
+- Bound and callable directly (verified against the fork): `ActorEquipManager::
+  GetSingleton/EquipObject/UnequipObject/EquipShout`, `Actor::GetEquippedObject(bool)`,
+  `DrawWeaponMagicHands(bool)`, `PauseCurrentDialogue()`, `IsSneaking()`,
+  `NotifyAnimationGraph(const BSFixedString&)`, `AIProcess::PlayIdle` /
+  `SetHeadtrackTarget(Actor*, NiPoint3&)`.
 - `Actor::StopCurrentDialogue` does not exist; the real vfunc is
   `PauseCurrentDialogue()` (0x4F). `SetDialogueWithPlayer` is
   `(bool, bool, TESTopicInfo*)`.
@@ -96,13 +109,59 @@ initializers and make channels silently vanish. Never wrap `channels/` in a stat
 library. Registration order is load-order-undefined; never assume a channel index or
 ordering.
 
-**#10 — Adding a channel touches exactly one file.** One new `channels/*.cpp` that
-subclasses `Channel` and ends with `APMF_REGISTER_CHANNEL`. No edit to CMake, the
-registry, the input layer, or the arbiter. If a change would require editing the
-core to add a facet, the abstraction is wrong — fix the abstraction, not the core.
+**#10 — Adding a channel touches one file (+ maybe one appended enum value).** One
+new `channels/*.cpp` that subclasses `Channel`, declares its `ServesIntent()`, and
+ends with `APMF_REGISTER_CHANNEL`. No edit to CMake, the registry, the input layer,
+or the arbiter. If the facet needs a NEW client intent, APPEND one value to the
+`Intent` enum in `APMF_API.h` (that is the ONLY permitted edit outside the channel
+file, and it is append-only — see #14). If a change would require editing the core
+to add a facet, the abstraction is wrong — fix the abstraction, not the core.
 
 ## Coherence / eviction
 
-**#11 — Momentary channels release the target.** A one-shot that holds no lasting
-authority (e.g. `Dialogue`) must not leave the arbiter holding the target: call
-`Arbiter::ClearTargetIfIdle()` after firing so an idle target is dropped.
+**#11 — Momentary channels hold no state; `Release` is a no-op.** A one-shot with no
+lasting authority (`Dialogue` pauses once; `Idle` fires one animation) does its work
+in `Engage` and leaves `Release` empty — there is nothing to restore. It still holds
+a claim in the control map until released (the tester's second press, release-all,
+or the client's `Release`); that claim is inert. Do not make a momentary channel
+override `Tick` or capture per-NPC state.
+
+## Multi-NPC control map (Phase 1)
+
+**#12 — SINGLE-WRITER threading; the map is mutated only on the game thread.** The
+`0xAD` hook runs on the game thread; client API calls (`Request`/`Release`) may
+arrive from a client's worker thread (MFO's BSJobs worker). So API calls only
+ENQUEUE a small POD op under a brief lock on `ControlMap::m_queue`; they NEVER touch
+the map. The map (`m_map`) and handle index (`m_index`) are mutated ONLY on the game
+thread — `Drain()` (once per frame, from the PlayerCharacter `0xAD` seat) applies
+the queued ops, and `ReleaseAll()` clears everything. Because every writer is the
+one serial game thread, the per-NPC per-frame hot path (`OnActorUpdate`) reads the
+map with NO lock. Handles are allocated with an atomic counter so `Request()`
+returns synchronously before its op is drained; ops are FIFO so a `Release` enqueued
+right after its `Request` is applied after it. A channel's OWN per-NPC state map is
+likewise game-thread-only. Break this and you get a data race across hundreds of
+NPCs.
+
+**#13 — An uncontrolled NPC pays near-zero.** `OnActorUpdate` runs for EVERY NPC
+every frame. It must do at most: an `m_map.empty()` check, then ONE hash lookup that
+misses — no allocation, no iteration over all NPCs, nothing else. Only a CONTROLLED
+NPC runs its channels' `Tick` (and most channels no-op there — a clean block does no
+per-tick work, #1). Never scan all NPCs, never allocate on the hot path. The
+liveness sweep and queue drain run once per frame over the SMALL control map, never
+over all actors.
+
+## API contract
+
+**#14 — `APMF_API.h` is a frozen, APPEND-ONLY C-ABI contract.** `APMF_API.h` is the
+ONLY file a client shares with APMF; a client (MFO) and APMF compile as SEPARATELY
+built DLLs and interact ONLY through it at runtime. So the surface is C-ABI: a POD
+struct of function pointers (`APMF_API_v1`) with POD args only (`RE::FormID`, the
+plain `Intent` enum, floats) — NO C++ class, NO STL, NO vtable crosses the boundary.
+Once shipped, NEVER change or reorder an existing field, `Intent` value, or
+function-pointer slot; only APPEND (new `Intent` values at the end, new fields at the
+END of the struct, bump `kABIVersion`). A client built against v1 must keep working
+against every later APMF (same discipline MFO applies to `MEO_API.h`). The interface
+is handed over by the exported query function `APMF_GetInterface` (chosen over the
+SKSE-messaging handshake: synchronous, no message-ordering/routing subtlety). APMF
+holds ZERO client-specific code — delete every client and APMF loses zero lines; the
+header + the query function are the ONLY seam.

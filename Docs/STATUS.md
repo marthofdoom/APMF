@@ -6,81 +6,97 @@ build/finding/workflow change.
 
 ## Where we are
 
-**Framing (marth 2026-09-02): APMF is THE GATEKEEPER.** Once it owns a channel on
-an actor, nothing else reaches that facet except through APMF. Each channel's job
-is to BLOCK the foreign input at its source so nothing competes — a re-assert loop
-is a FAILED block, not an acceptable pattern. The arbiter/registry is centered on
-that: being the gate.
+**Framing (marth): APMF is THE GATEKEEPER.** Once it owns a channel on an actor,
+nothing else reaches that facet except through APMF. Each channel BLOCKS the foreign
+input at its source so nothing competes — a re-assert loop is a FAILED block. The
+arbiter/registry is centered on being the gate.
 
-**First real modular APMF is built and on `main`.** It replaces the
-prototype/probe monolith with the extensible two-layer architecture:
-- **Core spine** (`native/core/`): the central `Actor::Update(0xAD)` arbiter hook,
-  a self-registering channel `Registry`, the `Arbiter` (single gated target,
-  per-tick channel drive, PACKAGE STABLE observability), the input test surface,
-  and the stubbed Layer-2 client-API seam.
-- **Channels** (`native/channels/`): one small self-registering module per facet.
-  Add a facet = drop one file (see MAP.md recipe).
+**Phase 1 is built and on `main`: the MULTI-NPC arbiter + the real C-ABI client
+API + the full documented channel catalog.** This replaces v0.1.0's single
+crosshair-captured target.
+
+- **Multi-NPC control map** (`core/ControlMap`): a hash map keyed by NPC FormID →
+  that NPC's control state (engaged channels + per-channel client claims + captured
+  package). Any number of NPCs controlled independently and simultaneously.
+  - **Performance (#13):** the `0xAD` hook calls `OnActorUpdate` for EVERY NPC every
+    frame; an uncontrolled NPC pays an `empty()` check + ONE hash lookup that misses,
+    nothing else. Only a controlled NPC runs its channels (most no-op).
+  - **Threading — single-writer (#12):** client `Request`/`Release` (any thread)
+    only ENQUEUE a POD op under a brief lock; the map is mutated ONLY on the game
+    thread — `Drain()` (once/frame, from the PlayerCharacter `0xAD` seat) applies the
+    queue, `ReleaseAll()` clears. The per-NPC hot path reads lock-free.
+- **Client API (Layer 2) is REAL** (`APMF_API.h` + `core/ClientAPI.cpp`): an
+  inter-plugin C-ABI. A separate client DLL (MFO — soon a mandatory prerequisite)
+  gets a POD struct of function pointers via the exported `APMF_GetInterface`, and
+  calls `Request(actorFormID, intent, basis) -> handle` / `Release(handle)`. No C++
+  class / STL / vtable crosses the boundary. `basis` arbitrates same-channel
+  same-NPC (higher wins; tie → earliest); the channel stays engaged until the LAST
+  claim releases. APMF holds ZERO client-specific code (#14); the header + the query
+  fn are the ONLY seam. `APMF_API.h` is APPEND-ONLY forever.
+- **Full movement block** (ch.1, the reference channel done right): `SetDontMove`
+  alone (v0.1.0) blocked translation but not the move INTENT — run-in-place +
+  teleport-snap. Now `KeepOffsetFromActor(self, offset 0)` nulls the move GOAL at the
+  source (planner sees "already there", produces no locomotion) PLUS `SetDontMove`
+  locks translation. Result: a clean stand-still — no walking, no run-in-place, no
+  snap. Both Address-Library bound (verified IDs, #8), package left current.
 
 Full nav: `MAP.md`. Design: `design.md` + `Docs/ARCHITECTURE.md`. Rules:
 `Docs/INVARIANTS.md`. Per-channel catalog: `Docs/CHANNEL-MAP.md`.
 
-## Built — the READY clean-gate channels (test-surface hotkeys)
+## Built — the FULL documented catalog (first-release baseline, 13 channels)
 
-Aim the crosshair at a follower/NPC, then press the key. Logs to
-`Data/SKSE/Plugins/APMF.log` (tagged `[ch.N]` / `[obs]` / `[target]`).
+The first release ships the full commonly-documented catalog as a baseline
+benchmark (MFO will exceed it immediately). Each is a small self-registering module
+exposed through an `APMF_API::Intent`. Test surface: aim the crosshair at an NPC +
+the key ADDS it to the controlled set; aim another + a key adds it too; **Numpad0
+releases ALL**. Logs to `Data/SKSE/Plugins/APMF.log` (`[ctl]`/`[obs]`/`[test]`/`[api]`).
 
-| Key | Ch | Facet | Kind | In-game test |
-|-----|----|-------|------|-------------|
-| Numpad1 | 1 | movement DENY | source-block (`SetDontMove`) | actor stops walking its package route; `[obs]` still PACKAGE STABLE |
-| Numpad2 | 11 | aggression+confidence | **true source-block** | actor turns aggressive/foolhardy; holds even on package-locked followers |
-| Numpad3 | 5 | headtrack look-up | **known-incomplete block** | head cranes up; re-assert stopgap; on a package-locked follower may hold only the eyes (documented) |
-| Numpad4 | 8 | cast selection (Firebolt) | **true source-block** | right-hand selection := Firebolt; AI keeps it (casts it when it triggers in combat) |
-| Numpad5 | 4 | weapon draw | one-shot | weapon drawn; press again to sheathe |
-| Numpad6 | 10 | dialogue | one-shot | current dialogue pauses |
-| Numpad7 | 1a | half speed | source-gate (`kSpeedMult`) | actor moves at half pace |
-| Numpad8 | 16 | silent movement | source-gate (`kMovementNoiseMult`) | actor's movement noise -> 0 |
+| Key | Ch | Facet | Kind | Mechanism |
+|-----|----|-------|------|-----------|
+| Num1 | 1 | movement FULL block | source-block | `KeepOffsetFromActor(self)` + `SetDontMove` |
+| Num2 | 11 | disposition (4 AVs) | source-block | aggression/confidence/assistance/morality |
+| Num3 | 5 | headtrack look-up | **known-incomplete block** | own point slot; Tick re-assert (flagged) |
+| Num4 | 8 | cast selection (Firebolt) | source-block | own `selectedSpells[R]` + caster |
+| Num5 | 4 | weapon draw | one-shot | `DrawWeaponMagicHands` |
+| Num6 | 10 | dialogue pause | one-shot | `PauseCurrentDialogue` |
+| Num7 | 1a | gait scale (x0.5) | source-block | `kSpeedMult` AV (arbitrary factor) |
+| Num8 | 16 | stealth (silent+keen) | source-block | `kMovementNoiseMult` + `kDetectLifeRange` |
+| Num9 | 3 | sneak/crouch | one-shot promote | `NotifyAnimationGraph(SneakStart/Stop)` |
+| Num- | 6 | combat-target STEER | promote (steer, not pin) | `StartCombat(player)` / `StopCombat` |
+| Num+ | 12 | idle/animation | one-shot | `NotifyAnimationGraph(IdleForceDefaultState)` |
+| Num* | 14 | shout select (Unrelenting Force) | one-shot (sticky) | `ActorEquipManager::EquipShout` |
+| Num. | 15 | unequip weapon | source-block | `GetEquippedObject`+`Unequip/EquipObject` |
 
-Every channel keeps the package coherent (no substitution) and restores the state
-it changed on release / disengage / pre-load-game. Only headtrack re-asserts.
+Every channel keeps the package coherent (no substitution) and restores state on
+release / disengage / pre-load-game. Only Headtrack re-asserts (flagged #2). ch.2
+facing is not a separate channel — it rides the movement gate.
 
-## Deck field findings folded in (gap-probe, 2026-09-02)
+## Post-first-release GAP work (do NOT attempt without a live probe)
 
-- **True source-blocks are robust even on package-locked followers** (Cicero, pkg
-  0x0009BE51): setting AI-attribute AVs and owning `selectedSpells` set the input
-  the AI itself reads, so an aggressive package cannot out-fight them. Implemented
-  as true source-blocks (ch.11, ch.8, ch.1a, ch.16, ch.1).
-- **Headtrack is a KNOWN-INCOMPLETE block, not a clean gate.** The re-assert war is
-  the symptom of an un-blocked AI write, not an inherent limit. The AI writes
-  multiple headtrack types; a package-locked follower reclaims the head via a
-  higher-priority type. The real fix is to BLOCK the AI's headtrack write for the
-  owned channel at the 0xAD hook (skip/neutralize it), not re-assert after — left
-  for later. Flagged in the module + INVARIANTS #2.
-- **Casting selection confirmed KEPT** every tick by the AI (never overwritten);
-  it only *shows* as a cast when the actor is in combat / has a trigger (expected).
+Marked GAP in `Docs/CHANNEL-MAP.md`; deliberately left for after the first release:
+- Combat-target PIN (ch.6, block the threat re-selector — we only STEER today).
+- Combat ACTIONS behavior tree (ch.7).
+- Casting TRIGGER suppression (ch.8, no documented suppressor).
+- Headtrack all-types FULL block (ch.5) — block the AI's headtrack write at the
+  `0xAD` hook so the re-assert stopgap can be removed.
+- Sustained package-procedure activities (ch.9).
+- Facial-expression setter (ch.13, not exposed in this CommonLib build).
+- Per-request FORM/target params in the API (a v2 addition): ch.8 left hand, ch.12
+  a specific `TESIdleForm`, ch.14 an arbitrary shout, ch.15 an arbitrary item, ch.6
+  an arbitrary target. Today those channels use a fixed demo form/target (the
+  CastingSelect-Firebolt precedent); the mechanism is bound and ready.
 
-## Probe-gated — do NOT build without a live probe
+**Movement PROMOTE is NOT a blocker.** Once the movement source is BLOCKED, driving
+the walk is uncontested; wiring the promote feed (`IMovementDirectControl`) is a
+driver choice for MFO integration, not a mystery.
 
-Marked GAP in `Docs/CHANNEL-MAP.md`:
-- Combat-target PIN (ch.6), combat ACTIONS behavior tree (ch.7), casting TRIGGER
-  suppression (ch.8), sustained package procedures (ch.9), facial-expression
-  setter (ch.13).
-- Headtrack's real block (block the AI write at the hook) — see above.
+## Client API (Layer 2) — REAL
 
-**Movement PROMOTE is NOT treated as a gap/blocker.** Once the movement source is
-BLOCKED, driving the walk is uncontested (MFO walks followers fine when it is
-actually in control; the probe's Move-inject "did nothing" only because the package
-still owned the body). The question is not "how do we drive" but "are we truly in
-control (blocking)." The `IMovementDirectControl` unnamed-feed detail is a driver
-choice to settle when the promote feed is wired, not a mystery.
-
-## Client API (Layer 2) — stubbed seam only
-
-`native/core/ClientAPI.{h,cpp}`: `Request(actor, intent, basis)` / `Complete(handle)`
-declared; bodies log "not implemented". Intentionally unbuilt — design.md §7 open
-questions (raw package vs high-level intent; numeric basis vs policy callback; how
-a client ranks against an unaware intercepted source; yield cadence) must be
-resolved first. When built, route through the SAME arbiter + channel engage the
-hotkeys use (one control path).
+`APMF_API.h` (the shared header) + `core/ClientAPI.cpp` (the impl). A client:
+`GetProcAddress(GetModuleHandleA("APMF.dll"), "APMF_GetInterface")` → `fn(kABIVersion)`
+→ a `const APMF_API_v1*` (null on ABI mismatch) → `Request/Release`. Forwards to
+`ControlMap` enqueue (the SAME path the hotkeys use — one control path). Frozen,
+append-only (#14).
 
 ## Build / CI
 
@@ -88,15 +104,16 @@ hotkeys use (one control path).
   `gh run list -R marthofdoom/APMF`. Windows + vcpkg + colorglass CommonLibSSE-NG,
   same toolchain/baseline as MFO.
 - CMake **GLOBs** `native/**/*.cpp` so a new channel needs no build-file edit.
-- Pinned CommonLib API-surface gotchas are in INVARIANTS #8 (verified via CI, not
+- Pinned CommonLib API-surface gotchas + the verified Address-Library IDs (movement
+  block, StartCombat) are in INVARIANTS #8 (verified against the fork's headers, not
   memory).
 
 ## Next
 
-1. Field-test the eight channels on the deck (marth); confirm PACKAGE STABLE and
-   per-channel behavior; confirm the AV/casting gates hold on package-locked
-   followers and note where headtrack loses.
-2. Decide the client-API shape (design.md §7) against what these channels prove
-   the arbiter can express, then build Layer 2 through the same path.
-3. Probe the gap channels (movement PROMOTE first) on a live runtime.
-4. Multi-target arbitration (today the test surface holds one gated target).
+1. Field-test the 13 channels on the deck (marth): confirm the multi-NPC test
+   surface (freeze 3 different followers independently, release-all), PACKAGE STABLE
+   per NPC, the clean stand-still (no run-in-place / snap), and the AV/casting gates
+   on a package-locked follower.
+2. MFO integration (Phase 3): MFO becomes the first client, calling `APMF_API.h`.
+3. Probe the GAP channels (movement PROMOTE first) on a live runtime.
+4. Phase 2 passive logger.

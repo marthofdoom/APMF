@@ -9,20 +9,26 @@ HUNDREDS of NPCs at once — MFO uses it for a handful of followers, but others 
 village. MFO is the first client and the full proof of concept: all of MFO's gambits plus the looting
 improvements APMF unlocks, driven through APMF.
 
-## Phase 1 — MULTI-NPC ARBITER + CLIENT API (NEXT)
-The v0.1.0 arbiter holds a single crosshair-captured target. Replace it with a scalable per-NPC
-control system:
-- A control MAP keyed by NPC (formID/handle), each entry holding that NPC's engaged channels + params.
-- Must scale to HUNDREDS of controlled NPCs. The 0xAD hook fires per-NPC per-frame for ALL NPCs, so an
-  uncontrolled NPC must pay near-zero cost (one hash lookup); only controlled NPCs do channel work.
-- Re-targetable and multi-target (any number of NPCs controlled simultaneously, each independent).
-- Thread-safe: the hook runs on the game thread; API calls may come from a client's worker thread
-  (MFO's BSJobs worker) — guard the control map (lock or marshal).
-- **Client API (Layer 2, `core/ClientAPI`) made real, coupled to the map:** `Request(actor, intent,
-  basis) -> handle` registers an NPC+channel into the control map; `Complete(handle)` releases. `basis`
-  arbitrates when two clients want the same channel on the same NPC. This is how MFO (and others) drive.
-- Reference channel done right: the FULL movement block (block the move INTENT, not just translation —
-  no run-in-place, no teleport-snap; SetDontMove alone is one layer too shallow).
+## Phase 1 — MULTI-NPC ARBITER + CLIENT API (BUILT, on `main`)
+Replaced v0.1.0's single crosshair-captured target with a scalable per-NPC control system. DONE:
+- A control MAP (`core/ControlMap`) keyed by NPC FormID, each entry holding that NPC's engaged channels
+  + per-channel client claims + captured package. Scales to hundreds: an uncontrolled NPC pays an
+  `empty()` check + ONE hash lookup that misses (INVARIANTS #13). Re-targetable + multi-target.
+- Thread-safe SINGLE-WRITER model (INVARIANTS #12): the hook runs on the game thread; API calls (from a
+  client's BSJobs worker) only ENQUEUE a POD op under a brief lock; the map is mutated ONLY on the game
+  thread (`Drain()` once/frame from the PlayerCharacter `0xAD` seat + `ReleaseAll()`), read lock-free.
+- **Client API (Layer 2) made real as an INTER-PLUGIN C-ABI** (`APMF_API.h` + `core/ClientAPI.cpp`): a
+  separate client DLL (MFO — becoming a mandatory prerequisite) obtains a POD struct of function pointers
+  via exported `APMF_GetInterface`, then calls `Request(actorFormID, intent, basis) -> handle` /
+  `Release(handle)`. No C++/STL/vtable crosses the boundary. `basis` arbitrates same-channel same-NPC
+  (higher wins, tie → earliest); refcounted to the last claim. APPEND-ONLY forever (INVARIANTS #14).
+  APMF holds ZERO client-specific code — the header + query fn are the ONLY seam.
+- Reference channel done right: the FULL movement block — `KeepOffsetFromActor(self)` nulls the move
+  INTENT at the source + `SetDontMove` locks translation → a clean stand-still (no run-in-place, no snap).
+- **First release ships the FULL documented channel catalog** (13 channels — every DOCUMENTED facet in
+  `Docs/CHANNEL-MAP.md`) as a baseline benchmark; each a small self-registering module through the intent
+  enum. The GAP channels (combat PIN, combat-actions, casting-trigger, headtrack all-types, package
+  procedures, facial-expression setter) are the post-first-release probe work (see STATUS).
 
 ## Phase 2 — PASSIVE LOGGER (built into ALL debug builds)
 A standing passive observer in every debug build that watches AI inputs/outputs and HEURISTICALLY LEARNS

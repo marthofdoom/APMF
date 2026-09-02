@@ -26,8 +26,14 @@ namespace apmf::hook {
         struct PlayerUpdateHook {
             static void thunk(RE::PlayerCharacter* a_this, float a_delta) {
                 func(a_this, a_delta);
+                // The player ticks exactly ONCE per frame on the game thread -- the
+                // right seat to DRAIN the client-API request queue (apply enqueued
+                // Request/Release, mutating the control map on the game thread only)
+                // and sweep unloaded NPCs. The per-NPC hot path then reads the map
+                // lock-free (single-writer model, INVARIANTS #12).
+                apmf::Arbiter::Get().OncePerFrame();
                 static bool s_first = true;
-                if (s_first) { s_first = false; spdlog::info("[hook] player Update seat live (0xAD firing)"); }
+                if (s_first) { s_first = false; spdlog::info("[hook] player Update seat live (0xAD firing; per-frame drain armed)"); }
             }
             static inline REL::Relocation<decltype(thunk)> func;
             static constexpr std::size_t idx = 0x0AD;

@@ -1,23 +1,21 @@
 #pragma once
+#include "APMF_API.h"
 
 // ============================================================================
-// APMF core -- the ARBITER. APMF is THE GATEKEEPER: the single decision point that
-// owns "which actor is under APMF control right now" and, per channel, is the sole
-// path to that facet -- once a channel is claimed, the arbiter's job is that
-// nothing else reaches it (the channel blocks the foreign input at its source; the
-// arbiter never fixes a fight after the fact). It drives the engaged channels each
-// tick.
+// APMF core -- the ARBITER: the front the engine hook, the input test surface, and
+// the plugin lifecycle talk to. The real multi-NPC engine is core/ControlMap; the
+// Arbiter delegates the per-frame drive to it and adds the crosshair TEST SURFACE.
 //
 // Layer 1 (design.md Section 2): the central Actor::Update(0xAD) hook calls
-// OnActorUpdate for EVERY NPC; the arbiter acts only on the gated target. For the
-// test surface the gated target is a single crosshair-picked actor; the client
-// API (core/ClientAPI.h) will later drive engage/release per (actor, channel)
-// through this same arbiter, so a request from a client and the hotkey test
-// surface converge on one path.
+// OnActorUpdate for EVERY NPC (per-NPC hot path) and OncePerFrame once per frame
+// (drain the client-API queue). The real client driver is the C-ABI API
+// (APMF_API.h / core/ClientAPI); the hotkey surface here is for a tester and drives
+// the SAME ControlMap through the SAME enqueue path, so there is one control path.
 //
-// The arbiter never substitutes the package (design.md Section 5). It holds the
-// package identity captured at engage and logs PACKAGE STABLE each ~second so a
-// coherence regression is visible.
+// MULTI-NPC TEST SURFACE. A hotkey ADDS the crosshair-aimed NPC to the controlled
+// set on that key's channel (press again to remove it); a dedicated key releases
+// ALL controlled NPCs. So a tester can freeze/bias several different followers at
+// once and confirm each is held independently.
 // ============================================================================
 
 namespace apmf {
@@ -26,32 +24,26 @@ namespace apmf {
     public:
         static Arbiter& Get();
 
-        // Resolve the gated target: while any channel is engaged, keep the current
-        // target (ignore the crosshair -- no mid-session hijack); when idle,
-        // crosshair-pick and capture package identity. May return null (nothing
-        // aimed at) -- callers refuse and log.
-        RE::Actor* EnsureTarget();
-        RE::Actor* CurrentTarget() const { return target.load(std::memory_order_relaxed); }
-        RE::FormID PackageAtCapture() const { return pkgAtCapture; }
-
-        // Drop the gated target if no channel is engaged.
-        void ClearTargetIfIdle();
-
-        // From the 0xAD hook, for EVERY actor. Ticks engaged channels on the gated
-        // target and logs observability.
+        // From the 0xAD hook, for EVERY actor. Delegates to the ControlMap hot path.
         void OnActorUpdate(RE::Actor* actor);
 
-        // Route a hotkey to the channel that owns it (test surface).
+        // Once per frame (from the PlayerCharacter 0xAD seat, game thread): drain
+        // the client-API request queue and sweep unloaded controlled NPCs.
+        void OncePerFrame();
+
+        // Route a test-surface hotkey: toggle the aimed NPC on that key's channel,
+        // or release-all on the dedicated key.
         void DispatchHotkey(std::uint32_t code);
 
-        // Release every engaged channel and clear the target.
+        // Release every controlled NPC (disengage-all / kPreLoadGame).
         void ReleaseAll(const char* why);
 
     private:
-        std::atomic<RE::Actor*>    target{ nullptr };   // fast identity compare in the hot thunk
-        RE::ActorHandle            handle{};            // liveness source of truth
-        RE::FormID                 pkgAtCapture{ 0 };   // package held at capture (coherence check)
-        std::atomic<std::uint64_t> ticks{ 0 };
+        // Resolve the actor currently under the crosshair (null if none / player).
+        RE::Actor* CrosshairActor() const;
+
+        // Test-surface claims: key = (FormID<<32 | intent) -> the handle we hold.
+        std::unordered_map<std::uint64_t, APMF_API::Handle> m_testHandles;
     };
 
 }

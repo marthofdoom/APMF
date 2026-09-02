@@ -18,8 +18,13 @@ namespace apmf {
         void Register(Channel* ch);
         const std::vector<Channel*>& All() const { return channels; }
 
-        // Any channel currently holding authority over the gated target?
-        bool AnyEngaged() const;
+        // The channel that serves a client Intent (null if none). The channel list
+        // is built once at load and immutable after, so this is safe from any
+        // thread (the client API resolves an intent off-thread before enqueuing).
+        Channel* ChannelForIntent(APMF_API::Intent intent) const;
+
+        // The channel that owns a test-surface hotkey scancode (null if none).
+        Channel* ChannelForHotkey(std::uint32_t code) const;
 
     private:
         std::vector<Channel*> channels;

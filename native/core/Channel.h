@@ -1,4 +1,5 @@
 #pragma once
+#include "APMF_API.h"
 
 // ============================================================================
 // APMF core -- the CHANNEL interface. Each directable AI-control facet (movement,
@@ -6,23 +7,29 @@
 // own small file under channels/. Adding a facet = drop one file that subclasses
 // Channel and self-registers (APMF_REGISTER_CHANNEL); nothing else is touched.
 //
+// PER-NPC MODEL (Phase 1). A channel is a program-lifetime SINGLETON that operates
+// on ANY number of NPCs at once. It owns NO single "engaged" flag; instead the
+// ControlMap tracks which NPCs have this channel engaged and refcounts client
+// claims, and calls the channel's per-NPC lifecycle (Engage/Tick/Release) keyed by
+// actor. A channel that needs to remember per-NPC restore data (a prior AV, the
+// prior spell) keeps its OWN small std::unordered_map<RE::FormID, State> -- touched
+// ONLY on the game thread (Docs/INVARIANTS.md #12), so no lock.
+//
 // Operating principle -- APMF IS THE GATEKEEPER (marth 2026-09-02, design.md
 // Section 1a). Once APMF owns a channel on an actor, nothing else reaches that
-// channel except through APMF. A channel's job is to BLOCK the foreign input at
-// its source so nothing competes -- deny the losing source, or set the input the
-// AI itself reads. It does NOT let the AI produce a write and then override it
-// every frame: a re-assert loop is a FAILED block, a symptom of not-blocking, not
-// an acceptable pattern. A channel that still needs re-assert (because we have not
-// yet blocked the AI's write) is a KNOWN-INCOMPLETE block: it says so in its
-// header and overrides Tick() as a flagged stopgap. Every complete channel leaves
-// Tick() empty.
+// facet except through APMF. A channel BLOCKS the foreign input at its source so
+// nothing competes -- deny the losing source, or set the input the AI itself reads.
+// It does NOT let the AI produce a write and then override it every frame: a
+// re-assert loop is a FAILED block (Tick() is empty by default for exactly this
+// reason). A channel that still needs re-assert is a KNOWN-INCOMPLETE block: it
+// says so in its header and overrides Tick() as a flagged stopgap (INVARIANTS #2).
 // ============================================================================
 
 namespace apmf {
 
     // A hotkey the test surface routes to a channel (DirectInput scancode + a
-    // human label for the startup help log). Test-surface only; the real driver
-    // is the client API (core/ClientAPI.h).
+    // human label for the startup help log). Test-surface only; the real driver is
+    // the C-ABI client API (APMF_API.h).
     struct Hotkey {
         std::uint32_t code;
         const char*   label;
@@ -36,30 +43,31 @@ namespace apmf {
         virtual const char* Name() const = 0;
         virtual int         ChannelNo() const = 0;
 
+        // The client Intent this channel serves. The ControlMap resolves a
+        // Request's intent to the channel whose ServesIntent() matches. Each
+        // channel serves a DISTINCT intent (the per-NPC channel key).
+        virtual APMF_API::Intent ServesIntent() const = 0;
+
         // Test surface: keys this channel listens for (empty = none).
         virtual std::span<const Hotkey> Hotkeys() const { return {}; }
 
-        // A registered hotkey fired. `target` is the arbiter's gated actor (may be
-        // null -> the channel should refuse and log). Toggle engage/deny here.
-        virtual void OnHotkey(std::uint32_t code, RE::Actor* target) = 0;
+        // ---- Per-NPC lifecycle. ALL on the game thread (the ControlMap drives
+        // them from the 0xAD hook / its once-per-frame drain). ----
 
-        // Per-tick drive for the engaged target, from the central 0xAD hook on the
-        // main/sim thread. Default: NOTHING -- a real block needs no tick. Only a
-        // KNOWN-INCOMPLETE block (the AI write is not yet blocked) overrides this,
-        // as a flagged stopgap.
+        // First claim landed on `actor`: capture the prior engine state for restore
+        // and apply the source-block. Called exactly once per 0->1 claim transition.
+        virtual void Engage(RE::Actor* actor) = 0;
+
+        // Per-tick drive for an engaged `actor`. Default: NOTHING -- a real block
+        // needs no per-tick work (INVARIANTS #1). Only a KNOWN-INCOMPLETE block
+        // (the AI write is not yet blocked) overrides this, as a flagged stopgap.
         virtual void Tick(RE::Actor* /*actor*/) {}
 
-        // Clean release (disengage, target-unload, kPreLoadGame). Restore any input
-        // the channel changed so the AI resumes ownership.
-        virtual void Release(RE::Actor* /*actor*/) {}
-
-        bool Engaged() const { return engaged.load(std::memory_order_relaxed); }
-
-    protected:
-        // Input events and the 0xAD tick both run on the main thread in this
-        // runtime; the flag is atomic as cheap defensive insurance (mirrors the
-        // prototype), never as a lock.
-        std::atomic<bool> engaged{ false };
+        // Last claim released on `actor` (or the actor unloaded): restore whatever
+        // Engage changed and drop the per-NPC state. `actor` may be NULL if the
+        // actor unloaded -- drop the internal entry regardless (a dead actor needs
+        // no restore). Called exactly once per 1->0 claim transition.
+        virtual void Release(RE::Actor* actor) = 0;
     };
 
 }

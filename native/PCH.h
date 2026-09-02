@@ -9,9 +9,11 @@
 #include <cstdint>
 #include <format>
 #include <memory>
+#include <mutex>
 #include <span>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <vector>
 
 // REQUIRED, not stylistic. add_commonlibsse_plugin generates a TU that uses

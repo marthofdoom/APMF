@@ -34,13 +34,15 @@ namespace apmf::input {
     }
 
     void LogHelp() {
-        spdlog::info("[input] test-surface hotkeys armed (aim the crosshair at a follower/NPC first):");
+        spdlog::info("[input] MULTI-NPC test surface armed. Aim at an NPC + a key ADDS it to the controlled "
+                     "set; aim another + a key adds it too; press a key again on an aimed NPC to remove it.");
         for (auto* ch : apmf::Registry::Get().All()) {
             for (const auto& hk : ch->Hotkeys()) {
                 spdlog::info("[input]   scancode 0x{:02X} -> ch.{} {} : {}",
                              hk.code, ch->ChannelNo(), ch->Name(), hk.label);
             }
         }
+        spdlog::info("[input]   scancode 0x52 -> RELEASE ALL controlled NPCs (Numpad0)");
     }
 
 }
