@@ -14,7 +14,15 @@ find_package(CommonLibSSE CONFIG REQUIRED)
 # this list. Every .cpp (plugin.cpp + core/* + channels/*) links DIRECTLY into
 # the DLL target -- NOT via a static archive -- so each channel's self-
 # registration static initializer is retained (see Docs/INVARIANTS.md #9).
-file(GLOB_RECURSE APMF_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/*.cpp")
+# Scoped to plugin.cpp + core/ + channels/ -- a bare "*.cpp" over the source dir
+# also swept in the build tree (build/ nests inside native/): CI was compiling
+# CMake's own CompilerIdCXX/CMakeCXXCompilerId.cpp (a stray TU with main()) into
+# the DLL. Found during the v0.2.2 hex-garbling forensics (not the cause, but a
+# real hygiene bug: the DLL's contents depended on configure-time build-dir state).
+file(GLOB_RECURSE APMF_SOURCES CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/core/*.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/channels/*.cpp")
+list(APPEND APMF_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/plugin.cpp")
 
 add_commonlibsse_plugin(${PROJECT_NAME} SOURCES ${APMF_SOURCES})
 
