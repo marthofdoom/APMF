@@ -41,4 +41,4 @@ is next. This is a framework for other mods to build on, not a standalone gamepl
 
 ## License
 
-TBD.
+MIT. See [LICENSE](LICENSE).
