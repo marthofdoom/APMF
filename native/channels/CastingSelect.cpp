@@ -10,14 +10,18 @@
 // stays a GAP (no documented suppressor) and is NOT built. Per-NPC prior selection
 // captured for restore. Package-independent.
 //
-// Test facet: force Firebolt into the RIGHT hand. (Left-hand selection uses the
-// identical path on SlotTypes::kLeftHand + the kLeftHand caster -- one API v2
-// intent away; the code below is written to make that a one-line addition.)
+// PARAM (API v2). The spell is the client's choice: RequestEx passes it as
+// APMF_Param.form (a SpellItem FormID). This is the seam MFO drives -- a "cast X"
+// gambit hands us X, and the follower's own AI casts X (fixing "gambit targets
+// right but the AI casts its own spell"). With NO param (form == 0, e.g. the v1
+// Request path or the Numpad4 test hotkey) we fall back to Firebolt so legacy
+// behavior is preserved. Left-hand selection is the identical path on
+// SlotTypes::kLeftHand + the kLeftHand caster -- one API intent away.
 // ============================================================================
 
 namespace {
 
-    constexpr RE::FormID kFirebolt = 0x0001C789;   // Skyrim.esm Firebolt (aimed, visible)
+    constexpr RE::FormID kFirebolt = 0x0001C789;   // Skyrim.esm Firebolt (aimed, visible) -- no-param default
 
     class CastingSelectChannel final : public apmf::Channel {
     public:
@@ -27,31 +31,40 @@ namespace {
 
         std::span<const apmf::Hotkey> Hotkeys() const override {
             static constexpr apmf::Hotkey keys[] = {
-                { 0x4B, "Numpad4 : toggle own right-hand spell selection (Firebolt)" },
+                { 0x4B, "Numpad4 : toggle own right-hand spell selection (no-param -> Firebolt)" },
             };
             return keys;
         }
 
-        void Engage(RE::FormID id, RE::Actor* actor) override {
+        void Engage(RE::FormID id, RE::Actor* actor, const APMF_API::APMF_Param& param) override {
             if (!actor) return;
-            auto* spell = RE::TESForm::LookupByID<RE::SpellItem>(kFirebolt);
-            if (!spell) { spdlog::warn("[ch.8] 0x{} Firebolt not found.", apmf::log::Hex(id)); return; }
+            auto* spell = ResolveSpell(id, param);
+            if (!spell) return;   // ResolveSpell logged the reason
 
             constexpr auto slot = RE::Actor::SlotTypes::kRightHand;
             auto& rt    = actor->GetActorRuntimeData();
             auto* exist = rt.selectedSpells[slot];
             auto* prev  = exist ? exist->As<RE::SpellItem>() : nullptr;
-            m_prev[id]  = prev;
+            m_prev[id]  = prev;   // capture the pre-APMF selection ONCE (Engage only)
 
-            // SetCurrentSpell is unbound at this rev (INVARIANTS #8), so write the
-            // slot + the caster's currentSpell member directly (guarded). The AI
-            // then casts our spell itself.
-            rt.selectedSpells[slot] = spell;
-            if (auto* caster = actor->GetMagicCaster(RE::MagicSystem::CastingSource::kRightHand))
-                caster->currentSpell = spell;
-            spdlog::info("[ch.8] 0x{} right-hand selection := Firebolt (prev 0x{}). Clean gate: AI "
-                         "casts our spell; trigger stays the AI's.",
-                         apmf::log::Hex(id), apmf::log::Hex(prev ? prev->GetFormID() : 0));
+            SelectInto(actor, spell);
+            spdlog::info("[ch.8] 0x{} right-hand selection := 0x{} (prev 0x{}). Clean gate: AI casts "
+                         "our spell; trigger stays the AI's.",
+                         apmf::log::Hex(id), apmf::log::Hex(spell->GetFormID()),
+                         apmf::log::Hex(prev ? prev->GetFormID() : 0));
+        }
+
+        // A new higher-basis claim (or a new winner after the owner released) wants a
+        // DIFFERENT spell. Switch the live selection WITHOUT touching m_prev -- the
+        // original pre-APMF selection was captured at Engage and Release still restores
+        // it. This makes the channel correct when two clients contend for the hand.
+        void OnOwnerChanged(RE::FormID id, RE::Actor* actor, const APMF_API::APMF_Param& param) override {
+            if (!actor) return;
+            auto* spell = ResolveSpell(id, param);
+            if (!spell) return;
+            SelectInto(actor, spell);
+            spdlog::info("[ch.8] 0x{} right-hand selection RE-POINTED to 0x{} (new owner; prior restore state kept).",
+                         apmf::log::Hex(id), apmf::log::Hex(spell->GetFormID()));
         }
 
         void Release(RE::FormID id, RE::Actor* actor) override {
@@ -69,6 +82,25 @@ namespace {
         }
 
     private:
+        // The client's spell (param.form) if given, else the Firebolt fallback.
+        RE::SpellItem* ResolveSpell(RE::FormID id, const APMF_API::APMF_Param& param) {
+            const RE::FormID want = param.form ? param.form : kFirebolt;
+            auto* spell = RE::TESForm::LookupByID<RE::SpellItem>(want);
+            if (!spell) spdlog::warn("[ch.8] 0x{} spell 0x{} not found (or not a SpellItem).",
+                                     apmf::log::Hex(id), apmf::log::Hex(want));
+            return spell;
+        }
+
+        // Set the right-hand slot + the caster's currentSpell directly. SetCurrentSpell
+        // is unbound at this rev (INVARIANTS #8), so we write the slot the AI reads; the
+        // AI then casts our spell itself.
+        static void SelectInto(RE::Actor* actor, RE::SpellItem* spell) {
+            constexpr auto slot = RE::Actor::SlotTypes::kRightHand;
+            actor->GetActorRuntimeData().selectedSpells[slot] = spell;
+            if (auto* caster = actor->GetMagicCaster(RE::MagicSystem::CastingSource::kRightHand))
+                caster->currentSpell = spell;
+        }
+
         std::unordered_map<RE::FormID, RE::SpellItem*> m_prev;   // game-thread only
     };
 

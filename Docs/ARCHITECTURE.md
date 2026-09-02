@@ -17,10 +17,13 @@ frame (§2a).
 
 **Layer 2 — the client API (`APMF_API.h` + `core/ClientAPI.cpp`).** An INTER-PLUGIN
 C-ABI. A separate client DLL (MFO) declares intents (`Request(actorFormID, intent,
-basis)` → handle … `Release(handle)`) instead of claiming a package or an alias.
-The contract is a POD struct of function pointers (`APMF_API_v1`) — no C++ class, no
-STL, no vtable crosses the DLL boundary (#14). A client obtains it via the exported
-query function `APMF_GetInterface`. `Request`/`Release` forward to the SAME
+basis)` → handle … `Release(handle)`, or `RequestEx(…, const APMF_Param*)` to name
+WHICH thing — the spell for cast-select, the target for combat-target) instead of
+claiming a package or an alias. The contract is POD structs of function pointers
+(`APMF_API_v1`; `APMF_API_v2` appends `RequestEx` via prefix extension, `kABIVersion=2`)
+— no C++ class, no STL, no vtable crosses the DLL boundary (#14/#14a). A client obtains
+it via the exported query function `APMF_GetInterface`. `Request`/`RequestEx`/`Release`
+forward to the SAME
 `ControlMap` enqueue path the test-surface hotkeys drive, so there is one control
 path, not two. APMF holds zero client-specific code (#14).
 
@@ -96,8 +99,14 @@ Every directable facet is one `Channel` subclass in its own small file under
 - `ServesIntent()` — the client `Intent` this channel serves (its unique key; the
   `ControlMap` resolves a Request's intent to the matching channel).
 - `Hotkeys()` — the test-surface keys (empty if none).
-- `Engage(actor)` — first claim landed on this NPC: capture the prior engine state
-  and apply the source-block. Called once per 0→1 claim transition, game thread.
+- `Engage(id, actor, param)` — first claim landed on this NPC: capture the prior
+  engine state and apply the source-block using the winning claim's `param` (a
+  parameterized channel reads `param.form`/`fval`/`ival`; all-zero == its default).
+  Called once per 0→1 claim transition, game thread.
+- `OnOwnerChanged(id, actor, param)` — the winning claim changed (a higher-basis
+  claim arrived, or the owner released and another now wins): re-point a
+  parameterized channel at the new winner's `param` WITHOUT re-capturing restore
+  state. Default no-op (parameterless channels do not care who owns them).
 - `Tick(actor)` — per-tick drive. **Default empty** — a clean source-gate needs no
   per-tick work (#1). Only a known-incomplete block overrides it.
 - `Release(actor)` — last claim gone (or the NPC unloaded, `actor` may be null):
@@ -144,8 +153,10 @@ source so nothing competes — never to fight after the fact. Three kinds:
 
 1. Copy `channels/Speed.cpp` → `channels/<Facet>.cpp`.
 2. Rename the class; set `Name`/`ChannelNo`/`ServesIntent`/`Hotkeys`.
-3. `Engage(actor)`: capture the prior state into your per-NPC map, apply the gate.
-4. `Release(actor)`: restore from the per-NPC map (guard `actor` null), erase it.
+3. `Engage(id, actor, param)`: capture the prior state into your per-NPC map, apply
+   the gate (a parameterized channel reads `param`; all-zero == its default).
+4. `Release(id, actor)`: restore from the per-NPC map (guard `actor` null), erase it.
+   Override `OnOwnerChanged(id, actor, param)` only if parameterized.
 5. `Tick`: leave it out UNLESS the facet is a known-incomplete block — then say so
    in the module header and INVARIANTS.
 6. End the file with `APMF_REGISTER_CHANNEL(<Class>);`.

@@ -28,8 +28,10 @@ crosshair-captured target.
 - **Client API (Layer 2) is REAL** (`APMF_API.h` + `core/ClientAPI.cpp`): an
   inter-plugin C-ABI. A separate client DLL (MFO — soon a mandatory prerequisite)
   gets a POD struct of function pointers via the exported `APMF_GetInterface`, and
-  calls `Request(actorFormID, intent, basis) -> handle` / `Release(handle)`. No C++
-  class / STL / vtable crosses the boundary. `basis` arbitrates same-channel
+  calls `Request(actorFormID, intent, basis) -> handle` / `Release(handle)` — or
+  `RequestEx(…, const APMF_Param*)` (ABI v2) to name WHICH thing (cast-select's spell,
+  combat-target's target). No C++ class / STL / vtable crosses the boundary. `basis`
+  arbitrates same-channel
   same-NPC (higher wins; tie → earliest); the channel stays engaged until the LAST
   claim releases. APMF holds ZERO client-specific code (#14); the header + the query
   fn are the ONLY seam. `APMF_API.h` is APPEND-ONLY forever.
@@ -134,9 +136,12 @@ driver choice for MFO integration, not a mystery.
 
 `APMF_API.h` (the shared header) + `core/ClientAPI.cpp` (the impl). A client:
 `GetProcAddress(GetModuleHandleA("APMF.dll"), "APMF_GetInterface")` → `fn(kABIVersion)`
-→ a `const APMF_API_v1*` (null on ABI mismatch) → `Request/Release`. Forwards to
-`ControlMap` enqueue (the SAME path the hotkeys use — one control path). Frozen,
-append-only (#14).
+→ a `const APMF_API_v1*` (null on ABI mismatch); if `p->abiVersion >= 2`, cast up to
+`APMF_API_v2*` → `Request/RequestEx/Release`. `RequestEx` carries the POD `APMF_Param`
+(`form`/`fval`/`ival`) — cast-select reads `param.form` as the spell (no param →
+Firebolt), combat-target as the target (no param → player). Forwards to `ControlMap`
+enqueue (the SAME path the hotkeys use — one control path). Frozen, append-only
+(#14/#14a): ABI v2 = a prefix-extension struct, `kABIVersion = 2`.
 
 ## Build / CI
 

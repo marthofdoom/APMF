@@ -43,7 +43,10 @@ namespace apmf {
         // ---- Client/API side: THREAD-SAFE (any thread). Enqueue only. ----
         // Allocate + return a handle synchronously; the claim is applied at the next
         // game-thread Drain. Returns kInvalidHandle if no channel serves `intent`.
-        Handle EnqueueRequest(RE::FormID actor, Intent intent, float basis);
+        // `param` (may be null) is COPIED synchronously into the queued op — APMF
+        // never retains the client's pointer; null == a zero param (channel default).
+        Handle EnqueueRequest(RE::FormID actor, Intent intent, float basis,
+                              const APMF_API::APMF_Param* param);
         void   EnqueueRelease(Handle handle);
 
         // ---- Game thread ONLY. ----
@@ -64,8 +67,9 @@ namespace apmf {
 
     private:
         struct Claim {
-            Handle handle = APMF_API::kInvalidHandle;
-            float  basis  = 0.0f;
+            Handle               handle = APMF_API::kInvalidHandle;
+            float                basis  = 0.0f;
+            APMF_API::APMF_Param param  = {};   // what this claim wants the channel to act on
         };
         struct ChannelCtl {
             Channel*           channel = nullptr;
@@ -79,10 +83,11 @@ namespace apmf {
         };
         struct PendingOp {
             enum class Kind : std::uint8_t { kRequest, kRelease } kind{};
-            Handle     handle = APMF_API::kInvalidHandle;
-            RE::FormID actor  = 0;         // request only
-            Intent     intent = APMF_API::kIntent_None;   // request only
-            float      basis  = 0.0f;      // request only
+            Handle               handle = APMF_API::kInvalidHandle;
+            RE::FormID           actor  = 0;         // request only
+            Intent               intent = APMF_API::kIntent_None;   // request only
+            float                basis  = 0.0f;      // request only
+            APMF_API::APMF_Param param  = {};        // request only (copied at enqueue)
         };
 
         void ApplyRequest(const PendingOp& op);   // game thread

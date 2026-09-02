@@ -13,7 +13,18 @@ namespace {
     // degrades to "no control taken", never a crash in the client.
     APMF_API::Handle APMF_Request(RE::FormID actor, APMF_API::Intent intent, float basis) {
         try {
-            return apmf::ControlMap::Get().EnqueueRequest(actor, intent, basis);
+            return apmf::ControlMap::Get().EnqueueRequest(actor, intent, basis, nullptr);
+        } catch (...) {
+            return APMF_API::kInvalidHandle;
+        }
+    }
+
+    // ABI v2: carries the POD param down to the channel (e.g. the cast-select spell).
+    // The pointer is read+copied synchronously here; APMF never retains it.
+    APMF_API::Handle APMF_RequestEx(RE::FormID actor, APMF_API::Intent intent, float basis,
+                                    const APMF_API::APMF_Param* param) {
+        try {
+            return apmf::ControlMap::Get().EnqueueRequest(actor, intent, basis, param);
         } catch (...) {
             return APMF_API::kInvalidHandle;
         }
@@ -26,18 +37,22 @@ namespace {
         }
     }
 
-    // The single static POD interface handed to clients. Constant-initialized (the
-    // pointers are to static functions), so it is valid the instant the DLL loads.
-    constexpr APMF_API::APMF_API_v1 g_api{
+    // The single static POD interface handed to clients. It is the NEWEST revision
+    // (APMF_API_v2), constant-initialized (the pointers are to static functions), so
+    // it is valid the instant the DLL loads. Because v2's leading members are exactly
+    // v1's, a v1 client reading it through APMF_API_v1* sees only the v1 prefix.
+    constexpr APMF_API::APMF_API_v2 g_api{
         APMF_API::kABIVersion,
         &APMF_Request,
         &APMF_Release,
+        &APMF_RequestEx,
     };
 
 }
 
 // Exported, undecorated (extern "C"). A client does
-// GetProcAddress(GetModuleHandleA("APMF.dll"), "APMF_GetInterface").
+// GetProcAddress(GetModuleHandleA("APMF.dll"), "APMF_GetInterface"). Returns the
+// base type; a v2 client checks p->abiVersion and casts up to APMF_API_v2*.
 extern "C" __declspec(dllexport) const APMF_API::APMF_API_v1* APMF_GetInterface(std::uint32_t abiVersion) {
     try {
         if (abiVersion > APMF_API::kABIVersion) {
@@ -47,7 +62,9 @@ extern "C" __declspec(dllexport) const APMF_API::APMF_API_v1* APMF_GetInterface(
         }
         spdlog::info("[api] APMF_GetInterface: handed v{} interface to a client (requested v{}).",
                      APMF_API::kABIVersion, abiVersion);
-        return &g_api;
+        // Hand back the base-type view of the newest struct; every shipped revision
+        // shares v1's identical initial sequence, so this is layout-safe.
+        return reinterpret_cast<const APMF_API::APMF_API_v1*>(&g_api);
     } catch (...) {
         return nullptr;   // an spdlog throw must not unwind into the client
     }

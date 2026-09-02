@@ -62,7 +62,20 @@ namespace apmf {
 
         // First claim landed: capture the prior engine state for restore and apply
         // the source-block. Called once per 0->1 claim transition (actor is live).
-        virtual void Engage(RE::FormID id, RE::Actor* actor) = 0;
+        // `param` is the WINNING claim's POD payload (APMF_API.h) telling the channel
+        // WHICH thing to act on (cast-select => param.form is the spell); an all-zero
+        // param means "no param" and the channel falls back to its default.
+        virtual void Engage(RE::FormID id, RE::Actor* actor,
+                            const APMF_API::APMF_Param& param) = 0;
+
+        // The winning claim on an ALREADY-engaged channel changed its param (a new
+        // higher-basis claim arrived, or the owner released and another claim now
+        // wins). Default: NOTHING -- a parameterless channel does not care which
+        // client owns it. A PARAMETERIZED channel (cast-select) overrides this to
+        // switch to the new winner's payload WITHOUT re-capturing the restore state
+        // (Engage already captured it; only Release restores it).
+        virtual void OnOwnerChanged(RE::FormID /*id*/, RE::Actor* /*actor*/,
+                                    const APMF_API::APMF_Param& /*param*/) {}
 
         // Per-tick drive for an engaged NPC. Default: NOTHING -- a real block needs
         // no per-tick work (INVARIANTS #1). Only a KNOWN-INCOMPLETE block overrides

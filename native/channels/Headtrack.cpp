@@ -45,7 +45,7 @@ namespace {
             return keys;
         }
 
-        void Engage(RE::FormID id, RE::Actor* actor) override {
+        void Engage(RE::FormID id, RE::Actor* actor, const APMF_API::APMF_Param& /*param*/) override {
             AssertLookUp(actor);
             spdlog::info("[ch.5] 0x{} look-up -- KNOWN-INCOMPLETE block; Tick re-asserts (stopgap for the "
                          "un-blocked AI write; may hold only the eyes on a package-locked follower).", apmf::log::Hex(id));

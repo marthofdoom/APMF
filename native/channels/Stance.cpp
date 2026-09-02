@@ -27,7 +27,7 @@ namespace {
             return keys;
         }
 
-        void Engage(RE::FormID id, RE::Actor* actor) override {
+        void Engage(RE::FormID id, RE::Actor* actor, const APMF_API::APMF_Param& /*param*/) override {
             if (!actor) return;
             const bool wasSneaking = actor->IsSneaking();
             m_startedSneak[id] = !wasSneaking;   // did WE start it?

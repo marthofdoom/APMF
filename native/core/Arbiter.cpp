@@ -73,7 +73,10 @@ namespace apmf {
             return;
         }
 
-        const APMF_API::Handle h = ControlMap::Get().EnqueueRequest(id, intent, kTestBasis);
+        // Test surface passes no param -> each channel uses its default (cast-select
+        // -> Firebolt, combat-target -> the player). The C-ABI RequestEx path is what
+        // carries a real client's chosen spell/target.
+        const APMF_API::Handle h = ControlMap::Get().EnqueueRequest(id, intent, kTestBasis, nullptr);
         if (h == APMF_API::kInvalidHandle) return;   // ControlMap already logged the refusal
         m_testHandles[key] = h;
         spdlog::info("[test] ch.{} {} -- ADDED 0x{} '{}' to the controlled set (h={}). Aim another NPC "

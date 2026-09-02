@@ -34,7 +34,7 @@ namespace {
             return keys;
         }
 
-        void Engage(RE::FormID id, RE::Actor* actor) override {
+        void Engage(RE::FormID id, RE::Actor* actor, const APMF_API::APMF_Param& /*param*/) override {
             if (!actor) return;
             apmf::av::Override(id, actor, RE::ActorValue::kAggression, 2.0f);   // Aggressive
             apmf::av::Override(id, actor, RE::ActorValue::kConfidence, 4.0f);   // Foolhardy

@@ -39,7 +39,7 @@ namespace {
             return keys;
         }
 
-        void Engage(RE::FormID id, RE::Actor* actor) override {
+        void Engage(RE::FormID id, RE::Actor* actor, const APMF_API::APMF_Param& /*param*/) override {
             if (!actor) return;
             auto* eqm = RE::ActorEquipManager::GetSingleton();
             if (!eqm) return;

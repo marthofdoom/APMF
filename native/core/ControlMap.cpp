@@ -22,7 +22,8 @@ namespace apmf {
 
     // ---- Client/API side (ANY thread): enqueue only, never touch the map. ----
 
-    Handle ControlMap::EnqueueRequest(RE::FormID actor, Intent intent, float basis) {
+    Handle ControlMap::EnqueueRequest(RE::FormID actor, Intent intent, float basis,
+                                      const APMF_API::APMF_Param* param) {
         // Registry is immutable after load, so this read is thread-safe.
         if (!Registry::Get().ChannelForIntent(intent)) {
             spdlog::warn("[api] Request REFUSED -- no channel serves intent {} (actor 0x{}).",
@@ -36,6 +37,7 @@ namespace apmf {
         op.actor  = actor;
         op.intent = intent;
         op.basis  = basis;
+        if (param) op.param = *param;   // COPY synchronously; never retain the client pointer
         {
             std::scoped_lock lock(m_qmx);
             m_queue.push_back(op);
@@ -116,23 +118,31 @@ namespace apmf {
             cc = &npc.channels.back();
         }
 
-        cc->claims.push_back(Claim{ op.handle, op.basis });
+        // Before adding this claim, note the incumbent owner's basis (if any).
+        float oldBest = 0.0f;
+        for (auto& c : cc->claims) oldBest = (c.basis > oldBest) ? c.basis : oldBest;
+
+        cc->claims.push_back(Claim{ op.handle, op.basis, op.param });
         m_index[op.handle] = { op.actor, channel };
 
         if (freshChannel) {
-            channel->Engage(op.actor, actor);   // 0 -> 1: apply the source-block once
-            spdlog::info("[ctl] 0x{} '{}' + ch.{} {} ENGAGED (h={}, basis={:.1f}). NPCs controlled: {}.",
+            channel->Engage(op.actor, actor, op.param);   // 0 -> 1: apply the source-block once
+            spdlog::info("[ctl] 0x{} '{}' + ch.{} {} ENGAGED (h={}, basis={:.1f}, form=0x{}). NPCs controlled: {}.",
                          apmf::log::Hex(op.actor), actor->GetName() ? actor->GetName() : "?",
-                         channel->ChannelNo(), channel->Name(), op.handle, op.basis, m_map.size());
+                         channel->ChannelNo(), channel->Name(), op.handle, op.basis,
+                         apmf::log::Hex(op.param.form), m_map.size());
         } else {
             // Additional claim on an already-engaged channel: arbitrate by basis
-            // (higher wins; tie -> earliest). Parameterless channels do not change
-            // behavior on winner change; the claim refcounts the engagement.
-            float best = cc->claims.front().basis;
-            for (auto& c : cc->claims) best = (c.basis > best) ? c.basis : best;
+            // (higher wins; tie -> earliest, so the incumbent keeps ownership unless
+            // this claim's basis is STRICTLY higher). On a real owner change, hand a
+            // parameterized channel the new winner's payload (parameterless channels
+            // no-op OnOwnerChanged; the claim just refcounts the engagement).
+            const bool newOwner = (op.basis > oldBest);
+            if (newOwner) channel->OnOwnerChanged(op.actor, actor, op.param);
             spdlog::info("[ctl] 0x{} + ch.{} {} additional claim (h={}, basis={:.1f}); {} claim(s), "
-                         "owner basis={:.1f}.", apmf::log::Hex(op.actor), channel->ChannelNo(), channel->Name(),
-                         op.handle, op.basis, cc->claims.size(), best);
+                         "owner basis={:.1f}{}.", apmf::log::Hex(op.actor), channel->ChannelNo(), channel->Name(),
+                         op.handle, op.basis, cc->claims.size(), newOwner ? op.basis : oldBest,
+                         newOwner ? " (NEW OWNER)" : "");
         }
     }
 
@@ -150,6 +160,17 @@ namespace apmf {
         for (auto ccIt = npc.channels.begin(); ccIt != npc.channels.end(); ++ccIt) {
             if (ccIt->channel != channel) continue;
             auto& claims = ccIt->claims;
+
+            // Identify the owner (highest basis; tie -> earliest) BEFORE removal, so
+            // a parameterized channel can be re-pointed at the new winner if the
+            // owner is the claim leaving.
+            auto ownerOf = [](std::vector<Claim>& cs) -> Claim* {
+                Claim* best = cs.empty() ? nullptr : &cs.front();
+                for (auto& c : cs) if (c.basis > best->basis) best = &c;   // strict: tie keeps earliest
+                return best;
+            };
+            const Handle oldOwner = [&] { Claim* o = ownerOf(claims); return o ? o->handle : APMF_API::kInvalidHandle; }();
+
             for (auto it = claims.begin(); it != claims.end(); ++it) {
                 if (it->handle == handle) { claims.erase(it); break; }
             }
@@ -160,6 +181,15 @@ namespace apmf {
                              apmf::log::Hex(formID), channel->ChannelNo(), channel->Name(), handle);
                 npc.channels.erase(ccIt);
             } else {
+                // Claims remain: if the OWNER just left, the new winner takes over --
+                // re-point a parameterized channel at its payload (no restore capture).
+                if (handle == oldOwner) {
+                    Claim* now = ownerOf(claims);
+                    if (now) {
+                        auto* actor = RE::TESForm::LookupByID<RE::Actor>(formID);   // may be null
+                        channel->OnOwnerChanged(formID, actor, now->param);
+                    }
+                }
                 spdlog::info("[ctl] 0x{} - ch.{} {} claim dropped (h={}); {} claim(s) remain.",
                              apmf::log::Hex(formID), channel->ChannelNo(), channel->Name(), handle, claims.size());
             }

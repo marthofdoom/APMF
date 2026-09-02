@@ -24,7 +24,7 @@ namespace {
             return keys;
         }
 
-        void Engage(RE::FormID id, RE::Actor* actor) override {
+        void Engage(RE::FormID id, RE::Actor* actor, const APMF_API::APMF_Param& /*param*/) override {
             if (!actor) return;
             actor->DrawWeaponMagicHands(true);
             spdlog::info("[ch.4] 0x{} DrawWeaponMagicHands(true) (one-shot, sticky).", apmf::log::Hex(id));

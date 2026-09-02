@@ -169,16 +169,32 @@ struct of function pointers (`APMF_API_v1`) with POD args only (`RE::FormID`, th
 plain `Intent` enum, floats) — NO C++ class, NO STL, NO vtable crosses the boundary.
 Once shipped, NEVER change or reorder an existing field, `Intent` value, or
 function-pointer slot; only APPEND (new `Intent` values at the end, new fields at the
-END of the struct, bump `kABIVersion`). A client built against v1 must keep working
+END of a struct, bump `kABIVersion`). A client built against v1 must keep working
 against every later APMF (same discipline MFO applies to `MEO_API.h`). The interface
 is handed over by the exported query function `APMF_GetInterface` (chosen over the
 SKSE-messaging handshake: synchronous, no message-ordering/routing subtlety). APMF
 holds ZERO client-specific code — delete every client and APMF loses zero lines; the
 header + the query function are the ONLY seam. NO EXCEPTION MAY CROSS THE BOUNDARY:
-each exported body (`APMF_Request`/`APMF_Release`/`APMF_GetInterface`) is wrapped in
-a `try { … } catch (...)` returning `kInvalidHandle`/void/`nullptr` — a throw
-(bad_alloc from the queue, an spdlog throw) unwinding across the client's separately
-compiled DLL is UB. A swallowed throw degrades to "no control taken", never a crash.
+each exported body (`APMF_Request`/`APMF_RequestEx`/`APMF_Release`/`APMF_GetInterface`)
+is wrapped in a `try { … } catch (...)` returning `kInvalidHandle`/void/`nullptr` — a
+throw (bad_alloc from the queue, an spdlog throw) unwinding across the client's
+separately compiled DLL is UB. A swallowed throw degrades to "no control taken",
+never a crash.
+
+**#14a — ABI revisions use PREFIX EXTENSION; the param payload is POD, append-only,
+and NEVER retained.** A new ABI revision (v2: `RequestEx` + `APMF_Param`) adds a
+struct `APMF_API_vN` whose LEADING members are byte-identical, in order, to
+`APMF_API_v(N-1)`, then appends the new function-pointer slots. The SAME static
+object is handed to every client: `APMF_GetInterface` returns the base type
+(`APMF_API_v1*`); a newer client checks `p->abiVersion >= N` and reinterpret_casts up
+to `APMF_API_vN`. Never edit a shipped `APMF_API_vN` struct — add the next one.
+`APMF_Param` is a PLAIN POD struct (`form`/`fval`/`ival`), never a class/STL/pointer-
+to-owned-memory; it too is append-only (new fields at the END, so a v1-era caller's
+zero-init reads them as 0). An ALL-ZERO param (`{}`), and the `Request`/no-param path,
+means "channel default" — cast-select falls back to Firebolt, combat-target to the
+player — so v1 behavior is preserved exactly. The `const APMF_Param*` a client passes
+to `RequestEx` is READ AND COPIED synchronously inside the call (into the queued POD
+op); APMF NEVER retains the client pointer, so a client stack temporary is safe.
 
 ## Persistence
 

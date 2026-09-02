@@ -73,7 +73,7 @@ namespace {
             return keys;
         }
 
-        void Engage(RE::FormID id, RE::Actor* actor) override {
+        void Engage(RE::FormID id, RE::Actor* actor, const APMF_API::APMF_Param& /*param*/) override {
             if (!actor || REL::Module::IsVR()) return;   // reloc IDs are SE/AE only
             const RE::ActorHandle self = actor->GetHandle();
             const RE::NiPoint3    zero{ 0.0f, 0.0f, 0.0f };

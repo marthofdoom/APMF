@@ -33,17 +33,23 @@ hook, registers the input sink, logs the hotkey help. `kPreLoadGame` →
   stuck sneaking / silent / speed-halved). Keep the release on pre-load.
 
 ### `native/APMF_API.h` — the inter-plugin C-ABI contract (shared with clients)
-The ONLY file a client shares with APMF. POD struct of function pointers
-(`APMF_API_v1`: `Request`/`Release`), the `Intent` enum, `Handle`, and the exported
-query-fn name. No C++ class / STL / vtable crosses the boundary.
-- **What breaks:** APPEND-ONLY forever (#14). Never reorder/change an existing
-  `Intent` value, struct field, or fn-pointer slot — a client built against v1 must
-  keep working. A client (MFO) and APMF are separately built DLLs; this header +
-  `APMF_GetInterface` are the ONLY seam. APMF carries zero client-specific code.
+The ONLY file a client shares with APMF. POD structs of function pointers
+(`APMF_API_v1`: `Request`/`Release`; `APMF_API_v2`: + `RequestEx` carrying the POD
+`APMF_Param`), the `Intent` enum, `Handle`, and the exported query-fn name. No C++
+class / STL / vtable crosses the boundary. `kABIVersion = 2`.
+- **What breaks:** APPEND-ONLY forever (#14/#14a). Never reorder/change a shipped
+  `Intent` value, struct, or fn-pointer slot — a v1 client must keep working. New ABI
+  = a new `APMF_API_vN` whose leading members mirror v(N-1) exactly (prefix
+  extension), + appended slots; `APMF_Param` grows only at the END. A client (MFO)
+  and APMF are separately built DLLs; this header + `APMF_GetInterface` are the ONLY
+  seam. APMF carries zero client-specific code.
 
 ### `native/core/ClientAPI.{h,cpp}` — the C-ABI implementation
-The exported `APMF_GetInterface(abiVersion)` hands over a static POD `APMF_API_v1`;
-its `Request`/`Release` fn-pointers forward to `ControlMap::EnqueueRequest/Release`.
+The exported `APMF_GetInterface(abiVersion)` hands over a static POD `APMF_API_v2`
+(as a base `APMF_API_v1*`; a v2 client casts up); its `Request`/`RequestEx`/`Release`
+fn-pointers forward to `ControlMap::EnqueueRequest/Release` (Request == RequestEx with
+a null param). `RequestEx` copies the client's `APMF_Param` synchronously (never
+retained).
 - **What breaks:** the exported fn must stay `extern "C"` + undecorated
   (`APMF_GetInterface`) or clients' `GetProcAddress` fails. Every exported body is a
   `try/catch(...)` — NO exception may unwind across the client DLL (#14). The enqueue
@@ -51,10 +57,13 @@ its `Request`/`Release` fn-pointers forward to `ControlMap::EnqueueRequest/Relea
 
 ### `native/core/ControlMap.{h,cpp}` — the multi-NPC engine (Phase 1 heart)
 `unordered_map<FormID, NpcCtl>` (each NpcCtl = engaged channels + per-channel client
-claims + captured package). `EnqueueRequest/Release` (any thread; brief queue lock,
-atomic handle), `Drain` (game thread, once/frame: apply ops + sweep unloaded),
-`OnActorUpdate` (per-NPC hot path: empty-check → one hash lookup → tick engaged),
-`ReleaseAll`. Arbitration by basis (higher wins, tie → earliest); claims refcount.
+claims + captured package; each `Claim` carries its `APMF_Param`). `EnqueueRequest`
+(now takes `const APMF_Param*`, copied into the op) / `Release` (any thread; brief
+queue lock, atomic handle), `Drain` (game thread, once/frame: apply ops + sweep
+unloaded), `OnActorUpdate` (per-NPC hot path: empty-check → one hash lookup → tick
+engaged), `ReleaseAll`. Arbitration by basis (higher wins, tie → earliest); claims
+refcount. On a real owner change (add or release) a parameterized channel gets
+`OnOwnerChanged(winner.param)`; `Engage` gets the winning claim's param.
 - **What breaks:** SINGLE-WRITER (#12) — the map is mutated ONLY on the game thread
   (Drain + ReleaseAll); API calls only enqueue. Mutate it off-thread and you race
   across hundreds of NPCs. The hot path (#13) must stay `empty()` + ONE lookup for
@@ -170,7 +179,9 @@ live probing" and STATUS "post-first-release gap work".
 ## How to add a channel (the whole recipe)
 1. Copy `channels/Speed.cpp` to `channels/<Facet>.cpp`.
 2. Rename the class; set `Name`/`ChannelNo`/`ServesIntent`/`Hotkeys`; capture+apply
-   in `Engage(actor)`, restore+erase in `Release(actor)` (and `Tick` only if a
+   in `Engage(id, actor, param)`, restore+erase in `Release(id, actor)` (override
+   `OnOwnerChanged(id, actor, param)` only if the channel is PARAMETERIZED; `Tick`
+   only if a
    flagged known-incomplete block).
 3. End with `APMF_REGISTER_CHANNEL(<Class>);`.
 4. Nothing else — CMake GLOBs it, the registry picks it up, the help log lists it.

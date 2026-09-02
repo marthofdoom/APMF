@@ -28,7 +28,7 @@ namespace {
             return keys;
         }
 
-        void Engage(RE::FormID id, RE::Actor* actor) override {
+        void Engage(RE::FormID id, RE::Actor* actor, const APMF_API::APMF_Param& /*param*/) override {
             if (!actor) return;
             const bool ok = actor->NotifyAnimationGraph("IdleForceDefaultState");
             spdlog::info("[ch.12] 0x{} one-shot idle (IdleForceDefaultState) accepted={}.", apmf::log::Hex(id), ok);

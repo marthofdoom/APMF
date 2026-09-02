@@ -29,7 +29,7 @@ namespace {
             return keys;
         }
 
-        void Engage(RE::FormID id, RE::Actor* actor) override {
+        void Engage(RE::FormID id, RE::Actor* actor, const APMF_API::APMF_Param& /*param*/) override {
             if (!actor) return;
             auto* shout = RE::TESForm::LookupByID<RE::TESShout>(kUnrelentingForce);
             if (!shout) { spdlog::warn("[ch.14] 0x{} shout form not found -- no-op.", apmf::log::Hex(id)); return; }

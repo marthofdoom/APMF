@@ -10,8 +10,9 @@
 // -- the PIN is a probe-gated GAP, NOT built here). Release stops combat via the
 // bound StopCombat() vfunc (0xE5).
 //
-// Test facet: make her fight the PLAYER (a self-evident demo target -- the API's
-// per-request target form is a v2 addition; for now the demo target is the player).
+// Target: the client's chosen actor via RequestEx's APMF_Param.form (a v2 addition).
+// With NO param (form == 0, e.g. the NumpadMinus test hotkey) we fall back to the
+// PLAYER as a self-evident demo target.
 // VR-refused (the StartCombat reloc IDs are SE/AE only).
 // ============================================================================
 
@@ -34,18 +35,19 @@ namespace {
 
         std::span<const apmf::Hotkey> Hotkeys() const override {
             static constexpr apmf::Hotkey keys[] = {
-                { 0x4A, "NumpadMinus : STEER combat target to the player (demo)" },
+                { 0x4A, "NumpadMinus : STEER combat target to the player (no-param demo)" },
             };
             return keys;
         }
 
-        void Engage(RE::FormID id, RE::Actor* actor) override {
+        void Engage(RE::FormID id, RE::Actor* actor, const APMF_API::APMF_Param& param) override {
             if (!actor || REL::Module::IsVR()) return;   // reloc IDs are SE/AE only
-            auto* player = RE::PlayerCharacter::GetSingleton();
-            if (!player) return;
-            Native::StartCombat(actor, player);
-            spdlog::info("[ch.6] 0x{} STEER -- StartCombat(player). Steers, does NOT pin (re-selector "
-                         "may re-choose; PIN is a GAP).", apmf::log::Hex(id));
+            RE::Actor* target = param.form ? RE::TESForm::LookupByID<RE::Actor>(param.form) : nullptr;
+            if (!target) target = RE::PlayerCharacter::GetSingleton();   // no-param fallback: the player
+            if (!target) return;
+            Native::StartCombat(actor, target);
+            spdlog::info("[ch.6] 0x{} STEER -- StartCombat(0x{}). Steers, does NOT pin (re-selector "
+                         "may re-choose; PIN is a GAP).", apmf::log::Hex(id), apmf::log::Hex(target->GetFormID()));
         }
 
         void Release(RE::FormID id, RE::Actor* actor) override {
