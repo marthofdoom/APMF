@@ -133,18 +133,20 @@ namespace apmf::log {
     }
 
     void HexSelfTest(const char* phase) {
-        // 1. Sentinels through fmt's real formatting paths. {:016X} exercises
-        //    every digit of the uppercase table, {:x} the lowercase one, {:.2f}
-        //    the float writer, {} the decimal writer (control).
-        const std::string up  = fmt::format("{:016X}", 0x0123456789ABCDEFull);
+        // 1. Sentinels through fmt's real formatting paths. The upper value
+        //    carries all 16 digits as SIGNIFICANT digits (leading F, interior
+        //    0) so every table entry is a real table read, not zero-fill; {:x}
+        //    exercises the lowercase table, {:.2f} the float writer, {} the
+        //    decimal writer (control).
+        const std::string up  = fmt::format("{:X}", 0xF0E1D2C3B4A59687ull);
         const std::string lo  = fmt::format("{:x}", 0xDEADBEEFu);
         const std::string fl  = fmt::format("{:.2f}", 1234.5);
         const std::string dec = fmt::format("{}", 1234567890u);
 
-        const bool pass = up == "0123456789ABCDEF" && lo == "deadbeef" &&
+        const bool pass = up == "F0E1D2C3B4A59687" && lo == "deadbeef" &&
                           fl == "1234.50" && dec == "1234567890";
         if (pass) {
-            spdlog::info("[hexprobe] {}: PASS ({{:016X}}/{{:x}}/{{:.2f}}/{{}} all clean)", phase);
+            spdlog::info("[hexprobe] {}: PASS ({{:X}}/{{:x}}/{{:.2f}}/{{}} all clean)", phase);
         } else {
             spdlog::error("[hexprobe] {}: FAIL -- upper=[{}] lower=[{}] float=[{}] dec=[{}]",
                           phase,
