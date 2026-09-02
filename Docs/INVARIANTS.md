@@ -43,12 +43,40 @@ package-locked Cicero; the un-blocked channels (headtrack, crouch) get out-fough
 by the package — because they are not blocking yet. Today only `Headtrack` (ch.5)
 is known-incomplete. Never mislabel a re-assert as a clean gate.
 
-**#3 — Never substitute the package.** APMF commandeers a facet while the actor's
-current package stays current and keeps evaluating (design.md §5). Substituting the
-package fires `OnPackageEnd`/`OnPackageChange` and tears the preempted source down.
-Every channel must keep the package coherent; the arbiter logs PACKAGE STABLE ~1/s
-so a regression is visible. Only one source holds the coherent package slot at a
-time.
+**#3 — Never substitute the package — SCOPED to the movement-hijack channels.** A
+channel that commandeers a facet BY DRIVING IT OVER A RUNNING PACKAGE (the movement
+hijack: locomotion/facing) must leave the actor's current package current and
+evaluating (design.md §5). Making another source the current package fires
+`OnPackageEnd`/`OnPackageChange` and tears the preempted source down; truthful state
+cannot save it. Those channels keep the package coherent; the arbiter logs PACKAGE
+STABLE ~1/s so a regression is visible.
+
+**THE ONE INTENTIONAL EXCEPTION — the 0x49 package-OFFER channel (design.md §5a).**
+The `CheckForCurrentAliasPackage` (vfunc 0x49) offer channel deliberately REDIRECTS the
+alias-tier package OFFER to a client's own package, so the engine then runs the CLIENT's
+REAL package NATIVELY. This is a package-tier PROMOTE, not a movement hijack, and it is
+allowed precisely because it costs exactly ONE `OnPackageChange` each way — the SAME
+class of interruption as vanilla combat taking an NPC and handing it back, which every
+follower already tolerates. It is bounded: engage only in a gambit-valid-and-live window,
+relinquish cleanly so the framework package resumes, and touch NO alias/run-once state.
+It is STRUCTURALLY BENEATH script-driven (PapyrusUtil) overrides — it cannot reach them
+(#3a) — so it can never break a script-driven follower. (Movement-hijack channels still
+obey the no-substitute rule above; the offer channel is the one facet where a promote is
+the correct, bounded mechanism.)
+
+**#3a — APMF is BENEATH script-driven package overrides; it uses ZERO Papyrus.** APMF
+arbitrates the engine's NATIVE / alias tier (packages the engine itself selects, and the
+alias-tier package offer at 0x49). A PapyrusUtil `AddPackageOverride` sits ABOVE that
+tier: the script layer wins, and APMF neither sees nor touches it — so "never break a
+custom follower" is AUTOMATIC for any script-driven follower. APMF calls no Papyrus
+itself. **Never-break guardrails (all three hold for every control window):** (1) control
+only in BOUNDED, gambit-valid-AND-live windows — never a standing hold; (2) RELINQUISH
+cleanly so the framework's package resumes; (3) the offer path touches NO alias / run-once
+state. **Supporting evidence (Tuxborn audit, 2026-09-02):** across all 1626 enabled mods,
+Simple Follower Framework + every custom follower are alias-tier with ZERO PapyrusUtil
+package overrides — so the alias-tier (0x49) mechanism covers every follower in that list,
+and the beneath-script layering means even a hypothetical script-driven follower is safe by
+construction.
 
 ## Threading
 

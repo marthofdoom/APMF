@@ -186,6 +186,50 @@ Worked example: a framework's "walk to the player, then start a conversation" pa
 drives the body elsewhere, the package truthfully sees "not at the player" and waits. APMF yields,
 the follower walks over, the conversation triggers. No lie, no desync, no per-framework code.
 
+**Scope of §5:** truthful non-arrival is the coherence story for the MOVEMENT-HIJACK channels
+(drive the body over a still-running package). It is NOT the only way APMF can let a client's
+behavior run — see §5a for the package-OFFER channel, where the engine runs the client's OWN
+package natively and no hijack (and no lie) is involved at all.
+
+## 5a. The package-OFFER channel — the ONE intentional package-tier promote (0x49)
+
+The movement hijack (§4/§5) is how APMF lets a client's *locomotion goal* win without substituting
+the package. There is a second, cleaner path for the case where a client has a REAL AI PACKAGE it
+wants the actor to run natively (travel-to-merchant, sandbox-at-town): **redirect the package
+OFFER at its source** so the engine itself adopts the client's package and runs it with full native
+fidelity (real pathing, real procedures, real arrival) — APMF then does nothing per-frame.
+
+- **Mechanism:** hook `Actor::CheckForCurrentAliasPackage` (VIRTUAL **0x49**) on `VTABLE_Character`
+  ONLY (never `PlayerCharacter` — §0.38 scar). The engine calls it to ask "does an ALIAS give this
+  actor a package right now?" The thunk: if APMF holds a package-offer claim for the actor
+  (game-thread, lock-free ControlMap read), return the CLIENT's `TESPackage*`; else return
+  `original(self)`. The engine adopts the returned package as current and runs it natively.
+- **Why this is allowed where §3 forbids "substitution":** it is NOT a movement hijack and NOT a
+  `SetRunOncePackage`-style forced swap. It redirects the alias-tier OFFER the engine was already
+  going to evaluate, so the cost is exactly ONE `OnPackageChange` on engage and ONE on release —
+  the SAME class of interruption as vanilla combat taking an NPC and handing it back, which every
+  follower framework already tolerates every fight. It is the ONE intentional package-tier promote.
+- **Bounded + never-break (the guardrails, all three always hold):** (1) claim only inside a
+  BOUNDED, client-gambit-valid-AND-live window — never a standing hold; (2) RELINQUISH cleanly (the
+  thunk returns `original(self)` again) so the framework's own package resumes; (3) the offer path
+  touches NO alias / run-once / ExtraAliasInstanceArray state — it only chooses which package the
+  offer returns.
+
+## 5b. The layering — APMF is STRUCTURALLY BENEATH script-driven overrides (architecture, not a caveat)
+
+Skyrim resolves an actor's package by TIER: a PapyrusUtil `AddPackageOverride` (script tier) wins
+over the engine's own native/alias selection. APMF operates at the NATIVE / alias tier (the 0xAD
+movement hijack and the 0x49 alias-offer). It therefore sits BENEATH the script tier and **cannot
+reach a PapyrusUtil override** — the script layer wins, APMF neither sees nor touches it. So "never
+break a custom follower" is AUTOMATIC for any script-driven follower: it is a structural property
+of where APMF lives, not a special case APMF has to handle. **APMF uses ZERO Papyrus itself.**
+
+**Supporting evidence — Tuxborn follower audit (2026-09-02):** across all 1626 enabled mods, Simple
+Follower Framework and every custom follower are ALIAS-TIER with ZERO PapyrusUtil package overrides.
+So the alias-tier (0x49) offer mechanism covers every follower in that load order, and the
+beneath-script layering means even a hypothetical script-driven follower is safe by construction.
+(This is what makes the 0x49 probe worth building before travel/nav.)
+
 ## 6. Time-sharing the body (the one real risk + its mitigation)
 
 Truthful state does NOT protect against a source with an **arrival timeout** ("not there in N
