@@ -37,15 +37,27 @@ namespace {
         }
     }
 
+    // ABI v3: re-point an existing claim's param in place (same handle) -- e.g.
+    // combat-target switches the held foe without a release/re-request. Copied
+    // synchronously; APMF never retains the pointer.
+    void APMF_Repoint(APMF_API::Handle handle, const APMF_API::APMF_Param* param) {
+        try {
+            apmf::ControlMap::Get().EnqueueRepoint(handle, param);
+        } catch (...) {
+        }
+    }
+
     // The single static POD interface handed to clients. It is the NEWEST revision
-    // (APMF_API_v2), constant-initialized (the pointers are to static functions), so
-    // it is valid the instant the DLL loads. Because v2's leading members are exactly
-    // v1's, a v1 client reading it through APMF_API_v1* sees only the v1 prefix.
-    constexpr APMF_API::APMF_API_v2 g_api{
+    // (APMF_API_v3), constant-initialized (the pointers are to static functions), so
+    // it is valid the instant the DLL loads. Because each revision's leading members
+    // are exactly the previous revision's, a v1/v2 client reading it through its own
+    // struct pointer sees only its prefix.
+    constexpr APMF_API::APMF_API_v3 g_api{
         APMF_API::kABIVersion,
         &APMF_Request,
         &APMF_Release,
         &APMF_RequestEx,
+        &APMF_Repoint,
     };
 
 }

@@ -195,7 +195,8 @@ separately compiled DLL is UB. A swallowed throw degrades to "no control taken",
 never a crash.
 
 **#14a — ABI revisions use PREFIX EXTENSION; the param payload is POD, append-only,
-and NEVER retained.** A new ABI revision (v2: `RequestEx` + `APMF_Param`) adds a
+and NEVER retained.** A new ABI revision (v2: `RequestEx` + `APMF_Param`; v3:
+`Repoint`, which re-points an existing claim's param in place, same handle) adds a
 struct `APMF_API_vN` whose LEADING members are byte-identical, in order, to
 `APMF_API_v(N-1)`, then appends the new function-pointer slots. The SAME static
 object is handed to every client: `APMF_GetInterface` returns the base type

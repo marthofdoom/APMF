@@ -48,6 +48,9 @@ namespace apmf {
         Handle EnqueueRequest(RE::FormID actor, Intent intent, float basis,
                               const APMF_API::APMF_Param* param);
         void   EnqueueRelease(Handle handle);
+        // Re-point an existing claim's param in place (same handle). `param` copied
+        // synchronously; null == no-op. Applied at the next Drain. See APMF_API_v3.
+        void   EnqueueRepoint(Handle handle, const APMF_API::APMF_Param* param);
 
         // ---- Game thread ONLY. ----
         // Hot path: one lookup; ticks the engaged channels of a controlled NPC.
@@ -82,16 +85,17 @@ namespace apmf {
             std::uint64_t           obsTick = 0;
         };
         struct PendingOp {
-            enum class Kind : std::uint8_t { kRequest, kRelease } kind{};
+            enum class Kind : std::uint8_t { kRequest, kRelease, kRepoint } kind{};
             Handle               handle = APMF_API::kInvalidHandle;
             RE::FormID           actor  = 0;         // request only
             Intent               intent = APMF_API::kIntent_None;   // request only
             float                basis  = 0.0f;      // request only
-            APMF_API::APMF_Param param  = {};        // request only (copied at enqueue)
+            APMF_API::APMF_Param param  = {};        // request/repoint (copied at enqueue)
         };
 
-        void ApplyRequest(const PendingOp& op);   // game thread
-        void ApplyRelease(Handle handle);         // game thread
+        void ApplyRequest(const PendingOp& op);                       // game thread
+        void ApplyRelease(Handle handle);                             // game thread
+        void ApplyRepoint(Handle handle, const APMF_API::APMF_Param& param);   // game thread
 
         // Game-thread state (NO lock -- single game-thread writer).
         std::unordered_map<RE::FormID, NpcCtl>                        m_map;

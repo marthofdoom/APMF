@@ -138,12 +138,14 @@ driver choice for MFO integration, not a mystery.
 
 `APMF_API.h` (the shared header) + `core/ClientAPI.cpp` (the impl). A client:
 `GetProcAddress(GetModuleHandleA("APMF.dll"), "APMF_GetInterface")` → `fn(kABIVersion)`
-→ a `const APMF_API_v1*` (null on ABI mismatch); if `p->abiVersion >= 2`, cast up to
-`APMF_API_v2*` → `Request/RequestEx/Release`. `RequestEx` carries the POD `APMF_Param`
-(`form`/`fval`/`ival`) — cast-select reads `param.form` as the spell (no param →
-Firebolt), combat-target as the target (no param → player). Forwards to `ControlMap`
-enqueue (the SAME path the hotkeys use — one control path). Frozen, append-only
-(#14/#14a): ABI v2 = a prefix-extension struct, `kABIVersion = 2`.
+→ a `const APMF_API_v1*` (null on ABI mismatch); check `p->abiVersion` and cast up to
+`APMF_API_v2*` (>=2) or `APMF_API_v3*` (>=3) → `Request/RequestEx/Release/Repoint`.
+`RequestEx` carries the POD `APMF_Param` (`form`/`fval`/`ival`) — cast-select reads
+`param.form` as the spell (no param → Firebolt), combat-target as the target (no param
+→ player). `Repoint(handle,param)` re-points a live claim in place (same handle) — the
+retarget primitive (combat-target switches the held foe without release/re-request).
+Forwards to `ControlMap` enqueue (the SAME path the hotkeys use — one control path).
+Frozen, append-only (#14/#14a): each ABI = a prefix-extension struct, `kABIVersion = 3`.
 
 ## Build / CI
 

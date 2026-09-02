@@ -56,6 +56,18 @@ namespace apmf {
         }
     }
 
+    void ControlMap::EnqueueRepoint(Handle handle, const APMF_API::APMF_Param* param) {
+        if (handle == APMF_API::kInvalidHandle || !param) return;
+        PendingOp op{};
+        op.kind   = PendingOp::Kind::kRepoint;
+        op.handle = handle;
+        op.param  = *param;   // COPY synchronously; never retain the client pointer
+        {
+            std::scoped_lock lock(m_qmx);
+            m_queue.push_back(op);
+        }
+    }
+
     // ---- Game thread ONLY. ----
 
     void ControlMap::Drain() {
@@ -67,8 +79,11 @@ namespace apmf {
             else ops.swap(m_queue);
         }
         for (const auto& op : ops) {
-            if (op.kind == PendingOp::Kind::kRequest) ApplyRequest(op);
-            else                                      ApplyRelease(op.handle);
+            switch (op.kind) {
+            case PendingOp::Kind::kRequest: ApplyRequest(op);                  break;
+            case PendingOp::Kind::kRelease: ApplyRelease(op.handle);           break;
+            case PendingOp::Kind::kRepoint: ApplyRepoint(op.handle, op.param); break;
+            }
         }
 
         // Sweep controlled NPCs that have unloaded (they stop calling OnActorUpdate,
@@ -204,6 +219,45 @@ namespace apmf {
         if (npc.channels.empty()) m_map.erase(npcIt);
     }
 
+    void ControlMap::ApplyRepoint(Handle handle, const APMF_API::APMF_Param& param) {
+        auto idxIt = m_index.find(handle);
+        if (idxIt == m_index.end()) return;   // unknown/stale
+        const RE::FormID formID  = idxIt->second.first;
+        Channel*         channel = idxIt->second.second;
+
+        auto npcIt = m_map.find(formID);
+        if (npcIt == m_map.end()) return;
+        auto& npc = npcIt->second;
+
+        for (auto& cc : npc.channels) {
+            if (cc.channel != channel) continue;
+            auto& claims = cc.claims;
+            if (claims.empty()) return;
+
+            // Find this claim, and the current owner (highest basis; tie -> earliest).
+            Claim* self = nullptr;
+            Claim* best = &claims.front();
+            for (auto& c : claims) {
+                if (c.handle == handle)     self = &c;
+                if (c.basis  > best->basis) best = &c;   // strict: tie keeps earliest
+            }
+            if (!self) return;   // handle not in this channel (should not happen)
+
+            self->param = param;   // update the stored param regardless of ownership
+            if (best == self) {
+                // This claim OWNS the channel -> re-point it in place (same handle,
+                // no release/re-engage). A parameterized channel switches its held
+                // target/spell; a parameterless channel no-ops OnOwnerChanged.
+                auto* actor = RE::TESForm::LookupByID<RE::Actor>(formID);   // may be null
+                channel->OnOwnerChanged(formID, actor, param);
+                spdlog::info("[ctl] 0x{} ~ ch.{} {} REPOINT (h={}, form=0x{}).",
+                             apmf::log::Hex(formID), channel->ChannelNo(), channel->Name(),
+                             handle, apmf::log::Hex(param.form));
+            }
+            return;
+        }
+    }
+
     void ControlMap::OnActorUpdate(RE::Actor* actor) {
         if (m_map.empty()) return;                 // near-zero cost: nothing controlled
         auto it = m_map.find(actor->GetFormID());  // the single hash lookup
@@ -238,8 +292,11 @@ namespace apmf {
             std::vector<PendingOp> ops;
             { std::scoped_lock lock(m_qmx); ops.swap(m_queue); }
             for (const auto& op : ops) {
-                if (op.kind == PendingOp::Kind::kRequest) ApplyRequest(op);
-                else                                      ApplyRelease(op.handle);
+                switch (op.kind) {
+                case PendingOp::Kind::kRequest: ApplyRequest(op);                  break;
+                case PendingOp::Kind::kRelease: ApplyRelease(op.handle);           break;
+                case PendingOp::Kind::kRepoint: ApplyRepoint(op.handle, op.param); break;
+                }
             }
         }
         if (m_map.empty()) return;

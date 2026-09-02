@@ -35,8 +35,9 @@ hook, registers the input sink, logs the hotkey help. `kPreLoadGame` →
 ### `native/APMF_API.h` — the inter-plugin C-ABI contract (shared with clients)
 The ONLY file a client shares with APMF. POD structs of function pointers
 (`APMF_API_v1`: `Request`/`Release`; `APMF_API_v2`: + `RequestEx` carrying the POD
-`APMF_Param`), the `Intent` enum, `Handle`, and the exported query-fn name. No C++
-class / STL / vtable crosses the boundary. `kABIVersion = 2`.
+`APMF_Param`; `APMF_API_v3`: + `Repoint` = re-point an existing claim's param in place,
+same handle), the `Intent` enum, `Handle`, and the exported query-fn name. No C++
+class / STL / vtable crosses the boundary. `kABIVersion = 3`.
 - **What breaks:** APPEND-ONLY forever (#14/#14a). Never reorder/change a shipped
   `Intent` value, struct, or fn-pointer slot — a v1 client must keep working. New ABI
   = a new `APMF_API_vN` whose leading members mirror v(N-1) exactly (prefix
@@ -45,11 +46,13 @@ class / STL / vtable crosses the boundary. `kABIVersion = 2`.
   seam. APMF carries zero client-specific code.
 
 ### `native/core/ClientAPI.{h,cpp}` — the C-ABI implementation
-The exported `APMF_GetInterface(abiVersion)` hands over a static POD `APMF_API_v2`
-(as a base `APMF_API_v1*`; a v2 client casts up); its `Request`/`RequestEx`/`Release`
-fn-pointers forward to `ControlMap::EnqueueRequest/Release` (Request == RequestEx with
-a null param). `RequestEx` copies the client's `APMF_Param` synchronously (never
-retained).
+The exported `APMF_GetInterface(abiVersion)` hands over a static POD `APMF_API_v3`
+(as a base `APMF_API_v1*`; a client casts up to the newest struct it uses); its
+`Request`/`RequestEx`/`Release`/`Repoint` fn-pointers forward to
+`ControlMap::EnqueueRequest/Release/Repoint` (Request == RequestEx with a null param).
+`RequestEx`/`Repoint` copy the client's `APMF_Param` synchronously (never retained).
+`Repoint(handle,param)` updates a live claim's param + re-points its channel if it
+owns it — no release/re-request (the "own the gambit" retarget primitive).
 - **What breaks:** the exported fn must stay `extern "C"` + undecorated
   (`APMF_GetInterface`) or clients' `GetProcAddress` fails. Every exported body is a
   `try/catch(...)` — NO exception may unwind across the client DLL (#14). The enqueue
@@ -58,12 +61,14 @@ retained).
 ### `native/core/ControlMap.{h,cpp}` — the multi-NPC engine (Phase 1 heart)
 `unordered_map<FormID, NpcCtl>` (each NpcCtl = engaged channels + per-channel client
 claims + captured package; each `Claim` carries its `APMF_Param`). `EnqueueRequest`
-(now takes `const APMF_Param*`, copied into the op) / `Release` (any thread; brief
-queue lock, atomic handle), `Drain` (game thread, once/frame: apply ops + sweep
-unloaded), `OnActorUpdate` (per-NPC hot path: empty-check → one hash lookup → tick
-engaged), `ReleaseAll`. Arbitration by basis (higher wins, tie → earliest); claims
-refcount. On a real owner change (add or release) a parameterized channel gets
-`OnOwnerChanged(winner.param)`; `Engage` gets the winning claim's param.
+(takes `const APMF_Param*`, copied) / `Release` / `EnqueueRepoint` (any thread; brief
+queue lock, atomic handle), `Drain` (game thread, once/frame: apply `kRequest`/
+`kRelease`/`kRepoint` ops + sweep unloaded), `OnActorUpdate` (per-NPC hot path:
+empty-check → one hash lookup → tick engaged), `ReleaseAll`. Arbitration by basis
+(higher wins, tie → earliest); claims refcount. On a real owner change (add, release,
+or `ApplyRepoint`) a parameterized channel gets `OnOwnerChanged(winner.param)`;
+`Engage` gets the winning claim's param. `ApplyRepoint` updates a claim's stored param
+and, if it owns the channel, re-points it in place (same handle — no release/re-engage).
 - **What breaks:** SINGLE-WRITER (#12) — the map is mutated ONLY on the game thread
   (Drain + ReleaseAll); API calls only enqueue. Mutate it off-thread and you race
   across hundreds of NPCs. The hot path (#13) must stay `empty()` + ONE lookup for
