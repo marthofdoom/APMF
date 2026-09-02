@@ -16,6 +16,36 @@ custom-follower framework claiming an actor above priority 60 locks everyone els
 MFO "Cicero can't be walked to the lockpick" case). APMF replaces that fight with brokered,
 time-shared control.
 
+## 1a. Core operating principles (marth 2026-09-02) — READ FIRST
+
+APMF is a CHANNEL ROUTER, not a behavior factory. Three rules govern everything below; where any
+later section (the prototypes especially) conflicts with these, these win.
+
+1. **Arbitrate channels, do not manufacture behavior.** APMF decides, per facet, which SOURCE's
+   input reaches the actor. It does NOT build movement, facing, pathing, or animation. Whoever owns
+   the promoted channel (a client mod, vanilla AI, or an unaware framework) produces the behavior;
+   APMF only routes. "Walk to the merchant naturally" is a CLIENT's channel — APMF promotes it and
+   denies the framework's follow channel; the naturalness is the channel's problem, never APMF's.
+
+2. **Promote and deny.** For each facet APMF PROMOTES one channel (grants it authority) and DENIES
+   the competing channels (suppresses their input).
+
+3. **Selectively ALLOW at the source — do NOT FORCE over the top.** The director gates the INPUT a
+   channel feeds the engine; it does not let the AI produce an output and then override it every
+   frame. Deny the losing channel at its source (or set the input the AI itself consumes) so the AI
+   never produces the competing command and there is nothing to fight. Where a channel has no clean
+   source-gate, override is a DOCUMENTED FALLBACK, flagged as such — never the default. **A re-assert
+   loop is a code smell**, a sign we are forcing an output instead of gating an input.
+
+**What the prototypes actually proved vs. these rules:** prototype 0/1 confirmed the foundation —
+the central 0xAD hook reaches every NPC, the package stays coherent (`PACKAGE STABLE`, no CTD) while
+control is exerted, and truthful non-arrival holds. But their EXECUTORS violate the rules and are
+stand-ins only: `KeepOffsetFromActor` MANUFACTURES movement (rule 1) and the SneakStart re-assert
+FORCES the output (rule 3). The real design replaces both with source-gated promote/deny. The next
+work is the CHANNEL MAP: enumerate the channels (movement, facing, stance, headtrack, combat-target,
+dialogue, …) and, per channel, its allow-gate and deny-gate — starting from a clean source-gated DENY
+(suppress a source's movement) with no re-assert.
+
 ## 2. Architecture — two layers
 
 **Layer 1 — the hook (APMF core).** A single central engine hook makes APMF the arbiter of the
