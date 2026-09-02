@@ -118,9 +118,16 @@ namespace apmf {
             cc = &npc.channels.back();
         }
 
-        // Before adding this claim, note the incumbent owner's basis (if any).
-        float oldBest = 0.0f;
-        for (auto& c : cc->claims) oldBest = (c.basis > oldBest) ? c.basis : oldBest;
+        // Before adding this claim, note the incumbent owner's basis (if any). Seed
+        // from the first existing claim -- NOT 0.0 -- so a negative-basis incumbent
+        // arbitrates correctly (a 0.0 floor would let a claim below the true max but
+        // above 0 wrongly "win", and mislog owner basis=0.0). Mirrors ApplyRelease's
+        // ownerOf. When cc->claims is empty (freshChannel) oldBest stays unused.
+        float oldBest   = 0.0f;
+        bool  haveIncum = false;
+        for (auto& c : cc->claims) {
+            if (!haveIncum || c.basis > oldBest) { oldBest = c.basis; haveIncum = true; }
+        }
 
         cc->claims.push_back(Claim{ op.handle, op.basis, op.param });
         m_index[op.handle] = { op.actor, channel };
