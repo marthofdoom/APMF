@@ -8,8 +8,11 @@
 #include <atomic>
 #include <cstdint>
 #include <format>
+#include <memory>
+#include <span>
 #include <string>
 #include <string_view>
+#include <vector>
 
 // REQUIRED, not stylistic. add_commonlibsse_plugin generates a TU that uses
 // "..."sv literals and force-includes this PCH; without this the build dies
