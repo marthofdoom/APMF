@@ -3,16 +3,24 @@
 #include "core/Arbiter.h"
 
 // ============================================================================
-// Channel 5 -- HEADTRACKING. Own the per-type headtrack slot (design.md Section
-// 4b Tier A, CHANNEL-MAP ch.5). Test facet: crane the head straight up (a point
-// above the actor).
+// Channel 5 -- HEADTRACKING. Test facet: crane the head straight up.
 //
-// DOCUMENTED FALLBACK (re-assert): the AI co-writes the very slot we own, so a
-// clean source-gate is impossible for this facet -- there is no separate input to
-// deny, only the shared output slot. We therefore re-assert each tick. This is
-// the design's flagged exception (Section 1a rule 3): owning a slot the AI also
-// writes, NOT forcing a computed downstream output. It is the ONLY channel here
-// that overrides Tick(). See Docs/INVARIANTS.md #2.
+// **OVERRIDE-WITH-HOLD, NOT a clean source-gate** (deck-tested 2026-09-02, folded
+// in from the gap-probe). Unlike the AV / casting-selection channels, this one is
+// NOT a true input-gate:
+//   - The AI writes MULTIPLE headtrack TYPES (default / combat / dialogue /
+//     procedure). Owning the one point-based slot only holds PART of it. On a
+//     normal follower you get head+eyes; on a PACKAGE-LOCKED follower (e.g.
+//     Cicero, pkg 0x0009BE51) the package reclaims the HEAD via a higher-priority
+//     type and we hold only the EYES -- a visible per-tick war.
+//   - So we RE-ASSERT every tick to hold authority. That is the design's flagged
+//     exception (design.md §1a rule 3): an override we must keep re-applying, not
+//     a source we deny once. It CAN LOSE to an aggressive/package-locked source.
+//
+// This is why the module is honest about being override-with-hold: a real
+// source-gate here would require owning/clearing ALL headtrack types (or detecting
+// and owning the currently-winning type) each tick. Left as documented override
+// until that typed-ownership API is pinned. See Docs/INVARIANTS.md #2.
 // ============================================================================
 
 namespace {
@@ -24,7 +32,7 @@ namespace {
         if (!proc) return;
         RE::NiPoint3 up = a->GetPosition();
         up.z += kLookUpHeight;                  // directly overhead -> look straight up
-        proc->SetHeadtrackTarget(a, up);
+        proc->SetHeadtrackTarget(a, up);        // owns the point-based slot; not all types
     }
 
     class HeadtrackChannel final : public apmf::Channel {
@@ -34,7 +42,7 @@ namespace {
 
         std::span<const apmf::Hotkey> Hotkeys() const override {
             static constexpr apmf::Hotkey keys[] = {
-                { 0x51, "Numpad3 : toggle look-straight-up (own the headtrack slot)" },
+                { 0x51, "Numpad3 : toggle look-straight-up (override-with-hold)" },
             };
             return keys;
         }
@@ -44,16 +52,18 @@ namespace {
             if (!target) { spdlog::warn("[ch.5] REFUSED -- no gated target."); return; }
             engaged.store(true);
             AssertLookUp(target);
-            spdlog::info("[ch.5] engaged on 0x{:08X} -- owning the headtrack slot (look up). Re-asserted each "
-                         "tick (documented fallback: AI co-writes this slot).", target->GetFormID());
+            spdlog::info("[ch.5] engaged on 0x{:08X} -- OVERRIDE-with-hold (look up), re-asserted each tick. "
+                         "May only hold the eyes (not the head) on a package-locked follower.",
+                         target->GetFormID());
         }
 
+        // Override-with-hold: re-apply each tick. This is NOT a clean source-gate.
         void Tick(RE::Actor* actor) override { AssertLookUp(actor); }
 
         void Release(RE::Actor*) override {
             if (!engaged.exchange(false)) return;
-            // Stop asserting; the AI resumes ownership of the slot on its next tick.
-            spdlog::info("[ch.5] released -- stop owning the headtrack slot; AI resumes pointing the head.");
+            // Stop asserting; the AI resumes ownership of its headtrack types.
+            spdlog::info("[ch.5] released -- stop overriding the headtrack slot; AI resumes.");
         }
     };
 

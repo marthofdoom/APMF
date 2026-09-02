@@ -3,26 +3,34 @@
 #include "core/Arbiter.h"
 
 // ============================================================================
-// Channel 1 -- MOVEMENT (DENY only). The clean source-gate: suspend the actor's
-// own package planner via MovementControllerNPC::SetAIDriven(false) so the AI
-// never produces a locomotion command. NOTHING to fight, no re-assert (design.md
-// Section 1a, rule 3). Release re-enables AI driving.
+// Channel 1 -- MOVEMENT (DENY only). Suspend the actor's own locomotion so the
+// package's movement never reaches the body, while the package stays current and
+// keeps evaluating (design.md Section 5). Set ONCE, engine-honored, NO re-assert
+// (Docs/INVARIANTS.md #1).
 //
-// This is the DENY half only. The movement PROMOTE feed (drive the body toward a
-// new goal) is probe-gated (IMovementDirectControl is unnamed -- CHANNEL-MAP ch.1
-// "promote GAP") and NOT built here.
+// Mechanism: Actor "don't move", bound through Address Library
+// (RELOCATION_ID(SE,AE) -> resolves per runtime, no hardcoded call-site offset;
+// IDs proven in the prototype/probe). This is the version-ROBUST deny that
+// actually compiles in the pinned CommonLib rev.
 //
-// PACKAGE COHERENCE: the package stays current and keeps evaluating; only its
-// locomotion input is suspended. No substitution (design.md Section 5).
+// Why not MovementControllerNPC::SetAIDriven: that rev exposes NO named
+// AI-driven setter -- only unnamed void(void) `Unk_0C/0D` vfuncs (see
+// RE/M/MovementControllerNPC.h). Calling those blind is the documented
+// blind-vtable CTD roulette, so the planner-input gate stays probe-gated and we
+// use the bound don't-move deny instead. VR-refused (the reloc IDs are SE/AE).
+//
+// The movement PROMOTE feed (drive the body to a new goal) is probe-gated
+// (CHANNEL-MAP ch.1 "promote GAP") and NOT built here.
 // ============================================================================
 
 namespace {
 
-    RE::MovementControllerNPC* GetController(RE::Actor* a) {
-        if (!a) return nullptr;
-        // Actor::movementController (design.md Section 4). Version-robust via the
-        // CommonLib accessor, not a raw offset.
-        return a->GetActorRuntimeData().movementController.get();
+    namespace Native {
+        void SetDontMove(RE::Actor* a_actor, bool a_dontMove) {
+            using func_t = void (*)(RE::Actor*, bool);
+            static REL::Relocation<func_t> func{ RELOCATION_ID(36490, 37489) };
+            func(a_actor, a_dontMove);
+        }
     }
 
     class MovementDenyChannel final : public apmf::Channel {
@@ -32,26 +40,25 @@ namespace {
 
         std::span<const apmf::Hotkey> Hotkeys() const override {
             static constexpr apmf::Hotkey keys[] = {
-                { 0x4F, "Numpad1 : toggle movement DENY (SetAIDriven false)" },
+                { 0x4F, "Numpad1 : toggle movement DENY (don't-move, package stays current)" },
             };
             return keys;
         }
 
         void OnHotkey(std::uint32_t, RE::Actor* target) override {
             if (engaged.load()) { Release(target ? target : apmf::Arbiter::Get().CurrentTarget()); return; }
+            if (REL::Module::IsVR()) { spdlog::warn("[ch.1] REFUSED -- VR (don't-move reloc IDs are SE/AE only)."); return; }
             if (!target) { spdlog::warn("[ch.1] REFUSED -- no gated target."); return; }
-            auto* mc = GetController(target);
-            if (!mc) { spdlog::warn("[ch.1] REFUSED -- no MovementControllerNPC on 0x{:08X}.", target->GetFormID()); return; }
-            mc->SetAIDriven(false);                     // gate the planner OFF at the source
+            Native::SetDontMove(target, true);          // deny the actor's locomotion at the movement layer
             engaged.store(true);
-            spdlog::info("[ch.1] DENY engaged on 0x{:08X} -- SetAIDriven(false). Planner suspended, package "
-                         "left current. Set ONCE, no re-assert.", target->GetFormID());
+            spdlog::info("[ch.1] DENY engaged on 0x{:08X} -- SetDontMove(true). Package left current, its "
+                         "locomotion suppressed. Set ONCE, no re-assert.", target->GetFormID());
         }
 
         void Release(RE::Actor* actor) override {
             if (!engaged.exchange(false)) return;
-            if (auto* mc = GetController(actor)) mc->SetAIDriven(true);
-            spdlog::info("[ch.1] DENY released -- SetAIDriven(true), AI resumes locomotion.");
+            if (actor && !REL::Module::IsVR()) Native::SetDontMove(actor, false);
+            spdlog::info("[ch.1] DENY released -- SetDontMove(false), AI resumes locomotion.");
         }
     };
 
