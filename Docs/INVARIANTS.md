@@ -83,7 +83,13 @@ offset.
 **#8 — Pinned CommonLib API surface (colorglass rev).** The probe confirmed this
 rev does NOT bind some functions the design references:
 - `Actor::StartCombat` — not bound; use `REL::RelocationID(37608, 38561)` (po3's
-  published ID) if needed. Combat-target is probe-gated anyway.
+  published ID). Its REAL signature is `bool(RE::Actor*, RE::Actor*, void*)` — THREE
+  args; pass the 3rd `nullptr`. A 2-arg wrapper faults inside the engine (it reads the
+  3rd param from a garbage register and dereferences it -> a hard AV). StartCombat is
+  used ONLY to INITIATE combat (ch.6): it does NOT retain a target across the threat
+  re-selector, so the HOLD/command is a compare-and-write of the AIProcess
+  `GetActorRuntimeData().currentCombatTarget` (an ActorHandle on the actor runtime data,
+  NOT the CombatController -> clear of the AE +8 (<0x68) layout hazard).
 - `Actor::SetCurrentSpell` — not bound (only a no-op `SetCurrentSpellImpl`); the
   casting-selection channel writes `selectedSpells[slot]` and `caster->currentSpell`
   directly, guarded. Deck-confirmed the AI KEEPS that selection (clean gate).

@@ -158,7 +158,7 @@ parentheses.
 | `Stance.cpp` | 3 | sneak/crouch (Num9) | `NotifyAnimationGraph("SneakStart/Stop")` | one-shot promote |
 | `WeaponDraw.cpp` | 4 | draw/sheathe (Num5) | `DrawWeaponMagicHands(bool)` | one-shot (sticky) |
 | `Headtrack.cpp` | 5 | look-at (Num3) | `AIProcess::SetHeadtrackTarget` (own point slot) | **known-incomplete block (Tick re-assert; loses to a package-locked follower)** |
-| `CombatTarget.cpp` | 6 | combat-target HOLD (Num-) | Engage `StartCombat(param.form)`; `Tick` re-asserts on drift (reads `currentCombatTarget`, re-`StartCombat` only when drifted); release RELINQUISHES (stops re-asserting, **no `StopCombat`** — releases are constant) | **known-incomplete PIN fill (#2)** — holds via drift-triggered re-assert, can lose 1 frame to the re-selector |
+| `CombatTarget.cpp` | 6 | combat-target HOLD (Num-) | `StartCombat(actor,target,nullptr)` (3-arg, #8) to INITIATE only; HOLD = compare-and-write of `GetActorRuntimeData().currentCombatTarget` (AIProcess field, clear of the AE +8 hazard) each drift-`Tick`; re-point via `Repoint`; release RELINQUISHES (**no `StopCombat`**, no clear) | **true PIN** (the measured mechanism); drift-corrected, may lose 1 frame to the re-selector |
 | `CastingSelect.cpp` | 8 | cast selection (Num4) | own `selectedSpells[kRightHand]` + `caster->currentSpell` | source-block |
 | `Dialogue.cpp` | 10 | dialogue (Num6) | `PauseCurrentDialogue()` | one-shot |
 | `Attribute.cpp` | 11 | disposition (Num2) | 4 AVs: aggression/confidence/assistance/morality | source-block |
@@ -176,11 +176,11 @@ parentheses.
   (#8), VR-refused.
 
 ### NOT built (probe-gated GAPs — do not add without a live probe)
-Movement PROMOTE feed (ch.1, `IMovementDirectControl` unnamed), combat-target true
-PIN (ch.6, BLOCK the threat re-selector at the hook — today's HOLD is a re-assert
-fill, #2, not a clean block), combat ACTIONS behavior tree (ch.7), casting
+Movement PROMOTE feed (ch.1, `IMovementDirectControl` unnamed), combat ACTIONS
+behavior tree (ch.7), casting
 TRIGGER suppression (ch.8), headtrack all-types full block (ch.5), sustained package
-procedures (ch.9), facial-expression setter (ch.13). See `Docs/CHANNEL-MAP.md` "Need
+procedures (ch.9), facial-expression setter (ch.13). (ch.6 combat-target PIN is now
+BUILT — the measured `currentCombatTarget` compare-and-write.) See `Docs/CHANNEL-MAP.md` "Need
 live probing" and STATUS "post-first-release gap work".
 
 ## How to add a channel (the whole recipe)
