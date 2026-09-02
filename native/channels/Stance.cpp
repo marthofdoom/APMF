@@ -26,22 +26,19 @@ namespace {
             return keys;
         }
 
-        void Engage(RE::Actor* actor) override {
+        void Engage(RE::FormID id, RE::Actor* actor) override {
             if (!actor) return;
             const bool wasSneaking = actor->IsSneaking();
-            m_startedSneak[actor->GetFormID()] = !wasSneaking;   // did WE start it?
+            m_startedSneak[id] = !wasSneaking;   // did WE start it?
             if (!wasSneaking) actor->NotifyAnimationGraph("SneakStart");
-            spdlog::info("[ch.3] 0x{:08X} sneak engaged (wasSneaking={}). Tier A promote.",
-                         actor->GetFormID(), wasSneaking);
+            spdlog::info("[ch.3] 0x{:08X} sneak engaged (wasSneaking={}). Tier A promote.", id, wasSneaking);
         }
 
-        void Release(RE::Actor* actor) override {
-            if (actor) {
-                if (auto it = m_startedSneak.find(actor->GetFormID()); it != m_startedSneak.end()) {
-                    if (it->second) actor->NotifyAnimationGraph("SneakStop");   // only undo what we started
-                    spdlog::info("[ch.3] 0x{:08X} sneak released.", actor->GetFormID());
-                }
-                m_startedSneak.erase(actor->GetFormID());
+        void Release(RE::FormID id, RE::Actor* actor) override {
+            if (auto it = m_startedSneak.find(id); it != m_startedSneak.end()) {
+                if (actor && it->second) actor->NotifyAnimationGraph("SneakStop");   // only undo what we started
+                spdlog::info("[ch.3] 0x{:08X} sneak released.", id);
+                m_startedSneak.erase(it);   // drop per-NPC state keyed by id, even if actor is null
             }
         }
 

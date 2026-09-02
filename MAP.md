@@ -45,8 +45,9 @@ query-fn name. No C++ class / STL / vtable crosses the boundary.
 The exported `APMF_GetInterface(abiVersion)` hands over a static POD `APMF_API_v1`;
 its `Request`/`Release` fn-pointers forward to `ControlMap::EnqueueRequest/Release`.
 - **What breaks:** the exported fn must stay `extern "C"` + undecorated
-  (`APMF_GetInterface`) or clients' `GetProcAddress` fails. The enqueue path is the
-  ONE control path (the hotkeys use it too) — never add a parallel one.
+  (`APMF_GetInterface`) or clients' `GetProcAddress` fails. Every exported body is a
+  `try/catch(...)` — NO exception may unwind across the client DLL (#14). The enqueue
+  path is the ONE control path (the hotkeys use it too) — never add a parallel one.
 
 ### `native/core/ControlMap.{h,cpp}` — the multi-NPC engine (Phase 1 heart)
 `unordered_map<FormID, NpcCtl>` (each NpcCtl = engaged channels + per-channel client
@@ -61,14 +62,17 @@ atomic handle), `Drain` (game thread, once/frame: apply ops + sweep unloaded),
   Handles must stay atomic-allocated so `Request` returns before Drain; ops FIFO.
 
 ### `native/core/AvLedger.{h,cpp}` — co-saved AV override ledger
-`(FormID, ActorValue) -> captured prior value`, co-saved via SKSE serialization
-(unique ID `'APMF'`, record `'AVOV'`). `av::Override`/`av::Restore` (the AV channels
-call these, not raw SetActorValue), `Save`/`Load`/`ApplyPending`/`Revert`.
-- **What breaks:** this is the ANTI-STRANDING backbone (#15). A persisted AV written
-  raw (bypassing the ledger) is stranded on save-while-engaged + reload. `OnSave`
-  writes it, `OnLoad`→pending, `kPostLoadGame`→`ApplyPending` restores + clears,
-  `OnRevert` wipes. Any new channel writing a PERSISTED actor value must use the
-  ledger. Game/main-thread only.
+`(FormID, ActorValue) -> {prev, applied}`, co-saved via SKSE serialization (unique
+ID `'APMF'`, record `'AVOV'`). `av::Override(id,actor,av,val)`/`av::Restore(id,actor,
+av)` (the AV channels call these, not raw SetActorValue), `Save`/`Load(intf,version)`/
+`ApplyPending`/`Revert`.
+- **What breaks:** the ANTI-STRANDING backbone (#15). A persisted AV written raw
+  (bypassing the ledger) is stranded on save-while-engaged + reload. `OnSave` writes
+  it, `OnLoad(version)`→pending, `kPostLoadGame`→`ApplyPending` restores + clears,
+  `OnRevert` wipes. CLOBBER GUARD: restore only when the AV still equals `applied`
+  (else a quest/mod's newer value wins). Keys by `(FormID, AV)` — one channel per AV.
+  Only AV channels are co-saved/save-safe; Equipment mutates persisted inventory but
+  is NOT co-saved (must not be held across a save — #15). Game/main-thread only.
 
 ### `native/core/Hook.{h,cpp}` — the central seat
 `Character` + `PlayerCharacter` vtable patched once at index **`0x0AD`**
@@ -86,8 +90,12 @@ single-writer drain seat). VR-refused. Installed once.
 ### `native/core/Channel.h` — the channel interface
 `Channel` = `Name`/`ChannelNo`/`ServesIntent`/`Hotkeys`/`Engage`/`Tick`/`Release`.
 Per-NPC lifecycle (no global `engaged` flag — the ControlMap refcounts claims and
-calls Engage/Tick/Release keyed by actor; a channel keeps its own per-NPC state
-map). `Hotkey{code,label}`.
+calls `Engage/Tick/Release(RE::FormID id, RE::Actor* actor)` keyed by the NPC). A
+channel keeps its own per-NPC state map. `Hotkey{code,label}`.
+- **What breaks:** key per-NPC state by `id`, NOT `actor->GetFormID()` — `actor` MAY
+  BE NULL (a deleted form), and the channel must still erase/clean its entry then; do
+  engine writes only when `actor` is non-null. Guarding the whole body on
+  `if (actor)` leaks the state map on a deleted actor.
 - **What breaks:** `Tick` default is EMPTY on purpose — a real block (APMF is the
   gatekeeper: block the foreign input at its source) does no per-tick work
   (design.md §1a rule 3, INVARIANTS #1). If you make channels do per-tick work by

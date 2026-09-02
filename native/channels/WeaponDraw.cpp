@@ -23,16 +23,16 @@ namespace {
             return keys;
         }
 
-        void Engage(RE::Actor* actor) override {
+        void Engage(RE::FormID id, RE::Actor* actor) override {
             if (!actor) return;
             actor->DrawWeaponMagicHands(true);
-            spdlog::info("[ch.4] 0x{:08X} DrawWeaponMagicHands(true) (one-shot, sticky).", actor->GetFormID());
+            spdlog::info("[ch.4] 0x{:08X} DrawWeaponMagicHands(true) (one-shot, sticky).", id);
         }
 
-        void Release(RE::Actor* actor) override {
+        void Release(RE::FormID id, RE::Actor* actor) override {
             if (!actor) return;
             actor->DrawWeaponMagicHands(false);
-            spdlog::info("[ch.4] 0x{:08X} DrawWeaponMagicHands(false).", actor->GetFormID());
+            spdlog::info("[ch.4] 0x{:08X} DrawWeaponMagicHands(false).", id);
         }
     };
 

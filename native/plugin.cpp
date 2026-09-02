@@ -29,7 +29,7 @@ namespace {
     void OnLoad(SKSE::SerializationInterface* intf) {
         std::uint32_t type = 0, version = 0, length = 0;
         while (intf->GetNextRecordInfo(type, version, length)) {
-            if (type == apmf::av::kRecordType) apmf::av::Load(intf);
+            if (type == apmf::av::kRecordType) apmf::av::Load(intf, version);
         }
     }
     void OnRevert(SKSE::SerializationInterface*) {

@@ -71,7 +71,23 @@ Every channel keeps the package coherent (no substitution) and restores state on
 release / disengage / pre-load-game. Only Headtrack re-asserts (flagged #2). ch.2
 facing is not a separate channel — it rides the movement gate.
 
-## Save/load safety + review fixes (folded into Phase 1)
+## Fix pass (trailing review, folded in)
+
+- **C-ABI exception guard (#14):** `APMF_Request`/`APMF_Release`/`APMF_GetInterface`
+  each wrapped in `try/catch(...)` — no throw crosses into the client DLL.
+- **FormID threaded through Engage/Tick/Release:** channels key per-NPC state by the
+  `id` (not `actor->GetFormID()`), so a null/deleted actor still cleans + restores —
+  no state-map leak, contract met.
+- **KeepOffset reloc IDs VERIFIED** (36870/37894, 36871/37895) against shipping SKSE
+  source with the identical signature + verbatim SetDontMove anchor (#8).
+- **AV clobber guard:** the ledger stores `{prev, applied}` and restores `prev` only
+  when the AV still equals `applied` (else the newer external value wins).
+- **AvLedger hardening:** `Load(intf, version)` threads the record version; `Save`
+  checks `WriteRecordData` and logs on failure.
+- **Equipment save-safety:** decided + documented (#15) — only AV channels are
+  co-saved; Equipment must not be held across a save (self-heals via AI re-equip).
+
+## Save/load safety (Phase 1)
 
 - **Persisted AV overrides are CO-SAVED (#15).** The AV channels (disposition, gait,
   detection) route every write through `core/AvLedger` (co-saved via SKSE

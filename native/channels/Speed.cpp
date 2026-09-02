@@ -31,19 +31,19 @@ namespace {
             return keys;
         }
 
-        void Engage(RE::Actor* actor) override {
+        void Engage(RE::FormID id, RE::Actor* actor) override {
             if (!actor) return;
             auto* avo = actor->AsActorValueOwner();
-            if (!avo) { spdlog::warn("[ch.1a] 0x{:08X} no ActorValueOwner.", actor->GetFormID()); return; }
+            if (!avo) { spdlog::warn("[ch.1a] 0x{:08X} no ActorValueOwner.", id); return; }
             const float prev = avo->GetActorValue(RE::ActorValue::kSpeedMult);
-            apmf::av::Override(actor, RE::ActorValue::kSpeedMult, prev * kSpeedFactor);
+            apmf::av::Override(id, actor, RE::ActorValue::kSpeedMult, prev * kSpeedFactor);
             spdlog::info("[ch.1a] 0x{:08X} kSpeedMult {:.0f}->{:.0f} (x{:.2f}). Clean AV gate, co-saved.",
-                         actor->GetFormID(), prev, prev * kSpeedFactor, kSpeedFactor);
+                         id, prev, prev * kSpeedFactor, kSpeedFactor);
         }
 
-        void Release(RE::Actor* actor) override {
-            apmf::av::Restore(actor, RE::ActorValue::kSpeedMult);
-            if (actor) spdlog::info("[ch.1a] 0x{:08X} kSpeedMult restored.", actor->GetFormID());
+        void Release(RE::FormID id, RE::Actor* actor) override {
+            apmf::av::Restore(id, actor, RE::ActorValue::kSpeedMult);
+            spdlog::info("[ch.1a] 0x{:08X} kSpeedMult restored.", id);
         }
     };
 

@@ -27,14 +27,13 @@ namespace {
             return keys;
         }
 
-        void Engage(RE::Actor* actor) override {
+        void Engage(RE::FormID id, RE::Actor* actor) override {
             if (!actor) return;
             const bool ok = actor->NotifyAnimationGraph("IdleForceDefaultState");
-            spdlog::info("[ch.12] 0x{:08X} one-shot idle (IdleForceDefaultState) accepted={}.",
-                         actor->GetFormID(), ok);
+            spdlog::info("[ch.12] 0x{:08X} one-shot idle (IdleForceDefaultState) accepted={}.", id, ok);
         }
 
-        void Release(RE::Actor*) override {}   // one-shot, nothing to restore
+        void Release(RE::FormID, RE::Actor*) override {}   // one-shot, nothing to restore
     };
 
 }

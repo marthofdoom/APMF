@@ -27,11 +27,13 @@
 namespace {
 
     // Address Library IDs (SE, AE). None of these is bound in the pinned CommonLib
-    // rev (verified against the fork's Actor.h). Provenance: SetDontMove (36490,
-    // 37489) is the known-good calibration pair; KeepOffsetFromActor (36870, 37894)
-    // and ClearKeepOffsetFromActor (36871, 37895) were read from published SKSE
-    // source that carries the identical SetDontMove pair (consecutive Actor natives)
-    // -- see INVARIANTS #8. VR has no sourced IDs -> VR-refused.
+    // rev (verified against the fork's Actor.h -- CommonLibSSE-NG does not vendor
+    // KeepOffsetFromActor). VERIFIED IDs: SetDontMove (36490, 37489) is the known-good
+    // calibration pair; KeepOffsetFromActor (36870, 37894) and ClearKeepOffsetFromActor
+    // (36871, 37895) were cross-checked against shipping SKSE source (Adventurers-Like-
+    // You Util.h) that carries the IDENTICAL signature AND reproduces the SetDontMove
+    // anchor verbatim, with zero conflicting values found anywhere -- see INVARIANTS #8.
+    // VR has no sourced IDs -> VR-refused.
     namespace Native {
         // Actor::SetDontMove(bool) -- suspend the mover's translation.
         void SetDontMove(RE::Actor* a_actor, bool a_dontMove) {
@@ -70,23 +72,21 @@ namespace {
             return keys;
         }
 
-        void Engage(RE::Actor* actor) override {
+        void Engage(RE::FormID id, RE::Actor* actor) override {
             if (!actor || REL::Module::IsVR()) return;   // reloc IDs are SE/AE only
             const RE::ActorHandle self = actor->GetHandle();
             const RE::NiPoint3    zero{ 0.0f, 0.0f, 0.0f };
             Native::KeepOffsetFromActor(actor, self, zero, zero, 20.0f, 10.0f);  // goal := my own spot
             Native::SetDontMove(actor, true);                                     // + lock translation
             spdlog::info("[ch.1] 0x{:08X} FULL block -- KeepOffsetFromActor(self,0) + SetDontMove(true). "
-                         "Move intent nulled at the source: stands still, no run-in-place, no snap.",
-                         actor->GetFormID());
+                         "Move intent nulled at the source: stands still, no run-in-place, no snap.", id);
         }
 
-        void Release(RE::Actor* actor) override {
-            if (!actor || REL::Module::IsVR()) return;
+        void Release(RE::FormID id, RE::Actor* actor) override {
+            if (!actor || REL::Module::IsVR()) return;   // no persisted state to clean if actor is gone
             Native::ClearKeepOffsetFromActor(actor);
             Native::SetDontMove(actor, false);
-            spdlog::info("[ch.1] 0x{:08X} block released -- goal + mover restored, AI resumes locomotion.",
-                         actor->GetFormID());
+            spdlog::info("[ch.1] 0x{:08X} block released -- goal + mover restored, AI resumes locomotion.", id);
         }
     };
 

@@ -28,18 +28,18 @@ namespace {
             return keys;
         }
 
-        void Engage(RE::Actor* actor) override {
+        void Engage(RE::FormID id, RE::Actor* actor) override {
             if (!actor) return;
             auto* shout = RE::TESForm::LookupByID<RE::TESShout>(kUnrelentingForce);
-            if (!shout) { spdlog::warn("[ch.14] 0x{:08X} shout form not found -- no-op.", actor->GetFormID()); return; }
+            if (!shout) { spdlog::warn("[ch.14] 0x{:08X} shout form not found -- no-op.", id); return; }
             if (auto* eqm = RE::ActorEquipManager::GetSingleton()) {
                 eqm->EquipShout(actor, shout);
                 spdlog::info("[ch.14] 0x{:08X} shout selected (Unrelenting Force). Sticky select; AI triggers it.",
-                             actor->GetFormID());
+                             id);
             }
         }
 
-        void Release(RE::Actor*) override {}   // sticky select; nothing force-restored
+        void Release(RE::FormID, RE::Actor*) override {}   // sticky select; nothing force-restored
     };
 
 }

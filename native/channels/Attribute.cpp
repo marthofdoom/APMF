@@ -33,22 +33,22 @@ namespace {
             return keys;
         }
 
-        void Engage(RE::Actor* actor) override {
+        void Engage(RE::FormID id, RE::Actor* actor) override {
             if (!actor) return;
-            apmf::av::Override(actor, RE::ActorValue::kAggression, 2.0f);   // Aggressive
-            apmf::av::Override(actor, RE::ActorValue::kConfidence, 4.0f);   // Foolhardy
-            apmf::av::Override(actor, RE::ActorValue::kAssistance, 2.0f);   // Helps friends and allies
-            apmf::av::Override(actor, RE::ActorValue::kMorality,   0.0f);   // Any crime
+            apmf::av::Override(id, actor, RE::ActorValue::kAggression, 2.0f);   // Aggressive
+            apmf::av::Override(id, actor, RE::ActorValue::kConfidence, 4.0f);   // Foolhardy
+            apmf::av::Override(id, actor, RE::ActorValue::kAssistance, 2.0f);   // Helps friends and allies
+            apmf::av::Override(id, actor, RE::ActorValue::kMorality,   0.0f);   // Any crime
             spdlog::info("[ch.11] 0x{:08X} disposition biased (aggr->2, conf->4, assist->2, moral->0). "
-                         "Clean input-gate, co-saved.", actor->GetFormID());
+                         "Clean input-gate, co-saved.", id);
         }
 
-        void Release(RE::Actor* actor) override {
-            apmf::av::Restore(actor, RE::ActorValue::kAggression);
-            apmf::av::Restore(actor, RE::ActorValue::kConfidence);
-            apmf::av::Restore(actor, RE::ActorValue::kAssistance);
-            apmf::av::Restore(actor, RE::ActorValue::kMorality);
-            if (actor) spdlog::info("[ch.11] 0x{:08X} disposition restored.", actor->GetFormID());
+        void Release(RE::FormID id, RE::Actor* actor) override {
+            apmf::av::Restore(id, actor, RE::ActorValue::kAggression);
+            apmf::av::Restore(id, actor, RE::ActorValue::kConfidence);
+            apmf::av::Restore(id, actor, RE::ActorValue::kAssistance);
+            apmf::av::Restore(id, actor, RE::ActorValue::kMorality);
+            spdlog::info("[ch.11] 0x{:08X} disposition restored.", id);
         }
     };
 

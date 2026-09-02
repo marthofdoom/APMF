@@ -26,13 +26,13 @@ namespace {
             return keys;
         }
 
-        void Engage(RE::Actor* actor) override {
+        void Engage(RE::FormID id, RE::Actor* actor) override {
             if (!actor) return;
             actor->PauseCurrentDialogue();
-            spdlog::info("[ch.10] 0x{:08X} PauseCurrentDialogue() (one-shot).", actor->GetFormID());
+            spdlog::info("[ch.10] 0x{:08X} PauseCurrentDialogue() (one-shot).", id);
         }
 
-        void Release(RE::Actor*) override {}   // nothing to restore
+        void Release(RE::FormID, RE::Actor*) override {}   // nothing to restore
     };
 
 }

@@ -81,8 +81,10 @@ rev does NOT bind some functions the design references:
   `SetDontMove` (`RELOCATION_ID(36490, 37489)`) to lock translation PLUS
   `KeepOffsetFromActor` (`RELOCATION_ID(36870, 37894)`) / `ClearKeepOffsetFromActor`
   (`RELOCATION_ID(36871, 37895)`) to null the move INTENT at the source — none is
-  bound in CommonLib (verified against the fork's `Actor.h`); the IDs are
-  calibration-checked against the known `SetDontMove` pair.
+  bound in CommonLib (CommonLibSSE-NG does not vendor `KeepOffsetFromActor`). The
+  KeepOffset IDs are VERIFIED: cross-checked against shipping SKSE source with the
+  identical signature that also reproduces the `SetDontMove` anchor verbatim, with
+  zero conflicting values found — safe to ship.
 - `Actor::StartCombat` — not bound; combat-target STEER (ch.6) uses
   `RELOCATION_ID(37608, 38561)`, signature `void(Actor*, Actor* target)`. VR-refused
   (SE/AE IDs). `StopCombat()` IS a bound vfunc (0xE5).
@@ -142,6 +144,14 @@ right after its `Request` is applied after it. A channel's OWN per-NPC state map
 likewise game-thread-only. Break this and you get a data race across hundreds of
 NPCs.
 
+Callback-thread quiescence: the SKSE serialization callbacks (`OnSave`/`OnLoad`/
+`OnRevert`) and the messaging callbacks (`kPreLoadGame`/`kPostLoadGame`) run on the
+main thread and are treated as game-thread writers of the same single-writer state
+(they touch `ControlMap`/`AvLedger` directly, no queue). This is safe ONLY because
+the engine does not run the `0xAD` tick concurrently with these callbacks — they are
+serialized on the main thread, not overlapped with a frame's actor updates. If a
+future SKSE ran a callback off-thread, this assumption breaks.
+
 **#13 — An uncontrolled NPC pays near-zero.** `OnActorUpdate` runs for EVERY NPC
 every frame. It must do at most: an `m_map.empty()` check, then ONE hash lookup that
 misses — no allocation, no iteration over all NPCs, nothing else. Only a CONTROLLED
@@ -164,7 +174,11 @@ against every later APMF (same discipline MFO applies to `MEO_API.h`). The inter
 is handed over by the exported query function `APMF_GetInterface` (chosen over the
 SKSE-messaging handshake: synchronous, no message-ordering/routing subtlety). APMF
 holds ZERO client-specific code — delete every client and APMF loses zero lines; the
-header + the query function are the ONLY seam.
+header + the query function are the ONLY seam. NO EXCEPTION MAY CROSS THE BOUNDARY:
+each exported body (`APMF_Request`/`APMF_Release`/`APMF_GetInterface`) is wrapped in
+a `try { … } catch (...)` returning `kInvalidHandle`/void/`nullptr` — a throw
+(bad_alloc from the queue, an spdlog throw) unwinding across the client's separately
+compiled DLL is UB. A swallowed throw degrades to "no control taken", never a crash.
 
 ## Persistence
 
@@ -180,5 +194,20 @@ writes it, `OnLoad` reads it into a pending set (`ResolveFormID` for load-order
 remap), `kPostLoadGame` restores each AV regardless of live engaged-state and clears,
 `OnRevert` wipes ledger + control map (no restore — actors are being replaced). Any
 NEW channel that writes a persisted actor value MUST route it through the ledger.
-Transient facets (weapon draw, sneak, equip, combat, dialogue, idle, headtrack) are
-self-correcting and are not co-saved.
+
+CLOBBER GUARD: the ledger stores both the captured `prev` AND the value we `applied`;
+Restore/ApplyPending write `prev` back ONLY when the AV still equals `applied`. If a
+quest or another mod changed the AV while our override was live, the newer value
+wins and we just drop our stale record — APMF never silently overwrites another
+author's write. ONE-CHANNEL-PER-AV assumption: the ledger keys by `(FormID, AV)`, so
+at most one APMF channel may own a given AV on a given actor (true today: the three
+AV channels own disjoint AVs). Sharing an AV would need per-AV refcounting.
+
+SAVE-SAFETY BOUNDARY: only the AV channels are co-saved and therefore save-safe.
+Transient facets (weapon draw, sneak, dialogue, idle, headtrack, combat-target) are
+self-correcting and need no co-save. **Equipment (ch.15) is the exception that
+matters: it mutates PERSISTED inventory (unequip) but its re-equip pointer is
+RAM-only (NOT co-saved).** So a client must NOT hold an equipment claim across a
+save — it self-heals (item stays in inventory, the AI re-equips), but APMF does not
+restore it. Do not add a persisted-state channel without either co-saving it or
+documenting the same boundary.

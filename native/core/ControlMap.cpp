@@ -119,7 +119,7 @@ namespace apmf {
         m_index[op.handle] = { op.actor, channel };
 
         if (freshChannel) {
-            channel->Engage(actor);   // 0 -> 1: apply the source-block once
+            channel->Engage(op.actor, actor);   // 0 -> 1: apply the source-block once
             spdlog::info("[ctl] 0x{:08X} '{}' + ch.{} {} ENGAGED (h={}, basis={:.1f}). NPCs controlled: {}.",
                          op.actor, actor->GetName() ? actor->GetName() : "?",
                          channel->ChannelNo(), channel->Name(), op.handle, op.basis, m_map.size());
@@ -154,7 +154,7 @@ namespace apmf {
             }
             if (claims.empty()) {
                 auto* actor = RE::TESForm::LookupByID<RE::Actor>(formID);   // may be null
-                channel->Release(actor);   // 1 -> 0: restore the AI
+                channel->Release(formID, actor);   // 1 -> 0: restore the AI
                 spdlog::info("[ctl] 0x{:08X} - ch.{} {} RELEASED (h={}).",
                              formID, channel->ChannelNo(), channel->Name(), handle);
                 npc.channels.erase(ccIt);
@@ -176,7 +176,7 @@ namespace apmf {
         if (!npc.handle.get()) return;             // unloaded; the Drain sweep reclaims it
 
         for (auto& cs : npc.channels) {
-            if (cs.channel) cs.channel->Tick(actor);   // most channels no-op (clean block)
+            if (cs.channel) cs.channel->Tick(it->first, actor);   // most channels no-op (clean block)
         }
 
         if ((++npc.obsTick % kObsEvery) != 0) return;
@@ -212,7 +212,7 @@ namespace apmf {
             // kPreLoadGame with a torn-down actor (returns null for a deleted form).
             auto* actor = RE::TESForm::LookupByID<RE::Actor>(formID);
             for (auto& cs : npc.channels) {
-                if (cs.channel) cs.channel->Release(actor);
+                if (cs.channel) cs.channel->Release(formID, actor);
             }
         }
         m_map.clear();

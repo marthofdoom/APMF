@@ -38,19 +38,19 @@ namespace {
             return keys;
         }
 
-        void Engage(RE::Actor* actor) override {
+        void Engage(RE::FormID id, RE::Actor* actor) override {
             if (!actor || REL::Module::IsVR()) return;   // reloc IDs are SE/AE only
             auto* player = RE::PlayerCharacter::GetSingleton();
             if (!player) return;
             Native::StartCombat(actor, player);
             spdlog::info("[ch.6] 0x{:08X} STEER -- StartCombat(player). Steers, does NOT pin (re-selector "
-                         "may re-choose; PIN is a GAP).", actor->GetFormID());
+                         "may re-choose; PIN is a GAP).", id);
         }
 
-        void Release(RE::Actor* actor) override {
+        void Release(RE::FormID id, RE::Actor* actor) override {
             if (!actor) return;
             actor->StopCombat();
-            spdlog::info("[ch.6] 0x{:08X} StopCombat().", actor->GetFormID());
+            spdlog::info("[ch.6] 0x{:08X} StopCombat().", id);
         }
     };
 

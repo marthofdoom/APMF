@@ -53,21 +53,26 @@ namespace apmf {
 
         // ---- Per-NPC lifecycle. ALL on the game thread (the ControlMap drives
         // them from the 0xAD hook / its once-per-frame drain). ----
+        //
+        // Every call carries the NPC's `id` (FormID) AND its resolved `actor`
+        // pointer. Key any per-NPC state map by `id`, NOT by `actor->GetFormID()`:
+        // `actor` MAY BE NULL (a deleted form the ControlMap could not resolve), and
+        // a channel must still be able to erase/clean its per-NPC entry then. Do
+        // engine writes only when `actor` is non-null.
 
-        // First claim landed on `actor`: capture the prior engine state for restore
-        // and apply the source-block. Called exactly once per 0->1 claim transition.
-        virtual void Engage(RE::Actor* actor) = 0;
+        // First claim landed: capture the prior engine state for restore and apply
+        // the source-block. Called once per 0->1 claim transition (actor is live).
+        virtual void Engage(RE::FormID id, RE::Actor* actor) = 0;
 
-        // Per-tick drive for an engaged `actor`. Default: NOTHING -- a real block
-        // needs no per-tick work (INVARIANTS #1). Only a KNOWN-INCOMPLETE block
-        // (the AI write is not yet blocked) overrides this, as a flagged stopgap.
-        virtual void Tick(RE::Actor* /*actor*/) {}
+        // Per-tick drive for an engaged NPC. Default: NOTHING -- a real block needs
+        // no per-tick work (INVARIANTS #1). Only a KNOWN-INCOMPLETE block overrides
+        // this, as a flagged stopgap.
+        virtual void Tick(RE::FormID /*id*/, RE::Actor* /*actor*/) {}
 
-        // Last claim released on `actor` (or the actor unloaded): restore whatever
-        // Engage changed and drop the per-NPC state. `actor` may be NULL if the
-        // actor unloaded -- drop the internal entry regardless (a dead actor needs
-        // no restore). Called exactly once per 1->0 claim transition.
-        virtual void Release(RE::Actor* actor) = 0;
+        // Last claim released (or the NPC unloaded/was deleted): restore whatever
+        // Engage changed (if `actor` is non-null) and drop the per-NPC entry keyed by
+        // `id` regardless. Called once per 1->0 claim transition.
+        virtual void Release(RE::FormID id, RE::Actor* actor) = 0;
     };
 
 }

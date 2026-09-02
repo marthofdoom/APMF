@@ -31,15 +31,16 @@ namespace {
             return keys;
         }
 
-        void Engage(RE::Actor* actor) override {
+        void Engage(RE::FormID id, RE::Actor* actor) override {
             if (!actor) return;
             auto* spell = RE::TESForm::LookupByID<RE::SpellItem>(kFirebolt);
-            if (!spell) { spdlog::warn("[ch.8] 0x{:08X} Firebolt not found.", actor->GetFormID()); return; }
+            if (!spell) { spdlog::warn("[ch.8] 0x{:08X} Firebolt not found.", id); return; }
 
             constexpr auto slot = RE::Actor::SlotTypes::kRightHand;
             auto& rt    = actor->GetActorRuntimeData();
             auto* exist = rt.selectedSpells[slot];
-            m_prev[actor->GetFormID()] = exist ? exist->As<RE::SpellItem>() : nullptr;
+            auto* prev  = exist ? exist->As<RE::SpellItem>() : nullptr;
+            m_prev[id]  = prev;
 
             // SetCurrentSpell is unbound at this rev (INVARIANTS #8), so write the
             // slot + the caster's currentSpell member directly (guarded). The AI
@@ -49,20 +50,20 @@ namespace {
                 caster->currentSpell = spell;
             spdlog::info("[ch.8] 0x{:08X} right-hand selection := Firebolt (prev 0x{:08X}). Clean gate: AI "
                          "casts our spell; trigger stays the AI's.",
-                         actor->GetFormID(), m_prev[actor->GetFormID()] ? m_prev[actor->GetFormID()]->GetFormID() : 0);
+                         id, prev ? prev->GetFormID() : 0);
         }
 
-        void Release(RE::Actor* actor) override {
-            if (actor) {
-                if (auto it = m_prev.find(actor->GetFormID()); it != m_prev.end()) {
+        void Release(RE::FormID id, RE::Actor* actor) override {
+            if (auto it = m_prev.find(id); it != m_prev.end()) {
+                if (actor) {   // engine write only when the actor is live
                     constexpr auto slot = RE::Actor::SlotTypes::kRightHand;
                     actor->GetActorRuntimeData().selectedSpells[slot] = it->second;
                     if (auto* caster = actor->GetMagicCaster(RE::MagicSystem::CastingSource::kRightHand))
                         caster->currentSpell = it->second;
                     spdlog::info("[ch.8] 0x{:08X} right-hand selection restored to 0x{:08X}.",
-                                 actor->GetFormID(), it->second ? it->second->GetFormID() : 0);
+                                 id, it->second ? it->second->GetFormID() : 0);
                 }
-                m_prev.erase(actor->GetFormID());
+                m_prev.erase(it);   // drop per-NPC state keyed by id, even if actor is null
             }
         }
 

@@ -37,6 +37,11 @@
 // Request/Release are SAFE FROM ANY THREAD. They capture POD (a FormID) and
 // enqueue the work; APMF applies it on the game thread. A client's BSJobs worker
 // may call them directly.
+//
+// ── Exceptions ──
+// NO exception ever crosses this boundary. Every APMF-side body (Request, Release,
+// APMF_GetInterface) is wrapped in a catch-all; a throw degrades to kInvalidHandle /
+// no-op / nullptr, never an unwind into the client's separately compiled DLL (UB).
 // ─────────────────────────────────────────────────────────────────────────────
 #include <cstdint>
 
