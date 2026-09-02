@@ -6,10 +6,15 @@ build/finding/workflow change.
 
 ## Where we are
 
-**Framing (marth): APMF is THE GATEKEEPER.** Once it owns a channel on an actor,
-nothing else reaches that facet except through APMF. Each channel BLOCKS the foreign
-input at its source so nothing competes — a re-assert loop is a FAILED block. The
-arbiter/registry is centered on being the gate.
+**Framing (marth 2026-09-02): APMF is a MODERATOR — it ARBITRATES + DENIES, it NEVER
+generates behavior (design.md §1a, INVARIANTS #0).** Its only lever on the engine is
+DENY (suppress the losing source at its source). It calls NO behavior-generating engine
+function (`StartCombat`, `CastSpellImmediate`, movement drive, anim trigger); the CLIENT
+executes behavior with its own proven mechanisms and APMF just makes it win. Once it owns
+a facet, nothing else reaches it except through APMF; a re-assert loop is a FAILED block.
+**ch.6 (combat-target) and ch.8 (casting) are now ARBITRATION-ONLY** — the client commands
+the target / selects the spell; APMF only records the claim. (A CTD from a ch.6
+`StartCombat` executor is the cautionary case that fixed this drift — see INVARIANTS #0.)
 
 **Phase 1 is built and on `main`: the MULTI-NPC arbiter + the real C-ABI client
 API + the full documented channel catalog.** This replaces v0.1.0's single
@@ -58,13 +63,13 @@ releases ALL**. Logs to `Data/SKSE/Plugins/APMF.log` (`[ctl]`/`[obs]`/`[test]`/`
 | Num1 | 1 | movement FULL block | source-block | `KeepOffsetFromActor(self)` + `SetDontMove` |
 | Num2 | 11 | disposition (4 AVs) | source-block | aggression/confidence/assistance/morality |
 | Num3 | 5 | headtrack look-up | **known-incomplete block** | own point slot; Tick re-assert (flagged) |
-| Num4 | 8 | cast selection (Firebolt) | source-block | own `selectedSpells[R]` + caster |
+| Num4 | 8 | casting CLAIM | arbitration-only (#0) | records owner; CLIENT selects the spell + fires (no APMF write) |
 | Num5 | 4 | weapon draw | one-shot | `DrawWeaponMagicHands` |
 | Num6 | 10 | dialogue pause | one-shot | `PauseCurrentDialogue` |
 | Num7 | 1a | gait scale (x0.5) | source-block | `kSpeedMult` AV (arbitrary factor) |
 | Num8 | 16 | stealth (silent+keen) | source-block | `kMovementNoiseMult` + `kDetectLifeRange` |
 | Num9 | 3 | sneak/crouch | one-shot promote | `NotifyAnimationGraph(SneakStart/Stop)` |
-| Num- | 6 | combat-target HOLD | true PIN (currentCombatTarget write) | `StartCombat(3-arg)` to initiate + `currentCombatTarget` compare-and-write on drift / release RELINQUISHES |
+| Num- | 6 | combat-target CLAIM | arbitration-only (#0) | records owner; CLIENT commands the target (no APMF combat call) |
 | Num+ | 12 | idle/animation | one-shot | `NotifyAnimationGraph(IdleForceDefaultState)` |
 | Num* | 14 | shout select (Unrelenting Force) | one-shot (sticky) | `ActorEquipManager::EquipShout` |
 | Num. | 15 | unequip weapon | source-block | `GetEquippedObject`+`Unequip/EquipObject` |

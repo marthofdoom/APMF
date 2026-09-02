@@ -13,10 +13,14 @@ up fighting over the same actor, and one of them loses.
 
 ## What APMF does
 
-APMF becomes the single point that decides what actually drives an actor. A client mod does not
-claim a package or fight over priority. It tells APMF what it needs the actor to do, on whatever
-basis it chooses, and releases when it is done. APMF arbitrates every request and hands out
-control.
+APMF is a MODERATOR: it arbitrates WHO controls each facet of an actor and DENIES the losing
+sources so the winner's own behavior reaches the actor. It NEVER generates behavior itself — it
+calls no combat, cast, or movement command. A client mod does not claim a package or fight over
+priority: it tells APMF which facet it is taking, on whatever basis it chooses, and EXECUTES the
+behavior with its own proven mechanisms; APMF just makes it win and releases when the client is
+done. Control is granular per-facet — e.g. a client can engage a follower's cast decision (so its
+own AI casts the client's chosen spell, fully animated) while the follower keeps moving under its
+own control, because only the cast facet was claimed.
 
 Unaware mods and vanilla packages keep working. APMF never lies to them. It reports the actor's
 true state, so a package that is waiting to reach a spot simply waits, exactly as it would if the

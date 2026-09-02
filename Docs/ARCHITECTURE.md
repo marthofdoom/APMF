@@ -117,36 +117,37 @@ per-NPC restore data in its OWN `std::unordered_map<FormID, State>` (game-thread
 only, #12). The `ControlMap` refcounts client claims and calls Engage/Tick/Release
 keyed by actor — the channel never sees the toggle/hotkey logic.
 
-APMF is the GATEKEEPER: once a channel is owned on an actor, nothing else reaches
-that facet except through APMF. A channel's job is to BLOCK the foreign input at its
-source so nothing competes — never to fight after the fact. Three kinds:
-1. **True source-block (no re-assert)** — set the input the AI itself reads, or deny
-   the losing source once, so nothing competes. Robust even against a package-locked
-   follower. Examples: AI-attribute AVs (ch.11), casting selection (ch.8,
-   deck-confirmed KEPT every tick), movement FULL block (ch.1 `KeepOffsetFromActor`
-   self + `SetDontMove` — the move intent is nulled at the source, so she stands
-   still with no run-in-place and no teleport-snap), gait (ch.1a), detection (ch.16),
-   equipment (ch.15). These do NOT override `Tick`.
-2. **One-shot promote** — a sticky/momentary state set once, uncontested. Weapon
-   draw (ch.4), dialogue (ch.10), stance/sneak (ch.3), idle (ch.12), shout select
-   (ch.14), combat-target STEER (ch.6, StartCombat — steers, does not pin).
-3. **Known-incomplete block (flagged)** — we have NOT yet blocked the AI's own write
-   to the facet, so a re-assert stopgap holds it imperfectly and can lose to an
-   aggressive source. This is a FAILED block, flagged as such (#1, #2), never called
-   clean. The fix is to block the AI's write at the 0xAD hook (skip/neutralize it
-   for the owned channel), not to keep re-asserting. Headtrack (ch.5) is the only
-   one today, and it says so.
+APMF MODERATES; it NEVER generates behavior (#0, design.md §1a). Once a facet is
+owned on an actor, APMF is the arbiter of who controls it — and its ONLY lever on the
+engine is DENY (suppress the losing source at its source). A channel does exactly two
+things: ARBITRATE (record the owner) and DENY. It calls NO behavior-generating engine
+function (`StartCombat`, `CastSpellImmediate`, movement drive, anim trigger); the
+CLIENT executes the behavior with its own mechanisms. Kinds:
+1. **DENY / true source-block (no re-assert)** — set the input the AI itself reads, or
+   deny the losing source once, so nothing competes. Robust even against a package-locked
+   follower. Examples: AI-attribute AVs (ch.11), movement FULL block (ch.1
+   `KeepOffsetFromActor` self + `SetDontMove` — the move intent is nulled at the source),
+   gait (ch.1a), detection (ch.16), equipment (ch.15). These do NOT override `Tick`.
+2. **Arbitration-only (no engine write)** — record that a client owns the facet so APMF
+   is the single arbiter; the CLIENT executes. Combat-target (ch.6 — client writes
+   `currentCombatTarget`) and casting (ch.8 — client writes `selectedSpells` + grants its
+   AI consent) are here. APMF makes NO combat/cast call for them (#0). Some prototype
+   one-shots (weapon draw ch.4, stance ch.3, idle ch.12, shout ch.14) still contain
+   executor stand-ins pending the same conversion — flagged, not clean.
+3. **Known-incomplete block (flagged)** — we have NOT yet blocked the AI's own write to
+   the facet, so a re-assert stopgap holds it imperfectly. A FAILED block, flagged (#1,
+   #2), never called clean. Fix: block the AI's write at the 0xAD hook. Headtrack (ch.5)
+   is the only one today, and it says so.
 
 ## 4. Version robustness
 
 - Hook a VIRTUAL (vtable index `0xAD`), never a call-site offset (#6).
 - Engine calls via CommonLib accessors / named methods, or Address-Library
-  `RELOCATION_ID(SE,AE)` for functions the CommonLib rev does not bind
-  (`StartCombat`, `KeepOffsetFromActor` — see the probe). Never a hardcoded
-  call-site offset.
-- Guard every struct-member write with a null-check on the accessor (#7); the
-  pinned colorglass CommonLib rev does not bind `StartCombat`/`SetCurrentSpell`,
-  so those facets write members directly, guarded (#8).
+  `RELOCATION_ID(SE,AE)` for the DENY-gate functions the CommonLib rev does not bind
+  (`KeepOffsetFromActor`/`SetDontMove` — movement full-block). Never a hardcoded
+  call-site offset. (APMF does NOT call `StartCombat`/`CastSpellImmediate` at all —
+  those are behavior, the client's job, #0; the CTD that taught us this is in #8.)
+- Guard every struct-member write with a null-check on the accessor (#7).
 - VR is refused at install (#6) — the `0xAD` index is unverified for VR.
 
 ## 5. How to add a channel (recipe)

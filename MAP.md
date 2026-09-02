@@ -158,8 +158,8 @@ parentheses.
 | `Stance.cpp` | 3 | sneak/crouch (Num9) | `NotifyAnimationGraph("SneakStart/Stop")` | one-shot promote |
 | `WeaponDraw.cpp` | 4 | draw/sheathe (Num5) | `DrawWeaponMagicHands(bool)` | one-shot (sticky) |
 | `Headtrack.cpp` | 5 | look-at (Num3) | `AIProcess::SetHeadtrackTarget` (own point slot) | **known-incomplete block (Tick re-assert; loses to a package-locked follower)** |
-| `CombatTarget.cpp` | 6 | combat-target HOLD (Num-) | `StartCombat(actor,target,nullptr)` (3-arg, #8) to INITIATE only; HOLD = compare-and-write of `GetActorRuntimeData().currentCombatTarget` (AIProcess field, clear of the AE +8 hazard) each drift-`Tick`; re-point via `Repoint`; release RELINQUISHES (**no `StopCombat`**, no clear) | **true PIN** (the measured mechanism); drift-corrected, may lose 1 frame to the re-selector |
-| `CastingSelect.cpp` | 8 | cast selection (Num4) | own `selectedSpells[kRightHand]` + `caster->currentSpell` | source-block |
+| `CombatTarget.cpp` | 6 | combat-target CLAIM (Num-) | **ARBITRATION-ONLY** — records the owner; makes NO engine combat call (no `StartCombat`, no `currentCombatTarget` write). The CLIENT commands the target. Release relinquishes | arbitration-only (#0); client executes |
+| `CastingSelect.cpp` | 8 | casting CLAIM (Num4) | **ARBITRATION-ONLY** — records the owner; NO `selectedSpells`/`CastSpellImmediate` write. The CLIENT selects the spell + grants its AI consent | arbitration-only (#0); client executes |
 | `Dialogue.cpp` | 10 | dialogue (Num6) | `PauseCurrentDialogue()` | one-shot |
 | `Attribute.cpp` | 11 | disposition (Num2) | 4 AVs: aggression/confidence/assistance/morality | source-block |
 | `Idle.cpp` | 12 | idle/anim (Num+) | `NotifyAnimationGraph("IdleForceDefaultState")` | one-shot |
@@ -170,18 +170,21 @@ parentheses.
 - **What breaks (all channels):** each must (1) keep the package coherent — none
   substitutes the package (§5); (2) capture-and-restore engine state in `Release`,
   keyed by the per-NPC state map (guard `actor` null — it may have unloaded); (3)
-  guard every struct-member write. `Engage`/`Tick`/`Release` are game-thread only
-  (#12). `Headtrack` and `CombatTarget` override `Tick` (both flagged known-incomplete,
-  #2). Movement FULL block, `StartCombat`, and KeepOffset use Address-Library IDs
-  (#8), VR-refused.
+  guard every struct-member write. **A channel MUST NOT generate behavior (#0):** no
+  `StartCombat`, `CastSpellImmediate`, movement drive-feed, or anim trigger — only
+  arbitrate + DENY. `Engage`/`Tick`/`Release` are game-thread only (#12). Only
+  `Headtrack` overrides `Tick` (flagged known-incomplete, #2; ch.6/ch.8 are now
+  arbitration-only, no `Tick`). Movement FULL block + KeepOffset (the DENY gate) use
+  Address-Library IDs (#8), VR-refused.
 
 ### NOT built (probe-gated GAPs — do not add without a live probe)
 Movement PROMOTE feed (ch.1, `IMovementDirectControl` unnamed), combat ACTIONS
-behavior tree (ch.7), casting
-TRIGGER suppression (ch.8), headtrack all-types full block (ch.5), sustained package
-procedures (ch.9), facial-expression setter (ch.13). (ch.6 combat-target PIN is now
-BUILT — the measured `currentCombatTarget` compare-and-write.) See `Docs/CHANNEL-MAP.md` "Need
-live probing" and STATUS "post-first-release gap work".
+behavior tree (ch.7), the DENY of a competing framework's combat-target/cast selection
+at the hook (ch.6/ch.8 — the future suppression gate; today both are arbitration-only
+and the CLIENT executes the command/selection), headtrack all-types full block (ch.5),
+sustained package procedures (ch.9), facial-expression setter (ch.13). **Load-bearing
+open mechanism: cleanly DENY/starve an outranking framework's PACKAGE (Cicero/travel).**
+See `Docs/CHANNEL-MAP.md` "Need live probing" and STATUS "post-first-release gap work".
 
 ## How to add a channel (the whole recipe)
 1. Copy `channels/Speed.cpp` to `channels/<Facet>.cpp`.

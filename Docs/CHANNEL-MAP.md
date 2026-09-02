@@ -1,10 +1,19 @@
 # APMF Channel Map (exhaustive)
 
-The core blueprint: for each directable AI-control channel, its source, the clean **deny** gate
-(suppress at the source, no re-assert), the **promote** mechanism, version-robustness, and a
-**DOCUMENTED vs GAP** verdict. Derived 2026-09-02 from CommonLibSSE-NG RE headers, the CK wiki, and
-existing mods (TDM, NFF, PapyrusUtil, Puppeteer). Governed by design.md §1a: gate INPUTS at the
-source, never FORCE outputs (a re-assert loop is a code smell); APMF routes, it does not manufacture.
+The core blueprint: for each directable AI-control facet, its source, the clean **APMF DENY gate**
+(APMF's ONLY lever — suppress the losing source, no re-assert), **how the CLIENT drives the facet**
+(the client's concern, via its own proven mechanisms — NEVER an APMF action), version-robustness, and
+a **DOCUMENTED vs GAP** verdict. Derived 2026-09-02 from CommonLibSSE-NG RE headers, the CK wiki, and
+existing mods (TDM, NFF, PapyrusUtil, Puppeteer).
+
+**Governed by design.md §1a + INVARIANTS #0: APMF MODERATES (arbitrate + DENY); it NEVER generates
+behavior.** The "how the client drives it" column below is documentation of the CLIENT's execution
+path — it is NOT a list of things APMF does. APMF calls no behavior-generating engine function
+(`StartCombat`, `CastSpellImmediate`, movement drive-feed, anim trigger). Legitimate APMF actions are
+only: arbitrate the claim, and DENY at the source (AV writes that gate the input the AI reads,
+movement full-block, detection AVs, package yield). (Earlier revisions of this file framed a "PROMOTE"
+column as APMF DRIVING each facet; that executor framing licensed a channel that called StartCombat
+and CTD'd — it is corrected here.)
 
 `RE/…` = CommonLibSSE-NG headers. `// 0xNN` = in-header vfunc index (index-stable across runtimes);
 struct-member offsets are accessor/Address-Library covered but more version-sensitive. Taxonomy is
@@ -12,7 +21,7 @@ OPEN (17 channels + sub-splits). Combat-target / combat-actions / casting (⭐) 
 
 ## Table
 
-| # | Channel | Source | DENY gate | PROMOTE | Verdict |
+| # | Channel | Source | APMF DENY gate (APMF's only lever) | How the CLIENT drives it (NOT an APMF action) | Verdict |
 |---|---------|--------|-----------|---------|---------|
 | 1 | **Movement / locomotion** | Package planner (`AIProcess.currentPackage`) → `MovementControllerNPC`→`ActorMover` | **FULL BLOCK (built):** `KeepOffsetFromActor(self, 0)` nulls the move GOAL at the source + `SetDontMove` locks translation → clean stand-still (no run-in-place, no teleport-snap; `SetDontMove` ALONE was one layer too shallow). Both Address-Library bound | `IMovementDirectControl` feed (unnamed `Unk_01..08`) or `Actor::Move` 0xC8 (probe-gated) | **DENY/full-block DOCUMENTED; PROMOTE feed GAP** |
 | 1a | ↳ **Gait / speed** | `PreferredSpeed` walk/jog/run; `kSpeedMult` AV=30 | **TRUE:** set `kSpeedMult` AV | same AV / package speed flag | **DOCUMENTED, clean** |
@@ -20,11 +29,11 @@ OPEN (17 channels + sub-splits). Combat-target / combat-actions / casting (⭐) 
 | 3 | **Stance / sneak** | Package flag → `actorState1.sneaking` | clean only via package flag; anim-event = additive | `NotifyAnimationGraph("SneakStart/Stop")` vfunc 01 | **DOCUMENTED (Tier A)**, re-assert caveat |
 | 4 | **Weapon draw / sheathe** | `actorState2.weaponState` (sticky) | sticky, not per-frame | `DrawWeaponMagicHands(bool)` vfunc 0xA6 | **DOCUMENTED** |
 | 5 | **Headtracking** | AI writes per-type `HighProcessData.headTrackTarget[]` | **TRUE:** own the slot (`SetHeadtrackTarget(type,ref)`) | same setter | **DOCUMENTED, clean gate** |
-| 6 | **Combat-target** ⭐ | `AIProcess.currentCombatTarget` (+ `CombatController.targetHandle`), re-chosen each tick by threat | `StartCombat(actor,target,nullptr)` (3-arg) INITIATES; compare-and-write of `currentCombatTarget` each drift-Tick COMMANDS/HOLDS (the measured pin; clear of AE hazard) | `StartCombat` (initiate) + `currentCombatTarget` write (hold) | **HOLD = true PIN (measured, currentCombatTarget compare-and-write)** |
+| 6 | **Combat-target** ⭐ | `AIProcess.currentCombatTarget` (+ `CombatController.targetHandle`), re-chosen each tick by threat | ARBITRATION-ONLY today (record owner). FUTURE deny: suppress a competing framework's target write at the hook (GAP) | CLIENT commands it: compare-and-write of `currentCombatTarget` (MFO's `Targeting::Command` + its UpdateCombat hook re-assert; StartCombat to initiate) — APMF makes NO combat call | **APMF arbitration-only; client executes the command** |
 | 7 | **Combat ACTIONS** ⭐ | Internal **combat behavior tree** (`CombatBehaviorController`) + `CombatInventory` + `CombatState` | **NONE** (`AttackBlockHandler` is player-only) | additive anim events fight the tree; real lever = loadout (ch.15) + aggression (ch.11) | **GAP** |
 | 7a | ↳ attack/block/power/bash | `ATTACK_STATE_ENUM`; `meleeAttackState`; melee-vs-ranged = equipped weapon | (share ch.7 GAP) | — | **GAP** |
-| 8 | **Casting** ⭐ | SELECT: `Actor.selectedSpells[slot]`→`MagicCaster.currentSpell`. TRIGGER: internal combat-caster state machine | **SELECT = TRUE gate:** own `selectedSpells[slot]` → AI casts your spell. **TRIGGER: no suppressor** | trigger via `CastSpellImmediate` vfunc 01 (additive injection — MFO's path) | **drive DOCUMENTED; trigger-gate GAP** |
-| 8a | ↳ L/R/dual/staff | `CastingSource` kLeftHand/kRightHand/kOther/kInstant; per-slot casters | own the slot's spell | `GetMagicCaster(source)`→`CastSpellImmediate` | **DOCUMENTED per-hand** |
+| 8 | **Casting** ⭐ | SELECT: `Actor.selectedSpells[slot]`→`MagicCaster.currentSpell`. TRIGGER: internal combat-caster state machine | ARBITRATION-ONLY today (record owner). FUTURE deny: suppress a COMPETING framework's cast selection (GAP) — NOT applied on the owned-cast path (the client WANTS its AI to cast) | CLIENT makes a REAL animated cast: equip spell + write own `selectedSpells[slot]` + grant own AI consent (deny competing spells) + a Cast-biased combat style so the AI DECIDES to cast it — full animation, mobile, NO force, NO package. APMF makes NO cast write | **APMF arbitration-only; client executes the AI-decided cast** |
+| 8a | ↳ L/R/dual/staff | `CastingSource` kLeftHand/kRightHand/kOther/kInstant; per-slot casters | (arbitration-only) | CLIENT owns the slot's spell via its own `selectedSpells` | **client per-hand** |
 | 9 | **Package-procedure activity** | `TESPackage.procedureType` (sandbox/patrol/guard) | **No gate** — `SetRunOncePackage` = substitution (OnPackageEnd, §5 rejects) | compose from primitives (locomotion + `PlayIdle` + `ActivateRef` + stance/headtrack) | **GAP native; DOCUMENTED workaround** |
 | 10 | **Dialogue / greeting** | AI greeting/dialogue + topics | `SetDialogueWithPlayer` 0x41 / `StopCurrentDialogue` 0x4F | `InitiateDialogue` 0xD8 | **DOCUMENTED** (coarse) |
 | 11 | **AI-attribute** (aggression / confidence / assistance / morality) | Dynamic AVs the engine's own combat/flee/assist decisions read (`kAggression`/`kConfidence`/`kMorality`/`kAssistance`) | **TRUE — the design's preferred model:** `ActorValueOwner::SetActorValue`/`ModActorValue` sets the input the AI itself consumes; no override | same setter | **DOCUMENTED, cleanest gate** |
@@ -36,23 +45,31 @@ OPEN (17 channels + sub-splits). Combat-target / combat-actions / casting (⭐) 
 
 ## Synthesis
 
-**Clean source-gates ready to build now (set the input the AI reads — no re-assert):**
-- **AI-attribute AVs (ch.11)** — the textbook case of the design's preferred model and the right lever
-  to bias combat/flee behavior. Cleanest gate on the board.
-- **Movement DENY (ch.1)** `SetAIDriven`; **Gait/speed (ch.1a)** `kSpeedMult`; **Headtrack (ch.5)** own-the-slot;
-  **Detection AVs (ch.16)**; **Casting SELECTION (ch.8)** own `selectedSpells`; **Equipment (ch.15)**.
-- **One-shot promotes (no loop):** weapon draw (ch.4), idle/anim (ch.12), dialogue (ch.10), shout/power select (ch.14).
+**APMF's legit DENY/suppress gates (APMF's own actions — set the input the AI reads, no re-assert):**
+- **AI-attribute AVs (ch.11)** — bias the engine's own combat/flee decisions; cleanest gate on the board.
+- **Movement DENY / full-block (ch.1)**; **Gait/speed (ch.1a)** `kSpeedMult`; **Detection AVs (ch.16)**;
+  **Equipment (ch.15)** (remove an item = deny the AI that option). These SUPPRESS; they do not drive.
+
+**Behavior the CLIENT executes (APMF only arbitrates the facet, never does these):** combat-target
+command (ch.6, client's `currentCombatTarget` write), casting (ch.8, client's `selectedSpells` + consent
++ Cast-style so the AI decides), weapon draw (ch.4), idle/anim (ch.12), dialogue (ch.10), shout/power
+(ch.14). NOTE: some prototype channels (stance-anim ch.3, weapon-draw, idle, shout) still contain
+executor stand-ins in code pending the same deny/arbitrate reframe — flagged, not yet converted.
 
 **Need live probing:** Movement PROMOTE feed (`IMovementDirectControl::Unk_0N`, §9.1 — biggest unknown);
-Combat-target PIN vs threat re-selector (ch.6); Combat ACTIONS behavior tree — no gate (ch.7); Casting
-TRIGGER suppression (ch.8); Sustained package procedures (ch.9); Facial-expression SETTER (ch.13).
+the DENY of a competing framework's combat-target/cast selection at the hook (ch.6/ch.8 — the future
+suppression gate); Combat ACTIONS behavior tree — no gate (ch.7); Sustained package procedures (ch.9);
+Facial-expression SETTER (ch.13). **The load-bearing open mechanism: cleanly DENY/starve an outranking
+framework's PACKAGE so a client's own package drives natively (the Cicero/travel case) — see design.md §1a.**
 
 ## Combat / casting verdict (the MFO headline)
-- **TARGET + SPELL + AI-DISPOSITION are drivable at a DOCUMENTED level.** Gambits can steer the target
-  (`StartCombat`), cast the exact spell per hand (own `selectedSpells[slot]` + `CastSpellImmediate`), and
-  bias the engine's own combat decisions cleanly via aggression/confidence AVs. Casting SELECTION is even
-  a clean source-gate (the AI casts your spell itself), a strict improvement over MFO's current
-  force-over-the-top; only the TRIGGER stays additive (the internal combat caster has no documented gate).
+- **The client makes the behavior; APMF arbitrates the facet.** MFO steers the target with its own
+  `currentCombatTarget` write (`Targeting`), makes its follower's own AI DECIDE to cast the chosen spell
+  via `selectedSpells` + `CasterConsent` (permit wanted, deny competing) + a Cast-biased combat style,
+  and biases combat/flee via aggression/confidence AVs. The cast is REAL and fully ANIMATED (the vanilla
+  AI path) and stays MOBILE — no `CastSpellImmediate` force, no rooting UseMagic package. APMF only claims
+  the cast + combat-target facets (arbitration), leaving movement untouched. APMF calls neither
+  `StartCombat` nor `CastSpellImmediate` (INVARIANTS #0).
 - **Combat ACTIONS (attack/block/power/bash, melee micro) remain a GAP** — the combat behavior tree owns
   them with no exposed gate. But they can be SHAPED cleanly: **equipment (ch.15)** dictates melee-vs-ranged
   and the available action set, and **aggression/confidence AVs (ch.11)** bias the tree's choices. What's

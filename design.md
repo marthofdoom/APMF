@@ -16,35 +16,54 @@ custom-follower framework claiming an actor above priority 60 locks everyone els
 MFO "Cicero can't be walked to the lockpick" case). APMF replaces that fight with brokered,
 time-shared control.
 
-## 1a. Core operating principles (marth 2026-09-02) — READ FIRST
+## 1a. THE BINDING CONTRACT (marth 2026-09-02) — READ FIRST, THESE WIN
 
-APMF is a CHANNEL ROUTER, not a behavior factory. Three rules govern everything below; where any
-later section (the prototypes especially) conflicts with these, these win.
+APMF is a **MODERATOR**, not a behavior factory. This is the top-level contract; where ANY later
+section (the prototypes and the channel spec especially) reads as APMF *driving* or *promoting* a
+facet, THIS SECTION WINS and that section is describing a stand-in to be corrected. (This contract
+was added after a CTD proved the drift: the channel spec's "PROMOTE" framing licensed a channel that
+called `Actor::StartCombat` to command a target — APMF generating behavior — which crashed. The
+lesson is written into the rules below.)
 
-1. **Arbitrate channels, do not manufacture behavior.** APMF decides, per facet, which SOURCE's
-   input reaches the actor. It does NOT build movement, facing, pathing, or animation. Whoever owns
-   the promoted channel (a client mod, vanilla AI, or an unaware framework) produces the behavior;
-   APMF only routes. "Walk to the merchant naturally" is a CLIENT's channel — APMF promotes it and
-   denies the framework's follow channel; the naturalness is the channel's problem, never APMF's.
+1. **APMF MODERATES; it NEVER generates behavior.** APMF does not build or trigger movement, facing,
+   pathing, casting, combat, or animation. It calls NO behavior-generating engine function
+   (`StartCombat`, `CastSpellImmediate`, a movement drive-feed, an anim trigger, …). Its channels may
+   do exactly two things and nothing else: (a) **ARBITRATE** — record which source owns a facet
+   (basis; the ControlMap), and (b) **DENY** — suppress the losing source so it stops reaching the
+   actor. Deny is APMF's ONLY lever on the engine: neutralize / redirect-to-null / starve the input.
+   **APMF cannot force an output and cannot boost one** — no override-every-frame, no re-assert loop
+   (a re-assert loop is a failed deny, not an acceptable pattern).
 
-2. **Promote and deny.** For each facet APMF PROMOTES one channel (grants it authority) and DENIES
-   the competing channels (suppresses their input).
+2. **The CLIENT brings and EXECUTES the behavior.** Real behavior comes from proper, already-
+   discovered mechanisms the CLIENT owns: real AI packages and proven engine commands (e.g. MFO
+   commands a combat target via its own `currentCombatTarget` write, selects a spell via its own
+   `selectedSpells`, grants its own AI consent, runs its own packages). The client executes; APMF
+   only ensures DELIVERY by denying the native AI / competing frameworks so the client's behavior
+   reaches the actor. "Walk to the merchant naturally" is the CLIENT's package; APMF only denies the
+   framework's follow so that package wins.
 
-3. **Selectively ALLOW at the source — do NOT FORCE over the top.** The director gates the INPUT a
-   channel feeds the engine; it does not let the AI produce an output and then override it every
-   frame. Deny the losing channel at its source (or set the input the AI itself consumes) so the AI
-   never produces the competing command and there is nothing to fight. Where a channel has no clean
-   source-gate, override is a DOCUMENTED FALLBACK, flagged as such — never the default. **A re-assert
-   loop is a code smell**, a sign we are forcing an output instead of gating an input.
+3. **Control is GRANULAR, per-facet.** APMF engages or denies ONE facet without interrupting the
+   others. Worked example — the AI-DECIDED CAST: the client sets `selectedSpells` + `currentCombatTarget`
+   and grants `CasterConsent`, so the follower's own combat AI DECIDES to cast the chosen spell at the
+   chosen target *as if it chose to* (full animation), while its MOVEMENT stays its own — the follower
+   keeps kiting/repositioning. APMF claims only the cast + combat-target facets and leaves movement
+   untouched. This is NOT a forced cast and NOT a body freeze. That granular non-interruption is
+   APMF's entire value.
 
-**What the prototypes actually proved vs. these rules:** prototype 0/1 confirmed the foundation —
-the central 0xAD hook reaches every NPC, the package stays coherent (`PACKAGE STABLE`, no CTD) while
-control is exerted, and truthful non-arrival holds. But their EXECUTORS violate the rules and are
-stand-ins only: `KeepOffsetFromActor` MANUFACTURES movement (rule 1) and the SneakStart re-assert
-FORCES the output (rule 3). The real design replaces both with source-gated promote/deny. The next
-work is the CHANNEL MAP: enumerate the channels (movement, facing, stance, headtrack, combat-target,
-dialogue, …) and, per channel, its allow-gate and deny-gate — starting from a clean source-gated DENY
-(suppress a source's movement) with no re-assert.
+4. **Hook SITE is negotiable; FUNCTION is not.** Where APMF hooks (which vtable slot / call site) is
+   chosen for function and for out-of-the-box compatibility with the load order, and may change. WHAT
+   it must achieve — moderate a facet by deny/arbitrate without generating behavior — does not.
+
+**The one genuinely hard job (the load-bearing open mechanism):** cleanly DENY / STARVE an
+*outranking* framework's package so a client's own package drives the actor natively (the Cicero /
+travel-nav case). This is the crux of "deny, don't force," and the mechanism is being demystified
+separately — treat it as the open problem, not a solved one.
+
+**Prototype status vs. this contract:** the 0xAD hook + coherent-package findings hold. The
+executor stand-ins that violated the contract are being removed: ch.6 combat-target no longer calls
+StartCombat/writes currentCombatTarget (arbitration-only now; the client commands the target), and
+ch.8 casting no longer writes selectedSpells (arbitration-only; the client selects). Remaining
+channels are being reframed to deny/arbitrate-only in the CHANNEL MAP.
 
 ## 2. Architecture — two layers
 

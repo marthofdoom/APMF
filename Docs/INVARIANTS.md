@@ -7,14 +7,29 @@ ones before touching a subsystem.
 
 ## Design principles
 
+**#0 — APMF MODERATES; it MUST NOT generate behavior (the hardest rule, the one a
+CTD taught us).** An APMF channel may do exactly two things: (a) ARBITRATE — record
+which client owns a facet — and (b) DENY — suppress the losing source at its source
+(AV writes, movement full-block, detection AVs, package yield). A channel MUST NOT
+call a behavior-generating engine function — NOT `Actor::StartCombat`, NOT
+`MagicCaster::CastSpellImmediate`, NOT a movement drive-feed, NOT an animation
+trigger, and it does not command a target, select a spell, or move a body. That is
+BEHAVIOR, and behavior belongs to the CLIENT (it executes with its own proven
+mechanisms; APMF only denies competitors so the client's behavior reaches the actor —
+design.md §1a). **Cautionary case:** ch.6 combat-target once called `StartCombat` (to
+command a target) — wrong LAYER, and with a bad reloc signature it was a hard AV
+(EXCEPTION_ACCESS_VIOLATION inside StartCombat). The deny-only rule makes that whole
+crash class structurally impossible: APMF makes no such call at all. ch.6 and ch.8 are
+now arbitration-only; the client commands the target / selects the spell.
+
 **#1 — APMF is the gatekeeper: BLOCK the foreign input, do not force the output.**
 Once APMF owns a channel on an actor, nothing else reaches that facet except through
 APMF. A channel's job is to block the competing input at its source — deny the
-losing source, or set the input the AI itself reads — so nothing competes. It does
-NOT let the AI produce a write and then override it every frame. A per-tick
+losing source — so nothing competes. It does NOT let a source produce a write and
+then override it every frame, and it does NOT itself write the behavior. A per-tick
 re-assert loop is a FAILED block, a symptom of not-blocking, NOT an acceptable
-pattern (design.md §1a rule 3; marth 2026-09-02). `Channel::Tick` is empty by
-default for exactly this reason — a real block does no per-tick work.
+pattern (design.md §1a; marth 2026-09-02). `Channel::Tick` is empty by default for
+exactly this reason — a real block does no per-tick work.
 
 **#2 — A channel that still needs re-assert is a KNOWN-INCOMPLETE block; label it
 so.** Where we have not yet blocked the AI's own write to a facet, a re-assert
@@ -52,18 +67,18 @@ engage and restore it in `Release`. `Arbiter::ReleaseAll` runs on disengage,
 target-unload, and `kPreLoadGame` — never skip or reorder it, or the actor keeps the
 mutated state across a save load.
 
-**#5a — a STEER channel RELINQUISHES on release; it does not "undo" a live decision.**
-A channel that steers a self-correcting engine decision the AI keeps re-making — the
-combat target (ch.6) is the case — must NOT try to reverse that decision in `Release`.
-`Release` there just stops re-asserting (drops the per-NPC steer entry); it must NOT
-`StopCombat`. Reason: clients release such a claim CONSTANTLY (a gambit yields, an
-expiry sweep, a target switch), so "undoing" on every release would yank the actor
-out of an ongoing fight and flicker Stop→Start on a switch. The engine keeps the
-decision if it is still valid (the foe is still hostile) and ends it for its own
-reasons otherwise — which APMF must not override ("commanding WHICH foe is ours;
-commanding THAT there is a foe is not"). This is #5's counterpart for steer channels:
-a channel that SETS a stored prior value restores it (#5); a channel that STEERS a
-live re-decision relinquishes it.
+**#5a — an ARBITRATION / DENY channel RELINQUISHES on release; it never "undoes" a
+live engine decision.** An arbitration-only channel (ch.6 combat-target, ch.8
+casting) wrote nothing to the engine (#0), so its `Release` has nothing to restore —
+it just drops the claim record. And a DENY channel over a self-correcting engine
+decision the AI keeps re-making (a combat target, once a real deny gate exists) must
+NOT reverse that decision on release (no `StopCombat`): clients release such a claim
+CONSTANTLY (a gambit yields, an expiry sweep, a target switch), so undoing on each
+release would yank the actor out of an ongoing fight and flicker on a switch. Let the
+engine keep the decision if it is still valid and end it for its own reasons otherwise
+("commanding WHICH foe is ours; commanding THAT there is a foe is not"). This is #5's
+counterpart: a channel that SET a stored prior value restores it (#5); an arbitration/
+deny channel relinquishes.
 
 ## Version robustness
 
@@ -82,17 +97,18 @@ offset.
 
 **#8 — Pinned CommonLib API surface (colorglass rev).** The probe confirmed this
 rev does NOT bind some functions the design references:
-- `Actor::StartCombat` — not bound; use `REL::RelocationID(37608, 38561)` (po3's
-  published ID). Its REAL signature is `bool(RE::Actor*, RE::Actor*, void*)` — THREE
-  args; pass the 3rd `nullptr`. A 2-arg wrapper faults inside the engine (it reads the
-  3rd param from a garbage register and dereferences it -> a hard AV). StartCombat is
-  used ONLY to INITIATE combat (ch.6): it does NOT retain a target across the threat
-  re-selector, so the HOLD/command is a compare-and-write of the AIProcess
-  `GetActorRuntimeData().currentCombatTarget` (an ActorHandle on the actor runtime data,
-  NOT the CombatController -> clear of the AE +8 (<0x68) layout hazard).
-- `Actor::SetCurrentSpell` — not bound (only a no-op `SetCurrentSpellImpl`); the
-  casting-selection channel writes `selectedSpells[slot]` and `caster->currentSpell`
-  directly, guarded. Deck-confirmed the AI KEEPS that selection (clean gate).
+- `Actor::StartCombat` — not bound. **APMF does NOT call it (#0 — that is behavior; it
+  is the CLIENT's job).** Recorded as a fact only: its REAL signature is
+  `bool(RE::Actor*, RE::Actor*, void*)` — THREE args (a 2-arg wrapper faults inside the
+  engine, reading the 3rd param from a garbage register -> a hard AV; that CTD is why
+  ch.6 is now arbitration-only). A client that initiates/commands a combat target does
+  so itself (e.g. MFO's own `currentCombatTarget` compare-and-write + its StartCombat).
+- `Actor::SetCurrentSpell` — not bound (only a no-op `SetCurrentSpellImpl`); a CLIENT
+  that owns cast selection writes `selectedSpells[slot]`/`caster->currentSpell` itself.
+  APMF's ch.8 does NOT (arbitration-only, #0). Engine fact (deck-confirmed, useful to
+  the client): writing `selectedSpells[slot]` + `caster->currentSpell` directly (guarded)
+  makes the AI KEEP that selection and cast it as its own decision — the client's path
+  to a real animated cast; APMF just arbitrates the facet.
 - Use `actor->AsActorState()` for attack/weapon/block state, not raw members.
 - `MovementControllerNPC` exposes NO named AI-driven setter in this rev — only
   unnamed `Unk_0C/0D` void(void) vfuncs (calling them blind is the documented
