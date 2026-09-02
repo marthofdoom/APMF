@@ -5,22 +5,22 @@
 // ============================================================================
 // Channel 5 -- HEADTRACKING. Test facet: crane the head straight up.
 //
-// **OVERRIDE-WITH-HOLD, NOT a clean source-gate** (deck-tested 2026-09-02, folded
-// in from the gap-probe). Unlike the AV / casting-selection channels, this one is
-// NOT a true input-gate:
+// **KNOWN-INCOMPLETE BLOCK** (deck-tested 2026-09-02, folded in from the gap-probe
+// + marth's gatekeeper reframe). APMF's job is to BE THE GATE: block the foreign
+// input so nothing competes. This channel does NOT yet do that -- and the re-assert
+// below is the SYMPTOM of a missing block, not an acceptable pattern (INVARIANTS
+// #1). It is flagged incomplete, never called a clean gate.
 //   - The AI writes MULTIPLE headtrack TYPES (default / combat / dialogue /
-//     procedure). Owning the one point-based slot only holds PART of it. On a
-//     normal follower you get head+eyes; on a PACKAGE-LOCKED follower (e.g.
-//     Cicero, pkg 0x0009BE51) the package reclaims the HEAD via a higher-priority
-//     type and we hold only the EYES -- a visible per-tick war.
-//   - So we RE-ASSERT every tick to hold authority. That is the design's flagged
-//     exception (design.md §1a rule 3): an override we must keep re-applying, not
-//     a source we deny once. It CAN LOSE to an aggressive/package-locked source.
+//     procedure). We only write the one point-based slot, so we do not block the
+//     AI's own writes. On a normal follower that still reads as head+eyes; on a
+//     PACKAGE-LOCKED follower (Cicero, pkg 0x0009BE51) the package keeps writing a
+//     higher-priority type and reclaims the HEAD -- a visible per-tick war.
+//   - Re-asserting each tick is a STOPGAP that papers over the un-blocked AI write.
 //
-// This is why the module is honest about being override-with-hold: a real
-// source-gate here would require owning/clearing ALL headtrack types (or detecting
-// and owning the currently-winning type) each tick. Left as documented override
-// until that typed-ownership API is pinned. See Docs/INVARIANTS.md #2.
+// The REAL fix (not built): block the AI's headtrack write for this channel AT THE
+// 0xAD hook -- skip/neutralize the AI's per-type write when APMF owns the channel,
+// so there is nothing to fight and no re-assert. Until then this stays a
+// known-incomplete block that can lose to an aggressive source. See INVARIANTS #2.
 // ============================================================================
 
 namespace {
@@ -42,7 +42,7 @@ namespace {
 
         std::span<const apmf::Hotkey> Hotkeys() const override {
             static constexpr apmf::Hotkey keys[] = {
-                { 0x51, "Numpad3 : toggle look-straight-up (override-with-hold)" },
+                { 0x51, "Numpad3 : toggle look-straight-up (KNOWN-INCOMPLETE block)" },
             };
             return keys;
         }
@@ -52,18 +52,19 @@ namespace {
             if (!target) { spdlog::warn("[ch.5] REFUSED -- no gated target."); return; }
             engaged.store(true);
             AssertLookUp(target);
-            spdlog::info("[ch.5] engaged on 0x{:08X} -- OVERRIDE-with-hold (look up), re-asserted each tick. "
-                         "May only hold the eyes (not the head) on a package-locked follower.",
-                         target->GetFormID());
+            spdlog::info("[ch.5] engaged on 0x{:08X} -- KNOWN-INCOMPLETE block (look up). Re-assert is a "
+                         "stopgap for the un-blocked AI write; may hold only the eyes on a package-locked "
+                         "follower.", target->GetFormID());
         }
 
-        // Override-with-hold: re-apply each tick. This is NOT a clean source-gate.
+        // Stopgap: the AI's headtrack write is not yet blocked, so re-apply each
+        // tick. This is a KNOWN-INCOMPLETE block, not a clean gate (INVARIANTS #2).
         void Tick(RE::Actor* actor) override { AssertLookUp(actor); }
 
         void Release(RE::Actor*) override {
             if (!engaged.exchange(false)) return;
             // Stop asserting; the AI resumes ownership of its headtrack types.
-            spdlog::info("[ch.5] released -- stop overriding the headtrack slot; AI resumes.");
+            spdlog::info("[ch.5] released -- stop the stopgap re-assert; AI resumes its headtrack.");
         }
     };
 

@@ -1,8 +1,12 @@
 #pragma once
 
 // ============================================================================
-// APMF core -- the ARBITER. The single decision point that owns "which actor is
-// under APMF control right now" and drives the engaged channels each tick.
+// APMF core -- the ARBITER. APMF is THE GATEKEEPER: the single decision point that
+// owns "which actor is under APMF control right now" and, per channel, is the sole
+// path to that facet -- once a channel is claimed, the arbiter's job is that
+// nothing else reaches it (the channel blocks the foreign input at its source; the
+// arbiter never fixes a fight after the fact). It drives the engaged channels each
+// tick.
 //
 // Layer 1 (design.md Section 2): the central Actor::Update(0xAD) hook calls
 // OnActorUpdate for EVERY NPC; the arbiter acts only on the gated target. For the
