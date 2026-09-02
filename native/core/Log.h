@@ -27,7 +27,7 @@ namespace apmf::log {
     // in-process writer clobbering the page after load.
     //
     // Call at each phase ("load", "data-loaded", "post-load-game"). It
-    //   1. formats sentinels through fmt's REAL hex path ({:016X}/{:x} via
+    //   1. formats sentinels through fmt's REAL hex path ({:X}/{:x} via
     //      fmt::format -- same compiled do_format_base2e + table the old {:X}
     //      log sites used; not a log-call spec, so #16 is not violated) plus a
     //      {:.2f} float control, and logs PASS or the raw output bytes;
