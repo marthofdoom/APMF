@@ -2,6 +2,7 @@
 #include "core/Log.h"
 #include "core/Hook.h"
 #include "core/Input.h"
+#include "core/AliasPkgProbe.h"
 #include "core/Arbiter.h"
 #include "core/ControlMap.h"
 #include "core/AvLedger.h"
@@ -44,6 +45,7 @@ namespace {
         switch (a_msg->type) {
         case SKSE::MessagingInterface::kDataLoaded:
             apmf::hook::Install();
+            apmf::probe::Install();              // 0x49 package-offer probe (throwaway; VR-refused inside)
             if (!REL::Module::IsVR()) {          // no drain seat on VR -> no test surface
                 apmf::input::Register();
                 apmf::input::LogHelp();

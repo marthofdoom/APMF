@@ -3,6 +3,7 @@
 #include "core/Arbiter.h"
 #include "core/ControlMap.h"
 #include "core/Registry.h"
+#include "core/AliasPkgProbe.h"
 
 namespace apmf {
 
@@ -26,6 +27,7 @@ namespace apmf {
 
     void Arbiter::OncePerFrame() {
         ControlMap::Get().Drain();
+        apmf::probe::OncePerFrame();   // 0x49 probe: game-thread eval pump + phase-0 census (no-op unless armed)
     }
 
     void Arbiter::ReleaseAll(const char* why) {

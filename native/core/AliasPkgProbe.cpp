@@ -1,0 +1,227 @@
+#include "PCH.h"
+#include "core/Log.h"
+#include "core/AliasPkgProbe.h"
+
+// ============================================================================
+// 0x49 package-offer probe implementation. See AliasPkgProbe.h + design.md §5a.
+//
+// THE MECHANISM UNDER TEST: the engine asks each actor "does an ALIAS give you a
+// package right now?" via CheckForCurrentAliasPackage (vfunc 0x49). If we return a
+// client's TESPackage*, the engine adopts it as current and runs it natively -- a
+// package-tier promote with one OnPackageChange each way (design.md §5a). We hook
+// 0x49 on VTABLE_Character ONLY (never PlayerCharacter -- the player must never be
+// package-driven; the §0.38 scar).
+//
+// PHASES (marth field-tests on Cicero, owner quest 0x0009BE51, 3 deck cycles):
+//   Phase 0  NO claim, ~60 s -- DOES THE HOOK FIRE? The make-or-break. The thunk
+//            counts every call and the periodic summary logs the hit count, the
+//            calling thread id (compare to the 0xAD thread), and the last returned
+//            package (FormID + type). If the count stays ZERO, 0x49 is devirtualised
+//            /inlined on this runtime: the mechanism is DEAD -- report and STOP, do
+//            not build fallbacks.
+//   Phase 1  ENGAGE (hotkey): GetCurrentPackage flips to the client pkg within one
+//            eval; distance-to-target shrinks; ZERO APMF writes after the engage
+//            EvaluatePackage; ExtraAliasInstanceArray identical before/after.
+//   Phase 2  RELEASE (hotkey again): framework pkg returns; exactly one OnPackageChange.
+//   Phase 3  save/load mid-claim: framework pkg after load; no latch; no CTD.
+//
+// THE CLIENT PACKAGE. APMF ships no ESP, so the offered package is identified by the
+// compile-time constant kProbePackageForm below. Phase 0 needs NO package (it only
+// asks whether the hook fires) and runs out of the box. For Phases 1-3, set
+// kProbePackageForm to a REAL package FormID present in the deck load order (a
+// travel-to-a-marker / sandbox package -- "target a marker, or targType 0 with a
+// runtime handle") and rebuild the probe. Left 0 => Phase 0 only, with a warning.
+// ============================================================================
+
+// Win32 thread id for the "which thread is 0x49 on?" phase-0 check (compare to 0xAD).
+// Declared by hand (probe-local); pointer-free, no header conflict.
+extern "C" __declspec(dllimport) std::uint32_t __stdcall GetCurrentThreadId();
+
+namespace apmf::probe {
+
+    namespace {
+
+        // ---- CONFIG (set for a full Phase 1-3 field build) ----
+        // The client package to OFFER. 0 => Phase 0 only (hook-fire detection). Set to
+        // a real TESPackage FormID in the deck load order for Phases 1-3.
+        constexpr RE::FormID       kProbePackageForm = 0;
+        // The test hotkey (DirectInput scancode). F11 = 0x57 -- off the numpad test set.
+        constexpr std::uint32_t    kProbeKey         = 0x57;
+
+        // ---- Hook state ----
+        std::atomic<bool>          g_armed{ false };
+
+        // ---- The single-actor package-offer CLAIM (probe scope). Two atomics =>
+        // lock-free read in the 0x49 thunk (game thread) + lock-free write from the
+        // hotkey (input thread). One claim at a time is all the probe needs. ----
+        std::atomic<RE::FormID>    g_claimActor{ 0 };   // 0 = no claim
+        std::atomic<RE::FormID>    g_claimPkg{ 0 };     // the offered package's FormID
+
+        // ---- Pending game-thread EvaluatePackage (queued by the hotkey, run in
+        // OncePerFrame on the true game thread). ----
+        enum class Pend : std::uint8_t { kNone, kEngage, kRelease };
+        std::atomic<Pend>          g_pend{ Pend::kNone };
+        std::atomic<RE::FormID>    g_pendActor{ 0 };
+
+        // ---- Phase-0 observability (thunk writes, OncePerFrame summarises) ----
+        std::atomic<std::uint64_t> g_hits{ 0 };          // total 0x49 calls seen
+        std::atomic<std::uint64_t> g_redirects{ 0 };     // calls where we returned the client pkg
+        std::atomic<std::uint32_t> g_thread{ 0 };        // thread id 0x49 fired on
+        std::atomic<RE::FormID>    g_lastRetPkg{ 0 };     // last package returned (original path)
+        std::atomic<bool>          g_firstLogged{ false };
+
+        namespace Native {
+            // Actor::EvaluatePackage(unk, resetAI) -- Address-Library bound, unbound in
+            // CommonLib. Poke the AI to re-run package selection now (so a 0x49 redirect
+            // takes within one eval). resetAI MUST be false (never a full AI reset).
+            void EvaluatePackage(RE::Actor* a_actor) {
+                using func_t = void (*)(RE::Actor*, bool, bool);
+                static REL::Relocation<func_t> func{ RELOCATION_ID(36407, 37401) };
+                func(a_actor, true, false);
+            }
+
+            const char* PkgType(RE::TESPackage* a_pkg) {
+                if (!a_pkg) return "<null>";
+                const char* n = a_pkg->GetObjectTypeName();
+                return n ? n : "<unnamed>";
+            }
+        }
+
+        // The crosshair-aimed NPC (never the player). Input-thread read, same as the
+        // arbiter's test surface.
+        RE::Actor* CrosshairActor() {
+            if (auto* pick = RE::CrosshairPickData::GetSingleton()) {
+                if (auto ref = pick->targetActor.get()) {
+                    auto* a = ref->As<RE::Actor>();
+                    if (a && !a->IsPlayerRef()) return a;
+                }
+            }
+            return nullptr;
+        }
+
+        // ---- The 0x49 hook (Character vtable ONLY) ----
+        struct AliasPkgHook {
+            static RE::TESPackage* thunk(RE::Actor* a_this) {
+                RE::TESPackage* orig = func(a_this);   // the engine's real alias-package answer
+
+                // Phase-0 census (cheap; no allocation, no lock).
+                g_hits.fetch_add(1, std::memory_order_relaxed);
+                g_thread.store(GetCurrentThreadId(), std::memory_order_relaxed);
+                g_lastRetPkg.store(orig ? orig->GetFormID() : 0, std::memory_order_relaxed);
+                if (!g_firstLogged.exchange(true)) {
+                    spdlog::info("[probe0x49] FIRST HIT -- 0x49 CheckForCurrentAliasPackage FIRES "
+                                 "(actor 0x{}, thread {}, returned pkg 0x{} {}). The mechanism is LIVE.",
+                                 apmf::log::Hex(a_this->GetFormID()), GetCurrentThreadId(),
+                                 apmf::log::Hex(orig ? orig->GetFormID() : 0), Native::PkgType(orig));
+                }
+
+                // REDIRECT: if this actor is our claim and we have a client package, offer
+                // it instead. The engine adopts it and runs it natively (design.md §5a).
+                const RE::FormID want = g_claimPkg.load(std::memory_order_relaxed);
+                if (want != 0 && a_this->GetFormID() == g_claimActor.load(std::memory_order_relaxed)) {
+                    if (auto* pkg = RE::TESForm::LookupByID<RE::TESPackage>(want)) {
+                        g_redirects.fetch_add(1, std::memory_order_relaxed);
+                        return pkg;
+                    }
+                }
+                return orig;
+            }
+            static inline REL::Relocation<decltype(thunk)> func;
+            static constexpr std::size_t idx = 0x49;   // Actor::CheckForCurrentAliasPackage
+        };
+
+    }
+
+    void Install() {
+        if (REL::Module::IsVR()) {
+            spdlog::warn("[probe0x49] VR runtime -- 0x49 index + EvaluatePackage reloc are SE/AE only; probe NOT armed.");
+            return;
+        }
+        if (g_armed.exchange(true)) return;
+
+        REL::Relocation<std::uintptr_t> charVtbl{ RE::VTABLE_Character[0] };
+        AliasPkgHook::func = charVtbl.write_vfunc(AliasPkgHook::idx, AliasPkgHook::thunk);
+
+        spdlog::info("[probe0x49] ARMED: hooked Character::CheckForCurrentAliasPackage (0x49). "
+                     "PHASE 0 running now -- watch for 'FIRST HIT' (hook fires) then the periodic census. "
+                     "Test hotkey: DIK 0x{} toggles a package-offer claim on the aimed NPC.",
+                     apmf::log::Hex(kProbeKey, 2));
+        if (kProbePackageForm == 0)
+            spdlog::warn("[probe0x49] kProbePackageForm=0 -> PHASE 0 ONLY (hook-fire detection). Set it to a "
+                         "real package FormID + rebuild for Phases 1-3 (engage/release/save-load).");
+        else
+            spdlog::info("[probe0x49] client package = 0x{} (Phases 1-3 armed).", apmf::log::Hex(kProbePackageForm));
+    }
+
+    void OnHotkey(std::uint32_t a_code) {
+        if (!g_armed.load(std::memory_order_relaxed) || a_code != kProbeKey) return;
+
+        // RELEASE if the aimed NPC (or any) is already claimed; else CLAIM the aimed NPC.
+        const RE::FormID cur = g_claimActor.load(std::memory_order_relaxed);
+        if (cur != 0) {
+            g_pendActor.store(cur, std::memory_order_relaxed);
+            g_claimPkg.store(0, std::memory_order_relaxed);
+            g_claimActor.store(0, std::memory_order_relaxed);   // stop redirecting BEFORE the release eval
+            g_pend.store(Pend::kRelease, std::memory_order_relaxed);
+            spdlog::info("[probe0x49] RELEASE queued -- dropping the offer claim on 0x{} (framework package resumes).",
+                         apmf::log::Hex(cur));
+            return;
+        }
+
+        auto* actor = CrosshairActor();
+        if (!actor) {
+            spdlog::warn("[probe0x49] claim REFUSED -- aim the crosshair at an NPC (not the player) first.");
+            return;
+        }
+        if (kProbePackageForm == 0) {
+            spdlog::warn("[probe0x49] claim REFUSED -- kProbePackageForm=0 (Phase 0 only). Set a real package "
+                         "FormID + rebuild to run Phases 1-3.");
+            return;
+        }
+        const RE::FormID id = actor->GetFormID();
+        g_claimPkg.store(kProbePackageForm, std::memory_order_relaxed);
+        g_claimActor.store(id, std::memory_order_relaxed);        // redirect takes effect on the next 0x49
+        g_pendActor.store(id, std::memory_order_relaxed);
+        g_pend.store(Pend::kEngage, std::memory_order_relaxed);
+        spdlog::info("[probe0x49] ENGAGE queued -- offering package 0x{} to 0x{} '{}'.",
+                     apmf::log::Hex(kProbePackageForm), apmf::log::Hex(id),
+                     actor->GetName() ? actor->GetName() : "?");
+    }
+
+    void OncePerFrame() {
+        if (!g_armed.load(std::memory_order_relaxed)) return;
+
+        // Apply a pending EvaluatePackage on the TRUE game thread (this seat is the
+        // PlayerCharacter 0xAD tick). One eval per engage/release, resetAI=false.
+        const Pend pend = g_pend.exchange(Pend::kNone, std::memory_order_relaxed);
+        if (pend != Pend::kNone) {
+            const RE::FormID id = g_pendActor.load(std::memory_order_relaxed);
+            if (auto* actor = RE::TESForm::LookupByID<RE::Actor>(id)) {
+                Native::EvaluatePackage(actor);
+                auto* now = actor->GetCurrentPackage();
+                spdlog::info("[probe0x49] {} applied on 0x{} -- EvaluatePackage(true,false); GetCurrentPackage now "
+                             "0x{} {}. {}", pend == Pend::kEngage ? "ENGAGE" : "RELEASE", apmf::log::Hex(id),
+                             apmf::log::Hex(now ? now->GetFormID() : 0), Native::PkgType(now),
+                             pend == Pend::kEngage
+                                 ? "Phase 1: expect the CLIENT pkg + distance-to-target shrinking + NO further APMF writes."
+                                 : "Phase 2: expect the FRAMEWORK pkg back + exactly one OnPackageChange.");
+            }
+        }
+
+        // Phase-0 periodic census (~ every 5 s @ 60 fps) so the make-or-break answer is
+        // legible without per-call spam.
+        static std::uint32_t s_frames = 0;
+        if ((++s_frames % 300) != 0) return;
+        const std::uint64_t hits = g_hits.load(std::memory_order_relaxed);
+        if (hits == 0) {
+            spdlog::warn("[probe0x49] PHASE 0: 0x49 has fired 0 times so far. If this stays 0, the vfunc is "
+                         "devirtualised/inlined on this runtime -- the mechanism is DEAD (report + stop).");
+        } else {
+            spdlog::info("[probe0x49] PHASE 0 census: 0x49 hits={}, redirects={}, thread={}, last returned pkg=0x{}. "
+                         "Hook is LIVE.", hits, g_redirects.load(std::memory_order_relaxed),
+                         g_thread.load(std::memory_order_relaxed),
+                         apmf::log::Hex(g_lastRetPkg.load(std::memory_order_relaxed)));
+        }
+    }
+
+}

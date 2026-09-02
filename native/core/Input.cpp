@@ -3,6 +3,7 @@
 #include "core/Input.h"
 #include "core/Arbiter.h"
 #include "core/Registry.h"
+#include "core/AliasPkgProbe.h"
 
 namespace apmf::input {
 
@@ -21,6 +22,7 @@ namespace apmf::input {
                     if (!btn || !btn->IsDown()) continue;
                     if (btn->GetDevice() != RE::INPUT_DEVICE::kKeyboard) continue;
                     apmf::Arbiter::Get().DispatchHotkey(btn->GetIDCode());
+                    apmf::probe::OnHotkey(btn->GetIDCode());   // 0x49 probe test key (no-op unless armed + its key)
                 }
                 return RE::BSEventNotifyControl::kContinue;
             }

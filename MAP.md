@@ -139,11 +139,23 @@ all. Multi-NPC: aim + key ADDS an NPC; aim another + key adds it too.
   input-thread (main) only. Real driving is the client API, not this.
 
 ### `native/core/Input.{h,cpp}` — test surface
-`InputSink` (keyboard button-down) → `Arbiter::DispatchHotkey`. `LogHelp`
-enumerates the registry's hotkeys.
+`InputSink` (keyboard button-down) → `Arbiter::DispatchHotkey` (+ `probe::OnHotkey`).
+`LogHelp` enumerates the registry's hotkeys.
 - **What breaks:** test surface only — do NOT let gameplay logic depend on it
   (the real driver is the client API). Adding a channel needs NO edit here;
   hotkeys come from the channel's own `Hotkeys()`.
+
+### `native/core/AliasPkgProbe.{h,cpp}` — the 0x49 package-offer PROBE (throwaway)
+Demystifies the design.md §5a package-tier promote. `Install()` ← `plugin.cpp` kDataLoaded
+(after `hook::Install`): `write_vfunc` **0x49** `CheckForCurrentAliasPackage` on
+`VTABLE_Character` ONLY (never PlayerCharacter — §0.38). Thunk `TESPackage*(Actor*)`: census
+(hit count/thread/last pkg — Phase 0) + return the client's package if the actor is the
+claimed offer, else `original(self)`. `OnHotkey` (DIK 0x57) toggles a single-actor claim
+(two atomics — lock-free); `OncePerFrame` ← `Arbiter::OncePerFrame` runs the pending
+`EvaluatePackage(true,false)` on the game thread + the periodic census. VR-refused.
+- **What breaks:** NOT wired to any client, NOT a travel/nav build — a probe for a field
+  test, gated behind arm + `kProbePackageForm` (0 ⇒ Phase 0 only). Never touch alias/
+  run-once state (INVARIANTS #3a). Delete wholesale once the mechanism is proven or dead.
 
 ### `native/channels/*.cpp` — one module per facet (FULL documented catalog)
 Each: a `Channel` subclass + `APMF_REGISTER_CHANNEL`, per-NPC `Engage`/`Release`.

@@ -136,6 +136,20 @@ Marked GAP in `Docs/CHANNEL-MAP.md`; deliberately left for after the first relea
 the walk is uncontested; wiring the promote feed (`IMovementDirectControl`) is a
 driver choice for MFO integration, not a mystery.
 
+**▶ 0x49 PACKAGE-OFFER PROBE (throwaway, on `main`; NOT wired to any client, NOT a
+travel/nav build).** Demystifies the ONE intentional package-tier promote (design.md
+§5a / INVARIANTS #3): hook `Actor::CheckForCurrentAliasPackage` (vfunc **0x49**) on
+`VTABLE_Character` ONLY and return a client's package for a claimed actor → the engine
+runs it natively. `native/core/AliasPkgProbe.{h,cpp}`; installed at kDataLoaded after
+the 0xAD hook; game-thread eval pump on `Arbiter::OncePerFrame`; test hotkey DIK `0x57`
+(F11) toggles a single-actor offer claim on the aimed NPC + `EvaluatePackage(true,false)`
+(RELOCATION_ID 36407/37401, resetAI=false). **Phased:** Phase 0 (armed now, no claim,
+no package needed) answers the make-or-break — *does 0x49 fire?* (census logs hit count
++ thread + returned pkg; **0 hits ⇒ devirtualised/inlined ⇒ mechanism DEAD, stop**);
+Phases 1-3 (engage/release/save-load) need `kProbePackageForm` set to a real package
+FormID + rebuild (left `0` ⇒ Phase 0 only). For marth to field-test on Cicero (owner
+quest 0x0009BE51), 3 deck cycles.
+
 ## Client API (Layer 2) — REAL
 
 `APMF_API.h` (the shared header) + `core/ClientAPI.cpp` (the impl). A client:
