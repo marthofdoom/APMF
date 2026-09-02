@@ -6,6 +6,12 @@ build/finding/workflow change.
 
 ## Where we are
 
+**Framing (marth 2026-09-02): APMF is THE GATEKEEPER.** Once it owns a channel on
+an actor, nothing else reaches that facet except through APMF. Each channel's job
+is to BLOCK the foreign input at its source so nothing competes — a re-assert loop
+is a FAILED block, not an acceptable pattern. The arbiter/registry is centered on
+that: being the gate.
+
 **First real modular APMF is built and on `main`.** It replaces the
 prototype/probe monolith with the extensible two-layer architecture:
 - **Core spine** (`native/core/`): the central `Actor::Update(0xAD)` arbiter hook,
@@ -25,10 +31,10 @@ Aim the crosshair at a follower/NPC, then press the key. Logs to
 
 | Key | Ch | Facet | Kind | In-game test |
 |-----|----|-------|------|-------------|
-| Numpad1 | 1 | movement DENY | source-gate (`SetDontMove`) | actor stops walking its package route; `[obs]` still PACKAGE STABLE |
-| Numpad2 | 11 | aggression+confidence | **true source-gate** | actor turns aggressive/foolhardy; holds even on package-locked followers |
-| Numpad3 | 5 | headtrack look-up | **override-with-hold** | head cranes up; on a package-locked follower may hold only the eyes (documented) |
-| Numpad4 | 8 | cast selection (Firebolt) | **true source-gate** | right-hand selection := Firebolt; AI keeps it (casts it when it triggers in combat) |
+| Numpad1 | 1 | movement DENY | source-block (`SetDontMove`) | actor stops walking its package route; `[obs]` still PACKAGE STABLE |
+| Numpad2 | 11 | aggression+confidence | **true source-block** | actor turns aggressive/foolhardy; holds even on package-locked followers |
+| Numpad3 | 5 | headtrack look-up | **known-incomplete block** | head cranes up; re-assert stopgap; on a package-locked follower may hold only the eyes (documented) |
+| Numpad4 | 8 | cast selection (Firebolt) | **true source-block** | right-hand selection := Firebolt; AI keeps it (casts it when it triggers in combat) |
 | Numpad5 | 4 | weapon draw | one-shot | weapon drawn; press again to sheathe |
 | Numpad6 | 10 | dialogue | one-shot | current dialogue pauses |
 | Numpad7 | 1a | half speed | source-gate (`kSpeedMult`) | actor moves at half pace |
@@ -39,26 +45,33 @@ it changed on release / disengage / pre-load-game. Only headtrack re-asserts.
 
 ## Deck field findings folded in (gap-probe, 2026-09-02)
 
-- **True source-gates are robust even on package-locked followers** (Cicero, pkg
+- **True source-blocks are robust even on package-locked followers** (Cicero, pkg
   0x0009BE51): setting AI-attribute AVs and owning `selectedSpells` set the input
   the AI itself reads, so an aggressive package cannot out-fight them. Implemented
-  as true source-gates (ch.11, ch.8, ch.1a, ch.16, ch.1).
-- **Headtrack is NOT a clean gate.** The AI writes multiple headtrack types; a
-  package-locked follower reclaims the head via a higher-priority type, leaving us
-  only the eyes, with a per-tick re-assert war. Relabeled override-with-hold in
-  the module + INVARIANTS #2. A real gate would own/clear ALL types each tick —
-  left for later.
+  as true source-blocks (ch.11, ch.8, ch.1a, ch.16, ch.1).
+- **Headtrack is a KNOWN-INCOMPLETE block, not a clean gate.** The re-assert war is
+  the symptom of an un-blocked AI write, not an inherent limit. The AI writes
+  multiple headtrack types; a package-locked follower reclaims the head via a
+  higher-priority type. The real fix is to BLOCK the AI's headtrack write for the
+  owned channel at the 0xAD hook (skip/neutralize it), not re-assert after — left
+  for later. Flagged in the module + INVARIANTS #2.
 - **Casting selection confirmed KEPT** every tick by the AI (never overwritten);
   it only *shows* as a cast when the actor is in combat / has a trigger (expected).
 
 ## Probe-gated — do NOT build without a live probe
 
 Marked GAP in `Docs/CHANNEL-MAP.md`:
-- Movement PROMOTE feed (ch.1) — `IMovementDirectControl` is unnamed
-  (`Unk_01..08`); blind calls CTD. The biggest unknown (design.md §9.1).
 - Combat-target PIN (ch.6), combat ACTIONS behavior tree (ch.7), casting TRIGGER
   suppression (ch.8), sustained package procedures (ch.9), facial-expression
   setter (ch.13).
+- Headtrack's real block (block the AI write at the hook) — see above.
+
+**Movement PROMOTE is NOT treated as a gap/blocker.** Once the movement source is
+BLOCKED, driving the walk is uncontested (MFO walks followers fine when it is
+actually in control; the probe's Move-inject "did nothing" only because the package
+still owned the body). The question is not "how do we drive" but "are we truly in
+control (blocking)." The `IMovementDirectControl` unnamed-feed detail is a driver
+choice to settle when the promote feed is wired, not a mystery.
 
 ## Client API (Layer 2) — stubbed seam only
 

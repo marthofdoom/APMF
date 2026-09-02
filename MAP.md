@@ -7,6 +7,11 @@ by module; grep to a symbol, read a narrow window. Authoritative companions:
 (per-channel source/deny/promote/verdict), `Docs/ARCHITECTURE.md`,
 `Docs/INVARIANTS.md`.
 
+**APMF is the GATEKEEPER** (marth 2026-09-02): once it owns a channel on an actor,
+nothing else reaches that facet except through APMF. Each channel BLOCKS the
+foreign input at its source so nothing competes; a re-assert loop is a FAILED
+block, not an acceptable pattern (INVARIANTS #1).
+
 ## The two layers (design.md §2)
 
 - **Layer 1 — the core spine** (`native/core/`): the central `Actor::Update`
@@ -39,10 +44,11 @@ hook, registers the input sink, logs the hotkey help. `kPreLoadGame` →
 ### `native/core/Channel.h` — the channel interface
 `Channel` = `Name`/`ChannelNo`/`Hotkeys`/`OnHotkey`/`Tick`/`Release` + an atomic
 `engaged` flag. `Hotkey{code,label}`.
-- **What breaks:** `Tick` default is EMPTY on purpose — a clean source-gate does
-  no per-tick work (design.md §1a rule 3). If you make channels do per-tick work
-  by default you invite the re-assert code smell. Only a documented fallback
-  overrides `Tick` (today: `Headtrack`).
+- **What breaks:** `Tick` default is EMPTY on purpose — a real block (APMF is the
+  gatekeeper: block the foreign input at its source) does no per-tick work
+  (design.md §1a rule 3, INVARIANTS #1). If you make channels do per-tick work by
+  default you invite the re-assert loop, which is a FAILED block. Only a
+  known-incomplete block overrides `Tick` as a flagged stopgap (today: `Headtrack`).
 
 ### `native/core/Registry.{h,cpp}` — the channel list + self-registration
 `Registry::Get()` (Meyers singleton), `Register`, `All`, `AnyEngaged`.

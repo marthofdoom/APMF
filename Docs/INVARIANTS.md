@@ -7,20 +7,26 @@ ones before touching a subsystem.
 
 ## Design principles
 
-**#1 — Gate the INPUT, do not force the OUTPUT.** A channel denies the losing
-source at its source, or sets the input the AI itself consumes. It does NOT let the
-AI produce an output and then override it every frame. A per-tick re-assert loop is
-a code smell (design.md §1a rule 3). `Channel::Tick` is empty by default for
-exactly this reason — a clean source-gate does no per-tick work.
+**#1 — APMF is the gatekeeper: BLOCK the foreign input, do not force the output.**
+Once APMF owns a channel on an actor, nothing else reaches that facet except through
+APMF. A channel's job is to block the competing input at its source — deny the
+losing source, or set the input the AI itself reads — so nothing competes. It does
+NOT let the AI produce a write and then override it every frame. A per-tick
+re-assert loop is a FAILED block, a symptom of not-blocking, NOT an acceptable
+pattern (design.md §1a rule 3; marth 2026-09-02). `Channel::Tick` is empty by
+default for exactly this reason — a real block does no per-tick work.
 
-**#2 — Override-with-hold is the flagged exception, and must be labeled as such.**
-Where a facet has no clean input to gate because the AI co-writes the very output
-slot, a re-assert is permitted BUT the channel must (a) override `Tick`, (b) say
-"override-with-hold, not a clean source-gate" in its module header, and (c) accept
-that it can LOSE to an aggressive or package-locked source. Deck-tested: true
-source-gates (AV, casting selection) hold even on a package-locked Cicero; the
-override channels (headtrack, crouch) get out-fought by the package. Today only
-`Headtrack` (ch.5) is override-with-hold. Never mislabel an override as clean.
+**#2 — A channel that still needs re-assert is a KNOWN-INCOMPLETE block; label it
+so.** Where we have not yet blocked the AI's own write to a facet, a re-assert
+stopgap is permitted BUT the channel must (a) override `Tick`, (b) say
+"known-incomplete block, not a clean gate" in its module header, and (c) accept
+that it can LOSE to an aggressive or package-locked source. The FIX is to block the
+AI's write (gate the relevant part of the AI decision layer at the 0xAD hook for
+the owned channel — skip/neutralize the write), NOT to keep overriding after the
+fact. Deck-tested: true source-blocks (AV, casting selection) hold even on a
+package-locked Cicero; the un-blocked channels (headtrack, crouch) get out-fought
+by the package — because they are not blocking yet. Today only `Headtrack` (ch.5)
+is known-incomplete. Never mislabel a re-assert as a clean gate.
 
 **#3 — Never substitute the package.** APMF commandeers a facet while the actor's
 current package stays current and keeps evaluating (design.md §5). Substituting the

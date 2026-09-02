@@ -70,19 +70,23 @@ Every directable facet is one `Channel` subclass in its own small file under
   per-tick work (#1). Only an override-with-hold channel overrides it.
 - `Release(actor)` — restore any engine state the channel changed (#5).
 
-Three kinds of channel:
-1. **True source-gate (no re-assert)** — set the input the AI itself reads, or deny
-   the losing source once. Robust even against a package-locked follower.
-   Examples: AI-attribute AVs (ch.11), casting selection (ch.8, deck-confirmed
-   KEPT every tick), movement DENY (ch.1 `SetDontMove`, Address-Library bound),
-   gait (ch.1a), detection (ch.16). These do NOT override `Tick`.
-2. **One-shot promote** — a sticky/momentary state set once. Weapon draw (ch.4),
-   dialogue (ch.10).
-3. **Override-with-hold (documented exception)** — no clean input to gate because
-   the AI co-writes the very output slot; re-assert each tick and accept it can
-   lose to an aggressive source. Headtrack (ch.5) is the only one, and it says so
-   (#2). This is the design's flagged fallback (design.md §1a rule 3), never the
-   default.
+APMF is the GATEKEEPER: once a channel is owned on an actor, nothing else reaches
+that facet except through APMF. A channel's job is to BLOCK the foreign input at its
+source so nothing competes — never to fight after the fact. Three kinds:
+1. **True source-block (no re-assert)** — set the input the AI itself reads, or deny
+   the losing source once, so nothing competes. Robust even against a package-locked
+   follower. Examples: AI-attribute AVs (ch.11), casting selection (ch.8,
+   deck-confirmed KEPT every tick), movement DENY (ch.1 `SetDontMove`,
+   Address-Library bound — the body is suspended, nothing competes to move it), gait
+   (ch.1a), detection (ch.16). These do NOT override `Tick`.
+2. **One-shot promote** — a sticky/momentary state set once, uncontested. Weapon
+   draw (ch.4), dialogue (ch.10).
+3. **Known-incomplete block (flagged)** — we have NOT yet blocked the AI's own write
+   to the facet, so a re-assert stopgap holds it imperfectly and can lose to an
+   aggressive source. This is a FAILED block, flagged as such (#1, #2), never called
+   clean. The fix is to block the AI's write at the 0xAD hook (skip/neutralize it
+   for the owned channel), not to keep re-asserting. Headtrack (ch.5) is the only
+   one today, and it says so.
 
 ## 4. Version robustness
 
