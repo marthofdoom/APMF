@@ -76,7 +76,7 @@ namespace apmf {
             if (ctl.handle.get()) { ++it; continue; }
             auto* actor = RE::TESForm::LookupByID<RE::Actor>(it->first);   // may be null
             for (auto& cs : ctl.channels) {
-                if (cs.channel) cs.channel->Release(actor);
+                if (cs.channel) cs.channel->Release(it->first, actor);
                 for (auto& c : cs.claims) m_index.erase(c.handle);
             }
             spdlog::info("[ctl] 0x{:08X} unloaded -- released {} channel(s), dropped from control.",
