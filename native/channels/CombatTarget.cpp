@@ -1,4 +1,5 @@
 #include "PCH.h"
+#include "core/Log.h"
 #include "core/Registry.h"
 
 // ============================================================================
@@ -43,14 +44,14 @@ namespace {
             auto* player = RE::PlayerCharacter::GetSingleton();
             if (!player) return;
             Native::StartCombat(actor, player);
-            spdlog::info("[ch.6] 0x{:08X} STEER -- StartCombat(player). Steers, does NOT pin (re-selector "
-                         "may re-choose; PIN is a GAP).", id);
+            spdlog::info("[ch.6] 0x{} STEER -- StartCombat(player). Steers, does NOT pin (re-selector "
+                         "may re-choose; PIN is a GAP).", apmf::log::Hex(id));
         }
 
         void Release(RE::FormID id, RE::Actor* actor) override {
             if (!actor) return;
             actor->StopCombat();
-            spdlog::info("[ch.6] 0x{:08X} StopCombat().", id);
+            spdlog::info("[ch.6] 0x{} StopCombat().", apmf::log::Hex(id));
         }
     };
 

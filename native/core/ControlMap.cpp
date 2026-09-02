@@ -1,4 +1,5 @@
 #include "PCH.h"
+#include "core/Log.h"
 #include "core/ControlMap.h"
 #include "core/Registry.h"
 
@@ -24,8 +25,8 @@ namespace apmf {
     Handle ControlMap::EnqueueRequest(RE::FormID actor, Intent intent, float basis) {
         // Registry is immutable after load, so this read is thread-safe.
         if (!Registry::Get().ChannelForIntent(intent)) {
-            spdlog::warn("[api] Request REFUSED -- no channel serves intent {} (actor 0x{:08X}).",
-                         static_cast<std::uint32_t>(intent), actor);
+            spdlog::warn("[api] Request REFUSED -- no channel serves intent {} (actor 0x{}).",
+                         static_cast<std::uint32_t>(intent), apmf::log::Hex(actor));
             return APMF_API::kInvalidHandle;
         }
         const Handle h = m_nextHandle.fetch_add(1, std::memory_order_relaxed);
@@ -79,8 +80,8 @@ namespace apmf {
                 if (cs.channel) cs.channel->Release(it->first, actor);
                 for (auto& c : cs.claims) m_index.erase(c.handle);
             }
-            spdlog::info("[ctl] 0x{:08X} unloaded -- released {} channel(s), dropped from control.",
-                         it->first, ctl.channels.size());
+            spdlog::info("[ctl] 0x{} unloaded -- released {} channel(s), dropped from control.",
+                         apmf::log::Hex(it->first), ctl.channels.size());
             it = m_map.erase(it);
         }
     }
@@ -91,8 +92,8 @@ namespace apmf {
 
         auto* actor = RE::TESForm::LookupByID<RE::Actor>(op.actor);
         if (!actor) {
-            spdlog::warn("[ctl] request h={} ignored -- actor 0x{:08X} not found/loaded.",
-                         op.handle, op.actor);
+            spdlog::warn("[ctl] request h={} ignored -- actor 0x{} not found/loaded.",
+                         op.handle, apmf::log::Hex(op.actor));
             return;
         }
 
@@ -120,8 +121,8 @@ namespace apmf {
 
         if (freshChannel) {
             channel->Engage(op.actor, actor);   // 0 -> 1: apply the source-block once
-            spdlog::info("[ctl] 0x{:08X} '{}' + ch.{} {} ENGAGED (h={}, basis={:.1f}). NPCs controlled: {}.",
-                         op.actor, actor->GetName() ? actor->GetName() : "?",
+            spdlog::info("[ctl] 0x{} '{}' + ch.{} {} ENGAGED (h={}, basis={:.1f}). NPCs controlled: {}.",
+                         apmf::log::Hex(op.actor), actor->GetName() ? actor->GetName() : "?",
                          channel->ChannelNo(), channel->Name(), op.handle, op.basis, m_map.size());
         } else {
             // Additional claim on an already-engaged channel: arbitrate by basis
@@ -129,8 +130,8 @@ namespace apmf {
             // behavior on winner change; the claim refcounts the engagement.
             float best = cc->claims.front().basis;
             for (auto& c : cc->claims) best = (c.basis > best) ? c.basis : best;
-            spdlog::info("[ctl] 0x{:08X} + ch.{} {} additional claim (h={}, basis={:.1f}); {} claim(s), "
-                         "owner basis={:.1f}.", op.actor, channel->ChannelNo(), channel->Name(),
+            spdlog::info("[ctl] 0x{} + ch.{} {} additional claim (h={}, basis={:.1f}); {} claim(s), "
+                         "owner basis={:.1f}.", apmf::log::Hex(op.actor), channel->ChannelNo(), channel->Name(),
                          op.handle, op.basis, cc->claims.size(), best);
         }
     }
@@ -155,12 +156,12 @@ namespace apmf {
             if (claims.empty()) {
                 auto* actor = RE::TESForm::LookupByID<RE::Actor>(formID);   // may be null
                 channel->Release(formID, actor);   // 1 -> 0: restore the AI
-                spdlog::info("[ctl] 0x{:08X} - ch.{} {} RELEASED (h={}).",
-                             formID, channel->ChannelNo(), channel->Name(), handle);
+                spdlog::info("[ctl] 0x{} - ch.{} {} RELEASED (h={}).",
+                             apmf::log::Hex(formID), channel->ChannelNo(), channel->Name(), handle);
                 npc.channels.erase(ccIt);
             } else {
-                spdlog::info("[ctl] 0x{:08X} - ch.{} {} claim dropped (h={}); {} claim(s) remain.",
-                             formID, channel->ChannelNo(), channel->Name(), handle, claims.size());
+                spdlog::info("[ctl] 0x{} - ch.{} {} claim dropped (h={}); {} claim(s) remain.",
+                             apmf::log::Hex(formID), channel->ChannelNo(), channel->Name(), handle, claims.size());
             }
             break;
         }
@@ -189,8 +190,8 @@ namespace apmf {
             if (!engaged.empty()) engaged += ',';
             engaged += cs.channel->Name();
         }
-        spdlog::info("[obs] 0x{:08X} pkg=0x{:08X}({}) [{}] engaged=[{}]",
-                     actor->GetFormID(), id, PkgTypeName(pkg),
+        spdlog::info("[obs] 0x{} pkg=0x{}({}) [{}] engaged=[{}]",
+                     apmf::log::Hex(actor->GetFormID()), apmf::log::Hex(id), PkgTypeName(pkg),
                      same ? "PACKAGE STABLE" : "PACKAGE CHANGED!!", engaged.c_str());
     }
 

@@ -1,4 +1,5 @@
 #include "PCH.h"
+#include "core/Log.h"
 #include "core/Hook.h"
 #include "core/Arbiter.h"
 
@@ -56,8 +57,8 @@ namespace apmf::hook {
         REL::Relocation<std::uintptr_t> pcVtbl{ RE::VTABLE_PlayerCharacter[0] };
         PlayerUpdateHook::func = pcVtbl.write_vfunc(PlayerUpdateHook::idx, PlayerUpdateHook::thunk);
 
-        spdlog::info("[hook] installed: Character + PlayerCharacter Update(0x{:X}). Central 0xAD arbiter "
-                     "seat live for every NPC.", CharacterUpdateHook::idx);
+        spdlog::info("[hook] installed: Character + PlayerCharacter Update(0x{}). Central 0xAD arbiter "
+                     "seat live for every NPC.", apmf::log::Hex(CharacterUpdateHook::idx, 0));
     }
 
 }

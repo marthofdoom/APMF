@@ -86,6 +86,12 @@ facing is not a separate channel — it rides the movement gate.
   12→16 B, so `kRecordVersion` is bumped to 2 and `Load` branches per version — a v1
   record reads its 12-byte entries and restores UNCONDITIONALLY (no `applied`); a v2
   record uses the clobber guard. A reader per version is kept forever (#15).
+- **Log hex formatting (v0.2.2):** on the deck every `{:08X}` rendered as raw garbage
+  bytes (corrupting the log to binary) while decimal/strings were clean; the same
+  toolchain formats `{:X}` fine for MFO, so the trigger is APMF-build-specific and not
+  statically isolable (typo/encoding/arg-type/config/formatter all ruled out). Robust
+  fix (#16): all hex now formats via `apmf::log::Hex()` (manual ASCII hex, logged
+  through the clean string path); no `{:X}` spec remains in any log call.
 - **AvLedger hardening:** `Load(intf, version)` threads the record version; `Save`
   checks `WriteRecordData` and logs on failure.
 - **Equipment save-safety:** decided + documented (#15) — only AV channels are

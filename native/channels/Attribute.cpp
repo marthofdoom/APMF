@@ -1,4 +1,5 @@
 #include "PCH.h"
+#include "core/Log.h"
 #include "core/Registry.h"
 #include "core/AvLedger.h"
 
@@ -39,8 +40,8 @@ namespace {
             apmf::av::Override(id, actor, RE::ActorValue::kConfidence, 4.0f);   // Foolhardy
             apmf::av::Override(id, actor, RE::ActorValue::kAssistance, 2.0f);   // Helps friends and allies
             apmf::av::Override(id, actor, RE::ActorValue::kMorality,   0.0f);   // Any crime
-            spdlog::info("[ch.11] 0x{:08X} disposition biased (aggr->2, conf->4, assist->2, moral->0). "
-                         "Clean input-gate, co-saved.", id);
+            spdlog::info("[ch.11] 0x{} disposition biased (aggr->2, conf->4, assist->2, moral->0). "
+                         "Clean input-gate, co-saved.", apmf::log::Hex(id));
         }
 
         void Release(RE::FormID id, RE::Actor* actor) override {
@@ -48,7 +49,7 @@ namespace {
             apmf::av::Restore(id, actor, RE::ActorValue::kConfidence);
             apmf::av::Restore(id, actor, RE::ActorValue::kAssistance);
             apmf::av::Restore(id, actor, RE::ActorValue::kMorality);
-            spdlog::info("[ch.11] 0x{:08X} disposition restored.", id);
+            spdlog::info("[ch.11] 0x{} disposition restored.", apmf::log::Hex(id));
         }
     };
 

@@ -1,4 +1,5 @@
 #include "PCH.h"
+#include "core/Log.h"
 #include "core/Registry.h"
 #include "core/AvLedger.h"
 
@@ -30,18 +31,18 @@ namespace {
         void Engage(RE::FormID id, RE::Actor* actor) override {
             if (!actor) return;
             auto* avo = actor->AsActorValueOwner();
-            if (!avo) { spdlog::warn("[ch.16] 0x{:08X} no ActorValueOwner.", id); return; }
+            if (!avo) { spdlog::warn("[ch.16] 0x{} no ActorValueOwner.", apmf::log::Hex(id)); return; }
             const float detect = avo->GetActorValue(RE::ActorValue::kDetectLifeRange);
             apmf::av::Override(id, actor, RE::ActorValue::kMovementNoiseMult, 0.0f);
             apmf::av::Override(id, actor, RE::ActorValue::kDetectLifeRange, detect * 1.5f);
-            spdlog::info("[ch.16] 0x{:08X} stealth tuned (noise->0, detectRange {:.0f}->{:.0f}). Co-saved AV gate.",
-                         id, detect, detect * 1.5f);
+            spdlog::info("[ch.16] 0x{} stealth tuned (noise->0, detectRange {:.0f}->{:.0f}). Co-saved AV gate.",
+                         apmf::log::Hex(id), detect, detect * 1.5f);
         }
 
         void Release(RE::FormID id, RE::Actor* actor) override {
             apmf::av::Restore(id, actor, RE::ActorValue::kMovementNoiseMult);
             apmf::av::Restore(id, actor, RE::ActorValue::kDetectLifeRange);
-            spdlog::info("[ch.16] 0x{:08X} detection AVs restored.", id);
+            spdlog::info("[ch.16] 0x{} detection AVs restored.", apmf::log::Hex(id));
         }
     };
 

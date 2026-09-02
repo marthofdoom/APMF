@@ -1,4 +1,5 @@
 #include "PCH.h"
+#include "core/Log.h"
 #include "core/Registry.h"
 
 // ============================================================================
@@ -78,15 +79,15 @@ namespace {
             const RE::NiPoint3    zero{ 0.0f, 0.0f, 0.0f };
             Native::KeepOffsetFromActor(actor, self, zero, zero, 20.0f, 10.0f);  // goal := my own spot
             Native::SetDontMove(actor, true);                                     // + lock translation
-            spdlog::info("[ch.1] 0x{:08X} FULL block -- KeepOffsetFromActor(self,0) + SetDontMove(true). "
-                         "Move intent nulled at the source: stands still, no run-in-place, no snap.", id);
+            spdlog::info("[ch.1] 0x{} FULL block -- KeepOffsetFromActor(self,0) + SetDontMove(true). "
+                         "Move intent nulled at the source: stands still, no run-in-place, no snap.", apmf::log::Hex(id));
         }
 
         void Release(RE::FormID id, RE::Actor* actor) override {
             if (!actor || REL::Module::IsVR()) return;   // no persisted state to clean if actor is gone
             Native::ClearKeepOffsetFromActor(actor);
             Native::SetDontMove(actor, false);
-            spdlog::info("[ch.1] 0x{:08X} block released -- goal + mover restored, AI resumes locomotion.", id);
+            spdlog::info("[ch.1] 0x{} block released -- goal + mover restored, AI resumes locomotion.", apmf::log::Hex(id));
         }
     };
 

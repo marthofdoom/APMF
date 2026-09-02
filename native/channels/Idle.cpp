@@ -1,4 +1,5 @@
 #include "PCH.h"
+#include "core/Log.h"
 #include "core/Registry.h"
 
 // ============================================================================
@@ -30,7 +31,7 @@ namespace {
         void Engage(RE::FormID id, RE::Actor* actor) override {
             if (!actor) return;
             const bool ok = actor->NotifyAnimationGraph("IdleForceDefaultState");
-            spdlog::info("[ch.12] 0x{:08X} one-shot idle (IdleForceDefaultState) accepted={}.", id, ok);
+            spdlog::info("[ch.12] 0x{} one-shot idle (IdleForceDefaultState) accepted={}.", apmf::log::Hex(id), ok);
         }
 
         void Release(RE::FormID, RE::Actor*) override {}   // one-shot, nothing to restore

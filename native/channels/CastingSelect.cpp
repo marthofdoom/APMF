@@ -1,4 +1,5 @@
 #include "PCH.h"
+#include "core/Log.h"
 #include "core/Registry.h"
 
 // ============================================================================
@@ -34,7 +35,7 @@ namespace {
         void Engage(RE::FormID id, RE::Actor* actor) override {
             if (!actor) return;
             auto* spell = RE::TESForm::LookupByID<RE::SpellItem>(kFirebolt);
-            if (!spell) { spdlog::warn("[ch.8] 0x{:08X} Firebolt not found.", id); return; }
+            if (!spell) { spdlog::warn("[ch.8] 0x{} Firebolt not found.", apmf::log::Hex(id)); return; }
 
             constexpr auto slot = RE::Actor::SlotTypes::kRightHand;
             auto& rt    = actor->GetActorRuntimeData();
@@ -48,9 +49,9 @@ namespace {
             rt.selectedSpells[slot] = spell;
             if (auto* caster = actor->GetMagicCaster(RE::MagicSystem::CastingSource::kRightHand))
                 caster->currentSpell = spell;
-            spdlog::info("[ch.8] 0x{:08X} right-hand selection := Firebolt (prev 0x{:08X}). Clean gate: AI "
+            spdlog::info("[ch.8] 0x{} right-hand selection := Firebolt (prev 0x{}). Clean gate: AI "
                          "casts our spell; trigger stays the AI's.",
-                         id, prev ? prev->GetFormID() : 0);
+                         apmf::log::Hex(id), apmf::log::Hex(prev ? prev->GetFormID() : 0));
         }
 
         void Release(RE::FormID id, RE::Actor* actor) override {
@@ -60,8 +61,8 @@ namespace {
                     actor->GetActorRuntimeData().selectedSpells[slot] = it->second;
                     if (auto* caster = actor->GetMagicCaster(RE::MagicSystem::CastingSource::kRightHand))
                         caster->currentSpell = it->second;
-                    spdlog::info("[ch.8] 0x{:08X} right-hand selection restored to 0x{:08X}.",
-                                 id, it->second ? it->second->GetFormID() : 0);
+                    spdlog::info("[ch.8] 0x{} right-hand selection restored to 0x{}.",
+                                 apmf::log::Hex(id), apmf::log::Hex(it->second ? it->second->GetFormID() : 0));
                 }
                 m_prev.erase(it);   // drop per-NPC state keyed by id, even if actor is null
             }

@@ -1,4 +1,5 @@
 #include "PCH.h"
+#include "core/Log.h"
 #include "core/Registry.h"
 
 // ============================================================================
@@ -29,7 +30,7 @@ namespace {
         void Engage(RE::FormID id, RE::Actor* actor) override {
             if (!actor) return;
             actor->PauseCurrentDialogue();
-            spdlog::info("[ch.10] 0x{:08X} PauseCurrentDialogue() (one-shot).", id);
+            spdlog::info("[ch.10] 0x{} PauseCurrentDialogue() (one-shot).", apmf::log::Hex(id));
         }
 
         void Release(RE::FormID, RE::Actor*) override {}   // nothing to restore

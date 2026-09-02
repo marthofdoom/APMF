@@ -1,4 +1,5 @@
 #include "PCH.h"
+#include "core/Log.h"
 #include "core/Registry.h"
 
 // ============================================================================
@@ -47,10 +48,10 @@ namespace {
             m_prev[id] = weap;
             if (weap) {
                 eqm->UnequipObject(actor, weap);
-                spdlog::info("[ch.15] 0x{:08X} unequipped right-hand weapon 0x{:08X} (denied). Restores on release.",
-                             id, weap->GetFormID());
+                spdlog::info("[ch.15] 0x{} unequipped right-hand weapon 0x{} (denied). Restores on release.",
+                             apmf::log::Hex(id), apmf::log::Hex(weap->GetFormID()));
             } else {
-                spdlog::info("[ch.15] 0x{:08X} no right-hand weapon to deny (no-op).", id);
+                spdlog::info("[ch.15] 0x{} no right-hand weapon to deny (no-op).", apmf::log::Hex(id));
             }
         }
 
@@ -59,7 +60,7 @@ namespace {
                 if (actor && it->second) {   // engine write only when the actor is live
                     if (auto* eqm = RE::ActorEquipManager::GetSingleton()) {
                         eqm->EquipObject(actor, it->second);
-                        spdlog::info("[ch.15] 0x{:08X} re-equipped weapon 0x{:08X}.", id, it->second->GetFormID());
+                        spdlog::info("[ch.15] 0x{} re-equipped weapon 0x{}.", apmf::log::Hex(id), apmf::log::Hex(it->second->GetFormID()));
                     }
                 }
                 m_prev.erase(it);   // drop per-NPC state keyed by id, even if actor is null

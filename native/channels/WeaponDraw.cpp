@@ -1,4 +1,5 @@
 #include "PCH.h"
+#include "core/Log.h"
 #include "core/Registry.h"
 
 // ============================================================================
@@ -26,13 +27,13 @@ namespace {
         void Engage(RE::FormID id, RE::Actor* actor) override {
             if (!actor) return;
             actor->DrawWeaponMagicHands(true);
-            spdlog::info("[ch.4] 0x{:08X} DrawWeaponMagicHands(true) (one-shot, sticky).", id);
+            spdlog::info("[ch.4] 0x{} DrawWeaponMagicHands(true) (one-shot, sticky).", apmf::log::Hex(id));
         }
 
         void Release(RE::FormID id, RE::Actor* actor) override {
             if (!actor) return;
             actor->DrawWeaponMagicHands(false);
-            spdlog::info("[ch.4] 0x{:08X} DrawWeaponMagicHands(false).", id);
+            spdlog::info("[ch.4] 0x{} DrawWeaponMagicHands(false).", apmf::log::Hex(id));
         }
     };
 

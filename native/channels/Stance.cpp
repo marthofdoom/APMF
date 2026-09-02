@@ -1,4 +1,5 @@
 #include "PCH.h"
+#include "core/Log.h"
 #include "core/Registry.h"
 
 // ============================================================================
@@ -31,13 +32,13 @@ namespace {
             const bool wasSneaking = actor->IsSneaking();
             m_startedSneak[id] = !wasSneaking;   // did WE start it?
             if (!wasSneaking) actor->NotifyAnimationGraph("SneakStart");
-            spdlog::info("[ch.3] 0x{:08X} sneak engaged (wasSneaking={}). Tier A promote.", id, wasSneaking);
+            spdlog::info("[ch.3] 0x{} sneak engaged (wasSneaking={}). Tier A promote.", apmf::log::Hex(id), wasSneaking);
         }
 
         void Release(RE::FormID id, RE::Actor* actor) override {
             if (auto it = m_startedSneak.find(id); it != m_startedSneak.end()) {
                 if (actor && it->second) actor->NotifyAnimationGraph("SneakStop");   // only undo what we started
-                spdlog::info("[ch.3] 0x{:08X} sneak released.", id);
+                spdlog::info("[ch.3] 0x{} sneak released.", apmf::log::Hex(id));
                 m_startedSneak.erase(it);   // drop per-NPC state keyed by id, even if actor is null
             }
         }

@@ -1,4 +1,5 @@
 #include "PCH.h"
+#include "core/Log.h"
 #include "core/Registry.h"
 
 // ============================================================================
@@ -46,8 +47,8 @@ namespace {
 
         void Engage(RE::FormID id, RE::Actor* actor) override {
             AssertLookUp(actor);
-            spdlog::info("[ch.5] 0x{:08X} look-up -- KNOWN-INCOMPLETE block; Tick re-asserts (stopgap for the "
-                         "un-blocked AI write; may hold only the eyes on a package-locked follower).", id);
+            spdlog::info("[ch.5] 0x{} look-up -- KNOWN-INCOMPLETE block; Tick re-asserts (stopgap for the "
+                         "un-blocked AI write; may hold only the eyes on a package-locked follower).", apmf::log::Hex(id));
         }
 
         // Stopgap: the AI's headtrack write is not yet blocked, so re-apply each
@@ -66,7 +67,7 @@ namespace {
                 if (auto* proc = actor->GetActorRuntimeData().currentProcess)
                     proc->ClearActionHeadtrackTarget(false);
             }
-            spdlog::info("[ch.5] 0x{:08X} released -- headtrack slot cleared; AI resumes its headtrack.", id);
+            spdlog::info("[ch.5] 0x{} released -- headtrack slot cleared; AI resumes its headtrack.", apmf::log::Hex(id));
         }
     };
 

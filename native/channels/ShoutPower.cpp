@@ -1,4 +1,5 @@
 #include "PCH.h"
+#include "core/Log.h"
 #include "core/Registry.h"
 
 // ============================================================================
@@ -31,11 +32,11 @@ namespace {
         void Engage(RE::FormID id, RE::Actor* actor) override {
             if (!actor) return;
             auto* shout = RE::TESForm::LookupByID<RE::TESShout>(kUnrelentingForce);
-            if (!shout) { spdlog::warn("[ch.14] 0x{:08X} shout form not found -- no-op.", id); return; }
+            if (!shout) { spdlog::warn("[ch.14] 0x{} shout form not found -- no-op.", apmf::log::Hex(id)); return; }
             if (auto* eqm = RE::ActorEquipManager::GetSingleton()) {
                 eqm->EquipShout(actor, shout);
-                spdlog::info("[ch.14] 0x{:08X} shout selected (Unrelenting Force). Sticky select; AI triggers it.",
-                             id);
+                spdlog::info("[ch.14] 0x{} shout selected (Unrelenting Force). Sticky select; AI triggers it.",
+                             apmf::log::Hex(id));
             }
         }
 

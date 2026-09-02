@@ -21,4 +21,13 @@ namespace apmf::log {
         spdlog::set_pattern("[%H:%M:%S.%e] [%l] %v");
     }
 
+    std::string Hex(std::uint64_t value, int width) {
+        static constexpr char kDigits[] = "0123456789ABCDEF";
+        char buf[16];
+        int  pos = 16;
+        do { buf[--pos] = kDigits[value & 0xF]; value >>= 4; } while (value && pos > 0);
+        while ((16 - pos) < width && pos > 0) buf[--pos] = '0';
+        return std::string(buf + pos, buf + 16);
+    }
+
 }

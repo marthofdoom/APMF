@@ -1,4 +1,5 @@
 #include "PCH.h"
+#include "core/Log.h"
 #include "core/Arbiter.h"
 #include "core/ControlMap.h"
 #include "core/Registry.h"
@@ -66,8 +67,8 @@ namespace apmf {
         if (auto it = m_testHandles.find(key); it != m_testHandles.end()) {
             ControlMap::Get().EnqueueRelease(it->second);
             m_testHandles.erase(it);
-            spdlog::info("[test] ch.{} {} -- REMOVED 0x{:08X} '{}' from the controlled set.",
-                         channel->ChannelNo(), channel->Name(), id,
+            spdlog::info("[test] ch.{} {} -- REMOVED 0x{} '{}' from the controlled set.",
+                         channel->ChannelNo(), channel->Name(), apmf::log::Hex(id),
                          actor->GetName() ? actor->GetName() : "?");
             return;
         }
@@ -75,9 +76,9 @@ namespace apmf {
         const APMF_API::Handle h = ControlMap::Get().EnqueueRequest(id, intent, kTestBasis);
         if (h == APMF_API::kInvalidHandle) return;   // ControlMap already logged the refusal
         m_testHandles[key] = h;
-        spdlog::info("[test] ch.{} {} -- ADDED 0x{:08X} '{}' to the controlled set (h={}). Aim another NPC "
+        spdlog::info("[test] ch.{} {} -- ADDED 0x{} '{}' to the controlled set (h={}). Aim another NPC "
                      "+ a key to add it too; Numpad0 releases all.",
-                     channel->ChannelNo(), channel->Name(), id,
+                     channel->ChannelNo(), channel->Name(), apmf::log::Hex(id),
                      actor->GetName() ? actor->GetName() : "?", h);
     }
 

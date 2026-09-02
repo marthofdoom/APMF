@@ -1,4 +1,5 @@
 #include "PCH.h"
+#include "core/Log.h"
 #include "core/AvLedger.h"
 
 #include <cmath>
@@ -53,8 +54,8 @@ namespace apmf::av {
                 if (NearlyEqual(current, it->second.applied)) {
                     avo->SetActorValue(av, it->second.prev);   // still ours -> restore
                 } else {
-                    spdlog::info("[avledger] 0x{:08X} av={} changed externally ({:.2f} != applied {:.2f}); "
-                                 "leaving the newer value.", id, static_cast<std::uint32_t>(av),
+                    spdlog::info("[avledger] 0x{} av={} changed externally ({:.2f} != applied {:.2f}); "
+                                 "leaving the newer value.", apmf::log::Hex(id), static_cast<std::uint32_t>(av),
                                  current, it->second.applied);
                 }
             }

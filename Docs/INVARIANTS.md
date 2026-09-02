@@ -223,3 +223,19 @@ RAM-only (NOT co-saved).** So a client must NOT hold an equipment claim across a
 save — it self-heals (item stays in inventory, the AI re-equips), but APMF does not
 restore it. Do not add a persisted-state channel without either co-saving it or
 documenting the same boundary.
+
+## Logging
+
+**#16 — Log hex via `apmf::log::Hex`, never the `{:X}` spec.** On the deck (v0.2.2)
+APMF's build rendered EVERY `{:08X}`/`{:02X}`/`{:X}` as raw garbage bytes, corrupting
+the log to a binary file (grep refused it) — while decimal `{}` and string `{}`
+rendered clean, and the IDENTICAL toolchain/baseline formats `{:X}` correctly for MFO
+(its `MFO.log` shows clean `FE08F801`). So the trigger is APMF-build-specific and was
+not statically isolable (it is not a format-string typo, a non-ASCII byte, an arg-type
+slip, a config/PCH/preset/baseline difference, or a custom formatter — all ruled out).
+The robust fix, immune to whatever the trigger is: format hex BY HAND into an ASCII
+`std::string` (`core/Log.h` `Hex(value, width)`) and log it through the string path
+(`spdlog::info("… 0x{} …", apmf::log::Hex(id))`), which both projects render correctly.
+NEVER reintroduce a `{:X}`/`{:x}` presentation spec in a log call; use `Hex`. If the
+underlying cause is ever found and fixed, this rule can relax — until then it keeps the
+log (the primary field-validation channel) plain text.

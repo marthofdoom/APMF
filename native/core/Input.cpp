@@ -1,4 +1,5 @@
 #include "PCH.h"
+#include "core/Log.h"
 #include "core/Input.h"
 #include "core/Arbiter.h"
 #include "core/Registry.h"
@@ -38,8 +39,8 @@ namespace apmf::input {
                      "set; aim another + a key adds it too; press a key again on an aimed NPC to remove it.");
         for (auto* ch : apmf::Registry::Get().All()) {
             for (const auto& hk : ch->Hotkeys()) {
-                spdlog::info("[input]   scancode 0x{:02X} -> ch.{} {} : {}",
-                             hk.code, ch->ChannelNo(), ch->Name(), hk.label);
+                spdlog::info("[input]   scancode 0x{} -> ch.{} {} : {}",
+                             apmf::log::Hex(hk.code, 2), ch->ChannelNo(), ch->Name(), hk.label);
             }
         }
         spdlog::info("[input]   scancode 0x52 -> RELEASE ALL controlled NPCs (Numpad0)");
