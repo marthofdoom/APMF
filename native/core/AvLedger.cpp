@@ -14,8 +14,10 @@ namespace apmf::av {
         // (FormID << 32 | ActorValue) -> {prev, applied}.
         std::unordered_map<std::uint64_t, Entry> g_ledger;
 
-        // Overrides read from a co-save, awaiting restore on kPostLoadGame.
-        struct Pending { RE::FormID actor; std::uint32_t av; float prev; float applied; };
+        // Overrides read from a co-save, awaiting restore on kPostLoadGame. `guard`
+        // is false for v1 records (no `applied` field -> restore unconditionally,
+        // v1's original semantics) and true for v2+ (apply the clobber guard).
+        struct Pending { RE::FormID actor; std::uint32_t av; float prev; float applied; bool guard; };
         std::vector<Pending> g_pending;
 
         std::uint64_t Key(RE::FormID f, RE::ActorValue av) {
@@ -84,6 +86,11 @@ namespace apmf::av {
             spdlog::warn("[avledger] co-save record v{} newer than known v{} -- skipping.", version, kRecordVersion);
             return;
         }
+        // A reader per record version, kept forever (INVARIANTS #15). v1 entries are
+        // 12 bytes {formID, av, prev} and restore UNCONDITIONALLY (no `applied`, so
+        // the clobber guard cannot apply -- v1's original semantics); v2 entries are
+        // 16 bytes {formID, av, prev, applied} and use the clobber guard.
+        const bool v2 = (version >= 2);
         std::uint32_t count = 0;
         if (!intf->ReadRecordData(&count, sizeof(count))) return;
         for (std::uint32_t i = 0; i < count; ++i) {
@@ -91,15 +98,16 @@ namespace apmf::av {
             std::uint32_t av      = 0;
             float         prev    = 0.0f;
             float         applied = 0.0f;
-            if (!intf->ReadRecordData(&formID, sizeof(formID)))   break;
-            if (!intf->ReadRecordData(&av, sizeof(av)))           break;
-            if (!intf->ReadRecordData(&prev, sizeof(prev)))       break;
-            if (!intf->ReadRecordData(&applied, sizeof(applied))) break;
+            if (!intf->ReadRecordData(&formID, sizeof(formID)))          break;
+            if (!intf->ReadRecordData(&av, sizeof(av)))                  break;
+            if (!intf->ReadRecordData(&prev, sizeof(prev)))              break;
+            if (v2 && !intf->ReadRecordData(&applied, sizeof(applied)))  break;
             RE::FormID resolved = 0;
             if (intf->ResolveFormID(formID, resolved))            // handle load-order remap
-                g_pending.push_back(Pending{ resolved, av, prev, applied });
+                g_pending.push_back(Pending{ resolved, av, prev, applied, /*guard*/ v2 });
         }
-        spdlog::info("[avledger] read {} co-saved AV override(s) to restore on post-load.", g_pending.size());
+        spdlog::info("[avledger] read {} co-saved AV override(s) (record v{}) to restore on post-load.",
+                     g_pending.size(), version);
     }
 
     void ApplyPending() {
@@ -111,9 +119,13 @@ namespace apmf::av {
             auto* avo = actor->AsActorValueOwner();
             if (!avo) continue;
             const auto  av      = static_cast<RE::ActorValue>(p.av);
-            const float current = avo->GetActorValue(av);
-            if (NearlyEqual(current, p.applied)) { avo->SetActorValue(av, p.prev); ++restored; }
-            else                                 { ++skipped; }   // changed externally -> keep newer
+            // v1 records restore unconditionally; v2 records apply the clobber guard.
+            if (!p.guard || NearlyEqual(avo->GetActorValue(av), p.applied)) {
+                avo->SetActorValue(av, p.prev);
+                ++restored;
+            } else {
+                ++skipped;   // v2 + changed externally -> keep the newer value
+            }
         }
         spdlog::info("[avledger] post-load: restored {} stranded AV override(s), left {} externally-changed.",
                      restored, skipped);

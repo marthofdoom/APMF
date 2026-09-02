@@ -82,6 +82,10 @@ facing is not a separate channel — it rides the movement gate.
   source with the identical signature + verbatim SetDontMove anchor (#8).
 - **AV clobber guard:** the ledger stores `{prev, applied}` and restores `prev` only
   when the AV still equals `applied` (else the newer external value wins).
+- **Co-save record versioning (v0.2.2):** adding `applied` changed the record layout
+  12→16 B, so `kRecordVersion` is bumped to 2 and `Load` branches per version — a v1
+  record reads its 12-byte entries and restores UNCONDITIONALLY (no `applied`); a v2
+  record uses the clobber guard. A reader per version is kept forever (#15).
 - **AvLedger hardening:** `Load(intf, version)` threads the record version; `Save`
   checks `WriteRecordData` and logs on failure.
 - **Equipment save-safety:** decided + documented (#15) — only AV channels are

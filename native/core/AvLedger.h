@@ -48,7 +48,14 @@ namespace apmf::av {
     void ApplyPending();                                                     // kPostLoadGame: restore + clear
     void Revert();                                                           // clear ledger + pending
 
-    inline constexpr std::uint32_t kRecordType = 'AVOV';   // co-save record tag
-    inline constexpr std::uint32_t kRecordVersion = 1;
+    // Co-save record tag + the CURRENT layout version.
+    //   v1: count, then per entry {FormID, ActorValue, prev}           (12 bytes/entry)
+    //   v2: count, then per entry {FormID, ActorValue, prev, applied}  (16 bytes/entry)
+    // A reader for EVERY shipped version is kept FOREVER (INVARIANTS #15). v1 has no
+    // `applied`, so its entries restore UNCONDITIONALLY (the clobber guard cannot
+    // apply -- that was v1's original semantics). Bump this + add a reader branch on
+    // ANY layout change; never change a layout under an existing version number.
+    inline constexpr std::uint32_t kRecordType = 'AVOV';
+    inline constexpr std::uint32_t kRecordVersion = 2;
 
 }

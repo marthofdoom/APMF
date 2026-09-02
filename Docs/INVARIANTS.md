@@ -195,6 +195,18 @@ remap), `kPostLoadGame` restores each AV regardless of live engaged-state and cl
 `OnRevert` wipes ledger + control map (no restore — actors are being replaced). Any
 NEW channel that writes a persisted actor value MUST route it through the ledger.
 
+RECORD VERSIONING — a reader per version, KEPT FOREVER. The `'AVOV'` record carries
+`kRecordVersion`; `Load(intf, version)` branches on it. NEVER change a record's byte
+layout under an existing version number — bump `kRecordVersion` and add a reader
+branch, or an old save's entries misalign (e.g. reading a 12-byte v1 entry as a
+16-byte v2 entry consumes the next entry's FormID as `applied` → every override
+stranded). Shipped layouts:
+- **v1** (12 B/entry): `{FormID, ActorValue, prev}` — restored UNCONDITIONALLY (no
+  `applied`; the clobber guard cannot apply — v1's original semantics).
+- **v2** (16 B/entry): `{FormID, ActorValue, prev, applied}` — clobber-guarded.
+`OnSave` always writes the current version; a `version > kRecordVersion` record is
+skipped (a downgrade cannot read a future layout).
+
 CLOBBER GUARD: the ledger stores both the captured `prev` AND the value we `applied`;
 Restore/ApplyPending write `prev` back ONLY when the AV still equals `applied`. If a
 quest or another mod changed the AV while our override was live, the newer value
