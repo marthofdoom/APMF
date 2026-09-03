@@ -6,6 +6,8 @@
 #include "core/Arbiter.h"
 #include "core/ControlMap.h"
 #include "core/AvLedger.h"
+#include "core/CastGate.h"
+#include "core/EquipGate.h"
 
 // ============================================================================
 // APMF -- AI Package Management Framework. Entry point (thin).
@@ -45,6 +47,8 @@ namespace {
         switch (a_msg->type) {
         case SKSE::MessagingInterface::kDataLoaded:
             apmf::hook::Install();
+            apmf::castgate::Install();           // T2c CheckCast allowance (Docs/ALLOWANCE-TEMPLATE.md)
+            apmf::equipgate::Install();          // T2a CheckShouldEquip allowance
             apmf::probe::Install();              // 0x49 package-offer probe (throwaway; VR-refused inside)
             if (!REL::Module::IsVR()) {          // no drain seat on VR -> no test surface
                 apmf::input::Register();

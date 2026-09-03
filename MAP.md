@@ -166,6 +166,56 @@ all. Multi-NPC: aim + key ADDS an NPC; aim another + key adds it too.
   (the real driver is the client API). Adding a channel needs NO edit here;
   hotkeys come from the channel's own `Hotkeys()`.
 
+### `native/core/Allowance.{h,cpp}` — the reusable ALLOWANCE TEMPLATE (Docs/ALLOWANCE-TEMPLATE.md §3)
+`DerivesFrom` (install-time RTTI derivation walk: reads the CompleteObjectLocator*
+at `vtableAddr-8`, walks `ClassHierarchyDescriptor::baseClassArray`, confirms the
+expected base's TypeDescriptor appears — the ENGINE_NOTES §0.28
+CombatMagicCasterArmor lesson turned into a build-time-safe runtime check),
+`InstallOnVtables<ThunkFn>` (header-only template: write_vfunc across a vtable
+list after RTTI-verifying each, storing per-vtable originals keyed by runtime
+address, logging + SKIPPING a non-deriving symbol rather than installing
+blind), `Allowed` (the one shared "flip YES->NO" decision: a lock-free RCU
+`ControlMap::TryGetOwningClaim` read — never a mutex). Consumed today by
+`core/CastGate.cpp` (T2c) and `core/EquipGate.cpp` (T2a); T1/T3/T4 reuse the
+same three pieces when built.
+- **What breaks:** `Allowed`/`InstallOnVtables`'s thunk callers run on COMBAT
+  THREADS (§5) — never take a lock, never touch the follower/actor list, never
+  call anything beyond the stored `orig` + one ControlMap read. `DerivesFrom`
+  must run at INSTALL time only (main thread, kDataLoaded) — it is not
+  thread-safe to call from a hot thunk (it doesn't need to be; install-once).
+
+### `native/core/CastGate.cpp` — T2c: CheckCast allowance (the hard cast gate)
+Hooks `MagicCaster::CheckCast` (vtable slot **0x0A**) on `VTABLE_ActorMagicCaster[0]`
+ONLY (the other two ActorMagicCaster vtable entries are base-subobject vtables of
+the same class, not separate casters — patching them clobbers unrelated engine
+vtables). Resolver = `MagicCaster::GetCasterAsActor` (an ordinary virtual call
+through the object's own unhooked slot 0x0C). Denies any spell whose FormID
+isn't the winning `kIntent_SelectSpell` claim's `param.form`; sets
+`CannotCastReason::kMultipleCast` on deny. VR-refused, install-once
+(`plugin.cpp` kDataLoaded, after `hook::Install()`).
+- **What breaks:** this is the PRIMARY cast allowance — CheckStartCast (T2's
+  advisory twin, not built) leaks (a denied spell still fires per MFO field
+  evidence); CheckCast is the one that actually stops the charge. Only
+  `VTABLE_ActorMagicCaster[0]` may be patched at slot 0x0A — `[1]`/`[2]` are a
+  DIFFERENT interface (anim-graph holder / event sink) at the same class.
+
+### `native/core/EquipGate.cpp` — T2a: CheckShouldEquip allowance (per-item equip gate)
+Hooks `CombatInventoryItem::CheckShouldEquip` (vtable slot **0x0F**) on the 30
+concrete spell/staff `CombatInventoryItemMagicT<item,caster>` instantiations —
+the identical set MFO's own `CombatStyle.cpp` equip gate patches (mirrored here
+APMF-side, mutex-free). Resolver = `CombatController::attackerHandle` @0x28
+(`static_assert`s pin it `<0x68`, AE-safe). Denies any spell/staff item whose
+FormID isn't the winning `kIntent_SelectSpell` claim's `param.form`.
+VR-refused, install-once.
+- **What breaks:** deliberately NOT the design doc's aspirational 87-vtable /
+  Melee-Ranged-Shield-Torch count — verified 2026-09-02 against the pinned
+  upstream that those 4 categories have NO CONCRETE C++ CLASS in the pinned
+  CommonLibSSE-NG headers (no vtable symbol exists to hook), and
+  potion/scroll/shout are deliberately excluded on the SAME v1.0.32 gameplay
+  lesson MFO's own gate already proved (denying them would only ever be a
+  false-positive block on combat drinking/shouting). Widen only on new header
+  evidence, never by guessing a symbol name.
+
 ### `native/core/AliasPkgProbe.{h,cpp}` — the 0x49 package-offer PROBE (throwaway)
 Demystifies the design.md §5a package-tier promote. `Install()` ← `plugin.cpp` kDataLoaded
 (after `hook::Install`): `write_vfunc` **0x49** `CheckForCurrentAliasPackage` on
@@ -192,7 +242,7 @@ parentheses.
 | `WeaponDraw.cpp` | 4 | draw/sheathe (Num5) | `DrawWeaponMagicHands(bool)` | one-shot (sticky) |
 | `Headtrack.cpp` | 5 | look-at (Num3) | `AIProcess::SetHeadtrackTarget` (own point slot) | **known-incomplete block (Tick re-assert; loses to a package-locked follower)** |
 | `CombatTarget.cpp` | 6 | combat-target CLAIM (Num-) | **ARBITRATION-ONLY** — records the owner; makes NO engine combat call (no `StartCombat`, no `currentCombatTarget` write). The CLIENT commands the target. Release relinquishes | arbitration-only (#0); client executes |
-| `CastingSelect.cpp` | 8 | casting CLAIM (Num4) | **ARBITRATION-ONLY** — records the owner; NO `selectedSpells`/`CastSpellImmediate` write. The CLIENT selects the spell + grants its AI consent | arbitration-only (#0); client executes |
+| `CastingSelect.cpp` | 8 | casting CLAIM (Num4) | Claim itself still makes NO `selectedSpells`/`CastSpellImmediate` write (client selects + grants AI consent) — but the claim is now a REAL allowance: `core/CastGate.cpp` (T2c CheckCast) + `core/EquipGate.cpp` (T2a CheckShouldEquip) deny any spell/item that isn't the claimed `param.form` | claim + T2 enforcement; client still executes |
 | `Dialogue.cpp` | 10 | dialogue (Num6) | `PauseCurrentDialogue()` | one-shot |
 | `Attribute.cpp` | 11 | disposition (Num2) | 4 AVs: aggression/confidence/assistance/morality | source-block |
 | `Idle.cpp` | 12 | idle/anim (Num+) | `NotifyAnimationGraph("IdleForceDefaultState")` | one-shot |
@@ -212,11 +262,17 @@ parentheses.
 
 ### NOT built (probe-gated GAPs — do not add without a live probe)
 Movement PROMOTE feed (ch.1, `IMovementDirectControl` unnamed), combat ACTIONS
-behavior tree (ch.7), the DENY of a competing framework's combat-target/cast selection
-at the hook (ch.6/ch.8 — the future suppression gate; today both are arbitration-only
-and the CLIENT executes the command/selection), headtrack all-types full block (ch.5),
-sustained package procedures (ch.9), facial-expression setter (ch.13). **Load-bearing
-open mechanism: cleanly DENY/starve an outranking framework's PACKAGE (Cicero/travel).**
+behavior tree (ch.7 / T1, PROBE-gated — see Docs/ALLOWANCE-TEMPLATE.md §6/§7),
+the DENY of a COMPETING framework's combat-target selection at the hook (ch.6 —
+still arbitration-only; the CLIENT commands the target, no T-hook yet), body
+commands (T4, PROBE-gated), headtrack all-types full block (ch.5), sustained
+package procedures (ch.9), facial-expression setter (ch.13). ch.8 (casting
+selection) GAINED its deny 2026-09-02 (Phase 2): `core/CastGate.cpp` (T2c
+CheckCast) + `core/EquipGate.cpp` (T2a CheckShouldEquip) — see those entries
+above; ch.8 is no longer arbitration-only. **Load-bearing open mechanism:
+cleanly DENY/starve an outranking framework's PACKAGE (Cicero/travel) — T3
+(`AliasPkgProbe.cpp`'s 0x49 hook) is built as a probe but not yet folded into
+the Allowance template / wired to a client.**
 See `Docs/CHANNEL-MAP.md` "Need live probing" and STATUS "post-first-release gap work".
 
 ## How to add a channel (the whole recipe)

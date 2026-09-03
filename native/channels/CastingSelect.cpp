@@ -3,24 +3,29 @@
 #include "core/Registry.h"
 
 // ============================================================================
-// Channel 8 -- CASTING (SELECTION), ARBITRATION-ONLY (moderator model, marth
-// 2026-09-02).
+// Channel 8 -- CASTING (SELECTION). Arbitration + claim lifecycle ONLY here;
+// the real ENFORCEMENT lives one layer down, in the T2 allowance hooks
+// (core/CastGate.cpp T2c CheckCast, core/EquipGate.cpp T2a CheckShouldEquip --
+// Docs/ALLOWANCE-TEMPLATE.md §3/§7, Phase 2, marth 2026-09-02).
 //
 // APMF MODERATES; it does NOT generate behavior. SELECTING the spell is BEHAVIOR the
 // CLIENT performs: MFO writes the follower's own `selectedSpells[slot]` and grants its
 // own AI consent (MFO's CasterConsent) so the follower's combat AI DECIDES to cast the
-// chosen spell itself -- a real, fully-animated cast, not a forced one. APMF must not
-// write `selectedSpells` or trigger a cast (no CastSpellImmediate). So this channel
-// makes NO engine write.
+// chosen spell itself -- a real, fully-animated cast, not a forced one. This channel
+// itself still makes NO engine write (no `selectedSpells` write, no CastSpellImmediate)
+// -- Engage/OnOwnerChanged/Release only log the claim lifecycle, exactly as before.
 //
-// What it DOES: record that a client OWNS the casting facet, so APMF is the single
-// arbiter (basis arbitration + claim lifecycle in the ControlMap). The chosen spell
-// rides in `param.form` for observability and for a FUTURE suppression capability
-// (deny a COMPETING framework's cast selection at the source -- a deep-hook gate, not
-// built yet). NOTE: on the owned-cast path the client WANTS its AI to cast, so APMF
-// must NOT suppress this actor's own casting here; a separate "suppress this actor's
-// casting" capability (e.g. a combat-style magic-score deny) is a DIFFERENT facet and
-// is never applied on the owned-cast path. `Release` has nothing to undo. No `Tick`.
+// What changed (Phase 2): the chosen spell riding in `param.form` is no longer
+// observability-only. CastGate.cpp's CheckCast hook and EquipGate.cpp's
+// CheckShouldEquip hook both read this SAME claim (ControlMap::TryGetOwningClaim,
+// kIntent_SelectSpell) and deny any spell/staff that is NOT `param.form` -- so once a
+// client claims this facet with a chosen spell, the engine's own AI can charge/equip
+// ONLY that spell. APMF still never INVENTS a yes (CastGate/EquipGate only narrow the
+// engine's own YES down to NO); the client's own consent grant (MFO's CasterConsent)
+// is still what makes the AI WANT to cast in the first place -- this channel's claim
+// only makes that choice EXCLUSIVE once the AI is willing. `Release` has nothing of
+// its own to undo (the allowance hooks simply stop seeing a claim for this actor). No
+// `Tick`.
 // ============================================================================
 
 namespace {

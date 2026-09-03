@@ -344,6 +344,43 @@ namespace apmf {
                      same ? "PACKAGE STABLE" : "PACKAGE CHANGED!!", engaged.c_str());
     }
 
+    bool ControlMap::TryGetOwningClaim(RE::FormID actor, Intent intent,
+                                       APMF_API::APMF_Param& outParam) const {
+        // ANY thread -- the allowance-template T2 thunks (core/Allowance.h,
+        // CastGate.cpp/EquipGate.cpp) call this from combat-thread hooks. Same
+        // RCU discipline as OnActorUpdate: relaxed pre-gate so an uncontrolled
+        // world costs one relaxed load, then one acquire-load of a LOCAL snapshot
+        // copy + one hash lookup on that frozen generation -- no torn reads, no
+        // UAF even if Drain publishes a newer generation mid-call. Never touches
+        // obsTick (a separate reader path from OnActorUpdate) or anything else.
+        if (m_anyControlled.load(std::memory_order_relaxed) == 0) return false;
+
+        std::shared_ptr<const MapType> snap = m_published.load(std::memory_order_acquire);
+        auto it = snap->find(actor);
+        if (it == snap->end()) return false;   // uncontrolled actor -> the common case
+
+        const NpcCtl& npc = it->second;
+        if (!npc.handle.get()) return false;   // unloaded; the Drain sweep reclaims it
+
+        // Registry is immutable after load -- safe to consult from any thread.
+        auto* channel = Registry::Get().ChannelForIntent(intent);
+        if (!channel) return false;
+
+        for (const auto& cs : npc.channels) {
+            if (cs.channel != channel) continue;
+            if (cs.claims.empty()) return false;
+            // Winner = highest basis; tie -> earliest -- the SAME arbitration
+            // rule as ApplyRequest's oldBest / ApplyRelease's ownerOf.
+            const Claim* best = &cs.claims.front();
+            for (const auto& c : cs.claims) {
+                if (c.basis > best->basis) best = &c;
+            }
+            outParam = best->param;
+            return true;
+        }
+        return false;   // this NPC is controlled, but not on this channel
+    }
+
     void ControlMap::ReleaseAll(const char* why) {
         // Drain any pending ops first so a just-enqueued claim is not orphaned, then
         // restore + drop every controlled NPC. Writer thread only (see ControlMap.h:

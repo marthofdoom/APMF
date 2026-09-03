@@ -76,6 +76,18 @@ namespace apmf {
         // One snapshot load + one lookup; ticks the engaged channels of a controlled NPC.
         void OnActorUpdate(RE::Actor* actor);
 
+        // ---- Allowance-template read: ANY thread (RCU reader). See
+        // Docs/ALLOWANCE-TEMPLATE.md §3/§5 -- the T2 hooks (core/Allowance.h's
+        // InstallOnVtables/Allowed) call this from combat-thread thunks. Look up
+        // whether `actor` has a winning claim on `intent`'s channel; if so, copy
+        // its APMF_Param out and return true. Same RCU discipline as
+        // OnActorUpdate: relaxed pre-gate, one acquire-load, one hash lookup on a
+        // frozen snapshot generation. Read-only -- does NOT touch obsTick (a
+        // separate reader path from OnActorUpdate), never blocks, no
+        // follower-list touch, no mutation of anything.
+        bool TryGetOwningClaim(RE::FormID actor, Intent intent,
+                               APMF_API::APMF_Param& outParam) const;
+
         // ---- Writer thread ONLY (the PlayerCharacter/Drain seat and the SKSE
         // revert/preload callbacks -- all the same MAIN thread). ----
         // Once per frame: apply queued ops, then sweep unloaded controlled NPCs;
