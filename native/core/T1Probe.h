@@ -11,22 +11,21 @@
 // Phase 0 (OBSERVE): every leaf's act() is hooked but ALWAYS calls the
 // original and returns its result unmodified -- pure observation. Logs the
 // first time each leaf fires (leaf identity via our own install-time name
-// table AND the object's own GetName() slot-1 virtual, unhooked) for the
-// CLAIMED actor only (hotkey-armed on the crosshair-aimed NPC; global
-// install, per-actor LOGGING gate -- unclaimed NPCs pay only the orig()
-// passthrough, no logging work). Also resolves the CombatBehaviorTreeControl
-// +0x158 ambiguity (CombatController* directly per CPR, vs the CommonLib-doc
-// +0x20 hop hypothesis) by reading BOTH and logging which yields a live
-// attackerHandle.
+// table AND the object's own GetName() slot-1 virtual, unhooked) for any
+// actor in the SHARED claim SET (core/ProbeClaimSet -- multiple actors at
+// once, generalized 2026-09-03 from a single claimed actor so a whole
+// battle can be claimed and denied at once; global install, per-actor
+// LOGGING gate -- unclaimed NPCs pay only the orig() passthrough, no
+// logging work). Also resolves the CombatBehaviorTreeControl +0x158
+// ambiguity (CombatController* directly per CPR, vs the CommonLib-doc +0x20
+// hop hypothesis) by reading BOTH and logging which yields a live
+// attackerHandle -- RESOLVED for 1.6.1170: hypothesis B (the +0x20 hop).
 //
-// Phase 1 (DENY): a second hotkey denies ONLY the `CombatBehaviorAttack`
-// leaf for the claimed actor via the engine's own failure protocol
-// (`CombatBehaviorTreeControl::SetFailed(true)`, resolved at install time by
-// disassembling `CombatBehaviorForceFail`'s own act() body for its internal
-// CALL to SetFailed -- see T1Probe.cpp -- since SetFailed's SE Address-
-// Library id (46240) has no known AE counterpart in any header this project
-// can reach; the ForceFail-body derivation works on SE+AE uniformly because
-// it reads the ACTUAL compiled bytes at runtime rather than a static table).
+// Phase 1 (DENY): a hotkey denies ONLY the `CombatBehaviorAttack` leaf, for
+// EVERY actor in the claim set, via the engine's own failure protocol --
+// invoking `CombatBehaviorForceFail`'s own ORIGINAL act() implementation
+// directly (not a hand-reconstructed `SetFailed` call; see T1Probe.cpp's
+// file header for the field-crash history and why).
 // ============================================================================
 
 namespace apmf::t1probe {

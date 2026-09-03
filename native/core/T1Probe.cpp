@@ -2,6 +2,7 @@
 #include "core/Log.h"
 #include "core/Allowance.h"
 #include "core/CombatBehaviorRE.h"
+#include "core/ProbeClaimSet.h"
 #include "core/T1Probe.h"
 
 #include <array>
@@ -46,16 +47,24 @@
 //   is no longer the thing actually called.
 // * GUARD (INVARIANTS #17 adapt/degrade-never-crash): the deny call requires
 //   the SAME actor-resolution the observe path already proved reliable --
-//   fidA == claim OR fidB == claim (the `+0x158` ambiguity, resolved via
-//   EITHER hypothesis) -- before touching `control` for a write. The first
+//   the resolved actor (via EITHER +0x158 hypothesis) is IN THE CLAIM SET
+//   (core/ProbeClaimSet) -- before touching `control` for a write. The first
 //   build wrongly narrowed this to hypothesis A alone; field data showed
 //   observe (A-or-B) resolves the correct actor on every hit while hypothesis
-//   A alone does not reliably match on this runtime, so the deny never fired
-//   even though the actor WAS resolvable -- fixed 2026-09-03 to use exactly
-//   what observe already demonstrated works, not a narrower re-check. If
-//   NEITHER hypothesis resolves (control genuinely unverifiable), the deny is
-//   skipped (warn-once) and the hit falls through to a plain observe -- never
-//   an unverified call.
+//   A alone does not reliably match on this runtime (RESOLVED: hypothesis B
+//   is the correct reading on 1.6.1170), so the deny never fired even though
+//   the actor WAS resolvable -- fixed 2026-09-03 to use exactly what observe
+//   already demonstrated works, not a narrower re-check. If NEITHER
+//   hypothesis resolves into the claim set (control genuinely unverifiable),
+//   the deny is skipped (warn-once) and the hit falls through to a plain
+//   observe -- never an unverified call.
+//
+// * MULTI-CLAIM (2026-09-03): the claim generalized from one actor to a SET
+//   (core/ProbeClaimSet, shared with AliasPkgProbe's 0x49 offer) so a whole
+//   battle can be claimed and denied at once -- NumpadEnter/Numpad3 toggle
+//   one actor in/out, Numpad6 claims every in-combat NPC in range (or clears
+//   the set if non-empty), Numpad0 (the existing release-all key) also
+//   clears it. Observe/deny apply uniformly to every actor in the set.
 // ============================================================================
 
 extern "C" __declspec(dllimport) std::uint32_t __stdcall GetCurrentThreadId();
@@ -65,16 +74,19 @@ namespace apmf::t1probe {
     namespace {
 
         // Probe/test hotkeys use the numpad (F-keys are occupied by the game/
-        // modlist). NumpadEnter is the SHARED claim/release key: T1Probe and
-        // AliasPkgProbe (0x49) both listen for the SAME scancode, so one press
-        // claims/releases the aimed NPC across both at once (each keeps its
-        // own independent claim state but the same toggle logic drives them
-        // in lockstep -- see Docs/PROBE-ALLOWANCE.md). T4 (TESActionData::
-        // Process) was removed 2026-09-03 -- its call-site patch collided
-        // with SCAR.dll and caused an execute-AV CTD in live combat.
-        constexpr std::uint32_t kClaimKey        = 0x9C;   // NumpadEnter -- claim/toggle T1 observe on the aimed NPC (shared)
-        constexpr std::uint32_t kDenyKey         = 0xB5;   // NumpadSlash -- toggle Phase-1 Attack-leaf deny on the claimed NPC
-        constexpr std::uint32_t kClaimNearestKey = 0x51;   // Numpad3 -- claim/toggle the NEAREST in-combat NPC, no aim needed (shared)
+        // modlist). NumpadEnter/Numpad3/Numpad6 all add/remove from the SAME
+        // SHARED claim SET (core/ProbeClaimSet) that AliasPkgProbe (0x49) also
+        // reads -- T1 observe/deny and the 0x49 offer apply to EVERY actor in
+        // the set at once (2026-09-03: generalized from a single claimed actor
+        // so marth can claim a whole battle and watch the deny stop it visibly).
+        // T4 (TESActionData::Process) was removed 2026-09-03 -- its call-site
+        // patch collided with SCAR.dll and caused an execute-AV CTD in combat.
+        constexpr std::uint32_t kClaimKey        = 0x9C;   // NumpadEnter -- toggle the AIMED NPC in/out of the claim set (shared)
+        constexpr std::uint32_t kDenyKey         = 0xB5;   // NumpadSlash -- toggle Phase-1 Attack-leaf deny for the whole claim set
+        constexpr std::uint32_t kClaimNearestKey = 0x51;   // Numpad3 -- toggle the NEAREST in-combat NPC in/out, no aim needed (shared)
+        constexpr std::uint32_t kClaimAllKey     = 0x4D;   // Numpad6 -- claim ALL in-combat NPCs in range at once, or clear the set if non-empty (shared)
+        constexpr std::uint32_t kReleaseAllKey   = 0x52;   // Numpad0 -- the existing channel test-surface release-all key ALSO clears this claim set
+        constexpr float         kClaimAllRadius  = 4096.0f;   // generous battle radius (game units) around the player
 
         std::atomic<bool> g_installed{ false };
 
@@ -87,7 +99,6 @@ namespace apmf::t1probe {
         std::atomic<std::uintptr_t> g_setFailed{ 0 };     // derived SetFailed address -- DIAGNOSTIC/LOG ONLY, never called directly
         std::atomic<std::uintptr_t> g_forceFailAct{ 0 };  // ForceFail's ORIGINAL act() -- the actual deny mechanism (see file header)
 
-        std::atomic<RE::FormID> g_claimActor{ 0 };
         std::atomic<bool>       g_denyAttack{ false };
         std::atomic<bool>       g_denySkippedLogged{ false };   // warn-once for the "control not plausible" guard
 
@@ -130,6 +141,30 @@ namespace apmf::t1probe {
                 if (!best || d < bestDist) { best = a; bestDist = d; }
             }
             return best;
+        }
+
+        // Bulk no-aim claim: add EVERY NPC currently in combat within
+        // kClaimAllRadius of the player, any allegiance, to the shared claim
+        // set at once -- the whole-battle visual test (claim everyone, arm
+        // Phase 1, watch the fight stop landing hits). Same filter as
+        // NearestCombatant() plus a distance cutoff so a claim doesn't reach
+        // across the whole loaded world. Returns the count actually added
+        // (duplicates already in the set, and anything past kCap, don't count).
+        std::size_t ClaimAllInCombat() {
+            auto* pl     = RE::ProcessLists::GetSingleton();
+            auto* player = RE::PlayerCharacter::GetSingleton();
+            if (!pl || !player) return 0;
+            const RE::NiPoint3 playerPos = player->GetPosition();
+
+            std::size_t added = 0;
+            for (auto& handle : pl->highActorHandles) {
+                auto ptr = handle.get();
+                RE::Actor* a = ptr.get();
+                if (!a || a->IsPlayerRef() || !a->Is3DLoaded() || !a->IsInCombat()) continue;
+                if (a->GetPosition().GetDistance(playerPos) > kClaimAllRadius) continue;
+                if (apmf::probeclaim::Add(a->GetFormID())) ++added;
+            }
+            return added;
         }
 
         // Find the (already-hooked) original act() for `vtRuntimeAddr`, disassemble
@@ -207,8 +242,7 @@ namespace apmf::t1probe {
             if (oit == g_orig.end()) return a_control;   // foreign vtable -- benign passthrough, touch nothing
             auto orig = reinterpret_cast<apmf::cbt::Act_t>(oit->second);
 
-            const RE::FormID claim = g_claimActor.load(std::memory_order_relaxed);
-            if (claim == 0) return orig(a_this, a_control);   // near-zero cost: no claim, nothing to observe
+            if (apmf::probeclaim::Count() == 0) return orig(a_this, a_control);   // near-zero cost: nothing claimed
 
             // Resolve the deliberating actor -- BOTH hypotheses (§5 ambiguity).
             RE::FormID fidA = 0, fidB = 0;
@@ -232,11 +266,17 @@ namespace apmf::t1probe {
             if (!g_ambiguityLogged.exchange(true) && a_control) {
                 spdlog::info("[t1probe] +0x158 AMBIGUITY: hypothesis A (control+0x158 == CombatController* directly, "
                              "attackerHandle@0x28) resolved actor=0x{}; hypothesis B (control+0x158 -> +0x20 -> "
-                             "CombatController*, attackerHandle@0x28) resolved actor=0x{}. Claimed actor is 0x{}.",
-                             apmf::log::Hex(fidA), apmf::log::Hex(fidB), apmf::log::Hex(claim));
+                             "CombatController*, attackerHandle@0x28) resolved actor=0x{}. Claim set has {} actor(s).",
+                             apmf::log::Hex(fidA), apmf::log::Hex(fidB), apmf::probeclaim::Count());
             }
 
-            if (fidA != claim && fidB != claim) return orig(a_this, a_control);   // not our claimed actor -- passthrough
+            // In the claim SET (either hypothesis) -- the same test the deny guard
+            // below reuses verbatim (INVARIANTS #17: use what observe already proved
+            // reliable, never a narrower re-check).
+            const bool inA = apmf::probeclaim::Contains(fidA);
+            const bool inB = apmf::probeclaim::Contains(fidB);
+            if (!inA && !inB) return orig(a_this, a_control);   // not one of our claimed actors -- passthrough
+            const RE::FormID resolvedActor = inA ? fidA : fidB;
 
             g_hitsClaimed.fetch_add(1, std::memory_order_relaxed);
             g_lastThread.store(GetCurrentThreadId(), std::memory_order_relaxed);
@@ -254,28 +294,20 @@ namespace apmf::t1probe {
                     auto* getNameSlot = reinterpret_cast<GetName_t*>(vt + 1 * sizeof(void*));
                     const char* liveName = getNameSlot && *getNameSlot ? (*getNameSlot)(a_this) : nullptr;
                     spdlog::info("[t1probe] FIRST FIRE leaf='{}' (engine GetName()='{}') actor=0x{} thread={}.",
-                                 ourName, liveName ? liveName : "<null>", apmf::log::Hex(claim), GetCurrentThreadId());
+                                 ourName, liveName ? liveName : "<null>", apmf::log::Hex(resolvedActor), GetCurrentThreadId());
                 }
                 break;
             }
 
-            // Phase 1: deny ONLY the Attack leaf, ONLY while armed, ONLY for the claim.
-            // GUARD (INVARIANTS #17 adapt/degrade-never-crash), FIXED (2026-09-03):
-            // the deny's "is this the claimed actor?" check now uses EXACTLY the
-            // same resolution the observe path already proved reliable -- fidA ==
-            // claim OR fidB == claim, the identical condition that gates every
-            // FIRST FIRE / g_hitsClaimed accounting above (control flow cannot even
-            // REACH this point unless that condition already held: the early
-            // `if (fidA != claim && fidB != claim) return orig(...)` above already
-            // filtered out every non-matching hit). The first build wrongly
-            // narrowed this to hypothesis A alone ("the CPR-backed reading"),
-            // which field data showed does NOT reliably match on this runtime even
-            // though observe (A-or-B) resolves the correct actor on every hit --
-            // that mismatch is exactly why the deny never fired. Observe's
-            // demonstrated success is the bar, not which specific hypothesis wins.
+            // Phase 1: deny ONLY the Attack leaf, ONLY while armed, ONLY for actors IN
+            // THE CLAIM SET. GUARD (INVARIANTS #17 adapt/degrade-never-crash): reuses
+            // `inA || inB`, computed above -- EXACTLY the same resolution the observe
+            // path already proved reliable, no narrower re-check (the earlier bug:
+            // narrowing this to hypothesis A alone made the deny never fire even
+            // though observe, A-or-B, resolved the actor correctly every hit).
             if (vt == g_attackVt && g_denyAttack.load(std::memory_order_relaxed)) {
                 const auto denyAct = g_forceFailAct.load(std::memory_order_relaxed);
-                const bool actorResolved = (fidA == claim || fidB == claim);   // same test observe already passed
+                const bool actorResolved = (inA || inB);   // explicit guard, even though control flow above already guarantees it
                 if (denyAct && a_control && actorResolved) {
                     g_hitsAttackDenied.fetch_add(1, std::memory_order_relaxed);
                     // Invoke ForceFail's own ORIGINAL act() -- the exact 2-arg
@@ -324,35 +356,61 @@ namespace apmf::t1probe {
         ResolveDenyMechanism();
 
         spdlog::info("[t1probe] ARMED: {} of 70 leaf vtables hooked (slot 0x02, act/Enter, OBSERVE-only by default). "
-                     "Attack vtable {}. NumpadEnter (DIK 0x{}, shared with the 0x49 probe) claims/toggles the aimed NPC; "
-                     "Numpad3 (DIK 0x{}, shared with the 0x49 probe) claims/toggles the NEAREST in-combat NPC, no aim "
-                     "needed; NumpadSlash (DIK 0x{}) toggles Phase-1 Attack-leaf deny once claimed.",
+                     "Attack vtable {}. NumpadEnter (DIK 0x{}) / Numpad3 (DIK 0x{}, nearest in-combat, no aim) toggle "
+                     "one actor in/out of the SHARED claim set (also read by the 0x49 probe); Numpad6 (DIK 0x{}) "
+                     "claims ALL in-combat NPCs within {:.0f} units at once, or clears the set if non-empty; "
+                     "Numpad0 (DIK 0x{}) also clears it. NumpadSlash (DIK 0x{}) toggles Phase-1 Attack-leaf deny for "
+                     "the WHOLE claim set.",
                      n, g_attackVt ? "resolved" : "NOT resolved",
-                     apmf::log::Hex(kClaimKey, 2), apmf::log::Hex(kClaimNearestKey, 2), apmf::log::Hex(kDenyKey, 2));
+                     apmf::log::Hex(kClaimKey, 2), apmf::log::Hex(kClaimNearestKey, 2), apmf::log::Hex(kClaimAllKey, 2),
+                     kClaimAllRadius, apmf::log::Hex(kReleaseAllKey, 2), apmf::log::Hex(kDenyKey, 2));
     }
 
     void OnHotkey(std::uint32_t a_code) {
         if (!g_installed.load(std::memory_order_relaxed)) return;
 
+        if (a_code == kReleaseAllKey) {   // Numpad0 -- the channel test surface's own release-all also clears this set
+            if (apmf::probeclaim::Count() > 0) {
+                apmf::probeclaim::Clear();
+                g_denyAttack.store(false, std::memory_order_relaxed);
+                spdlog::info("[t1probe] Numpad0 release-all -- cleared the shared claim set.");
+            }
+            return;
+        }
+
         if (a_code == kDenyKey) {
-            if (g_claimActor.load(std::memory_order_relaxed) == 0) {
-                spdlog::warn("[t1probe] Phase 1 REFUSED -- claim an NPC with NumpadEnter first.");
+            if (apmf::probeclaim::Count() == 0) {
+                spdlog::warn("[t1probe] Phase 1 REFUSED -- claim at least one NPC first (NumpadEnter/Numpad3/Numpad6).");
                 return;
             }
             const bool now = !g_denyAttack.load(std::memory_order_relaxed);
             g_denyAttack.store(now, std::memory_order_relaxed);
-            spdlog::info("[t1probe] Phase 1 Attack-leaf deny {} for the claimed actor.", now ? "ENABLED" : "DISABLED");
+            spdlog::info("[t1probe] Phase 1 Attack-leaf deny {} for the claim set ({} actor(s)).",
+                         now ? "ENABLED" : "DISABLED", apmf::probeclaim::Count());
             return;
         }
+
+        if (a_code == kClaimAllKey) {   // Numpad6 -- claim-all toggle: populate if empty, else clear everything
+            if (apmf::probeclaim::Count() > 0) {
+                const std::size_t n = apmf::probeclaim::Count();
+                apmf::probeclaim::Clear();
+                g_denyAttack.store(false, std::memory_order_relaxed);
+                spdlog::info("[t1probe] Numpad6 -- claim set cleared ({} actor(s) released).", n);
+            } else {
+                const std::size_t n = ClaimAllInCombat();
+                if (n == 0)
+                    spdlog::warn("[t1probe] Numpad6 -- no in-combat NPCs found within {:.0f} units; nothing claimed.",
+                                 kClaimAllRadius);
+                else
+                    spdlog::info("[t1probe] Numpad6 -- claimed {} in-combat NPC(s) within {:.0f} units of the player. "
+                                 "Arm NumpadSlash to deny the Attack leaf for all of them at once.",
+                                 n, kClaimAllRadius);
+            }
+            return;
+        }
+
         if (a_code != kClaimKey && a_code != kClaimNearestKey) return;
 
-        const RE::FormID cur = g_claimActor.load(std::memory_order_relaxed);
-        if (cur != 0) {
-            g_claimActor.store(0, std::memory_order_relaxed);
-            g_denyAttack.store(false, std::memory_order_relaxed);
-            spdlog::info("[t1probe] RELEASED claim on 0x{} (observation + any Phase-1 deny stop).", apmf::log::Hex(cur));
-            return;
-        }
         auto* actor = (a_code == kClaimKey) ? CrosshairActor() : NearestCombatant();
         if (!actor) {
             spdlog::warn("[t1probe] claim REFUSED -- {}", a_code == kClaimKey
@@ -360,26 +418,33 @@ namespace apmf::t1probe {
                          : "no in-combat NPC found near the player.");
             return;
         }
-        g_claimActor.store(actor->GetFormID(), std::memory_order_relaxed);
-        spdlog::info("[t1probe] CLAIMED 0x{} '{}' ({}) -- Phase 0 observation starts now (watch for FIRST FIRE lines).",
-                     apmf::log::Hex(actor->GetFormID()), actor->GetName() ? actor->GetName() : "?",
-                     a_code == kClaimKey ? "aimed" : "nearest in-combat");
+        const RE::FormID id = actor->GetFormID();
+        if (apmf::probeclaim::Toggle(id)) {
+            spdlog::info("[t1probe] CLAIMED 0x{} '{}' ({}) -- added to the claim set ({} total). Phase 0 observation "
+                         "starts now (watch for FIRST FIRE lines).", apmf::log::Hex(id),
+                         actor->GetName() ? actor->GetName() : "?", a_code == kClaimKey ? "aimed" : "nearest in-combat",
+                         apmf::probeclaim::Count());
+        } else {
+            spdlog::info("[t1probe] RELEASED 0x{} '{}' from the claim set ({} remaining).", apmf::log::Hex(id),
+                         actor->GetName() ? actor->GetName() : "?", apmf::probeclaim::Count());
+            if (apmf::probeclaim::Count() == 0) g_denyAttack.store(false, std::memory_order_relaxed);
+        }
     }
 
     void OncePerFrame() {
         if (!g_installed.load(std::memory_order_relaxed)) return;
-        const RE::FormID claim = g_claimActor.load(std::memory_order_relaxed);
-        if (claim == 0) return;
+        const std::size_t claimed = apmf::probeclaim::Count();
+        if (claimed == 0) return;
 
         static std::uint32_t s_frames = 0;
         if ((++s_frames % 300) != 0) return;   // ~5s @ 60fps
-        spdlog::info("[t1probe] census: claim=0x{} hits={} attackDenied={} lastThread={}.",
-                     apmf::log::Hex(claim), g_hitsClaimed.load(std::memory_order_relaxed),
+        spdlog::info("[t1probe] census: claimedCount={} hits={} attackDenied={} lastThread={}.",
+                     claimed, g_hitsClaimed.load(std::memory_order_relaxed),
                      g_hitsAttackDenied.load(std::memory_order_relaxed), g_lastThread.load(std::memory_order_relaxed));
     }
 
     void ClearOnPreLoad() {
-        g_claimActor.store(0, std::memory_order_relaxed);
+        apmf::probeclaim::Clear();   // shared with the 0x49 probe -- idempotent if it clears first
         g_denyAttack.store(false, std::memory_order_relaxed);
     }
 

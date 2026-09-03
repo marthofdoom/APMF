@@ -1,6 +1,7 @@
 #include "PCH.h"
 #include "core/Log.h"
 #include "core/AliasPkgProbe.h"
+#include "core/ProbeClaimSet.h"
 
 #include "RE/E/ExtraAliasInstanceArray.h"
 
@@ -57,19 +58,14 @@ namespace apmf::probe {
         constexpr RE::FormID       kProbePackageForm = 0x000956B8;
         // The test hotkeys (DirectInput scancodes). Probe/test hotkeys use the
         // numpad (F-keys are occupied by the game/modlist); SAME scancodes as
-        // T1Probe's claim keys, so one press claims/releases the SAME actor across
-        // both probes at once (see Docs/PROBE-ALLOWANCE.md).
-        constexpr std::uint32_t    kProbeKey         = 0x9C;   // NumpadEnter -- claim/toggle the aimed NPC
-        constexpr std::uint32_t    kProbeNearestKey  = 0x51;   // Numpad3 -- claim/toggle the NEAREST in-combat NPC, no aim needed
+        // T1Probe's claim keys, driving the SAME shared claim set (core/
+        // ProbeClaimSet) -- see Docs/PROBE-ALLOWANCE.md. Numpad6 (bulk claim-all)
+        // is T1Probe's alone; this probe just reads whatever ends up in the set.
+        constexpr std::uint32_t    kProbeKey         = 0x9C;   // NumpadEnter -- toggle the aimed NPC in/out of the claim set
+        constexpr std::uint32_t    kProbeNearestKey  = 0x51;   // Numpad3 -- toggle the NEAREST in-combat NPC in/out, no aim needed
 
         // ---- Hook state ----
         std::atomic<bool>          g_armed{ false };
-
-        // ---- The single-actor package-offer CLAIM (probe scope). Two atomics =>
-        // lock-free read in the 0x49 thunk (game thread) + lock-free write from the
-        // hotkey (input thread). One claim at a time is all the probe needs. ----
-        std::atomic<RE::FormID>    g_claimActor{ 0 };   // 0 = no claim
-        std::atomic<RE::FormID>    g_claimPkg{ 0 };     // the offered package's FormID
 
         // ---- Pending game-thread EvaluatePackage (queued by the hotkey, run in
         // OncePerFrame on the true game thread). ----
@@ -164,11 +160,13 @@ namespace apmf::probe {
                                  apmf::log::Hex(orig ? orig->GetFormID() : 0), Native::PkgType(orig));
                 }
 
-                // REDIRECT: if this actor is our claim and we have a client package, offer
-                // it instead. The engine adopts it and runs it natively (design.md §5a).
-                const RE::FormID want = g_claimPkg.load(std::memory_order_relaxed);
-                if (want != 0 && a_this->GetFormID() == g_claimActor.load(std::memory_order_relaxed)) {
-                    if (auto* pkg = RE::TESForm::LookupByID<RE::TESPackage>(want)) {
+                // REDIRECT: if this actor is IN THE SHARED CLAIM SET (core/ProbeClaimSet
+                // -- T1Probe's NumpadEnter/Numpad3/Numpad6 all write into the SAME set),
+                // offer the client package instead. The engine adopts it and runs it
+                // natively (design.md §5a). kProbePackageForm is a single constant offered
+                // to every claimed actor -- no per-actor "which package" bookkeeping needed.
+                if (kProbePackageForm != 0 && apmf::probeclaim::Contains(a_this->GetFormID())) {
+                    if (auto* pkg = RE::TESForm::LookupByID<RE::TESPackage>(kProbePackageForm)) {
                         g_redirects.fetch_add(1, std::memory_order_relaxed);
                         return pkg;
                     }
@@ -207,19 +205,11 @@ namespace apmf::probe {
         if (!g_armed.load(std::memory_order_relaxed)) return;
         if (a_code != kProbeKey && a_code != kProbeNearestKey) return;
 
-        // RELEASE if the aimed NPC (or any) is already claimed; else CLAIM the aimed
-        // (or nearest-in-combat) NPC.
-        const RE::FormID cur = g_claimActor.load(std::memory_order_relaxed);
-        if (cur != 0) {
-            g_pendActor.store(cur, std::memory_order_relaxed);
-            g_claimPkg.store(0, std::memory_order_relaxed);
-            g_claimActor.store(0, std::memory_order_relaxed);   // stop redirecting BEFORE the release eval
-            g_pend.store(Pend::kRelease, std::memory_order_relaxed);
-            spdlog::info("[probe0x49] RELEASE queued -- dropping the offer claim on 0x{} (framework package resumes).",
-                         apmf::log::Hex(cur));
+        if (kProbePackageForm == 0) {
+            spdlog::warn("[probe0x49] claim REFUSED -- kProbePackageForm=0 (Phase 0 only). Set a real package "
+                         "FormID + rebuild to run Phases 1-3.");
             return;
         }
-
         auto* actor = (a_code == kProbeKey) ? CrosshairActor() : NearestCombatant();
         if (!actor) {
             spdlog::warn("[probe0x49] claim REFUSED -- {}", a_code == kProbeKey
@@ -227,19 +217,26 @@ namespace apmf::probe {
                          : "no in-combat NPC found near the player.");
             return;
         }
-        if (kProbePackageForm == 0) {
-            spdlog::warn("[probe0x49] claim REFUSED -- kProbePackageForm=0 (Phase 0 only). Set a real package "
-                         "FormID + rebuild to run Phases 1-3.");
-            return;
-        }
+
+        // TOGGLE this one actor in/out of the SHARED claim set (core/ProbeClaimSet,
+        // also written by T1Probe's NumpadEnter/Numpad3/Numpad6 and read by this
+        // probe's thunk via Contains()). Queue an immediate EvaluatePackage so the
+        // flip is visible within one eval rather than waiting for the engine's next
+        // natural poll -- kept for the single-target keys; the bulk Numpad6 claim
+        // (T1Probe.cpp) intentionally skips this nudge (see Docs/PROBE-ALLOWANCE.md
+        // -- bulk claims are by definition in-combat, so no package effect would be
+        // visible anyway; combat AI overrides the package regardless).
         const RE::FormID id = actor->GetFormID();
-        g_claimPkg.store(kProbePackageForm, std::memory_order_relaxed);
-        g_claimActor.store(id, std::memory_order_relaxed);        // redirect takes effect on the next 0x49
+        const bool added = apmf::probeclaim::Toggle(id);
         g_pendActor.store(id, std::memory_order_relaxed);
-        g_pend.store(Pend::kEngage, std::memory_order_relaxed);
-        spdlog::info("[probe0x49] ENGAGE queued -- offering package 0x{} to 0x{} '{}'.",
-                     apmf::log::Hex(kProbePackageForm), apmf::log::Hex(id),
-                     actor->GetName() ? actor->GetName() : "?");
+        g_pend.store(added ? Pend::kEngage : Pend::kRelease, std::memory_order_relaxed);
+        if (added)
+            spdlog::info("[probe0x49] ENGAGE queued -- offering package 0x{} to 0x{} '{}'.",
+                         apmf::log::Hex(kProbePackageForm), apmf::log::Hex(id),
+                         actor->GetName() ? actor->GetName() : "?");
+        else
+            spdlog::info("[probe0x49] RELEASE queued -- dropping the offer claim on 0x{} (framework package resumes).",
+                         apmf::log::Hex(id));
     }
 
     void OncePerFrame() {
@@ -275,22 +272,22 @@ namespace apmf::probe {
             spdlog::warn("[probe0x49] PHASE 0: 0x49 has fired 0 times so far. If this stays 0, the vfunc is "
                          "devirtualised/inlined on this runtime -- the mechanism is DEAD (report + stop).");
         } else {
-            spdlog::info("[probe0x49] PHASE 0 census: 0x49 hits={}, redirects={}, thread={}, last returned pkg=0x{}. "
-                         "Hook is LIVE.", hits, g_redirects.load(std::memory_order_relaxed),
+            spdlog::info("[probe0x49] PHASE 0 census: 0x49 hits={}, redirects={}, thread={}, last returned pkg=0x{}, "
+                         "claimSet={}. Hook is LIVE.", hits, g_redirects.load(std::memory_order_relaxed),
                          g_thread.load(std::memory_order_relaxed),
-                         apmf::log::Hex(g_lastRetPkg.load(std::memory_order_relaxed)));
+                         apmf::log::Hex(g_lastRetPkg.load(std::memory_order_relaxed)), apmf::probeclaim::Count());
         }
     }
 
     void ClearOnPreLoad() {
-        const RE::FormID cur = g_claimActor.exchange(0, std::memory_order_relaxed);
-        g_claimPkg.store(0, std::memory_order_relaxed);
+        const std::size_t n = apmf::probeclaim::Count();
+        apmf::probeclaim::Clear();   // shared with T1Probe -- idempotent if it clears first
         g_pend.store(Pend::kNone, std::memory_order_relaxed);
         g_pendActor.store(0, std::memory_order_relaxed);
-        if (cur != 0)
-            spdlog::info("[probe0x49] Phase 3: dropped offer claim on 0x{} for kPreLoadGame -- no engine call "
-                         "(actor is about to be replaced); the framework package resumes on the incoming save's "
-                         "own first eval, no latch.", apmf::log::Hex(cur));
+        if (n != 0)
+            spdlog::info("[probe0x49] Phase 3: dropped {} offer claim(s) for kPreLoadGame -- no engine call "
+                         "(actors are about to be replaced); framework packages resume on the incoming save's "
+                         "own first eval, no latch.", n);
     }
 
 }

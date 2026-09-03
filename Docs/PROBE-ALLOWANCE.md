@@ -30,27 +30,32 @@ CLAUDE.md #4 / ALLOWANCE-TEMPLATE.md §5).
 not a Deck-reachability issue, they're simply occupied by the game/modlist already.
 Every future probe set should default to numpad without re-litigating this.
 
-Consolidated to the fewest keys: ONE shared claim key drives T1 + the 0x49 redirect at
-once (aim an NPC, press it — both claim the same actor in lockstep, since each
-independently applies the same toggle logic to the same scancode), plus one dedicated
-toggle key each for T1's Phase-1 deny and the two native-bit flags. The channel-demo
-numpad keys are not needed for this pass and are freely overridden.
+**The claim is a SET, not a single actor (generalized 2026-09-03).** `core/
+ProbeClaimSet` is a small shared, lock-free, fixed-capacity (64) FormID set that T1
+observe/deny and the 0x49 offer all read/write — so any number of actors can be
+claimed at once and the SAME operations (observe, Attack-leaf deny, package offer)
+apply to every one of them. This is what makes the whole-battle visual test possible:
+claim everyone fighting, arm the deny, watch the WHOLE fight stop landing hits at
+once, not just one NPC.
 
 | Key | DIK | Probe | Action |
 |---|---|---|---|
-| NumpadEnter | 0x9C | T1 + 0x49 redirect (SHARED) | Claim/release the crosshair-AIMED NPC — one press claims it for T1 Phase 0 observe AND the 0x49 package-offer engage, both at once; press again (regardless of current aim) to release both |
-| Numpad3 | 0x51 | T1 + 0x49 redirect (SHARED) | **No aim needed:** claim/release the NEAREST NPC currently IN COMBAT to the player, any allegiance (follower or enemy, whoever's fighting nearest) — same shared claim as NumpadEnter, so T1 observe + the 0x49 redirect both apply; refuses (logs, no-op) if nothing nearby is in combat, never claims a random calm NPC |
-| NumpadSlash | 0xB5 | T1 | Toggle Phase 1 DENY (the `CombatBehaviorAttack` leaf only) on the claimed NPC — refuses if nothing is claimed |
+| NumpadEnter | 0x9C | T1 + 0x49 redirect (SHARED) | Toggle the crosshair-AIMED NPC in/out of the shared claim set — adds it (T1 observe + the 0x49 package-offer both start applying to it) if absent, removes it if already present |
+| Numpad3 | 0x51 | T1 + 0x49 redirect (SHARED) | **No aim needed:** same toggle as NumpadEnter, but on the NEAREST NPC currently IN COMBAT to the player, any allegiance (follower or enemy, whoever's fighting nearest); refuses (logs, no-op) if nothing nearby is in combat, never claims a random calm NPC |
+| Numpad6 | 0x4D | T1 + 0x49 redirect (SHARED) | **Whole-battle claim, no aim needed:** if the set is empty, claims EVERY NPC currently in combat within 4096 units of the player (any allegiance) in one press and logs the count; if the set is non-empty, CLEARS the whole set instead (a toggle, mirroring Numpad0) |
+| NumpadSlash | 0xB5 | T1 | Toggle Phase 1 DENY (the `CombatBehaviorAttack` leaf only) for EVERY actor currently in the claim set at once — refuses if the set is empty |
 | Numpad1 | 0x4F | Native-bit | Toggle `kAttackingDisabled` on the crosshair-aimed NPC |
 | Numpad2 | 0x50 | Native-bit | Toggle `kCastingDisabled` on the crosshair-aimed NPC |
-| Numpad0 | 0x52 | (test surface) | Release ALL controlled NPCs — unrelated to these probes, listed for collision-avoidance |
+| Numpad0 | 0x52 | (test surface) + T1/0x49 | Release ALL controlled channel-test NPCs (its original job) AND clears the shared probe claim set |
 
-NumpadEnter/Numpad3 must be pressed before NumpadSlash (NumpadSlash refuses without a
-live T1 claim). The native-bit probe has no claim step — Numpad1/Numpad2 act on
-whatever the crosshair is aimed at on that press, independent of any claim. Both
-claim-based probes (T1, 0x49) release their claim (no engine call, nothing to restore)
-on `kPreLoadGame`. Numpad3 is the one-key battle-testing shortcut: walk into a fight,
-press it, the nearest combatant is claimed with no aiming required.
+NumpadEnter/Numpad3/Numpad6 must claim at least one actor before NumpadSlash (which
+refuses on an empty set). The native-bit probe has no claim step — Numpad1/Numpad2 act
+on whatever the crosshair is aimed at on that press, independent of the claim set. Both
+claim-based probes (T1, 0x49) clear the shared set (no engine call, nothing to restore)
+on `kPreLoadGame`. **The one-key whole-battle test:** walk into a fight, press Numpad6
+(claims everyone), press NumpadSlash (arms the deny) — the entire fight should visibly
+stop landing attacks (circling/blocking instead), and the census should show
+`attackDenied` climbing across many actors, not just one.
 
 ## Probe 1 — T1: combat behavior-tree leaf `Enter`/`act`
 
@@ -94,9 +99,11 @@ this resolution required NO code change** — the template was already robust to
 whichever hypothesis turns out correct, and would stay robust if a future runtime
 flips which one resolves.
 
-**Phase 1 (DENY):** NumpadSlash denies ONLY the `CombatBehaviorAttack` leaf for the claimed
-actor via the engine's own failure protocol, `CombatBehaviorTreeControl::SetFailed(true)`
-— never calling `orig()` for that hit.
+**Phase 1 (DENY):** NumpadSlash denies ONLY the `CombatBehaviorAttack` leaf, for EVERY
+actor currently in the shared claim set (`core/ProbeClaimSet`, generalized 2026-09-03
+from a single claimed actor so a whole battle can be denied at once), via the engine's
+own failure protocol, `CombatBehaviorTreeControl::SetFailed(true)` — never calling
+`orig()` for that hit.
 
 **Field-crashed once, redesigned (2026-09-03).** The first build derived `SetFailed`'s
 address by disassembling `CombatBehaviorForceFail`'s original `act()` body for its
@@ -148,6 +155,14 @@ unverified call.
 **Pass/fail: T1 PASSES — both observe and deny are PROVEN.** Leaves fire through the
 installed vtables (dispatch + RTTI derivation real on this build) AND the Attack-leaf
 deny fires and falls back cleanly with no stutter/re-entry storm/CTD.
+
+**Multi-claim (whole-battle visual test), added 2026-09-03, NOT YET field-run:** the
+above results were single-actor (Vampire Fledgling / Cicero individually). The claim
+generalized to a set (`core/ProbeClaimSet`) the same session the single-actor numbers
+came in, so Numpad6 (claim every in-combat NPC in range) + NumpadSlash (deny for the
+whole set) is new and awaits its own field pass — success criterion: census
+`attackDenied` climbing across MULTIPLE actors at once, and the whole fight visibly
+stops landing hits (circling/blocking instead), not just one NPC.
 
 ## Probe 2 — 0x49 package-offer REDIRECT (Phases 1-3)
 
