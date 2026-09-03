@@ -33,17 +33,19 @@ numpad keys are not needed for this pass and are freely overridden.
 
 | Key | DIK | Probe | Action |
 |---|---|---|---|
-| NumpadEnter | 0x9C | T1 + 0x49 redirect (SHARED) | Claim/release the crosshair-aimed NPC — one press claims it for T1 Phase 0 observe AND the 0x49 package-offer engage, both at once; press again (regardless of current aim) to release both |
-| NumpadSlash | 0xB5 | T1 | Toggle Phase 1 DENY (the `CombatBehaviorAttack` leaf only) on the NumpadEnter-claimed NPC — refuses if nothing is claimed |
+| NumpadEnter | 0x9C | T1 + 0x49 redirect (SHARED) | Claim/release the crosshair-AIMED NPC — one press claims it for T1 Phase 0 observe AND the 0x49 package-offer engage, both at once; press again (regardless of current aim) to release both |
+| Numpad3 | 0x51 | T1 + 0x49 redirect (SHARED) | **No aim needed:** claim/release the NEAREST NPC currently IN COMBAT to the player, any allegiance (follower or enemy, whoever's fighting nearest) — same shared claim as NumpadEnter, so T1 observe + the 0x49 redirect both apply; refuses (logs, no-op) if nothing nearby is in combat, never claims a random calm NPC |
+| NumpadSlash | 0xB5 | T1 | Toggle Phase 1 DENY (the `CombatBehaviorAttack` leaf only) on the claimed NPC — refuses if nothing is claimed |
 | Numpad1 | 0x4F | Native-bit | Toggle `kAttackingDisabled` on the crosshair-aimed NPC |
 | Numpad2 | 0x50 | Native-bit | Toggle `kCastingDisabled` on the crosshair-aimed NPC |
 | Numpad0 | 0x52 | (test surface) | Release ALL controlled NPCs — unrelated to these probes, listed for collision-avoidance |
 
-NumpadEnter must be pressed before NumpadSlash (NumpadSlash refuses without a live T1
-claim). The native-bit probe has no claim step — Numpad1/Numpad2 act on whatever the
-crosshair is aimed at on that press, independent of the NumpadEnter claim. Both
+NumpadEnter/Numpad3 must be pressed before NumpadSlash (NumpadSlash refuses without a
+live T1 claim). The native-bit probe has no claim step — Numpad1/Numpad2 act on
+whatever the crosshair is aimed at on that press, independent of any claim. Both
 claim-based probes (T1, 0x49) release their claim (no engine call, nothing to restore)
-on `kPreLoadGame`.
+on `kPreLoadGame`. Numpad3 is the one-key battle-testing shortcut: walk into a fight,
+press it, the nearest combatant is claimed with no aiming required.
 
 ## Probe 1 — T1: combat behavior-tree leaf `Enter`/`act`
 

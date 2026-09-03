@@ -67,8 +67,9 @@ namespace apmf::t1probe {
         // in lockstep -- see Docs/PROBE-ALLOWANCE.md). T4 (TESActionData::
         // Process) was removed 2026-09-03 -- its call-site patch collided
         // with SCAR.dll and caused an execute-AV CTD in live combat.
-        constexpr std::uint32_t kClaimKey = 0x9C;   // NumpadEnter -- claim/toggle T1 observe on the aimed NPC (shared)
-        constexpr std::uint32_t kDenyKey  = 0xB5;   // NumpadSlash -- toggle Phase-1 Attack-leaf deny on the claimed NPC
+        constexpr std::uint32_t kClaimKey        = 0x9C;   // NumpadEnter -- claim/toggle T1 observe on the aimed NPC (shared)
+        constexpr std::uint32_t kDenyKey         = 0xB5;   // NumpadSlash -- toggle Phase-1 Attack-leaf deny on the claimed NPC
+        constexpr std::uint32_t kClaimNearestKey = 0x51;   // Numpad3 -- claim/toggle the NEAREST in-combat NPC, no aim needed (shared)
 
         std::atomic<bool> g_installed{ false };
 
@@ -100,6 +101,30 @@ namespace apmf::t1probe {
                 }
             }
             return nullptr;
+        }
+
+        // No-aim claim target: the NEAREST NPC currently IN COMBAT to the player,
+        // regardless of allegiance (follower or enemy -- whoever's fighting
+        // nearest). Walks ProcessLists::highActorHandles (the engine's own live
+        // high-actor set, no follower-list touch) rather than every loaded
+        // reference. Returns nullptr (never a random calm NPC) if nothing nearby
+        // is actually in combat.
+        RE::Actor* NearestCombatant() {
+            auto* pl     = RE::ProcessLists::GetSingleton();
+            auto* player = RE::PlayerCharacter::GetSingleton();
+            if (!pl || !player) return nullptr;
+            const RE::NiPoint3 playerPos = player->GetPosition();
+
+            RE::Actor* best = nullptr;
+            float      bestDist = 0.0f;
+            for (auto& handle : pl->highActorHandles) {
+                auto ptr = handle.get();
+                RE::Actor* a = ptr.get();
+                if (!a || a->IsPlayerRef() || !a->Is3DLoaded() || !a->IsInCombat()) continue;
+                const float d = a->GetPosition().GetDistance(playerPos);
+                if (!best || d < bestDist) { best = a; bestDist = d; }
+            }
+            return best;
         }
 
         // Find the (already-hooked) original act() for `vtRuntimeAddr`, disassemble
@@ -288,9 +313,10 @@ namespace apmf::t1probe {
 
         spdlog::info("[t1probe] ARMED: {} of 70 leaf vtables hooked (slot 0x02, act/Enter, OBSERVE-only by default). "
                      "Attack vtable {}. NumpadEnter (DIK 0x{}, shared with the 0x49 probe) claims/toggles the aimed NPC; "
-                     "NumpadSlash (DIK 0x{}) toggles Phase-1 Attack-leaf deny once claimed.",
+                     "Numpad3 (DIK 0x{}, shared with the 0x49 probe) claims/toggles the NEAREST in-combat NPC, no aim "
+                     "needed; NumpadSlash (DIK 0x{}) toggles Phase-1 Attack-leaf deny once claimed.",
                      n, g_attackVt ? "resolved" : "NOT resolved",
-                     apmf::log::Hex(kClaimKey, 2), apmf::log::Hex(kDenyKey, 2));
+                     apmf::log::Hex(kClaimKey, 2), apmf::log::Hex(kClaimNearestKey, 2), apmf::log::Hex(kDenyKey, 2));
     }
 
     void OnHotkey(std::uint32_t a_code) {
@@ -306,7 +332,7 @@ namespace apmf::t1probe {
             spdlog::info("[t1probe] Phase 1 Attack-leaf deny {} for the claimed actor.", now ? "ENABLED" : "DISABLED");
             return;
         }
-        if (a_code != kClaimKey) return;
+        if (a_code != kClaimKey && a_code != kClaimNearestKey) return;
 
         const RE::FormID cur = g_claimActor.load(std::memory_order_relaxed);
         if (cur != 0) {
@@ -315,14 +341,17 @@ namespace apmf::t1probe {
             spdlog::info("[t1probe] RELEASED claim on 0x{} (observation + any Phase-1 deny stop).", apmf::log::Hex(cur));
             return;
         }
-        auto* actor = CrosshairActor();
+        auto* actor = (a_code == kClaimKey) ? CrosshairActor() : NearestCombatant();
         if (!actor) {
-            spdlog::warn("[t1probe] claim REFUSED -- aim the crosshair at an NPC (not the player) first.");
+            spdlog::warn("[t1probe] claim REFUSED -- {}", a_code == kClaimKey
+                         ? "aim the crosshair at an NPC (not the player) first."
+                         : "no in-combat NPC found near the player.");
             return;
         }
         g_claimActor.store(actor->GetFormID(), std::memory_order_relaxed);
-        spdlog::info("[t1probe] CLAIMED 0x{} '{}' -- Phase 0 observation starts now (watch for FIRST FIRE lines).",
-                     apmf::log::Hex(actor->GetFormID()), actor->GetName() ? actor->GetName() : "?");
+        spdlog::info("[t1probe] CLAIMED 0x{} '{}' ({}) -- Phase 0 observation starts now (watch for FIRST FIRE lines).",
+                     apmf::log::Hex(actor->GetFormID()), actor->GetName() ? actor->GetName() : "?",
+                     a_code == kClaimKey ? "aimed" : "nearest in-combat");
     }
 
     void OncePerFrame() {

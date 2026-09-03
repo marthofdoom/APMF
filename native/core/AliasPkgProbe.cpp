@@ -55,11 +55,12 @@ namespace apmf::probe {
         // not guessed and not taken from a third-party list. See
         // Docs/PROBE-ALLOWANCE.md for the extraction method.
         constexpr RE::FormID       kProbePackageForm = 0x000956B8;
-        // The test hotkey (DirectInput scancode). NumpadEnter -- probe/test hotkeys
-        // use the numpad (F-keys are occupied by the game/modlist); SAME scancode
-        // as T1Probe's claim key, so one press claims/releases the aimed NPC across
-        // both at once (see Docs/PROBE-ALLOWANCE.md).
-        constexpr std::uint32_t    kProbeKey         = 0x9C;
+        // The test hotkeys (DirectInput scancodes). Probe/test hotkeys use the
+        // numpad (F-keys are occupied by the game/modlist); SAME scancodes as
+        // T1Probe's claim keys, so one press claims/releases the SAME actor across
+        // both probes at once (see Docs/PROBE-ALLOWANCE.md).
+        constexpr std::uint32_t    kProbeKey         = 0x9C;   // NumpadEnter -- claim/toggle the aimed NPC
+        constexpr std::uint32_t    kProbeNearestKey  = 0x51;   // Numpad3 -- claim/toggle the NEAREST in-combat NPC, no aim needed
 
         // ---- Hook state ----
         std::atomic<bool>          g_armed{ false };
@@ -125,6 +126,28 @@ namespace apmf::probe {
             return nullptr;
         }
 
+        // No-aim claim target: the NEAREST NPC currently IN COMBAT to the player,
+        // regardless of allegiance. Walks ProcessLists::highActorHandles (the
+        // engine's own live high-actor set). Returns nullptr (never a random calm
+        // NPC) if nothing nearby is actually in combat.
+        RE::Actor* NearestCombatant() {
+            auto* pl     = RE::ProcessLists::GetSingleton();
+            auto* player = RE::PlayerCharacter::GetSingleton();
+            if (!pl || !player) return nullptr;
+            const RE::NiPoint3 playerPos = player->GetPosition();
+
+            RE::Actor* best = nullptr;
+            float      bestDist = 0.0f;
+            for (auto& handle : pl->highActorHandles) {
+                auto ptr = handle.get();
+                RE::Actor* a = ptr.get();
+                if (!a || a->IsPlayerRef() || !a->Is3DLoaded() || !a->IsInCombat()) continue;
+                const float d = a->GetPosition().GetDistance(playerPos);
+                if (!best || d < bestDist) { best = a; bestDist = d; }
+            }
+            return best;
+        }
+
         // ---- The 0x49 hook (Character vtable ONLY) ----
         struct AliasPkgHook {
             static RE::TESPackage* thunk(RE::Actor* a_this) {
@@ -170,8 +193,9 @@ namespace apmf::probe {
 
         spdlog::info("[probe0x49] ARMED: hooked Character::CheckForCurrentAliasPackage (0x49). "
                      "PHASE 0 running now -- watch for 'FIRST HIT' (hook fires) then the periodic census. "
-                     "Test hotkey: DIK 0x{} toggles a package-offer claim on the aimed NPC.",
-                     apmf::log::Hex(kProbeKey, 2));
+                     "Test hotkeys: DIK 0x{} toggles a package-offer claim on the aimed NPC; DIK 0x{} toggles "
+                     "one on the NEAREST in-combat NPC (no aim needed).",
+                     apmf::log::Hex(kProbeKey, 2), apmf::log::Hex(kProbeNearestKey, 2));
         if (kProbePackageForm == 0)
             spdlog::warn("[probe0x49] kProbePackageForm=0 -> PHASE 0 ONLY (hook-fire detection). Set it to a "
                          "real package FormID + rebuild for Phases 1-3 (engage/release/save-load).");
@@ -180,9 +204,11 @@ namespace apmf::probe {
     }
 
     void OnHotkey(std::uint32_t a_code) {
-        if (!g_armed.load(std::memory_order_relaxed) || a_code != kProbeKey) return;
+        if (!g_armed.load(std::memory_order_relaxed)) return;
+        if (a_code != kProbeKey && a_code != kProbeNearestKey) return;
 
-        // RELEASE if the aimed NPC (or any) is already claimed; else CLAIM the aimed NPC.
+        // RELEASE if the aimed NPC (or any) is already claimed; else CLAIM the aimed
+        // (or nearest-in-combat) NPC.
         const RE::FormID cur = g_claimActor.load(std::memory_order_relaxed);
         if (cur != 0) {
             g_pendActor.store(cur, std::memory_order_relaxed);
@@ -194,9 +220,11 @@ namespace apmf::probe {
             return;
         }
 
-        auto* actor = CrosshairActor();
+        auto* actor = (a_code == kProbeKey) ? CrosshairActor() : NearestCombatant();
         if (!actor) {
-            spdlog::warn("[probe0x49] claim REFUSED -- aim the crosshair at an NPC (not the player) first.");
+            spdlog::warn("[probe0x49] claim REFUSED -- {}", a_code == kProbeKey
+                         ? "aim the crosshair at an NPC (not the player) first."
+                         : "no in-combat NPC found near the player.");
             return;
         }
         if (kProbePackageForm == 0) {

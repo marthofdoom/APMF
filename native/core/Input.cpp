@@ -24,8 +24,8 @@ namespace apmf::input {
                     if (!btn || !btn->IsDown()) continue;
                     if (btn->GetDevice() != RE::INPUT_DEVICE::kKeyboard) continue;
                     apmf::Arbiter::Get().DispatchHotkey(btn->GetIDCode());
-                    apmf::probe::OnHotkey(btn->GetIDCode());            // 0x49 probe: NumpadEnter (shared claim)
-                    apmf::t1probe::OnHotkey(btn->GetIDCode());          // T1 probe: NumpadEnter (shared claim) / NumpadSlash (deny)
+                    apmf::probe::OnHotkey(btn->GetIDCode());            // 0x49 probe: NumpadEnter/Numpad3 (shared claim)
+                    apmf::t1probe::OnHotkey(btn->GetIDCode());          // T1 probe: NumpadEnter/Numpad3 (shared claim) / NumpadSlash (deny)
                     apmf::nativebitprobe::OnHotkey(btn->GetIDCode());   // native-bit probe: Numpad1 / Numpad2
                 }
                 return RE::BSEventNotifyControl::kContinue;
@@ -51,11 +51,12 @@ namespace apmf::input {
         }
         spdlog::info("[input]   scancode 0x52 -> RELEASE ALL controlled NPCs (Numpad0)");
         spdlog::info("[input]   PROBES (throwaway, numpad hotkeys -- F-keys are occupied by the game/modlist, "
-                     "see Docs/PROBE-ALLOWANCE.md): 0x9C NumpadEnter = SHARED claim/release the aimed NPC "
-                     "(T1 observe + 0x49 package-offer engage/release, both at once); 0xB5 "
-                     "NumpadSlash = T1 Phase-1 Attack-leaf deny toggle (needs a claim first); 0x4F Numpad1 = "
-                     "toggle kAttackingDisabled (native-bit); 0x50 Numpad2 = toggle kCastingDisabled "
-                     "(native-bit). T4 (TESActionData::Process) is REMOVED -- collided with SCAR.dll, see "
+                     "see Docs/PROBE-ALLOWANCE.md): 0x9C NumpadEnter = SHARED claim/release the AIMED NPC "
+                     "(T1 observe + 0x49 package-offer engage/release, both at once); 0x51 Numpad3 = SAME "
+                     "shared claim on the NEAREST in-combat NPC instead, no aim needed; 0xB5 NumpadSlash = "
+                     "T1 Phase-1 Attack-leaf deny toggle (needs a claim first); 0x4F Numpad1 = toggle "
+                     "kAttackingDisabled (native-bit); 0x50 Numpad2 = toggle kCastingDisabled (native-bit). "
+                     "T4 (TESActionData::Process) is REMOVED -- collided with SCAR.dll, see "
                      "Docs/PROBE-ALLOWANCE.md.");
     }
 
