@@ -376,3 +376,52 @@ The robust fix, immune to whatever the trigger is: format hex BY HAND into an AS
 NEVER reintroduce a `{:X}`/`{:x}` presentation spec in a log call; use `Hex`. If the
 underlying cause is ever found and fixed, this rule can relax — until then it keeps the
 log (the primary field-validation channel) plain text.
+
+## Framework coexistence
+
+**#17 — APMF must coexist with arbitrary modlists: it is a good citizen, never assumes
+exclusive access, and degrades rather than crashes.** APMF lives inside OTHER people's
+modlists, alongside mods it has never seen and cannot enumerate — it must never be the
+thing that derails one. Concretely:
+- **Vtable hooks (`write_vfunc`) ONLY.** They chain cleanly — another mod hooking the
+  same slot wraps the previous entry and calls the original, so independently-authored
+  hooks compose without coordination. **NO raw call-site patches**
+  (`write_call`/`write_branch`/a hand-rolled 5-byte overwrite/trampoline at a shared
+  address): they stomp bytes at one address, and two uncoordinated patchers at the same
+  site is a collision, not a composition. **Cautionary case:** the T4
+  `TESActionData::Process` probe's devirtualised fallback patched valhallaCombat's
+  known call site with `SKSE::GetTrampoline().write_call<5>` — SCAR.dll patches the
+  SAME AI-attack-start site, and the two collided into an execute-AV CTD in ordinary
+  combat (2026-09-03, not even during a probe keypress; see `Docs/PROBE-ALLOWANCE.md`
+  "T4 — DEFERRED" for the full crash record). T4 was removed rather than patched
+  around — this is the standing reason why. See also #6 (call-site offsets are also
+  version-fragile; this is a second, independent reason they're banned).
+- **Engine-answer-first.** Every thunk calls the stored original before deciding
+  anything; it only ever flips the engine's own YES to NO, only for an actor APMF
+  itself holds a claim on. Never invent a YES, never manufacture behavior, never
+  re-assert (#0).
+- **Verify at install.** RTTI-derivation check per vtable symbol before installing
+  (`core/Allowance.h`'s `DerivesFrom`, the `CombatMagicCasterArmor` lesson) — a symbol
+  that doesn't derive the expected class is skipped, not installed blind. At the hot
+  path, a foreign/unrecognized object (a vtable APMF never installed on reaching the
+  thunk) returns the benign default without touching its members.
+- **Read, don't own.** Consult engine/APMF state via the lock-free RCU `ControlMap`
+  snapshot (#12); never assume exclusive ownership of an actor, a vtable, or a call
+  site just because APMF is loaded.
+- **ADAPT, don't degrade; never crash.** When a preferred attach point is contested by
+  another mod, absent on a runtime, or devirtualised, ROUTE TO AN ALTERNATIVE SEAT that
+  covers the same facet — do not simply disable. The template is designed with
+  REDUNDANT per-facet attach points to make this possible: choose the viable seat at
+  install time (RTTI-verify, confirm the vtable/site is usable and not already
+  stomped), and fall back to the next when the preferred one isn't viable. Examples of
+  the redundancy: combat ACTIONS are covered by BOTH T1 (combat-tree leaves, chain-safe
+  vtable) AND T4 (action-data) — so T4's call-site seat colliding with SCAR does NOT
+  lose combat-action coverage, it falls through to T1; CASTING is covered by T1 Cast
+  leaves AND T2 `CheckCast`. Only when a facet has NO usable seat is it disabled (a
+  documented coverage gap), and even then APMF logs and continues — never a bad call,
+  never a crash.
+
+The current codebase satisfies this: every hook in `native/core/` is `write_vfunc` on a
+version-pinned `VTABLE_*` symbol; no call-site patch remains anywhere in the tree after
+T4's removal (grep-verified: no `write_call`/`write_branch`/`AllocTrampoline` in
+`native/`).

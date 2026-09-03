@@ -307,6 +307,12 @@ Open questions to settle once the hook/movement prototype pins down what the hoo
   Follower frameworks (NFF) and PapyrusUtil reimplement a coarse Papyrus package-override stack;
   TDM and position-fix mods hook `Actor::Update` + mutate AIProcess. APMF is the finer, brokered
   layer that gap is missing.
+- **Framework coexistence is a first-class requirement, not an afterthought:** APMF ships into other
+  people's modlists alongside mods it has never seen, so it hooks ONLY chain-safe `write_vfunc`
+  vtable slots — never a raw call-site patch, which stomps bytes another mod may already occupy (the
+  T4 `TESActionData::Process` probe's call-site patch collided with SCAR.dll and crashed the game,
+  2026-09-03) — and adapts to a redundant alternative seat rather than simply degrading when a
+  preferred attach point is contested, absent, or devirtualised. See `Docs/INVARIANTS.md` #17.
 
 ## Next steps
 

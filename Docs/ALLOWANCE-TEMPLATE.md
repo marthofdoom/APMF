@@ -126,10 +126,26 @@ fifth if its coverage probe proves it the shared body-command seat.
 2. T4: read the rel32 target at valhalla's site, compare with `VTABLE_TESActionData` slot 5; log `BGSAction`
    editorID + priority + source for one NPC across combat/sandbox/dialogue/player-command to measure coverage.
 
-**BUILT (2026-09-03), field-test pending — see `Docs/PROBE-ALLOWANCE.md` for the full
-hotkey map, method, and pass/fail table (also covers the 0x49 REDIRECT Phases 1-3 and
-a native-bit toggle probe, run in the same pass).** Findings that firm up this design
-already, from building the probes (not yet from a field run):
+**BUILT (2026-09-03) — see `Docs/PROBE-ALLOWANCE.md` for the full hotkey map, method,
+and pass/fail table (also covers the 0x49 REDIRECT Phases 1-3 and a native-bit toggle
+probe, run in the same pass). T1 is field-armed; T4 field-CRASHED and was REMOVED —
+see below and `Docs/PROBE-ALLOWANCE.md`'s "T4 — DEFERRED" section for the crash
+record.** Findings that firm up this design already, from building (and, for T4,
+field-crashing) the probes:
+- **T4 crashed the game and is REMOVED, not just probe-gated — but coverage ADAPTS
+  rather than degrades (`Docs/INVARIANTS.md` #17).** Its devirtualised fallback (an
+  `SKSE::GetTrampoline().write_call<5>` patch at valhalla's known `TESActionData::
+  Process` call site) collided with SCAR.dll, an installed attack-framework mod
+  patching the SAME AI attack-start path — two uncoordinated 5-byte call patches at one
+  address, execute-AV in ordinary combat (not hotkey-gated: the patch is live from
+  `Install()`). `RELOCATION_ID(48139,49170)+0x4D7/0x435` as a callee-entry attach point
+  is UNSAFE without hook-chaining discipline (detect + chain through an existing patch
+  rather than blindly overwrite) or a different attach point entirely — do not
+  re-attempt with a quick second guess at the call site. This is NOT a dead end for
+  combat-action coverage: T1 (chain-safe `write_vfunc` on the leaf tree) already covers
+  combat body-commands, so losing T4 falls through to T1 rather than opening a gap. The
+  real remaining gap is narrower — the NON-combat body-command slice (sneak/draw/
+  activate/idle outside combat, §4's honest gap) still awaits a chain-safe seat.
 - **The `CombatBehaviorTreeControl`+`0x158` ambiguity has a STRUCTURAL answer, pending
   runtime confirmation:** CombatPathingRevolution's own `src/RE/CombatBehaviorTreeControl.h`
   (the class this row's "CommonLib-vs-CPR disagreement" is about) types `master_controller`

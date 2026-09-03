@@ -4,7 +4,6 @@
 #include "core/Input.h"
 #include "core/AliasPkgProbe.h"
 #include "core/T1Probe.h"
-#include "core/T4Probe.h"
 #include "core/NativeBitProbe.h"
 #include "core/Arbiter.h"
 #include "core/ControlMap.h"
@@ -54,8 +53,14 @@ namespace {
             apmf::equipgate::Install();          // T2a CheckShouldEquip allowance
             apmf::probe::Install();              // 0x49 package-offer probe (throwaway; VR-refused inside)
             apmf::t1probe::Install();            // T1 combat behavior-tree leaf probe (throwaway; VR-refused inside)
-            apmf::t4probe::Install();            // T4 TESActionData::Process probe (throwaway; VR-refused inside)
             apmf::nativebitprobe::Install();     // native-bit toggle probe (throwaway; no VR gate needed)
+            // T4 (TESActionData::Process) REMOVED (2026-09-03): its call-site patch at
+            // valhalla's known site collided with SCAR.dll's own hook on the same AI
+            // attack-start path -> execute-AV CTD in live combat, not hotkey-gated (the
+            // patch was live from install). NEVER a raw call-site patch again
+            // (Docs/INVARIANTS.md #17: write_vfunc ONLY). See Docs/PROBE-ALLOWANCE.md
+            // "T4 -- DEFERRED" for the crash record; T1 already covers combat body-
+            // commands so this is not a coverage dead end.
             if (!REL::Module::IsVR()) {          // no drain seat on VR -> no test surface
                 apmf::input::Register();
                 apmf::input::LogHelp();
@@ -67,7 +72,6 @@ namespace {
             apmf::Arbiter::Get().ReleaseAll("kPreLoadGame");
             apmf::probe::ClearOnPreLoad();
             apmf::t1probe::ClearOnPreLoad();
-            apmf::t4probe::ClearOnPreLoad();
             break;
         case SKSE::MessagingInterface::kPostLoadGame:
             apmf::av::ApplyPending();             // restore any stranded AV overrides

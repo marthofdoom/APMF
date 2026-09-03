@@ -1,4 +1,4 @@
-# Allowance-template field probes — T1, T4, 0x49 redirect, native-bit
+# Allowance-template field probes — T1, 0x49 redirect, native-bit
 
 Status: **throwaway instrumentation, field-test-first.** Every probe here is hotkey-
 driven, observe-first, NOT wired to any client, and NOT a permanent channel. They exist
@@ -8,10 +8,14 @@ hotkeys, exactly what each phase proves, expected-vs-actual (actual left blank f
 field run), and pass/fail. Update the ACTUAL column after each field session; keep
 `ALLOWANCE-TEMPLATE.md` §6 in sync if a probe's findings firm up the design.
 
-All four probes: VR-refused where the underlying vtable/RTTI/reloc index is SE/AE-only
-verified (T1, T4, 0x49 — the native-bit probe has no such dependency and runs on VR
-too), install-once, lock-free reads only (no mutex in a hot thunk), warn-once/cadence-
-guarded logging (first-hit-per-item + a ~5s periodic census, never per-call), and every
+**T4 (`TESActionData::Process`) was built, field-crashed, and REMOVED (2026-09-03) —
+see the "T4 — DEFERRED" section at the end for the crash record.** Three probes remain
+active: T1, the 0x49 redirect, and native-bit.
+
+All three probes: VR-refused where the underlying vtable/RTTI/reloc index is SE/AE-only
+verified (T1, 0x49 — the native-bit probe has no such dependency and runs on VR too),
+install-once, lock-free reads only (no mutex in a hot thunk), warn-once/cadence-guarded
+logging (first-hit-per-item + a ~5s periodic census, never per-call), and every
 `CombatController`-shaped read stays `< 0x68` (the AE +8 spin-lock layout boundary,
 CLAUDE.md #4 / ALLOWANCE-TEMPLATE.md §5).
 
@@ -21,15 +25,15 @@ CLAUDE.md #4 / ALLOWANCE-TEMPLATE.md §5).
 not a Deck-reachability issue, they're simply occupied by the game/modlist already.
 Every future probe set should default to numpad without re-litigating this.
 
-Consolidated to the fewest keys: ONE shared claim key drives T1 + T4 + the 0x49
-redirect at once (aim an NPC, press it — all three claim the same actor in lockstep,
-since each independently applies the same toggle logic to the same scancode), plus one
-dedicated toggle key each for T1's Phase-1 deny and the two native-bit flags. The
-channel-demo numpad keys are not needed for this pass and are freely overridden.
+Consolidated to the fewest keys: ONE shared claim key drives T1 + the 0x49 redirect at
+once (aim an NPC, press it — both claim the same actor in lockstep, since each
+independently applies the same toggle logic to the same scancode), plus one dedicated
+toggle key each for T1's Phase-1 deny and the two native-bit flags. The channel-demo
+numpad keys are not needed for this pass and are freely overridden.
 
 | Key | DIK | Probe | Action |
 |---|---|---|---|
-| NumpadEnter | 0x9C | T1 + T4 + 0x49 redirect (SHARED) | Claim/release the crosshair-aimed NPC — one press claims it for T1 Phase 0 observe, T4 observe, AND the 0x49 package-offer engage, all at once; press again (regardless of current aim) to release all three |
+| NumpadEnter | 0x9C | T1 + 0x49 redirect (SHARED) | Claim/release the crosshair-aimed NPC — one press claims it for T1 Phase 0 observe AND the 0x49 package-offer engage, both at once; press again (regardless of current aim) to release both |
 | NumpadSlash | 0xB5 | T1 | Toggle Phase 1 DENY (the `CombatBehaviorAttack` leaf only) on the NumpadEnter-claimed NPC — refuses if nothing is claimed |
 | Numpad1 | 0x4F | Native-bit | Toggle `kAttackingDisabled` on the crosshair-aimed NPC |
 | Numpad2 | 0x50 | Native-bit | Toggle `kCastingDisabled` on the crosshair-aimed NPC |
@@ -37,9 +41,9 @@ channel-demo numpad keys are not needed for this pass and are freely overridden.
 
 NumpadEnter must be pressed before NumpadSlash (NumpadSlash refuses without a live T1
 claim). The native-bit probe has no claim step — Numpad1/Numpad2 act on whatever the
-crosshair is aimed at on that press, independent of the NumpadEnter claim. All
-claim-based probes (T1, T4, 0x49) release their claim (no engine call, nothing to
-restore) on `kPreLoadGame`.
+crosshair is aimed at on that press, independent of the NumpadEnter claim. Both
+claim-based probes (T1, 0x49) release their claim (no engine call, nothing to restore)
+on `kPreLoadGame`.
 
 ## Probe 1 — T1: combat behavior-tree leaf `Enter`/`act`
 
@@ -101,59 +105,7 @@ dispatch + RTTI derivation are real on this build) AND (b) the Attack-leaf deny 
 back cleanly with no stutter/re-entry storm. **If ZERO leaf hooks ever fire, the tree
 devirtualises on this build — T1 is DEAD, report and stop, do not build further on it.**
 
-## Probe 2 — T4: `TESActionData::Process` body-command seat
-
-**Files:** `native/core/T4Probe.{h,cpp}` (uses the REAL CommonLibSSE-NG
-`RE::ActionInput`/`RE::BGSActionData`/`RE::TESActionData`/`RE::BGSAction` classes
-directly — unlike T1's tree, these ARE shipped headers, no local extension needed).
-
-**Question 1 — virtual or devirtualised?** `Install()` reads the rel32 byte at
-valhallaCombat's own known call site (`RELOCATION_ID(48139,49170)+0x4D7` or `+0x435` —
-tried both, self-validated by checking the byte at each candidate address is actually
-`0xE8`; see the code comment for why neither offset is trusted as "the SE one" or "the
-AE one" without that check — this research found `ALLOWANCE-TEMPLATE.md`'s inline
-"SE X / AE Y" prose transposed relative to the real header convention in two other
-places, so nothing here is taken on the doc's label alone) and computes the CALL
-target. It compares that target to the actual function pointer STORED in
-`VTABLE_TESActionData[0]`'s slot-5 cell (`Process`, not the vtable's own address).
-
-**Question 2 — coverage.** Whichever seat wins the comparison gets hooked OBSERVE-only:
-- **MATCH (virtual):** hook `VTABLE_TESActionData[0]` slot 5 via the same
-  `allowance::InstallOnVtables` template T1/T2 use (RTTI-verified against
-  `RTTI_TESActionData`) — catches every caller, not just valhalla's site.
-- **MISMATCH (devirtualised):** hook the callee ENTRY directly via an SKSE trampoline
-  5-byte call patch at valhalla's own call site (`SKSE::GetTrampoline().write_call<5>`,
-  the same idiom MFO's `Board.cpp` uses for its D3D/DXGI/input hooks) — an honest,
-  documented coverage limitation: this only catches calls routed through THIS site,
-  not a guaranteed universal seat.
-
-For a claimed actor (NumpadEnter, matched against `ActionInput::source`), the FIRST time each
-distinct `BGSAction` is seen it logs the action's editorID + FormID, the raw
-`ActionInput::unk20` field (CommonLib has not reversed this as a named `Priority`
-enum — `ALLOWANCE-TEMPLATE.md`'s `Priority{kImperative,kQueue,kTry}` claim is
-UNCONFIRMED against any header; logged raw so the field run can correlate the value
-against observed behaviour) and the `target` FormID.
-
-**Expected vs actual:**
-
-| Check | Expected | Actual |
-|---|---|---|
-| Call-site byte validates as `0xE8` | one of the two candidate offsets does | |
-| Virtual vs devirtualised | MISMATCH expected (the doc's own caveat: `CombatAnimation::Execute` calls `actionData.Process()` on a by-value member → devirtualised in Release) | |
-| Seat installed | vtable OR call-site hook confirmed armed in the log | |
-| Combat actions seen | attack/power-attack/block kAction* names appear | |
-| Sandbox actions seen | idle/activate-type actions appear OOC | |
-| Dialogue actions seen | talking-idle/listen-idle appear during a conversation | |
-| Player-command actions seen | an issued command (e.g. "wait here") produces a logged action | |
-
-**Pass/fail:** T4 PASSES as a coverage seat if it reliably logs actions across at least
-combat + one non-combat context (sandbox/dialogue/command) for the claimed actor. It
-FAILS as a "shared seat" (though may still be useful narrowly) if only combat-context
-actions ever appear — meaning `TESActionData::Process` is NOT the universal body-command
-chokepoint the ranking table hoped for, and the honest gap (`ALLOWANCE-TEMPLATE.md`
-§4/§6) stands.
-
-## Probe 3 — 0x49 package-offer REDIRECT (Phases 1-3)
+## Probe 2 — 0x49 package-offer REDIRECT (Phases 1-3)
 
 **Files:** `native/core/AliasPkgProbe.{h,cpp}` (extends the existing Phase-0-proven
 probe; Phase 0 itself — does 0x49 fire at all — is unchanged and already LIVE per
@@ -197,7 +149,7 @@ own first eval; no latch, no stale redirect surviving a load.
 mutation. This is the confirmation that the 0x49 REDIRECT (not just the Phase-0
 hook-fires fact) is safe to build a real channel on later.
 
-## Probe 4 — native-bit toggle (`kAttackingDisabled` / `kCastingDisabled`)
+## Probe 3 — native-bit toggle (`kAttackingDisabled` / `kCastingDisabled`)
 
 **Files:** `native/core/NativeBitProbe.{h,cpp}` — no hook, no RTTI, no VR gate (a
 plain `Actor::BOOL_FLAGS` bit flip via `actor->GetActorRuntimeData().boolFlags`,
@@ -219,6 +171,55 @@ needs no co-save handling for a throwaway toggle) and flip `kAttackingDisabled` 
 **Pass/fail:** PASSES per-bit if toggling ON cleanly stops the behaviour and toggling
 OFF cleanly resumes it, with no wedge/stutter either direction — confirms the
 "native-bit tier" of `ALLOWANCE-TEMPLATE.md` §3 as a usable wholesale-deny fallback.
+
+## T4 — DEFERRED (built, field-crashed, removed 2026-09-03)
+
+**T4 (`TESActionData::Process` body-command seat) is REMOVED.** It was built exactly
+as designed — read the rel32 at valhallaCombat's known call site
+(`RELOCATION_ID(48139,49170)+0x4D7`/`+0x435`), compared it against
+`VTABLE_TESActionData[0]` slot 5, found a MISMATCH (devirtualised, as the design doc's
+own caveat predicted — `CombatAnimation::Execute` calls `actionData.Process()` on a
+by-value member), and installed the devirtualised fallback: an `SKSE::GetTrampoline()
+.write_call<5>` 5-byte call patch at valhalla's own call site. **That patch crashed the
+game.**
+
+**Root cause (from the field crashlog):** the patched call site (module+0x7F9470) is
+**also patched by SCAR.dll**, an installed attack-framework mod that hooks the exact
+same AI attack-start path (`Hook_AttackStart.cpp` / `AIAttackStartHook::StartAttack`).
+Crash stack: `[0] bad-execute 0x13FC79600 ← [1] T4Probe.cpp:104 ← [2] the patched site
+module+0x7F9475 ← [3-8] SCAR`. Two independent 5-byte call patches at the same address,
+installed by two different DLLs with no coordination, is a textbook stomp: whichever
+patches second either overwrites the first's redirect or chains into a return address
+SCAR's own trampoline no longer expects, landing execution at garbage. **This crashed
+in ordinary combat, not during a probe keypress** — T4's call-site patch is live from
+`Install()`, unconditionally, on every attack that routes through that site; there is
+no hotkey gate on the hook itself (only on the OBSERVE-logging).
+
+**Why "hook the callee entry instead" doesn't trivially fix this:** the callee entry
+*is* the call target valhalla's site jumps to — SCAR's hook, per the crash stack,
+appears to be at or wrapping the SAME site/entry (both mods targeting "where does an
+AI attack actually start"), so patching the entry runs into the identical collision,
+just moved one hop over. A safe T4 needs either (a) a genuinely different attach point
+that observes/gates the same information WITHOUT patching a byte range another popular
+mod is known to patch, or (b) real hook-chaining discipline — detect an existing patch
+at the target site/entry (read-before-write, diff against the expected original bytes)
+and CHAIN through it (call the current occupant, not assume you're the only patcher)
+rather than blindly overwriting. Neither is a quick fix; this needs a proper design
+pass before T4 is attempted again, not a hasty second call-site guess.
+
+**This is not a dead end — coverage ADAPTS to T1, it doesn't just degrade
+(`Docs/INVARIANTS.md` #17).** T1 (all 70 leaf `VTABLE_CombatBehaviorTreeNodeObject_*`
+vtable hooks, `write_vfunc`) is a completely different, standard, chain-safe mechanism
+— no call-site patch, no collision surface with SCAR or anything else — and it already
+covers combat body-commands (attack/power-attack/block/bash and the rest of the leaf
+catalog fire IN combat, which is where T4's crash happened too). Losing T4 does not
+lose combat-action coverage: it falls through to T1, which was already armed and
+unaffected. The real remaining gap is narrower than "all of T4" — it's the NON-combat
+body-command slice `ALLOWANCE-TEMPLATE.md` §4 already called honest (sneak/draw/
+activate/idle OUTSIDE combat, where no T1 leaf runs). Closing that slice later needs a
+chain-safe seat for it specifically — a vtable attach point, or genuine detect-and-
+chain discipline with whatever attack/action framework (SCAR or otherwise) already
+patches the same site — never another raw call-site patch.
 
 ## A documentation note on SE/AE labels
 

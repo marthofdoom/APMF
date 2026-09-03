@@ -154,18 +154,30 @@ not guessed), engage/release logs the `ExtraAliasInstanceArray` size before/afte
 (Phase 3, no latch). For marth to field-test on Cicero (owner quest 0x0009BE51) or
 any generic NPC, 3 deck cycles.
 
-**▶ T1/T4/NATIVE-BIT PROBES (throwaway, on this branch; see `Docs/PROBE-ALLOWANCE.md`
-for the full hotkey map, method, and pass/fail criteria).** T1 = combat behavior-tree
-leaf `Enter`/act (slot 0x02, all 70 `VTABLE_CombatBehaviorTreeNodeObject_*` leaves,
+**▶ T1/NATIVE-BIT PROBES (throwaway, on this branch; see `Docs/PROBE-ALLOWANCE.md` for
+the full hotkey map, method, and pass/fail criteria; all probe/test hotkeys are numpad
+— F-keys are occupied by the game/modlist).** T1 = combat behavior-tree leaf
+`Enter`/act (slot 0x02, all 70 `VTABLE_CombatBehaviorTreeNodeObject_*` leaves,
 `core/T1Probe.{h,cpp}` + the local `core/CombatBehaviorRE.h` RE:: extension since
-CommonLib doesn't ship these classes) — Phase 0 OBSERVE (F9 claim) + Phase 1 DENY the
-Attack leaf via a runtime-derived `SetFailed` (disassembled from `ForceFail`'s own
-body, F10 toggle). T4 = `TESActionData::Process` seat (`core/T4Probe.{h,cpp}`) —
-reads valhalla's known call site's rel32 and compares it to `VTABLE_TESActionData[0]`
-slot 5 to decide vtable-hook vs call-site-hook, then OBSERVEs `BGSAction`
-editorID/priority/source (F8 claim). Native-bit = a plain `kAttackingDisabled`/
-`kCastingDisabled` toggle on the aimed NPC, no hook (`core/NativeBitProbe.{h,cpp}`,
-F6/F7). All three field-test-first, hotkey-driven, NOT wired to any client.
+CommonLib doesn't ship these classes) — Phase 0 OBSERVE (NumpadEnter claim, shared
+with the 0x49 probe) + Phase 1 DENY the Attack leaf via a runtime-derived `SetFailed`
+(disassembled from `ForceFail`'s own body, NumpadSlash toggle). Native-bit = a plain
+`kAttackingDisabled`/`kCastingDisabled` toggle on the aimed NPC, no hook
+(`core/NativeBitProbe.{h,cpp}`, Numpad1/Numpad2). Both field-test-first,
+hotkey-driven, NOT wired to any client.
+
+**T4 (`TESActionData::Process` body-command seat) was built, field-CRASHED, and
+REMOVED (2026-09-03).** Its devirtualised fallback (`SKSE::GetTrampoline().
+write_call<5>` at valhalla's known call site) collided with SCAR.dll's own hook on the
+same AI attack-start path — execute-AV in ordinary combat, not even during a probe
+keypress (the patch was live from `Install()`). Full crash record in
+`Docs/PROBE-ALLOWANCE.md` "T4 — DEFERRED". Not a coverage dead end: T1 already covers
+combat body-commands (chain-safe `write_vfunc`), so this falls through to T1 rather
+than opening a gap; only the non-combat body-command slice (sneak/draw/activate/idle
+OOC) still awaits a chain-safe seat. **New standing rule from this crash:**
+`Docs/INVARIANTS.md` #17 — vtable hooks (`write_vfunc`) ONLY, no raw call-site patches
+ever, ADAPT to a redundant alternative seat rather than degrade when a preferred one
+is contested/absent/devirtualised. Also recorded in `design.md` §10.
 
 ## Client API (Layer 2) — REAL
 

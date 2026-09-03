@@ -30,12 +30,14 @@ namespace apmf::t1probe {
 
     namespace {
 
-        // Deck-pressable numpad range (F-keys aren't reachable on Steam Deck).
-        // NumpadEnter is the SHARED claim/release key: T1Probe, T4Probe, and
-        // AliasPkgProbe (0x49) all listen for the SAME scancode, so one press
-        // claims/releases the aimed NPC across all three at once (each keeps
-        // its own independent claim state but the same toggle logic drives
-        // them in lockstep -- see Docs/PROBE-ALLOWANCE.md).
+        // Probe/test hotkeys use the numpad (F-keys are occupied by the game/
+        // modlist). NumpadEnter is the SHARED claim/release key: T1Probe and
+        // AliasPkgProbe (0x49) both listen for the SAME scancode, so one press
+        // claims/releases the aimed NPC across both at once (each keeps its
+        // own independent claim state but the same toggle logic drives them
+        // in lockstep -- see Docs/PROBE-ALLOWANCE.md). T4 (TESActionData::
+        // Process) was removed 2026-09-03 -- its call-site patch collided
+        // with SCAR.dll and caused an execute-AV CTD in live combat.
         constexpr std::uint32_t kClaimKey = 0x9C;   // NumpadEnter -- claim/toggle T1 observe on the aimed NPC (shared)
         constexpr std::uint32_t kDenyKey  = 0xB5;   // NumpadSlash -- toggle Phase-1 Attack-leaf deny on the claimed NPC
 
@@ -214,7 +216,7 @@ namespace apmf::t1probe {
         ResolveSetFailed();
 
         spdlog::info("[t1probe] ARMED: {} of 70 leaf vtables hooked (slot 0x02, act/Enter, OBSERVE-only by default). "
-                     "Attack vtable {}. NumpadEnter (DIK 0x{}, shared with T4/0x49) claims/toggles the aimed NPC; "
+                     "Attack vtable {}. NumpadEnter (DIK 0x{}, shared with the 0x49 probe) claims/toggles the aimed NPC; "
                      "NumpadSlash (DIK 0x{}) toggles Phase-1 Attack-leaf deny once claimed.",
                      n, g_attackVt ? "resolved" : "NOT resolved",
                      apmf::log::Hex(kClaimKey, 2), apmf::log::Hex(kDenyKey, 2));
