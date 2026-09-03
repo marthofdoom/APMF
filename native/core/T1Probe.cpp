@@ -30,8 +30,14 @@ namespace apmf::t1probe {
 
     namespace {
 
-        constexpr std::uint32_t kClaimKey = 0x43;   // F9 -- claim/toggle T1 observe on the aimed NPC
-        constexpr std::uint32_t kDenyKey  = 0x44;   // F10 -- toggle Phase-1 Attack-leaf deny on the claimed NPC
+        // Deck-pressable numpad range (F-keys aren't reachable on Steam Deck).
+        // NumpadEnter is the SHARED claim/release key: T1Probe, T4Probe, and
+        // AliasPkgProbe (0x49) all listen for the SAME scancode, so one press
+        // claims/releases the aimed NPC across all three at once (each keeps
+        // its own independent claim state but the same toggle logic drives
+        // them in lockstep -- see Docs/PROBE-ALLOWANCE.md).
+        constexpr std::uint32_t kClaimKey = 0x9C;   // NumpadEnter -- claim/toggle T1 observe on the aimed NPC (shared)
+        constexpr std::uint32_t kDenyKey  = 0xB5;   // NumpadSlash -- toggle Phase-1 Attack-leaf deny on the claimed NPC
 
         std::atomic<bool> g_installed{ false };
 
@@ -208,8 +214,9 @@ namespace apmf::t1probe {
         ResolveSetFailed();
 
         spdlog::info("[t1probe] ARMED: {} of 70 leaf vtables hooked (slot 0x02, act/Enter, OBSERVE-only by default). "
-                     "Attack vtable {}. F9 (DIK 0x{}) claims/toggles the aimed NPC; F10 (DIK 0x{}) toggles Phase-1 "
-                     "Attack-leaf deny once claimed.", n, g_attackVt ? "resolved" : "NOT resolved",
+                     "Attack vtable {}. NumpadEnter (DIK 0x{}, shared with T4/0x49) claims/toggles the aimed NPC; "
+                     "NumpadSlash (DIK 0x{}) toggles Phase-1 Attack-leaf deny once claimed.",
+                     n, g_attackVt ? "resolved" : "NOT resolved",
                      apmf::log::Hex(kClaimKey, 2), apmf::log::Hex(kDenyKey, 2));
     }
 
@@ -218,7 +225,7 @@ namespace apmf::t1probe {
 
         if (a_code == kDenyKey) {
             if (g_claimActor.load(std::memory_order_relaxed) == 0) {
-                spdlog::warn("[t1probe] Phase 1 REFUSED -- claim an NPC with F9 first.");
+                spdlog::warn("[t1probe] Phase 1 REFUSED -- claim an NPC with NumpadEnter first.");
                 return;
             }
             const bool now = !g_denyAttack.load(std::memory_order_relaxed);

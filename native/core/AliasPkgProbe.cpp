@@ -55,8 +55,11 @@ namespace apmf::probe {
         // not guessed and not taken from a third-party list. See
         // Docs/PROBE-ALLOWANCE.md for the extraction method.
         constexpr RE::FormID       kProbePackageForm = 0x000956B8;
-        // The test hotkey (DirectInput scancode). F11 = 0x57 -- off the numpad test set.
-        constexpr std::uint32_t    kProbeKey         = 0x57;
+        // The test hotkey (DirectInput scancode). NumpadEnter -- Deck-pressable
+        // (F-keys aren't reachable on Steam Deck); SAME scancode as T1Probe's/
+        // T4Probe's claim key, so one press claims/releases the aimed NPC across
+        // all three at once (see Docs/PROBE-ALLOWANCE.md).
+        constexpr std::uint32_t    kProbeKey         = 0x9C;
 
         // ---- Hook state ----
         std::atomic<bool>          g_armed{ false };

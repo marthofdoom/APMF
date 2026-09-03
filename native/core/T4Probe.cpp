@@ -21,7 +21,11 @@ namespace apmf::t4probe {
 
     namespace {
 
-        constexpr std::uint32_t kClaimKey = 0x42;   // F8 -- claim/toggle T4 observe on the aimed NPC
+        // Deck-pressable numpad range (F-keys aren't reachable on Steam Deck).
+        // SAME scancode as T1Probe/AliasPkgProbe's claim key -- one press
+        // claims/releases the aimed NPC across all three at once (see
+        // Docs/PROBE-ALLOWANCE.md).
+        constexpr std::uint32_t kClaimKey = 0x9C;   // NumpadEnter -- claim/toggle T4 observe on the aimed NPC (shared)
 
         std::atomic<bool> g_installed{ false };
         std::atomic<bool> g_usingVtable{ false };   // which seat won (for logging/help text only)
@@ -178,8 +182,9 @@ namespace apmf::t4probe {
             spdlog::info("[t4probe] ARMED (call-site path): entry module+0x{} hooked via a 5-byte call patch "
                          "at valhalla's own known site.", apmf::log::Hex(callTarget - REL::Module::get().base(), 8));
         }
-        spdlog::info("[t4probe] F8 (DIK 0x{}) claims/toggles the aimed NPC as `source`; logs the first-seen "
-                     "BGSAction per unique action while claimed.", apmf::log::Hex(kClaimKey, 2));
+        spdlog::info("[t4probe] NumpadEnter (DIK 0x{}, shared with T1/0x49) claims/toggles the aimed NPC as "
+                     "`source`; logs the first-seen BGSAction per unique action while claimed.",
+                     apmf::log::Hex(kClaimKey, 2));
     }
 
     void OnHotkey(std::uint32_t a_code) {

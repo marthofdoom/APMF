@@ -17,18 +17,33 @@ CLAUDE.md #4 / ALLOWANCE-TEMPLATE.md §5).
 
 ## Hotkey map
 
+**All numpad — F-keys aren't reachable on a Steam Deck, matching every existing channel
+test-surface key.** Consolidated to the fewest keys: ONE shared claim key drives T1 +
+T4 + the 0x49 redirect at once (aim an NPC, press it — all three claim the same actor
+in lockstep, since each independently applies the same toggle logic to the same
+scancode), plus one per-probe toggle key each for T1's Phase-1 deny and the two
+native-bit flags.
+
 | Key | DIK | Probe | Action |
 |---|---|---|---|
-| F6 | 0x40 | Native-bit | Toggle `kAttackingDisabled` on the crosshair-aimed NPC |
-| F7 | 0x41 | Native-bit | Toggle `kCastingDisabled` on the crosshair-aimed NPC |
-| F8 | 0x42 | T4 | Claim/release the aimed NPC as `ActionInput::source`; OBSERVE `BGSAction` |
-| F9 | 0x43 | T1 | Claim/release the aimed NPC; Phase 0 OBSERVE (per-leaf `act()`) |
-| F10 | 0x44 | T1 | Toggle Phase 1 DENY (the `CombatBehaviorAttack` leaf only) on the claimed NPC |
-| F11 | 0x57 | 0x49 redirect | Engage/release a package-offer claim (`DefaultSandboxCurrentLocation256`) on the aimed NPC |
+| NumpadEnter | 0x9C | T1 + T4 + 0x49 redirect (SHARED) | Claim/release the crosshair-aimed NPC — one press claims it for T1 Phase 0 observe, T4 observe, AND the 0x49 package-offer engage, all at once; press again (regardless of current aim) to release all three |
+| NumpadSlash | 0xB5 | T1 | Toggle Phase 1 DENY (the `CombatBehaviorAttack` leaf only) on the NumpadEnter-claimed NPC — refuses if nothing is claimed |
+| NumpadStar | 0x37 | Native-bit | Toggle `kAttackingDisabled` on the crosshair-aimed NPC — **REPURPOSED**: also still fires ch. ShoutPower's "CLAIM the shout/power facet" key (both actions fire on every press); avoid using NumpadStar for ShoutPower channel testing while probing is armed |
+| NumpadDot | 0x53 | Native-bit | Toggle `kCastingDisabled` on the crosshair-aimed NPC — **REPURPOSED**: also still fires ch. Equipment's "unequip right-hand weapon" key (both actions fire on every press); avoid using NumpadDot for Equipment channel testing while probing is armed |
 | Numpad0 | 0x52 | (channel test surface) | Release ALL controlled NPCs — unrelated to these probes, listed for collision-avoidance |
 
-F9 must be pressed before F10 (F10 refuses without a live T1 claim). All probes release
-their claim (no engine call, nothing to restore) on `kPreLoadGame`.
+NumpadEnter must be pressed before NumpadSlash (NumpadSlash refuses without a live T1
+claim). The native-bit probe has no claim step — NumpadStar/NumpadDot act on whatever
+the crosshair is aimed at on that press, independent of the NumpadEnter claim. All
+claim-based probes (T1, T4, 0x49) release their claim (no engine call, nothing to
+restore) on `kPreLoadGame`.
+
+Only NumpadEnter (0x9C) and NumpadSlash (0xB5) were genuinely free on the existing
+numpad test surface (`0x47`/`0x48`/`0x49`/`0x4A`/`0x4B`/`0x4C`/`0x4D`/`0x4E`/`0x4F`/
+`0x50`/`0x51`/`0x52`/`0x53`/`0x37` are all already a channel-demo key) — NumpadStar and
+NumpadDot are deliberate, documented shadow-reuses of ch. ShoutPower's and ch.
+Equipment's keys respectively, acceptable because probing is the current test priority
+and both keys' dual-fire is called out above.
 
 ## Probe 1 — T1: combat behavior-tree leaf `Enter`/`act`
 
@@ -44,7 +59,7 @@ leaf vtables, RTTI-verified against `RTTI_CombatBehaviorTreeNode` at install (th
 ENGINE_NOTES §0.28).
 
 **Phase 0 (OBSERVE):** the thunk ALWAYS calls the leaf's original `act()` and returns
-its result unmodified. When a claimed actor (F9) is the one deliberating, it logs the
+its result unmodified. When a claimed actor (NumpadEnter) is the one deliberating, it logs the
 FIRST time each leaf fires (both our compile-time leaf name and the object's own
 `GetName()`, an unhooked slot-1 virtual) and increments silent counters; a ~5s census
 prints totals. This proves vtable dispatch actually works on this build and maps which
@@ -62,7 +77,7 @@ a `master_controller` pointer at `+0x158`. Two readings exist:
 The thunk resolves and logs BOTH on the first hit (once), so the field run settles it
 empirically rather than by trusting either source blindly.
 
-**Phase 1 (DENY):** F10 denies ONLY the `CombatBehaviorAttack` leaf for the claimed
+**Phase 1 (DENY):** NumpadSlash denies ONLY the `CombatBehaviorAttack` leaf for the claimed
 actor via the engine's own failure protocol, `CombatBehaviorTreeControl::SetFailed(true)`
 — never calling `orig()` for that hit. **`SetFailed`'s address is DERIVED, not looked
 up by a static Address-Library id:** its SE id (46240) has no known AE counterpart in
@@ -116,7 +131,7 @@ target. It compares that target to the actual function pointer STORED in
   documented coverage limitation: this only catches calls routed through THIS site,
   not a guaranteed universal seat.
 
-For a claimed actor (F8, matched against `ActionInput::source`), the FIRST time each
+For a claimed actor (NumpadEnter, matched against `ActionInput::source`), the FIRST time each
 distinct `BGSAction` is seen it logs the action's editorID + FormID, the raw
 `ActionInput::unk20` field (CommonLib has not reversed this as a named `Priority`
 enum — `ALLOWANCE-TEMPLATE.md`'s `Priority{kImperative,kQueue,kTry}` claim is
@@ -158,14 +173,14 @@ the `EditorLocation` variant (also found, `0x0009361E`) specifically because its
 it on ANY generic NPC cannot send them walking off toward a marker that might be far
 away or behind a locked door. Both are real, unmodified vanilla packages; radius 256.
 
-**Engage:** F11 on an unclaimed aimed NPC offers the package; the pending
+**Engage:** NumpadEnter on an unclaimed aimed NPC offers the package; the pending
 `EvaluatePackage(true,false)` runs on the next `Arbiter::OncePerFrame` and logs
 `GetCurrentPackage` flipping to the client package AND the `ExtraAliasInstanceArray`
 size (read under its own `BSReadWriteLock` via `BSReadLockGuard`, never mutated) — this
 MUST be unchanged before/after; a change would mean the redirect somehow touched real
 alias-fill state, which it must never do (CLAUDE.md #3).
 
-**Release:** F11 again drops the claim and re-evaluates; expect the framework package
+**Release:** NumpadEnter again drops the claim and re-evaluates; expect the framework package
 back with exactly one `OnPackageChange`.
 
 **Save/load (Phase 3):** `kPreLoadGame` now calls `AliasPkgProbe::ClearOnPreLoad()` —
@@ -192,7 +207,7 @@ hook-fires fact) is safe to build a real channel on later.
 plain `Actor::BOOL_FLAGS` bit flip via `actor->GetActorRuntimeData().boolFlags`,
 `stl::enumeration<BOOL_FLAGS,uint32_t>::set/reset`, is version-stable by construction).
 
-F6/F7 re-aim the crosshair on every press (no sticky claim — a live Actor bit needs no
+NumpadStar/NumpadDot re-aim the crosshair on every press (no sticky claim — a live Actor bit needs no
 co-save handling for a throwaway toggle) and flip `kAttackingDisabled` /
 `kCastingDisabled` respectively, logging the before/after state.
 
