@@ -4,6 +4,9 @@
 #include "core/Arbiter.h"
 #include "core/Registry.h"
 #include "core/AliasPkgProbe.h"
+#include "core/T1Probe.h"
+#include "core/T4Probe.h"
+#include "core/NativeBitProbe.h"
 
 namespace apmf::input {
 
@@ -22,7 +25,10 @@ namespace apmf::input {
                     if (!btn || !btn->IsDown()) continue;
                     if (btn->GetDevice() != RE::INPUT_DEVICE::kKeyboard) continue;
                     apmf::Arbiter::Get().DispatchHotkey(btn->GetIDCode());
-                    apmf::probe::OnHotkey(btn->GetIDCode());   // 0x49 probe test key (no-op unless armed + its key)
+                    apmf::probe::OnHotkey(btn->GetIDCode());            // 0x49 probe test key (no-op unless armed + its key)
+                    apmf::t1probe::OnHotkey(btn->GetIDCode());          // T1 probe test keys (F9/F10)
+                    apmf::t4probe::OnHotkey(btn->GetIDCode());          // T4 probe test key (F8)
+                    apmf::nativebitprobe::OnHotkey(btn->GetIDCode());   // native-bit probe test keys (F6/F7)
                 }
                 return RE::BSEventNotifyControl::kContinue;
             }
@@ -46,6 +52,10 @@ namespace apmf::input {
             }
         }
         spdlog::info("[input]   scancode 0x52 -> RELEASE ALL controlled NPCs (Numpad0)");
+        spdlog::info("[input]   PROBES (throwaway, Docs/PROBE-ALLOWANCE.md): 0x57 F11 = 0x49 package-offer "
+                     "engage/release; 0x43 F9 = T1 claim/toggle observe; 0x44 F10 = T1 Phase-1 Attack-leaf deny; "
+                     "0x42 F8 = T4 claim/toggle observe; 0x40 F6 = toggle kAttackingDisabled; 0x41 F7 = toggle "
+                     "kCastingDisabled (both native-bit, aimed NPC).");
     }
 
 }

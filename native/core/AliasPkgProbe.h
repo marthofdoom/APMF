@@ -29,4 +29,10 @@ namespace apmf::probe {
     // seat (Arbiter::OncePerFrame). No-op when disarmed / nothing pending.
     void OncePerFrame();
 
+    // Phase 3 (save/load mid-claim): drop the offer claim WITHOUT touching the engine
+    // -- the actor is about to be replaced by the incoming load, so there is nothing
+    // to restore (0x49 just stops redirecting; the framework package resumes on its
+    // own next eval). Call from kPreLoadGame, mirrors T1/T4's ClearOnPreLoad.
+    void ClearOnPreLoad();
+
 }

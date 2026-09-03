@@ -4,6 +4,8 @@
 #include "core/ControlMap.h"
 #include "core/Registry.h"
 #include "core/AliasPkgProbe.h"
+#include "core/T1Probe.h"
+#include "core/T4Probe.h"
 
 namespace apmf {
 
@@ -27,7 +29,9 @@ namespace apmf {
 
     void Arbiter::OncePerFrame() {
         ControlMap::Get().Drain();
-        apmf::probe::OncePerFrame();   // 0x49 probe: game-thread eval pump + phase-0 census (no-op unless armed)
+        apmf::probe::OncePerFrame();     // 0x49 probe: game-thread eval pump + phase-0 census (no-op unless armed)
+        apmf::t1probe::OncePerFrame();   // T1 probe: periodic census (no-op unless claimed)
+        apmf::t4probe::OncePerFrame();   // T4 probe: periodic census (no-op unless claimed)
     }
 
     void Arbiter::ReleaseAll(const char* why) {

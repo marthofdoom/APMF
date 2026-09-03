@@ -2,6 +2,8 @@
 #include "core/Log.h"
 #include "core/AliasPkgProbe.h"
 
+#include "RE/E/ExtraAliasInstanceArray.h"
+
 // ============================================================================
 // 0x49 package-offer probe implementation. See AliasPkgProbe.h + design.md §5a.
 //
@@ -42,9 +44,17 @@ namespace apmf::probe {
     namespace {
 
         // ---- CONFIG (set for a full Phase 1-3 field build) ----
-        // The client package to OFFER. 0 => Phase 0 only (hook-fire detection). Set to
-        // a real TESPackage FormID in the deck load order for Phases 1-3.
-        constexpr RE::FormID       kProbePackageForm = 0;
+        // The client package to OFFER: `DefaultSandboxCurrentLocation256`
+        // (Skyrim.esm, FormID 0x000956B8) -- a vanilla, radius-256,
+        // "sandbox wherever the actor CURRENTLY is" package (PLDT type
+        // reads current-location, not a fixed editor-placed marker) chosen
+        // specifically because it cannot send the claimed NPC walking off
+        // toward a marker that might be far away or behind a locked door --
+        // safe to engage/release on any generic NPC anywhere. Verified by
+        // parsing Skyrim.esm's own PACK group directly (EDID subrecord),
+        // not guessed and not taken from a third-party list. See
+        // Docs/PROBE-ALLOWANCE.md for the extraction method.
+        constexpr RE::FormID       kProbePackageForm = 0x000956B8;
         // The test hotkey (DirectInput scancode). F11 = 0x57 -- off the numpad test set.
         constexpr std::uint32_t    kProbeKey         = 0x57;
 
@@ -85,6 +95,19 @@ namespace apmf::probe {
                 const char* n = a_pkg->GetObjectTypeName();
                 return n ? n : "<unnamed>";
             }
+        }
+
+        // Phase 1/2 safety check: the alias-fill machinery (Packages.cpp-equivalent
+        // in a real client) must be UNTOUCHED by a package-offer redirect -- 0x49
+        // only changes what CheckForCurrentAliasPackage RETURNS, never writes an
+        // alias. Read under the array's own BSReadWriteLock (never a mutation, a
+        // count only) so this check itself can never race the real writer.
+        std::size_t AliasArraySize(RE::Actor* a_actor) {
+            if (!a_actor) return 0;
+            auto* arr = a_actor->extraList.GetByType<RE::ExtraAliasInstanceArray>();
+            if (!arr) return 0;
+            RE::BSReadLockGuard lock(arr->lock);
+            return arr->aliases.size();
         }
 
         // The crosshair-aimed NPC (never the player). Input-thread read, same as the
@@ -197,13 +220,17 @@ namespace apmf::probe {
         if (pend != Pend::kNone) {
             const RE::FormID id = g_pendActor.load(std::memory_order_relaxed);
             if (auto* actor = RE::TESForm::LookupByID<RE::Actor>(id)) {
+                const std::size_t aliasBefore = AliasArraySize(actor);
                 Native::EvaluatePackage(actor);
                 auto* now = actor->GetCurrentPackage();
+                const std::size_t aliasAfter = AliasArraySize(actor);
                 spdlog::info("[probe0x49] {} applied on 0x{} -- EvaluatePackage(true,false); GetCurrentPackage now "
-                             "0x{} {}. {}", pend == Pend::kEngage ? "ENGAGE" : "RELEASE", apmf::log::Hex(id),
+                             "0x{} {}. ExtraAliasInstanceArray size {}->{} ({}). {}",
+                             pend == Pend::kEngage ? "ENGAGE" : "RELEASE", apmf::log::Hex(id),
                              apmf::log::Hex(now ? now->GetFormID() : 0), Native::PkgType(now),
+                             aliasBefore, aliasAfter, aliasBefore == aliasAfter ? "UNCHANGED" : "CHANGED -- unexpected, investigate",
                              pend == Pend::kEngage
-                                 ? "Phase 1: expect the CLIENT pkg + distance-to-target shrinking + NO further APMF writes."
+                                 ? "Phase 1: expect the CLIENT pkg + the actor sandboxing near its current spot + NO further APMF writes."
                                  : "Phase 2: expect the FRAMEWORK pkg back + exactly one OnPackageChange.");
             }
         }
@@ -222,6 +249,17 @@ namespace apmf::probe {
                          g_thread.load(std::memory_order_relaxed),
                          apmf::log::Hex(g_lastRetPkg.load(std::memory_order_relaxed)));
         }
+    }
+
+    void ClearOnPreLoad() {
+        const RE::FormID cur = g_claimActor.exchange(0, std::memory_order_relaxed);
+        g_claimPkg.store(0, std::memory_order_relaxed);
+        g_pend.store(Pend::kNone, std::memory_order_relaxed);
+        g_pendActor.store(0, std::memory_order_relaxed);
+        if (cur != 0)
+            spdlog::info("[probe0x49] Phase 3: dropped offer claim on 0x{} for kPreLoadGame -- no engine call "
+                         "(actor is about to be replaced); the framework package resumes on the incoming save's "
+                         "own first eval, no latch.", apmf::log::Hex(cur));
     }
 
 }

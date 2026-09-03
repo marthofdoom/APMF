@@ -126,6 +126,35 @@ fifth if its coverage probe proves it the shared body-command seat.
 2. T4: read the rel32 target at valhalla's site, compare with `VTABLE_TESActionData` slot 5; log `BGSAction`
    editorID + priority + source for one NPC across combat/sandbox/dialogue/player-command to measure coverage.
 
+**BUILT (2026-09-03), field-test pending — see `Docs/PROBE-ALLOWANCE.md` for the full
+hotkey map, method, and pass/fail table (also covers the 0x49 REDIRECT Phases 1-3 and
+a native-bit toggle probe, run in the same pass).** Findings that firm up this design
+already, from building the probes (not yet from a field run):
+- **The `CombatBehaviorTreeControl`+`0x158` ambiguity has a STRUCTURAL answer, pending
+  runtime confirmation:** CombatPathingRevolution's own `src/RE/CombatBehaviorTreeControl.h`
+  (the class this row's "CommonLib-vs-CPR disagreement" is about) types `master_controller`
+  at `+0x158` as `CombatController*` DIRECTLY — no `+0x20` hop. T1Probe.cpp logs BOTH this
+  reading and the `+0x20`-hop alternative on first hit so the field run confirms which is
+  live, but CPR's own struct (a compiled, shipping mod) is the stronger prior.
+- **`SetFailed`'s AE address does not need a static Address-Library id.** No header this
+  project can reach carries an AE id for it (only the SE id, 46240, appears anywhere).
+  `T1Probe.cpp::ResolveSetFailed()` instead disassembles `CombatBehaviorForceFail`'s own
+  (pre-hook) `act()` body for its first CALL instruction — `ForceFail`'s whole job IS
+  "call SetFailed(true); return control" — which resolves correctly on SE and AE alike
+  because it reads the actual compiled bytes at runtime rather than a version table.
+- **Neither CommonLibSSE-NG commit APMF/CPR actually build against ships
+  `CombatBehaviorTreeNode.h`/`CombatBehaviorTreeControl.h`.** T1 needed a local RE::
+  extension header (`native/core/CombatBehaviorRE.h`) mirroring CPR's own approach,
+  built from `alandtse/CommonLibSSE-NG` (CPR's pinned submodule) — the SAME fork this
+  row's "CPR ... SE + AE" precedent already relies on.
+- **A documentation-label correction, not a header ambiguity:** this row's and §3's
+  inline "SE X / AE Y" prose has the SE/AE labels transposed relative to the real
+  header convention in every case checked (Attack, Block, CastImmediateSpell,
+  `VTABLE_TESActionData`) — the NUMBERS were always right, just mislabeled which is
+  which. See `Docs/PROBE-ALLOWANCE.md`'s closing note before trusting either label in
+  this doc's prose; every VariantID triple actually used in code was copied verbatim
+  from source, never re-derived from the prose labels.
+
 ## 7. Build order (marth-approved, proven-first)
 
 1. RCU thread-safe ControlMap — **DONE** (`fea17d2`).

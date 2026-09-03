@@ -146,9 +146,26 @@ the 0xAD hook; game-thread eval pump on `Arbiter::OncePerFrame`; test hotkey DIK
 (RELOCATION_ID 36407/37401, resetAI=false). **Phased:** Phase 0 (armed now, no claim,
 no package needed) answers the make-or-break — *does 0x49 fire?* (census logs hit count
 + thread + returned pkg; **0 hits ⇒ devirtualised/inlined ⇒ mechanism DEAD, stop**);
-Phases 1-3 (engage/release/save-load) need `kProbePackageForm` set to a real package
-FormID + rebuild (left `0` ⇒ Phase 0 only). For marth to field-test on Cicero (owner
-quest 0x0009BE51), 3 deck cycles.
+Phases 1-3 (engage/release/save-load) now ARMED — `kProbePackageForm` is set to
+`DefaultSandboxCurrentLocation256` (Skyrim.esm `0x000956B8`, a vanilla radius-256
+current-location sandbox, verified by parsing Skyrim.esm's own PACK group directly,
+not guessed), engage/release logs the `ExtraAliasInstanceArray` size before/after
+(must be UNCHANGED), and `kPreLoadGame` now drops the claim with no engine call
+(Phase 3, no latch). For marth to field-test on Cicero (owner quest 0x0009BE51) or
+any generic NPC, 3 deck cycles.
+
+**▶ T1/T4/NATIVE-BIT PROBES (throwaway, on this branch; see `Docs/PROBE-ALLOWANCE.md`
+for the full hotkey map, method, and pass/fail criteria).** T1 = combat behavior-tree
+leaf `Enter`/act (slot 0x02, all 70 `VTABLE_CombatBehaviorTreeNodeObject_*` leaves,
+`core/T1Probe.{h,cpp}` + the local `core/CombatBehaviorRE.h` RE:: extension since
+CommonLib doesn't ship these classes) — Phase 0 OBSERVE (F9 claim) + Phase 1 DENY the
+Attack leaf via a runtime-derived `SetFailed` (disassembled from `ForceFail`'s own
+body, F10 toggle). T4 = `TESActionData::Process` seat (`core/T4Probe.{h,cpp}`) —
+reads valhalla's known call site's rel32 and compares it to `VTABLE_TESActionData[0]`
+slot 5 to decide vtable-hook vs call-site-hook, then OBSERVEs `BGSAction`
+editorID/priority/source (F8 claim). Native-bit = a plain `kAttackingDisabled`/
+`kCastingDisabled` toggle on the aimed NPC, no hook (`core/NativeBitProbe.{h,cpp}`,
+F6/F7). All three field-test-first, hotkey-driven, NOT wired to any client.
 
 ## Client API (Layer 2) — REAL
 

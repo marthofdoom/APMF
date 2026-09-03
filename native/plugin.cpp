@@ -3,6 +3,9 @@
 #include "core/Hook.h"
 #include "core/Input.h"
 #include "core/AliasPkgProbe.h"
+#include "core/T1Probe.h"
+#include "core/T4Probe.h"
+#include "core/NativeBitProbe.h"
 #include "core/Arbiter.h"
 #include "core/ControlMap.h"
 #include "core/AvLedger.h"
@@ -50,6 +53,9 @@ namespace {
             apmf::castgate::Install();           // T2c CheckCast allowance (Docs/ALLOWANCE-TEMPLATE.md)
             apmf::equipgate::Install();          // T2a CheckShouldEquip allowance
             apmf::probe::Install();              // 0x49 package-offer probe (throwaway; VR-refused inside)
+            apmf::t1probe::Install();            // T1 combat behavior-tree leaf probe (throwaway; VR-refused inside)
+            apmf::t4probe::Install();            // T4 TESActionData::Process probe (throwaway; VR-refused inside)
+            apmf::nativebitprobe::Install();     // native-bit toggle probe (throwaway; no VR gate needed)
             if (!REL::Module::IsVR()) {          // no drain seat on VR -> no test surface
                 apmf::input::Register();
                 apmf::input::LogHelp();
@@ -59,6 +65,9 @@ namespace {
             break;
         case SKSE::MessagingInterface::kPreLoadGame:
             apmf::Arbiter::Get().ReleaseAll("kPreLoadGame");
+            apmf::probe::ClearOnPreLoad();
+            apmf::t1probe::ClearOnPreLoad();
+            apmf::t4probe::ClearOnPreLoad();
             break;
         case SKSE::MessagingInterface::kPostLoadGame:
             apmf::av::ApplyPending();             // restore any stranded AV overrides
