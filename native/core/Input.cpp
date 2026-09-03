@@ -28,7 +28,7 @@ namespace apmf::input {
                     apmf::probe::OnHotkey(btn->GetIDCode());            // 0x49 probe: NumpadEnter (shared claim)
                     apmf::t1probe::OnHotkey(btn->GetIDCode());          // T1 probe: NumpadEnter (shared claim) / NumpadSlash (deny)
                     apmf::t4probe::OnHotkey(btn->GetIDCode());          // T4 probe: NumpadEnter (shared claim)
-                    apmf::nativebitprobe::OnHotkey(btn->GetIDCode());   // native-bit probe: NumpadStar / NumpadDot
+                    apmf::nativebitprobe::OnHotkey(btn->GetIDCode());   // native-bit probe: Numpad1 / Numpad2
                 }
                 return RE::BSEventNotifyControl::kContinue;
             }
@@ -52,13 +52,12 @@ namespace apmf::input {
             }
         }
         spdlog::info("[input]   scancode 0x52 -> RELEASE ALL controlled NPCs (Numpad0)");
-        spdlog::info("[input]   PROBES (throwaway, Deck-pressable numpad keys, Docs/PROBE-ALLOWANCE.md): "
-                     "0x9C NumpadEnter = SHARED claim/release the aimed NPC (T1 observe + T4 observe + 0x49 "
-                     "package-offer engage/release, all at once); 0xB5 NumpadSlash = T1 Phase-1 Attack-leaf "
-                     "deny toggle (needs a claim first); 0x37 NumpadStar = toggle kAttackingDisabled "
-                     "(native-bit, also shadows ch. ShoutPower's claim key while probing); 0x53 NumpadDot = "
-                     "toggle kCastingDisabled (native-bit, also shadows ch. Equipment's unequip key while "
-                     "probing).");
+        spdlog::info("[input]   PROBES (throwaway, numpad hotkeys -- F-keys are occupied by the game/modlist, "
+                     "see Docs/PROBE-ALLOWANCE.md): 0x9C NumpadEnter = SHARED claim/release the aimed NPC "
+                     "(T1 observe + T4 observe + 0x49 package-offer engage/release, all at once); 0xB5 "
+                     "NumpadSlash = T1 Phase-1 Attack-leaf deny toggle (needs a claim first); 0x4F Numpad1 = "
+                     "toggle kAttackingDisabled (native-bit); 0x50 Numpad2 = toggle kCastingDisabled "
+                     "(native-bit).");
     }
 
 }

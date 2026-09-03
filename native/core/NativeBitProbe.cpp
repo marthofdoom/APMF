@@ -7,27 +7,16 @@
 // would need co-save/kPreLoadGame handling for a flag that mutates a live
 // Actor -- unnecessary for a throwaway toggle probe).
 //
-// DECK-PRESSABLE NUMPAD KEYS: F-keys aren't reachable on Steam Deck, and the
-// two truly free numpad scancodes (NumpadEnter/NumpadSlash) are already
-// spoken for by the shared T1/T4/0x49 claim key and T1's Phase-1 deny key
-// (Docs/PROBE-ALLOWANCE.md). These two REPURPOSE existing channel-demo
-// numpad keys for the duration of probing -- both keys still fire their
-// normal channel action too (Input.cpp dispatches channel hotkeys and probe
-// hotkeys unconditionally on every press), so avoid using NumpadStar/
-// NumpadDot for ShoutPower/Equipment channel testing while these probes are
-// armed:
-//   - NumpadStar (0x37) also shadows ch. ShoutPower's "CLAIM the shout/power
-//     facet" key.
-//   - NumpadDot (0x53) also shadows ch. Equipment's "unequip right-hand
-//     weapon" key.
+// Standing convention: probe/test hotkeys use the NUMPAD (see Docs/PROBE-
+// ALLOWANCE.md) -- F-keys are occupied by the game/modlist, not usable here.
 // ============================================================================
 
 namespace apmf::nativebitprobe {
 
     namespace {
 
-        constexpr std::uint32_t kAttackKey = 0x37;   // NumpadStar (shadows ch. ShoutPower) -- toggle kAttackingDisabled
-        constexpr std::uint32_t kCastKey   = 0x53;   // NumpadDot (shadows ch. Equipment) -- toggle kCastingDisabled
+        constexpr std::uint32_t kAttackKey = 0x4F;   // Numpad1 -- toggle kAttackingDisabled on the aimed NPC
+        constexpr std::uint32_t kCastKey   = 0x50;   // Numpad2 -- toggle kCastingDisabled on the aimed NPC
 
         std::atomic<bool> g_installed{ false };
 
@@ -59,9 +48,8 @@ namespace apmf::nativebitprobe {
 
     void Install() {
         if (g_installed.exchange(true)) return;
-        spdlog::info("[nativebitprobe] ARMED (no hook, no VR gate -- a plain bit flip). NumpadStar (DIK 0x{}, also "
-                     "shadows ch. ShoutPower) toggles kAttackingDisabled; NumpadDot (DIK 0x{}, also shadows "
-                     "ch. Equipment) toggles kCastingDisabled on the crosshair-aimed NPC.",
+        spdlog::info("[nativebitprobe] ARMED (no hook, no VR gate -- a plain bit flip). Numpad1 (DIK 0x{}) toggles "
+                     "kAttackingDisabled; Numpad2 (DIK 0x{}) toggles kCastingDisabled on the crosshair-aimed NPC.",
                      apmf::log::Hex(kAttackKey, 2), apmf::log::Hex(kCastKey, 2));
     }
 

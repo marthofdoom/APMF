@@ -17,33 +17,29 @@ CLAUDE.md #4 / ALLOWANCE-TEMPLATE.md §5).
 
 ## Hotkey map
 
-**All numpad — F-keys aren't reachable on a Steam Deck, matching every existing channel
-test-surface key.** Consolidated to the fewest keys: ONE shared claim key drives T1 +
-T4 + the 0x49 redirect at once (aim an NPC, press it — all three claim the same actor
-in lockstep, since each independently applies the same toggle logic to the same
-scancode), plus one per-probe toggle key each for T1's Phase-1 deny and the two
-native-bit flags.
+**Standing convention: probe/test hotkeys use the NUMPAD.** F-keys are unusable here —
+not a Deck-reachability issue, they're simply occupied by the game/modlist already.
+Every future probe set should default to numpad without re-litigating this.
+
+Consolidated to the fewest keys: ONE shared claim key drives T1 + T4 + the 0x49
+redirect at once (aim an NPC, press it — all three claim the same actor in lockstep,
+since each independently applies the same toggle logic to the same scancode), plus one
+dedicated toggle key each for T1's Phase-1 deny and the two native-bit flags. The
+channel-demo numpad keys are not needed for this pass and are freely overridden.
 
 | Key | DIK | Probe | Action |
 |---|---|---|---|
 | NumpadEnter | 0x9C | T1 + T4 + 0x49 redirect (SHARED) | Claim/release the crosshair-aimed NPC — one press claims it for T1 Phase 0 observe, T4 observe, AND the 0x49 package-offer engage, all at once; press again (regardless of current aim) to release all three |
 | NumpadSlash | 0xB5 | T1 | Toggle Phase 1 DENY (the `CombatBehaviorAttack` leaf only) on the NumpadEnter-claimed NPC — refuses if nothing is claimed |
-| NumpadStar | 0x37 | Native-bit | Toggle `kAttackingDisabled` on the crosshair-aimed NPC — **REPURPOSED**: also still fires ch. ShoutPower's "CLAIM the shout/power facet" key (both actions fire on every press); avoid using NumpadStar for ShoutPower channel testing while probing is armed |
-| NumpadDot | 0x53 | Native-bit | Toggle `kCastingDisabled` on the crosshair-aimed NPC — **REPURPOSED**: also still fires ch. Equipment's "unequip right-hand weapon" key (both actions fire on every press); avoid using NumpadDot for Equipment channel testing while probing is armed |
-| Numpad0 | 0x52 | (channel test surface) | Release ALL controlled NPCs — unrelated to these probes, listed for collision-avoidance |
+| Numpad1 | 0x4F | Native-bit | Toggle `kAttackingDisabled` on the crosshair-aimed NPC |
+| Numpad2 | 0x50 | Native-bit | Toggle `kCastingDisabled` on the crosshair-aimed NPC |
+| Numpad0 | 0x52 | (test surface) | Release ALL controlled NPCs — unrelated to these probes, listed for collision-avoidance |
 
 NumpadEnter must be pressed before NumpadSlash (NumpadSlash refuses without a live T1
-claim). The native-bit probe has no claim step — NumpadStar/NumpadDot act on whatever
-the crosshair is aimed at on that press, independent of the NumpadEnter claim. All
+claim). The native-bit probe has no claim step — Numpad1/Numpad2 act on whatever the
+crosshair is aimed at on that press, independent of the NumpadEnter claim. All
 claim-based probes (T1, T4, 0x49) release their claim (no engine call, nothing to
 restore) on `kPreLoadGame`.
-
-Only NumpadEnter (0x9C) and NumpadSlash (0xB5) were genuinely free on the existing
-numpad test surface (`0x47`/`0x48`/`0x49`/`0x4A`/`0x4B`/`0x4C`/`0x4D`/`0x4E`/`0x4F`/
-`0x50`/`0x51`/`0x52`/`0x53`/`0x37` are all already a channel-demo key) — NumpadStar and
-NumpadDot are deliberate, documented shadow-reuses of ch. ShoutPower's and ch.
-Equipment's keys respectively, acceptable because probing is the current test priority
-and both keys' dual-fire is called out above.
 
 ## Probe 1 — T1: combat behavior-tree leaf `Enter`/`act`
 
@@ -207,8 +203,8 @@ hook-fires fact) is safe to build a real channel on later.
 plain `Actor::BOOL_FLAGS` bit flip via `actor->GetActorRuntimeData().boolFlags`,
 `stl::enumeration<BOOL_FLAGS,uint32_t>::set/reset`, is version-stable by construction).
 
-NumpadStar/NumpadDot re-aim the crosshair on every press (no sticky claim — a live Actor bit needs no
-co-save handling for a throwaway toggle) and flip `kAttackingDisabled` /
+Numpad1/Numpad2 re-aim the crosshair on every press (no sticky claim — a live Actor bit
+needs no co-save handling for a throwaway toggle) and flip `kAttackingDisabled` /
 `kCastingDisabled` respectively, logging the before/after state.
 
 **Expected vs actual:**
