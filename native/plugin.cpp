@@ -10,6 +10,7 @@
 #include "core/EquipGate.h"
 #include "core/ActionGate.h"
 #include "core/PackageGate.h"
+#include "core/NonAliasProbe.h"
 
 // ============================================================================
 // APMF -- AI Package Management Framework. Entry point (thin).
@@ -53,6 +54,8 @@ namespace {
             apmf::equipgate::Install();          // T2a CheckShouldEquip allowance
             apmf::actiongate::Install();         // T1 combat-action allowance (ch.7; VR-refused inside)
             apmf::packagegate::Install();        // T3 package-offer allowance (ch.9; VR-refused inside)
+            apmf::nonaliasprobe::Install();      // OBSERVE-ONLY 0xDF hook + 0x49 assist + RTTI dumper
+                                                  // (Docs/PROBE-NONALIAS-PACKAGE.md; VR-refused inside)
             apmf::nativebitprobe::Install();     // native-bit toggle probe (throwaway; no VR gate needed)
             // T4 (TESActionData::Process) REMOVED (2026-09-03): its call-site patch at
             // valhalla's known site collided with SCAR.dll's own hook on the same AI

@@ -228,6 +228,22 @@ claimed offer, else `original(self)`. `OnHotkey` (DIK 0x57) toggles a single-act
   test, gated behind arm + `kProbePackageForm` (0 ⇒ Phase 0 only). Never touch alias/
   run-once state (INVARIANTS #3a). Delete wholesale once the mechanism is proven or dead.
 
+### `native/core/NonAliasProbe.{h,cpp}` — OBSERVE-ONLY 0xDF hook + 0x49 assist + RTTI dumper
+Docs/PROBE-NONALIAS-PACKAGE.md's runtime probe: does `Actor::CheckForCurrentAliasPackage`
+(0x49, `core/PackageGate.cpp`'s existing hook) fire for a NON-alias package actor (Cicero,
+`0009BE51`) at all, and does `Actor::PutCreatedPackage` (0xDF, RTTI-verified via
+`core/Allowance.h::InstallOnVtables` on `VTABLE_Character[0]`) ever carry that same package?
+Pure logging, chained to the original unconditionally, no decision/denial (INVARIANTS #17).
+`0x45` NumLock toggles the 0x49/0xDF observe log (OFF by default; PackageGate.cpp's thunk
+checks `IsEnabled()`/`RateLimitOK()` from here to add its own log line on the same switch);
+`0x46` ScrollLock one-shots a vtable/RTTI dump (module-relative RVAs + best-effort RTTI type
+name, mirroring `Allowance.cpp`'s `DerivesFrom` walk) of the crosshair-aimed actor — the
+reusable "find sites ourselves" tool so a future probe skips hand-reversing the vtable layout.
+- **What breaks:** THROWAWAY/instrumentation-only, same class as `native/core/
+  NativeBitProbe.{h,cpp}` — not wired to any client. Never touch alias/run-once state (#3a).
+  0xDF is a 1.6.1170-pinned raw index (Docs/PROBE-NONALIAS-PACKAGE.md §2) — no named
+  CommonLib binding exists to prefer over it today.
+
 ### `native/channels/*.cpp` — one module per facet (FULL documented catalog)
 Each: a `Channel` subclass + `APMF_REGISTER_CHANNEL`, per-NPC `Engage`/`Release`.
 The first release ships the full documented catalog (13 channels) as a baseline

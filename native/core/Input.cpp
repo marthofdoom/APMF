@@ -4,6 +4,7 @@
 #include "core/Arbiter.h"
 #include "core/Registry.h"
 #include "core/NativeBitProbe.h"
+#include "core/NonAliasProbe.h"
 
 namespace apmf::input {
 
@@ -23,6 +24,7 @@ namespace apmf::input {
                     if (btn->GetDevice() != RE::INPUT_DEVICE::kKeyboard) continue;
                     apmf::Arbiter::Get().DispatchHotkey(btn->GetIDCode());
                     apmf::nativebitprobe::OnHotkey(btn->GetIDCode());   // native-bit probe: Numpad1 / Numpad2
+                    apmf::nonaliasprobe::OnHotkey(btn->GetIDCode());    // 0x49/0xDF observe toggle + RTTI dump
                 }
                 return RE::BSEventNotifyControl::kContinue;
             }
@@ -52,6 +54,11 @@ namespace apmf::input {
                      "kAttackingDisabled on the aimed NPC; 0x50 Numpad2 = toggle kCastingDisabled. "
                      "T4 (TESActionData::Process) is REMOVED -- collided with SCAR.dll, see "
                      "Docs/PROBE-ALLOWANCE.md.");
+        spdlog::info("[input]   non-alias package OBSERVE probe (throwaway, Docs/PROBE-NONALIAS-PACKAGE.md): "
+                     "0x45 NumLock = toggle 0x49 (CheckForCurrentAliasPackage) + 0xDF (PutCreatedPackage) "
+                     "observe logging, OFF by default; 0x46 ScrollLock = one-shot vtable/RTTI dump of the "
+                     "crosshair-aimed actor. Every Numpad0-9/./+/-/*//Enter scancode is already claimed "
+                     "above, so this uses the two adjacent lock keys instead.");
     }
 
 }

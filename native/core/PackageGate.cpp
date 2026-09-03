@@ -1,6 +1,7 @@
 #include "PCH.h"
 #include "core/Log.h"
 #include "core/ControlMap.h"
+#include "core/NonAliasProbe.h"
 #include "core/PackageGate.h"
 
 // ============================================================================
@@ -41,17 +42,43 @@ namespace apmf::packagegate {
         struct PkgHook {
             static RE::TESPackage* thunk(RE::Actor* a_this) {
                 RE::TESPackage* orig = func(a_this);   // the engine's own answer first
+                RE::TESPackage* result = orig;         // mechanical refactor only (single exit for the
+                                                        // OBSERVE-log addition below) -- every branch below
+                                                        // is byte-identical to the prior early-return logic,
+                                                        // `break` in place of `return`; behavior UNCHANGED.
 
-                if (apmf::ControlMap::Get().ControlledCount() == 0) return orig;   // near-zero cost
+                do {
+                    if (apmf::ControlMap::Get().ControlledCount() == 0) break;   // near-zero cost
 
-                APMF_API::APMF_Param claim{};
-                if (!apmf::ControlMap::Get().TryGetOwningClaim(a_this->GetFormID(),
-                                                               APMF_API::kIntent_OfferPackage, claim))
-                    return orig;   // uncontrolled on this intent
-                if (claim.form == 0) return orig;   // claimed but no package named -- channel default, no redirect
+                    APMF_API::APMF_Param claim{};
+                    if (!apmf::ControlMap::Get().TryGetOwningClaim(a_this->GetFormID(),
+                                                                   APMF_API::kIntent_OfferPackage, claim))
+                        break;   // uncontrolled on this intent
+                    if (claim.form == 0) break;   // claimed but no package named -- channel default, no redirect
 
-                if (auto* pkg = RE::TESForm::LookupByID<RE::TESPackage>(claim.form)) return pkg;
-                return orig;   // named FormID doesn't resolve -- degrade to the engine's own answer, never null
+                    if (auto* pkg = RE::TESForm::LookupByID<RE::TESPackage>(claim.form)) { result = pkg; break; }
+                    // named FormID doesn't resolve -- degrade to the engine's own answer, never null
+                } while (false);
+
+                // OBSERVE-ONLY (Docs/PROBE-NONALIAS-PACKAGE.md §6.1): does this hook even get
+                // CALLED for a non-alias-package actor (e.g. Cicero, 0009BE51)? Gated behind
+                // core/NonAliasProbe.h's NumLock switch + shared per-actor rate limit -- OFF by
+                // default, never changes `result`. Uses Actor::GetCurrentPackage() (a plain
+                // accessor) rather than hand-walking AIProcess::currentPackage's raw struct --
+                // see NonAliasProbe.cpp's file header for why.
+                if (apmf::nonaliasprobe::IsEnabled() &&
+                    apmf::nonaliasprobe::RateLimitOK(a_this->GetFormID())) {
+                    const auto* cur = a_this->GetCurrentPackage();
+                    spdlog::info("[ch.9-observe] 0x49 CheckForCurrentAliasPackage actor=0x{} curPkg=0x{} "
+                                 "curPkgType={} engineOrig=0x{} hookReturns=0x{}",
+                                 apmf::log::Hex(a_this->GetFormID()),
+                                 apmf::log::Hex(cur ? cur->GetFormID() : 0),
+                                 cur ? static_cast<std::int32_t>(cur->GetPackageType()) : -1,
+                                 apmf::log::Hex(orig ? orig->GetFormID() : 0),
+                                 apmf::log::Hex(result ? result->GetFormID() : 0));
+                }
+
+                return result;
             }
             static inline REL::Relocation<decltype(thunk)> func;
             static constexpr std::size_t idx = 0x49;   // Actor::CheckForCurrentAliasPackage
