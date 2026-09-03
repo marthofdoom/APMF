@@ -44,13 +44,18 @@
 //   control)` contract with no further indirection). The raw SetFailed
 //   address is still derived and logged for diagnostic cross-checking, but
 //   is no longer the thing actually called.
-// * GUARD (INVARIANTS #17 adapt/degrade-never-crash): the deny call additionally
-//   requires hypothesis A's `+0x158` read (see below) to have resolved to the
-//   EXACT claimed actor on THIS hit before touching `control` at all -- a
-//   cheap plausibility check that `a_control` is genuinely the kind of object
-//   this code assumes it is. If it doesn't check out, the deny is skipped
-//   (warn-once) and the hit falls through to a plain observe -- never an
-//   unverified call.
+// * GUARD (INVARIANTS #17 adapt/degrade-never-crash): the deny call requires
+//   the SAME actor-resolution the observe path already proved reliable --
+//   fidA == claim OR fidB == claim (the `+0x158` ambiguity, resolved via
+//   EITHER hypothesis) -- before touching `control` for a write. The first
+//   build wrongly narrowed this to hypothesis A alone; field data showed
+//   observe (A-or-B) resolves the correct actor on every hit while hypothesis
+//   A alone does not reliably match on this runtime, so the deny never fired
+//   even though the actor WAS resolvable -- fixed 2026-09-03 to use exactly
+//   what observe already demonstrated works, not a narrower re-check. If
+//   NEITHER hypothesis resolves (control genuinely unverifiable), the deny is
+//   skipped (warn-once) and the hit falls through to a plain observe -- never
+//   an unverified call.
 // ============================================================================
 
 extern "C" __declspec(dllimport) std::uint32_t __stdcall GetCurrentThreadId();
@@ -255,16 +260,23 @@ namespace apmf::t1probe {
             }
 
             // Phase 1: deny ONLY the Attack leaf, ONLY while armed, ONLY for the claim.
-            // GUARD (INVARIANTS #17 adapt/degrade-never-crash): require the deny
-            // mechanism to be resolved AND hypothesis A specifically (control+0x158
-            // == CombatController* directly, the CPR-backed reading) to have matched
-            // the claim on THIS hit -- a concrete plausibility check that `a_control`
-            // is genuinely well-formed before it is ever passed into a WRITE
-            // operation. Hypothesis B alone is not enough here (it is the weaker,
-            // unverified alternative -- fine for observation, not for a write).
+            // GUARD (INVARIANTS #17 adapt/degrade-never-crash), FIXED (2026-09-03):
+            // the deny's "is this the claimed actor?" check now uses EXACTLY the
+            // same resolution the observe path already proved reliable -- fidA ==
+            // claim OR fidB == claim, the identical condition that gates every
+            // FIRST FIRE / g_hitsClaimed accounting above (control flow cannot even
+            // REACH this point unless that condition already held: the early
+            // `if (fidA != claim && fidB != claim) return orig(...)` above already
+            // filtered out every non-matching hit). The first build wrongly
+            // narrowed this to hypothesis A alone ("the CPR-backed reading"),
+            // which field data showed does NOT reliably match on this runtime even
+            // though observe (A-or-B) resolves the correct actor on every hit --
+            // that mismatch is exactly why the deny never fired. Observe's
+            // demonstrated success is the bar, not which specific hypothesis wins.
             if (vt == g_attackVt && g_denyAttack.load(std::memory_order_relaxed)) {
                 const auto denyAct = g_forceFailAct.load(std::memory_order_relaxed);
-                if (denyAct && a_control && fidA == claim) {
+                const bool actorResolved = (fidA == claim || fidB == claim);   // same test observe already passed
+                if (denyAct && a_control && actorResolved) {
                     g_hitsAttackDenied.fetch_add(1, std::memory_order_relaxed);
                     // Invoke ForceFail's own ORIGINAL act() -- the exact 2-arg
                     // (leaf-this, control) apmf::cbt::Act_t convention already
@@ -278,10 +290,10 @@ namespace apmf::t1probe {
                     return a_control;   // do NOT call orig -- this IS the deny
                 }
                 if (!g_denySkippedLogged.exchange(true)) {
-                    spdlog::warn("[t1probe] Phase 1 DENY SKIPPED for this hit (denyAct={}, control={}, hypothesisA "
-                                 "matched claim={}) -- control not verified as plausible, falling back to OBSERVE "
+                    spdlog::warn("[t1probe] Phase 1 DENY SKIPPED for this hit (denyAct={}, control={}, actor "
+                                 "resolved={}) -- control not verified as plausible, falling back to OBSERVE "
                                  "rather than risk an unverified call (INVARIANTS #17). Logged once.",
-                                 denyAct != 0, a_control != nullptr, fidA == claim);
+                                 denyAct != 0, a_control != nullptr, actorResolved);
                 }
             }
 

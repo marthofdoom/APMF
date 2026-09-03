@@ -102,11 +102,20 @@ already receives directly. `SetFailed`'s own address is still extracted and logg
 a diagnostic cross-check (SE only, against CPR's documented `SkyrimSE.exe+0x7C6D30`)
 but is never called directly anymore.
 
-**Guard added (`Docs/INVARIANTS.md` #17, adapt/degrade-never-crash):** the deny call
-additionally requires hypothesis A's `+0x158` read to have resolved to the EXACT
-claimed actor on THIS hit before touching `control` — a concrete plausibility check
-that `a_control` is genuinely well-formed before any write. If it doesn't check out,
-the deny is skipped (warn-once) and the hit falls through to a plain observe instead.
+**Guard (`Docs/INVARIANTS.md` #17, adapt/degrade-never-crash), fixed twice
+(2026-09-03):** the deny call requires `control`'s `+0x158` actor-resolution to have
+matched the claimed actor before touching `control` for a write. The FIRST version of
+this guard narrowed the check to hypothesis A alone ("the CPR-backed reading") —
+field data showed observe (which accepts EITHER hypothesis, `fidA == claim || fidB ==
+claim`) reliably resolved the correct actor on every hit, while hypothesis A alone
+did NOT, so the deny guard failed every single time and never fired (census showed
+`attackDenied=0`) even though the actor genuinely WAS resolvable. Fixed to use
+`fidA == claim || fidB == claim` — the EXACT same condition observe already proved
+reliable (it's the same expression the earlier "not our claimed actor" early-return
+already checks; the deny guard now checks nothing narrower than what observe already
+demonstrated). If NEITHER hypothesis resolves on a given hit, the deny is skipped
+(warn-once) and the hit falls through to a plain observe instead — never an
+unverified call.
 
 **Expected vs actual:**
 
@@ -115,8 +124,8 @@ the deny is skipped (warn-once) and the hit falls through to a plain observe ins
 | Any leaf fires at all | ≥1 leaf logs FIRST FIRE within a few seconds of combat | |
 | `ForceFail::act()` deny mechanism resolved | logs a non-zero address at ARMED | |
 | `SetFailed` diagnostic address | resolves to a non-zero address (cross-check informational only) | |
-| Hypothesis A resolves the claimed actor | `fidA == claim` (required for the deny guard to pass) | |
-| Hypothesis B resolves the claimed actor | `fidA` vs `fidB` — which (if not both) | |
+| Actor resolves for the deny (either hypothesis) | `fidA == claim \|\| fidB == claim`, matching observe | |
+| Deny actually fires | census `attackDenied > 0` after arming Phase 1 in a fight | |
 | Attack-leaf deny | tree falls back cleanly (block/circle/other leaf), NO CTD | |
 | Deny side effects | no stutter, no re-entry storm (repeated `Enter` on Attack within ms) | |
 | Guard skip (if it happens) | one warn-once log, falls back to observe, no crash | |
