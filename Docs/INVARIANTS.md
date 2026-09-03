@@ -94,14 +94,19 @@ construction.
 
 ## Threading
 
-**#4 — The control map is game-thread-only state.** `ControlMap`'s `m_map` and
-`m_index`, and every channel's engine mutation + per-NPC state map, are mutated
-ONLY on the game/main thread — in `Drain()` (applying enqueued ops), `ReleaseAll()`,
-and the per-NPC `Tick`; the input sink (`BSInputDeviceManager`) and both `0xAD`
-seats all dispatch there and are serial. Do NOT mutate the map from any other
+**#4 — The control map's WRITE side is main-thread-only state; the READ side is an
+RCU snapshot readable from any thread.** `ControlMap`'s working map, `m_index`, and
+every channel's engine mutation + per-NPC state map are mutated ONLY on the WRITER
+thread — in `Drain()` (applying enqueued ops), `ReleaseAll()`, `Clear()`, and every
+channel's `Engage`/`OnOwnerChanged`/`Release`; the input sink
+(`BSInputDeviceManager`), the PlayerCharacter `0xAD` seat, and the SKSE revert/
+preload callbacks all dispatch there and are serial (confirmed the same MAIN thread
+by the `[threadcheck]` evidence — see #12). Do NOT mutate the map from any other
 thread. The ONLY shared-with-workers state is the request `m_queue` (guarded by
-`m_qmx`) and the atomic handle counter. The per-NPC hot path (`OnActorUpdate`) READS
-the map with no lock — see #12/#13.
+`m_qmx`) and the atomic handle counter. The per-NPC hot path (`OnActorUpdate`) is
+NOT confined to the writer thread (field-proven — #12) and READS a published,
+immutable RCU snapshot with no lock, one sanctioned per-entry exception aside — see
+#12/#13.
 
 **#5 — Release restores what engage changed.** Any channel that writes engine state
 (AVs, the spell slot, weapon state, AI-driven flag) must capture the prior value at
@@ -207,35 +212,73 @@ override `Tick` or capture per-NPC state.
 
 ## Multi-NPC control map (Phase 1)
 
-**#12 — SINGLE-WRITER threading; the map is mutated only on the game thread.** The
-`0xAD` hook runs on the game thread; client API calls (`Request`/`Release`) may
-arrive from a client's worker thread (MFO's BSJobs worker). So API calls only
-ENQUEUE a small POD op under a brief lock on `ControlMap::m_queue`; they NEVER touch
-the map. The map (`m_map`) and handle index (`m_index`) are mutated ONLY on the game
-thread — `Drain()` (once per frame, from the PlayerCharacter `0xAD` seat) applies
-the queued ops, and `ReleaseAll()` clears everything. Because every writer is the
-one serial game thread, the per-NPC per-frame hot path (`OnActorUpdate`) reads the
-map with NO lock. Handles are allocated with an atomic counter so `Request()`
-returns synchronously before its op is drained; ops are FIFO so a `Release` enqueued
-right after its `Request` is applied after it. A channel's OWN per-NPC state map is
-likewise game-thread-only. Break this and you get a data race across hundreds of
-NPCs.
+**#12 — RCU SNAPSHOT; single-writer, multi-reader.** [threadcheck] field evidence
+(2026-09-02) proved the `0xAD` hook does NOT run on one serial thread: a `Character`
+seat fired on a DIFFERENT worker thread than the `PlayerCharacter`/Drain seat. The
+old "single-writer, unlocked-read" model that assumed one serial game thread for
+BOTH sides was therefore FALSE and has been retired. What is still true, and is now
+the load-bearing assumption instead:
 
-Callback-thread quiescence: the SKSE serialization callbacks (`OnSave`/`OnLoad`/
-`OnRevert`) and the messaging callbacks (`kPreLoadGame`/`kPostLoadGame`) run on the
-main thread and are treated as game-thread writers of the same single-writer state
-(they touch `ControlMap`/`AvLedger` directly, no queue). This is safe ONLY because
-the engine does not run the `0xAD` tick concurrently with these callbacks — they are
-serialized on the main thread, not overlapped with a frame's actor updates. If a
-future SKSE ran a callback off-thread, this assumption breaks.
+- The WRITER side is single-threaded. `Drain()` (from the `PlayerCharacter` `0xAD`
+  seat), `ReleaseAll()` (from `kPreLoadGame`), and `Clear()` (from `OnRevert`) all run
+  on the same MAIN thread — this is exactly what `[threadcheck]` verifies: it records
+  the `PlayerCharacter`/Drain seat's thread id once and would fire if a `Character`
+  seat's thread ever matched it AND something else also mutated the map off that same
+  thread; in practice only the per-NPC `Character` seats are parallelized across
+  worker threads, never the writer path. A channel's OWN per-NPC state map is
+  likewise writer-thread-only (`Engage`/`OnOwnerChanged`/`Release`).
+- The READER side (`OnActorUpdate`, i.e. every `Character` `0xAD` seat) is NOT
+  single-threaded, and is NOT assumed to be. It must never touch writer-thread state
+  directly.
+- Client API calls (`Request`/`Release`/`Repoint`) may arrive from a client's worker
+  thread (MFO's BSJobs worker) — unchanged: they only ENQUEUE a small POD op under a
+  brief lock on `ControlMap::m_queue`; they NEVER touch the map.
+
+The fix is an RCU snapshot, not a hot-path lock: the writer keeps a private working
+copy (`m_current`) built from the last published generation; `Drain()`/`ReleaseAll()`/
+`Clear()` apply ops/the unload sweep/a wipe against that private copy and, ONLY if
+something actually changed, atomically PUBLISH it —
+`m_published.store(newSnapshot, memory_order_release)` — as a NEW immutable
+`std::shared_ptr<const MapType>` generation (copy-on-CHANGE: a no-op frame allocates
+nothing). Readers atomically LOAD a LOCAL `shared_ptr` copy of `m_published`
+(`memory_order_acquire`, pairing with the writer's release) and read that frozen
+generation lock-free: no torn reads, no UAF even if the writer publishes a newer
+generation mid-call — the reader's local `shared_ptr` keeps its own generation alive
+via refcount. `m_index` needs no snapshot wrapper (writer-thread-only, no reader ever
+consults it) and stays a plain map. Handles are allocated with an atomic counter so
+`Request()` returns synchronously before its op is drained; ops are FIFO so a
+`Release` enqueued right after its `Request` is applied after it.
+
+Per-entry mutation: every `NpcCtl` field is READ-ONLY to readers once published, with
+ONE sanctioned exception — `obsTick` (the per-tick observability counter) is a
+`mutable std::atomic<uint64_t>` (relaxed) so `OnActorUpdate` can `fetch_add` it
+through the `const NpcCtl&` a snapshot lookup hands back, without breaking the
+"snapshot is otherwise immutable" guarantee. No other field may ever be
+reader-mutated — a future channel's `Tick()` must not write anything else in
+`NpcCtl`/`ChannelCtl`/`Claim`; if it needs live per-claim data, give it the same
+atomic treatment, don't reach into the map raw.
+
+Lock-freedom of `std::atomic<std::shared_ptr<const MapType>>` is NOT assumed — it is
+disclosed once at hook install (`Hook::Install`, via
+`ControlMap::SnapshotIsLockFree()`). Not-lock-free (spinlock-backed, plausible on
+MSVC) is ACCEPTABLE: the control map holds only a handful of controlled NPCs, so the
+critical section is a pointer copy, not a hot loop — but it must show up in the log,
+never be assumed silently.
+
+Break any of this — mutate the published snapshot in place from a reader, mutate
+`m_current`/`m_index` off the writer thread, or reader-mutate any `NpcCtl` field
+besides `obsTick` — and you get a data race across hundreds of NPCs.
 
 **#13 — An uncontrolled NPC pays near-zero.** `OnActorUpdate` runs for EVERY NPC
-every frame. It must do at most: an `m_map.empty()` check, then ONE hash lookup that
-misses — no allocation, no iteration over all NPCs, nothing else. Only a CONTROLLED
-NPC runs its channels' `Tick` (and most channels no-op there — a clean block does no
-per-tick work, #1). Never scan all NPCs, never allocate on the hot path. The
-liveness sweep and queue drain run once per frame over the SMALL control map, never
-over all actors.
+every frame, on whatever thread the engine schedules it on (#12). It must do at
+most: a relaxed `m_anyControlled` check (no atomic `shared_ptr` traffic at all while
+nothing is controlled), then one acquire-load of the published snapshot + ONE hash
+lookup that misses — no allocation, no iteration over all NPCs, nothing else. Only a
+CONTROLLED NPC runs its channels' `Tick` (and most channels no-op there — a clean
+block does no per-tick work, #1). Never scan all NPCs, never allocate on the hot
+path. The liveness sweep and queue drain run once per frame over the SMALL control
+map (the writer's private working copy), never over all actors, and publish a new
+snapshot only when something changed.
 
 ## API contract
 

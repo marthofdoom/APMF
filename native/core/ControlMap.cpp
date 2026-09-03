@@ -20,6 +20,23 @@ namespace apmf {
         return s_instance;
     }
 
+    bool ControlMap::SnapshotIsLockFree() {
+        // Query on a throwaway instance -- is_lock_free() only depends on the atomic
+        // specialization (the platform's shared_ptr atomic implementation), not on
+        // the pointee, so this is representative of m_published without touching it.
+        std::atomic<std::shared_ptr<const MapType>> probe;
+        return probe.is_lock_free();
+    }
+
+    // ---- Writer-thread-only RCU publish. The ONE place m_current/m_published/
+    // m_anyControlled are written. See ControlMap.h for the full model. ----
+    void ControlMap::Publish(MapType&& next) {
+        const std::size_t n = next.size();
+        m_current = std::make_shared<const MapType>(std::move(next));
+        m_published.store(m_current, std::memory_order_release);   // pairs with OnActorUpdate's acquire load
+        m_anyControlled.store(n, std::memory_order_relaxed);
+    }
+
     // ---- Client/API side (ANY thread): enqueue only, never touch the map. ----
 
     Handle ControlMap::EnqueueRequest(RE::FormID actor, Intent intent, float basis,
@@ -68,7 +85,8 @@ namespace apmf {
         }
     }
 
-    // ---- Game thread ONLY. ----
+    // ---- Writer thread ONLY (Drain/ApplyRequest/ApplyRelease/ApplyRepoint/
+    // ReleaseAll/Clear). OnActorUpdate below is the exception -- ANY thread. ----
 
     void ControlMap::Drain() {
         // Move the queued ops out under the lock, then apply them lock-free.
@@ -78,18 +96,37 @@ namespace apmf {
             if (m_queue.empty()) { /* fall through to the sweep */ }
             else ops.swap(m_queue);
         }
+
+        // Cheap READ-ONLY pre-check against the currently-published map: is there
+        // any work at all this frame? Avoids the deep copy-on-write below on the
+        // (common) no-op frame -- ops empty AND nothing unloaded -- so a truly quiet
+        // frame allocates nothing at all, not even the working copy.
+        if (ops.empty()) {
+            bool anyUnloaded = false;
+            for (const auto& kv : *m_current) {
+                if (!kv.second.handle.get()) { anyUnloaded = true; break; }
+            }
+            if (!anyUnloaded) return;
+        }
+
+        // RCU: build a private working copy of the last-published snapshot -- only
+        // reached when there's real work (an op arrived, or something unloaded).
+        // Deep-copies the (small, controlled-NPCs-only) map -- cheap -- and is
+        // published ONLY if something actually changed.
+        MapType next = *m_current;
+        bool changed = false;
         for (const auto& op : ops) {
             switch (op.kind) {
-            case PendingOp::Kind::kRequest: ApplyRequest(op);                  break;
-            case PendingOp::Kind::kRelease: ApplyRelease(op.handle);           break;
-            case PendingOp::Kind::kRepoint: ApplyRepoint(op.handle, op.param); break;
+            case PendingOp::Kind::kRequest: changed |= ApplyRequest(op, next);                  break;
+            case PendingOp::Kind::kRelease: changed |= ApplyRelease(op.handle, next);           break;
+            case PendingOp::Kind::kRepoint: changed |= ApplyRepoint(op.handle, op.param, next); break;
             }
         }
 
         // Sweep controlled NPCs that have unloaded (they stop calling OnActorUpdate,
         // so only this periodic pass reclaims them). Cheap: iterates the (small)
         // control map, never all NPCs.
-        for (auto it = m_map.begin(); it != m_map.end();) {
+        for (auto it = next.begin(); it != next.end();) {
             auto& ctl = it->second;
             if (ctl.handle.get()) { ++it; continue; }
             auto* actor = RE::TESForm::LookupByID<RE::Actor>(it->first);   // may be null
@@ -99,22 +136,26 @@ namespace apmf {
             }
             spdlog::info("[ctl] 0x{} unloaded -- released {} channel(s), dropped from control.",
                          apmf::log::Hex(it->first), ctl.channels.size());
-            it = m_map.erase(it);
+            it = next.erase(it);
+            changed = true;
         }
+
+        if (changed) Publish(std::move(next));
+        // else: `next` is discarded here -- zero reader-visible churn, no publish.
     }
 
-    void ControlMap::ApplyRequest(const PendingOp& op) {
+    bool ControlMap::ApplyRequest(const PendingOp& op, MapType& map) {
         auto* channel = Registry::Get().ChannelForIntent(op.intent);
-        if (!channel) return;   // (already checked at enqueue; defensive)
+        if (!channel) return false;   // (already checked at enqueue; defensive)
 
         auto* actor = RE::TESForm::LookupByID<RE::Actor>(op.actor);
         if (!actor) {
             spdlog::warn("[ctl] request h={} ignored -- actor 0x{} not found/loaded.",
                          op.handle, apmf::log::Hex(op.actor));
-            return;
+            return false;
         }
 
-        auto&      npc     = m_map[op.actor];
+        auto&      npc     = map[op.actor];
         const bool freshNpc = npc.channels.empty();
         if (freshNpc) {
             npc.handle       = actor->GetHandle();
@@ -151,7 +192,7 @@ namespace apmf {
             spdlog::info("[ctl] 0x{} '{}' + ch.{} {} ENGAGED (h={}, basis={:.1f}, form=0x{}). NPCs controlled: {}.",
                          apmf::log::Hex(op.actor), actor->GetName() ? actor->GetName() : "?",
                          channel->ChannelNo(), channel->Name(), op.handle, op.basis,
-                         apmf::log::Hex(op.param.form), m_map.size());
+                         apmf::log::Hex(op.param.form), map.size());
         } else {
             // Additional claim on an already-engaged channel: arbitrate by basis
             // (higher wins; tie -> earliest, so the incumbent keeps ownership unless
@@ -165,21 +206,24 @@ namespace apmf {
                          op.handle, op.basis, cc->claims.size(), newOwner ? op.basis : oldBest,
                          newOwner ? " (NEW OWNER)" : "");
         }
+        return true;   // the claim was always pushed onto `map` above, regardless of path
     }
 
-    void ControlMap::ApplyRelease(Handle handle) {
+    bool ControlMap::ApplyRelease(Handle handle, MapType& map) {
         auto idxIt = m_index.find(handle);
-        if (idxIt == m_index.end()) return;   // unknown/stale/already-released
+        if (idxIt == m_index.end()) return false;   // unknown/stale/already-released
         const RE::FormID formID  = idxIt->second.first;
         Channel*         channel = idxIt->second.second;
         m_index.erase(idxIt);
 
-        auto npcIt = m_map.find(formID);
-        if (npcIt == m_map.end()) return;
+        auto npcIt = map.find(formID);
+        if (npcIt == map.end()) return false;
         auto& npc = npcIt->second;
+        bool changed = false;
 
         for (auto ccIt = npc.channels.begin(); ccIt != npc.channels.end(); ++ccIt) {
             if (ccIt->channel != channel) continue;
+            changed = true;   // this claim is in `map` and is about to be removed from it
             auto& claims = ccIt->claims;
 
             // Identify the owner (highest basis; tie -> earliest) BEFORE removal, so
@@ -216,23 +260,24 @@ namespace apmf {
             }
             break;
         }
-        if (npc.channels.empty()) m_map.erase(npcIt);
+        if (npc.channels.empty()) map.erase(npcIt);
+        return changed;
     }
 
-    void ControlMap::ApplyRepoint(Handle handle, const APMF_API::APMF_Param& param) {
+    bool ControlMap::ApplyRepoint(Handle handle, const APMF_API::APMF_Param& param, MapType& map) {
         auto idxIt = m_index.find(handle);
-        if (idxIt == m_index.end()) return;   // unknown/stale
+        if (idxIt == m_index.end()) return false;   // unknown/stale
         const RE::FormID formID  = idxIt->second.first;
         Channel*         channel = idxIt->second.second;
 
-        auto npcIt = m_map.find(formID);
-        if (npcIt == m_map.end()) return;
+        auto npcIt = map.find(formID);
+        if (npcIt == map.end()) return false;
         auto& npc = npcIt->second;
 
         for (auto& cc : npc.channels) {
             if (cc.channel != channel) continue;
             auto& claims = cc.claims;
-            if (claims.empty()) return;
+            if (claims.empty()) return false;
 
             // Find this claim, and the current owner (highest basis; tie -> earliest).
             Claim* self = nullptr;
@@ -241,7 +286,7 @@ namespace apmf {
                 if (c.handle == handle)     self = &c;
                 if (c.basis  > best->basis) best = &c;   // strict: tie keeps earliest
             }
-            if (!self) return;   // handle not in this channel (should not happen)
+            if (!self) return false;   // handle not in this channel (should not happen)
 
             self->param = param;   // update the stored param regardless of ownership
             if (best == self) {
@@ -254,23 +299,37 @@ namespace apmf {
                              apmf::log::Hex(formID), channel->ChannelNo(), channel->Name(),
                              handle, apmf::log::Hex(param.form));
             }
-            return;
+            return true;   // self->param was written above regardless of ownership
         }
+        return false;   // handle's channel not found on this NPC (should not happen)
     }
 
     void ControlMap::OnActorUpdate(RE::Actor* actor) {
-        if (m_map.empty()) return;                 // near-zero cost: nothing controlled
-        auto it = m_map.find(actor->GetFormID());  // the single hash lookup
-        if (it == m_map.end()) return;             // uncontrolled NPC -> done
+        // ANY thread (field-proven: the Character 0xAD seat is not single-threaded).
+        // Relaxed pre-gate: near-zero cost while nothing is controlled -- no atomic
+        // shared_ptr traffic at all until m_anyControlled goes non-zero.
+        if (m_anyControlled.load(std::memory_order_relaxed) == 0) return;
 
-        auto& npc = it->second;
+        // Acquire-load a LOCAL shared_ptr copy of the published snapshot. This
+        // freezes one generation for the rest of this call: even if Drain publishes
+        // a newer one concurrently, `snap` keeps this generation alive (refcount) and
+        // every read below sees a fully-built, self-consistent map -- no torn reads.
+        std::shared_ptr<const MapType> snap = m_published.load(std::memory_order_acquire);
+        auto it = snap->find(actor->GetFormID());   // the single hash lookup
+        if (it == snap->end()) return;               // uncontrolled NPC -> done
+
+        const NpcCtl& npc = it->second;   // read-only view; see ControlMap.h for the obsTick exception
         if (!npc.handle.get()) return;             // unloaded; the Drain sweep reclaims it
 
         for (auto& cs : npc.channels) {
             if (cs.channel) cs.channel->Tick(it->first, actor);   // most channels no-op (clean block)
         }
 
-        if ((++npc.obsTick % kObsEvery) != 0) return;
+        // The ONE reader-side mutation: obsTick is `mutable std::atomic`, so this is
+        // safe through the const NpcCtl& above even though everything else in the
+        // snapshot is read-only (ControlMap.h). Relaxed: a pure logging-cadence
+        // counter with no other memory dependent on its ordering.
+        if ((npc.obsTick.fetch_add(1, std::memory_order_relaxed) + 1) % kObsEvery != 0) return;
         auto*      pkg  = actor->GetCurrentPackage();
         RE::FormID id   = pkg ? pkg->GetFormID() : 0;
         const bool same = (id == npc.pkgAtCapture);
@@ -287,38 +346,52 @@ namespace apmf {
 
     void ControlMap::ReleaseAll(const char* why) {
         // Drain any pending ops first so a just-enqueued claim is not orphaned, then
-        // restore + drop every controlled NPC. Game/main thread only.
+        // restore + drop every controlled NPC. Writer thread only (see ControlMap.h:
+        // confirmed the same MAIN thread as Drain by the [threadcheck] evidence).
+        MapType next = *m_current;
         {
             std::vector<PendingOp> ops;
             { std::scoped_lock lock(m_qmx); ops.swap(m_queue); }
             for (const auto& op : ops) {
                 switch (op.kind) {
-                case PendingOp::Kind::kRequest: ApplyRequest(op);                  break;
-                case PendingOp::Kind::kRelease: ApplyRelease(op.handle);           break;
-                case PendingOp::Kind::kRepoint: ApplyRepoint(op.handle, op.param); break;
+                case PendingOp::Kind::kRequest: ApplyRequest(op, next);                  break;
+                case PendingOp::Kind::kRelease: ApplyRelease(op.handle, next);           break;
+                case PendingOp::Kind::kRepoint: ApplyRepoint(op.handle, op.param, next); break;
                 }
             }
         }
-        if (m_map.empty()) return;
-        const std::size_t n = m_map.size();
-        for (auto& [formID, npc] : m_map) {
-            // Fresh lookup by FormID -- never a cached raw pointer, so no UAF even at
-            // kPreLoadGame with a torn-down actor (returns null for a deleted form).
-            auto* actor = RE::TESForm::LookupByID<RE::Actor>(formID);
-            for (auto& cs : npc.channels) {
-                if (cs.channel) cs.channel->Release(formID, actor);
+        const std::size_t n = next.size();
+        if (n != 0) {
+            for (auto& [formID, npc] : next) {
+                // Fresh lookup by FormID -- never a cached raw pointer, so no UAF even
+                // at kPreLoadGame with a torn-down actor (returns null for a deleted
+                // form). channel->Release() is where AV-ledger restore fires
+                // (core/AvLedger) -- every one of these completes HERE, strictly
+                // before the Publish(MapType{}) below, so a reader can never observe
+                // a torn/partially-cleared map: it either still sees the prior
+                // (about-to-be-replaced) generation in full, or the fully-empty one.
+                auto* actor = RE::TESForm::LookupByID<RE::Actor>(formID);
+                for (auto& cs : npc.channels) {
+                    if (cs.channel) cs.channel->Release(formID, actor);
+                }
             }
         }
-        m_map.clear();
         m_index.clear();
-        spdlog::info("[ctl] ReleaseAll ({}) -- {} controlled NPC(s) restored and cleared.", why, n);
+        if (n != 0 || !m_current->empty()) {
+            Publish(MapType{});   // atomically publish the wipe -- no reader ever sees a partial clear
+            spdlog::info("[ctl] ReleaseAll ({}) -- {} controlled NPC(s) restored and cleared.", why, n);
+        }
     }
 
     void ControlMap::Clear() {
-        std::scoped_lock lock(m_qmx);
-        m_queue.clear();
-        m_map.clear();
+        // Revert / new game: wipe WITHOUT restoring (see ControlMap.h -- the actors
+        // are being replaced; the co-saved AV ledger handles the incoming save).
+        // Writer thread only; no channel->Release() calls here by design (unchanged
+        // from the pre-RCU behavior), so there is nothing to order against the
+        // publish besides the queue clear.
+        { std::scoped_lock lock(m_qmx); m_queue.clear(); }
         m_index.clear();
+        if (!m_current->empty()) Publish(MapType{});
     }
 
 }

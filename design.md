@@ -210,8 +210,10 @@ fidelity (real pathing, real procedures, real arrival) — APMF then does nothin
 - **Mechanism:** hook `Actor::CheckForCurrentAliasPackage` (VIRTUAL **0x49**) on `VTABLE_Character`
   ONLY (never `PlayerCharacter` — §0.38 scar). The engine calls it to ask "does an ALIAS give this
   actor a package right now?" The thunk: if APMF holds a package-offer claim for the actor
-  (game-thread, lock-free ControlMap read), return the CLIENT's `TESPackage*`; else return
-  `original(self)`. The engine adopts the returned package as current and runs it natively.
+  (an RCU-snapshot `ControlMap` read, lock-free and safe from whatever thread this `Character`
+  vfunc lands on — `0xAD`'s seat is field-proven multi-thread, INVARIANTS #12), return the
+  CLIENT's `TESPackage*`; else return `original(self)`. The engine adopts the returned package
+  as current and runs it natively.
 - **Why this is allowed where §3 forbids "substitution":** it is NOT a movement hijack and NOT a
   `SetRunOncePackage`-style forced swap. It redirects the alias-tier OFFER the engine was already
   going to evaluate, so the cost is exactly ONE `OnPackageChange` on engage and ONE on release —

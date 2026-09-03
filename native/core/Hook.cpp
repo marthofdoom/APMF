@@ -2,6 +2,7 @@
 #include "core/Log.h"
 #include "core/Hook.h"
 #include "core/Arbiter.h"
+#include "core/ControlMap.h"
 
 // ============================================================================
 // The one central engine seat: Actor::Update(float) @ VIRTUAL index 0xAD
@@ -11,9 +12,9 @@
 // offset), and True Directional Movement hooks this exact slot at scale.
 // ============================================================================
 
-// Win32 thread id for the [threadcheck] single-writer detector below. Declared
-// by hand (Hook.cpp-local, mirrors AliasPkgProbe.cpp's 0x49 probe); pointer-free,
-// no header conflict -- PCH does not pull in <Windows.h>.
+// Win32 thread id for the [threadcheck] detector below. Declared by hand
+// (Hook.cpp-local, mirrors AliasPkgProbe.cpp's 0x49 probe); pointer-free, no header
+// conflict -- PCH does not pull in <Windows.h>.
 extern "C" __declspec(dllimport) std::uint32_t __stdcall GetCurrentThreadId();
 
 namespace apmf::hook {
@@ -21,14 +22,17 @@ namespace apmf::hook {
     namespace {
 
         // ----------------------------------------------------------------------
-        // [threadcheck]: instrumentation-only detector for the load-bearing
-        // assumption behind INVARIANTS #12/#13 -- that the Character 0xAD seat
-        // (every NPC's unlocked ControlMap::OnActorUpdate read) always runs on
-        // the SAME thread as the PlayerCharacter 0xAD seat (the one that DRAINs
-        // and mutates the map, apmf::Arbiter::Get().OncePerFrame() above). The
-        // 0x49 probe proved a sibling Actor vfunc fires on 4+ threads; this
-        // confirms (or refutes) 0xAD specifically before the map is trusted
-        // lock-free. NO BEHAVIOR CHANGE: read-only, logs at most once, no lock.
+        // [threadcheck]: instrumentation-only observer, RETIRED to informational
+        // (2026-09-02, post-RCU). It originally detected whether the Character
+        // 0xAD seat (every NPC's ControlMap::OnActorUpdate read) shares a thread
+        // with the PlayerCharacter/Drain seat -- the load-bearing assumption
+        // behind the OLD raw single-writer/unlocked-read model. It fired: a
+        // Character seat ran on a different worker thread than Drain. That is no
+        // longer a bug report -- ControlMap now publishes an RCU snapshot
+        // (core/ControlMap.{h,cpp}) specifically so cross-thread reads are SAFE
+        // regardless of which thread the Character seat lands on. This stays as a
+        // one-time INFO log (not a warning) so a multi-thread runtime is still
+        // visible in the log without crying wolf on every deck cycle.
         // ----------------------------------------------------------------------
         std::atomic<std::uint32_t> g_drainThreadId{ 0 };
         std::atomic<bool> g_threadCheckLogged{ false };
@@ -43,10 +47,10 @@ namespace apmf::hook {
                 const std::uint32_t drainTid = g_drainThreadId.load(std::memory_order_relaxed);
                 const std::uint32_t hereTid = GetCurrentThreadId();
                 if (drainTid != 0 && hereTid != drainTid && !g_threadCheckLogged.exchange(true)) {
-                    spdlog::warn("[threadcheck] Character 0xAD (thread {}) != PlayerCharacter/Drain 0xAD "
-                                 "(thread {}) -- INVARIANTS #12/#13 single-writer assumption is FALSE on "
-                                 "this runtime; ControlMap needs a snapshot/RCU scheme before it can be "
-                                 "trusted lock-free.", hereTid, drainTid);
+                    spdlog::info("[threadcheck] 0xAD confirmed multi-thread (Character thread {} != "
+                                 "PlayerCharacter/Drain thread {}) -- expected on this runtime; the RCU "
+                                 "snapshot (ControlMap) makes cross-thread OnActorUpdate reads safe.",
+                                 hereTid, drainTid);
                 }
             }
             static inline REL::Relocation<decltype(thunk)> func;
@@ -58,9 +62,10 @@ namespace apmf::hook {
                 func(a_this, a_delta);
                 // The player ticks exactly ONCE per frame on the game thread -- the
                 // right seat to DRAIN the client-API request queue (apply enqueued
-                // Request/Release, mutating the control map on the game thread only)
-                // and sweep unloaded NPCs. The per-NPC hot path then reads the map
-                // lock-free (single-writer model, INVARIANTS #12).
+                // Request/Release against a private working copy) and sweep unloaded
+                // NPCs, then PUBLISH a new RCU snapshot iff something changed. The
+                // per-NPC hot path (any thread) then reads that snapshot lock-free
+                // (INVARIANTS #12/#13 -- RCU model, core/ControlMap.h).
                 apmf::Arbiter::Get().OncePerFrame();
                 static bool s_first = true;
                 if (s_first) { s_first = false; spdlog::info("[hook] player Update seat live (0xAD firing; per-frame drain armed)"); }
@@ -94,6 +99,19 @@ namespace apmf::hook {
 
         spdlog::info("[hook] installed: Character + PlayerCharacter Update(0x{}). Central 0xAD arbiter "
                      "seat live for every NPC.", apmf::log::Hex(CharacterUpdateHook::idx, 0));
+
+        // Disclose, don't assume, whether the RCU snapshot pointer
+        // (std::atomic<std::shared_ptr<const MapType>>, core/ControlMap.h) is
+        // actually lock-free on this toolchain. NOT lock-free (spinlock-backed,
+        // likely on MSVC) is ACCEPTABLE here: the control map holds only a handful
+        // of controlled NPCs, so the critical section is a pointer copy, not a hot
+        // loop -- but it must be visible in the log, not silently assumed, so a
+        // heavier-than-expected fallback would be caught rather than shipped blind.
+        const bool lockFree = apmf::ControlMap::SnapshotIsLockFree();
+        spdlog::info("[hook] ControlMap RCU snapshot (atomic<shared_ptr<const MapType>>) is{} lock-free "
+                     "on this toolchain.{}", lockFree ? "" : " NOT",
+                     lockFree ? "" : " Spinlock-backed is expected/acceptable for this small map -- "
+                                     "flagged here for the deck perf check, not a defect.");
     }
 
 }

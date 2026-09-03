@@ -58,22 +58,36 @@ owns it — no release/re-request (the "own the gambit" retarget primitive).
   `try/catch(...)` — NO exception may unwind across the client DLL (#14). The enqueue
   path is the ONE control path (the hotkeys use it too) — never add a parallel one.
 
-### `native/core/ControlMap.{h,cpp}` — the multi-NPC engine (Phase 1 heart)
-`unordered_map<FormID, NpcCtl>` (each NpcCtl = engaged channels + per-channel client
-claims + captured package; each `Claim` carries its `APMF_Param`). `EnqueueRequest`
-(takes `const APMF_Param*`, copied) / `Release` / `EnqueueRepoint` (any thread; brief
-queue lock, atomic handle), `Drain` (game thread, once/frame: apply `kRequest`/
-`kRelease`/`kRepoint` ops + sweep unloaded), `OnActorUpdate` (per-NPC hot path:
-empty-check → one hash lookup → tick engaged), `ReleaseAll`. Arbitration by basis
-(higher wins, tie → earliest); claims refcount. On a real owner change (add, release,
-or `ApplyRepoint`) a parameterized channel gets `OnOwnerChanged(winner.param)`;
-`Engage` gets the winning claim's param. `ApplyRepoint` updates a claim's stored param
-and, if it owns the channel, re-points it in place (same handle — no release/re-engage).
-- **What breaks:** SINGLE-WRITER (#12) — the map is mutated ONLY on the game thread
-  (Drain + ReleaseAll); API calls only enqueue. Mutate it off-thread and you race
-  across hundreds of NPCs. The hot path (#13) must stay `empty()` + ONE lookup for
-  an uncontrolled NPC — no allocation, no all-NPC scan, or you tax the whole game.
-  Handles must stay atomic-allocated so `Request` returns before Drain; ops FIFO.
+### `native/core/ControlMap.{h,cpp}` — the multi-NPC engine (Phase 1 heart), RCU snapshot
+`unordered_map<FormID, NpcCtl>` published as an immutable `shared_ptr<const MapType>`
+generation (each NpcCtl = engaged channels + per-channel client claims + captured
+package; each `Claim` carries its `APMF_Param`). `EnqueueRequest` (takes
+`const APMF_Param*`, copied) / `Release` / `EnqueueRepoint` (any thread; brief queue
+lock, atomic handle), `Drain` (WRITER thread, once/frame: copy `m_current` into a
+private working map, apply `kRequest`/`kRelease`/`kRepoint` ops + sweep unloaded,
+then `Publish()` a NEW snapshot ONLY if something changed), `OnActorUpdate` (ANY
+thread — the `Character` `0xAD` seat is field-proven multi-thread, `[threadcheck]`:
+relaxed `m_anyControlled` check → acquire-load a LOCAL snapshot copy → one hash
+lookup on that frozen generation → tick engaged → `obsTick.fetch_add`, the one
+reader-mutable field, a `mutable std::atomic`), `ReleaseAll`/`Clear` (writer thread;
+restore/wipe then `Publish` an empty snapshot). Arbitration by basis (higher wins,
+tie → earliest); claims refcount. On a real owner change (add, release, or
+`ApplyRepoint`) a parameterized channel gets `OnOwnerChanged(winner.param)`; `Engage`
+gets the winning claim's param. `ApplyRepoint` updates a claim's stored param and, if
+it owns the channel, re-points it in place (same handle — no release/re-engage).
+- **What breaks:** the RCU contract (#12) — the working map/`m_index` are mutated
+  ONLY on the writer thread (Drain/ReleaseAll/Clear, all the same MAIN thread; API
+  calls only enqueue) and published via `Publish()`
+  (`m_published.store(..., release)`); readers `acquire`-load a LOCAL `shared_ptr`
+  copy and must treat every `NpcCtl` field as read-only EXCEPT `obsTick`.
+  Reader-mutate anything else, or mutate the working map/index off the writer
+  thread, and you race across hundreds of NPCs. The hot path (#13) must stay the
+  relaxed pre-gate + ONE lookup for an uncontrolled NPC — no allocation, no all-NPC
+  scan, or you tax the whole game. Handles must stay atomic-allocated so `Request`
+  returns before Drain; ops FIFO. `SnapshotIsLockFree()` DISCLOSES (never assumes)
+  whether the snapshot pointer is actually lock-free on the build toolchain — logged
+  once at `Hook::Install`; not-lock-free is acceptable for this small map but must
+  stay visible, never silent.
 
 ### `native/core/AvLedger.{h,cpp}` — co-saved AV override ledger
 `(FormID, ActorValue) -> {prev, applied}`, co-saved via SKSE serialization (unique
@@ -92,14 +106,21 @@ av)` (the AV channels call these, not raw SetActorValue), `Save`/`Load(intf,vers
 `Character` + `PlayerCharacter` vtable patched once at index **`0x0AD`**
 (`Actor::Update(float)`); the thunk calls the original FIRST, then
 `Arbiter::OnActorUpdate(this)`. The PlayerCharacter seat also calls
-`Arbiter::OncePerFrame()` → `ControlMap::Drain()` (once/frame, game thread — the
-single-writer drain seat). VR-refused. Installed once.
+`Arbiter::OncePerFrame()` → `ControlMap::Drain()` (once/frame, on the single WRITER
+thread — Drain publishes an RCU snapshot; `ControlMap`'s readers are NOT confined to
+this thread, see #12). `[threadcheck]` (retired to an informational one-time log,
+2026-09-02): confirms the `Character` seat runs on a different thread than the
+`PlayerCharacter`/Drain seat — expected post-RCU, no longer a warning. `Install()`
+also logs, once, whether the RCU snapshot pointer is actually lock-free on this
+toolchain (`ControlMap::SnapshotIsLockFree()`) — disclosed, never assumed.
+VR-refused. Installed once.
 - **What breaks:** the index `0x0AD` is the whole version-robustness thesis
   (design.md §3) — do NOT swap it for a call-site offset. The original must run
   first (we act on top of the real AI tick, never instead of it). If you hook a
   non-virtual (`EvaluatePackage`) instead, you reintroduce version fragility.
   Every NPC routes through this thunk each frame — keep it cheap (identity
-  compare + early-out; see Arbiter).
+  compare + early-out; see Arbiter). Do NOT re-tighten `[threadcheck]` back into a
+  race warning without re-verifying `ControlMap` is still RCU-safe first.
 
 ### `native/core/Channel.h` — the channel interface
 `Channel` = `Name`/`ChannelNo`/`ServesIntent`/`Hotkeys`/`Engage`/`Tick`/`Release`.

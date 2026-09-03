@@ -28,18 +28,26 @@ forward to the SAME
 path, not two. APMF holds zero client-specific code (#14).
 
 ```
-              Actor::Update(0xAD)  ── every NPC, every frame (GAME THREAD)
-                       │
+              Actor::Update(0xAD)  ── every NPC, every frame
+                       │             (Character seat: ANY thread, field-proven
+                       │              not single-threaded -- #12; Player seat:
+                       │              the one WRITER/main thread)
                  Hook::thunk  (original first, then:)
               ┌────────┴─────────────────────────────┐
    NPC seat:  │                        Player seat:   │
    Arbiter::OnActorUpdate(actor)       Arbiter::OncePerFrame()
    → ControlMap::OnActorUpdate         → ControlMap::Drain()
-     • m_map.empty()? return             • apply queued Request/Release ops
-     • ONE hash lookup by FormID         • sweep unloaded controlled NPCs
+     • m_anyControlled==0? return        • copy m_current -> a private working map
+       (relaxed, no snapshot touch)      • apply queued Request/Release ops to it
+     • acquire-load m_published          • sweep unloaded controlled NPCs
+       (a LOCAL shared_ptr snapshot)     • Publish() a NEW snapshot -- ONLY if
+     • ONE hash lookup on that              something changed (copy-on-CHANGE;
+       frozen generation                    a no-op frame allocates nothing)
      • miss → return (uncontrolled)
-     • hit  → Tick engaged channels      (map mutated ONLY here + ReleaseAll)
-              + PACKAGE STABLE ~1/s
+     • hit  → Tick engaged channels      (the working map + m_index are mutated
+              + obsTick fetch_add         ONLY on the writer thread -- Drain /
+              (the ONE reader-mutable     ReleaseAll / Clear; see #12)
+              field) + PACKAGE STABLE ~1/s
 
    Hotkeys ─► Arbiter::DispatchHotkey ─┐   (test surface: aim + key adds an NPC)
    Client DLL ─► APMF_GetInterface ────┤─► ControlMap::EnqueueRequest/Release
@@ -48,20 +56,26 @@ path, not two. APMF holds zero client-specific code (#14).
 
 ## 2. The control map, the arbiter, and the registry
 
-**`ControlMap`** (`core/ControlMap.{h,cpp}`) is the scalable heart (Phase 1). A hash
-map keyed by NPC `FormID` → that NPC's control state (its engaged channels, and per
-channel the list of client claims + the package captured at first control). Any
-number of NPCs are controlled independently and simultaneously.
+**`ControlMap`** (`core/ControlMap.{h,cpp}`) is the scalable heart (Phase 1). An RCU
+snapshot: a hash map keyed by NPC `FormID` → that NPC's control state (its engaged
+channels, and per channel the list of client claims + the package captured at first
+control), published as an immutable `std::shared_ptr<const MapType>` generation.
+Any number of NPCs are controlled independently and simultaneously.
 - `EnqueueRequest/EnqueueRelease` — thread-safe (any thread): allocate a handle
   (atomic), push a POD op under the queue lock, return. Never touch the map.
-- `Drain()` — game thread, once per frame: apply the queued ops (engage a channel
-  on the 0→1 claim, release on 1→0, arbitrate extra claims by basis), then sweep
-  controlled NPCs that have unloaded.
-- `OnActorUpdate(actor)` — the per-NPC hot path (#13): `m_map.empty()` check, then
-  ONE hash lookup; a miss (uncontrolled NPC) returns immediately; a hit ticks that
-  NPC's engaged channels and logs PACKAGE STABLE ~1/s.
+- `Drain()` — writer thread, once per frame: copy the last-published snapshot into a
+  private working map, apply the queued ops against it (engage a channel on the 0→1
+  claim, release on 1→0, arbitrate extra claims by basis), sweep controlled NPCs that
+  have unloaded, then publish a NEW snapshot — ONLY if something actually changed.
+- `OnActorUpdate(actor)` — the per-NPC hot path (#12/#13), ANY thread: a relaxed
+  `m_anyControlled` check, then an acquire-load of a LOCAL snapshot copy + ONE hash
+  lookup on that frozen generation; a miss (uncontrolled NPC) returns immediately; a
+  hit ticks that NPC's engaged channels, bumps the one reader-mutable field
+  (`obsTick`, a `mutable std::atomic`), and logs PACKAGE STABLE ~1/s.
 - `ReleaseAll(why)` — restore + clear every controlled NPC (disengage-all /
-  kPreLoadGame).
+  kPreLoadGame): every channel's `Release()` (where AV-ledger restore fires) runs
+  BEFORE the empty snapshot is published, so a reader can never observe a
+  torn/partially-cleared map.
 
 Arbitration: when two clients claim the SAME channel on the SAME NPC, the higher
 `basis` owns it; on a tie the earlier claim owns it. The channel stays engaged until
@@ -83,12 +97,19 @@ and calls `Registry::Register`. It resolves an intent → its channel
 built once at load and immutable after, so those reads are safe from the client's
 worker thread (#12). No central switch to edit when a facet is added (#9).
 
-## 2a. The per-frame drain seat (single-writer)
+## 2a. The per-frame drain seat (single-writer, RCU-published)
 
 The PlayerCharacter ticks exactly once per frame on the game thread — the right seat
-to `Drain()` the client-API queue. So the control map is mutated on ONE serial
-thread (Drain + ReleaseAll), and every per-NPC `OnActorUpdate` reads it lock-free
-(#12). A worker-thread `Request` is applied at most one frame later (invisible).
+to `Drain()` the client-API queue. So the control map's WRITE side is mutated on ONE
+serial thread (Drain + ReleaseAll + Clear). Field evidence (`[threadcheck]`,
+2026-09-02) proved the READ side is NOT confined to that same thread — a `Character`
+`0xAD` seat fired on a different worker thread than the Drain seat. So the writer
+builds its next working copy, then PUBLISHES it as a new immutable snapshot
+(`ControlMap::Publish`, `std::atomic<std::shared_ptr<const MapType>>`,
+`memory_order_release`); every per-NPC `OnActorUpdate`, on whatever thread it runs,
+acquire-loads a local copy of that snapshot and reads it lock-free with no torn
+reads (#12). A worker-thread `Request` is applied at most one frame later
+(invisible).
 
 ## 3. The channel-module pattern
 
