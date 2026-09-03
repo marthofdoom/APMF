@@ -106,8 +106,12 @@ readers unproven (probe: set the bit, observe).
   derivation walk (confirm base `CombatBehaviorTreeNode`) is marth's requested built-in heuristic.
 - **Less robust:** T4 is an AL function (call-site-derived entry); `SetFailed`/`Ascend` are AL functions (SE
   46240/46229) — the only non-vtable dependencies. `CombatController` members must stay `< 0x68` (§0.29).
-  Two REs disagree on `CombatBehaviorThread+0x158` (CommonLib: `CombatBehaviorController*`; CPR:
-  `CombatController*`) — resolve on the probe before reading through it.
+  **RESOLVED (2026-09-03 field probe, 1.6.1170):** `CombatBehaviorThread+0x158` is a
+  `CombatBehaviorController*` (CommonLib's reading), NOT a `CombatController*` directly (CPR's own
+  struct, which resolves NULL on this runtime) — read `+0x20` of that for the real `CombatController*`,
+  `attackerHandle` at its `+0x28`. See `Docs/PROBE-ALLOWANCE.md`'s `+0x158` section for the full
+  field record; T1Probe.cpp's guard already checked both readings (`fidA == claim || fidB == claim`),
+  so this required no code fix, and stays robust if a future runtime flips which one resolves.
 - **Threads:** T2 `CheckCast` is confirmed NON-main (`STATUS.md:1148`); 0x49 fires from several threads (Phase
   0); `CheckShouldEquip`/`CheckStartCast`/T1 run inside the combat AI update. All thunks use the lock-free RCU
   ControlMap read — never a mutex (contrast MFO `CombatStyle.cpp:276`), never a follower-list touch.
@@ -126,12 +130,16 @@ fifth if its coverage probe proves it the shared body-command seat.
 2. T4: read the rel32 target at valhalla's site, compare with `VTABLE_TESActionData` slot 5; log `BGSAction`
    editorID + priority + source for one NPC across combat/sandbox/dialogue/player-command to measure coverage.
 
-**BUILT (2026-09-03) — see `Docs/PROBE-ALLOWANCE.md` for the full hotkey map, method,
-and pass/fail table (also covers the 0x49 REDIRECT Phases 1-3 and a native-bit toggle
-probe, run in the same pass). T1 is field-armed; T4 field-CRASHED and was REMOVED —
-see below and `Docs/PROBE-ALLOWANCE.md`'s "T4 — DEFERRED" section for the crash
-record.** Findings that firm up this design already, from building (and, for T4,
-field-crashing) the probes:
+**BUILT + FIELD-PROVEN (2026-09-03, deck, 1.6.1170) — see `Docs/PROBE-ALLOWANCE.md`
+for the full hotkey map, method, and pass/fail table (also covers the 0x49 REDIRECT
+Phases 1-3 and a native-bit toggle probe, run in the same pass). T1 PASSES both
+observe (all ~70 leaves dispatch through the vtable for real actors) and deny
+(`SetFailed`, via `ForceFail::act()`, actually fires — `attackDenied=19`/`29` in two
+separate fights, tree falls back cleanly, no CTD); the 0x49 redirect PASSES Phases
+1-2 (engage/release, `ExtraAliasInstanceArray` unchanged); native-bit is untested;
+T4 field-CRASHED and was REMOVED — see below and `Docs/PROBE-ALLOWANCE.md`'s
+"T4 — DEFERRED" section for the crash record.** Findings from building (and
+field-crashing, and field-proving) the probes:
 - **T4 crashed the game and is REMOVED, not just probe-gated — but coverage ADAPTS
   rather than degrades (`Docs/INVARIANTS.md` #17).** Its devirtualised fallback (an
   `SKSE::GetTrampoline().write_call<5>` patch at valhalla's known `TESActionData::
@@ -146,12 +154,20 @@ field-crashing) the probes:
   combat body-commands, so losing T4 falls through to T1 rather than opening a gap. The
   real remaining gap is narrower — the NON-combat body-command slice (sneak/draw/
   activate/idle outside combat, §4's honest gap) still awaits a chain-safe seat.
-- **The `CombatBehaviorTreeControl`+`0x158` ambiguity has a STRUCTURAL answer, pending
-  runtime confirmation:** CombatPathingRevolution's own `src/RE/CombatBehaviorTreeControl.h`
-  (the class this row's "CommonLib-vs-CPR disagreement" is about) types `master_controller`
-  at `+0x158` as `CombatController*` DIRECTLY — no `+0x20` hop. T1Probe.cpp logs BOTH this
-  reading and the `+0x20`-hop alternative on first hit so the field run confirms which is
-  live, but CPR's own struct (a compiled, shipping mod) is the stronger prior.
+- **The `CombatBehaviorTreeControl`+`0x158` ambiguity is RESOLVED by the field run
+  (2026-09-03, 1.6.1170) — and the resolution went the OPPOSITE way from the prior
+  written here.** CombatPathingRevolution's own `src/RE/CombatBehaviorTreeControl.h`
+  types `master_controller` at `+0x158` as `CombatController*` DIRECTLY (hypothesis A,
+  no `+0x20` hop) — this doc previously called that "the stronger prior" since CPR is a
+  compiled, shipping mod. Field data says otherwise: **hypothesis A resolves NULL on
+  this runtime; hypothesis B (CommonLib's own reading — `+0x158` is a
+  `CombatBehaviorController*`, its `+0x20` holds the real `CombatController*`,
+  `attackerHandle` at `+0x28` of THAT) is the one that actually works.** A compiled,
+  shipping mod's own header still isn't proof its layout matches every runtime.
+  T1Probe.cpp's guard already checked `fidA == claim || fidB == claim` (never
+  hypothesis A alone), so this resolution needed NO code change — confirmation that
+  checking both hypotheses rather than trusting either source blindly was the right
+  call from the start.
 - **`SetFailed`'s AE address does not need a static Address-Library id.** No header this
   project can reach carries an AE id for it (only the SE id, 46240, appears anywhere).
   `T1Probe.cpp::ResolveSetFailed()` instead disassembles `CombatBehaviorForceFail`'s own

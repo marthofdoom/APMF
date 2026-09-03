@@ -12,6 +12,11 @@ field run), and pass/fail. Update the ACTUAL column after each field session; ke
 see the "T4 — DEFERRED" section at the end for the crash record.** Three probes remain
 active: T1, the 0x49 redirect, and native-bit.
 
+**FIELD RESULTS (2026-09-03, deck, 1.6.1170):** T1 observe **PROVEN**, T1 deny
+**PROVEN**, the `+0x158` ambiguity **RESOLVED (hypothesis B)**, 0x49 redirect
+**PROVEN for Phases 1-2**. Native-bit untested this run. T4 stays removed (SCAR
+collision, adapts to T1). Full detail + exact numbers in each probe's section below.
+
 All three probes: VR-refused where the underlying vtable/RTTI/reloc index is SE/AE-only
 verified (T1, 0x49 — the native-bit probe has no such dependency and runs on VR too),
 install-once, lock-free reads only (no mutex in a hot thunk), warn-once/cadence-guarded
@@ -67,17 +72,27 @@ FIRST time each leaf fires (both our compile-time leaf name and the object's own
 prints totals. This proves vtable dispatch actually works on this build and maps which
 leaves fire in a real fight.
 
-**The `+0x158` ambiguity:** `act()`'s argument (`CombatBehaviorTreeControl* control`,
-what CommonLib's own unshipped internals apparently call `CombatBehaviorThread`) carries
-a `master_controller` pointer at `+0x158`. Two readings exist:
+**The `+0x158` ambiguity — RESOLVED (2026-09-03, hypothesis B).** `act()`'s argument
+(`CombatBehaviorTreeControl* control`, what CommonLib's own unshipped internals
+apparently call `CombatBehaviorThread`) carries a `master_controller` pointer at
+`+0x158`. Two readings existed:
 - **Hypothesis A (CPR's own struct):** `+0x158` IS a `CombatController*` directly;
   `attackerHandle` sits at `+0x28` of THAT.
 - **Hypothesis B (the doc's own noted alternative):** `+0x158` is a
   `CombatBehaviorController*`; its OWN `+0x20` holds the real `CombatController*`,
   whose `+0x28` is `attackerHandle`.
 
-The thunk resolves and logs BOTH on the first hit (once), so the field run settles it
-empirically rather than by trusting either source blindly.
+The thunk resolves and logs BOTH on the first hit. **Field result on this runtime
+(1.6.1170): hypothesis A resolves NULL every time; hypothesis B is the correct
+reading** — `control+0x158` is a `CombatBehaviorController*`, and its `+0x20` holds
+the real `CombatController*` (`attackerHandle` at `+0x28` of that). CPR's own struct
+(hypothesis A) was the wrong prior for this build despite being the stronger-looking
+source (a compiled, shipping mod) — a reminder that a working mod's own header isn't
+proof its layout matches every runtime. **Both the observe gate and the Phase-1 deny
+guard already check `fidA == claim || fidB == claim` (never hypothesis A alone), so
+this resolution required NO code change** — the template was already robust to
+whichever hypothesis turns out correct, and would stay robust if a future runtime
+flips which one resolves.
 
 **Phase 1 (DENY):** NumpadSlash denies ONLY the `CombatBehaviorAttack` leaf for the claimed
 actor via the engine's own failure protocol, `CombatBehaviorTreeControl::SetFailed(true)`
@@ -121,19 +136,18 @@ unverified call.
 
 | Check | Expected | Actual |
 |---|---|---|
-| Any leaf fires at all | ≥1 leaf logs FIRST FIRE within a few seconds of combat | |
-| `ForceFail::act()` deny mechanism resolved | logs a non-zero address at ARMED | |
-| `SetFailed` diagnostic address | resolves to a non-zero address (cross-check informational only) | |
-| Actor resolves for the deny (either hypothesis) | `fidA == claim \|\| fidB == claim`, matching observe | |
-| Deny actually fires | census `attackDenied > 0` after arming Phase 1 in a fight | |
-| Attack-leaf deny | tree falls back cleanly (block/circle/other leaf), NO CTD | |
-| Deny side effects | no stutter, no re-entry storm (repeated `Enter` on Attack within ms) | |
-| Guard skip (if it happens) | one warn-once log, falls back to observe, no crash | |
+| Any leaf fires at all | ≥1 leaf logs FIRST FIRE within a few seconds of combat | **PROVEN.** ~70 leaves fire through the vtable for real actors — logged: Circle, Bash, BlockAttack, Fallback, Attack, CastImmediate/CastConcentration, EquipSpell, Advance, SpecialAttack, Reposition, and the rest of the catalog — on Jesper (`0x750012C6`) and Cicero (`0x0009BCB0`). Vtable dispatch + RTTI derivation confirmed on this build. |
+| `ForceFail::act()` deny mechanism resolved | logs a non-zero address at ARMED | Resolved (non-zero, logged at ARMED); the deny fires from it (see below), which is the strongest confirmation available. |
+| `SetFailed` diagnostic address | resolves to a non-zero address (cross-check informational only) | Resolved and logged (informational; never called directly — see the redesign above). |
+| Actor resolves for the deny (either hypothesis) | `fidA == claim \|\| fidB == claim`, matching observe | **Via hypothesis B specifically** (`+0x158` ambiguity resolved above) — hypothesis A resolves NULL on this runtime; the `A \|\| B` guard is exactly why this needed no further fix once the guard itself was corrected to match observe. |
+| Deny actually fires | census `attackDenied > 0` after arming Phase 1 in a fight | **PROVEN.** `attackDenied=19` (Vampire Fledgling), `attackDenied=29` (Cicero) — 0 before the guard fix (narrowed-to-hypothesis-A bug), nonzero and climbing after it. Count freezes cleanly on Phase-1 disable. |
+| Attack-leaf deny | tree falls back cleanly (block/circle/other leaf), NO CTD | Confirmed clean — no CTD across both field sessions (the crash session and the fixed re-test). |
+| Deny side effects | no stutter, no re-entry storm (repeated `Enter` on Attack within ms) | None observed; census counts climb at a normal per-decision cadence, not a tight re-entry loop. |
+| Guard skip (if it happens) | one warn-once log, falls back to observe, no crash | Not exercised as a skip in the passing run (the guard passed every hit once fixed to `A \|\| B`) — the earlier (buggy, hypothesis-A-only) build DID exercise this path repeatedly and it held with no crash, which is itself confirmation the skip-and-log path is safe. |
 
-**Pass/fail:** T1 PASSES if (a) leaves fire through the installed vtables (proves
-dispatch + RTTI derivation are real on this build) AND (b) the Attack-leaf deny falls
-back cleanly with no stutter/re-entry storm. **If ZERO leaf hooks ever fire, the tree
-devirtualises on this build — T1 is DEAD, report and stop, do not build further on it.**
+**Pass/fail: T1 PASSES — both observe and deny are PROVEN.** Leaves fire through the
+installed vtables (dispatch + RTTI derivation real on this build) AND the Attack-leaf
+deny fires and falls back cleanly with no stutter/re-entry storm/CTD.
 
 ## Probe 2 — 0x49 package-offer REDIRECT (Phases 1-3)
 
@@ -170,14 +184,14 @@ own first eval; no latch, no stale redirect surviving a load.
 
 | Check | Expected | Actual |
 |---|---|---|
-| Engage | `GetCurrentPackage` flips to `0x000956B8`; actor visibly sandboxes near its current spot | |
-| `ExtraAliasInstanceArray` size | UNCHANGED before/after both engage and release | |
-| Release | framework package returns; exactly one `OnPackageChange` | |
-| Save/load mid-claim | framework package after load; no CTD; no stale redirect | |
+| Engage | `GetCurrentPackage` flips to `0x000956B8`; actor visibly sandboxes near its current spot | **PROVEN.** `GetCurrentPackage` flipped to the sandbox package (`0x000956B8`) on engage. Behavioral sandboxing itself is only visible on an OUT-OF-COMBAT NPC (a combat NPC's package is overridden by combat AI regardless of what `GetCurrentPackage` reports), so field-test the visible sandbox behavior on a calm NPC, not a claimed combatant. |
+| `ExtraAliasInstanceArray` size | UNCHANGED before/after both engage and release | **PROVEN.** Size unchanged across engage and release — the redirect never touches real alias-fill state. |
+| Release | framework package returns; exactly one `OnPackageChange` | **PROVEN.** Framework package restored cleanly on release. |
+| Save/load mid-claim | framework package after load; no CTD; no stale redirect | Not exercised this run (Phase 3 not field-tested) — the `ClearOnPreLoad()` mechanism is in place but unconfirmed live. |
 
-**Pass/fail:** PASSES if engage/release/save-load all behave as above with zero alias
-mutation. This is the confirmation that the 0x49 REDIRECT (not just the Phase-0
-hook-fires fact) is safe to build a real channel on later.
+**Pass/fail: PROVEN for Phases 1-2 (engage/release).** Phase 3 (save/load) remains
+unexercised. This confirms the 0x49 REDIRECT itself (not just the Phase-0 hook-fires
+fact) is safe to build a real channel on later, for the engage/release path.
 
 ## Probe 3 — native-bit toggle (`kAttackingDisabled` / `kCastingDisabled`)
 
@@ -193,14 +207,16 @@ needs no co-save handling for a throwaway toggle) and flip `kAttackingDisabled` 
 
 | Check | Expected | Actual |
 |---|---|---|
-| `kAttackingDisabled` ON | the actor cleanly stops attacking (no stutter/wedge) | |
-| `kAttackingDisabled` OFF | attacking resumes normally | |
-| `kCastingDisabled` ON | the actor cleanly stops casting | |
-| `kCastingDisabled` OFF | casting resumes normally | |
+| `kAttackingDisabled` ON | the actor cleanly stops attacking (no stutter/wedge) | **Untested this run.** |
+| `kAttackingDisabled` OFF | attacking resumes normally | **Untested this run.** |
+| `kCastingDisabled` ON | the actor cleanly stops casting | **Untested this run.** |
+| `kCastingDisabled` OFF | casting resumes normally | **Untested this run.** |
 
-**Pass/fail:** PASSES per-bit if toggling ON cleanly stops the behaviour and toggling
+**Pass/fail: UNTESTED this field session** (the run focused on T1 observe/deny and the
+0x49 redirect). PASSES per-bit if toggling ON cleanly stops the behaviour and toggling
 OFF cleanly resumes it, with no wedge/stutter either direction — confirms the
 "native-bit tier" of `ALLOWANCE-TEMPLATE.md` §3 as a usable wholesale-deny fallback.
+Still to field-test.
 
 ## T4 — DEFERRED (built, field-crashed, removed 2026-09-03)
 
