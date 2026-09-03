@@ -2,14 +2,14 @@
 #include "core/Log.h"
 #include "core/Hook.h"
 #include "core/Input.h"
-#include "core/AliasPkgProbe.h"
-#include "core/T1Probe.h"
 #include "core/NativeBitProbe.h"
 #include "core/Arbiter.h"
 #include "core/ControlMap.h"
 #include "core/AvLedger.h"
 #include "core/CastGate.h"
 #include "core/EquipGate.h"
+#include "core/ActionGate.h"
+#include "core/PackageGate.h"
 
 // ============================================================================
 // APMF -- AI Package Management Framework. Entry point (thin).
@@ -51,8 +51,8 @@ namespace {
             apmf::hook::Install();
             apmf::castgate::Install();           // T2c CheckCast allowance (Docs/ALLOWANCE-TEMPLATE.md)
             apmf::equipgate::Install();          // T2a CheckShouldEquip allowance
-            apmf::probe::Install();              // 0x49 package-offer probe (throwaway; VR-refused inside)
-            apmf::t1probe::Install();            // T1 combat behavior-tree leaf probe (throwaway; VR-refused inside)
+            apmf::actiongate::Install();         // T1 combat-action allowance (ch.7; VR-refused inside)
+            apmf::packagegate::Install();        // T3 package-offer allowance (ch.9; VR-refused inside)
             apmf::nativebitprobe::Install();     // native-bit toggle probe (throwaway; no VR gate needed)
             // T4 (TESActionData::Process) REMOVED (2026-09-03): its call-site patch at
             // valhalla's known site collided with SCAR.dll's own hook on the same AI
@@ -61,6 +61,12 @@ namespace {
             // (Docs/INVARIANTS.md #17: write_vfunc ONLY). See Docs/PROBE-ALLOWANCE.md
             // "T4 -- DEFERRED" for the crash record; T1 already covers combat body-
             // commands so this is not a coverage dead end.
+            //
+            // T1Probe/AliasPkgProbe/ProbeClaimSet (2026-09-03): REMOVED, graduated into
+            // the real ch.7 (ActionGate) / ch.9 (PackageGate) channels above -- the
+            // throwaway hotkey-driven claim set is superseded by real ControlMap claims,
+            // never left installed alongside the real channels on the same vtables
+            // (Docs/INVARIANTS.md #17).
             if (!REL::Module::IsVR()) {          // no drain seat on VR -> no test surface
                 apmf::input::Register();
                 apmf::input::LogHelp();
@@ -69,9 +75,10 @@ namespace {
             }
             break;
         case SKSE::MessagingInterface::kPreLoadGame:
+            // ch.7/ch.9 need no bespoke ClearOnPreLoad -- ReleaseAll already drops
+            // every channel's claims (including these) through the generic
+            // ControlMap path; unlike the old probes, these are real channels.
             apmf::Arbiter::Get().ReleaseAll("kPreLoadGame");
-            apmf::probe::ClearOnPreLoad();
-            apmf::t1probe::ClearOnPreLoad();
             break;
         case SKSE::MessagingInterface::kPostLoadGame:
             apmf::av::ApplyPending();             // restore any stranded AV overrides

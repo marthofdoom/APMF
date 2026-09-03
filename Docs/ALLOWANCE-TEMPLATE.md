@@ -195,5 +195,9 @@ field-crashing, and field-proving) the probes:
    instance) + **T2a `CheckShouldEquip`** + **T3 `0x49`** (already built as the probe; fold into the template).
    MFO's owned cast becomes a pure client: declares the spell via ch.8; APMF enforces via T2. MFO drops its
    own cast-side `CasterConsent`/`CheckShouldEquip` (Option B).
-3. PROBE T1 (combat-tree deny via `SetFailed`) + T4 (`TESActionData::Process`).
-4. Expand to full T1/T4 coverage; migrate the rest of MFO's private control hooks to API requests.
+3. PROBE T1 (combat-tree deny via `SetFailed`) + T4 (`TESActionData::Process`) — **DONE**: T1 field-PROVEN
+   (`Docs/PROBE-ALLOWANCE.md`), T4 field-CRASHED and removed (SCAR.dll call-site collision).
+4. **GRADUATED (2026-09-03):** T1 → ch.7 combat-action (`kIntent_CombatAction`, category-bitmask deny,
+   `core/ActionGate.cpp`) and T3 0x49 → ch.9 offer-package (`kIntent_OfferPackage`, `core/PackageGate.cpp`)
+   are real API-driven channels; the throwaway probe hotkey surface is removed. Still open: expand T1's
+   category classification past "offense"; migrate the rest of MFO's private control hooks to API requests.

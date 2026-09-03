@@ -35,11 +35,11 @@ OPEN (17 channels + sub-splits). Combat-target / combat-actions / casting (⭐) 
 | 4 | **Weapon draw / sheathe** | `actorState2.weaponState` (sticky) | sticky, not per-frame | `DrawWeaponMagicHands(bool)` vfunc 0xA6 | **DOCUMENTED, bounded one-shot promote — #0c** |
 | 5 | **Headtracking** | AI writes per-type `HighProcessData.headTrackTarget[]` | **TRUE:** own the slot (`SetHeadtrackTarget(type,ref)`) | same setter | **DOCUMENTED, clean gate** |
 | 6 | **Combat-target** ⭐ | `AIProcess.currentCombatTarget` (+ `CombatController.targetHandle`), re-chosen each tick by threat | ARBITRATION-ONLY today (record owner). FUTURE deny: suppress a competing framework's target write at the hook (GAP) | CLIENT commands it: compare-and-write of `currentCombatTarget` (MFO's `Targeting::Command` + its UpdateCombat hook re-assert; StartCombat to initiate) — APMF makes NO combat call | **APMF arbitration-only; client executes the command** |
-| 7 | **Combat ACTIONS** ⭐ | Internal **combat behavior tree** (`CombatBehaviorController`) + `CombatInventory` + `CombatState` | **NONE** (`AttackBlockHandler` is player-only) | additive anim events fight the tree; real lever = loadout (ch.15) + aggression (ch.11) | **GAP** |
-| 7a | ↳ attack/block/power/bash | `ATTACK_STATE_ENUM`; `meleeAttackState`; melee-vs-ranged = equipped weapon | (share ch.7 GAP) | — | **GAP** |
+| 7 | **Combat ACTIONS** ⭐ | Internal **combat behavior tree** (`CombatBehaviorController`) + `CombatInventory` + `CombatState` | **TRUE (graduated 2026-09-03):** `write_vfunc` slot 0x02 on all 70 `CombatBehaviorTreeNodeObject_*` leaves (`core/ActionGate.cpp`, T1) — a `kIntent_CombatAction` claim denies exactly the leaves whose classified category bit is set in `APMF_Param.ival` (starts with `kCombatActionCat_Offense`); invokes `CombatBehaviorForceFail`'s own original `act()`, never a hand-reconstructed `SetFailed` call | `channels/CombatAction.cpp` claims the facet (arbitration-only, names the deny mask); real lever otherwise = loadout (ch.15) + aggression (ch.11) | **DOCUMENTED, clean gate (graduated from the field-proven T1 probe)** |
+| 7a | ↳ attack/block/power/bash | `ATTACK_STATE_ENUM`; `meleeAttackState`; melee-vs-ranged = equipped weapon | (share ch.7 gate above; Attack/AttackLow/Bash leaves classified "offense") | — | **DOCUMENTED (ch.7)** |
 | 8 | **Casting** ⭐ | SELECT: `Actor.selectedSpells[slot]`→`MagicCaster.currentSpell`. TRIGGER: internal combat-caster state machine | ARBITRATION-ONLY today (record owner). FUTURE deny: suppress a COMPETING framework's cast selection (GAP) — NOT applied on the owned-cast path (the client WANTS its AI to cast) | CLIENT makes a REAL animated cast: equip spell + write own `selectedSpells[slot]` + grant own AI consent (deny competing spells) + a Cast-biased combat style so the AI DECIDES to cast it — full animation, mobile, NO force, NO package. APMF makes NO cast write | **APMF arbitration-only; client executes the AI-decided cast** |
 | 8a | ↳ L/R/dual/staff | `CastingSource` kLeftHand/kRightHand/kOther/kInstant; per-slot casters | (arbitration-only) | CLIENT owns the slot's spell via its own `selectedSpells` | **client per-hand** |
-| 9 | **Package-procedure activity** | `TESPackage.procedureType` (sandbox/patrol/guard) | **No gate** — `SetRunOncePackage` = substitution (OnPackageEnd, §5 rejects) | compose from primitives (locomotion + `PlayIdle` + `ActivateRef` + stance/headtrack) | **GAP native; DOCUMENTED workaround** |
+| 9 | **Package-procedure activity** | `TESPackage.procedureType` (sandbox/patrol/guard) | **TRUE (graduated 2026-09-03):** `write_vfunc` on `VTABLE_Character[0]` slot 0x49 `CheckForCurrentAliasPackage` (`core/PackageGate.cpp`, T3) — a `kIntent_OfferPackage` claim returns the `TESPackage` named by `APMF_Param.form` instead of the framework's own answer; never-null fallback to the engine's answer on an unresolvable FormID | `channels/OfferPackage.cpp` claims the facet (arbitration-only, names the package); CLIENT owns the package's own runtime target (e.g. a targType-0 handle) | **DOCUMENTED (graduated from the field-proven 0x49 probe, PROVEN Phases 1-2)** |
 | 10 | **Dialogue / greeting** | AI greeting/dialogue + topics | `SetDialogueWithPlayer` 0x41 / `StopCurrentDialogue` 0x4F | `InitiateDialogue` 0xD8 | **DOCUMENTED** (coarse) |
 | 11 | **AI-attribute** (aggression / confidence / assistance / morality) | Dynamic AVs the engine's own combat/flee/assist decisions read (`kAggression`/`kConfidence`/`kMorality`/`kAssistance`) | **TRUE — the design's preferred model:** `ActorValueOwner::SetActorValue`/`ModActorValue` sets the input the AI itself consumes; no override | same setter | **DOCUMENTED, cleanest gate** |
 | 12 | **Idle / animation** | AI idle manager | additive (no gate on AI's own idles) | `AIProcess::PlayIdle` one-shot; `NotifyAnimationGraph` | **DOCUMENTED, bounded one-shot promote — #0c** |
@@ -68,9 +68,12 @@ conversion — see INVARIANTS #0(c).
 
 **Need live probing:** Movement PROMOTE feed (`IMovementDirectControl::Unk_0N`, §9.1 — biggest unknown);
 the DENY of a competing framework's combat-target/cast/shout selection at the hook (ch.6/ch.8/ch.14 —
-the future suppression gate); Combat ACTIONS behavior tree — no gate (ch.7); Sustained package procedures (ch.9);
-Facial-expression SETTER (ch.13). **The load-bearing open mechanism: cleanly DENY/starve an outranking
-framework's PACKAGE so a client's own package drives natively (the Cicero/travel case) — see design.md §1a.**
+the future suppression gate); Facial-expression SETTER (ch.13). Combat ACTIONS (ch.7) and package
+procedures (ch.9) are now gated — see rows above; ch.7's category classification currently covers only
+"offense" and ch.9's field pass covered Phases 1-2 only (save/load, Phase 3, unexercised). **The
+Cicero/travel "starve an outranking framework's package" case is what ch.9 was graduated to solve:**
+`core/PackageGate.cpp`'s 0x49 hook returns the claimed client's package for a claimed actor regardless
+of what any other framework's own package logic would otherwise offer — see design.md §1a.
 
 ## Combat / casting verdict (the MFO headline)
 - **The client makes the behavior; APMF arbitrates the facet.** MFO steers the target with its own
@@ -80,10 +83,12 @@ framework's PACKAGE so a client's own package drives natively (the Cicero/travel
   AI path) and stays MOBILE — no `CastSpellImmediate` force, no rooting UseMagic package. APMF only claims
   the cast + combat-target facets (arbitration), leaving movement untouched. APMF calls neither
   `StartCombat` nor `CastSpellImmediate` (INVARIANTS #0).
-- **Combat ACTIONS (attack/block/power/bash, melee micro) remain a GAP** — the combat behavior tree owns
-  them with no exposed gate. But they can be SHAPED cleanly: **equipment (ch.15)** dictates melee-vs-ranged
-  and the available action set, and **aggression/confidence AVs (ch.11)** bias the tree's choices. What's
-  missing is only the exact per-swing action stream.
-- **Net:** APMF lets MFO gambits fully PERFORM the target / spell / disposition layer of combat and SHAPE
-  the melee layer (loadout + disposition), leaving only the exact melee-action stream to a future probe of
-  the combat behavior tree.
+- **Combat ACTIONS (attack/block/power/bash, melee micro) are now GATED (ch.7, graduated 2026-09-03)** — a
+  `kIntent_CombatAction` claim denies the "offense" category (Attack/AttackLow/Bash/RangedAttack/
+  SpecialAttack/GroundAttack/FlyingAttack/CastImmediateSpell/CastConcentrationSpell/CastShout/
+  PrepareDualCast leaves) for its actor; every other leaf (movement, block, dodge, cover, search, ...)
+  still fires natively. They can ALSO be SHAPED, as before: **equipment (ch.15)** dictates melee-vs-ranged
+  and the available action set, and **aggression/confidence AVs (ch.11)** bias the tree's choices.
+- **Net:** APMF lets MFO gambits fully PERFORM the target / spell / disposition layer of combat, DENY the
+  offense category of the melee layer outright, and SHAPE what remains (loadout + disposition) — only a
+  finer-grained melee-action category split (defense/movement/utility) is still future work.

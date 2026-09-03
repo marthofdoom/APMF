@@ -179,6 +179,38 @@ OOC) still awaits a chain-safe seat. **New standing rule from this crash:**
 ever, ADAPT to a redundant alternative seat rather than degrade when a preferred one
 is contested/absent/devirtualised. Also recorded in `design.md` §10.
 
+## Allowance channels ch.7 / ch.9 graduated (2026-09-03)
+
+The two field-proven allowance probes (`Docs/PROBE-ALLOWANCE.md` — T1 combat
+behavior-tree leaf deny, and the 0x49 package-offer redirect) are now REAL,
+API-driven channels; the throwaway hotkey-claim surface (`T1Probe`,
+`AliasPkgProbe`, `ProbeClaimSet`) is REMOVED — never left installed alongside
+the real channels on the same vtables (`Docs/INVARIANTS.md` #17).
+
+- **ch.7 combat-action** (`native/channels/CombatAction.cpp` arbitration +
+  `native/core/ActionGate.cpp` enforcement): `kIntent_CombatAction`,
+  `APMF_Param.ival` = an `APMF_API::CombatActionCategory` bitmask of leaf
+  categories to DENY (starts with `kCombatActionCat_Offense`, append-only for
+  future categories). Reuses the proven T1 mechanism verbatim: `write_vfunc`
+  slot 0x02 on all 70 `CombatBehaviorTreeNodeObject_*` leaves, the `+0x158`
+  A‖B actor-resolution, and `CombatBehaviorForceFail`'s own original `act()`
+  as the deny call. A leaf is denied only if its classified category bit is
+  set in the winning claim's mask; unclassified leaves (movement/defense/
+  utility) are never looked up at all.
+- **ch.9 offer-package** (`native/channels/OfferPackage.cpp` arbitration +
+  `native/core/PackageGate.cpp` enforcement): `kIntent_OfferPackage`,
+  `APMF_Param.form` = the `TESPackage` FormID to offer. Reuses the proven
+  0x49 mechanism verbatim: `write_vfunc` on `VTABLE_Character[0]` slot 0x49,
+  never-null fallback to the engine's own answer, one
+  `EvaluatePackage(true,false)` nudge on Engage/OnOwnerChanged/Release (now
+  driven by the Channel lifecycle instead of a hotkey-queued op).
+- Both intents (`14`/`15`) and the `CombatActionCategory` enum are
+  append-only additions to `APMF_API.h` — no existing field/enum value
+  changed. Neither channel needs bespoke `kPreLoadGame` handling: the generic
+  `ControlMap::ReleaseAll` already calls every channel's `Release()`.
+- **Not yet field-tested** (built + CI-green only, same as every prior
+  graduation before its own deck pass) — marth reviews the diff before Pass B.
+
 ## Client API (Layer 2) — REAL
 
 `APMF_API.h` (the shared header) + `core/ClientAPI.cpp` (the impl). A client:

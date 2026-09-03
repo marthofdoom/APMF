@@ -29,7 +29,8 @@
 // regardless of what any comment calls them.
 //
 // SE/AE ONLY (matches the VariantID triples' 3rd/VR slot, which IS used --
-// see T1Probe.cpp's VR refusal, independent of this header).
+// see core/ActionGate.cpp's VR refusal (the graduated T1 channel; formerly
+// T1Probe.cpp, removed 2026-09-03), independent of this header).
 // ============================================================================
 
 #include "REL/Relocation.h"
@@ -180,7 +181,7 @@ namespace apmf::cbt {
             if (std::string_view(kLeaves[static_cast<std::size_t>(i)].name) == "CombatBehaviorAttack") return i;
         return -1;
     }
-    // Index of "CombatBehaviorForceFail" -- the SetFailed-derivation source (T1Probe.cpp).
+    // Index of "CombatBehaviorForceFail" -- the deny-mechanism source (core/ActionGate.cpp).
     inline int ForceFailIndex() {
         for (int i = 0; i < static_cast<int>(kLeaves.size()); ++i)
             if (std::string_view(kLeaves[static_cast<std::size_t>(i)].name) == "CombatBehaviorForceFail") return i;

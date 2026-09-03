@@ -13,8 +13,8 @@
 // ============================================================================
 
 // Win32 thread id for the [threadcheck] detector below. Declared by hand
-// (Hook.cpp-local, mirrors AliasPkgProbe.cpp's 0x49 probe); pointer-free, no header
-// conflict -- PCH does not pull in <Windows.h>.
+// (Hook.cpp-local); pointer-free, no header conflict -- PCH does not pull in
+// <Windows.h>.
 extern "C" __declspec(dllimport) std::uint32_t __stdcall GetCurrentThreadId();
 
 namespace apmf::hook {

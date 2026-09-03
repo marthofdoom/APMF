@@ -1,5 +1,12 @@
 # Allowance-template field probes — T1, 0x49 redirect, native-bit
 
+**GRADUATED (2026-09-03):** T1 and the 0x49 redirect are now real, API-driven channels
+(ch.7 `core/ActionGate.cpp`, ch.9 `core/PackageGate.cpp` — see `Docs/CHANNEL-MAP.md`
+rows 7/9 and `Docs/STATUS.md`). `T1Probe`/`AliasPkgProbe`/`ProbeClaimSet` (the throwaway
+hotkey-claim surface this file documents) are REMOVED — this file stays as the historical
+field-proof record the graduated channels reuse verbatim; it is no longer describing live
+code. Native-bit stays a probe (no graduated channel yet).
+
 Status: **throwaway instrumentation, field-test-first.** Every probe here is hotkey-
 driven, observe-first, NOT wired to any client, and NOT a permanent channel. They exist
 to answer the open questions in `Docs/ALLOWANCE-TEMPLATE.md` §5/§6 with LIVE data before
