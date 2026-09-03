@@ -18,17 +18,24 @@
 //   own accessor is the safe choice; guessing an internal struct's byte
 //   layout is exactly the kind of blind-offset hack the brief bans.
 //
-// * RTTI type-name resolution (DumpActor) walks the IDENTICAL
-//   CompleteObjectLocator -> ClassHierarchyDescriptor -> baseClassArray path
-//   core/Allowance.cpp's field-proven `DerivesFrom` already uses, just
-//   reading index 0 (Allowance.h's own doc comment: "its
-//   ClassHierarchyDescriptor->baseClassArray always lists the class itself
-//   at index 0") instead of searching for a match, then reads
-//   `TypeDescriptor::name` -- the raw MSVC-decorated name (e.g.
+// * RTTI type-name resolution (DumpActor/ResolveTypeName) reads
+//   CompleteObjectLocator::typeDescriptor directly (a Ptr RVA at +0x0C onto
+//   the object's own most-derived RE::msvc::type_info -- simpler than
+//   core/Allowance.cpp's `DerivesFrom`, which additionally walks
+//   ClassHierarchyDescriptor->baseClassArray because IT is searching for one
+//   specific BASE among possibly several; here the COL's own direct
+//   typeDescriptor already names the exact class), then calls
+//   `type_info::mangled_name()` -- the raw MSVC-decorated name (e.g.
 //   ".?AVCharacter@@"), NOT demangled (no demangler exists in this codebase
 //   or CommonLib; hand-rolling one would be exactly the "fragile hack" the
 //   brief says to avoid -- the raw decorated string is still legible enough
-//   to identify the class by eye).
+//   to identify the class by eye). Both this and the `procedureType`/
+//   `GetCurrentPackage()` choices above were corrected once against the real
+//   CommonLibSSE-NG headers (fetched from the pinned commit,
+//   c4ab853d095e81e3390b282d7ba01ab2f24ebf25) after a first CI compile
+//   failure named the wrong symbols (`GetPackageType()`,
+//   `TypeDescriptor::name`) -- no local vcpkg cache exists to check against
+//   up front (Docs/PROBE-NONALIAS-PACKAGE.md's own "Source used" section).
 // ============================================================================
 
 namespace apmf::nonaliasprobe {
@@ -77,7 +84,12 @@ namespace apmf::nonaliasprobe {
                              "PACKAGE.md §6.2 (does the framework's non-alias package ever flow through here?)",
                              apmf::log::Hex(a_this->GetFormID()),
                              apmf::log::Hex(a_package ? a_package->GetFormID() : 0),
-                             a_package ? static_cast<std::int32_t>(a_package->GetPackageType()) : -1,
+                             // TESPackage has no GetPackageType() method (verified against the real
+                             // CommonLibSSE-NG header after a first CI compile failure) -- the type
+                             // lives as plain data, RE::TESPackage::procedureType (a
+                             // stl::enumeration<PACKAGE_PROCEDURE_TYPE, uint32_t> at +0xD8);
+                             // .underlying() reads its raw integral value.
+                             a_package ? static_cast<std::int32_t>(a_package->procedureType.underlying()) : -1,
                              a_temp, a_created, a_allowFromFurniture);
             }
 
@@ -99,31 +111,27 @@ namespace apmf::nonaliasprobe {
             return nullptr;
         }
 
-        // Reads the RTTI type name of `vtableAddr`'s own class (baseClassArray
-        // index 0), mirroring Allowance.cpp's DerivesFrom walk. Returns nullptr
-        // (never guesses) if any link in the chain is absent.
+        // Reads the RTTI type name of `vtableAddr`'s own most-derived class.
+        // SIMPLER than Allowance.cpp's DerivesFrom walk needs to be: the
+        // CompleteObjectLocator carries its OWN typeDescriptor as a direct RVA
+        // at +0x0C (RE::RTTI::CompleteObjectLocator::typeDescriptor -- verified
+        // against the real CommonLibSSE-NG RTTI.h header after a first CI
+        // compile failure) -- no baseClassArray walk needed at all, unlike
+        // DerivesFrom which is searching for a specific BASE among possibly
+        // several. Returns nullptr (never guesses) if any link is absent.
         const char* ResolveTypeName(std::uintptr_t vtableAddr) {
             if (!vtableAddr) return nullptr;
             auto* colPtr = *reinterpret_cast<RE::RTTI::CompleteObjectLocator**>(
                 vtableAddr - sizeof(void*));
             if (!colPtr) return nullptr;
 
-            auto* hierarchy = colPtr->classDescriptor.get();
-            if (!hierarchy || hierarchy->numBaseClasses == 0) return nullptr;
-
-            const std::uint32_t arrayRva = hierarchy->baseClassArray.offset();
-            if (arrayRva == 0) return nullptr;
-            auto* rvaArray = REL::Relocation<std::uint32_t*>{ REL::Offset(arrayRva) }.get();
-            if (!rvaArray) return nullptr;
-
-            const std::uint32_t descRva = rvaArray[0];   // index 0 = the class itself
-            if (descRva == 0) return nullptr;
-            auto* desc = REL::Relocation<RE::RTTI::BaseClassDescriptor*>{ REL::Offset(descRva) }.get();
-            if (!desc) return nullptr;
-
-            const auto* td = desc->typeDescriptor.get();
+            auto* td = colPtr->typeDescriptor.get();
             if (!td) return nullptr;
-            return td->name;   // raw MSVC-decorated name -- NOT demangled, see file header
+            // RE::msvc::type_info exposes the raw MSVC-decorated name (e.g.
+            // ".?AVCharacter@@") via mangled_name() -- NOT demangled (no
+            // demangler exists in this codebase or CommonLib; the raw
+            // decorated string is still legible enough to identify the class).
+            return td->mangled_name();
         }
 
         void DumpActor(RE::Actor* a_actor) {

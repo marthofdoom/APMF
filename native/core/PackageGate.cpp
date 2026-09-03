@@ -69,11 +69,16 @@ namespace apmf::packagegate {
                 if (apmf::nonaliasprobe::IsEnabled() &&
                     apmf::nonaliasprobe::RateLimitOK(a_this->GetFormID())) {
                     const auto* cur = a_this->GetCurrentPackage();
+                    // TESPackage has no GetPackageType() method -- the type is
+                    // plain data, TESPackage::procedureType (a
+                    // stl::enumeration<PACKAGE_PROCEDURE_TYPE, uint32_t> at
+                    // +0xD8; see core/NonAliasProbe.cpp's file header for the
+                    // real-header citation this was corrected against).
                     spdlog::info("[ch.9-observe] 0x49 CheckForCurrentAliasPackage actor=0x{} curPkg=0x{} "
                                  "curPkgType={} engineOrig=0x{} hookReturns=0x{}",
                                  apmf::log::Hex(a_this->GetFormID()),
                                  apmf::log::Hex(cur ? cur->GetFormID() : 0),
-                                 cur ? static_cast<std::int32_t>(cur->GetPackageType()) : -1,
+                                 cur ? static_cast<std::int32_t>(cur->procedureType.underlying()) : -1,
                                  apmf::log::Hex(orig ? orig->GetFormID() : 0),
                                  apmf::log::Hex(result ? result->GetFormID() : 0));
                 }
