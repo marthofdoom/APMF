@@ -15,13 +15,42 @@
 //   dispatches on the calling vtable's runtime address (g_orig lookup),
 //   exactly the CastGate.cpp/EquipGate.cpp pattern, just with an
 //   observation-only default instead of an allow/deny default.
-// * SetFailed is resolved by disassembling CombatBehaviorForceFail's ORIGINAL
-//   (pre-hook) act() body -- read from g_orig AFTER InstallOnVtables runs, not
-//   from the live vtable slot (which our OWN thunk now occupies). ForceFail's
-//   entire job is "call SetFailed(true); return control" (ALLOWANCE-
-//   TEMPLATE.md §2 item 1: "CombatBehaviorForceFail is a shipped node doing
-//   exactly this"), so the first CALL (0xE8) instruction in its compiled body
-//   IS SetFailed on both SE and AE -- no Address-Library AE id needed.
+//
+// * PHASE-1 DENY, POST-CRASH REDESIGN (2026-09-03): the first build derived
+//   SetFailed's address by disassembling CombatBehaviorForceFail's original
+//   act() body for its first CALL (0xE8), then hand-called that address as
+//   `void(CombatBehaviorTreeControl*, bool)` -- CPR's own declared signature
+//   (`_generic_foo<46240, void, CombatBehaviorTreeControl*, bool>(this,
+//   a_fail)`, which is exactly this-then-bool). The field crashlog confirmed
+//   the DERIVED ADDRESS was correct (module+0x5572A0, independently verified)
+//   but the call still faulted inside SetFailed (`mov [rdi],rbx` with
+//   rdi=0x1 -- the boolean's own value where a pointer was expected). Rather
+//   than re-guess the hand-rolled signature a second time (the exact
+//   StartCombat 2-vs-3-arg lesson this project already learned once), the
+//   fix removes the hand reconstruction ENTIRELY: instead of calling
+//   SetFailed directly, this thunk now invokes ForceFail's own ORIGINAL,
+//   UNMODIFIED act() implementation (`g_forceFailAct`, `apmf::cbt::Act_t`,
+//   the SAME 2-arg (leaf-this, control) -> CombatBehaviorTreeControl*
+//   convention already proven correct for every other act() call in this
+//   file, including every successful orig() passthrough). ForceFail's own
+//   compiled body performs "control->SetFailed(true); return control"
+//   (ALLOWANCE-TEMPLATE.md §2 item 1) using WHATEVER exact register/stack
+//   layout the compiler actually generated for that call -- there is nothing
+//   left to reconstruct or get wrong. `this` in that call is the ATTACK
+//   leaf's own object (not a real ForceFail instance), which is safe because
+//   ForceFail's act() body needs `this` for nothing (it has no per-instance
+//   state; the whole behavior lives in the `control` parameter it already
+//   receives directly, matching CPR's own `act(CombatBehaviorTreeControl*
+//   control)` contract with no further indirection). The raw SetFailed
+//   address is still derived and logged for diagnostic cross-checking, but
+//   is no longer the thing actually called.
+// * GUARD (INVARIANTS #17 adapt/degrade-never-crash): the deny call additionally
+//   requires hypothesis A's `+0x158` read (see below) to have resolved to the
+//   EXACT claimed actor on THIS hit before touching `control` at all -- a
+//   cheap plausibility check that `a_control` is genuinely the kind of object
+//   this code assumes it is. If it doesn't check out, the deny is skipped
+//   (warn-once) and the hit falls through to a plain observe -- never an
+//   unverified call.
 // ============================================================================
 
 extern "C" __declspec(dllimport) std::uint32_t __stdcall GetCurrentThreadId();
@@ -49,10 +78,12 @@ namespace apmf::t1probe {
         std::unordered_map<std::uintptr_t, const char*>     g_leafName;
 
         std::uintptr_t g_attackVt   = 0;   // CombatBehaviorAttack's vtable runtime address
-        std::atomic<std::uintptr_t> g_setFailed{ 0 };   // resolved SetFailed(control, bool)
+        std::atomic<std::uintptr_t> g_setFailed{ 0 };     // derived SetFailed address -- DIAGNOSTIC/LOG ONLY, never called directly
+        std::atomic<std::uintptr_t> g_forceFailAct{ 0 };  // ForceFail's ORIGINAL act() -- the actual deny mechanism (see file header)
 
         std::atomic<RE::FormID> g_claimActor{ 0 };
         std::atomic<bool>       g_denyAttack{ false };
+        std::atomic<bool>       g_denySkippedLogged{ false };   // warn-once for the "control not plausible" guard
 
         // ---- Phase-0 observability (thunk writes, OncePerFrame summarises) ----
         std::atomic<std::uint64_t> g_hitsClaimed{ 0 };     // act() calls seen for the claimed actor (any leaf)
@@ -88,35 +119,55 @@ namespace apmf::t1probe {
             return 0;
         }
 
-        void ResolveSetFailed() {
+        // Resolve the Phase-1 deny mechanism: ForceFail's ORIGINAL (pre-hook) act()
+        // is the thing actually CALLED (g_forceFailAct); SetFailed's own address is
+        // additionally extracted from ForceFail's body purely as a diagnostic/cross-
+        // check log (g_setFailed) -- see the file header for why it is never called
+        // directly after the field crash.
+        void ResolveDenyMechanism() {
             const int ffIdx = apmf::cbt::ForceFailIndex();
             if (ffIdx < 0) {
-                spdlog::warn("[t1probe] ForceFail leaf not found in the local table -- SetFailed NOT derived; Phase 1 DENY unavailable.");
+                spdlog::warn("[t1probe] ForceFail leaf not found in the local table -- Phase 1 DENY unavailable.");
                 return;
             }
             REL::Relocation<std::uintptr_t> vt{ apmf::cbt::kLeaves[static_cast<std::size_t>(ffIdx)].vtbl };
             const auto oit = g_orig.find(vt.address());
             if (oit == g_orig.end()) {
-                spdlog::warn("[t1probe] ForceFail vtable 0x{} has no recorded original (install skipped it, likely an RTTI mismatch) -- SetFailed NOT derived.",
+                spdlog::warn("[t1probe] ForceFail vtable 0x{} has no recorded original (install skipped it, likely an RTTI mismatch) -- Phase 1 DENY unavailable.",
                              apmf::log::Hex(vt.address(), 16));
                 return;
             }
+            // THE ACTUAL DENY MECHANISM: ForceFail's own original act(), called with
+            // the SAME proven-correct 2-arg apmf::cbt::Act_t convention as every
+            // other act() call in this file -- no hand-reconstructed SetFailed call.
+            g_forceFailAct.store(oit->second, std::memory_order_relaxed);
+            const auto base = REL::Module::get().base();
+            spdlog::info("[t1probe] Phase 1 DENY mechanism: ForceFail::act() original at module+0x{} will be "
+                         "invoked directly on the Attack leaf's control (2-arg apmf::cbt::Act_t convention, "
+                         "same as every observed act() call) -- no hand-reconstructed SetFailed call.",
+                         apmf::log::Hex(oit->second - base, 8));
+
+            // DIAGNOSTIC ONLY from here: extract SetFailed's own address by
+            // disassembling ForceFail::act()'s first CALL, purely to log/cross-check
+            // -- this address is NEVER called directly (the field crash: the address
+            // was independently confirmed correct, module+0x5572A0, but a hand-
+            // reconstructed call signature still faulted inside it).
             const std::uintptr_t target = FindFirstCallTarget(oit->second);
             if (!target) {
-                spdlog::warn("[t1probe] no CALL (0xE8) found in the first 64 bytes of ForceFail::act() -- SetFailed NOT derived "
-                             "(the body may not be a simple call+return on this build). Phase 1 DENY unavailable.");
+                spdlog::info("[t1probe] (diagnostic) no CALL (0xE8) found in the first 64 bytes of ForceFail::act() -- "
+                             "SetFailed's own address not logged; the deny mechanism above is unaffected.");
                 return;
             }
             g_setFailed.store(target, std::memory_order_relaxed);
-            const auto base = REL::Module::get().base();
-            spdlog::info("[t1probe] SetFailed DERIVED from ForceFail::act() disassembly: module+0x{} (fn body at module+0x{}).",
-                         apmf::log::Hex(target - base, 8), apmf::log::Hex(oit->second - base, 8));
+            spdlog::info("[t1probe] (diagnostic) SetFailed's own address, extracted from ForceFail::act()'s first "
+                         "CALL: module+0x{} (not called directly).", apmf::log::Hex(target - base, 8));
             if (REL::Module::IsSE()) {
                 // CPR's own header comments this call site as SkyrimSE.exe+0x7C6D30 on the
-                // 1.5.97 build it ships for -- cross-check only (never used as the primary path).
+                // 1.5.97 build it ships for -- cross-check only.
                 const std::uintptr_t cprSE = base + 0x7C6D30;
-                spdlog::info("[t1probe] SE cross-check vs CPR's documented CombatBehaviorTreeControl::SetFailed "
-                             "(module+0x7C6D30): {}.", target == cprSE ? "MATCH" : "MISMATCH -- derivation may be wrong, verify before trusting Phase 1");
+                spdlog::info("[t1probe] (diagnostic) SE cross-check vs CPR's documented "
+                             "CombatBehaviorTreeControl::SetFailed (module+0x7C6D30): {}.",
+                             target == cprSE ? "MATCH" : "MISMATCH (expected if this runtime isn't CPR's exact SE build)");
             }
         }
 
@@ -179,14 +230,34 @@ namespace apmf::t1probe {
             }
 
             // Phase 1: deny ONLY the Attack leaf, ONLY while armed, ONLY for the claim.
+            // GUARD (INVARIANTS #17 adapt/degrade-never-crash): require the deny
+            // mechanism to be resolved AND hypothesis A specifically (control+0x158
+            // == CombatController* directly, the CPR-backed reading) to have matched
+            // the claim on THIS hit -- a concrete plausibility check that `a_control`
+            // is genuinely well-formed before it is ever passed into a WRITE
+            // operation. Hypothesis B alone is not enough here (it is the weaker,
+            // unverified alternative -- fine for observation, not for a write).
             if (vt == g_attackVt && g_denyAttack.load(std::memory_order_relaxed)) {
-                const auto sf = g_setFailed.load(std::memory_order_relaxed);
-                if (sf && a_control) {
+                const auto denyAct = g_forceFailAct.load(std::memory_order_relaxed);
+                if (denyAct && a_control && fidA == claim) {
                     g_hitsAttackDenied.fetch_add(1, std::memory_order_relaxed);
-                    reinterpret_cast<void (*)(void*, bool)>(sf)(a_control, true);
+                    // Invoke ForceFail's own ORIGINAL act() -- the exact 2-arg
+                    // (leaf-this, control) apmf::cbt::Act_t convention already
+                    // proven correct by every orig() call above. Its compiled body
+                    // performs "control->SetFailed(true); return control" with
+                    // whatever real calling convention the compiler generated for
+                    // that call -- nothing hand-reconstructed. `a_this` here is the
+                    // ATTACK leaf, not a real ForceFail instance, which is safe:
+                    // ForceFail's body needs `this` for nothing, only `control`.
+                    reinterpret_cast<apmf::cbt::Act_t>(denyAct)(a_this, a_control);
                     return a_control;   // do NOT call orig -- this IS the deny
                 }
-                spdlog::warn("[t1probe] Phase 1 armed but SetFailed was never derived -- falling back to OBSERVE for this hit.");
+                if (!g_denySkippedLogged.exchange(true)) {
+                    spdlog::warn("[t1probe] Phase 1 DENY SKIPPED for this hit (denyAct={}, control={}, hypothesisA "
+                                 "matched claim={}) -- control not verified as plausible, falling back to OBSERVE "
+                                 "rather than risk an unverified call (INVARIANTS #17). Logged once.",
+                                 denyAct != 0, a_control != nullptr, fidA == claim);
+                }
             }
 
             return orig(a_this, a_control);
@@ -213,7 +284,7 @@ namespace apmf::t1probe {
             if (std::string_view(apmf::cbt::kLeaves[i].name) == "CombatBehaviorAttack") g_attackVt = vt.address();
         }
 
-        ResolveSetFailed();
+        ResolveDenyMechanism();
 
         spdlog::info("[t1probe] ARMED: {} of 70 leaf vtables hooked (slot 0x02, act/Enter, OBSERVE-only by default). "
                      "Attack vtable {}. NumpadEnter (DIK 0x{}, shared with the 0x49 probe) claims/toggles the aimed NPC; "

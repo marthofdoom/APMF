@@ -79,26 +79,45 @@ empirically rather than by trusting either source blindly.
 
 **Phase 1 (DENY):** NumpadSlash denies ONLY the `CombatBehaviorAttack` leaf for the claimed
 actor via the engine's own failure protocol, `CombatBehaviorTreeControl::SetFailed(true)`
-— never calling `orig()` for that hit. **`SetFailed`'s address is DERIVED, not looked
-up by a static Address-Library id:** its SE id (46240) has no known AE counterpart in
-any header this project can reach, so `T1Probe.cpp::ResolveSetFailed()` instead reads
-`CombatBehaviorForceFail`'s own (pre-hook) `act()` body — `ForceFail`'s entire job is
-"call `SetFailed(true)`; return `control`" (`ALLOWANCE-TEMPLATE.md` §2 item 1) — and
-disassembles its first `0xE8` (CALL rel32) instruction to get the real target. This
-works identically on SE and AE because it reads the ACTUAL compiled bytes at runtime.
-On SE only, it also logs a MATCH/MISMATCH cross-check against CPR's own documented
-offset (`SkyrimSE.exe+0x7C6D30`) as a sanity check, never as the primary path.
+— never calling `orig()` for that hit.
+
+**Field-crashed once, redesigned (2026-09-03).** The first build derived `SetFailed`'s
+address by disassembling `CombatBehaviorForceFail`'s original `act()` body for its
+first `0xE8` CALL, then hand-called that address as `void(CombatBehaviorTreeControl*,
+bool)` (CPR's own declared signature). The crashlog confirmed the DERIVED ADDRESS was
+correct (`module+0x5572A0`, independently verified) but the call still faulted inside
+`SetFailed` (`mov [rdi],rbx` with `rdi=0x1`). Rather than re-guess the hand-rolled
+signature a second time, the fix removes the reconstruction entirely: `T1Probe.cpp`
+now invokes `CombatBehaviorForceFail`'s own ORIGINAL, unmodified `act()`
+implementation directly — the SAME 2-arg `(leaf-this, control) -> control` convention
+already proven correct for every `orig()` call in the file — instead of hand-calling
+`SetFailed`. `ForceFail`'s compiled body performs `control->SetFailed(true); return
+control` (`ALLOWANCE-TEMPLATE.md` §2 item 1) using whatever real calling convention
+the compiler actually generated for that call; nothing is left to reconstruct. `this`
+in that call is the Attack leaf's own object (not a real `ForceFail` instance), which
+is safe because `ForceFail`'s body needs `this` for nothing — only `control`, which it
+already receives directly. `SetFailed`'s own address is still extracted and logged as
+a diagnostic cross-check (SE only, against CPR's documented `SkyrimSE.exe+0x7C6D30`)
+but is never called directly anymore.
+
+**Guard added (`Docs/INVARIANTS.md` #17, adapt/degrade-never-crash):** the deny call
+additionally requires hypothesis A's `+0x158` read to have resolved to the EXACT
+claimed actor on THIS hit before touching `control` — a concrete plausibility check
+that `a_control` is genuinely well-formed before any write. If it doesn't check out,
+the deny is skipped (warn-once) and the hit falls through to a plain observe instead.
 
 **Expected vs actual:**
 
 | Check | Expected | Actual |
 |---|---|---|
 | Any leaf fires at all | ≥1 leaf logs FIRST FIRE within a few seconds of combat | |
-| `SetFailed` derivation | resolves to a non-zero address; SE cross-check MATCHes | |
-| Hypothesis A resolves the claimed actor | `fidA == claim` | |
+| `ForceFail::act()` deny mechanism resolved | logs a non-zero address at ARMED | |
+| `SetFailed` diagnostic address | resolves to a non-zero address (cross-check informational only) | |
+| Hypothesis A resolves the claimed actor | `fidA == claim` (required for the deny guard to pass) | |
 | Hypothesis B resolves the claimed actor | `fidA` vs `fidB` — which (if not both) | |
-| Attack-leaf deny | tree falls back cleanly (block/circle/other leaf) | |
+| Attack-leaf deny | tree falls back cleanly (block/circle/other leaf), NO CTD | |
 | Deny side effects | no stutter, no re-entry storm (repeated `Enter` on Attack within ms) | |
+| Guard skip (if it happens) | one warn-once log, falls back to observe, no crash | |
 
 **Pass/fail:** T1 PASSES if (a) leaves fire through the installed vtables (proves
 dispatch + RTTI derivation are real on this build) AND (b) the Attack-leaf deny falls
