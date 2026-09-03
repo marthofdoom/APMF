@@ -25,14 +25,22 @@ was added after a CTD proved the drift: the channel spec's "PROMOTE" framing lic
 called `Actor::StartCombat` to command a target — APMF generating behavior — which crashed. The
 lesson is written into the rules below.)
 
-1. **APMF MODERATES; it NEVER generates behavior.** APMF does not build or trigger movement, facing,
-   pathing, casting, combat, or animation. It calls NO behavior-generating engine function
-   (`StartCombat`, `CastSpellImmediate`, a movement drive-feed, an anim trigger, …). Its channels may
-   do exactly two things and nothing else: (a) **ARBITRATE** — record which source owns a facet
-   (basis; the ControlMap), and (b) **DENY** — suppress the losing source so it stops reaching the
-   actor. Deny is APMF's ONLY lever on the engine: neutralize / redirect-to-null / starve the input.
-   **APMF cannot force an output and cannot boost one** — no override-every-frame, no re-assert loop
-   (a re-assert loop is a failed deny, not an acceptable pattern).
+1. **APMF MODERATES; it NEVER manufactures or sustains an AI decision.** APMF does not build or trigger
+   sustained movement, facing, pathing, casting, or combat, and it does not select WHAT an AI decides
+   to do (a target, a spell, a shout) when the client already has its own proven mechanism for that
+   selection. It calls NO such decision-generating engine function (`StartCombat`, `CastSpellImmediate`,
+   a movement drive-feed, a direct `selectedSpells`/`EquipShout`-style selection write, …). Its channels
+   may do exactly three things and nothing else: (a) **ARBITRATE** — record which source owns a facet
+   (basis; the ControlMap); (b) **DENY** — suppress the losing source so it stops reaching the actor
+   (deny: neutralize / redirect-to-null / starve the input, including pausing an actor's own
+   in-progress dialogue); and (c) **PROMOTE A BOUNDED, ONE-SHOT, CLIENT-REQUESTED ACTION** for a facet
+   that has no meaningful deny form and involves no AI decision to arbitrate around — a single
+   anim-graph event, a sticky draw/sheathe, a stance toggle — fired ONCE at Engage/Release, on the game
+   thread, with no per-tick `Tick` work and no re-assert loop. **APMF cannot force an output and cannot
+   boost one** — no override-every-frame, no re-assert loop (a re-assert loop is a failed deny, not an
+   acceptable pattern). **The bright line:** a lawful promote (c) is a single deterministic call whose
+   outcome does not stand in for an AI decision; a forbidden generate calls a function that picks WHAT
+   the AI decides, or drives it continuously.
 
 2. **The CLIENT brings and EXECUTES the behavior.** Real behavior comes from proper, already-
    discovered mechanisms the CLIENT owns: real AI packages and proven engine commands (e.g. MFO

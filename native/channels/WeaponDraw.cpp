@@ -3,9 +3,13 @@
 #include "core/Registry.h"
 
 // ============================================================================
-// Channel 4 -- WEAPON DRAW / SHEATHE. One-shot promote (CHANNEL-MAP ch.4):
-// Actor::DrawWeaponMagicHands(bool) (vfunc 0xA6, bound). The weapon state is sticky
-// (not per-frame), so this is a clean one-shot -- no re-assert. Package-independent.
+// Channel 4 -- WEAPON DRAW / SHEATHE. SANCTIONED BOUNDED ONE-SHOT PROMOTE
+// (INVARIANTS #0(c), CHANNEL-MAP ch.4): Actor::DrawWeaponMagicHands(bool) (vfunc
+// 0xA6, bound). Draw/sheathe has no meaningful deny form and no AI decision to
+// arbitrate around -- the drawn state itself is the requested action, not a
+// selection input -- so a single deterministic call at Engage/Release is lawful
+// under #0(c), not a stand-in awaiting conversion. The weapon state is sticky (not
+// per-frame), so this is a clean one-shot -- no re-assert. Package-independent.
 // Engage draws; Release sheathes (restore-to-sheathed baseline).
 // ============================================================================
 

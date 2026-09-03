@@ -7,20 +7,34 @@ ones before touching a subsystem.
 
 ## Design principles
 
-**#0 — APMF MODERATES; it MUST NOT generate behavior (the hardest rule, the one a
-CTD taught us).** An APMF channel may do exactly two things: (a) ARBITRATE — record
-which client owns a facet — and (b) DENY — suppress the losing source at its source
-(AV writes, movement full-block, detection AVs, package yield). A channel MUST NOT
-call a behavior-generating engine function — NOT `Actor::StartCombat`, NOT
-`MagicCaster::CastSpellImmediate`, NOT a movement drive-feed, NOT an animation
-trigger, and it does not command a target, select a spell, or move a body. That is
-BEHAVIOR, and behavior belongs to the CLIENT (it executes with its own proven
-mechanisms; APMF only denies competitors so the client's behavior reaches the actor —
-design.md §1a). **Cautionary case:** ch.6 combat-target once called `StartCombat` (to
-command a target) — wrong LAYER, and with a bad reloc signature it was a hard AV
-(EXCEPTION_ACCESS_VIOLATION inside StartCombat). The deny-only rule makes that whole
-crash class structurally impossible: APMF makes no such call at all. ch.6 and ch.8 are
-now arbitration-only; the client commands the target / selects the spell.
+**#0 — APMF MODERATES; it MUST NOT MANUFACTURE OR SUSTAIN AN AI DECISION (the
+hardest rule, the one a CTD taught us).** An APMF channel may do exactly three
+things: (a) ARBITRATE — record which client owns a facet; (b) DENY — suppress the
+losing source at its source (AV writes, movement full-block, detection AVs, package
+yield, pausing an actor's own in-progress dialogue); and (c) PROMOTE A BOUNDED,
+ONE-SHOT, CLIENT-REQUESTED ACTION for a facet that has no meaningful "deny" form and
+involves no AI decision to arbitrate around — a single anim-graph event, a sticky
+draw/sheathe, a stance toggle — fired ONCE at Engage/Release, on the game thread,
+with no per-tick `Tick` work and no re-assert loop. A channel MUST NEVER call a
+function that SELECTS WHAT an AI will decide to do when the client already has its
+own proven mechanism for making that selection — NOT `Actor::StartCombat`, NOT
+`MagicCaster::CastSpellImmediate`, NOT a movement drive-feed, NOT a direct
+`selectedSpells`/`EquipShout`-style write that picks a target/spell/power for the AI
+to later act on. That class of DECISION-SELECTION is BEHAVIOR, and behavior belongs
+to the CLIENT (it executes with its own proven mechanisms; APMF only denies
+competitors, or arbitrates the claim, so the client's behavior reaches the actor —
+design.md §1a). **The bright line:** a lawful promote is a single deterministic call
+whose outcome does not stand in for an AI decision (idle-play, weapon-draw,
+stance-toggle); a forbidden generate calls a function that picks WHAT the AI decides
+(a target, a spell, a shout) or drives it continuously. **Cautionary case:** ch.6
+combat-target once called `StartCombat` (to command a target) — wrong LAYER, and
+with a bad reloc signature it was a hard AV (EXCEPTION_ACCESS_VIOLATION inside
+StartCombat). The deny-only rule makes that whole crash class structurally
+impossible: APMF makes no such call at all. ch.6 and ch.8 are now arbitration-only;
+the client commands the target / selects the spell. **ch.14 shout-power's direct
+`EquipShout` call was the same anti-pattern in miniature** — no crash (the function
+is bound and safe), but it duplicated the "APMF selects, not the client" mistake
+this rule exists to end; it is now converted to arbitration-only, matching ch.6/ch.8.
 
 **#1 — APMF is the gatekeeper: BLOCK the foreign input, do not force the output.**
 Once APMF owns a channel on an actor, nothing else reaches that facet except through

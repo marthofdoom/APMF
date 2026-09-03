@@ -71,7 +71,7 @@ releases ALL**. Logs to `Data/SKSE/Plugins/APMF.log` (`[ctl]`/`[obs]`/`[test]`/`
 | Num9 | 3 | sneak/crouch | one-shot promote | `NotifyAnimationGraph(SneakStart/Stop)` |
 | Num- | 6 | combat-target CLAIM | arbitration-only (#0) | records owner; CLIENT commands the target (no APMF combat call) |
 | Num+ | 12 | idle/animation | one-shot | `NotifyAnimationGraph(IdleForceDefaultState)` |
-| Num* | 14 | shout select (Unrelenting Force) | one-shot (sticky) | `ActorEquipManager::EquipShout` |
+| Num* | 14 | shout select CLAIM | arbitration-only (#0) | records owner; CLIENT selects via its own `EquipShout` (no APMF equip call) |
 | Num. | 15 | unequip weapon | source-block | `GetEquippedObject`+`Unequip/EquipObject` |
 
 Every channel keeps the package coherent (no substitution) and restores state on

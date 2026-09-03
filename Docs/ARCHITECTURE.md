@@ -117,24 +117,33 @@ per-NPC restore data in its OWN `std::unordered_map<FormID, State>` (game-thread
 only, #12). The `ControlMap` refcounts client claims and calls Engage/Tick/Release
 keyed by actor — the channel never sees the toggle/hotkey logic.
 
-APMF MODERATES; it NEVER generates behavior (#0, design.md §1a). Once a facet is
-owned on an actor, APMF is the arbiter of who controls it — and its ONLY lever on the
-engine is DENY (suppress the losing source at its source). A channel does exactly two
-things: ARBITRATE (record the owner) and DENY. It calls NO behavior-generating engine
-function (`StartCombat`, `CastSpellImmediate`, movement drive, anim trigger); the
-CLIENT executes the behavior with its own mechanisms. Kinds:
+APMF MODERATES; it NEVER manufactures or sustains an AI decision (#0, design.md §1a).
+Once a facet is owned on an actor, APMF is the arbiter of who controls it. A channel
+does exactly three things: ARBITRATE (record the owner), DENY (suppress the losing
+source at its source), and — for a facet with no meaningful deny form and no AI
+decision to arbitrate around — PROMOTE a bounded, one-shot, client-requested action
+(#0c). It calls NO decision-generating engine function (`StartCombat`,
+`CastSpellImmediate`, movement drive, a `selectedSpells`/`EquipShout`-style selection
+write); where the client already has its own proven mechanism for a selection, the
+CLIENT executes it. Kinds:
 1. **DENY / true source-block (no re-assert)** — set the input the AI itself reads, or
    deny the losing source once, so nothing competes. Robust even against a package-locked
    follower. Examples: AI-attribute AVs (ch.11), movement FULL block (ch.1
    `KeepOffsetFromActor` self + `SetDontMove` — the move intent is nulled at the source),
-   gait (ch.1a), detection (ch.16), equipment (ch.15). These do NOT override `Tick`.
+   gait (ch.1a), detection (ch.16), equipment (ch.15), dialogue pause (ch.10 — suppresses
+   the actor's own in-progress dialogue, does not manufacture it). These do NOT override
+   `Tick`.
 2. **Arbitration-only (no engine write)** — record that a client owns the facet so APMF
    is the single arbiter; the CLIENT executes. Combat-target (ch.6 — client writes
-   `currentCombatTarget`) and casting (ch.8 — client writes `selectedSpells` + grants its
-   AI consent) are here. APMF makes NO combat/cast call for them (#0). Some prototype
-   one-shots (weapon draw ch.4, stance ch.3, idle ch.12, shout ch.14) still contain
-   executor stand-ins pending the same conversion — flagged, not clean.
-3. **Known-incomplete block (flagged)** — we have NOT yet blocked the AI's own write to
+   `currentCombatTarget`), casting (ch.8 — client writes `selectedSpells` + grants its AI
+   consent), and shout/power select (ch.14 — client writes its own `EquipShout`) are
+   here. APMF makes NO combat/cast/equip call for them (#0).
+3. **Bounded one-shot promote (#0c, sanctioned)** — a single deterministic engine call
+   at Engage/Release for a facet with no deny form and no AI decision to arbitrate
+   around: weapon draw (ch.4, `DrawWeaponMagicHands`), stance toggle (ch.3,
+   `NotifyAnimationGraph SneakStart/Stop`), idle/animation (ch.12,
+   `NotifyAnimationGraph IdleForceDefaultState`). No per-tick work, no re-assert.
+4. **Known-incomplete block (flagged)** — we have NOT yet blocked the AI's own write to
    the facet, so a re-assert stopgap holds it imperfectly. A FAILED block, flagged (#1,
    #2), never called clean. Fix: block the AI's write at the 0xAD hook. Headtrack (ch.5)
    is the only one today, and it says so.

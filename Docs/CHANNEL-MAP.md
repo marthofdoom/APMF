@@ -6,14 +6,19 @@ The core blueprint: for each directable AI-control facet, its source, the clean 
 a **DOCUMENTED vs GAP** verdict. Derived 2026-09-02 from CommonLibSSE-NG RE headers, the CK wiki, and
 existing mods (TDM, NFF, PapyrusUtil, Puppeteer).
 
-**Governed by design.md §1a + INVARIANTS #0: APMF MODERATES (arbitrate + DENY); it NEVER generates
-behavior.** The "how the client drives it" column below is documentation of the CLIENT's execution
-path — it is NOT a list of things APMF does. APMF calls no behavior-generating engine function
-(`StartCombat`, `CastSpellImmediate`, movement drive-feed, anim trigger). Legitimate APMF actions are
-only: arbitrate the claim, and DENY at the source (AV writes that gate the input the AI reads,
-movement full-block, detection AVs, package yield). (Earlier revisions of this file framed a "PROMOTE"
-column as APMF DRIVING each facet; that executor framing licensed a channel that called StartCombat
-and CTD'd — it is corrected here.)
+**Governed by design.md §1a + INVARIANTS #0: APMF MODERATES (arbitrate + DENY + a narrow, sanctioned
+bounded-promote); it NEVER manufactures or sustains an AI decision.** The "how the client drives it"
+column below is documentation of the CLIENT's execution path for arbitration-only facets — it is NOT a
+list of things APMF does for those rows. APMF calls no decision-generating engine function
+(`StartCombat`, `CastSpellImmediate`, movement drive-feed, a `selectedSpells`/`EquipShout`-style
+selection write). Legitimate APMF actions are: arbitrate the claim; DENY at the source (AV writes that
+gate the input the AI reads, movement full-block, detection AVs, package yield, pausing an actor's own
+in-progress dialogue); and, for a facet with no meaningful deny form and no AI decision to arbitrate
+around, PROMOTE a single bounded one-shot client-requested action (#0c — weapon draw ch.4, stance
+toggle ch.3, idle/anim ch.12). (Earlier revisions of this file framed a "PROMOTE" column as APMF
+DRIVING every facet, including decision-selection ones; that executor framing licensed a channel that
+called StartCombat and CTD'd — it is corrected here. ch.14 shout-power previously called `EquipShout`
+directly, the same anti-pattern in miniature; it is now arbitration-only, mirroring ch.6/ch.8.)
 
 `RE/…` = CommonLibSSE-NG headers. `// 0xNN` = in-header vfunc index (index-stable across runtimes);
 struct-member offsets are accessor/Address-Library covered but more version-sensitive. Taxonomy is
@@ -26,8 +31,8 @@ OPEN (17 channels + sub-splits). Combat-target / combat-actions / casting (⭐) 
 | 1 | **Movement / locomotion** | Package planner (`AIProcess.currentPackage`) → `MovementControllerNPC`→`ActorMover` | **FULL BLOCK (built):** `KeepOffsetFromActor(self, 0)` nulls the move GOAL at the source + `SetDontMove` locks translation → clean stand-still (no run-in-place, no teleport-snap; `SetDontMove` ALONE was one layer too shallow). Both Address-Library bound | `IMovementDirectControl` feed (unnamed `Unk_01..08`) or `Actor::Move` 0xC8 (probe-gated) | **DENY/full-block DOCUMENTED; PROMOTE feed GAP** |
 | 1a | ↳ **Gait / speed** | `PreferredSpeed` walk/jog/run; `kSpeedMult` AV=30 | **TRUE:** set `kSpeedMult` AV | same AV / package speed flag | **DOCUMENTED, clean** |
 | 2 | **Facing / heading** | Same planner (rotation) | rides movement gate (`SetAIDriven`) | same direct-control feed | shared w/ movement; standalone = GAP |
-| 3 | **Stance / sneak** | Package flag → `actorState1.sneaking` | clean only via package flag; anim-event = additive | `NotifyAnimationGraph("SneakStart/Stop")` vfunc 01 | **DOCUMENTED (Tier A)**, re-assert caveat |
-| 4 | **Weapon draw / sheathe** | `actorState2.weaponState` (sticky) | sticky, not per-frame | `DrawWeaponMagicHands(bool)` vfunc 0xA6 | **DOCUMENTED** |
+| 3 | **Stance / sneak** | Package flag → `actorState1.sneaking` | clean only via package flag; anim-event = additive | `NotifyAnimationGraph("SneakStart/Stop")` vfunc 01 | **DOCUMENTED (Tier A), bounded one-shot promote — #0c** |
+| 4 | **Weapon draw / sheathe** | `actorState2.weaponState` (sticky) | sticky, not per-frame | `DrawWeaponMagicHands(bool)` vfunc 0xA6 | **DOCUMENTED, bounded one-shot promote — #0c** |
 | 5 | **Headtracking** | AI writes per-type `HighProcessData.headTrackTarget[]` | **TRUE:** own the slot (`SetHeadtrackTarget(type,ref)`) | same setter | **DOCUMENTED, clean gate** |
 | 6 | **Combat-target** ⭐ | `AIProcess.currentCombatTarget` (+ `CombatController.targetHandle`), re-chosen each tick by threat | ARBITRATION-ONLY today (record owner). FUTURE deny: suppress a competing framework's target write at the hook (GAP) | CLIENT commands it: compare-and-write of `currentCombatTarget` (MFO's `Targeting::Command` + its UpdateCombat hook re-assert; StartCombat to initiate) — APMF makes NO combat call | **APMF arbitration-only; client executes the command** |
 | 7 | **Combat ACTIONS** ⭐ | Internal **combat behavior tree** (`CombatBehaviorController`) + `CombatInventory` + `CombatState` | **NONE** (`AttackBlockHandler` is player-only) | additive anim events fight the tree; real lever = loadout (ch.15) + aggression (ch.11) | **GAP** |
@@ -37,9 +42,9 @@ OPEN (17 channels + sub-splits). Combat-target / combat-actions / casting (⭐) 
 | 9 | **Package-procedure activity** | `TESPackage.procedureType` (sandbox/patrol/guard) | **No gate** — `SetRunOncePackage` = substitution (OnPackageEnd, §5 rejects) | compose from primitives (locomotion + `PlayIdle` + `ActivateRef` + stance/headtrack) | **GAP native; DOCUMENTED workaround** |
 | 10 | **Dialogue / greeting** | AI greeting/dialogue + topics | `SetDialogueWithPlayer` 0x41 / `StopCurrentDialogue` 0x4F | `InitiateDialogue` 0xD8 | **DOCUMENTED** (coarse) |
 | 11 | **AI-attribute** (aggression / confidence / assistance / morality) | Dynamic AVs the engine's own combat/flee/assist decisions read (`kAggression`/`kConfidence`/`kMorality`/`kAssistance`) | **TRUE — the design's preferred model:** `ActorValueOwner::SetActorValue`/`ModActorValue` sets the input the AI itself consumes; no override | same setter | **DOCUMENTED, cleanest gate** |
-| 12 | **Idle / animation** | AI idle manager | additive (no gate on AI's own idles) | `AIProcess::PlayIdle` one-shot; `NotifyAnimationGraph` | **DOCUMENTED** (one-shot) |
+| 12 | **Idle / animation** | AI idle manager | additive (no gate on AI's own idles) | `AIProcess::PlayIdle` one-shot; `NotifyAnimationGraph` | **DOCUMENTED, bounded one-shot promote — #0c** |
 | 13 | **Facial expression / mood** | FaceGen emotion (`EmotionType`) | `ClearExpressionOverride` releases | **SetExpressionOverride not exposed** in this CommonLib build (raw fn needed) | **GAP** (setter) |
-| 14 | **Shouts / abilities / powers** | `selectedPower`; voice slot; `GetCurrentShout` | select which power/shout occupies the slot | `EquipShout` / `AddCastPower`; trigger like casting | **DOCUMENTED select** |
+| 14 | **Shouts / abilities / powers** | `selectedPower`; voice slot; `GetCurrentShout` | ARBITRATION-ONLY (record voice-slot owner). FUTURE deny: suppress a competing framework's own `EquipShout` write (GAP) | CLIENT selects it: its own `ActorEquipManager::EquipShout` (sticky select; AI still triggers it) — APMF makes NO equip write | **APMF arbitration-only; client executes the select — mirrors ch.8** |
 | 15 | **Equipment** (equip/unequip specific item) | Combat/package equip choices — sets what ch.4/7/8 work with | own the equipped set (remove an item = deny the AI that option — clean input-gate) | `ActorEquipManager::EquipObject`/`UnequipObject`/`EquipSpell`/`EquipShout` (scar: off-main → `MainThread::Post`, MFO #62) | **DOCUMENTED — the melee-vs-ranged lever** |
 | 16 | **Detection / stealth** | `sneaking` (=ch.3); `HighProcessData.detectionModifier`; AVs kDetectLifeRange/kMovementNoiseMult | **TRUE:** set the detect AVs / `detectionModifier` | same | **DOCUMENTED** (AV path clean) |
 
@@ -52,13 +57,18 @@ OPEN (17 channels + sub-splits). Combat-target / combat-actions / casting (⭐) 
 
 **Behavior the CLIENT executes (APMF only arbitrates the facet, never does these):** combat-target
 command (ch.6, client's `currentCombatTarget` write), casting (ch.8, client's `selectedSpells` + consent
-+ Cast-style so the AI decides), weapon draw (ch.4), idle/anim (ch.12), dialogue (ch.10), shout/power
-(ch.14). NOTE: some prototype channels (stance-anim ch.3, weapon-draw, idle, shout) still contain
-executor stand-ins in code pending the same deny/arbitrate reframe — flagged, not yet converted.
++ Cast-style so the AI decides), and shout/power select (ch.14, client's own `EquipShout` — converted to
+arbitration-only, mirroring ch.6/ch.8).
+
+**APMF's sanctioned bounded one-shot promotes (#0c — no deny form, no AI decision to arbitrate
+around, a single deterministic call at Engage/Release, no `Tick`, no re-assert):** weapon draw (ch.4,
+`DrawWeaponMagicHands`), stance toggle (ch.3, `NotifyAnimationGraph SneakStart/Stop`), idle/anim
+(ch.12, `NotifyAnimationGraph IdleForceDefaultState`). These are formally permitted, not pending
+conversion — see INVARIANTS #0(c).
 
 **Need live probing:** Movement PROMOTE feed (`IMovementDirectControl::Unk_0N`, §9.1 — biggest unknown);
-the DENY of a competing framework's combat-target/cast selection at the hook (ch.6/ch.8 — the future
-suppression gate); Combat ACTIONS behavior tree — no gate (ch.7); Sustained package procedures (ch.9);
+the DENY of a competing framework's combat-target/cast/shout selection at the hook (ch.6/ch.8/ch.14 —
+the future suppression gate); Combat ACTIONS behavior tree — no gate (ch.7); Sustained package procedures (ch.9);
 Facial-expression SETTER (ch.13). **The load-bearing open mechanism: cleanly DENY/starve an outranking
 framework's PACKAGE so a client's own package drives natively (the Cicero/travel case) — see design.md §1a.**
 

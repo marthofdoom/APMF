@@ -3,13 +3,16 @@
 #include "core/Registry.h"
 
 // ============================================================================
-// Channel 3 -- STANCE / SNEAK. Tier A promote (CHANNEL-MAP ch.3): drive the crouch
-// via NotifyAnimationGraph("SneakStart"/"SneakStop") (IAnimationGraphManagerHolder
-// vfunc 01, bound). We record whether SHE was already sneaking and only toggle the
-// difference, restoring on release. Note (ch.3 caveat): the anim-event drive is
-// ADDITIVE over the package's own crouch decision, so on a package that actively
-// forces stance this is not a hard block -- for the common case it stands as a
-// clean one-shot. No per-tick re-assert.
+// Channel 3 -- STANCE / SNEAK. SANCTIONED BOUNDED ONE-SHOT PROMOTE (INVARIANTS
+// #0(c), Tier A, CHANNEL-MAP ch.3): drive the crouch via
+// NotifyAnimationGraph("SneakStart"/"SneakStop") (IAnimationGraphManagerHolder
+// vfunc 01, bound). A stance toggle has no meaningful deny form and no AI decision
+// to arbitrate around, so a single deterministic call at Engage/Release is lawful
+// under #0(c), not a stand-in awaiting conversion. We record whether SHE was already
+// sneaking and only toggle the difference, restoring on release. Note (ch.3
+// caveat): the anim-event drive is ADDITIVE over the package's own crouch decision,
+// so on a package that actively forces stance this is not a hard block -- for the
+// common case it stands as a clean one-shot. No per-tick re-assert.
 // ============================================================================
 
 namespace {

@@ -3,10 +3,13 @@
 #include "core/Registry.h"
 
 // ============================================================================
-// Channel 10 -- DIALOGUE. One-shot promote (CHANNEL-MAP ch.10, "coarse"): interrupt
-// the actor's current dialogue via Actor::PauseCurrentDialogue() (vfunc 0x4F,
-// bound). Engage fires it once; there is no lasting state, so Release is a no-op
-// (the claim simply refcounts the engagement until released).
+// Channel 10 -- DIALOGUE. DENY -- suppresses the actor's own in-progress dialogue
+// (CHANNEL-MAP ch.10, "coarse") via Actor::PauseCurrentDialogue() (vfunc 0x4F,
+// bound). This does not manufacture dialogue; it interrupts/suppresses the AI's own
+// ongoing dialogue engagement at the source, the same lever class as movement
+// full-block or a package yield (INVARIANTS #0(b)). Engage fires it once; there is
+// no lasting state, so Release is a no-op (the claim simply refcounts the
+// engagement until released).
 //
 // A persistent dialogue-AVAILABILITY toggle (SetDialogueWithPlayer, vfunc 0x41) is
 // a documented follow-up left for a live build to pin its flag semantics.
