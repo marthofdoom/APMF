@@ -88,6 +88,16 @@ namespace apmf {
         bool TryGetOwningClaim(RE::FormID actor, Intent intent,
                                APMF_API::APMF_Param& outParam) const;
 
+        // ---- Observability/probe use only (Docs/SPEC-PACKAGE-HOLD.md §4): live
+        // Actor* for every actor CURRENTLY claimed on `intent`'s channel (unloaded
+        // NPCs filtered via the same npc.handle.get() liveness check OnActorUpdate/
+        // TryGetOwningClaim already use). Same RCU reader discipline (any thread) --
+        // relaxed pre-gate, one acquire-load of a frozen snapshot generation. The
+        // controlled set is small (INVARIANTS #13) so this returns a fresh vector
+        // rather than an iterator; meant for a ~250ms-cadence diagnostic poll, not a
+        // hot per-frame path. ----
+        std::vector<RE::Actor*> ClaimedActors(Intent intent) const;
+
         // ---- Writer thread ONLY (the PlayerCharacter/Drain seat and the SKSE
         // revert/preload callbacks -- all the same MAIN thread). ----
         // Once per frame: apply queued ops, then sweep unloaded controlled NPCs;

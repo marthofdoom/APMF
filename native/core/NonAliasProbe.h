@@ -73,4 +73,42 @@ namespace apmf::nonaliasprobe {
     // this does not itself consult the switch.
     bool RateLimitOK(RE::FormID a_actor);
 
+    // ------------------------------------------------------------------------
+    // Docs/SPEC-PACKAGE-HOLD.md §4 -- the package-drift correlation probe.
+    // OBSERVE-ONLY, same NumLock switch, same never-mutate discipline as the
+    // rest of this file. Two pieces:
+    //
+    //   1. MonotonicMs() -- the SHARED tick axis. Both this file's periodic
+    //      poll log and core/PackageGate.cpp's existing 0x49 observe log call
+    //      this so the two independent log lines interleave into one
+    //      readable timeline (same steady_clock source this file already
+    //      uses internally for its rate limiter).
+    //
+    //   2. PollClaimedPackages() -- a ~250ms-throttled poll, called every
+    //      frame from Arbiter::OncePerFrame (the SAME once-per-frame
+    //      game-thread seat Part A's EvaluatePackage nudge and Drain() already
+    //      use -- no new thread, no new hook). Internally gated on the SAME
+    //      NumLock switch (near-zero cost while off: one relaxed atomic
+    //      load), and internally self-throttles to ~250ms so callers need not
+    //      time it themselves. For each actor CURRENTLY claimed on
+    //      kIntent_OfferPackage (ControlMap::ClaimedActors -- INVARIANTS #13:
+    //      a small map), reads actor->GetCurrentPackage() (read-only, plain
+    //      accessor) and ControlMap::TryGetOwningClaim (read-only RCU lookup)
+    //      and logs both plus the shared tick -- never writes, never
+    //      redirects, never touches a package/claim/return value.
+    // ------------------------------------------------------------------------
+
+    // Shared monotonic tick (milliseconds, steady_clock-based) both the
+    // periodic poll and PackageGate.cpp's 0x49 observe line stamp their log
+    // lines with, so the two logs correlate into one timeline.
+    std::uint64_t MonotonicMs();
+
+    // Call once per frame from Arbiter::OncePerFrame (game thread). No-op
+    // (one relaxed atomic load) unless the NumLock switch is on; when on,
+    // self-throttles to ~250ms and then polls+logs every currently
+    // ch.9-claimed actor's GetCurrentPackage() + claim state. Never mutates
+    // anything -- pure diagnostic read+log, chained to nothing (there is
+    // nothing to chain; this isn't a hook).
+    void PollClaimedPackages();
+
 }

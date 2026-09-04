@@ -47,25 +47,41 @@ namespace apmf::packagegate {
                                                         // is byte-identical to the prior early-return logic,
                                                         // `break` in place of `return`; behavior UNCHANGED.
 
+                // Docs/SPEC-PACKAGE-HOLD.md §4.1 item 3: `claim`/`claimPresent` are
+                // declared at function scope (not inside the do-while, as before)
+                // purely so the OBSERVE-log below can report them -- same single
+                // TryGetOwningClaim call the redirect logic already made, no new
+                // lookup, no behavior change (the do-while's branches are
+                // byte-identical to before this widening).
+                APMF_API::APMF_Param claim{};
+                bool claimPresent = false;
+
                 do {
                     if (apmf::ControlMap::Get().ControlledCount() == 0) break;   // near-zero cost
 
-                    APMF_API::APMF_Param claim{};
                     if (!apmf::ControlMap::Get().TryGetOwningClaim(a_this->GetFormID(),
                                                                    APMF_API::kIntent_OfferPackage, claim))
                         break;   // uncontrolled on this intent
+                    claimPresent = true;
                     if (claim.form == 0) break;   // claimed but no package named -- channel default, no redirect
 
                     if (auto* pkg = RE::TESForm::LookupByID<RE::TESPackage>(claim.form)) { result = pkg; break; }
                     // named FormID doesn't resolve -- degrade to the engine's own answer, never null
                 } while (false);
 
-                // OBSERVE-ONLY (Docs/PROBE-NONALIAS-PACKAGE.md §6.1): does this hook even get
-                // CALLED for a non-alias-package actor (e.g. Cicero, 0009BE51)? Gated behind
-                // core/NonAliasProbe.h's NumLock switch + shared per-actor rate limit -- OFF by
-                // default, never changes `result`. Uses Actor::GetCurrentPackage() (a plain
-                // accessor) rather than hand-walking AIProcess::currentPackage's raw struct --
-                // see NonAliasProbe.cpp's file header for why.
+                // OBSERVE-ONLY (Docs/PROBE-NONALIAS-PACKAGE.md §6.1, extended per
+                // Docs/SPEC-PACKAGE-HOLD.md §4.1 item 2/3): does this hook even get
+                // CALLED for a non-alias-package actor (e.g. Cicero, 0009BE51), and
+                // is the claim continuously present when it does? Gated behind
+                // core/NonAliasProbe.h's NumLock switch + shared per-actor rate limit
+                // -- OFF by default, never changes `result`. Uses
+                // Actor::GetCurrentPackage() (a plain accessor) rather than
+                // hand-walking AIProcess::currentPackage's raw struct -- see
+                // NonAliasProbe.cpp's file header for why. `tick=` uses the SAME
+                // monotonic axis (nonaliasprobe::MonotonicMs()) as the new §4.1
+                // item-1 periodic poll (NonAliasProbe.cpp's PollClaimedPackages,
+                // "[ch.9-poll]") so the two independent log lines interleave into one
+                // readable timeline.
                 if (apmf::nonaliasprobe::IsEnabled() &&
                     apmf::nonaliasprobe::RateLimitOK(a_this->GetFormID())) {
                     const auto* cur = a_this->GetCurrentPackage();
@@ -74,13 +90,16 @@ namespace apmf::packagegate {
                     // stl::enumeration<PACKAGE_PROCEDURE_TYPE, uint32_t> at
                     // +0xD8; see core/NonAliasProbe.cpp's file header for the
                     // real-header citation this was corrected against).
-                    spdlog::info("[ch.9-observe] 0x49 CheckForCurrentAliasPackage actor=0x{} curPkg=0x{} "
-                                 "curPkgType={} engineOrig=0x{} hookReturns=0x{}",
+                    spdlog::info("[ch.9-observe] tick={} 0x49 CheckForCurrentAliasPackage actor=0x{} curPkg=0x{} "
+                                 "curPkgType={} engineOrig=0x{} hookReturns=0x{} claim={} claimForm=0x{}",
+                                 apmf::nonaliasprobe::MonotonicMs(),
                                  apmf::log::Hex(a_this->GetFormID()),
                                  apmf::log::Hex(cur ? cur->GetFormID() : 0),
                                  cur ? static_cast<std::int32_t>(cur->procedureType.underlying()) : -1,
                                  apmf::log::Hex(orig ? orig->GetFormID() : 0),
-                                 apmf::log::Hex(result ? result->GetFormID() : 0));
+                                 apmf::log::Hex(result ? result->GetFormID() : 0),
+                                 claimPresent ? "present" : "ABSENT",
+                                 apmf::log::Hex(claim.form));
                 }
 
                 return result;

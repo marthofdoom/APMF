@@ -1,6 +1,7 @@
 #include "PCH.h"
 #include "core/Log.h"
 #include "core/Allowance.h"
+#include "core/ControlMap.h"
 #include "core/NonAliasProbe.h"
 
 #include <chrono>
@@ -45,6 +46,7 @@ namespace apmf::nonaliasprobe {
         constexpr std::uint32_t kToggleKey = 0x45;   // NumLock  -- see .h for why not a Numpad0-9 key
         constexpr std::uint32_t kDumpKey   = 0x46;   // ScrollLock -- one-shot vtable/RTTI dump
         constexpr std::uint64_t kRateLimitMs = 2000; // per-actor observe-log cadence
+        constexpr std::uint64_t kPollIntervalMs = 250; // Docs/SPEC-PACKAGE-HOLD.md §4.1 -- periodic poll cadence
 
         std::atomic<bool> g_installed{ false };
         std::atomic<bool> g_debugEnabled{ false };
@@ -53,6 +55,15 @@ namespace apmf::nonaliasprobe {
 
         std::mutex                                     g_rlMx;
         std::unordered_map<RE::FormID, std::uint64_t>  g_lastLogMs;   // rate-limit table (debug-only traffic)
+
+        // Global throttle for PollClaimedPackages() -- one shared gate, not a
+        // per-actor table: the poll itself only ever runs from the single
+        // once-per-frame game-thread seat (Arbiter::OncePerFrame), so a single
+        // last-poll timestamp is enough to cap the whole sweep at ~250ms,
+        // which in turn caps every individual actor's log line to ~250ms too
+        // (the guardrail this mirrors the existing per-actor rate-limit shape
+        // for).
+        std::atomic<std::uint64_t> g_lastPollMs{ 0 };
 
         std::uint64_t NowMs() {
             using namespace std::chrono;
@@ -218,6 +229,51 @@ namespace apmf::nonaliasprobe {
         if (now - last < kRateLimitMs) return false;
         last = now;
         return true;
+    }
+
+    std::uint64_t MonotonicMs() { return NowMs(); }
+
+    void PollClaimedPackages() {
+        // Docs/SPEC-PACKAGE-HOLD.md §4.1 item 1. Near-zero cost while the switch
+        // is off: one relaxed atomic load, nothing else.
+        if (!g_debugEnabled.load(std::memory_order_relaxed)) return;
+
+        const auto now = NowMs();
+        // Single shared throttle (see the anon-namespace comment above) -- this
+        // function is only ever called from the once-per-frame game-thread seat
+        // (Arbiter::OncePerFrame), so a plain compare-then-store is race-free in
+        // practice; std::atomic is used defensively, not because of contention.
+        const auto last = g_lastPollMs.load(std::memory_order_relaxed);
+        if (now - last < kPollIntervalMs) return;
+        g_lastPollMs.store(now, std::memory_order_relaxed);
+
+        // CURRENTLY ch.9-claimed actors only (INVARIANTS #13: a small map).
+        // Read-only: ControlMap::ClaimedActors is an RCU snapshot read, never a
+        // mutation.
+        const auto actors = apmf::ControlMap::Get().ClaimedActors(APMF_API::kIntent_OfferPackage);
+        for (auto* actor : actors) {
+            if (!actor) continue;
+
+            // Same read-only accessor PackageGate.cpp's 0x49 observe line uses --
+            // never AIProcess::currentPackage's raw layout.
+            const auto* cur = actor->GetCurrentPackage();
+
+            // §4.1 item 3: resolve claim presence + claim.form the same way the
+            // 0x49 thunk does (TryGetOwningClaim), so the poll log and the 0x49
+            // log test the SAME "is the claim continuously present" question from
+            // two independent call sites.
+            APMF_API::APMF_Param claim{};
+            const bool claimPresent = apmf::ControlMap::Get().TryGetOwningClaim(
+                actor->GetFormID(), APMF_API::kIntent_OfferPackage, claim);
+
+            spdlog::info("[ch.9-poll] tick={} actor=0x{} curPkg=0x{} curPkgType={} claim={} claimForm=0x{}",
+                         now,
+                         apmf::log::Hex(actor->GetFormID()),
+                         apmf::log::Hex(cur ? cur->GetFormID() : 0),
+                         cur ? static_cast<std::int32_t>(cur->procedureType.underlying()) : -1,
+                         claimPresent ? "present" : "ABSENT",
+                         apmf::log::Hex(claim.form));
+        }
     }
 
 }

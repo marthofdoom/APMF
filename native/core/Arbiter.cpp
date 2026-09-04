@@ -2,6 +2,7 @@
 #include "core/Log.h"
 #include "core/Arbiter.h"
 #include "core/ControlMap.h"
+#include "core/NonAliasProbe.h"
 #include "core/Registry.h"
 
 namespace apmf {
@@ -26,6 +27,13 @@ namespace apmf {
 
     void Arbiter::OncePerFrame() {
         ControlMap::Get().Drain();
+
+        // Docs/SPEC-PACKAGE-HOLD.md §4.1 item 1 -- OBSERVE-ONLY package-drift
+        // correlation probe. Reuses this EXISTING once-per-frame game-thread seat
+        // (no new thread, no new hook); self-gated on NonAliasProbe's NumLock
+        // switch and self-throttled to ~250ms internally, so this call costs one
+        // relaxed atomic load whenever the probe is off (the default).
+        apmf::nonaliasprobe::PollClaimedPackages();
     }
 
     void Arbiter::ReleaseAll(const char* why) {

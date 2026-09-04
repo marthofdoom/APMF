@@ -381,6 +381,28 @@ namespace apmf {
         return false;   // this NPC is controlled, but not on this channel
     }
 
+    std::vector<RE::Actor*> ControlMap::ClaimedActors(Intent intent) const {
+        // Observability/probe use only (Docs/SPEC-PACKAGE-HOLD.md §4). Same RCU
+        // discipline as TryGetOwningClaim: relaxed pre-gate, one acquire-load of a
+        // LOCAL frozen snapshot copy. Read-only -- does not touch obsTick or
+        // anything else; never called from the hot per-tick path.
+        std::vector<RE::Actor*> out;
+        if (m_anyControlled.load(std::memory_order_relaxed) == 0) return out;
+
+        std::shared_ptr<const MapType> snap = m_published.load(std::memory_order_acquire);
+        auto* channel = Registry::Get().ChannelForIntent(intent);
+        if (!channel) return out;
+
+        for (const auto& [fid, npc] : *snap) {
+            auto actor = npc.handle.get();
+            if (!actor) continue;   // unloaded; the Drain sweep reclaims it
+            for (const auto& cs : npc.channels) {
+                if (cs.channel == channel && !cs.claims.empty()) { out.push_back(actor.get()); break; }
+            }
+        }
+        return out;
+    }
+
     void ControlMap::ReleaseAll(const char* why) {
         // Drain any pending ops first so a just-enqueued claim is not orphaned, then
         // restore + drop every controlled NPC. Writer thread only (see ControlMap.h:
