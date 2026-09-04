@@ -111,32 +111,43 @@ ended, the cast finished), not for a routine retarget.
 
 Every facet is one `Intent` value in `native/APMF_API.h`. The proof tier below
 is not a formality. It says how much to trust a facet before you build a
-release around it. It is drawn from `Docs/CHANNEL-MAP.md`, APMF's own honest
-research map of what is field-tested versus merely built.
+release around it. It is drawn from `Docs/CHANNEL-MAP.md` and
+`Docs/PROBE-ALLOWANCE.md`, APMF's own honest research map of what is
+field-tested versus merely built, cross-checked against marth's own field
+sessions.
 
-- **Field-proven** means a live deck run exercised the exact mechanism
-  (engage, deny, release) and it held up.
+- **Field-proven** means a live deck run exercised the mechanism (engage,
+  deny, release) and it held up, or the facet is in active production use by
+  a real client. Either counts.
 - **Built, not yet battle-tested** means the code compiles and the mechanism
   is sound on paper (or reuses a mechanism proven elsewhere), but this
   specific facet hasn't had its own field run yet.
 
+**"Tested" and "reads its param" are two different axes, don't conflate
+them.** A crouch toggle can be field-proven and working while it still
+applies a fixed built-in value and ignores whatever you pass in `APMF_Param`,
+that's fine for a plain toggle with nothing to parametrize. The Param column
+below is a separate, honest note on which facets consume a per-request value
+today versus accept-and-ignore it. Read both columns, don't collapse one into
+the other.
+
 | Intent | Facet | Param field | Proof tier |
 |---|---|---|---|
 | `kIntent_MovementBlock` (ch.1) | Full stand-still | none | Built, not yet battle-tested |
-| `kIntent_Gait` (ch.1a) | Movement speed scale | `fval` (reserved, not yet read) | Built, not yet battle-tested |
-| `kIntent_Stance` (ch.3) | Sneak/crouch toggle | `ival` (reserved, not yet read) | Built, not yet battle-tested |
+| `kIntent_Gait` (ch.1a) | Movement speed scale | `fval` (reserved, not yet read) | **Field-proven.** An actor-value source-block, deck-tested to hold even on a package-locked actor (`Docs/INVARIANTS.md` #2). |
+| `kIntent_Stance` (ch.3) | Sneak/crouch toggle | `ival` (reserved, not yet read) | **Field-proven.** Deck-tested as a crouch toggle, confirmed working. (Tested-and-working is a separate axis from param usage: a plain toggle needs no per-request value, so "reserved" here isn't a gap in it.) |
 | `kIntent_WeaponDrawn` (ch.4) | Draw/sheathe | none | Built, not yet battle-tested |
-| `kIntent_Headtrack` (ch.5) | Look-at target | `form` (reserved, not yet read) | Built, not yet battle-tested. Known-incomplete: the AI writes several headtrack slots and APMF owns only one, so an aggressive competing source can still win the head. |
-| `kIntent_CombatTarget` (ch.6) | Claim the combat-target facet | `form` (the target actor) | Built, not yet battle-tested. Arbitration only today: APMF records the owner, the client writes the target itself. Denying a competing framework's own target write is a future gap. |
+| `kIntent_Headtrack` (ch.5) | Look-at target | `form` (reserved, not yet read) | **Field-proven** for the look-up behavior itself (deck-tested). Known-incomplete as a DENY gate though: the AI writes several headtrack slots and APMF owns only one, so an aggressive competing source can still win the head back. Tested and working is not the same claim as fully gated, both are true here at once. |
+| `kIntent_CombatTarget` (ch.6) | Claim the combat-target facet | `form` (the target actor) | **Field-proven, in active production use.** MFO drives its combat targeting through this facet every fight. Arbitration only: APMF records the owner and the client writes the target itself. Denying a competing framework's own target write is still a future gap. |
 | `kIntent_CombatAction` (ch.7) | Deny named combat behavior-tree leaf categories (attack, bash, ranged attack, cast leaves, and more, grouped by category) | `ival` (a `CombatActionCategory` bitmask) | **Field-proven.** Graduated from a live deck probe: the deny fired, the tree fell back cleanly, no crash. |
-| `kIntent_SelectSpell` (ch.8) | Claim the casting facet | `form` (the spell FormID) | Built, not yet battle-tested. The underlying deny mechanism (an engine cast-check hook) has years of precedent from prior, non-APMF use, but the APMF-arbitrated path for this facet is a recent migration and hasn't had its own end-to-end field run. Denying a competing framework's own spell selection is a future gap. |
+| `kIntent_SelectSpell` (ch.8) | Claim the casting facet | `form` (the spell FormID) | Built, not yet battle-tested, as a specific facet of this shape. The underlying deny mechanism (an engine cast-check hook) has years of precedent from prior, non-APMF use, and an older deck session recorded a "casting selection" source-block holding on a package-locked actor (`Docs/INVARIANTS.md` #2), but that record predates the current arbitration-plus-T2-enforcement shape of this facet and the migration that made APMF the sole enforcer, so it isn't cited here as proof of the facet as it stands today. Denying a competing framework's own spell selection is a separate, still-open gap. |
 | `kIntent_OfferPackage` (ch.9) | Claim the package-offer facet | `form` (the TESPackage FormID) | **Field-proven** for engage/release. A live deck run confirmed the redirect holds and releases cleanly. Save/load persistence of an engaged claim across that boundary is unexercised. |
 | `kIntent_Dialogue` (ch.10) | Pause the actor's own in-progress dialogue | none | Built, not yet battle-tested |
-| `kIntent_Disposition` (ch.11) | Aggression / confidence / assistance / morality bias | `fval` (reserved, not yet read) | Built, not yet battle-tested |
+| `kIntent_Disposition` (ch.11) | Aggression / confidence / assistance / morality bias | `fval` (reserved, not yet read) | **Field-proven.** An actor-value source-block, deck-tested to hold even on a package-locked actor (`Docs/INVARIANTS.md` #2). |
 | `kIntent_Idle` (ch.12) | One-shot idle/animation | none | Built, not yet battle-tested |
 | `kIntent_ShoutPower` (ch.14) | Claim the shout/power selection facet | `form` (the shout/power FormID) | Built, not yet battle-tested. Arbitration only today, the same shape as ch.6. |
 | `kIntent_Equipment` (ch.15) | Unequip/equip a worn item, and (with a param) gate re-equip of a spell/staff while the claim stands | `form` (optional) | Built, not yet battle-tested. The most recently landed facet in the catalog. |
-| `kIntent_Detection` (ch.16) | Silent movement + reduced detection range | `fval` (reserved, not yet read) | Built, not yet battle-tested |
+| `kIntent_Detection` (ch.16) | Silent movement + reduced detection range | `fval` (reserved, not yet read) | **Field-proven.** An actor-value source-block, deck-tested to hold even on a package-locked actor (`Docs/INVARIANTS.md` #2). |
 
 Where a field is marked "reserved, not yet read", the channel currently
 applies a fixed built-in behavior and ignores whatever you pass in that field.
