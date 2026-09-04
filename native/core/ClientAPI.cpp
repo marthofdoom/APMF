@@ -47,17 +47,30 @@ namespace {
         }
     }
 
+    // ABI v4: attach a bounded ADDITIONAL allow-set of spell FormIDs to an
+    // existing kIntent_SelectSpell claim (see APMF_API.h's APMF_API_v4 doc
+    // comment). `forms` is READ AND COPIED synchronously here -- APMF never
+    // retains the pointer, same contract as RequestEx/Repoint's `param`; `count`
+    // is clamped to kMaxSpellAllowList inside EnqueueSetSpellAllowList.
+    void APMF_SetSpellAllowList(APMF_API::Handle handle, const RE::FormID* forms, std::uint32_t count) {
+        try {
+            apmf::ControlMap::Get().EnqueueSetSpellAllowList(handle, forms, count);
+        } catch (...) {
+        }
+    }
+
     // The single static POD interface handed to clients. It is the NEWEST revision
-    // (APMF_API_v3), constant-initialized (the pointers are to static functions), so
+    // (APMF_API_v4), constant-initialized (the pointers are to static functions), so
     // it is valid the instant the DLL loads. Because each revision's leading members
-    // are exactly the previous revision's, a v1/v2 client reading it through its own
-    // struct pointer sees only its prefix.
-    constexpr APMF_API::APMF_API_v3 g_api{
+    // are exactly the previous revision's, a v1/v2/v3 client reading it through its
+    // own struct pointer sees only its prefix.
+    constexpr APMF_API::APMF_API_v4 g_api{
         APMF_API::kABIVersion,
         &APMF_Request,
         &APMF_Release,
         &APMF_RequestEx,
         &APMF_Repoint,
+        &APMF_SetSpellAllowList,
     };
 
 }

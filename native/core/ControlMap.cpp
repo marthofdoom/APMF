@@ -85,8 +85,31 @@ namespace apmf {
         }
     }
 
+    // ABI v4 (ch.8's SetSpellAllowList): attach a bounded allow-set to an existing
+    // claim. `forms` is READ AND COPIED synchronously here -- APMF never retains
+    // the client's pointer, same contract as RequestEx/Repoint's `param`. Clamped
+    // to kMaxSpellAllowList at enqueue time (not in Apply) so the queued op itself
+    // is already bounded -- no unbounded write possible downstream.
+    void ControlMap::EnqueueSetSpellAllowList(Handle handle, const RE::FormID* forms, std::uint32_t count) {
+        if (handle == APMF_API::kInvalidHandle) return;
+        PendingOp op{};
+        op.kind   = PendingOp::Kind::kSetAllowList;
+        op.handle = handle;
+        if (forms && count > 0) {
+            op.altCount = (count < APMF_API::kMaxSpellAllowList) ? count : APMF_API::kMaxSpellAllowList;
+            for (std::uint32_t i = 0; i < op.altCount; ++i) op.altForms[i] = forms[i];
+        }
+        // else: altCount stays 0 -- CLEARS the allow-set on Apply (forms==nullptr
+        // or count==0 both mean "no allow-set").
+        {
+            std::scoped_lock lock(m_qmx);
+            m_queue.push_back(op);
+        }
+    }
+
     // ---- Writer thread ONLY (Drain/ApplyRequest/ApplyRelease/ApplyRepoint/
-    // ReleaseAll/Clear). OnActorUpdate below is the exception -- ANY thread. ----
+    // ApplySetSpellAllowList/ReleaseAll/Clear). OnActorUpdate below is the
+    // exception -- ANY thread. ----
 
     void ControlMap::Drain() {
         // Move the queued ops out under the lock, then apply them lock-free.
@@ -117,9 +140,10 @@ namespace apmf {
         bool changed = false;
         for (const auto& op : ops) {
             switch (op.kind) {
-            case PendingOp::Kind::kRequest: changed |= ApplyRequest(op, next);                  break;
-            case PendingOp::Kind::kRelease: changed |= ApplyRelease(op.handle, next);           break;
-            case PendingOp::Kind::kRepoint: changed |= ApplyRepoint(op.handle, op.param, next); break;
+            case PendingOp::Kind::kRequest:      changed |= ApplyRequest(op, next);                  break;
+            case PendingOp::Kind::kRelease:      changed |= ApplyRelease(op.handle, next);           break;
+            case PendingOp::Kind::kRepoint:      changed |= ApplyRepoint(op.handle, op.param, next); break;
+            case PendingOp::Kind::kSetAllowList: changed |= ApplySetSpellAllowList(op.handle, op.altForms, op.altCount, next); break;
             }
         }
 
@@ -304,6 +328,52 @@ namespace apmf {
         return false;   // handle's channel not found on this NPC (should not happen)
     }
 
+    // ABI v4 (ch.8's SetSpellAllowList). Writer thread only -- looks the claim up
+    // via m_index exactly as ApplyRepoint does, then writes altForms/altCount on
+    // the matching Claim. Restricted to kIntent_SelectSpell: a handle whose claim
+    // lives on any OTHER channel is a silent no-op (the allow-set concept only
+    // means something for cast-select). Updates the STORED claim regardless of
+    // whether it currently OWNS the channel -- same non-owning semantics as
+    // Repoint (§4.3): no engine write to make either way (allow-set is read
+    // straight off the stored claim by Allowance::Allowed, never pushed to the
+    // engine), so unlike Repoint's OnOwnerChanged call there is nothing to fire
+    // even when this claim IS the owner -- the widening is entirely inside the
+    // read side.
+    bool ControlMap::ApplySetSpellAllowList(Handle handle, const RE::FormID* forms, std::uint32_t count,
+                                            MapType& map) {
+        auto idxIt = m_index.find(handle);
+        if (idxIt == m_index.end()) return false;   // unknown/stale
+
+        auto* expected = Registry::Get().ChannelForIntent(APMF_API::kIntent_SelectSpell);
+        if (!expected || idxIt->second.second != expected) return false;   // not a SelectSpell claim
+
+        const RE::FormID formID  = idxIt->second.first;
+        Channel*         channel = idxIt->second.second;
+
+        auto npcIt = map.find(formID);
+        if (npcIt == map.end()) return false;
+        auto& npc = npcIt->second;
+
+        for (auto& cc : npc.channels) {
+            if (cc.channel != channel) continue;
+            for (auto& c : cc.claims) {
+                if (c.handle != handle) continue;
+                // count is already clamped to kMaxSpellAllowList by
+                // EnqueueSetSpellAllowList -- defensive re-clamp here anyway so this
+                // function is safe to call with an unclamped count from any future
+                // caller (never an unbounded write into the fixed altForms array).
+                c.altCount = (count < APMF_API::kMaxSpellAllowList) ? count : APMF_API::kMaxSpellAllowList;
+                for (std::uint32_t i = 0; i < c.altCount; ++i) c.altForms[i] = forms ? forms[i] : 0;
+                spdlog::info("[ctl] 0x{} ~ ch.{} {} SET-ALLOW-LIST (h={}, {} form(s)).",
+                             apmf::log::Hex(formID), channel->ChannelNo(), channel->Name(),
+                             handle, c.altCount);
+                return true;
+            }
+            return false;   // handle not among this channel's claims (should not happen)
+        }
+        return false;   // handle's channel not found on this NPC (should not happen)
+    }
+
     void ControlMap::OnActorUpdate(RE::Actor* actor) {
         // ANY thread (field-proven: the Character 0xAD seat is not single-threaded).
         // Relaxed pre-gate: near-zero cost while nothing is controlled -- no atomic
@@ -381,6 +451,48 @@ namespace apmf {
         return false;   // this NPC is controlled, but not on this channel
     }
 
+    bool ControlMap::TryGetOwningClaim(RE::FormID actor, Intent intent, APMF_API::APMF_Param& outParam,
+                                       RE::FormID* outAllowSet, std::uint32_t& outAllowCount) const {
+        // Same RCU discipline/pre-gate/lookup as the 3-arg overload above -- this
+        // is a separate, independent snapshot load + lookup (not a wrapper around
+        // the other overload) so both stay simple single-pass reads with no shared
+        // mutable state between them.
+        outAllowCount = 0;
+        if (m_anyControlled.load(std::memory_order_relaxed) == 0) return false;
+
+        std::shared_ptr<const MapType> snap = m_published.load(std::memory_order_acquire);
+        auto it = snap->find(actor);
+        if (it == snap->end()) return false;
+
+        const NpcCtl& npc = it->second;
+        if (!npc.handle.get()) return false;
+
+        auto* channel = Registry::Get().ChannelForIntent(intent);
+        if (!channel) return false;
+
+        for (const auto& cs : npc.channels) {
+            if (cs.channel != channel) continue;
+            if (cs.claims.empty()) return false;
+            const Claim* best = &cs.claims.front();
+            for (const auto& c : cs.claims) {
+                if (c.basis > best->basis) best = &c;
+            }
+            outParam = best->param;
+            // Copy the allow-set OUT BY VALUE (bounded, <=kMaxSpellAllowList
+            // uint32_t) rather than handing back a pointer/span into `best`
+            // (snapshot-owned storage) -- see ControlMap.h's comment on this
+            // overload: the copy has no RCU-lifetime coupling to `snap` once this
+            // call returns, so it stays valid however long the caller keeps it,
+            // even across a concurrent Drain/Publish.
+            if (outAllowSet && best->altCount > 0) {
+                outAllowCount = best->altCount;
+                for (std::uint32_t i = 0; i < outAllowCount; ++i) outAllowSet[i] = best->altForms[i];
+            }
+            return true;
+        }
+        return false;   // this NPC is controlled, but not on this channel
+    }
+
     std::vector<RE::Actor*> ControlMap::ClaimedActors(Intent intent) const {
         // Observability/probe use only (Docs/SPEC-PACKAGE-HOLD.md §4). Same RCU
         // discipline as TryGetOwningClaim: relaxed pre-gate, one acquire-load of a
@@ -413,9 +525,10 @@ namespace apmf {
             { std::scoped_lock lock(m_qmx); ops.swap(m_queue); }
             for (const auto& op : ops) {
                 switch (op.kind) {
-                case PendingOp::Kind::kRequest: ApplyRequest(op, next);                  break;
-                case PendingOp::Kind::kRelease: ApplyRelease(op.handle, next);           break;
-                case PendingOp::Kind::kRepoint: ApplyRepoint(op.handle, op.param, next); break;
+                case PendingOp::Kind::kRequest:      ApplyRequest(op, next);                  break;
+                case PendingOp::Kind::kRelease:      ApplyRelease(op.handle, next);           break;
+                case PendingOp::Kind::kRepoint:      ApplyRepoint(op.handle, op.param, next); break;
+                case PendingOp::Kind::kSetAllowList: ApplySetSpellAllowList(op.handle, op.altForms, op.altCount, next); break;
                 }
             }
         }

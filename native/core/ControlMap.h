@@ -70,6 +70,12 @@ namespace apmf {
         // Re-point an existing claim's param in place (same handle). `param` copied
         // synchronously; null == no-op. Applied at the next Drain. See APMF_API_v3.
         void   EnqueueRepoint(Handle handle, const APMF_API::APMF_Param* param);
+        // Attach a bounded allow-set of spell FormIDs to an existing claim (same
+        // handle), clamped to APMF_API::kMaxSpellAllowList and copied synchronously.
+        // `forms` may be null (== count 0, clears the allow-set). Applied at the
+        // next Drain: no-op on an unknown handle or a claim not on the
+        // kIntent_SelectSpell channel. See APMF_API_v4 / SetSpellAllowList.
+        void   EnqueueSetSpellAllowList(Handle handle, const RE::FormID* forms, std::uint32_t count);
 
         // ---- Hot path: ANY thread (RCU reader -- field-proven the 0xAD Character
         // seat is not single-threaded; see the header comment above). ----
@@ -87,6 +93,20 @@ namespace apmf {
         // follower-list touch, no mutation of anything.
         bool TryGetOwningClaim(RE::FormID actor, Intent intent,
                                APMF_API::APMF_Param& outParam) const;
+        // Overload that also hands back the winning claim's allow-set (ch.8's
+        // SetSpellAllowList addition, APMF_API_v4). `outAllowSet` (may be null to
+        // skip it) must have room for at least APMF_API::kMaxSpellAllowList
+        // RE::FormIDs; `outAllowCount` receives how many were copied (0 if the
+        // winning claim has no allow-set). The allow-set is copied OUT BY VALUE
+        // (bounded, <=32 uint32_t -- cheap) rather than handed back as a
+        // pointer/span into the snapshot's internal Claim storage, so the result
+        // has no RCU-lifetime coupling to this call's local snapshot generation
+        // once TryGetOwningClaim returns -- the same "copy out, don't alias"
+        // discipline `outParam` already uses for the primary param, just applied
+        // to the allow-set too. Internal C++ only -- NOT part of the C-ABI, free
+        // to change shape.
+        bool TryGetOwningClaim(RE::FormID actor, Intent intent, APMF_API::APMF_Param& outParam,
+                               RE::FormID* outAllowSet, std::uint32_t& outAllowCount) const;
 
         // ---- Observability/probe use only (Docs/SPEC-PACKAGE-HOLD.md §4): live
         // Actor* for every actor CURRENTLY claimed on `intent`'s channel (unloaded
@@ -124,6 +144,17 @@ namespace apmf {
             Handle               handle = APMF_API::kInvalidHandle;
             float                basis  = 0.0f;
             APMF_API::APMF_Param param  = {};   // what this claim wants the channel to act on
+            // ch.8 SetSpellAllowList (APMF_API_v4): a bounded ADDITIONAL allow-set
+            // of spell FormIDs a kIntent_SelectSpell claim's AI may also cast,
+            // beyond `param.form`. Fixed-size POD array (no heap, no std::vector) so
+            // Claim stays trivially copyable -- required for the RCU snapshot's
+            // per-Publish deep-copy (NpcCtl's copy ctor deep-copies `channels`,
+            // which deep-copies every ChannelCtl::claims, which deep-copies every
+            // Claim by value). altCount == 0 (the default) means "no allow-set" --
+            // a claim that never calls SetSpellAllowList reads byte-identically to
+            // before this field existed.
+            RE::FormID     altForms[APMF_API::kMaxSpellAllowList]{};
+            std::uint32_t  altCount = 0;
         };
         struct ChannelCtl {
             Channel*           channel = nullptr;
@@ -157,15 +188,20 @@ namespace apmf {
         using MapType = std::unordered_map<RE::FormID, NpcCtl>;
 
         struct PendingOp {
-            enum class Kind : std::uint8_t { kRequest, kRelease, kRepoint } kind{};
+            enum class Kind : std::uint8_t { kRequest, kRelease, kRepoint, kSetAllowList } kind{};
             Handle               handle = APMF_API::kInvalidHandle;
             RE::FormID           actor  = 0;         // request only
             Intent               intent = APMF_API::kIntent_None;   // request only
             float                basis  = 0.0f;      // request only
             APMF_API::APMF_Param param  = {};        // request/repoint (copied at enqueue)
+            // kSetAllowList only: copied synchronously at enqueue, same discipline
+            // as `param` above. altCount is pre-clamped to kMaxSpellAllowList by
+            // EnqueueSetSpellAllowList so Apply never has to re-check the bound.
+            RE::FormID           altForms[APMF_API::kMaxSpellAllowList]{};
+            std::uint32_t        altCount = 0;
         };
 
-        // All three apply against the WRITER's private working copy (`map`), never a
+        // All four apply against the WRITER's private working copy (`map`), never a
         // member -- writer thread only, called from Drain()/ReleaseAll() before that
         // copy is (maybe) published. Return whether they actually changed `map`, so
         // the caller only Publish()es on a real change (copy-on-CHANGE, not
@@ -173,6 +209,14 @@ namespace apmf {
         bool ApplyRequest(const PendingOp& op, MapType& map);
         bool ApplyRelease(Handle handle, MapType& map);
         bool ApplyRepoint(Handle handle, const APMF_API::APMF_Param& param, MapType& map);
+        // Writer-thread-only, mirrors ApplyRepoint's shape exactly: look the claim
+        // up via m_index, write altForms/altCount on the matching Claim regardless
+        // of whether it currently OWNS the channel (non-owning semantics, same as
+        // Repoint) -- takes effect immediately if it owns (no engine write to make;
+        // Allowance::Allowed reads the stored claim directly), otherwise if/when it
+        // later wins arbitration. No-op on an unknown handle or a claim not on the
+        // kIntent_SelectSpell channel.
+        bool ApplySetSpellAllowList(Handle handle, const RE::FormID* forms, std::uint32_t count, MapType& map);
 
         // Writer-thread-only choke point: takes ownership of the finished working
         // copy, makes it the new immutable snapshot, and publishes it for readers.

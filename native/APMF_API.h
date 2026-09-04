@@ -34,20 +34,20 @@
 // after SKSE load (e.g. your kPostLoad/kDataLoaded), then keep the pointer:
 //
 //     #include "APMF_API.h"
-//     const APMF_API::APMF_API_v3* g_apmf = nullptr;   // pick the newest struct you use
+//     const APMF_API::APMF_API_v4* g_apmf = nullptr;   // pick the newest struct you use
 //     if (HMODULE h = GetModuleHandleA("APMF.dll")) {
 //         auto fn = reinterpret_cast<APMF_API::GetInterface_t>(
 //             GetProcAddress(h, APMF_API::kGetInterfaceExport));
 //         if (fn) {
 //             if (auto* base = fn(APMF_API::kABIVersion)) {          // nullptr on ABI mismatch
-//                 if (base->abiVersion >= 3)
-//                     g_apmf = reinterpret_cast<const APMF_API::APMF_API_v3*>(base);
+//                 if (base->abiVersion >= 4)
+//                     g_apmf = reinterpret_cast<const APMF_API::APMF_API_v4*>(base);
 //             }
 //         }
 //     }
 //     // If g_apmf is null, APMF is absent or too old — guard every call. (A client
 //     // that only needs v2 checks `>= 2` and casts to APMF_API_v2*; a v3 field like
-//     // Repoint requires `>= 3`.)
+//     // Repoint requires `>= 3`; a v4 field like SetSpellAllowList requires `>= 4`.)
 //
 // (An exported query fn was chosen over the SKSE-messaging handshake MEO uses: it
 // is synchronous, has no message-ordering or sender/receiver routing subtlety, and
@@ -55,11 +55,14 @@
 // ABI contract; the transport is just how you get the pointer.)
 //
 // ── Threading ──
-// Request/RequestEx/Repoint/Release are SAFE FROM ANY THREAD. They capture POD (a
-// FormID, a copy of the APMF_Param) and enqueue the work; APMF applies it on the
-// game thread. A client's BSJobs worker may call them directly. The APMF_Param
-// pointer passed to RequestEx/Repoint is READ AND COPIED synchronously inside the
-// call — APMF never retains the client's pointer, so a stack temporary is fine.
+// Request/RequestEx/Repoint/Release/SetSpellAllowList are SAFE FROM ANY THREAD.
+// They capture POD (a FormID, a copy of the APMF_Param, or — for
+// SetSpellAllowList — a copy of the forms array) and enqueue the work; APMF
+// applies it on the game thread. A client's BSJobs worker may call them
+// directly. The APMF_Param pointer passed to RequestEx/Repoint, and the
+// RE::FormID* passed to SetSpellAllowList, are READ AND COPIED synchronously
+// inside the call — APMF never retains the client's pointer, so a stack
+// temporary/local array is fine.
 //
 // ── Exceptions ──
 // NO exception ever crosses this boundary. Every APMF-side body (Request,
@@ -77,7 +80,7 @@ namespace RE {
 
 namespace APMF_API {
 
-    inline constexpr std::uint32_t kABIVersion = 3;
+    inline constexpr std::uint32_t kABIVersion = 4;
 
     // The exported query function's undecorated name and pointer type.
     // const APMF_API_v1* APMF_GetInterface(std::uint32_t abiVersion);
@@ -86,6 +89,13 @@ namespace APMF_API {
     // A control claim handle. 0 is never a valid handle (returned on refusal).
     using Handle = std::uint32_t;
     inline constexpr Handle kInvalidHandle = 0;
+
+    // ABI v4: the bound on SetSpellAllowList's allow-set. Chosen generously above
+    // what a follower's realistic known heal/buff spell count needs (typically
+    // single digits to low teens even for a heavily-modded mage build) -- an
+    // overflow degrades to "the excess spells are treated as non-exempt" (still
+    // denied, never a crash or an unbounded write). See SetSpellAllowList below.
+    inline constexpr std::uint32_t kMaxSpellAllowList = 32;
 
     // Which FACET a client claims control of on an NPC. APMF MODERATES that facet
     // (arbitrates who owns it + DENYs competitors); it never generates the behavior --
@@ -226,6 +236,41 @@ namespace APMF_API {
         // the game thread). Its NON-owning-claim behavior: the stored param is updated
         // so it takes effect if/when the claim later becomes the owner.
         void (*Repoint)(Handle handle, const APMF_Param* param);
+    };
+
+    // The v4 interface: APMF_API_v3's members verbatim (identical initial sequence),
+    // then the appended SetSpellAllowList slot. A v1/v2/v3 client reading this
+    // object through its own struct pointer sees exactly its prefix; a v4 client
+    // reads SetSpellAllowList too.
+    struct APMF_API_v4 {
+        std::uint32_t abiVersion;
+        Handle (*Request)(RE::FormID actor, Intent intent, float basis);
+        void   (*Release)(Handle handle);
+        Handle (*RequestEx)(RE::FormID actor, Intent intent, float basis,
+                            const APMF_Param* param);
+        void   (*Repoint)(Handle handle, const APMF_Param* param);
+
+        // Attach a bounded ADDITIONAL allow-set of spell FormIDs to an EXISTING
+        // kIntent_SelectSpell claim (`handle`, as returned by RequestEx/Request):
+        // the follower's AI may cast the claim's primary `param.form` (the
+        // gambit/selected spell, unchanged) OR any spell FormID in `forms` --
+        // e.g. MFO's exempt heal/buff set for its castLvl slider (see
+        // Docs/SPEC-GRADUATED-CAST.md, MFO-side). `forms` is READ AND COPIED
+        // synchronously inside the call -- APMF never retains the pointer, same
+        // contract as RequestEx/Repoint's `param` (a stack-local array is fine).
+        // `count` is silently clamped to kMaxSpellAllowList; a count over the
+        // bound degrades to "the excess spells are treated as non-exempt" (never
+        // a crash or an unbounded write). `count == 0` or `forms == nullptr`
+        // clears the allow-set -- the claim falls back to today's exact
+        // claim.form-only match, so a v1-v3 client, or a v4 client that never
+        // calls this, is byte-for-byte unaffected. A stale/unknown `handle`, or a
+        // handle whose claim is on a channel OTHER than kIntent_SelectSpell, is a
+        // silent no-op (mirrors Repoint's own no-op-on-unknown-handle discipline).
+        // Updates the STORED claim whether or not it currently OWNS the channel --
+        // same non-owning semantics as Repoint, so a claim that later wins
+        // arbitration already carries its allow-set. Thread-safe (enqueues;
+        // applied on the game thread, never off it).
+        void (*SetSpellAllowList)(Handle handle, const RE::FormID* forms, std::uint32_t count);
     };
 
     // Function-pointer type for GetProcAddress(kGetInterfaceExport). Returns the

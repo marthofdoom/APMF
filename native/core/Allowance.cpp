@@ -59,9 +59,23 @@ namespace apmf::allowance {
 
     bool Allowed(RE::FormID actor, APMF_API::Intent intent, RE::FormID subjectForm) {
         APMF_API::APMF_Param claim{};
-        if (!ControlMap::Get().TryGetOwningClaim(actor, intent, claim)) return true;   // uncontrolled -> allow
-        if (claim.form == 0) return true;                                             // no param -> channel default
-        return claim.form == subjectForm;
+        // ch.8 SetSpellAllowList (APMF_API_v4): a winning claim may carry a bounded
+        // ADDITIONAL allow-set beyond claim.form (e.g. MFO's castLvl exempt
+        // heal/buff set riding a live offense-gambit claim,
+        // Docs/SPEC-GRADUATED-CAST.md). Fixed local buffer, no heap traffic on
+        // this hot combat-thread path. A claim that never calls SetSpellAllowList
+        // has allowCount == 0 and every read below is byte-identical to before
+        // this widening existed.
+        RE::FormID    allowSet[APMF_API::kMaxSpellAllowList];
+        std::uint32_t allowCount = 0;
+        if (!ControlMap::Get().TryGetOwningClaim(actor, intent, claim, allowSet, allowCount))
+            return true;                                                              // uncontrolled -> allow
+        if (claim.form == 0 && allowCount == 0) return true;                          // no param, no allow-set -> channel default
+        if (claim.form == subjectForm) return true;
+        for (std::uint32_t i = 0; i < allowCount; ++i) {
+            if (allowSet[i] == subjectForm) return true;
+        }
+        return false;
     }
 
 }
