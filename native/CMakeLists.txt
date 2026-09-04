@@ -4,7 +4,7 @@
 # registry + baseline as MFO, so APMF builds against the identical CommonLib.
 cmake_minimum_required(VERSION 3.21)
 
-project(APMF VERSION 0.1.0 LANGUAGES CXX)
+project(APMF VERSION 0.9.0 LANGUAGES CXX)
 
 find_package(CommonLibSSE CONFIG REQUIRED)
 
