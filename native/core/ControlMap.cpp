@@ -2,6 +2,8 @@
 #include "core/Log.h"
 #include "core/ControlMap.h"
 #include "core/Registry.h"
+#include "core/Clock.h"
+#include "channels/CastCompose.h"   // castcompose::ExtractFromPackage (ch.8b FromPackage read)
 
 namespace apmf {
 
@@ -107,6 +109,41 @@ namespace apmf {
         }
     }
 
+    // ABI v5 (ch.8b, kIntent_Cast): claim the cast-EXECUTION facet for a bounded
+    // window. Mirrors EnqueueRequest's shape (allocate a handle synchronously,
+    // enqueue a POD op applied at the next Drain) but carries the rich cast payload.
+    // `req` is COPIED synchronously here -- APMF never retains the client pointer.
+    // Any FromPackage extraction happens LATER on the writer thread inside
+    // ApplyRequest (form lookups are legal there, not here off-thread).
+    Handle ControlMap::EnqueueCast(RE::FormID actor, float basis,
+                                   const APMF_API::APMF_CastRequest* req) {
+        if (!Registry::Get().ChannelForIntent(APMF_API::kIntent_Cast)) {
+            spdlog::warn("[api] RequestCast REFUSED -- no channel serves kIntent_Cast (actor 0x{}).",
+                         apmf::log::Hex(actor));
+            return APMF_API::kInvalidHandle;
+        }
+        const Handle h = m_nextHandle.fetch_add(1, std::memory_order_relaxed);
+        PendingOp op{};
+        op.kind   = PendingOp::Kind::kCast;
+        op.handle = h;
+        op.actor  = actor;
+        op.intent = APMF_API::kIntent_Cast;
+        op.basis  = basis;
+        if (req) {
+            op.param.form  = req->spell;                        // form = spell (or the package if FromPackage)
+            op.param.ival  = static_cast<std::int32_t>(req->flags);   // keep param.ival == castFlags (degenerate-form parity)
+            op.castProxy   = req->proxy;
+            op.castTarget  = req->target;
+            op.castFlags   = req->flags;
+            op.ttlMs       = req->ttlMs;
+        }
+        {
+            std::scoped_lock lock(m_qmx);
+            m_queue.push_back(op);
+        }
+        return h;
+    }
+
     // ---- Writer thread ONLY (Drain/ApplyRequest/ApplyRelease/ApplyRepoint/
     // ApplySetSpellAllowList/ReleaseAll/Clear). OnActorUpdate below is the
     // exception -- ANY thread. ----
@@ -125,11 +162,21 @@ namespace apmf {
         // (common) no-op frame -- ops empty AND nothing unloaded -- so a truly quiet
         // frame allocates nothing at all, not even the working copy.
         if (ops.empty()) {
-            bool anyUnloaded = false;
+            bool anyWork = false;
+            const auto nowMs = apmf::clock::MonotonicMs();
             for (const auto& kv : *m_current) {
-                if (!kv.second.handle.get()) { anyUnloaded = true; break; }
+                if (!kv.second.handle.get()) { anyWork = true; break; }   // unloaded -> sweep
+                // A bounded cast claim whose window elapsed needs an auto-release pass
+                // even with no queued op (design.md §5a TTL, NOT a re-assert loop).
+                for (const auto& cc : kv.second.channels) {
+                    for (const auto& cl : cc.claims) {
+                        if (cl.expiresMs != 0 && nowMs >= cl.expiresMs) { anyWork = true; break; }
+                    }
+                    if (anyWork) break;
+                }
+                if (anyWork) break;
             }
-            if (!anyUnloaded) return;
+            if (!anyWork) return;
         }
 
         // RCU: build a private working copy of the last-published snapshot -- only
@@ -144,6 +191,31 @@ namespace apmf {
             case PendingOp::Kind::kRelease:      changed |= ApplyRelease(op.handle, next);           break;
             case PendingOp::Kind::kRepoint:      changed |= ApplyRepoint(op.handle, op.param, next); break;
             case PendingOp::Kind::kSetAllowList: changed |= ApplySetSpellAllowList(op.handle, op.altForms, op.altCount, next); break;
+            case PendingOp::Kind::kCast:         changed |= ApplyRequest(op, next);                  break;   // ch.8b -- ApplyRequest handles the cast branch
+            }
+        }
+
+        // TTL expiry pass (ch.8b, design.md §5a): auto-RELEASE -- the opposite of a
+        // re-assert -- every bounded cast claim whose window has elapsed, so a
+        // crashed/forgetful client can never leave a standing cast hold. Collect
+        // first (do not mutate `next` while iterating it), then ApplyRelease each.
+        {
+            const auto nowMs = apmf::clock::MonotonicMs();
+            std::vector<std::pair<Handle, RE::FormID>> expired;
+            for (const auto& [fid, ctl] : next) {
+                for (const auto& cc : ctl.channels) {
+                    for (const auto& cl : cc.claims) {
+                        if (cl.expiresMs != 0 && nowMs >= cl.expiresMs)
+                            expired.emplace_back(cl.handle, fid);
+                    }
+                }
+            }
+            for (const auto& [h, fid] : expired) {
+                if (ApplyRelease(h, next)) {
+                    changed = true;
+                    spdlog::info("[ch.8b] cast claim 0x{} expired (h={}) -- auto-released.",
+                                 apmf::log::Hex(fid), h);
+                }
             }
         }
 
@@ -179,6 +251,41 @@ namespace apmf {
             return false;
         }
 
+        // ch.8b (kIntent_Cast): resolve the effective spell/target, extract a
+        // FromPackage request, and stamp a bounded TTL -- all BEFORE map[op.actor]
+        // creates an entry, so a refusal leaves NO spurious NpcCtl behind. APMF makes
+        // NO cast write here; it only records the claim the gates will read.
+        APMF_API::APMF_Param effParam   = op.param;
+        RE::FormID           castProxy  = 0;
+        RE::FormID           castTarget = 0;
+        std::uint32_t        castFlags  = 0;
+        std::uint64_t        expiresMs  = 0;
+        if (op.intent == APMF_API::kIntent_Cast) {
+            // Flags: the kCast op carries them in castFlags; a degenerate
+            // RequestEx(kIntent_Cast) carries them in param.ival (kept in parity).
+            castFlags  = (op.kind == PendingOp::Kind::kCast) ? op.castFlags
+                                                             : static_cast<std::uint32_t>(op.param.ival);
+            castProxy  = op.castProxy;
+            castTarget = op.castTarget;
+            RE::FormID spell = op.param.form;
+            if (castFlags & APMF_API::kCastFlag_FromPackage) {
+                RE::FormID outSpell = 0, outTarget = 0;
+                if (!apmf::castcompose::ExtractFromPackage(op.param.form, outSpell, outTarget)) {
+                    spdlog::warn("[ch.8b] cast-from-package: no spell input on 0x{} -- REFUSED "
+                                 "(op dropped; package never run/offered/evaluated). The client "
+                                 "should pass the spell directly.", apmf::log::Hex(op.param.form));
+                    return false;   // handle was never registered in m_index -> never dangling
+                }
+                spell = outSpell;
+                if (castTarget == 0) castTarget = outTarget;   // client's own target wins if it named one
+            }
+            effParam.form = spell;
+            std::uint32_t ttl = (op.kind == PendingOp::Kind::kCast) ? op.ttlMs : 0;
+            if (ttl == 0) ttl = APMF_API::kCastDefaultTtlMs;
+            if (ttl > APMF_API::kCastMaxTtlMs) ttl = APMF_API::kCastMaxTtlMs;
+            expiresMs = apmf::clock::MonotonicMs() + ttl;
+        }
+
         auto&      npc     = map[op.actor];
         const bool freshNpc = npc.channels.empty();
         if (freshNpc) {
@@ -208,15 +315,20 @@ namespace apmf {
         float oldBest = cc->claims.empty() ? 0.0f : cc->claims.front().basis;
         for (auto& c : cc->claims) oldBest = (c.basis > oldBest) ? c.basis : oldBest;
 
-        cc->claims.push_back(Claim{ op.handle, op.basis, op.param });
+        Claim newClaim{ op.handle, op.basis, effParam };
+        newClaim.castProxy  = castProxy;
+        newClaim.castTarget = castTarget;
+        newClaim.castFlags  = castFlags;
+        newClaim.expiresMs  = expiresMs;
+        cc->claims.push_back(newClaim);
         m_index[op.handle] = { op.actor, channel };
 
         if (freshChannel) {
-            channel->Engage(op.actor, actor, op.param);   // 0 -> 1: apply the source-block once
+            channel->Engage(op.actor, actor, effParam);   // 0 -> 1: apply the source-block once
             spdlog::info("[ctl] 0x{} '{}' + ch.{} {} ENGAGED (h={}, basis={:.1f}, form=0x{}). NPCs controlled: {}.",
                          apmf::log::Hex(op.actor), actor->GetName() ? actor->GetName() : "?",
                          channel->ChannelNo(), channel->Name(), op.handle, op.basis,
-                         apmf::log::Hex(op.param.form), map.size());
+                         apmf::log::Hex(effParam.form), map.size());
         } else {
             // Additional claim on an already-engaged channel: arbitrate by basis
             // (higher wins; tie -> earliest, so the incumbent keeps ownership unless
@@ -224,7 +336,7 @@ namespace apmf {
             // parameterized channel the new winner's payload (parameterless channels
             // no-op OnOwnerChanged; the claim just refcounts the engagement).
             const bool newOwner = (op.basis > oldBest);
-            if (newOwner) channel->OnOwnerChanged(op.actor, actor, op.param);
+            if (newOwner) channel->OnOwnerChanged(op.actor, actor, effParam);
             spdlog::info("[ctl] 0x{} + ch.{} {} additional claim (h={}, basis={:.1f}); {} claim(s), "
                          "owner basis={:.1f}{}.", apmf::log::Hex(op.actor), channel->ChannelNo(), channel->Name(),
                          op.handle, op.basis, cc->claims.size(), newOwner ? op.basis : oldBest,
@@ -493,6 +605,40 @@ namespace apmf {
         return false;   // this NPC is controlled, but not on this channel
     }
 
+    bool ControlMap::TryGetCastClaim(RE::FormID actor, RE::FormID& outSpell, RE::FormID& outProxy) const {
+        // Same RCU reader discipline as TryGetOwningClaim (any thread): relaxed
+        // pre-gate, one acquire-load of a LOCAL frozen snapshot, one hash lookup.
+        // Reads the winning kIntent_Cast claim's spell (param.form) + castProxy --
+        // the two FormIDs Allowance::AllowedCast permits while the claim stands.
+        outSpell = 0;
+        outProxy = 0;
+        if (m_anyControlled.load(std::memory_order_relaxed) == 0) return false;
+
+        std::shared_ptr<const MapType> snap = m_published.load(std::memory_order_acquire);
+        auto it = snap->find(actor);
+        if (it == snap->end()) return false;
+
+        const NpcCtl& npc = it->second;
+        if (!npc.handle.get()) return false;
+
+        auto* channel = Registry::Get().ChannelForIntent(APMF_API::kIntent_Cast);
+        if (!channel) return false;
+
+        for (const auto& cs : npc.channels) {
+            if (cs.channel != channel) continue;
+            if (cs.claims.empty()) return false;
+            // Winner = highest basis; tie -> earliest (same rule everywhere else).
+            const Claim* best = &cs.claims.front();
+            for (const auto& c : cs.claims) {
+                if (c.basis > best->basis) best = &c;
+            }
+            outSpell = best->param.form;
+            outProxy = best->castProxy;
+            return true;
+        }
+        return false;   // controlled, but not on the cast channel
+    }
+
     std::vector<RE::Actor*> ControlMap::ClaimedActors(Intent intent) const {
         // Observability/probe use only (Docs/SPEC-PACKAGE-HOLD.md §4). Same RCU
         // discipline as TryGetOwningClaim: relaxed pre-gate, one acquire-load of a
@@ -529,6 +675,7 @@ namespace apmf {
                 case PendingOp::Kind::kRelease:      ApplyRelease(op.handle, next);           break;
                 case PendingOp::Kind::kRepoint:      ApplyRepoint(op.handle, op.param, next); break;
                 case PendingOp::Kind::kSetAllowList: ApplySetSpellAllowList(op.handle, op.altForms, op.altCount, next); break;
+                case PendingOp::Kind::kCast:         ApplyRequest(op, next);                  break;
                 }
             }
         }

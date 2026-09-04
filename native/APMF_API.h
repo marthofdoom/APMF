@@ -81,7 +81,7 @@ namespace RE {
 
 namespace APMF_API {
 
-    inline constexpr std::uint32_t kABIVersion = 4;
+    inline constexpr std::uint32_t kABIVersion = 5;
 
     // The exported query function's undecorated name and pointer type.
     // const APMF_API_v1* APMF_GetInterface(std::uint32_t abiVersion);
@@ -172,6 +172,17 @@ namespace APMF_API {
                                      //       (redirects the package offer to the claimed
                                      //       package; graduated from a field-proven probe).
                                      //       Param: form (the TESPackage FormID).
+        kIntent_Cast          = 16,  // ch.8b CLAIM the cast-EXECUTION facet for a bounded window.
+                                     //       DENY (composite). Param: see APMF_CastRequest via
+                                     //       RequestCast; RequestEx(form=spell) is the degenerate
+                                     //       form (no target/proxy/TTL -> default TTL). The CLAIM
+                                     //       fans into the SAME three ch.8/ch.7 gates that already
+                                     //       exist (0x0A CheckCast exclusivity, 0x0F re-arm deny,
+                                     //       the T1 cast leaves via kCombatActionCat_Cast) plus a
+                                     //       bounded TTL auto-release. APMF fires NO cast: the
+                                     //       CLIENT executes its own animated cast (design.md §1a;
+                                     //       MFO SPEC-FORCED-CAST.md). A cast is NEVER a package
+                                     //       (kIntent_Cast is invisible to ch.9's 0x49 offer).
     };
 
     // ── Combat-action CATEGORY bitmask (kIntent_CombatAction's param.ival) ──────
@@ -190,6 +201,45 @@ namespace APMF_API {
         kCombatActionCat_Offense = 1u << 0,   // Attack/AttackLow/Bash/RangedAttack/SpecialAttack/
                                                // GroundAttack/FlyingAttack/CastImmediateSpell/
                                                // CastConcentrationSpell/CastShout/PrepareDualCast leaves
+        kCombatActionCat_Cast    = 1u << 1,   // CastImmediateSpell, CastConcentrationSpell,
+                                               // PrepareDualCast, CastShout leaves (a leaf may carry
+                                               // several bits: the four cast leaves carry BOTH Offense
+                                               // and Cast). A kIntent_Cast claim denies ONLY these,
+                                               // leaving attack/ranged/movement leaves firing.
+    };
+
+    // ── Cast flags (kIntent_Cast / APMF_CastRequest::flags, ABI v5) ─────────────
+    // A bitmask a client passes with a cast-execution claim. APPEND-ONLY: never
+    // renumber an existing bit; OR in a new bit at the next free position.
+    enum CastFlags : std::uint32_t {
+        kCastFlag_None          = 0,
+        kCastFlag_FromPackage   = 1u << 0,   // param.form / req.spell is a TESPackage; APMF extracts
+                                             //   ONLY the cast portion (its SPELL-style input + target)
+                                             //   and NEVER runs/offers/installs/evaluates the package
+                                             //   (design.md §1a; the freeze half is simply never applied
+                                             //   because no package is applied).
+        kCastFlag_LeftHand      = 1u << 1,   // hand hint (default right). Informational for the gates today.
+        kCastFlag_Concentration = 1u << 2,   // client says the executed cast is a held stream (TTL floor applies).
+    };
+
+    // ABI v5: cast-window TTL bounds (kIntent_Cast is ALWAYS bounded -- never a
+    // standing hold, design.md §5a). ttlMs == 0 -> kCastDefaultTtlMs; any value is
+    // clamped to kCastMaxTtlMs. A crashed/forgetful client can never leave a
+    // standing cast hold: the claim auto-releases at expiry (ControlMap TTL pass).
+    inline constexpr std::uint32_t kCastDefaultTtlMs = 4000;
+    inline constexpr std::uint32_t kCastMaxTtlMs     = 15000;
+
+    // ── APMF_CastRequest (ABI v5) ──────────────────────────────────────────────
+    // The rich payload for RequestCast. Its own POD (NOT folded into APMF_Param, so
+    // the frozen APMF_Param layout is untouched). APPEND-ONLY: never reorder/retype
+    // an existing field; add new fields at the END. All fields optional except
+    // actor/spell; zero = "none".
+    struct APMF_CastRequest {
+        RE::FormID    spell;    // the spell the client will fire (or the package if FromPackage)
+        RE::FormID    proxy;    // runtime FF-form proxy the client fabricated for delivery (0 if none)
+        RE::FormID    target;   // intended target actor (0 = self). RECORD ONLY -- APMF never aims.
+        std::uint32_t flags;    // kCastFlag_*
+        std::uint32_t ttlMs;    // bounded window; 0 -> kCastDefaultTtlMs. Clamped to kCastMaxTtlMs.
     };
 
     // ── Channel PARAM (ABI v2) ─────────────────────────────────────────────────
@@ -223,6 +273,8 @@ namespace APMF_API {
     //   form   kIntent_OfferPackage    the TESPackage FormID
     //   form   kIntent_Equipment       optional, gates re-equip when set (see above)
     //   ival   kIntent_CombatAction    a CombatActionCategory bitmask (see below)
+    //   form   kIntent_Cast            the spell (degenerate RequestEx form); RequestCast for
+    //   ival   kIntent_Cast            the rich payload -- ival = CastFlags on the degenerate form
     //   none   every other Intent      accepted, not yet read by the channel
     //
     // fval is not read by any channel yet (reserved for a future per-request bias
@@ -328,6 +380,28 @@ namespace APMF_API {
         // arbitration already carries its allow-set. Thread-safe (enqueues;
         // applied on the game thread, never off it).
         void (*SetSpellAllowList)(Handle handle, const RE::FormID* forms, std::uint32_t count);
+    };
+
+    // The v5 interface: APMF_API_v4's members verbatim (via prefix EXTENSION -- the
+    // base subobject lays out first, so its identical initial sequence is preserved
+    // and a v1..v4 client reading this object through its own struct pointer sees
+    // exactly its prefix), then the appended RequestCast slot. This header is
+    // BYTE-SHARED with MFO: the declaration below is authoritative and must be
+    // mirrored byte-identically on the client side.
+    struct APMF_API_v5 : APMF_API_v4 {
+        // Claim the cast-EXECUTION facet (ch.8b) for actor `actor` at arbitration
+        // weight `basis`, carrying the rich APMF_CastRequest. The claim fans into
+        // the SAME three gates cast-select already rides (0x0A CheckCast, 0x0F
+        // CheckShouldEquip, the T1 cast leaves) plus a bounded TTL auto-release --
+        // NO engine cast call is ever made (design.md §1a; the CLIENT fires its own
+        // animated cast). `req` is READ AND COPIED synchronously inside the call;
+        // APMF never retains the pointer, so a stack temporary is fine. Returns a
+        // handle to release later, or kInvalidHandle if the cast channel is not
+        // registered. A kCastFlag_FromPackage request whose package carries no
+        // readable spell input is REFUSED at drain (the handle becomes inert; APMF
+        // never runs, offers, or evaluates the package). Safe from any thread (POD
+        // captured; applied on the game thread).
+        Handle (*RequestCast)(RE::FormID actor, float basis, const APMF_CastRequest* req);
     };
 
     // Function-pointer type for GetProcAddress(kGetInterfaceExport). Returns the

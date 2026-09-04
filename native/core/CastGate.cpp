@@ -68,7 +68,12 @@ namespace apmf::castgate {
             const auto fid         = actor->GetFormID();
             const auto subjectForm = a_spell ? a_spell->GetFormID() : 0;
 
-            if (allowance::Allowed(fid, APMF_API::kIntent_SelectSpell, subjectForm))
+            // ch.8 (cast-select exclusivity) AND ch.8b (cast-execution exclusivity)
+            // must BOTH pass (design.md §3.5). ch.8 narrows the AI to its selected
+            // spell; ch.8b narrows it to the client's executed cast spell/proxy while
+            // a kIntent_Cast claim stands. Either narrowing to NO denies the charge.
+            if (allowance::Allowed(fid, APMF_API::kIntent_SelectSpell, subjectForm) &&
+                allowance::AllowedCast(fid, subjectForm))
                 return engineSays;
 
             if (a_reason) *a_reason = RE::MagicSystem::CannotCastReason::kMultipleCast;

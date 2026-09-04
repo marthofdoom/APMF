@@ -59,18 +59,36 @@ namespace {
         }
     }
 
+    // ABI v5: claim the cast-EXECUTION facet (ch.8b). The rich APMF_CastRequest is
+    // read+copied synchronously here (APMF never retains the pointer, same contract
+    // as RequestEx's `param`). APMF fires NO cast -- it records the claim, denies the
+    // AI's competing cast/re-arm at the three gates, and auto-releases at the TTL;
+    // the CLIENT executes its own animated cast (design.md §1a).
+    APMF_API::Handle APMF_RequestCast(RE::FormID actor, float basis,
+                                      const APMF_API::APMF_CastRequest* req) {
+        try {
+            return apmf::ControlMap::Get().EnqueueCast(actor, basis, req);
+        } catch (...) {
+            return APMF_API::kInvalidHandle;
+        }
+    }
+
     // The single static POD interface handed to clients. It is the NEWEST revision
-    // (APMF_API_v4), constant-initialized (the pointers are to static functions), so
+    // (APMF_API_v5), constant-initialized (the pointers are to static functions), so
     // it is valid the instant the DLL loads. Because each revision's leading members
-    // are exactly the previous revision's, a v1/v2/v3 client reading it through its
-    // own struct pointer sees only its prefix.
-    constexpr APMF_API::APMF_API_v4 g_api{
-        APMF_API::kABIVersion,
-        &APMF_Request,
-        &APMF_Release,
-        &APMF_RequestEx,
-        &APMF_Repoint,
-        &APMF_SetSpellAllowList,
+    // are exactly the previous revision's (v5 extends v4, base laid out first), a
+    // v1/v2/v3/v4 client reading it through its own struct pointer sees only its
+    // prefix. The v4 base subobject is brace-initialized explicitly.
+    constexpr APMF_API::APMF_API_v5 g_api{
+        {
+            APMF_API::kABIVersion,
+            &APMF_Request,
+            &APMF_Release,
+            &APMF_RequestEx,
+            &APMF_Repoint,
+            &APMF_SetSpellAllowList,
+        },
+        &APMF_RequestCast,
     };
 
 }

@@ -92,6 +92,28 @@ package overrides — so the alias-tier (0x49) mechanism covers every follower i
 and the beneath-script layering means even a hypothetical script-driven follower is safe by
 construction.
 
+**#3c — A CAST IS NEVER A PACKAGE; a `kIntent_Cast` claim is TTL-BOUNDED and denies,
+never drives.** The cast-execution facet (ch.8b, `channels/CastCompose.cpp`, ABI v5
+`kIntent_Cast`) is the keystone's category correction (design.md §0/§3): a heal/ward/buff
+the AI would not choose is a CAST facet, not a package facet. A `kIntent_Cast` claim does
+EXACTLY what every other claim does — arbitrate + DENY — through the SAME three gates
+cast-select already rides (0x0A CheckCast, 0x0F CheckShouldEquip via `Allowance::AllowedCast`;
+the T1 cast leaves via `kCombatActionCat_Cast`), adding NO engine call. APMF makes NO cast
+write for it (no `CastSpellImmediate`/`StartCast`/`InterruptCast`/`NotifyAnimationGraph`/
+`EquipSpell`/`selectedSpells`) — the CLIENT executes its own animated cast; APMF only keeps
+the AI's competing cast/re-arm out of the way and never touches movement (design.md §3.7).
+Two hard sub-rules: (a) **the claim is ALWAYS bounded** — `expiresMs` is set on engage
+(default 4 s, clamped to 15 s) and the `ControlMap` Drain TTL pass AUTO-RELEASES it at
+expiry; this is a release, the OPPOSITE of a re-assert (#1), so a crashed/forgetful client
+can never leave a standing cast hold. A longer stream is a NEW bounded claim, never a
+re-assert of the same one. (b) **`kCastFlag_FromPackage` reads, never runs** — APMF extracts
+ONLY spell+target out of the handed package and NEVER offers/installs/evaluates/runs it
+(`PackageGate`'s 0x49 thunk reads only `kIntent_OfferPackage`, so a cast claim is invisible
+to it by construction). If the pinned CommonLib cannot cleanly read the package data, the
+extraction REFUSES (never a package run) and the client passes the spell directly (design.md
+§5.1/§6). The one intentional package-tier path stays #3's 0x49 offer, for REAL native
+packages only — a cast never touches it.
+
 ## Threading
 
 **#4 — The control map's WRITE side is main-thread-only state; the READ side is an

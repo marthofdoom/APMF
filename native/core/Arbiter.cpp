@@ -3,6 +3,7 @@
 #include "core/Arbiter.h"
 #include "core/ControlMap.h"
 #include "core/NonAliasProbe.h"
+#include "core/CastObserve.h"
 #include "core/Registry.h"
 
 namespace apmf {
@@ -34,6 +35,13 @@ namespace apmf {
         // switch and self-throttled to ~250ms internally, so this call costs one
         // relaxed atomic load whenever the probe is off (the default).
         apmf::nonaliasprobe::PollClaimedPackages();
+
+        // OBSERVE-AND-REPLICATE cast-path probe (marth 2026-09-04). Fully passive:
+        // reads loaded high-process actors' MagicCaster state + registers a passive
+        // anim-event sink on casting NPCs, logging the exact cast sequence so MFO can
+        // replicate it. Always-on, per-actor rate-limited, self-throttled (~100ms) --
+        // no hotkey, no toggle, never mutates. See core/CastObserve.h.
+        apmf::castobserve::Poll();
     }
 
     void Arbiter::ReleaseAll(const char* why) {

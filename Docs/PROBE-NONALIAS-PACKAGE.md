@@ -216,6 +216,10 @@ binary present, headers-only environment), or the cheap runtime probe below.
    moot since it's void — the gate would instead conditionally rewrite `a_package` before forwarding to
    `orig`, or skip the call+substitute the claim's package via `EvaluatePackage`-style re-trigger). If it
    never fires for the regular pick, rule it out for good.
+   **VERDICT (2026-09-04):** the 0xDF write path was probed via `feat/alias-drive` and is a
+   SUBSTITUTION — `PutCreatedPackage(pkg, temp=true, created=false)` pushes a temp package over
+   the current one, firing the exact `OnPackageEnd` teardown design.md §5 rejects. REJECTED
+   (branch shelved, `archive/alias-drive-shelved-2026-09-04`). The 0xDF hook stays OBSERVE-ONLY.
 3. If both (1) and (2) come back negative for Cicero specifically, the honest conclusion is: **the non-alias
    procedure-list pick has no reachable virtual seat in current CommonLibSSE-NG**, and closing this gap
    requires either (a) staying on the current re-assert-per-tick approach (works, just not quiet), or (b) a

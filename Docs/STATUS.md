@@ -1,8 +1,38 @@
 # APMF STATUS — living handoff (start here)
 
-Updated 2026-09-02. The current state of the build: what's shipped, what's
+Updated 2026-09-04. The current state of the build: what's shipped, what's
 probe-gated, what's next. Keep this current in the SAME change as any
 build/finding/workflow change.
+
+## Active branch: `feat/composition-cast` (unproven, off v0.9.0 `main`)
+
+The composition rework (`Docs/SPEC-COMPOSITION-REWORK.md`). Adds the cast-EXECUTION
+facet (ch.8b) as ABI v5. NOT on `main`; `main` stays v0.9.0.
+
+- **ABI v5** (`APMF_API.h`, append-only, byte-shared with MFO): `kIntent_Cast`,
+  `RequestCast`/`APMF_CastRequest{spell,proxy,target,flags,ttl}`, `kCastFlag_*`,
+  `kCombatActionCat_Cast`.
+- **Cast-facet claim**: a `kIntent_Cast` claim fans into the SAME three gates
+  cast-select rides (0x0A CheckCast + 0x0F CheckShouldEquip via
+  `Allowance::AllowedCast`; the T1 cast leaves via `kCombatActionCat_Cast`) plus a
+  bounded TTL auto-release in `ControlMap::Drain`. NO engine cast call (design.md
+  §1a). The CLIENT fires its own animated cast; movement untouched.
+- **`kCastFlag_FromPackage`**: extracts ONLY spell+target and never runs/offers/
+  evaluates the package. Ships the DIRECT-form path; the package-data read is the
+  §5.1/§6 fallback (refuses cleanly, client passes the spell directly) because the
+  pinned CommonLib does not cleanly express it without MFO's hand offsets (#7).
+- **Cast-path observer** (`core/CastObserve`, marth 2026-09-04): FULLY PASSIVE,
+  always-on, per-actor rate-limited, no hotkeys. Polls loaded actors' MagicCaster
+  state machine + registers a passive anim-event sink on casting NPCs, logging the
+  exact cast sequence (`[castobs]`) so MFO can OBSERVE-AND-REPLICATE the real cast
+  path instead of guessing a trigger.
+- **`feat/alias-drive` SHELVED** (design.md §5): package SUBSTITUTION, wrong model.
+  Tag `archive/alias-drive-shelved-2026-09-04` (LOCAL only pending push). Nothing
+  from it is on `main`; the shipping tree carries no ESL/quest/alias-pool/
+  PutCreatedPackage-write.
+- **Field test**: MFO heal on Jesper (non-alias). Expect `[ch.8b] ... CLAIMED`,
+  MFO's animated `[cast]` line, `[obs] ... PACKAGE STABLE`, and the follower moving
+  during the cast. CI-green pending (CI-only build).
 
 ## Where we are
 

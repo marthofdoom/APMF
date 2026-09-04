@@ -85,4 +85,17 @@ namespace apmf::allowance {
     // form -- APMF never invents a YES, only narrows one.
     bool Allowed(RE::FormID actor, APMF_API::Intent intent, RE::FormID subjectForm);
 
+    // ch.8b (kIntent_Cast) allowance -- the cast-EXECUTION exclusivity, consulted by
+    // CastGate (0x0A) and EquipGate (0x0F) AFTER the ch.8 SelectSpell check (BOTH
+    // must pass). While an actor holds a winning kIntent_Cast claim, the ONLY spells
+    // its AI may charge/re-arm are the claim's own spell + its runtime proxy -- so
+    // the client's executed cast (which names exactly those) passes, and the AI's
+    // competing choice for that hand fails. ANY thread -- a lock-free RCU
+    // ControlMap read (ControlMap::TryGetCastClaim), never a mutex. Returns true
+    // (ALLOW -- no cast claim, so ch.8b imposes nothing) when the actor has no
+    // winning kIntent_Cast claim, or the claim names no spell/proxy (degenerate).
+    // Returns false (DENY) only when a cast claim stands and `subjectForm` is
+    // neither its spell nor its proxy.
+    bool AllowedCast(RE::FormID actor, RE::FormID subjectForm);
+
 }

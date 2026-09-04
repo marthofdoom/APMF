@@ -78,4 +78,13 @@ namespace apmf::allowance {
         return false;
     }
 
+    bool AllowedCast(RE::FormID actor, RE::FormID subjectForm) {
+        RE::FormID spell = 0, proxy = 0;
+        if (!ControlMap::Get().TryGetCastClaim(actor, spell, proxy))
+            return true;                                   // no cast claim -> ch.8b imposes nothing
+        if (spell == 0 && proxy == 0) return true;         // degenerate/no spell named -> allow
+        if (subjectForm == spell || subjectForm == proxy) return true;
+        return false;                                      // a cast claim stands and this is neither -> DENY
+    }
+
 }

@@ -131,6 +131,15 @@ namespace apmf::equipgate {
             if (!allowance::Allowed(fid, APMF_API::kIntent_Equipment, subjectForm))
                 return false;
 
+            // ch.8b -- cast-execution claim: while a kIntent_Cast claim stands the AI
+            // may not re-arm this actor's hands with any spell/staff OTHER than the
+            // claimed cast spell/proxy (the freeze-free equivalent of "the package
+            // holds the spell in hand"). AllowedCast permits exactly claim spell +
+            // proxy, denies every other subjectForm; an actor with no cast claim is
+            // unaffected (returns true).
+            if (!allowance::AllowedCast(fid, subjectForm))
+                return false;
+
             return engineSays;
         }
 

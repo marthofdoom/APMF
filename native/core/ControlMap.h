@@ -77,6 +77,16 @@ namespace apmf {
         // kIntent_SelectSpell channel. See APMF_API_v4 / SetSpellAllowList.
         void   EnqueueSetSpellAllowList(Handle handle, const RE::FormID* forms, std::uint32_t count);
 
+        // ABI v5 (ch.8b, kIntent_Cast): claim the cast-EXECUTION facet for a bounded
+        // TTL window. `req` (may be null) is COPIED synchronously; APMF never retains
+        // the client pointer. Allocates + returns a handle synchronously (like
+        // EnqueueRequest); the claim is applied at the next Drain, where a
+        // kCastFlag_FromPackage request extracts spell+target on the WRITER thread
+        // (form lookups legal there) and REFUSES -- dropping the op, never running the
+        // package -- if the package carries no readable spell input. Returns
+        // kInvalidHandle only if no channel serves kIntent_Cast.
+        Handle EnqueueCast(RE::FormID actor, float basis, const APMF_API::APMF_CastRequest* req);
+
         // ---- Hot path: ANY thread (RCU reader -- field-proven the 0xAD Character
         // seat is not single-threaded; see the header comment above). ----
         // One snapshot load + one lookup; ticks the engaged channels of a controlled NPC.
@@ -107,6 +117,16 @@ namespace apmf {
         // to change shape.
         bool TryGetOwningClaim(RE::FormID actor, Intent intent, APMF_API::APMF_Param& outParam,
                                RE::FormID* outAllowSet, std::uint32_t& outAllowCount) const;
+
+        // ch.8b (kIntent_Cast): hand back the winning cast claim's spell (param.form)
+        // AND its runtime FF-form proxy (castProxy) -- the two FormIDs the cast gates
+        // (CastGate/EquipGate via Allowance::AllowedCast) allow while the claim
+        // stands. Same RCU reader discipline as TryGetOwningClaim (any thread; relaxed
+        // pre-gate, one acquire-load, one hash lookup on a frozen snapshot). Returns
+        // false (and leaves outputs 0) when the actor has no winning kIntent_Cast
+        // claim. castProxy is not expressible through APMF_Param, hence this dedicated
+        // read. Internal C++ only -- not part of the C-ABI.
+        bool TryGetCastClaim(RE::FormID actor, RE::FormID& outSpell, RE::FormID& outProxy) const;
 
         // ---- Observability/probe use only (Docs/SPEC-PACKAGE-HOLD.md §4): live
         // Actor* for every actor CURRENTLY claimed on `intent`'s channel (unloaded
@@ -155,6 +175,16 @@ namespace apmf {
             // before this field existed.
             RE::FormID     altForms[APMF_API::kMaxSpellAllowList]{};
             std::uint32_t  altCount = 0;
+            // ch.8b cast-execution claim (APMF_API_v5, kIntent_Cast). Appended at the
+            // END so the RCU deep-copy stays a trivially-copyable POD copy. All zero
+            // for every non-cast claim -- byte-identical to before these existed.
+            // expiresMs is the ONLY TTL in the map: 0 = no TTL (all existing intents);
+            // nonzero = a bounded cast claim the Drain TTL pass auto-releases at expiry
+            // (never a re-assert -- design.md §5a "never a standing hold").
+            RE::FormID     castProxy  = 0;   // second allowed FormID for the cast facet
+            RE::FormID     castTarget = 0;   // record only -- APMF never aims
+            std::uint32_t  castFlags  = 0;   // kCastFlag_*
+            std::uint64_t  expiresMs  = 0;   // 0 = no TTL; nonzero = monotonic-ms deadline
         };
         struct ChannelCtl {
             Channel*           channel = nullptr;
@@ -188,12 +218,20 @@ namespace apmf {
         using MapType = std::unordered_map<RE::FormID, NpcCtl>;
 
         struct PendingOp {
-            enum class Kind : std::uint8_t { kRequest, kRelease, kRepoint, kSetAllowList } kind{};
+            enum class Kind : std::uint8_t { kRequest, kRelease, kRepoint, kSetAllowList, kCast } kind{};
             Handle               handle = APMF_API::kInvalidHandle;
-            RE::FormID           actor  = 0;         // request only
-            Intent               intent = APMF_API::kIntent_None;   // request only
-            float                basis  = 0.0f;      // request only
-            APMF_API::APMF_Param param  = {};        // request/repoint (copied at enqueue)
+            RE::FormID           actor  = 0;         // request/cast only
+            Intent               intent = APMF_API::kIntent_None;   // request/cast only
+            float                basis  = 0.0f;      // request/cast only
+            APMF_API::APMF_Param param  = {};        // request/repoint/cast (copied at enqueue;
+                                                     //   cast: form = spell, ival = flags)
+            // kCast only (APMF_API_v5): the rich cast payload, copied at enqueue. On a
+            // degenerate RequestEx(kIntent_Cast) these stay 0 and ApplyRequest reads
+            // flags from param.ival with a default TTL. See EnqueueCast/ApplyRequest.
+            RE::FormID           castProxy  = 0;
+            RE::FormID           castTarget = 0;
+            std::uint32_t        castFlags  = 0;
+            std::uint32_t        ttlMs      = 0;
             // kSetAllowList only: copied synchronously at enqueue, same discipline
             // as `param` above. altCount is pre-clamped to kMaxSpellAllowList by
             // EnqueueSetSpellAllowList so Apply never has to re-check the bound.

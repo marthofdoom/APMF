@@ -73,6 +73,18 @@ namespace apmf::actiongate {
             "CombatBehaviorPrepareDualCast",
         } };
 
+        // The FOUR cast leaves get kCombatActionCat_Cast IN ADDITION to Offense
+        // (design.md §3.5): a kIntent_Cast claim denies exactly these, while a
+        // kIntent_CombatAction(Offense) claim still denies them too (they carry both
+        // bits). RangedAttack et al. are Offense-only, so a cast claim leaves them
+        // firing. All four names land 1:1 on this build's 70-leaf catalog.
+        constexpr std::array<const char*, 4> kCastLeafNames{ {
+            "CombatBehaviorCastImmediateSpell",
+            "CombatBehaviorCastConcentrationSpell",
+            "CombatBehaviorPrepareDualCast",
+            "CombatBehaviorCastShout",
+        } };
+
         std::atomic<bool> g_installed{ false };
 
         // vtable runtime address -> original act() (always the passthrough target).
@@ -120,13 +132,25 @@ namespace apmf::actiongate {
             }
             if (actorFid == 0) return orig(a_this, a_control);   // unresolvable -- degrade to passthrough (#17)
 
-            APMF_API::APMF_Param claim{};
-            if (!apmf::ControlMap::Get().TryGetOwningClaim(actorFid, APMF_API::kIntent_CombatAction, claim))
-                return orig(a_this, a_control);   // uncontrolled on this intent -- nothing to own
+            // Build the deny mask from TWO independent claim sources, OR'd:
+            //   * a real kIntent_CombatAction claim contributes its own ival bitmask;
+            //   * a kIntent_Cast claim (ch.8b) is treated as an IMPLICIT combat-action
+            //     claim with ival = kCombatActionCat_Cast -- it denies ONLY the four
+            //     cast leaves (which carry the Cast bit), leaving attack/ranged/block/
+            //     dodge/movement leaves firing so the follower keeps fighting while the
+            //     client's cast plays. Either source may be absent.
+            std::uint32_t denyMask = 0;
+            APMF_API::APMF_Param caClaim{};
+            if (apmf::ControlMap::Get().TryGetOwningClaim(actorFid, APMF_API::kIntent_CombatAction, caClaim))
+                denyMask |= static_cast<std::uint32_t>(caClaim.ival);
+            APMF_API::APMF_Param castClaim{};
+            if (apmf::ControlMap::Get().TryGetOwningClaim(actorFid, APMF_API::kIntent_Cast, castClaim))
+                denyMask |= APMF_API::kCombatActionCat_Cast;
 
-            const auto denyMask = static_cast<std::uint32_t>(claim.ival);
+            if (denyMask == 0)
+                return orig(a_this, a_control);   // neither claim on this actor -- nothing to own
             if ((denyMask & leafCat) == 0)
-                return orig(a_this, a_control);   // claim doesn't name this leaf's category -- allow
+                return orig(a_this, a_control);   // claims don't name this leaf's category -- allow
 
             const auto denyAct = g_forceFailAct.load(std::memory_order_relaxed);
             if (!denyAct) return orig(a_this, a_control);   // deny mechanism unresolved -- degrade, never crash
@@ -172,6 +196,24 @@ namespace apmf::actiongate {
                 spdlog::info("[ch.7] '{}' has no leaf on this build's 70-leaf catalog -- not classified "
                              "(see ActionGate.cpp's file header).", wanted);
         }
+
+        // ch.8b: OR the Cast bit onto the four cast leaves (already Offense-classified
+        // above). A kIntent_Cast claim then denies exactly these, no attack/ranged.
+        int castClassified = 0;
+        for (const char* wanted : kCastLeafNames) {
+            for (std::size_t i = 0; i < apmf::cbt::kLeaves.size(); ++i) {
+                if (std::string_view(apmf::cbt::kLeaves[i].name) != wanted) continue;
+                REL::Relocation<std::uintptr_t> vt{ apmf::cbt::kLeaves[i].vtbl };
+                if (g_orig.contains(vt.address())) {
+                    g_category[vt.address()] |= APMF_API::kCombatActionCat_Cast;
+                    ++castClassified;
+                }
+                break;
+            }
+        }
+        spdlog::info("[ch.8b] {} cast leaf(s) also classified 'cast' -- a kIntent_Cast claim denies "
+                     "exactly these (CastImmediateSpell/CastConcentrationSpell/PrepareDualCast/CastShout), "
+                     "leaving attack/ranged/movement leaves firing.", castClassified);
 
         const int ffIdx = apmf::cbt::ForceFailIndex();
         if (ffIdx >= 0) {

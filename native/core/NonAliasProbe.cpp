@@ -3,8 +3,7 @@
 #include "core/Allowance.h"
 #include "core/ControlMap.h"
 #include "core/NonAliasProbe.h"
-
-#include <chrono>
+#include "core/Clock.h"
 
 // ============================================================================
 // See NonAliasProbe.h for the design/why. Implementation notes:
@@ -65,11 +64,10 @@ namespace apmf::nonaliasprobe {
         // for).
         std::atomic<std::uint64_t> g_lastPollMs{ 0 };
 
-        std::uint64_t NowMs() {
-            using namespace std::chrono;
-            return static_cast<std::uint64_t>(duration_cast<milliseconds>(
-                steady_clock::now().time_since_epoch()).count());
-        }
+        // The monotonic tick now lives in core/Clock.h (design.md §3.4) so the cast
+        // TTL / observer need not depend on this probe file. NowMs() delegates so the
+        // rate limiter + poll timeline keep the SAME steady_clock source as before.
+        std::uint64_t NowMs() { return apmf::clock::MonotonicMs(); }
 
         // ---- 0xDF -- PutCreatedPackage observe hook ----
         using PutCreatedPackage_t = void (*)(RE::Actor*, RE::TESPackage*, bool, bool, bool);
