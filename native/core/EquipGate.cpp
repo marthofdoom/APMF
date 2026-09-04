@@ -1,6 +1,7 @@
 #include "PCH.h"
 #include "core/Log.h"
 #include "core/Allowance.h"
+#include "core/ControlMap.h"
 #include "core/EquipGate.h"
 
 // ============================================================================
@@ -40,6 +41,26 @@
 // ControlMap read, never a mutex (contrast MFO CombatStyle.cpp:276, which
 // takes one) -- exactly the threading discipline §5 requires of every T2
 // thunk (all run on combat threads).
+//
+// SECOND FACET (2026-09-03): also honors a ch.15 kIntent_Equipment claim --
+// the weapon-order side of MFO CombatStyle.cpp's SAME gate (its g_owned[..]
+// .equipOrder path, CombatStyle.cpp:286-317). MFO holds a follower's hands to
+// a chosen weapon by RequestEx'ing kIntent_Equipment with param.form = that
+// weapon's FormID; while the claim stands, every spell/staff item this hook
+// sees (subjectForm) is, by construction, never equal to a weapon FormID, so
+// Allowed(kIntent_Equipment, subjectForm) denies ALL of them -- exactly
+// CombatStyle.cpp's "every vtable this gate patches is hand-competing magic
+// by construction" rule, without per-item-type dispatch.
+//
+// The one exemption MFO's gate carries (its WantedSpell check, line 305) is
+// the off-hand loan: a gambit spell the follower is ALSO allowed to cast
+// stays equippable even while the weapon order holds the stance. Ported
+// here as: if `subjectForm` IS the actor's own actively-claimed ch.8
+// kIntent_SelectSpell form, it is exempt from the ch.15 deny outright (and,
+// as before, the ch.8 exclusivity check never denies its own claimed spell).
+// This is what lets MFO retire its own g_owned/equipOrder/WantedSpell gate
+// entirely in favor of two independent APMF claims (ch.8 + ch.15) whose
+// deny decisions this ONE hook now combines.
 // ============================================================================
 
 namespace apmf::equipgate {
@@ -85,9 +106,32 @@ namespace apmf::equipgate {
             auto* item = a_this->item;
             const auto subjectForm = item ? item->GetFormID() : 0;
 
-            if (allowance::Allowed(fid, APMF_API::kIntent_SelectSpell, subjectForm))
-                return engineSays;
-            return false;
+            // Off-hand loan exemption (mirrors MFO CombatStyle.cpp's WantedSpell
+            // rule): if this item IS the actor's own actively-claimed ch.8 spell,
+            // it is equippable no matter what a ch.15 weapon-order claim says --
+            // resolved directly off the SAME winning claim the ch.8 exclusivity
+            // check below reads, so both branches necessarily agree with it.
+            APMF_API::APMF_Param castClaim{};
+            const bool isClaimedSpell =
+                subjectForm != 0 &&
+                apmf::ControlMap::Get().TryGetOwningClaim(fid, APMF_API::kIntent_SelectSpell, castClaim) &&
+                castClaim.form == subjectForm;
+            if (isClaimedSpell) return engineSays;
+
+            // ch.8 -- cast-select exclusivity (unchanged: deny any OTHER spell
+            // while a SelectSpell claim names one).
+            if (!allowance::Allowed(fid, APMF_API::kIntent_SelectSpell, subjectForm))
+                return false;
+
+            // ch.15 -- weapon-order claim: deny any spell/staff re-arm while a
+            // kIntent_Equipment claim holds this actor's hands (its param.form,
+            // a weapon FormID, never matches a spell/staff subjectForm, so a
+            // held claim denies every item this hook sees -- the exemption
+            // above already let the claimed cast spell through).
+            if (!allowance::Allowed(fid, APMF_API::kIntent_Equipment, subjectForm))
+                return false;
+
+            return engineSays;
         }
 
     }
@@ -144,7 +188,8 @@ namespace apmf::equipgate {
         const int n = allowance::InstallOnVtables(kVtables, kCheckShouldEquip, &EquipGateThunk,
                                                    expectedTD.get(), "t2a", g_orig);
         spdlog::info("[t2a] CheckShouldEquip allowance hooked on {} spell/staff inventory-item "
-                     "vtable(s) -- ch.8 casting-select claims now enforced here too.", n);
+                     "vtable(s) -- ch.8 casting-select and ch.15 equipment (weapon-order) "
+                     "claims now enforced here too.", n);
     }
 
 }
