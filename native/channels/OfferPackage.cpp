@@ -39,6 +39,18 @@
 // APMF_Param::form names); an actor ALREADY alias-sourced by some other
 // framework (Cicero) is unaffected in practice (ClaimSlot/ReleaseActor are a
 // harmless no-op/best-effort either way -- see AliasPool.h).
+//
+// ARCHITECTURE CORRECTION (marth 2026-09-04, Docs/SPEC-ALIAS-DRIVE.md §7):
+// deck-proven the alias-ladder fill alone is not enough -- the pool slot's
+// authored placeholder package COMPETES with and often beats the 0x49-
+// substituted client package (measured 91 placeholder vs 52 client). Engage
+// now ALSO passes `param.form` into ClaimSlot, which pushes it directly onto
+// the actor via `Actor::PutCreatedPackage` (0xDF) right after the alias
+// fill -- core/AliasPool.cpp::InstallPackage; UNVERIFIED IN THE FIELD, see
+// its header comment for why the brief's originally-assumed alias-package-
+// list mutation was replaced with this. OnOwnerChanged re-installs the NEW
+// winner's package the same way (the alias fill itself never needs to
+// change on a repoint -- same actor, only which claim's param.form wins).
 // ============================================================================
 
 namespace {
@@ -58,18 +70,25 @@ namespace {
         }
 
         void Engage(RE::FormID id, RE::Actor* actor, const APMF_API::APMF_Param& param) override {
-            // Alias-drive FIRST: put the actor onto the alias ladder before the
+            // Alias-drive FIRST: put the actor onto the alias ladder AND push the
+            // client's package directly (core/AliasPool.cpp::ClaimSlot ->
+            // InstallPackage, the architecture correction above) before the
             // EvaluatePackage nudge below asks the engine to re-evaluate him --
             // same fill-before-nudge ordering MFO's own alias routes use.
-            const bool onLadder = apmf::aliaspool::ClaimSlot(id, actor);
+            const bool onLadder = apmf::aliaspool::ClaimSlot(id, actor, param.form);
             spdlog::info("[ch.9] 0x{} package-offer facet CLAIMED (package 0x{}, alias-pool={}). "
                          "core/PackageGate.cpp's 0x49 hook is what actually redirects the actor's "
-                         "package answer.",
+                         "package answer; core/AliasPool.cpp's PutCreatedPackage push is the "
+                         "belt-and-suspenders direct install (Docs/SPEC-ALIAS-DRIVE.md §7).",
                          apmf::log::Hex(id), apmf::log::Hex(param.form), onLadder ? "claimed" : "declined");
             apmf::packagegate::EvaluatePackage(actor);
         }
 
         void OnOwnerChanged(RE::FormID id, RE::Actor* actor, const APMF_API::APMF_Param& param) override {
+            // Same actor, only the winning claim's package changed -- no alias-
+            // ladder change needed (Engage already put him there), but the
+            // direct-install push must repeat with the NEW package.
+            apmf::aliaspool::InstallPackage(actor, param.form);
             spdlog::info("[ch.9] 0x{} package-offer claim RE-POINTED (package 0x{}).",
                          apmf::log::Hex(id), apmf::log::Hex(param.form));
             apmf::packagegate::EvaluatePackage(actor);

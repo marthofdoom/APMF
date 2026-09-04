@@ -22,6 +22,38 @@
 // actor). This module owns ONLY the alias-fill/evict plumbing; it never
 // changes what package PackageGate.cpp's 0x49 hook returns.
 //
+// ARCHITECTURE CORRECTION (marth 2026-09-04, Docs/SPEC-ALIAS-DRIVE.md §7):
+// deck-proven the alias fill alone is not enough -- the AUTHORED placeholder
+// package on the claimed slot COMPETES with and often beats the 0x49-
+// substituted client package (measured 91 placeholder vs 52 client). The
+// brief's assumed fix -- reach into BGSBaseAlias/BGSRefAlias's own `packages`
+// array and swap which TESPackage the alias' ALPC names -- does NOT exist in
+// the pinned CommonLibSSE-NG (verified against the exact pinned commit,
+// CharmedBaryon/CommonLibSSE-NG c4ab853d: neither class declares a packages
+// member; BGSRefAlias is 0x48 bytes, entirely accounted for by fillData +
+// conditions). The one structurally-adjacent field, `ExtraAliasInstanceArray`
+// ::`BGSRefAliasInstanceData::instancedPackages` (a `const BSTArray<TESPackage*>*`
+// on the ACTOR's own extra-data), is typed const specifically because its
+// write-time contract is unreversed and unprecedented -- writing it blind is
+// the same "wrong signature/shape guess = silent ABI corruption, not a
+// graceful miss" class INVARIANTS #17 and Docs/PROBE-NONALIAS-PACKAGE.md §3
+// (item 5, BGSProcedureTreeProcedure's own Unk_XX slots) already refuse for
+// the structurally identical reason. NOT implemented here.
+//
+// SUBSTITUTE (best judgment, marth-approved): `Actor::PutCreatedPackage`
+// (0xDF -- a REAL, already-declared, fully-typed CommonLib member; zero
+// ABI-guessing risk, unlike a blind vtable slot) -- flagged by Docs/
+// PROBE-NONALIAS-PACKAGE.md §3 item 2 as "the one candidate worth a cheap
+// runtime probe" for this exact class of problem. `InstallPackage` calls it
+// directly with the client's own claimed package (never a package APMF
+// itself selects -- same INVARIANTS #0/§5a carve-out ch.9's 0x49 substitution
+// already relies on) right after the alias fill (Engage) and again on every
+// OnOwnerChanged repoint. This is a pure RUNTIME push, no persistent form
+// data touched at all -- so there is nothing to "restore to the placeholder"
+// on evict (the alias' own authored ALPC entry is NEVER mutated; it stays
+// the placeholder the whole time) and nothing new to co-save (§6 below).
+// UNVERIFIED IN THE FIELD -- this correction is CI-only, not deck-tested.
+//
 // THREADING. Every entry point here (ClaimSlot/ReleaseActor/ReleaseAll/
 // EnsureEvictMarker/the co-save callbacks) runs on APMF's single MAIN/writer
 // thread: ClaimSlot/ReleaseActor are called only from channels/OfferPackage
@@ -65,14 +97,34 @@ namespace apmf::aliaspool {
 
     // Put `actor` onto the engine's alias ladder: claim a free pool slot and
     // ForceRefTo-fill it with `actor` (native first, VM-dispatch fallback off
-    // AE). Call from channels/OfferPackage.cpp's Engage (game thread only).
-    // Idempotent if `actorID` already holds a slot. Returns false -- a
-    // graceful degrade, never a crash -- on VR, a fill failure on BOTH
-    // routes, or all 16 slots already claimed (16 concurrently-claimed
-    // actors is generous headroom; see Docs/SPEC-ALIAS-DRIVE.md). On false,
-    // PackageGate.cpp's 0x49 hook simply has nothing to override for this
-    // actor (identical to today's pre-alias-drive behavior).
-    bool ClaimSlot(RE::FormID actorID, RE::Actor* actor);
+    // AE), THEN install `clientPackageID` directly via InstallPackage below
+    // (attempted regardless of whether the alias-ladder fill itself
+    // succeeded -- PutCreatedPackage needs no alias membership at all, so it
+    // is a useful push even when every pool slot is already claimed). Call
+    // from channels/OfferPackage.cpp's Engage (game thread only). Idempotent
+    // if `actorID` already holds a slot. Returns false -- a graceful
+    // degrade, never a crash -- on VR, an alias-fill failure on BOTH routes,
+    // or all 16 slots already claimed (16 concurrently-claimed actors is
+    // generous headroom; see Docs/SPEC-ALIAS-DRIVE.md) -- the return value
+    // reflects the ALIAS-LADDER fill only, not whether InstallPackage's
+    // separate push succeeded (that one is logged, not returned -- it is a
+    // best-effort assist, not something a caller branches on). `clientPackageID
+    // == 0` (channel default, no param) skips InstallPackage entirely, same
+    // "no redirect" semantics core/PackageGate.cpp's 0x49 hook already uses.
+    bool ClaimSlot(RE::FormID actorID, RE::Actor* actor, RE::FormID clientPackageID);
+
+    // Directly install `clientPackageID` on `actor` via `Actor::PutCreatedPackage`
+    // (0xDF) -- the architecture-correction push (see the header comment above)
+    // so the actor's alias-tier package presents exactly one candidate instead
+    // of competing against the pool slot's authored placeholder. A pure
+    // RUNTIME call: no persistent form data touched, nothing to undo on
+    // release, nothing to co-save. No-op on VR, a null `actor`, `clientPackageID
+    // == 0`, or an unresolvable FormID (logged, never a crash). Call from
+    // channels/OfferPackage.cpp's Engage (via ClaimSlot, above) and
+    // OnOwnerChanged (directly -- the winning claim's package can change
+    // without a fresh alias fill). Game-thread only, same as every other
+    // entry point here. UNVERIFIED IN THE FIELD (Docs/SPEC-ALIAS-DRIVE.md §7).
+    void InstallPackage(RE::Actor* actor, RE::FormID clientPackageID);
 
     // Evict `actorID` from whichever pool slot it currently occupies (the
     // in-process occupancy table is authoritative here -- ClaimSlot/

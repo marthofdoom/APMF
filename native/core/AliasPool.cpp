@@ -193,39 +193,72 @@ namespace apmf::aliaspool {
         }
     }
 
-    bool ClaimSlot(RE::FormID actorID, RE::Actor* actor) {
+    // Architecture correction (marth 2026-09-04, Docs/SPEC-ALIAS-DRIVE.md §7):
+    // the pinned CommonLib exposes no safe alias-package-list mutator (see
+    // AliasPool.h's header comment), so InstallPackage substitutes
+    // Actor::PutCreatedPackage (0xDF) -- a real, fully-typed member, zero
+    // ABI-guessing risk -- as a direct push of the client's OWN package. Never
+    // a package APMF itself selects (INVARIANTS #0); tempPackage=true
+    // (bounded/overridable, matching every other ch.9 control window) and
+    // createdPackage=false (this is a REAL, form-backed authored package the
+    // client named, not something the DLL fabricated at runtime).
+    void InstallPackage(RE::Actor* actor, RE::FormID clientPackageID) {
+        if (!actor || !clientPackageID) return;
+        if (REL::Module::IsVR()) return;
+        auto* pkg = RE::TESForm::LookupByID<RE::TESPackage>(clientPackageID);
+        if (!pkg) {
+            spdlog::warn("[aliaspool] 0x{}: client package 0x{} unresolved -- PutCreatedPackage skipped",
+                         apmf::log::Hex(actor->GetFormID()), apmf::log::Hex(clientPackageID));
+            return;
+        }
+        actor->PutCreatedPackage(pkg, /*tempPackage*/ true, /*createdPackage*/ false, /*allowFromFurniture*/ true);
+        spdlog::info("[aliaspool] 0x{}: installed client package 0x{} directly via PutCreatedPackage "
+                     "(0xDF) -- presents exactly one alias-tier candidate instead of competing with "
+                     "the pool slot's authored placeholder",
+                     apmf::log::Hex(actor->GetFormID()), apmf::log::Hex(pkg->GetFormID()));
+    }
+
+    bool ClaimSlot(RE::FormID actorID, RE::Actor* actor, RE::FormID clientPackageID) {
         if (!actorID || !actor) return false;
-        if (REL::Module::IsVR()) return false;
-        auto* quest = g_claimQuest;
-        if (!quest) return false;
 
-        if (int already = FindSlotFor(actorID); already >= 0) return true;   // idempotent
-
-        const int slot = FindFreeSlot();
-        if (slot < 0) {
-            spdlog::error("[aliaspool] 0x{}: no free pool slot (all {} claimed) -- alias-drive "
-                         "declined this actor; ch.9's 0x49 hook has nothing to override for him "
-                         "unless some OTHER framework already put him on the alias ladder",
-                         apmf::log::Hex(actorID), kNumSlots);
-            return false;
+        bool onLadder = false;
+        if (REL::Module::IsVR()) {
+            // fall through -- onLadder stays false; InstallPackage below also VR-refuses
+        } else if (auto* quest = g_claimQuest) {
+            if (int already = FindSlotFor(actorID); already >= 0) {
+                onLadder = true;   // idempotent
+            } else {
+                const int slot = FindFreeSlot();
+                if (slot < 0) {
+                    spdlog::error("[aliaspool] 0x{}: no free pool slot (all {} claimed) -- alias-drive "
+                                 "declined this actor; ch.9's 0x49 hook has nothing to override for him "
+                                 "unless some OTHER framework already put him on the alias ladder",
+                                 apmf::log::Hex(actorID), kNumSlots);
+                } else {
+                    bool filled = ForceRefToNative(quest, static_cast<std::uint32_t>(slot), actor);
+                    if (filled) {
+                        spdlog::info("[aliaspool] 0x{}: pool slot {} filled NATIVELY (synchronous)",
+                                     apmf::log::Hex(actorID), slot);
+                    } else if (DispatchAlias("ForceRefTo", actor, static_cast<std::uint32_t>(slot))) {
+                        filled = true;
+                        spdlog::info("[aliaspool] 0x{}: pool slot {} fill DISPATCHED via VM (async)",
+                                     apmf::log::Hex(actorID), slot);
+                    }
+                    if (filled) {
+                        g_slotActor[slot] = actorID;
+                        onLadder = true;
+                    } else {
+                        spdlog::error("[aliaspool] 0x{}: pool slot {} fill FAILED on both routes",
+                                     apmf::log::Hex(actorID), slot);
+                    }
+                }
+            }
         }
 
-        bool filled = ForceRefToNative(quest, static_cast<std::uint32_t>(slot), actor);
-        if (filled) {
-            spdlog::info("[aliaspool] 0x{}: pool slot {} filled NATIVELY (synchronous)",
-                         apmf::log::Hex(actorID), slot);
-        } else if (DispatchAlias("ForceRefTo", actor, static_cast<std::uint32_t>(slot))) {
-            filled = true;
-            spdlog::info("[aliaspool] 0x{}: pool slot {} fill DISPATCHED via VM (async)",
-                         apmf::log::Hex(actorID), slot);
-        }
-        if (!filled) {
-            spdlog::error("[aliaspool] 0x{}: pool slot {} fill FAILED on both routes",
-                         apmf::log::Hex(actorID), slot);
-            return false;
-        }
-        g_slotActor[slot] = actorID;
-        return true;
+        // Best-effort regardless of onLadder -- PutCreatedPackage needs no
+        // alias membership at all (see InstallPackage's own header comment).
+        InstallPackage(actor, clientPackageID);
+        return onLadder;
     }
 
     void ReleaseActor(RE::FormID actorID, RE::Actor* actor) {
