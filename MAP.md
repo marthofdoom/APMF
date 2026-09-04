@@ -244,6 +244,29 @@ reusable "find sites ourselves" tool so a future probe skips hand-reversing the 
   0xDF is a 1.6.1170-pinned raw index (Docs/PROBE-NONALIAS-PACKAGE.md §2) — no named
   CommonLib binding exists to prefer over it today.
 
+### `native/core/AliasPool.{h,cpp}` — ch.9's 16-slot alias-drive claim pool (Docs/SPEC-ALIAS-DRIVE.md)
+RELEASE-BLOCKER fix (marth 2026-09-04): `core/PackageGate.cpp`'s 0x49 hook only ever gets
+ASKED for an actor with SOME existing alias membership -- a vanilla follower (no custom AI
+framework, no alias at all) was never asked, so ch.9 never drove him. `ResolveForms()` (←
+`plugin.cpp` kDataLoaded) resolves `APMF.esl`'s `APMF_ClaimQuest` (16-slot actor-alias pool,
+static priority 90, `APMF_GenerateESP.py`) + confirms all 16 slots present. `ClaimSlot`/
+`ReleaseActor` (← `channels/OfferPackage.cpp`'s Engage/Release, game-thread only) `ForceRefTo`-
+fill/evict a free pool slot -- puts a non-alias-sourced actor onto the engine's alias ladder so
+the EXISTING 0x49 hook gets asked and (unmodified) supplies the real package. `ReleaseAll` (←
+`plugin.cpp` kPreLoadGame/kPostLoadGame/kNewGame) sweeps by ALIAS OCCUPANCY (not the in-process
+table) so a stale save self-heals. Co-save `'ADRV'` v1 (a diagnostic mirror only -- the alias
+fill persists natively in the .ess, so the occupancy sweep is the real reset). VR-refused
+(ForceRefTo's reloc id is SE/AE only). Ported directly from MFO's field-proven loot-travel alias
+mechanism (`marth-follower-overhaul` `native/Packages.cpp` + `MFO_GenerateESP.py`).
+- **What breaks:** never leave a pool slot claimed-with-nothing across a load -- an
+  alias-claimed actor with no VALID package STANDS STILL (MFO ENGINE_NOTES #69/#70,
+  Docs/SPEC-ALIAS-DRIVE.md §3); `APMF_PlaceholderPackage` must stay ungated and every slot
+  must keep carrying it. Eviction is ALWAYS a real `ForceRefTo` onto the session's XMarker
+  (`EnsureEvictMarker`, minted before the reconcile sweep) -- a null clear is a no-op. Never
+  evict to the PLAYER (furniture-ejection class). `core/PackageGate.cpp`'s redirect logic is
+  NOT touched by this module -- the alias-fill is upstream plumbing only, never the package
+  source. `g_slotActor` is main-thread-only (INVARIANTS #12) -- no lock, mirrors `AvLedger`.
+
 ### `native/channels/*.cpp` — one module per facet (FULL documented catalog)
 Each: a `Channel` subclass + `APMF_REGISTER_CHANNEL`, per-NPC `Engage`/`Release`.
 The first release ships the full documented catalog (13 channels) as a baseline
@@ -265,6 +288,7 @@ parentheses.
 | `ShoutPower.cpp` | 14 | shout select (Num*) | `ActorEquipManager::EquipShout` | one-shot (sticky) |
 | `Equipment.cpp` | 15 | equip/unequip (Num.) | `GetEquippedObject` + `UnequipObject`/`EquipObject` (melee-vs-ranged lever) | source-block |
 | `Detection.cpp` | 16 | stealth (Num8) | `kMovementNoiseMult` + `kDetectLifeRange` AVs | source-block |
+| `OfferPackage.cpp` | 9 | package-offer CLAIM (NumpadSlash) | `core/PackageGate.cpp`'s 0x49 hook returns the claim's package (DENY); Engage/Release ALSO `core/AliasPool.cpp::ClaimSlot`/`ReleaseActor` (alias-drive, Docs/SPEC-ALIAS-DRIVE.md) so a non-alias-sourced actor gets asked at all | claim + DENY enforcement; alias-drive plumbing on top |
 
 - **What breaks (all channels):** each must (1) keep the package coherent — none
   substitutes the package (§5); (2) capture-and-restore engine state in `Release`,

@@ -1,10 +1,14 @@
 # Build output
 build/
-out/
+native/build/
+native/out/
 *.dll
 *.pdb
 *.lib
 *.exp
+# top-level out/ is NOT ignored: APMF_GenerateESP.py writes the generated
+# APMF.esl + SEQ/APMF.seq there, and (mirroring MFO's own repo convention)
+# those generated artifacts are committed, not rebuilt at CI time.
 
 # vcpkg
 vcpkg_installed/

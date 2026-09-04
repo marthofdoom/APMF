@@ -85,12 +85,28 @@ tier: the script layer wins, and APMF neither sees nor touches it — so "never 
 custom follower" is AUTOMATIC for any script-driven follower. APMF calls no Papyrus
 itself. **Never-break guardrails (all three hold for every control window):** (1) control
 only in BOUNDED, gambit-valid-AND-live windows — never a standing hold; (2) RELINQUISH
-cleanly so the framework's package resumes; (3) the offer path touches NO alias / run-once
-state. **Supporting evidence (Tuxborn audit, 2026-09-02):** across all 1626 enabled mods,
-Simple Follower Framework + every custom follower are alias-tier with ZERO PapyrusUtil
-package overrides — so the alias-tier (0x49) mechanism covers every follower in that list,
-and the beneath-script layering means even a hypothetical script-driven follower is safe by
-construction.
+cleanly so the framework's package resumes; (3) the 0x49 REDIRECT thunk itself
+(`core/PackageGate.cpp`) touches NO alias / run-once state — it only chooses which package
+the vfunc's return value names, unchanged by the point below. **Supporting evidence (Tuxborn
+audit, 2026-09-02):** across all 1626 enabled mods, Simple Follower Framework + every custom
+follower are alias-tier with ZERO PapyrusUtil package overrides — so the alias-tier (0x49)
+mechanism covers every follower in that list, and the beneath-script layering means even a
+hypothetical script-driven follower is safe by construction.
+
+**#3b — ADDENDUM (marth 2026-09-04, Docs/SPEC-ALIAS-DRIVE.md): a VANILLA follower (no
+alias membership at all) is never even ASKED by 0x49, so guardrail (3) above needed a
+narrow, deliberate exception to reach him.** `core/AliasPool.cpp` ships APMF's OWN tiny ESL
+(`APMF.esl`, `APMF_GenerateESP.py`) — a claim quest with a 16-slot actor-alias pool at a
+high static priority — and `channels/OfferPackage.cpp`'s Engage/Release now ALSO
+`ForceRefTo`-fill/evict a free slot in THAT pool. This is the one place ch.9 touches alias
+state, and it is scoped tightly: (a) it is APMF's own pool, never another framework's or
+MFO's own alias; (b) it is bounded to the exact same Engage/Release window as the claim
+itself — never a standing hold beyond the claim's own lifetime; (c) eviction is unconditional
+and self-healing (kPreLoadGame + post-load reconcile sweep by alias OCCUPANCY, not
+bookkeeping) exactly like MFO's own loot/retreat/command alias sweeps; (d) it changes NOTHING
+about what 0x49 (`core/PackageGate.cpp`) returns — the redirect logic in guardrail (3) is
+unmodified. The alias-fill's only job is to put the actor on SOME alias ladder so the engine
+asks 0x49 about him at all.
 
 ## Threading
 
