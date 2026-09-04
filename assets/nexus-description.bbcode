@@ -2,9 +2,13 @@
 [/center]
 [line]
 
-Two mods both want to drive the same follower. One walks him to a merchant, the other tells him to hold position, and they fight over him every frame. That is the problem Harbinger solves. It sits underneath the mods on your load order and decides who is allowed to control an NPC at any moment, so one mod's orders go through and the others stand down cleanly instead of clobbering each other.
+Harbinger is a control layer for the AI that drives your NPCs. When more than one mod wants to steer the same actor, Harbinger decides which mod owns which part of it at any moment, so they run together instead of overwriting each other.
 
-Harbinger does not make an NPC do anything on its own. It moderates. A client mod brings the behaviour through the normal engine mechanisms it already uses, and Harbinger only decides whether that behaviour is allowed right now. It routes control from the mod that should have it and denies the sources that would compete, at the point the NPC receives them, so the winning behaviour just runs.
+The important word is [i]part[/i]. Control is split by facet, not by actor. One mod can own where a follower walks while another keeps running his combat, a third holds his dialogue, and a fourth manages his gear, all on the same body at the same time. Harbinger only ever arbitrates the exact facet two mods actually disagree on, and it leaves everything else running untouched. Nothing gets a blanket lock and no mod is switched off wholesale.
+
+That precision is the whole point. When a facet is contended, Harbinger routes it to the owner and quietly withholds only the competing input, at the point the NPC would receive it, so the other mod's scripts and behaviour stay alive the entire time. The moment the owner releases, the facet is handed straight back with nothing left behind. A mod loses control of one thing for as long as something else needs it, and not a scrap more.
+
+Harbinger owns [i]whether[/i] a piece of control reaches the NPC. Your mod owns [i]what[/i] that control is. So it never generates behaviour of its own and never fights the engine. It shapes what the NPC is allowed to receive, and the engine and the client do the rest.
 
 [size=5][b]For players[/b][/size]
 
@@ -12,13 +16,15 @@ You install it because something else needs it. There is nothing to configure an
 
 [size=5][b]For mod authors[/b][/size]
 
-Harbinger is a C ABI you talk to from your own SKSE plugin. You claim a control facet on an actor, aggression, combat target, casting, a package, and so on, at a priority you choose. If another client claims the same facet, the higher priority owns it and the loser waits, and the facet is restored the moment the last claim is released. You keep driving the NPC with your own code. Harbinger's job is to make sure the engine and the other mods let you.
+Harbinger is a C ABI you talk to from your own SKSE plugin. You claim a single facet on an actor, aggression, combat target, casting, a package, and so on, at a priority you choose. You keep driving the NPC with your own code. Harbinger's job is to make the engine and the other mods let that specific facet through, and to hold everything you did not claim out of your way.
 
-The design rule is that Harbinger owns [i]whether[/i] something happens, and your mod owns [i]what[/i] should happen. So it never generates behaviour and never fights the engine. It shapes what the NPC is allowed to receive, at the source, and the engine does the rest.
+Claims stack cleanly. Two mods claiming the same facet resolve by priority, the higher one owns it, the other waits, and it reverts the instant the last claim is dropped. Two mods claiming [i]different[/i] facets on the same NPC simply both work.
 
-Some facets are proven in the field already, through [url=https://www.nexusmods.com/skyrimspecialedition/mods/000000]marth's Follower Overhaul[/url], which is a full Harbinger client and the worked example. Others are built and ready but a mod author would be the first to run them in earnest. The page is honest about which is which. The full capability list, the proven-versus-untested status of each, and the header you build against are in the [url=https://github.com/marthofdoom/APMF]GitHub repo[/url].
+Some facets are proven in the field already, through [url=https://www.nexusmods.com/skyrimspecialedition/mods/000000]marth's Follower Overhaul[/url], which is a full Harbinger client and the worked example. Others are built and ready but a mod author would be the first to run them in earnest. The page is honest about which is which. The full facet list, the proven-versus-untested status of each, and the header you build against are in the [url=https://github.com/marthofdoom/APMF]GitHub repo[/url].
 
-Coexistence is the whole point, so it is a hard rule and not a hope. Harbinger only ever hooks in ways that chain with other mods, it reads the engine's own answer before it changes anything, and it verifies what it is hooking at install. If it cannot do a thing safely it declines the thing, it does not crash your game.
+[size=5][b]Coexistence[/b][/size]
+
+Running alongside other mods is not a feature here, it is the entire design, so it is a hard rule and not a hope. Harbinger only ever hooks in ways that chain with other mods, it reads the engine's own answer before it changes anything, and it verifies what it is hooking at install. It withholds a single competing input and never a whole system. If it cannot do a thing safely it declines that one thing, it does not crash your game or disturb anything else on the actor.
 
 [size=5][b]Requirements[/b][/size]
 
@@ -40,7 +46,7 @@ Install it with your mod manager like any other SKSE plugin. There is no plugin 
 No. Install it, turn it on, launch through SKSE. It has no MCM and nothing to tune.
 
 [b]Will it conflict with my follower framework or AI overhaul?[/b]
-No, that is what it is for. It edits no records and no AI packages, and it is built specifically to run alongside other mods that manage NPCs rather than fight them.
+No, that is what it is for. It edits no records and no AI packages, and it holds back only the exact input a claiming mod is overriding, so the rest of your other mods keep running on the same NPC.
 
 [b]Is it safe to add or remove mid-playthrough?[/b]
 Yes. Its state lives in the SKSE co-save and reverts cleanly.

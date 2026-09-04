@@ -15,27 +15,35 @@ CX=960; CY=320
 SLT=182
 RAIL=98
 
-# 1) Base: near-black vertical gradient + a soft amber radial glow.
-magick -size ${W}x${H} gradient:'#16181d-#08090b' \
-  \( -size ${W}x${H} radial-gradient:'#2b1e12-#000000' -evaluate multiply 0.9 \) \
-  -compose screen -composite base.png
+# 1) Base: near-black vertical gradient + emanating concentric signal rings
+#    (cool complementary blue, dark). A FRAMEWORK broadcast/herald motif, not the
+#    overhauls' single-color radial wash.
+magick -size ${W}x${H} gradient:'#16181d-#08090b' base.png
+magick base.png -fill none \
+  -stroke 'rgba(86,132,196,0.13)' -strokewidth 3 -draw "circle $CX,$CY $CX,$((CY-300))" \
+  -stroke 'rgba(86,132,196,0.10)' -strokewidth 3 -draw "circle $CX,$CY $CX,$((CY-560))" \
+  -stroke 'rgba(86,132,196,0.075)' -strokewidth 3 -draw "circle $CX,$CY $CX,$((CY-820))" \
+  -stroke 'rgba(86,132,196,0.05)' -strokewidth 3 -draw "circle $CX,$CY $CX,$((CY-1120))" \
+  -stroke 'rgba(86,132,196,0.035)' -strokewidth 3 -draw "circle $CX,$CY $CX,$((CY-1450))" \
+  base.png
 
 # 2) The beacon: blurred amber glow underlayer, translucent lens, faint flanking
 #    monolith rails, crisp white-hot core slit, bright central glint. Same recipe
 #    as the banner, scaled.
 magick base.png \
-  \( -clone 0 -fill '#e8963a' -stroke none \
+  \( -clone 0 -fill '#e5772e' -stroke none \
      -draw "roundrectangle $((CX-28)),$((CY-SLT)) $((CX+28)),$((CY+SLT)) 28,28" -blur 0x26 \) \
   -compose screen -composite \
-  -stroke none -fill 'rgba(224,123,42,0.30)' \
+  -stroke none -fill 'rgba(222,104,44,0.30)' \
      -draw "roundrectangle $((CX-26)),$((CY-SLT)) $((CX+26)),$((CY+SLT)) 26,26" \
   -fill none -stroke 'rgba(233,200,126,0.28)' -strokewidth 3.0 \
      -draw "line $((CX-RAIL)),$((CY-SLT-16)) $((CX-RAIL)),$((CY+SLT+16))" \
      -draw "line $((CX+RAIL)),$((CY-SLT-16)) $((CX+RAIL)),$((CY+SLT+16))" \
   -stroke none -fill 'rgba(255,240,216,0.92)' \
      -draw "roundrectangle $((CX-9)),$((CY-SLT+34)) $((CX+9)),$((CY+SLT-34)) 9,9" \
-  -fill 'rgba(255,247,235,0.98)' -draw "circle $CX,$CY $CX,$((CY-28))" \
-  -fill 'rgba(232,150,58,0.55)' -draw "circle $CX,$CY $CX,$((CY-58))" \
+  -fill 'rgba(198,52,30,0.62)'  -draw "circle $CX,$CY $CX,$((CY-66))" \
+  -fill 'rgba(236,150,60,0.66)' -draw "circle $CX,$CY $CX,$((CY-42))" \
+  -fill 'rgba(255,247,235,0.98)' -draw "circle $CX,$CY $CX,$((CY-21))" \
   beacon.png
 
 # 3) Typography - centered stack below the beacon.
