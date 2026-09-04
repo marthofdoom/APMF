@@ -175,6 +175,39 @@ namespace apmf::cbt {
         { "CombatBehaviorWaitBehindCover", REL::VariantID(267193, 214382, 0x17267f8) },
     } };
 
+    // ---- Cast/equip CONTEXT-CREATION nodes (deny-completeness, 2026-09-04) ----
+    // These are NOT leaves. They are `CombatBehaviorTreeCreateContextNode*`
+    // nodes whose act() (slot 0x02, SAME base-class vtable layout as every
+    // leaf -- they all derive CombatBehaviorTreeNode) BUILDS the AI's magic
+    // cast/equip CONTEXT: it selects the spell AND constructs the
+    // CombatBehaviorEquipContext holding a `NiPointer<CombatInventoryItem>`,
+    // then dereferences that item. The 70-leaf cast deny (kCombatActionCat_Cast)
+    // stops the cast-FIRING leaves but NOT this SETUP node -- so with a
+    // kIntent_Cast claim held, the AI still BUILT its magic-equip context and
+    // raced the client's forced equip: EXCEPTION_ACCESS_VIOLATION `call
+    // [rax+0x28]` rax=0 (null CombatInventoryItem vfunc) inside
+    // CombatBehaviorTreeCreateContextNode1<CombatBehaviorContextMagic, ...
+    // CombatBehaviorEquipContext, NiPointer<CombatInventoryItem>...> (deck CTD,
+    // MFO.dll frame 5). Denying THIS node's act() (via the SAME ForceFail
+    // mechanism the leaves use) means the AI never builds/derefs the magic-equip
+    // context while the cast facet is held -- closing the last open path
+    // (INVARIANTS #18, deny-completeness).
+    //
+    // Symbols verified PRESENT + ID-backed in the pinned CommonLib
+    // (CharmedBaryon/CommonLibSSE-NG @ c4ab853d, Offsets_VTABLE.h:3704-3705,
+    // Offsets_RTTI.h:4095-4096). Both are RTTI-verified (DerivesFrom
+    // CombatBehaviorTreeNode) at install by allowance::InstallOnVtables, so a
+    // symbol that does NOT actually derive the node base is SKIPPED, never
+    // hooked blind (INVARIANTS #17). Node1 (the concrete instantiation the live
+    // object dispatches through -- the crash frame) is the load-bearing target;
+    // the Base is included for completeness and skipped harmlessly if abstract.
+    inline constexpr std::array<LeafEntry, 2> kCastContextNodes{ {
+        { "CombatBehaviorTreeCreateContextNode1_CombatBehaviorContextMagic",
+          REL::VariantID(266702, 213692, 0x1720bd8) },
+        { "CombatBehaviorTreeCreateContextNodeBase_CombatBehaviorContextMagic",
+          REL::VariantID(550933, 213681, 0x1720b80) },
+    } };
+
     // Index of "CombatBehaviorAttack" within kLeaves -- the Phase-1 DENY target.
     inline int AttackIndex() {
         for (int i = 0; i < static_cast<int>(kLeaves.size()); ++i)

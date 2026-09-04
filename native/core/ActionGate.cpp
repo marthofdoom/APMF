@@ -49,6 +49,20 @@
 // skips actor resolution entirely for those, which is both the correct
 // "everything else stays allowed" semantics AND the cheap path for the ~58
 // of 70 leaves that are never deniable through this channel.
+//
+// DENY-COMPLETENESS (INVARIANTS #18, 2026-09-04): in ADDITION to the 70 leaves,
+// this gate also installs on the AI's magic cast/equip CONTEXT-CREATION nodes
+// (apmf::cbt::kCastContextNodes -- the CombatBehaviorContextMagic
+// CreateContextNode Base + Node1). Those nodes' act() BUILDS the magic-equip
+// context (spell select + a CombatBehaviorEquipContext over a
+// NiPointer<CombatInventoryItem>, then derefs it) UPSTREAM of the cast-firing
+// leaves. Denying only the firing leaves left that build running: with a
+// kIntent_Cast claim held it raced a client's forced equip and CTD'd
+// (EXCEPTION_ACCESS_VIOLATION, null CombatInventoryItem vfunc). Classified
+// Cast|Offense and denied via the SAME ForceFail act() path, so a cast/offense
+// claim now zeroes the AI's cast SETUP too -- the deny is complete across the
+// context-creation path, not just the firing path. See CombatBehaviorRE.h's
+// kCastContextNodes block for the symbol/verification detail.
 // ============================================================================
 
 namespace apmf::actiongate {
@@ -214,6 +228,40 @@ namespace apmf::actiongate {
         spdlog::info("[ch.8b] {} cast leaf(s) also classified 'cast' -- a kIntent_Cast claim denies "
                      "exactly these (CastImmediateSpell/CastConcentrationSpell/PrepareDualCast/CastShout), "
                      "leaving attack/ranged/movement leaves firing.", castClassified);
+
+        // ── deny-completeness (INVARIANTS #18): the AI's magic cast/equip
+        // CONTEXT-CREATION node. The cast LEAVES above deny the cast FIRING, but
+        // NOT the upstream node that BUILDS the magic-equip context (selects the
+        // spell + constructs the CombatBehaviorEquipContext holding a
+        // NiPointer<CombatInventoryItem> and derefs it). That build raced the
+        // client's forced equip and CTD'd (null item vfunc). Install the SAME
+        // ActThunk on those nodes' act() (slot 0x02) and classify them
+        // Cast|Offense, so a kIntent_Cast (or an Offense) claim denies the AI
+        // EVER building/dereferencing its magic-equip context while the facet is
+        // held -- the deny now ZEROES the source across the setup path too, not
+        // just the firing path. RTTI-verified per node at install (#17); a node
+        // that does not derive CombatBehaviorTreeNode is skipped, never hooked
+        // blind. This is granular: only the ContextMagic node is touched, so
+        // melee/ranged/movement context nodes keep firing.
+        std::array<REL::VariantID, apmf::cbt::kCastContextNodes.size()> ctxVts{};
+        for (std::size_t i = 0; i < apmf::cbt::kCastContextNodes.size(); ++i)
+            ctxVts[i] = apmf::cbt::kCastContextNodes[i].vtbl;
+        const int nCtx = allowance::InstallOnVtables(ctxVts, 0x02, &ActThunk, expectedTD.get(),
+                                                     "ch.8b-ctx", g_orig);
+        int ctxClassified = 0;
+        for (const auto& node : apmf::cbt::kCastContextNodes) {
+            REL::Relocation<std::uintptr_t> vt{ node.vtbl };
+            if (g_orig.contains(vt.address())) {
+                g_category[vt.address()] |=
+                    (APMF_API::kCombatActionCat_Cast | APMF_API::kCombatActionCat_Offense);
+                ++ctxClassified;
+            }
+        }
+        spdlog::info("[ch.8b] {} of {} magic cast/equip CONTEXT-CREATION node(s) hooked (slot 0x02) + "
+                     "classified Cast|Offense -- a kIntent_Cast claim now denies the AI BUILDING its "
+                     "magic-equip context (the CombatBehaviorContextMagic CreateContextNode that raced a "
+                     "client's forced equip and CTD'd, INVARIANTS #18), not just the cast-firing leaves. "
+                     "{} hooked.", ctxClassified, apmf::cbt::kCastContextNodes.size(), nCtx);
 
         const int ffIdx = apmf::cbt::ForceFailIndex();
         if (ffIdx >= 0) {

@@ -447,3 +447,47 @@ The current codebase satisfies this: every hook in `native/core/` is `write_vfun
 version-pinned `VTABLE_*` symbol; no call-site patch remains anywhere in the tree after
 T4's removal (grep-verified: no `write_call`/`write_branch`/`AllocTrampoline` in
 `native/`).
+
+## Deny completeness
+
+**#18 — DENY COMPLETENESS: for EVERY facet APMF can ACCEPT a claim on, the deny
+must ZERO the competing source across ALL paths it can reach that facet — a
+partial deny is a TOTAL architecture failure, not an edge case.** If a client can
+claim a facet, APMF must be able to reduce the competing source (native combat AI,
+a foreign framework, a package) to ZERO influence on that facet — not "mostly", not
+"the firing path but not the setup path". A residual competing write that still
+reaches the facet is a RACE, and a race against a client that is concurrently
+executing the behavior (e.g. MFO's forced equip on the main thread while the combat
+AI runs on the combat thread) is a data hazard that CTDs, not a cosmetic flicker.
+The rule is the explicit form of #0/#1: #1 says "block the foreign input"; #18 adds
+"block EVERY foreign input path to the owned facet, and prove you enumerated them."
+
+- **The obligation is per-facet path ENUMERATION.** Before shipping a claimable
+  intent, enumerate every path the competing source can reach that facet (select,
+  fire, SET-UP/context-creation, equip, re-arm, package-offer, …) and verify the
+  deny zeroes each. A facet is DONE only when no enumerated path leaks. Record the
+  enumeration in `Docs/DENY-COMPLETENESS-AUDIT.md` (intent | source paths | deny |
+  complete? | gap) and keep it current as claim kinds are added.
+- **The cast/equip lesson (2026-09-04, the rule's origin).** `kIntent_Cast` denied
+  the cast-FIRING path (0x0A CheckCast, 0x0F CheckShouldEquip, the four T1 cast
+  leaves) but NOT the cast-CONTEXT-CREATION path: the combat AI still BUILT its
+  `CombatBehaviorContextMagic` / `CombatBehaviorEquipContext` (over a
+  `NiPointer<CombatInventoryItem>`) and dereferenced the item UPSTREAM of the firing
+  leaves, racing MFO's forced equip → `EXCEPTION_ACCESS_VIOLATION call [rax+0x28]`
+  rax=0 (null item vfunc), MFO.dll frame 5. Fixed by extending `core/ActionGate.cpp`
+  to also deny that context node's `act()` (slot 0x02, ForceFail path,
+  `apmf::cbt::kCastContextNodes`), classified `Cast|Offense`. The firing-only deny
+  LOOKED complete because it stopped the visible cast; the CTD proved a setup path
+  it never touched.
+- **A path you cannot yet close is a DOCUMENTED GAP, never a silent one.** If an
+  enumerated path has no clean, RTTI-verified (#17), version-robust seat on the
+  pinned CommonLib, DO NOT hook a blind slot and DO NOT pretend the facet is
+  complete. Record it in the audit as an open gap with the precise RE it needs, and
+  scope the claim so a client is not handed a facet whose competitors APMF cannot
+  actually silence. A partial deny presented as complete is the failure this rule
+  exists to end.
+- **Bounded by #0.** Deny completeness NEVER licenses manufacturing behavior to
+  "win" — the deny still only ever flips the engine's own YES to NO for an actor
+  APMF holds a claim on (#17 engine-answer-first). Completeness is about covering
+  every SUPPRESSION path, never about adding a drive/re-assert to out-muscle a
+  competitor.

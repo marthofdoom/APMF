@@ -17,6 +17,17 @@ facet (ch.8b) as ABI v5. NOT on `main`; `main` stays v0.9.0.
   `Allowance::AllowedCast`; the T1 cast leaves via `kCombatActionCat_Cast`) plus a
   bounded TTL auto-release in `ControlMap::Drain`. NO engine cast call (design.md
   §1a). The CLIENT fires its own animated cast; movement untouched.
+- **Deny-completeness (branch `feat/deny-completeness`, 2026-09-04)**: the cast deny
+  was PARTIAL and CTD'd on the deck — it denied the cast-FIRING path but not the
+  cast-CONTEXT-CREATION node, so the AI still built its magic-equip context
+  (`CombatBehaviorContextMagic` CreateContextNode) and raced MFO's forced equip to a
+  null-`CombatInventoryItem` AV (`call [rax+0x28]` rax=0). FIX: `core/ActionGate.cpp`
+  now also denies that node's `act()` (slot 0x02, ForceFail path,
+  `apmf::cbt::kCastContextNodes`), classified `Cast|Offense` — symbols verified
+  present + ID-backed + RTTI-verified at install. The cast deny is now complete across
+  select/fire/setup. New **INVARIANTS #18** (deny completeness) + full
+  `Docs/DENY-COMPLETENESS-AUDIT.md`. Open residual: `kIntent_Equipment` weapon-vs-weapon
+  (same context-node seat is the fix; scoped to a follow-up pass). CI-only, unpushed.
 - **`kCastFlag_FromPackage`**: extracts ONLY spell+target and never runs/offers/
   evaluates the package. Ships the DIRECT-form path; the package-data read is the
   §5.1/§6 fallback (refuses cleanly, client passes the spell directly) because the
