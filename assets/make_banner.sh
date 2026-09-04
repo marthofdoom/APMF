@@ -46,8 +46,6 @@ magick beacon.png \
   -fill '#9a8a5e' -pointsize 30 -kerning 14 -annotate +72+52 "m a r t h" \
   -fill '#eae1cb' -pointsize 88 -kerning 6 -annotate +68+88 "HARBINGER" \
   -fill '#d68a3c' -pointsize 26 -kerning 26 -annotate +76+208 "A P M F" \
-  -font "$P052I" -fill '#8d939e' -pointsize 22 -kerning 1 \
-  -annotate +74+264 "AI Package Management Framework. It referees the mods driving your NPCs." \
   nexus-banner.png
 rm -f base.png beacon.png
 echo "wrote nexus-banner.png (${W}x${H})"

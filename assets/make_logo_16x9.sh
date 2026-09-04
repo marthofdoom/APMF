@@ -44,8 +44,6 @@ magick beacon.png -gravity north \
   -fill '#9a8a5e' -pointsize 44 -kerning 22 -annotate +0+600 "m a r t h" \
   -fill '#eae1cb' -pointsize 134 -kerning 9 -annotate +0+658 "HARBINGER" \
   -fill '#d68a3c' -pointsize 38 -kerning 40 -annotate +8+820 "A P M F" \
-  -font "$P052I" -fill '#8d939e' -pointsize 30 -kerning 1 \
-  -annotate +0+892 "AI Package Management Framework. It referees the mods driving your NPCs." \
   logo-16x9.png
 rm -f base.png beacon.png
 echo "wrote logo-16x9.png (${W}x${H})"
