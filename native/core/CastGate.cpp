@@ -97,10 +97,12 @@ namespace apmf::castgate {
             // FormID -- a form the ch.8 claim never names -- so the ch.8 test below
             // returned FALSE and, because the two were AND-ed, vetoed the ch.8b
             // allowance that was correctly permitting spell||proxy all along.
-            // CastExecutor::PhaseSelect literally calls `hand->CheckCast(castForm)`,
-            // i.e. THIS hook denied APMF's own cast with kMultipleCast, so every
-            // PROXIED cast could never charge (while un-proxied casts animated
-            // fine -- exactly the asymmetry the field saw).
+            // (Historically that denied APMF's OWN driven cast with kMultipleCast, so
+            // every PROXIED cast could never charge while un-proxied ones animated
+            // fine -- the exact asymmetry the field saw. The drive is retired, but the
+            // rule outlives it: with the engine seats, the AI ITSELF charges the proxy
+            // through this same hook, so admitting the claim's proxy here is now what
+            // lets the NPC's own cast get off the ground at all.)
             //
             // The override is deliberately NARROW: `CastClaimNamesForHand` is the
             // strict POSITIVE form (a kIntent_Cast claim must actually STAND, on

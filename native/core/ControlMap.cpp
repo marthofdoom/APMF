@@ -4,6 +4,7 @@
 #include "core/Registry.h"
 #include "core/Clock.h"
 #include "channels/CastCompose.h"   // castcompose::ExtractFromPackage (ch.8b FromPackage read)
+#include "core/CastProxy.h"         // castproxy::Acquire (ch.8b kSelf delivery-flip, writer thread)
 
 namespace apmf {
 
@@ -260,6 +261,7 @@ namespace apmf {
         RE::FormID           castTarget = 0;
         std::uint32_t        castFlags  = 0;
         std::uint64_t        expiresMs  = 0;
+        RE::ActorHandle      castTargetHandle{};
         if (op.intent == APMF_API::kIntent_Cast) {
             // Flags: the kCast op carries them in castFlags; a degenerate
             // RequestEx(kIntent_Cast) carries them in param.ival (kept in parity).
@@ -284,6 +286,46 @@ namespace apmf {
             if (ttl == 0) ttl = APMF_API::kCastDefaultTtlMs;
             if (ttl > APMF_API::kCastMaxTtlMs) ttl = APMF_API::kCastMaxTtlMs;
             expiresMs = apmf::clock::MonotonicMs() + ttl;
+
+            // ---- Resolve the target ONCE, here, on the WRITER thread ------------
+            // The engine seats (core/CastSeats.cpp) run on the COMBAT thread, where a
+            // `TESForm::LookupByID` would take the engine's own forms-map lock. This is
+            // the seat where form lookups are already legal, so the FormID is resolved
+            // to a native ActorHandle now and the seats pay only a handle-table read.
+            // An unresolvable/non-actor target leaves the handle invalid -- the seats
+            // then behave exactly as they do for a dead target (0x0A hands back nothing
+            // to redirect, 0x07 stops the channel), never a guess.
+            if (castTarget != 0) {
+                if (auto* tgt = RE::TESForm::LookupByID<RE::Actor>(castTarget)) {
+                    castTargetHandle = tgt->GetHandle();
+                } else {
+                    spdlog::warn("[ch.8b] cast claim on 0x{}: target 0x{} is not a loadable Actor -- "
+                                 "the seats will not redirect (the AI keeps its own target).",
+                                 apmf::log::Hex(op.actor), apmf::log::Hex(castTarget));
+                }
+            }
+
+            // ---- kSelf DELIVERY FLIP: mint + transient-teach the proxy ----------
+            // Disassembly-CERTAIN (FindTargets 0x5bc160 @0x5bc98a): a kSelf-delivery
+            // spell ALWAYS lands on the caster's own reference -- the Self branch never
+            // reads `desiredTarget`, so seat 0x0A cannot aim it at an ally. The only
+            // honest answer is a delivery-flipped COPY the AI selects instead. Minted
+            // HERE, before the claim is published, so a seat can never see a claim
+            // naming a proxy the actor does not yet know (core/CastProxy.h). A client
+            // that fabricated its OWN proxy (req.proxy != 0) is left alone.
+            if (castProxy == 0 && castTargetHandle && castTarget != op.actor) {
+                if (auto* sp = RE::TESForm::LookupByID<RE::SpellItem>(spell)) {
+                    if (sp->GetDelivery() == RE::MagicSystem::Delivery::kSelf) {
+                        castProxy = apmf::castproxy::Acquire(op.actor, sp);
+                        if (castProxy == 0)
+                            spdlog::warn("[ch.8b] 0x{} claimed a kSelf spell 0x{} at another actor but no "
+                                         "delivery-flip proxy could be minted -- the seats will NOT force "
+                                         "the original form (it would land on the caster). The claim still "
+                                         "stands as a plain deny.",
+                                         apmf::log::Hex(op.actor), apmf::log::Hex(spell));
+                    }
+                }
+            }
         }
 
         auto&      npc     = map[op.actor];
@@ -316,10 +358,11 @@ namespace apmf {
         for (auto& c : cc->claims) oldBest = (c.basis > oldBest) ? c.basis : oldBest;
 
         Claim newClaim{ op.handle, op.basis, effParam };
-        newClaim.castProxy  = castProxy;
-        newClaim.castTarget = castTarget;
-        newClaim.castFlags  = castFlags;
-        newClaim.expiresMs  = expiresMs;
+        newClaim.castProxy        = castProxy;
+        newClaim.castTarget       = castTarget;
+        newClaim.castFlags        = castFlags;
+        newClaim.expiresMs        = expiresMs;
+        newClaim.castTargetHandle = castTargetHandle;
         cc->claims.push_back(newClaim);
         m_index[op.handle] = { op.actor, channel };
 
@@ -639,6 +682,59 @@ namespace apmf {
             outSpell = best->param.form;
             outProxy = best->castProxy;
             if (outFlags) *outFlags = best->castFlags;
+            return true;
+        }
+        return false;   // controlled, but not on the cast channel
+    }
+
+    bool ControlMap::TryGetCastSeatClaim(RE::FormID actor, CastSeatClaim& out) const {
+        // The FIVE-SEAT read (core/CastSeats.cpp, core/EquipGate.cpp). Same RCU reader
+        // discipline as TryGetCastClaim above -- ANY thread; relaxed pre-gate, ONE
+        // acquire-load of a LOCAL frozen snapshot generation, ONE hash lookup, then
+        // everything the seats need copied OUT BY VALUE so nothing aliases
+        // snapshot-owned storage past this call (INVARIANTS #12).
+        //
+        // RELEASE ORDERING (Docs/INVARIANTS.md #20). A release removes the claim from
+        // the writer's private working copy and only then Publish()es it, so a reader
+        // sees EITHER the old generation (claim live, seats answer) OR the new one
+        // (claim gone -> `false` here -> every seat chains to the engine). There is no
+        // torn intermediate and no stale-claim window: the cleared claim is published
+        // BEFORE anything else the release does (the proxy teardown is deliberately
+        // deferred one main-thread hop past the publish -- channels/CastCompose.cpp).
+        out = CastSeatClaim{};
+        if (m_anyControlled.load(std::memory_order_relaxed) == 0) return false;
+
+        std::shared_ptr<const MapType> snap = m_published.load(std::memory_order_acquire);
+        auto it = snap->find(actor);
+        if (it == snap->end()) return false;
+
+        const NpcCtl& npc = it->second;
+        if (!npc.handle.get()) return false;
+
+        auto* channel = Registry::Get().ChannelForIntent(APMF_API::kIntent_Cast);
+        if (!channel) return false;
+
+        for (const auto& cs : npc.channels) {
+            if (cs.channel != channel) continue;
+            if (cs.claims.empty()) return false;
+            // Winner = highest basis; tie -> earliest (the same rule everywhere else).
+            const Claim* best = &cs.claims.front();
+            for (const auto& c : cs.claims) {
+                if (c.basis > best->basis) best = &c;
+            }
+            // A claim whose TTL has elapsed is treated as ALREADY GONE here, without
+            // waiting for the Drain auto-release pass to publish. The pass runs once per
+            // frame; a combat-thread seat can run several times inside that frame, and a
+            // seat answering from an expired claim is exactly the "unprotected drive"
+            // hazard the TTL exists to prevent. Reading the deadline costs one compare.
+            if (best->expiresMs != 0 && apmf::clock::MonotonicMs() >= best->expiresMs) return false;
+
+            out.spell        = best->param.form;
+            out.proxy        = best->castProxy;
+            out.target       = best->castTarget;
+            out.targetHandle = best->castTargetHandle;
+            out.flags        = best->castFlags;
+            out.expiresMs    = best->expiresMs;
             return true;
         }
         return false;   // controlled, but not on the cast channel

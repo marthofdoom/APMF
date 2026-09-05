@@ -55,6 +55,26 @@ namespace apmf {
     using Handle = APMF_API::Handle;
     using Intent = APMF_API::Intent;
 
+    // ch.8b -- everything the five ENGINE SEATS (core/CastSeats.cpp, core/EquipGate.cpp)
+    // need out of a winning kIntent_Cast claim, copied OUT BY VALUE in ONE lock-free RCU
+    // read. Internal C++ only (NOT part of the C-ABI) -- free to change shape.
+    //
+    // Why BY VALUE: a seat runs on the COMBAT thread and must not hold, alias or re-read
+    // snapshot-owned storage after its single read returns (INVARIANTS #12).
+    // Why the HANDLE and not just the FormID: seat 0x0A must hand the engine a native
+    // ActorHandle, and seat 0x07 must resolve the target's live health -- both on the
+    // combat thread, where a `TESForm::LookupByID` would take the engine's own forms-map
+    // lock. The handle is resolved ONCE on the writer thread (`ApplyRequest`, where form
+    // lookups are already legal) and stored, so a seat pays only a handle-table read.
+    struct CastSeatClaim {
+        RE::FormID      spell      = 0;   // param.form -- the spell the claim names
+        RE::FormID      proxy      = 0;   // castProxy -- its delivery-flip substitute (0 if none)
+        RE::FormID      target     = 0;   // castTarget FormID (0 == none/self)
+        RE::ActorHandle targetHandle{};   // resolved once on the writer thread; invalid if unresolved
+        std::uint32_t   flags      = 0;   // APMF_API::kCastFlag_* (hand hint, concentration, stop-pct)
+        std::uint64_t   expiresMs  = 0;   // monotonic-ms hard cap; 0 == none (never for a real cast claim)
+    };
+
     class ControlMap {
     public:
         static ControlMap& Get();
@@ -133,6 +153,16 @@ namespace apmf {
         bool TryGetCastClaim(RE::FormID actor, RE::FormID& outSpell, RE::FormID& outProxy,
                              std::uint32_t* outFlags = nullptr) const;
 
+        // ch.8b -- the FULL winning cast claim for the five engine seats, in ONE
+        // lock-free RCU read (see CastSeatClaim above for why by value / why the
+        // handle). Same reader discipline as TryGetCastClaim: any thread, relaxed
+        // pre-gate, one acquire-load of a frozen snapshot generation, one hash lookup;
+        // read-only, no allocation, no mutex, no follower-list touch. Returns false
+        // (and leaves `out` default-constructed) when the actor has no winning
+        // kIntent_Cast claim -- which is exactly how a seat learns "released, chain to
+        // the engine". Internal C++ only -- not part of the C-ABI.
+        bool TryGetCastSeatClaim(RE::FormID actor, CastSeatClaim& out) const;
+
         // ---- Observability/probe use only (Docs/SPEC-PACKAGE-HOLD.md §4): live
         // Actor* for every actor CURRENTLY claimed on `intent`'s channel (unloaded
         // NPCs filtered via the same npc.handle.get() liveness check OnActorUpdate/
@@ -187,9 +217,17 @@ namespace apmf {
             // nonzero = a bounded cast claim the Drain TTL pass auto-releases at expiry
             // (never a re-assert -- design.md §5a "never a standing hold").
             RE::FormID     castProxy  = 0;   // second allowed FormID for the cast facet
-            RE::FormID     castTarget = 0;   // record only -- APMF never aims
+            RE::FormID     castTarget = 0;   // the claimed cast target (LOAD-BEARING since the
+                                             //   engine seats: 0x0A hands it to the AI as the
+                                             //   magic target, 0x0D as the aim override)
             std::uint32_t  castFlags  = 0;   // kCastFlag_*
             std::uint64_t  expiresMs  = 0;   // 0 = no TTL; nonzero = monotonic-ms deadline
+            // castTarget resolved to a native ActorHandle ONCE on the writer thread
+            // (ApplyRequest), so a COMBAT-THREAD seat never has to run a form lookup
+            // (which would take the engine's forms-map lock). RE::ActorHandle is a
+            // BSPointerHandle -- a plain u32 with `= default` copy/dtor -- so Claim
+            // stays trivially copyable and the RCU deep-copy is unchanged in cost.
+            RE::ActorHandle castTargetHandle{};
         };
         struct ChannelCtl {
             Channel*           channel = nullptr;

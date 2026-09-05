@@ -1,36 +1,49 @@
 #include "PCH.h"
 #include "core/Log.h"
 #include "core/Registry.h"
+#include "core/CastProxy.h"
+#include "core/MainThread.h"
 #include "channels/CastCompose.h"
 
 // ============================================================================
 // Channel 8b -- CAST EXECUTION (design.md §3, the keystone). A kIntent_Cast claim
 // says: "for the next <= N ms, actor X's cast facet is mine -- spell S (and its
-// runtime proxy P), at target T; keep the AI's own casting and re-arming out of
-// the way; do not touch movement." APMF records the owner, DENIES the competitors
-// at three gates it already owns, and auto-releases at the TTL. APMF FIRES NOTHING.
+// runtime proxy P), at target T." APMF records the owner, ANSWERS the engine's own
+// cast-decision seats so the NPC's OWN AI performs that cast, DENIES the AI's
+// competing choices at the gates it already owns, and auto-releases at the TTL.
 //
-// THE BRIGHT LINE (design.md §1a / §3.7). APMF makes NO cast write for this facet:
-// no CastSpellImmediate, no StartCharge/StartCast, no InterruptCast, no
-// NotifyAnimationGraph("MRh_..."), no EquipSpell, no selectedSpells/desiredTarget
-// write. The CLIENT executes its own animated cast through the hand ActorMagicCaster
-// (MFO SPEC-FORCED-CAST.md). This channel is LOG-ONLY, exactly like CastingSelect.cpp
-// (ch.8): the entire effect lives one layer down, in the SAME three gates ch.8
-// already rides plus one ch.7 category bit, reading one more claim kind:
-//   * core/CastGate.cpp   (T2c 0x0A CheckCast)        -- Allowance::AllowedCastForHand
+// THE BRIGHT LINE HOLDS, AND IS NOW STRONGER (design.md §1a / §3.7). APMF makes NO
+// cast write for this facet: no CastSpellImmediate, no StartCharge/StartCast, no
+// InterruptCast, no NotifyAnimationGraph, no EquipSpell, no selectedSpells or
+// desiredTarget write. Every one of those was in the RETIRED forced drive
+// (core/CastExecutor.cpp, gone in feat/ai-cast-seats-impl) and none of them is made
+// anywhere now. The cast is performed end to end by the engine's own behavior tree,
+// on APMF's ANSWERS to five vfunc seats:
+//   * core/EquipGate.cpp  (0x0F CheckShouldEquip)      -- WHICH item enters the hands
+//   * core/CastSeats.cpp  (0x06 CheckStartCast)        -- WHETHER to start
+//   * core/CastSeats.cpp  (0x0A GetMagicTarget)        -- WHERE it applies
+//   * core/CastSeats.cpp  (0x07 CheckStopCast)         -- HOW LONG a channel runs
+//   * core/CastSeats.cpp  (0x0D SetupAimController)    -- the projectile/facing aim
+// plus the exclusivity denies the claim already rode:
+//   * core/CastGate.cpp   (T2c 0x0A CheckCast)         -- Allowance::AllowedCastForHand
 //   * core/EquipGate.cpp  (T2a 0x0F CheckShouldEquip)  -- Allowance::AllowedCastForHand
-//   * core/ActionGate.cpp (T1 cast leaves + ContextMagic CreateContextNode) --
-//     kCombatActionCat_Cast (PER-ACTOR at the ContextMagic node -- no native
-//     hand signal at that seat, documented gap, Docs/DENY-COMPLETENESS-AUDIT.md)
-// CastGate/EquipGate are PER-HAND (feat/deny-perhand, INVARIANTS #18): each
-// resolves its own hand from an engine-native signal (MagicCaster::
-// GetCastingSource() / CombatInventoryItem::itemSlot.equipSlot), and
-// AllowedCastForHand narrows only the claim's own hand, leaving the other
-// hand's AI untouched.
 // and the ControlMap Drain TTL pass (bounded auto-release, NOT a re-assert loop).
-// No engine call is added anywhere; every touch is a deny/arbitrate the code already
-// makes, now reading kIntent_Cast too. A cast is NEVER a package: PackageGate's 0x49
-// thunk only reads kIntent_OfferPackage, so a kIntent_Cast claim is invisible to it.
+// CastGate/EquipGate stay PER-HAND (feat/deny-perhand, INVARIANTS #18): each resolves
+// its own hand from an engine-native signal (MagicCaster::GetCastingSource() /
+// CombatInventoryItem::itemSlot.equipSlot) and narrows only the claim's own hand.
+//
+// NO LONGER PART OF THIS CLAIM: the ch.7 kCombatActionCat_Cast deny and the
+// ContextMagic CreateContextNode deny. Both existed to keep the AI's magic branch
+// silent while APMF drove the cast itself; the AI's magic branch IS the delivery
+// mechanism now, so denying it would silence the claim's own cast. See
+// core/ActionGate.cpp's RETIRED header block. A ch.7 kIntent_CombatAction claim can
+// still deny casting outright -- that is a different, still-live intent.
+//
+// This channel itself stays LOG-ONLY plus ONE lifecycle duty: releasing the
+// delivery-flip proxy (core/CastProxy.h) one main-thread hop AFTER the cleared claim
+// publishes -- see Release() for why the ordering is load-bearing.
+// A cast is NEVER a package: PackageGate's 0x49 thunk only reads
+// kIntent_OfferPackage, so a kIntent_Cast claim is invisible to it.
 // ============================================================================
 
 namespace apmf::castcompose {
@@ -82,8 +95,9 @@ namespace {
         APMF_API::Intent ServesIntent() const override { return APMF_API::kIntent_Cast; }
 
         void Engage(RE::FormID id, RE::Actor* /*actor*/, const APMF_API::APMF_Param& param) override {
-            spdlog::info("[ch.8b] 0x{} cast-execution CLAIMED (spell 0x{}). Bounded TTL, arbitration "
-                         "+ deny only -- the CLIENT fires its own animated cast; APMF makes no cast write.",
+            spdlog::info("[ch.8b] 0x{} cast-execution CLAIMED (spell 0x{}). Bounded TTL. The NPC's OWN AI "
+                         "now selects/equips/charges/aims/fires this spell at the claimed target through the "
+                         "engine seats -- APMF makes no equip, anim or cast write of any kind.",
                          apmf::log::Hex(id), apmf::log::Hex(param.form));
         }
 
@@ -93,9 +107,26 @@ namespace {
         }
 
         void Release(RE::FormID id, RE::Actor* /*actor*/) override {
-            spdlog::info("[ch.8b] 0x{} cast-execution facet released.", apmf::log::Hex(id));
+            spdlog::info("[ch.8b] 0x{} cast-execution facet released -- the seats stop answering the moment "
+                         "the cleared claim publishes; the AI reverts to its own choice on its next "
+                         "equipment rescore.", apmf::log::Hex(id));
+
+            // RELEASE ORDERING (Docs/INVARIANTS.md #20). This runs INSIDE
+            // ControlMap::Drain, on the writer thread, while the release is still only
+            // in the writer's PRIVATE working copy -- the cleared claim has not been
+            // Publish()ed yet, so a combat-thread seat can still see the old generation
+            // for the rest of this frame. Un-teaching the delivery-flip proxy HERE would
+            // therefore pull the form out from under a claim the seats still consider
+            // live. So the teardown is deferred exactly one main-thread hop:
+            // apmf::mainthread::Pump() runs in Arbiter::OncePerFrame IMMEDIATELY AFTER
+            // Drain() returns, i.e. strictly after Publish(). By then every seat already
+            // reads "no claim" and chains to the engine, and freeing the proxy can race
+            // nothing. Same confirmed-main seat, so the AddSpell/RemoveSpell calls stay
+            // legal (core/MainThread.h).
+            apmf::mainthread::Post([id] { apmf::castproxy::Free(id); });
         }
-        // No Tick: the deny lives entirely in the gate consults (INVARIANTS #1).
+        // No Tick: the claim's effect lives entirely in the seat/gate consults
+        // (INVARIANTS #1) -- no re-assert, no per-frame write.
     };
 
 }

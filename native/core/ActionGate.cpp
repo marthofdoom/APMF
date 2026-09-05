@@ -3,7 +3,6 @@
 #include "core/Allowance.h"
 #include "core/CombatBehaviorRE.h"
 #include "core/ControlMap.h"
-#include "core/CastExecutor.h"   // kActFlag_Drive -- the ch.8 +ACT opt-in bit (the "under cast control" scope signal)
 #include "core/ActionGate.h"
 
 #include <array>
@@ -83,35 +82,49 @@
 // "everything else stays allowed" semantics AND the cheap path for the ~58
 // of 70 leaves that are never deniable through this channel.
 //
-// DENY-COMPLETENESS (INVARIANTS #18, 2026-09-04): in ADDITION to the 70 leaves,
-// this gate also installs on the AI's magic cast/equip CONTEXT-CREATION nodes
-// (apmf::cbt::kCastContextNodes -- the CombatBehaviorContextMagic
-// CreateContextNode Base + Node1). That node's act() BUILDS the magic context
-// (CombatBehaviorContextMagic over the EquipContext's CombatInventoryItem)
-// UPSTREAM of the cast-firing leaves and then descends into the magic
-// subtree. Denying it (with the paired pop above) means the AI never builds a
-// magic context, never equips a spell on its own, and never reaches a cast
-// leaf while the facet is held -- the general, spell-agnostic "the combat AI
-// does not cast" gate. Classified Cast|Offense.
+// RETIRED HERE (feat/ai-cast-seats-impl, 2026-09-05) -- read this before adding
+// anything back. THREE things this gate used to do are gone, and two of them are
+// gone because they now DIRECTLY CONTRADICT how the cast facet works:
 //
-// SCOPE ("under cast control" -- when the cast deny arms). The Cast category is
-// denied for an actor when ANY of these claims is winning on it, all read from
-// the same lock-free RCU snapshot (arm = the claim's Drain publish, disarm =
-// its release/TTL publish; no separate flag to race):
-//   * a ch.8b `kIntent_Cast` claim (the client's own executed cast window);
-//   * a ch.7 `kIntent_CombatAction` claim whose mask names Cast (or Offense);
-//   * NEW (feat/ai-cast-suppress): a ch.8 `kIntent_SelectSpell` claim with the
-//     +ACT opt-in (`ival & castexec::kActFlag_Drive`) -- APMF itself drives the
-//     cast (core/CastExecutor.cpp), so for the WHOLE claim window (not just the
-//     ~150 ms internal ch.8b pulse) the AI's own magic branch must be silent:
-//     no context build, no self-equip fighting the drive's EquipSpell, no
-//     autonomous fire of the claimed spell alongside the driven one.
-//   A BARE ch.8 claim (gate-only mode, MFO's offense gambit) deliberately does
-//   NOT arm this: there the client WANTS its AI to build the magic context and
-//   cast the claimed spell itself (Docs/DENY-COMPLETENESS-AUDIT.md row 4).
-// The forced drive is untouched by this gate: CastExecutor equips/animates/
-// fires through ActorEquipManager::EquipSpell, NotifyAnimationGraph and the
-// MagicCaster directly -- none of which route through the behavior tree.
+//  1. The `CombatBehaviorContextMagic` CreateContextNode act()/pop() deny
+//     (`apmf::cbt::kCastContextNodes`) is REMOVED, hooks and classification both.
+//     Its whole purpose was to stop the AI ever BUILDING its magic context, so
+//     APMF's own forced drive could equip and animate a cast without the AI
+//     racing it for the hand. That drive is retired; the cast facet is now
+//     delivered BY the AI's own magic branch (core/CastSeats.cpp), so denying the
+//     context node would suppress the very cast a `kIntent_Cast` claim asks for.
+//     It is also the seat whose act()-only deny caused a months-live CTD (the
+//     data-stack imbalance recorded under "THE NODE PROTOCOL" above and in
+//     INVARIANTS #18) -- removing it is a real, permanent risk reduction, not
+//     just a cleanup. COVERAGE TRADED, stated plainly: an explicit
+//     `kIntent_CombatAction` claim naming Cast/Offense no longer suppresses the
+//     CONTEXT-BUILD path, only the four cast LEAVES (below), so the AI may still
+//     build a magic context and equip a spell it then cannot fire. Recorded as an
+//     open gap in Docs/DENY-COMPLETENESS-AUDIT.md.
+//
+//  2. `kIntent_Cast` (ch.8b) no longer contributes an implicit
+//     `kCombatActionCat_Cast` deny. It used to mean "the client is firing its own
+//     cast, keep the AI's out of the way"; it now means "the AI IS the one
+//     casting, on APMF's answer" -- so contributing a Cast deny would make a cast
+//     claim silence its own cast. A `kIntent_Cast` claim is invisible to this
+//     gate today.
+//
+//  3. A ch.8 `kIntent_SelectSpell` claim with the old `+ACT` drive opt-in bit no
+//     longer contributes anything either -- that bit is retired ABI-wide
+//     (APMF_API.h) along with the drive it selected.
+//
+// WHAT REMAINS, AND WHY IT IS STILL LOAD-BEARING. The four cast LEAVES keep their
+// act()/pop() deny and their Cast|Offense classification, because they serve a
+// DIFFERENT, still-live intent: `kIntent_CombatAction`. A client that genuinely
+// wants "this actor must not cast at all" claims ch.7 with `kCombatActionCat_Cast`
+// (or Offense) and gets exactly that. That is NOT subsumed by the cast seats --
+// the seats make a CLAIMED cast happen; they do not suppress casting in general.
+//
+// SCOPE ("when the cast/offense deny arms"). Exactly ONE source now: a winning
+// ch.7 `kIntent_CombatAction` claim whose own `param.ival` mask names the leaf's
+// classified category. Arm = the claim's Drain publish, disarm = its release
+// publish; no separate flag to race, and never an implicit deny inferred from
+// another intent.
 //
 // PER-HAND (feat/deny-perhand): this gate is PER-ACTOR, not per-hand -- neither
 // the tree node (CombatBehaviorTreeNode's fixed 10-vfunc layout, no per-instance
@@ -147,11 +160,13 @@ namespace apmf::actiongate {
             "CombatBehaviorPrepareDualCast",
         } };
 
-        // The FOUR cast leaves get kCombatActionCat_Cast IN ADDITION to Offense
-        // (design.md §3.5): a kIntent_Cast claim denies exactly these, while a
-        // kIntent_CombatAction(Offense) claim still denies them too (they carry both
-        // bits). RangedAttack et al. are Offense-only, so a cast claim leaves them
+        // The FOUR cast leaves get kCombatActionCat_Cast IN ADDITION to Offense, so a
+        // kIntent_CombatAction claim can name "no casting" (Cast) separately from "no
+        // offense at all" (Offense, which still denies them too -- they carry both
+        // bits). RangedAttack et al. are Offense-only, so a Cast-only claim leaves them
         // firing. All four names land 1:1 on this build's 70-leaf catalog.
+        // NOTE (feat/ai-cast-seats-impl): kIntent_Cast no longer maps onto this
+        // category -- see the file header's RETIRED block.
         constexpr std::array<const char*, 4> kCastLeafNames{ {
             "CombatBehaviorCastImmediateSpell",
             "CombatBehaviorCastConcentrationSpell",
@@ -226,30 +241,16 @@ namespace apmf::actiongate {
             }
             if (actorFid == 0) return orig(a_this, a_control);   // unresolvable -- degrade to passthrough (#17)
 
-            // Build the deny mask from THREE independent claim sources, OR'd (see the
-            // file header's SCOPE section):
-            //   * a real kIntent_CombatAction claim contributes its own ival bitmask;
-            //   * a kIntent_Cast claim (ch.8b) is treated as an IMPLICIT combat-action
-            //     claim with ival = kCombatActionCat_Cast -- it denies ONLY the cast
-            //     leaves + the magic context node (which carry the Cast bit), leaving
-            //     attack/ranged/block/dodge/movement leaves firing so the follower keeps
-            //     fighting while the client's cast plays;
-            //   * a kIntent_SelectSpell claim with the +ACT opt-in (APMF drives the
-            //     cast itself) contributes kCombatActionCat_Cast for the WHOLE claim
-            //     window -- the AI's autonomous magic branch is silent while APMF owns
-            //     the cast. A bare (gate-only) SelectSpell claim contributes nothing.
-            // Any source may be absent. All three are lock-free RCU snapshot reads.
+            // ONE deny source (see the file header's RETIRED/SCOPE sections): a real
+            // ch.7 kIntent_CombatAction claim's own ival bitmask. kIntent_Cast and the
+            // retired ch.8 +ACT bit no longer contribute an implicit Cast deny -- a cast
+            // claim is now DELIVERED BY the AI's own magic branch (core/CastSeats.cpp),
+            // so denying that branch would silence the very cast being claimed. One
+            // lock-free RCU snapshot read.
             std::uint32_t denyMask = 0;
             APMF_API::APMF_Param caClaim{};
             if (apmf::ControlMap::Get().TryGetOwningClaim(actorFid, APMF_API::kIntent_CombatAction, caClaim))
                 denyMask |= static_cast<std::uint32_t>(caClaim.ival);
-            APMF_API::APMF_Param castClaim{};
-            if (apmf::ControlMap::Get().TryGetOwningClaim(actorFid, APMF_API::kIntent_Cast, castClaim))
-                denyMask |= APMF_API::kCombatActionCat_Cast;
-            APMF_API::APMF_Param selClaim{};
-            if (apmf::ControlMap::Get().TryGetOwningClaim(actorFid, APMF_API::kIntent_SelectSpell, selClaim) &&
-                (selClaim.ival & apmf::castexec::kActFlag_Drive) != 0)
-                denyMask |= APMF_API::kCombatActionCat_Cast;
 
             if (denyMask == 0)
                 return orig(a_this, a_control);   // no claim on this actor -- nothing to own
@@ -358,42 +359,18 @@ namespace apmf::actiongate {
                 break;
             }
         }
-        spdlog::info("[ch.8b] {} cast leaf(s) also classified 'cast' -- a kIntent_Cast claim (or a ch.8 +ACT "
-                     "claim) denies exactly these (CastImmediateSpell/CastConcentrationSpell/PrepareDualCast/"
-                     "CastShout), leaving attack/ranged/movement leaves firing.", castClassified);
+        spdlog::info("[ch.7] {} cast leaf(s) also classified 'cast' -- a kIntent_CombatAction claim naming "
+                     "kCombatActionCat_Cast denies exactly these (CastImmediateSpell/CastConcentrationSpell/"
+                     "PrepareDualCast/CastShout), leaving attack/ranged/movement leaves firing. A kIntent_Cast "
+                     "(ch.8b) claim NO LONGER denies them -- it is now delivered BY the AI's own cast branch "
+                     "through the engine seats (core/CastSeats.cpp).", castClassified);
 
-        // ── deny-completeness (INVARIANTS #18): the AI's magic cast/equip
-        // CONTEXT-CREATION node. The cast LEAVES above deny the cast FIRING, but
-        // NOT the upstream node that BUILDS the magic context and descends into
-        // the magic subtree. Install the SAME paired act/pop thunks on those
-        // nodes and classify them Cast|Offense, so a kIntent_Cast, a ch.8 +ACT,
-        // or an Offense claim denies the AI EVER building its magic context (and
-        // therefore ever equipping/charging/firing a spell of its own) while the
-        // facet is held. RTTI-verified per node at install (#17); a node that
-        // does not derive CombatBehaviorTreeNode is skipped, never hooked blind.
-        // Granular: only the ContextMagic node is touched, so melee/ranged/
-        // movement context nodes keep firing.
-        std::array<REL::VariantID, apmf::cbt::kCastContextNodes.size()> ctxVts{};
-        for (std::size_t i = 0; i < apmf::cbt::kCastContextNodes.size(); ++i)
-            ctxVts[i] = apmf::cbt::kCastContextNodes[i].vtbl;
-        const int nCtx    = allowance::InstallOnVtables(ctxVts, 0x02, &ActThunk, expectedTD.get(),
-                                                        "ch.8b-ctx", g_orig);
-        const int nCtxPop = allowance::InstallOnVtables(ctxVts, 0x03, &PopThunk, expectedTD.get(),
-                                                        "ch.8b-ctx-pop", g_origPop);
-        int ctxClassified = 0;
-        for (const auto& node : apmf::cbt::kCastContextNodes) {
-            REL::Relocation<std::uintptr_t> vt{ node.vtbl };
-            if (Paired(vt.address())) {
-                g_category[vt.address()] |=
-                    (APMF_API::kCombatActionCat_Cast | APMF_API::kCombatActionCat_Offense);
-                ++ctxClassified;
-            }
-        }
-        spdlog::info("[ch.8b] {} of {} magic CONTEXT-CREATION node(s) hooked as an act/pop PAIR (slots 0x02+0x03) "
-                     "+ classified Cast|Offense -- a kIntent_Cast / ch.8 +ACT / Offense claim denies the AI "
-                     "BUILDING its magic context at all (no self-equip, no charge, no fire while APMF owns the "
-                     "cast). act hooked: {}, pop hooked: {}.",
-                     ctxClassified, apmf::cbt::kCastContextNodes.size(), nCtx, nCtxPop);
+        // NOT INSTALLED (feat/ai-cast-seats-impl): the magic CONTEXT-CREATION node
+        // (apmf::cbt::kCastContextNodes). See this file's RETIRED header block --
+        // denying the AI's magic context build would now suppress the very cast a
+        // kIntent_Cast claim asks for, and that node's deny is the seat whose
+        // act()-only form caused a months-live data-stack CTD. The RE record for the
+        // node stays in core/CombatBehaviorRE.h; it is simply never hooked.
 
         // Resolve ForceFail's ORIGINAL act() AND pop() -- the deny mechanism is the
         // PAIR. Either half missing => refuse the deny entirely (an unpaired ForceFail

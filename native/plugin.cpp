@@ -6,7 +6,8 @@
 #include "core/Arbiter.h"
 #include "core/ControlMap.h"
 #include "core/AvLedger.h"
-#include "core/CastExecutor.h"
+#include "core/CastProxy.h"
+#include "core/CastSeats.h"
 #include "core/CastGate.h"
 #include "core/EquipGate.h"
 #include "core/ActionGate.h"
@@ -32,11 +33,11 @@ namespace {
     // --- SKSE serialization: co-save the outstanding AV overrides so a
     // save-while-engaged is never stranded across a load (INVARIANTS #15). ---
     void OnSave(SKSE::SerializationInterface* intf) {
-        // A save must never capture a reference to one of the cast drive's TRANSIENT
+        // A save must never capture a reference to one of the cast facet's TRANSIENT
         // runtime 0xFF delivery-flip proxy spells (they are AddSpell'd to the caster
-        // for the length of a cast and do not exist on the next load). Sweep first,
-        // then write our own record. See castexec::PreSaveSweep.
-        apmf::castexec::PreSaveSweep();
+        // for the length of a cast claim and do not exist on the next load). Sweep
+        // first, then write our own record. See castproxy::PreSaveSweep (INVARIANTS #19).
+        apmf::castproxy::PreSaveSweep();
         apmf::av::Save(intf);
     }
     void OnLoad(SKSE::SerializationInterface* intf) {
@@ -51,12 +52,12 @@ namespace {
         // the incoming save's overrides on kPostLoadGame.
         apmf::ControlMap::Get().Clear();
         // ControlMap::Clear() deliberately does NOT call channel->Release, so the
-        // cast drive's own per-actor state and its delivery-flip proxy pool would
-        // otherwise survive the wipe -- leaving all 4 slots owned by actors that no
-        // longer exist (every later ally heal declining with "proxy pool overflow")
-        // and dead 0xFF proxy forms still holding the source spells' borrowed
-        // Effect* into the load-time purge. ResetAll closes both (H2/M8).
-        apmf::castexec::ResetAll();
+        // delivery-flip proxy pool would otherwise survive the wipe -- leaving all 4
+        // slots owned by actors that no longer exist (every later ally heal declining
+        // with "proxy pool overflow") and dead 0xFF proxy forms still holding the
+        // source spells' borrowed Effect* into the load-time purge. ResetAll closes
+        // both (INVARIANTS #19).
+        apmf::castproxy::ResetAll();
         apmf::av::Revert();
     }
 
@@ -72,9 +73,18 @@ namespace {
                                                   // (Docs/PROBE-NONALIAS-PACKAGE.md; VR-refused inside)
             apmf::aicastseats::Install();        // OBSERVE-ONLY: the 4 AI cast-decision seats
                                                   // (CalculateScore/CheckStartCast/GetMagicTarget/
-                                                  // CheckStopCast) -- confirms the RE notebook's
-                                                  // findings on the deck before any architecture is
-                                                  // built on them. VR-refused inside.
+                                                  // CheckStopCast). Both groups still config-gated
+                                                  // OFF by default. VR-refused inside.
+            apmf::castseats::Install();          // ch.8b ACTIVE engine cast seats (0x06/0x07/0x0A/
+                                                  // 0x0D on the Restore caster vtable ONLY).
+                                                  // DELIBERATELY INSTALLED AFTER the passive probe:
+                                                  // write_vfunc chains newest-first, so these sit
+                                                  // OUTSIDE it and the probe keeps logging the
+                                                  // ENGINE's raw answer beneath them -- which is
+                                                  // exactly what makes a deck run able to compare
+                                                  // "what the AI wanted" against "what the claim
+                                                  // answered". The 5th seat (0x0F CheckShouldEquip)
+                                                  // lives in equipgate above. VR-refused inside.
             apmf::nativebitprobe::Install();     // native-bit toggle probe (throwaway; no VR gate needed)
             // T4 (TESActionData::Process) REMOVED (2026-09-03): its call-site patch at
             // valhalla's known site collided with SCAR.dll's own hook on the same AI
@@ -101,12 +111,12 @@ namespace {
             // every channel's claims (including these) through the generic
             // ControlMap path; unlike the old probes, these are real channels.
             apmf::Arbiter::Get().ReleaseAll("kPreLoadGame");
-            // ReleaseAll tears down every DRIVEN hand through the channel (which
-            // un-teaches its proxy); this additionally nulls the proxy pool's 0xFF
-            // forms after clearing their borrowed source Effect*, so the incoming
-            // load's form purge can never free a live spell's effect array through a
-            // dead proxy (H2 -- MFO's Actuation_Direct.cpp lesson).
-            apmf::castexec::ResetAll();
+            // ReleaseAll drops every cast claim through the channel (whose Release
+            // frees its proxy); this additionally nulls the proxy pool's 0xFF forms
+            // after clearing their borrowed source Effect*, so the incoming load's form
+            // purge can never free a live spell's effect array through a dead proxy
+            // (INVARIANTS #19 -- MFO's Actuation_Direct.cpp lesson).
+            apmf::castproxy::ResetAll();
             break;
         case SKSE::MessagingInterface::kPostLoadGame:
             apmf::av::ApplyPending();             // restore any stranded AV overrides

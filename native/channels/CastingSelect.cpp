@@ -1,37 +1,31 @@
 #include "PCH.h"
 #include "core/Log.h"
 #include "core/Registry.h"
-#include "core/CastExecutor.h"
 
 // ============================================================================
-// Channel 8 -- CASTING (SELECTION), now with an +ACT MODE (feat/cast-act,
-// marth 2026-09-05). Historically ARBITRATION + claim lifecycle ONLY, with
+// Channel 8 -- CASTING (SELECTION). ARBITRATION + claim lifecycle ONLY, with
 // enforcement one layer down in the T2 allowance hooks (core/CastGate.cpp T2c
 // CheckCast, core/EquipGate.cpp T2a CheckShouldEquip -- Docs/ALLOWANCE-
-// TEMPLATE.md §3/§7, Phase 2). That shape is UNCHANGED and still applies when
-// a client only wants exclusivity (selects + grants its own AI consent, casts
-// itself).
+// TEMPLATE.md §3/§7). A claim here means: "while I hold this, the ONLY spell
+// this actor's AI may select and charge is `param.form`." APMF makes no engine
+// write for it; the client's own AI casts, and APMF narrows the alternatives.
 //
-// +ACT (this pass) is OPT-IN (marth 2026-09-05, the offense-safety fix): a
-// BARE claim (ival's kActFlag_Drive bit CLEAR -- including ival == 0, the
-// pre-+ACT shape) stays EXACTLY the gate-only mode above -- CastExecutor is
-// never even called, so MFO's offense gambit (which claims this facet only
-// to narrow the AI, e.g. via CastGate/EquipGate, and wants ITS OWN AI to fire)
-// is byte-identical to before this feature existed. ONLY a claim that sets
-// kActFlag_Drive in `ival` gets the +ACT treatment: APMF equips the resolved
-// hand(s), animates the engine's own observed cast sequence, and guarantees
-// delivery -- via core/CastExecutor.cpp. This is a deliberate, scoped
-// exception to "APMF only arbitrates/denies, never executes" (INVARIANTS #0):
-// MFO's own equivalent client-side execution code is being REMOVED for the
-// facets that opt in, so for THOSE claims APMF becomes the sole owner of
-// record, at the CLIENT's explicit request (never invented). See
-// core/CastExecutor.h for the full contract (no ABI change: `ival`, unread by
-// this channel before this pass, now carries the hand mode + the opt-in bit).
+// +ACT IS RETIRED (feat/ai-cast-seats-impl, marth 2026-09-05). This channel
+// briefly carried an opt-in `ival` bit (`kActFlag_Drive`) that handed the claim
+// to core/CastExecutor.cpp, which equipped + animated + fired the cast itself
+// and fell back to `CastSpellImmediate` when it could not. That whole drive is
+// gone. A cast that must actually HAPPEN is now a ch.8b `kIntent_Cast` claim,
+// which the ENGINE SEATS (core/CastSeats.cpp + core/EquipGate.cpp) turn into the
+// NPC's own native animated cast at the claimed target -- strictly better on
+// every axis that mattered (real animation, real charge/fire/concentration, real
+// magicka and interrupt handling, no equip race with the AI, no manufactured
+// effect application).
 //
-// `Release` (and an OnOwnerChanged that DROPS the opt-in bit) restores any
-// driven hand(s) via CastExecutor::Release -- safe to call unconditionally,
-// a no-op when nothing was driving. No `Tick` (CastExecutor's multi-frame
-// work runs via core/MainThread.h's Post/Pump, not a per-actor Tick).
+// So this channel is back to exactly the shape it had before +ACT: log-only, no
+// Tick, no engine write, `ival`/`target`/`pos` accepted and ignored (they stay
+// RESERVED in APMF_API.h so a client that still sets them is byte-compatible and
+// simply gets gate-only behaviour). MFO's offense gambit, which only ever used
+// the gate-only mode, is unaffected.
 // ============================================================================
 
 namespace {
@@ -49,28 +43,21 @@ namespace {
             return keys;
         }
 
-        void Engage(RE::FormID id, RE::Actor* actor, const APMF_API::APMF_Param& param) override {
-            const bool drive = (param.ival & apmf::castexec::kActFlag_Drive) != 0;
-            spdlog::info("[ch.8] 0x{} casting facet CLAIMED (spell 0x{}, ival {}) -- {}.",
-                         apmf::log::Hex(id), apmf::log::Hex(param.form), param.ival,
-                         drive ? "+ACT: APMF drives the cast (CastExecutor)"
-                               : "gate-only: the client's own AI casts; APMF narrows/denies");
-            if (drive) apmf::castexec::Engage(id, actor, param);
+        void Engage(RE::FormID id, RE::Actor* /*actor*/, const APMF_API::APMF_Param& param) override {
+            spdlog::info("[ch.8] 0x{} casting facet CLAIMED (spell 0x{}) -- gate-only: the client's own AI "
+                         "casts; APMF narrows/denies competitors. For a cast APMF should MAKE happen, use "
+                         "kIntent_Cast (ch.8b).", apmf::log::Hex(id), apmf::log::Hex(param.form));
         }
 
-        void OnOwnerChanged(RE::FormID id, RE::Actor* actor, const APMF_API::APMF_Param& param) override {
-            const bool drive = (param.ival & apmf::castexec::kActFlag_Drive) != 0;
-            spdlog::info("[ch.8] 0x{} casting claim RE-POINTED (spell 0x{}, ival {}) -- {}.",
-                         apmf::log::Hex(id), apmf::log::Hex(param.form), param.ival,
-                         drive ? "+ACT" : "gate-only");
-            if (drive) apmf::castexec::OnOwnerChanged(id, actor, param);
-            else       apmf::castexec::Release(id, actor);   // dropped the opt-in -- restore any driven hand
+        void OnOwnerChanged(RE::FormID id, RE::Actor* /*actor*/, const APMF_API::APMF_Param& param) override {
+            spdlog::info("[ch.8] 0x{} casting claim RE-POINTED (spell 0x{}).",
+                         apmf::log::Hex(id), apmf::log::Hex(param.form));
         }
 
-        void Release(RE::FormID id, RE::Actor* actor) override {
+        void Release(RE::FormID id, RE::Actor* /*actor*/) override {
             spdlog::info("[ch.8] 0x{} casting facet released.", apmf::log::Hex(id));
-            apmf::castexec::Release(id, actor);   // no-op if this claim was never driving
         }
+        // No Tick: the narrowing lives entirely in the gate consults (INVARIANTS #1).
     };
 
 }

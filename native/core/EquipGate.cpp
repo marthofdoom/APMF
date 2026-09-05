@@ -2,7 +2,10 @@
 #include "core/Log.h"
 #include "core/Allowance.h"
 #include "core/ControlMap.h"
+#include "core/ControlMap.h"
 #include "core/EquipGate.h"
+
+#include <unordered_set>
 
 // ============================================================================
 // T2a -- CheckShouldEquip, the combat AI's per-item "should I put this in my
@@ -62,6 +65,17 @@
 // entirely in favor of two independent APMF claims (ch.8 + ch.15) whose
 // deny decisions this ONE hook now combines.
 //
+// ch.8b SEAT 0x0F (feat/ai-cast-seats-impl, 2026-09-05) -- this file now hosts
+// the FIRST of the five engine cast seats (the other four live in
+// core/CastSeats.cpp, which explains the whole set). While a `kIntent_Cast` claim
+// stands, the claimed heal's Restore item is answered ELIGIBLE here WITHOUT
+// chaining, because the Restore templates' own `CheckShouldEquip` IS the vanilla
+// self/foe health gate (`0x81f7c0`, which reads its target straight off the
+// CombatController and can therefore never be redirected). That is the one
+// non-chaining answer in this codebase; see the SEAT 0x0F block in the thunk and
+// Docs/INVARIANTS.md #20. Every other path through this thunk is unchanged and
+// still strictly engine-answer-first.
+//
 // PER-HAND (2026-09-0x, INVARIANTS #18): a `CombatInventoryItem` instance
 // carries its OWN `itemSlot.equipSlot` (a real member, static_assert'd offset
 // below) -- the AI sets this to the vanilla Left/Right Hand BGSEquipSlot when
@@ -96,6 +110,12 @@ namespace apmf::equipgate {
         using CheckShouldEquip_t = bool (*)(RE::CombatInventoryItem*, RE::CombatController*);
 
         std::unordered_map<std::uintptr_t, std::uintptr_t> g_orig;
+        // ch.8b SEAT 0x0F (feat/ai-cast-seats-impl): which of the 30 patched item
+        // vtables are the RESTORE templates. Recorded at install from the two NAMED
+        // symbols (never inferred) so the seat's non-chaining force is scoped to
+        // exactly the vtables whose CheckShouldEquip IS the vanilla self/foe health
+        // gate -- see the SEAT 0x0F block in the thunk below.
+        std::unordered_set<std::uintptr_t> g_restoreVtables;
         std::atomic<bool> g_installed{ false };
 
         // Per-hand deny (INVARIANTS #18): the vanilla Left/Right Hand BGSEquipSlot
@@ -117,31 +137,98 @@ namespace apmf::equipgate {
             if (oit == g_orig.end()) return false;
             const auto original = reinterpret_cast<CheckShouldEquip_t>(oit->second);
 
+            // Resolve the deliberating actor, the subject form and the hand BEFORE the
+            // engine call. The DENY half below still runs engine-answer-first (nothing
+            // resolved here is acted on until after `original`); the ch.8b SEAT 0x0F
+            // block is the one branch that must decide WITHOUT chaining, and it can
+            // only do so if it has these three facts in hand first. See the seat's own
+            // block for why chaining is structurally impossible there.
+            RE::FormID           fid          = 0;
+            RE::FormID           subjectForm  = 0;
+            allowance::Hand      callerHand   = allowance::Hand::kUnknown;
+            if (a_cc) {
+                auto  attPtr = a_cc->attackerHandle.get();   // NiPointer<Actor>
+                if (auto* actor = attPtr.get()) fid = actor->GetFormID();
+
+                auto* item  = a_this->item;
+                subjectForm = item ? item->GetFormID() : 0;
+
+                // Per-hand deny (INVARIANTS #18): resolve which hand THIS item instance
+                // is for from its own itemSlot.equipSlot -- a real struct member (see
+                // the static_assert above), not an invented offset. Neither vanilla
+                // hand slot (kEitherHandEquip, a null slot, or the singleton table not
+                // yet resolved) degrades to kUnknown -- AllowedCastForHand then falls
+                // back to the actor-wide floor, never a guess.
+                auto*      slot = a_this->itemSlot.equipSlot;
+                const auto lh   = g_leftHandSlot.load(std::memory_order_acquire);
+                const auto rh   = g_rightHandSlot.load(std::memory_order_acquire);
+                callerHand =
+                    (slot && slot == lh) ? allowance::Hand::kLeft  :
+                    (slot && slot == rh) ? allowance::Hand::kRight :
+                                            allowance::Hand::kUnknown;
+            }
+
+            // ================================================================
+            // ch.8b SEAT 0x0F -- WHICH ITEM ENTERS THE HANDS. THE ONE NON-CHAINING
+            // ANSWER IN THIS CODEBASE. (feat/ai-cast-seats-impl; Docs/INVARIANTS.md
+            // #20 states the exception and its three conditions.)
+            //
+            // WHY IT CANNOT CHAIN. The five concrete Restore ITEM templates OVERRIDE
+            // CheckShouldEquip with `CombatInventoryItemMagic::CheckShouldEquip
+            // (return true) && 0x81f7c0(ctrl, item)`. That static pre-check has NO
+            // caster object -- it takes its target DIRECTLY off the CombatController
+            // (`spell delivery == kSelf ? ctrl.attacker : ctrl.TARGET`) and runs
+            // `ShouldRestore` on it. So the ORIGINAL's answer for a HEALTHY follower
+            // fighting a HEALTHY foe is always NO, there is no seat between it and
+            // the fields it reads, and `engineSays == false` above would return
+            // before anything downstream ran. Chaining here cannot express "heal the
+            // ally": the equipment set never admits the heal, the magic context is
+            // never built, and seats 0x06/0x0A/0x07/0x0D are NEVER CALLED. This is
+            // THE seat that unblocks the whole facet, and it is answered from the
+            // claim.
+            //
+            // WHY THAT IS STILL NOT "MANUFACTURING A DECISION" (#0). APMF does not
+            // perform the equip, choose the hand, time it, or animate it: this only
+            // says "this heal is ELIGIBLE for your equipment set." The AI's own
+            // selection loop still scores it, still applies its slot-mask/range/
+            // blackboard/resource gates, still runs its own `Equip magic` leaf with
+            // its own animation, and is free not to pick it. And it is the engine's
+            // OWN eligibility signal, one level up -- exactly what the engine emits
+            // for a vanilla self-heal.
+            //
+            // SCOPE, three ways, all required simultaneously:
+            //   * only the RESTORE item templates (recorded at install; every other
+            //     magic/staff template still chains unconditionally, as before);
+            //   * only the DRIVEN FORM of a live kIntent_Cast claim on THIS actor
+            //     -- proxy-when-one-exists, else spell, so the original kSelf form is
+            //     never forced (it would land on the caster, not the ally); and
+            //   * only the claim's OWN HAND when this call resolves to one.
+            // ================================================================
+            if (fid != 0 && subjectForm != 0 && g_restoreVtables.contains(vt)) {
+                apmf::CastSeatClaim seat{};
+                if (apmf::ControlMap::Get().TryGetCastSeatClaim(fid, seat) && seat.targetHandle) {
+                    const RE::FormID driven = seat.proxy ? seat.proxy : seat.spell;
+                    const bool       handOk =
+                        (callerHand == allowance::Hand::kUnknown) ||
+                        (callerHand == ((seat.flags & APMF_API::kCastFlag_LeftHand)
+                                            ? allowance::Hand::kLeft : allowance::Hand::kRight));
+                    if (handOk && driven != 0) {
+                        if (subjectForm == driven) return true;   // THE non-chaining answer
+                        // N4 exactness: while a delivery-flip proxy is being driven, the
+                        // ORIGINAL kSelf spell's own Restore item must NOT be allowed to
+                        // take the hand instead -- the AI would cast it and silently heal
+                        // the CASTER. `AllowedCastForHand` permits spell||proxy, so it
+                        // would let this through; deny it explicitly here.
+                        if (seat.proxy != 0 && subjectForm == seat.spell) return false;
+                    }
+                }
+            }
+
+            // ---- From here down: UNCHANGED, engine-answer-first DENY (#17). The
+            // engine gets the first word and APMF only ever flips its YES to NO. ----
             const bool engineSays = original(a_this, a_cc);
             if (!engineSays) return false;   // the AI already declined -- nothing to own
-            if (!a_cc) return engineSays;
-
-            auto attPtr = a_cc->attackerHandle.get();   // NiPointer<Actor>
-            auto* actor = attPtr.get();
-            if (!actor) return engineSays;
-            const auto fid = actor->GetFormID();
-
-            auto* item = a_this->item;
-            const auto subjectForm = item ? item->GetFormID() : 0;
-
-            // Per-hand deny (INVARIANTS #18): resolve which hand THIS item instance
-            // is for from its own itemSlot.equipSlot -- a real struct member (see
-            // the static_assert above), not an invented offset. Neither vanilla
-            // hand slot (kEitherHandEquip, a null slot, or the singleton table not
-            // yet resolved) degrades to kUnknown -- AllowedCastForHand then falls
-            // back to the actor-wide floor, never a guess.
-            auto* slot = a_this->itemSlot.equipSlot;
-            const auto lh = g_leftHandSlot.load(std::memory_order_acquire);
-            const auto rh = g_rightHandSlot.load(std::memory_order_acquire);
-            const auto callerHand =
-                (slot && slot == lh) ? allowance::Hand::kLeft  :
-                (slot && slot == rh) ? allowance::Hand::kRight :
-                                        allowance::Hand::kUnknown;
+            if (!a_cc || fid == 0) return engineSays;
 
             // Off-hand loan exemption (mirrors MFO CombatStyle.cpp's WantedSpell
             // rule): if this item IS the actor's own actively-claimed ch.8 spell,
@@ -265,10 +352,23 @@ namespace apmf::equipgate {
 
         const int n = allowance::InstallOnVtables(kVtables, kCheckShouldEquip, &EquipGateThunk,
                                                    expectedTD.get(), "t2a", g_orig);
+
+        // ch.8b SEAT 0x0F scope (feat/ai-cast-seats-impl): record WHICH of the vtables
+        // just patched are the RESTORE templates, from the two NAMED symbols -- never
+        // inferred from a class name at runtime. Only these two may ever take the
+        // seat's non-chaining branch; the other 28 keep chaining unconditionally.
+        // A symbol InstallOnVtables SKIPPED (failed RTTI derivation) is simply absent
+        // from g_orig, so the thunk never runs for it and this set is harmless.
+        for (const auto& id : { RE::VTABLE_CombatInventoryItemMagicT_CombatInventoryItemMagic_CombatMagicCasterRestore_[0],
+                                RE::VTABLE_CombatInventoryItemMagicT_CombatInventoryItemStaff_CombatMagicCasterRestore_[0] }) {
+            REL::Relocation<std::uintptr_t> vt{ id };
+            if (g_orig.contains(vt.address())) g_restoreVtables.insert(vt.address());
+        }
         spdlog::info("[t2a] CheckShouldEquip allowance hooked on {} spell/staff inventory-item "
                      "vtable(s) -- ch.8 casting-select and ch.15 equipment (weapon-order) "
                      "claims now enforced here too; ch.8b is per-hand-scoped via "
-                     "itemSlot.equipSlot (left-hand slot {}, right-hand slot {}).",
+                     "itemSlot.equipSlot (left-hand slot {}, right-hand slot {}). ch.8b SEAT 0x0F "
+                     "armed on the Restore templates only.",
                      n, static_cast<void*>(g_leftHandSlot.load(std::memory_order_relaxed)),
                      static_cast<void*>(g_rightHandSlot.load(std::memory_order_relaxed)));
     }

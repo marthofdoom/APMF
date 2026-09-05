@@ -30,11 +30,13 @@ namespace apmf {
     void Arbiter::OncePerFrame() {
         ControlMap::Get().Drain();
 
-        // ch.8 SelectSpell +ACT (feat/cast-act): drain the cast-drive phase chain
-        // (core/CastExecutor.cpp) on this SAME confirmed-main seat -- Engage/
-        // OnOwnerChanged/Release (called from Drain() above) may start a drive, and
-        // its multi-frame phases (equip-select poll, charge poll) re-Post themselves
-        // here every frame. See core/MainThread.h for why this seat, not AddTask.
+        // Drain the confirmed-main-thread task queue, on this SAME seat and STRICTLY
+        // AFTER ControlMap::Drain() has published its new snapshot. That ordering is
+        // load-bearing, not incidental: ch.8b's Release posts the delivery-flip proxy
+        // teardown here precisely so it lands AFTER the cleared claim is visible to
+        // the combat-thread cast seats (Docs/INVARIANTS.md #20's release-ordering
+        // rule; channels/CastCompose.cpp). See core/MainThread.h for why this seat
+        // and not SKSE's AddTask.
         apmf::mainthread::Pump();
 
         // Docs/SPEC-PACKAGE-HOLD.md §4.1 item 1 -- OBSERVE-ONLY package-drift

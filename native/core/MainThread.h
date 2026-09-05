@@ -18,8 +18,15 @@
 // Any thread may Post(); Pump() executes every queued task ONCE, in FIFO order,
 // and must be called ONLY from the confirmed-main seat (`Arbiter::OncePerFrame`,
 // right after `ControlMap::Drain()`). A task that needs another frame re-Posts
-// itself -- the exact multi-frame phase-chain pattern `core/CastExecutor.cpp`
-// uses to drive the observed BeginCast->Charging->Charged->SpellFire sequence.
+// itself.
+//
+// ITS ONE LOAD-BEARING USE TODAY (the forced cast drive that used to re-Post its
+// phase chain here is retired): ch.8b's claim Release posts the delivery-flip
+// proxy teardown through this queue so the un-teach happens STRICTLY AFTER the
+// cleared claim has been published to the combat-thread cast seats. Release runs
+// inside `ControlMap::Drain`, before `Publish()`; `Pump()` runs right after
+// `Drain()` returns, so this is the cheapest correct place to put "one hop later,
+// same thread" (Docs/INVARIANTS.md #20).
 // ============================================================================
 
 namespace apmf::mainthread {
