@@ -49,7 +49,13 @@ namespace apmf::castexec {
                       "MagicCaster::State baseline moved -- re-check the raw-int "
                       "charge-state gates below (PhaseFire/PhaseSelect)");
 
-        constexpr int   kSelectTries         = 6;     // frames to wait for the equip to select
+        // kSelectTries was 6 (~100ms) -- WRONG BY ~40x (deck field evidence,
+        // 2026-09-05): the equip queue can take far longer than a handful of
+        // frames to land, and the OLD gate (MagicCaster::currentSpell) never
+        // becomes true pre-cast at all (see PhaseSelect's header). Raised to a
+        // multi-second cap, sane but generous -- see PhaseSelect.
+        constexpr int   kSelectPolls         = 300;   // frames (~5s) to wait for the EQUIP to land
+        constexpr int   kSelectLogEveryN     = 30;    // ~0.5s -- periodic diagnostic without log spam
         constexpr int   kChargePolls         = 180;   // frames (~3s) to wait for Charged before degrading
         constexpr int   kConcentrationHoldPolls = 180;   // frames (~3s) a concentration spell CHANNELS
                                                           // after firing, so it heals/applies over a real
@@ -203,6 +209,23 @@ namespace apmf::castexec {
             return a_actor->GetFormID();   // neither -- self (conservative; never a guess)
         }
 
+        // Diagnostic-only (2026-09-05 field fix, requirement 4): dumps the THREE
+        // signals a select-wait cares about -- what's actually in the hand's
+        // equip slot (the thing we're waiting to become `castForm`), the
+        // caster's raw state, and MagicCaster::currentSpell (kept for
+        // comparison even though it's no longer the gate) -- so a deck run
+        // tells us definitively if this still doesn't land, rather than another
+        // guess. Never gates anything; log-only.
+        void LogHandDiagnostic(RE::Actor* a_actor, RE::MagicCaster* a_hand, bool a_left, const char* a_why) {
+            auto* eq = a_actor->GetEquippedObject(a_left);
+            spdlog::info("[ch.8+act] 0x{} {} hand diag ({}): equipped=0x{} ('{}') state={} currentSpell=0x{}",
+                         apmf::log::Hex(a_actor->GetFormID()), a_left ? "left" : "right", a_why,
+                         apmf::log::Hex(eq ? eq->GetFormID() : 0),
+                         eq && eq->GetName() ? eq->GetName() : "none",
+                         static_cast<std::uint32_t>(a_hand->state.get()),
+                         apmf::log::Hex(a_hand->currentSpell ? a_hand->currentSpell->GetFormID() : 0));
+        }
+
         // Guaranteed-delivery fallback (marth's rule #5): a direct effect apply
         // via the kInstant caster, bypassing the animated drive entirely. Uses
         // whatever form was ALREADY resolved as castForm (the proxy if the
@@ -349,10 +372,25 @@ namespace apmf::castexec {
             apmf::mainthread::Post([c, pollsLeft] { PhaseFire(c, pollsLeft - 1); });
         }
 
-        // Phase 1: wait for the (queued) equip to actually SELECT the driven form,
-        // then start the request from rest with the BeginCast anim +
-        // RequestCastImpl, and hand to PhaseFire.
-        void PhaseSelect(DriveCtx c, int triesLeft) {
+        // Phase 1: wait for the ALREADY-QUEUED equip (issued once, in
+        // StartHandDrive) to land, then start the request from rest with the
+        // BeginCast anim + RequestCastImpl, and hand to PhaseFire.
+        //
+        // SELECT SIGNAL (2026-09-05 field fix, replacing a 100% degrade). This
+        // used to gate on `MagicCaster::currentSpell == castForm`. Deck evidence
+        // (APMF.log, both hands, proxied AND un-proxied spells alike) showed it
+        // NEVER becomes true within any pre-cast window: `currentSpell` is
+        // populated only once the caster STARTS CASTING (state charging/
+        // charged/casting), not merely once a spell is equipped-and-ready --
+        // core/CastObserve.h's own passive observer confirms this independently
+        // (every logged line carrying a spell is at state>=2; state==1(ready)
+        // NEVER carries one). Gating a PRE-cast check on a field that is only
+        // set BY casting is a logic inversion that can never pass -- exactly the
+        // reported 100% degrade. The correct signal for "did the equip land" is
+        // the ACTOR's equipped object for that hand (MFO's own established
+        // pattern, e.g. its Loadout.cpp/Actuation.cpp: "selection comes from the
+        // equip, NOT currentSpell").
+        void PhaseSelect(DriveCtx c, int pollsLeft) {
             if (!Live(c)) return;
             auto* actor    = RE::TESForm::LookupByID<RE::Actor>(c.fid);
             auto* castForm = RE::TESForm::LookupByID<RE::SpellItem>(c.castForm);
@@ -361,23 +399,29 @@ namespace apmf::castexec {
             auto* hand = actor->GetMagicCaster(c.left ? CS::kLeftHand : CS::kRightHand);
             if (!hand) { FireFallback(c); TeardownHand(c); return; }
 
-            if (hand->currentSpell != castForm) {   // equip queued -- not selected yet
-                if (triesLeft <= 0) {
-                    spdlog::info("[ch.8+act] 0x{} never selected the drive form 0x{} -- degrading.",
-                                 apmf::log::Hex(c.fid), apmf::log::Hex(c.castForm));
+            if (actor->GetEquippedObject(c.left) != castForm) {   // the equip hasn't landed yet
+                if (pollsLeft % kSelectLogEveryN == 0)
+                    LogHandDiagnostic(actor, hand, c.left, "waiting-for-equip");
+                if (pollsLeft <= 0) {
+                    LogHandDiagnostic(actor, hand, c.left, "never-equipped -- degrading");
                     FireFallback(c);
                     TeardownHand(c);
                     return;
                 }
-                if (auto* mgr = RE::ActorEquipManager::GetSingleton())
-                    mgr->EquipSpell(actor, castForm, HandSlot(c.left));
-                actor->DrawWeaponMagicHands(true);
-                apmf::mainthread::Post([c, triesLeft] { PhaseSelect(c, triesLeft - 1); });
+                // Do NOT re-issue EquipSpell here -- it was already queued ONCE
+                // in StartHandDrive. Re-issuing every poll was the equip/
+                // interrupt/re-equip churn a prior deck cycle logged (and, paired
+                // with the AI's own context rebuild, tipped a since-fixed deny
+                // gap into a CTD) -- just wait for the ONE queued equip to land.
+                apmf::mainthread::Post([c, pollsLeft] { PhaseSelect(c, pollsLeft - 1); });
                 return;
             }
 
-            // Selected. Drive ONLY from rest (re-requesting mid-sequence wedges the
-            // caster in charge-glow -- the field-proven discipline this replicates).
+            LogHandDiagnostic(actor, hand, c.left, "equipped -- proceeding to BeginCast");
+
+            // Equipped. Drive ONLY from rest (re-requesting mid-sequence wedges
+            // the caster in charge-glow -- the field-proven discipline this
+            // replicates).
             if (hand->state.get() != RE::MagicCaster::State::kNone)
                 hand->InterruptCast(true);
             if (target) hand->desiredTarget = target->CreateRefHandle();
@@ -444,7 +488,7 @@ namespace apmf::castexec {
                          apmf::log::Hex(hd.castForm), apmf::log::Hex(hd.target));
 
             DriveCtx c{ id, hd.spell, hd.castForm, hd.target, left, hd.epoch };
-            PhaseSelect(c, kSelectTries);
+            PhaseSelect(c, kSelectPolls);
         }
 
         // 0 auto (prefers a free hand, no weapon there) / 1 right / 2 left / 3 dual.
