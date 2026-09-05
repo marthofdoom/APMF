@@ -187,14 +187,31 @@ winning ch.6 claim, else self; `param.posX/Y/Z` is RESERVED, not yet read) ->
 `AddSpell`'s the proxy so it's actually selectable, 2026-09-05 field fix -- if a
 self-delivery spell resolves to a non-self target, an internal `kIntent_Cast`
 protection claim via `ControlMap::EnqueueCast`,
-`ActorEquipManager::EquipSpell`) -> `PhaseSelect`/`PhaseFire` (the observed
+`ActorEquipManager::EquipSpell`) -> the phase chain (the observed
 BeginCast->Charging->Charged->SpellFire sequence, `core/MainThread.h`-posted across
-frames) -> for a CONCENTRATION spell, `PhaseHold` (keeps the channel + claim
-alive up to `kConcentrationHoldPolls` ~3s or until the caster exits the state on
-its own, so a heal applies over a real window, not one pulse) -> `ParkHand`/
-`TeardownHand` (interrupt/anim/deselect/release-claim/free-proxy) or
-`FireFallback` (`CastSpellImmediate` on the kInstant caster) on any degrade path
-(VR, never-selects, never-charges). Per-actor/per-hand state (`g_drives`) is
+frames, one poll per frame):
+`PhaseSelect` (wait for the ONE queued equip via `Actor::GetEquippedObject`, then
+interrupt + the paired anim stop tail) -> `PhaseRest` (H6: poll until the caster is
+genuinely at `kNone` BEFORE `BeginCast` + `RequestCastImpl` -- the interrupt and the
+drive must NOT share a frame) -> `PhaseFire` (>=3 -> SpellFire; `everLeftRest` keeps
+a not-spun-up-yet 0 from reading as terminal; `everCharging` keeps a cast that
+COMPLETED between two polls from double-applying via the fallback, M3) -> for a
+CONCENTRATION spell `PhaseHold` (keeps the channel + claim alive for `kConcHoldMs`
+~3s of WALL CLOCK, re-asserting `desiredTarget` each poll (M2), ending only on a
+state-0 read AFTER the channel was seen running (M1)), otherwise `PhaseParkWait`
+(short bounded grace so the release animation finishes; M7 post-fire diagnostic) ->
+`ParkHand` (emits the balanced stop tail + un-teaches/deselects a PROXY castForm so
+no transient can reach a save, H3/H7; releases the claim, keeps the hand ours) /
+`TeardownHand` (stop tail/deselect/release-claim/free-proxy) or `FireFallback`
+(`CastSpellImmediate` on the kInstant caster) on any degrade path (VR,
+never-selects, never-reaches-rest, never-charges).
+ALL budgets are WALL-CLOCK deadlines on `apmf::clock::MonotonicMs` (`Budget` +
+`MakeBudget`/`Expired`/`LogDue`), never frame counts (H4) -- and every phase deadline
+is clamped to ONE whole-drive ceiling `kDriveTotalMs` (12s), `static_assert`'d to
+finish inside the frozen `APMF_API::kCastMaxTtlMs` (15s) so a drive can never outlive
+its own protection claim (H5). `ResetAll` (revert + kPreLoadGame) and `PreSaveSweep`
+(SKSE save callback) are the proxy-pool lifecycle hooks -- see INVARIANTS #19.
+Per-actor/per-hand state (`g_drives`) is
 writer-thread-only (Drain seat + MainThread::Pump, same thread) -- no lock.
 - **What breaks:** the whole per-hand PROTECTION relies on feat/deny-perhand's
   CastGate/EquipGate/ActionGate deny already being live -- this module assumes
@@ -212,7 +229,19 @@ writer-thread-only (Drain seat + MainThread::Pump, same thread) -- no lock.
   `RemoveSpell`s it -- `Free` is the ONE choke point every teardown path already
   calls unconditionally, so this stays leak-safe (a lingering known/equipped
   transient spell historically caused a light-limit CTD) without needing a
-  second cleanup site.
+  second cleanup site. The proxy is ALSO a SAVE hazard and a LOAD hazard
+  (INVARIANTS #19): it must never be known to the actor when a save is taken
+  (`ParkHand` un-teaches it; `PreSaveSweep` sweeps whatever phase the chain is in),
+  and its BORROWED source `Effect*` must be cleared before a load purges the dead
+  0xFF form (`ResetAll` -> `proxy::Reset`, wired to BOTH the revert callback and
+  kPreLoadGame in `plugin.cpp`; `ControlMap::Clear()` does not call
+  `channel->Release`, so without `ResetAll` the pool stays owned by dead actors
+  forever and every later ally heal declines as overflow). Every timing budget here
+  is WALL CLOCK -- reintroducing a frame count makes the drive frame-rate-dependent
+  (a 144fps machine got 2.1s against a measured ~5s engine) and can float the drive
+  past its own claim TTL. `kHandDual` is a KNOWN GAP (H8): only one `kIntent_Cast`
+  claim wins per actor, so a dual drive has one protected hand and one unprotected
+  -- fixing it needs a hand BITMASK in the claim, not a change here.
 
 ### `native/core/Input.{h,cpp}` — test surface
 `InputSink` (keyboard button-down) → `Arbiter::DispatchHotkey` (+ `probe::OnHotkey`).
@@ -236,8 +265,16 @@ blind), `Allowed` (the one shared "flip YES->NO" decision: a lock-free RCU
 `allowance::Hand{kUnknown,kLeft,kRight}` the CALLER resolved from its own
 engine-native signal, and ALLOWS without narrowing when it differs from the
 claim's `CastFlags::kCastFlag_LeftHand` bit — feat/deny-perhand, INVARIANTS
-#18). Consumed today by `core/CastGate.cpp` (T2c) and `core/EquipGate.cpp`
+#18), and `CastClaimNamesForHand` (the strict POSITIVE form of the same read: a
+ch.8b claim must actually STAND, on THIS hand, naming THIS exact spell-or-proxy).
+Consumed today by `core/CastGate.cpp` (T2c) and `core/EquipGate.cpp`
 (T2a); T1/T3/T4 reuse the same pieces when built.
+`CastClaimNamesForHand` exists because of H1: a ch.8 `kIntent_SelectSpell` claim
+names the ORIGINAL spell, so the moment the +ACT drive mints a delivery-flip PROXY,
+`Allowed(fid, kIntent_SelectSpell, proxyFid)` denied APMF's OWN driven cast — and
+because ch.8 and ch.8b were AND-ed, ch.8b's correct spell||proxy allowance could
+never rescue it. Both gates now let a matching cast claim ADMIT its own form ahead
+of the ch.8 narrow.
 - **What breaks:** `Allowed`/`InstallOnVtables`'s thunk callers run on COMBAT
   THREADS (§5) — never take a lock, never touch the follower/actor list, never
   call anything beyond the stored `orig` + one ControlMap read. `DerivesFrom`
