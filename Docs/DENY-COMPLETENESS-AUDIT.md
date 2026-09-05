@@ -29,7 +29,7 @@ node-protocol fix" below.
 | 1a | `kIntent_Gait` (ch.1a) | DENY AV | `kSpeedMult` AV = the sole pace input | set `kSpeedMult` via co-saved ledger (`channels/Speed.cpp`) | **YES (source-gate)** — one input, owned | — |
 | 2 | `kIntent_Disposition` (ch.11) | DENY AV | `kAggression`/`kConfidence`/`kMorality`/`kAssistance` — the AVs the engine's own combat/flee/assist decisions read | set the AVs via co-saved ledger (`channels/Attribute.cpp`) | **YES (source-gate)** — biases the AI's own decision at its only input; no other path | — |
 | 16 | `kIntent_Detection` (ch.16) | DENY AV | `detectionModifier` + `kDetectLifeRange`/`kMovementNoiseMult` AVs | set the detect AVs (`channels/Detection.cpp`) | **YES (source-gate)** for the detection-AV facet | Sneaking POSTURE is a SEPARATE facet (ch.3 stance) — see row ch.3; not a leak of this facet |
-| 4 | `kIntent_SelectSpell` (ch.8), BARE (gate-only) | ARBITRATE + DENY (exclusivity) | AI charges a spell (`CheckCast` 0x0A); AI equips a spell/staff to hand (`CheckShouldEquip` 0x0F) | deny any spell/staff ≠ `param.form` at BOTH gates (`core/CastGate.cpp`, `core/EquipGate.cpp` via `Allowance::Allowed`) | **YES (gated)** — this facet NARROWS the AI to one spell (it does NOT stop casting). The magic context-node BUILD is *correct* here (it builds context for the claimed spell, which the client WANTS its AI to cast), so denying it would be wrong — deliberately not denied under a bare SelectSpell | — (context-node deny is `kIntent_Cast` / ch.8 +ACT / Offense-only by design, see rows 4+ACT and 8b) |
+| 4 | `kIntent_SelectSpell` (ch.8), BARE (gate-only) | ARBITRATE + DENY (exclusivity) | AI charges a spell (`CheckCast` 0x0A); AI equips a spell/staff to hand (`CheckShouldEquip` 0x0F) | deny any spell/staff ≠ `param.form` at BOTH gates (`core/CastGate.cpp`, `core/EquipGate.cpp` via `Allowance::Allowed`) | **YES (gated)** — this facet NARROWS the AI to one spell (it does NOT stop casting). The magic context-node BUILD is *correct* here (it builds context for the claimed spell, which the client WANTS its AI to cast), so denying it would be wrong — deliberately not denied under a bare SelectSpell | — (the context-node deny is REMOVED entirely as of feat/ai-cast-seats-impl — see rows 8b and 14; nothing denies the magic context build for any intent today) |
 | 4+ACT | **RETIRED** (feat/ai-cast-seats-impl, 2026-09-05) | — | — | — | **ROW VOID.** The `+ACT` drive this row audited is deleted; `ival` bit 2 is RESERVED and ignored, and `core/ActionGate.cpp` no longer reads it. A bare ch.8 claim behaves exactly as row 4. | For a cast APMF should MAKE happen, see row 8b (which no longer denies anything on the AI's cast path — it ANSWERS it) |
 | 8b | `kIntent_Cast` (ch.8b) | ARBITRATE + DENY (exclusivity) + **COMPOSE** (INVARIANTS #20) | (a) AI charges a competing spell (`CheckCast` 0x0A); (b) AI re-arms a competing spell/staff (`CheckShouldEquip` 0x0F). **Paths (c) the four cast leaves and (d) the ContextMagic CreateContextNode are NO LONGER competing sources for this intent** — they ARE how the claimed cast is delivered (the NPC's own AI performs it, `core/CastSeats.cpp`). Denying them would silence the claim's own cast. | (a)(b) `Allowance::AllowedCastForHand` allows only the claim's spell+proxy **on the claim's own hand**, PER-HAND; plus `EquipGate`'s seat-0x0F block denies the ORIGINAL kSelf form while its delivery-flip proxy is driven (N4). (c)/(d): no deny, by design. TTL-bounded auto-release throughout. | **YES for the exclusivity facet, PER-HAND at (a)/(b).** The facet this claim owns is "only MY spell may be charged/re-armed on this hand," and both paths to it are gated at a seat with a native hand signal. | The old per-actor gap at (c)/(d) is GONE because (c)/(d) are no longer denied at all. **What replaced them is not a deny but an ANSWER**, so its correctness question is different: see "The engine-seat pass" below. Coverage traded for `kIntent_CombatAction` is recorded in row 14. |
 | 14 | `kIntent_CombatAction` (ch.7) | DENY (category) | 70 combat behavior-tree leaves' `act()`/`pop()` (slots 0x02/0x03) | ForceFail-PAIR the leaves whose classified category bit is set in `param.ival` (`core/ActionGate.cpp`); "offense" classified today | **YES (gated) for the offense category** — the deny zeroes exactly the named category's leaves; every other leaf fires natively | SCOPE (not a leak): only "offense" is classified today; defense/movement/utility categories are future work (a claim only denies what it names — CHANNEL-MAP ch.7). **NEW GAP (feat/ai-cast-seats-impl, 2026-09-05):** the `CombatBehaviorContextMagic` CreateContextNode is no longer hooked at all, so a Cast/Offense claim now suppresses only the four FIRING leaves, not the magic CONTEXT-BUILD path — the AI may build a magic context and equip a spell it then cannot fire. Deliberate: that node's deny is the seat whose act()-only form caused the months-live data-stack CTD, and keeping it would suppress ch.8b's own delivery mechanism. Re-adding it would need a way to scope it to CombatAction claims only. Also: offense leaves' CONTEXT nodes (Melee/Ranged CreateContext) are NOT yet denied — same class as the cast-context fix; harmless today (no forced melee equip), flag if a client ever force-equips a weapon under an offense claim |
@@ -97,6 +97,14 @@ with nothing in between (checked in the step function: phase check → phase=1 �
 `pop()`); a mismatched pop is counted + logged once as a protocol anomaly, never
 trusted silently. Install refuses the whole deny if ForceFail's `act()` OR `pop()`
 fails to resolve, and only a vtable with BOTH halves installed is ever classified.
+
+> **HISTORICAL from here to the end of this section (superseded 2026-09-05 by
+> feat/ai-cast-seats-impl).** The node-protocol RE below is still the authoritative
+> record of WHY a T1 deny must be ForceFail's act()+pop() PAIR, and the four cast
+> LEAVES still carry that paired deny for `kIntent_CombatAction`. But the SCOPE
+> described immediately below is gone: the `ContextMagic` CreateContextNode is no
+> longer hooked at all, and neither `kIntent_Cast` nor the retired ch.8 `+ACT` bit
+> arms a Cast deny any more. See "The engine-seat pass" section.
 
 **Scope signal — when the cast deny arms (the "under cast control" question).** The
 Cast category is denied for an actor when any of these is the winning claim, all read
@@ -244,10 +252,23 @@ on (a)/(b)'s per-hand narrowing alone.
    0xAD seat. Already flagged; not presented as complete.
 5. **`kIntent_CombatAction` category coverage (row 14).** Only "offense" classified;
    defense/movement/utility are future categories (a scope limit, not a leak).
-6. **`kIntent_Cast` / ch.8 +ACT per-hand at paths (c)/(d) (rows 8b, 4+ACT).** The T1
-   cast-leaf deny and the `ContextMagic` node deny are PER-ACTOR — no native hand
-   signal at the tree-node/thread seat. Paths (a)/(b) ARE per-hand today.
+6. **`kIntent_CombatAction` no longer suppresses the magic CONTEXT-BUILD path (row 14,
+   NEW 2026-09-05).** The `ContextMagic` CreateContextNode is no longer hooked at all
+   (it was the CTD seat, and it would suppress ch.8b's own delivery mechanism), so a
+   Cast/Offense claim denies only the four FIRING leaves — the AI may build a magic
+   context and equip a spell it then cannot fire. Deliberate, and the trade is stated
+   in row 14. Re-adding it needs a way to scope it to CombatAction claims only.
+   (The old per-hand gap at ch.8b paths (c)/(d) is void: those paths are no longer
+   denied for that intent. The ch.7 leaf deny remains PER-ACTOR — no native hand signal
+   at the tree-node seat.)
 7. **Field confirmation of the paired deny (feat/ai-cast-suppress).** The protocol is
    disassembly-measured, not yet deck-cycled: expect zero `[ch.7] paired-pop protocol
-   ANOMALY` lines, no `Magic_Equip_Out` flip-flop on a driven actor, and the +ACT drive
-   selecting its form instead of degrading to the fallback every pulse.
+   ANOMALY` lines under a `kIntent_CombatAction` claim.
+8. **Field confirmation of the five engine seats (feat/ai-cast-seats-impl, NEW).** The
+   seats are disassembly-verified and CI-green, never deck-run. Expect, in order:
+   `[t2a] ... SEAT 0x0F armed` at install; then on a claim, a real engine equip of the
+   claimed heal, `[ch.8b seat 0x06] -> YES`, `[ch.8b seat 0x0A] -> claimed target`, an
+   animated cast, and `[ch.8b seat 0x07] -> STOP` at the stop percent. The ONE
+   NOT-CERTAIN item carried into the field is the `CombatAimController+0x30` lifecycle
+   (does anything reset or carry it between controllers?) — seat 0x0D has its own
+   kill-switch, `[CastSeats] EnableAimSeat=0`, for exactly that.

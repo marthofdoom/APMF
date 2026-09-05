@@ -459,22 +459,26 @@ documenting the same boundary.
 
 **#19 — A RUNTIME-MINTED FORM MUST NEVER BE REACHABLE FROM A SAVE, AND MUST DROP
 ITS BORROWED POINTERS BEFORE A LOAD.** The cast drive mints delivery-flip proxy
-`SpellItem`s through `IFormFactory` (`core/CastExecutor.cpp`, `namespace proxy`).
+`SpellItem`s through `IFormFactory` (`core/CastProxy.{h,cpp}` -- renamed from
+`CastExecutor` when the forced drive was retired; the pool outlived the drive because
+the engine's `FindTargets` Self branch always lands on the caster).
 These are dynamic `0xFF` forms: they do NOT survive a load, and the engine purges
 them on the way in. Two rules follow, both learned the expensive way (MFO's
 `native/Actuation_Direct.cpp` paid for the second one first):
 - **Never let one be captured into the `.ess`.** A proxy is `AddSpell`'d to the
-  caster only so `EquipSpell` can select it, and a save taken while it is known
+  caster only so the AI's own equip selector can choose it (and so the
+  `CombatInventory` rebuild makes an item for it), and a save taken while it is known
   would persist a reference to a form that will not exist on the next load. So the
-  transient is un-taught the moment the cast is done with it (`ParkHand`), and
-  swept unconditionally on the SKSE save callback (`castexec::PreSaveSweep`, called
-  from `plugin.cpp`'s `OnSave` BEFORE any record is written).
+  transient is un-taught when the claim releases (`castproxy::Free`, the single choke
+  point) and swept unconditionally on the SKSE save callback
+  (`castproxy::PreSaveSweep`, called from `plugin.cpp`'s `OnSave` BEFORE any record is
+  written).
 - **Clear borrowed pointers before the purge.** The proxy shares the SOURCE spell's
   `Effect*` objects BY POINTER (that is the whole point — same effects, flipped
   delivery). If the dead proxy still holds them at load time, the purge frees a
   LIVE spell's effect array through it. So `castexec::ResetAll` clears each form's
   `effects` FIRST, then nulls the slot, and it runs on BOTH the revert callback and
-  kPreLoadGame. This is also what stops the fixed-size proxy pool from staying
+  kPreLoadGame. (`castexec::ResetAll` is now `castproxy::ResetAll`.) This is also what stops the fixed-size proxy pool from staying
   permanently occupied by a stale owner across a revert (`ControlMap::Clear()`
   deliberately does not call `channel->Release`, so nothing else would reset it).
 Any future subsystem that mints a runtime form inherits both halves of this rule.
