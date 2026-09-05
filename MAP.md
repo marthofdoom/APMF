@@ -192,8 +192,14 @@ BeginCast->Charging->Charged->SpellFire sequence, `core/MainThread.h`-posted acr
 frames, one poll per frame):
 `PhaseSelect` (wait for the ONE queued equip via `Actor::GetEquippedObject`, then
 interrupt + the paired anim stop tail) -> `PhaseRest` (H6: poll until the caster is
-genuinely at `kNone` BEFORE `BeginCast` + `RequestCastImpl` -- the interrupt and the
-drive must NOT share a frame) -> `PhaseFire` (>=3 -> SpellFire; `everLeftRest` keeps
+genuinely at `kNone` -- the interrupt and the drive must NOT share a frame) ->
+`PhaseDrawn` (M4, 2026-09-05: poll `ActorState::IsWeaponDrawn()` until the ONE
+`DrawWeaponMagicHands(true)` queued in `StartHandDrive` actually lands -- it is a ~1s
+animation-driven request, not instant, and the caster's own charge state can never
+leave rest while the parent weapon/hands node is still mid-draw, which reads
+downstream as "CheckCast ALLOWs, state pinned at 0 forever"; `kDrawWaitMs`, degrades to
+`FireFallback` on timeout) BEFORE `BeginCast` + `RequestCastImpl` -> `PhaseFire`
+(>=3 -> SpellFire; `everLeftRest` keeps
 a not-spun-up-yet 0 from reading as terminal; `everCharging` keeps a cast that
 COMPLETED between two polls from double-applying via the fallback, M3) -> for a
 CONCENTRATION spell `PhaseHold` (keeps the channel + claim alive for `kConcHoldMs`
@@ -204,7 +210,7 @@ state-0 read AFTER the channel was seen running (M1)), otherwise `PhaseParkWait`
 no transient can reach a save, H3/H7; releases the claim, keeps the hand ours) /
 `TeardownHand` (stop tail/deselect/release-claim/free-proxy) or `FireFallback`
 (`CastSpellImmediate` on the kInstant caster) on any degrade path (VR,
-never-selects, never-reaches-rest, never-charges).
+never-selects, never-reaches-rest, never-draws (M4), never-charges).
 ALL budgets are WALL-CLOCK deadlines on `apmf::clock::MonotonicMs` (`Budget` +
 `MakeBudget`/`Expired`/`LogDue`), never frame counts (H4) -- and every phase deadline
 is clamped to ONE whole-drive ceiling `kDriveTotalMs` (12s), `static_assert`'d to

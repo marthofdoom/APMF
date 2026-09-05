@@ -80,6 +80,9 @@ namespace apmf::castexec {
                                                           // stop tail (H7) -- ends early the moment the
                                                           // engine concludes the cast on its own
         constexpr std::uint64_t kLogEveryMs   = 500;     // periodic diagnostic cadence, spam-free
+        constexpr std::uint64_t kDrawWaitMs   = 2500;    // wait for the magic hands to actually reach
+                                                          // WEAPON_STATE::kDrawn (the draw anim is ~1s;
+                                                          // this is a generous multiple -- M4, 2026-09-05)
         constexpr std::uint64_t kDriveTotalMs = 12000;   // whole-drive ceiling; MUST stay comfortably
                                                           // below APMF_API::kCastMaxTtlMs (15000)
         static_assert(kDriveTotalMs + 2000 <= APMF_API::kCastMaxTtlMs,
@@ -315,21 +318,29 @@ namespace apmf::castexec {
             return a_actor->GetFormID();   // neither -- self (conservative; never a guess)
         }
 
-        // Diagnostic-only (2026-09-05 field fix, requirement 4): dumps the THREE
-        // signals a select-wait cares about -- what's actually in the hand's
-        // equip slot (the thing we're waiting to become `castForm`), the
-        // caster's raw state, and MagicCaster::currentSpell (kept for
-        // comparison even though it's no longer the gate) -- so a deck run
-        // tells us definitively if this still doesn't land, rather than another
-        // guess. Never gates anything; log-only.
+        // Diagnostic-only (2026-09-05 field fix, requirement 4): dumps the FOUR
+        // signals a select/drawn/rest-wait cares about -- what's actually in the
+        // hand's equip slot (the thing we're waiting to become `castForm`), the
+        // caster's raw state, MagicCaster::currentSpell (kept for comparison
+        // even though it's no longer the gate), and the actor's WEAPON_STATE
+        // (added M4, 2026-09-05: the magic-hands draw is a separate, ~1s
+        // animation-driven state machine from the caster's own charge state --
+        // this is what let the drawn-gate bug be read off a single log line
+        // instead of costing a fifth field cycle) -- so a deck run tells us
+        // definitively if this still doesn't land, rather than another guess.
+        // Never gates anything; log-only.
         void LogHandDiagnostic(RE::Actor* a_actor, RE::MagicCaster* a_hand, bool a_left, const char* a_why) {
-            auto* eq = a_actor->GetEquippedObject(a_left);
-            spdlog::info("[ch.8+act] 0x{} {} hand diag ({}): equipped=0x{} ('{}') state={} currentSpell=0x{}",
+            auto*      eq       = a_actor->GetEquippedObject(a_left);
+            auto*      as       = a_actor->AsActorState();
+            const auto weaponSt = as ? static_cast<std::uint32_t>(as->GetWeaponState()) : 0xFFFFFFFFu;
+            spdlog::info("[ch.8+act] 0x{} {} hand diag ({}): equipped=0x{} ('{}') state={} "
+                         "currentSpell=0x{} weaponState={} drawn={}",
                          apmf::log::Hex(a_actor->GetFormID()), a_left ? "left" : "right", a_why,
                          apmf::log::Hex(eq ? eq->GetFormID() : 0),
                          eq && eq->GetName() ? eq->GetName() : "none",
                          static_cast<std::uint32_t>(a_hand->state.get()),
-                         apmf::log::Hex(a_hand->currentSpell ? a_hand->currentSpell->GetFormID() : 0));
+                         apmf::log::Hex(a_hand->currentSpell ? a_hand->currentSpell->GetFormID() : 0),
+                         weaponSt, as && as->IsWeaponDrawn() ? "yes" : "no");
         }
 
         // Guaranteed-delivery fallback (marth's rule #5): a direct effect apply
@@ -644,6 +655,75 @@ namespace apmf::castexec {
             });
         }
 
+        // Phase 1b.5 (M4, 2026-09-05 review -- identified in the same adversarial
+        // pass as H1-H7 but NOT fixed then; this is that omission).
+        //
+        // WAIT FOR THE MAGIC HANDS TO ACTUALLY BE DRAWN before firing.
+        // `DrawWeaponMagicHands(true)` (issued ONCE, in StartHandDrive) is a
+        // REQUEST, not an instant state change: `ActorState::WEAPON_STATE` walks
+        // kSheathed -> kWantToDraw -> kDrawing -> kDrawn over a real ~1s
+        // animation, driven by the SAME behaviour-graph weapon/hands state
+        // machine that `BeginCastLeft`/`BeginCastRight` are anim-events INTO.
+        // Deck-verified (2026-09-05): equip lands instantly, `CheckCast` ALLOWs
+        // (CannotCastReason carries no "not drawn" case -- CheckCast is a
+        // resource gate, not an animation-readiness gate), and yet the caster's
+        // OWN charge state (`hand->state`) stays pinned at 0 forever -- because
+        // the graph has nowhere to route the charge animation while its parent
+        // weapon/hands node is still mid-draw. This is the identical "drive the
+        // engine before it caught up" mistake H1-H7 were, just on the draw
+        // instead of the equip or the rest-interrupt. Poll on the wall clock
+        // (kDrawWaitMs, a generous multiple of the ~1s draw) until
+        // `ActorState::IsWeaponDrawn()` is true, THEN fire. Never re-issue
+        // `DrawWeaponMagicHands` here -- it was already requested once in
+        // StartHandDrive; re-requesting on a poll is the exact equip-churn class
+        // of bug PhaseSelect's own note warns about, applied to the draw.
+        void PhaseDrawn(DriveCtx c, Budget b) {
+            if (!Live(c)) return;
+            auto* actor    = RE::TESForm::LookupByID<RE::Actor>(c.fid);
+            auto* castForm = RE::TESForm::LookupByID<RE::SpellItem>(c.castForm);
+            if (!actor || !castForm) { TeardownHand(c); return; }
+            auto* hand = actor->GetMagicCaster(c.left ? CS::kLeftHand : CS::kRightHand);
+            if (!hand) { FireFallback(c); TeardownHand(c); return; }
+
+            auto* as = actor->AsActorState();
+            if (!as || !as->IsWeaponDrawn()) {   // still sheathed / mid-draw
+                if (Expired(b)) {
+                    LogHandDiagnostic(actor, hand, c.left, "hands never drawn -- degrading");
+                    FireFallback(c);
+                    TeardownHand(c);
+                    return;
+                }
+                if (LogDue(b)) LogHandDiagnostic(actor, hand, c.left, "waiting-for-hands-drawn");
+                apmf::mainthread::Post([c, b] { PhaseDrawn(c, b); });
+                return;
+            }
+
+            // Drawn, at rest (PhaseRest already confirmed rest before calling
+            // here), spell in hand -- start the request.
+            if (c.target != 0) {
+                if (auto* tgt = RE::TESForm::LookupByID<RE::Actor>(c.target))
+                    hand->desiredTarget = tgt->CreateRefHandle();
+            }
+
+            float                             strength = 1.0f;
+            RE::MagicSystem::CannotCastReason reason{};
+            const bool engineWillCast =
+                hand->CheckCast(castForm, false, &strength, &reason, false);   // engine's own gate
+            // Logged, never gated on (the drive requests regardless -- the engine
+            // gets the final word inside RequestCastImpl). This line is the direct
+            // read-out of the H1 fix: before it, THIS call was denied by APMF's own
+            // CheckCast hook whenever castForm was the delivery-flip proxy.
+            spdlog::info("[ch.8+act] 0x{} CheckCast(0x{}) -> {} (reason {}) -- diagnostic.",
+                         apmf::log::Hex(c.fid), apmf::log::Hex(c.castForm),
+                         engineWillCast ? "ALLOW" : "DENY", static_cast<std::uint32_t>(reason));
+
+            actor->NotifyAnimationGraph(c.left ? "BeginCastLeft" : "BeginCastRight");
+            hand->RequestCastImpl();
+
+            const Budget fb = MakeBudget(c, kChargeWaitMs);
+            apmf::mainthread::Post([c, fb] { PhaseFire(c, fb); });
+        }
+
         // Phase 1b (H6, 2026-09-05 review): DRIVE ONLY FROM ACTUAL REST.
         //
         // PhaseSelect used to interrupt the caster and call RequestCastImpl in the
@@ -655,7 +735,8 @@ namespace apmf::castexec {
         // three field cycles. So the interrupt now happens at the end of
         // PhaseSelect (paired with its anim-graph stop tail, H7) and THIS phase
         // polls, on the wall clock, until the caster is genuinely at kNone before
-        // pushing BeginCast + RequestCastImpl.
+        // handing off to PhaseDrawn (M4) -- which confirms the magic hands are
+        // actually drawn -- ahead of BeginCast + RequestCastImpl.
         //
         // If it never reaches rest inside kRestWaitMs we degrade rather than drive
         // from a busy caster: the guaranteed-delivery fallback still lands the
@@ -681,29 +762,9 @@ namespace apmf::castexec {
                 return;
             }
 
-            // At rest, spell in hand -- start the request.
-            if (c.target != 0) {
-                if (auto* tgt = RE::TESForm::LookupByID<RE::Actor>(c.target))
-                    hand->desiredTarget = tgt->CreateRefHandle();
-            }
-
-            float                             strength = 1.0f;
-            RE::MagicSystem::CannotCastReason reason{};
-            const bool engineWillCast =
-                hand->CheckCast(castForm, false, &strength, &reason, false);   // engine's own gate
-            // Logged, never gated on (the drive requests regardless -- the engine
-            // gets the final word inside RequestCastImpl). This line is the direct
-            // read-out of the H1 fix: before it, THIS call was denied by APMF's own
-            // CheckCast hook whenever castForm was the delivery-flip proxy.
-            spdlog::info("[ch.8+act] 0x{} CheckCast(0x{}) -> {} (reason {}) -- diagnostic.",
-                         apmf::log::Hex(c.fid), apmf::log::Hex(c.castForm),
-                         engineWillCast ? "ALLOW" : "DENY", static_cast<std::uint32_t>(reason));
-
-            actor->NotifyAnimationGraph(c.left ? "BeginCastLeft" : "BeginCastRight");
-            hand->RequestCastImpl();
-
-            const Budget fb = MakeBudget(c, kChargeWaitMs);
-            apmf::mainthread::Post([c, fb] { PhaseFire(c, fb); });
+            // At rest -- confirm the magic hands are actually drawn (M4) before
+            // firing BeginCast + RequestCastImpl.
+            PhaseDrawn(c, MakeBudget(c, kDrawWaitMs));
         }
 
         // Phase 1: wait for the ALREADY-QUEUED equip (issued once, in
