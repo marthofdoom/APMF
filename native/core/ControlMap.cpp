@@ -316,13 +316,39 @@ namespace apmf {
             if (castProxy == 0 && castTargetHandle && castTarget != op.actor) {
                 if (auto* sp = RE::TESForm::LookupByID<RE::SpellItem>(spell)) {
                     if (sp->GetDelivery() == RE::MagicSystem::Delivery::kSelf) {
-                        castProxy = apmf::castproxy::Acquire(op.actor, sp);
-                        if (castProxy == 0)
-                            spdlog::warn("[ch.8b] 0x{} claimed a kSelf spell 0x{} at another actor but no "
-                                         "delivery-flip proxy could be minted -- the seats will NOT force "
-                                         "the original form (it would land on the caster). The claim still "
-                                         "stands as a plain deny.",
-                                         apmf::log::Hex(op.actor), apmf::log::Hex(spell));
+                        // Only the PROSPECTIVE WINNER may mint. The pool is keyed by
+                        // OWNER (one slot per actor -- a dual cast shares one form), so a
+                        // second, LOSING cast claim on the same actor would otherwise
+                        // re-target the winner's proxy at ITS spell and the AI would cast
+                        // the wrong thing. Peek at the already-published/working map
+                        // WITHOUT creating an entry (map.find, never operator[]) --
+                        // deliberate: this whole block runs before `map[op.actor]` for
+                        // exactly that reason. A loser simply gets no proxy, which is
+                        // correct: it is not driving anything.
+                        float bestBasis = 0.0f;
+                        bool  haveBest  = false;
+                        if (auto npcIt = map.find(op.actor); npcIt != map.end()) {
+                            for (const auto& cc2 : npcIt->second.channels) {
+                                if (cc2.channel != channel) continue;
+                                for (const auto& cl : cc2.claims) {
+                                    if (!haveBest || cl.basis > bestBasis) { bestBasis = cl.basis; haveBest = true; }
+                                }
+                            }
+                        }
+                        if (haveBest && op.basis < bestBasis) {
+                            spdlog::info("[ch.8b] 0x{} cast claim (basis {:.1f}) loses to the incumbent "
+                                         "(basis {:.1f}) -- no delivery-flip proxy minted for it (the pool is "
+                                         "per-actor; re-targeting it would corrupt the winner's cast).",
+                                         apmf::log::Hex(op.actor), op.basis, bestBasis);
+                        } else {
+                            castProxy = apmf::castproxy::Acquire(op.actor, sp);
+                            if (castProxy == 0)
+                                spdlog::warn("[ch.8b] 0x{} claimed a kSelf spell 0x{} at another actor but "
+                                             "no delivery-flip proxy could be minted -- the seats will NOT "
+                                             "force the original form (it would land on the caster). The "
+                                             "claim still stands as a plain deny.",
+                                             apmf::log::Hex(op.actor), apmf::log::Hex(spell));
+                        }
                     }
                 }
             }

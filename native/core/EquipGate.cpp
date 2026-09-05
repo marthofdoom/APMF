@@ -242,12 +242,13 @@ namespace apmf::equipgate {
                 castClaim.form == subjectForm;
             if (isClaimedSpell) return engineSays;
 
-            // Same exemption, one level deeper -- APMF's OWN DRIVEN form (H1, the
-            // 2026-09-05 drive-chain review). The exemption directly above only
-            // recognises the ch.8 claim's literal `param.form`; when APMF's cast
-            // executor drives a delivery-flip PROXY instead, the proxy is a form
-            // the ch.8 claim never names, so the ch.8 narrow below would deny the
-            // very item APMF put in that hand. `CastClaimNamesForHand` is the
+            // Same exemption, one level deeper -- the claim's DELIVERY-FLIP PROXY
+            // (H1, the 2026-09-05 drive-chain review; the rule outlived the drive
+            // that exposed it). The exemption directly above only recognises the
+            // ch.8 claim's literal `param.form`; when a ch.8b claim carries a
+            // delivery-flip PROXY, that proxy is a form the ch.8 claim never names,
+            // so the ch.8 narrow below would deny the very item the AI is being asked
+            // to equip for the claimed cast. `CastClaimNamesForHand` is the
             // strict positive test (a kIntent_Cast claim standing on THIS hand
             // naming THIS spell-or-proxy), so this widens nothing else: it admits
             // exactly the spell/proxy pair the ch.8b claim already admits, and
