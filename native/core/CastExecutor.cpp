@@ -56,7 +56,14 @@ namespace apmf::castexec {
         // multi-second cap, sane but generous -- see PhaseSelect.
         constexpr int   kSelectPolls         = 300;   // frames (~5s) to wait for the EQUIP to land
         constexpr int   kSelectLogEveryN     = 30;    // ~0.5s -- periodic diagnostic without log spam
-        constexpr int   kChargePolls         = 180;   // frames (~3s) to wait for Charged before degrading
+        // kChargePolls was 180 (~3s) -- WRONG BY THE SAME CLASS OF BUG the select
+        // fix just corrected (deck field evidence, 2026-09-06): state==0 was
+        // checked ONE FRAME after RequestCastImpl and treated as an immediate
+        // terminal degrade, before the engine had any chance to spin the caster
+        // up past rest at all. Raised to match kSelectPolls's scale (seconds, not
+        // frames) -- see PhaseFire's header for the corrected state machine.
+        constexpr int   kChargePolls         = 300;   // frames (~5s) total wait budget for PhaseFire
+        constexpr int   kChargeLogEveryN     = 30;    // ~0.5s -- same diagnostic cadence as select
         constexpr int   kConcentrationHoldPolls = 180;   // frames (~3s) a concentration spell CHANNELS
                                                           // after firing, so it heals/applies over a real
                                                           // window instead of one instantaneous pulse
@@ -332,7 +339,25 @@ namespace apmf::castexec {
         // never SUSTAINS past one pulse, a repeat Repoint fires again from rest,
         // #0/#1a rule 3's bounded-one-shot shape) or hand off to PhaseHold
         // (concentration spells -- see PhaseHold's header).
-        void PhaseFire(DriveCtx c, int pollsLeft) {
+        //
+        // STATE-0 IS NOT TERMINAL ON ITS OWN (2026-09-06 field fix, the SAME
+        // class of bug the select-signal fix corrected). `state==0` right after
+        // RequestCastImpl means "has not spun up YET" -- the deck showed
+        // RequestCastImpl fired and the VERY NEXT poll (same millisecond) still
+        // read state 0, and the old code treated that as a terminal refusal,
+        // degrading on literally every pulse. The observed vanilla walk is
+        // 0 -> 1(ready) -> 2(Charging) -> 3(Charged) -> 4(Casting), and the
+        // engine can take seconds to advance it (the AI's own organic cast took
+        // ~5s claim->Charged). So `everLeftRest` tracks whether THIS poll chain
+        // has EVER observed state>0: while it hasn't, state==0 is "still waiting
+        // to spin up" and we keep polling (bounded by kChargePolls, same scale
+        // as the select wait). Once it HAS spun up at least once and THEN
+        // returns to state==0 without ever reaching >=3, that is a genuine
+        // early end/refusal -- terminal immediately, not after the whole
+        // remaining budget (further polling would just re-observe the same
+        // rest). Wedged mid-charge (stuck at 1/2 the whole budget) still
+        // degrades once pollsLeft is exhausted, as before.
+        void PhaseFire(DriveCtx c, int pollsLeft, bool everLeftRest = false) {
             if (!Live(c)) return;   // cancelled/superseded -- nothing to do
             auto* actor = RE::TESForm::LookupByID<RE::Actor>(c.fid);
             if (!actor) { TeardownHand(c); return; }
@@ -356,21 +381,31 @@ namespace apmf::castexec {
                 }
                 return;
             }
-            if (stNum == 0) {   // never entered charge -- degrade
-                spdlog::info("[ch.8+act] 0x{} caster at rest before charge -- degrading to fallback.",
-                             apmf::log::Hex(c.fid));
+
+            if (stNum > 0) everLeftRest = true;   // spun up into ready/charging at least once
+
+            if (pollsLeft % kChargeLogEveryN == 0)
+                LogHandDiagnostic(actor, hand, c.left, everLeftRest ? "charging" : "waiting-to-leave-rest");
+
+            if (stNum == 0 && everLeftRest) {
+                // It genuinely started, then returned to rest WITHOUT ever
+                // reaching Charged -- a real early end/refusal, not a startup
+                // delay. Terminal now (waiting out the rest of the budget would
+                // not change anything).
+                LogHandDiagnostic(actor, hand, c.left, "returned-to-rest-without-charging -- degrading");
                 FireFallback(c);
                 TeardownHand(c);
                 return;
             }
-            if (pollsLeft <= 0) {   // wedged mid-charge -- degrade
-                spdlog::info("[ch.8+act] 0x{} WEDGED at state {} -- degrading to fallback.",
-                             apmf::log::Hex(c.fid), stNum);
+            if (pollsLeft <= 0) {   // whole wait budget exhausted -- never left rest, or wedged mid-charge
+                LogHandDiagnostic(actor, hand, c.left,
+                                  everLeftRest ? "WEDGED mid-charge -- degrading"
+                                               : "never left rest -- degrading");
                 FireFallback(c);
                 TeardownHand(c);
                 return;
             }
-            apmf::mainthread::Post([c, pollsLeft] { PhaseFire(c, pollsLeft - 1); });
+            apmf::mainthread::Post([c, pollsLeft, everLeftRest] { PhaseFire(c, pollsLeft - 1, everLeftRest); });
         }
 
         // Phase 1: wait for the ALREADY-QUEUED equip (issued once, in
