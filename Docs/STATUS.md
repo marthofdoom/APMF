@@ -28,6 +28,24 @@ facet (ch.8b) as ABI v5. NOT on `main`; `main` stays v0.9.0.
   select/fire/setup. New **INVARIANTS #18** (deny completeness) + full
   `Docs/DENY-COMPLETENESS-AUDIT.md`. Open residual: `kIntent_Equipment` weapon-vs-weapon
   (same context-node seat is the fix; scoped to a follow-up pass). CI-only, unpushed.
+- **AI-cast suppression + the node-protocol fix (branch `feat/ai-cast-suppress`,
+  2026-09-04, off `feat/cast-act` 1da6eac)**: the CTD above RECURRED (three deck logs
+  2026-09-04) with the context-node deny live. Disassembling 1.6.1170 against the logs
+  showed frame 0 is the tree-thread STEP function walking a garbage `cur_node` during an
+  interrupt unwind — corrupted by APMF's own deny: a node's `act()` (slot 0x02) and
+  `pop()` (slot 0x03) are a push/pop PAIR on the thread's data stack, and ForceFail'ing
+  only `act()` left the node's own `pop()` to pop 0x30 (ContextMagic) for a 4-byte push,
+  releasing two NiPointers out of the enclosing frame. FIX: `core/ActionGate.cpp` hooks
+  slot 0x03 too and routes a denied node's next `pop()` to ForceFail's own `pop()`
+  (thread-local pending record) — a denied node now runs exactly ForceFail's pair.
+  SCOPE: the Cast category also arms for a ch.8 `kIntent_SelectSpell` claim carrying the
+  +ACT bit, so while APMF drives a cast the AI's whole magic branch (context build,
+  self-equip, fire) is silent; gate-only ch.8 unchanged. `kCastingDisabled` evaluated
+  and ruled out (downstream of the context build; persisted flag) — full RE in
+  `Docs/DENY-COMPLETENESS-AUDIT.md` "The node-protocol fix", INVARIANTS #18 (pair
+  bullet), `core/CombatBehaviorRE.h` "The node protocol". Not deck-cycled yet: expect
+  zero `[ch.7] paired-pop protocol ANOMALY` lines and no `Magic_Equip_Out` flip-flop on
+  a driven actor.
 - **`kCastFlag_FromPackage`**: extracts ONLY spell+target and never runs/offers/
   evaluates the package. Ships the DIRECT-form path; the package-data read is the
   §5.1/§6 fallback (refuses cleanly, client passes the spell directly) because the

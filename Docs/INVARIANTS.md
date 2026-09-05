@@ -474,11 +474,12 @@ The rule is the explicit form of #0/#1: #1 says "block the foreign input"; #18 a
   `CombatBehaviorContextMagic` / `CombatBehaviorEquipContext` (over a
   `NiPointer<CombatInventoryItem>`) and dereferenced the item UPSTREAM of the firing
   leaves, racing MFO's forced equip → `EXCEPTION_ACCESS_VIOLATION call [rax+0x28]`
-  rax=0 (null item vfunc), MFO.dll frame 5. Fixed by extending `core/ActionGate.cpp`
-  to also deny that context node's `act()` (slot 0x02, ForceFail path,
-  `apmf::cbt::kCastContextNodes`), classified `Cast|Offense`. The firing-only deny
-  LOOKED complete because it stopped the visible cast; the CTD proved a setup path
-  it never touched.
+  rax=0 (null item vfunc), MFO.dll frame 5. Addressed by extending `core/ActionGate.cpp`
+  to also deny that context node (`apmf::cbt::kCastContextNodes`), classified
+  `Cast|Offense`. The firing-only deny LOOKED complete because it stopped the visible
+  cast; the CTD proved a setup path it never touched. (The act()-only form of that
+  context-node deny was itself the next CTD — see the act()/pop() pair bullet below;
+  the seat is right, the deny had to become the full pair.)
 - **Completeness has a PER-HAND axis too, not just per-path (feat/deny-perhand).**
   A claim can name a hand (`kIntent_Cast`'s `CastFlags::kCastFlag_LeftHand`); "the
   deny zeroes this facet" must then mean "zeroes it for the CLAIMED hand only,"
@@ -491,6 +492,25 @@ The rule is the explicit form of #0/#1: #1 says "block the foreign input"; #18 a
   `CombatBehaviorTreeControl` carry none) stays PER-ACTOR and is a DOCUMENTED gap
   (next bullet), never silently presented as per-hand. See
   `Docs/DENY-COMPLETENESS-AUDIT.md`'s "per-hand pass" section.
+- **A deny must honor the denied seat's OWN PROTOCOL — the act()/pop() pair
+  lesson (feat/ai-cast-suppress, 2026-09-04, the recurring deck CTD).** Denying a
+  behavior-tree node means making it FAIL the way the engine's own `ForceFail`
+  node fails, and `ForceFail` is a PAIR: its `act()` (slot 0x02) pushes 4 bytes on
+  the thread's data stack, sets failed, ascends; the runner then calls the SAME
+  node's `pop()` (slot 0x03) in the same step, and `ForceFail::pop()` pops those
+  4 bytes. Substituting only `act()` while the node's OWN `pop()` still ran
+  unbalanced the data stack (push 4 / pop sizeof(node state) — 0x30 for the
+  ContextMagic context node, which also released two NiPointers out of the
+  enclosing frame and restored the context window from garbage) and corrupted the
+  thread until an interrupt unwind walked a garbage `cur_node`
+  (`call [rax+0x28]`, rax=0). "It stopped the visible behavior" was not proof of
+  a correct deny — it was balanced by accident only for the 4-byte leaves. The
+  rule: a deny at a paired seat installs BOTH halves (`core/ActionGate.cpp` hooks
+  0x02 AND 0x03 and routes a denied node's next `pop()` to `ForceFail`'s own
+  `pop()` via a thread-local pending record), refuses to arm if either half fails
+  to resolve, and documents the measured protocol (`core/CombatBehaviorRE.h`
+  "The node protocol") rather than inferring it from a class declaration. #17's
+  "engine-answer-first, flip YES→NO" applies to the whole protocol, not one slot.
 - **A path you cannot yet close is a DOCUMENTED GAP, never a silent one.** If an
   enumerated path has no clean, RTTI-verified (#17), version-robust seat on the
   pinned CommonLib, DO NOT hook a blind slot and DO NOT pretend the facet is

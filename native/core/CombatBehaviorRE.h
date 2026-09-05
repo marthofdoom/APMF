@@ -177,21 +177,18 @@ namespace apmf::cbt {
 
     // ---- Cast/equip CONTEXT-CREATION nodes (deny-completeness, 2026-09-04) ----
     // These are NOT leaves. They are `CombatBehaviorTreeCreateContextNode*`
-    // nodes whose act() (slot 0x02, SAME base-class vtable layout as every
-    // leaf -- they all derive CombatBehaviorTreeNode) BUILDS the AI's magic
-    // cast/equip CONTEXT: it selects the spell AND constructs the
-    // CombatBehaviorEquipContext holding a `NiPointer<CombatInventoryItem>`,
-    // then dereferences that item. The 70-leaf cast deny (kCombatActionCat_Cast)
-    // stops the cast-FIRING leaves but NOT this SETUP node -- so with a
-    // kIntent_Cast claim held, the AI still BUILT its magic-equip context and
-    // raced the client's forced equip: EXCEPTION_ACCESS_VIOLATION `call
-    // [rax+0x28]` rax=0 (null CombatInventoryItem vfunc) inside
-    // CombatBehaviorTreeCreateContextNode1<CombatBehaviorContextMagic, ...
-    // CombatBehaviorEquipContext, NiPointer<CombatInventoryItem>...> (deck CTD,
-    // MFO.dll frame 5). Denying THIS node's act() (via the SAME ForceFail
-    // mechanism the leaves use) means the AI never builds/derefs the magic-equip
-    // context while the cast facet is held -- closing the last open path
-    // (INVARIANTS #18, deny-completeness).
+    // nodes (SAME base-class vtable layout as every leaf -- they all derive
+    // CombatBehaviorTreeNode) whose act() (slot 0x02) BUILDS the AI's magic
+    // context: it reads the current CombatBehaviorEquipContext's item through
+    // the thread's context window, constructs a CombatBehaviorContextMagic over
+    // that `CombatInventoryItem`, and DESCENDS into the magic subtree (equip the
+    // spell, charge, the cast leaves). The 70-leaf cast deny
+    // (kCombatActionCat_Cast) stops the cast-FIRING leaves but NOT this SETUP
+    // node. Denying THIS node -- as ForceFail's act()+pop() PAIR (see "The node
+    // protocol" below; the act()-only deny was the CTD) -- means the AI never
+    // builds a magic context, never self-equips a spell, and never reaches a cast
+    // leaf while the cast facet is held: the general, spell-agnostic "the combat
+    // AI does not cast" gate (INVARIANTS #18, deny-completeness).
     //
     // Symbols verified PRESENT + ID-backed in the pinned CommonLib
     // (CharmedBaryon/CommonLibSSE-NG @ c4ab853d, Offsets_VTABLE.h:3704-3705,
@@ -208,34 +205,71 @@ namespace apmf::cbt {
           REL::VariantID(550933, 213681, 0x1720b80) },
     } };
 
-    // ---- Re-verification pass (feat/deny-perhand, deck CTD recurrence) ----
-    // The crash recurred even with the above act()-slot deny installed. Before
-    // moving the hook, this pass re-derived the class's OWN vtable layout from
-    // first principles: `CombatBehaviorTreeNode` (CombatPathingRevolution's
-    // `src/RE/CombatBehaviorTreeNode.h`, the SAME upstream source this file's own
-    // header already cites for the VariantID triples) declares EXACTLY 10 virtual
-    // functions -- destroy/get_name/act/pop/on_childfailed/on_interrupted/
-    // SaveGame/LoadGame/__unk_8/__unk_9 -- and EVERY concrete node (leaf,
-    // CreateContextNodeBase, CreateContextNode1) derives it through that SAME
-    // single vtable (one VTABLE_*/RTTI_* symbol each in Offsets_VTABLE.h/
-    // Offsets_RTTI.h -- no second vtable, no multiple inheritance). `act()` at
-    // slot 0x02 is the ONLY vfunc that does node-specific work; there is no
-    // separate virtual "Evaluate"/"GetValue" seat on this hierarchy for the
-    // magic-equip-context read to dispatch through instead. CONCLUSION: slot 0x02
-    // is not "the wrong method" -- it is the ONLY vtable-dispatched seat this
-    // class exposes, and it is the one already hooked. The context build (spell
-    // select + `CombatBehaviorEquipContext`/`CombatInventoryItem` read) happens
-    // as ordinary, NON-VIRTUAL code INSIDE act()'s own compiled body -- which is
-    // exactly what our ForceFail thunk replaces wholesale when a claim denies
-    // this node, so a still-firing crash under a held claim points at the DENY
-    // not ENGAGING for that call (actor resolution / claim timing), never at a
-    // missed vtable seat. See Docs/DENY-COMPLETENESS-AUDIT.md row 8b and
-    // Docs/DENY-PERHAND-AUDIT.md for the full writeup and the per-hand gap this
-    // seat carries (no per-instance/per-hand field is documented anywhere for
-    // CreateContextNode1 or CombatBehaviorTreeControl -- CPR's own struct, cross-
-    // checked above, exposes none -- so this node's deny stays PER-ACTOR; the
-    // per-hand requirement is met at the CheckCast/CheckShouldEquip seats
-    // instead, core/CastGate.cpp + core/EquipGate.cpp).
+    // ---- THE NODE PROTOCOL: act() and pop() are a PAIR (feat/ai-cast-suppress,
+    // 2026-09-04 -- the recurring deck CTD's root cause, measured by
+    // disassembling the 1.6.1170 image against the three 2026-09-04 crash logs;
+    // Docs/DENY-COMPLETENESS-AUDIT.md "The node-protocol fix") ----
+    //
+    // The earlier re-verification (feat/deny-perhand) was right that slot 0x02 is
+    // the only node-specific ENTRY seat and that the context build lives inside
+    // act()'s own body. It missed that act() has a PAIRED half: slot 0x03 pop().
+    // The measured protocol (AE address-library IDs cited as EVIDENCE only -- no
+    // hook targets them; the hooks stay at vtable slots 0x02/0x03):
+    //
+    //   CombatBehaviorThread (the `control` every node receives; 0x198 bytes):
+    //     +0x00 data-stack base   +0x08 capacity   +0x0C top (byte offset)
+    //     +0x10 node stack {node*, dataTopAtEntry} x depth (+0x118 depth)
+    //     +0x120 dataTop recorded at the current node's entry
+    //     +0x128 context WINDOW {dataStack*, offset} -- how a context node
+    //            finds the CURRENT context (e.g. the EquipContext)
+    //     +0x138 cur_node   +0x140 last_node   +0x148 state (0 run / 1 failed /
+    //            2 INTERRUPTED)   +0x14C phase (2 enter / 1 update / 0 exit)
+    //     +0x150 flags   +0x158 master CombatController*   +0x160 parent thread
+    //   Runner step (ID 47483): phase 2 -> push {node, top} on the node stack,
+    //     call node->act(node, ctrl) [slot 2]; phase 1 -> node->update [slot 4]
+    //     (or slot 5 on_interrupted when state==2 -- the crash's `call
+    //     [rax+0x28]`); phase 0 -> phase=1, call node->pop(node, ctrl) [slot 3]
+    //     on the SAME node object whose act() just ran, in the SAME step, then
+    //     depth--. Nothing else runs between an act() that ascended and its pop().
+    //   Data-stack PUSH (ID 33171, `(ctrl, out, size)`): top += align4(size);
+    //     returns {dataStack*, oldTop} -- the same {base, offset} shape as the
+    //     window. Ascend (47484): cur = cur->parent; phase = 0. Descend (47486):
+    //     cur = cur->childs[i]; phase = 2. SetFailed (47496): state = 1 if
+    //     state <= 1. Interrupt (47499): state = 2, recursively for child threads.
+    //   CombatBehaviorForceFail: act() [49702] = push 4, SetFailed(1), Ascend;
+    //     pop() [49705] = `top -= 4`.
+    //   CombatBehaviorTreeNodeObject<T>: act() = push align4(sizeof T), T::Enter;
+    //     pop() = T teardown + `top -= align4(sizeof T)`. Sizes on this catalog:
+    //     Attack/AttackLow/Bash/SpecialAttack/CastShout/PrepareDualCast/
+    //     selectors 4; CastImmediateSpell/CastConcentrationSpell/RangedAttack
+    //     0xC; GroundAttack 0x18; FlyingAttack 0x30.
+    //   CombatBehaviorTreeCreateContextNode1<CombatBehaviorContextMagic,...>:
+    //     act() [49133] = push 0x20 (the context), read the current context via
+    //     the window, call the expression at node+0x28 (the EquipContext's item
+    //     getter, ID 33197) -> construct CombatBehaviorContextMagic(item) [49081],
+    //     push 0x10 (save the old window), set the window to the new context,
+    //     Descend(0). pop() [49139] = read the saved window at top-0x10, top -=
+    //     0x10, RELEASE the two NiPointers at context+0x10/+0x18, top -= 0x20,
+    //     restore the window.
+    //
+    // WHY THE OLD DENY CRASHED: substituting ForceFail::act() for a node's act()
+    // while the node's OWN pop() still ran = push 4 / pop sizeof(T). Balanced by
+    // accident for the 4-byte leaves (which is why the T1 Attack probe "worked"),
+    // unbalanced for the 0xC/0x18/0x30 leaves, and catastrophic for the context
+    // node: its pop() popped 0x30 for a 4-byte push, released two NiPointers read
+    // out of the ENCLOSING frame's live data (a premature CombatInventoryItem
+    // free), and restored the window from garbage. The thread's state drifted
+    // until an interrupt unwind (state==2, e.g. after the driven cast's own
+    // InterruptCast) walked a garbage cur_node (0x100000000) -> `mov rax,[rsi]` /
+    // `call [rax+0x28]` in the runner. THE FIX (core/ActionGate.cpp): hook slot
+    // 0x03 too and, for a denied act(), route that node's very next pop() to
+    // ForceFail's ORIGINAL pop() -- a denied node then executes exactly
+    // ForceFail's own act()+pop() pair. No hand-rolled protocol, no invented
+    // offsets: both halves are the engine's own compiled bodies.
+    //
+    // Per-hand stays a documented gap at this seat (no per-instance hand field on
+    // CreateContextNode1 or CombatBehaviorThread -- CPR's own struct, cross-checked
+    // above, exposes none), met at core/CastGate.cpp + core/EquipGate.cpp instead.
 
     // Index of "CombatBehaviorAttack" within kLeaves -- the Phase-1 DENY target.
     inline int AttackIndex() {

@@ -288,6 +288,49 @@ VR-refused, install-once.
   `kIntent_Equipment` (`Allowed`, not `AllowedCastForHand`) stay actor-wide —
   unchanged, per-hand was scoped to `kIntent_Cast` only.
 
+### `native/core/ActionGate.{h,cpp}` — T1: the combat behavior-tree allowance (ch.7 / ch.8b / ch.8 +ACT)
+`Install()` (kDataLoaded, VR-refused, install-once) hooks the 70
+`VTABLE_CombatBehaviorTreeNodeObject_*` leaves (`apmf::cbt::kLeaves`) AND the
+`CombatBehaviorContextMagic` CreateContextNode Base/Node1 (`kCastContextNodes`) at
+vtable slot **0x02 (act)** and slot **0x03 (pop)** — both RTTI-verified through
+`allowance::InstallOnVtables`. `ActThunk` resolves the deliberating actor from
+`control+0x158` (both hypotheses, probe-proven), builds a deny mask from THREE lock-free
+RCU claim reads (`kIntent_CombatAction`'s `ival` category mask; `kIntent_Cast` ⇒ Cast;
+`kIntent_SelectSpell` with `castexec::kActFlag_Drive` ⇒ Cast — the "under APMF cast
+control" scope) and, when the node's install-time category is named, DENIES it as
+`CombatBehaviorForceFail`'s own act()+pop() **PAIR**: it records `{node, control}` in a
+`thread_local` pending-pop and invokes ForceFail's original `act()`; `PopThunk` then
+routes that node's very next `pop()` (same thread, same step — the runner's protocol,
+`core/CombatBehaviorRE.h` "The node protocol") to ForceFail's original `pop()`. Categories:
+offense leaves (12 names), the four cast leaves (Cast|Offense), the ContextMagic node
+(Cast|Offense). A bare gate-only ch.8 claim arms nothing.
+- **What breaks:** the PAIR is the whole fix for the 2026-09-04 recurring deck CTD
+  (INVARIANTS #18 "act()/pop() pair"): an act()-only ForceFail leaves the node's OWN
+  `pop()` to pop `sizeof(node state)` for a 4-byte push — balanced by accident for the
+  4-byte leaves, a data-stack corruption for CastImmediate/Concentration/RangedAttack
+  (0xC), GroundAttack (0x18), FlyingAttack (0x30) and catastrophic for the ContextMagic
+  node (0x30 + two NiPointer releases out of the enclosing frame + a garbage window
+  restore). Never classify a vtable that is not `Paired()` (both maps); never arm the deny
+  when ForceFail's `act()` OR `pop()` failed to resolve (Install refuses both together).
+  `t_pending` is `thread_local` on purpose — the runner calls `pop()` synchronously on
+  the same OS thread with nothing in between; a global would race across combat
+  threads. Thunks run on COMBAT threads (§5): no lock, no follower list, only the stored
+  originals + ControlMap RCU reads. Denying the ContextMagic node under a BARE ch.8
+  claim would break MFO's offense gambit (the client wants its AI to cast that spell —
+  Docs/DENY-COMPLETENESS-AUDIT.md row 4); the +ACT bit is the scope, keep it so.
+
+### `native/core/CombatBehaviorRE.h` — the local RE:: extension for the combat tree (measured)
+The `CombatBehaviorTreeNode` layout (10 vfuncs: act 0x02 / pop 0x03 / update 0x04 /
+on_interrupted 0x05), `TreeControl` (+0x158 master), `ControllerMini` (attackerHandle
+0x28, `static_assert` < 0x68), the 70 leaf VariantID triples, `kCastContextNodes`, and
+"The node protocol" — the disassembly-measured CombatBehaviorThread layout + the
+push/pop sizes per node kind (AE IDs cited as evidence only; no hook targets an ID —
+every hook here is a vtable slot).
+- **What breaks:** the VariantID triples are copied verbatim from CPR's pinned
+  Offsets_VTABLE.h — never retype; the protocol block is what justifies the paired deny —
+  re-measure before changing `ActionGate.cpp`'s pairing, don't reason from CPR's class
+  declaration alone (that is exactly how the pop half was missed the first time).
+
 ### `native/core/AliasPkgProbe.{h,cpp}` — the 0x49 package-offer PROBE (throwaway)
 Demystifies the design.md §5a package-tier promote. `Install()` ← `plugin.cpp` kDataLoaded
 (after `hook::Install`): `write_vfunc` **0x49** `CheckForCurrentAliasPackage` on
@@ -349,15 +392,15 @@ parentheses.
   Address-Library IDs (#8), VR-refused.
 
 ### NOT built (probe-gated GAPs — do not add without a live probe)
-Movement PROMOTE feed (ch.1, `IMovementDirectControl` unnamed), combat ACTIONS
-behavior tree (ch.7 / T1, PROBE-gated — see Docs/ALLOWANCE-TEMPLATE.md §6/§7),
+Movement PROMOTE feed (ch.1, `IMovementDirectControl` unnamed),
 the DENY of a COMPETING framework's combat-target selection at the hook (ch.6 —
 still arbitration-only; the CLIENT commands the target, no T-hook yet), body
 commands (T4, PROBE-gated), headtrack all-types full block (ch.5), sustained
 package procedures (ch.9), facial-expression setter (ch.13). ch.8 (casting
 selection) GAINED its deny 2026-09-02 (Phase 2): `core/CastGate.cpp` (T2c
 CheckCast) + `core/EquipGate.cpp` (T2a CheckShouldEquip) — see those entries
-above; ch.8 is no longer arbitration-only. **Load-bearing open mechanism:
+above; ch.8 is no longer arbitration-only. ch.7 combat ACTIONS graduated 2026-09-03
+(`core/ActionGate.cpp`, paired act/pop 2026-09-04). **Load-bearing open mechanism:
 cleanly DENY/starve an outranking framework's PACKAGE (Cicero/travel) — T3
 (`AliasPkgProbe.cpp`'s 0x49 hook) is built as a probe but not yet folded into
 the Allowance template / wired to a client.**

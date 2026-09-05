@@ -8,6 +8,8 @@ Branch `feat/composition-cast`, field-unproven. Adds the cast-EXECUTION facet so
 - `kCastFlag_FromPackage` extracts only the spell and target out of a handed package and never runs, offers, or evaluates it. If the package read is not clean on the pinned engine, the client passes the spell directly.
 - Passive observe-only cast-path probe: watches a real NPC cast (the MagicCaster state machine plus the animation-graph event strings) and logs the sequence, so a client can replicate the proven path.
 - Shelved the `feat/alias-drive` approach (package substitution). Tagged `archive/alias-drive-shelved-2026-09-04`. The shipping build carries no ESL, quest, or alias pool.
+- Fixed the recurring combat-thread crash (`call [rax+0x28]`, rax=0). Root cause was the behavior-tree deny itself: a denied node ran ForceFail's act() but its own pop(), which unbalanced the thread's data stack. Every T1 deny is now ForceFail's act()+pop() pair (vtable slots 0x02+0x03). The deny refuses to arm if either half fails to resolve.
+- While APMF drives a cast (ch.8 +ACT), the actor's own combat AI no longer builds a magic context, self-equips a spell, or fires one. Melee, ranged, movement and targeting stay the AI's. A gate-only ch.8 claim is unchanged.
 
 ## v0.9.0 -- First release
 
