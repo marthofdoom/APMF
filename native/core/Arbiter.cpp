@@ -4,6 +4,7 @@
 #include "core/ControlMap.h"
 #include "core/NonAliasProbe.h"
 #include "core/CastObserve.h"
+#include "core/MainThread.h"
 #include "core/Registry.h"
 
 namespace apmf {
@@ -28,6 +29,13 @@ namespace apmf {
 
     void Arbiter::OncePerFrame() {
         ControlMap::Get().Drain();
+
+        // ch.8 SelectSpell +ACT (feat/cast-act): drain the cast-drive phase chain
+        // (core/CastExecutor.cpp) on this SAME confirmed-main seat -- Engage/
+        // OnOwnerChanged/Release (called from Drain() above) may start a drive, and
+        // its multi-frame phases (equip-select poll, charge poll) re-Post themselves
+        // here every frame. See core/MainThread.h for why this seat, not AddTask.
+        apmf::mainthread::Pump();
 
         // Docs/SPEC-PACKAGE-HOLD.md §4.1 item 1 -- OBSERVE-ONLY package-drift
         // correlation probe. Reuses this EXISTING once-per-frame game-thread seat
