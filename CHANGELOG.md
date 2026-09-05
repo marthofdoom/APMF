@@ -1,6 +1,6 @@
 ## Unreleased -- Composition rework (cast facet)
 
-Branch `feat/composition-cast`, field-unproven. Adds the cast-EXECUTION facet so a client can hand APMF a cast to moderate around while the actor keeps moving, instead of freezing the body with a package.
+Branches `feat/composition-cast` then `feat/ai-cast-seats-impl`, field-unproven. Adds the cast-EXECUTION facet so a client can hand APMF a cast to moderate around while the actor keeps moving, instead of freezing the body with a package.
 
 - New ABI v5 (`APMF_API.h`, append-only): `kIntent_Cast`, `RequestCast(actor, basis, APMF_CastRequest{spell, proxy, target, flags, ttl})`, `kCastFlag_FromPackage`, `kCombatActionCat_Cast`.
 - A `kIntent_Cast` claim arbitrates and denies through the three gates cast-select already rides (CheckCast, CheckShouldEquip, the T1 cast leaves). APMF makes no cast write. The client fires its own animated cast. Movement stays the actor's.
@@ -9,7 +9,11 @@ Branch `feat/composition-cast`, field-unproven. Adds the cast-EXECUTION facet so
 - Passive observe-only cast-path probe: watches a real NPC cast (the MagicCaster state machine plus the animation-graph event strings) and logs the sequence, so a client can replicate the proven path.
 - Shelved the `feat/alias-drive` approach (package substitution). Tagged `archive/alias-drive-shelved-2026-09-04`. The shipping build carries no ESL, quest, or alias pool.
 - Fixed the recurring combat-thread crash (`call [rax+0x28]`, rax=0). Root cause was the behavior-tree deny itself: a denied node ran ForceFail's act() but its own pop(), which unbalanced the thread's data stack. Every T1 deny is now ForceFail's act()+pop() pair (vtable slots 0x02+0x03). The deny refuses to arm if either half fails to resolve.
-- While APMF drives a cast (ch.8 +ACT), the actor's own combat AI no longer builds a magic context, self-equips a spell, or fires one. Melee, ranged, movement and targeting stay the AI's. A gate-only ch.8 claim is unchanged.
+- A claimed cast is now performed by the NPC's own combat AI. Harbinger answers the five engine decision points the AI's cast choice is built out of, so the NPC picks up the spell, charges it, aims it and fires it at the target the client named, with the game's own animation, magicka cost, line of sight and interrupt handling. Harbinger itself casts nothing.
+- Removed the forced cast drive that preceded it, including its guaranteed-delivery fallback. Nothing in Harbinger force-casts a spell any more.
+- Removed the deny that stopped the AI building its magic context. It was the source of a long-running crash, and it now works against the cast it was meant to protect. A client that wants an actor not to cast at all still has that, through a combat-action claim.
+- A self-only spell (Fast Healing and the like) always lands on its caster, whatever the AI is told to aim at, so Harbinger mints a delivery-flipped copy for the length of the claim and the AI casts that instead. The copy is taught and untaught around the cast and can never reach a save.
+- A cast claim can now name the health percentage to stop at. Left unset, a channelled heal runs until the target is full.
 
 ## v0.9.0 -- First release
 
