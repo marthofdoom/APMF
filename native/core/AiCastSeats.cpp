@@ -34,6 +34,41 @@ extern "C" __declspec(dllimport) unsigned long __stdcall GetPrivateProfileIntA(
 // list actually got an original recorded, closing the loop the other
 // direction: the fixed set this file iterates is exactly the set whose
 // originals are guaranteed present.
+//
+// STANDING RULE (marth 2026-09-05, root-caused from a live deck CTD): A
+// CommonLib vfunc declaration is NOT ABI-trustworthy on its own -- verify
+// every hooked vfunc against the disassembled callee before writing a thunk
+// for it, especially anything CommonLib types `void*`/`unk`, and ESPECIALLY
+// anything that might be a hidden-return (sret) out-slot. CommonLib declared
+// `CombatMagicCaster::GetMagicTarget` as `void* GetMagicTarget(CombatController*)
+// const` (2 args, pointer return) -- WRONG. The real engine ABI (base impl
+// shared by all 14 caster vtables) is `Out16* GetMagicTarget(CombatMagicCaster*,
+// Out16* out, CombatController*)`: the Microsoft x64 ABI inserts a HIDDEN
+// out-pointer for any aggregate return >8 bytes that doesn't fit a register,
+// which CommonLib's header never modeled. The original thunk, written to the
+// wrong 2-arg shape, passed the map lookup's internal `unordered_map` node
+// pointer as if it were the CombatController* argument (every real argument
+// shifted one register) -- `orig` then read attacker/target handles out of
+// that foreign node's memory, handed back a garbage "target" (in the observed
+// crash, literally the engine's own GetMagicTarget function address, misread
+// as an Actor*), and a caller several frames later dereferenced it as an
+// object and jumped through a vtable slot built from raw instruction bytes.
+// Fixed below (see Out16 + the 3-arg GetMagicTarget_t). CalculateScore (0x0C)
+// and CheckStartCast/CheckStopCast (0x06/0x07) were re-checked against this
+// same risk: all three return a SCALAR (float / bool) that always fits in a
+// single register or XMM slot, so the x64 ABI can never insert a hidden
+// out-pointer for them regardless of what CommonLib's header says -- the bug
+// CLASS that hit GetMagicTarget is categorically impossible for a scalar
+// return. CheckStartCast's exact 2-arg/bool-return shape is additionally
+// field-proven: MFO's shipped, months-live native/CasterConsent.cpp:439 hooks
+// the identical signature on the identical vtable list with no ABI-mismatch
+// symptom ever observed. CheckStopCast shares that same vtable list, the
+// adjacent slot, and the same single-CombatController*-argument shape with no
+// counter-evidence. (This environment has no disassembler/game-binary access
+// to hand-verify CalculateScore's argument count byte-for-byte the way
+// GetMagicTarget was; the ABI-category argument above is sound regardless,
+// but a byte-level disassembly pass remains the gold standard before treating
+// any NEW vfunc here as trustworthy -- do it on the deck/IDA side if in doubt.)
 // ============================================================================
 
 namespace apmf::aicastseats {
@@ -190,6 +225,20 @@ namespace apmf::aicastseats {
 
         // ======================================================================
         // SEAT 2 -- WHETHER to cast. CombatMagicCaster::CheckStartCast, vfunc 0x06.
+        //
+        // THIS PROBE IS THE INNER HOOK on this slot when MFO is also present
+        // (marth 2026-09-05): the deck log shows APMF installing at 14:19:50,
+        // MFO's own CheckStartCast hook (native/CasterConsent.cpp, ADVISORY
+        // deny) installing LATER at 14:19:58. write_vfunc chains newest-first,
+        // so MFO -- installed second -- sits OUTER (the engine calls MFO's
+        // thunk, which calls this probe's thunk as ITS "orig", which calls the
+        // real engine implementation as ITS OWN "orig"). This thunk therefore
+        // logs the RAW, un-vetoed engine answer, BEFORE MFO's advisory logic
+        // gets a chance to flip a YES to NO for its own reasons. Read a
+        // CheckStartCast[..] -> YES line here as "the AI's OWN combat brain
+        // wanted this," not "the AI actually cast it" -- MFO may still have
+        // suppressed it one layer further out. Do not misread the two as the
+        // same thing when correlating this log against MFO's.
         // ======================================================================
 
         using CheckStartCast_t = bool (*)(RE::CombatMagicCaster*, RE::CombatController*);
@@ -231,21 +280,37 @@ namespace apmf::aicastseats {
 
         // ======================================================================
         // SEAT 3 -- WHERE it aims. CombatMagicCaster::GetMagicTarget, vfunc 0x0A.
-        // Returns an opaque `void*` in the pinned header (CommonLib itself never
-        // resolved the real return type here) -- this probe NEVER dereferences
-        // it. It only compares the raw pointer VALUE the engine returned against
-        // two INDEPENDENTLY, safely resolved Actor* pointers (the same
-        // attackerHandle/targetHandle accessors every other seat in this
-        // codebase already uses) to classify the aim as SELF/ATTACKER,
-        // COMBAT_TARGET (the foe), or OTHER/NONE -- exactly deliverable 3's
-        // question: is a beneficial (Restore-classified) cast aimed at the foe
-        // rather than an ally?
+        //
+        // CORRECTED ABI (marth 2026-09-05, root-caused from a live deck CTD --
+        // see the file banner's STANDING RULE). CommonLib's `void* GetMagicTarget
+        // (CombatController*) const` is WRONG: the real engine callee (base impl
+        // shared by all 14 caster vtables, confirmed against all three known
+        // engine call sites' `lea rdx,[rsp+X]; mov r8,ctrl; call [rax+0x50]`
+        // pattern) takes a HIDDEN 16-byte HANDLE+POINTER out-slot as its second
+        // argument -- the Microsoft x64 ABI's mandatory convention for any
+        // aggregate return that doesn't fit a single register. The engine's own
+        // callers allocate `out` on THEIR stack and pass a pointer to it; we
+        // never allocate it ourselves, only forward the caller's pointer through
+        // to `orig` UNCHANGED and read it back afterward (never write to it).
         // ======================================================================
 
-        using GetMagicTarget_t = void* (*)(RE::CombatMagicCaster*, RE::CombatController*);
+        // {handle, ptr} -- handle at +0x0 (4 bytes), 4 bytes of alignment padding,
+        // ptr at +0x8 (8 bytes) = 16 bytes total. Matches the crash log's own
+        // out-slot dump byte-for-byte: [out+0x00]=0 (handle), [out+0x08]=a pointer
+        // value (here, garbage from the old 2-arg-shaped call).
+        struct Out16 {
+            std::uint32_t handle;
+            RE::Actor*    ptr;
+        };
+        static_assert(sizeof(Out16) == 16, "Out16 must be exactly 16 bytes -- re-verify the engine's "
+                                            "handle+pointer out-slot layout before trusting this shape");
+        static_assert(offsetof(Out16, ptr) == 8, "Out16::ptr must sit at +0x8 -- matches the crash log's "
+                                                  "own out-slot dump ([out+0x8] held the garbage pointer)");
+
+        using GetMagicTarget_t = Out16* (*)(RE::CombatMagicCaster*, Out16*, RE::CombatController*);
         std::unordered_map<std::uintptr_t, std::uintptr_t> g_targetOrig;
 
-        void* GetMagicTargetThunk(RE::CombatMagicCaster* a_this, RE::CombatController* a_cc) {
+        Out16* GetMagicTargetThunk(RE::CombatMagicCaster* a_this, Out16* a_out, RE::CombatController* a_cc) {
             const auto vt  = *reinterpret_cast<std::uintptr_t*>(a_this);
             GetMagicTarget_t orig;
             if (const auto oit = g_targetOrig.find(vt); oit != g_targetOrig.end()) {
@@ -262,12 +327,13 @@ namespace apmf::aicastseats {
             // throttle table of its own (g_lastTargetEntryMs, not the exit log's
             // g_lastTargetMs below) -- the 2026-09-05 deck crash logged CheckStartCast
             // -> YES and the AI's own BeginCastRight, but NO GetMagicTarget line ever
-            // fired (entry or exit) before the CTD. This line, on its own dedup
-            // window, lets the next run distinguish "GetMagicTarget was never called"
-            // (no ENTER line at all) from "it was called, and something died in/after
-            // it" (an ENTER line with no matching exit line further down). Same
-            // never-dereference discipline as the exit log: only FormIDs and names
-            // resolved off attackerHandle/magicItem, never the returned target.
+            // fired (entry or exit) before the CTD (the old 2-arg-shaped call was
+            // corrupting its arguments before it could reach a log line). This line,
+            // on its own dedup window, lets the next run distinguish "GetMagicTarget
+            // was never called" (no ENTER line at all) from "it was called, and
+            // something died in/after it" (an ENTER line with no matching exit line
+            // further down). `a_out` is NOT yet filled at this point (the engine
+            // caller's stack slot, uninitialized until `orig` runs) -- never read.
             if (a_cc) {
                 if (auto* actorPre = a_cc->attackerHandle.get().get()) {
                     const auto fidPre      = actorPre->GetFormID();
@@ -284,33 +350,44 @@ namespace apmf::aicastseats {
                 }
             }
 
-            void* target = orig(a_this, a_cc);   // ENGINE ANSWERS FIRST -- never altered below
+            // ENGINE ANSWERS FIRST -- the exact 3 arguments, unchanged, in the exact
+            // engine order; `a_out` is the CALLER's out-slot, never one we allocate,
+            // and its contents are never altered by us (only read back below, after
+            // `orig` has filled it). Return EXACTLY what `orig` returned.
+            Out16* result = orig(a_this, a_out, a_cc);
 
-            if (!a_cc) return target;
+            if (!a_cc) return result;
             auto* actor = a_cc->attackerHandle.get().get();
-            if (!actor) return target;
+            if (!actor) return result;
             const auto fid = actor->GetFormID();
 
             auto*      spell     = a_this->magicItem;
             const auto spellForm = spell ? spell->GetFormID() : 0;
 
             if (ThrottleOK(g_lastTargetMs, fid, spellForm)) {
+                // Classify off the FILLED out-struct (a_out, which orig() just wrote
+                // into) -- never off `result` itself (a raw pointer identity, not the
+                // resolved Actor*). a_out->ptr is a real RE::Actor* per the corrected
+                // ABI; compared, never dereferenced beyond the pointer-equality checks
+                // every other seat in this codebase already does the same way.
                 auto*       attackerActor = actor;   // same object attackerHandle resolved above
                 auto*       combatTarget  = a_cc->targetHandle.get().get();
+                RE::Actor*  got           = a_out ? a_out->ptr : nullptr;
                 const char* which =
-                    !target                                                    ? "NONE" :
-                    (attackerActor && target == static_cast<void*>(attackerActor)) ? "SELF/ATTACKER" :
-                    (combatTarget  && target == static_cast<void*>(combatTarget))  ? "COMBAT_TARGET(foe)" :
-                                                                                      "OTHER";
+                    !got                                    ? "NONE" :
+                    (attackerActor && got == attackerActor) ? "SELF/ATTACKER" :
+                    (combatTarget  && got == combatTarget)  ? "COMBAT_TARGET(foe)" :
+                                                               "OTHER";
                 const char* cls = ResolveTypeName(vt);
                 spdlog::info("[aicastseats] t={} 0x{} '{}' GetMagicTarget[EXIT][{}] spell=0x{} '{}' -> {} "
-                             "(raw=0x{})",
+                             "(handle=0x{} ptr=0x{})",
                              apmf::clock::MonotonicMs(), apmf::log::Hex(fid),
                              actor->GetName() ? actor->GetName() : "?", cls ? cls : "<unresolved>",
                              apmf::log::Hex(spellForm), spell && spell->GetName() ? spell->GetName() : "?",
-                             which, apmf::log::Hex(reinterpret_cast<std::uintptr_t>(target), 16));
+                             which, apmf::log::Hex(a_out ? a_out->handle : 0),
+                             apmf::log::Hex(reinterpret_cast<std::uintptr_t>(got), 16));
             }
-            return target;
+            return result;
         }
 
         // ======================================================================

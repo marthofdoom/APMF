@@ -54,6 +54,22 @@
 // see AiCastSeats.cpp's file banner (RecoverLiveOriginal) for how a
 // structurally-unreachable lookup miss is handled without ever inventing a
 // score/decision/target the engine did not actually produce.
+//
+// ROOT CAUSE, FOUND (marth 2026-09-05): the deck CTD above WAS this probe --
+// CommonLib's `GetMagicTarget` declaration (2 args, `void*` return) is WRONG.
+// The real engine ABI has a HIDDEN 16-byte out-slot (Microsoft x64 sret
+// convention for an aggregate return that doesn't fit a register); the
+// original thunk, written to CommonLib's wrong shape, shifted every real
+// argument one register and handed back garbage read out of unrelated
+// process memory. Fixed in AiCastSeats.cpp (see its STANDING RULE banner and
+// the corrected `Out16`/3-arg `GetMagicTarget_t`). CalculateScore/
+// CheckStartCast/CheckStopCast were re-checked and are NOT susceptible (all
+// three return a scalar that can never trigger the sret convention).
+//
+// STANDING RULE: a CommonLib vfunc declaration is not ABI-trustworthy on its
+// own -- verify the disassembled callee before writing a thunk, especially
+// for anything typed `void*`/`unk`, and especially for a possible hidden-
+// return out-slot.
 // ============================================================================
 
 namespace apmf::aicastseats {
