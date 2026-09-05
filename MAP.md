@@ -159,6 +159,40 @@ all. Multi-NPC: aim + key ADDS an NPC; aim another + key adds it too.
   C-ABI uses — one control path, never a parallel one. `m_testHandles` is
   input-thread (main) only. Real driving is the client API, not this.
 
+### `native/core/MainThread.{h,cpp}` — confirmed-main-thread task pump (feat/cast-act)
+`Post(fn)` (any thread, mutex-guarded push) / `Pump()` (drains a local swap, FIFO,
+runs every queued task once). Called from `Arbiter::OncePerFrame` right after
+`ControlMap::Drain()` -- reuses the SAME confirmed-main `PlayerCharacter` 0xAD seat
+`core/Hook.cpp` already proved single-threaded, rather than trusting SKSE's
+`TaskInterface::AddTask` (MFO's own hard lesson: AddTask does not reliably land on
+a main-thread-safe seat for equip/3D work).
+- **What breaks:** `Pump()` must ONLY be called from that one confirmed seat, never
+  from `OnActorUpdate` (field-proven multi-thread, INVARIANTS #4/#12). A task
+  Post()'d during `Pump()` runs on the NEXT `Pump()`, never re-entrantly.
+
+### `native/core/CastExecutor.{h,cpp}` — ch.8 SelectSpell's +ACT mode (feat/cast-act)
+Wired 1:1 from `channels/CastingSelect.cpp`'s `Engage`/`OnOwnerChanged`/`Release`.
+Turns a `kIntent_SelectSpell` claim into APMF OWNING the cast: `ResolveHands` (0
+auto/1 right/2 left/3 dual, `param.ival`) -> `StartHandDrive` per resolved hand
+(delivery-flip `proxy::Acquire` if a self-delivery spell targets a claimed ch.6
+actor, an internal `kIntent_Cast` protection claim via `ControlMap::EnqueueCast`,
+`ActorEquipManager::EquipSpell`) -> `PhaseSelect`/`PhaseFire` (the observed
+BeginCast->Charging->Charged->SpellFire sequence, `core/MainThread.h`-posted across
+frames) -> `TeardownHand` (interrupt/anim/deselect/release-claim/free-proxy) or
+`FireFallback` (`CastSpellImmediate` on the kInstant caster) on any degrade path
+(VR, never-selects, never-charges). Per-actor/per-hand state (`g_drives`) is
+writer-thread-only (Drain seat + MainThread::Pump, same thread) -- no lock.
+- **What breaks:** the whole per-hand PROTECTION relies on feat/deny-perhand's
+  CastGate/EquipGate/ActionGate deny already being live -- this module assumes
+  EXCLUSIVE hand ownership once its internal claim is applied, not a race to
+  defend against. On VR (no per-hand deny installed there) it MUST skip the
+  animated drive entirely and go straight to `FireFallback` (see `ApplyDesired`'s
+  VR branch) -- do not let a future edit route VR through the equip/animate path.
+  `TeardownHand`'s proxy-free is conditional on the SIBLING hand not still using
+  the SAME proxy form (`kHandDual` shares one proxy across both hands, keyed by
+  owner not hand) -- freeing unconditionally there corrupts the surviving hand's
+  equipped form.
+
 ### `native/core/Input.{h,cpp}` — test surface
 `InputSink` (keyboard button-down) → `Arbiter::DispatchHotkey` (+ `probe::OnHotkey`).
 `LogHelp` enumerates the registry's hotkeys.
