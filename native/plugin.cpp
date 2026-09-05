@@ -12,6 +12,7 @@
 #include "core/ActionGate.h"
 #include "core/PackageGate.h"
 #include "core/NonAliasProbe.h"
+#include "core/AiCastSeats.h"
 
 // ============================================================================
 // APMF -- AI Package Management Framework. Entry point (thin).
@@ -69,6 +70,11 @@ namespace {
             apmf::packagegate::Install();        // T3 package-offer allowance (ch.9; VR-refused inside)
             apmf::nonaliasprobe::Install();      // OBSERVE-ONLY 0xDF hook + 0x49 assist + RTTI dumper
                                                   // (Docs/PROBE-NONALIAS-PACKAGE.md; VR-refused inside)
+            apmf::aicastseats::Install();        // OBSERVE-ONLY: the 4 AI cast-decision seats
+                                                  // (CalculateScore/CheckStartCast/GetMagicTarget/
+                                                  // CheckStopCast) -- confirms the RE notebook's
+                                                  // findings on the deck before any architecture is
+                                                  // built on them. VR-refused inside.
             apmf::nativebitprobe::Install();     // native-bit toggle probe (throwaway; no VR gate needed)
             // T4 (TESActionData::Process) REMOVED (2026-09-03): its call-site patch at
             // valhalla's known site collided with SCAR.dll's own hook on the same AI
