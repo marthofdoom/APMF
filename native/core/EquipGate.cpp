@@ -155,6 +155,21 @@ namespace apmf::equipgate {
                 castClaim.form == subjectForm;
             if (isClaimedSpell) return engineSays;
 
+            // Same exemption, one level deeper -- APMF's OWN DRIVEN form (H1, the
+            // 2026-09-05 drive-chain review). The exemption directly above only
+            // recognises the ch.8 claim's literal `param.form`; when APMF's cast
+            // executor drives a delivery-flip PROXY instead, the proxy is a form
+            // the ch.8 claim never names, so the ch.8 narrow below would deny the
+            // very item APMF put in that hand. `CastClaimNamesForHand` is the
+            // strict positive test (a kIntent_Cast claim standing on THIS hand
+            // naming THIS spell-or-proxy), so this widens nothing else: it admits
+            // exactly the spell/proxy pair the ch.8b claim already admits, and
+            // still lets the ENGINE have the final word. Applied here for the same
+            // reason as in CastGate -- a claim keyed on a FormID must admit the
+            // substitute form at EVERY gate that keys on that FormID.
+            if (allowance::CastClaimNamesForHand(fid, subjectForm, callerHand))
+                return engineSays;
+
             // ch.8 -- cast-select exclusivity (unchanged: deny any OTHER spell
             // while a SelectSpell claim names one).
             if (!allowance::Allowed(fid, APMF_API::kIntent_SelectSpell, subjectForm))

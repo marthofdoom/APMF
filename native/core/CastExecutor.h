@@ -70,10 +70,11 @@
 // long as it stays charged/casting, exactly like a player holding the cast
 // button. The drive reflects this: PhaseFire hands a concentration cast to
 // PhaseHold, which keeps the channel (and the internal ch.8b claim) alive --
-// no re-interrupt, no re-fire -- for a bounded window (kConcentrationHoldPolls,
-// ~3s) or until the caster exits that state on its own, THEN stops it
-// (InterruptCast) and parks. An instant/fire-and-forget spell parks
-// immediately after its one SpellFire, as before. Either way, a same-spell
+// no re-interrupt, no re-fire -- for a bounded WALL-CLOCK window (kConcHoldMs,
+// ~3s of real time, never a frame count) or until the caster exits that state on
+// its own, THEN stops it (InterruptCast + the balanced anim-graph stop tail) and
+// parks. An instant/fire-and-forget spell parks after a short bounded grace that
+// lets its release animation finish, as before. Either way, a same-spell
 // Repoint while still active is a no-op (`hd.inFlight`) -- it won't interrupt
 // an in-progress hold to "restart" it.
 //
@@ -106,12 +107,27 @@ namespace apmf::castexec {
     // previously-unread `ival` field -- see APMF_API.h's kIntent_SelectSpell
     // comment; not a new ABI surface).
     enum HandMode : std::int32_t {
-        kHandAuto  = 0,   // pick a free hand (no weapon there), prefers right
+        kHandAuto  = 0,   // pick a FREE hand (nothing held there -- no weapon, no
+                          // shield, no torch; a spell counts as free), prefers right
         kHandRight = 1,
         kHandLeft  = 2,
-        kHandDual  = 3,   // both hands, same spell
+        kHandDual  = 3,   // both hands, same spell -- SEE THE KNOWN GAP BELOW
     };
     inline constexpr std::int32_t kHandModeMask = 0x3;   // bits 0-1 -- mask ival to a HandMode
+
+    // KNOWN GAP -- kHandDual IS STRUCTURALLY UNPROTECTED (H8, 2026-09-05 review;
+    // deliberately NOT fixed in the drive-hardening pass, it is a CLAIM-MODEL
+    // change). The ch.8b protection claim is per-ACTOR: only ONE kIntent_Cast claim
+    // wins on an actor at a time, and it names exactly one hand (its
+    // kCastFlag_LeftHand bit). A dual drive therefore starts TWO hand drives but
+    // only ONE of them can hold the winning cast claim -- the other hand is left
+    // either unprotected (the AI free to re-arm/charge it) or, worse, denied by
+    // APMF's own per-hand gates, since a claim scoped to the right hand does not
+    // admit the left hand's cast of the same form. Making dual correct needs the
+    // claim itself to carry BOTH hands (a hand BITMASK in CastFlags rather than a
+    // single hint bit) plus per-hand gate resolution against that mask -- an
+    // append-only ABI addition and a matching change in every gate that reads the
+    // hand today. Not on the critical path: MFO drives single-hand kHandAuto.
 
     // OPT-IN bit (bit 2, value 4). CLEAR (the default -- including ival == 0,
     // the pre-+ACT shape) => GATE-ONLY: this module is never even called: the
@@ -137,5 +153,25 @@ namespace apmf::castexec {
     // Repoint drops the drive opt-in bit (switching an already-driven claim
     // back to gate-only must restore the hand, not leave it mid-cast).
     void Release(RE::FormID id, RE::Actor* actor);
+
+    // Drop ALL drive state and reset the delivery-flip proxy pool. Call on the SKSE
+    // revert callback (new game / pre-load wipe) and after the kPreLoadGame
+    // ReleaseAll (H2/M8, 2026-09-05 review). Two things depend on it:
+    //   * the proxies are runtime 0xFF dynamic forms holding the SOURCE spell's
+    //     `Effect*` BY POINTER -- they must have those borrowed pointers cleared
+    //     before the load-time form purge, or the purge frees a live spell's effect
+    //     array through a dead proxy (MFO's Actuation_Direct.cpp lesson);
+    //   * `ControlMap::Clear()` (revert) never calls channel->Release, so without
+    //     this the 4-slot proxy pool stays occupied by a stale owner FOREVER and
+    //     every later ally heal declines with "proxy pool overflow".
+    // MAIN THREAD ONLY (the SKSE revert / kPreLoadGame seat). Makes no engine calls.
+    void ResetAll();
+
+    // Un-teach + deselect every live delivery-flip proxy. Call on the SKSE SAVE
+    // callback (H3): the proxies are transient runtime 0xFF forms and a save taken
+    // mid-drive must never capture a reference to one. A drive interrupted this way
+    // degrades to the guaranteed-delivery fallback, so the effect still lands.
+    // MAIN THREAD ONLY (SKSE's save callback seat).
+    void PreSaveSweep();
 
 }

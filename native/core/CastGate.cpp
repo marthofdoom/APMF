@@ -87,6 +87,32 @@ namespace apmf::castgate {
                 (src == RE::MagicSystem::CastingSource::kRightHand) ? allowance::Hand::kRight :
                                                                        allowance::Hand::kUnknown;
 
+            // ---- H1 (2026-09-05 drive-chain review): APMF's OWN driven form
+            // OVERRIDES the ch.8 narrow, it is not co-required with it. ----
+            //
+            // The blocker this fixes: a ch.8 kIntent_SelectSpell claim carries
+            // `claim.form == the ORIGINAL spell`. As soon as APMF's own executor
+            // mints a delivery-flip PROXY (a heal-an-ally cast, where the source
+            // spell's delivery is kSelf), the caster deliberates on the PROXY
+            // FormID -- a form the ch.8 claim never names -- so the ch.8 test below
+            // returned FALSE and, because the two were AND-ed, vetoed the ch.8b
+            // allowance that was correctly permitting spell||proxy all along.
+            // CastExecutor::PhaseSelect literally calls `hand->CheckCast(castForm)`,
+            // i.e. THIS hook denied APMF's own cast with kMultipleCast, so every
+            // PROXIED cast could never charge (while un-proxied casts animated
+            // fine -- exactly the asymmetry the field saw).
+            //
+            // The override is deliberately NARROW: `CastClaimNamesForHand` is the
+            // strict POSITIVE form (a kIntent_Cast claim must actually STAND, on
+            // THIS hand, naming THIS exact spell-or-proxy). It never fires when
+            // there is no cast claim, when the claim is degenerate, when it belongs
+            // to the other hand, or for any other form -- so ch.8 keeps denying
+            // everything it denied before. And this still only ever lets the
+            // ENGINE's own answer stand (`engineSays`); APMF never invents a YES.
+            if (allowance::AllowedCastForHand(fid, subjectForm, callerHand) &&
+                allowance::CastClaimNamesForHand(fid, subjectForm, callerHand))
+                return engineSays;
+
             // ch.8 (cast-select exclusivity) AND ch.8b (cast-execution exclusivity)
             // must BOTH pass (design.md §3.5). ch.8 narrows the AI to its selected
             // spell; ch.8b narrows it to the client's executed cast spell/proxy while

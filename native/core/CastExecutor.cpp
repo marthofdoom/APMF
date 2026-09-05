@@ -3,6 +3,7 @@
 #include "core/CastExecutor.h"
 #include "core/ControlMap.h"
 #include "core/MainThread.h"
+#include "core/Clock.h"
 
 #include <unordered_map>
 
@@ -49,25 +50,42 @@ namespace apmf::castexec {
                       "MagicCaster::State baseline moved -- re-check the raw-int "
                       "charge-state gates below (PhaseFire/PhaseSelect)");
 
-        // kSelectTries was 6 (~100ms) -- WRONG BY ~40x (deck field evidence,
-        // 2026-09-05): the equip queue can take far longer than a handful of
-        // frames to land, and the OLD gate (MagicCaster::currentSpell) never
-        // becomes true pre-cast at all (see PhaseSelect's header). Raised to a
-        // multi-second cap, sane but generous -- see PhaseSelect.
-        constexpr int   kSelectPolls         = 300;   // frames (~5s) to wait for the EQUIP to land
-        constexpr int   kSelectLogEveryN     = 30;    // ~0.5s -- periodic diagnostic without log spam
-        // kChargePolls was 180 (~3s) -- WRONG BY THE SAME CLASS OF BUG the select
-        // fix just corrected (deck field evidence, 2026-09-06): state==0 was
-        // checked ONE FRAME after RequestCastImpl and treated as an immediate
-        // terminal degrade, before the engine had any chance to spin the caster
-        // up past rest at all. Raised to match kSelectPolls's scale (seconds, not
-        // frames) -- see PhaseFire's header for the corrected state machine.
-        constexpr int   kChargePolls         = 300;   // frames (~5s) total wait budget for PhaseFire
-        constexpr int   kChargeLogEveryN     = 30;    // ~0.5s -- same diagnostic cadence as select
-        constexpr int   kConcentrationHoldPolls = 180;   // frames (~3s) a concentration spell CHANNELS
-                                                          // after firing, so it heals/applies over a real
-                                                          // window instead of one instantaneous pulse
-                                                          // (2026-09-05 field fix -- see PhaseHold).
+        // ---- WALL-CLOCK BUDGETS, NOT FRAME COUNTS (H4/H5, 2026-09-05 review) ----
+        //
+        // Every one of these was a POLL COUNT (kSelectPolls=300, kChargePolls=300,
+        // kConcentrationHoldPolls=180). MainThread::Pump runs exactly ONE poll per
+        // frame, so "300 polls" is "~5s" only at exactly 60fps: on a 144Hz machine
+        // the charge budget collapsed to 2.1s against a MEASURED ~5s engine (the
+        // AI's own organic cast takes ~5s claim->Charged), so the drive degraded to
+        // the instant fallback on every pulse -- a frame-rate-dependent failure of
+        // the exact "read the engine before it updated" class the last three field
+        // cycles were spent on. They are now deadlines on the SAME monotonic clock
+        // the ch.8b claim TTL itself uses (core/Clock.h, apmf::clock::MonotonicMs),
+        // so a fast machine and a slow one wait the same real seconds.
+        //
+        // TTL SAFETY (H5): the internal ch.8b protection claim is bounded by
+        // APMF_API::kCastMaxTtlMs (15000, a FROZEN ABI constant -- it cannot be
+        // raised). The per-phase budgets below sum to more than that in the worst
+        // case, so EVERY phase deadline is additionally clamped to ONE whole-drive
+        // deadline (kDriveTotalMs, set once in StartHandDrive) that sits comfortably
+        // under the TTL. That makes it structurally impossible for the drive to
+        // still be running -- unprotected -- after its own claim has expired.
+        constexpr std::uint64_t kSelectWaitMs = 5000;    // wait for the ONE queued EquipSpell to land
+        constexpr std::uint64_t kRestWaitMs   = 1500;    // wait for the caster to actually return to rest
+        constexpr std::uint64_t kChargeWaitMs = 5000;    // wait for kNone -> ... -> Charged (measured ~5s)
+        constexpr std::uint64_t kConcHoldMs   = 3000;    // how long a concentration spell CHANNELS after
+                                                          // firing, so it applies over a real window rather
+                                                          // than one instantaneous pulse (2026-09-05 fix)
+        constexpr std::uint64_t kParkGraceMs  = 1500;    // let the RELEASE animation play out before the
+                                                          // stop tail (H7) -- ends early the moment the
+                                                          // engine concludes the cast on its own
+        constexpr std::uint64_t kLogEveryMs   = 500;     // periodic diagnostic cadence, spam-free
+        constexpr std::uint64_t kDriveTotalMs = 12000;   // whole-drive ceiling; MUST stay comfortably
+                                                          // below APMF_API::kCastMaxTtlMs (15000)
+        static_assert(kDriveTotalMs + 2000 <= APMF_API::kCastMaxTtlMs,
+                      "the whole-drive budget must finish well inside the ch.8b claim TTL -- a drive "
+                      "that outlives its own claim runs UNPROTECTED (H5)");
+
         constexpr float kDriveBasis  = 1000.0f;   // internal ch.8b protection claim -- always wins
 
         // ---- Vanilla Left/Right Hand BGSEquipSlot, resolved once (lazy). Same
@@ -137,7 +155,8 @@ namespace apmf::castexec {
                         if (!s.form) return nullptr;
                     }
                     Configure(s.form, a_src); s.source = sid; s.owner = a_owner;
-                    actor->AddSpell(s.form);   // TRANSIENT teach -- makes it selectable (removed in Free)
+                    if (!actor->HasSpell(s.form))
+                        actor->AddSpell(s.form);   // TRANSIENT teach -- selectable (removed in Free/Unteach)
                     return s.form;
                 }
                 spdlog::warn("[ch.8+act] proxy pool overflow (owner 0x{}, all {} slots held by "
@@ -145,6 +164,20 @@ namespace apmf::castexec {
                              "the original self-delivery form (2026-09-06 correctness fix).",
                              apmf::log::Hex(a_owner), sizeof(g_slot) / sizeof(g_slot[0]));
                 return nullptr;
+            }
+            // Un-teach WITHOUT releasing the slot (H3). A hand that has already
+            // FIRED and is merely PARKED must not leave a runtime 0xFF dynamic
+            // form in the actor's known-spell list, because a quicksave taken in
+            // that window would persist a reference to a form that does not exist
+            // on the next load. The slot stays OWNED (this drive still owns the
+            // hand and will tear it down properly); only the actor's knowledge of
+            // the transient is dropped. `Acquire` re-teaches on the next drive
+            // (its `!HasSpell` guard).
+            void Unteach(RE::FormID a_owner) {
+                for (auto& s : g_slot) if (s.owner == a_owner && s.form) {
+                    if (auto* actor = RE::TESForm::LookupByID<RE::Actor>(a_owner))
+                        actor->RemoveSpell(s.form);
+                }
             }
             void Free(RE::FormID a_owner) {
                 for (auto& s : g_slot) if (s.owner == a_owner) {
@@ -158,6 +191,38 @@ namespace apmf::castexec {
             RE::FormID FormForOwner(RE::FormID a_owner) {
                 for (auto& s : g_slot) if (s.owner == a_owner && s.form) return s.form->GetFormID();
                 return 0;
+            }
+            // Un-teach + deselect EVERY live proxy, keeping the slots. Pre-save
+            // sweep (H3): belt-and-braces so no quicksave taken at any point in
+            // the drive can capture a transient 0xFF spell, whatever phase the
+            // chain happens to be in. A drive whose proxy is pulled out from under
+            // it simply fails its equip/charge check and degrades to the
+            // guaranteed-delivery fallback -- the effect still lands.
+            void UnteachAll() {
+                for (auto& s : g_slot) {
+                    if (!s.owner || !s.form) continue;
+                    if (auto* actor = RE::TESForm::LookupByID<RE::Actor>(s.owner)) {
+                        actor->DeselectSpell(s.form);
+                        actor->RemoveSpell(s.form);
+                    }
+                }
+            }
+            // Revert / kPreLoadGame reset. The IFormFactory-minted 0xFF dynamic
+            // forms do NOT survive a load, so null every slot so the next cast
+            // re-mints -- and clear each form's BORROWED source `Effect*` FIRST
+            // (Configure copied them BY POINTER, sharing the source spell's own
+            // effect objects) so the load-time form purge frees an EMPTY array and
+            // can never double-free a live source spell's effects. This is MFO's
+            // own hard-won lesson, verbatim in shape: MFO
+            // `native/Actuation_Direct.cpp` ConcProxy::Reset. Without it, the pool
+            // ALSO stayed permanently occupied across a revert (M8) -- the 4 slots
+            // kept a stale `owner`, so ally heals silently stopped for the rest of
+            // the session. Main thread (the SKSE revert/pre-load seat).
+            void Reset() {
+                for (auto& s : g_slot) {
+                    if (s.form) s.form->effects.clear();   // drop borrowed source Effect*
+                    s = {};
+                }
             }
         }
 
@@ -184,7 +249,40 @@ namespace apmf::castexec {
             RE::FormID    target   = 0;   // 0 == self
             bool          left     = false;
             std::uint64_t epoch    = 0;
+            // Monotonic deadline for the WHOLE drive (H5). Set once in
+            // StartHandDrive to now + kDriveTotalMs; every per-phase deadline is
+            // clamped to it, so the chain can never still be running after its own
+            // ch.8b protection claim's TTL has lapsed. 0 == "no clamp" and is used
+            // only by the teardown-only contexts (Release/TeardownHand/the overflow
+            // decline), which never post a phase.
+            std::uint64_t driveDeadlineMs = 0;
         };
+
+        // A phase's own wall-clock budget: when to give up, and when to next emit a
+        // periodic diagnostic. Passed BY VALUE through the phase chain exactly like
+        // the old `pollsLeft` int was, so a re-post carries its own state and no
+        // shared mutable timer exists.
+        struct Budget {
+            std::uint64_t deadlineMs = 0;
+            std::uint64_t nextLogMs  = 0;
+        };
+
+        // Start a phase budget of `ms`, clamped to the whole-drive deadline (H5).
+        Budget MakeBudget(const DriveCtx& c, std::uint64_t ms) {
+            const auto now = apmf::clock::MonotonicMs();
+            std::uint64_t deadline = now + ms;
+            if (c.driveDeadlineMs != 0 && deadline > c.driveDeadlineMs)
+                deadline = c.driveDeadlineMs;   // never outlive the ch.8b claim
+            return Budget{ deadline, now + kLogEveryMs };
+        }
+        bool Expired(const Budget& b) { return apmf::clock::MonotonicMs() >= b.deadlineMs; }
+        // True at most once per kLogEveryMs; advances the budget's own log cursor.
+        bool LogDue(Budget& b) {
+            const auto now = apmf::clock::MonotonicMs();
+            if (now < b.nextLogMs) return false;
+            b.nextLogMs = now + kLogEveryMs;
+            return true;
+        }
 
         // The live HandDrive for this context, or null if it was cancelled/
         // superseded (epoch mismatch, or the actor entry is gone entirely --
@@ -259,12 +357,50 @@ namespace apmf::castexec {
         // across both hands, since the proxy pool is keyed by owner, not hand) is
         // still actively using that same proxy form. Idempotent-safe on a null
         // actor.
+        // Is the OTHER hand of this same actor still driving the SAME proxy form? A
+        // kHandDual drive shares ONE proxy across both hands (the pool is keyed by
+        // owner, not hand), so nothing may un-teach / deselect / free that form
+        // while the sibling is still using it.
+        bool SiblingUsesProxy(const DriveCtx& c) {
+            const RE::FormID proxyFid = proxy::FormForOwner(c.fid);
+            if (proxyFid == 0) return false;
+            auto it = g_drives.find(c.fid);
+            if (it == g_drives.end()) return false;
+            const HandDrive& sibling = c.left ? it->second.hand[0] : it->second.hand[1];
+            return sibling.active && sibling.castForm == proxyFid;
+        }
+
+        // The OBSERVED end-of-cast tail (deck capture 2026-09-04, step 5 of the
+        // vanilla sequence: anim-event `InterruptCast` then `CastStop`), paired with
+        // an actual caster stop.
+        //
+        // H7 (2026-09-05 review) -- ANIM EVENTS MUST BE BALANCED. Every
+        // `BeginCastRight`/`MRh_WinStart` this file pushes has to be answered by the
+        // matching stop, or the behaviour graph is left in a cast state it never
+        // exits: a graph that never returned to idle can REJECT the next BeginCast
+        // outright, which reads downstream as "the caster never left rest" -- i.e.
+        // it manufactures exactly the symptom the last two field cycles chased.
+        // Three unbalanced sites existed: PhaseSelect's pre-drive `InterruptCast(true)`
+        // (caster stopped, graph never told), `ParkHand` (the non-concentration
+        // SUCCESS path ended with NEITHER an interrupt nor a stop), and `MRh_WinStart`
+        // (never balanced by any stop on any path). All three now route through here.
+        //
+        // Idempotent: the caster stop is skipped at rest and the graph events are
+        // harmless no-ops on a graph already idle, so a path that reaches this twice
+        // (e.g. PhaseHold -> ParkHand) costs nothing and cannot corrupt state.
+        void EmitStopTail(RE::Actor* a_actor, bool a_left) {
+            if (!a_actor) return;
+            if (auto* hand = a_actor->GetMagicCaster(a_left ? CS::kLeftHand : CS::kRightHand)) {
+                if (static_cast<std::uint32_t>(hand->state.get()) != 0)
+                    hand->InterruptCast(false);   // stop the engine channel (no refund)
+            }
+            a_actor->NotifyAnimationGraph("InterruptCast");
+            a_actor->NotifyAnimationGraph("CastStop");
+        }
+
         void TeardownHand(const DriveCtx& c) {
             if (auto* actor = RE::TESForm::LookupByID<RE::Actor>(c.fid)) {
-                if (auto* hand = actor->GetMagicCaster(c.left ? CS::kLeftHand : CS::kRightHand))
-                    hand->InterruptCast(false);   // stop the engine channel (no refund)
-                actor->NotifyAnimationGraph("InterruptCast");
-                actor->NotifyAnimationGraph("CastStop");
+                EmitStopTail(actor, c.left);   // H7 -- balanced caster stop + graph tail
                 if (auto* px = RE::TESForm::LookupByID<RE::SpellItem>(c.castForm))
                     actor->DeselectSpell(px);   // no lingering equipped spell (light-limit CTD lesson)
             }
@@ -273,19 +409,8 @@ namespace apmf::castexec {
                 hd->claim  = APMF_API::kInvalidHandle;
                 hd->active = false;
             }
-            bool siblingStillUsesProxy = false;
-            if (const RE::FormID proxyFid = proxy::FormForOwner(c.fid); proxyFid != 0) {
-                if (auto it = g_drives.find(c.fid); it != g_drives.end()) {
-                    const HandDrive& sibling = c.left ? it->second.hand[0] : it->second.hand[1];
-                    siblingStillUsesProxy = sibling.active && sibling.castForm == proxyFid;
-                }
-            }
-            if (!siblingStillUsesProxy) proxy::Free(c.fid);
+            if (!SiblingUsesProxy(c)) proxy::Free(c.fid);
         }
-
-        // Forward decl -- PhaseSelect/PhaseFire/PhaseHold call each other across
-        // the chain.
-        void PhaseSelect(DriveCtx c, int triesLeft);
 
         // Releases the internal ch.8b protection claim and PARKS the hand --
         // `hd.active` stays true (this hand is still ours: Release() must still
@@ -297,11 +422,72 @@ namespace apmf::castexec {
         // if Release() comes instead (INVARIANTS #18-style completeness for THIS
         // channel's own cleanup, marth's rule #6).
         void ParkHand(const DriveCtx& c) {
+            auto* actor = RE::TESForm::LookupByID<RE::Actor>(c.fid);
+
+            // H7: the success path used to end with NEITHER an interrupt NOR a stop
+            // event, leaving `BeginCast*`/`MRh_WinStart` permanently unanswered in
+            // the behaviour graph. Every park now closes the sequence properly.
+            EmitStopTail(actor, c.left);
+
+            // H3: a PARKED hand must never leave the runtime 0xFF delivery-flip
+            // PROXY equipped or known. The proxy is minted by IFormFactory and
+            // AddSpell'd transiently; a quicksave taken while a hand sat parked
+            // would persist a reference to a dynamic form that does not exist on the
+            // next load. So the proxy is un-taught + deselected the moment the cast
+            // is done with it -- unless the sibling hand is still driving that same
+            // form. The slot stays OWNED (this drive still owns the hand and tears
+            // it down properly later); `proxy::Acquire` re-teaches on the next drive.
+            //
+            // Scoped to the PROXY case (castForm != spell) on purpose: a REAL spell
+            // left equipped is not a save hazard, and deselecting it here would cost
+            // the parked hand its fast re-fire (a repeat Repoint would have to pay
+            // the whole multi-second re-equip wait again) for no correctness gain.
+            if (actor && c.castForm != c.spell && !SiblingUsesProxy(c)) {
+                if (auto* px = RE::TESForm::LookupByID<RE::SpellItem>(c.castForm))
+                    actor->DeselectSpell(px);
+                proxy::Unteach(c.fid);
+            }
+
             if (HandDrive* hd = Live(c)) {
                 apmf::ControlMap::Get().EnqueueRelease(hd->claim);
                 hd->claim    = APMF_API::kInvalidHandle;
                 hd->inFlight = false;   // parked -- a same-spell Repoint now fires again
             }
+        }
+
+        // Phase 3a (non-concentration success tail). The SpellFire event has just
+        // been pushed; give the RELEASE animation a bounded moment to play and the
+        // engine a chance to conclude the cast on its OWN (state -> 0) before the
+        // stop tail lands, so H7's balancing does not visually clip the very
+        // animation this whole drive exists to produce. Ends the instant the caster
+        // reaches rest, so a normal cast pays no added latency.
+        //
+        // M7 (diagnostic ONLY -- changes no control flow): the success path never
+        // verified that anything was actually delivered; an animated cast that
+        // applies nothing was indistinguishable from a real one in the log. The
+        // first poll here dumps the caster state one frame after the fire, which is
+        // what tells a deck run "it fired and concluded" apart from "the fire event
+        // was accepted and nothing happened".
+        void PhaseParkWait(DriveCtx c, Budget b, bool firstPoll) {
+            if (!Live(c)) return;
+            auto* actor = RE::TESForm::LookupByID<RE::Actor>(c.fid);
+            if (!actor) { TeardownHand(c); return; }
+            auto* hand = actor->GetMagicCaster(c.left ? CS::kLeftHand : CS::kRightHand);
+            if (!hand) { ParkHand(c); return; }
+
+            if (firstPoll)
+                LogHandDiagnostic(actor, hand, c.left, "post-fire (one frame after SpellFire) -- M7 probe");
+
+            const auto stNum = static_cast<std::uint32_t>(hand->state.get());
+            if (stNum == 0 || Expired(b)) {
+                spdlog::info("[ch.8+act] 0x{} cast released and {} ({} hand, state {}) -- parking.",
+                             apmf::log::Hex(c.fid),
+                             stNum == 0 ? "returned to rest" : "still busy at the park grace deadline",
+                             c.left ? "left" : "right", stNum);
+                ParkHand(c);
+                return;
+            }
+            apmf::mainthread::Post([c, b] { PhaseParkWait(c, b, false); });
         }
 
         // Phase 3 (concentration only, 2026-09-05 field fix): after the initial
@@ -310,11 +496,27 @@ namespace apmf::castexec {
         // casting state (>=3) -- exactly like a player holding the cast button.
         // So we do NOT interrupt/re-fire here, just keep the channel (and the
         // internal ch.8b claim protecting the hand) alive by polling, up to a
-        // bounded hold window (kConcentrationHoldPolls, ~3s) or until the caster
-        // exits the state on its own -- whichever comes first -- then parks
-        // (single instant-apply fallback semantics don't apply here: the spell
-        // already fired at least once, so there is nothing to degrade to).
-        void PhaseHold(DriveCtx c, int pollsLeft) {
+        // bounded hold window (kConcHoldMs, wall clock) or until the caster exits
+        // the state on its own -- whichever comes first -- then parks (single
+        // instant-apply fallback semantics don't apply here: the spell already
+        // fired at least once, so there is nothing to degrade to).
+        //
+        // M1 (2026-09-05 review): this used to end the channel on a SINGLE
+        // `stNum == 0` read -- the exact transient-as-terminal shape PhaseFire had
+        // just been fixed for. The state can still be spinning up in the frames
+        // right after SpellFire, and reading a 0 there ended the heal instantly.
+        // `everActive` mirrors PhaseFire's `everLeftRest`: until this chain has seen
+        // the caster busy at least once, a 0 means "not spun up yet" and we keep
+        // waiting; only a 0 AFTER a busy observation is a genuine channel end.
+        //
+        // M2 (target half): the drive set `desiredTarget` ONCE, at BeginCast time,
+        // so the AI was free to re-aim a channelled heal mid-cast (onto its combat
+        // foe, in the worst case). It is now re-asserted on every hold poll. NOTE:
+        // whether a concentration channel ALSO needs a per-tick RE-FIRE to keep
+        // applying is RE-GATED and deliberately NOT guessed here -- the engine's own
+        // per-frame caster update is believed to apply the magnitude for as long as
+        // the state holds, and nothing measured contradicts that yet.
+        void PhaseHold(DriveCtx c, Budget b, bool everActive) {
             if (!Live(c)) return;
             auto* actor = RE::TESForm::LookupByID<RE::Actor>(c.fid);
             if (!actor) { TeardownHand(c); return; }
@@ -322,16 +524,25 @@ namespace apmf::castexec {
             if (!hand) { TeardownHand(c); return; }
 
             const auto stNum = static_cast<std::uint32_t>(hand->state.get());
-            if (stNum == 0 || pollsLeft <= 0) {   // channel ended on its own, or our hold window is up
-                hand->InterruptCast(false);       // stop the still-active engine channel (no refund)
-                actor->NotifyAnimationGraph("InterruptCast");
-                actor->NotifyAnimationGraph("CastStop");
-                spdlog::info("[ch.8+act] 0x{} concentration hold ended ({} hand, state {}).",
-                             apmf::log::Hex(c.fid), c.left ? "left" : "right", stNum);
-                ParkHand(c);
+            if (stNum > 0) everActive = true;   // the channel is genuinely running
+
+            // M2: hold the aim for the WHOLE channel, not just at BeginCast.
+            if (c.target != 0) {
+                if (auto* tgt = RE::TESForm::LookupByID<RE::Actor>(c.target))
+                    hand->desiredTarget = tgt->CreateRefHandle();
+            }
+
+            const bool channelEnded = (stNum == 0 && everActive);
+            if (channelEnded || Expired(b)) {
+                spdlog::info("[ch.8+act] 0x{} concentration hold ended ({} hand, state {}, {}).",
+                             apmf::log::Hex(c.fid), c.left ? "left" : "right", stNum,
+                             channelEnded ? "channel closed" : "hold window elapsed");
+                ParkHand(c);   // ParkHand emits the balanced stop tail (H7)
                 return;
             }
-            apmf::mainthread::Post([c, pollsLeft] { PhaseHold(c, pollsLeft - 1); });
+            if (LogDue(b))
+                LogHandDiagnostic(actor, hand, c.left, everActive ? "channelling" : "waiting-to-channel");
+            apmf::mainthread::Post([c, b, everActive] { PhaseHold(c, b, everActive); });
         }
 
         // Phase 2: poll the caster until it reaches Charged (deck-observed >=3),
@@ -350,14 +561,25 @@ namespace apmf::castexec {
         // engine can take seconds to advance it (the AI's own organic cast took
         // ~5s claim->Charged). So `everLeftRest` tracks whether THIS poll chain
         // has EVER observed state>0: while it hasn't, state==0 is "still waiting
-        // to spin up" and we keep polling (bounded by kChargePolls, same scale
+        // to spin up" and we keep polling (bounded by kChargeWaitMs, same scale
         // as the select wait). Once it HAS spun up at least once and THEN
         // returns to state==0 without ever reaching >=3, that is a genuine
         // early end/refusal -- terminal immediately, not after the whole
         // remaining budget (further polling would just re-observe the same
         // rest). Wedged mid-charge (stuck at 1/2 the whole budget) still
-        // degrades once pollsLeft is exhausted, as before.
-        void PhaseFire(DriveCtx c, int pollsLeft, bool everLeftRest = false) {
+        // degrades once the budget elapses, as before.
+        //
+        // M3 (2026-09-05 review) -- DO NOT DOUBLE-APPLY. The "returned to rest
+        // without charging" branch is only safe if the cast really never happened.
+        // A FAST cast can walk 1 -> 2 -> 3 -> 4 -> 6 -> 0 entirely BETWEEN two
+        // polls, and the old code then saw a 0 with `everLeftRest` set, called it a
+        // refusal, and fired the instant fallback AFTER the animated cast had
+        // already landed -- a silent double heal. `everCharging` records whether the
+        // chain ever observed state>=2 (Charging or beyond, i.e. the cast was
+        // genuinely under way): if it did, a subsequent rest is a COMPLETED cast, so
+        // we tear down quietly and never fire the fallback. Only a chain that never
+        // got past state 1 (ready) still degrades on that path.
+        void PhaseFire(DriveCtx c, Budget b, bool everLeftRest = false, bool everCharging = false) {
             if (!Live(c)) return;   // cancelled/superseded -- nothing to do
             auto* actor = RE::TESForm::LookupByID<RE::Actor>(c.fid);
             if (!actor) { TeardownHand(c); return; }
@@ -375,29 +597,41 @@ namespace apmf::castexec {
                 const bool concentration = origSpell &&
                     origSpell->GetCastingType() == RE::MagicSystem::CastingType::kConcentration;
                 if (concentration) {
-                    apmf::mainthread::Post([c] { PhaseHold(c, kConcentrationHoldPolls); });
+                    const Budget hb = MakeBudget(c, kConcHoldMs);
+                    apmf::mainthread::Post([c, hb] { PhaseHold(c, hb, false); });
                 } else {
-                    apmf::mainthread::Post([c] { ParkHand(c); });
+                    const Budget pb = MakeBudget(c, kParkGraceMs);
+                    apmf::mainthread::Post([c, pb] { PhaseParkWait(c, pb, true); });
                 }
                 return;
             }
 
             if (stNum > 0) everLeftRest = true;   // spun up into ready/charging at least once
+            if (stNum >= 2) everCharging = true;  // M3 -- the cast was genuinely under way
 
-            if (pollsLeft % kChargeLogEveryN == 0)
+            if (LogDue(b))
                 LogHandDiagnostic(actor, hand, c.left, everLeftRest ? "charging" : "waiting-to-leave-rest");
 
             if (stNum == 0 && everLeftRest) {
-                // It genuinely started, then returned to rest WITHOUT ever
-                // reaching Charged -- a real early end/refusal, not a startup
-                // delay. Terminal now (waiting out the rest of the budget would
-                // not change anything).
+                if (everCharging) {
+                    // M3: it was CHARGING (>=2) and is now at rest -- the whole
+                    // 2->3->4->6->0 walk completed between two polls. The animated
+                    // cast already landed; firing the fallback here would apply the
+                    // effect a SECOND time. Tear down quietly, no fallback.
+                    LogHandDiagnostic(actor, hand, c.left,
+                                      "charged-then-rest between polls -- cast completed, NOT degrading");
+                    TeardownHand(c);
+                    return;
+                }
+                // It reached ready (1) and returned to rest WITHOUT ever charging --
+                // a real early end/refusal, not a startup delay. Terminal now
+                // (waiting out the rest of the budget would not change anything).
                 LogHandDiagnostic(actor, hand, c.left, "returned-to-rest-without-charging -- degrading");
                 FireFallback(c);
                 TeardownHand(c);
                 return;
             }
-            if (pollsLeft <= 0) {   // whole wait budget exhausted -- never left rest, or wedged mid-charge
+            if (Expired(b)) {   // whole wait budget elapsed -- never left rest, or wedged mid-charge
                 LogHandDiagnostic(actor, hand, c.left,
                                   everLeftRest ? "WEDGED mid-charge -- degrading"
                                                : "never left rest -- degrading");
@@ -405,12 +639,76 @@ namespace apmf::castexec {
                 TeardownHand(c);
                 return;
             }
-            apmf::mainthread::Post([c, pollsLeft, everLeftRest] { PhaseFire(c, pollsLeft - 1, everLeftRest); });
+            apmf::mainthread::Post([c, b, everLeftRest, everCharging] {
+                PhaseFire(c, b, everLeftRest, everCharging);
+            });
+        }
+
+        // Phase 1b (H6, 2026-09-05 review): DRIVE ONLY FROM ACTUAL REST.
+        //
+        // PhaseSelect used to interrupt the caster and call RequestCastImpl in the
+        // SAME frame -- directly against its own comment ("Drive ONLY from rest;
+        // re-requesting mid-sequence wedges the caster in charge-glow"). An
+        // InterruptCast is a REQUEST to the engine, not an instantaneous state
+        // change: reading/driving the caster in the same frame is the identical
+        // "read the engine before it updated it" mistake that cost the previous
+        // three field cycles. So the interrupt now happens at the end of
+        // PhaseSelect (paired with its anim-graph stop tail, H7) and THIS phase
+        // polls, on the wall clock, until the caster is genuinely at kNone before
+        // pushing BeginCast + RequestCastImpl.
+        //
+        // If it never reaches rest inside kRestWaitMs we degrade rather than drive
+        // from a busy caster: the guaranteed-delivery fallback still lands the
+        // effect, and driving anyway is the wedge this phase exists to prevent.
+        void PhaseRest(DriveCtx c, Budget b) {
+            if (!Live(c)) return;
+            auto* actor    = RE::TESForm::LookupByID<RE::Actor>(c.fid);
+            auto* castForm = RE::TESForm::LookupByID<RE::SpellItem>(c.castForm);
+            if (!actor || !castForm) { TeardownHand(c); return; }
+            auto* hand = actor->GetMagicCaster(c.left ? CS::kLeftHand : CS::kRightHand);
+            if (!hand) { FireFallback(c); TeardownHand(c); return; }
+
+            if (static_cast<std::uint32_t>(hand->state.get()) != 0) {   // not at rest yet
+                if (Expired(b)) {
+                    LogHandDiagnostic(actor, hand, c.left,
+                                      "never returned to rest after the interrupt -- degrading");
+                    FireFallback(c);
+                    TeardownHand(c);
+                    return;
+                }
+                if (LogDue(b)) LogHandDiagnostic(actor, hand, c.left, "waiting-for-rest");
+                apmf::mainthread::Post([c, b] { PhaseRest(c, b); });
+                return;
+            }
+
+            // At rest, spell in hand -- start the request.
+            if (c.target != 0) {
+                if (auto* tgt = RE::TESForm::LookupByID<RE::Actor>(c.target))
+                    hand->desiredTarget = tgt->CreateRefHandle();
+            }
+
+            float                             strength = 1.0f;
+            RE::MagicSystem::CannotCastReason reason{};
+            const bool engineWillCast =
+                hand->CheckCast(castForm, false, &strength, &reason, false);   // engine's own gate
+            // Logged, never gated on (the drive requests regardless -- the engine
+            // gets the final word inside RequestCastImpl). This line is the direct
+            // read-out of the H1 fix: before it, THIS call was denied by APMF's own
+            // CheckCast hook whenever castForm was the delivery-flip proxy.
+            spdlog::info("[ch.8+act] 0x{} CheckCast(0x{}) -> {} (reason {}) -- diagnostic.",
+                         apmf::log::Hex(c.fid), apmf::log::Hex(c.castForm),
+                         engineWillCast ? "ALLOW" : "DENY", static_cast<std::uint32_t>(reason));
+
+            actor->NotifyAnimationGraph(c.left ? "BeginCastLeft" : "BeginCastRight");
+            hand->RequestCastImpl();
+
+            const Budget fb = MakeBudget(c, kChargeWaitMs);
+            apmf::mainthread::Post([c, fb] { PhaseFire(c, fb); });
         }
 
         // Phase 1: wait for the ALREADY-QUEUED equip (issued once, in
-        // StartHandDrive) to land, then start the request from rest with the
-        // BeginCast anim + RequestCastImpl, and hand to PhaseFire.
+        // StartHandDrive) to land, then interrupt to rest (PhaseRest) before the
+        // BeginCast anim + RequestCastImpl.
         //
         // SELECT SIGNAL (2026-09-05 field fix, replacing a 100% degrade). This
         // used to gate on `MagicCaster::currentSpell == castForm`. Deck evidence
@@ -426,50 +724,47 @@ namespace apmf::castexec {
         // the ACTOR's equipped object for that hand (MFO's own established
         // pattern, e.g. its Loadout.cpp/Actuation.cpp: "selection comes from the
         // equip, NOT currentSpell").
-        void PhaseSelect(DriveCtx c, int pollsLeft) {
+        void PhaseSelect(DriveCtx c, Budget b) {
             if (!Live(c)) return;
             auto* actor    = RE::TESForm::LookupByID<RE::Actor>(c.fid);
             auto* castForm = RE::TESForm::LookupByID<RE::SpellItem>(c.castForm);
-            auto* target   = c.target ? RE::TESForm::LookupByID<RE::Actor>(c.target) : nullptr;
             if (!actor || !castForm) { TeardownHand(c); return; }
             auto* hand = actor->GetMagicCaster(c.left ? CS::kLeftHand : CS::kRightHand);
             if (!hand) { FireFallback(c); TeardownHand(c); return; }
 
             if (actor->GetEquippedObject(c.left) != castForm) {   // the equip hasn't landed yet
-                if (pollsLeft % kSelectLogEveryN == 0)
-                    LogHandDiagnostic(actor, hand, c.left, "waiting-for-equip");
-                if (pollsLeft <= 0) {
+                if (Expired(b)) {
                     LogHandDiagnostic(actor, hand, c.left, "never-equipped -- degrading");
                     FireFallback(c);
                     TeardownHand(c);
                     return;
                 }
+                if (LogDue(b)) LogHandDiagnostic(actor, hand, c.left, "waiting-for-equip");
                 // Do NOT re-issue EquipSpell here -- it was already queued ONCE
                 // in StartHandDrive. Re-issuing every poll was the equip/
                 // interrupt/re-equip churn a prior deck cycle logged (and, paired
                 // with the AI's own context rebuild, tipped a since-fixed deny
                 // gap into a CTD) -- just wait for the ONE queued equip to land.
-                apmf::mainthread::Post([c, pollsLeft] { PhaseSelect(c, pollsLeft - 1); });
+                apmf::mainthread::Post([c, b] { PhaseSelect(c, b); });
                 return;
             }
 
-            LogHandDiagnostic(actor, hand, c.left, "equipped -- proceeding to BeginCast");
+            LogHandDiagnostic(actor, hand, c.left, "equipped -- draining to rest before BeginCast");
 
-            // Equipped. Drive ONLY from rest (re-requesting mid-sequence wedges
-            // the caster in charge-glow -- the field-proven discipline this
-            // replicates).
-            if (hand->state.get() != RE::MagicCaster::State::kNone)
+            // Equipped. Drive ONLY from rest -- but the interrupt and the drive can
+            // NOT share a frame (H6): ask the engine to stop here, PAIRED with the
+            // anim-graph stop tail (H7 -- an unbalanced caster interrupt leaves the
+            // behaviour graph in a cast state that can then REJECT our BeginCast),
+            // and let PhaseRest confirm the caster actually reached rest before
+            // anything is requested.
+            if (static_cast<std::uint32_t>(hand->state.get()) != 0) {
                 hand->InterruptCast(true);
-            if (target) hand->desiredTarget = target->CreateRefHandle();
+                actor->NotifyAnimationGraph("InterruptCast");
+                actor->NotifyAnimationGraph("CastStop");
+            }
 
-            float                              strength = 1.0f;
-            RE::MagicSystem::CannotCastReason  reason{};
-            hand->CheckCast(castForm, false, &strength, &reason, false);   // engine's own gate; logged only
-
-            actor->NotifyAnimationGraph(c.left ? "BeginCastLeft" : "BeginCastRight");
-            hand->RequestCastImpl();
-
-            apmf::mainthread::Post([c] { PhaseFire(c, kChargePolls); });
+            const Budget rb = MakeBudget(c, kRestWaitMs);
+            apmf::mainthread::Post([c, rb] { PhaseRest(c, rb); });
         }
 
         // Start (or restart) a single hand's drive: resolve the target, decide the
@@ -559,8 +854,15 @@ namespace apmf::castexec {
                          apmf::log::Hex(id), left ? "left" : "right", apmf::log::Hex(hd.spell),
                          apmf::log::Hex(hd.castForm), apmf::log::Hex(hd.target));
 
-            DriveCtx c{ id, hd.spell, hd.castForm, hd.target, left, hd.epoch };
-            PhaseSelect(c, kSelectPolls);
+            // ONE wall-clock ceiling for the WHOLE drive (H5), set here and clamped
+            // into every phase budget: the internal ch.8b claim above lives at most
+            // APMF_API::kCastMaxTtlMs, and a drive that outlived it would keep
+            // equipping/animating with no protection at all -- the AI free to fight
+            // it for the hand. kDriveTotalMs is static_assert'd to finish well inside
+            // that TTL.
+            DriveCtx c{ id, hd.spell, hd.castForm, hd.target, left, hd.epoch,
+                        apmf::clock::MonotonicMs() + kDriveTotalMs };
+            PhaseSelect(c, MakeBudget(c, kSelectWaitMs));
         }
 
         // 0 auto (prefers a free hand, no weapon there) / 1 right / 2 left / 3 dual.
@@ -572,13 +874,23 @@ namespace apmf::castexec {
             case kHandDual:  wantRight = wantLeft = true; return;
             default: break;   // kHandAuto and any unrecognized value
             }
-            auto* rightObj = actor->GetEquippedObject(false);
-            auto* leftObj  = actor->GetEquippedObject(true);
-            const bool rightHasWeapon = rightObj && rightObj->As<RE::TESObjectWEAP>();
-            const bool leftHasWeapon  = leftObj  && leftObj->As<RE::TESObjectWEAP>();
-            if (!rightHasWeapon)     wantRight = true;
-            else if (!leftHasWeapon) wantLeft  = true;
-            else                     wantRight = true;   // both occupied -- bump the right hand
+            // M6 (2026-09-05 review): "free hand" used to mean "no TESObjectWEAP
+            // there", so a SHIELD (TESObjectARMO) or a TORCH (TESObjectLIGH) in the
+            // left hand read as FREE and auto mode happily stripped it to cast --
+            // taking a sword-and-board follower's shield off mid-fight. Anything the
+            // engine considers held in that hand counts as occupied. A SPELL is NOT
+            // occupied on purpose: replacing one spell with another is exactly what
+            // this drive does.
+            auto occupied = [](RE::TESForm* obj) {
+                return obj && (obj->As<RE::TESObjectWEAP>() ||
+                               obj->As<RE::TESObjectARMO>() ||   // shield
+                               obj->As<RE::TESObjectLIGH>());    // torch
+            };
+            const bool rightHeld = occupied(actor->GetEquippedObject(false));
+            const bool leftHeld  = occupied(actor->GetEquippedObject(true));
+            if (!rightHeld)     wantRight = true;
+            else if (!leftHeld) wantLeft  = true;
+            else                wantRight = true;   // both occupied -- bump the right hand
         }
 
         void ApplyDesired(RE::FormID id, RE::Actor* actor, const APMF_API::APMF_Param& param) {
@@ -655,6 +967,44 @@ namespace apmf::castexec {
             TeardownHand(DriveCtx{ id, hd.spell, hd.castForm, hd.target, left, hd.epoch });
         }
         g_drives.erase(it);   // any stale posted continuation now finds no entry -> no-op
+    }
+
+    void ResetAll() {
+        // Revert / new game / kPreLoadGame (H2 + M8). Two distinct leaks closed:
+        //
+        //  * The delivery-flip proxies are IFormFactory-minted 0xFF dynamic forms
+        //    that do NOT survive a load, and `Configure` shares the SOURCE spell's
+        //    `Effect*` objects BY POINTER. Left alone, the load-time form purge
+        //    would free a live source spell's effect array through the dead proxy.
+        //    `proxy::Reset` clears the borrowed pointers FIRST, then nulls the
+        //    slots so the next cast re-mints -- MFO's own hard-won lesson
+        //    (native/Actuation_Direct.cpp, ConcProxy::Reset), same shape.
+        //  * `ControlMap::Clear()` (the revert path) deliberately does NOT call
+        //    channel->Release, so nothing ever released the drive state: the 4-slot
+        //    proxy pool stayed permanently occupied by a stale `owner` after a
+        //    revert and every subsequent ally heal silently declined ("proxy pool
+        //    overflow") for the rest of the session. Clearing g_drives here is what
+        //    makes the revert path actually reset.
+        //
+        // No engine calls: on this path the actors are being replaced/torn down, so
+        // this only drops APMF-side state. Any continuation still queued on the main
+        // -thread pump finds no g_drives entry (Live() -> null) and no-ops. MAIN
+        // THREAD ONLY (the SKSE revert / kPreLoadGame seat -- the same one Drain
+        // runs on, per core/ControlMap.h).
+        g_drives.clear();
+        proxy::Reset();
+    }
+
+    void PreSaveSweep() {
+        // H3, belt-and-braces. A drive that has fired and PARKED already un-taught
+        // its proxy (see ParkHand), but a save can be taken at ANY point in the
+        // chain -- including mid-charge, with the transient equipped and known. A
+        // runtime 0xFF dynamic form must never be capturable into the .ess, so this
+        // un-teaches + deselects every live proxy at save time. The slots stay
+        // owned; a drive whose proxy is pulled out from under it simply fails its
+        // equip/charge check and degrades to the guaranteed-delivery fallback, so
+        // the effect still lands. MAIN THREAD ONLY (SKSE's save callback seat).
+        proxy::UnteachAll();
     }
 
 }

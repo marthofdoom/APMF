@@ -130,4 +130,30 @@ namespace apmf::allowance {
     // anything the client does.
     bool AllowedCastForHand(RE::FormID actor, RE::FormID subjectForm, Hand callerHand);
 
+    // Does a STANDING ch.8b kIntent_Cast claim NAME `subjectForm` (as its spell or
+    // as its runtime delivery-flip proxy) for the hand this seat resolved?
+    //
+    // This exists for one reason (the 2026-09-05 drive-chain review, H1 -- the
+    // blocker that made every PROXIED cast deny itself). A ch.8 kIntent_SelectSpell
+    // claim carries `claim.form == the ORIGINAL spell`. The moment APMF's own drive
+    // mints a delivery-flip PROXY and drives THAT form, every gate that keys on the
+    // ch.8 claim's FormID (`Allowed(fid, kIntent_SelectSpell, proxyFid)`) sees a
+    // form the claim never named -> DENY -- so APMF denied its OWN driven cast, and
+    // ch.8b's correct spell||proxy allowance could never save it because the two
+    // were AND-ed. This predicate lets a gate recognise "this is APMF's own driven
+    // form, admitted by the cast claim itself" and let the ENGINE's own answer
+    // stand, WITHOUT weakening the ch.8 narrow for anything else: it returns true
+    // ONLY for the exact spell/proxy pair a live kIntent_Cast claim already names,
+    // on that claim's own hand.
+    //
+    // LESSON (recorded in the cast memory): when a claim is keyed on a FormID, any
+    // PROXY/substitute form we later drive must be admitted by EVERY gate that keys
+    // on that FormID -- check the whole AND-chain, not just the facet's own gate.
+    //
+    // ANY thread -- one lock-free RCU ControlMap read, same discipline as the rest
+    // of this header. Returns false when there is no cast claim at all, when the
+    // claim is degenerate (names neither spell nor proxy), when the claim belongs
+    // to the OTHER hand, or when `subjectForm` is simply not one of the two.
+    bool CastClaimNamesForHand(RE::FormID actor, RE::FormID subjectForm, Hand callerHand);
+
 }

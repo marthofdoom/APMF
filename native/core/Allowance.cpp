@@ -108,4 +108,29 @@ namespace apmf::allowance {
         return false;                                      // a cast claim stands on THIS hand and this is neither -> DENY
     }
 
+    bool CastClaimNamesForHand(RE::FormID actor, RE::FormID subjectForm, Hand callerHand) {
+        // See Allowance.h for WHY this exists (H1: APMF denied its own delivery-flip
+        // proxy). Deliberately NOT expressed in terms of AllowedCastForHand: THAT
+        // returns true for "no claim at all" and for "a different hand", neither of
+        // which may license an override of the ch.8 narrow. This is the strict
+        // POSITIVE form -- a claim must actually stand, on this hand, naming this
+        // exact form.
+        RE::FormID    spell = 0, proxy = 0;
+        std::uint32_t flags = 0;
+        if (!ControlMap::Get().TryGetCastClaim(actor, spell, proxy, &flags))
+            return false;                                  // no cast claim -> nothing to admit
+        if (spell == 0 && proxy == 0) return false;        // degenerate -> names nothing
+
+        if (callerHand != Hand::kUnknown) {
+            const Hand claimHand =
+                (flags & APMF_API::kCastFlag_LeftHand) ? Hand::kLeft : Hand::kRight;
+            if (callerHand != claimHand) return false;     // this claim is not about this hand
+        }
+        // kUnknown (kOther/kInstant casters, an equip slot that is neither vanilla
+        // hand) degrades to the actor-wide floor, exactly like AllowedCast above --
+        // never a guess.
+
+        return subjectForm != 0 && (subjectForm == spell || subjectForm == proxy);
+    }
+
 }

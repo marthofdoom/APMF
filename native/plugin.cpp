@@ -6,6 +6,7 @@
 #include "core/Arbiter.h"
 #include "core/ControlMap.h"
 #include "core/AvLedger.h"
+#include "core/CastExecutor.h"
 #include "core/CastGate.h"
 #include "core/EquipGate.h"
 #include "core/ActionGate.h"
@@ -30,6 +31,11 @@ namespace {
     // --- SKSE serialization: co-save the outstanding AV overrides so a
     // save-while-engaged is never stranded across a load (INVARIANTS #15). ---
     void OnSave(SKSE::SerializationInterface* intf) {
+        // A save must never capture a reference to one of the cast drive's TRANSIENT
+        // runtime 0xFF delivery-flip proxy spells (they are AddSpell'd to the caster
+        // for the length of a cast and do not exist on the next load). Sweep first,
+        // then write our own record. See castexec::PreSaveSweep.
+        apmf::castexec::PreSaveSweep();
         apmf::av::Save(intf);
     }
     void OnLoad(SKSE::SerializationInterface* intf) {
@@ -43,6 +49,13 @@ namespace {
         // being replaced) and clear the ledger; the co-save's pending set restores
         // the incoming save's overrides on kPostLoadGame.
         apmf::ControlMap::Get().Clear();
+        // ControlMap::Clear() deliberately does NOT call channel->Release, so the
+        // cast drive's own per-actor state and its delivery-flip proxy pool would
+        // otherwise survive the wipe -- leaving all 4 slots owned by actors that no
+        // longer exist (every later ally heal declining with "proxy pool overflow")
+        // and dead 0xFF proxy forms still holding the source spells' borrowed
+        // Effect* into the load-time purge. ResetAll closes both (H2/M8).
+        apmf::castexec::ResetAll();
         apmf::av::Revert();
     }
 
@@ -82,6 +95,12 @@ namespace {
             // every channel's claims (including these) through the generic
             // ControlMap path; unlike the old probes, these are real channels.
             apmf::Arbiter::Get().ReleaseAll("kPreLoadGame");
+            // ReleaseAll tears down every DRIVEN hand through the channel (which
+            // un-teaches its proxy); this additionally nulls the proxy pool's 0xFF
+            // forms after clearing their borrowed source Effect*, so the incoming
+            // load's form purge can never free a live spell's effect array through a
+            // dead proxy (H2 -- MFO's Actuation_Direct.cpp lesson).
+            apmf::castexec::ResetAll();
             break;
         case SKSE::MessagingInterface::kPostLoadGame:
             apmf::av::ApplyPending();             // restore any stranded AV overrides
