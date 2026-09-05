@@ -35,13 +35,33 @@
 // See AiCastSeats.cpp for the exact log-line shape and throttling (all four
 // seats are per-actor+per-subject rate-limited to ~1.5s, matching the
 // existing probes' cadence discipline).
+//
+// TWO INDEPENDENTLY-SELECTABLE GROUPS (marth 2026-09-05): a deck run of this
+// probe produced a NEW crash signature that did not occur before the probe
+// was deployed. The probe is the prime suspect but NOT proven (the crash
+// shares mid-chain frames with pre-existing, unrelated Targeting-hook cast
+// CTDs). To let the next run isolate which seat (if either) is implicated,
+// install is split into two groups, each gated by its OWN flag in
+// Data/SKSE/Plugins/APMF.ini, [AiCastSeats] section, both 0/OFF by default:
+//   GROUP A -- EnableItemScoreProbe=1  -- CalculateScore only (item vtables)
+//   GROUP B -- EnableCasterSeatProbe=1 -- CheckStartCast/CheckStopCast/
+//                                         GetMagicTarget (caster vtables)
+// A deck run sets exactly ONE of the two to 1 to isolate it. No hotkey/toggle
+// (standing rule: probes are config-gated or always-on rate-limited logging
+// only, never a runtime input switch) -- see AiCastSeats.cpp's ReadIniFlag.
+//
+// FALLBACK SAFETY: every thunk's original-recovery is now non-fabricating --
+// see AiCastSeats.cpp's file banner (RecoverLiveOriginal) for how a
+// structurally-unreachable lookup miss is handled without ever inventing a
+// score/decision/target the engine did not actually produce.
 // ============================================================================
 
 namespace apmf::aicastseats {
 
-    // Install all four observe hooks (once). Call at kDataLoaded. VR-refused
-    // (the vtable indices below are SE/AE-only verified, matching every other
-    // T2-shaped seat in this codebase). Idempotent.
+    // Install whichever of the two observe-hook groups its own INI flag
+    // enables (once). Call at kDataLoaded. VR-refused (the vtable indices
+    // below are SE/AE-only verified, matching every other T2-shaped seat in
+    // this codebase). Idempotent.
     void Install();
 
 }
