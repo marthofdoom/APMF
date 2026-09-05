@@ -133,9 +133,10 @@ namespace apmf::castexec {
                     actor->AddSpell(s.form);   // TRANSIENT teach -- makes it selectable (removed in Free)
                     return s.form;
                 }
-                spdlog::warn("[ch.8+act] proxy pool overflow (owner 0x{}) -- driving the "
-                             "original form (self-pose, imperfect but never a crash).",
-                             apmf::log::Hex(a_owner));
+                spdlog::warn("[ch.8+act] proxy pool overflow (owner 0x{}, all {} slots held by "
+                             "other live streams) -- caller must decline/fallback, never drive "
+                             "the original self-delivery form (2026-09-06 correctness fix).",
+                             apmf::log::Hex(a_owner), sizeof(g_slot) / sizeof(g_slot[0]));
                 return nullptr;
             }
             void Free(RE::FormID a_owner) {
@@ -449,26 +450,62 @@ namespace apmf::castexec {
                 TeardownHand(old);
             }
 
-            const RE::FormID targetFid    = ResolveTarget(actor, explicitTarget);
-            const bool       selfDelivery = spell->GetDelivery() == RE::MagicSystem::Delivery::kSelf;
-            const bool       mismatch     = selfDelivery && targetFid != id;
+            const RE::FormID targetFid     = ResolveTarget(actor, explicitTarget);
+            const bool       selfDelivery  = spell->GetDelivery() == RE::MagicSystem::Delivery::kSelf;
+            const bool       mismatch      = selfDelivery && targetFid != id;
+            const bool       concentration =
+                spell->GetCastingType() == RE::MagicSystem::CastingType::kConcentration;
+            const RE::FormID hdTarget      = (targetFid == id) ? 0 : targetFid;
 
             RE::SpellItem* castForm = spell;
             RE::FormID     proxyFid = 0;
             if (mismatch) {
-                if (auto* px = proxy::Acquire(id, spell)) { castForm = px; proxyFid = px->GetFormID(); }
-                // else: pool overflow -- drive the original (logged; self-pose but never a crash)
+                if (auto* px = proxy::Acquire(id, spell)) {
+                    castForm = px; proxyFid = px->GetFormID();
+                } else {
+                    // Proxy REQUIRED (self-delivery, non-self target) but the pool is
+                    // exhausted (2026-09-06 correctness fix, marth-approved). Driving
+                    // the ORIGINAL self-delivery form here would silently mis-deliver:
+                    // for a CONCENTRATION spell this is PROVEN wrong -- MFO's own
+                    // field-tested ConcProxy precedent (Actuation_Direct.cpp) found
+                    // that CastSpellImmediate resolves a concentration kSelf channel
+                    // onto the CASTER regardless of the target argument, and its own
+                    // overflow policy is to SKIP entirely rather than cast the Self
+                    // source off-slot. For a NON-concentration (FF/instant) spell,
+                    // CastSpellImmediate targeting kSelf delivery is separately
+                    // field-proven to land CORRECTLY on the passed target (MFO's own
+                    // comment: "a fire-and-forget Self spell force-cast at another
+                    // actor lands on that actor -- Candlelight/flesh work") -- so
+                    // THAT case has a genuine guaranteed-delivery fallback even
+                    // without a proxy; concentration does not. Either way we decline
+                    // the ANIMATED drive here (no field evidence RequestCastImpl's
+                    // driven channel targets kSelf delivery correctly at all, proxy
+                    // or not) and go straight to the guaranteed-delivery decision.
+                    DriveCtx fc{ id, spell->GetFormID(), spell->GetFormID(), hdTarget, left, 0 };
+                    if (concentration) {
+                        spdlog::warn("[ch.8+act] 0x{} proxy pool exhausted for a CONCENTRATION "
+                                     "self-delivery cast at 0x{} -- DECLINING entirely (a plain "
+                                     "apply would incorrectly land on the caster, not the target; "
+                                     "will retry on the next Repoint once a proxy slot frees).",
+                                     apmf::log::Hex(id), apmf::log::Hex(fc.target));
+                    } else {
+                        spdlog::warn("[ch.8+act] 0x{} proxy unavailable -- instant-apply at 0x{}, "
+                                     "no animation (field-proven correct target for a "
+                                     "non-concentration self-delivery spell).",
+                                     apmf::log::Hex(id), apmf::log::Hex(fc.target));
+                        FireFallback(fc);
+                    }
+                    return;   // this hand stays INACTIVE -- no claim, no equip, nothing to tear down
+                }
             }
 
             hd.active   = true;
             hd.inFlight = true;
             hd.spell    = spell->GetFormID();
             hd.castForm = castForm->GetFormID();
-            hd.target   = (targetFid == id) ? 0 : targetFid;
+            hd.target   = hdTarget;
             hd.epoch    = g_epoch.fetch_add(1, std::memory_order_relaxed);
 
-            const bool concentration =
-                spell->GetCastingType() == RE::MagicSystem::CastingType::kConcentration;
             APMF_API::APMF_CastRequest req{};
             req.spell  = hd.spell;
             req.proxy  = proxyFid;
