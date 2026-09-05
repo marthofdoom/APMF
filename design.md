@@ -73,6 +73,39 @@ StartCombat/writes currentCombatTarget (arbitration-only now; the client command
 ch.8 casting no longer writes selectedSpells (arbitration-only; the client selects). Remaining
 channels are being reframed to deny/arbitrate-only in the CHANNEL MAP.
 
+## 1a-i. THE EVOLUTION (feat/cast-act, marth 2026-09-05): DECLARE -> ENFORCE
+
+Rule 1 above still governs, and this section does not delete it. But one facet has since grown a
+fourth, deliberate, scoped kind of channel action, and the model needs to say so honestly rather
+than pretend it doesn't exist.
+
+`kIntent_SelectSpell`'s **+ACT mode** is that facet. The client still only DECLARES: which spell,
+which hand, which target (`APMF_Param`'s `form`/`ival`/`target`). What changed is who carries the
+declaration out. APMF now EQUIPS the spell into the resolved hand and DRIVES the engine's own
+animated cast sequence itself, falling back to a guaranteed-delivery `CastSpellImmediate` only if
+the drive can't animate. This is genuinely a fourth kind of legal channel action, alongside
+arbitrate/deny/promote: **EXECUTE a facet the client declared, end to end, when execution belongs
+to APMF.**
+
+This is the DECLARE -> ENFORCE model. The client declares what and where, APMF arbitrates ownership
+of the facet, denies every competing source down to zero influence on it, and where it owns
+execution, it carries the facet out itself. It is still not the thing rule 1's CTD lesson forbids:
+
+- **It is not APMF picking WHAT the AI decides.** There is no AI decision here to stand in for. The
+  client named the exact spell, hand, and target up front. APMF is not choosing on the actor's
+  behalf, it is carrying out a choice the client already made.
+- **It is not a package substitution.** The actor's running package is untouched. Nothing about
+  this facet reaches into the package system at all.
+- **It composes nothing the client didn't declare.** No target is invented beyond the client's own
+  `param.target`, a winning ch.6 combat-target claim, or self, in that order (documented in
+  `Docs/CHANNEL-MAP.md` row 8+ACT). `pos` is accepted and reserved, not silently acted on.
+
+So the composition-not-substitution principle and the deny-completeness discipline (INVARIANTS #18,
+`Docs/DENY-COMPLETENESS-AUDIT.md`) both still hold without exception. What evolved is narrower than
+that: for exactly one facet, "the client executes" (rule 2) is no longer universally true, because
+for that one facet APMF is now the better place to put the execution. Every other channel in the
+CHANNEL MAP is unaffected and keeps rule 1's original shape.
+
 ## 2. Architecture — two layers
 
 **Layer 1 — the hook (APMF core).** A single central engine hook makes APMF the arbiter of the

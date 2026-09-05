@@ -5,20 +5,75 @@ with other mods, instead of fighting them for it.
 
 ## What APMF is
 
-APMF (AI Package Management Framework, "Harbinger") is a per-facet arbitration
-layer for NPC control. You claim one facet of an actor (its combat target, its
-cast selection, whether it's sneaking, and so on) at a priority you choose, and
-APMF routes that one facet to you while denying whoever else was driving it.
-Everything else about that actor, movement, other packages, the rest of its
-AI, keeps running exactly as it was. When you release the claim, APMF stops
-suppressing and the actor's own AI (or the next-highest claim) takes it back.
+APMF (AI Package Management Framework, "Harbinger") is a per-facet control
+layer for NPC control. You declare what you want and where, on one facet of
+an actor (its combat target, its cast selection, whether it's sneaking, and
+so on), at a priority you choose. APMF arbitrates who owns that facet, denies
+whoever else was driving it, and for some facets now executes the behavior
+itself. Everything else about that actor, movement, other packages, the rest
+of its AI, keeps running exactly as it was. When you release the claim, APMF
+stops suppressing and the actor's own AI (or the next-highest claim) takes it
+back.
 
-APMF never drives behavior itself. It never calls `StartCombat`,
-`CastSpellImmediate`, or any other decision-making engine function. It
-arbitrates who owns a facet and denies the losers. You bring the behavior with
-your own proven mechanism (your own package, your own `selectedSpells` write,
-your own `currentCombatTarget` write) and APMF just makes sure it reaches the
-actor.
+This is the DECLARE -> ENFORCE model. You declare intent, APMF enforces it:
+it arbitrates who owns the facet, denies the competing sources completely (no
+half-denied facet, no lingering competitor), and where execution belongs to
+APMF, it carries the execution out. A claimed cast is the clearest example:
+you name the spell, the hand, and the target, and APMF equips the spell and
+drives the animated cast itself. You don't write `selectedSpells`, you don't
+touch a `MagicCaster`, you just hold the claim.
+
+This is newer than APMF's original design, where it only ever arbitrated and
+denied, and never called a decision-making engine function itself. That older
+model still applies to most facets today (combat targeting, shout selection,
+casting's base arbitration-only mode), where you still bring your own
+mechanism (your own `currentCombatTarget` write, your own `selectedSpells`
+write) and APMF just makes sure it reaches the actor. Two things never
+change, on either model: APMF never substitutes a whole package for the one
+an actor is already running, and it never fabricates a facet you didn't
+declare. It composes exactly what you asked for.
+
+## Two surfaces: ASK or POINT
+
+APMF gives you two ways to make a request. Both land on the same enforcer
+underneath.
+
+- **ASK** is the surface to reach for first, for almost everything. You
+  declare intent directly: `RequestEx(actor, Intent, basis, param)` returns a
+  `Handle`. `Repoint(handle, param)` changes what or where the claim acts, in
+  place. `Release(handle)` ends it.
+- **POINT** is the interop surface. You already have a package, your own, a
+  vanilla one, or another mod's, and you want APMF to enforce just one facet
+  of it rather than run the whole thing. You reference the package and name
+  the facet, and APMF dissects it down to that one facet. Reach for this when
+  you're integrating with something that predates APMF, or when a vanilla
+  package already does what you want and you only need one piece of it.
+  `kIntent_OfferPackage` is a POINT-style claim carried to its limit: point at
+  a package and take every facet of it, and the engine runs it natively.
+
+There used to be a third path: hand APMF a whole package and have it swap the
+package in wholesale, byte-marshaled across the boundary. That model is
+retired. It isn't documented here because it doesn't reflect what the code
+does anymore, POINT replaced it.
+
+Every request, on either surface, travels through the same small envelope:
+
+```cpp
+struct APMF_Param {
+    RE::FormID   form;    // WHAT: a spell, item, actor, or package FormID
+    float        fval;    // a scale (e.g. speed, disposition bias)
+    std::int32_t ival;    // WHERE / a variant: a hand, a slot, a category mask
+    RE::FormID   target;  // an actor this request acts ON
+    float        posX, posY, posZ;  // a world location (reserved, not read yet)
+};
+```
+
+Each intent reads only the fields it needs. `form` is always WHAT (the
+spell, the item, the actor, the package). `ival` is usually WHERE or a
+variant (which hand, which slot, a category bitmask). `fval` is a scale.
+`target` is an actor the request acts on, distinct from WHAT: for a cast,
+`form` is the spell you're casting and `target` is who it lands on. `pos` is
+reserved for a future ground-target pass and has no effect today.
 
 ## Quickstart
 
@@ -107,6 +162,50 @@ void RetargetWhileHeld(RE::FormID newTarget) {
 Reserve `Release` for when you are genuinely done with the facet (combat
 ended, the cast finished), not for a routine retarget.
 
+### 4. A worked example: a driven cast
+
+`kIntent_SelectSpell` (ch.8) is the one facet today where APMF does more than
+arbitrate. Claim it with a hand and a target, and APMF equips the spell into
+that hand and drives the actual animated cast. You don't write
+`selectedSpells`, you don't touch a `MagicCaster`, and the effect always
+lands (APMF drives the real animated sequence, or falls back to an immediate
+cast if the drive can't animate, so delivery never depends on the animation
+succeeding).
+
+Offense first, casting at whoever the follower is fighting:
+
+```cpp
+APMF_Param param{};
+param.form = fireballSpell;
+param.ival = 0;   // 0 auto (a free hand, prefers right), 1 right, 2 left, 3 dual
+// param.target left at 0: falls back to a winning kIntent_CombatTarget claim
+// on this actor, then to self.
+
+Handle castClaim = g_apmf->RequestEx(actor, kIntent_SelectSpell, /*basis=*/50.0f, &param);
+```
+
+Healing someone else is a different case, and it matters that you name the
+target explicitly. A combat-target claim is the actor's FOE, not who to heal.
+If you leave `target` at 0 for a heal spell, APMF's fallback resolves to
+combat-target-or-self, which is wrong for "heal my ally." Name the ally:
+
+```cpp
+APMF_Param param{};
+param.form   = healingSpell;
+param.ival   = 0;             // auto hand
+param.target = allyActorId;   // heal THIS actor, not whoever is being fought
+
+Handle healClaim = g_apmf->RequestEx(actor, kIntent_SelectSpell, /*basis=*/50.0f, &param);
+```
+
+To cast again, `Repoint` the same handle with the same param, a repeat pulse.
+To switch spell, hand, or target, `Repoint` with new values. `Release` when
+the actor should stop casting and its hand should go back to normal use.
+
+`pos` (a world-location target for a ground-effect spell) is in the struct
+today but not read by anything yet. Pass zeros. A future release will wire it
+without an ABI break.
+
 ## The facet table
 
 Every facet is one `Intent` value in `native/APMF_API.h`. The proof tier says
@@ -135,7 +234,7 @@ columns, one doesn't imply the other.
 | `kIntent_Headtrack` (ch.5) | Look-at target | `form` (reserved, not yet read) | **Field-proven** for the look-up behavior itself (deck-tested). Known-incomplete as a deny gate: the AI writes several headtrack slots and APMF owns only one, so an aggressive competing source can still win the head back. |
 | `kIntent_CombatTarget` (ch.6) | Claim the combat-target facet | `form` (the target actor) | **Field-proven, in active production use.** MFO drives its combat targeting through this facet every fight. Arbitration only: APMF records the owner and the client writes the target itself. Denying a competing framework's own target write is still a future gap. |
 | `kIntent_CombatAction` (ch.7) | Deny named combat behavior-tree leaf categories (attack, bash, ranged attack, cast leaves, and more, grouped by category) | `ival` (a `CombatActionCategory` bitmask) | **Field-proven.** Graduated from a live deck probe: the deny fired, the tree fell back cleanly, no crash. |
-| `kIntent_SelectSpell` (ch.8) | Claim the casting facet | `form` (the spell FormID) | **Field-proven, for the owned/exact cast.** A follower AI-fired an animated spell allowed only through APMF's cast-check gate, live in combat, no whack-a-mole, no crash. This covers the single claimed spell as the actor's only castable choice. The graduated multi-spell allow list (`SetSpellAllowList`, v4) is a separate capability and is not yet proven. Denying a competing framework's own spell selection is also still a future gap. |
+| `kIntent_SelectSpell` (ch.8) | Claim the casting facet | `form` (the spell), `ival` (+ACT hand: 0 auto/1 right/2 left/3 dual), `target` (the cast target) | **Base mode field-proven, for the owned/exact cast.** A follower AI-fired an animated spell allowed only through APMF's cast-check gate, live in combat, no whack-a-mole, no crash. This covers the single claimed spell as the actor's only castable choice. **+ACT mode (new, this branch) is built and CI-green, field test pending:** APMF itself equips the spell and drives the animated cast, so the client no longer writes `selectedSpells` for this facet. The graduated multi-spell allow list (`SetSpellAllowList`, v4) is a separate capability and is not yet proven. Denying a competing framework's own spell selection is also still a future gap. |
 | `kIntent_OfferPackage` (ch.9) | Claim the package-offer facet | `form` (the TESPackage FormID) | **Field-proven** for engage/release. A live deck run confirmed the redirect holds and releases cleanly. Save/load persistence of an engaged claim across that boundary is unexercised. |
 | `kIntent_Dialogue` (ch.10) | Pause the actor's own in-progress dialogue | none | Built, not yet battle-tested |
 | `kIntent_Disposition` (ch.11) | Aggression / confidence / assistance / morality bias | `fval` (reserved, not yet read) | **Field-proven.** An actor-value source-block, deck-tested to hold even on a package-locked actor. |

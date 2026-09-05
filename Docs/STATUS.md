@@ -9,6 +9,16 @@ build/finding/workflow change.
 The composition rework (`Docs/SPEC-COMPOSITION-REWORK.md`). Adds the cast-EXECUTION
 facet (ch.8b) as ABI v5. NOT on `main`; `main` stays v0.9.0.
 
+**Downstream: `feat/cast-act` (unproven, stacked on this work).** Adds ch.8's
+`kIntent_SelectSpell` **+ACT mode** (`core/CastExecutor.cpp`, no ABI-version bump --
+`target`/`pos` are an append-only `APMF_Param` extension): the client's existing ASK
+surface (`RequestEx(kIntent_SelectSpell, {form=spell, ival=HAND, target=castTarget})`)
+now gets APMF-owned execution -- APMF equips the resolved hand and drives the
+animated cast itself, with a guaranteed-delivery `CastSpellImmediate` fallback. This
+is the DECLARE -> ENFORCE model (design.md §1a-i). **CI-green on `feat/cast-act`
+(HEAD `3761955`), S1 field test pending** -- built and compiling, not yet exercised
+live on the deck.
+
 - **ABI v5** (`APMF_API.h`, append-only, byte-shared with MFO): `kIntent_Cast`,
   `RequestCast`/`APMF_CastRequest{spell,proxy,target,flags,ttl}`, `kCastFlag_*`,
   `kCombatActionCat_Cast`.

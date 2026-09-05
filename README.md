@@ -25,18 +25,25 @@ and one of them loses.
 
 ## What APMF does
 
-APMF is a MODERATOR. It arbitrates who controls each facet of an actor and
-denies the losing sources, so the winner's own behavior reaches the actor. It
-never generates behavior itself. It calls no combat, cast, or movement
-command. A client mod doesn't claim a package or fight over priority: it
-tells APMF which facet it's taking, on whatever basis it chooses, and
-executes the behavior with its own proven mechanisms. APMF just makes it win
-and releases when the client is done.
+APMF is a MODERATOR, not a package swap. A client DECLARES what it wants and
+where. APMF ENFORCES it: it arbitrates who owns each facet of an actor,
+denies the competing sources down to zero influence, and for a growing set of
+facets now EXECUTES that facet itself. For a claimed cast, for example, APMF
+equips the spell into the right hand and drives the actual animation, so the
+client never has to touch the engine's cast machinery at all.
+
+This is an evolution from APMF's earlier model, where it only arbitrated and
+the client always executed. That old line still holds for most facets today
+(combat targeting, shout selection, and casting's base mode all still work
+that way), but it is no longer the whole story. What never changes: APMF
+never substitutes a whole package. It doesn't take over an actor's AI or tear
+down the package that actor is already running, it keeps that package's slot
+intact. And APMF never fabricates input a client didn't declare. It composes
+only the facets a client actually asked for, nothing more.
 
 Control is granular, per facet. A client can claim a follower's cast
-decision, so its own AI casts the client's chosen spell, fully animated,
-while the follower keeps moving under its own control, because only the cast
-facet was claimed.
+decision, so a chosen spell fires, fully animated, while the follower keeps
+moving under its own control, because only the cast facet was claimed.
 
 Unaware mods and vanilla packages keep working. APMF never lies to them. It
 reports the actor's true state, so a package that's waiting to reach a spot
@@ -48,6 +55,51 @@ sneak, weapon draw, combat targeting, headtracking, idle animations,
 aggression, dialogue availability, and more. See
 [Docs/CHANNEL-MAP.md](Docs/CHANNEL-MAP.md) for the full list and how proven
 each one is.
+
+## How you use it: ASK or POINT
+
+There are two ways to hand APMF a request. Both end up at the same enforcer.
+
+- **ASK** (the recommended surface for almost everything). You declare intent
+  directly with a simple command: `RequestEx(actor, Intent, basis, param)`
+  returns a `Handle`. `Repoint(handle, param)` changes what or where the
+  claim acts, in place, no release needed. `Release(handle)` ends it. This is
+  the surface to reach for first.
+- **POINT** (the interop surface). You already have a package, either your
+  own, a vanilla one, or another mod's, and you want APMF to take just one
+  facet out of it rather than run the whole thing. You reference the package
+  and name the facet, and APMF dissects it and enforces only that piece. This
+  is how APMF stays compatible with mods that were never written against it.
+  `kIntent_OfferPackage` is a POINT-style claim too: point at a package and
+  take all of it, letting the engine run it natively.
+
+Either way, the request travels through one small POD envelope:
+
+```cpp
+struct APMF_Param {
+    RE::FormID   form;    // WHAT: a spell, item, actor, or package FormID
+    float        fval;    // a scale (e.g. speed, disposition bias)
+    std::int32_t ival;    // WHERE / a variant: a hand, a slot, a category mask
+    RE::FormID   target;  // an actor this request acts ON
+    float        posX, posY, posZ;  // a world location (reserved)
+};
+```
+
+Every intent uses the fields it needs and ignores the rest. A cast claim, for
+example, uses `form` for the spell, `ival` for which hand, and `target` for
+who to cast it at:
+
+```cpp
+APMF_API::APMF_Param param{};
+param.form   = fireballSpell;
+param.ival   = 0;              // 0 auto, 1 right, 2 left, 3 dual
+param.target = targetActorId;  // 0 falls back to self or a combat-target claim
+
+auto handle = g_apmf->RequestEx(actorFormID, APMF_API::kIntent_SelectSpell,
+                                 /*basis=*/50.0f, &param);
+// APMF equips the spell and drives the animated cast. Repeat with the same
+// param to cast again, Repoint with a new one to switch, Release when done.
+```
 
 ## Quickstart
 

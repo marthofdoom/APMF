@@ -138,15 +138,15 @@ per-NPC restore data in its OWN `std::unordered_map<FormID, State>` (game-thread
 only, #12). The `ControlMap` refcounts client claims and calls Engage/Tick/Release
 keyed by actor — the channel never sees the toggle/hotkey logic.
 
-APMF MODERATES; it NEVER manufactures or sustains an AI decision (#0, design.md §1a).
-Once a facet is owned on an actor, APMF is the arbiter of who controls it. A channel
-does exactly three things: ARBITRATE (record the owner), DENY (suppress the losing
-source at its source), and — for a facet with no meaningful deny form and no AI
-decision to arbitrate around — PROMOTE a bounded, one-shot, client-requested action
-(#0c). It calls NO decision-generating engine function (`StartCombat`,
-`CastSpellImmediate`, movement drive, a `selectedSpells`/`EquipShout`-style selection
-write); where the client already has its own proven mechanism for a selection, the
-CLIENT executes it. Kinds:
+APMF MODERATES; it NEVER manufactures or sustains an AI decision on its own initiative
+(#0, design.md §1a). Once a facet is owned on an actor, APMF is the arbiter of who
+controls it. A channel does one of four things: ARBITRATE (record the owner), DENY
+(suppress the losing source at its source), PROMOTE a bounded, one-shot,
+client-requested action (#0c), or, the newest and most scoped kind, EXECUTE the facet
+the client declared. For most facets APMF still calls no decision-generating engine
+function (`StartCombat`, a movement drive, a `selectedSpells`/`EquipShout`-style
+selection write); where the client already has its own proven mechanism for a
+selection, the CLIENT executes it. Kinds:
 1. **DENY / true source-block (no re-assert)** — set the input the AI itself reads, or
    deny the losing source once, so nothing competes. Robust even against a package-locked
    follower. Examples: AI-attribute AVs (ch.11), movement FULL block (ch.1
@@ -156,9 +156,9 @@ CLIENT executes it. Kinds:
    `Tick`.
 2. **Arbitration-only (no engine write)** — record that a client owns the facet so APMF
    is the single arbiter; the CLIENT executes. Combat-target (ch.6 — client writes
-   `currentCombatTarget`), casting (ch.8 — client writes `selectedSpells` + grants its AI
-   consent), and shout/power select (ch.14 — client writes its own `EquipShout`) are
-   here. APMF makes NO combat/cast/equip call for them (#0).
+   `currentCombatTarget`), casting's base mode (ch.8 — client writes `selectedSpells` +
+   grants its AI consent), and shout/power select (ch.14 — client writes its own
+   `EquipShout`) are here. APMF makes NO combat/cast/equip call for them (#0).
 3. **Bounded one-shot promote (#0c, sanctioned)** — a single deterministic engine call
    at Engage/Release for a facet with no deny form and no AI decision to arbitrate
    around: weapon draw (ch.4, `DrawWeaponMagicHands`), stance toggle (ch.3,
@@ -168,6 +168,16 @@ CLIENT executes it. Kinds:
    the facet, so a re-assert stopgap holds it imperfectly. A FAILED block, flagged (#1,
    #2), never called clean. Fix: block the AI's write at the 0xAD hook. Headtrack (ch.5)
    is the only one today, and it says so.
+5. **DECLARE -> ENFORCE execution (new, feat/cast-act, deliberately scoped).** The
+   client declares WHAT and WHERE via `APMF_Param` (the spell, the hand, the target),
+   and APMF carries the facet out end to end. It equips the resolved hand and drives the
+   engine's own animated cast sequence, falling back to a guaranteed-delivery
+   `CastSpellImmediate` only if the drive can't animate (`core/CastExecutor.cpp`). This
+   is ch.8's `kIntent_SelectSpell` in +ACT mode, and it is the ONLY channel that calls a
+   delivery-guaranteeing cast function today. Every other channel's "APMF calls no
+   decision-generating engine function" rule is unchanged. It is still not a package
+   substitution. The actor's package is untouched, and APMF composes only the spell,
+   hand, and target the client actually declared, nothing invented on top.
 
 ## 4. Version robustness
 
@@ -175,8 +185,10 @@ CLIENT executes it. Kinds:
 - Engine calls via CommonLib accessors / named methods, or Address-Library
   `RELOCATION_ID(SE,AE)` for the DENY-gate functions the CommonLib rev does not bind
   (`KeepOffsetFromActor`/`SetDontMove` — movement full-block). Never a hardcoded
-  call-site offset. (APMF does NOT call `StartCombat`/`CastSpellImmediate` at all —
-  those are behavior, the client's job, #0; the CTD that taught us this is in #8.)
+  call-site offset. (APMF does NOT call `StartCombat` at all — that is behavior, the
+  client's job, #0; the CTD that taught us this is in #8. The one deliberate exception
+  is ch.8's +ACT cast execution, §3 kind 5 above, whose guaranteed-delivery fallback
+  does call `CastSpellImmediate` for a claim the client explicitly declared.)
 - Guard every struct-member write with a null-check on the accessor (#7).
 - VR is refused at install (#6) — the `0xAD` index is unverified for VR.
 

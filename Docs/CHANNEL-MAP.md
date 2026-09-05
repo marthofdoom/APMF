@@ -20,6 +20,14 @@ DRIVING every facet, including decision-selection ones; that executor framing li
 called StartCombat and CTD'd — it is corrected here. ch.14 shout-power previously called `EquipShout`
 directly, the same anti-pattern in miniature; it is now arbitration-only, mirroring ch.6/ch.8.)
 
+**Evolution (feat/cast-act, 2026-09-05): one row is now a deliberate, scoped exception to "APMF
+calls no decision-generating engine function" above.** Row **8+ACT** below has the client declare
+what/where (spell, hand, target) and APMF EXECUTE the cast: it equips the spell and drives the
+animated cast itself, including a `CastSpellImmediate` guaranteed-delivery fallback. This is the
+DECLARE -> ENFORCE model (design.md §1a evolution), not a reversion to the rejected package-swap
+model. APMF still never substitutes the actor's package and still never composes a facet the
+client didn't declare. Every other row's "client executes" framing is unchanged.
+
 `RE/…` = CommonLibSSE-NG headers. `// 0xNN` = in-header vfunc index (index-stable across runtimes);
 struct-member offsets are accessor/Address-Library covered but more version-sensitive. Taxonomy is
 OPEN (17 channels + sub-splits). Combat-target / combat-actions / casting (⭐) carry the weight.
