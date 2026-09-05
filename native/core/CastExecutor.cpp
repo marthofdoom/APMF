@@ -418,7 +418,7 @@ namespace apmf::castexec {
             }
 
             bool wantRight = false, wantLeft = false;
-            ResolveHands(actor, param.ival, wantRight, wantLeft);
+            ResolveHands(actor, param.ival & kHandModeMask, wantRight, wantLeft);   // mask off kActFlag_Drive
 
             const RE::FormID spellFid = spell->GetFormID();
             ActorDrive&      ad       = g_drives[id];

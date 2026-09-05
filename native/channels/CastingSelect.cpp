@@ -12,21 +12,26 @@
 // a client only wants exclusivity (selects + grants its own AI consent, casts
 // itself).
 //
-// +ACT (this pass): the SAME claim now ALSO drives the cast end-to-end --
-// equip the resolved hand(s), animate the engine's own observed cast sequence,
-// and guarantee delivery -- via core/CastExecutor.cpp. This is a deliberate,
-// scoped exception to "APMF only arbitrates/denies, never executes" (INVARIANTS
-// #0): MFO's own equivalent client-side execution code is being REMOVED, so for
-// THIS ONE facet APMF becomes the sole owner of record, at the CLIENT's
-// explicit request (RequestEx's `ival` names a hand -- APMF never decides to
-// cast on its own, never invents a spell/target). See CastExecutor.h for the
-// full contract (no ABI change: `ival`, unread by this channel before this
-// pass, now carries the hand mode).
+// +ACT (this pass) is OPT-IN (marth 2026-09-05, the offense-safety fix): a
+// BARE claim (ival's kActFlag_Drive bit CLEAR -- including ival == 0, the
+// pre-+ACT shape) stays EXACTLY the gate-only mode above -- CastExecutor is
+// never even called, so MFO's offense gambit (which claims this facet only
+// to narrow the AI, e.g. via CastGate/EquipGate, and wants ITS OWN AI to fire)
+// is byte-identical to before this feature existed. ONLY a claim that sets
+// kActFlag_Drive in `ival` gets the +ACT treatment: APMF equips the resolved
+// hand(s), animates the engine's own observed cast sequence, and guarantees
+// delivery -- via core/CastExecutor.cpp. This is a deliberate, scoped
+// exception to "APMF only arbitrates/denies, never executes" (INVARIANTS #0):
+// MFO's own equivalent client-side execution code is being REMOVED for the
+// facets that opt in, so for THOSE claims APMF becomes the sole owner of
+// record, at the CLIENT's explicit request (never invented). See
+// core/CastExecutor.h for the full contract (no ABI change: `ival`, unread by
+// this channel before this pass, now carries the hand mode + the opt-in bit).
 //
-// `Release` restores the driven hand(s) (interrupt, teardown anims, deselect,
-// release CastExecutor's internal ch.8b protection claim) -- see
-// CastExecutor::Release. No `Tick` (CastExecutor's multi-frame work runs via
-// core/MainThread.h's Post/Pump, not a per-actor Tick).
+// `Release` (and an OnOwnerChanged that DROPS the opt-in bit) restores any
+// driven hand(s) via CastExecutor::Release -- safe to call unconditionally,
+// a no-op when nothing was driving. No `Tick` (CastExecutor's multi-frame
+// work runs via core/MainThread.h's Post/Pump, not a per-actor Tick).
 // ============================================================================
 
 namespace {
@@ -45,21 +50,26 @@ namespace {
         }
 
         void Engage(RE::FormID id, RE::Actor* actor, const APMF_API::APMF_Param& param) override {
-            spdlog::info("[ch.8] 0x{} casting facet CLAIMED (spell 0x{}, hand mode {}) -- +ACT: APMF "
-                         "drives the cast (CastExecutor).", apmf::log::Hex(id),
-                         apmf::log::Hex(param.form), param.ival);
-            apmf::castexec::Engage(id, actor, param);
+            const bool drive = (param.ival & apmf::castexec::kActFlag_Drive) != 0;
+            spdlog::info("[ch.8] 0x{} casting facet CLAIMED (spell 0x{}, ival {}) -- {}.",
+                         apmf::log::Hex(id), apmf::log::Hex(param.form), param.ival,
+                         drive ? "+ACT: APMF drives the cast (CastExecutor)"
+                               : "gate-only: the client's own AI casts; APMF narrows/denies");
+            if (drive) apmf::castexec::Engage(id, actor, param);
         }
 
         void OnOwnerChanged(RE::FormID id, RE::Actor* actor, const APMF_API::APMF_Param& param) override {
-            spdlog::info("[ch.8] 0x{} casting claim RE-POINTED (spell 0x{}, hand mode {}).",
-                         apmf::log::Hex(id), apmf::log::Hex(param.form), param.ival);
-            apmf::castexec::OnOwnerChanged(id, actor, param);
+            const bool drive = (param.ival & apmf::castexec::kActFlag_Drive) != 0;
+            spdlog::info("[ch.8] 0x{} casting claim RE-POINTED (spell 0x{}, ival {}) -- {}.",
+                         apmf::log::Hex(id), apmf::log::Hex(param.form), param.ival,
+                         drive ? "+ACT" : "gate-only");
+            if (drive) apmf::castexec::OnOwnerChanged(id, actor, param);
+            else       apmf::castexec::Release(id, actor);   // dropped the opt-in -- restore any driven hand
         }
 
         void Release(RE::FormID id, RE::Actor* actor) override {
             spdlog::info("[ch.8] 0x{} casting facet released.", apmf::log::Hex(id));
-            apmf::castexec::Release(id, actor);
+            apmf::castexec::Release(id, actor);   // no-op if this claim was never driving
         }
     };
 

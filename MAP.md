@@ -170,10 +170,16 @@ a main-thread-safe seat for equip/3D work).
   from `OnActorUpdate` (field-proven multi-thread, INVARIANTS #4/#12). A task
   Post()'d during `Pump()` runs on the NEXT `Pump()`, never re-entrantly.
 
-### `native/core/CastExecutor.{h,cpp}` — ch.8 SelectSpell's +ACT mode (feat/cast-act)
-Wired 1:1 from `channels/CastingSelect.cpp`'s `Engage`/`OnOwnerChanged`/`Release`.
-Turns a `kIntent_SelectSpell` claim into APMF OWNING the cast: `ResolveHands` (0
-auto/1 right/2 left/3 dual, `param.ival`) + `ResolveTarget` (`param.target` if the
+### `native/core/CastExecutor.{h,cpp}` — ch.8 SelectSpell's +ACT mode (feat/cast-act, OPT-IN)
+OPT-IN GATE lives in `channels/CastingSelect.cpp`, NOT here: `Engage`/`OnOwnerChanged`
+test `param.ival & kActFlag_Drive` (bit 2) BEFORE calling into this module at all -- a
+bare/default claim (bit clear, incl. `ival==0`) is gate-only (ch.8's original
+arbitrate+deny mode, `CastExecutor` never runs, MFO's offense gambit is unaffected);
+only a claim that sets the bit reaches `Engage`/`OnOwnerChanged` below. `Release` (and
+an `OnOwnerChanged` that DROPS the bit) always calls this module's `Release` -- safe
+unconditionally, a no-op if nothing was driving.
+Turns a `kIntent_SelectSpell` +ACT claim into APMF OWNING the cast: `ResolveHands` (0
+auto/1 right/2 left/3 dual, `param.ival & kHandModeMask`) + `ResolveTarget` (`param.target` if the
 client named one explicitly -- the heal-the-player fix, 2026-09-05: a ch.6
 `kIntent_CombatTarget` claim is the actor's FOE, never who to heal -- else a
 winning ch.6 claim, else self; `param.posX/Y/Z` is RESERVED, not yet read) ->
