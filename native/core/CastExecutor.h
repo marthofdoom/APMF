@@ -64,6 +64,28 @@
 // rather than half-implemented. All-zero today; a client MAY pass a point now
 // with no effect (forward-compatible once wired).
 //
+// CONCENTRATION (2026-09-05 field fix). A concentration spell (e.g. Fast
+// Healing) does not just pulse once: after the initial SpellFire, its
+// magnitude is applied by the engine's OWN per-frame caster update for as
+// long as it stays charged/casting, exactly like a player holding the cast
+// button. The drive reflects this: PhaseFire hands a concentration cast to
+// PhaseHold, which keeps the channel (and the internal ch.8b claim) alive --
+// no re-interrupt, no re-fire -- for a bounded window (kConcentrationHoldPolls,
+// ~3s) or until the caster exits that state on its own, THEN stops it
+// (InterruptCast) and parks. An instant/fire-and-forget spell parks
+// immediately after its one SpellFire, as before. Either way, a same-spell
+// Repoint while still active is a no-op (`hd.inFlight`) -- it won't interrupt
+// an in-progress hold to "restart" it.
+//
+// DELIVERY-FLIP PROXY IS EQUIPPABLE (2026-09-05 field fix). `ActorEquipManager
+// ::EquipSpell` can only SELECT a spell the actor already KNOWS
+// (`Actor::HasSpell`) -- it does not teach one. The proxy is therefore
+// `AddSpell`'d onto the actor when minted and `RemoveSpell`'d when freed
+// (TRANSIENT -- never persisted as a real learned spell, added/removed around
+// the same window it's equipped) so the caster can actually select it. See
+// core/CastExecutor.cpp's `proxy` namespace for the leak-safety argument (one
+// choke point, `proxy::Free`, that every teardown path already calls).
+//
 // PROTECTION. Internally rides the EXISTING, now per-hand-scoped ch.8b
 // (kIntent_Cast) deny (core/ActionGate.cpp/CastGate.cpp/EquipGate.cpp,
 // feat/deny-perhand) for the resolved hand(s) -- no new deny mechanism. Since the

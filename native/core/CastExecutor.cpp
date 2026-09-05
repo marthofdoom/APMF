@@ -49,8 +49,12 @@ namespace apmf::castexec {
                       "MagicCaster::State baseline moved -- re-check the raw-int "
                       "charge-state gates below (PhaseFire/PhaseSelect)");
 
-        constexpr int   kSelectTries = 6;     // frames to wait for the equip to select
-        constexpr int   kChargePolls = 180;   // frames (~3s) to wait for Charged before degrading
+        constexpr int   kSelectTries         = 6;     // frames to wait for the equip to select
+        constexpr int   kChargePolls         = 180;   // frames (~3s) to wait for Charged before degrading
+        constexpr int   kConcentrationHoldPolls = 180;   // frames (~3s) a concentration spell CHANNELS
+                                                          // after firing, so it heals/applies over a real
+                                                          // window instead of one instantaneous pulse
+                                                          // (2026-09-05 field fix -- see PhaseHold).
         constexpr float kDriveBasis  = 1000.0f;   // internal ch.8b protection claim -- always wins
 
         // ---- Vanilla Left/Right Hand BGSEquipSlot, resolved once (lazy). Same
@@ -69,12 +73,28 @@ namespace apmf::castexec {
             return resolved;
         }
 
-        // ---- Dedicated delivery-flip proxy pool (per-owner). NEVER AddSpell'd --
-        // a runtime dynamic form, shared Effect* array with the source (ported
-        // from ComposedCast.cpp's HealProxy). Main-thread-only (same seat as
-        // everything else here). One slot per owner covers dual-hand too: both
-        // hands of a kHandDual drive share the SAME spell, so one proxy form can
-        // be equipped in both hands at once, exactly like a vanilla dual-cast. ----
+        // ---- Dedicated delivery-flip proxy pool (per-owner). TRANSIENT AddSpell
+        // (2026-09-05 field fix): a runtime dynamic form, shared Effect* array
+        // with the source. Main-thread-only (same seat as everything else here).
+        // One slot per owner covers dual-hand too: both hands of a kHandDual
+        // drive share the SAME spell, so one proxy form can be equipped in both
+        // hands at once, exactly like a vanilla dual-cast.
+        //
+        // FIELD BUG (deck 2026-09-05): `ActorEquipManager::EquipSpell` can only
+        // SELECT a spell the actor actually KNOWS (`Actor::HasSpell`) -- it does
+        // NOT teach one. The proxy was never `AddSpell`'d, so the caster never
+        // selected it (`currentSpell != castForm` forever) -> PhaseSelect always
+        // exhausted its tries -> ALWAYS degraded to the fallback, every single
+        // pulse (equip/interrupt/re-equip churn, no animation, ever). Fixed by
+        // teaching the proxy to the actor on Acquire and un-teaching it on Free
+        // -- TRANSIENT (never persisted as a real learned spell; added/removed
+        // around the SAME window the form is equipped) so it never pollutes the
+        // actor's real spell list. Guaranteed removal: `Free` is the ONE choke
+        // point every teardown path in this file already calls unconditionally
+        // (see TeardownHand) -- no path can equip the proxy without eventually
+        // routing through here, so no path can leak it (the light-limit CTD
+        // lesson: a leaked equipped/known transient spell must never survive a
+        // save/teardown). ----
         namespace proxy {
             struct Slot { RE::SpellItem* form = nullptr; RE::FormID source = 0; RE::FormID owner = 0; };
             Slot g_slot[4];
@@ -87,9 +107,14 @@ namespace apmf::castexec {
             }
             RE::SpellItem* Acquire(RE::FormID a_owner, RE::SpellItem* a_src) {
                 if (!a_src || !a_owner) return nullptr;
+                auto* actor = RE::TESForm::LookupByID<RE::Actor>(a_owner);
+                if (!actor) return nullptr;   // no actor to teach the proxy to -- can't be made castable
+
                 const auto sid = a_src->GetFormID();
                 for (auto& s : g_slot) if (s.owner == a_owner && s.form) {
-                    if (s.source != sid) { Configure(s.form, a_src); s.source = sid; }
+                    if (s.source != sid) Configure(s.form, a_src);   // re-target: re-share the new effects
+                    s.source = sid;
+                    if (!actor->HasSpell(s.form)) actor->AddSpell(s.form);   // TRANSIENT teach -- makes it selectable
                     return s.form;
                 }
                 for (auto& s : g_slot) if (s.owner == 0) {
@@ -99,6 +124,7 @@ namespace apmf::castexec {
                         if (!s.form) return nullptr;
                     }
                     Configure(s.form, a_src); s.source = sid; s.owner = a_owner;
+                    actor->AddSpell(s.form);   // TRANSIENT teach -- makes it selectable (removed in Free)
                     return s.form;
                 }
                 spdlog::warn("[ch.8+act] proxy pool overflow (owner 0x{}) -- driving the "
@@ -107,7 +133,13 @@ namespace apmf::castexec {
                 return nullptr;
             }
             void Free(RE::FormID a_owner) {
-                for (auto& s : g_slot) if (s.owner == a_owner) { s.owner = 0; s.source = 0; }
+                for (auto& s : g_slot) if (s.owner == a_owner) {
+                    if (s.form) {
+                        if (auto* actor = RE::TESForm::LookupByID<RE::Actor>(a_owner))
+                            actor->RemoveSpell(s.form);   // un-teach -- never left known/castable
+                    }
+                    s.owner = 0; s.source = 0;
+                }
             }
             RE::FormID FormForOwner(RE::FormID a_owner) {
                 for (auto& s : g_slot) if (s.owner == a_owner && s.form) return s.form->GetFormID();
@@ -190,11 +222,12 @@ namespace apmf::castexec {
 
         // Every phase exit that ends the drive on this hand funnels here: stop the
         // engine channel, play the observed teardown anims, deselect the driven
-        // form (never AddSpell'd), release the internal protection claim, and free
-        // the proxy slot -- UNLESS the sibling hand (a kHandDual drive shares ONE
-        // proxy across both hands, since the proxy pool is keyed by owner, not
-        // hand) is still actively using that same proxy form. Idempotent-safe on
-        // a null actor.
+        // form, release the internal protection claim, and free the proxy slot
+        // (which un-teaches it via `proxy::Free` -- see the proxy namespace's
+        // header) -- UNLESS the sibling hand (a kHandDual drive shares ONE proxy
+        // across both hands, since the proxy pool is keyed by owner, not hand) is
+        // still actively using that same proxy form. Idempotent-safe on a null
+        // actor.
         void TeardownHand(const DriveCtx& c) {
             if (auto* actor = RE::TESForm::LookupByID<RE::Actor>(c.fid)) {
                 if (auto* hand = actor->GetMagicCaster(c.left ? CS::kLeftHand : CS::kRightHand))
@@ -219,13 +252,62 @@ namespace apmf::castexec {
             if (!siblingStillUsesProxy) proxy::Free(c.fid);
         }
 
-        // Forward decl -- PhaseSelect/PhaseFire call each other across the chain.
+        // Forward decl -- PhaseSelect/PhaseFire/PhaseHold call each other across
+        // the chain.
         void PhaseSelect(DriveCtx c, int triesLeft);
 
+        // Releases the internal ch.8b protection claim and PARKS the hand --
+        // `hd.active` stays true (this hand is still ours: Release() must still
+        // deselect/restore it later) but there is nothing left to protect (the
+        // fire/hold already happened), so the claim is no longer load-bearing. A
+        // repeat Repoint re-drives from rest via StartHandDrive, which tears this
+        // parked state down (deselect included) before re-equipping -- never a
+        // second, competing claim while parked, never a lingering equipped spell
+        // if Release() comes instead (INVARIANTS #18-style completeness for THIS
+        // channel's own cleanup, marth's rule #6).
+        void ParkHand(const DriveCtx& c) {
+            if (HandDrive* hd = Live(c)) {
+                apmf::ControlMap::Get().EnqueueRelease(hd->claim);
+                hd->claim    = APMF_API::kInvalidHandle;
+                hd->inFlight = false;   // parked -- a same-spell Repoint now fires again
+            }
+        }
+
+        // Phase 3 (concentration only, 2026-09-05 field fix): after the initial
+        // SpellFire, a concentration spell's magnitude is applied by the ENGINE's
+        // OWN per-frame caster update for as long as it stays in the charged/
+        // casting state (>=3) -- exactly like a player holding the cast button.
+        // So we do NOT interrupt/re-fire here, just keep the channel (and the
+        // internal ch.8b claim protecting the hand) alive by polling, up to a
+        // bounded hold window (kConcentrationHoldPolls, ~3s) or until the caster
+        // exits the state on its own -- whichever comes first -- then parks
+        // (single instant-apply fallback semantics don't apply here: the spell
+        // already fired at least once, so there is nothing to degrade to).
+        void PhaseHold(DriveCtx c, int pollsLeft) {
+            if (!Live(c)) return;
+            auto* actor = RE::TESForm::LookupByID<RE::Actor>(c.fid);
+            if (!actor) { TeardownHand(c); return; }
+            auto* hand = actor->GetMagicCaster(c.left ? CS::kLeftHand : CS::kRightHand);
+            if (!hand) { TeardownHand(c); return; }
+
+            const auto stNum = static_cast<std::uint32_t>(hand->state.get());
+            if (stNum == 0 || pollsLeft <= 0) {   // channel ended on its own, or our hold window is up
+                hand->InterruptCast(false);       // stop the still-active engine channel (no refund)
+                actor->NotifyAnimationGraph("InterruptCast");
+                actor->NotifyAnimationGraph("CastStop");
+                spdlog::info("[ch.8+act] 0x{} concentration hold ended ({} hand, state {}).",
+                             apmf::log::Hex(c.fid), c.left ? "left" : "right", stNum);
+                ParkHand(c);
+                return;
+            }
+            apmf::mainthread::Post([c, pollsLeft] { PhaseHold(c, pollsLeft - 1); });
+        }
+
         // Phase 2: poll the caster until it reaches Charged (deck-observed >=3),
-        // then fire the graph RELEASE event, then tear down. Never SUSTAINS a
-        // channel past one pulse (a repeat Repoint fires again from rest) --
-        // #0/#1a rule 3's bounded-one-shot shape, not a re-assert.
+        // fire the graph RELEASE event once, then either PARK (instant spells --
+        // never SUSTAINS past one pulse, a repeat Repoint fires again from rest,
+        // #0/#1a rule 3's bounded-one-shot shape) or hand off to PhaseHold
+        // (concentration spells -- see PhaseHold's header).
         void PhaseFire(DriveCtx c, int pollsLeft) {
             if (!Live(c)) return;   // cancelled/superseded -- nothing to do
             auto* actor = RE::TESForm::LookupByID<RE::Actor>(c.fid);
@@ -240,22 +322,14 @@ namespace apmf::castexec {
                 spdlog::info("[ch.8+act] 0x{} SpellFire ({} hand, state {}, form 0x{}).",
                              apmf::log::Hex(c.fid), c.left ? "left" : "right", stNum,
                              apmf::log::Hex(c.castForm));
-                // Single-shot: release the internal protection claim and PARK the
-                // hand -- `hd.active` stays true (this hand is still ours: Release()
-                // must still deselect/restore it later) but the fire already
-                // happened, so the claim is no longer load-bearing. A repeat
-                // Repoint re-drives from rest via StartHandDrive, which tears this
-                // parked state down (deselect included) before re-equipping --
-                // never a second, competing claim while parked, never a lingering
-                // equipped spell if Release() comes instead (INVARIANTS #18-style
-                // completeness for THIS channel's own cleanup, marth's rule #6).
-                apmf::mainthread::Post([c] {
-                    if (HandDrive* hd = Live(c)) {
-                        apmf::ControlMap::Get().EnqueueRelease(hd->claim);
-                        hd->claim    = APMF_API::kInvalidHandle;
-                        hd->inFlight = false;   // parked -- a same-spell Repoint now fires again
-                    }
-                });
+                auto*      origSpell    = RE::TESForm::LookupByID<RE::SpellItem>(c.spell);
+                const bool concentration = origSpell &&
+                    origSpell->GetCastingType() == RE::MagicSystem::CastingType::kConcentration;
+                if (concentration) {
+                    apmf::mainthread::Post([c] { PhaseHold(c, kConcentrationHoldPolls); });
+                } else {
+                    apmf::mainthread::Post([c] { ParkHand(c); });
+                }
                 return;
             }
             if (stNum == 0) {   // never entered charge -- degrade

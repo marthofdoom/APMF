@@ -183,12 +183,16 @@ auto/1 right/2 left/3 dual, `param.ival & kHandModeMask`) + `ResolveTarget` (`pa
 client named one explicitly -- the heal-the-player fix, 2026-09-05: a ch.6
 `kIntent_CombatTarget` claim is the actor's FOE, never who to heal -- else a
 winning ch.6 claim, else self; `param.posX/Y/Z` is RESERVED, not yet read) ->
-`StartHandDrive` per resolved hand (delivery-flip `proxy::Acquire` if a
+`StartHandDrive` per resolved hand (delivery-flip `proxy::Acquire` -- now
+`AddSpell`'s the proxy so it's actually selectable, 2026-09-05 field fix -- if a
 self-delivery spell resolves to a non-self target, an internal `kIntent_Cast`
 protection claim via `ControlMap::EnqueueCast`,
 `ActorEquipManager::EquipSpell`) -> `PhaseSelect`/`PhaseFire` (the observed
 BeginCast->Charging->Charged->SpellFire sequence, `core/MainThread.h`-posted across
-frames) -> `TeardownHand` (interrupt/anim/deselect/release-claim/free-proxy) or
+frames) -> for a CONCENTRATION spell, `PhaseHold` (keeps the channel + claim
+alive up to `kConcentrationHoldPolls` ~3s or until the caster exits the state on
+its own, so a heal applies over a real window, not one pulse) -> `ParkHand`/
+`TeardownHand` (interrupt/anim/deselect/release-claim/free-proxy) or
 `FireFallback` (`CastSpellImmediate` on the kInstant caster) on any degrade path
 (VR, never-selects, never-charges). Per-actor/per-hand state (`g_drives`) is
 writer-thread-only (Drain seat + MainThread::Pump, same thread) -- no lock.
@@ -201,7 +205,14 @@ writer-thread-only (Drain seat + MainThread::Pump, same thread) -- no lock.
   `TeardownHand`'s proxy-free is conditional on the SIBLING hand not still using
   the SAME proxy form (`kHandDual` shares one proxy across both hands, keyed by
   owner not hand) -- freeing unconditionally there corrupts the surviving hand's
-  equipped form.
+  equipped form. `proxy::Acquire` `AddSpell`s the delivery-flip proxy onto the
+  actor (2026-09-05 field fix: `EquipSpell` can only select a spell the actor
+  already KNOWS -- without this the caster never selects the proxy and the
+  drive always degrades to the fallback, every pulse) and `proxy::Free`
+  `RemoveSpell`s it -- `Free` is the ONE choke point every teardown path already
+  calls unconditionally, so this stays leak-safe (a lingering known/equipped
+  transient spell historically caused a light-limit CTD) without needing a
+  second cleanup site.
 
 ### `native/core/Input.{h,cpp}` — test surface
 `InputSink` (keyboard button-down) → `Arbiter::DispatchHotkey` (+ `probe::OnHotkey`).
