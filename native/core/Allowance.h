@@ -110,7 +110,7 @@ namespace apmf::allowance {
     // RE::MagicCaster, a plain unhooked virtual call); EquipGate resolves it via
     // CombatInventoryItem::itemSlot.equipSlot (a real struct member at a
     // static_assert'd offset) compared against
-    // BGSDefaultObjectManager::GetDefaultObject<BGSEquipSlot>(kLeftHandEquip /
+    // BGSDefaultObjectManager::GetObject<BGSEquipSlot>(kLeftHandEquip /
     // kRightHandEquip). kUnknown means the seat could not resolve a hand for THIS
     // call (e.g. MagicCaster::kOther/kInstant, or an equip slot that is neither
     // vanilla hand slot) -- degrade to the actor-wide floor, never guess.

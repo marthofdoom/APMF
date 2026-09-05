@@ -201,9 +201,9 @@ namespace apmf::equipgate {
         // Hand::kUnknown below and this gate degrades to its pre-existing
         // actor-wide floor -- never a crash, never a guess.
         if (auto* dobj = RE::BGSDefaultObjectManager::GetSingleton()) {
-            g_leftHandSlot.store(dobj->GetDefaultObject<RE::BGSEquipSlot>(RE::DEFAULT_OBJECT::kLeftHandEquip),
+            g_leftHandSlot.store(dobj->GetObject<RE::BGSEquipSlot>(RE::DEFAULT_OBJECT::kLeftHandEquip),
                                  std::memory_order_release);
-            g_rightHandSlot.store(dobj->GetDefaultObject<RE::BGSEquipSlot>(RE::DEFAULT_OBJECT::kRightHandEquip),
+            g_rightHandSlot.store(dobj->GetObject<RE::BGSEquipSlot>(RE::DEFAULT_OBJECT::kRightHandEquip),
                                   std::memory_order_release);
         }
 

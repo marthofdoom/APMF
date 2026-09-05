@@ -123,7 +123,7 @@ real, engine-native, per-hand signal at their seat, and both now read it:
   (`RE::CombatInventoryItem*`) carries its OWN `itemSlot.equipSlot` (a real struct
   member, `static_assert`'d at offset 0x20 — the AI sets this to the vanilla
   hand's `BGSEquipSlot` when it builds the item for that hand), compared against
-  `RE::BGSDefaultObjectManager::GetSingleton()->GetDefaultObject<RE::BGSEquipSlot>
+  `RE::BGSDefaultObjectManager::GetSingleton()->GetObject<RE::BGSEquipSlot>
   (kLeftHandEquip / kRightHandEquip)` — CommonLib's own version-robust default-
   object lookup (the SAME table the engine itself consults), never a hardcoded
   FormID.
