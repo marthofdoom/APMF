@@ -130,7 +130,18 @@ namespace APMF_API {
                                      //       (the claim's spell is enforced as the actor's
                                      //       only castable choice; denying a COMPETING
                                      //       framework's own selection is a future gap).
-                                     //       Param: form (the spell FormID).
+                                     //       Param: form (the spell FormID), ival (+ACT hand
+                                     //       mode: 0 auto/1 right/2 left/3 dual -- see
+                                     //       core/CastExecutor.h), target (the cast target
+                                     //       actor; 0 -> falls back to a winning
+                                     //       kIntent_CombatTarget claim, then self), pos
+                                     //       (reserved -- a world-location target for a
+                                     //       location-delivery spell; NOT yet wired, see
+                                     //       core/CastExecutor.cpp).
+                                     //       +ACT MODE (feat/cast-act): when driven by
+                                     //       core/CastExecutor.cpp, this claim doesn't just
+                                     //       narrow the AI -- APMF equips + animates + fires
+                                     //       the cast itself. See CastExecutor.h.
         kIntent_WeaponDrawn   = 5,   // ch.4  Draw/sheathe. Mode: PROMOTE (one-shot, sticky).
                                      //       Param: none.
         kIntent_Dialogue      = 6,   // ch.10 Pause the actor's own in-progress dialogue.
@@ -259,6 +270,21 @@ namespace APMF_API {
         float        fval;   // a scalar (a bias / scale / factor). 0 => channel default.
         std::int32_t ival;   // an integer/enum variant (e.g. a category bitmask).
                              //   0 => default.
+        // Appended (feat/cast-act, marth 2026-09-05) -- END of the struct, so a
+        // zero-init caller (v1..v-this-pass) reads target=0/pos=0/0/0, byte-identical
+        // to before these existed. No new vtable slot, no APMF_API_vN, no
+        // abiVersion bump -- APMF_Param itself is append-only by design (see the
+        // struct's own comment above).
+        RE::FormID   target;   // an actor/ref this request acts ON (e.g. kIntent_SelectSpell's
+                               //   cast target). 0 => channel-specific fallback.
+        float        posX;    // a WORLD-LOCATION target (all-zero => unset). Reserved for a
+        float        posY;    //   location-delivery cast (Rune/AoE ground-target) -- the
+        float        posZ;    //   CLIENT picks the point (e.g. by enemy-count-in-radius);
+                               //   APMF never selects one. Also pre-provisions a future
+                               //   move-to-point destination. NOT YET READ by any channel
+                               //   (core/CastExecutor.cpp accepts kIntent_SelectSpell's
+                               //   `target`; `pos` is documented-reserved until the rune/AoE
+                               //   pass wires the location-aim plumbing).
     };
 
     // ── APMF_Param field usage, per Intent (at a glance) ────────────────────────
@@ -268,6 +294,11 @@ namespace APMF_API {
     // above for the full picture; this is the quick-scan version.
     //
     //   form   kIntent_SelectSpell     the spell FormID
+    //   ival   kIntent_SelectSpell     +ACT hand mode: 0 auto/1 right/2 left/3 dual
+    //   target kIntent_SelectSpell     the cast target actor (0 -> a winning
+    //                                  kIntent_CombatTarget claim -> self)
+    //   pos    kIntent_SelectSpell     RESERVED (a location-delivery target; not yet
+    //                                  read -- core/CastExecutor.cpp)
     //   form   kIntent_CombatTarget    the target actor
     //   form   kIntent_ShoutPower      the shout/power FormID
     //   form   kIntent_OfferPackage    the TESPackage FormID
@@ -278,7 +309,8 @@ namespace APMF_API {
     //   none   every other Intent      accepted, not yet read by the channel
     //
     // fval is not read by any channel yet (reserved for a future per-request bias
-    // on ch.11, scale on ch.1a, factor on ch.16).
+    // on ch.11, scale on ch.1a, factor on ch.16). target/pos are not read by any
+    // Intent OTHER than kIntent_SelectSpell yet.
     // ─────────────────────────────────────────────────────────────────────────────
 
     // The v1 interface: a POD struct of function pointers. NO vtable. `abiVersion`

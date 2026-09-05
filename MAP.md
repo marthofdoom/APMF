@@ -173,9 +173,13 @@ a main-thread-safe seat for equip/3D work).
 ### `native/core/CastExecutor.{h,cpp}` — ch.8 SelectSpell's +ACT mode (feat/cast-act)
 Wired 1:1 from `channels/CastingSelect.cpp`'s `Engage`/`OnOwnerChanged`/`Release`.
 Turns a `kIntent_SelectSpell` claim into APMF OWNING the cast: `ResolveHands` (0
-auto/1 right/2 left/3 dual, `param.ival`) -> `StartHandDrive` per resolved hand
-(delivery-flip `proxy::Acquire` if a self-delivery spell targets a claimed ch.6
-actor, an internal `kIntent_Cast` protection claim via `ControlMap::EnqueueCast`,
+auto/1 right/2 left/3 dual, `param.ival`) + `ResolveTarget` (`param.target` if the
+client named one explicitly -- the heal-the-player fix, 2026-09-05: a ch.6
+`kIntent_CombatTarget` claim is the actor's FOE, never who to heal -- else a
+winning ch.6 claim, else self; `param.posX/Y/Z` is RESERVED, not yet read) ->
+`StartHandDrive` per resolved hand (delivery-flip `proxy::Acquire` if a
+self-delivery spell resolves to a non-self target, an internal `kIntent_Cast`
+protection claim via `ControlMap::EnqueueCast`,
 `ActorEquipManager::EquipSpell`) -> `PhaseSelect`/`PhaseFire` (the observed
 BeginCast->Charging->Charged->SpellFire sequence, `core/MainThread.h`-posted across
 frames) -> `TeardownHand` (interrupt/anim/deselect/release-claim/free-proxy) or

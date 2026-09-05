@@ -153,14 +153,22 @@ namespace apmf::castexec {
         }
 
         // Target resolution -- NEVER invents one (INVARIANTS #0/#17). See
-        // CastExecutor.h's file header for the full rule.
-        RE::FormID ResolveTarget(RE::Actor* a_actor, RE::SpellItem* /*a_spell*/) {
+        // CastExecutor.h's file header for the full rule. Priority (marth
+        // 2026-09-05, the heal-the-player fix): the claim's OWN explicit
+        // `param.target` first -- this is the ONLY correct source for
+        // heal/buff-another, since the actor's combat TARGET is its FOE, not
+        // whoever it should be healing (claiming CombatTarget=ally would
+        // redirect the actor to FIGHT the ally). Only when the claim names no
+        // target do we fall back to the actor's own winning kIntent_CombatTarget
+        // claim (the offense case: cast at your foe), then self.
+        RE::FormID ResolveTarget(RE::Actor* a_actor, RE::FormID a_explicitTarget) {
+            if (a_explicitTarget != 0) return a_explicitTarget;   // the claim named WHO explicitly
             APMF_API::APMF_Param claim{};
             if (apmf::ControlMap::Get().TryGetOwningClaim(a_actor->GetFormID(),
                                                           APMF_API::kIntent_CombatTarget, claim) &&
                 claim.form != 0)
-                return claim.form;   // the client already named who (ch.6) -- honor it either way
-            return a_actor->GetFormID();   // no named target -- self (conservative; never a guess)
+                return claim.form;   // no explicit target -- fall back to the combat-target claim
+            return a_actor->GetFormID();   // neither -- self (conservative; never a guess)
         }
 
         // Guaranteed-delivery fallback (marth's rule #5): a direct effect apply
@@ -313,7 +321,8 @@ namespace apmf::castexec {
         // Start (or restart) a single hand's drive: resolve the target, decide the
         // delivery-flip proxy, claim internal ch.8b protection for this hand, equip,
         // and kick PhaseSelect. Tears down any PRIOR drive on this same hand first.
-        void StartHandDrive(RE::FormID id, RE::Actor* actor, RE::SpellItem* spell, bool left) {
+        void StartHandDrive(RE::FormID id, RE::Actor* actor, RE::SpellItem* spell, bool left,
+                            RE::FormID explicitTarget) {
             ActorDrive& ad = g_drives[id];
             HandDrive&  hd = left ? ad.hand[1] : ad.hand[0];
 
@@ -322,7 +331,7 @@ namespace apmf::castexec {
                 TeardownHand(old);
             }
 
-            const RE::FormID targetFid    = ResolveTarget(actor, spell);
+            const RE::FormID targetFid    = ResolveTarget(actor, explicitTarget);
             const bool       selfDelivery = spell->GetDelivery() == RE::MagicSystem::Delivery::kSelf;
             const bool       mismatch     = selfDelivery && targetFid != id;
 
@@ -383,6 +392,11 @@ namespace apmf::castexec {
         }
 
         void ApplyDesired(RE::FormID id, RE::Actor* actor, const APMF_API::APMF_Param& param) {
+            // param.posX/Y/Z (a world-location target, e.g. for a Rune/AoE
+            // ground-target cast) is ACCEPTED but NOT YET WIRED here -- reserved
+            // for a later location-aim pass (see APMF_API.h's APMF_Param comment).
+            // param.target IS wired below (ResolveTarget) -- the actor-target fix
+            // this pass exists for (heal-the-player).
             auto* spell = RE::TESForm::LookupByID<RE::SpellItem>(param.form);
             if (!spell) {
                 spdlog::warn("[ch.8+act] 0x{} claimed with no loadable SpellItem (form 0x{}) -- ignored.",
@@ -396,7 +410,7 @@ namespace apmf::castexec {
                 // sequence would race the native AI with no protection. Degrade
                 // straight to the guaranteed fallback (marth's rule #5); no
                 // hand-drive state is recorded (nothing to hold/restore).
-                const RE::FormID targetFid = ResolveTarget(actor, spell);
+                const RE::FormID targetFid = ResolveTarget(actor, param.target);
                 DriveCtx c{ id, spell->GetFormID(), spell->GetFormID(),
                             (targetFid == id) ? 0 : targetFid, false, 0 };
                 FireFallback(c);
@@ -424,7 +438,7 @@ namespace apmf::castexec {
                     return;
                 }
                 if (hd.active && hd.inFlight && hd.spell == spellFid) return;   // still mid-cast -- don't restart
-                StartHandDrive(id, actor, spell, left);
+                StartHandDrive(id, actor, spell, left, param.target);
             };
             apply(false, wantRight);
             apply(true, wantLeft);
