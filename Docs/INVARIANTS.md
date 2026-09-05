@@ -36,6 +36,80 @@ the client commands the target / selects the spell. **ch.14 shout-power's direct
 is bound and safe), but it duplicated the "APMF selects, not the client" mistake
 this rule exists to end; it is now converted to arbitration-only, matching ch.6/ch.8.
 
+**The fourth legal action, added 2026-09-05: (d) COMPOSE — answer the ENGINE'S OWN
+decision seats so the engine's own logic produces what the claim asked for.** This
+is NOT a loophole in the rule above; it is the rule taken seriously. A composed
+seat makes NO call that performs the behavior (`core/CastSeats.cpp` makes no
+`EquipSpell`, no `CastSpell`, no `CastSpellImmediate`, no `NotifyAnimationGraph`,
+no caster-state write) — it changes what a vfunc SEES and lets the AI decide. The
+cast facet's retired forced drive, which DID call `CastSpellImmediate`, is exactly
+what this replaced. #20 states the mechanism, the one permitted non-chaining
+answer and its three conditions; read it before adding a composed seat anywhere.
+
+**#20 — COMPOSED ANSWERS: APMF may answer the ENGINE'S OWN DECISION SEATS so the
+AI decides what a claim asks for — and exactly ONE of those answers may skip the
+chain.** (feat/ai-cast-seats-impl, 2026-09-05. This is the rule that lets ch.8b
+work at all, and the rule that keeps it from becoming #0's forbidden "generate".)
+
+**The mechanism.** A decision the engine makes is a PIPELINE of vfunc seats, each
+reading inputs and producing an answer. APMF may sit in that pipeline and change
+what a seat SEES, so the engine's own logic — its own thresholds, its own
+animation, its own resource and LOS checks, its own interrupt handling — produces
+the outcome the claim asked for. That is COMPOSITION, and it is categorically
+different from generating behavior: no `EquipSpell`, no `CastSpell`, no
+`CastSpellImmediate`, no anim-graph event, no state poke. The cast facet is the
+worked example (`core/CastSeats.cpp` + `core/EquipGate.cpp`): five seats, and the
+NPC's own AI performs a real animated cast at the claimed target.
+
+**The exception, and its three conditions.** A seat is normally answered by
+CHAINING (call the original first, then only ever flip its YES to NO — #17). A
+seat may be answered FROM THE CLAIM WITHOUT CHAINING only when ALL THREE hold:
+1. **The original is structurally un-redirectable.** Its inputs are not reachable
+   through any interposable seat — it reads them directly out of an engine struct.
+   (`CheckShouldEquip`'s Restore override calls the static `0x81f7c0`, which takes
+   its target straight off the `CombatController` and has no caster object, hence
+   no `GetMagicTarget` to redirect. Chaining is not a weaker answer there; it is
+   NO answer, and it also short-circuits every downstream seat.)
+2. **The forced answer is an ELIGIBILITY signal, not the act.** It says "this is
+   allowed to be considered," never "do this." The engine still scores it, still
+   applies its own slot/range/resource/blackboard gates, still runs its own leaf
+   with its own animation, and is still free to choose otherwise.
+3. **It is scoped to the exact {claim, actor, form, hand}** and to the specific
+   vtables whose original IS the obstacle — verified at install, re-verified per
+   call. Everything else on that same slot keeps chaining unconditionally.
+If any condition fails, chain. A non-chaining answer that fails (2) is #0's
+forbidden generate wearing a hook's clothing.
+
+**Scope is the safety argument, not an afterthought.** Engine vfunc
+implementations are widely SHARED: `GetMagicTarget`'s implementation is the base,
+used by 13 of the 14 combat-caster vtables. An unscoped redirect there would aim
+Stagger/Disarm/Offensive effects at the ally a heal claim named. So a composed
+seat installs on the NARROWEST vtable set that carries the behavior (the Restore
+caster vtable alone), AND re-tests the claim per call. Two independent gates,
+either of which alone would suffice.
+
+**RELEASE ORDERING: the cleared claim is PUBLISHED BEFORE ANYTHING ELSE the
+release does.** A composed seat runs on the combat thread and reads the RCU
+snapshot; the instant the claim is gone from the published generation, every seat
+chains again. So nothing a release does may become visible to those seats BEFORE
+that publish. Concretely: `channel->Release` runs inside `ControlMap::Drain`,
+while the removal is still only in the writer's PRIVATE working copy — so ch.8b's
+proxy teardown (`castproxy::Free`, which un-teaches a form the seats may still be
+naming) is deferred exactly one main-thread hop through `apmf::mainthread::Post`,
+which `Arbiter::OncePerFrame` pumps immediately AFTER `Drain()` returns, i.e.
+strictly after `Publish()`. Any future release-time engine write inherits this:
+publish first, mutate second.
+
+**A raw struct offset is permitted in a composed seat ONLY with a runtime identity
+check.** #7 says never hand-write an offset. The aim-target override
+(`CombatAimController+0x30`) is the one place ch.8b must, because the pinned
+CommonLib has no `CombatProjectileAimController` class to reach through. It is
+allowed because it carries THREE guards instead of the static_assert it cannot
+have: its own INI kill-switch, an install-time RTTI derivation check, and a
+per-call check that the object's vtable pointer EXACTLY equals the resolved
+`VTABLE_CombatProjectileAimController`. Anything else is left untouched. Do not
+copy the offset without copying all three guards.
+
 **#1 — APMF is the gatekeeper: BLOCK the foreign input, do not force the output.**
 Once APMF owns a channel on an actor, nothing else reaches that facet except through
 APMF. A channel's job is to block the competing input at its source — deny the
@@ -443,7 +517,10 @@ thing that derails one. Concretely:
 - **Engine-answer-first.** Every thunk calls the stored original before deciding
   anything; it only ever flips the engine's own YES to NO, only for an actor APMF
   itself holds a claim on. Never invent a YES, never manufacture behavior, never
-  re-assert (#0).
+  re-assert (#0). **ONE bounded exception exists in the whole codebase** — ch.8b's
+  `CheckShouldEquip` seat, where the original is structurally un-redirectable and
+  chaining would answer nothing at all. #20 states its three conditions; a second
+  exception needs the same argument made explicitly, not an appeal to the first.
 - **Verify at install.** RTTI-derivation check per vtable symbol before installing
   (`core/Allowance.h`'s `DerivesFrom`, the `CombatMagicCasterArmor` lesson) — a symbol
   that doesn't derive the expected class is skipped, not installed blind. At the hot

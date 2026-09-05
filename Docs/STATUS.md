@@ -1,10 +1,71 @@
 # APMF STATUS — living handoff (start here)
 
-Updated 2026-09-04. The current state of the build: what's shipped, what's
+Updated 2026-09-05. The current state of the build: what's shipped, what's
 probe-gated, what's next. Keep this current in the SAME change as any
 build/finding/workflow change.
 
-## Active branch: `feat/composition-cast` (unproven, off v0.9.0 `main`)
+## HEAD OF THE CAST WORK: `feat/ai-cast-seats-impl` (built, CI-green, NOT field-run)
+
+Off `observe/ai-cast-seats-split` (525daae). **The keystone changed shape: the NPC's
+OWN AI now performs a claimed cast, natively, and the forced drive is deleted.**
+
+- **THE FIVE ENGINE SEATS.** While a `kIntent_Cast` claim {actor A, spell S, target T}
+  stands, APMF answers the vfunc seats the combat AI's own cast decision is built out
+  of, and the AI selects, equips, charges, aims, fires and channels S at T with its own
+  animation, magicka, LOS and interrupt handling. **APMF makes no `EquipSpell`,
+  `CastSpell`, `CastSpellImmediate`, `NotifyAnimationGraph` or caster-state write
+  anywhere.**
+  | Seat | Slot | Where | Answer |
+  |---|---|---|---|
+  | WHICH item | `0x0F CheckShouldEquip` | `core/EquipGate.cpp` | TRUE for the claim's driven form, **without chaining** |
+  | WHETHER | `0x06 CheckStartCast` | `core/CastSeats.cpp` | TRUE from the claim |
+  | WHERE | `0x0A GetMagicTarget` | `core/CastSeats.cpp` | `out->handle = T`, `out->ptr = nullptr` |
+  | HOW LONG | `0x07 CheckStopCast` | `core/CastSeats.cpp` | STOP on TTL / dead / unresolvable / stop-percent |
+  | AIM | `0x0D SetupAimController` | `core/CastSeats.cpp` | `aim->+0x30 = T` (always written) |
+- **The 0x0F seat is why this works at all, and it is the ONE non-chaining answer in
+  the codebase.** The Restore ITEM templates override `CheckShouldEquip` with the static
+  `0x81f7c0`, which reads its target straight off the `CombatController`
+  (`kSelf ? attacker : combat TARGET`) and runs `ShouldRestore` on it — so a healthy
+  follower fighting a healthy foe never lets a heal into its equipment set, and the
+  other four seats are NEVER CALLED. There is no interposable seat between it and those
+  fields, so chaining is not a weaker answer, it is no answer. **New INVARIANTS #20**
+  states the exception, its three conditions, the scope obligation and the release
+  ordering rule; **#0 gains a fourth legal channel action, (d) COMPOSE.**
+- **Scope is the safety argument.** `GetMagicTarget`'s impl is the SHARED base of 13 of
+  the 14 caster vtables — an unscoped redirect would aim Stagger/Disarm/Offensive
+  effects at the ally. The caster seats install on `VTABLE_CombatMagicCasterRestore`
+  ONLY, and every thunk re-tests {claim actor, claim's driven form} per call.
+- **RETIRED in the same pass:** the whole `CastExecutor` phase chain
+  (PhaseSelect/Rest/Drawn/Fire/Hold, ParkHand/TeardownHand, the wall-clock `Budget`
+  plumbing) **and its `CastSpellImmediate` fallback** (which is what INVARIANTS #0
+  forbids by name); the ch.8 `+ACT` drive opt-in (`ival` bit 2 — RESERVED and ignored,
+  ABI byte-frozen); the `CombatBehaviorContextMagic` CreateContextNode act/pop deny
+  (the months-live CTD seat, and now actively wrong — it would suppress the very cast
+  being claimed); and `kIntent_Cast`'s implicit `kCombatActionCat_Cast` deny.
+- **KEPT deliberately:** the four cast LEAVES' act/pop deny — still load-bearing for
+  `kIntent_CombatAction`, a separate live intent ("this actor must not cast at all");
+  the delivery-flip proxy pool, renamed `core/CastProxy.{h,cpp}`, because
+  `FindTargets`' Self branch (0x5bc98a) always lands on the caster so no seat can aim a
+  kSelf heal at an ally — with its `AddSpell`/`RemoveSpell` lifecycle, `ResetAll` and
+  `PreSaveSweep` intact (#19); `core/MainThread`, which now carries the release hop.
+- **ABI:** `APMF_CastRequest::target` is now LOAD-BEARING (it was RECORD ONLY). Stop
+  percent rides `CastFlags` bits 8-15 in-place (`MakeStopPct`/`ReadStopPct`); 0 = stop
+  at full restoration. No struct field added, reordered or retyped; `kABIVersion`
+  stays 5.
+- **CLIENT-SIDE CONSEQUENCE FOR MFO (coordinate before deploying the pair):** a claim
+  that still sets the retired `+ACT` bit gets gate-only behaviour and no cast; the cast
+  now goes through `RequestCast`. And MFO's own `CasterConsent` hooks slot `0x06` on 14
+  caster vtables — if it installs after APMF it sits OUTER and could deny APMF's forced
+  YES, so it must not deny while a ch.8b claim stands.
+- **NOT FIELD-RUN.** The `AiCastSeats` passive probe stays intact and config-gated (it
+  is deliberately installed BEFORE these seats, so it keeps logging the ENGINE's raw
+  answer beneath them). First deck run should confirm: `[t2a] SEAT 0x0F` armed ->
+  `[ch.8b seat 0x06] YES` -> `[ch.8b seat 0x0A] -> claimed target` -> a real equip +
+  animated cast -> `[ch.8b seat 0x07] STOP`. The aim seat has its own kill-switch,
+  `[CastSeats] EnableAimSeat=0`, if `+0x30` misbehaves (its lifecycle is the one
+  NOT-CERTAIN item carried into the field).
+
+## Earlier branch: `feat/composition-cast` (superseded in part by the seats above)
 
 The composition rework (`Docs/SPEC-COMPOSITION-REWORK.md`). Adds the cast-EXECUTION
 facet (ch.8b) as ABI v5. NOT on `main`; `main` stays v0.9.0.

@@ -170,84 +170,88 @@ a main-thread-safe seat for equip/3D work).
   from `OnActorUpdate` (field-proven multi-thread, INVARIANTS #4/#12). A task
   Post()'d during `Pump()` runs on the NEXT `Pump()`, never re-entrantly.
 
-### `native/core/CastExecutor.{h,cpp}` — ch.8 SelectSpell's +ACT mode (feat/cast-act, OPT-IN)
-OPT-IN GATE lives in `channels/CastingSelect.cpp`, NOT here: `Engage`/`OnOwnerChanged`
-test `param.ival & kActFlag_Drive` (bit 2) BEFORE calling into this module at all -- a
-bare/default claim (bit clear, incl. `ival==0`) is gate-only (ch.8's original
-arbitrate+deny mode, `CastExecutor` never runs, MFO's offense gambit is unaffected);
-only a claim that sets the bit reaches `Engage`/`OnOwnerChanged` below. `Release` (and
-an `OnOwnerChanged` that DROPS the bit) always calls this module's `Release` -- safe
-unconditionally, a no-op if nothing was driving.
-Turns a `kIntent_SelectSpell` +ACT claim into APMF OWNING the cast: `ResolveHands` (0
-auto/1 right/2 left/3 dual, `param.ival & kHandModeMask`) + `ResolveTarget` (`param.target` if the
-client named one explicitly -- the heal-the-player fix, 2026-09-05: a ch.6
-`kIntent_CombatTarget` claim is the actor's FOE, never who to heal -- else a
-winning ch.6 claim, else self; `param.posX/Y/Z` is RESERVED, not yet read) ->
-`StartHandDrive` per resolved hand (delivery-flip `proxy::Acquire` -- now
-`AddSpell`'s the proxy so it's actually selectable, 2026-09-05 field fix -- if a
-self-delivery spell resolves to a non-self target, an internal `kIntent_Cast`
-protection claim via `ControlMap::EnqueueCast`,
-`ActorEquipManager::EquipSpell`) -> the phase chain (the observed
-BeginCast->Charging->Charged->SpellFire sequence, `core/MainThread.h`-posted across
-frames, one poll per frame):
-`PhaseSelect` (wait for the ONE queued equip via `Actor::GetEquippedObject`, then
-interrupt + the paired anim stop tail) -> `PhaseRest` (H6: poll until the caster is
-genuinely at `kNone` -- the interrupt and the drive must NOT share a frame) ->
-`PhaseDrawn` (M4, 2026-09-05: poll `ActorState::IsWeaponDrawn()` until the ONE
-`DrawWeaponMagicHands(true)` queued in `StartHandDrive` actually lands -- it is a ~1s
-animation-driven request, not instant, and the caster's own charge state can never
-leave rest while the parent weapon/hands node is still mid-draw, which reads
-downstream as "CheckCast ALLOWs, state pinned at 0 forever"; `kDrawWaitMs`, degrades to
-`FireFallback` on timeout) BEFORE `BeginCast` + `RequestCastImpl` -> `PhaseFire`
-(>=3 -> SpellFire; `everLeftRest` keeps
-a not-spun-up-yet 0 from reading as terminal; `everCharging` keeps a cast that
-COMPLETED between two polls from double-applying via the fallback, M3) -> for a
-CONCENTRATION spell `PhaseHold` (keeps the channel + claim alive for `kConcHoldMs`
-~3s of WALL CLOCK, re-asserting `desiredTarget` each poll (M2), ending only on a
-state-0 read AFTER the channel was seen running (M1)), otherwise `PhaseParkWait`
-(short bounded grace so the release animation finishes; M7 post-fire diagnostic) ->
-`ParkHand` (emits the balanced stop tail + un-teaches/deselects a PROXY castForm so
-no transient can reach a save, H3/H7; releases the claim, keeps the hand ours) /
-`TeardownHand` (stop tail/deselect/release-claim/free-proxy) or `FireFallback`
-(`CastSpellImmediate` on the kInstant caster) on any degrade path (VR,
-never-selects, never-reaches-rest, never-draws (M4), never-charges).
-ALL budgets are WALL-CLOCK deadlines on `apmf::clock::MonotonicMs` (`Budget` +
-`MakeBudget`/`Expired`/`LogDue`), never frame counts (H4) -- and every phase deadline
-is clamped to ONE whole-drive ceiling `kDriveTotalMs` (12s), `static_assert`'d to
-finish inside the frozen `APMF_API::kCastMaxTtlMs` (15s) so a drive can never outlive
-its own protection claim (H5). `ResetAll` (revert + kPreLoadGame) and `PreSaveSweep`
-(SKSE save callback) are the proxy-pool lifecycle hooks -- see INVARIANTS #19.
-Per-actor/per-hand state (`g_drives`) is
-writer-thread-only (Drain seat + MainThread::Pump, same thread) -- no lock.
-- **What breaks:** the whole per-hand PROTECTION relies on feat/deny-perhand's
-  CastGate/EquipGate/ActionGate deny already being live -- this module assumes
-  EXCLUSIVE hand ownership once its internal claim is applied, not a race to
-  defend against. On VR (no per-hand deny installed there) it MUST skip the
-  animated drive entirely and go straight to `FireFallback` (see `ApplyDesired`'s
-  VR branch) -- do not let a future edit route VR through the equip/animate path.
-  `TeardownHand`'s proxy-free is conditional on the SIBLING hand not still using
-  the SAME proxy form (`kHandDual` shares one proxy across both hands, keyed by
-  owner not hand) -- freeing unconditionally there corrupts the surviving hand's
-  equipped form. `proxy::Acquire` `AddSpell`s the delivery-flip proxy onto the
-  actor (2026-09-05 field fix: `EquipSpell` can only select a spell the actor
-  already KNOWS -- without this the caster never selects the proxy and the
-  drive always degrades to the fallback, every pulse) and `proxy::Free`
-  `RemoveSpell`s it -- `Free` is the ONE choke point every teardown path already
-  calls unconditionally, so this stays leak-safe (a lingering known/equipped
-  transient spell historically caused a light-limit CTD) without needing a
-  second cleanup site. The proxy is ALSO a SAVE hazard and a LOAD hazard
-  (INVARIANTS #19): it must never be known to the actor when a save is taken
-  (`ParkHand` un-teaches it; `PreSaveSweep` sweeps whatever phase the chain is in),
-  and its BORROWED source `Effect*` must be cleared before a load purges the dead
-  0xFF form (`ResetAll` -> `proxy::Reset`, wired to BOTH the revert callback and
-  kPreLoadGame in `plugin.cpp`; `ControlMap::Clear()` does not call
-  `channel->Release`, so without `ResetAll` the pool stays owned by dead actors
-  forever and every later ally heal declines as overflow). Every timing budget here
-  is WALL CLOCK -- reintroducing a frame count makes the drive frame-rate-dependent
-  (a 144fps machine got 2.1s against a measured ~5s engine) and can float the drive
-  past its own claim TTL. `kHandDual` is a KNOWN GAP (H8): only one `kIntent_Cast`
-  claim wins per actor, so a dual drive has one protected hand and one unprotected
-  -- fixing it needs a hand BITMASK in the claim, not a change here.
+### `native/core/CastProxy.{h,cpp}` — the delivery-flip PROXY POOL (was `CastExecutor`)
+**The forced cast DRIVE that used to live here is DELETED** (feat/ai-cast-seats-impl,
+2026-09-05): `PhaseSelect`/`PhaseRest`/`PhaseDrawn`/`PhaseFire`/`PhaseHold`/
+`PhaseParkWait`, `ParkHand`/`TeardownHand`/`EmitStopTail`/`StartHandDrive`/
+`ResolveHands`/`ResolveTarget`, the wall-clock `Budget` plumbing, the per-hand
+`g_drives` state, and the `FireFallback` (`CastSpellImmediate`) guaranteed-delivery
+path. Superseded by `core/CastSeats.cpp`'s five engine seats, which make the NPC's own
+AI perform the cast. Do not resurrect any of it: the fallback in particular is what
+INVARIANTS #0 forbids by name.
+What survived is ONE engine fact the seats cannot answer around
+(disassembly-CERTAIN, `FindTargets` 0x5bc160 @0x5bc98a): a **kSelf-delivery** spell
+always lands on the CASTER's own reference — the Self branch never reads
+`desiredTarget`, so seat 0x0A cannot aim Fast Healing at an ally. So this module mints
+a delivery-flipped `kTargetActor` COPY (`Configure`: source `data` + shared source
+`Effect*` by pointer, delivery flipped) that the AI selects and casts instead.
+`Acquire` (mint/re-target + TRANSIENT `AddSpell`) / `Free` (un-teach + deselect +
+release the slot) / `FormForOwner` / `ResetAll` (revert + kPreLoadGame) /
+`PreSaveSweep` (SKSE save). Fixed 4-slot pool keyed by OWNER, not hand (a dual cast
+shares one form). WRITER/MAIN THREAD ONLY.
+Called from: `ControlMap::ApplyRequest` (`Acquire`, on the writer thread where form
+lookups are legal, BEFORE the claim publishes), `channels/CastCompose.cpp`'s
+`Release` (`Free`, deferred one `mainthread::Post` hop so it lands AFTER the cleared
+claim publishes — INVARIANTS #20), `plugin.cpp` (`ResetAll` on revert + kPreLoadGame,
+`PreSaveSweep` on save).
+- **What breaks:** both halves of INVARIANTS #19. (a) A proxy KNOWN to the actor when
+  a save is taken persists a reference to a 0xFF dynamic form that will not exist on
+  the next load — `PreSaveSweep` must stay wired into `OnSave` BEFORE any record is
+  written, and `Free` must stay the single choke point every release path reaches.
+  (b) `Configure` shares the SOURCE spell's `Effect*` BY POINTER, so `ResetAll` must
+  clear `effects` FIRST and only then null the slot, or the load-time purge frees a
+  LIVE spell's effect array through the dead proxy (MFO's `Actuation_Direct.cpp`
+  lesson). `ResetAll` is ALSO what stops the pool staying permanently occupied by a
+  dead owner across a revert (`ControlMap::Clear()` deliberately does not call
+  `channel->Release`) — without it every later ally heal declines as overflow.
+  A pool overflow must leave `castProxy == 0` and the ORIGINAL kSelf form must then
+  NOT be seat-forced: casting it at an ally would silently heal the caster instead.
+  DOCUMENTED CLIENT DEPENDENCY: teaching the proxy only makes it selectable once the
+  actor's `CombatInventory` REBUILDS; the one confirmed dirty-trigger is a change of
+  `Actor::GetCombatStyle()` (MFO's `MFO_CastStyle` swap does this). APMF does not
+  force a rebuild — no version-robust, RTTI-verified lever exists for it (#7).
+
+### `native/core/CastSeats.{h,cpp}` — ch.8b: THE ENGINE CAST SEATS (the keystone)
+While a `kIntent_Cast` claim {actor A, spell S, target T} stands, APMF answers the
+vfunc seats the combat AI's OWN cast decision is built out of, so the NPC's own AI
+selects, equips, charges, aims, fires and channels S at T — engine animation, engine
+magicka, engine LOS/interrupts. **APMF makes no `EquipSpell`, `CastSpell`,
+`CastSpellImmediate`, `NotifyAnimationGraph` or caster-state write anywhere.**
+FOUR seats here, on `VTABLE_CombatMagicCasterRestore[0]` ONLY (RTTI-verified):
+- `0x06 CheckStartCast` -> TRUE from the claim (magicka stays enforced by
+  `MagicCaster::CheckCast` inside `CastSpell`; hand-idle/`bMLh_Ready` by the leaf's
+  own 0x89f3c0; the equip by seat 0x0F). Bypasses only the vanilla health threshold,
+  the effect-already-active test and the 15s restrict-timer window — the exact policy
+  the claim replaces.
+- `0x0A GetMagicTarget` -> `out->handle = claim target's native handle; out->ptr =
+  nullptr`. THREE args with a hidden 16-byte sret out-slot (CommonLib declares two and
+  is WRONG — the bug that CTD'd the passive probe). Handle form is the lifetime-safe
+  one: all 12 consumers branch on `handle` first and resolve it refcounted.
+- `0x07 CheckStopCast` -> STOP on claim TTL / target unresolvable / target dead /
+  target reached the claim's stop percent (`CastFlags` bits 8-15; 0 = full
+  restoration). Left native it stops at threshold+0.25 of the ALLY — a ~0.25s pulse
+  for any claim whose trigger sits above the vanilla ceiling.
+- `0x0D SetupAimController` -> writes `CombatAimController+0x30` (the aim-target
+  override every aim reader honours first). ALWAYS writes: the claim's target on a
+  match, the engine's own ctor default 0 otherwise, so this seat can never leave a
+  stale override behind. Needed for kAimed heals (the projectile flies at the aim, not
+  `desiredTarget`) and for a concentration heal's tolerance/LOS re-checks.
+The FIFTH seat (`0x0F CheckShouldEquip`) lives in `core/EquipGate.cpp` — see there.
+- **What breaks:** **SCOPE IS THE SAFETY ARGUMENT.** `GetMagicTarget`'s implementation
+  (0x81e020) is the BASE, shared by 13 of the 14 caster vtables. Widening the install
+  list beyond Restore aims Stagger/Disarm/Offensive HOSTILE effects at the ally.
+  The second gate (`ClaimNamesThisCast`: deliberating actor holds the claim AND
+  `this->magicItem` IS the claim's DRIVEN form) must stay too — and DRIVEN means
+  proxy-when-one-exists, never "spell OR proxy": forcing the original kSelf form would
+  heal the caster. Every thunk runs on the COMBAT thread: one lock-free RCU read, no
+  mutex, no follower list, and only `CombatController` members below the AE +0x68
+  divergence (`attackerHandle` 0x28). The target is a PRE-RESOLVED `ActorHandle`
+  because a `TESForm::LookupByID` here would take the engine's forms-map lock.
+  `+0x30` is the one RAW OFFSET in the tree (no `CombatProjectileAimController` class
+  exists in the pinned CommonLib) — its three guards (INI kill-switch, install-time
+  RTTI check, per-call exact vtable-identity check) are not optional; #20 says so.
+  Installed AFTER `core/AiCastSeats.cpp` on purpose so that passive probe keeps
+  logging the ENGINE's raw answer beneath these.
 
 ### `native/core/Input.{h,cpp}` — test surface
 `InputSink` (keyboard button-down) → `Arbiter::DispatchHotkey` (+ `probe::OnHotkey`).
@@ -276,11 +280,16 @@ ch.8b claim must actually STAND, on THIS hand, naming THIS exact spell-or-proxy)
 Consumed today by `core/CastGate.cpp` (T2c) and `core/EquipGate.cpp`
 (T2a); T1/T3/T4 reuse the same pieces when built.
 `CastClaimNamesForHand` exists because of H1: a ch.8 `kIntent_SelectSpell` claim
-names the ORIGINAL spell, so the moment the +ACT drive mints a delivery-flip PROXY,
-`Allowed(fid, kIntent_SelectSpell, proxyFid)` denied APMF's OWN driven cast — and
-because ch.8 and ch.8b were AND-ed, ch.8b's correct spell||proxy allowance could
-never rescue it. Both gates now let a matching cast claim ADMIT its own form ahead
-of the ch.8 narrow.
+names the ORIGINAL spell, so the moment a delivery-flip PROXY is minted,
+`Allowed(fid, kIntent_SelectSpell, proxyFid)` denied the proxied cast — and because
+ch.8 and ch.8b were AND-ed, ch.8b's correct spell||proxy allowance could never rescue
+it. Both gates now let a matching cast claim ADMIT its own form ahead of the ch.8
+narrow. That rule OUTLIVED the drive that exposed it: with the engine seats the
+**AI ITSELF** charges the proxy through `CastGate`'s `CheckCast`, so admitting the
+claim's proxy there is what lets the NPC's own cast get off the ground at all.
+`core/CastSeats.cpp` and `core/EquipGate.cpp`'s seat 0x0F read the richer
+`ControlMap::TryGetCastSeatClaim` instead (spell + proxy + target + resolved
+`ActorHandle` + flags + TTL in one RCU read) — same discipline, more fields.
 - **What breaks:** `Allowed`/`InstallOnVtables`'s thunk callers run on COMBAT
   THREADS (§5) — never take a lock, never touch the follower/actor list, never
   call anything beyond the stored `orig` + one ControlMap read. `DerivesFrom`
@@ -330,37 +339,64 @@ VR-refused, install-once.
   same per-hand guarantee as CastGate above. `kIntent_SelectSpell`/
   `kIntent_Equipment` (`Allowed`, not `AllowedCastForHand`) stay actor-wide —
   unchanged, per-hand was scoped to `kIntent_Cast` only.
+  **ch.8b SEAT 0x0F (feat/ai-cast-seats-impl) — the FIFTH engine cast seat and the
+  ONE NON-CHAINING ANSWER IN THE TREE.** This thunk now resolves actor/subject/hand
+  BEFORE calling the original, so that while a `kIntent_Cast` claim stands it can
+  return TRUE for the claim's DRIVEN form on a RESTORE item vtable without chaining.
+  It must: the five Restore ITEM templates OVERRIDE `CheckShouldEquip` with the
+  static `0x81f7c0`, which reads its target STRAIGHT off the `CombatController`
+  (`kSelf ? attacker : combat TARGET`) and runs `ShouldRestore` on it — so for a
+  healthy follower fighting a healthy foe the original always says NO, the heal never
+  enters the equipment set, no magic context is built, and seats 0x06/0x0A/0x07/0x0D
+  are NEVER CALLED. There is no interposable seat between it and those fields, so
+  chaining is not a weaker answer, it is no answer. INVARIANTS #20 states the
+  exception and its three conditions. **Everything else in this thunk still runs
+  strictly engine-answer-first.** Scope, all required together: `g_restoreVtables`
+  (recorded at install from the two NAMED Restore symbols, never inferred), the
+  claim's DRIVEN form (proxy-when-one-exists — the ORIGINAL kSelf spell must never be
+  forced, it would heal the caster), and the claim's own hand when resolvable. The
+  same block also DENIES the original kSelf spell's item while its proxy is being
+  driven (N4 exactness — `AllowedCastForHand` permits spell||proxy and would
+  otherwise let the AI take the hand with the self-healing form).
 
-### `native/core/ActionGate.{h,cpp}` — T1: the combat behavior-tree allowance (ch.7 / ch.8b / ch.8 +ACT)
+### `native/core/ActionGate.{h,cpp}` — T1: the combat behavior-tree allowance (ch.7 ONLY)
 `Install()` (kDataLoaded, VR-refused, install-once) hooks the 70
-`VTABLE_CombatBehaviorTreeNodeObject_*` leaves (`apmf::cbt::kLeaves`) AND the
-`CombatBehaviorContextMagic` CreateContextNode Base/Node1 (`kCastContextNodes`) at
-vtable slot **0x02 (act)** and slot **0x03 (pop)** — both RTTI-verified through
+`VTABLE_CombatBehaviorTreeNodeObject_*` leaves (`apmf::cbt::kLeaves`) at vtable slot
+**0x02 (act)** and slot **0x03 (pop)**, RTTI-verified through
 `allowance::InstallOnVtables`. `ActThunk` resolves the deliberating actor from
-`control+0x158` (both hypotheses, probe-proven), builds a deny mask from THREE lock-free
-RCU claim reads (`kIntent_CombatAction`'s `ival` category mask; `kIntent_Cast` ⇒ Cast;
-`kIntent_SelectSpell` with `castexec::kActFlag_Drive` ⇒ Cast — the "under APMF cast
-control" scope) and, when the node's install-time category is named, DENIES it as
-`CombatBehaviorForceFail`'s own act()+pop() **PAIR**: it records `{node, control}` in a
-`thread_local` pending-pop and invokes ForceFail's original `act()`; `PopThunk` then
-routes that node's very next `pop()` (same thread, same step — the runner's protocol,
-`core/CombatBehaviorRE.h` "The node protocol") to ForceFail's original `pop()`. Categories:
-offense leaves (12 names), the four cast leaves (Cast|Offense), the ContextMagic node
-(Cast|Offense). A bare gate-only ch.8 claim arms nothing.
+`control+0x158` (both hypotheses, probe-proven), reads ONE lock-free RCU claim
+(`kIntent_CombatAction`'s `ival` category mask) and, when the node's install-time
+category is named, DENIES it as `CombatBehaviorForceFail`'s own act()+pop() **PAIR**:
+it records `{node, control}` in a `thread_local` pending-pop and invokes ForceFail's
+original `act()`; `PopThunk` then routes that node's very next `pop()` (same thread,
+same step — the runner's protocol, `core/CombatBehaviorRE.h` "The node protocol") to
+ForceFail's original `pop()`. Categories: offense leaves (12 names) and the four cast
+leaves (Cast|Offense).
+**RETIRED 2026-09-05 (feat/ai-cast-seats-impl), do not re-add without re-reading why:**
+the `CombatBehaviorContextMagic` CreateContextNode deny (`kCastContextNodes`) is GONE —
+hooks and classification both — and so are the two IMPLICIT deny sources
+(`kIntent_Cast` ⇒ Cast, and `kIntent_SelectSpell`+`kActFlag_Drive` ⇒ Cast). A cast
+claim is now DELIVERED BY the AI's own magic branch (`core/CastSeats.cpp`); denying that
+branch would silence the very cast being claimed. The context node was also the seat
+whose act()-only deny caused the months-live data-stack CTD. `kIntent_Cast` is invisible
+to this gate today; only an explicit `kIntent_CombatAction` claim arms anything.
 - **What breaks:** the PAIR is the whole fix for the 2026-09-04 recurring deck CTD
   (INVARIANTS #18 "act()/pop() pair"): an act()-only ForceFail leaves the node's OWN
   `pop()` to pop `sizeof(node state)` for a 4-byte push — balanced by accident for the
   4-byte leaves, a data-stack corruption for CastImmediate/Concentration/RangedAttack
   (0xC), GroundAttack (0x18), FlyingAttack (0x30) and catastrophic for the ContextMagic
-  node (0x30 + two NiPointer releases out of the enclosing frame + a garbage window
-  restore). Never classify a vtable that is not `Paired()` (both maps); never arm the deny
-  when ForceFail's `act()` OR `pop()` failed to resolve (Install refuses both together).
-  `t_pending` is `thread_local` on purpose — the runner calls `pop()` synchronously on
-  the same OS thread with nothing in between; a global would race across combat
-  threads. Thunks run on COMBAT threads (§5): no lock, no follower list, only the stored
-  originals + ControlMap RCU reads. Denying the ContextMagic node under a BARE ch.8
-  claim would break MFO's offense gambit (the client wants its AI to cast that spell —
-  Docs/DENY-COMPLETENESS-AUDIT.md row 4); the +ACT bit is the scope, keep it so.
+  node — which is why that one is now never hooked at all). Never classify a vtable that
+  is not `Paired()` (both maps); never arm the deny when ForceFail's `act()` OR `pop()`
+  failed to resolve (Install refuses both together). `t_pending` is `thread_local` on
+  purpose — the runner calls `pop()` synchronously on the same OS thread with nothing in
+  between; a global would race across combat threads. Thunks run on COMBAT threads (§5):
+  no lock, no follower list, only the stored originals + ControlMap RCU reads.
+  **Never make `kIntent_Cast` (or any future cast claim) contribute a Cast deny here** —
+  it would suppress the AI's own cast branch, which is now the cast facet's delivery
+  mechanism. COVERAGE TRADED by dropping the context node, stated plainly: an explicit
+  `kIntent_CombatAction(Cast|Offense)` claim now suppresses only the four FIRING leaves,
+  not the CONTEXT-BUILD path, so the AI may build a magic context and equip a spell it
+  then cannot fire (Docs/DENY-COMPLETENESS-AUDIT.md, open gap).
 
 ### `native/core/CombatBehaviorRE.h` — the local RE:: extension for the combat tree (measured)
 The `CombatBehaviorTreeNode` layout (10 vfuncs: act 0x02 / pop 0x03 / update 0x04 /
@@ -416,7 +452,8 @@ parentheses.
 | `WeaponDraw.cpp` | 4 | draw/sheathe (Num5) | `DrawWeaponMagicHands(bool)` | one-shot (sticky) |
 | `Headtrack.cpp` | 5 | look-at (Num3) | `AIProcess::SetHeadtrackTarget` (own point slot) | **known-incomplete block (Tick re-assert; loses to a package-locked follower)** |
 | `CombatTarget.cpp` | 6 | combat-target CLAIM (Num-) | **ARBITRATION-ONLY** — records the owner; makes NO engine combat call (no `StartCombat`, no `currentCombatTarget` write). The CLIENT commands the target. Release relinquishes | arbitration-only (#0); client executes |
-| `CastingSelect.cpp` | 8 | casting CLAIM (Num4) | Claim itself still makes NO `selectedSpells`/`CastSpellImmediate` write (client selects + grants AI consent) — but the claim is now a REAL allowance: `core/CastGate.cpp` (T2c CheckCast) + `core/EquipGate.cpp` (T2a CheckShouldEquip) deny any spell/item that isn't the claimed `param.form` | claim + T2 enforcement; client still executes |
+| `CastingSelect.cpp` | 8 | casting CLAIM (Num4) | Log-only + a REAL allowance one layer down: `core/CastGate.cpp` (T2c CheckCast) + `core/EquipGate.cpp` (T2a CheckShouldEquip) deny any spell/item that isn't the claimed `param.form`. Makes NO engine write. The `+ACT` drive opt-in it briefly carried is RETIRED (`ival`/`target`/`pos` accepted-and-ignored, bits stay RESERVED in the byte-frozen ABI) — for a cast APMF should MAKE happen, use `kIntent_Cast` (ch.8b) | claim + T2 enforcement; client's own AI executes |
+| `CastCompose.cpp` | 8b | cast EXECUTION claim (`RequestCast`, ABI v5) | Log-only, PLUS one lifecycle duty: `Release` frees the delivery-flip proxy one `mainthread::Post` hop AFTER the cleared claim publishes (INVARIANTS #20). The claim's real effect is the FIVE ENGINE SEATS (`core/CastSeats.cpp` 0x06/0x07/0x0A/0x0D + `core/EquipGate.cpp` 0x0F) — the NPC's own AI performs the cast | claim + seat answers; the ENGINE executes |
 | `Dialogue.cpp` | 10 | dialogue (Num6) | `PauseCurrentDialogue()` | one-shot |
 | `Attribute.cpp` | 11 | disposition (Num2) | 4 AVs: aggression/confidence/assistance/morality | source-block |
 | `Idle.cpp` | 12 | idle/anim (Num+) | `NotifyAnimationGraph("IdleForceDefaultState")` | one-shot |
