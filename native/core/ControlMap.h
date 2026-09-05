@@ -125,8 +125,13 @@ namespace apmf {
         // pre-gate, one acquire-load, one hash lookup on a frozen snapshot). Returns
         // false (and leaves outputs 0) when the actor has no winning kIntent_Cast
         // claim. castProxy is not expressible through APMF_Param, hence this dedicated
-        // read. Internal C++ only -- not part of the C-ABI.
-        bool TryGetCastClaim(RE::FormID actor, RE::FormID& outSpell, RE::FormID& outProxy) const;
+        // read. `outFlags` (optional, default nullptr -- existing callers unaffected)
+        // additionally hands back the claim's raw CastFlags (APMF_API::kCastFlag_*),
+        // e.g. kCastFlag_LeftHand -- the per-hand deny (2026-09-0x, INVARIANTS #18)
+        // reads this to scope the narrowing to the claimed hand only. Internal C++
+        // only -- not part of the C-ABI.
+        bool TryGetCastClaim(RE::FormID actor, RE::FormID& outSpell, RE::FormID& outProxy,
+                             std::uint32_t* outFlags = nullptr) const;
 
         // ---- Observability/probe use only (Docs/SPEC-PACKAGE-HOLD.md §4): live
         // Actor* for every actor CURRENTLY claimed on `intent`'s channel (unloaded

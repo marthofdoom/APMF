@@ -96,6 +96,38 @@ namespace apmf::allowance {
     // winning kIntent_Cast claim, or the claim names no spell/proxy (degenerate).
     // Returns false (DENY) only when a cast claim stands and `subjectForm` is
     // neither its spell nor its proxy.
+    //
+    // NOTE: this is the actor-wide floor (both hands) -- callers that can resolve
+    // WHICH hand they are deliberating for (CastGate via MagicCaster::GetCastingSource,
+    // EquipGate via CombatInventoryItem::itemSlot.equipSlot) should call the
+    // hand-aware overload below instead, so a single-hand cast claim leaves the
+    // OTHER hand's AI untouched (marth's per-hand requirement, INVARIANTS #18).
     bool AllowedCast(RE::FormID actor, RE::FormID subjectForm);
+
+    // Which hand a T2 gate has resolved ITS OWN deliberation to be about, from an
+    // engine-native, RTTI/struct-verified source at that seat (never invented):
+    // CastGate resolves it via MagicCaster::GetCastingSource() (vtable slot 0x15,
+    // RE::MagicCaster, a plain unhooked virtual call); EquipGate resolves it via
+    // CombatInventoryItem::itemSlot.equipSlot (a real struct member at a
+    // static_assert'd offset) compared against
+    // BGSDefaultObjectManager::GetDefaultObject<BGSEquipSlot>(kLeftHandEquip /
+    // kRightHandEquip). kUnknown means the seat could not resolve a hand for THIS
+    // call (e.g. MagicCaster::kOther/kInstant, or an equip slot that is neither
+    // vanilla hand slot) -- degrade to the actor-wide floor, never guess.
+    enum class Hand { kUnknown, kLeft, kRight };
+
+    // Hand-aware ch.8b allowance. Identical to AllowedCast(actor, subjectForm)
+    // EXCEPT: when the winning kIntent_Cast claim names a specific hand (its
+    // CastFlags' kCastFlag_LeftHand bit -- default right, "hand hint" per
+    // APMF_API.h) AND the caller's OWN resolved `callerHand` is KNOWN and
+    // DIFFERS from the claim's hand, this returns true (ALLOW) WITHOUT even
+    // checking `subjectForm` -- the claim is not about this hand's deliberation
+    // at all, so the AI's own choice for the other hand stands untouched. When
+    // `callerHand` is kUnknown (the seat could not resolve a hand for this call),
+    // this degrades EXACTLY to AllowedCast(actor, subjectForm) -- the per-actor
+    // floor, never a guess. This is the per-hand deny (marth 2026-09-0x,
+    // INVARIANTS #18) -- driven purely by the claim's own hand field, never by
+    // anything the client does.
+    bool AllowedCastForHand(RE::FormID actor, RE::FormID subjectForm, Hand callerHand);
 
 }

@@ -17,9 +17,16 @@
 // (MFO SPEC-FORCED-CAST.md). This channel is LOG-ONLY, exactly like CastingSelect.cpp
 // (ch.8): the entire effect lives one layer down, in the SAME three gates ch.8
 // already rides plus one ch.7 category bit, reading one more claim kind:
-//   * core/CastGate.cpp   (T2c 0x0A CheckCast)        -- Allowance::AllowedCast
-//   * core/EquipGate.cpp  (T2a 0x0F CheckShouldEquip)  -- Allowance::AllowedCast
-//   * core/ActionGate.cpp (T1 cast leaves)             -- kCombatActionCat_Cast
+//   * core/CastGate.cpp   (T2c 0x0A CheckCast)        -- Allowance::AllowedCastForHand
+//   * core/EquipGate.cpp  (T2a 0x0F CheckShouldEquip)  -- Allowance::AllowedCastForHand
+//   * core/ActionGate.cpp (T1 cast leaves + ContextMagic CreateContextNode) --
+//     kCombatActionCat_Cast (PER-ACTOR at the ContextMagic node -- no native
+//     hand signal at that seat, documented gap, Docs/DENY-COMPLETENESS-AUDIT.md)
+// CastGate/EquipGate are PER-HAND (feat/deny-perhand, INVARIANTS #18): each
+// resolves its own hand from an engine-native signal (MagicCaster::
+// GetCastingSource() / CombatInventoryItem::itemSlot.equipSlot), and
+// AllowedCastForHand narrows only the claim's own hand, leaving the other
+// hand's AI untouched.
 // and the ControlMap Drain TTL pass (bounded auto-release, NOT a re-assert loop).
 // No engine call is added anywhere; every touch is a deny/arbitrate the code already
 // makes, now reading kIntent_Cast too. A cast is NEVER a package: PackageGate's 0x49

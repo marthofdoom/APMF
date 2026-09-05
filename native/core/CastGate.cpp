@@ -29,6 +29,12 @@
 // no re-assert, no force, full animation. See channels/CastingSelect.cpp: ch.8
 // itself still makes no engine write (still arbitration-only, the client
 // selects+fires); THIS hook is what makes that claim a real allowance.
+//
+// PER-HAND (2026-09-0x, INVARIANTS #18): `a_this` is already a per-hand object
+// (RE::Actor stores one MagicCaster per RE::MagicSystem::CastingSource), so this
+// is the ONE T2 seat that can resolve a real hand for free via
+// MagicCaster::GetCastingSource() (vtable slot 0x15, publicly declared on
+// MagicCaster -- RE/M/MagicCaster.h). See Allowance::AllowedCastForHand.
 // ============================================================================
 
 namespace apmf::castgate {
@@ -68,12 +74,27 @@ namespace apmf::castgate {
             const auto fid         = actor->GetFormID();
             const auto subjectForm = a_spell ? a_spell->GetFormID() : 0;
 
+            // Per-hand deny (INVARIANTS #18): `a_this` IS the hand-specific caster --
+            // RE::Actor keeps a SEPARATE MagicCaster per casting source (left/right/
+            // other/instant), and MagicCaster::GetCastingSource() (vtable slot 0x15,
+            // declared on MagicCaster itself, an ordinary unhooked virtual call, same
+            // safety as GetCasterAsActor above) reports exactly which one THIS
+            // deliberation is for. kOther/kInstant (staves, non-hand casters) resolve
+            // to kUnknown -- Allowance degrades those to the actor-wide floor.
+            const auto src = a_this->GetCastingSource();
+            const auto callerHand =
+                (src == RE::MagicSystem::CastingSource::kLeftHand)  ? allowance::Hand::kLeft  :
+                (src == RE::MagicSystem::CastingSource::kRightHand) ? allowance::Hand::kRight :
+                                                                       allowance::Hand::kUnknown;
+
             // ch.8 (cast-select exclusivity) AND ch.8b (cast-execution exclusivity)
             // must BOTH pass (design.md §3.5). ch.8 narrows the AI to its selected
             // spell; ch.8b narrows it to the client's executed cast spell/proxy while
-            // a kIntent_Cast claim stands. Either narrowing to NO denies the charge.
+            // a kIntent_Cast claim stands -- scoped to the claim's own hand (above),
+            // so a single-hand cast claim leaves the OTHER hand's charge decision
+            // untouched. Either narrowing to NO denies the charge.
             if (allowance::Allowed(fid, APMF_API::kIntent_SelectSpell, subjectForm) &&
-                allowance::AllowedCast(fid, subjectForm))
+                allowance::AllowedCastForHand(fid, subjectForm, callerHand))
                 return engineSays;
 
             if (a_reason) *a_reason = RE::MagicSystem::CannotCastReason::kMultipleCast;

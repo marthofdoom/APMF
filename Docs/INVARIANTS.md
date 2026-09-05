@@ -479,6 +479,18 @@ The rule is the explicit form of #0/#1: #1 says "block the foreign input"; #18 a
   `apmf::cbt::kCastContextNodes`), classified `Cast|Offense`. The firing-only deny
   LOOKED complete because it stopped the visible cast; the CTD proved a setup path
   it never touched.
+- **Completeness has a PER-HAND axis too, not just per-path (feat/deny-perhand).**
+  A claim can name a hand (`kIntent_Cast`'s `CastFlags::kCastFlag_LeftHand`); "the
+  deny zeroes this facet" must then mean "zeroes it for the CLAIMED hand only,"
+  never a blanket both-hands suppression dressed up as complete. Resolve the
+  hand from an engine-native signal AT THE SEAT (`MagicCaster::GetCastingSource()`
+  for `CheckCast`; `CombatInventoryItem::itemSlot.equipSlot` vs.
+  `BGSDefaultObjectManager`'s hand slots for `CheckShouldEquip`) — never invent one.
+  A seat with NO native hand signal (the `ContextMagic` `CreateContextNode`'s
+  `act()`: `CombatBehaviorTreeNode`'s fixed 10-vfunc layout and
+  `CombatBehaviorTreeControl` carry none) stays PER-ACTOR and is a DOCUMENTED gap
+  (next bullet), never silently presented as per-hand. See
+  `Docs/DENY-COMPLETENESS-AUDIT.md`'s "per-hand pass" section.
 - **A path you cannot yet close is a DOCUMENTED GAP, never a silent one.** If an
   enumerated path has no clean, RTTI-verified (#17), version-robust seat on the
   pinned CommonLib, DO NOT hook a blind slot and DO NOT pretend the facet is

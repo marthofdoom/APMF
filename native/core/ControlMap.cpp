@@ -605,13 +605,17 @@ namespace apmf {
         return false;   // this NPC is controlled, but not on this channel
     }
 
-    bool ControlMap::TryGetCastClaim(RE::FormID actor, RE::FormID& outSpell, RE::FormID& outProxy) const {
+    bool ControlMap::TryGetCastClaim(RE::FormID actor, RE::FormID& outSpell, RE::FormID& outProxy,
+                                     std::uint32_t* outFlags) const {
         // Same RCU reader discipline as TryGetOwningClaim (any thread): relaxed
         // pre-gate, one acquire-load of a LOCAL frozen snapshot, one hash lookup.
         // Reads the winning kIntent_Cast claim's spell (param.form) + castProxy --
-        // the two FormIDs Allowance::AllowedCast permits while the claim stands.
+        // the two FormIDs Allowance::AllowedCast permits while the claim stands --
+        // and (optionally) its CastFlags (e.g. kCastFlag_LeftHand) for hand-scoped
+        // callers (CastGate/EquipGate's per-hand deny, INVARIANTS #18).
         outSpell = 0;
         outProxy = 0;
+        if (outFlags) *outFlags = 0;
         if (m_anyControlled.load(std::memory_order_relaxed) == 0) return false;
 
         std::shared_ptr<const MapType> snap = m_published.load(std::memory_order_acquire);
@@ -634,6 +638,7 @@ namespace apmf {
             }
             outSpell = best->param.form;
             outProxy = best->castProxy;
+            if (outFlags) *outFlags = best->castFlags;
             return true;
         }
         return false;   // controlled, but not on the cast channel

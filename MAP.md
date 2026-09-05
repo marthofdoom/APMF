@@ -175,9 +175,14 @@ CombatMagicCasterArmor lesson turned into a build-time-safe runtime check),
 list after RTTI-verifying each, storing per-vtable originals keyed by runtime
 address, logging + SKIPPING a non-deriving symbol rather than installing
 blind), `Allowed` (the one shared "flip YES->NO" decision: a lock-free RCU
-`ControlMap::TryGetOwningClaim` read — never a mutex). Consumed today by
-`core/CastGate.cpp` (T2c) and `core/EquipGate.cpp` (T2a); T1/T3/T4 reuse the
-same three pieces when built.
+`ControlMap::TryGetOwningClaim` read — never a mutex), `AllowedCast`/
+`AllowedCastForHand` (ch.8b `kIntent_Cast` exclusivity via
+`ControlMap::TryGetCastClaim`; the `ForHand` overload additionally takes an
+`allowance::Hand{kUnknown,kLeft,kRight}` the CALLER resolved from its own
+engine-native signal, and ALLOWS without narrowing when it differs from the
+claim's `CastFlags::kCastFlag_LeftHand` bit — feat/deny-perhand, INVARIANTS
+#18). Consumed today by `core/CastGate.cpp` (T2c) and `core/EquipGate.cpp`
+(T2a); T1/T3/T4 reuse the same pieces when built.
 - **What breaks:** `Allowed`/`InstallOnVtables`'s thunk callers run on COMBAT
   THREADS (§5) — never take a lock, never touch the follower/actor list, never
   call anything beyond the stored `orig` + one ControlMap read. `DerivesFrom`
@@ -198,6 +203,11 @@ isn't the winning `kIntent_SelectSpell` claim's `param.form`; sets
   evidence); CheckCast is the one that actually stops the charge. Only
   `VTABLE_ActorMagicCaster[0]` may be patched at slot 0x0A — `[1]`/`[2]` are a
   DIFFERENT interface (anim-graph holder / event sink) at the same class.
+  PER-HAND (feat/deny-perhand): `a_this` is already a per-hand `MagicCaster`
+  (one per `RE::MagicSystem::CastingSource`); the ch.8b `kIntent_Cast` narrowing
+  resolves the hand via `a_this->GetCastingSource()` (slot 0x15, ordinary
+  unhooked virtual call) and feeds `Allowance::AllowedCastForHand`, so a
+  single-hand cast claim leaves the OTHER hand's charge decision untouched.
 
 ### `native/core/EquipGate.cpp` — T2a: CheckShouldEquip allowance (per-item equip gate)
 Hooks `CombatInventoryItem::CheckShouldEquip` (vtable slot **0x0F**) on the 30
@@ -215,6 +225,13 @@ VR-refused, install-once.
   lesson MFO's own gate already proved (denying them would only ever be a
   false-positive block on combat drinking/shouting). Widen only on new header
   evidence, never by guessing a symbol name.
+  PER-HAND (feat/deny-perhand): `a_this` (`CombatInventoryItem`) carries its
+  OWN `itemSlot.equipSlot` (`static_assert`'d @0x20); compared against
+  `BGSDefaultObjectManager`'s Left/Right Hand default objects to resolve the
+  hand, fed into `Allowance::AllowedCastForHand` for the ch.8b narrowing —
+  same per-hand guarantee as CastGate above. `kIntent_SelectSpell`/
+  `kIntent_Equipment` (`Allowed`, not `AllowedCastForHand`) stay actor-wide —
+  unchanged, per-hand was scoped to `kIntent_Cast` only.
 
 ### `native/core/AliasPkgProbe.{h,cpp}` — the 0x49 package-offer PROBE (throwaway)
 Demystifies the design.md §5a package-tier promote. `Install()` ← `plugin.cpp` kDataLoaded

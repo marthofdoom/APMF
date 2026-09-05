@@ -208,6 +208,35 @@ namespace apmf::cbt {
           REL::VariantID(550933, 213681, 0x1720b80) },
     } };
 
+    // ---- Re-verification pass (feat/deny-perhand, deck CTD recurrence) ----
+    // The crash recurred even with the above act()-slot deny installed. Before
+    // moving the hook, this pass re-derived the class's OWN vtable layout from
+    // first principles: `CombatBehaviorTreeNode` (CombatPathingRevolution's
+    // `src/RE/CombatBehaviorTreeNode.h`, the SAME upstream source this file's own
+    // header already cites for the VariantID triples) declares EXACTLY 10 virtual
+    // functions -- destroy/get_name/act/pop/on_childfailed/on_interrupted/
+    // SaveGame/LoadGame/__unk_8/__unk_9 -- and EVERY concrete node (leaf,
+    // CreateContextNodeBase, CreateContextNode1) derives it through that SAME
+    // single vtable (one VTABLE_*/RTTI_* symbol each in Offsets_VTABLE.h/
+    // Offsets_RTTI.h -- no second vtable, no multiple inheritance). `act()` at
+    // slot 0x02 is the ONLY vfunc that does node-specific work; there is no
+    // separate virtual "Evaluate"/"GetValue" seat on this hierarchy for the
+    // magic-equip-context read to dispatch through instead. CONCLUSION: slot 0x02
+    // is not "the wrong method" -- it is the ONLY vtable-dispatched seat this
+    // class exposes, and it is the one already hooked. The context build (spell
+    // select + `CombatBehaviorEquipContext`/`CombatInventoryItem` read) happens
+    // as ordinary, NON-VIRTUAL code INSIDE act()'s own compiled body -- which is
+    // exactly what our ForceFail thunk replaces wholesale when a claim denies
+    // this node, so a still-firing crash under a held claim points at the DENY
+    // not ENGAGING for that call (actor resolution / claim timing), never at a
+    // missed vtable seat. See Docs/DENY-COMPLETENESS-AUDIT.md row 8b and
+    // Docs/DENY-PERHAND-AUDIT.md for the full writeup and the per-hand gap this
+    // seat carries (no per-instance/per-hand field is documented anywhere for
+    // CreateContextNode1 or CombatBehaviorTreeControl -- CPR's own struct, cross-
+    // checked above, exposes none -- so this node's deny stays PER-ACTOR; the
+    // per-hand requirement is met at the CheckCast/CheckShouldEquip seats
+    // instead, core/CastGate.cpp + core/EquipGate.cpp).
+
     // Index of "CombatBehaviorAttack" within kLeaves -- the Phase-1 DENY target.
     inline int AttackIndex() {
         for (int i = 0; i < static_cast<int>(kLeaves.size()); ++i)

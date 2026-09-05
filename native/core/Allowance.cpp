@@ -87,4 +87,25 @@ namespace apmf::allowance {
         return false;                                      // a cast claim stands and this is neither -> DENY
     }
 
+    bool AllowedCastForHand(RE::FormID actor, RE::FormID subjectForm, Hand callerHand) {
+        RE::FormID    spell = 0, proxy = 0;
+        std::uint32_t flags = 0;
+        if (!ControlMap::Get().TryGetCastClaim(actor, spell, proxy, &flags))
+            return true;                                   // no cast claim -> ch.8b imposes nothing
+        if (spell == 0 && proxy == 0) return true;         // degenerate/no spell named -> allow
+
+        // Per-hand scoping (INVARIANTS #18): the claim's OWN hand field decides
+        // this, never anything the client does. Default (bit clear) is right
+        // hand, per APMF_API.h's CastFlags comment.
+        if (callerHand != Hand::kUnknown) {
+            const Hand claimHand =
+                (flags & APMF_API::kCastFlag_LeftHand) ? Hand::kLeft : Hand::kRight;
+            if (callerHand != claimHand)
+                return true;   // a different hand's deliberation -- not this claim's business
+        }
+
+        if (subjectForm == spell || subjectForm == proxy) return true;
+        return false;                                      // a cast claim stands on THIS hand and this is neither -> DENY
+    }
+
 }

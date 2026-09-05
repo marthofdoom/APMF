@@ -61,6 +61,15 @@
 // This is what lets MFO retire its own g_owned/equipOrder/WantedSpell gate
 // entirely in favor of two independent APMF claims (ch.8 + ch.15) whose
 // deny decisions this ONE hook now combines.
+//
+// PER-HAND (2026-09-0x, INVARIANTS #18): a `CombatInventoryItem` instance
+// carries its OWN `itemSlot.equipSlot` (a real member, static_assert'd offset
+// below) -- the AI sets this to the vanilla Left/Right Hand BGSEquipSlot when
+// it builds the item for that hand. Comparing it against
+// `BGSDefaultObjectManager`'s own Left/Right Hand default objects resolves
+// which hand THIS CheckShouldEquip call is about, so the ch.8b cast-execution
+// narrowing (`Allowance::AllowedCastForHand`) can be scoped to the claimed
+// hand only, leaving the OTHER hand's re-arm decision fully AI-governed.
 // ============================================================================
 
 namespace apmf::equipgate {
@@ -79,11 +88,25 @@ namespace apmf::equipgate {
         static_assert(offsetof(RE::CombatInventoryItem, item) == 0x10,
                       "CombatInventoryItem::item moved -- re-verify against the "
                       "pinned header before shipping");
+        static_assert(offsetof(RE::CombatInventoryItem, itemSlot) == 0x20,
+                      "CombatInventoryItem::itemSlot moved -- re-verify against the "
+                      "pinned header before shipping (per-hand deny reads "
+                      "itemSlot.equipSlot, INVARIANTS #18)");
 
         using CheckShouldEquip_t = bool (*)(RE::CombatInventoryItem*, RE::CombatController*);
 
         std::unordered_map<std::uintptr_t, std::uintptr_t> g_orig;
         std::atomic<bool> g_installed{ false };
+
+        // Per-hand deny (INVARIANTS #18): the vanilla Left/Right Hand BGSEquipSlot
+        // forms, resolved ONCE at install through CommonLib's own version-robust
+        // singleton (RE::BGSDefaultObjectManager -- the SAME table the engine
+        // itself uses to look these up; no hardcoded FormID). A concrete
+        // CombatInventoryItem instance's OWN `itemSlot.equipSlot` (set by the AI
+        // when IT builds that item for a specific hand) is compared against these
+        // to resolve which hand THIS CheckShouldEquip call is deliberating for.
+        std::atomic<RE::BGSEquipSlot*> g_leftHandSlot{ nullptr };
+        std::atomic<RE::BGSEquipSlot*> g_rightHandSlot{ nullptr };
 
         bool EquipGateThunk(RE::CombatInventoryItem* a_this, RE::CombatController* a_cc) {
             const auto vt  = *reinterpret_cast<std::uintptr_t*>(a_this);
@@ -105,6 +128,20 @@ namespace apmf::equipgate {
 
             auto* item = a_this->item;
             const auto subjectForm = item ? item->GetFormID() : 0;
+
+            // Per-hand deny (INVARIANTS #18): resolve which hand THIS item instance
+            // is for from its own itemSlot.equipSlot -- a real struct member (see
+            // the static_assert above), not an invented offset. Neither vanilla
+            // hand slot (kEitherHandEquip, a null slot, or the singleton table not
+            // yet resolved) degrades to kUnknown -- AllowedCastForHand then falls
+            // back to the actor-wide floor, never a guess.
+            auto* slot = a_this->itemSlot.equipSlot;
+            const auto lh = g_leftHandSlot.load(std::memory_order_acquire);
+            const auto rh = g_rightHandSlot.load(std::memory_order_acquire);
+            const auto callerHand =
+                (slot && slot == lh) ? allowance::Hand::kLeft  :
+                (slot && slot == rh) ? allowance::Hand::kRight :
+                                        allowance::Hand::kUnknown;
 
             // Off-hand loan exemption (mirrors MFO CombatStyle.cpp's WantedSpell
             // rule): if this item IS the actor's own actively-claimed ch.8 spell,
@@ -132,12 +169,15 @@ namespace apmf::equipgate {
                 return false;
 
             // ch.8b -- cast-execution claim: while a kIntent_Cast claim stands the AI
-            // may not re-arm this actor's hands with any spell/staff OTHER than the
+            // may not re-arm THE CLAIMED HAND with any spell/staff OTHER than the
             // claimed cast spell/proxy (the freeze-free equivalent of "the package
-            // holds the spell in hand"). AllowedCast permits exactly claim spell +
-            // proxy, denies every other subjectForm; an actor with no cast claim is
-            // unaffected (returns true).
-            if (!allowance::AllowedCast(fid, subjectForm))
+            // holds the spell in hand"). AllowedCastForHand permits exactly claim
+            // spell + proxy on the claim's own hand, denies every other subjectForm
+            // on that hand, and -- per-hand deny, INVARIANTS #18 -- leaves the OTHER
+            // hand's re-arm decision untouched (callerHand resolved above); an actor
+            // with no cast claim, or a call this hook cannot resolve to a hand, is
+            // unaffected / degrades to the actor-wide floor.
+            if (!allowance::AllowedCastForHand(fid, subjectForm, callerHand))
                 return false;
 
             return engineSays;
@@ -152,6 +192,20 @@ namespace apmf::equipgate {
             return;
         }
         if (g_installed.exchange(true)) return;
+
+        // Per-hand deny (INVARIANTS #18): resolve the vanilla Left/Right Hand
+        // BGSEquipSlot forms ONCE, through CommonLib's own version-robust
+        // BGSDefaultObjectManager singleton (the same table the engine consults) --
+        // never a hardcoded FormID. A null result (a runtime that somehow has no
+        // default-object table populated yet) just means every item resolves to
+        // Hand::kUnknown below and this gate degrades to its pre-existing
+        // actor-wide floor -- never a crash, never a guess.
+        if (auto* dobj = RE::BGSDefaultObjectManager::GetSingleton()) {
+            g_leftHandSlot.store(dobj->GetDefaultObject<RE::BGSEquipSlot>(RE::DEFAULT_OBJECT::kLeftHandEquip),
+                                 std::memory_order_release);
+            g_rightHandSlot.store(dobj->GetDefaultObject<RE::BGSEquipSlot>(RE::DEFAULT_OBJECT::kRightHandEquip),
+                                  std::memory_order_release);
+        }
 
         // Expected RTTI base: CombatInventoryItem (CheckShouldEquip is declared
         // there; every concrete spell/staff instantiation derives it).
@@ -198,7 +252,10 @@ namespace apmf::equipgate {
                                                    expectedTD.get(), "t2a", g_orig);
         spdlog::info("[t2a] CheckShouldEquip allowance hooked on {} spell/staff inventory-item "
                      "vtable(s) -- ch.8 casting-select and ch.15 equipment (weapon-order) "
-                     "claims now enforced here too.", n);
+                     "claims now enforced here too; ch.8b is per-hand-scoped via "
+                     "itemSlot.equipSlot (left-hand slot {}, right-hand slot {}).",
+                     n, static_cast<void*>(g_leftHandSlot.load(std::memory_order_relaxed)),
+                     static_cast<void*>(g_rightHandSlot.load(std::memory_order_relaxed)));
     }
 
 }

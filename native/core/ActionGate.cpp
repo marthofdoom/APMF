@@ -63,6 +63,18 @@
 // claim now zeroes the AI's cast SETUP too -- the deny is complete across the
 // context-creation path, not just the firing path. See CombatBehaviorRE.h's
 // kCastContextNodes block for the symbol/verification detail.
+//
+// PER-HAND (feat/deny-perhand): this gate is PER-ACTOR, not per-hand -- neither
+// the tree node (CombatBehaviorTreeNode's fixed 10-vfunc layout, no per-instance
+// data beyond it) nor CombatBehaviorTreeControl (CPR's own struct) documents a
+// hand/casting-source field at this seat, so there is no RTTI/struct-verified way
+// to scope THIS deny to one hand (CombatBehaviorRE.h's kCastContextNodes block has
+// the full re-derivation). Documented gap (INVARIANTS #18) -- Docs/
+// DENY-COMPLETENESS-AUDIT.md row 8b. The per-hand requirement IS met at the two
+// seats that DO carry a native hand signal: CastGate.cpp
+// (MagicCaster::GetCastingSource()) and EquipGate.cpp
+// (CombatInventoryItem::itemSlot.equipSlot), both scoping their kIntent_Cast
+// narrowing via Allowance::AllowedCastForHand.
 // ============================================================================
 
 namespace apmf::actiongate {
