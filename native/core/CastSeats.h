@@ -43,14 +43,18 @@
 //
 // ── SCOPE IS THE SAFETY ARGUMENT ────────────────────────────────────────────
 // `GetMagicTarget`'s implementation (0x81e020) is the BASE, SHARED by 13 of the
-// 14 caster vtables -- including Stagger, Disarm and Offensive. An unscoped
+// 14 caster vtables -- including Stagger, Disarm and Reanimate. An unscoped
 // redirect would aim HOSTILE effects at the ally. So:
-//   * these seats install on `VTABLE_CombatMagicCasterRestore` ONLY (never the
-//     shared base, never the other 13), RTTI-verified at install; and
+//   * these seats install on `VTABLE_CombatMagicCasterRestore` AND
+//     `VTABLE_CombatMagicCasterOffensive` ONLY (2026-09-06: a claimed hostile
+//     spell -- e.g. Firebolt -- classifies into the Offensive caster, never
+//     Restore, so a claim on it is inert without a seat there too; Stagger,
+//     Disarm, Reanimate and the other 11 caster categories are still NEVER
+//     touched), RTTI-verified at install; and
 //   * every thunk additionally requires an exact match on the DRIVEN FORM
 //     (`this->magicItem == the claim's proxy-or-spell`) for the deliberating
 //     actor. Two independent gates, either of which alone would suffice.
-// A Restore caster that is not the claim's is untouched; it chains.
+// A Restore/Offensive caster that is not the claim's is untouched; it chains.
 //
 // ── kSelf SPELLS STILL NEED THE PROXY ───────────────────────────────────────
 // `FindTargets`' Self branch (0x5bc98a) resolves to the caster's OWN reference

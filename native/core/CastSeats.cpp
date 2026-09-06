@@ -114,6 +114,15 @@ namespace apmf::castseats {
         // Resolved once at install; 0 == "never write +0x30" (the identity check can
         // then never pass, so the seat self-disables rather than guessing).
         std::atomic<std::uintptr_t> g_aimVtable{ 0 };
+        // Resolved once at install (2026-09-06, offense-seat-scope): the ONE
+        // caster vtable address whose concrete layout past the shared
+        // CombatMagicCaster base is `CombatMagicCasterRestore` -- seat 0x07 casts
+        // to that type to read `primaryAV` (static_assert'd offset above), and
+        // must never do so for the Offensive caster now also installed below
+        // (a DIFFERENT concrete layout at the same base offset). 0 == "never take
+        // the Restore-only branch" (harmless: the seat still bounds the channel by
+        // claim TTL and target-death, see CheckStopCastThunk).
+        std::atomic<std::uintptr_t> g_restoreVtable{ 0 };
 
         // ---- one shared throttle table for all four seats (leaf lock, never held
         // across an engine call). Key = (actorFormID << 32 | subjectFormID). ----
@@ -279,8 +288,8 @@ namespace apmf::castseats {
 
             if (LogDue(m.actor, m.driven, kGetMagicTarget))
                 spdlog::info("[ch.8b seat 0x0A] 0x{} GetMagicTarget -> claimed target 0x{} (handle 0x{}), "
-                             "spell 0x{}{}. Restore vtable only -- Stagger/Disarm/Offensive share this base "
-                             "impl and are never redirected.",
+                             "spell 0x{}{}. Restore + Offensive vtables only -- Stagger/Disarm/Reanimate and "
+                             "the other 11 caster categories share this base impl and are never redirected.",
                              apmf::log::Hex(m.actor), apmf::log::Hex(m.claim.target),
                              apmf::log::Hex(a_out->handle), apmf::log::Hex(m.driven),
                              m.claim.proxy ? " (delivery-flip proxy)" : "");
@@ -334,14 +343,25 @@ namespace apmf::castseats {
                     why = "target no longer resolves";
                 } else if (target->IsDead()) {
                     why = "target is dead";
-                } else if (auto* avo = target->AsActorValueOwner()) {
-                    const auto  av   = static_cast<RE::CombatMagicCasterRestore*>(a_this)->primaryAV;
-                    const float perm = avo->GetPermanentActorValue(av);
-                    if (perm > 0.0f) {
-                        const float pct     = avo->GetActorValue(av) / perm;
-                        const auto  stopPct = APMF_API::ReadStopPct(m.claim.flags);
-                        const float limit   = (stopPct == 0) ? 1.0f : static_cast<float>(stopPct) / 100.0f;
-                        if (pct >= limit) why = "target reached the claim's stop percent";
+                } else if (vt == g_restoreVtable.load(std::memory_order_relaxed)) {
+                    // RESTORE ONLY (2026-09-06): `primaryAV` is a real member on
+                    // `CombatMagicCasterRestore`'s OWN concrete layout past the shared
+                    // CombatMagicCaster base -- the vtable-identity check above (not
+                    // just the claim match already established by this point) is what
+                    // makes this cast safe now that seat 0x07 is ALSO installed on the
+                    // Offensive caster, whose concrete layout past that same base
+                    // offset is different. An Offensive claim simply has no "restored
+                    // AV percent" completion signal to read -- it is bounded above by
+                    // claim TTL and target-death only, never by an unbounded read here.
+                    if (auto* avo = target->AsActorValueOwner()) {
+                        const auto  av   = static_cast<RE::CombatMagicCasterRestore*>(a_this)->primaryAV;
+                        const float perm = avo->GetPermanentActorValue(av);
+                        if (perm > 0.0f) {
+                            const float pct     = avo->GetActorValue(av) / perm;
+                            const auto  stopPct = APMF_API::ReadStopPct(m.claim.flags);
+                            const float limit   = (stopPct == 0) ? 1.0f : static_cast<float>(stopPct) / 100.0f;
+                            if (pct >= limit) why = "target reached the claim's stop percent";
+                        }
                     }
                 }
             }
@@ -451,20 +471,36 @@ namespace apmf::castseats {
         }
         if (g_installed.exchange(true)) return;
 
-        // SCOPE: the Restore caster vtable and NOTHING else. `GetMagicTarget`'s
-        // implementation is the BASE, shared by 13 of the 14 caster vtables --
-        // installing on the others would let a claim aim Stagger/Disarm/Offensive
-        // effects at the ally. RTTI-verified (`DerivesFrom`) exactly like every other
-        // seat in this codebase; a symbol that does not derive CombatMagicCaster is
-        // skipped, never hooked blind (the CombatMagicCasterArmor lesson, #17).
+        // SCOPE (2026-09-06, offense-seat-scope): the Restore AND Offensive caster
+        // vtables, NOTHING else. `GetMagicTarget`'s implementation is the BASE,
+        // shared by 13 of the 14 caster vtables -- installing on the OTHER 12
+        // (Stagger, Disarm, Reanimate, ...) would let a claim aim THEIR effects at
+        // the ally. Offensive is added here because a claimed HOSTILE spell (e.g.
+        // Firebolt) classifies into the Offensive caster, never Restore, so without
+        // a seat there a claim on it is inert -- exactly the field-diagnosed bug
+        // this pass fixes. Safe ONLY because every thunk below independently
+        // re-tests the DRIVEN FORM (`this->magicItem == the claim's proxy-or-spell`)
+        // for the deliberating actor on EVERY call (see ClaimNamesThisCast above) --
+        // an Offensive caster that is not the claim's is untouched; it chains.
+        // RTTI-verified (`DerivesFrom`) exactly like every other seat in this
+        // codebase; a symbol that does not derive CombatMagicCaster is skipped,
+        // never hooked blind (the CombatMagicCasterArmor lesson, #17).
         REL::Relocation<void*> casterTD{ RE::RTTI_CombatMagicCaster };
-        const REL::VariantID   kRestoreOnly[] = { RE::VTABLE_CombatMagicCasterRestore[0] };
+        const REL::VariantID   kEngineSeatVtables[] = { RE::VTABLE_CombatMagicCasterRestore[0],
+                                                         RE::VTABLE_CombatMagicCasterOffensive[0] };
 
-        const int nStart = allowance::InstallOnVtables(kRestoreOnly, kCheckStartCast, &CheckStartCastThunk,
+        // Resolved once here (not just installed on) so seat 0x07 can identity-check
+        // it per call before ever reading CombatMagicCasterRestore::primaryAV -- that
+        // member does not exist at the same layout on the Offensive caster now also
+        // installed below. See g_restoreVtable's declaration and CheckStopCastThunk.
+        REL::Relocation<std::uintptr_t> restoreVt{ RE::VTABLE_CombatMagicCasterRestore[0] };
+        g_restoreVtable.store(restoreVt.address(), std::memory_order_relaxed);
+
+        const int nStart = allowance::InstallOnVtables(kEngineSeatVtables, kCheckStartCast, &CheckStartCastThunk,
                                                         casterTD.get(), "ch.8b-seat06", g_startOrig);
-        const int nStop  = allowance::InstallOnVtables(kRestoreOnly, kCheckStopCast, &CheckStopCastThunk,
+        const int nStop  = allowance::InstallOnVtables(kEngineSeatVtables, kCheckStopCast, &CheckStopCastThunk,
                                                         casterTD.get(), "ch.8b-seat07", g_stopOrig);
-        const int nTgt   = allowance::InstallOnVtables(kRestoreOnly, kGetMagicTarget, &GetMagicTargetThunk,
+        const int nTgt   = allowance::InstallOnVtables(kEngineSeatVtables, kGetMagicTarget, &GetMagicTargetThunk,
                                                         casterTD.get(), "ch.8b-seat0A", g_targetOrig);
 
         // Seat 0x0D: armed by default, killable from the INI (see the header). It is
@@ -477,7 +513,7 @@ namespace apmf::castseats {
             REL::Relocation<void*>          aimTD{ RE::RTTI_CombatAimController };
             if (allowance::DerivesFrom(aimVt.address(), aimTD.get())) {
                 g_aimVtable.store(aimVt.address(), std::memory_order_relaxed);
-                nAim = allowance::InstallOnVtables(kRestoreOnly, kSetupAimController, &SetupAimControllerThunk,
+                nAim = allowance::InstallOnVtables(kEngineSeatVtables, kSetupAimController, &SetupAimControllerThunk,
                                                     casterTD.get(), "ch.8b-seat0D", g_aimOrig);
                 g_aimSeatArmed.store(nAim > 0, std::memory_order_relaxed);
             } else {
@@ -492,7 +528,8 @@ namespace apmf::castseats {
                          "re-checks will track the combat target.");
         }
 
-        spdlog::info("[ch.8b seats] engine cast seats installed on the Restore caster vtable ONLY: "
+        spdlog::info("[ch.8b seats] engine cast seats installed on the Restore + Offensive caster vtables "
+                     "ONLY (never Stagger/Disarm/Reanimate/the other 11): "
                      "0x06 CheckStartCast {}, 0x07 CheckStopCast {}, 0x0A GetMagicTarget {}, "
                      "0x0D SetupAimController {}. While a kIntent_Cast claim stands, the NPC's OWN AI "
                      "casts the claimed spell at the claimed target -- APMF makes no equip, anim or "

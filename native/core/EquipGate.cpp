@@ -393,16 +393,23 @@ namespace apmf::equipgate {
             // 0x815050 against every other item that also survived 0x0F, and
             // only the winner occupies the equip slot the behavior thread reads
             // to mint the next CombatBehaviorContextMagic (and, for Restore,
-            // the caster the four other seats need). The block above only
-            // governs the two Restore vtables; this one closes the gap for the
-            // remaining 28 (and the residual Restore case the block above
-            // doesn't already return on: a self-delivery Restore item that is
-            // neither the driven form nor the N4 original-spell case).
+            // the caster the four other seats need). The YES block above only
+            // governs the two Restore vtables (its non-chaining bypass is a
+            // Restore-ONLY exception, INVARIANTS #20); THIS block is not vtable-
+            // scoped at all -- the `subjectForm == driven` exemption immediately
+            // below applies IDENTICALLY on all 30 hooked spell/staff templates
+            // (Offensive included, now that core/CastSeats.cpp's four caster
+            // seats also install there), so a claimed OFFENSE spell's own item
+            // is exempted here exactly like a claimed heal's -- it closes the
+            // gap for the 28 non-Restore vtables (and the residual Restore case
+            // the block above doesn't already return on: a self-delivery Restore
+            // item that is neither the driven form nor the N4 original-spell
+            // case).
             //
-            // Scope, all three required and enforced by the guards already in
-            // effect at this point in the function: ONLY this actor (fid != 0,
-            // read off THIS call's own CombatController -- never a client actor
-            // list, #4); ONLY while `hasLiveSeat` is true, i.e. exactly for the
+            // Scope, all required and enforced by the guards already in effect
+            // at this point in the function: ONLY this actor (fid != 0, read off
+            // THIS call's own CombatController -- never a client actor list,
+            // #4); ONLY while `hasLiveSeat` is true, i.e. exactly for the
             // duration ControlMap reports a live kIntent_Cast claim on this fid
             // (TryGetCastSeatClaim above, same read the YES branch uses -- no
             // latched/cached state here, so this lifts the instant the claim
@@ -411,31 +418,58 @@ namespace apmf::equipgate {
             // never reached for anything else -- line ~191 already returned
             // false for a foreign vtable).
             //
-            // Deliberately actor-wide, NOT hand-scoped like AllowedCastForHand
-            // below: it has not been established that the 0x815050 score
-            // compare partitions by hand, so completeness denies a competing
-            // item on EITHER hand rather than risk a same-vtable, other-hand
-            // survivor still winning the compare.
+            // PER-SET NARROWING (2026-09-06 field fix -- v0.9.1 shipped this
+            // block actor-wide/both-hands and it disarmed a follower's ENTIRE
+            // spell kit for the life of ANY cast claim, heal or offense: 552
+            // denies vs 13 allows on the deck, follower unable to fight while a
+            // heal claim stood). Disassembly now CONFIRMS the equip slot is not
+            // one actor-wide contest: there are TWO independent CombatEquipment
+            // sets (`r15+0x118`/mask `+0x130` and `r15+0x148`/mask `+0x160`),
+            // each filled by its own ordered `CombatEquipment::AddItem` (0x80e490)
+            // pass keyed on the ITEM's OWN equip-slot bitmask (`item->+0x28`),
+            // first-come-first-served -- and the tail (0x814783-0x814887) never
+            // cross-picks a winner between the two sets. An item resolved to the
+            // OTHER hand is therefore not competing for the claimed item's slot
+            // AT ALL, and denying it was strictly more than this seat's one job
+            // ("win the claimed item's own slot") ever required.
+            //
+            // `callerHand` (resolved above, same per-hand read AllowedCastForHand
+            // uses) narrows the deny to items on the CLAIM's OWN hand (its
+            // CastFlags hand hint, default right) ONLY. kUnknown (a call this
+            // hook cannot resolve to a hand -- an instant/kOther caster's item)
+            // keeps the former actor-wide deny: we cannot prove which set an
+            // unresolvable item lands in, so the conservative choice stands
+            // there, exactly as it always has. The claimed item's OWN slot is
+            // still guaranteed: every OTHER item competing for that SAME hand is
+            // still denied, unconditionally, for as long as the claim stands --
+            // nothing here weakens why heals started working.
             //
             // TWO KNOWN HOLES -- documented, not fixed here (see the brief):
             //   (1) weapon/fist item classes have no concrete header class to
             //       hook (same finding as the file banner above) and can still
-            //       out-score us;
+            //       out-score us on the SAME hand;
             //   (2) Actor::StartCombat's direct ActorEquipManager equip path
             //       (0x6b6bb5..0x6b6c02) bypasses this selector entirely.
             // ================================================================
             if (g_denyCompleteEnabled.load(std::memory_order_relaxed) &&
                 hasLiveSeat && fid != 0 && subjectForm != 0) {
-                const RE::FormID driven = seat.proxy ? seat.proxy : seat.spell;
-                if (driven == 0 || subjectForm != driven) {
-                    if (LogDue(fid, subjectForm))
-                        spdlog::info("[t2a seat 0x0F] 0x{} CheckShouldEquip item=0x{} -> NO (deny-complete: a "
-                                     "cast claim spell 0x{}{} stands on this actor -- every other spell/staff "
-                                     "item is denied so the claimed form is the sole survivor of the equip-slot "
-                                     "score compare).",
-                                     apmf::log::Hex(fid), apmf::log::Hex(subjectForm), apmf::log::Hex(seat.spell),
-                                     seat.proxy ? " via delivery-flip proxy" : "");
-                    return false;
+                const bool competesForClaimedSlot =
+                    (callerHand == allowance::Hand::kUnknown) ||
+                    (callerHand == ((seat.flags & APMF_API::kCastFlag_LeftHand)
+                                         ? allowance::Hand::kLeft : allowance::Hand::kRight));
+                if (competesForClaimedSlot) {
+                    const RE::FormID driven = seat.proxy ? seat.proxy : seat.spell;
+                    if (driven == 0 || subjectForm != driven) {
+                        if (LogDue(fid, subjectForm))
+                            spdlog::info("[t2a seat 0x0F] 0x{} CheckShouldEquip item=0x{} -> NO (deny-complete: "
+                                         "a cast claim spell 0x{}{} stands on this actor -- every other spell/"
+                                         "staff item competing for the CLAIM'S OWN equip-slot set is denied so "
+                                         "the claimed form is the sole survivor of that set's score compare; "
+                                         "the OTHER hand's items are untouched).",
+                                         apmf::log::Hex(fid), apmf::log::Hex(subjectForm),
+                                         apmf::log::Hex(seat.spell), seat.proxy ? " via delivery-flip proxy" : "");
+                        return false;
+                    }
                 }
             }
 
@@ -598,13 +632,17 @@ namespace apmf::equipgate {
         spdlog::info("[t2a] CheckShouldEquip allowance hooked on {} spell/staff inventory-item "
                      "vtable(s) -- ch.8 casting-select and ch.15 equipment (weapon-order) "
                      "claims now enforced here too; ch.8b is per-hand-scoped via "
-                     "itemSlot.equipSlot (left-hand slot {}, right-hand slot {}). ch.8b SEAT 0x0F "
-                     "armed on the Restore templates only; the SEAT 0 rebuild trigger and the 0x0F "
-                     "completeness fix (non-self Restore item denied unless it is the live claim's "
-                     "driven form) run on every patched vtable. Deny-complete (every OTHER spell/staff "
-                     "item denied, actor-wide, while a cast claim stands): {} ([EquipGate] "
-                     "EnableEquipDenyComplete). Per-call trace log: {} ([EquipGate] "
-                     "EnableEquipGateLog).",
+                     "itemSlot.equipSlot (left-hand slot {}, right-hand slot {}). ch.8b SEAT 0x0F's "
+                     "non-chaining YES bypass is armed on the Restore templates ONLY (INVARIANTS #20); "
+                     "the SEAT 0 rebuild trigger and the 0x0F completeness fix (non-self Restore item "
+                     "denied unless it is the live claim's driven form) run on every patched vtable, "
+                     "and so does the deny-complete exemption for the claim's OWN driven form (it was "
+                     "never Restore-scoped -- an offense claim's own spell is exempted identically). "
+                     "Deny-complete (every OTHER spell/staff item competing for the CLAIM'S OWN hand "
+                     "denied while a cast claim stands; the other hand is untouched -- 2026-09-06, "
+                     "narrowed from actor-wide after it left a follower unable to equip anything for "
+                     "the life of a claim): {} ([EquipGate] EnableEquipDenyComplete). Per-call trace "
+                     "log: {} ([EquipGate] EnableEquipGateLog).",
                      n, static_cast<void*>(g_leftHandSlot.load(std::memory_order_relaxed)),
                      static_cast<void*>(g_rightHandSlot.load(std::memory_order_relaxed)),
                      g_denyCompleteEnabled.load(std::memory_order_relaxed) ? "ON (default)" : "OFF",

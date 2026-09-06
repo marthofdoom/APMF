@@ -22,7 +22,11 @@
 // hooks slot 1: if the effect being classified belongs to the spell a live
 // `kIntent_Cast` claim is currently DRIVING for the deliberating actor (the
 // SAME "driven form" test core/CastSeats.cpp's `ClaimNamesThisCast` already
-// uses -- proxy-when-one-exists, else the claim's spell), force `+0x4c = 1`
+// uses -- proxy-when-one-exists, else the claim's spell) AND that EFFECT is
+// NOT HOSTILE (2026-09-06: a hostile claim, e.g. Firebolt, already keys into
+// an existing table row via its own hostile=1 bit and needs no help -- forcing
+// isSelfDelivery=1 on it would misclassify it into a row vanilla never
+// populates, since a hostile spell is never self-cast), force `+0x4c = 1`
 // BEFORE chaining to the real classifier -- so the claimed spell's effect keys
 // into the EXACT SAME table row a self-heal already uses (Restore, creator
 // 0x824510). Nothing else about the row, the score, or the duration changes
