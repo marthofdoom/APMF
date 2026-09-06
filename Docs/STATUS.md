@@ -4,6 +4,35 @@ Updated 2026-09-05. The current state of the build: what's shipped, what's
 probe-gated, what's next. Keep this current in the SAME change as any
 build/finding/workflow change.
 
+
+## ✅ SHIPPED 2026-09-05 -- v0.9.1 (beta prerelease). THE NPC'S OWN AI PERFORMS A CLIENT'S CAST.
+
+**FIELD-PROVEN on the deck.** Release: https://github.com/marthofdoom/APMF/releases/tag/v0.9.1
+(client: MFO v2.0.1). main = the field-proven tree. The `feat/ai-cast-seats-impl` section below
+is now SHIPPED -- read this block first.
+
+**THE MISSING LINK WAS CLASSIFICATION, NOT THE SEATS.** The five seats were correct but
+unreachable: `CombatInventory::Rebuild`'s per-effect classifier keys on
+`archetype<<16 | av<<8 | hostile<<1 | isSelfDelivery`, and the 23-row table has **no row for
+`(Health, self=0, hostile=0)`** -- so a heal-OTHER spell mints no CombatInventoryItem, no Restore
+caster is ever built, and no seat is ever called. **That is why no follower in any mod has ever
+healed an ally through the game's own AI.**
+
+**SEAT 0 CLASSIFY** (`core/CastClassify.cpp`, `CombatMagicItemData` vtable slot 1) forces
+`+0x4c=1` for the claim's driven form so the effect keys into the self-heal row. Then the
+**deny-complete 0x0F** (`core/EquipGate.cpp`) denies every other spell/staff item while the claim
+stands, so ours is the sole survivor and takes the equip slot -- and the equip slot is what mints
+the caster (`CombatBehaviorContextMagic` ctor -> item vfunc 0x15 CreateCaster). The four seats
+then answer from the claim. **APMF still makes no equip, anim or cast write, and CastSpellImmediate
+is gone.**
+
+**Guards on the one raw write:** install refuses unless the disassembled RTTI name matches, plus
+per-call vtable identity, an INI kill-switch (`[CastSeats] EnableSeat0Classify`), VR refused, and
+**non-AE refused outright** (the SE offsets are NOT confirmed).
+
+**NEXT:** support the client's OFFENSE casts through the same ch.8b path; narrow the equip deny
+from both hands to one (equip slot is per-SET, confirmed); then movement/target facet RE.
+
 ## HEAD OF THE CAST WORK: `feat/ai-cast-seats-impl` (built, CI-green, NOT field-run)
 
 Off `observe/ai-cast-seats-split` (525daae). **The keystone changed shape: the NPC's
