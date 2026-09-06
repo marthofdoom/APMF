@@ -5,6 +5,7 @@
 #include "core/NonAliasProbe.h"
 #include "core/CastObserve.h"
 #include "core/ActionGate.h"
+#include "core/PackageGate.h"
 #include "core/MainThread.h"
 #include "core/Registry.h"
 
@@ -60,6 +61,12 @@ namespace apmf {
         // default); a relaxed atomic-bool load the rest of the time. See
         // core/ActionGate.cpp's PFP section.
         apmf::actiongate::PfpHeartbeat();
+
+        // "Does 0x49 actually redirect?" probe (marth 2026-09-06, core/PackageGate.cpp).
+        // Same RULE C shape as the PfpHeartbeat above: self-throttled internally
+        // (~30s), INI-gated ([PackageGate] EnableRedirectLog, default ON), one
+        // relaxed atomic-bool load the rest of the time.
+        apmf::packagegate::Heartbeat();
     }
 
     void Arbiter::ReleaseAll(const char* why) {
