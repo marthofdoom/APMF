@@ -70,14 +70,38 @@
 // own -- verify the disassembled callee before writing a thunk, especially
 // for anything typed `void*`/`unk`, and especially for a possible hidden-
 // return out-slot.
+//
+// GROUP C (marth 2026-09-06, Opus PASS S brief): a THIRD, independent probe in
+// this same file -- CalculateScore (0x0C) on the four WEAPON-class
+// CombatInventoryItem leaves (Melee, Ranged, Shield, Torch), which have NO
+// CommonLib concrete class/vtable symbol at all (Docs/DENY-COMPLETENESS-
+// AUDIT.md row 15's documented gap -- the reason `core/EquipGate.cpp` cannot
+// hook 0x0F for weapons). Resolved from raw disasm-confirmed RVAs
+// (`REL::Offset`, no `REL::VariantID` -- no Address-Library ID exists for any
+// of the four), AE-only, gated by an install-time function-pointer-at-slot
+// identity check (no confirmed RTTI name exists for these four, so that check
+// stands in for the name-match guard the other seats use). Ships ENABLED by
+// default (`[AiCastSeats] EnableWeaponScoreProbe`, default 1) -- CalculateScore
+// is scalar-return, categorically immune to the GetMagicTarget-class sret bug
+// documented above. A SEPARATE flag (`[AiCastSeats] EnableScoreSteer`, default
+// 0) adds a fixed upward bias to a claimed form's own returned score (reading
+// the same ch.15 `kIntent_Equipment` claim `core/EquipGate.cpp`'s T2a gate
+// already reads) -- stays OFF until this probe's own field data confirms 0x0C
+// actually runs for a follower. Melee+Ranged share arbitration category 0,
+// Shield+Torch share category 3 -- a weapon score can bias which OF THOSE
+// wins, never beat a spell that already claimed the hand (weapons are walked
+// after the spell/staff categories in the engine's fixed order table). See
+// AiCastSeats.cpp's GROUP C block comment (above `WeaponScoreThunk`) for the
+// full design.
 // ============================================================================
 
 namespace apmf::aicastseats {
 
-    // Install whichever of the two observe-hook groups its own INI flag
+    // Install whichever of the three observe-hook groups its own INI flag
     // enables (once). Call at kDataLoaded. VR-refused (the vtable indices
     // below are SE/AE-only verified, matching every other T2-shaped seat in
-    // this codebase). Idempotent.
+    // this codebase; GROUP C is additionally AE-only, refused on SE 1.5.97).
+    // Idempotent.
     void Install();
 
 }

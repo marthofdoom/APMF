@@ -320,7 +320,11 @@ namespace apmf::equipgate {
                 bool       handOk = false;
                 if (hasLiveSeat) {
                     driven = seat.proxy ? seat.proxy : seat.spell;
+                    // kCastFlag_DualCast (2026-09-06): the claim wants BOTH hands, so
+                    // this non-chaining YES is admitted regardless of which hand
+                    // resolved -- same treatment as kUnknown, just for a resolved hand.
                     handOk = (callerHand == allowance::Hand::kUnknown) ||
+                             (seat.flags & APMF_API::kCastFlag_DualCast) ||
                              (callerHand == ((seat.flags & APMF_API::kCastFlag_LeftHand)
                                                  ? allowance::Hand::kLeft : allowance::Hand::kRight));
                 }
@@ -453,8 +457,13 @@ namespace apmf::equipgate {
             // ================================================================
             if (g_denyCompleteEnabled.load(std::memory_order_relaxed) &&
                 hasLiveSeat && fid != 0 && subjectForm != 0) {
+                // kCastFlag_DualCast (2026-09-06): the claim wants BOTH equip-slot
+                // sets, so this deny-complete narrowing applies to whichever set
+                // `subjectForm` resolved into -- competitors are denied on BOTH
+                // hands, not just the one CastFlags' LeftHand bit would select.
                 const bool competesForClaimedSlot =
                     (callerHand == allowance::Hand::kUnknown) ||
+                    (seat.flags & APMF_API::kCastFlag_DualCast) ||
                     (callerHand == ((seat.flags & APMF_API::kCastFlag_LeftHand)
                                          ? allowance::Hand::kLeft : allowance::Hand::kRight));
                 if (competesForClaimedSlot) {

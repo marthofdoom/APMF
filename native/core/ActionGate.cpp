@@ -1,11 +1,18 @@
 #include "PCH.h"
 #include "core/Log.h"
 #include "core/Allowance.h"
+#include "core/Clock.h"
 #include "core/CombatBehaviorRE.h"
 #include "core/ControlMap.h"
 #include "core/ActionGate.h"
 
 #include <array>
+#include <mutex>
+
+// Win32 INI read for [Probe.mvcbt] -- same hand-declared extern every other
+// INI-gated file in this project uses (PCH does not pull in <Windows.h>).
+extern "C" __declspec(dllimport) unsigned long __stdcall GetPrivateProfileIntA(
+    const char* a_appName, const char* a_keyName, long a_default, const char* a_fileName);
 
 // ============================================================================
 // T1 -- COMBAT-ACTION allowance (ch.7, Docs/CHANNEL-MAP.md). Graduated
@@ -174,6 +181,114 @@ namespace apmf::actiongate {
             "CombatBehaviorCastShout",
         } };
 
+        // ====================================================================
+        // PFP PHASE 0 -- movement-leaf OBSERVE-ONLY reporting (marth 2026-09-06,
+        // scratchpad/progressive-facet-probe-design.md §3.1.2). ZERO new hooks:
+        // this rides the SAME act() thunk already installed above on all 70
+        // leaves. Movement leaves are deliberately NEVER classified into
+        // g_category (see the file header -- "everything else stays allowed"),
+        // so the classification here is a SEPARATE, deny-inert lookup table
+        // consulted BEFORE the `leafCat == 0` early-return, purely to observe
+        // and log -- it never denies anything and never changes what `orig`
+        // returns.
+        //
+        // THE OPEN QUESTION THIS SETTLES (design doc §3.1.2, "the single most
+        // consequential unknown"): does ch.1's FULL block
+        // (channels/MovementDeny.cpp: KeepOffsetFromActor(self,0) +
+        // SetDontMove(true)) actually stop the combat AI's OWN movement
+        // branch, or does the behaviour tree keep entering movement leaves
+        // underneath the block regardless? Scope: only actors that currently
+        // hold a WINNING kIntent_MovementBlock (ch.1) claim -- read the same
+        // way the existing deny path reads kIntent_CombatAction, one RCU
+        // snapshot lookup, no new API.
+        //
+        // THE LEAF LIST IS A HYPOTHESIS, NOT AN ASSERTION (RULE C/"no silent
+        // negatives" -- design doc §3.1.3 item 3). Only 8 of CombatBehaviorRE.h's
+        // 70 leaves are corroborated by an independent source (CombatPathingRevolution's
+        // OWN `CombatBehaviorNodesMovement.h`, which groups exactly these 8 under a
+        // "CloseMovement" context). The remaining ~22 are HYPOTHESIS-BY-NAMING only
+        // (locomotion-shaped names with no independent confirmation) -- they are
+        // still instrumented, because the entire point of an observe-only probe is
+        // to let the field tell us which of them actually fire, not to assume it.
+        // Leaves already classified Offense/Cast, equip leaves, selectors, and
+        // pure-utility/control nodes (ForceFail, Pause, DrinkPotion, FindWeapon,
+        // the Find*AttackLocation trio, WaitBehindCover, CheckUnreachableTarget,
+        // SearchInvestigateDoor, DiveBomb, PerchAttack) are deliberately EXCLUDED
+        // as ambiguous or out of scope -- a later pass can fold any of them in once
+        // this run's field data says whether they behave like locomotion.
+        constexpr std::array<const char*, 8> kMovementLeafConfirmed{ {
+            "CombatBehaviorAdvance",
+            "CombatBehaviorBackoff",
+            "CombatBehaviorCircle",
+            "CombatBehaviorCircleDistant",
+            "CombatBehaviorFallback",
+            "CombatBehaviorFallbackToRanged",
+            "CombatBehaviorReposition",
+            "CombatBehaviorSurround",
+        } };
+        constexpr std::array<const char*, 22> kMovementLeafHypothesis{ {
+            "CombatBehaviorChase",
+            "CombatBehaviorDodgeThreat",
+            "CombatBehaviorExitWater",
+            "CombatBehaviorFindCover",
+            "CombatBehaviorFlank",
+            "CombatBehaviorFlankDistant",
+            "CombatBehaviorFlee",
+            "CombatBehaviorFleeThroughDoor",
+            "CombatBehaviorFleeToAlly",
+            "CombatBehaviorFleeToCover",
+            "CombatBehaviorHide",
+            "CombatBehaviorHover",
+            "CombatBehaviorLand",
+            "CombatBehaviorMaintainOptimalRange",
+            "CombatBehaviorOrbit",
+            "CombatBehaviorOrbitDistant",
+            "CombatBehaviorPursueTarget",
+            "CombatBehaviorReturnToCombatArea",
+            "CombatBehaviorStalk",
+            "CombatBehaviorStrafe",
+            "CombatBehaviorTakeoff",
+            "CombatBehaviorTrackTarget",
+        } };
+
+        std::atomic<bool> g_mvcbtEnabled{ false };   // [Probe.mvcbt] Enable, default 0
+
+        // vtable -> movement leaf name. Populated at Install() from the two lists
+        // above; a lookup HIT means "this act() call is a movement-shaped leaf,"
+        // independent of g_category (which stays 0 for all of these -- never denied).
+        std::unordered_map<std::uintptr_t, const char*> g_movementLeaf;
+
+        // RULE C heartbeats -- printed even at zero by PfpHeartbeat() below.
+        // "anchor": every movement-leaf act() call seen while the probe is armed,
+        // ANY actor -- proves the thunk itself is alive regardless of whether
+        // anyone currently holds a ch.1 claim (the fact a subject-scoped count
+        // alone could never establish -- see RULE C's own worked example).
+        std::atomic<std::uint64_t> g_mvcbtAnchorHits{ 0 };
+        // "ch1": the subset of the above where the deliberating actor currently
+        // holds a WINNING kIntent_MovementBlock claim -- the number that actually
+        // answers this facet's question.
+        std::atomic<std::uint64_t> g_mvcbtCh1Hits{ 0 };
+
+        // RULE D -- high-water dedup by TRANSITION, never a timer: one line per
+        // (actor, new leaf), never a repeat of the same leaf. Guarded the same way
+        // AiCastSeats.cpp's throttle tables are (a small mutex; combat-thread calls
+        // here are rare -- gated behind an INI flag AND a live ch.1 claim).
+        std::mutex                                       g_mvcbtMx;
+        std::unordered_map<RE::FormID, const char*>      g_mvcbtLastLeaf;
+
+        // RULE E/session volume cap for the transition lines (heartbeats are far
+        // fewer and are never capped -- RULE C, they must never go silent).
+        constexpr std::uint64_t    kMvcbtLineCap = 1500;
+        std::atomic<std::uint64_t> g_mvcbtLineCount{ 0 };
+
+        // Heartbeat cadence. No CombatController-lifetime ("episode") signal is
+        // wired at this seat, so this is a fixed main-thread interval instead of a
+        // true per-episode print -- a deliberate, documented approximation, not an
+        // invented episode boundary.
+        constexpr std::uint64_t    kMvcbtHeartbeatMs = 30000;
+        std::atomic<std::uint64_t> g_mvcbtLastHeartbeatMs{ 0 };
+        // ====================================================================
+
         std::atomic<bool> g_installed{ false };
 
         // vtable runtime address -> original act() (slot 0x02; always the passthrough target).
@@ -205,6 +320,74 @@ namespace apmf::actiongate {
         std::atomic<std::uint32_t> g_popAnomalies{ 0 };
         std::atomic<bool>          g_popAnomalyLogged{ false };
 
+        // Resolve the deliberating actor from a node's `control` argument -- BOTH
+        // +0x158 hypotheses, exactly the guard T1Probe field-proved (see the
+        // deny path below for the full history). Shared by the deny path AND the
+        // PFP movement-probe path so the fragile offset logic exists in exactly
+        // one place. Declared BEFORE ActThunk (which calls it) -- this file has
+        // no header-declared helpers, so ordering inside the anonymous namespace
+        // is the only thing that makes it visible.
+        RE::FormID ResolveDeliberatingActor(void* a_control) {
+            if (!a_control) return 0;
+            auto* tc      = reinterpret_cast<apmf::cbt::TreeControl*>(a_control);
+            void* p0x158 = tc->master_controller;
+            if (!p0x158) return 0;
+            auto* ctrlA = reinterpret_cast<apmf::cbt::ControllerMini*>(p0x158);
+            if (auto a = ctrlA->attackerHandle.get()) return a->GetFormID();
+            void* cbcPlus20 = *reinterpret_cast<void**>(reinterpret_cast<std::uintptr_t>(p0x158) + 0x20);
+            if (cbcPlus20) {
+                auto* ctrlB = reinterpret_cast<apmf::cbt::ControllerMini*>(cbcPlus20);
+                if (auto b = ctrlB->attackerHandle.get()) return b->GetFormID();
+            }
+            return 0;
+        }
+
+        // PFP Phase 0 -- OBSERVE ONLY (see the PFP section above). Called from
+        // ActThunk BEFORE the leafCat==0 early-return, since every movement leaf
+        // IS category 0 (never classified for deny) and would otherwise never
+        // reach any code below that gate. Never denies, never touches `orig`'s
+        // return; a pure side-channel read + log. Also declared BEFORE ActThunk
+        // for the same ordering reason as ResolveDeliberatingActor above.
+        void PfpObserveMovementLeaf(std::uintptr_t vt, void* a_control) {
+            const auto mit = g_movementLeaf.find(vt);
+            if (mit == g_movementLeaf.end()) return;   // not a movement-shaped leaf -- nothing to report
+
+            g_mvcbtAnchorHits.fetch_add(1, std::memory_order_relaxed);   // RULE C: the anchor is alive
+
+            if (apmf::ControlMap::Get().ControlledCount() == 0)
+                return;   // near-zero cost: nobody is claimed on anything right now
+
+            const RE::FormID actorFid = ResolveDeliberatingActor(a_control);
+            if (actorFid == 0) return;   // unresolvable -- degrade to silence, never a guess (#17)
+
+            APMF_API::APMF_Param blockParam{};
+            if (!apmf::ControlMap::Get().TryGetOwningClaim(actorFid, APMF_API::kIntent_MovementBlock, blockParam))
+                return;   // this actor has no winning ch.1 claim -- out of scope for this question
+
+            g_mvcbtCh1Hits.fetch_add(1, std::memory_order_relaxed);
+
+            const char* leafName = mit->second;
+            bool        emit     = false;
+            {
+                std::scoped_lock lock(g_mvcbtMx);
+                auto&            last = g_mvcbtLastLeaf[actorFid];
+                if (last != leafName) {   // RULE D: transition dedup, never a repeat, never a timer
+                    last = leafName;
+                    emit = true;
+                }
+            }
+            if (!emit) return;
+
+            const auto lineIdx = g_mvcbtLineCount.fetch_add(1, std::memory_order_relaxed);
+            if (lineIdx < kMvcbtLineCap) {
+                spdlog::info("[pfp] mvcbt A 0x{} leaf={} stage=MC2 block=1", apmf::log::Hex(actorFid), leafName);
+            } else if (lineIdx == kMvcbtLineCap) {
+                spdlog::warn("[pfp] mvcbt line cap ({}) reached -- further transition lines suppressed "
+                             "this session (heartbeats keep printing, RULE C). Not a mask: the cap and "
+                             "this trip are themselves logged (#7).", kMvcbtLineCap);
+            }
+        }
+
         void* ActThunk(void* a_this, void* a_control) {
             const auto vt  = *reinterpret_cast<std::uintptr_t*>(a_this);
             const auto oit = g_orig.find(vt);
@@ -213,6 +396,15 @@ namespace apmf::actiongate {
 
             const auto cit    = g_category.find(vt);
             const auto leafCat = cit != g_category.end() ? cit->second : 0u;
+
+            // PFP Phase 0 (marth 2026-09-06) -- OBSERVE ONLY, must run BEFORE the
+            // leafCat==0 early-return below: every movement leaf IS category 0
+            // (never classified for deny -- see the file header), so this is the
+            // only point in the thunk that ever sees a movement leaf's act() call.
+            // Never denies, never touches the return value. See the PFP section
+            // above ActThunk for the full design.
+            if (g_mvcbtEnabled.load(std::memory_order_relaxed)) PfpObserveMovementLeaf(vt, a_control);
+
             if (leafCat == 0) return orig(a_this, a_control);   // never a denyable leaf -- skip everything below
 
             if (apmf::ControlMap::Get().ControlledCount() == 0)
@@ -222,23 +414,9 @@ namespace apmf::actiongate {
             // guard T1Probe field-proved (2026-09-03, 1.6.1170: hypothesis B, the
             // +0x20 hop, is the one that actually resolves on this runtime, but the
             // fallback to hypothesis A is kept -- never narrow to one alone, per the
-            // probe's own fixed bug history, Docs/PROBE-ALLOWANCE.md).
-            RE::FormID actorFid = 0;
-            if (a_control) {
-                auto* tc      = reinterpret_cast<apmf::cbt::TreeControl*>(a_control);
-                void* p0x158 = tc->master_controller;
-                if (p0x158) {
-                    auto* ctrlA = reinterpret_cast<apmf::cbt::ControllerMini*>(p0x158);
-                    if (auto a = ctrlA->attackerHandle.get()) actorFid = a->GetFormID();
-                    if (actorFid == 0) {
-                        void* cbcPlus20 = *reinterpret_cast<void**>(reinterpret_cast<std::uintptr_t>(p0x158) + 0x20);
-                        if (cbcPlus20) {
-                            auto* ctrlB = reinterpret_cast<apmf::cbt::ControllerMini*>(cbcPlus20);
-                            if (auto b = ctrlB->attackerHandle.get()) actorFid = b->GetFormID();
-                        }
-                    }
-                }
-            }
+            // probe's own fixed bug history, Docs/PROBE-ALLOWANCE.md). Shared with
+            // the PFP probe path via ResolveDeliberatingActor() above.
+            const RE::FormID actorFid = ResolveDeliberatingActor(a_control);
             if (actorFid == 0) return orig(a_this, a_control);   // unresolvable -- degrade to passthrough (#17)
 
             // ONE deny source (see the file header's RETIRED/SCOPE sections): a real
@@ -395,6 +573,60 @@ namespace apmf::actiongate {
                      "(act {} / pop {}); {} leaf(s) classified 'offense'. A kIntent_CombatAction claim with "
                      "kCombatActionCat_Offense set in APMF_Param::ival denies exactly those leaves for its winning "
                      "actor; every other leaf is never looked up and never denied.", n, n, nPop, classified);
+
+        // ================================================================
+        // PFP PHASE 0 -- movement-leaf classification (OBSERVE ONLY; see the
+        // PFP section above kMovementLeafConfirmed/kMovementLeafHypothesis for
+        // the design). Deliberately does NOT check Paired(vt) -- unlike the
+        // offense/cast classification above, this table is never used to deny
+        // anything, so it does not need the act()/pop() pair to be intact, only
+        // for act() (already installed on all 70 leaves unconditionally) to run.
+        // ================================================================
+        int mvConfirmed = 0, mvHypothesis = 0;
+        auto classifyMovement = [](const char* wanted, int& counter) {
+            for (std::size_t i = 0; i < apmf::cbt::kLeaves.size(); ++i) {
+                if (std::string_view(apmf::cbt::kLeaves[i].name) != wanted) continue;
+                REL::Relocation<std::uintptr_t> vt{ apmf::cbt::kLeaves[i].vtbl };
+                g_movementLeaf[vt.address()] = apmf::cbt::kLeaves[i].name;
+                ++counter;
+                return;
+            }
+            spdlog::info("[pfp] mvcbt '{}' has no leaf on this build's 70-leaf catalog -- not classified "
+                         "(see ActionGate.cpp's PFP section).", wanted);
+        };
+        for (const char* wanted : kMovementLeafConfirmed)  classifyMovement(wanted, mvConfirmed);
+        for (const char* wanted : kMovementLeafHypothesis) classifyMovement(wanted, mvHypothesis);
+
+        g_mvcbtEnabled.store(GetPrivateProfileIntA("Probe.mvcbt", "Enable", 0,
+                                                    "Data/SKSE/Plugins/APMF.ini") != 0,
+                             std::memory_order_relaxed);
+        spdlog::info("[pfp] mvcbt {} -- {} movement leaf(s) classified for OBSERVE-ONLY reporting "
+                     "({} CPR-corroborated + {} hypothesis-by-naming, out of {} total leaves). Never denies; "
+                     "reports leaf-fire transitions for actors holding a winning ch.1 (kIntent_MovementBlock) "
+                     "claim, so a deck cycle can answer whether the full block holds against combat pathing. "
+                     "[Probe.mvcbt] Enable=0 in Data/SKSE/Plugins/APMF.ini is the default (OFF).",
+                     g_mvcbtEnabled.load(std::memory_order_relaxed) ? "ARMED" : "installed, disabled",
+                     mvConfirmed + mvHypothesis, mvConfirmed, mvHypothesis, apmf::cbt::kLeaves.size());
+    }
+
+    void PfpHeartbeat() {
+        // RULE C -- prints ONCE per interval, INCLUDING ZERO counts, so silence
+        // is never mistaken for "the anchor never fires." No CombatController
+        // "episode" boundary is wired at this seat, so this uses a fixed ~30s
+        // main-thread cadence as a documented approximation instead. Cheap when
+        // disabled: one relaxed atomic-bool load, nothing else.
+        if (!g_mvcbtEnabled.load(std::memory_order_relaxed)) return;
+
+        const auto now  = apmf::clock::MonotonicMs();
+        const auto last = g_mvcbtLastHeartbeatMs.load(std::memory_order_relaxed);
+        if (now - last < kMvcbtHeartbeatMs) return;
+        g_mvcbtLastHeartbeatMs.store(now, std::memory_order_relaxed);   // main-thread-only writer, no race
+
+        const auto lineCount = g_mvcbtLineCount.load(std::memory_order_relaxed);
+        const auto dropped   = lineCount > kMvcbtLineCap ? lineCount - kMvcbtLineCap : 0;
+        spdlog::info("[pfp] mvcbt H stage=MC2-anchor hits={} drops={}",
+                     g_mvcbtAnchorHits.load(std::memory_order_relaxed), dropped);
+        spdlog::info("[pfp] mvcbt H stage=MC2-ch1 hits={}", g_mvcbtCh1Hits.load(std::memory_order_relaxed));
     }
 
 }

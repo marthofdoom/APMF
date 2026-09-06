@@ -96,8 +96,12 @@ namespace apmf::allowance {
 
         // Per-hand scoping (INVARIANTS #18): the claim's OWN hand field decides
         // this, never anything the client does. Default (bit clear) is right
-        // hand, per APMF_API.h's CastFlags comment.
-        if (callerHand != Hand::kUnknown) {
+        // hand, per APMF_API.h's CastFlags comment. kCastFlag_DualCast (2026-09-06)
+        // claims BOTH hands at once, so the hand-mismatch escape below is skipped
+        // entirely for a dual-cast claim -- every hand's deliberation is "this
+        // claim's business", which is what lets the claimed form win the charge
+        // decision on EITHER hand while denying every competitor on both.
+        if (callerHand != Hand::kUnknown && !(flags & APMF_API::kCastFlag_DualCast)) {
             const Hand claimHand =
                 (flags & APMF_API::kCastFlag_LeftHand) ? Hand::kLeft : Hand::kRight;
             if (callerHand != claimHand)
@@ -121,14 +125,16 @@ namespace apmf::allowance {
             return false;                                  // no cast claim -> nothing to admit
         if (spell == 0 && proxy == 0) return false;        // degenerate -> names nothing
 
-        if (callerHand != Hand::kUnknown) {
+        if (callerHand != Hand::kUnknown && !(flags & APMF_API::kCastFlag_DualCast)) {
             const Hand claimHand =
                 (flags & APMF_API::kCastFlag_LeftHand) ? Hand::kLeft : Hand::kRight;
             if (callerHand != claimHand) return false;     // this claim is not about this hand
         }
         // kUnknown (kOther/kInstant casters, an equip slot that is neither vanilla
         // hand) degrades to the actor-wide floor, exactly like AllowedCast above --
-        // never a guess.
+        // never a guess. kCastFlag_DualCast (2026-09-06) also skips the hand-match
+        // requirement -- a dual-cast claim names BOTH hands, so this strict-positive
+        // test admits the claimed spell/proxy on either one.
 
         return subjectForm != 0 && (subjectForm == spell || subjectForm == proxy);
     }

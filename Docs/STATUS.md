@@ -1,8 +1,24 @@
 # APMF STATUS — living handoff (start here)
 
-Updated 2026-09-05. The current state of the build: what's shipped, what's
+Updated 2026-09-06. The current state of the build: what's shipped, what's
 probe-gated, what's next. Keep this current in the SAME change as any
 build/finding/workflow change.
+
+## PROBE-GATED 2026-09-06 -- PFP Phase 0: movement-leaf OBSERVE-ONLY reporting (`feat/pfp-phase0-movement`)
+
+ZERO new hooks: rides the act() thunk `core/ActionGate.cpp` already installs on all
+70 `CombatBehaviorTreeNodeObject` leaves (`Docs/CHANNEL-MAP.md` ch.7). Classifies ~30
+movement-shaped leaves (8 corroborated by CombatPathingRevolution's own
+`CombatBehaviorNodesMovement.h`, ~22 HYPOTHESIS-by-naming) and, for any actor holding a
+winning ch.1 `kIntent_MovementBlock` claim, logs `[pfp] mvcbt A ...` on a leaf-fire
+TRANSITION -- settling the open question of whether ch.1's full block
+(`channels/MovementDeny.cpp`) actually stops the combat AI's own movement branch or
+just the translation underneath it. `[pfp] mvcbt H ...` heartbeats (incl. zero) print
+every ~30s from `Arbiter::OncePerFrame`, so a dead anchor is never mistaken for "no
+ch.1 claims this session." INI-gated `[Probe.mvcbt] Enable=0` in
+`Data/SKSE/Plugins/APMF.ini`, default OFF. NOT yet field-run. From the 2026-09-06
+"Progressive Facet Probe" design pass §3.1.2 -- Phase 0 (movement) only; that design's
+mvpkg/tgt/cast probes are NOT part of this branch.
 
 
 ## ✅ SHIPPED 2026-09-05 -- v0.9.1 (beta prerelease). THE NPC'S OWN AI PERFORMS A CLIENT'S CAST.

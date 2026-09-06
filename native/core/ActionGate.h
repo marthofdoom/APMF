@@ -11,4 +11,11 @@ namespace apmf::actiongate {
     // (the 70 vtable indices are SE/AE-only verified). Idempotent.
     void Install();
 
+    // PFP Phase 0 (marth 2026-09-06, Docs -- see ActionGate.cpp's PFP section):
+    // OBSERVE-ONLY movement-leaf heartbeat, RULE C (no silent negatives). Call
+    // once per frame from Arbiter::OncePerFrame (game thread) -- self-throttles
+    // internally to a coarse cadence, near-zero cost when [Probe.mvcbt] is
+    // disabled (the default). Prints even when every counter is zero.
+    void PfpHeartbeat();
+
 }
