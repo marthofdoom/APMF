@@ -159,18 +159,19 @@ namespace apmf::castclassify {
                                 // never populates -- a hostile spell is never self-cast -- which
                                 // could silently break an offense cast that already works today.
                                 // Read the SAME "hostile" component the classifier's own key
-                                // uses, straight off THIS effect's EffectSetting -- `RE::Effect`
-                                // and `RE::EffectSetting` are ordinary, long-stable CommonLib
-                                // types (unlike this file's three raw CombatMagicItemData
-                                // offsets, which have no header to check against); this is a
-                                // real member read, not a guess. A delivery-flip proxy (Heal
-                                // Other/Healing Hands) is always non-hostile by construction
-                                // (core/CastProxy.h only flips kSelf-delivery BENEFICIAL spells),
-                                // so this guard costs that path nothing.
+                                // uses, via `RE::Effect::IsHostile()` -- a real, ordinary
+                                // CommonLib method on the argument's OWN documented type (unlike
+                                // this file's three raw CombatMagicItemData offsets, which have
+                                // no header to check against); not a guess. A delivery-flip
+                                // proxy (Heal Other/Healing Hands) is always non-hostile by
+                                // construction (core/CastProxy.h only flips kSelf-delivery
+                                // BENEFICIAL spells), so this guard costs that path nothing.
+                                // NOTE: `Effect::IsHostile()` forwards to `baseEffect->IsHostile()`
+                                // UNCONDITIONALLY (no null check of its own, per its CommonLib
+                                // implementation) -- so `baseEffect` is null-checked HERE first,
+                                // never assumed, before it is ever called.
                                 const auto* eff     = reinterpret_cast<const RE::Effect*>(a_effect);
-                                const bool  hostile = eff && eff->baseEffect &&
-                                                      eff->baseEffect->data.flags.any(
-                                                          RE::EffectSetting::Data::Flag::kHostile);
+                                const bool  hostile = eff && eff->baseEffect && eff->IsHostile();
                                 if (!hostile) {
                                     *selfFlag = 1;   // SET BEFORE CHAINING -- orig() reads this field itself
                                     if (LogDue(fid, spellForm))
