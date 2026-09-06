@@ -5,6 +5,7 @@
 #include "core/ControlMap.h"
 #include "core/EquipGate.h"
 
+#include <intrin.h>
 #include <unordered_set>
 
 // Win32 INI read for the one log-gate flag this file adds below. Declared by
@@ -172,6 +173,20 @@ namespace apmf::equipgate {
             if (!td) return nullptr;
             return td->mangled_name();
         }
+
+        // feat/0x0f-callsite-log: friendly name for the caller RVA captured below.
+        // Known 0x0F call sites (this session's disassembly): 0x80fcd0 (pre-loop,
+        // invoked at 0x813643) and 0x813af2/0x813d38/0x814270/0x8144b2 (selector).
+        const char* CallSiteName(std::uintptr_t a_rva) {
+            switch (a_rva) {
+                case 0x80fcd0: return "pre-loop";
+                case 0x813af2:
+                case 0x813d38:
+                case 0x814270:
+                case 0x8144b2: return "selector";
+                default:       return "unknown";
+            }
+        }
         // ch.8b SEAT 0x0F (feat/ai-cast-seats-impl): which of the 30 patched item
         // vtables are the RESTORE templates. Recorded at install from the two NAMED
         // symbols (never inferred) so the seat's non-chaining force is scoped to
@@ -191,6 +206,10 @@ namespace apmf::equipgate {
         std::atomic<RE::BGSEquipSlot*> g_rightHandSlot{ nullptr };
 
         bool EquipGateThunk(RE::CombatInventoryItem* a_this, RE::CombatController* a_cc) {
+            // feat/0x0f-callsite-log: captured FIRST, before any other call, so it
+            // is the genuine caller, not a frame this thunk itself pushed.
+            const auto callSiteRva =
+                reinterpret_cast<std::uintptr_t>(_ReturnAddress()) - REL::Module::get().base();
             const auto vt  = *reinterpret_cast<std::uintptr_t*>(a_this);
             const auto oit = g_orig.find(vt);
             // Foreign object -> "don't equip" is the benign default here,
@@ -307,13 +326,24 @@ namespace apmf::equipgate {
                 }
 
                 if (handOk && driven != 0 && subjectForm == driven) {
-                    if (LogDue(fid, subjectForm))
+                    if (LogDue(fid, subjectForm)) {
+                        // feat/0x0f-callsite-log: slot 0x0B GetCategory via the vtable
+                        // directly (no new hook) -- confirms category 1 == Restore.
+                        using GetCategory_t = std::uint32_t (*)(RE::MagicItem*);
+                        std::int64_t category = -1;
+                        if (auto* mi = a_this->item ? skyrim_cast<RE::MagicItem*>(a_this->item) : nullptr) {
+                            const auto miVt = *reinterpret_cast<std::uintptr_t*>(mi);
+                            const auto fn   = *reinterpret_cast<GetCategory_t*>(miVt + 0x0B * sizeof(void*));
+                            category        = fn(mi);
+                        }
                         spdlog::info("[t2a seat 0x0F] 0x{} CheckShouldEquip item=0x{} -> YES (non-chaining; "
-                                     "claim spell 0x{}{} target 0x{}) -- ELIGIBLE for the equipment set; the "
-                                     "AI's own scoring/slot/range/resource gates still decide whether it is "
-                                     "actually equipped.",
+                                     "claim spell 0x{}{} target 0x{}; callsite RVA=0x{} [{}]; category={}) -- "
+                                     "ELIGIBLE for the equipment set; the AI's own scoring/slot/range/resource "
+                                     "gates still decide whether it is actually equipped.",
                                      apmf::log::Hex(fid), apmf::log::Hex(subjectForm), apmf::log::Hex(seat.spell),
-                                     seat.proxy ? " via delivery-flip proxy" : "", apmf::log::Hex(seat.target));
+                                     seat.proxy ? " via delivery-flip proxy" : "", apmf::log::Hex(seat.target),
+                                     apmf::log::Hex(callSiteRva), CallSiteName(callSiteRva), category);
+                    }
                     return true;   // THE non-chaining answer
                 }
                 if (handOk && seat.proxy != 0 && subjectForm == seat.spell) {
