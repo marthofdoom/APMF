@@ -4,6 +4,7 @@
 #include "core/ControlMap.h"
 #include "core/NonAliasProbe.h"
 #include "core/CastObserve.h"
+#include "core/ActionGate.h"
 #include "core/MainThread.h"
 #include "core/Registry.h"
 
@@ -52,6 +53,13 @@ namespace apmf {
         // replicate it. Always-on, per-actor rate-limited, self-throttled (~100ms) --
         // no hotkey, no toggle, never mutates. See core/CastObserve.h.
         apmf::castobserve::Poll();
+
+        // PFP Phase 0 (marth 2026-09-06) -- movement-leaf probe heartbeat (RULE C:
+        // print the stage's hit count even when zero, so a dead anchor is never
+        // mistaken for "nothing to report"). INI-gated ([Probe.mvcbt] Enable=0
+        // default); a relaxed atomic-bool load the rest of the time. See
+        // core/ActionGate.cpp's PFP section.
+        apmf::actiongate::PfpHeartbeat();
     }
 
     void Arbiter::ReleaseAll(const char* why) {
