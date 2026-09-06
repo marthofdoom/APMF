@@ -143,6 +143,14 @@ namespace apmf::equipgate {
         std::mutex                                       g_rlMx;
         std::unordered_map<std::uint64_t, std::uint64_t> g_lastLogMs;
 
+        // feat/equip-deny-complete (2026-09-05), own kill-switch, independent of
+        // [CastSeats] EnableSeat0Classify (CastClassify.cpp:209) which that flag
+        // keeps governing unchanged: this one only controls whether the NEW
+        // deny-complete branch below fires, so a field session can isolate
+        // classification from the completeness deny if either needs to be
+        // ruled out separately. Default ON.
+        std::atomic<bool> g_denyCompleteEnabled{ true };
+
         bool LogDue(RE::FormID a_actor, RE::FormID a_subject) {
             const auto now = apmf::clock::MonotonicMs();
             const auto key = (static_cast<std::uint64_t>(a_actor) << 32) | static_cast<std::uint64_t>(a_subject);
@@ -346,6 +354,61 @@ namespace apmf::equipgate {
                 }
             }
 
+            // ================================================================
+            // ch.8b SEAT 0x0F DENY-COMPLETENESS (feat/equip-deny-complete,
+            // 2026-09-05 -- CLAUDE.md principle 2, "for every facet a client can
+            // claim there must be a COMPLETE deny"). Disassembly (0x813af2)
+            // showed 0x0F is only a hard ADMISSION filter: passing it just means
+            // an item was not dropped, it still has to WIN the score compare at
+            // 0x815050 against every other item that also survived 0x0F, and
+            // only the winner occupies the equip slot the behavior thread reads
+            // to mint the next CombatBehaviorContextMagic (and, for Restore,
+            // the caster the four other seats need). The block above only
+            // governs the two Restore vtables; this one closes the gap for the
+            // remaining 28 (and the residual Restore case the block above
+            // doesn't already return on: a self-delivery Restore item that is
+            // neither the driven form nor the N4 original-spell case).
+            //
+            // Scope, all three required and enforced by the guards already in
+            // effect at this point in the function: ONLY this actor (fid != 0,
+            // read off THIS call's own CombatController -- never a client actor
+            // list, #4); ONLY while `hasLiveSeat` is true, i.e. exactly for the
+            // duration ControlMap reports a live kIntent_Cast claim on this fid
+            // (TryGetCastSeatClaim above, same read the YES branch uses -- no
+            // latched/cached state here, so this lifts the instant the claim
+            // releases or its TTL expires, and never fires for an unclaimed
+            // actor); ONLY on the 30 hooked spell/staff vtables (this thunk is
+            // never reached for anything else -- line ~191 already returned
+            // false for a foreign vtable).
+            //
+            // Deliberately actor-wide, NOT hand-scoped like AllowedCastForHand
+            // below: it has not been established that the 0x815050 score
+            // compare partitions by hand, so completeness denies a competing
+            // item on EITHER hand rather than risk a same-vtable, other-hand
+            // survivor still winning the compare.
+            //
+            // TWO KNOWN HOLES -- documented, not fixed here (see the brief):
+            //   (1) weapon/fist item classes have no concrete header class to
+            //       hook (same finding as the file banner above) and can still
+            //       out-score us;
+            //   (2) Actor::StartCombat's direct ActorEquipManager equip path
+            //       (0x6b6bb5..0x6b6c02) bypasses this selector entirely.
+            // ================================================================
+            if (g_denyCompleteEnabled.load(std::memory_order_relaxed) &&
+                hasLiveSeat && fid != 0 && subjectForm != 0) {
+                const RE::FormID driven = seat.proxy ? seat.proxy : seat.spell;
+                if (driven == 0 || subjectForm != driven) {
+                    if (LogDue(fid, subjectForm))
+                        spdlog::info("[t2a seat 0x0F] 0x{} CheckShouldEquip item=0x{} -> NO (deny-complete: a "
+                                     "cast claim spell 0x{}{} stands on this actor -- every other spell/staff "
+                                     "item is denied so the claimed form is the sole survivor of the equip-slot "
+                                     "score compare).",
+                                     apmf::log::Hex(fid), apmf::log::Hex(subjectForm), apmf::log::Hex(seat.spell),
+                                     seat.proxy ? " via delivery-flip proxy" : "");
+                    return false;
+                }
+            }
+
             // ---- From here down: UNCHANGED, engine-answer-first DENY (#17). The
             // engine gets the first word and APMF only ever flips its YES to NO. ----
             const bool engineSays = original(a_this, a_cc);
@@ -429,6 +492,9 @@ namespace apmf::equipgate {
         g_logEnabled.store(GetPrivateProfileIntA("EquipGate", "EnableEquipGateLog", 0,
                                                   "Data/SKSE/Plugins/APMF.ini") != 0,
                            std::memory_order_relaxed);
+        g_denyCompleteEnabled.store(GetPrivateProfileIntA("EquipGate", "EnableEquipDenyComplete", 1,
+                                                           "Data/SKSE/Plugins/APMF.ini") != 0,
+                                    std::memory_order_relaxed);
 
         // Per-hand deny (INVARIANTS #18): resolve the vanilla Left/Right Hand
         // BGSEquipSlot forms ONCE, through CommonLib's own version-robust
@@ -505,10 +571,13 @@ namespace apmf::equipgate {
                      "itemSlot.equipSlot (left-hand slot {}, right-hand slot {}). ch.8b SEAT 0x0F "
                      "armed on the Restore templates only; the SEAT 0 rebuild trigger and the 0x0F "
                      "completeness fix (non-self Restore item denied unless it is the live claim's "
-                     "driven form) run on every patched vtable. Per-call trace log: {} ([EquipGate] "
+                     "driven form) run on every patched vtable. Deny-complete (every OTHER spell/staff "
+                     "item denied, actor-wide, while a cast claim stands): {} ([EquipGate] "
+                     "EnableEquipDenyComplete). Per-call trace log: {} ([EquipGate] "
                      "EnableEquipGateLog).",
                      n, static_cast<void*>(g_leftHandSlot.load(std::memory_order_relaxed)),
                      static_cast<void*>(g_rightHandSlot.load(std::memory_order_relaxed)),
+                     g_denyCompleteEnabled.load(std::memory_order_relaxed) ? "ON (default)" : "OFF",
                      g_logEnabled.load(std::memory_order_relaxed) ? "ON" : "OFF (default)");
     }
 
