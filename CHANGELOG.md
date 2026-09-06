@@ -1,3 +1,12 @@
+## v0.9.1 -- The NPC's own AI performs a client's cast
+
+- **A client mod can now ask Harbinger to make an NPC cast a chosen spell at a chosen target, and the NPC's OWN combat AI performs it.** Harbinger makes no equip call, no animation call and no cast call of any kind. It answers the questions the engine's own cast logic asks, so the charge, the aim, the animation style and the channel are all the game's own.
+- **This makes a heal-other cast possible for the first time.** The vanilla combat AI cannot classify a healing spell aimed at someone else, so it can never build one as a candidate and never considers casting it. That is why followers in every mod have only ever healed themselves through the AI. Harbinger supplies the one classification decision the engine is missing, and the rest of the engine takes it from there.
+- The forced cast drive is gone. Harbinger no longer equips, drives or fires anything, and it no longer calls CastSpellImmediate. A cast that the engine refuses now visibly does not happen instead of being faked.
+- A client can state its own stop threshold for a channelled cast, so a heal can run to full instead of stopping where the engine would.
+- Requires a client that uses the kIntent_Cast request. MFO v2.0.1 or newer.
+- This is a beta build.
+
 ## Unreleased -- Composition rework (cast facet)
 
 Branches `feat/composition-cast` then `feat/ai-cast-seats-impl`, field-unproven. Adds the cast-EXECUTION facet so a client can hand APMF a cast to moderate around while the actor keeps moving, instead of freezing the body with a package.
