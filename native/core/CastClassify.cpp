@@ -144,67 +144,81 @@ namespace apmf::castclassify {
                     if (auto* actor = attPtr.get()) {
                         const RE::FormID fid       = actor->GetFormID();
                         const RE::FormID spellForm = spellPtr->GetFormID();
+                        // feat/per-hand-cast-claims: matched by DRIVEN FORM (this
+                        // resolver's own spell), not "the actor-wide best-basis
+                        // claim" -- up to two kIntent_Cast claims can be live at
+                        // once now (one per hand). Picking the highest-basis claim
+                        // overall here would classify against the WRONG hand's
+                        // claim whenever the other hand happens to have the higher
+                        // basis. See ControlMap::TryGetCastSeatClaimForForm.
                         apmf::CastSeatClaim seat{};
-                        if (apmf::ControlMap::Get().TryGetCastSeatClaim(fid, seat) && seat.targetHandle) {
-                            const RE::FormID driven = seat.proxy ? seat.proxy : seat.spell;
-                            if (driven != 0 && spellForm == driven) {
-                                // HOSTILE GUARD (2026-09-06, offense-seat-scope). The rescue
-                                // exists SOLELY because the 23-row table has no row for
-                                // (Health, self=0, hostile=0) -- a HOSTILE claim (e.g.
-                                // Firebolt) already keys into an EXISTING row via its own
-                                // hostile=1 bit (archetype<<16 | av<<8 | hostile<<1 |
-                                // isSelfDelivery, Docs/STATUS.md) and needs no help. Forcing
-                                // isSelfDelivery=1 on it would instead misclassify it into a
-                                // (archetype, av, hostile=1, isSelfDelivery=1) row vanilla data
-                                // never populates -- a hostile spell is never self-cast -- which
-                                // could silently break an offense cast that already works today.
-                                // Read the SAME "hostile" component the classifier's own key
-                                // uses, via `RE::Effect::IsHostile()` -- a real, ordinary
-                                // CommonLib method on the argument's OWN documented type (unlike
-                                // this file's three raw CombatMagicItemData offsets, which have
-                                // no header to check against); not a guess. A delivery-flip
-                                // proxy (Heal Other/Healing Hands) is always non-hostile by
-                                // construction (core/CastProxy.h only flips kSelf-delivery
-                                // BENEFICIAL spells), so this guard costs that path nothing.
-                                // NOTE: `Effect::IsHostile()` forwards to `baseEffect->IsHostile()`
-                                // UNCONDITIONALLY (no null check of its own, per its CommonLib
-                                // implementation) -- so `baseEffect` is null-checked HERE first,
-                                // never assumed, before it is ever called.
-                                const auto* eff     = reinterpret_cast<const RE::Effect*>(a_effect);
-                                const bool  hostile = eff && eff->baseEffect && eff->IsHostile();
-                                if (!hostile) {
-                                    *selfFlag = 1;   // SET BEFORE CHAINING -- orig() reads this field itself
-                                    if (LogDue(fid, spellForm))
-                                        spdlog::info(
-                                            "[ch.8b seat 0] 0x{} CLASSIFY spell=0x{} '{}' selfFlag {}->{} "
-                                            "(matches the live cast claim's driven form{}) -- this effect now "
-                                            "keys into the SAME table row a self-heal uses (Restore/Ward/etc., "
-                                            "creator 0x824510-family); nothing else about the row, score or "
-                                            "duration changes.",
-                                            apmf::log::Hex(fid), apmf::log::Hex(spellForm),
-                                            spellPtr->GetName() ? spellPtr->GetName() : "?", before, *selfFlag,
-                                            seat.proxy ? " -- via delivery-flip proxy" : "");
-                                } else if (LogDue(fid, spellForm)) {
+                        if (apmf::ControlMap::Get().TryGetCastSeatClaimForForm(fid, spellForm, seat) && seat.targetHandle) {
+                            // HOSTILE GUARD (2026-09-06, offense-seat-scope). The rescue
+                            // exists SOLELY because the 23-row table has no row for
+                            // (Health, self=0, hostile=0) -- a HOSTILE claim (e.g.
+                            // Firebolt) already keys into an EXISTING row via its own
+                            // hostile=1 bit (archetype<<16 | av<<8 | hostile<<1 |
+                            // isSelfDelivery, Docs/STATUS.md) and needs no help. Forcing
+                            // isSelfDelivery=1 on it would instead misclassify it into a
+                            // (archetype, av, hostile=1, isSelfDelivery=1) row vanilla data
+                            // never populates -- a hostile spell is never self-cast -- which
+                            // could silently break an offense cast that already works today.
+                            // Read the SAME "hostile" component the classifier's own key
+                            // uses, via `RE::Effect::IsHostile()` -- a real, ordinary
+                            // CommonLib method on the argument's OWN documented type (unlike
+                            // this file's three raw CombatMagicItemData offsets, which have
+                            // no header to check against); not a guess. A delivery-flip
+                            // proxy (Heal Other/Healing Hands) is always non-hostile by
+                            // construction (core/CastProxy.h only flips kSelf-delivery
+                            // BENEFICIAL spells), so this guard costs that path nothing.
+                            // NOTE: `Effect::IsHostile()` forwards to `baseEffect->IsHostile()`
+                            // UNCONDITIONALLY (no null check of its own, per its CommonLib
+                            // implementation) -- so `baseEffect` is null-checked HERE first,
+                            // never assumed, before it is ever called.
+                            const auto* eff     = reinterpret_cast<const RE::Effect*>(a_effect);
+                            const bool  hostile = eff && eff->baseEffect && eff->IsHostile();
+                            if (!hostile) {
+                                *selfFlag = 1;   // SET BEFORE CHAINING -- orig() reads this field itself
+                                if (LogDue(fid, spellForm))
                                     spdlog::info(
-                                        "[ch.8b seat 0] 0x{} CLASSIFY spell=0x{} '{}' selfFlag {} -- matches "
-                                        "the live cast claim's driven form but the EFFECT is HOSTILE; NOT "
-                                        "forced (the classify rescue only widens the non-hostile heal/buff-"
-                                        "OTHER row -- a hostile claim already classifies correctly on its own).",
+                                        "[ch.8b seat 0] 0x{} CLASSIFY spell=0x{} '{}' selfFlag {}->{} "
+                                        "(matches the live cast claim's driven form{}) -- this effect now "
+                                        "keys into the SAME table row a self-heal uses (Restore/Ward/etc., "
+                                        "creator 0x824510-family); nothing else about the row, score or "
+                                        "duration changes.",
                                         apmf::log::Hex(fid), apmf::log::Hex(spellForm),
-                                        spellPtr->GetName() ? spellPtr->GetName() : "?", before);
-                                }
-                            } else if (driven != 0 && LogDue(fid, spellForm)) {
-                                // A live claim stands on this actor but names a
-                                // DIFFERENT spell -- logged at the SAME throttle so
-                                // "the claim never even reached this seat" is
-                                // distinguishable in the field log from "reached
-                                // it, didn't match."
+                                        spellPtr->GetName() ? spellPtr->GetName() : "?", before, *selfFlag,
+                                        seat.proxy ? " -- via delivery-flip proxy" : "");
+                            } else if (LogDue(fid, spellForm)) {
                                 spdlog::info(
-                                    "[ch.8b seat 0] 0x{} CLASSIFY spell=0x{} '{}' selfFlag {} -- a live cast "
-                                    "claim stands (driven=0x{}) but names a DIFFERENT spell; not forced.",
+                                    "[ch.8b seat 0] 0x{} CLASSIFY spell=0x{} '{}' selfFlag {} -- matches "
+                                    "the live cast claim's driven form but the EFFECT is HOSTILE; NOT "
+                                    "forced (the classify rescue only widens the non-hostile heal/buff-"
+                                    "OTHER row -- a hostile claim already classifies correctly on its own).",
                                     apmf::log::Hex(fid), apmf::log::Hex(spellForm),
-                                    spellPtr->GetName() ? spellPtr->GetName() : "?", before,
-                                    apmf::log::Hex(driven));
+                                    spellPtr->GetName() ? spellPtr->GetName() : "?", before);
+                            }
+                        } else if (LogDue(fid, spellForm)) {
+                            // Diagnostic only (never decisional): TryGetCastSeatClaimForForm
+                            // just said no LIVE claim on this actor drives THIS spell. Peek
+                            // the actor-wide floor (any hand) purely to keep the field log's
+                            // existing distinction -- "the claim never even reached this
+                            // seat" vs "a claim stands, but for a different spell" -- feat/
+                            // per-hand-cast-claims made the FORCE decision above hand-exact,
+                            // but this fallback log deliberately stays "any hand" (it is
+                            // informational, not a bug: with two hands potentially claimed,
+                            // reporting either one's driven form here is equally useful).
+                            apmf::CastSeatClaim anySeat{};
+                            if (apmf::ControlMap::Get().TryGetCastSeatClaim(fid, anySeat) && anySeat.targetHandle) {
+                                const RE::FormID otherDriven = anySeat.proxy ? anySeat.proxy : anySeat.spell;
+                                if (otherDriven != 0) {
+                                    spdlog::info(
+                                        "[ch.8b seat 0] 0x{} CLASSIFY spell=0x{} '{}' selfFlag {} -- a live cast "
+                                        "claim stands (driven=0x{}) but names a DIFFERENT spell; not forced.",
+                                        apmf::log::Hex(fid), apmf::log::Hex(spellForm),
+                                        spellPtr->GetName() ? spellPtr->GetName() : "?", before,
+                                        apmf::log::Hex(otherDriven));
+                                }
                             }
                         }
                     }

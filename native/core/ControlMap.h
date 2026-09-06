@@ -75,6 +75,16 @@ namespace apmf {
         std::uint64_t   expiresMs  = 0;   // monotonic-ms hard cap; 0 == none (never for a real cast claim)
     };
 
+    // feat/per-hand-cast-claims (2026-09-06): which hand a T2 gate has resolved
+    // ITS OWN deliberation to be about, from an engine-native source (never
+    // invented) -- mirrors apmf::allowance::Hand exactly (kept as a SEPARATE type
+    // here rather than an include-dependency on core/Allowance.h; callers convert
+    // with a one-line switch). kUnknown means "degrade to the actor-wide floor,
+    // regardless of hand" -- the existing TryGetCastClaim/TryGetCastSeatClaim
+    // overloads below (unchanged) ARE that floor; the *ForHand overloads forward
+    // to them exactly when `hand == kUnknown`.
+    enum class CastHand { kUnknown, kLeft, kRight };
+
     class ControlMap {
     public:
         static ControlMap& Get();
@@ -153,6 +163,20 @@ namespace apmf {
         bool TryGetCastClaim(RE::FormID actor, RE::FormID& outSpell, RE::FormID& outProxy,
                              std::uint32_t* outFlags = nullptr) const;
 
+        // feat/per-hand-cast-claims: HAND-SCOPED variant. Two concurrent kIntent_Cast
+        // claims can now coexist on one actor (one per hand, or a single
+        // kCastFlag_DualCast claim occupying both) -- this answers "which claim
+        // occupies THIS hand", never "the actor-wide best-basis claim regardless of
+        // hand" (that would let the OTHER hand's claim mask this hand's own, the
+        // exact self-deny-across-hands bug class this pass exists to close). A
+        // kCastFlag_DualCast claim occupies BOTH hands (matches either query). ANY
+        // thread, same RCU discipline as the 3-arg overload above. `hand ==
+        // kUnknown` forwards VERBATIM to the 3-arg overload (the pre-existing
+        // actor-wide floor for a caller that cannot resolve a hand) -- byte-identical
+        // behavior for every existing caller of that shape.
+        bool TryGetCastClaimForHand(RE::FormID actor, CastHand hand, RE::FormID& outSpell,
+                                    RE::FormID& outProxy, std::uint32_t* outFlags = nullptr) const;
+
         // ch.8b -- the FULL winning cast claim for the five engine seats, in ONE
         // lock-free RCU read (see CastSeatClaim above for why by value / why the
         // handle). Same reader discipline as TryGetCastClaim: any thread, relaxed
@@ -162,6 +186,31 @@ namespace apmf {
         // kIntent_Cast claim -- which is exactly how a seat learns "released, chain to
         // the engine". Internal C++ only -- not part of the C-ABI.
         bool TryGetCastSeatClaim(RE::FormID actor, CastSeatClaim& out) const;
+
+        // feat/per-hand-cast-claims: HAND-SCOPED sibling of TryGetCastSeatClaim,
+        // same rationale as TryGetCastClaimForHand above -- used by core/EquipGate.cpp
+        // (the ONE seat/gate site that both (a) needs the full CastSeatClaim shape,
+        // e.g. target/expiry, AND (b) already resolves a native hand). `hand ==
+        // kUnknown` forwards to the unscoped overload above.
+        bool TryGetCastSeatClaimForHand(RE::FormID actor, CastHand hand, CastSeatClaim& out) const;
+
+        // feat/per-hand-cast-claims: FORM-SCOPED sibling. core/CastSeats.cpp's four
+        // caster-vtable seats and core/CastClassify.cpp's SEAT 0 never resolve a
+        // hand at all (no native hand signal reaches a `CombatMagicCaster*` /
+        // `CombatMagicItemData*`) -- they instead already know the CANDIDATE FORM
+        // they are deliberating about (`this->magicItem`, or the effect's own
+        // spell). With two claims potentially live at once (one per hand), "the
+        // actor-wide best-basis claim" is the WRONG read for these call sites too:
+        // it can hide the live claim whose driven form actually matches, exactly
+        // when the OTHER hand's claim happens to have a higher basis (the same bug
+        // class TryGetCastClaimForHand/TryGetCastSeatClaimForHand close for the
+        // hand-aware callers). This instead searches every LIVE (unexpired) claim
+        // on the actor's cast channel for the one whose DRIVEN form (proxy, else
+        // spell) equals `form`, independent of basis -- the two concurrent claims
+        // never compete for the SAME magic-item instance, so there is nothing to
+        // arbitrate here at all. Same RCU discipline (any thread, one acquire-load,
+        // one hash lookup). Returns false when no live claim's driven form matches.
+        bool TryGetCastSeatClaimForForm(RE::FormID actor, RE::FormID form, CastSeatClaim& out) const;
 
         // ---- Observability/probe use only (Docs/SPEC-PACKAGE-HOLD.md §4): live
         // Actor* for every actor CURRENTLY claimed on `intent`'s channel (unloaded

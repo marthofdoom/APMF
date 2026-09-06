@@ -116,18 +116,24 @@ namespace apmf::allowance {
     // vanilla hand slot) -- degrade to the actor-wide floor, never guess.
     enum class Hand { kUnknown, kLeft, kRight };
 
-    // Hand-aware ch.8b allowance. Identical to AllowedCast(actor, subjectForm)
-    // EXCEPT: when the winning kIntent_Cast claim names a specific hand (its
-    // CastFlags' kCastFlag_LeftHand bit -- default right, "hand hint" per
-    // APMF_API.h) AND the caller's OWN resolved `callerHand` is KNOWN and
-    // DIFFERS from the claim's hand, this returns true (ALLOW) WITHOUT even
-    // checking `subjectForm` -- the claim is not about this hand's deliberation
-    // at all, so the AI's own choice for the other hand stands untouched. When
-    // `callerHand` is kUnknown (the seat could not resolve a hand for this call),
-    // this degrades EXACTLY to AllowedCast(actor, subjectForm) -- the per-actor
-    // floor, never a guess. This is the per-hand deny (marth 2026-09-0x,
-    // INVARIANTS #18) -- driven purely by the claim's own hand field, never by
-    // anything the client does.
+    // Hand-aware ch.8b allowance. feat/per-hand-cast-claims (2026-09-06): TWO
+    // concurrent kIntent_Cast claims can now stand on one actor at once, one per
+    // hand (or a single kCastFlag_DualCast claim occupying both) --
+    // ControlMap::TryGetCastClaimForHand resolves the claim that OCCUPIES
+    // `callerHand` specifically, never "the actor-wide best-basis claim" (which
+    // could belong to the OTHER hand and would then either wrongly ALLOW a
+    // competitor on THIS hand, or wrongly DENY this hand's own claimed spell --
+    // the self-deny-across-hands bug class this pass exists to close). When NO
+    // claim occupies `callerHand`, this returns true (ALLOW) without even
+    // checking `subjectForm` -- that hand is simply not claimed, so the AI's own
+    // choice for it stands untouched (this is what lets a follower keep one hand
+    // fully AI-governed while the other is claimed, and lets two DIFFERENT
+    // claimed spells coexist on both hands at once). When `callerHand` is
+    // kUnknown (the seat could not resolve a hand for this call), this degrades
+    // EXACTLY to AllowedCast(actor, subjectForm) -- the per-actor floor, never a
+    // guess. Per-hand deny (marth 2026-09-0x, INVARIANTS #18) -- driven purely by
+    // which claim(s) stand and their own hand field, never by anything the
+    // client does.
     bool AllowedCastForHand(RE::FormID actor, RE::FormID subjectForm, Hand callerHand);
 
     // Does a STANDING ch.8b kIntent_Cast claim NAME `subjectForm` (as its spell or

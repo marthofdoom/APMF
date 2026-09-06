@@ -87,27 +87,33 @@ namespace apmf::allowance {
         return false;                                      // a cast claim stands and this is neither -> DENY
     }
 
-    bool AllowedCastForHand(RE::FormID actor, RE::FormID subjectForm, Hand callerHand) {
-        RE::FormID    spell = 0, proxy = 0;
-        std::uint32_t flags = 0;
-        if (!ControlMap::Get().TryGetCastClaim(actor, spell, proxy, &flags))
-            return true;                                   // no cast claim -> ch.8b imposes nothing
-        if (spell == 0 && proxy == 0) return true;         // degenerate/no spell named -> allow
-
-        // Per-hand scoping (INVARIANTS #18): the claim's OWN hand field decides
-        // this, never anything the client does. Default (bit clear) is right
-        // hand, per APMF_API.h's CastFlags comment. kCastFlag_DualCast (2026-09-06)
-        // claims BOTH hands at once, so the hand-mismatch escape below is skipped
-        // entirely for a dual-cast claim -- every hand's deliberation is "this
-        // claim's business", which is what lets the claimed form win the charge
-        // decision on EITHER hand while denying every competitor on both.
-        if (callerHand != Hand::kUnknown && !(flags & APMF_API::kCastFlag_DualCast)) {
-            const Hand claimHand =
-                (flags & APMF_API::kCastFlag_LeftHand) ? Hand::kLeft : Hand::kRight;
-            if (callerHand != claimHand)
-                return true;   // a different hand's deliberation -- not this claim's business
+    namespace {
+        // feat/per-hand-cast-claims: apmf::allowance::Hand -> apmf::CastHand. Two
+        // separate enums on purpose (Allowance.h stays free of a ControlMap.h
+        // include-dependency) -- this is the one place they meet.
+        apmf::CastHand ToCastHand(Hand h) {
+            switch (h) {
+                case Hand::kLeft:  return apmf::CastHand::kLeft;
+                case Hand::kRight: return apmf::CastHand::kRight;
+                default:           return apmf::CastHand::kUnknown;
+            }
         }
+    }
 
+    bool AllowedCastForHand(RE::FormID actor, RE::FormID subjectForm, Hand callerHand) {
+        // feat/per-hand-cast-claims: reads the claim that OCCUPIES `callerHand`
+        // (kCastFlag_DualCast occupies both; `kUnknown` forwards to the unscoped,
+        // actor-wide floor -- byte-identical to the pre-existing behavior for a
+        // caller that cannot resolve a hand). This used to read the single
+        // actor-wide best-basis claim and then compare its OWN hand field against
+        // `callerHand` by hand -- with two concurrent claims now possible, that
+        // comparison could pick the OTHER hand's claim and wrongly treat THIS
+        // hand as unclaimed (or vice versa); ControlMap::TryGetCastClaimForHand
+        // does the correct per-hand arbitration once, here.
+        RE::FormID spell = 0, proxy = 0;
+        if (!ControlMap::Get().TryGetCastClaimForHand(actor, ToCastHand(callerHand), spell, proxy))
+            return true;                                   // no cast claim on THIS hand -> ch.8b imposes nothing
+        if (spell == 0 && proxy == 0) return true;         // degenerate/no spell named -> allow
         if (subjectForm == spell || subjectForm == proxy) return true;
         return false;                                      // a cast claim stands on THIS hand and this is neither -> DENY
     }
@@ -115,27 +121,14 @@ namespace apmf::allowance {
     bool CastClaimNamesForHand(RE::FormID actor, RE::FormID subjectForm, Hand callerHand) {
         // See Allowance.h for WHY this exists (H1: APMF denied its own delivery-flip
         // proxy). Deliberately NOT expressed in terms of AllowedCastForHand: THAT
-        // returns true for "no claim at all" and for "a different hand", neither of
-        // which may license an override of the ch.8 narrow. This is the strict
-        // POSITIVE form -- a claim must actually stand, on this hand, naming this
-        // exact form.
-        RE::FormID    spell = 0, proxy = 0;
-        std::uint32_t flags = 0;
-        if (!ControlMap::Get().TryGetCastClaim(actor, spell, proxy, &flags))
-            return false;                                  // no cast claim -> nothing to admit
+        // returns true for "no claim at all", which may not license an override
+        // of the ch.8 narrow. This is the strict POSITIVE form -- a claim must
+        // actually stand, on this hand, naming this exact form. Same per-hand
+        // read as AllowedCastForHand above (feat/per-hand-cast-claims).
+        RE::FormID spell = 0, proxy = 0;
+        if (!ControlMap::Get().TryGetCastClaimForHand(actor, ToCastHand(callerHand), spell, proxy))
+            return false;                                  // no cast claim on THIS hand -> nothing to admit
         if (spell == 0 && proxy == 0) return false;        // degenerate -> names nothing
-
-        if (callerHand != Hand::kUnknown && !(flags & APMF_API::kCastFlag_DualCast)) {
-            const Hand claimHand =
-                (flags & APMF_API::kCastFlag_LeftHand) ? Hand::kLeft : Hand::kRight;
-            if (callerHand != claimHand) return false;     // this claim is not about this hand
-        }
-        // kUnknown (kOther/kInstant casters, an equip slot that is neither vanilla
-        // hand) degrades to the actor-wide floor, exactly like AllowedCast above --
-        // never a guess. kCastFlag_DualCast (2026-09-06) also skips the hand-match
-        // requirement -- a dual-cast claim names BOTH hands, so this strict-positive
-        // test admits the claimed spell/proxy on either one.
-
         return subjectForm != 0 && (subjectForm == spell || subjectForm == proxy);
     }
 
