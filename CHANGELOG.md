@@ -1,3 +1,11 @@
+## v0.9.2 -- The equip deny no longer disarms the follower
+
+- **Fixes the v0.9.1 issue where a follower could stop fighting.** While a cast claim stood, the equip deny took every spell and staff the actor owned, on both hands, for the whole life of the claim. A follower being healed repeatedly lost their own attack spells and appeared to freeze. The deny is now limited to the claim's own hand, so the other hand goes back to the NPC's own AI. The claimed spell still wins its slot, which is what makes the cast work.
+- **Offense casts now work through the same path as heals.** The engine seats were installed only on the Restore caster, so a client claiming a hostile spell got nothing at all. They now cover the Offensive caster too, still gated per call on the claim naming that exact actor and spell.
+- **A hostile spell is no longer re-classified.** The classification fix exists only because the game has no way to describe a heal aimed at someone else. Applying it to a hostile spell would have moved it to a row the game never uses and could have broken casting that already worked.
+- Fixed a latent crash risk: one seat read a value that only exists on the Restore caster and would have read garbage off the Offensive one.
+- **Not field-tested.** CI verified only. See the note on the release page.
+
 ## v0.9.1 -- The NPC's own AI performs a client's cast
 
 - **A client mod can now ask Harbinger to make an NPC cast a chosen spell at a chosen target, and the NPC's OWN combat AI performs it.** Harbinger makes no equip call, no animation call and no cast call of any kind. It answers the questions the engine's own cast logic asks, so the charge, the aim, the animation style and the channel are all the game's own.
