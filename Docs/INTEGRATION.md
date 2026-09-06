@@ -13,12 +13,20 @@ Everything else about that actor, movement, other packages, the rest of its
 AI, keeps running exactly as it was. When you release the claim, APMF stops
 suppressing and the actor's own AI (or the next-highest claim) takes it back.
 
-APMF never drives behavior itself. It never calls `StartCombat`,
-`CastSpellImmediate`, or any other decision-making engine function. It
-arbitrates who owns a facet and denies the losers. You bring the behavior with
-your own proven mechanism (your own package, your own `selectedSpells` write,
-your own `currentCombatTarget` write) and APMF just makes sure it reaches the
-actor.
+APMF never calls `StartCombat`, `CastSpellImmediate`, or any other
+decision-making engine function. It arbitrates who owns a facet and denies the
+losers.
+
+For most facets you bring the behavior with your own proven mechanism (your own
+package, your own `currentCombatTarget` write) and APMF makes sure it reaches
+the actor.
+
+**The cast facet works differently, and this is the point of ABI v5.** You do
+not bring a cast mechanism at all. You declare *what* to cast and *at whom*, and
+APMF answers the engine's own cast-decision points so that **the NPC's own combat
+AI** selects, equips, charges, aims, fires and channels it. APMF still calls no
+cast, equip or animation function. The animation is the game's own because the
+game is the one casting. See "Making an NPC cast" below.
 
 ## Quickstart
 
@@ -107,6 +115,47 @@ void RetargetWhileHeld(RE::FormID newTarget) {
 Reserve `Release` for when you are genuinely done with the facet (combat
 ended, the cast finished), not for a routine retarget.
 
+
+## Making an NPC cast (ABI v5, `kIntent_Cast`)
+
+Requires `abiVersion >= 5` and `APMF_API_v5`.
+
+```cpp
+APMF_API::APMF_CastRequest req{};
+req.spell  = spellFormID;     // the spell to cast
+req.proxy  = 0;               // 0 = APMF mints a delivery-flip proxy if the spell is Self-delivery
+req.target = targetActorID;   // 0 = self. Load-bearing: this is where the cast lands.
+req.flags  = APMF_API::kCastFlag_LeftHand          // which hand
+           | APMF_API::kCastFlag_Concentration     // set for a held/channelled stream
+           | APMF_API::MakeStopPct(80);            // stop a channel at 80% of the target's AV
+req.ttlMs  = 4000;                                 // 0 -> default; always clamped, never unbounded
+
+APMF_API::Handle h = g_apmf->RequestCast(actorFormID, basis, &req);
+if (h == APMF_API::kInvalidHandle) { /* lost arbitration, or channel not registered */ }
+```
+
+`req` is copied synchronously, so a stack temporary is fine, and the call is safe
+from any thread. Re-request while you still want the cast; `Release(h)` when you do
+not. The claim is always TTL-bounded so a crashed client cannot strand an NPC.
+
+**What this unlocks.** The vanilla combat AI cannot classify a healing spell aimed
+at someone *else*, so it never builds one as a candidate and never considers casting
+it. That is why NPCs have only ever healed themselves through the game's AI. APMF
+supplies the one missing classification decision and the engine does the rest.
+
+**Practical notes.**
+- If the NPC holds a weapon from another source, use the **left** hand. Contesting the
+  weapon hand means that source re-equips over you and the cast dies.
+- A `kSelf` spell applied at an ally lands on the caster. Leave `proxy = 0` and APMF
+  mints a delivery-flipped copy.
+- Left at `stopPct = 0`, a channel runs to full restoration. Without it the engine stops
+  where its combat style says, which for a heal is roughly a quarter-second pulse.
+- A refused cast (no magicka, hand busy, spell unknown) visibly does not happen. Nothing
+  is faked. Check `APMF.log`.
+- **AE 1.6.1170 only.** The cast path refuses to install on other runtimes and on VR
+  rather than guessing at offsets. Kill switches live in `Data/SKSE/Plugins/APMF.ini`.
+
+
 ## The facet table
 
 Every facet is one `Intent` value in `native/APMF_API.h`. The proof tier says
@@ -136,6 +185,7 @@ columns, one doesn't imply the other.
 | `kIntent_CombatTarget` (ch.6) | Claim the combat-target facet | `form` (the target actor) | **Field-proven, in active production use.** MFO drives its combat targeting through this facet every fight. Arbitration only: APMF records the owner and the client writes the target itself. Denying a competing framework's own target write is still a future gap. |
 | `kIntent_CombatAction` (ch.7) | Deny named combat behavior-tree leaf categories (attack, bash, ranged attack, cast leaves, and more, grouped by category) | `ival` (a `CombatActionCategory` bitmask) | **Field-proven.** Graduated from a live deck probe: the deny fired, the tree fell back cleanly, no crash. |
 | `kIntent_SelectSpell` (ch.8) | Claim the casting facet | `form` (the spell FormID) | **Field-proven, for the owned/exact cast.** A follower AI-fired an animated spell allowed only through APMF's cast-check gate, live in combat, no whack-a-mole, no crash. This covers the single claimed spell as the actor's only castable choice. The graduated multi-spell allow list (`SetSpellAllowList`, v4) is a separate capability and is not yet proven. Denying a competing framework's own spell selection is also still a future gap. |
+| `kIntent_Cast` (ch.8b) | **Make the NPC's own AI cast a chosen spell at a chosen target.** ABI v5, use `RequestCast` | `APMF_CastRequest` (spell, proxy, target, flags, ttlMs) | **Field-proven** for heal-other on a follower: real animated casting, correct animation style, at the player and at another follower. APMF makes no equip, anim or cast call. Offense casts through this path are still being ported in the reference client. |
 | `kIntent_OfferPackage` (ch.9) | Claim the package-offer facet | `form` (the TESPackage FormID) | **Field-proven** for engage/release. A live deck run confirmed the redirect holds and releases cleanly. Save/load persistence of an engaged claim across that boundary is unexercised. |
 | `kIntent_Dialogue` (ch.10) | Pause the actor's own in-progress dialogue | none | Built, not yet battle-tested |
 | `kIntent_Disposition` (ch.11) | Aggression / confidence / assistance / morality bias | `fval` (reserved, not yet read) | **Field-proven.** An actor-value source-block, deck-tested to hold even on a package-locked actor. |
