@@ -21,4 +21,15 @@ namespace apmf::packagegate {
     // `actor` argument straight through even when it is null.
     void EvaluatePackage(RE::Actor* a_actor);
 
+    // RULE C heartbeat (marth 2026-09-06, "does 0x49 actually redirect?" probe) --
+    // call once per frame from Arbiter::OncePerFrame (game thread), same seat
+    // ActionGate.cpp's PfpHeartbeat() and NonAliasProbe.cpp's PollClaimedPackages()
+    // already use. INI-gated ([PackageGate] EnableRedirectLog, default ON -- see
+    // PackageGate.cpp); self-throttled internally to a fixed cadence, so this costs
+    // one relaxed atomic-bool load the rest of the time. Prints the cumulative
+    // 0x49-fired / fired-for-a-claimed-actor / redirect-won counters EVEN WHEN THEY
+    // ARE ZERO, so "the hook never fires for our claim" reads as a visible zero
+    // line, never as silence indistinguishable from "nothing to report."
+    void Heartbeat();
+
 }

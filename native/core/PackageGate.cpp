@@ -1,8 +1,18 @@
 #include "PCH.h"
 #include "core/Log.h"
+#include "core/Clock.h"
 #include "core/ControlMap.h"
 #include "core/NonAliasProbe.h"
 #include "core/PackageGate.h"
+
+#include <mutex>
+#include <unordered_map>
+
+// Win32 INI read for the redirect-probe log gate below. Declared by hand, exactly
+// like core/EquipGate.cpp / core/ActionGate.cpp / core/AiCastSeats.cpp do -- PCH
+// does not pull in <Windows.h>, and this is the single Win32 call this file needs.
+extern "C" __declspec(dllimport) unsigned long __stdcall GetPrivateProfileIntA(
+    const char* a_appName, const char* a_keyName, long a_default, const char* a_fileName);
 
 // ============================================================================
 // T3 -- CheckForCurrentAliasPackage (ch.9, Docs/CHANNEL-MAP.md). Graduated
@@ -39,6 +49,55 @@ namespace apmf::packagegate {
 
         std::atomic<bool> g_installed{ false };
 
+        // ========================================================================
+        // "Does 0x49 actually redirect?" probe (marth 2026-09-06). Answers the
+        // question marth's field read raised: an offered package might CLAIM and
+        // ENGAGE (ch.9 logs) while the follower is really just trailing the player
+        // and looting whatever it passes, with this hook never actually winning.
+        // FULLY PASSIVE -- reads the SAME orig/result/claim this thunk already
+        // computed below, never a new lookup, never a behavior change.
+        //
+        // RULE C (ActionGate.cpp's PfpHeartbeat precedent): two-level cumulative
+        // counters, printed EVEN AT ZERO by Heartbeat() below so "never fires" is a
+        // visible zero line, not silence indistinguishable from "nothing to log."
+        //   anchor  -- every 0x49 call seen, ANY actor: proves the thunk itself is
+        //              alive regardless of whether anyone currently holds a claim.
+        //   claimed -- the subset where the calling actor holds a winning
+        //              kIntent_OfferPackage claim: the number that answers "does
+        //              0x49 get CONSULTED for our claimed actor at all."
+        //   won     -- the subset of `claimed` where the claim's named package was
+        //              the one actually handed back to the engine.
+        std::atomic<bool>     g_redirectLogEnabled{ true };   // [PackageGate] EnableRedirectLog, default ON
+        std::atomic<std::uint64_t> g_redirectAnchorHits{ 0 };
+        std::atomic<std::uint64_t> g_redirectClaimedHits{ 0 };
+        std::atomic<std::uint64_t> g_redirectWinHits{ 0 };
+
+        // RULE D -- dedup by TRANSITION, never a bare timer (a prior probe printed
+        // 37 identical lines of a stable condition through a 1.5s throttle). One
+        // line per (actor, answer-tuple); logged again only on first sighting per
+        // actor or when the answer changes. Combat-thread calls here are rare
+        // (package re-evaluation cadence, not per-frame), so a small mutex is fine
+        // -- same shape as ActionGate.cpp's mvcbt throttle table.
+        struct RedirectAnswer {
+            RE::FormID orig;
+            RE::FormID result;
+            RE::FormID claimForm;
+            bool       claimPresent;
+            bool operator==(const RedirectAnswer&) const = default;
+        };
+        std::mutex                                        g_redirectMx;
+        std::unordered_map<RE::FormID, RedirectAnswer>    g_redirectLast;
+
+        // Defensive session line cap (RULE E) -- the transition dedup above should
+        // already keep this near-silent; this only guards against a pathological
+        // flip-flop actor spamming the log. Counters above are NEVER capped.
+        constexpr std::uint64_t    kRedirectLineCap = 600;
+        std::atomic<std::uint64_t> g_redirectLineCount{ 0 };
+
+        constexpr std::uint64_t    kRedirectHeartbeatMs = 30000;   // ~30s, matches ActionGate.cpp's mvcbt cadence
+        std::atomic<std::uint64_t> g_redirectLastHeartbeatMs{ 0 };
+        // ========================================================================
+
         struct PkgHook {
             static RE::TESPackage* thunk(RE::Actor* a_this) {
                 RE::TESPackage* orig = func(a_this);   // the engine's own answer first
@@ -55,6 +114,7 @@ namespace apmf::packagegate {
                 // byte-identical to before this widening).
                 APMF_API::APMF_Param claim{};
                 bool claimPresent = false;
+                bool won = false;   // redirect-probe only: did OUR named package win this call?
 
                 do {
                     if (apmf::ControlMap::Get().ControlledCount() == 0) break;   // near-zero cost
@@ -65,9 +125,50 @@ namespace apmf::packagegate {
                     claimPresent = true;
                     if (claim.form == 0) break;   // claimed but no package named -- channel default, no redirect
 
-                    if (auto* pkg = RE::TESForm::LookupByID<RE::TESPackage>(claim.form)) { result = pkg; break; }
+                    if (auto* pkg = RE::TESForm::LookupByID<RE::TESPackage>(claim.form)) { result = pkg; won = true; break; }
                     // named FormID doesn't resolve -- degrade to the engine's own answer, never null
                 } while (false);
+
+                // "Does 0x49 actually redirect?" probe (marth 2026-09-06). RULE C
+                // cumulative counters -- unconditional, no INI gate on the counting
+                // itself (only the printed lines are gated), so Heartbeat() can
+                // always report a true zero rather than "never counted." Reuses
+                // orig/result/claim/claimPresent/won already computed above --
+                // zero new lookups, zero behavior change.
+                g_redirectAnchorHits.fetch_add(1, std::memory_order_relaxed);
+                if (claimPresent) {
+                    g_redirectClaimedHits.fetch_add(1, std::memory_order_relaxed);
+                    if (won) g_redirectWinHits.fetch_add(1, std::memory_order_relaxed);
+
+                    if (g_redirectLogEnabled.load(std::memory_order_relaxed)) {
+                        const RE::FormID actorId = a_this->GetFormID();
+                        const RedirectAnswer answer{
+                            orig ? orig->GetFormID() : 0,
+                            result ? result->GetFormID() : 0,
+                            claim.form,
+                            claimPresent,
+                        };
+                        bool changed = false;
+                        {
+                            std::scoped_lock lock(g_redirectMx);
+                            auto [it, inserted] = g_redirectLast.try_emplace(actorId, answer);
+                            if (inserted) {
+                                changed = true;
+                            } else if (!(it->second == answer)) {
+                                it->second = answer;
+                                changed = true;
+                            }
+                        }
+                        if (changed &&
+                            g_redirectLineCount.fetch_add(1, std::memory_order_relaxed) < kRedirectLineCap) {
+                            spdlog::info("[ch.9-redirect] actor=0x{} engineOrig=0x{} apmfResult=0x{} "
+                                         "claimForm=0x{} won={}",
+                                         apmf::log::Hex(actorId), apmf::log::Hex(answer.orig),
+                                         apmf::log::Hex(answer.result), apmf::log::Hex(answer.claimForm),
+                                         won);
+                        }
+                    }
+                }
 
                 // OBSERVE-ONLY (Docs/PROBE-NONALIAS-PACKAGE.md §6.1, extended per
                 // Docs/SPEC-PACKAGE-HOLD.md §4.1 item 2/3): does this hook even get
@@ -121,9 +222,23 @@ namespace apmf::packagegate {
         REL::Relocation<std::uintptr_t> charVtbl{ RE::VTABLE_Character[0] };
         PkgHook::func = charVtbl.write_vfunc(PkgHook::idx, PkgHook::thunk);
 
+        // "Does 0x49 actually redirect?" probe -- default ON (read-only, low
+        // volume: RULE D dedup-on-transition + a 600-line/session defensive cap;
+        // see the anon-namespace block above). [PackageGate] EnableRedirectLog=0
+        // in Data/SKSE/Plugins/APMF.ini disables both the per-transition
+        // [ch.9-redirect] lines and the [ch.9-redirect] H heartbeat; the
+        // underlying counters themselves are always tallied regardless (near-zero
+        // cost -- three relaxed atomic increments) so toggling the flag mid-session
+        // never loses history.
+        g_redirectLogEnabled.store(GetPrivateProfileIntA("PackageGate", "EnableRedirectLog", 1,
+                                                          "Data/SKSE/Plugins/APMF.ini") != 0,
+                                   std::memory_order_relaxed);
+
         spdlog::info("[ch.9] package-offer allowance hooked (Character::CheckForCurrentAliasPackage, 0x49) -- "
                      "a kIntent_OfferPackage claim with APMF_Param::form set to a TESPackage FormID redirects "
-                     "that actor's alias-package answer to it; the engine runs it natively.");
+                     "that actor's alias-package answer to it; the engine runs it natively. Redirect-probe "
+                     "logging ([ch.9-redirect]) is {} ([PackageGate] EnableRedirectLog, DEFAULT ON).",
+                     g_redirectLogEnabled.load(std::memory_order_relaxed) ? "ARMED" : "disabled by INI");
     }
 
     void EvaluatePackage(RE::Actor* a_actor) {
@@ -131,6 +246,35 @@ namespace apmf::packagegate {
         using func_t = void (*)(RE::Actor*, bool, bool);
         static REL::Relocation<func_t> func{ RELOCATION_ID(36407, 37401) };
         func(a_actor, true, false);   // resetAI MUST stay false -- never a full AI reset
+    }
+
+    void Heartbeat() {
+        // RULE C -- prints ONCE per ~30s interval, INCLUDING ZERO counts, so
+        // silence is never mistaken for "0x49 never fires." Cheap when disabled or
+        // unclaimed: one relaxed atomic-bool load (plus, once armed, one more for
+        // the throttle) -- no ControlMap touch unless the interval has elapsed.
+        if (!g_redirectLogEnabled.load(std::memory_order_relaxed)) return;
+
+        const auto now  = apmf::clock::MonotonicMs();
+        const auto last = g_redirectLastHeartbeatMs.load(std::memory_order_relaxed);
+        if (now - last < kRedirectHeartbeatMs) return;
+        g_redirectLastHeartbeatMs.store(now, std::memory_order_relaxed);   // main-thread-only writer, no race
+
+        // Read-only RCU snapshot (INVARIANTS #13: a small map) -- how many actors
+        // are CURRENTLY claimed on kIntent_OfferPackage, for context alongside the
+        // cumulative counters below.
+        const auto claimedNow = apmf::ControlMap::Get().ClaimedActors(APMF_API::kIntent_OfferPackage).size();
+
+        const auto lineCount = g_redirectLineCount.load(std::memory_order_relaxed);
+        const auto dropped   = lineCount > kRedirectLineCap ? lineCount - kRedirectLineCap : 0;
+
+        spdlog::info("[ch.9-redirect] H claimedActorsNow={} anchorHits={} claimedHits={} winHits={} "
+                     "transitionLinesDropped={}",
+                     claimedNow,
+                     g_redirectAnchorHits.load(std::memory_order_relaxed),
+                     g_redirectClaimedHits.load(std::memory_order_relaxed),
+                     g_redirectWinHits.load(std::memory_order_relaxed),
+                     dropped);
     }
 
 }
