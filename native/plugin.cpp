@@ -14,6 +14,7 @@
 #include "core/PackageGate.h"
 #include "core/NonAliasProbe.h"
 #include "core/AiCastSeats.h"
+#include "core/CastClassify.h"
 
 // ============================================================================
 // APMF -- AI Package Management Framework. Entry point (thin).
@@ -66,6 +67,9 @@ namespace {
         case SKSE::MessagingInterface::kDataLoaded:
             apmf::hook::Install();
             apmf::castgate::Install();           // T2c CheckCast allowance (Docs/ALLOWANCE-TEMPLATE.md)
+            apmf::castclassify::Install();       // ch.8b SEAT 0: classify a heal/buff-OTHER spell into
+                                                  // the SAME table row a self-heal uses (CombatMagicItemData
+                                                  // vfunc slot 1). AE-only; VR/SE-refused inside.
             apmf::equipgate::Install();          // T2a CheckShouldEquip allowance
             apmf::actiongate::Install();         // T1 combat-action allowance (ch.7; VR-refused inside)
             apmf::packagegate::Install();        // T3 package-offer allowance (ch.9; VR-refused inside)

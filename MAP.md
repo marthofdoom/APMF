@@ -208,8 +208,39 @@ claim publishes — INVARIANTS #20), `plugin.cpp` (`ResetAll` on revert + kPreLo
   NOT be seat-forced: casting it at an ally would silently heal the caster instead.
   DOCUMENTED CLIENT DEPENDENCY: teaching the proxy only makes it selectable once the
   actor's `CombatInventory` REBUILDS; the one confirmed dirty-trigger is a change of
-  `Actor::GetCombatStyle()` (MFO's `MFO_CastStyle` swap does this). APMF does not
-  force a rebuild — no version-robust, RTTI-verified lever exists for it (#7).
+  `Actor::GetCombatStyle()` (MFO's `MFO_CastStyle` swap does this). **UPDATE
+  (feat/seat0-classify, 2026-09-05): APMF now ALSO forces a rebuild itself** —
+  `core/EquipGate.cpp`'s `EquipGateThunk` sets `CombatController::inventory->dirty =
+  true` (both real, CommonLib-declared members — no raw offset) every call it makes
+  for an actor holding a live cast-seat claim. This is additive to the MFO trigger
+  above, not a replacement, and only fires while the hook is already being called for
+  the actor (i.e. it has at least one OTHER magic/staff item already) — see that
+  file's own comment for the documented edge case.
+
+### `native/core/CastClassify.{h,cpp}` — ch.8b SEAT 0: CLASSIFY (2026-09-05)
+**THE ROOT-CAUSE FIX** the other five seats sat downstream of and could never reach:
+a heal/buff-OTHER spell (kTargetActor/kAimed RestoreHealth — Healing Hands, Heal
+Other, every delivery-flip proxy) was **NEVER GIVEN a `CombatInventoryItem` at all**
+by the engine's own classifier (the 23-row table at `0x20163b0` has no row for
+`(Health, self=0, hostile=0)` — RE notebook J3/J9). Hooks `VTABLE_CombatMagicItemData`
+slot 1 (the per-effect classification visitor, `0x81d830`, ID 45321): if the effect's
+owning spell (`+0x10`) is the live `kIntent_Cast` claim's DRIVEN form for the
+deliberating actor (`+0x18` `CombatController*` → `attackerHandle`), force the
+self-delivery byte at `+0x4c` to 1 **before chaining** — the classifier then keys the
+SAME row a self-heal uses (Restore, creator `0x824510`). Deliberately NOT restored
+after the call (a multi-effect spell re-enters this thunk once per effect on the SAME
+resolver; delivery is a spell-level property, so every effect of that spell should see
+the same forced answer within one classify pass — see the .cpp's comment).
+- **What breaks:** `CombatMagicItemData` is NOT a CommonLib-declared type in this
+  pinned rev — no header, no `static_assert`. Verification is by RTTI **mangled-name
+  string match** (`.?AVCombatMagicItemData@@`) at install, since no
+  `RTTI_CombatMagicItemData` Address-Library ID was established during the RE pass
+  (documented gap — a name mismatch refuses install, never a blind write). AE-ONLY:
+  refuses on SE 1.5.97 and VR (the `+0x10/+0x18/+0x4c` offsets are disassembly-CERTAIN
+  on 1.6.1170 only). INI kill-switch `[CastSeats] EnableSeat0Classify` (default 1).
+  Install ordering vs `core/EquipGate.cpp`/`core/CastSeats.cpp` does not matter
+  (disjoint vtable). Runs on the combat thread; one lock-free RCU read
+  (`TryGetCastSeatClaim`), no mutex, no engine call besides the chained original.
 
 ### `native/core/CastSeats.{h,cpp}` — ch.8b: THE ENGINE CAST SEATS (the keystone)
 While a `kIntent_Cast` claim {actor A, spell S, target T} stands, APMF answers the
@@ -358,6 +389,21 @@ VR-refused, install-once.
   same block also DENIES the original kSelf spell's item while its proxy is being
   driven (N4 exactness — `AllowedCastForHand` permits spell||proxy and would
   otherwise let the AI take the hand with the self-healing form).
+  **0x0F COMPLETENESS FIX + SEAT 0 REBUILD TRIGGER (feat/seat0-classify, 2026-09-05,
+  RE notebook J9 / INVARIANTS #18):** below the driven-form match, any Restore item
+  whose spell delivery is NOT `kSelf` and is NOT the live claim's driven form is now
+  denied OUTRIGHT (`item->GetDelivery() != kSelf → false`) — vanilla data never
+  produces one (no table row exists for it, `core/CastClassify.cpp`'s own finding),
+  so this changes nothing today; it closes the path a stale/foreign heal-OTHER item
+  could reach the hands after Release, on the wrong hand, or from a future source
+  (`0x81f7c0` aims a non-self Restore item at `ctrl.TARGET`, i.e. the FOE). Also: this
+  thunk now sets `a_cc->inventory->dirty = true` (one lock-free RCU read of the cast
+  claim, reused by both this write and the block above) whenever the deliberating
+  actor holds a live cast-seat claim — the rebuild trigger `core/CastClassify.cpp`
+  needs to reclassify the claim's spell; see that file's entry above for the scope
+  note. Per-call trace log added (`[EquipGate] EnableEquipGateLog`, default OFF) —
+  the 0x0F force/deny decisions above always log at the seat's own throttle
+  regardless of that flag.
 
 ### `native/core/ActionGate.{h,cpp}` — T1: the combat behavior-tree allowance (ch.7 ONLY)
 `Install()` (kDataLoaded, VR-refused, install-once) hooks the 70

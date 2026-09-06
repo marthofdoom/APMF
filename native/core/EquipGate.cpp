@@ -1,11 +1,18 @@
 #include "PCH.h"
 #include "core/Log.h"
+#include "core/Clock.h"
 #include "core/Allowance.h"
-#include "core/ControlMap.h"
 #include "core/ControlMap.h"
 #include "core/EquipGate.h"
 
 #include <unordered_set>
+
+// Win32 INI read for the one log-gate flag this file adds below. Declared by
+// hand, exactly like core/AiCastSeats.cpp / core/CastSeats.cpp / core/Hook.cpp
+// do -- PCH does not pull in <Windows.h>, and this is the single Win32 call
+// this file needs.
+extern "C" __declspec(dllimport) unsigned long __stdcall GetPrivateProfileIntA(
+    const char* a_appName, const char* a_keyName, long a_default, const char* a_fileName);
 
 // ============================================================================
 // T2a -- CheckShouldEquip, the combat AI's per-item "should I put this in my
@@ -106,10 +113,57 @@ namespace apmf::equipgate {
                       "CombatInventoryItem::itemSlot moved -- re-verify against the "
                       "pinned header before shipping (per-hand deny reads "
                       "itemSlot.equipSlot, INVARIANTS #18)");
+        // ch.8b SEAT 0 REBUILD TRIGGER (RE notebook J7/J9): both plain CommonLib-
+        // declared members (clib/include/RE/C/CombatController.h /
+        // CombatInventory.h per the RE pass) -- no raw offset invented here, just
+        // guarded exactly as #7 asks. `inventory` sits at 0x10, well below the AE
+        // +0x68 divergence point, so it is layout-identical on SE and AE.
+        static_assert(offsetof(RE::CombatController, inventory) == 0x10,
+                      "CombatController::inventory moved -- re-verify against the "
+                      "pinned header before shipping (SEAT 0 rebuild trigger)");
+        static_assert(offsetof(RE::CombatInventory, dirty) == 0x1C4,
+                      "CombatInventory::dirty moved -- re-verify against the pinned "
+                      "header before shipping (SEAT 0 rebuild trigger)");
 
         using CheckShouldEquip_t = bool (*)(RE::CombatInventoryItem*, RE::CombatController*);
 
         std::unordered_map<std::uintptr_t, std::uintptr_t> g_orig;
+
+        // ---- ch.8b / t2a PER-CALL LOG (2026-09-05): 0x0F previously had NO
+        // per-call log at all -- the field session that produced the RE notebook's
+        // J5 finding could not show whether this seat was ever reached for a
+        // Restore item. Rate-limited (per actor+subject, matching every other
+        // seat's cadence in this codebase) and INI-gated ([EquipGate]
+        // EnableEquipGateLog, default 0 -- this hook is called for up to 30
+        // vtables x every known spell/staff item, every rescore pass, so it can
+        // be noisy; the SEAT 0x0F force/deny decisions below log unconditionally
+        // at the same throttle regardless of this flag, since those are rare,
+        // load-bearing decisions rather than routine traffic). ----
+        std::atomic<bool> g_logEnabled{ false };
+        std::mutex                                       g_rlMx;
+        std::unordered_map<std::uint64_t, std::uint64_t> g_lastLogMs;
+
+        bool LogDue(RE::FormID a_actor, RE::FormID a_subject) {
+            const auto now = apmf::clock::MonotonicMs();
+            const auto key = (static_cast<std::uint64_t>(a_actor) << 32) | static_cast<std::uint64_t>(a_subject);
+            std::scoped_lock lk(g_rlMx);
+            auto& last = g_lastLogMs[key];
+            if (now - last < 1500) return false;
+            last = now;
+            return true;
+        }
+
+        // Mirrors core/AiCastSeats.cpp's ResolveTypeName exactly (raw
+        // MSVC-decorated name; no demangler exists anywhere in this codebase or
+        // CommonLib). Never guesses -- returns nullptr on any missing RTTI link.
+        const char* ResolveTypeName(std::uintptr_t a_vtableAddr) {
+            if (!a_vtableAddr) return nullptr;
+            auto* colPtr = *reinterpret_cast<RE::RTTI::CompleteObjectLocator**>(a_vtableAddr - sizeof(void*));
+            if (!colPtr) return nullptr;
+            auto* td = colPtr->typeDescriptor.get();
+            if (!td) return nullptr;
+            return td->mangled_name();
+        }
         // ch.8b SEAT 0x0F (feat/ai-cast-seats-impl): which of the 30 patched item
         // vtables are the RESTORE templates. Recorded at install from the two NAMED
         // symbols (never inferred) so the seat's non-chaining force is scoped to
@@ -204,29 +258,101 @@ namespace apmf::equipgate {
             //     never forced (it would land on the caster, not the ally); and
             //   * only the claim's OWN HAND when this call resolves to one.
             // ================================================================
+            // ch.8b SEAT 0 REBUILD TRIGGER (RE notebook J9): ONE lock-free RCU
+            // read, resolved here (regardless of which of the 30 vtables `vt` is)
+            // and reused by both the SEAT 0x0F block below and the completeness
+            // fix. While a live cast claim stands on this actor, re-arm
+            // `CombatInventory::dirty` every tick this hook runs for ANY of the
+            // actor's items -- the proper, engine-native trigger for the NEXT
+            // `CombatInventory::Rebuild` to re-run SEAT 0's classification
+            // (core/CastClassify.cpp) for the claim's driven spell, rather than
+            // relying solely on MFO's own combat-style-swap side effect (J7's
+            // original, still-standing mechanism -- this is additive, never a
+            // replacement). `a_cc` is the SAME engine-supplied CombatController*
+            // this thunk already reads fid/subjectForm from; no NEW Actor->
+            // CombatController resolution is introduced anywhere (there is no
+            // CommonLib accessor for that on this pinned rev -- Docs/PROBE-
+            // NONALIAS-PACKAGE.md already documents the neighbouring
+            // `combatController` field as accessor-less). One bool write,
+            // idempotent, no engine call. Scope note: this only fires while THIS
+            // hook is already being called for the actor, i.e. the actor must
+            // have at least one OTHER existing magic/staff CombatInventoryItem
+            // (0x0F's own precondition) -- a follower with literally no other
+            // known spell/staff still depends on MFO's pre-existing trigger for
+            // the very FIRST rebuild after a claim engages; documented, not
+            // silent (see the PR notes).
+            apmf::CastSeatClaim seat{};
+            bool hasLiveSeat = false;
+            if (fid != 0) {
+                hasLiveSeat = apmf::ControlMap::Get().TryGetCastSeatClaim(fid, seat) && seat.targetHandle;
+                if (hasLiveSeat && a_cc && a_cc->inventory) a_cc->inventory->dirty = true;
+            }
+
             if (fid != 0 && subjectForm != 0 && g_restoreVtables.contains(vt)) {
-                apmf::CastSeatClaim seat{};
-                if (apmf::ControlMap::Get().TryGetCastSeatClaim(fid, seat) && seat.targetHandle) {
-                    const RE::FormID driven = seat.proxy ? seat.proxy : seat.spell;
-                    const bool       handOk =
-                        (callerHand == allowance::Hand::kUnknown) ||
-                        (callerHand == ((seat.flags & APMF_API::kCastFlag_LeftHand)
-                                            ? allowance::Hand::kLeft : allowance::Hand::kRight));
-                    if (handOk && driven != 0) {
-                        if (subjectForm == driven) return true;   // THE non-chaining answer
-                        // N4 exactness: while a delivery-flip proxy is being driven, the
-                        // ORIGINAL kSelf spell's own Restore item must NOT be allowed to
-                        // take the hand instead -- the AI would cast it and silently heal
-                        // the CASTER. `AllowedCastForHand` permits spell||proxy, so it
-                        // would let this through; deny it explicitly here.
-                        if (seat.proxy != 0 && subjectForm == seat.spell) return false;
-                    }
+                RE::FormID driven = 0;
+                bool       handOk = false;
+                if (hasLiveSeat) {
+                    driven = seat.proxy ? seat.proxy : seat.spell;
+                    handOk = (callerHand == allowance::Hand::kUnknown) ||
+                             (callerHand == ((seat.flags & APMF_API::kCastFlag_LeftHand)
+                                                 ? allowance::Hand::kLeft : allowance::Hand::kRight));
+                }
+
+                if (handOk && driven != 0 && subjectForm == driven) {
+                    if (LogDue(fid, subjectForm))
+                        spdlog::info("[t2a seat 0x0F] 0x{} CheckShouldEquip item=0x{} -> YES (non-chaining; "
+                                     "claim spell 0x{}{} target 0x{}) -- ELIGIBLE for the equipment set; the "
+                                     "AI's own scoring/slot/range/resource gates still decide whether it is "
+                                     "actually equipped.",
+                                     apmf::log::Hex(fid), apmf::log::Hex(subjectForm), apmf::log::Hex(seat.spell),
+                                     seat.proxy ? " via delivery-flip proxy" : "", apmf::log::Hex(seat.target));
+                    return true;   // THE non-chaining answer
+                }
+                if (handOk && seat.proxy != 0 && subjectForm == seat.spell) {
+                    // N4 exactness: while a delivery-flip proxy is being driven, the
+                    // ORIGINAL kSelf spell's own Restore item must NOT be allowed to
+                    // take the hand instead -- the AI would cast it and silently heal
+                    // the CASTER. `AllowedCastForHand` permits spell||proxy, so it
+                    // would let this through; deny it explicitly here.
+                    if (LogDue(fid, subjectForm))
+                        spdlog::info("[t2a seat 0x0F] 0x{} CheckShouldEquip item=0x{} -> NO (N4: the original "
+                                     "kSelf spell while its delivery-flip proxy 0x{} is being driven -- would "
+                                     "silently heal the caster instead of the claimed ally).",
+                                     apmf::log::Hex(fid), apmf::log::Hex(subjectForm), apmf::log::Hex(seat.proxy));
+                    return false;
+                }
+
+                // ch.8b SEAT 0x0F COMPLETENESS FIX (RE notebook J9, Docs/INVARIANTS.md
+                // #18): by this point subjectForm is definitely NOT the live claim's
+                // driven form (the match above would have returned already) -- so ANY
+                // Restore item whose spell delivery is NOT kSelf must be denied
+                // outright, whether or not a claim currently stands. Vanilla data
+                // never produces one at all (J3: the classifier's key requires
+                // delivery==kSelf for every Restore-typed effect), so this changes
+                // NOTHING today; it closes the one path a heal-OTHER item could
+                // otherwise reach the hands after its claim releases, on the wrong
+                // hand, or from a future/foreign source -- 0x81f7c0 aims a non-self
+                // Restore item at `ctrl.TARGET`, i.e. the FOE.
+                if (a_this->item && a_this->item->GetDelivery() != RE::MagicSystem::Delivery::kSelf) {
+                    if (LogDue(fid, subjectForm))
+                        spdlog::info("[t2a seat 0x0F] 0x{} CheckShouldEquip item=0x{} -> NO (completeness fix: "
+                                     "non-self-delivery Restore item, not the live claim's driven form).",
+                                     apmf::log::Hex(fid), apmf::log::Hex(subjectForm));
+                    return false;
                 }
             }
 
             // ---- From here down: UNCHANGED, engine-answer-first DENY (#17). The
             // engine gets the first word and APMF only ever flips its YES to NO. ----
             const bool engineSays = original(a_this, a_cc);
+            if (g_logEnabled.load(std::memory_order_relaxed) && fid != 0 && LogDue(fid, subjectForm)) {
+                const char* cls = ResolveTypeName(vt);
+                spdlog::info("[t2a] 0x{} CheckShouldEquip item=0x{} class={} hand={} engineSays={}",
+                             apmf::log::Hex(fid), apmf::log::Hex(subjectForm), cls ? cls : "<unresolved>",
+                             callerHand == allowance::Hand::kLeft    ? "L" :
+                             callerHand == allowance::Hand::kRight   ? "R" : "?",
+                             engineSays ? "YES" : "NO");
+            }
             if (!engineSays) return false;   // the AI already declined -- nothing to own
             if (!a_cc || fid == 0) return engineSays;
 
@@ -295,6 +421,10 @@ namespace apmf::equipgate {
             return;
         }
         if (g_installed.exchange(true)) return;
+
+        g_logEnabled.store(GetPrivateProfileIntA("EquipGate", "EnableEquipGateLog", 0,
+                                                  "Data/SKSE/Plugins/APMF.ini") != 0,
+                           std::memory_order_relaxed);
 
         // Per-hand deny (INVARIANTS #18): resolve the vanilla Left/Right Hand
         // BGSEquipSlot forms ONCE, through CommonLib's own version-robust
@@ -369,9 +499,13 @@ namespace apmf::equipgate {
                      "vtable(s) -- ch.8 casting-select and ch.15 equipment (weapon-order) "
                      "claims now enforced here too; ch.8b is per-hand-scoped via "
                      "itemSlot.equipSlot (left-hand slot {}, right-hand slot {}). ch.8b SEAT 0x0F "
-                     "armed on the Restore templates only.",
+                     "armed on the Restore templates only; the SEAT 0 rebuild trigger and the 0x0F "
+                     "completeness fix (non-self Restore item denied unless it is the live claim's "
+                     "driven form) run on every patched vtable. Per-call trace log: {} ([EquipGate] "
+                     "EnableEquipGateLog).",
                      n, static_cast<void*>(g_leftHandSlot.load(std::memory_order_relaxed)),
-                     static_cast<void*>(g_rightHandSlot.load(std::memory_order_relaxed)));
+                     static_cast<void*>(g_rightHandSlot.load(std::memory_order_relaxed)),
+                     g_logEnabled.load(std::memory_order_relaxed) ? "ON" : "OFF (default)");
     }
 
 }
