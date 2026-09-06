@@ -77,8 +77,11 @@ namespace {
                                                   // (Docs/PROBE-NONALIAS-PACKAGE.md; VR-refused inside)
             apmf::aicastseats::Install();        // OBSERVE-ONLY: the 4 AI cast-decision seats
                                                   // (CalculateScore/CheckStartCast/GetMagicTarget/
-                                                  // CheckStopCast). Both groups still config-gated
-                                                  // OFF by default. VR-refused inside.
+                                                  // CheckStopCast, groups A/B) still config-gated OFF
+                                                  // by default, PLUS GROUP C: weapon-class (Melee/
+                                                  // Ranged/Shield/Torch) CalculateScore, default ON,
+                                                  // + its own score-steer bias flag, default OFF.
+                                                  // VR-refused inside; GROUP C also AE-only.
             apmf::castseats::Install();          // ch.8b ACTIVE engine cast seats (0x06/0x07/0x0A/
                                                   // 0x0D on the Restore caster vtable ONLY).
                                                   // DELIBERATELY INSTALLED AFTER the passive probe:

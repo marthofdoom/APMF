@@ -2,7 +2,10 @@
 #include "core/Log.h"
 #include "core/Allowance.h"
 #include "core/Clock.h"
+#include "core/ControlMap.h"
 #include "core/AiCastSeats.h"
+
+#include <cmath>
 
 // Win32 INI read for the two group flags below. Declared by hand, exactly
 // like Hook.cpp's GetCurrentThreadId() -- PCH does not pull in <Windows.h>,
@@ -97,8 +100,8 @@ namespace apmf::aicastseats {
         // always-on rate-limited logging only, never a runtime input switch.
         // Missing file/section/key -> GetPrivateProfileIntA returns the default
         // (0/OFF) without erroring, so this is safe with no ini present at all.
-        bool ReadIniFlag(const char* a_key) {
-            return GetPrivateProfileIntA("AiCastSeats", a_key, 0, "Data/SKSE/Plugins/APMF.ini") != 0;
+        bool ReadIniFlag(const char* a_key, long a_default = 0) {
+            return GetPrivateProfileIntA("AiCastSeats", a_key, a_default, "Data/SKSE/Plugins/APMF.ini") != 0;
         }
 
         // ---- layout guards (ENGINE_NOTES §0.29 -- the AE +8 CombatController
@@ -221,6 +224,176 @@ namespace apmf::aicastseats {
                              score);
             }
             return score;
+        }
+
+        // ======================================================================
+        // GROUP C -- TASK 1 (PRIMARY, ships enabled) + TASK 2 (score bias, ships
+        // DISABLED). CalculateScore (0x0C) on the WEAPON-CLASS CombatInventoryItem
+        // leaves -- Melee, Ranged, Shield, Torch. Opus PASS S, 2026-09-06,
+        // disasm-CONFIRMED (do NOT re-derive): these four have NO CommonLib
+        // concrete C++ class and therefore NO `RE::VTABLE_*` symbol (the same
+        // finding core/EquipGate.cpp's file banner and Docs/DENY-COMPLETENESS-
+        // AUDIT.md row 15 already record for why 0x0F can't be hooked for
+        // weapons) -- so this group resolves each vtable from a RAW RVA
+        // (`REL::Offset`, no `REL::VariantID`; no Address-Library ID exists for
+        // any of the four) and is AE-ONLY (1.6.1170; the RVAs are meaningless on
+        // any other build).
+        //
+        // Melee+Ranged share arbitration category 0; Shield+Torch share category
+        // 3 (the engine's fixed `[1,2,4,0,3,5,0,6]` order table + slot-bitmask
+        // occupancy walks categories score-BLIND -- only WITHIN a category does
+        // `itemScore` (`+0x18`) actually get compared, ascending, highest wins).
+        // A weapon score can therefore only ever decide melee-vs-ranged or
+        // shield-vs-torch; it can never outscore a spell that already claimed
+        // the hand (weapons are walked after categories 1/2/4) -- TASK 2 below
+        // does not attempt that.
+        //
+        // INSTALL-TIME VERIFICATION, belt-and-suspenders and STRONGER than an
+        // RTTI-name guess: this codebase has never established the real mangled
+        // class names for these four leaves (unlike CastClassify.cpp's
+        // CombatMagicItemData, which at least has a confirmed name to string-
+        // match). So the GATING check here is the one fact this session actually
+        // disassembled -- the LIVE function pointer already sitting in vtable
+        // slot 0x0C, BEFORE this file writes anything, must equal the
+        // disasm-confirmed CalculateScore address for that exact class. A
+        // mismatch means the vtable RVA resolved to something other than what
+        // marth's table names for THIS build -- refuse that one class, log both
+        // addresses, never a blind write. RTTI name is ALSO resolved and logged
+        // per class at install, informational only (not gating), so a future
+        // pass can confirm/replace this whole check with a real name match.
+        //
+        // TASK 2 (score bias, [AiCastSeats] EnableScoreSteer, default 0): while a
+        // live ch.15 `kIntent_Equipment` claim on this actor names THIS item's
+        // exact form (the SAME claim core/EquipGate.cpp's T2a gate already reads
+        // via `Allowance::Allowed`), the engine's own returned score is biased
+        // UPWARD by a fixed constant -- never fabricated from nothing, the
+        // engine always answers first and the base is always its real number.
+        // Independent of GROUP C's own probe flag being armed: TASK 2 can only
+        // ever fire if TASK 1's hook is actually installed, and Install() logs
+        // that dependency explicitly. Stays OFF until TASK 1's probe data
+        // (deliverable of this same change) confirms 0x0C actually runs for a
+        // follower and for which of these four classes.
+        // ======================================================================
+
+        using WeaponScore_t = float (*)(RE::CombatInventoryItem*, RE::CombatController*);
+
+        struct WeaponClassSpec {
+            const char*    tag;            // for logging only
+            std::uintptr_t vtableRva;      // AE 1.6.1170 RVA, disasm-confirmed
+            std::uintptr_t calcScoreRva;   // this class's OWN CalculateScore impl RVA -- the install-time gate
+            int            category;       // engine arbitration category (informational)
+        };
+        constexpr WeaponClassSpec kWeaponClasses[] = {
+            { "Melee",  0x18c9028, 0x8183e0, 0 },
+            { "Ranged", 0x18c90d8, 0x8188b0, 0 },
+            { "Shield", 0x18c9188, 0x818df0, 3 },
+            { "Torch",  0x18c92e8, 0x819480, 3 },
+        };
+
+        struct WeaponClassInfo { const char* tag; int category; };
+        std::unordered_map<std::uintptr_t, WeaponClassInfo> g_weaponClassInfo;
+        std::unordered_map<std::uintptr_t, std::uintptr_t>  g_weaponScoreOrig;
+        std::atomic<bool> g_scoreSteerEnabled{ false };
+
+        // PLACEHOLDER magnitude (marth 2026-09-06): no field data exists yet on
+        // this category's real score distribution -- exactly what TASK 1's own
+        // probe below is for. An additive constant chosen only to dominate any
+        // plausible same-category spread once real numbers are in; revisit this
+        // value (or replace with a proportional bias) once GROUP C's probe lines
+        // report actual magnitudes. This is WHY TASK 2 ships OFF (see Install()).
+        constexpr float kScoreSteerBias = 100000.0f;
+
+        // Dedup-on-transition, not a bare time throttle (marth 2026-09-06: "a
+        // recent probe printed 37 identical lines of a stable condition through
+        // a 1.5s throttle -- a throttle is not a dedup"). Logs on first sighting
+        // of a (actor,item) key, on a real score/bias-state change beyond
+        // epsilon, or on a long heartbeat floor so a genuinely stable value still
+        // proves the probe alive at least once per window -- never silently.
+        // `kMinChangeIntervalMs` only guards a pathological same-tick oscillation
+        // from flooding; it never suppresses the FIRST report of a change.
+        struct WeaponScoreLogState { std::uint64_t lastMs = 0; float lastScore = 0.0f; bool biased = false; };
+        std::unordered_map<std::uint64_t, WeaponScoreLogState> g_weaponScoreLogState;
+        constexpr float          kScoreEpsilon         = 0.01f;
+        constexpr std::uint64_t  kHeartbeatMs          = 15000;
+        constexpr std::uint64_t  kMinChangeIntervalMs  = 250;
+
+        bool WeaponScoreLogDue(RE::FormID a_actor, RE::FormID a_subject, float a_score, bool a_biased) {
+            const auto now = apmf::clock::MonotonicMs();
+            const auto key = RlKey(a_actor, a_subject);
+            std::scoped_lock lk(g_rlMx);   // shares the file's one throttle mutex -- leaf lock, no engine call under it
+            auto& st = g_weaponScoreLogState[key];
+            const bool first     = (st.lastMs == 0);
+            const bool changed   = !first && (std::fabs(a_score - st.lastScore) > kScoreEpsilon || a_biased != st.biased);
+            const bool heartbeat = !first && (now - st.lastMs) >= kHeartbeatMs;
+            if (!first && !changed && !heartbeat) return false;                              // stable, floor not due -- SUPPRESS
+            if (!first && changed && !heartbeat && (now - st.lastMs) < kMinChangeIntervalMs)
+                return false;                                                                // oscillation guard only
+            st = { now, a_score, a_biased };
+            return true;
+        }
+
+        float WeaponScoreThunk(RE::CombatInventoryItem* a_this, RE::CombatController* a_cc) {
+            const auto vt = *reinterpret_cast<std::uintptr_t*>(a_this);
+            WeaponScore_t orig;
+            if (const auto oit = g_weaponScoreOrig.find(vt); oit != g_weaponScoreOrig.end()) {
+                orig = reinterpret_cast<WeaponScore_t>(oit->second);
+            } else {
+                // See the file banner -- never fabricate a score; recover a real,
+                // live original instead of a lookup miss this file itself made
+                // structurally unreachable in the first place.
+                spdlog::error("[aicastseats] weapon CalculateScore: vtable 0x{} not in the recorded "
+                              "set -- recovering the LIVE original instead of fabricating a score.",
+                              apmf::log::Hex(vt, 16));
+                orig = RecoverLiveOriginal<WeaponScore_t>(vt, kCalculateScore);
+            }
+
+            const float engineScore = orig(a_this, a_cc);   // ENGINE ANSWERS FIRST -- the only call made before any decision
+
+            if (!a_cc) return engineScore;
+            auto* actor = a_cc->attackerHandle.get().get();
+            if (!actor) return engineScore;
+            const auto fid = actor->GetFormID();
+
+            auto*      item     = a_this->item;
+            const auto itemForm = item ? item->GetFormID() : 0;
+
+            // TASK 2: bias ONLY when a live ch.15 kIntent_Equipment claim on this
+            // actor names THIS EXACT item form -- the same claim/read EquipGate.cpp's
+            // T2a gate already uses (TryGetOwningClaim, lock-free RCU, any thread).
+            // Never applied with the flag off; never applied to any other item.
+            float finalScore = engineScore;
+            bool  biased     = false;
+            if (g_scoreSteerEnabled.load(std::memory_order_relaxed) && itemForm != 0) {
+                APMF_API::APMF_Param claim{};
+                if (apmf::ControlMap::Get().TryGetOwningClaim(fid, APMF_API::kIntent_Equipment, claim) &&
+                    claim.form == itemForm) {
+                    finalScore = engineScore + kScoreSteerBias;
+                    biased     = true;
+                }
+            }
+
+            if (WeaponScoreLogDue(fid, itemForm, finalScore, biased)) {
+                const auto  cit = g_weaponClassInfo.find(vt);
+                const char* tag = cit != g_weaponClassInfo.end() ? cit->second.tag : "?";
+                const int   cat = cit != g_weaponClassInfo.end() ? cit->second.category : -1;
+                const char* cls = ResolveTypeName(vt);
+                if (biased) {
+                    spdlog::info("[aicastseats] t={} 0x{} '{}' WEAPON-SCORE class={} rtti={} cat={} "
+                                 "item=0x{} '{}' engineScore={:.3f} STEERED->{:.3f} (ch.15 claim)",
+                                 apmf::clock::MonotonicMs(), apmf::log::Hex(fid),
+                                 actor->GetName() ? actor->GetName() : "?", tag, cls ? cls : "<unresolved>",
+                                 cat, apmf::log::Hex(itemForm), item && item->GetName() ? item->GetName() : "?",
+                                 engineScore, finalScore);
+                } else {
+                    spdlog::info("[aicastseats] t={} 0x{} '{}' WEAPON-SCORE class={} rtti={} cat={} "
+                                 "item=0x{} '{}' engineScore={:.3f}",
+                                 apmf::clock::MonotonicMs(), apmf::log::Hex(fid),
+                                 actor->GetName() ? actor->GetName() : "?", tag, cls ? cls : "<unresolved>",
+                                 cat, apmf::log::Hex(itemForm), item && item->GetName() ? item->GetName() : "?",
+                                 engineScore);
+                }
+            }
+            return finalScore;
         }
 
         // ======================================================================
@@ -454,7 +627,19 @@ namespace apmf::aicastseats {
         const bool groupA = ReadIniFlag("EnableItemScoreProbe");   // Group A: CalculateScore (item vtables)
         const bool groupB = ReadIniFlag("EnableCasterSeatProbe");  // Group B: CheckStartCast/CheckStopCast/
                                                                     // GetMagicTarget (caster vtables)
-        int nScore = 0, nStart = 0, nStop = 0, nTgt = 0;
+        // GROUP C (marth 2026-09-06, Opus PASS S brief): the WEAPON-class
+        // CalculateScore probe -- UNRELATED to the groupA/groupB crash-isolation
+        // history above (different vtables entirely: raw-RVA weapon leaves, not
+        // the RTTI-verified magic item/caster symbols). TASK 1 there is PRIMARY
+        // and ships ENABLED by default (CalculateScore is a scalar-return vfunc,
+        // categorically immune to the GetMagicTarget-class sret ABI bug this file's
+        // banner documents -- see kAiCastSeats's SEAT 1 for that same reasoning
+        // already applied to the magic-item CalculateScore probe). TASK 2 (score
+        // steer) is its own flag and stays OFF until this probe's own field data
+        // confirms 0x0C actually runs.
+        const bool groupC     = ReadIniFlag("EnableWeaponScoreProbe", 1);   // GROUP C, default ON (TASK 1)
+        const bool scoreSteer = ReadIniFlag("EnableScoreSteer", 0);         // TASK 2, default OFF
+        int nScore = 0, nStart = 0, nStop = 0, nTgt = 0, nWeaponScore = 0, nWeaponRefused = 0;
 
         // ---- GROUP A / SEAT 1: CalculateScore (0x0C) on the 30 concrete spell/
         // staff CombatInventoryItem vtables -- the IDENTICAL list core/EquipGate.cpp
@@ -549,13 +734,63 @@ namespace apmf::aicastseats {
             }
         }   // groupB
 
+        // ---- GROUP C: CalculateScore (0x0C) on the Melee/Ranged/Shield/Torch
+        // weapon-class leaves -- raw RVA, AE-only, no CommonLib symbol. See the
+        // GROUP C block comment above WeaponScoreThunk for the full design.
+        if (groupC) {
+            if (!REL::Module::IsAE()) {
+                spdlog::warn("[aicastseats] GROUP C (weapon-class item score) requires AE (1.6.1170) -- "
+                             "the Melee/Ranged/Shield/Torch vtable RVAs are AE-only disassembly-confirmed "
+                             "and meaningless on any other runtime. NOT installed on this build.");
+            } else {
+                for (const auto& spec : kWeaponClasses) {
+                    REL::Relocation<std::uintptr_t> vt{ REL::Offset(spec.vtableRva) };
+                    REL::Relocation<std::uintptr_t> expectedFn{ REL::Offset(spec.calcScoreRva) };
+                    // Read the LIVE slot 0x0C pointer BEFORE writing anything (the
+                    // same read RecoverLiveOriginal performs elsewhere in this file) --
+                    // the install-time gate, never a blind vtable write.
+                    const auto curFn = reinterpret_cast<std::uintptr_t>(
+                        RecoverLiveOriginal<WeaponScore_t>(vt.address(), kCalculateScore));
+                    if (curFn != expectedFn.address()) {
+                        spdlog::error("[aicastseats] GROUP C: {} vtable 0x{} slot 0x0C holds 0x{}, expected "
+                                      "the disasm-confirmed CalculateScore address 0x{} -- REFUSED (not "
+                                      "installed; never a blind vtable write; the vtable-RVA table may be "
+                                      "stale for this build).",
+                                      spec.tag, apmf::log::Hex(vt.address(), 16), apmf::log::Hex(curFn, 16),
+                                      apmf::log::Hex(expectedFn.address(), 16));
+                        ++nWeaponRefused;
+                        continue;
+                    }
+                    const char* rtti = ResolveTypeName(vt.address());
+                    g_weaponClassInfo[vt.address()] = { spec.tag, spec.category };
+                    g_weaponScoreOrig[vt.address()] = vt.write_vfunc(kCalculateScore, &WeaponScoreThunk);
+                    spdlog::info("[aicastseats] GROUP C: {} CalculateScore hooked (vtable 0x{}, category {}, "
+                                 "RTTI name '{}' -- informational only, not verified against a known base).",
+                                 spec.tag, apmf::log::Hex(vt.address(), 16), spec.category,
+                                 rtti ? rtti : "<unresolved>");
+                    ++nWeaponScore;
+                }
+            }
+        }   // groupC
+
+        g_scoreSteerEnabled.store(scoreSteer && nWeaponScore > 0, std::memory_order_relaxed);
+
         spdlog::info("[aicastseats] OBSERVE-ONLY seat probe: GROUP A (item score) {} -- CalculateScore "
                      "on {} item vtable(s). GROUP B (caster seats) {} -- CheckStartCast/CheckStopCast/"
-                     "GetMagicTarget on {}/{}/{} caster vtable(s). Both flags read ONCE from "
-                     "Data/SKSE/Plugins/APMF.ini [AiCastSeats] EnableItemScoreProbe / "
-                     "EnableCasterSeatProbe (0/1, default 0=OFF). Chains to the original "
-                     "unconditionally; never alters an argument or a return value.",
-                     groupA ? "ARMED" : "OFF", nScore, groupB ? "ARMED" : "OFF", nStart, nStop, nTgt);
+                     "GetMagicTarget on {}/{}/{} caster vtable(s). GROUP C (weapon-class item score) {} -- "
+                     "CalculateScore on {}/{} weapon vtable(s) ({} refused the install-time function-"
+                     "pointer check). Score-steer (TASK 2, biases a claimed form's own score) is {} "
+                     "([AiCastSeats] EnableScoreSteer, default 0) -- {}. All flags read ONCE from "
+                     "Data/SKSE/Plugins/APMF.ini [AiCastSeats]: EnableItemScoreProbe / EnableCasterSeatProbe "
+                     "(default 0=OFF), EnableWeaponScoreProbe (default 1=ON). Every probe chains to the "
+                     "original unconditionally when steer is OFF; never alters an argument.",
+                     groupA ? "ARMED" : "OFF", nScore, groupB ? "ARMED" : "OFF", nStart, nStop, nTgt,
+                     groupC ? "ARMED" : "OFF", nWeaponScore, static_cast<int>(std::size(kWeaponClasses)),
+                     nWeaponRefused,
+                     g_scoreSteerEnabled.load(std::memory_order_relaxed) ? "ARMED" : "OFF",
+                     !scoreSteer                ? "flag is off" :
+                     nWeaponScore == 0          ? "flag is on but GROUP C installed 0 vtables, so it cannot fire" :
+                                                   "GROUP C is live -- steer will bias a claimed form's own weapon score");
     }
 
 }
