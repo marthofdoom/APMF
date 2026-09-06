@@ -4,7 +4,8 @@
 #include "core/Registry.h"
 #include "core/Clock.h"
 #include "channels/CastCompose.h"   // castcompose::ExtractFromPackage (ch.8b FromPackage read)
-#include "core/CastProxy.h"         // castproxy::Acquire (ch.8b kSelf delivery-flip, writer thread)
+#include "core/CastProxy.h"         // castproxy::Acquire/Free (ch.8b kSelf delivery-flip, writer thread)
+#include "core/MainThread.h"        // mainthread::Post (defer proxy teardown past this Drain's Publish)
 
 namespace apmf {
 
@@ -15,6 +16,26 @@ namespace apmf {
             if (!pkg) return "<none>";
             const char* n = pkg->GetObjectTypeName();
             return n ? n : "<unnamed>";
+        }
+
+        // feat/per-hand-cast-claims: does a claim carrying `castFlags` occupy
+        // `hand`? A kCastFlag_DualCast claim occupies BOTH hands at once (matches
+        // either query); otherwise the claim's own hand hint decides (default
+        // right, per APMF_API.h's CastFlags comment) -- never anything the QUERIER
+        // does. Never called with `hand == CastHand::kUnknown` -- every call site
+        // forwards that case to the unscoped (any-hand) reads before reaching here.
+        bool ClaimOccupiesHand(std::uint32_t castFlags, CastHand hand) {
+            if (castFlags & APMF_API::kCastFlag_DualCast) return true;
+            const CastHand claimHand =
+                (castFlags & APMF_API::kCastFlag_LeftHand) ? CastHand::kLeft : CastHand::kRight;
+            return claimHand == hand;
+        }
+
+        // feat/per-hand-cast-claims: does `castFlags` describe a kCastFlag_DualCast
+        // claim? Small shared predicate for the dual-vs-single-hand mutual
+        // exclusivity check in ApplyRequest below.
+        bool IsDualCastFlags(std::uint32_t castFlags) {
+            return (castFlags & APMF_API::kCastFlag_DualCast) != 0;
         }
     }
 
@@ -262,6 +283,15 @@ namespace apmf {
         std::uint32_t        castFlags  = 0;
         std::uint64_t        expiresMs  = 0;
         RE::ActorHandle      castTargetHandle{};
+        // feat/per-hand-cast-claims: handles of conflicting kIntent_Cast claims a
+        // WINNING dual-vs-single-hand collision (below) must evict once the new
+        // claim is actually inserted -- populated in the early conflict check,
+        // consumed right before `cc->claims.push_back(newClaim)` (Phase 2), so the
+        // eviction happens with the new claim's OWN final castProxy already known
+        // (needed to tell whether an evicted claim's proxy is about to be reused in
+        // place rather than actually freed -- core/CastProxy.cpp's pool is one
+        // shared slot PER OWNER, not per hand).
+        std::vector<Handle> toEvict;
         if (op.intent == APMF_API::kIntent_Cast) {
             // Flags: the kCast op carries them in castFlags; a degenerate
             // RequestEx(kIntent_Cast) carries them in param.ival (kept in parity).
@@ -286,6 +316,56 @@ namespace apmf {
             if (ttl == 0) ttl = APMF_API::kCastDefaultTtlMs;
             if (ttl > APMF_API::kCastMaxTtlMs) ttl = APMF_API::kCastMaxTtlMs;
             expiresMs = apmf::clock::MonotonicMs() + ttl;
+
+            // ---- DUAL vs SINGLE-HAND MUTUAL EXCLUSIVITY (feat/per-hand-cast-claims)
+            // Two concurrent kIntent_Cast claims on one actor now coexist when they
+            // occupy DIFFERENT hands (kCastFlag_LeftHand vs the right-hand default) --
+            // see ApplyRequest's tail and the *ForHand/*ForForm reads below. A
+            // kCastFlag_DualCast claim occupies BOTH hands at once, so it can NEVER
+            // coexist with a left- or right-hand single-hand claim: arbitrate the
+            // collision by basis (same rule as everywhere else), but the LOSER is
+            // REFUSED outright here -- never left in the claims list as a non-owning
+            // claim waiting for the winner to release (that would be the same
+            // silent-coexistence-of-incompatible-claims bug class this whole pass
+            // exists to close). Same-shape claims (two lefts, two rights, or two
+            // duals) are NOT touched by this block -- they keep the normal
+            // non-exclusive basis arbitration every other channel already uses.
+            // Checked BEFORE the target-resolve/proxy-mint work below so a claim
+            // that is about to be refused never wastes a delivery-flip mint.
+            {
+                const bool newIsDual = IsDualCastFlags(castFlags);
+                if (auto npcIt = map.find(op.actor); npcIt != map.end()) {
+                    for (const auto& cc2 : npcIt->second.channels) {
+                        if (cc2.channel != channel) continue;
+                        float bestConflictBasis = 0.0f;
+                        bool  anyConflict       = false;
+                        for (const auto& cl : cc2.claims) {
+                            if (IsDualCastFlags(cl.castFlags) == newIsDual) continue;   // same shape -- not this collision
+                            if (!anyConflict || cl.basis > bestConflictBasis) bestConflictBasis = cl.basis;
+                            anyConflict = true;
+                        }
+                        if (!anyConflict) break;
+                        if (op.basis <= bestConflictBasis) {
+                            spdlog::warn("[ch.8b] 0x{} {}-cast claim (h={}, basis {:.1f}) REFUSED -- conflicts "
+                                         "with an existing {}-cast claim (basis {:.1f}); a dual-cast and a "
+                                         "single-hand claim cannot coexist on one actor (arbitrated by basis, "
+                                         "the loser is refused outright, never silently merged/replaced).",
+                                         apmf::log::Hex(op.actor), newIsDual ? "dual" : "single-hand", op.handle,
+                                         op.basis, newIsDual ? "single-hand" : "dual", bestConflictBasis);
+                            return false;   // handle was never registered in m_index -> never dangling
+                        }
+                        // The new claim wins the collision -- remember every conflicting
+                        // claim's HANDLE (not index: nothing reorders `cc2.claims` between
+                        // now and Phase 2, but a handle survives that better than an index
+                        // would if this logic ever moves) for eviction in Phase 2, once the
+                        // new claim's own castProxy is finally resolved.
+                        for (const auto& cl : cc2.claims) {
+                            if (IsDualCastFlags(cl.castFlags) != newIsDual) toEvict.push_back(cl.handle);
+                        }
+                        break;
+                    }
+                }
+            }
 
             // ---- Resolve the target ONCE, here, on the WRITER thread ------------
             // The engine seats (core/CastSeats.cpp) run on the COMBAT thread, where a
@@ -373,6 +453,44 @@ namespace apmf {
             cc = &npc.channels.back();
         }
 
+        // feat/per-hand-cast-claims Phase 2: evict every claim the early
+        // dual-vs-single-hand collision check (above) found this WINNING claim
+        // conflicts with. Done here (not in Phase 1) so `castProxy` for the new
+        // claim is already fully resolved -- an evicted claim's own delivery-flip
+        // proxy is freed ONLY when the new claim is not simply about to reuse the
+        // exact same slot (core/CastProxy.cpp's pool is one shared slot PER OWNER;
+        // `Acquire` above already re-targeted it in place when the new claim is
+        // ALSO a kSelf-delivery cast on the same actor, in which case freeing it
+        // here would tear down a proxy the new claim is actively using).
+        for (const Handle evictHandle : toEvict) {
+            for (auto it = cc->claims.begin(); it != cc->claims.end(); ++it) {
+                if (it->handle != evictHandle) continue;
+                const RE::FormID evictedProxy = it->castProxy;
+                m_index.erase(it->handle);
+                cc->claims.erase(it);
+                spdlog::warn("[ch.8b] 0x{} cast claim (h={}) EVICTED -- refused by a higher-basis "
+                             "{}-cast claim (h={}, basis {:.1f}); dual-cast and single-hand claims "
+                             "cannot coexist on one actor.",
+                             apmf::log::Hex(op.actor), evictHandle, IsDualCastFlags(castFlags) ? "dual" : "single-hand",
+                             op.handle, op.basis);
+                if (evictedProxy != 0 && evictedProxy != castProxy) {
+                    apmf::mainthread::Post([actorId = op.actor, evictedProxy] {
+                        // One hop past this Drain's Publish (INVARIANTS #20's release
+                        // ordering) -- by now every seat already reads "claim gone" for
+                        // the evicted handle. `castproxy::Free` is a plain "clear this
+                        // owner's slot" call with no source-form check of its own, so
+                        // this re-checks the slot still holds exactly the form being
+                        // torn down before freeing it -- never un-teaching a DIFFERENT
+                        // proxy some later claim on the same owner may have minted in
+                        // the meantime.
+                        if (apmf::castproxy::FormForOwner(actorId) == evictedProxy)
+                            apmf::castproxy::Free(actorId);
+                    });
+                }
+                break;
+            }
+        }
+
         // Before adding this claim, note the incumbent owner's basis (if any). Seed
         // from the first EXISTING claim -- never a 0.0 floor -- so a negative-basis
         // incumbent arbitrates correctly (a 0.0 floor would let a claim below the true
@@ -441,8 +559,16 @@ namespace apmf {
             };
             const Handle oldOwner = [&] { Claim* o = ownerOf(claims); return o ? o->handle : APMF_API::kInvalidHandle; }();
 
+            // feat/per-hand-cast-claims: capture THIS claim's own delivery-flip
+            // proxy (if any) before it is erased below -- see the teardown after
+            // the if/else. Non-cast claims (and most cast claims) never set this,
+            // so it stays 0 for everything but a released kSelf-delivery cast claim.
+            RE::FormID departingProxy = 0;
             for (auto it = claims.begin(); it != claims.end(); ++it) {
-                if (it->handle == handle) { claims.erase(it); break; }
+                if (it->handle != handle) continue;
+                departingProxy = it->castProxy;
+                claims.erase(it);
+                break;
             }
             if (claims.empty()) {
                 auto* actor = RE::TESForm::LookupByID<RE::Actor>(formID);   // may be null
@@ -450,6 +576,9 @@ namespace apmf {
                 spdlog::info("[ctl] 0x{} - ch.{} {} RELEASED (h={}).",
                              apmf::log::Hex(formID), channel->ChannelNo(), channel->Name(), handle);
                 npc.channels.erase(ccIt);
+                // channel->Release() (CastComposeChannel::Release, channels/CastCompose.cpp)
+                // already defers castproxy::Free(formID) for exactly this "last claim on
+                // the channel" case -- nothing more to do here.
             } else {
                 // Claims remain: if the OWNER just left, the new winner takes over --
                 // re-point a parameterized channel at its payload (no restore capture).
@@ -462,6 +591,27 @@ namespace apmf {
                 }
                 spdlog::info("[ctl] 0x{} - ch.{} {} claim dropped (h={}); {} claim(s) remain.",
                              apmf::log::Hex(formID), channel->ChannelNo(), channel->Name(), handle, claims.size());
+
+                // feat/per-hand-cast-claims: a SECOND live claim on this channel
+                // (the other hand) means the channel-level Release() above will NOT
+                // fire for this departure -- with two concurrent kIntent_Cast claims
+                // now possible, "the channel disengaged" and "this ONE claim's own
+                // resources are done" are no longer the same event. A released claim's
+                // own delivery-flip proxy (core/CastProxy.cpp, one shared slot PER
+                // OWNER) must be torn down on ITS OWN release, independent of whatever
+                // the OTHER hand's claim is doing -- releasing one hand must never
+                // disturb the other, and must never LEAK the released hand's proxy
+                // either (never mask a failure by just leaving it taught forever).
+                if (departingProxy != 0) {
+                    apmf::mainthread::Post([formID, departingProxy] {
+                        // Re-check the slot still holds exactly the form being torn
+                        // down (see the identical guard in ApplyRequest's eviction
+                        // path) -- never un-teach a DIFFERENT proxy a later claim on
+                        // the same owner minted in the meantime.
+                        if (apmf::castproxy::FormForOwner(formID) == departingProxy)
+                            apmf::castproxy::Free(formID);
+                    });
+                }
             }
             break;
         }
@@ -762,6 +912,134 @@ namespace apmf {
             out.flags        = best->castFlags;
             out.expiresMs    = best->expiresMs;
             return true;
+        }
+        return false;   // controlled, but not on the cast channel
+    }
+
+    bool ControlMap::TryGetCastClaimForHand(RE::FormID actor, CastHand hand, RE::FormID& outSpell,
+                                            RE::FormID& outProxy, std::uint32_t* outFlags) const {
+        // feat/per-hand-cast-claims. `kUnknown` is byte-identical to the unscoped
+        // overload (the pre-existing actor-wide floor for a caller that cannot
+        // resolve a hand) -- see ControlMap.h.
+        if (hand == CastHand::kUnknown) return TryGetCastClaim(actor, outSpell, outProxy, outFlags);
+
+        outSpell = 0;
+        outProxy = 0;
+        if (outFlags) *outFlags = 0;
+        if (m_anyControlled.load(std::memory_order_relaxed) == 0) return false;
+
+        std::shared_ptr<const MapType> snap = m_published.load(std::memory_order_acquire);
+        auto it = snap->find(actor);
+        if (it == snap->end()) return false;
+
+        const NpcCtl& npc = it->second;
+        if (!npc.handle.get()) return false;
+
+        auto* channel = Registry::Get().ChannelForIntent(APMF_API::kIntent_Cast);
+        if (!channel) return false;
+
+        for (const auto& cs : npc.channels) {
+            if (cs.channel != channel) continue;
+            if (cs.claims.empty()) return false;
+            // Winner = highest basis AMONG CLAIMS THAT OCCUPY `hand` (a
+            // kCastFlag_DualCast claim occupies both); a claim on the OTHER hand is
+            // simply not a candidate here -- never mixed into this arbitration, and
+            // never able to mask this hand's own claim regardless of its basis.
+            const Claim* best = nullptr;
+            for (const auto& c : cs.claims) {
+                if (!ClaimOccupiesHand(c.castFlags, hand)) continue;
+                if (!best || c.basis > best->basis) best = &c;
+            }
+            if (!best) return false;   // no claim occupies this hand -- not this hand's business
+            outSpell = best->param.form;
+            outProxy = best->castProxy;
+            if (outFlags) *outFlags = best->castFlags;
+            return true;
+        }
+        return false;   // controlled, but not on the cast channel
+    }
+
+    bool ControlMap::TryGetCastSeatClaimForHand(RE::FormID actor, CastHand hand, CastSeatClaim& out) const {
+        // feat/per-hand-cast-claims. `kUnknown` forwards to the unscoped overload,
+        // byte-identical to its existing behavior (see ControlMap.h).
+        if (hand == CastHand::kUnknown) return TryGetCastSeatClaim(actor, out);
+
+        out = CastSeatClaim{};
+        if (m_anyControlled.load(std::memory_order_relaxed) == 0) return false;
+
+        std::shared_ptr<const MapType> snap = m_published.load(std::memory_order_acquire);
+        auto it = snap->find(actor);
+        if (it == snap->end()) return false;
+
+        const NpcCtl& npc = it->second;
+        if (!npc.handle.get()) return false;
+
+        auto* channel = Registry::Get().ChannelForIntent(APMF_API::kIntent_Cast);
+        if (!channel) return false;
+
+        for (const auto& cs : npc.channels) {
+            if (cs.channel != channel) continue;
+            if (cs.claims.empty()) return false;
+            // Winner = highest basis AMONG CLAIMS THAT OCCUPY `hand` -- same
+            // per-hand arbitration as TryGetCastClaimForHand above.
+            const Claim* best = nullptr;
+            for (const auto& c : cs.claims) {
+                if (!ClaimOccupiesHand(c.castFlags, hand)) continue;
+                if (!best || c.basis > best->basis) best = &c;
+            }
+            if (!best) return false;   // no claim occupies this hand
+            // Same TTL-as-gone treatment as TryGetCastSeatClaim above.
+            if (best->expiresMs != 0 && apmf::clock::MonotonicMs() >= best->expiresMs) return false;
+
+            out.spell        = best->param.form;
+            out.proxy        = best->castProxy;
+            out.target       = best->castTarget;
+            out.targetHandle = best->castTargetHandle;
+            out.flags        = best->castFlags;
+            out.expiresMs    = best->expiresMs;
+            return true;
+        }
+        return false;   // controlled, but not on the cast channel
+    }
+
+    bool ControlMap::TryGetCastSeatClaimForForm(RE::FormID actor, RE::FormID form, CastSeatClaim& out) const {
+        // feat/per-hand-cast-claims. core/CastSeats.cpp's four caster-vtable seats
+        // and core/CastClassify.cpp's SEAT 0 never resolve a hand -- they already
+        // know the candidate FORM they are deliberating about. Search every LIVE
+        // (unexpired) claim on the cast channel for the one whose driven form
+        // (proxy, else spell) equals `form`; NOT an arbitration -- the two
+        // concurrent claims never compete for the same magic-item instance, so
+        // there is nothing to pick a "winner" between here.
+        out = CastSeatClaim{};
+        if (form == 0) return false;
+        if (m_anyControlled.load(std::memory_order_relaxed) == 0) return false;
+
+        std::shared_ptr<const MapType> snap = m_published.load(std::memory_order_acquire);
+        auto it = snap->find(actor);
+        if (it == snap->end()) return false;
+
+        const NpcCtl& npc = it->second;
+        if (!npc.handle.get()) return false;
+
+        auto* channel = Registry::Get().ChannelForIntent(APMF_API::kIntent_Cast);
+        if (!channel) return false;
+
+        const auto nowMs = apmf::clock::MonotonicMs();
+        for (const auto& cs : npc.channels) {
+            if (cs.channel != channel) continue;
+            for (const auto& c : cs.claims) {
+                if (c.expiresMs != 0 && nowMs >= c.expiresMs) continue;   // gone -- do not let it match
+                const RE::FormID driven = c.castProxy ? c.castProxy : c.param.form;
+                if (driven == 0 || driven != form) continue;
+                out.spell        = c.param.form;
+                out.proxy        = c.castProxy;
+                out.target       = c.castTarget;
+                out.targetHandle = c.castTargetHandle;
+                out.flags        = c.castFlags;
+                out.expiresMs    = c.expiresMs;
+                return true;
+            }
+            return false;
         }
         return false;   // controlled, but not on the cast channel
     }

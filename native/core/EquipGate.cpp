@@ -315,21 +315,30 @@ namespace apmf::equipgate {
                 if (hasLiveSeat && a_cc && a_cc->inventory) a_cc->inventory->dirty = true;
             }
 
-            if (fid != 0 && subjectForm != 0 && g_restoreVtables.contains(vt)) {
-                RE::FormID driven = 0;
-                bool       handOk = false;
-                if (hasLiveSeat) {
-                    driven = seat.proxy ? seat.proxy : seat.spell;
-                    // kCastFlag_DualCast (2026-09-06): the claim wants BOTH hands, so
-                    // this non-chaining YES is admitted regardless of which hand
-                    // resolved -- same treatment as kUnknown, just for a resolved hand.
-                    handOk = (callerHand == allowance::Hand::kUnknown) ||
-                             (seat.flags & APMF_API::kCastFlag_DualCast) ||
-                             (callerHand == ((seat.flags & APMF_API::kCastFlag_LeftHand)
-                                                 ? allowance::Hand::kLeft : allowance::Hand::kRight));
-                }
+            // feat/per-hand-cast-claims: a SECOND concurrent kIntent_Cast claim can
+            // now stand on the OTHER hand at the same time. `seat` above (the
+            // actor-wide best-basis claim) is deliberately kept ONLY for the
+            // rebuild-trigger dirty-mark just above (which wants "is ANY claim live
+            // on this actor", regardless of hand) -- every decision below that is
+            // scoped to THIS item's own hand must instead read the claim that
+            // actually OCCUPIES `callerHand` (a kCastFlag_DualCast claim occupies
+            // both). Reading `seat` for those decisions would let the OTHER hand's
+            // claim mask or falsely license this hand's own -- the exact
+            // self-deny-across-hands bug class this pass exists to close.
+            const auto castHand = (callerHand == allowance::Hand::kLeft)    ? apmf::CastHand::kLeft  :
+                                   (callerHand == allowance::Hand::kRight)  ? apmf::CastHand::kRight :
+                                                                              apmf::CastHand::kUnknown;
+            apmf::CastSeatClaim handSeat{};
+            const bool hasHandSeat =
+                fid != 0 && apmf::ControlMap::Get().TryGetCastSeatClaimForHand(fid, castHand, handSeat) &&
+                handSeat.targetHandle;
 
-                if (handOk && driven != 0 && subjectForm == driven) {
+            if (fid != 0 && subjectForm != 0 && g_restoreVtables.contains(vt)) {
+                // Hand-scoping (kCastFlag_DualCast included) is already baked into
+                // `hasHandSeat`/`handSeat` above -- no separate handOk re-check needed.
+                const RE::FormID driven = hasHandSeat ? (handSeat.proxy ? handSeat.proxy : handSeat.spell) : 0;
+
+                if (hasHandSeat && driven != 0 && subjectForm == driven) {
                     if (LogDue(fid, subjectForm)) {
                         // feat/0x0f-callsite-log: slot 0x0B GetCategory via the vtable
                         // directly (no new hook) -- confirms category 1 == Restore.
@@ -344,13 +353,13 @@ namespace apmf::equipgate {
                                      "claim spell 0x{}{} target 0x{}; callsite RVA=0x{} [{}]; category={}) -- "
                                      "ELIGIBLE for the equipment set; the AI's own scoring/slot/range/resource "
                                      "gates still decide whether it is actually equipped.",
-                                     apmf::log::Hex(fid), apmf::log::Hex(subjectForm), apmf::log::Hex(seat.spell),
-                                     seat.proxy ? " via delivery-flip proxy" : "", apmf::log::Hex(seat.target),
+                                     apmf::log::Hex(fid), apmf::log::Hex(subjectForm), apmf::log::Hex(handSeat.spell),
+                                     handSeat.proxy ? " via delivery-flip proxy" : "", apmf::log::Hex(handSeat.target),
                                      apmf::log::Hex(callSiteRva), CallSiteName(callSiteRva), category);
                     }
                     return true;   // THE non-chaining answer
                 }
-                if (handOk && seat.proxy != 0 && subjectForm == seat.spell) {
+                if (hasHandSeat && handSeat.proxy != 0 && subjectForm == handSeat.spell) {
                     // N4 exactness: while a delivery-flip proxy is being driven, the
                     // ORIGINAL kSelf spell's own Restore item must NOT be allowed to
                     // take the hand instead -- the AI would cast it and silently heal
@@ -360,7 +369,7 @@ namespace apmf::equipgate {
                         spdlog::info("[t2a seat 0x0F] 0x{} CheckShouldEquip item=0x{} -> NO (N4: the original "
                                      "kSelf spell while its delivery-flip proxy 0x{} is being driven -- would "
                                      "silently heal the caster instead of the claimed ally).",
-                                     apmf::log::Hex(fid), apmf::log::Hex(subjectForm), apmf::log::Hex(seat.proxy));
+                                     apmf::log::Hex(fid), apmf::log::Hex(subjectForm), apmf::log::Hex(handSeat.proxy));
                     return false;
                 }
 
@@ -413,14 +422,16 @@ namespace apmf::equipgate {
             // Scope, all required and enforced by the guards already in effect
             // at this point in the function: ONLY this actor (fid != 0, read off
             // THIS call's own CombatController -- never a client actor list,
-            // #4); ONLY while `hasLiveSeat` is true, i.e. exactly for the
-            // duration ControlMap reports a live kIntent_Cast claim on this fid
-            // (TryGetCastSeatClaim above, same read the YES branch uses -- no
-            // latched/cached state here, so this lifts the instant the claim
-            // releases or its TTL expires, and never fires for an unclaimed
-            // actor); ONLY on the 30 hooked spell/staff vtables (this thunk is
-            // never reached for anything else -- line ~191 already returned
-            // false for a foreign vtable).
+            // #4); ONLY while `hasHandSeat` is true, i.e. exactly for the
+            // duration ControlMap reports a live kIntent_Cast claim occupying
+            // THIS ITEM'S OWN HAND (TryGetCastSeatClaimForHand above, feat/
+            // per-hand-cast-claims -- the same hand-scoped read the YES branch
+            // uses; a claim standing only on the OTHER hand leaves `hasHandSeat`
+            // false here, so it never fires for a hand that has no claim of its
+            // own, no latched/cached state, lifts the instant the claim releases
+            // or its TTL expires); ONLY on the 30 hooked spell/staff vtables
+            // (this thunk is never reached for anything else -- line ~191
+            // already returned false for a foreign vtable).
             //
             // PER-SET NARROWING (2026-09-06 field fix -- v0.9.1 shipped this
             // block actor-wide/both-hands and it disarmed a follower's ENTIRE
@@ -439,14 +450,21 @@ namespace apmf::equipgate {
             //
             // `callerHand` (resolved above, same per-hand read AllowedCastForHand
             // uses) narrows the deny to items on the CLAIM's OWN hand (its
-            // CastFlags hand hint, default right) ONLY. kUnknown (a call this
-            // hook cannot resolve to a hand -- an instant/kOther caster's item)
-            // keeps the former actor-wide deny: we cannot prove which set an
-            // unresolvable item lands in, so the conservative choice stands
-            // there, exactly as it always has. The claimed item's OWN slot is
-            // still guaranteed: every OTHER item competing for that SAME hand is
-            // still denied, unconditionally, for as long as the claim stands --
-            // nothing here weakens why heals started working.
+            // CastFlags hand hint, default right; kCastFlag_DualCast occupies
+            // both) ONLY -- `TryGetCastSeatClaimForHand` folds all of that
+            // matching in, so `hasHandSeat`/`handSeat` already ARE "the claim (if
+            // any) for this item's hand". kUnknown (a call this hook cannot
+            // resolve to a hand -- an instant/kOther caster's item) keeps the
+            // former actor-wide floor (that overload forwards to the unscoped,
+            // any-hand read): we cannot prove which set an unresolvable item
+            // lands in, so the conservative choice stands there, exactly as it
+            // always has. The claimed item's OWN slot is still guaranteed: every
+            // OTHER item competing for that SAME hand is still denied,
+            // unconditionally, for as long as that hand's claim stands -- and,
+            // feat/per-hand-cast-claims, a SECOND concurrent claim on the OTHER
+            // hand is equally guaranteed its OWN slot, independently -- nothing
+            // here weakens why heals started working, and nothing here lets one
+            // hand's claim suppress the other's.
             //
             // TWO KNOWN HOLES -- documented, not fixed here (see the brief):
             //   (1) weapon/fist item classes have no concrete header class to
@@ -455,30 +473,28 @@ namespace apmf::equipgate {
             //   (2) Actor::StartCombat's direct ActorEquipManager equip path
             //       (0x6b6bb5..0x6b6c02) bypasses this selector entirely.
             // ================================================================
+            // feat/per-hand-cast-claims: narrowed to `hasHandSeat` (the claim that
+            // occupies THIS item's own hand, kCastFlag_DualCast already folded in by
+            // TryGetCastSeatClaimForHand) rather than `hasLiveSeat`/`seat` (any hand).
+            // With two concurrent claims possible, `hasLiveSeat` being true no longer
+            // means THIS hand is claimed -- it could be the OTHER hand's claim making
+            // it true while THIS hand has none at all, which would have wrongly
+            // denied every item on an UNCLAIMED hand (a self-deny-across-hands bug:
+            // the follower's own free hand would lose the ability to equip anything
+            // for as long as the OTHER hand held a claim).
             if (g_denyCompleteEnabled.load(std::memory_order_relaxed) &&
-                hasLiveSeat && fid != 0 && subjectForm != 0) {
-                // kCastFlag_DualCast (2026-09-06): the claim wants BOTH equip-slot
-                // sets, so this deny-complete narrowing applies to whichever set
-                // `subjectForm` resolved into -- competitors are denied on BOTH
-                // hands, not just the one CastFlags' LeftHand bit would select.
-                const bool competesForClaimedSlot =
-                    (callerHand == allowance::Hand::kUnknown) ||
-                    (seat.flags & APMF_API::kCastFlag_DualCast) ||
-                    (callerHand == ((seat.flags & APMF_API::kCastFlag_LeftHand)
-                                         ? allowance::Hand::kLeft : allowance::Hand::kRight));
-                if (competesForClaimedSlot) {
-                    const RE::FormID driven = seat.proxy ? seat.proxy : seat.spell;
-                    if (driven == 0 || subjectForm != driven) {
-                        if (LogDue(fid, subjectForm))
-                            spdlog::info("[t2a seat 0x0F] 0x{} CheckShouldEquip item=0x{} -> NO (deny-complete: "
-                                         "a cast claim spell 0x{}{} stands on this actor -- every other spell/"
-                                         "staff item competing for the CLAIM'S OWN equip-slot set is denied so "
-                                         "the claimed form is the sole survivor of that set's score compare; "
-                                         "the OTHER hand's items are untouched).",
-                                         apmf::log::Hex(fid), apmf::log::Hex(subjectForm),
-                                         apmf::log::Hex(seat.spell), seat.proxy ? " via delivery-flip proxy" : "");
-                        return false;
-                    }
+                hasHandSeat && fid != 0 && subjectForm != 0) {
+                const RE::FormID driven = handSeat.proxy ? handSeat.proxy : handSeat.spell;
+                if (driven == 0 || subjectForm != driven) {
+                    if (LogDue(fid, subjectForm))
+                        spdlog::info("[t2a seat 0x0F] 0x{} CheckShouldEquip item=0x{} -> NO (deny-complete: "
+                                     "a cast claim spell 0x{}{} stands on this actor's hand -- every other "
+                                     "spell/staff item competing for the CLAIM'S OWN equip-slot set is denied "
+                                     "so the claimed form is the sole survivor of that set's score compare; "
+                                     "the OTHER hand's own claim (if any) and items are untouched).",
+                                     apmf::log::Hex(fid), apmf::log::Hex(subjectForm),
+                                     apmf::log::Hex(handSeat.spell), handSeat.proxy ? " via delivery-flip proxy" : "");
+                    return false;
                 }
             }
 

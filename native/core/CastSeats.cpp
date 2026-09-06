@@ -173,13 +173,23 @@ namespace apmf::castseats {
             auto* actor  = attPtr.get();
             if (!actor) return false;
 
-            const RE::FormID fid = actor->GetFormID();
+            const RE::FormID fid      = actor->GetFormID();
+            const RE::FormID itemForm = item->GetFormID();
+            // feat/per-hand-cast-claims: matched by DRIVEN FORM, not "the actor-wide
+            // best-basis claim" -- up to two kIntent_Cast claims can be live at once
+            // now (one per hand, or a kCastFlag_DualCast claim occupying both), each
+            // driving a DIFFERENT CombatMagicCaster instance (one per hand's own
+            // magic context). This caster's OWN `magicItem` already tells us exactly
+            // which claim (if either) is ours; picking "the highest-basis claim
+            // overall" here would answer for the WRONG hand whenever the other hand's
+            // claim happens to have the higher basis (the exact bug this pass exists
+            // to close). See ControlMap::TryGetCastSeatClaimForForm.
             apmf::CastSeatClaim claim{};
-            if (!apmf::ControlMap::Get().TryGetCastSeatClaim(fid, claim)) return false;   // released/expired -> chain
+            if (!apmf::ControlMap::Get().TryGetCastSeatClaimForForm(fid, itemForm, claim)) return false;   // no live claim drives THIS item -> chain
 
             const RE::FormID driven = claim.proxy ? claim.proxy : claim.spell;
             if (driven == 0) return false;                       // degenerate claim -- names nothing
-            if (item->GetFormID() != driven) return false;       // a DIFFERENT spell's caster -- not ours
+            if (itemForm != driven) return false;                // defensive re-check (should be unreachable: the form query above already matched)
             if (!claim.targetHandle) return false;               // no resolvable target -- nothing to answer
 
             out.actor  = fid;
