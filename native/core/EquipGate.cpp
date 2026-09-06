@@ -333,7 +333,11 @@ namespace apmf::equipgate {
                 // otherwise reach the hands after its claim releases, on the wrong
                 // hand, or from a future/foreign source -- 0x81f7c0 aims a non-self
                 // Restore item at `ctrl.TARGET`, i.e. the FOE.
-                if (a_this->item && a_this->item->GetDelivery() != RE::MagicSystem::Delivery::kSelf) {
+                // `item` is a TESForm*; GetDelivery() lives on MagicItem (the same type
+                // CastClassify.cpp reads at +0x10). RTTI-checked cast: a non-MagicItem
+                // item (or a null one) simply falls through to the normal path below.
+                auto* mi = a_this->item ? skyrim_cast<RE::MagicItem*>(a_this->item) : nullptr;
+                if (mi && mi->GetDelivery() != RE::MagicSystem::Delivery::kSelf) {
                     if (LogDue(fid, subjectForm))
                         spdlog::info("[t2a seat 0x0F] 0x{} CheckShouldEquip item=0x{} -> NO (completeness fix: "
                                      "non-self-delivery Restore item, not the live claim's driven form).",
