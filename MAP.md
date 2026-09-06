@@ -284,6 +284,38 @@ The FIFTH seat (`0x0F CheckShouldEquip`) lives in `core/EquipGate.cpp` — see t
   Installed AFTER `core/AiCastSeats.cpp` on purpose so that passive probe keeps
   logging the ENGINE's raw answer beneath these.
 
+### `native/core/AiCastSeats.{h,cpp}` — OBSERVE-ONLY: the AI cast/equip-decision seats
+Three independently-flagged, chain-unconditionally probes (`Install()`), all
+`[AiCastSeats]`-INI-gated, all VR-refused: **GROUP A** — `CalculateScore` (0x0C) on
+the 30 magic/staff `CombatInventoryItem` vtables (`EnableItemScoreProbe`, default
+OFF). **GROUP B** — `CheckStartCast`/`CheckStopCast`/`GetMagicTarget` (0x06/0x07/0x0A)
+on the 14 `CombatMagicCaster` vtables (`EnableCasterSeatProbe`, default OFF). **GROUP
+C** (marth 2026-09-06, Opus PASS S) — `CalculateScore` (0x0C) on the four
+WEAPON-class leaves (Melee/Ranged/Shield/Torch), which have **no CommonLib concrete
+class/vtable symbol** (Docs/DENY-COMPLETENESS-AUDIT.md row 15's gap): resolved from
+raw disasm-confirmed RVAs (`REL::Offset`, no `REL::VariantID`), AE-only, gated by an
+install-time check that the LIVE function pointer already at vtable slot 0x0C equals
+the disasm-confirmed `CalculateScore` address for that class (stands in for an
+RTTI-name match — no confirmed mangled name exists for these four). Ships **ENABLED**
+by default (`EnableWeaponScoreProbe`, default 1 — `CalculateScore` is scalar-return,
+immune to the `GetMagicTarget` sret-ABI bug class this file's banner documents). A
+second, independent flag (`EnableScoreSteer`, default 0) biases a claimed form's own
+returned score upward by a fixed constant when a live ch.15 `kIntent_Equipment` claim
+on the actor names that exact item (same claim `core/EquipGate.cpp`'s T2a gate
+reads) — stays OFF until GROUP C's own field data confirms 0x0C actually runs.
+- **What breaks:** GROUP C's `kWeaponClasses` table (vtable RVA + CalculateScore RVA
+  + category) is AE 1.6.1170-ONLY and disassembly-CERTAIN for THIS build only — any
+  runtime/version drift is caught by the function-pointer-at-slot mismatch (refuses
+  that one class, never a blind write) but a NEW build could silently resolve a
+  DIFFERENT class at the same RVA if the check is ever loosened; keep it exact.
+  Melee+Ranged share the engine's arbitration category 0, Shield+Torch share
+  category 3 — a weapon score can only ever decide within its own category
+  (melee-vs-ranged, shield-vs-torch); it can NEVER outscore a spell/staff that
+  already claimed the hand (weapons walk after the spell categories in the engine's
+  fixed `[1,2,4,0,3,5,0,6]` order table) — do not build a weapon-vs-spell lever on
+  this. `kScoreSteerBias` (100000.0f) is an unvalidated placeholder pending GROUP
+  C's own probe numbers; revisit once real magnitudes are in.
+
 ### `native/core/Input.{h,cpp}` — test surface
 `InputSink` (keyboard button-down) → `Arbiter::DispatchHotkey` (+ `probe::OnHotkey`).
 `LogHelp` enumerates the registry's hotkeys.
