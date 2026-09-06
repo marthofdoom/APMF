@@ -5,7 +5,9 @@
 #include "core/ControlMap.h"
 #include "core/AiCastSeats.h"
 
+#include <array>
 #include <cmath>
+#include <string_view>
 
 // Win32 INI read for the two group flags below. Declared by hand, exactly
 // like Hook.cpp's GetCurrentThreadId() -- PCH does not pull in <Windows.h>,
@@ -174,10 +176,11 @@ namespace apmf::aicastseats {
 
         // Vfunc slot indices -- file-scope so both the Install() loops and the
         // thunks' RecoverLiveOriginal fallback reference the exact same constant.
-        constexpr std::size_t kCalculateScore = 0x0C;
-        constexpr std::size_t kCheckStartCast = 0x06;
-        constexpr std::size_t kCheckStopCast  = 0x07;
-        constexpr std::size_t kGetMagicTarget = 0x0A;
+        constexpr std::size_t kCalculateScore   = 0x0C;
+        constexpr std::size_t kCheckStartCast   = 0x06;
+        constexpr std::size_t kCheckStopCast    = 0x07;
+        constexpr std::size_t kGetMagicTarget   = 0x0A;
+        constexpr std::size_t kCheckShouldEquip = 0x0F;   // TASK 2 -- same slot core/EquipGate.cpp patches
 
         // ======================================================================
         // SEAT 1 -- WHICH item. CombatInventoryItem::CalculateScore, vfunc 0x0C.
@@ -295,6 +298,119 @@ namespace apmf::aicastseats {
         std::unordered_map<std::uintptr_t, std::uintptr_t>  g_weaponScoreOrig;
         std::atomic<bool> g_scoreSteerEnabled{ false };
 
+        // ======================================================================
+        // TASK 1 per-hand resolution (marth 2026-09-06 PASS S brief) -- own copy
+        // of the SAME per-hand read core/EquipGate.cpp's T2a gate already does
+        // for `callerHand` (itemSlot.equipSlot vs. the vanilla Left/Right Hand
+        // BGSEquipSlot default objects). Kept file-local rather than exported
+        // from EquipGate.cpp/Allowance.h -- this is a read of a plain struct
+        // member on `CombatInventoryItem` (the SAME base class WeaponScoreThunk
+        // already operates on), resolved through the SAME engine singleton, so
+        // duplicating the two-line lookup is cheaper and lower-risk than adding
+        // a cross-TU dependency for it. `allowance::Hand` (Allowance.h) is
+        // reused as the result type so both files speak the same vocabulary.
+        // ======================================================================
+        std::atomic<RE::BGSEquipSlot*> g_leftHandSlot{ nullptr };
+        std::atomic<RE::BGSEquipSlot*> g_rightHandSlot{ nullptr };
+
+        // ======================================================================
+        // TASK 2 (marth 2026-09-06 PASS S brief, [EquipGate] EnableDualWieldPreference,
+        // default 0) -- shared state. See ShieldEquipGateThunk below (after
+        // WeaponScoreThunk) for the full design and the guards.
+        // ======================================================================
+        std::atomic<bool> g_dualWieldPrefEnabled{ false };
+
+        // Vanilla Skyrim.esm One-Handed dual-wield perks. VERIFIED 2026-09-06
+        // directly against the shipped Skyrim.esm's own PERK records -- this
+        // environment has no xEdit/CK, so the raw TES4 record structure was
+        // parsed by hand (EDID subrecord text -> its owning PERK record header
+        // -> that record's own FormID field), exactly the "verify against real
+        // game data, never guess" precedent Loadout.cpp's DualCastPerkForSchool
+        // set for 0x000153CD..0x000153D1. Findings, byte-for-byte off the ESM:
+        //   EDID "DualFlurry30" (rank 1) -- FormID 0x00106256. Its own NNAM
+        //     (next-rank) field reads 0x00106257 -- confirmed to chain to:
+        //   EDID "DualFlurry50" (rank 2) -- FormID 0x00106257.
+        //   EDID "DualSavagery"          -- FormID 0x00106258 (immediately
+        //     adjacent in the authoring block; a separate, later perk in the
+        //     same One-Handed dual-wield line, not a further Dual Flurry rank).
+        // All three are checked independently below (own ANY -> invested) --
+        // simpler and equally correct vs. walking BGSPerk::nextPerk, since all
+        // three concrete forms are already resolved individually.
+        constexpr RE::FormID kDualFlurryRank1FormID = 0x00106256;   // EDID DualFlurry30
+        constexpr RE::FormID kDualFlurryRank2FormID = 0x00106257;   // EDID DualFlurry50
+        constexpr RE::FormID kDualSavageryFormID    = 0x00106258;   // EDID DualSavagery
+        std::atomic<RE::BGSPerk*> g_dualFlurryRank1{ nullptr };
+        std::atomic<RE::BGSPerk*> g_dualFlurryRank2{ nullptr };
+        std::atomic<RE::BGSPerk*> g_dualSavagery{ nullptr };
+
+        // Genuinely-one-handed + perk-invested is necessary but NOT sufficient
+        // -- denying the shield must never leave the off-hand empty (worse than
+        // the shield). This table answers "does the ENGINE'S OWN Melee-category
+        // scoring pass currently see a SECOND, DISTINCT one-handed weapon for
+        // this actor" by piggybacking on WeaponScoreThunk (a hook already
+        // field-proven to run), rather than walking inventory -- Actor::
+        // GetInventory() allocates and is main-thread-idiomatic everywhere else
+        // in this codebase, not something to call from a combat-thread vfunc
+        // hook. Keyed on the item's own FormID (not the per-hand instance), so
+        // a weapon scored via BOTH a main- and an off-hand CombatInventoryItem
+        // (TASK 1's own open question) still counts ONCE -- this answers "is a
+        // second DISTINCT weapon available" correctly either way that resolves.
+        std::mutex g_oneHandedMx;
+        std::unordered_map<RE::FormID, std::unordered_map<RE::FormID, std::uint64_t>> g_oneHandedSeen;
+        constexpr std::uint64_t kOneHandedSightingTtlMs = 6000;   // a few rescore cycles' worth; no LIVE state to expire early
+
+        void RecordOneHandedSighting(RE::FormID a_actor, RE::FormID a_weaponForm) {
+            const auto now = apmf::clock::MonotonicMs();
+            std::scoped_lock lk(g_oneHandedMx);
+            auto& perActor = g_oneHandedSeen[a_actor];
+            perActor[a_weaponForm] = now;
+            for (auto it = perActor.begin(); it != perActor.end(); )
+                it = (now - it->second > kOneHandedSightingTtlMs) ? perActor.erase(it) : std::next(it);
+        }
+
+        bool HasSecondOneHandedWeapon(RE::FormID a_actor) {
+            const auto now = apmf::clock::MonotonicMs();
+            std::scoped_lock lk(g_oneHandedMx);
+            const auto it = g_oneHandedSeen.find(a_actor);
+            if (it == g_oneHandedSeen.end()) return false;
+            int live = 0;
+            for (const auto& [form, ms] : it->second)
+                if (now - ms <= kOneHandedSightingTtlMs) ++live;
+            return live >= 2;
+        }
+
+        bool IsOneHandedMeleeWeapon(RE::TESObjectWEAP* a_weap) {
+            if (!a_weap) return false;
+            switch (a_weap->GetWeaponType()) {
+            case RE::WEAPON_TYPE::kOneHandSword:
+            case RE::WEAPON_TYPE::kOneHandDagger:
+            case RE::WEAPON_TYPE::kOneHandAxe:
+            case RE::WEAPON_TYPE::kOneHandMace:
+                return true;
+            default:
+                return false;
+            }
+        }
+
+        // HasPerk() ONLY (deliberately not also TESNPC::GetPerkIndex's base-
+        // template check, unlike Loadout.cpp's CanDualCast/OwnsExactPerk
+        // precedent) -- this runs on the COMBAT thread, where GetPerkIndex has
+        // no established precedent in either codebase (both known uses are
+        // MainThread::Post/AddTask-side). HasPerk alone is a plain read on the
+        // Actor's own already-resolved runtime perk list, no lock, matching
+        // every other combat-thread read in this file. The known gap (a perk
+        // authored only on a shared base TESNPC template, never runtime-added)
+        // fails CLOSED here -- toward keeping the shield, never toward denying
+        // it -- so it can never produce an empty off-hand from a missed read.
+        bool HasDualWieldInvestment(RE::Actor* a_actor) {
+            if (!a_actor) return false;
+            auto* r1 = g_dualFlurryRank1.load(std::memory_order_acquire);
+            auto* r2 = g_dualFlurryRank2.load(std::memory_order_acquire);
+            auto* sv = g_dualSavagery.load(std::memory_order_acquire);
+            return (r1 && a_actor->HasPerk(r1)) || (r2 && a_actor->HasPerk(r2)) ||
+                   (sv && a_actor->HasPerk(sv));
+        }
+
         // PLACEHOLDER magnitude (marth 2026-09-06): no field data exists yet on
         // this category's real score distribution -- exactly what TASK 1's own
         // probe below is for. An additive constant chosen only to dominate any
@@ -312,16 +428,22 @@ namespace apmf::aicastseats {
         // `kMinChangeIntervalMs` only guards a pathological same-tick oscillation
         // from flooding; it never suppresses the FIRST report of a change.
         struct WeaponScoreLogState { std::uint64_t lastMs = 0; float lastScore = 0.0f; bool biased = false; };
-        std::unordered_map<std::uint64_t, WeaponScoreLogState> g_weaponScoreLogState;
+        // Keyed on (actor,item) PLUS hand -- indexed [kUnknown=0, kLeft=1,
+        // kRight=2] -- so the SAME item scored via two DIFFERENT hand
+        // instances (TASK 1's own duplicate-cat-0 question) gets its own
+        // first-sighting log for EACH hand, rather than the second hand's
+        // sighting being suppressed as "no real change" against the first.
+        std::unordered_map<std::uint64_t, std::array<WeaponScoreLogState, 3>> g_weaponScoreLogState;
         constexpr float          kScoreEpsilon         = 0.01f;
         constexpr std::uint64_t  kHeartbeatMs          = 15000;
         constexpr std::uint64_t  kMinChangeIntervalMs  = 250;
 
-        bool WeaponScoreLogDue(RE::FormID a_actor, RE::FormID a_subject, float a_score, bool a_biased) {
+        bool WeaponScoreLogDue(RE::FormID a_actor, RE::FormID a_subject, allowance::Hand a_hand,
+                               float a_score, bool a_biased) {
             const auto now = apmf::clock::MonotonicMs();
             const auto key = RlKey(a_actor, a_subject);
             std::scoped_lock lk(g_rlMx);   // shares the file's one throttle mutex -- leaf lock, no engine call under it
-            auto& st = g_weaponScoreLogState[key];
+            auto& st = g_weaponScoreLogState[key][static_cast<std::size_t>(a_hand)];
             const bool first     = (st.lastMs == 0);
             const bool changed   = !first && (std::fabs(a_score - st.lastScore) > kScoreEpsilon || a_biased != st.biased);
             const bool heartbeat = !first && (now - st.lastMs) >= kHeartbeatMs;
@@ -357,10 +479,67 @@ namespace apmf::aicastseats {
             auto*      item     = a_this->item;
             const auto itemForm = item ? item->GetFormID() : 0;
 
-            // TASK 2: bias ONLY when a live ch.15 kIntent_Equipment claim on this
-            // actor names THIS EXACT item form -- the same claim/read EquipGate.cpp's
-            // T2a gate already uses (TryGetOwningClaim, lock-free RCU, any thread).
-            // Never applied with the flag off; never applied to any other item.
+            // TASK 1 (marth 2026-09-06 PASS S brief) -- per-hand + slot-bitmask
+            // report, the data that confirms or kills the duplicate-cat-0
+            // hypothesis. TWO DISTINCT signals, both real, both read-only:
+            //   * `hand` -- WHICH hand THIS SCORING CALL is for, resolved from
+            //     `itemSlot.equipSlot` (a real CombatInventoryItem member, the
+            //     SAME per-call field core/EquipGate.cpp's T2a gate already
+            //     reads for `callerHand`) compared against the vanilla Left/
+            //     Right Hand BGSEquipSlot default objects. This is the field
+            //     that would differ across TWO calls scoring the SAME item
+            //     FormID if the engine really does build one CombatInventoryItem
+            //     wrapper per hand.
+            //   * `slotMask` -- the CONFIRMED-GROUND-TRUTH raw bitmask at
+            //     `item+0x28` (PASS S disasm: the occupancy-test value the
+            //     engine's own order-table walk compares against a
+            //     CombatEquipment set's own mask at +0x130/+0x160). This is a
+            //     property of the ITEM FORM itself (constant across hands for
+            //     the same weapon), so seeing it differ from a shield's own
+            //     mask (or NOT differ) is the second half of the evidence.
+            //   Which CombatEquipment SET (r15+0x118 vs +0x148) is being
+            //   filled is NOT resolvable from this call site -- CalculateScore
+            //   runs during the scoring pass, before the later AddItem/
+            //   order-table walk that actually assigns a set; no pointer to
+            //   that walk's own `r15` object reaches this vfunc's arguments.
+            //   Logged as "set=?" rather than guessed.
+            allowance::Hand hand = allowance::Hand::kUnknown;
+            {
+                auto*      slot = a_this->itemSlot.equipSlot;
+                const auto lh   = g_leftHandSlot.load(std::memory_order_acquire);
+                const auto rh   = g_rightHandSlot.load(std::memory_order_acquire);
+                hand = (slot && slot == lh) ? allowance::Hand::kLeft  :
+                       (slot && slot == rh) ? allowance::Hand::kRight :
+                                               allowance::Hand::kUnknown;
+            }
+            std::uint32_t slotMask = 0;
+            if (item) {
+                slotMask = *reinterpret_cast<const std::uint32_t*>(
+                    reinterpret_cast<std::uintptr_t>(item) + 0x28);
+            }
+
+            const auto  cit = g_weaponClassInfo.find(vt);
+            const char* tag = cit != g_weaponClassInfo.end() ? cit->second.tag : "?";
+            const int   cat = cit != g_weaponClassInfo.end() ? cit->second.category : -1;
+
+            // TASK 2 evidence table (only while the feature's own flag is on --
+            // zero extra state/work otherwise): record a DISTINCT sighting of a
+            // one-handed melee weapon FormID for this actor, from the SAME
+            // Melee-category scoring pass ShieldEquipGateThunk below consults
+            // via HasSecondOneHandedWeapon. See that table's own comment
+            // (above HasDualWieldInvestment) for why this beats an inventory walk.
+            if (g_dualWieldPrefEnabled.load(std::memory_order_relaxed) && cat == 0 && itemForm != 0) {
+                if (auto* weap = item ? item->As<RE::TESObjectWEAP>() : nullptr;
+                    IsOneHandedMeleeWeapon(weap)) {
+                    RecordOneHandedSighting(fid, itemForm);
+                }
+            }
+
+            // TASK 2 (score bias): bias ONLY when a live ch.15 kIntent_Equipment
+            // claim on this actor names THIS EXACT item form -- the same claim/
+            // read EquipGate.cpp's T2a gate already uses (TryGetOwningClaim,
+            // lock-free RCU, any thread). Never applied with the flag off;
+            // never applied to any other item.
             float finalScore = engineScore;
             bool  biased     = false;
             if (g_scoreSteerEnabled.load(std::memory_order_relaxed) && itemForm != 0) {
@@ -372,28 +551,160 @@ namespace apmf::aicastseats {
                 }
             }
 
-            if (WeaponScoreLogDue(fid, itemForm, finalScore, biased)) {
-                const auto  cit = g_weaponClassInfo.find(vt);
-                const char* tag = cit != g_weaponClassInfo.end() ? cit->second.tag : "?";
-                const int   cat = cit != g_weaponClassInfo.end() ? cit->second.category : -1;
-                const char* cls = ResolveTypeName(vt);
+            if (WeaponScoreLogDue(fid, itemForm, hand, finalScore, biased)) {
+                const char* cls  = ResolveTypeName(vt);
+                const char* hs   = hand == allowance::Hand::kLeft  ? "L" :
+                                   hand == allowance::Hand::kRight ? "R" : "?";
                 if (biased) {
-                    spdlog::info("[aicastseats] t={} 0x{} '{}' WEAPON-SCORE class={} rtti={} cat={} "
-                                 "item=0x{} '{}' engineScore={:.3f} STEERED->{:.3f} (ch.15 claim)",
+                    spdlog::info("[aicastseats] t={} 0x{} '{}' WEAPON-SCORE class={} rtti={} cat={} hand={} "
+                                 "slotMask=0x{} item=0x{} '{}' engineScore={:.3f} STEERED->{:.3f} (ch.15 claim)",
                                  apmf::clock::MonotonicMs(), apmf::log::Hex(fid),
                                  actor->GetName() ? actor->GetName() : "?", tag, cls ? cls : "<unresolved>",
-                                 cat, apmf::log::Hex(itemForm), item && item->GetName() ? item->GetName() : "?",
-                                 engineScore, finalScore);
+                                 cat, hs, apmf::log::Hex(slotMask), apmf::log::Hex(itemForm),
+                                 item && item->GetName() ? item->GetName() : "?", engineScore, finalScore);
                 } else {
-                    spdlog::info("[aicastseats] t={} 0x{} '{}' WEAPON-SCORE class={} rtti={} cat={} "
-                                 "item=0x{} '{}' engineScore={:.3f}",
+                    spdlog::info("[aicastseats] t={} 0x{} '{}' WEAPON-SCORE class={} rtti={} cat={} hand={} "
+                                 "slotMask=0x{} item=0x{} '{}' engineScore={:.3f}",
                                  apmf::clock::MonotonicMs(), apmf::log::Hex(fid),
                                  actor->GetName() ? actor->GetName() : "?", tag, cls ? cls : "<unresolved>",
-                                 cat, apmf::log::Hex(itemForm), item && item->GetName() ? item->GetName() : "?",
-                                 engineScore);
+                                 cat, hs, apmf::log::Hex(slotMask), apmf::log::Hex(itemForm),
+                                 item && item->GetName() ? item->GetName() : "?", engineScore);
                 }
             }
             return finalScore;
+        }
+
+        // ======================================================================
+        // TASK 2 -- [EquipGate] EnableDualWieldPreference, default 0 (OFF).
+        // CheckShouldEquip (0x0F) on the SAME Shield raw-RVA vtable GROUP C's
+        // own CalculateScore (0x0C) check just identity-verified above --
+        // deliberately placed HERE (core/AiCastSeats.cpp), not core/EquipGate.cpp,
+        // per the brief: EquipGate.cpp's 0x0F hook only reaches the 30 concrete
+        // Magic/Staff/Armor CombatInventoryItem instantiations it can name via a
+        // real `RE::VTABLE_*` symbol (its own file banner) -- Shield has none,
+        // exactly like Melee/Ranged/Torch, so the raw-RVA vtable GROUP C already
+        // resolved is the ONLY handle this codebase has on Shield's slot 0x0F.
+        //
+        // WHY THIS INSTALL IS SAFE WITHOUT A SECOND DISASM-CONFIRMED ADDRESS.
+        // GROUP C's 0x0C install-time check (above, in Install()) already reads
+        // the LIVE pointer at slot 0x0C on THIS EXACT vtable object and requires
+        // it to equal the disasm-confirmed CalculateScore address for Shield --
+        // that is what proves `vt.address()` for the Shield entry in
+        // kWeaponClasses genuinely IS Shield's own vtable (not a stale RVA or a
+        // symbol drift). CombatInventoryItem is an ABSTRACT base whose vtable
+        // SHAPE (which slot is which virtual function) is fixed by the C++ ABI
+        // once the class hierarchy is fixed -- it is the same reasoning
+        // core/EquipGate.cpp already relies on to patch slot 0x0F identically
+        // across 30 UNRELATED concrete subclasses using one fixed slot index,
+        // with no per-class address to check against either. So once 0x0C is
+        // proven to be Shield's real slot (the check above), slot 0x0F on that
+        // SAME already-identity-verified vtable is CheckShouldEquip by the same
+        // structural guarantee -- this is a WEAKER install-time guard than 0x0C's
+        // own (no independent known-good address exists for 0x0F on Shield to
+        // cross-check, unlike 0x0C), and that gap is called out here rather than
+        // papered over. The live pointer at 0x0F is still only ever CAPTURED
+        // (never assumed, never fabricated) and always chained through for
+        // every call this hook does not explicitly deny.
+        //
+        // WHAT IT DOES: engine-answer-first, exactly the allowance-template
+        // contract (Docs/ALLOWANCE-TEMPLATE.md §3) core/EquipGate.cpp's own T2a
+        // gate follows -- calls `orig` unconditionally, and only ever turns a
+        // YES into a NO. Denies THIS shield's admission only when ALL hold:
+        //   1. the actor is resolvable and this candidate is genuinely a shield
+        //      item (non-zero form);
+        //   2. no live ch.15 kIntent_Equipment claim already names THIS EXACT
+        //      shield form -- composition, not a fight with MFO's own equip
+        //      gambits or a deliberate client choice (CLAUDE.md principle 3);
+        //   3. the actor is GENUINELY one-handed right now: GetEquippedObject
+        //      (false) (right hand -- a plain already-resolved Actor-local
+        //      read, no forms-map lock, no inventory walk) is a one-handed
+        //      melee TESObjectWEAP;
+        //   4. the actor has invested in the vanilla dual-wield perk line
+        //      (HasDualWieldInvestment -- verified real FormIDs, see the
+        //      comment above g_dualFlurryRank1);
+        //   5. a SECOND, DISTINCT one-handed melee weapon is CONFIRMED
+        //      available (HasSecondOneHandedWeapon -- the engine's own
+        //      Melee-category scoring pass, not a guess) -- an unconfirmed
+        //      off-hand weapon means NO deny, ever: an empty off-hand with no
+        //      shield is strictly worse than the shield, and this table only
+        //      ever grows evidence, never assumes it.
+        // Every other call is untouched -- returns the engine's own answer
+        // unmodified, including every call while the flag is off (checked
+        // AFTER `orig` runs, never gating the engine call itself).
+        // ======================================================================
+
+        using ShieldEquip_t = bool (*)(RE::CombatInventoryItem*, RE::CombatController*);
+        std::atomic<std::uintptr_t> g_shieldVtableAddr{ 0 };
+        std::uintptr_t              g_shieldEquipOrig = 0;   // set ONCE at install; single-vtable hook, no map needed
+        std::mutex                                       g_shieldDenyRlMx;
+        std::unordered_map<std::uint64_t, std::uint64_t> g_lastShieldDenyMs;
+
+        bool ShieldEquipGateThunk(RE::CombatInventoryItem* a_this, RE::CombatController* a_cc) {
+            const auto vt         = *reinterpret_cast<std::uintptr_t*>(a_this);
+            const auto expectedVt = g_shieldVtableAddr.load(std::memory_order_acquire);
+            ShieldEquip_t orig;
+            if (vt == expectedVt && g_shieldEquipOrig != 0) {
+                orig = reinterpret_cast<ShieldEquip_t>(g_shieldEquipOrig);
+            } else {
+                // Structurally unreachable -- this thunk is only ever installed
+                // on the one Shield vtable slot captured at install. Never
+                // fabricate a should-equip result; recover the live original
+                // for whatever vtable actually called us.
+                spdlog::error("[aicastseats] ShieldEquipGate: vtable 0x{} != installed Shield vtable 0x{} -- "
+                              "recovering the LIVE original instead of fabricating a result.",
+                              apmf::log::Hex(vt, 16), apmf::log::Hex(expectedVt, 16));
+                orig = RecoverLiveOriginal<ShieldEquip_t>(vt, kCheckShouldEquip);
+            }
+
+            const bool result = orig(a_this, a_cc);   // ENGINE ANSWERS FIRST -- always called, flag or no flag
+            if (!result) return result;                // engine already said no -- nothing to narrow
+            if (!g_dualWieldPrefEnabled.load(std::memory_order_relaxed)) return result;
+            if (!a_cc) return result;
+
+            auto* actor = a_cc->attackerHandle.get().get();
+            if (!actor) return result;
+            const auto fid = actor->GetFormID();
+
+            auto*      shieldItem = a_this->item;
+            const auto shieldForm = shieldItem ? shieldItem->GetFormID() : 0;
+            if (shieldForm == 0) return result;
+
+            // Guard 2: never override an explicit ch.15 equipment claim naming
+            // THIS exact shield -- the same claim/read WeaponScoreThunk's own
+            // TASK 2 branch and EquipGate.cpp's T2a gate both already use.
+            APMF_API::APMF_Param claim{};
+            if (apmf::ControlMap::Get().TryGetOwningClaim(fid, APMF_API::kIntent_Equipment, claim) &&
+                claim.form == shieldForm) {
+                return result;
+            }
+
+            // Guard 3: genuinely one-handed right now.
+            auto* rightObj  = actor->GetEquippedObject(false);
+            auto* rightWeap = rightObj ? rightObj->As<RE::TESObjectWEAP>() : nullptr;
+            if (!IsOneHandedMeleeWeapon(rightWeap)) return result;
+
+            // Guards 4 + 5: perk investment, then confirmed off-hand availability
+            // -- deliberately checked LAST (cheapest-first is backwards here;
+            // correctness-critical guard 5 must be the final word before a deny).
+            if (!HasDualWieldInvestment(actor)) return result;
+            if (!HasSecondOneHandedWeapon(fid)) return result;
+
+            {
+                const auto now = apmf::clock::MonotonicMs();
+                const auto key = RlKey(fid, shieldForm);
+                std::scoped_lock lk(g_shieldDenyRlMx);
+                auto& last = g_lastShieldDenyMs[key];
+                if (now - last >= kThrottleMs) {
+                    last = now;
+                    spdlog::info("[aicastseats] t={} 0x{} '{}' TASK2 DENY shield=0x{} '{}' -- dual-wield "
+                                 "perk investment confirmed + a second one-handed weapon is available; "
+                                 "freeing the off-hand slot for the AI's own weapon pass.",
+                                 now, apmf::log::Hex(fid), actor->GetName() ? actor->GetName() : "?",
+                                 apmf::log::Hex(shieldForm),
+                                 shieldItem && shieldItem->GetName() ? shieldItem->GetName() : "?");
+                }
+            }
+            return false;   // THE one narrowing answer -- everything else above returns `result` unmodified
         }
 
         // ======================================================================
@@ -638,8 +949,48 @@ namespace apmf::aicastseats {
         // steer) is its own flag and stays OFF until this probe's own field data
         // confirms 0x0C actually runs.
         const bool groupC     = ReadIniFlag("EnableWeaponScoreProbe", 1);   // GROUP C, default ON (TASK 1)
-        const bool scoreSteer = ReadIniFlag("EnableScoreSteer", 0);         // TASK 2, default OFF
+        const bool scoreSteer = ReadIniFlag("EnableScoreSteer", 0);         // TASK 2 (score bias), default OFF
+        // TASK 2 (dual-wield preference), marth 2026-09-06 PASS S brief -- its OWN
+        // section/key per the brief ([EquipGate] EnableDualWieldPreference, not
+        // [AiCastSeats]): the FACET this flag governs (Shield admission, T2a's
+        // own allowance-template contract) lives conceptually with EquipGate.cpp's
+        // other equip-gate flags even though the hook itself installs here (see
+        // ShieldEquipGateThunk's own comment for why). Bypasses ReadIniFlag (which
+        // hardcodes the [AiCastSeats] section) for that reason.
+        const bool dualWieldPref = GetPrivateProfileIntA("EquipGate", "EnableDualWieldPreference", 0,
+                                                          "Data/SKSE/Plugins/APMF.ini") != 0;
         int nScore = 0, nStart = 0, nStop = 0, nTgt = 0, nWeaponScore = 0, nWeaponRefused = 0;
+        int nShieldEquip = 0;
+
+        // TASK 1 per-hand resolution (see g_leftHandSlot's own comment) --
+        // resolved unconditionally, harmless if GROUP C never installs anything
+        // to use it. Same engine singleton core/EquipGate.cpp already reads;
+        // never a hardcoded FormID. A null result just means every WEAPON-SCORE
+        // line below reports hand=? -- never a crash, never a guess.
+        if (auto* dobj = RE::BGSDefaultObjectManager::GetSingleton()) {
+            g_leftHandSlot.store(dobj->GetObject<RE::BGSEquipSlot>(RE::DEFAULT_OBJECT::kLeftHandEquip),
+                                 std::memory_order_release);
+            g_rightHandSlot.store(dobj->GetObject<RE::BGSEquipSlot>(RE::DEFAULT_OBJECT::kRightHandEquip),
+                                  std::memory_order_release);
+        }
+
+        // TASK 2 perk resolution -- ONCE, main-thread-legal here (TESForm::
+        // LookupByID takes the engine's own forms-map lock, which is exactly
+        // why every combat-thread reader in this codebase resolves its forms
+        // at Install() and caches the pointer, never per-call). See the
+        // constants' own comment (above g_dualFlurryRank1) for how these three
+        // FormIDs were verified. A null result (a load order that somehow
+        // lacks Skyrim.esm's own perks) just means HasDualWieldInvestment can
+        // never return true -- the feature degrades to fully inert, never a
+        // guess or a crash.
+        if (dualWieldPref) {
+            g_dualFlurryRank1.store(RE::TESForm::LookupByID<RE::BGSPerk>(kDualFlurryRank1FormID),
+                                    std::memory_order_release);
+            g_dualFlurryRank2.store(RE::TESForm::LookupByID<RE::BGSPerk>(kDualFlurryRank2FormID),
+                                    std::memory_order_release);
+            g_dualSavagery.store(RE::TESForm::LookupByID<RE::BGSPerk>(kDualSavageryFormID),
+                                 std::memory_order_release);
+        }
 
         // ---- GROUP A / SEAT 1: CalculateScore (0x0C) on the 30 concrete spell/
         // staff CombatInventoryItem vtables -- the IDENTICAL list core/EquipGate.cpp
@@ -769,28 +1120,65 @@ namespace apmf::aicastseats {
                                  spec.tag, apmf::log::Hex(vt.address(), 16), spec.category,
                                  rtti ? rtti : "<unresolved>");
                     ++nWeaponScore;
+
+                    // TASK 2 -- Shield ONLY, and only after the SAME 0x0C identity
+                    // check above already passed for this exact vtable object (the
+                    // continue on refusal a few lines up means we never reach here
+                    // for a Shield entry whose vtable identity is unconfirmed). See
+                    // ShieldEquipGateThunk's own comment for the full design and the
+                    // weaker-guard callout.
+                    if (dualWieldPref && std::string_view(spec.tag) == "Shield") {
+                        const auto curEquipFn = reinterpret_cast<std::uintptr_t>(
+                            RecoverLiveOriginal<ShieldEquip_t>(vt.address(), kCheckShouldEquip));
+                        if (curEquipFn == 0) {
+                            spdlog::error("[aicastseats] TASK2: Shield vtable 0x{} slot 0x0F holds a null "
+                                          "pointer -- REFUSED (dual-wield preference NOT installed; never a "
+                                          "blind vtable write).",
+                                          apmf::log::Hex(vt.address(), 16));
+                        } else {
+                            g_shieldEquipOrig = curEquipFn;
+                            g_shieldVtableAddr.store(vt.address(), std::memory_order_release);
+                            vt.write_vfunc(kCheckShouldEquip, &ShieldEquipGateThunk);
+                            spdlog::info("[aicastseats] TASK2: dual-wield preference ARMED -- Shield "
+                                         "CheckShouldEquip (slot 0x0F) hooked on the same identity-verified "
+                                         "vtable 0x{} GROUP C's own CalculateScore check just confirmed is "
+                                         "genuinely Shield's (no independent disasm-confirmed address exists "
+                                         "for 0x0F itself -- see ShieldEquipGateThunk's comment for why that "
+                                         "is still a safe install).",
+                                         apmf::log::Hex(vt.address(), 16));
+                            ++nShieldEquip;
+                        }
+                    }
                 }
             }
         }   // groupC
 
         g_scoreSteerEnabled.store(scoreSteer && nWeaponScore > 0, std::memory_order_relaxed);
+        g_dualWieldPrefEnabled.store(dualWieldPref && nShieldEquip > 0, std::memory_order_relaxed);
 
         spdlog::info("[aicastseats] OBSERVE-ONLY seat probe: GROUP A (item score) {} -- CalculateScore "
                      "on {} item vtable(s). GROUP B (caster seats) {} -- CheckStartCast/CheckStopCast/"
                      "GetMagicTarget on {}/{}/{} caster vtable(s). GROUP C (weapon-class item score) {} -- "
                      "CalculateScore on {}/{} weapon vtable(s) ({} refused the install-time function-"
-                     "pointer check). Score-steer (TASK 2, biases a claimed form's own score) is {} "
-                     "([AiCastSeats] EnableScoreSteer, default 0) -- {}. All flags read ONCE from "
-                     "Data/SKSE/Plugins/APMF.ini [AiCastSeats]: EnableItemScoreProbe / EnableCasterSeatProbe "
-                     "(default 0=OFF), EnableWeaponScoreProbe (default 1=ON). Every probe chains to the "
-                     "original unconditionally when steer is OFF; never alters an argument.",
+                     "pointer check). Score-steer (TASK 2a, biases a claimed form's own score) is {} "
+                     "([AiCastSeats] EnableScoreSteer, default 0) -- {}. Dual-wield preference (TASK 2b, "
+                     "denies Shield admission for a perked, confirmed-second-weapon one-handed follower) is "
+                     "{} ([EquipGate] EnableDualWieldPreference, default 0) -- {}. All flags read ONCE from "
+                     "Data/SKSE/Plugins/APMF.ini: [AiCastSeats] EnableItemScoreProbe / EnableCasterSeatProbe "
+                     "(default 0=OFF), EnableWeaponScoreProbe (default 1=ON), EnableScoreSteer (default 0); "
+                     "[EquipGate] EnableDualWieldPreference (default 0). Every probe chains to the original "
+                     "unconditionally when its own steer/deny flag is OFF; never alters an argument.",
                      groupA ? "ARMED" : "OFF", nScore, groupB ? "ARMED" : "OFF", nStart, nStop, nTgt,
                      groupC ? "ARMED" : "OFF", nWeaponScore, static_cast<int>(std::size(kWeaponClasses)),
                      nWeaponRefused,
                      g_scoreSteerEnabled.load(std::memory_order_relaxed) ? "ARMED" : "OFF",
                      !scoreSteer                ? "flag is off" :
                      nWeaponScore == 0          ? "flag is on but GROUP C installed 0 vtables, so it cannot fire" :
-                                                   "GROUP C is live -- steer will bias a claimed form's own weapon score");
+                                                   "GROUP C is live -- steer will bias a claimed form's own weapon score",
+                     g_dualWieldPrefEnabled.load(std::memory_order_relaxed) ? "ARMED" : "OFF",
+                     !dualWieldPref ? "flag is off" :
+                     nShieldEquip == 0 ? "flag is on but the Shield CheckShouldEquip install was refused, so it cannot fire" :
+                                         "Shield admission-deny is live");
     }
 
 }
