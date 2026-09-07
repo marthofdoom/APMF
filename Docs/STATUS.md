@@ -23,8 +23,10 @@ ordering on both edges.
 
 **Fix (3b9b29c):** both edges post the nudge through `apmf::mainthread::Post`, which runs
 one hop past that `Publish` (`Arbiter::OncePerFrame` = `Drain()` then `Pump()`) -- the same
-idiom, for the same ordering reason, that ch.8b's CastCompose eviction teardown already
-uses (INVARIANTS #20). The posted nudge carries an `RE::ActorHandle`, re-reads the
+idiom, for the same ordering reason, that ch.8b's two existing deferred teardowns already
+use (INVARIANTS #20) -- the cast-claim EVICTION teardown in `ControlMap::ApplyRequest`
+(`core/ControlMap.cpp:477`) and `CastComposeChannel::Release`'s proxy teardown
+(`channels/CastCompose.cpp:126`). The posted nudge carries an `RE::ActorHandle`, re-reads the
 now-published ch.9 claim and DROPS itself (logged, no retry) if the state moved.
 
 **Fable diff review + the five follow-up fixes it found (this branch, second commit):**
@@ -56,9 +58,40 @@ now-published ch.9 claim and DROPS itself (logged, no retry) if the state moved.
    that a channel MAY read the ControlMap back (lock-free RCU, any thread) and why, since
    OfferPackage is the first channel to do it.
 
+**Round-2 Fable review + its four follow-ups (third commit).** Verdict SHIP WITH
+FOLLOW-UP; the five fixes above were verified correct and complete, and all four new
+findings were log FIDELITY, not mechanism -- the redirect works either way, but the deck
+run would have been graded wrong.
+
+1. **The erase could not fire on the path that matters.** Erasing only inside the 0x49
+   no-claim consult assumed such a consult happens between a release and the next
+   same-form claim. It does not have to: a release plus a re-request landing in ONE
+   `ControlMap::Drain` leaves the release nudge correctly DROPPED as stale at Pump (the
+   claim is already back), so 0x49 is never called with no claim, the re-engage answers
+   with a byte-identical tuple, and the dedup eats the line again. New
+   `packagegate::ForgetRedirect(FormID)` is called from `OfferPackageChannel::Release`
+   BEFORE it posts its nudge -- the edge that actually knows. The hook-side branch stays
+   as a BACKSTOP for the one path with no channel `Release` at all: `ControlMap::Clear()`
+   (revert / new game). Two idempotent erase sites; erasing can only ever cause an extra
+   line, never a missing one.
+2. **The RULE E line cap was reachable and crossing it was silent.** Fix 1 above makes
+   `[ch.9-redirect]` at least one line per dispatch, so 600 is reachable in a long
+   multi-follower session -- after which every later dispatch prints nothing and the pass
+   criterion false-negatives again. Cap resized to 4000 (from the real cadence, not a
+   guess), and the crossing now emits a one-shot `spdlog::warn` naming itself, so the
+   silence can never be misread as "no redirects" (principle 7).
+3. `RedirectAnswer::claimPresent` is dead-always-true; commented as such (no-claim paths
+   ERASE, never store) rather than left implying the opposite.
+4. Mis-naming corrected here and in `OfferPackage.cpp`'s header: the ch.8b EVICTION
+   teardown is `ControlMap::ApplyRequest`'s (`core/ControlMap.cpp:477`);
+   `channels/CastCompose.cpp:126` is the channel-`Release` proxy teardown. Both use the
+   idiom; neither is "CastCompose's eviction teardown".
+
 **NEXT: a deck cycle.** Pass criterion (now that it can actually fire): a `[ch.9-redirect]`
-line within one frame of every ch.9 CLAIMED, on EVERY dispatch including repeats, with
-`[ch.9-nudge] ... FIRED post-publish` between them.
+line within one frame of every ch.9 CLAIMED, on EVERY dispatch including repeats and
+including a release + same-form re-claim inside one Drain, with `[ch.9-nudge] ... FIRED
+post-publish` between them. If `[ch.9-redirect] SESSION LINE CAP` ever appears, the
+absence of later lines is the cap, not the mechanism.
 
 ## PROBE-GATED 2026-09-06 -- PFP Phase 0: movement-leaf OBSERVE-ONLY reporting (`feat/pfp-phase0-movement`)
 
