@@ -21,6 +21,58 @@ ch.1 claims this session." INI-gated `[Probe.mvcbt] Enable=0` in
 mvpkg/tgt/cast probes are NOT part of this branch.
 
 
+## CI-GREEN, NOT FIELD-RUN: `fix/apmf-claim-renew-denyhand-spellsteer` (2026-09-06)
+
+The APMF half of the 2026-09-06 deny/heal field diagnosis (MFO
+`Docs/DIAG-2026-09-06-deny-heal-failures.md`). Four fixes plus an adversarial-review
+follow-up pass; nothing here has been on a deck.
+
+- **F2 / RC2 — a cast claim's TTL is a renewable FLOOR, not a hard expiry.**
+  `Repoint` on a live `kIntent_Cast` claim moves its deadline to now + the claim's own
+  granted (already clamped) `ttlMs`. Before this, every claim died exactly `ttlMs`
+  after `RequestCast` and the client's re-request arrived 0.26–0.61 s later — a
+  recurring unclaimed gap in which foreign spells were observed equipping and charging
+  (one 110 ms after an expiry). Crash-safety is unchanged: a client that STOPS asking
+  still loses the claim on the same schedule. An already-lapsed claim is never
+  resurrected. No ABI change.
+- **F3 / RC3 — `kCastFlag_DenyHandOnly`: claim a hand purely to DENY it.** The missing
+  half of the per-hand cast deny — the client drives nothing on that hand and APMF
+  arms nothing, so an actor-wide cast deny is expressible again without giving up
+  per-hand scoping. Bit 4 of the already-frozen `flags` word, so **no `kABIVersion`
+  bump** (still 6). Ships **DORMANT**: no client sets the bit yet.
+- **F5 / RC5 — the score steer is applied where SPELLS are scored.** The bias lived
+  only in `WeaponScoreThunk`, whose `driven == itemForm` test compares a spell FormID
+  against a WEAPON's — dead code under any INI setting. It now rides
+  `CalculateScoreThunk` (the spell/staff item leaves), hand-resolved from the item's
+  own `itemSlot.equipSlot`; the dead weapon branch is deleted. Still OFF by default.
+- **F6 / RC7 — the cast deny is observable.** `core/CastGate.cpp` had no per-decision
+  log at all, so the 2026-09-06 audit had to record its own P1 row as "DENIED (code) /
+  UNOBSERVED (log)". A throttled `[t2c] ... CheckCast DENIED ...` line now names the
+  actor, the spell, the hand and WHICH narrowing said no (CLAUDE.md principle 5).
+
+**Adversarial-review follow-up (same branch).** Every finding fixed, none deferred:
+`Repoint` can no longer rewrite what a cast claim drives (a deny-only claim's form
+stays 0; a driving claim's form change is REFUSED loudly, since proxy/target/flags
+were resolved against the original spell and `Repoint` re-runs none of that); all
+SEVEN winner-selections in `core/ControlMap.cpp` share ONE comparator
+(`ControlMap.h::BetterClaim` — higher basis wins, and at an equal basis a deny-only
+claim loses to a driving one) so the channel owner and the per-hand gates can never
+disagree; a deny-only claim is excluded from the dual-vs-single collision in BOTH
+directions (a dual claim no longer evicts a floor, and a standing floor no longer
+refuses a dual claim); the two Allowance readers respect an elapsed TTL instead of
+denying from a lapsed claim until the sweep runs; and `Docs/DENY-COMPLETENESS-AUDIT.md`
+row 8b + its new "deny-only hand claim" section describe the mechanism as it actually
+is. One review hypothesis was checked and found WRONG: a client's own direct
+`CastSpellImmediate` force is NOT denied by its own floor — that call is vtable slot
+0x01 and never consults `CheckCast` (0x0A), field-established by MFO's own
+`CasterConsent.cpp` note and by `ENGINE_NOTES` §0.9's zero-magicka infinite-cast
+measurement.
+
+**Field observables, in order:** `[ctl] ... REPOINT (... TTL renewed +N ms)` with no
+`already auto-expired` churn between claims; `[t2c] ... CheckCast DENIED ...` lines
+proving the deny executes; and, once a client sets the bit, no foreign spell charging
+on the floored hand.
+
 ## ✅ SHIPPED 2026-09-05 -- v0.9.1 (beta prerelease). THE NPC'S OWN AI PERFORMS A CLIENT'S CAST.
 
 **FIELD-PROVEN on the deck.** Release: https://github.com/marthofdoom/APMF/releases/tag/v0.9.1
@@ -46,8 +98,17 @@ is gone.**
 per-call vtable identity, an INI kill-switch (`[CastSeats] EnableSeat0Classify`), VR refused, and
 **non-AE refused outright** (the SE offsets are NOT confirmed).
 
-**NEXT:** support the client's OFFENSE casts through the same ch.8b path; narrow the equip deny
-from both hands to one (equip slot is per-SET, confirmed); then movement/target facet RE.
+**DONE since this was written:** offense casts ride the same ch.8b path, and the equip deny was
+narrowed from both hands to one (`feat/per-hand-cast-claims`; `Allowance::AllowedCastForHand` +
+`EquipGate`'s `hasHandSeat`). The narrowing had a known cost -- an unclaimed hand is fully
+AI-governed, and the field proved the AI uses it (25 Stone Runes / 6 Poison Sprays / 8 Raise
+Zombies charged there under a live claim; MFO `Docs/DIAG-2026-09-06-deny-heal-failures.md`, RC3).
+`kCastFlag_DenyHandOnly` (see the `fix/apmf-claim-renew-denyhand-spellsteer` section above) is the other half: a claim that closes a hand it drives nothing
+on, so an actor-wide cast deny is expressible again WITHOUT giving up per-hand scoping.
+
+**NEXT:** movement/target facet RE. Field-run `fix/apmf-claim-renew-denyhand-spellsteer` (the
+renewable cast TTL, the deny-only hand claim, the spell score steer, and the `[t2c]` deny log) --
+none of it has been on a deck, and the deny-only flag ships DORMANT until a client sets the bit.
 
 ## HEAD OF THE CAST WORK: `feat/ai-cast-seats-impl` (built, CI-green, NOT field-run)
 
