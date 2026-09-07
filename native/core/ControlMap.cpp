@@ -282,6 +282,10 @@ namespace apmf {
         RE::FormID           castTarget = 0;
         std::uint32_t        castFlags  = 0;
         std::uint64_t        expiresMs  = 0;
+        // The clamped TTL actually granted below -- stored on the Claim so
+        // ApplyRepoint can renew the window with this claim's OWN length (see
+        // Claim::ttlMs in core/ControlMap.h). 0 for every non-cast claim.
+        std::uint32_t        castTtlMs  = 0;
         RE::ActorHandle      castTargetHandle{};
         // feat/per-hand-cast-claims: handles of conflicting kIntent_Cast claims a
         // WINNING dual-vs-single-hand collision (below) must evict once the new
@@ -316,6 +320,7 @@ namespace apmf {
             if (ttl == 0) ttl = APMF_API::kCastDefaultTtlMs;
             if (ttl > APMF_API::kCastMaxTtlMs) ttl = APMF_API::kCastMaxTtlMs;
             expiresMs = apmf::clock::MonotonicMs() + ttl;
+            castTtlMs = ttl;   // the GRANTED (already-clamped) length ApplyRepoint renews with
 
             // ---- DUAL vs SINGLE-HAND MUTUAL EXCLUSIVITY (feat/per-hand-cast-claims)
             // Two concurrent kIntent_Cast claims on one actor now coexist when they
@@ -506,6 +511,7 @@ namespace apmf {
         newClaim.castTarget       = castTarget;
         newClaim.castFlags        = castFlags;
         newClaim.expiresMs        = expiresMs;
+        newClaim.ttlMs            = castTtlMs;
         newClaim.castTargetHandle = castTargetHandle;
         cc->claims.push_back(newClaim);
         m_index[op.handle] = { op.actor, channel };
@@ -644,15 +650,46 @@ namespace apmf {
             if (!self) return false;   // handle not in this channel (should not happen)
 
             self->param = param;   // update the stored param regardless of ownership
+
+            // ---- TTL RENEWAL (2026-09-06 diagnosis RC2, CLAUDE.md principle 9) ----
+            // A kIntent_Cast claim (the ONLY claim kind that carries a TTL) used to
+            // die exactly ttlMs after RequestCast with nothing able to renew it, so a
+            // client holding one cast for longer than that went UNCLAIMED for the
+            // whole gap between the expiry and its next re-request -- measured at
+            // 0.26-0.61 s every 6 s in the field, with a foreign spell observed
+            // equipping and charging 110 ms into one of those gaps. A Repoint is the
+            // client saying "I still want this window", so it now MOVES the deadline
+            // to now + this claim's OWN granted (already-clamped) length. Done
+            // regardless of ownership, for exactly the same reason `param` above is:
+            // the stored claim is the thing every reader consults, owner or not.
+            // NOT a standing hold and NOT a mask (principle 7): the claim still dies
+            // ttlMs after the client's LAST call, so a crashed or forgetful client
+            // loses it on the same schedule as before -- design.md 5a intact. Only a
+            // client that keeps ASKING keeps the window.
+            //
+            // An ALREADY-LAPSED claim is NOT resurrected. Drain applies queued ops
+            // BEFORE its TTL auto-release pass, so without the liveness test below a
+            // Repoint arriving after the deadline (a client that stalled, or frames
+            // that never ran during a load) would move a dead claim's deadline
+            // forward and it would survive that sweep -- after every reader had
+            // already been answering "gone" (the *ForHand/*ForForm reads treat an
+            // elapsed deadline as gone without waiting for the sweep). Expiry stays
+            // final: renewal EXTENDS a live window, it never reopens a closed one.
+            const auto          nowMs     = apmf::clock::MonotonicMs();
+            const std::uint32_t renewedMs =
+                (self->expiresMs != 0 && self->ttlMs != 0 && nowMs < self->expiresMs) ? self->ttlMs : 0;
+            if (renewedMs != 0) self->expiresMs = nowMs + renewedMs;
+
             if (best == self) {
                 // This claim OWNS the channel -> re-point it in place (same handle,
                 // no release/re-engage). A parameterized channel switches its held
                 // target/spell; a parameterless channel no-ops OnOwnerChanged.
                 auto* actor = RE::TESForm::LookupByID<RE::Actor>(formID);   // may be null
                 channel->OnOwnerChanged(formID, actor, param);
-                spdlog::info("[ctl] 0x{} ~ ch.{} {} REPOINT (h={}, form=0x{}).",
+                spdlog::info("[ctl] 0x{} ~ ch.{} {} REPOINT (h={}, form=0x{}, TTL renewed +{} ms "
+                             "[0 = no TTL on this claim, or its window had already lapsed]).",
                              apmf::log::Hex(formID), channel->ChannelNo(), channel->Name(),
-                             handle, apmf::log::Hex(param.form));
+                             handle, apmf::log::Hex(param.form), renewedMs);
             }
             return true;   // self->param was written above regardless of ownership
         }

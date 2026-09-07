@@ -295,6 +295,18 @@ namespace apmf {
                                              //   magic target, 0x0D as the aim override)
             std::uint32_t  castFlags  = 0;   // kCastFlag_*
             std::uint64_t  expiresMs  = 0;   // 0 = no TTL; nonzero = monotonic-ms deadline
+            // The ALREADY-CLAMPED TTL this claim was granted in ApplyRequest (0 for
+            // every non-cast claim, exactly like the fields above -- byte-identical
+            // to before this existed for them). Stored so ApplyRepoint can RENEW the
+            // window with the claim's OWN granted length (`expiresMs = now + ttlMs`)
+            // instead of guessing a default. The crash-safety guarantee is unchanged:
+            // a client that STOPS repointing still loses the claim ttlMs after its
+            // LAST Repoint/RequestCast, so a forgetful or crashed client can never
+            // leave a standing cast hold (design.md 5a). What changes is that a
+            // client which keeps asking for the window keeps it -- a renewable FLOOR
+            // instead of a hard expiry that kills LIVE state mid-cast (CLAUDE.md
+            // principle 9: a floor is safe, an expiry is not).
+            std::uint32_t  ttlMs      = 0;   // 0 = none granted; else the clamped grant length
             // castTarget resolved to a native ActorHandle ONCE on the writer thread
             // (ApplyRequest), so a COMBAT-THREAD seat never has to run a form lookup
             // (which would take the engine's forms-map lock). RE::ActorHandle is a

@@ -300,6 +300,18 @@ namespace APMF_API {
     // standing hold, design.md §5a). ttlMs == 0 -> kCastDefaultTtlMs; any value is
     // clamped to kCastMaxTtlMs. A crashed/forgetful client can never leave a
     // standing cast hold: the claim auto-releases at expiry (ControlMap TTL pass).
+    //
+    // REPOINT RENEWS THE WINDOW (added 2026-09-06; no ABI change -- no slot, no
+    // field, no flag). Calling Repoint(handle, &param) on a live kIntent_Cast claim
+    // moves its deadline to now + the SAME (already-clamped) ttlMs it was granted,
+    // in addition to updating the stored param. A client that wants to hold a cast
+    // longer than one window therefore HEARTBEATS with Repoint instead of letting
+    // the claim die and re-requesting: the release/re-request cycle left the actor
+    // measurably UNCLAIMED for 0.26-0.61 s every window, and foreign spells equipped
+    // and charged inside that gap (2026-09-06 field diagnosis, RC2). The bound is
+    // unchanged for a client that stops asking -- the claim still dies ttlMs after
+    // its LAST RequestCast/Repoint -- so this is a renewable FLOOR, not a standing
+    // hold: crash-safety identical, live state no longer killed mid-cast.
     inline constexpr std::uint32_t kCastDefaultTtlMs = 4000;
     inline constexpr std::uint32_t kCastMaxTtlMs     = 15000;
 
