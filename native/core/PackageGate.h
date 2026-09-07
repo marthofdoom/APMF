@@ -29,6 +29,27 @@ namespace apmf::packagegate {
     // No-op on a null actor.
     void EvaluatePackage(RE::Actor* a_actor);
 
+    // Drop the actor's remembered `[ch.9-redirect]` answer, so the NEXT claim on
+    // this actor prints a line instead of being swallowed by the RULE D
+    // transition dedup. Call it from the ch.9 RELEASE edge -- the edge that
+    // actually KNOWS the claim went away.
+    //
+    // WHY THE EDGE HAS TO DO IT (round-2 review, 2026-09-06). PackageGate can only
+    // notice "no claim" when the 0x49 hook is CONSULTED for the actor, and there is
+    // no guarantee of such a consult between a release and the next same-form claim:
+    // a release and a re-request that land in ONE ControlMap::Drain both post their
+    // nudges, and at Pump the release nudge is correctly DROPPED as stale (the claim
+    // is already back), so 0x49 is never called with no claim. The re-engage then
+    // produces a byte-identical answer tuple -- same actor, same offered package,
+    // same engine original -- and the dedup suppresses the line even though the
+    // redirect happened. The mechanism would be working and the pass criterion would
+    // read failure.
+    //
+    // Idempotent, cheap (one mutex + one hash erase), and safe to call for an actor
+    // that was never recorded. Any thread; takes only PackageGate's own log-dedup
+    // mutex, so it cannot participate in a lock cycle.
+    void ForgetRedirect(RE::FormID a_actor);
+
     // RULE C heartbeat (marth 2026-09-06, "does 0x49 actually redirect?" probe) --
     // call once per frame from Arbiter::OncePerFrame (game thread), same seat
     // ActionGate.cpp's PfpHeartbeat() and NonAliasProbe.cpp's PollClaimedPackages()

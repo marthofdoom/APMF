@@ -50,10 +50,14 @@
 //
 // So both edges post the nudge through apmf::mainthread::Post, which runs one
 // hop past this Drain's Publish (Arbiter::OncePerFrame does Drain() then
-// Pump()) -- the same idiom, for the same ordering reason, that the ch.8b
-// CastCompose eviction teardown already uses at core/ControlMap.cpp:478-489
-// (Docs/INVARIANTS.md #20). By the time the posted nudge runs, the hook sees
-// exactly the state the nudge is about.
+// Pump()) -- the same idiom, for the same ordering reason, that ch.8b's two
+// existing deferred teardowns already use (Docs/INVARIANTS.md #20): the
+// cast-claim EVICTION teardown in ControlMap::ApplyRequest
+// (core/ControlMap.cpp:477) and CastComposeChannel::Release's proxy teardown
+// (channels/CastCompose.cpp:126). (Naming corrected 2026-09-06: the eviction
+// teardown is ControlMap's, not CastCompose's -- the earlier "CastCompose
+// eviction teardown at core/ControlMap.cpp" conflated the two.) By the time
+// the posted nudge runs, the hook sees exactly the state the nudge is about.
 //
 // RE-VALIDATION CONTRACT (this is load-bearing, not defensive padding -- a
 // posted task outlives the moment it was posted for):
@@ -193,6 +197,23 @@ namespace {
         void Release(RE::FormID id, RE::Actor* actor) override {
             spdlog::info("[ch.9] 0x{} package-offer facet released -- framework package resumes.",
                          apmf::log::Hex(id));
+            // FORGET FIRST, THEN NUDGE -- the order is deliberate, not incidental.
+            //
+            // This is the edge that KNOWS the claim went away; core/PackageGate.cpp's
+            // own no-claim branch can only learn it if the 0x49 hook happens to be
+            // consulted with no claim standing, and that consult is NOT guaranteed
+            // here: a release plus a same-form re-request landing in ONE Drain leaves
+            // the release nudge correctly DROPPED as stale at gate 3 (the claim is
+            // already back by Pump time), so 0x49 is never called with no claim, the
+            // re-engage produces a byte-identical answer tuple, and the RULE D dedup
+            // eats the line. The redirect works; the pass criterion reads failure.
+            //
+            // BEFORE the post, because the erase must be unconditional: gate 1 can
+            // legitimately refuse to post at all (the ControlMap unload sweep reaches
+            // this Release with an already-invalid handle), and the remembered tuple
+            // must be dropped in that case too. Ordering it first also keeps the
+            // erase strictly ahead of any 0x49 consult the nudge could ever cause.
+            apmf::packagegate::ForgetRedirect(id);
             PostDeferredNudge(id, actor, false, 0, "release");
         }
     };

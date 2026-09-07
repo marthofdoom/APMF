@@ -91,6 +91,12 @@ namespace apmf::packagegate {
             RE::FormID orig;
             RE::FormID result;
             RE::FormID claimForm;
+            // ALWAYS TRUE in a stored tuple, and deliberately so: only the
+            // claim-present path STORES, and the no-claim paths ERASE rather than
+            // record a "no claim" answer (see ForgetRedirect below and the backstop
+            // branch in the thunk). Kept in the struct, and in the `==`, so the
+            // tuple stays a faithful record of the answer it describes -- but do not
+            // read it as evidence that no-claim tuples are ever held here.
             bool       claimPresent;
             bool operator==(const RedirectAnswer&) const = default;
         };
@@ -102,10 +108,20 @@ namespace apmf::packagegate {
         // FIX below costs one relaxed load there and nothing else.
         std::atomic<std::uint32_t>                        g_redirectRemembered{ 0 };
 
-        // Defensive session line cap (RULE E) -- the transition dedup above should
-        // already keep this near-silent; this only guards against a pathological
+        // Defensive session line cap (RULE E) -- guards against a pathological
         // flip-flop actor spamming the log. Counters above are NEVER capped.
-        constexpr std::uint64_t    kRedirectLineCap = 600;
+        //
+        // RESIZED + MADE LOUD (round-2 review, 2026-09-06). The old 600 was sized
+        // for a line-per-ANOMALY probe. It is not the right size any more: the
+        // erase-on-release fix deliberately makes this at LEAST one line per ch.9
+        // dispatch, plus one per engine-original flip while claimed (combat
+        // interrupts do this), so a long multi-follower loot session reaches 600 --
+        // and past it every later dispatch prints nothing, which is exactly the
+        // false-negative the erase fix exists to remove. Sized from the real cadence
+        // rather than a guess (principle 9), and the crossing is announced ONCE
+        // (principle 7: a budget that truncates the evidence must never do it
+        // silently). The per-actor dedup, not this cap, is what bounds normal churn.
+        constexpr std::uint64_t    kRedirectLineCap = 4000;
         std::atomic<std::uint64_t> g_redirectLineCount{ 0 };
 
         constexpr std::uint64_t    kRedirectHeartbeatMs = 30000;   // ~30s, matches ActionGate.cpp's mvcbt cadence
@@ -174,30 +190,48 @@ namespace apmf::packagegate {
                                 changed = true;
                             }
                         }
-                        if (changed &&
-                            g_redirectLineCount.fetch_add(1, std::memory_order_relaxed) < kRedirectLineCap) {
-                            spdlog::info("[ch.9-redirect] actor=0x{} engineOrig=0x{} apmfResult=0x{} "
-                                         "claimForm=0x{} won={}",
-                                         apmf::log::Hex(actorId), apmf::log::Hex(answer.orig),
-                                         apmf::log::Hex(answer.result), apmf::log::Hex(answer.claimForm),
-                                         won);
+                        if (changed) {
+                            // Capture fetch_add's PRIOR value so the crossing can be
+                            // announced exactly once, by whichever call consumes the
+                            // last allowed slot -- never silently (principle 7).
+                            const auto prior =
+                                g_redirectLineCount.fetch_add(1, std::memory_order_relaxed);
+                            if (prior < kRedirectLineCap) {
+                                spdlog::info("[ch.9-redirect] actor=0x{} engineOrig=0x{} apmfResult=0x{} "
+                                             "claimForm=0x{} won={}",
+                                             apmf::log::Hex(actorId), apmf::log::Hex(answer.orig),
+                                             apmf::log::Hex(answer.result), apmf::log::Hex(answer.claimForm),
+                                             won);
+                            }
+                            if (prior + 1 == kRedirectLineCap) {
+                                spdlog::warn("[ch.9-redirect] SESSION LINE CAP ({}) REACHED -- further "
+                                             "[ch.9-redirect] lines are SUPPRESSED for the rest of this "
+                                             "session. The cumulative counters in the 30s heartbeat are "
+                                             "NOT capped and remain authoritative; do not read the "
+                                             "silence after this line as 'no redirects'.",
+                                             kRedirectLineCap);
+                            }
                         }
                     }
                 } else if (g_redirectLogEnabled.load(std::memory_order_relaxed) &&
                            g_redirectRemembered.load(std::memory_order_relaxed) != 0) {
-                    // FIX (2026-09-06 review of the ch.9 nudge deferral): FORGET the
-                    // actor's remembered answer when it holds NO ch.9 claim.
+                    // BACKSTOP erase (the PRIMARY one is ForgetRedirect below, driven
+                    // from the ch.9 release edge). Forget the actor's remembered answer
+                    // whenever 0x49 is consulted for it with NO claim standing.
                     //
-                    // Before this, g_redirectLast was written ONLY on the claimPresent
-                    // path, so a no-claim answer was never recorded and never cleared.
-                    // The deferred release nudge now consults 0x49 with claimPresent=
-                    // false, which left the ENGAGED tuple sitting in the map -- so a
-                    // dispatch -> release -> SAME dispatch again produced a tuple
-                    // byte-identical to the remembered one and RULE D's transition
-                    // dedup suppressed the line. The redirect would have happened and
-                    // the log would have been silent, and the diagnosis's own pass
-                    // criterion ("a [ch.9-redirect] line within one frame of every
-                    // CLAIMED") would have graded a working deck cycle as a failure.
+                    // WHY BOTH, and why this one is NOT the load-bearing half (round-2
+                    // review, 2026-09-06). This branch can only fire if the hook is
+                    // actually CONSULTED with no claim, and that consult is NOT
+                    // guaranteed between a release and the next same-form claim -- a
+                    // release plus a re-request inside ONE Drain leaves the release
+                    // nudge correctly dropped as stale, so 0x49 is never called with no
+                    // claim and the identical tuple survives into the re-engage. So the
+                    // release EDGE erases (ForgetRedirect), and this stays as the
+                    // backstop for the paths that drop a claim with NO channel Release
+                    // at all -- specifically ControlMap::Clear() (revert / new game),
+                    // which by design makes no Release calls. Two idempotent erase
+                    // sites, and erasing can only ever cause an EXTRA line, never a
+                    // missing one, so the belt and the braces cannot disagree.
                     //
                     // Erasing rather than recording a no-claim tuple is deliberate:
                     // this branch runs for EVERY unclaimed actor in the game, and a
@@ -279,6 +313,16 @@ namespace apmf::packagegate {
                      "that actor's alias-package answer to it; the engine runs it natively. Redirect-probe "
                      "logging ([ch.9-redirect]) is {} ([PackageGate] EnableRedirectLog, DEFAULT ON).",
                      g_redirectLogEnabled.load(std::memory_order_relaxed) ? "ARMED" : "disabled by INI");
+    }
+
+    void ForgetRedirect(RE::FormID a_actor) {
+        // See PackageGate.h for WHY the release edge -- not the hook -- has to drive
+        // this. Same two lines as the thunk's backstop branch, same mutex, and the
+        // same relaxed size counter so the backstop's cheap pre-gate stays accurate.
+        if (g_redirectRemembered.load(std::memory_order_relaxed) == 0) return;
+        std::scoped_lock lock(g_redirectMx);
+        if (g_redirectLast.erase(a_actor) != 0)
+            g_redirectRemembered.fetch_sub(1, std::memory_order_relaxed);
     }
 
     void EvaluatePackage(RE::Actor* a_actor) {
