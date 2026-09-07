@@ -161,7 +161,10 @@ all. Multi-NPC: aim + key ADDS an NPC; aim another + key adds it too.
 
 ### `native/core/MainThread.{h,cpp}` — confirmed-main-thread task pump (feat/cast-act)
 `Post(fn)` (any thread, mutex-guarded push) / `Pump()` (drains a local swap, FIFO,
-runs every queued task once). Called from `Arbiter::OncePerFrame` right after
+runs every queued task once) / `Discard()` (drops the queue WITHOUT running it and
+returns the count -- called from `plugin.cpp`'s kPreLoadGame and revert handlers so a
+task posted by a teardown `Release` cannot survive the world swap and fire against the
+NEW world; nothing Pumps between pre-load and the first post-load player Update). Called from `Arbiter::OncePerFrame` right after
 `ControlMap::Drain()` -- reuses the SAME confirmed-main `PlayerCharacter` 0xAD seat
 `core/Hook.cpp` already proved single-threaded, rather than trusting SKSE's
 `TaskInterface::AddTask` (MFO's own hard lesson: AddTask does not reliably land on

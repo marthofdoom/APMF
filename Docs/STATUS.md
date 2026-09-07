@@ -4,6 +4,62 @@ Updated 2026-09-06. The current state of the build: what's shipped, what's
 probe-gated, what's next. Keep this current in the SAME change as any
 build/finding/workflow change.
 
+## HEAD OF WORK 2026-09-06 -- ch.9 nudge ordering fix (`fix/apmf-offerpackage-nudge-ordering`)
+
+Branch off main. **CI-green, NOT field-run.** Fixes the bug MFO's
+`Docs/DIAG-2026-09-06-loot-travel.md` diagnosed: every MFO loot dispatch claimed the
+ch.9 package offer and none of them ever put the follower on the offered package.
+
+**Root cause: right thread, wrong MOMENT.** `channels/OfferPackage.cpp`'s
+`Engage`/`OnOwnerChanged`/`Release` called `packagegate::EvaluatePackage` synchronously.
+All three run INSIDE `ControlMap::Drain`'s apply loop, and `Drain` only `Publish()`es the
+new snapshot AFTER that loop -- while the 0x49 `CheckForCurrentAliasPackage` thunk answers
+off the PUBLISHED snapshot. So an engage nudge re-evaluated while the hook still saw NO
+claim (offer never adopted), and a release nudge re-evaluated while the hook still saw the
+claim (offered package asserted at the instant of withdrawal). The field-proven
+`AliasPkgProbe` this code was graduated from had the order right (claim first, nudge one
+frame later); graduating it into the Channel lifecycle kept the call and inverted the
+ordering on both edges.
+
+**Fix (3b9b29c):** both edges post the nudge through `apmf::mainthread::Post`, which runs
+one hop past that `Publish` (`Arbiter::OncePerFrame` = `Drain()` then `Pump()`) -- the same
+idiom, for the same ordering reason, that ch.8b's CastCompose eviction teardown already
+uses (INVARIANTS #20). The posted nudge carries an `RE::ActorHandle`, re-reads the
+now-published ch.9 claim and DROPS itself (logged, no retry) if the state moved.
+
+**Fable diff review + the five follow-up fixes it found (this branch, second commit):**
+
+1. **The pass criterion would have false-negatived.** `core/PackageGate.cpp`'s
+   `[ch.9-redirect]` RULE D transition dedup only ever WROTE `g_redirectLast` on the
+   claim-present path, so a no-claim answer was never recorded and never cleared -- and
+   dispatch -> release -> the SAME dispatch again produced a byte-identical tuple, so the
+   second dispatch printed NOTHING even though the redirect happened. A working deck cycle
+   would have been graded a failure. The no-claim path now ERASES the actor's remembered
+   answer (guarded by an atomic count so unclaimed actors never touch the mutex), so the
+   next claim is a fresh insert and prints.
+2. **Posted tasks crossed the load boundary.** kPreLoadGame -> `ReleaseAll` -> `Release`
+   -> `Post`, and nothing `Pump()`ed until the first player Update AFTER the load, so the
+   task acted on the NEW world. New `mainthread::Discard()`, called in the kPreLoadGame
+   handler (after `ReleaseAll` + `castproxy::ResetAll`) and on the revert/new-game path.
+   Harmless for what is queued today -- the review corrected the original commit's
+   "strictly safer" to "harmless" -- but the hole is GENERAL to every future teardown Post.
+3. **The commit's "the unload sweep hits gate 2" claim was FALSE.** `Actor::GetHandle`
+   MINTS a fresh valid handle for an actor that has none, so the posted task's
+   `handle.get()` check could not catch `ControlMap`'s unload sweep. Gate 1 is now
+   `!actor || !actor->IsHandleValid()` -> NOT POSTED (checked BEFORE `GetHandle`).
+4. **Doc drift inside the mechanism's own files.** `core/PackageGate.{h,cpp}` still
+   asserted the RETRACTED "the lifecycle calls it directly, they already run on the game
+   thread" claim. Both corrected, and the retraction is written down as a retraction.
+5. **Scope trim + dependency note.** `OfferPackage.cpp`'s header no longer restates the
+   field session's timestamps/DLL hashes (they rot; the DIAG owns them) -- two-line pointer
+   instead, ordering rationale and re-validation contract kept. `core/Channel.h` now records
+   that a channel MAY read the ControlMap back (lock-free RCU, any thread) and why, since
+   OfferPackage is the first channel to do it.
+
+**NEXT: a deck cycle.** Pass criterion (now that it can actually fire): a `[ch.9-redirect]`
+line within one frame of every ch.9 CLAIMED, on EVERY dispatch including repeats, with
+`[ch.9-nudge] ... FIRED post-publish` between them.
+
 ## PROBE-GATED 2026-09-06 -- PFP Phase 0: movement-leaf OBSERVE-ONLY reporting (`feat/pfp-phase0-movement`)
 
 ZERO new hooks: rides the act() thunk `core/ActionGate.cpp` already installs on all
