@@ -1,3 +1,10 @@
+## Unreleased -- Diagnostic keys are opt-in
+
+- **No key press can change what Harbinger does any more.** Earlier builds armed a keyboard test surface in every game: numpad keys took control of whatever NPC the crosshair was on, and two of them switched a live actor's ability to attack or cast on and off. That was a diagnostic surface that should never have shipped armed. It is now off unless you ask for it, and the release note for v0.9.0 ("nothing to configure") is finally true of the keyboard as well.
+- Testers who want it back set `EnableTestSurface=1` under `[Input]` in `Data/SKSE/Plugins/APMF.ini`. The probe that flips an actor's attack and cast bits needs its own `[Probe.NativeBit] Enable=1` on top of that.
+- The package-observation probe reads its switch from the ini (`[Probe.NonAlias] EnableObserveLog`) instead of needing a key press, so a diagnosis run no longer depends on the test surface at all.
+- No change to any client-facing behaviour: the arbitration, the channels, the gates and the engine seats are untouched.
+
 ## v0.9.2 -- The equip deny no longer disarms the follower
 
 - **Fixes the v0.9.1 issue where a follower could stop fighting.** While a cast claim stood, the equip deny took every spell and staff the actor owned, on both hands, for the whole life of the claim. A follower being healed repeatedly lost their own attack spells and appeared to freeze. The deny is now limited to the claim's own hand, so the other hand goes back to the NPC's own AI. The claimed spell still wins its slot, which is what makes the cast work.

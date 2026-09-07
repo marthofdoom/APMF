@@ -30,11 +30,14 @@ stance-toggle); a forbidden generate calls a function that picks WHAT the AI dec
 combat-target once called `StartCombat` (to command a target) — wrong LAYER, and
 with a bad reloc signature it was a hard AV (EXCEPTION_ACCESS_VIOLATION inside
 StartCombat). The deny-only rule makes that whole crash class structurally
-impossible: APMF makes no such call at all. ch.6 and ch.8 are now arbitration-only;
-the client commands the target / selects the spell. **ch.14 shout-power's direct
+impossible: APMF makes no such call at all. ch.6 is arbitration-only and the client
+commands the target. **ch.8 is ARBITRATION + DENY, not arbitration-only** (corrected 2026-09-07): a `kIntent_SelectSpell` claim is enforced at two gates — `core/CastGate.cpp:124` (0x0A `CheckCast`) and `core/EquipGate.cpp` (0x0F `CheckShouldEquip`) deny any spell/staff that is not the claim's `param.form` (plus its allow-list). The "arbitration-only" wording dates from the 2026-09-02 #0 correction and was never updated when the deny landed the same day. What ch.8 does NOT do is WRITE the selection —
+it denies everything else, and the client writes its own `selectedSpells`. That is the
+part #0 is about. **ch.14 shout-power's direct
 `EquipShout` call was the same anti-pattern in miniature** — no crash (the function
 is bound and safe), but it duplicated the "APMF selects, not the client" mistake
-this rule exists to end; it is now converted to arbitration-only, matching ch.6/ch.8.
+this rule exists to end; it is now converted to arbitration-only, matching ch.6 (and ch.8's
+"APMF never writes the selection" half).
 
 **The fourth legal action, added 2026-09-05: (d) COMPOSE — answer the ENGINE'S OWN
 decision seats so the engine's own logic produces what the claim asked for.** This
@@ -84,9 +87,15 @@ forbidden generate wearing a hook's clothing.
 implementations are widely SHARED: `GetMagicTarget`'s implementation is the base,
 used by 13 of the 14 combat-caster vtables. An unscoped redirect there would aim
 Stagger/Disarm/Offensive effects at the ally a heal claim named. So a composed
-seat installs on the NARROWEST vtable set that carries the behavior (the Restore
-caster vtable alone), AND re-tests the claim per call. Two independent gates,
-either of which alone would suffice.
+seat installs on the NARROWEST vtable set that carries the behavior — today the
+Restore AND Offensive caster vtables, 2 of the 14 (`core/CastSeats.cpp:483-500`;
+widened from Restore-alone in v0.9.2, because a claimed HOSTILE spell classifies
+into the Offensive caster and a claim on it was otherwise inert) — AND re-tests the
+claim per call. Two independent gates, either of which alone would suffice.
+NARROWEST means narrowest that carries the behavior the claim needs, never
+"whichever vtable we started on": widening is legitimate when a claim provably
+cannot be served without it, and the per-call re-test is what makes each widening
+safe. It is not a licence to install on the base.
 
 **RELEASE ORDERING: the cleared claim is PUBLISHED BEFORE ANYTHING ELSE the
 release does.** A composed seat runs on the combat thread and reads the RCU
@@ -166,8 +175,42 @@ package overrides — so the alias-tier (0x49) mechanism covers every follower i
 and the beneath-script layering means even a hypothetical script-driven follower is safe by
 construction.
 
-**#3c — A CAST IS NEVER A PACKAGE; a `kIntent_Cast` claim is TTL-BOUNDED and denies,
-never drives.** The cast-execution facet (ch.8b, `channels/CastCompose.cpp`, ABI v5
+**#3c — A CAST IS NEVER A PACKAGE; a `kIntent_Cast` claim is TTL-BOUNDED.**
+
+> **AMENDED 2026-09-07 — read this before the body of the rule.** #3c was written for the
+> 2026-09-04 mechanism and was never updated when that mechanism was replaced on
+> 2026-09-05, so as written it contradicts `#0(d)` and `#20` in this same file and the
+> shipped code. Three corrections, in force:
+>
+> 1. **"denies, never drives" and "the CLIENT executes its own animated cast" are
+>    RETIRED.** A `kIntent_Cast` claim COMPOSES (#0 action (d), #20): APMF answers the
+>    engine's own cast-decision seats (0x06/0x07/0x0A/0x0D on the Restore + Offensive
+>    caster vtables, plus 0x0F) and the NPC's OWN AI selects, equips, charges, aims,
+>    fires and channels the claimed spell. APMF still makes NO cast write of its own —
+>    that part of the rule stands, and it is the part #0 is really about.
+> 2. **The T1 cast-leaf deny is NOT part of this claim any more.** `kIntent_Cast` no
+>    longer maps to `kCombatActionCat_Cast`, and the `ContextMagic` CreateContextNode
+>    hooks are removed outright. Denying the cast leaves under a cast claim would silence
+>    the claim's own delivery. Those leaves are still denied for `kIntent_CombatAction`,
+>    a separate live intent.
+> 3. **The TTL is a bounded FLOOR, not a hard expiry, once claim-renewal lands.** Sub-rule
+>    (a) below says "a longer stream is a NEW bounded claim, never a re-assert of the same
+>    one". That sentence is the written origin of a real field failure: the claim died at
+>    6 s, the client had not yet re-requested, and foreign spells equipped and charged in
+>    the 0.3-1.2 s gap, every 6 s (MFO `DIAG-2026-09-06-deny-heal-failures.md` RC2;
+>    `DENY-COMPLETENESS-AUDIT.md` open gap 11; engineering principle 9, "a floor is safe,
+>    an expiry is not"). The correction is that a RE-REQUEST for the same {actor, spell,
+>    hand} RENEWS the deadline instead of racing it — which keeps everything sub-rule (a)
+>    is actually protecting (a crashed or forgetful client still auto-releases at the
+>    deadline; nothing becomes a standing hold; there is still no re-assert loop).
+>    **The renewal is NOT SHIPPED** — it lives on the unmerged branch
+>    `fix/apmf-claim-renew-denyhand-spellsteer`. Until it merges, the gap is live in
+>    every released build, and this amendment is what licenses the fix when it lands.
+>
+> Everything below is the original 2026-09-04 text, kept because sub-rule (b)
+> (`kCastFlag_FromPackage` reads, never runs) and the bounding discipline are unchanged.
+
+The cast-execution facet (ch.8b, `channels/CastCompose.cpp`, ABI v5
 `kIntent_Cast`) is the keystone's category correction (design.md §0/§3): a heal/ward/buff
 the AI would not choose is a CAST facet, not a package facet. A `kIntent_Cast` claim does
 EXACTLY what every other claim does — arbitrate + DENY — through the SAME three gates
@@ -211,8 +254,9 @@ target-unload, and `kPreLoadGame` — never skip or reorder it, or the actor kee
 mutated state across a save load.
 
 **#5a — an ARBITRATION / DENY channel RELINQUISHES on release; it never "undoes" a
-live engine decision.** An arbitration-only channel (ch.6 combat-target, ch.8
-casting) wrote nothing to the engine (#0), so its `Release` has nothing to restore —
+live engine decision.** An arbitration-only channel (ch.6 combat-target, ch.14
+shout-power; and ch.8 casting, whose gates deny but whose channel still writes
+nothing) wrote nothing to the engine (#0), so its `Release` has nothing to restore —
 it just drops the claim record. And a DENY channel over a self-correcting engine
 decision the AI keeps re-making (a combat target, once a real deny gate exists) must
 NOT reverse that decision on release (no `StopCombat`): clients release such a claim
@@ -248,7 +292,8 @@ rev does NOT bind some functions the design references:
   so itself (e.g. MFO's own `currentCombatTarget` compare-and-write + its StartCombat).
 - `Actor::SetCurrentSpell` — not bound (only a no-op `SetCurrentSpellImpl`); a CLIENT
   that owns cast selection writes `selectedSpells[slot]`/`caster->currentSpell` itself.
-  APMF's ch.8 does NOT (arbitration-only, #0). Engine fact (deck-confirmed, useful to
+  APMF's ch.8 does NOT write it (#0) — it denies every other spell at the two gates instead
+  (`CastGate.cpp:124`, `EquipGate.cpp`; "arbitration-only" here was corrected 2026-09-07). Engine fact (deck-confirmed, useful to
   the client): writing `selectedSpells[slot]` + `caster->currentSpell` directly (guarded)
   makes the AI KEEP that selection and cast it as its own decision — the client's path
   to a real animated cast; APMF just arbitrates the facet.
@@ -396,6 +441,32 @@ is wrapped in a `try { … } catch (...)` returning `kInvalidHandle`/void/`nullp
 throw (bad_alloc from the queue, an spdlog throw) unwinding across the client's
 separately compiled DLL is UB. A swallowed throw degrades to "no control taken",
 never a crash.
+
+**#14b — WHEN `kABIVersion` BUMPS, and why a bump is expensive (practised rule,
+written down 2026-09-07).** The header is the ONLY canonical statement of the current
+number — read `kABIVersion` in `native/APMF_API.h`. **No other document may restate it**,
+this rule included: four did, and by 2026-09-07 they had drifted to 2, 3, 3 and 4 while
+the header had moved on. A restated version number is a copy that cannot be kept in sync.
+
+- **A new struct or a new function-pointer slot ⇒ BUMP.** That is what `abiVersion >= N`
+  guards: a client must be able to tell whether the slot it is about to call exists.
+- **A new BIT in an already-frozen word ⇒ DO NOT BUMP.** `APMF_CastFlags`' stop-percent
+  bits 8-15, `kCastFlag_DualCast` and `kCastFlag_DenyHandOnly` all added meaning to a
+  field that already shipped, at the same offset, with the same size. An older APMF
+  reads the bit as 0 and behaves exactly as it did before — the degrade is automatic
+  and correct, and no version test could improve on it.
+- **Why the asymmetry matters HERE.** `APMF_GetInterface(v)` returns **nullptr** when
+  `v > kABIVersion` (`core/ClientAPI.cpp:125-128`), and MFO calls
+  `fn(APMF_API::kABIVersion)` ONCE, with no downward retry: on null it logs "APMF
+  refused ABI v{} (too old) -- owned-cast model OFF" and disables the whole owned-cast
+  model (`native/APMFBridge.cpp:398-403`). So a gratuitous bump does not degrade a
+  feature — it turns the reference client's entire cast integration off against every
+  older APMF.dll in the field. Bump when a slot genuinely needs a version test; never
+  as bookkeeping.
+- **PROPAGATION.** The header is byte-shared. A change to it lands in MFO's
+  `native/APMF_API.h` in the SAME deploy pair, and `md5sum` must match on both repos at
+  every tag and every deck deploy — the header is the one file where "my branch is
+  ahead" is a shipping bug, not a merge detail. Verify before tagging either side.
 
 **#14a — ABI revisions use PREFIX EXTENSION; the param payload is POD, append-only,
 and NEVER retained.** A new ABI revision (v2: `RequestEx` + `APMF_Param`; v3:

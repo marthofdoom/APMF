@@ -20,7 +20,11 @@ C-ABI. A separate client DLL (MFO) declares intents (`Request(actorFormID, inten
 basis)` → handle … `Release(handle)`, or `RequestEx(…, const APMF_Param*)` to name
 WHICH thing — the spell for cast-select, the target for combat-target) instead of
 claiming a package or an alias. The contract is POD structs of function pointers
-(`APMF_API_v1`; `APMF_API_v2` appends `RequestEx` via prefix extension, `kABIVersion=2`)
+(`APMF_API_v1`; each later revision appends via prefix extension — `APMF_API_v2`
+`RequestEx`, v3 `Repoint`, v4 `SetSpellAllowList`, v5 `RequestCast`, v6
+`GetCastProxy`/`IsCastActive`. **The current `kABIVersion` lives in `native/APMF_API.h`
+and NOWHERE ELSE** — INVARIANTS #14b; this line used to hardcode 2 and drifted four
+versions behind)
 — no C++ class, no STL, no vtable crosses the DLL boundary (#14/#14a). A client obtains
 it via the exported query function `APMF_GetInterface`. `Request`/`RequestEx`/`Release`
 forward to the SAME
@@ -49,7 +53,8 @@ path, not two. APMF holds zero client-specific code (#14).
               (the ONE reader-mutable     ReleaseAll / Clear; see #12)
               field) + PACKAGE STABLE ~1/s
 
-   Hotkeys ─► Arbiter::DispatchHotkey ─┐   (test surface: aim + key adds an NPC)
+   Hotkeys ─► Arbiter::DispatchHotkey ─┐   (test surface, OPT-IN [Input]
+     (only when EnableTestSurface=1)   │    EnableTestSurface=1; OFF by default)
    Client DLL ─► APMF_GetInterface ────┤─► ControlMap::EnqueueRequest/Release
      (Request/Release, ANY thread)     ┘   (brief queue lock; applied at Drain)
 ```
@@ -87,7 +92,8 @@ body, never package substitution (§5, #3).
 plugin talk to: it delegates `OnActorUpdate`/`OncePerFrame`/`ReleaseAll` to the
 `ControlMap` and owns the crosshair TEST SURFACE — `DispatchHotkey` resolves the
 aimed NPC and toggles a test claim for that key's channel through the same enqueue
-path (a dedicated key releases all).
+path (a dedicated key releases all). **OPT-IN, DEFAULT OFF (2026-09-07).** No keyboard sink is registered unless `[Input] EnableTestSurface=1` in `Data/SKSE/Plugins/APMF.ini`, so in a shipped game no scancode below does anything at all (CLAUDE.md: probes are fully passive, config-gated, default OFF). `core/Input.cpp` is where that
+gate lives; `Arbiter` itself is unchanged, it simply never receives a key.
 
 **`Registry`** (`core/Registry.{h,cpp}`) is a flat list of every `Channel` instance.
 Channels self-register at load — `APMF_REGISTER_CHANNEL(Type)` expands to a
@@ -156,9 +162,13 @@ CLIENT executes it. Kinds:
    `Tick`.
 2. **Arbitration-only (no engine write)** — record that a client owns the facet so APMF
    is the single arbiter; the CLIENT executes. Combat-target (ch.6 — client writes
-   `currentCombatTarget`), casting (ch.8 — client writes `selectedSpells` + grants its AI
-   consent), and shout/power select (ch.14 — client writes its own `EquipShout`) are
-   here. APMF makes NO combat/cast/equip call for them (#0).
+   `currentCombatTarget`) and shout/power select (ch.14 — client writes its own
+   `EquipShout`) are here. APMF makes NO combat/cast/equip call for them (#0).
+   **ch.8 casting is NOT in this kind (corrected 2026-09-07).** Its channel makes no
+   engine write, but the claim is ENFORCED: `core/CastGate.cpp:124` (0x0A `CheckCast`)
+   and `core/EquipGate.cpp` (0x0F `CheckShouldEquip`) deny any spell/staff that is not
+   the claim's `param.form`. It belongs with kind 3 (gated deny) — the client still
+   writes `selectedSpells` and grants its own AI consent.
 3. **Bounded one-shot promote (#0c, sanctioned)** — a single deterministic engine call
    at Engage/Release for a facet with no deny form and no AI decision to arbitrate
    around: weapon draw (ch.4, `DrawWeaponMagicHands`), stance toggle (ch.3,

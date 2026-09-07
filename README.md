@@ -1,6 +1,9 @@
 # AI Package Management Framework (APMF)
 
-APMF ("Harbinger") is an SKSE framework for Skyrim SE and AE. It's a scalpel,
+APMF ("Harbinger") is an SKSE framework for Skyrim **Anniversary Edition
+(1.6.x)**. It refuses to install its cast path on any other runtime, and VR is
+refused outright. (This line said "SE and AE" until 2026-09-07; CHANGELOG,
+INTEGRATION and STATUS have all said AE-only since v0.9.0.) It's a scalpel,
 not a takeover. A mod claims exactly the facet of an NPC it needs, gets it
 without a fight, and everything else about that NPC (movement, other
 packages, the rest of its AI) keeps running untouched. When the mod releases
@@ -54,16 +57,22 @@ each one is.
 ```cpp
 #include "APMF_API.h"
 
-const APMF_API::APMF_API_v4* g_apmf = nullptr;
+// Pick the NEWEST struct you actually call -- APMF_API_v6 is the current one
+// (APMF_API.h is canonical; never hardcode the number in your own docs).
+const APMF_API::APMF_API_v6* g_apmf = nullptr;
 
 // Once, from kPostLoad/kDataLoaded:
 if (HMODULE h = GetModuleHandleA("APMF.dll")) {
     auto fn = reinterpret_cast<APMF_API::GetInterface_t>(
         GetProcAddress(h, APMF_API::kGetInterfaceExport));
     if (fn) {
+        // fn() returns nullptr if the installed APMF is OLDER than the header you
+        // compiled against, so this single call is all-or-nothing: if you want a
+        // graceful degrade to an older APMF, ask for the lowest version you can
+        // live with and feature-test with base->abiVersion from there.
         if (auto* base = fn(APMF_API::kABIVersion)) {
-            if (base->abiVersion >= 4)
-                g_apmf = reinterpret_cast<const APMF_API::APMF_API_v4*>(base);
+            if (base->abiVersion >= 6)
+                g_apmf = reinterpret_cast<const APMF_API::APMF_API_v6*>(base);
         }
     }
 }
@@ -91,7 +100,9 @@ Full design is in [design.md](design.md).
 
 ## Requirements
 
-- Skyrim SE or AE (Windows). VR is refused at install, not supported.
+- Skyrim **Anniversary Edition, 1.6.x (Windows)**. The cast path refuses to
+  install on SE 1.5.97 (`core/CastClassify.cpp` is AE-only), and VR is refused at
+  install throughout. Corrected 2026-09-07 — this said "SE or AE".
 - Build: CMake 3.21+, a C++23 compiler, [vcpkg](https://vcpkg.io) with the
   `commonlibsse-ng` port (see `native/vcpkg.json` / `native/vcpkg-configuration.json`).
 - A client mod links only against `native/APMF_API.h`, a plain C-ABI header

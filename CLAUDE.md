@@ -6,7 +6,8 @@ result onto the actor — WITHOUT substituting the actor's package. MFO
 (marth's Follower Overhaul, a separate repo) is its primary client and showpiece.
 
 **Read first:** `design.md` (the model), `Docs/ARCHITECTURE.md`, `Docs/INVARIANTS.md`
-(24 numbered rules — code cites them as `#N`), `Docs/CHANNEL-MAP.md` (channel ↔ hook
+(26 numbered rules — code cites them as `#N`; #0-#20 plus the sub-rules #3a/#3c/#5a/#14a/#14b.
+There is no #3b: it left with `feat/alias-drive`, `Docs/SPEC-COMPOSITION-REWORK.md`), `Docs/CHANNEL-MAP.md` (channel ↔ hook
 site), `Docs/DENY-COMPLETENESS-AUDIT.md`, `Docs/HOOK-SITE-COVERAGE.md`, `Docs/STATUS.md`
 (living handoff — update it in the SAME change as any release/field-test change).
 

@@ -21,6 +21,37 @@ node-protocol fix" below.
   known-incomplete) or newly found here. Each carries its concrete fix or the RE it
   needs. A GAP is documented, never silent (#18).
 
+## METHODOLOGY — THE RULE THIS DOCUMENT BROKE ONCE (2026-09-07)
+
+**A completeness audit may NEVER redefine its own facet in order to reach YES.**
+
+If the definition of a facet changes — because the mechanism changed, because a claim
+got narrower, because a path moved to a different seat — then **every row is re-graded
+under the new definition, and everything the change makes moot is LISTED AS A GAP, not
+deleted.** The narrowing itself is the finding. Write down: what the facet used to mean,
+what it means now, and which paths the client used to be protected from that it no
+longer is.
+
+This is not hypothetical. Row 8b was graded **YES** for the cast facet by defining the
+facet as *"only MY spell may be charged/re-armed **on this hand**"*. Under that sentence
+the grade is correct. But the facet a client actually claims through `RequestCast` is
+*"make this NPC cast S"* (`INTEGRATION.md`), and against THAT facet the same code has
+open paths: the other hand is fully AI-governed, the claim dies at its TTL and leaves an
+unclaimed window, a spell already charging is never interrupted. None of those appeared
+in the Table's "Gap / fix" column and none appeared in "Open gaps carried out of this
+pass" — the definition had already excluded them. On 2026-09-06 all three fired in the
+field at once (MFO `Docs/DIAG-2026-09-06-deny-heal-failures.md` §3, rows P3-P8), on a
+change that was reviewed, CI-green and shipped **with this document's YES behind it**.
+
+So the grade is not the deliverable — the enumeration is. Three concrete obligations:
+1. **Grade against the CLIENT's facet**, the one the API's own wording promises, not
+   against the seat you happen to have hooked.
+2. **A narrowed scope is a GAP entry**, even when the narrowing is deliberate and
+   correct. "By design" describes WHY a path is open; it does not make the path closed.
+   A design decision and a completeness verdict belong in different columns.
+3. **Reconcile against field evidence before re-grading up.** A row may only move to YES
+   on evidence (code plus an observation), never on the absence of a counter-example.
+
 ## Table
 
 | # | Intent (ch.) | Mode | Source paths to the facet | Current deny | Complete? | Gap / fix |
@@ -31,9 +62,9 @@ node-protocol fix" below.
 | 16 | `kIntent_Detection` (ch.16) | DENY AV | `detectionModifier` + `kDetectLifeRange`/`kMovementNoiseMult` AVs | set the detect AVs (`channels/Detection.cpp`) | **YES (source-gate)** for the detection-AV facet | Sneaking POSTURE is a SEPARATE facet (ch.3 stance) — see row ch.3; not a leak of this facet |
 | 4 | `kIntent_SelectSpell` (ch.8), BARE (gate-only) | ARBITRATE + DENY (exclusivity) | AI charges a spell (`CheckCast` 0x0A); AI equips a spell/staff to hand (`CheckShouldEquip` 0x0F) | deny any spell/staff ≠ `param.form` at BOTH gates (`core/CastGate.cpp`, `core/EquipGate.cpp` via `Allowance::Allowed`) | **YES (gated)** — this facet NARROWS the AI to one spell (it does NOT stop casting). The magic context-node BUILD is *correct* here (it builds context for the claimed spell, which the client WANTS its AI to cast), so denying it would be wrong — deliberately not denied under a bare SelectSpell | — (the context-node deny is REMOVED entirely as of feat/ai-cast-seats-impl — see rows 8b and 14; nothing denies the magic context build for any intent today) |
 | 4+ACT | **RETIRED** (feat/ai-cast-seats-impl, 2026-09-05) | — | — | — | **ROW VOID.** The `+ACT` drive this row audited is deleted; `ival` bit 2 is RESERVED and ignored, and `core/ActionGate.cpp` no longer reads it. A bare ch.8 claim behaves exactly as row 4. | For a cast APMF should MAKE happen, see row 8b (which no longer denies anything on the AI's cast path — it ANSWERS it) |
-| 8b | `kIntent_Cast` (ch.8b) | ARBITRATE + DENY (exclusivity) + **COMPOSE** (INVARIANTS #20) | (a) AI charges a competing spell (`CheckCast` 0x0A); (b) AI re-arms a competing spell/staff (`CheckShouldEquip` 0x0F). **Paths (c) the four cast leaves and (d) the ContextMagic CreateContextNode are NO LONGER competing sources for this intent** — they ARE how the claimed cast is delivered (the NPC's own AI performs it, `core/CastSeats.cpp`). Denying them would silence the claim's own cast. | (a)(b) `Allowance::AllowedCastForHand` allows only the claim's spell+proxy **on the claim's own hand**, PER-HAND; plus `EquipGate`'s seat-0x0F block denies the ORIGINAL kSelf form while its delivery-flip proxy is driven (N4). **2026-09-06: a client may now also close a hand it drives NOTHING on — `kCastFlag_DenyHandOnly` (see “The deny-only hand claim” below), which is what makes an ACTOR-WIDE cast deny expressible at all.** (c)/(d): no deny, by design. TTL-bounded auto-release throughout (a TTL is renewable via `Repoint`, so a held cast no longer reopens the hand every window). | **YES for the exclusivity facet, PER-HAND at (a)/(b) — and, when the client claims both hands (one driving + one deny-only, or one deny-only per hand), ACTOR-WIDE at (a)/(b).** The facet this claim owns is “only MY spell may be charged/re-armed on this hand,” and both paths to it are gated at a seat with a native hand signal. | The old per-actor gap at (c)/(d) is GONE because (c)/(d) are no longer denied at all. **What replaced them is not a deny but an ANSWER**, so its correctness question is different: see “The engine-seat pass” below. The RESIDUAL hole this row carried until 2026-09-06 — the UNCLAIMED hand being fully AI-governed (field: 25 Stone Runes, 6 Poison Sprays, 8 Raise Zombies charged there; DIAG RC3 / rows P3-P4) — is now closable by the client, but it is the CLIENT that has to close it: APMF denies the hands it was asked to, and no more. Coverage traded for `kIntent_CombatAction` is recorded in row 14. |
+| 8b | `kIntent_Cast` (ch.8b) | ARBITRATE + DENY (exclusivity) + **COMPOSE** (INVARIANTS #20) | (a) AI charges a competing spell (`CheckCast` 0x0A); (b) AI re-arms a competing spell/staff (`CheckShouldEquip` 0x0F). **Paths (c) the four cast leaves and (d) the ContextMagic CreateContextNode are NO LONGER competing sources for this intent** — they ARE how the claimed cast is delivered (the NPC's own AI performs it, `core/CastSeats.cpp`). Denying them would silence the claim's own cast. | (a)(b) `Allowance::AllowedCastForHand` allows only the claim's spell+proxy **on the claim's own hand**, PER-HAND; plus `EquipGate`'s seat-0x0F block denies the ORIGINAL kSelf form while its delivery-flip proxy is driven (N4). **2026-09-06: a client may now also close a hand it drives NOTHING on — `kCastFlag_DenyHandOnly` (see “The deny-only hand claim” below), which is what makes an ACTOR-WIDE cast deny expressible at all.** (c)/(d): no deny, by design. TTL-bounded auto-release throughout (a TTL is renewable via `Repoint`, so a held cast no longer reopens the hand every window). | **YES for the exclusivity facet, PER-HAND at (a)/(b) — and, when the client claims both hands (one driving + one deny-only, or one deny-only per hand), ACTOR-WIDE at (a)/(b). But PARTIAL for the facet a client actually claims ("make this NPC cast S"), and it is the CLIENT that closes the difference.** Re-graded 2026-09-07 against MFO `DIAG-2026-09-06-deny-heal-failures.md` §3 (P1-P14) under the METHODOLOGY rule above: the earlier flat **YES** was reached by defining the facet as "only MY spell may be charged/re-armed on this hand", and the wider facet's open paths (P3/P4 the other hand, P5 a weapon, P6 the TTL gap, P7 publish latency, P8 a spell already charging) were never enumerated as paths at all. They are open gaps 9-13 below. Both paths this cell DOES grade are gated at a seat with a native hand signal | The old per-actor gap at (c)/(d) is GONE because (c)/(d) are no longer denied at all. **What replaced them is not a deny but an ANSWER**, so its correctness question is different: see “The engine-seat pass” below. The RESIDUAL hole this row carried until 2026-09-06 — the UNCLAIMED hand being fully AI-governed (field: 25 Stone Runes, 6 Poison Sprays, 8 Raise Zombies charged there; DIAG RC3 / rows P3-P4) — is now closable by the client, but it is the CLIENT that has to close it: APMF denies the hands it was asked to, and no more. Coverage traded for `kIntent_CombatAction` is recorded in row 14. **The wider facet's residual paths are open gaps 9-13**, not covered by this cell's YES: gaps 9 (other hand) and 11 (TTL) now have SHIPPED mechanisms a client must actually use, and gaps 10, 12 and 13 have none. |
 | 14 | `kIntent_CombatAction` (ch.7) | DENY (category) | 70 combat behavior-tree leaves' `act()`/`pop()` (slots 0x02/0x03) | ForceFail-PAIR the leaves whose classified category bit is set in `param.ival` (`core/ActionGate.cpp`); "offense" classified today | **YES (gated) for the offense category** — the deny zeroes exactly the named category's leaves; every other leaf fires natively | SCOPE (not a leak): only "offense" is classified today; defense/movement/utility categories are future work (a claim only denies what it names — CHANNEL-MAP ch.7). **NEW GAP (feat/ai-cast-seats-impl, 2026-09-05):** the `CombatBehaviorContextMagic` CreateContextNode is no longer hooked at all, so a Cast/Offense claim now suppresses only the four FIRING leaves, not the magic CONTEXT-BUILD path — the AI may build a magic context and equip a spell it then cannot fire. Deliberate: that node's deny is the seat whose act()-only form caused the months-live data-stack CTD, and keeping it would suppress ch.8b's own delivery mechanism. Re-adding it would need a way to scope it to CombatAction claims only. Also: offense leaves' CONTEXT nodes (Melee/Ranged CreateContext) are NOT yet denied — same class as the cast-context fix; harmless today (no forced melee equip), flag if a client ever force-equips a weapon under an offense claim |
-| 15 | `kIntent_Equipment` (ch.15) | ARBITRATE + DENY (input-gate) | AI equips a spell/staff (`CheckShouldEquip` 0x0F, 30 magic/staff vtables); **AI equips a competing WEAPON**; **AI BUILDS a weapon-equip CONTEXT** (AcquireWeapon / ContextMelee / ContextRanged CreateContextNode) | deny spell/staff re-arm at 0x0F while the weapon-order claim holds (`core/EquipGate.cpp`) | **PARTIAL** — the spell/staff-suppression path is gated, but the weapon-vs-weapon path is **NOT**: `CombatInventoryItemMelee`/`Ranged` have NO concrete C++ class in the pinned CommonLib, so 0x0F cannot be hooked for weapons. The AI can still equip a *different weapon*; a client that force-equips a weapon concurrently is exposed to the same context-creation race class | **GAP (documented).** Fix path found + symbols verified: deny the weapon CONTEXT nodes as the same act()+pop() pair — `VTABLE_CombatBehaviorTreeCreateContextNode_CombatBehaviorContextAcquireWeapon_` (Offsets_VTABLE.h:3430), `...ContextMelee...` (3719), `...ContextRanged...` (1784), all RTTI-backed. NOTE those nodes' own push sizes must be irrelevant to the pair (they are: the pair is ForceFail's own 4/4). Scoped OUT this pass (needs a field test for over-suppression + its own `kIntent_Equipment` category semantics). Until then: an equipment claim is complete for SPELL-hand exclusivity only; do not rely on it to win weapon-vs-weapon. **2026-09-06 addendum:** `core/AiCastSeats.cpp` GROUP C now hooks `CalculateScore` (0x0C, NOT 0x0F) on all four weapon-class leaves via raw disasm-confirmed RVAs (still no CommonLib class) — an observe-only probe by default, plus an OFF-by-default score-steer bias. This is a SCORE lever within a category (melee-vs-ranged, shield-vs-torch), not a 0x0F admission gate; it does not close this GAP (weapon-vs-weapon admission is still unarbitrated) and a biased weapon can never outscore a spell/staff that already claimed the hand |
+| 15 | `kIntent_Equipment` (ch.15) | ARBITRATE + DENY (input-gate) | AI equips a spell/staff (`CheckShouldEquip` 0x0F, 30 magic/staff vtables); **AI equips a competing WEAPON**; **AI BUILDS a weapon-equip CONTEXT** (AcquireWeapon / ContextMelee / ContextRanged CreateContextNode) | deny spell/staff re-arm at 0x0F while the weapon-order claim holds (`core/EquipGate.cpp`) | **PARTIAL** — the spell/staff-suppression path is gated, but the weapon-vs-weapon path is **NOT**: `CombatInventoryItemMelee`/`Ranged` have NO concrete C++ class in the pinned CommonLib, so 0x0F cannot be hooked for weapons. The AI can still equip a *different weapon*; a client that force-equips a weapon concurrently is exposed to the same context-creation race class | **GAP (documented).** Fix path found + symbols verified: deny the weapon CONTEXT nodes as the same act()+pop() pair — `VTABLE_CombatBehaviorTreeCreateContextNode_CombatBehaviorContextAcquireWeapon_` (Offsets_VTABLE.h:3430), `...ContextMelee...` (3719), `...ContextRanged...` (1784), all RTTI-backed. NOTE those nodes' own push sizes must be irrelevant to the pair (they are: the pair is ForceFail's own 4/4). Scoped OUT this pass (needs a field test for over-suppression + its own `kIntent_Equipment` category semantics). Until then: an equipment claim is complete for SPELL-hand exclusivity only; do not rely on it to win weapon-vs-weapon. **2026-09-06 addendum:** `core/AiCastSeats.cpp` GROUP C now hooks `CalculateScore` (0x0C, NOT 0x0F) on all four weapon-class leaves via raw disasm-confirmed RVAs (still no CommonLib class) — an observe-only probe by default, plus an OFF-by-default score-steer bias. This is a SCORE lever within a category (melee-vs-ranged, shield-vs-torch), not a 0x0F admission gate; it does not close this GAP (weapon-vs-weapon admission is still unarbitrated). **CORRECTED 2026-09-07:** this row used to end "a biased weapon can never outscore a spell/staff that already claimed the hand". That was a statement about the ch.15 steer's own category-0 ceiling, written as if it were a general guarantee — it is not one. The steer cannot bias a weapon ABOVE a claimed spell, but **nothing in APMF denies a weapon that the engine's own scoring already ranks above the claimed spell on that hand**: 0x0F is not hookable on weapon leaves (no concrete `CombatInventoryItemMelee`/`Ranged` class in the pinned CommonLib), so the claimed hand has no weapon-side admission gate at all. MFO DIAG row P5 records it as a plausible contributor to a claimed heal holding the hand only briefly (not proven from that log). Tracked as open gap 10 |
 | 9 | `kIntent_OfferPackage` (ch.9) | DENY (redirect offer) | alias-tier package OFFER (`CheckForCurrentAliasPackage` 0x49); non-alias / procedure-tier package selection | 0x49 returns the claimed package for the claim's actor (`core/PackageGate.cpp`), engine runs it natively; structurally BENEATH script-driven (PapyrusUtil) overrides (#3a) | **YES (gated) for the alias tier** — the enumerated path for EVERY follower in the Tuxborn audit (all alias-tier, zero PapyrusUtil overrides). Phases 1-2 field-proven | Non-alias procedure-tier (`BGSProcedureTreeProcedure` `Unk_XX`) is a FLAGGED gap needing an RE spike (HOOK-SITE-COVERAGE §5) — not a follower-relevant path today, but the one remaining package path APMF cannot yet deny. Phase 3 (save/load interplay) unexercised |
 | 6 | `kIntent_CombatTarget` (ch.6) | ARBITRATE-only | `AIProcess.currentCombatTarget` (+ `CombatController.targetHandle`), re-chosen each tick by threat; a competing framework's target write | NONE built (records owner; client writes its own `currentCombatTarget`) | **PARTIAL (by design today)** — the NATIVE AI's target re-choice is handled by the CLIENT (MFO commands `currentCombatTarget` + consent), so the native path is not a "competing source" in practice. But a COMPETING FRAMEWORK writing the target is NOT denied | **GAP (already documented, CHANNEL-MAP ch.6):** the future deny is a suppression of a competing framework's target write at the hook. Single-client today (MFO), so no live race; flag before a second target-writing framework is supported |
 | 12 | `kIntent_ShoutPower` (ch.14) | ARBITRATE-only | `selectedPower` / voice slot; a competing framework's `EquipShout`; AI shout leaves (`CombatBehaviorCastShout`/`EquipShout`) | records voice-slot owner; client executes its own `EquipShout` | **PARTIAL (by design today)** — mirrors ch.6/ch.8: the client selects; the native AI is made to cooperate. A competing framework's `EquipShout` is not denied | **GAP (documented, CHANNEL-MAP ch.14):** same future competing-framework suppression as ch.6. Note `CombatBehaviorCastShout` leaf IS deniable via ch.7 offense/cast today if a client also claims combat-action |
@@ -178,9 +209,13 @@ implementation is the SHARED BASE of 13 of the 14 combat-caster vtables, so an
 unscoped redirect would aim Stagger/Disarm/Offensive HOSTILE effects at the ally a heal
 claim named. The equivalent of "enumerate every path" for a composed seat is
 "enumerate every OTHER consumer of the implementation you are answering, and prove none
-of them can see your answer." Here that is done twice over: the install list is the
-Restore vtable alone, AND every thunk re-tests {claim actor, claim's driven form} per
-call. Either gate alone would suffice; both are required to stay.
+of them can see your answer." Here that is done twice over: the install list is
+**the Restore AND Offensive caster vtables only** (2 of the 14 — widened from
+Restore-alone in v0.9.2 by `feat/offense-seat-scope`, because a claimed HOSTILE spell
+classifies into the Offensive caster and a claim on it was otherwise inert;
+`core/CastSeats.cpp:483-500`), AND every thunk re-tests {claim actor, claim's driven
+form} per call. Either gate alone would suffice; both are required to stay — and with
+the list at two vtables the per-call test is doing real work, not standing in reserve.
 
 **Release ordering is part of the obligation** (INVARIANTS #20): the cleared claim must
 be PUBLISHED before anything else the release does, or the next native heal decision
@@ -210,7 +245,22 @@ Both feed `Allowance::AllowedCastForHand(actor, subjectForm, callerHand)`:
 when the winning `kIntent_Cast` claim names a specific hand (its `CastFlags`'
 `kCastFlag_LeftHand` bit — default right) and the caller's resolved hand is KNOWN
 and DIFFERENT, it returns ALLOW without even checking `subjectForm` — that hand's
-AI deliberation is untouched. `Hand::kUnknown` (a caster with `kOther`/`kInstant`
+AI deliberation is untouched.
+
+> **THE OTHER HAND IS A GAP, NOT ONLY A FEATURE (added 2026-09-07).** "That hand's AI
+> deliberation is untouched" is the intended *behaviour* of a per-hand claim, and it is
+> also, verbatim, an open path against the facet the client claimed. Both statements are
+> true and this document previously carried only the first. A client that claims one
+> hand and expects the NPC to cast only its spell gets a follower who charges and re-arms
+> whatever the AI likes in the other hand: MFO's 2026-09-06 deck session recorded Stone
+> Rune R x25, Poison Spray R x6, Raise Zombie R x8 + L x2 under a standing left-hand heal
+> claim (DIAG §3 rows P3/P4, RC3). See open gap 9. The intended remedy is the deny-only
+> hand claim (`kCastFlag_DenyHandOnly`): a claim on the unclaimed hand that drives
+> nothing and denies everything, so the client can close the actor without APMF inventing
+> a second cast. **It is NOT shipped** — it lives on the unmerged branch
+> `fix/apmf-claim-renew-denyhand-spellsteer`, ships DORMANT there (no client sets the
+> bit), and has its own pre-adoption follow-ups. Nothing in a released APMF closes P3/P4
+> today. `Hand::kUnknown` (a caster with `kOther`/`kInstant`
 source, or an item whose slot is neither vanilla hand — e.g. `kEitherHandEquip`)
 degrades exactly to the old `AllowedCast(actor, subjectForm)` actor-wide floor —
 never a guess. `ControlMap::TryGetCastClaim` grew an optional `outFlags` parameter
@@ -226,9 +276,14 @@ carries no per-instance data beyond the base, and the thread object
 (`CombatBehaviorThread`, measured layout in `core/CombatBehaviorRE.h`) has no
 hand/casting-source field either. There is no RTTI/struct-verified read available
 here — inventing one would violate INVARIANTS #17/#18's "no blind slots, no invented
-offsets" discipline. **Practical effect:** a `kIntent_Cast` claim on ONE hand still
-denies (c)/(d) for BOTH hands' magic-offense leaves/context-build on that actor. This
-is the required per-actor floor, not silently presented as per-hand. If a future
+offsets" discipline. ~~**Practical effect:** a `kIntent_Cast` claim on ONE hand still
+denies (c)/(d) for BOTH hands' magic-offense leaves/context-build on that actor.~~
+**RETIRED 2026-09-05 by "The engine-seat pass" above; correction recorded 2026-09-07.**
+`kIntent_Cast` does not arm the (c)/(d) deny AT ALL any more — (d)'s hooks are removed
+outright and (c)'s implicit `kIntent_Cast ⇒ Cast` mapping is gone, so a cast claim has
+nothing left to deny on either hand. The per-actor floor described here survives only
+for a `kIntent_CombatAction` claim (row 14), the intent that still arms those leaves.
+It is the required per-actor floor for THAT intent, not silently presented as per-hand. If a future
 client needs a magic-hand deny that leaves the OTHER hand's magic branch genuinely
 free, that needs either a version-pinned instance-layout RE spike on the thread's
 context window (the built `CombatBehaviorContextMagic` DOES know its caster, but
@@ -322,12 +377,67 @@ says nothing about the other still gets exactly the row-P3/P4 behaviour, by desi
    at the tree-node seat.)
 7. **Field confirmation of the paired deny (feat/ai-cast-suppress).** The protocol is
    disassembly-measured, not yet deck-cycled: expect zero `[ch.7] paired-pop protocol
-   ANOMALY` lines under a `kIntent_CombatAction` claim.
-8. **Field confirmation of the five engine seats (feat/ai-cast-seats-impl, NEW).** The
-   seats are disassembly-verified and CI-green, never deck-run. Expect, in order:
-   `[t2a] ... SEAT 0x0F armed` at install; then on a claim, a real engine equip of the
-   claimed heal, `[ch.8b seat 0x06] -> YES`, `[ch.8b seat 0x0A] -> claimed target`, an
-   animated cast, and `[ch.8b seat 0x07] -> STOP` at the stop percent. The ONE
-   NOT-CERTAIN item carried into the field is the `CombatAimController+0x30` lifecycle
-   (does anything reset or carry it between controllers?) — seat 0x0D has its own
-   kill-switch, `[CastSeats] EnableAimSeat=0`, for exactly that.
+   ANOMALY` lines under a `kIntent_CombatAction` claim. STILL OPEN as of 2026-09-07 —
+   the 2026-09-06 deck session ran cast claims, not a `kIntent_CombatAction` claim, and
+   MFO's DIAG reports no paired-pop anomaly either way.
+8. ~~**Field confirmation of the five engine seats (feat/ai-cast-seats-impl, NEW).**~~
+   **CLOSED 2026-09-05 (v0.9.1), recorded here 2026-09-07.** The seats are deck-run and
+   field-proven: `STATUS.md` v0.9.1, and MFO's 2026-09-06 session logged 17 animated
+   offense fires plus the heal path through them. This entry said "never deck-run" for
+   two days after that stopped being true — a stale open gap is as misleading as a
+   missing one. The one item that was carried into the field on a kill-switch, the
+   `CombatAimController+0x30` lifecycle behind `[CastSeats] EnableAimSeat=0`, is
+   unchallenged so far (no aim-seat anomaly in the field logs) but has no positive
+   observation either; it stays a watch item, not a gap.
+
+### Gaps 9-13 — the wider cast facet (added 2026-09-07, from MFO DIAG §3 P1-P14)
+
+These are the paths row 8b's narrow definition excluded. They are listed here because
+the METHODOLOGY rule at the top of this file says a narrowed scope is a gap entry.
+
+9. **The OTHER hand is fully AI-governed (DIAG P3/P4).** A `kIntent_Cast` claim on hand
+   H imposes nothing on the other hand at either gate: `Allowance.cpp` returns ALLOW
+   without reading `subjectForm`, and `EquipGate`'s `hasHandSeat` is per-hand. Field-
+   observed under a standing claim (RC3). Remedy: the client claims the other hand too,
+   with the deny-only hand claim (`kCastFlag_DenyHandOnly`) so it denies without driving.
+   **NOT SHIPPED** — unmerged branch `fix/apmf-claim-renew-denyhand-spellsteer`, dormant
+   even there. Until it merges AND a client sets the bit, this gap is open in every
+   released APMF.
+10. **A weapon can take the claimed hand (DIAG P5).** No weapon-side admission gate
+    exists on the claimed hand: 0x0F is not hookable on the weapon leaves (row 15's
+    GAP), and the ch.15 score steer is a within-category lever that cannot deny an
+    admission. Row 15's old "a biased weapon can never outscore a spell/staff that
+    already claimed the hand" is corrected in place. Plausible contributor to a claimed
+    heal holding the hand only briefly; not proven from the 2026-09-06 log. Closing it
+    means the weapon CONTEXT-node seat in gap 1, or an RE spike that finds a real
+    weapon-side admission gate.
+11. **The TTL expiry gap (DIAG P6, RC2).** A `kIntent_Cast` claim hard-expires at its
+    TTL (6 s in MFO's usage) and every seat, gate and steer chains natively from the
+    moment it expires until the client's next `RequestCast` publishes — measured at
+    0.3-1.2 s, recurring, with a foreign spell observed equipping 110 ms into one gap.
+    This document previously listed "TTL-bounded auto-release throughout" as a FEATURE
+    of the deny and never as a path. **The gap was written into the rules**, not just
+    the code: `INVARIANTS.md #3c` ("A longer stream is a NEW bounded claim, never a
+    re-assert of the same one") and `SPEC-COMPOSITION-REWORK.md` §risk 2 both mandate
+    exactly the behaviour that produces it. Remedy: make a re-request RENEW the deadline
+    (a renewable FLOOR, principle 9) — on the same unmerged claim branch, **not
+    shipped**, and it requires amending #3c in the same change.
+12. **Publish latency (DIAG P7).** Between `RequestCast` and the next `Drain`/`Publish`
+    the claim does not exist, so nothing is denied — bounded by one frame in play. Named
+    here for completeness (the enumeration obligation is every path, not every
+    *important* path). UNKNOWN whether `Drain` still runs every frame during menus and
+    loads; that is the only version of this gap that could grow.
+13. **A spell already CHARGING when the claim arrives (DIAG P8).** `CastGate` is
+    pre-charge only and seat 0x07 `CheckStopCast` governs the CLAIMED caster instance;
+    nothing anywhere interrupts a foreign charge already in flight. Becomes rare once
+    gap 11 is closed (most arrivals are re-requests into a gap the AI just filled), but
+    it is a design gap, not an artefact of the TTL.
+
+**Not a gap, recorded so nobody re-reports it (DIAG P14).** When the engine arms the
+claimed spell in the hand the client did NOT name, the seats drive it anyway:
+`ClaimNamesThisCast` matches by FORM, not by hand, while seat 0x0F forces YES for the
+claimed form on the named hand only. That is the claim's own spell being cast — benign,
+not a leak. DIAG P9-P13 are covered elsewhere: P9 (caster categories with no seat) is
+gap 9 by another name, P10 (`Hand::kUnknown` → actor-wide floor) is the per-hand
+section above, P11/P12 are client-side (MFO's own force path and its own `CheckCast`
+hook, the latter LATENT), P13 is out of scope (another actor casting AT ours).

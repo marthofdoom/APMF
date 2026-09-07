@@ -36,8 +36,11 @@ hook, registers the input sink, logs the hotkey help. `kPreLoadGame` →
 The ONLY file a client shares with APMF. POD structs of function pointers
 (`APMF_API_v1`: `Request`/`Release`; `APMF_API_v2`: + `RequestEx` carrying the POD
 `APMF_Param`; `APMF_API_v3`: + `Repoint` = re-point an existing claim's param in place,
-same handle), the `Intent` enum, `Handle`, and the exported query-fn name. No C++
-class / STL / vtable crosses the boundary. `kABIVersion = 3`.
+same handle; `APMF_API_v4`: + `SetSpellAllowList`; `APMF_API_v5`: + `RequestCast` with
+the rich `APMF_CastRequest`; `APMF_API_v6`: + `GetCastProxy`/`IsCastActive`), the
+`Intent` enum, `Handle`, and the exported query-fn name. No C++ class / STL / vtable
+crosses the boundary. **The current `kABIVersion` is stated ONLY in the header**
+(INVARIANTS #14b — this line said 3 while the header was at 6).
 - **What breaks:** APPEND-ONLY forever (#14/#14a). Never reorder/change a shipped
   `Intent` value, struct, or fn-pointer slot — a v1 client must keep working. New ABI
   = a new `APMF_API_vN` whose leading members mirror v(N-1) exactly (prefix
@@ -46,8 +49,11 @@ class / STL / vtable crosses the boundary. `kABIVersion = 3`.
   seam. APMF carries zero client-specific code.
 
 ### `native/core/ClientAPI.{h,cpp}` — the C-ABI implementation
-The exported `APMF_GetInterface(abiVersion)` hands over a static POD `APMF_API_v3`
-(as a base `APMF_API_v1*`; a client casts up to the newest struct it uses); its
+The exported `APMF_GetInterface(abiVersion)` hands over the static POD newest-struct
+object (`APMF_API_v6` today — read the header, not this line) as a base
+`APMF_API_v1*`; a client casts up to the newest struct it uses. It returns **nullptr**
+when the client asks for a version NEWER than this APMF implements (`:125-128`), which
+is why a needless `kABIVersion` bump is expensive (INVARIANTS #14b). Its
 `Request`/`RequestEx`/`Release`/`Repoint` fn-pointers forward to
 `ControlMap::EnqueueRequest/Release/Repoint` (Request == RequestEx with a null param).
 `RequestEx`/`Repoint` copy the client's `APMF_Param` synchronously (never retained).
@@ -251,7 +257,11 @@ vfunc seats the combat AI's OWN cast decision is built out of, so the NPC's own 
 selects, equips, charges, aims, fires and channels S at T — engine animation, engine
 magicka, engine LOS/interrupts. **APMF makes no `EquipSpell`, `CastSpell`,
 `CastSpellImmediate`, `NotifyAnimationGraph` or caster-state write anywhere.**
-FOUR seats here, on `VTABLE_CombatMagicCasterRestore[0]` ONLY (RTTI-verified):
+FOUR seats here, on `VTABLE_CombatMagicCasterRestore[0]` **and
+`VTABLE_CombatMagicCasterOffensive[0]`** ONLY — 2 of the 14 caster vtables,
+RTTI-verified (`CastSeats.cpp:483-500`; Offensive added in v0.9.2 by
+`feat/offense-seat-scope` because a claimed HOSTILE spell classifies into the
+Offensive caster, never Restore, so a claim on it was inert):
 - `0x06 CheckStartCast` -> TRUE from the claim (magicka stays enforced by
   `MagicCaster::CheckCast` inside `CastSpell`; hand-idle/`bMLh_Ready` by the leaf's
   own 0x89f3c0; the equip by seat 0x0F). Bypasses only the vanilla health threshold,
@@ -273,8 +283,11 @@ FOUR seats here, on `VTABLE_CombatMagicCasterRestore[0]` ONLY (RTTI-verified):
 The FIFTH seat (`0x0F CheckShouldEquip`) lives in `core/EquipGate.cpp` — see there.
 - **What breaks:** **SCOPE IS THE SAFETY ARGUMENT.** `GetMagicTarget`'s implementation
   (0x81e020) is the BASE, shared by 13 of the 14 caster vtables. Widening the install
-  list beyond Restore aims Stagger/Disarm/Offensive HOSTILE effects at the ally.
-  The second gate (`ClaimNamesThisCast`: deliberating actor holds the claim AND
+  list beyond {Restore, Offensive} aims Stagger/Disarm/Reanimate/Summon/Ward HOSTILE
+  effects at the ally. (Corrected 2026-09-07: this note used to say "beyond Restore",
+  which by then pointed the wrong way — Offensive has been in the list since v0.9.2 and
+  is what makes an offense claim work at all. The rule is "no vtable a live claim does
+  not need", not "Restore".) The second gate (`ClaimNamesThisCast`: deliberating actor holds the claim AND
   `this->magicItem` IS the claim's DRIVEN form) must stay too — and DRIVEN means
   proxy-when-one-exists, never "spell OR proxy": forcing the original kSelf form would
   heal the caster. Every thunk runs on the COMBAT thread: one lock-free RCU read, no
@@ -313,18 +326,39 @@ reads) — stays OFF until GROUP C's own field data confirms 0x0C actually runs.
   DIFFERENT class at the same RVA if the check is ever loosened; keep it exact.
   Melee+Ranged share the engine's arbitration category 0, Shield+Torch share
   category 3 — a weapon score can only ever decide within its own category
-  (melee-vs-ranged, shield-vs-torch); it can NEVER outscore a spell/staff that
-  already claimed the hand (weapons walk after the spell categories in the engine's
-  fixed `[1,2,4,0,3,5,0,6]` order table) — do not build a weapon-vs-spell lever on
-  this. `kScoreSteerBias` (100000.0f) is an unvalidated placeholder pending GROUP
-  C's own probe numbers; revisit once real magnitudes are in.
+  (melee-vs-ranged, shield-vs-torch), so **this STEER cannot push a weapon above a
+  claimed spell** — do not build a weapon-vs-spell lever on this.
+  **CORRECTED 2026-09-07:** this note used to read "it can NEVER outscore a
+  spell/staff that already claimed the hand", stated as a property of the WORLD
+  rather than of the steer. It is not one. Nothing in APMF gates weapon ADMISSION on
+  a claimed hand (0x0F is not hookable on the weapon leaves —
+  `Docs/DENY-COMPLETENESS-AUDIT.md` row 15 + open gap 10), so a weapon the engine's
+  own scoring already ranks above the claimed spell can still take the hand; MFO's
+  `DIAG-2026-09-06-deny-heal-failures.md` row P5 lists exactly that as a plausible
+  cause of a claimed heal holding a hand only briefly. What the ordering table
+  `[1,2,4,0,3,5,0,6]` buys is that OUR steer cannot make it worse.
+  `kScoreSteerBias` is **1000.0f** (`AiCastSeats.cpp:446`), right-sized 2026-09-06 to
+  measured magnitudes (Falmer War Axe 194, bow 81, magic 0.08-29) — it replaced an
+  unmeasured 100000.0f placeholder, which this line quoted until 2026-09-07. The bias
+  applies to a form named by a live ch.15 `kIntent_Equipment` claim **or by a live
+  ch.8b cast claim's driven form** (`AiCastSeats.cpp:596-620`), not to ch.15 alone.
 
-### `native/core/Input.{h,cpp}` — test surface
-`InputSink` (keyboard button-down) → `Arbiter::DispatchHotkey` (+ `probe::OnHotkey`).
-`LogHelp` enumerates the registry's hotkeys.
+### `native/core/Input.{h,cpp}` — test surface (OPT-IN, DEFAULT OFF)
+`InputSink` (keyboard button-down) → `Arbiter::DispatchHotkey` (+ each probe's
+`OnHotkey`). `LogHelp` enumerates the registry's hotkeys.
+**`Register()` adds NO event sink unless `[Input] EnableTestSurface=1` in
+`Data/SKSE/Plugins/APMF.ini`** (2026-09-07). That single gate is what makes the
+shipped DLL obey CLAUDE.md's "probes are FULLY PASSIVE: no hotkeys, no toggles":
+with no sink, no scancode can claim a channel, flip a native bit or toggle the
+non-alias observe switch in a player's game. `LogHelp()` is a no-op when the surface
+did not arm.
 - **What breaks:** test surface only — do NOT let gameplay logic depend on it
   (the real driver is the client API). Adding a channel needs NO edit here;
-  hotkeys come from the channel's own `Hotkeys()`.
+  hotkeys come from the channel's own `Hotkeys()`. **Do not re-arm the sink
+  unconditionally**: every channel `Hotkeys()` entry is a real ControlMap claim on
+  the crosshair-aimed NPC, and the native-bit probe writes live actor flags — that is
+  a user-visible behaviour change from one stray numpad press, which is exactly what
+  the gate exists to prevent.
 
 ### `native/core/Allowance.{h,cpp}` — the reusable ALLOWANCE TEMPLATE (Docs/ALLOWANCE-TEMPLATE.md §3)
 `DerivesFrom` (install-time RTTI derivation walk: reads the CompleteObjectLocator*
@@ -491,17 +525,25 @@ every hook here is a vtable slot).
   re-measure before changing `ActionGate.cpp`'s pairing, don't reason from CPR's class
   declaration alone (that is exactly how the pop half was missed the first time).
 
-### `native/core/AliasPkgProbe.{h,cpp}` — the 0x49 package-offer PROBE (throwaway)
-Demystifies the design.md §5a package-tier promote. `Install()` ← `plugin.cpp` kDataLoaded
-(after `hook::Install`): `write_vfunc` **0x49** `CheckForCurrentAliasPackage` on
-`VTABLE_Character` ONLY (never PlayerCharacter — §0.38). Thunk `TESPackage*(Actor*)`: census
-(hit count/thread/last pkg — Phase 0) + return the client's package if the actor is the
-claimed offer, else `original(self)`. `OnHotkey` (DIK 0x57) toggles a single-actor claim
-(two atomics — lock-free); `OncePerFrame` ← `Arbiter::OncePerFrame` runs the pending
-`EvaluatePackage(true,false)` on the game thread + the periodic census. VR-refused.
-- **What breaks:** NOT wired to any client, NOT a travel/nav build — a probe for a field
-  test, gated behind arm + `kProbePackageForm` (0 ⇒ Phase 0 only). Never touch alias/
-  run-once state (INVARIANTS #3a). Delete wholesale once the mechanism is proven or dead.
+### `native/core/PackageGate.{h,cpp}` — T3: the 0x49 package-offer gate (ch.9)
+**(This entry replaces MAP's old `core/AliasPkgProbe.{h,cpp}` section, corrected
+2026-09-07: that file NO LONGER EXISTS — the probe graduated into this gate on
+2026-09-03 and MAP kept documenting the deleted throwaway for four days.)**
+`Install()` ← `plugin.cpp` kDataLoaded: `write_vfunc` **0x49**
+`CheckForCurrentAliasPackage` on `VTABLE_Character[0]` ONLY (never PlayerCharacter —
+§0.38), VR-refused. Thunk `TESPackage*(Actor*)`: if the actor holds the winning
+`kIntent_OfferPackage` claim (lock-free RCU `TryGetOwningClaim`), return the package
+FormID that claim NAMES (`APMF_Param::form`); a FormID that does not resolve falls back
+to `original(self)` — NEVER a fabricated null (§0.25 "claimed with nothing = rooted").
+`EvaluatePackage(actor)` is the engine nudge, called from `channels/OfferPackage.cpp`'s
+Engage/OnOwnerChanged/Release (game-thread by Channel.h's contract). A `[ch.9-redirect]`
+log line per transition, gated by `[PackageGate] EnableRedirectLog` (default 1).
+- **What breaks:** the redirect only takes effect **when the engine ASKS**, and the field
+  evidence is that it does not ask on a useful cadence of its own — every win so far
+  reconciles to an explicit `EvaluatePackage` nudge (MFO `DIAG-2026-09-06-loot-travel.md`;
+  `Docs/SPEC-PACKAGE-HOLD.md` §2.2). So the nudge's ORDERING relative to the claim's
+  `Publish()` is load-bearing, not incidental. Never touch alias/run-once state
+  (INVARIANTS #3a); never return null.
 
 ### `native/core/NonAliasProbe.{h,cpp}` — OBSERVE-ONLY 0xDF hook + 0x49 assist + RTTI dumper
 Docs/PROBE-NONALIAS-PACKAGE.md's runtime probe: does `Actor::CheckForCurrentAliasPackage`
@@ -509,20 +551,27 @@ Docs/PROBE-NONALIAS-PACKAGE.md's runtime probe: does `Actor::CheckForCurrentAlia
 `0009BE51`) at all, and does `Actor::PutCreatedPackage` (0xDF, RTTI-verified via
 `core/Allowance.h::InstallOnVtables` on `VTABLE_Character[0]`) ever carry that same package?
 Pure logging, chained to the original unconditionally, no decision/denial (INVARIANTS #17).
-`0x45` NumLock toggles the 0x49/0xDF observe log (OFF by default; PackageGate.cpp's thunk
-checks `IsEnabled()`/`RateLimitOK()` from here to add its own log line on the same switch);
-`0x46` ScrollLock one-shots a vtable/RTTI dump (module-relative RVAs + best-effort RTTI type
-name, mirroring `Allowance.cpp`'s `DerivesFrom` walk) of the crosshair-aimed actor — the
-reusable "find sites ourselves" tool so a future probe skips hand-reversing the vtable layout.
+**`[Probe.NonAlias] EnableObserveLog`** (INI, default 0/OFF, read once at `Install()`)
+is the switch for the 0x49/0xDF observe log; `core/PackageGate.cpp`'s thunk checks
+`IsEnabled()`/`RateLimitOK()` from here to add its own line on the same switch. The
+`0x45` NumLock toggle and the `0x46` ScrollLock one-shot vtable/RTTI dump
+(module-relative RVAs + best-effort RTTI type name, mirroring `Allowance.cpp`'s
+`DerivesFrom` walk, of the crosshair-aimed actor — the reusable "find sites ourselves"
+tool) still exist but are **unreachable unless the keyboard test surface is armed**
+(`[Input] EnableTestSurface=1`, default OFF — see `core/Input.{h,cpp}`).
 - **What breaks:** THROWAWAY/instrumentation-only, same class as `native/core/
-  NativeBitProbe.{h,cpp}` — not wired to any client. Never touch alias/run-once state (#3a).
+  NativeBitProbe.{h,cpp}` (which is itself gated by `[Probe.NativeBit] Enable`, default
+  0, because it MUTATES live actor flags) — not wired to any client. Never re-arm either
+  probe by default: CLAUDE.md's rule is passive, config-gated, OFF. Never touch
+  alias/run-once state (#3a).
   0xDF is a 1.6.1170-pinned raw index (Docs/PROBE-NONALIAS-PACKAGE.md §2) — no named
   CommonLib binding exists to prefer over it today.
 
 ### `native/channels/*.cpp` — one module per facet (FULL documented catalog)
 Each: a `Channel` subclass + `APMF_REGISTER_CHANNEL`, per-NPC `Engage`/`Release`.
-The first release ships the full documented catalog (13 channels) as a baseline
-benchmark. Each `ServesIntent()` maps to an `APMF_API::Intent`. Test keys in
+The first release shipped the documented catalog of 13 channels as a baseline
+benchmark; the table below is the CURRENT set — 16 files, 16 rows (ch.7
+`CombatAction` and ch.9 `OfferPackage` were missing from it until 2026-09-07). Each `ServesIntent()` maps to an `APMF_API::Intent`. Test keys in
 parentheses.
 
 | File | Ch | Facet | Gate / mechanism | Kind |
@@ -538,7 +587,9 @@ parentheses.
 | `Dialogue.cpp` | 10 | dialogue (Num6) | `PauseCurrentDialogue()` | one-shot |
 | `Attribute.cpp` | 11 | disposition (Num2) | 4 AVs: aggression/confidence/assistance/morality | source-block |
 | `Idle.cpp` | 12 | idle/anim (Num+) | `NotifyAnimationGraph("IdleForceDefaultState")` | one-shot |
-| `ShoutPower.cpp` | 14 | shout select (Num*) | `ActorEquipManager::EquipShout` | one-shot (sticky) |
+| `ShoutPower.cpp` | 14 | shout/power select (Num*) | **ARBITRATION-ONLY** — records the voice-slot owner and the chosen shout in `param.form`; makes NO engine write. It previously called `ActorEquipManager::EquipShout` directly (the #0 anti-pattern ch.6/ch.8 were fixed for); the CLIENT issues its own `EquipShout`. `Release` has nothing to undo (corrected 2026-09-07) | arbitration-only (#0); client executes |
+| `CombatAction.cpp` | 7 | combat-action category deny (NumpadEnter) | Arbitration + claim lifecycle only; the deny is `core/ActionGate.cpp`'s T1 paired act()/pop() on the 70 combat behavior-tree leaves, for the categories named in `param.ival` (`kCombatActionCat_Offense` today). The test key carries no category, so a test claim denies nothing | claim + T1 enforcement |
+| `OfferPackage.cpp` | 9 | package-procedure activity (NumpadSlash) | Arbitration + claim lifecycle + the `EvaluatePackage(true,false)` nudge; the redirect itself is `core/PackageGate.cpp`'s T3 0x49 hook returning the claim's `param.form`. The test key carries no package, so a test claim offers nothing | claim + T3 enforcement; the ENGINE runs the package natively |
 | `Equipment.cpp` | 15 | equip/unequip (Num.) | `GetEquippedObject` + `UnequipObject`/`EquipObject` (melee-vs-ranged lever) | source-block |
 | `Detection.cpp` | 16 | stealth (Num8) | `kMovementNoiseMult` + `kDetectLifeRange` AVs | source-block |
 
@@ -561,10 +612,16 @@ package procedures (ch.9), facial-expression setter (ch.13). ch.8 (casting
 selection) GAINED its deny 2026-09-02 (Phase 2): `core/CastGate.cpp` (T2c
 CheckCast) + `core/EquipGate.cpp` (T2a CheckShouldEquip) — see those entries
 above; ch.8 is no longer arbitration-only. ch.7 combat ACTIONS graduated 2026-09-03
-(`core/ActionGate.cpp`, paired act/pop 2026-09-04). **Load-bearing open mechanism:
-cleanly DENY/starve an outranking framework's PACKAGE (Cicero/travel) — T3
-(`AliasPkgProbe.cpp`'s 0x49 hook) is built as a probe but not yet folded into
-the Allowance template / wired to a client.**
+(`core/ActionGate.cpp`, paired act/pop 2026-09-04). **CORRECTED 2026-09-07:** this
+paragraph used to end "T3 (`AliasPkgProbe.cpp`'s 0x49 hook) is built as a probe but not
+yet folded into the Allowance template / wired to a client". T3 GRADUATED on 2026-09-03
+into `core/PackageGate.cpp` + `channels/OfferPackage.cpp` (ch.9), the probe file is
+deleted, and MFO ships on it. What remains open is narrower and different: the redirect
+answers only when the engine ASKS, and the engine does not ask on a useful cadence of
+its own — holding a package against an outranking framework therefore depends on
+nudging at the right moment (MFO `DIAG-2026-09-06-loot-travel.md`), and the non-alias
+/ procedure tier (`BGSProcedureTreeProcedure`) still has no hook at all
+(HOOK-SITE-COVERAGE §5).
 See `Docs/CHANNEL-MAP.md` "Need live probing" and STATUS "post-first-release gap work".
 
 ## How to add a channel (the whole recipe)

@@ -7,6 +7,13 @@ hotkey-claim surface this file documents) are REMOVED — this file stays as the
 field-proof record the graduated channels reuse verbatim; it is no longer describing live
 code. Native-bit stays a probe (no graduated channel yet).
 
+**KEYS ARE OPT-IN AS OF 2026-09-07.** Everything this file describes as "press key X"
+now requires `[Input] EnableTestSurface=1` in `Data/SKSE/Plugins/APMF.ini` — with the
+key absent (the shipped state) APMF registers no keyboard sink at all. The native-bit
+probe additionally needs `[Probe.NativeBit] Enable=1` before it installs, because it
+MUTATES live actor flags. Read every hotkey table below as "in a test session with the
+surface armed", never as shipped behaviour.
+
 Status: **throwaway instrumentation, field-test-first.** Every probe here is hotkey-
 driven, observe-first, NOT wired to any client, and NOT a permanent channel. They exist
 to answer the open questions in `Docs/ALLOWANCE-TEMPLATE.md` §5/§6 with LIVE data before
@@ -16,8 +23,11 @@ field run), and pass/fail. Update the ACTUAL column after each field session; ke
 `ALLOWANCE-TEMPLATE.md` §6 in sync if a probe's findings firm up the design.
 
 **T4 (`TESActionData::Process`) was built, field-crashed, and REMOVED (2026-09-03) —
-see the "T4 — DEFERRED" section at the end for the crash record.** Three probes remain
-active: T1, the 0x49 redirect, and native-bit.
+see the "T4 — DEFERRED" section at the end for the crash record.** **CORRECTED 2026-09-07:** this line used to say "Three probes remain active: T1, the
+0x49 redirect, and native-bit", contradicting this file's own banner three paragraphs
+up. T1 and the 0x49 redirect are GONE as probes (graduated to ch.7/ch.9). The only
+probe this file still describes as live code is **native-bit**, and it now installs
+only under `[Probe.NativeBit] Enable=1`.
 
 **FIELD RESULTS (2026-09-03, deck, 1.6.1170):** T1 observe **PROVEN**, T1 deny
 **PROVEN**, the `+0x158` ambiguity **RESOLVED (hypothesis B)**, 0x49 redirect

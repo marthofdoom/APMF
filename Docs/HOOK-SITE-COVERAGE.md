@@ -20,8 +20,29 @@ not because it's unimportant, but because there's nothing to ask upstream for. O
 call-site patches are out of scope for CommonLib on principle (see §4) regardless of naming
 status.
 
-**Bottom line up front:** of 10 hooked sites across both repos, **9 are already fully covered**
-(named CommonLib slot + existing Address Library id). **Exactly one CommonLib gap is PR-ready**
+> **UPDATE 2026-09-07 — THE "ZERO RAW OFFSETS" BOTTOM LINE BELOW IS NO LONGER TRUE.**
+> The inventory was accurate on 2026-09-03 and has not been re-run since; three sites added
+> after it are missing from the table, and two of them are exactly the case this document
+> exists to flag:
+> - **`native/core/CastSeats.cpp`** — the ch.8b engine seats: slots 0x06/0x07/0x0A/0x0D on
+>   `VTABLE_CombatMagicCasterRestore[0]` **and** `VTABLE_CombatMagicCasterOffensive[0]`.
+>   ID-backed, named slots; would be "covered, no PR". NOTE `GetMagicTarget` (0x0A) has a
+>   hidden 16-byte sret out-slot CommonLib's declaration OMITS — an ABI defect, not a naming
+>   gap, and a genuine upstream item.
+> - **`native/core/CastClassify.cpp`** — `VTABLE_CombatMagicItemData` slot 1, verified at
+>   install by an **RTTI type-name string**, because no Address-Library RTTI id exists for
+>   that class. That is stream 2's question, with the answer "no id".
+> - **`native/core/AiCastSeats.cpp` GROUP C** — the four weapon-class `CalculateScore` (0x0C)
+>   leaves, resolved from **raw disasm-confirmed RVAs** (`REL::Offset`, no `REL::VariantID`),
+>   AE-1.6.1170-only, guarded by an install-time function-pointer-at-slot equality check.
+>   These ARE raw offsets. They are why the claim below is false, and they are the strongest
+>   Address-Library submission candidate in the repo.
+>
+> Re-run this inventory before trusting its counts, and before any new-runtime port that
+> plans around "no raw offsets to re-verify".
+
+**Bottom line up front (2026-09-03, STALE — see the update above):** of 10 hooked sites across
+both repos, **9 are already fully covered** (named CommonLib slot + existing Address Library id). **Exactly one CommonLib gap is PR-ready**
 (the `CombatBehaviorTreeNode` class family — T1/ch.7's ~70-leaf combat-action gate), and it needs
 **zero new Address Library ids** (every id it needs already exists in the pinned tree; the gap is
 purely a missing C++ class binding over addresses that are already there). One further site
@@ -294,9 +315,13 @@ is its own follow-up project, not a diff this report can respons­ibly hand over
 - **Rows 2/8 and 3/9 are the same CommonLib slots hooked twice**, once by APMF (`CastGate.cpp`
   T2c, `EquipGate.cpp` T2a) and once by MFO (`CasterConsent.cpp`'s `CheckCast` hook,
   `CombatStyle.cpp`'s equip gate). This is exactly what `feat/apmf-cast` commit `f80021f` ("owned
-  cast becomes a pure APMF T2 client -- drop redundant enforcement") is in the middle of
-  resolving — not a CommonLib gap, just noted here so the two-repo hook inventory is honest about
-  the current overlap while that migration is mid-flight.
+  cast becomes a pure APMF T2 client -- drop redundant enforcement") set out to resolve — not a
+  CommonLib gap, noted here so the two-repo hook inventory is honest about the overlap.
+  **STATUS 2026-09-07: that migration never finished, and nothing recorded it.** MFO's
+  `CasterConsent.cpp` still installs its own 0x0A `CheckCast` hook (`:917`), so the double hook
+  is live today — outside APMF's gate, and able to abort a cast APMF's own claim is driving
+  (MFO `DIAG-2026-09-06-deny-heal-failures.md` row P12: LATENT, 0 hits that session; latent is
+  not closed). `Docs/SPEC-GRADUATED-CAST.md` §3 carries the unmeasured consequence.
 
 ---
 

@@ -1,7 +1,20 @@
 # AI Package Management Framework (APMF) — Design
 
-Status: DESIGN / mechanics-verification (2026-09-01). Not yet scaffolded as code.
-Folder name is provisional (`ai-package-management-framework`) — rename freely (e.g. `apmf`, `marth-apmf`).
+> **STATUS (2026-09-07) — PART LIVE, PART HISTORICAL. Read this banner before any section.**
+> The original header ("Status: DESIGN / mechanics-verification (2026-09-01). Not yet
+> scaffolded as code.") has been wrong since the plugin shipped; v0.9.2 is tagged and MFO
+> ships on it.
+> - **LIVE and binding:** §1a (THE BINDING CONTRACT — it wins over everything else here),
+>   §5a (the package-OFFER promote), §5b (the layering beneath script-driven overrides),
+>   §10 (relationship to MFO).
+> - **HISTORICAL:** §3-§4 (the movement-hijack prototype plan), §7 (client API "shape,
+>   TBD" — the API is real and frozen, see `native/APMF_API.h` + `Docs/INTEGRATION.md`),
+>   §9 (open unknowns — most are answered; see `Docs/STATUS.md`), and "Next steps" at the
+>   end (all three items are done).
+> - The current architecture is `Docs/ARCHITECTURE.md`; the rules are
+>   `Docs/INVARIANTS.md`; what is built and proven is `Docs/STATUS.md`.
+>
+> Folder name is no longer provisional.
 
 ## 1. Premise
 
@@ -64,13 +77,22 @@ lesson is written into the rules below.)
 
 **The one genuinely hard job (the load-bearing open mechanism):** cleanly DENY / STARVE an
 *outranking* framework's package so a client's own package drives the actor natively (the Cicero /
-travel-nav case). This is the crux of "deny, don't force," and the mechanism is being demystified
-separately — treat it as the open problem, not a solved one.
+travel-nav case). This is the crux of "deny, don't force."
+**UPDATED 2026-09-07 — the ALIAS tier of this is no longer open.** ch.9's 0x49 gate
+(`core/PackageGate.cpp`) redirects the engine's package answer for a claimed actor whenever the
+engine ASKS, and it has won 16/16 in the field. The residual problem is narrower and precisely
+stated: **the engine does not re-ask on a useful cadence of its own** (ZERO natural hits over
+~75 s in MFO's loot-travel diagnosis), so a hold depends on nudging with `EvaluatePackage` at the
+right moment relative to the claim's publish — and the **non-alias / procedure tier**
+(`BGSProcedureTreeProcedure`) still has no hook at all (`Docs/HOOK-SITE-COVERAGE.md` §5,
+`Docs/SPEC-PACKAGE-HOLD.md`). Treat THOSE as the open problem; "0x49 might not work" is settled.
 
 **Prototype status vs. this contract:** the 0xAD hook + coherent-package findings hold. The
 executor stand-ins that violated the contract are being removed: ch.6 combat-target no longer calls
 StartCombat/writes currentCombatTarget (arbitration-only now; the client commands the target), and
-ch.8 casting no longer writes selectedSpells (arbitration-only; the client selects). Remaining
+ch.8 casting no longer writes selectedSpells (the client selects; APMF then DENIES every other
+spell/staff at `core/CastGate.cpp:124` + `core/EquipGate.cpp` — this line said "arbitration-only",
+corrected 2026-09-07). Remaining
 channels are being reframed to deny/arbitrate-only in the CHANNEL MAP.
 
 ## 2. Architecture — two layers
@@ -150,7 +172,10 @@ method layered OVER the running package, no coherence machinery):
 - Dialogue/greeting: `SetDialogueWithPlayer` 0x041 / `StopCurrentDialogue` 0x04F / `InitiateDialogue` 0xD8 (`A/Actor.h:299,308,420`).
 - Teleport/position: `TESObjectREFR::MoveTo` (`T/TESObjectREFR.h:441`), `Actor::SetPosition` vfunc 0xA9.
 
-**Tier B — needs a dedicated executor, still package-INDEPENDENT:**
+**Tier B — needs a dedicated executor, still package-INDEPENDENT.** *(HISTORICAL: §1a wins.
+`StartCombat` below is FORBIDDEN to a channel by `Docs/INVARIANTS.md` #0 — it is a
+behavior-GENERATING call, and a ch.6 executor calling it was a hard AV. Read this list as engine
+facts, never as a menu of things APMF may call.)*
 - Locomotion (facet 1) — the movement-virtual hijack of §4.
 - Combat target/behavior — combat runs on `CombatController`/`CombatGroup`, NOT the sandbox/travel
   package, so `StartCombat` (`A/Actor.h:652`) / `StopCombat` vfunc 0xE5 / `SetCombatGroup` vfunc 0xD5
@@ -314,7 +339,11 @@ Open questions to settle once the hook/movement prototype pins down what the hoo
   2026-09-03) — and adapts to a redundant alternative seat rather than simply degrading when a
   preferred attach point is contested, absent, or devirtualised. See `Docs/INVARIANTS.md` #17.
 
-## Next steps
+## Next steps — HISTORICAL (all three done; kept as the record of the original plan)
+
+*(2026-09-07: item 1's prototype became the shipped 0xAD hook + ControlMap; item 2's API is
+`native/APMF_API.h` at ABI v6, frozen and append-only; item 3's plugin has been building in CI
+since v0.1.0. For what is actually next, read `Docs/STATUS.md`.)*
 
 1. Prototype the movement hijack on 1.6.1170: `write_vfunc(0xAD)` on Character, keep a test
    follower's package current, drive its body to a marker via the MovementControllerNPC feed (or

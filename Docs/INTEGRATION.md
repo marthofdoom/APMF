@@ -41,7 +41,10 @@ Fetch the interface pointer once, after SKSE has loaded (`kPostLoad` or
 
 namespace MyMod {
 
-    const APMF_API::APMF_API_v4* g_apmf = nullptr;   // pick the newest struct you use
+    const APMF_API::APMF_API_v6* g_apmf = nullptr;   // pick the newest struct you use
+                                                     // (v6 is current -- APMF_API.h
+                                                     // is the only canonical statement
+                                                     // of kABIVersion, INVARIANTS #14b)
 
     void TryBindAPMF() {
         HMODULE h = GetModuleHandleA("APMF.dll");
@@ -52,10 +55,13 @@ namespace MyMod {
         if (!fn) return;
 
         const APMF_API::APMF_API_v1* base = fn(APMF_API::kABIVersion);
-        if (!base) return;   // ABI mismatch. APMF refused.
+        if (!base) return;   // The installed APMF is OLDER than the header you built
+                             // against, so it refused outright. This one call has no
+                             // downward retry -- ask for the LOWEST version you can
+                             // work with if you want to keep supporting older APMFs.
 
-        if (base->abiVersion >= 4)
-            g_apmf = reinterpret_cast<const APMF_API::APMF_API_v4*>(base);
+        if (base->abiVersion >= 6)
+            g_apmf = reinterpret_cast<const APMF_API::APMF_API_v6*>(base);
         // A client that only needs v2 checks `>= 2` and casts to APMF_API_v2*.
         // Guard every call site on g_apmf being non-null either way: APMF may be
         // absent, or older than the ABI version you want.
@@ -185,8 +191,8 @@ columns, one doesn't imply the other.
 | `kIntent_CombatTarget` (ch.6) | Claim the combat-target facet | `form` (the target actor) | **Field-proven, in active production use.** MFO drives its combat targeting through this facet every fight. Arbitration only: APMF records the owner and the client writes the target itself. Denying a competing framework's own target write is still a future gap. |
 | `kIntent_CombatAction` (ch.7) | Deny named combat behavior-tree leaf categories (attack, bash, ranged attack, cast leaves, and more, grouped by category) | `ival` (a `CombatActionCategory` bitmask) | **Field-proven.** Graduated from a live deck probe: the deny fired, the tree fell back cleanly, no crash. |
 | `kIntent_SelectSpell` (ch.8) | Claim the casting facet | `form` (the spell FormID) | **Field-proven, for the owned/exact cast.** A follower AI-fired an animated spell allowed only through APMF's cast-check gate, live in combat, no whack-a-mole, no crash. This covers the single claimed spell as the actor's only castable choice. The graduated multi-spell allow list (`SetSpellAllowList`, v4) is a separate capability and is not yet proven. Denying a competing framework's own spell selection is also still a future gap. |
-| `kIntent_Cast` (ch.8b) | **Make the NPC's own AI cast a chosen spell at a chosen target.** ABI v5, use `RequestCast` | `APMF_CastRequest` (spell, proxy, target, flags, ttlMs) | **Field-proven** for heal-other on a follower: real animated casting, correct animation style, at the player and at another follower. APMF makes no equip, anim or cast call. Offense casts through this path are still being ported in the reference client. |
-| `kIntent_OfferPackage` (ch.9) | Claim the package-offer facet | `form` (the TESPackage FormID) | **Field-proven** for engage/release. A live deck run confirmed the redirect holds and releases cleanly. Save/load persistence of an engaged claim across that boundary is unexercised. |
+| `kIntent_Cast` (ch.8b) | **Make the NPC's own AI cast a chosen spell at a chosen target.** ABI v5, use `RequestCast` | `APMF_CastRequest` (spell, proxy, target, flags, ttlMs) | **Field-proven** for heal-other on a follower AND for offense (17 animated offense fires in the 2026-09-06 deck session; the Offensive caster seat shipped in v0.9.2 — the "still being ported" note here was stale, corrected 2026-09-07). APMF makes no equip, anim or cast call. **Know what a claim does NOT cover:** it governs ONE hand, so the other hand keeps casting whatever the NPC's own AI picks; it expires at `ttlMs` and nothing is denied in the gap until you request again; and a spell already charging when your claim arrives is not interrupted. See `Docs/DENY-COMPLETENESS-AUDIT.md` open gaps 9-13. |
+| `kIntent_OfferPackage` (ch.9) | Claim the package-offer facet | `form` (the TESPackage FormID) | **Proven WHEN NUDGED (corrected 2026-09-07).** The 0x49 redirect answers whenever the engine asks while a published claim stands — 16/16 deck wins, every one of them following an explicit `EvaluatePackage` nudge, with ZERO hits from the engine's own evaluation cadence over ~75 s. It is not self-sustaining: if nothing nudges, nothing re-asks. The earlier "field-proven for engage/release" credit belonged to the retired PROBE; the graduated channel's own first field run engaged **0 of 6** dispatches because its nudge fired before the claim published (fix on an unmerged branch, not shipped). Save/load persistence of an engaged claim is still unexercised. |
 | `kIntent_Dialogue` (ch.10) | Pause the actor's own in-progress dialogue | none | Built, not yet battle-tested |
 | `kIntent_Disposition` (ch.11) | Aggression / confidence / assistance / morality bias | `fval` (reserved, not yet read) | **Field-proven.** An actor-value source-block, deck-tested to hold even on a package-locked actor. |
 | `kIntent_Idle` (ch.12) | One-shot idle/animation | none | Built, not yet battle-tested |
@@ -201,7 +207,7 @@ without an ABI break. Don't design a release around a reserved field doing
 anything yet.
 
 Read `Docs/CHANNEL-MAP.md` for the full research behind every row (the exact
-hook, the exact vfunc, the version-robustness notes) and `Docs/ROADMAP.md` /
+hook, the exact vfunc, the version-robustness notes) and `Docs/archive/ROADMAP.md` (archived) /
 `Docs/STATUS.md` for what's next.
 
 ## Threading

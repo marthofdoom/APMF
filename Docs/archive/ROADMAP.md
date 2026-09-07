@@ -1,3 +1,20 @@
+> # ARCHIVED — SUPERSEDED, 2026-09-07
+>
+> **This plan is finished and this file is history. Do not plan from it.**
+> Moved to `Docs/archive/` on 2026-09-07 because every phase below is either done or has
+> been restated somewhere current, and a roadmap that lists shipped work as "future" gets
+> re-planned by whoever reads it next:
+> - Phase 3 "MFO INTEGRATION (first client)" is in production (`Docs/INTEGRATION.md`,
+>   MFO v2.0.1+ ships on APMF v0.9.x).
+> - The "casting-trigger suppression" GAP is built — ch.7 `kCombatActionCat_Cast`
+>   (`core/ActionGate.cpp`).
+> - ch.7 and ch.9, listed here as "post-first-release probe work", GRADUATED on 2026-09-03
+>   into real channels.
+>
+> **Current sources of truth:** `Docs/STATUS.md` (what is built, shipped and next),
+> `Docs/ARCHITECTURE.md` (the design as built), `Docs/CHANNEL-MAP.md` (channel ↔ hook site),
+> `Docs/DENY-COMPLETENESS-AUDIT.md` (what each claim actually closes, and what it does not).
+
 # APMF Roadmap — from prototype to proof of concept
 
 The prototypes proved the model (central 0xAD hook reaches every NPC; package stays coherent; true

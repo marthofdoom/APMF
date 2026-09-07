@@ -1,5 +1,28 @@
 # Spec: the composition rework — facets, executors, and the cast-intent API
 
+> **STATUS BANNER (added 2026-09-07) — PART SHIPPED, PART SUPERSEDED, PART NEVER BUILT.**
+> The original status line below ("No code in this doc has been applied") has been wrong since
+> 2026-09-04. Per section:
+> - **§3 — SHIPPED, then SUPERSEDED IN MECHANISM.** ABI v5 shipped (`native/APMF_API.h`).
+>   But three of its statements were overturned days later: `target` is described as "RECORD
+>   ONLY — APMF never aims" and is now LOAD-BEARING (seat 0x0A answers with it);
+>   `kCastFlag_LeftHand` is called "informational for the gates today" and is now the per-hand
+>   scoping signal; and the `ActionGate` implicit `kIntent_Cast ⇒ Cast` deny it specifies is
+>   RETIRED. The whole "the client fires its own animated cast" model was replaced by the
+>   engine seats (`Docs/INVARIANTS.md` #20, `#3c`'s amendment).
+> - **§4 — NEVER BUILT.** The receiver probes (§4.6, P1-P4) have no code: no `inUpdate`, no
+>   `0x11A` anywhere in `native/` (grepped 2026-09-07). The non-alias/receiver problem is
+>   still open, and `design.md` §5a/`Docs/SPEC-PACKAGE-HOLD.md` are where it is tracked now.
+> - **§5 — DONE (as a decision).** `feat/alias-drive` is shelved, tag
+>   `archive/alias-drive-shelved-2026-09-04`; nothing from it is on `main`.
+> - **§risk 2 (`:509-510`) is the written origin of a shipped defect.** "A longer stream is a
+>   NEW bounded claim, never a re-assert of the same one" is the rule that produced the
+>   recurring TTL gap (`Docs/DENY-COMPLETENESS-AUDIT.md` open gap 11; MFO
+>   `DIAG-2026-09-06-deny-heal-failures.md` RC2). `INVARIANTS.md #3c` carries the amendment;
+>   the code fix is unmerged.
+>
+> Read this file as the design record of the 2026-09-04 pass, never as current behaviour.
+
 Status: **implementation spec (2026-09-04, Fable). No code in this doc has been applied.**
 Corrects the `feat/alias-drive` miss. Governed by `design.md` §1a (the binding contract) and
 `Docs/INVARIANTS.md` #0; where anything below or in any older spec reads as APMF *driving*

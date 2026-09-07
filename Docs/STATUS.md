@@ -162,6 +162,37 @@ measurement.
 proving the deny executes; and, once a client sets the bit, no foreign spell charging
 on the floored hand.
 
+## ✅ SHIPPED 2026-09-06 -- v0.9.2. PER-HAND EQUIP DENY + THE OFFENSIVE CASTER SEAT.
+
+*(Added 2026-09-07: the tag and the CHANGELOG entry existed since 2026-09-06 and STATUS
+carried no v0.9.2 section at all — this file is the living handoff, so a shipped tag missing
+from it is a defect in its own right.)*
+
+Tag `v0.9.2`. **CI-verified only; NOT field-tested as a build** — though its two changes were
+both exercised in MFO's 2026-09-06 deck session, which is where their limits were found.
+
+- **The equip deny is PER-HAND** (`feat/deny-perhand`, `core/EquipGate.cpp` +
+  `core/CastGate.cpp` + `Allowance::AllowedCastForHand`). A cast claim used to deny every
+  spell and staff on BOTH hands for its whole life, which disarmed the follower; it now denies
+  only the claim's own hand, read from a native per-hand signal at each seat
+  (`MagicCaster::GetCastingSource()` at 0x0A; `CombatInventoryItem::itemSlot.equipSlot` at
+  0x0F, compared against `BGSDefaultObjectManager`'s own left/right hand objects).
+- **The engine seats cover the Offensive caster** (`feat/offense-seat-scope`,
+  `CastSeats.cpp:483-500`). A claimed HOSTILE spell classifies into `CombatMagicCasterOffensive`,
+  never `CombatMagicCasterRestore`, so before this a claim on an offense spell was structurally
+  inert. Safe because every thunk re-tests {claim actor, claim's driven form} per call; seat
+  0x07's read of `primaryAV` (a Restore-only member) is now guarded by a vtable-identity check.
+- **The classify seat refuses hostile spells** — applying the heal-other classification fix to a
+  hostile spell would move it to a table row the engine never uses.
+
+**What v0.9.2 did NOT fix, learned the next day in the field:** narrowing the deny to one hand
+left the OTHER hand entirely AI-governed, and nothing in the release closed the TTL gap — open
+gaps 9 and 11 in `Docs/DENY-COMPLETENESS-AUDIT.md`. **Both mechanisms are now ON `main`**
+(`fix/apmf-claim-renew-denyhand-spellsteer`, merged 2026-09-07 — the block above): `Repoint`
+renews a cast claim's TTL, and `kCastFlag_DenyHandOnly` lets a client close the other hand. Neither
+is in a tagged release yet, and F3 ships DORMANT: **gap 9 stays open in practice until a client
+sets the bit**, which no client does today.
+
 ## ✅ SHIPPED 2026-09-05 -- v0.9.1 (beta prerelease). THE NPC'S OWN AI PERFORMS A CLIENT'S CAST.
 
 **FIELD-PROVEN on the deck.** Release: https://github.com/marthofdoom/APMF/releases/tag/v0.9.1
@@ -199,7 +230,16 @@ on, so an actor-wide cast deny is expressible again WITHOUT giving up per-hand s
 renewable cast TTL, the deny-only hand claim, the spell score steer, and the `[t2c]` deny log) --
 none of it has been on a deck, and the deny-only flag ships DORMANT until a client sets the bit.
 
-## HEAD OF THE CAST WORK: `feat/ai-cast-seats-impl` (built, CI-green, NOT field-run)
+Still open beyond that branch, and NOT closed by it: `Docs/DENY-COMPLETENESS-AUDIT.md` open gaps
+10 (a weapon can take the claimed hand — no weapon-side admission gate exists), 12 (the
+request-to-publish window) and 13 (a spell already CHARGING when the claim arrives). Gap 9 is
+closable by a client now but is open until one sets the bit.
+
+## HEAD OF THE CAST WORK: `feat/ai-cast-seats-impl` (SHIPPED in v0.9.1 and FIELD-RUN)
+
+*(Heading corrected 2026-09-07: it said "built, CI-green, NOT field-run" for two days after the
+2026-09-05 deck run proved it — see the v0.9.1 block above, and the 17 animated offense fires in
+MFO's 2026-09-06 session. The body below is kept as the design record of the pass.)*
 
 Off `observe/ai-cast-seats-split` (525daae). **The keystone changed shape: the NPC's
 OWN AI now performs a claimed cast, natively, and the forced drive is deleted.**
@@ -229,7 +269,11 @@ OWN AI now performs a claimed cast, natively, and the forced drive is deleted.**
 - **Scope is the safety argument.** `GetMagicTarget`'s impl is the SHARED base of 13 of
   the 14 caster vtables — an unscoped redirect would aim Stagger/Disarm/Offensive
   effects at the ally. The caster seats install on `VTABLE_CombatMagicCasterRestore`
-  ONLY, and every thunk re-tests {claim actor, claim's driven form} per call.
+  **and `VTABLE_CombatMagicCasterOffensive`** ONLY (2 of the 14 — Offensive added in
+  v0.9.2, `CastSeats.cpp:483-500`, because a claimed HOSTILE spell classifies into the
+  Offensive caster and a claim on it was otherwise inert; this bullet said
+  "Restore ONLY" until 2026-09-07), and every thunk re-tests {claim actor, claim's
+  driven form} per call.
 - **RETIRED in the same pass:** the whole `CastExecutor` phase chain
   (PhaseSelect/Rest/Drawn/Fire/Hold, ParkHand/TeardownHand, the wall-clock `Budget`
   plumbing) **and its `CastSpellImmediate` fallback** (which is what INVARIANTS #0
@@ -327,8 +371,9 @@ DENY (suppress the losing source at its source). It calls NO behavior-generating
 function (`StartCombat`, `CastSpellImmediate`, movement drive, anim trigger); the CLIENT
 executes behavior with its own proven mechanisms and APMF just makes it win. Once it owns
 a facet, nothing else reaches it except through APMF; a re-assert loop is a FAILED block.
-**ch.6 (combat-target) and ch.8 (casting) are now ARBITRATION-ONLY** — the client commands
-the target / selects the spell; APMF only records the claim. (A CTD from a ch.6
+**ch.6 (combat-target) is ARBITRATION-ONLY** — the client commands the target; APMF only
+records the claim. **ch.8 is ARBITRATION + DENY, not arbitration-only** (corrected 2026-09-07): a `kIntent_SelectSpell` claim is enforced at two gates — `core/CastGate.cpp:124` (0x0A `CheckCast`) and `core/EquipGate.cpp` (0x0F `CheckShouldEquip`) deny any spell/staff that is not the claim's `param.form` (plus its allow-list). The "arbitration-only" wording dates from the 2026-09-02 #0 correction and was never updated when the deny landed the same day. The CHANNEL still makes no engine write; the
+enforcement lives one layer down in the gates. (A CTD from a ch.6
 `StartCombat` executor is the cautionary case that fixed this drift — see INVARIANTS #0.)
 
 **Phase 1 is built and on `main`: the MULTI-NPC arbiter + the real C-ABI client
@@ -369,16 +414,16 @@ Full nav: `MAP.md`. Design: `design.md` + `Docs/ARCHITECTURE.md`. Rules:
 
 The first release ships the full commonly-documented catalog as a baseline
 benchmark (MFO will exceed it immediately). Each is a small self-registering module
-exposed through an `APMF_API::Intent`. Test surface: aim the crosshair at an NPC +
-the key ADDS it to the controlled set; aim another + a key adds it too; **Numpad0
-releases ALL**. Logs to `Data/SKSE/Plugins/APMF.log` (`[ctl]`/`[obs]`/`[test]`/`[api]`).
+exposed through an `APMF_API::Intent`. Test surface (**OPT-IN, DEFAULT OFF (2026-09-07).** No keyboard sink is registered unless `[Input] EnableTestSurface=1` in `Data/SKSE/Plugins/APMF.ini`, so in a shipped game no scancode below does anything at all (CLAUDE.md: probes are fully passive, config-gated, default OFF).): aim the
+crosshair at an NPC + the key ADDS it to the controlled set; aim another + a key adds
+it too; **Numpad0 releases ALL**. Logs to `Data/SKSE/Plugins/APMF.log` (`[ctl]`/`[obs]`/`[test]`/`[api]`).
 
 | Key | Ch | Facet | Kind | Mechanism |
 |-----|----|-------|------|-----------|
 | Num1 | 1 | movement FULL block | source-block | `KeepOffsetFromActor(self)` + `SetDontMove` |
 | Num2 | 11 | disposition (4 AVs) | source-block | aggression/confidence/assistance/morality |
 | Num3 | 5 | headtrack look-up | **known-incomplete block** | own point slot; Tick re-assert (flagged) |
-| Num4 | 8 | casting CLAIM | arbitration-only (#0) | records owner; CLIENT selects the spell + fires (no APMF write) |
+| Num4 | 8 | casting CLAIM | claim + T2 DENY (gated, not arbitration-only — `CastGate.cpp:124` + `EquipGate.cpp`) | records owner and denies every OTHER spell/staff at 0x0A/0x0F; CLIENT selects the spell + fires (no APMF write) |
 | Num5 | 4 | weapon draw | one-shot | `DrawWeaponMagicHands` |
 | Num6 | 10 | dialogue pause | one-shot | `PauseCurrentDialogue` |
 | Num7 | 1a | gait scale (x0.5) | source-block | `kSpeedMult` AV (arbitrary factor) |
@@ -523,21 +568,34 @@ the real channels on the same vtables (`Docs/INVARIANTS.md` #17).
   append-only additions to `APMF_API.h` — no existing field/enum value
   changed. Neither channel needs bespoke `kPreLoadGame` handling: the generic
   `ControlMap::ReleaseAll` already calls every channel's `Release()`.
-- **Not yet field-tested** (built + CI-green only, same as every prior
-  graduation before its own deck pass) — marth reviews the diff before Pass B.
+- ~~**Not yet field-tested** (built + CI-green only, same as every prior
+  graduation before its own deck pass) — marth reviews the diff before Pass B.~~
+  **FIELD-RUN 2026-09-06, and the result was NOT a pass (recorded 2026-09-07).** ch.7 was not
+  exercised. ch.9 ran and engaged **0 of 6** dispatches: the `EvaluatePackage` nudge fires
+  BEFORE the claim publishes, so the engine's 0x49 question is answered with the pre-claim
+  package (MFO `Docs/DIAG-2026-09-06-loot-travel.md`). The redirect itself is sound — 16/16
+  when it is asked with a published claim standing — and the engine contributes ZERO
+  evaluations of its own. Fix on `fix/apmf-offerpackage-nudge-ordering`, unmerged.
 
 ## Client API (Layer 2) — REAL
 
 `APMF_API.h` (the shared header) + `core/ClientAPI.cpp` (the impl). A client:
 `GetProcAddress(GetModuleHandleA("APMF.dll"), "APMF_GetInterface")` → `fn(kABIVersion)`
 → a `const APMF_API_v1*` (null on ABI mismatch); check `p->abiVersion` and cast up to
-`APMF_API_v2*` (>=2) or `APMF_API_v3*` (>=3) → `Request/RequestEx/Release/Repoint`.
+`APMF_API_v2*` (>=2), `APMF_API_v3*` (>=3), … up to the newest struct the client uses
+→ `Request/RequestEx/Release/Repoint/SetSpellAllowList/RequestCast/GetCastProxy/
+IsCastActive`. `APMF_GetInterface` returns NULL if the client asks for a version newer
+than APMF implements.
 `RequestEx` carries the POD `APMF_Param` (`form`/`fval`/`ival`) — cast-select reads
 `param.form` as the spell (no param → Firebolt), combat-target as the target (no param
 → player). `Repoint(handle,param)` re-points a live claim in place (same handle) — the
 retarget primitive (combat-target switches the held foe without release/re-request).
 Forwards to `ControlMap` enqueue (the SAME path the hotkeys use — one control path).
-Frozen, append-only (#14/#14a): each ABI = a prefix-extension struct, `kABIVersion = 3`.
+Frozen, append-only (#14/#14a): each ABI = a prefix-extension struct. **The current
+`kABIVersion` is in `native/APMF_API.h` and only there** (#14b — this line said 3 while
+the header was at 6). New slot ⇒ bump; a new bit in an already-frozen word ⇒ NO bump,
+because MFO calls `fn(kABIVersion)` once with no downward retry and a bump turns its
+whole owned-cast model off against any older APMF.
 
 ## Build / CI
 
@@ -551,10 +609,21 @@ Frozen, append-only (#14/#14a): each ABI = a prefix-extension struct, `kABIVersi
 
 ## Next
 
-1. Field-test the 13 channels on the deck (marth): confirm the multi-NPC test
-   surface (freeze 3 different followers independently, release-all), PACKAGE STABLE
-   per NPC, the clean stand-still (no run-in-place / snap), and the AV/casting gates
-   on a package-locked follower.
-2. MFO integration (Phase 3): MFO becomes the first client, calling `APMF_API.h`.
-3. Probe the GAP channels (movement PROMOTE first) on a live runtime.
-4. Phase 2 passive logger.
+*(Rewritten 2026-09-07. The previous list was 2026-09-02 content — "field-test the 13 channels"
+and "MFO integration (Phase 3)" have both been done since v0.9.0/v0.9.1, and a stale Next list in
+the living handoff is how a finished item gets re-planned.)*
+
+1. **Close the cast facet's open gaps 9-13** (`Docs/DENY-COMPLETENESS-AUDIT.md`): the other hand
+   (deny-only hand claim), the TTL gap (a renewable floor), and the already-charging case. The
+   first two are written on `fix/apmf-claim-renew-denyhand-spellsteer` and unmerged; #3c is
+   amended to license the TTL change.
+2. **Fix the ch.9 nudge ordering** so a package claim engages on the dispatch that made it
+   (`fix/apmf-offerpackage-nudge-ordering`, unmerged) — the engine does not re-ask on its own,
+   so the nudge's position relative to `Publish()` is the whole mechanism.
+3. **Finish the double-0x0A migration**: MFO still installs its own `CheckCast` hook outside
+   APMF's gate (`Docs/SPEC-GRADUATED-CAST.md` §3, `Docs/HOOK-SITE-COVERAGE.md` §5) — latent
+   today, and the collapse of castLvl 1-3 under APMF has never been measured.
+4. **Probe the GAP channels** (movement PROMOTE first) on a live runtime — `feat/pfp-phase0-movement`
+   is the standing Phase 0 for that, INI-gated and not yet field-run.
+5. **Weapon-vs-weapon admission** (open gap 1 / row 15): the weapon CONTEXT-node seat, with its
+   own field test for over-suppression.
