@@ -314,6 +314,47 @@ namespace apmf {
             // stays trivially copyable and the RCU deep-copy is unchanged in cost.
             RE::ActorHandle castTargetHandle{};
         };
+
+        // ---- THE ONE CLAIM COMPARATOR (2026-09-06) ------------------------------
+        // Every winner-selection in this class goes through here. There are SEVEN of
+        // them -- ApplyRequest's oldBest, ApplyRelease's ownerOf, ApplyRepoint's
+        // best, and the four cast reads (TryGetCastClaim, TryGetCastSeatClaim and
+        // both *ForHand overloads) -- and they MUST all agree: the channel OWNER (the
+        // claim OnOwnerChanged fires for) and the answer the per-hand gates give have
+        // to be the SAME claim, or a client is told one thing and denied by another.
+        // Before this existed each site open-coded `c.basis > best->basis`, so adding
+        // the tie rule below to only some of them would have manufactured exactly
+        // that disagreement.
+        //
+        // THE ORDER. Higher basis wins -- unchanged, and still the only thing that
+        // ranks two DRIVING claims. What is ADDED is the tie: at an EQUAL basis a
+        // DENY-ONLY claim (kCastFlag_DenyHandOnly) LOSES to a driving one. Otherwise
+        // the earliest keeps it, exactly as before (return false == no displacement).
+        //
+        // Why this ENFORCES a declaration rather than INVENTING a rank (CLAUDE.md
+        // principle 4): the client set kCastFlag_DenyHandOnly itself, and that flag
+        // says "this claim drives NOTHING, it only closes the hand". A claim that
+        // drives nothing cannot meaningfully outrank one that drives something at the
+        // same basis -- letting it would mean the client's own floor silencing the
+        // client's own cast, which is exactly what a client using ONE uniform basis
+        // for every claim (MFO's kOwnBasis = 200.0f) would get the moment it issued a
+        // floor before a gambit. The flag is a fact the client declared; this is a
+        // total order over that fact, not a precedence APMF made up.
+        //
+        // ABOVE an equal basis nothing changes: a floor requested at a STRICTLY
+        // HIGHER basis than a driving claim still wins, and ApplyRequest still warns
+        // loudly about it (never masked -- principle 7), because there the client
+        // really did declare that the hand must stay shut.
+        //
+        // Non-cast claims carry castFlags == 0 by construction, so for every other
+        // channel this is byte-identical to the strict `>` it replaced.
+        static bool BetterClaim(const Claim& cand, const Claim& incumbent) {
+            if (cand.basis != incumbent.basis) return cand.basis > incumbent.basis;
+            const bool candDeny = (cand.castFlags      & APMF_API::kCastFlag_DenyHandOnly) != 0;
+            const bool incDeny  = (incumbent.castFlags & APMF_API::kCastFlag_DenyHandOnly) != 0;
+            return incDeny && !candDeny;   // only a DRIVING candidate displaces a deny-only incumbent
+        }
+
         struct ChannelCtl {
             Channel*           channel = nullptr;
             std::vector<Claim> claims;   // engaged <=> !claims.empty()
