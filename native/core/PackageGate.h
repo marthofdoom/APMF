@@ -14,11 +14,19 @@ namespace apmf::packagegate {
     // Nudge the actor's package selection to re-evaluate NOW: Address-Library
     // Actor::EvaluatePackage(actor, true, false) -- resetAI stays false,
     // never a full AI reset (mirrors the field-proven AliasPkgProbe.cpp
-    // mechanism exactly). Exposed so channels/OfferPackage.cpp's
-    // Engage/OnOwnerChanged/Release can make a package-offer claim take
-    // effect within one eval instead of waiting for the engine's own natural
-    // poll. No-op on a null actor -- callers may pass the Channel lifecycle's
-    // `actor` argument straight through even when it is null.
+    // mechanism exactly). Exposed so a package-offer claim takes effect within
+    // one eval instead of waiting for the engine's own natural poll.
+    //
+    // MUST NOT be called from inside a Channel lifecycle call (corrected
+    // 2026-09-06; the earlier "Engage/OnOwnerChanged/Release call this, and
+    // they already run on the game thread" claim is RETRACTED). Those run
+    // inside ControlMap::Drain's apply loop, BEFORE Drain Publish()es -- so
+    // the 0x49 thunk would answer off the PREVIOUS generation and never see
+    // the claim the nudge is about. channels/OfferPackage.cpp posts it through
+    // apmf::mainthread::Post instead, so it runs one hop past that Publish.
+    // Right thread, wrong MOMENT was the whole bug.
+    //
+    // No-op on a null actor.
     void EvaluatePackage(RE::Actor* a_actor);
 
     // RULE C heartbeat (marth 2026-09-06, "does 0x49 actually redirect?" probe) --

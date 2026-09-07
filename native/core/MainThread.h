@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <functional>
 
 // ============================================================================
@@ -41,5 +42,29 @@ namespace apmf::mainthread {
     // local swap of the queue, never the live one, so it cannot loop forever on
     // a self-reposting chain and cannot re-enter mid-drain.
     void Pump();
+
+    // Drop every queued task WITHOUT running it; returns how many were dropped.
+    // Same seat rule as Pump() (called from the kPreLoadGame / revert handlers in
+    // plugin.cpp, which run on the main thread).
+    //
+    // WHY IT EXISTS (2026-09-06 review of the ch.9 nudge deferral). Posted tasks
+    // otherwise CROSS THE LOAD BOUNDARY. `ControlMap::ReleaseAll` on kPreLoadGame
+    // calls every channel's Release, and a channel that defers work through Post()
+    // has nothing Pump() it until the FIRST PLAYER UPDATE AFTER THE LOAD -- by which
+    // time the world has been swapped. A persistent NPC's reference survives that
+    // swap, so the task's handle still resolves and its re-validation still passes;
+    // it then acts on the NEW world's actor, un-asked.
+    //
+    // For what is queued today that is HARMLESS, not dangerous -- and "harmless" is
+    // the accurate word: ch.9's nudge serializes nothing, touches no alias fill, and
+    // keeps `EvaluatePackage`'s resetAI=false; ch.8b's proxy teardown post is moot
+    // because `castproxy::ResetAll()` runs right after it anyway. (The original fix
+    // commit called the deferral "strictly safer"; review corrected that to
+    // "harmless", and this comment records the corrected claim, not the first one.)
+    // It is still an UNREQUESTED engine write on the far side of a world swap, and
+    // the hole is GENERAL: every future teardown-path Post() inherits it. So the
+    // teardown paths flush the queue explicitly instead of relying on what happens
+    // to be in it.
+    std::size_t Discard();
 
 }

@@ -26,30 +26,27 @@
 // ---------------------------------------------------------------------------
 // One EvaluatePackage(true,false) nudge on Engage/OnOwnerChanged (so the
 // redirect takes within one eval instead of waiting for the engine's own
-// natural poll) and on Release (so the framework package resumes
-// immediately) -- exactly the AliasPkgProbe.cpp mechanism.
+// natural poll) and on Release (so the framework package resumes immediately)
+// -- exactly the AliasPkgProbe.cpp mechanism.
 //
 // That nudge MUST NOT be issued from inside these lifecycle calls. They run
 // inside ControlMap::Drain's apply loop (core/ControlMap.cpp:514 Engage,
 // :575 Release), and Drain only Publish()es the new snapshot AFTER that loop
 // (:261). The 0x49 thunk answers off the PUBLISHED snapshot
-// (core/PackageGate.cpp:122 -> ControlMap::TryGetOwningClaim, :759), so a
-// nudge issued here re-evaluates against the PREVIOUS generation:
+// (core/PackageGate.cpp -> ControlMap::TryGetOwningClaim), so a nudge issued
+// here re-evaluates against the PREVIOUS generation:
 //   * ENGAGE  -- the hook sees NO claim and hands back the framework's own
 //                package. The offer is never adopted.
 //   * RELEASE -- the hook still sees the claim and asserts the offered
 //                package at the exact instant it is being withdrawn.
-// FIELD EVIDENCE (Tuxbornrc1, 19:51-19:59, MFO aae6df64 / APMF 69c57bde,
-// Docs/DIAG-2026-09-06-loot-travel.md): 0 of 6 MFO loot dispatches put a
-// follower on the offered travel package (14 `onTravelPkg=false` lines), the
-// first `[ch.9-redirect]` for each dispatch printed at the RELEASE and never
-// at the dispatch, and the 19:57:37 heartbeat read `claimedActorsNow=2,
-// claimedHits=0` six seconds into two live claims. All 16 claimed hits in the
-// session reconcile to explicit nudges that happened to fire while an OLDER
-// claim was already published; the engine's own evaluation cadence
-// contributed ZERO. The original AliasPkgProbe had the order right (claim
-// first, nudge one frame later); graduating it into the Channel lifecycle
-// kept the call and inverted the ordering on both edges.
+// The original AliasPkgProbe had the order right (claim first, nudge one frame
+// later); graduating it into the Channel lifecycle kept the call and inverted
+// the ordering on both edges. Right thread, wrong MOMENT.
+//
+// FIELD EVIDENCE for that failure -- 6 loot dispatches, 0 adoptions, every
+// [ch.9-redirect] printing at the RELEASE and none at the dispatch -- is
+// recorded once, in MFO's Docs/DIAG-2026-09-06-loot-travel.md. It is not
+// restated here: session timestamps and DLL hashes rot in a source header.
 //
 // So both edges post the nudge through apmf::mainthread::Post, which runs one
 // hop past this Drain's Publish (Arbiter::OncePerFrame does Drain() then
@@ -58,13 +55,18 @@
 // (Docs/INVARIANTS.md #20). By the time the posted nudge runs, the hook sees
 // exactly the state the nudge is about.
 //
-// The deferred nudge re-validates instead of trusting what it captured: it
-// carries an RE::ActorHandle (never a raw Actor*) plus the claim state it was
-// posted FOR, and drops itself if the actor no longer resolves or if the
-// actor's ch.9 claim is no longer the one it was posted for (a newer claim
-// posted its own nudge and that one wins; a stale release nudge must never
-// re-assert a package that has since been re-offered, or vice versa). A
-// dropped nudge is LOGGED and nothing else happens -- no retry, no watchdog,
+// RE-VALIDATION CONTRACT (this is load-bearing, not defensive padding -- a
+// posted task outlives the moment it was posted for):
+//   * it carries an RE::ActorHandle, never a raw Actor*;
+//   * it is NOT POSTED at all unless the actor resolves AND already holds a
+//     live engine handle (core/PackageGate.cpp's nudge is an engine AI write,
+//     and Actor::GetHandle MINTS a handle for an actor that has none -- see
+//     PostDeferredNudge below);
+//   * at execution it re-reads the NOW-PUBLISHED ch.9 claim and drops itself
+//     unless that claim is still the one it was posted for -- a newer claim
+//     posted its own nudge and that one wins; a stale release nudge must never
+//     re-assert a package that has since been re-offered, or vice versa.
+// A dropped nudge is LOGGED and nothing else happens -- no retry, no watchdog,
 // no re-assert loop (CLAUDE.md principle 7; Channel.h "a re-assert loop is a
 // FAILED block").
 //
@@ -73,6 +75,10 @@
 // (CLAUDE.md principle 5): a dispatch that works now shows CLAIMED ->
 // [ch.9-nudge] FIRED -> [ch.9-redirect] within one frame, instead of the
 // silence this bug produced.
+//
+// DEPENDENCY NOTE: this is the only channel that includes core/ControlMap.h
+// and reads the map back. That is allowed (an any-thread lock-free RCU read),
+// and core/Channel.h now says so and why.
 // ============================================================================
 
 namespace {
@@ -84,16 +90,48 @@ namespace {
     // `edge` must be a string literal (captured by pointer for the log lines).
     void PostDeferredNudge(RE::FormID id, RE::Actor* actor, bool expectClaim,
                            RE::FormID wantForm, const char* edge) {
-        // Channel.h: `actor` MAY BE NULL (a form the ControlMap could not resolve).
-        // Nothing to nudge -- say so rather than dropping it silently.
-        if (!actor) {
-            spdlog::info("[ch.9-nudge] 0x{} {} nudge NOT POSTED -- actor does not resolve.",
-                         apmf::log::Hex(id), edge);
+        // GATE 1 -- do not post at all unless there is a live actor to nudge.
+        //
+        // Two distinct ways this fires, and BOTH must be caught HERE, before
+        // GetHandle:
+        //   (a) Channel.h: `actor` MAY BE NULL (a form the ControlMap could not
+        //       resolve).
+        //   (b) the actor resolves but its engine handle has been INVALIDATED --
+        //       ControlMap's unload sweep (core/ControlMap.cpp:249-252) reaches
+        //       Release with exactly this shape: `ctl.handle.get()` came back null,
+        //       then LookupByID handed back the still-allocated form.
+        //
+        // Case (b) is why this gate is not just `!actor`. The commit that
+        // introduced this deferral claimed the unload sweep would be caught later,
+        // by the posted task's own `handle.get()` check -- IT WOULD NOT.
+        // Actor::GetHandle (RE::BSPointerHandleManagerInterface<Actor>::GetHandle,
+        // RELOCATION_ID(15967, 16212)) MINTS A FRESH, VALID HANDLE for an actor
+        // that has none, so that check would pass and the nudge would fire an
+        // EvaluatePackage at an actor APMF has just declared unloaded. Benign (it
+        // is the same engine call the old inline code made), but a guard that does
+        // not exist must not be written down as if it did.
+        //
+        // RE::BSHandleRefObject::IsHandleValid() (CommonLibSSE-NG
+        // include/RE/B/BSHandleRefObject.h; TESObjectREFR inherits it) is a plain
+        // read of the kHandleValid bit (1 << 10) in the object's own refcount word
+        // -- no relocation, no vfunc, nothing version-fragile. Every actor the
+        // ControlMap controls already has a minted handle (core/ControlMap.cpp:440
+        // does `npc.handle = actor->GetHandle()` at claim time), so a live claim's
+        // engage / re-point / release always passes this gate.
+        if (!actor || !actor->IsHandleValid()) {
+            spdlog::info("[ch.9-nudge] 0x{} {} nudge NOT POSTED -- {}.",
+                         apmf::log::Hex(id), edge,
+                         actor ? "actor resolves but its engine handle is already invalid (unloaded)"
+                               : "actor does not resolve");
             return;
         }
 
         const RE::ActorHandle handle = actor->GetHandle();
         apmf::mainthread::Post([id, handle, expectClaim, wantForm, edge] {
+            // GATE 2 -- the actor went away between the post and this Pump. Note
+            // what this does and does not prove: the handle was VALID when it was
+            // captured (gate 1), so a null here is a real teardown in between. It
+            // is NOT the unload-sweep guard -- that is gate 1's job, above.
             auto  ptr = handle.get();   // NiPointer<Actor>; null once unloaded/deleted
             auto* a   = ptr.get();
             if (!a) {
@@ -102,7 +140,7 @@ namespace {
                 return;
             }
 
-            // Re-validate against the NOW-PUBLISHED snapshot: only nudge for the
+            // GATE 3 -- re-validate against the NOW-PUBLISHED snapshot: only nudge for the
             // state this nudge was posted for. Anything else means a newer claim
             // (or release) landed in between and posted its own nudge.
             APMF_API::APMF_Param now{};

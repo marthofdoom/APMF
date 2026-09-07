@@ -6,6 +6,7 @@
 #include "core/Arbiter.h"
 #include "core/ControlMap.h"
 #include "core/AvLedger.h"
+#include "core/MainThread.h"
 #include "core/CastProxy.h"
 #include "core/CastSeats.h"
 #include "core/CastGate.h"
@@ -59,6 +60,13 @@ namespace {
         // source spells' borrowed Effect* into the load-time purge. ResetAll closes
         // both (INVARIANTS #19).
         apmf::castproxy::ResetAll();
+        // Flush the confirmed-main task queue at the world boundary (see
+        // core/MainThread.h's Discard() for why). Clear() posts nothing today -- it
+        // makes no channel->Release calls by design -- but anything posted BEFORE the
+        // revert must not survive into the new world either.
+        if (const auto dropped = apmf::mainthread::Discard(); dropped != 0)
+            spdlog::info("[mainthread] revert/new game -- dropped {} queued task(s) at the world boundary.",
+                         dropped);
         apmf::av::Revert();
     }
 
@@ -124,6 +132,18 @@ namespace {
             // purge can never free a live spell's effect array through a dead proxy
             // (INVARIANTS #19 -- MFO's Actuation_Direct.cpp lesson).
             apmf::castproxy::ResetAll();
+            // Flush the confirmed-main task queue. NOTHING Pump()s between here and
+            // the first player Update AFTER the load, so anything ReleaseAll just
+            // posted (ch.9's release nudge; ch.8b's proxy teardown) would otherwise
+            // run against the NEW world's actors -- a persistent NPC's ref survives
+            // the swap, so the handle still resolves and the re-validation still
+            // passes. Harmless for what is queued today (see core/MainThread.h), but
+            // it is an unrequested engine write after a world swap and the hole is
+            // general to every future teardown Post(). Must stay AFTER ReleaseAll and
+            // castproxy::ResetAll, which are what do the posting.
+            if (const auto dropped = apmf::mainthread::Discard(); dropped != 0)
+                spdlog::info("[mainthread] kPreLoadGame -- dropped {} queued task(s) at the load boundary.",
+                             dropped);
             break;
         case SKSE::MessagingInterface::kPostLoadGame:
             apmf::av::ApplyPending();             // restore any stranded AV overrides

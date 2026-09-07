@@ -27,10 +27,19 @@ extern "C" __declspec(dllimport) unsigned long __stdcall GetPrivateProfileIntA(
 // §0.38 scar), SAME never-null contract (a claimed actor whose named package
 // FormID doesn't resolve falls back to the engine's own answer, never a
 // fabricated null -- §0.25 "claimed with nothing = rooted"), SAME
-// EvaluatePackage(true,false) nudge (now called from channels/
-// OfferPackage.cpp's Engage/OnOwnerChanged/Release, which already run on the
-// game thread per Channel.h's contract -- exactly the thread AliasPkgProbe's
-// OncePerFrame pump ran the identical call from).
+// EvaluatePackage(true,false) nudge.
+//
+// WHERE THE NUDGE IS ISSUED FROM (corrected 2026-09-06 -- the earlier claim in
+// this header, that OfferPackage.cpp's Engage/OnOwnerChanged/Release call it
+// directly because they "already run on the game thread", is RETRACTED). Being
+// on the game thread was never the whole contract: those lifecycle calls run
+// INSIDE ControlMap::Drain's apply loop, i.e. BEFORE Drain Publish()es the
+// snapshot this thunk answers from, so a nudge issued there re-evaluates
+// against the PREVIOUS generation and the claim it is about is invisible.
+// channels/OfferPackage.cpp therefore POSTS the nudge through
+// apmf::mainthread::Post, which runs one hop later (Arbiter::OncePerFrame does
+// Drain() then Pump()) -- the same one-frame-later ordering AliasPkgProbe's
+// OncePerFrame pump had. See OfferPackage.cpp's header for the full rationale.
 //
 // WHAT'S NEW vs the probe: the offered package is no longer one compile-time
 // constant (`kProbePackageForm`) handed to every claimed actor -- it is
@@ -87,6 +96,11 @@ namespace apmf::packagegate {
         };
         std::mutex                                        g_redirectMx;
         std::unordered_map<RE::FormID, RedirectAnswer>    g_redirectLast;
+        // Non-zero iff g_redirectLast holds at least one entry. Lets the
+        // no-claim path below skip the mutex entirely in the overwhelmingly
+        // common case (every unclaimed actor in the game calls 0x49), so the
+        // FIX below costs one relaxed load there and nothing else.
+        std::atomic<std::uint32_t>                        g_redirectRemembered{ 0 };
 
         // Defensive session line cap (RULE E) -- the transition dedup above should
         // already keep this near-silent; this only guards against a pathological
@@ -153,6 +167,7 @@ namespace apmf::packagegate {
                             std::scoped_lock lock(g_redirectMx);
                             auto [it, inserted] = g_redirectLast.try_emplace(actorId, answer);
                             if (inserted) {
+                                g_redirectRemembered.fetch_add(1, std::memory_order_relaxed);
                                 changed = true;
                             } else if (!(it->second == answer)) {
                                 it->second = answer;
@@ -168,6 +183,31 @@ namespace apmf::packagegate {
                                          won);
                         }
                     }
+                } else if (g_redirectLogEnabled.load(std::memory_order_relaxed) &&
+                           g_redirectRemembered.load(std::memory_order_relaxed) != 0) {
+                    // FIX (2026-09-06 review of the ch.9 nudge deferral): FORGET the
+                    // actor's remembered answer when it holds NO ch.9 claim.
+                    //
+                    // Before this, g_redirectLast was written ONLY on the claimPresent
+                    // path, so a no-claim answer was never recorded and never cleared.
+                    // The deferred release nudge now consults 0x49 with claimPresent=
+                    // false, which left the ENGAGED tuple sitting in the map -- so a
+                    // dispatch -> release -> SAME dispatch again produced a tuple
+                    // byte-identical to the remembered one and RULE D's transition
+                    // dedup suppressed the line. The redirect would have happened and
+                    // the log would have been silent, and the diagnosis's own pass
+                    // criterion ("a [ch.9-redirect] line within one frame of every
+                    // CLAIMED") would have graded a working deck cycle as a failure.
+                    //
+                    // Erasing rather than recording a no-claim tuple is deliberate:
+                    // this branch runs for EVERY unclaimed actor in the game, and a
+                    // "no claim, no redirect" line for each of them is noise, not
+                    // information (principle 8). Erase makes the next claim on this
+                    // actor a fresh insert, which prints.
+                    const RE::FormID actorId = a_this->GetFormID();
+                    std::scoped_lock lock(g_redirectMx);
+                    if (g_redirectLast.erase(actorId) != 0)
+                        g_redirectRemembered.fetch_sub(1, std::memory_order_relaxed);
                 }
 
                 // OBSERVE-ONLY (Docs/PROBE-NONALIAS-PACKAGE.md §6.1, extended per

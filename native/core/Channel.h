@@ -23,6 +23,23 @@
 // re-assert loop is a FAILED block (Tick() is empty by default for exactly this
 // reason). A channel that still needs re-assert is a KNOWN-INCOMPLETE block: it
 // says so in its header and overrides Tick() as a flagged stopgap (INVARIANTS #2).
+//
+// MAY A CHANNEL READ THE CONTROL MAP BACK? YES -- and channels/OfferPackage.cpp
+// is the first one that does (2026-09-06), so the rule is written down here
+// rather than inferred from one file. `ControlMap::TryGetOwningClaim` is a
+// LOCK-FREE RCU READ off the published snapshot, callable from any thread (it is
+// what the combat-thread gates in core/ already use), so including
+// core/ControlMap.h from a channel introduces no lock, no ordering hazard and no
+// cycle. What it is FOR: a channel that DEFERS work through
+// apmf::mainthread::Post cannot trust the arguments it captured, because a
+// posted task runs one hop later and the claim it was posted for may already be
+// gone or replaced -- so it re-reads the now-published claim and drops itself if
+// the state moved. That is a re-VALIDATION, not a re-ASSERT.
+//
+// WHAT IS STILL FORBIDDEN, unchanged: writing to the ControlMap from a lifecycle
+// call (Engage/Release run INSIDE ControlMap::Drain's apply loop), and treating a
+// read-back as licence to re-drive a facet every frame -- that is the re-assert
+// loop above, still a FAILED block.
 // ============================================================================
 
 namespace apmf {
