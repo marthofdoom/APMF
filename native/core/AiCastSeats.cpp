@@ -561,19 +561,62 @@ namespace apmf::aicastseats {
                 }
             }
 
-            // TASK 2 (score bias): bias ONLY when a live ch.15 kIntent_Equipment
-            // claim on this actor names THIS EXACT item form -- the same claim/
-            // read EquipGate.cpp's T2a gate already uses (TryGetOwningClaim,
-            // lock-free RCU, any thread). Never applied with the flag off;
-            // never applied to any other item.
+            // TASK 2 (score bias) -- CORRECTED 2026-09-07: the original version
+            // only ever read the ch.15 kIntent_Equipment claim, which is a no-op
+            // for a claimed SPELL (MFO claims spells through ch.8b kIntent_Cast,
+            // never kIntent_Equipment). Bias now fires on EITHER:
+            //   (a) a live ch.15 kIntent_Equipment claim on this actor naming
+            //       THIS EXACT item form -- the same claim/read EquipGate.cpp's
+            //       T2a gate already uses (TryGetOwningClaim, lock-free RCU, any
+            //       thread); or
+            //   (b) a live ch.8b kIntent_Cast claim occupying THIS HAND whose
+            //       DRIVEN form (proxy if one was minted, else the spell itself
+            //       -- the SAME "driven form" resolution CastSeats.cpp/
+            //       CastClassify.cpp/EquipGate.cpp already use, not reinvented
+            //       here) equals this item form. Per-hand (TryGetCastSeatClaimForHand)
+            //       so the bias lands on the hand the engine actually built THIS
+            //       CombatInventoryItem for (a separate instance per hand, its
+            //       own itemScore at +0x18) -- the SAME self-deny-across-hands
+            //       concern TryGetCastClaimForHand/TryGetCastSeatClaimForHand
+            //       exist to close elsewhere; `hand == kUnknown` forwards to the
+            //       actor-wide floor exactly like every other caller of that
+            //       shape.
+            // UNIFORM by design (marth's call): no offense/heal special-casing.
+            // For an offense spell (category 0, the same scoring array as Melee/
+            // Ranged) the bias is what actually wins the hand against a weapon.
+            // For a heal (category 1, walked before category 0) it is a
+            // harmless no-op because category order already preempts it -- but
+            // PASS S could never confirm the magic category indices (its read
+            // misaligned on the MagicT<> leaf vtables), so applying the bias
+            // uniformly HEDGES that unconfirmed inference: if heals turn out NOT
+            // to preempt after all, the uniform bias still has a lever; a
+            // heal-excluded version would have none. Keeps the existing ch.15
+            // branch (still the right lever for a pure equipment claim) and adds
+            // the cast case ALONGSIDE it, never replacing it. Never applied with
+            // the flag off; never applied to any other item.
             float finalScore = engineScore;
             bool  biased     = false;
+            const char* biasReason = "";
             if (g_scoreSteerEnabled.load(std::memory_order_relaxed) && itemForm != 0) {
                 APMF_API::APMF_Param claim{};
                 if (apmf::ControlMap::Get().TryGetOwningClaim(fid, APMF_API::kIntent_Equipment, claim) &&
                     claim.form == itemForm) {
                     finalScore = engineScore + kScoreSteerBias;
                     biased     = true;
+                    biasReason = "ch.15 equipment claim";
+                } else {
+                    const auto castHand = (hand == allowance::Hand::kLeft)  ? apmf::CastHand::kLeft  :
+                                          (hand == allowance::Hand::kRight) ? apmf::CastHand::kRight :
+                                                                              apmf::CastHand::kUnknown;
+                    apmf::CastSeatClaim seat{};
+                    if (apmf::ControlMap::Get().TryGetCastSeatClaimForHand(fid, castHand, seat)) {
+                        const RE::FormID driven = seat.proxy ? seat.proxy : seat.spell;
+                        if (driven != 0 && driven == itemForm) {
+                            finalScore = engineScore + kScoreSteerBias;
+                            biased     = true;
+                            biasReason = "ch.8b cast claim";
+                        }
+                    }
                 }
             }
 
@@ -583,11 +626,12 @@ namespace apmf::aicastseats {
                                    hand == allowance::Hand::kRight ? "R" : "?";
                 if (biased) {
                     spdlog::info("[aicastseats] t={} 0x{} '{}' WEAPON-SCORE class={} rtti={} cat={} hand={} "
-                                 "slotMask=0x{} item=0x{} '{}' engineScore={:.3f} STEERED->{:.3f} (ch.15 claim)",
+                                 "slotMask=0x{} item=0x{} '{}' engineScore={:.3f} STEERED->{:.3f} ({})",
                                  apmf::clock::MonotonicMs(), apmf::log::Hex(fid),
                                  actor->GetName() ? actor->GetName() : "?", tag, cls ? cls : "<unresolved>",
                                  cat, hs, apmf::log::Hex(slotMask), apmf::log::Hex(itemForm),
-                                 item && item->GetName() ? item->GetName() : "?", engineScore, finalScore);
+                                 item && item->GetName() ? item->GetName() : "?", engineScore, finalScore,
+                                 biasReason);
                 } else {
                     spdlog::info("[aicastseats] t={} 0x{} '{}' WEAPON-SCORE class={} rtti={} cat={} hand={} "
                                  "slotMask=0x{} item=0x{} '{}' engineScore={:.3f}",
