@@ -26,20 +26,31 @@
 //      RTTI type name (best-effort, see .cpp), the first ~0x60 slot RVAs,
 //      and the two known slots (0x49, 0xDF) called out by index.
 //
-// HOTKEYS (both OFF by default; see .cpp Install()/OnHotkey()). Every one of
+// CONFIG GATE (2026-09-07, the passive-probe rule). The observe switch is read
+// ONCE from `Data/SKSE/Plugins/APMF.ini`:
+//
+//     [Probe.NonAlias]
+//     EnableObserveLog=1
+//
+// default 0/OFF. That is the path a normal diagnosis uses -- no key press is
+// involved and nothing is armed in a shipped game.
+//
+// TEST-SURFACE KEYS (inert unless the keyboard surface is separately opted into
+// with [Input] EnableTestSurface=1 -- core/Input.h; both OFF by default). Every one of
 // the 17 conventional Numpad0-9/./+/-/*//Enter scancodes is ALREADY claimed
 // by a real channel or the native-bit probe (grep confirmed, 2026-09-03) --
 // so this uses the two adjacent, genuinely-unclaimed lock-key scancodes
 // instead, and says so plainly rather than silently double-booking an
 // already-owned key:
 //   - DIK 0x45 (NumLock)    -- toggle deliverable-1 observe logging (0x49 +
-//                              0xDF) on/off. OFF by default; while off, both
-//                              hooks cost one relaxed atomic load and
-//                              nothing else -- no per-frame log noise.
+//                              0xDF) on/off, from whatever the INI seeded it
+//                              to. While off, both hooks cost one relaxed
+//                              atomic load and nothing else -- no per-frame
+//                              log noise.
 //   - DIK 0x46 (ScrollLock) -- one-shot: dump the crosshair-aimed actor's
 //                              vtable/RTTI (deliverable 2). Independent of
-//                              the NumLock switch -- always armed once
-//                              Install() has run.
+//                              the observe switch, but still only reachable
+//                              through the opted-in keyboard surface.
 // ============================================================================
 
 namespace apmf::nonaliasprobe {
@@ -58,11 +69,13 @@ namespace apmf::nonaliasprobe {
     // Dispatch a raw keyboard scancode: NumLock toggles the debug switch,
     // ScrollLock fires a one-shot vtable/RTTI dump on the crosshair-aimed
     // actor. Called from core/Input.cpp's InputSink alongside
-    // nativebitprobe::OnHotkey. No-op for any other code.
+    // nativebitprobe::OnHotkey -- and that sink only exists when the tester
+    // opted in with [Input] EnableTestSurface=1. No-op for any other code.
     void OnHotkey(std::uint32_t a_code);
 
-    // Debug-switch state (relaxed read). Exposed so core/PackageGate.cpp's
-    // 0x49 thunk can gate its own observe-log addition on this same switch.
+    // Debug-switch state (relaxed read; seeded from [Probe.NonAlias]
+    // EnableObserveLog at Install). Exposed so core/PackageGate.cpp's 0x49
+    // thunk can gate its own observe-log addition on this same switch.
     bool IsEnabled();
 
     // Shared per-actor rate limiter (2s window) for BOTH the 0x49 log

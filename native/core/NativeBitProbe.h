@@ -9,6 +9,18 @@
 // the crosshair-aimed NPC and logs the before/after state so marth can
 // field-observe whether it cleanly stops attacking/casting or wedges/
 // stutters. Not wired to any client, not a permanent channel.
+//
+// CONFIG-GATED, DEFAULT OFF (2026-09-07). This is the ONE probe in the
+// codebase that MUTATES live actor state, so it must never be reachable in a
+// shipped game: `Install()` no-ops unless
+//
+//     [Probe.NativeBit]
+//     Enable=1
+//
+// is set in `Data/SKSE/Plugins/APMF.ini`, and even then the keys only arrive
+// if the keyboard surface is separately armed ([Input] EnableTestSurface=1,
+// core/Input.h). Two independent opt-ins, both default OFF -- CLAUDE.md's
+// "no hotkeys, no toggles ... config-gated, default OFF" rule.
 // ============================================================================
 
 namespace apmf::nativebitprobe {

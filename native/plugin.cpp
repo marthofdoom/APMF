@@ -100,7 +100,10 @@ namespace {
                                                   // "what the AI wanted" against "what the claim
                                                   // answered". The 5th seat (0x0F CheckShouldEquip)
                                                   // lives in equipgate above. VR-refused inside.
-            apmf::nativebitprobe::Install();     // native-bit toggle probe (throwaway; no VR gate needed)
+            apmf::nativebitprobe::Install();     // native-bit probe (throwaway; no VR gate needed).
+                                                  // CONFIG-GATED, default OFF -- it is the only probe that
+                                                  // MUTATES a live actor, so it no-ops unless
+                                                  // [Probe.NativeBit] Enable=1 in APMF.ini.
             // T4 (TESActionData::Process) REMOVED (2026-09-03): its call-site patch at
             // valhalla's known site collided with SCAR.dll's own hook on the same AI
             // attack-start path -> execute-AV CTD in live combat, not hotkey-gated (the
@@ -115,8 +118,12 @@ namespace {
             // never left installed alongside the real channels on the same vtables
             // (Docs/INVARIANTS.md #17).
             if (!REL::Module::IsVR()) {          // no drain seat on VR -> no test surface
+                // OPT-IN, default OFF: Register() adds no keyboard sink unless
+                // [Input] EnableTestSurface=1 in Data/SKSE/Plugins/APMF.ini, so in a
+                // shipped game no scancode can claim a channel or reach either probe
+                // (CLAUDE.md: probes are fully passive, config-gated, default OFF).
                 apmf::input::Register();
-                apmf::input::LogHelp();
+                apmf::input::LogHelp();          // no-op unless the surface actually armed
             } else {
                 spdlog::warn("[input] VR runtime -- hooks refused, input test surface NOT armed.");
             }

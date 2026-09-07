@@ -5,6 +5,11 @@
 #include "core/NonAliasProbe.h"
 #include "core/Clock.h"
 
+// Win32 INI read for [Probe.NonAlias] -- same hand-declared extern every other
+// INI-gated file in this project uses (PCH does not pull in <Windows.h>).
+extern "C" __declspec(dllimport) unsigned long __stdcall GetPrivateProfileIntA(
+    const char* a_appName, const char* a_keyName, long a_default, const char* a_fileName);
+
 // ============================================================================
 // See NonAliasProbe.h for the design/why. Implementation notes:
 //
@@ -184,10 +189,21 @@ namespace apmf::nonaliasprobe {
     }
 
     void Install() {
+        // The observe switch is CONFIG-GATED (CLAUDE.md: probes are passive,
+        // config-gated logging, default OFF). Read ONCE here, before the VR gate,
+        // so the 0x49 assist log core/PackageGate.cpp gates on IsEnabled() obeys
+        // the same switch on every runtime. Missing file/section/key ->
+        // GetPrivateProfileIntA returns the default (0/OFF) without erroring.
+        const bool iniObserve =
+            GetPrivateProfileIntA("Probe.NonAlias", "EnableObserveLog", 0, "Data/SKSE/Plugins/APMF.ini") != 0;
+        g_debugEnabled.store(iniObserve, std::memory_order_relaxed);
+        spdlog::info("[nonaliasprobe] observe logging {} by [Probe.NonAlias] EnableObserveLog={} in "
+                     "Data/SKSE/Plugins/APMF.ini (default 0/OFF).",
+                     iniObserve ? "ARMED" : "off", iniObserve ? 1 : 0);
         if (REL::Module::IsVR()) {
             spdlog::warn("[nonaliasprobe] VR runtime -- 0xDF index is SE/AE-only verified; "
-                         "PutCreatedPackage observe hook NOT installed (NumLock/ScrollLock probe "
-                         "keys still armed for the dumper + 0x49 assist, which need no vtable index).");
+                         "PutCreatedPackage observe hook NOT installed (the INI observe switch and the "
+                         "0x49 assist, which need no vtable index, are unaffected).");
             return;
         }
         if (g_installed.exchange(true)) return;
@@ -199,8 +215,9 @@ namespace apmf::nonaliasprobe {
                                                    expectedTD.get(), "nonaliasprobe", g_orig);
         spdlog::info("[nonaliasprobe] OBSERVE-ONLY diagnostic armed -- PutCreatedPackage (0x{}) hooked on "
                      "{} vtable(s) (Character[0]); logs then chains unconditionally, never alters args/"
-                     "return. NumLock toggles this + the 0x49 assist log (OFF by default); ScrollLock "
-                     "dumps the crosshair-aimed actor's vtable/RTTI. See Docs/PROBE-NONALIAS-PACKAGE.md.",
+                     "return. [Probe.NonAlias] EnableObserveLog gates this + the 0x49 assist log (OFF by "
+                     "default). The NumLock/ScrollLock keys are inert unless the keyboard test surface is "
+                     "separately armed ([Input] EnableTestSurface=1). See Docs/PROBE-NONALIAS-PACKAGE.md.",
                      apmf::log::Hex(kPutCreatedPackage, 2), n);
     }
 
