@@ -156,3 +156,24 @@ Principle 1 (portals) proposes forcing combat purely as a SUBSTRATE so that engi
 machinery exists, with every non-cast facet denied. These are in genuine tension. If a
 design needs it, AMEND #0 explicitly and in writing (as its fourth action **(d) COMPOSE**
 was added) with the deny-set that makes it safe — do NOT quietly violate it.
+
+## REVIEW + MODEL RULES (marth 2026-09-06) — mirrored from MFO's CLAUDE.md, same rules both repos
+
+1. **EVERY COMMIT GETS A FABLE DIFF REVIEW.** Not just pre-cut, not just risky ones — each commit, as it
+   lands. CI-green is not a review and the coordinator's own read is not a substitute. Give the reviewer the
+   BRIEF the commit was written against so it can catch unrequested scope, tell it to be adversarial, and
+   have it review the BRANCH's files (`git show <branch>:<path>`), never the main working copy.
+2. **WE FIX EVERYTHING THE FABLE REVIEW FINDS.** marth, verbatim: *"A rule with fable reviews, we fix
+   everything it finds."* There is no triage into blocker-vs-follow-up and no deferring a finding because
+   the code that would hit it is dormant, rare, or "a design cycle". Fix them all, in severity order, before
+   the branch merges or deploys. If a finding is genuinely wrong, say WHY with evidence and get it dropped
+   explicitly — do not silently downgrade it. If one truly cannot be fixed in this cycle, that is a
+   STOP-and-report to marth, not a decision the worker or the coordinator makes alone.
+   (Why: the 2026-09-06 deny/heal failure shipped as a reviewed, CI-green, deliberate change. Deferred
+   findings are how a known defect reaches the deck wearing a review's approval.)
+3. **AN OPUS AGENT WRITES THE CODE — INCLUDING SMALL CHANGES.** Not a cheap model, and NOT the coordinator
+   itself. marth set the threshold LOW on purpose: *"by reasonably sized I mean smaller. but we cant afford
+   the sloppy work weve been getting from teh cheap agents."* The driver is QUALITY, not token size.
+   Cheap models (Sonnet/Haiku) are NOT for authoring code at all — reserve them for non-authoring mechanical
+   grinds, and check their work even there. The coordinator dispatches, reads diffs, and directs corrections
+   back to the worker holding the file context; hand-edits are for context-free one-liners only.
