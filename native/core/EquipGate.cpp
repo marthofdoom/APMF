@@ -205,6 +205,39 @@ namespace apmf::equipgate {
         std::atomic<RE::BGSEquipSlot*> g_leftHandSlot{ nullptr };
         std::atomic<RE::BGSEquipSlot*> g_rightHandSlot{ nullptr };
 
+        // Resolve one Left/Right/Voice default-object slot DIRECTLY from
+        // BGSDefaultObjectManager::objects[idx] rather than through CommonLib's own
+        // GetObject/IsObjectInitialized (pinned rev c4ab853d095e81e3390b282d7ba01ab2f24ebf25):
+        // IsObjectInitialized is written `REL::RelocateMember<bool*>(this, 0xB80, 0xBA8)[idx]`,
+        // and RelocateMember's (a_seAndAE, a_vr) pair applies 0xB80 to BOTH SE and
+        // AE alike (0xBA8 is the VR-only offset) -- but AE actually appends MORE
+        // default-object slots onto `objects[]` than SE before its own bool
+        // objectInit[] array begins, so on AE 0xB80 lands inside the TAIL of the
+        // (longer) objects[] pointer array, not the flag array, and the byte read
+        // back is a live TESForm*'s raw bytes reinterpreted as a bool -- 2026-09-06
+        // field diagnosis, root cause of "left-hand slot 0x0". `objects[]` itself
+        // (offset 0x020, right after TESForm) is NOT affected by that divergence
+        // for a LOW index like kLeftHandEquip(19)/kRightHandEquip(20)/kVoiceEquip(22)
+        // -- those sit far before where AE's extra entries are appended -- so read
+        // the pointer straight out of the array and validate it with the
+        // RTTI-checked As<T>() instead of trusting the broken initialized flag: a
+        // garbage/wrong-type pointer just fails the cast. Returns nullptr (and
+        // logs loudly) rather than silently degrading to any-hand on a bad
+        // resolution (principle 7 -- never mask a failure).
+        RE::BGSEquipSlot* ResolveHandSlot(RE::BGSDefaultObjectManager* dobj, RE::DEFAULT_OBJECT idx,
+                                          const char* which) {
+            const auto        i   = static_cast<std::size_t>(idx);
+            RE::TESForm* const raw = dobj->objects[i];
+            auto* const        slot = raw ? raw->As<RE::BGSEquipSlot>() : nullptr;
+            if (!slot) {
+                spdlog::error("[t2a] BGSDefaultObjectManager::objects[{}] did not resolve to a "
+                              "BGSEquipSlot for the {} hand (raw = {}) -- per-hand deny REFUSED for "
+                              "that hand, not silently degraded to any-hand.",
+                              i, which, static_cast<void*>(raw));
+            }
+            return slot;
+        }
+
         bool EquipGateThunk(RE::CombatInventoryItem* a_this, RE::CombatController* a_cc) {
             // feat/0x0f-callsite-log: captured FIRST, before any other call, so it
             // is the genuine caller, not a frame this thunk itself pushed.
@@ -593,9 +626,9 @@ namespace apmf::equipgate {
         // Hand::kUnknown below and this gate degrades to its pre-existing
         // actor-wide floor -- never a crash, never a guess.
         if (auto* dobj = RE::BGSDefaultObjectManager::GetSingleton()) {
-            g_leftHandSlot.store(dobj->GetObject<RE::BGSEquipSlot>(RE::DEFAULT_OBJECT::kLeftHandEquip),
+            g_leftHandSlot.store(ResolveHandSlot(dobj, RE::DEFAULT_OBJECT::kLeftHandEquip, "left"),
                                  std::memory_order_release);
-            g_rightHandSlot.store(dobj->GetObject<RE::BGSEquipSlot>(RE::DEFAULT_OBJECT::kRightHandEquip),
+            g_rightHandSlot.store(ResolveHandSlot(dobj, RE::DEFAULT_OBJECT::kRightHandEquip, "right"),
                                   std::memory_order_release);
         }
 

@@ -313,6 +313,28 @@ namespace apmf::aicastseats {
         std::atomic<RE::BGSEquipSlot*> g_leftHandSlot{ nullptr };
         std::atomic<RE::BGSEquipSlot*> g_rightHandSlot{ nullptr };
 
+        // Own copy of core/EquipGate.cpp's ResolveHandSlot -- see that file's copy
+        // for the full root-cause writeup (pinned CommonLib rev c4ab853d, AE-only
+        // IsObjectInitialized offset bug misreads a live TESForm*'s bytes as a
+        // bool). Bypasses GetObject/IsObjectInitialized entirely: reads
+        // objects[idx] directly (safe for a low index like kLeftHandEquip(19)/
+        // kRightHandEquip(20), well before AE's extra appended entries) and
+        // validates with As<T>(); a bad resolution REFUSES (nullptr + loud log)
+        // rather than silently degrading to any-hand (principle 7).
+        RE::BGSEquipSlot* ResolveHandSlot(RE::BGSDefaultObjectManager* dobj, RE::DEFAULT_OBJECT idx,
+                                          const char* which) {
+            const auto        i   = static_cast<std::size_t>(idx);
+            RE::TESForm* const raw = dobj->objects[i];
+            auto* const        slot = raw ? raw->As<RE::BGSEquipSlot>() : nullptr;
+            if (!slot) {
+                spdlog::error("[aicast] BGSDefaultObjectManager::objects[{}] did not resolve to a "
+                              "BGSEquipSlot for the {} hand (raw = {}) -- per-hand resolution REFUSED "
+                              "for that hand, not silently degraded to any-hand.",
+                              i, which, static_cast<void*>(raw));
+            }
+            return slot;
+        }
+
         // ======================================================================
         // TASK 2 (marth 2026-09-06 PASS S brief, [EquipGate] EnableDualWieldPreference,
         // default 0) -- shared state. See ShieldEquipGateThunk below (after
@@ -411,13 +433,17 @@ namespace apmf::aicastseats {
                    (sv && a_actor->HasPerk(sv));
         }
 
-        // PLACEHOLDER magnitude (marth 2026-09-06): no field data exists yet on
-        // this category's real score distribution -- exactly what TASK 1's own
-        // probe below is for. An additive constant chosen only to dominate any
-        // plausible same-category spread once real numbers are in; revisit this
-        // value (or replace with a proportional bias) once GROUP C's probe lines
-        // report actual magnitudes. This is WHY TASK 2 ships OFF (see Install()).
-        constexpr float kScoreSteerBias = 100000.0f;
+        // RIGHT-SIZED from real field data (marth 2026-09-06 field session):
+        // measured weapon-score magnitudes were Falmer War Axe 194, bow 81, and
+        // magic scores ~0.08-29 -- so an additive bias only needs to clear ~200
+        // to dominate any same-category rival actually observed. 1000.0f is an
+        // additive offset over the engine's OWN answer (finalScore = engineScore
+        // + kScoreSteerBias, unchanged shape), right-sized to that ~200 ceiling
+        // with headroom, replacing the old 100000.0f placeholder that predated
+        // any measurement. Still ships with EnableScoreSteer default OFF in code
+        // (see Install()) -- this constant only matters once that INI flag is
+        // deliberately turned on.
+        constexpr float kScoreSteerBias = 1000.0f;
 
         // Dedup-on-transition, not a bare time throttle (marth 2026-09-06: "a
         // recent probe printed 37 identical lines of a stable condition through
@@ -968,9 +994,9 @@ namespace apmf::aicastseats {
         // never a hardcoded FormID. A null result just means every WEAPON-SCORE
         // line below reports hand=? -- never a crash, never a guess.
         if (auto* dobj = RE::BGSDefaultObjectManager::GetSingleton()) {
-            g_leftHandSlot.store(dobj->GetObject<RE::BGSEquipSlot>(RE::DEFAULT_OBJECT::kLeftHandEquip),
+            g_leftHandSlot.store(ResolveHandSlot(dobj, RE::DEFAULT_OBJECT::kLeftHandEquip, "left"),
                                  std::memory_order_release);
-            g_rightHandSlot.store(dobj->GetObject<RE::BGSEquipSlot>(RE::DEFAULT_OBJECT::kRightHandEquip),
+            g_rightHandSlot.store(ResolveHandSlot(dobj, RE::DEFAULT_OBJECT::kRightHandEquip, "right"),
                                   std::memory_order_release);
         }
 

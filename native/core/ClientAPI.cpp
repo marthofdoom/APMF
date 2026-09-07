@@ -73,22 +73,46 @@ namespace {
         }
     }
 
+    // ABI v6: read-only cast-claim observability (see APMF_API_v6's doc comment).
+    // Neither call mutates anything -- both forward straight to ControlMap's
+    // handle-keyed RCU-snapshot scan. Safe from any thread, same contract as
+    // every other exported entry here.
+    RE::FormID APMF_GetCastProxy(APMF_API::Handle handle) {
+        try {
+            return apmf::ControlMap::Get().GetCastProxy(handle);
+        } catch (...) {
+            return 0;
+        }
+    }
+
+    bool APMF_IsClaimLive(APMF_API::Handle handle) {
+        try {
+            return apmf::ControlMap::Get().IsClaimLive(handle);
+        } catch (...) {
+            return false;
+        }
+    }
+
     // The single static POD interface handed to clients. It is the NEWEST revision
-    // (APMF_API_v5), constant-initialized (the pointers are to static functions), so
+    // (APMF_API_v6), constant-initialized (the pointers are to static functions), so
     // it is valid the instant the DLL loads. Because each revision's leading members
-    // are exactly the previous revision's (v5 extends v4, base laid out first), a
-    // v1/v2/v3/v4 client reading it through its own struct pointer sees only its
-    // prefix. The v4 base subobject is brace-initialized explicitly.
-    constexpr APMF_API::APMF_API_v5 g_api{
+    // are exactly the previous revision's (v6 extends v5 extends v4, base laid out
+    // first), a v1/v2/v3/v4/v5 client reading it through its own struct pointer sees
+    // only its prefix. The v4 base subobject is brace-initialized explicitly.
+    constexpr APMF_API::APMF_API_v6 g_api{
         {
-            APMF_API::kABIVersion,
-            &APMF_Request,
-            &APMF_Release,
-            &APMF_RequestEx,
-            &APMF_Repoint,
-            &APMF_SetSpellAllowList,
+            {
+                APMF_API::kABIVersion,
+                &APMF_Request,
+                &APMF_Release,
+                &APMF_RequestEx,
+                &APMF_Repoint,
+                &APMF_SetSpellAllowList,
+            },
+            &APMF_RequestCast,
         },
-        &APMF_RequestCast,
+        &APMF_GetCastProxy,
+        &APMF_IsClaimLive,
     };
 
 }

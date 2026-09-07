@@ -1044,6 +1044,51 @@ namespace apmf {
         return false;   // controlled, but not on the cast channel
     }
 
+    RE::FormID ControlMap::GetCastProxy(Handle handle) const {
+        // ABI v6 observability (APMF_API_v6::GetCastProxy). Keyed by HANDLE ALONE
+        // (the client may not have the actor FormID at every call site) -- scans
+        // the small controlled set rather than a single hash lookup, same
+        // trade-off ClaimedActors already makes. Never the hot per-tick path.
+        if (handle == APMF_API::kInvalidHandle) return 0;
+        if (m_anyControlled.load(std::memory_order_relaxed) == 0) return 0;
+
+        std::shared_ptr<const MapType> snap = m_published.load(std::memory_order_acquire);
+        const auto nowMs = apmf::clock::MonotonicMs();
+        for (const auto& [fid, npc] : *snap) {
+            for (const auto& cs : npc.channels) {
+                for (const auto& c : cs.claims) {
+                    if (c.handle != handle) continue;
+                    // Same "expired but not yet swept" treat-as-gone rule as
+                    // TryGetCastSeatClaimForForm -- never hand back a proxy for a
+                    // claim the writer's TTL pass is about to release.
+                    if (c.expiresMs != 0 && nowMs >= c.expiresMs) return 0;
+                    return c.castProxy;   // 0 by construction on every non-cast claim
+                }
+            }
+        }
+        return 0;   // unknown/stale/released handle
+    }
+
+    bool ControlMap::IsClaimLive(Handle handle) const {
+        // ABI v6 observability (APMF_API_v6::IsClaimLive). Same handle-keyed scan
+        // and TTL-as-gone treatment as GetCastProxy above.
+        if (handle == APMF_API::kInvalidHandle) return false;
+        if (m_anyControlled.load(std::memory_order_relaxed) == 0) return false;
+
+        std::shared_ptr<const MapType> snap = m_published.load(std::memory_order_acquire);
+        const auto nowMs = apmf::clock::MonotonicMs();
+        for (const auto& [fid, npc] : *snap) {
+            for (const auto& cs : npc.channels) {
+                for (const auto& c : cs.claims) {
+                    if (c.handle != handle) continue;
+                    if (c.expiresMs != 0 && nowMs >= c.expiresMs) return false;
+                    return true;
+                }
+            }
+        }
+        return false;   // unknown/stale/released handle
+    }
+
     std::vector<RE::Actor*> ControlMap::ClaimedActors(Intent intent) const {
         // Observability/probe use only (Docs/SPEC-PACKAGE-HOLD.md §4). Same RCU
         // discipline as TryGetOwningClaim: relaxed pre-gate, one acquire-load of a

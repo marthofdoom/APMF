@@ -212,6 +212,30 @@ namespace apmf {
         // one hash lookup). Returns false when no live claim's driven form matches.
         bool TryGetCastSeatClaimForForm(RE::FormID actor, RE::FormID form, CastSeatClaim& out) const;
 
+        // ABI v6 (APMF_API_v6::GetCastProxy/IsClaimLive) -- closes the MFO<->APMF
+        // observability blind spot diagnosed 2026-09-06: a client only has the
+        // Handle RequestCast returned, not the actor FormID at every later call
+        // site, so both of these key by HANDLE ALONE and scan the (small,
+        // INVARIANTS #13) controlled set rather than doing a single hash lookup.
+        // Observability use only -- never the hot per-tick path. Same RCU reader
+        // discipline as ClaimedActors: any thread, relaxed pre-gate, one
+        // acquire-load of a frozen snapshot generation. A claim whose TTL has
+        // elapsed but not yet been swept by the writer's TTL pass (Drain) is
+        // treated as ALREADY GONE here, same as TryGetCastSeatClaimForForm's
+        // expiresMs check -- never hand back a proxy/liveness answer for a claim
+        // the writer is about to release.
+        //
+        // GetCastProxy: the delivery-flip proxy FormID APMF minted for the claim
+        // behind `handle` (any channel -- castProxy is 0 by construction for every
+        // non-cast claim, so this degrades harmlessly). Returns 0 if `handle` is
+        // unknown/stale/expired/released.
+        RE::FormID GetCastProxy(Handle handle) const;
+
+        // IsClaimLive: true while `handle`'s claim is still held (found in the
+        // published snapshot and not past its TTL). False for an
+        // unknown/stale/expired/released handle.
+        bool IsClaimLive(Handle handle) const;
+
         // ---- Observability/probe use only (Docs/SPEC-PACKAGE-HOLD.md §4): live
         // Actor* for every actor CURRENTLY claimed on `intent`'s channel (unloaded
         // NPCs filtered via the same npc.handle.get() liveness check OnActorUpdate/
