@@ -264,6 +264,70 @@ namespace APMF_API {
                                              //   are set, DualCast takes priority (the seats' hand check is skipped
                                              //   entirely) rather than picking one hand arbitrarily.
 
+        // ── DENY-ONLY HAND CLAIM (added 2026-09-06; bits 4-7 were free) ──────────
+        kCastFlag_DenyHandOnly  = 1u << 4,   // Claim the hand purely to DENY it. The client drives
+                                             //   NOTHING here and APMF asks the engine to arm nothing:
+                                             //   this is the missing half of the per-hand cast deny.
+                                             //
+                                             //   THE PROBLEM IT SOLVES. A single-hand kIntent_Cast claim
+                                             //   scopes its deny to its OWN hand by design, so the other
+                                             //   hand stays fully AI-governed -- and the field showed the
+                                             //   AI using it: 25 Stone Runes, 6 Poison Sprays and 8 Raise
+                                             //   Zombies all charged on the UNCLAIMED hand while the claim
+                                             //   held the other one (2026-09-06 diagnosis, RC3 / audit rows
+                                             //   P3-P4). A client that wants the follower to cast ONLY what
+                                             //   it asked for had no way to say so, because there is no
+                                             //   spell it wants on that second hand -- only silence.
+                                             //
+                                             //   WHAT APMF DOES WITH IT. The claim stands on exactly the
+                                             //   hand kCastFlag_LeftHand selects (default right), with its
+                                             //   DRIVEN FORM FORCED TO NONE: APMF zeroes spell, proxy and
+                                             //   target on this claim regardless of what the request
+                                             //   carried, so no seat can ever seat, drive or classify for
+                                             //   it, and no delivery-flip proxy is minted. Every OTHER
+                                             //   spell/staff competing for that hand is then denied through
+                                             //   the SAME per-hand deny path a real claim already uses
+                                             //   (core/CastGate.cpp 0x0A, core/EquipGate.cpp 0x0F). It
+                                             //   fabricates no intent (CLAUDE.md principle 4): the client
+                                             //   declared "nothing else here", and that is precisely and
+                                             //   only what is enforced.
+                                             //
+                                             //   IT IS STILL A BOUNDED CAST CLAIM. Same TTL rules as any
+                                             //   other kIntent_Cast claim (kCastDefaultTtlMs / ttlMs,
+                                             //   clamped to kCastMaxTtlMs), and Repoint renews the window
+                                             //   the same way -- so a crashed client's deny-only claim
+                                             //   expires on its own, exactly like a driving one.
+                                             //
+                                             //   *** BASIS CONTRACT -- THE CLIENT MUST HONOUR THIS. ***
+                                             //   A deny-only claim is an ordinary claim in APMF's ordinary
+                                             //   arbitration: highest basis owns, ties keep the earliest.
+                                             //   So a client that later wants a REAL cast on that same hand
+                                             //   (its second gambit firing inside the first's lock phase)
+                                             //   MUST request the deny-only floor at a basis STRICTLY BELOW
+                                             //   the basis it uses for its real cast claims. Then the real
+                                             //   claim wins that hand the instant it publishes -- no
+                                             //   release/re-request gap, no self-deny -- and the deny-only
+                                             //   floor is still standing underneath when the real claim
+                                             //   ends. At an EQUAL basis the earlier claim keeps the hand,
+                                             //   which for a client issuing its floor first means it would
+                                             //   deny its own cast. APMF cannot fix that for the client by
+                                             //   guessing a rank it was never given, so instead it DETECTS
+                                             //   the violation and logs it loudly at claim time
+                                             //   ("[ch.8b] ... deny-only ... OUTRANKS ...", core/
+                                             //   ControlMap.cpp) rather than letting a follower silently
+                                             //   stand still (CLAUDE.md principles 5 and 7).
+                                             //
+                                             //   COMPATIBILITY. This is an APPEND-ONLY bit inside the
+                                             //   already-frozen `flags` word -- no struct field added,
+                                             //   reordered or retyped, no vtable slot, so kABIVersion is
+                                             //   NOT bumped (a bump would make a client asking for the new
+                                             //   version get a null interface from an older APMF.dll --
+                                             //   APMF_GetInterface refuses anything above its own
+                                             //   kABIVersion). The consequence a client must know: an APMF
+                                             //   built before this bit existed IGNORES it, and the claim
+                                             //   then stands as a degenerate no-form claim that denies
+                                             //   nothing. Ship the pair together.
+
         // ── Bits 8-15: STOP PERCENT (added in-place; the word is byte-frozen) ────
         // The seat that owns a concentration channel's duration is
         // CombatMagicCaster::CheckStopCast (vfunc 0x07, core/CastSeats.cpp). Left

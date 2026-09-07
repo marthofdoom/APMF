@@ -304,7 +304,35 @@ namespace apmf {
             castProxy  = op.castProxy;
             castTarget = op.castTarget;
             RE::FormID spell = op.param.form;
-            if (castFlags & APMF_API::kCastFlag_FromPackage) {
+
+            // ---- DENY-ONLY HAND CLAIM (kCastFlag_DenyHandOnly, 2026-09-06) ----
+            // The client claimed this hand purely to DENY it: it drives nothing
+            // there and the engine is never asked to arm anything. DECLARE ->
+            // ENFORCE (CLAUDE.md principle 4): the driven form, the proxy and the
+            // target are forced to NONE here, at the one place a claim is built, so
+            // "drives nothing" is a property of the stored claim rather than a rule
+            // every downstream reader has to remember. That single fact is what
+            // makes every cast SEAT skip this claim for free -- they all key on a
+            // driven form (TryGetCastSeatClaimForForm ignores a 0 driven form) or on
+            // a resolved target handle (which stays invalid because castTarget is 0),
+            // so none of them can ever seat, drive or classify for it. No
+            // delivery-flip proxy is minted either (the mint below is gated on a
+            // resolved target). The DENY half is the whole point and is untouched:
+            // the claim still occupies its hand, so core/Allowance.cpp's per-hand
+            // reads deny every other spell/staff competing for that hand.
+            const bool denyHandOnly = (castFlags & APMF_API::kCastFlag_DenyHandOnly) != 0;
+            if (denyHandOnly) {
+                if (spell != 0 || castProxy != 0 || castTarget != 0) {
+                    spdlog::info("[ch.8b] 0x{} deny-only hand claim (h={}) also carried spell 0x{} / proxy "
+                                 "0x{} / target 0x{} -- all IGNORED. A kCastFlag_DenyHandOnly claim drives "
+                                 "NOTHING by definition; it only denies the hand to everything else.",
+                                 apmf::log::Hex(op.actor), op.handle, apmf::log::Hex(spell),
+                                 apmf::log::Hex(castProxy), apmf::log::Hex(castTarget));
+                }
+                spell      = 0;
+                castProxy  = 0;
+                castTarget = 0;
+            } else if (castFlags & APMF_API::kCastFlag_FromPackage) {
                 RE::FormID outSpell = 0, outTarget = 0;
                 if (!apmf::castcompose::ExtractFromPackage(op.param.form, outSpell, outTarget)) {
                     spdlog::warn("[ch.8b] cast-from-package: no spell input on 0x{} -- REFUSED "
@@ -366,6 +394,54 @@ namespace apmf {
                         // new claim's own castProxy is finally resolved.
                         for (const auto& cl : cc2.claims) {
                             if (IsDualCastFlags(cl.castFlags) != newIsDual) toEvict.push_back(cl.handle);
+                        }
+                        break;
+                    }
+                }
+            }
+
+            // ---- DENY-ONLY BASIS CONTRACT: DETECT, NEVER GUESS (2026-09-06) ----
+            // A deny-only claim is an ORDINARY claim in the ordinary arbitration
+            // (highest basis owns; a tie keeps the earliest), because inventing a
+            // special rank for it would be APMF deciding a precedence its client
+            // never declared. The contract that makes it work is therefore the
+            // client's: request the deny-only FLOOR at a basis STRICTLY BELOW the
+            // basis used for real cast claims, so the client's own second gambit
+            // supersedes its floor the instant it publishes -- no release/re-request
+            // gap, no self-deny, and the floor still standing underneath afterwards
+            // (APMF_API.h, kCastFlag_DenyHandOnly).
+            //
+            // A client that breaks the contract would produce EXACTLY the failure
+            // that is hardest to read from a log: a follower with two valid gambits
+            // casting one and then standing still, because its own floor outranks
+            // its own cast. So detect it here, at claim time, and say so loudly
+            // (CLAUDE.md principles 5 and 7 -- observe it, never mask it). The check
+            // is deliberately NOT hand-scoped: the actor-wide seat reads
+            // (TryGetCastSeatClaim -- core/EquipGate.cpp's rescore-dirty trigger,
+            // core/CastClassify.cpp's diagnostic) pick the actor-wide best-basis
+            // claim, so a floor that outranks a DRIVING claim on the OTHER hand
+            // masks those too. Nothing is refused or re-ranked here; the claim
+            // proceeds exactly as asked.
+            {
+                const auto nowMs = apmf::clock::MonotonicMs();
+                if (auto npcIt = map.find(op.actor); npcIt != map.end()) {
+                    for (const auto& cc2 : npcIt->second.channels) {
+                        if (cc2.channel != channel) continue;
+                        for (const auto& cl : cc2.claims) {
+                            if (cl.expiresMs != 0 && nowMs >= cl.expiresMs) continue;   // already gone
+                            const bool clDenyOnly = (cl.castFlags & APMF_API::kCastFlag_DenyHandOnly) != 0;
+                            if (clDenyOnly == denyHandOnly) continue;   // only a floor-vs-driver pair matters
+                            const float floorBasis  = denyHandOnly ? op.basis : cl.basis;
+                            const float driveBasis  = denyHandOnly ? cl.basis : op.basis;
+                            if (floorBasis < driveBasis) continue;      // contract honoured -- the driver wins
+                            spdlog::warn("[ch.8b] 0x{} DENY-ONLY BASIS CONTRACT VIOLATED: the deny-only hand "
+                                         "claim (basis {:.1f}) OUTRANKS a live DRIVING cast claim (basis "
+                                         "{:.1f}) on this actor, so the floor wins the arbitration and the "
+                                         "client is about to deny its OWN cast (the follower will hold the "
+                                         "hand and cast nothing). Request the deny-only floor at a basis "
+                                         "STRICTLY BELOW your real cast claims -- see kCastFlag_DenyHandOnly "
+                                         "in APMF_API.h. APMF re-ranks nothing here; the claim stands as "
+                                         "asked.", apmf::log::Hex(op.actor), floorBasis, driveBasis);
                         }
                         break;
                     }
