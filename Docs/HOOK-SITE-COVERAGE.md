@@ -318,7 +318,7 @@ is its own follow-up project, not a diff this report can respons­ibly hand over
   cast becomes a pure APMF T2 client -- drop redundant enforcement") set out to resolve — not a
   CommonLib gap, noted here so the two-repo hook inventory is honest about the overlap.
   **STATUS 2026-09-07: that migration never finished, and nothing recorded it.** MFO's
-  `CasterConsent.cpp` still installs its own 0x0A `CheckCast` hook (`:917`), so the double hook
+  `CasterConsent.cpp` still installs its own 0x0A `CheckCast` hook (thunk `:917`, install `:1054`), so the double hook
   is live today — outside APMF's gate, and able to abort a cast APMF's own claim is driving
   (MFO `DIAG-2026-09-06-deny-heal-failures.md` row P12: LATENT, 0 hits that session; latent is
   not closed). `Docs/SPEC-GRADUATED-CAST.md` §3 carries the unmeasured consequence.

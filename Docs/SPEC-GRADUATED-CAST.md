@@ -7,7 +7,7 @@
 >   (grepped 2026-09-07), so the allow-list capability this spec was written for has never
 >   been exercised by the reference client, and `Docs/INTEGRATION.md` still marks it unproven.
 > - **The retirement this spec is a decision-input for never happened either.** MFO's own
->   `CheckCast` hook is still installed (`native/CasterConsent.cpp:917`), so BOTH 0x0A hooks
+>   `CheckCast` hook is still installed (thunk `native/CasterConsent.cpp:917`, `write_vfunc` at `:1054`), so BOTH 0x0A hooks
 >   are live — MFO's sitting outside APMF's gate (`Docs/HOOK-SITE-COVERAGE.md` §5; MFO
 >   `DIAG-2026-09-06-deny-heal-failures.md` row P12, LATENT).
 > - **§3's finding — that castLvl 1-3 silently COLLAPSE under APMF — has never been
