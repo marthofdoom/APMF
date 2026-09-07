@@ -203,9 +203,10 @@ construction.
 >    hand} RENEWS the deadline instead of racing it — which keeps everything sub-rule (a)
 >    is actually protecting (a crashed or forgetful client still auto-releases at the
 >    deadline; nothing becomes a standing hold; there is still no re-assert loop).
->    **The renewal is NOT SHIPPED** — it lives on the unmerged branch
->    `fix/apmf-claim-renew-denyhand-spellsteer`. Until it merges, the gap is live in
->    every released build, and this amendment is what licenses the fix when it lands.
+>    The renewal is **MERGED TO `main` 2026-09-07** (branch `fix/apmf-claim-renew-denyhand-spellsteer`), CI-green, NOT yet in a tagged release and NOT yet deck-run. This amendment is what licenses it: without
+>    amending #3c first, the rules file forbade the fix. The gap remains live in every
+>    TAGGED release (v0.9.2 and older), and it only closes in behaviour for a client that
+>    RE-POINTS its claim rather than releasing and re-requesting.
 >
 > Everything below is the original 2026-09-04 text, kept because sub-rule (b)
 > (`kCastFlag_FromPackage` reads, never runs) and the bounding discipline are unchanged.

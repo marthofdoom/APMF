@@ -575,7 +575,9 @@ the real channels on the same vtables (`Docs/INVARIANTS.md` #17).
   BEFORE the claim publishes, so the engine's 0x49 question is answered with the pre-claim
   package (MFO `Docs/DIAG-2026-09-06-loot-travel.md`). The redirect itself is sound — 16/16
   when it is asked with a published claim standing — and the engine contributes ZERO
-  evaluations of its own. Fix on `fix/apmf-offerpackage-nudge-ordering`, unmerged.
+  evaluations of its own. Fixed by `fix/apmf-offerpackage-nudge-ordering`, MERGED to `main`
+  2026-09-07: the nudge is now posted one main-thread hop PAST the claim's publish. **Not
+  re-run on a deck yet** -- 0-of-6 has not yet been shown to be 6-of-6.
 
 ## Client API (Layer 2) — REAL
 
@@ -613,15 +615,16 @@ whole owned-cast model off against any older APMF.
 and "MFO integration (Phase 3)" have both been done since v0.9.0/v0.9.1, and a stale Next list in
 the living handoff is how a finished item gets re-planned.)*
 
-1. **Close the cast facet's open gaps 9-13** (`Docs/DENY-COMPLETENESS-AUDIT.md`): the other hand
-   (deny-only hand claim), the TTL gap (a renewable floor), and the already-charging case. The
-   first two are written on `fix/apmf-claim-renew-denyhand-spellsteer` and unmerged; #3c is
-   amended to license the TTL change.
-2. **Fix the ch.9 nudge ordering** so a package claim engages on the dispatch that made it
-   (`fix/apmf-offerpackage-nudge-ordering`, unmerged) — the engine does not re-ask on its own,
-   so the nudge's position relative to `Publish()` is the whole mechanism.
+1. **FIELD-RUN what merged on 2026-09-07**, because none of it has been on a deck: the
+   renewable cast TTL, `kCastFlag_DenyHandOnly` (dormant until a client sets the bit), the
+   spell score steer, the `[t2c]` deny log, and the ch.9 nudge posted past `Publish()`. The
+   ch.9 pass criterion is the one that was 0-of-6.
+2. **Close the cast facet's REMAINING open gaps** (`Docs/DENY-COMPLETENESS-AUDIT.md`): gap 10
+   (a weapon takes the claimed hand — no weapon-side admission gate exists), gap 12 (the
+   request-to-publish window) and gap 13 (a spell already charging). Gap 9 needs a CLIENT to
+   set the deny-only bit; gap 11 needs a client that RE-POINTS instead of re-requesting.
 3. **Finish the double-0x0A migration**: MFO still installs its own `CheckCast` hook outside
-   APMF's gate (`Docs/SPEC-GRADUATED-CAST.md` §3, `Docs/HOOK-SITE-COVERAGE.md` §5) — latent
+   APMF's gate (`Docs/SPEC-GRADUATED-CAST.md` §3, `Docs/HOOK-SITE-COVERAGE.md` §6) — latent
    today, and the collapse of castLvl 1-3 under APMF has never been measured.
 4. **Probe the GAP channels** (movement PROMOTE first) on a live runtime — `feat/pfp-phase0-movement`
    is the standing Phase 0 for that, INI-gated and not yet field-run.

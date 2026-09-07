@@ -8,7 +8,8 @@
 >   been exercised by the reference client, and `Docs/INTEGRATION.md` still marks it unproven.
 > - **The retirement this spec is a decision-input for never happened either.** MFO's own
 >   `CheckCast` hook is still installed (thunk `native/CasterConsent.cpp:917`, `write_vfunc` at `:1054`), so BOTH 0x0A hooks
->   are live — MFO's sitting outside APMF's gate (`Docs/HOOK-SITE-COVERAGE.md` §5; MFO
+>   are live — MFO's sitting outside APMF's gate (`Docs/HOOK-SITE-COVERAGE.md` §6, the
+>   two-repo overlap note; §5 is the procedure-tree gap, a different subject; MFO
 >   `DIAG-2026-09-06-deny-heal-failures.md` row P12, LATENT).
 > - **§3's finding — that castLvl 1-3 silently COLLAPSE under APMF — has never been
 >   measured**, though it was written as "worth confirming on the next deck cycle" on
@@ -123,7 +124,7 @@ change.
   hooking `MagicCaster::CheckCast` (0x0A) on `VTABLE_ActorMagicCaster[0]`
   (`CastGate.cpp:92-98`) — the same slot MFO's own `CheckCast` hook patches
   (`CasterConsent.cpp:897-899`), currently a documented, unresolved
-  double-hook (`HOOK-SITE-COVERAGE.md` §5, `Docs/archive/MFO-CONVERSION-ROADMAP.md`
+  double-hook (`HOOK-SITE-COVERAGE.md` §6, `Docs/archive/MFO-CONVERSION-ROADMAP.md`
   row 1).
 - `CastGate::CheckCastThunk` (`CastGate.cpp:47-76`): lets the engine answer
   first, resolves the actor via `GetCasterAsActor()` (`:66`), then

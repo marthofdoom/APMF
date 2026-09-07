@@ -18,8 +18,9 @@
 > - **§risk 2 (`:509-510`) is the written origin of a shipped defect.** "A longer stream is a
 >   NEW bounded claim, never a re-assert of the same one" is the rule that produced the
 >   recurring TTL gap (`Docs/DENY-COMPLETENESS-AUDIT.md` open gap 11; MFO
->   `DIAG-2026-09-06-deny-heal-failures.md` RC2). `INVARIANTS.md #3c` carries the amendment;
->   the code fix is unmerged.
+>   `DIAG-2026-09-06-deny-heal-failures.md` RC2). `INVARIANTS.md #3c` carries the amendment,
+>   and the code fix (`Repoint` renews the deadline) is on `main` as of 2026-09-07 —
+>   CI-green, untagged, not yet deck-run.
 >
 > Read this file as the design record of the 2026-09-04 pass, never as current behaviour.
 

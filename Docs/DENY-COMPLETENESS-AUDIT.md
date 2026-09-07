@@ -257,10 +257,10 @@ AI deliberation is untouched.
 > claim (DIAG §3 rows P3/P4, RC3). See open gap 9. The intended remedy is the deny-only
 > hand claim (`kCastFlag_DenyHandOnly`): a claim on the unclaimed hand that drives
 > nothing and denies everything, so the client can close the actor without APMF inventing
-> a second cast. **It is NOT shipped** — it lives on the unmerged branch
-> `fix/apmf-claim-renew-denyhand-spellsteer`, ships DORMANT there (no client sets the
-> bit), and has its own pre-adoption follow-ups. Nothing in a released APMF closes P3/P4
-> today. `Hand::kUnknown` (a caster with `kOther`/`kInstant`
+> a second cast. It is **MERGED TO `main` 2026-09-07** (branch `fix/apmf-claim-renew-denyhand-spellsteer`), CI-green, NOT yet in a tagged release and NOT yet deck-run — and it ships **DORMANT**: no client sets
+> the bit yet. So the MECHANISM exists and the GAP is still open in practice. "The client
+> can close it" is not "it is closed"; this row says which one is true (see the
+> "The deny-only hand claim" section below for what a floored hand admits, and open gap 9). `Hand::kUnknown` (a caster with `kOther`/`kInstant`
 source, or an item whose slot is neither vanilla hand — e.g. `kEitherHandEquip`)
 degrades exactly to the old `AllowedCast(actor, subjectForm)` actor-wide floor —
 never a guess. `ControlMap::TryGetCastClaim` grew an optional `outFlags` parameter
@@ -400,9 +400,9 @@ the METHODOLOGY rule at the top of this file says a narrowed scope is a gap entr
    without reading `subjectForm`, and `EquipGate`'s `hasHandSeat` is per-hand. Field-
    observed under a standing claim (RC3). Remedy: the client claims the other hand too,
    with the deny-only hand claim (`kCastFlag_DenyHandOnly`) so it denies without driving.
-   **NOT SHIPPED** — unmerged branch `fix/apmf-claim-renew-denyhand-spellsteer`, dormant
-   even there. Until it merges AND a client sets the bit, this gap is open in every
-   released APMF.
+   That mechanism is **MERGED TO `main` 2026-09-07** (branch `fix/apmf-claim-renew-denyhand-spellsteer`), CI-green, NOT yet in a tagged release and NOT yet deck-run, and it ships DORMANT: **no client sets the bit**.
+   The gap therefore stays OPEN in behaviour until a client claims the other hand — an
+   available remedy is not a closed path, and this list grades paths.
 10. **A weapon can take the claimed hand (DIAG P5).** No weapon-side admission gate
     exists on the claimed hand: 0x0F is not hookable on the weapon leaves (row 15's
     GAP), and the ch.15 score steer is a within-category lever that cannot deny an
@@ -420,8 +420,11 @@ the METHODOLOGY rule at the top of this file says a narrowed scope is a gap entr
     the code: `INVARIANTS.md #3c` ("A longer stream is a NEW bounded claim, never a
     re-assert of the same one") and `SPEC-COMPOSITION-REWORK.md` §risk 2 both mandate
     exactly the behaviour that produces it. Remedy: make a re-request RENEW the deadline
-    (a renewable FLOOR, principle 9) — on the same unmerged claim branch, **not
-    shipped**, and it requires amending #3c in the same change.
+    (a renewable FLOOR, principle 9). **CLOSED IN CODE:** `Repoint` on a live
+    `kIntent_Cast` claim now moves its deadline to now + the granted `ttlMs` (**MERGED TO `main` 2026-09-07** (branch `fix/apmf-claim-renew-denyhand-spellsteer`), CI-green, NOT yet in a tagged release and NOT yet deck-run), and `INVARIANTS #3c` is amended to license it. Two conditions remain before this
+    row can be graded closed: the client must RE-POINT rather than release-and-re-request
+    (a client that keeps releasing still reopens the window), and none of it has been on a
+    deck.
 12. **Publish latency (DIAG P7).** Between `RequestCast` and the next `Drain`/`Publish`
     the claim does not exist, so nothing is denied — bounded by one frame in play. Named
     here for completeness (the enumeration obligation is every path, not every

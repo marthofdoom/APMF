@@ -316,9 +316,15 @@ RTTI-name match — no confirmed mangled name exists for these four). Ships **EN
 by default (`EnableWeaponScoreProbe`, default 1 — `CalculateScore` is scalar-return,
 immune to the `GetMagicTarget` sret-ABI bug class this file's banner documents). A
 second, independent flag (`EnableScoreSteer`, default 0) biases a claimed form's own
-returned score upward by a fixed constant when a live ch.15 `kIntent_Equipment` claim
-on the actor names that exact item (same claim `core/EquipGate.cpp`'s T2a gate
-reads) — stays OFF until GROUP C's own field data confirms 0x0C actually runs.
+returned score upward by a fixed constant. **Where that bias lives MOVED on 2026-09-06
+(F5 / DIAG RC5):** it used to sit in `WeaponScoreThunk`, whose `driven == itemForm`
+test compared a WEAPON's FormID against a cast claim's driven spell form and so could
+never match — dead code under any INI setting. It now rides `CalculateScoreThunk`, the
+seat that scores SPELL/STAFF items (`SteerScoreForCastClaim`), hand-resolved from the
+item's own `itemSlot.equipSlot`, and applies only when a live ch.8b claim occupying
+that hand DRIVES that exact form (proxy if one was minted, else the spell). A deny-only
+claim drives no form and can never bias anything. The dead weapon branch is deleted.
+Still OFF by default.
 - **What breaks:** GROUP C's `kWeaponClasses` table (vtable RVA + CalculateScore RVA
   + category) is AE 1.6.1170-ONLY and disassembly-CERTAIN for THIS build only — any
   runtime/version drift is caught by the function-pointer-at-slot mismatch (refuses
@@ -337,11 +343,12 @@ reads) — stays OFF until GROUP C's own field data confirms 0x0C actually runs.
   `DIAG-2026-09-06-deny-heal-failures.md` row P5 lists exactly that as a plausible
   cause of a claimed heal holding a hand only briefly. What the ordering table
   `[1,2,4,0,3,5,0,6]` buys is that OUR steer cannot make it worse.
-  `kScoreSteerBias` is **1000.0f** (`AiCastSeats.cpp:446`), right-sized 2026-09-06 to
+  `kScoreSteerBias` is **1000.0f** (`AiCastSeats.cpp:501`), right-sized 2026-09-06 to
   measured magnitudes (Falmer War Axe 194, bow 81, magic 0.08-29) — it replaced an
-  unmeasured 100000.0f placeholder, which this line quoted until 2026-09-07. The bias
-  applies to a form named by a live ch.15 `kIntent_Equipment` claim **or by a live
-  ch.8b cast claim's driven form** (`AiCastSeats.cpp:596-620`), not to ch.15 alone.
+  unmeasured 100000.0f placeholder, which this line quoted until 2026-09-07. And the
+  bias no longer applies HERE at all: after F5 it belongs to the SPELL/STAFF seat
+  (`SteerScoreForCastClaim`, `AiCastSeats.cpp:523-551`), driven by a ch.8b cast claim
+  on the item's own hand. GROUP C keeps its observe-only probe and no steer.
 
 ### `native/core/Input.{h,cpp}` — test surface (OPT-IN, DEFAULT OFF)
 `InputSink` (keyboard button-down) → `Arbiter::DispatchHotkey` (+ each probe's
@@ -535,14 +542,19 @@ every hook here is a vtable slot).
 `kIntent_OfferPackage` claim (lock-free RCU `TryGetOwningClaim`), return the package
 FormID that claim NAMES (`APMF_Param::form`); a FormID that does not resolve falls back
 to `original(self)` — NEVER a fabricated null (§0.25 "claimed with nothing = rooted").
-`EvaluatePackage(actor)` is the engine nudge, called from `channels/OfferPackage.cpp`'s
-Engage/OnOwnerChanged/Release (game-thread by Channel.h's contract). A `[ch.9-redirect]`
-log line per transition, gated by `[PackageGate] EnableRedirectLog` (default 1).
+`EvaluatePackage(actor)` is the engine nudge, POSTED by `channels/OfferPackage.cpp`'s
+Engage/OnOwnerChanged/Release through `apmf::mainthread::Post` so it runs one hop PAST
+`ControlMap::Publish()` — calling it inline asks the engine the 0x49 question while the
+claim is still only in the writer's private copy, which is exactly the 0-of-6 bug. A
+`[ch.9-redirect]` log line per transition, gated by `[PackageGate] EnableRedirectLog`
+(default 1), deduped per actor on the answer tuple; `ForgetRedirect` (release edge) and
+`ForgetAllRedirects` (revert/new game) drop that memory so a re-dispatch still prints.
 - **What breaks:** the redirect only takes effect **when the engine ASKS**, and the field
   evidence is that it does not ask on a useful cadence of its own — every win so far
   reconciles to an explicit `EvaluatePackage` nudge (MFO `DIAG-2026-09-06-loot-travel.md`;
   `Docs/SPEC-PACKAGE-HOLD.md` §2.2). So the nudge's ORDERING relative to the claim's
-  `Publish()` is load-bearing, not incidental. Never touch alias/run-once state
+  `Publish()` is load-bearing, not incidental — inline it again and the channel silently
+  goes back to answering with the pre-claim package. Never touch alias/run-once state
   (INVARIANTS #3a); never return null.
 
 ### `native/core/NonAliasProbe.{h,cpp}` — OBSERVE-ONLY 0xDF hook + 0x49 assist + RTTI dumper
@@ -589,7 +601,7 @@ parentheses.
 | `Idle.cpp` | 12 | idle/anim (Num+) | `NotifyAnimationGraph("IdleForceDefaultState")` | one-shot |
 | `ShoutPower.cpp` | 14 | shout/power select (Num*) | **ARBITRATION-ONLY** — records the voice-slot owner and the chosen shout in `param.form`; makes NO engine write. It previously called `ActorEquipManager::EquipShout` directly (the #0 anti-pattern ch.6/ch.8 were fixed for); the CLIENT issues its own `EquipShout`. `Release` has nothing to undo (corrected 2026-09-07) | arbitration-only (#0); client executes |
 | `CombatAction.cpp` | 7 | combat-action category deny (NumpadEnter) | Arbitration + claim lifecycle only; the deny is `core/ActionGate.cpp`'s T1 paired act()/pop() on the 70 combat behavior-tree leaves, for the categories named in `param.ival` (`kCombatActionCat_Offense` today). The test key carries no category, so a test claim denies nothing | claim + T1 enforcement |
-| `OfferPackage.cpp` | 9 | package-procedure activity (NumpadSlash) | Arbitration + claim lifecycle + the `EvaluatePackage(true,false)` nudge; the redirect itself is `core/PackageGate.cpp`'s T3 0x49 hook returning the claim's `param.form`. The test key carries no package, so a test claim offers nothing | claim + T3 enforcement; the ENGINE runs the package natively |
+| `OfferPackage.cpp` | 9 | package-procedure activity (NumpadSlash) | Arbitration + claim lifecycle + the `EvaluatePackage(true,false)` nudge, `mainthread::Post`ed so it lands PAST the claim's publish; the redirect itself is `core/PackageGate.cpp`'s T3 0x49 hook returning the claim's `param.form`. The test key carries no package, so a test claim offers nothing | claim + T3 enforcement; the ENGINE runs the package natively |
 | `Equipment.cpp` | 15 | equip/unequip (Num.) | `GetEquippedObject` + `UnequipObject`/`EquipObject` (melee-vs-ranged lever) | source-block |
 | `Detection.cpp` | 16 | stealth (Num8) | `kMovementNoiseMult` + `kDetectLifeRange` AVs | source-block |
 

@@ -12,7 +12,7 @@
 > - Row 7 "confirm on the next deck cycle" — that cycle RAN and did not confirm; see MFO's
 >   `Docs/DIAG-2026-09-06-loot-travel.md`.
 > - §3 item 0 (remove MFO's redundant 0x0A/0x0F hooks) — STILL NOT DONE. The double 0x0A
->   hook is live (`Docs/HOOK-SITE-COVERAGE.md` §5, `Docs/SPEC-GRADUATED-CAST.md` §3). That
+>   hook is live (`Docs/HOOK-SITE-COVERAGE.md` §6, `Docs/SPEC-GRADUATED-CAST.md` §3). That
 >   one item is the only reason to read this file at all.
 >
 > It is an MFO-facing survey living in the APMF repo, which is the same misplacement flagged

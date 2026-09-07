@@ -9,9 +9,12 @@
 >   the wrong property: it checked that the call happens on the game thread (§1 `:53-60`,
 >   citing `Channel.h`) and that `EvaluatePackage` fires once per real transition (`:61-69`),
 >   and never checked WHEN it fires relative to `ControlMap::Publish()`. Right thread, wrong
->   MOMENT. Fix on the unmerged branch `fix/apmf-offerpackage-nudge-ordering`; the retracted
->   "the lifecycle calls it directly, they already run on the game thread" claim is corrected
->   in `Docs/STATUS.md` and in `PackageGate.{h,cpp}` on that branch. **NOT SHIPPED.**
+>   MOMENT. **FIXED and MERGED TO `main` 2026-09-07** (`fix/apmf-offerpackage-nudge-ordering`):
+>   `channels/OfferPackage.cpp` now posts the nudge through `apmf::mainthread::Post`, so it
+>   runs one hop PAST the claim's `Publish()`. The retracted "the lifecycle calls it directly,
+>   they already run on the game thread" claim is corrected in `Docs/STATUS.md` and in
+>   `PackageGate.{h,cpp}`. CI-green, not in a tagged release, and **not yet deck-run** — the
+>   0-of-6 result has not yet been re-run and shown to be 6-of-6.
 > - **§2.2 IS NO LONGER A HYPOTHESIS — PROMOTED TO A MEASURED FINDING (2026-09-07).**
 >   `:120`'s "the engine is very likely NOT consulted on every occasion" is exactly right and
 >   is now measured: across ~75 s of live dispatches the engine's own evaluation cadence
