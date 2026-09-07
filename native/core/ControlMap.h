@@ -326,6 +326,25 @@ namespace apmf {
         // the tie rule below to only some of them would have manufactured exactly
         // that disagreement.
         //
+        // WHAT IS *NOT* A WINNER-SELECTION, and therefore correctly does NOT call
+        // this (F5-4, spelled out 2026-09-07 -- "SEVEN" above counts selections, and
+        // a reader who greps for bare basis compares finds three more that are fine):
+        //   * `ControlMap.cpp`'s dual-vs-single collision scan -- it asks "does any
+        //     OTHER-shaped claim exist here, and what is the highest basis among
+        //     them", a MAX over a filtered set, not "who owns this facet". It already
+        //     skips deny-only claims explicitly (they drive nothing, so they cannot
+        //     collide), which is the same rule this comparator encodes, applied where
+        //     it belongs.
+        //   * `ControlMap.cpp`'s proxy-mint precedence check -- same shape: the
+        //     highest incumbent basis, used to decide whether to spend a pool slot,
+        //     not to pick an owner.
+        //   * `TryGetOwningClaim`'s plain strict compare -- deliberate and commented
+        //     at its own site: it is never called for kIntent_Cast, and every
+        //     non-cast claim has castFlags == 0, so the tie rule cannot change its
+        //     answer.
+        // All three were traced NON-DIVERGENT against this comparator. If any of them
+        // ever starts ANSWERING WHO OWNS A FACET, it must move to BetterClaim.
+        //
         // THE ORDER. Higher basis wins -- unchanged, and still the only thing that
         // ranks two DRIVING claims. What is ADDED is the tie: at an EQUAL basis a
         // DENY-ONLY claim (kCastFlag_DenyHandOnly) LOSES to a driving one. Otherwise

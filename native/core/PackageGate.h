@@ -50,6 +50,26 @@ namespace apmf::packagegate {
     // mutex, so it cannot participate in a lock cycle.
     void ForgetRedirect(RE::FormID a_actor);
 
+    // Drop EVERY remembered redirect answer, for every actor.
+    //
+    // WHY A WHOLESALE FORGET EXISTS AS WELL (F4-1, 2026-09-07). `ForgetRedirect`
+    // above is driven from the ch.9 release EDGE, and the thunk's own no-claim
+    // branch is the backstop -- but BOTH need something to happen for a given
+    // actor. A revert / new game goes through `ControlMap::Clear()`, which by
+    // design makes NO `channel->Release` calls (so no edge fires) and hands the
+    // hook nothing to be consulted about (the actors are being replaced). The
+    // remembered tuples therefore survive the world boundary, and the FIRST
+    // dispatch of the same package on the same FormID in the NEW session produces
+    // a byte-identical answer tuple, which the RULE D transition dedup swallows:
+    // the redirect works and the pass criterion reads failure -- the exact
+    // false-negative `ForgetRedirect` was added to remove, one scope wider.
+    //
+    // Call it at the world boundary (`plugin.cpp`'s OnRevert, beside
+    // `mainthread::Discard()`), never per-actor. Idempotent, cheap (one relaxed
+    // load when nothing is remembered), and erasing can only ever cause an EXTRA
+    // `[ch.9-redirect]` line, never a missing one.
+    void ForgetAllRedirects();
+
     // RULE C heartbeat (marth 2026-09-06, "does 0x49 actually redirect?" probe) --
     // call once per frame from Arbiter::OncePerFrame (game thread), same seat
     // ActionGate.cpp's PfpHeartbeat() and NonAliasProbe.cpp's PollClaimedPackages()

@@ -325,6 +325,16 @@ namespace apmf::packagegate {
             g_redirectRemembered.fetch_sub(1, std::memory_order_relaxed);
     }
 
+    void ForgetAllRedirects() {
+        // See PackageGate.h for WHY the world boundary needs its own wholesale
+        // erase: Clear() releases nothing and consults nothing, so neither the
+        // release edge nor the thunk's backstop can reach these entries.
+        if (g_redirectRemembered.load(std::memory_order_relaxed) == 0) return;
+        std::scoped_lock lock(g_redirectMx);
+        g_redirectLast.clear();
+        g_redirectRemembered.store(0, std::memory_order_relaxed);
+    }
+
     void EvaluatePackage(RE::Actor* a_actor) {
         if (!a_actor) return;
         using func_t = void (*)(RE::Actor*, bool, bool);

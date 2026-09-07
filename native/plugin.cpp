@@ -67,6 +67,13 @@ namespace {
         if (const auto dropped = apmf::mainthread::Discard(); dropped != 0)
             spdlog::info("[mainthread] revert/new game -- dropped {} queued task(s) at the world boundary.",
                          dropped);
+        // Same reason, for ch.9's redirect-log memory (F4-1): Clear() makes no
+        // channel->Release calls, so PackageGate's per-actor ForgetRedirect never
+        // fires for the claims it drops, and its thunk-side backstop needs a 0x49
+        // consult that the replaced actors will never produce. Without this, the
+        // first same-form dispatch in the NEW session is deduped SILENT and the
+        // pass criterion reads failure while the redirect is working.
+        apmf::packagegate::ForgetAllRedirects();
         apmf::av::Revert();
     }
 
