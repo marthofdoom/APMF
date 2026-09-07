@@ -282,6 +282,10 @@ namespace apmf {
         RE::FormID           castTarget = 0;
         std::uint32_t        castFlags  = 0;
         std::uint64_t        expiresMs  = 0;
+        // The clamped TTL actually granted below -- stored on the Claim so
+        // ApplyRepoint can renew the window with this claim's OWN length (see
+        // Claim::ttlMs in core/ControlMap.h). 0 for every non-cast claim.
+        std::uint32_t        castTtlMs  = 0;
         RE::ActorHandle      castTargetHandle{};
         // feat/per-hand-cast-claims: handles of conflicting kIntent_Cast claims a
         // WINNING dual-vs-single-hand collision (below) must evict once the new
@@ -300,7 +304,35 @@ namespace apmf {
             castProxy  = op.castProxy;
             castTarget = op.castTarget;
             RE::FormID spell = op.param.form;
-            if (castFlags & APMF_API::kCastFlag_FromPackage) {
+
+            // ---- DENY-ONLY HAND CLAIM (kCastFlag_DenyHandOnly, 2026-09-06) ----
+            // The client claimed this hand purely to DENY it: it drives nothing
+            // there and the engine is never asked to arm anything. DECLARE ->
+            // ENFORCE (CLAUDE.md principle 4): the driven form, the proxy and the
+            // target are forced to NONE here, at the one place a claim is built, so
+            // "drives nothing" is a property of the stored claim rather than a rule
+            // every downstream reader has to remember. That single fact is what
+            // makes every cast SEAT skip this claim for free -- they all key on a
+            // driven form (TryGetCastSeatClaimForForm ignores a 0 driven form) or on
+            // a resolved target handle (which stays invalid because castTarget is 0),
+            // so none of them can ever seat, drive or classify for it. No
+            // delivery-flip proxy is minted either (the mint below is gated on a
+            // resolved target). The DENY half is the whole point and is untouched:
+            // the claim still occupies its hand, so core/Allowance.cpp's per-hand
+            // reads deny every other spell/staff competing for that hand.
+            const bool denyHandOnly = (castFlags & APMF_API::kCastFlag_DenyHandOnly) != 0;
+            if (denyHandOnly) {
+                if (spell != 0 || castProxy != 0 || castTarget != 0) {
+                    spdlog::info("[ch.8b] 0x{} deny-only hand claim (h={}) also carried spell 0x{} / proxy "
+                                 "0x{} / target 0x{} -- all IGNORED. A kCastFlag_DenyHandOnly claim drives "
+                                 "NOTHING by definition; it only denies the hand to everything else.",
+                                 apmf::log::Hex(op.actor), op.handle, apmf::log::Hex(spell),
+                                 apmf::log::Hex(castProxy), apmf::log::Hex(castTarget));
+                }
+                spell      = 0;
+                castProxy  = 0;
+                castTarget = 0;
+            } else if (castFlags & APMF_API::kCastFlag_FromPackage) {
                 RE::FormID outSpell = 0, outTarget = 0;
                 if (!apmf::castcompose::ExtractFromPackage(op.param.form, outSpell, outTarget)) {
                     spdlog::warn("[ch.8b] cast-from-package: no spell input on 0x{} -- REFUSED "
@@ -316,6 +348,7 @@ namespace apmf {
             if (ttl == 0) ttl = APMF_API::kCastDefaultTtlMs;
             if (ttl > APMF_API::kCastMaxTtlMs) ttl = APMF_API::kCastMaxTtlMs;
             expiresMs = apmf::clock::MonotonicMs() + ttl;
+            castTtlMs = ttl;   // the GRANTED (already-clamped) length ApplyRepoint renews with
 
             // ---- DUAL vs SINGLE-HAND MUTUAL EXCLUSIVITY (feat/per-hand-cast-claims)
             // Two concurrent kIntent_Cast claims on one actor now coexist when they
@@ -332,14 +365,36 @@ namespace apmf {
             // non-exclusive basis arbitration every other channel already uses.
             // Checked BEFORE the target-resolve/proxy-mint work below so a claim
             // that is about to be refused never wastes a delivery-flip mint.
+            //
+            // DENY-ONLY CLAIMS ARE OUTSIDE THIS COLLISION, IN BOTH DIRECTIONS
+            // (2026-09-06). The exclusivity above is about two claims wanting the
+            // engine to ARM different things in overlapping hands. A
+            // kCastFlag_DenyHandOnly claim asks the engine to arm nothing at all --
+            // its spell, proxy and target are 0 by construction -- so it cannot
+            // collide with anything, and treating it as a single-hand claim produced
+            // two real breakages:
+            //   * a higher-basis DUAL claim marked the standing floor `toEvict`, and
+            //     Phase 2 erased it -- so the floored hand REOPENED for a full client
+            //     tick after every dual cast, which is precisely the recurring
+            //     unclaimed-gap class (RC2) the floor exists to remove;
+            //   * a floor requested while a dual claim stands was REFUSED at
+            //     `op.basis <= bestConflictBasis`, and (mirror image) a standing floor
+            //     REFUSED an incoming dual claim outright at the same test -- so with a
+            //     client using one uniform basis for every claim, a follower with a
+            //     floor standing could never dual-cast at all.
+            // Coexistence is harmless because the per-hand readers already rank the
+            // two correctly with the shared comparator: on the hand the dual claim
+            // occupies it outranks (or, at an equal basis, displaces) the floor, and
+            // when it ends the floor is still standing underneath with no gap.
             {
                 const bool newIsDual = IsDualCastFlags(castFlags);
-                if (auto npcIt = map.find(op.actor); npcIt != map.end()) {
+                if (auto npcIt = map.find(op.actor); !denyHandOnly && npcIt != map.end()) {
                     for (const auto& cc2 : npcIt->second.channels) {
                         if (cc2.channel != channel) continue;
                         float bestConflictBasis = 0.0f;
                         bool  anyConflict       = false;
                         for (const auto& cl : cc2.claims) {
+                            if (cl.castFlags & APMF_API::kCastFlag_DenyHandOnly) continue;   // drives nothing -- cannot collide
                             if (IsDualCastFlags(cl.castFlags) == newIsDual) continue;   // same shape -- not this collision
                             if (!anyConflict || cl.basis > bestConflictBasis) bestConflictBasis = cl.basis;
                             anyConflict = true;
@@ -360,7 +415,69 @@ namespace apmf {
                         // would if this logic ever moves) for eviction in Phase 2, once the
                         // new claim's own castProxy is finally resolved.
                         for (const auto& cl : cc2.claims) {
+                            if (cl.castFlags & APMF_API::kCastFlag_DenyHandOnly) continue;   // never evict a floor
                             if (IsDualCastFlags(cl.castFlags) != newIsDual) toEvict.push_back(cl.handle);
+                        }
+                        break;
+                    }
+                }
+            }
+
+            // ---- DENY-ONLY BASIS: THE TIE IS NOW ENFORCED; A STRICT INVERSION
+            // IS STILL THE CLIENT'S CALL, AND IS STILL SAID OUT LOUD (2026-09-06) ----
+            // The EQUAL-basis case is no longer a contract the client has to remember:
+            // ControlMap.h::BetterClaim -- the ONE comparator every winner-selection
+            // in this class now uses -- makes a deny-only claim LOSE to a driving one
+            // at an equal basis. That is enforcement of a fact the client declared
+            // (the flag says this claim drives nothing), not a rank APMF invented, and
+            // it is what makes the flag usable by a client that issues every claim at
+            // one uniform basis: a floor issued FIRST no longer denies the gambit that
+            // follows it.
+            //
+            // What is NOT decided for the client is a STRICT inversion -- a floor
+            // requested at a basis genuinely ABOVE a driving claim. There the client
+            // really did say "this hand stays shut, outranking that cast", so the
+            // floor wins and APMF re-ranks nothing. But that is also EXACTLY the
+            // failure that is hardest to read from a log (a follower with two valid
+            // gambits casting one and then standing still, because its own floor
+            // outranks its own cast), so it is detected here, at claim time, and said
+            // loudly (CLAUDE.md principles 5 and 7 -- observe it, never mask it). The
+            // outcome is DEFINED in both cases; this warn reports a defined outcome
+            // the client is unlikely to have wanted, it does not report an undefined
+            // one.
+            //
+            // The check is deliberately NOT hand-scoped: the actor-wide seat reads
+            // (TryGetCastSeatClaim -- core/EquipGate.cpp's rescore-dirty trigger,
+            // core/CastClassify.cpp's diagnostic) pick the actor-wide best claim, so a
+            // floor that outranks a DRIVING claim on the OTHER hand masks those too.
+            {
+                const auto nowMs = apmf::clock::MonotonicMs();
+                if (auto npcIt = map.find(op.actor); npcIt != map.end()) {
+                    for (const auto& cc2 : npcIt->second.channels) {
+                        if (cc2.channel != channel) continue;
+                        for (const auto& cl : cc2.claims) {
+                            if (cl.expiresMs != 0 && nowMs >= cl.expiresMs) continue;   // already gone
+                            const bool clDenyOnly = (cl.castFlags & APMF_API::kCastFlag_DenyHandOnly) != 0;
+                            if (clDenyOnly == denyHandOnly) continue;   // only a floor-vs-driver pair matters
+                            const float floorBasis  = denyHandOnly ? op.basis : cl.basis;
+                            const float driveBasis  = denyHandOnly ? cl.basis : op.basis;
+                            // <= : an EQUAL basis is now DEFINED in the driver's favour
+                            // by ControlMap.h::BetterClaim, so it is no longer a
+                            // violation and no longer warned about. Only a floor
+                            // STRICTLY above a driving claim actually self-denies.
+                            if (floorBasis <= driveBasis) continue;
+                            spdlog::warn("[ch.8b] 0x{} DENY-ONLY FLOOR OUTRANKS A LIVE CAST: the deny-only "
+                                         "hand claim (basis {:.1f}) is STRICTLY ABOVE a live DRIVING cast "
+                                         "claim (basis {:.1f}) on this actor, so the floor wins the "
+                                         "arbitration and the client is about to deny its OWN cast (the "
+                                         "follower will hold the hand and cast nothing). That outcome is "
+                                         "DEFINED, not undefined -- APMF is doing exactly what the bases "
+                                         "asked for -- but it is almost never what a client wants. Request "
+                                         "the deny-only floor at a basis AT OR BELOW your real cast claims: "
+                                         "at an EQUAL basis the driving claim now wins automatically. See "
+                                         "kCastFlag_DenyHandOnly in APMF_API.h. Nothing is re-ranked or "
+                                         "refused here; the claim stands as asked.",
+                                         apmf::log::Hex(op.actor), floorBasis, driveBasis);
                         }
                         break;
                     }
@@ -491,22 +608,35 @@ namespace apmf {
             }
         }
 
-        // Before adding this claim, note the incumbent owner's basis (if any). Seed
-        // from the first EXISTING claim -- never a 0.0 floor -- so a negative-basis
-        // incumbent arbitrates correctly (a 0.0 floor would let a claim below the true
-        // max but above 0 wrongly "win", and mislog owner basis=0.0). Mirrors
-        // ApplyRelease's ownerOf (best = &cs.front(), then max). When cc->claims is
-        // empty (freshChannel) the 0.0 is unused -- the freshChannel path Engages, and
-        // oldBest is only read on the additional-claim (non-empty) path below.
-        float oldBest = cc->claims.empty() ? 0.0f : cc->claims.front().basis;
-        for (auto& c : cc->claims) oldBest = (c.basis > oldBest) ? c.basis : oldBest;
-
+        // Build the claim BEFORE the incumbent scan (2026-09-06): the shared
+        // BetterClaim comparator ranks two CLAIMS, not two bare basis floats, so the
+        // new claim's own castFlags must exist by the time the comparison runs. Pure
+        // reordering of already-computed values -- everything assigned here was
+        // finalized in Phase 1 above (castProxy last, by the eviction block).
         Claim newClaim{ op.handle, op.basis, effParam };
         newClaim.castProxy        = castProxy;
         newClaim.castTarget       = castTarget;
         newClaim.castFlags        = castFlags;
         newClaim.expiresMs        = expiresMs;
+        newClaim.ttlMs            = castTtlMs;
         newClaim.castTargetHandle = castTargetHandle;
+
+        // Before adding this claim, find the incumbent OWNER (if any) -- seeded from
+        // the first EXISTING claim, never a 0.0 floor, so a negative-basis incumbent
+        // arbitrates correctly (a 0.0 floor would let a claim below the true max but
+        // above 0 wrongly "win", and mislog owner basis=0.0). ONE comparator with
+        // ApplyRelease's ownerOf, ApplyRepoint and the four cast reads
+        // (ControlMap.h::BetterClaim): higher basis wins, and at an equal basis a
+        // deny-only claim loses to a driving one. `newOwner` is resolved HERE, while
+        // `oldBestClaim` still points into the un-reallocated vector -- push_back
+        // below may move the storage, so nothing may dereference it afterwards.
+        const Claim* oldBestClaim = nullptr;
+        for (auto& c : cc->claims) {
+            if (!oldBestClaim || BetterClaim(c, *oldBestClaim)) oldBestClaim = &c;
+        }
+        const float oldBest  = oldBestClaim ? oldBestClaim->basis : 0.0f;
+        const bool  newOwner = !oldBestClaim || BetterClaim(newClaim, *oldBestClaim);
+
         cc->claims.push_back(newClaim);
         m_index[op.handle] = { op.actor, channel };
 
@@ -517,12 +647,13 @@ namespace apmf {
                          channel->ChannelNo(), channel->Name(), op.handle, op.basis,
                          apmf::log::Hex(effParam.form), map.size());
         } else {
-            // Additional claim on an already-engaged channel: arbitrate by basis
-            // (higher wins; tie -> earliest, so the incumbent keeps ownership unless
-            // this claim's basis is STRICTLY higher). On a real owner change, hand a
-            // parameterized channel the new winner's payload (parameterless channels
-            // no-op OnOwnerChanged; the claim just refcounts the engagement).
-            const bool newOwner = (op.basis > oldBest);
+            // Additional claim on an already-engaged channel: arbitrate with the ONE
+            // comparator (higher basis wins; at an equal basis a deny-only claim
+            // loses to a driving one, otherwise the incumbent keeps ownership). On a
+            // real owner change, hand a parameterized channel the new winner's
+            // payload (parameterless channels no-op OnOwnerChanged; the claim just
+            // refcounts the engagement). `newOwner` was resolved above, before
+            // push_back could invalidate the incumbent pointer.
             if (newOwner) channel->OnOwnerChanged(op.actor, actor, effParam);
             spdlog::info("[ctl] 0x{} + ch.{} {} additional claim (h={}, basis={:.1f}); {} claim(s), "
                          "owner basis={:.1f}{}.", apmf::log::Hex(op.actor), channel->ChannelNo(), channel->Name(),
@@ -554,7 +685,11 @@ namespace apmf {
             // owner is the claim leaving.
             auto ownerOf = [](std::vector<Claim>& cs) -> Claim* {
                 Claim* best = cs.empty() ? nullptr : &cs.front();
-                for (auto& c : cs) if (c.basis > best->basis) best = &c;   // strict: tie keeps earliest
+                // ONE comparator, shared with ApplyRequest/ApplyRepoint and the four
+                // cast reads (ControlMap.h::BetterClaim): higher basis wins; at an
+                // equal basis a deny-only claim loses to a driving one; otherwise the
+                // earliest keeps it.
+                for (auto& c : cs) if (best && BetterClaim(c, *best)) best = &c;
                 return best;
             };
             const Handle oldOwner = [&] { Claim* o = ownerOf(claims); return o ? o->handle : APMF_API::kInvalidHandle; }();
@@ -634,25 +769,126 @@ namespace apmf {
             auto& claims = cc.claims;
             if (claims.empty()) return false;
 
-            // Find this claim, and the current owner (highest basis; tie -> earliest).
+            // Find this claim, and the current owner. ONE comparator, shared with
+            // ApplyRequest/ApplyRelease and the four cast reads
+            // (ControlMap.h::BetterClaim): higher basis wins; at an equal basis a
+            // deny-only claim loses to a driving one; otherwise the earliest keeps it.
             Claim* self = nullptr;
             Claim* best = &claims.front();
             for (auto& c : claims) {
                 if (c.handle == handle)     self = &c;
-                if (c.basis  > best->basis) best = &c;   // strict: tie keeps earliest
+                if (BetterClaim(c, *best))  best = &c;
             }
             if (!self) return false;   // handle not in this channel (should not happen)
 
-            self->param = param;   // update the stored param regardless of ownership
+            // ---- WHAT A REPOINT MAY AND MAY NOT CHANGE (2026-09-06) --------------
+            // `self->param = param` used to run UNCONDITIONALLY, which made a plain
+            // heartbeat -- the very thing the TTL-renewal below invites a client to
+            // do -- able to rewrite the ONE field that decides what a cast claim
+            // drives. Two distinct breakages, both closed here:
+            //
+            //  (1) A DENY-ONLY claim (kCastFlag_DenyHandOnly) has its spell, proxy
+            //      and target FORCED TO NONE in ApplyRequest, and every seat skips it
+            //      for free precisely because its driven form is 0. A Repoint carrying
+            //      a form would put a driven form BACK onto a claim the client
+            //      declared closed: core/EquipGate.cpp's 0x0F would then compute
+            //      `driven = handSeat.spell` and ADMIT that spell on the floored hand,
+            //      core/AiCastSeats.cpp's steer would bias it, and
+            //      TryGetCastSeatClaimForForm would match it -- while
+            //      core/CastGate.cpp's 0x0A still denies it (the deny-only branch in
+            //      Allowance.cpp keys on the FLAG, not the form), so the AI equips,
+            //      is refused with kMultipleCast, re-deliberates and equips again: a
+            //      churn loop on a hand that was supposed to be silent. `form` is
+            //      therefore pinned to 0 for a deny-only claim, at the same one place
+            //      ApplyRequest pins it -- DECLARE -> ENFORCE (principle 4).
+            //
+            //  (2) A DRIVING cast claim's `param.form` is only HALF of a cast claim:
+            //      castProxy (a delivery-flip form minted for THAT spell), castTarget,
+            //      castTargetHandle and castFlags were all resolved together against
+            //      it in ApplyRequest, and Repoint runs none of that. Letting a
+            //      Repoint swap the form would leave the claim naming spell B while
+            //      driving A's proxy at A's target -- a silently WRONG cast, and the
+            //      hardest possible thing to read from a log. So a form change is
+            //      REFUSED and said out loud (principle 7: never mask a failure); the
+            //      client must Release + RequestCast to change what it casts. Every
+            //      other param field still updates, and the TTL still renews, so a
+            //      same-form heartbeat is completely unaffected.
+            //
+            // Only kIntent_Cast claims are affected: for every other channel `param`
+            // is written exactly as before.
+            const bool isCastClaim =
+                (channel == Registry::Get().ChannelForIntent(APMF_API::kIntent_Cast));
+            const bool denyOnly =
+                isCastClaim && (self->castFlags & APMF_API::kCastFlag_DenyHandOnly) != 0;
+
+            APMF_API::APMF_Param effParam = param;
+            if (denyOnly) {
+                if (param.form != 0) {
+                    spdlog::warn("[ch.8b] 0x{} Repoint on a DENY-ONLY hand claim (h={}) carried form 0x{} "
+                                 "-- IGNORED. A kCastFlag_DenyHandOnly claim drives NOTHING by definition; "
+                                 "its driven form stays 0 for its whole life. Release it and RequestCast "
+                                 "if you want that hand to actually cast something.",
+                                 apmf::log::Hex(formID), handle, apmf::log::Hex(param.form));
+                }
+                effParam.form = 0;
+            } else if (isCastClaim && param.form != self->param.form) {
+                spdlog::warn("[ch.8b] 0x{} Repoint on a live cast claim (h={}) tried to change its spell "
+                             "0x{} -> 0x{} -- REFUSED (the claim keeps 0x{}). A cast claim's proxy, target "
+                             "and flags were all resolved against its ORIGINAL spell in RequestCast and a "
+                             "Repoint re-runs none of that, so honouring this would drive the old spell's "
+                             "proxy at the old target under a new name. Release this handle and RequestCast "
+                             "the new spell. (Repoint is for HEARTBEATING the TTL and updating the non-form "
+                             "param fields -- see Repoint in APMF_API.h.)",
+                             apmf::log::Hex(formID), handle, apmf::log::Hex(self->param.form),
+                             apmf::log::Hex(param.form), apmf::log::Hex(self->param.form));
+                effParam.form = self->param.form;
+            }
+
+            self->param = effParam;   // update the stored param regardless of ownership
+
+            // ---- TTL RENEWAL (2026-09-06 diagnosis RC2, CLAUDE.md principle 9) ----
+            // A kIntent_Cast claim (the ONLY claim kind that carries a TTL) used to
+            // die exactly ttlMs after RequestCast with nothing able to renew it, so a
+            // client holding one cast for longer than that went UNCLAIMED for the
+            // whole gap between the expiry and its next re-request -- measured at
+            // 0.26-0.61 s every 6 s in the field, with a foreign spell observed
+            // equipping and charging 110 ms into one of those gaps. A Repoint is the
+            // client saying "I still want this window", so it now MOVES the deadline
+            // to now + this claim's OWN granted (already-clamped) length. Done
+            // regardless of ownership, for exactly the same reason `param` above is:
+            // the stored claim is the thing every reader consults, owner or not.
+            // NOT a standing hold and NOT a mask (principle 7): the claim still dies
+            // ttlMs after the client's LAST call, so a crashed or forgetful client
+            // loses it on the same schedule as before -- design.md 5a intact. Only a
+            // client that keeps ASKING keeps the window.
+            //
+            // An ALREADY-LAPSED claim is NOT resurrected. Drain applies queued ops
+            // BEFORE its TTL auto-release pass, so without the liveness test below a
+            // Repoint arriving after the deadline (a client that stalled, or frames
+            // that never ran during a load) would move a dead claim's deadline
+            // forward and it would survive that sweep -- after every reader had
+            // already been answering "gone" (the *ForHand/*ForForm reads treat an
+            // elapsed deadline as gone without waiting for the sweep). Expiry stays
+            // final: renewal EXTENDS a live window, it never reopens a closed one.
+            const auto          nowMs     = apmf::clock::MonotonicMs();
+            const std::uint32_t renewedMs =
+                (self->expiresMs != 0 && self->ttlMs != 0 && nowMs < self->expiresMs) ? self->ttlMs : 0;
+            if (renewedMs != 0) self->expiresMs = nowMs + renewedMs;
+
             if (best == self) {
                 // This claim OWNS the channel -> re-point it in place (same handle,
                 // no release/re-engage). A parameterized channel switches its held
                 // target/spell; a parameterless channel no-ops OnOwnerChanged.
                 auto* actor = RE::TESForm::LookupByID<RE::Actor>(formID);   // may be null
-                channel->OnOwnerChanged(formID, actor, param);
-                spdlog::info("[ctl] 0x{} ~ ch.{} {} REPOINT (h={}, form=0x{}).",
+                // `effParam`, not the raw `param`: the channel must be handed exactly
+                // what the claim now STORES, or a refused/pinned form would still
+                // reach the channel and the log would report a form the claim does
+                // not hold.
+                channel->OnOwnerChanged(formID, actor, effParam);
+                spdlog::info("[ctl] 0x{} ~ ch.{} {} REPOINT (h={}, form=0x{}, TTL renewed +{} ms "
+                             "[0 = no TTL on this claim, or its window had already lapsed]).",
                              apmf::log::Hex(formID), channel->ChannelNo(), channel->Name(),
-                             handle, apmf::log::Hex(param.form));
+                             handle, apmf::log::Hex(effParam.form), renewedMs);
             }
             return true;   // self->param was written above regardless of ownership
         }
@@ -772,6 +1008,12 @@ namespace apmf {
             if (cs.claims.empty()) return false;
             // Winner = highest basis; tie -> earliest -- the SAME arbitration
             // rule as ApplyRequest's oldBest / ApplyRelease's ownerOf.
+            // Deliberately NOT ControlMap.h::BetterClaim: this generic reader is
+            // never called for kIntent_Cast (its callers pass MovementBlock,
+            // CombatAction, SelectSpell, Equipment or OfferPackage), and every
+            // non-cast claim has castFlags == 0, so the comparator's deny-only tie
+            // rule could not change an answer here. Left as the plain strict compare
+            // so the cast-specific rule lives only where cast claims do.
             const Claim* best = &cs.claims.front();
             for (const auto& c : cs.claims) {
                 if (c.basis > best->basis) best = &c;
@@ -850,11 +1092,25 @@ namespace apmf {
         for (const auto& cs : npc.channels) {
             if (cs.channel != channel) continue;
             if (cs.claims.empty()) return false;
-            // Winner = highest basis; tie -> earliest (same rule everywhere else).
+            // Winner = the ONE comparator (ControlMap.h::BetterClaim), the same rule
+            // every other winner-selection in this class uses: higher basis wins; at
+            // an equal basis a deny-only claim loses to a driving one; otherwise the
+            // earliest keeps it.
             const Claim* best = &cs.claims.front();
             for (const auto& c : cs.claims) {
-                if (c.basis > best->basis) best = &c;
+                if (BetterClaim(c, *best)) best = &c;
             }
+            // A claim whose TTL has elapsed is treated as ALREADY GONE, without
+            // waiting for the Drain auto-release pass to publish -- the SAME
+            // treat-as-gone rule (and the same winner-only test) as
+            // TryGetCastSeatClaim below. This is an ALLOWANCE reader
+            // (Allowance::AllowedCast), so a lapsed claim left un-tested here goes on
+            // DENYING every other spell for up to a frame after its window closed:
+            // the claim is dead, its own cast will never be seated, and the AI is
+            // held off a hand nothing is using. One compare, on the read that decides
+            // a deny.
+            if (best->expiresMs != 0 && apmf::clock::MonotonicMs() >= best->expiresMs) return false;
+
             outSpell = best->param.form;
             outProxy = best->castProxy;
             if (outFlags) *outFlags = best->castFlags;
@@ -893,10 +1149,11 @@ namespace apmf {
         for (const auto& cs : npc.channels) {
             if (cs.channel != channel) continue;
             if (cs.claims.empty()) return false;
-            // Winner = highest basis; tie -> earliest (the same rule everywhere else).
+            // Winner = the ONE comparator (ControlMap.h::BetterClaim), the same rule
+            // every other winner-selection in this class uses.
             const Claim* best = &cs.claims.front();
             for (const auto& c : cs.claims) {
-                if (c.basis > best->basis) best = &c;
+                if (BetterClaim(c, *best)) best = &c;
             }
             // A claim whose TTL has elapsed is treated as ALREADY GONE here, without
             // waiting for the Drain auto-release pass to publish. The pass runs once per
@@ -948,9 +1205,15 @@ namespace apmf {
             const Claim* best = nullptr;
             for (const auto& c : cs.claims) {
                 if (!ClaimOccupiesHand(c.castFlags, hand)) continue;
-                if (!best || c.basis > best->basis) best = &c;
+                if (!best || BetterClaim(c, *best)) best = &c;   // ONE comparator (ControlMap.h)
             }
             if (!best) return false;   // no claim occupies this hand -- not this hand's business
+            // Same treat-as-gone TTL rule (and the same winner-only test) as
+            // TryGetCastSeatClaimForHand below -- see TryGetCastClaim above for why an
+            // ALLOWANCE reader in particular must not keep denying from a lapsed claim
+            // while it waits for the Drain sweep.
+            if (best->expiresMs != 0 && apmf::clock::MonotonicMs() >= best->expiresMs) return false;
+
             outSpell = best->param.form;
             outProxy = best->castProxy;
             if (outFlags) *outFlags = best->castFlags;
@@ -985,7 +1248,7 @@ namespace apmf {
             const Claim* best = nullptr;
             for (const auto& c : cs.claims) {
                 if (!ClaimOccupiesHand(c.castFlags, hand)) continue;
-                if (!best || c.basis > best->basis) best = &c;
+                if (!best || BetterClaim(c, *best)) best = &c;   // ONE comparator (ControlMap.h)
             }
             if (!best) return false;   // no claim occupies this hand
             // Same TTL-as-gone treatment as TryGetCastSeatClaim above.

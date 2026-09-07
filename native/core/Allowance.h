@@ -102,6 +102,12 @@ namespace apmf::allowance {
     // EquipGate via CombatInventoryItem::itemSlot.equipSlot) should call the
     // hand-aware overload below instead, so a single-hand cast claim leaves the
     // OTHER hand's AI untouched (marth's per-hand requirement, INVARIANTS #18).
+    //
+    // A kCastFlag_DenyHandOnly claim winning this actor-wide read denies every
+    // `subjectForm` here too -- the floor a hand-less caller (kOther/kInstant
+    // casting sources) degrades to must not read the claim's deliberate silence as
+    // a degenerate accident and allow everything. Same treatment as the hand-aware
+    // overload below.
     bool AllowedCast(RE::FormID actor, RE::FormID subjectForm);
 
     // Which hand a T2 gate has resolved ITS OWN deliberation to be about, from an
@@ -134,6 +140,17 @@ namespace apmf::allowance {
     // guess. Per-hand deny (marth 2026-09-0x, INVARIANTS #18) -- driven purely by
     // which claim(s) stand and their own hand field, never by anything the
     // client does.
+    //
+    // DENY-ONLY CLAIMS (kCastFlag_DenyHandOnly, 2026-09-06). A claim carrying that
+    // flag occupies its hand purely to CLOSE it: it drives nothing, and APMF forces
+    // its spell/proxy/target to 0 when the claim is built (core/ControlMap.cpp
+    // ApplyRequest). When such a claim is the one occupying `callerHand`, this
+    // returns false for EVERY `subjectForm` -- there is nothing it admits. That is
+    // what closes the RC3 hole (a one-hand claim left the other hand fully open and
+    // the AI charged 39 foreign spells on it in one field session) without
+    // fabricating any intent: the client declared "nothing here", and nothing is
+    // exactly what gets through. It stays hand-scoped like every other answer in
+    // this header -- the other hand and an unclaimed actor are untouched.
     bool AllowedCastForHand(RE::FormID actor, RE::FormID subjectForm, Hand callerHand);
 
     // Does a STANDING ch.8b kIntent_Cast claim NAME `subjectForm` (as its spell or
@@ -158,8 +175,10 @@ namespace apmf::allowance {
     //
     // ANY thread -- one lock-free RCU ControlMap read, same discipline as the rest
     // of this header. Returns false when there is no cast claim at all, when the
-    // claim is degenerate (names neither spell nor proxy), when the claim belongs
-    // to the OTHER hand, or when `subjectForm` is simply not one of the two.
+    // claim is degenerate (names neither spell nor proxy), when the claim is
+    // DENY-ONLY (kCastFlag_DenyHandOnly -- it stands, but by definition it names
+    // nothing), when the claim belongs to the OTHER hand, or when `subjectForm` is
+    // simply not one of the two.
     bool CastClaimNamesForHand(RE::FormID actor, RE::FormID subjectForm, Hand callerHand);
 
 }

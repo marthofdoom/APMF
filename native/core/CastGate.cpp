@@ -1,5 +1,6 @@
 #include "PCH.h"
 #include "core/Log.h"
+#include "core/Clock.h"
 #include "core/Allowance.h"
 #include "core/CastGate.h"
 
@@ -49,6 +50,36 @@ namespace apmf::castgate {
         // symmetric with EquipGate.cpp / the template's general shape.
         std::unordered_map<std::uintptr_t, std::uintptr_t> g_orig;
         std::atomic<bool> g_installed{ false };
+
+        // ---- F6 (2026-09-06): MAKE THE CAST DENY OBSERVABLE -------------------
+        // This gate had NO per-decision log at all -- only the install line -- so
+        // the completeness of the cast deny could not be observed from APMF.log.
+        // The 2026-09-06 deny audit had to record its own P1 row as "DENIED (code)
+        // / UNOBSERVED (log)": correct by reading, never once seen executing. That
+        // is precisely the trap CLAUDE.md principle 5 exists for (five seats were
+        // built on a caster the engine never runs), so the deny now says so.
+        //
+        // Throttled, not per-frame: the SAME idiom core/CastClassify.cpp uses --
+        // one leaf mutex, a (actor << 32 | subject) key, and the 1500 ms cadence
+        // every other seat in this codebase logs at. Keying on the pair means a
+        // burst that denies several DIFFERENT spells for one actor reports each of
+        // them once, while the same spell re-deliberated inside the window is
+        // suppressed. Combat-thread traffic; the lock is never held across a call
+        // into the engine.
+        constexpr std::uint64_t kLogThrottleMs = 1500;
+
+        std::mutex                                       g_rlMx;
+        std::unordered_map<std::uint64_t, std::uint64_t> g_lastDenyLogMs;
+
+        bool DenyLogDue(RE::FormID a_actor, RE::FormID a_subject) {
+            const auto now = apmf::clock::MonotonicMs();
+            const auto key = (static_cast<std::uint64_t>(a_actor) << 32) | static_cast<std::uint64_t>(a_subject);
+            std::scoped_lock lk(g_rlMx);
+            auto& last = g_lastDenyLogMs[key];
+            if (now - last < kLogThrottleMs) return false;
+            last = now;
+            return true;
+        }
 
         bool CheckCastThunk(RE::MagicCaster* a_this, RE::MagicItem* a_spell, bool a_dual,
                             float* a_cost, RE::MagicSystem::CannotCastReason* a_reason,
@@ -111,8 +142,13 @@ namespace apmf::castgate {
             // to the other hand, or for any other form -- so ch.8 keeps denying
             // everything it denied before. And this still only ever lets the
             // ENGINE's own answer stand (`engineSays`); APMF never invents a YES.
-            if (allowance::AllowedCastForHand(fid, subjectForm, callerHand) &&
-                allowance::CastClaimNamesForHand(fid, subjectForm, callerHand))
+            //
+            // Read the ch.8b answer ONCE and reuse it below (it was previously
+            // evaluated twice, once in each branch). Same predicate, same inputs;
+            // one read also means both branches necessarily agree with each other
+            // and with the deny line's own report of why.
+            const bool castAllows = allowance::AllowedCastForHand(fid, subjectForm, callerHand);
+            if (castAllows && allowance::CastClaimNamesForHand(fid, subjectForm, callerHand))
                 return engineSays;
 
             // ch.8 (cast-select exclusivity) AND ch.8b (cast-execution exclusivity)
@@ -121,11 +157,28 @@ namespace apmf::castgate {
             // a kIntent_Cast claim stands -- scoped to the claim's own hand (above),
             // so a single-hand cast claim leaves the OTHER hand's charge decision
             // untouched. Either narrowing to NO denies the charge.
-            if (allowance::Allowed(fid, APMF_API::kIntent_SelectSpell, subjectForm) &&
-                allowance::AllowedCastForHand(fid, subjectForm, callerHand))
+            const bool selectAllows = allowance::Allowed(fid, APMF_API::kIntent_SelectSpell, subjectForm);
+            if (selectAllows && castAllows)
                 return engineSays;
 
             if (a_reason) *a_reason = RE::MagicSystem::CannotCastReason::kMultipleCast;
+
+            // F6: the deny, observed. Names the actor, the spell it refused, the
+            // hand this caster instance is for, and WHICH narrowing said no -- so a
+            // log can distinguish "ch.8 select claim" from "ch.8b cast claim (this
+            // hand)" without re-deriving it from the claim traffic. Throttled per
+            // (actor, spell); nothing else about the decision changes.
+            if (DenyLogDue(fid, subjectForm)) {
+                spdlog::info("[t2c] 0x{} '{}' CheckCast DENIED spell=0x{} '{}' hand={} (ch.8 select {}, "
+                             "ch.8b cast {}) -- engine had said YES; returned kMultipleCast so the AI "
+                             "re-deliberates instead of charging this spell.",
+                             apmf::log::Hex(fid), actor->GetName() ? actor->GetName() : "?",
+                             apmf::log::Hex(subjectForm),
+                             a_spell && a_spell->GetName() ? a_spell->GetName() : "?",
+                             callerHand == allowance::Hand::kLeft  ? "L" :
+                             callerHand == allowance::Hand::kRight ? "R" : "?",
+                             selectAllows ? "ALLOW" : "DENY", castAllows ? "ALLOW" : "DENY");
+            }
             return false;
         }
 

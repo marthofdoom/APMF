@@ -362,9 +362,16 @@ namespace apmf::equipgate {
                                    (callerHand == allowance::Hand::kRight)  ? apmf::CastHand::kRight :
                                                                               apmf::CastHand::kUnknown;
             apmf::CastSeatClaim handSeat{};
-            const bool hasHandSeat =
-                fid != 0 && apmf::ControlMap::Get().TryGetCastSeatClaimForHand(fid, castHand, handSeat) &&
-                handSeat.targetHandle;
+            const bool haveHandClaim =
+                fid != 0 && apmf::ControlMap::Get().TryGetCastSeatClaimForHand(fid, castHand, handSeat);
+            const bool hasHandSeat = haveHandClaim && handSeat.targetHandle;
+            // kCastFlag_DenyHandOnly (2026-09-06): a claim taken purely to CLOSE this
+            // hand. It drives nothing, so it deliberately carries no spell, no proxy
+            // and no target -- which means `hasHandSeat` above is false for it (the
+            // targetHandle test) and the SEAT block below correctly never seats it.
+            // Only the DENY-COMPLETE branch further down cares that it is standing.
+            const bool handDenyOnly =
+                haveHandClaim && (handSeat.flags & APMF_API::kCastFlag_DenyHandOnly) != 0;
 
             if (fid != 0 && subjectForm != 0 && g_restoreVtables.contains(vt)) {
                 // Hand-scoping (kCastFlag_DualCast included) is already baked into
@@ -515,17 +522,25 @@ namespace apmf::equipgate {
             // denied every item on an UNCLAIMED hand (a self-deny-across-hands bug:
             // the follower's own free hand would lose the ability to equip anything
             // for as long as the OTHER hand held a claim).
+            // A DENY-ONLY claim (kCastFlag_DenyHandOnly) arms this same branch: it is
+            // a standing claim on this hand whose driven form is NONE, so `driven`
+            // below is 0 and every spell/staff item on the hand is denied -- one
+            // deny path, not a second mechanism. The difference from a driving claim
+            // is only that nothing survives the deny, which is exactly what the
+            // client declared (APMF_API.h, kCastFlag_DenyHandOnly).
             if (g_denyCompleteEnabled.load(std::memory_order_relaxed) &&
-                hasHandSeat && fid != 0 && subjectForm != 0) {
+                (hasHandSeat || handDenyOnly) && fid != 0 && subjectForm != 0) {
                 const RE::FormID driven = handSeat.proxy ? handSeat.proxy : handSeat.spell;
                 if (driven == 0 || subjectForm != driven) {
                     if (LogDue(fid, subjectForm))
                         spdlog::info("[t2a seat 0x0F] 0x{} CheckShouldEquip item=0x{} -> NO (deny-complete: "
-                                     "a cast claim spell 0x{}{} stands on this actor's hand -- every other "
+                                     "a {} stands on this actor's hand [claim spell 0x{}{}] -- every other "
                                      "spell/staff item competing for the CLAIM'S OWN equip-slot set is denied "
                                      "so the claimed form is the sole survivor of that set's score compare; "
                                      "the OTHER hand's own claim (if any) and items are untouched).",
                                      apmf::log::Hex(fid), apmf::log::Hex(subjectForm),
+                                     handDenyOnly ? "DENY-ONLY hand claim (drives nothing, admits nothing)"
+                                                  : "cast claim",
                                      apmf::log::Hex(handSeat.spell), handSeat.proxy ? " via delivery-flip proxy" : "");
                     return false;
                 }

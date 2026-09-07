@@ -79,9 +79,17 @@ namespace apmf::allowance {
     }
 
     bool AllowedCast(RE::FormID actor, RE::FormID subjectForm) {
-        RE::FormID spell = 0, proxy = 0;
-        if (!ControlMap::Get().TryGetCastClaim(actor, spell, proxy))
+        RE::FormID    spell = 0, proxy = 0;
+        std::uint32_t flags = 0;
+        if (!ControlMap::Get().TryGetCastClaim(actor, spell, proxy, &flags))
             return true;                                   // no cast claim -> ch.8b imposes nothing
+        // kCastFlag_DenyHandOnly: the winning claim drives NOTHING and exists only
+        // to close its hand. Its spell/proxy are 0 by construction (ApplyRequest
+        // forces them), so the "degenerate -> allow" line below would otherwise read
+        // a deliberate DENY as an accident and allow everything -- the exact hole
+        // the flag was added to close. Checked FIRST, and only on the flag, so a
+        // genuinely degenerate claim still degrades as it always did.
+        if (flags & APMF_API::kCastFlag_DenyHandOnly) return false;   // hand claimed purely to deny -> DENY
         if (spell == 0 && proxy == 0) return true;         // degenerate/no spell named -> allow
         if (subjectForm == spell || subjectForm == proxy) return true;
         return false;                                      // a cast claim stands and this is neither -> DENY
@@ -110,9 +118,21 @@ namespace apmf::allowance {
         // comparison could pick the OTHER hand's claim and wrongly treat THIS
         // hand as unclaimed (or vice versa); ControlMap::TryGetCastClaimForHand
         // does the correct per-hand arbitration once, here.
-        RE::FormID spell = 0, proxy = 0;
-        if (!ControlMap::Get().TryGetCastClaimForHand(actor, ToCastHand(callerHand), spell, proxy))
+        RE::FormID    spell = 0, proxy = 0;
+        std::uint32_t flags = 0;
+        if (!ControlMap::Get().TryGetCastClaimForHand(actor, ToCastHand(callerHand), spell, proxy, &flags))
             return true;                                   // no cast claim on THIS hand -> ch.8b imposes nothing
+        // kCastFlag_DenyHandOnly (2026-09-06): the claim that OCCUPIES this hand was
+        // taken purely to CLOSE it -- the client drives nothing here and declared
+        // that nothing else may either. Its spell/proxy are 0 by construction
+        // (core/ControlMap.cpp ApplyRequest forces them), so without this line the
+        // "degenerate -> allow" case below would read that deliberate silence as an
+        // accident and leave the hand wide open, which is precisely the RC3 hole
+        // (25 Stone Runes on the unclaimed hand) the flag exists to close. The deny
+        // is the SAME per-hand deny a driving claim already imposes -- one path, not
+        // a second mechanism -- and it stops at this hand: the other hand, and an
+        // actor with no claim at all, are untouched.
+        if (flags & APMF_API::kCastFlag_DenyHandOnly) return false;   // hand claimed purely to deny -> DENY
         if (spell == 0 && proxy == 0) return true;         // degenerate/no spell named -> allow
         if (subjectForm == spell || subjectForm == proxy) return true;
         return false;                                      // a cast claim stands on THIS hand and this is neither -> DENY
@@ -125,9 +145,16 @@ namespace apmf::allowance {
         // of the ch.8 narrow. This is the strict POSITIVE form -- a claim must
         // actually stand, on this hand, naming this exact form. Same per-hand
         // read as AllowedCastForHand above (feat/per-hand-cast-claims).
-        RE::FormID spell = 0, proxy = 0;
-        if (!ControlMap::Get().TryGetCastClaimForHand(actor, ToCastHand(callerHand), spell, proxy))
+        RE::FormID    spell = 0, proxy = 0;
+        std::uint32_t flags = 0;
+        if (!ControlMap::Get().TryGetCastClaimForHand(actor, ToCastHand(callerHand), spell, proxy, &flags))
             return false;                                  // no cast claim on THIS hand -> nothing to admit
+        // A deny-only claim NAMES NOTHING -- it exists to close the hand, not to
+        // admit anything into it. Its spell/proxy are already 0 so the next line
+        // would return false anyway; stated explicitly because this is the strict
+        // POSITIVE predicate and "a claim stands" must never be mistaken here for
+        // "a claim admits something".
+        if (flags & APMF_API::kCastFlag_DenyHandOnly) return false;
         if (spell == 0 && proxy == 0) return false;        // degenerate -> names nothing
         return subjectForm != 0 && (subjectForm == spell || subjectForm == proxy);
     }
