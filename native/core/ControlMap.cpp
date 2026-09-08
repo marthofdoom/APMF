@@ -825,7 +825,7 @@ namespace apmf {
             //      other param field still updates, and the TTL still renews, so a
             //      same-form heartbeat is completely unaffected.
             //
-            //      ONE FORM THAT IS *NOT* A CHANGE (F5-2, 2026-09-07). On a
+            //      ONE FORM THAT IS *NOT* A CHANGE (F5-2, fixed 2026-09-08). On a
             //      kCastFlag_FromPackage claim the stored form is the spell APMF
             //      EXTRACTED from the client's package -- a FormID the client is never
             //      handed -- so the only thing a correct client can heartbeat with is
@@ -855,7 +855,7 @@ namespace apmf {
                 }
                 effParam.form = 0;
             } else if (isCastClaim && self->castSrcForm != 0 && param.form == self->castSrcForm) {
-                // A kCastFlag_FromPackage claim's HEARTBEAT (F5-2, 2026-09-07). The
+                // A kCastFlag_FromPackage claim's HEARTBEAT (F5-2, fixed 2026-09-08). The
                 // client named a PACKAGE; ApplyRequest extracted the spell out of it
                 // and stored THAT as param.form, a FormID the client is never told.
                 // So the only form a correct client can heartbeat with is the package
@@ -1135,7 +1135,7 @@ namespace apmf {
             // an equal basis a deny-only claim loses to a driving one; otherwise the
             // earliest keeps it.
             //
-            // ---- THE CANDIDATE SET IS THE *LIVE* CLAIMS (F5-3, 2026-09-07) --------
+            // ---- THE CANDIDATE SET IS THE *LIVE* CLAIMS (F5-3, fixed 2026-09-08) ----
             // A claim whose TTL has elapsed is treated as ALREADY GONE, without
             // waiting for the Drain auto-release pass to publish it away. That rule is
             // older than this comment; what changed is WHERE it is applied. It used to

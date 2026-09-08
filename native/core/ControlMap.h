@@ -322,7 +322,8 @@ namespace apmf {
             // claim's stored form IS the form the client named), so this reads
             // byte-identically to before it existed for them.
             //
-            // WHY IT IS STORED (F5-2, 2026-09-07). Repoint is the invited HEARTBEAT
+            // WHY IT IS STORED (F5-2, raised 2026-09-07, fixed 2026-09-08). Repoint is
+            // the invited HEARTBEAT
             // for a cast window (APMF_API.h, Repoint), and a client heartbeats with
             // the param it requested with -- for a FromPackage claim that is the
             // PACKAGE. ApplyRepoint compares the incoming form against the claim's
@@ -366,13 +367,32 @@ namespace apmf {
         // All three were traced NON-DIVERGENT against this comparator. If any of them
         // ever starts ANSWERING WHO OWNS A FACET, it must move to BetterClaim.
         //
-        // WHAT IT IS NEVER ASKED TO RANK (F5-3, 2026-09-07). The four cast reads feed
-        // it only the claims that are still LIVE: a claim past its TTL is skipped as a
-        // CANDIDATE, not tested after the fact. Testing only the winner let a lapsed
-        // high-basis claim speak for the channel and take a live lower-basis claim's
-        // answer down with it (dropping that claim's deny, or leaving it undriven) for
-        // up to a frame, until the Drain sweep published the release. This comparator
-        // is unchanged by that fix -- it simply never sees a dead claim.
+        // WHAT IT IS NEVER ASKED TO RANK ON THE READER SIDE (F5-3, raised 2026-09-07,
+        // fixed 2026-09-08). The four cast READS feed it only the claims that are still
+        // LIVE: a claim past its TTL is skipped as a CANDIDATE, not tested after the
+        // fact. Testing only the winner let a lapsed high-basis claim speak for the
+        // channel and take a live lower-basis claim's answer down with it (dropping
+        // that claim's deny, or leaving it undriven) for up to a frame, until the Drain
+        // sweep published the release. This comparator is unchanged by that fix -- it
+        // simply never sees a dead claim on those paths.
+        //
+        // THE THREE WRITER-SIDE SELECTIONS STILL DO SEE LAPSED CLAIMS, AND THAT IS
+        // LEFT ALONE DELIBERATELY -- for the real reason, not the one the F5-3 commit
+        // message gave (corrected by review, 2026-09-08; the message said Drain's TTL
+        // pass "releases expired claims in that same call", which is true but does NOT
+        // make the apply loop safe, because that pass runs AFTER the loop -- see the
+        // TTL expiry pass in ControlMap.cpp's Drain, below the op switch). So
+        // ApplyRequest's oldBestClaim, ApplyRelease's ownerOf and ApplyRepoint's best
+        // genuinely can pick a claim whose window has already elapsed: a Repoint on a
+        // lapsed claim that is also `best` fires OnOwnerChanged with that lapsed
+        // claim's param, and the TTL pass then releases it and fires OnOwnerChanged for
+        // the next claim. It is harmless ONLY because (a) the cast channel's Engage /
+        // OnOwnerChanged are log lines and nothing else (channels/CastCompose.cpp) and
+        // (b) Publish() happens after BOTH passes, so no reader ever observes the
+        // intermediate state -- one extra log line is the entire cost. Both halves of
+        // that are load-bearing: if a channel's OnOwnerChanged ever performs a real
+        // engine write, this must be revisited, and the fix then belongs in the ORDER
+        // of Drain's passes, not in this comparator.
         //
         // THE ORDER. Higher basis wins -- unchanged, and still the only thing that
         // ranks two DRIVING claims. What is ADDED is the tie: at an EQUAL basis a

@@ -45,7 +45,7 @@ namespace apmf::packagegate {
     // redirect happened. The mechanism would be working and the pass criterion would
     // read failure.
     //
-    // MUST BE POSTED, NOT CALLED INLINE FROM THAT EDGE (F4-2, 2026-09-07 -- the
+    // MUST BE POSTED, NOT CALLED INLINE FROM THAT EDGE (F4-2, fixed 2026-09-08 -- the
     // same correction the nudge itself needed). A Channel's Release runs inside
     // ControlMap::Drain's apply loop, BEFORE Drain Publish()es; the PUBLISHED map
     // therefore still holds the claim, and a combat-thread 0x49 consult in that

@@ -404,7 +404,10 @@ narrow. That rule OUTLIVED the drive that exposed it: with the engine seats the
 claim's proxy there is what lets the NPC's own cast get off the ground at all.
 `core/CastSeats.cpp` and `core/EquipGate.cpp`'s seat 0x0F read the richer
 `ControlMap::TryGetCastSeatClaim` instead (spell + proxy + target + resolved
-`ActorHandle` + flags + TTL in one RCU read) — same discipline, more fields.
+`ActorHandle` + flags + TTL in one RCU read) — same discipline, more fields, and the
+same live-candidate rule: `TryGetCastSeatClaim`/`…ForHand` skip a TTL-elapsed claim as
+a CANDIDATE rather than testing only the winner, so a lapsed claim can neither seat nor
+mask a live lower-basis one before the Drain sweep.
 - **What breaks:** `Allowed`/`InstallOnVtables`'s thunk callers run on COMBAT
   THREADS (§5) — never take a lock, never touch the follower/actor list, never
   call anything beyond the stored `orig` + one ControlMap read. `DerivesFrom`

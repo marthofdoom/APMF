@@ -1,6 +1,6 @@
 # APMF STATUS — living handoff (start here)
 
-Updated 2026-09-06. The current state of the build: what's shipped, what's
+Updated 2026-09-08. The current state of the build: what's shipped, what's
 probe-gated, what's next. Keep this current in the SAME change as any
 build/finding/workflow change.
 
@@ -40,6 +40,17 @@ documents Repoint as "a `param.form` different from the claim's current spell is
 REFUSED" with no FromPackage carve-out. Correcting that comment touches a byte-shared
 header and must be done in lockstep with MFO's copy -- deliberately NOT done here.
 
+**Field-pass-criterion caveat for the next deck run (Fable, 2026-09-08 -- NOT a
+defect).** "One `[ch.9-redirect]` line per ch.9 dispatch" only holds when a client's ops
+land RELEASE-then-request. If they land the other way round inside ONE Drain -- request
+the new claim, then release the old (claims 1 -> 2 -> 1) -- the channel never reaches
+zero claims, so no `Release`/`Engage` fires, no erase is posted, and the re-point's
+same-form nudge produces an identical answer tuple that RULE D correctly dedups: no
+line. That run is CORRECT (the redirect never lapsed at the engine, which is the point
+of that ordering), but a grader counting lines will read it as a miss. Grade that shape
+by the `[ch.9-redirect] H` heartbeat counters, which are never capped and never deduped.
+Recorded in `channels/OfferPackage.cpp`'s Release comment too.
+
 **F5-3 (LOW) -- a lapsed winner could take a LIVE claim's answer down with it.** The
 four winner-selecting cast reads (`TryGetCastClaim`, `TryGetCastSeatClaim` and both
 `*ForHand` overloads) picked the best claim by basis and only THEN tested that winner's
@@ -53,6 +64,19 @@ where no claim has lapsed; an all-lapsed list still returns false;
 `ControlMap.h::BetterClaim` itself is untouched. All four changed together on purpose --
 the allowance reader and the seat reader disagreeing about who owns a hand is the bug
 class that comparator exists to prevent.
+
+CORRECTION (review, 2026-09-08) to the reason that commit's message gave for leaving the
+three WRITER-side selections alone: it said Drain's TTL pass "releases expired claims in
+that same call", which is true but does not make the apply loop safe -- that pass runs
+AFTER the loop, so `ApplyRequest`'s `oldBestClaim`, `ApplyRelease`'s `ownerOf` and
+`ApplyRepoint`'s `best` really can pick a lapsed claim (a Repoint on a lapsed `best`
+fires `OnOwnerChanged` with its param, then the TTL pass releases it and fires
+`OnOwnerChanged` for the next claim). The decision to leave them stands, for the real
+reason: ch.8b's `Engage`/`OnOwnerChanged` are log lines only, and `Publish()` follows
+BOTH passes, so no reader can observe the intermediate -- the whole cost is one extra
+log line. Both halves are load-bearing; if a channel's `OnOwnerChanged` ever does a real
+engine write, the fix belongs in the ORDER of Drain's passes, not in the comparator.
+Written into `core/ControlMap.h`'s `BetterClaim` block so it is found from the code.
 
 ## HEAD OF WORK 2026-09-06 -- ch.9 nudge ordering fix (`fix/apmf-offerpackage-nudge-ordering`)
 

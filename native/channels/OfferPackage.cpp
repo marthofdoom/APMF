@@ -208,8 +208,8 @@ namespace {
             // re-engage produces a byte-identical answer tuple, and the RULE D dedup
             // eats the line. The redirect works; the pass criterion reads failure.
             //
-            // THE ERASE IS ITSELF POSTED -- IT IS NOT SAFE TO RUN HERE (F4-2,
-            // 2026-09-07). This Release runs inside ControlMap::Drain's apply loop,
+            // THE ERASE IS ITSELF POSTED -- IT IS NOT SAFE TO RUN HERE (F4-2, raised
+            // 2026-09-07, fixed 2026-09-08). This Release runs inside Drain's apply loop,
             // BEFORE Drain Publish()es the snapshot the 0x49 thunk answers from, so an
             // erase performed inline lands in exactly the window where the PUBLISHED
             // map still holds the claim. A combat-thread 0x49 consult in that window
@@ -226,9 +226,14 @@ namespace {
             //     re-request applied later in this same Drain posts), the erase always
             //     runs before the 0x49 consult a nudge causes;
             //   * by the time it runs the new generation is published, so a consult
-            //     racing it either sees NO claim (the thunk's own no-claim backstop
-            //     erases) or sees the re-offered claim and inserts a tuple that PRINTS
-            //     on its own. Either way the dispatch stays visible in the log.
+            //     racing it can no longer preserve a stale tuple: if there is no claim
+            //     the thunk's own no-claim backstop erases, and if the claim is back
+            //     the consult merely re-finds the identical tuple and dedups (it does
+            //     NOT print -- corrected 2026-09-08, the first version of this comment
+            //     claimed such a consult prints on its own, which is false). What makes
+            //     the dispatch visible is the FIFO ORDER, not that consult: the erase
+            //     runs, and the engage nudge's own consult then inserts FRESH and
+            //     prints.
             // A bare Post, NOT routed through PostDeferredNudge, because the erase must
             // be unconditional: gate 1 legitimately refuses to post a nudge at all (the
             // ControlMap unload sweep reaches this Release with an already-invalid
@@ -236,6 +241,19 @@ namespace {
             // captures only the FormID -- no actor, no handle, nothing to re-validate:
             // erasing a log memory for an actor that has since gone away is a no-op by
             // construction (idempotent, one mutex + one hash erase).
+            //
+            // A FIELD-PASS-CRITERION CAVEAT, NOT A DEFECT (Fable, 2026-09-08). "One
+            // [ch.9-redirect] line per dispatch" holds for RELEASE-then-request
+            // ordering, which is what posts this erase. A client whose ops land in ONE
+            // Drain the other way round -- request the new claim, then release the old
+            // (claims 1 -> 2 -> 1) -- never takes this channel to zero claims, so NO
+            // Release and no Engage fire, nothing is posted here, and the re-point's
+            // same-form nudge produces an identical answer tuple that RULE D correctly
+            // dedups. Nothing is wrong in that run: the redirect never lapsed at the
+            // engine, which is the whole point of that ordering. But a grader counting
+            // lines will read a correct dispatch as a miss, so grade that shape by the
+            // [ch.9-redirect] H heartbeat counters (never capped, never deduped)
+            // instead of by line count.
             //
             // THE ONE PATH THAT DROPS IT, stated rather than buried: at kPreLoadGame
             // ReleaseAll drives this Release and plugin.cpp then calls
