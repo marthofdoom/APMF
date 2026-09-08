@@ -208,12 +208,43 @@ namespace {
             // re-engage produces a byte-identical answer tuple, and the RULE D dedup
             // eats the line. The redirect works; the pass criterion reads failure.
             //
-            // BEFORE the post, because the erase must be unconditional: gate 1 can
-            // legitimately refuse to post at all (the ControlMap unload sweep reaches
-            // this Release with an already-invalid handle), and the remembered tuple
-            // must be dropped in that case too. Ordering it first also keeps the
-            // erase strictly ahead of any 0x49 consult the nudge could ever cause.
-            apmf::packagegate::ForgetRedirect(id);
+            // THE ERASE IS ITSELF POSTED -- IT IS NOT SAFE TO RUN HERE (F4-2,
+            // 2026-09-07). This Release runs inside ControlMap::Drain's apply loop,
+            // BEFORE Drain Publish()es the snapshot the 0x49 thunk answers from, so an
+            // erase performed inline lands in exactly the window where the PUBLISHED
+            // map still holds the claim. A combat-thread 0x49 consult in that window
+            // takes the thunk's claim-present path and RE-INSERTS the byte-identical
+            // tuple (core/PackageGate.cpp's try_emplace); a release plus a same-form
+            // re-request landing in ONE Drain then hands the re-engage a remembered
+            // tuple again, the RULE D dedup swallows the line, and the false negative
+            // this erase exists to remove is back. Same class of bug as the nudge
+            // itself: right thread, wrong MOMENT.
+            //
+            // Posting it fixes that by ORDER, not by luck. mainthread::Pump runs one
+            // hop past this Drain's Publish, in FIFO order, so:
+            //   * queued FIRST (ahead of both nudges posted below and of any nudge a
+            //     re-request applied later in this same Drain posts), the erase always
+            //     runs before the 0x49 consult a nudge causes;
+            //   * by the time it runs the new generation is published, so a consult
+            //     racing it either sees NO claim (the thunk's own no-claim backstop
+            //     erases) or sees the re-offered claim and inserts a tuple that PRINTS
+            //     on its own. Either way the dispatch stays visible in the log.
+            // A bare Post, NOT routed through PostDeferredNudge, because the erase must
+            // be unconditional: gate 1 legitimately refuses to post a nudge at all (the
+            // ControlMap unload sweep reaches this Release with an already-invalid
+            // handle) and the remembered tuple must be dropped in that case too. It
+            // captures only the FormID -- no actor, no handle, nothing to re-validate:
+            // erasing a log memory for an actor that has since gone away is a no-op by
+            // construction (idempotent, one mutex + one hash erase).
+            //
+            // THE ONE PATH THAT DROPS IT, stated rather than buried: at kPreLoadGame
+            // ReleaseAll drives this Release and plugin.cpp then calls
+            // mainthread::Discard(), so this task never runs. That is correct and costs
+            // nothing -- the world boundary erases WHOLESALE through
+            // packagegate::ForgetAllRedirects() on the revert callback, and the thunk's
+            // no-claim backstop catches anything after it. A missed erase can only ever
+            // suppress a LOG LINE; it can never change what 0x49 returns.
+            apmf::mainthread::Post([id] { apmf::packagegate::ForgetRedirect(id); });
             PostDeferredNudge(id, actor, false, 0, "release");
         }
     };

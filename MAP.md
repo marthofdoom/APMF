@@ -547,8 +547,11 @@ Engage/OnOwnerChanged/Release through `apmf::mainthread::Post` so it runs one ho
 `ControlMap::Publish()` — calling it inline asks the engine the 0x49 question while the
 claim is still only in the writer's private copy, which is exactly the 0-of-6 bug. A
 `[ch.9-redirect]` log line per transition, gated by `[PackageGate] EnableRedirectLog`
-(default 1), deduped per actor on the answer tuple; `ForgetRedirect` (release edge) and
-`ForgetAllRedirects` (revert/new game) drop that memory so a re-dispatch still prints.
+(default 1), deduped per actor on the answer tuple; `ForgetRedirect` (release edge —
+POSTED through `mainthread::Post`, queued ahead of the release nudge, because an inline
+erase sits in the pre-`Publish()` window where a combat-thread 0x49 consult re-inserts
+the identical tuple) and `ForgetAllRedirects` (revert/new game) drop that memory so a
+re-dispatch still prints.
 - **What breaks:** the redirect only takes effect **when the engine ASKS**, and the field
   evidence is that it does not ask on a useful cadence of its own — every win so far
   reconciles to an explicit `EvaluatePackage` nudge (MFO `DIAG-2026-09-06-loot-travel.md`;

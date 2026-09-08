@@ -4,6 +4,26 @@ Updated 2026-09-06. The current state of the build: what's shipped, what's
 probe-gated, what's next. Keep this current in the SAME change as any
 build/finding/workflow change.
 
+## HEAD OF WORK 2026-09-08 -- the three DEFERRED review findings (`fix/apmf-deferred-f4-2-f5-2-f5-3`)
+
+Branch off main. One commit per finding; each gets its own Fable diff review. **Not
+field-run.**
+
+**F4-2 (SEV-3, log fidelity) -- the ch.9 redirect erase ran in the pre-`Publish()`
+window.** `channels/OfferPackage.cpp`'s `Release` called `packagegate::ForgetRedirect`
+inline. Release runs inside `ControlMap::Drain`'s apply loop, so the PUBLISHED snapshot
+still held the claim: a combat-thread 0x49 consult in that window took the thunk's
+claim-present path and re-inserted the byte-identical tuple, and a release plus a
+same-form re-request inside ONE Drain then had its `[ch.9-redirect]` line eaten by the
+RULE D dedup again -- the exact false negative `ForgetRedirect` was added to remove.
+The erase is now POSTED through `apmf::mainthread::Post`, queued AHEAD of the release
+nudge, so it runs one hop past that `Publish` and strictly before any 0x49 consult a
+nudge causes. Unconditional by construction (a bare Post, never behind
+`PostDeferredNudge`'s gate-1 early return). At kPreLoadGame the task is dropped by
+`mainthread::Discard()` -- correct and costless: the world boundary erases wholesale via
+`ForgetAllRedirects()` and the thunk's no-claim backstop covers the rest, and a missed
+erase can only suppress a LOG LINE, never change what 0x49 returns.
+
 ## HEAD OF WORK 2026-09-06 -- ch.9 nudge ordering fix (`fix/apmf-offerpackage-nudge-ordering`)
 
 Branch off main. **CI-green, NOT field-run.** Fixes the bug MFO's
