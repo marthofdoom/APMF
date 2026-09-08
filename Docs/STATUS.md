@@ -40,6 +40,20 @@ documents Repoint as "a `param.form` different from the claim's current spell is
 REFUSED" with no FromPackage carve-out. Correcting that comment touches a byte-shared
 header and must be done in lockstep with MFO's copy -- deliberately NOT done here.
 
+**F5-3 (LOW) -- a lapsed winner could take a LIVE claim's answer down with it.** The
+four winner-selecting cast reads (`TryGetCastClaim`, `TryGetCastSeatClaim` and both
+`*ForHand` overloads) picked the best claim by basis and only THEN tested that winner's
+TTL, returning false if it had lapsed. With a lapsed high-basis claim and a live
+lower-basis one standing together -- ordinary while a client re-requests at one uniform
+basis, or holds a deny floor under a gambit -- the live claim's answer vanished for up
+to a frame, until the Drain sweep published the release: its deny dropped on the
+allowance readers, its drive absent on the seat readers. Lapsed claims are now skipped
+as CANDIDATES in all four, so the comparator ranks what is actually live. Byte-identical
+where no claim has lapsed; an all-lapsed list still returns false;
+`ControlMap.h::BetterClaim` itself is untouched. All four changed together on purpose --
+the allowance reader and the seat reader disagreeing about who owns a hand is the bug
+class that comparator exists to prevent.
+
 ## HEAD OF WORK 2026-09-06 -- ch.9 nudge ordering fix (`fix/apmf-offerpackage-nudge-ordering`)
 
 Branch off main. **CI-green, NOT field-run.** Fixes the bug MFO's

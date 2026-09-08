@@ -154,7 +154,9 @@ namespace apmf {
         // stands. Same RCU reader discipline as TryGetOwningClaim (any thread; relaxed
         // pre-gate, one acquire-load, one hash lookup on a frozen snapshot). Returns
         // false (and leaves outputs 0) when the actor has no winning kIntent_Cast
-        // claim. castProxy is not expressible through APMF_Param, hence this dedicated
+        // claim -- where "winning" means the best of the LIVE claims: one whose TTL has
+        // elapsed is not a candidate at all (F5-3), so it can neither answer for the
+        // channel nor mask a live lower-basis claim while it waits for the Drain sweep. castProxy is not expressible through APMF_Param, hence this dedicated
         // read. `outFlags` (optional, default nullptr -- existing callers unaffected)
         // additionally hands back the claim's raw CastFlags (APMF_API::kCastFlag_*),
         // e.g. kCastFlag_LeftHand -- the per-hand deny (2026-09-0x, INVARIANTS #18)
@@ -363,6 +365,14 @@ namespace apmf {
         //     answer.
         // All three were traced NON-DIVERGENT against this comparator. If any of them
         // ever starts ANSWERING WHO OWNS A FACET, it must move to BetterClaim.
+        //
+        // WHAT IT IS NEVER ASKED TO RANK (F5-3, 2026-09-07). The four cast reads feed
+        // it only the claims that are still LIVE: a claim past its TTL is skipped as a
+        // CANDIDATE, not tested after the fact. Testing only the winner let a lapsed
+        // high-basis claim speak for the channel and take a live lower-basis claim's
+        // answer down with it (dropping that claim's deny, or leaving it undriven) for
+        // up to a frame, until the Drain sweep published the release. This comparator
+        // is unchanged by that fix -- it simply never sees a dead claim.
         //
         // THE ORDER. Higher basis wins -- unchanged, and still the only thing that
         // ranks two DRIVING claims. What is ADDED is the tie: at an EQUAL basis a

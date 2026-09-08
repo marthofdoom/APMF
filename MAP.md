@@ -384,7 +384,9 @@ address, logging + SKIPPING a non-deriving symbol rather than installing
 blind), `Allowed` (the one shared "flip YES->NO" decision: a lock-free RCU
 `ControlMap::TryGetOwningClaim` read — never a mutex), `AllowedCast`/
 `AllowedCastForHand` (ch.8b `kIntent_Cast` exclusivity via
-`ControlMap::TryGetCastClaim`; the `ForHand` overload additionally takes an
+`ControlMap::TryGetCastClaim` — whose winner is the best LIVE claim, a TTL-elapsed
+claim being skipped as a candidate so it can neither answer nor mask a live
+lower-basis one before the Drain sweep; the `ForHand` overload additionally takes an
 `allowance::Hand{kUnknown,kLeft,kRight}` the CALLER resolved from its own
 engine-native signal, and ALLOWS without narrowing when it differs from the
 claim's `CastFlags::kCastFlag_LeftHand` bit — feat/deny-perhand, INVARIANTS
