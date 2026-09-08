@@ -313,6 +313,25 @@ namespace apmf {
             // BSPointerHandle -- a plain u32 with `= default` copy/dtor -- so Claim
             // stays trivially copyable and the RCU deep-copy is unchanged in cost.
             RE::ActorHandle castTargetHandle{};
+            // The form the CLIENT actually named for this claim, when that differs
+            // from `param.form` -- i.e. ONLY on a kCastFlag_FromPackage cast claim,
+            // where ApplyRequest stores the spell it EXTRACTED from the package and
+            // the client never learns that FormID. 0 everywhere else (every other
+            // claim's stored form IS the form the client named), so this reads
+            // byte-identically to before it existed for them.
+            //
+            // WHY IT IS STORED (F5-2, 2026-09-07). Repoint is the invited HEARTBEAT
+            // for a cast window (APMF_API.h, Repoint), and a client heartbeats with
+            // the param it requested with -- for a FromPackage claim that is the
+            // PACKAGE. ApplyRepoint compares the incoming form against the claim's
+            // stored form to refuse a spell SWAP, so every such heartbeat compared
+            // package-vs-extracted-spell and was refused as a spell change: a loud
+            // false alarm on a call that changed nothing (and, being a warning about
+            // a working client, exactly the kind of noise that hides a real one).
+            // Remembering what the client named lets that heartbeat be recognised
+            // for what it is, while a genuine swap -- a DIFFERENT package, or a bare
+            // spell -- is still refused and still logged.
+            RE::FormID     castSrcForm = 0;
         };
 
         // ---- THE ONE CLAIM COMPARATOR (2026-09-06) ------------------------------

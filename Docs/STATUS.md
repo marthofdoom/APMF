@@ -24,6 +24,22 @@ nudge causes. Unconditional by construction (a bare Post, never behind
 `ForgetAllRedirects()` and the thunk's no-claim backstop covers the rest, and a missed
 erase can only suppress a LOG LINE, never change what 0x49 returns.
 
+**F5-2 (MEDIUM, dormant) -- a FromPackage heartbeat was refused as a spell change.**
+`ControlMap::ApplyRequest` stores the spell it EXTRACTED from a `kCastFlag_FromPackage`
+request, a FormID the client is never handed, so the only form a correct client can
+heartbeat with is the PACKAGE it requested with -- and `ApplyRepoint`'s
+form-change refusal fired on every such call: a loud warning about a client doing
+exactly the right thing. The claim now remembers the client-named form
+(`Claim::castSrcForm`, 0 for every other claim) and `ApplyRepoint` treats a heartbeat
+carrying it as the same-form shape: nothing refused, nothing warned, TTL renewed. A
+genuinely different form -- another package, or a bare spell -- is still refused and
+still logged. Dormant today: MFO sets no FromPackage claim.
+
+NOTE for the coordinator: `native/APMF_API.h` (byte-shared with MFO, append-only) still
+documents Repoint as "a `param.form` different from the claim's current spell is
+REFUSED" with no FromPackage carve-out. Correcting that comment touches a byte-shared
+header and must be done in lockstep with MFO's copy -- deliberately NOT done here.
+
 ## HEAD OF WORK 2026-09-06 -- ch.9 nudge ordering fix (`fix/apmf-offerpackage-nudge-ordering`)
 
 Branch off main. **CI-green, NOT field-run.** Fixes the bug MFO's

@@ -287,6 +287,10 @@ namespace apmf {
         // Claim::ttlMs in core/ControlMap.h). 0 for every non-cast claim.
         std::uint32_t        castTtlMs  = 0;
         RE::ActorHandle      castTargetHandle{};
+        // The form the CLIENT named, when the claim ends up storing a DIFFERENT one
+        // (kCastFlag_FromPackage only -- see Claim::castSrcForm in core/ControlMap.h).
+        // 0 for every other claim, whose stored form IS the client's own.
+        RE::FormID           castSrcForm = 0;
         // feat/per-hand-cast-claims: handles of conflicting kIntent_Cast claims a
         // WINNING dual-vs-single-hand collision (below) must evict once the new
         // claim is actually inserted -- populated in the early conflict check,
@@ -342,6 +346,12 @@ namespace apmf {
                 }
                 spell = outSpell;
                 if (castTarget == 0) castTarget = outTarget;   // client's own target wins if it named one
+                // Remember the PACKAGE the client named. The claim is about to store
+                // the EXTRACTED spell instead, a FormID the client never sees, so
+                // without this a plain Repoint heartbeat -- which necessarily carries
+                // the package -- reads as a spell SWAP in ApplyRepoint and is refused
+                // loudly on every call (F5-2). See Claim::castSrcForm.
+                castSrcForm = op.param.form;
             }
             effParam.form = spell;
             std::uint32_t ttl = (op.kind == PendingOp::Kind::kCast) ? op.ttlMs : 0;
@@ -620,6 +630,7 @@ namespace apmf {
         newClaim.expiresMs        = expiresMs;
         newClaim.ttlMs            = castTtlMs;
         newClaim.castTargetHandle = castTargetHandle;
+        newClaim.castSrcForm      = castSrcForm;
 
         // Before adding this claim, find the incumbent OWNER (if any) -- seeded from
         // the first EXISTING claim, never a 0.0 floor, so a negative-basis incumbent
@@ -814,6 +825,18 @@ namespace apmf {
             //      other param field still updates, and the TTL still renews, so a
             //      same-form heartbeat is completely unaffected.
             //
+            //      ONE FORM THAT IS *NOT* A CHANGE (F5-2, 2026-09-07). On a
+            //      kCastFlag_FromPackage claim the stored form is the spell APMF
+            //      EXTRACTED from the client's package -- a FormID the client is never
+            //      handed -- so the only thing a correct client can heartbeat with is
+            //      the PACKAGE it requested with, and the test above flagged that as a
+            //      swap on every single call. The claim now remembers the form the
+            //      client named (Claim::castSrcForm) and treats it as the same-form
+            //      shape: no refusal, no warning, nothing changed. That is not a
+            //      loosening of the rule -- the extracted spell, its proxy, its target
+            //      and its flags all stay exactly as RequestCast resolved them, which
+            //      is precisely what the rule protects.
+            //
             // Only kIntent_Cast claims are affected: for every other channel `param`
             // is written exactly as before.
             const bool isCastClaim =
@@ -831,6 +854,21 @@ namespace apmf {
                                  apmf::log::Hex(formID), handle, apmf::log::Hex(param.form));
                 }
                 effParam.form = 0;
+            } else if (isCastClaim && self->castSrcForm != 0 && param.form == self->castSrcForm) {
+                // A kCastFlag_FromPackage claim's HEARTBEAT (F5-2, 2026-09-07). The
+                // client named a PACKAGE; ApplyRequest extracted the spell out of it
+                // and stored THAT as param.form, a FormID the client is never told.
+                // So the only form a correct client can heartbeat with is the package
+                // it requested with -- and comparing that against the extracted spell
+                // made every heartbeat look like a spell swap and print the REFUSED
+                // warning below. Nothing is being changed here, so nothing is refused
+                // and nothing is warned about: the claim keeps the spell it extracted
+                // (the assignment is what makes that explicit rather than incidental)
+                // and the TTL renews below, which is the whole point of the call.
+                // A genuinely different form -- another package, or a bare spell --
+                // still falls through to the refusal below, because it still means
+                // proxy/target/flags resolved against something else.
+                effParam.form = self->param.form;
             } else if (isCastClaim && param.form != self->param.form) {
                 spdlog::warn("[ch.8b] 0x{} Repoint on a live cast claim (h={}) tried to change its spell "
                              "0x{} -> 0x{} -- REFUSED (the claim keeps 0x{}). A cast claim's proxy, target "

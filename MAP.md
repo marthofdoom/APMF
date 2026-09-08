@@ -80,7 +80,13 @@ restore/wipe then `Publish` an empty snapshot). Arbitration by basis (higher win
 tie → earliest); claims refcount. On a real owner change (add, release, or
 `ApplyRepoint`) a parameterized channel gets `OnOwnerChanged(winner.param)`; `Engage`
 gets the winning claim's param. `ApplyRepoint` updates a claim's stored param and, if
-it owns the channel, re-points it in place (same handle — no release/re-engage).
+it owns the channel, re-points it in place (same handle — no release/re-engage). On a
+`kIntent_Cast` claim Repoint is a HEARTBEAT: it renews the TTL and updates the non-form
+param fields, but a form CHANGE is refused + logged (proxy/target/flags were resolved
+against the original spell and Repoint re-runs none of that) — with the one exception
+that a `kCastFlag_FromPackage` claim's heartbeat necessarily carries the PACKAGE the
+client named, which the claim remembers as `Claim::castSrcForm` and accepts silently
+(the stored form stays the spell APMF extracted).
 - **What breaks:** the RCU contract (#12) — the working map/`m_index` are mutated
   ONLY on the writer thread (Drain/ReleaseAll/Clear, all the same MAIN thread; API
   calls only enqueue) and published via `Publish()`
