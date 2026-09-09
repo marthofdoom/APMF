@@ -1,3 +1,9 @@
+## v0.9.4 -- Ships its settings file
+
+- **Harbinger now ships `Data/SKSE/Plugins/APMF.ini`.** The plugin has always read that file, but no release ever contained it, so every switch fell back to a built in default and there was no way to see what the switches were. The file is now included, with every key documented and set to the configuration that was actually tested.
+- **The spell score steer is on by default.** It nudges the game's own scoring so a follower picks the spell a mod asked for instead of its own preference. It was held off until field data proved the underlying hook runs. That data arrived on 2026-09-09.
+- No code changed. Deleting the file, or any line in it, is still safe.
+
 ## v0.9.3 -- Package offers actually engage, and a cast claim can be renewed
 
 - **A client's package offer now reaches the game.** The nudge that tells the engine to re-ask for a package was being posted before the claim was published, so the engine asked while the claim was still invisible and kept the package it already had. Nothing a client offered ever ran. It is now posted after the claim goes live. This is what was stopping follower loot travel from working.
