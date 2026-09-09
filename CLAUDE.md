@@ -145,6 +145,20 @@ of a given change.
 9. **A FLOOR IS SAFE; AN EXPIRY IS NOT.** Size every budget/TTL from the REAL refresh
    cadence, not from a guess. A round-robin tick means per-item refresh is
    `N x period` — a flat expiry shorter than that silently kills LIVE state.
+11. **PER-RUNTIME PATHS, NOT A LOWEST-COMMON-DENOMINATOR COMPROMISE (marth 2026-09-09).**
+    Both binaries are unpacked now (1.6.1170 and 1.5.97), so version fragility is no
+    longer a reason to weaken a mechanism. **Whatever is proven on 1.6 is what ships on
+    1.6.** 1.5 gets its OWN separate path, behaviourally identical, with every offset and
+    id verified against the 1.5 LAYOUT. Never degrade the proven path to make one
+    construct span both runtimes, and never assume a construct valid on one layout is
+    valid on the other — the layouts genuinely differ (17 vs 18 input contexts shifts
+    every `ControlMap` member past `controlMap[]`, which is how MFO shipped a
+    session-ending crash).
+    **APMF's exposure right now: six single-version `REL::ID` sites in `native/` with no
+    1.5 id.** Under this rule each needs a 1.5 id sourced and VERIFIED (address library
+    plus the unpacked 1.5.97 binary), not a shared guess and not a construct chosen
+    because it happens to span both.
+
 10. **PROPER SOLUTIONS, NOT WORKAROUNDS.** Never work around unless absolutely
     needed; solve the root cause. If a compromise is genuinely unavoidable, FLAG it
     explicitly and record why — never bury it.
