@@ -45,6 +45,16 @@ namespace apmf::packagegate {
     // redirect happened. The mechanism would be working and the pass criterion would
     // read failure.
     //
+    // MUST BE POSTED, NOT CALLED INLINE FROM THAT EDGE (F4-2, fixed 2026-09-08 -- the
+    // same correction the nudge itself needed). A Channel's Release runs inside
+    // ControlMap::Drain's apply loop, BEFORE Drain Publish()es; the PUBLISHED map
+    // therefore still holds the claim, and a combat-thread 0x49 consult in that
+    // window takes the thunk's claim-present path and re-inserts the byte-identical
+    // tuple the erase just removed -- restoring exactly the dedup false negative
+    // this function exists to remove. channels/OfferPackage.cpp posts it through
+    // apmf::mainthread::Post, queued AHEAD of its release nudge, so it runs one hop
+    // past that Publish and strictly before any 0x49 consult a nudge causes.
+    //
     // Idempotent, cheap (one mutex + one hash erase), and safe to call for an actor
     // that was never recorded. Any thread; takes only PackageGate's own log-dedup
     // mutex, so it cannot participate in a lock cycle.

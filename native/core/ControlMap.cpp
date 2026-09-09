@@ -287,6 +287,10 @@ namespace apmf {
         // Claim::ttlMs in core/ControlMap.h). 0 for every non-cast claim.
         std::uint32_t        castTtlMs  = 0;
         RE::ActorHandle      castTargetHandle{};
+        // The form the CLIENT named, when the claim ends up storing a DIFFERENT one
+        // (kCastFlag_FromPackage only -- see Claim::castSrcForm in core/ControlMap.h).
+        // 0 for every other claim, whose stored form IS the client's own.
+        RE::FormID           castSrcForm = 0;
         // feat/per-hand-cast-claims: handles of conflicting kIntent_Cast claims a
         // WINNING dual-vs-single-hand collision (below) must evict once the new
         // claim is actually inserted -- populated in the early conflict check,
@@ -342,6 +346,12 @@ namespace apmf {
                 }
                 spell = outSpell;
                 if (castTarget == 0) castTarget = outTarget;   // client's own target wins if it named one
+                // Remember the PACKAGE the client named. The claim is about to store
+                // the EXTRACTED spell instead, a FormID the client never sees, so
+                // without this a plain Repoint heartbeat -- which necessarily carries
+                // the package -- reads as a spell SWAP in ApplyRepoint and is refused
+                // loudly on every call (F5-2). See Claim::castSrcForm.
+                castSrcForm = op.param.form;
             }
             effParam.form = spell;
             std::uint32_t ttl = (op.kind == PendingOp::Kind::kCast) ? op.ttlMs : 0;
@@ -620,6 +630,7 @@ namespace apmf {
         newClaim.expiresMs        = expiresMs;
         newClaim.ttlMs            = castTtlMs;
         newClaim.castTargetHandle = castTargetHandle;
+        newClaim.castSrcForm      = castSrcForm;
 
         // Before adding this claim, find the incumbent OWNER (if any) -- seeded from
         // the first EXISTING claim, never a 0.0 floor, so a negative-basis incumbent
@@ -814,6 +825,18 @@ namespace apmf {
             //      other param field still updates, and the TTL still renews, so a
             //      same-form heartbeat is completely unaffected.
             //
+            //      ONE FORM THAT IS *NOT* A CHANGE (F5-2, fixed 2026-09-08). On a
+            //      kCastFlag_FromPackage claim the stored form is the spell APMF
+            //      EXTRACTED from the client's package -- a FormID the client is never
+            //      handed -- so the only thing a correct client can heartbeat with is
+            //      the PACKAGE it requested with, and the test above flagged that as a
+            //      swap on every single call. The claim now remembers the form the
+            //      client named (Claim::castSrcForm) and treats it as the same-form
+            //      shape: no refusal, no warning, nothing changed. That is not a
+            //      loosening of the rule -- the extracted spell, its proxy, its target
+            //      and its flags all stay exactly as RequestCast resolved them, which
+            //      is precisely what the rule protects.
+            //
             // Only kIntent_Cast claims are affected: for every other channel `param`
             // is written exactly as before.
             const bool isCastClaim =
@@ -831,6 +854,21 @@ namespace apmf {
                                  apmf::log::Hex(formID), handle, apmf::log::Hex(param.form));
                 }
                 effParam.form = 0;
+            } else if (isCastClaim && self->castSrcForm != 0 && param.form == self->castSrcForm) {
+                // A kCastFlag_FromPackage claim's HEARTBEAT (F5-2, fixed 2026-09-08). The
+                // client named a PACKAGE; ApplyRequest extracted the spell out of it
+                // and stored THAT as param.form, a FormID the client is never told.
+                // So the only form a correct client can heartbeat with is the package
+                // it requested with -- and comparing that against the extracted spell
+                // made every heartbeat look like a spell swap and print the REFUSED
+                // warning below. Nothing is being changed here, so nothing is refused
+                // and nothing is warned about: the claim keeps the spell it extracted
+                // (the assignment is what makes that explicit rather than incidental)
+                // and the TTL renews below, which is the whole point of the call.
+                // A genuinely different form -- another package, or a bare spell --
+                // still falls through to the refusal below, because it still means
+                // proxy/target/flags resolved against something else.
+                effParam.form = self->param.form;
             } else if (isCastClaim && param.form != self->param.form) {
                 spdlog::warn("[ch.8b] 0x{} Repoint on a live cast claim (h={}) tried to change its spell "
                              "0x{} -> 0x{} -- REFUSED (the claim keeps 0x{}). A cast claim's proxy, target "
@@ -1096,20 +1134,37 @@ namespace apmf {
             // every other winner-selection in this class uses: higher basis wins; at
             // an equal basis a deny-only claim loses to a driving one; otherwise the
             // earliest keeps it.
-            const Claim* best = &cs.claims.front();
-            for (const auto& c : cs.claims) {
-                if (BetterClaim(c, *best)) best = &c;
-            }
+            //
+            // ---- THE CANDIDATE SET IS THE *LIVE* CLAIMS (F5-3, fixed 2026-09-08) ----
             // A claim whose TTL has elapsed is treated as ALREADY GONE, without
-            // waiting for the Drain auto-release pass to publish -- the SAME
-            // treat-as-gone rule (and the same winner-only test) as
-            // TryGetCastSeatClaim below. This is an ALLOWANCE reader
-            // (Allowance::AllowedCast), so a lapsed claim left un-tested here goes on
-            // DENYING every other spell for up to a frame after its window closed:
-            // the claim is dead, its own cast will never be seated, and the AI is
-            // held off a hand nothing is using. One compare, on the read that decides
-            // a deny.
-            if (best->expiresMs != 0 && apmf::clock::MonotonicMs() >= best->expiresMs) return false;
+            // waiting for the Drain auto-release pass to publish it away. That rule is
+            // older than this comment; what changed is WHERE it is applied. It used to
+            // run as a single test on the winner AFTER the comparator had already
+            // picked it, which silently made a lapsed claim able to speak for the
+            // whole channel: with a high-basis LAPSED claim and a lower-basis LIVE one
+            // standing together -- ordinary while a client re-requests at one uniform
+            // basis, or holds a floor under a gambit -- the winner-only test returned
+            // false and the LIVE claim's answer vanished with it, for up to a frame,
+            // until the sweep ran. On this reader (Allowance::AllowedCast) that means
+            // the live claim's DENY is dropped and the AI is free on a hand a live
+            // claim is holding; on the seat readers it means the live claim is not
+            // driven at all. Both are the "unclaimed gap" class the TTL floor exists
+            // to remove, manufactured by the very test that enforces the TTL.
+            //
+            // So skip lapsed claims as CANDIDATES and let the comparator rank what is
+            // actually live. Nothing else moves: with no lapsed claim in the list this
+            // is byte-identical to the old code, an all-lapsed list still returns
+            // false, and the comparator itself is untouched -- it never sees a claim
+            // it would have been asked to rank before. The four winner-selecting cast
+            // reads all do this the same way, or they would disagree about who owns a
+            // hand (ControlMap.h::BetterClaim's "they MUST all agree").
+            const auto nowMs = apmf::clock::MonotonicMs();
+            const Claim* best = nullptr;
+            for (const auto& c : cs.claims) {
+                if (c.expiresMs != 0 && nowMs >= c.expiresMs) continue;   // lapsed -- already gone
+                if (!best || BetterClaim(c, *best)) best = &c;
+            }
+            if (!best) return false;   // every claim here has lapsed -- nothing live to answer for
 
             outSpell = best->param.form;
             outProxy = best->castProxy;
@@ -1150,17 +1205,22 @@ namespace apmf {
             if (cs.channel != channel) continue;
             if (cs.claims.empty()) return false;
             // Winner = the ONE comparator (ControlMap.h::BetterClaim), the same rule
-            // every other winner-selection in this class uses.
-            const Claim* best = &cs.claims.front();
+            // every other winner-selection in this class uses -- ranking only the LIVE
+            // claims (F5-3; the full rationale is on TryGetCastClaim above). A claim
+            // whose TTL has elapsed is treated as ALREADY GONE without waiting for the
+            // Drain auto-release pass: that pass runs once per frame, a combat-thread
+            // seat can run several times inside that frame, and a seat answering from
+            // an expired claim is exactly the "unprotected drive" hazard the TTL exists
+            // to prevent. Skipping lapsed candidates rather than testing only the
+            // winner keeps that guarantee AND stops a lapsed claim from hiding a live
+            // lower-basis one for up to a frame.
+            const auto nowMs = apmf::clock::MonotonicMs();
+            const Claim* best = nullptr;
             for (const auto& c : cs.claims) {
-                if (BetterClaim(c, *best)) best = &c;
+                if (c.expiresMs != 0 && nowMs >= c.expiresMs) continue;   // lapsed -- already gone
+                if (!best || BetterClaim(c, *best)) best = &c;
             }
-            // A claim whose TTL has elapsed is treated as ALREADY GONE here, without
-            // waiting for the Drain auto-release pass to publish. The pass runs once per
-            // frame; a combat-thread seat can run several times inside that frame, and a
-            // seat answering from an expired claim is exactly the "unprotected drive"
-            // hazard the TTL exists to prevent. Reading the deadline costs one compare.
-            if (best->expiresMs != 0 && apmf::clock::MonotonicMs() >= best->expiresMs) return false;
+            if (!best) return false;   // every claim here has lapsed -- nothing live to answer for
 
             out.spell        = best->param.form;
             out.proxy        = best->castProxy;
@@ -1202,17 +1262,19 @@ namespace apmf {
             // kCastFlag_DualCast claim occupies both); a claim on the OTHER hand is
             // simply not a candidate here -- never mixed into this arbitration, and
             // never able to mask this hand's own claim regardless of its basis.
+            // Lapsed claims are not candidates -- same treat-as-gone rule, applied to
+            // the candidate SET rather than only to the winner (F5-3; rationale on
+            // TryGetCastClaim above). It matters most here: this hand's live floor
+            // being masked by a lapsed claim on the same hand is precisely how an
+            // ALLOWANCE reader ends up dropping a deny the client still holds.
+            const auto nowMs = apmf::clock::MonotonicMs();
             const Claim* best = nullptr;
             for (const auto& c : cs.claims) {
                 if (!ClaimOccupiesHand(c.castFlags, hand)) continue;
+                if (c.expiresMs != 0 && nowMs >= c.expiresMs) continue;   // lapsed -- already gone
                 if (!best || BetterClaim(c, *best)) best = &c;   // ONE comparator (ControlMap.h)
             }
-            if (!best) return false;   // no claim occupies this hand -- not this hand's business
-            // Same treat-as-gone TTL rule (and the same winner-only test) as
-            // TryGetCastSeatClaimForHand below -- see TryGetCastClaim above for why an
-            // ALLOWANCE reader in particular must not keep denying from a lapsed claim
-            // while it waits for the Drain sweep.
-            if (best->expiresMs != 0 && apmf::clock::MonotonicMs() >= best->expiresMs) return false;
+            if (!best) return false;   // no LIVE claim occupies this hand -- not this hand's business
 
             outSpell = best->param.form;
             outProxy = best->castProxy;
@@ -1245,14 +1307,16 @@ namespace apmf {
             if (cs.claims.empty()) return false;
             // Winner = highest basis AMONG CLAIMS THAT OCCUPY `hand` -- same
             // per-hand arbitration as TryGetCastClaimForHand above.
+            // Lapsed claims are not candidates -- same TTL-as-gone treatment as
+            // TryGetCastSeatClaim above, applied to the candidate SET (F5-3).
+            const auto nowMs = apmf::clock::MonotonicMs();
             const Claim* best = nullptr;
             for (const auto& c : cs.claims) {
                 if (!ClaimOccupiesHand(c.castFlags, hand)) continue;
+                if (c.expiresMs != 0 && nowMs >= c.expiresMs) continue;   // lapsed -- already gone
                 if (!best || BetterClaim(c, *best)) best = &c;   // ONE comparator (ControlMap.h)
             }
-            if (!best) return false;   // no claim occupies this hand
-            // Same TTL-as-gone treatment as TryGetCastSeatClaim above.
-            if (best->expiresMs != 0 && apmf::clock::MonotonicMs() >= best->expiresMs) return false;
+            if (!best) return false;   // no LIVE claim occupies this hand
 
             out.spell        = best->param.form;
             out.proxy        = best->castProxy;

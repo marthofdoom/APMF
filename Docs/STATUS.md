@@ -1,8 +1,82 @@
 # APMF STATUS — living handoff (start here)
 
-Updated 2026-09-06. The current state of the build: what's shipped, what's
+Updated 2026-09-08. The current state of the build: what's shipped, what's
 probe-gated, what's next. Keep this current in the SAME change as any
 build/finding/workflow change.
+
+## HEAD OF WORK 2026-09-08 -- the three DEFERRED review findings (`fix/apmf-deferred-f4-2-f5-2-f5-3`)
+
+Branch off main. One commit per finding; each gets its own Fable diff review. **Not
+field-run.**
+
+**F4-2 (SEV-3, log fidelity) -- the ch.9 redirect erase ran in the pre-`Publish()`
+window.** `channels/OfferPackage.cpp`'s `Release` called `packagegate::ForgetRedirect`
+inline. Release runs inside `ControlMap::Drain`'s apply loop, so the PUBLISHED snapshot
+still held the claim: a combat-thread 0x49 consult in that window took the thunk's
+claim-present path and re-inserted the byte-identical tuple, and a release plus a
+same-form re-request inside ONE Drain then had its `[ch.9-redirect]` line eaten by the
+RULE D dedup again -- the exact false negative `ForgetRedirect` was added to remove.
+The erase is now POSTED through `apmf::mainthread::Post`, queued AHEAD of the release
+nudge, so it runs one hop past that `Publish` and strictly before any 0x49 consult a
+nudge causes. Unconditional by construction (a bare Post, never behind
+`PostDeferredNudge`'s gate-1 early return). At kPreLoadGame the task is dropped by
+`mainthread::Discard()` -- correct and costless: the world boundary erases wholesale via
+`ForgetAllRedirects()` and the thunk's no-claim backstop covers the rest, and a missed
+erase can only suppress a LOG LINE, never change what 0x49 returns.
+
+**F5-2 (MEDIUM, dormant) -- a FromPackage heartbeat was refused as a spell change.**
+`ControlMap::ApplyRequest` stores the spell it EXTRACTED from a `kCastFlag_FromPackage`
+request, a FormID the client is never handed, so the only form a correct client can
+heartbeat with is the PACKAGE it requested with -- and `ApplyRepoint`'s
+form-change refusal fired on every such call: a loud warning about a client doing
+exactly the right thing. The claim now remembers the client-named form
+(`Claim::castSrcForm`, 0 for every other claim) and `ApplyRepoint` treats a heartbeat
+carrying it as the same-form shape: nothing refused, nothing warned, TTL renewed. A
+genuinely different form -- another package, or a bare spell -- is still refused and
+still logged. Dormant today: MFO sets no FromPackage claim.
+
+NOTE for the coordinator: `native/APMF_API.h` (byte-shared with MFO, append-only) still
+documents Repoint as "a `param.form` different from the claim's current spell is
+REFUSED" with no FromPackage carve-out. Correcting that comment touches a byte-shared
+header and must be done in lockstep with MFO's copy -- deliberately NOT done here.
+
+**Field-pass-criterion caveat for the next deck run (Fable, 2026-09-08 -- NOT a
+defect).** "One `[ch.9-redirect]` line per ch.9 dispatch" only holds when a client's ops
+land RELEASE-then-request. If they land the other way round inside ONE Drain -- request
+the new claim, then release the old (claims 1 -> 2 -> 1) -- the channel never reaches
+zero claims, so no `Release`/`Engage` fires, no erase is posted, and the re-point's
+same-form nudge produces an identical answer tuple that RULE D correctly dedups: no
+line. That run is CORRECT (the redirect never lapsed at the engine, which is the point
+of that ordering), but a grader counting lines will read it as a miss. Grade that shape
+by the `[ch.9-redirect] H` heartbeat counters, which are never capped and never deduped.
+Recorded in `channels/OfferPackage.cpp`'s Release comment too.
+
+**F5-3 (LOW) -- a lapsed winner could take a LIVE claim's answer down with it.** The
+four winner-selecting cast reads (`TryGetCastClaim`, `TryGetCastSeatClaim` and both
+`*ForHand` overloads) picked the best claim by basis and only THEN tested that winner's
+TTL, returning false if it had lapsed. With a lapsed high-basis claim and a live
+lower-basis one standing together -- ordinary while a client re-requests at one uniform
+basis, or holds a deny floor under a gambit -- the live claim's answer vanished for up
+to a frame, until the Drain sweep published the release: its deny dropped on the
+allowance readers, its drive absent on the seat readers. Lapsed claims are now skipped
+as CANDIDATES in all four, so the comparator ranks what is actually live. Byte-identical
+where no claim has lapsed; an all-lapsed list still returns false;
+`ControlMap.h::BetterClaim` itself is untouched. All four changed together on purpose --
+the allowance reader and the seat reader disagreeing about who owns a hand is the bug
+class that comparator exists to prevent.
+
+CORRECTION (review, 2026-09-08) to the reason that commit's message gave for leaving the
+three WRITER-side selections alone: it said Drain's TTL pass "releases expired claims in
+that same call", which is true but does not make the apply loop safe -- that pass runs
+AFTER the loop, so `ApplyRequest`'s `oldBestClaim`, `ApplyRelease`'s `ownerOf` and
+`ApplyRepoint`'s `best` really can pick a lapsed claim (a Repoint on a lapsed `best`
+fires `OnOwnerChanged` with its param, then the TTL pass releases it and fires
+`OnOwnerChanged` for the next claim). The decision to leave them stands, for the real
+reason: ch.8b's `Engage`/`OnOwnerChanged` are log lines only, and `Publish()` follows
+BOTH passes, so no reader can observe the intermediate -- the whole cost is one extra
+log line. Both halves are load-bearing; if a channel's `OnOwnerChanged` ever does a real
+engine write, the fix belongs in the ORDER of Drain's passes, not in the comparator.
+Written into `core/ControlMap.h`'s `BetterClaim` block so it is found from the code.
 
 ## HEAD OF WORK 2026-09-06 -- ch.9 nudge ordering fix (`fix/apmf-offerpackage-nudge-ordering`)
 

@@ -80,7 +80,13 @@ restore/wipe then `Publish` an empty snapshot). Arbitration by basis (higher win
 tie → earliest); claims refcount. On a real owner change (add, release, or
 `ApplyRepoint`) a parameterized channel gets `OnOwnerChanged(winner.param)`; `Engage`
 gets the winning claim's param. `ApplyRepoint` updates a claim's stored param and, if
-it owns the channel, re-points it in place (same handle — no release/re-engage).
+it owns the channel, re-points it in place (same handle — no release/re-engage). On a
+`kIntent_Cast` claim Repoint is a HEARTBEAT: it renews the TTL and updates the non-form
+param fields, but a form CHANGE is refused + logged (proxy/target/flags were resolved
+against the original spell and Repoint re-runs none of that) — with the one exception
+that a `kCastFlag_FromPackage` claim's heartbeat necessarily carries the PACKAGE the
+client named, which the claim remembers as `Claim::castSrcForm` and accepts silently
+(the stored form stays the spell APMF extracted).
 - **What breaks:** the RCU contract (#12) — the working map/`m_index` are mutated
   ONLY on the writer thread (Drain/ReleaseAll/Clear, all the same MAIN thread; API
   calls only enqueue) and published via `Publish()`
@@ -378,7 +384,9 @@ address, logging + SKIPPING a non-deriving symbol rather than installing
 blind), `Allowed` (the one shared "flip YES->NO" decision: a lock-free RCU
 `ControlMap::TryGetOwningClaim` read — never a mutex), `AllowedCast`/
 `AllowedCastForHand` (ch.8b `kIntent_Cast` exclusivity via
-`ControlMap::TryGetCastClaim`; the `ForHand` overload additionally takes an
+`ControlMap::TryGetCastClaim` — whose winner is the best LIVE claim, a TTL-elapsed
+claim being skipped as a candidate so it can neither answer nor mask a live
+lower-basis one before the Drain sweep; the `ForHand` overload additionally takes an
 `allowance::Hand{kUnknown,kLeft,kRight}` the CALLER resolved from its own
 engine-native signal, and ALLOWS without narrowing when it differs from the
 claim's `CastFlags::kCastFlag_LeftHand` bit — feat/deny-perhand, INVARIANTS
@@ -396,7 +404,10 @@ narrow. That rule OUTLIVED the drive that exposed it: with the engine seats the
 claim's proxy there is what lets the NPC's own cast get off the ground at all.
 `core/CastSeats.cpp` and `core/EquipGate.cpp`'s seat 0x0F read the richer
 `ControlMap::TryGetCastSeatClaim` instead (spell + proxy + target + resolved
-`ActorHandle` + flags + TTL in one RCU read) — same discipline, more fields.
+`ActorHandle` + flags + TTL in one RCU read) — same discipline, more fields, and the
+same live-candidate rule: `TryGetCastSeatClaim`/`…ForHand` skip a TTL-elapsed claim as
+a CANDIDATE rather than testing only the winner, so a lapsed claim can neither seat nor
+mask a live lower-basis one before the Drain sweep.
 - **What breaks:** `Allowed`/`InstallOnVtables`'s thunk callers run on COMBAT
   THREADS (§5) — never take a lock, never touch the follower/actor list, never
   call anything beyond the stored `orig` + one ControlMap read. `DerivesFrom`
@@ -547,8 +558,11 @@ Engage/OnOwnerChanged/Release through `apmf::mainthread::Post` so it runs one ho
 `ControlMap::Publish()` — calling it inline asks the engine the 0x49 question while the
 claim is still only in the writer's private copy, which is exactly the 0-of-6 bug. A
 `[ch.9-redirect]` log line per transition, gated by `[PackageGate] EnableRedirectLog`
-(default 1), deduped per actor on the answer tuple; `ForgetRedirect` (release edge) and
-`ForgetAllRedirects` (revert/new game) drop that memory so a re-dispatch still prints.
+(default 1), deduped per actor on the answer tuple; `ForgetRedirect` (release edge —
+POSTED through `mainthread::Post`, queued ahead of the release nudge, because an inline
+erase sits in the pre-`Publish()` window where a combat-thread 0x49 consult re-inserts
+the identical tuple) and `ForgetAllRedirects` (revert/new game) drop that memory so a
+re-dispatch still prints.
 - **What breaks:** the redirect only takes effect **when the engine ASKS**, and the field
   evidence is that it does not ask on a useful cadence of its own — every win so far
   reconciles to an explicit `EvaluatePackage` nudge (MFO `DIAG-2026-09-06-loot-travel.md`;
