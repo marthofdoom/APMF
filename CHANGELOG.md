@@ -1,4 +1,14 @@
-## Unreleased -- Diagnostic keys are opt-in
+## v0.9.3 -- Package offers actually engage, and a cast claim can be renewed
+
+- **A client's package offer now reaches the game.** The nudge that tells the engine to re-ask for a package was being posted before the claim was published, so the engine asked while the claim was still invisible and kept the package it already had. Nothing a client offered ever ran. It is now posted after the claim goes live. This is what was stopping follower loot travel from working.
+- **A cast claim's deadline is a floor that can be renewed, not a hard expiry.** A client that keeps asking for the same spell on the same hand can now hold it through a long cast. Before this, a claim died on its own clock in the middle of a cast the engine was still performing.
+- **A client can claim a hand purely to deny it.** This lets a client keep the game's AI off the other hand without pretending to cast anything there. It ships switched off and no client sets it yet.
+- **The spell score steer now runs where spells are scored.** It was installed on the weapon path, where it could not affect a spell. The weapon steer is gone.
+- Fixed a redirect answer that could be remembered past the point it stopped being true, so a repeat offer of the same package logged nothing and looked like a failure.
+- Fixed a claim built from a package refusing its own client's heartbeat.
+- Fixed the winner of a hand being picked before checking whether that claim was still alive, which could drop a live lower-priority deny for a frame.
+
+## Diagnostic keys are opt-in
 
 - **No key press can change what Harbinger does any more.** Earlier builds armed a keyboard test surface in every game: numpad keys took control of whatever NPC the crosshair was on, and two of them switched a live actor's ability to attack or cast on and off. That was a diagnostic surface that should never have shipped armed. It is now off unless you ask for it, and the release note for v0.9.0 ("nothing to configure") is finally true of the keyboard as well.
 - Testers who want it back set `EnableTestSurface=1` under `[Input]` in `Data/SKSE/Plugins/APMF.ini`. The probe that flips an actor's attack and cast bits needs its own `[Probe.NativeBit] Enable=1` on top of that.
