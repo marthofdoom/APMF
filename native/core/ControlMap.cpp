@@ -131,6 +131,27 @@ namespace apmf {
         }
     }
 
+    // ABI v7 (ch.17's SetEquipSet): DECLARE the worn set on an existing claim.
+    // Same shape and same contract as EnqueueSetSpellAllowList above: `forms` is
+    // READ AND COPIED synchronously here (APMF never retains the client's pointer),
+    // clamped to kMaxEquipSet at enqueue time so the queued op is already bounded.
+    // forms == nullptr or count == 0 -> equipCount stays 0 -> CLEARS the
+    // declaration on Apply.
+    void ControlMap::EnqueueSetEquipSet(Handle handle, const RE::FormID* forms, std::uint32_t count) {
+        if (handle == APMF_API::kInvalidHandle) return;
+        PendingOp op{};
+        op.kind   = PendingOp::Kind::kSetEquipSet;
+        op.handle = handle;
+        if (forms && count > 0) {
+            op.equipCount = (count < APMF_API::kMaxEquipSet) ? count : APMF_API::kMaxEquipSet;
+            for (std::uint32_t i = 0; i < op.equipCount; ++i) op.equipForms[i] = forms[i];
+        }
+        {
+            std::scoped_lock lock(m_qmx);
+            m_queue.push_back(op);
+        }
+    }
+
     // ABI v5 (ch.8b, kIntent_Cast): claim the cast-EXECUTION facet for a bounded
     // window. Mirrors EnqueueRequest's shape (allocate a handle synchronously,
     // enqueue a POD op applied at the next Drain) but carries the rich cast payload.
@@ -214,6 +235,7 @@ namespace apmf {
             case PendingOp::Kind::kRepoint:      changed |= ApplyRepoint(op.handle, op.param, next); break;
             case PendingOp::Kind::kSetAllowList: changed |= ApplySetSpellAllowList(op.handle, op.altForms, op.altCount, next); break;
             case PendingOp::Kind::kCast:         changed |= ApplyRequest(op, next);                  break;   // ch.8b -- ApplyRequest handles the cast branch
+            case PendingOp::Kind::kSetEquipSet:  changed |= ApplySetEquipSet(op.handle, op.equipForms, op.equipCount, next); break;   // ch.17
             }
         }
 
@@ -979,6 +1001,72 @@ namespace apmf {
         return false;   // handle's channel not found on this NPC (should not happen)
     }
 
+    // ch.17 EquipAuthority (APMF_API_v7's SetEquipSet). Writer thread only;
+    // ApplySetSpellAllowList's shape. Stores the declaration on the matching
+    // Claim whether or not it owns the channel (non-owning semantics, like
+    // Repoint). THE ONE DIFFERENCE from the allow-list: a declaration has an
+    // ENGAGE-SIDE engine write to make -- APMF equips the declared items
+    // (Docs/INVARIANTS.md #17a condition 4) -- so when the declaring claim IS the
+    // current owner, the channel is told (OnOwnerChanged, the existing
+    // "effective param changed" notification) on EVERY applied declaration,
+    // changed or not: a client re-issuing the same set after something
+    // unequipped an item is asking for it back, and that is a client-initiated
+    // declaration, not a re-assert loop. The channel does NOT equip here: it
+    // posts one mainthread hop that lands after this Drain's Publish, so the
+    // seat reads the NEW set by the time the equip calls run (INVARIANTS #20's
+    // "publish first, mutate second", channels/EquipAuthority.cpp). Returns
+    // whether the STORED set changed (Publish gate), never whether it enforced.
+    bool ControlMap::ApplySetEquipSet(Handle handle, const RE::FormID* forms, std::uint32_t count,
+                                      MapType& map) {
+        auto idxIt = m_index.find(handle);
+        if (idxIt == m_index.end()) return false;   // unknown/stale
+
+        auto* expected = Registry::Get().ChannelForIntent(APMF_API::kIntent_EquipAuthority);
+        if (!expected || idxIt->second.second != expected) return false;   // not an EquipAuthority claim
+
+        const RE::FormID formID  = idxIt->second.first;
+        Channel*         channel = idxIt->second.second;
+
+        auto npcIt = map.find(formID);
+        if (npcIt == map.end()) return false;
+        auto& npc = npcIt->second;
+
+        for (auto& cc : npc.channels) {
+            if (cc.channel != channel) continue;
+            Claim* mine = nullptr;
+            const Claim* best = cc.claims.empty() ? nullptr : &cc.claims.front();
+            for (auto& c : cc.claims) {
+                if (c.handle == handle) mine = &c;
+                if (best && c.basis > best->basis) best = &c;   // same rule as TryGetOwningClaim
+            }
+            if (!mine) return false;   // handle not among this channel's claims (should not happen)
+
+            // Defensive re-clamp (already clamped at enqueue) -- never an unbounded
+            // write into the fixed equipForms array from any future caller.
+            const std::uint32_t n = (count < APMF_API::kMaxEquipSet) ? count : APMF_API::kMaxEquipSet;
+            bool changed = (mine->equipCount != n);
+            for (std::uint32_t i = 0; i < n && !changed; ++i) changed = (mine->equipForms[i] != (forms ? forms[i] : 0));
+            if (changed) {
+                mine->equipCount = n;
+                for (std::uint32_t i = 0; i < n; ++i) mine->equipForms[i] = forms ? forms[i] : 0;
+                for (std::uint32_t i = n; i < APMF_API::kMaxEquipSet; ++i) mine->equipForms[i] = 0;
+            }
+            const bool owner = (best == mine);
+            spdlog::info("[ctl] 0x{} ~ ch.{} {} SET-EQUIP-SET (h={}, {} form(s), {}{}).",
+                         apmf::log::Hex(formID), channel->ChannelNo(), channel->Name(),
+                         handle, n, changed ? "changed" : "unchanged", owner ? ", owner" : ", not owner");
+            if (owner) {
+                // Writer thread: form lookups are legal here (ApplyRequest does the
+                // same). The channel only POSTS from this; the equip calls themselves
+                // run after Publish.
+                auto* actor = RE::TESForm::LookupByID<RE::Actor>(formID);
+                channel->OnOwnerChanged(formID, actor, mine->param);
+            }
+            return changed;
+        }
+        return false;   // handle's channel not found on this NPC (should not happen)
+    }
+
     void ControlMap::OnActorUpdate(RE::Actor* actor) {
         // ANY thread (field-proven: the Character 0xAD seat is not single-threaded).
         // Relaxed pre-gate: near-zero cost while nothing is controlled -- no atomic
@@ -1438,6 +1526,44 @@ namespace apmf {
         return out;
     }
 
+    bool ControlMap::TryGetEquipSet(RE::FormID actor, EquipSetView& out) const {
+        // ANY thread -- core/EquipSink.cpp's thunk calls this from whatever engine
+        // thread performs an equip. Same RCU discipline as TryGetOwningClaim:
+        // relaxed pre-gate, one acquire-load of a LOCAL snapshot copy, one hash
+        // lookup on that frozen generation, copy OUT BY VALUE, return. No form
+        // lookup, no lock, nothing mutated (INVARIANTS #12/#13).
+        if (m_anyControlled.load(std::memory_order_relaxed) == 0) return false;
+
+        std::shared_ptr<const MapType> snap = m_published.load(std::memory_order_acquire);
+        auto it = snap->find(actor);
+        if (it == snap->end()) return false;   // unclaimed actor -> the common case
+
+        const NpcCtl& npc = it->second;
+        if (!npc.handle.get()) return false;   // unloaded; the Drain sweep reclaims it
+
+        // Registry is immutable after load -- safe to consult from any thread.
+        auto* channel = Registry::Get().ChannelForIntent(APMF_API::kIntent_EquipAuthority);
+        if (!channel) return false;
+
+        for (const auto& cs : npc.channels) {
+            if (cs.channel != channel) continue;
+            if (cs.claims.empty()) return false;
+            // Winner = highest basis; tie -> earliest -- the same plain strict
+            // compare TryGetOwningClaim uses (no cast claim ever sits on this
+            // channel, so BetterClaim's deny-only tie rule cannot apply).
+            const Claim* best = &cs.claims.front();
+            for (const auto& c : cs.claims) {
+                if (c.basis > best->basis) best = &c;
+            }
+            out.count = (best->equipCount < APMF_API::kMaxEquipSet) ? best->equipCount : APMF_API::kMaxEquipSet;
+            for (std::uint32_t i = 0; i < out.count; ++i) out.forms[i] = best->equipForms[i];
+            for (std::uint32_t i = out.count; i < APMF_API::kMaxEquipSet; ++i) out.forms[i] = 0;
+            out.flags = static_cast<std::uint32_t>(best->param.ival);   // APMF_Param::ival is int32
+            return true;
+        }
+        return false;   // this NPC is controlled, but not on this channel
+    }
+
     void ControlMap::ReleaseAll(const char* why) {
         // Drain any pending ops first so a just-enqueued claim is not orphaned, then
         // restore + drop every controlled NPC. Writer thread only (see ControlMap.h:
@@ -1453,6 +1579,7 @@ namespace apmf {
                 case PendingOp::Kind::kRepoint:      ApplyRepoint(op.handle, op.param, next); break;
                 case PendingOp::Kind::kSetAllowList: ApplySetSpellAllowList(op.handle, op.altForms, op.altCount, next); break;
                 case PendingOp::Kind::kCast:         ApplyRequest(op, next);                  break;
+                case PendingOp::Kind::kSetEquipSet:  ApplySetEquipSet(op.handle, op.equipForms, op.equipCount, next); break;
                 }
             }
         }

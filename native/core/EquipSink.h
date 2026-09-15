@@ -1,0 +1,93 @@
+#pragma once
+
+// ============================================================================
+// core/EquipSink -- THE ENGINE-EQUIP SINK SEAT (ch.17 EquipAuthority's deny half).
+//
+// THE FACET. Every engine equip of anything -- outfit re-apply, the AI's own
+// weapon/armor choice, combat re-arm, RemoveItem's re-equip, a Papyrus/console
+// EquipItem, another plugin's ActorEquipManager::EquipObject call -- funnels
+// through ONE non-virtual worker (AE 38929 / SE 37974), reached from exactly two
+// internal call sites inside the engine's own EquipObject bodies (full E8 scan of
+// .text on both unpacked binaries, 2026-09-15: no other E8, no E9, no lea, no
+// pointer reference). No virtual function exists anywhere on that path
+// (`Actor::AddWornItem` is devirtualised), so this facet has NO vtable seat.
+// That is the exact shape Docs/INVARIANTS.md #17a licenses: a bounded call-site
+// seat on an INTERNAL choke point, byte-verified at install, refusing the whole
+// seat on any mismatch, scoped to actors holding an explicit claim, and
+// engine-answer-first in the only form a sink allows (deny == do not call the
+// worker; nothing is manufactured). READ #17a's five conditions before touching
+// this file -- every one is mandatory, and this seat exists ONLY under them.
+//
+// WHAT IT DOES. For an actor with a winning kIntent_EquipAuthority claim whose
+// client has DECLARED a worn set (APMF_API_v7::SetEquipSet), the thunk lets the
+// worker run for a declared item and REFUSES it (returns without calling the
+// worker: nothing queued, no re-entry) for an off-set item. The player, an
+// unclaimed actor, and a claimed actor with no declaration pass through untouched
+// and unlogged (#17a condition 5, INVARIANTS #13). Equips APMF itself issues
+// (channels/EquipAuthority.cpp enforcing a declaration) run inside the TLS
+// bracket below and pass, as does every engine re-entry made beneath them
+// (the worker family re-enters EquipObject via 38913/37957 for a second copy /
+// dual wield). Papyrus/console equips pass unless the claim or the INI says
+// kEquipAuth_DenyScript. Observe-only (INI, default ON for the first field build,
+// or the claim's kEquipAuth_ObserveOnly) logs `would-deny` and refuses nothing.
+//
+// HOW IT KNOWS WHO ASKED. The thunk is entered with EquipObject's own frame still
+// on the stack, so it reads EquipObject's CALLER's return slot at a per-site,
+// per-runtime depth measured from the bytes (Docs/HOOK-SITE-COVERAGE.md, "equip
+// sink"): AE EquipObject = 5 pushes + sub rsp,0x50 -> [rsp+0x80]; AE sibling
+// 38893 = 3 pushes + 0x50 -> [rsp+0x70]; SE 37938 = push rdi + 0x50 ->
+// [rsp+0x60]; SE 37937 = 3 pushes + 0x50 -> [rsp+0x70]. That address is turned
+// into an Address-Library id (the greatest library offset <= the RVA, i.e. the
+// containing function) and named from a small per-runtime path table; anything
+// outside SkyrimSE.exe is `External(<module>)`, and an engine caller not in the
+// table is `Unknown(<id>)` -- the first field build's probe criteria
+// (Docs/INTEGRATION.md) require zero of those.
+//
+// THREADING. The thunk runs on whatever thread the engine equips on. It reads
+// ONLY the lock-free RCU snapshot (ControlMap::TryGetEquipSet, FormID compares --
+// never LookupByID, never client state; INVARIANTS #12), an immutable sorted
+// offset table built once at install, and a small mutex-guarded dedupe/rate
+// state touched only for claimed actors. spdlog is thread-safe.
+//
+// WHAT BREAKS. (1) The frame depths are per-site AND per-runtime; a new runtime
+// needs them re-measured from its bytes, never assumed. (2) The install byte-
+// verify is the collision guard: two patchers at one site is a refusal here,
+// never a CTD -- do not weaken it to "warn and install anyway". (3) The TLS
+// bracket is what lets APMF's own enforcement through; an enforcement path that
+// forgets the bracket denies its own equips (visible as `deny` with tls=0 on a
+// declared item -- impossible by construction today, since a declared item is
+// always allowed; the bracket exists so the log can PROVE the equip was APMF's).
+// ============================================================================
+
+namespace apmf::equipsink {
+
+    // kDataLoaded. VR-refused, install-once, INI-gated ([EquipAuthority]
+    // bEquipAuthority, default 1). Byte-verifies all sites before writing ANY of
+    // them; a single mismatch refuses the whole seat and logs each site's bytes.
+    void Install();
+
+    // True once both sites are patched (false when refused, disabled, or VR).
+    bool Installed();
+
+    // RAII bracket for equips APMF ISSUES ITSELF (channels/EquipAuthority.cpp).
+    // While one is alive on the current thread, every engine equip the sink sees
+    // on that thread -- including the worker family's own re-entry -- passes as
+    // `allow` with `tls=<depth>`. Depth-counted so nesting is safe. Never
+    // copyable; never hold one across a frame boundary.
+    class ApmfEquipScope {
+    public:
+        ApmfEquipScope();
+        ~ApmfEquipScope();
+        ApmfEquipScope(const ApmfEquipScope&) = delete;
+        ApmfEquipScope& operator=(const ApmfEquipScope&) = delete;
+    };
+
+    // Current thread's bracket depth (0 == not inside an APMF-issued equip).
+    int ApmfDepth();
+
+    // The INI switches, read once at Install (default 1 / 1 / 0). Either the
+    // INI or the claim's own flag bits can set observe-only / deny-script.
+    bool ObserveOnly();
+    bool DenyScript();
+
+}

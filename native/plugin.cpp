@@ -13,6 +13,7 @@
 #include "core/EquipGate.h"
 #include "core/ActionGate.h"
 #include "core/PackageGate.h"
+#include "core/EquipSink.h"
 #include "core/NonAliasProbe.h"
 #include "core/AiCastSeats.h"
 #include "core/CastClassify.h"
@@ -88,6 +89,13 @@ namespace {
             apmf::equipgate::Install();          // T2a CheckShouldEquip allowance
             apmf::actiongate::Install();         // T1 combat-action allowance (ch.7; VR-refused inside)
             apmf::packagegate::Install();        // T3 package-offer allowance (ch.9; VR-refused inside)
+            apmf::equipsink::Install();          // ch.17 ENGINE-EQUIP SINK: the ONE #17a call-site seat
+                                                  // (ActorEquipManager worker, two internal E8 sites per
+                                                  // runtime, byte-verified before any write; a mismatch
+                                                  // refuses the whole seat). INI [EquipAuthority]
+                                                  // bEquipAuthority (default 1) / bEquipObserveOnly
+                                                  // (default 1: the first field build observes only).
+                                                  // VR-refused inside. Docs/INVARIANTS.md #17a.
             apmf::nonaliasprobe::Install();      // OBSERVE-ONLY 0xDF hook + 0x49 assist + RTTI dumper
                                                   // (Docs/PROBE-NONALIAS-PACKAGE.md; VR-refused inside)
             apmf::aicastseats::Install();        // OBSERVE-ONLY: the 4 AI cast-decision seats
