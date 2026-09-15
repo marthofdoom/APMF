@@ -648,9 +648,10 @@ thing that derails one. Concretely:
   never a crash.
 
 The current codebase satisfies this: every hook in `native/core/` is `write_vfunc` on a
-version-pinned `VTABLE_*` symbol; no call-site patch remains anywhere in the tree after
-T4's removal (grep-verified: no `write_call`/`write_branch`/`AllocTrampoline` in
-`native/`).
+version-pinned `VTABLE_*` symbol, with ONE exception, the #17a seat: `core/EquipSink.cpp`
+is the only `write_call`/`AllocTrampoline` in `native/` (2026-09-15), and it exists only
+under #17a's five conditions. No other call-site patch remains anywhere in the tree after
+T4's removal.
 
 ## Deny completeness
 

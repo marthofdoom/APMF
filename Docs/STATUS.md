@@ -4,6 +4,69 @@ Updated 2026-09-15. The current state of the build: what's shipped, what's
 probe-gated, what's next. Keep this current in the SAME change as any
 build/finding/workflow change.
 
+## HEAD OF WORK 2026-09-15 -- ch.17 EQUIP AUTHORITY, the #17a engine-equip sink (`feat/equip-authority`)
+
+Branch off main (88d237d, rebased onto 2e084b8 after the 1.5.97 pass merged). **CI-green, NOT field-run. Ships OBSERVE-ONLY.** ABI bumped to
+v7 (`SetEquipSet`); MFO's `native/APMF_API.h` must be re-mirrored byte-identically before
+either side tags (INVARIANTS #14b).
+
+**What it is.** `kIntent_EquipAuthority` (ch.17, `channels/EquipAuthority.cpp`) is a
+STANDING claim (no TTL) over the engine-equip facet, taken whole (marth: "a command is
+sent to APMF with what to equip and that is enforced until overridden"). The client
+declares the worn set with `SetEquipSet`; APMF equips every declared item the actor is
+not wearing (one main-thread pass per declaration, `ActorEquipManager::EquipObject`
+queued/not-forced, inside the seat's TLS bracket, never an unequip, never a re-assert)
+and `core/EquipSink.cpp` refuses every other engine equip on that actor at the ONE
+non-virtual worker every equip funnels through (AE 38929 / SE 37974, two internal E8
+sites per runtime, byte-verified before any write, whole seat refused on a mismatch).
+The caller is classified from `EquipObject`'s caller's return slot at a per-site,
+per-runtime frame depth measured from the bytes (AE `[rsp+0x80]`/`[rsp+0x70]`, SE
+`[rsp+0x60]`/`[rsp+0x70]`) and named from a path table; anything outside the exe is
+`External(<dll>)`, an unnamed engine caller is `Unknown(<id>)`. INVARIANTS #17a is the
+licence; MAP.md `EquipSink` and `DENY-COMPLETENESS-AUDIT` row 17 carry the facts.
+
+**First field build = observe only.** `[EquipAuthority] bEquipObserveOnly=1` (shipped
+INI) logs every verdict as `would-deny` and refuses nothing. marth flips it after the
+four probe criteria in `Docs/INTEGRATION.md` hold on a deck log: every off-set engine
+re-equip logs `would-deny` with a NAMED path; zero `would-deny` with `tls>0`; zero
+`Unknown(<id>)` paths; every APMF equip pairs an `[apmf][equip-auth] -> equip` line with
+its `[apmf][equip-obs] tls=1 verdict=allow` line.
+
+**Deliberately NOT in this cut.** Unequips are not seated (`kEquipAuth_DenyUnequip`
+RESERVED, refused+ignored); Papyrus/console equips pass unless `kEquipAuth_DenyScript` /
+`bEquipDenyScript`; no per-item client callback (client code on an engine thread was
+rejected). Fifteen engine callers of `EquipObject`/its sibling per runtime are not yet
+named in the path table (they are still DENIED -- the sink is below them -- only their
+log label is `Unknown`); name them from the first deck log, not from the disassembly
+alone (principle 5).
+
+**Fable tier-3 round 1 (on d1aa66b): nothing above SEV-3; all findings fixed in one
+round** (rebased onto 2e084b8 first): `QueuedApply` path named (38906,39814 / 37950,38789 —
+APMF's own queued equips come back through it, so criterion 3 is now "zero Unknown on a
+deny/would-deny line"); entry-detour inspection at install (a third-party inline detour of
+`EquipObject` collapses attribution to `External(<dll>)` — logged loudly, seat still
+installs; new criterion 5 "at least one engine id attributes"); `tls>0` no longer bypasses
+the in-set test (38913 re-equips the same object; a displaced off-set second copy could
+have ridden back in); identical re-declarations coalesced within 1 s and issued-not-applied
+items skipped one pass (a per-tick client can no longer build a #0 loop); exact-version
+runtime gate (`1.6.1170 || 1.5.97`), "runtime gated" not "site-verify FAILED"; the
+below-the-seat restore path (16073 → 38001, persisted ExtraWorn on 3D load) and the orphan
+38919 named in AUDIT row 17 + MAP; `kMaxEquipSet` truncation logged once per handle;
+reserved-bit warning once per actor; INTEGRATION states the refused replacement equip
+after RemoveItem, the unloaded-actor case, and `SetOutfit` = engine path.
+
+**Fable round 2 (on 123d50e): nothing above SEV-3; closing round applied** — the 1 s
+coalesce (which defeated "give it back") is DROPPED — the inventory walk always runs and is
+the only dedupe; a held item keeps its
+original issue time so the 3 s hold is real; the entry-detour inspection re-runs at
+kPostLoadGame / kNewGame and logs on a change of verdict; criterion 4 states QueuedApply
+appears only for high / middle-high process actors; CHANGELOG/MAP `[runtime]` wording;
+SEV-5 #3/#6/#7 recorded verbatim as `Docs/REVIEW-BACKLOG.md` APMF-B2..B4.
+
+**Next.** Merge; mirror `APMF_API.h` into MFO; MFO's
+`Loadout`/`CombatStyle` become a ch.17 declaration; deck run in observe mode; flip
+`bEquipObserveOnly`.
+
 ## HEAD OF WORK 2026-09-15 -- the 1.5.97 placement pass (`feat/apmf-1.5.97-pass`)
 
 Branch off main `0b61290`. Two commits (code, then docs). **CI-green, NOT field-run on

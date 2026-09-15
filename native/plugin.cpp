@@ -13,6 +13,7 @@
 #include "core/EquipGate.h"
 #include "core/ActionGate.h"
 #include "core/PackageGate.h"
+#include "core/EquipSink.h"
 #include "core/NonAliasProbe.h"
 #include "core/AiCastSeats.h"
 #include "core/CastClassify.h"
@@ -88,6 +89,13 @@ namespace {
             apmf::equipgate::Install();          // T2a CheckShouldEquip allowance
             apmf::actiongate::Install();         // T1 combat-action allowance (ch.7; VR-refused inside)
             apmf::packagegate::Install();        // T3 package-offer allowance (ch.9; VR-refused inside)
+            apmf::equipsink::Install();          // ch.17 ENGINE-EQUIP SINK: the ONE #17a call-site seat
+                                                  // (ActorEquipManager worker, two internal E8 sites per
+                                                  // runtime, byte-verified before any write; a mismatch
+                                                  // refuses the whole seat). INI [EquipAuthority]
+                                                  // bEquipAuthority (default 1) / bEquipObserveOnly
+                                                  // (default 1: the first field build observes only).
+                                                  // VR-refused inside. Docs/INVARIANTS.md #17a.
             apmf::nonaliasprobe::Install();      // OBSERVE-ONLY 0xDF hook + 0x49 assist + RTTI dumper
                                                   // (Docs/PROBE-NONALIAS-PACKAGE.md; VR-refused inside)
             apmf::aicastseats::Install();        // OBSERVE-ONLY: the 4 AI cast-decision seats
@@ -161,6 +169,10 @@ namespace {
             break;
         case SKSE::MessagingInterface::kPostLoadGame:
             apmf::av::ApplyPending();             // restore any stranded AV overrides
+            apmf::equipsink::ReinspectEntries("kPostLoadGame");   // a later plugin may have detoured EquipObject's entry
+            break;
+        case SKSE::MessagingInterface::kNewGame:
+            apmf::equipsink::ReinspectEntries("kNewGame");
             break;
         default:
             break;
@@ -181,8 +193,9 @@ SKSEPluginLoad(const SKSE::LoadInterface* a_skse) {
 
     // Per-runtime placement state (CLAUDE.md rule 11; CONFIRMED address table,
     // 2026-09-15). The two seats that carry per-binary literals -- ch.8b seat 0
-    // (core/CastClassify.cpp, the +0x10/+0x18/+0x4c CombatMagicItemData offsets)
-    // and AiCastSeats GROUP C (the slot-0x0C CalculateScore expected values) --
+    // (core/CastClassify.cpp, the +0x10/+0x18/+0x4c CombatMagicItemData offsets),
+    // AiCastSeats GROUP C (the slot-0x0C CalculateScore expected values) and the
+    // ch.17 equip sink (core/EquipSink.cpp, two E8 sites + frame depths) --
     // open on exactly 1.6.1170 and 1.5.97 and refuse everything else. This is the
     // SAME two-version predicate those two Install()s evaluate (deliberately not
     // REL::Module::IsAE()/IsSE(): in 3.7.0 IsSE() is the `default:` arm, so
@@ -192,8 +205,9 @@ SKSEPluginLoad(const SKSE::LoadInterface* a_skse) {
     {
         const auto game     = REL::Module::get().version();
         const bool placed   = game == REL::Version{ 1, 6, 1170, 0 } || game == REL::Version{ 1, 5, 97, 0 };
-        spdlog::info("[runtime] {}: cast-classify {}, group-C {}",
-                     game.string("."), placed ? "open" : "gated", placed ? "open" : "gated");
+        spdlog::info("[runtime] {}: cast-classify {}, group-C {}, equip-sink {}",
+                     game.string("."), placed ? "open" : "gated", placed ? "open" : "gated",
+                     placed ? "open" : "gated");
     }
 
     SKSE::GetMessagingInterface()->RegisterListener(OnMessage);

@@ -162,6 +162,118 @@ supplies the one missing classification decision and the engine does the rest.
   rather than guessing at offsets. Kill switches live in `Data/SKSE/Plugins/APMF.ini`.
 
 
+## Declaring what an NPC wears (ABI v7, `kIntent_EquipAuthority`)
+
+Requires `abiVersion >= 7` and `APMF_API_v7`. This facet is the engine-equip
+facet taken whole: you declare the worn set, APMF equips it and refuses every
+other engine equip on that actor until you re-declare or release. Outfit
+re-apply, the AI's own weapon and armor choice, combat re-arm and RemoveItem's
+re-equip all stop reaching the actor. The player is never subject to it.
+
+```cpp
+APMF_API::APMF_Param p{};
+p.ival = 0;   // or APMF_API::kEquipAuth_DenyScript to refuse Papyrus/console equips too
+APMF_API::Handle h = g_apmf->RequestEx(actorFormID, APMF_API::kIntent_EquipAuthority, basis, &p);
+// The claim alone changes nothing. Now declare the set (base FormIDs: weapons,
+// armor, jewelry). Everything not in it is refused from here on; everything in
+// it that the actor owns and is not wearing is equipped once, on the main thread.
+RE::FormID worn[] = { swordID, shieldID, cuirassID, bootsID, gauntletsID, helmetID, ringID };
+g_apmf->SetEquipSet(h, worn, 7);
+// ...later, a different loadout: declare again. Items dropped from the set are
+// not unequipped by APMF; the engine's own worker displaces them when a declared
+// item takes their slot, and the seat refuses any attempt to put them back.
+g_apmf->SetEquipSet(h, worn2, n2);
+// Done: the engine owns the worn set again. Nothing is unequipped.
+g_apmf->Release(h);
+```
+
+Rules of the road:
+
+- **Standing, not bounded.** There is no TTL on this claim. It ends only with
+  `Release` (or by losing arbitration to a higher basis). Release before a
+  save if you do not want the declaration to be the thing the player loads
+  back into, though what they load into is exactly what you declared.
+- **Declare, do not tick.** Call `SetEquipSet` when your loadout changes, not
+  every frame. Each call on the owning claim runs one equip pass. Re-issuing
+  the same set is a legitimate way to ask for an item back after a script
+  unequipped it, and it is honoured at once: every declaration walks the
+  inventory and equips what is missing. What is bounded is the re-issue: an
+  item APMF queued is held for 3 s before it is queued again. A
+  per-tick client therefore pays one inventory walk per tick and at most one
+  re-issue per item per 3 s, all logged. That is bounded and cannot pile up
+  the engine's equip queue, but it is a client-driven re-issue every 3 s for
+  any item the engine keeps taking back off, which is exactly the kind of
+  churn the log will show you. Declare on change.
+- **The set must be simultaneously wearable.** A two-hander and a shield, or
+  two items for one slot, make the engine displace one with the other on
+  every pass. APMF never picks which one wins. Declare one loadout.
+- **The engine's replacement equip is refused.** If you `RemoveItem` or
+  unequip a declared weapon, the engine's own re-equip of whatever it would
+  pick next is an off-set equip and is refused: the follower stays unarmed
+  until you re-declare. Re-declare in the same breath as the removal.
+- **An unloaded actor is stored, not equipped.** A declaration for an actor
+  whose 3D is not loaded is kept and the seat denies for it, but the equip
+  pass is skipped (logged). Re-declare once the actor is loaded.
+- **`SetOutfit` is an engine path.** A Papyrus `SetOutfit` ends in the engine's
+  own outfit apply (`OutfitApply`), not in the script equip path, so it is
+  refused even when scripts are exempt.
+- **Do not mix `kIntent_Equipment` (ch.15) with a ch.17 claim on one actor.**
+  Ch.15's no-param probe path re-equips the weapon it removed on release,
+  from inside APMF.dll. On a ch.17 actor that re-equip is an equip from
+  outside the engine (`External(APMF.dll)`) and is refused unless the weapon
+  is in the declared set. Ch.15's param form (gate only) makes no equip and
+  is unaffected.
+- **APMF never adds items.** A declared item the actor does not own is skipped
+  and logged. Give it to them first.
+- **Unequips are not refused.** `kEquipAuth_DenyUnequip` is reserved and a
+  claim carrying it is accepted with the bit ignored. If something unequips a
+  declared item, re-declare.
+- **An empty declaration clears.** `SetEquipSet(h, nullptr, 0)` returns the
+  actor to pass-through without releasing the claim.
+- **Observe-only first.** The first field build ships with
+  `[EquipAuthority] bEquipObserveOnly=1`: every verdict is logged as
+  `would-deny` and nothing is refused. It is switched to enforcing once the
+  probe criteria below pass. A client can also set `kEquipAuth_ObserveOnly`
+  on its own claim.
+
+### The probe criteria (what a field log must show before enforcement is switched on)
+
+Read `[apmf][equip-obs]` lines. Each carries `actor= item= op=equip path=
+site= ret= q= f= s= a= tls= verdict= name=`. `tls` is attribution only (an
+equip APMF issued itself runs with `tls>0`); it never changes a verdict. The
+`name='...'` field is the item's display name, for reading, not for parsing.
+
+1. Every engine re-equip of an off-set item on a claimed actor logs
+   `verdict=would-deny` with a NAMED path (`OutfitApply`, `AddWornOutfit`,
+   `AiCommand`, `RemoveItemReequip`, `CombatNode`, `PlayerMenu`, `Script`,
+   `Console`, `WorkerReentry`, `QueuedApply`, or `External(<dll>)`).
+2. ZERO `would-deny` lines with `tls>0`. APMF's own equip pass only ever issues
+   declared items, so a would-deny inside the bracket means the set the seat
+   reads is not the set the pass enforced.
+3. ZERO `path=Unknown(<id>)` on a `deny` or `would-deny` line. An unknown id
+   there is an engine caller the path table does not name yet; add it before
+   enforcing. (An `Unknown` on an `allow` line is a caller that only ever
+   equips declared items; name it when convenient.) Note that APMF's own
+   queued equips come back one actor update later as `path=QueuedApply tls=0
+   verdict=allow`; that is the engine applying what APMF queued, not a leak.
+4. Every item APMF equips shows up as an `[apmf][equip-auth] ... -> equip` line
+   followed by its `[apmf][equip-obs] ... tls=1 verdict=allow` line. For an
+   actor in high or middle-high AI process (a follower near the player) a
+   `path=QueuedApply ... verdict=allow` apply line follows one actor update
+   later: the engine queues the equip and applies it from its AI process. A
+   loaded actor in low process applies directly beneath the seat, so no
+   `QueuedApply` line appears for it. Its absence on a low-process actor is
+   not a failure.
+5. At least one engine id attributes: the log must contain at least one
+   `[apmf][equip-obs]` line whose `path` is a named engine path (not
+   `External(...)`). If every line reads `External(<dll>)`, another plugin
+   has inline-detoured the engine's `EquipObject` entry and every caller now
+   returns through it; the seat logs `entry <id> detoured by <dll>` at install
+   when it can see that. Attribution is degraded and the script exemption is
+   unavailable until that detour is accounted for.
+
+Only after all five hold on a real session is `bEquipObserveOnly` flipped to 0.
+
 ## The facet table
 
 Every facet is one `Intent` value in `native/APMF_API.h`. The proof tier says
@@ -199,6 +311,7 @@ columns, one doesn't imply the other.
 | `kIntent_ShoutPower` (ch.14) | Claim the shout/power selection facet | `form` (the shout/power FormID) | Built, not yet battle-tested. Arbitration only today, the same shape as ch.6. |
 | `kIntent_Equipment` (ch.15) | Unequip/equip a worn item, and (with a param) gate re-equip of a spell/staff while the claim stands | `form` (optional) | Built, not yet battle-tested. The most recently landed facet in the catalog. |
 | `kIntent_Detection` (ch.16) | Silent movement + reduced detection range | `fval` (reserved, not yet read) | **Field-proven.** An actor-value source-block, deck-tested to hold even on a package-locked actor. |
+| `kIntent_EquipAuthority` (ch.17) | **Declare what the NPC wears; APMF equips it and refuses every other engine equip.** ABI v7, declare with `SetEquipSet` | `ival` (an `EquipAuthFlags` bitmask); the set itself via `SetEquipSet` | Built, not yet battle-tested. Ships OBSERVE-ONLY (`[EquipAuthority] bEquipObserveOnly=1`) until the probe criteria above pass. The only call-site seat in APMF, under `Docs/INVARIANTS.md` #17a. |
 
 Where a field is marked "reserved, not yet read", the channel currently
 applies a fixed built-in behavior and ignores whatever you pass in that field.
@@ -239,7 +352,12 @@ nothing about it:
 
 - **Chainable hooks only.** APMF never overwrites another mod's hook. Every
   deny gate calls through to whatever answered before it and only turns a YES
-  into a NO for the one thing it's denying.
+  into a NO for the one thing it's denying. The one exception is the equip
+  authority seat (ch.17): the engine-equip facet has no virtual function on
+  its path, so APMF patches the two internal call sites of the engine's own
+  equip worker. It byte-verifies both before writing either; if any other
+  mod has touched those bytes the whole seat refuses to install and says so
+  in the log, so a collision is a missing feature, never a crash.
 - **Engine-answer-first.** A deny gate always lets the engine (or the next
   hook in the chain) answer first. APMF never invents a YES on its own, it
   only ever suppresses one.

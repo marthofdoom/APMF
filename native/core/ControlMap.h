@@ -85,6 +85,21 @@ namespace apmf {
     // to them exactly when `hand == kUnknown`.
     enum class CastHand { kUnknown, kLeft, kRight };
 
+    // ch.17 EquipAuthority (ABI v7): the COPY-OUT view of an actor's winning
+    // kIntent_EquipAuthority claim, read by the engine-equip seat
+    // (core/EquipSink.cpp) on whatever engine thread performs an equip. BY VALUE,
+    // like CastSeatClaim and for the same reason (INVARIANTS #12): the seat must
+    // never hold, alias or re-read snapshot-owned storage after its single read
+    // returns. Bounded (kMaxEquipSet FormIDs) so the copy is a fixed 140 bytes.
+    // `count == 0` means "claimed, but no worn set declared (or cleared)" -- the
+    // seat passes every equip through in that state (declare->enforce: never
+    // enforce a set the client did not give). Internal C++ only, not the C-ABI.
+    struct EquipSetView {
+        RE::FormID    forms[APMF_API::kMaxEquipSet]{};
+        std::uint32_t count = 0;
+        std::uint32_t flags = 0;   // the winning claim's param.ival (APMF_API::EquipAuthFlags)
+    };
+
     class ControlMap {
     public:
         static ControlMap& Get();
@@ -106,6 +121,12 @@ namespace apmf {
         // next Drain: no-op on an unknown handle or a claim not on the
         // kIntent_SelectSpell channel. See APMF_API_v4 / SetSpellAllowList.
         void   EnqueueSetSpellAllowList(Handle handle, const RE::FormID* forms, std::uint32_t count);
+        // ABI v7 (ch.17, kIntent_EquipAuthority): DECLARE the worn set for an
+        // existing claim (same handle), clamped to APMF_API::kMaxEquipSet and copied
+        // synchronously. `forms` may be null (== count 0, CLEARS the declaration).
+        // Applied at the next Drain: no-op on an unknown handle or a claim not on
+        // the kIntent_EquipAuthority channel. See APMF_API_v7 / SetEquipSet.
+        void   EnqueueSetEquipSet(Handle handle, const RE::FormID* forms, std::uint32_t count);
 
         // ABI v5 (ch.8b, kIntent_Cast): claim the cast-EXECUTION facet for a bounded
         // TTL window. `req` (may be null) is COPIED synchronously; APMF never retains
@@ -248,6 +269,19 @@ namespace apmf {
         // hot per-frame path. ----
         std::vector<RE::Actor*> ClaimedActors(Intent intent) const;
 
+        // ---- ch.17 EquipAuthority seat read: ANY thread (RCU reader). The
+        // engine-equip sink (core/EquipSink.cpp) calls this from whatever thread
+        // the engine performs an equip on. Same discipline as TryGetOwningClaim:
+        // relaxed pre-gate, one acquire-load of a LOCAL snapshot copy, one hash
+        // lookup on that frozen generation; the winning claim's declared set is
+        // copied OUT BY VALUE into `out` (never a pointer into the snapshot).
+        // Returns true iff `actor` holds a winning kIntent_EquipAuthority claim
+        // (loaded); `out.count` is 0 when that claim has no declaration. False
+        // (and `out` untouched) for the player, an unclaimed or unloaded actor,
+        // or a channel that is not registered. FormID compares only: no form
+        // lookup, no lock, no client state (INVARIANTS #12/#13). ----
+        bool TryGetEquipSet(RE::FormID actor, EquipSetView& out) const;
+
         // ---- Writer thread ONLY (the PlayerCharacter/Drain seat and the SKSE
         // revert/preload callbacks -- all the same MAIN thread). ----
         // Once per frame: apply queued ops, then sweep unloaded controlled NPCs;
@@ -335,6 +369,21 @@ namespace apmf {
             // for what it is, while a genuine swap -- a DIFFERENT package, or a bare
             // spell -- is still refused and still logged.
             RE::FormID     castSrcForm = 0;
+            // ch.17 EquipAuthority (APMF_API_v7, kIntent_EquipAuthority): the worn
+            // set the client DECLARED with SetEquipSet. Fixed-size POD array, same
+            // shape and same reason as altForms above (Claim must stay trivially
+            // copyable for the RCU deep-copy). equipCount == 0 (the default) means
+            // "no declaration" -- the equip seat passes everything through for
+            // the actor, and every non-equip-authority claim reads byte-identically
+            // to before these fields existed. Appended at the END.
+            RE::FormID     equipForms[APMF_API::kMaxEquipSet]{};
+            std::uint32_t  equipCount = 0;
+            // The UNCLAMPED count of the last declaration that overflowed
+            // kMaxEquipSet (0 == never). Exists so the truncation is logged ONCE
+            // per handle per distinct overflow, not on every re-declaration
+            // (Fable tier-3 on d1aa66b, SEV-4 #6): a silently clamped set denies
+            // items 33+ with nothing in the log saying why.
+            std::uint32_t  equipRequested = 0;
         };
 
         // ---- THE ONE CLAIM COMPARATOR (2026-09-06) ------------------------------
@@ -455,7 +504,7 @@ namespace apmf {
         using MapType = std::unordered_map<RE::FormID, NpcCtl>;
 
         struct PendingOp {
-            enum class Kind : std::uint8_t { kRequest, kRelease, kRepoint, kSetAllowList, kCast } kind{};
+            enum class Kind : std::uint8_t { kRequest, kRelease, kRepoint, kSetAllowList, kCast, kSetEquipSet } kind{};
             Handle               handle = APMF_API::kInvalidHandle;
             RE::FormID           actor  = 0;         // request/cast only
             Intent               intent = APMF_API::kIntent_None;   // request/cast only
@@ -474,6 +523,13 @@ namespace apmf {
             // EnqueueSetSpellAllowList so Apply never has to re-check the bound.
             RE::FormID           altForms[APMF_API::kMaxSpellAllowList]{};
             std::uint32_t        altCount = 0;
+            // kSetEquipSet only (ch.17, APMF_API_v7): copied synchronously at
+            // enqueue, pre-clamped to kMaxEquipSet by EnqueueSetEquipSet. Kept as
+            // its OWN array rather than aliasing altForms so the two declarations
+            // can never be confused by a future reader of the op.
+            RE::FormID           equipForms[APMF_API::kMaxEquipSet]{};
+            std::uint32_t        equipCount = 0;
+            std::uint32_t        equipRequested = 0;   // the client's UNCLAMPED count (for the once-per-handle truncation log)
         };
 
         // All four apply against the WRITER's private working copy (`map`), never a
@@ -492,6 +548,20 @@ namespace apmf {
         // later wins arbitration. No-op on an unknown handle or a claim not on the
         // kIntent_SelectSpell channel.
         bool ApplySetSpellAllowList(Handle handle, const RE::FormID* forms, std::uint32_t count, MapType& map);
+        // ch.17 (APMF_API_v7): writer-thread-only, ApplySetSpellAllowList's shape --
+        // look the claim up via m_index, write equipForms/equipCount on the matching
+        // Claim regardless of whether it currently OWNS the channel (non-owning
+        // semantics, same as Repoint). If the claim IS the current owner, the
+        // channel's OnOwnerChanged fires on EVERY applied declaration, changed or
+        // not (the channel's inventory walk is the dedupe; it holds an item it
+        // already queued for 3 s, and coalesces nothing else) (still inside
+        // Drain, BEFORE Publish) so channels/EquipAuthority.cpp can post its ONE
+        // main-thread enforcement hop, which lands strictly AFTER Publish (the
+        // mainthread::Pump runs after Drain returns -- INVARIANTS #20's release-
+        // ordering rule, applied to an engage-side engine write). No-op on an
+        // unknown handle or a claim not on the kIntent_EquipAuthority channel.
+        bool ApplySetEquipSet(Handle handle, const RE::FormID* forms, std::uint32_t count,
+                              std::uint32_t requested, MapType& map);
 
         // Writer-thread-only choke point: takes ownership of the finished working
         // copy, makes it the new immutable snapshot, and publishes it for readers.
