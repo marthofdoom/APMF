@@ -85,7 +85,9 @@ namespace apmf::castseats {
     namespace {
 
         // ---- layout guards. Everything read on the combat thread sits BELOW the
-        // AE +0x68 CombatController divergence point (ENGINE_NOTES §0.29). ----
+        // AE +0x68 CombatController divergence point (ENGINE_NOTES §0.29).
+        // CONFIRMED table (2026-09-15) "MFO layout facts" CombatController row:
+        // 0x28/0x2C/0x38 read unshifted on 1.6.1170, 1.5.97 and 1.7.104. ----
         static_assert(offsetof(RE::CombatController, attackerHandle) == 0x28,
                       "CombatController::attackerHandle moved -- re-verify the SE/AE layout "
                       "split (ENGINE_NOTES §0.29) before shipping");
@@ -105,6 +107,13 @@ namespace apmf::castseats {
 
         // The aim-target override, +0x30 into CombatAimController. See the file banner
         // for the full evidence and the three guards around this one raw offset.
+        // RUNTIMES: no version gate, by evidence -- CONFIRMED table (2026-09-15)
+        // "MFO layout facts" CombatController row (c): the CombatAimController ctor
+        // stores [+0x28]=CombatController* and zeroes [+0x30] on 1.6.1170, 1.5.97
+        // AND 1.7.104, and the projectile aim vfunc7 reads [rcx+0x30] first on all
+        // three. The VTABLE_CombatProjectileAimController / RTTI_CombatAimController
+        // symbols below resolve on SE (vtable id 264187 -> 0x167E2A8; RTTI id
+        // 687513) and DerivesFrom holds there ("New for APMF" row 1).
         constexpr std::uintptr_t kAimTargetOverride = 0x30;
 
         constexpr std::uint64_t kLogThrottleMs = 1500;   // per (actor, subject), matching the probes' cadence
@@ -263,6 +272,10 @@ namespace apmf::castseats {
             std::uint32_t handle;
             RE::Actor*    ptr;
         };
+        // RUNTIMES: no version gate, by evidence -- CONFIRMED table (2026-09-15)
+        // "GetMagicTarget sret" row: the hidden out-slot shape is identical on
+        // 1.6.1170 (0x81e020), 1.5.97 (0x781CB0, helper 0x782100 fills {u32 @0,
+        // ptr @8}) and 1.7.104; base impl shared by 14 of 15 caster vtables on each.
         static_assert(sizeof(Out16) == 16, "Out16 must be exactly 16 bytes -- it IS the engine's hidden "
                                             "sret out-slot; re-verify 0x81e020's tail before trusting this");
         static_assert(offsetof(Out16, ptr) == 8, "Out16::ptr must sit at +0x8 (0x81e020 writes [rdi]=eax "

@@ -154,10 +154,25 @@ of a given change.
     valid on the other — the layouts genuinely differ (17 vs 18 input contexts shifts
     every `ControlMap` member past `controlMap[]`, which is how MFO shipped a
     session-ending crash).
-    **APMF's exposure right now: six single-version `REL::ID` sites in `native/` with no
-    1.5 id.** Under this rule each needs a 1.5 id sourced and VERIFIED (address library
-    plus the unpacked 1.5.97 binary), not a shared guess and not a construct chosen
-    because it happens to span both.
+    **APMF's exposure (re-counted 2026-09-15; `native/` has ZERO `REL::ID(` sites — the
+    older "six single-version `REL::ID` sites" sentence never described a `REL::ID` count).
+    The six single-runtime MECHANISMS, each now placed per runtime from the CONFIRMED
+    address table (`Docs/HOOK-SITE-COVERAGE.md` §1a has the per-runtime state):**
+    - `core/CastClassify.cpp:60-62` (+gate in `Install()`): the +0x10/+0x18/+0x4c `CombatMagicItemData` offsets + slot-1 thunk — 1.6.1170 and 1.5.97, exact-version gate.
+    - `core/AiCastSeats.cpp` GROUP C (`kWeaponClasses` + gate in `Install()`): vtables via `VTABLE_CombatInventoryItem{Melee,Ranged,Shield,Torch}` VariantIDs, slot-0x0C expected value per runtime — 1.6.1170 and 1.5.97, exact-version gate.
+    - `core/CastSeats.cpp` `kAimTargetOverride = 0x30` (`CombatAimController`): confirmed identical on 1.6.1170 / 1.5.97 / 1.7.104, runs ungated by evidence.
+    - `core/CastSeats.cpp` / `core/AiCastSeats.cpp` `Out16` (`GetMagicTarget` hidden sret): confirmed identical on all three, ungated by evidence.
+    - `core/EquipGate.cpp` `CallSiteName()`: 0x0F call-site LABELS, 1.6.1170-only table consulted only there; cosmetic.
+    - `core/NonAliasProbe.cpp` `kPutCreatedPackage = 0xDF`: confirmed same slot/function on all three, VR-refused only.
+    Under this rule a new binary gets its OWN column sourced and VERIFIED (address library
+    plus the unpacked binary), not a shared guess and not a construct chosen because it
+    happens to span both. Gates on per-binary literals compare the EXACT version, never
+    `REL::Module::IsAE()/IsSE()` (in 3.7.0 `IsSE()` is the `default:` arm — any 1.5.x/1.7.x
+    reads as SE, so a family test would admit an unverified build). 1.7.104: nothing placed,
+    by marth's call — and CommonLib terminates at `SKSE::Init` with the address-library
+    dialog on 1.7.104; APMF's gates never run there. The REAL guard against a wrong-id
+    resolve on a build that does load is the slot-0x0C expected-value compare (Group C) and
+    the RTTI string compare (CastClassify): 3.7.0's `id2offset` never nulls a missing id.
 
 10. **PROPER SOLUTIONS, NOT WORKAROUNDS.** Never work around unless absolutely
     needed; solve the root cause. If a compromise is genuinely unavoidable, FLAG it
