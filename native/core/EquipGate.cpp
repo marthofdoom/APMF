@@ -101,9 +101,12 @@ namespace apmf::equipgate {
         // Same layout guard MFO's CombatStyle.cpp/CasterConsent.cpp already
         // carry -- the combat thread may only read a CombatController member
         // BELOW 0x68 (the AE +8 layout bug, ENGINE_NOTES §0.29). CONFIRMED table
-        // (2026-09-15) "MFO layout facts" CombatController row: 0x10/0x28/0x2C
-        // are unshifted on 1.6.1170, 1.5.97 and 1.7.104; this file reads nothing
-        // above 0x68.
+        // (2026-09-15) "MFO layout facts" CombatController row confirms 0x28/
+        // 0x2C/0x38 by direct read on 1.6.1170, 1.5.97 and 1.7.104. `inventory`
+        // @0x10 is NOT in that row: it is CommonLib-declared (`RE::CombatController`,
+        // pinned 3.7.0) and sits < 0x68, i.e. in the unshifted region per
+        // ENGINE_NOTES §0.29 -- that, not the table, is its evidence. This file
+        // reads nothing above 0x68.
         static_assert(offsetof(RE::CombatController, attackerHandle) == 0x28,
                       "CombatController::attackerHandle moved -- re-verify the "
                       "SE/AE layout split (ENGINE_NOTES §0.29) before shipping");

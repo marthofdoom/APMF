@@ -316,8 +316,15 @@ namespace apmf::aicastseats {
         // VALUE is still that class's own CalculateScore entry, which is what the
         // gate compares; the bodies are not comparable across runtimes and the
         // thunk never relies on them. 1.7.104: values exist in the CONFIRMED table
-        // but there is no address library, so nothing is placed and Install()
-        // refuses with a loud line (principle 7).
+        // but there is no address library -- and CommonLib terminates at
+        // SKSE::Init with the address-library dialog on 1.7.104 (src/SKSE/
+        // API.cpp:78-79 -> IDDatabase::load_file(..., failOnError=true)); APMF's
+        // gates never run there. The exact-version gate below is what refuses
+        // any OTHER binary that does load (a 1.6.x other than 1170, say), and
+        // the slot-0x0C expected-value compare is the real guard against a
+        // VariantID that resolved to the wrong function on such a build
+        // (3.7.0's id2offset has no equality check off VR -- a missing id
+        // returns the next id's offset, never null).
         //
         // Melee+Ranged share arbitration category 0; Shield+Torch share category
         // 3 (the engine's fixed `[1,2,4,0,3,5,0,6]` order table + slot-bitmask
@@ -376,9 +383,12 @@ namespace apmf::aicastseats {
         // Exact-binary gate for the per-runtime literals above (CLAUDE.md rule 11).
         // Deliberately NOT REL::Module::IsAE()/IsSE(): in the pinned 3.7.0
         // `Relocation.h:899-912` IsAE() is "major.minor == 1.6" (any 1.6.x) and
-        // IsSE() is the `default:` arm -- 1.7.104 classifies as SE there, with no
-        // address library behind it, so every VariantID would resolve to null.
-        // Only the two binaries the CONFIRMED table was read against open this gate.
+        // IsSE() is the `default:` arm -- 1.7.104 classifies as SE there (it never
+        // gets this far: with no address library CommonLib terminates at
+        // SKSE::Init, see the GROUP C block comment). The gate exists for the
+        // binaries that DO load: only the two the CONFIRMED table was read
+        // against open it; any other 1.6.x/1.5.x is refused by name, never
+        // admitted on the IsAE()/IsSE() family test.
         // core/CastClassify.cpp's Install() and plugin.cpp's `[runtime]` startup
         // line apply the identical two-version predicate; keep the three in step.
         bool IsRuntime1_6_1170() { return REL::Module::get().version() == REL::Version{ 1, 6, 1170, 0 }; }
@@ -1268,18 +1278,35 @@ namespace apmf::aicastseats {
             if (!onAE1170 && !onSE597) {
                 spdlog::warn("[aicastseats] GROUP C (weapon-class item score) is placed on 1.6.1170 and 1.5.97 "
                              "only -- the slot-0x0C CalculateScore expected values its install gate compares "
-                             "are per-binary literals and this build is {} (no confirmed values for it; "
-                             "1.7.104 also has no address library). NOT installed on this build.",
+                             "are per-binary literals and this build is {} (no confirmed values for it). "
+                             "NOT installed on this build.",
                              REL::Module::get().version().string("."));
             } else {
                 for (const auto& spec : kWeaponClasses) {
                     REL::Relocation<std::uintptr_t> vt{ spec.vtable };
                     REL::Relocation<std::uintptr_t> expectedFn{
                         REL::Offset(onAE1170 ? spec.calcScoreRvaAE : spec.calcScoreRvaSE) };
+                    // Belt-and-braces, UNREACHABLE by construction (Fable tier-3 on
+                    // c70767c, SEV-4): in the pinned 3.7.0 a VariantID does NOT resolve
+                    // to null for a missing id -- `VariantID::address()` (Relocation.h
+                    // :1535) is zero only when `id()` is zero, and `IDDatabase::
+                    // id2offset` (:1069-1095) `report_and_fail`s past the end of the
+                    // table and otherwise `lower_bound`s with NO equality check off VR
+                    // (a missing id silently yields the NEXT id's offset). A missing
+                    // address-library FILE never reaches here either: `SKSE::Init`
+                    // (src/SKSE/API.cpp:78-79) loads the library and `report_and_fail`s,
+                    // so on 1.7.104 the process terminates inside SKSE::Init before any
+                    // APMF gate runs. The REAL guard against a wrong-id resolve is the
+                    // slot-0x0C expected-value compare just below. This zero test only
+                    // keeps `RecoverLiveOriginal(0, 0x0C)` from ever reading near null
+                    // if CommonLib's runtime enum ever returned something outside its
+                    // three arms; it is not a failure mode this codebase has observed.
                     if (vt.address() == 0) {
                         spdlog::error("[aicastseats] GROUP C: {} VTABLE_CombatInventoryItem{} VariantID resolved "
-                                      "to null on {} (address library missing the id) -- REFUSED (not installed; "
-                                      "never a blind vtable read).",
+                                      "to ZERO on {} -- REFUSED (not installed; never a blind vtable read). This "
+                                      "is not the missing-id case (3.7.0 report_and_fails or mis-resolves that "
+                                      "one, never nulls it); it means REL::Module::GetRuntime() returned no "
+                                      "AE/SE/VR arm at all -- investigate CommonLib, not the address library.",
                                       spec.tag, spec.tag, REL::Module::get().version().string("."));
                         ++nWeaponRefused;
                         continue;
@@ -1314,6 +1341,16 @@ namespace apmf::aicastseats {
                     // for a Shield entry whose vtable identity is unconfirmed). See
                     // ShieldEquipGateThunk's own comment for the full design and the
                     // weaker-guard callout.
+                    // RUNTIMES: this block rides inside the Group C loop, so since the
+                    // 1.5.97 pass it opens on SE too. Re-derived for SE (Fable tier-3
+                    // on c70767c, SEV-4; re-confirmed from the unpacked 1.5.97 image
+                    // in this closing round): SE Shield vtable 0x1681C28 has 21 slots
+                    // (= AE 0x18C9188), slot 0x0F = 0x77DC90, body `sub rsp,0x28; mov
+                    // rcx,rdx; call 0x4FDE10; test al,al; sete al; add rsp,0x28; ret`
+                    // -- byte-shape-identical to AE's 0x817FC0 (only the rel32
+                    // differs), so `ShieldEquip_t = bool(CombatInventoryItem*,
+                    // CombatController*)` holds on SE. Docs/ADDRESS-TABLE-2026-09-15.md
+                    // "Group C" carries the row (added post-confirmation).
                     if (dualWieldPref && std::string_view(spec.tag) == "Shield") {
                         const auto curEquipFn = reinterpret_cast<std::uintptr_t>(
                             RecoverLiveOriginal<ShieldEquip_t>(vt.address(), kCheckShouldEquip));

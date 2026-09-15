@@ -252,18 +252,20 @@ namespace apmf::castclassify {
         }
         // Exact-binary gate (CLAUDE.md rule 11). NOT REL::Module::IsAE()/IsSE():
         // in the pinned 3.7.0 Relocation.h:899-912 IsAE() is any 1.6.x and IsSE()
-        // is the `default:` arm (1.7.104 lands there with no address library, so
-        // the vtable VariantID would resolve to null). The three offsets are
-        // disassembly-confirmed on exactly 1.6.1170 and 1.5.97; nothing else is
-        // guessed. core/AiCastSeats.cpp's Group C gate and plugin.cpp's
-        // `[runtime]` startup line apply this same two-version predicate.
+        // is the `default:` arm (1.7.104 lands there -- though it never reaches
+        // this gate: with no address library CommonLib terminates at SKSE::Init
+        // with the address-library dialog, src/SKSE/API.cpp:78-79). The gate is
+        // for the binaries that DO load: the three offsets are disassembly-
+        // confirmed on exactly 1.6.1170 and 1.5.97; any other 1.6.x/1.5.x is
+        // refused by name, nothing is guessed. core/AiCastSeats.cpp's Group C
+        // gate and plugin.cpp's `[runtime]` startup line apply this same
+        // two-version predicate.
         const auto ver       = REL::Module::get().version();
         const bool onAE1170  = ver == REL::Version{ 1, 6, 1170, 0 };
         const bool onSE597   = ver == REL::Version{ 1, 5, 97, 0 };
         if (!onAE1170 && !onSE597) {
             spdlog::warn("[ch.8b seat 0] runtime {} -- the +0x10/+0x18/+0x4c CombatMagicItemData offsets "
-                         "this seat reads are disassembly-CONFIRMED on 1.6.1170 and 1.5.97 only (1.7.104 "
-                         "has the same offsets on paper but no address library to resolve the vtable). "
+                         "this seat reads are disassembly-CONFIRMED on 1.6.1170 and 1.5.97 only. "
                          "Refusing to install rather than guess a struct layout carries across runtimes "
                          "unchanged (CLAUDE.md rule 11). Heal-OTHER stays absent on this runtime; the "
                          "direct-force degrade path is unaffected.",
@@ -279,9 +281,22 @@ namespace apmf::castclassify {
         }
 
         REL::Relocation<std::uintptr_t> vt{ kCombatMagicItemDataVtable };
+        // Belt-and-braces, UNREACHABLE by construction (Fable tier-3 on c70767c,
+        // SEV-4): in the pinned 3.7.0 a VariantID does NOT resolve to null for a
+        // missing id -- `VariantID::address()` (Relocation.h:1535) is zero only
+        // when `id()` is zero, and `IDDatabase::id2offset` (:1069-1095)
+        // `report_and_fail`s past the end and otherwise `lower_bound`s with NO
+        // equality check off VR (a missing id silently yields the next id's
+        // offset). A missing library FILE terminates the process in SKSE::Init
+        // (src/SKSE/API.cpp:78-79) before this runs. The REAL guard against a
+        // wrong-id resolve is the RTTI mangled-name compare just below. This zero
+        // test only keeps ResolveMangledName from walking near null if CommonLib's
+        // runtime enum ever returned something outside its three arms.
         if (vt.address() == 0) {
-            spdlog::error("[ch.8b seat 0] CombatMagicItemData VariantID resolved to null on {} (address "
-                          "library missing the id) -- REFUSED (not installed; never a blind vtable read).",
+            spdlog::error("[ch.8b seat 0] CombatMagicItemData VariantID resolved to ZERO on {} -- REFUSED (not "
+                          "installed; never a blind vtable read). Not the missing-id case (3.7.0 "
+                          "report_and_fails or mis-resolves that one, never nulls it): REL::Module::"
+                          "GetRuntime() returned no AE/SE/VR arm -- investigate CommonLib, not the library.",
                           ver.string("."));
             return;
         }

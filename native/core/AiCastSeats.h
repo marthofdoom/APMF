@@ -74,13 +74,18 @@
 // GROUP C (marth 2026-09-06, Opus PASS S brief): a THIRD, independent probe in
 // this same file -- CalculateScore (0x0C) on the four WEAPON-class
 // CombatInventoryItem leaves (Melee, Ranged, Shield, Torch), which have NO
-// CommonLib concrete class/vtable symbol at all (Docs/DENY-COMPLETENESS-
-// AUDIT.md row 15's documented gap -- the reason `core/EquipGate.cpp` cannot
-// hook 0x0F for weapons). Resolved from raw disasm-confirmed RVAs
-// (`REL::Offset`, no `REL::VariantID` -- no Address-Library ID exists for any
-// of the four), AE-only, gated by an install-time function-pointer-at-slot
-// identity check (no confirmed RTTI name exists for these four, so that check
-// stands in for the name-match guard the other seats use). Ships ENABLED by
+// CommonLib concrete C++ CLASS (Docs/DENY-COMPLETENESS-AUDIT.md row 15's
+// documented gap -- the reason `core/EquipGate.cpp` cannot hook 0x0F for
+// weapons) but DO have vtable symbols: since the 1.5.97 pass (2026-09-15) the
+// four vtables resolve through the pinned 3.7.0
+// `VTABLE_CombatInventoryItem{Melee,Ranged,Shield,Torch}[0]` VariantIDs (SE
+// 264523/264525/264527/264531, AE 210297/210299/210301/210305 -- the older
+// "no Address-Library ID exists" reading was wrong). Placed on 1.6.1170 AND
+// 1.5.97 behind an exact-version gate; the only per-binary literal left is
+// the slot-0x0C expected value, one per runtime, that the install-time
+// function-pointer-at-slot identity check compares (no confirmed RTTI name is
+// string-matched for these four, so that check stands in for the name-match
+// guard the other seats use). Ships ENABLED by
 // default (`[AiCastSeats] EnableWeaponScoreProbe`, default 1) -- CalculateScore
 // is scalar-return, categorically immune to the GetMagicTarget-class sret bug
 // documented above. A SEPARATE flag (`[AiCastSeats] EnableScoreSteer`, default
