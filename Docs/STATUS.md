@@ -30,8 +30,15 @@ binaries; nothing derived in this branch). Per-site state lives in
 - `plugin.cpp`: one `[runtime] <version>: cast-classify <open|gated>, group-C <open|gated>`
   line at load.
 - **1.7.104: nothing placed** (no address library; a `REL::Offset` literal path is marth's
-  call). Both gates refuse it by name. In 3.7.0 `REL::Module::IsSE()` is the `default:`
-  arm, so 1.7.104 classifies as SE -- the exact-version predicate exists because of that.
+  call). CommonLib terminates at `SKSE::Init` with the address-library dialog on 1.7.104;
+  APMF's gates never run. In 3.7.0 `REL::Module::IsSE()` is the `default:` arm, so 1.7.104
+  classifies as SE -- the exact-version predicate exists so no unverified binary that DOES
+  load passes a family test. The real guard against a wrong-id resolve is the slot-0x0C
+  expected-value compare (Group C) and the RTTI string compare (CastClassify); 3.7.0 never
+  nulls a missing id (Fable tier-3 on c70767c, SEV-4).
+- **TASK2 (Shield slot 0x0F dual-wield preference) opens on 1.5.97 with Group C** --
+  re-derived and re-confirmed: SE slot 0x0F `0x77DC90`, byte-shape-identical to AE
+  `0x817FC0`; row appended to `Docs/ADDRESS-TABLE-2026-09-15.md` "Group C".
 - **Field observable on the deck (1.5.97):** the `[runtime] 1.5.97.0: cast-classify open,
   group-C open` line, then `[ch.8b seat 0] CLASSIFY installed` and four `[aicastseats]
   GROUP C: <class> CalculateScore hooked` lines with `nWeaponRefused == 0`. A `REFUSED`

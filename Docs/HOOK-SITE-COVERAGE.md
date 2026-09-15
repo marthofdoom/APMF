@@ -99,8 +99,9 @@ admits the binary; "no gate" = the construct is layout-identical by evidence and
 
 | # | Site | Construct | 1.6.1170 | 1.5.97 | 1.7.104 | Gate | CONFIRMED-table row |
 |---|---|---|---|---|---|---|---|
-| A | `native/core/CastClassify.cpp` (`kSpellOffset/kCtrlOffset/kSelfFlagOffset`, `Install()`) | `CombatMagicItemData` +0x10/+0x18/+0x4c, slot 1 thunk | **open** (thunk `0x81D830`) | **open** (thunk `0x7811F0`, id 43931; ctor `0x780F5C` stores the same three fields) | **gated** — offsets identical on paper (`0x832D20`) but no address library, VariantID resolves null | exact version `1.6.1170 \|\| 1.5.97` (NOT `IsAE()/IsSE()` — 3.7.0's `IsSE()` is the `default:` arm) | "CastClassify.h SEAT 0", slot-1 row |
-| B | `native/core/AiCastSeats.cpp` GROUP C (`kWeaponClasses`, `Install()`) | vtables via `VTABLE_CombatInventoryItem{Melee,Ranged,Shield,Torch}[0]` (SE 264523/264525/264527/264531, AE 210297/210299/210301/210305); slot-0x0C expected value per runtime | **open** — expected `0x8183e0/0x8188b0/0x818df0/0x819480` | **open** — expected `0x77e0a0/0x77e550/0x77eac0/0x77f0e0` (Shield/Torch are 0xF-byte arg-swap thunks; the slot value is still the class's own entry) | **gated** — values confirmed (`0x82D2C0/0x82D790/0x82DCD0/0x82E360`) but no library; not placed by marth's decision | same exact-version predicate as A; null resolve and slot mismatch each refuse per class | "Group C: weapon-class CalculateScore seats" (8 rows) |
+| A | `native/core/CastClassify.cpp` (`kSpellOffset/kCtrlOffset/kSelfFlagOffset`, `Install()`) | `CombatMagicItemData` +0x10/+0x18/+0x4c, slot 1 thunk | **open** (thunk `0x81D830`) | **open** (thunk `0x7811F0`, id 43931; ctor `0x780F5C` stores the same three fields) | **never reached** — offsets identical on paper (`0x832D20`) but no address library: CommonLib terminates at `SKSE::Init` with the address-library dialog on 1.7.104; APMF's gates never run | exact version `1.6.1170 \|\| 1.5.97` (NOT `IsAE()/IsSE()` — 3.7.0's `IsSE()` is the `default:` arm); the real wrong-id guard is the RTTI mangled-name compare | "CastClassify.h SEAT 0", slot-1 row |
+| B | `native/core/AiCastSeats.cpp` GROUP C (`kWeaponClasses`, `Install()`) | vtables via `VTABLE_CombatInventoryItem{Melee,Ranged,Shield,Torch}[0]` (SE 264523/264525/264527/264531, AE 210297/210299/210301/210305); slot-0x0C expected value per runtime | **open** — expected `0x8183e0/0x8188b0/0x818df0/0x819480` | **open** — expected `0x77e0a0/0x77e550/0x77eac0/0x77f0e0` (Shield/Torch are 0xF-byte arg-swap thunks; the slot value is still the class's own entry) | **never reached** — values confirmed (`0x82D2C0/0x82D790/0x82DCD0/0x82E360`) but no library: CommonLib terminates at `SKSE::Init` with the address-library dialog on 1.7.104; APMF's gates never run; not placed by marth's decision | same exact-version predicate as A (inlined per file, not a shared helper); the real wrong-id guard is the slot-0x0C expected-value compare per class (a `vt.address()==0` test precedes it as unreachable belt-and-braces — 3.7.0 never nulls a missing id) | "Group C: weapon-class CalculateScore seats" (8 rows) |
+| B2 | `native/core/AiCastSeats.cpp` TASK2 (`EnableDualWieldPreference`, inside the Group C loop) | Shield vtable slot 0x0F `CheckShouldEquip`, `ShieldEquip_t = bool(CombatInventoryItem*, CombatController*)` | **open** — slot 0x0F `0x817FC0` on vtable `0x18C9188` (21 slots) | **open** — slot 0x0F `0x77DC90` on vtable `0x1681C28` (21 slots); body `sub rsp,0x28; mov rcx,rdx; call 0x4FDE10; test al,al; sete al; add rsp,0x28; ret`, byte-shape-identical to AE | never reached (as B) | rides B's gate + B's 0x0C identity pass for the Shield entry; INI default 0 | "Group C", Shield `CheckShouldEquip (slot 0x0F)` row (added post-confirmation, reviewer re-derived) |
 | C | `native/core/CastSeats.cpp` (`kAimTargetOverride`) | `CombatAimController` +0x30 aim override | no gate | no gate — ctor zeroes `[+0x30]`, vfunc7 reads it first | no gate (same evidence) | INI switch + install RTTI + per-call vtable identity (unchanged) | "MFO layout facts", CombatController row (c) |
 | D | `native/core/CastSeats.cpp` / `native/core/AiCastSeats.cpp` (`Out16`) | `GetMagicTarget` hidden sret `{u32 @0, ptr @8}` | no gate (`0x81e020`) | no gate (`0x781CB0` + helper `0x782100`) | no gate (same ABI) | none needed | "GetMagicTarget sret" row |
 | E | `native/core/EquipGate.cpp` (`CallSiteName`) | 0x0F call-site LABEL table (`0x80fcd0`, `0x813af2/0x813d38/0x814270/0x8144b2`) | consulted | not consulted — prints the live RVA as "unlabelled" | not consulted | exact version `1.6.1170`; cosmetic, nothing gates on it | none (SE call sites were not derived) |
@@ -110,13 +111,22 @@ Also confirmed on 1.5.97 with no change needed (RTTI-verified at install, no ver
 14 `CombatMagicCaster` seat vtables (`CastSeats.cpp`, `AiCastSeats.cpp` GROUP B), the 30
 `CombatInventoryItemMagicT` combos incl. the two `_CombatMagicCasterArmor_` rows
 (`EquipGate.cpp`, `AiCastSeats.cpp` GROUP A), the `<0x68` `CombatController` reads
-(`attackerHandle` 0x28 / `targetHandle` 0x2C / `inventory` 0x10 — APMF reads nothing above
-0x68), and the 72 `CombatBehaviorTree` leaf triples (`ActionGate.cpp`). `plugin.cpp` logs
+(`attackerHandle` 0x28 / `targetHandle` 0x2C / `combatStyle` 0x38 confirmed by direct read in
+the table's CombatController row; `inventory` 0x10 is CommonLib-declared and < 0x68, i.e. in the
+unshifted region per ENGINE_NOTES §0.29, not a table cell — APMF reads nothing above 0x68), and
+the 72 `CombatBehaviorTree` leaf triples (`ActionGate.cpp`). `plugin.cpp` logs
 `[runtime] <version>: cast-classify <open|gated>, group-C <open|gated>` once at load.
 
-**1.7.104: nothing placed.** No address library exists for it, so every `VariantID`/`RE::VTABLE_*`
-resolves to null; a 1.7 path would be a `REL::Offset` literal table behind an exact-version
-check, which is a design decision for marth, not a placement. Rows A and B refuse it by name.
+**1.7.104: nothing placed, and nothing of APMF's runs.** No address library exists for it, and
+CommonLib terminates at `SKSE::Init` with the address-library dialog on 1.7.104
+(`src/SKSE/API.cpp:78-79` → `IDDatabase::load_file(..., failOnError=true)`); APMF's gates never
+run. (The earlier "every `VariantID` resolves to null" wording was wrong: in 3.7.0
+`IDDatabase::id2offset` `report_and_fail`s past the end of the table and otherwise `lower_bound`s
+with no equality check off VR, so a missing id is a silent next-id offset, never a null.) A 1.7
+path would be a `REL::Offset` literal table behind an exact-version check, which is a design
+decision for marth, not a placement. Rows A/B's exact-version gates are for the binaries that DO
+load; their real wrong-id guards are the RTTI-name compare (A) and the slot-0x0C expected-value
+compare (B).
 
 Not a hook site (checked and ruled out): `native/core/NativeBitProbe.cpp` only toggles
 `Actor::BOOL_FLAGS` bits via the ordinary `GetActorRuntimeData().boolFlags` accessor — no

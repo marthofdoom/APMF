@@ -4,7 +4,7 @@
 - **The weapon score seat resolves its four vtables through the address library on both runtimes.** It used to carry hard 1.6.1170 addresses. The install check that compares the live function pointer against the expected one is now per runtime, because 1.5.97 compiles two of those functions as short thunks.
 - **The version gates are exact.** Each seat opens on 1.6.1170 and 1.5.97 and refuses any other build by name. A 1.6 build other than 1170 is refused where it used to be admitted unverified.
 - **One line at startup states the placement.** `[runtime] <version>: cast-classify open, group-C open` tells a log reader what this build placed before any seat installs.
-- Skyrim 1.7.104 is still unsupported. There is no address library for it, so nothing was placed. The refusal lines name it.
+- Skyrim 1.7.104 is still unsupported. There is no address library for it, so nothing was placed. CommonLib terminates at SKSE::Init with the address-library dialog on 1.7.104; APMF's gates never run.
 - Not field-tested on either runtime. CI verified only.
 
 ## v0.9.4 -- Ships its settings file

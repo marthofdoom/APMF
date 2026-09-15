@@ -35,10 +35,15 @@ hook, registers the input sink, logs the hotkey help. `kPreLoadGame` →
   `ReleaseAll`, engaged channels leak engine state across a save load (a follower
   stuck sneaking / silent / speed-halved). Keep the release on pre-load. The
   `[runtime]` line MUST use the same two-version predicate as `core/CastClassify.cpp`
-  `Install()` and `core/AiCastSeats.cpp` GROUP C (`IsRuntime1_6_1170/IsRuntime1_5_97`)
-  — it is a report of those gates, not a third gate; if one of them ever admits a
-  third binary, change all three. Never `REL::Module::IsAE()/IsSE()` here: in the
-  pinned 3.7.0 `IsSE()` is the `default:` arm, so 1.7.104 reads as SE.
+  `Install()` and `core/AiCastSeats.cpp` GROUP C — it is a report of those gates, not a
+  third gate; if one of them ever admits a third binary, change all three. The predicate
+  is NOT a shared helper: `IsRuntime1_6_1170()/IsRuntime1_5_97()` are file-local to
+  `AiCastSeats.cpp`'s anonymous namespace, while `CastClassify.cpp` and `plugin.cpp`
+  each inline their own `REL::Version{1,6,1170,0}` / `{1,5,97,0}` compares — three
+  copies to keep in step by hand. Never `REL::Module::IsAE()/IsSE()` here: in the
+  pinned 3.7.0 `IsSE()` is the `default:` arm, so 1.7.104 reads as SE — though it never
+  reaches this line: CommonLib terminates at `SKSE::Init` with the address-library
+  dialog on 1.7.104; APMF's gates never run there.
 
 ### `native/APMF_API.h` — the inter-plugin C-ABI contract (shared with clients)
 The ONLY file a client shares with APMF. POD structs of function pointers
@@ -265,9 +270,15 @@ the same forced answer within one classify pass — see the .cpp's comment).
   `0x780F5C`) stores `[+0x10]=MagicItem`, `[+0x18]=CombatController`, `[+0x4c]=self
   flag` byte-for-byte as on AE, the slot-1 thunk is SE `0x7811F0` (id 43931), the
   vtable resolves via SE id 265000 (`0x1686BF8`). The gate is EXACT-VERSION
-  (`1.6.1170 || 1.5.97`), not `IsAE()/IsSE()`; every other binary (VR, 1.7.104, any
-  other 1.6.x) is refused with a loud line naming the version; a null VariantID
-  resolve is refused before the RTTI walk. INI kill-switch `[CastSeats]
+  (`1.6.1170 || 1.5.97`), not `IsAE()/IsSE()`; every other binary that loads (VR, any
+  other 1.6.x/1.5.x) is refused with a loud line naming the version. 1.7.104 never
+  reaches the gate: CommonLib terminates at `SKSE::Init` with the address-library dialog
+  on 1.7.104; APMF's gates never run there. The REAL guard against a wrong-id resolve is
+  the RTTI mangled-name string compare — in 3.7.0 a missing id is never a null resolve
+  (`IDDatabase::id2offset` `report_and_fail`s past the end and otherwise `lower_bound`s
+  with no equality check off VR, so it silently returns the NEXT id's offset); the
+  `vt.address() == 0` test that precedes the RTTI walk is unreachable belt-and-braces
+  (Fable tier-3 on c70767c, SEV-4). INI kill-switch `[CastSeats]
   EnableSeat0Classify` (default 1).
   Install ordering vs `core/EquipGate.cpp`/`core/CastSeats.cpp` does not matter
   (disjoint vtable). Runs on the combat thread; one lock-free RCU read
@@ -363,14 +374,26 @@ Still OFF by default.
 - **What breaks:** GROUP C's `kWeaponClasses` table (VariantID + per-runtime
   CalculateScore RVA + category) is disassembly-CERTAIN for 1.6.1170 and 1.5.97 ONLY
   (CONFIRMED table 2026-09-15, "Group C" rows) — the gate is `IsRuntime1_6_1170() ||
-  IsRuntime1_5_97()`, deliberately NOT `IsAE()/IsSE()` (3.7.0's `IsSE()` is the
-  `default:` arm: 1.7.104 would pass it, its VariantIDs resolve to null with no
-  address library, and `RecoverLiveOriginal(0, 0x0C)` would read near address 0). A
-  null resolve and a slot-value mismatch each refuse that one class loudly, never a
-  blind write; a NEW build could still resolve a DIFFERENT class at a matching value
+  IsRuntime1_5_97()` (file-local helpers), deliberately NOT `IsAE()/IsSE()` (3.7.0's
+  `IsSE()` is the `default:` arm, so any 1.5.x/1.7.x reads as SE and an unverified
+  build would pass a family test). 1.7.104 itself never reaches the gate: CommonLib
+  terminates at `SKSE::Init` with the address-library dialog on 1.7.104; APMF's gates
+  never run there. **The REAL guard against a wrong-id resolve on a build that DOES
+  load is the slot-0x0C expected-value compare** — in 3.7.0 a missing id is never a
+  null resolve (`IDDatabase::id2offset` `report_and_fail`s past the end and otherwise
+  `lower_bound`s with no equality check off VR, so it silently returns the NEXT id's
+  offset); the `vt.address() == 0` test ahead of it is unreachable belt-and-braces
+  (Fable tier-3 on c70767c, SEV-4), kept only so `RecoverLiveOriginal(0, 0x0C)` can
+  never read near address 0. A slot-value mismatch refuses that one class loudly, never
+  a blind write; a NEW build could still resolve a DIFFERENT class at a matching value
   if the check is ever loosened; keep it exact and per-runtime. Adding a third
   binary means a third expected-value column sourced from a CONFIRMED table row, the
   same predicate change in `core/CastClassify.cpp` and `plugin.cpp`'s `[runtime]` line.
+  **TASK2 (Shield slot 0x0F, `EnableDualWieldPreference`) rides inside this loop and so
+  opens on 1.5.97 too** — re-derived (same review) and re-confirmed from the unpacked
+  1.5.97 image: SE Shield vtable `0x1681C28` has 21 slots (= AE), slot 0x0F =
+  `0x77DC90`, byte-shape-identical to AE `0x817FC0`, so `ShieldEquip_t` holds on SE;
+  the row is in `Docs/ADDRESS-TABLE-2026-09-15.md` "Group C" (added post-confirmation).
   The 14 caster and 30 item VariantID lists (GROUP A/B) and the `<0x68`
   `CombatController` guards are confirmed on SE by the same table (14-seat / 30-combo
   / CombatController rows) — no gate, RTTI-verified at install.
