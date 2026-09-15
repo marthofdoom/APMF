@@ -259,7 +259,7 @@ namespace apmf::equipsink {
             // untouched and unlogged. Cheapest checks first.
             if (!actor || !obj || !data || actor->IsPlayerRef()) { g_worker(mgr, actor, obj, data); return; }
             const RE::FormID actorId = actor->GetFormID();
-            ControlMap::EquipSetView set;
+            EquipSetView set;
             if (!ControlMap::Get().TryGetEquipSet(actorId, set)) { g_worker(mgr, actor, obj, data); return; }
 
             // A claimed actor. Everything from here is logged (deduped/capped).

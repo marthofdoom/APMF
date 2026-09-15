@@ -69,7 +69,7 @@ namespace {
     // actor is not already wearing. A claim released between the post and the
     // pump simply reads back as "no claim" and enforces nothing.
     void Enforce(RE::FormID id) {
-        apmf::ControlMap::EquipSetView set;
+        apmf::EquipSetView set;
         if (!apmf::ControlMap::Get().TryGetEquipSet(id, set)) return;   // claim gone, or lost arbitration
         if (set.count == 0) return;                                     // no declaration (or cleared): nothing to equip
 
