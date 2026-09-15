@@ -193,7 +193,7 @@ SKSEPluginLoad(const SKSE::LoadInterface* a_skse) {
         const auto game     = REL::Module::get().version();
         const bool placed   = game == REL::Version{ 1, 6, 1170, 0 } || game == REL::Version{ 1, 5, 97, 0 };
         spdlog::info("[runtime] {}: cast-classify {}, group-C {}",
-                     game.string(), placed ? "open" : "gated", placed ? "open" : "gated");
+                     game.string("."), placed ? "open" : "gated", placed ? "open" : "gated");
     }
 
     SKSE::GetMessagingInterface()->RegisterListener(OnMessage);

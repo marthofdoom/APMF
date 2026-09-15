@@ -267,7 +267,7 @@ namespace apmf::castclassify {
                          "Refusing to install rather than guess a struct layout carries across runtimes "
                          "unchanged (CLAUDE.md rule 11). Heal-OTHER stays absent on this runtime; the "
                          "direct-force degrade path is unaffected.",
-                         ver.string());
+                         ver.string("."));
             return;
         }
         if (g_installed.exchange(true)) return;
@@ -282,7 +282,7 @@ namespace apmf::castclassify {
         if (vt.address() == 0) {
             spdlog::error("[ch.8b seat 0] CombatMagicItemData VariantID resolved to null on {} (address "
                           "library missing the id) -- REFUSED (not installed; never a blind vtable read).",
-                          ver.string());
+                          ver.string("."));
             return;
         }
         const char* name = ResolveMangledName(vt.address());

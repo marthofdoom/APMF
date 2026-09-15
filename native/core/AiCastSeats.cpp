@@ -1270,7 +1270,7 @@ namespace apmf::aicastseats {
                              "only -- the slot-0x0C CalculateScore expected values its install gate compares "
                              "are per-binary literals and this build is {} (no confirmed values for it; "
                              "1.7.104 also has no address library). NOT installed on this build.",
-                             REL::Module::get().version().string());
+                             REL::Module::get().version().string("."));
             } else {
                 for (const auto& spec : kWeaponClasses) {
                     REL::Relocation<std::uintptr_t> vt{ spec.vtable };
@@ -1280,7 +1280,7 @@ namespace apmf::aicastseats {
                         spdlog::error("[aicastseats] GROUP C: {} VTABLE_CombatInventoryItem{} VariantID resolved "
                                       "to null on {} (address library missing the id) -- REFUSED (not installed; "
                                       "never a blind vtable read).",
-                                      spec.tag, spec.tag, REL::Module::get().version().string());
+                                      spec.tag, spec.tag, REL::Module::get().version().string("."));
                         ++nWeaponRefused;
                         continue;
                     }
