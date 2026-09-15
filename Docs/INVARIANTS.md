@@ -590,6 +590,35 @@ thing that derails one. Concretely:
   "T4 — DEFERRED" for the full crash record). T4 was removed rather than patched
   around — this is the standing reason why. See also #6 (call-site offsets are also
   version-fragile; this is a second, independent reason they're banned).
+  **#17a — the ONE bounded call-site exception (marth 2026-09-15): a FACET WITH NO VIRTUAL
+  SEAT, taken in its ENTIRETY.** Amended after the engine-equip design pass: every engine
+  equip funnels through the `ActorEquipManager` worker (AE 38929→0x6CBE30 / SE
+  37974→0x639E20), reached ONLY from two internal call sites (`EquipObject` 38894+0x170 /
+  37938+0xE5 and the non-queued sibling 38893+0xBC / 37937+0xBC; full E8 scan), and NO
+  virtual function exists anywhere on that path (`Actor::AddWornItem` is devirtualised).
+  A facet like that cannot be seated by a vtable hook at all, so "vtable only" would mean
+  "no control", which is the opposite of APMF's purpose. marth: "an exception would be
+  measured control of that facet in entirety … a command is sent to APMF with what to
+  equip and that is enforced until overridden." Conditions, ALL required:
+  (1) the site is an INTERNAL call site inside a non-virtual choke point — never a public
+  entry another mod would reasonably patch (the two sites above are inside the engine's
+  own `EquipObject` bodies, not at a caller);
+  (2) install byte-verifies the exact 5 bytes at EACH site as `E8 rel32 → worker` on the
+  running binary; any mismatch REFUSES THE WHOLE SEAT and logs it — a SCAR-class
+  collision becomes a refusal, never a CTD;
+  (3) per-runtime ids AND offsets come from disassembly of that runtime (rule 11), never
+  from a CommonLib declaration;
+  (4) engine-answer-first is preserved in the only form a sink allows: deny = do not call
+  the worker; the seat NEVER manufactures an equip the client did not declare — the
+  client's declared set is what APMF equips, and the seat is what keeps the engine from
+  undoing it;
+  (5) the seat is scoped to actors holding an explicit claim (`kIntent_EquipAuthority`);
+  the player and unclaimed actors pass through untouched and unlogged.
+  Under #17a the facet is taken WHOLE (declare the worn set → APMF equips it and refuses
+  everything else until the client re-declares or releases), which is full control of the
+  facet exactly as a per-path deny would be. Any further call-site seat needs its own
+  #17a argument, made explicitly. See `Docs/DENY-COMPLETENESS-AUDIT.md` row 17 and
+  `MAP.md` EquipSink once they land.
 - **Engine-answer-first.** Every thunk calls the stored original before deciding
   anything; it only ever flips the engine's own YES to NO, only for an actor APMF
   itself holds a claim on. Never invent a YES, never manufacture behavior, never
