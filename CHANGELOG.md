@@ -1,3 +1,11 @@
+## Unreleased -- A mod can decide what a follower wears
+
+- **A mod can now declare a follower's worn set and have it hold.** The mod sends the list of items. Harbinger equips them and refuses every other equip the game tries on that follower: outfit refresh, the AI's own weapon and armor picks, the re-equip after an item is removed. It holds until the mod declares a new set or releases. The player is never touched. Followers without a declaration are never touched.
+- **This is the first call-site hook in Harbinger.** Every engine equip goes through one internal function that has no virtual entry to hook, so the two places the game calls it are patched instead. Both are checked byte for byte before either is written. If any other mod has touched them the whole feature refuses to install and says so in the log. A conflict is a missing feature, never a crash.
+- **Ships in observe mode.** `bEquipObserveOnly=1` in `APMF.ini` logs what would have been refused and refuses nothing. It stays that way until a real session proves the log is right. Flip it to 0 to enforce.
+- **Scripts still get through.** A Papyrus or console equip passes unless the mod asks for those to be refused too. Unequips are never refused in this version.
+- New API revision (v7) with one call, `SetEquipSet`. Older clients are unaffected.
+- No change to any existing facet.
 ## Unreleased -- APMF's cast seats run on Skyrim 1.5.97
 
 - **The cast classify seat and the weapon score seat now run on Skyrim 1.5.97.** Both used to refuse anything but 1.6.1170. Every value they read was checked against the 1.5.97 binary and its address library before being placed. Nothing was guessed.

@@ -50,7 +50,9 @@ The ONLY file a client shares with APMF. POD structs of function pointers
 (`APMF_API_v1`: `Request`/`Release`; `APMF_API_v2`: + `RequestEx` carrying the POD
 `APMF_Param`; `APMF_API_v3`: + `Repoint` = re-point an existing claim's param in place,
 same handle; `APMF_API_v4`: + `SetSpellAllowList`; `APMF_API_v5`: + `RequestCast` with
-the rich `APMF_CastRequest`; `APMF_API_v6`: + `GetCastProxy`/`IsCastActive`), the
+the rich `APMF_CastRequest`; `APMF_API_v6`: + `GetCastProxy`/`IsCastActive`;
+`APMF_API_v7`: + `SetEquipSet` — the ch.17 equip-authority DECLARATION, plus
+`kIntent_EquipAuthority = 17`, the `EquipAuthFlags` bits and `kMaxEquipSet`), the
 `Intent` enum, `Handle`, and the exported query-fn name. No C++ class / STL / vtable
 crosses the boundary. **The current `kABIVersion` is stated ONLY in the header**
 (INVARIANTS #14b — this line said 3 while the header was at 6).
@@ -63,12 +65,13 @@ crosses the boundary. **The current `kABIVersion` is stated ONLY in the header**
 
 ### `native/core/ClientAPI.{h,cpp}` — the C-ABI implementation
 The exported `APMF_GetInterface(abiVersion)` hands over the static POD newest-struct
-object (`APMF_API_v6` today — read the header, not this line) as a base
+object (`APMF_API_v7` today — read the header, not this line) as a base
 `APMF_API_v1*`; a client casts up to the newest struct it uses. It returns **nullptr**
 when the client asks for a version NEWER than this APMF implements (`:125-128`), which
 is why a needless `kABIVersion` bump is expensive (INVARIANTS #14b). Its
-`Request`/`RequestEx`/`Release`/`Repoint` fn-pointers forward to
-`ControlMap::EnqueueRequest/Release/Repoint` (Request == RequestEx with a null param).
+`Request`/`RequestEx`/`Release`/`Repoint`/`SetSpellAllowList`/`SetEquipSet`
+fn-pointers forward to `ControlMap::EnqueueRequest/Release/Repoint/SetSpellAllowList/
+SetEquipSet` (Request == RequestEx with a null param).
 `RequestEx`/`Repoint` copy the client's `APMF_Param` synchronously (never retained).
 `Repoint(handle,param)` updates a live claim's param + re-points its channel if it
 owns it — no release/re-request (the "own the gambit" retarget primitive).
@@ -100,6 +103,16 @@ against the original spell and Repoint re-runs none of that) — with the one ex
 that a `kCastFlag_FromPackage` claim's heartbeat necessarily carries the PACKAGE the
 client named, which the claim remembers as `Claim::castSrcForm` and accepts silently
 (the stored form stays the spell APMF extracted).
+**ch.17 (ABI v7):** each `Claim` also carries the equip-authority DECLARATION
+(`equipForms[kMaxEquipSet]`/`equipCount`, POD, appended at the end; 0 == none).
+`EnqueueSetEquipSet` (any thread, copied + clamped at enqueue) → `kSetEquipSet` op →
+`ApplySetEquipSet` (writer: stores on the claim whether or not it owns the channel;
+if it IS the owner it fires `channel->OnOwnerChanged` on EVERY applied declaration,
+changed or not — a client re-issuing the same set is asking for it back, and that is
+a declaration, not a loop; returns "stored set changed" for the Publish gate).
+`TryGetEquipSet(actor, EquipSetView&)` is the seat's read: any thread, relaxed
+pre-gate, one acquire-load, one lookup, the WINNING claim's set copied out BY VALUE
+with its `param.ival` flags; false for an unclaimed/unloaded actor.
 - **What breaks:** the RCU contract (#12) — the working map/`m_index` are mutated
   ONLY on the writer thread (Drain/ReleaseAll/Clear, all the same MAIN thread; API
   calls only enqueue) and published via `Publish()`
@@ -644,6 +657,59 @@ re-dispatch still prints.
   goes back to answering with the pre-claim package. Never touch alias/run-once state
   (INVARIANTS #3a); never return null.
 
+### `native/core/EquipSink.{h,cpp}` — THE #17a CALL-SITE SEAT: the engine-equip sink (ch.17)
+**The one non-vtable seat in the tree, licensed by INVARIANTS #17a and NOTHING else.**
+Every engine equip funnels through the `ActorEquipManager` worker (AE 38929 → RVA
+0x6CBE30 / SE 37974 → 0x639E20), reached from exactly TWO internal E8 sites — `EquipObject`
+38894+0x170 / 37938+0xE5 and the list sibling 38893+0xBC / 37937+0xBC (full .text E8 scan
+plus E9/lea/pointer scans on both unpacked binaries, 2026-09-15: nothing else reaches it;
+`Actor::AddWornItem` is devirtualised, so no vtable seat exists for this facet). `Install()`
+← `plugin.cpp` kDataLoaded: VR-refused, install-once, INI `[EquipAuthority] bEquipAuthority`
+(default 1); resolves the worker via `REL::ID`, then BYTE-VERIFIES all sites BEFORE writing
+any (`E8 rel32` whose target == the library-resolved worker on the running binary); ANY
+mismatch refuses the WHOLE seat with `[apmf][equip-sink] site-verify FAILED …` (a SCAR-class
+collision is a refusal, never a CTD); on success logs `site <id>+<off> verified E8-><rva>`
+per site, builds a sorted `REL::IDDatabase::Offset2ID` copy of the Address Library (the
+caller classifier), `SKSE::AllocTrampoline(64)` and `write_call<5>` both sites onto ONE thunk.
+**Thunk** (worker signature `(ActorEquipManager*, Actor*, TESBoundObject*, EquipData*)`;
+`EquipData{extra@0,count@8,slot@0x10,0@0x18,queue@0x20,force@0x21,sounds@0x22,applyNow@0x23}`,
+`static_assert`-pinned): player / null / UNCLAIMED actor (`ControlMap::TryGetEquipSet` false)
+→ call the worker, unlogged (#17a-5, #13). Claimed actor → classify the caller by reading
+`EquipObject`'s CALLER's return slot at the per-site, per-runtime depth measured from the
+bytes (AE 38894 = 5 pushes + `sub rsp,0x50` → `[rsp+0x80]`; AE 38893 = 3 pushes → `[rsp+0x70]`;
+SE 37938 = `push rdi` → `[rsp+0x60]`; SE 37937 = 3 pushes → `[rsp+0x70]`; the site is
+identified from `_ReturnAddress()-5`), map the RVA to the containing function's library id
+(greatest offset ≤ RVA via `upper_bound-1` over the public iterators — NEVER `Offset2ID::
+operator()`, which `report_and_fail`s on a miss), name it from the per-runtime path table
+(OutfitApply / AddWornOutfit / AiCommand / RemoveItemReequip / CombatNode / Script / Console /
+PlayerMenu / WorkerReentry), `External(<module.dll>)` for a return address outside the exe
+(skse64* counts as Script), `Unknown(<id>)` otherwise. **Verdict, in order:** `tls>0`
+(APMF's own equip, `ApmfEquipScope`, inherited by the worker family's 38913/37957 re-entry)
+→ allow; no declaration (`count==0`) → allow; item in the declared set → allow; Script/
+Console without `kEquipAuth_DenyScript`/INI `bEquipDenyScript` → allow; else observe-only
+(INI `bEquipObserveOnly`, default 1, or the claim's `kEquipAuth_ObserveOnly`) → log
+`would-deny` and call; else `deny` = RETURN WITHOUT CALLING the worker (nothing queued, no
+re-entry; the caller's own spin-lock/epilogue run as if the worker returned — both callers
+discard its return value, verified). One `[apmf][equip-obs] actor= item= op=equip path=
+site=<id>+<off> ret=<rva> q= f= s= a= tls= verdict=` line per decision, deduped 2 s per
+(actor,item,path), capped 100/s with a per-minute dropped-count line, wrapped in
+`try/catch` so logging can never unwind into the engine frame.
+- **What breaks:** (1) **#17a's five conditions are the ONLY licence** — a third site, a
+  public entry, a "warn and install anyway" on a byte mismatch, an equip the client did not
+  declare, or a touch on an unclaimed actor each voids it; a NEW call-site seat anywhere
+  needs its own explicit #17a argument, not an appeal to this one. (2) **The depths are
+  per-site AND per-runtime**: a new runtime (1.7.x) needs its ids, offsets AND frame shapes
+  re-measured from its bytes (rule 11); never carry AE's `0x80` to a binary you have not
+  disassembled. (3) **The TLS bracket** is what lets `channels/EquipAuthority.cpp`'s own
+  equips through AND what proves them in the log (`tls=1`); enforce without it and the
+  probe criterion "zero would-deny with tls>0" cannot be read. (4) The seat reads ONLY the
+  RCU snapshot (FormID compares; never `LookupByID`, never client state) — it runs on
+  whatever thread equips; a form lookup there takes the engine's forms-map lock on the
+  combat thread. (5) `Offset2ID` is built BEFORE the patch (the thunk must never see a
+  half-built table) and is immutable after. (6) UNEQUIPS are not seated (the twin
+  `UnequipObject` 38901/37945 → worker 38934/37979, single caller 38901+0x1B9 / 37945+0x138)
+  — `kEquipAuth_DenyUnequip` is RESERVED and refused; seating it is its own #17a argument.
+
 ### `native/core/NonAliasProbe.{h,cpp}` — OBSERVE-ONLY 0xDF hook + 0x49 assist + RTTI dumper
 Docs/PROBE-NONALIAS-PACKAGE.md's runtime probe: does `Actor::CheckForCurrentAliasPackage`
 (0x49, `core/PackageGate.cpp`'s existing hook) fire for a NON-alias package actor (Cicero,
@@ -671,8 +737,9 @@ tool) still exist but are **unreachable unless the keyboard test surface is arme
 ### `native/channels/*.cpp` — one module per facet (FULL documented catalog)
 Each: a `Channel` subclass + `APMF_REGISTER_CHANNEL`, per-NPC `Engage`/`Release`.
 The first release shipped the documented catalog of 13 channels as a baseline
-benchmark; the table below is the CURRENT set — 16 files, 16 rows (ch.7
-`CombatAction` and ch.9 `OfferPackage` were missing from it until 2026-09-07). Each `ServesIntent()` maps to an `APMF_API::Intent`. Test keys in
+benchmark; the table below is the CURRENT set — 17 files, 17 rows (ch.7
+`CombatAction` and ch.9 `OfferPackage` were missing from it until 2026-09-07; ch.17
+`EquipAuthority` added 2026-09-15). Each `ServesIntent()` maps to an `APMF_API::Intent`. Test keys in
 parentheses.
 
 | File | Ch | Facet | Gate / mechanism | Kind |
@@ -693,6 +760,7 @@ parentheses.
 | `OfferPackage.cpp` | 9 | package-procedure activity (NumpadSlash) | Arbitration + claim lifecycle + the `EvaluatePackage(true,false)` nudge, `mainthread::Post`ed so it lands PAST the claim's publish; the redirect itself is `core/PackageGate.cpp`'s T3 0x49 hook returning the claim's `param.form`. The test key carries no package, so a test claim offers nothing | claim + T3 enforcement; the ENGINE runs the package natively |
 | `Equipment.cpp` | 15 | equip/unequip (Num.) | `GetEquippedObject` + `UnequipObject`/`EquipObject` (melee-vs-ranged lever) | source-block |
 | `Detection.cpp` | 16 | stealth (Num8) | `kMovementNoiseMult` + `kDetectLifeRange` AVs | source-block |
+| `EquipAuthority.cpp` | 17 | ENGINE-EQUIP facet, WHOLE (`kIntent_EquipAuthority`, ABI v7; no test key) | Arbitration + claim lifecycle (standing, no TTL) + the ONE #17a-licensed equip: on every applied `SetEquipSet` for the owning claim (and on a win/repoint) it POSTS one `mainthread` hop that lands after `Publish()` and equips each declared item the actor is not wearing via `ActorEquipManager::EquipObject` (queued, not forced) inside `equipsink::ApmfEquipScope`; never unequips; no re-assert. The deny is `core/EquipSink.cpp`'s call-site seat. `Release` relinquishes (nothing to undo). Refuses `kEquipAuth_DenyUnequip` (reserved) | claim + #17a seat; APMF equips the DECLARED set, the ENGINE keeps its hands off |
 
 - **What breaks (all channels):** each must (1) keep the package coherent — none
   substitutes the package (§5); (2) capture-and-restore engine state in `Release`,
