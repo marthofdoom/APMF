@@ -142,6 +142,7 @@ namespace apmf {
         PendingOp op{};
         op.kind   = PendingOp::Kind::kSetEquipSet;
         op.handle = handle;
+        op.equipRequested = forms ? count : 0;
         if (forms && count > 0) {
             op.equipCount = (count < APMF_API::kMaxEquipSet) ? count : APMF_API::kMaxEquipSet;
             for (std::uint32_t i = 0; i < op.equipCount; ++i) op.equipForms[i] = forms[i];
@@ -235,7 +236,7 @@ namespace apmf {
             case PendingOp::Kind::kRepoint:      changed |= ApplyRepoint(op.handle, op.param, next); break;
             case PendingOp::Kind::kSetAllowList: changed |= ApplySetSpellAllowList(op.handle, op.altForms, op.altCount, next); break;
             case PendingOp::Kind::kCast:         changed |= ApplyRequest(op, next);                  break;   // ch.8b -- ApplyRequest handles the cast branch
-            case PendingOp::Kind::kSetEquipSet:  changed |= ApplySetEquipSet(op.handle, op.equipForms, op.equipCount, next); break;   // ch.17
+            case PendingOp::Kind::kSetEquipSet:  changed |= ApplySetEquipSet(op.handle, op.equipForms, op.equipCount, op.equipRequested, next); break;   // ch.17
             }
         }
 
@@ -1017,7 +1018,7 @@ namespace apmf {
     // "publish first, mutate second", channels/EquipAuthority.cpp). Returns
     // whether the STORED set changed (Publish gate), never whether it enforced.
     bool ControlMap::ApplySetEquipSet(Handle handle, const RE::FormID* forms, std::uint32_t count,
-                                      MapType& map) {
+                                      std::uint32_t requested, MapType& map) {
         auto idxIt = m_index.find(handle);
         if (idxIt == m_index.end()) return false;   // unknown/stale
 
@@ -1052,6 +1053,15 @@ namespace apmf {
                 for (std::uint32_t i = n; i < APMF_API::kMaxEquipSet; ++i) mine->equipForms[i] = 0;
             }
             const bool owner = (best == mine);
+            // Once per handle per distinct overflow (SEV-4 #6): a clamped set
+            // denies items 33+ and the log must say so, not just the first time
+            // a client ever overflows but not on every identical re-send either.
+            if (requested > APMF_API::kMaxEquipSet && requested != mine->equipRequested) {
+                spdlog::warn("[apmf][equip-auth] actor=0x{} h={} set truncated to {} (got {}) -- items past the "
+                             "bound are treated as OFF-SET: denied when the engine equips them, never equipped by APMF.",
+                             apmf::log::Hex(formID), handle, APMF_API::kMaxEquipSet, requested);
+            }
+            mine->equipRequested = (requested > APMF_API::kMaxEquipSet) ? requested : 0;
             spdlog::info("[ctl] 0x{} ~ ch.{} {} SET-EQUIP-SET (h={}, {} form(s), {}{}).",
                          apmf::log::Hex(formID), channel->ChannelNo(), channel->Name(),
                          handle, n, changed ? "changed" : "unchanged", owner ? ", owner" : ", not owner");
@@ -1579,7 +1589,7 @@ namespace apmf {
                 case PendingOp::Kind::kRepoint:      ApplyRepoint(op.handle, op.param, next); break;
                 case PendingOp::Kind::kSetAllowList: ApplySetSpellAllowList(op.handle, op.altForms, op.altCount, next); break;
                 case PendingOp::Kind::kCast:         ApplyRequest(op, next);                  break;
-                case PendingOp::Kind::kSetEquipSet:  ApplySetEquipSet(op.handle, op.equipForms, op.equipCount, next); break;
+                case PendingOp::Kind::kSetEquipSet:  ApplySetEquipSet(op.handle, op.equipForms, op.equipCount, op.equipRequested, next); break;
                 }
             }
         }

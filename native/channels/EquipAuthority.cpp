@@ -4,6 +4,9 @@
 #include "core/ControlMap.h"
 #include "core/MainThread.h"
 #include "core/EquipSink.h"
+#include "core/Clock.h"
+
+#include <algorithm>
 
 // ============================================================================
 // Channel 17 -- EQUIP AUTHORITY (kIntent_EquipAuthority, ABI v7). The ENGINE-
@@ -27,6 +30,21 @@
 // Nothing is ever UNEQUIPPED by APMF: the engine's own worker displaces whatever
 // occupies a declared item's slot, the ordinary way. No re-assert loop follows
 // (INVARIANTS #0): the seat is what keeps the engine from undoing the set.
+//
+// NOT A LOOP, EVEN FROM A TICKING CLIENT (Fable tier-3 on d1aa66b, SEV-3 #3).
+// ControlMap fires OnOwnerChanged on EVERY applied declaration (a re-issued
+// identical set is the sanctioned "give it back"), so a client that re-sends
+// its set every tick (MFO's 133 ms ServiceFollower would) could otherwise turn
+// this pass into a #0 re-assert loop built out of client ticks: a full
+// GetInventory() walk per tick, and a queued-but-not-yet-applied item reading
+// "not worn" on the next pass and being queued AGAIN. Two guards, per actor,
+// main-thread state: (a) an IDENTICAL set re-issued within kCoalesceMs of the
+// last pass is coalesced (skipped with a log line) -- a deliberate re-send after
+// that window still runs; (b) an item this channel issued in the PREVIOUS pass
+// that still reads not-worn is left alone for one pass (its queued equip is in
+// flight), then retried. A set that cannot be worn simultaneously (a two-hander
+// AND a shield) is the client's error: the engine displaces one with the other
+// on every pass and the log shows it -- declare a wearable set, do not tick.
 //
 // WHY THIS IS LAWFUL UNDER #0 / #17. #17a condition 4 licenses exactly this
 // pair: "the client's declared set is what APMF equips, and the seat is what
@@ -64,6 +82,28 @@ namespace {
         return n == 0 || (n % 100) == 0;
     }
 
+    // ---- per-actor enforcement memory (MAIN THREAD ONLY: written by Enforce,
+    // erased by Release; both run on the writer/main thread). ----
+    constexpr std::uint64_t kCoalesceMs   = 1000;   // identical re-issue inside this window is coalesced
+    constexpr std::uint64_t kPendingMaxMs = 3000;   // an issued-not-applied item older than this is retried
+    struct ActorMemory {
+        std::uint64_t lastPassMs  = 0;
+        std::uint64_t lastSig     = 0;      // FNV-1a over (count, forms in order)
+        std::uint32_t passes      = 0;
+        std::uint64_t issuedAtMs  = 0;      // when `issued` was filled
+        std::vector<RE::FormID> issued;     // forms EquipObject'd in the previous pass
+        bool          reservedWarned = false;   // kEquipAuth_DenyUnequip warned once per actor
+    };
+    std::unordered_map<RE::FormID, ActorMemory> g_memory;
+
+    std::uint64_t SetSignature(const apmf::EquipSetView& set) {
+        std::uint64_t h = 1469598103934665603ull;
+        auto mix = [&](std::uint32_t v) { h ^= v; h *= 1099511628211ull; };
+        mix(set.count);
+        for (std::uint32_t i = 0; i < set.count; ++i) mix(set.forms[i]);
+        return h;
+    }
+
     // MAIN THREAD, strictly after the publishing Drain (see the banner). Reads the
     // PUBLISHED winning declaration for `id` and equips each declared item the
     // actor is not already wearing. A claim released between the post and the
@@ -81,6 +121,17 @@ namespace {
                               "sink is not installed ([EquipAuthority] bEquipAuthority=0, VR, or site-verify "
                               "refused; see the [apmf][equip-sink] install lines). Recurrence #{}.",
                               apmf::log::Hex(id), set.count, g_seatMissing.load(std::memory_order_relaxed));
+            return;
+        }
+
+        // Guard (a): coalesce an identical re-issue inside the window.
+        const auto nowMs = apmf::clock::MonotonicMs();
+        auto&      mem   = g_memory[id];
+        const auto sig   = SetSignature(set);
+        if (mem.passes > 0 && sig == mem.lastSig && nowMs - mem.lastPassMs < kCoalesceMs) {
+            spdlog::info("[apmf][equip-auth] actor=0x{} identical declaration re-issued {} ms after pass #{} -- "
+                         "coalesced (no equip issued; re-send after {} ms to force a pass).",
+                         apmf::log::Hex(id), nowMs - mem.lastPassMs, mem.passes, kCoalesceMs);
             return;
         }
 
@@ -104,7 +155,12 @@ namespace {
         // One inventory snapshot for the whole pass (main thread; the map is a
         // local copy, nothing aliased into the engine).
         auto inv = actor->GetInventory();
-        std::uint32_t equipped = 0, worn = 0, missing = 0, unresolved = 0;
+        // Guard (b): what the PREVIOUS pass issued and may still be in the
+        // engine's equip queue. Stale (older than kPendingMaxMs) means the queue
+        // has long since drained -- retry rather than hold back forever.
+        const bool pendingFresh = (nowMs - mem.issuedAtMs) < kPendingMaxMs;
+        std::vector<RE::FormID> issuedNow;
+        std::uint32_t equipped = 0, worn = 0, missing = 0, unresolved = 0, pending = 0;
         for (std::uint32_t i = 0; i < set.count; ++i) {
             const RE::FormID form = set.forms[i];
             if (form == 0) continue;
@@ -125,6 +181,12 @@ namespace {
             }
             const auto& entry = it->second.second;
             if (entry && entry->IsWorn()) { ++worn; continue; }
+            if (pendingFresh && std::find(mem.issued.begin(), mem.issued.end(), form) != mem.issued.end()) {
+                // Issued last pass, not yet applied by the engine's queue: do not
+                // queue a second copy of the same equip. Retried next pass.
+                ++pending;
+                continue;
+            }
 
             {
                 // The bracket is what the seat recognises as "APMF-issued": this
@@ -134,23 +196,36 @@ namespace {
                                  /*sounds*/ true, /*applyNow*/ false);
             }
             ++equipped;
+            issuedNow.push_back(form);
             spdlog::info("[apmf][equip-auth] actor=0x{} set={} items -> equip 0x{} '{}'",
                          apmf::log::Hex(id), set.count, apmf::log::Hex(form), obj->GetName() ? obj->GetName() : "");
         }
-        spdlog::info("[apmf][equip-auth] actor=0x{} enforce pass: set={} equipped={} already-worn={} "
-                     "not-in-inventory={} unresolved={}",
-                     apmf::log::Hex(id), set.count, equipped, worn, missing, unresolved);
+        mem.lastPassMs = nowMs;
+        mem.lastSig    = sig;
+        ++mem.passes;
+        mem.issued     = std::move(issuedNow);
+        mem.issuedAtMs = nowMs;
+        spdlog::info("[apmf][equip-auth] actor=0x{} enforce pass #{}: set={} equipped={} already-worn={} "
+                     "pending-from-previous-pass={} not-in-inventory={} unresolved={}",
+                     apmf::log::Hex(id), mem.passes, set.count, equipped, worn, pending, missing, unresolved);
     }
 
     void PostEnforce(RE::FormID id) {
         apmf::mainthread::Post([id] { Enforce(id); });
     }
 
+    // Once per actor (the channel sees the actor and the param, never the handle;
+    // SEV-5 #11): a declaration-per-tick client would otherwise print this on
+    // every pass. Reset by Release, so a fresh claim after a release warns again.
     void RefuseReservedBits(RE::FormID id, const APMF_API::APMF_Param& param) {
         const auto flags = static_cast<std::uint32_t>(param.ival);
-        if (flags & APMF_API::kEquipAuth_DenyUnequip)
-            spdlog::warn("[ch.17] 0x{} claim carries kEquipAuth_DenyUnequip -- RESERVED in this ABI, refused and "
-                         "ignored: unequips are not seated. The rest of the claim stands.", apmf::log::Hex(id));
+        if (!(flags & APMF_API::kEquipAuth_DenyUnequip)) return;
+        auto& mem = g_memory[id];
+        if (mem.reservedWarned) return;
+        mem.reservedWarned = true;
+        spdlog::warn("[ch.17] 0x{} claim carries kEquipAuth_DenyUnequip -- RESERVED in this ABI, refused and "
+                     "ignored: unequips are not seated. The rest of the claim stands. (Logged once per actor.)",
+                     apmf::log::Hex(id));
     }
 
     class EquipAuthorityChannel final : public apmf::Channel {
@@ -188,6 +263,7 @@ namespace {
             // cleared claim publishes; nothing was unequipped, so nothing is undone.
             spdlog::info("[ch.17] 0x{} equip authority released -- the engine owns the worn set again; "
                          "nothing is unequipped.", apmf::log::Hex(id));
+            g_memory.erase(id);   // main thread (Release runs inside Drain/ReleaseAll)
         }
         // No Tick: the deny lives entirely in the seat (INVARIANTS #1), the equip
         // fires once per declaration (#0: no re-assert loop).

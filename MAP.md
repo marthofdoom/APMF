@@ -682,15 +682,23 @@ identified from `_ReturnAddress()-5`), map the RVA to the containing function's 
 (greatest offset ≤ RVA via `upper_bound-1` over the public iterators — NEVER `Offset2ID::
 operator()`, which `report_and_fail`s on a miss), name it from the per-runtime path table
 (OutfitApply / AddWornOutfit / AiCommand / RemoveItemReequip / CombatNode / Script / Console /
-PlayerMenu / WorkerReentry), `External(<module.dll>)` for a return address outside the exe
-(skse64* counts as Script), `Unknown(<id>)` otherwise. **Verdict, in order:** `tls>0`
-(APMF's own equip, `ApmfEquipScope`, inherited by the worker family's 38913/37957 re-entry)
-→ allow; no declaration (`count==0`) → allow; item in the declared set → allow; Script/
+PlayerMenu / WorkerReentry / QueuedApply — the last is the deferred apply of a queued equip,
+38906,39814 / 37950,38789, which is how APMF's OWN queued equips come back one actor-update
+later with tls=0), `External(<module.dll>)` for a return address outside the exe (skse64*
+counts as Script), `Unknown(<id>)` otherwise. **Verdict, in order:** no declaration
+(`count==0`) → allow; item in the declared set → allow; Script/
 Console without `kEquipAuth_DenyScript`/INI `bEquipDenyScript` → allow; else observe-only
 (INI `bEquipObserveOnly`, default 1, or the claim's `kEquipAuth_ObserveOnly`) → log
 `would-deny` and call; else `deny` = RETURN WITHOUT CALLING the worker (nothing queued, no
 re-entry; the caller's own spin-lock/epilogue run as if the worker returned — both callers
-discard its return value, verified). One `[apmf][equip-obs] actor= item= op=equip path=
+discard its return value, verified). `tls` (the `ApmfEquipScope` depth) is a LOG FIELD, never
+a bypass: APMF's own equips pass by being in-set. Install also inspects the PUBLIC entry of
+both site functions for a third-party inline detour (E9 / FF 25 / 48 B8 / E8) and, if found,
+logs `entry <id> detoured by <dll>: attribution degraded` — the seat still installs, but every
+caller then classifies `External(<that dll>)` and the Script exemption is unavailable.
+Runtime gate is EXACT-VERSION (`1.6.1170 || 1.5.97`, the same predicate as CastClassify /
+plugin.cpp's `[runtime]` line), never `IsAE()`; other builds log `runtime <v> gated`.
+One `[apmf][equip-obs] actor= item= op=equip path=
 site=<id>+<off> ret=<rva> q= f= s= a= tls= verdict=` line per decision, deduped 2 s per
 (actor,item,path), capped 100/s with a per-minute dropped-count line, wrapped in
 `try/catch` so logging can never unwind into the engine frame.
@@ -709,6 +717,17 @@ site=<id>+<off> ret=<rva> q= f= s= a= tls= verdict=` line per decision, deduped 
   half-built table) and is immutable after. (6) UNEQUIPS are not seated (the twin
   `UnequipObject` 38901/37945 → worker 38934/37979, single caller 38901+0x1B9 / 37945+0x138)
   — `kEquipAuth_DenyUnequip` is RESERVED and refused; seating it is its own #17a argument.
+  (7) ONE path runs BELOW the seat and is not a decision: the worker's apply function 38001
+  (worker +0x289) is also reached from 16073+0xf0 (InventoryChanges family ← 40746 ← 40655),
+  the persisted-ExtraWorn RESTORE when an actor's 3D loads; it re-applies a state the seat
+  governed when it was chosen, never chooses. 38919 is an orphan copy of the worker's tail
+  (no references). Do not write "every engine equip" — write "every engine equip DECISION".
+  (8) Never re-add a `tls>0` short-circuit to the verdict: 38913 re-equips the SAME object it
+  was handed, so a second copy of a displaced off-set item could ride back in on it, and
+  probe criterion 2 would be vacuous. (9) The `channels/EquipAuthority.cpp` pass coalesces an
+  identical re-declaration inside 1 s and skips items issued-not-applied in the previous pass
+  (≤3 s) — that is what keeps a per-tick client from turning "give it back" into a #0 loop;
+  keep both guards if you touch `Enforce`.
 
 ### `native/core/NonAliasProbe.{h,cpp}` — OBSERVE-ONLY 0xDF hook + 0x49 assist + RTTI dumper
 Docs/PROBE-NONALIAS-PACKAGE.md's runtime probe: does `Actor::CheckForCurrentAliasPackage`
@@ -760,7 +779,7 @@ parentheses.
 | `OfferPackage.cpp` | 9 | package-procedure activity (NumpadSlash) | Arbitration + claim lifecycle + the `EvaluatePackage(true,false)` nudge, `mainthread::Post`ed so it lands PAST the claim's publish; the redirect itself is `core/PackageGate.cpp`'s T3 0x49 hook returning the claim's `param.form`. The test key carries no package, so a test claim offers nothing | claim + T3 enforcement; the ENGINE runs the package natively |
 | `Equipment.cpp` | 15 | equip/unequip (Num.) | `GetEquippedObject` + `UnequipObject`/`EquipObject` (melee-vs-ranged lever) | source-block |
 | `Detection.cpp` | 16 | stealth (Num8) | `kMovementNoiseMult` + `kDetectLifeRange` AVs | source-block |
-| `EquipAuthority.cpp` | 17 | ENGINE-EQUIP facet, WHOLE (`kIntent_EquipAuthority`, ABI v7; no test key) | Arbitration + claim lifecycle (standing, no TTL) + the ONE #17a-licensed equip: on every applied `SetEquipSet` for the owning claim (and on a win/repoint) it POSTS one `mainthread` hop that lands after `Publish()` and equips each declared item the actor is not wearing via `ActorEquipManager::EquipObject` (queued, not forced) inside `equipsink::ApmfEquipScope`; never unequips; no re-assert. The deny is `core/EquipSink.cpp`'s call-site seat. `Release` relinquishes (nothing to undo). Refuses `kEquipAuth_DenyUnequip` (reserved) | claim + #17a seat; APMF equips the DECLARED set, the ENGINE keeps its hands off |
+| `EquipAuthority.cpp` | 17 | ENGINE-EQUIP facet, WHOLE (`kIntent_EquipAuthority`, ABI v7; no test key) | Arbitration + claim lifecycle (standing, no TTL) + the ONE #17a-licensed equip: on every applied `SetEquipSet` for the owning claim (and on a win/repoint) it POSTS one `mainthread` hop that lands after `Publish()` and equips each declared item the actor is not wearing via `ActorEquipManager::EquipObject` (queued, not forced) inside `equipsink::ApmfEquipScope`; never unequips; no re-assert (identical re-issue within 1 s coalesced; an item issued-not-applied last pass is skipped once). The deny is `core/EquipSink.cpp`'s call-site seat. `Release` relinquishes (nothing to undo). Refuses `kEquipAuth_DenyUnequip` (reserved) | claim + #17a seat; APMF equips the DECLARED set, the ENGINE keeps its hands off |
 
 - **What breaks (all channels):** each must (1) keep the package coherent — none
   substitutes the package (§5); (2) capture-and-restore engine state in `Release`,

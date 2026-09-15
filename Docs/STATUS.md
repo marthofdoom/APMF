@@ -40,9 +40,24 @@ named in the path table (they are still DENIED -- the sink is below them -- only
 log label is `Unknown`); name them from the first deck log, not from the disassembly
 alone (principle 5).
 
-**Next.** Fable tier-3 review of the branch (new mechanism, ABI header, a call-site
-seat); mirror `APMF_API.h` into MFO; MFO's `Loadout`/`CombatStyle` become a ch.17
-declaration; deck run in observe mode; flip `bEquipObserveOnly`.
+**Fable tier-3 round 1 (on d1aa66b): nothing above SEV-3; all findings fixed in one
+round** (rebased onto 2e084b8 first): `QueuedApply` path named (38906,39814 / 37950,38789 —
+APMF's own queued equips come back through it, so criterion 3 is now "zero Unknown on a
+deny/would-deny line"); entry-detour inspection at install (a third-party inline detour of
+`EquipObject` collapses attribution to `External(<dll>)` — logged loudly, seat still
+installs; new criterion 5 "at least one engine id attributes"); `tls>0` no longer bypasses
+the in-set test (38913 re-equips the same object; a displaced off-set second copy could
+have ridden back in); identical re-declarations coalesced within 1 s and issued-not-applied
+items skipped one pass (a per-tick client can no longer build a #0 loop); exact-version
+runtime gate (`1.6.1170 || 1.5.97`), "runtime gated" not "site-verify FAILED"; the
+below-the-seat restore path (16073 → 38001, persisted ExtraWorn on 3D load) and the orphan
+38919 named in AUDIT row 17 + MAP; `kMaxEquipSet` truncation logged once per handle;
+reserved-bit warning once per actor; INTEGRATION states the refused replacement equip
+after RemoveItem, the unloaded-actor case, and `SetOutfit` = engine path.
+
+**Next.** Fable re-review of the round; mirror `APMF_API.h` into MFO; MFO's
+`Loadout`/`CombatStyle` become a ch.17 declaration; deck run in observe mode; flip
+`bEquipObserveOnly`.
 
 ## HEAD OF WORK 2026-09-15 -- the 1.5.97 placement pass (`feat/apmf-1.5.97-pass`)
 

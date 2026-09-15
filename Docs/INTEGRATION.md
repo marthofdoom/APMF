@@ -196,7 +196,22 @@ Rules of the road:
 - **Declare, do not tick.** Call `SetEquipSet` when your loadout changes, not
   every frame. Each call on the owning claim runs one equip pass. Re-issuing
   the same set is a legitimate way to ask for an item back after a script
-  unequipped it; a per-tick re-issue is a re-assert loop with extra steps.
+  unequipped it. APMF coalesces an identical re-issue inside 1 s and holds
+  back an item whose queued equip from the previous pass has not applied yet,
+  so a per-tick re-send cannot become a loop, but it is still wasted work.
+- **The set must be simultaneously wearable.** A two-hander and a shield, or
+  two items for one slot, make the engine displace one with the other on
+  every pass. APMF never picks which one wins. Declare one loadout.
+- **The engine's replacement equip is refused.** If you `RemoveItem` or
+  unequip a declared weapon, the engine's own re-equip of whatever it would
+  pick next is an off-set equip and is refused: the follower stays unarmed
+  until you re-declare. Re-declare in the same breath as the removal.
+- **An unloaded actor is stored, not equipped.** A declaration for an actor
+  whose 3D is not loaded is kept and the seat denies for it, but the equip
+  pass is skipped (logged). Re-declare once the actor is loaded.
+- **`SetOutfit` is an engine path.** A Papyrus `SetOutfit` ends in the engine's
+  own outfit apply (`OutfitApply`), not in the script equip path, so it is
+  refused even when scripts are exempt.
 - **APMF never adds items.** A declared item the actor does not own is skipped
   and logged. Give it to them first.
 - **Unequips are not refused.** `kEquipAuth_DenyUnequip` is reserved and a
@@ -213,20 +228,35 @@ Rules of the road:
 ### The probe criteria (what a field log must show before enforcement is switched on)
 
 Read `[apmf][equip-obs]` lines. Each carries `actor= item= op=equip path=
-site= ret= q= f= s= a= tls= verdict=`.
+site= ret= q= f= s= a= tls= verdict= name=`. `tls` is attribution only (an
+equip APMF issued itself runs with `tls>0`); it never changes a verdict. The
+`name='...'` field is the item's display name, for reading, not for parsing.
 
 1. Every engine re-equip of an off-set item on a claimed actor logs
    `verdict=would-deny` with a NAMED path (`OutfitApply`, `AddWornOutfit`,
    `AiCommand`, `RemoveItemReequip`, `CombatNode`, `PlayerMenu`, `Script`,
-   `Console`, `WorkerReentry`, or `External(<dll>)`).
-2. ZERO `would-deny` lines with `tls>0`. APMF's own equip pass runs inside the
-   seat's TLS bracket; a would-deny there means the bracket is not covering it.
-3. ZERO `path=Unknown(<id>)` lines. An unknown id is an engine caller the path
-   table does not name yet; add it before enforcing.
+   `Console`, `WorkerReentry`, `QueuedApply`, or `External(<dll>)`).
+2. ZERO `would-deny` lines with `tls>0`. APMF's own equip pass only ever issues
+   declared items, so a would-deny inside the bracket means the set the seat
+   reads is not the set the pass enforced.
+3. ZERO `path=Unknown(<id>)` on a `deny` or `would-deny` line. An unknown id
+   there is an engine caller the path table does not name yet; add it before
+   enforcing. (An `Unknown` on an `allow` line is a caller that only ever
+   equips declared items; name it when convenient.) Note that APMF's own
+   queued equips come back one actor update later as `path=QueuedApply tls=0
+   verdict=allow`; that is the engine applying what APMF queued, not a leak.
 4. Every item APMF equips shows up as an `[apmf][equip-auth] ... -> equip` line
-   followed by its `[apmf][equip-obs] ... tls=1 verdict=allow` line.
+   followed by its `[apmf][equip-obs] ... tls=1 verdict=allow` line, and then
+   its `path=QueuedApply ... verdict=allow` apply line.
+5. At least one engine id attributes: the log must contain at least one
+   `[apmf][equip-obs]` line whose `path` is a named engine path (not
+   `External(...)`). If every line reads `External(<dll>)`, another plugin
+   has inline-detoured the engine's `EquipObject` entry and every caller now
+   returns through it; the seat logs `entry <id> detoured by <dll>` at install
+   when it can see that. Attribution is degraded and the script exemption is
+   unavailable until that detour is accounted for.
 
-Only after all four hold on a real session is `bEquipObserveOnly` flipped to 0.
+Only after all five hold on a real session is `bEquipObserveOnly` flipped to 0.
 
 ## The facet table
 

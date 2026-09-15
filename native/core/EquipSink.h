@@ -3,7 +3,7 @@
 // ============================================================================
 // core/EquipSink -- THE ENGINE-EQUIP SINK SEAT (ch.17 EquipAuthority's deny half).
 //
-// THE FACET. Every engine equip of anything -- outfit re-apply, the AI's own
+// THE FACET. Every engine equip DECISION -- outfit re-apply, the AI's own
 // weapon/armor choice, combat re-arm, RemoveItem's re-equip, a Papyrus/console
 // EquipItem, another plugin's ActorEquipManager::EquipObject call -- funnels
 // through ONE non-virtual worker (AE 38929 / SE 37974), reached from exactly two
@@ -11,6 +11,11 @@
 // .text on both unpacked binaries, 2026-09-15: no other E8, no E9, no lea, no
 // pointer reference). No virtual function exists anywhere on that path
 // (`Actor::AddWornItem` is devirtualised), so this facet has NO vtable seat.
+// ONE path runs BELOW the seat and is not a decision: the worker's apply function
+// (38001, worker +0x289) is also reached from 16073+0xf0 (InventoryChanges family,
+// <- 40746 <- 40655), which re-applies PERSISTED ExtraWorn state when an actor's
+// 3D loads -- it restores what was worn, it never chooses. 38919 is an orphan
+// copy of the worker's tail with no references. (Fable tier-3 on d1aa66b, SEV-4 #5.)
 // That is the exact shape Docs/INVARIANTS.md #17a licenses: a bounded call-site
 // seat on an INTERNAL choke point, byte-verified at install, refusing the whole
 // seat on any mismatch, scoped to actors holding an explicit claim, and
@@ -21,13 +26,17 @@
 // WHAT IT DOES. For an actor with a winning kIntent_EquipAuthority claim whose
 // client has DECLARED a worn set (APMF_API_v7::SetEquipSet), the thunk lets the
 // worker run for a declared item and REFUSES it (returns without calling the
-// worker: nothing queued, no re-entry) for an off-set item. The player, an
-// unclaimed actor, and a claimed actor with no declaration pass through untouched
-// and unlogged (#17a condition 5, INVARIANTS #13). Equips APMF itself issues
+// worker: nothing queued, no re-entry) for an off-set item. The player and an
+// unclaimed actor pass through untouched and unlogged (#17a condition 5,
+// INVARIANTS #13); a CLAIMED actor with no declaration passes too, but IS logged
+// (`verdict=allow`, its path named) -- that is the probe's view of what the engine
+// does before a client declares. Equips APMF itself issues
 // (channels/EquipAuthority.cpp enforcing a declaration) run inside the TLS
-// bracket below and pass, as does every engine re-entry made beneath them
-// (the worker family re-enters EquipObject via 38913/37957 for a second copy /
-// dual wield). Papyrus/console equips pass unless the claim or the INI says
+// bracket below; they pass because they are IN THE SET, never because of the
+// bracket -- `tls` is a log field that PROVES the equip was APMF's, not a bypass
+// (the worker family's 38913/37957 re-entry equips the same in-set object; the
+// deferred apply of a queued equip comes back one actor-update later from
+// 38906/37950 = `QueuedApply`, tls=0, also in-set). Papyrus/console equips pass unless the claim or the INI says
 // kEquipAuth_DenyScript. Observe-only (INI, default ON for the first field build,
 // or the claim's kEquipAuth_ObserveOnly) logs `would-deny` and refuses nothing.
 //
@@ -54,9 +63,11 @@
 // verify is the collision guard: two patchers at one site is a refusal here,
 // never a CTD -- do not weaken it to "warn and install anyway". (3) The TLS
 // bracket is what lets APMF's own enforcement through; an enforcement path that
-// forgets the bracket denies its own equips (visible as `deny` with tls=0 on a
-// declared item -- impossible by construction today, since a declared item is
-// always allowed; the bracket exists so the log can PROVE the equip was APMF's).
+// forgets the bracket loses the attribution (its equips still pass, being in-set,
+// but the probe can no longer tell them from an engine equip of the same item).
+// (4) The runtime gate is EXACT-VERSION (1.6.1170 || 1.5.97), the same predicate
+// core/CastClassify.cpp uses -- never IsAE()/IsSE(); a new build is gated by
+// name, then its sites, offsets AND frame depths are re-measured from its bytes.
 // ============================================================================
 
 namespace apmf::equipsink {
@@ -71,9 +82,10 @@ namespace apmf::equipsink {
 
     // RAII bracket for equips APMF ISSUES ITSELF (channels/EquipAuthority.cpp).
     // While one is alive on the current thread, every engine equip the sink sees
-    // on that thread -- including the worker family's own re-entry -- passes as
-    // `allow` with `tls=<depth>`. Depth-counted so nesting is safe. Never
-    // copyable; never hold one across a frame boundary.
+    // on that thread logs `tls=<depth>` -- the attribution that proves an equip
+    // was APMF's. It is NOT a bypass: the verdict is the in-set test regardless.
+    // Depth-counted so nesting is safe. Never copyable; never hold one across a
+    // frame boundary.
     class ApmfEquipScope {
     public:
         ApmfEquipScope();

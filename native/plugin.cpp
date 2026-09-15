@@ -189,8 +189,9 @@ SKSEPluginLoad(const SKSE::LoadInterface* a_skse) {
 
     // Per-runtime placement state (CLAUDE.md rule 11; CONFIRMED address table,
     // 2026-09-15). The two seats that carry per-binary literals -- ch.8b seat 0
-    // (core/CastClassify.cpp, the +0x10/+0x18/+0x4c CombatMagicItemData offsets)
-    // and AiCastSeats GROUP C (the slot-0x0C CalculateScore expected values) --
+    // (core/CastClassify.cpp, the +0x10/+0x18/+0x4c CombatMagicItemData offsets),
+    // AiCastSeats GROUP C (the slot-0x0C CalculateScore expected values) and the
+    // ch.17 equip sink (core/EquipSink.cpp, two E8 sites + frame depths) --
     // open on exactly 1.6.1170 and 1.5.97 and refuse everything else. This is the
     // SAME two-version predicate those two Install()s evaluate (deliberately not
     // REL::Module::IsAE()/IsSE(): in 3.7.0 IsSE() is the `default:` arm, so
@@ -200,8 +201,9 @@ SKSEPluginLoad(const SKSE::LoadInterface* a_skse) {
     {
         const auto game     = REL::Module::get().version();
         const bool placed   = game == REL::Version{ 1, 6, 1170, 0 } || game == REL::Version{ 1, 5, 97, 0 };
-        spdlog::info("[runtime] {}: cast-classify {}, group-C {}",
-                     game.string("."), placed ? "open" : "gated", placed ? "open" : "gated");
+        spdlog::info("[runtime] {}: cast-classify {}, group-C {}, equip-sink {}",
+                     game.string("."), placed ? "open" : "gated", placed ? "open" : "gated",
+                     placed ? "open" : "gated");
     }
 
     SKSE::GetMessagingInterface()->RegisterListener(OnMessage);

@@ -378,6 +378,12 @@ namespace apmf {
             // to before these fields existed. Appended at the END.
             RE::FormID     equipForms[APMF_API::kMaxEquipSet]{};
             std::uint32_t  equipCount = 0;
+            // The UNCLAMPED count of the last declaration that overflowed
+            // kMaxEquipSet (0 == never). Exists so the truncation is logged ONCE
+            // per handle per distinct overflow, not on every re-declaration
+            // (Fable tier-3 on d1aa66b, SEV-4 #6): a silently clamped set denies
+            // items 33+ with nothing in the log saying why.
+            std::uint32_t  equipRequested = 0;
         };
 
         // ---- THE ONE CLAIM COMPARATOR (2026-09-06) ------------------------------
@@ -523,6 +529,7 @@ namespace apmf {
             // can never be confused by a future reader of the op.
             RE::FormID           equipForms[APMF_API::kMaxEquipSet]{};
             std::uint32_t        equipCount = 0;
+            std::uint32_t        equipRequested = 0;   // the client's UNCLAMPED count (for the once-per-handle truncation log)
         };
 
         // All four apply against the WRITER's private working copy (`map`), never a
@@ -544,14 +551,16 @@ namespace apmf {
         // ch.17 (APMF_API_v7): writer-thread-only, ApplySetSpellAllowList's shape --
         // look the claim up via m_index, write equipForms/equipCount on the matching
         // Claim regardless of whether it currently OWNS the channel (non-owning
-        // semantics, same as Repoint). If the claim IS the current owner and the
-        // set actually changed, the channel's OnOwnerChanged fires (still inside
+        // semantics, same as Repoint). If the claim IS the current owner, the
+        // channel's OnOwnerChanged fires on EVERY applied declaration, changed or
+        // not (the channel coalesces identical re-issues itself) (still inside
         // Drain, BEFORE Publish) so channels/EquipAuthority.cpp can post its ONE
         // main-thread enforcement hop, which lands strictly AFTER Publish (the
         // mainthread::Pump runs after Drain returns -- INVARIANTS #20's release-
         // ordering rule, applied to an engage-side engine write). No-op on an
         // unknown handle or a claim not on the kIntent_EquipAuthority channel.
-        bool ApplySetEquipSet(Handle handle, const RE::FormID* forms, std::uint32_t count, MapType& map);
+        bool ApplySetEquipSet(Handle handle, const RE::FormID* forms, std::uint32_t count,
+                              std::uint32_t requested, MapType& map);
 
         // Writer-thread-only choke point: takes ownership of the finished working
         // copy, makes it the new immutable snapshot, and publishes it for readers.

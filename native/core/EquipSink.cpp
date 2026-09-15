@@ -116,6 +116,14 @@ namespace apmf::equipsink {
             { 29346,  "PlayerMenu",        PathKind::kEngine },
             { 38907,  "PlayerMenu",        PathKind::kEngine },
             { 38913,  "WorkerReentry",     PathKind::kEngine },   // the worker family's own re-entry (2nd copy / dual wield)
+            // The DEFERRED APPLY of a queued equip (Fable tier-3 on d1aa66b, SEV-3 #1):
+            // EquipObject(queue=1) -> worker +0x272 -> 37684 -> 39821 (AIProcess enqueue)
+            // -> vtable task 34227 (its ONLY caller) -> 38906 -> EquipObject(queue=0) per
+            // entry at 38906+0xFD. So APMF's OWN queued equips re-enter the seat from
+            // here, one actor-update later, with tls=0. 39814 (+0xCB -> EquipObject) is
+            // the other AIProcess-family caller (<- 39089/41381).
+            { 38906,  "QueuedApply",       PathKind::kEngine },
+            { 39814,  "QueuedApply",       PathKind::kEngine },
         };
         constexpr PathSpec kPathsSE[] = {
             { 24234,  "OutfitApply",       PathKind::kEngine },
@@ -133,6 +141,8 @@ namespace apmf::equipsink {
             { 28593,  "PlayerMenu",        PathKind::kEngine },
             { 37951,  "PlayerMenu",        PathKind::kEngine },
             { 37957,  "WorkerReentry",     PathKind::kEngine },
+            { 37950,  "QueuedApply",       PathKind::kEngine },   // <- 33449 (its only caller); -> EquipObject at +0xF1
+            { 38789,  "QueuedApply",       PathKind::kEngine },   // <- 38133/40367; -> EquipObject at +0xD1
         };
 
         // ---- runtime state (written at Install on the main thread, read from any
@@ -288,14 +298,20 @@ namespace apmf::equipsink {
             const bool scriptPath = (caller.kind == PathKind::kScript || caller.kind == PathKind::kConsole);
 
             // The verdict. Order matters and is the whole policy:
-            //   APMF's own equip (and the engine's re-entry beneath it)  -> allow
             //   no declaration yet                                      -> allow (declare->enforce)
             //   a declared item                                         -> allow
             //   a script/console equip without DenyScript               -> allow
             //   anything else                                           -> deny (or would-deny)
+            // `tls` is a LOG FIELD ONLY, never a bypass (Fable tier-3 on d1aa66b,
+            // SEV-4 #4): APMF's own Enforce equips are in-set by construction, so
+            // they pass on the in-set test; the worker family's 38913 re-entry
+            // beneath one of them equips the SAME object it was handed, which is
+            // also in-set. Letting tls>0 bypass the set would have let a second
+            // copy of a DISPLACED off-set item ride back in on that re-entry, and
+            // made probe criterion 2 ("zero would-deny with tls>0") vacuous.
             const char* verdict = "allow";
             bool        callWorker = true;
-            if (tls > 0 || set.count == 0 || inSet || (scriptPath && !denyScript)) {
+            if (set.count == 0 || inSet || (scriptPath && !denyScript)) {
                 verdict = "allow";
             } else if (observe) {
                 verdict = "would-deny";
@@ -366,7 +382,24 @@ namespace apmf::equipsink {
             return;
         }
 
-        const bool ae = REL::Module::IsAE();
+        // EXACT-VERSION gate, the same two-version predicate core/CastClassify.cpp,
+        // core/AiCastSeats.cpp Group C and plugin.cpp's `[runtime]` line evaluate
+        // (deliberately NOT REL::Module::IsAE()/IsSE(): in 3.7.0 IsSE() is the
+        // `default:` arm, so an unknown build would classify as SE and be byte-
+        // verified against SE ids it does not have). The sites, offsets and frame
+        // depths are disassembly-verified on 1.6.1170 and 1.5.97 ONLY (rule 11);
+        // any other build is GATED here, by name -- not a site-verify failure.
+        const auto ver      = REL::Module::get().version();
+        const bool onAE1170 = ver == REL::Version{ 1, 6, 1170, 0 };
+        const bool onSE597  = ver == REL::Version{ 1, 5, 97, 0 };
+        if (!onAE1170 && !onSE597) {
+            spdlog::warn("[apmf][equip-sink] runtime {} gated -- the two worker call sites and their frame "
+                         "depths are disassembly-verified on 1.6.1170 and 1.5.97 only; seat NOT installed "
+                         "(kIntent_EquipAuthority claims are accepted but enforce nothing on this runtime).",
+                         ver.string("."));
+            return;
+        }
+        const bool ae = onAE1170;
         const SiteSpec* sites = ae ? kSitesAE : kSitesSE;
         g_paths     = ae ? kPathsAE : kPathsSE;
         g_pathCount = ae ? std::size(kPathsAE) : std::size(kPathsSE);
@@ -408,6 +441,54 @@ namespace apmf::equipsink {
         if (!ok) {
             g_sites[0] = g_sites[1] = InstalledSite{};
             return;
+        }
+
+        // ENTRY-DETOUR INSPECTION (Fable tier-3 on d1aa66b, SEV-3 #2; principle 7).
+        // The internal sites above are byte-verified, but a third party that
+        // inline-detours the PUBLIC entry of EquipObject / the list sibling (the
+        // standard "intercept every equip" target) changes what sits in the
+        // caller's return slot: it becomes the DETOUR's return, so every caller
+        // classifies as External(<that dll>) -> kEngine -> the Script exemption is
+        // silently unavailable and the probe cannot attribute anything. The seat
+        // still installs (the deny at the worker is unaffected); it just says so,
+        // loudly, so a log with no engine ids attributing has a stated cause.
+        for (int i = 0; i < 2; ++i) {
+            const auto&          s     = sites[i];
+            const std::uintptr_t entry = REL::ID(s.id).address();
+            std::uint8_t e[16]{};
+            std::memcpy(e, reinterpret_cast<const void*>(entry), sizeof(e));
+            std::uintptr_t target = 0;
+            const char*    shape  = nullptr;
+            if (e[0] == 0xE9) {                                   // jmp rel32
+                std::int32_t rel = 0; std::memcpy(&rel, e + 1, 4);
+                target = entry + 5 + static_cast<std::intptr_t>(rel); shape = "E9 jmp rel32";
+            } else if (e[0] == 0xFF && e[1] == 0x25) {            // jmp [rip+disp32]
+                std::int32_t disp = 0; std::memcpy(&disp, e + 2, 4);
+                std::memcpy(&target, reinterpret_cast<const void*>(entry + 6 + static_cast<std::intptr_t>(disp)), sizeof(target));
+                shape = "FF 25 jmp [rip]";
+            } else if (e[0] == 0x48 && e[1] == 0xB8) {            // mov rax, imm64 (; jmp rax)
+                std::memcpy(&target, e + 2, sizeof(target)); shape = "48 B8 mov rax,imm64";
+            } else if (e[0] == 0xE8) {                            // call rel32 at entry -- not the engine's shape
+                std::int32_t rel = 0; std::memcpy(&rel, e + 1, 4);
+                target = entry + 5 + static_cast<std::intptr_t>(rel); shape = "E8 call rel32";
+            }
+            if (!shape) continue;
+            char module[64] = "?";
+            void* mod = nullptr;
+            if (target && GetModuleHandleExA(0x6, reinterpret_cast<const char*>(target), &mod) && mod) {
+                char path[260]{};
+                const auto n = GetModuleFileNameA(mod, path, sizeof(path));
+                if (n > 0 && n < sizeof(path)) {
+                    const char* baseName = path;
+                    for (const char* p = path; *p; ++p) if (*p == '\\' || *p == '/') baseName = p + 1;
+                    std::strncpy(module, baseName, sizeof(module) - 1);
+                }
+            }
+            spdlog::warn("[apmf][equip-sink] entry {} ({}) detoured by {} ({} -> 0x{}): attribution degraded, "
+                         "every caller will classify as External({}); the Script/Console exemption is unavailable "
+                         "and the probe criteria cannot attribute engine ids. The seat still installs (the deny "
+                         "sits below the detour).",
+                         s.id, s.name, module, shape, apmf::log::Hex(target, 0), module);
         }
 
         // The caller classifier's table: a sorted copy of the Address Library
