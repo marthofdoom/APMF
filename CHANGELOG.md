@@ -1,3 +1,12 @@
+## Unreleased -- APMF's cast seats run on Skyrim 1.5.97
+
+- **The cast classify seat and the weapon score seat now run on Skyrim 1.5.97.** Both used to refuse anything but 1.6.1170. Every value they read was checked against the 1.5.97 binary and its address library before being placed. Nothing was guessed.
+- **The weapon score seat resolves its four vtables through the address library on both runtimes.** It used to carry hard 1.6.1170 addresses. The install check that compares the live function pointer against the expected one is now per runtime, because 1.5.97 compiles two of those functions as short thunks.
+- **The version gates are exact.** Each seat opens on 1.6.1170 and 1.5.97 and refuses any other build by name. A 1.6 build other than 1170 is refused where it used to be admitted unverified.
+- **One line at startup states the placement.** `[runtime] <version>: cast-classify open, group-C open` tells a log reader what this build placed before any seat installs.
+- Skyrim 1.7.104 is still unsupported. There is no address library for it, so nothing was placed. The refusal lines name it.
+- Not field-tested on either runtime. CI verified only.
+
 ## v0.9.4 -- Ships its settings file
 
 - **Harbinger now ships `Data/SKSE/Plugins/APMF.ini`.** The plugin has always read that file, but no release ever contained it, so every switch fell back to a built in default and there was no way to see what the switches were. The file is now included, with every key documented and set to the configuration that was actually tested.

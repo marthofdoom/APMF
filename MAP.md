@@ -25,12 +25,20 @@ block, not an acceptable pattern (INVARIANTS #1).
 ## Module map
 
 ### `native/plugin.cpp` — entry (thin)
-`SKSEPluginLoad` → log setup + messaging listener. `kDataLoaded` installs the
+`SKSEPluginLoad` → log setup + messaging listener + ONE `[runtime] <version>:
+cast-classify <open|gated>, group-C <open|gated>` line (2026-09-15): the exact-version
+predicate (`1.6.1170 || 1.5.97`) the two per-binary-literal seats gate on, logged once
+at load so a deck log states its placement state up front. `kDataLoaded` installs the
 hook, registers the input sink, logs the hotkey help. `kPreLoadGame` →
 `Arbiter::ReleaseAll`.
 - **What breaks if you change this:** if `kPreLoadGame` stops calling
   `ReleaseAll`, engaged channels leak engine state across a save load (a follower
-  stuck sneaking / silent / speed-halved). Keep the release on pre-load.
+  stuck sneaking / silent / speed-halved). Keep the release on pre-load. The
+  `[runtime]` line MUST use the same two-version predicate as `core/CastClassify.cpp`
+  `Install()` and `core/AiCastSeats.cpp` GROUP C (`IsRuntime1_6_1170/IsRuntime1_5_97`)
+  — it is a report of those gates, not a third gate; if one of them ever admits a
+  third binary, change all three. Never `REL::Module::IsAE()/IsSE()` here: in the
+  pinned 3.7.0 `IsSE()` is the `default:` arm, so 1.7.104 reads as SE.
 
 ### `native/APMF_API.h` — the inter-plugin C-ABI contract (shared with clients)
 The ONLY file a client shares with APMF. POD structs of function pointers
@@ -248,11 +256,19 @@ resolver; delivery is a spell-level property, so every effect of that spell shou
 the same forced answer within one classify pass — see the .cpp's comment).
 - **What breaks:** `CombatMagicItemData` is NOT a CommonLib-declared type in this
   pinned rev — no header, no `static_assert`. Verification is by RTTI **mangled-name
-  string match** (`.?AVCombatMagicItemData@@`) at install, since no
-  `RTTI_CombatMagicItemData` Address-Library ID was established during the RE pass
-  (documented gap — a name mismatch refuses install, never a blind write). AE-ONLY:
-  refuses on SE 1.5.97 and VR (the `+0x10/+0x18/+0x4c` offsets are disassembly-CERTAIN
-  on 1.6.1170 only). INI kill-switch `[CastSeats] EnableSeat0Classify` (default 1).
+  string match** (`.?AVCombatMagicItemData@@`) at install — the RE pass did not
+  establish an `RTTI_CombatMagicItemData` Address-Library ID, though the pinned 3.7.0
+  `Offsets_RTTI.h` does carry one (`{687623, 395938}`, CONFIRMED table 2026-09-15); the
+  string match stays (a name mismatch refuses install, never a blind write).
+  **RUNTIMES (2026-09-15, `feat/apmf-1.5.97-pass`): placed on 1.6.1170 AND 1.5.97**, by
+  the CONFIRMED address table's "CastClassify.h SEAT 0" slot-1 row — the ctor (SE
+  `0x780F5C`) stores `[+0x10]=MagicItem`, `[+0x18]=CombatController`, `[+0x4c]=self
+  flag` byte-for-byte as on AE, the slot-1 thunk is SE `0x7811F0` (id 43931), the
+  vtable resolves via SE id 265000 (`0x1686BF8`). The gate is EXACT-VERSION
+  (`1.6.1170 || 1.5.97`), not `IsAE()/IsSE()`; every other binary (VR, 1.7.104, any
+  other 1.6.x) is refused with a loud line naming the version; a null VariantID
+  resolve is refused before the RTTI walk. INI kill-switch `[CastSeats]
+  EnableSeat0Classify` (default 1).
   Install ordering vs `core/EquipGate.cpp`/`core/CastSeats.cpp` does not matter
   (disjoint vtable). Runs on the combat thread; one lock-free RCU read
   (`TryGetCastSeatClaim`), no mutex, no engine call besides the chained original.
@@ -303,6 +319,13 @@ The FIFTH seat (`0x0F CheckShouldEquip`) lives in `core/EquipGate.cpp` — see t
   `+0x30` is the one RAW OFFSET in the tree (no `CombatProjectileAimController` class
   exists in the pinned CommonLib) — its three guards (INI kill-switch, install-time
   RTTI check, per-call exact vtable-identity check) are not optional; #20 says so.
+  It carries NO runtime gate, by evidence, not by omission (CONFIRMED table
+  2026-09-15, "MFO layout facts" CombatController row (c)): the `CombatAimController`
+  ctor zeroes `[+0x30]` and the projectile aim vfunc7 reads it first on 1.6.1170,
+  1.5.97 and 1.7.104. Same for `Out16` (the `GetMagicTarget` hidden sret out-slot,
+  "GetMagicTarget sret" row: identical `{u32 @0, ptr @8}` on all three; SE `0x781CB0`
+  + helper `0x782100`). Do not add a version gate to either; do re-cite the table if
+  the shape is ever re-derived.
   Installed AFTER `core/AiCastSeats.cpp` on purpose so that passive probe keeps
   logging the ENGINE's raw answer beneath these.
 
@@ -314,11 +337,17 @@ OFF). **GROUP B** — `CheckStartCast`/`CheckStopCast`/`GetMagicTarget` (0x06/0x
 on the 14 `CombatMagicCaster` vtables (`EnableCasterSeatProbe`, default OFF). **GROUP
 C** (marth 2026-09-06, Opus PASS S) — `CalculateScore` (0x0C) on the four
 WEAPON-class leaves (Melee/Ranged/Shield/Torch), which have **no CommonLib concrete
-class/vtable symbol** (Docs/DENY-COMPLETENESS-AUDIT.md row 15's gap): resolved from
-raw disasm-confirmed RVAs (`REL::Offset`, no `REL::VariantID`), AE-only, gated by an
+C++ class** (Docs/DENY-COMPLETENESS-AUDIT.md row 15's gap) but DO have vtable symbols:
+since 2026-09-15 (`feat/apmf-1.5.97-pass`) resolved through the pinned 3.7.0
+`VTABLE_CombatInventoryItem{Melee,Ranged,Shield,Torch}[0]` VariantIDs (SE
+264523/264525/264527/264531, AE 210297/210299/210301/210305 — the CONFIRMED table's
+"Group C" rows decoded all eight to exactly the disasm-confirmed vtables), **placed on
+1.6.1170 AND 1.5.97** behind an EXACT-VERSION gate, and gated per class by an
 install-time check that the LIVE function pointer already at vtable slot 0x0C equals
-the disasm-confirmed `CalculateScore` address for that class (stands in for an
-RTTI-name match — no confirmed mangled name exists for these four). Ships **ENABLED**
+that runtime's confirmed `CalculateScore` entry (AE `0x8183e0/0x8188b0/0x818df0/
+0x819480`; SE `0x77e0a0/0x77e550/0x77eac0/0x77f0e0` — the SE Shield/Torch entries are
+0xF-byte arg-swap thunks, so the expected value is per runtime, never shared; stands in
+for an RTTI-name match). Ships **ENABLED**
 by default (`EnableWeaponScoreProbe`, default 1 — `CalculateScore` is scalar-return,
 immune to the `GetMagicTarget` sret-ABI bug class this file's banner documents). A
 second, independent flag (`EnableScoreSteer`, default 0) biases a claimed form's own
@@ -331,11 +360,20 @@ item's own `itemSlot.equipSlot`, and applies only when a live ch.8b claim occupy
 that hand DRIVES that exact form (proxy if one was minted, else the spell). A deny-only
 claim drives no form and can never bias anything. The dead weapon branch is deleted.
 Still OFF by default.
-- **What breaks:** GROUP C's `kWeaponClasses` table (vtable RVA + CalculateScore RVA
-  + category) is AE 1.6.1170-ONLY and disassembly-CERTAIN for THIS build only — any
-  runtime/version drift is caught by the function-pointer-at-slot mismatch (refuses
-  that one class, never a blind write) but a NEW build could silently resolve a
-  DIFFERENT class at the same RVA if the check is ever loosened; keep it exact.
+- **What breaks:** GROUP C's `kWeaponClasses` table (VariantID + per-runtime
+  CalculateScore RVA + category) is disassembly-CERTAIN for 1.6.1170 and 1.5.97 ONLY
+  (CONFIRMED table 2026-09-15, "Group C" rows) — the gate is `IsRuntime1_6_1170() ||
+  IsRuntime1_5_97()`, deliberately NOT `IsAE()/IsSE()` (3.7.0's `IsSE()` is the
+  `default:` arm: 1.7.104 would pass it, its VariantIDs resolve to null with no
+  address library, and `RecoverLiveOriginal(0, 0x0C)` would read near address 0). A
+  null resolve and a slot-value mismatch each refuse that one class loudly, never a
+  blind write; a NEW build could still resolve a DIFFERENT class at a matching value
+  if the check is ever loosened; keep it exact and per-runtime. Adding a third
+  binary means a third expected-value column sourced from a CONFIRMED table row, the
+  same predicate change in `core/CastClassify.cpp` and `plugin.cpp`'s `[runtime]` line.
+  The 14 caster and 30 item VariantID lists (GROUP A/B) and the `<0x68`
+  `CombatController` guards are confirmed on SE by the same table (14-seat / 30-combo
+  / CombatController rows) — no gate, RTTI-verified at install.
   Melee+Ranged share the engine's arbitration category 0, Shield+Torch share
   category 3 — a weapon score can only ever decide within its own category
   (melee-vs-ranged, shield-vs-torch), so **this STEER cannot push a weapon above a
@@ -445,7 +483,11 @@ VR-refused, install-once.
 - **What breaks:** deliberately NOT the design doc's aspirational 87-vtable /
   Melee-Ranged-Shield-Torch count — verified 2026-09-02 against the pinned
   upstream that those 4 categories have NO CONCRETE C++ CLASS in the pinned
-  CommonLibSSE-NG headers (no vtable symbol exists to hook), and
+  CommonLibSSE-NG headers (CORRECTED 2026-09-15: the VTABLE symbols DO exist —
+  `VTABLE_CombatInventoryItem{Melee,Ranged,Shield,Torch}`, now used by
+  `core/AiCastSeats.cpp` GROUP C; what is missing is the C++ class, so 0x0F's
+  per-class semantics on those leaves remain unverified and this gate still does
+  not hook them), and
   potion/scroll/shout are deliberately excluded on the SAME v1.0.32 gameplay
   lesson MFO's own gate already proved (denying them would only ever be a
   false-positive block on combat drinking/shouting). Widen only on new header
@@ -454,7 +496,15 @@ VR-refused, install-once.
   OWN `itemSlot.equipSlot` (`static_assert`'d @0x20); compared against
   `BGSDefaultObjectManager`'s Left/Right Hand default objects to resolve the
   hand, fed into `Allowance::AllowedCastForHand` for the ch.8b narrowing —
-  same per-hand guarantee as CastGate above. `kIntent_SelectSpell`/
+  same per-hand guarantee as CastGate above. RUNTIMES (CONFIRMED table
+  2026-09-15): the 30 item VariantIDs (28 + the two `_CombatMagicCasterArmor_`
+  rows) decode to RTTI-verified vtables on 1.6.1170 and 1.5.97 with slot 0x0F a
+  per-instantiation function on both; the direct `objects[19]/[20]` read is
+  layout-safe on SE (364 entries) and AE (366); the `CallSiteName` 0x0F call-site
+  label table (`0x80fcd0` pre-loop, `0x813af2/0x813d38/0x814270/0x8144b2`
+  selector) is 1.6.1170-ONLY and is consulted only there — on any other binary the
+  live RVA still prints, labelled "unlabelled", never matched against AE literals.
+  `kIntent_SelectSpell`/
   `kIntent_Equipment` (`Allowed`, not `AllowedCastForHand`) stay actor-wide —
   unchanged, per-hand was scoped to `kIntent_Cast` only.
   **ch.8b SEAT 0x0F (feat/ai-cast-seats-impl) — the FIFTH engine cast seat and the
@@ -591,7 +641,9 @@ tool) still exist but are **unreachable unless the keyboard test surface is arme
   probe by default: CLAUDE.md's rule is passive, config-gated, OFF. Never touch
   alias/run-once state (#3a).
   0xDF is a 1.6.1170-pinned raw index (Docs/PROBE-NONALIAS-PACKAGE.md §2) — no named
-  CommonLib binding exists to prefer over it today.
+  CommonLib binding exists to prefer over it today. CONFIRMED on 1.5.97 (table
+  2026-09-15, `VTABLE_Character` row): 298-slot `Character` vtable on 1.6.1170, 1.5.97
+  and 1.7.104, slot 0xDF the same 12-callee function id-for-id on SE — no runtime gate.
 
 ### `native/channels/*.cpp` — one module per facet (FULL documented catalog)
 Each: a `Channel` subclass + `APMF_REGISTER_CHANNEL`, per-NPC `Engage`/`Release`.

@@ -1,8 +1,42 @@
 # APMF STATUS — living handoff (start here)
 
-Updated 2026-09-08. The current state of the build: what's shipped, what's
+Updated 2026-09-15. The current state of the build: what's shipped, what's
 probe-gated, what's next. Keep this current in the SAME change as any
 build/finding/workflow change.
+
+## HEAD OF WORK 2026-09-15 -- the 1.5.97 placement pass (`feat/apmf-1.5.97-pass`)
+
+Branch off main `0b61290`. Two commits (code, then docs). **CI-green, NOT field-run on
+either runtime.** Places the values the 2026-09-15 CONFIRMED address table established
+(re-derived cell by cell against the 1.5.97 + 1.6.1170 address libraries and unpacked
+binaries; nothing derived in this branch). Per-site state lives in
+`Docs/HOOK-SITE-COVERAGE.md` §1a; `MAP.md` cites the table rows per entry.
+
+- **`core/CastClassify.cpp` (ch.8b seat 0) opens on 1.5.97.** The +0x10/+0x18/+0x4c
+  `CombatMagicItemData` offsets and the slot-1 thunk are confirmed identical on SE
+  (thunk `0x7811F0`, id 43931). Gate is now EXACT-VERSION (`1.6.1170 || 1.5.97`), which
+  also means any 1.6.x other than 1170 is now refused where the old `IsAE()` gate admitted
+  it unverified.
+- **`core/AiCastSeats.cpp` GROUP C opens on 1.5.97.** Vtables switched from raw AE RVAs to
+  the pinned 3.7.0 `VTABLE_CombatInventoryItem{Melee,Ranged,Shield,Torch}[0]` VariantIDs
+  (checked: all 8 ids decode to exactly the confirmed AE and SE vtables). The slot-0x0C
+  expected value is per runtime (SE `0x77e0a0/0x77e550/0x77eac0/0x77f0e0`). Same
+  exact-version gate. On 1.6.1170 the resolved addresses and the expected values are
+  identical to before -- no AE behaviour change.
+- **No code change**, comments cite the table: `+0x30` aim override, `Out16` sret, slot
+  0xDF, the 14-seat / 30-combo VariantID lists, the `<0x68` CombatController guards.
+- `core/EquipGate.cpp` `CallSiteName`: the 0x0F call-site label table is consulted on
+  1.6.1170 only; elsewhere the live RVA prints as "unlabelled".
+- `plugin.cpp`: one `[runtime] <version>: cast-classify <open|gated>, group-C <open|gated>`
+  line at load.
+- **1.7.104: nothing placed** (no address library; a `REL::Offset` literal path is marth's
+  call). Both gates refuse it by name. In 3.7.0 `REL::Module::IsSE()` is the `default:`
+  arm, so 1.7.104 classifies as SE -- the exact-version predicate exists because of that.
+- **Field observable on the deck (1.5.97):** the `[runtime] 1.5.97.0: cast-classify open,
+  group-C open` line, then `[ch.8b seat 0] CLASSIFY installed` and four `[aicastseats]
+  GROUP C: <class> CalculateScore hooked` lines with `nWeaponRefused == 0`. A `REFUSED`
+  line on any class means the per-runtime expected value is wrong for that binary: stop,
+  do not loosen the check.
 
 ## HEAD OF WORK 2026-09-08 -- the three DEFERRED review findings (`fix/apmf-deferred-f4-2-f5-2-f5-3`)
 

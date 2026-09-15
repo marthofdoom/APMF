@@ -30,13 +30,15 @@ status.
 >   hidden 16-byte sret out-slot CommonLib's declaration OMITS — an ABI defect, not a naming
 >   gap, and a genuine upstream item.
 > - **`native/core/CastClassify.cpp`** — `VTABLE_CombatMagicItemData` slot 1, verified at
->   install by an **RTTI type-name string**, because no Address-Library RTTI id exists for
->   that class. That is stream 2's question, with the answer "no id".
+>   install by an **RTTI type-name string**. (CORRECTED 2026-09-15: the pinned tree DOES carry
+>   `RTTI_CombatMagicItemData{687623, 395938}`; the "no id" reading was wrong. The string match
+>   stays. The three raw member offsets it reads are per-binary literals — see §1a.)
 > - **`native/core/AiCastSeats.cpp` GROUP C** — the four weapon-class `CalculateScore` (0x0C)
->   leaves, resolved from **raw disasm-confirmed RVAs** (`REL::Offset`, no `REL::VariantID`),
->   AE-1.6.1170-only, guarded by an install-time function-pointer-at-slot equality check.
->   These ARE raw offsets. They are why the claim below is false, and they are the strongest
->   Address-Library submission candidate in the repo.
+>   leaves. (CORRECTED 2026-09-15: they were resolved from raw AE RVAs because the 2026-09-06
+>   pass believed no Address-Library id existed; the pinned tree carries
+>   `VTABLE_CombatInventoryItem{Melee,Ranged,Shield,Torch}` and GROUP C now resolves through
+>   them. The install gate's slot-0x0C EXPECTED VALUE is still a per-binary literal — see
+>   §1a. There is nothing left to submit to the Address Library for this site.)
 >
 > Re-run this inventory before trusting its counts, and before any new-runtime port that
 > plans around "no raw offsets to re-verify".
@@ -83,6 +85,38 @@ PR, pending an RE spike. See §5.
 | 9 | MFO | `native/CombatStyle.cpp:237,387-389` | 30× `VTABLE_CombatInventoryItemMagicT_...[0]`, slot **0x0F** | equip gate (#75) — same slot as row 3 | chainable vtable hook | **NAMED** — same citation as row 3 | ID-backed | N — covered, no PR (duplicate of APMF's own T2a — §5) |
 | 10 | MFO | `native/MainThread.cpp:56-73,95-98` | `RE::VTABLE_PlayerCharacter[0]`, slot **0xAD** | `PlayerCharacter::Update` (the main-thread pump seat) | chainable vtable hook | **NAMED** — same citation as row 1 | ID-backed | N — covered, no PR |
 | 11 | MFO | `native/Board.cpp:1847-1852,2357-2360` (`D3DInitHook` 1502, `DXGIPresentHook` 1580, `InputDispatchHook` 1634) | 3× mid-function CALL-instruction patches via `SKSE::GetTrampoline().write_call<5>` at `REL::RelocationID(75595,77226)`, `RelocationID(75461,77246)+0x9`, `RelocationID(67315,68617)+0x7B` | ImGui overlay: D3D device init, DXGI Present, input-event dispatch | **call-site trampoline** (not a vtable) | N/A — CommonLib doesn't "bind" a byte offset mid-function; nothing to name | ID-backed (all three already resolve via `RelocationID`, no gap) | **N — not upstreamable by kind** (overlay/call-site patch, matches the standing project note that trampolines are never CommonLib PR material, independent of naming) |
+
+### 1a. Per-runtime placement of APMF's single-runtime constructs (2026-09-15)
+
+APMF `native/` has **zero** `REL::ID(` sites (CLAUDE.md rule 11's old "six single-version
+`REL::ID` sites" sentence never described a `REL::ID` count). What it has is six MECHANISMS
+that carry a per-binary fact — a raw member offset, a raw slot index, a per-binary expected
+function value, or a log label. This table is their placement state per runtime, sourced from
+the 2026-09-15 CONFIRMED address table (re-derived cell by cell against the 1.5.97 and 1.6.1170
+address libraries + unpacked binaries; 1.7.104 static analysis only). "open" = the runtime gate
+admits the binary; "no gate" = the construct is layout-identical by evidence and runs ungated;
+"gated" = refused with a loud line.
+
+| # | Site | Construct | 1.6.1170 | 1.5.97 | 1.7.104 | Gate | CONFIRMED-table row |
+|---|---|---|---|---|---|---|---|
+| A | `native/core/CastClassify.cpp` (`kSpellOffset/kCtrlOffset/kSelfFlagOffset`, `Install()`) | `CombatMagicItemData` +0x10/+0x18/+0x4c, slot 1 thunk | **open** (thunk `0x81D830`) | **open** (thunk `0x7811F0`, id 43931; ctor `0x780F5C` stores the same three fields) | **gated** — offsets identical on paper (`0x832D20`) but no address library, VariantID resolves null | exact version `1.6.1170 \|\| 1.5.97` (NOT `IsAE()/IsSE()` — 3.7.0's `IsSE()` is the `default:` arm) | "CastClassify.h SEAT 0", slot-1 row |
+| B | `native/core/AiCastSeats.cpp` GROUP C (`kWeaponClasses`, `Install()`) | vtables via `VTABLE_CombatInventoryItem{Melee,Ranged,Shield,Torch}[0]` (SE 264523/264525/264527/264531, AE 210297/210299/210301/210305); slot-0x0C expected value per runtime | **open** — expected `0x8183e0/0x8188b0/0x818df0/0x819480` | **open** — expected `0x77e0a0/0x77e550/0x77eac0/0x77f0e0` (Shield/Torch are 0xF-byte arg-swap thunks; the slot value is still the class's own entry) | **gated** — values confirmed (`0x82D2C0/0x82D790/0x82DCD0/0x82E360`) but no library; not placed by marth's decision | same exact-version predicate as A; null resolve and slot mismatch each refuse per class | "Group C: weapon-class CalculateScore seats" (8 rows) |
+| C | `native/core/CastSeats.cpp` (`kAimTargetOverride`) | `CombatAimController` +0x30 aim override | no gate | no gate — ctor zeroes `[+0x30]`, vfunc7 reads it first | no gate (same evidence) | INI switch + install RTTI + per-call vtable identity (unchanged) | "MFO layout facts", CombatController row (c) |
+| D | `native/core/CastSeats.cpp` / `native/core/AiCastSeats.cpp` (`Out16`) | `GetMagicTarget` hidden sret `{u32 @0, ptr @8}` | no gate (`0x81e020`) | no gate (`0x781CB0` + helper `0x782100`) | no gate (same ABI) | none needed | "GetMagicTarget sret" row |
+| E | `native/core/EquipGate.cpp` (`CallSiteName`) | 0x0F call-site LABEL table (`0x80fcd0`, `0x813af2/0x813d38/0x814270/0x8144b2`) | consulted | not consulted — prints the live RVA as "unlabelled" | not consulted | exact version `1.6.1170`; cosmetic, nothing gates on it | none (SE call sites were not derived) |
+| F | `native/core/NonAliasProbe.cpp` (`kPutCreatedPackage`) | `Character` vtable slot 0xDF | no gate | no gate — 298-slot vtable, same 12-callee function id-for-id | no gate (298 slots, AE==1.7 body match) | VR-refused only (unchanged) | `Targeting.cpp:162` `VTABLE_Character` row |
+
+Also confirmed on 1.5.97 with no change needed (RTTI-verified at install, no version gate): the
+14 `CombatMagicCaster` seat vtables (`CastSeats.cpp`, `AiCastSeats.cpp` GROUP B), the 30
+`CombatInventoryItemMagicT` combos incl. the two `_CombatMagicCasterArmor_` rows
+(`EquipGate.cpp`, `AiCastSeats.cpp` GROUP A), the `<0x68` `CombatController` reads
+(`attackerHandle` 0x28 / `targetHandle` 0x2C / `inventory` 0x10 — APMF reads nothing above
+0x68), and the 72 `CombatBehaviorTree` leaf triples (`ActionGate.cpp`). `plugin.cpp` logs
+`[runtime] <version>: cast-classify <open|gated>, group-C <open|gated>` once at load.
+
+**1.7.104: nothing placed.** No address library exists for it, so every `VariantID`/`RE::VTABLE_*`
+resolves to null; a 1.7 path would be a `REL::Offset` literal table behind an exact-version
+check, which is a design decision for marth, not a placement. Rows A and B refuse it by name.
 
 Not a hook site (checked and ruled out): `native/core/NativeBitProbe.cpp` only toggles
 `Actor::BOOL_FLAGS` bits via the ordinary `GetActorRuntimeData().boolFlags` accessor — no
@@ -242,7 +276,10 @@ unreversed padding rather than guessed.
 `REL::VariantID`/`REL::RelocationID`/`RE::VTABLE_*` triple — including row 4's `Offsets_VTABLE.h`/
 `Offsets_RTTI.h` entries, which are already there even though no class binds them (§2). Neither
 repo uses a raw hardcoded offset or a signature scan anywhere in the hook/trampoline sites
-enumerated in §1.
+enumerated in §1. (2026-09-15: GROUP C's vtables, the one exception the 2026-09-07 update box
+flagged, now resolve through the pinned `VTABLE_CombatInventoryItem{Melee,Ranged,Shield,Torch}`
+ids — see §1a. The per-binary literals that remain are member offsets and expected-value
+checks, which the Address Library does not carry.)
 
 One historical near-miss, noted for completeness and NOT a current gap: `Docs/
 ALLOWANCE-TEMPLATE.md` records that `CombatBehaviorTreeControl::SetFailed`/`Ascend` (the function
