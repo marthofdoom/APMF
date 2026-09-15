@@ -100,7 +100,10 @@ namespace apmf::equipgate {
 
         // Same layout guard MFO's CombatStyle.cpp/CasterConsent.cpp already
         // carry -- the combat thread may only read a CombatController member
-        // BELOW 0x68 (the AE +8 layout bug, ENGINE_NOTES §0.29).
+        // BELOW 0x68 (the AE +8 layout bug, ENGINE_NOTES §0.29). CONFIRMED table
+        // (2026-09-15) "MFO layout facts" CombatController row: 0x10/0x28/0x2C
+        // are unshifted on 1.6.1170, 1.5.97 and 1.7.104; this file reads nothing
+        // above 0x68.
         static_assert(offsetof(RE::CombatController, attackerHandle) == 0x28,
                       "CombatController::attackerHandle moved -- re-verify the "
                       "SE/AE layout split (ENGINE_NOTES §0.29) before shipping");
@@ -175,9 +178,19 @@ namespace apmf::equipgate {
         }
 
         // feat/0x0f-callsite-log: friendly name for the caller RVA captured below.
-        // Known 0x0F call sites (this session's disassembly): 0x80fcd0 (pre-loop,
-        // invoked at 0x813643) and 0x813af2/0x813d38/0x814270/0x8144b2 (selector).
+        // Known 0x0F call sites on 1.6.1170 ONLY (this session's disassembly):
+        // 0x80fcd0 (pre-loop, invoked at 0x813643) and 0x813af2/0x813d38/
+        // 0x814270/0x8144b2 (selector). Log-label only, nothing gates on it.
+        // PER-RUNTIME (CLAUDE.md rule 11): the label table is consulted on
+        // 1.6.1170 alone. The 1.5.97 pass (CONFIRMED table, 2026-09-15) did not
+        // derive SE call sites for 0x0F, so on any other binary the live RVA is
+        // still printed (it is that runtime's own return address, not an AE
+        // number) but labelled "unlabelled" rather than "unknown" -- a match of
+        // an SE address against an AE literal would be a coincidence, never a
+        // fact, so the table is not even consulted there.
         const char* CallSiteName(std::uintptr_t a_rva) {
+            static const bool onAE1170 = REL::Module::get().version() == REL::Version{ 1, 6, 1170, 0 };
+            if (!onAE1170) return "unlabelled (call-site table is 1.6.1170-only)";
             switch (a_rva) {
                 case 0x80fcd0: return "pre-loop";
                 case 0x813af2:
@@ -651,6 +664,10 @@ namespace apmf::equipgate {
         // there; every concrete spell/staff instantiation derives it).
         REL::Relocation<void*> expectedTD{ RE::RTTI_CombatInventoryItem };
 
+        // All 30 VariantIDs below (28 + the two _CombatMagicCasterArmor_ rows)
+        // decode to RTTI-verified vtables on 1.6.1170 and 1.5.97, slot 0x0F a
+        // 0x42-byte per-instantiation function on both -- CONFIRMED table
+        // (2026-09-15) "28 (really 30) CombatInventoryItemMagicT combos".
         const REL::VariantID kVtables[] = {
             // spells in hand
             RE::VTABLE_CombatInventoryItemMagicT_CombatInventoryItemMagic_CombatMagicCasterOffensive_[0],

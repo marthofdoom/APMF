@@ -79,6 +79,10 @@ namespace apmf::nonaliasprobe {
         constexpr std::size_t kPutCreatedPackage = 0xDF;   // Actor::PutCreatedPackage -- see .h; 1.6.1170-pinned
                                                             // index, no named CommonLib binding to prefer over it
                                                             // today (Docs/PROBE-NONALIAS-PACKAGE.md §2).
+                                                            // 1.5.97: CONFIRMED (table 2026-09-15, Targeting.cpp:162
+                                                            // VTABLE_Character row) -- 298-slot Character vtable on
+                                                            // 1.6.1170/1.5.97/1.7.104, slot 0xDF the same 12-callee
+                                                            // function id-for-id on SE. No runtime gate needed.
 
         void PutCreatedPackageThunk(RE::Actor* a_this, RE::TESPackage* a_package,
                                     bool a_temp, bool a_created, bool a_allowFromFurniture) {

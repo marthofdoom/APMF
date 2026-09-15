@@ -31,9 +31,11 @@ namespace apmf::castclassify {
         constexpr REL::VariantID kCombatMagicItemDataVtable(265000, 211955, 0x1709ce8);
 
         // Mangled RTTI name, read directly off the 1.6.1170 disassembly (J7:
-        // "RTTI .?AVCombatMagicItemData@@"). No RTTI_CombatMagicItemData
-        // Address-Library ID was established during the RE pass, so install-time
-        // verification here is a STRING match on this name (walked off the
+        // "RTTI .?AVCombatMagicItemData@@"). The RE pass did not establish an
+        // RTTI_CombatMagicItemData Address-Library ID (the pinned 3.7.0
+        // Offsets_RTTI.h does carry one, `RTTI_CombatMagicItemData{687623,
+        // 395938}` -- CONFIRMED table 2026-09-15, "CastClassify.h SEAT 0" row),
+        // so install-time verification here is a STRING match on this name (walked off the
         // resolved vtable's own CompleteObjectLocator/TypeDescriptor, exactly
         // like core/AiCastSeats.cpp's ResolveTypeName) rather than
         // allowance::DerivesFrom's pointer-identity walk against a known base
@@ -48,8 +50,13 @@ namespace apmf::castclassify {
         // identity, an INI kill-switch, AE-only refusal) stand in exactly where
         // core/CastSeats.cpp's own `+0x30` aim-override offset explains they
         // must (Docs/INVARIANTS.md #20's "raw offset in a composed seat"
-        // clause). AE 1.6.1170 disassembly-CERTAIN (J9); SE 1.5.97 explicitly
-        // NOT VERIFIED -- refused at Install() rather than guessed.
+        // clause). AE 1.6.1170 disassembly-CERTAIN (J9). SE 1.5.97: CONFIRMED
+        // (2026-09-15 pass, "CastClassify.h SEAT 0" slot-1 row) -- the ctor
+        // (SE 0x780F5C) stores [this+0x10]=MagicItem, [this+0x18]=CombatController,
+        // [this+0x4c]=sete(delivery check) byte-for-byte as on AE, and the slot-1
+        // thunk (SE 0x7811F0, id 43931) reads [r13+0x4c] the same way; the
+        // vtable resolves via the SE id 265000 (0x1686BF8). Both runtimes open
+        // the gate below; any other binary is refused, not guessed.
         constexpr std::uintptr_t kSpellOffset    = 0x10;   // RE::MagicItem* -- the effect's owning spell
         constexpr std::uintptr_t kCtrlOffset     = 0x18;   // RE::CombatController* -- the deliberating actor's controller
         constexpr std::uintptr_t kSelfFlagOffset = 0x4c;   // std::uint8_t -- (spell->GetDelivery()==kSelf) at ctor time
@@ -243,13 +250,24 @@ namespace apmf::castclassify {
                          "combat-AI item on this runtime; the direct-force degrade path is unaffected.");
             return;
         }
-        if (!REL::Module::IsAE()) {
-            spdlog::warn("[ch.8b seat 0] non-AE runtime (SE 1.5.97, or unrecognised) -- the +0x10/+0x18/"
-                         "+0x4c CombatMagicItemData offsets this seat reads are disassembly-CERTAIN on "
-                         "1.6.1170 (AE) ONLY; the RE notebook explicitly could NOT verify them on SE. "
+        // Exact-binary gate (CLAUDE.md rule 11). NOT REL::Module::IsAE()/IsSE():
+        // in the pinned 3.7.0 Relocation.h:899-912 IsAE() is any 1.6.x and IsSE()
+        // is the `default:` arm (1.7.104 lands there with no address library, so
+        // the vtable VariantID would resolve to null). The three offsets are
+        // disassembly-confirmed on exactly 1.6.1170 and 1.5.97; nothing else is
+        // guessed. core/AiCastSeats.cpp's Group C gate and plugin.cpp's
+        // `[runtime]` startup line apply this same two-version predicate.
+        const auto ver       = REL::Module::get().version();
+        const bool onAE1170  = ver == REL::Version{ 1, 6, 1170, 0 };
+        const bool onSE597   = ver == REL::Version{ 1, 5, 97, 0 };
+        if (!onAE1170 && !onSE597) {
+            spdlog::warn("[ch.8b seat 0] runtime {} -- the +0x10/+0x18/+0x4c CombatMagicItemData offsets "
+                         "this seat reads are disassembly-CONFIRMED on 1.6.1170 and 1.5.97 only (1.7.104 "
+                         "has the same offsets on paper but no address library to resolve the vtable). "
                          "Refusing to install rather than guess a struct layout carries across runtimes "
-                         "unchanged (CLAUDE.md: 'gate the SE path off or refuse it explicitly'). Heal-OTHER "
-                         "stays absent on this runtime; the direct-force degrade path is unaffected.");
+                         "unchanged (CLAUDE.md rule 11). Heal-OTHER stays absent on this runtime; the "
+                         "direct-force degrade path is unaffected.",
+                         ver.string());
             return;
         }
         if (g_installed.exchange(true)) return;
@@ -261,6 +279,12 @@ namespace apmf::castclassify {
         }
 
         REL::Relocation<std::uintptr_t> vt{ kCombatMagicItemDataVtable };
+        if (vt.address() == 0) {
+            spdlog::error("[ch.8b seat 0] CombatMagicItemData VariantID resolved to null on {} (address "
+                          "library missing the id) -- REFUSED (not installed; never a blind vtable read).",
+                          ver.string());
+            return;
+        }
         const char* name = ResolveMangledName(vt.address());
         if (!name || std::strcmp(name, kExpectedMangledName) != 0) {
             spdlog::error("[ch.8b seat 0] CombatMagicItemData vtable 0x{} did NOT resolve to the expected "

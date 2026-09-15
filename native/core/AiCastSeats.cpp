@@ -108,7 +108,10 @@ namespace apmf::aicastseats {
 
         // ---- layout guards (ENGINE_NOTES §0.29 -- the AE +8 CombatController
         // bug). Every member this file reads is BELOW the 0x68 divergence
-        // point, so it is layout-identical on SE and AE. ----
+        // point, so it is layout-identical on SE and AE. CONFIRMED table
+        // (2026-09-15) "MFO layout facts" CombatController row: 0x28/0x2C read
+        // unshifted by GetMagicTarget on 1.6.1170, 1.5.97 AND 1.7.104; the +8
+        // divergence starts at the cached-target block (0xC0 SE vs 0xC8 AE). ----
         static_assert(offsetof(RE::CombatController, attackerHandle) == 0x28,
                       "CombatController::attackerHandle moved -- re-verify the "
                       "SE/AE layout split (ENGINE_NOTES §0.29) before shipping");
@@ -290,13 +293,31 @@ namespace apmf::aicastseats {
         // DISABLED). CalculateScore (0x0C) on the WEAPON-CLASS CombatInventoryItem
         // leaves -- Melee, Ranged, Shield, Torch. Opus PASS S, 2026-09-06,
         // disasm-CONFIRMED (do NOT re-derive): these four have NO CommonLib
-        // concrete C++ class and therefore NO `RE::VTABLE_*` symbol (the same
-        // finding core/EquipGate.cpp's file banner and Docs/DENY-COMPLETENESS-
-        // AUDIT.md row 15 already record for why 0x0F can't be hooked for
-        // weapons) -- so this group resolves each vtable from a RAW RVA
-        // (`REL::Offset`, no `REL::VariantID`; no Address-Library ID exists for
-        // any of the four) and is AE-ONLY (1.6.1170; the RVAs are meaningless on
-        // any other build).
+        // concrete C++ CLASS (the same finding core/EquipGate.cpp's file banner
+        // and Docs/DENY-COMPLETENESS-AUDIT.md row 15 already record for why 0x0F
+        // can't be hooked for weapons). They DO have vtable symbols, though: the
+        // pinned 3.7.0 `Offsets_VTABLE.h` binds
+        // `VTABLE_CombatInventoryItem{Melee,Ranged,Shield,Torch}` as
+        // VariantID(264523/210297, 264525/210299, 264527/210301, 264531/210305)
+        // -- the 2026-09-06 "no Address-Library ID exists" reading was wrong, and
+        // the 1.5.97 pass (CONFIRMED table, "Group C" rows, 2026-09-15) decoded
+        // every one of those eight ids against its address library to EXACTLY
+        // the disasm-confirmed vtable RVAs (AE 0x18c9028/0x18c90d8/0x18c9188/
+        // 0x18c92e8; SE 0x1681a88/0x1681b58/0x1681c28/0x1681dd0). So this group
+        // now resolves each vtable through the VariantID (per-runtime by
+        // construction, CLAUDE.md rule 11) and the ONLY per-binary literal left
+        // is the slot-0x0C expected value the install gate compares, carried per
+        // runtime below.
+        //
+        // RUNTIMES: placed on 1.6.1170 and 1.5.97 only. On 1.5.97 the Shield and
+        // Torch slot-0x0C entries are 0xF-byte arg-swapping THUNKS (`rax=rdx;
+        // rdx=[rcx+0x10]; rcx=rax; jmp <scorer>`) into the scorer AE inlines, and
+        // Melee's is a 0x5D-byte recompile calling a helper AE inlines -- the slot
+        // VALUE is still that class's own CalculateScore entry, which is what the
+        // gate compares; the bodies are not comparable across runtimes and the
+        // thunk never relies on them. 1.7.104: values exist in the CONFIRMED table
+        // but there is no address library, so nothing is placed and Install()
+        // refuses with a loud line (principle 7).
         //
         // Melee+Ranged share arbitration category 0; Shield+Torch share category
         // 3 (the engine's fixed `[1,2,4,0,3,5,0,6]` order table + slot-bitmask
@@ -336,17 +357,32 @@ namespace apmf::aicastseats {
         using WeaponScore_t = float (*)(RE::CombatInventoryItem*, RE::CombatController*);
 
         struct WeaponClassSpec {
-            const char*    tag;            // for logging only
-            std::uintptr_t vtableRva;      // AE 1.6.1170 RVA, disasm-confirmed
-            std::uintptr_t calcScoreRva;   // this class's OWN CalculateScore impl RVA -- the install-time gate
-            int            category;       // engine arbitration category (informational)
+            const char*    tag;              // for logging only
+            REL::VariantID vtable;           // pinned CommonLib VTABLE_CombatInventoryItem<class>[0] (SE id, AE id)
+            std::uintptr_t calcScoreRvaAE;   // 1.6.1170: this class's OWN CalculateScore RVA -- the install-time gate
+            std::uintptr_t calcScoreRvaSE;   // 1.5.97: the slot-0x0C entry RVA (Shield/Torch are arg-swap thunks)
+            int            category;         // engine arbitration category (informational)
         };
+        // CONFIRMED table (2026-09-15) "Group C: weapon-class CalculateScore seats",
+        // every cell CONFIRMED on both runtimes. Vtables resolve via the address
+        // library; only the slot-0x0C expected values are literals, one per runtime.
         constexpr WeaponClassSpec kWeaponClasses[] = {
-            { "Melee",  0x18c9028, 0x8183e0, 0 },
-            { "Ranged", 0x18c90d8, 0x8188b0, 0 },
-            { "Shield", 0x18c9188, 0x818df0, 3 },
-            { "Torch",  0x18c92e8, 0x819480, 3 },
+            { "Melee",  RE::VTABLE_CombatInventoryItemMelee[0],  0x8183e0, 0x77e0a0, 0 },
+            { "Ranged", RE::VTABLE_CombatInventoryItemRanged[0], 0x8188b0, 0x77e550, 0 },
+            { "Shield", RE::VTABLE_CombatInventoryItemShield[0], 0x818df0, 0x77eac0, 3 },
+            { "Torch",  RE::VTABLE_CombatInventoryItemTorch[0],  0x819480, 0x77f0e0, 3 },
         };
+
+        // Exact-binary gate for the per-runtime literals above (CLAUDE.md rule 11).
+        // Deliberately NOT REL::Module::IsAE()/IsSE(): in the pinned 3.7.0
+        // `Relocation.h:899-912` IsAE() is "major.minor == 1.6" (any 1.6.x) and
+        // IsSE() is the `default:` arm -- 1.7.104 classifies as SE there, with no
+        // address library behind it, so every VariantID would resolve to null.
+        // Only the two binaries the CONFIRMED table was read against open this gate.
+        // core/CastClassify.cpp's Install() and plugin.cpp's `[runtime]` startup
+        // line apply the identical two-version predicate; keep the three in step.
+        bool IsRuntime1_6_1170() { return REL::Module::get().version() == REL::Version{ 1, 6, 1170, 0 }; }
+        bool IsRuntime1_5_97()   { return REL::Module::get().version() == REL::Version{ 1, 5, 97, 0 }; }
 
         struct WeaponClassInfo { const char* tag; int category; };
         std::unordered_map<std::uintptr_t, WeaponClassInfo> g_weaponClassInfo;
@@ -899,7 +935,11 @@ namespace apmf::aicastseats {
         // ======================================================================
 
         // {handle, ptr} -- handle at +0x0 (4 bytes), 4 bytes of alignment padding,
-        // ptr at +0x8 (8 bytes) = 16 bytes total. Matches the crash log's own
+        // ptr at +0x8 (8 bytes) = 16 bytes total. CONFIRMED table (2026-09-15)
+        // "GetMagicTarget sret" row: the hidden `Out16* (this, Out16* out,
+        // CombatController*)` shape holds on 1.6.1170 (0x81e020), 1.5.97 (0x781CB0
+        // + helper 0x782100 filling the same {u32 @0, ptr @8}) and 1.7.104 -- no
+        // runtime gate is needed here. Matches the crash log's own
         // out-slot dump byte-for-byte: [out+0x00]=0 (handle), [out+0x08]=a pointer
         // value (here, garbage from the old 2-arg-shaped call).
         struct Out16 {
@@ -1124,6 +1164,9 @@ namespace apmf::aicastseats {
         // turning the steer on does NOT turn a 30-vtable probe log on with it.
         if (groupA || scoreSteer) {
             REL::Relocation<void*> itemTD{ RE::RTTI_CombatInventoryItem };
+            // All 30 VariantIDs (28 + the two _CombatMagicCasterArmor_ rows) decode
+            // to RTTI-verified vtables on 1.6.1170 and 1.5.97 -- CONFIRMED table
+            // (2026-09-15) "28 (really 30) CombatInventoryItemMagicT combos".
             const REL::VariantID kItemVtables[] = {
                 RE::VTABLE_CombatInventoryItemMagicT_CombatInventoryItemMagic_CombatMagicCasterOffensive_[0],
                 RE::VTABLE_CombatInventoryItemMagicT_CombatInventoryItemMagic_CombatMagicCasterRestore_[0],
@@ -1181,6 +1224,10 @@ namespace apmf::aicastseats {
         // §0.28: a vtable symbol with no real class behind it).
         if (groupB) {
             REL::Relocation<void*> casterTD{ RE::RTTI_CombatMagicCaster };
+            // All 14 seat VariantIDs decode to RTTI-verified vtables with 14 slots
+            // on 1.6.1170 and 1.5.97 -- CONFIRMED table (2026-09-15) "14
+            // CombatMagicCaster seat vtables"; slots 0x06/0x07/0x0A keep their
+            // arg shapes on both runtimes.
             const REL::VariantID kCasterVtables[] = {
                 RE::VTABLE_CombatMagicCasterOffensive[0],    RE::VTABLE_CombatMagicCasterRestore[0],
                 RE::VTABLE_CombatMagicCasterWard[0],         RE::VTABLE_CombatMagicCasterSummon[0],
@@ -1212,17 +1259,31 @@ namespace apmf::aicastseats {
         }   // groupB
 
         // ---- GROUP C: CalculateScore (0x0C) on the Melee/Ranged/Shield/Torch
-        // weapon-class leaves -- raw RVA, AE-only, no CommonLib symbol. See the
-        // GROUP C block comment above WeaponScoreThunk for the full design.
+        // weapon-class leaves -- vtables via the pinned CommonLib VariantIDs, the
+        // slot-0x0C expected value per runtime (1.6.1170 / 1.5.97; CONFIRMED table
+        // "Group C" rows). See the GROUP C block comment above WeaponScoreThunk.
         if (groupC) {
-            if (!REL::Module::IsAE()) {
-                spdlog::warn("[aicastseats] GROUP C (weapon-class item score) requires AE (1.6.1170) -- "
-                             "the Melee/Ranged/Shield/Torch vtable RVAs are AE-only disassembly-confirmed "
-                             "and meaningless on any other runtime. NOT installed on this build.");
+            const bool onAE1170 = IsRuntime1_6_1170();
+            const bool onSE597  = IsRuntime1_5_97();
+            if (!onAE1170 && !onSE597) {
+                spdlog::warn("[aicastseats] GROUP C (weapon-class item score) is placed on 1.6.1170 and 1.5.97 "
+                             "only -- the slot-0x0C CalculateScore expected values its install gate compares "
+                             "are per-binary literals and this build is {} (no confirmed values for it; "
+                             "1.7.104 also has no address library). NOT installed on this build.",
+                             REL::Module::get().version().string());
             } else {
                 for (const auto& spec : kWeaponClasses) {
-                    REL::Relocation<std::uintptr_t> vt{ REL::Offset(spec.vtableRva) };
-                    REL::Relocation<std::uintptr_t> expectedFn{ REL::Offset(spec.calcScoreRva) };
+                    REL::Relocation<std::uintptr_t> vt{ spec.vtable };
+                    REL::Relocation<std::uintptr_t> expectedFn{
+                        REL::Offset(onAE1170 ? spec.calcScoreRvaAE : spec.calcScoreRvaSE) };
+                    if (vt.address() == 0) {
+                        spdlog::error("[aicastseats] GROUP C: {} VTABLE_CombatInventoryItem{} VariantID resolved "
+                                      "to null on {} (address library missing the id) -- REFUSED (not installed; "
+                                      "never a blind vtable read).",
+                                      spec.tag, spec.tag, REL::Module::get().version().string());
+                        ++nWeaponRefused;
+                        continue;
+                    }
                     // Read the LIVE slot 0x0C pointer BEFORE writing anything (the
                     // same read RecoverLiveOriginal performs elsewhere in this file) --
                     // the install-time gate, never a blind vtable write.
@@ -1230,11 +1291,11 @@ namespace apmf::aicastseats {
                         RecoverLiveOriginal<WeaponScore_t>(vt.address(), kCalculateScore));
                     if (curFn != expectedFn.address()) {
                         spdlog::error("[aicastseats] GROUP C: {} vtable 0x{} slot 0x0C holds 0x{}, expected "
-                                      "the disasm-confirmed CalculateScore address 0x{} -- REFUSED (not "
-                                      "installed; never a blind vtable write; the vtable-RVA table may be "
-                                      "stale for this build).",
+                                      "the disasm-confirmed {} CalculateScore address 0x{} -- REFUSED (not "
+                                      "installed; never a blind vtable write; the per-runtime expected-value "
+                                      "table may be stale for this build).",
                                       spec.tag, apmf::log::Hex(vt.address(), 16), apmf::log::Hex(curFn, 16),
-                                      apmf::log::Hex(expectedFn.address(), 16));
+                                      onAE1170 ? "1.6.1170" : "1.5.97", apmf::log::Hex(expectedFn.address(), 16));
                         ++nWeaponRefused;
                         continue;
                     }
