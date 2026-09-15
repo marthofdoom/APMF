@@ -169,6 +169,10 @@ namespace {
             break;
         case SKSE::MessagingInterface::kPostLoadGame:
             apmf::av::ApplyPending();             // restore any stranded AV overrides
+            apmf::equipsink::ReinspectEntries("kPostLoadGame");   // a later plugin may have detoured EquipObject's entry
+            break;
+        case SKSE::MessagingInterface::kNewGame:
+            apmf::equipsink::ReinspectEntries("kNewGame");
             break;
         default:
             break;

@@ -5,7 +5,9 @@
 - **Ships in observe mode.** `bEquipObserveOnly=1` in `APMF.ini` logs what would have been refused and refuses nothing. It stays that way until a real session proves the log is right. Flip it to 0 to enforce.
 - **Scripts still get through.** A Papyrus or console equip passes unless the mod asks for those to be refused too. Unequips are never refused in this version.
 - New API revision (v7) with one call, `SetEquipSet`. Older clients are unaffected.
+- The startup `[runtime]` line now also reports `equip-sink open` or `gated`. That field is the version predicate only. The `[apmf][equip-sink] INSTALLED` line is the truth about whether the seat is live.
 - No change to any existing facet.
+
 ## Unreleased -- APMF's cast seats run on Skyrim 1.5.97
 
 - **The cast classify seat and the weapon score seat now run on Skyrim 1.5.97.** Both used to refuse anything but 1.6.1170. Every value they read was checked against the 1.5.97 binary and its address library before being placed. Nothing was guessed.

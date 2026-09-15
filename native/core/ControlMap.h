@@ -553,7 +553,8 @@ namespace apmf {
         // Claim regardless of whether it currently OWNS the channel (non-owning
         // semantics, same as Repoint). If the claim IS the current owner, the
         // channel's OnOwnerChanged fires on EVERY applied declaration, changed or
-        // not (the channel coalesces identical re-issues itself) (still inside
+        // not (the channel's inventory walk is the dedupe; it holds an item it
+        // already queued for 3 s, and coalesces nothing else) (still inside
         // Drain, BEFORE Publish) so channels/EquipAuthority.cpp can post its ONE
         // main-thread enforcement hop, which lands strictly AFTER Publish (the
         // mainthread::Pump runs after Drain returns -- INVARIANTS #20's release-

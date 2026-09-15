@@ -55,7 +55,15 @@ below-the-seat restore path (16073 → 38001, persisted ExtraWorn on 3D load) an
 reserved-bit warning once per actor; INTEGRATION states the refused replacement equip
 after RemoveItem, the unloaded-actor case, and `SetOutfit` = engine path.
 
-**Next.** Fable re-review of the round; mirror `APMF_API.h` into MFO; MFO's
+**Fable round 2 (on 123d50e): nothing above SEV-3; closing round applied** — the 1 s
+coalesce (which defeated "give it back") is DROPPED — the inventory walk always runs and is
+the only dedupe; a held item keeps its
+original issue time so the 3 s hold is real; the entry-detour inspection re-runs at
+kPostLoadGame / kNewGame and logs on a change of verdict; criterion 4 states QueuedApply
+appears only for high / middle-high process actors; CHANGELOG/MAP `[runtime]` wording;
+SEV-5 #3/#6/#7 recorded verbatim as `Docs/REVIEW-BACKLOG.md` APMF-B2..B4.
+
+**Next.** Merge; mirror `APMF_API.h` into MFO; MFO's
 `Loadout`/`CombatStyle` become a ch.17 declaration; deck run in observe mode; flip
 `bEquipObserveOnly`.
 

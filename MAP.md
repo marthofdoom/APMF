@@ -697,7 +697,13 @@ both site functions for a third-party inline detour (E9 / FF 25 / 48 B8 / E8) an
 logs `entry <id> detoured by <dll>: attribution degraded` — the seat still installs, but every
 caller then classifies `External(<that dll>)` and the Script exemption is unavailable.
 Runtime gate is EXACT-VERSION (`1.6.1170 || 1.5.97`, the same predicate as CastClassify /
-plugin.cpp's `[runtime]` line), never `IsAE()`; other builds log `runtime <v> gated`.
+plugin.cpp's `[runtime]` line), never `IsAE()`; other builds log `runtime <v> gated`. The
+`[runtime] … equip-sink open|gated` field is that VERSION PREDICATE ONLY — the
+`[apmf][equip-sink] INSTALLED … entries=clean|DETOURED` line is the truth about whether the
+seat is live (INI off, a site-verify refusal, or VR all leave `open` on the runtime line). The
+entry-detour inspection is re-run at kPostLoadGame / kNewGame (`ReinspectEntries`) and logs
+only on a change of verdict, because a plugin later in load order may detour after our
+kDataLoaded.
 One `[apmf][equip-obs] actor= item= op=equip path=
 site=<id>+<off> ret=<rva> q= f= s= a= tls= verdict=` line per decision, deduped 2 s per
 (actor,item,path), capped 100/s with a per-minute dropped-count line, wrapped in
@@ -724,10 +730,16 @@ site=<id>+<off> ret=<rva> q= f= s= a= tls= verdict=` line per decision, deduped 
   (no references). Do not write "every engine equip" — write "every engine equip DECISION".
   (8) Never re-add a `tls>0` short-circuit to the verdict: 38913 re-equips the SAME object it
   was handed, so a second copy of a displaced off-set item could ride back in on it, and
-  probe criterion 2 would be vacuous. (9) The `channels/EquipAuthority.cpp` pass coalesces an
-  identical re-declaration inside 1 s and skips items issued-not-applied in the previous pass
-  (≤3 s) — that is what keeps a per-tick client from turning "give it back" into a #0 loop;
-  keep both guards if you touch `Enforce`.
+  probe criterion 2 would be vacuous. (9) The `channels/EquipAuthority.cpp` pass holds an
+  item it already queued for 3 s from its issue before queuing it again — that is what keeps a
+  per-tick client from piling up the engine's equip queue; keep the hold if you touch `Enforce`. **CORRECTED (Fable round 2 on 123d50e):** the
+  1 s coalesce is GONE — there is no signature/time guard at all; the inventory walk (the
+  real dedupe) always runs, so a "give it back" re-declaration right after a script unequip
+  is honoured, and the pass line marks an identical re-declaration. A held item
+  keeps its ORIGINAL issue time across passes (the 3 s window is real). (10) **Open review
+  findings live in `Docs/REVIEW-BACKLOG.md` APMF-B2..B4** (ch.15's probe re-equip is
+  `External(APMF.dll)` on a ch.17 actor; a detour target inside a trampoline page prints
+  `detoured by ?`; the truncation log fires at Apply) — read them before editing this seat.
 
 ### `native/core/NonAliasProbe.{h,cpp}` — OBSERVE-ONLY 0xDF hook + 0x49 assist + RTTI dumper
 Docs/PROBE-NONALIAS-PACKAGE.md's runtime probe: does `Actor::CheckForCurrentAliasPackage`
@@ -779,7 +791,7 @@ parentheses.
 | `OfferPackage.cpp` | 9 | package-procedure activity (NumpadSlash) | Arbitration + claim lifecycle + the `EvaluatePackage(true,false)` nudge, `mainthread::Post`ed so it lands PAST the claim's publish; the redirect itself is `core/PackageGate.cpp`'s T3 0x49 hook returning the claim's `param.form`. The test key carries no package, so a test claim offers nothing | claim + T3 enforcement; the ENGINE runs the package natively |
 | `Equipment.cpp` | 15 | equip/unequip (Num.) | `GetEquippedObject` + `UnequipObject`/`EquipObject` (melee-vs-ranged lever) | source-block |
 | `Detection.cpp` | 16 | stealth (Num8) | `kMovementNoiseMult` + `kDetectLifeRange` AVs | source-block |
-| `EquipAuthority.cpp` | 17 | ENGINE-EQUIP facet, WHOLE (`kIntent_EquipAuthority`, ABI v7; no test key) | Arbitration + claim lifecycle (standing, no TTL) + the ONE #17a-licensed equip: on every applied `SetEquipSet` for the owning claim (and on a win/repoint) it POSTS one `mainthread` hop that lands after `Publish()` and equips each declared item the actor is not wearing via `ActorEquipManager::EquipObject` (queued, not forced) inside `equipsink::ApmfEquipScope`; never unequips; no re-assert (identical re-issue within 1 s coalesced; an item issued-not-applied last pass is skipped once). The deny is `core/EquipSink.cpp`'s call-site seat. `Release` relinquishes (nothing to undo). Refuses `kEquipAuth_DenyUnequip` (reserved) | claim + #17a seat; APMF equips the DECLARED set, the ENGINE keeps its hands off |
+| `EquipAuthority.cpp` | 17 | ENGINE-EQUIP facet, WHOLE (`kIntent_EquipAuthority`, ABI v7; no test key) | Arbitration + claim lifecycle (standing, no TTL) + the ONE #17a-licensed equip: on every applied `SetEquipSet` for the owning claim (and on a win/repoint) it POSTS one `mainthread` hop that lands after `Publish()` and equips each declared item the actor is not wearing via `ActorEquipManager::EquipObject` (queued, not forced) inside `equipsink::ApmfEquipScope`; never unequips; no re-assert (every declaration walks the inventory; an item APMF already queued is held 3 s from its issue before it is queued again). The deny is `core/EquipSink.cpp`'s call-site seat. `Release` relinquishes (nothing to undo). Refuses `kEquipAuth_DenyUnequip` (reserved) | claim + #17a seat; APMF equips the DECLARED set, the ENGINE keeps its hands off |
 
 - **What breaks (all channels):** each must (1) keep the package coherent — none
   substitutes the package (§5); (2) capture-and-restore engine state in `Release`,

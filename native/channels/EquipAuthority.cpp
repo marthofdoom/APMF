@@ -38,13 +38,20 @@
 // this pass into a #0 re-assert loop built out of client ticks: a full
 // GetInventory() walk per tick, and a queued-but-not-yet-applied item reading
 // "not worn" on the next pass and being queued AGAIN. Two guards, per actor,
-// main-thread state: (a) an IDENTICAL set re-issued within kCoalesceMs of the
-// last pass is coalesced (skipped with a log line) -- a deliberate re-send after
-// that window still runs; (b) an item this channel issued in the PREVIOUS pass
-// that still reads not-worn is left alone for one pass (its queued equip is in
-// flight), then retried. A set that cannot be worn simultaneously (a two-hander
-// AND a shield) is the client's error: the engine displaces one with the other
-// on every pass and the log shows it -- declare a wearable set, do not tick.
+// main-thread state -- the INVENTORY WALK is the real dedupe and ALWAYS runs,
+// so a "give it back" re-declaration issued right after a script unequip is
+// honoured (Fable round 2 on 123d50e, SEV-3: the 1 s coalesce this had in
+// round 1 dropped exactly that case, and any signature-based guard short of
+// the walk does the same -- there is none now). The one bound: an item this
+// channel issued that still reads not-worn is held for kPendingMaxMs from its
+// ORIGINAL issue time (carried across every pass inside that window, then
+// retried). What a ticking client gets is one inventory walk per tick and, at
+// most, one re-issue per item per 3 s -- logged (the pass line marks an
+// identical re-declaration), bounded, never a queue pile-up; not free, and
+// INTEGRATION.md says so. A set
+// that cannot be worn simultaneously (a two-hander AND a shield) is the client's
+// error: the engine displaces one with the other on every pass and the log
+// shows it -- declare a wearable set, do not tick.
 //
 // WHY THIS IS LAWFUL UNDER #0 / #17. #17a condition 4 licenses exactly this
 // pair: "the client's declared set is what APMF equips, and the seat is what
@@ -84,14 +91,16 @@ namespace {
 
     // ---- per-actor enforcement memory (MAIN THREAD ONLY: written by Enforce,
     // erased by Release; both run on the writer/main thread). ----
-    constexpr std::uint64_t kCoalesceMs   = 1000;   // identical re-issue inside this window is coalesced
-    constexpr std::uint64_t kPendingMaxMs = 3000;   // an issued-not-applied item older than this is retried
+    constexpr std::uint64_t kPendingMaxMs = 3000;   // an issued-not-applied item is held this long from its issue
+    struct Issued {
+        RE::FormID    form     = 0;
+        std::uint64_t issuedMs = 0;   // the ORIGINAL issue time; carried, never refreshed by a hold
+    };
     struct ActorMemory {
         std::uint64_t lastPassMs  = 0;
         std::uint64_t lastSig     = 0;      // FNV-1a over (count, forms in order)
         std::uint32_t passes      = 0;
-        std::uint64_t issuedAtMs  = 0;      // when `issued` was filled
-        std::vector<RE::FormID> issued;     // forms EquipObject'd in the previous pass
+        std::vector<Issued> issued;         // forms this channel EquipObject'd and has not yet seen worn
         bool          reservedWarned = false;   // kEquipAuth_DenyUnequip warned once per actor
     };
     std::unordered_map<RE::FormID, ActorMemory> g_memory;
@@ -124,16 +133,19 @@ namespace {
             return;
         }
 
-        // Guard (a): coalesce an identical re-issue inside the window.
+        // NO time-based or signature-based coalescing (Fable round 2 on 123d50e,
+        // SEV-3): every declaration WALKS the inventory, because the walk is the
+        // only dedupe that sees what the actor actually wears -- an identical set
+        // re-issued right after a script unequip must be honoured, and any guard
+        // short of the walk (a 1 s window, "same set while issues are in flight")
+        // drops exactly that case. The only bound is guard (b) below: an item
+        // this channel already queued is not queued again inside its hold window.
         const auto nowMs = apmf::clock::MonotonicMs();
         auto&      mem   = g_memory[id];
         const auto sig   = SetSignature(set);
-        if (mem.passes > 0 && sig == mem.lastSig && nowMs - mem.lastPassMs < kCoalesceMs) {
-            spdlog::info("[apmf][equip-auth] actor=0x{} identical declaration re-issued {} ms after pass #{} -- "
-                         "coalesced (no equip issued; re-send after {} ms to force a pass).",
-                         apmf::log::Hex(id), nowMs - mem.lastPassMs, mem.passes, kCoalesceMs);
-            return;
-        }
+        // Drop issues past their hold window first, so "held" means fresh.
+        std::erase_if(mem.issued, [&](const Issued& e) { return nowMs - e.issuedMs >= kPendingMaxMs; });
+        const bool identical = (mem.passes > 0 && sig == mem.lastSig);
 
         auto* actor = RE::TESForm::LookupByID<RE::Actor>(id);
         if (!actor || !actor->Is3DLoaded()) {
@@ -155,11 +167,11 @@ namespace {
         // One inventory snapshot for the whole pass (main thread; the map is a
         // local copy, nothing aliased into the engine).
         auto inv = actor->GetInventory();
-        // Guard (b): what the PREVIOUS pass issued and may still be in the
-        // engine's equip queue. Stale (older than kPendingMaxMs) means the queue
-        // has long since drained -- retry rather than hold back forever.
-        const bool pendingFresh = (nowMs - mem.issuedAtMs) < kPendingMaxMs;
-        std::vector<RE::FormID> issuedNow;
+        // Guard (b): what this channel issued and has not yet seen worn, each
+        // with its ORIGINAL issue time (stale ones were dropped above). A held
+        // item is CARRIED into `issuedNow` with that time, so the hold is a real
+        // kPendingMaxMs window, not one pass.
+        std::vector<Issued> issuedNow;
         std::uint32_t equipped = 0, worn = 0, missing = 0, unresolved = 0, pending = 0;
         for (std::uint32_t i = 0; i < set.count; ++i) {
             const RE::FormID form = set.forms[i];
@@ -181,10 +193,14 @@ namespace {
             }
             const auto& entry = it->second.second;
             if (entry && entry->IsWorn()) { ++worn; continue; }
-            if (pendingFresh && std::find(mem.issued.begin(), mem.issued.end(), form) != mem.issued.end()) {
-                // Issued last pass, not yet applied by the engine's queue: do not
-                // queue a second copy of the same equip. Retried next pass.
+            if (auto held = std::find_if(mem.issued.begin(), mem.issued.end(),
+                                         [&](const Issued& e) { return e.form == form; });
+                held != mem.issued.end()) {
+                // Issued inside the hold window and not yet worn: do not queue a
+                // second copy. Carried with its original time; retried once the
+                // window elapses.
                 ++pending;
+                issuedNow.push_back(*held);
                 continue;
             }
 
@@ -196,7 +212,7 @@ namespace {
                                  /*sounds*/ true, /*applyNow*/ false);
             }
             ++equipped;
-            issuedNow.push_back(form);
+            issuedNow.push_back(Issued{ form, nowMs });
             spdlog::info("[apmf][equip-auth] actor=0x{} set={} items -> equip 0x{} '{}'",
                          apmf::log::Hex(id), set.count, apmf::log::Hex(form), obj->GetName() ? obj->GetName() : "");
         }
@@ -204,10 +220,10 @@ namespace {
         mem.lastSig    = sig;
         ++mem.passes;
         mem.issued     = std::move(issuedNow);
-        mem.issuedAtMs = nowMs;
-        spdlog::info("[apmf][equip-auth] actor=0x{} enforce pass #{}: set={} equipped={} already-worn={} "
-                     "pending-from-previous-pass={} not-in-inventory={} unresolved={}",
-                     apmf::log::Hex(id), mem.passes, set.count, equipped, worn, pending, missing, unresolved);
+        spdlog::info("[apmf][equip-auth] actor=0x{} enforce pass #{}{}: set={} equipped={} already-worn={} "
+                     "held-in-flight={} not-in-inventory={} unresolved={}",
+                     apmf::log::Hex(id), mem.passes, identical ? " (identical re-declaration)" : "",
+                     set.count, equipped, worn, pending, missing, unresolved);
     }
 
     void PostEnforce(RE::FormID id) {

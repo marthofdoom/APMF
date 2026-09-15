@@ -196,9 +196,14 @@ Rules of the road:
 - **Declare, do not tick.** Call `SetEquipSet` when your loadout changes, not
   every frame. Each call on the owning claim runs one equip pass. Re-issuing
   the same set is a legitimate way to ask for an item back after a script
-  unequipped it. APMF coalesces an identical re-issue inside 1 s and holds
-  back an item whose queued equip from the previous pass has not applied yet,
-  so a per-tick re-send cannot become a loop, but it is still wasted work.
+  unequipped it, and it is honoured at once: every declaration walks the
+  inventory and equips what is missing. What is bounded is the re-issue: an
+  item APMF queued is held for 3 s before it is queued again. A
+  per-tick client therefore pays one inventory walk per tick and at most one
+  re-issue per item per 3 s, all logged. That is bounded and cannot pile up
+  the engine's equip queue, but it is a client-driven re-issue every 3 s for
+  any item the engine keeps taking back off, which is exactly the kind of
+  churn the log will show you. Declare on change.
 - **The set must be simultaneously wearable.** A two-hander and a shield, or
   two items for one slot, make the engine displace one with the other on
   every pass. APMF never picks which one wins. Declare one loadout.
@@ -212,6 +217,12 @@ Rules of the road:
 - **`SetOutfit` is an engine path.** A Papyrus `SetOutfit` ends in the engine's
   own outfit apply (`OutfitApply`), not in the script equip path, so it is
   refused even when scripts are exempt.
+- **Do not mix `kIntent_Equipment` (ch.15) with a ch.17 claim on one actor.**
+  Ch.15's no-param probe path re-equips the weapon it removed on release,
+  from inside APMF.dll. On a ch.17 actor that re-equip is an equip from
+  outside the engine (`External(APMF.dll)`) and is refused unless the weapon
+  is in the declared set. Ch.15's param form (gate only) makes no equip and
+  is unaffected.
 - **APMF never adds items.** A declared item the actor does not own is skipped
   and logged. Give it to them first.
 - **Unequips are not refused.** `kEquipAuth_DenyUnequip` is reserved and a
@@ -246,8 +257,13 @@ equip APMF issued itself runs with `tls>0`); it never changes a verdict. The
    queued equips come back one actor update later as `path=QueuedApply tls=0
    verdict=allow`; that is the engine applying what APMF queued, not a leak.
 4. Every item APMF equips shows up as an `[apmf][equip-auth] ... -> equip` line
-   followed by its `[apmf][equip-obs] ... tls=1 verdict=allow` line, and then
-   its `path=QueuedApply ... verdict=allow` apply line.
+   followed by its `[apmf][equip-obs] ... tls=1 verdict=allow` line. For an
+   actor in high or middle-high AI process (a follower near the player) a
+   `path=QueuedApply ... verdict=allow` apply line follows one actor update
+   later: the engine queues the equip and applies it from its AI process. A
+   loaded actor in low process applies directly beneath the seat, so no
+   `QueuedApply` line appears for it. Its absence on a low-process actor is
+   not a failure.
 5. At least one engine id attributes: the log must contain at least one
    `[apmf][equip-obs]` line whose `path` is a named engine path (not
    `External(...)`). If every line reads `External(<dll>)`, another plugin

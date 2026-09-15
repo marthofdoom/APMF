@@ -80,6 +80,12 @@ namespace apmf::equipsink {
     // True once both sites are patched (false when refused, disabled, or VR).
     bool Installed();
 
+    // Re-run the public-entry detour inspection (main thread, outside any engine
+    // frame: plugin.cpp calls it at kPostLoadGame and kNewGame). A plugin later
+    // in load order may detour EquipObject's entry after our kDataLoaded pass;
+    // this logs ONLY when the verdict changes. No-op when the seat is not installed.
+    void ReinspectEntries(const char* why);
+
     // RAII bracket for equips APMF ISSUES ITSELF (channels/EquipAuthority.cpp).
     // While one is alive on the current thread, every engine equip the sink sees
     // on that thread logs `tls=<depth>` -- the attribution that proves an equip

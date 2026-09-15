@@ -255,6 +255,76 @@ namespace apmf::equipsink {
             return c;
         }
 
+        // ---- ENTRY-DETOUR INSPECTION (Fable tier-3 on d1aa66b SEV-3 #2; round 2
+        // SEV-4: re-run after load events). The internal sites are byte-verified,
+        // but a third party that inline-detours the PUBLIC entry of EquipObject /
+        // the list sibling (the standard "intercept every equip" target) changes
+        // what sits in the caller's return slot: it becomes the DETOUR's return, so
+        // every caller classifies as External(<that dll>) -> kEngine -> the Script
+        // exemption is silently unavailable and the probe cannot attribute
+        // anything. The seat still installs (the deny at the worker is unaffected);
+        // it says so, loudly, and only when the verdict CHANGES (first sight of a
+        // detour, a different detour, or a detour gone). Main thread only, outside
+        // any engine frame (kDataLoaded / kPostLoadGame / kNewGame). ----
+        std::uintptr_t g_entrySites[2]{};
+        std::uint64_t  g_entrySiteIds[2]{};
+        const char*    g_entrySiteNames[2]{ "", "" };
+        std::string    g_entryVerdict[2];   // "" == not yet inspected; "none" == clean; else "<dll>|<shape>"
+
+        void InspectEntryDetours(const char* why) {
+            for (int i = 0; i < 2; ++i) {
+                const std::uintptr_t entry = g_entrySites[i];
+                if (!entry) continue;
+                std::uint8_t e[16]{};
+                std::memcpy(e, reinterpret_cast<const void*>(entry), sizeof(e));
+                std::uintptr_t target = 0;
+                const char*    shape  = nullptr;
+                if (e[0] == 0xE9) {                                   // jmp rel32
+                    std::int32_t rel = 0; std::memcpy(&rel, e + 1, 4);
+                    target = entry + 5 + static_cast<std::intptr_t>(rel); shape = "E9 jmp rel32";
+                } else if (e[0] == 0xFF && e[1] == 0x25) {            // jmp [rip+disp32]
+                    std::int32_t disp = 0; std::memcpy(&disp, e + 2, 4);
+                    std::memcpy(&target, reinterpret_cast<const void*>(entry + 6 + static_cast<std::intptr_t>(disp)), sizeof(target));
+                    shape = "FF 25 jmp [rip]";
+                } else if (e[0] == 0x48 && e[1] == 0xB8) {            // mov rax, imm64 (; jmp rax)
+                    std::memcpy(&target, e + 2, sizeof(target)); shape = "48 B8 mov rax,imm64";
+                } else if (e[0] == 0xE8) {                            // call rel32 at entry -- not the engine's shape
+                    std::int32_t rel = 0; std::memcpy(&rel, e + 1, 4);
+                    target = entry + 5 + static_cast<std::intptr_t>(rel); shape = "E8 call rel32";
+                }
+                std::string verdict = "none";
+                char module[64] = "?";
+                if (shape) {
+                    void* mod = nullptr;
+                    if (target && GetModuleHandleExA(0x6, reinterpret_cast<const char*>(target), &mod) && mod) {
+                        char path[260]{};
+                        const auto n = GetModuleFileNameA(mod, path, sizeof(path));
+                        if (n > 0 && n < sizeof(path)) {
+                            const char* baseName = path;
+                            for (const char* p = path; *p; ++p) if (*p == '\\' || *p == '/') baseName = p + 1;
+                            std::strncpy(module, baseName, sizeof(module) - 1);
+                        }
+                    }
+                    verdict = std::string(module) + "|" + shape;
+                }
+                if (verdict == g_entryVerdict[i]) continue;   // unchanged since the last inspection
+                const bool first = g_entryVerdict[i].empty();
+                g_entryVerdict[i] = verdict;
+                if (!shape) {
+                    if (!first)
+                        spdlog::info("[apmf][equip-sink] entry {} ({}) no longer detoured (at {}): attribution restored.",
+                                     g_entrySiteIds[i], g_entrySiteNames[i], why);
+                    continue;
+                }
+                spdlog::warn("[apmf][equip-sink] entry {} ({}) detoured by {} ({} -> 0x{}, seen at {}): attribution degraded, "
+                             "every caller will classify as External({}); the Script/Console exemption is unavailable "
+                             "and the probe criteria cannot attribute engine ids. The seat still installs (the deny "
+                             "sits below the detour). A '?' module means the target is a trampoline page; the DLL "
+                             "behind it is not resolved (REVIEW-BACKLOG APMF-B3).",
+                             g_entrySiteIds[i], g_entrySiteNames[i], module, shape, apmf::log::Hex(target, 0), why, module);
+            }
+        }
+
         // ---- THE THUNK. Same signature as the worker; the two patched E8s land
         // here through one shared trampoline stub. ----
         void SinkThunk(RE::ActorEquipManager* mgr, RE::Actor* actor, RE::TESBoundObject* obj, EquipData* data) {
@@ -359,6 +429,10 @@ namespace apmf::equipsink {
     ApmfEquipScope::ApmfEquipScope()  { ++t_apmfDepth; }
     ApmfEquipScope::~ApmfEquipScope() { --t_apmfDepth; }
     int  ApmfDepth()   { return t_apmfDepth; }
+    void ReinspectEntries(const char* why) {
+        if (!g_installed.load(std::memory_order_acquire)) return;
+        InspectEntryDetours(why ? why : "?");
+    }
     bool Installed()   { return g_installed.load(std::memory_order_acquire); }
     bool ObserveOnly() { return g_observeOnly.load(std::memory_order_relaxed); }
     bool DenyScript()  { return g_denyScript.load(std::memory_order_relaxed); }
@@ -443,53 +517,12 @@ namespace apmf::equipsink {
             return;
         }
 
-        // ENTRY-DETOUR INSPECTION (Fable tier-3 on d1aa66b, SEV-3 #2; principle 7).
-        // The internal sites above are byte-verified, but a third party that
-        // inline-detours the PUBLIC entry of EquipObject / the list sibling (the
-        // standard "intercept every equip" target) changes what sits in the
-        // caller's return slot: it becomes the DETOUR's return, so every caller
-        // classifies as External(<that dll>) -> kEngine -> the Script exemption is
-        // silently unavailable and the probe cannot attribute anything. The seat
-        // still installs (the deny at the worker is unaffected); it just says so,
-        // loudly, so a log with no engine ids attributing has a stated cause.
-        for (int i = 0; i < 2; ++i) {
-            const auto&          s     = sites[i];
-            const std::uintptr_t entry = REL::ID(s.id).address();
-            std::uint8_t e[16]{};
-            std::memcpy(e, reinterpret_cast<const void*>(entry), sizeof(e));
-            std::uintptr_t target = 0;
-            const char*    shape  = nullptr;
-            if (e[0] == 0xE9) {                                   // jmp rel32
-                std::int32_t rel = 0; std::memcpy(&rel, e + 1, 4);
-                target = entry + 5 + static_cast<std::intptr_t>(rel); shape = "E9 jmp rel32";
-            } else if (e[0] == 0xFF && e[1] == 0x25) {            // jmp [rip+disp32]
-                std::int32_t disp = 0; std::memcpy(&disp, e + 2, 4);
-                std::memcpy(&target, reinterpret_cast<const void*>(entry + 6 + static_cast<std::intptr_t>(disp)), sizeof(target));
-                shape = "FF 25 jmp [rip]";
-            } else if (e[0] == 0x48 && e[1] == 0xB8) {            // mov rax, imm64 (; jmp rax)
-                std::memcpy(&target, e + 2, sizeof(target)); shape = "48 B8 mov rax,imm64";
-            } else if (e[0] == 0xE8) {                            // call rel32 at entry -- not the engine's shape
-                std::int32_t rel = 0; std::memcpy(&rel, e + 1, 4);
-                target = entry + 5 + static_cast<std::intptr_t>(rel); shape = "E8 call rel32";
-            }
-            if (!shape) continue;
-            char module[64] = "?";
-            void* mod = nullptr;
-            if (target && GetModuleHandleExA(0x6, reinterpret_cast<const char*>(target), &mod) && mod) {
-                char path[260]{};
-                const auto n = GetModuleFileNameA(mod, path, sizeof(path));
-                if (n > 0 && n < sizeof(path)) {
-                    const char* baseName = path;
-                    for (const char* p = path; *p; ++p) if (*p == '\\' || *p == '/') baseName = p + 1;
-                    std::strncpy(module, baseName, sizeof(module) - 1);
-                }
-            }
-            spdlog::warn("[apmf][equip-sink] entry {} ({}) detoured by {} ({} -> 0x{}): attribution degraded, "
-                         "every caller will classify as External({}); the Script/Console exemption is unavailable "
-                         "and the probe criteria cannot attribute engine ids. The seat still installs (the deny "
-                         "sits below the detour).",
-                         s.id, s.name, module, shape, apmf::log::Hex(target, 0), module);
-        }
+        // ENTRY-DETOUR INSPECTION, first pass (see InspectEntryDetours above; it is
+        // re-run at kPostLoadGame / kNewGame from plugin.cpp because a plugin
+        // later in load order may detour the entry after our kDataLoaded).
+        g_entrySites[0] = REL::ID(sites[0].id).address(); g_entrySiteIds[0] = sites[0].id; g_entrySiteNames[0] = sites[0].name;
+        g_entrySites[1] = REL::ID(sites[1].id).address(); g_entrySiteIds[1] = sites[1].id; g_entrySiteNames[1] = sites[1].name;
+        InspectEntryDetours("kDataLoaded");
 
         // The caller classifier's table: a sorted copy of the Address Library
         // (one-time, ~0.4M AE / ~0.8M SE entries). Built BEFORE the patch so the
@@ -508,11 +541,14 @@ namespace apmf::equipsink {
         for (const auto& s : g_sites) tr.write_call<5>(s.addr, &SinkThunk);
 
         g_installed.store(true, std::memory_order_release);
-        spdlog::info("[apmf][equip-sink] INSTALLED on {} ({} sites -> worker {}); observe-only={} deny-script={}. "
-                     "Deny = the worker is not called; the player and unclaimed actors pass untouched (INVARIANTS #17a).",
+        const bool entriesClean = (g_entryVerdict[0] == "none" && g_entryVerdict[1] == "none");
+        spdlog::info("[apmf][equip-sink] INSTALLED on {} ({} sites -> worker {}); observe-only={} deny-script={} "
+                     "entries={}. Deny = the worker is not called; the player and unclaimed actors pass untouched "
+                     "(INVARIANTS #17a).",
                      ae ? "AE" : "SE", 2, ae ? kWorkerAE : kWorkerSE,
                      g_observeOnly.load(std::memory_order_relaxed) ? 1 : 0,
-                     g_denyScript.load(std::memory_order_relaxed) ? 1 : 0);
+                     g_denyScript.load(std::memory_order_relaxed) ? 1 : 0,
+                     entriesClean ? "clean" : "DETOURED");
     }
 
 }

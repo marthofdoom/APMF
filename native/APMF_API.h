@@ -808,10 +808,10 @@ namespace APMF_API {
         //      occupies a declared item's slot, the ordinary way. No re-assert loop
         //      follows: the seat is what keeps the engine from undoing the set.
         // DECLARE, DO NOT TICK. Call this when the loadout CHANGES. Each call on the
-        // owning claim is a declaration event; APMF coalesces an identical re-issue
-        // inside ~1 s and holds back an item whose queued equip from the previous
-        // pass is still in flight, so a per-tick re-send is wasted work, not a
-        // loop -- but it is still wasted work. The set MUST BE SIMULTANEOUSLY
+        // owning claim is a declaration event and walks the inventory; an item APMF
+        // already queued is held 3 s before it is queued again, so a per-tick
+        // re-send is bounded, logged work, not a queue pile-up -- but it is still
+        // wasted work. The set MUST BE SIMULTANEOUSLY
         // WEARABLE: a two-hander and a shield, or two items for one slot, make the
         // engine displace one with the other on every pass. That is the client's
         // error and the log will show it; APMF never picks which one wins.
