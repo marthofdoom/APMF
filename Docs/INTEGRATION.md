@@ -311,6 +311,28 @@ and form type at debug level (`verdict=allow (not a governed type...)`), never
 per event. APMF's equip pass applies the same set: a declared item of any
 other type is skipped and logged, because equipping it would consume it.
 
+### A refused claim means keep your own equips (ABI v8)
+
+A `Request`/`RequestEx` for `kIntent_EquipAuthority` returns `kInvalidHandle`
+while the equip seat is NOT installed: `[EquipAuthority] bEquipAuthority=0`, VR,
+a runtime other than 1.6.1170 / 1.5.97, a site-verify refusal (another patcher
+at one of the worker's call sites), or a request made before kDataLoaded. The
+v7 build accepted the claim and enforced nothing, which left a client that had
+turned its own equips off on a successful claim equipping nothing all session.
+APMF logs once: `[apmf][equip-auth] claim refused: seat not installed (<reason>)`.
+Treat a refused claim exactly like an absent APMF: run your own equip path.
+
+For an ACCEPTED claim, `IsEquipAuthorityEnforced()` (v8) tells observe from
+enforce: true only when the seat is installed AND `bEquipObserveOnly=0`. In
+observe mode APMF equips your declared set but refuses nothing, so the engine
+can still take it back off. Your claim's own `kEquipAuth_ObserveOnly` bit is
+not consulted by that call.
+
+```cpp
+if (h == APMF_API::kInvalidHandle) { /* seat not installed: keep your own equips */ }
+else if (!g_apmf->IsEquipAuthorityEnforced()) { /* observe mode: APMF equips, engine may undo */ }
+```
+
 ### The player menu policy (ABI v8)
 
 The player dressing a follower by hand through the trade or gift menu

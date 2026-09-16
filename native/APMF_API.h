@@ -243,6 +243,12 @@ namespace APMF_API {
                                      //       Declare->enforce (CLAUDE.md principle 4): an empty
                                      //       declaration (count 0) CLEARS it and the seat passes
                                      //       everything through again; APMF never invents a set.
+                                     //       ABI v8: the claim is REFUSED (kInvalidHandle) while
+                                     //       the equip seat is not installed (bEquipAuthority=0,
+                                     //       VR, a gated runtime, a site-verify refusal, or before
+                                     //       kDataLoaded) -- a refused claim means KEEP YOUR OWN
+                                     //       EQUIPS; APMF_API_v8::IsEquipAuthorityEnforced tells
+                                     //       observe from enforce for an accepted claim.
     };
 
     // ── Equip-authority flags (kIntent_EquipAuthority's param.ival, ABI v7) ──
@@ -923,6 +929,25 @@ namespace APMF_API {
         // potion use are never refused. APMF's equip pass likewise skips (and logs) a
         // declared item of any other type: equipping a potion is drinking it.
         void (*SetEquipSetEx)(Handle handle, const APMF_EquipEntry* entries, std::uint32_t count);
+
+        // TRUE only when the equip seat is INSTALLED (the two worker call sites
+        // byte-verified and patched on this runtime) AND APMF.ini's [EquipAuthority]
+        // bEquipObserveOnly is 0 -- i.e. an off-set engine equip on a claimed actor
+        // is actually REFUSED, not merely logged `would-deny`. FALSE in observe
+        // mode, before kDataLoaded, with bEquipAuthority=0, on VR, on a runtime
+        // other than 1.6.1170 / 1.5.97, or after a site-verify refusal. A claim's
+        // own kEquipAuth_ObserveOnly bit is not consulted (the client that set it
+        // knows). Read-only, safe from any thread, may change once at kDataLoaded
+        // and never afterwards.
+        //
+        // WHY (ABI v8, MFO wiring review SEV-2 F1): a client that turns its OWN
+        // equips off on a successful kIntent_EquipAuthority claim must be able to
+        // tell "APMF holds the set" from "APMF is only watching". Paired with the
+        // v8 rule that a kIntent_EquipAuthority Request/RequestEx returns
+        // kInvalidHandle while the seat is NOT installed (so the client's documented
+        // degrade path runs), this call distinguishes the remaining case: claimed
+        // and installed, but observe-only.
+        bool (*IsEquipAuthorityEnforced)(void);
     };
 
     // Function-pointer type for GetProcAddress(kGetInterfaceExport). Returns the

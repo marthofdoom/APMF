@@ -1,6 +1,7 @@
 #include "PCH.h"
 #include "core/Log.h"
 #include "core/ControlMap.h"
+#include "core/EquipSink.h"
 #include "core/Registry.h"
 #include "core/Clock.h"
 #include "channels/CastCompose.h"   // castcompose::ExtractFromPackage (ch.8b FromPackage read)
@@ -69,6 +70,21 @@ namespace apmf {
         if (!Registry::Get().ChannelForIntent(intent)) {
             spdlog::warn("[api] Request REFUSED -- no channel serves intent {} (actor 0x{}).",
                          static_cast<std::uint32_t>(intent), apmf::log::Hex(actor));
+            return APMF_API::kInvalidHandle;
+        }
+        // ch.17 (ABI v8, MFO wiring review SEV-2 F1): a kIntent_EquipAuthority claim
+        // is REFUSED while the equip seat is not installed (INI off, VR, runtime
+        // gated, site-verify refused, or before kDataLoaded). The channel used to
+        // accept it and enforce nothing -- and a client that turns its OWN equips
+        // off on a successful claim then equipped nothing all session. A refusal
+        // here is synchronous (kInvalidHandle), so the client's documented degrade
+        // path runs. Logged once (the reason cannot change after Install).
+        if (intent == APMF_API::kIntent_EquipAuthority && !apmf::equipsink::Installed()) {
+            static std::atomic<bool> s_logged{ false };
+            if (!s_logged.exchange(true))
+                spdlog::warn("[apmf][equip-auth] claim refused: seat not installed ({}) -- actor 0x{}; the client keeps "
+                             "its own equips. (Logged once.)",
+                             apmf::equipsink::NotInstalledReason(), apmf::log::Hex(actor));
             return APMF_API::kInvalidHandle;
         }
         const Handle h = m_nextHandle.fetch_add(1, std::memory_order_relaxed);

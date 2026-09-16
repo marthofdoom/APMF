@@ -55,7 +55,8 @@ the rich `APMF_CastRequest`; `APMF_API_v6`: + `GetCastProxy`/`IsCastActive`;
 `kIntent_EquipAuthority = 17`, the `EquipAuthFlags` bits and `kMaxEquipSet`;
 `APMF_API_v8`: + `SetEquipSetEx` — the same declaration with a HAND per item via
 the 8-byte POD `APMF_EquipEntry{form@0, slot@4 (EquipSlot: Default 0/Right 1/Left 2),
-reserved[3]@5}`, static_assert-pinned, plus `kEquipAuth_DenyPlayerMenu = 1<<3`), the
+reserved[3]@5}`, static_assert-pinned, + `IsEquipAuthorityEnforced` (installed AND not
+INI-observe-only), plus `kEquipAuth_DenyPlayerMenu = 1<<3`), the
 `Intent` enum, `Handle`, and the exported query-fn name. No C++ class / STL / vtable
 crosses the boundary. **The current `kABIVersion` is stated ONLY in the header**
 (INVARIANTS #14b — this line said 3 while the header was at 6).
@@ -75,7 +76,10 @@ is why a needless `kABIVersion` bump is expensive (INVARIANTS #14b). Its
 `Request`/`RequestEx`/`Release`/`Repoint`/`SetSpellAllowList`/`SetEquipSet`/`SetEquipSetEx`
 fn-pointers forward to `ControlMap::EnqueueRequest/Release/Repoint/SetSpellAllowList/
 SetEquipSet/SetEquipSetEx` (Request == RequestEx with a null param; `SetEquipSet` is
-`SetEquipSetEx` with every slot Default).
+`SetEquipSetEx` with every slot Default); `IsEquipAuthorityEnforced` → `equipsink::Enforcing()`.
+The "client too new" null (`abiVersion > kABIVersion`) logs the running APMF version
+(`SKSE::PluginDeclaration::GetSingleton()`) and `MinReleaseForAbi(abi)` — a table that must
+be extended on every `kABIVersion` bump.
 `RequestEx`/`Repoint` copy the client's `APMF_Param` synchronously (never retained).
 `Repoint(handle,param)` updates a live claim's param + re-points its channel if it
 owns it — no release/re-request (the "own the gambit" retarget primitive).
@@ -88,7 +92,9 @@ owns it — no release/re-request (the "own the gambit" retarget primitive).
 `unordered_map<FormID, NpcCtl>` published as an immutable `shared_ptr<const MapType>`
 generation (each NpcCtl = engaged channels + per-channel client claims + captured
 package; each `Claim` carries its `APMF_Param`). `EnqueueRequest` (takes
-`const APMF_Param*`, copied) / `Release` / `EnqueueRepoint` (any thread; brief queue
+`const APMF_Param*`, copied; REFUSES `kIntent_EquipAuthority` with `kInvalidHandle` while
+`equipsink::Installed()` is false — logged once with `NotInstalledReason()` — so a client
+never holds a ch.17 claim the seat cannot enforce) / `Release` / `EnqueueRepoint` (any thread; brief queue
 lock, atomic handle), `Drain` (WRITER thread, once/frame: copy `m_current` into a
 private working map, apply `kRequest`/`kRelease`/`kRepoint` ops + sweep unloaded,
 then `Publish()` a NEW snapshot ONLY if something changed), `OnActorUpdate` (ANY
@@ -761,7 +767,13 @@ site=<id>+<off> ret=<rva> q= f= s= a= tls= verdict=` line per decision, deduped 
   `IsObjectInitialized` reads +0xB80 as a `bool*`, always-null on 1.6.1170 and a fault on
   1.5.97), tests "worn" per hand via `Actor::GetEquippedObject(left)`, keys the 3 s hold by
   (form, slot), and counts same-form instances per hand against the inventory count. Never
-  let a null slot lookup degrade to a slot-less equip (it is skipped + logged). (10) **Open review
+  let a null slot lookup degrade to a slot-less equip (it is skipped + logged). (13)
+  `NotInstalledReason()` must be a string LITERAL set at every refusal point in `Install()`
+  and cleared to "" on success — `ControlMap::EnqueueRequest` reads it from any thread to
+  refuse ch.17 claims; a new refusal point that forgets to set it leaves the stale
+  "not yet installed" text in the log. `Enforcing()` (= `IsEquipAuthorityEnforced`) is
+  installed AND NOT INI-observe-only; a claim's own ObserveOnly bit is deliberately not
+  folded in. (10) **Open review
   findings live in `Docs/REVIEW-BACKLOG.md` APMF-B2..B4** (ch.15's probe re-equip is
   `External(APMF.dll)` on a ch.17 actor; a detour target inside a trampoline page prints
   `detoured by ?`; the truncation log fires at Apply) — read them before editing this seat.

@@ -93,6 +93,18 @@ namespace apmf::equipsink {
     // True once both sites are patched (false when refused, disabled, or VR).
     bool Installed();
 
+    // WHY Installed() is false, as a string literal ("" once installed; before
+    // Install runs it reads "not yet installed ..."). Any thread. ControlMap uses
+    // it to REFUSE a kIntent_EquipAuthority claim while the seat is down (ABI v8,
+    // MFO wiring review SEV-2 F1): a client that turns its own equips off on a
+    // successful claim must never be left holding a claim that enforces nothing.
+    const char* NotInstalledReason();
+
+    // Installed() AND the INI is not observe-only -- what APMF_API_v8::
+    // IsEquipAuthorityEnforced reports. A claim's OWN kEquipAuth_ObserveOnly bit is
+    // not consulted (the client that set it knows). Any thread.
+    bool Enforcing();
+
     // Re-run the public-entry detour inspection (main thread, outside any engine
     // frame: plugin.cpp calls it at kPostLoadGame and kNewGame). A plugin later
     // in load order may detour EquipObject's entry after our kDataLoaded pass;

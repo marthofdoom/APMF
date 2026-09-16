@@ -1,6 +1,7 @@
 #include "PCH.h"
 #include "core/ClientAPI.h"
 #include "core/ControlMap.h"
+#include "core/EquipSink.h"
 
 // The C-ABI implementation behind APMF_API.h. These free functions forward to the
 // in-process multi-NPC engine (core/ControlMap) over its thread-safe enqueue path,
@@ -116,6 +117,36 @@ namespace {
         }
     }
 
+    // ABI v8: seat status -- installed AND not observe-only (see APMF_API_v8's doc
+    // comment). Two atomic loads; safe from any thread.
+    bool APMF_IsEquipAuthorityEnforced() {
+        try {
+            return apmf::equipsink::Enforcing();
+        } catch (...) {
+            return false;
+        }
+    }
+
+    // ABI -> the first APMF release that implements it, for the "client too new"
+    // refusal log below (MFO wiring review SEV-3 F4): a user running an older
+    // APMF under a newer client must be able to read WHICH APMF they need. Keep in
+    // step with kABIVersion bumps (git tags: v0.2.0 v1, v0.2.3 v2, v0.3.0-rc.1 v3,
+    // v0.3.0-rc.3 v4, v0.9.1 v5, v0.9.3 v6; v7 and v8 ship together in the first
+    // release after 0.9.4).
+    const char* MinReleaseForAbi(std::uint32_t abi) {
+        switch (abi) {
+        case 1:  return "0.2.0";
+        case 2:  return "0.2.3";
+        case 3:  return "0.3.0-rc.1";
+        case 4:  return "0.3.0-rc.3";
+        case 5:  return "0.9.1";
+        case 6:  return "0.9.3";
+        case 7:
+        case 8:  return "the first release after 0.9.4";
+        default: return "a release newer than this one";
+        }
+    }
+
     // The single static POD interface handed to clients. It is the NEWEST revision
     // (APMF_API_v8), constant-initialized (the pointers are to static functions), so
     // it is valid the instant the DLL loads. Because each revision's leading members
@@ -143,6 +174,7 @@ namespace {
             &APMF_SetEquipSet,
         },
         &APMF_SetEquipSetEx,
+        &APMF_IsEquipAuthorityEnforced,
     };
 
 }
@@ -153,8 +185,15 @@ namespace {
 extern "C" __declspec(dllexport) const APMF_API::APMF_API_v1* APMF_GetInterface(std::uint32_t abiVersion) {
     try {
         if (abiVersion > APMF_API::kABIVersion) {
-            spdlog::warn("[api] APMF_GetInterface: client wants ABI v{} but APMF is v{} -- returning null.",
-                         abiVersion, APMF_API::kABIVersion);
+            // Name the running APMF and the one the client needs (SEV-3 F4): with
+            // this null every channel the client would use stays off, and the only
+            // diagnosis a user gets is this line.
+            const auto* self = SKSE::PluginDeclaration::GetSingleton();
+            spdlog::warn("[api] APMF_GetInterface: client wants ABI v{} but this APMF ({}) implements v{} -- returning "
+                         "null, so EVERY facet that client would claim stays off. The client needs APMF {} or newer "
+                         "(the first release implementing ABI v{}).",
+                         abiVersion, self ? self->GetVersion().string(".") : "version unknown", APMF_API::kABIVersion,
+                         MinReleaseForAbi(abiVersion), abiVersion);
             return nullptr;   // we cannot satisfy a newer contract than we implement
         }
         spdlog::info("[api] APMF_GetInterface: handed v{} interface to a client (requested v{}).",

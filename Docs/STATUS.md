@@ -29,6 +29,15 @@ three gaps MFO's wiring author found while converting `Loadout` to a ch.17 decla
 3. **PlayerMenu denied (closed).** `PathKind::kPlayerMenu`; allowed by default
    (`verdict=allow (player agency)`); `kEquipAuth_DenyPlayerMenu = 1<<3` for the strict
    form. No INI twin.
+4. **Seat-down claims accepted (closed; MFO wiring review SEV-2 F1).** `EnqueueRequest`
+   refuses `kIntent_EquipAuthority` with `kInvalidHandle` while `equipsink::Installed()`
+   is false (reason from `equipsink::NotInstalledReason()`, logged once), so a client's
+   degrade path runs; `APMF_API_v8::IsEquipAuthorityEnforced` = installed AND not
+   observe-only (INI), so a client can tell observe from enforce.
+5. **"Client too new" log (SEV-3 F4, pair-shipped).** `APMF_GetInterface` still returns
+   null for client-ABI > server, but the line now names the running APMF version
+   (`SKSE::PluginDeclaration::GetSingleton()`) and the first release implementing the
+   ABI the client asked for (`MinReleaseForAbi`, keep in step with bumps).
 
 **Next.** Fable tier-3 review (byte-shared header); merge; mirror `APMF_API.h` into MFO
 (MFO re-declares with `SetEquipSetEx` and drops its own explicit hand equips); deck run in

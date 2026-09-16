@@ -159,6 +159,10 @@ namespace apmf::equipsink {
             const char*    name  = "";
         };
         std::atomic<bool>  g_installed{ false };
+        // WHY the seat is not installed (ABI v8, MFO wiring review SEV-2 F1): read by
+        // ControlMap::EnqueueRequest from any thread to REFUSE a ch.17 claim while the
+        // seat is down. Always a string literal (never freed); cleared to "" on success.
+        std::atomic<const char*> g_notInstalledReason{ "not yet installed (Install runs at kDataLoaded)" };
         std::atomic<bool>  g_observeOnly{ true };
         std::atomic<bool>  g_denyScript{ false };
         Worker_t           g_worker = nullptr;
@@ -486,11 +490,14 @@ namespace apmf::equipsink {
         InspectEntryDetours(why ? why : "?");
     }
     bool Installed()   { return g_installed.load(std::memory_order_acquire); }
+    const char* NotInstalledReason() { return g_notInstalledReason.load(std::memory_order_acquire); }
+    bool Enforcing()   { return Installed() && !g_observeOnly.load(std::memory_order_relaxed); }
     bool ObserveOnly() { return g_observeOnly.load(std::memory_order_relaxed); }
     bool DenyScript()  { return g_denyScript.load(std::memory_order_relaxed); }
 
     void Install() {
         if (REL::Module::IsVR()) {
+            g_notInstalledReason.store("VR runtime", std::memory_order_release);
             spdlog::warn("[apmf][equip-sink] VR runtime -- sites are SE/AE-only verified; seat NOT installed.");
             return;
         }
@@ -503,8 +510,9 @@ namespace apmf::equipsink {
         g_denyScript.store(GetPrivateProfileIntA("EquipAuthority", "bEquipDenyScript", 0, kIni) != 0,
                            std::memory_order_relaxed);
         if (!enabled) {
+            g_notInstalledReason.store("[EquipAuthority] bEquipAuthority=0", std::memory_order_release);
             spdlog::warn("[apmf][equip-sink] [EquipAuthority] bEquipAuthority=0 -- seat NOT installed; "
-                         "kIntent_EquipAuthority claims will be accepted but enforce nothing.");
+                         "kIntent_EquipAuthority claims are REFUSED (kInvalidHandle) so a client keeps its own equips.");
             return;
         }
 
@@ -519,6 +527,7 @@ namespace apmf::equipsink {
         const bool onAE1170 = ver == REL::Version{ 1, 6, 1170, 0 };
         const bool onSE597  = ver == REL::Version{ 1, 5, 97, 0 };
         if (!onAE1170 && !onSE597) {
+            g_notInstalledReason.store("runtime gated (not 1.6.1170 / 1.5.97)", std::memory_order_release);
             spdlog::warn("[apmf][equip-sink] runtime {} gated -- the two worker call sites and their frame "
                          "depths are disassembly-verified on 1.6.1170 and 1.5.97 only; seat NOT installed "
                          "(kIntent_EquipAuthority claims are accepted but enforce nothing on this runtime).",
@@ -566,6 +575,7 @@ namespace apmf::equipsink {
         }
         if (!ok) {
             g_sites[0] = g_sites[1] = InstalledSite{};
+            g_notInstalledReason.store("site-verify refused (another patcher at a worker call site)", std::memory_order_release);
             return;
         }
 
@@ -592,6 +602,7 @@ namespace apmf::equipsink {
         auto& tr = SKSE::GetTrampoline();
         for (const auto& s : g_sites) tr.write_call<5>(s.addr, &SinkThunk);
 
+        g_notInstalledReason.store("", std::memory_order_release);
         g_installed.store(true, std::memory_order_release);
         const bool entriesClean = (g_entryVerdict[0] == "none" && g_entryVerdict[1] == "none");
         spdlog::info("[apmf][equip-sink] INSTALLED on {} ({} sites -> worker {}); observe-only={} deny-script={} "
