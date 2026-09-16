@@ -774,7 +774,11 @@ site=<id>+<off> ret=<rva> q= f= s= a= tls= verdict=` line per decision, deduped 
   "not yet installed" text in the log. `Enforcing()` (= `IsEquipAuthorityEnforced`) is
   installed AND NOT INI-observe-only; a claim's own ObserveOnly bit is deliberately not
   folded in. (10) **Open review
-  findings live in `Docs/REVIEW-BACKLOG.md` APMF-B2..B4** (ch.15's probe re-equip is
+  findings live in `Docs/REVIEW-BACKLOG.md` APMF-B2..B4 and, for the v8 round on a369e9f,
+  APMF-B5..B10** (B5 Engage log names only v7; B6 the hand-EQUP resolve error over-claims;
+  B7 the once-logged claim-refusal reason can be stale; B8 Enforce's seat-missing branch is
+  unreachable under the v8 refusal; B9 queued-slot carriage unobserved — INTEGRATION criterion
+  7; B10 `MinReleaseForAbi`'s v7/v8 placeholder must be named at the cut) (ch.15's probe re-equip is
   `External(APMF.dll)` on a ch.17 actor; a detour target inside a trampoline page prints
   `detoured by ?`; the truncation log fires at Apply) — read them before editing this seat.
 
@@ -828,7 +832,7 @@ parentheses.
 | `OfferPackage.cpp` | 9 | package-procedure activity (NumpadSlash) | Arbitration + claim lifecycle + the `EvaluatePackage(true,false)` nudge, `mainthread::Post`ed so it lands PAST the claim's publish; the redirect itself is `core/PackageGate.cpp`'s T3 0x49 hook returning the claim's `param.form`. The test key carries no package, so a test claim offers nothing | claim + T3 enforcement; the ENGINE runs the package natively |
 | `Equipment.cpp` | 15 | equip/unequip (Num.) | `GetEquippedObject` + `UnequipObject`/`EquipObject` (melee-vs-ranged lever) | source-block |
 | `Detection.cpp` | 16 | stealth (Num8) | `kMovementNoiseMult` + `kDetectLifeRange` AVs | source-block |
-| `EquipAuthority.cpp` | 17 | ENGINE-EQUIP facet, WHOLE (`kIntent_EquipAuthority`, ABI v7/v8; no test key) | Arbitration + claim lifecycle (standing, no TTL) + the ONE #17a-licensed equip: on every applied `SetEquipSet`/`SetEquipSetEx` for the owning claim (and on a win/repoint) it POSTS one `mainthread` hop that lands after `Publish()` and equips each declared item the actor is not wearing via `ActorEquipManager::EquipObject` (queued, not forced; v8: with the declared hand's `BGSEquipSlot` 0x13F42/0x13F43 by `LookupByID`, "worn" = in THAT hand, same form allowed once per hand) inside `equipsink::ApmfEquipScope`; skips a declared non-governed form type (ARMO/WEAP/AMMO/LIGH only); never unequips; no re-assert (every declaration walks the inventory; an item APMF already queued is held 3 s from its issue before it is queued again, per (form, hand)). The deny is `core/EquipSink.cpp`'s call-site seat. `Release` relinquishes (nothing to undo). Refuses `kEquipAuth_DenyUnequip` (reserved) | claim + #17a seat; APMF equips the DECLARED set, the ENGINE keeps its hands off |
+| `EquipAuthority.cpp` | 17 | ENGINE-EQUIP facet, WHOLE (`kIntent_EquipAuthority`, ABI v7/v8; no test key) | Arbitration + claim lifecycle (standing, no TTL) + the ONE #17a-licensed equip: on every applied `SetEquipSet`/`SetEquipSetEx` for the owning claim (and on a win/repoint) it POSTS one `mainthread` hop that lands after `Publish()` and equips each declared item the actor is not wearing via `ActorEquipManager::EquipObject` (queued, not forced; v8: with the declared hand's `BGSEquipSlot` 0x13F42/0x13F43 by `LookupByID`, "worn" = in THAT hand, same form allowed once per hand) inside `equipsink::ApmfEquipScope`; skips a declared non-governed form type (ARMO/WEAP/AMMO/LIGH only); never unequips; no re-assert (every declaration walks the inventory; an item APMF already queued is held 3 s from its issue before it is queued again, per (form, hand)). The deny is `core/EquipSink.cpp`'s call-site seat. `Release` relinquishes (nothing to undo). Refuses `kEquipAuth_DenyUnequip` (reserved). Open findings: `Docs/REVIEW-BACKLOG.md` APMF-B5, B6, B8, B9 | claim + #17a seat; APMF equips the DECLARED set, the ENGINE keeps its hands off |
 
 - **What breaks (all channels):** each must (1) keep the package coherent — none
   substitutes the package (§5); (2) capture-and-restore engine state in `Release`,

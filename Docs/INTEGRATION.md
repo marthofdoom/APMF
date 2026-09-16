@@ -340,7 +340,7 @@ The player dressing a follower by hand through the trade or gift menu
 off-set item. The log line reads `path=PlayerMenu verdict=allow (player
 agency)`. A client that wants the strict form sets `kEquipAuth_DenyPlayerMenu`
 on its claim and the path is then refused like any other engine equip. There
-is no INI twin for this bit. A v7 APMF ignores the bit, so a v8 client running
+is no INI twin for this bit. The allow is at the seat only. The next enforce pass re-equips any declared item the player's equip displaced. A client honouring player agency must observe the change (the `path=PlayerMenu verdict=allow (player agency)` line, or its own inventory read) and fold the player's choice into its next declaration. A v7 APMF ignores the bit, so a v8 client running
 against a v7 APMF gets the v7 behaviour (PlayerMenu refused).
 
 ### The probe criteria (what a field log must show before enforcement is switched on)
@@ -382,7 +382,18 @@ equip APMF issued itself runs with `tls>0`); it never changes a verdict. The
    when it can see that. Attribution is degraded and the script exemption is
    unavailable until that detour is accounted for.
 
-Only after all five hold on a real session is `bEquipObserveOnly` flipped to 0.
+6. `path=PlayerMenu` attributes correctly: ZERO `path=PlayerMenu` lines in a
+   session where the player never opens a follower's inventory, and every
+   `path=PlayerMenu` line coincides with a trade or gift menu interaction. The
+   six PlayerMenu ids come from prior enumeration, not from a field proof; the
+   log is the proof.
+7. The hand reaches the engine: at least one `[apmf][equip-auth] ... hand=left`
+   equip line followed by the follower visibly dual-wielding (or holding the
+   declared shield or torch in the left hand). The queued equip carries the
+   slot through the engine's deferred apply on paper only until a session shows
+   it.
+
+Only after all seven hold on a real session is `bEquipObserveOnly` flipped to 0.
 
 ## The facet table
 

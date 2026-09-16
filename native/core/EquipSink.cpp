@@ -530,7 +530,7 @@ namespace apmf::equipsink {
             g_notInstalledReason.store("runtime gated (not 1.6.1170 / 1.5.97)", std::memory_order_release);
             spdlog::warn("[apmf][equip-sink] runtime {} gated -- the two worker call sites and their frame "
                          "depths are disassembly-verified on 1.6.1170 and 1.5.97 only; seat NOT installed "
-                         "(kIntent_EquipAuthority claims are accepted but enforce nothing on this runtime).",
+                         "(kIntent_EquipAuthority claims are REFUSED on this runtime: seat not installed).",
                          ver.string("."));
             return;
         }

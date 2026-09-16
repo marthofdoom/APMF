@@ -280,6 +280,12 @@ namespace APMF_API {
                                             //   a follower by hand is a deliberate act and
                                             //   PASSES unless the client sets this bit. The
                                             //   log line reads `verdict=allow (player agency)`.
+                                            //   The allow is at the seat only: the next enforce
+                                            //   pass re-equips any declared item the player's
+                                            //   equip displaced. A client honouring player agency
+                                            //   must observe the change (that log line, or its own
+                                            //   inventory read) and fold the player's choice into
+                                            //   its next declaration.
                                             //   A v7 APMF ignores the bit (unknown bits are
                                             //   not refused), so a v8 client degrades to the
                                             //   v7 behaviour (PlayerMenu denied) there.
