@@ -127,12 +127,23 @@ namespace {
         }
     }
 
+    // ABI v9 (ch.17): SCOPE an equip-authority claim to owned/denied categories
+    // (see APMF_API_v9's doc comment). `scope` is READ AND COPIED synchronously
+    // inside EnqueueSetEquipScope -- APMF never retains the pointer; nullptr
+    // resets to the defaults. Applied on the game thread at the next Drain.
+    void APMF_SetEquipScope(APMF_API::Handle handle, const APMF_API::APMF_EquipScope* scope) {
+        try {
+            apmf::ControlMap::Get().EnqueueSetEquipScope(handle, scope);
+        } catch (...) {
+        }
+    }
+
     // ABI -> the first APMF release that implements it, for the "client too new"
     // refusal log below (MFO wiring review SEV-3 F4): a user running an older
     // APMF under a newer client must be able to read WHICH APMF they need. Keep in
     // step with kABIVersion bumps (git tags: v0.2.0 v1, v0.2.3 v2, v0.3.0-rc.1 v3,
-    // v0.3.0-rc.3 v4, v0.9.1 v5, v0.9.3 v6; v7 and v8 ship together in the first
-    // release after 0.9.4).
+    // v0.3.0-rc.3 v4, v0.9.1 v5, v0.9.3 v6; v7, v8 and v9 ship together in the
+    // first release after 0.9.4 -- REVIEW-BACKLOG APMF-B10: name it at the cut).
     const char* MinReleaseForAbi(std::uint32_t abi) {
         switch (abi) {
         case 1:  return "0.2.0";
@@ -142,39 +153,43 @@ namespace {
         case 5:  return "0.9.1";
         case 6:  return "0.9.3";
         case 7:
-        case 8:  return "the first release after 0.9.4";
+        case 8:
+        case 9:  return "the first release after 0.9.4";
         default: return "a release newer than this one";
         }
     }
 
     // The single static POD interface handed to clients. It is the NEWEST revision
-    // (APMF_API_v8), constant-initialized (the pointers are to static functions), so
+    // (APMF_API_v9), constant-initialized (the pointers are to static functions), so
     // it is valid the instant the DLL loads. Because each revision's leading members
-    // are exactly the previous revision's (v8 extends v7 extends v6 extends v5
-    // extends v4, base laid out first), a v1..v7 client reading it through its own
-    // struct pointer sees only its prefix. The v4 base subobject is brace-initialized
-    // explicitly.
-    constexpr APMF_API::APMF_API_v8 g_api{
+    // are exactly the previous revision's (v9 extends v8 extends v7 extends v6
+    // extends v5 extends v4, base laid out first), a v1..v8 client reading it through
+    // its own struct pointer sees only its prefix. The v4 base subobject is
+    // brace-initialized explicitly.
+    constexpr APMF_API::APMF_API_v9 g_api{
         {
             {
                 {
                     {
-                        APMF_API::kABIVersion,
-                        &APMF_Request,
-                        &APMF_Release,
-                        &APMF_RequestEx,
-                        &APMF_Repoint,
-                        &APMF_SetSpellAllowList,
+                        {
+                            APMF_API::kABIVersion,
+                            &APMF_Request,
+                            &APMF_Release,
+                            &APMF_RequestEx,
+                            &APMF_Repoint,
+                            &APMF_SetSpellAllowList,
+                        },
+                        &APMF_RequestCast,
                     },
-                    &APMF_RequestCast,
+                    &APMF_GetCastProxy,
+                    &APMF_IsClaimLive,
                 },
-                &APMF_GetCastProxy,
-                &APMF_IsClaimLive,
+                &APMF_SetEquipSet,
             },
-            &APMF_SetEquipSet,
+            &APMF_SetEquipSetEx,
+            &APMF_IsEquipAuthorityEnforced,
         },
-        &APMF_SetEquipSetEx,
-        &APMF_IsEquipAuthorityEnforced,
+        &APMF_SetEquipScope,
     };
 
 }

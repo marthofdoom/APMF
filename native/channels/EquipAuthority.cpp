@@ -56,6 +56,19 @@
 // skipped and logged, because equipping a potion is drinking it, and a
 // re-declaring client would drink one per pass.
 //
+// THE SCOPE (ABI v9, 2026-09-16). The claim carries two APMF_API::EquipCategory
+// masks (SetEquipScope; default {All, 0} == v8): OWNED categories are where the
+// declared set is authoritative, DENIED categories are where the actor must not
+// equip at all. This pass equips a declared item only when EVERY category it
+// competes for is owned and NONE is denied; the rest are skipped and counted
+// (`skipped-unowned` / `skipped-denied` on the pass line, the items named once
+// per actor and set signature). The category map is ONE function shared with
+// the seat -- apmf::equipsink::Categorize -- called here with the DECLARED
+// hand's EQUP (nullptr for Default), so a Default-declared one-hander competes
+// for both hands and needs both owned. A scope CHANGE on the owner is a
+// declaration event (ControlMap fires OnOwnerChanged); an unchanged re-send is
+// not. Nothing else changes: still queued, still bracketed, still no unequip.
+//
 // NOT A LOOP, EVEN FROM A TICKING CLIENT (Fable tier-3 on d1aa66b, SEV-3 #3).
 // ControlMap fires OnOwnerChanged on EVERY applied declaration (a re-issued
 // identical set is the sanctioned "give it back"), so a client that re-sends
@@ -124,7 +137,8 @@ namespace {
     };
     struct ActorMemory {
         std::uint64_t lastPassMs  = 0;
-        std::uint64_t lastSig     = 0;      // FNV-1a over (count, forms in order)
+        std::uint64_t lastSig     = 0;      // FNV-1a over (count, forms+slots in order, owned, denied)
+        std::uint64_t lastSkipSig = 0;      // ABI v9: the signature the unowned/denied skip list was last warned for
         std::uint32_t passes      = 0;
         std::vector<Issued> issued;         // forms this channel EquipObject'd and has not yet seen worn
         bool          reservedWarned = false;   // kEquipAuth_DenyUnequip warned once per actor
@@ -136,16 +150,14 @@ namespace {
         auto mix = [&](std::uint32_t v) { h ^= v; h *= 1099511628211ull; };
         mix(set.count);
         for (std::uint32_t i = 0; i < set.count; ++i) { mix(set.forms[i]); mix(set.slots[i]); }
+        mix(set.owned); mix(set.denied);   // ABI v9: a scope change is a new signature
         return h;
     }
 
-    // The vanilla hand EQUP forms, read from Skyrim.esm's DOBJ record (DNAM `RHEQ`
-    // -> 0x13F42 "RightHand", `LHEQ` -> 0x13F43 "LeftHand"). Skyrim.esm is always
-    // load index 00, so the runtime FormID is the file FormID; the engine's own
-    // InitItemImpl fills its LHEQ/RHEQ default objects with exactly this lookup,
-    // so the slot the engine calls "left" IS this form on both runtimes.
-    constexpr RE::FormID kRightHandEquipSlot = 0x00013F42;
-    constexpr RE::FormID kLeftHandEquipSlot  = 0x00013F43;
+    // The vanilla hand EQUP FormIDs live in core/EquipSink.h (ONE definition,
+    // shared with the seat's category map): 0x13F42 RightHand / 0x13F43 LeftHand.
+    using apmf::equipsink::kRightHandEquipSlot;
+    using apmf::equipsink::kLeftHandEquipSlot;
 
     // The seat's governed set, mirrored here (core/EquipSink.cpp IsGovernedType):
     // ARMO / WEAP / AMMO / LIGH. Everything else is not a wearable and is never
@@ -244,6 +256,11 @@ namespace {
         // kPendingMaxMs window, not one pass.
         std::vector<Issued> issuedNow;
         std::uint32_t equipped = 0, worn = 0, missing = 0, unresolved = 0, pending = 0, notGoverned = 0;
+        // ABI v9: declared items this pass will not touch because a category they
+        // compete for is not owned, or is denied. Named once per (actor, set
+        // signature) below; counted on every pass line.
+        std::uint32_t skippedUnowned = 0, skippedDenied = 0;
+        std::string   skipNames;
         for (std::uint32_t i = 0; i < set.count; ++i) {
             const RE::FormID   form = set.forms[i];
             const std::uint8_t slot = (set.slots[i] <= APMF_API::kEquipSlot_Left) ? set.slots[i] : APMF_API::kEquipSlot_Default;
@@ -266,6 +283,28 @@ namespace {
                              "would consume it).",
                              apmf::log::Hex(id), apmf::log::Hex(form), obj->GetName() ? obj->GetName() : "",
                              apmf::log::Hex(static_cast<std::uint32_t>(obj->GetFormType()), 2));
+                continue;
+            }
+            // ABI v9: the categories this entry competes for, with the DECLARED
+            // hand's EQUP (the same map the seat runs with the engine's slot). A
+            // handed entry needs the EQUP resolved first; if the forms did not
+            // resolve the entry is unresolved (logged once above), never
+            // categorized slot-less and never equipped slot-less.
+            const RE::BGSEquipSlot* declaredSlot = nullptr;
+            if (slot != APMF_API::kEquipSlot_Default) {
+                resolveHandSlots();
+                declaredSlot = handSlot[slot];
+                if (!declaredSlot) { ++unresolved; continue; }
+            }
+            const std::uint32_t competes = apmf::equipsink::Categorize(obj, declaredSlot);
+            if ((competes & set.denied) != 0 || (competes & ~set.owned) != 0) {
+                const bool denied = (competes & set.denied) != 0;
+                if (denied) ++skippedDenied; else ++skippedUnowned;
+                char catBuf[48];
+                skipNames += (skipNames.empty() ? "" : ", ");
+                skipNames += "0x" + apmf::log::Hex(form) + " '" + (obj->GetName() ? obj->GetName() : "") + "' " +
+                             SlotName(slot) + " cat=" + apmf::equipsink::CategoryNames(competes, catBuf, sizeof(catBuf)) +
+                             (denied ? " (denied)" : " (unowned)");
                 continue;
             }
             auto it = inv.find(obj);
@@ -302,12 +341,9 @@ namespace {
                 issuedNow.push_back(*held);
                 continue;
             }
-            const RE::BGSEquipSlot* equipSlot = nullptr;
-            if (slot != APMF_API::kEquipSlot_Default) {
-                resolveHandSlots();
-                equipSlot = handSlot[slot];
-                if (!equipSlot) { ++unresolved; continue; }   // logged once above; never degraded to slot-less
-            }
+            // The hand EQUP for the equip call: resolved and null-checked above
+            // for a handed entry (never degraded to slot-less); nullptr for Default.
+            const RE::BGSEquipSlot* equipSlot = declaredSlot;
 
             {
                 // The bracket is what the seat recognises as "APMF-issued": this
@@ -326,10 +362,24 @@ namespace {
         mem.lastSig    = sig;
         ++mem.passes;
         mem.issued     = std::move(issuedNow);
-        spdlog::info("[apmf][equip-auth] actor=0x{} enforce pass #{}{}: set={} equipped={} already-worn={} "
-                     "held-in-flight={} not-in-inventory={} unresolved={} not-governed={}",
+        // ABI v9: name the skipped entries ONCE per (actor, set signature) -- the
+        // channel never sees the handle (it sees the actor and the param), and
+        // the signature covers forms, hands AND scope, so a new declaration or a
+        // new scope re-names them, an identical re-send does not.
+        if ((skippedUnowned || skippedDenied) && sig != mem.lastSkipSig) {
+            mem.lastSkipSig = sig;
+            spdlog::warn("[apmf][equip-auth] actor=0x{} scope owned=0x{} denied=0x{}: {} declared item(s) NOT equipped "
+                         "by this pass -- a category they compete for is unowned ({}) or denied ({}). The seat still "
+                         "holds the set in the owned categories; declare the hand with SetEquipSetEx, or widen the "
+                         "scope, if these were meant to be worn. Items: {}",
+                         apmf::log::Hex(id), apmf::log::Hex(set.owned, 2), apmf::log::Hex(set.denied, 2),
+                         skippedUnowned + skippedDenied, skippedUnowned, skippedDenied, skipNames);
+        }
+        spdlog::info("[apmf][equip-auth] actor=0x{} enforce pass #{}{}: set={} owned=0x{} denied=0x{} equipped={} already-worn={} "
+                     "held-in-flight={} not-in-inventory={} unresolved={} not-governed={} skipped-unowned={} skipped-denied={}",
                      apmf::log::Hex(id), mem.passes, identical ? " (identical re-declaration)" : "",
-                     set.count, equipped, worn, pending, missing, unresolved, notGoverned);
+                     set.count, apmf::log::Hex(set.owned, 2), apmf::log::Hex(set.denied, 2),
+                     equipped, worn, pending, missing, unresolved, notGoverned, skippedUnowned, skippedDenied);
     }
 
     void PostEnforce(RE::FormID id) {

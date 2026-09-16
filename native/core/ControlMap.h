@@ -103,6 +103,13 @@ namespace apmf {
         // pass only (channels/EquipAuthority.cpp); the seat's in-set test stays a
         // FormID compare. Appended at the END.
         std::uint8_t  slots[APMF_API::kMaxEquipSet]{};
+        // ABI v9: the winning claim's SCOPE (APMF_API::EquipCategory masks), copied
+        // out in the SAME snapshot read as forms/count/slots so the seat can never
+        // pair a set from one generation with a scope from another. Defaults are
+        // the v8 whole-facet behaviour (All owned, nothing denied). Appended at
+        // the END.
+        std::uint32_t owned  = APMF_API::kEquipCat_All;
+        std::uint32_t denied = 0;
     };
 
     class ControlMap {
@@ -138,6 +145,13 @@ namespace apmf {
         // null/0. A slot value outside EquipSlot is stored as kEquipSlot_Default
         // and logged once per handle at Apply. See APMF_API_v8 / SetEquipSetEx.
         void   EnqueueSetEquipSetEx(Handle handle, const APMF_API::APMF_EquipEntry* entries, std::uint32_t count);
+        // ABI v9: SCOPE the authority of an existing claim (same handle) to the
+        // owned/denied category masks in `scope`, copied synchronously; nullptr
+        // == reset to {kEquipCat_All, 0}. Bits outside kEquipCat_All are masked
+        // off at Apply and logged once per handle. Applied at the next Drain:
+        // no-op on an unknown handle or a claim not on the kIntent_EquipAuthority
+        // channel. See APMF_API_v9 / SetEquipScope.
+        void   EnqueueSetEquipScope(Handle handle, const APMF_API::APMF_EquipScope* scope);
 
         // ABI v5 (ch.8b, kIntent_Cast): claim the cast-EXECUTION facet for a bounded
         // TTL window. `req` (may be null) is COPIED synchronously; APMF never retains
@@ -404,6 +418,16 @@ namespace apmf {
             // declaration that had any (0 == none), so an identical re-send does
             // not re-log.
             std::uint32_t  equipBadSlots = 0;
+            // ABI v9: the claim's SCOPE (APMF_API::EquipCategory masks). Defaults
+            // are v8's whole facet: everything owned, nothing denied. Stored
+            // whether or not the claim owns the channel (same non-owning semantics
+            // as the declaration). POD, appended at the END.
+            std::uint32_t  equipOwned  = APMF_API::kEquipCat_All;
+            std::uint32_t  equipDenied = 0;
+            // Once-per-handle guard for the unknown-category-bit log: the OR of
+            // the out-of-range bits in the last scope that had any (0 == none), so
+            // an identical re-send does not re-log.
+            std::uint32_t  equipBadScopeBits = 0;
         };
 
         // ---- THE ONE CLAIM COMPARATOR (2026-09-06) ------------------------------
@@ -524,7 +548,7 @@ namespace apmf {
         using MapType = std::unordered_map<RE::FormID, NpcCtl>;
 
         struct PendingOp {
-            enum class Kind : std::uint8_t { kRequest, kRelease, kRepoint, kSetAllowList, kCast, kSetEquipSet } kind{};
+            enum class Kind : std::uint8_t { kRequest, kRelease, kRepoint, kSetAllowList, kCast, kSetEquipSet, kSetEquipScope } kind{};
             Handle               handle = APMF_API::kInvalidHandle;
             RE::FormID           actor  = 0;         // request/cast only
             Intent               intent = APMF_API::kIntent_None;   // request/cast only
@@ -551,6 +575,10 @@ namespace apmf {
             std::uint32_t        equipCount = 0;
             std::uint32_t        equipRequested = 0;   // the client's UNCLAMPED count (for the once-per-handle truncation log)
             std::uint8_t         equipSlots[APMF_API::kMaxEquipSet]{};   // ABI v8: the hand per item, parallel to equipForms (raw client value; validated at Apply)
+            // kSetEquipScope only (ABI v9): the client's RAW masks, copied at
+            // enqueue (nullptr -> the defaults); unknown bits masked at Apply.
+            std::uint32_t        equipOwned  = APMF_API::kEquipCat_All;
+            std::uint32_t        equipDenied = 0;
         };
 
         // All four apply against the WRITER's private working copy (`map`), never a
@@ -586,6 +614,14 @@ namespace apmf {
         // is stored as kEquipSlot_Default and logged once per handle.
         bool ApplySetEquipSet(Handle handle, const RE::FormID* forms, const std::uint8_t* slots, std::uint32_t count,
                               std::uint32_t requested, MapType& map);
+        // ABI v9: writer-thread-only, ApplySetEquipSet's shape -- look the claim up
+        // via m_index, mask `owned`/`denied` to kEquipCat_All (unknown bits logged
+        // once per handle), store both on the matching Claim whether or not it
+        // owns the channel. If the claim IS the owner AND the stored scope CHANGED,
+        // fires channel->OnOwnerChanged (a scope change is a declaration event:
+        // one enforce hop after Publish); an unchanged re-send fires nothing.
+        // No-op on an unknown handle or a claim not on kIntent_EquipAuthority.
+        bool ApplySetEquipScope(Handle handle, std::uint32_t owned, std::uint32_t denied, MapType& map);
 
         // Writer-thread-only choke point: takes ownership of the finished working
         // copy, makes it the new immutable snapshot, and publishes it for readers.
