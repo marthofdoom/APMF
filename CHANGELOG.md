@@ -1,3 +1,14 @@
+## Unreleased -- A mod can say which parts of the loadout it owns
+
+- **A mod can now scope its equip authority.** The first two versions took the whole loadout. A mod that only cared about the hands still had to declare the body armor, the shield, the arrows and the torch, or the game's own outfit refresh and combat re-arm got refused for every one of them. The first field run showed exactly that. Now a mod says which categories it owns: armor, shield, right hand, left hand, ammo, light. Harbinger holds the declared set in those categories and leaves the rest to the game.
+- **A mod can also refuse a category outright.** A follower who must never raise a shield gets the shield category denied. The game cannot equip one there, and neither will Harbinger, even if the mod lists one by mistake.
+- **One rule decides what an item competes for.** A shield takes the shield and the left hand. A torch takes light and the left hand. A two hander, a bow or a crossbow takes both hands. A one hander takes the hand the game resolved it for. When the game has not picked a hand yet, it takes both. The same rule runs in the equip check and in the equip pass, so the two cannot disagree.
+- **The log shows the scope.** Every equip check line now names the categories the item competes for, whether the mod owns any of them, whether any is denied, and the slot the game resolved. The equip pass line reports how many declared items it skipped as unowned or denied, and names them once.
+- **Scripts and the player still come first.** A Papyrus or console equip, and the player dressing a follower by hand, pass before the scope is consulted, as before.
+- New API revision (v9) with one call, `SetEquipScope`. A mod that does not call it gets the whole loadout, exactly as v8 did. Older clients are unaffected.
+- Still ships in observe mode. `bEquipObserveOnly=1` is unchanged. Four new probe criteria cover the scope.
+- No change to any existing facet.
+
 ## Unreleased -- The equip log names the paths the first field run could not
 
 - **The AI equip dispatcher is now named.** The first observe run on the Deck passed every check but one: two lines came from an engine caller the log could only call `Unknown(39637)`. That caller is the AI command dispatcher itself, which equips directly as well as through the two helpers the log already named. It now reads `AiCommand` on both game versions.

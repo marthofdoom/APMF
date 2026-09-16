@@ -1,5 +1,8 @@
 #pragma once
 
+#include <cstddef>
+#include <cstdint>
+
 // ============================================================================
 // core/EquipSink -- THE ENGINE-EQUIP SINK SEAT (ch.17 EquipAuthority's deny half).
 //
@@ -52,6 +55,19 @@
 // item of any other type is skipped, never equipped (equipping it consumes it).
 // The v8 per-item HAND (SetEquipSetEx) is an equip-side matter too: the seat's
 // in-set test stays a FormID compare, whichever hand the engine aims at.
+//
+// THE SCOPE (ABI v9, SetEquipScope). v7/v8 held the WHOLE facet: every off-set
+// governed equip was refused. v9 holds only the categories the claim OWNS and
+// refuses outright the ones it DENIES (APMF_API::EquipCategory: Armor, Shield,
+// Right, Left, Ammo, Light; default {All, 0} == v8). Each governed item COMPETES
+// for one or more categories, mapped by ONE function -- Categorize() below --
+// that the thunk (with the engine's resolved slot) and the enforce pass (with
+// the declared hand) both call, so the two halves can never disagree on what a
+// shield or a torch competes for. The verdict, in order: the script/console and
+// player-menu exemptions FIRST (they sit above both masks); then `competes &
+// denied` -> deny even if in-set; then `competes & owned` -> the v8 in-set test;
+// else -> allow (`owned=0`: nothing the claim holds is at stake). The obs line
+// carries `cat=<categories> owned=<0|1> black=<0|1> eslot=<none|R|L|E|hex>`.
 //
 // HOW IT KNOWS WHO ASKED. The thunk is entered with EquipObject's own frame still
 // on the stack, so it reads EquipObject's CALLER's return slot at a per-site,
@@ -132,5 +148,41 @@ namespace apmf::equipsink {
     // INI or the claim's own flag bits can set observe-only / deny-script.
     bool ObserveOnly();
     bool DenyScript();
+
+    // The vanilla hand EQUP forms (Skyrim.esm DOBJ `RHEQ` -> 0x13F42 "RightHand",
+    // `LHEQ` -> 0x13F43 "LeftHand"). Skyrim.esm is always load index 00, so the
+    // runtime FormID is the file FormID; the engine's own InitItemImpl fills its
+    // LHEQ/RHEQ default objects with exactly this lookup, so the slot the engine
+    // calls "left" IS this form on both runtimes. Compared by FormID only here
+    // (no lookup at the seat); channels/EquipAuthority.cpp resolves them by
+    // LookupByID on the main thread for its own equip calls.
+    inline constexpr RE::FormID kRightHandEquipSlot = 0x00013F42;
+    inline constexpr RE::FormID kLeftHandEquipSlot  = 0x00013F43;
+
+    // ABI v9: the ONE category map. Which APMF_API::EquipCategory bits `obj`
+    // competes for when equipped into `slot` (the engine's resolved slot at the
+    // seat; the DECLARED hand's EQUP in the enforce pass, nullptr for Default).
+    // Pure member reads (form type, biped slot mask, weapon animation type, the
+    // slot's FormID): safe on any thread, never a LookupByID (INVARIANTS #12).
+    //   ARMO without the shield bit (or no bits)       -> Armor
+    //   ARMO with BipedObjectSlot::kShield             -> Shield | Left
+    //   ARMO with kShield AND any other biped bit      -> Shield | Left | Armor  (both
+    //        kinds of bits -> both categories: a modded "shield on back" piece
+    //        must not slip under an Armor-only scope and displace the body piece)
+    //   WEAP 2H sword / 2H axe / bow / crossbow        -> Right | Left
+    //   WEAP one-handed (incl. staff), slot 0x13F43    -> Left
+    //   WEAP one-handed (incl. staff), slot 0x13F42    -> Right
+    //   WEAP one-handed, any other or no slot          -> Right | Left  (CONSERVATIVE
+    //        on purpose: EitherHand/null means the engine has not picked yet, so
+    //        the item competes for both until it has)
+    //   AMMO                                           -> Ammo
+    //   LIGH                                           -> Light | Left
+    //   anything else (not a governed type) or null    -> 0
+    std::uint32_t Categorize(const RE::TESBoundObject* obj, const RE::BGSEquipSlot* slot);
+
+    // A readable form of a category mask for the log: `+`-joined names
+    // ("Shield+Left"), "none" for 0. Writes into `buf` (at least 48 bytes) and
+    // returns it; never allocates (the thunk calls it inside an engine frame).
+    const char* CategoryNames(std::uint32_t mask, char* buf, std::size_t size);
 
 }

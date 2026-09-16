@@ -449,6 +449,15 @@ namespace apmf::equipsink {
             bool inSet = false;
             for (std::uint32_t i = 0; i < set.count; ++i) if (set.forms[i] == itemId) { inSet = true; break; }
 
+            // ABI v9: what this item competes for, with the slot the engine resolved
+            // for it (data->slot: the caller's a_slot or the default slot 38911/37955
+            // picked). ONE map, shared with the enforce pass (Categorize). The
+            // claim's owned/denied masks came out of the SAME snapshot read as the
+            // set, so the two can never be from different generations.
+            const std::uint32_t competes = Categorize(obj, data->slot);
+            const bool          blacked  = (competes & set.denied) != 0;
+            const bool          ownedCat = (competes & set.owned)  != 0;
+
             const bool observe    = g_observeOnly.load(std::memory_order_relaxed) ||
                                     (set.flags & APMF_API::kEquipAuth_ObserveOnly) != 0;
             const bool denyScript = g_denyScript.load(std::memory_order_relaxed) ||
@@ -460,12 +469,17 @@ namespace apmf::equipsink {
             const bool denyPlayerMenu = (set.flags & APMF_API::kEquipAuth_DenyPlayerMenu) != 0;
             const bool playerMenuPath = (caller.kind == PathKind::kPlayerMenu);
 
-            // The verdict. Order matters and is the whole policy:
-            //   no declaration yet                                      -> allow (declare->enforce)
-            //   a declared item                                         -> allow
-            //   a script/console equip without DenyScript               -> allow
-            //   a PlayerMenu equip without DenyPlayerMenu               -> allow (player agency)
-            //   anything else                                           -> deny (or would-deny)
+            // The verdict (ABI v9). Order matters and is the whole policy:
+            //   0. a script/console equip without DenyScript            -> allow (exempt; above both masks)
+            //   1. a PlayerMenu equip without DenyPlayerMenu            -> allow (player agency; above both masks)
+            //   2. competes for a DENIED category                       -> deny, even if in-set
+            //   3. competes for an OWNED category, no declaration yet   -> allow (declare->enforce)
+            //   4. competes for an OWNED category, a declared item      -> allow
+            //   5. competes for an OWNED category, off-set              -> deny
+            //   6. competes for nothing the claim holds                 -> allow (owned=0)
+            // Observe-only (INI or the claim's bit) turns each deny into `would-deny`.
+            // Default scope {All, 0} makes 2 unreachable and 6 unreachable, so a
+            // v7/v8 client sees exactly the v8 verdict table.
             // `tls` is a LOG FIELD ONLY, never a bypass (Fable tier-3 on d1aa66b,
             // SEV-4 #4): APMF's own Enforce equips are in-set by construction, so
             // they pass on the in-set test; the worker family's 38913 re-entry
@@ -475,15 +489,21 @@ namespace apmf::equipsink {
             // made probe criterion 2 ("zero would-deny with tls>0") vacuous.
             const char* verdict = "allow";
             bool        callWorker = true;
-            if (set.count == 0 || inSet || (scriptPath && !denyScript)) {
+            bool        refuse     = false;
+            if (scriptPath && !denyScript) {
                 verdict = "allow";
             } else if (playerMenuPath && !denyPlayerMenu) {
                 verdict = "allow (player agency)";
-            } else if (observe) {
-                verdict = "would-deny";
+            } else if (blacked) {
+                refuse  = true;
+            } else if (ownedCat) {
+                refuse  = !(set.count == 0 || inSet);
             } else {
-                verdict    = "deny";
-                callWorker = false;
+                verdict = "allow";   // owned=0: nothing the claim holds is at stake
+            }
+            if (refuse) {
+                if (observe) verdict = "would-deny";
+                else { verdict = "deny"; callWorker = false; }
             }
 
             // Log line (Docs/INTEGRATION.md's probe criteria parse these fields).
@@ -505,12 +525,31 @@ namespace apmf::equipsink {
                     else if (!caller.known)  path = "Unknown(" + std::to_string(caller.id) + ")";
                     else                     path = caller.name;
                     const char* itemName = obj->GetName();
-                    spdlog::info("[apmf][equip-obs] actor={} item={} op=equip path={} site={}+0x{} ret={} q={} f={} s={} a={} tls={} verdict={} name='{}'",
+                    // ABI v9 fields, after tls=: the categories the item competes
+                    // for, whether any is owned / denied by the claim, and the
+                    // engine's resolved slot: `none` for a null slot, R/L for the
+                    // two hand EQUPs, E for EitherHand (Skyrim.esm 0x13F44,
+                    // Docs/ADDRESS-TABLE-2026-09-15.md -- a LOG LABEL only; the
+                    // verdict treats it as "not a hand", both hands competed),
+                    // else the slot's FormID (a body slot or a foreign one).
+                    char catBuf[48];
+                    std::string eslot;
+                    if (!data->slot) eslot = "none";
+                    else {
+                        constexpr RE::FormID kEitherHandEquipSlotLogOnly = 0x00013F44;
+                        const RE::FormID slotId = data->slot->GetFormID();
+                        if (slotId == kRightHandEquipSlot)              eslot = "R";
+                        else if (slotId == kLeftHandEquipSlot)          eslot = "L";
+                        else if (slotId == kEitherHandEquipSlotLogOnly) eslot = "E";
+                        else                                            eslot = apmf::log::Hex(slotId);
+                    }
+                    spdlog::info("[apmf][equip-obs] actor={} item={} op=equip path={} site={}+0x{} ret={} q={} f={} s={} a={} tls={} cat={} owned={} black={} eslot={} verdict={} name='{}'",
                                  apmf::log::Hex(actorId), apmf::log::Hex(itemId), path,
                                  siteSpec ? siteSpec->id : 0, apmf::log::Hex(siteSpec ? siteSpec->off : 0, 0),
                                  caller.external ? std::string("ext") : apmf::log::Hex(caller.rva, 0),
                                  data->queue ? 1 : 0, data->force ? 1 : 0, data->sounds ? 1 : 0, data->applyNow ? 1 : 0,
-                                 tls, verdict, itemName ? itemName : "");
+                                 tls, CategoryNames(competes, catBuf, sizeof(catBuf)), ownedCat ? 1 : 0, blacked ? 1 : 0, eslot,
+                                 verdict, itemName ? itemName : "");
                 }
             } catch (...) {
             }
@@ -521,6 +560,83 @@ namespace apmf::equipsink {
         }
 
     }   // namespace
+
+    // ABI v9: THE category map (declared in EquipSink.h with its table). Called by
+    // the thunk on the engine's equip thread with the engine's resolved slot, and
+    // by channels/EquipAuthority.cpp on the main thread with the declared hand.
+    // Member reads only: GetFormType (TESForm), GetSlotMask (BGSBipedObjectForm,
+    // pinned CommonLib 3.7.0 BGSBipedObjectForm.h:78), the WEAP animation-type
+    // predicates (TESObjectWEAP.h:250-254) and the slot's FormID. No lookup.
+    std::uint32_t Categorize(const RE::TESBoundObject* obj, const RE::BGSEquipSlot* slot) {
+        using namespace APMF_API;
+        if (!obj) return 0;
+        switch (obj->GetFormType()) {
+        case RE::FormType::Armor: {
+            const auto* armo = obj->As<RE::TESObjectARMO>();
+            if (!armo) return kEquipCat_Armor;   // a malformed ARMO is still armor, never a hand
+            const auto mask   = static_cast<std::uint32_t>(armo->GetSlotMask());
+            const auto kShield = static_cast<std::uint32_t>(RE::BGSBipedObjectForm::BipedObjectSlot::kShield);
+            const bool shield = (mask & kShield) != 0;
+            // Both kinds of bits -> both categories (Fable on 3d5cab8, SEV-3 F1): a
+            // modded "shield on back" piece carries kShield AND a body/back bit; as
+            // Shield|Left only it would land under an Armor-only scope and displace
+            // the declared body piece. An ARMO with NO biped bits at all is Armor.
+            const bool armor  = (mask & ~kShield) != 0 || mask == 0;
+            return (shield ? (kEquipCat_Shield | kEquipCat_Left) : 0u) | (armor ? kEquipCat_Armor : 0u);
+        }
+        case RE::FormType::Weapon: {
+            const auto* weap = obj->As<RE::TESObjectWEAP>();
+            if (!weap) return kEquipCat_Right | kEquipCat_Left;   // unknown shape: both hands (conservative)
+            if (weap->IsTwoHandedSword() || weap->IsTwoHandedAxe() || weap->IsBow() || weap->IsCrossbow())
+                return kEquipCat_Right | kEquipCat_Left;
+            // One-handed, including a staff: the slot names the hand. EitherHand,
+            // a foreign slot, or no slot at all -> the engine has not picked yet,
+            // so the item competes for BOTH hands (conservative on purpose).
+            if (slot) {
+                const RE::FormID slotId = slot->GetFormID();
+                if (slotId == kLeftHandEquipSlot)  return kEquipCat_Left;
+                if (slotId == kRightHandEquipSlot) return kEquipCat_Right;
+            }
+            return kEquipCat_Right | kEquipCat_Left;
+        }
+        case RE::FormType::Ammo:  return kEquipCat_Ammo;
+        case RE::FormType::Light: return kEquipCat_Light | kEquipCat_Left;
+        default:                  return 0;   // not a governed type
+        }
+    }
+
+    const char* CategoryNames(std::uint32_t mask, char* buf, std::size_t size) {
+        if (!buf || size == 0) return "";
+        buf[0] = '\0';
+        if (mask == 0) {
+            const char*       none = "none";
+            const std::size_t len  = std::min(std::strlen(none), size - 1);
+            std::memcpy(buf, none, len);
+            buf[len] = '\0';
+            return buf;
+        }
+        static constexpr struct { std::uint32_t bit; const char* name; } kNames[] = {
+            { APMF_API::kEquipCat_Armor,  "Armor"  }, { APMF_API::kEquipCat_Shield, "Shield" },
+            { APMF_API::kEquipCat_Right,  "Right"  }, { APMF_API::kEquipCat_Left,   "Left"   },
+            { APMF_API::kEquipCat_Ammo,   "Ammo"   }, { APMF_API::kEquipCat_Light,  "Light"  },
+        };
+        std::size_t n = 0;
+        for (const auto& e : kNames) {
+            if (!(mask & e.bit)) continue;
+            const std::size_t len = std::strlen(e.name);
+            if (n + (n ? 1 : 0) + len + 1 > size) break;   // never overrun; a truncated list beats a fault
+            if (n) buf[n++] = '+';
+            std::memcpy(buf + n, e.name, len);
+            n += len;
+            buf[n] = '\0';
+        }
+        if (mask & ~APMF_API::kEquipCat_All) {
+            const char* extra = "+?";
+            const std::size_t len = std::strlen(extra);
+            if (n + len + 1 <= size) { std::memcpy(buf + n, extra, len); n += len; buf[n] = '\0'; }
+        }
+        return buf;
+    }
 
     ApmfEquipScope::ApmfEquipScope()  { ++t_apmfDepth; }
     ApmfEquipScope::~ApmfEquipScope() { --t_apmfDepth; }

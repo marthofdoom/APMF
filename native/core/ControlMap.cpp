@@ -196,6 +196,27 @@ namespace apmf {
         }
     }
 
+    // ABI v9 (ch.17's SetEquipScope): SCOPE an existing claim's authority. `scope`
+    // is READ AND COPIED synchronously here (APMF never retains the client's
+    // pointer); nullptr == reset to the defaults {kEquipCat_All, 0}. The masks
+    // are copied RAW (unknown bits are masked at Apply, on the writer thread,
+    // where the once-per-handle log lives); the reserved words are ignored.
+    void ControlMap::EnqueueSetEquipScope(Handle handle, const APMF_API::APMF_EquipScope* scope) {
+        if (handle == APMF_API::kInvalidHandle) return;
+        PendingOp op{};
+        op.kind   = PendingOp::Kind::kSetEquipScope;
+        op.handle = handle;
+        if (scope) {
+            op.equipOwned  = scope->owned;
+            op.equipDenied = scope->denied;
+        }
+        // else: the PendingOp defaults ARE the reset values.
+        {
+            std::scoped_lock lock(m_qmx);
+            m_queue.push_back(op);
+        }
+    }
+
     // ABI v5 (ch.8b, kIntent_Cast): claim the cast-EXECUTION facet for a bounded
     // window. Mirrors EnqueueRequest's shape (allocate a handle synchronously,
     // enqueue a POD op applied at the next Drain) but carries the rich cast payload.
@@ -280,6 +301,7 @@ namespace apmf {
             case PendingOp::Kind::kSetAllowList: changed |= ApplySetSpellAllowList(op.handle, op.altForms, op.altCount, next); break;
             case PendingOp::Kind::kCast:         changed |= ApplyRequest(op, next);                  break;   // ch.8b -- ApplyRequest handles the cast branch
             case PendingOp::Kind::kSetEquipSet:  changed |= ApplySetEquipSet(op.handle, op.equipForms, op.equipSlots, op.equipCount, op.equipRequested, next); break;   // ch.17
+            case PendingOp::Kind::kSetEquipScope: changed |= ApplySetEquipScope(op.handle, op.equipOwned, op.equipDenied, next); break;   // ch.17, ABI v9
             }
         }
 
@@ -1141,6 +1163,70 @@ namespace apmf {
         return false;   // handle's channel not found on this NPC (should not happen)
     }
 
+    // ABI v9 (ch.17): SCOPE an existing claim. Writer-thread-only, ApplySetEquipSet's
+    // shape: look the claim up via m_index, mask both words to kEquipCat_All
+    // (unknown bits logged once per handle per distinct set of bits), store on the
+    // Claim whether or not it owns the channel. Unlike ApplySetEquipSet, which
+    // fires OnOwnerChanged on EVERY applied declaration (a re-issued identical
+    // set is the sanctioned "give it back"), a scope re-send that changes
+    // nothing fires nothing: a scope is a POLICY, not a request for items, and
+    // an unchanged policy has nothing new to enforce. A CHANGED scope on the
+    // owner IS a declaration event (the enforce pass may now equip an item it
+    // previously skipped as unowned) -> one main-thread hop after Publish.
+    // Returns whether the STORED scope changed (Publish gate).
+    bool ControlMap::ApplySetEquipScope(Handle handle, std::uint32_t owned, std::uint32_t denied, MapType& map) {
+        auto idxIt = m_index.find(handle);
+        if (idxIt == m_index.end()) return false;   // unknown/stale
+
+        auto* expected = Registry::Get().ChannelForIntent(APMF_API::kIntent_EquipAuthority);
+        if (!expected || idxIt->second.second != expected) return false;   // not an EquipAuthority claim
+
+        const RE::FormID formID  = idxIt->second.first;
+        Channel*         channel = idxIt->second.second;
+
+        auto npcIt = map.find(formID);
+        if (npcIt == map.end()) return false;
+        auto& npc = npcIt->second;
+
+        for (auto& cc : npc.channels) {
+            if (cc.channel != channel) continue;
+            Claim* mine = nullptr;
+            const Claim* best = cc.claims.empty() ? nullptr : &cc.claims.front();
+            for (auto& c : cc.claims) {
+                if (c.handle == handle) mine = &c;
+                if (best && c.basis > best->basis) best = &c;   // same rule as TryGetOwningClaim
+            }
+            if (!mine) return false;   // handle not among this channel's claims (should not happen)
+
+            const std::uint32_t badBits = (owned | denied) & ~static_cast<std::uint32_t>(APMF_API::kEquipCat_All);
+            const std::uint32_t ownedNow  = owned  & APMF_API::kEquipCat_All;
+            const std::uint32_t deniedNow = denied & APMF_API::kEquipCat_All;
+            if (badBits != 0 && badBits != mine->equipBadScopeBits) {
+                spdlog::warn("[apmf][equip-auth] actor=0x{} h={} scope carries category bit(s) 0x{} outside this ABI's "
+                             "kEquipCat_All (0x{}) -- masked off (a client built against a later APMF degrades to what "
+                             "this one knows).",
+                             apmf::log::Hex(formID), handle, apmf::log::Hex(badBits, 0),
+                             apmf::log::Hex(static_cast<std::uint32_t>(APMF_API::kEquipCat_All), 0));
+            }
+            mine->equipBadScopeBits = badBits;
+            const bool changed = (mine->equipOwned != ownedNow) || (mine->equipDenied != deniedNow);
+            if (changed) { mine->equipOwned = ownedNow; mine->equipDenied = deniedNow; }
+            const bool owner = (best == mine);
+            spdlog::info("[ctl] 0x{} ~ ch.{} {} SET-EQUIP-SCOPE (h={}, owned=0x{}, denied=0x{}, {}, {}).",
+                         apmf::log::Hex(formID), channel->ChannelNo(), channel->Name(),
+                         handle, apmf::log::Hex(ownedNow, 2), apmf::log::Hex(deniedNow, 2),
+                         changed ? "changed" : "unchanged", owner ? "owner" : "not owner");
+            if (owner && changed) {
+                // Writer thread: the channel only POSTS from this; the equip calls
+                // themselves run after Publish (same hop as ApplySetEquipSet).
+                auto* actor = RE::TESForm::LookupByID<RE::Actor>(formID);
+                channel->OnOwnerChanged(formID, actor, mine->param);
+            }
+            return changed;
+        }
+        return false;   // handle's channel not found on this NPC (should not happen)
+    }
+
     void ControlMap::OnActorUpdate(RE::Actor* actor) {
         // ANY thread (field-proven: the Character 0xAD seat is not single-threaded).
         // Relaxed pre-gate: near-zero cost while nothing is controlled -- no atomic
@@ -1633,6 +1719,9 @@ namespace apmf {
             for (std::uint32_t i = 0; i < out.count; ++i) { out.forms[i] = best->equipForms[i]; out.slots[i] = best->equipSlots[i]; }
             for (std::uint32_t i = out.count; i < APMF_API::kMaxEquipSet; ++i) { out.forms[i] = 0; out.slots[i] = 0; }
             out.flags = static_cast<std::uint32_t>(best->param.ival);   // APMF_Param::ival is int32
+            // ABI v9: the scope rides the SAME read as the set -- one generation.
+            out.owned  = best->equipOwned;
+            out.denied = best->equipDenied;
             return true;
         }
         return false;   // this NPC is controlled, but not on this channel
@@ -1654,6 +1743,7 @@ namespace apmf {
                 case PendingOp::Kind::kSetAllowList: ApplySetSpellAllowList(op.handle, op.altForms, op.altCount, next); break;
                 case PendingOp::Kind::kCast:         ApplyRequest(op, next);                  break;
                 case PendingOp::Kind::kSetEquipSet:  ApplySetEquipSet(op.handle, op.equipForms, op.equipSlots, op.equipCount, op.equipRequested, next); break;
+                case PendingOp::Kind::kSetEquipScope: ApplySetEquipScope(op.handle, op.equipOwned, op.equipDenied, next); break;
                 }
             }
         }

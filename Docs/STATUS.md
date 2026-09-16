@@ -1,8 +1,46 @@
 # APMF STATUS — living handoff (start here)
 
-Updated 2026-09-15. The current state of the build: what's shipped, what's
+Updated 2026-09-16. The current state of the build: what's shipped, what's
 probe-gated, what's next. Keep this current in the SAME change as any
 build/finding/workflow change.
+
+## HEAD OF WORK 2026-09-16 -- ch.17 EQUIP AUTHORITY v9: SCOPED authority, owned + denied categories (`feat/equip-authority-v9`)
+
+Branch off main (bc49416, the merged Tier-C naming round). **CI-green, NOT field-run. Still
+OBSERVE-ONLY (`bEquipObserveOnly=1` unchanged).** ABI bumped to v9. Driver: the first v8 deck
+log's 117 `CombatNode`/`OutfitApply` would-denies were ALL against a hand-only intent -- v7/v8
+took the facet WHOLE, so a client owning the hands had to declare everything else or watch
+the engine's own outfit/shield/ammo refresh get refused.
+
+1. **`APMF_API_v9::SetEquipScope(Handle, const APMF_EquipScope*)`.** `APMF_EquipScope{owned@0,
+   denied@4, reserved[2]@8}` (16 bytes, static_assert-pinned), masks over `EquipCategory`
+   (Armor 1<<0, Shield 1<<1, Right 1<<2, Left 1<<3, Ammo 1<<4, Light 1<<5, All 0x3F). nullptr
+   resets to `{All, 0}` == v8 verbatim; unknown bits masked + logged once per handle; stale
+   handle = silent no-op. Stored on the claim (`Claim::equipOwned/equipDenied`, appended),
+   copied out in the SAME `TryGetEquipSet` read as the set. A CHANGED scope on the owner
+   fires `OnOwnerChanged` (one enforce hop); an unchanged re-send fires nothing.
+2. **ONE category map, `apmf::equipsink::Categorize(obj, slot)`**, called by the seat with
+   the engine's resolved `data->slot` and by the enforce pass with the declared hand's
+   EQUP: ARMO -> Armor (Shield+Left with the shield biped bit); 2H/bow/crossbow ->
+   Right+Left; one-hander (incl. staff) by slot 0x13F42 -> Right / 0x13F43 -> Left /
+   anything else -> Right+Left (CONSERVATIVE, on purpose); AMMO -> Ammo; LIGH -> Light+Left;
+   an ARMO with the shield bit AND another biped bit -> Shield+Left+Armor (both kinds, both).
+   Member reads only (GetSlotMask, weapon type, slot FormID), verified against pinned
+   CommonLib 3.7.0 (`BGSBipedObjectForm.h:22,78`, `TESObjectWEAP.h:250-254`).
+3. **Seat verdict (steps 0-6):** Script/PlayerMenu exemptions FIRST (above both masks);
+   `competes & denied` -> deny even in-set; `competes & owned` -> the v8 in-set test; else
+   allow (`owned=0`). Obs line gains `cat= owned= black= eslot=<none|R|L|E|hex>` after `tls=`.
+4. **Enforce pass:** skips any entry whose competed categories are not all owned or any
+   denied (`skipped-unowned=` / `skipped-denied=` on the pass line, named once per
+   actor+set signature at warn); never equips/evicts into an unowned category; still
+   never unequips. The two hand EQUP FormIDs now live in `core/EquipSink.h` (one definition).
+5. **Docs:** INTEGRATION v9 section + criterion 1 reworded ("in an owned or denied category")
+   + criteria 8-15 (8-11 behavioural, from the design; 12-15 log invariants); AUDIT row 17; MAP (API / ClientAPI / ControlMap / EquipSink / ch.17 row);
+   CHANGELOG; REVIEW-BACKLOG APMF-B10 (v9 joins the "name at the cut" entry).
+
+**Next.** Fable review; MFO's v9 wiring (Armor always owned; Right/Left from the hold ledger;
+Ammo with a bow/crossbow hold; Shield DENIED under weapon-style control; Light never owned;
+`EquipAuthoritySupported` requires abi >= 9); one observe deck run against criteria 1-15. Review round on 3d5cab8: F1 (mixed ARMO -> Shield+Left+Armor) fixed; F3/F4/F7 fixed; F5/F6 recorded as REVIEW-BACKLOG APMF-B11/B12.
 
 ## HEAD OF WORK 2026-09-16 -- first v8 deck run + the Tier-C path-naming round (`fix/equip-sink-aicommand-dispatcher`)
 

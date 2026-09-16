@@ -90,7 +90,22 @@ This file tracks REVIEW findings only.
 - **Severity:** SEV-5 (release-checklist item).
 - **Finding (verbatim, as relayed):** "MinReleaseForAbi \"first release after 0.9.4\" must be named at the cut (release checklist)".
 - **Reasoning:** `core/ClientAPI.cpp MinReleaseForAbi` returns the placeholder "the first release after 0.9.4" for ABI v7/v8 because no release carrying them exists yet. Whoever cuts the next release replaces it with the actual version string in the same commit that bumps `project(APMF VERSION ...)`.
+- **v9 (2026-09-16, `feat/equip-authority-v9`):** ABI v9 (`SetEquipScope`) joins the same placeholder entry (`case 7: case 8: case 9:`). v7, v8 and v9 all ship together in that first release; the cut names ONE version string for all three.
 - **Assigned:** the next release cut.
+
+### APMF-B11 — v9 enforce pass counts an already-worn unowned item as `skipped-unowned`
+- **Raised:** Fable tier-A on `3d5cab8`, SEV-5; text as relayed by the coordinator.
+- **Severity:** SEV-5.
+- **Finding (verbatim, as relayed):** "skip-before-worn miscounts an already-worn unowned item as skipped-unowned".
+- **Reasoning:** `channels/EquipAuthority.cpp Enforce` runs the scope skip (`competes & denied` / `competes & ~owned`) BEFORE the inventory/worn test, so a declared item the actor already wears in an unowned category is counted and named as skipped rather than `already-worn`. The pass never equips it either way (correct); only the counter and the once-per-signature warn text are off. Fix = move the scope test after the worn test, or count worn-and-unowned separately.
+- **Assigned:** the v9 backlog drain (before the observe-only flip).
+
+### APMF-B12 — v9 skip warn is once-per-distinct-from-last, not once per signature
+- **Raised:** Fable tier-A on `3d5cab8`, SEV-5; text as relayed by the coordinator.
+- **Severity:** SEV-5.
+- **Finding (verbatim, as relayed):** "warn is once-per-distinct-from-last, not once per signature".
+- **Reasoning:** `ActorMemory::lastSkipSig` holds ONE signature, so alternating declarations A, B, A re-warn for A each time it returns; a true once-per-signature guard needs a bounded set per actor. Bounded, logged, never a pile-up; cosmetic.
+- **Assigned:** the v9 backlog drain (before the observe-only flip).
 
 ---
 

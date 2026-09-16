@@ -247,6 +247,10 @@ Rules of the road:
 - **The player's own equips pass (ABI v8).** The player dressing the follower
   through the trade or gift menu (`path=PlayerMenu`) is allowed by default.
   Set `kEquipAuth_DenyPlayerMenu` for the strict form.
+- **The authority can be scoped (ABI v9).** By default the claim holds the
+  whole facet, as above. `SetEquipScope` narrows it to the categories you own
+  (hands, armor, shield, ammo, light) and can refuse a category outright. See
+  the v9 section below.
 
 ## Declaring hands (ABI v8, `SetEquipSetEx`)
 
@@ -348,15 +352,106 @@ on its claim and the path is then refused like any other engine equip. There
 is no INI twin for this bit. The allow is at the seat only. The next enforce pass re-equips any declared item the player's equip displaced. A client honouring player agency must observe the change (the `path=PlayerMenu verdict=allow (player agency)` line, or its own inventory read) and fold the player's choice into its next declaration. A v7 APMF ignores the bit, so a v8 client running
 against a v7 APMF gets the v7 behaviour (PlayerMenu refused).
 
+## Scoping the authority (ABI v9, `SetEquipScope`)
+
+Requires `abiVersion >= 9` and `APMF_API_v9`. v7 and v8 take the facet whole: a
+declaration refuses every off-set engine equip of a governed type on the actor.
+A client that only wants to own the hands must then also declare the body
+armor, the shield, the arrows and the torch, or watch the engine's own outfit
+refresh and combat re-arm get refused for them. The first v8 field run showed
+exactly that: 117 `CombatNode` and `OutfitApply` would-denies, every one
+against a hand-only intent.
+
+v9 scopes the claim. Each governed item COMPETES for one or more categories,
+and the claim says which categories it OWNS and which it DENIES:
+
+```cpp
+// Layout, byte-shared and static_assert-pinned in APMF_API.h:
+//   +0 owned (u32)  +4 denied (u32)  +8 reserved[2] (u32, must be 0)   size 16, align 4
+APMF_API::APMF_EquipScope scope{};
+scope.owned  = APMF_API::kEquipCat_Armor | APMF_API::kEquipCat_Right | APMF_API::kEquipCat_Left;
+scope.denied = APMF_API::kEquipCat_Shield;   // this follower never raises a shield
+g_apmf->SetEquipScope(h, &scope);
+g_apmf->SetEquipScope(h, nullptr);           // reset to the default {kEquipCat_All, 0}
+```
+
+The category map is ONE function in APMF (`apmf::equipsink::Categorize`), run
+by the seat with the engine's resolved slot and by the equip pass with the
+hand you declared, so the two halves can never disagree:
+
+| Item | Competes for |
+|---|---|
+| ARMO without the shield biped bit (or with no bits) | `Armor` |
+| ARMO with `BipedObjectSlot::kShield` only | `Shield` + `Left` |
+| ARMO with `kShield` AND any other biped bit (a modded shield-on-back piece) | `Shield` + `Left` + `Armor` (both kinds of bits, both categories) |
+| WEAP two-handed sword, two-handed axe, bow, crossbow | `Right` + `Left` |
+| WEAP one-handed (incl. staff), equip slot LeftHand `0x13F43` | `Left` |
+| WEAP one-handed (incl. staff), equip slot RightHand `0x13F42` | `Right` |
+| WEAP one-handed, any other slot or none (EitherHand) | `Right` + `Left` |
+| AMMO | `Ammo` |
+| LIGH (torch) | `Light` + `Left` |
+
+The either-hand row is conservative on purpose: when the engine has not picked
+a hand yet the item competes for both, so a claim that owns only one hand
+still holds it. The same rule applies to your own declaration: a one-hander
+declared with `kEquipSlot_Default` competes for BOTH hands and is equipped
+only when both are owned. Declare the hand with `SetEquipSetEx` when you own
+one.
+
+The seat's verdict for a governed equip on a claimed actor, in order:
+
+| Step | Condition | Verdict |
+|---|---|---|
+| 0 | Script or console path, claim without `kEquipAuth_DenyScript` | allow (exempt, above both masks) |
+| 1 | `PlayerMenu` path, claim without `kEquipAuth_DenyPlayerMenu` | allow (player agency, above both masks) |
+| 2 | item competes for a DENIED category | deny, even if the item is in the set |
+| 3 | item competes for an OWNED category, no declaration yet | allow (declare then enforce) |
+| 4 | item competes for an OWNED category, item is in the set | allow |
+| 5 | item competes for an OWNED category, item is off-set | deny |
+| 6 | item competes for nothing the claim owns or denies | allow (`owned=0`) |
+
+Observe-only turns each deny into `would-deny`. The default scope
+`{kEquipCat_All, 0}` makes steps 2 and 6 unreachable, so a v7 or v8 client
+sees the v8 verdict table unchanged. One label differs from v8: a `PlayerMenu`
+equip of an IN-SET item now logs `verdict=allow (player agency)` (step 1 runs
+before the in-set test), where v8 logged plain `verdict=allow`. The verdict is
+the same, only the label moved.
+
+Rules of the road for the scope:
+
+- **`nullptr` resets** the claim to `{kEquipCat_All, 0}`. Bits outside
+  `kEquipCat_All` are masked off and logged once per handle, never refused: a
+  client built against a later APMF degrades to what this one knows.
+- **A stale handle is a silent no-op**, like `SetEquipSet`.
+- **The scope is stored whether or not the claim owns the channel** and rides
+  the same snapshot read as the set. The seat never sees a set from one
+  generation and a scope from another.
+- **A changed scope on the owning claim is a declaration event.** One enforce
+  hop runs after Publish, exactly as after `SetEquipSetEx`. An unchanged
+  re-send fires nothing. The log line reads
+  `[ctl] ... SET-EQUIP-SCOPE (h=N, owned=0x.., denied=0x.., changed|unchanged, owner|not owner)`.
+- **The equip pass equips a declared item only when every category it
+  competes for is owned and none is denied.** The rest are skipped and counted
+  on the pass line as `skipped-unowned=N skipped-denied=N`, and named once per
+  actor and set signature at warn level. APMF never equips or evicts into an
+  unowned category and still never unequips anything.
+- **Log lines.** Each `[apmf][equip-obs]` line now carries, after `tls=`:
+  `cat=<Armor|Shield|Right|Left|Ammo|Light, +-joined>` (what the item competes
+  for), `owned=<0|1>` (any competed category owned), `black=<0|1>` (any
+  competed category denied) and `eslot=<none|R|L|E|hex>` (the engine's
+  resolved slot: none, RightHand, LeftHand, EitherHand, or the slot's FormID).
+
 ### The probe criteria (what a field log must show before enforcement is switched on)
 
 Read `[apmf][equip-obs]` lines. Each carries `actor= item= op=equip path=
-site= ret= q= f= s= a= tls= verdict= name=`. `tls` is attribution only (an
-equip APMF issued itself runs with `tls>0`); it never changes a verdict. The
-`name='...'` field is the item's display name, for reading, not for parsing.
+site= ret= q= f= s= a= tls= cat= owned= black= eslot= verdict= name=`. `tls` is
+attribution only (an equip APMF issued itself runs with `tls>0`); it never
+changes a verdict. `cat= owned= black= eslot=` are the v9 scope fields (see
+the v9 section). The `name='...'` field is the item's display name, for
+reading, not for parsing.
 
-1. Every engine re-equip of an off-set item on a claimed actor logs
-   `verdict=would-deny` with a NAMED path (`OutfitApply`, `AddWornOutfit`,
+1. Every engine re-equip of an off-set item in an owned or denied category on
+   a claimed actor logs `verdict=would-deny` with a NAMED path (`OutfitApply`, `AddWornOutfit`,
    `AiCommand`, `RemoveItemReequip`, `CombatNode`, `Script`, `Console`,
    `WorkerReentry`, `QueuedApply`, `DropObject`, `PickUpObject`, `BoundItem`,
    `ProcedureEat`, `InventoryReequip`, `StartCombat`, or `External(<dll>)`).
@@ -403,7 +498,40 @@ equip APMF issued itself runs with `tls>0`); it never changes a verdict. The
    slot through the engine's deferred apply on paper only until a session shows
    it.
 
-Only after all seven hold on a real session is `bEquipObserveOnly` flipped to 0.
+8. A follower with NO hold switches to a bow in combat: `path=CombatNode ...
+   verdict=allow cat=Right+Left owned=0 black=0 name='... Bow'` followed by
+   the follower visibly shooting. (The unowned hands are the engine's.)
+9. ZERO `verdict=deny` or `verdict=would-deny` lines with `owned=0 black=0`.
+10. A dual-wielder (offHand==2) with no hold logs `cat=Shield+Left owned=0
+    black=1 verdict=deny` (or `would-deny` in observe mode) on the shield AND
+    stays shield-less.
+11. Every WEAP line's `eslot` is `R`, `L` or `E` (histogram over the session).
+    An `E` on a `WorkerReentry` line is the case the conservative either-hand
+    rule guards; it is expected, not a failure.
+12. The scope reaches the seat: after a `SET-EQUIP-SCOPE` line with a narrowed
+    `owned`, every `[apmf][equip-obs]` line for that actor whose `cat=` has no
+    bit in `owned` and none in `denied` reads `owned=0 black=0 verdict=allow`.
+13. The deny mask fires: for a scope with a non-zero `denied`, every
+    `[apmf][equip-obs]` line whose `cat=` overlaps `denied` reads `black=1` and
+    `verdict=would-deny` (or `deny`), including an item that is in the declared
+    set. ZERO `black=1 verdict=allow` lines except on a `Script`, `Console` or
+    `PlayerMenu` path without the matching deny bit.
+14. The category map agrees with the engine: every `cat=Shield+Left` line
+    names a shield, every `cat=Ammo` line names arrows or bolts, every
+    `cat=Light+Left` line names a torch, and a one-handed weapon with
+    `eslot=R` or `eslot=L` reads `cat=Right` or `cat=Left` respectively. A
+    `cat=Right+Left` line for a one-hander carries `eslot=E`, `eslot=none` or a
+    non-hand `eslot`, never `R` or `L`. A `cat=Armor+Shield+Left` line (the log
+    prints categories in bit order) names a piece that carries both the shield
+    bit and another biped bit.
+15. The equip pass honours the scope: every `enforce pass` line prints
+    `owned=0x.. denied=0x..` matching the last `SET-EQUIP-SCOPE` for that
+    actor, and every declared item skipped as unowned or denied appears in ONE
+    `NOT equipped by this pass` warn per (actor, set) with `skipped-unowned` /
+    `skipped-denied` counted on the pass line. ZERO `-> equip` lines for an
+    item whose categories are not all owned, or any denied.
+
+Only after all fifteen hold on a real session (8-11 are the behavioural scope criteria from the v9 design, 12-15 are log-invariant checks) is `bEquipObserveOnly` flipped to 0.
 
 ## The facet table
 
@@ -442,7 +570,7 @@ columns, one doesn't imply the other.
 | `kIntent_ShoutPower` (ch.14) | Claim the shout/power selection facet | `form` (the shout/power FormID) | Built, not yet battle-tested. Arbitration only today, the same shape as ch.6. |
 | `kIntent_Equipment` (ch.15) | Unequip/equip a worn item, and (with a param) gate re-equip of a spell/staff while the claim stands | `form` (optional) | Built, not yet battle-tested. The most recently landed facet in the catalog. |
 | `kIntent_Detection` (ch.16) | Silent movement + reduced detection range | `fval` (reserved, not yet read) | **Field-proven.** An actor-value source-block, deck-tested to hold even on a package-locked actor. |
-| `kIntent_EquipAuthority` (ch.17) | **Declare what the NPC wears; APMF equips it and refuses every other engine equip of a governed type (ARMO/WEAP/AMMO/LIGH).** ABI v7, declare with `SetEquipSet`; ABI v8 `SetEquipSetEx` adds a hand per item | `ival` (an `EquipAuthFlags` bitmask); the set itself via `SetEquipSet` / `SetEquipSetEx` | Built, not yet battle-tested. Ships OBSERVE-ONLY (`[EquipAuthority] bEquipObserveOnly=1`) until the probe criteria above pass. The only call-site seat in APMF, under `Docs/INVARIANTS.md` #17a. Player-menu equips pass by default (v8). |
+| `kIntent_EquipAuthority` (ch.17) | **Declare what the NPC wears; APMF equips it and refuses every other engine equip of a governed type (ARMO/WEAP/AMMO/LIGH) in the categories the claim owns.** ABI v7, declare with `SetEquipSet`; ABI v8 `SetEquipSetEx` adds a hand per item; ABI v9 `SetEquipScope` scopes the claim to owned/denied categories (default: all owned) | `ival` (an `EquipAuthFlags` bitmask); the set itself via `SetEquipSet` / `SetEquipSetEx`; the scope via `SetEquipScope` | Built, not yet battle-tested. Ships OBSERVE-ONLY (`[EquipAuthority] bEquipObserveOnly=1`) until the probe criteria above pass. The only call-site seat in APMF, under `Docs/INVARIANTS.md` #17a. Player-menu equips pass by default (v8). |
 
 Where a field is marked "reserved, not yet read", the channel currently
 applies a fixed built-in behavior and ignores whatever you pass in that field.
