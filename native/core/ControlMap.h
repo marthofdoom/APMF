@@ -90,7 +90,7 @@ namespace apmf {
     // (core/EquipSink.cpp) on whatever engine thread performs an equip. BY VALUE,
     // like CastSeatClaim and for the same reason (INVARIANTS #12): the seat must
     // never hold, alias or re-read snapshot-owned storage after its single read
-    // returns. Bounded (kMaxEquipSet FormIDs) so the copy is a fixed 140 bytes.
+    // returns. Bounded (kMaxEquipSet entries) so the copy is a fixed, small POD (forms + slots + flags + the v9 scope).
     // `count == 0` means "claimed, but no worn set declared (or cleared)" -- the
     // seat passes every equip through in that state (declare->enforce: never
     // enforce a set the client did not give). Internal C++ only, not the C-ABI.
