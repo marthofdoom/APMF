@@ -1,3 +1,12 @@
+## Unreleased -- A mod can say which hand, and potions are never refused
+
+- **A mod can now say which hand an item goes in.** The first version equipped every item without a hand, so the game always put a one handed weapon in the right hand and pushed out whatever was there. A follower could not dual wield through Harbinger and a declared dagger evicted the declared sword. The new call carries a hand per item: right, left, or let the game pick. An item declared for the left hand that the follower holds in the right is moved. The same weapon can be declared once per hand.
+- **Potions, food, scrolls, ingredients and books are never refused.** The equip check only governs armor, weapons, ammo and torches now. A follower drinking a potion, or a mod telling one to, passes through untouched. Before this the check would have refused every potion on a follower with a declared set once enforcement was switched on.
+- **The player can still dress a follower by hand.** An equip from the trade or gift menu passes by default. A mod that wants the strict form can ask for those to be refused too.
+- New API revision (v8) with one call, `SetEquipSetEx`, and one flag. The v7 call still works and now runs through the same path with the hand left to the game. Older clients are unaffected.
+- Still ships in observe mode. `bEquipObserveOnly=1` is unchanged.
+- No change to any existing facet.
+
 ## Unreleased -- A mod can decide what a follower wears
 
 - **A mod can now declare a follower's worn set and have it hold.** The mod sends the list of items. Harbinger equips them and refuses every other equip the game tries on that follower: outfit refresh, the AI's own weapon and armor picks, the re-equip after an item is removed. It holds until the mod declares a new set or releases. The player is never touched. Followers without a declaration are never touched.

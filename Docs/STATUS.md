@@ -4,6 +4,36 @@ Updated 2026-09-15. The current state of the build: what's shipped, what's
 probe-gated, what's next. Keep this current in the SAME change as any
 build/finding/workflow change.
 
+## HEAD OF WORK 2026-09-15 -- ch.17 EQUIP AUTHORITY v8: hands, governed types, player menu (`feat/equip-authority-v8`)
+
+Branch off main (aa585c3, the merged `feat/equip-authority`). **CI-green, NOT field-run.
+Still OBSERVE-ONLY (`bEquipObserveOnly=1` unchanged).** ABI bumped to v8; MFO's
+`native/APMF_API.h` must be re-mirrored byte-identically (INVARIANTS #14b). Closes the
+three gaps MFO's wiring author found while converting `Loadout` to a ch.17 declaration:
+
+1. **No per-item hand (closed).** `APMF_API_v8::SetEquipSetEx(handle, const
+   APMF_EquipEntry*, count)`; `APMF_EquipEntry{form@0 u32, slot@4 u8 (EquipSlot:
+   Default 0 / Right 1 / Left 2), reserved[3]@5}`, 8 bytes, static_assert-pinned. v7's
+   `SetEquipSet` stays and is implemented as Ex with slot Default. The slot rides beside
+   each form in `Claim::equipSlots[]` / `EquipSetView::slots[]` (appended). The enforce
+   pass equips a handed entry with `BGSEquipSlot` 0x13F42 (right) / 0x13F43 (left)
+   resolved by `LookupByID` (never `BGSDefaultObjectManager::GetObject`: CommonLib 3.7.0's
+   `IsObjectInitialized` is broken on 1.6.1170 and faults on 1.5.97), treats "worn" as
+   "in THAT hand" (`Actor::GetEquippedObject`), allows the same form once per hand
+   (instances counted against the inventory count), holds per (form, hand). The seat's
+   in-set test is unchanged (FormID compare).
+2. **Non-wearables governed (closed).** The seat governs ARMO / WEAP / AMMO / LIGH only;
+   every other form type passes on a claimed actor, logged once per (actor, formType) at
+   debug. The enforce pass skips a declared non-governed form (equipping a potion drinks
+   it).
+3. **PlayerMenu denied (closed).** `PathKind::kPlayerMenu`; allowed by default
+   (`verdict=allow (player agency)`); `kEquipAuth_DenyPlayerMenu = 1<<3` for the strict
+   form. No INI twin.
+
+**Next.** Fable tier-3 review (byte-shared header); merge; mirror `APMF_API.h` into MFO
+(MFO re-declares with `SetEquipSetEx` and drops its own explicit hand equips); deck run in
+observe mode; flip `bEquipObserveOnly`.
+
 ## HEAD OF WORK 2026-09-15 -- ch.17 EQUIP AUTHORITY, the #17a engine-equip sink (`feat/equip-authority`)
 
 Branch off main (88d237d, rebased onto 2e084b8 after the 1.5.97 pass merged). **CI-green, NOT field-run. Ships OBSERVE-ONLY.** ABI bumped to
