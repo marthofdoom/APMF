@@ -128,6 +128,31 @@ namespace apmf::equipsink {
             // the other AIProcess-family caller (<- 39089/41381).
             { 38906,  "QueuedApply",       PathKind::kEngine },
             { 39814,  "QueuedApply",       PathKind::kEngine },
+            // ---- Tier-C round after the first v8 deck log (2026-09-16): the one
+            // criterion-3 failure was `Unknown(39637)` -- the AI equip-command
+            // DISPATCHER itself (the switch over cmd 0..0x36) calls EquipObject
+            // directly at +0xF47 (ret +0xF4C = 0x6F2FEC, the field line), not only
+            // through its executors 39649/39650. Verified by an E8 scan of the
+            // unpacked 1.6.1170 image against the address library; the same pass
+            // swept every other engine caller of EquipObject / the sibling and
+            // named what it could PROVE (caller chains + RTTI vtable membership):
+            { 39637,  "AiCommand",         PathKind::kEngine },   // dispatcher: +0xF47 -> EquipObject; sole caller 39108
+            { 39948,  "AiCommand",         PathKind::kEngine },   // +0x199 -> EquipObject; called ONLY from 39637+0x8B1
+            { 39655,  "AiCommand",         PathKind::kEngine },   // +0x868 -> sibling;     called ONLY from 39637+0x195C
+            { 39645,  "AiCommand",         PathKind::kEngine },   // +0x250 -> sibling; from 39108 (the dispatcher's caller) + 39209 (<- 39108)
+            { 37510,  "AiCommand",         PathKind::kEngine },   // +0x226 -> sibling; every LIVE caller is the 39108 family (39223, 39653 <- 39637, 39654); 40087/40088 are orphans
+            { 37520,  "DropObject",        PathKind::kEngine },   // +0x345 -> sibling; Actor vtable slot 0xCB (RTTI-read), Actor::DropObject in the pinned header
+            { 37521,  "PickUpObject",      PathKind::kEngine },   // +0x437 -> sibling; Actor vtable slot 0xCC, Actor::PickUpObject
+            { 38898,  "BoundItem",         PathKind::kEngine },   // +0x25F -> EquipObject; from BoundItemEffect vtable slot 4 (34229, ActiveEffect::Update): a conjured bound weapon equipping itself
+            { 28422,  "ProcedureEat",      PathKind::kEngine },   // +0x17E -> sibling; from BGSProcedureEat vtable slot 0xC (28411) + 28417: the Eat package procedure equipping food (ALCH, ungoverned under v8)
+            { 41244,  "InventoryReequip",  PathKind::kEngine },   // +0x150 -> EquipObject (+0x257 UnequipObject); from PlayerCharacter::UseAmmo (41243, slot 0xD2), PlayerCharacter::PickUpObject (40533, slot 0xCC) and InventoryChanges 16066
+            { 38561,  "StartCombat",       PathKind::kEngine },   // +0x2BD -> sibling; Actor::StartCombat (alandtse binding 37608/38561, cross-checked: called from Actor vfunc 0x96 (37289), the 39652 executor, 37496/39695/40079/40814/41407)
+            // NOT named, deliberately: 16104 (+0xCD -> EquipObject) is reached from
+            // PlayerCharacter::ServePrisonTime (40657, slot 0xBA; player-only, never
+            // seated) AND from 40702 <- 37925 <- console/script-range callers
+            // (22338/22546/23008/54758) that could not be pinned -- a name would
+            // misattribute route B. 52410 (+0x6F -> EquipObject) has NO reference
+            // in .text/.rdata/.data (no E8/E9/lea/pointer): an orphan like 38919.
         };
         constexpr PathSpec kPathsSE[] = {
             { 24234,  "OutfitApply",       PathKind::kEngine },
@@ -147,6 +172,21 @@ namespace apmf::equipsink {
             { 37957,  "WorkerReentry",     PathKind::kEngine },
             { 37950,  "QueuedApply",       PathKind::kEngine },   // <- 33449 (its only caller); -> EquipObject at +0xF1
             { 38789,  "QueuedApply",       PathKind::kEngine },   // <- 38133/40367; -> EquipObject at +0xD1
+            // ---- Tier-C round (2026-09-16): the 1.5.97 counterparts, each E8
+            // verified on the unpacked 1.5.97 image with the SAME caller shape as
+            // the AE row (RTTI vtable slots identical; see the AE table for the chains).
+            { 38606,  "AiCommand",         PathKind::kEngine },   // dispatcher: +0xCCD -> EquipObject (ret 0x65FD12); sole caller 38150
+            { 38902,  "AiCommand",         PathKind::kEngine },   // +0x1A0 -> EquipObject; called ONLY from 38606+0x798
+            { 38624,  "AiCommand",         PathKind::kEngine },   // +0x857 -> sibling;     called ONLY from 38606+0x152F
+            { 38614,  "AiCommand",         PathKind::kEngine },   // +0x250 -> sibling; from 38150 (the dispatcher's caller), 38227, 38249
+            { 36510,  "AiCommand",         PathKind::kEngine },   // +0x226 -> sibling; callers 38263, 38622, 38623, 39020, 39021 (the 38150 family)
+            { 36520,  "DropObject",        PathKind::kEngine },   // +0x345 -> sibling; Actor vtable slot 0xCB
+            { 36521,  "PickUpObject",      PathKind::kEngine },   // +0x432 -> sibling; Actor vtable slot 0xCC
+            { 37942,  "BoundItem",         PathKind::kEngine },   // +0x20A -> EquipObject; <- 33455 <- BoundItemEffect vtable slot 4 (33451)
+            { 27700,  "ProcedureEat",      PathKind::kEngine },   // +0x16E -> sibling; <- BGSProcedureEat vtable slot 0xC (27689) + 27695
+            { 40241,  "InventoryReequip",  PathKind::kEngine },   // +0x14D -> EquipObject; <- PlayerCharacter slots 0xD2 (40240) / 0xCC (39456) + InventoryChanges 15827
+            { 37608,  "StartCombat",       PathKind::kEngine },   // +0x2C3 -> sibling; Actor::StartCombat (<- Actor vfunc 0x96 = 36299, 38621, 36496, 38667, 39012, 39712, 40393)
+            // NOT named: 15864 (+0xCD -> EquipObject; <- PlayerCharacter::ServePrisonTime 39571 + 39616) and 51535 (+0x6F, no reference anywhere) -- same reasons as AE 16104 / 52410.
         };
 
         // ---- runtime state (written at Install on the main thread, read from any

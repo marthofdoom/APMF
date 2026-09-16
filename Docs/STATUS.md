@@ -4,6 +4,27 @@ Updated 2026-09-15. The current state of the build: what's shipped, what's
 probe-gated, what's next. Keep this current in the SAME change as any
 build/finding/workflow change.
 
+## HEAD OF WORK 2026-09-16 -- first v8 deck run + the Tier-C path-naming round (`fix/equip-sink-aicommand-dispatcher`)
+
+**Deck, observe-only, 10 min, on the v8 build:** criteria 1, 2, 4, 5, 6, 7 PASS (seat installed
+clean; `hand=left`/`hand=right` equips landed and the follower dual-wielded; CombatNode /
+OutfitApply shield re-equips logged `would-deny`; zero PlayerMenu lines). **Criterion 3 FAILED
+on one id:** two `path=Unknown(39637) site=38894+0x170 ret=6F2FEC ... verdict=would-deny
+name='Royal Elven Dagger'` lines (actor 750012C6 re-arming). 39637 is the AI equip-command
+DISPATCHER (`switch(cmd 0..0x36)`, AE 0x6F20A0 / SE 38606 0x65F040): the path table named its
+executors 39649/39650 but the dispatcher calls `EquipObject` directly at +0xF47 (ret +0xF4C =
+0x6F2FEC, exactly the field line). Verified by an E8 scan of BOTH unpacked images (SE +0xCCD,
+ret 0x65FD12). The same sweep resolved every other unnamed engine caller (one direct E8 each)
+and named the ones it could PROVE: AiCommand x5, DropObject, PickUpObject, BoundItem,
+ProcedureEat, InventoryReequip, StartCombat (evidence per id in AUDIT row 17 and the
+`core/EquipSink.cpp` table comments); 16104/15864 (route B unpinned) and 52410/51535 (orphan)
+stay `Unknown` on purpose. **New finding from the naming: a conjured bound weapon equips
+through the seat (`BoundItem`) — a client must declare the bound weapon form or the follower
+casts and holds nothing under enforcement.** Log-label change only; no mechanism touched.
+
+**Next.** Fable review; merge; one more observe run expecting zero `Unknown` on deny lines;
+then flip `bEquipObserveOnly`.
+
 ## HEAD OF WORK 2026-09-15 -- ch.17 EQUIP AUTHORITY v8: hands, governed types, player menu (`feat/equip-authority-v8`)
 
 Branch off main (aa585c3, the merged `feat/equip-authority`). **CI-green, NOT field-run.
