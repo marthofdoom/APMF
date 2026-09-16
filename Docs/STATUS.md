@@ -23,7 +23,8 @@ the engine's own outfit/shield/ammo refresh get refused.
    the engine's resolved `data->slot` and by the enforce pass with the declared hand's
    EQUP: ARMO -> Armor (Shield+Left with the shield biped bit); 2H/bow/crossbow ->
    Right+Left; one-hander (incl. staff) by slot 0x13F42 -> Right / 0x13F43 -> Left /
-   anything else -> Right+Left (CONSERVATIVE, on purpose); AMMO -> Ammo; LIGH -> Light+Left.
+   anything else -> Right+Left (CONSERVATIVE, on purpose); AMMO -> Ammo; LIGH -> Light+Left;
+   an ARMO with the shield bit AND another biped bit -> Shield+Left+Armor (both kinds, both).
    Member reads only (GetSlotMask, weapon type, slot FormID), verified against pinned
    CommonLib 3.7.0 (`BGSBipedObjectForm.h:22,78`, `TESObjectWEAP.h:250-254`).
 3. **Seat verdict (steps 0-6):** Script/PlayerMenu exemptions FIRST (above both masks);
@@ -34,12 +35,12 @@ the engine's own outfit/shield/ammo refresh get refused.
    actor+set signature at warn); never equips/evicts into an unowned category; still
    never unequips. The two hand EQUP FormIDs now live in `core/EquipSink.h` (one definition).
 5. **Docs:** INTEGRATION v9 section + criterion 1 reworded ("in an owned or denied category")
-   + criteria 8-11; AUDIT row 17; MAP (API / ClientAPI / ControlMap / EquipSink / ch.17 row);
+   + criteria 8-15 (8-11 behavioural, from the design; 12-15 log invariants); AUDIT row 17; MAP (API / ClientAPI / ControlMap / EquipSink / ch.17 row);
    CHANGELOG; REVIEW-BACKLOG APMF-B10 (v9 joins the "name at the cut" entry).
 
 **Next.** Fable review; MFO's v9 wiring (Armor always owned; Right/Left from the hold ledger;
 Ammo with a bow/crossbow hold; Shield DENIED under weapon-style control; Light never owned;
-`EquipAuthoritySupported` requires abi >= 9); one observe deck run against criteria 1-11.
+`EquipAuthoritySupported` requires abi >= 9); one observe deck run against criteria 1-15. Review round on 3d5cab8: F1 (mixed ARMO -> Shield+Left+Armor) fixed; F3/F4/F7 fixed; F5/F6 recorded as REVIEW-BACKLOG APMF-B11/B12.
 
 ## HEAD OF WORK 2026-09-16 -- first v8 deck run + the Tier-C path-naming round (`fix/equip-sink-aicommand-dispatcher`)
 

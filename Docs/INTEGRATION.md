@@ -381,8 +381,9 @@ hand you declared, so the two halves can never disagree:
 
 | Item | Competes for |
 |---|---|
-| ARMO without the shield biped bit | `Armor` |
-| ARMO with `BipedObjectSlot::kShield` | `Shield` + `Left` |
+| ARMO without the shield biped bit (or with no bits) | `Armor` |
+| ARMO with `BipedObjectSlot::kShield` only | `Shield` + `Left` |
+| ARMO with `kShield` AND any other biped bit (a modded shield-on-back piece) | `Shield` + `Left` + `Armor` (both kinds of bits, both categories) |
 | WEAP two-handed sword, two-handed axe, bow, crossbow | `Right` + `Left` |
 | WEAP one-handed (incl. staff), equip slot LeftHand `0x13F43` | `Left` |
 | WEAP one-handed (incl. staff), equip slot RightHand `0x13F42` | `Right` |
@@ -411,7 +412,10 @@ The seat's verdict for a governed equip on a claimed actor, in order:
 
 Observe-only turns each deny into `would-deny`. The default scope
 `{kEquipCat_All, 0}` makes steps 2 and 6 unreachable, so a v7 or v8 client
-sees the v8 verdict table unchanged.
+sees the v8 verdict table unchanged. One label differs from v8: a `PlayerMenu`
+equip of an IN-SET item now logs `verdict=allow (player agency)` (step 1 runs
+before the in-set test), where v8 logged plain `verdict=allow`. The verdict is
+the same, only the label moved.
 
 Rules of the road for the scope:
 
@@ -494,29 +498,40 @@ reading, not for parsing.
    slot through the engine's deferred apply on paper only until a session shows
    it.
 
-8. The scope reaches the seat: after a `SET-EQUIP-SCOPE` line with a narrowed
-   `owned`, every `[apmf][equip-obs]` line for that actor whose `cat=` has no
-   bit in `owned` and none in `denied` reads `owned=0 black=0 verdict=allow`.
-   ZERO `would-deny` or `deny` lines with `owned=0 black=0`.
-9. The deny mask fires: for a scope with a non-zero `denied`, every
-   `[apmf][equip-obs]` line whose `cat=` overlaps `denied` reads `black=1` and
-   `verdict=would-deny` (or `deny`), including an item that is in the declared
-   set. ZERO `black=1 verdict=allow` lines except on a `Script`, `Console` or
-   `PlayerMenu` path without the matching deny bit.
-10. The category map agrees with the engine: every `cat=Shield+Left` line
+8. A follower with NO hold switches to a bow in combat: `path=CombatNode ...
+   verdict=allow cat=Right+Left owned=0 black=0 name='... Bow'` followed by
+   the follower visibly shooting. (The unowned hands are the engine's.)
+9. ZERO `verdict=deny` or `verdict=would-deny` lines with `owned=0 black=0`.
+10. A dual-wielder (offHand==2) with no hold logs `cat=Shield+Left owned=0
+    black=1 verdict=deny` (or `would-deny` in observe mode) on the shield AND
+    stays shield-less.
+11. Every WEAP line's `eslot` is `R`, `L` or `E` (histogram over the session).
+    An `E` on a `WorkerReentry` line is the case the conservative either-hand
+    rule guards; it is expected, not a failure.
+12. The scope reaches the seat: after a `SET-EQUIP-SCOPE` line with a narrowed
+    `owned`, every `[apmf][equip-obs]` line for that actor whose `cat=` has no
+    bit in `owned` and none in `denied` reads `owned=0 black=0 verdict=allow`.
+13. The deny mask fires: for a scope with a non-zero `denied`, every
+    `[apmf][equip-obs]` line whose `cat=` overlaps `denied` reads `black=1` and
+    `verdict=would-deny` (or `deny`), including an item that is in the declared
+    set. ZERO `black=1 verdict=allow` lines except on a `Script`, `Console` or
+    `PlayerMenu` path without the matching deny bit.
+14. The category map agrees with the engine: every `cat=Shield+Left` line
     names a shield, every `cat=Ammo` line names arrows or bolts, every
     `cat=Light+Left` line names a torch, and a one-handed weapon with
     `eslot=R` or `eslot=L` reads `cat=Right` or `cat=Left` respectively. A
     `cat=Right+Left` line for a one-hander carries `eslot=E`, `eslot=none` or a
-    non-hand `eslot`, never `R` or `L`.
-11. The equip pass honours the scope: every `enforce pass` line prints
+    non-hand `eslot`, never `R` or `L`. A `cat=Armor+Shield+Left` line (the log
+    prints categories in bit order) names a piece that carries both the shield
+    bit and another biped bit.
+15. The equip pass honours the scope: every `enforce pass` line prints
     `owned=0x.. denied=0x..` matching the last `SET-EQUIP-SCOPE` for that
     actor, and every declared item skipped as unowned or denied appears in ONE
     `NOT equipped by this pass` warn per (actor, set) with `skipped-unowned` /
     `skipped-denied` counted on the pass line. ZERO `-> equip` lines for an
     item whose categories are not all owned, or any denied.
 
-Only after all eleven hold on a real session is `bEquipObserveOnly` flipped to 0.
+Only after all fifteen hold on a real session (8-11 are the behavioural scope criteria from the v9 design, 12-15 are log-invariant checks) is `bEquipObserveOnly` flipped to 0.
 
 ## The facet table
 

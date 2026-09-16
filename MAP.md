@@ -730,7 +730,8 @@ claimed actor calls the worker at once, logged ONCE per (actor, formType) at deb
 and the AI's own potion/food/scroll use are never refused. **Categories (ABI v9):** `Categorize(obj, data->slot)` — THE ONE category map, a public
 function in this TU shared with `channels/EquipAuthority.cpp` (which calls it with the DECLARED
 hand's EQUP) — maps the item to `APMF_API::EquipCategory` bits from member reads only (ARMO
-`GetSlotMask` & `kShield` → Shield+Left else Armor; WEAP `IsTwoHandedSword/IsTwoHandedAxe/IsBow/
+`GetSlotMask`: `kShield` → Shield+Left, any OTHER bit (or none) → Armor, BOTH kinds of bits →
+Shield+Left+Armor — a modded shield-on-back piece must not slip under an Armor-only scope; WEAP `IsTwoHandedSword/IsTwoHandedAxe/IsBow/
 IsCrossbow` → Right+Left; a one-hander (incl. staff) by the slot's FormID 0x13F42 → Right /
 0x13F43 → Left / anything else incl. null → Right+Left CONSERVATIVE; AMMO → Ammo; LIGH →
 Light+Left); `competes & set.denied` = `black`, `competes & set.owned` = `owned`.

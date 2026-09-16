@@ -164,8 +164,11 @@ namespace apmf::equipsink {
     // seat; the DECLARED hand's EQUP in the enforce pass, nullptr for Default).
     // Pure member reads (form type, biped slot mask, weapon animation type, the
     // slot's FormID): safe on any thread, never a LookupByID (INVARIANTS #12).
-    //   ARMO without the shield bit                    -> Armor
+    //   ARMO without the shield bit (or no bits)       -> Armor
     //   ARMO with BipedObjectSlot::kShield             -> Shield | Left
+    //   ARMO with kShield AND any other biped bit      -> Shield | Left | Armor  (both
+    //        kinds of bits -> both categories: a modded "shield on back" piece
+    //        must not slip under an Armor-only scope and displace the body piece)
     //   WEAP 2H sword / 2H axe / bow / crossbow        -> Right | Left
     //   WEAP one-handed (incl. staff), slot 0x13F43    -> Left
     //   WEAP one-handed (incl. staff), slot 0x13F42    -> Right

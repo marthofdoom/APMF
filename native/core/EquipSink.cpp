@@ -574,9 +574,15 @@ namespace apmf::equipsink {
         case RE::FormType::Armor: {
             const auto* armo = obj->As<RE::TESObjectARMO>();
             if (!armo) return kEquipCat_Armor;   // a malformed ARMO is still armor, never a hand
-            const auto mask = static_cast<std::uint32_t>(armo->GetSlotMask());
-            const bool shield = (mask & static_cast<std::uint32_t>(RE::BGSBipedObjectForm::BipedObjectSlot::kShield)) != 0;
-            return shield ? (kEquipCat_Shield | kEquipCat_Left) : kEquipCat_Armor;
+            const auto mask   = static_cast<std::uint32_t>(armo->GetSlotMask());
+            const auto kShield = static_cast<std::uint32_t>(RE::BGSBipedObjectForm::BipedObjectSlot::kShield);
+            const bool shield = (mask & kShield) != 0;
+            // Both kinds of bits -> both categories (Fable on 3d5cab8, SEV-3 F1): a
+            // modded "shield on back" piece carries kShield AND a body/back bit; as
+            // Shield|Left only it would land under an Armor-only scope and displace
+            // the declared body piece. An ARMO with NO biped bits at all is Armor.
+            const bool armor  = (mask & ~kShield) != 0 || mask == 0;
+            return (shield ? (kEquipCat_Shield | kEquipCat_Left) : 0u) | (armor ? kEquipCat_Armor : 0u);
         }
         case RE::FormType::Weapon: {
             const auto* weap = obj->As<RE::TESObjectWEAP>();
