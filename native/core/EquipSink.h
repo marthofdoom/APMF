@@ -37,8 +37,21 @@
 // (the worker family's 38913/37957 re-entry equips the same in-set object; the
 // deferred apply of a queued equip comes back one actor-update later from
 // 38906/37950 = `QueuedApply`, tls=0, also in-set). Papyrus/console equips pass unless the claim or the INI says
-// kEquipAuth_DenyScript. Observe-only (INI, default ON for the first field build,
+// kEquipAuth_DenyScript. The PLAYER's own equips on the actor through the
+// trade/gift menu (`path=PlayerMenu`) pass unless the claim says
+// kEquipAuth_DenyPlayerMenu (ABI v8: player agency; logged `verdict=allow
+// (player agency)`). Observe-only (INI, default ON for the first field build,
 // or the claim's kEquipAuth_ObserveOnly) logs `would-deny` and refuses nothing.
+//
+// THE GOVERNED TYPES (ABI v8). EquipObject is also how a potion is drunk, food
+// eaten, a scroll read, an ingredient tasted, a book read -- Actor::DrinkPotion
+// and the AI's own potion use end at this same worker. Only ARMO / WEAP / AMMO
+// / LIGH (torch) are governed; every other form type passes the seat for a
+// claimed actor untouched, logged once per (actor, formType) at debug level.
+// The equip half (channels/EquipAuthority.cpp) applies the same set: a declared
+// item of any other type is skipped, never equipped (equipping it consumes it).
+// The v8 per-item HAND (SetEquipSetEx) is an equip-side matter too: the seat's
+// in-set test stays a FormID compare, whichever hand the engine aims at.
 //
 // HOW IT KNOWS WHO ASKED. The thunk is entered with EquipObject's own frame still
 // on the stack, so it reads EquipObject's CALLER's return slot at a per-site,

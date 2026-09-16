@@ -16,7 +16,9 @@
 // THE SHAPE. A claim here is a STANDING authority over what the actor wears: no
 // TTL, ended only by Release (or the losing side of arbitration). The claim
 // alone changes nothing. The client then DECLARES the worn set with
-// APMF_API_v7::SetEquipSet (base FormIDs, bounded by kMaxEquipSet), and from
+// APMF_API_v7::SetEquipSet (base FormIDs, bounded by kMaxEquipSet) or, from ABI
+// v8, APMF_API_v8::SetEquipSetEx (the same forms, each with a HAND: an
+// APMF_API::EquipSlot; v7's call is v8's with every slot Default), and from
 // that declaration on the facet has two halves:
 //   DENY   -- core/EquipSink.cpp, the #17a call-site seat at the one worker every
 //             engine equip funnels through, refuses every engine equip of an
@@ -30,6 +32,29 @@
 // Nothing is ever UNEQUIPPED by APMF: the engine's own worker displaces whatever
 // occupies a declared item's slot, the ordinary way. No re-assert loop follows
 // (INVARIANTS #0): the seat is what keeps the engine from undoing the set.
+//
+// THE HAND (ABI v8, 2026-09-15). A slot-less EquipObject of a one-hander lands
+// in the RIGHT hand and evicts the main-hand weapon (MFO measured it), so the
+// v7 form could never dual-wield and a declared off-hand dagger displaced the
+// declared sword. A v8 entry names the hand: kEquipSlot_Right / kEquipSlot_Left
+// are handed to EquipObject as the engine's own RightHand / LeftHand
+// BGSEquipSlot (Skyrim.esm EQUP 0x00013F42 / 0x00013F43, resolved by FormID --
+// NOT via BGSDefaultObjectManager::GetObject, whose CommonLib 3.7.0
+// IsObjectInitialized reads +0xB80 as a bool* and is broken on 1.6.1170 and a
+// fault on 1.5.97; MFO's Loadout.cpp + Docs/ADDRESS-TABLE-2026-09-15.md). "Not
+// worn" for a handed entry is "not in THAT hand" (Actor::GetEquippedObject(left)
+// compare), so a right-hand sword declared Left is re-equipped left. The same
+// form may be declared once per hand (two identical daggers): the pass counts
+// the instances it needs per form against the inventory count and skips (logs)
+// what the actor does not own enough copies of. kEquipSlot_Default is v7's
+// behaviour verbatim: no slot, IsWorn() as the worn test.
+//
+// THE GOVERNED TYPES (ABI v8). The seat governs ARMO / WEAP / AMMO / LIGH only;
+// every other form type passes it (a potion, food, a scroll, an ingredient, a
+// book -- DrinkPotion and the AI's own potion use are never refused). This pass
+// applies the SAME set on the equip side: a declared item of any other type is
+// skipped and logged, because equipping a potion is drinking it, and a
+// re-declaring client would drink one per pass.
 //
 // NOT A LOOP, EVEN FROM A TICKING CLIENT (Fable tier-3 on d1aa66b, SEV-3 #3).
 // ControlMap fires OnOwnerChanged on EVERY applied declaration (a re-issued
@@ -94,6 +119,7 @@ namespace {
     constexpr std::uint64_t kPendingMaxMs = 3000;   // an issued-not-applied item is held this long from its issue
     struct Issued {
         RE::FormID    form     = 0;
+        std::uint8_t  slot     = 0;   // ABI v8: the hand it was issued for (APMF_API::EquipSlot); a hold is per (form, slot)
         std::uint64_t issuedMs = 0;   // the ORIGINAL issue time; carried, never refreshed by a hold
     };
     struct ActorMemory {
@@ -109,8 +135,32 @@ namespace {
         std::uint64_t h = 1469598103934665603ull;
         auto mix = [&](std::uint32_t v) { h ^= v; h *= 1099511628211ull; };
         mix(set.count);
-        for (std::uint32_t i = 0; i < set.count; ++i) mix(set.forms[i]);
+        for (std::uint32_t i = 0; i < set.count; ++i) { mix(set.forms[i]); mix(set.slots[i]); }
         return h;
+    }
+
+    // The vanilla hand EQUP forms, read from Skyrim.esm's DOBJ record (DNAM `RHEQ`
+    // -> 0x13F42 "RightHand", `LHEQ` -> 0x13F43 "LeftHand"). Skyrim.esm is always
+    // load index 00, so the runtime FormID is the file FormID; the engine's own
+    // InitItemImpl fills its LHEQ/RHEQ default objects with exactly this lookup,
+    // so the slot the engine calls "left" IS this form on both runtimes.
+    constexpr RE::FormID kRightHandEquipSlot = 0x00013F42;
+    constexpr RE::FormID kLeftHandEquipSlot  = 0x00013F43;
+
+    // The seat's governed set, mirrored here (core/EquipSink.cpp IsGovernedType):
+    // ARMO / WEAP / AMMO / LIGH. Everything else is not a wearable and is never
+    // equipped by this pass (equipping a potion is drinking it).
+    bool IsGovernedType(RE::FormType t) {
+        return t == RE::FormType::Armor || t == RE::FormType::Weapon ||
+               t == RE::FormType::Ammo  || t == RE::FormType::Light;
+    }
+
+    const char* SlotName(std::uint8_t slot) {
+        switch (slot) {
+        case APMF_API::kEquipSlot_Right: return "right";
+        case APMF_API::kEquipSlot_Left:  return "left";
+        default:                         return "default";
+        }
     }
 
     // MAIN THREAD, strictly after the publishing Drain (see the banner). Reads the
@@ -164,6 +214,27 @@ namespace {
             return;
         }
 
+        // The two hand slots, resolved ONCE per pass by FormID (main thread; see
+        // the banner for why not BGSDefaultObjectManager::GetObject). Resolved
+        // lazily: a Default-only set never looks them up.
+        const RE::BGSEquipSlot* handSlot[3] = { nullptr, nullptr, nullptr };   // indexed by APMF_API::EquipSlot
+        bool handSlotsResolved = false;
+        auto resolveHandSlots = [&] {
+            if (handSlotsResolved) return;
+            handSlotsResolved = true;
+            handSlot[APMF_API::kEquipSlot_Right] = RE::TESForm::LookupByID<RE::BGSEquipSlot>(kRightHandEquipSlot);
+            handSlot[APMF_API::kEquipSlot_Left]  = RE::TESForm::LookupByID<RE::BGSEquipSlot>(kLeftHandEquipSlot);
+            if (!handSlot[APMF_API::kEquipSlot_Right] || !handSlot[APMF_API::kEquipSlot_Left])
+                spdlog::error("[apmf][equip-auth] actor=0x{} the hand EQUP forms did not resolve (RightHand 0x{} -> {}, "
+                              "LeftHand 0x{} -> {}) -- every handed entry in this pass is skipped, never equipped slot-less.",
+                              apmf::log::Hex(id), apmf::log::Hex(kRightHandEquipSlot),
+                              handSlot[APMF_API::kEquipSlot_Right] ? "ok" : "null",
+                              apmf::log::Hex(kLeftHandEquipSlot), handSlot[APMF_API::kEquipSlot_Left] ? "ok" : "null");
+        };
+        // What the actor holds in each hand right now, read once (the pass issues
+        // QUEUED equips, so nothing here changes while it runs).
+        const RE::TESForm* inHand[3] = { nullptr, actor->GetEquippedObject(/*left*/ false), actor->GetEquippedObject(/*left*/ true) };
+
         // One inventory snapshot for the whole pass (main thread; the map is a
         // local copy, nothing aliased into the engine).
         auto inv = actor->GetInventory();
@@ -172,10 +243,15 @@ namespace {
         // item is CARRIED into `issuedNow` with that time, so the hold is a real
         // kPendingMaxMs window, not one pass.
         std::vector<Issued> issuedNow;
-        std::uint32_t equipped = 0, worn = 0, missing = 0, unresolved = 0, pending = 0;
+        std::uint32_t equipped = 0, worn = 0, missing = 0, unresolved = 0, pending = 0, notGoverned = 0;
         for (std::uint32_t i = 0; i < set.count; ++i) {
-            const RE::FormID form = set.forms[i];
+            const RE::FormID   form = set.forms[i];
+            const std::uint8_t slot = (set.slots[i] <= APMF_API::kEquipSlot_Left) ? set.slots[i] : APMF_API::kEquipSlot_Default;
             if (form == 0) continue;
+            // ABI v8: the same form may be declared once per hand. This entry is
+            // instance #k of its form (0-based) -- it needs k+1 copies in inventory.
+            std::uint32_t instance = 0;
+            for (std::uint32_t j = 0; j < i; ++j) if (set.forms[j] == form) ++instance;
             auto* obj = RE::TESForm::LookupByID<RE::TESBoundObject>(form);
             if (!obj) {
                 ++unresolved;
@@ -183,18 +259,41 @@ namespace {
                              "equippable) -- skipped.", apmf::log::Hex(id), apmf::log::Hex(form));
                 continue;
             }
+            if (!IsGovernedType(obj->GetFormType())) {
+                ++notGoverned;
+                spdlog::warn("[apmf][equip-auth] actor=0x{} declared 0x{} '{}' is form type 0x{}, not a governed equip "
+                             "type (ARMO/WEAP/AMMO/LIGH) -- skipped (the seat passes this type through; equipping it "
+                             "would consume it).",
+                             apmf::log::Hex(id), apmf::log::Hex(form), obj->GetName() ? obj->GetName() : "",
+                             apmf::log::Hex(static_cast<std::uint32_t>(obj->GetFormType()), 2));
+                continue;
+            }
             auto it = inv.find(obj);
-            if (it == inv.end() || it->second.first <= 0) {
+            const std::int32_t invCount = (it == inv.end()) ? 0 : it->second.first;
+            if (invCount <= 0) {
                 ++missing;
                 spdlog::warn("[apmf][equip-auth] actor=0x{} declared 0x{} '{}' is not in the actor's inventory -- "
                              "skipped (APMF never adds items; the seat still holds the declaration).",
                              apmf::log::Hex(id), apmf::log::Hex(form), obj->GetName() ? obj->GetName() : "");
                 continue;
             }
+            if (static_cast<std::int32_t>(instance) >= invCount) {
+                ++missing;
+                spdlog::warn("[apmf][equip-auth] actor=0x{} declared 0x{} '{}' ({} hand) is instance #{} of that form but "
+                             "the actor owns {} -- skipped (APMF never adds items).",
+                             apmf::log::Hex(id), apmf::log::Hex(form), obj->GetName() ? obj->GetName() : "",
+                             SlotName(slot), instance + 1, invCount);
+                continue;
+            }
             const auto& entry = it->second.second;
-            if (entry && entry->IsWorn()) { ++worn; continue; }
+            // Worn test. Default: any worn instance (v7 verbatim). A handed entry:
+            // THAT hand holds this form -- the engine's own per-hand read, so a
+            // right-hand sword declared Left reads not-worn and is moved.
+            const bool isWorn = (slot == APMF_API::kEquipSlot_Default) ? (entry && entry->IsWorn())
+                                                                       : (inHand[slot] == obj);
+            if (isWorn) { ++worn; continue; }
             if (auto held = std::find_if(mem.issued.begin(), mem.issued.end(),
-                                         [&](const Issued& e) { return e.form == form; });
+                                         [&](const Issued& e) { return e.form == form && e.slot == slot; });
                 held != mem.issued.end()) {
                 // Issued inside the hold window and not yet worn: do not queue a
                 // second copy. Carried with its original time; retried once the
@@ -203,27 +302,34 @@ namespace {
                 issuedNow.push_back(*held);
                 continue;
             }
+            const RE::BGSEquipSlot* equipSlot = nullptr;
+            if (slot != APMF_API::kEquipSlot_Default) {
+                resolveHandSlots();
+                equipSlot = handSlot[slot];
+                if (!equipSlot) { ++unresolved; continue; }   // logged once above; never degraded to slot-less
+            }
 
             {
                 // The bracket is what the seat recognises as "APMF-issued": this
                 // equip, and every engine re-entry beneath it, passes with tls>0.
                 apmf::equipsink::ApmfEquipScope scope;
-                mgr->EquipObject(actor, obj, nullptr, 1, nullptr, /*queue*/ true, /*force*/ false,
+                mgr->EquipObject(actor, obj, nullptr, 1, equipSlot, /*queue*/ true, /*force*/ false,
                                  /*sounds*/ true, /*applyNow*/ false);
             }
             ++equipped;
-            issuedNow.push_back(Issued{ form, nowMs });
-            spdlog::info("[apmf][equip-auth] actor=0x{} set={} items -> equip 0x{} '{}'",
-                         apmf::log::Hex(id), set.count, apmf::log::Hex(form), obj->GetName() ? obj->GetName() : "");
+            issuedNow.push_back(Issued{ form, slot, nowMs });
+            spdlog::info("[apmf][equip-auth] actor=0x{} set={} items -> equip 0x{} '{}' hand={}",
+                         apmf::log::Hex(id), set.count, apmf::log::Hex(form), obj->GetName() ? obj->GetName() : "",
+                         SlotName(slot));
         }
         mem.lastPassMs = nowMs;
         mem.lastSig    = sig;
         ++mem.passes;
         mem.issued     = std::move(issuedNow);
         spdlog::info("[apmf][equip-auth] actor=0x{} enforce pass #{}{}: set={} equipped={} already-worn={} "
-                     "held-in-flight={} not-in-inventory={} unresolved={}",
+                     "held-in-flight={} not-in-inventory={} unresolved={} not-governed={}",
                      apmf::log::Hex(id), mem.passes, identical ? " (identical re-declaration)" : "",
-                     set.count, equipped, worn, pending, missing, unresolved);
+                     set.count, equipped, worn, pending, missing, unresolved, notGoverned);
     }
 
     void PostEnforce(RE::FormID id) {

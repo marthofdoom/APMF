@@ -105,29 +105,44 @@ namespace {
         }
     }
 
+    // ABI v8 (ch.17): the same declaration with a HAND per item (see APMF_API_v8's
+    // doc comment). `entries` is READ AND COPIED synchronously inside
+    // EnqueueSetEquipSetEx -- APMF never retains the pointer; `count` is clamped
+    // to kMaxEquipSet there. Applied on the game thread at the next Drain.
+    void APMF_SetEquipSetEx(APMF_API::Handle handle, const APMF_API::APMF_EquipEntry* entries, std::uint32_t count) {
+        try {
+            apmf::ControlMap::Get().EnqueueSetEquipSetEx(handle, entries, count);
+        } catch (...) {
+        }
+    }
+
     // The single static POD interface handed to clients. It is the NEWEST revision
-    // (APMF_API_v7), constant-initialized (the pointers are to static functions), so
+    // (APMF_API_v8), constant-initialized (the pointers are to static functions), so
     // it is valid the instant the DLL loads. Because each revision's leading members
-    // are exactly the previous revision's (v7 extends v6 extends v5 extends v4, base
-    // laid out first), a v1..v6 client reading it through its own struct pointer sees
-    // only its prefix. The v4 base subobject is brace-initialized explicitly.
-    constexpr APMF_API::APMF_API_v7 g_api{
+    // are exactly the previous revision's (v8 extends v7 extends v6 extends v5
+    // extends v4, base laid out first), a v1..v7 client reading it through its own
+    // struct pointer sees only its prefix. The v4 base subobject is brace-initialized
+    // explicitly.
+    constexpr APMF_API::APMF_API_v8 g_api{
         {
             {
                 {
-                    APMF_API::kABIVersion,
-                    &APMF_Request,
-                    &APMF_Release,
-                    &APMF_RequestEx,
-                    &APMF_Repoint,
-                    &APMF_SetSpellAllowList,
+                    {
+                        APMF_API::kABIVersion,
+                        &APMF_Request,
+                        &APMF_Release,
+                        &APMF_RequestEx,
+                        &APMF_Repoint,
+                        &APMF_SetSpellAllowList,
+                    },
+                    &APMF_RequestCast,
                 },
-                &APMF_RequestCast,
+                &APMF_GetCastProxy,
+                &APMF_IsClaimLive,
             },
-            &APMF_GetCastProxy,
-            &APMF_IsClaimLive,
+            &APMF_SetEquipSet,
         },
-        &APMF_SetEquipSet,
+        &APMF_SetEquipSetEx,
     };
 
 }

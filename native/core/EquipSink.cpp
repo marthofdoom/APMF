@@ -9,6 +9,7 @@
 #include <cstddef>
 #include <cstring>
 #include <iterator>
+#include <unordered_set>
 
 // Win32 INI read for the three switches below. Declared by hand, exactly like
 // core/EquipGate.cpp / core/CastClassify.cpp do -- PCH does not pull in
@@ -94,7 +95,10 @@ namespace apmf::equipsink {
         // ---- Caller path table (per runtime). An engine caller of EquipObject /
         // the list sibling whose id is not here logs as Unknown(<id>); a return
         // address outside SkyrimSE.exe logs as External(<module>). ----
-        enum class PathKind : std::uint8_t { kEngine, kScript, kConsole };
+        // kPlayerMenu (ABI v8): the player's own equips on the actor through the
+        // trade/gift/follower-inventory menu -- ALLOWED by default (player agency,
+        // marth 2026-09-15) unless the claim carries kEquipAuth_DenyPlayerMenu.
+        enum class PathKind : std::uint8_t { kEngine, kScript, kConsole, kPlayerMenu };
         struct PathSpec {
             std::uint64_t id;
             const char*   name;
@@ -112,9 +116,9 @@ namespace apmf::equipsink {
             { 48124,  "CombatNode",        PathKind::kEngine },
             { 54661,  "Script",            PathKind::kScript },
             { 22351,  "Console",           PathKind::kConsole },
-            { 29383,  "PlayerMenu",        PathKind::kEngine },
-            { 29346,  "PlayerMenu",        PathKind::kEngine },
-            { 38907,  "PlayerMenu",        PathKind::kEngine },
+            { 29383,  "PlayerMenu",        PathKind::kPlayerMenu },
+            { 29346,  "PlayerMenu",        PathKind::kPlayerMenu },
+            { 38907,  "PlayerMenu",        PathKind::kPlayerMenu },
             { 38913,  "WorkerReentry",     PathKind::kEngine },   // the worker family's own re-entry (2nd copy / dual wield)
             // The DEFERRED APPLY of a queued equip (Fable tier-3 on d1aa66b, SEV-3 #1):
             // EquipObject(queue=1) -> worker +0x272 -> 37684 -> 39821 (AIProcess enqueue)
@@ -137,9 +141,9 @@ namespace apmf::equipsink {
             { 46955,  "CombatNode",        PathKind::kEngine },
             { 53861,  "Script",            PathKind::kScript },
             { 21869,  "Console",           PathKind::kConsole },
-            { 28629,  "PlayerMenu",        PathKind::kEngine },
-            { 28593,  "PlayerMenu",        PathKind::kEngine },
-            { 37951,  "PlayerMenu",        PathKind::kEngine },
+            { 28629,  "PlayerMenu",        PathKind::kPlayerMenu },
+            { 28593,  "PlayerMenu",        PathKind::kPlayerMenu },
+            { 37951,  "PlayerMenu",        PathKind::kPlayerMenu },
             { 37957,  "WorkerReentry",     PathKind::kEngine },
             { 37950,  "QueuedApply",       PathKind::kEngine },   // <- 33449 (its only caller); -> EquipObject at +0xF1
             { 38789,  "QueuedApply",       PathKind::kEngine },   // <- 38133/40367; -> EquipObject at +0xD1
@@ -325,6 +329,29 @@ namespace apmf::equipsink {
             }
         }
 
+        // ---- THE GOVERNED TYPES (ABI v8). The worker is the sink for EVERY
+        // EquipObject, and EquipObject is also how a potion is drunk, food eaten,
+        // a scroll read, an ingredient tasted, a book read (Actor::DrinkPotion and
+        // the AI's own potion use end here too). Those are not the worn set, so
+        // only ARMO / WEAP / AMMO / LIGH (torch) are governed; every other form
+        // type passes the seat untouched -- logged once per (actor, formType) at
+        // debug level, never per event. A plain member read on the engine's
+        // thread, no lookup (INVARIANTS #12/#13). channels/EquipAuthority.cpp
+        // mirrors this set on the equip side. ----
+        bool IsGovernedType(RE::FormType t) {
+            return t == RE::FormType::Armor || t == RE::FormType::Weapon ||
+                   t == RE::FormType::Ammo  || t == RE::FormType::Light;
+        }
+        constexpr std::size_t kUngovernedSeenMax = 1024;
+        std::unordered_set<std::uint64_t> g_ungovernedSeen;   // (actor << 8 | formType), under g_logMx
+        // True the FIRST time this (actor, formType) pair is seen; bounded.
+        bool FirstUngovernedSight(RE::FormID actor, RE::FormType t) {
+            const std::uint64_t key = (static_cast<std::uint64_t>(actor) << 8) | (static_cast<std::uint64_t>(t) & 0xFF);
+            std::scoped_lock lock(g_logMx);
+            if (g_ungovernedSeen.size() >= kUngovernedSeenMax) g_ungovernedSeen.clear();   // never unbounded; a re-log beats growth
+            return g_ungovernedSeen.insert(key).second;
+        }
+
         // ---- THE THUNK. Same signature as the worker; the two patched E8s land
         // here through one shared trampoline stub. ----
         void SinkThunk(RE::ActorEquipManager* mgr, RE::Actor* actor, RE::TESBoundObject* obj, EquipData* data) {
@@ -342,7 +369,24 @@ namespace apmf::equipsink {
             EquipSetView set;
             if (!ControlMap::Get().TryGetEquipSet(actorId, set)) { g_worker(mgr, actor, obj, data); return; }
 
-            // A claimed actor. Everything from here is logged (deduped/capped).
+            // A claimed actor. A non-governed form type (a potion, food, a scroll,
+            // an ingredient, a book) passes: the worn set is ARMO/WEAP/AMMO/LIGH
+            // only. Logged once per (actor, formType) at debug, not per event.
+            const RE::FormType formType = obj->GetFormType();
+            if (!IsGovernedType(formType)) {
+                try {
+                    if (FirstUngovernedSight(actorId, formType))
+                        spdlog::debug("[apmf][equip-obs] actor={} formType=0x{} verdict=allow (not a governed type: "
+                                      "ARMO/WEAP/AMMO/LIGH only; first sight, logged once per actor and type) item={} name='{}'",
+                                      apmf::log::Hex(actorId), apmf::log::Hex(static_cast<std::uint32_t>(formType), 2),
+                                      apmf::log::Hex(obj->GetFormID()), obj->GetName() ? obj->GetName() : "");
+                } catch (...) {
+                }
+                g_worker(mgr, actor, obj, data);
+                return;
+            }
+
+            // Everything from here is logged (deduped/capped).
             const RE::FormID itemId = obj->GetFormID();
             const int        tls    = t_apmfDepth;
 
@@ -366,11 +410,17 @@ namespace apmf::equipsink {
             const bool denyScript = g_denyScript.load(std::memory_order_relaxed) ||
                                     (set.flags & APMF_API::kEquipAuth_DenyScript) != 0;
             const bool scriptPath = (caller.kind == PathKind::kScript || caller.kind == PathKind::kConsole);
+            // ABI v8: the player's own equips on the actor (the trade/gift menu)
+            // pass by default -- player agency; a client wanting the strict form
+            // sets kEquipAuth_DenyPlayerMenu on its claim. No INI twin.
+            const bool denyPlayerMenu = (set.flags & APMF_API::kEquipAuth_DenyPlayerMenu) != 0;
+            const bool playerMenuPath = (caller.kind == PathKind::kPlayerMenu);
 
             // The verdict. Order matters and is the whole policy:
             //   no declaration yet                                      -> allow (declare->enforce)
             //   a declared item                                         -> allow
             //   a script/console equip without DenyScript               -> allow
+            //   a PlayerMenu equip without DenyPlayerMenu               -> allow (player agency)
             //   anything else                                           -> deny (or would-deny)
             // `tls` is a LOG FIELD ONLY, never a bypass (Fable tier-3 on d1aa66b,
             // SEV-4 #4): APMF's own Enforce equips are in-set by construction, so
@@ -383,6 +433,8 @@ namespace apmf::equipsink {
             bool        callWorker = true;
             if (set.count == 0 || inSet || (scriptPath && !denyScript)) {
                 verdict = "allow";
+            } else if (playerMenuPath && !denyPlayerMenu) {
+                verdict = "allow (player agency)";
             } else if (observe) {
                 verdict = "would-deny";
             } else {
