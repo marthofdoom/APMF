@@ -37,8 +37,21 @@
 // (the worker family's 38913/37957 re-entry equips the same in-set object; the
 // deferred apply of a queued equip comes back one actor-update later from
 // 38906/37950 = `QueuedApply`, tls=0, also in-set). Papyrus/console equips pass unless the claim or the INI says
-// kEquipAuth_DenyScript. Observe-only (INI, default ON for the first field build,
+// kEquipAuth_DenyScript. The PLAYER's own equips on the actor through the
+// trade/gift menu (`path=PlayerMenu`) pass unless the claim says
+// kEquipAuth_DenyPlayerMenu (ABI v8: player agency; logged `verdict=allow
+// (player agency)`). Observe-only (INI, default ON for the first field build,
 // or the claim's kEquipAuth_ObserveOnly) logs `would-deny` and refuses nothing.
+//
+// THE GOVERNED TYPES (ABI v8). EquipObject is also how a potion is drunk, food
+// eaten, a scroll read, an ingredient tasted, a book read -- Actor::DrinkPotion
+// and the AI's own potion use end at this same worker. Only ARMO / WEAP / AMMO
+// / LIGH (torch) are governed; every other form type passes the seat for a
+// claimed actor untouched, logged once per (actor, formType) at debug level.
+// The equip half (channels/EquipAuthority.cpp) applies the same set: a declared
+// item of any other type is skipped, never equipped (equipping it consumes it).
+// The v8 per-item HAND (SetEquipSetEx) is an equip-side matter too: the seat's
+// in-set test stays a FormID compare, whichever hand the engine aims at.
 //
 // HOW IT KNOWS WHO ASKED. The thunk is entered with EquipObject's own frame still
 // on the stack, so it reads EquipObject's CALLER's return slot at a per-site,
@@ -79,6 +92,18 @@ namespace apmf::equipsink {
 
     // True once both sites are patched (false when refused, disabled, or VR).
     bool Installed();
+
+    // WHY Installed() is false, as a string literal ("" once installed; before
+    // Install runs it reads "not yet installed ..."). Any thread. ControlMap uses
+    // it to REFUSE a kIntent_EquipAuthority claim while the seat is down (ABI v8,
+    // MFO wiring review SEV-2 F1): a client that turns its own equips off on a
+    // successful claim must never be left holding a claim that enforces nothing.
+    const char* NotInstalledReason();
+
+    // Installed() AND the INI is not observe-only -- what APMF_API_v8::
+    // IsEquipAuthorityEnforced reports. A claim's OWN kEquipAuth_ObserveOnly bit is
+    // not consulted (the client that set it knows). Any thread.
+    bool Enforcing();
 
     // Re-run the public-entry detour inspection (main thread, outside any engine
     // frame: plugin.cpp calls it at kPostLoadGame and kNewGame). A plugin later

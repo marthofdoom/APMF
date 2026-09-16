@@ -235,6 +235,113 @@ Rules of the road:
   `would-deny` and nothing is refused. It is switched to enforcing once the
   probe criteria below pass. A client can also set `kEquipAuth_ObserveOnly`
   on its own claim.
+- **Only ARMO, WEAP, AMMO and LIGH are governed (ABI v8).** See the v8
+  section below. A potion, food, a scroll, an ingredient or a book passes the
+  seat untouched, so `DrinkPotion` and the AI's own potion use are never
+  refused. Do not declare one: the equip pass skips it and logs why.
+- **The player's own equips pass (ABI v8).** The player dressing the follower
+  through the trade or gift menu (`path=PlayerMenu`) is allowed by default.
+  Set `kEquipAuth_DenyPlayerMenu` for the strict form.
+
+## Declaring hands (ABI v8, `SetEquipSetEx`)
+
+Requires `abiVersion >= 8` and `APMF_API_v8`. The v7 `SetEquipSet` carries bare
+FormIDs and APMF equips them without a slot, so the engine picks the hand. A
+slot-less one-hander always lands in the RIGHT hand and evicts whatever was
+there (MFO measured it, 2026-09-15). Two hand-held items therefore cannot be
+declared through v7: a dagger meant for the off-hand evicts the sword.
+
+`SetEquipSetEx` takes one `APMF_EquipEntry` per item, with the hand:
+
+```cpp
+// Layout, byte-shared and static_assert-pinned in APMF_API.h:
+//   +0 form (u32)  +4 slot (u8: kEquipSlot_Default 0 / kEquipSlot_Right 1 / kEquipSlot_Left 2)
+//   +5 reserved[3] (must be 0)   size 8, align 4
+APMF_API::APMF_EquipEntry worn[] = {
+    { swordID,    APMF_API::kEquipSlot_Right,   {} },
+    { daggerID,   APMF_API::kEquipSlot_Left,    {} },   // dual wield: the off-hand
+    { cuirassID,  APMF_API::kEquipSlot_Default, {} },   // body armor: the engine picks
+    { arrowsID,   APMF_API::kEquipSlot_Default, {} },
+};
+g_apmf->SetEquipSetEx(h, worn, 4);
+```
+
+Rules of the road for hands:
+
+- **`kEquipSlot_Default` is v7 verbatim.** No slot is passed, the engine picks,
+  and "worn" means any worn instance. Use it for a two-hander, a bow, ammo and
+  every armor piece that is not a shield. `SetEquipSet` (v7) is implemented as
+  `SetEquipSetEx` with every slot Default.
+- **`kEquipSlot_Right` / `kEquipSlot_Left` name the hand.** APMF hands the
+  engine's own RightHand / LeftHand equip slot (Skyrim.esm EQUP `0x13F42` /
+  `0x13F43`, resolved by FormID) to `EquipObject`. Use them ONLY for hand-held
+  items: a one-hand weapon, a shield, a torch.
+- **"Not worn" for a handed entry means "not in THAT hand".** APMF reads what
+  the actor holds in each hand and compares. A sword the actor holds in the
+  right hand, declared Left, is re-equipped into the left hand.
+- **The same form may appear once per hand.** Two identical daggers, one per
+  hand, is a legal declaration. APMF counts the instances it needs per form
+  against the inventory count and skips (logged) any instance the actor does
+  not own enough copies of. It never adds items.
+- **The deny half does not know hands.** The seat compares FormIDs only. A
+  declared item is in-set whichever hand the engine tries to put it in. The
+  hand is what APMF's own equip pass enforces.
+- **A slot value outside 0..2 is treated as Default** and logged once per
+  handle. The reserved bytes are ignored by this APMF and must be 0.
+- **Log lines.** Each APMF equip prints `hand=right|left|default`. The
+  `SET-EQUIP-SET` line prints how many entries carry a hand. The pass summary
+  gained `not-governed=N` for declared items of a type the seat does not
+  govern.
+
+### The governed form types (ABI v8)
+
+`EquipObject` is also how a potion is drunk, food eaten, a scroll read, an
+ingredient tasted and a book read. Those are not the worn set. The seat
+governs only these form types, on both runtimes:
+
+| Governed | Passes untouched |
+|---|---|
+| ARMO (armor, shields, jewelry) | ALCH (potions, food) |
+| WEAP (weapons) | SCRL (scrolls) |
+| AMMO (arrows, bolts) | INGR (ingredients) |
+| LIGH (torches) | BOOK, and every other type |
+
+A non-governed equip on a claimed actor is allowed and logged ONCE per actor
+and form type at debug level (`verdict=allow (not a governed type...)`), never
+per event. APMF's equip pass applies the same set: a declared item of any
+other type is skipped and logged, because equipping it would consume it.
+
+### A refused claim means keep your own equips (ABI v8)
+
+A `Request`/`RequestEx` for `kIntent_EquipAuthority` returns `kInvalidHandle`
+while the equip seat is NOT installed: `[EquipAuthority] bEquipAuthority=0`, VR,
+a runtime other than 1.6.1170 / 1.5.97, a site-verify refusal (another patcher
+at one of the worker's call sites), or a request made before kDataLoaded. The
+v7 build accepted the claim and enforced nothing, which left a client that had
+turned its own equips off on a successful claim equipping nothing all session.
+APMF logs once: `[apmf][equip-auth] claim refused: seat not installed (<reason>)`.
+Treat a refused claim exactly like an absent APMF: run your own equip path.
+
+For an ACCEPTED claim, `IsEquipAuthorityEnforced()` (v8) tells observe from
+enforce: true only when the seat is installed AND `bEquipObserveOnly=0`. In
+observe mode APMF equips your declared set but refuses nothing, so the engine
+can still take it back off. Your claim's own `kEquipAuth_ObserveOnly` bit is
+not consulted by that call.
+
+```cpp
+if (h == APMF_API::kInvalidHandle) { /* seat not installed: keep your own equips */ }
+else if (!g_apmf->IsEquipAuthorityEnforced()) { /* observe mode: APMF equips, engine may undo */ }
+```
+
+### The player menu policy (ABI v8)
+
+The player dressing a follower by hand through the trade or gift menu
+(`path=PlayerMenu`) is a deliberate act and is ALLOWED by default, even for an
+off-set item. The log line reads `path=PlayerMenu verdict=allow (player
+agency)`. A client that wants the strict form sets `kEquipAuth_DenyPlayerMenu`
+on its claim and the path is then refused like any other engine equip. There
+is no INI twin for this bit. The allow is at the seat only. The next enforce pass re-equips any declared item the player's equip displaced. A client honouring player agency must observe the change (the `path=PlayerMenu verdict=allow (player agency)` line, or its own inventory read) and fold the player's choice into its next declaration. A v7 APMF ignores the bit, so a v8 client running
+against a v7 APMF gets the v7 behaviour (PlayerMenu refused).
 
 ### The probe criteria (what a field log must show before enforcement is switched on)
 
@@ -245,8 +352,11 @@ equip APMF issued itself runs with `tls>0`); it never changes a verdict. The
 
 1. Every engine re-equip of an off-set item on a claimed actor logs
    `verdict=would-deny` with a NAMED path (`OutfitApply`, `AddWornOutfit`,
-   `AiCommand`, `RemoveItemReequip`, `CombatNode`, `PlayerMenu`, `Script`,
-   `Console`, `WorkerReentry`, `QueuedApply`, or `External(<dll>)`).
+   `AiCommand`, `RemoveItemReequip`, `CombatNode`, `Script`, `Console`,
+   `WorkerReentry`, `QueuedApply`, or `External(<dll>)`). A `PlayerMenu`
+   off-set equip logs `verdict=allow (player agency)` unless the claim carries
+   `kEquipAuth_DenyPlayerMenu`, and a non-governed form type (a potion) logs
+   no per-event line at all.
 2. ZERO `would-deny` lines with `tls>0`. APMF's own equip pass only ever issues
    declared items, so a would-deny inside the bracket means the set the seat
    reads is not the set the pass enforced.
@@ -272,7 +382,18 @@ equip APMF issued itself runs with `tls>0`); it never changes a verdict. The
    when it can see that. Attribution is degraded and the script exemption is
    unavailable until that detour is accounted for.
 
-Only after all five hold on a real session is `bEquipObserveOnly` flipped to 0.
+6. `path=PlayerMenu` attributes correctly: ZERO `path=PlayerMenu` lines in a
+   session where the player never opens a follower's inventory, and every
+   `path=PlayerMenu` line coincides with a trade or gift menu interaction. The
+   six PlayerMenu ids come from prior enumeration, not from a field proof; the
+   log is the proof.
+7. The hand reaches the engine: at least one `[apmf][equip-auth] ... hand=left`
+   equip line followed by the follower visibly dual-wielding (or holding the
+   declared shield or torch in the left hand). The queued equip carries the
+   slot through the engine's deferred apply on paper only until a session shows
+   it.
+
+Only after all seven hold on a real session is `bEquipObserveOnly` flipped to 0.
 
 ## The facet table
 
@@ -311,7 +432,7 @@ columns, one doesn't imply the other.
 | `kIntent_ShoutPower` (ch.14) | Claim the shout/power selection facet | `form` (the shout/power FormID) | Built, not yet battle-tested. Arbitration only today, the same shape as ch.6. |
 | `kIntent_Equipment` (ch.15) | Unequip/equip a worn item, and (with a param) gate re-equip of a spell/staff while the claim stands | `form` (optional) | Built, not yet battle-tested. The most recently landed facet in the catalog. |
 | `kIntent_Detection` (ch.16) | Silent movement + reduced detection range | `fval` (reserved, not yet read) | **Field-proven.** An actor-value source-block, deck-tested to hold even on a package-locked actor. |
-| `kIntent_EquipAuthority` (ch.17) | **Declare what the NPC wears; APMF equips it and refuses every other engine equip.** ABI v7, declare with `SetEquipSet` | `ival` (an `EquipAuthFlags` bitmask); the set itself via `SetEquipSet` | Built, not yet battle-tested. Ships OBSERVE-ONLY (`[EquipAuthority] bEquipObserveOnly=1`) until the probe criteria above pass. The only call-site seat in APMF, under `Docs/INVARIANTS.md` #17a. |
+| `kIntent_EquipAuthority` (ch.17) | **Declare what the NPC wears; APMF equips it and refuses every other engine equip of a governed type (ARMO/WEAP/AMMO/LIGH).** ABI v7, declare with `SetEquipSet`; ABI v8 `SetEquipSetEx` adds a hand per item | `ival` (an `EquipAuthFlags` bitmask); the set itself via `SetEquipSet` / `SetEquipSetEx` | Built, not yet battle-tested. Ships OBSERVE-ONLY (`[EquipAuthority] bEquipObserveOnly=1`) until the probe criteria above pass. The only call-site seat in APMF, under `Docs/INVARIANTS.md` #17a. Player-menu equips pass by default (v8). |
 
 Where a field is marked "reserved, not yet read", the channel currently
 applies a fixed built-in behavior and ignores whatever you pass in that field.

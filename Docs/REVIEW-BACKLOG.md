@@ -50,6 +50,50 @@ This file tracks REVIEW findings only.
 
 ---
 
+### APMF-B5 — ch.17 Engage log still says "(SetEquipSet, ABI v7)"
+- **Raised:** Fable tier-3 on `a369e9f` (feat/equip-authority-v8), SEV-5; text as relayed by the coordinator.
+- **Severity:** SEV-5.
+- **Finding (verbatim, as relayed):** ":364 Engage log \"(SetEquipSet, ABI v7)\"".
+- **Reasoning:** `channels/EquipAuthority.cpp` `Engage` names only the v7 call; v8's `SetEquipSetEx` is the other declaration path. Cosmetic log text; a reader grepping for v8 adoption would not see it here.
+- **Assigned:** none; drain with the next ch.17 batch.
+
+### APMF-B6 — the hand-EQUP resolve error over-claims "every handed entry skipped"
+- **Raised:** Fable tier-3 on `a369e9f`, SEV-5; text as relayed by the coordinator.
+- **Severity:** SEV-5.
+- **Finding (verbatim, as relayed):** ":226 error text over-claims \"every handed entry skipped\"".
+- **Reasoning:** `Enforce`'s `resolveHandSlots` logs "every handed entry in this pass is skipped" when EITHER hand form fails to resolve, but the per-entry check skips only an entry whose OWN hand slot is null (`if (!equipSlot) { ++unresolved; continue; }`); with one hand resolving, entries for that hand are still equipped. Both forms come from Skyrim.esm at load index 00, so the branch is not expected to fire; the text should say "every entry declared for that hand".
+- **Assigned:** none.
+
+### APMF-B7 — the once-logged claim refusal reason can be stale after a later Install refusal
+- **Raised:** Fable tier-3 on `a369e9f`, SEV-5; text as relayed by the coordinator.
+- **Severity:** SEV-5.
+- **Finding (verbatim, as relayed):** "ControlMap.cpp:82-88 once-logged refusal reason vs a later Install refusal".
+- **Reasoning:** `EnqueueRequest` logs the seat-not-installed refusal ONCE with `NotInstalledReason()` at that moment. A client that requests before kDataLoaded logs "not yet installed (Install runs at kDataLoaded)"; if `Install()` then refuses for another reason (INI off, site-verify), that reason is never printed by this line (the `[apmf][equip-sink]` install line still carries it). Fix shape: log once PER DISTINCT reason string, not once ever.
+- **Assigned:** none.
+
+### APMF-B8 — the "seat not installed" branch in Enforce is unreachable under the v8 refusal
+- **Raised:** Fable tier-3 on `a369e9f`, SEV-5; text as relayed by the coordinator.
+- **Severity:** SEV-5.
+- **Finding (verbatim, as relayed):** "the unreachable \"seat not installed\" branch in Enforce :176-186".
+- **Reasoning:** since `EnqueueRequest` refuses a ch.17 claim while the seat is down, no claim exists for `Enforce` to run against when `Installed()` is false (Install runs once and never uninstalls), so the `g_seatMissing` error path is dead code. Kept as a defensive guard; its message ("declaration ... NOT enforced") describes a state that cannot arise. Either delete it or reword it as an invariant-violation log.
+- **Assigned:** none.
+
+### APMF-B9 — queued-slot carriage through the engine's deferred apply is unobserved
+- **Raised:** Fable tier-3 on `a369e9f`, SEV-5; text as relayed by the coordinator.
+- **Severity:** SEV-5 (probe requirement added to `Docs/INTEGRATION.md` criterion 7 in the closing round).
+- **Finding (verbatim, as relayed):** "queued-slot carriage unobserved (add the probe requirement: one `hand=left` equip line followed by visible dual-wield)".
+- **Reasoning:** `Enforce` passes the `BGSEquipSlot` to `EquipObject(queue=true)`; the slot's survival through the AIProcess queue and the `QueuedApply` re-entry (38906/37950) is argued from the `EquipData` layout, not observed. CLAUDE.md principle 5: a path exists is not a path runs. Closed by the field log, not by code.
+- **Assigned:** the first v8 deck session.
+
+### APMF-B10 — `MinReleaseForAbi` v7/v8 entry must be named at the cut
+- **Raised:** Fable tier-3 on `a369e9f`, SEV-5; text as relayed by the coordinator.
+- **Severity:** SEV-5 (release-checklist item).
+- **Finding (verbatim, as relayed):** "MinReleaseForAbi \"first release after 0.9.4\" must be named at the cut (release checklist)".
+- **Reasoning:** `core/ClientAPI.cpp MinReleaseForAbi` returns the placeholder "the first release after 0.9.4" for ABI v7/v8 because no release carrying them exists yet. Whoever cuts the next release replaces it with the actual version string in the same commit that bumps `project(APMF VERSION ...)`.
+- **Assigned:** the next release cut.
+
+---
+
 ## DRAINED
 
 _(none yet)_

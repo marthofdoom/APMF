@@ -52,7 +52,11 @@ The ONLY file a client shares with APMF. POD structs of function pointers
 same handle; `APMF_API_v4`: + `SetSpellAllowList`; `APMF_API_v5`: + `RequestCast` with
 the rich `APMF_CastRequest`; `APMF_API_v6`: + `GetCastProxy`/`IsCastActive`;
 `APMF_API_v7`: + `SetEquipSet` — the ch.17 equip-authority DECLARATION, plus
-`kIntent_EquipAuthority = 17`, the `EquipAuthFlags` bits and `kMaxEquipSet`), the
+`kIntent_EquipAuthority = 17`, the `EquipAuthFlags` bits and `kMaxEquipSet`;
+`APMF_API_v8`: + `SetEquipSetEx` — the same declaration with a HAND per item via
+the 8-byte POD `APMF_EquipEntry{form@0, slot@4 (EquipSlot: Default 0/Right 1/Left 2),
+reserved[3]@5}`, static_assert-pinned, + `IsEquipAuthorityEnforced` (installed AND not
+INI-observe-only), plus `kEquipAuth_DenyPlayerMenu = 1<<3`), the
 `Intent` enum, `Handle`, and the exported query-fn name. No C++ class / STL / vtable
 crosses the boundary. **The current `kABIVersion` is stated ONLY in the header**
 (INVARIANTS #14b — this line said 3 while the header was at 6).
@@ -65,13 +69,17 @@ crosses the boundary. **The current `kABIVersion` is stated ONLY in the header**
 
 ### `native/core/ClientAPI.{h,cpp}` — the C-ABI implementation
 The exported `APMF_GetInterface(abiVersion)` hands over the static POD newest-struct
-object (`APMF_API_v7` today — read the header, not this line) as a base
+object (`APMF_API_v8` today — read the header, not this line) as a base
 `APMF_API_v1*`; a client casts up to the newest struct it uses. It returns **nullptr**
 when the client asks for a version NEWER than this APMF implements (`:125-128`), which
 is why a needless `kABIVersion` bump is expensive (INVARIANTS #14b). Its
-`Request`/`RequestEx`/`Release`/`Repoint`/`SetSpellAllowList`/`SetEquipSet`
+`Request`/`RequestEx`/`Release`/`Repoint`/`SetSpellAllowList`/`SetEquipSet`/`SetEquipSetEx`
 fn-pointers forward to `ControlMap::EnqueueRequest/Release/Repoint/SetSpellAllowList/
-SetEquipSet` (Request == RequestEx with a null param).
+SetEquipSet/SetEquipSetEx` (Request == RequestEx with a null param; `SetEquipSet` is
+`SetEquipSetEx` with every slot Default); `IsEquipAuthorityEnforced` → `equipsink::Enforcing()`.
+The "client too new" null (`abiVersion > kABIVersion`) logs the running APMF version
+(`SKSE::PluginDeclaration::GetSingleton()`) and `MinReleaseForAbi(abi)` — a table that must
+be extended on every `kABIVersion` bump.
 `RequestEx`/`Repoint` copy the client's `APMF_Param` synchronously (never retained).
 `Repoint(handle,param)` updates a live claim's param + re-points its channel if it
 owns it — no release/re-request (the "own the gambit" retarget primitive).
@@ -84,7 +92,9 @@ owns it — no release/re-request (the "own the gambit" retarget primitive).
 `unordered_map<FormID, NpcCtl>` published as an immutable `shared_ptr<const MapType>`
 generation (each NpcCtl = engaged channels + per-channel client claims + captured
 package; each `Claim` carries its `APMF_Param`). `EnqueueRequest` (takes
-`const APMF_Param*`, copied) / `Release` / `EnqueueRepoint` (any thread; brief queue
+`const APMF_Param*`, copied; REFUSES `kIntent_EquipAuthority` with `kInvalidHandle` while
+`equipsink::Installed()` is false — logged once with `NotInstalledReason()` — so a client
+never holds a ch.17 claim the seat cannot enforce) / `Release` / `EnqueueRepoint` (any thread; brief queue
 lock, atomic handle), `Drain` (WRITER thread, once/frame: copy `m_current` into a
 private working map, apply `kRequest`/`kRelease`/`kRepoint` ops + sweep unloaded,
 then `Publish()` a NEW snapshot ONLY if something changed), `OnActorUpdate` (ANY
@@ -103,16 +113,20 @@ against the original spell and Repoint re-runs none of that) — with the one ex
 that a `kCastFlag_FromPackage` claim's heartbeat necessarily carries the PACKAGE the
 client named, which the claim remembers as `Claim::castSrcForm` and accepts silently
 (the stored form stays the spell APMF extracted).
-**ch.17 (ABI v7):** each `Claim` also carries the equip-authority DECLARATION
-(`equipForms[kMaxEquipSet]`/`equipCount`, POD, appended at the end; 0 == none).
-`EnqueueSetEquipSet` (any thread, copied + clamped at enqueue) → `kSetEquipSet` op →
-`ApplySetEquipSet` (writer: stores on the claim whether or not it owns the channel;
+**ch.17 (ABI v7/v8):** each `Claim` also carries the equip-authority DECLARATION
+(`equipForms[kMaxEquipSet]`/`equipCount`, POD, appended at the end; 0 == none; ABI v8
+appends the parallel `equipSlots[kMaxEquipSet]` (an `APMF_API::EquipSlot` per form, all
+Default for a v7 call) and `equipBadSlots` (the once-per-handle out-of-range-slot log)).
+`EnqueueSetEquipSetEx` (any thread, entries copied + clamped at enqueue; `EnqueueSetEquipSet`
+packs v7 forms into it with slot Default) → `kSetEquipSet` op →
+`ApplySetEquipSet` (writer: validates each slot to 0..2, else Default + one warn per handle;
+stores on the claim whether or not it owns the channel;
 if it IS the owner it fires `channel->OnOwnerChanged` on EVERY applied declaration,
 changed or not — a client re-issuing the same set is asking for it back, and that is
 a declaration, not a loop; returns "stored set changed" for the Publish gate).
 `TryGetEquipSet(actor, EquipSetView&)` is the seat's read: any thread, relaxed
 pre-gate, one acquire-load, one lookup, the WINNING claim's set copied out BY VALUE
-with its `param.ival` flags; false for an unclaimed/unloaded actor.
+with its `param.ival` flags and (v8) its `slots[]`; false for an unclaimed/unloaded actor.
 - **What breaks:** the RCU contract (#12) — the working map/`m_index` are mutated
   ONLY on the writer thread (Drain/ReleaseAll/Clear, all the same MAIN thread; API
   calls only enqueue) and published via `Publish()`
@@ -685,9 +699,16 @@ operator()`, which `report_and_fail`s on a miss), name it from the per-runtime p
 PlayerMenu / WorkerReentry / QueuedApply — the last is the deferred apply of a queued equip,
 38906,39814 / 37950,38789, which is how APMF's OWN queued equips come back one actor-update
 later with tls=0), `External(<module.dll>)` for a return address outside the exe (skse64*
-counts as Script), `Unknown(<id>)` otherwise. **Verdict, in order:** no declaration
-(`count==0`) → allow; item in the declared set → allow; Script/
-Console without `kEquipAuth_DenyScript`/INI `bEquipDenyScript` → allow; else observe-only
+counts as Script), `Unknown(<id>)` otherwise. **Governed types (ABI v8), checked right after `TryGetEquipSet`:** only
+ARMO / WEAP / AMMO / LIGH are governed (`IsGovernedType`); any other `GetFormType()` on a
+claimed actor calls the worker at once, logged ONCE per (actor, formType) at debug
+(`FirstUngovernedSight`, a bounded set under `g_logMx`), never per event — `DrinkPotion`
+and the AI's own potion/food/scroll use are never refused. **Verdict, in order:** no declaration
+(`count==0`) → allow; item in the declared set (FormID compare — the v8 hand is NOT consulted
+here) → allow; Script/
+Console without `kEquipAuth_DenyScript`/INI `bEquipDenyScript` → allow; `PlayerMenu`
+(`PathKind::kPlayerMenu`, the three per-runtime ids) without the claim's
+`kEquipAuth_DenyPlayerMenu` → `allow (player agency)` (v8: player agency, no INI twin); else observe-only
 (INI `bEquipObserveOnly`, default 1, or the claim's `kEquipAuth_ObserveOnly`) → log
 `would-deny` and call; else `deny` = RETURN WITHOUT CALLING the worker (nothing queued, no
 re-entry; the caller's own spin-lock/epilogue run as if the worker returned — both callers
@@ -736,8 +757,28 @@ site=<id>+<off> ret=<rva> q= f= s= a= tls= verdict=` line per decision, deduped 
   1 s coalesce is GONE — there is no signature/time guard at all; the inventory walk (the
   real dedupe) always runs, so a "give it back" re-declaration right after a script unequip
   is honoured, and the pass line marks an identical re-declaration. A held item
-  keeps its ORIGINAL issue time across passes (the 3 s window is real). (10) **Open review
-  findings live in `Docs/REVIEW-BACKLOG.md` APMF-B2..B4** (ch.15's probe re-equip is
+  keeps its ORIGINAL issue time across passes (the 3 s window is real). (11) **The governed-type set is
+  mirrored in TWO places** — `core/EquipSink.cpp IsGovernedType` (the deny) and
+  `channels/EquipAuthority.cpp IsGovernedType` (the equip pass skips a declared non-governed
+  form; equipping a potion drinks it) — change both or a declared potion is drunk per pass
+  while the seat lets every potion through. (12) **The hand (v8) lives ONLY in the equip
+  pass**: `EquipSetView::slots[]` → `Enforce` resolves `BGSEquipSlot` 0x13F42/0x13F43 by
+  `LookupByID` (NEVER `BGSDefaultObjectManager::GetObject` — CommonLib 3.7.0's
+  `IsObjectInitialized` reads +0xB80 as a `bool*`, always-null on 1.6.1170 and a fault on
+  1.5.97), tests "worn" per hand via `Actor::GetEquippedObject(left)`, keys the 3 s hold by
+  (form, slot), and counts same-form instances per hand against the inventory count. Never
+  let a null slot lookup degrade to a slot-less equip (it is skipped + logged). (13)
+  `NotInstalledReason()` must be a string LITERAL set at every refusal point in `Install()`
+  and cleared to "" on success — `ControlMap::EnqueueRequest` reads it from any thread to
+  refuse ch.17 claims; a new refusal point that forgets to set it leaves the stale
+  "not yet installed" text in the log. `Enforcing()` (= `IsEquipAuthorityEnforced`) is
+  installed AND NOT INI-observe-only; a claim's own ObserveOnly bit is deliberately not
+  folded in. (10) **Open review
+  findings live in `Docs/REVIEW-BACKLOG.md` APMF-B2..B4 and, for the v8 round on a369e9f,
+  APMF-B5..B10** (B5 Engage log names only v7; B6 the hand-EQUP resolve error over-claims;
+  B7 the once-logged claim-refusal reason can be stale; B8 Enforce's seat-missing branch is
+  unreachable under the v8 refusal; B9 queued-slot carriage unobserved — INTEGRATION criterion
+  7; B10 `MinReleaseForAbi`'s v7/v8 placeholder must be named at the cut) (ch.15's probe re-equip is
   `External(APMF.dll)` on a ch.17 actor; a detour target inside a trampoline page prints
   `detoured by ?`; the truncation log fires at Apply) — read them before editing this seat.
 
@@ -791,7 +832,7 @@ parentheses.
 | `OfferPackage.cpp` | 9 | package-procedure activity (NumpadSlash) | Arbitration + claim lifecycle + the `EvaluatePackage(true,false)` nudge, `mainthread::Post`ed so it lands PAST the claim's publish; the redirect itself is `core/PackageGate.cpp`'s T3 0x49 hook returning the claim's `param.form`. The test key carries no package, so a test claim offers nothing | claim + T3 enforcement; the ENGINE runs the package natively |
 | `Equipment.cpp` | 15 | equip/unequip (Num.) | `GetEquippedObject` + `UnequipObject`/`EquipObject` (melee-vs-ranged lever) | source-block |
 | `Detection.cpp` | 16 | stealth (Num8) | `kMovementNoiseMult` + `kDetectLifeRange` AVs | source-block |
-| `EquipAuthority.cpp` | 17 | ENGINE-EQUIP facet, WHOLE (`kIntent_EquipAuthority`, ABI v7; no test key) | Arbitration + claim lifecycle (standing, no TTL) + the ONE #17a-licensed equip: on every applied `SetEquipSet` for the owning claim (and on a win/repoint) it POSTS one `mainthread` hop that lands after `Publish()` and equips each declared item the actor is not wearing via `ActorEquipManager::EquipObject` (queued, not forced) inside `equipsink::ApmfEquipScope`; never unequips; no re-assert (every declaration walks the inventory; an item APMF already queued is held 3 s from its issue before it is queued again). The deny is `core/EquipSink.cpp`'s call-site seat. `Release` relinquishes (nothing to undo). Refuses `kEquipAuth_DenyUnequip` (reserved) | claim + #17a seat; APMF equips the DECLARED set, the ENGINE keeps its hands off |
+| `EquipAuthority.cpp` | 17 | ENGINE-EQUIP facet, WHOLE (`kIntent_EquipAuthority`, ABI v7/v8; no test key) | Arbitration + claim lifecycle (standing, no TTL) + the ONE #17a-licensed equip: on every applied `SetEquipSet`/`SetEquipSetEx` for the owning claim (and on a win/repoint) it POSTS one `mainthread` hop that lands after `Publish()` and equips each declared item the actor is not wearing via `ActorEquipManager::EquipObject` (queued, not forced; v8: with the declared hand's `BGSEquipSlot` 0x13F42/0x13F43 by `LookupByID`, "worn" = in THAT hand, same form allowed once per hand) inside `equipsink::ApmfEquipScope`; skips a declared non-governed form type (ARMO/WEAP/AMMO/LIGH only); never unequips; no re-assert (every declaration walks the inventory; an item APMF already queued is held 3 s from its issue before it is queued again, per (form, hand)). The deny is `core/EquipSink.cpp`'s call-site seat. `Release` relinquishes (nothing to undo). Refuses `kEquipAuth_DenyUnequip` (reserved). Open findings: `Docs/REVIEW-BACKLOG.md` APMF-B5, B6, B8, B9 | claim + #17a seat; APMF equips the DECLARED set, the ENGINE keeps its hands off |
 
 - **What breaks (all channels):** each must (1) keep the package coherent — none
   substitutes the package (§5); (2) capture-and-restore engine state in `Release`,

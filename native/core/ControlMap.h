@@ -98,6 +98,11 @@ namespace apmf {
         RE::FormID    forms[APMF_API::kMaxEquipSet]{};
         std::uint32_t count = 0;
         std::uint32_t flags = 0;   // the winning claim's param.ival (APMF_API::EquipAuthFlags)
+        // ABI v8: the hand per entry (APMF_API::EquipSlot values, parallel to
+        // `forms`; kEquipSlot_Default for a v7 SetEquipSet). Read by the ENFORCE
+        // pass only (channels/EquipAuthority.cpp); the seat's in-set test stays a
+        // FormID compare. Appended at the END.
+        std::uint8_t  slots[APMF_API::kMaxEquipSet]{};
     };
 
     class ControlMap {
@@ -126,7 +131,13 @@ namespace apmf {
         // synchronously. `forms` may be null (== count 0, CLEARS the declaration).
         // Applied at the next Drain: no-op on an unknown handle or a claim not on
         // the kIntent_EquipAuthority channel. See APMF_API_v7 / SetEquipSet.
+        // Implemented as EnqueueSetEquipSetEx with every slot = kEquipSlot_Default.
         void   EnqueueSetEquipSet(Handle handle, const RE::FormID* forms, std::uint32_t count);
+        // ABI v8: the same declaration with a HAND per item (APMF_EquipEntry: form +
+        // an APMF_API::EquipSlot). Same clamp, same synchronous copy, same clear on
+        // null/0. A slot value outside EquipSlot is stored as kEquipSlot_Default
+        // and logged once per handle at Apply. See APMF_API_v8 / SetEquipSetEx.
+        void   EnqueueSetEquipSetEx(Handle handle, const APMF_API::APMF_EquipEntry* entries, std::uint32_t count);
 
         // ABI v5 (ch.8b, kIntent_Cast): claim the cast-EXECUTION facet for a bounded
         // TTL window. `req` (may be null) is COPIED synchronously; APMF never retains
@@ -384,6 +395,15 @@ namespace apmf {
             // (Fable tier-3 on d1aa66b, SEV-4 #6): a silently clamped set denies
             // items 33+ with nothing in the log saying why.
             std::uint32_t  equipRequested = 0;
+            // ABI v8: the hand per declared item (APMF_API::EquipSlot), parallel to
+            // equipForms; all kEquipSlot_Default for a v7 SetEquipSet. Appended at
+            // the END, POD, same RCU deep-copy discipline as equipForms.
+            std::uint8_t   equipSlots[APMF_API::kMaxEquipSet]{};
+            // Once-per-handle guard for the out-of-range-slot log (mirrors
+            // equipRequested's shape): the count of out-of-range slots in the last
+            // declaration that had any (0 == none), so an identical re-send does
+            // not re-log.
+            std::uint32_t  equipBadSlots = 0;
         };
 
         // ---- THE ONE CLAIM COMPARATOR (2026-09-06) ------------------------------
@@ -530,6 +550,7 @@ namespace apmf {
             RE::FormID           equipForms[APMF_API::kMaxEquipSet]{};
             std::uint32_t        equipCount = 0;
             std::uint32_t        equipRequested = 0;   // the client's UNCLAMPED count (for the once-per-handle truncation log)
+            std::uint8_t         equipSlots[APMF_API::kMaxEquipSet]{};   // ABI v8: the hand per item, parallel to equipForms (raw client value; validated at Apply)
         };
 
         // All four apply against the WRITER's private working copy (`map`), never a
@@ -560,7 +581,10 @@ namespace apmf {
         // mainthread::Pump runs after Drain returns -- INVARIANTS #20's release-
         // ordering rule, applied to an engage-side engine write). No-op on an
         // unknown handle or a claim not on the kIntent_EquipAuthority channel.
-        bool ApplySetEquipSet(Handle handle, const RE::FormID* forms, std::uint32_t count,
+        // `slots` (ABI v8) is parallel to `forms` (never null when count > 0 --
+        // the enqueue side always fills it); a value outside APMF_API::EquipSlot
+        // is stored as kEquipSlot_Default and logged once per handle.
+        bool ApplySetEquipSet(Handle handle, const RE::FormID* forms, const std::uint8_t* slots, std::uint32_t count,
                               std::uint32_t requested, MapType& map);
 
         // Writer-thread-only choke point: takes ownership of the finished working
