@@ -1,3 +1,10 @@
+## Unreleased -- The equip log names the paths the first field run could not
+
+- **The AI equip dispatcher is now named.** The first observe run on the Deck passed every check but one: two lines came from an engine caller the log could only call `Unknown(39637)`. That caller is the AI command dispatcher itself, which equips directly as well as through the two helpers the log already named. It now reads `AiCommand` on both game versions.
+- **Twelve more engine callers are named.** Every remaining caller of the equip worker was checked against both unpacked game images. Dropping an item, picking one up, a conjured bound weapon equipping itself, the eat package, the re-equip after ammo or pickup, and combat start now read as what they are. Two stay unnamed on purpose: one whose second route could not be pinned, and one that nothing in the game references.
+- **Bound weapons are equips.** A follower's Bound Sword equips through the same check. A mod that declares a worn set must include the bound weapon or the follower will cast and hold nothing once enforcement is on. Documented.
+- No code path changed. Only the labels in the log and the documentation.
+
 ## Unreleased -- A mod can say which hand, and potions are never refused
 
 - **A mod can now say which hand an item goes in.** The first version equipped every item without a hand, so the game always put a one hand weapon in the right hand and pushed out whatever was there. A follower could not dual wield through Harbinger and a declared dagger evicted the declared sword. The new call carries a hand per item: right, left, or let the game pick. An item declared for the left hand that the follower holds in the right is moved. The same weapon can be declared once per hand.

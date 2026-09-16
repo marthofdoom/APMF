@@ -698,7 +698,13 @@ operator()`, which `report_and_fail`s on a miss), name it from the per-runtime p
 (OutfitApply / AddWornOutfit / AiCommand / RemoveItemReequip / CombatNode / Script / Console /
 PlayerMenu / WorkerReentry / QueuedApply — the last is the deferred apply of a queued equip,
 38906,39814 / 37950,38789, which is how APMF's OWN queued equips come back one actor-update
-later with tls=0), `External(<module.dll>)` for a return address outside the exe (skse64*
+later with tls=0 — plus, from the 2026-09-16 Tier-C sweep, AiCommand for the DISPATCHER
+39637/38606 itself (+0xF47/+0xCCD → EquipObject, the first v8 deck log's `Unknown(39637)`) and
+its family 39948,39655,39645,37510 / 38902,38624,38614,36510, DropObject 37520/36520 (Actor
+vtable 0xCB), PickUpObject 37521/36521 (0xCC), BoundItem 38898/37942 (← BoundItemEffect slot 4),
+ProcedureEat 28422/27700 (← BGSProcedureEat slot 0xC), InventoryReequip 41244/40241, StartCombat
+38561/37608; 16104/15864 and the orphan 52410/51535 stay Unknown on purpose — AUDIT row 17 has the
+evidence per id), `External(<module.dll>)` for a return address outside the exe (skse64*
 counts as Script), `Unknown(<id>)` otherwise. **Governed types (ABI v8), checked right after `TryGetEquipSet`:** only
 ARMO / WEAP / AMMO / LIGH are governed (`IsGovernedType`); any other `GetFormType()` on a
 claimed actor calls the worker at once, logged ONCE per (actor, formType) at debug
@@ -767,7 +773,12 @@ site=<id>+<off> ret=<rva> q= f= s= a= tls= verdict=` line per decision, deduped 
   `IsObjectInitialized` reads +0xB80 as a `bool*`, always-null on 1.6.1170 and a fault on
   1.5.97), tests "worn" per hand via `Actor::GetEquippedObject(left)`, keys the 3 s hold by
   (form, slot), and counts same-form instances per hand against the inventory count. Never
-  let a null slot lookup degrade to a slot-less equip (it is skipped + logged). (13)
+  let a null slot lookup degrade to a slot-less equip (it is skipped + logged). (14) **Every path-table row is
+  a PROVEN chain, not a guess** — the 2026-09-16 rows were named from an E8 sweep of both unpacked
+  images (address-library bounds, RTTI vtable slots, caller chains; tooling was scratch, the
+  evidence is in AUDIT row 17). Adding a row from a design table alone is how `Unknown(39637)`
+  cost a field cycle: the table named the dispatcher's executors and missed the dispatcher's own
+  direct call. Name a new id only after reading its E8 in the image. (13)
   `NotInstalledReason()` must be a string LITERAL set at every refusal point in `Install()`
   and cleared to "" on success — `ControlMap::EnqueueRequest` reads it from any thread to
   refuse ch.17 claims; a new refusal point that forgets to set it leaves the stale

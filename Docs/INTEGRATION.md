@@ -217,6 +217,11 @@ Rules of the road:
 - **`SetOutfit` is an engine path.** A Papyrus `SetOutfit` ends in the engine's
   own outfit apply (`OutfitApply`), not in the script equip path, so it is
   refused even when scripts are exempt.
+- **Bound weapons are equips too.** A conjured bound weapon equips itself
+  through the seat (`path=BoundItem`). Under enforcement that is an off-set
+  equip and is refused unless the bound weapon form is in your declared set.
+  A follower that casts Bound Sword needs `BoundSword` (WEAP) declared, or
+  will cast and hold nothing.
 - **Do not mix `kIntent_Equipment` (ch.15) with a ch.17 claim on one actor.**
   Ch.15's no-param probe path re-equips the weapon it removed on release,
   from inside APMF.dll. On a ch.17 actor that re-equip is an equip from
@@ -353,7 +358,12 @@ equip APMF issued itself runs with `tls>0`); it never changes a verdict. The
 1. Every engine re-equip of an off-set item on a claimed actor logs
    `verdict=would-deny` with a NAMED path (`OutfitApply`, `AddWornOutfit`,
    `AiCommand`, `RemoveItemReequip`, `CombatNode`, `Script`, `Console`,
-   `WorkerReentry`, `QueuedApply`, or `External(<dll>)`). A `PlayerMenu`
+   `WorkerReentry`, `QueuedApply`, `DropObject`, `PickUpObject`, `BoundItem`,
+   `ProcedureEat`, `InventoryReequip`, `StartCombat`, or `External(<dll>)`).
+   Two engine callers stay `Unknown` on purpose: 16104/15864 (a re-equip
+   helper whose second route could not be pinned) and 52410/51535 (an
+   orphan with no reference in the image). Either on a deny line is a real
+   finding; see `Docs/DENY-COMPLETENESS-AUDIT.md` row 17. A `PlayerMenu`
    off-set equip logs `verdict=allow (player agency)` unless the claim carries
    `kEquipAuth_DenyPlayerMenu`, and a non-governed form type (a potion) logs
    no per-event line at all.
