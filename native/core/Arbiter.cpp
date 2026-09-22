@@ -8,6 +8,7 @@
 #include "core/PackageGate.h"
 #include "core/MainThread.h"
 #include "core/Registry.h"
+#include "channels/CombatEngage.h"
 
 namespace apmf {
 
@@ -67,6 +68,16 @@ namespace apmf {
         // (~30s), INI-gated ([PackageGate] EnableRedirectLog, default ON), one
         // relaxed atomic-bool load the rest of the time.
         apmf::packagegate::Heartbeat();
+
+        // ch.19 (kIntent_CombatEngage) APPROACH MONITOR. Reuses this EXISTING
+        // once-per-frame game-thread seat -- no new thread, no new hook. It is NOT a
+        // re-assert (Channel.h): it never re-offers a package, it only decides when
+        // an approach has ENDED (arrived / line of sight / detection / target gone /
+        // stuck) and drops the ch.9 sub-claim. Deliberately NOT on Channel::Tick,
+        // which runs from the multi-threaded Character 0xAD seat while this monitor
+        // resolves handles and makes engine LOS/detection calls. Self-throttled
+        // internally; one relaxed atomic load while nothing is engaged.
+        apmf::combatengage::Poll();
     }
 
     void Arbiter::ReleaseAll(const char* why) {

@@ -7,6 +7,7 @@
 #include "channels/CastCompose.h"   // castcompose::ExtractFromPackage (ch.8b FromPackage read)
 #include "core/CastProxy.h"         // castproxy::Acquire/Free (ch.8b kSelf delivery-flip, writer thread)
 #include "core/MainThread.h"        // mainthread::Post (defer proxy teardown past this Drain's Publish)
+#include "channels/CombatEngage.h"  // ch.19 Installed()/NotInstalledReason() for the synchronous refusal
 
 namespace apmf {
 
@@ -87,6 +88,30 @@ namespace apmf {
                              apmf::equipsink::NotInstalledReason(), apmf::log::Hex(actor));
             return APMF_API::kInvalidHandle;
         }
+        // ch.19 (ABI v10): a kIntent_CombatEngage claim is REFUSED synchronously when
+        // the channel cannot do anything -- VR, [CombatEngage] bCombatEngage=0, or
+        // Data/APMF.esl missing -- and when it names NO TARGET. Same "seat down =
+        // claim refused" contract ch.17 uses above, and for the same reason: a claim
+        // that is accepted and then silently does nothing is worse than a refusal,
+        // because the client's documented degrade path never runs. A zero param.form
+        // is refused HERE rather than at Engage so the client learns at the call.
+        if (intent == APMF_API::kIntent_CombatEngage) {
+            if (!apmf::combatengage::Installed()) {
+                static std::atomic<bool> s_logged{ false };
+                if (!s_logged.exchange(true))
+                    spdlog::warn("[apmf][ch.19] claim refused: channel not installed ({}) -- actor 0x{}. "
+                                 "(Logged once.)",
+                                 apmf::combatengage::NotInstalledReason(), apmf::log::Hex(actor));
+                return APMF_API::kInvalidHandle;
+            }
+            if (!param || param->form == 0) {
+                spdlog::warn("[apmf][ch.19] claim refused: no target (param.form is 0) -- actor 0x{}. "
+                             "kIntent_CombatEngage REQUIRES param.form = the target actor's FormID.",
+                             apmf::log::Hex(actor));
+                return APMF_API::kInvalidHandle;
+            }
+        }
+
         const Handle h = m_nextHandle.fetch_add(1, std::memory_order_relaxed);
         PendingOp op{};
         op.kind   = PendingOp::Kind::kRequest;
@@ -1347,6 +1372,44 @@ namespace apmf {
                 outAllowCount = best->altCount;
                 for (std::uint32_t i = 0; i < outAllowCount; ++i) outAllowSet[i] = best->altForms[i];
             }
+            return true;
+        }
+        return false;   // this NPC is controlled, but not on this channel
+    }
+
+    bool ControlMap::TryGetOwningClaimBasis(RE::FormID actor, Intent intent,
+                                            APMF_API::APMF_Param& outParam, float& outBasis) const {
+        // ch.19's composite expansion needs the winning claim's BASIS as well as its
+        // param (see ControlMap.h). Deliberately an independent single-pass read, the
+        // same shape as the two overloads above rather than a wrapper around them, so
+        // each stays one snapshot load + one lookup with no shared mutable state.
+        outBasis = 0.0f;
+        if (m_anyControlled.load(std::memory_order_relaxed) == 0) return false;
+
+        std::shared_ptr<const MapType> snap = m_published.load(std::memory_order_acquire);
+        auto it = snap->find(actor);
+        if (it == snap->end()) return false;
+
+        const NpcCtl& npc = it->second;
+        if (!npc.handle.get()) return false;
+
+        auto* channel = Registry::Get().ChannelForIntent(intent);
+        if (!channel) return false;
+
+        for (const auto& cs : npc.channels) {
+            if (cs.channel != channel) continue;
+            if (cs.claims.empty()) return false;
+            // Winner = highest basis; tie -> earliest. The SAME plain strict compare
+            // the generic readers use, for the same reason: this is never called for
+            // kIntent_Cast, and every non-cast claim has castFlags == 0, so
+            // ControlMap.h::BetterClaim's deny-only tie rule could not change an
+            // answer here.
+            const Claim* best = &cs.claims.front();
+            for (const auto& c : cs.claims) {
+                if (c.basis > best->basis) best = &c;
+            }
+            outParam = best->param;
+            outBasis = best->basis;
             return true;
         }
         return false;   // this NPC is controlled, but not on this channel

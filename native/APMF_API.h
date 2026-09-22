@@ -84,7 +84,11 @@ namespace RE {
 
 namespace APMF_API {
 
-    inline constexpr std::uint32_t kABIVersion = 9;
+    // ABI v10 (2026-09-22) adds kIntent_CombatEngage (ch.19) + CombatEngageFlags
+    // and NOTHING else: ch.19 rides the EXISTING Request/RequestEx/Repoint/Release
+    // slots, so there is no APMF_API_v10 struct and no new function pointer. A v9
+    // client is byte-unaffected and keeps working against this build unchanged.
+    inline constexpr std::uint32_t kABIVersion = 10;
 
     // The exported query function's undecorated name and pointer type.
     // const APMF_API_v1* APMF_GetInterface(std::uint32_t abiVersion);
@@ -250,6 +254,80 @@ namespace APMF_API {
                                      //       kDataLoaded) -- a refused claim means KEEP YOUR OWN
                                      //       EQUIPS; APMF_API_v8::IsEquipAuthorityEnforced tells
                                      //       observe from enforce for an accepted claim.
+
+        // 18 is DELIBERATELY SKIPPED, not free. `Docs/SPEC-ATTACK-SELECTION-FACET.md`
+        // reserves ch.18 for the NPC attack-selection facet (a design, not yet
+        // authored). Leaving the number unused costs nothing and keeps intent
+        // numbers and channel numbers aligned for every channel that exists.
+
+        kIntent_CombatEngage  = 19,  // ch.19 SEND this actor AT a target actor (ABI v10, marth
+                                     //       2026-09-22). Mode: COMPOSITE -- APMF expands ONE
+                                     //       claim into an internal ch.6 combat-target claim and
+                                     //       an internal ch.9 package-offer claim (both at THIS
+                                     //       claim's own basis), and drives the approach with a
+                                     //       package APMF itself ships (Data/APMF.esl).
+                                     //       A STANDING claim: no TTL on the claim, ended only
+                                     //       by Release.
+                                     //       Param: form = the TARGET actor's FormID (required --
+                                     //       a zero form is refused); fval = the arrival radius in
+                                     //       game units (0 => the 128u default); ival = a
+                                     //       CombatEngageFlags bitmask.
+                                     //
+                                     //       WHAT v1 DOES, exactly, and nothing more: the actor
+                                     //       TRAVELS to the target under an APMF-owned Travel
+                                     //       package, and the approach ENDS when the actor
+                                     //       arrives, sees the target, detects it, or the target
+                                     //       is gone. From that moment the actor behaves EXACTLY
+                                     //       as vanilla would -- which, for a hostile target in
+                                     //       sight, is the engine's own combat AI.
+                                     //
+                                     //       WHAT v1 DOES NOT DO -- say so to your users, because
+                                     //       it is the difference between "they run at him" and
+                                     //       "they attack him": APMF makes NO combat-entry call
+                                     //       (no StartCombat) and does NOT pin the engine's combat
+                                     //       target. If the engine does not pick the fight up on
+                                     //       arrival, that is the evidence a later ABI needs to
+                                     //       justify adding entry + a target pin. It is NOT a
+                                     //       thing to work around client-side by re-pushing
+                                     //       StartCombat on a timer -- that produces search-state
+                                     //       pacing, not a charge.
+                                     //       It also claims NOTHING else: no attack selection, no
+                                     //       casting, no equip (ch.17), no hands, no aggression
+                                     //       (ch.11), no movement block (ch.1). A client that
+                                     //       wants any of those claims them itself.
+                                     //
+                                     //       Repoint(handle, &param) switches the foe in place
+                                     //       (the approach re-points; no release/re-claim churn).
+                                     //       Release ends the claim and both sub-claims.
+                                     //       REFUSED (kInvalidHandle) on VR, when
+                                     //       [CombatEngage] bCombatEngage=0, when APMF.esl is
+                                     //       missing, or when param.form is 0 -- each logged with
+                                     //       the reason.
+    };
+
+    // ── Combat-engage flags (kIntent_CombatEngage's param.ival, ABI v10) ────────
+    // Read at RequestEx/Repoint time from param.ival. APPEND-ONLY: never renumber
+    // an existing bit; OR in a new bit at the next free position.
+    enum CombatEngageFlags : std::uint32_t {
+        kEngage_None       = 0,
+
+        kEngage_NoApproach = 1u << 0,   // Skip the travel leg entirely: APMF makes the ch.6
+                                        //   combat-target claim and offers NO package. For a
+                                        //   client that already has the actor where it wants it,
+                                        //   or that drives its own movement. With this bit ch.19
+                                        //   is arbitration-only and changes nothing at the engine.
+
+        kEngage_ReleaseOnTargetDead = 1u << 1,
+                                        // NAMES THE v1 DEFAULT; it does not switch it on. APMF
+                                        //   ALWAYS drops the composition when the target dies, is
+                                        //   disabled, or unloads, whether or not this bit is set
+                                        //   -- holding an approach to a corpse would be a mask,
+                                        //   not a feature (CLAUDE.md principle 7). The bit exists
+                                        //   so a later ABI can add its inverse
+                                        //   (kEngage_HoldOnTargetDead) without a client having to
+                                        //   guess which way the default ran. Setting it is free
+                                        //   and documents intent; leaving it clear changes
+                                        //   nothing today.
     };
 
     // ── Equip-authority flags (kIntent_EquipAuthority's param.ival, ABI v7) ──
@@ -710,11 +788,14 @@ namespace APMF_API {
     //                                  the engine seats, core/CastSeats.cpp)
     //   ival   kIntent_EquipAuthority  an EquipAuthFlags bitmask (the worn set itself is NOT a
     //                                  param field -- it is declared with SetEquipSet, ABI v7)
+    //   form   kIntent_CombatEngage    the TARGET actor (REQUIRED; a 0 form is refused)
+    //   fval   kIntent_CombatEngage    the arrival radius in game units (0 => 128u default)
+    //   ival   kIntent_CombatEngage    a CombatEngageFlags bitmask (see above)
     //   none   every other Intent      accepted, not yet read by the channel
     //
-    // fval is not read by any channel yet (reserved for a future per-request bias
-    // on ch.11, scale on ch.1a, factor on ch.16). target/pos are not read by any
-    // Intent OTHER than kIntent_SelectSpell yet.
+    // fval is read ONLY by kIntent_CombatEngage (ABI v10); it stays reserved for a
+    // future per-request bias on ch.11, scale on ch.1a, factor on ch.16. target/pos
+    // are not read by any Intent OTHER than kIntent_SelectSpell yet.
     // ─────────────────────────────────────────────────────────────────────────────
 
     // The v1 interface: a POD struct of function pointers. NO vtable. `abiVersion`
