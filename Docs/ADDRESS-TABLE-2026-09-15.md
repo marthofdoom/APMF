@@ -407,3 +407,20 @@ only PlayerControls. Every framework's NPC attack ends in NotifyAnimationGraph w
 **Race ATKD (Tuxborn Skyrim.esm):** DefaultRace 0x19 = 8 ATKE, no Left/Dual. ImperialRace 0x13744 / NordRace
 0x13746 = 27 entries incl. attackStartLeftHand / attackStartDualWield / attackPowerStartDualWield at 1.0.
 CSTY DATA flags: csThalmorMeleeDual 0x5, csMercerFreyMelee 0x6, csHumanMelee_AllD 0x1, MFO_MeleeStyle 0x5.
+
+
+## Two AE 1.6.1170 Address Library files exist: pick by EXE BUILD (2026-09-22)
+
+`versionlib-1-6-1170-0.bin` serves exe build **1.6.1170.0**, `versionlib-1-6-1170-0-1.bin` serves exe build
+**1.6.1170.1**. They are not interchangeable: decoding ids with the wrong one lands about 0x930 off, i.e.
+mid-function, which reads as a plausible address instead of failing loudly.
+`binaries/1.6.1170/SkyrimSE.unpacked.exe` is **1.6.1170.0**, so use `-0.bin` for every offline id decode here.
+Self-check before trusting any AE id: `NotifyAnimationGraph` id 38048 must resolve to `0x6A35F0`
+(a `jmp rel32` thunk to the body at `0x54C450`). Only `-0.bin` gives that.
+
+**At RUNTIME this cannot bite us.** CommonLib builds the filename from the running exe's own version string
+(`REL/Relocation.h:1205-1214`, `versionlib-{version.string()}.bin`) and then rejects a file whose header
+version does not match the exe (`load_file`: "version mismatch" -> `report_and_error`). So the game always
+loads the library that matches its own build, or refuses. This is purely an OFFLINE ANALYSIS trap: it bites an
+agent decoding ids by hand against an unpacked binary, which is exactly how it was found (agentlog
+`apmf-combat-engage.md`).
