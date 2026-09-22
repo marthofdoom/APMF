@@ -1,12 +1,12 @@
 # AI Package Management Framework (APMF)
 
-APMF ("Harbinger") is an SKSE framework for Skyrim **Anniversary Edition
-(1.6.x)**. It refuses to install its cast path on any other runtime, and VR is
-refused outright. (This line said "SE and AE" until 2026-09-07; CHANGELOG,
-INTEGRATION and STATUS have all said AE-only since v0.9.0.) It's a scalpel,
-not a takeover. A mod claims exactly the facet of an NPC it needs, gets it
-without a fight, and everything else about that NPC (movement, other
-packages, the rest of its AI) keeps running untouched. When the mod releases
+APMF ("Harbinger") is an SKSE framework for Skyrim on Windows. Its cast seats
+open on **Anniversary Edition 1.6.1170** and **Special Edition 1.5.97**, behind
+exact-version gates that refuse any other build by name, and VR is refused
+outright. (This line said AE only until v0.9.5, which placed the verified 1.5.97
+values.) It's a scalpel, not a takeover. A mod claims exactly the facet of an
+NPC it needs, gets it without a fight, and everything else about that NPC
+(movement, other packages, the rest of its AI) keeps running untouched. When the mod releases
 the facet, the actor's own AI takes it straight back.
 
 It's for SKSE plugin authors whose mod directs NPCs and wants to stop
@@ -57,9 +57,9 @@ each one is.
 ```cpp
 #include "APMF_API.h"
 
-// Pick the NEWEST struct you actually call -- APMF_API_v6 is the current one
-// (APMF_API.h is canonical; never hardcode the number in your own docs).
-const APMF_API::APMF_API_v6* g_apmf = nullptr;
+// Pick the NEWEST struct you actually call -- APMF_API_v9 is the current one
+// (APMF_API.h is canonical, never hardcode the number in your own docs).
+const APMF_API::APMF_API_v9* g_apmf = nullptr;
 
 // Once, from kPostLoad/kDataLoaded:
 if (HMODULE h = GetModuleHandleA("APMF.dll")) {
@@ -71,8 +71,8 @@ if (HMODULE h = GetModuleHandleA("APMF.dll")) {
         // graceful degrade to an older APMF, ask for the lowest version you can
         // live with and feature-test with base->abiVersion from there.
         if (auto* base = fn(APMF_API::kABIVersion)) {
-            if (base->abiVersion >= 6)
-                g_apmf = reinterpret_cast<const APMF_API::APMF_API_v6*>(base);
+            if (base->abiVersion >= 9)
+                g_apmf = reinterpret_cast<const APMF_API::APMF_API_v9*>(base);
         }
     }
 }
@@ -100,9 +100,14 @@ Full design is in [design.md](design.md).
 
 ## Requirements
 
-- Skyrim **Anniversary Edition, 1.6.x (Windows)**. The cast path refuses to
-  install on SE 1.5.97 (`core/CastClassify.cpp` is AE-only), and VR is refused at
-  install throughout. Corrected 2026-09-07 — this said "SE or AE".
+- Skyrim on **Windows**: Anniversary Edition **1.6.1170** or Special Edition
+  **1.5.97**. The cast-classify seat (`core/CastClassify.cpp`) and the weapon-score
+  seat (`core/AiCastSeats.cpp` Group C) are placed per runtime from values verified
+  against each binary, and both open on both. Any other build is refused by name,
+  including a 1.6.x that isn't 1170, so nothing runs unverified. VR is refused at
+  install throughout, and 1.7.104 is unsupported because there's no address library
+  for it. (Corrected at v0.9.5. This said AE only, the cast path refuses to install
+  on SE 1.5.97.)
 - Build: CMake 3.21+, a C++23 compiler, [vcpkg](https://vcpkg.io) with the
   `commonlibsse-ng` port (see `native/vcpkg.json` / `native/vcpkg-configuration.json`).
 - A client mod links only against `native/APMF_API.h`, a plain C-ABI header
