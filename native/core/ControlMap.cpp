@@ -106,8 +106,25 @@ namespace apmf {
             }
             if (!param || param->form == 0) {
                 spdlog::warn("[apmf][travel] claim refused: no destination (param.form is 0) -- actor "
-                             "0x{}. kIntent_Travel REQUIRES param.form = the destination reference's "
-                             "FormID.",
+                             "0x{}. kIntent_Travel REQUIRES param.form = the destination's FormID (an "
+                             "object reference or a cell).",
+                             apmf::log::Hex(actor));
+                return APMF_API::kInvalidHandle;
+            }
+            // A WORLD POSITION IS NOT EXPRESSIBLE, so a claim that carries one is
+            // REFUSED rather than silently ignored. `PackageLocation` has no coordinate
+            // storage at all -- it is an 8-byte union of a form pointer and a ref
+            // handle -- the on-disk PLDT is 12 bytes in all 1988 vanilla Travel
+            // instances, and no case of the engine's own locType switch reads
+            // coordinates out of it (channels/Travel.cpp's header has the full
+            // derivation). Vanilla's idiom for "go to this spot" is a marker
+            // REFERENCE, so that is what a client passes.
+            if (param->posX != 0.0f || param->posY != 0.0f || param->posZ != 0.0f) {
+                spdlog::warn("[apmf][travel] claim refused: param.pos is set -- actor 0x{}. A travel "
+                             "destination cannot be a world POSITION: an AI package's location carries "
+                             "a form or a handle and no coordinates, on disk or at runtime. Place a "
+                             "marker and pass the MARKER REFERENCE in param.form, which is what vanilla "
+                             "does.",
                              apmf::log::Hex(actor));
                 return APMF_API::kInvalidHandle;
             }

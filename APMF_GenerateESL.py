@@ -15,9 +15,10 @@ DOCTRINE (Linux-Native-Tools, and the reason this file exists):
 WHY APMF SHIPS A PLUGIN AT ALL (2026-09-22, ch.19 kIntent_Travel).
   ch.9 (`kIntent_OfferPackage`) hands the engine a TESPackage the CLIENT ships.
   ch.19 moves the actor FOR the client, so the package has to be APMF's. Move-to-a-
-  place is a staple feature, not a niche one, and ONE shipped, generated, ESL-flagged
-  record set (no load-order slot, no overrides, ~2.5 KB, one master) buys every client
-  a working travel facet -- which is what earns the plugin its place.
+  place is a staple feature, not a niche one -- the destination may be any object
+  reference OR a whole cell -- and ONE shipped, generated, ESL-flagged record set (no
+  load-order slot, no overrides, ~2.5 KB, one master) buys every client a working
+  travel facet. That is what earns the plugin its place.
   Three options were weighed before writing this file:
 
     (A) REUSE A VANILLA PACKAGE -- REJECTED, two independent fatal defects.

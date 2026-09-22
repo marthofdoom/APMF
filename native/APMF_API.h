@@ -267,15 +267,32 @@ namespace APMF_API {
                                      //       natively, with a package APMF itself ships
                                      //       (Data/APMF.esl). A STANDING claim: no TTL, ended
                                      //       only by Release.
-                                     //       Param: form = the DESTINATION reference's FormID
-                                     //       (REQUIRED -- a zero form is refused); fval = the
-                                     //       arrival radius in game units (0 => the 75u default,
-                                     //       clamped to [50, 512] and the clamp logged); ival = a
-                                     //       TravelFlags bitmask.
-                                     //       ANY loaded object reference is a legal destination.
-                                     //       An actor is just the common case: the mechanism is a
-                                     //       runtime handle written into the package's location,
-                                     //       and it does not care what kind of ref it points at.
+                                     //       Param: form = the DESTINATION's FormID (REQUIRED --
+                                     //       a zero form is refused); fval = the arrival radius in
+                                     //       game units (0 => the 75u default, clamped to
+                                     //       [50, 512] and the clamp logged); ival = a TravelFlags
+                                     //       bitmask.
+                                     //
+                                     //       A DESTINATION IS A REFERENCE OR A CELL, and the
+                                     //       FormID's own record type decides which -- no flag,
+                                     //       no second field, no ambiguity:
+                                     //         * an object REFERENCE (REFR/ACHR: an actor, an
+                                     //           XMarker, a container, anything loaded). Arrival
+                                     //           = distance to it <= the radius.
+                                     //         * a CELL. Arrival = the actor's PARENT CELL is that
+                                     //           cell; distance has no meaning for a cell, so the
+                                     //           radius is not consulted for this kind.
+                                     //       Anything else is REFUSED and logged, never
+                                     //       reinterpreted.
+                                     //
+                                     //       A WORLD POSITION IS NOT ON OFFER, and that is a
+                                     //       property of the engine, not a choice: an AI package's
+                                     //       location carries a form or a handle and NO
+                                     //       coordinates, on disk or at runtime. Vanilla's own way
+                                     //       to say "go to this spot" is to place an XMarker and
+                                     //       point at the MARKER REFERENCE -- so do that. A claim
+                                     //       whose param.pos is non-zero is REFUSED with that
+                                     //       message rather than silently ignored.
                                      //
                                      //       THE WHOLE CONTRACT, in marth's words: "it goes to
                                      //       the target 50-100u from it. And combat interrupts
@@ -790,9 +807,13 @@ namespace APMF_API {
     //                                  the engine seats, core/CastSeats.cpp)
     //   ival   kIntent_EquipAuthority  an EquipAuthFlags bitmask (the worn set itself is NOT a
     //                                  param field -- it is declared with SetEquipSet, ABI v7)
-    //   form   kIntent_Travel          the DESTINATION reference (REQUIRED; a 0 form is refused)
-    //   fval   kIntent_Travel          the arrival radius in units (0 => 75u default, clamped 50-512)
+    //   form   kIntent_Travel          the DESTINATION: an object REFERENCE or a CELL (REQUIRED;
+    //                                  a 0 form, or any other record type, is refused)
+    //   fval   kIntent_Travel          the arrival radius in units (0 => 75u default, clamped 50-512);
+    //                                  not consulted when the destination is a CELL
     //   ival   kIntent_Travel          a TravelFlags bitmask (see above)
+    //   pos    kIntent_Travel          REFUSED if non-zero -- a package location cannot carry a
+    //                                  world position; pass a marker REFERENCE instead
     //   none   every other Intent      accepted, not yet read by the channel
     //
     // fval is read ONLY by kIntent_Travel (ABI v10); it stays reserved for a

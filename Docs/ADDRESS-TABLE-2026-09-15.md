@@ -412,6 +412,34 @@ actor the engine has not put in combat is simply not in combat, which is exactly
 monitor needs. The `+0x158` / `+0x160` difference is the AE +8 shift; APMF never touches that member
 itself, the call goes through the vtable.
 
+**`PackageLocation::AllocateLocation` -- the locType switch, decoded on both images.** ch.19 does not
+CALL it; the engine does, on the location ch.19 wrote. It was decoded because "which union member does
+each locType read" is a question that must be answered rather than assumed before writing that union.
+It is `RE::VTABLE_PackageLocation` slot **1**, so again a vtable index, not a relocation.
+
+| runtime | vtable | slot 1 target | addrlib id | jump table (13 entries, locType 0..12) |
+|---|---|---|---|---|
+| SE 1.5.97 | id 254228 -> `0x16177E0` | `0x441BE0` | 29012 | `0x442194` |
+| AE 1.6.1170 | id 203994 -> `0x185C1D0` | `0x49C9E0` | 29820 | `0x49CF94` |
+
+Every case body is instruction-for-instruction identical across the two runtimes. What each case reads
+out of `PackageLocation::data` (`[rsi+0x10]` SE / `[rdi+0x10]` AE):
+
+| locType | case body reads | verdict for ch.19 |
+|---|---|---|
+| 0 `kNearReference` | `mov eax, DWORD [..+0x10]` -- a **4-byte handle**, handed to a handle lookup | **SUPPORTED** (`data.refHandle`); also MFO-field-proven |
+| 1 `kInCell` | `mov rcx, QWORD [..+0x10]` -- an **8-byte pointer**, null-checked, used as `this` | **SUPPORTED** (`data.object` = the CELL) |
+| 2 `kNearPackageStartLocation` | the CONTEXT (`[r15]`) only; no payload read | refused: nothing a client can name |
+| 3 `kNearEditorLocation` | three CONSTANT floats from `.rdata`; never this struct | refused: our record has no editor location, and this is where a "position type" would have had to live |
+| 4 `kObjectID`, 5 `kObjectType`, 7 `kAtPackagelocation`, 10 | the jump table sends all of them **straight to the epilogue** | refused WITH PROOF: not implemented at this vfunc |
+| 6 `kNearLinkedReference` | `mov rdx, QWORD [..+0x10]` -- an 8-byte KEYWORD pointer, resolved against the ACTOR's linked ref | refused: APMF would be choosing the destination |
+| 8/9 `kAlias_*` | `mov edx, DWORD [..+0x10]` -- a 4-byte ALIAS INDEX, plus `[r15+0x10]`, the owning quest's alias machinery | refused: our record has no QNAM, and adding one hijacks that quest |
+| 12 `kNearSelf` | the actor (`[r15]`) only; no payload | refused: "stay put" is ch.1's facet |
+
+**NO CASE READS COORDINATES OUT OF THE STRUCT**, which -- with `sizeof(PackageLocation) == 0x18` (an
+8-byte union and no position field) and a 12-byte on-disk PLDT in all 1988 vanilla Travel-template
+instances -- makes "travel to a world position" a hard NOT FOUND rather than a design choice.
+
 **Struct offsets ch.19 relies on carry no per-runtime risk and are asserted at BUILD time**
 (`native/core/PackageData.cpp`): `PackageLocation` `sizeof 0x18`, `locType@0x08`, `rad@0x0C`,
 `data@0x10`; `TESCustomPackageData` `data@0x08`, `nameMap@0x28`, `templateParent@0x30`;

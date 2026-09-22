@@ -17,9 +17,10 @@ the travel leg lived only inside MFO. Their plugin fell back to re-pushing `Star
 combat interrupts and cancels the movement. That's all."** And: "Move to location is a staple
 feature." The hotkey-hunt case is just one caller.
 
-1. **`kIntent_Travel = 19`** (`native/APMF_API.h`). `param.form` = the DESTINATION reference
-   (REQUIRED -- any loaded ref; an actor is just the common case), `fval` = arrival radius
-   (0 => 75u, CLAMPED to [50, 512] with the clamp logged), `ival` = `TravelFlags`
+1. **`kIntent_Travel = 19`** (`native/APMF_API.h`). `param.form` = the DESTINATION (REQUIRED)
+   -- an object REFERENCE **or a CELL**, decided by the FormID's own record type, no flag and
+   no second field. `fval` = arrival radius (0 => 75u, CLAMPED to [50, 512] with the clamp
+   logged; not consulted for a cell), `ival` = `TravelFlags`
    (`kTravel_ReleaseOnTargetDead`, which NAMES the default rather than switching it on).
    Intent 18 is skipped, reserved for an attack-selection design that is not yet on main.
    **ABI v10 adds no struct and no fn-pointer slot** -- ch.19 rides the existing
@@ -85,6 +86,23 @@ observe session CAN prove is the client-facing half: per command, one `[travel] 
 naming destination/radius/flags plus one `[travel-observe] ... WOULD walk to ...` naming
 destination/radius/basis, with the values the client meant. That is the gate. **The ordering
 evidence requires an ACTIVE session** (`bTravelObserveOnly=0`).
+
+**WHAT A DESTINATION MAY BE, and why the boundary is where it is.** marth: "Move to location is
+a staple feature." So the facet takes a REFERENCE (arrival = distance <= radius) or a CELL
+(arrival = the actor's parent cell IS that cell; distance is meaningless for a cell, so the
+radius is not consulted). Everything else is REFUSED, and the boundary was MEASURED: the engine's
+own `PackageLocation::AllocateLocation` locType switch was decoded on both unpacked images (SE
+`0x441BE0` / table `0x442194`, AE `0x49C9E0` / table `0x49CF94`, case bodies identical). Case 0
+reads a 4-byte HANDLE and case 1 an 8-byte POINTER -- which is why `SetTravelTarget` and
+`SetTravelCell` are separate functions writing different members of the same union. Cases 4, 5, 7
+and 10 jump straight to the epilogue (the engine does not implement them); 2, 3 and 12 read no
+payload; 6 resolves against the actor's own linked ref; 8/9 resolve against the owning quest's
+aliases, which our QNAM-less record cannot use without hijacking a quest.
+**A WORLD POSITION IS A HARD NOT FOUND**, proven three ways: `PackageLocation` is 0x18 bytes with
+an 8-byte union and no coordinate field; the on-disk PLDT is 12 bytes in ALL 1988 vanilla
+Travel-template instances in Skyrim.esm; and no switch case reads coordinates out of the struct.
+Vanilla's idiom is an XMarker REFERENCE, so that is what a client passes, and a claim carrying
+`param.pos` is REFUSED rather than reinterpreted.
 
 **FUTURE FACETS, named so nobody builds them into this one.** Target PINNING (a port of MFO's
 `UpdateCombat` 0xE4 PIN) and COMBAT ENTRY are becoming their OWN intents -- explicitly NOT a v2

@@ -272,6 +272,13 @@ namespace apmf::packagedata {
 
         // Both guards passed -- write. Nothing above this line mutated anything, so
         // a decline is never a half-mutated package.
+        //
+        // `refHandle` (a u32 ObjectRefHandle), NOT `object`: the engine's case-0 body
+        // does `mov eax, DWORD PTR [rsi+0x10]` -- a 4-byte read -- and hands the result
+        // to a handle lookup. Verified on both unpacked images 2026-09-22 (SE
+        // AllocateLocation 0x441BE0, jump table 0x442194, case 0 at 0x441C62; AE
+        // 0x49C9E0, table 0x49CF94, case 0 at 0x49CA62), and field-proven by MFO before
+        // that.
         loc->locType        = RE::PackageLocation::Type::kNearReference;
         loc->data.refHandle = a_ref->CreateRefHandle();
         loc->rad            = static_cast<std::uint32_t>(a_radius);
@@ -280,6 +287,33 @@ namespace apmf::packagedata {
                      "kNearReference).",
                      apmf::log::Hex(a_pkg->GetFormID()), apmf::log::Hex(a_ref->GetFormID()),
                      static_cast<std::uint32_t>(a_radius), authored);
+        return true;
+    }
+
+    bool SetTravelCell(RE::TESPackage* a_pkg, RE::TESObjectCELL* a_cell, float a_radius) {
+        if (!a_pkg || !a_cell) return false;
+
+        auto* locPd = FindInput(a_pkg, kInputLocation);
+        if (!locPd) return false;
+        auto* loc = ReadLocation(locPd);
+        if (!loc) return false;
+
+        const int authored = static_cast<int>(loc->locType.get());
+
+        // `object` (an 8-byte TESForm*), NOT `refHandle`: the engine's case-1 body does
+        // `mov rcx, QWORD PTR [rsi+0x10]`, null-checks it, and uses it as the `this`
+        // pointer of a call. Verified on both unpacked images 2026-09-22 (SE case 1 at
+        // 0x441E85, AE at 0x49CC7A -- instruction-for-instruction identical apart from
+        // the register allocation). A handle written here would be a truncated pointer.
+        loc->locType     = RE::PackageLocation::Type::kInCell;
+        loc->data.object = a_cell;
+        loc->rad         = static_cast<std::uint32_t>(a_radius);
+
+        spdlog::info("[pkgdata] package 0x{} Location -> CELL 0x{} '{}' (authored locType {} -> "
+                     "kInCell; the engine's in-cell path does not read the radius, and APMF's own "
+                     "arrival test for a cell is parent-cell identity, not distance).",
+                     apmf::log::Hex(a_pkg->GetFormID()), apmf::log::Hex(a_cell->GetFormID()),
+                     a_cell->GetFormEditorID() ? a_cell->GetFormEditorID() : "?", authored);
         return true;
     }
 

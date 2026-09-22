@@ -19,9 +19,67 @@ extern "C" __declspec(dllimport) unsigned long __stdcall GetPrivateProfileIntA(
 // THE CONTRACT, in marth's own words: "it goes to the target 50-100u from it. And
 // combat interrupts and cancels the movement. That's all."
 //
-// A client claims kIntent_Travel naming a DESTINATION REFERENCE. APMF walks the
-// claimed actor to within ~75u of it and lets go the moment the actor is in
-// combat. That is the entire feature.
+// A client claims kIntent_Travel naming a DESTINATION. APMF walks the claimed
+// actor to it and lets go the moment the actor is in combat. That is the entire
+// feature. Move-to-a-place is a staple, not a niche: the hotkey-hunt case below is
+// one caller of it.
+//
+// ---------------------------------------------------------------------------
+// WHAT A DESTINATION MAY BE, and what it may NOT -- all of it read off the engine
+// ---------------------------------------------------------------------------
+// `param.form` is ONE FormID and its record type decides which location kind is
+// written. No new struct, no new field, no flag, and no ambiguity -- a FormID is
+// exactly one kind of record.
+//
+//   * an object REFERENCE (REFR/ACHR, incl. an actor or an XMarker)
+//         -> PackageLocation::Type::kNearReference (0), the ref's handle.
+//            Arrival = distance to the ref <= the leg's radius.
+//   * a CELL
+//         -> PackageLocation::Type::kInCell (1), a pointer to the cell.
+//            Arrival = the actor's PARENT CELL is that cell. Distance means nothing
+//            for a cell, so the radius is not consulted for this kind (it is still
+//            written, for symmetry; the engine's own in-cell path never reads it).
+//
+// EVERYTHING ELSE IS REFUSED, and here is the evidence rather than an opinion.
+// `PackageLocation::AllocateLocation` (vtable slot 1) switches on locType through a
+// 13-entry jump table; both unpacked images were decoded, 2026-09-22 (SE fn
+// 0x441BE0 / table 0x442194, AE fn 0x49C9E0 / table 0x49CF94), and every case body
+// is instruction-for-instruction identical across the two runtimes:
+//
+//   0 kNearReference             4-byte handle read       -> SUPPORTED
+//   1 kInCell                    8-byte pointer read      -> SUPPORTED
+//   2 kNearPackageStartLocation  reads the CONTEXT only, no payload. Not a
+//                                destination a client can name. REFUSED.
+//   3 kNearEditorLocation        loads three CONSTANT floats from .rdata; it never
+//                                reads this struct for coordinates, and our
+//                                generated record has no editor location. REFUSED.
+//   4 kObjectID, 5 kObjectType, 7 kAtPackagelocation
+//                                the jump table sends all three STRAIGHT TO THE
+//                                EPILOGUE -- the engine does not implement them
+//                                here at all. REFUSED, with proof.
+//   6 kNearLinkedReference       8-byte KEYWORD pointer; resolves against the
+//                                ACTOR's own linked ref. The client is not naming a
+//                                destination, APMF would be choosing one. REFUSED.
+//   8/9 kAlias_*                 a 4-byte ALIAS INDEX resolved against the OWNING
+//                                QUEST's alias machinery. Our record carries no
+//                                QNAM, and giving it one would hijack that quest.
+//                                REFUSED.
+//   12 kNearSelf                 reads the actor only, no payload. "Stay put" is
+//                                ch.1's facet, not travel's. REFUSED.
+//
+// AN EXPLICIT WORLD POSITION IS NOT EXPRESSIBLE AT ALL -- this is a hard NOT FOUND,
+// proven three ways, not a decision:
+//   (a) `PackageLocation` is 0x18 bytes: vptr, locType, rad, and an 8-byte union of
+//       `TESForm*` / `ObjectRefHandle`. There is no coordinate storage anywhere in
+//       it.
+//   (b) the on-disk PLDT subrecord is 12 bytes -- type, data, radius -- in ALL 1988
+//       vanilla instances of the Travel template in Skyrim.esm. No vanilla record
+//       carries coordinates in a package location either.
+//   (c) no case in the switch above reads coordinates out of the struct.
+// Vanilla's own idiom for "go to this spot" is to place an XMarker and point at the
+// REFERENCE -- which is case 0, already supported. So a client that wants a point
+// passes a marker ref. A claim carrying `param.posX/posY/posZ` is REFUSED with that
+// message rather than silently reinterpreted.
 //
 // WHAT PROBLEM IT SOLVES. A third-party "hotkey sends my teammates at that enemy"
 // plugin failed on ABI v9 because nothing in the public API moves an NPC to
@@ -46,16 +104,16 @@ extern "C" __declspec(dllimport) unsigned long __stdcall GetPrivateProfileIntA(
 // only way to move an NPC natively is to give the engine a package, so the package
 // offer is to travel what a vtable write is to a deny: mechanism, not meaning. It
 // is filed at the ch.19 claim's own basis so that arbitration stays honest (see
-// RefileSubClaim), and a client never sees it.
+// RefileOffer), and a client never sees it.
 //
 // ---------------------------------------------------------------------------
 // WHAT IT DOES, AND THE SHORT LIST OF WHAT IT DOES NOT
 // ---------------------------------------------------------------------------
 // DOES: point an APMF-OWNED Travel package (Data/APMF.esl, one record per
-// concurrent leg) at the destination reference via its "Place to Travel" Location
-// input (core/PackageData.cpp), offer it through ch.9's proven 0x49 redirect + the
-// posted EvaluatePackage nudge, and END the leg on ARRIVAL, on the ACTOR ENTERING
-// COMBAT, or on the destination going away.
+// concurrent leg) at the destination via its "Place to Travel" Location input
+// (core/PackageData.cpp), offer it through ch.9's proven 0x49 redirect + the posted
+// EvaluatePackage nudge, and END the leg on ARRIVAL, on the ACTOR ENTERING COMBAT,
+// or on the destination going away.
 //
 // DOES NOT: claim the target (no ch.6), enter combat (no `StartCombat`), pin a
 // combat target (no 0xE4 seat), or fake perception of any kind. There is NO
@@ -172,10 +230,15 @@ namespace {
     RE::TESPackage*          g_pkg[kTravelSlots]{};
 
     // ---- Per-leg state. GAME THREAD ONLY (see the threading note). ----
+    // Which kind of destination `destId` names. Decided ONCE, at claim time, from
+    // the form's own record type -- never re-inferred later.
+    enum class DestKind { kRef, kCell };
+
     struct Leg {
         RE::ActorHandle       actorHandle{};
-        RE::FormID            destId = 0;
-        RE::ObjectRefHandle   destHandle{};   // a REFERENCE, not necessarily an actor
+        RE::FormID            destId   = 0;
+        DestKind              destKind = DestKind::kRef;
+        RE::ObjectRefHandle   destHandle{};   // kRef only: a REFERENCE, not necessarily an actor
         float                 radius = kDefaultRadiusUnits;
         std::uint32_t         flags  = 0;
         float                 basis  = 0.0f;
@@ -276,6 +339,30 @@ namespace {
         return fresh;
     }
 
+    // Classify a client-named destination FormID. Returns false (having logged the
+    // reason) for anything ch.19 cannot honestly point a package at -- see the
+    // locType table in this file's header for why each kind is in or out.
+    bool ClassifyDestination(RE::FormID a_id, RE::FormID a_dest, DestKind& out, const char* a_step) {
+        auto* form = RE::TESForm::LookupByID(a_dest);
+        if (!form) {
+            spdlog::error("[travel] 0x{} {} REFUSED -- destination 0x{} is not a live form.",
+                          Hex(a_id), a_step, Hex(a_dest));
+            return false;
+        }
+        if (form->As<RE::TESObjectREFR>()) { out = DestKind::kRef;  return true; }
+        if (form->As<RE::TESObjectCELL>()) { out = DestKind::kCell; return true; }
+
+        spdlog::error("[travel] 0x{} {} REFUSED -- destination 0x{} is a {} ({}), and a travel "
+                      "destination must be an object REFERENCE or a CELL. A world POSITION is not "
+                      "expressible: a package's location carries a form or a handle and no "
+                      "coordinates at all, on disk or at runtime. Place a marker and pass the "
+                      "MARKER REFERENCE, which is what vanilla does.",
+                      Hex(a_id), a_step, Hex(a_dest),
+                      static_cast<std::uint32_t>(form->GetFormType()),
+                      form->GetFormEditorID() ? form->GetFormEditorID() : "?");
+        return false;
+    }
+
     // ---- The leg ---------------------------------------------------------------
 
     // Release the internal ch.9 offer and free the package slot. The client's own
@@ -300,10 +387,34 @@ namespace {
         }
     }
 
+    // Write this leg's destination into `a_pkg`'s Location input, by KIND. The two
+    // kinds write DIFFERENT members of the same 8-byte union (a 4-byte handle for a
+    // reference, an 8-byte form pointer for a cell) -- see core/PackageData.h for the
+    // disassembly that establishes which, and why they are separate functions.
+    bool PointPackage(RE::FormID a_id, const Leg& a_leg, RE::TESPackage* a_pkg) {
+        if (a_leg.destKind == DestKind::kCell) {
+            auto* cell = RE::TESForm::LookupByID<RE::TESObjectCELL>(a_leg.destId);
+            if (!cell) {
+                spdlog::error("[travel] 0x{} destination CELL 0x{} no longer resolves.",
+                              Hex(a_id), Hex(a_leg.destId));
+                return false;
+            }
+            return apmf::packagedata::SetTravelCell(a_pkg, cell, a_leg.radius);
+        }
+        auto  ptr = a_leg.destHandle.get();
+        auto* ref = ptr.get();
+        if (!ref) {
+            spdlog::error("[travel] 0x{} destination ref 0x{} no longer resolves.",
+                          Hex(a_id), Hex(a_leg.destId));
+            return false;
+        }
+        return apmf::packagedata::SetTravelTarget(a_pkg, ref, a_leg.radius);
+    }
+
     // Point this leg's package slot at the destination and offer it through ch.9.
     // Returns false (having offered nothing) if anything in the chain declines --
     // the failure is LOGGED, never masked with a retry or a fallback.
-    bool StartLeg(RE::FormID a_id, Leg& a_leg, RE::TESObjectREFR* a_dest) {
+    bool StartLeg(RE::FormID a_id, Leg& a_leg) {
         const int slot = AcquireSlot(a_id);
         if (slot < 0) {
             spdlog::error("[travel-leg] 0x{} REFUSED -- all {} package slots are in use by other legs. A "
@@ -320,11 +431,11 @@ namespace {
             return false;
         }
 
-        if (!apmf::packagedata::SetTravelTarget(pkg, a_dest, a_leg.radius)) {
+        if (!PointPackage(a_id, a_leg, pkg)) {
             spdlog::error("[travel-leg] 0x{} REFUSED -- could not point package 0x{}'s Location at "
-                          "destination 0x{} (core/PackageData.cpp declined; see the [pkgdata] line above "
-                          "for which guard failed). NOTHING was offered: an unpointed travel package "
-                          "would walk the actor to the placeholder ref.",
+                          "destination 0x{} (see the [pkgdata] line above for which guard failed). "
+                          "NOTHING was offered: an unpointed travel package would walk the actor to the "
+                          "placeholder ref.",
                           Hex(a_id), Hex(pkg->GetFormID()), Hex(a_leg.destId));
             FreeSlot(slot);
             return false;
@@ -401,24 +512,27 @@ namespace {
             leg.flags  = static_cast<std::uint32_t>(param.ival);
             if (actor && actor->IsHandleValid()) leg.actorHandle = actor->GetHandle();
 
-            // ANY LOADED REFERENCE is a legal destination -- an actor is just the
-            // common case. The Location write needs a ref handle and nothing more, so
-            // no reference-type restriction is imposed beyond that.
-            auto* dest = RE::TESForm::LookupByID<RE::TESObjectREFR>(leg.destId);
-            if (!dest) {
-                spdlog::error("[travel] 0x{} engage IGNORED -- destination 0x{} is not a live object "
-                              "reference.", Hex(id), Hex(leg.destId));
-                return;
+            if (!ClassifyDestination(id, leg.destId, leg.destKind, "engage")) return;
+
+            const char* destName = "?";
+            if (leg.destKind == DestKind::kRef) {
+                auto* ref = RE::TESForm::LookupByID<RE::TESObjectREFR>(leg.destId);
+                if (!ref) return;                       // ClassifyDestination just resolved it
+                leg.destHandle = ref->CreateRefHandle();
+                if (ref->GetName()) destName = ref->GetName();
+            } else {
+                auto* cell = RE::TESForm::LookupByID<RE::TESObjectCELL>(leg.destId);
+                if (!cell) return;
+                if (cell->GetFormEditorID()) destName = cell->GetFormEditorID();
             }
-            leg.destHandle = dest->CreateRefHandle();
 
             g_legs[id] = leg;
             g_legCount.store(static_cast<std::uint32_t>(g_legs.size()), std::memory_order_relaxed);
 
-            spdlog::info("[travel] 0x{} travel facet CLAIMED -- destination 0x{} '{}', radius {}, "
+            spdlog::info("[travel] 0x{} travel facet CLAIMED -- destination {} 0x{} '{}', radius {}, "
                          "flags 0x{}.",
-                         Hex(id), Hex(leg.destId), dest->GetName() ? dest->GetName() : "?",
-                         static_cast<std::uint32_t>(leg.radius), Hex(leg.flags, 2));
+                         Hex(id), leg.destKind == DestKind::kCell ? "CELL" : "ref", Hex(leg.destId),
+                         destName, static_cast<std::uint32_t>(leg.radius), Hex(leg.flags, 2));
 
             // Compose one hop past this Drain's Publish (see the ordering note).
             apmf::mainthread::Post([id] { Compose(id, "engage"); });
@@ -441,22 +555,27 @@ namespace {
                 return;
             }
 
-            auto* dest = RE::TESForm::LookupByID<RE::TESObjectREFR>(param.form);
-            if (!dest) {
-                spdlog::error("[travel] 0x{} re-point IGNORED -- destination 0x{} is not a live object "
-                              "reference; the previous destination 0x{} stands.",
-                              Hex(id), Hex(param.form), Hex(leg.destId));
+            DestKind kind = DestKind::kRef;
+            if (!ClassifyDestination(id, param.form, kind, "re-point")) {
+                spdlog::error("[travel] 0x{} re-point IGNORED -- the previous destination 0x{} stands.",
+                              Hex(id), Hex(leg.destId));
                 return;
             }
 
             const RE::FormID was = leg.destId;
             leg.destId     = param.form;
-            leg.destHandle = dest->CreateRefHandle();
+            leg.destKind   = kind;
+            leg.destHandle = {};
             leg.radius     = ClampRadius(id, param.fval);
             leg.flags      = static_cast<std::uint32_t>(param.ival);
+            if (kind == DestKind::kRef) {
+                auto* ref = RE::TESForm::LookupByID<RE::TESObjectREFR>(leg.destId);
+                if (!ref) return;                       // ClassifyDestination just resolved it
+                leg.destHandle = ref->CreateRefHandle();
+            }
 
-            spdlog::info("[travel] 0x{} travel claim RE-POINTED -- destination 0x{} -> 0x{} '{}'.",
-                         Hex(id), Hex(was), Hex(leg.destId), dest->GetName() ? dest->GetName() : "?");
+            spdlog::info("[travel] 0x{} travel claim RE-POINTED -- destination 0x{} -> {} 0x{}.",
+                         Hex(id), Hex(was), kind == DestKind::kCell ? "CELL" : "ref", Hex(leg.destId));
 
             apmf::mainthread::Post([id] { Compose(id, "re-point"); });
         }
@@ -494,20 +613,29 @@ namespace {
             if (!StillOurs(id, leg, step, &basis)) return;
             leg.basis = basis;
 
-            RE::NiPointer<RE::TESObjectREFR> destPtr = leg.destHandle.get();   // keeps it alive below
-            RE::TESObjectREFR*               dest    = destPtr.get();
-            if (!dest) {
-                spdlog::error("[travel] 0x{} {} DROPPED -- destination 0x{} no longer resolves (unloaded "
-                              "or deleted).", Hex(id), step, Hex(leg.destId));
-                return;
+            // A ref destination must still RESOLVE; a cell destination is a plain form
+            // that does not unload, so the lookup in PointPackage is the only check it
+            // needs.
+            RE::NiPointer<RE::TESObjectREFR> destPtr;
+            if (leg.destKind == DestKind::kRef) {
+                destPtr = leg.destHandle.get();
+                if (!destPtr.get()) {
+                    spdlog::error("[travel] 0x{} {} DROPPED -- destination ref 0x{} no longer resolves "
+                                  "(unloaded or deleted).", Hex(id), step, Hex(leg.destId));
+                    return;
+                }
             }
 
             if (g_observeOnly) {
-                spdlog::info("[travel-observe] 0x{} {} -- WOULD walk to destination 0x{} at radius {}, "
-                             "offering an APMF travel package at basis {}. Nothing claimed, nothing "
-                             "written: [Travel] bTravelObserveOnly=1.",
-                             Hex(id), step, Hex(leg.destId),
-                             static_cast<std::uint32_t>(leg.radius), basis);
+                spdlog::info("[travel-observe] 0x{} {} -- WOULD walk to {} 0x{}{}, offering an APMF "
+                             "travel package at basis {}. Nothing claimed, nothing written: [Travel] "
+                             "bTravelObserveOnly=1.",
+                             Hex(id), step, leg.destKind == DestKind::kCell ? "CELL" : "destination",
+                             Hex(leg.destId),
+                             leg.destKind == DestKind::kCell
+                                 ? std::string(" (arrival = the actor's parent cell)")
+                                 : std::format(" at radius {}", static_cast<std::uint32_t>(leg.radius)),
+                             basis);
                 return;
             }
 
@@ -515,7 +643,7 @@ namespace {
             // either re-file the offer at a moved basis or re-point it so its nudge
             // fires again); otherwise start a fresh one.
             if (leg.legLive && leg.slot >= 0 && g_pkg[leg.slot]) {
-                if (!apmf::packagedata::SetTravelTarget(g_pkg[leg.slot], dest, leg.radius)) {
+                if (!PointPackage(id, leg, g_pkg[leg.slot])) {
                     spdlog::error("[travel-leg] 0x{} re-point FAILED -- could not re-point package 0x{}'s "
                                   "Location; ENDING the leg rather than leaving the actor walking at the "
                                   "old destination.",
@@ -539,7 +667,7 @@ namespace {
                 spdlog::info("[travel-leg] 0x{} RE-POINTED -- slot {}, package 0x{} -> destination 0x{}.",
                              Hex(id), leg.slot, Hex(p9.form), Hex(leg.destId));
             } else {
-                StartLeg(id, leg, dest);
+                StartLeg(id, leg);
             }
         }
     };
@@ -692,34 +820,54 @@ namespace apmf::travel {
                 continue;
             }
 
-            // The DESTINATION. Note IsDisabled() reads the ref's kInitiallyDisabled
-            // form flag, which is the SAME flag the engine's runtime Disable() sets --
-            // so it covers a scripted despawn, not only an editor-disabled ref.
-            auto  dptr = leg.destHandle.get();
-            auto* d    = dptr.get();
-            if (!d) {
-                EndLeg(id, leg, "the destination no longer resolves (unloaded or deleted)", false);
-                continue;
-            }
-            if (d->IsDisabled()) {
-                EndLeg(id, leg, "the destination was disabled", false);
-                continue;
-            }
-            if (d->IsDead()) {
-                EndLeg(id, leg, "the destination is dead", false);
-                continue;
-            }
-            if (!d->Is3DLoaded()) {
-                EndLeg(id, leg, "the destination's 3D is not loaded", false);
-                continue;
-            }
+            // The DESTINATION, and ARRIVAL -- both depend on which KIND it is.
+            if (leg.destKind == DestKind::kCell) {
+                auto* cell = RE::TESForm::LookupByID<RE::TESObjectCELL>(leg.destId);
+                if (!cell) {
+                    EndLeg(id, leg, "the destination cell no longer resolves", false);
+                    continue;
+                }
+                // ARRIVAL FOR A CELL IS PARENT-CELL IDENTITY, not distance. A cell has
+                // no single position to measure against -- an interior is a volume and
+                // an exterior cell is a 4096-unit tile -- so "within 75u of a cell" has
+                // no meaning. The actor is either in it or not, which is also exactly
+                // what the engine's own in-cell package path is steering towards, so
+                // the two agree by construction. The leg's radius is not consulted here
+                // (it is still written into the record, for symmetry).
+                if (a->GetParentCell() == cell) {
+                    EndLeg(id, leg, "ARRIVED (the actor's parent cell is the destination cell)", false);
+                    continue;
+                }
+            } else {
+                // Note IsDisabled() reads the ref's kInitiallyDisabled form flag, which
+                // is the SAME flag the engine's runtime Disable() sets -- so it covers a
+                // scripted despawn, not only an editor-disabled ref.
+                auto  dptr = leg.destHandle.get();
+                auto* d    = dptr.get();
+                if (!d) {
+                    EndLeg(id, leg, "the destination no longer resolves (unloaded or deleted)", false);
+                    continue;
+                }
+                if (d->IsDisabled()) {
+                    EndLeg(id, leg, "the destination was disabled", false);
+                    continue;
+                }
+                if (d->IsDead()) {
+                    EndLeg(id, leg, "the destination is dead", false);
+                    continue;
+                }
+                if (!d->Is3DLoaded()) {
+                    EndLeg(id, leg, "the destination's 3D is not loaded", false);
+                    continue;
+                }
 
-            // ARRIVED. The same radius this leg wrote into the package record, so the
-            // engine's own stop and this test fire at the same distance.
-            const float dist = a->GetPosition().GetDistance(d->GetPosition());
-            if (dist <= leg.radius) {
-                EndLeg(id, leg, "ARRIVED (inside the arrival radius)", false);
-                continue;
+                // ARRIVED. The same radius this leg wrote into the package record, so
+                // the engine's own stop and this test fire at the same distance.
+                const float dist = a->GetPosition().GetDistance(d->GetPosition());
+                if (dist <= leg.radius) {
+                    EndLeg(id, leg, "ARRIVED (inside the arrival radius)", false);
+                    continue;
+                }
             }
 
             // The safety net, last: everything above is a legitimate end, this is a

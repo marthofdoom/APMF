@@ -543,12 +543,13 @@ tried to fill the gap with `StartCombat` on a timer and got alert-and-search pac
 instead of a charge, because `StartCombat` does not path an actor to a foe it has
 never detected.
 
-`kIntent_Travel` is the missing verb. You pass an actor and a destination reference;
-APMF walks the actor there.
+`kIntent_Travel` is the missing verb. You pass an actor and a destination; APMF
+walks the actor there. Move-to-a-place is a staple — sending followers at an enemy
+is just one caller of it.
 
 ### The contract, in one sentence
 
-**ch.19 `kIntent_Travel` walks the claimed actor to within ~75u of a reference and
+**ch.19 `kIntent_Travel` walks the claimed actor to a reference or a cell and
 cancels the moment that actor is in combat.** It does not claim the target, does not
 enter combat, does not pin a target, and does not fake perception.
 
@@ -621,15 +622,40 @@ beside it.
 
 | field | meaning |
 |---|---|
-| `param.form` | **REQUIRED.** The DESTINATION reference's FormID. Any loaded object reference works — an actor is just the common case, because the mechanism is a runtime ref handle written into a package's location and it does not care what kind of reference it points at. A zero form is refused synchronously (`kInvalidHandle`) so you find out at the call. |
-| `param.fval` | Arrival radius in game units. `0` means the 75u default. Anything outside **[50, 512]** is CLAMPED and the clamp is logged — never silently reinterpreted. Whatever value ends up in force is also written into the package's own stop radius for that leg, so the engine's idea of "arrived" and APMF's cannot drift apart. |
+| `param.form` | **REQUIRED.** The DESTINATION's FormID — an object **REFERENCE** (REFR/ACHR: an actor, an XMarker, a container, anything loaded) or a **CELL**. The record type decides which; there is no flag to set. A zero form, or any other record type, is refused synchronously (`kInvalidHandle`) so you find out at the call. |
+| `param.fval` | Arrival radius in game units. `0` means the 75u default. Anything outside **[50, 512]** is CLAMPED and the clamp is logged — never silently reinterpreted. Whatever value ends up in force is also written into the package's own stop radius for that leg, so the engine's idea of "arrived" and APMF's cannot drift apart. **Not consulted when the destination is a cell.** |
 | `param.ival` | A `TravelFlags` bitmask. |
+| `param.posX/Y/Z` | **Must be zero.** A non-zero position REFUSES the claim, with the reason in the log. See below. |
 
 `kTravel_ReleaseOnTargetDead` **names the v1 default, it does not switch it on.**
 APMF always ends the leg when the destination dies, is disabled or unloads, set or
 not — walking an actor to a corpse would be a mask, not a feature. The bit exists so
 a later ABI can add its inverse without you having to guess which way the default
 ran.
+
+### What "arrived" means, per destination kind
+
+* **A reference:** the actor is within the radius of it. Straight-line distance,
+  tested on the same number the package's own stop radius was set to, so the
+  engine parking the actor and APMF ending the leg happen at the same place.
+* **A cell:** the actor's parent cell IS that cell. Distance is not used and the
+  radius is ignored, because a cell has no single position to measure against — an
+  interior is a volume and an exterior cell is a 4096-unit tile. "In it or not" is
+  also exactly what the engine's own in-cell package path steers towards, so the
+  two agree by construction.
+
+### Why you cannot pass a world position
+
+Because the engine cannot carry one. An AI package's location holds a form pointer
+or a reference handle and nothing else — there is no coordinate storage in it at
+runtime, the on-disk record is twelve bytes of type/payload/radius, and none of the
+engine's own location kinds reads coordinates out of it. That was read off both
+game binaries rather than assumed.
+
+Vanilla's answer is the same one you should use: **place an XMarker and pass the
+marker's reference.** That is case one above, fully supported. A claim with a
+non-zero `param.pos` is refused and says so, rather than quietly walking the actor
+somewhere you did not ask for.
 
 ### When a claim is refused
 
@@ -639,7 +665,8 @@ when:
 * the runtime is VR (the 0x49 package seat travel rides is SE/AE only),
 * `[Travel] bTravel=0` in `Data/SKSE/Plugins/APMF.ini`,
 * `Data/APMF.esl` is missing or disabled, so no travel package resolved,
-* `param.form` is 0.
+* `param.form` is 0, or names a record that is neither a reference nor a cell,
+* `param.posX/posY/posZ` is non-zero.
 
 Each is logged with the reason. A refusal means **run your own path**: APMF is
 telling you it will do nothing, rather than accepting a claim that silently does

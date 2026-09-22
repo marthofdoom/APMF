@@ -36,4 +36,26 @@ namespace apmf::packagedata {
     // GAME THREAD ONLY.
     bool SetTravelTarget(RE::TESPackage* a_pkg, RE::TESObjectREFR* a_ref, float a_radius);
 
+    // Point `a_pkg`'s "Place to Travel" Location input at a CELL (locType 1,
+    // "In Cell"). Same guards, same all-or-nothing contract as SetTravelTarget.
+    //
+    // WHY THIS IS A SEPARATE ENTRY POINT and not a flag: the two locTypes read
+    // DIFFERENT members of the same 8-byte union, and that is not a guess -- it is
+    // read off both unpacked images. `PackageLocation::AllocateLocation` (vtable
+    // slot 1) switches on locType through a 13-entry jump table, and:
+    //   case 0 kNearReference : `mov eax, DWORD PTR [rsi+0x10]`  -- a 4-BYTE read,
+    //                           the ObjectRefHandle, handed to a handle lookup.
+    //   case 1 kInCell        : `mov rcx, QWORD PTR [rsi+0x10]`  -- an 8-BYTE
+    //                           POINTER read, null-checked, then used as `this`.
+    // Writing a handle where a pointer is read (or the reverse) would hand the
+    // engine a truncated or a garbage pointer, so the two writes stay separate
+    // functions with separate types in their signatures.
+    //
+    // `a_radius` is written for symmetry, but the cell path does not use it: the
+    // engine's case-1 body never reads `rad`, and APMF's own arrival test for a cell
+    // is parent-cell identity, not distance.
+    //
+    // GAME THREAD ONLY.
+    bool SetTravelCell(RE::TESPackage* a_pkg, RE::TESObjectCELL* a_cell, float a_radius);
+
 }
