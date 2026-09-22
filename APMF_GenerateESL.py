@@ -12,9 +12,12 @@ DOCTRINE (Linux-Native-Tools, and the reason this file exists):
   verified against records parsed out of Skyrim.esm. The engine drops malformed
   records SILENTLY; there is no error to catch.
 
-WHY APMF SHIPS A PLUGIN AT ALL (2026-09-22, ch.19 kIntent_CombatEngage).
+WHY APMF SHIPS A PLUGIN AT ALL (2026-09-22, ch.19 kIntent_Travel).
   ch.9 (`kIntent_OfferPackage`) hands the engine a TESPackage the CLIENT ships.
-  ch.19 does the approach leg FOR the client, so the package has to be APMF's.
+  ch.19 moves the actor FOR the client, so the package has to be APMF's. Move-to-a-
+  place is a staple feature, not a niche one, and ONE shipped, generated, ESL-flagged
+  record set (no load-order slot, no overrides, ~2.5 KB, one master) buys every client
+  a working travel facet -- which is what earns the plugin its place.
   Three options were weighed before writing this file:
 
     (A) REUSE A VANILLA PACKAGE -- REJECTED, two independent fatal defects.
@@ -41,7 +44,7 @@ WHY APMF SHIPS A PLUGIN AT ALL (2026-09-22, ch.19 kIntent_CombatEngage).
 
     (C) SHIP ONE -- TAKEN. It is the port of a field-proven MFO mechanism.
 
-FormID band is a FROZEN generator<->DLL contract with `native/channels/CombatEngage.cpp`.
+FormID band is a FROZEN generator<->DLL contract with `native/channels/Travel.cpp`.
 One master (Skyrim.esm) => own-file master index 0x01. ESL-legal range 0x800-0xFFF.
 Ids are only ever ADDED; a retired id is never recycled.
 """
@@ -53,12 +56,17 @@ import sys
 # ── FormID band -- FROZEN. Never renumber. ──
 OWN = 0x01000000
 
-# ch.19 (kIntent_CombatEngage) approach packages: ONE per concurrent engagement
-# slot, mirroring MFO's per-slot loot-travel records. Each is byte-identical to
-# the others except for its FormID and EDID; the DLL overwrites the Location
-# input's live runtime handle per slot before offering it through ch.9.
-FID_ENGAGE_TRAVEL_BASE = OWN | 0x800   # 0x800 .. 0x807 (kEngageSlots == 8)
-ENGAGE_SLOTS = 8
+# ch.19 (kIntent_Travel) packages: ONE per concurrent travel leg, mirroring MFO's
+# per-slot loot-travel records. Each is byte-identical to the others except for its
+# FormID and EDID; the DLL overwrites the Location input's live runtime handle AND
+# its radius per slot before offering it through ch.9.
+#
+# THE FROZEN CONTRACT WITH THE DLL IS THE FormID BAND, NOT THE EDIDs.
+# native/channels/Travel.cpp resolves these by local id (0x800 + slot) through
+# TESDataHandler::LookupForm, so the editor IDs are documentation only and were
+# renamed freely when the intent was renamed.
+FID_TRAVEL_BASE = OWN | 0x800   # 0x800 .. 0x807 (kTravelSlots == 8)
+TRAVEL_SLOTS = 8
 
 NEXT_OBJECT_ID = 0x808   # first never-used local id
 
@@ -105,7 +113,7 @@ def pack_input(kind, payload_type, payload):
     return subrec('ANAM', zstr(kind)) + subrec(payload_type, payload)
 
 
-def build_engage_travel(fid, edid, radius):
+def build_travel(fid, edid, radius):
     """One PACK instance riding vanilla Travel (00016FAA) with a RUNTIME-HANDLE
     Location: walk to whatever ref the DLL points the Location input at, then
     stop. Byte shape mirrored from MFO's shipped, field-run
@@ -123,14 +131,12 @@ def build_engage_travel(fid, edid, radius):
 
     # PKDT general flags 0x00002000 = PREFERRED-SPEED ENABLE, and nothing else.
     #
-    # DELIBERATELY NOT kIgnoreCombat (0x00100000). "Travel to the enemy" must
-    # not also mean "walk past whoever is hitting you": if a fight starts en
-    # route the engine's own combat AI takes the actor, which is exactly the
-    # vanilla behaviour ch.19 v1 promises to hand back. Setting the bit would be
-    # an unrequested behaviour change AND a deny hole (APMF would be suppressing
-    # a combat reaction no client asked it to suppress). A future
-    # kEngage_IgnoreCombatEnRoute flag would select a SECOND record set, never
-    # mutate this one.
+    # DELIBERATELY NOT kIgnoreCombat (0x00100000), and it matters more than ever now
+    # that the contract is "combat interrupts and cancels the movement" (marth,
+    # 2026-09-22): if a fight starts en route the engine's own combat AI takes the
+    # actor, and the DLL's own monitor sees `IsInCombat()` and ends the leg. Setting
+    # the bit would fight both halves of that. A future kTravel_IgnoreCombatEnRoute
+    # flag would select a SECOND record set, never mutate this one.
     #
     # preferredSpeed is byte 6 of PKDT (0=Walk 1=Jog 2=Run 3=FastWalk) and is
     # INERT unless 0x2000 is set -- proven by scanning all 5,961 Skyrim.esm PACK
@@ -177,14 +183,18 @@ def build_engage_travel(fid, edid, radius):
 
 
 def make_pack():
-    """The ch.19 approach packages. Radius 128 (~arm's reach) so the engine stops
-    the actor ON the target rather than at a polite distance; the DLL's own
-    arrival test uses the SAME radius, so "the engine thinks it arrived" and
-    "APMF thinks it arrived" cannot disagree."""
+    """The ch.19 travel packages. The authored radius is 75 -- the middle of marth's
+    "50-100u from it" band and the same number native/channels/Travel.cpp uses as its
+    default arrival radius, so the engine's own package stop and the DLL's arrival
+    test agree by construction.
+
+    It is only a PLACEHOLDER either way: the DLL writes this leg's real radius (and
+    the real destination handle) into the record before the package is ever offered,
+    and refuses the leg outright if that write is declined. Authoring the same number
+    means a reader never has to reconcile two."""
     out = b''
-    for i in range(ENGAGE_SLOTS):
-        out += build_engage_travel(FID_ENGAGE_TRAVEL_BASE + i,
-                                   f"APMF_EngageTravelPackage{i}", radius=128)
+    for i in range(TRAVEL_SLOTS):
+        out += build_travel(FID_TRAVEL_BASE + i, f"APMF_TravelPackage{i}", radius=75)
     return group('PACK', out)
 
 
@@ -200,10 +210,10 @@ def main():
         f.write(data)
 
     print(f"wrote {out_path} ({len(data)} bytes)")
-    print(f"  PACK  0x{FID_ENGAGE_TRAVEL_BASE & 0xFFF:03X}-"
-          f"0x{(FID_ENGAGE_TRAVEL_BASE + ENGAGE_SLOTS - 1) & 0xFFF:03X}    "
-          f"APMF_EngageTravelPackage0..{ENGAGE_SLOTS - 1} (ch.19 approach, Travel 00016FAA, "
-          f"PLDT type 0, radius 128)")
+    print(f"  PACK  0x{FID_TRAVEL_BASE & 0xFFF:03X}-"
+          f"0x{(FID_TRAVEL_BASE + TRAVEL_SLOTS - 1) & 0xFFF:03X}    "
+          f"APMF_TravelPackage0..{TRAVEL_SLOTS - 1} (ch.19 travel, Travel 00016FAA, "
+          f"PLDT type 0, radius 75)")
 
 
 if __name__ == '__main__':

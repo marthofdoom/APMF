@@ -533,153 +533,183 @@ reading, not for parsing.
 
 Only after all fifteen hold on a real session (8-11 are the behavioural scope criteria from the v9 design, 12-15 are log-invariant checks) is `bEquipObserveOnly` flipped to 0.
 
-## Sending an NPC at an enemy (ABI v10, `kIntent_CombatEngage`)
+## Walking an NPC somewhere (ABI v10, `kIntent_Travel`)
 
-This is the facet for "the player pressed a key and their followers should go
-after that enemy." Before v10 the public API could not express it: `ch.6
-kIntent_CombatTarget` records who owns the combat-target facet but makes no
-engine call, and `ch.9 kIntent_OfferPackage` delivers a package the CLIENT has
-to ship in its own plugin. A real third-party client tried to fill the gap with
-`StartCombat` on a timer and got alert-and-search pacing instead of a charge,
-because `StartCombat` does not path an actor to a foe it has never detected.
+Move-to-a-place is a staple. Before v10 the public API could not express it: `ch.6
+kIntent_CombatTarget` records who owns the combat-target facet but makes no engine
+call, and `ch.9 kIntent_OfferPackage` delivers a package the CLIENT has to ship in
+its own plugin. A real third-party client that wanted to send followers at an enemy
+tried to fill the gap with `StartCombat` on a timer and got alert-and-search pacing
+instead of a charge, because `StartCombat` does not path an actor to a foe it has
+never detected.
 
-`kIntent_CombatEngage` is the missing verb. You pass an actor and a target;
-APMF walks the actor to the target.
+`kIntent_Travel` is the missing verb. You pass an actor and a destination reference;
+APMF walks the actor there.
 
-### What it does, and what it deliberately does not
+### The contract, in one sentence
 
-**It does:** claim the combat-target facet for you (an internal `ch.6` claim at
-YOUR basis, so APMF remains the single arbiter), then offer the actor an
-APMF-owned Travel package whose destination is the target reference. The actor
-paths to the target natively, with real navmesh pathing, at a run.
+**ch.19 `kIntent_Travel` walks the claimed actor to within ~75u of a reference and
+cancels the moment that actor is in combat.** It does not claim the target, does not
+enter combat, does not pin a target, and does not fake perception.
 
-**It stops as soon as the actor gets there.** The approach ends the moment the
-actor arrives inside the radius, gains line of sight to the target, detects the
-target, or the target dies / is disabled / unloads. APMF then releases the
-package offer and the actor behaves exactly as it would have without APMF —
-which, for a hostile target now in sight, is the game's own combat AI.
+The leg ends on exactly three things: **ARRIVAL** (inside the radius), the **ACTOR
+ENTERING COMBAT** (`Actor::IsInCombat`), or the **destination going away** (dead,
+disabled, or unloaded). There is no line-of-sight test and no detection test
+anywhere in it.
 
-**It does NOT start the fight and it does NOT hold the target.** APMF makes no
-`StartCombat` call and does not write `currentCombatTarget`. Say this to your
-users, because it is the difference between "they run at him" and "they attack
-him". If you find the engine does not take the fight up on arrival, report that
-— it is the evidence a later ABI needs before APMF adds combat entry. Do NOT
-paper over it by re-pushing `StartCombat` from your own plugin on a timer; that
-is the exact anti-pattern that produced search-state pacing.
+### One intent, one facet
 
-**It claims nothing else.** No attack selection, no casting, no equip (`ch.17`),
-no hand, no aggression (`ch.11`), no movement block (`ch.1`). If you want any of
-those, claim them yourself, separately, and they arbitrate normally.
+ch.19 claims **nothing** on your behalf. No combat target, no attack selection, no
+casting, no equipment, no hands, no aggression, no movement block. If you want the
+combat-target facet arbitrated, claim `kIntent_CombatTarget` yourself — the two
+claims are independent and arbitrate separately.
+
+That is deliberate (marth: *"We should avoid combining intents anyway"*), and it is
+not the final word: convenience **combo intents** — one call that bundles, say,
+travel plus combat target plus combat entry — are a recognised and reasonable idea,
+**deferred until after the full MFO port to APMF is complete**. They are not being
+refused on principle. Until then: one facet, one intent, and a client that wants two
+behaviours makes two claims.
 
 ### The recipe
 
 ```cpp
 using namespace APMF_API;
 
-// One claim per actor you are commanding. Keep the handle -- Repoint switches
-// the foe without any release/re-claim churn.
-std::unordered_map<RE::FormID, Handle> g_engage;
+// One claim per actor you are moving. Keep the handle -- Repoint moves the
+// destination without any release/re-claim churn.
+std::unordered_map<RE::FormID, Handle> g_travel;
 
-void SendAt(RE::FormID actor, RE::FormID target) {
+void SendTo(RE::FormID actor, RE::FormID destination) {
     if (!g_apmf || g_apmf->abiVersion < 10) return;   // APMF absent or pre-v10: your own path
 
     APMF_Param p{};
-    p.form = target;                       // REQUIRED. A zero form is refused.
-    p.fval = 0.0f;                         // arrival radius in units; 0 => 128u default
-    p.ival = kEngage_ReleaseOnTargetDead;  // names the default; see below
+    p.form = destination;                  // REQUIRED. Any loaded reference. 0 is refused.
+    p.fval = 0.0f;                         // arrival radius in units; 0 => 75u default
+    p.ival = kTravel_ReleaseOnTargetDead;  // names the default; see below
 
-    if (auto it = g_engage.find(actor); it != g_engage.end()) {
-        g_apmf->Repoint(it->second, &p);   // switch the foe in place
+    if (auto it = g_travel.find(actor); it != g_travel.end()) {
+        g_apmf->Repoint(it->second, &p);   // move the destination in place
         return;
     }
 
-    const Handle h = g_apmf->RequestEx(actor, kIntent_CombatEngage, /*basis=*/50.0f, &p);
+    const Handle h = g_apmf->RequestEx(actor, kIntent_Travel, /*basis=*/50.0f, &p);
     if (h == kInvalidHandle) return;       // refused -- see "When a claim is refused"
-    g_engage[actor] = h;
+    g_travel[actor] = h;
 }
 
-void StopCommanding(RE::FormID actor) {
-    auto it = g_engage.find(actor);
-    if (it == g_engage.end()) return;
-    g_apmf->Release(it->second);           // ends the claim AND both internal sub-claims
-    g_engage.erase(it);
+void StopTravel(RE::FormID actor) {
+    auto it = g_travel.find(actor);
+    if (it == g_travel.end()) return;
+    g_apmf->Release(it->second);           // ends the claim and the leg
+    g_travel.erase(it);
 }
 ```
 
-That is the whole client side. There is no tick, no re-assert, no package to
-ship, no `StartCombat`, no detection poke, no `currentCombatTarget` write. If
-your client is doing any of those today, delete them — every one of them fights
-the engine rather than using it.
+That is the whole client side. No tick, no re-assert, no package to ship, no
+`StartCombat`, no detection poke, no `currentCombatTarget` write. If your client is
+doing any of those to get an NPC to walk somewhere, delete them — every one of them
+fights the engine instead of using it.
+
+For the "hotkey, send my followers at that enemy" case, that is one `RequestEx` per
+follower with the enemy as the destination. The follower runs at the enemy and
+Harbinger lets go the instant the fight starts. If you also want APMF to arbitrate
+who owns that follower's combat target, add your own `kIntent_CombatTarget` claim
+beside it.
 
 ### The parameter fields
 
 | field | meaning |
 |---|---|
-| `param.form` | **REQUIRED.** The TARGET actor's FormID. A zero form is refused synchronously (`kInvalidHandle`) so you find out at the call. |
-| `param.fval` | Arrival radius in game units. `0` means the 128u default (about arm's reach). Whatever you pass is written into the package's own stop radius too, so the engine's idea of "arrived" and APMF's cannot drift apart. |
-| `param.ival` | A `CombatEngageFlags` bitmask. |
+| `param.form` | **REQUIRED.** The DESTINATION reference's FormID. Any loaded object reference works — an actor is just the common case, because the mechanism is a runtime ref handle written into a package's location and it does not care what kind of reference it points at. A zero form is refused synchronously (`kInvalidHandle`) so you find out at the call. |
+| `param.fval` | Arrival radius in game units. `0` means the 75u default. Anything outside **[50, 512]** is CLAMPED and the clamp is logged — never silently reinterpreted. Whatever value ends up in force is also written into the package's own stop radius for that leg, so the engine's idea of "arrived" and APMF's cannot drift apart. |
+| `param.ival` | A `TravelFlags` bitmask. |
 
-`kEngage_NoApproach` skips the travel leg entirely: APMF makes the combat-target
-claim and offers no package. Use it when your client already has the actor where
-it wants it, or drives its own movement.
-
-`kEngage_ReleaseOnTargetDead` **names the v1 default, it does not switch it on.**
-APMF always drops the composition when the target dies, is disabled or unloads,
-set or not — holding an approach to a corpse would be a mask, not a feature. The
-bit exists so a later ABI can add its inverse without you having to guess which
-way the default ran.
+`kTravel_ReleaseOnTargetDead` **names the v1 default, it does not switch it on.**
+APMF always ends the leg when the destination dies, is disabled or unloads, set or
+not — walking an actor to a corpse would be a mask, not a feature. The bit exists so
+a later ABI can add its inverse without you having to guess which way the default
+ran.
 
 ### When a claim is refused
 
 `RequestEx` returns `kInvalidHandle` — synchronously, before anything is queued —
 when:
 
-* the runtime is VR (the 0x49 package seat the approach rides is SE/AE only),
-* `[CombatEngage] bCombatEngage=0` in `Data/SKSE/Plugins/APMF.ini`,
-* `Data/APMF.esl` is missing or disabled, so no approach package resolved,
+* the runtime is VR (the 0x49 package seat travel rides is SE/AE only),
+* `[Travel] bTravel=0` in `Data/SKSE/Plugins/APMF.ini`,
+* `Data/APMF.esl` is missing or disabled, so no travel package resolved,
 * `param.form` is 0.
 
 Each is logged with the reason. A refusal means **run your own path**: APMF is
 telling you it will do nothing, rather than accepting a claim that silently does
 nothing. That distinction is the whole point of refusing.
 
+### Installing `Data/APMF.esl`
+
+Harbinger ships one plugin, `Data/APMF.esl`, in the same archive as `APMF.dll`,
+beside `Data/SKSE/Plugins/APMF.ini`. It holds eight travel package records and
+nothing else. It is **ESL-flagged**, so it takes no regular load-order slot (it uses
+one of the 4096 light-plugin slots), it has **one master (Skyrim.esm)**, it
+**overrides nothing**, and it is about 2.5 KB. Install the archive and enable the
+plugin as usual; there is no further step.
+
+If it is missing or disabled, ch.19 refuses every `kIntent_Travel` claim and names
+the reason once in the log. Nothing else in Harbinger depends on it, so an absent
+ESL costs exactly this one facet.
+
+Why a plugin at all: a package's destination lives on the package RECORD, not on the
+actor, so borrowing a vanilla travel package would re-point it for every actor in the
+game that runs it — hijacking whatever quest owns it — and would cap Harbinger at one
+travel leg globally. Building one at runtime instead needs `IPackageData` wrapper
+objects the pinned CommonLib does not expose, and a dynamic form does not survive a
+save. One tiny generated record set is the honest answer.
+
 ### Observe-only, and what a good log looks like
 
-The first shipped build has `[CombatEngage] bEngageObserveOnly=1`. In that mode
-ch.19 logs exactly what it would claim and point, and changes nothing at the
-engine. Flip it to `0` once a session shows this shape per command, in order:
+The first shipped build has `[Travel] bTravelObserveOnly=1`. In that mode nothing is
+claimed and no package is pointed, so the **only** thing an observe session can
+prove is the client-facing half — and that is the gate. Per command, in order:
 
 ```
-[ch.19] 0x<actor> combat-engage CLAIMED -- target 0x<foe> '<name>', radius 128, flags 0x02.
-[pkgdata] package 0x<pkg> Location -> ref 0x<foe> radius 128 (authored locType 0 -> kNearReference).
-[ch.19] 0x<actor> ch.6 sub-claim h=<n> at basis 50 -> target 0x<foe>.
-[ch.19-approach] 0x<actor> approach STARTED -- slot 0, package 0x<pkg> -> target 0x<foe>, ...
+[travel] 0x<actor> travel facet CLAIMED -- destination 0x<dest> '<name>', radius 75, flags 0x01.
+[travel-observe] 0x<actor> engage -- WOULD walk to destination 0x<dest> at radius 75, offering an APMF travel package at basis 50. Nothing claimed, nothing written: [Travel] bTravelObserveOnly=1.
+```
+
+Both lines present, with the values you meant, for every command = pass. There is no
+package line, no offer line, no nudge and no end reason in this mode, because none of
+that happens. **The ordering evidence requires an ACTIVE session**
+(`bTravelObserveOnly=0`), which looks like this:
+
+```
+[travel] 0x<actor> travel facet CLAIMED -- destination 0x<dest> ...
+[pkgdata] package 0x<pkg> Location -> ref 0x<dest> radius 75 (authored locType 0 -> kNearReference).
+[travel-leg] 0x<actor> STARTED -- slot 0, package 0x<pkg> -> destination 0x<dest>, ...
 [ch.9] 0x<actor> package-offer facet CLAIMED (package 0x<pkg>).
 [ch.9-nudge] 0x<actor> engage nudge FIRED post-publish ...; curPkg now 0x<pkg>.
-[ch.19-approach] 0x<actor> approach ENDED after <n> ms -- PERCEIVED (line of sight to the target).
+[travel-leg] 0x<actor> ENDED after <n> ms -- ARRIVED (inside the arrival radius).
 ```
 
 The line that proves the mechanism is `curPkg now 0x<pkg>` matching the package
-ch.19 pointed: that is the engine having actually adopted the approach package.
-An `approach ABANDONED` line is a FAILURE report, not noise — it means the actor
-never arrived, never saw the target and never detected it. It is logged loudly
-and nothing is retried.
+travel pointed: that is the engine having actually adopted the package. A
+`[travel-leg] ... ABANDONED` line is a FAILURE report, not noise — it means the actor
+never arrived, never entered combat and never lost its destination inside the safety
+net. It is logged loudly and nothing is retried.
 
 ### Limits worth knowing
 
-* **Eight concurrent approaches.** A package's destination lives on the package
-  RECORD, not on the actor, so two actors walking to two different targets need
-  two records; APMF ships eight. A ninth simultaneous approach is REFUSED and
-  logged (the actor still gets the combat-target claim, just no travel). This is
-  a real cap, not a soft one — it is never worked around by sharing a record,
-  which would send both actors to one destination.
-* **The approach does not ignore combat.** If a fight starts en route the engine
-  takes the actor, which is the vanilla behaviour this facet promises to hand
-  back. "Walk past whoever is hitting you" is not on offer.
-* **Arbitration is honest.** The internal `ch.6` and `ch.9` claims are filed at
-  YOUR basis. If another client outbids you on the combat-target facet, it wins
-  it, exactly as if you had claimed `ch.6` yourself. If it outbids you on the
-  package-offer facet, your approach loses the package.
+* **Eight concurrent legs.** A package's destination lives on the package RECORD, so
+  two actors walking to two different places need two records; APMF ships eight. A
+  ninth simultaneous leg is REFUSED and logged. This is a real cap, not a soft one —
+  it is never worked around by sharing a record, which would send both actors to one
+  destination.
+* **Combat cancels the movement, and the package does not ignore combat.** If a fight
+  starts en route the engine takes the actor and the leg ends. "Walk past whoever is
+  hitting you" is not on offer.
+* **Arbitration is honest.** Travel's internal package offer is filed at YOUR basis,
+  and it is re-filed if the winning travel claim's basis changes. If another client
+  outbids you on the package-offer facet, your leg loses the package — exactly as if
+  you had claimed `ch.9` yourself.
 
 
 ## The facet table
@@ -720,7 +750,7 @@ columns, one doesn't imply the other.
 | `kIntent_Equipment` (ch.15) | Unequip/equip a worn item, and (with a param) gate re-equip of a spell/staff while the claim stands | `form` (optional) | Built, not yet battle-tested. The most recently landed facet in the catalog. |
 | `kIntent_Detection` (ch.16) | Silent movement + reduced detection range | `fval` (reserved, not yet read) | **Field-proven.** An actor-value source-block, deck-tested to hold even on a package-locked actor. |
 | `kIntent_EquipAuthority` (ch.17) | **Declare what the NPC wears; APMF equips it and refuses every other engine equip of a governed type (ARMO/WEAP/AMMO/LIGH) in the categories the claim owns.** ABI v7, declare with `SetEquipSet`; ABI v8 `SetEquipSetEx` adds a hand per item; ABI v9 `SetEquipScope` scopes the claim to owned/denied categories (default: all owned) | `ival` (an `EquipAuthFlags` bitmask); the set itself via `SetEquipSet` / `SetEquipSetEx`; the scope via `SetEquipScope` | Built, not yet battle-tested. Ships OBSERVE-ONLY (`[EquipAuthority] bEquipObserveOnly=1`) until the probe criteria above pass. The only call-site seat in APMF, under `Docs/INVARIANTS.md` #17a. Player-menu equips pass by default (v8). |
-| `kIntent_CombatEngage` (ch.19) | **Send this actor AT a target actor.** APMF composes an internal ch.6 combat-target claim and an internal ch.9 approach-package offer, both at YOUR basis, and walks the actor to the target; the approach ends on arrival, line of sight, detection, or the target being gone | `form` (the TARGET actor, REQUIRED), `fval` (arrival radius, 0 => 128u), `ival` (a `CombatEngageFlags` bitmask) | Built, not yet battle-tested. ABI v10. Ships OBSERVE-ONLY (`[CombatEngage] bEngageObserveOnly=1`). v1 is the TRAVEL LEG ONLY: APMF makes **no** combat-entry call and does **not** pin the combat target, by design -- whether the engine's own combat AI takes over on arrival is exactly what the first field cycle measures. Eight concurrent approaches; the ninth is refused and logged. Adds no engine seat: it rides ch.9's existing 0x49 seat and the existing once-per-frame 0xAD seat. |
+| `kIntent_Travel` (ch.19) | **Walk this actor to a reference.** APMF points its own travel package at the destination and offers it through an internal ch.9 claim at YOUR basis; the leg ends on arrival, on the actor entering combat, or on the destination being gone | `form` (the DESTINATION reference, REQUIRED -- any loaded ref), `fval` (arrival radius, 0 => 75u, clamped 50-512), `ival` (a `TravelFlags` bitmask) | Built, not yet battle-tested. ABI v10. Ships OBSERVE-ONLY (`[Travel] bTravelObserveOnly=1`). It claims NO other facet on your behalf -- no combat target, no combat entry, no target pin, no faked perception; claim those intents yourself. Eight concurrent legs; the ninth is refused and logged. Adds no engine seat: it rides ch.9's existing 0x49 seat and the existing once-per-frame 0xAD seat. Needs `Data/APMF.esl` (ESL-flagged, one master, no overrides); absent = every claim refused, logged. |
 
 Where a field is marked "reserved, not yet read", the channel currently
 applies a fixed built-in behavior and ignores whatever you pass in that field.

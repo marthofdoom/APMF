@@ -194,21 +194,21 @@ namespace apmf {
         bool TryGetOwningClaim(RE::FormID actor, Intent intent, APMF_API::APMF_Param& outParam,
                                RE::FormID* outAllowSet, std::uint32_t& outAllowCount) const;
 
-        // ch.19 (kIntent_CombatEngage): the winning claim's param AND its BASIS.
+        // ch.19 (kIntent_Travel): the winning claim's param AND its BASIS.
         //
-        // WHY THIS EXISTS, since no other reader needed it. ch.19 is a COMPOSITE
-        // intent: one client claim is expanded by APMF into an internal ch.6
-        // combat-target claim and an internal ch.9 package-offer claim. Those two
-        // sub-claims must arbitrate against OTHER clients' ch.6/ch.9 claims at the
-        // SAME weight the client asked for -- a sub-claim filed at an invented basis
-        // would either steal a facet the client did not outbid for, or lose one it
-        // did. The basis is not reachable any other way: it is a private `Claim`
-        // member, `Channel::Engage` is not handed it, and the two `TryGetOwningClaim`
-        // overloads above deliberately expose only the param.
+        // WHY THIS EXISTS, since no other reader needed it. ch.19 moves an actor by
+        // filing ONE internal ch.9 package offer -- the IMPLEMENTATION of travel, not
+        // a second client intent. That offer must arbitrate against OTHER clients'
+        // ch.9 claims at the SAME weight the travel client asked for: filed at an
+        // invented basis it would either steal the package facet from a client that
+        // outbid us, or lose it to one we outbid. The basis is not reachable any
+        // other way: it is a private `Claim` member, `Channel::Engage` is not handed
+        // it, and the two `TryGetOwningClaim` overloads above deliberately expose
+        // only the param.
         //
         // Same RCU reader discipline as `TryGetOwningClaim` -- relaxed pre-gate, one
         // acquire-load of a LOCAL frozen snapshot, one hash lookup, copy out by
-        // value, mutate nothing. Any thread by construction; channels/CombatEngage.cpp
+        // value, mutate nothing. Any thread by construction; channels/Travel.cpp
         // calls it from the confirmed-main seat.
         //
         // Internal C++ ONLY -- not part of the C-ABI, free to change shape.

@@ -8,7 +8,7 @@
 // `native/Packages.cpp` -- `FindInput` / `ReadLocation` / `SetAPMFLootTravelTarget`,
 // and the LAYOUT derivation at the top of that file), carried over WITH its
 // guards and its reasoning rather than re-derived. It exists here because ch.19
-// (`kIntent_CombatEngage`) does the approach leg for a client, so the package it
+// (`kIntent_Travel`) walks the actor for a client, so the package it
 // re-points is APMF's own (`Data/APMF.esl`, `APMF_GenerateESL.py`) and the write
 // has to live in APMF.
 //

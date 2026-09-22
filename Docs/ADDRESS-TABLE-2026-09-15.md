@@ -359,12 +359,19 @@ derivation re-proven against 1.7's base TD.
 | `CombatBehaviorTreeCreateContextNode1_CombatBehaviorContextMagic` | 266702 -> `0x169dad8` | 213692 -> `0x18e35a8` | `0x1961b70` |
 | `CombatBehaviorTreeCreateContextNodeBase_CombatBehaviorContextMagic` | 550933 -> `0x169da80` | 213681 -> `0x18e3550` | `0x1961b18` |
 
-## ADDENDUM 2026-09-22 — ch.19 `kIntent_CombatEngage` (ABI v10), both runtimes
+## ADDENDUM 2026-09-22 — ch.19 `kIntent_Travel` (ABI v10), both runtimes
 
-**ch.19 places NO new address and NO new vtable seat.** It composes ch.6 and ch.9, and it rides two
-engine functions that CommonLib already binds through its own `RELOCATION_ID`. The table below exists
-so the next person does not have to re-derive them, and so the two ch.19 uses are on the record as
-per-runtime-verified rather than assumed (CLAUDE.md principle 11).
+**ch.19 places NO new address and NO new vtable seat.** It files one internal ch.9 claim and rides
+engine functions CommonLib already binds. The table below exists so the next person does not have to
+re-derive them, and so every one is on the record as per-runtime-verified rather than assumed
+(CLAUDE.md principle 11).
+
+**SCOPE MOVED UNDER THIS TABLE, 2026-09-22.** The first cut ended a leg on line of sight or detection;
+marth's contract is arrival-only plus a combat cancel, so `Actor::HasLineOfSight` and
+`Actor::RequestDetectionLevel` are **NO LONGER CALLED BY ANY APMF CODE**. Their rows are KEPT rather
+than deleted — the resolution work is done and correct, and a future facet may want them — but they are
+marked RESOLVED, NOT USED so nobody reads them as live dependencies. The one engine call ch.19 actually
+makes is `Actor::IsInCombat()`, added at the bottom.
 
 Resolution method, identical to §0: Address Library id -> RVA, then `raw = 0x400 + (rva - 0x1000)` into
 the unpacked images at `marth-follower-overhaul/binaries/{1.6.1170,1.5.97}/SkyrimSE.unpacked.exe`
@@ -382,11 +389,28 @@ reproduces (`-0-1.bin` gives `0x6a2cc0`, which is `c3 cc cc cc...` — a functio
 
 | Function | Used by | SE 1.5.97 id -> RVA | AE 1.6.1170 id -> RVA | First 16 bytes (both) | Grade |
 |---|---|---|---|---|---|
-| `Actor::HasLineOfSight(TESObjectREFR*, bool&)` | ch.19 approach monitor (the "perceived" test) | 53029 -> `0x91c620` | 53829 -> `0x9ba120` | `41c600004885c9743b4885d27436483b` — **byte-identical on both** | **CONFIRMED** both. CommonLib binds it at `src/RE/A/Actor.cpp:648` with exactly these ids. No VR id exists, which is one more reason ch.19 is VR-refused at install. |
-| `Actor::RequestDetectionLevel(Actor*, DETECTION_PRIORITY)` | ch.19 approach monitor (the second "perceived" test) | 36748 -> `0x5fc9a0` | 37764 -> `0x68f9f0` | `40534883ec20418bd84c8bc2488bd148` — **byte-identical on both** | **CONFIRMED** both. CommonLib binds it via `Offset::Actor::RequestDetectionLevel` (`include/RE/Offsets.h:17`, `RELOCATION_ID(36748, 37764)`). |
-| `Actor::EvaluatePackage(bool, bool)` | ch.9's nudge, which ch.19's approach rides — **pre-existing, re-confirmed** | 36407 -> `0x5db310` | 37401 -> `0x66ccf0` | `488bc4565741564883ec6048c740d8fe` — byte-identical on both | **CONFIRMED** both (matches `Docs/HOOK-SITE-COVERAGE.md` row 6). |
+| `Actor::HasLineOfSight(TESObjectREFR*, bool&)` | **RESOLVED, NOT USED IN v1** (was the ch.19 "perceived" test) | 53029 -> `0x91c620` | 53829 -> `0x9ba120` | `41c600004885c9743b4885d27436483b` — **byte-identical on both** | **CONFIRMED** both. CommonLib binds it at `src/RE/A/Actor.cpp:648` with exactly these ids. No VR id exists, which is one more reason ch.19 is VR-refused at install. |
+| `Actor::RequestDetectionLevel(Actor*, DETECTION_PRIORITY)` | **RESOLVED, NOT USED IN v1** (was the ch.19 second "perceived" test; also an UNOBSERVED path for this project) | 36748 -> `0x5fc9a0` | 37764 -> `0x68f9f0` | `40534883ec20418bd84c8bc2488bd148` — **byte-identical on both** | **CONFIRMED** both. CommonLib binds it via `Offset::Actor::RequestDetectionLevel` (`include/RE/Offsets.h:17`, `RELOCATION_ID(36748, 37764)`). |
+| `Actor::EvaluatePackage(bool, bool)` | ch.9's nudge, which ch.19's leg rides — **pre-existing, re-confirmed** | 36407 -> `0x5db310` | 37401 -> `0x66ccf0` | `488bc4565741564883ec6048c740d8fe` — byte-identical on both | **CONFIRMED** both (matches `Docs/HOOK-SITE-COVERAGE.md` row 6). |
 | `BSPointerHandleManagerInterface<Actor>::GetHandle` | `Actor::GetHandle()` in ch.9's nudge gate and ch.19's handle capture — **pre-existing, re-confirmed** | 15967 -> `0x1ee670` | 16212 -> `0x23b780` | `40534883ec20488bd94885d2741af742` — byte-identical on both | **CONFIRMED** both. |
 | `Actor::StartCombat` (3-arg `bool(Actor*, Actor*, void*)`) | **NOT USED BY ch.19 v1.** Recorded only so a future combat-entry brief starts from a verified id instead of re-deriving it | 37608 -> `0x6251b0` (`4c8bdc56574154415641574883ec5049`) | 38561 -> `0x6b6930` (`4c8bdc55565741544155415641574883`) | prologues differ (an extra `push rbp`/`push r13` on AE) — expected across builds; both are real function entries | **CONFIRMED** both as function entries. `Docs/INVARIANTS.md #0` forbids a channel calling it and ch.19 v1 does not. |
+
+**`Actor::IsInCombat()` — the ONE engine call ch.19 v1 makes, and it needs no address at all.** It is
+`RE::VTABLE_Character[0]` slot **0xE3** (VR 0xE5, never reached: ch.19 is VR-refused), dispatched through
+CommonLib's `RelocateVirtual`, so it is a vtable INDEX rather than a relocation — version-robust by
+construction. Its body was still read on both images, because "what does this mean for an actor the
+engine has not given a controller yet" had to be answered rather than assumed:
+
+| runtime | vtable | slot 0xE3 target | addrlib id | body |
+|---|---|---|---|---|
+| SE 1.5.97 | `VTABLE_Character[0]` id 261397 -> `0x165DA40` | `0x625660` | 37609 | `mov rax,[rcx+0x158]; test rax,rax; je false; cmp byte [rax+0x43],0; jne false; return true` |
+| AE 1.6.1170 | `VTABLE_Character[0]` id 207886 -> `0x18A5558` | `0x6B6DD0` | 38562 | identical instruction for instruction, with `[rcx+0x160]` |
+
+So `IsInCombat()` reads the actor's `combatController` pointer and returns true only when it is non-null
+AND the byte at `+0x43` is zero. **A null controller returns FALSE cleanly, with no dereference** — an
+actor the engine has not put in combat is simply not in combat, which is exactly the answer the travel
+monitor needs. The `+0x158` / `+0x160` difference is the AE +8 shift; APMF never touches that member
+itself, the call goes through the vtable.
 
 **Struct offsets ch.19 relies on carry no per-runtime risk and are asserted at BUILD time**
 (`native/core/PackageData.cpp`): `PackageLocation` `sizeof 0x18`, `locType@0x08`, `rad@0x0C`,

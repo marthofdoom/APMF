@@ -62,7 +62,7 @@ INI-observe-only), plus `kEquipAuth_DenyPlayerMenu = 1<<3`; `APMF_API_v9`: +
 Light 1<<5, `kEquipCat_All` 0x3F) via the 16-byte POD `APMF_EquipScope{owned@0, denied@4,
 reserved[2]@8}`, static_assert-pinned; nullptr resets to `{All, 0}` == v8; unknown bits
 masked + logged once per handle); **ABI v10 adds NO struct and NO fn-pointer slot at all** --
-`kIntent_CombatEngage = 19` (ch.19) plus the `CombatEngageFlags` bits ride the EXISTING
+`kIntent_Travel = 19` (ch.19) plus the `TravelFlags` bits ride the EXISTING
 `RequestEx`/`Repoint`/`Release` slots, so a v9 client is byte-unaffected and the newest
 struct stays `APMF_API_v9`; intent 18 is deliberately SKIPPED, reserved for the unauthored
 ch.18 attack-selection spec), the
@@ -693,7 +693,7 @@ re-dispatch still prints.
   goes back to answering with the pre-claim package. Never touch alias/run-once state
   (INVARIANTS #3a); never return null.
 
-### `native/core/PackageData.{h,cpp}` — read a templated package's inputs, point its Location (ch.19)
+### `native/core/PackageData.{h,cpp}` — read a templated package's inputs, point its Location (ch.19 travel)
 `SetTravelTarget(pkg, ref, radius)`: resolve the vanilla Travel template's
 `"Place to Travel"` input BY NAME, guard the recovered pointer by the input's own
 `GetTypeName()`, then write `locType = kNearReference`, `data.refHandle = ref->CreateRefHandle()`
@@ -884,8 +884,8 @@ Each: a `Channel` subclass + `APMF_REGISTER_CHANNEL`, per-NPC `Engage`/`Release`
 The first release shipped the documented catalog of 13 channels as a baseline
 benchmark; the table below is the CURRENT set — 18 files, 18 rows (ch.7
 `CombatAction` and ch.9 `OfferPackage` were missing from it until 2026-09-07; ch.17
-`EquipAuthority` added 2026-09-15; ch.19 `CombatEngage` added 2026-09-22 — ch.18 is
-RESERVED for the unauthored attack-selection spec, so the intent numbers skip it). Each `ServesIntent()` maps to an `APMF_API::Intent`. Test keys in
+`EquipAuthority` added 2026-09-15; ch.19 `Travel` added 2026-09-22 — ch.18 is RESERVED
+for an attack-selection design that is NOT YET ON MAIN, so the intent numbers skip it). Each `ServesIntent()` maps to an `APMF_API::Intent`. Test keys in
 parentheses.
 
 | File | Ch | Facet | Gate / mechanism | Kind |
@@ -907,7 +907,7 @@ parentheses.
 | `Equipment.cpp` | 15 | equip/unequip (Num.) | `GetEquippedObject` + `UnequipObject`/`EquipObject` (melee-vs-ranged lever) | source-block |
 | `Detection.cpp` | 16 | stealth (Num8) | `kMovementNoiseMult` + `kDetectLifeRange` AVs | source-block |
 | `EquipAuthority.cpp` | 17 | ENGINE-EQUIP facet, WHOLE by default, SCOPED by category from ABI v9 (`kIntent_EquipAuthority`, ABI v7/v8/v9; no test key) | Arbitration + claim lifecycle (standing, no TTL) + the ONE #17a-licensed equip: on every applied `SetEquipSet`/`SetEquipSetEx` for the owning claim (and on a win/repoint, and on a CHANGED `SetEquipScope`) it POSTS one `mainthread` hop that lands after `Publish()` and equips each declared item the actor is not wearing via `ActorEquipManager::EquipObject` (queued, not forced; v8: with the declared hand's `BGSEquipSlot` 0x13F42/0x13F43 by `LookupByID`, "worn" = in THAT hand, same form allowed once per hand) inside `equipsink::ApmfEquipScope`; skips a declared non-governed form type (ARMO/WEAP/AMMO/LIGH only); v9: skips (counts `skipped-unowned`/`skipped-denied`, names once per actor+set signature) any entry whose `equipsink::Categorize(obj, declaredHandEQUP)` bits are not ALL owned or ANY denied — never equips or evicts into an unowned category; never unequips; no re-assert (every declaration walks the inventory; an item APMF already queued is held 3 s from its issue before it is queued again, per (form, hand)). The deny is `core/EquipSink.cpp`'s call-site seat. `Release` relinquishes (nothing to undo). Refuses `kEquipAuth_DenyUnequip` (reserved). Open findings: `Docs/REVIEW-BACKLOG.md` APMF-B5, B6, B8, B9 | claim + #17a seat; APMF equips the DECLARED set, the ENGINE keeps its hands off |
-| `CombatEngage.cpp` | 19 | SEND this actor AT a target actor (`kIntent_CombatEngage`, ABI v10; no test key — the crosshair surface can name only ONE actor and ch.19 needs an actor AND a target, so a hotkey would mean APMF inventing intent) | **COMPOSITE, adds NO seat.** One client claim is expanded, one `mainthread::Post` hop past `Drain`'s `Publish`, into (a) an internal ch.6 `kIntent_CombatTarget` claim and (b) an internal ch.9 `kIntent_OfferPackage` claim naming an APMF-OWNED Travel package from `Data/APMF.esl`, whose `Place to Travel` Location input `core/PackageData.cpp` points at the target ref. BOTH sub-claims are filed at the CLIENT's own basis, read back through `ControlMap::TryGetOwningClaimBasis`. The approach is ENDED (ch.9 sub-claim released, package slot freed) by the per-frame monitor `combatengage::Poll()` on `Arbiter::OncePerFrame` when the actor arrives / has line of sight / detects the target / the target is gone, or by a 120 s STUCK safety net that logs a failure and retries nothing. **v1 makes NO `StartCombat` call and installs NO 0xE4 PIN, so INVARIANTS #0 is untouched.** 8 concurrent approaches; a 9th is refused and logged. Ships OBSERVE-ONLY | claim + ch.6/ch.9 composition; the ENGINE runs the package natively |
+| `Travel.cpp` | 19 | WALK this actor to a reference (`kIntent_Travel`, ABI v10; no test key — the crosshair surface can name only ONE ref and ch.19 needs an actor AND a destination, so a hotkey would mean APMF inventing intent) | **ADDS NO SEAT; CLAIMS NO OTHER INTENT.** One `mainthread::Post` hop past `Drain`'s `Publish`, it files ONE internal ch.9 `kIntent_OfferPackage` claim naming an APMF-OWNED Travel package from `Data/APMF.esl`, whose `Place to Travel` Location input `core/PackageData.cpp` points at the destination ref together with this leg's radius. That offer is travel's IMPLEMENTATION, not a composed client intent; it is filed at the CLIENT's basis (read back through `ControlMap::TryGetOwningClaimBasis`) and RE-FILED — request-new-then-release-old, in one `Drain` — when the winner's basis moves, because a claim's basis is immutable. The leg is ENDED (offer released, package slot freed) by the per-frame monitor `travel::Poll()` on `Arbiter::OncePerFrame` on ARRIVAL, on `Actor::IsInCombat()`, or on the destination being gone — plus a 120 s STUCK safety net that logs a failure and retries nothing. **No LOS test, no detection test, no `StartCombat`, no 0xE4 PIN, so INVARIANTS #0 is untouched.** 8 concurrent legs; a 9th is refused and logged. Ships OBSERVE-ONLY | one internal ch.9 offer; the ENGINE runs the package natively |
 
 - **What breaks (all channels):** each must (1) keep the package coherent — none
   substitutes the package (§5); (2) capture-and-restore engine state in `Release`,
@@ -920,15 +920,26 @@ parentheses.
   its monitor runs on the confirmed-main `OncePerFrame` seat because `Tick` is
   multi-threaded and the monitor makes engine LOS/detection calls). Movement FULL block +
   KeepOffset (the DENY gate) use Address-Library IDs (#8), VR-refused.
-- **What breaks (ch.19 specifically — it is the ONE channel that claims OTHER channels;
-  `core/ControlMap.h`'s `TryGetOwningClaimBasis` exists only for it):** the sub-claims must
-  stay at the CLIENT's basis (an invented basis steals, or loses, a facet the client did not
-  bid on); every ControlMap write must stay POSTED (a lifecycle call runs BEFORE `Publish`);
-  the package SLOT must stay owned until the posted teardown runs, or a
-  release-then-re-request inside ONE `Drain` hands the new engagement the very record the
-  outgoing ch.9 claim is still offering; and the arrival radius written into the package
-  must stay equal to the one the monitor tests, or "the engine thinks it arrived" and "APMF
-  thinks it arrived" can disagree forever. Its deny holes are stated in
+- **What breaks (ch.19 specifically — it is the ONE channel that files an internal claim on
+  another channel; `core/ControlMap.h`'s `TryGetOwningClaimBasis` exists only for it):**
+  (1) THE INTERNAL ch.9 OFFER IS TRAVEL'S IMPLEMENTATION, NOT A COMPOSED CLIENT INTENT — do
+  not grow it back into one. An earlier cut also filed a ch.6 combat-target claim on the
+  client's behalf and it was DELETED (marth, 2026-09-22: "We should avoid combining intents
+  anyway"); a client that wants ch.6 claims ch.6. (2) The offer must stay at the CLIENT's
+  basis (an invented basis steals, or loses, a facet the client did not bid on) and must be
+  RE-FILED — request the new one, THEN release the old, in one `Drain` — when the winner's
+  basis moves: a claim's basis is immutable, `ApplyRepoint` updates the param only, so a
+  re-point alone leaves the offer arbitrating at the FIRST owner's basis. (3) Every
+  ControlMap write must stay POSTED (a lifecycle call runs BEFORE `Publish`). (4) The package
+  SLOT must stay owned until the posted teardown runs, or a release-then-re-request inside
+  ONE `Drain` hands the new leg the very record the outgoing ch.9 claim is still offering.
+  (5) The arrival radius written into the package must stay equal to the one the monitor
+  tests, or "the engine thinks it arrived" and "APMF thinks it arrived" can disagree forever.
+  (6) The end conditions are ARRIVAL, `IsInCombat()` and destination-gone — do NOT re-add a
+  line-of-sight or detection test; the LOS one was removed because it fires before the actor
+  moves in the case this facet exists for (`Docs/DENY-COMPLETENESS-AUDIT.md` row 19 (d)).
+  Its open review findings are `Docs/REVIEW-BACKLOG.md` APMF-B13..B18 — read them before
+  editing. Its deny holes are stated in
   `Docs/DENY-COMPLETENESS-AUDIT.md` row 19 — read them before editing.
 
 ### NOT built (probe-gated GAPs — do not add without a live probe)

@@ -4,64 +4,106 @@ Updated 2026-09-22. The current state of the build: what's shipped, what's
 probe-gated, what's next. Keep this current in the SAME change as any
 build/finding/workflow change.
 
-## HEAD OF WORK 2026-09-22 -- ch.19 COMBAT ENGAGE v1: the TRAVEL LEG (`feat/apmf-combat-engage`)
+## HEAD OF WORK 2026-09-22 -- ch.19 TRAVEL v1 (`feat/apmf-combat-engage`)
 
-Branch off `origin/main` (9226f77). **OBSERVE-ONLY (`[CombatEngage] bEngageObserveOnly=1`),
-NOT field-run, NOT merged.** ABI bumped to v10. Driver: a third-party "hotkey sends my
-teammates at that enemy" plugin built on ABI v9 and gave up, because at v9 the public API
-CANNOT express "go attack this actor now" -- ch.6 is arbitration only, ch.9 needs a package
-the CLIENT ships, and the approach leg lived only inside MFO. Their plugin fell back to
-re-pushing `StartCombat` every 3 s at foes the actor had never detected, which is the
-engine's SEARCH behaviour, not a charge. marth: "so all this needs to be added to Harbinger
-then. Ok, what the modder needs first."
+Branch off `origin/main` (9226f77). **OBSERVE-ONLY (`[Travel] bTravelObserveOnly=1`), NOT
+field-run, NOT merged.** ABI bumped to v10. Driver: a third-party "hotkey sends my teammates
+at that enemy" plugin built on ABI v9 and gave up, because at v9 the public API CANNOT express
+"go over there" at all -- ch.6 is arbitration only, ch.9 needs a package the CLIENT ships, and
+the travel leg lived only inside MFO. Their plugin fell back to re-pushing `StartCombat` every
+3 s at foes the actor had never detected, which is the engine's SEARCH behaviour, not a charge.
 
-**SCOPE, cut by marth the same day: "for now lets try having it just travel to the enemy."**
-v1 is the TRAVEL LEG and nothing else. **NO `StartCombat`. NO 0xE4 `UpdateCombat` target PIN.
-`Docs/INVARIANTS.md #0` is UNTOUCHED by this branch and needs no amendment.** This branch
-installs NO engine seat at all.
+**THE CONTRACT, in marth's words (2026-09-22): "it goes to the target 50-100u from it. And
+combat interrupts and cancels the movement. That's all."** And: "Move to location is a staple
+feature." The hotkey-hunt case is just one caller.
 
-1. **`kIntent_CombatEngage = 19`** (`native/APMF_API.h`). `param.form` = the target actor
-   (REQUIRED), `fval` = arrival radius (0 => 128u), `ival` = `CombatEngageFlags`
-   (`kEngage_NoApproach`, `kEngage_ReleaseOnTargetDead` -- the latter NAMES the default
-   rather than switching it on). Intent 18 is deliberately SKIPPED, reserved for the
-   unauthored ch.18 attack-selection spec. **ABI v10 adds no struct and no fn-pointer slot**:
-   ch.19 rides the existing `RequestEx`/`Repoint`/`Release`, so a v9 client is byte-unaffected
-   and the newest interface struct stays `APMF_API_v9`.
-2. **`channels/CombatEngage.cpp`** composes ONE client claim into an internal ch.6
-   combat-target claim and an internal ch.9 package-offer claim, BOTH at the CLIENT's own
-   basis (new internal reader `ControlMap::TryGetOwningClaimBasis`). Every ControlMap write is
-   `mainthread::Post`ed one hop past `Drain`'s `Publish` and re-validates the published claim,
-   the same ordering rule ch.9's nudge already obeys (INVARIANTS #20).
-3. **The approach monitor runs on `Arbiter::OncePerFrame`** (the existing confirmed-main
-   PlayerCharacter 0xAD seat), NOT on `Channel::Tick` -- Tick is field-proven multi-threaded
-   and the monitor makes engine LOS/detection calls. It ENDS the approach on arrival / line of
-   sight / detection / target gone, plus a 120 s STUCK safety net that logs a FAILURE and
-   retries nothing.
-4. **`core/PackageData.{h,cpp}`**: MFO's field-run package-input accessor PORTED with its
+1. **`kIntent_Travel = 19`** (`native/APMF_API.h`). `param.form` = the DESTINATION reference
+   (REQUIRED -- any loaded ref; an actor is just the common case), `fval` = arrival radius
+   (0 => 75u, CLAMPED to [50, 512] with the clamp logged), `ival` = `TravelFlags`
+   (`kTravel_ReleaseOnTargetDead`, which NAMES the default rather than switching it on).
+   Intent 18 is skipped, reserved for an attack-selection design that is not yet on main.
+   **ABI v10 adds no struct and no fn-pointer slot** -- ch.19 rides the existing
+   `RequestEx`/`Repoint`/`Release`, so a v9 client is byte-unaffected and the newest interface
+   struct stays `APMF_API_v9`. (It was briefly authored as `kIntent_CombatEngage`; renamed
+   because v1 travels and cancels, it does not engage anything. The rename was free: ABI v10
+   has never been released -- the newest tag is v0.9.4 -- and MFO's byte-shared copy is still
+   at v9 and does not contain the intent at all.)
+2. **ONE INTENT, ONE FACET** (marth: "We should avoid combining intents anyway"). An earlier
+   cut also filed an internal ch.6 combat-target claim on the client's behalf; **that is
+   deleted.** A client that wants ch.6 claims ch.6 -- which is exactly what the third-party
+   plugin already did. The ONE internal claim left is a ch.9 `kIntent_OfferPackage`, and it is
+   travel's IMPLEMENTATION, not a composed intent: the only way to move an NPC natively is to
+   hand the engine a package. It is filed at the CLIENT's basis (new internal reader
+   `ControlMap::TryGetOwningClaimBasis`) and RE-FILED on an owner change -- request the new one
+   FIRST, then release the old, in one `Drain`, so the offer is never unheld (a claim's basis is
+   immutable; `ApplyRepoint` updates the param only).
+3. **End conditions: ARRIVAL, the ACTOR ENTERING COMBAT, the destination being gone. Nothing
+   else.** No line-of-sight test and no detection test anywhere in it. The first cut had both,
+   and ending on LOS was actively wrong: LOS is GEOMETRY while the engine's combat AI runs on
+   KNOWLEDGE, and in the send-them-at-a-visible-foe case it is already true at engage time, so
+   the leg ended on the first poll within 250 ms before the actor had moved (Fable tier-3 on
+   2d6108f, SEV-3). Detection went with it -- `RequestDetectionLevel` is an UNOBSERVED path for
+   this project and the contract does not mention perception. The combat test is
+   `Actor::IsInCombat()`, Character vtable slot 0xE3, verified on BOTH unpacked images as a
+   null-check of `combatController` plus one byte compare, so an actor the engine has given no
+   controller reads FALSE cleanly with no dereference.
+4. **The monitor runs on `Arbiter::OncePerFrame`** (the existing confirmed-main PlayerCharacter
+   0xAD seat), NOT on `Channel::Tick` -- Tick is field-proven multi-threaded. Plus a 120 s STUCK
+   safety net that logs a FAILURE and retries nothing.
+5. **`core/PackageData.{h,cpp}`**: MFO's field-run package-input accessor PORTED with its
    RTTI-derived `IPackageData* + 0x10` model, its `GetTypeName()` guard and five
-   `static_assert`s against the pinned CommonLib. Uses the Travel template's REAL parameter
-   name `"Place to Travel"` (deck-proven 2026-09-03), never the ANAM type `"Location"`.
-5. **APMF SHIPS A PLUGIN FOR THE FIRST TIME.** `APMF_GenerateESL.py` -> `Data/APMF.esl`:
-   8 Travel PACK records (PLDT type 0 "Near Reference", radius 128, placeholder ref the DLL
-   overwrites), 1 master, ESL-flagged, 2539 bytes. **The record body is BYTE-IDENTICAL to
-   MFO's shipped, field-run `MFO_APMFLootTravelPackage0` apart from the EDID string.**
-   Vanilla-package reuse was REJECTED (a package's Location lives on the RECORD, so borrowing
-   one hijacks whatever quest owns it AND caps APMF at one concurrent approach; measured:
-   1988 of Skyrim.esm's 5961 PACK records instance the Travel template, 1494 of them already
-   bound to a specific NPC/quest, and none is per-actor-writable). Runtime fabrication via the
-   proxy-form pattern was DEFERRED (proven for `SpellItem` only; a package's inputs live behind
-   `TESPackageData*`, a shallow copy shares them and a deep copy needs classes the pin does not
-   expose, and a dynamic 0xFF package does not survive a save while `currentPackage` may point
-   at it).
-6. **This makes TRAVEL a first-class Harbinger facet available to EVERY client**, not an
-   MFO-internal trick. **Duplicated from MFO, for a later consolidation:** MFO's
-   `native/Packages.cpp` `FindInput`/`ReadLocation`/`SetAPMFLootTravelTarget` and its four
-   `MFO_APMFLootTravelPackage` records now have twins in APMF. MFO can later route its loot
-   travel through ch.19 (or through a ch.9 offer of an APMF-owned record) and retire its own
-   copies -- that is its OWN brief, in the MFO repo, and nothing here touches MFO.
-7. **Open, and the whole point of the first field cycle:** does the engine's own combat AI
-   take the actor once ch.19 lets go? A NO is the evidence that would justify amending #0 for
-   a bounded combat-entry call plus the 0xE4 PIN (v2). A YES means v1 is the whole feature.
+   `static_assert`s against the pinned CommonLib. Uses the Travel template's REAL parameter name
+   `"Place to Travel"` (deck-proven 2026-09-03), never the ANAM type `"Location"`.
+6. **APMF SHIPS A PLUGIN FOR THE FIRST TIME, and this is why.** marth: "I don't like the idea
+   of the esl, but if it's needed." It is needed, and it EARNS itself by serving a staple
+   feature rather than one niche case. `APMF_GenerateESL.py` -> `Data/APMF.esl`: 8 Travel PACK
+   records (PLDT type 0 "Near Reference", authored radius 75, placeholder ref the DLL
+   overwrites), 1 master, ESL-flagged, ~2.5 KB, overriding nothing. **The record body is
+   byte-identical to MFO's shipped, field-run `MFO_APMFLootTravelPackage0` apart from the EDID
+   string and the authored radius (75 vs 128), both of which are overwritten or ignored at
+   runtime.** Vanilla-package reuse was REJECTED (a package's Location lives on the RECORD, so
+   borrowing one hijacks whatever quest owns it AND caps APMF at one leg globally; measured:
+   1988 of Skyrim.esm's 5961 PACK records instance the Travel template, 1494 already bound to a
+   specific NPC/quest, none per-actor-writable). Runtime fabrication was DEFERRED (proven for
+   `SpellItem` only; a package's inputs live behind `TESPackageData*`, a shallow copy shares
+   them, a deep copy needs classes the pin does not expose, and a dynamic 0xFF package does not
+   survive a save while `currentPackage` may point at it).
+
+**INSTALL STORY for `Data/APMF.esl`.** It ships in the same archive as `APMF.dll`, under
+`Data/`, beside `Data/SKSE/Plugins/APMF.ini`. ESL-flagged (TES4 record flag 0x200), so it takes
+no regular load-order slot -- it uses one of the 4096 light-plugin slots, which is why the
+FormID band is frozen at 0x800-0x807. One master (Skyrim.esm). It must be ENABLED in the load
+order like any plugin; a mod manager that installs the archive and enables it needs no further
+step. If it is missing or disabled, ch.19 REFUSES every `kIntent_Travel` claim synchronously and
+names the reason once, so the client's own degrade path runs. Nothing else in APMF depends on
+it, so an absent ESL costs exactly this facet.
+
+**THE OBSERVE-MODE GATE, restated because the first version of it was unreachable** (Fable
+tier-3, SEV-3): in observe mode `Compose` returns BEFORE any claim is filed and `Poll` never
+runs, so there is no package line, no offer line, no nudge and no end reason to read. What an
+observe session CAN prove is the client-facing half: per command, one `[travel] ... CLAIMED`
+naming destination/radius/flags plus one `[travel-observe] ... WOULD walk to ...` naming
+destination/radius/basis, with the values the client meant. That is the gate. **The ordering
+evidence requires an ACTIVE session** (`bTravelObserveOnly=0`).
+
+**FUTURE FACETS, named so nobody builds them into this one.** Target PINNING (a port of MFO's
+`UpdateCombat` 0xE4 PIN) and COMBAT ENTRY are becoming their OWN intents -- explicitly NOT a v2
+of travel. Intents stay orthogonal. Convenience COMBO intents (one call bundling, say, travel +
+combat target + entry) are a RECOGNISED and reasonable idea and are **DEFERRED until after the
+full MFO port to APMF is complete** -- not refused on principle. Until then every facet ships on
+its own intent and a client that wants two behaviours claims two intents. No combo intent is
+designed or slot-numbered now.
+
+**Duplicated from MFO, for a later consolidation:** MFO's `native/Packages.cpp`
+`FindInput`/`ReadLocation`/`SetAPMFLootTravelTarget` and its four `MFO_APMFLootTravelPackage`
+records now have twins in APMF. Travel is a first-class Harbinger facet available to EVERY
+client now, not an MFO-internal trick, so MFO can later retire its own copies and route loot
+travel through ch.19 -- that is its OWN brief, in the MFO repo, and nothing here touches MFO.
+
+**Open review findings:** `Docs/REVIEW-BACKLOG.md` APMF-B13..B18 (a future append-only
+"what is this leg doing" query; the uid-0 fallback divergence from MFO; the observe log's slot
+naming; a leg whose actor does not resolve; 120 s vs MFO's 60 s; a stale Location handle across
+save/load).
 
 ## HEAD OF WORK 2026-09-16 -- ch.17 EQUIP AUTHORITY v9: SCOPED authority, owned + denied categories (`feat/equip-authority-v9`)
 

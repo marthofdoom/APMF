@@ -7,7 +7,7 @@
 #include "channels/CastCompose.h"   // castcompose::ExtractFromPackage (ch.8b FromPackage read)
 #include "core/CastProxy.h"         // castproxy::Acquire/Free (ch.8b kSelf delivery-flip, writer thread)
 #include "core/MainThread.h"        // mainthread::Post (defer proxy teardown past this Drain's Publish)
-#include "channels/CombatEngage.h"  // ch.19 Installed()/NotInstalledReason() for the synchronous refusal
+#include "channels/Travel.h"  // ch.19 Installed()/NotInstalledReason() for the synchronous refusal
 
 namespace apmf {
 
@@ -88,25 +88,26 @@ namespace apmf {
                              apmf::equipsink::NotInstalledReason(), apmf::log::Hex(actor));
             return APMF_API::kInvalidHandle;
         }
-        // ch.19 (ABI v10): a kIntent_CombatEngage claim is REFUSED synchronously when
-        // the channel cannot do anything -- VR, [CombatEngage] bCombatEngage=0, or
-        // Data/APMF.esl missing -- and when it names NO TARGET. Same "seat down =
-        // claim refused" contract ch.17 uses above, and for the same reason: a claim
-        // that is accepted and then silently does nothing is worse than a refusal,
-        // because the client's documented degrade path never runs. A zero param.form
-        // is refused HERE rather than at Engage so the client learns at the call.
-        if (intent == APMF_API::kIntent_CombatEngage) {
-            if (!apmf::combatengage::Installed()) {
+        // ch.19 (ABI v10): a kIntent_Travel claim is REFUSED synchronously when the
+        // channel cannot do anything -- VR, [Travel] bTravel=0, or Data/APMF.esl
+        // missing -- and when it names NO DESTINATION. Same "seat down = claim
+        // refused" contract ch.17 uses above, and for the same reason: a claim that is
+        // accepted and then silently does nothing is worse than a refusal, because the
+        // client's documented degrade path never runs. A zero param.form is refused
+        // HERE rather than at Engage so the client learns at the call.
+        if (intent == APMF_API::kIntent_Travel) {
+            if (!apmf::travel::Installed()) {
                 static std::atomic<bool> s_logged{ false };
                 if (!s_logged.exchange(true))
-                    spdlog::warn("[apmf][ch.19] claim refused: channel not installed ({}) -- actor 0x{}. "
-                                 "(Logged once.)",
-                                 apmf::combatengage::NotInstalledReason(), apmf::log::Hex(actor));
+                    spdlog::warn("[apmf][travel] claim refused: channel not installed ({}) -- actor "
+                                 "0x{}. (Logged once.)",
+                                 apmf::travel::NotInstalledReason(), apmf::log::Hex(actor));
                 return APMF_API::kInvalidHandle;
             }
             if (!param || param->form == 0) {
-                spdlog::warn("[apmf][ch.19] claim refused: no target (param.form is 0) -- actor 0x{}. "
-                             "kIntent_CombatEngage REQUIRES param.form = the target actor's FormID.",
+                spdlog::warn("[apmf][travel] claim refused: no destination (param.form is 0) -- actor "
+                             "0x{}. kIntent_Travel REQUIRES param.form = the destination reference's "
+                             "FormID.",
                              apmf::log::Hex(actor));
                 return APMF_API::kInvalidHandle;
             }

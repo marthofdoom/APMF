@@ -17,7 +17,7 @@
 #include "core/NonAliasProbe.h"
 #include "core/AiCastSeats.h"
 #include "core/CastClassify.h"
-#include "channels/CombatEngage.h"
+#include "channels/Travel.h"
 
 // ============================================================================
 // APMF -- AI Package Management Framework. Entry point (thin).
@@ -63,9 +63,9 @@ namespace {
         // both (INVARIANTS #19).
         apmf::castproxy::ResetAll();
         // Same reason, for ch.19: Clear() makes no channel->Release calls at all, so
-        // the engagement table and its package slots would survive the world swap
+        // the travel-leg table and its package slots would survive the world swap
         // owned by actors that no longer exist.
-        apmf::combatengage::ResetAll("revert/new game");
+        apmf::travel::ResetAll("revert/new game");
         // Flush the confirmed-main task queue at the world boundary (see
         // core/MainThread.h's Discard() for why). Clear() posts nothing today -- it
         // makes no channel->Release calls by design -- but anything posted BEFORE the
@@ -94,11 +94,13 @@ namespace {
             apmf::equipgate::Install();          // T2a CheckShouldEquip allowance
             apmf::actiongate::Install();         // T1 combat-action allowance (ch.7; VR-refused inside)
             apmf::packagegate::Install();        // T3 package-offer allowance (ch.9; VR-refused inside)
-            apmf::combatengage::Install();       // ch.19 COMBAT ENGAGE (ABI v10): resolve Data/APMF.esl's
-                                                  // approach packages + read [CombatEngage]. Installs NO
-                                                  // seat of its own -- it composes ch.6 + ch.9, so it MUST
-                                                  // come after packagegate::Install above. VR-refused
-                                                  // inside; a failure REFUSES kIntent_CombatEngage claims
+            apmf::travel::Install();             // ch.19 TRAVEL (ABI v10): resolve Data/APMF.esl's
+                                                  // travel packages + read [Travel]. Installs NO seat of
+                                                  // its own -- its ONE internal claim is a ch.9 package
+                                                  // offer (the implementation of travel, not a composed
+                                                  // client intent), so it MUST come after
+                                                  // packagegate::Install above. VR-refused inside; a
+                                                  // failure REFUSES kIntent_Travel claims
                                                   // (ControlMap::EnqueueRequest) rather than accepting a
                                                   // claim that would do nothing.
             apmf::equipsink::Install();          // ch.17 ENGINE-EQUIP SINK: the ONE #17a call-site seat
@@ -166,12 +168,12 @@ namespace {
             // purge can never free a live spell's effect array through a dead proxy
             // (INVARIANTS #19 -- MFO's Actuation_Direct.cpp lesson).
             apmf::castproxy::ResetAll();
-            // ch.19: ReleaseAll drives this channel's own Release (so the sub-claims
-            // go), but the queued teardown it posts is about to be Discard()ed --
-            // which is what frees the package slots. Drop the table here instead, or
-            // every slot stays owned by an actor from the outgoing world and the
-            // first engagement in the new one overflows.
-            apmf::combatengage::ResetAll("kPreLoadGame");
+            // ch.19: ReleaseAll drives this channel's own Release (so the internal
+            // package offer goes), but the queued teardown it posts is about to be
+            // Discard()ed -- which is what frees the package slots. Drop the table here
+            // instead, or every slot stays owned by an actor from the outgoing world and
+            // the first leg in the new one overflows.
+            apmf::travel::ResetAll("kPreLoadGame");
             // Flush the confirmed-main task queue. NOTHING Pump()s between here and
             // the first player Update AFTER the load, so anything ReleaseAll just
             // posted (ch.9's release nudge; ch.8b's proxy teardown) would otherwise

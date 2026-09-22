@@ -168,7 +168,7 @@ namespace {
     // its own struct pointer sees only its prefix. The v4 base subobject is
     // brace-initialized explicitly.
     //
-    // ABI v10 (ch.19 kIntent_CombatEngage) adds NO function-pointer slot, so there is
+    // ABI v10 (ch.19 kIntent_Travel) adds NO function-pointer slot, so there is
     // deliberately no APMF_API_v10 and this stays APMF_API_v9: the new intent rides
     // the existing RequestEx/Repoint/Release slots. `abiVersion` still reports 10, so
     // a client can gate on `>= 10` before passing the new Intent value.

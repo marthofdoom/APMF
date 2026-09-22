@@ -118,6 +118,17 @@ namespace {
     // even if wrong, because ReadLocation independently validates the resolved
     // slot's reported TYPE NAME before anything is written through it: a bad uid
     // resolves to a slot that declines loudly rather than a silent stomp.
+    //
+    // A DELIBERATE DIVERGENCE FROM THE MFO ORIGINAL, named here rather than left to
+    // be discovered. MFO's `FindInput` carries static fallback uids for the UseMagic
+    // template's SPELL (3) and Target (4) inputs and NONE for a Location, so on a
+    // both-maps miss MFO's Location path returns null and declines outright. This
+    // port adds uid 0 for the Travel template's "Place to Travel", dumped from
+    // Skyrim.esm and confirmed by the same 2026-09-03 deck name-map dump that produced
+    // the parameter name. It is strictly additive -- the type-name guard still stands
+    // in front of every write -- but it means the two implementations can behave
+    // DIFFERENTLY on a both-maps miss, which is worth knowing when comparing their
+    // logs. (Fable tier-3 on 2d6108f, SEV-5 #3; Docs/REVIEW-BACKLOG.md APMF-B14.)
     constexpr std::int8_t kUidLocationTravel = 0;
 
     RE::TESCustomPackageData* CustomData(RE::TESPackage* a_pkg) {
