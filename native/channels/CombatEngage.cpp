@@ -173,6 +173,30 @@ namespace {
         if (a_slot >= 0 && static_cast<std::size_t>(a_slot) < kEngageSlots) g_slotOwner[a_slot] = 0;
     }
 
+    // Release a ch.9 offer and give its package slot back -- IN THAT ORDER, WITH A
+    // HOP BETWEEN THEM. This is the one piece of ordering in this file that is not
+    // obvious, so it is spelled out.
+    //
+    // `EnqueueRelease` does not release anything; it queues an op that the NEXT
+    // `ControlMap::Drain` applies. Until that Drain the ch.9 claim is still in the
+    // PUBLISHED snapshot, so the 0x49 thunk can still answer with this package.
+    // Freeing the slot in the same breath would therefore open a window in which a
+    // DIFFERENT engagement can take the slot and re-point that record's Location --
+    // and for one frame the outgoing actor's still-live offer would walk it to
+    // somebody else's target.
+    //
+    // `mainthread::Pump` swaps its queue, so a task posted from inside Pump runs on
+    // the NEXT frame's Pump (core/MainThread.cpp), which is strictly after that
+    // frame's `Drain` -- i.e. strictly after the release above has been applied. One
+    // hop is exactly enough, and it is enough from EVERY caller (the lifecycle
+    // Release, which already runs a hop late, and the per-frame monitor).
+    void DropOfferAndFreeSlot(APMF_API::Handle a_hPackage, int a_slot) {
+        if (a_hPackage != APMF_API::kInvalidHandle)
+            apmf::ControlMap::Get().EnqueueRelease(a_hPackage);
+        if (a_slot >= 0)
+            apmf::mainthread::Post([a_slot] { FreeSlot(a_slot); });
+    }
+
     // ---- The composition -------------------------------------------------------
 
     // Release the ch.9 sub-claim and free the package slot. The ch.6 sub-claim and
@@ -182,12 +206,9 @@ namespace {
         if (!a_e.approachLive) return;
         a_e.approachLive = false;
 
-        if (a_e.hPackage != APMF_API::kInvalidHandle) {
-            apmf::ControlMap::Get().EnqueueRelease(a_e.hPackage);
-            a_e.hPackage = APMF_API::kInvalidHandle;
-        }
-        FreeSlot(a_e.slot);
-        a_e.slot = -1;
+        DropOfferAndFreeSlot(a_e.hPackage, a_e.slot);
+        a_e.hPackage = APMF_API::kInvalidHandle;
+        a_e.slot     = -1;
 
         const auto elapsed = apmf::clock::MonotonicMs() - a_e.approachStartedMs;
         if (a_failure) {
@@ -392,10 +413,9 @@ namespace {
             // cannot hand the new engagement the very record the outgoing ch.9 claim
             // is still offering (there are kEngageSlots of them; it gets another).
             apmf::mainthread::Post([e] {
-                auto& map = apmf::ControlMap::Get();
-                if (e.hPackage != APMF_API::kInvalidHandle) map.EnqueueRelease(e.hPackage);
-                if (e.hTarget  != APMF_API::kInvalidHandle) map.EnqueueRelease(e.hTarget);
-                FreeSlot(e.slot);
+                if (e.hTarget != APMF_API::kInvalidHandle)
+                    apmf::ControlMap::Get().EnqueueRelease(e.hTarget);
+                DropOfferAndFreeSlot(e.hPackage, e.slot);   // release first, free the slot a hop later
             });
         }
 
