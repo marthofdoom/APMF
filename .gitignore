@@ -19,3 +19,6 @@ compile_commands.json
 # OS
 .DS_Store
 Thumbs.db
+
+# Release archives -- releases/vX.Y.Z/MANIFEST.txt is TRACKED, the zip beside it is not.
+*.zip

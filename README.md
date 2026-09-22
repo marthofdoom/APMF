@@ -108,6 +108,26 @@ Full design is in [design.md](design.md).
 - A client mod links only against `native/APMF_API.h`, a plain C-ABI header
   with no CommonLib dependency of its own.
 
+## Install
+
+The archive's root is your `Data` folder, so a mod manager installs it with nothing to
+place by hand. Three files come out of it, and all three have to be there:
+
+- `SKSE/Plugins/APMF.dll`, the plugin itself.
+- `SKSE/Plugins/APMF.ini`, the settings file. Every key is documented in it and set to
+  the configuration that was tested. Deleting the file, or any line in it, is safe.
+- `APMF.esl`, at the root, beside `SKSE`.
+
+`APMF.esl` is new in v0.9.5 and it has to be **enabled** in your load order like any
+other plugin. It's ESL flagged, so it takes no regular load-order slot (it uses one of
+the 4096 light slots), it has one master (Skyrim.esm), it overrides nothing, and it's
+about 2.5 KB. It carries the travel packages the travel facet (ch.19) hands the engine,
+and it is generated from `APMF_GenerateESL.py` rather than hand-authored.
+
+If it's missing or disabled, APMF refuses every `kIntent_Travel` claim and names the
+reason once in the log, so a client's own degrade path runs. Nothing else breaks. Every
+other facet behaves exactly the same without it.
+
 ## Status
 
 Phase 1 built (see [Docs/STATUS.md](Docs/STATUS.md)). The central
