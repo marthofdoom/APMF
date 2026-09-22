@@ -1,3 +1,14 @@
+## Unreleased -- Send a follower at an enemy
+
+- **A mod can now tell Harbinger "send this follower at that enemy" and Harbinger walks them there.** Before this there was no way to say it. A mod could claim the combat target facet, but that only records who owns it, and it could offer a package, but only one it shipped in its own plugin. A mod author who tried to fill the gap ended up calling the game's start-combat function on a timer, which makes a follower search and pace instead of charge, because the game will not path anyone to an enemy they have never seen.
+- **What it does.** The follower runs to the enemy on real pathing, and Harbinger lets go the moment they arrive, see the enemy, detect the enemy, or the enemy dies or goes away. From there the follower behaves exactly as they would have without Harbinger, which for an enemy in sight is the game's own combat AI.
+- **What it does not do, and this is deliberate.** Harbinger does not start the fight and does not hold the target. If the game does not pick the fight up on arrival, that is worth reporting, because it is the evidence needed before Harbinger takes over combat entry. It is not something to work around with a timer.
+- **It claims nothing else.** No attack choice, no casting, no equipment, no hands, no aggression, no movement lock. A mod that wants any of those asks for them separately.
+- **Harbinger ships a plugin for the first time.** `APMF.esl` carries eight travel packages, one per follower being sent at once. A package's destination lives on the package itself, so two followers walking to two different enemies need two of them. A ninth at the same time is refused and said so in the log rather than quietly sharing one and sending both to the same place. Nothing else in the game is touched: no vanilla record is edited and nothing is overridden.
+- New API revision (v10) with one new intent and two flags. No new call, no struct change. Older mods are unaffected.
+- Ships in observe mode. `bEngageObserveOnly=1` logs what it would do and changes nothing, until a session shows the claim, the package and the release reasons arriving in the right order.
+- No change to any existing facet.
+
 ## Unreleased -- A mod can say which parts of the loadout it owns
 
 - **A mod can now scope its equip authority.** The first two versions took the whole loadout. A mod that only cared about the hands still had to declare the body armor, the shield, the arrows and the torch, or the game's own outfit refresh and combat re-arm got refused for every one of them. The first field run showed exactly that. Now a mod says which categories it owns: armor, shield, right hand, left hand, ammo, light. Harbinger holds the declared set in those categories and leaves the rest to the game.

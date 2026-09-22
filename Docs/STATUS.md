@@ -1,8 +1,67 @@
 # APMF STATUS — living handoff (start here)
 
-Updated 2026-09-16. The current state of the build: what's shipped, what's
+Updated 2026-09-22. The current state of the build: what's shipped, what's
 probe-gated, what's next. Keep this current in the SAME change as any
 build/finding/workflow change.
+
+## HEAD OF WORK 2026-09-22 -- ch.19 COMBAT ENGAGE v1: the TRAVEL LEG (`feat/apmf-combat-engage`)
+
+Branch off `origin/main` (9226f77). **OBSERVE-ONLY (`[CombatEngage] bEngageObserveOnly=1`),
+NOT field-run, NOT merged.** ABI bumped to v10. Driver: a third-party "hotkey sends my
+teammates at that enemy" plugin built on ABI v9 and gave up, because at v9 the public API
+CANNOT express "go attack this actor now" -- ch.6 is arbitration only, ch.9 needs a package
+the CLIENT ships, and the approach leg lived only inside MFO. Their plugin fell back to
+re-pushing `StartCombat` every 3 s at foes the actor had never detected, which is the
+engine's SEARCH behaviour, not a charge. marth: "so all this needs to be added to Harbinger
+then. Ok, what the modder needs first."
+
+**SCOPE, cut by marth the same day: "for now lets try having it just travel to the enemy."**
+v1 is the TRAVEL LEG and nothing else. **NO `StartCombat`. NO 0xE4 `UpdateCombat` target PIN.
+`Docs/INVARIANTS.md #0` is UNTOUCHED by this branch and needs no amendment.** This branch
+installs NO engine seat at all.
+
+1. **`kIntent_CombatEngage = 19`** (`native/APMF_API.h`). `param.form` = the target actor
+   (REQUIRED), `fval` = arrival radius (0 => 128u), `ival` = `CombatEngageFlags`
+   (`kEngage_NoApproach`, `kEngage_ReleaseOnTargetDead` -- the latter NAMES the default
+   rather than switching it on). Intent 18 is deliberately SKIPPED, reserved for the
+   unauthored ch.18 attack-selection spec. **ABI v10 adds no struct and no fn-pointer slot**:
+   ch.19 rides the existing `RequestEx`/`Repoint`/`Release`, so a v9 client is byte-unaffected
+   and the newest interface struct stays `APMF_API_v9`.
+2. **`channels/CombatEngage.cpp`** composes ONE client claim into an internal ch.6
+   combat-target claim and an internal ch.9 package-offer claim, BOTH at the CLIENT's own
+   basis (new internal reader `ControlMap::TryGetOwningClaimBasis`). Every ControlMap write is
+   `mainthread::Post`ed one hop past `Drain`'s `Publish` and re-validates the published claim,
+   the same ordering rule ch.9's nudge already obeys (INVARIANTS #20).
+3. **The approach monitor runs on `Arbiter::OncePerFrame`** (the existing confirmed-main
+   PlayerCharacter 0xAD seat), NOT on `Channel::Tick` -- Tick is field-proven multi-threaded
+   and the monitor makes engine LOS/detection calls. It ENDS the approach on arrival / line of
+   sight / detection / target gone, plus a 120 s STUCK safety net that logs a FAILURE and
+   retries nothing.
+4. **`core/PackageData.{h,cpp}`**: MFO's field-run package-input accessor PORTED with its
+   RTTI-derived `IPackageData* + 0x10` model, its `GetTypeName()` guard and five
+   `static_assert`s against the pinned CommonLib. Uses the Travel template's REAL parameter
+   name `"Place to Travel"` (deck-proven 2026-09-03), never the ANAM type `"Location"`.
+5. **APMF SHIPS A PLUGIN FOR THE FIRST TIME.** `APMF_GenerateESL.py` -> `Data/APMF.esl`:
+   8 Travel PACK records (PLDT type 0 "Near Reference", radius 128, placeholder ref the DLL
+   overwrites), 1 master, ESL-flagged, 2539 bytes. **The record body is BYTE-IDENTICAL to
+   MFO's shipped, field-run `MFO_APMFLootTravelPackage0` apart from the EDID string.**
+   Vanilla-package reuse was REJECTED (a package's Location lives on the RECORD, so borrowing
+   one hijacks whatever quest owns it AND caps APMF at one concurrent approach; measured:
+   1988 of Skyrim.esm's 5961 PACK records instance the Travel template, 1494 of them already
+   bound to a specific NPC/quest, and none is per-actor-writable). Runtime fabrication via the
+   proxy-form pattern was DEFERRED (proven for `SpellItem` only; a package's inputs live behind
+   `TESPackageData*`, a shallow copy shares them and a deep copy needs classes the pin does not
+   expose, and a dynamic 0xFF package does not survive a save while `currentPackage` may point
+   at it).
+6. **This makes TRAVEL a first-class Harbinger facet available to EVERY client**, not an
+   MFO-internal trick. **Duplicated from MFO, for a later consolidation:** MFO's
+   `native/Packages.cpp` `FindInput`/`ReadLocation`/`SetAPMFLootTravelTarget` and its four
+   `MFO_APMFLootTravelPackage` records now have twins in APMF. MFO can later route its loot
+   travel through ch.19 (or through a ch.9 offer of an APMF-owned record) and retire its own
+   copies -- that is its OWN brief, in the MFO repo, and nothing here touches MFO.
+7. **Open, and the whole point of the first field cycle:** does the engine's own combat AI
+   take the actor once ch.19 lets go? A NO is the evidence that would justify amending #0 for
+   a bounded combat-entry call plus the 0xE4 PIN (v2). A YES means v1 is the whole feature.
 
 ## HEAD OF WORK 2026-09-16 -- ch.17 EQUIP AUTHORITY v9: SCOPED authority, owned + denied categories (`feat/equip-authority-v9`)
 

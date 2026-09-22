@@ -358,3 +358,39 @@ derivation re-proven against 1.7's base TD.
 | `CombatBehaviorWaitBehindCover` | 267193 -> `0x16a36f8` | 214382 -> `0x18e8bd0` | `0x19671c0` |
 | `CombatBehaviorTreeCreateContextNode1_CombatBehaviorContextMagic` | 266702 -> `0x169dad8` | 213692 -> `0x18e35a8` | `0x1961b70` |
 | `CombatBehaviorTreeCreateContextNodeBase_CombatBehaviorContextMagic` | 550933 -> `0x169da80` | 213681 -> `0x18e3550` | `0x1961b18` |
+
+## ADDENDUM 2026-09-22 — ch.19 `kIntent_CombatEngage` (ABI v10), both runtimes
+
+**ch.19 places NO new address and NO new vtable seat.** It composes ch.6 and ch.9, and it rides two
+engine functions that CommonLib already binds through its own `RELOCATION_ID`. The table below exists
+so the next person does not have to re-derive them, and so the two ch.19 uses are on the record as
+per-runtime-verified rather than assumed (CLAUDE.md principle 11).
+
+Resolution method, identical to §0: Address Library id -> RVA, then `raw = 0x400 + (rva - 0x1000)` into
+the unpacked images at `marth-follower-overhaul/binaries/{1.6.1170,1.5.97}/SkyrimSE.unpacked.exe`
+(both have `.text` va `0x1000` / raw `0x400`, verified from the section table on this pass). No id
+below lands on a `jmp rel32` thunk; every one is a real prologue.
+
+**LIBRARY-FILE CAUTION (cost me a pass, so it is written down).** Two AE files ship side by side in
+`custom-modlist/mods/Address Library for SKSE Plugins/SKSE/Plugins/`: `versionlib-1-6-1170-0.bin`
+(428,461 ids) and `versionlib-1-6-1170-0-1.bin` (428,309 ids). **Only `-0.bin` matches the unpacked
+1.6.1170 image we hold.** `-0-1.bin` is a different build: every id resolves ~0x930 low and lands
+mid-function, which reads as a plausible address and disassembles into garbage. §0 of this document
+already validated `-0.bin` (428,461 / `38894 -> 0x6c9820`); the cross-check that settles it in one line
+is the `binaries/README.md` example `NotifyAnimationGraph AE 38048 @ 0x6a35f0`, which only `-0.bin`
+reproduces (`-0-1.bin` gives `0x6a2cc0`, which is `c3 cc cc cc...` — a function's tail padding).
+
+| Function | Used by | SE 1.5.97 id -> RVA | AE 1.6.1170 id -> RVA | First 16 bytes (both) | Grade |
+|---|---|---|---|---|---|
+| `Actor::HasLineOfSight(TESObjectREFR*, bool&)` | ch.19 approach monitor (the "perceived" test) | 53029 -> `0x91c620` | 53829 -> `0x9ba120` | `41c600004885c9743b4885d27436483b` — **byte-identical on both** | **CONFIRMED** both. CommonLib binds it at `src/RE/A/Actor.cpp:648` with exactly these ids. No VR id exists, which is one more reason ch.19 is VR-refused at install. |
+| `Actor::RequestDetectionLevel(Actor*, DETECTION_PRIORITY)` | ch.19 approach monitor (the second "perceived" test) | 36748 -> `0x5fc9a0` | 37764 -> `0x68f9f0` | `40534883ec20418bd84c8bc2488bd148` — **byte-identical on both** | **CONFIRMED** both. CommonLib binds it via `Offset::Actor::RequestDetectionLevel` (`include/RE/Offsets.h:17`, `RELOCATION_ID(36748, 37764)`). |
+| `Actor::EvaluatePackage(bool, bool)` | ch.9's nudge, which ch.19's approach rides — **pre-existing, re-confirmed** | 36407 -> `0x5db310` | 37401 -> `0x66ccf0` | `488bc4565741564883ec6048c740d8fe` — byte-identical on both | **CONFIRMED** both (matches `Docs/HOOK-SITE-COVERAGE.md` row 6). |
+| `BSPointerHandleManagerInterface<Actor>::GetHandle` | `Actor::GetHandle()` in ch.9's nudge gate and ch.19's handle capture — **pre-existing, re-confirmed** | 15967 -> `0x1ee670` | 16212 -> `0x23b780` | `40534883ec20488bd94885d2741af742` — byte-identical on both | **CONFIRMED** both. |
+| `Actor::StartCombat` (3-arg `bool(Actor*, Actor*, void*)`) | **NOT USED BY ch.19 v1.** Recorded only so a future combat-entry brief starts from a verified id instead of re-deriving it | 37608 -> `0x6251b0` (`4c8bdc56574154415641574883ec5049`) | 38561 -> `0x6b6930` (`4c8bdc55565741544155415641574883`) | prologues differ (an extra `push rbp`/`push r13` on AE) — expected across builds; both are real function entries | **CONFIRMED** both as function entries. `Docs/INVARIANTS.md #0` forbids a channel calling it and ch.19 v1 does not. |
+
+**Struct offsets ch.19 relies on carry no per-runtime risk and are asserted at BUILD time**
+(`native/core/PackageData.cpp`): `PackageLocation` `sizeof 0x18`, `locType@0x08`, `rad@0x0C`,
+`data@0x10`; `TESCustomPackageData` `data@0x08`, `nameMap@0x28`, `templateParent@0x30`;
+`BGSPackageDataLocation sizeof 0x20` and `BGSPackageDataBool sizeof 0x10 / data@0x08` (the two shapes
+the recovered `IPackageData* + 0x10` pointer model is derived from). The pinned CommonLib asserts these
+identically for both runtimes, so a CommonLib bump that moved one fails the BUILD rather than the game.
