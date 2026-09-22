@@ -22,3 +22,6 @@ Thumbs.db
 
 # Release archives -- releases/vX.Y.Z/MANIFEST.txt is TRACKED, the zip beside it is not.
 *.zip
+
+# Agent worktrees and local Claude state, never part of a release
+.claude/
