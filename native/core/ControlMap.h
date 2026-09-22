@@ -194,6 +194,27 @@ namespace apmf {
         bool TryGetOwningClaim(RE::FormID actor, Intent intent, APMF_API::APMF_Param& outParam,
                                RE::FormID* outAllowSet, std::uint32_t& outAllowCount) const;
 
+        // ch.19 (kIntent_Travel): the winning claim's param AND its BASIS.
+        //
+        // WHY THIS EXISTS, since no other reader needed it. ch.19 moves an actor by
+        // filing ONE internal ch.9 package offer -- the IMPLEMENTATION of travel, not
+        // a second client intent. That offer must arbitrate against OTHER clients'
+        // ch.9 claims at the SAME weight the travel client asked for: filed at an
+        // invented basis it would either steal the package facet from a client that
+        // outbid us, or lose it to one we outbid. The basis is not reachable any
+        // other way: it is a private `Claim` member, `Channel::Engage` is not handed
+        // it, and the two `TryGetOwningClaim` overloads above deliberately expose
+        // only the param.
+        //
+        // Same RCU reader discipline as `TryGetOwningClaim` -- relaxed pre-gate, one
+        // acquire-load of a LOCAL frozen snapshot, one hash lookup, copy out by
+        // value, mutate nothing. Any thread by construction; channels/Travel.cpp
+        // calls it from the confirmed-main seat.
+        //
+        // Internal C++ ONLY -- not part of the C-ABI, free to change shape.
+        bool TryGetOwningClaimBasis(RE::FormID actor, Intent intent,
+                                    APMF_API::APMF_Param& outParam, float& outBasis) const;
+
         // ch.8b (kIntent_Cast): hand back the winning cast claim's spell (param.form)
         // AND its runtime FF-form proxy (castProxy) -- the two FormIDs the cast gates
         // (CastGate/EquipGate via Allowance::AllowedCast) allow while the claim

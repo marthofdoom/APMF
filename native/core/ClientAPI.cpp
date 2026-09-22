@@ -142,7 +142,7 @@ namespace {
     // refusal log below (MFO wiring review SEV-3 F4): a user running an older
     // APMF under a newer client must be able to read WHICH APMF they need. Keep in
     // step with kABIVersion bumps (git tags: v0.2.0 v1, v0.2.3 v2, v0.3.0-rc.1 v3,
-    // v0.3.0-rc.3 v4, v0.9.1 v5, v0.9.3 v6; v7, v8 and v9 ship together in the
+    // v0.3.0-rc.3 v4, v0.9.1 v5, v0.9.3 v6; v7, v8, v9 and v10 ship together in the
     // first release after 0.9.4 -- REVIEW-BACKLOG APMF-B10: name it at the cut).
     const char* MinReleaseForAbi(std::uint32_t abi) {
         switch (abi) {
@@ -154,7 +154,8 @@ namespace {
         case 6:  return "0.9.3";
         case 7:
         case 8:
-        case 9:  return "the first release after 0.9.4";
+        case 9:
+        case 10: return "the first release after 0.9.4";
         default: return "a release newer than this one";
         }
     }
@@ -166,6 +167,11 @@ namespace {
     // extends v5 extends v4, base laid out first), a v1..v8 client reading it through
     // its own struct pointer sees only its prefix. The v4 base subobject is
     // brace-initialized explicitly.
+    //
+    // ABI v10 (ch.19 kIntent_Travel) adds NO function-pointer slot, so there is
+    // deliberately no APMF_API_v10 and this stays APMF_API_v9: the new intent rides
+    // the existing RequestEx/Repoint/Release slots. `abiVersion` still reports 10, so
+    // a client can gate on `>= 10` before passing the new Intent value.
     constexpr APMF_API::APMF_API_v9 g_api{
         {
             {

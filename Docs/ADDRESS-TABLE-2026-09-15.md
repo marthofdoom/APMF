@@ -358,3 +358,91 @@ derivation re-proven against 1.7's base TD.
 | `CombatBehaviorWaitBehindCover` | 267193 -> `0x16a36f8` | 214382 -> `0x18e8bd0` | `0x19671c0` |
 | `CombatBehaviorTreeCreateContextNode1_CombatBehaviorContextMagic` | 266702 -> `0x169dad8` | 213692 -> `0x18e35a8` | `0x1961b70` |
 | `CombatBehaviorTreeCreateContextNodeBase_CombatBehaviorContextMagic` | 550933 -> `0x169da80` | 213681 -> `0x18e3550` | `0x1961b18` |
+
+## ADDENDUM 2026-09-22 — ch.19 `kIntent_Travel` (ABI v10), both runtimes
+
+**ch.19 places NO new address and NO new vtable seat.** It files one internal ch.9 claim and rides
+engine functions CommonLib already binds. The table below exists so the next person does not have to
+re-derive them, and so every one is on the record as per-runtime-verified rather than assumed
+(CLAUDE.md principle 11).
+
+**SCOPE MOVED UNDER THIS TABLE, 2026-09-22.** The first cut ended a leg on line of sight or detection;
+marth's contract is arrival-only plus a combat cancel, so `Actor::HasLineOfSight` and
+`Actor::RequestDetectionLevel` are **NO LONGER CALLED BY ANY APMF CODE**. Their rows are KEPT rather
+than deleted — the resolution work is done and correct, and a future facet may want them — but they are
+marked RESOLVED, NOT USED so nobody reads them as live dependencies. The one engine call ch.19 actually
+makes is `Actor::IsInCombat()`, added at the bottom.
+
+Resolution method, identical to §0: Address Library id -> RVA, then `raw = 0x400 + (rva - 0x1000)` into
+the unpacked images at `marth-follower-overhaul/binaries/{1.6.1170,1.5.97}/SkyrimSE.unpacked.exe`
+(both have `.text` va `0x1000` / raw `0x400`, verified from the section table on this pass). No id
+below lands on a `jmp rel32` thunk; every one is a real prologue.
+
+**LIBRARY-FILE CAUTION (cost me a pass, so it is written down).** Two AE files ship side by side in
+`custom-modlist/mods/Address Library for SKSE Plugins/SKSE/Plugins/`: `versionlib-1-6-1170-0.bin`
+(428,461 ids) and `versionlib-1-6-1170-0-1.bin` (428,309 ids). **Only `-0.bin` matches the unpacked
+1.6.1170 image we hold.** `-0-1.bin` is a different build: every id resolves ~0x930 low and lands
+mid-function, which reads as a plausible address and disassembles into garbage. §0 of this document
+already validated `-0.bin` (428,461 / `38894 -> 0x6c9820`); the cross-check that settles it in one line
+is the `binaries/README.md` example `NotifyAnimationGraph AE 38048 @ 0x6a35f0`, which only `-0.bin`
+reproduces (`-0-1.bin` gives `0x6a2cc0`, which is `c3 cc cc cc...` — a function's tail padding).
+
+| Function | Used by | SE 1.5.97 id -> RVA | AE 1.6.1170 id -> RVA | First 16 bytes (both) | Grade |
+|---|---|---|---|---|---|
+| `Actor::HasLineOfSight(TESObjectREFR*, bool&)` | **RESOLVED, NOT USED IN v1** (was the ch.19 "perceived" test) | 53029 -> `0x91c620` | 53829 -> `0x9ba120` | `41c600004885c9743b4885d27436483b` — **byte-identical on both** | **CONFIRMED** both. CommonLib binds it at `src/RE/A/Actor.cpp:648` with exactly these ids. No VR id exists, which is one more reason ch.19 is VR-refused at install. |
+| `Actor::RequestDetectionLevel(Actor*, DETECTION_PRIORITY)` | **RESOLVED, NOT USED IN v1** (was the ch.19 second "perceived" test; also an UNOBSERVED path for this project) | 36748 -> `0x5fc9a0` | 37764 -> `0x68f9f0` | `40534883ec20418bd84c8bc2488bd148` — **byte-identical on both** | **CONFIRMED** both. CommonLib binds it via `Offset::Actor::RequestDetectionLevel` (`include/RE/Offsets.h:17`, `RELOCATION_ID(36748, 37764)`). |
+| `Actor::EvaluatePackage(bool, bool)` | ch.9's nudge, which ch.19's leg rides — **pre-existing, re-confirmed** | 36407 -> `0x5db310` | 37401 -> `0x66ccf0` | `488bc4565741564883ec6048c740d8fe` — byte-identical on both | **CONFIRMED** both (matches `Docs/HOOK-SITE-COVERAGE.md` row 6). |
+| `BSPointerHandleManagerInterface<Actor>::GetHandle` | `Actor::GetHandle()` in ch.9's nudge gate and ch.19's handle capture — **pre-existing, re-confirmed** | 15967 -> `0x1ee670` | 16212 -> `0x23b780` | `40534883ec20488bd94885d2741af742` — byte-identical on both | **CONFIRMED** both. |
+| `Actor::StartCombat` (3-arg `bool(Actor*, Actor*, void*)`) | **NOT USED BY ch.19 v1.** Recorded only so a future combat-entry brief starts from a verified id instead of re-deriving it | 37608 -> `0x6251b0` (`4c8bdc56574154415641574883ec5049`) | 38561 -> `0x6b6930` (`4c8bdc55565741544155415641574883`) | prologues differ (an extra `push rbp`/`push r13` on AE) — expected across builds; both are real function entries | **CONFIRMED** both as function entries. `Docs/INVARIANTS.md #0` forbids a channel calling it and ch.19 v1 does not. |
+
+**`Actor::IsInCombat()` — the ONE engine call ch.19 v1 makes, and it needs no address at all.** It is
+`RE::VTABLE_Character[0]` slot **0xE3** (VR 0xE5, never reached: ch.19 is VR-refused), dispatched through
+CommonLib's `RelocateVirtual`, so it is a vtable INDEX rather than a relocation — version-robust by
+construction. Its body was still read on both images, because "what does this mean for an actor the
+engine has not given a controller yet" had to be answered rather than assumed:
+
+| runtime | vtable | slot 0xE3 target | addrlib id | body |
+|---|---|---|---|---|
+| SE 1.5.97 | `VTABLE_Character[0]` id 261397 -> `0x165DA40` | `0x625660` | 37609 | `mov rax,[rcx+0x158]; test rax,rax; je false; cmp byte [rax+0x43],0; jne false; return true` |
+| AE 1.6.1170 | `VTABLE_Character[0]` id 207886 -> `0x18A5558` | `0x6B6DD0` | 38562 | identical instruction for instruction, with `[rcx+0x160]` |
+
+So `IsInCombat()` reads the actor's `combatController` pointer and returns true only when it is non-null
+AND the byte at `+0x43` is zero. **A null controller returns FALSE cleanly, with no dereference** — an
+actor the engine has not put in combat is simply not in combat, which is exactly the answer the travel
+monitor needs. The `+0x158` / `+0x160` difference is the AE +8 shift; APMF never touches that member
+itself, the call goes through the vtable.
+
+**`PackageLocation::AllocateLocation` -- the locType switch, decoded on both images.** ch.19 does not
+CALL it; the engine does, on the location ch.19 wrote. It was decoded because "which union member does
+each locType read" is a question that must be answered rather than assumed before writing that union.
+It is `RE::VTABLE_PackageLocation` slot **1**, so again a vtable index, not a relocation.
+
+| runtime | vtable | slot 1 target | addrlib id | jump table (13 entries, locType 0..12) |
+|---|---|---|---|---|
+| SE 1.5.97 | id 254228 -> `0x16177E0` | `0x441BE0` | 29012 | `0x442194` |
+| AE 1.6.1170 | id 203994 -> `0x185C1D0` | `0x49C9E0` | 29820 | `0x49CF94` |
+
+Every case body is instruction-for-instruction identical across the two runtimes. What each case reads
+out of `PackageLocation::data` (`[rsi+0x10]` SE / `[rdi+0x10]` AE):
+
+| locType | case body reads | verdict for ch.19 |
+|---|---|---|
+| 0 `kNearReference` | `mov eax, DWORD [..+0x10]` -- a **4-byte handle**, handed to a handle lookup | **SUPPORTED** (`data.refHandle`); also MFO-field-proven |
+| 1 `kInCell` | `mov rcx, QWORD [..+0x10]` -- an **8-byte pointer**, null-checked, used as `this` | **SUPPORTED** (`data.object` = the CELL) |
+| 2 `kNearPackageStartLocation` | the CONTEXT (`[r15]`) only; no payload read | refused: nothing a client can name |
+| 3 `kNearEditorLocation` | three CONSTANT floats from `.rdata`; never this struct | refused: our record has no editor location, and this is where a "position type" would have had to live |
+| 4 `kObjectID`, 5 `kObjectType`, 7 `kAtPackagelocation`, 10 | the jump table sends all of them **straight to the epilogue** | refused WITH PROOF: not implemented at this vfunc |
+| 6 `kNearLinkedReference` | `mov rdx, QWORD [..+0x10]` -- an 8-byte KEYWORD pointer, resolved against the ACTOR's linked ref | refused: APMF would be choosing the destination |
+| 8/9 `kAlias_*` | `mov edx, DWORD [..+0x10]` -- a 4-byte ALIAS INDEX, plus `[r15+0x10]`, the owning quest's alias machinery | refused: our record has no QNAM, and adding one hijacks that quest |
+| 12 `kNearSelf` | the actor (`[r15]`) only; no payload | refused: "stay put" is ch.1's facet |
+
+**NO CASE READS COORDINATES OUT OF THE STRUCT**, which -- with `sizeof(PackageLocation) == 0x18` (an
+8-byte union and no position field) and a 12-byte on-disk PLDT in all 1988 vanilla Travel-template
+instances -- makes "travel to a world position" a hard NOT FOUND rather than a design choice.
+
+**Struct offsets ch.19 relies on carry no per-runtime risk and are asserted at BUILD time**
+(`native/core/PackageData.cpp`): `PackageLocation` `sizeof 0x18`, `locType@0x08`, `rad@0x0C`,
+`data@0x10`; `TESCustomPackageData` `data@0x08`, `nameMap@0x28`, `templateParent@0x30`;
+`BGSPackageDataLocation sizeof 0x20` and `BGSPackageDataBool sizeof 0x10 / data@0x08` (the two shapes
+the recovered `IPackageData* + 0x10` pointer model is derived from). The pinned CommonLib asserts these
+identically for both runtimes, so a CommonLib bump that moved one fails the BUILD rather than the game.

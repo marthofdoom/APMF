@@ -8,6 +8,7 @@
 #include "core/PackageGate.h"
 #include "core/MainThread.h"
 #include "core/Registry.h"
+#include "channels/Travel.h"
 
 namespace apmf {
 
@@ -67,6 +68,16 @@ namespace apmf {
         // (~30s), INI-gated ([PackageGate] EnableRedirectLog, default ON), one
         // relaxed atomic-bool load the rest of the time.
         apmf::packagegate::Heartbeat();
+
+        // ch.19 (kIntent_Travel) LEG MONITOR. Reuses this EXISTING once-per-frame
+        // game-thread seat -- no new thread, no new hook. It is NOT a re-assert
+        // (Channel.h): it never re-offers a package, it only decides when a leg has
+        // ENDED (arrived / the actor is in combat / the destination is gone / stuck)
+        // and drops the internal ch.9 offer. Deliberately NOT on Channel::Tick, which
+        // runs from the multi-threaded Character 0xAD seat while this monitor resolves
+        // handles and makes engine calls. Self-throttled internally; one relaxed atomic
+        // load while nothing is travelling.
+        apmf::travel::Poll();
     }
 
     void Arbiter::ReleaseAll(const char* why) {

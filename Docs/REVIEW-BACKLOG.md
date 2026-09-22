@@ -107,6 +107,48 @@ This file tracks REVIEW findings only.
 - **Reasoning:** `ActorMemory::lastSkipSig` holds ONE signature, so alternating declarations A, B, A re-warn for A each time it returns; a true once-per-signature guard needs a bounded set per actor. Bounded, logged, never a pile-up; cosmetic.
 - **Assigned:** the v9 backlog drain (before the observe-only flip).
 
+### APMF-B13 — ch.19 has no way for a client to learn what the claim is actually doing
+- **Raised:** Fable tier-3 on `2d6108f`, SEV-4 (plus a related gap found in the same round); text as relayed by the coordinator.
+- **Severity:** SEV-4.
+- **Finding (verbatim, as relayed):** "observe-only ACCEPTS the claim and is inert with no way for a client to tell (ch.17 has IsEquipAuthorityEnforced; ch.19 cannot add a query without an ABI slot) PLUS the related gap that a client has NO way to learn the approach ENDED or was ABANDONED after the 120 s STUCK — record both as one entry for a later append-only query, do not add an API now".
+- **Reasoning:** Two halves of one missing capability. (a) With `[Travel] bTravelObserveOnly=1` a `kIntent_Travel` claim is ACCEPTED and then does nothing at the engine; ch.17 solved the same problem with `APMF_API_v8::IsEquipAuthorityEnforced`, which is a function-pointer slot, and ch.19 deliberately added no slot for ABI v10. (b) Even in ACTIVE mode the leg ends on its own (arrival, the actor entering combat, the destination going away, or the 120 s STUCK safety net) while the client's claim stands; the client is told only in the log. A client cannot currently distinguish "walking", "arrived", "cancelled by combat" or "gave up". Fix is ONE append-only query on a future `APMF_API_v11` — e.g. `TravelState(Handle) -> {observe, walking, ended-arrived, ended-combat, ended-gone, abandoned}` — which covers both halves at once. Deliberately NOT added now: it is a new fn-pointer slot, and the contract is that one ABI revision adds one thing.
+- **Assigned:** the next ABI revision that adds a slot for another reason (append-only, never a v10 retrofit).
+
+### APMF-B14 — the ported package accessor adds a static uid fallback MFO does not have
+- **Raised:** Fable tier-3 on `2d6108f`, SEV-5; text as relayed by the coordinator.
+- **Severity:** SEV-5.
+- **Finding (verbatim, as relayed):** "the uid-0 static fallback MFO lacks (name it in the port comment too)".
+- **Reasoning:** `core/PackageData.cpp` falls back to UNAM uid 0 for the Travel template's `"Place to Travel"` when BOTH name maps miss; MFO's original carries static fallbacks only for the UseMagic template's SPELL (3) and Target (4) and none for a Location, so MFO declines where this port proceeds. Strictly additive and still guarded by the type-name check before any write, but the two implementations can behave differently on a both-maps miss, which matters when comparing their logs. The divergence is now NAMED in the port comment (done in this round); the entry stays open only for the decision of whether to converge the two.
+- **Assigned:** whichever brief routes MFO's loot travel through APMF's copy (the two implementations merge there anyway).
+
+### APMF-B15 — the observe log names package slot 0 whatever slot would be used
+- **Raised:** Fable tier-3 on `2d6108f`, SEV-5; text as relayed by the coordinator.
+- **Severity:** SEV-5.
+- **Finding (verbatim, as relayed):** "observe log prints g_pkg[0] whatever slot would be used".
+- **Reasoning:** In observe mode no slot is allocated (nothing is claimed), so the line had to name SOME package and named the first. Cosmetic, and the fix landed incidentally in the same round the intent was renamed — the observe line no longer names a package at all, it names the destination, the radius and the basis. Kept as a record of the finding; re-check at the drain that no observe line names a slot it did not allocate.
+- **Assigned:** verify-only at the next drain.
+
+### APMF-B16 — a leg whose ACTOR does not resolve still offers a package and nudges
+- **Raised:** Fable tier-3 on `2d6108f`, SEV-5; text as relayed by the coordinator.
+- **Severity:** SEV-5.
+- **Finding (verbatim, as relayed):** "an engagement whose ACTOR does not resolve still offers a package + nudge".
+- **Reasoning:** `Engage` captures the actor handle only when `actor && actor->IsHandleValid()`, but it does NOT refuse the claim when the actor is unresolvable — so `Compose` can still point a package and file the ch.9 offer for an actor that is not there. ch.9's own `PostDeferredNudge` gate 1 then refuses to post the nudge (it logs "actor does not resolve"), so nothing reaches the engine and the per-frame monitor ends the leg on its first pass with "the actor no longer resolves". The cost is one wasted package slot for up to one poll period and two log lines, never a wrong actor being moved. Fix = refuse at `Engage` when the handle is invalid, the same shape ch.9 uses.
+- **Assigned:** the ch.19 backlog drain (before the observe-only flip).
+
+### APMF-B17 — the leg safety net is 120 s where MFO's equivalent is 60 s
+- **Raised:** Fable tier-3 on `2d6108f`, SEV-5; text as relayed by the coordinator.
+- **Severity:** SEV-5.
+- **Finding (verbatim, as relayed):** "120 s STUCK vs MFO's 60 s".
+- **Reasoning:** `kLegMaxMs = 120000` was sized from "far longer than any legitimate cross-cell travel" rather than from a measurement, while MFO's loot-travel equivalent settled on 60 s after the navmesh-sticky field round (`memory/loot-multiminute-stall-navmesh-sticky`). Both are safety nets, so a too-long value costs only a slower FAILURE report, never a cut-short leg (CLAUDE.md principle 9: a floor is safe, an expiry is not) — but two numbers for the same job in two codebases is the kind of divergence that gets argued about later. Decide one from the first ACTIVE field log's real leg durations.
+- **Assigned:** the first field cycle's log review.
+
+### APMF-B18 — a package record's runtime Location handle is stale across a save/load
+- **Raised:** Fable tier-3 on `2d6108f`, SEV-5; text as relayed by the coordinator.
+- **Severity:** SEV-5.
+- **Finding (verbatim, as relayed):** "a stale PackageLocation.refHandle across save/load (same shape MFO ships)".
+- **Reasoning:** `SetTravelTarget` writes a live `ObjectRefHandle` into the shipped record's `PackageLocation`. Handles do not survive a save/load, so a record saved mid-leg carries a dangling handle into the next session. In practice the leg cannot survive either — `ControlMap::Clear()` + `travel::ResetAll` drop every claim at the world boundary, so nothing offers that package again until a fresh `SetTravelTarget` overwrites the handle — and MFO ships exactly this shape in production. Still worth a deliberate decision rather than an inherited one: either clear the records' handles at the revert boundary, or write down why the overwrite-before-offer ordering makes it unreachable.
+- **Assigned:** the ch.19 backlog drain (before the observe-only flip).
+
 ---
 
 ## DRAINED

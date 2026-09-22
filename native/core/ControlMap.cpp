@@ -7,6 +7,7 @@
 #include "channels/CastCompose.h"   // castcompose::ExtractFromPackage (ch.8b FromPackage read)
 #include "core/CastProxy.h"         // castproxy::Acquire/Free (ch.8b kSelf delivery-flip, writer thread)
 #include "core/MainThread.h"        // mainthread::Post (defer proxy teardown past this Drain's Publish)
+#include "channels/Travel.h"  // ch.19 Installed()/NotInstalledReason() for the synchronous refusal
 
 namespace apmf {
 
@@ -87,6 +88,48 @@ namespace apmf {
                              apmf::equipsink::NotInstalledReason(), apmf::log::Hex(actor));
             return APMF_API::kInvalidHandle;
         }
+        // ch.19 (ABI v10): a kIntent_Travel claim is REFUSED synchronously when the
+        // channel cannot do anything -- VR, [Travel] bTravel=0, or Data/APMF.esl
+        // missing -- and when it names NO DESTINATION. Same "seat down = claim
+        // refused" contract ch.17 uses above, and for the same reason: a claim that is
+        // accepted and then silently does nothing is worse than a refusal, because the
+        // client's documented degrade path never runs. A zero param.form is refused
+        // HERE rather than at Engage so the client learns at the call.
+        if (intent == APMF_API::kIntent_Travel) {
+            if (!apmf::travel::Installed()) {
+                static std::atomic<bool> s_logged{ false };
+                if (!s_logged.exchange(true))
+                    spdlog::warn("[apmf][travel] claim refused: channel not installed ({}) -- actor "
+                                 "0x{}. (Logged once.)",
+                                 apmf::travel::NotInstalledReason(), apmf::log::Hex(actor));
+                return APMF_API::kInvalidHandle;
+            }
+            if (!param || param->form == 0) {
+                spdlog::warn("[apmf][travel] claim refused: no destination (param.form is 0) -- actor "
+                             "0x{}. kIntent_Travel REQUIRES param.form = the destination's FormID (an "
+                             "object reference or a cell).",
+                             apmf::log::Hex(actor));
+                return APMF_API::kInvalidHandle;
+            }
+            // A WORLD POSITION IS NOT EXPRESSIBLE, so a claim that carries one is
+            // REFUSED rather than silently ignored. `PackageLocation` has no coordinate
+            // storage at all -- it is an 8-byte union of a form pointer and a ref
+            // handle -- the on-disk PLDT is 12 bytes in all 1988 vanilla Travel
+            // instances, and no case of the engine's own locType switch reads
+            // coordinates out of it (channels/Travel.cpp's header has the full
+            // derivation). Vanilla's idiom for "go to this spot" is a marker
+            // REFERENCE, so that is what a client passes.
+            if (param->posX != 0.0f || param->posY != 0.0f || param->posZ != 0.0f) {
+                spdlog::warn("[apmf][travel] claim refused: param.pos is set -- actor 0x{}. A travel "
+                             "destination cannot be a world POSITION: an AI package's location carries "
+                             "a form or a handle and no coordinates, on disk or at runtime. Place a "
+                             "marker and pass the MARKER REFERENCE in param.form, which is what vanilla "
+                             "does.",
+                             apmf::log::Hex(actor));
+                return APMF_API::kInvalidHandle;
+            }
+        }
+
         const Handle h = m_nextHandle.fetch_add(1, std::memory_order_relaxed);
         PendingOp op{};
         op.kind   = PendingOp::Kind::kRequest;
@@ -1347,6 +1390,44 @@ namespace apmf {
                 outAllowCount = best->altCount;
                 for (std::uint32_t i = 0; i < outAllowCount; ++i) outAllowSet[i] = best->altForms[i];
             }
+            return true;
+        }
+        return false;   // this NPC is controlled, but not on this channel
+    }
+
+    bool ControlMap::TryGetOwningClaimBasis(RE::FormID actor, Intent intent,
+                                            APMF_API::APMF_Param& outParam, float& outBasis) const {
+        // ch.19's composite expansion needs the winning claim's BASIS as well as its
+        // param (see ControlMap.h). Deliberately an independent single-pass read, the
+        // same shape as the two overloads above rather than a wrapper around them, so
+        // each stays one snapshot load + one lookup with no shared mutable state.
+        outBasis = 0.0f;
+        if (m_anyControlled.load(std::memory_order_relaxed) == 0) return false;
+
+        std::shared_ptr<const MapType> snap = m_published.load(std::memory_order_acquire);
+        auto it = snap->find(actor);
+        if (it == snap->end()) return false;
+
+        const NpcCtl& npc = it->second;
+        if (!npc.handle.get()) return false;
+
+        auto* channel = Registry::Get().ChannelForIntent(intent);
+        if (!channel) return false;
+
+        for (const auto& cs : npc.channels) {
+            if (cs.channel != channel) continue;
+            if (cs.claims.empty()) return false;
+            // Winner = highest basis; tie -> earliest. The SAME plain strict compare
+            // the generic readers use, for the same reason: this is never called for
+            // kIntent_Cast, and every non-cast claim has castFlags == 0, so
+            // ControlMap.h::BetterClaim's deny-only tie rule could not change an
+            // answer here.
+            const Claim* best = &cs.claims.front();
+            for (const auto& c : cs.claims) {
+                if (c.basis > best->basis) best = &c;
+            }
+            outParam = best->param;
+            outBasis = best->basis;
             return true;
         }
         return false;   // this NPC is controlled, but not on this channel
