@@ -553,10 +553,15 @@ is just one caller of it.
 cancels the moment that actor is in combat.** It does not claim the target, does not
 enter combat, does not pin a target, and does not fake perception.
 
-The leg ends on exactly three things: **ARRIVAL** (inside the radius), the **ACTOR
-ENTERING COMBAT** (`Actor::IsInCombat`), or the **destination going away** (dead,
-disabled, or unloaded). There is no line-of-sight test and no detection test
-anywhere in it.
+The leg ends on exactly three things: **ARRIVAL**, the **ACTOR ENTERING COMBAT**
+(`Actor::IsInCombat`), or the **destination going away** (dead, disabled, or
+deleted). There is no line-of-sight test and no detection test anywhere in it.
+
+**The destination does not have to be loaded, or nearby.** An actor will path across
+cells to somewhere it cannot see, which is what a vanilla travel package does. What
+bounds a hopeless leg is the combat cancel, your own `Release`, and a two-minute
+safety net that reports a leg that got nowhere as a failure instead of holding a
+package slot for ever.
 
 ### One intent, one facet
 
@@ -628,8 +633,9 @@ beside it.
 | `param.posX/Y/Z` | **Must be zero.** A non-zero position REFUSES the claim, with the reason in the log. See below. |
 
 `kTravel_ReleaseOnTargetDead` **names the v1 default, it does not switch it on.**
-APMF always ends the leg when the destination dies, is disabled or unloads, set or
-not — walking an actor to a corpse would be a mask, not a feature. The bit exists so
+APMF always ends the leg when the destination dies, is disabled, or is deleted, set
+or not — walking an actor to a corpse would be a mask, not a feature. An
+unloaded-but-alive destination is NOT "gone" and does not end the leg. The bit exists so
 a later ABI can add its inverse without you having to guess which way the default
 ran.
 
@@ -657,20 +663,32 @@ marker's reference.** That is case one above, fully supported. A claim with a
 non-zero `param.pos` is refused and says so, rather than quietly walking the actor
 somewhere you did not ask for.
 
-### When a claim is refused
+### When a claim is refused — and the two timings, which are not the same
 
-`RequestEx` returns `kInvalidHandle` — synchronously, before anything is queued —
+**Synchronously.** `RequestEx` returns `kInvalidHandle` before anything is queued
 when:
 
 * the runtime is VR (the 0x49 package seat travel rides is SE/AE only),
 * `[Travel] bTravel=0` in `Data/SKSE/Plugins/APMF.ini`,
 * `Data/APMF.esl` is missing or disabled, so no travel package resolved,
-* `param.form` is 0, or names a record that is neither a reference nor a cell,
+* `param.form` is 0,
 * `param.posX/posY/posZ` is non-zero.
 
-Each is logged with the reason. A refusal means **run your own path**: APMF is
-telling you it will do nothing, rather than accepting a claim that silently does
-nothing. That distinction is the whole point of refusing.
+There is nothing to clean up after one of these. A synchronous refusal means **run
+your own path**: APMF is telling you it will do nothing, rather than accepting a
+claim that silently does nothing.
+
+**At engage, one frame later.** One refusal cannot be synchronous: `param.form`
+naming a record that is **neither an object reference nor a cell**. `RequestEx` has
+already handed you a LIVE HANDLE by then; the log says why the claim will do
+nothing, and **the handle stays live until you `Release` it.** So release it.
+
+Why it works that way, since the asymmetry is otherwise just annoying: `RequestEx`
+is callable from any thread, and its contract is that it copies POD and enqueues —
+nothing more. Deciding whether a FormID is a reference or a cell needs a form
+lookup, and APMF will not reach into the engine's form table off the game thread to
+satisfy an API call. `kIntent_Cast` defers its own package extraction for exactly
+the same reason. Pass a reference or a cell and the question never arises.
 
 ### Installing `Data/APMF.esl`
 
@@ -777,7 +795,7 @@ columns, one doesn't imply the other.
 | `kIntent_Equipment` (ch.15) | Unequip/equip a worn item, and (with a param) gate re-equip of a spell/staff while the claim stands | `form` (optional) | Built, not yet battle-tested. The most recently landed facet in the catalog. |
 | `kIntent_Detection` (ch.16) | Silent movement + reduced detection range | `fval` (reserved, not yet read) | **Field-proven.** An actor-value source-block, deck-tested to hold even on a package-locked actor. |
 | `kIntent_EquipAuthority` (ch.17) | **Declare what the NPC wears; APMF equips it and refuses every other engine equip of a governed type (ARMO/WEAP/AMMO/LIGH) in the categories the claim owns.** ABI v7, declare with `SetEquipSet`; ABI v8 `SetEquipSetEx` adds a hand per item; ABI v9 `SetEquipScope` scopes the claim to owned/denied categories (default: all owned) | `ival` (an `EquipAuthFlags` bitmask); the set itself via `SetEquipSet` / `SetEquipSetEx`; the scope via `SetEquipScope` | Built, not yet battle-tested. Ships OBSERVE-ONLY (`[EquipAuthority] bEquipObserveOnly=1`) until the probe criteria above pass. The only call-site seat in APMF, under `Docs/INVARIANTS.md` #17a. Player-menu equips pass by default (v8). |
-| `kIntent_Travel` (ch.19) | **Walk this actor to a reference.** APMF points its own travel package at the destination and offers it through an internal ch.9 claim at YOUR basis; the leg ends on arrival, on the actor entering combat, or on the destination being gone | `form` (the DESTINATION reference, REQUIRED -- any loaded ref), `fval` (arrival radius, 0 => 75u, clamped 50-512), `ival` (a `TravelFlags` bitmask) | Built, not yet battle-tested. ABI v10. Ships OBSERVE-ONLY (`[Travel] bTravelObserveOnly=1`). It claims NO other facet on your behalf -- no combat target, no combat entry, no target pin, no faked perception; claim those intents yourself. Eight concurrent legs; the ninth is refused and logged. Adds no engine seat: it rides ch.9's existing 0x49 seat and the existing once-per-frame 0xAD seat. Needs `Data/APMF.esl` (ESL-flagged, one master, no overrides); absent = every claim refused, logged. |
+| `kIntent_Travel` (ch.19) | **Walk this actor to a destination.** APMF points its own travel package at it and offers that package through an internal ch.9 claim at YOUR basis. The leg ends on arrival, on the actor entering combat, or on the destination being gone | `form` (the DESTINATION, REQUIRED -- an object REFERENCE or a CELL, and it need not be loaded or nearby), `fval` (arrival radius, 0 => 75u, clamped 50-512, not used for a cell), `ival` (a `TravelFlags` bitmask) | Built, not yet battle-tested. ABI v10. Ships OBSERVE-ONLY (`[Travel] bTravelObserveOnly=1`). It claims NO other facet on your behalf -- no combat target, no combat entry, no target pin, no faked perception. Claim those intents yourself. Eight concurrent legs, and the ninth is refused and logged. Adds no engine seat: it rides ch.9's existing 0x49 seat and the existing once-per-frame 0xAD seat. Needs `Data/APMF.esl` (ESL-flagged, one master, no overrides), and an absent plugin means every claim is refused and logged. |
 
 Where a field is marked "reserved, not yet read", the channel currently
 applies a fixed built-in behavior and ignores whatever you pass in that field.

@@ -283,7 +283,9 @@ namespace APMF_API {
                                      //           cell; distance has no meaning for a cell, so the
                                      //           radius is not consulted for this kind.
                                      //       Anything else is REFUSED and logged, never
-                                     //       reinterpreted.
+                                     //       reinterpreted -- but read the two refusal TIMINGS
+                                     //       below, because they are not the same and a client
+                                     //       that assumes they are will leak a claim.
                                      //
                                      //       A WORLD POSITION IS NOT ON OFFER, and that is a
                                      //       property of the engine, not a choice: an AI package's
@@ -321,9 +323,26 @@ namespace APMF_API {
                                      //       Repoint(handle, &param) moves the destination in
                                      //       place -- no release/re-claim churn. Release ends the
                                      //       claim and the leg.
-                                     //       REFUSED (kInvalidHandle) on VR, when [Travel]
-                                     //       bTravel=0, when APMF.esl is missing, or when
-                                     //       param.form is 0 -- each logged with the reason.
+                                     //       TWO REFUSAL TIMINGS, and the difference matters:
+                                     //       * SYNCHRONOUS (RequestEx returns kInvalidHandle
+                                     //         before anything is queued): VR, [Travel]
+                                     //         bTravel=0, APMF.esl missing, param.form == 0,
+                                     //         param.pos non-zero. Nothing to clean up.
+                                     //       * AT ENGAGE (one Drain later, on the game thread):
+                                     //         param.form naming a record that is neither an
+                                     //         object reference nor a cell. RequestEx already
+                                     //         returned a LIVE HANDLE, the log says why the
+                                     //         claim does nothing, and the handle stays live
+                                     //         until you Release it. RELEASE IT.
+                                     //       Why not synchronous: RequestEx is callable FROM ANY
+                                     //         THREAD and its whole contract is that it copies
+                                     //         POD and enqueues (see the Threading note at the
+                                     //         top). Deciding a form's record type needs a form
+                                     //         lookup, and APMF does not take the engine's form
+                                     //         table off the game thread for an API call --
+                                     //         kIntent_Cast's own FromPackage extraction defers
+                                     //         for exactly the same reason. Every refusal is
+                                     //         logged with its reason either way.
     };
 
     // ── Travel flags (kIntent_Travel's param.ival, ABI v10) ─────────────────────

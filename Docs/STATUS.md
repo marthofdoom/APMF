@@ -39,7 +39,15 @@ feature." The hotkey-hunt case is just one caller.
    FIRST, then release the old, in one `Drain`, so the offer is never unheld (a claim's basis is
    immutable; `ApplyRepoint` updates the param only).
 3. **End conditions: ARRIVAL, the ACTOR ENTERING COMBAT, the destination being gone. Nothing
-   else.** No line-of-sight test and no detection test anywhere in it. The first cut had both,
+   else.** "Gone" means dead, disabled or deleted -- **NOT merely unloaded**. An earlier cut
+   ended a ref leg the instant `Is3DLoaded()` went false, which forbade by construction the one
+   thing a vanilla Travel package exists to do (path across cells to somewhere the actor cannot
+   see) and ended every distant leg on the first poll, as a non-failure, before the actor moved
+   (Fable round 2 on 3c8adbf, SEV-3). That test is GONE; the arrival compare never needed it,
+   since `GetPosition()` is a plain read of `data.location`. A hopeless leg is bounded by the
+   combat cancel, the client's Release and the 120 s safety net -- no reachability heuristics,
+   and deliberately no cross-worldspace refusal (an interior has no worldspace at all, so that
+   test would repeat the same over-restriction). No line-of-sight test and no detection test anywhere in it. The first cut had both,
    and ending on LOS was actively wrong: LOS is GEOMETRY while the engine's combat AI runs on
    KNOWLEDGE, and in the send-them-at-a-visible-foe case it is already true at engage time, so
    the leg ended on the first poll within 250 ms before the actor had moved (Fable tier-3 on

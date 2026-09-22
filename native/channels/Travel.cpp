@@ -324,6 +324,18 @@ namespace {
         const APMF_API::Handle fresh =
             map.EnqueueRequest(a_id, APMF_API::kIntent_OfferPackage, a_newBasis, &a_param);
         if (fresh == APMF_API::kInvalidHandle) {
+            // UNREACHABLE TODAY, and written down so nobody spends an afternoon trying
+            // to make it fire (Fable round 2 on 3c8adbf, SEV-5). `EnqueueRequest`
+            // refuses only for an intent no channel serves, for ch.17 with its seat
+            // down, and for ch.19's own gates -- none of which applies to a ch.9
+            // request -- and there is no per-actor claim cap anywhere in the
+            // ControlMap. So ch.9 has no synchronous refusal path at all and this
+            // branch cannot currently be entered. It stays because the refusal is part
+            // of `EnqueueRequest`'s CONTRACT rather than of today's implementation, and
+            // the alternative to handling it is dropping the facet on a case we did not
+            // foresee. If a future ch.9 gate makes it reachable, this is already the
+            // right behaviour: keep the old claim, re-point it, log, and leave
+            // `basisPackage` alone so the next Compose retries.
             map.EnqueueRepoint(a_old, &a_param);
             spdlog::error("[travel] 0x{} internal package offer could NOT be re-filed from basis {} to {} "
                           "(the request was refused; ControlMap logged why). KEEPING h={} at the old "
@@ -839,13 +851,44 @@ namespace apmf::travel {
                     continue;
                 }
             } else {
-                // Note IsDisabled() reads the ref's kInitiallyDisabled form flag, which
-                // is the SAME flag the engine's runtime Disable() sets -- so it covers a
+                // THE DESTINATION IS NOT REQUIRED TO BE LOADED, and this is the one
+                // place it is easy to get backwards (Fable round 2 on 3c8adbf, SEV-3).
+                // An earlier cut ended the leg as soon as `d->Is3DLoaded()` went false,
+                // which forbade BY CONSTRUCTION the thing a vanilla Travel package
+                // exists to do -- path across cells to somewhere the actor cannot yet
+                // see -- so any destination outside the loaded area ended on the FIRST
+                // poll, as a non-failure, with the actor never having moved. It also
+                // put the documented XMarker case at risk, since whether a marker
+                // reference carries a live NiNode at all is not something this pass
+                // could establish (see below). The test is GONE.
+                //
+                // Nothing needs it: the arrival compare below uses `GetPosition()`,
+                // which is a plain read of the reference's own `data.location` and is
+                // valid whether or not any 3D is attached.
+                //
+                // WHAT BOUNDS A LEG, then, now that "too far away" is not an end
+                // condition: (1) the actor entering combat, which is the contract's own
+                // cancel and fires wherever the actor is; (2) the destination dying,
+                // being disabled, or its HANDLE going stale (the checks that remain
+                // below -- a handle that no longer resolves really is gone, unlike an
+                // unloaded-but-alive ref); (3) the client's own Release; and (4) the
+                // kLegMaxMs safety net, which reports a leg that got nowhere as a
+                // FAILURE rather than letting it hold a package slot for ever.
+                //
+                // DELIBERATELY NOT ADDED: a cross-worldspace refusal. It was considered
+                // and rejected because it is the same mistake one level up -- an
+                // interior has no worldspace at all, so "different worldspace" does not
+                // mean "unreachable", and travelling from an interior out into Tamriel
+                // is exactly what vanilla Travel packages do. No pathing heuristics
+                // either; the engine owns pathing and the safety net owns giving up.
+                //
+                // IsDisabled() reads the ref's kInitiallyDisabled form flag, which is
+                // the SAME flag the engine's runtime Disable() sets -- so it covers a
                 // scripted despawn, not only an editor-disabled ref.
                 auto  dptr = leg.destHandle.get();
                 auto* d    = dptr.get();
                 if (!d) {
-                    EndLeg(id, leg, "the destination no longer resolves (unloaded or deleted)", false);
+                    EndLeg(id, leg, "the destination no longer resolves (deleted)", false);
                     continue;
                 }
                 if (d->IsDisabled()) {
@@ -856,13 +899,10 @@ namespace apmf::travel {
                     EndLeg(id, leg, "the destination is dead", false);
                     continue;
                 }
-                if (!d->Is3DLoaded()) {
-                    EndLeg(id, leg, "the destination's 3D is not loaded", false);
-                    continue;
-                }
 
                 // ARRIVED. The same radius this leg wrote into the package record, so
                 // the engine's own stop and this test fire at the same distance.
+                // `GetPosition()` is `data.location` -- no 3D required.
                 const float dist = a->GetPosition().GetDistance(d->GetPosition());
                 if (dist <= leg.radius) {
                     EndLeg(id, leg, "ARRIVED (inside the arrival radius)", false);
@@ -874,8 +914,8 @@ namespace apmf::travel {
             // failure report.
             if (now - leg.legStartedMs > kLegMaxMs) {
                 EndLeg(id, leg, "STUCK -- no arrival, no combat, and the destination is still there "
-                                "after the leg safety net elapsed (unreachable destination, blocked "
-                                "path, or an outranking package is winning)", true);
+                                "after the leg safety net elapsed (unreachable or cross-worldspace "
+                                "destination, blocked path, or an outranking package is winning)", true);
             }
         }
     }
