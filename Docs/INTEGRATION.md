@@ -554,8 +554,10 @@ cancels the moment that actor is in combat.** It does not claim the target, does
 enter combat, does not pin a target, and does not fake perception.
 
 The leg ends on exactly three things: **ARRIVAL**, the **ACTOR ENTERING COMBAT**
-(`Actor::IsInCombat`), or the **destination going away** (dead, disabled, or
-deleted). There is no line-of-sight test and no detection test anywhere in it.
+(`Actor::IsInCombat`), or the **destination going away** (disabled, deleted, or
+dying DURING travel). A destination that was already dead when you targeted it is a
+corpse to walk to, and its deadness never ends the leg. A live one that dies on the
+way does. There is no line-of-sight test and no detection test anywhere in it.
 
 **The destination does not have to be loaded, or nearby.** An actor will path across
 cells to somewhere it cannot see, which is what a vanilla travel package does. What
@@ -633,8 +635,9 @@ beside it.
 | `param.posX/Y/Z` | **Must be zero.** A non-zero position REFUSES the claim, with the reason in the log. See below. |
 
 `kTravel_ReleaseOnTargetDead` **names the v1 default, it does not switch it on.**
-APMF always ends the leg when the destination dies, is disabled, or is deleted, set
-or not — walking an actor to a corpse would be a mask, not a feature. An
+APMF always ends the leg when a destination that was alive when targeted dies during
+travel, or the destination is disabled or deleted, set or not. A destination already
+dead when targeted (a corpse) is walked to, and does not end the leg by being dead. An
 unloaded-but-alive destination is NOT "gone" and does not end the leg. The bit exists so
 a later ABI can add its inverse without you having to guess which way the default
 ran.

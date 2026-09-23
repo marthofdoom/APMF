@@ -1,3 +1,8 @@
+## v0.9.7 -- Travel walks to a body
+
+- **A follower sent to a corpse now gets there.** Travel ended the walk the moment it saw the destination was dead. A looter's destination is always a body, so almost every loot walk ended a fraction of a second after it started. Now a target that was already dead when it was picked is just a place to walk to. A target that was alive when it was picked and dies on the way still ends the walk.
+- A walk still ends on arrival, on the follower entering combat, or on the destination being deleted or disabled. No API change.
+
 ## v0.9.6 -- Travel just works
 
 - **Travel moves the follower the moment a mod asks.** v0.9.5 shipped travel in an observe mode that logged what it would do and changed nothing. That mode is gone. Harbinger takes commands, so the way to not move a follower is to not ask. A mod that asks gets a follower who walks.
