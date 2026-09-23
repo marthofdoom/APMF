@@ -1,3 +1,10 @@
+## v0.9.6 -- Travel just works
+
+- **Travel moves the follower the moment a mod asks.** v0.9.5 shipped travel in an observe mode that logged what it would do and changed nothing. That mode is gone. Harbinger takes commands, so the way to not move a follower is to not ask. A mod that asks gets a follower who walks.
+- **A claim is never accepted and then ignored.** In observe mode a mod got a live claim back and no behaviour, with no way to tell. Now an accepted claim always means the follower is walking. A refused one says why in the log.
+- `bTravelObserveOnly` is removed from `APMF.ini`. `bTravel` stays, and turning it off refuses travel claims outright.
+- No change to any other facet. No API change.
+
 ## v0.9.5 -- Tell a follower where to go and what to wear
 
 - **A mod can now tell Harbinger "walk this follower over there" and Harbinger does it.** Move to a place is a staple, and before this there was no way to ask for it. A mod could claim the combat target facet, but that only records who owns it, and it could offer a package, but only one it shipped in its own plugin. A mod author who wanted to send followers at an enemy ended up calling the game's start-combat function on a timer, which makes a follower search and pace instead of charge, because the game will not path anyone to an enemy they have never seen.
