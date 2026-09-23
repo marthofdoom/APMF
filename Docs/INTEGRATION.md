@@ -554,8 +554,9 @@ cancels the moment that actor is in combat.** It does not claim the target, does
 enter combat, does not pin a target, and does not fake perception.
 
 The leg ends on exactly three things: **ARRIVAL**, the **ACTOR ENTERING COMBAT**
-(`Actor::IsInCombat`), or the **destination going away** (dead, disabled, or
-deleted). There is no line-of-sight test and no detection test anywhere in it.
+(`Actor::IsInCombat`), or the **destination going away** (disabled or deleted).
+A dead destination ends the leg ONLY if you set `kTravel_ReleaseOnTargetDead`.
+There is no line-of-sight test and no detection test anywhere in it.
 
 **The destination does not have to be loaded, or nearby.** An actor will path across
 cells to somewhere it cannot see, which is what a vanilla travel package does. What
@@ -592,7 +593,7 @@ void SendTo(RE::FormID actor, RE::FormID destination) {
     APMF_Param p{};
     p.form = destination;                  // REQUIRED. Any loaded reference. 0 is refused.
     p.fval = 0.0f;                         // arrival radius in units; 0 => 75u default
-    p.ival = kTravel_ReleaseOnTargetDead;  // names the default; see below
+    p.ival = kTravel_None;                 // or kTravel_ReleaseOnTargetDead; see below
 
     if (auto it = g_travel.find(actor); it != g_travel.end()) {
         g_apmf->Repoint(it->second, &p);   // move the destination in place
@@ -632,12 +633,13 @@ beside it.
 | `param.ival` | A `TravelFlags` bitmask. |
 | `param.posX/Y/Z` | **Must be zero.** A non-zero position REFUSES the claim, with the reason in the log. See below. |
 
-`kTravel_ReleaseOnTargetDead` **names the v1 default, it does not switch it on.**
-APMF always ends the leg when the destination dies, is disabled, or is deleted, set
-or not — walking an actor to a corpse would be a mask, not a feature. An
-unloaded-but-alive destination is NOT "gone" and does not end the leg. The bit exists so
-a later ABI can add its inverse without you having to guess which way the default
-ran.
+| flag | meaning |
+|---|---|
+| `kTravel_None` (0) | The default. A dead destination is just a reference to walk to, so a corpse is a valid travel target (a looter walking to a body). |
+| `kTravel_ReleaseOnTargetDead` | **Opt-in.** End the leg when the destination actor dies. Off by default. |
+
+A disabled or deleted destination always ends the leg, flag or not. An
+unloaded-but-alive destination is NOT "gone" and does not end the leg.
 
 ### What "arrived" means, per destination kind
 

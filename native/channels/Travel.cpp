@@ -850,8 +850,9 @@ namespace apmf::travel {
                 //
                 // WHAT BOUNDS A LEG, then, now that "too far away" is not an end
                 // condition: (1) the actor entering combat, which is the contract's own
-                // cancel and fires wherever the actor is; (2) the destination dying,
-                // being disabled, or its HANDLE going stale (the checks that remain
+                // cancel and fires wherever the actor is; (2) the destination being
+                // disabled, or its HANDLE going stale, or -- only when the client set
+                // kTravel_ReleaseOnTargetDead -- dying (the checks that remain
                 // below -- a handle that no longer resolves really is gone, unlike an
                 // unloaded-but-alive ref); (3) the client's own Release; and (4) the
                 // kLegMaxMs safety net, which reports a leg that got nowhere as a
@@ -877,8 +878,12 @@ namespace apmf::travel {
                     EndLeg(id, leg, "the destination was disabled", false);
                     continue;
                 }
-                if (d->IsDead()) {
-                    EndLeg(id, leg, "the destination is dead", false);
+                // A DEAD destination is OPT-IN only (kTravel_ReleaseOnTargetDead). With
+                // the bit clear a corpse is a valid reference to walk to -- MFO's loot
+                // legs target corpses -- and the leg ends only on arrival, combat, the
+                // destination being genuinely gone (the two checks above), or Release.
+                if ((leg.flags & APMF_API::kTravel_ReleaseOnTargetDead) != 0 && d->IsDead()) {
+                    EndLeg(id, leg, "the destination is dead (kTravel_ReleaseOnTargetDead)", false);
                     continue;
                 }
 
