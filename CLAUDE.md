@@ -53,6 +53,13 @@ never read past the end of a shorter interface struct.
    Guard with a `static_assert` on the offset, an install-time RTTI check, a per-call
    vtable-identity test, and an INI kill-switch. Re-verify all of them on a new runtime.
 
+> **REVIEWER MODEL (marth 2026-09-23): every review, spot check and field diagnosis in this file is done by an
+> OPUS 5.5 agent (the Agent tool's `opus` model), replacing Fable.** Historical statements below about what
+> Fable found are left as they were, because they are records of what happened. marth's own quoted words
+> are left verbatim too. The standing review model is still the cheap one: the author names its 1-5
+> uncertain spots and the reviewer answers only those, unless the change is co-save / ABI / a new engine
+> seat / a TU split.
+
 ## SCOPE DISCIPLINE — the git system only catches regressions if nobody skips it
 
 **Every regression this project has shipped recently came from UNREQUESTED SCOPE reaching the deck through
@@ -189,11 +196,11 @@ was added) with the deny-set that makes it safe — do NOT quietly violate it.
 
 ## REVIEW + MODEL RULES (marth 2026-09-06) — mirrored from MFO's CLAUDE.md, same rules both repos
 
-1. **EVERY COMMIT GETS A FABLE DIFF REVIEW.** Not just pre-cut, not just risky ones — each commit, as it
+1. **EVERY COMMIT GETS AN OPUS 5.5 DIFF REVIEW.** Not just pre-cut, not just risky ones — each commit, as it
    lands. CI-green is not a review and the coordinator's own read is not a substitute. Give the reviewer the
    BRIEF the commit was written against so it can catch unrequested scope, tell it to be adversarial, and
    have it review the BRANCH's files (`git show <branch>:<path>`), never the main working copy.
-2. **WE FIX EVERYTHING THE FABLE REVIEW FINDS.** marth, verbatim: *"A rule with fable reviews, we fix
+2. **WE FIX EVERYTHING THE OPUS 5.5 REVIEW FINDS.** marth, verbatim: *"A rule with fable reviews, we fix
    everything it finds."* There is no triage into blocker-vs-follow-up and no dropping a finding because the
    code that would hit it is dormant, rare, or "a design cycle". Fix them all, in severity order, before the
    branch merges or deploys — **with the ONE exception rule 9 defines: SEV-4/SEV-5 findings may be DEFERRED
@@ -215,7 +222,7 @@ was added) with the deny-set that makes it safe — do NOT quietly violate it.
    dropped: recorded in `Docs/REVIEW-BACKLOG.md` with the finding's VERBATIM text, its severity, the SHA it
    was raised against, and the reviewer's reasoning. Anything above SEV-3 keeps the cycle running as before.
    **Drain the backlog in ONE batch** at a natural boundary — before a release cut, or before a field cycle
-   touching that subsystem — as a single agent round with a single Fable review.
+   touching that subsystem — as a single agent round with a single Opus 5.5 review.
    **CARVE-OUTS that are ALWAYS fixed immediately, whatever their nominal severity:** (a) co-save layout,
    threading, or ABI / byte-shared-header findings — a SEV-4 threading finding is a SEV-4 right up until the
    day it is not, and `g_forcedWeapon`'s unguarded read was graded with "no live race today" while being the
@@ -237,10 +244,10 @@ was added) with the deny-set that makes it safe — do NOT quietly violate it.
      at all escalates to tier 2 or 3. (A comment-only commit consumed an 85k adversarial review on
      2026-09-08 to conclude what that strip-and-diff proves in seconds — which is exactly the check the
      reviewer itself ran first.)
-   - **Tier 2 — localized change inside an existing mechanism.** Focused Fable review, carrying the
+   - **Tier 2 — localized change inside an existing mechanism.** Focused Opus 5.5 review, carrying the
      cleared-ledger of what earlier rounds already proved so it does not re-derive settled ground.
    - **Tier 3 — NO DOWNGRADE EVER.** New mechanism, threading, co-save, ABI or byte-shared headers, engine
-     seats/hooks, or a TU split. Full adversarial Fable review. A TU split is tier 3 no matter how mechanical
+     seats/hooks, or a TU split. Full adversarial Opus 5.5 review. A TU split is tier 3 no matter how mechanical
      it looks, because "CI-identical" is not a claim a split may assert.
    Never downgrade the REVIEWER to a cheap model at any tier. Fable found every defect that mattered this
    week; cheap review is how the 2026-09-06 regression shipped.
@@ -268,22 +275,22 @@ declarations are not ABI-trustworthy (a wrong `GetMagicTarget` signature with a 
 made a "passive" probe crash the game).
 
 **Open strategic question, not yet decided:** we are pinned four major versions behind (3.7.0 vs 7.2.0) on
-a dormant repo. Migrating to the alandtse fork is its own scoped brief with its own Fable review — changing
+a dormant repo. Migrating to the alandtse fork is its own scoped brief with its own Opus 5.5 review — changing
 the ABI source under a plugin doing vtable and offset work breaks in the FIELD, not in CI. Do not start it
 as a side effect of another task.
 
 ## FIELD DIAGNOSIS + AGENT REUSE (marth 2026-09-06)
 
-**4. WHEN AN IN-GAME TEST DOES NOT DO WHAT WE EXPECT, IT GOES STRAIGHT TO FABLE.** marth: *"when a test in
+**4. WHEN AN IN-GAME TEST DOES NOT DO WHAT WE EXPECT, IT GOES STRAIGHT TO OPUS 5.5.** marth: *"when a test in
 game doesnt do what we expect, immediately goes to fable."* The split is strict:
 - **The coordinator GATHERS.** Pull the deck logs; verify the deployed DLL sha against the branch that
   produced them; check the INI switch states; build a consolidated EVIDENCE file (tag histograms, message
-  shapes, per-ACTOR and per-HAND attribution, timestamps). This works and makes Fable fast.
-- **FABLE CONCLUDES.** Do NOT arrive with a root-cause theory. Hand over the evidence and the brief.
+  shapes, per-ACTOR and per-HAND attribution, timestamps). This works and makes Opus 5.5 fast.
+- **OPUS 5.5 CONCLUDES.** Do NOT arrive with a root-cause theory. Hand over the evidence and the brief.
 Measured 2026-09-06: from one 8-minute deck log the coordinator produced FOUR confident root causes and
 Fable overturned ALL FOUR using that same evidence file (a "deny hole" that was by-design chaining; a spell
 attributed to the follower that four Chaurus Reapers were casting; a "stale" proxy that was actually read
-before it was minted; a config problem that was a code problem). Also pass Fable any METHOD constraint marth
+before it was minted; a config problem that was a code problem). Also pass Opus 5.5 any METHOD constraint marth
 has already given — e.g. do NOT argue from loot arrival counts or travel/arrival ratios; a follower walking
 past loot during an ordinary follow produces arrival-shaped lines that prove nothing.
 
