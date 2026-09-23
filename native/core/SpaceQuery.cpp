@@ -94,6 +94,7 @@ namespace apmf::spacequery {
             };
             if (auto* pl = RE::ProcessLists::GetSingleton()) pl->ForEachHighActor(test);
             if (!found) {
+                // The player is not assumed to be in the high list; testing it twice is harmless here.
                 if (auto* player = RE::PlayerCharacter::GetSingleton()) test(*player);
             }
             return found;
@@ -149,7 +150,9 @@ namespace apmf::spacequery {
         a_out->x = a_out->y = a_out->z = 0.0f;
         a_out->detail = 0;
 
-        const RE::FormID originId = a_q ? a_q->origin : 0;
+        // Read the id for the log only once `size` says the caller's struct reaches it.
+        const RE::FormID originId =
+            (a_q && a_q->size >= offsetof(APMF_SpaceQuery, origin) + sizeof(RE::FormID)) ? a_q->origin : 0;
         const auto finish = [&](std::uint32_t a_status, std::uint32_t a_detail, std::string_view a_why) {
             a_out->status = a_status;
             a_out->detail = a_detail;
@@ -285,7 +288,8 @@ namespace apmf::spacequery {
                                       std::uint32_t* a_outCount, std::uint32_t* a_outTotal) {
         if (a_outCount) *a_outCount = 0;
         if (a_outTotal) *a_outTotal = 0;
-        const RE::FormID sideId = a_q ? a_q->side : 0;
+        const RE::FormID sideId =
+            (a_q && a_q->size >= offsetof(APMF_HostileQuery, side) + sizeof(RE::FormID)) ? a_q->side : 0;
         const auto refuse = [&](std::uint32_t a_status, std::string_view a_why) {
             spdlog::warn("[space] FindHostilesInSpace side 0x{} -> {}: {}", Hex(sideId), StatusName(a_status), a_why);
             return a_status;
@@ -310,6 +314,7 @@ namespace apmf::spacequery {
         auto* const        ws   = side->GetWorldspace();
         auto* const        cell = side->GetParentCell();
 
+        auto* const player = RE::PlayerCharacter::GetSingleton();
         std::vector<std::pair<float, RE::FormID>> hits;
         const auto consider = [&](RE::Actor& a) {
             if (&a == side || a.IsDead() || a.IsDisabled()) return RE::BSContainer::ForEachResult::kContinue;
@@ -323,8 +328,14 @@ namespace apmf::spacequery {
             if (a.IsHostileToActor(side)) hits.emplace_back(d2, a.GetFormID());
             return RE::BSContainer::ForEachResult::kContinue;
         };
-        if (auto* pl = RE::ProcessLists::GetSingleton()) pl->ForEachHighActor(consider);
-        if (auto* player = RE::PlayerCharacter::GetSingleton()) consider(*player);
+        // The player is considered exactly once: skipped inside the high-list pass (in
+        // case a runtime lists it there) and tested on its own after.
+        if (auto* pl = RE::ProcessLists::GetSingleton()) {
+            pl->ForEachHighActor([&](RE::Actor& a) {
+                return (player && &a == player) ? RE::BSContainer::ForEachResult::kContinue : consider(a);
+            });
+        }
+        if (player) consider(*player);
 
         std::sort(hits.begin(), hits.end());
         const std::uint32_t total = static_cast<std::uint32_t>(hits.size());
