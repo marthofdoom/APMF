@@ -162,6 +162,96 @@ supplies the one missing classification decision and the engine does the rest.
   rather than guessing at offsets. Kill switches live in `Data/SKSE/Plugins/APMF.ini`.
 
 
+## Casting at a point (ABI v11, `kCastFlag_AtPosition`)
+
+Requires `abiVersion >= 11`. Check it before you set the bit: an older APMF ignores
+`kCastFlag_AtPosition` and turns the request into an ordinary cast claim aimed at
+`param.target` (0 = the caster itself).
+
+```cpp
+APMF_API::APMF_Param p{};
+p.form = runeSpellID;                       // a SpellItem: Target Location, fire-and-forget, no summon
+p.ival = APMF_API::kCastFlag_AtPosition;    // the flag ALONE; any other cast flag is refused
+p.posX = pt.x; p.posY = pt.y; p.posZ = pt.z; // world point, in the actor's cell/worldspace
+APMF_API::Handle h = g_apmf->RequestEx(actorFormID, APMF_API::kIntent_Cast, basis, &p);
+if (h == APMF_API::kInvalidHandle) { /* refused at the call: see APMF.log */ }
+```
+
+**What happens.** On the next main-thread pump APMF places a non-persistent XMarker
+(Skyrim.esm `0x3B`) at the point and casts the spell FROM it, blamed on the actor:
+`InterruptCast(false)` then `CastSpellImmediate(spell, false, none, 1.0, false, 0.0, actor)`
+on the marker's instant caster. That is the exact sequence the game's own Papyrus
+`Spell.RemoteCast` runs. The actor does not animate, its hands are not touched, and
+APMF charges no magicka (resource policy is yours). The marker is deleted one frame later.
+
+**Why not "the actor casts at a marker".** The game places a Target Location spell cast
+by an NPC at the NPC's own magic node and never reads the target it was handed, on
+both runtimes (`Docs/ADDRESS-TABLE-2026-09-15.md`, ADDENDUM 2026-09-23). That call
+lands at the actor's hand. A marker has no magic node, so a spell it casts lands on it.
+
+**What is refused, each with one `[poscast] ... REFUSED` line naming why:**
+- a **summon**. The game applies a summon effect only to the actor that cast it, so a
+  marker cannot summon. An NPC's own summon already lands in front of it: the engine's
+  `SummonCreatureEffect` picks that spot itself. Summon through an ordinary cast.
+- Self, Touch, Aimed or Target Actor delivery. Use `RequestCast` with an actor target.
+- concentration and constant-effect spells.
+- disease, ability and addiction spell types (`RemoteCast` refuses the same three).
+- any other cast flag alongside `kCastFlag_AtPosition`.
+- `RequestCast` with the bit: `APMF_CastRequest` has no position field.
+- a dead or unloaded actor, a cell that is not attached, or more than 16 markers alive
+  at once (they live one frame, so that is a burst of 16+ casts in one frame).
+- the whole feature when `[PositionCast] bPositionCast=0`, on VR, or on a runtime other
+  than 1.6.1170 / 1.5.97.
+
+**It is a one-shot, not a claim.** It never enters the control map, so no engine seat
+can read it as an actor target and it holds no facet. The handle labels its log lines
+and nothing else: `IsClaimLive(h)` is false, `Repoint`/`Release` on it do nothing. You
+learn the outcome from `APMF.log` (`queued`, then `DELIVERED` or `REFUSED`).
+
+**Picking the point** is your job (declare, then APMF enforces). `FindEmptySpace` below
+answers "where is a clear, standable spot over there" if you want the help.
+
+## Asking about space (ABI v11 queries)
+
+Requires `abiVersion >= 11` and `APMF_API_v11`. Two questions. They answer and change
+nothing: no claim, no facet, no handle, no world write.
+
+**Threading: synchronous, main thread only.** The main thread is the one that runs the
+player's `Actor::Update` (APMF drains its own queue there). Anywhere else a query does
+nothing and returns `kQuery_NotMainThread`. SKSE's `AddTask` is NOT that thread. A client
+with its own player-Update pump (MFO's `MainThread::Post`) calls straight in from it.
+
+**Sizes.** Every v11 struct starts with `size`. Set it to `sizeof(struct)`. APMF refuses
+an input below the v11 layout and never writes an output past the size you declared.
+
+```cpp
+// Where can a summon-sized thing stand, 180u in front of this follower?
+APMF_API::APMF_SpaceQuery q{};
+q.size      = sizeof(q);
+q.origin    = followerID;     // REQUIRED: a loaded reference; its cell gives the world
+q.distance  = 180.0f;
+q.clearance = 80.0f;          // free radius wanted around the point
+APMF_API::APMF_SpaceResult r{};
+r.size = sizeof(r);
+if (g_apmf11->FindEmptySpace(&q, &r) == APMF_API::kQuery_Ok) { /* r.x, r.y, r.z */ }
+
+// Which hostiles to this follower stand inside 300u of that point?
+APMF_API::APMF_HostileQuery hq{};
+hq.size = sizeof(hq); hq.side = followerID; hq.x = r.x; hq.y = r.y; hq.z = r.z; hq.radius = 300.0f;
+RE::FormID foes[16]; std::uint32_t n = 0, total = 0;
+g_apmf11->FindHostilesInSpace(&hq, foes, 16, &n, &total);   // nearest first; total = before the cap
+```
+
+| Query | Answers | Cost |
+|---|---|---|
+| `FindEmptySpace` | A ground point `distance` along the heading (the origin's facing, or `heading` with `kSpaceFlag_UseHeading`) from the origin (its position, or `originX/Y/Z` with `kSpaceFlag_OriginIsPoint`) with `clearance` free around it. Fails by name: `Blocked` (a wall or an actor on the walk; `kSpaceFlag_ClampToWall` shortens the walk instead), `NoGround` (nothing within `maxDrop`, default 128u, below the origin's feet), `NotGround` (the ground ray hit something other than static/terrain/ground/stairs; `detail` = the layer), `Occupied` (a live actor inside the clearance, including one whose capsule the ground ray hit; `detail` = its FormID), `NoClearance` (geometry within the clearance), `Ledge` (the clearance ring is not within 48u of level) | At most 14 ray casts (walk, ground, 8 clearance, 4 ring) under the havok world's read lock, plus one pass over the high actors |
+| `FindHostilesInSpace` | Live actors within `radius` of the point, in the side actor's worldspace (or cell indoors), for which `candidate->IsHostileToActor(side)` is true. That is the engine's own test, the one Papyrus `Actor.IsHostileToActor` calls. Nearest first, at most `min(capacity, 64)` written | One pass over the high actors (a distance each), one engine hostility test per actor inside the sphere, one sort |
+
+Statuses (`QueryStatus`): `Ok`, `NotMainThread`, `BadArgs`, `Unsupported` (VR, an
+unverified runtime, before kDataLoaded), `NoOrigin`, `NoWorld`, `Blocked`, `NoGround`,
+`NotGround`, `Occupied`, `NoClearance`, `Ledge`, `Failed` (an exception was caught).
+Every non-`Ok` answer is one `[space] ...` WARN line naming the reason.
+
 ## Declaring what an NPC wears (ABI v7, `kIntent_EquipAuthority`)
 
 Requires `abiVersion >= 7` and `APMF_API_v7`. This facet is the engine-equip
@@ -782,6 +872,7 @@ columns, one doesn't imply the other.
 | `kIntent_Equipment` (ch.15) | Unequip/equip a worn item, and (with a param) gate re-equip of a spell/staff while the claim stands | `form` (optional) | Built, not yet battle-tested. The most recently landed facet in the catalog. |
 | `kIntent_Detection` (ch.16) | Silent movement + reduced detection range | `fval` (reserved, not yet read) | **Field-proven.** An actor-value source-block, deck-tested to hold even on a package-locked actor. |
 | `kIntent_EquipAuthority` (ch.17) | **Declare what the NPC wears; APMF equips it and refuses every other engine equip of a governed type (ARMO/WEAP/AMMO/LIGH) in the categories the claim owns.** ABI v7, declare with `SetEquipSet`; ABI v8 `SetEquipSetEx` adds a hand per item; ABI v9 `SetEquipScope` scopes the claim to owned/denied categories (default: all owned) | `ival` (an `EquipAuthFlags` bitmask); the set itself via `SetEquipSet` / `SetEquipSetEx`; the scope via `SetEquipScope` | Built, not yet battle-tested. Ships OBSERVE-ONLY (`[EquipAuthority] bEquipObserveOnly=1`) until the probe criteria above pass. The only call-site seat in APMF, under `Docs/INVARIANTS.md` #17a. Player-menu equips pass by default (v8). |
+| `kIntent_Cast` + `kCastFlag_AtPosition` (ABI v11) | **Cast a Target Location spell at a world point.** A one-shot remote cast from an APMF XMarker, blamed on the actor. Not a claim: no facet held, never seen by the cast seats | `form` (the spell), `ival` (the flag alone), `pos` (the point) | Built, not yet battle-tested. CI verified only. Summons refused by name (the engine only lets the caster summon). |
 | `kIntent_Travel` (ch.19) | **Walk this actor to a destination.** APMF points its own travel package at it and offers that package through an internal ch.9 claim at YOUR basis. The leg ends on arrival, on the actor entering combat, or on the destination being gone | `form` (the DESTINATION, REQUIRED -- an object REFERENCE or a CELL, and it need not be loaded or nearby), `fval` (arrival radius, 0 => 75u, clamped 50-512, not used for a cell), `ival` (a `TravelFlags` bitmask) |a refused claim means the channel is off in APMF.ini, VR, the esl is missing, or eight legs are already running|
 
 Where a field is marked "reserved, not yet read", the channel currently
@@ -798,7 +889,10 @@ hook, the exact vfunc, the version-robustness notes) and `Docs/archive/ROADMAP.m
 
 - `Request`, `RequestEx`, `Repoint`, `Release`, and `SetSpellAllowList` are
   safe to call from any thread. They enqueue the work, APMF applies it on the
-  game thread.
+  game thread. That includes a `kCastFlag_AtPosition` RequestEx (ABI v11).
+- **The exception (ABI v11): `FindEmptySpace` and `FindHostilesInSpace` are
+  synchronous and run ONLY on the main (player-Update) thread.** Elsewhere they
+  return `kQuery_NotMainThread` and do nothing. See "Asking about space".
 - The `APMF_Param` (or the `forms` array for `SetSpellAllowList`) you pass is
   read and copied synchronously inside the call. APMF never retains your
   pointer, so a stack temporary or a local array is fine.

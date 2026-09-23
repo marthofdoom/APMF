@@ -26,7 +26,9 @@ competitors, or arbitrates the claim, so the client's behavior reaches the actor
 design.md §1a). **The bright line:** a lawful promote is a single deterministic call
 whose outcome does not stand in for an AI decision (idle-play, weapon-draw,
 stance-toggle); a forbidden generate calls a function that picks WHAT the AI decides
-(a target, a spell, a shout) or drives it continuously. **Cautionary case:** ch.6
+(a target, a spell, a shout) or drives it continuously. (The one `CastSpellImmediate`
+APMF makes is action (e) below: from an APMF-owned MARKER, never from the actor, for a
+spell and a point the client declared.) **Cautionary case:** ch.6
 combat-target once called `StartCombat` (to command a target) — wrong LAYER, and
 with a bad reloc signature it was a hard AV (EXCEPTION_ACCESS_VIOLATION inside
 StartCombat). The deny-only rule makes that whole crash class structurally
@@ -48,6 +50,37 @@ no caster-state write) — it changes what a vfunc SEES and lets the AI decide. 
 cast facet's retired forced drive, which DID call `CastSpellImmediate`, is exactly
 what this replaced. #20 states the mechanism, the one permitted non-chaining
 answer and its three conditions; read it before adding a composed seat anywhere.
+
+**The fifth legal action, added 2026-09-23 (ABI v11, `core/PositionCast.cpp`): (e)
+DELIVER AT A POINT — one client-declared remote cast from an APMF-owned marker.** A
+`kIntent_Cast` RequestEx with `kCastFlag_AtPosition` makes APMF place an XMarker at
+`param.pos` and call `CastSpellImmediate` on the MARKER's instant caster, blamed on the
+actor. This is written here, in the rule it touches, rather than done quietly (CLAUDE.md
+"standing tension"). It is legal only while ALL of these hold:
+1. **There is nothing to compose.** No engine seat can aim a location spell at a point
+   for an NPC: the cast core's Target Location arm never reads the target it is handed
+   and lands at the caster's own magic node, and seat 0x0A carries an `Actor*`
+   (`Docs/ADDRESS-TABLE-2026-09-15.md`, ADDENDUM 2026-09-23, both runtimes). Composition
+   is not a weaker answer here, it is no answer.
+2. **APMF selects nothing.** The client declared the spell and the point. APMF picks no
+   spell, no target and no point, and it replaces no AI decision: no NPC AI decides to
+   put a spell at a remote point, so there is no AI choice being overridden.
+3. **One call, once.** On the main thread, once per request, the engine's own
+   sequence (Papyrus `Spell.RemoteCast`: `InterruptCast(false)` then
+   `CastSpellImmediate(spell, false, none, 1.0, false, 0.0, blame)`). No Tick, no
+   re-assert, no retry. A refusal is logged and the request is dropped.
+4. **The actor is not touched.** The caster is the marker, so the actor does not
+   animate and its hands, its casters and its cast facet are unchanged. Nothing is
+   switched on in the actor, so principle 2 has no facet to deny.
+5. **It is never a claim.** It never enters the control map, so no seat can read it as
+   an actor target, and it holds no facet.
+6. **Scope is closed by name.** Target Location, fire-and-forget, no summon, not
+   disease/ability/addiction, exactly 1.6.1170 or 1.5.97, not VR. Everything else is
+   refused in the log. Widening it (another delivery, a held stream, casting from the
+   actor) is a new amendment, not a code change.
+The marker itself inherits #19's spirit: it is a runtime-created 0xFF reference, deleted
+one frame after the cast by its tracked handle, forgotten (never touched) at a world
+boundary, and its worst-case save footprint is stated in `core/PositionCast.h`.
 
 **#20 — COMPOSED ANSWERS: APMF may answer the ENGINE'S OWN DECISION SEATS so the
 AI decides what a claim asks for — and exactly ONE of those answers may skip the

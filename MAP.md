@@ -44,6 +44,10 @@ hook, registers the input sink, logs the hotkey help. `kPreLoadGame` →
   pinned 3.7.0 `IsSE()` is the `default:` arm, so 1.7.104 reads as SE — though it never
   reaches this line: CommonLib terminates at `SKSE::Init` with the address-library
   dialog on 1.7.104; APMF's gates never run there.
+  **ABI v11 (2026-09-23):** `kDataLoaded` also runs `poscast::Install()` and
+  `spacequery::Install()`, and both revert and `kPreLoadGame` call
+  `poscast::ResetAll()` BEFORE `mainthread::Discard()`. Those two Installs carry two
+  more inline copies of the same exact-version predicate (five copies now).
 
 ### `native/APMF_API.h` — the inter-plugin C-ABI contract (shared with clients)
 The ONLY file a client shares with APMF. POD structs of function pointers
@@ -78,7 +82,7 @@ crosses the boundary. **The current `kABIVersion` is stated ONLY in the header**
 
 ### `native/core/ClientAPI.{h,cpp}` — the C-ABI implementation
 The exported `APMF_GetInterface(abiVersion)` hands over the static POD newest-struct
-object (`APMF_API_v9` today — read the header, not this line) as a base
+object (`APMF_API_v11` since ABI v11 — read the header, not this line) as a base
 `APMF_API_v1*`; a client casts up to the newest struct it uses. It returns **nullptr**
 when the client asks for a version NEWER than this APMF implements (`:125-128`), which
 is why a needless `kABIVersion` bump is expensive (INVARIANTS #14b). Its
@@ -87,6 +91,8 @@ is why a needless `kABIVersion` bump is expensive (INVARIANTS #14b). Its
 SetEquipSet/SetEquipSetEx/SetEquipScope` (Request == RequestEx with a null param; `SetEquipSet` is
 `SetEquipSetEx` with every slot Default); `IsEquipAuthorityEnforced` → `equipsink::Enforcing()`.
 `MinReleaseForAbi` names the first release per ABI (v7/v8/v9 = the placeholder until the cut, REVIEW-BACKLOG APMF-B10).
+ABI v11 adds `FindEmptySpace` / `FindHostilesInSpace` → `core/SpaceQuery.cpp` (each a
+`try/catch(...)` returning `kQuery_Failed`), and `MinReleaseForAbi(11)` = `0.9.8`.
 The "client too new" null (`abiVersion > kABIVersion`) logs the running APMF version
 (`SKSE::PluginDeclaration::GetSingleton()`) and `MinReleaseForAbi(abi)` — a table that must
 be extended on every `kABIVersion` bump.
@@ -104,7 +110,9 @@ generation (each NpcCtl = engaged channels + per-channel client claims + capture
 package; each `Claim` carries its `APMF_Param`). `EnqueueRequest` (takes
 `const APMF_Param*`, copied; REFUSES `kIntent_EquipAuthority` with `kInvalidHandle` while
 `equipsink::Installed()` is false — logged once with `NotInstalledReason()` — so a client
-never holds a ch.17 claim the seat cannot enforce) / `Release` / `EnqueueRepoint` (any thread; brief queue
+never holds a ch.17 claim the seat cannot enforce; ABI v11: a `kIntent_Cast` param with
+`kCastFlag_AtPosition` is diverted to `poscast::Enqueue` and NEVER becomes a claim, and
+`EnqueueCast` refuses that bit by name) / `Release` / `EnqueueRepoint` (any thread; brief queue
 lock, atomic handle), `Drain` (WRITER thread, once/frame: copy `m_current` into a
 private working map, apply `kRequest`/`kRelease`/`kRepoint` ops + sweep unloaded,
 then `Publish()` a NEW snapshot ONLY if something changed), `OnActorUpdate` (ANY
@@ -187,7 +195,9 @@ this thread, see #12). `[threadcheck]` (retired to an informational one-time log
 `PlayerCharacter`/Drain seat — expected post-RCU, no longer a warning. `Install()`
 also logs, once, whether the RCU snapshot pointer is actually lock-free on this
 toolchain (`ControlMap::SnapshotIsLockFree()`) — disclosed, never assumed.
-VR-refused. Installed once.
+VR-refused. Installed once. `OnMainThread()` (ABI v11) compares the calling thread
+with the id the PlayerCharacter seat records (`g_drainThreadId`); the space queries
+refuse to run when it is false.
 - **What breaks:** the index `0x0AD` is the whole version-robustness thesis
   (design.md §3) — do NOT swap it for a call-site offset. The original must run
   first (we act on top of the real AI tick, never instead of it). If you hook a
@@ -293,6 +303,48 @@ claim publishes — INVARIANTS #20), `plugin.cpp` (`ResetAll` on revert + kPreLo
   above, not a replacement, and only fires while the hook is already being called for
   the actor (i.e. it has at least one OTHER magic/staff item already) — see that
   file's own comment for the documented edge case.
+
+### `native/core/PositionCast.{h,cpp}` — ABI v11 POSITION CAST (one-shot remote cast)
+A `kIntent_Cast` RequestEx with `kCastFlag_AtPosition` (`ControlMap::EnqueueRequest`
+diverts it here; it is never a claim). `Enqueue` (any thread) checks the POD (flag
+alone, spell and actor non-zero, finite point) and posts `Deliver` to the main-thread
+pump. `Deliver` re-validates on the main thread (loaded live actor, attached cell,
+SpellItem with Target Location + fire-and-forget + no Summon Creature effect + not
+disease/ability/addiction), places an XMarker (`0x3B`) with
+`TESDataHandler::CreateReferenceAtLocation` in the actor's cell/worldspace, tracks it,
+then `marker->GetMagicCaster(kInstant)` → `InterruptCast(false)` →
+`CastSpellImmediate(spell, false, nullptr, 1.0, false, 0.0, actor)` (Papyrus
+`RemoteCast`'s sequence) and posts `Retire` one hop later (`Disable()` + `SetDelete(true)`
+after re-checking handle, FormID and base). `ResetAll` (revert / kPreLoadGame) forgets
+the table without touching refs. Cap `kMaxLiveMarkers` = 16. INI `[PositionCast] bPositionCast`.
+Runtime gate: exactly 1.6.1170 / 1.5.97, VR refused. Evidence:
+`Docs/ADDRESS-TABLE-2026-09-15.md` ADDENDUM 2026-09-23; doctrine `Docs/INVARIANTS.md` #0 (e).
+- **What breaks:** (a) making it a CLAIM: the cast seats read claims as actor targets
+  (seat 0x0A writes an `Actor*`), so a position cast must never enter the control map.
+  (b) casting from the ACTOR instead of the marker: the engine's Target Location branch
+  ignores the target and lands at the caster's hand (both runtimes). (c) dropping the
+  summon refusal: the engine applies a summon only to the casting actor, so a marker
+  "summon" silently does nothing. (d) deleting by FormID instead of the tracked handle:
+  0xFF FormIDs recycle; the handle's age bits are the reuse guard. (e) moving
+  `ResetAll` after `mainthread::Discard` in `plugin.cpp` changes nothing today, but
+  never let a `Retire` task outlive the world swap. (f) the worst-case save footprint
+  is one inert XMarker per position cast issued in the frame before a save (<= 16).
+
+### `native/core/SpaceQuery.{h,cpp}` — ABI v11 SPACE QUERIES (read-only)
+`FindEmptySpace` (walk ray at feet+64u, down ray to feet-maxDrop, 8 knee-height
+clearance rays, 4 ring ground rays, live-actor scan) and `FindHostilesInSpace` (high
+actors + player, same worldspace/cell, 3D radius, `candidate->IsHostileToActor(side)`,
+nearest first, cap `kMaxHostileResults` = 64). Rays: `bhkPickData` +
+`bhkWorld::PickObject` under `worldLock` (read), filter
+`(originActorSystemGroup << 16) | kCharController` (MFO Sightline's field-proven recipe);
+ground = layers static/terrain/ground (the engine's own Target Location placement rule)
+plus the stair helper. Synchronous; `hook::OnMainThread()` or `kQuery_NotMainThread`.
+Runtime gate as PositionCast (`Install` at kDataLoaded).
+- **What breaks:** calling either off the main thread (havok world and the hostility
+  test are main-thread state; the refusal is the guard, do not remove it). Writing
+  past the caller's `size` (append-only structs: always honour `out->size`). Using a
+  hand-kept faction list instead of `IsHostileToActor`. The "stair helper counts as
+  ground" choice is a judgement call, not engine evidence (see the file comment).
 
 ### `native/core/CastClassify.{h,cpp}` — ch.8b SEAT 0: CLASSIFY (2026-09-05)
 **THE ROOT-CAUSE FIX** the other five seats sat downstream of and could never reach:

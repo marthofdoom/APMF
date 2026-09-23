@@ -446,3 +446,61 @@ instances -- makes "travel to a world position" a hard NOT FOUND rather than a d
 `BGSPackageDataLocation sizeof 0x20` and `BGSPackageDataBool sizeof 0x10 / data@0x08` (the two shapes
 the recovered `IPackageData* + 0x10` pointer model is derived from). The pinned CommonLib asserts these
 identically for both runtimes, so a CommonLib bump that moved one fails the BUILD rather than the game.
+
+## ADDENDUM 2026-09-23 — ABI v11 position cast + space queries, both runtimes
+
+**ABI v11 places NO hook and NO raw offset.** Every call is a CommonLib binding (Address Library id)
+or a vtable index. This table records each one as read on BOTH unpacked images so nobody re-derives
+it. Method as §0 and the 2026-09-22 addendum: id -> RVA with `version-1-5-97-0.bin` /
+`versionlib-1-6-1170-0.bin` (self-check `NotifyAnimationGraph` AE 38048 -> `0x6a35f0` passed), then
+`raw = 0x400 + (rva - 0x1000)`. "Bytes" = the first 16 bytes at the RVA. Helper script (scratch, not in
+the repo): capstone 5.0.7 over the mapped images plus `Linux-Native-Tools/tools/steamstub-rtti/addrlib.py`.
+
+| What | SE 1.5.97 id `RVA` bytes | AE 1.6.1170 id `RVA` bytes | Used for |
+|---|---|---|---|
+| ActorMagicCaster CastSpellImmediate (`VTABLE_ActorMagicCaster[0]` 257613 / 205828, slot 1) | 33626 `0x54c5f0` `48895c240848896c2410488974241857` | 34404 `0x5bb9c0` `48895c241048896c2418488974242057` | Evidence only (why the actor is not the caster) |
+| Cast core (called by every CastSpellImmediate) | 33632 `0x54cd10` `488bc44c8948204c8940185556574154` | 34410 `0x5bc160` `488bc44c8948204c8940185556574154` | Evidence: delivery switch |
+| Location helper (caster magic-node pos, else ref pos) | (not separately resolved; branch shape compared) | 34447 `0x5bf350` `48895c24084889742410574883ec2049` | Evidence |
+| Spell-has-Summon-Creature test (archetype table class `0x2b`) | 11211 `0x101960` `448b416833c04585c074364c8b49584c` | 11319 `0x14c120` `448b416833c04585c074364c8b49584c` | Evidence: summon refusal |
+| NonActorMagicCaster CastSpellImmediate (`VTABLE_NonActorMagicCaster[1]` 257866 / 206007, slot 1) | 33900 `0x559d40` `48895c240848896c2410488974241848` | 34697 `0x5ca310` `48895c240848896c2410488974241848` | **Called** (through the vtable) |
+| NonActorMagicCaster GetCasterObjectReference (slot 0x0D) = `jmp [vt+0x58]` | 33902 `0x559ec0` `488b0148ff6058cc...` | 34699 `0x5ca4a0` `488b0148ff6058cc...` | Evidence: writes no out-actor |
+| NonActorMagicCaster GetCasterStatsObject (slot 0x0B) = `mov rax,[rcx+0x48]; ret` | 33913 `0x55a580` `488b4148c3cc...` | 34710 `0x5cac10` `488b4148c3cc...` | Evidence |
+| TESObjectREFR::GetMagicCaster (`VTABLE_TESObjectREFR[0]` 235511 / 190259, slot 0x5C) | 19284 `0x28ea00` `40555657415641574883ec3048c74424` | 19710 `0x2e2750` `40555657415641574883ec3048c74424` | **Called**: finds extra `0x31` or allocates a 0x68-byte NonActorMagicCaster |
+| MagicCaster::InterruptCast (CommonLib `RELOCATION_ID(33630, 34408)`) | 33630 `0x54cb70` `40534883ec204883792800488bd97452` | 34408 `0x5bbfa0` `40534883ec204883792800488bd97452` | **Called** |
+| TESDataHandler::CreateReferenceAtLocation (`RELOCATION_ID(13625, 13723)`) | 13625 `0x16c210` `4c8bdc4d894b20498953105556574154` | 13723 `0x1b6c10` `488bc44c894820488950105556574154` | **Called** (same fn CommonLib's `PlaceObjectAtMe` wraps) |
+| TESObjectREFR::SetDelete (slot 0x23) | 19155 `0x289d50` `48895c2408574883ec200fb6fa488bd9` | 19565 `0x2dd860` `48895c2408574883ec200fb6fa488bd9` | **Called**. Tail-jumps to TESForm::SetDelete |
+| TESObjectREFR::Disable (slot 0x89; CommonLib `RelocateVirtual(0x89, 0x8A)`) | 19374 `0x2986b0` `405355565741544155415641574883ec` | 19801 `0x2ec7e0` `405355565741544155415641574883ec` | **Called**. Early-outs on formFlags bit 11 or the player |
+| Papyrus `Spell.RemoteCast` cast step | 55168 `0x9817c0` `48895c2418555741574883ec40498be9` | 55744 `0xa19f50` `488bc448895010535556574154415541` | Evidence: the engine's own sequence |
+| Actor::IsHostileToActor (`Offset::Actor::GetHostileToActor`, `RELOCATION_ID(36537, 37537)`) | 36537 `0x5e7e40` `48895c24104889742418574883ec2048` | 37537 `0x679f10` `48895c24104889742418574883ec2048` | **Called**. Papyrus `Actor.IsHostileToActor` (AE 54944) is `jmp 0x679f10` |
+| bhkWorld::PickObject (`VTABLE_bhkWorld` 288902 / 238918, slot 0x33) | 76027 `0xda7580` `488bc45741544155415641574881ecb0` | 77860 `0xe86560` `488bc45741544155415641574881ecb0` | **Called** |
+| bhkWorld world scale (`RELOCATION_ID(231896, 188105)`) | `0x154064c` = 0.0142875 | `0x17849dc` = 0.0142875 | **Read** |
+| SummonCreatureEffect::Start (`VTABLE_SummonCreatureEffect` 206083, slot 0x14) | (not read) | 34990 `0x5d4620` `405355565741544155415641574883ec` | Evidence: the engine places an NPC summon itself |
+
+**What the cast core does with a Target Location spell (AE 34410, SE 33632, same shape).** It switches on
+`spell->GetDelivery()` (MagicItem vfunc 0x57). The Target Location arm (AE `0x5bc3de`-`0x5bc7f0`, SE
+`0x54cf7c`-`0x54d370`) takes its location from the location helper, i.e. the CASTER's magic node, or the
+caster reference's position when there is no node. The player gets a crosshair pick instead (AE
+`0x5c0470`). An NPC out-actor gets a navmesh snap near that point when the effect has
+`kSnapToNavMesh` (EffectSetting flags bit 3). **Nothing in that arm reads `desiredTarget`
+(`MagicCaster+0x20`)**, which is where CastSpellImmediate stored the target. The Target Actor arm
+(AE `0x5bc7f5`, SE `0x54d375`) is the one that reads it. So an ACTOR casting a Target Location spell "at a
+marker" lands at its own hand.
+
+**Why a marker caster lands on the marker.** NonActorMagicCaster's GetCasterObjectReference is a bare
+`jmp` to GetCasterStatsObject and never writes the out-actor, so the Target Location arm skips both
+the player pick and the navmesh snap. It has no magic node for an XMarker (its GetMagicNode looks up
+a named node in the ref's 3D), so the helper falls back to the reference's own position.
+
+**Why a marker can never summon.** For Target Location, when the spell has a Summon Creature effect
+(the test above) the target becomes the caster object reference. The apply loop (AE `0x5bcd58`-`0x5bcd91`)
+then applies a summon effect ONLY when that target is the caster's own actor, and a non-actor target has
+no MagicTarget anyway (TESObjectREFR vfunc 0x5D). An actor-cast summon's SummonCreatureEffect::Start
+picks its own spot in front of the caster when the given location is zero or within a set distance
+of it (AE `0x5d4726`-`0x5d481f`, helper `0x5d50c0`).
+
+**Why the pick's hitFraction is valid with no collector.** PickObject resets `rayOutput`
+(`hitFraction = 1.0` at pick+0x40, `rootCollidable` at pick+0x80) and, with the four collector slots
+null, casts into `pick+0x30` (AE `0xe867f1`-`0xe867fb`). The stock Havok closest-hit output.
+
+**Nothing in this addendum is field-run.** Principle 5: this proves the paths exist. The first deck
+log decides whether they run (see the field-test plan in the branch's hand-back).
