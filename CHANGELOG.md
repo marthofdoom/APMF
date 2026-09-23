@@ -1,9 +1,7 @@
 ## v0.9.7 -- Travel walks to a body
 
-- **A follower sent to a corpse now gets there.** Travel ended the walk the moment it saw the destination was dead. A looter's destination is always a body, so almost every loot walk ended a fraction of a second after it started. A dead destination is now just a place to walk to.
-- **A mod that wants the old behaviour asks for it.** `kTravel_ReleaseOnTargetDead` used to only name the default. It is now a real switch. Set it and the walk ends when the destination dies. Leave it clear and it does not.
-- A walk still ends on arrival, on the follower entering combat, or on the destination being deleted or disabled. Nothing else changed.
-- The API header changes one comment. No value moved and nothing was added.
+- **A follower sent to a corpse now gets there.** Travel ended the walk the moment it saw the destination was dead. A looter's destination is always a body, so almost every loot walk ended a fraction of a second after it started. Now a target that was already dead when it was picked is just a place to walk to. A target that was alive when it was picked and dies on the way still ends the walk.
+- A walk still ends on arrival, on the follower entering combat, or on the destination being deleted or disabled. No API change.
 
 ## v0.9.6 -- Travel just works
 

@@ -250,6 +250,12 @@ namespace {
         float                 basisPackage = 0.0f;
         bool                  legLive = false;
         std::uint64_t         legStartedMs = 0;
+        // Was the destination ALIVE when it was targeted (engage or re-point)? Only
+        // then does its death end the leg ("the destination died during travel"). A
+        // destination already dead at target time is a corpse to walk to (MFO's loot
+        // legs), so its deadness never ends the leg. Sampled in Compose, reset on
+        // every re-point. False for a cell and until Compose has sampled it.
+        bool                  destAliveAtTarget = false;
     };
 
     std::unordered_map<RE::FormID, Leg> g_legs;
@@ -635,6 +641,15 @@ namespace {
                                   "(unloaded or deleted).", Hex(id), step, Hex(leg.destId));
                     return;
                 }
+                // Sample the destination's life at TARGET time (marth: "If the target
+                // is dead when targeted, it's fine. But if it dies during travel,
+                // drop."). Same IsDead call Poll's death end makes.
+                leg.destAliveAtTarget = !destPtr->IsDead();
+                spdlog::info("[travel] 0x{} {}: destination 0x{} {}.", Hex(id), step, Hex(leg.destId),
+                             leg.destAliveAtTarget ? "alive at target time"
+                                                   : "dead at target time -- walking to a corpse");
+            } else {
+                leg.destAliveAtTarget = false;
             }
 
 
@@ -850,9 +865,9 @@ namespace apmf::travel {
                 //
                 // WHAT BOUNDS A LEG, then, now that "too far away" is not an end
                 // condition: (1) the actor entering combat, which is the contract's own
-                // cancel and fires wherever the actor is; (2) the destination being
-                // disabled, or its HANDLE going stale, or -- only when the client set
-                // kTravel_ReleaseOnTargetDead -- dying (the checks that remain
+                // cancel and fires wherever the actor is; (2) the destination dying
+                // DURING travel (alive when targeted), being disabled, or its HANDLE
+                // going stale (the checks that remain
                 // below -- a handle that no longer resolves really is gone, unlike an
                 // unloaded-but-alive ref); (3) the client's own Release; and (4) the
                 // kLegMaxMs safety net, which reports a leg that got nowhere as a
@@ -878,12 +893,11 @@ namespace apmf::travel {
                     EndLeg(id, leg, "the destination was disabled", false);
                     continue;
                 }
-                // A DEAD destination is OPT-IN only (kTravel_ReleaseOnTargetDead). With
-                // the bit clear a corpse is a valid reference to walk to -- MFO's loot
-                // legs target corpses -- and the leg ends only on arrival, combat, the
-                // destination being genuinely gone (the two checks above), or Release.
-                if ((leg.flags & APMF_API::kTravel_ReleaseOnTargetDead) != 0 && d->IsDead()) {
-                    EndLeg(id, leg, "the destination is dead (kTravel_ReleaseOnTargetDead)", false);
+                // DEATH ends the leg only if the destination was ALIVE when targeted
+                // (see Leg::destAliveAtTarget). A destination dead at target time is a
+                // corpse to walk to, and ends the leg only on the other checks here.
+                if (leg.destAliveAtTarget && d->IsDead()) {
+                    EndLeg(id, leg, "the destination died during travel", false);
                     continue;
                 }
 
