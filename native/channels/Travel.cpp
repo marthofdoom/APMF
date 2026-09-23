@@ -707,7 +707,7 @@ namespace apmf::travel {
             return;
         }
 
-        g_observeOnly = GetPrivateProfileIntA("Travel", "bTravelObserveOnly", 1,
+        g_observeOnly = GetPrivateProfileIntA("Travel", "bTravelObserveOnly", 0,
                                               "Data/SKSE/Plugins/APMF.ini") != 0;
 
         auto* dh = RE::TESDataHandler::GetSingleton();
