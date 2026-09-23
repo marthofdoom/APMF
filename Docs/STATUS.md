@@ -106,7 +106,7 @@ feature." The hotkey-hunt case is just one caller.
    -- an object REFERENCE **or a CELL**, decided by the FormID's own record type, no flag and
    no second field. `fval` = arrival radius (0 => 75u, CLAMPED to [50, 512] with the clamp
    logged; not consulted for a cell), `ival` = `TravelFlags`
-   (`kTravel_ReleaseOnTargetDead`, which NAMES the default rather than switching it on).
+   (`kTravel_ReleaseOnTargetDead`, which NAMES the default rather than switching it on; the default since v0.9.7 is that a destination alive when targeted ends the leg if it dies, and a corpse never does).
    Intent 18 is skipped, reserved for an attack-selection design that is not yet on main.
    **ABI v10 adds no struct and no fn-pointer slot** -- ch.19 rides the existing
    `RequestEx`/`Repoint`/`Release`, so a v9 client is byte-unaffected and the newest interface
