@@ -67,6 +67,13 @@
 // synchronously inside the call — APMF never retains the client's pointer, so a
 // stack temporary/local array is fine.
 //
+// THE ONE EXCEPTION (ABI v11): the two SPACE QUERIES, FindEmptySpace and
+// FindHostilesInSpace, are synchronous and run ONLY on the game's main thread (the
+// player-Update thread). Called from anywhere else they do nothing and return
+// kQuery_NotMainThread. See the "ABI v11: SPACE QUERIES" section below. A
+// kCastFlag_AtPosition RequestEx is still safe from any thread: it is captured and
+// delivered on the game thread like every other request.
+//
 // ── Exceptions ──
 // NO exception ever crosses this boundary. Every APMF-side body (Request,
 // RequestEx, Repoint, Release, APMF_GetInterface) is wrapped in a catch-all; a throw
@@ -88,7 +95,14 @@ namespace APMF_API {
     // else: ch.19 rides the EXISTING Request/RequestEx/Repoint/Release slots, so
     // there is no APMF_API_v10 struct and no new function pointer. A v9 client is
     // byte-unaffected and keeps working against this build unchanged.
-    inline constexpr std::uint32_t kABIVersion = 10;
+    //
+    // ABI v11 (2026-09-23) adds APMF_API_v11: two read-only SPACE QUERIES
+    // (FindEmptySpace, FindHostilesInSpace) and their POD structs, plus the
+    // kCastFlag_AtPosition bit that lets a kIntent_Cast RequestEx carry a world
+    // POINT (APMF_Param.pos). A client must see abiVersion >= 11 before it calls a
+    // v11 slot OR sets kCastFlag_AtPosition: an older APMF ignores the bit and would
+    // treat the request as an ordinary actor-target cast claim.
+    inline constexpr std::uint32_t kABIVersion = 11;
 
     // The exported query function's undecorated name and pointer type.
     // const APMF_API_v1* APMF_GetInterface(std::uint32_t abiVersion);
@@ -701,6 +715,54 @@ namespace APMF_API {
                                              //   then stands as a degenerate no-form claim that denies
                                              //   nothing. Ship the pair together.
 
+        // ── POSITION CAST (ABI v11, 2026-09-23; bit 5 was free) ─────────────────
+        kCastFlag_AtPosition    = 1u << 5,   // Deliver `param.form` (a SpellItem) at the WORLD POINT
+                                             //   `param.pos` instead of at an actor. RequestEx ONLY:
+                                             //   APMF_CastRequest has no position field, so RequestCast
+                                             //   with this bit is REFUSED by name. Gate on
+                                             //   abiVersion >= 11 before setting it (an older APMF
+                                             //   ignores the bit and makes an ordinary actor-target claim).
+                                             //
+                                             //   WHAT APMF DOES. On the game thread it places a
+                                             //   non-persistent XMarker (Skyrim.esm 0x3B) at the point, in
+                                             //   the ACTOR's cell and worldspace, and casts the spell FROM
+                                             //   that marker, blamed on the actor: the marker's instant
+                                             //   caster runs InterruptCast(false) then CastSpellImmediate(
+                                             //   spell, false, none, 1.0, false, 0.0, actor). That is the
+                                             //   exact sequence the engine's own Papyrus Spell.RemoteCast
+                                             //   runs (Docs/ADDRESS-TABLE-2026-09-15.md, ADDENDUM 2026-09-23). The actor
+                                             //   does not animate and its hands are untouched. APMF deletes
+                                             //   the marker one frame later (core/PositionCast.cpp).
+                                             //
+                                             //   WHY A MARKER CASTS AND THE ACTOR DOES NOT. The engine
+                                             //   places a Target Location spell cast by an NPC at the
+                                             //   CASTER's own magic node. It never reads the target it was
+                                             //   handed. So "the actor casts at a marker" lands at the
+                                             //   actor's hand. A caster that IS the marker lands at the
+                                             //   marker. Disassembly on both runtimes, same ADDENDUM.
+                                             //
+                                             //   WHAT IS ACCEPTED. A SpellItem with Target Location
+                                             //   delivery, fire-and-forget, and no Summon Creature effect.
+                                             //   Everything else is REFUSED by name in APMF.log:
+                                             //   * a SUMMON. The engine applies a summon effect ONLY to the
+                                             //     actor that cast it, so a marker can never summon. An
+                                             //     NPC's own summon already lands in front of it: the
+                                             //     engine's SummonCreatureEffect picks that spot itself.
+                                             //   * Self / Touch / Aimed / Target Actor delivery (use an
+                                             //     ordinary kIntent_Cast with an actor target).
+                                             //   * concentration and constant-effect spells.
+                                             //   * disease / ability / addiction spell types (Papyrus
+                                             //     RemoteCast refuses the same three).
+                                             //   * any other cast flag set alongside this one.
+                                             //
+                                             //   IT IS A ONE-SHOT, NOT A CLAIM. It never enters the control
+                                             //   map, so no engine seat ever sees it (it can never be read
+                                             //   as an actor target) and it holds no facet. RequestEx
+                                             //   returns a handle for log correlation only: IsClaimLive is
+                                             //   false for it, Repoint and Release are no-ops. The
+                                             //   client owns resource cost (APMF charges no magicka, the
+                                             //   same as every CastSpellImmediate).
+
         // ── Bits 8-15: STOP PERCENT (added in-place; the word is byte-frozen) ────
         // The seat that owns a concentration channel's duration is
         // CombatMagicCaster::CheckStopCast (vfunc 0x07, core/CastSeats.cpp). Left
@@ -797,11 +859,13 @@ namespace APMF_API {
         float        posY;    //   location-delivery cast (Rune/AoE ground-target) -- the
         float        posZ;    //   CLIENT picks the point (e.g. by enemy-count-in-radius);
                                //   APMF never selects one. Also pre-provisions a future
-                               //   move-to-point destination. NOT YET READ by any channel:
-                               //   an actor target rides kIntent_Cast's APMF_CastRequest
-                               //   (`req.target`, load-bearing at the engine seats), and
-                               //   `pos` stays documented-reserved until a rune/AoE pass
-                               //   wires location aiming.
+                               //   move-to-point destination. READ SINCE ABI v11 by
+                               //   kIntent_Cast when ival carries kCastFlag_AtPosition (a
+                               //   position cast; see that flag). When the flag is set,
+                               //   (0,0,0) is a legal point: the flag, not the value, says
+                               //   the field is in use. An actor target still rides
+                               //   kIntent_Cast's APMF_CastRequest (`req.target`,
+                               //   load-bearing at the engine seats).
     };
 
     // ── APMF_Param field usage, per Intent (at a glance) ────────────────────────
@@ -825,6 +889,9 @@ namespace APMF_API {
     //   ival   kIntent_Cast            the rich payload -- ival = CastFlags on the degenerate form
     //                                  (req.target / req.flags' hand + stop-percent are read by
     //                                  the engine seats, core/CastSeats.cpp)
+    //   pos    kIntent_Cast            ABI v11: the WORLD POINT of a position cast, read ONLY
+    //                                  when ival has kCastFlag_AtPosition (then form = the spell,
+    //                                  ival = that flag alone). Ignored otherwise.
     //   ival   kIntent_EquipAuthority  an EquipAuthFlags bitmask (the worn set itself is NOT a
     //                                  param field -- it is declared with SetEquipSet, ABI v7)
     //   form   kIntent_Travel          the DESTINATION: an object REFERENCE or a CELL (REQUIRED;
@@ -837,8 +904,9 @@ namespace APMF_API {
     //   none   every other Intent      accepted, not yet read by the channel
     //
     // fval is read ONLY by kIntent_Travel (ABI v10); it stays reserved for a
-    // future per-request bias on ch.11, scale on ch.1a, factor on ch.16. target/pos
-    // are not read by any Intent OTHER than kIntent_SelectSpell yet.
+    // future per-request bias on ch.11, scale on ch.1a, factor on ch.16. target is
+    // not read by any Intent OTHER than kIntent_SelectSpell yet. pos is read by
+    // kIntent_Cast with kCastFlag_AtPosition (ABI v11) and refused by kIntent_Travel.
     // ─────────────────────────────────────────────────────────────────────────────
 
     // The v1 interface: a POD struct of function pointers. NO vtable. `abiVersion`
@@ -1196,6 +1264,152 @@ namespace APMF_API {
         // BOTH hands (the hand is not known until the engine picks); declare the hand
         // with SetEquipSetEx when only one is owned.
         void (*SetEquipScope)(Handle handle, const APMF_EquipScope* scope);
+    };
+
+    // ── ABI v11: SPACE QUERIES ──────────────────────────────────────────────────
+    // Two read-only questions a client asks before it declares something that needs a
+    // place in the world: "where is an empty, standable spot over there?" and "which
+    // hostile actors are inside this sphere?". They serve a position cast
+    // (kCastFlag_AtPosition), a rune or ward a mod wants to place, and anything else
+    // that has to pick a point. APMF ANSWERS; the client DECIDES (CLAUDE.md principle 4).
+    //
+    // WHAT A QUERY IS NOT. It claims no facet, holds nothing, writes nothing into the
+    // world or the control map, and has no handle. One intent is still one facet: a
+    // query is not an intent at all, and there is no combined query-and-cast call.
+    //
+    // THREADING: SYNCHRONOUS, TRUE MAIN THREAD ONLY. Ray casts and the engine's
+    // hostility test must run on the game's main thread. A query called from any other
+    // thread does no work and returns kQuery_NotMainThread at once. The main thread
+    // here is the thread that runs the PLAYER's Actor::Update, the same seat APMF drains
+    // its own request queue from. A client already on that thread (for example inside
+    // its own player-Update pump; MFO's MainThread::Post runs there) calls straight in.
+    // A client on a worker thread moves the call onto that thread first. SKSE's
+    // TaskInterface::AddTask is NOT that thread (it runs on a job worker).
+    //
+    // SIZES. Every v11 struct starts with `size`. The caller sets it to
+    // sizeof(struct) as compiled against its header. APMF refuses an input whose size
+    // is below the v11 layout (kQuery_BadArgs) and never writes an output past the size
+    // the caller declared. A later ABI may append fields; an older caller keeps working.
+    //
+    // No exception crosses the boundary: a throw inside a query returns kQuery_Failed.
+
+    enum QueryStatus : std::uint32_t {
+        kQuery_Ok             = 0,
+        kQuery_NotMainThread  = 1,   // called off the main thread; nothing was done
+        kQuery_BadArgs        = 2,   // null pointer, short `size`, or a non-positive distance/radius
+        kQuery_Unsupported    = 3,   // VR, a runtime APMF has not verified, or before kDataLoaded
+        kQuery_NoOrigin       = 4,   // the origin/side FormID is not a loaded reference (actor for side)
+        kQuery_NoWorld        = 5,   // the origin has no attached cell or no havok world
+        kQuery_Blocked        = 6,   // geometry (or an actor) between the origin and the point; detail = layer
+        kQuery_NoGround       = 7,   // nothing to stand on within maxDrop under the point: a void or a drop
+        kQuery_NotGround      = 8,   // the ground ray hit something that is not static, terrain or ground; detail = layer
+        kQuery_Occupied       = 9,   // a live actor stands inside the clearance; detail = its FormID
+        kQuery_NoClearance    = 10,  // geometry inside the clearance radius; detail = layer
+        kQuery_Ledge          = 11,  // the clearance ring is not level (a drop or step over 48u at its edge)
+        kQuery_Failed         = 12,  // an exception was caught; nothing was returned
+    };
+
+    enum SpaceFlags : std::uint32_t {
+        kSpaceFlag_None          = 0,
+        kSpaceFlag_OriginIsPoint = 1u << 0,   // walk from (originX, originY, originZ), a FEET-level point in
+                                              //   the origin reference's cell and worldspace, instead of from
+                                              //   the reference's own position
+        kSpaceFlag_UseHeading    = 1u << 1,   // walk along `heading` (radians, Skyrim's angle Z: forward is
+                                              //   (sin h, cos h)) instead of the origin reference's facing
+        kSpaceFlag_ClampToWall   = 1u << 2,   // a wall before `distance` shortens the walk to (hit - clearance)
+                                              //   instead of returning kQuery_Blocked. Nothing else is relaxed.
+    };
+
+    // FindEmptySpace input. EXACT LAYOUT (byte-shared): 44 bytes.
+    struct APMF_SpaceQuery {
+        std::uint32_t size;        // = sizeof(APMF_SpaceQuery)
+        RE::FormID    origin;      // REQUIRED. A loaded reference, actor or not. Its cell supplies the havok
+                                   //   world. If it is an actor, the rays skip its own capsule.
+        float         originX;     // read only with kSpaceFlag_OriginIsPoint
+        float         originY;
+        float         originZ;
+        float         heading;     // read only with kSpaceFlag_UseHeading
+        float         distance;    // how far along the direction, > 0; clamped to 2048 (logged)
+        float         clearance;   // the free radius wanted around the point, > 0; clamped to [16, 512]
+        float         maxDrop;     // how far the ground may sit below the origin's feet; 0 => 128; clamped to 1024
+        std::uint32_t flags;       // SpaceFlags
+        std::uint32_t reserved;    // MUST be 0
+    };
+
+    // FindEmptySpace output. EXACT LAYOUT (byte-shared): 24 bytes.
+    struct APMF_SpaceResult {
+        std::uint32_t size;        // the CALLER sets = sizeof(APMF_SpaceResult)
+        std::uint32_t status;      // a QueryStatus (the same value the call returns)
+        float         x;           // the ground point, valid only when status == kQuery_Ok
+        float         y;
+        float         z;
+        std::uint32_t detail;      // the collision layer that stopped a ray, or the occupying actor's
+                                   //   FormID (kQuery_Occupied); 0 otherwise
+    };
+
+    // FindHostilesInSpace input. EXACT LAYOUT (byte-shared): 24 bytes.
+    struct APMF_HostileQuery {
+        std::uint32_t size;        // = sizeof(APMF_HostileQuery)
+        RE::FormID    side;        // REQUIRED. The loaded actor whose side we are on.
+        float         x;           // the sphere's centre, in the side actor's cell/worldspace
+        float         y;
+        float         z;
+        float         radius;      // > 0; clamped to 4096 (logged)
+    };
+
+    static_assert(sizeof(APMF_SpaceQuery) == 44,   "APMF_SpaceQuery is 44 bytes, byte-shared with clients");
+    static_assert(offsetof(APMF_SpaceQuery, origin)   == 4,  "origin at +4");
+    static_assert(offsetof(APMF_SpaceQuery, heading)  == 20, "heading at +20");
+    static_assert(offsetof(APMF_SpaceQuery, flags)    == 36, "flags at +36");
+    static_assert(sizeof(APMF_SpaceResult) == 24,  "APMF_SpaceResult is 24 bytes, byte-shared with clients");
+    static_assert(offsetof(APMF_SpaceResult, x)       == 8,  "x at +8");
+    static_assert(offsetof(APMF_SpaceResult, detail)  == 20, "detail at +20");
+    static_assert(sizeof(APMF_HostileQuery) == 24, "APMF_HostileQuery is 24 bytes, byte-shared with clients");
+    static_assert(offsetof(APMF_HostileQuery, radius) == 20, "radius at +20");
+
+    // The most actors FindHostilesInSpace ever writes, whatever capacity the caller passes.
+    inline constexpr std::uint32_t kMaxHostileResults = 64;
+
+    // The v11 interface: APMF_API_v9's members verbatim (prefix EXTENSION; there is no
+    // APMF_API_v10 struct because ABI v10 added no slot), then the two query slots.
+    // This header is BYTE-SHARED with MFO: the declaration below is authoritative and
+    // must be mirrored byte-identically on the client side.
+    //
+    // WHY A BUMP (INVARIANTS #14b): new function-pointer slots need an
+    // `abiVersion >= 11` test before a client may call them.
+    struct APMF_API_v11 : APMF_API_v9 {
+        // Find a standable, empty point `q->distance` units from the origin along the
+        // direction. Returns a QueryStatus and writes the same status (plus the point on
+        // success) into `*out`. MAIN THREAD ONLY (see the section header).
+        //   The walk: a ray at the origin's chest height (feet + 64u) out to the point,
+        //   then a ray straight down from there to (feet - maxDrop). The ground it finds
+        //   must be static, terrain or ground (the three layers the engine itself accepts
+        //   for a Target Location placement); anything else is kQuery_NotGround, and an
+        //   actor's capsule under the point is kQuery_Occupied. Then the clearance:
+        //   eight level rays of `clearance` length at the point's knee height (+32u)
+        //   must hit nothing, four ground rays at the clearance ring must land within 48u
+        //   of the point's height, and no live actor may stand within `clearance` + 32u.
+        //   Every failure names itself; nothing is retried or relaxed except by
+        //   kSpaceFlag_ClampToWall. Cost: at most 14 ray casts plus one pass over the
+        //   loaded ("high") actors.
+        std::uint32_t (*FindEmptySpace)(const APMF_SpaceQuery* q, APMF_SpaceResult* out);
+
+        // List the live actors inside the sphere that the engine considers HOSTILE to
+        // `q->side`. The test is the engine's own `Actor::IsHostileToActor`, asked from
+        // each candidate: candidate->IsHostileToActor(side). That is the same call
+        // Papyrus Actor.IsHostileToActor makes. No faction list is kept here.
+        //   Candidates: every loaded ("high") actor plus the player, in the side actor's
+        //   worldspace (or, indoors, its cell), alive, enabled, not the side actor, with
+        //   a 3D distance to the centre <= radius.
+        //   Output: up to min(capacity, kMaxHostileResults) FormIDs, NEAREST FIRST.
+        //   `*outCount` = how many were written. `outTotal` (may be null) = how many
+        //   matched before the cap, so a caller can tell a full sphere from a truncated
+        //   list. Returns a QueryStatus. MAIN THREAD ONLY.
+        //   Cost: one pass over the high actors (one distance each), one engine
+        //   hostility test per actor inside the sphere, and a sort of the matches.
+        std::uint32_t (*FindHostilesInSpace)(const APMF_HostileQuery* q, RE::FormID* outActors,
+                                             std::uint32_t capacity, std::uint32_t* outCount,
+                                             std::uint32_t* outTotal);
     };
 
     // Function-pointer type for GetProcAddress(kGetInterfaceExport). Returns the

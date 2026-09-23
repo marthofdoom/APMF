@@ -8,6 +8,7 @@
 #include "core/CastProxy.h"         // castproxy::Acquire/Free (ch.8b kSelf delivery-flip, writer thread)
 #include "core/MainThread.h"        // mainthread::Post (defer proxy teardown past this Drain's Publish)
 #include "channels/Travel.h"  // ch.19 Installed()/NotInstalledReason() for the synchronous refusal
+#include "core/PositionCast.h"  // ABI v11 position cast: poscast::Enqueue (one-shot, never a claim)
 
 namespace apmf {
 
@@ -128,6 +129,18 @@ namespace apmf {
                              apmf::log::Hex(actor));
                 return APMF_API::kInvalidHandle;
             }
+        }
+
+        // ABI v11: a kIntent_Cast RequestEx carrying kCastFlag_AtPosition is a
+        // POSITION CAST -- a one-shot remote cast at param.pos (core/PositionCast.h).
+        // It NEVER enters the control map: no claim is published, so no engine seat
+        // can read it as an actor target, and it holds no facet. The handle is only a
+        // label for its log lines (IsClaimLive is false for it; Release/Repoint on it
+        // find nothing and do nothing). A synchronous refusal returns kInvalidHandle.
+        if (intent == APMF_API::kIntent_Cast && param &&
+            (static_cast<std::uint32_t>(param->ival) & APMF_API::kCastFlag_AtPosition) != 0) {
+            const Handle ph = m_nextHandle.fetch_add(1, std::memory_order_relaxed);
+            return apmf::poscast::Enqueue(ph, actor, *param) ? ph : APMF_API::kInvalidHandle;
         }
 
         const Handle h = m_nextHandle.fetch_add(1, std::memory_order_relaxed);
@@ -270,6 +283,15 @@ namespace apmf {
                                    const APMF_API::APMF_CastRequest* req) {
         if (!Registry::Get().ChannelForIntent(APMF_API::kIntent_Cast)) {
             spdlog::warn("[api] RequestCast REFUSED -- no channel serves kIntent_Cast (actor 0x{}).",
+                         apmf::log::Hex(actor));
+            return APMF_API::kInvalidHandle;
+        }
+        // ABI v11: APMF_CastRequest has no position field, so a position cast cannot
+        // ride RequestCast. Refused by name rather than run as an actor-target claim.
+        if (req && (req->flags & APMF_API::kCastFlag_AtPosition) != 0) {
+            spdlog::warn("[api] RequestCast REFUSED (actor 0x{}): kCastFlag_AtPosition needs a point, and "
+                         "APMF_CastRequest has none. Send a position cast through RequestEx with "
+                         "param.form = the spell, param.ival = kCastFlag_AtPosition, param.pos = the point.",
                          apmf::log::Hex(actor));
             return APMF_API::kInvalidHandle;
         }

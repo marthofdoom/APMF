@@ -18,6 +18,8 @@
 #include "core/AiCastSeats.h"
 #include "core/CastClassify.h"
 #include "channels/Travel.h"
+#include "core/PositionCast.h"
+#include "core/SpaceQuery.h"
 
 // ============================================================================
 // APMF -- AI Package Management Framework. Entry point (thin).
@@ -66,6 +68,10 @@ namespace {
         // the travel-leg table and its package slots would survive the world swap
         // owned by actors that no longer exist.
         apmf::travel::ResetAll("revert/new game");
+        // ABI v11 position cast: forget any marker still waiting for its one-frame
+        // delete (its Retire task is dropped by the Discard below). The references
+        // belong to the world being replaced, so none is touched.
+        apmf::poscast::ResetAll("revert/new game");
         // Flush the confirmed-main task queue at the world boundary (see
         // core/MainThread.h's Discard() for why). Clear() posts nothing today -- it
         // makes no channel->Release calls by design -- but anything posted BEFORE the
@@ -103,6 +109,10 @@ namespace {
                                                   // failure REFUSES kIntent_Travel claims
                                                   // (ControlMap::EnqueueRequest) rather than accepting a
                                                   // claim that would do nothing.
+            apmf::poscast::Install();            // ABI v11 POSITION CAST: runtime gate (1.6.1170 / 1.5.97,
+                                                  // never VR) + [PositionCast] + the XMarker base. Installs NO
+                                                  // hook. Refused -> kCastFlag_AtPosition requests are refused.
+            apmf::spacequery::Install();         // ABI v11 SPACE QUERIES: runtime gate only (read-only calls).
             apmf::equipsink::Install();          // ch.17 ENGINE-EQUIP SINK: the ONE #17a call-site seat
                                                   // (ActorEquipManager worker, two internal E8 sites per
                                                   // runtime, byte-verified before any write; a mismatch
@@ -174,6 +184,8 @@ namespace {
             // instead, or every slot stays owned by an actor from the outgoing world and
             // the first leg in the new one overflows.
             apmf::travel::ResetAll("kPreLoadGame");
+            // ABI v11 position cast: same as the revert path -- forget, never touch.
+            apmf::poscast::ResetAll("kPreLoadGame");
             // Flush the confirmed-main task queue. NOTHING Pump()s between here and
             // the first player Update AFTER the load, so anything ReleaseAll just
             // posted (ch.9's release nudge; ch.8b's proxy teardown) would otherwise
