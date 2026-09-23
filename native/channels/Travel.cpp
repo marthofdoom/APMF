@@ -226,7 +226,6 @@ namespace {
     // synchronous refusal reads it from whatever thread the client called RequestEx
     // on, while Install writes it on the game thread.
     std::atomic<const char*> g_notInstalledReason{ "not yet initialized (before kDataLoaded)" };
-    bool                     g_observeOnly = true;
     RE::TESPackage*          g_pkg[kTravelSlots]{};
 
     // ---- Per-leg state. GAME THREAD ONLY (see the threading note). ----
@@ -638,18 +637,6 @@ namespace {
                 }
             }
 
-            if (g_observeOnly) {
-                spdlog::info("[travel-observe] 0x{} {} -- WOULD walk to {} 0x{}{}, offering an APMF "
-                             "travel package at basis {}. Nothing claimed, nothing written: [Travel] "
-                             "bTravelObserveOnly=1.",
-                             Hex(id), step, leg.destKind == DestKind::kCell ? "CELL" : "destination",
-                             Hex(leg.destId),
-                             leg.destKind == DestKind::kCell
-                                 ? std::string(" (arrival = the actor's parent cell)")
-                                 : std::format(" at radius {}", static_cast<std::uint32_t>(leg.radius)),
-                             basis);
-                return;
-            }
 
             // A live leg is RE-POINTED in place (rewrite the record's Location, then
             // either re-file the offer at a moved basis or re-point it so its nudge
@@ -707,8 +694,6 @@ namespace apmf::travel {
             return;
         }
 
-        g_observeOnly = GetPrivateProfileIntA("Travel", "bTravelObserveOnly", 0,
-                                              "Data/SKSE/Plugins/APMF.ini") != 0;
 
         auto* dh = RE::TESDataHandler::GetSingleton();
         if (!dh) {
@@ -743,15 +728,12 @@ namespace apmf::travel {
         }
 
         g_installed.store(true, std::memory_order_release);
-        spdlog::info("[travel] installed -- {} of {} travel packages resolved from {}; mode = {}. "
+        spdlog::info("[travel] installed -- {} of {} travel packages resolved from {}. "
                      "Arrival radius default {}u (client range {}-{}u), poll {} ms, leg safety net {} ms. "
                      "A leg ends on ARRIVAL, on the ACTOR ENTERING COMBAT, or on the destination being "
                      "gone -- and nothing else. No perception test of any kind, and no other intent is "
                      "claimed on the client's behalf.",
                      resolved, kTravelSlots, kPlugin,
-                     g_observeOnly ? "OBSERVE-ONLY (bTravelObserveOnly=1: logs what it would do, claims "
-                                     "nothing, writes nothing)"
-                                   : "ACTIVE",
                      static_cast<std::uint32_t>(kDefaultRadiusUnits),
                      static_cast<std::uint32_t>(kMinRadiusUnits),
                      static_cast<std::uint32_t>(kMaxRadiusUnits),

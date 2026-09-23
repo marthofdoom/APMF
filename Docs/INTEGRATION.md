@@ -712,28 +712,12 @@ save. One tiny generated record set is the honest answer.
 
 ### Observe-only, and what a good log looks like
 
-The first shipped build has `[Travel] bTravelObserveOnly=1`. In that mode nothing is
-claimed and no package is pointed, so the **only** thing an observe session can
-prove is the client-facing half — and that is the gate. Per command, in order:
+Harbinger receives commands. There is no observe mode and there never will be: the
+off switch is a mod not sending a claim. If you want to watch without moving anyone,
+do not claim. A claim that was accepted always moves the actor, so a live handle
+means the follower is walking.
 
-```
-[travel] 0x<actor> travel facet CLAIMED -- destination 0x<dest> '<name>', radius 75, flags 0x01.
-[travel-observe] 0x<actor> engage -- WOULD walk to destination 0x<dest> at radius 75, offering an APMF travel package at basis 50. Nothing claimed, nothing written: [Travel] bTravelObserveOnly=1.
-```
-
-Both lines present, with the values you meant, for every command = pass. There is no
-package line, no offer line, no nudge and no end reason in this mode, because none of
-that happens. **The ordering evidence requires an ACTIVE session**
-(`bTravelObserveOnly=0`), which looks like this:
-
-```
-[travel] 0x<actor> travel facet CLAIMED -- destination 0x<dest> ...
-[pkgdata] package 0x<pkg> Location -> ref 0x<dest> radius 75 (authored locType 0 -> kNearReference).
-[travel-leg] 0x<actor> STARTED -- slot 0, package 0x<pkg> -> destination 0x<dest>, ...
-[ch.9] 0x<actor> package-offer facet CLAIMED (package 0x<pkg>).
-[ch.9-nudge] 0x<actor> engage nudge FIRED post-publish ...; curPkg now 0x<pkg>.
-[travel-leg] 0x<actor> ENDED after <n> ms -- ARRIVED (inside the arrival radius).
-```
+A good active session reads like this:
 
 The line that proves the mechanism is `curPkg now 0x<pkg>` matching the package
 travel pointed: that is the engine having actually adopted the package. A
@@ -795,7 +779,7 @@ columns, one doesn't imply the other.
 | `kIntent_Equipment` (ch.15) | Unequip/equip a worn item, and (with a param) gate re-equip of a spell/staff while the claim stands | `form` (optional) | Built, not yet battle-tested. The most recently landed facet in the catalog. |
 | `kIntent_Detection` (ch.16) | Silent movement + reduced detection range | `fval` (reserved, not yet read) | **Field-proven.** An actor-value source-block, deck-tested to hold even on a package-locked actor. |
 | `kIntent_EquipAuthority` (ch.17) | **Declare what the NPC wears; APMF equips it and refuses every other engine equip of a governed type (ARMO/WEAP/AMMO/LIGH) in the categories the claim owns.** ABI v7, declare with `SetEquipSet`; ABI v8 `SetEquipSetEx` adds a hand per item; ABI v9 `SetEquipScope` scopes the claim to owned/denied categories (default: all owned) | `ival` (an `EquipAuthFlags` bitmask); the set itself via `SetEquipSet` / `SetEquipSetEx`; the scope via `SetEquipScope` | Built, not yet battle-tested. Ships OBSERVE-ONLY (`[EquipAuthority] bEquipObserveOnly=1`) until the probe criteria above pass. The only call-site seat in APMF, under `Docs/INVARIANTS.md` #17a. Player-menu equips pass by default (v8). |
-| `kIntent_Travel` (ch.19) | **Walk this actor to a destination.** APMF points its own travel package at it and offers that package through an internal ch.9 claim at YOUR basis. The leg ends on arrival, on the actor entering combat, or on the destination being gone | `form` (the DESTINATION, REQUIRED -- an object REFERENCE or a CELL, and it need not be loaded or nearby), `fval` (arrival radius, 0 => 75u, clamped 50-512, not used for a cell), `ival` (a `TravelFlags` bitmask) | Built, not yet battle-tested. ABI v10. Ships OBSERVE-ONLY (`[Travel] bTravelObserveOnly=1`). It claims NO other facet on your behalf -- no combat target, no combat entry, no target pin, no faked perception. Claim those intents yourself. Eight concurrent legs, and the ninth is refused and logged. Adds no engine seat: it rides ch.9's existing 0x49 seat and the existing once-per-frame 0xAD seat. Needs `Data/APMF.esl` (ESL-flagged, one master, no overrides), and an absent plugin means every claim is refused and logged. |
+| `kIntent_Travel` (ch.19) | **Walk this actor to a destination.** APMF points its own travel package at it and offers that package through an internal ch.9 claim at YOUR basis. The leg ends on arrival, on the actor entering combat, or on the destination being gone | `form` (the DESTINATION, REQUIRED -- an object REFERENCE or a CELL, and it need not be loaded or nearby), `fval` (arrival radius, 0 => 75u, clamped 50-512, not used for a cell), `ival` (a `TravelFlags` bitmask) |a refused claim means the channel is off in APMF.ini, VR, the esl is missing, or eight legs are already running|
 
 Where a field is marked "reserved, not yet read", the channel currently
 applies a fixed built-in behavior and ignores whatever you pass in that field.

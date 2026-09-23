@@ -22,7 +22,7 @@ the design record and are not repeated here):
 
 1. **ch.19 `kIntent_Travel`** (ABI v10, `channels/Travel.cpp`, `core/PackageData.*`). Arrival-only,
    combat cancels, reference or cell destination, 50-512u radius, 120 s stuck net. **Ships
-   OBSERVE-ONLY** (`[Travel] bTravelObserveOnly=1`). Not field-run.
+   ACTIVE (no observe mode exists: Harbinger receives commands, so the off switch is a mod not claiming). Not field-run.
 2. **ch.17 equip authority, v7 through v9** (`channels/EquipAuthority.cpp`, `core/EquipSink.*`).
    Declared worn set, per-item hand (`SetEquipSetEx`), scoped ownership and per-category deny
    (`SetEquipScope`), governed form types, player-menu agency, `IsEquipAuthorityEnforced`, and a
@@ -84,7 +84,7 @@ of travel. Intents stay orthogonal (marth 2026-09-22: "We should avoid combining
 - Convenience COMBO intents (one call bundling travel plus combat target plus entry) stay DEFERRED
   until after the full MFO port to APMF is complete. Recognised as reasonable, not refused.
 
-**Still open against what shipped:** both observe-only flips (`bTravelObserveOnly`,
+**Still open against what shipped:** the equip-authority observe flip (`bEquipObserveOnly`) is the only one left; ch.19 has no observe mode by design (marth 2026-09-23: Harbinger accepts commands, the off switch is not sending one).
 `bEquipObserveOnly`) need a deck run first, MFO's ch.19 and v9 wiring is its own brief in the MFO
 repo, and `Docs/REVIEW-BACKLOG.md` APMF-B11..B18 are the deferred SEV-4/SEV-5 findings against this
 release's code. APMF-B10 is closed by `release.sh` phase 1.
@@ -92,7 +92,7 @@ release's code. APMF-B10 is closed by `release.sh` phase 1.
 ## HEAD OF WORK 2026-09-22 -- ch.19 TRAVEL v1 (`feat/apmf-combat-engage`)
 
 Branch off `origin/main` (9226f77). **MERGED at `563f0d2`, SHIPPED in v0.9.5. OBSERVE-ONLY
-(`[Travel] bTravelObserveOnly=1`), still NOT field-run.** ABI bumped to v10. Driver: a third-party "hotkey sends my teammates
+ACTIVE, still NOT field-run.** ABI bumped to v10. Driver: a third-party "hotkey sends my teammates
 at that enemy" plugin built on ABI v9 and gave up, because at v9 the public API CANNOT express
 "go over there" at all -- ch.6 is arbitration only, ch.9 needs a package the CLIENT ships, and
 the travel leg lived only inside MFO. Their plugin fell back to re-pushing `StartCombat` every
@@ -178,7 +178,7 @@ runs, so there is no package line, no offer line, no nudge and no end reason to 
 observe session CAN prove is the client-facing half: per command, one `[travel] ... CLAIMED`
 naming destination/radius/flags plus one `[travel-observe] ... WOULD walk to ...` naming
 destination/radius/basis, with the values the client meant. That is the gate. **The ordering
-evidence requires an ACTIVE session** (`bTravelObserveOnly=0`).
+evidence comes from any session, because every accepted claim moves the actor.**
 
 **WHAT A DESTINATION MAY BE, and why the boundary is where it is.** marth: "Move to location is
 a staple feature." So the facet takes a REFERENCE (arrival = distance <= radius) or a CELL
