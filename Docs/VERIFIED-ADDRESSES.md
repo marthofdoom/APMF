@@ -10,7 +10,7 @@ nothing when one does not. At startup `REL::SelfCheck::Run` repeats the comparis
 game actually loaded. A row that fails refuses THAT seat by name in the log; the expected RVA is never
 used in place of the library's answer.
 
-Offline result of this generation: 1.6.1170.0 173/173 verified, 0 refused, 1.5.97.0 173/173 verified, 0 refused.
+Offline result of this generation: 1.6.1170.0 175/175 verified, 0 refused, 1.5.97.0 175/175 verified, 0 refused.
 
 ## Rows
 
@@ -156,6 +156,8 @@ Offline result of this generation: 1.6.1170.0 173/173 verified, 0 refused, 1.5.9
 | PositionCast.TES.GetCell | function | 13322 | 0x19E850 | 13177 | 0x155090 | signature (16 bytes, unique in .text) |  | native/core/PositionCast.cpp:267 |  |
 | PositionCast.InterruptCast | function | 34408 | 0x5BBFA0 | 33630 | 0x54CB70 | signature (16 bytes, unique in .text) |  | native/core/PositionCast.cpp | ADDRESS-TABLE-2026-09-15.md:469 |
 | SpaceQuery.IsHostileToActor | function | 37537 | 0x679F10 | 36537 | 0x5E7E40 | signature (24 bytes, unique in .text) |  | native/core/SpaceQuery.cpp:335 | ADDRESS-TABLE-2026-09-15.md:474 |
+| Travel.GetOpenState | function | 14288 | 0x1D4A50 | 14180 | 0x189750 | signature (22 bytes, unique in .text) |  | native/channels/Travel.cpp GateProbe / LogOpenStates (ABI v12 passive gate probe) |  |
+| Travel.ScriptEventSourceHolder.GetSingleton | function | 14298 | 0x1D5230 | 14108 | 0x186790 | signature (150 bytes, unique in .text) |  | native/channels/Travel.cpp Install (ABI v12 gate probe: TESOpenCloseEvent +0x8F0 / TESActivateEvent +0x58 sinks) |  |
 | TESObjectREFR | vtable | 190259 | 0x17AE180 | 235511 | 0x1569A80 | RTTI .?AVTESObjectREFR@@ (COL offset 0) | 0x23: 0x2DD860 / 0x289D50<br>0x5C: 0x2E2750 / 0x28EA00<br>0x89: 0x2EC7E0 / 0x2986B0 | native/core/PositionCast.cpp:217,347 (SetDelete, GetMagicCaster, Disable; virtual calls) | ADDRESS-TABLE-2026-09-15.md:471 |
 | NonActorMagicCaster | vtable | 206007 | 0x187F378 | 257866 | 0x163AD70 | RTTI .?AVNonActorMagicCaster@@ (COL offset 16) | 0x01: 0x5CA310 / 0x559D40 | native/core/PositionCast.cpp:225 (CastSpellImmediate; virtual call) | ADDRESS-TABLE-2026-09-15.md:465 |
 | bhkWorld | vtable | 238918 | 0x19E1990 | 288902 | 0x1798A28 | RTTI .?AVbhkWorld@@ (COL offset 0) | 0x33: 0xE86560 / 0xDA7580 | native/core/SpaceQuery.cpp:70 (PickObject; virtual call) | ADDRESS-TABLE-2026-09-15.md:475 |
@@ -248,6 +250,10 @@ audit covers everything the DLL installs or reads.
 | CombatBehaviorThread +0x158 controller, +0x20 hop, +0x28 attackerHandle | +0x158 / +0x20 / +0x28 | CombatBehaviorRE.h:70-94; ActionGate.cpp:332-340 | local struct static_asserts only | VR refused (install) |
 | IPackageData + 0x10 -> PackageLocation* (read, then WRITTEN by Travel) | 0x10 | core/PackageData.cpp:90, :249 | type-name check kTypeLocation before the read | Travel VR gate |
 | Character vcall IsInCombat | 0xE3 | channels/Travel.cpp:827 | CommonLib RelocateVirtual | Travel VR gate |
+| TESPackage PACKAGE_DATA::packType (read; 36 = Movement Blocked) | +0x24 (u8) | channels/Travel.cpp Poll (ABI v12 BLOCKED end) | TESPackage vfunc 0x39 GetObjectTypeName: movsx [rcx+0x24] into a name table whose entry 36 is "Movement Blocked" (1.6.1170 fn 0x496D50 table 0x200F670 / 1.5.97 fn 0x43B790 table 0x1DEC060) | Travel VR gate (layout identical on both builds) |
+| TESPackage PACKAGE_DATA::packFlags bit 13 kPreferredSpeed + maxSpeed (WRITTEN, travel gait) | +0x20 (u32, 0x2000) / +0x26 (u8) | channels/Travel.cpp ApplyGait (ABI v12) | package start copies +0x20 and the +0x26 getter into ActorPackage +0x24 / +0x2B (1.6.1170 0x6CE2C0, getter 0x491340 / 1.5.97 0x63BD40, getter 0x4363E0); movement reads test bit 13 then use +0x2B (1.6.1170 0x482841 / 1.5.97 0x4280C1) | exact 1.6.1170 / 1.5.97 (g_gaitVerified) |
+| ActorPackage modifiedPackageFlag / preferredSpeed; running package = middleHigh->runOncePackage if it holds one, else process->currentPackage (read, passive gait log) | ActorPackage +0x24 / +0x2B; AIProcess +0x08 middleHigh, +0x18 currentPackage; MiddleHigh +0x58 runOncePackage (+0x60 its package) | channels/Travel.cpp ObserveGait (ABI v12) | 1.6.1170 0x70F590 / 1.5.97 0x67BDD0 (running-ActorPackage select), the package-start copy above | exact 1.6.1170 / 1.5.97 (only gait legs) |
+| ScriptEventSourceHolder event sources TESActivateEvent / TESOpenCloseEvent | +0x58 / +0x8F0 | channels/Travel.cpp Install (ABI v12 gate probe sinks) | SendOpenCloseEvent (1.6.1170 id 14299 / 1.5.97 id 14190) add rcx, 0x8F0; engine activate senders lea rcx, [holder+0x58] (1.6.1170 0x9CABF3 / 1.5.97 0x92C291) | exact 1.6.1170 / 1.5.97 + self-check |
 | Actor runtime data boolFlags (WRITTEN, probe) | CommonLib RelocateMember | core/NativeBitProbe.cpp:46 | CommonLib 3.7.0 | INI only (off by default) |
 | EquipSink per-site caller frame depth; worker 4th-arg struct | 0x80 / 0x70 (1.6.1170), 0x60 / 0x70 (1.5.97); extra +0, count +8, slot +0x10 | EquipSink.cpp:41-60, :84-91, :406 | derived from the prologues (code comments); site E8 + target check in code | exact 1.6.1170/1.5.97 + self-check |
 | EquipSink Classify: RVA -> id through the Address Library table | the whole Offset2ID table | EquipSink.cpp:269-280, :698 | the path ids above are self-checked rows | exact 1.6.1170/1.5.97 + self-check |

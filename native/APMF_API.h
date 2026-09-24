@@ -103,7 +103,15 @@ namespace APMF_API {
     // walk to one. A client must see abiVersion >= 11 before it calls a v11 slot or
     // sets either bit: an older APMF ignores kCastFlag_AtPosition and would treat the
     // request as an ordinary actor-target cast claim (it refuses a zero-form travel).
-    inline constexpr std::uint32_t kABIVersion = 11;
+    //
+    // ABI v12 (2026-09-24) adds APMF_API_v12: ONE read-only slot, GetTravelLegState,
+    // and its POD struct APMF_TravelLegInfo, so a client can read WHY its travel leg
+    // ended (APMF ends a leg but never releases the client's claim, so without it an
+    // ended leg is indistinguishable from a package theft). It also adds the travel
+    // GAIT bits (kTravel_SpeedSet + a 2-bit speed) and the BLOCKED leg end. A client
+    // must see abiVersion >= 12 before it calls the slot or sets a gait bit: an older
+    // APMF stores the unknown bits and walks at its authored speed without a word.
+    inline constexpr std::uint32_t kABIVersion = 12;
 
     // The exported query function's undecorated name and pointer type.
     // const APMF_API_v1* APMF_GetInterface(std::uint32_t abiVersion);
@@ -323,6 +331,11 @@ namespace APMF_API {
                                      //       on ARRIVAL (inside the radius), on the ACTOR ENTERING
                                      //       COMBAT (`Actor::IsInCombat`), or on the destination
                                      //       dying / being disabled / unloading. Nothing else.
+                                     //       (ABI v12 adds one engine-reported end: BLOCKED, the
+                                     //       engine holding the actor in its Movement Blocked
+                                     //       package for 3 s. The 2-minute stuck end is the
+                                     //       safety net. APMF_API_v12::GetTravelLegState says
+                                     //       which end it was.)
                                      //
                                      //       ONE INTENT, ONE FACET. ch.19 claims NOTHING on your
                                      //       behalf -- no combat target (ch.6), no attack
@@ -412,7 +425,140 @@ namespace APMF_API {
                                         //   then deletes the old one. At most one marker per travel
                                         //   package slot (8). APMF does NOT pick the point (use
                                         //   FindEmptySpace if you want help) and never adjusts it.
+
+        // ── GAIT (ABI v12) ── bits 2-4. Gate on abiVersion >= 12: an older APMF stores the
+        //   bits and walks at its authored speed (Run), with no refusal and no log line.
+        kTravel_SpeedSet = 1u << 2,     // ABI v12. Use the speed in bits 3-4 for this leg. Without
+                                        //   this bit the leg runs at the package record's AUTHORED
+                                        //   speed (APMF.esl ships Run) and bits 3-4 are ignored.
+        kTravel_SpeedMask = 3u << 3,    // ABI v12. The speed field. The four values are the engine's
+                                        //   own PACKAGE_DATA::PreferredSpeed enum, written into the
+                                        //   leg's package record (PKDT byte 6) together with the
+                                        //   record's "Preferred Speed" flag (0x2000), which the engine
+                                        //   requires before it honours the byte at all.
+        kTravel_SpeedWalk     = 0u << 3,   // PreferredSpeed 0 = Walk
+        kTravel_SpeedJog      = 1u << 3,   // PreferredSpeed 1 = Jog
+        kTravel_SpeedRun      = 2u << 3,   // PreferredSpeed 2 = Run
+        kTravel_SpeedFastWalk = 3u << 3,   // PreferredSpeed 3 = FastWalk (the engine's fourth value)
+                                        //   WHEN IT TAKES EFFECT: the engine copies the record's speed
+                                        //   into the actor's running-package state when the package
+                                        //   STARTS on the actor (1.6.1170 0x6CE2C0 / 1.5.97 0x63BD40)
+                                        //   and the movement code reads that copy. APMF writes the
+                                        //   record before it offers the package, so a fresh leg walks
+                                        //   at the declared gait. A Repoint that CHANGES the gait of a
+                                        //   leg that is already walking rewrites the record, but the
+                                        //   running package keeps the speed it started with until the
+                                        //   package next starts. APMF logs that case. Release and
+                                        //   re-request to change gait mid-walk.
     };
+
+    // ── Travel LEG STATE (ABI v12, APMF_API_v12::GetTravelLegState) ──────────────
+    // What ch.19 is doing with an actor's travel leg right now, or why it stopped.
+    // APPEND-ONLY: never renumber a value.
+    //
+    // A LEG ENDS BUT THE CLAIM STANDS. APMF never releases a client's kIntent_Travel
+    // claim. When a leg ends (arrival, combat, blocked, ...) APMF drops only its own
+    // internal package offer and the claim stays live (IsClaimLive stays true) and does
+    // nothing until the client Repoints or Releases it. Read this state to learn WHY
+    // the actor stopped walking, instead of mistaking an ended leg for a package theft.
+    enum TravelLegState : std::uint32_t {
+        kLeg_None            = 0,   // APMF holds no ch.19 state for this actor (never claimed since the
+                                    //   last load, or ch.19 is not installed)
+        kLeg_Pending         = 1,   // the claim was accepted or re-pointed; the leg starts on the next frame
+        kLeg_Walking         = 2,   // the package is offered and the actor is travelling
+        kLeg_Arrived         = 3,   // inside the arrival radius (or, for a cell, inside the cell)
+        kLeg_Blocked         = 4,   // the engine held the actor in its MOVEMENT BLOCKED package (package
+                                    //   type 36) for 3 s of running game time (one missed poll tolerated).
+                                    //   stallX/Y/Z says where; blocker/blockerKind say whether an ACTOR
+                                    //   stood in front of it (it will likely move: take another item and
+                                    //   come back later) or nothing did (a STATIC block such as a closed
+                                    //   gate: the route stays closed until the world changes).
+        kLeg_CombatCancelled = 5,   // the actor entered combat
+        kLeg_DestGone        = 6,   // the destination was deleted, disabled, died during travel, or (a
+                                    //   cell) no longer resolves
+        kLeg_StuckTimeout    = 7,   // the 2-minute safety net elapsed with none of the above
+        kLeg_ActorGone       = 8,   // the actor unloaded, died, or lost its 3D
+        kLeg_Failed          = 9,   // the leg could not start or be re-pointed (a destination that is not
+                                    //   a reference or a cell, a zero form or a bad point on a Repoint, all
+                                    //   8 package slots in use, a declined Location write, a marker that
+                                    //   could not be placed). The log says which. destForm / destX..Z name
+                                    //   the REFUSED destination. A refused Repoint ENDS the previous leg:
+                                    //   the actor does not keep walking to a destination the claim no
+                                    //   longer declares.
+        kLeg_Released        = 10,  // the ch.19 claim was released
+    };
+
+    // What stood in front of the actor when a leg ended kLeg_Blocked (APMF_TravelLegInfo::blockerKind).
+    enum TravelBlocker : std::uint32_t {
+        kBlocker_None     = 0,   // not a BLOCKED end, or no actor in front: a STATIC block (a closed gate,
+                                 //   a wall, clutter). Treat the route as closed until the world changes.
+        kBlocker_Player   = 1,   // the player stood in front of the actor
+        kBlocker_Teammate = 2,   // a player teammate (a follower) stood in front of the actor
+        kBlocker_Actor    = 3,   // another live actor (any NPC or creature) stood in front of the actor
+    };
+
+    // GetTravelLegState output. EXACT LAYOUT (byte-shared): 72 bytes, every field 4 bytes.
+    // The CALLER sets `size` = sizeof(APMF_TravelLegInfo) as compiled against its header.
+    // THE SIZE RULE (frozen): APMF fills the v12 fields when `size` >= kTravelLegInfoV12Size
+    // (72, a constant that NEVER changes, unlike sizeof as fields are appended) and writes
+    // nothing into a smaller struct. A field a later ABI appends is written ONLY when it lies
+    // entirely inside the caller's `size`, so a client built against v12 keeps getting its
+    // 72 bytes from every later APMF, and APMF never writes past `size`.
+    struct APMF_TravelLegInfo {
+        std::uint32_t size;        // +0   the CALLER sets = sizeof(APMF_TravelLegInfo)
+        std::uint32_t state;       // +4   a TravelLegState (the same value the call returns)
+        RE::FormID    actor;       // +8   the actor asked about
+        RE::FormID    destForm;    // +12  the destination FormID this state is about; 0 for a point leg
+                                   //        (kTravel_ToPosition) or when state is kLeg_None. Compare it
+                                   //        with what you declared: after a Repoint the state refers to
+                                   //        the new destination only once it reads Pending or later for it.
+        float         destX;       // +16  a point leg's declared point; 0 otherwise
+        float         destY;       // +20
+        float         destZ;       // +24
+        std::uint32_t msInState;   // +28  milliseconds since this state began (saturates at 0xFFFFFFFF)
+        std::uint32_t seq;         // +32  a stamp from ONE counter APMF never resets while the game runs
+                                   //        (not per actor, not per load): it changes on EVERY state change of
+                                   //        this actor's leg and never repeats, so a client can tell a new end
+                                   //        from one it already handled, across save loads too. Compare for
+                                   //        inequality, not for +1.
+        float         stallX;      // +36  kLeg_Blocked: the actor's position when the leg ended; 0 otherwise
+        float         stallY;      // +40
+        float         stallZ;      // +44
+        std::uint32_t blockedMs;   // +48  kLeg_Blocked: how long Movement Blocked held before the end
+        std::uint32_t speed;       // +52  the gait written into the leg's package record: 0..3 =
+                                   //        PreferredSpeed (Walk, Jog, Run, FastWalk); 0xFFFFFFFF = none
+                                   //        written (no kTravel_SpeedSet on the claim, or a build the gait
+                                   //        path is not verified on, which the log names), so the record's
+                                   //        authored speed applies
+        std::uint32_t reserved;    // +56  0
+        std::uint32_t ownerHandle; // +60  the kIntent_Travel claim handle whose leg this is (the WINNING claim
+                                   //        when the leg was composed). Compare it with YOUR handle: a
+                                   //        different value is another client's leg, or an older claim of
+                                   //        yours. 0 while a fresh claim is still Pending, and on kLeg_None.
+                                   //        During a Pending re-point, and on a kLeg_Failed recorded for a
+                                   //        refused re-point that arrived with an OWNER CHANGE, it still
+                                   //        names the previous owner (the new claim is not yet published).
+        RE::FormID    blocker;     // +64  kLeg_Blocked: the actor found in front of the stalled actor (see
+                                   //        blockerKind); 0 for a static block or any other state
+        std::uint32_t blockerKind; // +68  a TravelBlocker; kBlocker_None unless state is kLeg_Blocked
+    };
+    // The v12 prefix size. FROZEN: GetTravelLegState tests the caller's `size` against THIS,
+    // never against sizeof(APMF_TravelLegInfo), which grows when a later ABI appends a field.
+    inline constexpr std::uint32_t kTravelLegInfoV12Size = 72;
+    static_assert(sizeof(APMF_TravelLegInfo) == 72,  "APMF_TravelLegInfo is 72 bytes, byte-shared with clients");
+    static_assert(sizeof(APMF_TravelLegInfo) >= kTravelLegInfoV12Size, "the v12 prefix is never shrunk");
+    static_assert(alignof(APMF_TravelLegInfo) == 4,  "APMF_TravelLegInfo aligns to 4");
+    static_assert(offsetof(APMF_TravelLegInfo, state)     == 4,  "state at +4");
+    static_assert(offsetof(APMF_TravelLegInfo, destForm)  == 12, "destForm at +12");
+    static_assert(offsetof(APMF_TravelLegInfo, msInState) == 28, "msInState at +28");
+    static_assert(offsetof(APMF_TravelLegInfo, seq)       == 32, "seq at +32");
+    static_assert(offsetof(APMF_TravelLegInfo, stallX)    == 36, "stallX at +36");
+    static_assert(offsetof(APMF_TravelLegInfo, blockedMs) == 48, "blockedMs at +48");
+    static_assert(offsetof(APMF_TravelLegInfo, speed)     == 52, "speed at +52");
+    static_assert(offsetof(APMF_TravelLegInfo, reserved)  == 56, "reserved at +56");
+    static_assert(offsetof(APMF_TravelLegInfo, ownerHandle) == 60, "ownerHandle at +60");
+    static_assert(offsetof(APMF_TravelLegInfo, blocker)     == 64, "blocker at +64");
+    static_assert(offsetof(APMF_TravelLegInfo, blockerKind) == 68, "blockerKind at +68");
 
     // ── Equip-authority flags (kIntent_EquipAuthority's param.ival, ABI v7) ──
     // Read at RequestEx/Repoint time from param.ival. APPEND-ONLY: never renumber
@@ -1476,6 +1622,31 @@ namespace APMF_API {
         std::uint32_t (*FindHostilesInSpace)(const APMF_HostileQuery* q, RE::FormID* outActors,
                                              std::uint32_t capacity, std::uint32_t* outCount,
                                              std::uint32_t* outTotal);
+    };
+
+    // The v12 interface: APMF_API_v11's members verbatim (prefix EXTENSION), then ONE
+    // appended slot: the travel leg-state read. This header is BYTE-SHARED with MFO: the
+    // declaration below is authoritative and must be mirrored byte-identically on the
+    // client side.
+    //
+    // WHY A BUMP (INVARIANTS #14b): a new function-pointer slot needs an
+    // `abiVersion >= 12` test before a client may call it.
+    struct APMF_API_v12 : APMF_API_v11 {
+        // Read the ch.19 travel leg state of `actor` (see TravelLegState above). Returns the
+        // state and, when `out` is non-null and `out->size` covers the v12 layout, fills
+        // `*out` (it writes nothing into a shorter struct). `out` may be null for a
+        // state-only read. The state describes the actor's leg, which is the leg of the
+        // WINNING kIntent_Travel claim on it; a client whose claim is outranked sees the
+        // owner's leg, so compare ownerHandle with your own handle.
+        //   READ-ONLY and SAFE FROM ANY THREAD: APMF copies a small per-actor record under
+        //   a mutex, the same "snapshot read" contract as IsClaimLive. It claims nothing,
+        //   holds nothing and changes nothing. The state is updated on the game thread as
+        //   the leg changes, so a read right after a Repoint may still show the previous
+        //   leg's end for up to a frame (check ownerHandle, destForm and seq).
+        //   The state is not saved: after a save load an actor reads kLeg_None until its
+        //   claim is made again.
+        //   A throw inside returns kLeg_None and writes nothing.
+        std::uint32_t (*GetTravelLegState)(RE::FormID actor, APMF_TravelLegInfo* out);
     };
 
     // Function-pointer type for GetProcAddress(kGetInterfaceExport). Returns the

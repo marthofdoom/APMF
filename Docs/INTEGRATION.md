@@ -686,7 +686,10 @@ enter combat, does not pin a target, and does not fake perception.
 
 The leg ends on exactly three things: **ARRIVAL**, the **ACTOR ENTERING COMBAT**
 (`Actor::IsInCombat`), or the **destination going away** (disabled, deleted, or
-dying DURING travel). A destination that was already dead when you targeted it is a
+dying DURING travel). ABI v12 adds one engine-reported end, **BLOCKED**: the engine
+held the actor in its own Movement Blocked package for 3 s (see "When the walk is
+blocked" below). The two-minute stuck end stays the safety net. Every end is readable
+with `GetTravelLegState` (ABI v12), because your claim outlives the leg. A destination that was already dead when you targeted it is a
 corpse to walk to, and its deadness never ends the leg. A live one that dies on the
 way does. There is no line-of-sight test and no detection test anywhere in it.
 
@@ -762,7 +765,7 @@ beside it.
 |---|---|
 | `param.form` | **REQUIRED.** The DESTINATION's FormID — an object **REFERENCE** (REFR/ACHR: an actor, an XMarker, a container, anything loaded) or a **CELL**. The record type decides which; there is no flag to set. A zero form, or any other record type, is refused synchronously (`kInvalidHandle`) so you find out at the call. |
 | `param.fval` | Arrival radius in game units. `0` means the 75u default. Anything outside **[50, 512]** is CLAMPED and the clamp is logged — never silently reinterpreted. Whatever value ends up in force is also written into the package's own stop radius for that leg, so the engine's idea of "arrived" and APMF's cannot drift apart. **Not consulted when the destination is a cell.** |
-| `param.ival` | A `TravelFlags` bitmask. |
+| `param.ival` | A `TravelFlags` bitmask. ABI v12 adds the gait bits (`kTravel_SpeedSet` + a 2-bit speed); see "Gait". |
 | `param.posX/Y/Z` | **ABI v11:** the destination POINT when `param.ival` has `kTravel_ToPosition` (then `param.form` must be 0). Without that flag it **must be zero**: a non-zero position REFUSES the claim, with the reason in the log. See below. |
 
 `kTravel_ReleaseOnTargetDead` **names the v1 default, it does not switch it on.**
@@ -832,6 +835,146 @@ follower somewhere far, walk it in hops inside the loaded area, or pass an exist
 both), a non-finite point, VR or a runtime other than 1.6.1170 / 1.5.97 (all
 synchronous, `kInvalidHandle`), and a marker that cannot be placed because the actor's
 cell is not attached (at Compose, logged, the claim stands doing nothing: Release it).
+
+### Why the walk stopped (ABI v12, `GetTravelLegState`)
+
+Requires `abiVersion >= 12` and `APMF_API_v12`.
+
+**APMF ends a leg but never releases your claim.** When the actor arrives, enters
+combat, loses its destination, is blocked or times out, APMF drops only its own
+internal package offer. Your `kIntent_Travel` claim stays live: `IsClaimLive` stays
+true and the claim does nothing until you `Repoint` or `Release` it. Before v12 a
+client could not tell an ended leg from a package another mod took away. Now it asks.
+
+```cpp
+APMF_API::APMF_TravelLegInfo info{};
+info.size = sizeof(info);
+const auto state = g_apmf12->GetTravelLegState(followerID, &info);
+if (info.ownerHandle != myHandle) { /* another client's leg, or an older claim of yours */ }
+switch (state) {
+case APMF_API::kLeg_Walking:  /* still going */ break;
+case APMF_API::kLeg_Arrived:  /* next item */ break;
+case APMF_API::kLeg_Blocked:  /* see "When the walk is blocked": actor block => reorder,
+                                  static block => park the item until the world changes */ break;
+case APMF_API::kLeg_DestGone: /* next item */ break;
+default: break;
+}
+```
+
+| state | meaning |
+|---|---|
+| `kLeg_None` | APMF holds nothing for this actor (never claimed since the last load, or ch.19 is off). |
+| `kLeg_Pending` | The claim was accepted or re-pointed. The leg starts on the next frame. |
+| `kLeg_Walking` | The package is offered and the actor is travelling. |
+| `kLeg_Arrived` | Inside the arrival radius (a cell: inside the cell). |
+| `kLeg_Blocked` | The engine held the actor in Movement Blocked for 3 s of running game time. `stallX/Y/Z` and `blockedMs` say where and how long; `blocker` / `blockerKind` say whether an actor stood in front. |
+| `kLeg_CombatCancelled` | The actor entered combat. |
+| `kLeg_DestGone` | The destination was deleted, disabled, died during travel, or (a cell) no longer resolves. |
+| `kLeg_StuckTimeout` | The two-minute safety net elapsed. |
+| `kLeg_ActorGone` | The actor unloaded, died or lost its 3D. |
+| `kLeg_Failed` | The leg could not start, or a `Repoint` was refused (a zero form, a record that is not a reference or a cell, a reference that no longer resolves, a bad point). `destForm` / `destX/Y/Z` name the REFUSED destination and the log says why. **A refused Repoint ends the previous leg**: the actor does not keep walking to a destination your claim no longer declares. Repoint to a valid destination to start again. |
+| `kLeg_Released` | The claim was released. |
+
+How to read it:
+
+* **Any thread.** It copies a small per-actor record under a mutex, like `IsClaimLive`.
+  It holds nothing and changes nothing.
+* **Match the claim.** The state is the actor's leg, which is the leg of the WINNING
+  travel claim. `ownerHandle` is that claim's handle: compare it with yours. It is 0
+  while a fresh claim is still Pending. During a Pending re-point, and on a `kLeg_Failed`
+  for a refused re-point that came with an owner change, it still names the previous
+  owner. `destForm` (or `destX/Y/Z` for a point leg) says which
+  destination the state is about. After a `Repoint` the old leg's end can still show for
+  up to a frame. Wait for your destination to read `kLeg_Pending` or later.
+* **`seq`** is a stamp from one counter APMF never resets while the game runs. It changes
+  on every state change and never repeats, across save loads too, so a cached `seq` can
+  never match a new end by accident. Compare for inequality, not for +1.
+  `msInState` is how long the current state has held.
+* **After a save load** every actor reads `kLeg_None` until its claim is made again. The
+  state is not saved, and neither are travel claims.
+* **`size`.** Set `info.size = sizeof(info)` (72 bytes in v12). APMF fills the v12 fields
+  when `size` is at least `kTravelLegInfoV12Size` (72, frozen) and writes nothing into a
+  shorter struct. A field a later ABI appends is written only if it fits inside your
+  `size`, so a v12 build keeps working against every later APMF. APMF never writes past
+  `size`. `out` may be null for a state-only read.
+
+| field | offset | meaning |
+|---|---|---|
+| `size` | 0 | you set it |
+| `state` | 4 | a `TravelLegState` |
+| `actor` | 8 | the actor asked about |
+| `destForm` | 12 | the destination FormID (0 for a point leg) |
+| `destX/Y/Z` | 16/20/24 | a point leg's declared point |
+| `msInState` | 28 | ms since the state began |
+| `seq` | 32 | the change stamp |
+| `stallX/Y/Z` | 36/40/44 | `kLeg_Blocked`: where the actor stood |
+| `blockedMs` | 48 | `kLeg_Blocked`: how long it was blocked |
+| `speed` | 52 | the gait written (0..3), `0xFFFFFFFF` = none |
+| `reserved` | 56 | 0 |
+| `ownerHandle` | 60 | the travel claim this leg belongs to |
+| `blocker` | 64 | `kLeg_Blocked`: the actor in front, 0 for a static block |
+| `blockerKind` | 68 | a `TravelBlocker`: None / Player / Teammate / Actor |
+
+### When the walk is blocked (ABI v12)
+
+The engine answers "this actor cannot move along its path" by running a runtime
+package of type 36, **Movement Blocked**. It is the engine's own collision answer
+(`[obs]` prints it as `(Movement Blocked)`). A closed lever portcullis produced it
+for 39-45 s in the field, while healthy legs showed it for about one second and
+then arrived. So ch.19 ends the leg as **BLOCKED** once it has held for **3 s of
+running game time** (checked every 250 ms). Time spent in a menu does not count:
+each poll adds at most 500 ms, so a pause cannot turn a short bump into a BLOCKED
+end. One poll without Movement Blocked inside a run is tolerated, so a brief flicker
+does not restart the clock. Two in a row end the run.
+
+APMF does not fight or deny Movement Blocked. It records the end and lets you
+decide. At the verdict it looks for a live actor right in front of the stalled one:
+within 192u on the ground plane, less than 128u above or below, inside a 120-degree
+cone around the actor's facing or around the straight line to the destination. The
+nearest one is reported in `blocker`, with `blockerKind` = the player, a teammate
+(a follower) or another actor.
+
+What to do with it (marth's loot rules, and good advice for any client):
+
+* **An actor block** (`blockerKind != kBlocker_None`): someone is standing in the way
+  and will probably move. **Reorder, do not drop.** Take another item now and come back
+  to this one later.
+* **A static block** (`kBlocker_None`): a closed gate, a wall or clutter. The route is
+  closed. Park the item until the world actually changes: a door or gate opens
+  (`TESOpenCloseEvent`), a lever is used (`TESActivateEvent`), or a cell attaches.
+  Do not use a timer to retry it, and do not send the actor home while other reachable
+  items remain.
+
+A BLOCKED end also runs a **passive gate probe** (log only). It lists the DOOR and
+ACTIVATOR references within 1024u of where the actor stalled, with their base form,
+record flags (Obstacle, NavMesh filter) and `GetOpenState`, then logs OPEN-CLOSE and
+ACTIVATE events near the stall for ten minutes, with the gates' open state read again
+right after the event and 4 s later. Lines are tagged `[travel-gate]`.
+
+### Gait (ABI v12)
+
+Requires `abiVersion >= 12`. An older APMF stores the bits and walks at its authored
+speed (Run) without a word, so check the version first.
+
+```cpp
+p.ival = APMF_API::kTravel_SpeedSet | APMF_API::kTravel_SpeedWalk;   // or Jog / Run / FastWalk
+```
+
+The four values are the engine's own `PreferredSpeed` enum. APMF writes the speed
+into the leg's package record, with the record's "Preferred Speed" flag (0x2000)
+that the engine requires before it honours the speed at all. Without
+`kTravel_SpeedSet` the leg runs at the record's authored speed, even if the previous
+leg on the same record declared a different one.
+
+**It takes effect when the package starts.** The engine copies the record's speed
+into the actor's running-package state when the package starts on the actor, and
+movement reads that copy (read on both 1.6.1170 and 1.5.97). APMF writes the record
+before it offers the package, so a fresh leg walks at the declared gait. A `Repoint`
+that changes the gait of a leg already walking rewrites the record, but the running
+package keeps its old speed until it next starts. APMF logs a warning for that case.
+Release and re-request to change gait mid-walk. `GetTravelLegState`'s `speed` field
+reports what was written (`0xFFFFFFFF` = nothing written). A `[travel-gait]` line
+per gait leg shows the engine's running copy once the package runs.
 
 ### Why a package cannot carry a world position
 
@@ -964,7 +1107,7 @@ columns, one doesn't imply the other.
 | `kIntent_Detection` (ch.16) | Silent movement + reduced detection range | `fval` (reserved, not yet read) | **Field-proven.** An actor-value source-block, deck-tested to hold even on a package-locked actor. |
 | `kIntent_EquipAuthority` (ch.17) | **Declare what the NPC wears; APMF equips it and refuses every other engine equip of a governed type (ARMO/WEAP/AMMO/LIGH) in the categories the claim owns.** ABI v7, declare with `SetEquipSet`; ABI v8 `SetEquipSetEx` adds a hand per item; ABI v9 `SetEquipScope` scopes the claim to owned/denied categories (default: all owned) | `ival` (an `EquipAuthFlags` bitmask); the set itself via `SetEquipSet` / `SetEquipSetEx`; the scope via `SetEquipScope` | Built, not yet battle-tested. Ships OBSERVE-ONLY (`[EquipAuthority] bEquipObserveOnly=1`) until the probe criteria above pass. The only call-site seat in APMF, under `Docs/INVARIANTS.md` #17a. Player-menu equips pass by default (v8). |
 | `kIntent_Cast` + `kCastFlag_AtPosition` (ABI v11) | **Cast a Target Location spell at a world point.** A one-shot remote cast from an APMF XMarker, blamed on the actor. Not a claim: no facet held, never seen by the cast seats | `form` (the spell), `ival` (the flag alone), `pos` (the point) | Built, not yet battle-tested. CI verified only. Summons refused by name (the engine only lets the caster summon). |
-| `kIntent_Travel` (ch.19) | **Walk this actor to a destination** (ABI v11: or to a world point, `kTravel_ToPosition`, via an APMF-owned XMarker). APMF points its own travel package at it and offers that package through an internal ch.9 claim at YOUR basis. The leg ends on arrival, on the actor entering combat, or on the destination being gone | `form` (the DESTINATION, REQUIRED -- an object REFERENCE or a CELL, and it need not be loaded or nearby), `fval` (arrival radius, 0 => 75u, clamped 50-512, not used for a cell), `ival` (a `TravelFlags` bitmask) |a refused claim means the channel is off in APMF.ini, VR, the esl is missing, or eight legs are already running|
+| `kIntent_Travel` (ch.19) | **Walk this actor to a destination** (ABI v11: or to a world point, `kTravel_ToPosition`, via an APMF-owned XMarker). APMF points its own travel package at it and offers that package through an internal ch.9 claim at YOUR basis. The leg ends on arrival, on the actor entering combat, on the destination being gone, or (ABI v12) BLOCKED. ABI v12: `GetTravelLegState` says which, and `kTravel_SpeedSet` sets the gait | `form` (the DESTINATION, REQUIRED -- an object REFERENCE or a CELL, and it need not be loaded or nearby), `fval` (arrival radius, 0 => 75u, clamped 50-512, not used for a cell), `ival` (a `TravelFlags` bitmask) |a refused claim means the channel is off in APMF.ini, VR, the esl is missing, or eight legs are already running|
 
 Where a field is marked "reserved, not yet read", the channel currently
 applies a fixed built-in behavior and ignores whatever you pass in that field.
@@ -984,6 +1127,7 @@ hook, the exact vfunc, the version-robustness notes) and `Docs/archive/ROADMAP.m
 - **The exception (ABI v11): `FindEmptySpace` and `FindHostilesInSpace` are
   synchronous and run ONLY on the main (player-Update) thread.** Elsewhere they
   return `kQuery_NotMainThread` and do nothing. See "Asking about space".
+- `GetTravelLegState` (ABI v12) is a read-only snapshot and is safe from any thread.
 - The `APMF_Param` (or the `forms` array for `SetSpellAllowList`) you pass is
   read and copied synchronously inside the call. APMF never retains your
   pointer, so a stack temporary or a local array is fine.

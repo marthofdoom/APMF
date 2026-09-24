@@ -14,7 +14,7 @@
 
 namespace apmf::VerifiedAddresses
 {
-	// 1.6.1170.0: 173 rows
+	// 1.6.1170.0: 175 rows
 	inline constexpr REL::SelfCheck::Row kRows_1_6_1170[] = {
 		{ 207886, 0x18A5558, 0x0, 0, {  }, "Character" },
 		{ 208040, 0x18AB9C0, 0x0, 0, {  }, "PlayerCharacter" },
@@ -156,6 +156,8 @@ namespace apmf::VerifiedAddresses
 		{ 13322, 0x19E850, 0x0, 0, {  }, "PositionCast.TES.GetCell" },
 		{ 34408, 0x5BBFA0, 0x0, 0, {  }, "PositionCast.InterruptCast" },
 		{ 37537, 0x679F10, 0x0, 0, {  }, "SpaceQuery.IsHostileToActor" },
+		{ 14288, 0x1D4A50, 0x0, 0, {  }, "Travel.GetOpenState" },
+		{ 14298, 0x1D5230, 0x0, 0, {  }, "Travel.ScriptEventSourceHolder.GetSingleton" },
 		{ 190259, 0x17AE180, 0x0, 0, {  }, "TESObjectREFR" },
 		{ 206007, 0x187F378, 0x0, 0, {  }, "NonActorMagicCaster" },
 		{ 238918, 0x19E1990, 0x0, 0, {  }, "bhkWorld" },
@@ -191,7 +193,7 @@ namespace apmf::VerifiedAddresses
 		{ 68239, 0xCC9380, 0x0, 0, {  }, "CommonLib.BSReadWriteLock.UnlockForRead" },
 	};
 
-	// 1.5.97.0: 173 rows
+	// 1.5.97.0: 175 rows
 	inline constexpr REL::SelfCheck::Row kRows_1_5_97[] = {
 		{ 261397, 0x165DA40, 0x0, 0, {  }, "Character" },
 		{ 261916, 0x16635E0, 0x0, 0, {  }, "PlayerCharacter" },
@@ -333,6 +335,8 @@ namespace apmf::VerifiedAddresses
 		{ 13177, 0x155090, 0x0, 0, {  }, "PositionCast.TES.GetCell" },
 		{ 33630, 0x54CB70, 0x0, 0, {  }, "PositionCast.InterruptCast" },
 		{ 36537, 0x5E7E40, 0x0, 0, {  }, "SpaceQuery.IsHostileToActor" },
+		{ 14180, 0x189750, 0x0, 0, {  }, "Travel.GetOpenState" },
+		{ 14108, 0x186790, 0x0, 0, {  }, "Travel.ScriptEventSourceHolder.GetSingleton" },
 		{ 235511, 0x1569A80, 0x0, 0, {  }, "TESObjectREFR" },
 		{ 257866, 0x163AD70, 0x0, 0, {  }, "NonActorMagicCaster" },
 		{ 288902, 0x1798A28, 0x0, 0, {  }, "bhkWorld" },
