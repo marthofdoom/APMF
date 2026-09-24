@@ -850,10 +850,12 @@ client could not tell an ended leg from a package another mod took away. Now it 
 APMF_API::APMF_TravelLegInfo info{};
 info.size = sizeof(info);
 const auto state = g_apmf12->GetTravelLegState(followerID, &info);
+if (info.ownerHandle != myHandle) { /* another client's leg, or an older claim of yours */ }
 switch (state) {
 case APMF_API::kLeg_Walking:  /* still going */ break;
 case APMF_API::kLeg_Arrived:  /* next item */ break;
-case APMF_API::kLeg_Blocked:  /* skip this route; info.stallX/Y/Z is where */ break;
+case APMF_API::kLeg_Blocked:  /* see "When the walk is blocked": actor block => reorder,
+                                  static block => park the item until the world changes */ break;
 case APMF_API::kLeg_DestGone: /* next item */ break;
 default: break;
 }
@@ -865,26 +867,49 @@ default: break;
 | `kLeg_Pending` | The claim was accepted or re-pointed. The leg starts on the next frame. |
 | `kLeg_Walking` | The package is offered and the actor is travelling. |
 | `kLeg_Arrived` | Inside the arrival radius (a cell: inside the cell). |
-| `kLeg_Blocked` | The engine held the actor in Movement Blocked for 3 s. `stallX/Y/Z` and `blockedMs` say where and how long. |
+| `kLeg_Blocked` | The engine held the actor in Movement Blocked for 3 s of running game time. `stallX/Y/Z` and `blockedMs` say where and how long; `blocker` / `blockerKind` say whether an actor stood in front. |
 | `kLeg_CombatCancelled` | The actor entered combat. |
 | `kLeg_DestGone` | The destination was deleted, disabled, died during travel, or (a cell) no longer resolves. |
 | `kLeg_StuckTimeout` | The two-minute safety net elapsed. |
 | `kLeg_ActorGone` | The actor unloaded, died or lost its 3D. |
-| `kLeg_Failed` | The leg could not start or be re-pointed. The log says why. |
+| `kLeg_Failed` | The leg could not start, or a `Repoint` was refused (a zero form, a record that is not a reference or a cell, a reference that no longer resolves, a bad point). `destForm` / `destX/Y/Z` name the REFUSED destination and the log says why. **A refused Repoint ends the previous leg**: the actor does not keep walking to a destination your claim no longer declares. Repoint to a valid destination to start again. |
 | `kLeg_Released` | The claim was released. |
 
 How to read it:
 
 * **Any thread.** It copies a small per-actor record under a mutex, like `IsClaimLive`.
   It holds nothing and changes nothing.
-* **Match the destination.** The state is the actor's leg, which is the leg of the
-  WINNING travel claim. `destForm` (or `destX/Y/Z` for a point leg) says which
-  destination it is about. After a `Repoint` the old leg's end can still show for up to
-  a frame. Wait for your destination to read `kLeg_Pending` or later.
-* **`seq`** goes up on every state change, so you can tell a new end from one you
-  already handled. `msInState` is how long the current state has held.
-* **`size`.** Set `info.size = sizeof(info)`. APMF writes nothing into a shorter struct
-  and never past `size`. `out` may be null for a state-only read.
+* **Match the claim.** The state is the actor's leg, which is the leg of the WINNING
+  travel claim. `ownerHandle` is that claim's handle: compare it with yours. It is 0
+  while a fresh claim is still Pending, and during a Pending re-point it still names
+  the previous owner. `destForm` (or `destX/Y/Z` for a point leg) says which
+  destination the state is about. After a `Repoint` the old leg's end can still show for
+  up to a frame. Wait for your destination to read `kLeg_Pending` or later.
+* **`seq`** is a stamp from one counter APMF never resets while the game runs. It changes
+  on every state change and never repeats, across save loads too, so a cached `seq` can
+  never match a new end by accident. Compare for inequality, not for +1.
+  `msInState` is how long the current state has held.
+* **After a save load** every actor reads `kLeg_None` until its claim is made again. The
+  state is not saved, and neither are travel claims.
+* **`size`.** Set `info.size = sizeof(info)` (72 bytes in v12). APMF writes nothing into a
+  shorter struct and never past `size`. `out` may be null for a state-only read.
+
+| field | offset | meaning |
+|---|---|---|
+| `size` | 0 | you set it |
+| `state` | 4 | a `TravelLegState` |
+| `actor` | 8 | the actor asked about |
+| `destForm` | 12 | the destination FormID (0 for a point leg) |
+| `destX/Y/Z` | 16/20/24 | a point leg's declared point |
+| `msInState` | 28 | ms since the state began |
+| `seq` | 32 | the change stamp |
+| `stallX/Y/Z` | 36/40/44 | `kLeg_Blocked`: where the actor stood |
+| `blockedMs` | 48 | `kLeg_Blocked`: how long it was blocked |
+| `speed` | 52 | the gait written (0..3), `0xFFFFFFFF` = none |
+| `reserved` | 56 | 0 |
+| `ownerHandle` | 60 | the travel claim this leg belongs to |
+| `blocker` | 64 | `kLeg_Blocked`: the actor in front, 0 for a static block |
+| `blockerKind` | 68 | a `TravelBlocker`: None / Player / Teammate / Actor |
 
 ### When the walk is blocked (ABI v12)
 
@@ -892,12 +917,29 @@ The engine answers "this actor cannot move along its path" by running a runtime
 package of type 36, **Movement Blocked**. It is the engine's own collision answer
 (`[obs]` prints it as `(Movement Blocked)`). A closed lever portcullis produced it
 for 39-45 s in the field, while healthy legs showed it for about one second and
-then arrived. So ch.19 ends the leg as **BLOCKED** once it holds for **3 s without a
-break** (checked every 250 ms). One poll without it resets the clock.
+then arrived. So ch.19 ends the leg as **BLOCKED** once it has held for **3 s of
+running game time** (checked every 250 ms). Time spent in a menu does not count:
+each poll adds at most 500 ms, so a pause cannot turn a short bump into a BLOCKED
+end. One poll without Movement Blocked inside a run is tolerated, so a brief flicker
+does not restart the clock. Two in a row end the run.
 
 APMF does not fight or deny Movement Blocked. It records the end and lets you
-decide. Re-pointing along the same route will most likely block again, so a looter
-should skip the item, not retry it.
+decide. At the verdict it looks for a live actor right in front of the stalled one:
+within 192u on the ground plane, less than 128u above or below, inside a 120-degree
+cone around the actor's facing or around the straight line to the destination. The
+nearest one is reported in `blocker`, with `blockerKind` = the player, a teammate
+(a follower) or another actor.
+
+What to do with it (marth's loot rules, and good advice for any client):
+
+* **An actor block** (`blockerKind != kBlocker_None`): someone is standing in the way
+  and will probably move. **Reorder, do not drop.** Take another item now and come back
+  to this one later.
+* **A static block** (`kBlocker_None`): a closed gate, a wall or clutter. The route is
+  closed. Park the item until the world actually changes: a door or gate opens
+  (`TESOpenCloseEvent`), a lever is used (`TESActivateEvent`), or a cell attaches.
+  Do not use a timer to retry it, and do not send the actor home while other reachable
+  items remain.
 
 A BLOCKED end also runs a **passive gate probe** (log only). It lists the DOOR and
 ACTIVATOR references within 1024u of where the actor stalled, with their base form,

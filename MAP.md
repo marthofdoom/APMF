@@ -74,8 +74,9 @@ masked + logged once per handle); **ABI v10 adds NO struct and NO fn-pointer slo
 `RequestEx`/`Repoint`/`Release` slots, so a v9 client is byte-unaffected and the newest
 struct stays `APMF_API_v9`; intent 18 is deliberately SKIPPED, reserved for the unauthored
 ch.18 attack-selection spec); **ABI v12 adds `APMF_API_v12 : APMF_API_v11` with ONE slot,
-`GetTravelLegState(FormID, APMF_TravelLegInfo*)`, the 60-byte POD `APMF_TravelLegInfo` (size
-field first, static_assert-pinned), the `TravelLegState` enum, and the travel gait bits
+`GetTravelLegState(FormID, APMF_TravelLegInfo*)`, the 72-byte POD `APMF_TravelLegInfo` (size
+field first, static_assert-pinned; +60 ownerHandle, +64 blocker, +68 blockerKind), the
+`TravelLegState` and `TravelBlocker` enums, and the travel gait bits
 `kTravel_SpeedSet` (1<<2) + `kTravel_SpeedMask` (bits 3-4 = the engine's PreferredSpeed)**, the
 `Intent` enum, `Handle`, and the exported query-fn name. No C++ class / STL / vtable
 crosses the boundary. **The current `kABIVersion` is stated ONLY in the header**
@@ -1061,11 +1062,21 @@ parentheses.
   and a marker outlives its leg or a record carries a stale marker handle across a load.
   Not rule #0 (e): no cast, only a package destination.
   (8) **ABI v12 (2026-09-24): BLOCKED end, leg-state mirror, gait, gate probe.** `Poll` reads
-  `GetCurrentPackage()->packData.packType` (TESPackage+0x24) every 250 ms; 36 = Movement
-  Blocked (the engine's own type-name table, both images). `Leg::blockedSinceMs` starts at the
-  first MB poll, resets on any non-MB poll, at every `StartLeg` and live re-point; at
-  `kBlockedEndMs` (3000, sized from the deck: ~1 s healthy blips vs 39-45 s gate freezes) the
-  leg ends `kLeg_Blocked` AFTER the arrival/destination checks and BEFORE the stuck net. Never
+  the running package's `packData.packType` (TESPackage+0x24) every 250 ms through
+  `ReadRunningPackage`, UNDER that ActorPackage's `packageLock` (review F7); 36 = Movement
+  Blocked (the engine's own type-name table, both images). The clock counts RUNNING time
+  (review F1): each MB poll adds `min(since last poll, kMbMaxStepMs = 500)`, so a menu pause
+  adds at most one step; ONE non-MB poll in a run is tolerated, two end it (F6).
+  `ResetBlockedClock` at every `StartLeg`, live re-point and `EndLeg`. At `kBlockedEndMs`
+  (3000, sized from the deck: ~1 s healthy blips vs 39-45 s gate freezes) the leg ends
+  `kLeg_Blocked` AFTER the arrival/destination checks and BEFORE the stuck net, and
+  `FindBlocker` names the nearest live actor in front (192u ground plane, |dz| <= 128,
+  +-60 deg of facing OR goal bearing; player / teammate / actor) into the leg info (F3).
+  `leg.ownerHandle` comes from `TryGetOwningClaimBasis`'s optional handle out (Compose).
+  A REFUSED re-point (`OnOwnerChanged`) or a re-pointed ref that no longer resolves at
+  Compose ENDS the old leg and records `kLeg_Failed` with the refused destination (F2);
+  nothing on the leg is mutated before the refusal is decided. `seq` comes from one
+  process-wide `g_seqCounter` that ResetAll does not reset (F5). Never
   deny or fight MB. Every state change goes through `SetLegState[For]` into `g_state` under
   `g_stateMx` — the ONE any-thread structure besides the probe's `g_watches`; `GetLegState`
   copies it out and touches nothing else. **What breaks:** an `EndLeg` without its
@@ -1083,7 +1094,8 @@ parentheses.
   logs events near a watched stall for 10 min; sinks run on engine threads and only read plain
   fields + `mainthread::Post` the `GetOpenState` re-reads. Armed only when the self-check
   verifies `Travel.GetOpenState`, `Travel.ScriptEventSourceHolder.GetSingleton` and TES::GetCell
-  on an exact build. Passive: it must never write anything.
+  on an exact build. Passive: it must never write anything. Deferred review items:
+  REVIEW-BACKLOG APMF-B24.
   Its open review findings are `Docs/REVIEW-BACKLOG.md` APMF-B13..B18 — read them before
   editing. Its deny holes are stated in
   `Docs/DENY-COMPLETENESS-AUDIT.md` row 19 — read them before editing.
