@@ -393,7 +393,7 @@ namespace APMF_API {
                                         //   is free and documents intent.
 
         kTravel_ToPosition = 1u << 1,   // ABI v11. The destination is the WORLD POINT param.pos
-                                        //   (in the actor's cell and worldspace), not a form:
+                                        //   (in the actor's worldspace; indoors, its cell), not a form:
                                         //   param.form MUST be 0 (a non-zero form with this bit is
                                         //   REFUSED as ambiguous). Gate on abiVersion >= 11: an
                                         //   older APMF refuses a zero form, so the request fails
@@ -754,9 +754,19 @@ namespace APMF_API {
                                              //   abiVersion >= 11 before setting it (an older APMF
                                              //   ignores the bit and makes an ordinary actor-target claim).
                                              //
+                                             //   OFF BY DEFAULT. It rests on a PROPOSED amendment to
+                                             //   Docs/INVARIANTS.md #0 (action (e)) that marth has not
+                                             //   approved yet, so [PositionCast] bPositionCast defaults to
+                                             //   0 and every request is REFUSED by name until a user sets
+                                             //   it to 1. kIntent_Travel's kTravel_ToPosition does not
+                                             //   depend on it.
+                                             //
                                              //   WHAT APMF DOES. On the game thread it places a
                                              //   non-persistent XMarker (Skyrim.esm 0x3B) at the point, in
-                                             //   the ACTOR's cell and worldspace, and casts the spell FROM
+                                             //   the cell that CONTAINS the point (outdoors: the loaded,
+                                             //   attached exterior cell of the actor's worldspace at those
+                                             //   coordinates, TES::GetCell; indoors: the actor's own cell),
+                                             //   and casts the spell FROM
                                              //   that marker, blamed on the actor: the marker's instant
                                              //   caster runs InterruptCast(false) then CastSpellImmediate(
                                              //   spell, false, none, 1.0, false, 0.0, actor). That is the
@@ -785,6 +795,18 @@ namespace APMF_API {
                                              //   * disease / ability / addiction spell types (Papyrus
                                              //     RemoteCast refuses the same three).
                                              //   * any other cast flag set alongside this one.
+                                             //   * a point whose cell is not loaded and attached (or not in
+                                             //     the actor's worldspace).
+                                             //   * THE ACTOR'S CAST FACET IS OWNED: a live kIntent_Cast
+                                             //     claim that would outrank a driving request at this basis
+                                             //     (a higher basis, a kCastFlag_DenyHandOnly floor included,
+                                             //     or an equal basis that drives something) refuses the
+                                             //     request synchronously.
+                                             //   The spell checks and the facet check run AT THE CALL
+                                             //   (kInvalidHandle); the actor and cell checks run on the game
+                                             //   thread and are logged.
+                                             //   A Repoint carrying this bit on a live cast claim is
+                                             //   REFUSED and changes nothing.
                                              //
                                              //   IT IS A ONE-SHOT, NOT A CLAIM. It never enters the control
                                              //   map, so no engine seat ever sees it (it can never be read

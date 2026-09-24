@@ -149,6 +149,21 @@ This file tracks REVIEW findings only.
 - **Finding (verbatim, as relayed):** "a stale PackageLocation.refHandle across save/load (same shape MFO ships)".
 - **Reasoning:** `SetTravelTarget` writes a live `ObjectRefHandle` into the shipped record's `PackageLocation`. Handles do not survive a save/load, so a record saved mid-leg carries a dangling handle into the next session. In practice the leg cannot survive either — `ControlMap::Clear()` + `travel::ResetAll` drop every claim at the world boundary, so nothing offers that package again until a fresh `SetTravelTarget` overwrites the handle — and MFO ships exactly this shape in production. Still worth a deliberate decision rather than an inherited one: either clear the records' handles at the revert boundary, or write down why the overwrite-before-offer ordering makes it unreachable.
 - **Assigned:** the ch.19 backlog drain (before the observe-only flip).
+- **Partly addressed 2026-09-23 (`feat/apmf-position-cast-and-space-queries`):** a record that last named an APMF MARKER is pointed back at its PlayerRef placeholder at the load boundary and whenever that marker is deleted (`channels/Travel.cpp` `RestoreMarkerSlots` / `UnpointSlotsAt`). Records aimed at an ordinary reference are unchanged, so this entry stays open for them.
+
+### APMF-B19 — the load-time marker sweep's proofs could match a different XMarker
+- **Raised:** Opus 5.5 tier-A review of `ed729ec` (ABI v11 branch), finding F8(a); text as relayed by the coordinator.
+- **Severity:** below SEV-3 (deferred by the coordinator as "negligible"; the relay did not restate the exact grade).
+- **Finding (as relayed):** "co-save proofs matching a different XMarker, negligible".
+- **Reasoning:** `SweepCarriedMarkers` deletes a recorded marker only when the recorded 0xFF FormID resolves, its base is the Skyrim.esm XMarker and it stands within 1u of the recorded position. A DIFFERENT XMarker could pass all three only if the engine recycled that exact 0xFF FormID for another runtime-created XMarker placed within 1u of the same spot, between the save and the load. Possible in principle, vanishingly unlikely, and the cost would be deleting one invisible marker another mod placed at that exact spot. A stronger proof would need a per-marker tag the engine keeps (none found) or a created-by record.
+- **Assigned:** the ABI v11 backlog drain.
+
+### APMF-B20 — a player-blamed position cast's location may shift
+- **Raised:** Opus 5.5 tier-A review of `ed729ec`, finding F8(e); text as relayed by the coordinator.
+- **Severity:** below SEV-3 (deferred by the coordinator; the relay did not restate the exact grade).
+- **Finding (as relayed):** "player-blamed location shift".
+- **Reasoning:** the cast core's Target Location arm compares the caster's OUT-ACTOR against the player and takes a crosshair pick for the player (AE `0x5bc3ec` -> `0x5c0470`). A marker caster reports no out-actor (NonActorMagicCaster slot 0x0D never writes it), which is why an NPC-blamed cast lands on the marker. Whether that still holds when the BLAME actor is the player (an API client naming the player as `actor`) was not traced, so a player-blamed position cast might land at the crosshair instead of the point. No client does this today (MFO blames followers).
+- **Assigned:** the ABI v11 backlog drain; a one-line field check (position-cast with the player as actor, read where it lands) settles it.
 
 ---
 

@@ -164,6 +164,11 @@ supplies the one missing classification decision and the engine does the rest.
 
 ## Casting at a point (ABI v11, `kCastFlag_AtPosition`)
 
+**Off by default.** The position cast rests on a proposed amendment to INVARIANTS #0 (action
+(e)) that marth has not approved. `[PositionCast] bPositionCast` defaults to 0, and every
+request is refused by name (`[poscast] request REFUSED ... position cast not installed`) until
+a user sets it to 1. Travel to a point does not depend on it.
+
 Requires `abiVersion >= 11`. Check it before you set the bit: an older APMF ignores
 `kCastFlag_AtPosition` and turns the request into an ordinary cast claim aimed at
 `param.target` (0 = the caster itself).
@@ -172,7 +177,7 @@ Requires `abiVersion >= 11`. Check it before you set the bit: an older APMF igno
 APMF_API::APMF_Param p{};
 p.form = runeSpellID;                       // a SpellItem: Target Location, fire-and-forget, no summon
 p.ival = APMF_API::kCastFlag_AtPosition;    // the flag ALONE; any other cast flag is refused
-p.posX = pt.x; p.posY = pt.y; p.posZ = pt.z; // world point, in the actor's cell/worldspace
+p.posX = pt.x; p.posY = pt.y; p.posZ = pt.z; // world point, in the actor's worldspace (indoors: its cell)
 APMF_API::Handle h = g_apmf->RequestEx(actorFormID, APMF_API::kIntent_Cast, basis, &p);
 if (h == APMF_API::kInvalidHandle) { /* refused at the call: see APMF.log */ }
 ```
@@ -198,9 +203,18 @@ lands at the actor's hand. A marker has no magic node, so a spell it casts lands
 - disease, ability and addiction spell types (`RemoteCast` refuses the same three).
 - any other cast flag alongside `kCastFlag_AtPosition`.
 - `RequestCast` with the bit: `APMF_CastRequest` has no position field.
+- **the actor's cast facet is owned**: a live cast claim on that actor would outrank a
+  driving request at your basis (a higher basis, a `kCastFlag_DenyHandOnly` floor included,
+  or an equal basis that drives something). Refused at the call, naming the claim.
+- a point outdoors in a cell that is not loaded and attached, or not in the actor's
+  worldspace (the marker goes in the cell that CONTAINS the point, found with
+  `TES::GetCell`; indoors it is the actor's cell).
+- a `Repoint` carrying `kCastFlag_AtPosition` on a live cast claim (nothing changes).
 - a dead or unloaded actor, a cell that is not attached, or more than 16 markers alive
   at once (they live one frame, so that is a burst of 16+ casts in one frame).
-- the whole feature when `[PositionCast] bPositionCast=0`, on VR, or on a runtime other
+The spell checks and the facet check refuse AT THE CALL (`kInvalidHandle`); the actor and
+cell checks run on the game thread and are logged.
+- the whole feature when `[PositionCast] bPositionCast=0` (the default), on VR, or on a runtime other
   than 1.6.1170 / 1.5.97.
 
 **It is a one-shot, not a claim.** It never enters the control map, so no engine seat
@@ -215,7 +229,7 @@ answers "where is a clear, standable spot over there" if you want the help.
 
 Every XMarker APMF places (position casts and position travel legs) is recorded until APMF
 deletes it, and that record is co-saved (record `'XMRK'` v1 under APMF's `'APMF'` co-save).
-Loading a save deletes, at kPostLoadGame, every recorded marker the loaded world still holds,
+Loading a save deletes, on the first main-thread pump after the load, every recorded marker the loaded world still holds,
 and only one that passes all three proofs: the recorded runtime (0xFF) FormID resolves, its
 base is Skyrim.esm's XMarker, and it stands within 1u of the recorded spot. Anything that
 fails a proof is forgotten and never touched. A recorded marker whose cell is not loaded at
@@ -760,7 +774,7 @@ ran.
 ### Walking to a world position (ABI v11, `kTravel_ToPosition`)
 
 Requires `abiVersion >= 11`. Set `kTravel_ToPosition`, leave `param.form = 0`, and put
-the point in `param.pos` (in the actor's cell and worldspace). An older APMF refuses a
+the point in `param.pos` (in the actor's worldspace; indoors, in its cell). An older APMF refuses a
 zero form, so the request fails loudly on it instead of walking somewhere else.
 
 ```cpp

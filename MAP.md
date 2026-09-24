@@ -50,8 +50,8 @@ hook, registers the input sink, logs the hotkey help. `kPreLoadGame` →
   more inline copies of the same exact-version predicate (five copies now).
   Co-save (ABI v11): `OnSave` also writes `poscast::SaveMarkers` (record `'XMRK'`), `OnLoad`
   dispatches `'XMRK'` to `LoadMarkers`, `OnRevert` calls `RevertMarkers` (must stay before the
-  load callback, which SKSE guarantees), and `kPostLoadGame` runs `SweepCarriedMarkers` after
-  `av::ApplyPending` (the first point the loaded refs exist).
+  load callback, which SKSE guarantees), and `kPostLoadGame` POSTS `SweepCarriedMarkers` to the
+  main-thread pump (review F4), so it runs on the first player-Update after the load.
 
 ### `native/APMF_API.h` — the inter-plugin C-ABI contract (shared with clients)
 The ONLY file a client shares with APMF. POD structs of function pointers
@@ -319,7 +319,7 @@ alone, spell and actor non-zero, finite point) and posts `Deliver` to the main-t
 pump. `Deliver` re-validates on the main thread (loaded live actor, attached cell,
 SpellItem with Target Location + fire-and-forget + no Summon Creature effect + not
 disease/ability/addiction), places an XMarker (`0x3B`) with
-`TESDataHandler::CreateReferenceAtLocation` in the actor's cell/worldspace, tracks it,
+`TESDataHandler::CreateReferenceAtLocation` in the cell that CONTAINS the point (outdoors `TES::GetCell(point)` = the loaded grid cell, required attached and in the actor's worldspace; indoors the actor's cell), tracks it,
 then `marker->GetMagicCaster(kInstant)` → `InterruptCast(false)` →
 `CastSpellImmediate(spell, false, nullptr, 1.0, false, 0.0, actor)` (Papyrus
 `RemoteCast`'s sequence) and posts `Retire` one hop later (`Disable()` + `SetDelete(true)`
@@ -344,6 +344,13 @@ Runtime gate: exactly 1.6.1170 / 1.5.97, VR refused. Evidence:
   loudly). Breaking the ledger (a PlaceMarker that does not record, a DeleteMarker that drops a
   STALE-handle entry instead of carrying it, the sweep moved into the load callback before the
   refs exist, the revert clear moved after the load callback) re-opens unbounded .ess growth.
+  (g) REVIEW ROUND on `ed729ec`: the cast is OFF by default (`bPositionCast` code default 0,
+  INVARIANTS #0 (e) is PROPOSED); `MarkersSupported` must stay independent of that switch or
+  ch.19 position legs die with it. `Enqueue` checks the spell's static eligibility at the call,
+  and `ControlMap::CastFacetOutranks` refuses a cast while a live cast claim owns the actor's
+  facet (condition 7). The load sweep is POSTED from kPostLoadGame. `g_carry` is capped
+  wherever it grows (`CapCarried`). Open deferred findings: `Docs/REVIEW-BACKLOG.md`
+  APMF-B19 (sweep proofs vs a different XMarker) and APMF-B20 (player-blamed location).
 
 ### `native/core/SpaceQuery.{h,cpp}` — ABI v11 SPACE QUERIES (read-only)
 `FindEmptySpace` (walk ray at feet+64u, down ray to feet-maxDrop, 8 knee-height

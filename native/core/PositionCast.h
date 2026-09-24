@@ -27,7 +27,8 @@
 // alongside kCastFlag_AtPosition, an unloaded or dead actor, a cell that is not
 // attached. Every refusal is one WARN line naming the reason. Nothing is retried.
 //
-// DOCTRINE (Docs/INVARIANTS.md #0 action (e), added with this module). This is the
+// DOCTRINE (Docs/INVARIANTS.md #0 action (e), PROPOSED, pending marth -- so the cast
+// ships OFF: [PositionCast] bPositionCast defaults to 0). This would be the
 // one place APMF itself makes a cast call. It is legal because no decision seat
 // exists to compose instead (an NPC's AI has no seat that aims a location spell at
 // a point, and seat 0x0A carries an Actor*), because the client declared both the
@@ -118,9 +119,11 @@ namespace apmf::poscast {
     //
     // TIMELINE: revert callback -> RevertMarkers (forget the outgoing world's ledger);
     // SKSE load callback -> LoadMarkers (read the record into the carried list; refs
-    // are not trusted yet); kPostLoadGame -> SweepCarriedMarkers (the loaded world's
-    // references exist and are looked up, on the main thread). kPreLoadGame does not
-    // touch the ledger. SKSE save callback -> SaveMarkers.
+    // are not trusted yet); kPostLoadGame POSTS SweepCarriedMarkers to the confirmed-
+    // main pump, so it runs on the FIRST player-Update after the load (the loaded
+    // world's references exist and are looked up there). kPreLoadGame does not touch
+    // the ledger; its Discard() drops a sweep a second load pre-empts, and the revert
+    // then clears the record that sweep would have read. SKSE save callback -> SaveMarkers.
     inline constexpr std::uint32_t kMarkerRecordType    = 'XMRK';
     inline constexpr std::uint32_t kMarkerRecordVersion = 1;
     inline constexpr std::size_t   kMaxCarriedMarkers   = 64;
