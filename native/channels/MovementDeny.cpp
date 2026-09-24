@@ -1,4 +1,5 @@
 #include "PCH.h"
+#include "core/Allowance.h"   // SeatVerified(): the mit-3.7 F1 self-check gate
 #include "core/Log.h"
 #include "core/Registry.h"
 
@@ -40,6 +41,8 @@ namespace {
         void SetDontMove(RE::Actor* a_actor, bool a_dontMove) {
             using func_t = void (*)(RE::Actor*, bool);
             static REL::Relocation<func_t> func{ RELOCATION_ID(36490, 37489) };
+            static const bool verified = allowance::SeatVerified(func.address(), "MovementDeny.SetDontMove");   // mit-3.7 F1
+            if (!verified) return;
             func(a_actor, a_dontMove);
         }
         // Actor::KeepOffsetFromActor(target, offset, angle, catchUp, follow) --
@@ -50,12 +53,16 @@ namespace {
             using func_t = void (*)(RE::Actor*, const RE::ActorHandle&, const RE::NiPoint3&,
                                     const RE::NiPoint3&, float, float);
             static REL::Relocation<func_t> func{ RELOCATION_ID(36870, 37894) };
+            static const bool verified = allowance::SeatVerified(func.address(), "MovementDeny.KeepOffsetFromActor");   // mit-3.7 F1
+            if (!verified) return;
             func(a_actor, a_target, a_offset, a_angle, a_catchUpRadius, a_followRadius);
         }
         // Actor::ClearKeepOffsetFromActor() -- release the parked goal.
         void ClearKeepOffsetFromActor(RE::Actor* a_actor) {
             using func_t = void (*)(RE::Actor*);
             static REL::Relocation<func_t> func{ RELOCATION_ID(36871, 37895) };
+            static const bool verified = allowance::SeatVerified(func.address(), "MovementDeny.ClearKeepOffsetFromActor");   // mit-3.7 F1
+            if (!verified) return;
             func(a_actor);
         }
     }

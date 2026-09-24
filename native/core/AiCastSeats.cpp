@@ -1311,6 +1311,12 @@ namespace apmf::aicastseats {
                         ++nWeaponRefused;
                         continue;
                     }
+                    // mit-3.7 F1: the vtable must be a verified address (row
+                    // CombatInventoryItem<class>); the expected-entry compare below stays.
+                    if (!allowance::SeatVerified(vt.address(), fmt::format("AiCastSeats.GroupC.{}", spec.tag))) {
+                        ++nWeaponRefused;
+                        continue;
+                    }
                     // Read the LIVE slot 0x0C pointer BEFORE writing anything (the
                     // same read RecoverLiveOriginal performs elsewhere in this file) --
                     // the install-time gate, never a blind vtable write.

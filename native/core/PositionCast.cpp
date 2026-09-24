@@ -1,4 +1,5 @@
 #include "PCH.h"
+#include "core/Allowance.h"   // SeatVerified(): the mit-3.7 F1 self-check gate
 #include "core/ControlMap.h"
 #include "core/Log.h"
 #include "core/MainThread.h"
@@ -478,6 +479,27 @@ namespace apmf::poscast {
             g_reason.store("runtime not verified for the position cast (only 1.6.1170 and 1.5.97 are)");
             spdlog::warn("[poscast] NOT installed -- {} (running {}).", g_reason.load(), game.string("."));
             return;
+        }
+        // mit-3.7 F1: every engine function / vtable this path calls must be a verified
+        // address (VerifiedAddresses.h rows PositionCast.* / TESObjectREFR /
+        // NonActorMagicCaster). Any refusal -> not installed, the same as an
+        // unverified runtime.
+        {
+            bool verified = allowance::SeatVerified(
+                REL::Relocation<std::uintptr_t>{ RELOCATION_ID(13625, 13723) }.address(), "PositionCast.CreateReferenceAtLocation");
+            verified = allowance::SeatVerified(
+                REL::Relocation<std::uintptr_t>{ RELOCATION_ID(13177, 13322) }.address(), "PositionCast.TES.GetCell") && verified;
+            verified = allowance::SeatVerified(
+                REL::Relocation<std::uintptr_t>{ RELOCATION_ID(33630, 34408) }.address(), "PositionCast.InterruptCast") && verified;
+            verified = allowance::SeatVerified(
+                REL::Relocation<std::uintptr_t>{ RE::VTABLE_TESObjectREFR[0] }.address(), "PositionCast.TESObjectREFR") && verified;
+            verified = allowance::SeatVerified(
+                REL::Relocation<std::uintptr_t>{ RE::VTABLE_NonActorMagicCaster[1] }.address(), "PositionCast.NonActorMagicCaster") && verified;
+            if (!verified) {
+                g_reason.store("the mit-3.7 self-check refused an address this path calls");
+                spdlog::error("[poscast] NOT installed -- {}.", g_reason.load());
+                return;
+            }
         }
         auto* base = RE::TESForm::LookupByID<RE::TESBoundObject>(kXMarkerBase);
         if (!base || base->GetFormType() != RE::FormType::Static) {

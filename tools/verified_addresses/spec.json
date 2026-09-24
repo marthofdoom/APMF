@@ -1,0 +1,3262 @@
+{
+ "repo": "APMF",
+ "namespace": "apmf::VerifiedAddresses",
+ "rows": [
+  {
+   "seat": "Character",
+   "kind": "vtable",
+   "construct": "RE::VTABLE_Character[0]",
+   "rtti": ".?AVCharacter@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 207886,
+    "1.5.97": 261397
+   },
+   "slots": [
+    "0xAD",
+    "0x49",
+    "0xDF"
+   ],
+   "source": "native/core/Hook.cpp:94; PackageGate.cpp:296; NonAliasProbe.cpp:216",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:64"
+  },
+  {
+   "seat": "PlayerCharacter",
+   "kind": "vtable",
+   "construct": "RE::VTABLE_PlayerCharacter[0]",
+   "rtti": ".?AVPlayerCharacter@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 208040,
+    "1.5.97": 261916
+   },
+   "slots": [
+    "0xAD"
+   ],
+   "source": "native/core/Hook.cpp:97",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:69"
+  },
+  {
+   "seat": "ActorMagicCaster",
+   "kind": "vtable",
+   "construct": "RE::VTABLE_ActorMagicCaster[0]",
+   "rtti": ".?AVActorMagicCaster@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 205828,
+    "1.5.97": 257613
+   },
+   "slots": [
+    "0x0A"
+   ],
+   "source": "native/core/CastGate.cpp:199",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:65"
+  },
+  {
+   "seat": "CombatMagicItemData",
+   "kind": "vtable",
+   "construct": "kCombatMagicItemDataVtable(265000, 211955)",
+   "rtti": ".?AVCombatMagicItemData@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 211955,
+    "1.5.97": 265000
+   },
+   "slots": [
+    "0x01"
+   ],
+   "source": "native/core/CastClassify.cpp:31",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:40"
+  },
+  {
+   "seat": "CombatProjectileAimController",
+   "kind": "vtable",
+   "construct": "RE::VTABLE_CombatProjectileAimController[0]",
+   "rtti": ".?AVCombatProjectileAimController@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 210081,
+    "1.5.97": 264187
+   },
+   "slots": [],
+   "source": "native/core/CastSeats.cpp:535",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:175"
+  },
+  {
+   "seat": "CombatMagicCasterOffensive",
+   "kind": "vtable",
+   "construct": "RE::VTABLE_CombatMagicCasterOffensive[0]",
+   "rtti": ".?AVCombatMagicCasterOffensive@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 211104,
+    "1.5.97": 265003
+   },
+   "slots": [
+    "0x06",
+    "0x07",
+    "0x0A",
+    "0x0D"
+   ],
+   "source": "native/core/AiCastSeats.cpp (Group B); CastSeats.cpp:512",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:72"
+  },
+  {
+   "seat": "CombatMagicCasterRestore",
+   "kind": "vtable",
+   "construct": "RE::VTABLE_CombatMagicCasterRestore[0]",
+   "rtti": ".?AVCombatMagicCasterRestore@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 211142,
+    "1.5.97": 265007
+   },
+   "slots": [
+    "0x06",
+    "0x07",
+    "0x0A",
+    "0x0D"
+   ],
+   "source": "native/core/AiCastSeats.cpp (Group B); CastSeats.cpp:512",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:72"
+  },
+  {
+   "seat": "CombatMagicCasterWard",
+   "kind": "vtable",
+   "construct": "RE::VTABLE_CombatMagicCasterWard[0]",
+   "rtti": ".?AVCombatMagicCasterWard@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 211118,
+    "1.5.97": 265005
+   },
+   "slots": [
+    "0x06",
+    "0x07",
+    "0x0A"
+   ],
+   "source": "native/core/AiCastSeats.cpp (Group B)",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:72"
+  },
+  {
+   "seat": "CombatMagicCasterSummon",
+   "kind": "vtable",
+   "construct": "RE::VTABLE_CombatMagicCasterSummon[0]",
+   "rtti": ".?AVCombatMagicCasterSummon@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 211146,
+    "1.5.97": 265009
+   },
+   "slots": [
+    "0x06",
+    "0x07",
+    "0x0A"
+   ],
+   "source": "native/core/AiCastSeats.cpp (Group B)",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:72"
+  },
+  {
+   "seat": "CombatMagicCasterStagger",
+   "kind": "vtable",
+   "construct": "RE::VTABLE_CombatMagicCasterStagger[0]",
+   "rtti": ".?AVCombatMagicCasterStagger@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 211154,
+    "1.5.97": 265011
+   },
+   "slots": [
+    "0x06",
+    "0x07",
+    "0x0A"
+   ],
+   "source": "native/core/AiCastSeats.cpp (Group B)",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:72"
+  },
+  {
+   "seat": "CombatMagicCasterDisarm",
+   "kind": "vtable",
+   "construct": "RE::VTABLE_CombatMagicCasterDisarm[0]",
+   "rtti": ".?AVCombatMagicCasterDisarm@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 211166,
+    "1.5.97": 265013
+   },
+   "slots": [
+    "0x06",
+    "0x07",
+    "0x0A"
+   ],
+   "source": "native/core/AiCastSeats.cpp (Group B)",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:72"
+  },
+  {
+   "seat": "CombatMagicCasterCloak",
+   "kind": "vtable",
+   "construct": "RE::VTABLE_CombatMagicCasterCloak[0]",
+   "rtti": ".?AVCombatMagicCasterCloak@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 211176,
+    "1.5.97": 265015
+   },
+   "slots": [
+    "0x06",
+    "0x07",
+    "0x0A"
+   ],
+   "source": "native/core/AiCastSeats.cpp (Group B)",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:72"
+  },
+  {
+   "seat": "CombatMagicCasterLight",
+   "kind": "vtable",
+   "construct": "RE::VTABLE_CombatMagicCasterLight[0]",
+   "rtti": ".?AVCombatMagicCasterLight@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 211186,
+    "1.5.97": 265017
+   },
+   "slots": [
+    "0x06",
+    "0x07",
+    "0x0A"
+   ],
+   "source": "native/core/AiCastSeats.cpp (Group B)",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:72"
+  },
+  {
+   "seat": "CombatMagicCasterInvisibility",
+   "kind": "vtable",
+   "construct": "RE::VTABLE_CombatMagicCasterInvisibility[0]",
+   "rtti": ".?AVCombatMagicCasterInvisibility@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 211200,
+    "1.5.97": 265019
+   },
+   "slots": [
+    "0x06",
+    "0x07",
+    "0x0A"
+   ],
+   "source": "native/core/AiCastSeats.cpp (Group B)",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:72"
+  },
+  {
+   "seat": "CombatMagicCasterBoundItem",
+   "kind": "vtable",
+   "construct": "RE::VTABLE_CombatMagicCasterBoundItem[0]",
+   "rtti": ".?AVCombatMagicCasterBoundItem@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 211210,
+    "1.5.97": 265021
+   },
+   "slots": [
+    "0x06",
+    "0x07",
+    "0x0A"
+   ],
+   "source": "native/core/AiCastSeats.cpp (Group B)",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:72"
+  },
+  {
+   "seat": "CombatMagicCasterTargetEffect",
+   "kind": "vtable",
+   "construct": "RE::VTABLE_CombatMagicCasterTargetEffect[0]",
+   "rtti": ".?AVCombatMagicCasterTargetEffect@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 211232,
+    "1.5.97": 265025
+   },
+   "slots": [
+    "0x06",
+    "0x07",
+    "0x0A"
+   ],
+   "source": "native/core/AiCastSeats.cpp (Group B)",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:72"
+  },
+  {
+   "seat": "CombatMagicCasterParalyze",
+   "kind": "vtable",
+   "construct": "RE::VTABLE_CombatMagicCasterParalyze[0]",
+   "rtti": ".?AVCombatMagicCasterParalyze@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 211270,
+    "1.5.97": 265029
+   },
+   "slots": [
+    "0x06",
+    "0x07",
+    "0x0A"
+   ],
+   "source": "native/core/AiCastSeats.cpp (Group B)",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:72"
+  },
+  {
+   "seat": "CombatMagicCasterScript",
+   "kind": "vtable",
+   "construct": "RE::VTABLE_CombatMagicCasterScript[0]",
+   "rtti": ".?AVCombatMagicCasterScript@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 211276,
+    "1.5.97": 265031
+   },
+   "slots": [
+    "0x06",
+    "0x07",
+    "0x0A"
+   ],
+   "source": "native/core/AiCastSeats.cpp (Group B)",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:72"
+  },
+  {
+   "seat": "CombatMagicCasterReanimate",
+   "kind": "vtable",
+   "construct": "RE::VTABLE_CombatMagicCasterReanimate[0]",
+   "rtti": ".?AVCombatMagicCasterReanimate@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 211973,
+    "1.5.97": 265027
+   },
+   "slots": [
+    "0x06",
+    "0x07",
+    "0x0A"
+   ],
+   "source": "native/core/AiCastSeats.cpp (Group B)",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:72"
+  },
+  {
+   "seat": "CombatInventoryItemMagicT.MagicOffensive",
+   "kind": "vtable",
+   "construct": "RE::VTABLE_CombatInventoryItemMagicT_CombatInventoryItemMagic_CombatMagicCasterOffensive_[0]",
+   "rtti": ".?AV?$CombatInventoryItemMagicT@VCombatInventoryItemMagic@@VCombatMagicCasterOffensive@@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 211706,
+    "1.5.97": 265385
+   },
+   "slots": [
+    "0x0C",
+    "0x0F"
+   ],
+   "source": "native/core/EquipGate.cpp:676; AiCastSeats.cpp (Group A)",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:67"
+  },
+  {
+   "seat": "CombatInventoryItemMagicT.MagicRestore",
+   "kind": "vtable",
+   "construct": "RE::VTABLE_CombatInventoryItemMagicT_CombatInventoryItemMagic_CombatMagicCasterRestore_[0]",
+   "rtti": ".?AV?$CombatInventoryItemMagicT@VCombatInventoryItemMagic@@VCombatMagicCasterRestore@@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 211612,
+    "1.5.97": 265375
+   },
+   "slots": [
+    "0x0C",
+    "0x0F"
+   ],
+   "source": "native/core/EquipGate.cpp:676; AiCastSeats.cpp (Group A)",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:67"
+  },
+  {
+   "seat": "CombatInventoryItemMagicT.MagicWard",
+   "kind": "vtable",
+   "construct": "RE::VTABLE_CombatInventoryItemMagicT_CombatInventoryItemMagic_CombatMagicCasterWard_[0]",
+   "rtti": ".?AV?$CombatInventoryItemMagicT@VCombatInventoryItemMagic@@VCombatMagicCasterWard@@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 211658,
+    "1.5.97": 265380
+   },
+   "slots": [
+    "0x0C",
+    "0x0F"
+   ],
+   "source": "native/core/EquipGate.cpp:676; AiCastSeats.cpp (Group A)",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:67"
+  },
+  {
+   "seat": "CombatInventoryItemMagicT.MagicSummon",
+   "kind": "vtable",
+   "construct": "RE::VTABLE_CombatInventoryItemMagicT_CombatInventoryItemMagic_CombatMagicCasterSummon_[0]",
+   "rtti": ".?AV?$CombatInventoryItemMagicT@VCombatInventoryItemMagic@@VCombatMagicCasterSummon@@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 211568,
+    "1.5.97": 265370
+   },
+   "slots": [
+    "0x0C",
+    "0x0F"
+   ],
+   "source": "native/core/EquipGate.cpp:676; AiCastSeats.cpp (Group A)",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:67"
+  },
+  {
+   "seat": "CombatInventoryItemMagicT.MagicStagger",
+   "kind": "vtable",
+   "construct": "RE::VTABLE_CombatInventoryItemMagicT_CombatInventoryItemMagic_CombatMagicCasterStagger_[0]",
+   "rtti": ".?AV?$CombatInventoryItemMagicT@VCombatInventoryItemMagic@@VCombatMagicCasterStagger@@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 211524,
+    "1.5.97": 265365
+   },
+   "slots": [
+    "0x0C",
+    "0x0F"
+   ],
+   "source": "native/core/EquipGate.cpp:676; AiCastSeats.cpp (Group A)",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:67"
+  },
+  {
+   "seat": "CombatInventoryItemMagicT.MagicDisarm",
+   "kind": "vtable",
+   "construct": "RE::VTABLE_CombatInventoryItemMagicT_CombatInventoryItemMagic_CombatMagicCasterDisarm_[0]",
+   "rtti": ".?AV?$CombatInventoryItemMagicT@VCombatInventoryItemMagic@@VCombatMagicCasterDisarm@@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 211480,
+    "1.5.97": 265360
+   },
+   "slots": [
+    "0x0C",
+    "0x0F"
+   ],
+   "source": "native/core/EquipGate.cpp:676; AiCastSeats.cpp (Group A)",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:67"
+  },
+  {
+   "seat": "CombatInventoryItemMagicT.MagicCloak",
+   "kind": "vtable",
+   "construct": "RE::VTABLE_CombatInventoryItemMagicT_CombatInventoryItemMagic_CombatMagicCasterCloak_[0]",
+   "rtti": ".?AV?$CombatInventoryItemMagicT@VCombatInventoryItemMagic@@VCombatMagicCasterCloak@@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 211436,
+    "1.5.97": 265355
+   },
+   "slots": [
+    "0x0C",
+    "0x0F"
+   ],
+   "source": "native/core/EquipGate.cpp:676; AiCastSeats.cpp (Group A)",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:67"
+  },
+  {
+   "seat": "CombatInventoryItemMagicT.MagicLight",
+   "kind": "vtable",
+   "construct": "RE::VTABLE_CombatInventoryItemMagicT_CombatInventoryItemMagic_CombatMagicCasterLight_[0]",
+   "rtti": ".?AV?$CombatInventoryItemMagicT@VCombatInventoryItemMagic@@VCombatMagicCasterLight@@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 211390,
+    "1.5.97": 265350
+   },
+   "slots": [
+    "0x0C",
+    "0x0F"
+   ],
+   "source": "native/core/EquipGate.cpp:676; AiCastSeats.cpp (Group A)",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:67"
+  },
+  {
+   "seat": "CombatInventoryItemMagicT.MagicInvisibility",
+   "kind": "vtable",
+   "construct": "RE::VTABLE_CombatInventoryItemMagicT_CombatInventoryItemMagic_CombatMagicCasterInvisibility_[0]",
+   "rtti": ".?AV?$CombatInventoryItemMagicT@VCombatInventoryItemMagic@@VCombatMagicCasterInvisibility@@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 211346,
+    "1.5.97": 265345
+   },
+   "slots": [
+    "0x0C",
+    "0x0F"
+   ],
+   "source": "native/core/EquipGate.cpp:676; AiCastSeats.cpp (Group A)",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:67"
+  },
+  {
+   "seat": "CombatInventoryItemMagicT.MagicBoundItem",
+   "kind": "vtable",
+   "construct": "RE::VTABLE_CombatInventoryItemMagicT_CombatInventoryItemMagic_CombatMagicCasterBoundItem_[0]",
+   "rtti": ".?AV?$CombatInventoryItemMagicT@VCombatInventoryItemMagic@@VCombatMagicCasterBoundItem@@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 211302,
+    "1.5.97": 265340
+   },
+   "slots": [
+    "0x0C",
+    "0x0F"
+   ],
+   "source": "native/core/EquipGate.cpp:676; AiCastSeats.cpp (Group A)",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:67"
+  },
+  {
+   "seat": "CombatInventoryItemMagicT.MagicTargetEffect",
+   "kind": "vtable",
+   "construct": "RE::VTABLE_CombatInventoryItemMagicT_CombatInventoryItemMagic_CombatMagicCasterTargetEffect_[0]",
+   "rtti": ".?AV?$CombatInventoryItemMagicT@VCombatInventoryItemMagic@@VCombatMagicCasterTargetEffect@@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 211204,
+    "1.5.97": 265330
+   },
+   "slots": [
+    "0x0C",
+    "0x0F"
+   ],
+   "source": "native/core/EquipGate.cpp:676; AiCastSeats.cpp (Group A)",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:67"
+  },
+  {
+   "seat": "CombatInventoryItemMagicT.MagicParalyze",
+   "kind": "vtable",
+   "construct": "RE::VTABLE_CombatInventoryItemMagicT_CombatInventoryItemMagic_CombatMagicCasterParalyze_[0]",
+   "rtti": ".?AV?$CombatInventoryItemMagicT@VCombatInventoryItemMagic@@VCombatMagicCasterParalyze@@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 211092,
+    "1.5.97": 265320
+   },
+   "slots": [
+    "0x0C",
+    "0x0F"
+   ],
+   "source": "native/core/EquipGate.cpp:676; AiCastSeats.cpp (Group A)",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:67"
+  },
+  {
+   "seat": "CombatInventoryItemMagicT.MagicScript",
+   "kind": "vtable",
+   "construct": "RE::VTABLE_CombatInventoryItemMagicT_CombatInventoryItemMagic_CombatMagicCasterScript_[0]",
+   "rtti": ".?AV?$CombatInventoryItemMagicT@VCombatInventoryItemMagic@@VCombatMagicCasterScript@@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 211050,
+    "1.5.97": 265315
+   },
+   "slots": [
+    "0x0C",
+    "0x0F"
+   ],
+   "source": "native/core/EquipGate.cpp:676; AiCastSeats.cpp (Group A)",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:67"
+  },
+  {
+   "seat": "CombatInventoryItemMagicT.MagicReanimate",
+   "kind": "vtable",
+   "construct": "RE::VTABLE_CombatInventoryItemMagicT_CombatInventoryItemMagic_CombatMagicCasterReanimate_[0]",
+   "rtti": ".?AV?$CombatInventoryItemMagicT@VCombatInventoryItemMagic@@VCombatMagicCasterReanimate@@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 211148,
+    "1.5.97": 265325
+   },
+   "slots": [
+    "0x0C",
+    "0x0F"
+   ],
+   "source": "native/core/EquipGate.cpp:676; AiCastSeats.cpp (Group A)",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:67"
+  },
+  {
+   "seat": "CombatInventoryItemMagicT.MagicArmor",
+   "kind": "vtable",
+   "construct": "RE::VTABLE_CombatInventoryItemMagicT_CombatInventoryItemMagic_CombatMagicCasterArmor_[0]",
+   "rtti": ".?AV?$CombatInventoryItemMagicT@VCombatInventoryItemMagic@@VCombatMagicCasterArmor@@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 211254,
+    "1.5.97": 265335
+   },
+   "slots": [
+    "0x0C",
+    "0x0F"
+   ],
+   "source": "native/core/EquipGate.cpp:676; AiCastSeats.cpp (Group A)",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:67"
+  },
+  {
+   "seat": "CombatInventoryItemMagicT.StaffOffensive",
+   "kind": "vtable",
+   "construct": "RE::VTABLE_CombatInventoryItemMagicT_CombatInventoryItemStaff_CombatMagicCasterOffensive_[0]",
+   "rtti": ".?AV?$CombatInventoryItemMagicT@VCombatInventoryItemStaff@@VCombatMagicCasterOffensive@@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 211688,
+    "1.5.97": 265383
+   },
+   "slots": [
+    "0x0C",
+    "0x0F"
+   ],
+   "source": "native/core/EquipGate.cpp:676; AiCastSeats.cpp (Group A)",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:67"
+  },
+  {
+   "seat": "CombatInventoryItemMagicT.StaffRestore",
+   "kind": "vtable",
+   "construct": "RE::VTABLE_CombatInventoryItemMagicT_CombatInventoryItemStaff_CombatMagicCasterRestore_[0]",
+   "rtti": ".?AV?$CombatInventoryItemMagicT@VCombatInventoryItemStaff@@VCombatMagicCasterRestore@@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 211608,
+    "1.5.97": 265373
+   },
+   "slots": [
+    "0x0C",
+    "0x0F"
+   ],
+   "source": "native/core/EquipGate.cpp:676; AiCastSeats.cpp (Group A)",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:67"
+  },
+  {
+   "seat": "CombatInventoryItemMagicT.StaffWard",
+   "kind": "vtable",
+   "construct": "RE::VTABLE_CombatInventoryItemMagicT_CombatInventoryItemStaff_CombatMagicCasterWard_[0]",
+   "rtti": ".?AV?$CombatInventoryItemMagicT@VCombatInventoryItemStaff@@VCombatMagicCasterWard@@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 211642,
+    "1.5.97": 265378
+   },
+   "slots": [
+    "0x0C",
+    "0x0F"
+   ],
+   "source": "native/core/EquipGate.cpp:676; AiCastSeats.cpp (Group A)",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:67"
+  },
+  {
+   "seat": "CombatInventoryItemMagicT.StaffSummon",
+   "kind": "vtable",
+   "construct": "RE::VTABLE_CombatInventoryItemMagicT_CombatInventoryItemStaff_CombatMagicCasterSummon_[0]",
+   "rtti": ".?AV?$CombatInventoryItemMagicT@VCombatInventoryItemStaff@@VCombatMagicCasterSummon@@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 211552,
+    "1.5.97": 265368
+   },
+   "slots": [
+    "0x0C",
+    "0x0F"
+   ],
+   "source": "native/core/EquipGate.cpp:676; AiCastSeats.cpp (Group A)",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:67"
+  },
+  {
+   "seat": "CombatInventoryItemMagicT.StaffStagger",
+   "kind": "vtable",
+   "construct": "RE::VTABLE_CombatInventoryItemMagicT_CombatInventoryItemStaff_CombatMagicCasterStagger_[0]",
+   "rtti": ".?AV?$CombatInventoryItemMagicT@VCombatInventoryItemStaff@@VCombatMagicCasterStagger@@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 211508,
+    "1.5.97": 265363
+   },
+   "slots": [
+    "0x0C",
+    "0x0F"
+   ],
+   "source": "native/core/EquipGate.cpp:676; AiCastSeats.cpp (Group A)",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:67"
+  },
+  {
+   "seat": "CombatInventoryItemMagicT.StaffDisarm",
+   "kind": "vtable",
+   "construct": "RE::VTABLE_CombatInventoryItemMagicT_CombatInventoryItemStaff_CombatMagicCasterDisarm_[0]",
+   "rtti": ".?AV?$CombatInventoryItemMagicT@VCombatInventoryItemStaff@@VCombatMagicCasterDisarm@@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 211464,
+    "1.5.97": 265358
+   },
+   "slots": [
+    "0x0C",
+    "0x0F"
+   ],
+   "source": "native/core/EquipGate.cpp:676; AiCastSeats.cpp (Group A)",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:67"
+  },
+  {
+   "seat": "CombatInventoryItemMagicT.StaffCloak",
+   "kind": "vtable",
+   "construct": "RE::VTABLE_CombatInventoryItemMagicT_CombatInventoryItemStaff_CombatMagicCasterCloak_[0]",
+   "rtti": ".?AV?$CombatInventoryItemMagicT@VCombatInventoryItemStaff@@VCombatMagicCasterCloak@@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 211420,
+    "1.5.97": 265353
+   },
+   "slots": [
+    "0x0C",
+    "0x0F"
+   ],
+   "source": "native/core/EquipGate.cpp:676; AiCastSeats.cpp (Group A)",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:67"
+  },
+  {
+   "seat": "CombatInventoryItemMagicT.StaffLight",
+   "kind": "vtable",
+   "construct": "RE::VTABLE_CombatInventoryItemMagicT_CombatInventoryItemStaff_CombatMagicCasterLight_[0]",
+   "rtti": ".?AV?$CombatInventoryItemMagicT@VCombatInventoryItemStaff@@VCombatMagicCasterLight@@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 211380,
+    "1.5.97": 265348
+   },
+   "slots": [
+    "0x0C",
+    "0x0F"
+   ],
+   "source": "native/core/EquipGate.cpp:676; AiCastSeats.cpp (Group A)",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:67"
+  },
+  {
+   "seat": "CombatInventoryItemMagicT.StaffInvisibility",
+   "kind": "vtable",
+   "construct": "RE::VTABLE_CombatInventoryItemMagicT_CombatInventoryItemStaff_CombatMagicCasterInvisibility_[0]",
+   "rtti": ".?AV?$CombatInventoryItemMagicT@VCombatInventoryItemStaff@@VCombatMagicCasterInvisibility@@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 211330,
+    "1.5.97": 265343
+   },
+   "slots": [
+    "0x0C",
+    "0x0F"
+   ],
+   "source": "native/core/EquipGate.cpp:676; AiCastSeats.cpp (Group A)",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:67"
+  },
+  {
+   "seat": "CombatInventoryItemMagicT.StaffBoundItem",
+   "kind": "vtable",
+   "construct": "RE::VTABLE_CombatInventoryItemMagicT_CombatInventoryItemStaff_CombatMagicCasterBoundItem_[0]",
+   "rtti": ".?AV?$CombatInventoryItemMagicT@VCombatInventoryItemStaff@@VCombatMagicCasterBoundItem@@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 211284,
+    "1.5.97": 265338
+   },
+   "slots": [
+    "0x0C",
+    "0x0F"
+   ],
+   "source": "native/core/EquipGate.cpp:676; AiCastSeats.cpp (Group A)",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:67"
+  },
+  {
+   "seat": "CombatInventoryItemMagicT.StaffTargetEffect",
+   "kind": "vtable",
+   "construct": "RE::VTABLE_CombatInventoryItemMagicT_CombatInventoryItemStaff_CombatMagicCasterTargetEffect_[0]",
+   "rtti": ".?AV?$CombatInventoryItemMagicT@VCombatInventoryItemStaff@@VCombatMagicCasterTargetEffect@@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 211182,
+    "1.5.97": 265328
+   },
+   "slots": [
+    "0x0C",
+    "0x0F"
+   ],
+   "source": "native/core/EquipGate.cpp:676; AiCastSeats.cpp (Group A)",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:67"
+  },
+  {
+   "seat": "CombatInventoryItemMagicT.StaffParalyze",
+   "kind": "vtable",
+   "construct": "RE::VTABLE_CombatInventoryItemMagicT_CombatInventoryItemStaff_CombatMagicCasterParalyze_[0]",
+   "rtti": ".?AV?$CombatInventoryItemMagicT@VCombatInventoryItemStaff@@VCombatMagicCasterParalyze@@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 211076,
+    "1.5.97": 265318
+   },
+   "slots": [
+    "0x0C",
+    "0x0F"
+   ],
+   "source": "native/core/EquipGate.cpp:676; AiCastSeats.cpp (Group A)",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:67"
+  },
+  {
+   "seat": "CombatInventoryItemMagicT.StaffScript",
+   "kind": "vtable",
+   "construct": "RE::VTABLE_CombatInventoryItemMagicT_CombatInventoryItemStaff_CombatMagicCasterScript_[0]",
+   "rtti": ".?AV?$CombatInventoryItemMagicT@VCombatInventoryItemStaff@@VCombatMagicCasterScript@@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 211034,
+    "1.5.97": 265313
+   },
+   "slots": [
+    "0x0C",
+    "0x0F"
+   ],
+   "source": "native/core/EquipGate.cpp:676; AiCastSeats.cpp (Group A)",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:67"
+  },
+  {
+   "seat": "CombatInventoryItemMagicT.StaffReanimate",
+   "kind": "vtable",
+   "construct": "RE::VTABLE_CombatInventoryItemMagicT_CombatInventoryItemStaff_CombatMagicCasterReanimate_[0]",
+   "rtti": ".?AV?$CombatInventoryItemMagicT@VCombatInventoryItemStaff@@VCombatMagicCasterReanimate@@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 211128,
+    "1.5.97": 265323
+   },
+   "slots": [
+    "0x0C",
+    "0x0F"
+   ],
+   "source": "native/core/EquipGate.cpp:676; AiCastSeats.cpp (Group A)",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:67"
+  },
+  {
+   "seat": "CombatInventoryItemMagicT.StaffArmor",
+   "kind": "vtable",
+   "construct": "RE::VTABLE_CombatInventoryItemMagicT_CombatInventoryItemStaff_CombatMagicCasterArmor_[0]",
+   "rtti": ".?AV?$CombatInventoryItemMagicT@VCombatInventoryItemStaff@@VCombatMagicCasterArmor@@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 211234,
+    "1.5.97": 265333
+   },
+   "slots": [
+    "0x0C",
+    "0x0F"
+   ],
+   "source": "native/core/EquipGate.cpp:676; AiCastSeats.cpp (Group A)",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:67"
+  },
+  {
+   "seat": "CombatInventoryItemMelee",
+   "kind": "vtable",
+   "construct": "RE::VTABLE_CombatInventoryItemMelee[0]",
+   "rtti": ".?AVCombatInventoryItemMelee@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 210297,
+    "1.5.97": 264523
+   },
+   "slots": [
+    "0x0C"
+   ],
+   "source": "native/core/AiCastSeats.cpp:377",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:150"
+  },
+  {
+   "seat": "CombatInventoryItemRanged",
+   "kind": "vtable",
+   "construct": "RE::VTABLE_CombatInventoryItemRanged[0]",
+   "rtti": ".?AVCombatInventoryItemRanged@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 210299,
+    "1.5.97": 264525
+   },
+   "slots": [
+    "0x0C"
+   ],
+   "source": "native/core/AiCastSeats.cpp:377"
+  },
+  {
+   "seat": "CombatInventoryItemShield",
+   "kind": "vtable",
+   "construct": "RE::VTABLE_CombatInventoryItemShield[0]",
+   "rtti": ".?AVCombatInventoryItemShield@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 210301,
+    "1.5.97": 264527
+   },
+   "slots": [
+    "0x0C",
+    "0x0F"
+   ],
+   "source": "native/core/AiCastSeats.cpp:377",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:156"
+  },
+  {
+   "seat": "CombatInventoryItemTorch",
+   "kind": "vtable",
+   "construct": "RE::VTABLE_CombatInventoryItemTorch[0]",
+   "rtti": ".?AVCombatInventoryItemTorch@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 210305,
+    "1.5.97": 264531
+   },
+   "slots": [
+    "0x0C"
+   ],
+   "source": "native/core/AiCastSeats.cpp:377"
+  },
+  {
+   "seat": "Leaf.CombatBehaviorAdvance",
+   "kind": "vtable",
+   "construct": "apmf::cbt::kLeaves[\"CombatBehaviorAdvance\"]",
+   "rtti": ".?AV?$CombatBehaviorTreeNodeObject@VCombatBehaviorAdvance@@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 212694,
+    "1.5.97": 266096
+   },
+   "slots": [
+    "0x02",
+    "0x03"
+   ],
+   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:289"
+  },
+  {
+   "seat": "Leaf.CombatBehaviorAttack",
+   "kind": "vtable",
+   "construct": "apmf::cbt::kLeaves[\"CombatBehaviorAttack\"]",
+   "rtti": ".?AV?$CombatBehaviorTreeNodeObject@VCombatBehaviorAttack@@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 213789,
+    "1.5.97": 266747
+   },
+   "slots": [
+    "0x02",
+    "0x03"
+   ],
+   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:290"
+  },
+  {
+   "seat": "Leaf.CombatBehaviorAttackFromCover",
+   "kind": "vtable",
+   "construct": "apmf::cbt::kLeaves[\"CombatBehaviorAttackFromCover\"]",
+   "rtti": ".?AV?$CombatBehaviorTreeNodeObject@VCombatBehaviorAttackFromCover@@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 214395,
+    "1.5.97": 267194
+   },
+   "slots": [
+    "0x02",
+    "0x03"
+   ],
+   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:291"
+  },
+  {
+   "seat": "Leaf.CombatBehaviorAttackLow",
+   "kind": "vtable",
+   "construct": "apmf::cbt::kLeaves[\"CombatBehaviorAttackLow\"]",
+   "rtti": ".?AV?$CombatBehaviorTreeNodeObject@VCombatBehaviorAttackLow@@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 213640,
+    "1.5.97": 266654
+   },
+   "slots": [
+    "0x02",
+    "0x03"
+   ],
+   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:292"
+  },
+  {
+   "seat": "Leaf.CombatBehaviorBackoff",
+   "kind": "vtable",
+   "construct": "apmf::cbt::kLeaves[\"CombatBehaviorBackoff\"]",
+   "rtti": ".?AV?$CombatBehaviorTreeNodeObject@VCombatBehaviorBackoff@@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 212785,
+    "1.5.97": 266103
+   },
+   "slots": [
+    "0x02",
+    "0x03"
+   ],
+   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:293"
+  },
+  {
+   "seat": "Leaf.CombatBehaviorBash",
+   "kind": "vtable",
+   "construct": "apmf::cbt::kLeaves[\"CombatBehaviorBash\"]",
+   "rtti": ".?AV?$CombatBehaviorTreeNodeObject@VCombatBehaviorBash@@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 212595,
+    "1.5.97": 265986
+   },
+   "slots": [
+    "0x02",
+    "0x03"
+   ],
+   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:294"
+  },
+  {
+   "seat": "Leaf.CombatBehaviorBlock",
+   "kind": "vtable",
+   "construct": "apmf::cbt::kLeaves[\"CombatBehaviorBlock\"]",
+   "rtti": ".?AV?$CombatBehaviorTreeNodeObject@VCombatBehaviorBlock@@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 212608,
+    "1.5.97": 265987
+   },
+   "slots": [
+    "0x02",
+    "0x03"
+   ],
+   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:295"
+  },
+  {
+   "seat": "Leaf.CombatBehaviorBlockAttack",
+   "kind": "vtable",
+   "construct": "apmf::cbt::kLeaves[\"CombatBehaviorBlockAttack\"]",
+   "rtti": ".?AV?$CombatBehaviorTreeNodeObject@VCombatBehaviorBlockAttack@@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 212582,
+    "1.5.97": 265985
+   },
+   "slots": [
+    "0x02",
+    "0x03"
+   ],
+   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:296"
+  },
+  {
+   "seat": "Leaf.CombatBehaviorCastConcentrationSpell",
+   "kind": "vtable",
+   "construct": "apmf::cbt::kLeaves[\"CombatBehaviorCastConcentrationSpell\"]",
+   "rtti": ".?AV?$CombatBehaviorTreeNodeObject@VCombatBehaviorCastConcentrationSpell@@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 213735,
+    "1.5.97": 266707
+   },
+   "slots": [
+    "0x02",
+    "0x03"
+   ],
+   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:297"
+  },
+  {
+   "seat": "Leaf.CombatBehaviorCastImmediateSpell",
+   "kind": "vtable",
+   "construct": "apmf::cbt::kLeaves[\"CombatBehaviorCastImmediateSpell\"]",
+   "rtti": ".?AV?$CombatBehaviorTreeNodeObject@VCombatBehaviorCastImmediateSpell@@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 213720,
+    "1.5.97": 266705
+   },
+   "slots": [
+    "0x02",
+    "0x03"
+   ],
+   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:298"
+  },
+  {
+   "seat": "Leaf.CombatBehaviorCastShout",
+   "kind": "vtable",
+   "construct": "apmf::cbt::kLeaves[\"CombatBehaviorCastShout\"]",
+   "rtti": ".?AV?$CombatBehaviorTreeNodeObject@VCombatBehaviorCastShout@@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 214280,
+    "1.5.97": 267116
+   },
+   "slots": [
+    "0x02",
+    "0x03"
+   ],
+   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:299"
+  },
+  {
+   "seat": "Leaf.CombatBehaviorChase",
+   "kind": "vtable",
+   "construct": "apmf::cbt::kLeaves[\"CombatBehaviorChase\"]",
+   "rtti": ".?AV?$CombatBehaviorTreeNodeObject@VCombatBehaviorChase@@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 213109,
+    "1.5.97": 266336
+   },
+   "slots": [
+    "0x02",
+    "0x03"
+   ],
+   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:300"
+  },
+  {
+   "seat": "Leaf.CombatBehaviorCheckUnreachableTarget",
+   "kind": "vtable",
+   "construct": "apmf::cbt::kLeaves[\"CombatBehaviorCheckUnreachableTarget\"]",
+   "rtti": ".?AV?$CombatBehaviorTreeNodeObject@VCombatBehaviorCheckUnreachableTarget@@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 213917,
+    "1.5.97": 266866
+   },
+   "slots": [
+    "0x02",
+    "0x03"
+   ],
+   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:301"
+  },
+  {
+   "seat": "Leaf.CombatBehaviorChildSelector_ConditionalChildSelector_",
+   "kind": "vtable",
+   "construct": "apmf::cbt::kLeaves[\"CombatBehaviorChildSelector_ConditionalChildSelector_\"]",
+   "rtti": ".?AV?$CombatBehaviorTreeNodeObject@V?$CombatBehaviorChildSelector@VConditionalChildSelector@@@@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 212668,
+    "1.5.97": 266094
+   },
+   "slots": [
+    "0x02",
+    "0x03"
+   ],
+   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:302"
+  },
+  {
+   "seat": "Leaf.CombatBehaviorChildSelector_RandomValueChildSelector_",
+   "kind": "vtable",
+   "construct": "apmf::cbt::kLeaves[\"CombatBehaviorChildSelector_RandomValueChildSelector_\"]",
+   "rtti": ".?AV?$CombatBehaviorTreeNodeObject@V?$CombatBehaviorChildSelector@VRandomValueChildSelector@@@@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 212746,
+    "1.5.97": 266100
+   },
+   "slots": [
+    "0x02",
+    "0x03"
+   ],
+   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:303"
+  },
+  {
+   "seat": "Leaf.CombatBehaviorChildSelector_ValueChildSelector_",
+   "kind": "vtable",
+   "construct": "apmf::cbt::kLeaves[\"CombatBehaviorChildSelector_ValueChildSelector_\"]",
+   "rtti": ".?AV?$CombatBehaviorTreeNodeObject@V?$CombatBehaviorChildSelector@VValueChildSelector@@@@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 212424,
+    "1.5.97": 265919
+   },
+   "slots": [
+    "0x02",
+    "0x03"
+   ],
+   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:304"
+  },
+  {
+   "seat": "Leaf.CombatBehaviorCircle",
+   "kind": "vtable",
+   "construct": "apmf::cbt::kLeaves[\"CombatBehaviorCircle\"]",
+   "rtti": ".?AV?$CombatBehaviorTreeNodeObject@VCombatBehaviorCircle@@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 212772,
+    "1.5.97": 266102
+   },
+   "slots": [
+    "0x02",
+    "0x03"
+   ],
+   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:305"
+  },
+  {
+   "seat": "Leaf.CombatBehaviorCircleDistant",
+   "kind": "vtable",
+   "construct": "apmf::cbt::kLeaves[\"CombatBehaviorCircleDistant\"]",
+   "rtti": ".?AV?$CombatBehaviorTreeNodeObject@VCombatBehaviorCircleDistant@@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 212720,
+    "1.5.97": 266098
+   },
+   "slots": [
+    "0x02",
+    "0x03"
+   ],
+   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:306"
+  },
+  {
+   "seat": "Leaf.CombatBehaviorDiveBomb",
+   "kind": "vtable",
+   "construct": "apmf::cbt::kLeaves[\"CombatBehaviorDiveBomb\"]",
+   "rtti": ".?AV?$CombatBehaviorTreeNodeObject@VCombatBehaviorDiveBomb@@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 213551,
+    "1.5.97": 266624
+   },
+   "slots": [
+    "0x02",
+    "0x03"
+   ],
+   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:307"
+  },
+  {
+   "seat": "Leaf.CombatBehaviorDodgeThreat",
+   "kind": "vtable",
+   "construct": "apmf::cbt::kLeaves[\"CombatBehaviorDodgeThreat\"]",
+   "rtti": ".?AV?$CombatBehaviorTreeNodeObject@VCombatBehaviorDodgeThreat@@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 212546,
+    "1.5.97": 265954
+   },
+   "slots": [
+    "0x02",
+    "0x03"
+   ],
+   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:308"
+  },
+  {
+   "seat": "Leaf.CombatBehaviorDrinkPotion",
+   "kind": "vtable",
+   "construct": "apmf::cbt::kLeaves[\"CombatBehaviorDrinkPotion\"]",
+   "rtti": ".?AV?$CombatBehaviorTreeNodeObject@VCombatBehaviorDrinkPotion@@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 214430,
+    "1.5.97": 267213
+   },
+   "slots": [
+    "0x02",
+    "0x03"
+   ],
+   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:309"
+  },
+  {
+   "seat": "Leaf.CombatBehaviorDynamicConditionalNode",
+   "kind": "vtable",
+   "construct": "apmf::cbt::kLeaves[\"CombatBehaviorDynamicConditionalNode\"]",
+   "rtti": ".?AV?$CombatBehaviorTreeNodeObject@VCombatBehaviorDynamicConditionalNode@@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 212411,
+    "1.5.97": 265918
+   },
+   "slots": [
+    "0x02",
+    "0x03"
+   ],
+   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:310"
+  },
+  {
+   "seat": "Leaf.CombatBehaviorEquipObject",
+   "kind": "vtable",
+   "construct": "apmf::cbt::kLeaves[\"CombatBehaviorEquipObject\"]",
+   "rtti": ".?AV?$CombatBehaviorTreeNodeObject@VCombatBehaviorEquipObject@@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 212437,
+    "1.5.97": 265920
+   },
+   "slots": [
+    "0x02",
+    "0x03"
+   ],
+   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:311"
+  },
+  {
+   "seat": "Leaf.CombatBehaviorEquipRangedWeapon",
+   "kind": "vtable",
+   "construct": "apmf::cbt::kLeaves[\"CombatBehaviorEquipRangedWeapon\"]",
+   "rtti": ".?AV?$CombatBehaviorTreeNodeObject@VCombatBehaviorEquipRangedWeapon@@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 212450,
+    "1.5.97": 265921
+   },
+   "slots": [
+    "0x02",
+    "0x03"
+   ],
+   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:312"
+  },
+  {
+   "seat": "Leaf.CombatBehaviorEquipShout",
+   "kind": "vtable",
+   "construct": "apmf::cbt::kLeaves[\"CombatBehaviorEquipShout\"]",
+   "rtti": ".?AV?$CombatBehaviorTreeNodeObject@VCombatBehaviorEquipShout@@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 212478,
+    "1.5.97": 265924
+   },
+   "slots": [
+    "0x02",
+    "0x03"
+   ],
+   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:313"
+  },
+  {
+   "seat": "Leaf.CombatBehaviorEquipSpell",
+   "kind": "vtable",
+   "construct": "apmf::cbt::kLeaves[\"CombatBehaviorEquipSpell\"]",
+   "rtti": ".?AV?$CombatBehaviorTreeNodeObject@VCombatBehaviorEquipSpell@@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 212463,
+    "1.5.97": 265922
+   },
+   "slots": [
+    "0x02",
+    "0x03"
+   ],
+   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:314"
+  },
+  {
+   "seat": "Leaf.CombatBehaviorExitWater",
+   "kind": "vtable",
+   "construct": "apmf::cbt::kLeaves[\"CombatBehaviorExitWater\"]",
+   "rtti": ".?AV?$CombatBehaviorTreeNodeObject@VCombatBehaviorExitWater@@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 213943,
+    "1.5.97": 266868
+   },
+   "slots": [
+    "0x02",
+    "0x03"
+   ],
+   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:315"
+  },
+  {
+   "seat": "Leaf.CombatBehaviorFallback",
+   "kind": "vtable",
+   "construct": "apmf::cbt::kLeaves[\"CombatBehaviorFallback\"]",
+   "rtti": ".?AV?$CombatBehaviorTreeNodeObject@VCombatBehaviorFallback@@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 212759,
+    "1.5.97": 266101
+   },
+   "slots": [
+    "0x02",
+    "0x03"
+   ],
+   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:316"
+  },
+  {
+   "seat": "Leaf.CombatBehaviorFallbackSelector_NextChildSelector_",
+   "kind": "vtable",
+   "construct": "apmf::cbt::kLeaves[\"CombatBehaviorFallbackSelector_NextChildSelector_\"]",
+   "rtti": ".?AV?$CombatBehaviorTreeNodeObject@V?$CombatBehaviorFallbackSelector@VNextChildSelector@@@@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 205291,
+    "1.5.97": 256698
+   },
+   "slots": [
+    "0x02",
+    "0x03"
+   ],
+   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:317"
+  },
+  {
+   "seat": "Leaf.CombatBehaviorFallbackSelector_WeightedRandomChildSelector_",
+   "kind": "vtable",
+   "construct": "apmf::cbt::kLeaves[\"CombatBehaviorFallbackSelector_WeightedRandomChildSelector_\"]",
+   "rtti": ".?AV?$CombatBehaviorTreeNodeObject@V?$CombatBehaviorFallbackSelector@VWeightedRandomChildSelector@@@@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 213512,
+    "1.5.97": 266621
+   },
+   "slots": [
+    "0x02",
+    "0x03"
+   ],
+   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:318"
+  },
+  {
+   "seat": "Leaf.CombatBehaviorFallbackToRanged",
+   "kind": "vtable",
+   "construct": "apmf::cbt::kLeaves[\"CombatBehaviorFallbackToRanged\"]",
+   "rtti": ".?AV?$CombatBehaviorTreeNodeObject@VCombatBehaviorFallbackToRanged@@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 212681,
+    "1.5.97": 266095
+   },
+   "slots": [
+    "0x02",
+    "0x03"
+   ],
+   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:319"
+  },
+  {
+   "seat": "Leaf.CombatBehaviorFindAllyAttackLocation",
+   "kind": "vtable",
+   "construct": "apmf::cbt::kLeaves[\"CombatBehaviorFindAllyAttackLocation\"]",
+   "rtti": ".?AV?$CombatBehaviorTreeNodeObject@VCombatBehaviorFindAllyAttackLocation@@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 212925,
+    "1.5.97": 266196
+   },
+   "slots": [
+    "0x02",
+    "0x03"
+   ],
+   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:320"
+  },
+  {
+   "seat": "Leaf.CombatBehaviorFindAttackLocation",
+   "kind": "vtable",
+   "construct": "apmf::cbt::kLeaves[\"CombatBehaviorFindAttackLocation\"]",
+   "rtti": ".?AV?$CombatBehaviorTreeNodeObject@VCombatBehaviorFindAttackLocation@@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 212912,
+    "1.5.97": 266195
+   },
+   "slots": [
+    "0x02",
+    "0x03"
+   ],
+   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:321"
+  },
+  {
+   "seat": "Leaf.CombatBehaviorFindCover",
+   "kind": "vtable",
+   "construct": "apmf::cbt::kLeaves[\"CombatBehaviorFindCover\"]",
+   "rtti": ".?AV?$CombatBehaviorTreeNodeObject@VCombatBehaviorFindCover@@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 214365,
+    "1.5.97": 267190
+   },
+   "slots": [
+    "0x02",
+    "0x03"
+   ],
+   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:322"
+  },
+  {
+   "seat": "Leaf.CombatBehaviorFindLateralAttackLocation",
+   "kind": "vtable",
+   "construct": "apmf::cbt::kLeaves[\"CombatBehaviorFindLateralAttackLocation\"]",
+   "rtti": ".?AV?$CombatBehaviorTreeNodeObject@VCombatBehaviorFindLateralAttackLocation@@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 212899,
+    "1.5.97": 266194
+   },
+   "slots": [
+    "0x02",
+    "0x03"
+   ],
+   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:323"
+  },
+  {
+   "seat": "Leaf.CombatBehaviorFindWeapon",
+   "kind": "vtable",
+   "construct": "apmf::cbt::kLeaves[\"CombatBehaviorFindWeapon\"]",
+   "rtti": ".?AV?$CombatBehaviorTreeNodeObject@VCombatBehaviorFindWeapon@@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 212262,
+    "1.5.97": 265838
+   },
+   "slots": [
+    "0x02",
+    "0x03"
+   ],
+   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:324"
+  },
+  {
+   "seat": "Leaf.CombatBehaviorFlank",
+   "kind": "vtable",
+   "construct": "apmf::cbt::kLeaves[\"CombatBehaviorFlank\"]",
+   "rtti": ".?AV?$CombatBehaviorTreeNodeObject@VCombatBehaviorFlank@@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 213096,
+    "1.5.97": 266335
+   },
+   "slots": [
+    "0x02",
+    "0x03"
+   ],
+   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:325"
+  },
+  {
+   "seat": "Leaf.CombatBehaviorFlankDistant",
+   "kind": "vtable",
+   "construct": "apmf::cbt::kLeaves[\"CombatBehaviorFlankDistant\"]",
+   "rtti": ".?AV?$CombatBehaviorTreeNodeObject@VCombatBehaviorFlankDistant@@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 213122,
+    "1.5.97": 266337
+   },
+   "slots": [
+    "0x02",
+    "0x03"
+   ],
+   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:326"
+  },
+  {
+   "seat": "Leaf.CombatBehaviorFlee",
+   "kind": "vtable",
+   "construct": "apmf::cbt::kLeaves[\"CombatBehaviorFlee\"]",
+   "rtti": ".?AV?$CombatBehaviorTreeNodeObject@VCombatBehaviorFlee@@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 213321,
+    "1.5.97": 266497
+   },
+   "slots": [
+    "0x02",
+    "0x03"
+   ],
+   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:327"
+  },
+  {
+   "seat": "Leaf.CombatBehaviorFleeThroughDoor",
+   "kind": "vtable",
+   "construct": "apmf::cbt::kLeaves[\"CombatBehaviorFleeThroughDoor\"]",
+   "rtti": ".?AV?$CombatBehaviorTreeNodeObject@VCombatBehaviorFleeThroughDoor@@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 213295,
+    "1.5.97": 266495
+   },
+   "slots": [
+    "0x02",
+    "0x03"
+   ],
+   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:328"
+  },
+  {
+   "seat": "Leaf.CombatBehaviorFleeToAlly",
+   "kind": "vtable",
+   "construct": "apmf::cbt::kLeaves[\"CombatBehaviorFleeToAlly\"]",
+   "rtti": ".?AV?$CombatBehaviorTreeNodeObject@VCombatBehaviorFleeToAlly@@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 213282,
+    "1.5.97": 266494
+   },
+   "slots": [
+    "0x02",
+    "0x03"
+   ],
+   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:329"
+  },
+  {
+   "seat": "Leaf.CombatBehaviorFleeToCover",
+   "kind": "vtable",
+   "construct": "apmf::cbt::kLeaves[\"CombatBehaviorFleeToCover\"]",
+   "rtti": ".?AV?$CombatBehaviorTreeNodeObject@VCombatBehaviorFleeToCover@@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 213308,
+    "1.5.97": 266496
+   },
+   "slots": [
+    "0x02",
+    "0x03"
+   ],
+   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:330"
+  },
+  {
+   "seat": "Leaf.CombatBehaviorFlyingAttack",
+   "kind": "vtable",
+   "construct": "apmf::cbt::kLeaves[\"CombatBehaviorFlyingAttack\"]",
+   "rtti": ".?AV?$CombatBehaviorTreeNodeObject@VCombatBehaviorFlyingAttack@@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 213577,
+    "1.5.97": 266626
+   },
+   "slots": [
+    "0x02",
+    "0x03"
+   ],
+   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:331"
+  },
+  {
+   "seat": "Leaf.CombatBehaviorForceFail",
+   "kind": "vtable",
+   "construct": "apmf::cbt::kLeaves[\"CombatBehaviorForceFail\"]",
+   "rtti": ".?AV?$CombatBehaviorTreeNodeObject@VCombatBehaviorForceFail@@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 214228,
+    "1.5.97": 267085
+   },
+   "slots": [
+    "0x02",
+    "0x03"
+   ],
+   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:332"
+  },
+  {
+   "seat": "Leaf.CombatBehaviorForceSuccess",
+   "kind": "vtable",
+   "construct": "apmf::cbt::kLeaves[\"CombatBehaviorForceSuccess\"]",
+   "rtti": ".?AV?$CombatBehaviorTreeNodeObject@VCombatBehaviorForceSuccess@@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 213405,
+    "1.5.97": 266506
+   },
+   "slots": [
+    "0x02",
+    "0x03"
+   ],
+   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:333"
+  },
+  {
+   "seat": "Leaf.CombatBehaviorGroundAttack",
+   "kind": "vtable",
+   "construct": "apmf::cbt::kLeaves[\"CombatBehaviorGroundAttack\"]",
+   "rtti": ".?AV?$CombatBehaviorTreeNodeObject@VCombatBehaviorGroundAttack@@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 213525,
+    "1.5.97": 266622
+   },
+   "slots": [
+    "0x02",
+    "0x03"
+   ],
+   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:334"
+  },
+  {
+   "seat": "Leaf.CombatBehaviorHide",
+   "kind": "vtable",
+   "construct": "apmf::cbt::kLeaves[\"CombatBehaviorHide\"]",
+   "rtti": ".?AV?$CombatBehaviorTreeNodeObject@VCombatBehaviorHide@@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 213364,
+    "1.5.97": 266502
+   },
+   "slots": [
+    "0x02",
+    "0x03"
+   ],
+   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:335"
+  },
+  {
+   "seat": "Leaf.CombatBehaviorHover",
+   "kind": "vtable",
+   "construct": "apmf::cbt::kLeaves[\"CombatBehaviorHover\"]",
+   "rtti": ".?AV?$CombatBehaviorTreeNodeObject@VCombatBehaviorHover@@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 213538,
+    "1.5.97": 266623
+   },
+   "slots": [
+    "0x02",
+    "0x03"
+   ],
+   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:336"
+  },
+  {
+   "seat": "Leaf.CombatBehaviorLand",
+   "kind": "vtable",
+   "construct": "apmf::cbt::kLeaves[\"CombatBehaviorLand\"]",
+   "rtti": ".?AV?$CombatBehaviorTreeNodeObject@VCombatBehaviorLand@@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 213609,
+    "1.5.97": 266631
+   },
+   "slots": [
+    "0x02",
+    "0x03"
+   ],
+   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:337"
+  },
+  {
+   "seat": "Leaf.CombatBehaviorMaintainOptimalRange",
+   "kind": "vtable",
+   "construct": "apmf::cbt::kLeaves[\"CombatBehaviorMaintainOptimalRange\"]",
+   "rtti": ".?AV?$CombatBehaviorTreeNodeObject@VCombatBehaviorMaintainOptimalRange@@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 214013,
+    "1.5.97": 266933
+   },
+   "slots": [
+    "0x02",
+    "0x03"
+   ],
+   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:338"
+  },
+  {
+   "seat": "Leaf.CombatBehaviorOrbit",
+   "kind": "vtable",
+   "construct": "apmf::cbt::kLeaves[\"CombatBehaviorOrbit\"]",
+   "rtti": ".?AV?$CombatBehaviorTreeNodeObject@VCombatBehaviorOrbit@@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 213499,
+    "1.5.97": 266620
+   },
+   "slots": [
+    "0x02",
+    "0x03"
+   ],
+   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:339"
+  },
+  {
+   "seat": "Leaf.CombatBehaviorOrbitDistant",
+   "kind": "vtable",
+   "construct": "apmf::cbt::kLeaves[\"CombatBehaviorOrbitDistant\"]",
+   "rtti": ".?AV?$CombatBehaviorTreeNodeObject@VCombatBehaviorOrbitDistant@@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 213486,
+    "1.5.97": 266619
+   },
+   "slots": [
+    "0x02",
+    "0x03"
+   ],
+   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:340"
+  },
+  {
+   "seat": "Leaf.CombatBehaviorParallel",
+   "kind": "vtable",
+   "construct": "apmf::cbt::kLeaves[\"CombatBehaviorParallel\"]",
+   "rtti": ".?AV?$CombatBehaviorTreeNodeObject@VCombatBehaviorParallel@@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 212197,
+    "1.5.97": 265772
+   },
+   "slots": [
+    "0x02",
+    "0x03"
+   ],
+   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:341"
+  },
+  {
+   "seat": "Leaf.CombatBehaviorPause",
+   "kind": "vtable",
+   "construct": "apmf::cbt::kLeaves[\"CombatBehaviorPause\"]",
+   "rtti": ".?AV?$CombatBehaviorTreeNodeObject@VCombatBehaviorPause@@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 212491,
+    "1.5.97": 265925
+   },
+   "slots": [
+    "0x02",
+    "0x03"
+   ],
+   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:342"
+  },
+  {
+   "seat": "Leaf.CombatBehaviorPerchAttack",
+   "kind": "vtable",
+   "construct": "apmf::cbt::kLeaves[\"CombatBehaviorPerchAttack\"]",
+   "rtti": ".?AV?$CombatBehaviorTreeNodeObject@VCombatBehaviorPerchAttack@@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 213564,
+    "1.5.97": 266625
+   },
+   "slots": [
+    "0x02",
+    "0x03"
+   ],
+   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:343"
+  },
+  {
+   "seat": "Leaf.CombatBehaviorPrepareDualCast",
+   "kind": "vtable",
+   "construct": "apmf::cbt::kLeaves[\"CombatBehaviorPrepareDualCast\"]",
+   "rtti": ".?AV?$CombatBehaviorTreeNodeObject@VCombatBehaviorPrepareDualCast@@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 213705,
+    "1.5.97": 266703
+   },
+   "slots": [
+    "0x02",
+    "0x03"
+   ],
+   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:344"
+  },
+  {
+   "seat": "Leaf.CombatBehaviorPursueTarget",
+   "kind": "vtable",
+   "construct": "apmf::cbt::kLeaves[\"CombatBehaviorPursueTarget\"]",
+   "rtti": ".?AV?$CombatBehaviorTreeNodeObject@VCombatBehaviorPursueTarget@@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 213653,
+    "1.5.97": 266655
+   },
+   "slots": [
+    "0x02",
+    "0x03"
+   ],
+   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:345"
+  },
+  {
+   "seat": "Leaf.CombatBehaviorRangedAttack",
+   "kind": "vtable",
+   "construct": "apmf::cbt::kLeaves[\"CombatBehaviorRangedAttack\"]",
+   "rtti": ".?AV?$CombatBehaviorTreeNodeObject@VCombatBehaviorRangedAttack@@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 205304,
+    "1.5.97": 256699
+   },
+   "slots": [
+    "0x02",
+    "0x03"
+   ],
+   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:346"
+  },
+  {
+   "seat": "Leaf.CombatBehaviorRepeat",
+   "kind": "vtable",
+   "construct": "apmf::cbt::kLeaves[\"CombatBehaviorRepeat\"]",
+   "rtti": ".?AV?$CombatBehaviorTreeNodeObject@VCombatBehaviorRepeat@@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 205278,
+    "1.5.97": 256697
+   },
+   "slots": [
+    "0x02",
+    "0x03"
+   ],
+   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:347"
+  },
+  {
+   "seat": "Leaf.CombatBehaviorReposition",
+   "kind": "vtable",
+   "construct": "apmf::cbt::kLeaves[\"CombatBehaviorReposition\"]",
+   "rtti": ".?AV?$CombatBehaviorTreeNodeObject@VCombatBehaviorReposition@@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 212733,
+    "1.5.97": 266099
+   },
+   "slots": [
+    "0x02",
+    "0x03"
+   ],
+   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:348"
+  },
+  {
+   "seat": "Leaf.CombatBehaviorReturnToCombatArea",
+   "kind": "vtable",
+   "construct": "apmf::cbt::kLeaves[\"CombatBehaviorReturnToCombatArea\"]",
+   "rtti": ".?AV?$CombatBehaviorTreeNodeObject@VCombatBehaviorReturnToCombatArea@@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 213930,
+    "1.5.97": 266867
+   },
+   "slots": [
+    "0x02",
+    "0x03"
+   ],
+   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:349"
+  },
+  {
+   "seat": "Leaf.CombatBehaviorSearchInvestigateDoor",
+   "kind": "vtable",
+   "construct": "apmf::cbt::kLeaves[\"CombatBehaviorSearchInvestigateDoor\"]",
+   "rtti": ".?AV?$CombatBehaviorTreeNodeObject@VCombatBehaviorSearchInvestigateDoor@@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 214241,
+    "1.5.97": 267086
+   },
+   "slots": [
+    "0x02",
+    "0x03"
+   ],
+   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:350"
+  },
+  {
+   "seat": "Leaf.CombatBehaviorSequence",
+   "kind": "vtable",
+   "construct": "apmf::cbt::kLeaves[\"CombatBehaviorSequence\"]",
+   "rtti": ".?AV?$CombatBehaviorTreeNodeObject@VCombatBehaviorSequence@@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 212249,
+    "1.5.97": 265837
+   },
+   "slots": [
+    "0x02",
+    "0x03"
+   ],
+   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:351"
+  },
+  {
+   "seat": "Leaf.CombatBehaviorSpecialAttack",
+   "kind": "vtable",
+   "construct": "apmf::cbt::kLeaves[\"CombatBehaviorSpecialAttack\"]",
+   "rtti": ".?AV?$CombatBehaviorTreeNodeObject@VCombatBehaviorSpecialAttack@@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 213776,
+    "1.5.97": 266746
+   },
+   "slots": [
+    "0x02",
+    "0x03"
+   ],
+   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:352"
+  },
+  {
+   "seat": "Leaf.CombatBehaviorStalk",
+   "kind": "vtable",
+   "construct": "apmf::cbt::kLeaves[\"CombatBehaviorStalk\"]",
+   "rtti": ".?AV?$CombatBehaviorTreeNodeObject@VCombatBehaviorStalk@@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 213083,
+    "1.5.97": 266334
+   },
+   "slots": [
+    "0x02",
+    "0x03"
+   ],
+   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:353"
+  },
+  {
+   "seat": "Leaf.CombatBehaviorStrafe",
+   "kind": "vtable",
+   "construct": "apmf::cbt::kLeaves[\"CombatBehaviorStrafe\"]",
+   "rtti": ".?AV?$CombatBehaviorTreeNodeObject@VCombatBehaviorStrafe@@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 214026,
+    "1.5.97": 266934
+   },
+   "slots": [
+    "0x02",
+    "0x03"
+   ],
+   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:354"
+  },
+  {
+   "seat": "Leaf.CombatBehaviorSurround",
+   "kind": "vtable",
+   "construct": "apmf::cbt::kLeaves[\"CombatBehaviorSurround\"]",
+   "rtti": ".?AV?$CombatBehaviorTreeNodeObject@VCombatBehaviorSurround@@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 212707,
+    "1.5.97": 266097
+   },
+   "slots": [
+    "0x02",
+    "0x03"
+   ],
+   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:355"
+  },
+  {
+   "seat": "Leaf.CombatBehaviorTakeoff",
+   "kind": "vtable",
+   "construct": "apmf::cbt::kLeaves[\"CombatBehaviorTakeoff\"]",
+   "rtti": ".?AV?$CombatBehaviorTreeNodeObject@VCombatBehaviorTakeoff@@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 213460,
+    "1.5.97": 266617
+   },
+   "slots": [
+    "0x02",
+    "0x03"
+   ],
+   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:356"
+  },
+  {
+   "seat": "Leaf.CombatBehaviorTrackTarget",
+   "kind": "vtable",
+   "construct": "apmf::cbt::kLeaves[\"CombatBehaviorTrackTarget\"]",
+   "rtti": ".?AV?$CombatBehaviorTreeNodeObject@VCombatBehaviorTrackTarget@@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 213338,
+    "1.5.97": 266500
+   },
+   "slots": [
+    "0x02",
+    "0x03"
+   ],
+   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:357"
+  },
+  {
+   "seat": "Leaf.CombatBehaviorWaitBehindCover",
+   "kind": "vtable",
+   "construct": "apmf::cbt::kLeaves[\"CombatBehaviorWaitBehindCover\"]",
+   "rtti": ".?AV?$CombatBehaviorTreeNodeObject@VCombatBehaviorWaitBehindCover@@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 214382,
+    "1.5.97": 267193
+   },
+   "slots": [
+    "0x02",
+    "0x03"
+   ],
+   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:358"
+  },
+  {
+   "seat": "RTTI.MagicCaster",
+   "kind": "rtti",
+   "construct": "RE::RTTI_MagicCaster",
+   "rtti": ".?AVMagicCaster@@",
+   "ids": {
+    "1.6.1170": 393096,
+    "1.5.97": 513999
+   },
+   "source": "native/core/CastGate.cpp:197"
+  },
+  {
+   "seat": "RTTI.CombatInventoryItem",
+   "kind": "rtti",
+   "construct": "RE::RTTI_CombatInventoryItem",
+   "rtti": ".?AVCombatInventoryItem@@",
+   "ids": {
+    "1.6.1170": 395440,
+    "1.5.97": 687590
+   },
+   "source": "native/core/EquipGate.cpp:668; AiCastSeats.cpp:1176"
+  },
+  {
+   "seat": "RTTI.CombatMagicCaster",
+   "kind": "rtti",
+   "construct": "RE::RTTI_CombatMagicCaster",
+   "rtti": ".?AVCombatMagicCaster@@",
+   "ids": {
+    "1.6.1170": 395744,
+    "1.5.97": 687618
+   },
+   "source": "native/core/AiCastSeats.cpp:1236; CastSeats.cpp:511"
+  },
+  {
+   "seat": "RTTI.Character",
+   "kind": "rtti",
+   "construct": "RE::RTTI_Character",
+   "rtti": ".?AVCharacter@@",
+   "ids": {
+    "1.6.1170": 394334,
+    "1.5.97": 514043
+   },
+   "source": "native/core/NonAliasProbe.cpp:215"
+  },
+  {
+   "seat": "RTTI.CombatAimController",
+   "kind": "rtti",
+   "construct": "RE::RTTI_CombatAimController",
+   "rtti": ".?AVCombatAimController@@",
+   "ids": {
+    "1.6.1170": 395363,
+    "1.5.97": 687513
+   },
+   "source": "native/core/CastSeats.cpp:536"
+  },
+  {
+   "seat": "RTTI.CombatBehaviorTreeNode",
+   "kind": "rtti",
+   "construct": "apmf::cbt::RTTI_CombatBehaviorTreeNode(686393, 394204)",
+   "ids": {
+    "1.6.1170": 394204,
+    "1.5.97": 686393
+   },
+   "source": "native/core/ActionGate.cpp:504",
+   "rtti": ".?AVCombatBehaviorTreeNode@@"
+  },
+  {
+   "seat": "PackageGate.EvaluatePackage",
+   "kind": "function",
+   "construct": "RELOCATION_ID(36407, 37401)",
+   "ids": {
+    "1.6.1170": 37401,
+    "1.5.97": 36407
+   },
+   "sig": {
+    "1.6.1170": "48 8B C4 56 57 41 56 48 83 EC 60 48 C7 40 D8 FE FF FF FF 48 89 58 10 48 89 68 18 41 0F B6 D8",
+    "1.5.97": "48 8B C4 56 57 41 56 48 83 EC 60 48 C7 40 D8 FE FF FF FF 48 89 58 10 48 89 68 18 41 0F B6 D8"
+   },
+   "source": "native/core/PackageGate.cpp:341",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:144"
+  },
+  {
+   "seat": "MovementDeny.SetDontMove",
+   "kind": "function",
+   "construct": "RELOCATION_ID(36490, 37489)",
+   "ids": {
+    "1.6.1170": 37489,
+    "1.5.97": 36490
+   },
+   "sig": {
+    "1.6.1170": "40 53 48 83 EC 20 48 8B D9 84 D2 74 1F BA 09 00 00 00",
+    "1.5.97": "40 53 48 83 EC 20 48 8B D9 84 D2 74 1F BA 09 00 00 00"
+   },
+   "source": "native/channels/MovementDeny.cpp:42",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:141"
+  },
+  {
+   "seat": "MovementDeny.KeepOffsetFromActor",
+   "kind": "function",
+   "construct": "RELOCATION_ID(36870, 37894)",
+   "ids": {
+    "1.6.1170": 37894,
+    "1.5.97": 36870
+   },
+   "sig": {
+    "1.6.1170": "48 8B C4 57 41 56 41 57 48 83 EC 50 48 C7 40 B8 FE FF FF FF 48 89 58 10 48 89 68 18 48 89 70 20 49 8B E9",
+    "1.5.97": "48 8B C4 56 57 41 56 48 83 EC 50 48 C7 40 B8 FE FF FF FF 48 89 58 10 48 89 68 18 49 8B F1"
+   },
+   "source": "native/channels/MovementDeny.cpp:52",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:142"
+  },
+  {
+   "seat": "MovementDeny.ClearKeepOffsetFromActor",
+   "kind": "function",
+   "construct": "RELOCATION_ID(36871, 37895)",
+   "ids": {
+    "1.6.1170": 37895,
+    "1.5.97": 36871
+   },
+   "sig": {
+    "1.6.1170": "40 57 48 83 EC 30 48 C7 44 24 20 FE FF FF FF 48 89 5C 24 48 48 8B B9 50 01 00 00",
+    "1.5.97": "40 53 48 83 EC 30 48 C7 44 24 20 FE FF FF FF 48 8B 99 48 01 00 00 48 89 5C 24 40 48 85 DB 74 09 F0 FF 43 08 48 8B 5C 24 40 48 85 DB 74 0B"
+   },
+   "source": "native/channels/MovementDeny.cpp:58",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:143"
+  },
+  {
+   "seat": "EquipSink.Worker",
+   "kind": "function",
+   "construct": "REL::ID(kWorkerAE 38929 / kWorkerSE 37974)",
+   "ids": {
+    "1.6.1170": 38929,
+    "1.5.97": 37974
+   },
+   "sig": {
+    "1.6.1170": "40 53 56 57 41 55 48 83 EC 38 48 3B 15 ?? ?? ?? ?? 48 8B FA 48 89 6C 24 60 4C 8B E9 4C 89 74 24 78 49 8B E8 4C 89 7C 24 30 4D 8B F1 75 28 81 BA C8 00 00 00 00 00 00 10 72 1C 41 0F B6 50 1A 8D 42 EA 3C 01 76 08 80 EA 29 80 FA 01 77 08 48 8B CF E8 ?? ?? ?? ?? 48 8B CD E8 ?? ?? ?? ?? 48 85 C0 74 0E 48 8B 10 48 8B C8 FF 52 20 48 8B F0 EB 02 33 F6 33 DB 41 BF 80 06 00 00 48 89 5C 24 68 48 85 F6 0F 84 ?? ?? ?? ?? 4C 89 64 24 70 4C 8B CE 44 8B A7 CC 00 00 00 4C 8B C5 48 8B D7 49 8B CD 41 81 E4 E0 00 00 00 E8 ?? ?? ?? ?? 84 C0 74 0E",
+    "1.5.97": "40 56 57 41 54 41 57 48 83 EC 38 48 3B 15 ?? ?? ?? ?? 48 8B F2 48 89 6C 24 70 4C 8B F9 4C 89 74 24 30 49 8B E8 4D 8B F1 75 29 F7 82 C0 00 00 00 00 00 00 F0 74 1D 41 0F B6 50 1A 8D 42 EA 83 F8 01 76 08 8D 42 D7 83 F8 01 77 08 48 8B CE E8 ?? ?? ?? ?? 48 8B CD E8 ?? ?? ?? ?? 48 85 C0 74 0E 48 8B 10 48 8B C8 FF 52 20 48 8B F8 EB 02 33 FF 45 33 E4 48 85 FF 0F 84 ?? ?? ?? ?? 8B 86 C4 00 00 00 4C 8B CF C1 E8 05 4C 8B C5 83 E0 07 48 89 5C 24 60 3C 03 4C 89 6C 24 78 48 8B D6 49 8B CF 0F 9D 44 24 68 E8 ?? ?? ?? ?? 84 C0 74 0E"
+   },
+   "source": "native/core/EquipSink.cpp:92"
+  },
+  {
+   "seat": "EquipSink.Site.EquipObject",
+   "kind": "callsite",
+   "construct": "kSitesAE {38894, 0x170} / kSitesSE {37938, 0x0E5}",
+   "ids": {
+    "1.6.1170": 38894,
+    "1.5.97": 37938
+   },
+   "sig": {
+    "1.6.1170": "48 85 D2 0F 84 ?? ?? ?? ?? 48 8B C4 57 41 54 41 55 41 56 41 57 48 83 EC 50",
+    "1.5.97": "48 85 D2 0F 84 ?? ?? ?? ?? 57 48 83 EC 50 48 C7 44 24 20 FE FF FF FF 48 89 5C 24 60 48 89 6C 24 70"
+   },
+   "source": "native/core/EquipSink.cpp:85",
+   "offset": {
+    "1.6.1170": "0x170",
+    "1.5.97": "0xE5"
+   },
+   "bytes": "E8",
+   "target": {
+    "1.6.1170": 38929,
+    "1.5.97": 37974
+   },
+   "doc": "ADDRESS-TABLE-2026-09-15.md:14"
+  },
+  {
+   "seat": "EquipSink.Site.EquipObjectList",
+   "kind": "callsite",
+   "construct": "kSitesAE {38893, 0x0BC} / kSitesSE {37937, 0x0BC}",
+   "ids": {
+    "1.6.1170": 38893,
+    "1.5.97": 37937
+   },
+   "sig": {
+    "1.6.1170": "48 85 D2 0F 84 ?? ?? ?? ?? 48 8B C4 48 89 70 20",
+    "1.5.97": "48 85 D2 0F 84 ?? ?? ?? ?? 48 8B C4 48 89 70 20"
+   },
+   "source": "native/core/EquipSink.cpp:86",
+   "offset": {
+    "1.6.1170": "0xBC",
+    "1.5.97": "0xBC"
+   },
+   "bytes": "E8",
+   "target": {
+    "1.6.1170": 38929,
+    "1.5.97": 37974
+   }
+  },
+  {
+   "seat": "PositionCast.CreateReferenceAtLocation",
+   "kind": "function",
+   "construct": "TESDataHandler::CreateReferenceAtLocation RELOCATION_ID(13625, 13723)",
+   "ids": {
+    "1.6.1170": 13723,
+    "1.5.97": 13625
+   },
+   "sig": {
+    "1.6.1170": "48 8B C4 4C 89 48 20 48 89 50 10 55 56 57 41 54 41 55 41 56 41 57 48 8D 68 A8",
+    "1.5.97": "4C 8B DC 4D 89 4B 20 49 89 53 10 55 56 57 41 54"
+   },
+   "source": "native/core/PositionCast.cpp:290",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:470"
+  },
+  {
+   "seat": "PositionCast.TES.GetCell",
+   "kind": "function",
+   "construct": "TES::GetCell RELOCATION_ID(13177, 13322)",
+   "ids": {
+    "1.6.1170": 13322,
+    "1.5.97": 13177
+   },
+   "sig": {
+    "1.6.1170": "48 83 EC 28 48 8B 81 C0 00 00 00 48 85 C0 75 73",
+    "1.5.97": "48 83 EC 28 48 8B 81 C0 00 00 00 48 85 C0 75 71"
+   },
+   "source": "native/core/PositionCast.cpp:267"
+  },
+  {
+   "seat": "PositionCast.InterruptCast",
+   "kind": "function",
+   "construct": "MagicCaster::InterruptCast RELOCATION_ID(33630, 34408)",
+   "ids": {
+    "1.6.1170": 34408,
+    "1.5.97": 33630
+   },
+   "sig": {
+    "1.6.1170": "40 53 48 83 EC 20 48 83 79 28 00 48 8B D9 74 52",
+    "1.5.97": "40 53 48 83 EC 20 48 83 79 28 00 48 8B D9 74 52"
+   },
+   "source": "native/core/PositionCast.cpp",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:469"
+  },
+  {
+   "seat": "SpaceQuery.IsHostileToActor",
+   "kind": "function",
+   "construct": "Offset::Actor::GetHostileToActor RELOCATION_ID(36537, 37537)",
+   "ids": {
+    "1.6.1170": 37537,
+    "1.5.97": 36537
+   },
+   "sig": {
+    "1.6.1170": "48 89 5C 24 10 48 89 74 24 18 57 48 83 EC 20 48 8B F2 48 8B D9 40 32 FF",
+    "1.5.97": "48 89 5C 24 10 48 89 74 24 18 57 48 83 EC 20 48 8B F2 48 8B D9 40 32 FF"
+   },
+   "source": "native/core/SpaceQuery.cpp:335",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:474"
+  },
+  {
+   "seat": "TESObjectREFR",
+   "kind": "vtable",
+   "construct": "RE::VTABLE_TESObjectREFR[0]",
+   "rtti": ".?AVTESObjectREFR@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 190259,
+    "1.5.97": 235511
+   },
+   "slots": [
+    "0x23",
+    "0x5C",
+    "0x89"
+   ],
+   "source": "native/core/PositionCast.cpp:217,347 (SetDelete, GetMagicCaster, Disable; virtual calls)",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:471"
+  },
+  {
+   "seat": "NonActorMagicCaster",
+   "kind": "vtable",
+   "construct": "RE::VTABLE_NonActorMagicCaster[1]",
+   "rtti": ".?AVNonActorMagicCaster@@",
+   "col_offset": 16,
+   "ids": {
+    "1.6.1170": 206007,
+    "1.5.97": 257866
+   },
+   "slots": [
+    "0x01"
+   ],
+   "source": "native/core/PositionCast.cpp:225 (CastSpellImmediate; virtual call)",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:465"
+  },
+  {
+   "seat": "bhkWorld",
+   "kind": "vtable",
+   "construct": "RE::VTABLE_bhkWorld[0]",
+   "rtti": ".?AVbhkWorld@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 238918,
+    "1.5.97": 288902
+   },
+   "slots": [
+    "0x33"
+   ],
+   "source": "native/core/SpaceQuery.cpp:70 (PickObject; virtual call)",
+   "doc": "ADDRESS-TABLE-2026-09-15.md:475"
+  },
+  {
+   "seat": "EquipSink.Path.OutfitApply.418622",
+   "kind": "function",
+   "construct": "kPathsAE { 418622, \"OutfitApply\", PathKind::kEngine }",
+   "ids": {
+    "1.6.1170": 418622
+   },
+   "sig": {
+    "1.6.1170": "48 8B C4 44 88 48 20 48 89 50 10 48 89 48 08 55 57"
+   },
+   "source": "native/core/EquipSink.cpp:108"
+  },
+  {
+   "seat": "EquipSink.Path.AddWornOutfit.19692",
+   "kind": "function",
+   "construct": "kPathsAE { 19692, \"AddWornOutfit\", PathKind::kEngine }",
+   "ids": {
+    "1.6.1170": 19692
+   },
+   "sig": {
+    "1.6.1170": "48 85 D2 0F 84 ?? ?? ?? ?? 48 8B C4 48 89 48 08 53 57"
+   },
+   "source": "native/core/EquipSink.cpp:109"
+  },
+  {
+   "seat": "EquipSink.Path.AiCommand.39649",
+   "kind": "function",
+   "construct": "kPathsAE { 39649, \"AiCommand\", PathKind::kEngine }",
+   "ids": {
+    "1.6.1170": 39649
+   },
+   "sig": {
+    "1.6.1170": "48 8B C4 55 56 57 41 54 41 55 41 56 41 57 48 8D 68 98 48 81 EC 30 01 00 00 48 C7 45 A8 FE FF FF FF"
+   },
+   "source": "native/core/EquipSink.cpp:110"
+  },
+  {
+   "seat": "EquipSink.Path.AiCommand.39650",
+   "kind": "function",
+   "construct": "kPathsAE { 39650, \"AiCommand\", PathKind::kEngine }",
+   "ids": {
+    "1.6.1170": 39650
+   },
+   "sig": {
+    "1.6.1170": "48 8B C4 55 56 57 41 54 41 55 41 56 41 57 48 8D A8 F8 FE FF FF 48 81 EC D0 01 00 00 48 C7 45 00 FE FF FF FF"
+   },
+   "source": "native/core/EquipSink.cpp:111"
+  },
+  {
+   "seat": "EquipSink.Path.RemoveItemReequip.37797",
+   "kind": "function",
+   "construct": "kPathsAE { 37797, \"RemoveItemReequip\", PathKind::kEngine }",
+   "ids": {
+    "1.6.1170": 37797
+   },
+   "sig": {
+    "1.6.1170": "4C 8B DC 49 89 5B 10 49 89 6B 18 49 89 73 20 57 48 83 EC 50 8B 05 ?? ?? ?? ??"
+   },
+   "source": "native/core/EquipSink.cpp:112"
+  },
+  {
+   "seat": "EquipSink.Path.RemoveItemReequip.19689",
+   "kind": "function",
+   "construct": "kPathsAE { 19689, \"RemoveItemReequip\", PathKind::kEngine }",
+   "ids": {
+    "1.6.1170": 19689
+   },
+   "sig": {
+    "1.6.1170": "48 89 5C 24 18 55 56 57 48 83 EC 50 8B 05 ?? ?? ?? ??"
+   },
+   "source": "native/core/EquipSink.cpp:113"
+  },
+  {
+   "seat": "EquipSink.Path.RemoveItemReequip.16059",
+   "kind": "function",
+   "construct": "kPathsAE { 16059, \"RemoveItemReequip\", PathKind::kEngine }",
+   "ids": {
+    "1.6.1170": 16059
+   },
+   "sig": {
+    "1.6.1170": "4C 89 4C 24 20 4C 89 44 24 18 48 89 54 24 10 48 89 4C 24 08 55 53 56 57 41 54 41 55 41 56 41 57 48 8D AC 24 B8 FE FF FF"
+   },
+   "source": "native/core/EquipSink.cpp:114"
+  },
+  {
+   "seat": "EquipSink.Path.CombatNode.48126",
+   "kind": "function",
+   "construct": "kPathsAE { 48126, \"CombatNode\", PathKind::kEngine }",
+   "ids": {
+    "1.6.1170": 48126
+   },
+   "sig": {
+    "1.6.1170": "48 8B C4 41 56 48 81 EC 90 00 00 00 48 C7 40 B8 FE FF FF FF"
+   },
+   "source": "native/core/EquipSink.cpp:115"
+  },
+  {
+   "seat": "EquipSink.Path.CombatNode.48124",
+   "kind": "function",
+   "construct": "kPathsAE { 48124, \"CombatNode\", PathKind::kEngine }",
+   "ids": {
+    "1.6.1170": 48124
+   },
+   "sig": {
+    "1.6.1170": "48 8B C4 57 41 54 41 55 41 56 41 57 48 81 EC 90 00 00 00 48 C7 40 98 FE FF FF FF"
+   },
+   "source": "native/core/EquipSink.cpp:116"
+  },
+  {
+   "seat": "EquipSink.Path.Script.54661",
+   "kind": "function",
+   "construct": "kPathsAE { 54661, \"Script\", PathKind::kScript }",
+   "ids": {
+    "1.6.1170": 54661
+   },
+   "sig": {
+    "1.6.1170": "48 8B C4 57 41 54 41 55 41 56 41 57 48 83 EC 70 48 C7 40 B8 FE FF FF FF"
+   },
+   "source": "native/core/EquipSink.cpp:117"
+  },
+  {
+   "seat": "EquipSink.Path.Console.22351",
+   "kind": "function",
+   "construct": "kPathsAE { 22351, \"Console\", PathKind::kConsole }",
+   "ids": {
+    "1.6.1170": 22351
+   },
+   "sig": {
+    "1.6.1170": "4C 8B DC 55 41 54 41 55 41 56 41 57 49 8D 6B C1 48 81 EC 90 00 00 00 48 C7 45 FF FE FF FF FF"
+   },
+   "source": "native/core/EquipSink.cpp:118"
+  },
+  {
+   "seat": "EquipSink.Path.PlayerMenu.29383",
+   "kind": "function",
+   "construct": "kPathsAE { 29383, \"PlayerMenu\", PathKind::kPlayerMenu }",
+   "ids": {
+    "1.6.1170": 29383
+   },
+   "sig": {
+    "1.6.1170": "48 8B C4 48 89 50 10 48 89 48 08 55 53 56 57 41 54 41 55 41 56 41 57 48 8D A8 D8 FC FF FF"
+   },
+   "source": "native/core/EquipSink.cpp:119"
+  },
+  {
+   "seat": "EquipSink.Path.PlayerMenu.29346",
+   "kind": "function",
+   "construct": "kPathsAE { 29346, \"PlayerMenu\", PathKind::kPlayerMenu }",
+   "ids": {
+    "1.6.1170": 29346
+   },
+   "sig": {
+    "1.6.1170": "48 8B C4 48 89 50 10 48 89 48 08 55 53 56 57 41 54 41 55 41 56 41 57 48 8D A8 98 FE FF FF 48 81 EC 28 02 00 00 48 C7 45 30 FE FF FF FF"
+   },
+   "source": "native/core/EquipSink.cpp:120"
+  },
+  {
+   "seat": "EquipSink.Path.PlayerMenu.38907",
+   "kind": "function",
+   "construct": "kPathsAE { 38907, \"PlayerMenu\", PathKind::kPlayerMenu }",
+   "ids": {
+    "1.6.1170": 38907
+   },
+   "sig": {
+    "1.6.1170": "48 89 5C 24 08 4C 89 44 24 18 55 56 57 41 54 41 55 41 56 41 57 48 83 EC 60"
+   },
+   "source": "native/core/EquipSink.cpp:121"
+  },
+  {
+   "seat": "EquipSink.Path.WorkerReentry.38913",
+   "kind": "function",
+   "construct": "kPathsAE { 38913, \"WorkerReentry\", PathKind::kEngine }",
+   "ids": {
+    "1.6.1170": 38913
+   },
+   "sig": {
+    "1.6.1170": "48 85 D2 0F 84 ?? ?? ?? ?? 48 89 5C 24 20 55 56"
+   },
+   "source": "native/core/EquipSink.cpp:122"
+  },
+  {
+   "seat": "EquipSink.Path.QueuedApply.38906",
+   "kind": "function",
+   "construct": "kPathsAE { 38906, \"QueuedApply\", PathKind::kEngine }",
+   "ids": {
+    "1.6.1170": 38906
+   },
+   "sig": {
+    "1.6.1170": "48 85 D2 0F 84 ?? ?? ?? ?? 48 8B C4 55 56 57 48 83 EC 60 48 89 58 08"
+   },
+   "source": "native/core/EquipSink.cpp:129"
+  },
+  {
+   "seat": "EquipSink.Path.QueuedApply.39814",
+   "kind": "function",
+   "construct": "kPathsAE { 39814, \"QueuedApply\", PathKind::kEngine }",
+   "ids": {
+    "1.6.1170": 39814
+   },
+   "sig": {
+    "1.6.1170": "48 89 74 24 20 57 48 83 EC 60 48 8B 71 08 48 8B FA"
+   },
+   "source": "native/core/EquipSink.cpp:130"
+  },
+  {
+   "seat": "EquipSink.Path.AiCommand.39637",
+   "kind": "function",
+   "construct": "kPathsAE { 39637, \"AiCommand\", PathKind::kEngine }",
+   "ids": {
+    "1.6.1170": 39637
+   },
+   "sig": {
+    "1.6.1170": "48 8B C4 55 53 56 57 41 54 41 55 41 56 41 57 48 8D A8 28 FF FF FF 48 81 EC 98 01 00 00 48 C7 45 E8 FE FF FF FF"
+   },
+   "source": "native/core/EquipSink.cpp:139"
+  },
+  {
+   "seat": "EquipSink.Path.AiCommand.39948",
+   "kind": "function",
+   "construct": "kPathsAE { 39948, \"AiCommand\", PathKind::kEngine }",
+   "ids": {
+    "1.6.1170": 39948
+   },
+   "sig": {
+    "1.6.1170": "48 89 5C 24 08 48 89 6C 24 10 48 89 74 24 18 57 48 83 EC 60 48 8B DA"
+   },
+   "source": "native/core/EquipSink.cpp:140"
+  },
+  {
+   "seat": "EquipSink.Path.AiCommand.39655",
+   "kind": "function",
+   "construct": "kPathsAE { 39655, \"AiCommand\", PathKind::kEngine }",
+   "ids": {
+    "1.6.1170": 39655
+   },
+   "sig": {
+    "1.6.1170": "48 8B C4 55 56 57 41 54 41 55 41 56 41 57 48 8D 68 A1 48 81 EC 00 01 00 00 48 C7 45 07 FE FF FF FF 48 89 58 08 0F 29 70 B8 4D 8B F8"
+   },
+   "source": "native/core/EquipSink.cpp:141"
+  },
+  {
+   "seat": "EquipSink.Path.AiCommand.39645",
+   "kind": "function",
+   "construct": "kPathsAE { 39645, \"AiCommand\", PathKind::kEngine }",
+   "ids": {
+    "1.6.1170": 39645
+   },
+   "sig": {
+    "1.6.1170": "48 89 5C 24 10 48 89 6C 24 18 56 57 41 55 41 56 41 57 48 83 EC 40"
+   },
+   "source": "native/core/EquipSink.cpp:142"
+  },
+  {
+   "seat": "EquipSink.Path.AiCommand.37510",
+   "kind": "function",
+   "construct": "kPathsAE { 37510, \"AiCommand\", PathKind::kEngine }",
+   "ids": {
+    "1.6.1170": 37510
+   },
+   "sig": {
+    "1.6.1170": "48 8B C4 57 41 54 41 55 41 56 41 57 48 83 EC 70 48 C7 40 C8 FE FF FF FF 48 89 58 10 48 89 68 18 48 89 70 20 49 8B F1"
+   },
+   "source": "native/core/EquipSink.cpp:143"
+  },
+  {
+   "seat": "EquipSink.Path.DropObject.37520",
+   "kind": "function",
+   "construct": "kPathsAE { 37520, \"DropObject\", PathKind::kEngine }",
+   "ids": {
+    "1.6.1170": 37520
+   },
+   "sig": {
+    "1.6.1170": "48 8B C4 55 56 57 41 54 41 55 41 56 41 57 48 81 EC 90 00 00 00 48 C7 40 A8 FE FF FF FF"
+   },
+   "source": "native/core/EquipSink.cpp:144"
+  },
+  {
+   "seat": "EquipSink.Path.PickUpObject.37521",
+   "kind": "function",
+   "construct": "kPathsAE { 37521, \"PickUpObject\", PathKind::kEngine }",
+   "ids": {
+    "1.6.1170": 37521
+   },
+   "sig": {
+    "1.6.1170": "44 88 4C 24 20 55 56 57 41 54 41 55 41 56 41 57 48 83 EC 70"
+   },
+   "source": "native/core/EquipSink.cpp:145"
+  },
+  {
+   "seat": "EquipSink.Path.BoundItem.38898",
+   "kind": "function",
+   "construct": "kPathsAE { 38898, \"BoundItem\", PathKind::kEngine }",
+   "ids": {
+    "1.6.1170": 38898
+   },
+   "sig": {
+    "1.6.1170": "48 85 D2 0F 84 ?? ?? ?? ?? 48 8B C4 48 89 48 08 57"
+   },
+   "source": "native/core/EquipSink.cpp:146"
+  },
+  {
+   "seat": "EquipSink.Path.ProcedureEat.28422",
+   "kind": "function",
+   "construct": "kPathsAE { 28422, \"ProcedureEat\", PathKind::kEngine }",
+   "ids": {
+    "1.6.1170": 28422
+   },
+   "sig": {
+    "1.6.1170": "48 8B C4 56 57 41 54 41 55 41 57 48 83 EC 50 48 C7 40 B8 FE FF FF FF 48 89 58 08 48 89 68 18"
+   },
+   "source": "native/core/EquipSink.cpp:147"
+  },
+  {
+   "seat": "EquipSink.Path.InventoryReequip.41244",
+   "kind": "function",
+   "construct": "kPathsAE { 41244, \"InventoryReequip\", PathKind::kEngine }",
+   "ids": {
+    "1.6.1170": 41244
+   },
+   "sig": {
+    "1.6.1170": "48 8B C4 41 54 41 56 41 57 48 81 EC D0 00 00 00"
+   },
+   "source": "native/core/EquipSink.cpp:148"
+  },
+  {
+   "seat": "EquipSink.Path.StartCombat.38561",
+   "kind": "function",
+   "construct": "kPathsAE { 38561, \"StartCombat\", PathKind::kEngine }",
+   "ids": {
+    "1.6.1170": 38561
+   },
+   "sig": {
+    "1.6.1170": "4C 8B DC 55 56 57 41 54 41 55 41 56 41 57 48 83 EC 50 49 C7 43 A8 FE FF FF FF 49 89 5B 10 0F 29 74 24 40 49 8B E8"
+   },
+   "source": "native/core/EquipSink.cpp:149"
+  },
+  {
+   "seat": "EquipSink.Path.OutfitApply.24234",
+   "kind": "function",
+   "construct": "kPathsSE { 24234, \"OutfitApply\", PathKind::kEngine }",
+   "ids": {
+    "1.5.97": 24234
+   },
+   "sig": {
+    "1.5.97": "48 8B C4 44 88 48 20 48 89 50 10 48 89 48 08 55 56 48 8D 68 88"
+   },
+   "source": "native/core/EquipSink.cpp:158"
+  },
+  {
+   "seat": "EquipSink.Path.AddWornOutfit.19266",
+   "kind": "function",
+   "construct": "kPathsSE { 19266, \"AddWornOutfit\", PathKind::kEngine }",
+   "ids": {
+    "1.5.97": 19266
+   },
+   "sig": {
+    "1.5.97": "48 85 D2 0F 84 ?? ?? ?? ?? 48 8B C4 48 89 48 08 53"
+   },
+   "source": "native/core/EquipSink.cpp:159"
+  },
+  {
+   "seat": "EquipSink.Path.AiCommand.38618",
+   "kind": "function",
+   "construct": "kPathsSE { 38618, \"AiCommand\", PathKind::kEngine }",
+   "ids": {
+    "1.5.97": 38618
+   },
+   "sig": {
+    "1.5.97": "48 8B C4 55 56 57 41 54 41 55 41 56 41 57 48 8D 68 98 48 81 EC 30 01 00 00 48 C7 45 B0 FE FF FF FF"
+   },
+   "source": "native/core/EquipSink.cpp:160"
+  },
+  {
+   "seat": "EquipSink.Path.AiCommand.38619",
+   "kind": "function",
+   "construct": "kPathsSE { 38619, \"AiCommand\", PathKind::kEngine }",
+   "ids": {
+    "1.5.97": 38619
+   },
+   "sig": {
+    "1.5.97": "48 8B C4 55 56 57 41 54 41 55 41 56 41 57 48 8D A8 F8 FE FF FF 48 81 EC D0 01 00 00 48 C7 45 F8 FE FF FF FF"
+   },
+   "source": "native/core/EquipSink.cpp:161"
+  },
+  {
+   "seat": "EquipSink.Path.RemoveItemReequip.36781",
+   "kind": "function",
+   "construct": "kPathsSE { 36781, \"RemoveItemReequip\", PathKind::kEngine }",
+   "ids": {
+    "1.5.97": 36781
+   },
+   "sig": {
+    "1.5.97": "4C 8B DC 49 89 5B 10 49 89 6B 18 49 89 73 20 57 48 83 EC 50 8B 05 ?? ?? ?? ??"
+   },
+   "source": "native/core/EquipSink.cpp:162"
+  },
+  {
+   "seat": "EquipSink.Path.RemoveItemReequip.19263",
+   "kind": "function",
+   "construct": "kPathsSE { 19263, \"RemoveItemReequip\", PathKind::kEngine }",
+   "ids": {
+    "1.5.97": 19263
+   },
+   "sig": {
+    "1.5.97": "48 89 5C 24 18 55 57 41 56 48 83 EC 50 8B 05 ?? ?? ?? ??"
+   },
+   "source": "native/core/EquipSink.cpp:163"
+  },
+  {
+   "seat": "EquipSink.Path.RemoveItemReequip.15821",
+   "kind": "function",
+   "construct": "kPathsSE { 15821, \"RemoveItemReequip\", PathKind::kEngine }",
+   "ids": {
+    "1.5.97": 15821
+   },
+   "sig": {
+    "1.5.97": "4C 89 4C 24 20 4C 89 44 24 18 48 89 54 24 10 48 89 4C 24 08 55 53 56 57 48 8D AC 24 A8 FE FF FF"
+   },
+   "source": "native/core/EquipSink.cpp:164"
+  },
+  {
+   "seat": "EquipSink.Path.CombatNode.46957",
+   "kind": "function",
+   "construct": "kPathsSE { 46957, \"CombatNode\", PathKind::kEngine }",
+   "ids": {
+    "1.5.97": 46957
+   },
+   "sig": {
+    "1.5.97": "4C 8B DC 41 57 48 81 EC B0 00 00 00 49 C7 43 98 FE FF FF FF"
+   },
+   "source": "native/core/EquipSink.cpp:165"
+  },
+  {
+   "seat": "EquipSink.Path.CombatNode.46955",
+   "kind": "function",
+   "construct": "kPathsSE { 46955, \"CombatNode\", PathKind::kEngine }",
+   "ids": {
+    "1.5.97": 46955
+   },
+   "sig": {
+    "1.5.97": "4C 8B DC 41 54 41 56 41 57 48 81 EC B0 00 00 00"
+   },
+   "source": "native/core/EquipSink.cpp:166"
+  },
+  {
+   "seat": "EquipSink.Path.Script.53861",
+   "kind": "function",
+   "construct": "kPathsSE { 53861, \"Script\", PathKind::kScript }",
+   "ids": {
+    "1.5.97": 53861
+   },
+   "sig": {
+    "1.5.97": "48 8B C4 57 41 54 41 55 41 56 41 57 48 83 EC 70 48 C7 40 B8 FE FF FF FF 48 89 58 08 48 89 68 10"
+   },
+   "source": "native/core/EquipSink.cpp:167"
+  },
+  {
+   "seat": "EquipSink.Path.Console.21869",
+   "kind": "function",
+   "construct": "kPathsSE { 21869, \"Console\", PathKind::kConsole }",
+   "ids": {
+    "1.5.97": 21869
+   },
+   "sig": {
+    "1.5.97": "4C 8B DC 55 41 54 41 55 41 56 41 57 49 8D 6B C1"
+   },
+   "source": "native/core/EquipSink.cpp:168"
+  },
+  {
+   "seat": "EquipSink.Path.PlayerMenu.28629",
+   "kind": "function",
+   "construct": "kPathsSE { 28629, \"PlayerMenu\", PathKind::kPlayerMenu }",
+   "ids": {
+    "1.5.97": 28629
+   },
+   "sig": {
+    "1.5.97": "48 8B C4 48 89 50 10 48 89 48 08 55 53 56 57 41 54 41 55 41 56 41 57 48 8D A8 A8 FC FF FF"
+   },
+   "source": "native/core/EquipSink.cpp:169"
+  },
+  {
+   "seat": "EquipSink.Path.PlayerMenu.28593",
+   "kind": "function",
+   "construct": "kPathsSE { 28593, \"PlayerMenu\", PathKind::kPlayerMenu }",
+   "ids": {
+    "1.5.97": 28593
+   },
+   "sig": {
+    "1.5.97": "48 8B C4 48 89 50 10 48 89 48 08 55 53 56 57 41 54 41 55 41 56 41 57 48 8D A8 78 FE FF FF"
+   },
+   "source": "native/core/EquipSink.cpp:170"
+  },
+  {
+   "seat": "EquipSink.Path.PlayerMenu.37951",
+   "kind": "function",
+   "construct": "kPathsSE { 37951, \"PlayerMenu\", PathKind::kPlayerMenu }",
+   "ids": {
+    "1.5.97": 37951
+   },
+   "sig": {
+    "1.5.97": "48 89 5C 24 08 4C 89 44 24 18 55 56 57 41 54 41 55 41 56 41 57 48 83 EC 60"
+   },
+   "source": "native/core/EquipSink.cpp:171"
+  },
+  {
+   "seat": "EquipSink.Path.WorkerReentry.37957",
+   "kind": "function",
+   "construct": "kPathsSE { 37957, \"WorkerReentry\", PathKind::kEngine }",
+   "ids": {
+    "1.5.97": 37957
+   },
+   "sig": {
+    "1.5.97": "48 85 D2 0F 84 ?? ?? ?? ?? 48 89 5C 24 20 56 57 41 56 48 83 EC 50"
+   },
+   "source": "native/core/EquipSink.cpp:172"
+  },
+  {
+   "seat": "EquipSink.Path.QueuedApply.37950",
+   "kind": "function",
+   "construct": "kPathsSE { 37950, \"QueuedApply\", PathKind::kEngine }",
+   "ids": {
+    "1.5.97": 37950
+   },
+   "sig": {
+    "1.5.97": "48 85 D2 0F 84 ?? ?? ?? ?? 48 8B C4 55 56 57 48 83 EC 70 48 8B FA"
+   },
+   "source": "native/core/EquipSink.cpp:173"
+  },
+  {
+   "seat": "EquipSink.Path.QueuedApply.38789",
+   "kind": "function",
+   "construct": "kPathsSE { 38789, \"QueuedApply\", PathKind::kEngine }",
+   "ids": {
+    "1.5.97": 38789
+   },
+   "sig": {
+    "1.5.97": "48 89 74 24 20 57 48 83 EC 60 48 8B 79 08 48 8B F2"
+   },
+   "source": "native/core/EquipSink.cpp:174"
+  },
+  {
+   "seat": "EquipSink.Path.AiCommand.38606",
+   "kind": "function",
+   "construct": "kPathsSE { 38606, \"AiCommand\", PathKind::kEngine }",
+   "ids": {
+    "1.5.97": 38606
+   },
+   "sig": {
+    "1.5.97": "48 8B C4 55 53 56 57 41 54 41 55 41 56 41 57 48 8D 68 88 48 81 EC 38 01 00 00 48 C7 45 98 FE FF FF FF"
+   },
+   "source": "native/core/EquipSink.cpp:178"
+  },
+  {
+   "seat": "EquipSink.Path.AiCommand.38902",
+   "kind": "function",
+   "construct": "kPathsSE { 38902, \"AiCommand\", PathKind::kEngine }",
+   "ids": {
+    "1.5.97": 38902
+   },
+   "sig": {
+    "1.5.97": "48 89 5C 24 08 48 89 6C 24 10 48 89 74 24 18 57 48 83 EC 60 48 8B FA"
+   },
+   "source": "native/core/EquipSink.cpp:179"
+  },
+  {
+   "seat": "EquipSink.Path.AiCommand.38624",
+   "kind": "function",
+   "construct": "kPathsSE { 38624, \"AiCommand\", PathKind::kEngine }",
+   "ids": {
+    "1.5.97": 38624
+   },
+   "sig": {
+    "1.5.97": "48 8B C4 55 56 57 41 54 41 55 41 56 41 57 48 8D 68 A1 48 81 EC 00 01 00 00 48 C7 45 07 FE FF FF FF 48 89 58 08 0F 29 70 B8 4D 8B F8"
+   },
+   "source": "native/core/EquipSink.cpp:180"
+  },
+  {
+   "seat": "EquipSink.Path.AiCommand.38614",
+   "kind": "function",
+   "construct": "kPathsSE { 38614, \"AiCommand\", PathKind::kEngine }",
+   "ids": {
+    "1.5.97": 38614
+   },
+   "sig": {
+    "1.5.97": "48 89 5C 24 10 48 89 6C 24 18 56 57 41 56 48 83 EC 40 48 83 79 20 00"
+   },
+   "source": "native/core/EquipSink.cpp:181"
+  },
+  {
+   "seat": "EquipSink.Path.AiCommand.36510",
+   "kind": "function",
+   "construct": "kPathsSE { 36510, \"AiCommand\", PathKind::kEngine }",
+   "ids": {
+    "1.5.97": 36510
+   },
+   "sig": {
+    "1.5.97": "48 8B C4 57 41 54 41 55 41 56 41 57 48 83 EC 70 48 C7 40 C8 FE FF FF FF 48 89 58 10 48 89 68 18 48 89 70 20 49 8B F1"
+   },
+   "source": "native/core/EquipSink.cpp:182"
+  },
+  {
+   "seat": "EquipSink.Path.DropObject.36520",
+   "kind": "function",
+   "construct": "kPathsSE { 36520, \"DropObject\", PathKind::kEngine }",
+   "ids": {
+    "1.5.97": 36520
+   },
+   "sig": {
+    "1.5.97": "48 8B C4 55 56 57 41 54 41 55 41 56 41 57 48 81 EC 90 00 00 00 48 C7 40 A8 FE FF FF FF"
+   },
+   "source": "native/core/EquipSink.cpp:183"
+  },
+  {
+   "seat": "EquipSink.Path.PickUpObject.36521",
+   "kind": "function",
+   "construct": "kPathsSE { 36521, \"PickUpObject\", PathKind::kEngine }",
+   "ids": {
+    "1.5.97": 36521
+   },
+   "sig": {
+    "1.5.97": "44 88 4C 24 20 55 56 57 41 54 41 55 41 56 41 57 48 83 EC 70"
+   },
+   "source": "native/core/EquipSink.cpp:184"
+  },
+  {
+   "seat": "EquipSink.Path.BoundItem.37942",
+   "kind": "function",
+   "construct": "kPathsSE { 37942, \"BoundItem\", PathKind::kEngine }",
+   "ids": {
+    "1.5.97": 37942
+   },
+   "sig": {
+    "1.5.97": "48 85 D2 0F 84 ?? ?? ?? ?? 48 8B C4 56 57 41 54 41 56 41 57 48 81 EC 80 00 00 00 48 C7 40 A8 FE FF FF FF"
+   },
+   "source": "native/core/EquipSink.cpp:185"
+  },
+  {
+   "seat": "EquipSink.Path.ProcedureEat.27700",
+   "kind": "function",
+   "construct": "kPathsSE { 27700, \"ProcedureEat\", PathKind::kEngine }",
+   "ids": {
+    "1.5.97": 27700
+   },
+   "sig": {
+    "1.5.97": "40 55 56 41 56 41 57 48 83 EC 48 48 8B 02 4C 8B FA"
+   },
+   "source": "native/core/EquipSink.cpp:186"
+  },
+  {
+   "seat": "EquipSink.Path.InventoryReequip.40241",
+   "kind": "function",
+   "construct": "kPathsSE { 40241, \"InventoryReequip\", PathKind::kEngine }",
+   "ids": {
+    "1.5.97": 40241
+   },
+   "sig": {
+    "1.5.97": "48 8B C4 56 57 41 54 41 56 41 57 48 81 EC D0 00 00 00 48 C7 44 24 60 FE FF FF FF"
+   },
+   "source": "native/core/EquipSink.cpp:187"
+  },
+  {
+   "seat": "EquipSink.Path.StartCombat.37608",
+   "kind": "function",
+   "construct": "kPathsSE { 37608, \"StartCombat\", PathKind::kEngine }",
+   "ids": {
+    "1.5.97": 37608
+   },
+   "sig": {
+    "1.5.97": "4C 8B DC 56 57 41 54 41 56 41 57 48 83 EC 50 49 C7 43 B8 FE FF FF FF 49 89 5B 10 49 89 6B 18 0F 29 74 24 40 49 8B E8"
+   },
+   "source": "native/core/EquipSink.cpp:188"
+  }
+ ],
+ "layout_facts": [
+  {
+   "what": "Character / PlayerCharacter slot Actor::Update",
+   "value": "0xAD",
+   "where": "core/Hook.cpp:57,80",
+   "verified_by": "ADDRESS-TABLE (Character rows); Rows table slot targets",
+   "gate": "VR refused + self-check"
+  },
+  {
+   "what": "Character slot CheckForCurrentAliasPackage",
+   "value": "0x49",
+   "where": "core/PackageGate.cpp:283",
+   "verified_by": "Rows table slot target; ENGINE_NOTES 0x49 field proof",
+   "gate": "VR refused + self-check"
+  },
+  {
+   "what": "Character slot PutCreatedPackage",
+   "value": "0xDF",
+   "where": "core/NonAliasProbe.cpp:79",
+   "verified_by": "Rows table slot target",
+   "gate": "VR refused + RTTI DerivesFrom + self-check"
+  },
+  {
+   "what": "ActorMagicCaster slot CheckCast",
+   "value": "0x0A",
+   "where": "core/CastGate.cpp:199",
+   "verified_by": "Rows table; RTTI DerivesFrom(MagicCaster)",
+   "gate": "VR refused + self-check"
+  },
+  {
+   "what": "MagicCaster vcalls GetCasterAsActor / GetCastingSource",
+   "value": "0x0C / 0x15",
+   "where": "core/CastGate.cpp:103,115",
+   "verified_by": "CommonLib 3.7.0 MagicCaster.h",
+   "gate": "inside the CheckCast hook"
+  },
+  {
+   "what": "CombatMagicItemData slot 1 (classify) and members spell / controller / self-flag",
+   "value": "slot 1; +0x10 / +0x18 / +0x4C (u8, WRITTEN)",
+   "where": "core/CastClassify.cpp:31-62, :188",
+   "verified_by": "exact RTTI name check .?AVCombatMagicItemData@@ + exact 1.6.1170/1.5.97 gate (CastClassify.cpp:263)",
+   "gate": "exact-version + self-check"
+  },
+  {
+   "what": "CombatMagicCaster slots CheckStartCast / CheckStopCast / GetMagicTarget / SetupAimController",
+   "value": "0x06 / 0x07 / 0x0A / 0x0D",
+   "where": "core/CastSeats.cpp:103-106; AiCastSeats.cpp Group B",
+   "verified_by": "Rows table slot targets; GetMagicTarget sret shape = fork CombatMagicCaster::MagicTarget (fork 4065b48d)",
+   "gate": "VR refused + RTTI + self-check"
+  },
+  {
+   "what": "GetMagicTarget out-slot {u32 handle, pad, Actor*}",
+   "value": "16 bytes, ptr @+8",
+   "where": "core/CastSeats.cpp:271; AiCastSeats.cpp:955",
+   "verified_by": "base impl 1.6.1170 0x81E020 / 1.5.97 0x781CB0 (fork 4065b48d)",
+   "gate": "inside the hook"
+  },
+  {
+   "what": "CombatProjectileAimController +0x28 CombatController*, +0x30 aim override (u32, WRITTEN)",
+   "value": "+0x28 / +0x30",
+   "where": "core/CastSeats.cpp:117, :446-465",
+   "verified_by": "aim ctor 0x7F51C0 (1.6.1170) per code comment; vtable identity check A22",
+   "gate": "INI + vtable identity; no version gate"
+  },
+  {
+   "what": "CombatMagicCasterRestore::primaryAV / CombatMagicCaster::magicItem",
+   "value": "0x28 / 0x18",
+   "where": "core/CastSeats.cpp:98, :178, :380",
+   "verified_by": "static_asserts (compile-time)",
+   "gate": "inside the hook"
+  },
+  {
+   "what": "CombatController attackerHandle / targetHandle / inventory",
+   "value": "0x28 / 0x2C / 0x10",
+   "where": "CastSeats.cpp:181; EquipGate.cpp:280,364; AiCastSeats.cpp:115",
+   "verified_by": "fork CombatController ctors: identical below +0x68 on both builds",
+   "gate": "inside the hooks"
+  },
+  {
+   "what": "CombatInventoryItem item / itemSlot, CombatInventory::dirty (WRITTEN)",
+   "value": "0x10 / 0x20 / 0x1C4",
+   "where": "EquipGate.cpp:283,292,364",
+   "verified_by": "static_asserts (CommonLib 3.7.0 layout)",
+   "gate": "VR refused"
+  },
+  {
+   "what": "CombatInventoryItemMagicT slots CalculateScore / CheckShouldEquip",
+   "value": "0x0C / 0x0F",
+   "where": "EquipGate.cpp:709; AiCastSeats.cpp:189,193",
+   "verified_by": "Rows table slot targets",
+   "gate": "VR refused + RTTI + self-check"
+  },
+  {
+   "what": "Weapon-class CalculateScore slot + expected engine entry",
+   "value": "0x0C; Melee 0x8183E0/0x77E0A0, Ranged 0x8188B0/0x77E550, Shield 0x818DF0/0x77EAC0, Torch 0x819480/0x77F0E0",
+   "where": "AiCastSeats.cpp:377-380, :1287",
+   "verified_by": "live-slot compare in code (the only slot-content check) + Rows table",
+   "gate": "exact 1.6.1170/1.5.97 + self-check"
+  },
+  {
+   "what": "MagicItem slot GetCategory",
+   "value": "0x0B",
+   "where": "EquipGate.cpp:404",
+   "verified_by": "skyrim_cast<MagicItem*> before the call",
+   "gate": "VR refused"
+  },
+  {
+   "what": "BGSDefaultObjectManager objects[19] / objects[20] (left / right hand equip slot)",
+   "value": "+0x20 + i*8",
+   "where": "EquipGate.cpp:246; AiCastSeats.cpp:428",
+   "verified_by": "fork DOBJ: objects at +0x20 on both builds (indices < 363 identical); As<BGSEquipSlot> check",
+   "gate": "VR refused"
+  },
+  {
+   "what": "CheckShouldEquip caller return RVAs (log label only)",
+   "value": "0x80FCD0, 0x813AF2, 0x813D38, 0x814270, 0x8144B2",
+   "where": "EquipGate.cpp:195-203",
+   "verified_by": "log label only",
+   "gate": "exact 1.6.1170"
+  },
+  {
+   "what": "TESForm(item) + 0x28 equip-slot bitmask",
+   "value": "+0x28 (u32)",
+   "where": "AiCastSeats.cpp:690",
+   "verified_by": "comment only (PASS S)",
+   "gate": "Group C gates"
+  },
+  {
+   "what": "Behaviour-tree leaf slots act() / pop()",
+   "value": "0x02 / 0x03",
+   "where": "ActionGate.cpp; CombatBehaviorRE.h",
+   "verified_by": "Rows table slot targets; RTTI DerivesFrom(CombatBehaviorTreeNode)",
+   "gate": "VR refused + RTTI + self-check"
+  },
+  {
+   "what": "CombatBehaviorThread +0x158 controller, +0x20 hop, +0x28 attackerHandle",
+   "value": "+0x158 / +0x20 / +0x28",
+   "where": "CombatBehaviorRE.h:70-94; ActionGate.cpp:332-340",
+   "verified_by": "local struct static_asserts only",
+   "gate": "VR refused (install)"
+  },
+  {
+   "what": "IPackageData + 0x10 -> PackageLocation* (read, then WRITTEN by Travel)",
+   "value": "0x10",
+   "where": "core/PackageData.cpp:90, :249",
+   "verified_by": "type-name check kTypeLocation before the read",
+   "gate": "Travel VR gate"
+  },
+  {
+   "what": "Character vcall IsInCombat",
+   "value": "0xE3",
+   "where": "channels/Travel.cpp:827",
+   "verified_by": "CommonLib RelocateVirtual",
+   "gate": "Travel VR gate"
+  },
+  {
+   "what": "Actor runtime data boolFlags (WRITTEN, probe)",
+   "value": "CommonLib RelocateMember",
+   "where": "core/NativeBitProbe.cpp:46",
+   "verified_by": "CommonLib 3.7.0",
+   "gate": "INI only (off by default)"
+  },
+  {
+   "what": "EquipSink per-site caller frame depth; worker 4th-arg struct",
+   "value": "0x80 / 0x70 (1.6.1170), 0x60 / 0x70 (1.5.97); extra +0, count +8, slot +0x10",
+   "where": "EquipSink.cpp:41-60, :84-91, :406",
+   "verified_by": "derived from the prologues (code comments); site E8 + target check in code",
+   "gate": "exact 1.6.1170/1.5.97 + self-check"
+  },
+  {
+   "what": "EquipSink Classify: RVA -> id through the Address Library table",
+   "value": "the whole Offset2ID table",
+   "where": "EquipSink.cpp:269-280, :698",
+   "verified_by": "the path ids above are self-checked rows",
+   "gate": "exact 1.6.1170/1.5.97 + self-check"
+  },
+  {
+   "what": "CommonLib-bound calls APMF relies on: GetHandle, LookupForm, DOBJ GetSingleton, ActorValueOwner",
+   "value": "CommonLib 3.7.0 ids",
+   "where": "channels/*, core/*",
+   "verified_by": "every id present in both libraries; a miss is now fatal (fork d9ad1072)",
+   "gate": "varies"
+  },
+  {
+   "what": "Declared but never hooked: CombatBehaviorTreeCreateContextNode1/Base<CombatBehaviorContextMagic>",
+   "value": "VariantID(266702, 213692) / (550933, 213681)",
+   "where": "CombatBehaviorRE.h kCastContextNodes",
+   "verified_by": "not installed anywhere, so not a self-check row",
+   "gate": "n/a"
+  }
+ ]
+}

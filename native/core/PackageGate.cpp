@@ -1,4 +1,5 @@
 #include "PCH.h"
+#include "core/Allowance.h"   // SeatVerified(): the mit-3.7 F1 self-check gate
 #include "core/Log.h"
 #include "core/Clock.h"
 #include "core/ControlMap.h"
@@ -294,6 +295,10 @@ namespace apmf::packagegate {
         if (g_installed.exchange(true)) return;
 
         REL::Relocation<std::uintptr_t> charVtbl{ RE::VTABLE_Character[0] };
+        if (!allowance::SeatVerified(charVtbl.address(), "PackageGate.Character.CheckForCurrentAliasPackage")) {
+            spdlog::error("[ch.9] package-offer allowance NOT installed (self-check refused the Character vtable).");
+            return;
+        }
         PkgHook::func = charVtbl.write_vfunc(PkgHook::idx, PkgHook::thunk);
 
         // "Does 0x49 actually redirect?" probe -- default ON (read-only, low
@@ -339,6 +344,9 @@ namespace apmf::packagegate {
         if (!a_actor) return;
         using func_t = void (*)(RE::Actor*, bool, bool);
         static REL::Relocation<func_t> func{ RELOCATION_ID(36407, 37401) };
+        // mit-3.7 F1: refused (logged once) unless the self-check verified the address.
+        static const bool verified = allowance::SeatVerified(func.address(), "PackageGate.EvaluatePackage");
+        if (!verified) return;
         func(a_actor, true, false);   // resetAI MUST stay false -- never a full AI reset
     }
 

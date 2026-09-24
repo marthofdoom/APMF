@@ -1,4 +1,5 @@
 #include "PCH.h"
+#include "core/Allowance.h"   // SeatVerified(): the mit-3.7 F1 self-check gate
 #include "core/Log.h"
 #include "core/Hook.h"
 #include "core/Arbiter.h"
@@ -97,6 +98,15 @@ namespace apmf::hook {
         if (g_installed.exchange(true)) return;
 
         REL::Relocation<std::uintptr_t> charVtbl{ RE::VTABLE_Character[0] };
+        REL::Relocation<std::uintptr_t> pcVtblCheck{ RE::VTABLE_PlayerCharacter[0] };
+        // mit-3.7 F1: both vtables must pass the self-check, or neither hook goes in
+        // (the 0xAD arbiter seat is one seat served by two vtables).
+        if (!allowance::SeatVerified(charVtbl.address(), "Hook.Character.Update") ||
+            !allowance::SeatVerified(pcVtblCheck.address(), "Hook.PlayerCharacter.Update")) {
+            g_installed.store(false);
+            spdlog::error("[hook] 0xAD arbiter seat NOT installed (self-check refused a vtable).");
+            return;
+        }
         CharacterUpdateHook::func = charVtbl.write_vfunc(CharacterUpdateHook::idx, CharacterUpdateHook::thunk);
 
         REL::Relocation<std::uintptr_t> pcVtbl{ RE::VTABLE_PlayerCharacter[0] };

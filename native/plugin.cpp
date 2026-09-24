@@ -1,4 +1,5 @@
 #include "PCH.h"
+#include "core/Allowance.h"   // SeatVerified(): the mit-3.7 F1 self-check gate
 #include "core/Log.h"
 #include "core/Hook.h"
 #include "core/Input.h"
@@ -258,6 +259,10 @@ SKSEPluginLoad(const SKSE::LoadInterface* a_skse) {
                      game.string("."), placed ? "open" : "gated", placed ? "open" : "gated",
                      placed ? "open" : "gated");
     }
+    // mit-3.7 F1: compare the loaded Address Library with our own table of every
+    // hooked / called address (VerifiedAddresses.h). Every install asks
+    // apmf::allowance::SeatVerified() and refuses a seat whose row failed.
+    apmf::allowance::LogSelfCheck();
 
     SKSE::GetMessagingInterface()->RegisterListener(OnMessage);
 
