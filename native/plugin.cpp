@@ -45,11 +45,15 @@ namespace {
         // first, then write our own record. See castproxy::PreSaveSweep (INVARIANTS #19).
         apmf::castproxy::PreSaveSweep();
         apmf::av::Save(intf);
+        // ABI v11: record every live APMF XMarker (position casts + ch.19 position
+        // legs) so the load of THIS save can delete the ones it captured.
+        apmf::poscast::SaveMarkers(intf);
     }
     void OnLoad(SKSE::SerializationInterface* intf) {
         std::uint32_t type = 0, version = 0, length = 0;
         while (intf->GetNextRecordInfo(type, version, length)) {
             if (type == apmf::av::kRecordType) apmf::av::Load(intf, version);
+            else if (type == apmf::poscast::kMarkerRecordType) apmf::poscast::LoadMarkers(intf, version);
         }
     }
     void OnRevert(SKSE::SerializationInterface*) {
@@ -72,6 +76,9 @@ namespace {
         // delete (its Retire task is dropped by the Discard below). The references
         // belong to the world being replaced, so none is touched.
         apmf::poscast::ResetAll("revert/new game");
+        // ...and forget the outgoing world's marker LEDGER. This must precede the load
+        // callback (which reads the incoming save's record); SKSE runs revert first.
+        apmf::poscast::RevertMarkers();
         // Flush the confirmed-main task queue at the world boundary (see
         // core/MainThread.h's Discard() for why). Clear() posts nothing today -- it
         // makes no channel->Release calls by design -- but anything posted BEFORE the
@@ -201,6 +208,12 @@ namespace {
             break;
         case SKSE::MessagingInterface::kPostLoadGame:
             apmf::av::ApplyPending();             // restore any stranded AV overrides
+            // ABI v11: delete the APMF XMarkers this save captured mid-leg / mid-cast.
+            // HERE and not in the load callback: kPostLoadGame is the first point at
+            // which the loaded world's references exist to be looked up, and it runs on
+            // the main thread. No APMF leg or cast is live yet (legs are never
+            // restored), so nothing of ours still points at them.
+            apmf::poscast::SweepCarriedMarkers("kPostLoadGame");
             apmf::equipsink::ReinspectEntries("kPostLoadGame");   // a later plugin may have detoured EquipObject's entry
             break;
         case SKSE::MessagingInterface::kNewGame:

@@ -36,6 +36,19 @@ namespace apmf::poscast {
         };
         std::vector<LiveMarker> g_live;
 
+        // ── THE MARKER LEDGER (co-saved, record kMarkerRecordType). MAIN THREAD ONLY. ──
+        // Every XMarker PlaceMarker created and DeleteMarker has not yet deleted, for
+        // BOTH callers (position casts and ch.19 position legs). It is what lets a load
+        // prove which markers in the loaded world are APMF's. See PositionCast.h.
+        struct OwnedMarker {
+            RE::FormID          id = 0;
+            RE::NiPoint3        pos{};
+            RE::ObjectRefHandle handle{};   // empty for a carried entry
+        };
+        std::vector<OwnedMarker> g_owned;   // placed in THIS world, handle live
+        std::vector<OwnedMarker> g_carry;   // read from a co-save, or whose handle went stale: swept at
+                                            // the next kPostLoadGame where they resolve
+
         const char* SpellTypeName(RE::MagicSystem::SpellType a_type) {
             switch (a_type) {
             case RE::MagicSystem::SpellType::kDisease:   return "disease";
@@ -220,13 +233,38 @@ namespace apmf::poscast {
                                 "it was {}", Hex(id), del ? std::format("NOT deleted: {}", del) : "deleted");
             return {};
         }
+        // Into the co-saved ledger from this line on: a save taken while it lives
+        // records it, and the load of that save deletes it (SweepCarriedMarkers).
+        g_owned.push_back(OwnedMarker{ marker->GetFormID(), marker->GetPosition(), handle });
         return handle;
     }
 
     const char* DeleteMarker(const RE::ObjectRefHandle& a_handle, RE::FormID a_formID) {
+        // Take this marker out of the live ledger whatever happens below; the only
+        // outcome that keeps it recorded is a stale handle (next comment).
+        OwnedMarker entry{};
+        bool        tracked = false;
+        if (const auto it = std::find_if(g_owned.begin(), g_owned.end(),
+                                         [&](const OwnedMarker& m) { return m.id == a_formID; });
+            it != g_owned.end()) {
+            entry   = *it;
+            tracked = true;
+            g_owned.erase(it);
+        }
+
         auto  refPtr = a_handle.get();
         auto* ref    = refPtr.get();
-        if (!ref) return "the handle no longer resolves (already gone)";
+        if (!ref) {
+            // A stale handle does NOT prove the marker is gone: a temporary reference
+            // whose cell detached is unloaded from memory but still lives in the
+            // cell's saved data. Keep it recorded (FormID + position) so the next load
+            // that finds it deletes it, under the same proofs.
+            if (tracked) {
+                entry.handle = {};
+                g_carry.push_back(entry);
+            }
+            return "the handle no longer resolves (unloaded or gone); kept in the co-saved ledger for the next load";
+        }
         if (ref->GetFormID() != a_formID || !g_markerBase || ref->GetBaseObject() != g_markerBase) {
             spdlog::error("[marker] handle for 0x{} now resolves to 0x{} (base 0x{}) -- NOT ours, left untouched.",
                           Hex(a_formID), Hex(ref->GetFormID()),
@@ -237,6 +275,122 @@ namespace apmf::poscast {
         if (!ref->IsDisabled()) ref->Disable();   // TESObjectREFR vfunc 0x89 (both runtimes, verified)
         ref->SetDelete(true);                     // TESObjectREFR vfunc 0x23 (both runtimes, verified)
         return nullptr;
+    }
+
+    // ── Co-save (record kMarkerRecordType, v1) ────────────────────────────────────
+
+    void SaveMarkers(SKSE::SerializationInterface* a_intf) {
+        const std::uint32_t count = static_cast<std::uint32_t>(g_owned.size() + g_carry.size());
+        if (!a_intf->OpenRecord(kMarkerRecordType, kMarkerRecordVersion)) {
+            spdlog::error("[marker] OpenRecord failed -- {} APMF XMarker(s) NOT co-saved; a load of this save cannot "
+                          "sweep them.", count);
+            return;
+        }
+        bool ok = a_intf->WriteRecordData(&count, sizeof(count));
+        const auto write = [&](const OwnedMarker& m) {
+            ok = ok && a_intf->WriteRecordData(&m.id, sizeof(m.id));
+            ok = ok && a_intf->WriteRecordData(&m.pos.x, sizeof(m.pos.x));
+            ok = ok && a_intf->WriteRecordData(&m.pos.y, sizeof(m.pos.y));
+            ok = ok && a_intf->WriteRecordData(&m.pos.z, sizeof(m.pos.z));
+        };
+        for (const auto& m : g_owned) write(m);
+        for (const auto& m : g_carry) write(m);
+        if (!ok) spdlog::error("[marker] WriteRecordData failed mid-record -- the marker record may be truncated.");
+        else if (count != 0)
+            spdlog::info("[marker] co-saved {} APMF XMarker(s) ({} live, {} carried) for the load-time sweep.", count,
+                         g_owned.size(), g_carry.size());
+    }
+
+    void LoadMarkers(SKSE::SerializationInterface* a_intf, std::uint32_t a_version) {
+        if (a_version > kMarkerRecordVersion) {
+            spdlog::warn("[marker] co-save record v{} is newer than this build knows (v{}) -- skipped; nothing it "
+                         "names will be swept.", a_version, kMarkerRecordVersion);
+            return;
+        }
+        // v1 (the only version): u32 count, then count x { u32 formID, f32 x, f32 y, f32 z }.
+        std::uint32_t count = 0;
+        if (a_intf->ReadRecordData(&count, sizeof(count)) != sizeof(count)) return;
+        std::size_t read = 0, refused = 0;
+        for (std::uint32_t i = 0; i < count; ++i) {
+            OwnedMarker m{};
+            if (a_intf->ReadRecordData(&m.id, sizeof(m.id)) != sizeof(m.id) ||
+                a_intf->ReadRecordData(&m.pos.x, sizeof(m.pos.x)) != sizeof(m.pos.x) ||
+                a_intf->ReadRecordData(&m.pos.y, sizeof(m.pos.y)) != sizeof(m.pos.y) ||
+                a_intf->ReadRecordData(&m.pos.z, sizeof(m.pos.z)) != sizeof(m.pos.z)) {
+                spdlog::error("[marker] record truncated after {} of {} entries.", i, count);
+                break;
+            }
+            // Only a runtime-created (0xFF) reference can be one of ours. SKSE passes
+            // 0xFF ids through ResolveFormID unchanged; anything else is not ours.
+            RE::FormID resolved = 0;
+            if (!a_intf->ResolveFormID(m.id, resolved) || (resolved >> 24) != 0xFF) {
+                ++refused;
+                continue;
+            }
+            m.id = resolved;
+            g_carry.push_back(m);
+            ++read;
+        }
+        spdlog::info("[marker] read {} recorded APMF XMarker(s) from the co-save (record v{}, {} refused as not "
+                     "0xFF); they are swept at kPostLoadGame.", read, a_version, refused);
+    }
+
+    void RevertMarkers() {
+        if (!g_owned.empty() || !g_carry.empty())
+            spdlog::info("[marker] revert -- forgetting {} live and {} carried marker record(s) of the outgoing world "
+                         "(its markers were co-saved with it if a save captured them).",
+                         g_owned.size(), g_carry.size());
+        g_owned.clear();
+        g_carry.clear();
+    }
+
+    void SweepCarriedMarkers(const char* a_when) {
+        if (g_carry.empty()) return;
+        std::size_t swept = 0, forgotten = 0, kept = 0;
+        std::vector<OwnedMarker> keep;
+        for (const auto& m : g_carry) {
+            // A marker placed in THIS session can never be a recorded one; if an id
+            // somehow matches a live entry, the live entry owns it. Forget the record.
+            if (std::any_of(g_owned.begin(), g_owned.end(), [&](const OwnedMarker& o) { return o.id == m.id; })) {
+                ++forgotten;
+                continue;
+            }
+            auto* ref = RE::TESForm::LookupByID<RE::TESObjectREFR>(m.id);
+            if (!ref) {
+                // Not in memory (its cell is not loaded now). Still recorded: kept for
+                // the next save and swept by a later load that finds it.
+                keep.push_back(m);
+                ++kept;
+                continue;
+            }
+            // THE THREE PROOFS: recorded FormID (the lookup), XMarker base, recorded
+            // position within 1u. Any failure: forgotten, never touched.
+            const bool baseOk = g_markerBase && ref->GetBaseObject() == g_markerBase;
+            const bool posOk  = ref->GetPosition().GetDistance(m.pos) <= 1.0f;
+            if (!baseOk || !posOk || ref->IsDeleted()) {
+                spdlog::info("[marker] {} -- recorded 0x{} {} -- forgotten, NOT touched.", a_when, Hex(m.id),
+                             ref->IsDeleted() ? "is already deleted"
+                             : !baseOk        ? "is no longer an XMarker"
+                                              : "is not at its recorded position");
+                ++forgotten;
+                continue;
+            }
+            if (!ref->IsDisabled()) ref->Disable();   // TESObjectREFR vfunc 0x89 (both runtimes, verified)
+            ref->SetDelete(true);                     // TESObjectREFR vfunc 0x23 (both runtimes, verified)
+            ++swept;
+        }
+        // Bound what is carried forward: markers that never resolve again cannot grow
+        // the record without limit. The oldest go first, loudly.
+        if (keep.size() > kMaxCarriedMarkers) {
+            const std::size_t drop = keep.size() - kMaxCarriedMarkers;
+            spdlog::warn("[marker] {} -- {} unresolved marker record(s) over the cap of {}; the oldest {} are "
+                         "dropped from the ledger (those markers, if they still exist, stay in the save).",
+                         a_when, keep.size(), kMaxCarriedMarkers, drop);
+            keep.erase(keep.begin(), keep.begin() + static_cast<std::ptrdiff_t>(drop));
+        }
+        g_carry = std::move(keep);
+        spdlog::info("[marker] {} sweep -- {} APMF XMarker(s) deleted, {} forgotten (failed a proof), {} not loaded "
+                     "(kept for the next load).", a_when, swept, forgotten, kept);
     }
 
     void Install() {

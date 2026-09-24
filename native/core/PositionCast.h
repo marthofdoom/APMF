@@ -42,8 +42,8 @@
 // once; a request past that is refused. Revert and kPreLoadGame forget the table
 // without touching any reference (the old world is going away). The worst-case
 // save footprint: a save taken inside that one frame captures at most one marker
-// per position cast issued in it (never more than kMaxLiveMarkers), each an inert
-// XMarker reference that nothing will delete later.
+// per position cast issued in it (never more than kMaxLiveMarkers). Since the
+// co-saved ledger below, the load of such a save DELETES them (see the ledger).
 //
 // THREADING. Enqueue() is safe from any thread (it copies POD and posts). Every
 // other function is MAIN-THREAD ONLY (apmf::mainthread::Pump, or the SKSE
@@ -94,6 +94,41 @@ namespace apmf::poscast {
     // XMarker base, not already deleted. Returns nullptr when it deleted the marker,
     // else why it did not (a reference that is not provably ours is never touched).
     const char* DeleteMarker(const RE::ObjectRefHandle& a_handle, RE::FormID a_formID);
+
+    // ── THE CO-SAVED MARKER LEDGER (record 'XMRK', v1) ─────────────────────────
+    // Every marker PlaceMarker made and DeleteMarker has not yet deleted (position
+    // casts AND ch.19 position legs) is recorded, and the record is co-saved. A load
+    // of that save then deletes each recorded marker the loaded world still holds,
+    // so no save carries an APMF marker forward. "Fix-forward never cleans old
+    // saves": stopping the write was not enough, the load must sweep.
+    //
+    // RECORD LAYOUT, v1 (unique ID 'APMF', record type 'XMRK'), little-endian:
+    //     u32 count
+    //     count x { u32 formID, f32 x, f32 y, f32 z }     (16 bytes per entry)
+    // A reader is kept for every shipped version forever (INVARIANTS #15); a record
+    // newer than this build is skipped and logged. A save with no 'XMRK' record
+    // (0.9.7 and earlier) simply sweeps nothing.
+    //
+    // WHAT A LOAD DELETES, and only this (all three proofs, else FORGOTTEN, never
+    // touched): the recorded 0xFF FormID resolves to a reference, its base is the
+    // Skyrim.esm XMarker, and it stands within 1u of the recorded position (and it is
+    // not already deleted). A recorded marker that is not in memory at the sweep (its
+    // cell is not loaded) is CARRIED: re-saved and retried at the next load that finds
+    // it, capped at kMaxCarriedMarkers (the oldest dropped, loudly).
+    //
+    // TIMELINE: revert callback -> RevertMarkers (forget the outgoing world's ledger);
+    // SKSE load callback -> LoadMarkers (read the record into the carried list; refs
+    // are not trusted yet); kPostLoadGame -> SweepCarriedMarkers (the loaded world's
+    // references exist and are looked up, on the main thread). kPreLoadGame does not
+    // touch the ledger. SKSE save callback -> SaveMarkers.
+    inline constexpr std::uint32_t kMarkerRecordType    = 'XMRK';
+    inline constexpr std::uint32_t kMarkerRecordVersion = 1;
+    inline constexpr std::size_t   kMaxCarriedMarkers   = 64;
+
+    void SaveMarkers(SKSE::SerializationInterface* a_intf);                         // SKSE save callback
+    void LoadMarkers(SKSE::SerializationInterface* a_intf, std::uint32_t a_version); // SKSE load callback
+    void RevertMarkers();                                                           // SKSE revert callback
+    void SweepCarriedMarkers(const char* a_when);                                   // kPostLoadGame, MAIN THREAD
 
     // MAIN THREAD. Forget every tracked marker WITHOUT touching it (revert /
     // kPreLoadGame: the references belong to the world being replaced). Logs how

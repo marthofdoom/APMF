@@ -288,7 +288,31 @@ namespace {
     // Which package records were last pointed at an APMF marker (ABI v11). Read at the
     // load boundary (ResetAll), where the record would otherwise keep a handle to a
     // marker from the world being replaced.
-    bool                                g_slotAtMarker[kTravelSlots]{};
+    // The marker FormID each record was last pointed at (0 = not a marker).
+    RE::FormID                          g_slotMarkerId[kTravelSlots]{};
+
+    // Point a FREE slot's record back at its authored placeholder (PlayerRef,
+    // APMF_GenerateESL.py) if it still names `a_markerId`, so no record keeps a
+    // handle to a marker APMF is deleting. A slot another leg already took has been
+    // re-pointed by that leg (its id no longer matches) and is left alone. GAME THREAD.
+    void UnpointSlotsAt(RE::FormID a_markerId, const char* a_why) {
+        auto* player = RE::PlayerCharacter::GetSingleton();
+        for (std::size_t i = 0; i < kTravelSlots; ++i) {
+            if (a_markerId == 0 || g_slotMarkerId[i] != a_markerId) continue;
+            if (g_slotOwner[i] != 0) continue;   // still a live leg's record; that leg re-points it
+            g_slotMarkerId[i] = 0;
+            const bool ok = g_pkg[i] && player &&
+                            apmf::packagedata::SetTravelTarget(g_pkg[i], player, kDefaultRadiusUnits);
+            if (ok) {
+                spdlog::info("[travel] package slot {} pointed back at its placeholder (PlayerRef) -- it named marker "
+                             "0x{} ({}).", i, Hex(a_markerId), a_why);
+            } else {
+                spdlog::error("[travel] package slot {} could NOT be pointed back at its placeholder (see the [pkgdata] "
+                              "line) -- it keeps a handle to deleted marker 0x{} until its next leg re-points it; no "
+                              "leg offers it before then.", i, Hex(a_markerId));
+            }
+        }
+    }
 
     bool SamePoint(const RE::NiPoint3& a, const RE::NiPoint3& b) { return a.x == b.x && a.y == b.y && a.z == b.z; }
 
@@ -301,6 +325,10 @@ namespace {
     void RetireMarkerLater(RE::FormID a_id, RE::ObjectRefHandle a_marker, RE::FormID a_markerId, const char* a_why) {
         if (a_markerId == 0) return;
         apmf::mainthread::Post([a_id, a_marker, a_markerId, a_why] {
+            // First take the marker out of every free package record, then delete it:
+            // nothing of APMF's names it afterwards. (The slot was freed by a Post queued
+            // BEFORE this one, so FIFO order makes it free here.)
+            UnpointSlotsAt(a_markerId, a_why);
             if (const char* no = apmf::poscast::DeleteMarker(a_marker, a_markerId)) {
                 spdlog::warn("[travel] 0x{} destination marker 0x{} NOT deleted ({}) -- {}.", Hex(a_id),
                              Hex(a_markerId), a_why, no);
@@ -517,7 +545,7 @@ namespace {
             return false;
         }
 
-        g_slotAtMarker[slot] = a_leg.markerId != 0 && a_leg.destId == a_leg.markerId;
+        g_slotMarkerId[slot] = (a_leg.markerId != 0 && a_leg.destId == a_leg.markerId) ? a_leg.markerId : 0;
 
         APMF_API::APMF_Param p9{};
         p9.form = pkg->GetFormID();
@@ -840,7 +868,7 @@ namespace {
                     EndLeg(id, leg, "the Location re-point was declined", true);
                     return;
                 }
-                g_slotAtMarker[leg.slot] = leg.markerId != 0 && leg.destId == leg.markerId;
+                g_slotMarkerId[leg.slot] = (leg.markerId != 0 && leg.destId == leg.markerId) ? leg.markerId : 0;
                 APMF_API::APMF_Param p9{};
                 p9.form = g_pkg[leg.slot]->GetFormID();
                 if (leg.basisPackage != basis) {
@@ -942,8 +970,8 @@ namespace apmf::travel {
     void RestoreMarkerSlots(const char* why) {
         auto* player = RE::PlayerCharacter::GetSingleton();
         for (std::size_t i = 0; i < kTravelSlots; ++i) {
-            if (!g_slotAtMarker[i]) continue;
-            g_slotAtMarker[i] = false;
+            if (g_slotMarkerId[i] == 0) continue;
+            g_slotMarkerId[i] = 0;
             if (!g_pkg[i] || !player) continue;
             const bool ok = apmf::packagedata::SetTravelTarget(g_pkg[i], player, kDefaultRadiusUnits);
             if (ok) {
