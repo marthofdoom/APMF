@@ -1,4 +1,5 @@
 #include "PCH.h"
+#include "core/Allowance.h"   // SeatVerified(): the mit-3.7 F1 self-check gate
 #include "core/Log.h"
 #include "core/Clock.h"
 #include "core/ControlMap.h"
@@ -298,6 +299,10 @@ namespace apmf::castclassify {
                           "report_and_fails or mis-resolves that one, never nulls it): REL::Module::"
                           "GetRuntime() returned no AE/SE/VR arm -- investigate CommonLib, not the library.",
                           ver.string("."));
+            return;
+        }
+        if (!allowance::SeatVerified(vt.address(), "CastClassify.CombatMagicItemData")) {
+            spdlog::error("[ch.8b seat 0] CLASSIFY NOT installed (self-check refused the CombatMagicItemData vtable).");
             return;
         }
         const char* name = ResolveMangledName(vt.address());

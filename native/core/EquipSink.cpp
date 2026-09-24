@@ -1,4 +1,5 @@
 #include "PCH.h"
+#include "core/Allowance.h"   // SeatVerified(): the mit-3.7 F1 self-check gate
 #include "core/Log.h"
 #include "core/Clock.h"
 #include "core/ControlMap.h"
@@ -703,6 +704,23 @@ namespace apmf::equipsink {
 
         const std::uintptr_t worker = REL::ID(ae ? kWorkerAE : kWorkerSE).address();
         g_worker = reinterpret_cast<Worker_t>(worker);
+
+        // mit-3.7 F1: the worker and both call sites must be verified addresses
+        // (VerifiedAddresses.h rows EquipSink.Worker / EquipSink.Site.*, whose site rows
+        // also check the E8 byte). Any refusal refuses the whole seat, like the byte
+        // check below, which stays as it was.
+        {
+            bool verified = allowance::SeatVerified(worker, "EquipSink.Worker");
+            for (int i = 0; i < 2; ++i) {
+                const std::uintptr_t addr = REL::ID(sites[i].id).address() + sites[i].off;
+                verified = allowance::SeatVerified(addr, fmt::format("EquipSink.Site.{}", sites[i].name)) && verified;
+            }
+            if (!verified) {
+                g_notInstalledReason.store("self-check refused the worker or a call site", std::memory_order_release);
+                spdlog::error("[apmf][equip-sink] seat NOT installed (self-check refused an address).");
+                return;
+            }
+        }
 
         // #17a condition 2: byte-verify EVERY site before writing ANY. Any mismatch
         // refuses the whole seat -- a SCAR-class collision becomes a refusal.

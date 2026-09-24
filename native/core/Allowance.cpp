@@ -2,6 +2,7 @@
 #include "core/Log.h"
 #include "core/Allowance.h"
 #include "core/ControlMap.h"
+#include "VerifiedAddresses.h"
 
 // ============================================================================
 // See core/Allowance.h for the design. This file holds the two non-template
@@ -10,6 +11,42 @@
 // ============================================================================
 
 namespace apmf::allowance {
+
+    const REL::SelfCheck::Result& SelfCheckResult() {
+        static const REL::SelfCheck::Result result = REL::SelfCheck::Run(apmf::VerifiedAddresses::kTables);
+        return result;
+    }
+
+    void LogSelfCheck() {
+        const auto& r = SelfCheckResult();
+        if (!r.Covered()) {
+            spdlog::error("[selfcheck] {}: game {} has NO verified address table (verified: 1.6.1170.0, "
+                          "1.5.97.0) -- every self-checked seat is REFUSED",
+                          REL::SelfCheck::kLibrary, r.GameVersion().string("."));
+            return;
+        }
+        for (const auto& f : r.Failures()) {
+            spdlog::error("[selfcheck] REFUSED {}: {}", f.row->label, f.reason);
+        }
+        if (r.Failures().empty()) {
+            spdlog::info("[selfcheck] {}: game {} {}/{} verified",
+                         REL::SelfCheck::kLibrary, r.GameVersion().string("."), r.Passed(), r.Checked());
+        } else {
+            spdlog::error("[selfcheck] {}: game {} {}/{} verified, {} REFUSED (listed above; those seats will "
+                          "not install)",
+                          REL::SelfCheck::kLibrary, r.GameVersion().string("."), r.Passed(), r.Checked(),
+                          r.Failures().size());
+        }
+    }
+
+    bool SeatVerified(std::uintptr_t address, std::string_view seat) {
+        const auto& r = SelfCheckResult();
+        if (r.IsVerifiedAddress(address)) return true;
+        spdlog::error("[selfcheck] seat {} REFUSED: 0x{:X} (RVA 0x{:X}) is not a verified address for game {}{}",
+                      seat, address, address - REL::Module::get().base(), r.GameVersion().string("."),
+                      r.Covered() ? "" : " (no table for this build)");
+        return false;
+    }
 
     bool DerivesFrom(std::uintptr_t vtableAddr, const void* expectedTypeDescriptor) {
         if (!vtableAddr || !expectedTypeDescriptor) return false;

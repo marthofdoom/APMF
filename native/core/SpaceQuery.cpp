@@ -1,4 +1,5 @@
 #include "PCH.h"
+#include "core/Allowance.h"   // SeatVerified(): the mit-3.7 F1 self-check gate
 #include "core/Hook.h"
 #include "core/Log.h"
 #include "core/SpaceQuery.h"
@@ -133,6 +134,18 @@ namespace apmf::spacequery {
             spdlog::warn("[space] queries NOT armed -- runtime {} is not verified (only 1.6.1170 and 1.5.97 are). "
                          "Every v11 query answers Unsupported.", game.string("."));
             return;
+        }
+        // mit-3.7 F1: the hostility test and the pick's vtable must be verified addresses.
+        {
+            bool verified = allowance::SeatVerified(
+                REL::Relocation<std::uintptr_t>{ RELOCATION_ID(36537, 37537) }.address(), "SpaceQuery.IsHostileToActor");
+            verified = allowance::SeatVerified(
+                REL::Relocation<std::uintptr_t>{ RE::VTABLE_bhkWorld[0] }.address(), "SpaceQuery.bhkWorld") && verified;
+            if (!verified) {
+                spdlog::error("[space] queries NOT armed -- the mit-3.7 self-check refused an address they call. "
+                              "Every v11 query answers Unsupported.");
+                return;
+            }
         }
         g_ready.store(true, std::memory_order_release);
         spdlog::info("[space] queries armed on {}: FindEmptySpace, FindHostilesInSpace (main thread only, read-only).",

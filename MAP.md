@@ -561,6 +561,14 @@ did not arm.
   the gate exists to prevent.
 
 ### `native/core/Allowance.{h,cpp}` — the reusable ALLOWANCE TEMPLATE (Docs/ALLOWANCE-TEMPLATE.md §3)
+**SEAT SELF-CHECK (mit-3.7 F1, 2026-09-24):** `SelfCheckResult()` / `LogSelfCheck()` /
+**`SeatVerified(address, seat)`** over the generated `native/VerifiedAddresses.h` (171 rows per
+runtime; `Docs/VERIFIED-ADDRESSES.md`). `InstallOnVtables` refuses a list whose expected RTTI
+TypeDescriptor is unverified and skips each unverified vtable; direct guards in Hook, PackageGate
+(+ EvaluatePackage), CastClassify, EquipSink (worker + both sites), MovementDeny (3 natives), CastSeats
+aim seat, AiCastSeats Group C, PositionCast::Install, SpaceQuery::Install. `plugin.cpp` logs
+`[selfcheck] ... N/N verified` after the `[runtime]` line. **What breaks:** a new id-based hook or call
+without a spec row (tools/verified_addresses/spec.json) + regenerated header refuses itself at startup.
 `DerivesFrom` (install-time RTTI derivation walk: reads the CompleteObjectLocator*
 at `vtableAddr-8`, walks `ClassHierarchyDescriptor::baseClassArray`, confirms the
 expected base's TypeDescriptor appears — the ENGINE_NOTES §0.28

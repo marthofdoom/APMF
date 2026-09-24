@@ -534,7 +534,9 @@ namespace apmf::castseats {
         if (ReadIniFlag("EnableAimSeat", 1)) {
             REL::Relocation<std::uintptr_t> aimVt{ RE::VTABLE_CombatProjectileAimController[0] };
             REL::Relocation<void*>          aimTD{ RE::RTTI_CombatAimController };
-            if (allowance::DerivesFrom(aimVt.address(), aimTD.get())) {
+            if (allowance::SeatVerified(aimVt.address(), "CastSeats.CombatProjectileAimController") &&
+                allowance::SeatVerified(reinterpret_cast<std::uintptr_t>(aimTD.get()), "CastSeats.RTTI.CombatAimController") &&
+                allowance::DerivesFrom(aimVt.address(), aimTD.get())) {
                 g_aimVtable.store(aimVt.address(), std::memory_order_relaxed);
                 nAim = allowance::InstallOnVtables(kEngineSeatVtables, kSetupAimController, &SetupAimControllerThunk,
                                                     casterTD.get(), "ch.8b-seat0D", g_aimOrig);
