@@ -26,7 +26,10 @@ competitors, or arbitrates the claim, so the client's behavior reaches the actor
 design.md §1a). **The bright line:** a lawful promote is a single deterministic call
 whose outcome does not stand in for an AI decision (idle-play, weapon-draw,
 stance-toggle); a forbidden generate calls a function that picks WHAT the AI decides
-(a target, a spell, a shout) or drives it continuously. **Cautionary case:** ch.6
+(a target, a spell, a shout) or drives it continuously. (The one `CastSpellImmediate` APMF
+makes is action (e) below, ADOPTED 2026-09-23 by marth: from an APMF-owned MARKER, never from
+the actor, for a spell and a point the client declared, and under condition (8) it is not an
+endpoint.) **Cautionary case:** ch.6
 combat-target once called `StartCombat` (to command a target) — wrong LAYER, and
 with a bad reloc signature it was a hard AV (EXCEPTION_ACCESS_VIOLATION inside
 StartCombat). The deny-only rule makes that whole crash class structurally
@@ -48,6 +51,70 @@ no caster-state write) — it changes what a vfunc SEES and lets the AI decide. 
 cast facet's retired forced drive, which DID call `CastSpellImmediate`, is exactly
 what this replaced. #20 states the mechanism, the one permitted non-chaining
 answer and its three conditions; read it before adding a composed seat anywhere.
+
+**ADOPTED 2026-09-23 by marth. The fifth legal action (ABI v11, `core/PositionCast.cpp`): (e)
+DELIVER AT A POINT — one client-declared remote cast from an APMF-owned marker.** Approved
+with a standing condition, verbatim: *"this is not an acceptable endpoint, proper animations
+are required for ALL actions. So choosing a path that makes that impossible is incorrect."*
+That is condition (8) below, and it is why the code still ships it OFF: `[PositionCast]
+bPositionCast` defaults to 0 in both `APMF.ini` and the code, and every request is refused by
+name until a user sets it to 1. A
+`kIntent_Cast` RequestEx with `kCastFlag_AtPosition` makes APMF place an XMarker at
+`param.pos` and call `CastSpellImmediate` on the MARKER's instant caster, blamed on the
+actor. This is written here, in the rule it touches, rather than done quietly (CLAUDE.md
+"standing tension"). It is legal only while ALL of these hold:
+1. **There is nothing to compose.** No engine seat can aim a location spell at a point
+   for an NPC: the cast core's Target Location arm never reads the target it is handed
+   and lands at the caster's own magic node, and seat 0x0A carries an `Actor*`
+   (`Docs/ADDRESS-TABLE-2026-09-15.md`, ADDENDUM 2026-09-23, both runtimes). Composition
+   is not a weaker answer here, it is no answer.
+2. **APMF selects nothing.** The client declared the spell and the point. APMF picks no
+   spell, no target and no point. (CORRECTED 2026-09-23: an earlier wording said "no NPC AI
+   decides to put a spell at a remote point". That is wrong: the field shows a follower's own
+   AI choosing and animating runes (Natura Stone Rune FE209C83 fired 5 and 25 times). The true
+   statement is narrower: no engine seat lets an NPC's cast land a Target Location PROJECTILE
+   at a point, because the cast core places that projectile only from the player's crosshair
+   pick.)
+   **THE LIMIT THIS PUTS ON (e) ITSELF.** The same fact binds the marker: its caster has no
+   out-actor and no pick, so the cast core never launches a Target Location projectile from it
+   (AE inline `0x5bd04e`-`0x5bd08e` + TestProjectilePlacement 34453 `0x5c02e0`; SE 33671
+   `0x550550` +0x8d; the pick is filled only by the player branch, AE 34457 `0x5c0470`, gated at
+   AE `0x5bc3ec` / SE `0x54cf8a`). So (e) delivers only Target Location effects WITHOUT a
+   projectile. A rune, a trap or any spell whose effect carries a projectile is REFUSED by name
+   on the game thread (it would silently place nothing).
+3. **One call, once.** On the main thread, once per request, the engine's own
+   sequence (Papyrus `Spell.RemoteCast`: `InterruptCast(false)` then
+   `CastSpellImmediate(spell, false, none, 1.0, false, 0.0, blame)`). No Tick, no
+   re-assert, no retry. A refusal is logged and the request is dropped.
+4. **The actor is not touched.** The caster is the marker, so the actor does not
+   animate and its hands, its casters and its cast facet are unchanged. Nothing is
+   switched on in the actor, so principle 2 has no facet to deny.
+5. **It is never a claim.** It never enters the control map, so no seat can read it as
+   an actor target, and it holds no facet.
+6. **Scope is closed by name.** Target Location, fire-and-forget, no summon, not
+   disease/ability/addiction, exactly 1.6.1170 or 1.5.97, not VR. Everything else is
+   refused in the log. Widening it (another delivery, a held stream, casting from the
+   actor) is a new amendment, not a code change.
+7. **The actor's cast facet keeps its owner.** A position cast is refused by name,
+   synchronously, while a LIVE `kIntent_Cast` claim on that actor would outrank a driving
+   request at the position cast's basis: a higher basis (a `kCastFlag_DenyHandOnly` floor
+   included), or an equal basis that drives something (earliest keeps a tie; an equal-basis
+   deny-only floor loses to a driving request, as everywhere else in the cast channel).
+   APMF has no client identity, so "another client's claim" is decided the way every facet
+   is: by basis (`ControlMap::CastFacetOutranks`, `core/ControlMap.cpp`). Only PUBLISHED
+   claims are seen; one still in the request queue is not. It runs at the call and AGAIN on
+   the main thread just before the cast (a claim may publish in between); a non-finite basis
+   is refused first. **Consequence, stated because there is no client identity:** a caller's
+   OWN driving cast claim at the same (or a higher) basis blocks its own position cast.
+8. **Not an endpoint.** A marker cast does not animate the actor, and marth requires proper
+   animations for ALL actions. No client may ship a user-facing action on (e) alone. An
+   animated path (the actor's own AI cast, aimed at the point, composed through the engine's
+   seats) must be researched and preferred; (e) is only a stepping stone or the delivery half
+   of an animated composition.
+The marker itself inherits #19's spirit: it is a runtime-created 0xFF reference, deleted
+one frame after the cast by its tracked handle, forgotten (never touched) at a world
+boundary, and it is recorded in the co-saved marker ledger (#15, record `'XMRK'`) so the
+load of a save that captured it deletes it.
 
 **#20 — COMPOSED ANSWERS: APMF may answer the ENGINE'S OWN DECISION SEATS so the
 AI decides what a claim asks for — and exactly ONE of those answers may skip the
@@ -511,6 +578,19 @@ stranded). Shipped layouts:
 - **v2** (16 B/entry): `{FormID, ActorValue, prev, applied}` — clobber-guarded.
 `OnSave` always writes the current version; a `version > kRecordVersion` record is
 skipped (a downgrade cannot read a future layout).
+
+**SECOND RECORD, added 2026-09-23 (ABI v11): `'XMRK'`, the APMF MARKER LEDGER**
+(`core/PositionCast.{h,cpp}`). Same unique ID `'APMF'`; `plugin.cpp` `OnLoad` dispatches by
+record type, so each record keeps its own version line and neither layout touches the other.
+- **v1** (16 B/entry): `u32 count`, then `count x {u32 formID, f32 x, f32 y, f32 z}` -- every
+  XMarker APMF placed and has not deleted (a stale handle keeps its entry).
+Same rules as `'AVOV'`: a reader per version forever, a newer record skipped and logged, no
+layout change under an existing number. Timeline: revert callback clears the ledger; load
+callback reads the record (no ref lookups there); kPostLoadGame POSTS the sweep, and the first
+main-thread pump after the load deletes each recorded marker
+that passes ALL THREE PROOFS (0xFF FormID resolves, XMarker base, recorded position within
+1u, not already deleted), FORGETS any that fails one (never touched), and CARRIES any not in
+memory to later loads (cap 64). A save without the record (0.9.7 and older) sweeps nothing.
 
 CLOBBER GUARD: the ledger stores both the captured `prev` AND the value we `applied`;
 Restore/ApplyPending write `prev` back ONLY when the AV still equals `applied`. If a

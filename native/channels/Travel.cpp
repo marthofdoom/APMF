@@ -4,8 +4,11 @@
 #include "core/Log.h"
 #include "core/MainThread.h"
 #include "core/PackageData.h"
+#include "core/PositionCast.h"   // ABI v11: PlaceMarker / DeleteMarker for kTravel_ToPosition legs
 #include "core/Registry.h"
 #include "channels/Travel.h"
+
+#include <cmath>
 
 // Win32 INI reader, declared by hand (the PCH does not pull in <Windows.h>) --
 // the same one-line import core/Input.cpp, core/ActionGate.cpp and
@@ -39,6 +42,15 @@ extern "C" __declspec(dllimport) unsigned long __stdcall GetPrivateProfileIntA(
 //            Arrival = the actor's PARENT CELL is that cell. Distance means nothing
 //            for a cell, so the radius is not consulted for this kind (it is still
 //            written, for symmetry; the engine's own in-cell path never reads it).
+//
+//   * a WORLD POINT (ABI v11, `kTravel_ToPosition`, `param.form` = 0, `param.pos`)
+//         -> APMF places its OWN non-persistent XMarker at the point (the idiom
+//            vanilla uses for "go to this spot") and the leg is an ordinary
+//            REFERENCE leg to that marker. Nothing below changes for it except that
+//            a marker never "dies". The marker's lifetime is the leg's: see
+//            RetireMarkerLater and every EndLeg / Release / Compose path. This is
+//            NOT Docs/INVARIANTS.md #0 action (e): no cast, no decision, only a
+//            package destination.
 //
 // EVERYTHING ELSE IS REFUSED, and here is the evidence rather than an opinion.
 // `PackageLocation::AllocateLocation` (vtable slot 1) switches on locType through a
@@ -256,12 +268,84 @@ namespace {
         // legs), so its deadness never ends the leg. Sampled in Compose, reset on
         // every re-point. False for a cell and until Compose has sampled it.
         bool                  destAliveAtTarget = false;
+
+        // ABI v11 position legs (kTravel_ToPosition). `point` is what the client
+        // declared; `marker` is APMF's XMarker for the point `markerPoint` (the two
+        // differ only between a Repoint and the Compose that replaces the marker).
+        // While a marker exists, destHandle/destId name it. APMF owns the marker and
+        // deletes it when the leg ends for any reason.
+        bool                  toPosition = false;
+        RE::NiPoint3          point{};
+        RE::ObjectRefHandle   marker{};
+        RE::FormID            markerId = 0;
+        RE::NiPoint3          markerPoint{};
     };
 
     std::unordered_map<RE::FormID, Leg> g_legs;
     RE::FormID                          g_slotOwner[kTravelSlots]{};   // 0 == free
     std::atomic<std::uint32_t>          g_legCount{ 0 };               // Poll's relaxed pre-gate
     std::uint64_t                       g_lastPollMs = 0;
+    // Which package records were last pointed at an APMF marker (ABI v11). Read at the
+    // load boundary (ResetAll), where the record would otherwise keep a handle to a
+    // marker from the world being replaced.
+    // The marker FormID each record was last pointed at (0 = not a marker).
+    RE::FormID                          g_slotMarkerId[kTravelSlots]{};
+
+    // Point a FREE slot's record back at its authored placeholder (PlayerRef,
+    // APMF_GenerateESL.py) if it still names `a_markerId`, so no record keeps a
+    // handle to a marker APMF is deleting. A slot another leg already took has been
+    // re-pointed by that leg (its id no longer matches) and is left alone. GAME THREAD.
+    void UnpointSlotsAt(RE::FormID a_markerId, const char* a_why) {
+        auto* player = RE::PlayerCharacter::GetSingleton();
+        for (std::size_t i = 0; i < kTravelSlots; ++i) {
+            if (a_markerId == 0 || g_slotMarkerId[i] != a_markerId) continue;
+            if (g_slotOwner[i] != 0) continue;   // still a live leg's record; that leg re-points it
+            g_slotMarkerId[i] = 0;
+            const bool ok = g_pkg[i] && player &&
+                            apmf::packagedata::SetTravelTarget(g_pkg[i], player, kDefaultRadiusUnits);
+            if (ok) {
+                spdlog::info("[travel] package slot {} pointed back at its placeholder (PlayerRef) -- it named marker "
+                             "0x{} ({}).", i, Hex(a_markerId), a_why);
+            } else {
+                spdlog::error("[travel] package slot {} could NOT be pointed back at its placeholder (see the [pkgdata] "
+                              "line) -- it keeps a handle to deleted marker 0x{} until its next leg re-points it; no "
+                              "leg offers it before then.", i, Hex(a_markerId));
+            }
+        }
+    }
+
+    bool SamePoint(const RE::NiPoint3& a, const RE::NiPoint3& b) { return a.x == b.x && a.y == b.y && a.z == b.z; }
+
+    // Delete a leg's marker ONE HOP LATER. From every caller (Poll, which runs after
+    // Pump; a posted Release/Compose, which run inside Pump) a Post lands on the next
+    // frame's Pump, strictly after the Drain that applies the ch.9 offer release queued
+    // beside it -- so the package is never still offered at a deleted marker. The
+    // delete re-checks handle, FormID and base (poscast::DeleteMarker), so a recycled
+    // 0xFF FormID is never touched. GAME THREAD.
+    void RetireMarkerLater(RE::FormID a_id, RE::ObjectRefHandle a_marker, RE::FormID a_markerId, const char* a_why) {
+        if (a_markerId == 0) return;
+        apmf::mainthread::Post([a_id, a_marker, a_markerId, a_why] {
+            // First take the marker out of every free package record, then delete it:
+            // nothing of APMF's names it afterwards. (The slot was freed by a Post queued
+            // BEFORE this one, so FIFO order makes it free here.)
+            UnpointSlotsAt(a_markerId, a_why);
+            if (const char* no = apmf::poscast::DeleteMarker(a_marker, a_markerId)) {
+                spdlog::warn("[travel] 0x{} destination marker 0x{} NOT deleted ({}) -- {}.", Hex(a_id),
+                             Hex(a_markerId), a_why, no);
+            } else {
+                spdlog::info("[travel] 0x{} destination marker 0x{} deleted ({}).", Hex(a_id), Hex(a_markerId),
+                             a_why);
+            }
+        });
+    }
+
+    // Hand a leg's marker to RetireMarkerLater and forget it on the leg.
+    void DropLegMarker(RE::FormID a_id, Leg& a_leg, const char* a_why) {
+        if (a_leg.markerId == 0) return;
+        RetireMarkerLater(a_id, a_leg.marker, a_leg.markerId, a_why);
+        a_leg.marker   = {};
+        a_leg.markerId = 0;
+    }
 
     // ---- Slots ----------------------------------------------------------------
 
@@ -392,6 +476,9 @@ namespace {
         DropOfferAndFreeSlot(a_leg.hPackage, a_leg.slot);
         a_leg.hPackage = APMF_API::kInvalidHandle;
         a_leg.slot     = -1;
+        // ABI v11: a position leg's marker lives exactly as long as the leg. The
+        // claim may stand on; a later Repoint/Compose places a fresh marker.
+        DropLegMarker(a_id, a_leg, "the leg ended");
 
         const auto elapsed = apmf::clock::MonotonicMs() - a_leg.legStartedMs;
         if (a_failure) {
@@ -458,6 +545,8 @@ namespace {
             return false;
         }
 
+        g_slotMarkerId[slot] = (a_leg.markerId != 0 && a_leg.destId == a_leg.markerId) ? a_leg.markerId : 0;
+
         APMF_API::APMF_Param p9{};
         p9.form = pkg->GetFormID();
         const APMF_API::Handle h =
@@ -490,10 +579,17 @@ namespace {
         float                basis = 0.0f;
         const bool claimed = apmf::ControlMap::Get().TryGetOwningClaimBasis(
             a_id, APMF_API::kIntent_Travel, now, basis);
-        if (!claimed || now.form != a_leg.destId) {
-            spdlog::info("[travel] 0x{} {} DROPPED (stale) -- posted for destination 0x{}, now claim={} "
-                         "destination 0x{}; a newer claim owns this edge.",
-                         Hex(a_id), a_step, Hex(a_leg.destId), claimed, Hex(now.form));
+        // ABI v11: a position leg is identified by its declared POINT (its destId is
+        // APMF's marker, a FormID the client never sees).
+        const bool nowToPos = (static_cast<std::uint32_t>(now.ival) & APMF_API::kTravel_ToPosition) != 0;
+        const bool same = a_leg.toPosition
+                              ? (nowToPos && SamePoint(a_leg.point, RE::NiPoint3{ now.posX, now.posY, now.posZ }))
+                              : (!nowToPos && now.form == a_leg.destId);
+        if (!claimed || !same) {
+            spdlog::info("[travel] 0x{} {} DROPPED (stale) -- posted for destination 0x{}{}, now claim={} "
+                         "destination 0x{}{}; a newer claim owns this edge.",
+                         Hex(a_id), a_step, Hex(a_leg.destId), a_leg.toPosition ? " (point)" : "", claimed,
+                         Hex(now.form), nowToPos ? " (point)" : "");
             return false;
         }
         if (a_outBasis) *a_outBasis = basis;
@@ -518,7 +614,8 @@ namespace {
             // and a claim made while the channel is down, so reaching here means both
             // held at request time. Re-test anyway -- the request was enqueued on some
             // other thread, possibly frames ago.
-            if (param.form == 0) {
+            const bool toPos = (static_cast<std::uint32_t>(param.ival) & APMF_API::kTravel_ToPosition) != 0;
+            if (param.form == 0 && !toPos) {
                 spdlog::error("[travel] 0x{} engage IGNORED -- param.form is 0 (no destination).", Hex(id));
                 return;
             }
@@ -528,6 +625,28 @@ namespace {
             leg.radius = ClampRadius(id, param.fval);
             leg.flags  = static_cast<std::uint32_t>(param.ival);
             if (actor && actor->IsHandleValid()) leg.actorHandle = actor->GetHandle();
+
+            // ABI v11 position leg: the marker is placed by Compose, one hop past this
+            // Drain's Publish, on the same confirmed-main seat as every other leg step.
+            if (toPos) {
+                if (param.form != 0) {   // ControlMap already refused this; re-tested, never trusted
+                    spdlog::error("[travel] 0x{} engage IGNORED -- kTravel_ToPosition with a non-zero form.",
+                                  Hex(id));
+                    return;
+                }
+                leg.toPosition = true;
+                leg.point      = RE::NiPoint3{ param.posX, param.posY, param.posZ };
+                leg.destId     = 0;
+                leg.destKind   = DestKind::kRef;
+                g_legs[id]     = leg;
+                g_legCount.store(static_cast<std::uint32_t>(g_legs.size()), std::memory_order_relaxed);
+                spdlog::info("[travel] 0x{} travel facet CLAIMED -- destination POINT {:.0f},{:.0f},{:.0f} (APMF "
+                             "places its own XMarker there), radius {}, flags 0x{}.",
+                             Hex(id), leg.point.x, leg.point.y, leg.point.z, static_cast<std::uint32_t>(leg.radius),
+                             Hex(leg.flags, 2));
+                apmf::mainthread::Post([id] { Compose(id, "engage"); });
+                return;
+            }
 
             if (!ClassifyDestination(id, leg.destId, leg.destKind, "engage")) return;
 
@@ -566,6 +685,26 @@ namespace {
             }
             Leg& leg = it->second;
 
+            // ABI v11: a Repoint to a POINT. The current destination (a ref, a cell, or
+            // the previous marker) stays in force until Compose places the new marker and
+            // re-points the package; Compose then deletes the old marker.
+            if ((static_cast<std::uint32_t>(param.ival) & APMF_API::kTravel_ToPosition) != 0) {
+                const RE::NiPoint3 pt{ param.posX, param.posY, param.posZ };
+                if (param.form != 0 || !std::isfinite(pt.x) || !std::isfinite(pt.y) || !std::isfinite(pt.z)) {
+                    spdlog::error("[travel] 0x{} re-point IGNORED -- kTravel_ToPosition needs form 0 and a finite "
+                                  "point. The previous destination 0x{} stands.", Hex(id), Hex(leg.destId));
+                    return;
+                }
+                leg.toPosition = true;
+                leg.point      = pt;
+                leg.radius     = ClampRadius(id, param.fval);
+                leg.flags      = static_cast<std::uint32_t>(param.ival);
+                spdlog::info("[travel] 0x{} travel claim RE-POINTED -- destination 0x{} -> POINT {:.0f},{:.0f},{:.0f}.",
+                             Hex(id), Hex(leg.destId), pt.x, pt.y, pt.z);
+                apmf::mainthread::Post([id] { Compose(id, "re-point"); });
+                return;
+            }
+
             if (param.form == 0) {
                 spdlog::error("[travel] 0x{} re-point IGNORED -- param.form is 0 (no destination).",
                               Hex(id));
@@ -580,6 +719,7 @@ namespace {
             }
 
             const RE::FormID was = leg.destId;
+            leg.toPosition = false;   // a form destination; any marker is deleted by Compose
             leg.destId     = param.form;
             leg.destKind   = kind;
             leg.destHandle = {};
@@ -615,7 +755,12 @@ namespace {
             // teardown runs, so a release-then-re-request inside ONE Drain cannot hand
             // the new leg the very record the outgoing ch.9 claim is still offering
             // (there are kTravelSlots of them; it gets another).
-            apmf::mainthread::Post([leg] { DropOfferAndFreeSlot(leg.hPackage, leg.slot); });
+            apmf::mainthread::Post([id, leg] {
+                DropOfferAndFreeSlot(leg.hPackage, leg.slot);
+                // ABI v11: the marker goes one hop after the offer release is queued
+                // (RetireMarkerLater posts again from inside this Pump).
+                RetireMarkerLater(id, leg.marker, leg.markerId, "the claim was released");
+            });
         }
 
     private:
@@ -630,6 +775,75 @@ namespace {
             if (!StillOurs(id, leg, step, &basis)) return;
             leg.basis = basis;
 
+            // ABI v11: a marker that no longer matches what the claim declares (a
+            // form destination now, or a different point) is taken OFF the leg here
+            // and deleted after this Compose has re-pointed or ended the leg, on every
+            // exit (see the tail of this function).
+            RE::ObjectRefHandle oldMarker{};
+            RE::FormID          oldMarkerId = 0;
+            RE::NiPoint3        oldMarkerPoint{};
+            if (leg.markerId != 0 && (!leg.toPosition || !SamePoint(leg.markerPoint, leg.point))) {
+                oldMarker      = leg.marker;
+                oldMarkerId    = leg.markerId;
+                oldMarkerPoint = leg.markerPoint;
+                leg.marker   = {};
+                leg.markerId = 0;
+            }
+
+            ComposeLeg(id, leg, step);
+
+            // NEVER DELETE A MARKER A LIVE SLOT STILL NAMES (review F5). If ComposeLeg
+            // returned early with the leg still live and its package record still aimed
+            // at the old marker (the new destination did not resolve, so nothing was
+            // re-pointed), the old marker goes back on the leg: it is retired when that
+            // leg ends (EndLeg frees the slot first), not now under a live offer.
+            if (oldMarkerId != 0 && leg.legLive && leg.slot >= 0 && g_slotMarkerId[leg.slot] == oldMarkerId) {
+                if (leg.markerId != 0) DropLegMarker(id, leg, "placed for a re-point that did not take");
+                leg.marker      = oldMarker;
+                leg.markerId    = oldMarkerId;
+                leg.markerPoint = oldMarkerPoint;
+                spdlog::info("[travel] 0x{} {}: marker 0x{} KEPT -- the live leg's package still names it; it is "
+                             "deleted when the leg ends.", Hex(id), step, Hex(oldMarkerId));
+                oldMarkerId = 0;
+            }
+            RetireMarkerLater(id, oldMarker, oldMarkerId, "re-pointed away from it");
+            // A position leg that did not start (or was ended above) must not keep a
+            // marker nothing walks to.
+            if (!leg.legLive) DropLegMarker(id, leg, "the leg did not start");
+        }
+
+        // The body of Compose. Every return leaves `leg` consistent; Compose's tail
+        // disposes of markers.
+        static void ComposeLeg(RE::FormID id, Leg& leg, const char* step) {
+            const float basis = leg.basis;
+
+            // ABI v11: place this position leg's marker. The leg then IS a reference
+            // leg to it, through the unchanged path below.
+            if (leg.toPosition && leg.markerId == 0) {
+                auto  aptr  = leg.actorHandle.get();
+                auto* actor = aptr.get();
+                std::string why = "the actor no longer resolves";
+                RE::ObjectRefHandle h{};
+                if (actor) h = apmf::poscast::PlaceMarker(actor, leg.point, why);
+                auto  mptr   = h.get();
+                auto* marker = mptr.get();
+                if (!marker) {
+                    spdlog::error("[travel] 0x{} {} REFUSED -- no destination marker at {:.0f},{:.0f},{:.0f}: {}.",
+                                  Hex(id), step, leg.point.x, leg.point.y, leg.point.z, why);
+                    if (leg.legLive) EndLeg(id, leg, "the destination marker could not be placed", true);
+                    return;
+                }
+                leg.marker      = h;
+                leg.markerId    = marker->GetFormID();
+                leg.markerPoint = leg.point;
+                leg.destKind    = DestKind::kRef;
+                leg.destHandle  = h;
+                leg.destId      = leg.markerId;
+                spdlog::info("[travel] 0x{} {}: destination marker 0x{} placed at {:.0f},{:.0f},{:.0f} (cell 0x{}).",
+                             Hex(id), step, Hex(leg.markerId), leg.point.x, leg.point.y, leg.point.z,
+                             Hex(marker->GetParentCell() ? marker->GetParentCell()->GetFormID() : 0));
+            }
+
             // A ref destination must still RESOLVE; a cell destination is a plain form
             // that does not unload, so the lookup in PointPackage is the only check it
             // needs.
@@ -641,13 +855,18 @@ namespace {
                                   "(unloaded or deleted).", Hex(id), step, Hex(leg.destId));
                     return;
                 }
-                // Sample the destination's life at TARGET time (marth: "If the target
-                // is dead when targeted, it's fine. But if it dies during travel,
-                // drop."). Same IsDead call Poll's death end makes.
-                leg.destAliveAtTarget = !destPtr->IsDead();
-                spdlog::info("[travel] 0x{} {}: destination 0x{} {}.", Hex(id), step, Hex(leg.destId),
-                             leg.destAliveAtTarget ? "alive at target time"
-                                                   : "dead at target time -- walking to a corpse");
+                if (leg.toPosition) {
+                    // A marker cannot die: the death rule does not apply to it.
+                    leg.destAliveAtTarget = false;
+                } else {
+                    // Sample the destination's life at TARGET time (marth: "If the target
+                    // is dead when targeted, it's fine. But if it dies during travel,
+                    // drop."). Same IsDead call Poll's death end makes.
+                    leg.destAliveAtTarget = !destPtr->IsDead();
+                    spdlog::info("[travel] 0x{} {}: destination 0x{} {}.", Hex(id), step, Hex(leg.destId),
+                                 leg.destAliveAtTarget ? "alive at target time"
+                                                       : "dead at target time -- walking to a corpse");
+                }
             } else {
                 leg.destAliveAtTarget = false;
             }
@@ -665,6 +884,7 @@ namespace {
                     EndLeg(id, leg, "the Location re-point was declined", true);
                     return;
                 }
+                g_slotMarkerId[leg.slot] = (leg.markerId != 0 && leg.destId == leg.markerId) ? leg.markerId : 0;
                 APMF_API::APMF_Param p9{};
                 p9.form = g_pkg[leg.slot]->GetFormID();
                 if (leg.basisPackage != basis) {
@@ -759,10 +979,40 @@ namespace apmf::travel {
 
     const char* NotInstalledReason() { return g_notInstalledReason.load(std::memory_order_acquire); }
 
+    // ABI v11: put every package record that was last pointed at an APMF marker back
+    // on its AUTHORED placeholder (PlayerRef, APMF_GenerateESL.py), so no record
+    // carries a handle to a marker from the world being replaced into the next one.
+    // The markers themselves are FORGOTTEN, never touched: they belong to that world.
+    void RestoreMarkerSlots(const char* why) {
+        auto* player = RE::PlayerCharacter::GetSingleton();
+        for (std::size_t i = 0; i < kTravelSlots; ++i) {
+            if (g_slotMarkerId[i] == 0) continue;
+            g_slotMarkerId[i] = 0;
+            if (!g_pkg[i] || !player) continue;
+            const bool ok = apmf::packagedata::SetTravelTarget(g_pkg[i], player, kDefaultRadiusUnits);
+            if (ok) {
+                spdlog::info("[travel] {} -- package slot {} pointed back at its placeholder (PlayerRef); it last "
+                             "pointed at an APMF marker.", why, i);
+            } else {
+                spdlog::error("[travel] {} -- package slot {} could NOT be pointed back at its placeholder (see the "
+                              "[pkgdata] line). It keeps a stale marker handle until its next leg re-points it; "
+                              "no leg offers it before then.", why, i);
+            }
+        }
+    }
+
     void ResetAll(const char* why) {
+        RestoreMarkerSlots(why);
         if (g_legs.empty()) {
             for (auto& o : g_slotOwner) o = 0;
             return;
+        }
+        std::size_t markers = 0;
+        for (const auto& [id, leg] : g_legs) markers += leg.markerId != 0 ? 1 : 0;
+        if (markers != 0) {
+            spdlog::warn("[travel] {} -- forgetting {} destination marker(s) WITHOUT deleting them (they belong to "
+                         "the world being replaced; a save taken mid-leg records them, and its load deletes them).",
+                         why, markers);
         }
         spdlog::info("[travel] {} -- dropping {} leg(s) and freeing every package slot without releasing "
                      "the internal offers (the world is being replaced).", why, g_legs.size());

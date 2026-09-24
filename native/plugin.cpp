@@ -18,6 +18,8 @@
 #include "core/AiCastSeats.h"
 #include "core/CastClassify.h"
 #include "channels/Travel.h"
+#include "core/PositionCast.h"
+#include "core/SpaceQuery.h"
 
 // ============================================================================
 // APMF -- AI Package Management Framework. Entry point (thin).
@@ -43,11 +45,15 @@ namespace {
         // first, then write our own record. See castproxy::PreSaveSweep (INVARIANTS #19).
         apmf::castproxy::PreSaveSweep();
         apmf::av::Save(intf);
+        // ABI v11: record every live APMF XMarker (position casts + ch.19 position
+        // legs) so the load of THIS save can delete the ones it captured.
+        apmf::poscast::SaveMarkers(intf);
     }
     void OnLoad(SKSE::SerializationInterface* intf) {
         std::uint32_t type = 0, version = 0, length = 0;
         while (intf->GetNextRecordInfo(type, version, length)) {
             if (type == apmf::av::kRecordType) apmf::av::Load(intf, version);
+            else if (type == apmf::poscast::kMarkerRecordType) apmf::poscast::LoadMarkers(intf, version);
         }
     }
     void OnRevert(SKSE::SerializationInterface*) {
@@ -66,6 +72,13 @@ namespace {
         // the travel-leg table and its package slots would survive the world swap
         // owned by actors that no longer exist.
         apmf::travel::ResetAll("revert/new game");
+        // ABI v11 position cast: forget any marker still waiting for its one-frame
+        // delete (its Retire task is dropped by the Discard below). The references
+        // belong to the world being replaced, so none is touched.
+        apmf::poscast::ResetAll("revert/new game");
+        // ...and forget the outgoing world's marker LEDGER. This must precede the load
+        // callback (which reads the incoming save's record); SKSE runs revert first.
+        apmf::poscast::RevertMarkers();
         // Flush the confirmed-main task queue at the world boundary (see
         // core/MainThread.h's Discard() for why). Clear() posts nothing today -- it
         // makes no channel->Release calls by design -- but anything posted BEFORE the
@@ -103,6 +116,10 @@ namespace {
                                                   // failure REFUSES kIntent_Travel claims
                                                   // (ControlMap::EnqueueRequest) rather than accepting a
                                                   // claim that would do nothing.
+            apmf::poscast::Install();            // ABI v11 POSITION CAST: runtime gate (1.6.1170 / 1.5.97,
+                                                  // never VR) + [PositionCast] + the XMarker base. Installs NO
+                                                  // hook. Refused -> kCastFlag_AtPosition requests are refused.
+            apmf::spacequery::Install();         // ABI v11 SPACE QUERIES: runtime gate only (read-only calls).
             apmf::equipsink::Install();          // ch.17 ENGINE-EQUIP SINK: the ONE #17a call-site seat
                                                   // (ActorEquipManager worker, two internal E8 sites per
                                                   // runtime, byte-verified before any write; a mismatch
@@ -174,6 +191,8 @@ namespace {
             // instead, or every slot stays owned by an actor from the outgoing world and
             // the first leg in the new one overflows.
             apmf::travel::ResetAll("kPreLoadGame");
+            // ABI v11 position cast: same as the revert path -- forget, never touch.
+            apmf::poscast::ResetAll("kPreLoadGame");
             // Flush the confirmed-main task queue. NOTHING Pump()s between here and
             // the first player Update AFTER the load, so anything ReleaseAll just
             // posted (ch.9's release nudge; ch.8b's proxy teardown) would otherwise
@@ -189,6 +208,16 @@ namespace {
             break;
         case SKSE::MessagingInterface::kPostLoadGame:
             apmf::av::ApplyPending();             // restore any stranded AV overrides
+            // ABI v11: delete the APMF XMarkers this save captured mid-leg / mid-cast.
+            // NOT in the load callback (the loaded references are not there yet) and NOT
+            // inside this message either (review F4): it is POSTED to the confirmed-main
+            // pump, so it runs on the FIRST player-Update after the load, in the world
+            // the game is actually running, on the same seat every other APMF world write
+            // uses. No APMF leg or cast can be live before it: legs are never restored,
+            // and a new request's marker has a fresh id (the sweep also skips any id it
+            // finds live). A second load before that pump Discard()s the post at
+            // kPreLoadGame and the revert callback clears the record it would have swept.
+            apmf::mainthread::Post([] { apmf::poscast::SweepCarriedMarkers("first pump after load"); });
             apmf::equipsink::ReinspectEntries("kPostLoadGame");   // a later plugin may have detoured EquipObject's entry
             break;
         case SKSE::MessagingInterface::kNewGame:
