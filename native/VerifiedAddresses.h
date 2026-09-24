@@ -14,7 +14,7 @@
 
 namespace apmf::VerifiedAddresses
 {
-	// 1.6.1170.0: 171 rows
+	// 1.6.1170.0: 173 rows
 	inline constexpr REL::SelfCheck::Row kRows_1_6_1170[] = {
 		{ 207886, 0x18A5558, 0x0, 0, {  }, "Character" },
 		{ 208040, 0x18AB9C0, 0x0, 0, {  }, "PlayerCharacter" },
@@ -187,9 +187,11 @@ namespace apmf::VerifiedAddresses
 		{ 28422, 0x45D840, 0x0, 0, {  }, "EquipSink.Path.ProcedureEat.28422" },
 		{ 41244, 0x764060, 0x0, 0, {  }, "EquipSink.Path.InventoryReequip.41244" },
 		{ 38561, 0x6B6930, 0x0, 0, {  }, "EquipSink.Path.StartCombat.38561" },
+		{ 68233, 0xCC90C0, 0x0, 0, {  }, "CommonLib.BSReadWriteLock.LockForRead" },
+		{ 68239, 0xCC9380, 0x0, 0, {  }, "CommonLib.BSReadWriteLock.UnlockForRead" },
 	};
 
-	// 1.5.97.0: 171 rows
+	// 1.5.97.0: 173 rows
 	inline constexpr REL::SelfCheck::Row kRows_1_5_97[] = {
 		{ 261397, 0x165DA40, 0x0, 0, {  }, "Character" },
 		{ 261916, 0x16635E0, 0x0, 0, {  }, "PlayerCharacter" },
@@ -362,6 +364,8 @@ namespace apmf::VerifiedAddresses
 		{ 27700, 0x403280, 0x0, 0, {  }, "EquipSink.Path.ProcedureEat.27700" },
 		{ 40241, 0x6CFC00, 0x0, 0, {  }, "EquipSink.Path.InventoryReequip.40241" },
 		{ 37608, 0x6251B0, 0x0, 0, {  }, "EquipSink.Path.StartCombat.37608" },
+		{ 66976, 0xC072D0, 0x0, 0, {  }, "CommonLib.BSReadWriteLock.LockForRead" },
+		{ 66982, 0xC07590, 0x0, 0, {  }, "CommonLib.BSReadWriteLock.UnlockForRead" },
 	};
 
 	inline constexpr REL::SelfCheck::Table kTables[] = {

@@ -14,6 +14,8 @@
 - `[PositionCast] bPositionCast` is new in `APMF.ini`, default 0 (off). Set it to 1 to allow position casts.
 - New API revision (v11). It adds `FindEmptySpace` and `FindHostilesInSpace`, their structs, and the `kCastFlag_AtPosition` and `kTravel_ToPosition` bits. Check `abiVersion >= 11` before calling either query or setting either bit. An older Harbinger ignores the cast bit and makes an ordinary cast claim, and it refuses a travel request with no form. A mod built against an older revision is unaffected.
 - Both runtimes. Every call these paths make was read on the 1.6.1170 and 1.5.97 binaries before it was used, and both features refuse any other build by name. VR is refused.
+- **Looking up a form off the main thread is safe now.** A mod can call Harbinger from any thread, and several paths look up forms by ID. The library underneath read the game's list of forms without taking its lock. If the game added a form at the same moment (a spawned actor, a placed marker), the read could land on memory the game had just moved and crash, or come back empty. It now holds the game's own lock for the lookup, the same way the game does. Nothing else changes. A lookup only waits while the game is in the middle of adding or removing a form.
+- Built on CommonLib mit-3.7 F1b (registry 3.7.0#4). The startup self-check now also verifies the two lock functions on both runtimes. The log line reads 173/173.
 - Not field-run. CI verified only.
 
 ## v0.9.7 -- Travel walks to a body

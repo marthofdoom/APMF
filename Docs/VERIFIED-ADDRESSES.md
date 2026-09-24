@@ -10,7 +10,7 @@ nothing when one does not. At startup `REL::SelfCheck::Run` repeats the comparis
 game actually loaded. A row that fails refuses THAT seat by name in the log; the expected RVA is never
 used in place of the library's answer.
 
-Offline result of this generation: 1.6.1170.0 171/171 verified, 0 refused, 1.5.97.0 171/171 verified, 0 refused.
+Offline result of this generation: 1.6.1170.0 173/173 verified, 0 refused, 1.5.97.0 173/173 verified, 0 refused.
 
 ## Rows
 
@@ -187,6 +187,8 @@ Offline result of this generation: 1.6.1170.0 171/171 verified, 0 refused, 1.5.9
 | EquipSink.Path.ProcedureEat.28422 | function | 28422 | 0x45D840 | - | - | signature (31 bytes, unique in .text) |  | native/core/EquipSink.cpp:147 |  |
 | EquipSink.Path.InventoryReequip.41244 | function | 41244 | 0x764060 | - | - | signature (16 bytes, unique in .text) |  | native/core/EquipSink.cpp:148 |  |
 | EquipSink.Path.StartCombat.38561 | function | 38561 | 0x6B6930 | - | - | signature (38 bytes, unique in .text) |  | native/core/EquipSink.cpp:149 |  |
+| CommonLib.BSReadWriteLock.LockForRead | function | 68233 | 0xCC90C0 | 66976 | 0xC072D0 | signature (32 bytes, unique in .text) |  | CommonLib mit-3.7 fde0f3ae include/RE/T/TESForm.h LookupByID/LookupByEditorID (BSReadLockGuard) | ADDRESS-TABLE-2026-09-15.md ADDENDUM 2026-09-24 F1b |
+| CommonLib.BSReadWriteLock.UnlockForRead | function | 68239 | 0xCC9380 | 66982 | 0xC07590 | signature (16 bytes, unique in .text) |  | CommonLib mit-3.7 fde0f3ae include/RE/T/TESForm.h LookupByID/LookupByEditorID (BSReadLockGuard) | ADDRESS-TABLE-2026-09-15.md ADDENDUM 2026-09-24 F1b |
 | EquipSink.Path.OutfitApply.24234 | function | - | - | 24234 | 0x364710 | signature (21 bytes, unique in .text) |  | native/core/EquipSink.cpp:158 |  |
 | EquipSink.Path.AddWornOutfit.19266 | function | - | - | 19266 | 0x28DDA0 | signature (17 bytes, unique in .text) |  | native/core/EquipSink.cpp:159 |  |
 | EquipSink.Path.AiCommand.38618 | function | - | - | 38618 | 0x669210 | signature (33 bytes, unique in .text) |  | native/core/EquipSink.cpp:160 |  |

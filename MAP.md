@@ -348,7 +348,8 @@ Runtime gate: exactly 1.6.1170 / 1.5.97, VR refused. Evidence:
   INVARIANTS #0 (e) is ADOPTED with condition (8) "not an endpoint": no animation, so no client
   ships a user-facing action on it alone); `MarkersSupported` must stay independent of that switch or
   ch.19 position legs die with it. `Enqueue` does NO form lookup (review R2-1: 3.7.0's
-  `LookupByID` takes no lock; the spell checks live in `Deliver`, main thread), and
+  `LookupByID` took no lock. Fork F1b makes it take the real read lock, and the spell checks still live in
+  `Deliver`, main thread), and
   `ControlMap::CastFacetOutranks` refuses (at the call AND again in `Deliver`, R2-3c; a non-finite
   basis is refused first, R2-3b) a cast while a live cast claim owns the actor's
   facet (condition 7). The load sweep is POSTED from kPostLoadGame. `g_carry` is capped
@@ -561,9 +562,19 @@ did not arm.
   the gate exists to prevent.
 
 ### `native/core/Allowance.{h,cpp}` — the reusable ALLOWANCE TEMPLATE (Docs/ALLOWANCE-TEMPLATE.md §3)
+**FORM LOOKUP LOCK (mit-3.7 F1b, 2026-09-24): threading.** `RE::TESForm::LookupByID`/`LookupByEditorID` now hold
+the game's read lock on the form map for the find (3.7.0 copied the lock and held nothing). Proof:
+Docs/ADDRESS-TABLE-2026-09-15.md "ADDENDUM 2026-09-24 (mit-3.7 F1b)". A read waits only while another thread inserts
+or erases a form. Writers are leaf, and a thread that already holds the lock re-enters, so no lookup can deadlock.
+Audit 2026-09-24: 36 sites, 0 risks, none under an APMF mutex. They run on MAIN (Drain, Pump, OncePerFrame, the
+main-only SpaceQuery calls, kDataLoaded, kPostLoadGame), the save callback, and the `PackageGate` 0x49 thunk
+(engine AI threads). The 0x49 lookup happens before `g_redirectMx` is taken. **What breaks:** holding an APMF mutex
+that the game could wait on across a lookup. None can today. The `PositionCast.cpp` `Enqueue` comment about the
+unlocked 3.7.0 lookup is history now. Keep the rule it states: no lookup on the caller's thread.
+
 **SEAT SELF-CHECK (mit-3.7 F1, 2026-09-24):** `SelfCheckResult()` / `LogSelfCheck()` / (open backlog: APMF-B21 APMF-B22)
-**`SeatVerified(address, seat)`** over the generated `native/VerifiedAddresses.h` (171 rows per
-runtime; `Docs/VERIFIED-ADDRESSES.md`). `InstallOnVtables` refuses a list whose expected RTTI
+**`SeatVerified(address, seat)`** over the generated `native/VerifiedAddresses.h` (173 rows per
+runtime, incl. the F1b `BSReadWriteLock::LockForRead`/`UnlockForRead` rows, logged only; `Docs/VERIFIED-ADDRESSES.md`). `InstallOnVtables` refuses a list whose expected RTTI
 TypeDescriptor is unverified and skips each unverified vtable; direct guards in Hook, PackageGate
 (+ EvaluatePackage), CastClassify, EquipSink (worker + both sites), MovementDeny (3 natives), CastSeats
 aim seat, AiCastSeats Group C, PositionCast::Install, SpaceQuery::Install. `plugin.cpp` logs
