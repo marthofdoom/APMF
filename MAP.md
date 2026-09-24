@@ -73,7 +73,10 @@ masked + logged once per handle); **ABI v10 adds NO struct and NO fn-pointer slo
 `kIntent_Travel = 19` (ch.19) plus the `TravelFlags` bits ride the EXISTING
 `RequestEx`/`Repoint`/`Release` slots, so a v9 client is byte-unaffected and the newest
 struct stays `APMF_API_v9`; intent 18 is deliberately SKIPPED, reserved for the unauthored
-ch.18 attack-selection spec), the
+ch.18 attack-selection spec); **ABI v12 adds `APMF_API_v12 : APMF_API_v11` with ONE slot,
+`GetTravelLegState(FormID, APMF_TravelLegInfo*)`, the 60-byte POD `APMF_TravelLegInfo` (size
+field first, static_assert-pinned), the `TravelLegState` enum, and the travel gait bits
+`kTravel_SpeedSet` (1<<2) + `kTravel_SpeedMask` (bits 3-4 = the engine's PreferredSpeed)**, the
 `Intent` enum, `Handle`, and the exported query-fn name. No C++ class / STL / vtable
 crosses the boundary. **The current `kABIVersion` is stated ONLY in the header**
 (INVARIANTS #14b — this line said 3 while the header was at 6).
@@ -86,7 +89,7 @@ crosses the boundary. **The current `kABIVersion` is stated ONLY in the header**
 
 ### `native/core/ClientAPI.{h,cpp}` — the C-ABI implementation
 The exported `APMF_GetInterface(abiVersion)` hands over the static POD newest-struct
-object (`APMF_API_v11` since ABI v11 — read the header, not this line) as a base
+object (`APMF_API_v12` since ABI v12 — read the header, not this line) as a base
 `APMF_API_v1*`; a client casts up to the newest struct it uses. It returns **nullptr**
 when the client asks for a version NEWER than this APMF implements (`:125-128`), which
 is why a needless `kABIVersion` bump is expensive (INVARIANTS #14b). Its
@@ -97,6 +100,9 @@ SetEquipSet/SetEquipSetEx/SetEquipScope` (Request == RequestEx with a null param
 `MinReleaseForAbi` names the first release per ABI (v7/v8/v9 = the placeholder until the cut, REVIEW-BACKLOG APMF-B10).
 ABI v11 adds `FindEmptySpace` / `FindHostilesInSpace` → `core/SpaceQuery.cpp` (each a
 `try/catch(...)` returning `kQuery_Failed`), and `MinReleaseForAbi(11)` = `0.9.8`.
+ABI v12 adds `GetTravelLegState` → `travel::GetLegState` (`channels/Travel.cpp`, a
+`try/catch(...)` returning `kLeg_None`), and `MinReleaseForAbi(12)` = `0.9.8` (v11 and v12
+ship together; both static_assert pairs pin the prefix ends).
 The "client too new" null (`abiVersion > kABIVersion`) logs the running APMF version
 (`SKSE::PluginDeclaration::GetSingleton()`) and `MinReleaseForAbi(abi)` — a table that must
 be extended on every `kABIVersion` bump.
@@ -573,8 +579,9 @@ that the game could wait on across a lookup. None can today. The `PositionCast.c
 unlocked 3.7.0 lookup is history now. Keep the rule it states: no lookup on the caller's thread.
 
 **SEAT SELF-CHECK (mit-3.7 F1, 2026-09-24):** `SelfCheckResult()` / `LogSelfCheck()` / (open backlog: APMF-B21 APMF-B22, APMF-B23)
-**`SeatVerified(address, seat)`** over the generated `native/VerifiedAddresses.h` (173 rows per
-runtime, incl. the F1b `BSReadWriteLock::LockForRead`/`UnlockForRead` rows, logged only; `Docs/VERIFIED-ADDRESSES.md`). `InstallOnVtables` refuses a list whose expected RTTI
+**`SeatVerified(address, seat)`** over the generated `native/VerifiedAddresses.h` (175 rows per
+runtime, incl. the F1b `BSReadWriteLock::LockForRead`/`UnlockForRead` rows, logged only, and the
+ABI v12 gate-probe rows `Travel.GetOpenState` / `Travel.ScriptEventSourceHolder.GetSingleton`; `Docs/VERIFIED-ADDRESSES.md`). `InstallOnVtables` refuses a list whose expected RTTI
 TypeDescriptor is unverified and skips each unverified vtable; direct guards in Hook, PackageGate
 (+ EvaluatePackage), CastClassify, EquipSink (worker + both sites), MovementDeny (3 natives), CastSeats
 aim seat, AiCastSeats Group C, PositionCast::Install, SpaceQuery::Install. `plugin.cpp` logs
@@ -1053,6 +1060,30 @@ parentheses.
   aimed at a marker back at its PlayerRef placeholder (`g_slotAtMarker`). Break any of those
   and a marker outlives its leg or a record carries a stale marker handle across a load.
   Not rule #0 (e): no cast, only a package destination.
+  (8) **ABI v12 (2026-09-24): BLOCKED end, leg-state mirror, gait, gate probe.** `Poll` reads
+  `GetCurrentPackage()->packData.packType` (TESPackage+0x24) every 250 ms; 36 = Movement
+  Blocked (the engine's own type-name table, both images). `Leg::blockedSinceMs` starts at the
+  first MB poll, resets on any non-MB poll, at every `StartLeg` and live re-point; at
+  `kBlockedEndMs` (3000, sized from the deck: ~1 s healthy blips vs 39-45 s gate freezes) the
+  leg ends `kLeg_Blocked` AFTER the arrival/destination checks and BEFORE the stuck net. Never
+  deny or fight MB. Every state change goes through `SetLegState[For]` into `g_state` under
+  `g_stateMx` — the ONE any-thread structure besides the probe's `g_watches`; `GetLegState`
+  copies it out and touches nothing else. **What breaks:** an `EndLeg` without its
+  `TravelLegState` (the client then reads a stale state and treats an ended leg as a theft), a
+  new end path that skips `SetLegState`, or an engine call made while `g_stateMx`/`g_watchMx`
+  is held. GAIT: `ApplyGait` writes `packData.maxSpeed` (+0x26) and `kPreferredSpeed` (0x2000)
+  into the slot's record right after `PointPackage` and BEFORE the ch.9 offer is queued; a
+  leg without `kTravel_SpeedSet` restores the record's AUTHORED values (`g_authoredSpeed`/
+  `g_authoredPrefSpeed`, captured at Install), or a previous leg's gait leaks. The engine copies
+  the speed at package START (1.6.1170 0x6CE2C0 / 1.5.97 0x63BD40), so a live re-point's gait
+  change is logged, not applied to the running copy. Exact-build gated (`g_gaitVerified`).
+  `ObserveGait` reads the running ActorPackage under its `packageLock`, log only. GATE PROBE:
+  `GateProbe` at a BLOCKED end (DOOR/ACTI refs within 1024u, parent cell + `TES::GetCell`
+  corners outdoors), then `GateEventSink` (TESOpenCloseEvent +0x8F0 / TESActivateEvent +0x58)
+  logs events near a watched stall for 10 min; sinks run on engine threads and only read plain
+  fields + `mainthread::Post` the `GetOpenState` re-reads. Armed only when the self-check
+  verifies `Travel.GetOpenState`, `Travel.ScriptEventSourceHolder.GetSingleton` and TES::GetCell
+  on an exact build. Passive: it must never write anything.
   Its open review findings are `Docs/REVIEW-BACKLOG.md` APMF-B13..B18 — read them before
   editing. Its deny holes are stated in
   `Docs/DENY-COMPLETENESS-AUDIT.md` row 19 — read them before editing.

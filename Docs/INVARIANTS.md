@@ -523,6 +523,13 @@ the header had moved on. A restated version number is a copy that cannot be kept
   field that already shipped, at the same offset, with the same size. An older APMF
   reads the bit as 0 and behaves exactly as it did before — the degrade is automatic
   and correct, and no version test could improve on it.
+- **The exception: a bit whose silent ignore IS the failure.** The ch.19 gait bits
+  (`kTravel_SpeedSet` + speed, 2026-09-24) are new bits in the frozen `ival` word, but an
+  older APMF ignoring them walks the actor at the wrong speed with no refusal and no log,
+  which is a masked failure (CLAUDE.md principle 7), not a correct degrade. Such a bit
+  rides a bump that exists anyway (here v12, for `GetTravelLegState`) and its doc tells
+  the client to gate it on `abiVersion`. Never bump for such a bit alone without asking
+  whether the degrade is really wrong.
 - **Why the asymmetry matters HERE.** `APMF_GetInterface(v)` returns **nullptr** when
   `v > kABIVersion` (`core/ClientAPI.cpp:125-128`), and MFO calls
   `fn(APMF_API::kABIVersion)` ONCE, with no downward retry: on null it logs "APMF
