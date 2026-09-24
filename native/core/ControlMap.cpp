@@ -8,6 +8,9 @@
 #include "core/CastProxy.h"         // castproxy::Acquire/Free (ch.8b kSelf delivery-flip, writer thread)
 #include "core/MainThread.h"        // mainthread::Post (defer proxy teardown past this Drain's Publish)
 #include "channels/Travel.h"  // ch.19 Installed()/NotInstalledReason() for the synchronous refusal
+#include "core/PositionCast.h"  // ABI v11 position cast: poscast::Enqueue (one-shot, never a claim); MarkersSupported (ch.19)
+
+#include <cmath>
 
 namespace apmf {
 
@@ -104,14 +107,34 @@ namespace apmf {
                                  apmf::travel::NotInstalledReason(), apmf::log::Hex(actor));
                 return APMF_API::kInvalidHandle;
             }
-            if (!param || param->form == 0) {
+            // ABI v11: kTravel_ToPosition -- the destination is param.pos, and APMF
+            // walks the actor to its OWN XMarker there (channels/Travel.cpp). The form
+            // must then be 0 (a form AND a point is ambiguous), the point finite, and
+            // the runtime one the marker helpers are verified on.
+            if (param && (static_cast<std::uint32_t>(param->ival) & APMF_API::kTravel_ToPosition) != 0) {
+                const char* why = nullptr;
+                if (!apmf::poscast::MarkersSupported())
+                    why = "XMarker placement is not available (VR, a runtime other than 1.6.1170 / 1.5.97, or "
+                          "before kDataLoaded)";
+                else if (param->form != 0)
+                    why = "param.form is set as well as kTravel_ToPosition -- a destination is a form OR a point, "
+                          "never both";
+                else if (!std::isfinite(param->posX) || !std::isfinite(param->posY) || !std::isfinite(param->posZ))
+                    why = "param.pos is not a finite point";
+                if (why) {
+                    spdlog::warn("[apmf][travel] position claim refused -- actor 0x{}: {}.", apmf::log::Hex(actor),
+                                 why);
+                    return APMF_API::kInvalidHandle;
+                }
+            } else if (!param || param->form == 0) {
                 spdlog::warn("[apmf][travel] claim refused: no destination (param.form is 0) -- actor "
                              "0x{}. kIntent_Travel REQUIRES param.form = the destination's FormID (an "
                              "object reference or a cell).",
                              apmf::log::Hex(actor));
                 return APMF_API::kInvalidHandle;
             }
-            // A WORLD POSITION IS NOT EXPRESSIBLE, so a claim that carries one is
+            // A WORLD POSITION IS NOT EXPRESSIBLE IN A PACKAGE, so a claim that carries
+            // one WITHOUT kTravel_ToPosition (which makes APMF place the marker) is
             // REFUSED rather than silently ignored. `PackageLocation` has no coordinate
             // storage at all -- it is an 8-byte union of a form pointer and a ref
             // handle -- the on-disk PLDT is 12 bytes in all 1988 vanilla Travel
@@ -119,15 +142,50 @@ namespace apmf {
             // coordinates out of it (channels/Travel.cpp's header has the full
             // derivation). Vanilla's idiom for "go to this spot" is a marker
             // REFERENCE, so that is what a client passes.
-            if (param->posX != 0.0f || param->posY != 0.0f || param->posZ != 0.0f) {
-                spdlog::warn("[apmf][travel] claim refused: param.pos is set -- actor 0x{}. A travel "
-                             "destination cannot be a world POSITION: an AI package's location carries "
-                             "a form or a handle and no coordinates, on disk or at runtime. Place a "
-                             "marker and pass the MARKER REFERENCE in param.form, which is what vanilla "
-                             "does.",
+            else if (param->posX != 0.0f || param->posY != 0.0f || param->posZ != 0.0f) {
+                spdlog::warn("[apmf][travel] claim refused: param.pos is set without kTravel_ToPosition -- "
+                             "actor 0x{}. A package's location carries a form or a handle and no "
+                             "coordinates. Either set kTravel_ToPosition (ABI v11: APMF places its own "
+                             "marker at the point, form = 0) or pass a MARKER REFERENCE in param.form.",
                              apmf::log::Hex(actor));
                 return APMF_API::kInvalidHandle;
             }
+        }
+
+        // ABI v11: a kIntent_Cast RequestEx carrying kCastFlag_AtPosition is a
+        // POSITION CAST -- a one-shot remote cast at param.pos (core/PositionCast.h).
+        // It NEVER enters the control map: no claim is published, so no engine seat
+        // can read it as an actor target, and it holds no facet. The handle is only a
+        // label for its log lines (IsClaimLive is false for it; Release/Repoint on it
+        // find nothing and do nothing). A synchronous refusal returns kInvalidHandle.
+        if (intent == APMF_API::kIntent_Cast && param &&
+            (static_cast<std::uint32_t>(param->ival) & APMF_API::kCastFlag_AtPosition) != 0) {
+            // CONDITION 7 of INVARIANTS #0 (e) (review F2): the position cast respects the
+            // ownership of the actor's cast facet. A live cast claim that would outrank a
+            // driving request at this basis (a deny-only floor above it included) owns
+            // the facet, and the request is REFUSED by name, synchronously.
+            // A non-finite basis would compare false against every claim and slip past the
+            // check below (review R2-3b), so it is refused by name first.
+            if (!std::isfinite(basis)) {
+                spdlog::warn("[poscast] request REFUSED (actor 0x{}): basis is not a finite number.",
+                             apmf::log::Hex(actor));
+                return APMF_API::kInvalidHandle;
+            }
+            {
+                Handle        bh = APMF_API::kInvalidHandle;
+                float         bb = 0.0f;
+                std::uint32_t bf = 0;
+                if (CastFacetOutranks(actor, basis, bh, bb, bf)) {
+                    spdlog::warn("[poscast] request REFUSED (actor 0x{}, basis {}): the actor's cast facet is owned by "
+                                 "{}claim h={} at basis {} -- a position cast never casts over the facet's owner. "
+                                 "Release that claim, or ask at a higher basis.",
+                                 apmf::log::Hex(actor), basis,
+                                 (bf & APMF_API::kCastFlag_DenyHandOnly) ? "DENY-ONLY " : "", bh, bb);
+                    return APMF_API::kInvalidHandle;
+                }
+            }
+            const Handle ph = m_nextHandle.fetch_add(1, std::memory_order_relaxed);
+            return apmf::poscast::Enqueue(ph, actor, basis, *param) ? ph : APMF_API::kInvalidHandle;
         }
 
         const Handle h = m_nextHandle.fetch_add(1, std::memory_order_relaxed);
@@ -270,6 +328,15 @@ namespace apmf {
                                    const APMF_API::APMF_CastRequest* req) {
         if (!Registry::Get().ChannelForIntent(APMF_API::kIntent_Cast)) {
             spdlog::warn("[api] RequestCast REFUSED -- no channel serves kIntent_Cast (actor 0x{}).",
+                         apmf::log::Hex(actor));
+            return APMF_API::kInvalidHandle;
+        }
+        // ABI v11: APMF_CastRequest has no position field, so a position cast cannot
+        // ride RequestCast. Refused by name rather than run as an actor-target claim.
+        if (req && (req->flags & APMF_API::kCastFlag_AtPosition) != 0) {
+            spdlog::warn("[api] RequestCast REFUSED (actor 0x{}): kCastFlag_AtPosition needs a point, and "
+                         "APMF_CastRequest has none. Send a position cast through RequestEx with "
+                         "param.form = the spell, param.ival = kCastFlag_AtPosition, param.pos = the point.",
                          apmf::log::Hex(actor));
             return APMF_API::kInvalidHandle;
         }
@@ -975,6 +1042,19 @@ namespace apmf {
             const bool denyOnly =
                 isCastClaim && (self->castFlags & APMF_API::kCastFlag_DenyHandOnly) != 0;
 
+            // ABI v11 (review F7a): kCastFlag_AtPosition is a ONE-SHOT request, never a
+            // claim, so it cannot be carried onto a live cast claim by Repoint. Refused by
+            // name, and the whole Repoint is dropped (no param change, no TTL renewal):
+            // silently storing the bit would leave a claim the client believes is aimed
+            // at a point but that the seats still drive at its actor target.
+            if (isCastClaim && (static_cast<std::uint32_t>(param.ival) & APMF_API::kCastFlag_AtPosition) != 0) {
+                spdlog::warn("[ch.8b] 0x{} Repoint on cast claim h={} carried kCastFlag_AtPosition -- REFUSED, "
+                             "nothing changed. A position cast is a one-shot RequestEx, not a claim; send it on its "
+                             "own and keep this claim's Repoint for its heartbeat.",
+                             apmf::log::Hex(formID), handle);
+                return false;   // nothing changed -> no publish
+            }
+
             APMF_API::APMF_Param effParam = param;
             if (denyOnly) {
                 if (param.form != 0) {
@@ -1501,6 +1581,37 @@ namespace apmf {
             return true;
         }
         return false;   // controlled, but not on the cast channel
+    }
+
+    bool ControlMap::CastFacetOutranks(RE::FormID actor, float basis, Handle& outHandle, float& outBasis,
+                                       std::uint32_t& outFlags) const {
+        outHandle = APMF_API::kInvalidHandle;
+        outBasis  = 0.0f;
+        outFlags  = 0;
+        if (m_anyControlled.load(std::memory_order_relaxed) == 0) return false;
+
+        std::shared_ptr<const MapType> snap = m_published.load(std::memory_order_acquire);
+        auto it = snap->find(actor);
+        if (it == snap->end()) return false;
+
+        auto* channel = Registry::Get().ChannelForIntent(APMF_API::kIntent_Cast);
+        if (!channel) return false;
+
+        const auto nowMs = apmf::clock::MonotonicMs();
+        for (const auto& cs : it->second.channels) {
+            if (cs.channel != channel) continue;
+            for (const auto& c : cs.claims) {
+                if (c.expiresMs != 0 && nowMs >= c.expiresMs) continue;   // lapsed -- already gone (F5-3)
+                const bool denyOnly = (c.castFlags & APMF_API::kCastFlag_DenyHandOnly) != 0;
+                const bool outranks = c.basis > basis || (c.basis == basis && !denyOnly);
+                if (outranks && (outHandle == APMF_API::kInvalidHandle || c.basis > outBasis)) {
+                    outHandle = c.handle;
+                    outBasis  = c.basis;
+                    outFlags  = c.castFlags;
+                }
+            }
+        }
+        return outHandle != APMF_API::kInvalidHandle;
     }
 
     bool ControlMap::TryGetCastSeatClaim(RE::FormID actor, CastSeatClaim& out) const {

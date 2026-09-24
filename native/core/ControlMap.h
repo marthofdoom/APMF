@@ -256,6 +256,16 @@ namespace apmf {
         // the engine". Internal C++ only -- not part of the C-ABI.
         bool TryGetCastSeatClaim(RE::FormID actor, CastSeatClaim& out) const;
 
+        // ABI v11 (review F2): would a DRIVING cast request at `basis`, arriving now, be
+        // outranked on this actor's cast facet? True when a LIVE kIntent_Cast claim (any
+        // hand, a kCastFlag_DenyHandOnly floor included) has a higher basis, or an EQUAL
+        // basis and drives something (earliest keeps a tie; a deny-only claim loses a tie
+        // to a driving one -- the same order as BetterClaim). Fills the winning blocker's
+        // handle/basis/flags. ANY thread: one RCU snapshot read, like TryGetCastClaim. It
+        // sees PUBLISHED claims only; a claim still in the request queue is not seen.
+        bool CastFacetOutranks(RE::FormID actor, float basis, Handle& outHandle, float& outBasis,
+                               std::uint32_t& outFlags) const;
+
         // feat/per-hand-cast-claims: HAND-SCOPED sibling of TryGetCastSeatClaim,
         // same rationale as TryGetCastClaimForHand above -- used by core/EquipGate.cpp
         // (the ONE seat/gate site that both (a) needs the full CastSeatClaim shape,

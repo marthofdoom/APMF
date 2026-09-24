@@ -2,6 +2,7 @@
 #include "core/ClientAPI.h"
 #include "core/ControlMap.h"
 #include "core/EquipSink.h"
+#include "core/SpaceQuery.h"
 
 // The C-ABI implementation behind APMF_API.h. These free functions forward to the
 // in-process multi-NPC engine (core/ControlMap) over its thread-safe enqueue path,
@@ -138,6 +139,27 @@ namespace {
         }
     }
 
+    // ABI v11: the two read-only SPACE QUERIES (see APMF_API.h, "ABI v11: SPACE
+    // QUERIES"). Synchronous and main-thread-only by contract; the refusal for any
+    // other thread lives inside core/SpaceQuery.cpp. A throw never crosses the
+    // boundary: it becomes kQuery_Failed.
+    std::uint32_t APMF_FindEmptySpace(const APMF_API::APMF_SpaceQuery* q, APMF_API::APMF_SpaceResult* out) {
+        try {
+            return apmf::spacequery::FindEmptySpace(q, out);
+        } catch (...) {
+            return APMF_API::kQuery_Failed;
+        }
+    }
+
+    std::uint32_t APMF_FindHostilesInSpace(const APMF_API::APMF_HostileQuery* q, RE::FormID* outActors,
+                                           std::uint32_t capacity, std::uint32_t* outCount, std::uint32_t* outTotal) {
+        try {
+            return apmf::spacequery::FindHostilesInSpace(q, outActors, capacity, outCount, outTotal);
+        } catch (...) {
+            return APMF_API::kQuery_Failed;
+        }
+    }
+
     // ABI -> the first APMF release that implements it, for the "client too new"
     // refusal log below (MFO wiring review SEV-3 F4): a user running an older
     // APMF under a newer client must be able to read WHICH APMF they need. Keep in
@@ -156,23 +178,36 @@ namespace {
         case 8:
         case 9:
         case 10: return "0.9.5";
+        case 11: return "0.9.8";
         default: return "a release newer than this one";
         }
     }
 
     // The single static POD interface handed to clients. It is the NEWEST revision
-    // (APMF_API_v9), constant-initialized (the pointers are to static functions), so
+    // (APMF_API_v11), constant-initialized (the pointers are to static functions), so
     // it is valid the instant the DLL loads. Because each revision's leading members
     // are exactly the previous revision's (v9 extends v8 extends v7 extends v6
     // extends v5 extends v4, base laid out first), a v1..v8 client reading it through
     // its own struct pointer sees only its prefix. The v4 base subobject is
     // brace-initialized explicitly.
     //
-    // ABI v10 (ch.19 kIntent_Travel) adds NO function-pointer slot, so there is
-    // deliberately no APMF_API_v10 and this stays APMF_API_v9: the new intent rides
-    // the existing RequestEx/Repoint/Release slots. `abiVersion` still reports 10, so
-    // a client can gate on `>= 10` before passing the new Intent value.
-    constexpr APMF_API::APMF_API_v9 g_api{
+    // ABI v10 (ch.19 kIntent_Travel) added NO function-pointer slot, so there is
+    // deliberately no APMF_API_v10: the new intent rode the existing
+    // RequestEx/Repoint/Release slots. ABI v11 appends the two space-query slots, so
+    // the object is now an APMF_API_v11 (which extends v9 directly). `abiVersion`
+    // reports 11; a v1..v10 client still reads exactly its own prefix.
+    // ABI v11 layout proof (review F8d): the two query slots start exactly where the
+    // v9 prefix ends, so a v1..v10 client reading its own prefix never overlaps them.
+    // offsetof on a derived struct is conditionally-supported; MSVC (the only compiler
+    // this DLL is built with, CI) accepts it. The sizeof twin proves the same with no
+    // offsetof at all: base first, two pointers appended, no padding between.
+    static_assert(offsetof(APMF_API::APMF_API_v11, FindEmptySpace) == sizeof(APMF_API::APMF_API_v9),
+                  "APMF_API_v11's first slot must start right after the v9 prefix");
+    static_assert(sizeof(APMF_API::APMF_API_v11) == sizeof(APMF_API::APMF_API_v9) + 2 * sizeof(void*),
+                  "APMF_API_v11 = the v9 prefix plus exactly two function pointers");
+
+    constexpr APMF_API::APMF_API_v11 g_api{
+        {
         {
             {
                 {
@@ -196,6 +231,9 @@ namespace {
             &APMF_IsEquipAuthorityEnforced,
         },
         &APMF_SetEquipScope,
+        },
+        &APMF_FindEmptySpace,
+        &APMF_FindHostilesInSpace,
     };
 
 }

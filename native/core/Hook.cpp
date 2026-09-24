@@ -84,6 +84,11 @@ namespace apmf::hook {
 
     }
 
+    bool OnMainThread() {
+        const std::uint32_t mainTid = g_drainThreadId.load(std::memory_order_relaxed);
+        return mainTid != 0 && mainTid == GetCurrentThreadId();
+    }
+
     void Install() {
         if (REL::Module::IsVR()) {
             spdlog::warn("[hook] VR runtime -- 0xAD index unverified for VR; hooks NOT installed.");

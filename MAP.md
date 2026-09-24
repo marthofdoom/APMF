@@ -44,6 +44,14 @@ hook, registers the input sink, logs the hotkey help. `kPreLoadGame` →
   pinned 3.7.0 `IsSE()` is the `default:` arm, so 1.7.104 reads as SE — though it never
   reaches this line: CommonLib terminates at `SKSE::Init` with the address-library
   dialog on 1.7.104; APMF's gates never run there.
+  **ABI v11 (2026-09-23):** `kDataLoaded` also runs `poscast::Install()` and
+  `spacequery::Install()`, and both revert and `kPreLoadGame` call
+  `poscast::ResetAll()` BEFORE `mainthread::Discard()`. Those two Installs carry two
+  more inline copies of the same exact-version predicate (five copies now).
+  Co-save (ABI v11): `OnSave` also writes `poscast::SaveMarkers` (record `'XMRK'`), `OnLoad`
+  dispatches `'XMRK'` to `LoadMarkers`, `OnRevert` calls `RevertMarkers` (must stay before the
+  load callback, which SKSE guarantees), and `kPostLoadGame` POSTS `SweepCarriedMarkers` to the
+  main-thread pump (review F4), so it runs on the first player-Update after the load.
 
 ### `native/APMF_API.h` — the inter-plugin C-ABI contract (shared with clients)
 The ONLY file a client shares with APMF. POD structs of function pointers
@@ -78,7 +86,7 @@ crosses the boundary. **The current `kABIVersion` is stated ONLY in the header**
 
 ### `native/core/ClientAPI.{h,cpp}` — the C-ABI implementation
 The exported `APMF_GetInterface(abiVersion)` hands over the static POD newest-struct
-object (`APMF_API_v9` today — read the header, not this line) as a base
+object (`APMF_API_v11` since ABI v11 — read the header, not this line) as a base
 `APMF_API_v1*`; a client casts up to the newest struct it uses. It returns **nullptr**
 when the client asks for a version NEWER than this APMF implements (`:125-128`), which
 is why a needless `kABIVersion` bump is expensive (INVARIANTS #14b). Its
@@ -87,6 +95,8 @@ is why a needless `kABIVersion` bump is expensive (INVARIANTS #14b). Its
 SetEquipSet/SetEquipSetEx/SetEquipScope` (Request == RequestEx with a null param; `SetEquipSet` is
 `SetEquipSetEx` with every slot Default); `IsEquipAuthorityEnforced` → `equipsink::Enforcing()`.
 `MinReleaseForAbi` names the first release per ABI (v7/v8/v9 = the placeholder until the cut, REVIEW-BACKLOG APMF-B10).
+ABI v11 adds `FindEmptySpace` / `FindHostilesInSpace` → `core/SpaceQuery.cpp` (each a
+`try/catch(...)` returning `kQuery_Failed`), and `MinReleaseForAbi(11)` = `0.9.8`.
 The "client too new" null (`abiVersion > kABIVersion`) logs the running APMF version
 (`SKSE::PluginDeclaration::GetSingleton()`) and `MinReleaseForAbi(abi)` — a table that must
 be extended on every `kABIVersion` bump.
@@ -104,7 +114,9 @@ generation (each NpcCtl = engaged channels + per-channel client claims + capture
 package; each `Claim` carries its `APMF_Param`). `EnqueueRequest` (takes
 `const APMF_Param*`, copied; REFUSES `kIntent_EquipAuthority` with `kInvalidHandle` while
 `equipsink::Installed()` is false — logged once with `NotInstalledReason()` — so a client
-never holds a ch.17 claim the seat cannot enforce) / `Release` / `EnqueueRepoint` (any thread; brief queue
+never holds a ch.17 claim the seat cannot enforce; ABI v11: a `kIntent_Cast` param with
+`kCastFlag_AtPosition` is diverted to `poscast::Enqueue` and NEVER becomes a claim, and
+`EnqueueCast` refuses that bit by name) / `Release` / `EnqueueRepoint` (any thread; brief queue
 lock, atomic handle), `Drain` (WRITER thread, once/frame: copy `m_current` into a
 private working map, apply `kRequest`/`kRelease`/`kRepoint` ops + sweep unloaded,
 then `Publish()` a NEW snapshot ONLY if something changed), `OnActorUpdate` (ANY
@@ -187,7 +199,9 @@ this thread, see #12). `[threadcheck]` (retired to an informational one-time log
 `PlayerCharacter`/Drain seat — expected post-RCU, no longer a warning. `Install()`
 also logs, once, whether the RCU snapshot pointer is actually lock-free on this
 toolchain (`ControlMap::SnapshotIsLockFree()`) — disclosed, never assumed.
-VR-refused. Installed once.
+VR-refused. Installed once. `OnMainThread()` (ABI v11) compares the calling thread
+with the id the PlayerCharacter seat records (`g_drainThreadId`); the space queries
+refuse to run when it is false.
 - **What breaks:** the index `0x0AD` is the whole version-robustness thesis
   (design.md §3) — do NOT swap it for a call-site offset. The original must run
   first (we act on top of the real AI tick, never instead of it). If you hook a
@@ -293,6 +307,69 @@ claim publishes — INVARIANTS #20), `plugin.cpp` (`ResetAll` on revert + kPreLo
   above, not a replacement, and only fires while the hook is already being called for
   the actor (i.e. it has at least one OTHER magic/staff item already) — see that
   file's own comment for the documented edge case.
+
+### `native/core/PositionCast.{h,cpp}` — ABI v11 POSITION CAST (one-shot remote cast) + the shared XMarker helpers
+Also exports `MarkersSupported()` / `PlaceMarker()` / `DeleteMarker()`, used by the cast
+below AND by ch.19's position legs (`channels/Travel.cpp`). `MarkersSupported` is the
+runtime + XMarker-base gate and does NOT depend on `[PositionCast] bPositionCast` (that
+switch turns off the cast only). Changing either helper changes both callers.
+A `kIntent_Cast` RequestEx with `kCastFlag_AtPosition` (`ControlMap::EnqueueRequest`
+diverts it here; it is never a claim). `Enqueue` (any thread) checks the POD (flag
+alone, spell and actor non-zero, finite point) and posts `Deliver` to the main-thread
+pump. `Deliver` re-validates on the main thread (loaded live actor, attached cell,
+SpellItem with Target Location + fire-and-forget + no Summon Creature effect + NO projectile on any effect (the engine never launches a TL projectile for a marker caster: only the player pick feeds it) + not
+disease/ability/addiction), places an XMarker (`0x3B`) with
+`TESDataHandler::CreateReferenceAtLocation` in the cell that CONTAINS the point (outdoors `TES::GetCell(point)` = the loaded grid cell, required attached and in the actor's worldspace; indoors the actor's cell), tracks it,
+then `marker->GetMagicCaster(kInstant)` → `InterruptCast(false)` →
+`CastSpellImmediate(spell, false, nullptr, 1.0, false, 0.0, actor)` (Papyrus
+`RemoteCast`'s sequence) and posts `Retire` one hop later (`Disable()` + `SetDelete(true)`
+after re-checking handle, FormID and base). `ResetAll` (revert / kPreLoadGame) forgets
+the table without touching refs. Cap `kMaxLiveMarkers` = 16. INI `[PositionCast] bPositionCast`.
+Runtime gate: exactly 1.6.1170 / 1.5.97, VR refused. Evidence:
+`Docs/ADDRESS-TABLE-2026-09-15.md` ADDENDUM 2026-09-23; doctrine `Docs/INVARIANTS.md` #0 (e).
+- **What breaks:** (a) making it a CLAIM: the cast seats read claims as actor targets
+  (seat 0x0A writes an `Actor*`), so a position cast must never enter the control map.
+  (b) casting from the ACTOR instead of the marker: the engine's Target Location branch
+  ignores the target and lands at the caster's hand (both runtimes). (c) dropping the
+  summon refusal: the engine applies a summon only to the casting actor, so a marker
+  "summon" silently does nothing. (d) deleting by FormID instead of the tracked handle:
+  0xFF FormIDs recycle; the handle's age bits are the reuse guard. (e) moving
+  `ResetAll` after `mainthread::Discard` in `plugin.cpp` changes nothing today, but
+  never let a `Retire` task outlive the world swap. (f) SAVE FOOTPRINT: every placed,
+  not-yet-deleted marker is in the co-saved ledger (record `'XMRK'` v1, `SaveMarkers` /
+  `LoadMarkers` / `RevertMarkers` / `SweepCarriedMarkers`, wired in `plugin.cpp`), so the load of
+  a save that captured markers DELETES them at kPostLoadGame, under three proofs (0xFF FormID
+  resolves, XMarker base, recorded position within 1u; else forgotten, never touched). Markers
+  not in memory at the sweep are carried and retried at later loads (cap 64, oldest dropped
+  loudly). Breaking the ledger (a PlaceMarker that does not record, a DeleteMarker that drops a
+  STALE-handle entry instead of carrying it, the sweep moved into the load callback before the
+  refs exist, the revert clear moved after the load callback) re-opens unbounded .ess growth.
+  (g) REVIEW ROUND on `ed729ec`: the cast is OFF by default (`bPositionCast` code default 0;
+  INVARIANTS #0 (e) is ADOPTED with condition (8) "not an endpoint": no animation, so no client
+  ships a user-facing action on it alone); `MarkersSupported` must stay independent of that switch or
+  ch.19 position legs die with it. `Enqueue` does NO form lookup (review R2-1: 3.7.0's
+  `LookupByID` takes no lock; the spell checks live in `Deliver`, main thread), and
+  `ControlMap::CastFacetOutranks` refuses (at the call AND again in `Deliver`, R2-3c; a non-finite
+  basis is refused first, R2-3b) a cast while a live cast claim owns the actor's
+  facet (condition 7). The load sweep is POSTED from kPostLoadGame. `g_carry` is capped
+  wherever it grows (`CapCarried`). Open deferred findings: `Docs/REVIEW-BACKLOG.md`
+  APMF-B19 (sweep proofs vs a different XMarker) and APMF-B20 (player-blamed location).
+
+### `native/core/SpaceQuery.{h,cpp}` — ABI v11 SPACE QUERIES (read-only)
+`FindEmptySpace` (walk ray at feet+64u, down ray to feet-maxDrop, 8 knee-height
+clearance rays, 4 ring ground rays, live-actor scan) and `FindHostilesInSpace` (high
+actors + player, same worldspace/cell, 3D radius, `candidate->IsHostileToActor(side)`,
+nearest first, cap `kMaxHostileResults` = 64). Rays: `bhkPickData` +
+`bhkWorld::PickObject` under `worldLock` (read), filter
+`(originActorSystemGroup << 16) | kCharController` (MFO Sightline's field-proven recipe);
+ground = layers static/terrain/ground (the engine's own Target Location placement rule)
+plus the stair helper. Synchronous; `hook::OnMainThread()` or `kQuery_NotMainThread`.
+Runtime gate as PositionCast (`Install` at kDataLoaded).
+- **What breaks:** calling either off the main thread (havok world and the hostility
+  test are main-thread state; the refusal is the guard, do not remove it). Writing
+  past the caller's `size` (append-only structs: always honour `out->size`). Using a
+  hand-kept faction list instead of `IsHostileToActor`. The "stair helper counts as
+  ground" choice is a judgement call, not engine evidence (see the file comment).
 
 ### `native/core/CastClassify.{h,cpp}` — ch.8b SEAT 0: CLASSIFY (2026-09-05)
 **THE ROOT-CAUSE FIX** the other five seats sat downstream of and could never reach:
@@ -913,7 +990,7 @@ parentheses.
 | `Equipment.cpp` | 15 | equip/unequip (Num.) | `GetEquippedObject` + `UnequipObject`/`EquipObject` (melee-vs-ranged lever) | source-block |
 | `Detection.cpp` | 16 | stealth (Num8) | `kMovementNoiseMult` + `kDetectLifeRange` AVs | source-block |
 | `EquipAuthority.cpp` | 17 | ENGINE-EQUIP facet, WHOLE by default, SCOPED by category from ABI v9 (`kIntent_EquipAuthority`, ABI v7/v8/v9; no test key) | Arbitration + claim lifecycle (standing, no TTL) + the ONE #17a-licensed equip: on every applied `SetEquipSet`/`SetEquipSetEx` for the owning claim (and on a win/repoint, and on a CHANGED `SetEquipScope`) it POSTS one `mainthread` hop that lands after `Publish()` and equips each declared item the actor is not wearing via `ActorEquipManager::EquipObject` (queued, not forced; v8: with the declared hand's `BGSEquipSlot` 0x13F42/0x13F43 by `LookupByID`, "worn" = in THAT hand, same form allowed once per hand) inside `equipsink::ApmfEquipScope`; skips a declared non-governed form type (ARMO/WEAP/AMMO/LIGH only); v9: skips (counts `skipped-unowned`/`skipped-denied`, names once per actor+set signature) any entry whose `equipsink::Categorize(obj, declaredHandEQUP)` bits are not ALL owned or ANY denied — never equips or evicts into an unowned category; never unequips; no re-assert (every declaration walks the inventory; an item APMF already queued is held 3 s from its issue before it is queued again, per (form, hand)). The deny is `core/EquipSink.cpp`'s call-site seat. `Release` relinquishes (nothing to undo). Refuses `kEquipAuth_DenyUnequip` (reserved). Open findings: `Docs/REVIEW-BACKLOG.md` APMF-B5, B6, B8, B9 | claim + #17a seat; APMF equips the DECLARED set, the ENGINE keeps its hands off |
-| `Travel.cpp` | 19 | WALK this actor to a destination — an object REFERENCE (arrival = distance <= radius) or a CELL (arrival = parent-cell identity; the radius is not consulted) — (`kIntent_Travel`, ABI v10; no test key — the crosshair surface can name only ONE ref and ch.19 needs an actor AND a destination, so a hotkey would mean APMF inventing intent) | **ADDS NO SEAT; CLAIMS NO OTHER INTENT.** One `mainthread::Post` hop past `Drain`'s `Publish`, it files ONE internal ch.9 `kIntent_OfferPackage` claim naming an APMF-OWNED Travel package from `Data/APMF.esl`, whose `Place to Travel` Location input `core/PackageData.cpp` points at the destination. TWO kinds, chosen by the FormID's own record type: an object REFERENCE (`kNearReference`, a 4-byte handle -- `SetTravelTarget`) or a CELL (`kInCell`, an 8-byte form POINTER -- `SetTravelCell`). The two write DIFFERENT members of the same 8-byte union, which is why they are separate functions with separate types; both member choices were read off the engine's own locType switch on both unpacked images. Every other locType, and any world POSITION, is REFUSED -- see `Docs/DENY-COMPLETENESS-AUDIT.md` row 19 (h). That offer is travel's IMPLEMENTATION, not a composed client intent; it is filed at the CLIENT's basis (read back through `ControlMap::TryGetOwningClaimBasis`) and RE-FILED — request-new-then-release-old, in one `Drain` — when the winner's basis moves, because a claim's basis is immutable. The leg is ENDED (offer released, package slot freed) by the per-frame monitor `travel::Poll()` on `Arbiter::OncePerFrame` on ARRIVAL (distance for a ref, PARENT-CELL IDENTITY for a cell), on `Actor::IsInCombat()`, or on the destination being gone — plus a 120 s STUCK safety net that logs a failure and retries nothing. **No LOS test, no detection test, no `StartCombat`, no 0xE4 PIN, so INVARIANTS #0 is untouched.** 8 concurrent legs; a 9th is refused and logged. Ships OBSERVE-ONLY | one internal ch.9 offer; the ENGINE runs the package natively |
+| `Travel.cpp` | 19 | WALK this actor to a destination — an object REFERENCE (arrival = distance <= radius) or a CELL (arrival = parent-cell identity; the radius is not consulted) — (`kIntent_Travel`, ABI v10; no test key — the crosshair surface can name only ONE ref and ch.19 needs an actor AND a destination, so a hotkey would mean APMF inventing intent) | **ADDS NO SEAT; CLAIMS NO OTHER INTENT.** One `mainthread::Post` hop past `Drain`'s `Publish`, it files ONE internal ch.9 `kIntent_OfferPackage` claim naming an APMF-OWNED Travel package from `Data/APMF.esl`, whose `Place to Travel` Location input `core/PackageData.cpp` points at the destination. TWO kinds, chosen by the FormID's own record type: an object REFERENCE (`kNearReference`, a 4-byte handle -- `SetTravelTarget`) or a CELL (`kInCell`, an 8-byte form POINTER -- `SetTravelCell`). The two write DIFFERENT members of the same 8-byte union, which is why they are separate functions with separate types; both member choices were read off the engine's own locType switch on both unpacked images. Every other locType is REFUSED -- see `Docs/DENY-COMPLETENESS-AUDIT.md` row 19 (h). A world POSITION is REFUSED unless the claim sets `kTravel_ToPosition` (ABI v11), in which case APMF places its own XMarker and runs a REFERENCE leg to it (see What breaks (7)). That offer is travel's IMPLEMENTATION, not a composed client intent; it is filed at the CLIENT's basis (read back through `ControlMap::TryGetOwningClaimBasis`) and RE-FILED — request-new-then-release-old, in one `Drain` — when the winner's basis moves, because a claim's basis is immutable. The leg is ENDED (offer released, package slot freed) by the per-frame monitor `travel::Poll()` on `Arbiter::OncePerFrame` on ARRIVAL (distance for a ref, PARENT-CELL IDENTITY for a cell), on `Actor::IsInCombat()`, or on the destination being gone — plus a 120 s STUCK safety net that logs a failure and retries nothing. **No LOS test, no detection test, no `StartCombat`, no 0xE4 PIN, so INVARIANTS #0 is untouched.** 8 concurrent legs; a 9th is refused and logged. Ships OBSERVE-ONLY | one internal ch.9 offer; the ENGINE runs the package natively |
 
 - **What breaks (all channels):** each must (1) keep the package coherent — none
   substitutes the package (§5); (2) capture-and-restore engine state in `Release`,
@@ -944,6 +1021,19 @@ parentheses.
   (6) The end conditions are ARRIVAL, `IsInCombat()` and destination-gone — do NOT re-add a
   line-of-sight or detection test; the LOS one was removed because it fires before the actor
   moves in the case this facet exists for (`Docs/DENY-COMPLETENESS-AUDIT.md` row 19 (d)).
+  (7) **ABI v11 position legs (`kTravel_ToPosition`, 2026-09-23).** `Engage`/`OnOwnerChanged`
+  record the POINT; `Compose` places APMF's XMarker through `poscast::PlaceMarker` and the
+  leg is then an ordinary ref leg to it (`destAliveAtTarget = false`: a marker never dies).
+  `StillOurs` identifies a position leg by its POINT (its destId is the marker, which the
+  client never sees). The marker's lifetime IS the leg: `EndLeg` (arrival, combat, actor
+  gone/dead/3D, stuck, a declined re-point) and `Release` delete it via `RetireMarkerLater`
+  (one posted hop, so the ch.9 release applies first; `poscast::DeleteMarker` re-checks
+  handle, FormID, base); `Compose` deletes a marker the claim no longer names (a Repoint to a
+  form or another point) AFTER re-pointing the package, and any marker on a leg that did not
+  start. `ResetAll` forgets markers and `RestoreMarkerSlots` points every record that last
+  aimed at a marker back at its PlayerRef placeholder (`g_slotAtMarker`). Break any of those
+  and a marker outlives its leg or a record carries a stale marker handle across a load.
+  Not rule #0 (e): no cast, only a package destination.
   Its open review findings are `Docs/REVIEW-BACKLOG.md` APMF-B13..B18 — read them before
   editing. Its deny holes are stated in
   `Docs/DENY-COMPLETENESS-AUDIT.md` row 19 — read them before editing.

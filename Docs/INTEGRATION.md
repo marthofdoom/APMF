@@ -162,6 +162,137 @@ supplies the one missing classification decision and the engine does the rest.
   rather than guessing at offsets. Kill switches live in `Data/SKSE/Plugins/APMF.ini`.
 
 
+## Casting at a point (ABI v11, `kCastFlag_AtPosition`)
+
+**Off by default, and not an endpoint.** The position cast is INVARIANTS #0 action (e),
+adopted by marth with a standing condition: the actor does not animate, and proper animations
+are required for ALL actions. Do not ship a user-facing action on this alone. The goal is an
+animated path (the actor's own AI cast aimed at the point through the engine's seats); this is
+a stepping stone or the delivery half of that. `[PositionCast] bPositionCast` defaults to 0,
+and every request is refused by name (`[poscast] request REFUSED ... position cast not
+installed`) until a user sets it to 1. Travel to a point does not depend on it.
+
+Requires `abiVersion >= 11`. Check it before you set the bit: an older APMF ignores
+`kCastFlag_AtPosition` and turns the request into an ordinary cast claim aimed at
+`param.target` (0 = the caster itself).
+
+```cpp
+APMF_API::APMF_Param p{};
+p.form = spellID;                           // a SpellItem: Target Location, fire-and-forget, no summon, NO projectile
+p.ival = APMF_API::kCastFlag_AtPosition;    // the flag ALONE; any other cast flag is refused
+p.posX = pt.x; p.posY = pt.y; p.posZ = pt.z; // world point, in the actor's worldspace (indoors: its cell)
+APMF_API::Handle h = g_apmf->RequestEx(actorFormID, APMF_API::kIntent_Cast, basis, &p);
+if (h == APMF_API::kInvalidHandle) { /* refused at the call: see APMF.log */ }
+```
+
+**What happens.** On the next main-thread pump APMF places a non-persistent XMarker
+(Skyrim.esm `0x3B`) at the point and casts the spell FROM it, blamed on the actor:
+`InterruptCast(false)` then `CastSpellImmediate(spell, false, none, 1.0, false, 0.0, actor)`
+on the marker's instant caster. That is the exact sequence the game's own Papyrus
+`Spell.RemoteCast` runs. The actor does not animate, its hands are not touched, and
+APMF charges no magicka (resource policy is yours). The marker is deleted one frame later.
+
+**Why not "the actor casts at a marker".** The game places a Target Location spell cast
+by an NPC at the NPC's own magic node and never reads the target it was handed, on
+both runtimes (`Docs/ADDRESS-TABLE-2026-09-15.md`, ADDENDUM 2026-09-23). That call
+lands at the actor's hand. A marker has no magic node, so a spell it casts lands on it.
+
+**What is refused, each with one `[poscast] ... REFUSED` line naming why:**
+- a spell with a **projectile** on any effect: a rune, a trap, a lobbed shot. The engine
+  launches a Target Location projectile only from the player's crosshair pick, never for a
+  marker caster (both runtimes, `Docs/ADDRESS-TABLE-2026-09-15.md` ADDENDUM 2026-09-23), so it
+  would silently place nothing. Refused on the game thread (logged). What remains is Target Location effects
+  applied at the spot directly.
+- a **summon**. The game applies a summon effect only to the actor that cast it, so a
+  marker cannot summon. An NPC's own summon already lands in front of it: the engine's
+  `SummonCreatureEffect` picks that spot itself. Summon through an ordinary cast.
+- Self, Touch, Aimed or Target Actor delivery. Use `RequestCast` with an actor target.
+- concentration and constant-effect spells.
+- disease, ability and addiction spell types (`RemoteCast` refuses the same three).
+- any other cast flag alongside `kCastFlag_AtPosition`.
+- `RequestCast` with the bit: `APMF_CastRequest` has no position field.
+- **the actor's cast facet is owned**: a live cast claim on that actor would outrank a
+  driving request at your basis (a higher basis, a `kCastFlag_DenyHandOnly` floor included,
+  or an equal basis that drives something). Refused at the call, naming the claim.
+- a point outdoors in a cell that is not loaded and attached, or not in the actor's
+  worldspace (the marker goes in the cell that CONTAINS the point, found with
+  `TES::GetCell`; indoors it is the actor's cell).
+- a `Repoint` carrying `kCastFlag_AtPosition` on a live cast claim (nothing changes).
+- a dead or unloaded actor, a cell that is not attached, or more than 16 markers alive
+  at once (they live one frame, so that is a burst of 16+ casts in one frame).
+AT THE CALL (`kInvalidHandle`): the flag, the point, a non-finite basis, and the facet check.
+ON THE GAME THREAD, one `[poscast] request N REFUSED ...` line: the spell checks (APMF does not
+look forms up off the main thread: the pinned CommonLib's `LookupByID` takes no lock), the actor
+and cell checks, and the facet check again (a claim may publish in between). So a live handle
+does not mean the cast will happen; read the log.
+**Same-basis note:** APMF has no client identity, so your OWN driving cast claim at the same
+basis (or higher) blocks your own position cast. Release it, or ask at a higher basis.
+- the whole feature when `[PositionCast] bPositionCast=0` (the default), on VR, or on a runtime other
+  than 1.6.1170 / 1.5.97.
+
+**It is a one-shot, not a claim.** It never enters the control map, so no engine seat
+can read it as an actor target and it holds no facet. The handle labels its log lines
+and nothing else: `IsClaimLive(h)` is false, `Repoint`/`Release` on it do nothing. You
+learn the outcome from `APMF.log` (`queued`, then `DELIVERED` or `REFUSED`).
+
+**Picking the point** is your job (declare, then APMF enforces). `FindEmptySpace` below
+answers "where is a clear, standable spot over there" if you want the help.
+
+### Save behaviour of APMF markers (ABI v11)
+
+Every XMarker APMF places (position casts and position travel legs) is recorded until APMF
+deletes it, and that record is co-saved (record `'XMRK'` v1 under APMF's `'APMF'` co-save).
+Loading a save deletes, on the first main-thread pump after the load, every recorded marker the loaded world still holds,
+and only one that passes all three proofs: the recorded runtime (0xFF) FormID resolves, its
+base is Skyrim.esm's XMarker, and it stands within 1u of the recorded spot. Anything that
+fails a proof is forgotten and never touched. A recorded marker whose cell is not loaded at
+that moment is kept in the record and deleted by a later load that finds it (at most 64 are
+carried). A save from Harbinger 0.9.7 or older has no such record and sweeps nothing. The log
+line is `[marker] kPostLoadGame sweep -- N APMF XMarker(s) deleted, F forgotten, K not loaded`.
+Nothing of APMF's names a marker when it is deleted: no leg or cast survives a load, and every
+package record that last aimed at one was pointed back at its placeholder before the load.
+
+## Asking about space (ABI v11 queries)
+
+Requires `abiVersion >= 11` and `APMF_API_v11`. Two questions. They answer and change
+nothing: no claim, no facet, no handle, no world write.
+
+**Threading: synchronous, main thread only.** The main thread is the one that runs the
+player's `Actor::Update` (APMF drains its own queue there). Anywhere else a query does
+nothing and returns `kQuery_NotMainThread`. SKSE's `AddTask` is NOT that thread. A client
+with its own player-Update pump (MFO's `MainThread::Post`) calls straight in from it.
+
+**Sizes.** Every v11 struct starts with `size`. Set it to `sizeof(struct)`. APMF refuses
+an input below the v11 layout and never writes an output past the size you declared.
+
+```cpp
+// Where can a summon-sized thing stand, 180u in front of this follower?
+APMF_API::APMF_SpaceQuery q{};
+q.size      = sizeof(q);
+q.origin    = followerID;     // REQUIRED: a loaded reference; its cell gives the world
+q.distance  = 180.0f;
+q.clearance = 80.0f;          // free radius wanted around the point
+APMF_API::APMF_SpaceResult r{};
+r.size = sizeof(r);
+if (g_apmf11->FindEmptySpace(&q, &r) == APMF_API::kQuery_Ok) { /* r.x, r.y, r.z */ }
+
+// Which hostiles to this follower stand inside 300u of that point?
+APMF_API::APMF_HostileQuery hq{};
+hq.size = sizeof(hq); hq.side = followerID; hq.x = r.x; hq.y = r.y; hq.z = r.z; hq.radius = 300.0f;
+RE::FormID foes[16]; std::uint32_t n = 0, total = 0;
+g_apmf11->FindHostilesInSpace(&hq, foes, 16, &n, &total);   // nearest first; total = before the cap
+```
+
+| Query | Answers | Cost |
+|---|---|---|
+| `FindEmptySpace` | A ground point `distance` along the heading (the origin's facing, or `heading` with `kSpaceFlag_UseHeading`) from the origin (its position, or `originX/Y/Z` with `kSpaceFlag_OriginIsPoint`) with `clearance` free around it. Fails by name: `Blocked` (a wall or an actor on the walk; `kSpaceFlag_ClampToWall` shortens the walk instead), `NoGround` (nothing within `maxDrop`, default 128u, below the origin's feet), `NotGround` (the ground ray hit something other than static/terrain/ground/stairs; `detail` = the layer), `Occupied` (a live actor inside the clearance, including one whose capsule the ground ray hit; `detail` = its FormID), `NoClearance` (geometry within the clearance), `Ledge` (the clearance ring is not within 48u of level) | At most 14 ray casts (walk, ground, 8 clearance, 4 ring) under the havok world's read lock, plus one pass over the high actors |
+| `FindHostilesInSpace` | Live actors within `radius` of the point, in the side actor's worldspace (or cell indoors), for which `candidate->IsHostileToActor(side)` is true. That is the engine's own test, the one Papyrus `Actor.IsHostileToActor` calls. Nearest first, at most `min(capacity, 64)` written | One pass over the high actors (a distance each), one engine hostility test per actor inside the sphere, one sort |
+
+Statuses (`QueryStatus`): `Ok`, `NotMainThread`, `BadArgs`, `Unsupported` (VR, an
+unverified runtime, before kDataLoaded), `NoOrigin`, `NoWorld`, `Blocked`, `NoGround`,
+`NotGround`, `Occupied`, `NoClearance`, `Ledge`, `Failed` (an exception was caught).
+Every non-`Ok` answer is one `[space] ...` WARN line naming the reason.
+
 ## Declaring what an NPC wears (ABI v7, `kIntent_EquipAuthority`)
 
 Requires `abiVersion >= 7` and `APMF_API_v7`. This facet is the engine-equip
@@ -632,7 +763,7 @@ beside it.
 | `param.form` | **REQUIRED.** The DESTINATION's FormID — an object **REFERENCE** (REFR/ACHR: an actor, an XMarker, a container, anything loaded) or a **CELL**. The record type decides which; there is no flag to set. A zero form, or any other record type, is refused synchronously (`kInvalidHandle`) so you find out at the call. |
 | `param.fval` | Arrival radius in game units. `0` means the 75u default. Anything outside **[50, 512]** is CLAMPED and the clamp is logged — never silently reinterpreted. Whatever value ends up in force is also written into the package's own stop radius for that leg, so the engine's idea of "arrived" and APMF's cannot drift apart. **Not consulted when the destination is a cell.** |
 | `param.ival` | A `TravelFlags` bitmask. |
-| `param.posX/Y/Z` | **Must be zero.** A non-zero position REFUSES the claim, with the reason in the log. See below. |
+| `param.posX/Y/Z` | **ABI v11:** the destination POINT when `param.ival` has `kTravel_ToPosition` (then `param.form` must be 0). Without that flag it **must be zero**: a non-zero position REFUSES the claim, with the reason in the log. See below. |
 
 `kTravel_ReleaseOnTargetDead` **names the v1 default, it does not switch it on.**
 APMF always ends the leg when a destination that was alive when targeted dies during
@@ -653,7 +784,56 @@ ran.
   also exactly what the engine's own in-cell package path steers towards, so the
   two agree by construction.
 
-### Why you cannot pass a world position
+### Walking to a world position (ABI v11, `kTravel_ToPosition`)
+
+Requires `abiVersion >= 11`. Set `kTravel_ToPosition`, leave `param.form = 0`, and put
+the point in `param.pos` (in the actor's worldspace; indoors, in its cell). An older APMF refuses a
+zero form, so the request fails loudly on it instead of walking somewhere else.
+
+```cpp
+APMF_API::APMF_Param p{};
+p.ival = APMF_API::kTravel_ToPosition;
+p.posX = pt.x; p.posY = pt.y; p.posZ = pt.z;   // e.g. a FindEmptySpace result
+p.fval = 0.0f;                                  // arrival radius, 0 => 75u
+APMF_API::Handle h = g_apmf->RequestEx(followerID, APMF_API::kIntent_Travel, basis, &p);
+```
+
+APMF does what vanilla does with a spot: it places its OWN non-persistent XMarker
+(Skyrim.esm `0x3B`) at the point, one hop after the claim publishes, and the leg is an
+ordinary reference leg to that marker. Arrival radius, the combat cancel and the
+2-minute stuck end are unchanged. The death rule never applies (a marker cannot die).
+APMF does not pick the point and never adjusts it: call `FindEmptySpace` first if you
+want a clear, standable one.
+
+**The marker lives exactly as long as the leg.** It is deleted, by its tracked handle
+with the FormID and base re-checked, when the leg ends for any reason: arrival, combat,
+`Release`, a `Repoint` to a different point or to a form, the stuck end, or the actor
+unloading, dying or losing its 3D. A `Repoint` to a new point places the new marker,
+re-points the package, then deletes the old one. If the claim is still held after the
+leg ended, a later `Repoint` places a fresh marker. At most one marker exists per
+package slot (8).
+
+**Across a load.** Legs are never restored across a load (that was already true for
+every destination kind). At the load boundary APMF forgets its markers without touching
+them and points every package record that last aimed at one back at its authored
+placeholder, so no record carries a marker handle into the next world. A save taken
+mid-leg records its markers in APMF's co-save, and loading it DELETES them (see "Save
+behaviour of APMF markers" below).
+
+**Far destinations: walk in hops.** The marker can only be placed in a LOADED cell: outdoors
+the point must fall in the loaded grid (an attached cell of the actor's worldspace, found with
+`TES::GetCell`), indoors it is the actor's cell. A point outside the loaded grid is refused at
+Compose (`[travel] ... REFUSED -- no destination marker ... no loaded exterior cell contains the
+point`), and the claim then stands doing nothing until you Release or Repoint it. To send a
+follower somewhere far, walk it in hops inside the loaded area, or pass an existing REFERENCE
+(or a cell) as `param.form`, which needs no marker and can be anywhere.
+
+**Refused, by name:** a non-zero `param.form` with the flag (a form OR a point, never
+both), a non-finite point, VR or a runtime other than 1.6.1170 / 1.5.97 (all
+synchronous, `kInvalidHandle`), and a marker that cannot be placed because the actor's
+cell is not attached (at Compose, logged, the claim stands doing nothing: Release it).
+
+### Why a package cannot carry a world position
 
 Because the engine cannot carry one. An AI package's location holds a form pointer
 or a reference handle and nothing else — there is no coordinate storage in it at
@@ -661,9 +841,10 @@ runtime, the on-disk record is twelve bytes of type/payload/radius, and none of 
 engine's own location kinds reads coordinates out of it. That was read off both
 game binaries rather than assumed.
 
-Vanilla's answer is the same one you should use: **place an XMarker and pass the
-marker's reference.** That is case one above, fully supported. A claim with a
-non-zero `param.pos` is refused and says so, rather than quietly walking the actor
+Vanilla's answer is to **place an XMarker and point at the marker's reference.** You
+can do that yourself (case one above), or set `kTravel_ToPosition` and APMF does it
+for you (the section above). A claim with a non-zero `param.pos` and no
+`kTravel_ToPosition` is refused and says so, rather than quietly walking the actor
 somewhere you did not ask for.
 
 ### When a claim is refused — and the two timings, which are not the same
@@ -782,7 +963,8 @@ columns, one doesn't imply the other.
 | `kIntent_Equipment` (ch.15) | Unequip/equip a worn item, and (with a param) gate re-equip of a spell/staff while the claim stands | `form` (optional) | Built, not yet battle-tested. The most recently landed facet in the catalog. |
 | `kIntent_Detection` (ch.16) | Silent movement + reduced detection range | `fval` (reserved, not yet read) | **Field-proven.** An actor-value source-block, deck-tested to hold even on a package-locked actor. |
 | `kIntent_EquipAuthority` (ch.17) | **Declare what the NPC wears; APMF equips it and refuses every other engine equip of a governed type (ARMO/WEAP/AMMO/LIGH) in the categories the claim owns.** ABI v7, declare with `SetEquipSet`; ABI v8 `SetEquipSetEx` adds a hand per item; ABI v9 `SetEquipScope` scopes the claim to owned/denied categories (default: all owned) | `ival` (an `EquipAuthFlags` bitmask); the set itself via `SetEquipSet` / `SetEquipSetEx`; the scope via `SetEquipScope` | Built, not yet battle-tested. Ships OBSERVE-ONLY (`[EquipAuthority] bEquipObserveOnly=1`) until the probe criteria above pass. The only call-site seat in APMF, under `Docs/INVARIANTS.md` #17a. Player-menu equips pass by default (v8). |
-| `kIntent_Travel` (ch.19) | **Walk this actor to a destination.** APMF points its own travel package at it and offers that package through an internal ch.9 claim at YOUR basis. The leg ends on arrival, on the actor entering combat, or on the destination being gone | `form` (the DESTINATION, REQUIRED -- an object REFERENCE or a CELL, and it need not be loaded or nearby), `fval` (arrival radius, 0 => 75u, clamped 50-512, not used for a cell), `ival` (a `TravelFlags` bitmask) |a refused claim means the channel is off in APMF.ini, VR, the esl is missing, or eight legs are already running|
+| `kIntent_Cast` + `kCastFlag_AtPosition` (ABI v11) | **Cast a Target Location spell at a world point.** A one-shot remote cast from an APMF XMarker, blamed on the actor. Not a claim: no facet held, never seen by the cast seats | `form` (the spell), `ival` (the flag alone), `pos` (the point) | Built, not yet battle-tested. CI verified only. Summons refused by name (the engine only lets the caster summon). |
+| `kIntent_Travel` (ch.19) | **Walk this actor to a destination** (ABI v11: or to a world point, `kTravel_ToPosition`, via an APMF-owned XMarker). APMF points its own travel package at it and offers that package through an internal ch.9 claim at YOUR basis. The leg ends on arrival, on the actor entering combat, or on the destination being gone | `form` (the DESTINATION, REQUIRED -- an object REFERENCE or a CELL, and it need not be loaded or nearby), `fval` (arrival radius, 0 => 75u, clamped 50-512, not used for a cell), `ival` (a `TravelFlags` bitmask) |a refused claim means the channel is off in APMF.ini, VR, the esl is missing, or eight legs are already running|
 
 Where a field is marked "reserved, not yet read", the channel currently
 applies a fixed built-in behavior and ignores whatever you pass in that field.
@@ -798,7 +980,10 @@ hook, the exact vfunc, the version-robustness notes) and `Docs/archive/ROADMAP.m
 
 - `Request`, `RequestEx`, `Repoint`, `Release`, and `SetSpellAllowList` are
   safe to call from any thread. They enqueue the work, APMF applies it on the
-  game thread.
+  game thread. That includes a `kCastFlag_AtPosition` RequestEx (ABI v11).
+- **The exception (ABI v11): `FindEmptySpace` and `FindHostilesInSpace` are
+  synchronous and run ONLY on the main (player-Update) thread.** Elsewhere they
+  return `kQuery_NotMainThread` and do nothing. See "Asking about space".
 - The `APMF_Param` (or the `forms` array for `SetSpellAllowList`) you pass is
   read and copied synchronously inside the call. APMF never retains your
   pointer, so a stack temporary or a local array is fine.
