@@ -499,8 +499,11 @@ namespace APMF_API {
 
     // GetTravelLegState output. EXACT LAYOUT (byte-shared): 72 bytes, every field 4 bytes.
     // The CALLER sets `size` = sizeof(APMF_TravelLegInfo) as compiled against its header.
-    // APMF writes nothing into a struct whose size is below this v12 layout (72), and never
-    // writes past `size`. A later ABI may append fields.
+    // THE SIZE RULE (frozen): APMF fills the v12 fields when `size` >= kTravelLegInfoV12Size
+    // (72, a constant that NEVER changes, unlike sizeof as fields are appended) and writes
+    // nothing into a smaller struct. A field a later ABI appends is written ONLY when it lies
+    // entirely inside the caller's `size`, so a client built against v12 keeps getting its
+    // 72 bytes from every later APMF, and APMF never writes past `size`.
     struct APMF_TravelLegInfo {
         std::uint32_t size;        // +0   the CALLER sets = sizeof(APMF_TravelLegInfo)
         std::uint32_t state;       // +4   a TravelLegState (the same value the call returns)
@@ -532,12 +535,18 @@ namespace APMF_API {
                                    //        when the leg was composed). Compare it with YOUR handle: a
                                    //        different value is another client's leg, or an older claim of
                                    //        yours. 0 while a fresh claim is still Pending, and on kLeg_None.
-                                   //        During a Pending re-point it still names the previous owner.
+                                   //        During a Pending re-point, and on a kLeg_Failed recorded for a
+                                   //        refused re-point that arrived with an OWNER CHANGE, it still
+                                   //        names the previous owner (the new claim is not yet published).
         RE::FormID    blocker;     // +64  kLeg_Blocked: the actor found in front of the stalled actor (see
                                    //        blockerKind); 0 for a static block or any other state
         std::uint32_t blockerKind; // +68  a TravelBlocker; kBlocker_None unless state is kLeg_Blocked
     };
+    // The v12 prefix size. FROZEN: GetTravelLegState tests the caller's `size` against THIS,
+    // never against sizeof(APMF_TravelLegInfo), which grows when a later ABI appends a field.
+    inline constexpr std::uint32_t kTravelLegInfoV12Size = 72;
     static_assert(sizeof(APMF_TravelLegInfo) == 72,  "APMF_TravelLegInfo is 72 bytes, byte-shared with clients");
+    static_assert(sizeof(APMF_TravelLegInfo) >= kTravelLegInfoV12Size, "the v12 prefix is never shrunk");
     static_assert(alignof(APMF_TravelLegInfo) == 4,  "APMF_TravelLegInfo aligns to 4");
     static_assert(offsetof(APMF_TravelLegInfo, state)     == 4,  "state at +4");
     static_assert(offsetof(APMF_TravelLegInfo, destForm)  == 12, "destForm at +12");

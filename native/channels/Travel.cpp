@@ -2021,7 +2021,11 @@ namespace apmf::travel {
             }
         }
         const std::uint32_t state = found ? r.state : static_cast<std::uint32_t>(APMF_API::kLeg_None);
-        if (out && out->size >= sizeof(APMF_API::APMF_TravelLegInfo)) {
+        // THE SIZE RULE (review R2-1): test against the FROZEN v12 prefix size, never against
+        // sizeof(APMF_TravelLegInfo), which grows when a later ABI appends a field and would
+        // then starve every shipped v12 client. A field appended later is written only when
+        // it lies entirely inside `out->size` (offsetof(field) + sizeof(field) <= size).
+        if (out && out->size >= APMF_API::kTravelLegInfoV12Size) {
             const std::uint64_t age = found ? apmf::clock::MonotonicMs() - r.sinceMs : 0;
             out->state     = state;
             out->actor     = actor;

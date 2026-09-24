@@ -881,8 +881,9 @@ How to read it:
   It holds nothing and changes nothing.
 * **Match the claim.** The state is the actor's leg, which is the leg of the WINNING
   travel claim. `ownerHandle` is that claim's handle: compare it with yours. It is 0
-  while a fresh claim is still Pending, and during a Pending re-point it still names
-  the previous owner. `destForm` (or `destX/Y/Z` for a point leg) says which
+  while a fresh claim is still Pending. During a Pending re-point, and on a `kLeg_Failed`
+  for a refused re-point that came with an owner change, it still names the previous
+  owner. `destForm` (or `destX/Y/Z` for a point leg) says which
   destination the state is about. After a `Repoint` the old leg's end can still show for
   up to a frame. Wait for your destination to read `kLeg_Pending` or later.
 * **`seq`** is a stamp from one counter APMF never resets while the game runs. It changes
@@ -891,8 +892,11 @@ How to read it:
   `msInState` is how long the current state has held.
 * **After a save load** every actor reads `kLeg_None` until its claim is made again. The
   state is not saved, and neither are travel claims.
-* **`size`.** Set `info.size = sizeof(info)` (72 bytes in v12). APMF writes nothing into a
-  shorter struct and never past `size`. `out` may be null for a state-only read.
+* **`size`.** Set `info.size = sizeof(info)` (72 bytes in v12). APMF fills the v12 fields
+  when `size` is at least `kTravelLegInfoV12Size` (72, frozen) and writes nothing into a
+  shorter struct. A field a later ABI appends is written only if it fits inside your
+  `size`, so a v12 build keeps working against every later APMF. APMF never writes past
+  `size`. `out` may be null for a state-only read.
 
 | field | offset | meaning |
 |---|---|---|

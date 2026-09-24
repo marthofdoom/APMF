@@ -1095,7 +1095,9 @@ parentheses.
   fields + `mainthread::Post` the `GetOpenState` re-reads. Armed only when the self-check
   verifies `Travel.GetOpenState`, `Travel.ScriptEventSourceHolder.GetSingleton` and TES::GetCell
   on an exact build. Passive: it must never write anything. Deferred review items:
-  REVIEW-BACKLOG APMF-B24.
+  REVIEW-BACKLOG APMF-B24 and APMF-B25 (read B25 R2-2 before touching `OnOwnerChanged`'s refusal
+  teardown). `GetLegState` tests the caller's size against the FROZEN `kTravelLegInfoV12Size`
+  (72), never `sizeof` — appended fields are written only inside the caller's size.
   Its open review findings are `Docs/REVIEW-BACKLOG.md` APMF-B13..B18 — read them before
   editing. Its deny holes are stated in
   `Docs/DENY-COMPLETENESS-AUDIT.md` row 19 — read them before editing.
