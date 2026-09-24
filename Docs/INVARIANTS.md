@@ -26,10 +26,10 @@ competitors, or arbitrates the claim, so the client's behavior reaches the actor
 design.md §1a). **The bright line:** a lawful promote is a single deterministic call
 whose outcome does not stand in for an AI decision (idle-play, weapon-draw,
 stance-toggle); a forbidden generate calls a function that picks WHAT the AI decides
-(a target, a spell, a shout) or drives it continuously. (**PROPOSED, pending marth:** the one
-`CastSpellImmediate` APMF would make is the proposed action (e) below, from an APMF-owned
-MARKER, never from the actor, for a spell and a point the client declared. Until marth
-approves (e), the rule above stands unamended and the code ships it OFF.) **Cautionary case:** ch.6
+(a target, a spell, a shout) or drives it continuously. (The one `CastSpellImmediate` APMF
+makes is action (e) below, ADOPTED 2026-09-23 by marth: from an APMF-owned MARKER, never from
+the actor, for a spell and a point the client declared, and under condition (8) it is not an
+endpoint.) **Cautionary case:** ch.6
 combat-target once called `StartCombat` (to command a target) — wrong LAYER, and
 with a bad reloc signature it was a hard AV (EXCEPTION_ACCESS_VIOLATION inside
 StartCombat). The deny-only rule makes that whole crash class structurally
@@ -52,11 +52,13 @@ cast facet's retired forced drive, which DID call `CastSpellImmediate`, is exact
 what this replaced. #20 states the mechanism, the one permitted non-chaining
 answer and its three conditions; read it before adding a composed seat anywhere.
 
-**PROPOSED, pending marth — NOT ADOPTED. The fifth legal action, proposed 2026-09-23 (ABI
-v11, `core/PositionCast.cpp`): (e) DELIVER AT A POINT — one client-declared remote cast from an
-APMF-owned marker.** Until marth approves it the code ships it OFF: `[PositionCast]
+**ADOPTED 2026-09-23 by marth. The fifth legal action (ABI v11, `core/PositionCast.cpp`): (e)
+DELIVER AT A POINT — one client-declared remote cast from an APMF-owned marker.** Approved
+with a standing condition, verbatim: *"this is not an acceptable endpoint, proper animations
+are required for ALL actions. So choosing a path that makes that impossible is incorrect."*
+That is condition (8) below, and it is why the code still ships it OFF: `[PositionCast]
 bPositionCast` defaults to 0 in both `APMF.ini` and the code, and every request is refused by
-name. Adopting it is marth's call, recorded here when made; the branch does not pre-empt it. A
+name until a user sets it to 1. A
 `kIntent_Cast` RequestEx with `kCastFlag_AtPosition` makes APMF place an XMarker at
 `param.pos` and call `CastSpellImmediate` on the MARKER's instant caster, blamed on the
 actor. This is written here, in the rule it touches, rather than done quietly (CLAUDE.md
@@ -90,6 +92,11 @@ actor. This is written here, in the rule it touches, rather than done quietly (C
    APMF has no client identity, so "another client's claim" is decided the way every facet
    is: by basis (`ControlMap::CastFacetOutranks`, `core/ControlMap.cpp`). Only PUBLISHED
    claims are seen; one still in the request queue is not.
+8. **Not an endpoint.** A marker cast does not animate the actor, and marth requires proper
+   animations for ALL actions. No client may ship a user-facing action on (e) alone. An
+   animated path (the actor's own AI cast, aimed at the point, composed through the engine's
+   seats) must be researched and preferred; (e) is only a stepping stone or the delivery half
+   of an animated composition.
 The marker itself inherits #19's spirit: it is a runtime-created 0xFF reference, deleted
 one frame after the cast by its tracked handle, forgotten (never touched) at a world
 boundary, and it is recorded in the co-saved marker ledger (#15, record `'XMRK'`) so the

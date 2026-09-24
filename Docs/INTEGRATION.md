@@ -164,10 +164,13 @@ supplies the one missing classification decision and the engine does the rest.
 
 ## Casting at a point (ABI v11, `kCastFlag_AtPosition`)
 
-**Off by default.** The position cast rests on a proposed amendment to INVARIANTS #0 (action
-(e)) that marth has not approved. `[PositionCast] bPositionCast` defaults to 0, and every
-request is refused by name (`[poscast] request REFUSED ... position cast not installed`) until
-a user sets it to 1. Travel to a point does not depend on it.
+**Off by default, and not an endpoint.** The position cast is INVARIANTS #0 action (e),
+adopted by marth with a standing condition: the actor does not animate, and proper animations
+are required for ALL actions. Do not ship a user-facing action on this alone. The goal is an
+animated path (the actor's own AI cast aimed at the point through the engine's seats); this is
+a stepping stone or the delivery half of that. `[PositionCast] bPositionCast` defaults to 0,
+and every request is refused by name (`[poscast] request REFUSED ... position cast not
+installed`) until a user sets it to 1. Travel to a point does not depend on it.
 
 Requires `abiVersion >= 11`. Check it before you set the bit: an older APMF ignores
 `kCastFlag_AtPosition` and turns the request into an ordinary cast claim aimed at

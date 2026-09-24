@@ -27,9 +27,10 @@
 // alongside kCastFlag_AtPosition, an unloaded or dead actor, a cell that is not
 // attached. Every refusal is one WARN line naming the reason. Nothing is retried.
 //
-// DOCTRINE (Docs/INVARIANTS.md #0 action (e), PROPOSED, pending marth -- so the cast
-// ships OFF: [PositionCast] bPositionCast defaults to 0). This would be the
-// one place APMF itself makes a cast call. It is legal because no decision seat
+// DOCTRINE (Docs/INVARIANTS.md #0 action (e), ADOPTED 2026-09-23 by marth with
+// condition (8): NOT AN ENDPOINT -- the actor does not animate and marth requires
+// proper animations for ALL actions, so the cast ships OFF, [PositionCast]
+// bPositionCast defaults to 0). This is the one place APMF itself makes a cast call. It is legal because no decision seat
 // exists to compose instead (an NPC's AI has no seat that aims a location spell at
 // a point, and seat 0x0A carries an Actor*), because the client declared both the
 // spell and the point, and because it is a single one-shot call on the main thread

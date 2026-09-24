@@ -456,11 +456,13 @@ namespace apmf::poscast {
         // The marker helpers (also ch.19's position legs) need only the runtime and
         // the base. The INI below switches off the position CAST alone.
         g_markersSupported.store(true, std::memory_order_release);
-        // DEFAULT OFF (review F1): INVARIANTS #0 action (e) is PROPOSED, pending marth.
-        // A missing key reads 0 = off; only an explicit bPositionCast=1 installs it.
+        // DEFAULT OFF (review F1 + marth 2026-09-23): INVARIANTS #0 action (e) is adopted
+        // with condition (8), "not an endpoint" -- the actor does not animate, and proper
+        // animations are required for ALL actions. A missing key reads 0 = off; only an
+        // explicit bPositionCast=1 installs it.
         if (GetPrivateProfileIntA("PositionCast", "bPositionCast", 0, "Data/SKSE/Plugins/APMF.ini") == 0) {
-            g_reason.store("[PositionCast] bPositionCast is 0 (the default: the position cast is PROPOSED, pending "
-                           "marth's approval of INVARIANTS #0 (e))");
+            g_reason.store("[PositionCast] bPositionCast is 0 (the default: a marker cast does not animate the actor, "
+                           "and INVARIANTS #0 (e) condition 8 says it is not an endpoint)");
             spdlog::info("[poscast] NOT installed -- {} (the XMarker helpers ch.19 uses stay available).",
                          g_reason.load());
             return;

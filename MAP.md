@@ -344,8 +344,9 @@ Runtime gate: exactly 1.6.1170 / 1.5.97, VR refused. Evidence:
   loudly). Breaking the ledger (a PlaceMarker that does not record, a DeleteMarker that drops a
   STALE-handle entry instead of carrying it, the sweep moved into the load callback before the
   refs exist, the revert clear moved after the load callback) re-opens unbounded .ess growth.
-  (g) REVIEW ROUND on `ed729ec`: the cast is OFF by default (`bPositionCast` code default 0,
-  INVARIANTS #0 (e) is PROPOSED); `MarkersSupported` must stay independent of that switch or
+  (g) REVIEW ROUND on `ed729ec`: the cast is OFF by default (`bPositionCast` code default 0;
+  INVARIANTS #0 (e) is ADOPTED with condition (8) "not an endpoint": no animation, so no client
+  ships a user-facing action on it alone); `MarkersSupported` must stay independent of that switch or
   ch.19 position legs die with it. `Enqueue` checks the spell's static eligibility at the call,
   and `ControlMap::CastFacetOutranks` refuses a cast while a live cast claim owns the actor's
   facet (condition 7). The load sweep is POSTED from kPostLoadGame. `g_carry` is capped

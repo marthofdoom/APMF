@@ -754,12 +754,16 @@ namespace APMF_API {
                                              //   abiVersion >= 11 before setting it (an older APMF
                                              //   ignores the bit and makes an ordinary actor-target claim).
                                              //
-                                             //   OFF BY DEFAULT. It rests on a PROPOSED amendment to
-                                             //   Docs/INVARIANTS.md #0 (action (e)) that marth has not
-                                             //   approved yet, so [PositionCast] bPositionCast defaults to
-                                             //   0 and every request is REFUSED by name until a user sets
-                                             //   it to 1. kIntent_Travel's kTravel_ToPosition does not
-                                             //   depend on it.
+                                             //   OFF BY DEFAULT, AND NOT AN ENDPOINT. It rests on
+                                             //   Docs/INVARIANTS.md #0 action (e), adopted by marth with a
+                                             //   standing condition: the actor does NOT animate, and proper
+                                             //   animations are required for ALL actions, so no client may
+                                             //   ship a user-facing action on this alone (an animated path
+                                             //   through the engine's own cast seats is the goal; this is a
+                                             //   stepping stone or the delivery half of one). So
+                                             //   [PositionCast] bPositionCast defaults to 0 and every
+                                             //   request is REFUSED by name until a user sets it to 1.
+                                             //   kIntent_Travel's kTravel_ToPosition does not depend on it.
                                              //
                                              //   WHAT APMF DOES. On the game thread it places a
                                              //   non-persistent XMarker (Skyrim.esm 0x3B) at the point, in
