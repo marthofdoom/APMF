@@ -502,6 +502,19 @@ of it (AE `0x5d4726`-`0x5d481f`, helper `0x5d50c0`).
 (`hitFraction = 1.0` at pick+0x40, `rootCollidable` at pick+0x80) and, with the four collector slots
 null, casts into `pick+0x30` (AE `0xe867f1`-`0xe867fb`). The stock Havok closest-hit output.
 
+**THE LIMIT: a marker caster never launches a Target Location PROJECTILE (research 2026-09-23,
+re-read on both images for this addendum).** In the cast core's effect loop the AE inline check at
+`0x5bd04e`-`0x5bd08e` reads the effect's EffectSetting `data.delivery` (`+0xdc` = `0x68` + `0x74`) == 4
+(Target Location) and `data.projectileBase` (`+0xc8` = `0x68` + `0x60`) != null, and then requires
+the core's pick data to have NO `unkC0` flag and a `rootCollidable` whose layer (`& 0x7f`) is 1, 13
+or 17 (static, terrain, ground); otherwise the projectile branch is skipped (`jne 0x5bd0f9`). The same
+checks are inlined in SE 33671 `0x550550` at +0x8d (`0x5505dd`-`0x550610`). AE 34453 `0x5c02e0` is
+`MagicCaster::TestProjectilePlacement` (CommonLib names the same layer rule). The pick is filled only by
+AE 34457 `0x5c0470`, and only on the player branch (`cmp outActor, player` at AE `0x5bc3ec`, SE
+`0x54cf8a`). A marker's caster has no out-actor, so there is never a pick and never a projectile:
+position casts are therefore limited to Target Location effects WITHOUT a projectile, and a spell with
+one is refused at the call (`core/PositionCast.cpp` `Ineligible`).
+
 **Nothing in this addendum is field-run.** Principle 5: this proves the paths exist. The first deck
 log decides whether they run (see the field-test plan in the branch's hand-back).
 

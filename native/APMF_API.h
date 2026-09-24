@@ -787,7 +787,12 @@ namespace APMF_API {
                                              //   marker. Disassembly on both runtimes, same ADDENDUM.
                                              //
                                              //   WHAT IS ACCEPTED. A SpellItem with Target Location
-                                             //   delivery, fire-and-forget, and no Summon Creature effect.
+                                             //   delivery, fire-and-forget, no Summon Creature effect, and
+                                             //   NO PROJECTILE on any effect. The engine launches a Target
+                                             //   Location projectile only from the player's crosshair pick
+                                             //   (never for a marker caster, both runtimes), so a rune, a
+                                             //   trap or a lobbed shot would silently place nothing: it is
+                                             //   REFUSED at the call.
                                              //   Everything else is REFUSED by name in APMF.log:
                                              //   * a SUMMON. The engine applies a summon effect ONLY to the
                                              //     actor that cast it, so a marker can never summon. An
@@ -1329,7 +1334,7 @@ namespace APMF_API {
     // Two read-only questions a client asks before it declares something that needs a
     // place in the world: "where is an empty, standable spot over there?" and "which
     // hostile actors are inside this sphere?". They serve a position cast
-    // (kCastFlag_AtPosition), a rune or ward a mod wants to place, and anything else
+    // (kCastFlag_AtPosition), a travel point (kTravel_ToPosition), and anything else
     // that has to pick a point. APMF ANSWERS; the client DECIDES (CLAUDE.md principle 4).
     //
     // WHAT A QUERY IS NOT. It claims no facet, holds nothing, writes nothing into the

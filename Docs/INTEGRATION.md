@@ -178,7 +178,7 @@ Requires `abiVersion >= 11`. Check it before you set the bit: an older APMF igno
 
 ```cpp
 APMF_API::APMF_Param p{};
-p.form = runeSpellID;                       // a SpellItem: Target Location, fire-and-forget, no summon
+p.form = spellID;                           // a SpellItem: Target Location, fire-and-forget, no summon, NO projectile
 p.ival = APMF_API::kCastFlag_AtPosition;    // the flag ALONE; any other cast flag is refused
 p.posX = pt.x; p.posY = pt.y; p.posZ = pt.z; // world point, in the actor's worldspace (indoors: its cell)
 APMF_API::Handle h = g_apmf->RequestEx(actorFormID, APMF_API::kIntent_Cast, basis, &p);
@@ -198,6 +198,11 @@ both runtimes (`Docs/ADDRESS-TABLE-2026-09-15.md`, ADDENDUM 2026-09-23). That ca
 lands at the actor's hand. A marker has no magic node, so a spell it casts lands on it.
 
 **What is refused, each with one `[poscast] ... REFUSED` line naming why:**
+- a spell with a **projectile** on any effect: a rune, a trap, a lobbed shot. The engine
+  launches a Target Location projectile only from the player's crosshair pick, never for a
+  marker caster (both runtimes, `Docs/ADDRESS-TABLE-2026-09-15.md` ADDENDUM 2026-09-23), so it
+  would silently place nothing. Refused at the call. What remains is Target Location effects
+  applied at the spot directly.
 - a **summon**. The game applies a summon effect only to the actor that cast it, so a
   marker cannot summon. An NPC's own summon already lands in front of it: the engine's
   `SummonCreatureEffect` picks that spot itself. Summon through an ordinary cast.

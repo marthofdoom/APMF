@@ -69,8 +69,19 @@ actor. This is written here, in the rule it touches, rather than done quietly (C
    (`Docs/ADDRESS-TABLE-2026-09-15.md`, ADDENDUM 2026-09-23, both runtimes). Composition
    is not a weaker answer here, it is no answer.
 2. **APMF selects nothing.** The client declared the spell and the point. APMF picks no
-   spell, no target and no point, and it replaces no AI decision: no NPC AI decides to
-   put a spell at a remote point, so there is no AI choice being overridden.
+   spell, no target and no point. (CORRECTED 2026-09-23: an earlier wording said "no NPC AI
+   decides to put a spell at a remote point". That is wrong: the field shows a follower's own
+   AI choosing and animating runes (Natura Stone Rune FE209C83 fired 5 and 25 times). The true
+   statement is narrower: no engine seat lets an NPC's cast land a Target Location PROJECTILE
+   at a point, because the cast core places that projectile only from the player's crosshair
+   pick.)
+   **THE LIMIT THIS PUTS ON (e) ITSELF.** The same fact binds the marker: its caster has no
+   out-actor and no pick, so the cast core never launches a Target Location projectile from it
+   (AE inline `0x5bd04e`-`0x5bd08e` + TestProjectilePlacement 34453 `0x5c02e0`; SE 33671
+   `0x550550` +0x8d; the pick is filled only by the player branch, AE 34457 `0x5c0470`, gated at
+   AE `0x5bc3ec` / SE `0x54cf8a`). So (e) delivers only Target Location effects WITHOUT a
+   projectile. A rune, a trap or any spell whose effect carries a projectile is REFUSED by name
+   at the call (it would silently place nothing).
 3. **One call, once.** On the main thread, once per request, the engine's own
    sequence (Papyrus `Spell.RemoteCast`: `InterruptCast(false)` then
    `CastSpellImmediate(spell, false, none, 1.0, false, 0.0, blame)`). No Tick, no

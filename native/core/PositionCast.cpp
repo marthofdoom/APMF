@@ -112,6 +112,23 @@ namespace apmf::poscast {
                            "SummonCreatureEffect picks that spot";
                 }
             }
+            for (auto* effect : a_spell->effects) {
+                // A PROJECTILE is never placed for a marker caster (2026-09-23 research, both
+                // runtimes): the cast core launches a Target Location effect's projectile only
+                // after a pick hit on static/terrain/ground (AE inline 0x5bd04e..0x5bd08e,
+                // TestProjectilePlacement 34453 0x5c02e0; SE 33671 0x550550 +0x8d), and only
+                // the PLAYER branch fills that pick (AE 34457 0x5c0470, gated by
+                // `cmp outActor, player` at AE 0x5bc3ec / SE 0x54cf8a). A marker has no
+                // out-actor, so the projectile -- a rune, a trap, a lobbed ball -- would
+                // silently not exist. Refused by name instead.
+                if (effect && effect->baseEffect && effect->baseEffect->data.projectileBase) {
+                    a_detail = std::format("effect 0x{} projectile 0x{}", Hex(effect->baseEffect->GetFormID()),
+                                           Hex(effect->baseEffect->data.projectileBase->GetFormID()));
+                    return "the spell launches a PROJECTILE (a rune, a trap, a lobbed shot): the engine places a "
+                           "Target Location projectile only from the player's crosshair pick, so from a marker it "
+                           "would silently place nothing";
+                }
+            }
             return nullptr;
         }
 

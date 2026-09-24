@@ -20,8 +20,10 @@
 // actor's hand. A marker's NonActorMagicCaster has no magic node and reports no
 // out-actor, so the location is the marker itself and no navmesh snap moves it.
 //
-// WHAT IS REFUSED, BY NAME: summons (the engine applies a summon effect only to the
-// actor that cast it, so a marker can never summon), every delivery other than
+// WHAT IS REFUSED, BY NAME: a spell with a PROJECTILE on any effect (the engine places a
+// Target Location projectile only from the player's crosshair pick, so from a marker a
+// rune or trap would silently not exist), summons (the engine applies a summon effect
+// only to the actor that cast it, so a marker can never summon), every delivery other than
 // Target Location, concentration and constant-effect spells, the three spell types
 // Papyrus RemoteCast refuses (disease, ability, addiction), any other cast flag set
 // alongside kCastFlag_AtPosition, an unloaded or dead actor, a cell that is not

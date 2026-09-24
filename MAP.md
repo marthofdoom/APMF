@@ -317,7 +317,7 @@ A `kIntent_Cast` RequestEx with `kCastFlag_AtPosition` (`ControlMap::EnqueueRequ
 diverts it here; it is never a claim). `Enqueue` (any thread) checks the POD (flag
 alone, spell and actor non-zero, finite point) and posts `Deliver` to the main-thread
 pump. `Deliver` re-validates on the main thread (loaded live actor, attached cell,
-SpellItem with Target Location + fire-and-forget + no Summon Creature effect + not
+SpellItem with Target Location + fire-and-forget + no Summon Creature effect + NO projectile on any effect (the engine never launches a TL projectile for a marker caster: only the player pick feeds it) + not
 disease/ability/addiction), places an XMarker (`0x3B`) with
 `TESDataHandler::CreateReferenceAtLocation` in the cell that CONTAINS the point (outdoors `TES::GetCell(point)` = the loaded grid cell, required attached and in the actor's worldspace; indoors the actor's cell), tracks it,
 then `marker->GetMagicCaster(kInstant)` → `InterruptCast(false)` →
