@@ -561,7 +561,7 @@ did not arm.
   the gate exists to prevent.
 
 ### `native/core/Allowance.{h,cpp}` — the reusable ALLOWANCE TEMPLATE (Docs/ALLOWANCE-TEMPLATE.md §3)
-**SEAT SELF-CHECK (mit-3.7 F1, 2026-09-24):** `SelfCheckResult()` / `LogSelfCheck()` /
+**SEAT SELF-CHECK (mit-3.7 F1, 2026-09-24):** `SelfCheckResult()` / `LogSelfCheck()` / (open backlog: APMF-B21 APMF-B22)
 **`SeatVerified(address, seat)`** over the generated `native/VerifiedAddresses.h` (171 rows per
 runtime; `Docs/VERIFIED-ADDRESSES.md`). `InstallOnVtables` refuses a list whose expected RTTI
 TypeDescriptor is unverified and skips each unverified vtable; direct guards in Hook, PackageGate
