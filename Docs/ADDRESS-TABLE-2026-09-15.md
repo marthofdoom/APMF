@@ -504,3 +504,10 @@ null, casts into `pick+0x30` (AE `0xe867f1`-`0xe867fb`). The stock Havok closest
 
 **Nothing in this addendum is field-run.** Principle 5: this proves the paths exist. The first deck
 log decides whether they run (see the field-test plan in the branch's hand-back).
+
+**ch.19 position legs (`kTravel_ToPosition`, same branch) add NO new address.** They place and delete
+their marker through the same two rows above (`CreateReferenceAtLocation`, `Disable` + `SetDelete`,
+wrapped as `poscast::PlaceMarker` / `DeleteMarker`) and point the package with the existing
+`packagedata::SetTravelTarget` (`kNearReference` handle write, verified 2026-09-22 in the addendum
+above). The load-boundary reset points a record back at `PlayerCharacter::GetSingleton()`, the same
+PlayerRef the generated record authors as its placeholder (`APMF_GenerateESL.py`, `FREF_PLAYER`).
