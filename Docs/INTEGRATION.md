@@ -201,7 +201,7 @@ lands at the actor's hand. A marker has no magic node, so a spell it casts lands
 - a spell with a **projectile** on any effect: a rune, a trap, a lobbed shot. The engine
   launches a Target Location projectile only from the player's crosshair pick, never for a
   marker caster (both runtimes, `Docs/ADDRESS-TABLE-2026-09-15.md` ADDENDUM 2026-09-23), so it
-  would silently place nothing. Refused at the call. What remains is Target Location effects
+  would silently place nothing. Refused on the game thread (logged). What remains is Target Location effects
   applied at the spot directly.
 - a **summon**. The game applies a summon effect only to the actor that cast it, so a
   marker cannot summon. An NPC's own summon already lands in front of it: the engine's
@@ -220,8 +220,13 @@ lands at the actor's hand. A marker has no magic node, so a spell it casts lands
 - a `Repoint` carrying `kCastFlag_AtPosition` on a live cast claim (nothing changes).
 - a dead or unloaded actor, a cell that is not attached, or more than 16 markers alive
   at once (they live one frame, so that is a burst of 16+ casts in one frame).
-The spell checks and the facet check refuse AT THE CALL (`kInvalidHandle`); the actor and
-cell checks run on the game thread and are logged.
+AT THE CALL (`kInvalidHandle`): the flag, the point, a non-finite basis, and the facet check.
+ON THE GAME THREAD, one `[poscast] request N REFUSED ...` line: the spell checks (APMF does not
+look forms up off the main thread: the pinned CommonLib's `LookupByID` takes no lock), the actor
+and cell checks, and the facet check again (a claim may publish in between). So a live handle
+does not mean the cast will happen; read the log.
+**Same-basis note:** APMF has no client identity, so your OWN driving cast claim at the same
+basis (or higher) blocks your own position cast. Release it, or ask at a higher basis.
 - the whole feature when `[PositionCast] bPositionCast=0` (the default), on VR, or on a runtime other
   than 1.6.1170 / 1.5.97.
 
@@ -814,6 +819,14 @@ them and points every package record that last aimed at one back at its authored
 placeholder, so no record carries a marker handle into the next world. A save taken
 mid-leg records its markers in APMF's co-save, and loading it DELETES them (see "Save
 behaviour of APMF markers" below).
+
+**Far destinations: walk in hops.** The marker can only be placed in a LOADED cell: outdoors
+the point must fall in the loaded grid (an attached cell of the actor's worldspace, found with
+`TES::GetCell`), indoors it is the actor's cell. A point outside the loaded grid is refused at
+Compose (`[travel] ... REFUSED -- no destination marker ... no loaded exterior cell contains the
+point`), and the claim then stands doing nothing until you Release or Repoint it. To send a
+follower somewhere far, walk it in hops inside the loaded area, or pass an existing REFERENCE
+(or a cell) as `param.form`, which needs no marker and can be anywhere.
 
 **Refused, by name:** a non-zero `param.form` with the flag (a form OR a point, never
 both), a non-finite point, VR or a runtime other than 1.6.1170 / 1.5.97 (all

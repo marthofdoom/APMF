@@ -74,7 +74,7 @@ namespace apmf::poscast {
     // delivery to the main thread. Returns false (and logs the reason) when the
     // request is refused synchronously; the caller then returns kInvalidHandle.
     // `handle` is only a label for the log lines.
-    bool Enqueue(APMF_API::Handle handle, RE::FormID actor, const APMF_API::APMF_Param& param);
+    bool Enqueue(APMF_API::Handle handle, RE::FormID actor, float basis, const APMF_API::APMF_Param& param);
 
     // ── Shared XMarker helpers (ABI v11): the position cast above, and ch.19's
     // position legs (channels/Travel.cpp), which point a travel package at one. ──

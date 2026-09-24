@@ -1,4 +1,5 @@
 #include "PCH.h"
+#include "core/ControlMap.h"
 #include "core/Log.h"
 #include "core/MainThread.h"
 #include "core/PositionCast.h"
@@ -162,7 +163,8 @@ namespace apmf::poscast {
         }
 
         // MAIN THREAD (runs from apmf::mainthread::Pump). The whole delivery.
-        void Deliver(APMF_API::Handle a_request, RE::FormID a_actor, RE::FormID a_spell, RE::NiPoint3 a_point) {
+        void Deliver(APMF_API::Handle a_request, RE::FormID a_actor, RE::FormID a_spell, RE::NiPoint3 a_point,
+                     float a_basis) {
             const auto refuse = [&](std::string_view a_why) {
                 spdlog::warn("[poscast] request {} REFUSED (actor 0x{}, spell 0x{}, point {:.0f},{:.0f},{:.0f}): {}",
                              a_request, Hex(a_actor), Hex(a_spell), a_point.x, a_point.y, a_point.z, a_why);
@@ -180,6 +182,20 @@ namespace apmf::poscast {
             std::string detail;
             if (const char* why = Ineligible(spell, detail)) {
                 return refuse(std::format("{} [{}]", why, detail));
+            }
+
+            // CONDITION 7 AGAIN, ON THE MAIN THREAD (review R2-3c): a cast claim may have
+            // published between the call and this frame. Checked last before any engine
+            // write, against the same basis the call used.
+            {
+                APMF_API::Handle bh = APMF_API::kInvalidHandle;
+                float            bb = 0.0f;
+                std::uint32_t    bf = 0;
+                if (apmf::ControlMap::Get().CastFacetOutranks(a_actor, a_basis, bh, bb, bf)) {
+                    return refuse(std::format("the actor's cast facet is owned by {}claim h={} at basis {} (it "
+                                              "published after the request was made)",
+                                              (bf & APMF_API::kCastFlag_DenyHandOnly) ? "DENY-ONLY " : "", bh, bb));
+                }
             }
 
             if (g_live.size() >= kMaxLiveMarkers) {
@@ -496,7 +512,7 @@ namespace apmf::poscast {
 
     const char* NotInstalledReason() { return g_reason.load(); }
 
-    bool Enqueue(APMF_API::Handle a_handle, RE::FormID a_actor, const APMF_API::APMF_Param& a_param) {
+    bool Enqueue(APMF_API::Handle a_handle, RE::FormID a_actor, float a_basis, const APMF_API::APMF_Param& a_param) {
         const std::uint32_t flags = static_cast<std::uint32_t>(a_param.ival);
         if (!Installed()) {
             spdlog::warn("[poscast] request REFUSED (actor 0x{}): position cast not installed -- {}.", Hex(a_actor),
@@ -518,29 +534,18 @@ namespace apmf::poscast {
             spdlog::warn("[poscast] request REFUSED (actor 0x{}): param.pos is not a finite point.", Hex(a_actor));
             return false;
         }
-        // STATIC ELIGIBILITY, SYNCHRONOUSLY (review F7b): delivery, casting type, summon
-        // effect and spell type are the spell RECORD's own data, fixed after kDataLoaded,
-        // so a wrong spell is refused at the call with kInvalidHandle instead of a live
-        // handle that later does nothing. TESForm::LookupByID takes the form map under
-        // its own read lock (CommonLib TESForm.h), so it is safe from the caller's thread;
-        // nothing here writes. Deliver re-checks the same things on the main thread.
-        {
-            auto* sp = RE::TESForm::LookupByID<RE::SpellItem>(a_param.form);
-            if (!sp) {
-                spdlog::warn("[poscast] request REFUSED (actor 0x{}): param.form 0x{} is not a SpellItem.", Hex(a_actor),
-                             Hex(a_param.form));
-                return false;
-            }
-            std::string detail;
-            if (const char* why = Ineligible(sp, detail)) {
-                spdlog::warn("[poscast] request REFUSED (actor 0x{}, spell 0x{}): {} [{}]", Hex(a_actor),
-                             Hex(a_param.form), why, detail);
-                return false;
-            }
-        }
+        // NO FORM LOOKUP HERE (review R2-1, reverting F7b). This runs on the caller's
+        // thread, and the pinned 3.7.0 TESForm::LookupByID does not actually take the
+        // all-forms lock (TESForm.h:212 copy-constructs a BSReadWriteLock and acquires
+        // nothing), so it would read the map unlocked while the main thread inserts
+        // 0xFF forms -- APMF's own markers among them. The spell's eligibility (and the
+        // facet check, again) is decided in Deliver, on the main thread, and a refusal
+        // there is one WARN line naming the reason. The request's handle is live until then.
         const RE::NiPoint3 point{ a_param.posX, a_param.posY, a_param.posZ };
         const RE::FormID   spell = a_param.form;
-        apmf::mainthread::Post([a_handle, a_actor, spell, point] { Deliver(a_handle, a_actor, spell, point); });
+        apmf::mainthread::Post([a_handle, a_actor, spell, point, a_basis] {
+            Deliver(a_handle, a_actor, spell, point, a_basis);
+        });
         spdlog::info("[poscast] request {} queued: actor 0x{} spell 0x{} at {:.0f},{:.0f},{:.0f}.", a_handle,
                      Hex(a_actor), Hex(spell), point.x, point.y, point.z);
         return true;

@@ -792,7 +792,7 @@ namespace APMF_API {
                                              //   Location projectile only from the player's crosshair pick
                                              //   (never for a marker caster, both runtimes), so a rune, a
                                              //   trap or a lobbed shot would silently place nothing: it is
-                                             //   REFUSED at the call.
+                                             //   REFUSED on the game thread (logged).
                                              //   Everything else is REFUSED by name in APMF.log:
                                              //   * a SUMMON. The engine applies a summon effect ONLY to the
                                              //     actor that cast it, so a marker can never summon. An
@@ -811,9 +811,11 @@ namespace APMF_API {
                                              //     (a higher basis, a kCastFlag_DenyHandOnly floor included,
                                              //     or an equal basis that drives something) refuses the
                                              //     request synchronously.
-                                             //   The spell checks and the facet check run AT THE CALL
-                                             //   (kInvalidHandle); the actor and cell checks run on the game
-                                             //   thread and are logged.
+                                             //   AT THE CALL (kInvalidHandle): the flag, the point, a finite
+                                             //   basis and the facet check. ON THE GAME THREAD, logged as
+                                             //   "[poscast] request N REFUSED ...": the spell checks (a form
+                                             //   lookup cannot be made off the main thread safely), the
+                                             //   actor and cell checks, and the facet check AGAIN.
                                              //   A Repoint carrying this bit on a live cast claim is
                                              //   REFUSED and changes nothing.
                                              //

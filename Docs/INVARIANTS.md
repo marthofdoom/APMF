@@ -81,7 +81,7 @@ actor. This is written here, in the rule it touches, rather than done quietly (C
    `0x550550` +0x8d; the pick is filled only by the player branch, AE 34457 `0x5c0470`, gated at
    AE `0x5bc3ec` / SE `0x54cf8a`). So (e) delivers only Target Location effects WITHOUT a
    projectile. A rune, a trap or any spell whose effect carries a projectile is REFUSED by name
-   at the call (it would silently place nothing).
+   on the game thread (it would silently place nothing).
 3. **One call, once.** On the main thread, once per request, the engine's own
    sequence (Papyrus `Spell.RemoteCast`: `InterruptCast(false)` then
    `CastSpellImmediate(spell, false, none, 1.0, false, 0.0, blame)`). No Tick, no
@@ -102,7 +102,10 @@ actor. This is written here, in the rule it touches, rather than done quietly (C
    deny-only floor loses to a driving request, as everywhere else in the cast channel).
    APMF has no client identity, so "another client's claim" is decided the way every facet
    is: by basis (`ControlMap::CastFacetOutranks`, `core/ControlMap.cpp`). Only PUBLISHED
-   claims are seen; one still in the request queue is not.
+   claims are seen; one still in the request queue is not. It runs at the call and AGAIN on
+   the main thread just before the cast (a claim may publish in between); a non-finite basis
+   is refused first. **Consequence, stated because there is no client identity:** a caller's
+   OWN driving cast claim at the same (or a higher) basis blocks its own position cast.
 8. **Not an endpoint.** A marker cast does not animate the actor, and marth requires proper
    animations for ALL actions. No client may ship a user-facing action on (e) alone. An
    animated path (the actor's own AI cast, aimed at the point, composed through the engine's

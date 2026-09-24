@@ -164,6 +164,13 @@ namespace apmf {
             // ownership of the actor's cast facet. A live cast claim that would outrank a
             // driving request at this basis (a deny-only floor above it included) owns
             // the facet, and the request is REFUSED by name, synchronously.
+            // A non-finite basis would compare false against every claim and slip past the
+            // check below (review R2-3b), so it is refused by name first.
+            if (!std::isfinite(basis)) {
+                spdlog::warn("[poscast] request REFUSED (actor 0x{}): basis is not a finite number.",
+                             apmf::log::Hex(actor));
+                return APMF_API::kInvalidHandle;
+            }
             {
                 Handle        bh = APMF_API::kInvalidHandle;
                 float         bb = 0.0f;
@@ -178,7 +185,7 @@ namespace apmf {
                 }
             }
             const Handle ph = m_nextHandle.fetch_add(1, std::memory_order_relaxed);
-            return apmf::poscast::Enqueue(ph, actor, *param) ? ph : APMF_API::kInvalidHandle;
+            return apmf::poscast::Enqueue(ph, actor, basis, *param) ? ph : APMF_API::kInvalidHandle;
         }
 
         const Handle h = m_nextHandle.fetch_add(1, std::memory_order_relaxed);

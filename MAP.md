@@ -347,8 +347,10 @@ Runtime gate: exactly 1.6.1170 / 1.5.97, VR refused. Evidence:
   (g) REVIEW ROUND on `ed729ec`: the cast is OFF by default (`bPositionCast` code default 0;
   INVARIANTS #0 (e) is ADOPTED with condition (8) "not an endpoint": no animation, so no client
   ships a user-facing action on it alone); `MarkersSupported` must stay independent of that switch or
-  ch.19 position legs die with it. `Enqueue` checks the spell's static eligibility at the call,
-  and `ControlMap::CastFacetOutranks` refuses a cast while a live cast claim owns the actor's
+  ch.19 position legs die with it. `Enqueue` does NO form lookup (review R2-1: 3.7.0's
+  `LookupByID` takes no lock; the spell checks live in `Deliver`, main thread), and
+  `ControlMap::CastFacetOutranks` refuses (at the call AND again in `Deliver`, R2-3c; a non-finite
+  basis is refused first, R2-3b) a cast while a live cast claim owns the actor's
   facet (condition 7). The load sweep is POSTED from kPostLoadGame. `g_carry` is capped
   wherever it grows (`CapCarried`). Open deferred findings: `Docs/REVIEW-BACKLOG.md`
   APMF-B19 (sweep proofs vs a different XMarker) and APMF-B20 (player-blamed location).
