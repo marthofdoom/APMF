@@ -157,8 +157,15 @@ namespace apmf::spacequery {
             a_out->status = a_status;
             a_out->detail = a_detail;
             if (a_status == APMF_API::kQuery_Ok) {
-                spdlog::info("[space] FindEmptySpace origin 0x{} -> Ok at {:.0f},{:.0f},{:.0f} ({})", Hex(originId),
-                             a_out->x, a_out->y, a_out->z, a_why);
+                // Success is logged at most once a second (review F6): a client may ask
+                // every tick. Every refusal below stays one WARN line per call.
+                static auto s_last = std::chrono::steady_clock::time_point{};   // main thread only
+                const auto  now    = std::chrono::steady_clock::now();
+                if (now - s_last >= std::chrono::seconds(1)) {
+                    s_last = now;
+                    spdlog::info("[space] FindEmptySpace origin 0x{} -> Ok at {:.0f},{:.0f},{:.0f} ({}) (rate-limited "
+                                 "1/s)", Hex(originId), a_out->x, a_out->y, a_out->z, a_why);
+                }
             } else {
                 spdlog::warn("[space] FindEmptySpace origin 0x{} -> {} (detail 0x{}): {}", Hex(originId),
                              StatusName(a_status), Hex(a_detail), a_why);

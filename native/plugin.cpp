@@ -209,11 +209,15 @@ namespace {
         case SKSE::MessagingInterface::kPostLoadGame:
             apmf::av::ApplyPending();             // restore any stranded AV overrides
             // ABI v11: delete the APMF XMarkers this save captured mid-leg / mid-cast.
-            // HERE and not in the load callback: kPostLoadGame is the first point at
-            // which the loaded world's references exist to be looked up, and it runs on
-            // the main thread. No APMF leg or cast is live yet (legs are never
-            // restored), so nothing of ours still points at them.
-            apmf::poscast::SweepCarriedMarkers("kPostLoadGame");
+            // NOT in the load callback (the loaded references are not there yet) and NOT
+            // inside this message either (review F4): it is POSTED to the confirmed-main
+            // pump, so it runs on the FIRST player-Update after the load, in the world
+            // the game is actually running, on the same seat every other APMF world write
+            // uses. No APMF leg or cast can be live before it: legs are never restored,
+            // and a new request's marker has a fresh id (the sweep also skips any id it
+            // finds live). A second load before that pump Discard()s the post at
+            // kPreLoadGame and the revert callback clears the record it would have swept.
+            apmf::mainthread::Post([] { apmf::poscast::SweepCarriedMarkers("first pump after load"); });
             apmf::equipsink::ReinspectEntries("kPostLoadGame");   // a later plugin may have detoured EquipObject's entry
             break;
         case SKSE::MessagingInterface::kNewGame:

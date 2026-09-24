@@ -196,6 +196,16 @@ namespace {
     // RequestEx/Repoint/Release slots. ABI v11 appends the two space-query slots, so
     // the object is now an APMF_API_v11 (which extends v9 directly). `abiVersion`
     // reports 11; a v1..v10 client still reads exactly its own prefix.
+    // ABI v11 layout proof (review F8d): the two query slots start exactly where the
+    // v9 prefix ends, so a v1..v10 client reading its own prefix never overlaps them.
+    // offsetof on a derived struct is conditionally-supported; MSVC (the only compiler
+    // this DLL is built with, CI) accepts it. The sizeof twin proves the same with no
+    // offsetof at all: base first, two pointers appended, no padding between.
+    static_assert(offsetof(APMF_API::APMF_API_v11, FindEmptySpace) == sizeof(APMF_API::APMF_API_v9),
+                  "APMF_API_v11's first slot must start right after the v9 prefix");
+    static_assert(sizeof(APMF_API::APMF_API_v11) == sizeof(APMF_API::APMF_API_v9) + 2 * sizeof(void*),
+                  "APMF_API_v11 = the v9 prefix plus exactly two function pointers");
+
     constexpr APMF_API::APMF_API_v11 g_api{
         {
         {

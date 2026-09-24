@@ -781,15 +781,31 @@ namespace {
             // exit (see the tail of this function).
             RE::ObjectRefHandle oldMarker{};
             RE::FormID          oldMarkerId = 0;
+            RE::NiPoint3        oldMarkerPoint{};
             if (leg.markerId != 0 && (!leg.toPosition || !SamePoint(leg.markerPoint, leg.point))) {
-                oldMarker   = leg.marker;
-                oldMarkerId = leg.markerId;
+                oldMarker      = leg.marker;
+                oldMarkerId    = leg.markerId;
+                oldMarkerPoint = leg.markerPoint;
                 leg.marker   = {};
                 leg.markerId = 0;
             }
 
             ComposeLeg(id, leg, step);
 
+            // NEVER DELETE A MARKER A LIVE SLOT STILL NAMES (review F5). If ComposeLeg
+            // returned early with the leg still live and its package record still aimed
+            // at the old marker (the new destination did not resolve, so nothing was
+            // re-pointed), the old marker goes back on the leg: it is retired when that
+            // leg ends (EndLeg frees the slot first), not now under a live offer.
+            if (oldMarkerId != 0 && leg.legLive && leg.slot >= 0 && g_slotMarkerId[leg.slot] == oldMarkerId) {
+                if (leg.markerId != 0) DropLegMarker(id, leg, "placed for a re-point that did not take");
+                leg.marker      = oldMarker;
+                leg.markerId    = oldMarkerId;
+                leg.markerPoint = oldMarkerPoint;
+                spdlog::info("[travel] 0x{} {}: marker 0x{} KEPT -- the live leg's package still names it; it is "
+                             "deleted when the leg ends.", Hex(id), step, Hex(oldMarkerId));
+                oldMarkerId = 0;
+            }
             RetireMarkerLater(id, oldMarker, oldMarkerId, "re-pointed away from it");
             // A position leg that did not start (or was ended above) must not keep a
             // marker nothing walks to.

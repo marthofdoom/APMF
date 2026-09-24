@@ -49,6 +49,18 @@ namespace apmf::poscast {
         std::vector<OwnedMarker> g_carry;   // read from a co-save, or whose handle went stale: swept at
                                             // the next kPostLoadGame where they resolve
 
+        // Bound g_carry at kMaxCarriedMarkers wherever it grows (review F8b): the oldest
+        // records go first, loudly. A dropped record's marker, if it still exists, stays
+        // in the save. MAIN THREAD.
+        void CapCarried(const char* a_where) {
+            if (g_carry.size() <= kMaxCarriedMarkers) return;
+            const std::size_t drop = g_carry.size() - kMaxCarriedMarkers;
+            spdlog::warn("[marker] {} -- {} carried marker record(s) over the cap of {}; the oldest {} dropped (those "
+                         "markers, if they still exist, stay in the save).", a_where, g_carry.size(),
+                         kMaxCarriedMarkers, drop);
+            g_carry.erase(g_carry.begin(), g_carry.begin() + static_cast<std::ptrdiff_t>(drop));
+        }
+
         const char* SpellTypeName(RE::MagicSystem::SpellType a_type) {
             switch (a_type) {
             case RE::MagicSystem::SpellType::kDisease:   return "disease";
@@ -203,10 +215,36 @@ namespace apmf::poscast {
             a_why = "the point is not finite";
             return {};
         }
-        auto* cell = a_actor ? a_actor->GetParentCell() : nullptr;
-        if (!cell || !cell->IsAttached()) {
+        auto* actorCell = a_actor ? a_actor->GetParentCell() : nullptr;
+        if (!actorCell || !actorCell->IsAttached()) {
             a_why = "the actor's cell is not attached";
             return {};
+        }
+        // THE CELL THAT CONTAINS THE POINT (review F3, 2026-09-23). An interior has no
+        // other cell, so an interior actor's point is placed in its own cell. Outdoors
+        // the point may lie in a neighbouring cell, so it is resolved by coordinates
+        // with TES::GetCell(const NiPoint3&) (RELOCATION_ID(13177, 13322); SE 0x155090 /
+        // AE 0x19e850, identical): with no interior loaded it floors x/y to the 4096u
+        // grid and returns the LOADED grid cell there (state 6 or 7), else null. That
+        // cell must be an attached exterior cell of the actor's own worldspace, or the
+        // request is refused by name. Nothing is guessed.
+        RE::TESObjectCELL* cell = actorCell;
+        if (actorCell->IsExteriorCell()) {
+            auto* tes = RE::TES::GetSingleton();
+            RE::TESObjectCELL* at = tes ? tes->GetCell(a_point) : nullptr;
+            if (!at) {
+                a_why = "no loaded exterior cell contains the point (it is outside the loaded grid)";
+                return {};
+            }
+            if (!at->IsExteriorCell() || at->GetRuntimeData().worldSpace != a_actor->GetWorldspace()) {
+                a_why = "the cell at the point is not an exterior cell of the actor's worldspace";
+                return {};
+            }
+            if (!at->IsAttached()) {
+                a_why = std::format("the cell 0x{} that contains the point is not attached", Hex(at->GetFormID()));
+                return {};
+            }
+            cell = at;
         }
         auto* dh = RE::TESDataHandler::GetSingleton();
         if (!dh) {
@@ -262,6 +300,7 @@ namespace apmf::poscast {
             if (tracked) {
                 entry.handle = {};
                 g_carry.push_back(entry);
+                CapCarried("a stale handle during the session");
             }
             return "the handle no longer resolves (unloaded or gone); kept in the co-saved ledger for the next load";
         }
@@ -309,7 +348,11 @@ namespace apmf::poscast {
         }
         // v1 (the only version): u32 count, then count x { u32 formID, f32 x, f32 y, f32 z }.
         std::uint32_t count = 0;
-        if (a_intf->ReadRecordData(&count, sizeof(count)) != sizeof(count)) return;
+        if (a_intf->ReadRecordData(&count, sizeof(count)) != sizeof(count)) {
+            spdlog::error("[marker] co-save record v{} is truncated: its entry count could not be read -- nothing "
+                          "from it will be swept.", a_version);
+            return;
+        }
         std::size_t read = 0, refused = 0;
         for (std::uint32_t i = 0; i < count; ++i) {
             OwnedMarker m{};
@@ -332,7 +375,8 @@ namespace apmf::poscast {
             ++read;
         }
         spdlog::info("[marker] read {} recorded APMF XMarker(s) from the co-save (record v{}, {} refused as not "
-                     "0xFF); they are swept at kPostLoadGame.", read, a_version, refused);
+                     "0xFF); they are swept on the first main-thread pump after the load.", read, a_version, refused);
+        CapCarried("co-save load");
     }
 
     void RevertMarkers() {
@@ -379,16 +423,8 @@ namespace apmf::poscast {
             ref->SetDelete(true);                     // TESObjectREFR vfunc 0x23 (both runtimes, verified)
             ++swept;
         }
-        // Bound what is carried forward: markers that never resolve again cannot grow
-        // the record without limit. The oldest go first, loudly.
-        if (keep.size() > kMaxCarriedMarkers) {
-            const std::size_t drop = keep.size() - kMaxCarriedMarkers;
-            spdlog::warn("[marker] {} -- {} unresolved marker record(s) over the cap of {}; the oldest {} are "
-                         "dropped from the ledger (those markers, if they still exist, stay in the save).",
-                         a_when, keep.size(), kMaxCarriedMarkers, drop);
-            keep.erase(keep.begin(), keep.begin() + static_cast<std::ptrdiff_t>(drop));
-        }
         g_carry = std::move(keep);
+        CapCarried(a_when);
         spdlog::info("[marker] {} sweep -- {} APMF XMarker(s) deleted, {} forgotten (failed a proof), {} not loaded "
                      "(kept for the next load).", a_when, swept, forgotten, kept);
     }
@@ -420,8 +456,11 @@ namespace apmf::poscast {
         // The marker helpers (also ch.19's position legs) need only the runtime and
         // the base. The INI below switches off the position CAST alone.
         g_markersSupported.store(true, std::memory_order_release);
-        if (GetPrivateProfileIntA("PositionCast", "bPositionCast", 1, "Data/SKSE/Plugins/APMF.ini") == 0) {
-            g_reason.store("[PositionCast] bPositionCast=0 in Data/SKSE/Plugins/APMF.ini");
+        // DEFAULT OFF (review F1): INVARIANTS #0 action (e) is PROPOSED, pending marth.
+        // A missing key reads 0 = off; only an explicit bPositionCast=1 installs it.
+        if (GetPrivateProfileIntA("PositionCast", "bPositionCast", 0, "Data/SKSE/Plugins/APMF.ini") == 0) {
+            g_reason.store("[PositionCast] bPositionCast is 0 (the default: the position cast is PROPOSED, pending "
+                           "marth's approval of INVARIANTS #0 (e))");
             spdlog::info("[poscast] NOT installed -- {} (the XMarker helpers ch.19 uses stay available).",
                          g_reason.load());
             return;
@@ -459,6 +498,26 @@ namespace apmf::poscast {
         if (!std::isfinite(a_param.posX) || !std::isfinite(a_param.posY) || !std::isfinite(a_param.posZ)) {
             spdlog::warn("[poscast] request REFUSED (actor 0x{}): param.pos is not a finite point.", Hex(a_actor));
             return false;
+        }
+        // STATIC ELIGIBILITY, SYNCHRONOUSLY (review F7b): delivery, casting type, summon
+        // effect and spell type are the spell RECORD's own data, fixed after kDataLoaded,
+        // so a wrong spell is refused at the call with kInvalidHandle instead of a live
+        // handle that later does nothing. TESForm::LookupByID takes the form map under
+        // its own read lock (CommonLib TESForm.h), so it is safe from the caller's thread;
+        // nothing here writes. Deliver re-checks the same things on the main thread.
+        {
+            auto* sp = RE::TESForm::LookupByID<RE::SpellItem>(a_param.form);
+            if (!sp) {
+                spdlog::warn("[poscast] request REFUSED (actor 0x{}): param.form 0x{} is not a SpellItem.", Hex(a_actor),
+                             Hex(a_param.form));
+                return false;
+            }
+            std::string detail;
+            if (const char* why = Ineligible(sp, detail)) {
+                spdlog::warn("[poscast] request REFUSED (actor 0x{}, spell 0x{}): {} [{}]", Hex(a_actor),
+                             Hex(a_param.form), why, detail);
+                return false;
+            }
         }
         const RE::NiPoint3 point{ a_param.posX, a_param.posY, a_param.posZ };
         const RE::FormID   spell = a_param.form;
