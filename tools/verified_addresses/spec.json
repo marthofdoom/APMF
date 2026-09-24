@@ -2346,6 +2346,34 @@
    "doc": "ADDRESS-TABLE-2026-09-15.md:474"
   },
   {
+   "seat": "Travel.GetOpenState",
+   "kind": "function",
+   "construct": "BGSOpenCloseForm::GetOpenState RELOCATION_ID(14180, 14288)",
+   "ids": {
+    "1.6.1170": 14288,
+    "1.5.97": 14180
+   },
+   "sig": {
+    "1.6.1170": "48 89 5C 24 10 48 89 74 24 18 57 48 83 EC 20 33 F6 48 8B F9 8B DE",
+    "1.5.97": "48 89 5C 24 10 48 89 74 24 18 57 48 83 EC 20 33 F6 48 8B F9"
+   },
+   "source": "native/channels/Travel.cpp GateProbe / LogOpenStates (ABI v12 passive gate probe)"
+  },
+  {
+   "seat": "Travel.ScriptEventSourceHolder.GetSingleton",
+   "kind": "function",
+   "construct": "ScriptEventSourceHolder::GetSingleton RELOCATION_ID(14108, 14298)",
+   "ids": {
+    "1.6.1170": 14298,
+    "1.5.97": 14108
+   },
+   "sig": {
+    "1.6.1170": "40 53 48 83 EC 30 48 C7 44 24 20 FE FF FF FF 8B 0D ?? ?? ?? ?? 65 48 8B 04 25 58 00 00 00 BA 08 2A 00 00 48 8B 0C C8 8B 04 0A 39 05 ?? ?? ?? ?? 7F 0D 48 8D 05 ?? ?? ?? ?? 48 83 C4 30 5B C3 48 8D 0D ?? ?? ?? ?? E8 ?? ?? ?? ?? 83 3D ?? ?? ?? ?? FF 75 DE 48 8D 1D ?? ?? ?? ?? 48 8B CB E8 ?? ?? ?? ?? 48 8D 0D ?? ?? ?? ?? E8 ?? ?? ?? ?? 90 48 8D 0D ?? ?? ?? ?? E8 ?? ?? ?? ?? 48 8B C3 48 83 C4 30 5B C3 CC CC CC CC CC CC CC CC CC CC CC 40 53 48 83 EC 40",
+    "1.5.97": "40 53 48 83 EC 30 48 C7 44 24 20 FE FF FF FF 8B 0D ?? ?? ?? ?? 65 48 8B 04 25 58 00 00 00 BA 08 2A 00 00 48 8B 04 C8 8B 0C 02 39 0D ?? ?? ?? ?? 7E 42 48 8D 0D ?? ?? ?? ?? E8 ?? ?? ?? ?? 83 3D ?? ?? ?? ?? FF 75 2D 48 8D 1D ?? ?? ?? ?? 48 8B CB E8 ?? ?? ?? ?? 48 8D 0D ?? ?? ?? ?? E8 ?? ?? ?? ?? 90 48 8D 0D ?? ?? ?? ?? E8 ?? ?? ?? ?? 48 8B C3 EB 07 48 8D 05 ?? ?? ?? ?? 48 83 C4 30 5B C3 CC CC CC CC CC CC CC CC CC CC CC CC CC CC CC 48 83 EC 48"
+   },
+   "source": "native/channels/Travel.cpp Install (ABI v12 gate probe: TESOpenCloseEvent +0x8F0 / TESActivateEvent +0x58 sinks)"
+  },
+  {
    "seat": "TESObjectREFR",
    "kind": "vtable",
    "construct": "RE::VTABLE_TESObjectREFR[0]",
@@ -3252,6 +3280,34 @@
    "where": "channels/Travel.cpp:827",
    "verified_by": "CommonLib RelocateVirtual",
    "gate": "Travel VR gate"
+  },
+  {
+   "what": "TESPackage PACKAGE_DATA::packType (read; 36 = Movement Blocked)",
+   "value": "+0x24 (u8)",
+   "where": "channels/Travel.cpp Poll (ABI v12 BLOCKED end)",
+   "verified_by": "TESPackage vfunc 0x39 GetObjectTypeName: movsx [rcx+0x24] into a name table whose entry 36 is \"Movement Blocked\" (1.6.1170 fn 0x496D50 table 0x200F670 / 1.5.97 fn 0x43B790 table 0x1DEC060)",
+   "gate": "Travel VR gate (layout identical on both builds)"
+  },
+  {
+   "what": "TESPackage PACKAGE_DATA::packFlags bit 13 kPreferredSpeed + maxSpeed (WRITTEN, travel gait)",
+   "value": "+0x20 (u32, 0x2000) / +0x26 (u8)",
+   "where": "channels/Travel.cpp ApplyGait (ABI v12)",
+   "verified_by": "package start copies +0x20 and the +0x26 getter into ActorPackage +0x24 / +0x2B (1.6.1170 0x6CE2C0, getter 0x491340 / 1.5.97 0x63BD40, getter 0x4363E0); movement reads test bit 13 then use +0x2B (1.6.1170 0x482841 / 1.5.97 0x4280C1)",
+   "gate": "exact 1.6.1170 / 1.5.97 (g_gaitVerified)"
+  },
+  {
+   "what": "ActorPackage modifiedPackageFlag / preferredSpeed; running package = middleHigh->runOncePackage if it holds one, else process->currentPackage (read, passive gait log)",
+   "value": "ActorPackage +0x24 / +0x2B; AIProcess +0x08 middleHigh, +0x18 currentPackage; MiddleHigh +0x58 runOncePackage (+0x60 its package)",
+   "where": "channels/Travel.cpp ObserveGait (ABI v12)",
+   "verified_by": "1.6.1170 0x70F590 / 1.5.97 0x67BDD0 (running-ActorPackage select), the package-start copy above",
+   "gate": "exact 1.6.1170 / 1.5.97 (only gait legs)"
+  },
+  {
+   "what": "ScriptEventSourceHolder event sources TESActivateEvent / TESOpenCloseEvent",
+   "value": "+0x58 / +0x8F0",
+   "where": "channels/Travel.cpp Install (ABI v12 gate probe sinks)",
+   "verified_by": "SendOpenCloseEvent (1.6.1170 id 14299 / 1.5.97 id 14190) add rcx, 0x8F0; engine activate senders lea rcx, [holder+0x58] (1.6.1170 0x9CABF3 / 1.5.97 0x92C291)",
+   "gate": "exact 1.6.1170 / 1.5.97 + self-check"
   },
   {
    "what": "Actor runtime data boolFlags (WRITTEN, probe)",

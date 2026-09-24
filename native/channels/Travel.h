@@ -1,4 +1,5 @@
 #pragma once
+#include "APMF_API.h"
 
 // ============================================================================
 // Channel 19 -- TRAVEL (kIntent_Travel, ABI v10). See channels/Travel.cpp for the
@@ -39,5 +40,11 @@ namespace apmf::travel {
     // owned by actors that no longer exist and every later leg would overflow.
     // GAME THREAD.
     void ResetAll(const char* why);
+
+    // ABI v12 (APMF_API_v12::GetTravelLegState): the actor's leg state, copied out of a
+    // mutex-guarded per-actor record that the game-thread paths above keep current.
+    // ANY THREAD. Returns the TravelLegState; fills `*out` only when `out` is non-null and
+    // `out->size` covers the v12 layout. Never touches g_legs or the engine.
+    std::uint32_t GetLegState(RE::FormID actor, APMF_API::APMF_TravelLegInfo* out);
 
 }

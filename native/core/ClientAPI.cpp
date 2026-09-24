@@ -3,6 +3,7 @@
 #include "core/ControlMap.h"
 #include "core/EquipSink.h"
 #include "core/SpaceQuery.h"
+#include "channels/Travel.h"
 
 // The C-ABI implementation behind APMF_API.h. These free functions forward to the
 // in-process multi-NPC engine (core/ControlMap) over its thread-safe enqueue path,
@@ -160,12 +161,24 @@ namespace {
         }
     }
 
+    // ABI v12: the travel leg-state read (see APMF_API_v12's doc comment). Read-only,
+    // any thread: channels/Travel.cpp copies a per-actor record under its own mutex. A
+    // throw never crosses the boundary: it becomes kLeg_None with nothing written.
+    std::uint32_t APMF_GetTravelLegState(RE::FormID actor, APMF_API::APMF_TravelLegInfo* out) {
+        try {
+            return apmf::travel::GetLegState(actor, out);
+        } catch (...) {
+            return APMF_API::kLeg_None;
+        }
+    }
+
     // ABI -> the first APMF release that implements it, for the "client too new"
     // refusal log below (MFO wiring review SEV-3 F4): a user running an older
     // APMF under a newer client must be able to read WHICH APMF they need. Keep in
     // step with kABIVersion bumps (git tags: v0.2.0 v1, v0.2.3 v2, v0.3.0-rc.1 v3,
     // v0.3.0-rc.3 v4, v0.9.1 v5, v0.9.3 v6; v7, v8, v9 and v10 ship together in the
-    // first release after 0.9.4 -- REVIEW-BACKLOG APMF-B10: name it at the cut).
+    // first release after 0.9.4 -- REVIEW-BACKLOG APMF-B10: name it at the cut; v11 and
+    // v12 ship together in 0.9.8, the next release, still Unreleased in CHANGELOG.md).
     const char* MinReleaseForAbi(std::uint32_t abi) {
         switch (abi) {
         case 1:  return "0.2.0";
@@ -178,13 +191,14 @@ namespace {
         case 8:
         case 9:
         case 10: return "0.9.5";
-        case 11: return "0.9.8";
+        case 11:
+        case 12: return "0.9.8";
         default: return "a release newer than this one";
         }
     }
 
     // The single static POD interface handed to clients. It is the NEWEST revision
-    // (APMF_API_v11), constant-initialized (the pointers are to static functions), so
+    // (APMF_API_v12), constant-initialized (the pointers are to static functions), so
     // it is valid the instant the DLL loads. Because each revision's leading members
     // are exactly the previous revision's (v9 extends v8 extends v7 extends v6
     // extends v5 extends v4, base laid out first), a v1..v8 client reading it through
@@ -195,7 +209,9 @@ namespace {
     // deliberately no APMF_API_v10: the new intent rode the existing
     // RequestEx/Repoint/Release slots. ABI v11 appends the two space-query slots, so
     // the object is now an APMF_API_v11 (which extends v9 directly). `abiVersion`
-    // reports 11; a v1..v10 client still reads exactly its own prefix.
+    // reports 11; a v1..v10 client still reads exactly its own prefix. ABI v12 appends
+    // the one travel leg-state slot, so the object is now an APMF_API_v12 (extends v11)
+    // and `abiVersion` reports 12.
     // ABI v11 layout proof (review F8d): the two query slots start exactly where the
     // v9 prefix ends, so a v1..v10 client reading its own prefix never overlaps them.
     // offsetof on a derived struct is conditionally-supported; MSVC (the only compiler
@@ -205,8 +221,15 @@ namespace {
                   "APMF_API_v11's first slot must start right after the v9 prefix");
     static_assert(sizeof(APMF_API::APMF_API_v11) == sizeof(APMF_API::APMF_API_v9) + 2 * sizeof(void*),
                   "APMF_API_v11 = the v9 prefix plus exactly two function pointers");
+    // ABI v12 layout proof, same two forms: the one leg-state slot starts exactly where
+    // the v11 prefix ends, and the struct is that prefix plus one pointer.
+    static_assert(offsetof(APMF_API::APMF_API_v12, GetTravelLegState) == sizeof(APMF_API::APMF_API_v11),
+                  "APMF_API_v12's slot must start right after the v11 prefix");
+    static_assert(sizeof(APMF_API::APMF_API_v12) == sizeof(APMF_API::APMF_API_v11) + sizeof(void*),
+                  "APMF_API_v12 = the v11 prefix plus exactly one function pointer");
 
-    constexpr APMF_API::APMF_API_v11 g_api{
+    constexpr APMF_API::APMF_API_v12 g_api{
+        {
         {
         {
             {
@@ -234,6 +257,8 @@ namespace {
         },
         &APMF_FindEmptySpace,
         &APMF_FindHostilesInSpace,
+        },
+        &APMF_GetTravelLegState,
     };
 
 }
