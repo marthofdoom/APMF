@@ -572,7 +572,7 @@ main-only SpaceQuery calls, kDataLoaded, kPostLoadGame), the save callback, and 
 that the game could wait on across a lookup. None can today. The `PositionCast.cpp` `Enqueue` comment about the
 unlocked 3.7.0 lookup is history now. Keep the rule it states: no lookup on the caller's thread.
 
-**SEAT SELF-CHECK (mit-3.7 F1, 2026-09-24):** `SelfCheckResult()` / `LogSelfCheck()` / (open backlog: APMF-B21 APMF-B22)
+**SEAT SELF-CHECK (mit-3.7 F1, 2026-09-24):** `SelfCheckResult()` / `LogSelfCheck()` / (open backlog: APMF-B21 APMF-B22, APMF-B23)
 **`SeatVerified(address, seat)`** over the generated `native/VerifiedAddresses.h` (173 rows per
 runtime, incl. the F1b `BSReadWriteLock::LockForRead`/`UnlockForRead` rows, logged only; `Docs/VERIFIED-ADDRESSES.md`). `InstallOnVtables` refuses a list whose expected RTTI
 TypeDescriptor is unverified and skips each unverified vtable; direct guards in Hook, PackageGate
