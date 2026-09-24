@@ -471,7 +471,7 @@ namespace apmf::poscast {
     void ResetAll(const char* a_why) {
         if (!g_live.empty()) {
             spdlog::warn("[poscast] {} -- forgetting {} live marker(s) WITHOUT deleting them (they belong to the world "
-                         "being replaced; a save taken in that frame keeps them as inert XMarkers).",
+                         "being replaced; a save that captured them records them, and its load deletes them).",
                          a_why, g_live.size());
         }
         g_live.clear();

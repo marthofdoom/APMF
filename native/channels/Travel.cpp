@@ -995,7 +995,7 @@ namespace apmf::travel {
         for (const auto& [id, leg] : g_legs) markers += leg.markerId != 0 ? 1 : 0;
         if (markers != 0) {
             spdlog::warn("[travel] {} -- forgetting {} destination marker(s) WITHOUT deleting them (they belong to "
-                         "the world being replaced; a save taken mid-leg keeps them as inert XMarkers).",
+                         "the world being replaced; a save taken mid-leg records them, and its load deletes them).",
                          why, markers);
         }
         spdlog::info("[travel] {} -- dropping {} leg(s) and freeing every package slot without releasing "

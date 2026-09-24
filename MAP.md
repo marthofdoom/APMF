@@ -48,6 +48,10 @@ hook, registers the input sink, logs the hotkey help. `kPreLoadGame` →
   `spacequery::Install()`, and both revert and `kPreLoadGame` call
   `poscast::ResetAll()` BEFORE `mainthread::Discard()`. Those two Installs carry two
   more inline copies of the same exact-version predicate (five copies now).
+  Co-save (ABI v11): `OnSave` also writes `poscast::SaveMarkers` (record `'XMRK'`), `OnLoad`
+  dispatches `'XMRK'` to `LoadMarkers`, `OnRevert` calls `RevertMarkers` (must stay before the
+  load callback, which SKSE guarantees), and `kPostLoadGame` runs `SweepCarriedMarkers` after
+  `av::ApplyPending` (the first point the loaded refs exist).
 
 ### `native/APMF_API.h` — the inter-plugin C-ABI contract (shared with clients)
 The ONLY file a client shares with APMF. POD structs of function pointers
@@ -331,8 +335,15 @@ Runtime gate: exactly 1.6.1170 / 1.5.97, VR refused. Evidence:
   "summon" silently does nothing. (d) deleting by FormID instead of the tracked handle:
   0xFF FormIDs recycle; the handle's age bits are the reuse guard. (e) moving
   `ResetAll` after `mainthread::Discard` in `plugin.cpp` changes nothing today, but
-  never let a `Retire` task outlive the world swap. (f) the worst-case save footprint
-  is one inert XMarker per position cast issued in the frame before a save (<= 16).
+  never let a `Retire` task outlive the world swap. (f) SAVE FOOTPRINT: every placed,
+  not-yet-deleted marker is in the co-saved ledger (record `'XMRK'` v1, `SaveMarkers` /
+  `LoadMarkers` / `RevertMarkers` / `SweepCarriedMarkers`, wired in `plugin.cpp`), so the load of
+  a save that captured markers DELETES them at kPostLoadGame, under three proofs (0xFF FormID
+  resolves, XMarker base, recorded position within 1u; else forgotten, never touched). Markers
+  not in memory at the sweep are carried and retried at later loads (cap 64, oldest dropped
+  loudly). Breaking the ledger (a PlaceMarker that does not record, a DeleteMarker that drops a
+  STALE-handle entry instead of carrying it, the sweep moved into the load callback before the
+  refs exist, the revert clear moved after the load callback) re-opens unbounded .ess growth.
 
 ### `native/core/SpaceQuery.{h,cpp}` — ABI v11 SPACE QUERIES (read-only)
 `FindEmptySpace` (walk ray at feet+64u, down ray to feet-maxDrop, 8 knee-height

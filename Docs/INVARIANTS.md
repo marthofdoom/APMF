@@ -80,7 +80,8 @@ actor. This is written here, in the rule it touches, rather than done quietly (C
    actor) is a new amendment, not a code change.
 The marker itself inherits #19's spirit: it is a runtime-created 0xFF reference, deleted
 one frame after the cast by its tracked handle, forgotten (never touched) at a world
-boundary, and its worst-case save footprint is stated in `core/PositionCast.h`.
+boundary, and it is recorded in the co-saved marker ledger (#15, record `'XMRK'`) so the
+load of a save that captured it deletes it.
 
 **#20 — COMPOSED ANSWERS: APMF may answer the ENGINE'S OWN DECISION SEATS so the
 AI decides what a claim asks for — and exactly ONE of those answers may skip the
@@ -544,6 +545,18 @@ stranded). Shipped layouts:
 - **v2** (16 B/entry): `{FormID, ActorValue, prev, applied}` — clobber-guarded.
 `OnSave` always writes the current version; a `version > kRecordVersion` record is
 skipped (a downgrade cannot read a future layout).
+
+**SECOND RECORD, added 2026-09-23 (ABI v11): `'XMRK'`, the APMF MARKER LEDGER**
+(`core/PositionCast.{h,cpp}`). Same unique ID `'APMF'`; `plugin.cpp` `OnLoad` dispatches by
+record type, so each record keeps its own version line and neither layout touches the other.
+- **v1** (16 B/entry): `u32 count`, then `count x {u32 formID, f32 x, f32 y, f32 z}` -- every
+  XMarker APMF placed and has not deleted (a stale handle keeps its entry).
+Same rules as `'AVOV'`: a reader per version forever, a newer record skipped and logged, no
+layout change under an existing number. Timeline: revert callback clears the ledger; load
+callback reads the record (no ref lookups there); kPostLoadGame deletes each recorded marker
+that passes ALL THREE PROOFS (0xFF FormID resolves, XMarker base, recorded position within
+1u, not already deleted), FORGETS any that fails one (never touched), and CARRIES any not in
+memory to later loads (cap 64). A save without the record (0.9.7 and older) sweeps nothing.
 
 CLOBBER GUARD: the ledger stores both the captured `prev` AND the value we `applied`;
 Restore/ApplyPending write `prev` back ONLY when the AV still equals `applied`. If a

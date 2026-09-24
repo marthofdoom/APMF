@@ -211,6 +211,20 @@ learn the outcome from `APMF.log` (`queued`, then `DELIVERED` or `REFUSED`).
 **Picking the point** is your job (declare, then APMF enforces). `FindEmptySpace` below
 answers "where is a clear, standable spot over there" if you want the help.
 
+### Save behaviour of APMF markers (ABI v11)
+
+Every XMarker APMF places (position casts and position travel legs) is recorded until APMF
+deletes it, and that record is co-saved (record `'XMRK'` v1 under APMF's `'APMF'` co-save).
+Loading a save deletes, at kPostLoadGame, every recorded marker the loaded world still holds,
+and only one that passes all three proofs: the recorded runtime (0xFF) FormID resolves, its
+base is Skyrim.esm's XMarker, and it stands within 1u of the recorded spot. Anything that
+fails a proof is forgotten and never touched. A recorded marker whose cell is not loaded at
+that moment is kept in the record and deleted by a later load that finds it (at most 64 are
+carried). A save from Harbinger 0.9.7 or older has no such record and sweeps nothing. The log
+line is `[marker] kPostLoadGame sweep -- N APMF XMarker(s) deleted, F forgotten, K not loaded`.
+Nothing of APMF's names a marker when it is deleted: no leg or cast survives a load, and every
+package record that last aimed at one was pointed back at its placeholder before the load.
+
 ## Asking about space (ABI v11 queries)
 
 Requires `abiVersion >= 11` and `APMF_API_v11`. Two questions. They answer and change
@@ -776,8 +790,8 @@ package slot (8).
 every destination kind). At the load boundary APMF forgets its markers without touching
 them and points every package record that last aimed at one back at its authored
 placeholder, so no record carries a marker handle into the next world. A save taken
-mid-leg therefore holds at most 8 inert XMarkers (one per slot) that nothing deletes
-later.
+mid-leg records its markers in APMF's co-save, and loading it DELETES them (see "Save
+behaviour of APMF markers" below).
 
 **Refused, by name:** a non-zero `param.form` with the flag (a form OR a point, never
 both), a non-finite point, VR or a runtime other than 1.6.1170 / 1.5.97 (all
