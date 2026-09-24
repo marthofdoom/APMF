@@ -72,6 +72,29 @@ namespace apmf::poscast {
     // `handle` is only a label for the log lines.
     bool Enqueue(APMF_API::Handle handle, RE::FormID actor, const APMF_API::APMF_Param& param);
 
+    // ── Shared XMarker helpers (ABI v11): the position cast above, and ch.19's
+    // position legs (channels/Travel.cpp), which point a travel package at one. ──
+
+    // True once Install() found a verified runtime (exactly 1.6.1170 or 1.5.97, never
+    // VR) and the Skyrim.esm XMarker base. INDEPENDENT of [PositionCast]
+    // bPositionCast: that switch turns off the cast, not the markers. Any thread.
+    bool MarkersSupported();
+
+    // MAIN THREAD. Place a non-persistent XMarker at `a_point` in `a_actor`'s cell and
+    // worldspace (TESDataHandler::CreateReferenceAtLocation, forcePersist = false) and
+    // prove its cell is attached. Returns the marker's handle, or an empty handle with
+    // the reason in `a_why` (a marker that was created but failed the cell check has
+    // already been deleted). The CALLER owns the marker from here: it must call
+    // DeleteMarker exactly once, by this handle.
+    RE::ObjectRefHandle PlaceMarker(RE::Actor* a_actor, const RE::NiPoint3& a_point, std::string& a_why);
+
+    // MAIN THREAD. Disable() + SetDelete(true) the marker behind `a_handle`, but only
+    // after re-checking it: the handle still resolves (its age bits reject a recycled
+    // slot), to `a_formID` (a recycled 0xFF FormID never matches a live handle), on the
+    // XMarker base, not already deleted. Returns nullptr when it deleted the marker,
+    // else why it did not (a reference that is not provably ours is never touched).
+    const char* DeleteMarker(const RE::ObjectRefHandle& a_handle, RE::FormID a_formID);
+
     // MAIN THREAD. Forget every tracked marker WITHOUT touching it (revert /
     // kPreLoadGame: the references belong to the world being replaced). Logs how
     // many were abandoned.

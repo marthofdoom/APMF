@@ -25,6 +25,7 @@ namespace apmf::poscast {
         std::atomic<bool>        g_installed{ false };
         std::atomic<const char*> g_reason{ "not installed yet (before kDataLoaded)" };
         RE::TESBoundObject*      g_markerBase = nullptr;   // written once in Install (main thread)
+        std::atomic<bool>        g_markersSupported{ false };   // runtime + base gate, independent of the INI
 
         // MAIN THREAD ONLY: every marker APMF placed and has not deleted yet.
         struct LiveMarker {
@@ -109,27 +110,11 @@ namespace apmf::poscast {
             const LiveMarker m = *it;
             g_live.erase(it);
 
-            auto  refPtr = m.handle.get();
-            auto* ref    = refPtr.get();
-            if (!ref) {
-                spdlog::warn("[poscast] request {} marker 0x{} ({}): handle no longer resolves -- already gone, "
-                             "nothing deleted.", m.request, Hex(m.formID), a_when);
+            if (const char* why = DeleteMarker(m.handle, m.formID)) {
+                spdlog::warn("[poscast] request {} marker 0x{} ({}): NOT deleted -- {}.", m.request, Hex(m.formID),
+                             a_when, why);
                 return;
             }
-            if (ref->GetFormID() != m.formID || ref->GetBaseObject() != g_markerBase) {
-                spdlog::error("[poscast] request {} marker 0x{} ({}): handle now resolves to 0x{} (base 0x{}) -- "
-                              "NOT ours, left untouched.", m.request, Hex(m.formID), a_when,
-                              Hex(ref->GetFormID()),
-                              Hex(ref->GetBaseObject() ? ref->GetBaseObject()->GetFormID() : 0));
-                return;
-            }
-            if (ref->IsDeleted()) {
-                spdlog::info("[poscast] request {} marker 0x{} ({}): already deleted.", m.request, Hex(m.formID),
-                             a_when);
-                return;
-            }
-            if (!ref->IsDisabled()) ref->Disable();   // TESObjectREFR vfunc 0x89 (both runtimes, verified)
-            ref->SetDelete(true);                     // TESObjectREFR vfunc 0x23 (both runtimes, verified)
             spdlog::info("[poscast] request {} marker 0x{} deleted ({}). {} marker(s) still live.", m.request,
                          Hex(m.formID), a_when, g_live.size());
         }
@@ -161,28 +146,15 @@ namespace apmf::poscast {
                                           g_live.size(), kMaxLiveMarkers));
             }
 
-            auto* dh = RE::TESDataHandler::GetSingleton();
-            if (!dh || !g_markerBase) return refuse("TESDataHandler or the XMarker base is unavailable");
-
-            // The same engine call CommonLib's PlaceObjectAtMe wraps (TESDataHandler
-            // 13625 / 13723), with the point as the location, the actor's cell and
-            // worldspace, and forcePersist = false.
-            const RE::ObjectRefHandle handle = dh->CreateReferenceAtLocation(
-                g_markerBase, a_point, RE::NiPoint3{}, cell, actor->GetWorldspace(), nullptr, nullptr,
-                RE::ObjectRefHandle(), false, true);
+            std::string placeWhy;
+            const RE::ObjectRefHandle handle = PlaceMarker(actor, a_point, placeWhy);
             auto  markerPtr = handle.get();
             auto* marker    = markerPtr.get();
-            if (!marker) return refuse("the engine placed no marker (CreateReferenceAtLocation returned no reference)");
+            if (!marker) return refuse(placeWhy);
 
             // Tracked from this line on, so every exit below deletes it.
             g_live.push_back(LiveMarker{ handle, marker->GetFormID(), a_request, a_actor });
-
-            auto* mcell = marker->GetParentCell();
-            if (!mcell || !mcell->IsAttached()) {
-                Retire(handle.native_handle(), "refused before the cast");
-                return refuse(std::format("the marker 0x{} is not in an attached cell (Papyrus RemoteCast refuses "
-                                          "the same)", Hex(marker->GetFormID())));
-            }
+            auto* mcell = marker->GetParentCell();   // PlaceMarker proved it attached
 
             auto* caster = marker->GetMagicCaster(RE::MagicSystem::CastingSource::kInstant);
             if (!caster) {
@@ -207,6 +179,66 @@ namespace apmf::poscast {
 
     }
 
+    bool MarkersSupported() { return g_markersSupported.load(std::memory_order_acquire); }
+
+    RE::ObjectRefHandle PlaceMarker(RE::Actor* a_actor, const RE::NiPoint3& a_point, std::string& a_why) {
+        if (!MarkersSupported() || !g_markerBase) {
+            a_why = "XMarker placement is not available on this runtime (VR, unverified build, or before kDataLoaded)";
+            return {};
+        }
+        if (!std::isfinite(a_point.x) || !std::isfinite(a_point.y) || !std::isfinite(a_point.z)) {
+            a_why = "the point is not finite";
+            return {};
+        }
+        auto* cell = a_actor ? a_actor->GetParentCell() : nullptr;
+        if (!cell || !cell->IsAttached()) {
+            a_why = "the actor's cell is not attached";
+            return {};
+        }
+        auto* dh = RE::TESDataHandler::GetSingleton();
+        if (!dh) {
+            a_why = "TESDataHandler is unavailable";
+            return {};
+        }
+        // The same engine call CommonLib's PlaceObjectAtMe wraps (TESDataHandler
+        // 13625 / 13723), with the point as the location, the actor's cell and
+        // worldspace, and forcePersist = false.
+        const RE::ObjectRefHandle handle = dh->CreateReferenceAtLocation(
+            g_markerBase, a_point, RE::NiPoint3{}, cell, a_actor->GetWorldspace(), nullptr, nullptr,
+            RE::ObjectRefHandle(), false, true);
+        auto  ptr    = handle.get();
+        auto* marker = ptr.get();
+        if (!marker) {
+            a_why = "the engine placed no marker (CreateReferenceAtLocation returned no reference)";
+            return {};
+        }
+        auto* mcell = marker->GetParentCell();
+        if (!mcell || !mcell->IsAttached()) {
+            const RE::FormID id = marker->GetFormID();
+            const char* del = DeleteMarker(handle, id);
+            a_why = std::format("the marker 0x{} is not in an attached cell (Papyrus RemoteCast refuses the same); "
+                                "it was {}", Hex(id), del ? std::format("NOT deleted: {}", del) : "deleted");
+            return {};
+        }
+        return handle;
+    }
+
+    const char* DeleteMarker(const RE::ObjectRefHandle& a_handle, RE::FormID a_formID) {
+        auto  refPtr = a_handle.get();
+        auto* ref    = refPtr.get();
+        if (!ref) return "the handle no longer resolves (already gone)";
+        if (ref->GetFormID() != a_formID || !g_markerBase || ref->GetBaseObject() != g_markerBase) {
+            spdlog::error("[marker] handle for 0x{} now resolves to 0x{} (base 0x{}) -- NOT ours, left untouched.",
+                          Hex(a_formID), Hex(ref->GetFormID()),
+                          Hex(ref->GetBaseObject() ? ref->GetBaseObject()->GetFormID() : 0));
+            return "the handle resolves to a reference that is not this XMarker";
+        }
+        if (ref->IsDeleted()) return "already deleted";
+        if (!ref->IsDisabled()) ref->Disable();   // TESObjectREFR vfunc 0x89 (both runtimes, verified)
+        ref->SetDelete(true);                     // TESObjectREFR vfunc 0x23 (both runtimes, verified)
+        return nullptr;
+    }
+
     void Install() {
         if (g_installed.load(std::memory_order_relaxed)) return;
 
@@ -224,11 +256,6 @@ namespace apmf::poscast {
             spdlog::warn("[poscast] NOT installed -- {} (running {}).", g_reason.load(), game.string("."));
             return;
         }
-        if (GetPrivateProfileIntA("PositionCast", "bPositionCast", 1, "Data/SKSE/Plugins/APMF.ini") == 0) {
-            g_reason.store("[PositionCast] bPositionCast=0 in Data/SKSE/Plugins/APMF.ini");
-            spdlog::info("[poscast] NOT installed -- {}.", g_reason.load());
-            return;
-        }
         auto* base = RE::TESForm::LookupByID<RE::TESBoundObject>(kXMarkerBase);
         if (!base || base->GetFormType() != RE::FormType::Static) {
             g_reason.store("Skyrim.esm XMarker (0x3B) did not resolve to a STAT");
@@ -236,6 +263,15 @@ namespace apmf::poscast {
             return;
         }
         g_markerBase = base;
+        // The marker helpers (also ch.19's position legs) need only the runtime and
+        // the base. The INI below switches off the position CAST alone.
+        g_markersSupported.store(true, std::memory_order_release);
+        if (GetPrivateProfileIntA("PositionCast", "bPositionCast", 1, "Data/SKSE/Plugins/APMF.ini") == 0) {
+            g_reason.store("[PositionCast] bPositionCast=0 in Data/SKSE/Plugins/APMF.ini");
+            spdlog::info("[poscast] NOT installed -- {} (the XMarker helpers ch.19 uses stay available).",
+                         g_reason.load());
+            return;
+        }
         g_reason.store("");
         g_installed.store(true, std::memory_order_release);
         spdlog::info("[poscast] installed on {}: a kIntent_Cast RequestEx with kCastFlag_AtPosition casts a Target "

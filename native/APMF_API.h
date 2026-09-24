@@ -99,9 +99,10 @@ namespace APMF_API {
     // ABI v11 (2026-09-23) adds APMF_API_v11: two read-only SPACE QUERIES
     // (FindEmptySpace, FindHostilesInSpace) and their POD structs, plus the
     // kCastFlag_AtPosition bit that lets a kIntent_Cast RequestEx carry a world
-    // POINT (APMF_Param.pos). A client must see abiVersion >= 11 before it calls a
-    // v11 slot OR sets kCastFlag_AtPosition: an older APMF ignores the bit and would
-    // treat the request as an ordinary actor-target cast claim.
+    // POINT (APMF_Param.pos), and the kTravel_ToPosition bit that lets kIntent_Travel
+    // walk to one. A client must see abiVersion >= 11 before it calls a v11 slot or
+    // sets either bit: an older APMF ignores kCastFlag_AtPosition and would treat the
+    // request as an ordinary actor-target cast claim (it refuses a zero-form travel).
     inline constexpr std::uint32_t kABIVersion = 11;
 
     // The exported query function's undecorated name and pointer type.
@@ -282,7 +283,8 @@ namespace APMF_API {
                                      //       (Data/APMF.esl). A STANDING claim: no TTL, ended
                                      //       only by Release.
                                      //       Param: form = the DESTINATION's FormID (REQUIRED --
-                                     //       a zero form is refused); fval = the arrival radius in
+                                     //       a zero form is refused -- unless ival carries
+                                     //       kTravel_ToPosition, ABI v11); fval = the arrival radius in
                                      //       game units (0 => the 75u default, clamped to
                                      //       [50, 512] and the clamp logged); ival = a TravelFlags
                                      //       bitmask.
@@ -301,14 +303,19 @@ namespace APMF_API {
                                      //       below, because they are not the same and a client
                                      //       that assumes they are will leak a claim.
                                      //
-                                     //       A WORLD POSITION IS NOT ON OFFER, and that is a
-                                     //       property of the engine, not a choice: an AI package's
-                                     //       location carries a form or a handle and NO
-                                     //       coordinates, on disk or at runtime. Vanilla's own way
-                                     //       to say "go to this spot" is to place an XMarker and
-                                     //       point at the MARKER REFERENCE -- so do that. A claim
-                                     //       whose param.pos is non-zero is REFUSED with that
-                                     //       message rather than silently ignored.
+                                     //       A WORLD POSITION (ABI v11): set kTravel_ToPosition in
+                                     //       ival, leave form = 0, put the point in param.pos. An
+                                     //       AI package's location still carries a form or a handle
+                                     //       and NO coordinates, so APMF does what vanilla does: it
+                                     //       places its OWN XMarker at the point and the leg's
+                                     //       destination is that marker. Everything else is the
+                                     //       reference path above, unchanged (radius, combat,
+                                     //       the 2-minute stuck end), except that a marker never
+                                     //       "dies". APMF deletes the marker when the leg ends for
+                                     //       ANY reason and replaces it on a Repoint to a new
+                                     //       point (see kTravel_ToPosition). WITHOUT the flag a
+                                     //       non-zero param.pos is still REFUSED by name, never
+                                     //       silently ignored.
                                      //
                                      //       THE WHOLE CONTRACT, in marth's words: "it goes to
                                      //       the target 50-100u from it. And combat interrupts
@@ -341,7 +348,10 @@ namespace APMF_API {
                                      //       * SYNCHRONOUS (RequestEx returns kInvalidHandle
                                      //         before anything is queued): VR, [Travel]
                                      //         bTravel=0, APMF.esl missing, param.form == 0,
-                                     //         param.pos non-zero. Nothing to clean up.
+                                     //         param.pos non-zero -- and, with kTravel_ToPosition
+                                     //         (ABI v11): a non-zero param.form, a non-finite
+                                     //         point, or a runtime without XMarker support.
+                                     //         Nothing to clean up.
                                      //       * AT ENGAGE (one Drain later, on the game thread):
                                      //         param.form naming a record that is neither an
                                      //         object reference nor a cell. RequestEx already
@@ -381,6 +391,27 @@ namespace APMF_API {
                                         //   re-samples. A disabled, deleted or unresolvable
                                         //   destination ends the leg regardless. Setting the bit
                                         //   is free and documents intent.
+
+        kTravel_ToPosition = 1u << 1,   // ABI v11. The destination is the WORLD POINT param.pos
+                                        //   (in the actor's cell and worldspace), not a form:
+                                        //   param.form MUST be 0 (a non-zero form with this bit is
+                                        //   REFUSED as ambiguous). Gate on abiVersion >= 11: an
+                                        //   older APMF refuses a zero form, so the request fails
+                                        //   loudly rather than walking somewhere else.
+                                        //   APMF places a non-persistent XMarker (Skyrim.esm 0x3B)
+                                        //   at the point one hop after the claim publishes, and the
+                                        //   leg is an ordinary reference leg to it: same arrival
+                                        //   radius, same combat cancel, same 2-minute stuck end. The
+                                        //   death rule never applies (a marker cannot die).
+                                        //   MARKER LIFETIME = THE LEG. It is deleted (by tracked
+                                        //   handle, re-checked FormID and base) when the leg ends
+                                        //   for ANY reason: arrival, combat, Release, a Repoint to a
+                                        //   different point or to a form, the stuck end, the actor
+                                        //   unloading, dying or losing its 3D. A Repoint to a new
+                                        //   point places the new marker, re-points the package,
+                                        //   then deletes the old one. At most one marker per travel
+                                        //   package slot (8). APMF does NOT pick the point (use
+                                        //   FindEmptySpace if you want help) and never adjusts it.
     };
 
     // ── Equip-authority flags (kIntent_EquipAuthority's param.ival, ABI v7) ──
@@ -899,14 +930,16 @@ namespace APMF_API {
     //   fval   kIntent_Travel          the arrival radius in units (0 => 75u default, clamped 50-512);
     //                                  not consulted when the destination is a CELL
     //   ival   kIntent_Travel          a TravelFlags bitmask (see above)
-    //   pos    kIntent_Travel          REFUSED if non-zero -- a package location cannot carry a
-    //                                  world position; pass a marker REFERENCE instead
+    //   pos    kIntent_Travel          ABI v11: the destination POINT when ival has kTravel_ToPosition
+    //                                  (form must then be 0; APMF walks the actor to its own XMarker
+    //                                  there). Without the flag: REFUSED if non-zero.
     //   none   every other Intent      accepted, not yet read by the channel
     //
     // fval is read ONLY by kIntent_Travel (ABI v10); it stays reserved for a
     // future per-request bias on ch.11, scale on ch.1a, factor on ch.16. target is
     // not read by any Intent OTHER than kIntent_SelectSpell yet. pos is read by
-    // kIntent_Cast with kCastFlag_AtPosition (ABI v11) and refused by kIntent_Travel.
+    // kIntent_Cast with kCastFlag_AtPosition and by kIntent_Travel with kTravel_ToPosition
+    // (both ABI v11). Without its flag, kIntent_Travel refuses a non-zero pos.
     // ─────────────────────────────────────────────────────────────────────────────
 
     // The v1 interface: a POD struct of function pointers. NO vtable. `abiVersion`

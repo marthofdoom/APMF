@@ -8,7 +8,9 @@
 #include "core/CastProxy.h"         // castproxy::Acquire/Free (ch.8b kSelf delivery-flip, writer thread)
 #include "core/MainThread.h"        // mainthread::Post (defer proxy teardown past this Drain's Publish)
 #include "channels/Travel.h"  // ch.19 Installed()/NotInstalledReason() for the synchronous refusal
-#include "core/PositionCast.h"  // ABI v11 position cast: poscast::Enqueue (one-shot, never a claim)
+#include "core/PositionCast.h"  // ABI v11 position cast: poscast::Enqueue (one-shot, never a claim); MarkersSupported (ch.19)
+
+#include <cmath>
 
 namespace apmf {
 
@@ -105,14 +107,34 @@ namespace apmf {
                                  apmf::travel::NotInstalledReason(), apmf::log::Hex(actor));
                 return APMF_API::kInvalidHandle;
             }
-            if (!param || param->form == 0) {
+            // ABI v11: kTravel_ToPosition -- the destination is param.pos, and APMF
+            // walks the actor to its OWN XMarker there (channels/Travel.cpp). The form
+            // must then be 0 (a form AND a point is ambiguous), the point finite, and
+            // the runtime one the marker helpers are verified on.
+            if (param && (static_cast<std::uint32_t>(param->ival) & APMF_API::kTravel_ToPosition) != 0) {
+                const char* why = nullptr;
+                if (!apmf::poscast::MarkersSupported())
+                    why = "XMarker placement is not available (VR, a runtime other than 1.6.1170 / 1.5.97, or "
+                          "before kDataLoaded)";
+                else if (param->form != 0)
+                    why = "param.form is set as well as kTravel_ToPosition -- a destination is a form OR a point, "
+                          "never both";
+                else if (!std::isfinite(param->posX) || !std::isfinite(param->posY) || !std::isfinite(param->posZ))
+                    why = "param.pos is not a finite point";
+                if (why) {
+                    spdlog::warn("[apmf][travel] position claim refused -- actor 0x{}: {}.", apmf::log::Hex(actor),
+                                 why);
+                    return APMF_API::kInvalidHandle;
+                }
+            } else if (!param || param->form == 0) {
                 spdlog::warn("[apmf][travel] claim refused: no destination (param.form is 0) -- actor "
                              "0x{}. kIntent_Travel REQUIRES param.form = the destination's FormID (an "
                              "object reference or a cell).",
                              apmf::log::Hex(actor));
                 return APMF_API::kInvalidHandle;
             }
-            // A WORLD POSITION IS NOT EXPRESSIBLE, so a claim that carries one is
+            // A WORLD POSITION IS NOT EXPRESSIBLE IN A PACKAGE, so a claim that carries
+            // one WITHOUT kTravel_ToPosition (which makes APMF place the marker) is
             // REFUSED rather than silently ignored. `PackageLocation` has no coordinate
             // storage at all -- it is an 8-byte union of a form pointer and a ref
             // handle -- the on-disk PLDT is 12 bytes in all 1988 vanilla Travel
@@ -120,12 +142,11 @@ namespace apmf {
             // coordinates out of it (channels/Travel.cpp's header has the full
             // derivation). Vanilla's idiom for "go to this spot" is a marker
             // REFERENCE, so that is what a client passes.
-            if (param->posX != 0.0f || param->posY != 0.0f || param->posZ != 0.0f) {
-                spdlog::warn("[apmf][travel] claim refused: param.pos is set -- actor 0x{}. A travel "
-                             "destination cannot be a world POSITION: an AI package's location carries "
-                             "a form or a handle and no coordinates, on disk or at runtime. Place a "
-                             "marker and pass the MARKER REFERENCE in param.form, which is what vanilla "
-                             "does.",
+            else if (param->posX != 0.0f || param->posY != 0.0f || param->posZ != 0.0f) {
+                spdlog::warn("[apmf][travel] claim refused: param.pos is set without kTravel_ToPosition -- "
+                             "actor 0x{}. A package's location carries a form or a handle and no "
+                             "coordinates. Either set kTravel_ToPosition (ABI v11: APMF places its own "
+                             "marker at the point, form = 0) or pass a MARKER REFERENCE in param.form.",
                              apmf::log::Hex(actor));
                 return APMF_API::kInvalidHandle;
             }
