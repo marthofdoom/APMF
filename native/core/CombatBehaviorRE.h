@@ -6,27 +6,41 @@
 // `c4ab853d095e81e3390b282d7ba01ab2f24ebf25` this project actually builds
 // against, nor CharmedBaryon/CommonLibSSE-NG main/sync/upstream-* branches,
 // contain a CombatBehaviorTreeNode.h/CombatBehaviorThread.h/
-// CombatBehaviorTreeControl.h). This mirrors CombatPathingRevolution's own
-// `src/RE/CombatBehaviorTreeNode.h` / `CombatBehaviorTreeControl.h` -- the
-// SAME precedent Docs/ALLOWANCE-TEMPLATE.md §2 item 1 cites -- which itself
-// declares these classes locally against `alandtse/CommonLibSSE-NG` (the
-// build CPR compiles against). All VariantID triples below are copied
-// VERBATIM from that fork's `include/RE/Offsets_VTABLE.h` /
-// `Offsets_RTTI.h` at commit `3f9fc679347c99d6171b459c91db3fe2261368a7`
-// (CPR's pinned submodule) -- not re-typed by hand, not guessed. Every
-// number here independently cross-checked against ALLOWANCE-TEMPLATE.md's
-// own cited evidence (Attack/Block/CastImmediateSpell SE+AE ids match
-// exactly -- see the probe doc's "SE/AE label note" for the one
-// discrepancy found: the doc's inline "SE X / AE Y" prose has the two
-// labels SWAPPED relative to the header's own positional convention
-// (REL::VariantID's constructor is literally named
-// `VariantID(a_seID, a_aeID, a_vrOffset)` in REL/Relocation.h -- verified
-// by reading the ctor signature itself, 3-for-3 against RelocationID and
-// VariantOffset too). The NUMBERS match; only the doc's English labels for
-// which number is SE vs AE were transposed. This header uses the raw
-// triples verbatim (source order preserved) so that transposition cannot
-// leak into the actual hook -- REL::VariantID resolves seID/aeID positionally
-// regardless of what any comment calls them.
+// CombatBehaviorTreeControl.h).
+//
+// LAYOUT SOURCE. The class shapes below follow CombatPathingRevolution's
+// (CPR, github.com/max-su-2019/CombatPathingRevolution, MIT License,
+// Copyright (c) 2022 max-su-2019) `src/RE/CombatBehaviorTreeNode.h` /
+// `CombatBehaviorTreeControl.h` -- the SAME precedent
+// Docs/ALLOWANCE-TEMPLATE.md §2 item 1 cites. Only layout facts are used
+// (vtable slot order, member offsets; CPR's member names are quoted in
+// comments for cross-reference); no CPR function bodies are reproduced.
+//
+// ID PROVENANCE (MIT sources only). Every VariantID triple below is the
+// value MIT-licensed CommonLibSSE-NG 3.7.0 ships under the same symbol, in
+// CharmedBaryon/CommonLibSSE-NG @ `c4ab853d095e81e3390b282d7ba01ab2f24ebf25`
+// (the colorglass-pinned tree) and in marthofdoom/CommonLibSSE-NG branch
+// `mit-3.7` (our MIT fork of it), `include/RE/Offsets_VTABLE.h` /
+// `Offsets_RTTI.h`, at identical line numbers in both:
+//   - leaves: `VTABLE_CombatBehaviorTreeNodeObject_<Name>_`, Offsets_VTABLE.h
+//     lines 1786-3867 (e.g. Attack :3723, ForceFail :3828);
+//   - cast context nodes: Offsets_VTABLE.h:3704-3705;
+//   - RTTI_CombatBehaviorTreeNode: Offsets_RTTI.h:1994.
+// All 73 triples were checked value-for-value against both trees
+// (2026-09-24, ClickUp 86e3dw9dd): 73/73 identical, none missing. Every
+// number here was also cross-checked against ALLOWANCE-TEMPLATE.md's own
+// cited evidence (Attack/Block/CastImmediateSpell SE+AE ids match exactly
+// -- see the probe doc's "SE/AE label note" for the one discrepancy found:
+// the doc's inline "SE X / AE Y" prose has the two labels SWAPPED relative
+// to the header's own positional convention (REL::VariantID's constructor
+// is literally named `VariantID(a_seID, a_aeID, a_vrOffset)` in
+// REL/Relocation.h -- verified by reading the ctor signature itself,
+// 3-for-3 against RelocationID and VariantOffset too). The NUMBERS match;
+// only the doc's English labels for which number is SE vs AE were
+// transposed. This header keeps CommonLib's raw triple order (seID, aeID,
+// vrOffset) so that transposition cannot leak into the actual hook --
+// REL::VariantID resolves seID/aeID positionally regardless of what any
+// comment calls them.
 //
 // SE/AE ONLY (matches the VariantID triples' 3rd/VR slot, which IS used --
 // see core/ActionGate.cpp's VR refusal (the graduated T1 channel; formerly
@@ -98,8 +112,8 @@ namespace apmf::cbt {
         REL::VariantID   vtbl;
     };
 
-    // All 70 leaf VTABLE_CombatBehaviorTreeNodeObject_* symbols (verbatim
-    // triples, see file header). Alphabetical (matches Offsets_VTABLE.h
+    // All 70 leaf VTABLE_CombatBehaviorTreeNodeObject_* symbols (triples as
+    // MIT CommonLib 3.7.0 ships them, see file header). Alphabetical (matches Offsets_VTABLE.h
     // symbol sort, not tree-declaration order -- irrelevant, this is a flat
     // install list).
     inline constexpr std::array<LeafEntry, 70> kLeaves{ {
