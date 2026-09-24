@@ -212,8 +212,11 @@ namespace apmf {
         // calls it from the confirmed-main seat.
         //
         // Internal C++ ONLY -- not part of the C-ABI, free to change shape.
+        // ABI v12: `outHandle` (optional) receives the winning claim's handle, so ch.19
+        // can report WHICH claim a leg belongs to (APMF_TravelLegInfo::ownerHandle).
         bool TryGetOwningClaimBasis(RE::FormID actor, Intent intent,
-                                    APMF_API::APMF_Param& outParam, float& outBasis) const;
+                                    APMF_API::APMF_Param& outParam, float& outBasis,
+                                    Handle* outHandle = nullptr) const;
 
         // ch.8b (kIntent_Cast): hand back the winning cast claim's spell (param.form)
         // AND its runtime FF-form proxy (castProxy) -- the two FormIDs the cast gates

@@ -1476,12 +1476,14 @@ namespace apmf {
     }
 
     bool ControlMap::TryGetOwningClaimBasis(RE::FormID actor, Intent intent,
-                                            APMF_API::APMF_Param& outParam, float& outBasis) const {
+                                            APMF_API::APMF_Param& outParam, float& outBasis,
+                                            Handle* outHandle) const {
         // ch.19's composite expansion needs the winning claim's BASIS as well as its
         // param (see ControlMap.h). Deliberately an independent single-pass read, the
         // same shape as the two overloads above rather than a wrapper around them, so
         // each stays one snapshot load + one lookup with no shared mutable state.
         outBasis = 0.0f;
+        if (outHandle) *outHandle = APMF_API::kInvalidHandle;
         if (m_anyControlled.load(std::memory_order_relaxed) == 0) return false;
 
         std::shared_ptr<const MapType> snap = m_published.load(std::memory_order_acquire);
@@ -1508,6 +1510,7 @@ namespace apmf {
             }
             outParam = best->param;
             outBasis = best->basis;
+            if (outHandle) *outHandle = best->handle;
             return true;
         }
         return false;   // this NPC is controlled, but not on this channel

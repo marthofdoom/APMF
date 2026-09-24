@@ -245,12 +245,43 @@ namespace {
     // SIZED FROM THE FIELD (deck 2026-09-24, design doc section 4): healthy legs show a
     // Movement Blocked blip of about one [obs] sample (the ~1 s observability cadence)
     // and then arrive; a lever portcullis held two followers in it for 39-45 s. Three
-    // seconds of CONTINUOUS Movement Blocked (every 250 ms poll in the window sees it; a
-    // single poll without it resets the clock) is therefore above every healthy blip seen
+    // seconds of Movement Blocked in RUNNING game time (see kMbMaxStepMs for the clock and
+    // its one-missed-poll tolerance) is therefore above every healthy blip seen
     // and ends a real freeze about 40 s sooner than the two-minute stuck net. It is not a
     // deny and not a fight with the engine: the engine's collision answer is observed and
     // the leg is ended as BLOCKED, so the client can decide.
     constexpr std::uint64_t kBlockedEndMs = 3000;
+
+    // THE BLOCKED CLOCK COUNTS RUNNING GAME TIME, NOT THE WALL CLOCK (review F1). Poll runs
+    // from the player's update, which does not run while a menu pauses the game, so a wall
+    // clock would turn a 1 s blip plus 3 s in the inventory into a false BLOCKED on the
+    // first poll after the menu closes. Instead each poll that sees Movement Blocked adds
+    // the time since this leg's previous poll, CAPPED at kMbMaxStepMs (two poll periods):
+    // a paused stretch contributes at most one capped step, while a real 60 fps game polls
+    // every 250 ms and adds that in full. A frame rate so low that polls are > 500 ms
+    // apart only makes the end LATER (a floor, never an early end; principle 9).
+    // ONE non-Movement-Blocked poll inside a run is TOLERATED (review F6): a flicker of the
+    // running package shorter than a poll must not restart a real gate's clock; a second
+    // consecutive miss ends the run. A healthy ~1 s blip therefore accrues ~0.75-1 s and is
+    // then cleared by two clean polls.
+    constexpr std::uint64_t kMbMaxStepMs = 2 * kPollPeriodMs;
+
+    // THE BLOCKER CHECK (review F3, marth 2026-09-24: "do a directional proximity check to
+    // see if its another follower, or the player, or an NPC"). At the BLOCKED verdict the
+    // nearest live actor IN FRONT of the stalled actor is looked for: centre-to-centre
+    // within kBlockerReach on the ground plane, |dz| <= kBlockerMaxDz, and inside a cone of
+    // +-kBlockerHalfAngleDeg around EITHER the actor's facing (data.angle.z; Skyrim's
+    // forward is (sin z, cos z)) OR the straight bearing to the destination. Why these
+    // numbers (an engineering choice, sized to be observed in the field, not an engine
+    // constant): a humanoid's collision capsule is a few tens of units across, so two
+    // bodies in contact stand well under 100u apart; the engine's avoidance gives up with
+    // some room to spare; 192u covers "right in front" plus the body behind it without
+    // reaching into the next room. The two cones exist because an actor stuck while turning
+    // may face along the path while the blocker stands toward the goal, or the reverse.
+    // One floor of height (128u) keeps an actor on a balcony above out of it.
+    constexpr float kBlockerReach        = 192.0f;
+    constexpr float kBlockerMaxDz        = 128.0f;
+    constexpr float kBlockerHalfAngleDeg = 60.0f;
     // Clamp a client-supplied radius, saying so when it lands outside the band.
     float ClampRadius(RE::FormID a_id, float a_requested) {
         if (a_requested <= 0.0f) return kDefaultRadiusUnits;   // 0 == "use the default"
@@ -321,13 +352,28 @@ namespace {
         RE::FormID            markerId = 0;
         RE::NiPoint3          markerPoint{};
 
-        // ABI v12. `blockedSinceMs` = when Poll first saw the actor's running package be
-        // Movement Blocked in the current unbroken run (0 = not blocked). Reset at every
-        // leg start and re-point. `gaitLogged` = the one passive [travel-gait] line for
-        // this leg has been written.
-        std::uint64_t         blockedSinceMs = 0;
-        bool                  gaitLogged = false;
+        // ABI v12 BLOCKED clock (see kBlockedEndMs / Poll). `mbAccumMs` = Movement
+        // Blocked time accumulated over RUNNING polls in the current run (0 = not
+        // blocked); `mbLastPollMs` = when Poll last evaluated this leg; `mbMissed` = the
+        // previous poll of a run did not see MB (one such poll is tolerated). All reset
+        // by ResetBlockedClock at every leg start, re-point and end. `gaitLogged` = the
+        // one passive [travel-gait] line for this leg has been written. `ownerHandle` =
+        // the winning ch.19 claim's handle when this leg was last composed (reported as
+        // APMF_TravelLegInfo::ownerHandle; 0 until the first Compose).
+        std::uint32_t         mbAccumMs    = 0;
+        std::uint64_t         mbLastPollMs = 0;
+        bool                  mbRun        = false;   // a Movement Blocked run is being timed
+        bool                  mbMissed     = false;
+        bool                  gaitLogged   = false;
+        APMF_API::Handle      ownerHandle  = APMF_API::kInvalidHandle;
     };
+
+    void ResetBlockedClock(Leg& a_leg) {
+        a_leg.mbAccumMs    = 0;
+        a_leg.mbLastPollMs = 0;
+        a_leg.mbRun        = false;
+        a_leg.mbMissed     = false;
+    }
 
     std::unordered_map<RE::FormID, Leg> g_legs;
     RE::FormID                          g_slotOwner[kTravelSlots]{};   // 0 == free
@@ -355,9 +401,24 @@ namespace {
         RE::NiPoint3  stall{};
         std::uint32_t blockedMs = 0;
         std::uint32_t speed     = 0xFFFFFFFFu;
+        std::uint32_t owner     = 0;
+        RE::FormID    blocker   = 0;
+        std::uint32_t blockerKind = APMF_API::kBlocker_None;
     };
     std::mutex                                  g_stateMx;
     std::unordered_map<RE::FormID, LegStateRec> g_state;   // guarded by g_stateMx
+    // One stamp counter for every record, NEVER reset while the game runs (ResetAll
+    // clears the records, not this), so a `seq` a client cached before a load can never
+    // equal one issued after it (review F5). Guarded by g_stateMx.
+    std::uint32_t                               g_seqCounter = 0;
+
+    // What a BLOCKED end carries into the mirror (kLeg_Blocked only).
+    struct BlockInfo {
+        RE::NiPoint3  stall{};
+        std::uint32_t ms          = 0;
+        RE::FormID    blocker     = 0;
+        std::uint32_t blockerKind = APMF_API::kBlocker_None;
+    };
 
     const char* LegStateName(std::uint32_t a_state) {
         switch (a_state) {
@@ -384,24 +445,28 @@ namespace {
 
     // Record a state change. GAME THREAD (every caller is). `a_speed` = what was written
     // into the record (0xFFFFFFFF = nothing written); pass the previous value to keep it.
+    // `a_owner` = the ch.19 claim handle the state belongs to.
     void SetLegState(RE::FormID a_id, std::uint32_t a_state, RE::FormID a_destForm, const RE::NiPoint3& a_point,
-                     std::uint32_t a_speed, const RE::NiPoint3* a_stall = nullptr, std::uint32_t a_blockedMs = 0) {
+                     std::uint32_t a_speed, APMF_API::Handle a_owner, const BlockInfo* a_block = nullptr) {
         std::uint32_t seq = 0;
         {
             std::lock_guard lk(g_stateMx);
-            auto& r     = g_state[a_id];
-            r.state     = a_state;
-            r.destForm  = a_destForm;
-            r.point     = a_point;
-            r.sinceMs   = apmf::clock::MonotonicMs();
-            r.seq      += 1;
-            r.stall     = a_stall ? *a_stall : RE::NiPoint3{};
-            r.blockedMs = a_stall ? a_blockedMs : 0;
-            r.speed     = a_speed;
-            seq         = r.seq;
+            auto& r       = g_state[a_id];
+            r.state       = a_state;
+            r.destForm    = a_destForm;
+            r.point       = a_point;
+            r.sinceMs     = apmf::clock::MonotonicMs();
+            r.seq         = ++g_seqCounter;
+            r.stall       = a_block ? a_block->stall : RE::NiPoint3{};
+            r.blockedMs   = a_block ? a_block->ms : 0;
+            r.blocker     = a_block ? a_block->blocker : 0;
+            r.blockerKind = a_block ? a_block->blockerKind : static_cast<std::uint32_t>(APMF_API::kBlocker_None);
+            r.speed       = a_speed;
+            r.owner       = a_owner;
+            seq           = r.seq;
         }
-        spdlog::info("[travel-state] 0x{} -> {} (seq {}, destination 0x{}).", Hex(a_id), LegStateName(a_state), seq,
-                     Hex(a_destForm));
+        spdlog::info("[travel-state] 0x{} -> {} (seq {}, destination 0x{}, claim h={}).", Hex(a_id),
+                     LegStateName(a_state), seq, Hex(a_destForm), a_owner);
     }
 
     // The speed field the mirror currently holds for `a_id` (0xFFFFFFFF if none).
@@ -414,9 +479,9 @@ namespace {
     // SetLegState for a leg: a point leg reports its declared point and destForm 0 (its
     // destId is APMF's marker, a FormID the client never sees).
     void SetLegStateFor(RE::FormID a_id, const Leg& a_leg, std::uint32_t a_state, std::uint32_t a_speed,
-                        const RE::NiPoint3* a_stall = nullptr, std::uint32_t a_blockedMs = 0) {
+                        const BlockInfo* a_block = nullptr) {
         SetLegState(a_id, a_state, a_leg.toPosition ? 0 : a_leg.destId,
-                    a_leg.toPosition ? a_leg.point : RE::NiPoint3{}, a_speed, a_stall, a_blockedMs);
+                    a_leg.toPosition ? a_leg.point : RE::NiPoint3{}, a_speed, a_leg.ownerHandle, a_block);
     }
 
     // Point a FREE slot's record back at its authored placeholder (PlayerRef,
@@ -705,13 +770,13 @@ namespace {
     // ch.19 claim is NOT touched: APMF never revokes a claim the client still holds
     // -- it only ends the work it started.
     // ABI v12: `a_state` is the TravelLegState the end is recorded as (GetTravelLegState);
-    // `a_stall` / `a_blockedMs` are for kLeg_Blocked only.
+    // `a_block` is for kLeg_Blocked only.
     void EndLeg(RE::FormID a_id, Leg& a_leg, const char* a_why, bool a_failure, std::uint32_t a_state,
-                const RE::NiPoint3* a_stall = nullptr, std::uint32_t a_blockedMs = 0) {
+                const BlockInfo* a_block = nullptr) {
         if (!a_leg.legLive) return;
         a_leg.legLive = false;
-        a_leg.blockedSinceMs = 0;
-        SetLegStateFor(a_id, a_leg, a_state, MirroredSpeed(a_id), a_stall, a_blockedMs);
+        ResetBlockedClock(a_leg);
+        SetLegStateFor(a_id, a_leg, a_state, MirroredSpeed(a_id), a_block);
 
         DropOfferAndFreeSlot(a_leg.hPackage, a_leg.slot);
         a_leg.hPackage = APMF_API::kInvalidHandle;
@@ -811,7 +876,7 @@ namespace {
         a_leg.basisPackage = a_leg.basis;   // what the offer was actually FILED at
         a_leg.legLive      = true;
         a_leg.legStartedMs = apmf::clock::MonotonicMs();
-        a_leg.blockedSinceMs = 0;
+        ResetBlockedClock(a_leg);
         a_leg.gaitLogged   = false;
         SetLegStateFor(a_id, a_leg, APMF_API::kLeg_Walking, speed);
         spdlog::info("[travel-leg] 0x{} STARTED -- slot {}, package 0x{} -> destination 0x{}, radius {}, "
@@ -825,11 +890,13 @@ namespace {
     // one the world wants. A posted task outlives the moment it was posted for: the
     // claim may have been released, replaced by a higher-basis one, or re-pointed at
     // another destination before Pump ran.
-    bool StillOurs(RE::FormID a_id, const Leg& a_leg, const char* a_step, float* a_outBasis) {
+    bool StillOurs(RE::FormID a_id, const Leg& a_leg, const char* a_step, float* a_outBasis,
+                   APMF_API::Handle* a_outOwner = nullptr) {
         APMF_API::APMF_Param now{};
         float                basis = 0.0f;
+        APMF_API::Handle     owner = APMF_API::kInvalidHandle;
         const bool claimed = apmf::ControlMap::Get().TryGetOwningClaimBasis(
-            a_id, APMF_API::kIntent_Travel, now, basis);
+            a_id, APMF_API::kIntent_Travel, now, basis, &owner);
         // ABI v11: a position leg is identified by its declared POINT (its destId is
         // APMF's marker, a FormID the client never sees).
         const bool nowToPos = (static_cast<std::uint32_t>(now.ival) & APMF_API::kTravel_ToPosition) != 0;
@@ -844,7 +911,113 @@ namespace {
             return false;
         }
         if (a_outBasis) *a_outBasis = basis;
+        if (a_outOwner) *a_outOwner = owner;
         return true;
+    }
+
+    // ---- ABI v12: the running package, read the engine's way, under its lock ----------
+    // The engine picks the RUNNING ActorPackage as process->middleHigh->runOncePackage when
+    // that holds a package, else process->currentPackage (1.6.1170 0x70F590 / 1.5.97
+    // 0x67BDD0, the same selection CommonLib's AIProcess::GetRunningPackage makes, unlocked
+    // in the engine too). The package pointer and its type are then read under that
+    // ActorPackage's own `packageLock` (review F7): follower AI updates run on job threads
+    // and swap the package under that lock, and a runtime package such as Movement Blocked
+    // (an 0xFF form) is not something this file may assume outlives the swap. If the
+    // selection races a runOnce clear, the locked read sees no package: one missed poll,
+    // which the BLOCKED clock tolerates. GAME THREAD (Poll).
+    struct RunningPackage {
+        RE::FormID formId          = 0;
+        bool       movementBlocked = false;
+    };
+
+    RunningPackage ReadRunningPackage(RE::Actor* a_actor) {
+        RunningPackage out{};
+        auto* proc = a_actor->GetActorRuntimeData().currentProcess;
+        if (!proc) return out;
+        RE::ActorPackage* ap = (proc->middleHigh && proc->middleHigh->runOncePackage.package)
+                                   ? &proc->middleHigh->runOncePackage
+                                   : &proc->currentPackage;
+        RE::BSSpinLockGuard lk(ap->packageLock);
+        if (const auto* pkg = ap->package) {
+            out.formId          = pkg->GetFormID();
+            out.movementBlocked = pkg->packData.packType.get() == RE::PACKAGE_PROCEDURE_TYPE::kMovementBlocked;
+        }
+        return out;
+    }
+
+    const char* BlockerKindName(std::uint32_t a_kind) {
+        switch (a_kind) {
+        case APMF_API::kBlocker_Player:   return "the PLAYER";
+        case APMF_API::kBlocker_Teammate: return "a TEAMMATE";
+        case APMF_API::kBlocker_Actor:    return "an ACTOR";
+        default:                          return "nothing";
+        }
+    }
+
+    // The directional proximity check at a BLOCKED verdict (see kBlockerReach). Fills
+    // `a_blk.blocker` / `blockerKind` with the nearest live actor in front, or leaves them
+    // 0 / kBlocker_None (a static block). Candidates: the high-process actors and the
+    // player. Reads positions, angles and flags only. GAME THREAD (Poll).
+    void FindBlocker(RE::Actor* a_actor, const Leg& a_leg, BlockInfo& a_blk) {
+        const RE::NiPoint3 me    = a_actor->GetPosition();
+        const float        face  = a_actor->GetAngleZ();
+        const RE::NiPoint3 fwdA{ std::sin(face), std::cos(face), 0.0f };
+        RE::NiPoint3       fwdB{};
+        bool               haveB = false;
+        {
+            RE::NiPoint3 goal{};
+            bool         haveGoal = false;
+            if (a_leg.destKind == DestKind::kRef) {
+                auto dptr = a_leg.destHandle.get();
+                if (auto* d = dptr.get()) {
+                    goal     = d->GetPosition();
+                    haveGoal = true;
+                }
+            }
+            if (haveGoal) {
+                const float gx = goal.x - me.x, gy = goal.y - me.y;
+                const float gl = std::sqrt(gx * gx + gy * gy);
+                if (gl > 1.0f) {
+                    fwdB  = RE::NiPoint3{ gx / gl, gy / gl, 0.0f };
+                    haveB = true;
+                }
+            }
+        }
+        const float cosLimit = std::cos(kBlockerHalfAngleDeg * 3.14159265f / 180.0f);
+        auto* const player   = RE::PlayerCharacter::GetSingleton();
+        float       bestD    = kBlockerReach + 1.0f;
+        RE::Actor*  best     = nullptr;
+        const auto consider = [&](RE::Actor& o) {
+            if (&o == a_actor || o.IsDead() || o.IsDisabled() || !o.Is3DLoaded())
+                return RE::BSContainer::ForEachResult::kContinue;
+            const RE::NiPoint3 p = o.GetPosition();
+            const float dx = p.x - me.x, dy = p.y - me.y, dz = p.z - me.z;
+            if (std::fabs(dz) > kBlockerMaxDz) return RE::BSContainer::ForEachResult::kContinue;
+            const float d = std::sqrt(dx * dx + dy * dy);
+            if (d > kBlockerReach || d >= bestD) return RE::BSContainer::ForEachResult::kContinue;
+            // Inside 1u counts as in front (standing on top of each other).
+            const bool inA = d < 1.0f || (dx * fwdA.x + dy * fwdA.y) / d >= cosLimit;
+            const bool inB = haveB && d >= 1.0f && (dx * fwdB.x + dy * fwdB.y) / d >= cosLimit;
+            if (!inA && !inB) return RE::BSContainer::ForEachResult::kContinue;
+            bestD = d;
+            best  = &o;
+            return RE::BSContainer::ForEachResult::kContinue;
+        };
+        if (auto* pl = RE::ProcessLists::GetSingleton()) {
+            pl->ForEachHighActor([&](RE::Actor& o) {
+                return (player && &o == player) ? RE::BSContainer::ForEachResult::kContinue : consider(o);
+            });
+        }
+        if (player) consider(*player);
+        if (!best) return;
+        a_blk.blocker     = best->GetFormID();
+        a_blk.blockerKind = best == player              ? APMF_API::kBlocker_Player
+                            : best->IsPlayerTeammate() ? APMF_API::kBlocker_Teammate
+                                                        : APMF_API::kBlocker_Actor;
+        spdlog::info("[travel-leg] 0x{} blocker check: {} 0x{} '{}' {:.0f}u in front (reach {:.0f}u, cone +-{:.0f} deg of "
+                     "facing or goal bearing).",
+                     Hex(a_actor->GetFormID()), BlockerKindName(a_blk.blockerKind), Hex(a_blk.blocker),
+                     best->GetName() ? best->GetName() : "", bestD, kBlockerReach, kBlockerHalfAngleDeg);
     }
 
     // ---- ABI v12: the PASSIVE GATE PROBE -------------------------------------------
@@ -1203,14 +1376,29 @@ namespace {
             }
             Leg& leg = it->second;
 
+            // ABI v12 (review F2): a REFUSED re-point. The claim now declares a destination
+            // ch.19 cannot walk to, so the previous leg is ENDED rather than left walking to
+            // a destination nobody declares any more (CLAUDE.md principle 4: enforce only
+            // what was declared), and the state names the REFUSED destination as kLeg_Failed
+            // so the client learns at once. The leg entry stays (not live); a later valid
+            // Repoint starts a fresh leg through Compose. Nothing on `leg` is changed before
+            // the refusal is decided.
+            const auto refuse = [&](const char* a_why, RE::FormID a_form, const RE::NiPoint3& a_point) {
+                spdlog::error("[travel] 0x{} re-point REFUSED -- {}. {}", Hex(id), a_why,
+                              leg.legLive ? "The previous leg is ENDED (it no longer matches the claim)."
+                                          : "No leg was running.");
+                EndLeg(id, leg, "a re-point was refused", true, APMF_API::kLeg_Failed);
+                SetLegState(id, APMF_API::kLeg_Failed, a_form, a_point, MirroredSpeed(id), leg.ownerHandle);
+            };
+
             // ABI v11: a Repoint to a POINT. The current destination (a ref, a cell, or
             // the previous marker) stays in force until Compose places the new marker and
             // re-points the package; Compose then deletes the old marker.
             if ((static_cast<std::uint32_t>(param.ival) & APMF_API::kTravel_ToPosition) != 0) {
                 const RE::NiPoint3 pt{ param.posX, param.posY, param.posZ };
                 if (param.form != 0 || !std::isfinite(pt.x) || !std::isfinite(pt.y) || !std::isfinite(pt.z)) {
-                    spdlog::error("[travel] 0x{} re-point IGNORED -- kTravel_ToPosition needs form 0 and a finite "
-                                  "point. The previous destination 0x{} stands.", Hex(id), Hex(leg.destId));
+                    refuse("kTravel_ToPosition needs form 0 and a finite point", param.form,
+                           std::isfinite(pt.x) && std::isfinite(pt.y) && std::isfinite(pt.z) ? pt : RE::NiPoint3{});
                     return;
                 }
                 leg.toPosition = true;
@@ -1225,30 +1413,34 @@ namespace {
             }
 
             if (param.form == 0) {
-                spdlog::error("[travel] 0x{} re-point IGNORED -- param.form is 0 (no destination).",
-                              Hex(id));
+                refuse("param.form is 0 (no destination)", 0, RE::NiPoint3{});
                 return;
             }
 
             DestKind kind = DestKind::kRef;
             if (!ClassifyDestination(id, param.form, kind, "re-point")) {
-                spdlog::error("[travel] 0x{} re-point IGNORED -- the previous destination 0x{} stands.",
-                              Hex(id), Hex(leg.destId));
+                refuse("the destination is not a live reference or cell (logged above)", param.form, RE::NiPoint3{});
                 return;
+            }
+            // Resolve the new reference BEFORE touching the leg, so a failure cannot leave it
+            // half re-pointed (review F2).
+            RE::ObjectRefHandle newHandle{};
+            if (kind == DestKind::kRef) {
+                auto* ref = RE::TESForm::LookupByID<RE::TESObjectREFR>(param.form);
+                if (!ref) {
+                    refuse("the destination reference no longer resolves", param.form, RE::NiPoint3{});
+                    return;
+                }
+                newHandle = ref->CreateRefHandle();
             }
 
             const RE::FormID was = leg.destId;
             leg.toPosition = false;   // a form destination; any marker is deleted by Compose
             leg.destId     = param.form;
             leg.destKind   = kind;
-            leg.destHandle = {};
+            leg.destHandle = newHandle;
             leg.radius     = ClampRadius(id, param.fval);
             leg.flags      = static_cast<std::uint32_t>(param.ival);
-            if (kind == DestKind::kRef) {
-                auto* ref = RE::TESForm::LookupByID<RE::TESObjectREFR>(leg.destId);
-                if (!ref) return;                       // ClassifyDestination just resolved it
-                leg.destHandle = ref->CreateRefHandle();
-            }
 
             spdlog::info("[travel] 0x{} travel claim RE-POINTED -- destination 0x{} -> {} 0x{}.",
                          Hex(id), Hex(was), kind == DestKind::kCell ? "CELL" : "ref", Hex(leg.destId));
@@ -1261,7 +1453,8 @@ namespace {
             auto it = g_legs.find(id);
             if (it == g_legs.end()) {
                 spdlog::info("[travel] 0x{} travel facet released (nothing was started).", Hex(id));
-                SetLegState(id, APMF_API::kLeg_Released, 0, RE::NiPoint3{}, 0xFFFFFFFFu);   // ABI v12
+                SetLegState(id, APMF_API::kLeg_Released, 0, RE::NiPoint3{}, 0xFFFFFFFFu,
+                            APMF_API::kInvalidHandle);   // ABI v12
                 return;
             }
             SetLegStateFor(id, it->second, APMF_API::kLeg_Released, MirroredSpeed(id));   // ABI v12
@@ -1293,9 +1486,11 @@ namespace {
             if (it == g_legs.end()) return;   // released before this ran
             Leg& leg = it->second;
 
-            float basis = 0.0f;
-            if (!StillOurs(id, leg, step, &basis)) return;
-            leg.basis = basis;
+            float            basis = 0.0f;
+            APMF_API::Handle owner = APMF_API::kInvalidHandle;
+            if (!StillOurs(id, leg, step, &basis, &owner)) return;
+            leg.basis       = basis;
+            leg.ownerHandle = owner;   // ABI v12: the claim this leg now belongs to
 
             // ABI v11: a marker that no longer matches what the claim declares (a
             // form destination now, or a different point) is taken OFF the leg here
@@ -1376,7 +1571,11 @@ namespace {
                 if (!destPtr.get()) {
                     spdlog::error("[travel] 0x{} {} DROPPED -- destination ref 0x{} no longer resolves "
                                   "(unloaded or deleted).", Hex(id), step, Hex(leg.destId));
-                    SetLegStateFor(id, leg, APMF_API::kLeg_Failed, MirroredSpeed(id));
+                    // ABI v12 (review F2): a live leg would otherwise keep walking to the OLD
+                    // destination while the state reads Failed for the new one. End it.
+                    if (leg.legLive) EndLeg(id, leg, "the re-pointed destination no longer resolves", true,
+                                            APMF_API::kLeg_Failed);
+                    else SetLegStateFor(id, leg, APMF_API::kLeg_Failed, MirroredSpeed(id));
                     return;
                 }
                 if (leg.toPosition) {
@@ -1423,7 +1622,7 @@ namespace {
                     apmf::ControlMap::Get().EnqueueRepoint(leg.hPackage, &p9);
                 }
                 leg.legStartedMs = apmf::clock::MonotonicMs();   // a new leg, a new deadline
-                leg.blockedSinceMs = 0;                          // ABI v12: a new route, a new blocked clock
+                ResetBlockedClock(leg);                          // ABI v12: a new route, a new blocked clock
                 SetLegStateFor(id, leg, APMF_API::kLeg_Walking, speed);
                 spdlog::info("[travel-leg] 0x{} RE-POINTED -- slot {}, package 0x{} -> destination 0x{}.",
                              Hex(id), leg.slot, Hex(p9.form), Hex(leg.destId));
@@ -1750,35 +1949,51 @@ namespace apmf::travel {
             }
 
             // ABI v12: BLOCKED. After every legitimate end above (arrival wins over a blip at
-            // the destination), before the safety net. See kBlockedEndMs for the engine fact
-            // and the sizing. GetCurrentPackage is the engine's own running-package read
-            // (runOnce first, then current), and packType is PACKAGE_DATA+4 = TESPackage+0x24.
+            // the destination), before the safety net. See kBlockedEndMs / kMbMaxStepMs for the
+            // engine fact, the sizing and the running-time clock. The running package is read
+            // under its own ActorPackage lock (review F7): see ReadRunningPackage.
             {
-                const auto* cur = a->GetCurrentPackage();
-                const bool  mb  = cur && cur->packData.packType.get() == RE::PACKAGE_PROCEDURE_TYPE::kMovementBlocked;
-                if (mb) {
-                    if (leg.blockedSinceMs == 0) {
-                        leg.blockedSinceMs = now;
-                        const auto p = a->GetPosition();
+                const RunningPackage cur  = ReadRunningPackage(a);
+                const std::uint64_t  step = leg.mbLastPollMs == 0 ? 0 : std::min(now - leg.mbLastPollMs, kMbMaxStepMs);
+                leg.mbLastPollMs = now;
+                if (cur.movementBlocked) {
+                    if (!leg.mbRun) {
+                        leg.mbRun     = true;
+                        leg.mbAccumMs = 0;
+                        const auto p  = a->GetPosition();
                         spdlog::info("[travel-leg] 0x{} Movement Blocked (package 0x{}) at {:.0f},{:.0f},{:.0f} -- the leg "
-                                     "ends as BLOCKED if it holds {} ms.",
-                                     Hex(id), Hex(cur->GetFormID()), p.x, p.y, p.z, kBlockedEndMs);
-                    } else if (now - leg.blockedSinceMs >= kBlockedEndMs) {
-                        const auto         held  = now - leg.blockedSinceMs;
-                        const RE::NiPoint3 stall = a->GetPosition();
-                        const std::string  why   = std::format(
-                            "BLOCKED -- the engine held the actor in its Movement Blocked package (0x{}) for {} ms at "
-                            "{:.0f},{:.0f},{:.0f}",
-                            Hex(cur->GetFormID()), held, stall.x, stall.y, stall.z);
-                        EndLeg(id, leg, why.c_str(), true, APMF_API::kLeg_Blocked, &stall,
-                               static_cast<std::uint32_t>(held));
-                        GateProbe(id, a, stall);
+                                     "ends as BLOCKED if it holds {} ms of running time.",
+                                     Hex(id), Hex(cur.formId), p.x, p.y, p.z, kBlockedEndMs);
+                    } else {
+                        leg.mbAccumMs += static_cast<std::uint32_t>(step);
+                    }
+                    leg.mbMissed = false;
+                    if (leg.mbAccumMs >= kBlockedEndMs) {
+                        BlockInfo blk{};
+                        blk.stall = a->GetPosition();
+                        blk.ms    = leg.mbAccumMs;
+                        FindBlocker(a, leg, blk);
+                        const std::string why = std::format(
+                            "BLOCKED -- the engine held the actor in its Movement Blocked package (0x{}) for {} ms of "
+                            "running time at {:.0f},{:.0f},{:.0f}; {}",
+                            Hex(cur.formId), blk.ms, blk.stall.x, blk.stall.y, blk.stall.z,
+                            blk.blockerKind == APMF_API::kBlocker_None
+                                ? std::string("no actor in front (a STATIC block)")
+                                : std::format("{} 0x{} in front", BlockerKindName(blk.blockerKind), Hex(blk.blocker)));
+                        EndLeg(id, leg, why.c_str(), true, APMF_API::kLeg_Blocked, &blk);
+                        GateProbe(id, a, blk.stall);
                         continue;
                     }
-                } else if (leg.blockedSinceMs != 0) {
-                    spdlog::info("[travel-leg] 0x{} Movement Blocked cleared after {} ms (under the {} ms end).",
-                                 Hex(id), now - leg.blockedSinceMs, kBlockedEndMs);
-                    leg.blockedSinceMs = 0;
+                } else if (leg.mbRun) {
+                    if (!leg.mbMissed) {
+                        leg.mbMissed = true;   // one miss tolerated (review F6)
+                    } else {
+                        spdlog::info("[travel-leg] 0x{} Movement Blocked cleared after {} ms of running time (under the "
+                                     "{} ms end).", Hex(id), leg.mbAccumMs, kBlockedEndMs);
+                        leg.mbRun     = false;
+                        leg.mbMissed  = false;
+                        leg.mbAccumMs = 0;
+                    }
                 }
             }
 
@@ -1822,6 +2037,9 @@ namespace apmf::travel {
             out->blockedMs = r.blockedMs;
             out->speed     = found ? r.speed : 0xFFFFFFFFu;
             out->reserved  = 0;
+            out->ownerHandle = r.owner;
+            out->blocker     = r.blocker;
+            out->blockerKind = r.blockerKind;
         }
         return state;
     }

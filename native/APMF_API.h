@@ -468,23 +468,38 @@ namespace APMF_API {
         kLeg_Walking         = 2,   // the package is offered and the actor is travelling
         kLeg_Arrived         = 3,   // inside the arrival radius (or, for a cell, inside the cell)
         kLeg_Blocked         = 4,   // the engine held the actor in its MOVEMENT BLOCKED package (package
-                                    //   type 36) continuously for 3 s. stallX/Y/Z says where. Repointing
-                                    //   along the same route will most likely block again.
+                                    //   type 36) for 3 s of running game time (one missed poll tolerated).
+                                    //   stallX/Y/Z says where; blocker/blockerKind say whether an ACTOR
+                                    //   stood in front of it (it will likely move: take another item and
+                                    //   come back later) or nothing did (a STATIC block such as a closed
+                                    //   gate: the route stays closed until the world changes).
         kLeg_CombatCancelled = 5,   // the actor entered combat
         kLeg_DestGone        = 6,   // the destination was deleted, disabled, died during travel, or (a
                                     //   cell) no longer resolves
         kLeg_StuckTimeout    = 7,   // the 2-minute safety net elapsed with none of the above
         kLeg_ActorGone       = 8,   // the actor unloaded, died, or lost its 3D
         kLeg_Failed          = 9,   // the leg could not start or be re-pointed (a destination that is not
-                                    //   a reference or a cell, all 8 package slots in use, a declined
-                                    //   Location write, a marker that could not be placed). The log says
-                                    //   which.
+                                    //   a reference or a cell, a zero form or a bad point on a Repoint, all
+                                    //   8 package slots in use, a declined Location write, a marker that
+                                    //   could not be placed). The log says which. destForm / destX..Z name
+                                    //   the REFUSED destination. A refused Repoint ENDS the previous leg:
+                                    //   the actor does not keep walking to a destination the claim no
+                                    //   longer declares.
         kLeg_Released        = 10,  // the ch.19 claim was released
     };
 
-    // GetTravelLegState output. EXACT LAYOUT (byte-shared): 60 bytes, every field 4 bytes.
+    // What stood in front of the actor when a leg ended kLeg_Blocked (APMF_TravelLegInfo::blockerKind).
+    enum TravelBlocker : std::uint32_t {
+        kBlocker_None     = 0,   // not a BLOCKED end, or no actor in front: a STATIC block (a closed gate,
+                                 //   a wall, clutter). Treat the route as closed until the world changes.
+        kBlocker_Player   = 1,   // the player stood in front of the actor
+        kBlocker_Teammate = 2,   // a player teammate (a follower) stood in front of the actor
+        kBlocker_Actor    = 3,   // another live actor (any NPC or creature) stood in front of the actor
+    };
+
+    // GetTravelLegState output. EXACT LAYOUT (byte-shared): 72 bytes, every field 4 bytes.
     // The CALLER sets `size` = sizeof(APMF_TravelLegInfo) as compiled against its header.
-    // APMF writes nothing into a struct whose size is below this v12 layout, and never
+    // APMF writes nothing into a struct whose size is below this v12 layout (72), and never
     // writes past `size`. A later ABI may append fields.
     struct APMF_TravelLegInfo {
         std::uint32_t size;        // +0   the CALLER sets = sizeof(APMF_TravelLegInfo)
@@ -498,8 +513,11 @@ namespace APMF_API {
         float         destY;       // +20
         float         destZ;       // +24
         std::uint32_t msInState;   // +28  milliseconds since this state began (saturates at 0xFFFFFFFF)
-        std::uint32_t seq;         // +32  increments on EVERY state change of this actor's leg, so a
-                                   //        client can tell a new end from one it already handled
+        std::uint32_t seq;         // +32  a stamp from ONE counter APMF never resets while the game runs
+                                   //        (not per actor, not per load): it changes on EVERY state change of
+                                   //        this actor's leg and never repeats, so a client can tell a new end
+                                   //        from one it already handled, across save loads too. Compare for
+                                   //        inequality, not for +1.
         float         stallX;      // +36  kLeg_Blocked: the actor's position when the leg ended; 0 otherwise
         float         stallY;      // +40
         float         stallZ;      // +44
@@ -510,8 +528,16 @@ namespace APMF_API {
                                    //        path is not verified on, which the log names), so the record's
                                    //        authored speed applies
         std::uint32_t reserved;    // +56  0
+        std::uint32_t ownerHandle; // +60  the kIntent_Travel claim handle whose leg this is (the WINNING claim
+                                   //        when the leg was composed). Compare it with YOUR handle: a
+                                   //        different value is another client's leg, or an older claim of
+                                   //        yours. 0 while a fresh claim is still Pending, and on kLeg_None.
+                                   //        During a Pending re-point it still names the previous owner.
+        RE::FormID    blocker;     // +64  kLeg_Blocked: the actor found in front of the stalled actor (see
+                                   //        blockerKind); 0 for a static block or any other state
+        std::uint32_t blockerKind; // +68  a TravelBlocker; kBlocker_None unless state is kLeg_Blocked
     };
-    static_assert(sizeof(APMF_TravelLegInfo) == 60,  "APMF_TravelLegInfo is 60 bytes, byte-shared with clients");
+    static_assert(sizeof(APMF_TravelLegInfo) == 72,  "APMF_TravelLegInfo is 72 bytes, byte-shared with clients");
     static_assert(alignof(APMF_TravelLegInfo) == 4,  "APMF_TravelLegInfo aligns to 4");
     static_assert(offsetof(APMF_TravelLegInfo, state)     == 4,  "state at +4");
     static_assert(offsetof(APMF_TravelLegInfo, destForm)  == 12, "destForm at +12");
@@ -521,6 +547,9 @@ namespace APMF_API {
     static_assert(offsetof(APMF_TravelLegInfo, blockedMs) == 48, "blockedMs at +48");
     static_assert(offsetof(APMF_TravelLegInfo, speed)     == 52, "speed at +52");
     static_assert(offsetof(APMF_TravelLegInfo, reserved)  == 56, "reserved at +56");
+    static_assert(offsetof(APMF_TravelLegInfo, ownerHandle) == 60, "ownerHandle at +60");
+    static_assert(offsetof(APMF_TravelLegInfo, blocker)     == 64, "blocker at +64");
+    static_assert(offsetof(APMF_TravelLegInfo, blockerKind) == 68, "blockerKind at +68");
 
     // ── Equip-authority flags (kIntent_EquipAuthority's param.ival, ABI v7) ──
     // Read at RequestEx/Repoint time from param.ival. APPEND-ONLY: never renumber
@@ -1599,12 +1628,14 @@ namespace APMF_API {
         // `*out` (it writes nothing into a shorter struct). `out` may be null for a
         // state-only read. The state describes the actor's leg, which is the leg of the
         // WINNING kIntent_Travel claim on it; a client whose claim is outranked sees the
-        // owner's leg, so compare destForm / destX..Z with what you declared.
+        // owner's leg, so compare ownerHandle with your own handle.
         //   READ-ONLY and SAFE FROM ANY THREAD: APMF copies a small per-actor record under
         //   a mutex, the same "snapshot read" contract as IsClaimLive. It claims nothing,
         //   holds nothing and changes nothing. The state is updated on the game thread as
         //   the leg changes, so a read right after a Repoint may still show the previous
-        //   leg's end for up to a frame (check destForm and seq).
+        //   leg's end for up to a frame (check ownerHandle, destForm and seq).
+        //   The state is not saved: after a save load an actor reads kLeg_None until its
+        //   claim is made again.
         //   A throw inside returns kLeg_None and writes nothing.
         std::uint32_t (*GetTravelLegState)(RE::FormID actor, APMF_TravelLegInfo* out);
     };
