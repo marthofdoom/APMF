@@ -122,14 +122,16 @@ namespace {
                                                   // failure REFUSES kIntent_Travel claims
                                                   // (ControlMap::EnqueueRequest) rather than accepting a
                                                   // claim that would do nothing.
-            apmf::targetpin::Install();          // ch.20 TARGET PIN (ABI v13): Character vtable slot 0xE4
-                                                  // (Actor::UpdateCombat) seat, chaining -- the engine's
-                                                  // combat update runs first, then the winning
-                                                  // kIntent_TargetPin claim's target is written back only
-                                                  // when the engine already holds a different one. Exact
-                                                  // 1.6.1170 / 1.5.97, VR-refused, [TargetPin] bTargetPin,
-                                                  // SeatVerified. A refusal REFUSES kIntent_TargetPin
-                                                  // claims (ControlMap::EnqueueRequest).
+            apmf::targetpin::Install();          // ch.20 TARGET PIN (ABI v13): SOURCE DENY on the combat
+                                                  // target selectors (CombatTargetSelectorStandard / Fixed,
+                                                  // vtable slot 6, chaining) -- the winning kIntent_TargetPin
+                                                  // claim's target answers the engine's selection when the
+                                                  // engine picked one and the target is in its group's
+                                                  // targets -- plus an OBSERVE-ONLY Character::UpdateCombat
+                                                  // (0xE4) hook. Exact 1.6.1170 / 1.5.97, VR-refused,
+                                                  // [TargetPin] bTargetPin, SeatVerified on all three. A
+                                                  // refusal REFUSES kIntent_TargetPin claims
+                                                  // (ControlMap::EnqueueRequest).
             apmf::poscast::Install();            // ABI v11 POSITION CAST: runtime gate (1.6.1170 / 1.5.97,
                                                   // never VR) + [PositionCast] + the XMarker base. Installs NO
                                                   // hook. Refused -> kCastFlag_AtPosition requests are refused.

@@ -390,28 +390,31 @@ namespace APMF_API {
                                      //         logged with its reason either way.
 
         kIntent_TargetPin     = 20,  // ch.20 PIN this actor's combat target (ABI v13, marth
-                                     //       2026-09-25). Mode: DENY the ENGINE'S OWN re-pick of
-                                     //       the combat target, at APMF's own seat
-                                     //       (Character::UpdateCombat, vtable slot 0xE4). A
-                                     //       STANDING claim: no TTL, ended only by Release.
+                                     //       2026-09-25). Mode: DENY the ENGINE'S OWN target
+                                     //       selection AT ITS SOURCE (APMF's seat on the combat
+                                     //       target selectors, vtable slot 6). A STANDING claim:
+                                     //       no TTL, ended only by Release.
                                      //       Param: form = the TARGET actor's FormID (REQUIRED).
                                      //       fval / ival / target / pos are not read.
                                      //
-                                     //       WHAT IT DOES. After the engine's own combat update
-                                     //       for this actor has run, if the engine HOLDS a
-                                     //       combat target and it is not your target, APMF
-                                     //       writes your target back (AIProcess
-                                     //       currentCombatTarget + CombatController targetHandle,
-                                     //       previous target kept in previousTargetHandle). The
-                                     //       engine then fights that target with its own AI:
-                                     //       its own attacks, movement, spells and equips.
+                                     //       WHAT IT DOES. Each combat update the engine asks its
+                                     //       target selectors which foe this actor should fight.
+                                     //       While the claim stands, APMF answers that question
+                                     //       with your target, so the engine's own pick never
+                                     //       reaches the actor. The engine then fights your
+                                     //       target with its own AI: its own attacks, movement,
+                                     //       spells and equips.
                                      //
-                                     //       WHAT IT NEVER DOES. It does NOT start combat: if the
-                                     //       engine holds NO target (the actor is not fighting,
-                                     //       the fight ended, the foe was lost), nothing is
-                                     //       written -- "commanding WHICH foe is ours, commanding
-                                     //       THAT there is a foe is not". Combat entry is a
-                                     //       separate concern, never this intent (INVARIANTS #0).
+                                     //       ONLY AMONG THE ENGINE'S OWN COMBAT TARGETS. The
+                                     //       answer is replaced only when the engine's selector
+                                     //       picked a target (the actor is fighting) AND your
+                                     //       target is one of the actor's combat group's targets.
+                                     //       Otherwise nothing is written and the log says so.
+                                     //       It does NOT start combat and does not make anyone a
+                                     //       target: an actor becomes pinnable once something (the
+                                     //       engine, or your own combat entry, a separate concern)
+                                     //       makes it a combat target of the actor's group. Combat
+                                     //       entry is never this intent (INVARIANTS #0).
                                      //       It claims nothing else: no attack selection, no
                                      //       casting, no equip, no movement, no aggression. One
                                      //       intent, one facet (the kIntent_Travel rule).
@@ -419,27 +422,28 @@ namespace APMF_API {
                                      //       (ch.6), which stays ARBITRATION-ONLY and writes
                                      //       nothing: claim this one to have APMF hold the target.
                                      //
-                                     //       THE PIN STOPS -- and the engine's own targeting takes
+                                     //       THE PIN STOPS -- and the engine's own selection takes
                                      //       over -- whenever the target is dead, disabled, not
-                                     //       loaded, or no longer resolves, and whenever the claim
-                                     //       is released or outranked. APMF never releases your
-                                     //       claim for you: a pin whose target died stays a live,
-                                     //       inert claim until you Release or Repoint it. A save
-                                     //       load, a new game, or the actor unloading drops the
-                                     //       claim (it is never saved); claim again after a load.
+                                     //       loaded, no longer resolves or is no longer one of the
+                                     //       group's combat targets, whenever the engine has no
+                                     //       target, and whenever the claim is released or
+                                     //       outranked. APMF never releases your claim for you: a
+                                     //       pin whose target died stays a live, inert claim until
+                                     //       you Release or Repoint it. A save load, a new game,
+                                     //       or the actor unloading drops the claim (it is never
+                                     //       saved); claim again after a load.
                                      //
-                                     //       The world's reaction is YOURS (CLAUDE.md principle 2):
-                                     //       pin a follower onto a guard or a friendly and the
-                                     //       crime, bounty, faction and aggression consequences
-                                     //       happen as the engine does them, and Release does not
-                                     //       undo them.
+                                     //       The world's reaction to the fight is YOURS (CLAUDE.md
+                                     //       principle 2): crime, bounty, faction and aggression
+                                     //       consequences happen as the engine does them, and
+                                     //       Release does not undo them.
                                      //
                                      //       REFUSED SYNCHRONOUSLY (kInvalidHandle, logged): VR, a
                                      //       runtime other than 1.6.1170 / 1.5.97, [TargetPin]
-                                     //       bTargetPin=0, the seat's address self-check failed,
+                                     //       bTargetPin=0, a seat's address self-check failed,
                                      //       before kDataLoaded, param.form == 0, param.form == the
-                                     //       actor itself, or the actor is the player (the player
-                                     //       has no NPC combat update to pin). REFUSED AT ENGAGE
+                                     //       actor itself, or the actor is the player (ch.20 pins
+                                     //       NPC combat targets only). REFUSED AT ENGAGE
                                      //       (one Drain later; the handle is LIVE and inert, the log
                                      //       says why -- RELEASE IT): param.form is not an Actor.
                                      //       Repoint(handle, &param) moves the pin to a new target

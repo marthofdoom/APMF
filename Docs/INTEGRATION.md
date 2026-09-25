@@ -1072,27 +1072,34 @@ net. It is logged loudly and nothing is retried.
 
 `kIntent_CombatTarget` (ch.6) only records who owns the combat-target facet. It makes no
 engine call, so until v13 a client that wanted an NPC to fight ONE particular foe had to
-hook the engine itself. `kIntent_TargetPin` (ch.20) is that hook, owned by Harbinger.
+hook the engine itself. `kIntent_TargetPin` (ch.20) does it inside Harbinger, at the engine's
+own target selector.
 
 ### The contract
 
-**While the NPC is already fighting, it fights your target.** After the engine's own combat
-update for the actor, if the engine is aiming the actor at someone else, Harbinger points it
-back at your target. The NPC's own AI then does the fighting: its own attacks, movement,
-spells and equips.
+**While the NPC is fighting, the engine's own target choice is replaced with yours.** Every
+combat update the engine asks its target selectors which foe the actor should fight. Harbinger
+answers that question with your target, so the engine's own pick never reaches the actor. The
+NPC's own AI then does the fighting: its own attacks, movement, spells and equips.
+
+**Only among the engine's own combat targets.** The answer is replaced only when the engine
+picked a target (the actor is fighting) and your target is one of the actor's combat group's
+targets. If your target is not a combat target of that group, nothing is written, the engine's
+pick stands, and the log says "not a combat target". Harbinger never makes anyone a target. An
+actor becomes pinnable once the engine holds it as a combat target, for example after your own
+combat entry (a separate concern) puts the actor in a fight with it.
 
 **It never starts a fight.** If the engine holds no target (the actor is not in combat, the
 fight ended, the foe was lost or fled), nothing is written. Getting the actor into combat is a
-separate concern and this intent does not do it. Pair it with whatever puts the actor in
-combat (a travel leg that ends in a fight, the engine's own aggro, or your own mechanism).
+separate concern and this intent does not do it.
 
 **It claims nothing else.** No attack selection, no casting, no equip, no movement, no
 aggression, no perception. One intent, one facet.
 
-**It stops by itself.** When the target is dead, disabled, not loaded, or no longer
-resolves, when the owner is dead, or when the engine drops the target, Harbinger writes
-nothing and the engine picks its own targets again. Your claim stays live (Harbinger never
-releases a claim for you), so `Repoint` it to the next target or `Release` it.
+**It stops by itself.** When the target is dead, disabled, not loaded, no longer resolves, or is
+no longer a combat target of the group, and when the engine has no target, Harbinger writes
+nothing and the engine picks its own targets. Your claim stays live (Harbinger never releases a
+claim for you), so `Repoint` it to the next target or `Release` it.
 
 ### The recipe
 
@@ -1125,8 +1132,8 @@ void StopPin(RE::FormID actor) {
 ```
 
 No tick, no hook, no `currentCombatTarget` write of your own. If your client already has
-its own target hook, make it stand down for any actor you have pinned through Harbinger: two
-hooks on the same engine slot both write, and the one chained outside the other writes last.
+its own target hook, make it stand down for any actor you have pinned through Harbinger: a hook
+that writes the target after the engine's update overrides the pin.
 
 ### Parameter fields
 
@@ -1153,20 +1160,25 @@ hooks on the same engine slot both write, and the one chained outside the other 
 
 ### What is yours
 
-The world's reaction. Pin a follower onto a guard, a friendly or a bystander and the crime,
-bounty, faction and aggression consequences happen the way the engine does them. Harbinger
-does not stop them and Release does not undo them.
+The world's reaction to the fight. Crime, bounty, faction and aggression consequences happen the
+way the engine does them. Harbinger does not stop them and Release does not undo them.
 
 ### Limits worth knowing
 
-* **One update of lag.** The pin corrects the engine's pick right after the engine makes it,
-  inside the same combat update. What that one update already did with the engine's own pick
-  stands. From the next update on, the NPC is on your target.
-* **Another mod writing the same target is not denied.** If another mod hooks the same engine
-  slot after Harbinger, it writes last and wins.
+* **The deny is at the source, and it is checked.** Harbinger answers the engine's target
+  selector itself, so there is no update where the engine's own pick is used first. Harbinger also
+  watches the result of each update for a pinned actor. If the actor ends an update aimed at
+  someone else and the selector was never asked, the log says `SOURCE SEAT MISSED`. If the
+  selector was answered with your target and something still changed it afterwards, the log says
+  `OVERWRITTEN`. The Release line reports how many times the selector was asked, how often the
+  engine's pick was replaced, and each reason it was left alone.
+* **Another mod writing the same target is not denied.** A mod that writes the target after the
+  engine's update (its own `UpdateCombat` hook) writes last and wins. That shows up as
+  `OVERWRITTEN` when Harbinger can see it.
 * **Not saved.** A save load, a new game or the actor unloading drops the claim. Claim again.
-* **Built, CI-verified, not yet field-run.** The mechanism is MFO's field-proven target hook,
-  moved into Harbinger.
+* **Built, CI-verified, not yet field-run.** Nobody has watched the selector seat run in a game
+  yet. The first field log must show the `FIRST SOURCE DENY` line and no `SOURCE SEAT MISSED`
+  before anything relies on it.
 
 ## The facet table
 
@@ -1208,7 +1220,7 @@ columns, one doesn't imply the other.
 | `kIntent_EquipAuthority` (ch.17) | **Declare what the NPC wears; APMF equips it and refuses every other engine equip of a governed type (ARMO/WEAP/AMMO/LIGH) in the categories the claim owns.** ABI v7, declare with `SetEquipSet`; ABI v8 `SetEquipSetEx` adds a hand per item; ABI v9 `SetEquipScope` scopes the claim to owned/denied categories (default: all owned) | `ival` (an `EquipAuthFlags` bitmask); the set itself via `SetEquipSet` / `SetEquipSetEx`; the scope via `SetEquipScope` | Built, not yet battle-tested. Ships OBSERVE-ONLY (`[EquipAuthority] bEquipObserveOnly=1`) until the probe criteria above pass. The only call-site seat in APMF, under `Docs/INVARIANTS.md` #17a. Player-menu equips pass by default (v8). |
 | `kIntent_Cast` + `kCastFlag_AtPosition` (ABI v11) | **Cast a Target Location spell at a world point.** A one-shot remote cast from an APMF XMarker, blamed on the actor. Not a claim: no facet held, never seen by the cast seats | `form` (the spell), `ival` (the flag alone), `pos` (the point) | Built, not yet battle-tested. CI verified only. Summons refused by name (the engine only lets the caster summon). |
 | `kIntent_Travel` (ch.19) | **Walk this actor to a destination** (ABI v11: or to a world point, `kTravel_ToPosition`, via an APMF-owned XMarker). APMF points its own travel package at it and offers that package through an internal ch.9 claim at YOUR basis. The leg ends on arrival, on the actor entering combat, on the destination being gone, or (ABI v12) BLOCKED. ABI v12: `GetTravelLegState` says which, and `kTravel_SpeedSet` sets the gait | `form` (the DESTINATION, REQUIRED -- an object REFERENCE or a CELL, and it need not be loaded or nearby), `fval` (arrival radius, 0 => 75u, clamped 50-512, not used for a cell), `ival` (a `TravelFlags` bitmask) |a refused claim means the channel is off in APMF.ini, VR, the esl is missing, or eight legs are already running|
-| `kIntent_TargetPin` (ch.20, ABI v13) | **Pin the actor's combat target.** While the engine holds a target, Harbinger writes yours back after each combat update. Never starts combat | `form` (the target ACTOR, REQUIRED) | Built, not yet battle-tested. CI verified only. The mechanism is MFO's field-proven UpdateCombat target hook. |
+| `kIntent_TargetPin` (ch.20, ABI v13) | **Pin the actor's combat target.** Harbinger answers the engine's own target selector with your target while the actor is fighting and your target is one of its group's combat targets. Never starts combat | `form` (the target ACTOR, REQUIRED) | Built, not yet battle-tested. CI verified only. The selector seat has not been observed running in a game yet. |
 
 Where a field is marked "reserved, not yet read", the channel currently
 applies a fixed built-in behavior and ignores whatever you pass in that field.

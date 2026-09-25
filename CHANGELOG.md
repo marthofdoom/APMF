@@ -1,12 +1,13 @@
 ## Unreleased
 
-- **A mod can now pin an NPC's combat target.** Claim `kIntent_TargetPin` with the target actor in `APMF_Param.form`. While the NPC is fighting, Harbinger keeps it on that target. After the game's own combat update, if the game is aiming the NPC at someone else, Harbinger points it back. The NPC's own AI does the fighting.
+- **A mod can now pin an NPC's combat target.** Claim `kIntent_TargetPin` with the target actor in `APMF_Param.form`. While the NPC is fighting, the game asks who it should fight, and Harbinger answers with the mod's target. The game's own pick never reaches the NPC. The NPC's own AI does the fighting.
+- **Only among the game's own combat targets.** The target must already be one the NPC's side is fighting. If it is not, nothing changes and the log says so. Harbinger never makes anyone a target.
 - **It never starts a fight.** If the game has no target for the NPC, Harbinger writes nothing. When the fight ends, or the target dies or unloads, the game picks its own targets again. The claim stays until the mod releases it or points it somewhere else.
-- **It pins the target and nothing else.** No attacks, spells, equips, movement or aggression are touched. What the world does about the fight (crime, bounty, guards) is the mod's business, and releasing the pin does not undo it.
-- **This is MFO's target hook, moved into Harbinger.** Any mod can use it now without a hook of its own. Another mod that hooks the same spot after Harbinger still writes last.
+- **It pins the target and nothing else.** No attacks, spells, equips, movement or aggression are touched. What the world does about the fight is the mod's business, and releasing the pin does not undo it.
+- **Harbinger checks its own work.** If the NPC ends a combat update aimed at someone else and Harbinger was never asked, the log says so. If something changes the target after Harbinger answered, the log says that too. Another mod that writes the target after the game's update still wins.
 - `[TargetPin] bTargetPin` is new in `APMF.ini`, default 1. Set it to 0 and every pin request is refused.
 - New API revision (v13). It adds the intent and nothing else. Check `abiVersion >= 13` before asking for it. An older Harbinger refuses the request. A mod built against an older revision is unaffected.
-- Both runtimes. The hooked slot was read on the 1.6.1170 and 1.5.97 binaries, and any other build is refused by name. VR is refused.
+- Both runtimes. The three hooked spots were read on the 1.6.1170 and 1.5.97 binaries, and any other build is refused by name. VR is refused. The startup check now covers 177 addresses.
 - Not field-run. CI verified only.
 
 ## v0.9.8 -- Travel to a point, blocked legs, gait, and a startup address check

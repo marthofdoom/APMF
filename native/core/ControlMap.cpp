@@ -156,8 +156,8 @@ namespace apmf {
         // ch.20 (ABI v13): a kIntent_TargetPin claim is REFUSED synchronously when its
         // seat is not installed (VR, a runtime other than 1.6.1170 / 1.5.97, [TargetPin]
         // bTargetPin=0, a self-check refusal, or before kDataLoaded), when it names no
-        // target or names the actor itself, and for the player (whose vtable the seat
-        // does not sit on, so the claim could never pin). Same "seat down = claim
+        // target or names the actor itself, and for the player (ch.20 pins NPC combat
+        // targets only). Same "seat down = claim
         // refused" contract as ch.17 / ch.19 above. Whether param.form is an ACTOR
         // needs a form lookup, which RequestEx does not do off the game thread, so that
         // one is decided at Engage (channels/TargetPin.cpp) and logged there.
@@ -176,7 +176,7 @@ namespace apmf {
             else if (param->form == actor)
                 why = "the target is the actor itself";
             else if (actor == 0x14)
-                why = "the actor is the player, whose combat update the seat does not sit on";
+                why = "the actor is the player (ch.20 pins NPC combat targets only)";
             if (why) {
                 spdlog::warn("[apmf][target-pin] claim refused -- actor 0x{}: {}.", apmf::log::Hex(actor), why);
                 return APMF_API::kInvalidHandle;

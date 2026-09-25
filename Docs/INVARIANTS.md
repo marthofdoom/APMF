@@ -116,35 +116,45 @@ one frame after the cast by its tracked handle, forgotten (never touched) at a w
 boundary, and it is recorded in the co-saved marker ledger (#15, record `'XMRK'`) so the
 load of a save that captured it deletes it.
 
-**ADOPTED 2026-09-25 by marth ("yes, start the target pin", ClickUp 86e3cr9u7). The sixth legal
-action (ABI v13, `channels/TargetPin.cpp`): (f) PIN A DECLARED TARGET — deny the engine's own
-re-pick of an actor's combat target, at APMF's own seat.** This is a `currentCombatTarget` write,
-which the rule above names as forbidden; it is written here, in the rule it touches, rather than
-done quietly (CLAUDE.md "standing tension"). The client declares {actor, target} with
-`kIntent_TargetPin`; APMF's `Character::UpdateCombat` seat (vtable slot 0xE4) runs the engine's
-update first and then writes the declared target back into `currentCombatTarget` and the
-`CombatController`'s `targetHandle`. It is legal only while ALL of these hold:
+**ADOPTED 2026-09-25 by marth ("yes, start the target pin", ClickUp 86e3cr9u7; design corrected the
+same day: "APMF offers pinning, it must block engine pinning"). The sixth legal action (ABI v13,
+`channels/TargetPin.cpp`): (f) PIN A DECLARED TARGET — deny the engine's own target selection AT ITS
+SOURCE, among the targets the engine itself holds.** This puts a client-named actor where the engine's
+target pick would go, which the rule above names as forbidden; it is written here, in the rule it
+touches, rather than done quietly (CLAUDE.md "standing tension"). The client declares {actor, target}
+with `kIntent_TargetPin`. The engine picks an actor's combat target in
+`CombatController::UpdateTarget` (called once per `UpdateCombat`), which asks each active
+`CombatTargetSelector` through vtable slot 6 (`SelectTarget`) and hands the first answer to
+`SetTarget`. APMF's seat on slot 6 of both selector classes (Standard and Fixed) chains the original
+and replaces its answer with the declared target. It is legal only while ALL of these hold:
 1. **APMF selects nothing.** The client named the target. APMF picks no target, no foe order and
-   no fallback; an inert claim (the target is not an actor, 0, or the actor itself) writes nothing.
-2. **The engine already holds a target.** Nothing is written when `currentCombatTarget` is empty.
-   So the pin never starts a fight, never revives one the engine ended, and never overrides the
-   engine's judgement that there is no foe (lost, fled, undetected). Combat ENTRY stays forbidden
-   (the `StartCombat` clause above is untouched). "Commanding WHICH foe is ours; commanding THAT
-   there is a foe is not."
+   no fallback; an inert claim (the target is not an actor, 0, or the actor itself) answers nothing.
+2. **APMF only chooses among targets the engine itself holds.** The answer is replaced only when
+   the engine's own selector answered with a target (the actor is fighting) AND the declared target
+   is in the actor's `combatGroup->targets` (read under the group's own lock). A declared target the
+   engine does not hold as a combat target is NOT written: counted and logged. So the pin never starts
+   a fight, never revives one the engine ended, never overrides the engine's judgement that there is no
+   foe, and never makes a non-combatant a target on its own. A non-foe becomes pinnable only once
+   something else (the client's own combat entry, a separate facet) makes it a combat target. Combat
+   ENTRY stays forbidden here (the `StartCombat` clause above is untouched).
 3. **It is the target facet and nothing else.** No attack selection, cast, equip, movement,
    aggression or perception write. Everything the NPC does against the target is its own AI.
-4. **The engine runs first, every time.** The seat chains (#17): the original always runs, and
-   the write only replaces the result of the engine's pick, after it. It is a SEAT-TIME
-   CORRECTION, not a source block: inside one update the engine's pick exists until the original
-   returns, and what that same update consumed saw it. That is #2's label and ch.20 carries it
-   (`Docs/DENY-COMPLETENESS-AUDIT.md` row 20 names the open source-level deny).
-5. **It stops by itself.** Target dead, disabled, not loaded or unresolvable, owner dead, the
-   claim released, outranked or dropped (unload, save load, revert): nothing is written and the
-   engine's own targeting stands. Release restores nothing (#5a): there is no prior value to put
-   back, and the engine re-picks on its own.
-6. **Scope is closed by name.** Exactly 1.6.1170 or 1.5.97, not VR, the Character vtable only
-   (never the player), `[TargetPin] bTargetPin`, and the address self-check. Widening it (a combat
-   entry, a target list, a priority order) is a new amendment, not a code change.
+4. **It is a SOURCE deny, chained.** The selector's original always runs (#17) and keeps its own
+   bookkeeping; only its OUTPUT is replaced, before `UpdateTarget` compares it with the controller's
+   target and calls `SetTarget`. The engine's pick therefore never reaches `targetHandle`,
+   `currentCombatTarget`, or anything the rest of that update reads. The engine CLEARING the target
+   (`SetTarget(0)`) is not denied (condition 2). There is NO after-the-fact rewrite: the
+   `UpdateCombat` hook ch.20 also installs is observe-only and exists to log a source-seat MISS or an
+   OVERWRITE loudly (principle 7), never to paper over one.
+5. **It stops by itself.** Target dead, disabled, not loaded or unresolvable, not in the group's
+   targets, the engine holding no target, the claim released, outranked or dropped (unload, save
+   load, revert): nothing is replaced and the engine's own selection stands. Release restores nothing
+   (#5a).
+6. **Scope is closed by name.** Exactly 1.6.1170 or 1.5.97, not VR, the two selector vtables and
+   the Character vtable only (never the player), `[TargetPin] bTargetPin`, the address self-check on
+   all three, and a per-call vtable-identity check before the raw selector offset (+0x10) is read
+   (#20's raw-offset guards). Widening it (a combat entry, a target list, a priority order) is a new
+   amendment, not a code change.
 7. **The world's reaction belongs to the client** (CLAUDE.md principle 2 scope, marth
    2026-09-25). Crime, bounty, faction and aggression reactions to the declared fight happen as
    the engine does them, and are not undone.
@@ -238,10 +248,9 @@ the owned channel — skip/neutralize the write), NOT to keep overriding after t
 fact. Deck-tested: true source-blocks (AV, casting selection) hold even on a
 package-locked Cicero; the un-blocked channels (headtrack, crouch) get out-fought
 by the package — because they are not blocking yet. Today only `Headtrack` (ch.5)
-is known-incomplete. Never mislabel a re-assert as a clean gate. (ch.20 `TargetPin`, ABI v13, is
-not a `Tick` re-assert: it corrects the engine's target inside the engine's own per-actor combat
-update, at its seat, right after the pick. It still is not a SOURCE block, so it carries this
-label at one-update granularity and says so in its header -- #0 (f) condition 4.)
+is known-incomplete. Never mislabel a re-assert as a clean gate. (ch.20 `TargetPin`, ABI v13, is a
+SOURCE block, not a re-assert: it answers the engine's own target-selector seat, so the engine's pick
+never reaches the controller -- #0 (f) condition 4. It is not on this list.)
 
 **#3 — Never substitute the package — SCOPED to the movement-hijack channels.** A
 channel that commandeers a facet BY DRIVING IT OVER A RUNNING PACKAGE (the movement
