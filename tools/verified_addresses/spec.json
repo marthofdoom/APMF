@@ -18,7 +18,7 @@
     "0xDF",
     "0xE4"
    ],
-   "source": "native/core/Hook.cpp:94; PackageGate.cpp:296; NonAliasProbe.cpp:216; channels/TargetPin.cpp:305",
+   "source": "native/core/Hook.cpp:94; PackageGate.cpp:296; NonAliasProbe.cpp:216; channels/TargetPin.cpp:306",
    "doc": "ADDRESS-TABLE-2026-09-15.md:64"
   },
   {
@@ -3278,14 +3278,14 @@
   {
    "what": "Character slot UpdateCombat (ch.20 target-pin seat; void(Actor*), call site sets rcx only)",
    "value": "0xE4",
-   "where": "channels/TargetPin.cpp:305-309",
+   "where": "channels/TargetPin.cpp:306-313",
    "verified_by": "Rows table slot target; call site 1.6.1170 0x83F5E0+0x3C / 1.5.97 0x7A8390+0x3C: call [rax+0x720], rcx only, rax discarded",
    "gate": "VR refused + exact 1.6.1170/1.5.97 + INI bTargetPin + self-check"
   },
   {
    "what": "Actor runtime data currentCombatTarget (WRITTEN) / combatController (read); CombatController targetHandle + previousTargetHandle (WRITTEN)",
    "value": "CommonLib ACTOR_RUNTIME_DATA (Actor +0xFC / +0x104, +0x158 / +0x160); 0x2C / 0x30",
-   "where": "channels/TargetPin.cpp:163-180",
+   "where": "channels/TargetPin.cpp:163-181",
    "verified_by": "MFO ENGINE_NOTES 0.47 (StopCombat writes [+0x158]/[+0x160] and [+0xFC]/[+0x104] on both builds); fork CombatController ctors: identical below +0x68; static_asserts",
    "gate": "inside the ch.20 seat"
   },

@@ -173,8 +173,9 @@ namespace {
             }
 
             const RE::FormID engineChoice = currentPtr->GetFormID();
+            auto* const      cc           = rt.combatController;   // read ONCE (see THREADING above)
             rt.currentCombatTarget = pin.handle;
-            if (auto* cc = rt.combatController) {
+            if (cc) {
                 cc->previousTargetHandle = cc->targetHandle;
                 cc->targetHandle         = pin.handle;
             }
@@ -186,7 +187,7 @@ namespace {
                 spdlog::info("[ch.20] 0x{} FIRST PIN: the engine picked 0x{}, pinned back to 0x{} (combat "
                              "controller {}).",
                              Hex(self), Hex(engineChoice), Hex(claim.form),
-                             rt.combatController ? "present" : "ABSENT -- currentCombatTarget only");
+                             cc ? "present" : "ABSENT -- currentCombatTarget only");
             }
         }
 
