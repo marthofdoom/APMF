@@ -142,6 +142,13 @@ namespace {
     // overwritten). Counters are always kept; only the log is limited.
     constexpr std::uint64_t kLogEveryMs = 5000;
 
+    // The ONE seat-recorded end reason Poll() trusts without a live re-check: it comes from
+    // the group's target list, which Poll must not read off the combat job (APMF-B26). Every
+    // other reason is re-checked live on the game thread (review closing round F1: a worker
+    // can see a null Get3D2 during a 3D rebuild -- a transform, a skeleton swap, Reset3D, a
+    // script Disable+Enable -- so one worker observation must not end the pin).
+    constexpr const char* kReasonLost = "target lost";
+
     std::atomic<bool>        g_installed{ false };
     std::atomic<bool>        g_installTried{ false };
     std::atomic<const char*> g_notInstalledReason{ "before kDataLoaded (the seat installs there)" };
@@ -250,6 +257,10 @@ namespace {
         pin.seatHits.fetch_add(1, std::memory_order_relaxed);
         const auto decline = [&pin] { pin.lastDecision.store(2, std::memory_order_relaxed); };
         const auto endWith = [&pin](const char* why) {
+            if (why == kReasonLost) {   // the trusted reason always wins over a transient one
+                pin.seatEndReason.store(why, std::memory_order_relaxed);
+                return;
+            }
             const char* none = nullptr;
             pin.seatEndReason.compare_exchange_strong(none, why, std::memory_order_relaxed);
         };
@@ -282,7 +293,7 @@ namespace {
         const Membership m = group ? GroupMembership(group, pin.handle) : Membership::kAbsent;
         if (m == Membership::kLost) {
             pin.targetLost.fetch_add(1, std::memory_order_relaxed);
-            endWith("target lost");   // the engine can no longer locate it: the pin ends
+            endWith(kReasonLost);   // the engine can no longer locate it: the pin ends
             decline();
             return;
         }
@@ -360,6 +371,9 @@ namespace {
             // MISS is judged only when the actor is alive and had a controller both before
             // and after the update.
             auto* const ccBefore = tf ? a_this->GetActorRuntimeData().combatController : nullptr;
+            // Closing round F2: the target BEFORE the update, so a change made during it with no
+            // seat call is a MISS whatever the seat decided last time.
+            const RE::ActorHandle curBefore = a_this->GetActorRuntimeData().currentCombatTarget;
 
             func(a_this);   // the engine's update, with the selector seat inside it
 
@@ -382,10 +396,12 @@ namespace {
 
             const auto hits1   = pin.seatHits.load(std::memory_order_relaxed);
             const auto denied1 = pin.denied.load(std::memory_order_relaxed);
-            // A seat whose previous call DECLINED (not a combat target, lost, gone, ending)
-            // leaves the engine's pick standing on purpose; only a seat that has never run,
-            // or last answered with the pin, is judged.
-            if (hits1 == hits0 && pin.lastDecision.load(std::memory_order_relaxed) != 2) {
+            // A MISS: the seat was not called this update AND either the target CHANGED during
+            // the update (whatever the seat decided last time -- a sticky decline must not hide
+            // a real miss for good), or it is unchanged and the seat's last decision was not a
+            // decline (a declined pin legitimately leaves the engine's standing pick in place).
+            const bool changed = a_this->GetActorRuntimeData().currentCombatTarget != curBefore;
+            if (hits1 == hits0 && (changed || pin.lastDecision.load(std::memory_order_relaxed) != 2)) {
                 const auto n = pin.seatMissed.fetch_add(1, std::memory_order_relaxed) + 1;
                 if (RateOk(pin.lastMissLogMs)) {
                     spdlog::warn("[ch.20] 0x{} SOURCE SEAT MISSED: the actor ended its combat update aimed at 0x{}, "
@@ -573,7 +589,9 @@ namespace apmf::targetpin {
         }
 
         for (const auto& sn : snaps) {
-            const char* why = sn.seatWhy;   // e.g. "target lost", seen by the seat on a worker
+            // "target lost" is trusted as the seat saw it; everything else is checked LIVE here,
+            // on the game thread, whatever the seat recorded.
+            const char* why = sn.seatWhy == kReasonLost ? kReasonLost : nullptr;
             if (!why) {
                 auto* owner = RE::TESForm::LookupByID<RE::Actor>(sn.id);
                 auto  tptr  = sn.handle.get();
@@ -583,7 +601,16 @@ namespace apmf::targetpin {
                 else if (tptr->IsDisabled())       why = "target disabled";
                 else if (!tptr->Is3DLoaded())      why = "target unloaded";
             }
-            if (!why) continue;
+            if (!why) {
+                if (sn.seatWhy) {   // the seat saw a transient state that the live check does not confirm
+                    std::shared_lock lk(g_pinMx);
+                    if (const auto it = g_pins.find(sn.id); it != g_pins.end() && it->second.target == sn.target) {
+                        const char* seen = sn.seatWhy;
+                        it->second.seatEndReason.compare_exchange_strong(seen, nullptr, std::memory_order_relaxed);
+                    }
+                }
+                continue;
+            }
 
             // End the WINNING claim -- the one this entry was resolved for.
             APMF_API::APMF_Param param{};
