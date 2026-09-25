@@ -10,7 +10,7 @@ nothing when one does not. At startup `REL::SelfCheck::Run` repeats the comparis
 game actually loaded. A row that fails refuses THAT seat by name in the log; the expected RVA is never
 used in place of the library's answer.
 
-Offline result of this generation: 1.6.1170.0 177/177 verified, 0 refused, 1.5.97.0 177/177 verified, 0 refused.
+Offline result of this generation: 1.6.1170.0 178/178 verified, 0 refused, 1.5.97.0 178/178 verified, 0 refused.
 
 ## Rows
 
@@ -193,6 +193,7 @@ Offline result of this generation: 1.6.1170.0 177/177 verified, 0 refused, 1.5.9
 | EquipSink.Path.StartCombat.38561 | function | 38561 | 0x6B6930 | - | - | signature (38 bytes, unique in .text) |  | native/core/EquipSink.cpp:149 |  |
 | CommonLib.BSReadWriteLock.LockForRead | function | 68233 | 0xCC90C0 | 66976 | 0xC072D0 | signature (32 bytes, unique in .text) |  | CommonLib mit-3.7 fde0f3ae include/RE/T/TESForm.h LookupByID/LookupByEditorID (BSReadLockGuard) | ADDRESS-TABLE-2026-09-15.md ADDENDUM 2026-09-24 F1b |
 | CommonLib.BSReadWriteLock.UnlockForRead | function | 68239 | 0xCC9380 | 66982 | 0xC07590 | signature (16 bytes, unique in .text) |  | CommonLib mit-3.7 fde0f3ae include/RE/T/TESForm.h LookupByID/LookupByEditorID (BSReadLockGuard) | ADDRESS-TABLE-2026-09-15.md ADDENDUM 2026-09-24 F1b |
+| CombatEntry.Actor.StartCombat | function | 38561 | 0x6B6930 | 37608 | 0x6251B0 | signature (38 bytes, unique in .text) |  | native/channels/CombatEntry.cpp:244 (call), :379 (SeatVerified) | ch.21 combat entry, INVARIANTS #0 (g); ADDRESS-TABLE-2026-09-15.md:396 |
 | EquipSink.Path.OutfitApply.24234 | function | - | - | 24234 | 0x364710 | signature (21 bytes, unique in .text) |  | native/core/EquipSink.cpp:158 |  |
 | EquipSink.Path.AddWornOutfit.19266 | function | - | - | 19266 | 0x28DDA0 | signature (17 bytes, unique in .text) |  | native/core/EquipSink.cpp:159 |  |
 | EquipSink.Path.AiCommand.38618 | function | - | - | 38618 | 0x669210 | signature (33 bytes, unique in .text) |  | native/core/EquipSink.cpp:160 |  |
@@ -266,6 +267,9 @@ audit covers everything the DLL installs or reads.
 | EquipSink Classify: RVA -> id through the Address Library table | the whole Offset2ID table | EquipSink.cpp:269-280, :698 | the path ids above are self-checked rows | exact 1.6.1170/1.5.97 + self-check |
 | CommonLib-bound calls APMF relies on: GetHandle, LookupForm, DOBJ GetSingleton, ActorValueOwner | CommonLib 3.7.0 ids | channels/*, core/* | every id present in both libraries; a miss is now fatal (fork d9ad1072) | varies |
 | Declared but never hooked: CombatBehaviorTreeCreateContextNode1/Base<CombatBehaviorContextMagic> | VariantID(266702, 213692) / (550933, 213681) | CombatBehaviorRE.h kCastContextNodes | not installed anywhere, so not a self-check row | n/a |
+| Actor::StartCombat signature (ch.21, the ONE call): bool(Actor* this, Actor* target, CombatGroup* join) | rcx this, rdx target, r8 group-to-join (nullptr), al = bool | channels/CombatEntry.cpp:244 | 1.6.1170 0x6B6930 / 1.5.97 0x6251B0 prologue: mov rbp,r8; mov rsi,rdx; mov rdi,rcx; r8 used as [rbp+0x30] members count + CombatManager 46874 / 45574 (join path); return movzx eax,r14b; engine caller 40814 passes xor r8d,r8d at 0x7505A3 | VR refused + exact 1.6.1170/1.5.97 + INI bCombatEntry + self-check |
+| Actor currentProcess must be non-null before StartCombat (dereferenced unchecked) | ACTOR_RUNTIME_DATA::currentProcess (SE 0xF0 / AE 0xF8) | channels/CombatEntry.cpp:221 | 1.6.1170 0x6B69E3 mov rcx,[rdi+0xF8]; call 39445 reads [rcx+0x10] with no null test; 1.5.97 0x625261 -> 38447 same | checked in Enter() before the call |
+| ch.21 entry log: CombatController combatGroup (read), CombatGroup targets / lock, CombatTarget handle + kTargetLost | cc+0x00; group +0x08 / +0x160; target stride 0xA8, handle +0x00, flags u16 +0xA6 bit 1 | channels/CombatEntry.cpp:160-169 | same facts as ch.20 (group ctor 1.6.1170 0x803240 / 1.5.97 0x769DF0; AddTarget 44704 / 43482 appends 0xA8-byte entries under +0x160); static_asserts | main thread, right after StartCombat, under the group's read lock |
 
 ## Regenerating
 
