@@ -1233,7 +1233,7 @@ says `entry ended: <reason>`, and `IsClaimLive(handle)` turns false, when:
 
 | reason in the log | what happened |
 |---|---|
-| `engine refused entry: <cause>` | `StartCombat` returned false. The cause is named when Harbinger can see it (restrained, unconscious, dead actor, dead target); otherwise "cause not reported by the engine" (its distance test, or one of its flags). |
+| `engine refused entry: <cause>` | `StartCombat` returned false. The cause is named when Harbinger can see it (restrained, unconscious, dead actor, dead target); otherwise "cause not reported by the engine": its distance test, its identity test against one engine-global actor (AE id 401069 / SE id 514905), or one of its actor / process flags. |
 | `entry not attempted: <why>` | The target is not an Actor, or at call time the NPC was not loaded, had no AI process or was dead, or the target was not loaded, disabled or dead. No engine call was made. |
 | `combat ended` | The entry succeeded and the NPC is no longer in combat (it has no combat controller). The engine ended the fight: the foe got away, was calmed, someone called `StopCombat`. |
 | `owner dead`, `target dead`, `target disabled`, `target unloaded`, `target unresolvable` | Checked about four times a second while the claim stands. |
@@ -1241,65 +1241,72 @@ says `entry ended: <reason>`, and `IsClaimLive(handle)` turns false, when:
 Your own Release, an outranking claim, a save load, a new game or the NPC unloading also end it.
 **To try again, send a NEW `RequestEx`.** An ended handle is dead; Repointing it does nothing.
 
+**The engine giving up is final for that target.** If a claim ended with `combat ended` or `engine
+refused entry`, and another claim on the same NPC (yours or another mod's) was waiting under it and
+names the SAME target, that claim does not start the fight again: it ends with the same reason. A
+waiting claim naming a different target gets its one call. The record lasts until the NPC has no
+combat-entry claim left, so once every claim on it is released, a new request starts fresh.
+
 ### The recipe: enter combat + pin
 
 Two intents, two handles. Entry puts your target into the NPC's combat group; the pin answers the
-engine's target selector with it on every combat update. Claim the pin AFTER the entry has
-succeeded: then the target is already one of the group's combat targets and the pin engages on the
-next combat update. Harbinger makes the entry call one frame after your request and ends a failed
-entry the frame after that, so check two or more frames later: the entry claim still live AND the
-NPC in combat means it entered.
+engine's target selector with it on every combat update. Claim both together: the pin WAITS (it does
+not end) while your target is not yet one of the group's combat targets, and takes hold on the first
+combat update after the entry put it there. Your code never needs to look at the NPC's combat state
+itself; watch the two handles with `IsClaimLive`.
 
 ```cpp
 using namespace APMF_API;
 
-struct Fight { RE::FormID target = 0; Handle entry = kInvalidHandle; Handle pin = kInvalidHandle; int age = 0; };
+struct Fight { Handle entry = kInvalidHandle; Handle pin = kInvalidHandle; };
 std::unordered_map<RE::FormID, Fight> g_fight;   // one per actor
 
-void StopFight(RE::FormID actor);
+void StopFight(RE::FormID actor) {
+    if (auto it = g_fight.find(actor); it != g_fight.end()) {
+        g_apmf->Release(it->second.pin);    // the engine picks its own targets again
+        g_apmf->Release(it->second.entry);  // stops nothing: the engine ends the fight its own way
+        g_fight.erase(it);
+    }
+}
 
 void FightThis(RE::FormID actor, RE::FormID target) {
     if (!g_apmf || g_apmf->abiVersion < 14) return;   // absent or older than v14: start it your own way
-    StopFight(actor);                                  // one fight per actor; a new target = a new request
+    StopFight(actor);                                  // one fight per actor; a new target = new requests
     APMF_Param p{};
-    p.form = target;                                   // REQUIRED: the target ACTOR
-    const Handle h = g_apmf->RequestEx(actor, kIntent_CombatEntry, /*basis=*/50.0f, &p);
-    if (h == kInvalidHandle) return;                   // refused at the call (the log says why)
-    g_fight[actor] = { target, h, kInvalidHandle, 0 };
+    p.form = target;                                   // REQUIRED for both: the target ACTOR
+    Fight f;
+    f.entry = g_apmf->RequestEx(actor, kIntent_CombatEntry, /*basis=*/50.0f, &p);
+    if (f.entry == kInvalidHandle) return;             // refused at the call (the log says why)
+    f.pin = g_apmf->RequestEx(actor, kIntent_TargetPin, /*basis=*/50.0f, &p);
+    g_fight[actor] = f;                                // a refused pin (kInvalidHandle) just means no pin
 }
 
 // Your own per-frame (or per-tick) update.
 void TickFights() {
     for (auto it = g_fight.begin(); it != g_fight.end();) {
-        auto& [actor, f] = *it;
-        if (!g_apmf->IsClaimLive(f.entry)) {           // Harbinger ended it (the log says why)
-            if (f.pin != kInvalidHandle) g_apmf->Release(f.pin);
-            it = g_fight.erase(it);                    // to try again: FightThis() again = a NEW request
+        const auto& f = it->second;
+        // Harbinger ended one of them (the log says why): drop both. To try again, call
+        // FightThis() again -- that is a NEW request.
+        if (!g_apmf->IsClaimLive(f.entry) || (f.pin != kInvalidHandle && !g_apmf->IsClaimLive(f.pin))) {
+            g_apmf->Release(f.pin);
+            g_apmf->Release(f.entry);
+            it = g_fight.erase(it);
             continue;
         }
-        if (f.pin == kInvalidHandle && ++f.age >= 2) {
-            auto* a = RE::TESForm::LookupByID<RE::Actor>(actor);
-            if (a && a->IsInCombat()) {                // entered: now pin the same target
-                APMF_Param p{};
-                p.form = f.target;
-                f.pin  = g_apmf->RequestEx(actor, kIntent_TargetPin, /*basis=*/50.0f, &p);
-            }
-        }
         ++it;
-    }
-}
-
-void StopFight(RE::FormID actor) {
-    if (auto it = g_fight.find(actor); it != g_fight.end()) {
-        if (it->second.pin != kInvalidHandle) g_apmf->Release(it->second.pin);   // the engine picks again
-        g_apmf->Release(it->second.entry);            // stops nothing: the engine ends the fight its own way
-        g_fight.erase(it);
     }
 }
 ```
 
 `IsClaimLive` is ABI v6. The pin ends by itself on the same kinds of reason, plus a target the
-engine has LOST; release the other handle when either one ends.
+engine has LOST.
+
+**Watch the pin's "NOT a combat target" line when the NPC was already fighting.** On the
+already-in-combat path the engine's `StartCombat` ignores whether it managed to add your target and
+reports success either way, so the entry line says `ENTERED` and cannot tell you. If the target was
+not added, the pin waits and logs `[ch.20] ... pin 0x... is NOT a combat target of this actor's
+group` about every five seconds while the NPC keeps fighting its own foes. That line is how you find
+out; your mod can release both handles and try again later with new requests.
 
 ### Parameter fields
 
@@ -1326,9 +1333,10 @@ Harbinger does not stop any of it and Release does not undo it.
 
 ```
 [ch.21] 0x... combat-entry ENGAGED -> target 0x...: ONE Actor::StartCombat call is queued ...
+[ch.20] 0x... target-pin ENGAGED -> target 0x... (same frame: the pin waits for the entry)
 [ch.21] 0x... entry ENGAGED against 0x...: REQUESTED -> the engine ENTERED (was not in combat: new
-        controller and group). Target is a combat-group target: yes (...). Pin: no ch.20 claim yet ...
-[ch.20] 0x... target-pin ENGAGED -> target 0x... (your pin, a couple of frames later)
+        controller and group). Target is a combat-group target: yes (...). Pin: a ch.20 claim names
+        this target.
 [ch.20] 0x... FIRST SOURCE DENY: ...
 ...
 [ch.21] 0x... entry ended: combat ended (target 0x..., claim h=...). ...

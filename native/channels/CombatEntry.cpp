@@ -95,6 +95,12 @@ extern "C" __declspec(dllimport) unsigned long __stdcall GetPrivateProfileIntA(
 //         -- Poll().
 //     A client that wants another entry sends a NEW request. (A Repoint of a still-live
 //     claim makes one more call too, but an ended claim is gone.)
+//   * THE ENGINE GAVE UP = DROPPED (review F1, option a). When a claim ends because the engine
+//     ended the fight ("combat ended") or refused the entry, and a RIVAL claim on the same actor
+//     takes over naming the SAME target, it does NOT re-enter: its owner-change Apply ends it
+//     with the same reason. The reason is kept on the actor's entry keyed by target
+//     (engineGaveUp), across Apply, until the actor's last combat-entry claim is released. A
+//     rival naming a DIFFERENT target still gets its one call.
 //   * Save load / revert / new game: claims are never saved (ControlMap::Clear), so the
 //     entry state is dropped with them (ResetAll) and a task still queued is discarded with
 //     the main-thread queue. Whatever combat the engine was in is saved and restored by the
@@ -152,6 +158,12 @@ namespace {
         bool            inFight = false;    // the last call entered and the controller was present
         bool            ending = false;     // Harbinger is releasing this claim
         std::string     endedReason;        // for the Release line
+        // Review F1 (option a, marth: "the engine gave up = dropped"): targets whose entry the
+        // ENGINE ended ("combat ended") or refused, with that reason. Keyed by TARGET and kept
+        // across Apply (the gen bump does not wipe it) for as long as this actor has any
+        // combat-entry claim: a rival claim taking over with the SAME target is ended with the
+        // same reason instead of re-entering. Dropped with the entry on the last Release.
+        std::unordered_map<RE::FormID, std::string> engineGaveUp;
     };
 
     std::unordered_map<RE::FormID, Entry> g_entries;
@@ -175,6 +187,8 @@ namespace {
             param.form != tf || h == APMF_API::kInvalidHandle)
             return;
         it->second.ending      = true;
+        if (why.starts_with("combat ended") || why.starts_with("engine refused entry"))
+            it->second.engineGaveUp.try_emplace(tf, why);   // keep the FIRST (engine) reason
         it->second.endedReason = why;
         apmf::ControlMap::Get().EnqueueRelease(h);
         spdlog::info("[ch.21] 0x{} entry ended: {} (target 0x{}, claim h={}). Harbinger released the claim and "
@@ -253,10 +267,12 @@ namespace {
             const char* cause =
                 lifeState == RE::ACTOR_LIFE_STATE::kRestrained ? "the actor is restrained" :
                 lifeState == RE::ACTOR_LIFE_STATE::kUnconcious ? "the actor is unconscious" :
-                actor->IsDead(false)                           ? "the actor is dead" :
-                target->IsDead(false)                          ? "the target is dead" :
+                actor->IsDead(true)                            ? "the actor is dead" :   // engine: dl=1, AE 0x6B69BF
+                target->IsDead(false)                          ? "the target is dead" :  // engine: edx=0, AE 0x6B69FF
                                                                   "cause not reported by the engine (its distance "
-                                                                  "test, or one of its actor / process flags)";
+                                                                  "test, its global-actor identity test -- AE id "
+                                                                  "401069 / SE id 514905 -- or one of its actor / "
+                                                                  "process flags)";
             spdlog::warn("[ch.21] 0x{} entry {} against 0x{}: REQUESTED -> the engine REFUSED (StartCombat returned "
                          "false; {} before the call).",
                          Hex(id), what, Hex(tf), wasInCombat ? "in combat" : "not in combat");
@@ -337,6 +353,20 @@ namespace {
                          "Harbinger ends the claim.",
                          Hex(id), what, Hex(tf), why);
             std::string reason = fmt::format("entry not attempted: {}", why);
+            apmf::mainthread::Post([id, tf, gen, reason] { EndUnusable(id, tf, gen, reason); });
+            return;
+        }
+        // Review F1: the engine already gave up on THIS target for this actor (it ended the fight
+        // or refused the entry, under an earlier claim). A claim that takes over naming the same
+        // target does not re-enter: it ends with the same reason. A different target is a new
+        // declaration and gets its one call.
+        if (const auto& gave = g_entries.at(id).engineGaveUp; gave.contains(tf)) {
+            std::string reason = fmt::format("{} (earlier claim; a claim taking over with the same target does "
+                                             "not re-enter)",
+                                             gave.at(tf));
+            spdlog::warn("[ch.21] 0x{} combat-entry {} -> target 0x{}: NOT CALLED, the engine already gave up on "
+                         "this target for this actor ({}). Harbinger ends the claim.",
+                         Hex(id), what, Hex(tf), gave.at(tf));
             apmf::mainthread::Post([id, tf, gen, reason] { EndUnusable(id, tf, gen, reason); });
             return;
         }

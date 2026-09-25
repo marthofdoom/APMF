@@ -188,14 +188,20 @@ target. It is legal only while ALL of these hold:
    a fight (its callers include AE 40814, which passes the same nullptr third argument). APMF writes no
    controller, group, target, detection, aggression or faction state, builds no selector, and calls no
    `SetTarget`. Whether and how the actor enters is the engine's: it refuses a restrained, unconscious or
-   dead actor, a dead target, a target failing its own distance test, and a few engine flags. A refusal
+   dead actor, a dead target, a target failing its own distance test, an actor that is one particular
+   engine-global actor (AE id 401069 / SE id 514905, an identity test), and a few engine flags. A refusal
    is not retried: it ENDS the claim (condition 5).
 3. **One call per declaration, which is not sustaining.** On the main thread, one frame after the claim
    is published (re-validated then), exactly one call per Engage and one per Repoint / owner change.
    Each call answers a declaration the client just made (a Repoint is a new declaration; so is another
    client's claim becoming the winner). No Tick, no re-assert, no retry, no re-entry when the engine
    ends the fight: re-entering on Harbinger's own initiative would SUSTAIN a decision, which the rule
-   above forbids. After the claim has ENDED, another entry is a NEW request from the client.
+   above forbids. After the claim has ENDED, another entry is a NEW request from the client. **The
+   engine giving up is final for that target (marth: "the engine gave up = dropped"):** when a claim
+   ended because the engine ended the fight (`combat ended`) or refused the entry, a rival claim that
+   then takes over the actor's facet naming the SAME target makes NO call -- it is ended with the same
+   reason. That record is kept per actor and per target until the actor's last combat-entry claim is
+   released. A rival naming a DIFFERENT target is a different declaration and gets its one call.
 4. **Release stops forcing and undoes nothing.** Release calls no `StopCombat` and restores nothing
    (#5a): once entered, the fight is engine state -- controller, group, members told, detection, crime --
    and stopping it would be an undo that also tears down combat the actor may have for its own reasons.

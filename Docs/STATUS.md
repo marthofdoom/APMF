@@ -30,6 +30,13 @@ needs to make an NPC fight a target, and MFO's hidden "nearest visible enemy" ga
   unloaded / unresolvable. A retry is a NEW request. The post-call group-membership read is GONE (on a new
   fight membership == the true return; already in combat it is not read), so ch.21 dereferences no
   controller or group. Not saved.
+  **Round 3 (tier-A review clean, one SEV-3):** F1 -- when the engine ended the fight or refused the entry,
+  a rival claim taking over with the SAME target does not re-enter; it ends with the same reason (kept per
+  actor and target until the last combat-entry claim is released). F2/F3 -- the INTEGRATION recipe claims
+  entry + pin together and watches only `IsClaimLive` (no `IsInCombat`, a controller dereference), and warns
+  that on the already-in-combat path `ENTERED` does not prove the target was added (watch the pin's "NOT a
+  combat target" line). F4 -- refusal label tests `IsDead(true)` as the engine does. F6/F7 deferred as
+  APMF-B30 / APMF-B31.
 - **ABI v14** adds the intent only (no struct, slot or field). The H1 lockpick/LOTD idle work pencilled at v14
   below must take v15.
 - **APMF-B26 (StopCombat seat) NOT BUILT -- stop-and-report.** The disassembly says a 0xE5 seat sharing a

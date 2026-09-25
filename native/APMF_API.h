@@ -508,8 +508,9 @@ namespace APMF_API {
                                      //       the log names the reason), when:
                                      //         * the ENGINE REFUSED the entry (StartCombat returned
                                      //           false: a restrained, unconscious or dead actor, a
-                                     //           dead target, the engine's own distance test, or
-                                     //           an engine flag) -- "engine refused entry: ...";
+                                     //           dead target, the engine's own distance test, its
+                                     //           identity test against one engine-global actor,
+                                     //           or an engine flag) -- "engine refused entry: ...";
                                      //         * the entry could not be attempted: the target is
                                      //           not an Actor, or the actor is not loaded, has no
                                      //           AI process or is dead;
@@ -517,6 +518,10 @@ namespace APMF_API {
                                      //           now has no combat controller -- "combat ended";
                                      //         * the target is dead, disabled, not loaded or no
                                      //           longer resolves, or the actor itself dies.
+                                     //       After "combat ended" or a refusal, another claim on
+                                     //       the actor that takes over naming the SAME target ends
+                                     //       with the same reason (no re-entry) until the actor has
+                                     //       no combat-entry claim left.
                                      //       To try again, send a NEW RequestEx. Your own Release,
                                      //       an outranking claim, a save load, a new game or the
                                      //       actor unloading also end it (never saved).
