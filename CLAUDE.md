@@ -125,6 +125,13 @@ of a given change.
    nothing unrequested can get through, entering any state is safe. So when reviewing
    a design, NEVER ask "which side effects are acceptable?" — ask **"for each facet
    this switches on, do we have a complete deny, and WHERE ARE THE HOLES?"**
+   **SCOPE OF THE DENY (marth 2026-09-25): the client owns the consequences.** "The ramifications
+   of decisions made through APMF are not ours to fix. If a user uses it to cause chaos, chaos
+   ensues." The deny covers COMPETING sources for the facet a client claimed, and facets Harbinger
+   switches on by itself as a substrate. It NEVER covers the world's reaction to the client's own
+   declared action: crime, bounty, faction and aggression changes, allies or guards joining. When
+   a client makes an NPC fight someone it would not normally fight, those reactions happen as the
+   engine does them. On release Harbinger stops forcing and does not undo them.
 3. **COMPOSITION, NOT SUBSTITUTION.** Never swap in a whole package; a substituted
    package makes the preempted source lose its slot, fire OnPackageEnd and tear down
    (that is why substitution FREEZES the body). Moderate PER FACET. The NPC ends up
