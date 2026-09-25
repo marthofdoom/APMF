@@ -29,11 +29,13 @@ stance-toggle); a forbidden generate calls a function that picks WHAT the AI dec
 (a target, a spell, a shout) or drives it continuously. (The one `CastSpellImmediate` APMF
 makes is action (e) below, ADOPTED 2026-09-23 by marth: from an APMF-owned MARKER, never from
 the actor, for a spell and a point the client declared, and under condition (8) it is not an
-endpoint.) **Cautionary case:** ch.6
+endpoint. The one `StartCombat` APMF makes is action (g) below, ADOPTED 2026-09-25 by marth: once per
+client declaration, against the target the client named, through the engine's own entry function.) **Cautionary case:** ch.6
 combat-target once called `StartCombat` (to command a target) — wrong LAYER, and
 with a bad reloc signature it was a hard AV (EXCEPTION_ACCESS_VIOLATION inside
-StartCombat). The deny-only rule makes that whole crash class structurally
-impossible: APMF makes no such call at all. ch.6 is arbitration-only and the client
+StartCombat). The deny-only rule made that whole crash class structurally
+impossible: APMF made no such call at all. (Since (g), 2026-09-25, it makes exactly one kind: the
+three-argument form verified on both images, from ch.21 only, never from ch.6.) ch.6 is arbitration-only and the client
 commands the target. **ch.8 is ARBITRATION + DENY, not arbitration-only** (corrected 2026-09-07): a `kIntent_SelectSpell` claim is enforced at two gates — `core/CastGate.cpp:124` (0x0A `CheckCast`) and `core/EquipGate.cpp` (0x0F `CheckShouldEquip`) deny any spell/staff that is not the claim's `param.form` (plus its allow-list). The "arbitration-only" wording dates from the 2026-09-02 #0 correction and was never updated when the deny landed the same day. What ch.8 does NOT do is WRITE the selection —
 it denies everything else, and the client writes its own `selectedSpells`. That is the
 part #0 is about. **ch.14 shout-power's direct
@@ -137,7 +139,8 @@ and replaces its answer with the declared target. It is legal only while ALL of 
    a fight, never revives one the engine ended, never overrides the engine's judgement that there is no
    foe, and never makes a non-combatant a target on its own. A non-foe becomes pinnable only once
    something else (the client's own combat entry, a separate facet) makes it a combat target. Combat
-   ENTRY stays forbidden here (the `StartCombat` clause above is untouched).
+   ENTRY is not this action: it is (g) below, its own intent (`kIntent_CombatEntry`), and the pin
+   itself still never enters combat.
 3. **It is the target facet and nothing else.** No attack selection, cast, equip, movement,
    aggression or perception write. Everything the NPC does against the target is its own AI.
 4. **It is a SOURCE deny, chained.** The selector's original always runs (#17) and keeps its own
@@ -165,6 +168,67 @@ and replaces its answer with the declared target. It is legal only while ALL of 
 7. **The world's reaction belongs to the client** (CLAUDE.md principle 2 scope, marth
    2026-09-25). Crime, bounty, faction and aggression reactions to the declared fight happen as
    the engine does them, and are not undone.
+
+**ADOPTED 2026-09-25 by marth (ClickUp 86e3940zb: "a third-party modder needs to make an NPC fight a
+target"). The seventh legal action (ABI v14, `channels/CombatEntry.cpp`): (g) ENTER COMBAT AGAINST A
+DECLARED TARGET -- one call of the engine's own combat entry.** The rule above names `Actor::StartCombat`
+as forbidden; this is written here, in the rule it touches, rather than done quietly (CLAUDE.md "standing
+tension"). The client declares {actor, target} with `kIntent_CombatEntry`. Harbinger calls
+`Actor::StartCombat(target, nullptr)` (1.6.1170 id 38561 `0x6B6930`, 1.5.97 id 37608 `0x6251B0`; three
+arguments, verified register by register on both images -- the old ch.6 CTD was a two-argument call that
+left garbage in R8). Not in combat, the engine builds the controller and group and makes the target the
+group's first combat target, or builds nothing (its `CombatGroup::AddTarget` failing destroys the new
+controller); already in combat, it adds the target to the group's targets and keeps its own current
+target. It is legal only while ALL of these hold:
+1. **The client names the target; APMF selects nothing.** No target, foe order, fallback or "nearest
+   enemy" is chosen by APMF. A claim whose target is 0, the actor itself, or not an Actor makes no call
+   (refused at the call, or ended one frame later, logged). The player may be the target and may never be
+   the actor.
+2. **The engine's own entry path, and nothing else.** The one function the engine itself calls to start
+   a fight (its callers include AE 40814, which passes the same nullptr third argument). APMF writes no
+   controller, group, target, detection, aggression or faction state, builds no selector, and calls no
+   `SetTarget`. Whether and how the actor enters is the engine's: it refuses a restrained, unconscious or
+   dead actor, a dead target, a target failing its own distance test, an actor that is one particular
+   engine-global actor (AE id 401069 / SE id 514905, an identity test), and a few engine flags. A refusal
+   is not retried: it ENDS the claim (condition 5).
+3. **One call per declaration, which is not sustaining.** On the main thread, one frame after the claim
+   is published (re-validated then), exactly one call per Engage and one per Repoint / owner change.
+   Each call answers a declaration the client just made (a Repoint is a new declaration; so is another
+   client's claim becoming the winner). No Tick, no re-assert, no retry, no re-entry when the engine
+   ends the fight: re-entering on Harbinger's own initiative would SUSTAIN a decision, which the rule
+   above forbids. After the claim has ENDED, another entry is a NEW request from the client. **The
+   engine giving up is final for that target (marth: "the engine gave up = dropped"):** when a claim
+   ended because the engine ended the fight (`combat ended`) or refused the entry, a rival claim that
+   then takes over the actor's facet naming the SAME target makes NO call -- it is ended with the same
+   reason. That record is kept per actor and per target until the actor's last combat-entry claim is
+   released. A rival naming a DIFFERENT target is a different declaration and gets its one call.
+4. **Release stops forcing and undoes nothing.** Release calls no `StopCombat` and restores nothing
+   (#5a): once entered, the fight is engine state -- controller, group, members told, detection, crime --
+   and stopping it would be an undo that also tears down combat the actor may have for its own reasons.
+   The engine ends it as it ends any fight; a client that wants it over calls `StopCombat` itself.
+5. **It ends by itself, and is never left live and inert** (marth's ch.20 ruling: "if APMF can no
+   longer track the target, it's lost and dropped"). APMF releases the claim and logs `entry ended:
+   <reason>` (repeated on the Release line) when: the ENGINE REFUSED the entry (`engine refused entry:
+   <cause if known>`); the entry could not be attempted (the target is not an Actor; the actor is not
+   loaded, has no AI process or is dead; the target is not loaded, disabled or dead); the FIGHT ENDED
+   (the entry succeeded and the actor's `combatController` POINTER is now null -- `combat ended`; the
+   pointer is read, the controller is never dereferenced, which is why `Actor::IsInCombat`, which reads
+   a byte at controller +0x43, is not used); or the target is dead, disabled, not loaded or unresolvable,
+   or the owner dead (`combatentry::Poll`, the ch.19 / ch.20 monitor seat). Endings are enqueued from
+   the main-thread pump or Poll, never from inside Drain. Released, outranked or dropped (unload, save
+   load, revert): nothing is saved and nothing is undone.
+6. **It is the entry facet and nothing else.** It does not choose whom the actor fights first (the
+   engine's selector does; the client claims (f) `kIntent_TargetPin` for that), and it claims no attack
+   selection, cast, equip, movement or perception. The re-arm equip `StartCombat` performs goes through
+   ch.17's seat like every other engine equip.
+7. **Scope is closed by name.** Exactly 1.6.1170 or 1.5.97, not VR, a non-player actor with an AI
+   process (`StartCombat` dereferences it unchecked) that is loaded and alive, a loaded, enabled, living
+   target, `[CombatEntry] bCombatEntry`, and the address self-check on `StartCombat`. Joining a named
+   CombatGroup (the third argument), entering against a list, re-entry on a timer, or ending combat
+   (`StopCombat`) are each a new amendment, not a code change.
+8. **The world's reaction belongs to the client** (principle 2 scope, marth 2026-09-25): "if a user uses
+   it to cause chaos, chaos ensues." Crime, bounty, faction and aggression changes, allies and guards
+   joining, combat music -- all happen as the engine does them and are not denied or undone.
 
 **#20 — COMPOSED ANSWERS: APMF may answer the ENGINE'S OWN DECISION SEATS so the
 AI decides what a claim asks for — and exactly ONE of those answers may skip the

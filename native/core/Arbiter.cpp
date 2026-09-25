@@ -10,6 +10,7 @@
 #include "core/Registry.h"
 #include "channels/Travel.h"
 #include "channels/TargetPin.h"
+#include "channels/CombatEntry.h"
 
 namespace apmf {
 
@@ -86,6 +87,14 @@ namespace apmf {
         // writes no engine state. Self-throttled; one relaxed atomic load while nothing
         // is pinned.
         apmf::targetpin::Poll();
+
+        // ch.21 (kIntent_CombatEntry) END-OF-CLAIM MONITOR, same seat and shape as the pin
+        // monitor above: it only decides that an entry claim has ENDED (owner dead; target
+        // dead / disabled / unloaded / unresolvable; "combat ended" -- the actor's
+        // combatController pointer is null after a successful entry) and releases it. It never re-enters
+        // combat and writes no engine state. Self-throttled; one relaxed atomic load while
+        // nothing is claimed.
+        apmf::combatentry::Poll();
     }
 
     void Arbiter::ReleaseAll(const char* why) {

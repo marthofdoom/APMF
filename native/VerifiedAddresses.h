@@ -14,7 +14,7 @@
 
 namespace apmf::VerifiedAddresses
 {
-	// 1.6.1170.0: 177 rows
+	// 1.6.1170.0: 178 rows
 	inline constexpr REL::SelfCheck::Row kRows_1_6_1170[] = {
 		{ 207886, 0x18A5558, 0x0, 0, {  }, "Character" },
 		{ 212096, 0x18D7388, 0x0, 0, {  }, "CombatTargetSelectorStandard" },
@@ -193,9 +193,10 @@ namespace apmf::VerifiedAddresses
 		{ 38561, 0x6B6930, 0x0, 0, {  }, "EquipSink.Path.StartCombat.38561" },
 		{ 68233, 0xCC90C0, 0x0, 0, {  }, "CommonLib.BSReadWriteLock.LockForRead" },
 		{ 68239, 0xCC9380, 0x0, 0, {  }, "CommonLib.BSReadWriteLock.UnlockForRead" },
+		{ 38561, 0x6B6930, 0x0, 0, {  }, "CombatEntry.Actor.StartCombat" },
 	};
 
-	// 1.5.97.0: 177 rows
+	// 1.5.97.0: 178 rows
 	inline constexpr REL::SelfCheck::Row kRows_1_5_97[] = {
 		{ 261397, 0x165DA40, 0x0, 0, {  }, "Character" },
 		{ 265605, 0x1690A98, 0x0, 0, {  }, "CombatTargetSelectorStandard" },
@@ -374,6 +375,7 @@ namespace apmf::VerifiedAddresses
 		{ 37608, 0x6251B0, 0x0, 0, {  }, "EquipSink.Path.StartCombat.37608" },
 		{ 66976, 0xC072D0, 0x0, 0, {  }, "CommonLib.BSReadWriteLock.LockForRead" },
 		{ 66982, 0xC07590, 0x0, 0, {  }, "CommonLib.BSReadWriteLock.UnlockForRead" },
+		{ 37608, 0x6251B0, 0x0, 0, {  }, "CombatEntry.Actor.StartCombat" },
 	};
 
 	inline constexpr REL::SelfCheck::Table kTables[] = {

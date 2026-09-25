@@ -20,6 +20,7 @@
 #include "core/CastClassify.h"
 #include "channels/Travel.h"
 #include "channels/TargetPin.h"
+#include "channels/CombatEntry.h"
 #include "core/PositionCast.h"
 #include "core/SpaceQuery.h"
 
@@ -78,6 +79,10 @@ namespace {
         // the outgoing world) must not survive the swap. The seat could not act on them
         // alone -- it also requires the published claim, which Clear() just wiped.
         apmf::targetpin::ResetAll("revert/new game");
+        // ch.21: same, for the combat-entry entries (target handles of the outgoing world).
+        // An entry task still queued is dropped by the Discard below; one that somehow ran
+        // would find no entry and drop itself.
+        apmf::combatentry::ResetAll("revert/new game");
         // ABI v11 position cast: forget any marker still waiting for its one-frame
         // delete (its Retire task is dropped by the Discard below). The references
         // belong to the world being replaced, so none is touched.
@@ -132,6 +137,11 @@ namespace {
                                                   // [TargetPin] bTargetPin, SeatVerified on all three. A
                                                   // refusal REFUSES kIntent_TargetPin claims
                                                   // (ControlMap::EnqueueRequest).
+            apmf::combatentry::Install();        // ch.21 COMBAT ENTRY (ABI v14): installs NO hook. Gates the
+                                                  // one Actor::StartCombat call per engage (INVARIANTS #0 (g)):
+                                                  // exact 1.6.1170 / 1.5.97, VR-refused, [CombatEntry]
+                                                  // bCombatEntry, SeatVerified on StartCombat. A refusal
+                                                  // REFUSES kIntent_CombatEntry claims.
             apmf::poscast::Install();            // ABI v11 POSITION CAST: runtime gate (1.6.1170 / 1.5.97,
                                                   // never VR) + [PositionCast] + the XMarker base. Installs NO
                                                   // hook. Refused -> kCastFlag_AtPosition requests are refused.
@@ -210,6 +220,9 @@ namespace {
             // ch.20: ReleaseAll above already drove this channel's Release for every
             // engaged actor; this drops anything left, so no pin entry crosses the load.
             apmf::targetpin::ResetAll("kPreLoadGame");
+            // ch.21: same -- no entry crosses the load (the queued entry task, if any, is
+            // flushed with the main-thread queue below).
+            apmf::combatentry::ResetAll("kPreLoadGame");
             // ABI v11 position cast: same as the revert path -- forget, never touch.
             apmf::poscast::ResetAll("kPreLoadGame");
             // Flush the confirmed-main task queue. NOTHING Pump()s between here and

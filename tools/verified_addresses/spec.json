@@ -3157,6 +3157,21 @@
    },
    "source": "CommonLib mit-3.7 fde0f3ae include/RE/T/TESForm.h LookupByID/LookupByEditorID (BSReadLockGuard)",
    "doc": "ADDRESS-TABLE-2026-09-15.md ADDENDUM 2026-09-24 F1b"
+  },
+  {
+   "seat": "CombatEntry.Actor.StartCombat",
+   "kind": "function",
+   "construct": "RE::Actor::StartCombat (fork mit-3.7: RELOCATION_ID(37608, 38561)); SeatVerified in combatentry::Install",
+   "ids": {
+    "1.6.1170": 38561,
+    "1.5.97": 37608
+   },
+   "sig": {
+    "1.6.1170": "4C 8B DC 55 56 57 41 54 41 55 41 56 41 57 48 83 EC 50 49 C7 43 A8 FE FF FF FF 49 89 5B 10 0F 29 74 24 40 49 8B E8",
+    "1.5.97": "4C 8B DC 56 57 41 54 41 56 41 57 48 83 EC 50 49 C7 43 B8 FE FF FF FF 49 89 5B 10 49 89 6B 18 0F 29 74 24 40 49 8B E8"
+   },
+   "source": "native/channels/CombatEntry.cpp:243 (call), :399 (SeatVerified)",
+   "doc": "ch.21 combat entry, INVARIANTS #0 (g); ADDRESS-TABLE-2026-09-15.md:396"
   }
  ],
  "layout_facts": [
@@ -3411,6 +3426,27 @@
    "where": "CombatBehaviorRE.h kCastContextNodes",
    "verified_by": "not installed anywhere, so not a self-check row",
    "gate": "n/a"
+  },
+  {
+   "what": "Actor::StartCombat signature (ch.21, the ONE call): bool(Actor* this, Actor* target, CombatGroup* join)",
+   "value": "rcx this, rdx target, r8 group-to-join (nullptr), al = bool",
+   "where": "channels/CombatEntry.cpp:243",
+   "verified_by": "1.6.1170 0x6B6930 / 1.5.97 0x6251B0 prologue: mov rbp,r8; mov rsi,rdx; mov rdi,rcx; r8 used as [rbp+0x30] members count + CombatManager 46874 / 45574 (join path); return movzx eax,r14b; engine caller 40814 passes xor r8d,r8d at 0x7505A3",
+   "gate": "VR refused + exact 1.6.1170/1.5.97 + INI bCombatEntry + self-check"
+  },
+  {
+   "what": "Actor currentProcess must be non-null before StartCombat (dereferenced unchecked)",
+   "value": "ACTOR_RUNTIME_DATA::currentProcess (SE 0xF0 / AE 0xF8)",
+   "where": "channels/CombatEntry.cpp:223",
+   "verified_by": "1.6.1170 0x6B69E3 mov rcx,[rdi+0xF8]; call 39445 reads [rcx+0x10] with no null test; 1.5.97 0x625261 -> 38447 same",
+   "gate": "checked in Enter() before the call"
+  },
+  {
+   "what": "ch.21 fight-ended test: the actor's combatController POINTER only (null = combat ended); the controller is never dereferenced",
+   "value": "ACTOR_RUNTIME_DATA::combatController (SE 0x158 / AE 0x160)",
+   "where": "channels/CombatEntry.cpp:162",
+   "verified_by": "StopCombat 1.6.1170 0x6B70A0 / 1.5.97 0x625920 frees the controller and stores 0 there (AE 0x6B7235); Actor::IsInCombat (0x6B6DD0 / 0x625660) is NOT used because it reads [controller+0x43]",
+   "gate": "main thread, Poll / Enter"
   }
  ]
 }

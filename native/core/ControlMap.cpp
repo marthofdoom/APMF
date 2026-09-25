@@ -9,6 +9,7 @@
 #include "core/MainThread.h"        // mainthread::Post (defer proxy teardown past this Drain's Publish)
 #include "channels/Travel.h"  // ch.19 Installed()/NotInstalledReason() for the synchronous refusal
 #include "channels/TargetPin.h"  // ch.20 Installed()/NotInstalledReason() for the synchronous refusal
+#include "channels/CombatEntry.h"  // ch.21 Installed()/NotInstalledReason() for the synchronous refusal
 #include "core/PositionCast.h"  // ABI v11 position cast: poscast::Enqueue (one-shot, never a claim); MarkersSupported (ch.19)
 
 #include <cmath>
@@ -179,6 +180,34 @@ namespace apmf {
                 why = "the actor is the player (ch.20 pins NPC combat targets only)";
             if (why) {
                 spdlog::warn("[apmf][target-pin] claim refused -- actor 0x{}: {}.", apmf::log::Hex(actor), why);
+                return APMF_API::kInvalidHandle;
+            }
+        }
+
+        // ch.21 (ABI v14): a kIntent_CombatEntry claim is REFUSED synchronously when the
+        // channel is not available (VR, a runtime other than 1.6.1170 / 1.5.97, [CombatEntry]
+        // bCombatEntry=0, the StartCombat self-check refused, or before kDataLoaded), when
+        // it names no target or names the actor itself, and for the player as the ACTOR (the
+        // player may be the target). Same contract as ch.20 above; "is param.form an Actor"
+        // is decided at Engage (channels/CombatEntry.cpp) and logged there.
+        if (intent == APMF_API::kIntent_CombatEntry) {
+            if (!apmf::combatentry::Installed()) {
+                static std::atomic<bool> s_logged{ false };
+                if (!s_logged.exchange(true))
+                    spdlog::warn("[apmf][combat-entry] claim refused: channel not available ({}) -- actor 0x{}; "
+                                 "the client starts the fight its own way. (Logged once.)",
+                                 apmf::combatentry::NotInstalledReason(), apmf::log::Hex(actor));
+                return APMF_API::kInvalidHandle;
+            }
+            const char* why = nullptr;
+            if (!param || param->form == 0)
+                why = "no target (param.form is 0) -- kIntent_CombatEntry REQUIRES param.form = the target actor";
+            else if (param->form == actor)
+                why = "the target is the actor itself";
+            else if (actor == 0x14)
+                why = "the actor is the player (ch.21 puts NPCs into combat only; the player may be the target)";
+            if (why) {
+                spdlog::warn("[apmf][combat-entry] claim refused -- actor 0x{}: {}.", apmf::log::Hex(actor), why);
                 return APMF_API::kInvalidHandle;
             }
         }
