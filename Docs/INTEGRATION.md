@@ -1213,74 +1213,99 @@ engine's AI.
 
 ### The contract
 
-* **One call per declaration.** One call when the claim engages, one more each time you Repoint it
-  (or a different claim becomes the winner). No tick, no watch, no retry. When the engine ends the
-  fight, Harbinger does NOT start it again. To try again, Repoint.
+* **One call per declaration.** One call when the claim engages, one more each time you Repoint a
+  live claim (or a different claim becomes the winner). No tick, no watch, no retry. Harbinger never
+  starts the fight again on its own.
 * **Not in combat:** the engine builds the NPC's combat controller and group with your target as the
-  group's first combat target. If the engine will not take your target, it builds nothing.
-  **Already in combat:** the engine adds your target to the group's combat targets and keeps
-  fighting whoever it was fighting.
-* **The engine may say no.** It refuses a restrained, unconscious or dead NPC, a dead target, a
-  target that fails its own distance test, and a few engine flags. The log says `REFUSED`, the
-  handle stays LIVE and does nothing. Repoint to retry, or Release.
+  group's first combat target. If the engine will not take your target, it builds nothing and the
+  call is a refusal. **Already in combat:** the engine is asked to add your target to the group's
+  combat targets and keeps fighting whoever it was fighting.
 * **Release stops nothing.** Releasing ends Harbinger's part. It calls no `StopCombat` and undoes
   nothing: the fight is the engine's now. If you want it over, call `Actor::StopCombat` yourself.
-* **It ends by itself** when the target is dead, disabled, not loaded or no longer resolves, or the
-  NPC dies. Harbinger releases the claim (`entry ended: <reason>` in the log, `IsClaimLive` false).
 * **Entry does not choose whom the NPC fights first.** The engine's own target selector does, among
   the group's targets. To make it fight YOUR target, also claim `kIntent_TargetPin` with the same
   target (the recipe below).
 
+### How combat entry ends
+
+A combat-entry claim is never left live and doing nothing. Harbinger releases it itself, the log
+says `entry ended: <reason>`, and `IsClaimLive(handle)` turns false, when:
+
+| reason in the log | what happened |
+|---|---|
+| `engine refused entry: <cause>` | `StartCombat` returned false. The cause is named when Harbinger can see it (restrained, unconscious, dead actor, dead target); otherwise "cause not reported by the engine" (its distance test, or one of its flags). |
+| `entry not attempted: <why>` | The target is not an Actor, or at call time the NPC was not loaded, had no AI process or was dead, or the target was not loaded, disabled or dead. No engine call was made. |
+| `combat ended` | The entry succeeded and the NPC is no longer in combat (it has no combat controller). The engine ended the fight: the foe got away, was calmed, someone called `StopCombat`. |
+| `owner dead`, `target dead`, `target disabled`, `target unloaded`, `target unresolvable` | Checked about four times a second while the claim stands. |
+
+Your own Release, an outranking claim, a save load, a new game or the NPC unloading also end it.
+**To try again, send a NEW `RequestEx`.** An ended handle is dead; Repointing it does nothing.
+
 ### The recipe: enter combat + pin
 
 Two intents, two handles. Entry puts your target into the NPC's combat group; the pin answers the
-engine's target selector with it on every combat update. Either one alone is not enough when the
-NPC has other foes: entry without the pin lets the engine pick; the pin without entry does nothing
-until the target is already one of the group's combat targets.
+engine's target selector with it on every combat update. Claim the pin AFTER the entry has
+succeeded: then the target is already one of the group's combat targets and the pin engages on the
+next combat update. Harbinger makes the entry call one frame after your request and ends a failed
+entry the frame after that, so check two or more frames later: the entry claim still live AND the
+NPC in combat means it entered.
 
 ```cpp
 using namespace APMF_API;
 
-struct Fight { Handle entry = kInvalidHandle; Handle pin = kInvalidHandle; };
-std::unordered_map<RE::FormID, Fight> g_fight;   // one pair per actor
+struct Fight { RE::FormID target = 0; Handle entry = kInvalidHandle; Handle pin = kInvalidHandle; int age = 0; };
+std::unordered_map<RE::FormID, Fight> g_fight;   // one per actor
+
+void StopFight(RE::FormID actor);
 
 void FightThis(RE::FormID actor, RE::FormID target) {
     if (!g_apmf || g_apmf->abiVersion < 14) return;   // absent or older than v14: start it your own way
-
+    StopFight(actor);                                  // one fight per actor; a new target = a new request
     APMF_Param p{};
-    p.form = target;                       // REQUIRED for both: the target ACTOR
+    p.form = target;                                   // REQUIRED: the target ACTOR
+    const Handle h = g_apmf->RequestEx(actor, kIntent_CombatEntry, /*basis=*/50.0f, &p);
+    if (h == kInvalidHandle) return;                   // refused at the call (the log says why)
+    g_fight[actor] = { target, h, kInvalidHandle, 0 };
+}
 
-    auto& f = g_fight[actor];
-    if (f.entry != kInvalidHandle && g_apmf->IsClaimLive(f.entry)) {
-        g_apmf->Repoint(f.entry, &p);      // ONE more entry, against the new target
-        if (f.pin != kInvalidHandle) g_apmf->Repoint(f.pin, &p);
-        return;
+// Your own per-frame (or per-tick) update.
+void TickFights() {
+    for (auto it = g_fight.begin(); it != g_fight.end();) {
+        auto& [actor, f] = *it;
+        if (!g_apmf->IsClaimLive(f.entry)) {           // Harbinger ended it (the log says why)
+            if (f.pin != kInvalidHandle) g_apmf->Release(f.pin);
+            it = g_fight.erase(it);                    // to try again: FightThis() again = a NEW request
+            continue;
+        }
+        if (f.pin == kInvalidHandle && ++f.age >= 2) {
+            auto* a = RE::TESForm::LookupByID<RE::Actor>(actor);
+            if (a && a->IsInCombat()) {                // entered: now pin the same target
+                APMF_Param p{};
+                p.form = f.target;
+                f.pin  = g_apmf->RequestEx(actor, kIntent_TargetPin, /*basis=*/50.0f, &p);
+            }
+        }
+        ++it;
     }
-    // Pin first or entry first does not matter: both are applied in the same frame, and the
-    // entry call runs after both are published.
-    f.pin   = g_apmf->RequestEx(actor, kIntent_TargetPin,   /*basis=*/50.0f, &p);
-    f.entry = g_apmf->RequestEx(actor, kIntent_CombatEntry, /*basis=*/50.0f, &p);
-    // kInvalidHandle on either = refused at the call (the log says why).
 }
 
 void StopFight(RE::FormID actor) {
     if (auto it = g_fight.find(actor); it != g_fight.end()) {
-        g_apmf->Release(it->second.pin);   // the engine picks its own targets again
-        g_apmf->Release(it->second.entry); // stops nothing: the engine ends the fight its own way
+        if (it->second.pin != kInvalidHandle) g_apmf->Release(it->second.pin);   // the engine picks again
+        g_apmf->Release(it->second.entry);            // stops nothing: the engine ends the fight its own way
         g_fight.erase(it);
     }
 }
 ```
 
-`IsClaimLive` is ABI v6; it turns false when Harbinger ended a claim (target dead, and so on). The
-pin ends by itself on the same kinds of reason, plus a target the engine has LOST. A pin that has
-ended stays ended: pin again if you still want it.
+`IsClaimLive` is ABI v6. The pin ends by itself on the same kinds of reason, plus a target the
+engine has LOST; release the other handle when either one ends.
 
 ### Parameter fields
 
 | field | meaning |
 |---|---|
-| `param.form` | **REQUIRED.** The target ACTOR's FormID. 0 and the claimed actor itself are refused at the call. The player may be the target. A form that is not an Actor is refused at Engage. |
+| `param.form` | **REQUIRED.** The target ACTOR's FormID. 0 and the claimed actor itself are refused at the call. The player may be the target. A form that is not an Actor ends the claim one frame later. |
 | everything else | Not read. |
 
 ### When a claim is refused
@@ -1289,10 +1314,7 @@ ended stays ended: pin again if you still want it.
   intent 21"), VR, a runtime other than exactly 1.6.1170 or 1.5.97, `[CombatEntry]
   bCombatEntry=0` in `APMF.ini`, the address self-check refused `StartCombat`, before
   kDataLoaded, `param.form` 0, `param.form` equal to the actor, or the actor is the player.
-* **At Engage (one frame later, handle LIVE and inert):** `param.form` is not an Actor.
-* **At the call to the engine (handle LIVE and inert):** the NPC is not loaded, has no AI process,
-  or is dead; the target is not loaded, disabled or dead (the last three also end the claim); or
-  the engine itself refused.
+* **Everything later ENDS the claim** with a reason (the table above).
 
 ### What is yours
 
@@ -1305,14 +1327,18 @@ Harbinger does not stop any of it and Release does not undo it.
 ```
 [ch.21] 0x... combat-entry ENGAGED -> target 0x...: ONE Actor::StartCombat call is queued ...
 [ch.21] 0x... entry ENGAGED against 0x...: REQUESTED -> the engine ENTERED (was not in combat: new
-        controller and group; controller built). Target is a combat-group target: yes. ch.20 pin
-        could engage: yes (pin names this target and it is a combat-group target).
+        controller and group). Target is a combat-group target: yes (...). Pin: no ch.20 claim yet ...
+[ch.20] 0x... target-pin ENGAGED -> target 0x... (your pin, a couple of frames later)
 [ch.20] 0x... FIRST SOURCE DENY: ...
+...
+[ch.21] 0x... entry ended: combat ended (target 0x..., claim h=...). ...
 ```
 
-`Target is a combat-group target: no` after `ENTERED` means the NPC was already fighting and the
-engine did not add your target; the pin will pause until it is. Entry lines are rate-limited to one
-per NPC every two seconds; the next line counts the ones held back.
+On the already-in-combat path the entry line says `not read` for group membership: the engine does
+not report whether it added the target, and Harbinger does not read the group itself. The ch.20
+pin's own log (`FIRST SOURCE DENY`, or `NOT a combat target of this actor's group`) answers it.
+Entry lines are rate-limited to one per NPC every two seconds; the next line counts the ones held
+back. Endings are never rate-limited.
 
 ### Limits worth knowing
 
@@ -1363,7 +1389,7 @@ columns, one doesn't imply the other.
 | `kIntent_Cast` + `kCastFlag_AtPosition` (ABI v11) | **Cast a Target Location spell at a world point.** A one-shot remote cast from an APMF XMarker, blamed on the actor. Not a claim: no facet held, never seen by the cast seats | `form` (the spell), `ival` (the flag alone), `pos` (the point) | Built, not yet battle-tested. CI verified only. Summons refused by name (the engine only lets the caster summon). |
 | `kIntent_Travel` (ch.19) | **Walk this actor to a destination** (ABI v11: or to a world point, `kTravel_ToPosition`, via an APMF-owned XMarker). APMF points its own travel package at it and offers that package through an internal ch.9 claim at YOUR basis. The leg ends on arrival, on the actor entering combat, on the destination being gone, or (ABI v12) BLOCKED. ABI v12: `GetTravelLegState` says which, and `kTravel_SpeedSet` sets the gait | `form` (the DESTINATION, REQUIRED -- an object REFERENCE or a CELL, and it need not be loaded or nearby), `fval` (arrival radius, 0 => 75u, clamped 50-512, not used for a cell), `ival` (a `TravelFlags` bitmask) |a refused claim means the channel is off in APMF.ini, VR, the esl is missing, or eight legs are already running|
 | `kIntent_TargetPin` (ch.20, ABI v13) | **Pin the actor's combat target.** Harbinger answers the engine's own target selector with your target while the actor is fighting and your target is one of its group's combat targets. Never starts combat | `form` (the target ACTOR, REQUIRED) | Built, not yet battle-tested. CI verified only. The selector seat has not been observed running in a game yet. |
-| `kIntent_CombatEntry` (ch.21, ABI v14) | **Start a fight.** Harbinger calls the engine's own `StartCombat` once against your target (once more per Repoint). Never re-enters, never stops the fight. Pair with `kIntent_TargetPin` to make it fight THAT target | `form` (the target ACTOR, REQUIRED) | Built, not yet battle-tested. CI verified only. |
+| `kIntent_CombatEntry` (ch.21, ABI v14) | **Start a fight.** Harbinger calls the engine's own `StartCombat` once against your target (once more per Repoint). Never re-enters, never stops the fight; the claim ENDS on a refusal or when the fight ends. Pin the same target after it entered to make it fight THAT one | `form` (the target ACTOR, REQUIRED) | Built, not yet battle-tested. CI verified only. |
 
 Where a field is marked "reserved, not yet read", the channel currently
 applies a fixed built-in behavior and ignores whatever you pass in that field.

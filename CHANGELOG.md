@@ -1,8 +1,9 @@
 ## Unreleased
 
-- **A mod can now start a fight.** Claim `kIntent_CombatEntry` with the target actor in `APMF_Param.form`, and Harbinger asks the game once to put the NPC into combat against that target, with the game's own call for starting a fight. Repoint the claim to ask again. The game can say no (a restrained or dead NPC, a target too far away), and the log says so.
-- **Harbinger starts it and then lets go.** It never starts the fight a second time, and releasing the claim does not stop the fight. The game ends it the way it ends any fight. A mod that wants it over stops it itself. The claim ends by itself if the target dies, is disabled or unloads, or the NPC dies.
-- **Start the fight and pin the target to make the NPC fight that one.** Starting a fight puts the target on the NPC's list of foes. Pinning the same target makes the NPC choose it from that list. The log says whether the target made the list and whether a pin can take hold.
+- **A mod can now start a fight.** Claim `kIntent_CombatEntry` with the target actor in `APMF_Param.form`, and Harbinger asks the game once to put the NPC into combat against that target, with the game's own call for starting a fight. The game can say no (a restrained or dead NPC, a target too far away). Then the request ends and the log says why.
+- **Harbinger starts it and then lets go.** It never starts the fight a second time, and releasing the claim does not stop the fight. The game ends it the way it ends any fight. A mod that wants it over stops it itself.
+- **A request never hangs around doing nothing.** It ends by itself when the game refuses, when the fight is over, when the target dies, is disabled or unloads, or when the NPC dies. The log says which. To try again, a mod sends a new request.
+- **Start the fight and pin the target to make the NPC fight that one.** Starting a fight puts the target on the NPC's list of foes. Pinning the same target once the fight has started makes the NPC choose it from that list.
 - What the world does about the fight is the mod's business: crime, guards, allies joining, the music. Harbinger does not stop it and does not undo it.
 - `[CombatEntry] bCombatEntry` is new in `APMF.ini`, default 1. Set it to 0 and every request is refused.
 - New API revision (v14). It adds the intent and nothing else. Check `abiVersion >= 14` before asking for it. An older Harbinger refuses the request. A mod built against an older revision is unaffected.

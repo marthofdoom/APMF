@@ -182,26 +182,35 @@ controller); already in combat, it adds the target to the group's targets and ke
 target. It is legal only while ALL of these hold:
 1. **The client names the target; APMF selects nothing.** No target, foe order, fallback or "nearest
    enemy" is chosen by APMF. A claim whose target is 0, the actor itself, or not an Actor makes no call
-   (refused, or live and inert, logged). The player may be the target and may never be the actor.
+   (refused at the call, or ended one frame later, logged). The player may be the target and may never be
+   the actor.
 2. **The engine's own entry path, and nothing else.** The one function the engine itself calls to start
    a fight (its callers include AE 40814, which passes the same nullptr third argument). APMF writes no
    controller, group, target, detection, aggression or faction state, builds no selector, and calls no
    `SetTarget`. Whether and how the actor enters is the engine's: it refuses a restrained, unconscious or
-   dead actor, a dead target, a target failing its own distance test, and a few engine flags, and a
-   refusal is logged and left standing.
-3. **One call per declaration, never sustained.** On the main thread, one frame after the claim is
-   published (re-validated then), exactly one call per Engage and one per Repoint / owner change. No
-   Tick, no re-assert, no retry, no re-entry when the engine ends the fight: re-entering would SUSTAIN a
-   decision, which the rule above forbids. Another entry is the client's next declaration (a Repoint),
-   not Harbinger's initiative.
+   dead actor, a dead target, a target failing its own distance test, and a few engine flags. A refusal
+   is not retried: it ENDS the claim (condition 5).
+3. **One call per declaration, which is not sustaining.** On the main thread, one frame after the claim
+   is published (re-validated then), exactly one call per Engage and one per Repoint / owner change.
+   Each call answers a declaration the client just made (a Repoint is a new declaration; so is another
+   client's claim becoming the winner). No Tick, no re-assert, no retry, no re-entry when the engine
+   ends the fight: re-entering on Harbinger's own initiative would SUSTAIN a decision, which the rule
+   above forbids. After the claim has ENDED, another entry is a NEW request from the client.
 4. **Release stops forcing and undoes nothing.** Release calls no `StopCombat` and restores nothing
    (#5a): once entered, the fight is engine state -- controller, group, members told, detection, crime --
    and stopping it would be an undo that also tears down combat the actor may have for its own reasons.
    The engine ends it as it ends any fight; a client that wants it over calls `StopCombat` itself.
-5. **It ends by itself** (the (f) precedent): the target dead, disabled, not loaded or unresolvable, or
-   the owner dead -- APMF releases the claim (`combatentry::Poll`, the ch.19 / ch.20 monitor seat) and
-   logs `entry ended: <reason>`. Released, outranked or dropped (unload, save load, revert): nothing is
-   saved and nothing is undone.
+5. **It ends by itself, and is never left live and inert** (marth's ch.20 ruling: "if APMF can no
+   longer track the target, it's lost and dropped"). APMF releases the claim and logs `entry ended:
+   <reason>` (repeated on the Release line) when: the ENGINE REFUSED the entry (`engine refused entry:
+   <cause if known>`); the entry could not be attempted (the target is not an Actor; the actor is not
+   loaded, has no AI process or is dead; the target is not loaded, disabled or dead); the FIGHT ENDED
+   (the entry succeeded and the actor's `combatController` POINTER is now null -- `combat ended`; the
+   pointer is read, the controller is never dereferenced, which is why `Actor::IsInCombat`, which reads
+   a byte at controller +0x43, is not used); or the target is dead, disabled, not loaded or unresolvable,
+   or the owner dead (`combatentry::Poll`, the ch.19 / ch.20 monitor seat). Endings are enqueued from
+   the main-thread pump or Poll, never from inside Drain. Released, outranked or dropped (unload, save
+   load, revert): nothing is saved and nothing is undone.
 6. **It is the entry facet and nothing else.** It does not choose whom the actor fights first (the
    engine's selector does; the client claims (f) `kIntent_TargetPin` for that), and it claims no attack
    selection, cast, equip, movement or perception. The re-arm equip `StartCombat` performs goes through

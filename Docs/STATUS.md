@@ -20,10 +20,16 @@ needs to make an NPC fight a target, and MFO's hidden "nearest visible enemy" ga
   ignored), no SetTarget. StartCombat dereferences `currentProcess` unchecked, so the channel never calls it
   for an actor with no process. StartCombat builds NO Fixed selector (its ctor AE 47197 is built by AE 40814
   and 48846 only).
-- **Release / end:** no re-entry ever (that would sustain a decision); release calls NO StopCombat (the fight
-  is engine state; stopping it is an undo and would also end combat the actor has for its own reasons). Ends
-  itself on owner dead / target dead / disabled / unloaded / unresolvable (`combatentry::Poll`). An engine
-  refusal leaves the claim live and inert; a Repoint retries. Not saved.
+- **Release / end:** one call per declaration (a Repoint is a declaration), never re-entry on Harbinger's own
+  initiative; release calls NO StopCombat (the fight is engine state; stopping it is an undo and would also
+  end combat the actor has for its own reasons). **Round 2 (coordinator, marth's ch.20 ruling): never live and
+  inert.** The claim ENDS with a logged reason on an engine refusal (`engine refused entry: <cause if known>`),
+  an entry that cannot be attempted (target not an Actor, actor unloaded / no process / dead, target gone),
+  the fight ending (`combat ended`: the actor's `combatController` POINTER is null after a successful entry --
+  pointer only, `IsInCombat` is not used because it reads `[cc+0x43]`), owner dead, or target dead / disabled /
+  unloaded / unresolvable. A retry is a NEW request. The post-call group-membership read is GONE (on a new
+  fight membership == the true return; already in combat it is not read), so ch.21 dereferences no
+  controller or group. Not saved.
 - **ABI v14** adds the intent only (no struct, slot or field). The H1 lockpick/LOTD idle work pencilled at v14
   below must take v15.
 - **APMF-B26 (StopCombat seat) NOT BUILT -- stop-and-report.** The disassembly says a 0xE5 seat sharing a
@@ -39,7 +45,8 @@ needs to make an NPC fight a target, and MFO's hidden "nearest visible enemy" ga
   StartCombat (new row `CombatEntry.Actor.StartCombat`; 178/178 on both runtimes). Sync refusal: channel
   unavailable, form 0, self, player as the actor.
 - **State:** CI-only, not field-run, awaiting the tier-A Opus review. First field log must show `ENTERED` with
-  `Target is a combat-group target: yes`.
+  `Target is a combat-group target: yes`, then the ch.20 `FIRST SOURCE DENY` once the pin is claimed, and an
+  `entry ended: combat ended` when the fight is over.
 
 ## HEAD OF WORK 2026-09-25 -- ch.20 TARGET PIN (`kIntent_TargetPin`, ABI v13), branch `feat/apmf-target-pin`, NOT merged
 
