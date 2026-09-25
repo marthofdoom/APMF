@@ -74,6 +74,16 @@ extern "C" __declspec(dllimport) unsigned long __stdcall GetPrivateProfileIntA(
 // the mechanism marth rejected, and keeping it as a belt would hide exactly those two
 // failures.
 //
+// THE PIN ENDS BY ITSELF (marth 2026-09-25: "If APMF can no longer track the target, it's
+// lost, and dropped"). The seat declines and records a reason when the pinned target is
+// LOST (its group entry carries kTargetLost: CombatTarget::flags, u16 +0xA6, bit 1, verified
+// on both runtimes), dead, disabled, not loaded or unresolvable. targetpin::Poll() -- the
+// Arbiter's once-per-frame game-thread seat, the ch.19 leg-monitor precedent -- checks the
+// same target conditions plus the OWNER being dead, and ENDS the winning claim itself
+// (ControlMap::EnqueueRelease), logging "pin ended: <reason>"; the Release line repeats the
+// reason. A target merely NOT (YET) in the group's targets does not end the pin: it
+// declines, because the client's combat entry may still add it.
+//
 // DENY-COMPLETENESS (principle 2), stated plainly. The facet is "which actor this NPC
 // fights". Competing sources:
 //   * the ENGINE'S OWN pick (both selector classes) -- DENIED at the source, above.
@@ -400,7 +410,9 @@ namespace {
     };
 
     // Resolve `param.form` on the game thread and (re)write this actor's entry. A refused
-    // target ERASES the entry, so the claim stays live but inert and the log says why.
+    // target (not an actor, 0, self) ERASES the entry, so the claim stays live but inert and
+    // the log says why -- that refusal is the client's input, not a target APMF lost track of,
+    // so it is not ended by Poll().
     void Apply(RE::FormID id, const APMF_API::APMF_Param& param, const char* what) {
         const RE::FormID tf  = param.form;
         const char*      why = nullptr;

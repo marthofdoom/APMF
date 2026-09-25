@@ -119,7 +119,7 @@ load of a save that captured it deletes it.
 **ADOPTED 2026-09-25 by marth ("yes, start the target pin", ClickUp 86e3cr9u7; design corrected the
 same day: "APMF offers pinning, it must block engine pinning"). The sixth legal action (ABI v13,
 `channels/TargetPin.cpp`): (f) PIN A DECLARED TARGET — deny the engine's own target selection AT ITS
-SOURCE, among the targets the engine itself holds.** This puts a client-named actor where the engine's
+SOURCE, among the targets the engine itself holds and can locate.** This puts a client-named actor where the engine's
 target pick would go, which the rule above names as forbidden; it is written here, in the rule it
 touches, rather than done quietly (CLAUDE.md "standing tension"). The client declares {actor, target}
 with `kIntent_TargetPin`. The engine picks an actor's combat target in
@@ -129,9 +129,10 @@ with `kIntent_TargetPin`. The engine picks an actor's combat target in
 and replaces its answer with the declared target. It is legal only while ALL of these hold:
 1. **APMF selects nothing.** The client named the target. APMF picks no target, no foe order and
    no fallback; an inert claim (the target is not an actor, 0, or the actor itself) answers nothing.
-2. **APMF only chooses among targets the engine itself holds.** The answer is replaced only when
-   the engine's own selector answered with a target (the actor is fighting) AND the declared target
-   is in the actor's `combatGroup->targets` (read under the group's own lock). A declared target the
+2. **APMF only chooses among targets the engine itself holds AND can locate.** The answer is
+   replaced only when the engine's own selector answered with a target (the actor is fighting) AND
+   the declared target is in the actor's `combatGroup->targets` (read under the group's own lock)
+   AND that entry is not flagged `kTargetLost` (`CombatTarget::flags`, u16 +0xA6, bit 1). A declared target the
    engine does not hold as a combat target is NOT written: counted and logged. So the pin never starts
    a fight, never revives one the engine ended, never overrides the engine's judgement that there is no
    foe, and never makes a non-combatant a target on its own. A non-foe becomes pinnable only once
@@ -141,15 +142,21 @@ and replaces its answer with the declared target. It is legal only while ALL of 
    aggression or perception write. Everything the NPC does against the target is its own AI.
 4. **It is a SOURCE deny, chained.** The selector's original always runs (#17) and keeps its own
    bookkeeping; only its OUTPUT is replaced, before `UpdateTarget` compares it with the controller's
-   target and calls `SetTarget`. The engine's pick therefore never reaches `targetHandle`,
-   `currentCombatTarget`, or anything the rest of that update reads. The engine CLEARING the target
+   target and calls `SetTarget`. From the first combat update on, the engine's pick therefore never reaches
+   `targetHandle`, `currentCombatTarget`, or anything the rest of that update reads. (A new
+   controller's very first target is set before any update asks the selectors; the pin applies
+   from that first update.) The engine CLEARING the target
    (`SetTarget(0)`) is not denied (condition 2). There is NO after-the-fact rewrite: the
    `UpdateCombat` hook ch.20 also installs is observe-only and exists to log a source-seat MISS or an
    OVERWRITE loudly (principle 7), never to paper over one.
-5. **It stops by itself.** Target dead, disabled, not loaded or unresolvable, not in the group's
-   targets, the engine holding no target, the claim released, outranked or dropped (unload, save
-   load, revert): nothing is replaced and the engine's own selection stands. Release restores nothing
-   (#5a).
+5. **It ends by itself.** marth, 2026-09-25: *"If APMF can no longer track the target, it's lost,
+   and dropped."* Target LOST, dead, disabled, not loaded or unresolvable, or the owner dead: APMF
+   RELEASES the claim itself (`targetpin::Poll`, the ch.19 monitor seat), logs `pin ended:
+   <reason>`, and repeats the reason on the Release line. This is the only case where APMF releases
+   a client's pin claim. The pin merely PAUSES (the engine's selection stands, the claim stays) while
+   the engine holds no target or the declared target is not yet in the group's targets, since the
+   client's combat entry may still add it. Released, outranked or dropped (unload, save load,
+   revert): the engine's own selection answers again. Release restores nothing (#5a).
 6. **Scope is closed by name.** Exactly 1.6.1170 or 1.5.97, not VR, the two selector vtables and
    the Character vtable only (never the player), `[TargetPin] bTargetPin`, the address self-check on
    all three, and a per-call vtable-identity check before the raw selector offset (+0x10) is read

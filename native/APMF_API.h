@@ -422,16 +422,23 @@ namespace APMF_API {
                                      //       (ch.6), which stays ARBITRATION-ONLY and writes
                                      //       nothing: claim this one to have APMF hold the target.
                                      //
-                                     //       THE PIN STOPS -- and the engine's own selection takes
-                                     //       over -- whenever the target is dead, disabled, not
-                                     //       loaded, no longer resolves or is no longer one of the
-                                     //       group's combat targets, whenever the engine has no
-                                     //       target, and whenever the claim is released or
-                                     //       outranked. APMF never releases your claim for you: a
-                                     //       pin whose target died stays a live, inert claim until
-                                     //       you Release or Repoint it. A save load, a new game,
-                                     //       or the actor unloading drops the claim (it is never
-                                     //       saved); claim again after a load.
+                                     //       THE PIN PAUSES -- the engine's own pick stands for
+                                     //       that update -- while the engine has no target or your
+                                     //       target is not (yet) one of the group's combat targets.
+                                     //       The claim stays; it resumes when both hold again.
+                                     //
+                                     //       THE PIN ENDS, AND APMF RELEASES THE CLAIM ITSELF
+                                     //       (marth: "If APMF can no longer track the target, it's
+                                     //       lost, and dropped"), when the target is LOST (the
+                                     //       engine can no longer locate it), dead, disabled, not
+                                     //       loaded or no longer resolves, or the actor itself
+                                     //       dies. The log names the reason ("pin ended: target
+                                     //       lost"), IsClaimLive(handle) turns false (ABI v6), and
+                                     //       the handle is dead: a mod that wants to keep chasing
+                                     //       must pin again. This is the ONLY case in which APMF
+                                     //       releases a client's kIntent_TargetPin claim. Your own
+                                     //       Release, an outranking claim, a save load, a new game
+                                     //       or the actor unloading also end it (never saved).
                                      //
                                      //       The world's reaction to the fight is YOURS (CLAUDE.md
                                      //       principle 2): crime, bounty, faction and aggression

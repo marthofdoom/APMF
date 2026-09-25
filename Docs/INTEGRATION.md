@@ -1096,10 +1096,29 @@ separate concern and this intent does not do it.
 **It claims nothing else.** No attack selection, no casting, no equip, no movement, no
 aggression, no perception. One intent, one facet.
 
-**It stops by itself.** When the target is dead, disabled, not loaded, no longer resolves, or is
-no longer a combat target of the group, and when the engine has no target, Harbinger writes
-nothing and the engine picks its own targets. Your claim stays live (Harbinger never releases a
-claim for you), so `Repoint` it to the next target or `Release` it.
+**It pauses while it cannot apply.** While the engine has no target, or your target is not (yet)
+one of the group's combat targets, Harbinger writes nothing and the engine picks. The claim stays,
+and the pin applies again as soon as both hold.
+
+**It ends by itself when Harbinger can no longer track the target.** When the target is **lost**
+(the engine can no longer locate it: its entry in the group's target list is flagged lost),
+**dead**, **disabled**, **not loaded**, or no longer resolves, or when the pinned actor itself
+dies, Harbinger releases your claim for you. The log says `pin ended: <reason>` and the Release
+line repeats the reason. `IsClaimLive(handle)` (ABI v6) turns false and the handle is dead. This
+is the only case in which Harbinger releases a pin claim on its own.
+
+### How the pin ends, and what to do about it
+
+* **Poll `IsClaimLive(handle)`** (ABI v6) if you need to know. A false answer on a pin you did not
+  release means Harbinger ended it: the target was lost, died, was disabled or unloaded, or your
+  actor died. The log has the reason.
+* **Want to keep chasing?** Pin again. A lost target is one the engine cannot locate, so a new pin
+  only takes effect once the engine holds and can locate it again (until then it pauses).
+* **MFO**, once it is a ch.20 client (its port is a separate task), re-evaluates its gambits on its
+  own cadence: its next pass picks a new target and pins
+  it, or releases. It never re-pins a target Harbinger dropped without choosing it again.
+* **Another mod** should treat an ended pin like any lost target: pick again, pin again if it still
+  wants that actor, or let the engine choose.
 
 ### The recipe
 
@@ -1146,7 +1165,7 @@ that writes the target after the engine's update overrides the pin.
 
 * **At the call (`kInvalidHandle`, logged):** Harbinger older than v13 ("no channel serves
   intent 20"), VR, a runtime other than exactly 1.6.1170 or 1.5.97, `[TargetPin]
-  bTargetPin=0` in `APMF.ini`, the address self-check refused the seat, before kDataLoaded,
+  bTargetPin=0` in `APMF.ini`, the address self-check refused a seat, before kDataLoaded,
   `param.form` 0, `param.form` equal to the actor, or the actor is the player.
 * **At Engage (one frame later):** `param.form` is not an Actor. `RequestEx` already
   returned a LIVE handle; it pins nothing and the log says why. Release it or Repoint it.
@@ -1176,6 +1195,8 @@ way the engine does them. Harbinger does not stop them and Release does not undo
   engine's update (its own `UpdateCombat` hook) writes last and wins. That shows up as
   `OVERWRITTEN` when Harbinger can see it.
 * **Not saved.** A save load, a new game or the actor unloading drops the claim. Claim again.
+* **Pin a loaded target.** A target that is not loaded ends the pin at the next check (about a
+  quarter second), so pin an actor that is in the loaded area.
 * **Built, CI-verified, not yet field-run.** Nobody has watched the selector seat run in a game
   yet. The first field log must show the `FIRST SOURCE DENY` line and no `SOURCE SEAT MISSED`
   before anything relies on it.

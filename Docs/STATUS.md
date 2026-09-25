@@ -13,6 +13,11 @@ ClickUp 86e3cr9u7, tier A (new engine seat + ABI). marth approved 2026-09-25 ("y
   called by `CombatController::UpdateTarget` inside `UpdateCombat`) with the WINNING claim's target, only when
   the engine answered non-zero and the target is in `combatGroup->targets`. The first cut's post-update rewrite
   is gone; slot 0xE4 is hooked OBSERVE-ONLY to log a source-seat miss or an overwrite. Never enters combat.
+  **Round 3 (marth: "If APMF can no longer track the target, it's lost, and dropped"):** a target LOST
+  (`kTargetLost`, CombatTarget u16 +0xA6 bit 1), dead, disabled, unloaded or unresolvable, or a dead owner, ENDS
+  the pin -- `targetpin::Poll()` on the Arbiter seat releases the claim with the reason logged. A target not yet
+  in the group only pauses the pin. The observer now judges a miss only on a real update (live actor, controller
+  before and after, seat not declining).
 - **ABI v13** adds the intent only: no struct, no slot, no `APMF_Param` field (the v10 shape). A v13 client on an
   older Harbinger is refused ("no channel serves intent 20"). **The H1 lockpick/LOTD idle work pencilled at "ABI
   v13" above must take v14.**
