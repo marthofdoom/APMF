@@ -25,6 +25,15 @@ namespace apmf::targetpin {
     // Why Installed() is false, for the one-time refusal log. Never null. Any thread.
     const char* NotInstalledReason();
 
+    // End-of-pin monitor (marth 2026-09-25: "If APMF can no longer track the target, it's
+    // lost, and dropped"), from Arbiter::OncePerFrame -- the ch.19 Poll seat. Self-throttled
+    // (250 ms); one relaxed atomic load while nothing is pinned. When the owner is dead or
+    // the target is dead, disabled, unloaded, unresolvable, or LOST (the seat saw kTargetLost
+    // in the group entry), it ENDS the winning claim itself (EnqueueRelease) and logs the
+    // reason; the Release line repeats it. A target that is merely not a combat target yet
+    // does NOT end the pin. Not a re-assert: it writes no engine state. GAME THREAD.
+    void Poll();
+
     // Drop every per-actor pin entry (the world is being replaced). For the kPreLoadGame /
     // revert boundary, beside travel::ResetAll(): ControlMap::Clear() makes no
     // channel->Release calls, so without this the entries of the outgoing world would

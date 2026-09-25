@@ -9,6 +9,7 @@
 #include "core/MainThread.h"
 #include "core/Registry.h"
 #include "channels/Travel.h"
+#include "channels/TargetPin.h"
 
 namespace apmf {
 
@@ -78,6 +79,13 @@ namespace apmf {
         // handles and makes engine calls. Self-throttled internally; one relaxed atomic
         // load while nothing is travelling.
         apmf::travel::Poll();
+
+        // ch.20 (kIntent_TargetPin) END-OF-PIN MONITOR, same seat and same shape as the
+        // travel monitor above: it only decides that a pin has ENDED (owner dead; target
+        // dead / disabled / unloaded / unresolvable / lost) and releases that claim. It
+        // writes no engine state. Self-throttled; one relaxed atomic load while nothing
+        // is pinned.
+        apmf::targetpin::Poll();
     }
 
     void Arbiter::ReleaseAll(const char* why) {

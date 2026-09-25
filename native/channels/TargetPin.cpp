@@ -149,10 +149,21 @@ namespace {
         mutable std::atomic<std::uint32_t> noEngineTarget{ 0 };  // engine answered "no target": left alone
         mutable std::atomic<std::uint32_t> notCombatTarget{ 0 }; // pin not in combatGroup->targets
         mutable std::atomic<std::uint32_t> targetGone{ 0 };      // target dead/disabled/unloaded/unresolved
+        mutable std::atomic<std::uint32_t> targetLost{ 0 };      // group entry flagged kTargetLost
         // observer
         mutable std::atomic<std::uint32_t> seatMissed{ 0 };      // aimed elsewhere, seat never called
         mutable std::atomic<std::uint32_t> overwritten{ 0 };     // seat pinned, something wrote after
         mutable std::atomic<bool>          firstDenyLogged{ false };
+        // The seat's last decision, for the observer (F-A): 0 never called, 1 answered
+        // (denied or held), 2 declined.
+        mutable std::atomic<std::uint8_t>  lastDecision{ 0 };
+        // "Can't hold it any more" (marth 2026-09-25: "If APMF can no longer track the
+        // target, it's lost, and dropped"). The seat records a reason it saw on a worker
+        // (target lost / dead / disabled / unloaded / unresolvable); Poll() -- game
+        // thread -- ends the claim and sets `ending` so neither path acts twice.
+        mutable std::atomic<const char*>   seatEndReason{ nullptr };
+        mutable std::atomic<bool>          ending{ false };
+        mutable std::atomic<const char*>   endedReason{ nullptr };   // for the Release line
         mutable std::atomic<std::uint64_t> lastNotTargetLogMs{ 0 };
         mutable std::atomic<std::uint64_t> lastMissLogMs{ 0 };
         mutable std::atomic<std::uint64_t> lastOverwriteLogMs{ 0 };
@@ -189,13 +200,19 @@ namespace {
         return now - prev >= kLogEveryMs && last.compare_exchange_strong(prev, now, std::memory_order_relaxed);
     }
 
-    // Is `h` in the group's target list? Read under the group's own read lock.
-    bool InCombatGroupTargets(RE::CombatGroup* group, const RE::ActorHandle& h) {
+    // Where is `h` in the group's target list? Read under the group's own read lock.
+    // kLost: the entry is there but flagged kTargetLost (CombatTarget::flags, a u16 at
+    // +0xA6, bit 1 -- verified on both runtimes: the engine sets it with `or cx, 2` at
+    // AE 0x8053EA / SE 0x76B886 and reads it with `shr al,1; and al,1` at AE 0x802B61 /
+    // SE 0x769621). A lost target is one the engine can no longer locate.
+    enum class Membership { kAbsent, kHeld, kLost };
+    Membership GroupMembership(RE::CombatGroup* group, const RE::ActorHandle& h) {
         RE::BSReadLockGuard guard(group->lock);
         for (const auto& t : group->targets) {
-            if (t.targetHandle == h) return true;
+            if (t.targetHandle == h)
+                return t.flags.any(RE::CombatTarget::Flags::kTargetLost) ? Membership::kLost : Membership::kHeld;
         }
-        return false;
+        return Membership::kAbsent;
     }
 
     // The selector seat body, shared by both vtables. `out` is what the original
@@ -221,26 +238,51 @@ namespace {
         if (it == g_pins.end() || it->second.target != claim.form) return;
         const Pin& pin = it->second;
         pin.seatHits.fetch_add(1, std::memory_order_relaxed);
+        const auto decline = [&pin] { pin.lastDecision.store(2, std::memory_order_relaxed); };
+        const auto endWith = [&pin](const char* why) {
+            const char* none = nullptr;
+            pin.seatEndReason.compare_exchange_strong(none, why, std::memory_order_relaxed);
+        };
+        if (pin.ending.load(std::memory_order_relaxed)) {   // Harbinger is ending this claim
+            decline();
+            return;
+        }
 
         const std::uint32_t engineAnswer = *a_out;
         if (engineAnswer == 0) {   // the engine holds no target: never start or revive a fight
             pin.noEngineTarget.fetch_add(1, std::memory_order_relaxed);
-            return;
-        }
-        if (engineAnswer == pin.handle.native_handle()) {
-            pin.held.fetch_add(1, std::memory_order_relaxed);
+            decline();
             return;
         }
 
         auto       targetPtr = pin.handle.get();
         RE::Actor* target    = targetPtr.get();
-        if (!target || target->IsDead() || target->IsDisabled() || !target->Is3DLoaded()) {
+        const char* gone = !target               ? "target unresolvable" :
+                           target->IsDead()      ? "target dead" :
+                           target->IsDisabled()  ? "target disabled" :
+                           !target->Is3DLoaded() ? "target unloaded" : nullptr;
+        if (gone) {
             pin.targetGone.fetch_add(1, std::memory_order_relaxed);
+            endWith(gone);   // Poll() ends the claim on the game thread
+            decline();
             return;
         }
 
         auto* group = cc->combatGroup;
-        if (!group || !InCombatGroupTargets(group, pin.handle)) {
+        const Membership m = group ? GroupMembership(group, pin.handle) : Membership::kAbsent;
+        if (m == Membership::kLost) {
+            pin.targetLost.fetch_add(1, std::memory_order_relaxed);
+            endWith("target lost");   // the engine can no longer locate it: the pin ends
+            decline();
+            return;
+        }
+        if (engineAnswer == pin.handle.native_handle()) {
+            pin.held.fetch_add(1, std::memory_order_relaxed);
+            pin.lastDecision.store(1, std::memory_order_relaxed);
+            return;
+        }
+        if (m == Membership::kAbsent) {
+            decline();
             const auto n = pin.notCombatTarget.fetch_add(1, std::memory_order_relaxed) + 1;
             if (RateOk(pin.lastNotTargetLogMs)) {
                 spdlog::info("[ch.20] 0x{} pin 0x{} is NOT a combat target of this actor's group ({}) -- the "
@@ -254,6 +296,7 @@ namespace {
 
         *a_out = pin.handle.native_handle();   // DENY the engine's pick at its source
         pin.denied.fetch_add(1, std::memory_order_relaxed);
+        pin.lastDecision.store(1, std::memory_order_relaxed);
         if (!pin.firstDenyLogged.exchange(true, std::memory_order_relaxed)) {
             spdlog::info("[ch.20] 0x{} FIRST SOURCE DENY: the engine's target selector picked handle 0x{}, "
                          "answered with the pin 0x{} instead.",
@@ -299,10 +342,19 @@ namespace {
                     denied0 = it->second.denied.load(std::memory_order_relaxed);
                 }
             }
+            // F-A: UpdateCombat skips UpdateTarget on purpose on its early-outs (form flag
+            // bit 21; IsDead(true); no current process; the 0xA9 extra-data test -- AE
+            // 0x6B6E8F / 0x6B6EA9 / 0x6B6EB7 / 0x6B6EC7-0x6B6ED3, SE 0x62571F / 0x625739 /
+            // 0x625747 / 0x625757-0x625763; and no controller). Those paths still sync the
+            // controller's target into currentCombatTarget (AE 0x662BE0 / SE 0x5D2470). A
+            // MISS is judged only when the actor is alive and had a controller both before
+            // and after the update.
+            auto* const ccBefore = tf ? a_this->GetActorRuntimeData().combatController : nullptr;
 
             func(a_this);   // the engine's update, with the selector seat inside it
 
-            if (tf == 0) return;
+            if (tf == 0 || !ccBefore) return;
+            if (a_this->IsDead() || !a_this->GetActorRuntimeData().combatController) return;
             APMF_API::APMF_Param claim{};
             if (!apmf::ControlMap::Get().TryGetOwningClaim(self, APMF_API::kIntent_TargetPin, claim) ||
                 claim.form != tf)
@@ -320,7 +372,10 @@ namespace {
 
             const auto hits1   = pin.seatHits.load(std::memory_order_relaxed);
             const auto denied1 = pin.denied.load(std::memory_order_relaxed);
-            if (hits1 == hits0) {
+            // A seat whose previous call DECLINED (not a combat target, lost, gone, ending)
+            // leaves the engine's pick standing on purpose; only a seat that has never run,
+            // or last answered with the pin, is judged.
+            if (hits1 == hits0 && pin.lastDecision.load(std::memory_order_relaxed) != 2) {
                 const auto n = pin.seatMissed.fetch_add(1, std::memory_order_relaxed) + 1;
                 if (RateOk(pin.lastMissLogMs)) {
                     spdlog::warn("[ch.20] 0x{} SOURCE SEAT MISSED: the actor ended its combat update aimed at 0x{}, "
@@ -402,9 +457,10 @@ namespace {
         // Relinquish (INVARIANTS #5a): nothing to restore. The engine's own selection
         // answers again from the next combat update on.
         void Release(RE::FormID id, RE::Actor* /*actor*/) override {
-            struct { std::uint32_t hits, denied, held, none, notTgt, gone, missed, over; } c{};
-            RE::FormID t   = 0;
-            bool       had = false;
+            struct { std::uint32_t hits, denied, held, none, notTgt, gone, lost, missed, over; } c{};
+            RE::FormID  t   = 0;
+            bool        had = false;
+            const char* why = nullptr;
             {
                 std::unique_lock lk(g_pinMx);
                 if (const auto it = g_pins.find(id); it != g_pins.end()) {
@@ -412,17 +468,21 @@ namespace {
                     const Pin& p = it->second;
                     t = p.target;
                     c = { p.seatHits.load(), p.denied.load(), p.held.load(), p.noEngineTarget.load(),
-                          p.notCombatTarget.load(), p.targetGone.load(), p.seatMissed.load(), p.overwritten.load() };
+                          p.notCombatTarget.load(), p.targetGone.load(), p.targetLost.load(), p.seatMissed.load(),
+                          p.overwritten.load() };
+                    why = p.endedReason.load();
                     g_pins.erase(it);
                 }
                 g_pinCount.store(g_pins.size(), std::memory_order_relaxed);
             }
             if (had) {
-                spdlog::info("[ch.20] 0x{} target-pin released (target 0x{}): selector seat called {} time(s) -- "
+                spdlog::info("[ch.20] 0x{} target-pin released ({}) (target 0x{}): selector seat called {} time(s) -- "
                              "denied the engine's pick {}, engine already on the pin {}, engine had no target {}, "
-                             "pin not a combat target {}, target gone {}; observer: seat missed {}, overwritten "
-                             "after the seat {}. The engine's own selection answers again.",
-                             Hex(id), Hex(t), c.hits, c.denied, c.held, c.none, c.notTgt, c.gone, c.missed, c.over);
+                             "pin not a combat target {}, target gone {}, target lost {}; observer: seat missed {}, "
+                             "overwritten after the seat {}. The engine's own selection answers again.",
+                             Hex(id), why ? fmt::format("ENDED BY HARBINGER: {}", why) : std::string("by the client, "
+                             "an unload or a load"), Hex(t), c.hits, c.denied, c.held, c.none, c.notTgt, c.gone,
+                             c.lost, c.missed, c.over);
             } else {
                 spdlog::info("[ch.20] 0x{} target-pin released (it was inert).", Hex(id));
             }
@@ -481,6 +541,58 @@ namespace apmf::targetpin {
     const char* NotInstalledReason() {
         const char* r = g_notInstalledReason.load(std::memory_order_acquire);
         return r ? r : "unknown";
+    }
+
+    void Poll() {
+        if (g_pinCount.load(std::memory_order_relaxed) == 0) return;
+        static std::uint64_t s_lastMs = 0;
+        const std::uint64_t  now      = apmf::clock::MonotonicMs();
+        if (now - s_lastMs < 250) return;
+        s_lastMs = now;
+
+        struct Snap { RE::FormID id, target; RE::ActorHandle handle; const char* seatWhy; };
+        std::vector<Snap> snaps;
+        {
+            std::shared_lock lk(g_pinMx);
+            for (const auto& [id, p] : g_pins) {
+                if (p.ending.load(std::memory_order_relaxed)) continue;
+                snaps.push_back({ id, p.target, p.handle, p.seatEndReason.load(std::memory_order_relaxed) });
+            }
+        }
+
+        for (const auto& sn : snaps) {
+            const char* why = sn.seatWhy;   // e.g. "target lost", seen by the seat on a worker
+            if (!why) {
+                auto* owner = RE::TESForm::LookupByID<RE::Actor>(sn.id);
+                auto  tptr  = sn.handle.get();
+                if (owner && owner->IsDead())      why = "owner dead";
+                else if (!tptr)                    why = "target unresolvable";
+                else if (tptr->IsDead())           why = "target dead";
+                else if (tptr->IsDisabled())       why = "target disabled";
+                else if (!tptr->Is3DLoaded())      why = "target unloaded";
+            }
+            if (!why) continue;
+
+            // End the WINNING claim -- the one this entry was resolved for.
+            APMF_API::APMF_Param param{};
+            float                basis = 0.0f;
+            APMF_API::Handle     h     = APMF_API::kInvalidHandle;
+            if (!apmf::ControlMap::Get().TryGetOwningClaimBasis(sn.id, APMF_API::kIntent_TargetPin, param, basis,
+                                                                 &h) ||
+                param.form != sn.target || h == APMF_API::kInvalidHandle)
+                continue;   // the claim moved; the next Apply rewrites the entry
+            {
+                std::unique_lock lk(g_pinMx);
+                const auto it = g_pins.find(sn.id);
+                if (it == g_pins.end() || it->second.target != sn.target || it->second.ending.load()) continue;
+                it->second.ending.store(true);
+                it->second.endedReason.store(why);
+            }
+            apmf::ControlMap::Get().EnqueueRelease(h);
+            spdlog::info("[ch.20] 0x{} pin ended: {} (target 0x{}, claim h={}). Harbinger released the claim; a "
+                         "mod that wants to keep chasing must pin again.",
+                         Hex(sn.id), why, Hex(sn.target), h);
+        }
     }
 
     void ResetAll(const char* why) {
