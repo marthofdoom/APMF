@@ -1,6 +1,7 @@
 #include "PCH.h"
 #include "channels/TargetPin.h"
 #include "core/Allowance.h"   // SeatVerified(): the mit-3.7 F1 self-check gate
+#include "core/Clock.h"
 #include "core/ControlMap.h"
 #include "core/Log.h"
 #include "core/Registry.h"
@@ -14,81 +15,107 @@ extern "C" __declspec(dllimport) unsigned long __stdcall GetPrivateProfileIntA(
 
 // ============================================================================
 // Channel 20 -- TARGET PIN (kIntent_TargetPin, ABI v13, marth 2026-09-25, ClickUp
-// 86e3cr9u7: "yes, start the target pin").
+// 86e3cr9u7: "yes, start the target pin"; design correction the same day: "APMF offers
+// pinning, it must block engine pinning").
 //
 // WHAT IT IS. A client claims {actor, target}. While that claim is the WINNING
-// kIntent_TargetPin claim on the actor, APMF's seat on Character::UpdateCombat (vtable
-// slot 0xE4) runs the engine's own combat update FIRST and then, if the engine HOLDS a
-// combat target that is not the claimed one, writes the claimed target back into
-// `currentCombatTarget` and the CombatController's `targetHandle` (the old one moves to
-// `previousTargetHandle`). The engine's own AI then fights that target: its own attack
-// selection, movement, spells and equips. Lifted from MFO's field-proven
-// native/Targeting.cpp (UpdateCombat hook, MFO origin/main) into Harbinger as a
-// first-class facet, so a client needs no hook of its own.
+// kIntent_TargetPin claim on the actor, the ENGINE'S OWN TARGET SELECTION IS ANSWERED
+// WITH THE PINNED TARGET AT ITS SOURCE, so the engine's own pick never reaches the
+// controller. The NPC's own AI then fights that target: attacks, movement, spells, equips.
 //
-// THE GUARD THAT IS THE WHOLE SAFETY ARGUMENT: NEVER WRITE WHEN THE ENGINE HAS NO TARGET.
-// If vanilla cleared the target -- the foe fled, died, went undetected, combat ended --
-// it did that for a reason Harbinger cannot see. Commanding WHICH foe is ours;
-// commanding THAT there is a foe is not. So the pin never starts a fight and never
-// revives one the engine ended (INVARIANTS #0: combat entry is forbidden here, and
-// this is the line that keeps it out). The same guard is what makes the pin stop by
-// itself when the engine ends combat: StopCombat nulls currentCombatTarget (MFO
-// ENGINE_NOTES 0.47 item 1, both runtimes), so the next update writes nothing.
+// WHERE THE ENGINE PICKS (disassembly of both unpacked images, 2026-09-25):
+//   Actor::UpdateCombat (Character vtable slot 0xE4; AE 0x6B6E70 / SE 0x625700) calls
+//   CombatController::UpdateTarget exactly once (AE 0x6B6F1C -> 0x559930, SE 0x6257AC ->
+//   0x4FE300; the only caller on each). UpdateTarget walks the controller's
+//   targetSelectors array and, for each active selector (flags +0x20: bit0 set, bit1
+//   clear), calls its vtable SLOT 6 -- `ActorHandle* SelectTarget(this, ActorHandle* out)`,
+//   a hidden-return-slot call: rdx = out, the 4-byte handle is stored at [rdx] and rdx is
+//   returned. The FIRST non-zero answer wins; if it differs from the controller's
+//   targetHandle (+0x2C) UpdateTarget calls CombatController::SetTarget (AE 0x559630 /
+//   SE 0x4FDFE0), which writes targetHandle AND the actor's currentCombatTarget. SetTarget
+//   has two callers per runtime: UpdateTarget, and one that passes 0 (the engine
+//   CLEARING the target). Nothing else in the CombatController code writes +0x2C
+//   besides its constructor.
+//   The selector classes are CombatTargetSelectorStandard (the threat/scoring picker,
+//   slot 6 AE 0x84CFE0 / SE 0x7B5E50) and CombatTargetSelectorFixed (returns the handle
+//   it was built with, AE 0x84DAF0 / SE 0x7B6920); the base's slot 6 is a purecall.
+//   Selector layout, from both constructors on both runtimes (AE 0x84CFBA / 0x84DA3D,
+//   SE 0x7B5E2A / 0x7B686D): +0x10 CombatController*, +0x18 handle, +0x1C priority,
+//   +0x20 flags. CommonLib declares these classes only by name, so +0x10 is a raw offset
+//   and carries the INVARIANTS #20 guards: an install-time address self-check on both
+//   vtables, a per-call vtable-identity check, and the INI kill-switch.
+//
+// THE SEAT (the source deny). write_vfunc on slot 6 of BOTH selector vtables, chaining:
+// the original runs first (the selector keeps its own bookkeeping), then, for an actor
+// whose winning kIntent_TargetPin claim resolves, the answer is REPLACED with the pinned
+// handle when ALL of these hold:
+//   * the engine's own answer is non-zero -- the engine holds a target, i.e. the actor is
+//     fighting. A zero answer means "no target" and is left alone: the pin never starts a
+//     fight and never revives one the engine ended (INVARIANTS #0 (f) condition 2);
+//   * the pinned target is alive, enabled and loaded;
+//   * the pinned target is IN THE ACTOR'S COMBAT GROUP'S TARGET LIST
+//     (`combatController->combatGroup->targets`, read under the group's own read lock).
+//     APMF only chooses among the targets the engine itself holds; a non-foe becomes
+//     pinnable when something (the client's own combat entry) makes it a combat target.
+//     A pinned target outside the list is NOT written -- counted and logged, rate-limited.
+// The engine's pick is then never seen by SetTarget, the controller, the actor's
+// currentCombatTarget or anything UpdateCombat reads after UpdateTarget (the process-side
+// read of +0x2C at AE 0x6B6F34 / SE 0x6257C4 included). That is the "block engine
+// pinning" marth asked for.
+//
+// THE OBSERVER (not a belt). Character vtable slot 0xE4 (UpdateCombat) is also hooked,
+// OBSERVE-ONLY: it writes nothing. For a pinned actor it snapshots the selector seat's
+// counters before the engine's update and, after it, checks the outcome. If the actor
+// ends the update aimed at someone else while the seat was NEVER CALLED, that is a
+// SOURCE-SEAT MISS and it is logged loudly (principle 7: a miss must show, not be
+// papered over by a rewrite). If the seat DID answer with the pin and the actor still
+// ends aimed elsewhere, something wrote after the seat (another framework, another
+// path) -- logged as OVERWRITTEN. The previous cut's post-update rewrite is GONE: it was
+// the mechanism marth rejected, and keeping it as a belt would hide exactly those two
+// failures.
 //
 // DENY-COMPLETENESS (principle 2), stated plainly. The facet is "which actor this NPC
-// fights". Its competing sources, and what happens to each:
-//   * the ENGINE'S OWN re-pick (CombatTargetSelector, threat) -- DENIED, at the seat,
-//     every combat update, before the next update reads it. That is the point.
-//     It is a SEAT-TIME CORRECTION, not a source block: inside one UpdateCombat call
-//     the engine's own pick exists until the original returns, and whatever that same
-//     call consumed from it (its behaviour tree runs off the controller) saw the
-//     engine's pick for that one update. That is the shape MFO field-proved and the
-//     brief specified; a source-level deny of CombatTargetSelector is NOT built and is
-//     recorded as an open item (Docs/DENY-COMPLETENESS-AUDIT.md row 20). INVARIANTS #2's
-//     label applies: this is a known-incomplete block at one-update granularity, not a
-//     clean gate, and it says so here.
-//   * another framework's OWN currentCombatTarget write -- NOT denied (ch.6 row 6 gap,
-//     unchanged). A framework whose seat runs after ours (a later write_vfunc on the
-//     same slot chains OUTSIDE us and so writes last) wins. That includes MFO's own
-//     Targeting hook during the transition: both are chaining vtable hooks and neither
-//     replaces the other; MFO's Targeting must defer to the claim owner (MFO's task).
-//   * NOTHING ELSE is claimed: no attack selection (ch.7), no casting (ch.8/8b), no
-//     equip (ch.15/17), no movement (ch.1), no aggression (ch.11), no combat entry.
+// fights". Competing sources:
+//   * the ENGINE'S OWN pick (both selector classes) -- DENIED at the source, above.
+//   * the engine CLEARING the target (SetTarget(0): combat ending, the foe lost) -- NOT
+//     denied, by design (#0 (f) condition 2).
+//   * another framework's OWN currentCombatTarget / targetHandle write (e.g. a later
+//     UpdateCombat hook, SmartNPCTargetSelector, MFO's own Targeting hook until MFO
+//     defers) -- NOT denied (ch.6 row 6 gap, unchanged). The observer reports it as
+//     OVERWRITTEN; Docs/REVIEW-BACKLOG.md carries the MFO closure.
+//   * NOTHING ELSE is claimed: no attack selection, casting, equip, movement, aggression
+//     or combat entry.
 //
-// WHAT THE CLIENT OWNS (principle 2 scope, marth 2026-09-25). Pinning an NPC onto a
-// guard, a friendly or a bystander produces crime, bounty, faction, aggression and
-// ally-joining reactions exactly as the engine does them. Harbinger does not deny
-// them and Release does not undo them.
+// WHAT THE CLIENT OWNS (principle 2 scope, marth 2026-09-25). The world's reaction to the
+// fight the client declared -- crime, bounty, faction, aggression, allies joining --
+// happens as the engine does it and is not undone on release.
 //
-// THREADING (MFO ENGINE_NOTES 0.47 item 3). UpdateCombat runs as a JOB on the BSJobs
-// worker threads, several actors in parallel; its one call site (AE 0x83f5e0+0x3c,
-// SE 0x7a8390+0x3c) holds a NiPointer on the actor across the call, so `a_this` lives
-// through this thunk. The thunk therefore:
-//   * reads the CLAIM from the ControlMap's published RCU snapshot (TryGetOwningClaim,
-//     lock-free, any thread) -- the pin follows the WINNING claim only;
-//   * reads the TARGET'S HANDLE from this file's own map under a shared_lock. The
-//     handle is resolved ONCE on the game thread (Engage / OnOwnerChanged, where form
-//     lookups are legal) -- the thunk never does a form lookup (the CastSeatClaim
-//     rule, core/ControlMap.h);
-//   * requires the two to AGREE (map entry's target FormID == the published claim's
-//     param.form). Between a Drain applying a Repoint and its Publish the two can
-//     briefly disagree; the pin then writes nothing for that update (engine keeps its
-//     own pick) -- never a write of a stale target;
-//   * touches ONLY this actor's own fields, after its own original returned, on the
-//     same thread. The controller pointer is read once. A StopCombat on ANOTHER
-//     thread against this same actor while this thunk runs (a script, a package
-//     evaluation, a kill -- 0.47 item 4) is the same race the engine's own update body
-//     and MFO's hook live with; it is flagged for review, not hidden.
+// THREADING. UpdateCombat runs as a BSJobs worker job, several actors in parallel (MFO
+// ENGINE_NOTES 0.47 item 3); UpdateTarget and so the selector seat run inside it, for
+// that one actor. The seat:
+//   * reads the CLAIM from the ControlMap's published RCU snapshot (lock-free);
+//   * reads the pinned handle from this file's map under a shared_lock (filled on the
+//     game thread at Engage / OnOwnerChanged -- the seat never looks up a form);
+//   * resolves the attacking actor from the controller's attackerHandle (a handle-table
+//     read, the same one core/CastSeats.cpp does on the combat thread);
+//   * takes the combat GROUP's read lock (BSReadLockGuard, the engine's own
+//     BSReadWriteLock::LockForRead, self-checked row). LockForRead is recursive for a
+//     thread that already holds the write lock (AE 0xCC90C0: compares the writer thread
+//     id, then `lock inc` the count), so taking it inside the engine's update cannot
+//     self-deadlock.
+// KNOWN EXPOSURE, ACCEPTED (review F2, SEV-4, threading carve-out, decided 2026-09-25):
+// a StopCombat on ANOTHER thread against this same actor while the seat or the observer
+// runs (a script, a package evaluation, a kill -- 0.47 item 4) frees the controller under
+// the read. That is identical to vanilla's own UpdateCombat body and to MFO's hook. The
+// closure is a StopCombat (slot 0xE5) seat sharing a per-actor lock, which belongs to the
+// combat-substrate task. Recorded in Docs/REVIEW-BACKLOG.md.
 //
-// VERSION ROBUSTNESS (CLAUDE.md "What breaks" 4). Slot 0xE4 is SE == AE (CommonLib's
-// RelocateVirtual second index is VR) and holds Actor::UpdateCombat on the Character
-// vtable on BOTH unpacked images: AE 0x6B6E70 / SE 0x625700, signature `void(Actor*)`
-// (the call site sets only rcx and discards rax). Recorded in spec.json (Character row,
-// slot 0xE4) and guarded at install by SeatVerified + an EXACT-runtime gate + VR
-// refusal + the [TargetPin] bTargetPin INI kill-switch. `currentCombatTarget` is
-// reached through CommonLib's per-runtime ACTOR_RUNTIME_DATA accessor (SE +0xFC /
-// AE +0x104 absolute); `targetHandle` 0x2C and `previousTargetHandle` 0x30 sit below the
-// CombatController's +0x68 AE divergence (static_asserts below).
+// VERSION ROBUSTNESS. All three seats are vtable slots (principle 11: no call-site
+// patch), each on a vtable that is a self-checked row derived from our own executables
+// (spec.json: Character slot 0xE4, CombatTargetSelectorStandard / Fixed slot 0x06),
+// exact 1.6.1170 / 1.5.97 only, VR refused, [TargetPin] bTargetPin. If ANY of the three
+// is refused, none is installed and every claim is refused: a pin with half a mechanism
+// is worse than none.
 // ============================================================================
 
 namespace {
@@ -97,98 +124,220 @@ namespace {
 
     constexpr const char* kIni = "Data/SKSE/Plugins/APMF.ini";
 
+    // Selector layout (see the header). Raw because CommonLib declares the classes by
+    // name only; guarded by the per-call vtable-identity check in SelectorSeat.
+    constexpr std::uintptr_t kSelectorController = 0x10;
+
+    // Rate limit for the per-pin warning lines (not-a-combat-target, seat miss,
+    // overwritten). Counters are always kept; only the log is limited.
+    constexpr std::uint64_t kLogEveryMs = 5000;
+
     std::atomic<bool>        g_installed{ false };
     std::atomic<bool>        g_installTried{ false };
     std::atomic<const char*> g_notInstalledReason{ "before kDataLoaded (the seat installs there)" };
 
-    // One entry per actor with an engaged ch.20. Written ONLY on the game thread (the
-    // lifecycle calls run inside ControlMap::Drain / ReleaseAll; ResetAll at the world
-    // boundary) under a unique_lock; read by the seat on BSJobs workers under a
-    // shared_lock. The counters are the seat's only mutation and are atomics, so a
-    // shared_lock is enough for them.
+    // One entry per actor with an engaged ch.20. Written ONLY on the game thread under a
+    // unique_lock; read by the seats on BSJobs workers under a shared_lock. The counters
+    // are the seats' only mutation and are atomics, so a shared_lock is enough for them.
     struct Pin {
         RE::FormID      target = 0;    // the claim's param.form this handle was resolved for
-        RE::ActorHandle handle{};      // resolved on the game thread; never looked up by the seat
-        mutable std::atomic<std::uint32_t> writes{ 0 };        // engine held another target: pinned back
-        mutable std::atomic<std::uint32_t> held{ 0 };          // engine already held ours
-        mutable std::atomic<std::uint32_t> noEngineTarget{ 0 };// engine held none: nothing written (the guard)
-        mutable std::atomic<std::uint32_t> targetGone{ 0 };    // target dead/disabled/unloaded/unresolved
-        mutable std::atomic<bool>          firstWriteLogged{ false };
+        RE::ActorHandle handle{};      // resolved on the game thread; never looked up by the seats
+        // selector seat
+        mutable std::atomic<std::uint32_t> seatHits{ 0 };        // SelectTarget called for this actor
+        mutable std::atomic<std::uint32_t> denied{ 0 };          // engine's pick replaced by the pin
+        mutable std::atomic<std::uint32_t> held{ 0 };            // engine's pick already was the pin
+        mutable std::atomic<std::uint32_t> noEngineTarget{ 0 };  // engine answered "no target": left alone
+        mutable std::atomic<std::uint32_t> notCombatTarget{ 0 }; // pin not in combatGroup->targets
+        mutable std::atomic<std::uint32_t> targetGone{ 0 };      // target dead/disabled/unloaded/unresolved
+        // observer
+        mutable std::atomic<std::uint32_t> seatMissed{ 0 };      // aimed elsewhere, seat never called
+        mutable std::atomic<std::uint32_t> overwritten{ 0 };     // seat pinned, something wrote after
+        mutable std::atomic<bool>          firstDenyLogged{ false };
+        mutable std::atomic<std::uint64_t> lastNotTargetLogMs{ 0 };
+        mutable std::atomic<std::uint64_t> lastMissLogMs{ 0 };
+        mutable std::atomic<std::uint64_t> lastOverwriteLogMs{ 0 };
     };
 
-    std::shared_mutex                  g_pinMx;
+    std::shared_mutex                   g_pinMx;
     std::unordered_map<RE::FormID, Pin> g_pins;
-    // Relaxed pre-gate: the seat fires for EVERY Character in combat in the world; with no
-    // pin anywhere this one load is its whole cost. Updated under g_pinMx's unique_lock.
-    std::atomic<std::size_t>           g_pinCount{ 0 };
+    // Relaxed pre-gate: the seats fire for EVERY combatant in the world; with no pin
+    // anywhere this one load is their whole cost. Updated under g_pinMx's unique_lock.
+    std::atomic<std::size_t>            g_pinCount{ 0 };
 
-    // AE +8 LAYOUT GUARD (CLAUDE.md "What breaks" 4; the fork static_asserts
-    // sizeof(CombatController) == 0x68 and moves everything past it behind
-    // GetRuntimeData()). Both handles this seat writes must stay below +0x68.
-    static_assert(offsetof(RE::CombatController, targetHandle) < 0x68,
-                  "targetHandle is past the CombatController AE layout divergence (+0x68)");
-    static_assert(offsetof(RE::CombatController, previousTargetHandle) < 0x68,
-                  "previousTargetHandle is past the CombatController AE layout divergence (+0x68)");
+    // The exact vtables the two selector thunks were installed on (per-call identity).
+    std::uintptr_t g_vtStandard = 0;
+    std::uintptr_t g_vtFixed    = 0;
 
-    struct UpdateCombatHook {
+    // AE +8 LAYOUT GUARD: the controller members read here must stay below +0x68 (the
+    // fork static_asserts sizeof(CombatController) == 0x68 and moves the rest behind
+    // GetRuntimeData()).
+    static_assert(offsetof(RE::CombatController, combatGroup) < 0x68);
+    static_assert(offsetof(RE::CombatController, attackerHandle) < 0x68);
+    static_assert(offsetof(RE::CombatController, targetHandle) < 0x68);
+    // CombatGroup: targets at +0x08 (BSTArray: data +0x08, size +0x18), CombatTarget
+    // stride 0xA8 with the handle at +0x00, lock at +0x160 -- verified on both runtimes
+    // (group ctor AE 0x803240 / SE 0x769DF0; target walk AE 0x804A10 / SE 0x76B0F0).
+    static_assert(offsetof(RE::CombatGroup, targets) == 0x08);
+    static_assert(offsetof(RE::CombatGroup, lock) == 0x160);
+    static_assert(sizeof(RE::CombatTarget) == 0xA8);
+    static_assert(offsetof(RE::CombatTarget, targetHandle) == 0x00);
+    static_assert(sizeof(RE::ActorHandle) == sizeof(std::uint32_t));
+
+    bool RateOk(std::atomic<std::uint64_t>& last) {
+        const auto now  = apmf::clock::MonotonicMs();
+        auto       prev = last.load(std::memory_order_relaxed);
+        return now - prev >= kLogEveryMs && last.compare_exchange_strong(prev, now, std::memory_order_relaxed);
+    }
+
+    // Is `h` in the group's target list? Read under the group's own read lock.
+    bool InCombatGroupTargets(RE::CombatGroup* group, const RE::ActorHandle& h) {
+        RE::BSReadLockGuard guard(group->lock);
+        for (const auto& t : group->targets) {
+            if (t.targetHandle == h) return true;
+        }
+        return false;
+    }
+
+    // The selector seat body, shared by both vtables. `out` is what the original
+    // returned (the engine's own answer slot).
+    void AnswerSelection(void* a_self, std::uint32_t* a_out, std::uintptr_t a_expectedVt) {
+        if (g_pinCount.load(std::memory_order_relaxed) == 0 || !a_self || !a_out) return;
+        if (*reinterpret_cast<const std::uintptr_t*>(a_self) != a_expectedVt) return;   // #20 identity
+
+        auto* cc = *reinterpret_cast<RE::CombatController* const*>(
+            reinterpret_cast<std::uintptr_t>(a_self) + kSelectorController);
+        if (!cc) return;
+        auto        attackerPtr = cc->attackerHandle.get();
+        RE::Actor*  attacker    = attackerPtr.get();
+        if (!attacker) return;
+
+        const RE::FormID     self = attacker->GetFormID();
+        APMF_API::APMF_Param claim{};
+        if (!apmf::ControlMap::Get().TryGetOwningClaim(self, APMF_API::kIntent_TargetPin, claim)) return;
+        if (claim.form == 0) return;
+
+        std::shared_lock lk(g_pinMx);
+        const auto it = g_pins.find(self);
+        if (it == g_pins.end() || it->second.target != claim.form) return;
+        const Pin& pin = it->second;
+        pin.seatHits.fetch_add(1, std::memory_order_relaxed);
+
+        const std::uint32_t engineAnswer = *a_out;
+        if (engineAnswer == 0) {   // the engine holds no target: never start or revive a fight
+            pin.noEngineTarget.fetch_add(1, std::memory_order_relaxed);
+            return;
+        }
+        if (engineAnswer == pin.handle.native_handle()) {
+            pin.held.fetch_add(1, std::memory_order_relaxed);
+            return;
+        }
+
+        auto       targetPtr = pin.handle.get();
+        RE::Actor* target    = targetPtr.get();
+        if (!target || target->IsDead() || target->IsDisabled() || !target->Is3DLoaded()) {
+            pin.targetGone.fetch_add(1, std::memory_order_relaxed);
+            return;
+        }
+
+        auto* group = cc->combatGroup;
+        if (!group || !InCombatGroupTargets(group, pin.handle)) {
+            const auto n = pin.notCombatTarget.fetch_add(1, std::memory_order_relaxed) + 1;
+            if (RateOk(pin.lastNotTargetLogMs)) {
+                spdlog::info("[ch.20] 0x{} pin 0x{} is NOT a combat target of this actor's group ({}) -- the "
+                             "engine's own pick stands. APMF only chooses among targets the engine holds. ({} so "
+                             "far)",
+                             Hex(self), Hex(claim.form), group ? "not in combatGroup->targets" : "no combat group",
+                             n);
+            }
+            return;
+        }
+
+        *a_out = pin.handle.native_handle();   // DENY the engine's pick at its source
+        pin.denied.fetch_add(1, std::memory_order_relaxed);
+        if (!pin.firstDenyLogged.exchange(true, std::memory_order_relaxed)) {
+            spdlog::info("[ch.20] 0x{} FIRST SOURCE DENY: the engine's target selector picked handle 0x{}, "
+                         "answered with the pin 0x{} instead.",
+                         Hex(self), Hex(engineAnswer), Hex(claim.form));
+        }
+    }
+
+    struct SelectStandardHook {
+        static std::uint32_t* thunk(void* a_self, std::uint32_t* a_out) {
+            std::uint32_t* r = func(a_self, a_out);   // the engine's own selection first
+            AnswerSelection(a_self, r, g_vtStandard);
+            return r;
+        }
+        static inline REL::Relocation<decltype(thunk)> func;
+    };
+
+    struct SelectFixedHook {
+        static std::uint32_t* thunk(void* a_self, std::uint32_t* a_out) {
+            std::uint32_t* r = func(a_self, a_out);
+            AnswerSelection(a_self, r, g_vtFixed);
+            return r;
+        }
+        static inline REL::Relocation<decltype(thunk)> func;
+    };
+
+    constexpr std::size_t kSelectTargetSlot = 0x06;   // CombatTargetSelector::SelectTarget (both runtimes)
+
+    // OBSERVE-ONLY. Writes nothing. See "THE OBSERVER" in the header.
+    struct UpdateCombatObserver {
         static void thunk(RE::Actor* a_this) {
-            // ALWAYS the engine first. The pin corrects the engine's choice after it is
-            // made; it never replaces the engine's combat bookkeeping.
-            func(a_this);
+            if (g_pinCount.load(std::memory_order_relaxed) == 0 || !a_this) {
+                func(a_this);
+                return;
+            }
+            const RE::FormID self = a_this->GetFormID();
+            RE::FormID       tf   = 0;
+            std::uint32_t    hits0 = 0, denied0 = 0;
+            {
+                std::shared_lock lk(g_pinMx);
+                if (const auto it = g_pins.find(self); it != g_pins.end()) {
+                    tf      = it->second.target;
+                    hits0   = it->second.seatHits.load(std::memory_order_relaxed);
+                    denied0 = it->second.denied.load(std::memory_order_relaxed);
+                }
+            }
 
-            if (g_pinCount.load(std::memory_order_relaxed) == 0 || !a_this) return;
+            func(a_this);   // the engine's update, with the selector seat inside it
 
-            const RE::FormID          self = a_this->GetFormID();
-            APMF_API::APMF_Param      claim{};
-            if (!apmf::ControlMap::Get().TryGetOwningClaim(self, APMF_API::kIntent_TargetPin, claim)) return;
-            if (claim.form == 0) return;
+            if (tf == 0) return;
+            APMF_API::APMF_Param claim{};
+            if (!apmf::ControlMap::Get().TryGetOwningClaim(self, APMF_API::kIntent_TargetPin, claim) ||
+                claim.form != tf)
+                return;
 
             std::shared_lock lk(g_pinMx);
             const auto it = g_pins.find(self);
-            // No entry (refused at engage) or an entry for another target (a Repoint not
-            // yet published, or published but not yet applied here): write nothing.
-            if (it == g_pins.end() || it->second.target != claim.form) return;
+            if (it == g_pins.end() || it->second.target != tf) return;
             const Pin& pin = it->second;
 
-            // Hold the NiPointer for the whole body -- never `.get().get()`, which drops
-            // the reference at the end of the statement.
-            auto        targetPtr = pin.handle.get();
-            RE::Actor*  target    = targetPtr.get();
-            if (!target || target->IsDead() || target->IsDisabled() || !target->Is3DLoaded()) {
-                pin.targetGone.fetch_add(1, std::memory_order_relaxed);
-                return;   // the pin stops; the engine's own targeting stands
-            }
-            if (a_this->IsDead()) return;
+            auto currentPtr = a_this->GetActorRuntimeData().currentCombatTarget.get();
+            if (!currentPtr) return;                    // no target: nothing to judge
+            auto targetPtr = pin.handle.get();
+            if (!targetPtr || currentPtr.get() == targetPtr.get()) return;   // on the pin, or pin gone
 
-            auto& rt         = a_this->GetActorRuntimeData();
-            auto  currentPtr = rt.currentCombatTarget.get();
-            if (!currentPtr) {
-                // THE GUARD: the engine holds no target. Never start or revive a fight.
-                pin.noEngineTarget.fetch_add(1, std::memory_order_relaxed);
-                return;
+            const auto hits1   = pin.seatHits.load(std::memory_order_relaxed);
+            const auto denied1 = pin.denied.load(std::memory_order_relaxed);
+            if (hits1 == hits0) {
+                const auto n = pin.seatMissed.fetch_add(1, std::memory_order_relaxed) + 1;
+                if (RateOk(pin.lastMissLogMs)) {
+                    spdlog::warn("[ch.20] 0x{} SOURCE SEAT MISSED: the actor ended its combat update aimed at 0x{}, "
+                                 "not the pin 0x{}, and the target-selector seat was never called for it. The pin "
+                                 "is NOT holding. ({} so far)",
+                                 Hex(self), Hex(currentPtr->GetFormID()), Hex(tf), n);
+                }
+            } else if (denied1 != denied0) {
+                const auto n = pin.overwritten.fetch_add(1, std::memory_order_relaxed) + 1;
+                if (RateOk(pin.lastOverwriteLogMs)) {
+                    spdlog::warn("[ch.20] 0x{} OVERWRITTEN: the selector seat answered with the pin 0x{}, but the "
+                                 "actor ended its combat update aimed at 0x{} -- something wrote the target after "
+                                 "the seat (another mod's hook, or another engine path). ({} so far)",
+                                 Hex(self), Hex(tf), Hex(currentPtr->GetFormID()), n);
+                }
             }
-            if (currentPtr.get() == target) {
-                pin.held.fetch_add(1, std::memory_order_relaxed);
-                return;
-            }
-
-            const RE::FormID engineChoice = currentPtr->GetFormID();
-            auto* const      cc           = rt.combatController;   // read ONCE (see THREADING above)
-            rt.currentCombatTarget = pin.handle;
-            if (cc) {
-                cc->previousTargetHandle = cc->targetHandle;
-                cc->targetHandle         = pin.handle;
-            }
-            pin.writes.fetch_add(1, std::memory_order_relaxed);
-
-            // One line per engagement, so a log shows the seat EXECUTING (principle 5)
-            // without a line per combat update.
-            if (!pin.firstWriteLogged.exchange(true, std::memory_order_relaxed)) {
-                spdlog::info("[ch.20] 0x{} FIRST PIN: the engine picked 0x{}, pinned back to 0x{} (combat "
-                             "controller {}).",
-                             Hex(self), Hex(engineChoice), Hex(claim.form),
-                             cc ? "present" : "ABSENT -- currentCombatTarget only");
-            }
+            // else: the seat ran and declined for a logged, counted reason.
         }
 
         static inline REL::Relocation<decltype(thunk)> func;
@@ -229,8 +378,9 @@ namespace {
                          "live and pins nothing; Repoint it to an actor or Release it.",
                          Hex(id), what, Hex(tf), why);
         } else {
-            spdlog::info("[ch.20] 0x{} target-pin {} -> target 0x{}. Pins only while the engine holds a "
-                         "combat target; never starts combat.",
+            spdlog::info("[ch.20] 0x{} target-pin {} -> target 0x{}. The engine's target selection is answered "
+                         "with it while the actor is fighting and it is one of the group's combat targets; never "
+                         "starts combat.",
                          Hex(id), what, Hex(tf));
         }
     }
@@ -249,31 +399,30 @@ namespace {
             Apply(id, param, "RE-POINTED");
         }
 
-        // Relinquish (INVARIANTS #5a): nothing to restore. The engine's own targeting
-        // takes over on the next combat update; the target the pin last wrote stays
-        // until the engine re-picks, exactly as any engine pick would.
+        // Relinquish (INVARIANTS #5a): nothing to restore. The engine's own selection
+        // answers again from the next combat update on.
         void Release(RE::FormID id, RE::Actor* /*actor*/) override {
-            std::uint32_t w = 0, hd = 0, ne = 0, tg = 0;
-            RE::FormID    t = 0;
-            bool          had = false;
+            struct { std::uint32_t hits, denied, held, none, notTgt, gone, missed, over; } c{};
+            RE::FormID t   = 0;
+            bool       had = false;
             {
                 std::unique_lock lk(g_pinMx);
                 if (const auto it = g_pins.find(id); it != g_pins.end()) {
                     had = true;
-                    t   = it->second.target;
-                    w   = it->second.writes.load(std::memory_order_relaxed);
-                    hd  = it->second.held.load(std::memory_order_relaxed);
-                    ne  = it->second.noEngineTarget.load(std::memory_order_relaxed);
-                    tg  = it->second.targetGone.load(std::memory_order_relaxed);
+                    const Pin& p = it->second;
+                    t = p.target;
+                    c = { p.seatHits.load(), p.denied.load(), p.held.load(), p.noEngineTarget.load(),
+                          p.notCombatTarget.load(), p.targetGone.load(), p.seatMissed.load(), p.overwritten.load() };
                     g_pins.erase(it);
                 }
                 g_pinCount.store(g_pins.size(), std::memory_order_relaxed);
             }
             if (had) {
-                spdlog::info("[ch.20] 0x{} target-pin released (target 0x{}): pinned back {} engine re-pick(s), "
-                             "held {} update(s), engine had no target on {}, target gone on {}. The engine's own "
-                             "targeting takes over.",
-                             Hex(id), Hex(t), w, hd, ne, tg);
+                spdlog::info("[ch.20] 0x{} target-pin released (target 0x{}): selector seat called {} time(s) -- "
+                             "denied the engine's pick {}, engine already on the pin {}, engine had no target {}, "
+                             "pin not a combat target {}, target gone {}; observer: seat missed {}, overwritten "
+                             "after the seat {}. The engine's own selection answers again.",
+                             Hex(id), Hex(t), c.hits, c.denied, c.held, c.none, c.notTgt, c.gone, c.missed, c.over);
             } else {
                 spdlog::info("[ch.20] 0x{} target-pin released (it was inert).", Hex(id));
             }
@@ -289,32 +438,42 @@ namespace apmf::targetpin {
 
         const char* why = nullptr;
         if (REL::Module::IsVR()) {
-            why = "VR runtime (slot 0xE4 is not verified for VR)";
+            why = "VR runtime (the seats are verified on 1.6.1170 and 1.5.97 only)";
         } else if (!REL::Module::IsExactly(SKSE::RUNTIME_SSE_1_6_1170) &&
                    !REL::Module::IsExactly(SKSE::RUNTIME_SSE_1_5_97)) {
-            why = "runtime is not exactly 1.6.1170 or 1.5.97 (the seat is verified on those two only)";
+            why = "runtime is not exactly 1.6.1170 or 1.5.97 (the seats are verified on those two only)";
         } else if (GetPrivateProfileIntA("TargetPin", "bTargetPin", 1, kIni) == 0) {
             why = "[TargetPin] bTargetPin=0 in Data/SKSE/Plugins/APMF.ini";
         }
         if (why) {
             g_notInstalledReason.store(why, std::memory_order_release);
-            spdlog::warn("[ch.20] target-pin seat NOT installed -- {}. kIntent_TargetPin claims are REFUSED.", why);
+            spdlog::warn("[ch.20] target-pin seats NOT installed -- {}. kIntent_TargetPin claims are REFUSED.", why);
             return;
         }
 
-        REL::Relocation<std::uintptr_t> vtbl{ RE::VTABLE_Character[0] };
-        if (!apmf::allowance::SeatVerified(vtbl.address(), "TargetPin.Character.UpdateCombat")) {
-            g_notInstalledReason.store("the address self-check refused the Character vtable",
-                                       std::memory_order_release);
-            spdlog::error("[ch.20] target-pin seat NOT installed (self-check refused the Character vtable). "
+        // Verify ALL THREE before writing ANY: a pin with half a mechanism is refused whole.
+        REL::Relocation<std::uintptr_t> vtChar{ RE::VTABLE_Character[0] };
+        REL::Relocation<std::uintptr_t> vtStd{ RE::VTABLE_CombatTargetSelectorStandard[0] };
+        REL::Relocation<std::uintptr_t> vtFix{ RE::VTABLE_CombatTargetSelectorFixed[0] };
+        bool ok = apmf::allowance::SeatVerified(vtStd.address(), "TargetPin.CombatTargetSelectorStandard.SelectTarget");
+        ok = apmf::allowance::SeatVerified(vtFix.address(), "TargetPin.CombatTargetSelectorFixed.SelectTarget") && ok;
+        ok = apmf::allowance::SeatVerified(vtChar.address(), "TargetPin.Character.UpdateCombat(observer)") && ok;
+        if (!ok) {
+            g_notInstalledReason.store("the address self-check refused a seat vtable", std::memory_order_release);
+            spdlog::error("[ch.20] target-pin seats NOT installed (self-check refused a vtable, listed above). "
                           "kIntent_TargetPin claims are REFUSED.");
             return;
         }
-        UpdateCombatHook::func = vtbl.write_vfunc(UpdateCombatHook::idx, UpdateCombatHook::thunk);
+
+        g_vtStandard = vtStd.address();
+        g_vtFixed    = vtFix.address();
+        SelectStandardHook::func   = vtStd.write_vfunc(kSelectTargetSlot, SelectStandardHook::thunk);
+        SelectFixedHook::func      = vtFix.write_vfunc(kSelectTargetSlot, SelectFixedHook::thunk);
+        UpdateCombatObserver::func = vtChar.write_vfunc(UpdateCombatObserver::idx, UpdateCombatObserver::thunk);
         g_installed.store(true, std::memory_order_release);
-        spdlog::info("[ch.20] target-pin seat installed (Character::UpdateCombat, vtable slot 0x{:X}, chaining: "
-                     "the engine's update runs first).",
-                     UpdateCombatHook::idx);
+        spdlog::info("[ch.20] target-pin seats installed: SOURCE DENY on CombatTargetSelectorStandard / Fixed "
+                     "SelectTarget (slot 0x{:X}, chaining), OBSERVE-ONLY on Character::UpdateCombat (slot 0x{:X}).",
+                     kSelectTargetSlot, UpdateCombatObserver::idx);
     }
 
     bool Installed() { return g_installed.load(std::memory_order_relaxed); }
