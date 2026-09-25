@@ -19,6 +19,7 @@
 #include "core/AiCastSeats.h"
 #include "core/CastClassify.h"
 #include "channels/Travel.h"
+#include "channels/TargetPin.h"
 #include "core/PositionCast.h"
 #include "core/SpaceQuery.h"
 
@@ -73,6 +74,10 @@ namespace {
         // the travel-leg table and its package slots would survive the world swap
         // owned by actors that no longer exist.
         apmf::travel::ResetAll("revert/new game");
+        // Same reason, for ch.20: its per-actor pin entries (target handles resolved in
+        // the outgoing world) must not survive the swap. The seat could not act on them
+        // alone -- it also requires the published claim, which Clear() just wiped.
+        apmf::targetpin::ResetAll("revert/new game");
         // ABI v11 position cast: forget any marker still waiting for its one-frame
         // delete (its Retire task is dropped by the Discard below). The references
         // belong to the world being replaced, so none is touched.
@@ -117,6 +122,14 @@ namespace {
                                                   // failure REFUSES kIntent_Travel claims
                                                   // (ControlMap::EnqueueRequest) rather than accepting a
                                                   // claim that would do nothing.
+            apmf::targetpin::Install();          // ch.20 TARGET PIN (ABI v13): Character vtable slot 0xE4
+                                                  // (Actor::UpdateCombat) seat, chaining -- the engine's
+                                                  // combat update runs first, then the winning
+                                                  // kIntent_TargetPin claim's target is written back only
+                                                  // when the engine already holds a different one. Exact
+                                                  // 1.6.1170 / 1.5.97, VR-refused, [TargetPin] bTargetPin,
+                                                  // SeatVerified. A refusal REFUSES kIntent_TargetPin
+                                                  // claims (ControlMap::EnqueueRequest).
             apmf::poscast::Install();            // ABI v11 POSITION CAST: runtime gate (1.6.1170 / 1.5.97,
                                                   // never VR) + [PositionCast] + the XMarker base. Installs NO
                                                   // hook. Refused -> kCastFlag_AtPosition requests are refused.
@@ -192,6 +205,9 @@ namespace {
             // instead, or every slot stays owned by an actor from the outgoing world and
             // the first leg in the new one overflows.
             apmf::travel::ResetAll("kPreLoadGame");
+            // ch.20: ReleaseAll above already drove this channel's Release for every
+            // engaged actor; this drops anything left, so no pin entry crosses the load.
+            apmf::targetpin::ResetAll("kPreLoadGame");
             // ABI v11 position cast: same as the revert path -- forget, never touch.
             apmf::poscast::ResetAll("kPreLoadGame");
             // Flush the confirmed-main task queue. NOTHING Pump()s between here and

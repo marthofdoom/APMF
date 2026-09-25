@@ -178,7 +178,8 @@ namespace {
     // step with kABIVersion bumps (git tags: v0.2.0 v1, v0.2.3 v2, v0.3.0-rc.1 v3,
     // v0.3.0-rc.3 v4, v0.9.1 v5, v0.9.3 v6; v7, v8, v9 and v10 ship together in the
     // first release after 0.9.4 -- REVIEW-BACKLOG APMF-B10: name it at the cut; v11 and
-    // v12 ship together in 0.9.8, the next release, still Unreleased in CHANGELOG.md).
+    // v12 ship together in 0.9.8; v13 is Unreleased in CHANGELOG.md -- name its release
+    // here at the cut).
     const char* MinReleaseForAbi(std::uint32_t abi) {
         switch (abi) {
         case 1:  return "0.2.0";
@@ -193,6 +194,7 @@ namespace {
         case 10: return "0.9.5";
         case 11:
         case 12: return "0.9.8";
+        case 13: return "the first release after 0.9.8";
         default: return "a release newer than this one";
         }
     }
@@ -211,7 +213,8 @@ namespace {
     // the object is now an APMF_API_v11 (which extends v9 directly). `abiVersion`
     // reports 11; a v1..v10 client still reads exactly its own prefix. ABI v12 appends
     // the one travel leg-state slot, so the object is now an APMF_API_v12 (extends v11)
-    // and `abiVersion` reports 12.
+    // and `abiVersion` reports 12. ABI v13 (ch.20 kIntent_TargetPin) adds NO slot, like
+    // v10: the object stays an APMF_API_v12 and `abiVersion` reports 13.
     // ABI v11 layout proof (review F8d): the two query slots start exactly where the
     // v9 prefix ends, so a v1..v10 client reading its own prefix never overlaps them.
     // offsetof on a derived struct is conditionally-supported; MSVC (the only compiler
