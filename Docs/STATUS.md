@@ -82,6 +82,14 @@ ClickUp 86e3cr9u7, tier A (new engine seat + ABI). marth approved 2026-09-25 ("y
 - **State:** CI-only, not field-run, awaiting the tier-A Opus review. The MFO side (retire `Targeting.cpp`'s pin,
   become a client) is a separate brief.
 
+## ✅ SHIPPED v0.9.9 (cut 2026-09-25) -- START A FIGHT AND PIN THE TARGET (ABI v14)
+
+GitHub tag `v0.9.9`. DLL `c24dba59…`, esl unchanged (still required). NOT on Nexus yet: marth tests first. Not field-run.
+- ch.20 kIntent_TargetPin (v13): source deny at CombatTargetSelector slot 6 (Standard + Fixed); combat-group targets only, not kTargetLost; ends itself on lost / dead / disabled / unloaded / owner dead; the 0xE4 hook is a watcher (SOURCE SEAT MISSED / OVERWRITTEN).
+- ch.21 kIntent_CombatEntry (v14): one engine StartCombat(target, nullptr) per declaration; ends itself on refusal / combat ended / target gone; no re-entry after the engine gave up on that target.
+- INVARIANTS #0 (f) + (g). Accepted: APMF-B26 (a concurrent StopCombat, not closable by a seat).
+- Field checks: `FIRST SOURCE DENY` with zero `SOURCE SEAT MISSED`; `[ch.21] ... ENTERED`. MFO client: feat/mfo-target-pin (in review).
+
 ## ✅ SHIPPED v0.9.8 (cut 2026-09-24) -- TRAVEL TO A POINT, LEG STATE (ABI v12), STARTUP ADDRESS CHECK
 
 GitHub tag `v0.9.8`, stamp `e58b76c`, CI 36085981607, manifest `ae8e6f5`. DLL `8dfb63da…`, esl `78a3e6a4…` (unchanged, still required). NOT on Nexus yet: marth tests first.
