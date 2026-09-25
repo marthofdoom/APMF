@@ -1,4 +1,4 @@
-## v0.9.8 -- Unreleased
+## v0.9.8 -- Travel to a point, blocked legs, gait, and a startup address check
 
 - **Casting at a point ships switched off.** The follower does not animate when Harbinger casts from a marker, and every action needs a proper animation. So this is a building block for an animated version, not a finished feature, and no mod should ship on it alone. `bPositionCast` is 0 and every request is refused with that reason in the log. Set it to 1 to try it. Walking a follower to a point does not depend on it.
 - **A mod can now cast a spell at a spot on the ground.** Send a cast request with `kCastFlag_AtPosition` and a point in `APMF_Param.pos`, and Harbinger drops an invisible marker there and casts the spell from it in the follower's name. The follower does not animate and its hands are not touched. The marker is deleted a frame later. It only works for spells that apply their effect at the spot directly. A spell that launches a projectile (a rune, a trap, a lobbed shot) is refused by name, because the game only places that kind of projectile from the player's crosshair.
