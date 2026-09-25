@@ -1,8 +1,29 @@
 # APMF STATUS — living handoff (start here)
 
-Updated 2026-09-22. Current version **v0.9.5**. The current state of the build: what's
+Updated 2026-09-25. Current version **v0.9.8**. The current state of the build: what's
 shipped, what's probe-gated, what's next. Keep this current in the SAME change as any
 build/finding/workflow change.
+
+## HEAD OF WORK 2026-09-25 -- ch.20 TARGET PIN (`kIntent_TargetPin`, ABI v13), branch `feat/apmf-target-pin`, NOT merged
+
+ClickUp 86e3cr9u7, tier A (new engine seat + ABI). marth approved 2026-09-25 ("yes, start the target pin").
+- **What:** a new intent (20, its own channel `channels/TargetPin.cpp`, not a v2 of ch.19). The client claims
+  {actor, target}; APMF's own seat on `Character::UpdateCombat` (vtable slot 0xE4, 1.6.1170 `0x6B6E70` /
+  1.5.97 `0x625700`, write_vfunc, chaining) runs the engine first and then writes the WINNING claim's target back
+  into `currentCombatTarget` + `CombatController.targetHandle` ONLY when the engine already holds a different
+  target. Never enters combat. MFO's `Targeting.cpp` hook lifted into Harbinger.
+- **ABI v13** adds the intent only: no struct, no slot, no `APMF_Param` field (the v10 shape). A v13 client on an
+  older Harbinger is refused ("no channel serves intent 20"). **The H1 lockpick/LOTD idle work pencilled at "ABI
+  v13" above must take v14.**
+- **Rules:** `INVARIANTS #0 (f)` (the amendment that licenses the `currentCombatTarget` write, seven conditions),
+  `#2` note (seat-time correction, not a source block). Deny audit row 20 names the holes: no source-level
+  deny of the engine's target selector (one-update window), a competing framework's write undenied (row 6 gap),
+  and MFO's own hook must defer to the claim owner (MFO's task, not started).
+- **Seat guard:** exact 1.6.1170 / 1.5.97, VR refused, `[TargetPin] bTargetPin=1`, `SeatVerified` on the
+  Character vtable (spec row gained slot 0xE4; `VerifiedAddresses.h` regenerated, byte-identical, 175/175 both
+  runtimes). Claims are refused synchronously while the seat is down.
+- **State:** CI-only, not field-run, awaiting the tier-A Opus review. The MFO side (retire `Targeting.cpp`'s pin,
+  become a client) is a separate brief.
 
 ## ✅ SHIPPED v0.9.8 (cut 2026-09-24) -- TRAVEL TO A POINT, LEG STATE (ABI v12), STARTUP ADDRESS CHECK
 

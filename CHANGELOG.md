@@ -1,3 +1,14 @@
+## Unreleased
+
+- **A mod can now pin an NPC's combat target.** Claim `kIntent_TargetPin` with the target actor in `APMF_Param.form`. While the NPC is fighting, Harbinger keeps it on that target. After the game's own combat update, if the game is aiming the NPC at someone else, Harbinger points it back. The NPC's own AI does the fighting.
+- **It never starts a fight.** If the game has no target for the NPC, Harbinger writes nothing. When the fight ends, or the target dies or unloads, the game picks its own targets again. The claim stays until the mod releases it or points it somewhere else.
+- **It pins the target and nothing else.** No attacks, spells, equips, movement or aggression are touched. What the world does about the fight (crime, bounty, guards) is the mod's business, and releasing the pin does not undo it.
+- **This is MFO's target hook, moved into Harbinger.** Any mod can use it now without a hook of its own. Another mod that hooks the same spot after Harbinger still writes last.
+- `[TargetPin] bTargetPin` is new in `APMF.ini`, default 1. Set it to 0 and every pin request is refused.
+- New API revision (v13). It adds the intent and nothing else. Check `abiVersion >= 13` before asking for it. An older Harbinger refuses the request. A mod built against an older revision is unaffected.
+- Both runtimes. The hooked slot was read on the 1.6.1170 and 1.5.97 binaries, and any other build is refused by name. VR is refused.
+- Not field-run. CI verified only.
+
 ## v0.9.8 -- Travel to a point, blocked legs, gait, and a startup address check
 
 - **Casting at a point ships switched off.** The follower does not animate when Harbinger casts from a marker, and every action needs a proper animation. So this is a building block for an animated version, not a finished feature, and no mod should ship on it alone. `bPositionCast` is 0 and every request is refused with that reason in the log. Set it to 1 to try it. Walking a follower to a point does not depend on it.

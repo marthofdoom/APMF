@@ -116,6 +116,39 @@ one frame after the cast by its tracked handle, forgotten (never touched) at a w
 boundary, and it is recorded in the co-saved marker ledger (#15, record `'XMRK'`) so the
 load of a save that captured it deletes it.
 
+**ADOPTED 2026-09-25 by marth ("yes, start the target pin", ClickUp 86e3cr9u7). The sixth legal
+action (ABI v13, `channels/TargetPin.cpp`): (f) PIN A DECLARED TARGET — deny the engine's own
+re-pick of an actor's combat target, at APMF's own seat.** This is a `currentCombatTarget` write,
+which the rule above names as forbidden; it is written here, in the rule it touches, rather than
+done quietly (CLAUDE.md "standing tension"). The client declares {actor, target} with
+`kIntent_TargetPin`; APMF's `Character::UpdateCombat` seat (vtable slot 0xE4) runs the engine's
+update first and then writes the declared target back into `currentCombatTarget` and the
+`CombatController`'s `targetHandle`. It is legal only while ALL of these hold:
+1. **APMF selects nothing.** The client named the target. APMF picks no target, no foe order and
+   no fallback; an inert claim (the target is not an actor, 0, or the actor itself) writes nothing.
+2. **The engine already holds a target.** Nothing is written when `currentCombatTarget` is empty.
+   So the pin never starts a fight, never revives one the engine ended, and never overrides the
+   engine's judgement that there is no foe (lost, fled, undetected). Combat ENTRY stays forbidden
+   (the `StartCombat` clause above is untouched). "Commanding WHICH foe is ours; commanding THAT
+   there is a foe is not."
+3. **It is the target facet and nothing else.** No attack selection, cast, equip, movement,
+   aggression or perception write. Everything the NPC does against the target is its own AI.
+4. **The engine runs first, every time.** The seat chains (#17): the original always runs, and
+   the write only replaces the result of the engine's pick, after it. It is a SEAT-TIME
+   CORRECTION, not a source block: inside one update the engine's pick exists until the original
+   returns, and what that same update consumed saw it. That is #2's label and ch.20 carries it
+   (`Docs/DENY-COMPLETENESS-AUDIT.md` row 20 names the open source-level deny).
+5. **It stops by itself.** Target dead, disabled, not loaded or unresolvable, owner dead, the
+   claim released, outranked or dropped (unload, save load, revert): nothing is written and the
+   engine's own targeting stands. Release restores nothing (#5a): there is no prior value to put
+   back, and the engine re-picks on its own.
+6. **Scope is closed by name.** Exactly 1.6.1170 or 1.5.97, not VR, the Character vtable only
+   (never the player), `[TargetPin] bTargetPin`, and the address self-check. Widening it (a combat
+   entry, a target list, a priority order) is a new amendment, not a code change.
+7. **The world's reaction belongs to the client** (CLAUDE.md principle 2 scope, marth
+   2026-09-25). Crime, bounty, faction and aggression reactions to the declared fight happen as
+   the engine does them, and are not undone.
+
 **#20 — COMPOSED ANSWERS: APMF may answer the ENGINE'S OWN DECISION SEATS so the
 AI decides what a claim asks for — and exactly ONE of those answers may skip the
 chain.** (feat/ai-cast-seats-impl, 2026-09-05. This is the rule that lets ch.8b
@@ -205,7 +238,10 @@ the owned channel — skip/neutralize the write), NOT to keep overriding after t
 fact. Deck-tested: true source-blocks (AV, casting selection) hold even on a
 package-locked Cicero; the un-blocked channels (headtrack, crouch) get out-fought
 by the package — because they are not blocking yet. Today only `Headtrack` (ch.5)
-is known-incomplete. Never mislabel a re-assert as a clean gate.
+is known-incomplete. Never mislabel a re-assert as a clean gate. (ch.20 `TargetPin`, ABI v13, is
+not a `Tick` re-assert: it corrects the engine's target inside the engine's own per-actor combat
+update, at its seat, right after the pick. It still is not a SOURCE block, so it carries this
+label at one-update granularity and says so in its header -- #0 (f) condition 4.)
 
 **#3 — Never substitute the package — SCOPED to the movement-hijack channels.** A
 channel that commandeers a facet BY DRIVING IT OVER A RUNNING PACKAGE (the movement
