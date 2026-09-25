@@ -14,9 +14,11 @@
 
 namespace apmf::VerifiedAddresses
 {
-	// 1.6.1170.0: 175 rows
+	// 1.6.1170.0: 177 rows
 	inline constexpr REL::SelfCheck::Row kRows_1_6_1170[] = {
 		{ 207886, 0x18A5558, 0x0, 0, {  }, "Character" },
+		{ 212096, 0x18D7388, 0x0, 0, {  }, "CombatTargetSelectorStandard" },
+		{ 212098, 0x18D73C8, 0x0, 0, {  }, "CombatTargetSelectorFixed" },
 		{ 208040, 0x18AB9C0, 0x0, 0, {  }, "PlayerCharacter" },
 		{ 205828, 0x187B8B0, 0x0, 0, {  }, "ActorMagicCaster" },
 		{ 211955, 0x18D5120, 0x0, 0, {  }, "CombatMagicItemData" },
@@ -193,9 +195,11 @@ namespace apmf::VerifiedAddresses
 		{ 68239, 0xCC9380, 0x0, 0, {  }, "CommonLib.BSReadWriteLock.UnlockForRead" },
 	};
 
-	// 1.5.97.0: 175 rows
+	// 1.5.97.0: 177 rows
 	inline constexpr REL::SelfCheck::Row kRows_1_5_97[] = {
 		{ 261397, 0x165DA40, 0x0, 0, {  }, "Character" },
+		{ 265605, 0x1690A98, 0x0, 0, {  }, "CombatTargetSelectorStandard" },
+		{ 265607, 0x1690AF8, 0x0, 0, {  }, "CombatTargetSelectorFixed" },
 		{ 261916, 0x16635E0, 0x0, 0, {  }, "PlayerCharacter" },
 		{ 257613, 0x1637490, 0x0, 0, {  }, "ActorMagicCaster" },
 		{ 265000, 0x1686BF8, 0x0, 0, {  }, "CombatMagicItemData" },

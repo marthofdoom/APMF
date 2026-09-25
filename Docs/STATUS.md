@@ -1,8 +1,35 @@
 # APMF STATUS — living handoff (start here)
 
-Updated 2026-09-22. Current version **v0.9.5**. The current state of the build: what's
+Updated 2026-09-25. Current version **v0.9.8**. The current state of the build: what's
 shipped, what's probe-gated, what's next. Keep this current in the SAME change as any
 build/finding/workflow change.
+
+## HEAD OF WORK 2026-09-25 -- ch.20 TARGET PIN (`kIntent_TargetPin`, ABI v13), branch `feat/apmf-target-pin`, NOT merged
+
+ClickUp 86e3cr9u7, tier A (new engine seat + ABI). marth approved 2026-09-25 ("yes, start the target pin").
+- **What:** a new intent (20, its own channel `channels/TargetPin.cpp`, not a v2 of ch.19). The client claims
+  {actor, target}. **Round 2 (marth: "APMF offers pinning, it must block engine pinning"):** the pin is now a
+  SOURCE DENY -- APMF answers the engine's own `CombatTargetSelector` (Standard + Fixed, vtable slot 6,
+  called by `CombatController::UpdateTarget` inside `UpdateCombat`) with the WINNING claim's target, only when
+  the engine answered non-zero and the target is in `combatGroup->targets`. The first cut's post-update rewrite
+  is gone; slot 0xE4 is hooked OBSERVE-ONLY to log a source-seat miss or an overwrite. Never enters combat.
+  **Round 3 (marth: "If APMF can no longer track the target, it's lost, and dropped"):** a target LOST
+  (`kTargetLost`, CombatTarget u16 +0xA6 bit 1), dead, disabled, unloaded or unresolvable, or a dead owner, ENDS
+  the pin -- `targetpin::Poll()` on the Arbiter seat releases the claim with the reason logged. A target not yet
+  in the group only pauses the pin. The observer now judges a miss only on a real update (live actor, controller
+  before and after, seat not declining).
+- **ABI v13** adds the intent only: no struct, no slot, no `APMF_Param` field (the v10 shape). A v13 client on an
+  older Harbinger is refused ("no channel serves intent 20"). **The H1 lockpick/LOTD idle work pencilled at "ABI
+  v13" above must take v14.**
+- **Rules:** `INVARIANTS #0 (f)` (seven conditions: source deny, only among the engine's own combat targets).
+  Deny audit row 20: source deny YES; open = not yet OBSERVED running (principle 5), a competing framework's
+  write undenied (row 6 gap; MFO's own hook overrides until MFO defers, APMF-B27), cross-thread StopCombat
+  accepted (APMF-B26).
+- **Seat guard:** exact 1.6.1170 / 1.5.97, VR refused, `[TargetPin] bTargetPin=1`, `SeatVerified` on all three
+  vtables (two new rows, CombatTargetSelectorStandard / Fixed; 177/177 on both runtimes). Claims are refused
+  synchronously while the seats are down.
+- **State:** CI-only, not field-run, awaiting the tier-A Opus review. The MFO side (retire `Targeting.cpp`'s pin,
+  become a client) is a separate brief.
 
 ## ✅ SHIPPED v0.9.8 (cut 2026-09-24) -- TRAVEL TO A POINT, LEG STATE (ABI v12), STARTUP ADDRESS CHECK
 

@@ -1,3 +1,16 @@
+## Unreleased
+
+- **A mod can now pin an NPC's combat target.** Claim `kIntent_TargetPin` with the target actor in `APMF_Param.form`. While the NPC is fighting, the game asks who it should fight, and Harbinger answers with the mod's target. The game's own pick never reaches the NPC. The NPC's own AI does the fighting.
+- **Only among the game's own combat targets.** The target must already be one the NPC's side is fighting and can still find. If it is not in the fight yet, nothing changes and the log says so. Harbinger never makes anyone a target.
+- **It never starts a fight.** If the game has no target for the NPC, Harbinger writes nothing and the pin waits.
+- **A pin ends when Harbinger can no longer track the target.** If the target is lost, dies, is disabled or unloads, or the NPC itself dies, Harbinger drops the pin and the log says why. The game picks its own targets again. A mod that wants to keep chasing pins again.
+- **It pins the target and nothing else.** No attacks, spells, equips, movement or aggression are touched. What the world does about the fight is the mod's business, and releasing the pin does not undo it.
+- **Harbinger checks its own work.** If the NPC ends a combat update aimed at someone else and Harbinger was never asked, the log says so. If something changes the target after Harbinger answered, the log says that too. Another mod that writes the target after the game's update still wins.
+- `[TargetPin] bTargetPin` is new in `APMF.ini`, default 1. Set it to 0 and every pin request is refused.
+- New API revision (v13). It adds the intent and nothing else. Check `abiVersion >= 13` before asking for it. An older Harbinger refuses the request. A mod built against an older revision is unaffected.
+- Both runtimes. The three hooked spots were read on the 1.6.1170 and 1.5.97 binaries, and any other build is refused by name. VR is refused. The startup check now covers 177 addresses.
+- Not field-run. CI verified only.
+
 ## v0.9.8 -- Travel to a point, blocked legs, gait, and a startup address check
 
 - **Casting at a point ships switched off.** The follower does not animate when Harbinger casts from a marker, and every action needs a proper animation. So this is a building block for an animated version, not a finished feature, and no mod should ship on it alone. `bPositionCast` is 0 and every request is refused with that reason in the log. Set it to 1 to try it. Walking a follower to a point does not depend on it.

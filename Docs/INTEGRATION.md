@@ -1068,6 +1068,140 @@ net. It is logged loudly and nothing is retried.
   you had claimed `ch.9` yourself.
 
 
+## Pinning a combat target (ABI v13, `kIntent_TargetPin`)
+
+`kIntent_CombatTarget` (ch.6) only records who owns the combat-target facet. It makes no
+engine call, so until v13 a client that wanted an NPC to fight ONE particular foe had to
+hook the engine itself. `kIntent_TargetPin` (ch.20) does it inside Harbinger, at the engine's
+own target selector.
+
+### The contract
+
+**While the NPC is fighting, the engine's own target choice is replaced with yours.** Every
+combat update the engine asks its target selectors which foe the actor should fight. Harbinger
+answers that question with your target, so the engine's own pick never reaches the actor. The
+NPC's own AI then does the fighting: its own attacks, movement, spells and equips.
+
+**Only among the engine's own combat targets.** The answer is replaced only when the engine
+picked a target (the actor is fighting) and your target is one of the actor's combat group's
+targets. If your target is not a combat target of that group, nothing is written, the engine's
+pick stands, and the log says "not a combat target". Harbinger never makes anyone a target. An
+actor becomes pinnable once the engine holds it as a combat target, for example after your own
+combat entry (a separate concern) puts the actor in a fight with it.
+
+**It never starts a fight.** If the engine holds no target at all (the actor is not in combat,
+or the fight ended), nothing is written and the pin waits. That is the only state that leaves it
+waiting: a pinned target the engine has LOST ends the pin (see below). Getting the actor into
+combat is a separate concern and this intent does not do it.
+
+**It claims nothing else.** No attack selection, no casting, no equip, no movement, no
+aggression, no perception. One intent, one facet.
+
+**It pauses while it cannot apply.** While the engine has no target, or your target is not (yet)
+one of the group's combat targets, Harbinger writes nothing and the engine picks. The claim stays,
+and the pin applies again as soon as both hold.
+
+**It ends by itself when Harbinger can no longer track the target.** When the target is **lost**
+(the engine can no longer locate it: its entry in the group's target list is flagged lost),
+**dead**, **disabled**, **not loaded**, or no longer resolves, or when the pinned actor itself
+dies, Harbinger releases your claim for you. The log says `pin ended: <reason>` and the Release
+line repeats the reason. `IsClaimLive(handle)` (ABI v6) turns false and the handle is dead. This
+is the only case in which Harbinger releases a pin claim on its own.
+
+### How the pin ends, and what to do about it
+
+* **Poll `IsClaimLive(handle)`** (ABI v6) if you need to know. A false answer on a pin you did not
+  release means Harbinger ended it: the target was lost, died, was disabled or unloaded, or your
+  actor died. The log has the reason.
+* **Want to keep chasing?** Pin again. A lost target is one the engine cannot locate, so a new pin
+  only takes effect once the engine holds and can locate it again (until then it pauses).
+* **MFO**, once it is a ch.20 client (its port is a separate task), re-evaluates its gambits on its
+  own cadence: its next pass picks a new target and pins
+  it, or releases. It never re-pins a target Harbinger dropped without choosing it again.
+* **Another mod** should treat an ended pin like any lost target: pick again, pin again if it still
+  wants that actor, or let the engine choose.
+
+### The recipe
+
+```cpp
+using namespace APMF_API;
+
+std::unordered_map<RE::FormID, Handle> g_pin;   // one claim per actor
+
+void FightThis(RE::FormID actor, RE::FormID target) {
+    if (!g_apmf || g_apmf->abiVersion < 13) return;   // absent or older than v13: your own targeting
+
+    APMF_Param p{};
+    p.form = target;                       // REQUIRED: the target ACTOR. 0 or the actor itself is refused.
+
+    if (auto it = g_pin.find(actor); it != g_pin.end()) {
+        g_apmf->Repoint(it->second, &p);   // move the pin in place
+        return;
+    }
+    const Handle h = g_apmf->RequestEx(actor, kIntent_TargetPin, /*basis=*/50.0f, &p);
+    if (h == kInvalidHandle) return;       // refused: keep your own targeting (the log says why)
+    g_pin[actor] = h;
+}
+
+void StopPin(RE::FormID actor) {
+    if (auto it = g_pin.find(actor); it != g_pin.end()) {
+        g_apmf->Release(it->second);       // the engine picks its own targets again
+        g_pin.erase(it);
+    }
+}
+```
+
+No tick, no hook, no `currentCombatTarget` write of your own. If your client already has
+its own target hook, make it stand down for any actor you have pinned through Harbinger: a hook
+that writes the target after the engine's update overrides the pin.
+
+### Parameter fields
+
+| field | meaning |
+|---|---|
+| `param.form` | **REQUIRED.** The target ACTOR's FormID. 0 and the claimed actor itself are refused at the call. A form that is not an Actor is refused at Engage (see below). |
+| everything else | Not read. |
+
+### When a claim is refused
+
+* **At the call (`kInvalidHandle`, logged):** Harbinger older than v13 ("no channel serves
+  intent 20"), VR, a runtime other than exactly 1.6.1170 or 1.5.97, `[TargetPin]
+  bTargetPin=0` in `APMF.ini`, the address self-check refused a seat, before kDataLoaded,
+  `param.form` 0, `param.form` equal to the actor, or the actor is the player.
+* **At Engage (one frame later):** `param.form` is not an Actor. `RequestEx` already
+  returned a LIVE handle; it pins nothing and the log says why. Release it or Repoint it.
+
+### Older and newer builds
+
+* **A client built against v12 or older** never sees intent 20 and is unaffected.
+* **A v13 client on an older Harbinger:** check `abiVersion >= 13` first. If you ask anyway,
+  the older Harbinger has no channel for intent 20 and refuses the request. Either way the
+  answer is the same: keep your own targeting.
+
+### What is yours
+
+The world's reaction to the fight. Crime, bounty, faction and aggression consequences happen the
+way the engine does them. Harbinger does not stop them and Release does not undo them.
+
+### Limits worth knowing
+
+* **The deny is at the source, and it is checked.** Harbinger answers the engine's target
+  selector itself, so there is no update where the engine's own pick is used first. Harbinger also
+  watches the result of each update for a pinned actor. If the actor ends an update aimed at
+  someone else and the selector was never asked, the log says `SOURCE SEAT MISSED`. If the
+  selector was answered with your target and something still changed it afterwards, the log says
+  `OVERWRITTEN`. The Release line reports how many times the selector was asked, how often the
+  engine's pick was replaced, and each reason it was left alone.
+* **Another mod writing the same target is not denied.** A mod that writes the target after the
+  engine's update (its own `UpdateCombat` hook) writes last and wins. That shows up as
+  `OVERWRITTEN` when Harbinger can see it.
+* **Not saved.** A save load, a new game or the actor unloading drops the claim. Claim again.
+* **Pin a loaded target.** A target that is not loaded ends the pin at the next check (about a
+  quarter second), so pin an actor that is in the loaded area.
+* **Built, CI-verified, not yet field-run.** Nobody has watched the selector seat run in a game
+  yet. The first field log must show the `FIRST SOURCE DENY` line and no `SOURCE SEAT MISSED`
+  before anything relies on it.
+
 ## The facet table
 
 Every facet is one `Intent` value in `native/APMF_API.h`. The proof tier says
@@ -1108,6 +1242,7 @@ columns, one doesn't imply the other.
 | `kIntent_EquipAuthority` (ch.17) | **Declare what the NPC wears; APMF equips it and refuses every other engine equip of a governed type (ARMO/WEAP/AMMO/LIGH) in the categories the claim owns.** ABI v7, declare with `SetEquipSet`; ABI v8 `SetEquipSetEx` adds a hand per item; ABI v9 `SetEquipScope` scopes the claim to owned/denied categories (default: all owned) | `ival` (an `EquipAuthFlags` bitmask); the set itself via `SetEquipSet` / `SetEquipSetEx`; the scope via `SetEquipScope` | Built, not yet battle-tested. Ships OBSERVE-ONLY (`[EquipAuthority] bEquipObserveOnly=1`) until the probe criteria above pass. The only call-site seat in APMF, under `Docs/INVARIANTS.md` #17a. Player-menu equips pass by default (v8). |
 | `kIntent_Cast` + `kCastFlag_AtPosition` (ABI v11) | **Cast a Target Location spell at a world point.** A one-shot remote cast from an APMF XMarker, blamed on the actor. Not a claim: no facet held, never seen by the cast seats | `form` (the spell), `ival` (the flag alone), `pos` (the point) | Built, not yet battle-tested. CI verified only. Summons refused by name (the engine only lets the caster summon). |
 | `kIntent_Travel` (ch.19) | **Walk this actor to a destination** (ABI v11: or to a world point, `kTravel_ToPosition`, via an APMF-owned XMarker). APMF points its own travel package at it and offers that package through an internal ch.9 claim at YOUR basis. The leg ends on arrival, on the actor entering combat, on the destination being gone, or (ABI v12) BLOCKED. ABI v12: `GetTravelLegState` says which, and `kTravel_SpeedSet` sets the gait | `form` (the DESTINATION, REQUIRED -- an object REFERENCE or a CELL, and it need not be loaded or nearby), `fval` (arrival radius, 0 => 75u, clamped 50-512, not used for a cell), `ival` (a `TravelFlags` bitmask) |a refused claim means the channel is off in APMF.ini, VR, the esl is missing, or eight legs are already running|
+| `kIntent_TargetPin` (ch.20, ABI v13) | **Pin the actor's combat target.** Harbinger answers the engine's own target selector with your target while the actor is fighting and your target is one of its group's combat targets. Never starts combat | `form` (the target ACTOR, REQUIRED) | Built, not yet battle-tested. CI verified only. The selector seat has not been observed running in a game yet. |
 
 Where a field is marked "reserved, not yet read", the channel currently
 applies a fixed built-in behavior and ignores whatever you pass in that field.

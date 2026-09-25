@@ -15,10 +15,43 @@
    "slots": [
     "0xAD",
     "0x49",
-    "0xDF"
+    "0xDF",
+    "0xE4"
    ],
-   "source": "native/core/Hook.cpp:94; PackageGate.cpp:296; NonAliasProbe.cpp:216",
+   "source": "native/core/Hook.cpp:94; PackageGate.cpp:296; NonAliasProbe.cpp:216; channels/TargetPin.cpp:460 (observer)",
    "doc": "ADDRESS-TABLE-2026-09-15.md:64"
+  },
+  {
+   "seat": "CombatTargetSelectorStandard",
+   "kind": "vtable",
+   "construct": "RE::VTABLE_CombatTargetSelectorStandard[0]",
+   "rtti": ".?AVCombatTargetSelectorStandard@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 212096,
+    "1.5.97": 265605
+   },
+   "slots": [
+    "0x06"
+   ],
+   "source": "native/channels/TargetPin.cpp:458",
+   "doc": "ch.20 source deny; UpdateTarget AE 0x559930 / SE 0x4FE300 calls slot 6"
+  },
+  {
+   "seat": "CombatTargetSelectorFixed",
+   "kind": "vtable",
+   "construct": "RE::VTABLE_CombatTargetSelectorFixed[0]",
+   "rtti": ".?AVCombatTargetSelectorFixed@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 212098,
+    "1.5.97": 265607
+   },
+   "slots": [
+    "0x06"
+   ],
+   "source": "native/channels/TargetPin.cpp:459",
+   "doc": "ch.20 source deny; UpdateTarget AE 0x559930 / SE 0x4FE300 calls slot 6"
   },
   {
    "seat": "PlayerCharacter",
@@ -3273,6 +3306,41 @@
    "where": "core/PackageData.cpp:90, :249",
    "verified_by": "type-name check kTypeLocation before the read",
    "gate": "Travel VR gate"
+  },
+  {
+   "what": "Character slot UpdateCombat (ch.20 OBSERVER, writes nothing; void(Actor*), call site sets rcx only)",
+   "value": "0xE4",
+   "where": "channels/TargetPin.cpp:460, :472",
+   "verified_by": "Rows table slot target; call site 1.6.1170 0x83F5E0+0x3C / 1.5.97 0x7A8390+0x3C: call [rax+0x720], rcx only, rax discarded",
+   "gate": "VR refused + exact 1.6.1170/1.5.97 + INI bTargetPin + self-check"
+  },
+  {
+   "what": "CombatTargetSelector slot SelectTarget (ch.20 SOURCE DENY): ActorHandle* (this, ActorHandle* out), out WRITTEN (u32)",
+   "value": "0x06",
+   "where": "channels/TargetPin.cpp:255, :470-471",
+   "verified_by": "UpdateTarget (1.6.1170 0x559930 / 1.5.97 0x4FE300, sole caller UpdateCombat 0x6B6F1C / 0x6257AC) calls [rax+0x30] with rdx = a stack slot, reads dword [rax]; Standard 0x84CFE0 / 0x7B5E50 and Fixed 0x84DAF0 / 0x7B6920 store a dword at [rdx] and return rdx",
+   "gate": "VR refused + exact 1.6.1170/1.5.97 + INI bTargetPin + self-check + per-call vtable identity"
+  },
+  {
+   "what": "CombatTargetSelector +0x10 CombatController* (read); CombatController combatGroup / attackerHandle (read)",
+   "value": "+0x10; 0x00 / 0x28",
+   "where": "channels/TargetPin.cpp:129, :206-210, :242",
+   "verified_by": "selector ctors 1.6.1170 0x84CFBA / 0x84DA3D, 1.5.97 0x7B5E2A / 0x7B686D store rdx at +0x10 then call cc->AddTargetSelector (0x559A90 / 0x4FE490); Standard slot 6 reads [[this+0x10]] as the group; controller members below +0x68 (static_asserts)",
+   "gate": "inside the ch.20 seat, after the vtable identity check"
+  },
+  {
+   "what": "CombatGroup targets (BSTArray<CombatTarget>) / CombatTarget stride + targetHandle / lock (read, under LockForRead)",
+   "value": "+0x08 (data +0x08, size +0x18) / 0xA8, +0x00 / +0x160",
+   "where": "channels/TargetPin.cpp:193-199",
+   "verified_by": "group ctor 1.6.1170 0x803240 / 1.5.97 0x769DF0 (BSTArray ctor at +0x08, BSReadWriteLock ctor 0xCC90A0 / 0xC072B0 at +0x160, alloc 0x168); target walk 0x804A10 / 0x76B0F0 (size [grp+0x18], data [grp+0x08], imul 0xA8, handle dword [elem+0]); fork static_asserts",
+   "gate": "inside the ch.20 seat"
+  },
+  {
+   "what": "Actor vcalls IsDead / Get3D2 (via Is3DLoaded) on the pinned target, from the ch.20 seat (read)",
+   "value": "0x99 / 0x70",
+   "where": "channels/TargetPin.cpp:237",
+   "verified_by": "Character vtable slot targets read 2026-09-25: 0x99 -> 0x674ED0 / 0x5E3160 (bool(this, dl)), 0x70 -> 0x2E5770 / 0x2917B0 (ptr(this)); CastSeats.cpp already calls IsDead from a combat thread",
+   "gate": "inside the ch.20 seat"
   },
   {
    "what": "Character vcall IsInCombat",

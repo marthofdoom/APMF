@@ -116,6 +116,56 @@ one frame after the cast by its tracked handle, forgotten (never touched) at a w
 boundary, and it is recorded in the co-saved marker ledger (#15, record `'XMRK'`) so the
 load of a save that captured it deletes it.
 
+**ADOPTED 2026-09-25 by marth ("yes, start the target pin", ClickUp 86e3cr9u7; design corrected the
+same day: "APMF offers pinning, it must block engine pinning"). The sixth legal action (ABI v13,
+`channels/TargetPin.cpp`): (f) PIN A DECLARED TARGET — deny the engine's own target selection AT ITS
+SOURCE, among the targets the engine itself holds and can locate.** This puts a client-named actor where the engine's
+target pick would go, which the rule above names as forbidden; it is written here, in the rule it
+touches, rather than done quietly (CLAUDE.md "standing tension"). The client declares {actor, target}
+with `kIntent_TargetPin`. The engine picks an actor's combat target in
+`CombatController::UpdateTarget` (called once per `UpdateCombat`), which asks each active
+`CombatTargetSelector` through vtable slot 6 (`SelectTarget`) and hands the first answer to
+`SetTarget`. APMF's seat on slot 6 of both selector classes (Standard and Fixed) chains the original
+and replaces its answer with the declared target. It is legal only while ALL of these hold:
+1. **APMF selects nothing.** The client named the target. APMF picks no target, no foe order and
+   no fallback; an inert claim (the target is not an actor, 0, or the actor itself) answers nothing.
+2. **APMF only chooses among targets the engine itself holds AND can locate.** The answer is
+   replaced only when the engine's own selector answered with a target (the actor is fighting) AND
+   the declared target is in the actor's `combatGroup->targets` (read under the group's own lock)
+   AND that entry is not flagged `kTargetLost` (`CombatTarget::flags`, u16 +0xA6, bit 1). A declared target the
+   engine does not hold as a combat target is NOT written: counted and logged. So the pin never starts
+   a fight, never revives one the engine ended, never overrides the engine's judgement that there is no
+   foe, and never makes a non-combatant a target on its own. A non-foe becomes pinnable only once
+   something else (the client's own combat entry, a separate facet) makes it a combat target. Combat
+   ENTRY stays forbidden here (the `StartCombat` clause above is untouched).
+3. **It is the target facet and nothing else.** No attack selection, cast, equip, movement,
+   aggression or perception write. Everything the NPC does against the target is its own AI.
+4. **It is a SOURCE deny, chained.** The selector's original always runs (#17) and keeps its own
+   bookkeeping; only its OUTPUT is replaced, before `UpdateTarget` compares it with the controller's
+   target and calls `SetTarget`. From the first combat update on, the engine's pick therefore never reaches
+   `targetHandle`, `currentCombatTarget`, or anything the rest of that update reads. (A new
+   controller's very first target is set before any update asks the selectors; the pin applies
+   from that first update.) The engine CLEARING the target
+   (`SetTarget(0)`) is not denied (condition 2). There is NO after-the-fact rewrite: the
+   `UpdateCombat` hook ch.20 also installs is observe-only and exists to log a source-seat MISS or an
+   OVERWRITE loudly (principle 7), never to paper over one.
+5. **It ends by itself.** marth, 2026-09-25: *"If APMF can no longer track the target, it's lost,
+   and dropped."* Target LOST, dead, disabled, not loaded or unresolvable, or the owner dead: APMF
+   RELEASES the claim itself (`targetpin::Poll`, the ch.19 monitor seat), logs `pin ended:
+   <reason>`, and repeats the reason on the Release line. This is the only case where APMF releases
+   a client's pin claim. The pin merely PAUSES (the engine's selection stands, the claim stays) while
+   the engine holds no target or the declared target is not yet in the group's targets, since the
+   client's combat entry may still add it. Released, outranked or dropped (unload, save load,
+   revert): the engine's own selection answers again. Release restores nothing (#5a).
+6. **Scope is closed by name.** Exactly 1.6.1170 or 1.5.97, not VR, the two selector vtables and
+   the Character vtable only (never the player), `[TargetPin] bTargetPin`, the address self-check on
+   all three, and a per-call vtable-identity check before the raw selector offset (+0x10) is read
+   (#20's raw-offset guards). Widening it (a combat entry, a target list, a priority order) is a new
+   amendment, not a code change.
+7. **The world's reaction belongs to the client** (CLAUDE.md principle 2 scope, marth
+   2026-09-25). Crime, bounty, faction and aggression reactions to the declared fight happen as
+   the engine does them, and are not undone.
+
 **#20 — COMPOSED ANSWERS: APMF may answer the ENGINE'S OWN DECISION SEATS so the
 AI decides what a claim asks for — and exactly ONE of those answers may skip the
 chain.** (feat/ai-cast-seats-impl, 2026-09-05. This is the rule that lets ch.8b
@@ -205,7 +255,9 @@ the owned channel — skip/neutralize the write), NOT to keep overriding after t
 fact. Deck-tested: true source-blocks (AV, casting selection) hold even on a
 package-locked Cicero; the un-blocked channels (headtrack, crouch) get out-fought
 by the package — because they are not blocking yet. Today only `Headtrack` (ch.5)
-is known-incomplete. Never mislabel a re-assert as a clean gate.
+is known-incomplete. Never mislabel a re-assert as a clean gate. (ch.20 `TargetPin`, ABI v13, is a
+SOURCE block, not a re-assert: it answers the engine's own target-selector seat, so the engine's pick
+never reaches the controller -- #0 (f) condition 4. It is not on this list.)
 
 **#3 — Never substitute the package — SCOPED to the movement-hijack channels.** A
 channel that commandeers a facet BY DRIVING IT OVER A RUNNING PACKAGE (the movement

@@ -111,7 +111,15 @@ namespace APMF_API {
     // GAIT bits (kTravel_SpeedSet + a 2-bit speed) and the BLOCKED leg end. A client
     // must see abiVersion >= 12 before it calls the slot or sets a gait bit: an older
     // APMF stores the unknown bits and walks at its authored speed without a word.
-    inline constexpr std::uint32_t kABIVersion = 12;
+    //
+    // ABI v13 (2026-09-25) adds kIntent_TargetPin (ch.20) and NOTHING else: no struct,
+    // no function-pointer slot, no APMF_Param field. ch.20 rides the EXISTING
+    // RequestEx/Repoint/Release slots, exactly as ch.19 did at v10, so there is no
+    // APMF_API_v13 struct and a v12 client is byte-unaffected. A client must see
+    // abiVersion >= 13 before it asks for the intent: an OLDER APMF has no channel for
+    // intent 20 and REFUSES the request (kInvalidHandle, "no channel serves intent 20"
+    // in its log), which is the documented degrade -- keep your own targeting.
+    inline constexpr std::uint32_t kABIVersion = 13;
 
     // The exported query function's undecorated name and pointer type.
     // const APMF_API_v1* APMF_GetInterface(std::uint32_t abiVersion);
@@ -380,6 +388,74 @@ namespace APMF_API {
                                      //         kIntent_Cast's own FromPackage extraction defers
                                      //         for exactly the same reason. Every refusal is
                                      //         logged with its reason either way.
+
+        kIntent_TargetPin     = 20,  // ch.20 PIN this actor's combat target (ABI v13, marth
+                                     //       2026-09-25). Mode: DENY the ENGINE'S OWN target
+                                     //       selection AT ITS SOURCE (APMF's seat on the combat
+                                     //       target selectors, vtable slot 6). A STANDING claim:
+                                     //       no TTL, ended only by Release.
+                                     //       Param: form = the TARGET actor's FormID (REQUIRED).
+                                     //       fval / ival / target / pos are not read.
+                                     //
+                                     //       WHAT IT DOES. Each combat update the engine asks its
+                                     //       target selectors which foe this actor should fight.
+                                     //       While the claim stands, APMF answers that question
+                                     //       with your target, so the engine's own pick never
+                                     //       reaches the actor. The engine then fights your
+                                     //       target with its own AI: its own attacks, movement,
+                                     //       spells and equips.
+                                     //
+                                     //       ONLY AMONG THE ENGINE'S OWN COMBAT TARGETS. The
+                                     //       answer is replaced only when the engine's selector
+                                     //       picked a target (the actor is fighting) AND your
+                                     //       target is one of the actor's combat group's targets.
+                                     //       Otherwise nothing is written and the log says so.
+                                     //       It does NOT start combat and does not make anyone a
+                                     //       target: an actor becomes pinnable once something (the
+                                     //       engine, or your own combat entry, a separate concern)
+                                     //       makes it a combat target of the actor's group. Combat
+                                     //       entry is never this intent (INVARIANTS #0).
+                                     //       It claims nothing else: no attack selection, no
+                                     //       casting, no equip, no movement, no aggression. One
+                                     //       intent, one facet (the kIntent_Travel rule).
+                                     //       It is a different intent from kIntent_CombatTarget
+                                     //       (ch.6), which stays ARBITRATION-ONLY and writes
+                                     //       nothing: claim this one to have APMF hold the target.
+                                     //
+                                     //       THE PIN PAUSES -- the engine's own pick stands for
+                                     //       that update -- while the engine has no target or your
+                                     //       target is not (yet) one of the group's combat targets.
+                                     //       The claim stays; it resumes when both hold again.
+                                     //
+                                     //       THE PIN ENDS, AND APMF RELEASES THE CLAIM ITSELF
+                                     //       (marth: "If APMF can no longer track the target, it's
+                                     //       lost, and dropped"), when the target is LOST (the
+                                     //       engine can no longer locate it), dead, disabled, not
+                                     //       loaded or no longer resolves, or the actor itself
+                                     //       dies. The log names the reason ("pin ended: target
+                                     //       lost"), IsClaimLive(handle) turns false (ABI v6), and
+                                     //       the handle is dead: a mod that wants to keep chasing
+                                     //       must pin again. This is the ONLY case in which APMF
+                                     //       releases a client's kIntent_TargetPin claim. Your own
+                                     //       Release, an outranking claim, a save load, a new game
+                                     //       or the actor unloading also end it (never saved).
+                                     //
+                                     //       The world's reaction to the fight is YOURS (CLAUDE.md
+                                     //       principle 2): crime, bounty, faction and aggression
+                                     //       consequences happen as the engine does them, and
+                                     //       Release does not undo them.
+                                     //
+                                     //       REFUSED SYNCHRONOUSLY (kInvalidHandle, logged): VR, a
+                                     //       runtime other than 1.6.1170 / 1.5.97, [TargetPin]
+                                     //       bTargetPin=0, a seat's address self-check failed,
+                                     //       before kDataLoaded, param.form == 0, param.form == the
+                                     //       actor itself, or the actor is the player (ch.20 pins
+                                     //       NPC combat targets only). REFUSED AT ENGAGE
+                                     //       (one Drain later; the handle is LIVE and inert, the log
+                                     //       says why -- RELEASE IT): param.form is not an Actor.
+                                     //       Repoint(handle, &param) moves the pin to a new target
+                                     //       in place; a Repoint naming a non-actor, 0 or the actor
+                                     //       itself leaves the claim live and inert, logged.
     };
 
     // ── Travel flags (kIntent_Travel's param.ival, ABI v10) ─────────────────────
@@ -1112,6 +1188,8 @@ namespace APMF_API {
     //   pos    kIntent_Travel          ABI v11: the destination POINT when ival has kTravel_ToPosition
     //                                  (form must then be 0; APMF walks the actor to its own XMarker
     //                                  there). Without the flag: REFUSED if non-zero.
+    //   form   kIntent_TargetPin       ABI v13: the TARGET actor (REQUIRED; 0 or the actor itself
+    //                                  is refused). No other field is read.
     //   none   every other Intent      accepted, not yet read by the channel
     //
     // fval is read ONLY by kIntent_Travel (ABI v10); it stays reserved for a
