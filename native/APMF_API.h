@@ -491,17 +491,11 @@ namespace APMF_API {
                                      //       intent, one facet). INTEGRATION.md "enter combat +
                                      //       pin" is the recipe.
                                      //
-                                     //       ONE CALL, NEVER SUSTAINED. Harbinger does not re-enter
-                                     //       combat when the engine ends it, and does not watch the
-                                     //       fight. A Repoint (or a new winning claim) makes ONE
-                                     //       more call for the claim's target -- that is also the
-                                     //       way to retry after the engine refused. The ENGINE may
-                                     //       refuse (StartCombat returns false): the actor is
-                                     //       restrained or unconscious or dead, the target is
-                                     //       dead, the engine's own distance test fails, or one of
-                                     //       a few engine flags is set. The log says it refused;
-                                     //       the claim stays LIVE and INERT until you Repoint or
-                                     //       Release it.
+                                     //       ONE CALL PER DECLARATION, NEVER SUSTAINED. Harbinger
+                                     //       does not re-enter combat when the engine ends it and
+                                     //       does not keep the fight going. A Repoint of a live
+                                     //       claim (or a new winning claim) makes ONE more call for
+                                     //       its target.
                                      //
                                      //       RELEASE STOPS NOTHING. Releasing the claim ends
                                      //       Harbinger's part and calls no StopCombat: the fight
@@ -509,12 +503,22 @@ namespace APMF_API {
                                      //       the way it ends any fight. Call Actor::StopCombat
                                      //       yourself if you want it over.
                                      //
-                                     //       THE CLAIM ENDS, AND APMF RELEASES IT ITSELF, when
-                                     //       the target is dead, disabled, not loaded or no longer
-                                     //       resolves, or the actor itself dies (the ch.20
-                                     //       precedent). The log names the reason and
-                                     //       IsClaimLive(handle) turns false. Your own Release, an
-                                     //       outranking claim, a save load, a new game or the
+                                     //       THE CLAIM ENDS, AND APMF RELEASES IT ITSELF (never
+                                     //       left live and inert; IsClaimLive(handle) turns false,
+                                     //       the log names the reason), when:
+                                     //         * the ENGINE REFUSED the entry (StartCombat returned
+                                     //           false: a restrained, unconscious or dead actor, a
+                                     //           dead target, the engine's own distance test, or
+                                     //           an engine flag) -- "engine refused entry: ...";
+                                     //         * the entry could not be attempted: the target is
+                                     //           not an Actor, or the actor is not loaded, has no
+                                     //           AI process or is dead;
+                                     //         * the FIGHT ENDED: the entry succeeded and the actor
+                                     //           now has no combat controller -- "combat ended";
+                                     //         * the target is dead, disabled, not loaded or no
+                                     //           longer resolves, or the actor itself dies.
+                                     //       To try again, send a NEW RequestEx. Your own Release,
+                                     //       an outranking claim, a save load, a new game or the
                                      //       actor unloading also end it (never saved).
                                      //
                                      //       The world's reaction to the fight is YOURS (CLAUDE.md
@@ -528,9 +532,9 @@ namespace APMF_API {
                                      //       bCombatEntry=0, the StartCombat address self-check
                                      //       failed, before kDataLoaded, param.form == 0,
                                      //       param.form == the actor itself, or the actor is the
-                                     //       player. The TARGET may be the player. REFUSED AT
-                                     //       ENGAGE (the handle is LIVE and inert, the log says
-                                     //       why -- RELEASE IT): param.form is not an Actor.
+                                     //       player. The TARGET may be the player. A target that
+                                     //       is not an Actor is found one frame later and ENDS the
+                                     //       claim (above).
     };
 
     // ── Travel flags (kIntent_Travel's param.ival, ABI v10) ─────────────────────
