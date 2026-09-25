@@ -1,5 +1,13 @@
 ## Unreleased
 
+- **A mod can now start a fight.** Claim `kIntent_CombatEntry` with the target actor in `APMF_Param.form`, and Harbinger asks the game once to put the NPC into combat against that target, with the game's own call for starting a fight. Repoint the claim to ask again. The game can say no (a restrained or dead NPC, a target too far away), and the log says so.
+- **Harbinger starts it and then lets go.** It never starts the fight a second time, and releasing the claim does not stop the fight. The game ends it the way it ends any fight. A mod that wants it over stops it itself. The claim ends by itself if the target dies, is disabled or unloads, or the NPC dies.
+- **Start the fight and pin the target to make the NPC fight that one.** Starting a fight puts the target on the NPC's list of foes. Pinning the same target makes the NPC choose it from that list. The log says whether the target made the list and whether a pin can take hold.
+- What the world does about the fight is the mod's business: crime, guards, allies joining, the music. Harbinger does not stop it and does not undo it.
+- `[CombatEntry] bCombatEntry` is new in `APMF.ini`, default 1. Set it to 0 and every request is refused.
+- New API revision (v14). It adds the intent and nothing else. Check `abiVersion >= 14` before asking for it. An older Harbinger refuses the request. A mod built against an older revision is unaffected.
+- Both runtimes. The game's call was read on the 1.6.1170 and 1.5.97 binaries, all three of its arguments included, and any other build is refused by name. VR is refused. The startup check now covers 178 addresses.
+- Not field-run. CI verified only.
 - **A mod can now pin an NPC's combat target.** Claim `kIntent_TargetPin` with the target actor in `APMF_Param.form`. While the NPC is fighting, the game asks who it should fight, and Harbinger answers with the mod's target. The game's own pick never reaches the NPC. The NPC's own AI does the fighting.
 - **Only among the game's own combat targets.** The target must already be one the NPC's side is fighting and can still find. If it is not in the fight yet, nothing changes and the log says so. Harbinger never makes anyone a target.
 - **It never starts a fight.** If the game has no target for the NPC, Harbinger writes nothing and the pin waits.

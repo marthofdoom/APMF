@@ -4,6 +4,43 @@ Updated 2026-09-25. Current version **v0.9.8**. The current state of the build: 
 shipped, what's probe-gated, what's next. Keep this current in the SAME change as any
 build/finding/workflow change.
 
+## HEAD OF WORK 2026-09-25 -- ch.21 COMBAT ENTRY (`kIntent_CombatEntry`, ABI v14), branch `feat/apmf-combat-entry`, NOT merged
+
+ClickUp 86e3940zb, batch L, tier A (new engine call + ABI). marth approved 2026-09-25: a third-party modder
+needs to make an NPC fight a target, and MFO's hidden "nearest visible enemy" gambit (86e3errnu) will use it.
+- **What:** intent 21, its own channel `channels/CombatEntry.cpp`. The client names {actor, target}; one frame
+  after the claim is published Harbinger calls `Actor::StartCombat(target, nullptr)` ONCE on the main thread
+  (one more per Repoint / owner change). No hook. Entry + the ch.20 pin (same target) = the NPC fights that
+  target. `INVARIANTS #0 (g)` (eight conditions) is the amendment.
+- **Engine facts (both unpacked images):** StartCombat 1.6.1170 id 38561 `0x6B6930` / 1.5.97 id 37608
+  `0x6251B0`, `bool(Actor* this, Actor* target, CombatGroup* join)` -- r8 is a group to join, nullptr is the
+  engine's own usage (AE 40814 `xor r8d, r8d` at `0x7505A3`). New controller path: CombatManager AE 46873 /
+  SE 45573 builds group + controller then `CombatGroup::AddTarget` (AE 44704 / SE 43482); if AddTarget fails
+  the controller is destroyed and StartCombat returns false. Already in combat: AddTarget only (result
+  ignored), no SetTarget. StartCombat dereferences `currentProcess` unchecked, so the channel never calls it
+  for an actor with no process. StartCombat builds NO Fixed selector (its ctor AE 47197 is built by AE 40814
+  and 48846 only).
+- **Release / end:** no re-entry ever (that would sustain a decision); release calls NO StopCombat (the fight
+  is engine state; stopping it is an undo and would also end combat the actor has for its own reasons). Ends
+  itself on owner dead / target dead / disabled / unloaded / unresolvable (`combatentry::Poll`). An engine
+  refusal leaves the claim live and inert; a Repoint retries. Not saved.
+- **ABI v14** adds the intent only (no struct, slot or field). The H1 lockpick/LOTD idle work pencilled at v14
+  below must take v15.
+- **APMF-B26 (StopCombat seat) NOT BUILT -- stop-and-report.** The disassembly says a 0xE5 seat sharing a
+  per-actor lock with the ch.20 seat does not close the race: (1) after the selector seat returns,
+  `UpdateTarget` keeps using the controller and the selector object itself, both freed by the controller's
+  destructor, so a lock around the seat window only moves the crash; (2) holding it across the whole
+  `UpdateCombat` (the ch.20 0xE4 observer) means holding a lock across engine code that takes CombatGroup
+  locks, while CombatGroup code itself calls StopCombat (AE 44717 +0xF8, 44758 +0x97; 35 indirect 0x728
+  call sites on AE) -- a deadlock risk unless every site is proven lock-free, plus same-thread re-entry;
+  (3) the controller is also freed WITHOUT StopCombat by the actor AI-reset path (AE 37653 +0x91 / SE 36645,
+  reached from AE 40270). Trade-off reported to the coordinator; B26 stays accepted.
+- **Seat guard:** exact 1.6.1170 / 1.5.97, VR refused, `[CombatEntry] bCombatEntry=1`, `SeatVerified` on
+  StartCombat (new row `CombatEntry.Actor.StartCombat`; 178/178 on both runtimes). Sync refusal: channel
+  unavailable, form 0, self, player as the actor.
+- **State:** CI-only, not field-run, awaiting the tier-A Opus review. First field log must show `ENTERED` with
+  `Target is a combat-group target: yes`.
+
 ## HEAD OF WORK 2026-09-25 -- ch.20 TARGET PIN (`kIntent_TargetPin`, ABI v13), branch `feat/apmf-target-pin`, NOT merged
 
 ClickUp 86e3cr9u7, tier A (new engine seat + ABI). marth approved 2026-09-25 ("yes, start the target pin").
