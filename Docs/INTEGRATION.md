@@ -1089,9 +1089,10 @@ pick stands, and the log says "not a combat target". Harbinger never makes anyon
 actor becomes pinnable once the engine holds it as a combat target, for example after your own
 combat entry (a separate concern) puts the actor in a fight with it.
 
-**It never starts a fight.** If the engine holds no target (the actor is not in combat, the
-fight ended, the foe was lost or fled), nothing is written. Getting the actor into combat is a
-separate concern and this intent does not do it.
+**It never starts a fight.** If the engine holds no target at all (the actor is not in combat,
+or the fight ended), nothing is written and the pin waits. That is the only state that leaves it
+waiting: a pinned target the engine has LOST ends the pin (see below). Getting the actor into
+combat is a separate concern and this intent does not do it.
 
 **It claims nothing else.** No attack selection, no casting, no equip, no movement, no
 aggression, no perception. One intent, one facet.

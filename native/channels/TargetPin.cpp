@@ -79,7 +79,9 @@ extern "C" __declspec(dllimport) unsigned long __stdcall GetPrivateProfileIntA(
 // LOST (its group entry carries kTargetLost: CombatTarget::flags, u16 +0xA6, bit 1, verified
 // on both runtimes), dead, disabled, not loaded or unresolvable. targetpin::Poll() -- the
 // Arbiter's once-per-frame game-thread seat, the ch.19 leg-monitor precedent -- checks the
-// same target conditions plus the OWNER being dead, and ENDS the winning claim itself
+// same target conditions LIVE plus the OWNER being dead -- trusting only the seat's "target
+// lost" (the group list it must not read itself), and clearing any other seat reason the live
+// check does not confirm (a worker can see a transient null 3D) -- and ENDS the winning claim itself
 // (ControlMap::EnqueueRelease), logging "pin ended: <reason>"; the Release line repeats the
 // reason. A target merely NOT (YET) in the group's targets does not end the pin: it
 // declines, because the client's combat entry may still add it.
