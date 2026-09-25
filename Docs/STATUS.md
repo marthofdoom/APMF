@@ -4,6 +4,14 @@ Updated 2026-09-22. Current version **v0.9.5**. The current state of the build: 
 shipped, what's probe-gated, what's next. Keep this current in the SAME change as any
 build/finding/workflow change.
 
+## ✅ SHIPPED v0.9.8 (cut 2026-09-24) -- TRAVEL TO A POINT, LEG STATE (ABI v12), STARTUP ADDRESS CHECK
+
+GitHub tag `v0.9.8`, stamp `e58b76c`, CI 36085981607, manifest `ae8e6f5`. DLL `8dfb63da…`, esl `78a3e6a4…` (unchanged, still required). NOT on Nexus yet: marth tests first.
+- ABI v11: position cast (ships OFF, `bPositionCast = 0`; no animation, so not an endpoint; projectile spells refused), FindEmptySpace / FindHostilesInSpace, travel to a point, XMRK marker co-save (markers dumped on load).
+- ABI v12: `GetTravelLegState` -> 72-byte `APMF_TravelLegInfo` (frozen `kTravelLegInfoV12Size = 72`): blocked from accumulated Movement Blocked time, blocker kind (actor vs static), gait bits, passive gate probe.
+- CommonLib = our MIT fork `mit-3.7` (F1): startup self-check, 175 verified rows, fails closed on unknown builds.
+- Pairs with MFO v2.0.13. NEXT: M3 reachability query (after gate-probe field data), H1 shared lockpick/LOTD idle at ABI v13.
+
 ## ✅ SHIPPED v0.9.5 (cut 2026-09-22) -- TRAVEL, SCOPED EQUIP AUTHORITY, AND THE FIRST SHIPPED PLUGIN
 
 **Current version: v0.9.5.** Cut off `main` at `563f0d2` (the ch.19 travel merge). ABI **v10**.
