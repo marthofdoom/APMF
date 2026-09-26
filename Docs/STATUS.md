@@ -4,6 +4,38 @@ Updated 2026-09-25. Current version **v0.9.8**. The current state of the build: 
 shipped, what's probe-gated, what's next. Keep this current in the SAME change as any
 build/finding/workflow change.
 
+## HEAD OF WORK 2026-09-25 -- ch.12 IDLE v2 (`kIntent_Idle` + a form and a target, ABI v17), branch `feat/apmf-idle-v2`, NOT merged
+
+Harbinger H1, batch L, tier A (ABI). Shared by MFO lockpicking (ClickUp 86e3edgha) and the LOTD deposit
+(86e3edghj). marth: proper animations are required for ALL actions.
+- **What:** `param.form` = a TESIdleForm, `param.target` = an optional ref. Engage (and each Repoint / owner
+  change) = ONE `AIProcess::PlayIdle(actor, idle, target)`, posted past Publish and re-validated on the game
+  thread. Release = ONE `IdleForceDefaultState` only when the idle is HELD. INVARIANTS #0 (c) text updated.
+  ABI v17 = new semantics on the existing fields only (no struct, slot, field or intent). `form` 0 = v1,
+  unchanged. An APMF older than v17 IGNORES the form (plays v1): clients must check `abiVersion >= 17`.
+- **Binding (both images):** the fork's PlayIdle = `SetupSpecialIdle(process, actor, kActionIdle=64, idle, 1, 0,
+  target)`, `RELOCATION_ID(38290, 39256)` = SE `0x64B140` / AE `0x6DDE70`. The engine's Papyrus Actor.PlayIdle
+  native (AE 55105 / SE 54395) makes the identical call. Returns false on a null `process->high`, on a failing
+  idle condition (arg5), and may return TRUE on a QUEUED idle. Verified row `Idle.AIProcess.SetupSpecialIdle`,
+  186/186, `SeatVerified` in `apmf::idle::Install`.
+- **Held:** no usable loop flag (IDLE DATA loopMin/Max 0; `IsIdlePlaying` is an engine stub). Held = accepted
+  AND the actor's graph has not raised `IdleStop` since the call (per-actor anim sink; mt_behavior: MT_LockPick
+  is single-play with IdleStop at clip end, ~5.6 s, and InteractionObjectState raises IdleStop on exit).
+- **Crouch finding (for clients):** sneak locomotion is inside MT_Default_State; IdleLockPick is an
+  unconditional root wildcard, one standing clip. From a crouch the NPC stands for the idle and resumes
+  sneaking after. No kneel in vanilla. `IdleActivatePickUpLow` is REFUSED against a container (its own
+  IsCarryable condition on the target).
+- **Ends:** refused / unplayable idle, owner death (`Poll`), Release, unload, load / revert (`ResetAll`).
+- **Closing round (review CLEAN, nothing above SEV-3):** F1 the Release reset is never sent while
+  `GetSitSleepState() != kNormal` (furniture); F2 `[Idle] bIdleV2` (default 1) in `APMF.ini` refuses form
+  claims at the call; F3 a form-free owner change over a v2 idle runs the same guarded reset and drops the entry.
+- **FIELD CHECKS (principle 5, NOT YET OBSERVED):**
+  1. `ANIMATION CONFIRMED` for IdleLockPick on a follower.
+  2. **"Held" is INFERRED from `IdleStop`:** a one-shot idle's Release line must list `IdleStop` in its tag
+     list and say `not held`. If it never appears, every idle is treated as held (reset at Release, guarded).
+  3. A crouched follower stands for the pick and resumes sneaking after.
+  MFO adoption is a separate brief (mirror `APMF_API.h` v17).
+
 ## HEAD OF WORK 2026-09-25 -- ch.23 PURSUIT LEASH (`kIntent_PursuitLeash`, ABI v16), branch `feat/apmf-pursuit-deny`, NOT merged
 
 ClickUp 86e3ex5ve, batch L, tier A (new engine seat + ABI). From MFO's confidence / leash assessment: MFO has

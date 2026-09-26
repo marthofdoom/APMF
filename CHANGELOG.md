@@ -1,5 +1,16 @@
 ## Unreleased
 
+- **A mod can now play a chosen animation at a target.** Claim `kIntent_Idle` with an IDLE record in `APMF_Param.form` and, if it needs one, the reference to play it at in `APMF_Param.target`. Harbinger plays it once with the game's own call, the same one the game's scripts use. A follower can pick a lock with `IdleLockPick` or hand something over with `IdleGive`.
+- **Harbinger plays it and lets go.** One play per request. A Repoint with an idle plays it again. The game checks the idle's own conditions and can say no. Then the request ends and the log says why.
+- **Release only resets a pose that is still held.** A one-shot animation ends by itself. Release sends the reset only when the animation has not ended, so it never pulls the NPC out of whatever it is doing by then. It is never sent to an NPC sitting or lying in furniture.
+- **The log says whether the animation really played.** Harbinger watches the NPC's animation events after the call and writes one line: confirmed, with the events it saw, or no animation seen.
+- **A crouching NPC stands for the animation.** The game has one standing lockpick clip and no kneeling one. The NPC goes back to sneaking when it ends.
+- It ends by itself when the animation cannot be played, when the game refuses it, or when the NPC dies. The log says which. Release, a save load, a new game or the NPC unloading end it too.
+- The old form-free idle (no form) is unchanged.
+- `[Idle] bIdleV2` is new in `APMF.ini`, default 1. Set it to 0 and every request that names an idle is refused.
+- New API revision (v17). It adds the form and target to the idle and nothing else. Check `abiVersion >= 17` before setting a form. An older Harbinger does not refuse it: it plays its old default-pose reset instead.
+- Both runtimes. The game's play call was read on the 1.6.1170 and 1.5.97 binaries and is checked at startup. The startup check now covers 186 addresses.
+- Not field-run yet. CI verified only.
 - **A mod can now leash an NPC in combat.** Claim `kIntent_PursuitLeash` with an anchor actor in `APMF_Param.target` (usually the player) and a radius in `APMF_Param.fval`. While the NPC is farther than the radius from the anchor, the game's own moves toward its target (closing in, chasing, flanking, repositioning, a ranged NPC closing to range) and around its search area when the target is lost are refused when that goal is farther from the anchor still.
 - **A chase that already started is stopped too.** The game runs a whole chase inside one move, so Harbinger also ends a running move once the NPC crosses the radius, the same way the game ends one whose path failed.
 - **The NPC keeps fighting.** Attacks, spells, blocks, dodges and every other move run as the game decides. A goal nearer the anchor is always allowed. Harbinger does not walk the NPC back. Past the radius a step back toward the anchor can be refused too, so the NPC may stand where it is.

@@ -1639,6 +1639,138 @@ time any NPC starts that leaf; a leaf you expect but never see is a leaf that NP
   leashed follower that stops at the radius without freezing, with `update-anomaly=0`, before a client
   relies on it (CLAUDE.md principle 5).
 
+## Playing an idle at a target (ABI v17, `kIntent_Idle` with a form)
+
+Before v17, `kIntent_Idle` (ch.12) could play one thing: `IdleForceDefaultState`, the reset to
+the default pose. From v17 it plays the IDLE record YOU name, at a reference you name: a follower
+picks a lock with `IdleLockPick`, hands something over with `IdleGive`, reaches into a box.
+Harbinger never picks the idle. It plays yours once and gets out of the way.
+
+### The contract
+
+* **One engine call per declaration.** When the claim engages, Harbinger calls the engine's own
+  `AIProcess::PlayIdle(actor, idle, target)` once, on the main thread, right after the claim is
+  published (the same call the game's Papyrus `Actor.PlayIdle` makes). A Repoint with a new idle,
+  or another claim taking over, is a new declaration and gets one more call. Nothing is re-played
+  on a timer or when the idle ends.
+* **The engine checks the idle's own conditions** against the NPC and the target. A failing
+  condition refuses the idle. Vanilla `IdleActivatePickUpLow` (0x08B5D3) requires a CARRYABLE
+  target, so it is refused against a container; `IdleLockPick` (0x0BB051) and `IdleGive`
+  (0x0B5E20) have no conditions.
+* **`PlayIdle` returning true means accepted, not played.** The engine may queue the idle. So
+  Harbinger watches the NPC's animation graph and logs whether the animation actually ran (below).
+* **Release resets only a held idle.** A one-shot idle ends by itself: its clip raises the graph
+  event `IdleStop` and the NPC returns to its default state. At Release, Harbinger sends
+  `IdleForceDefaultState` ONLY when that has NOT happened since the call (a looping idle that is
+  still playing). An idle that already ended gets nothing, so Release never pops the NPC out of
+  whatever it is doing by then. It is also never sent while the NPC is in furniture (sitting,
+  sleeping, getting in or out). "Held" is INFERRED from the graph event `IdleStop` and is not yet
+  observed on a deck: the first field log must show `IdleStop` in a one-shot idle's Release line.
+  A form-free Repoint (or a form-free claim taking over) drops the v2 idle with the same guarded
+  reset.
+* **It does not hold the NPC still.** The NPC's package keeps running. A follower whose follow
+  package walks it toward you walks off the lock mid-animation. Claim `kIntent_MovementBlock` (ch.1)
+  for the length of the idle if you need it to stay put, and walk it there first with
+  `kIntent_Travel` (ch.19).
+* **Crouching does not give a kneeling version.** In the vanilla behaviour graph an idle played
+  while sneaking leaves the sneak pose, plays its normal STANDING clip, and returns to sneaking
+  when it ends (the sneak locomotion lives inside the default state the idle leaves; `IdleLockPick`
+  has one clip and no sneak variant). There is no kneeling lockpick in vanilla. For a kneel, name a
+  kneeling IDLE of your own (or a mod's) in `param.form`.
+* **The form-free v1 idle is unchanged.** `param.form` 0 still plays `IdleForceDefaultState` at
+  engage, on every ABI, and reads nothing else.
+
+### How the claim ends
+
+Your own Release, a save load, a new game or the NPC unloading end it. Harbinger also RELEASES the
+claim itself, and logs `idle claim ended: <reason>`, when the idle could not be played (the form
+is not an IDLE record; the target is not a loaded, enabled reference; the NPC is not loaded, is
+dead, or has no AI process), when the engine refused it, or when the NPC died. `IsClaimLive`
+(ABI v6) turns false. A one-shot idle that finished does NOT end the claim: release it when your
+own logic is done (e.g. when your lockpick simulation ends).
+
+### The recipe: play an idle at a target
+
+```cpp
+using namespace APMF_API;
+
+constexpr RE::FormID kIdleLockPick = 0x000BB051;   // Skyrim.esm; about 5.6 s, one-shot
+
+// The NPC is already standing at the lock (a ch.19 travel leg arrived) and holding still (ch.1).
+Handle PlayIdleAt(RE::FormID npc, RE::FormID idle, RE::FormID targetRef) {
+    if (!g_apmf || g_apmf->abiVersion < 17) return kInvalidHandle;
+    // REQUIRED: an APMF older than v17 does NOT refuse this; it ignores the form and plays the
+    // v1 IdleForceDefaultState instead. Check the version first.
+    APMF_Param p{};
+    p.form   = idle;        // the IDLE record to play
+    p.target = targetRef;   // the lock / crate / NPC to play it at; 0 = no target
+    return g_apmf->RequestEx(npc, kIntent_Idle, /*basis=*/50.0f, &p);
+    // kInvalidHandle: refused at the call; the log says why (see below).
+}
+
+// One pick-break later, play it again: a Repoint with the same idle is a new declaration.
+void ReplayIdle(Handle h, RE::FormID idle, RE::FormID targetRef) {
+    APMF_Param p{};
+    p.form   = idle;
+    p.target = targetRef;
+    g_apmf->Repoint(h, &p);
+}
+
+void DoneWithIdle(Handle h) { g_apmf->Release(h); }   // resets the pose only if the idle is still held
+```
+
+Poll `IsClaimLive(h)`: false means Harbinger ended it (refused, unplayable, NPC died) and the log
+line names why.
+
+### Parameter fields
+
+| field | meaning |
+|---|---|
+| `param.form` | The IDLE record's FormID. 0 = the v1 form-free idle. Any other record type ends the claim. |
+| `param.target` | Optional. A loaded, enabled reference to play the idle at. 0 = none (the engine then uses the NPC's own AI target). Not read when `form` is 0. |
+| everything else | Not read. |
+
+### When a claim is refused
+
+* **At the call (`kInvalidHandle`), `form` set only,** logged `[apmf][idle] idle v2 claim
+  refused`: v2 is not available (VR, a runtime other than exactly 1.6.1170 or 1.5.97,
+  `[Idle] bIdleV2=0` in `APMF.ini`, the address
+  self-check refused `SetupSpecialIdle`, or before kDataLoaded), or `target` is the NPC itself.
+* **On the main thread (the claim is ended, logged `NOT PLAYED` / `the engine REFUSED`):** see
+  "How the claim ends".
+
+### What a good log looks like
+
+```
+[ch.12] idle v2 available: one AIProcess::PlayIdle(actor, idle, target) per engage / re-point, ...
+[ch.12] 0x... idle claim ENGAGED -> idle 0x000BB051 at target 0x...: ONE AIProcess::PlayIdle call is queued ...
+[ch.12] 0x... idle ENGAGED IdleLockPick (event IdleLockPick) (0x000BB051) at target 0x...: REQUESTED ->
+        PlayIdle returned TRUE (accepted; sink added; ...).
+[ch.12] 0x... idle IdleLockPick (event IdleLockPick): ANIMATION CONFIRMED by the graph (N event(s) in
+        M ms: <the first graph events>); no IdleStop yet (still playing, or held).
+[ch.12] 0x... idle released (by the client, an unload or a load) (...): PlayIdle called 1 time(s) --
+        accepted 1, refused 0. Release: no reset (not held: the graph raised IdleStop 5633 ms after the call). ...
+```
+
+The confirmation line is written once per play: at `IdleStop`, at the eighth event, or 3 s after the
+call. **`NO ANIMATION EVENT from the actor's graph` is a bug report** (PlayIdle accepted the idle but
+nothing was observed playing). The exact event names in the confirmation line depend on the behaviour graph and
+are what the first field run records.
+
+### Limits worth knowing
+
+* **The idle is yours; so are its consequences.** Harbinger does not stop the NPC's own idle
+  manager, package or combat from playing over it.
+* **Held is read from the graph event `IdleStop`**, which the vanilla one-shot interaction idles
+  raise when they end. An idle that ends WITHOUT raising `IdleStop` counts as held, and gets
+  `IdleForceDefaultState` at Release: harmless on an NPC already in its default state, and never sent
+  to an NPC in furniture.
+* **Humanoid idles need a humanoid.** An IDLE from the character behaviour has no clip in a
+  creature's graph. Check the confirmation line before relying on a creature.
+* **Not saved.** A save load, a new game or the NPC unloading drops the claim.
+* **Built, CI-verified, not yet field-run.** The first field log must show `ANIMATION CONFIRMED`
+  for `IdleLockPick` before a client relies on it (CLAUDE.md principle 5).
+
 ## The facet table
 
 Every facet is one `Intent` value in `native/APMF_API.h`. The proof tier says
@@ -1672,7 +1804,7 @@ columns, one doesn't imply the other.
 | `kIntent_OfferPackage` (ch.9) | Claim the package-offer facet | `form` (the TESPackage FormID) | **Proven WHEN NUDGED (corrected 2026-09-07).** The 0x49 redirect answers whenever the engine asks while a published claim stands — 16/16 deck wins, every one of them following an explicit `EvaluatePackage` nudge, with ZERO hits from the engine's own evaluation cadence over ~75 s. It is not self-sustaining: if nothing nudges, nothing re-asks. The earlier "field-proven for engage/release" credit belonged to the retired PROBE; the graduated channel's own first field run engaged **0 of 6** dispatches because its nudge fired before the claim published. Fixed on `main` as of 2026-09-07 (the nudge is posted one hop past the claim's publish); untagged, and not yet re-run on a deck. Save/load persistence of an engaged claim is still unexercised. |
 | `kIntent_Dialogue` (ch.10) | Pause the actor's own in-progress dialogue | none | Built, not yet battle-tested |
 | `kIntent_Disposition` (ch.11) | Aggression / confidence / assistance / morality bias | `fval` (reserved, not yet read) | **Field-proven.** An actor-value source-block, deck-tested to hold even on a package-locked actor. |
-| `kIntent_Idle` (ch.12) | One-shot idle/animation | none | Built, not yet battle-tested |
+| `kIntent_Idle` (ch.12) | One-shot idle/animation; v17: the client's IDLE at a target | none (v1); `form` = IDLE, `target` = ref (v2, ABI v17) | v1 built, not yet battle-tested; v2 built, CI-verified, not field-run |
 | `kIntent_ShoutPower` (ch.14) | Claim the shout/power selection facet | `form` (the shout/power FormID) | Built, not yet battle-tested. Arbitration only today, the same shape as ch.6. |
 | `kIntent_Equipment` (ch.15) | Unequip/equip a worn item, and (with a param) gate re-equip of a spell/staff while the claim stands | `form` (optional) | Built, not yet battle-tested. The most recently landed facet in the catalog. |
 | `kIntent_Detection` (ch.16) | Silent movement + reduced detection range | `fval` (reserved, not yet read) | **Field-proven.** An actor-value source-block, deck-tested to hold even on a package-locked actor. |

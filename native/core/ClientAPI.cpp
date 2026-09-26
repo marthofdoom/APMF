@@ -178,7 +178,7 @@ namespace {
     // step with kABIVersion bumps (git tags: v0.2.0 v1, v0.2.3 v2, v0.3.0-rc.1 v3,
     // v0.3.0-rc.3 v4, v0.9.1 v5, v0.9.3 v6; v7, v8, v9 and v10 ship together in the
     // first release after 0.9.4 -- REVIEW-BACKLOG APMF-B10: name it at the cut; v11 and
-    // v12 ship together in 0.9.8; v13 and v14 ship in 0.9.9; v15 and v16 are Unreleased in
+    // v12 ship together in 0.9.8; v13 and v14 ship in 0.9.9; v15, v16 and v17 are Unreleased in
     // CHANGELOG.md -- name their release here at the cut).
     const char* MinReleaseForAbi(std::uint32_t abi) {
         switch (abi) {
@@ -197,7 +197,8 @@ namespace {
         case 13:
         case 14: return "0.9.9";
         case 15:
-        case 16: return "the first release after 0.9.9";
+        case 16:
+        case 17: return "the first release after 0.9.9";
         default: return "a release newer than this one";
         }
     }
@@ -222,6 +223,8 @@ namespace {
     // ABI v15 (ch.22 kIntent_CombatReentryDeny) adds NO slot either: still an APMF_API_v12,
     // `abiVersion` 15. ABI v16 (ch.23 kIntent_PursuitLeash, reading the existing
     // param.target / param.fval) adds NO slot either: still an APMF_API_v12, `abiVersion` 16.
+    // ABI v17 (ch.12 idle v2, reading the existing param.form / param.target for
+    // kIntent_Idle) adds NO slot either: still an APMF_API_v12, `abiVersion` 17.
     // ABI v11 layout proof (review F8d): the two query slots start exactly where the
     // v9 prefix ends, so a v1..v10 client reading its own prefix never overlaps them.
     // offsetof on a derived struct is conditionally-supported; MSVC (the only compiler

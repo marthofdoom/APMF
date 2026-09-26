@@ -146,7 +146,18 @@ namespace APMF_API {
     // -- keep your own leash. (An earlier, never-released v16 draft carried the leash as a ch.7
     // category bit, kCombatActionCat_Pursuit; it was withdrawn before any release, so no client
     // ever saw it. The leash is its own facet, arbitrated separately from ch.7.)
-    inline constexpr std::uint32_t kABIVersion = 16;
+    //
+    // ABI v17 (2026-09-25) gives kIntent_Idle (ch.12) a FORM and a TARGET and NOTHING else: no
+    // new intent, no struct, no function-pointer slot, no APMF_Param field. The idle rides the
+    // EXISTING param.form (the TESIdleForm to play) and param.target (the reference to play it
+    // at), which v1..v16 accept and ignore for this intent. That is why no field is added: the
+    // two values are a form and a ref, exactly what those fields already carry for every other
+    // intent, and a zero form still means the v1 behaviour. There is no APMF_API_v17 struct and
+    // a v16 client is byte-unaffected. A client must see abiVersion >= 17 before it sets
+    // param.form on kIntent_Idle: an OLDER APMF does NOT refuse such a claim -- it ignores the
+    // form and plays its form-free IdleForceDefaultState -- so an unchecked client gets the
+    // wrong animation, silently. That is the degrade to avoid; check the version.
+    inline constexpr std::uint32_t kABIVersion = 17;
 
     // The exported query function's undecorated name and pointer type.
     // const APMF_API_v1* APMF_GetInterface(std::uint32_t abiVersion);
@@ -226,8 +237,30 @@ namespace APMF_API {
                                      //       denying a competing framework's own target
                                      //       write is a future gap). Param: form (the
                                      //       target actor).
-        kIntent_Idle          = 11,  // ch.12 One-shot idle/animation. Mode: PROMOTE.
-                                     //       Param: none.
+        kIntent_Idle          = 11,  // ch.12 Play an idle/animation. Mode: PROMOTE.
+                                     //       Param v1 (form 0, every ABI): none -- one
+                                     //       IdleForceDefaultState at engage, nothing at release.
+                                     //       Param v2 (ABI v17): form = a TESIdleForm (an IDLE
+                                     //       record) to play; target = an optional reference to
+                                     //       play it AT (0 = none). ONE AIProcess::PlayIdle(actor,
+                                     //       idle, target) at engage and one per Repoint / owner
+                                     //       change; at release ONE IdleForceDefaultState, and only
+                                     //       when the idle is still HELD (the actor's graph has
+                                     //       not raised IdleStop since the call -- a one-shot idle
+                                     //       has ended by itself and gets nothing). No Tick.
+                                     //       The idle's OWN conditions are evaluated by the engine
+                                     //       against (actor, target): a failing one refuses it.
+                                     //       The client picks the idle; Harbinger never does.
+                                     //       ENDS (released by Harbinger, logged): the form is not
+                                     //       an IDLE, the target is not a loaded reference, the
+                                     //       actor is not loaded / dead / has no AI process, the
+                                     //       engine refused the idle, or the owner died; plus
+                                     //       Release, an unload, a save load or a new game.
+                                     //       REFUSED SYNCHRONOUSLY (form != 0 only; kInvalidHandle,
+                                     //       logged): VR, a runtime other than 1.6.1170 / 1.5.97,
+                                     //       a self-check refusal, before kDataLoaded, or target
+                                     //       == the actor. An APMF older than v17 does NOT refuse
+                                     //       a form: it plays the v1 idle. Check abiVersion >= 17.
         kIntent_ShoutPower    = 12,  // ch.14 Shout/power selection. Mode: ARBITRATE only
                                      //       (mirrors ch.6/ch.8, no deny gate yet). Param:
                                      //       form (the shout/power FormID).
@@ -1393,6 +1426,9 @@ namespace APMF_API {
     //   pos    kIntent_Travel          ABI v11: the destination POINT when ival has kTravel_ToPosition
     //                                  (form must then be 0; APMF walks the actor to its own XMarker
     //                                  there). Without the flag: REFUSED if non-zero.
+    //   form   kIntent_Idle            ABI v17: the TESIdleForm to play (0 = the v1 form-free idle)
+    //   target kIntent_Idle            ABI v17: optional reference to play the idle AT (read only
+    //                                  when form != 0)
     //   form   kIntent_TargetPin       ABI v13: the TARGET actor (REQUIRED; 0 or the actor itself
     //                                  is refused). No other field is read.
     //   form   kIntent_CombatEntry     ABI v14: the TARGET actor (REQUIRED; 0 or the actor itself

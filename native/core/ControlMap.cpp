@@ -10,6 +10,7 @@
 #include "channels/Travel.h"  // ch.19 Installed()/NotInstalledReason() for the synchronous refusal
 #include "channels/TargetPin.h"  // ch.20 Installed()/NotInstalledReason() for the synchronous refusal
 #include "channels/CombatEntry.h"  // ch.21 Installed()/NotInstalledReason() for the synchronous refusal
+#include "channels/Idle.h"  // ch.12 v2 V2Installed()/NotInstalledReason() for the synchronous refusal
 #include "channels/CombatReentryDeny.h"  // ch.22 Installed()/NotInstalledReason() for the synchronous refusal
 #include "core/ActionGate.h"  // ch.23 pursuit leash (ABI v16) PursuitArmed()/PursuitNotArmedReason() for the synchronous refusal
 #include "core/PositionCast.h"  // ABI v11 position cast: poscast::Enqueue (one-shot, never a claim); MarkersSupported (ch.19)
@@ -210,6 +211,25 @@ namespace apmf {
                 why = "the actor is the player (ch.21 puts NPCs into combat only; the player may be the target)";
             if (why) {
                 spdlog::warn("[apmf][combat-entry] claim refused -- actor 0x{}: {}.", apmf::log::Hex(actor), why);
+                return APMF_API::kInvalidHandle;
+            }
+        }
+
+        // ch.12 v2 (ABI v17): a kIntent_Idle claim that carries a FORM (param.form != 0: play
+        // this IDLE at param.target) is REFUSED synchronously when the v2 path is not available
+        // (VR, a runtime other than 1.6.1170 / 1.5.97, [Idle] bIdleV2=0, the SetupSpecialIdle
+        // self-check refused, or before kDataLoaded) and when param.target names the actor itself. A form-free
+        // claim (v1) is never refused here. Whether param.form is an IDLE record and
+        // param.target a loaded reference needs a form lookup, so it is decided on the game
+        // thread (channels/Idle.cpp) and logged there.
+        if (intent == APMF_API::kIntent_Idle && param && param->form != 0) {
+            const char* why = nullptr;
+            if (!apmf::idle::V2Installed())
+                why = apmf::idle::NotInstalledReason();
+            else if (param->target == actor)
+                why = "param.target is the actor itself";
+            if (why) {
+                spdlog::warn("[apmf][idle] idle v2 claim refused -- actor 0x{}: {}.", apmf::log::Hex(actor), why);
                 return APMF_API::kInvalidHandle;
             }
         }
