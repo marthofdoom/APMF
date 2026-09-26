@@ -282,6 +282,9 @@ namespace apmf {
         op.intent = intent;
         op.basis  = basis;
         if (param) op.param = *param;   // COPY synchronously; never retain the client pointer
+        // ch.22 (review F3): the claim's window runs from its own request time. Recorded before
+        // the op is queued, so it exists when the claim is applied.
+        if (intent == APMF_API::kIntent_CombatReentryDeny) apmf::reentrydeny::NoteRequest(h, actor);
         {
             std::scoped_lock lock(m_qmx);
             m_queue.push_back(op);
@@ -306,6 +309,7 @@ namespace apmf {
         op.kind   = PendingOp::Kind::kRepoint;
         op.handle = handle;
         op.param  = *param;   // COPY synchronously; never retain the client pointer
+        apmf::reentrydeny::NoteRepoint(handle);   // ch.22 (F3): a Repoint restarts that claim's window; others ignored
         {
             std::scoped_lock lock(m_qmx);
             m_queue.push_back(op);

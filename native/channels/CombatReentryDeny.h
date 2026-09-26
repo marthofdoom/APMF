@@ -38,6 +38,15 @@ namespace apmf::reentrydeny {
     // combatentry::ResetAll at the kPreLoadGame / revert boundary. GAME THREAD.
     void ResetAll(const char* why);
 
+    // Review F3: the time each claim was REQUESTED (NoteRequest, from
+    // ControlMap::EnqueueRequest for kIntent_CombatReentryDeny, before the op is queued) or last
+    // REPOINTED (NoteRepoint, from ControlMap::EnqueueRepoint for every handle; a handle this
+    // channel never recorded is ignored after one relaxed load when none is recorded). A claim's
+    // window runs from that time, so a claim that takes over from a rival gets only what is left
+    // of its own window. ANY THREAD (own mutex).
+    void NoteRequest(APMF_API::Handle handle, RE::FormID actor);
+    void NoteRepoint(APMF_API::Handle handle);
+
     // ch.21 PRECEDENCE. channels/CombatEntry.cpp holds one of these around its own
     // Actor::StartCombat call: while it lives, the seat lets THAT actor's entry through on
     // THIS thread (a client's declared combat entry is not denied by another client's, or

@@ -4,10 +4,12 @@
 #include "core/Clock.h"
 #include "core/ControlMap.h"
 #include "core/Log.h"
+#include "core/MainThread.h"   // Post: Settle runs right after Drain publishes
 #include "core/Registry.h"
 
 #include <cmath>
 #include <intrin.h>   // _ReturnAddress (core/EquipSink.cpp / core/EquipGate.cpp precedent)
+#include <mutex>
 #include <shared_mutex>
 
 // Win32 INI reader, declared by hand (the PCH does not pull in <Windows.h>) -- the same
@@ -23,10 +25,11 @@ extern "C" __declspec(dllimport) unsigned long __stdcall GetPrivateProfileIntA(
 // actor back into combat until the window ends.
 //
 // WHAT IT IS. A client claims {actor, window seconds} (param.fval; 0 = 10 s, at most
-// 120 s). While that is the WINNING kIntent_CombatReentryDeny claim on the actor, the window
-// is running and the actor is OUT OF COMBAT (no combat controller), the engine's own
-// COMBAT ENTRY for that actor is REFUSED at its source. Nothing else changes: no StopCombat,
-// no engine state written, no other facet touched.
+// 120 s). While that is the WINNING kIntent_CombatReentryDeny claim on the actor and its
+// window is running, EVERY engine StartCombat for that actor is REFUSED at its source -- a new
+// entry, and (review F2, ruled option (a)) a target-add while the actor is still fighting.
+// Only ch.21's own entry passes. Nothing else changes: no StopCombat, no engine state written,
+// no other facet touched.
 //
 // HOW AN ACTOR ENTERS COMBAT (disassembly of both unpacked images, 2026-09-25; scratchpad
 // log apmf-reentry.md has the listings).
@@ -63,12 +66,14 @@ extern "C" __declspec(dllimport) unsigned long __stdcall GetPrivateProfileIntA(
 //   StartCombat's own "enter" is turned into its own "refuse", through a check the engine
 //   already makes there -- when ALL of these hold:
 //     * the actor holds the WINNING kIntent_CombatReentryDeny claim (published RCU read);
-//     * its window has not elapsed;
-//     * the actor has NO combat controller (the pointer only; nothing behind it is read):
-//       the facet is ENTRY. An actor already fighting is not stopped and the engine may still
-//       add targets to its group (StartCombat's in-combat path) -- the client decides whether
-//       the fight ends (Actor::StopCombat, its call);
+//     * its window has not elapsed (the window runs from the claim's OWN request / last Repoint
+//       time, review F3: a claim taking over from a rival gets only what is left of it);
 //     * the call is not ch.21's own entry for this actor (ClientEntryScope, below).
+//   The seat does NOT look at whether the actor is in combat (review F2, option (a)): an actor
+//   still fighting is not stopped (the client ends that fight, Actor::StopCombat, its call), but
+//   StartCombat's in-combat path -- adding a target to its group -- is refused too. That removed
+//   the one read the seat made of actor state (the controller pointer), and with it the race
+//   against a StopCombat on another thread between that read and StartCombat's own lock.
 //   Every other caller of IsDead -- thousands per frame -- gets the original answer: the
 //   return-address compare is the first thing the thunk does after the original.
 //
@@ -82,28 +87,43 @@ extern "C" __declspec(dllimport) unsigned long __stdcall GetPrivateProfileIntA(
 // every StartCombat self-check it sees, claim or no claim, and logs the FIRST one of the
 // session ("seat OBSERVED"). Poll() carries a DENY-MISS detector: a denied actor that GAINS a
 // combat controller while its window runs without a ch.21 entry passing the seat is logged
-// loudly (principle 7). The known way to miss: another DLL wraps Character slot 0x99 AFTER
+// loudly (principle 7). A known way to miss: another DLL wraps Character slot 0x99 AFTER
 // Harbinger with a thunk that CALLS (not tail-jumps to) the previous entry; StartCombat's return
-// address is then theirs, never ours. Apply() warns when the slot no longer holds this thunk.
+// address is then theirs, never ours. Every Engage / Repoint line warns when the slot no longer
+// holds this thunk. The detector samples every 250 ms, so a StopCombat and a new entry inside
+// one sample are not seen as a transition; that is a limit of the detector, not of the deny.
 //
 // THE CLAIM ENDS, AND HARBINGER RELEASES IT ITSELF (logged "deny ended: <reason>", repeated on
-// the Release line), when the window elapses or the owner dies -- Poll(). A client's Release,
-// an outranking claim, a save load / new game (claims are never saved; ResetAll) and the
-// actor unloading also end it. Repoint(handle, &param) restarts the window from that moment.
+// the Release line), when the window elapses or the owner dies -- Poll(), or Settle() right
+// after a takeover whose own window is already over. A client's Release, an outranking claim,
+// a save load / new game (claims are never saved; ResetAll) and the actor unloading also end
+// it. Repoint(handle, &param) restarts that claim's window from the moment it was called.
 // Nothing is undone on any end: nothing was written.
+//
+// WHOSE TIME (review F3, the ch.21 F1 "no stale declaration" line). ControlMap tells this file
+// when each kIntent_CombatReentryDeny claim was REQUESTED or last REPOINTED (NoteRequest /
+// NoteRepoint, any thread, keyed by handle). Apply() cannot know the winning handle inside
+// Drain, so it sets a provisional deadline (now + window) and posts Settle(), which runs from the
+// main-thread pump right after Drain publishes: it reads the WINNING handle and sets the
+// deadline to that claim's own time + its window. A claim that took over after its own window
+// ran out is ended there with "window elapsed". The provisional deadline stands for at most
+// that one pump.
 //
 // DENY-COMPLETENESS (principle 2, 2026-09-25 scope: the client owns the consequences). The
 // facet is "this actor ENTERS combat". Competing sources: every engine / script / mod
 // StartCombat on this actor -- DENIED at the one choke point (above); the save-load rebuild --
 // out of scope (no claim crosses a load). NOT denied, by design: other actors fighting THIS
-// actor (their StartCombat has them as `this`; hits, spells and pursuit are their facets); an
-// actor that is already in combat. Harbinger switches no facet on.
+// actor (their StartCombat has them as `this`; hits, spells and pursuit are their facets); a
+// fight the actor is already in (it is not stopped, only kept from growing). Harbinger
+// switches no facet on.
 //
 // THREADING. StartCombat runs on whatever thread asks (the main thread, BSJobs combat /
 // detection jobs, the script VM). The seat reads the ControlMap's published snapshot
 // (lock-free) and this file's map under a shared_lock (written on the game thread under a
-// unique_lock), plus the actor's own controller POINTER. It dereferences no controller and
-// takes no engine lock. The engine's own spinlock is not yet held at the seat.
+// unique_lock). It reads no actor state beyond its FormID, dereferences nothing of the
+// engine's and takes no engine lock. The engine's own spinlock is not yet held at the seat.
+// The request-time map (g_reqs) is written from any client thread and read on the game thread,
+// under its own mutex.
 //
 // VERSION ROBUSTNESS. Two self-checked rows derived from our own executables: the Character
 // vtable (spec.json "Character", slot 0x99 listed) and the StartCombat self-check call site
@@ -149,11 +169,11 @@ namespace {
     // Poll mutates is atomic, so a shared_lock is enough for them.
     struct Deny {
         std::uint64_t deadlineMs = 0;   // monotonic ms; the window ends here
-        float         windowSec  = 0.0f;
+        std::uint64_t windowMs   = 0;   // the winning claim's window length
+        std::uint32_t gen        = 0;   // bumps per Apply; Settle carries it
         // seat
         mutable std::atomic<std::uint32_t> seatHits{ 0 };      // StartCombat self-checks for this actor
         mutable std::atomic<std::uint32_t> denied{ 0 };        // entries refused
-        mutable std::atomic<std::uint32_t> inCombatPass{ 0 };  // passed: already in combat
         mutable std::atomic<std::uint32_t> clientPass{ 0 };    // passed: ch.21's own entry
         mutable std::atomic<std::uint32_t> expiredPass{ 0 };   // passed: window over, Poll not yet run
         mutable std::atomic<bool>          firstDenyLogged{ false };
@@ -172,6 +192,15 @@ namespace {
     // Relaxed pre-gate: with no claim anywhere this one load (after the return-address
     // compare) is the seat's whole cost. Updated under g_mx's unique_lock.
     std::atomic<std::size_t>             g_count{ 0 };
+    std::uint32_t                        g_nextGen = 0;   // game thread
+
+    // Review F3: when each claim was requested / last repointed. Keyed by handle; written by
+    // NoteRequest / NoteRepoint on the client's thread, read by Settle on the game thread.
+    // Dropped per actor when the actor's last claim is released, and at ResetAll.
+    struct Req { RE::FormID actor = 0; std::uint64_t atMs = 0; };
+    std::mutex                                 g_reqMx;
+    std::unordered_map<APMF_API::Handle, Req>  g_reqs;
+    std::atomic<std::size_t>                   g_reqCount{ 0 };   // NoteRepoint's pre-gate
 
     bool HasController(RE::Actor* a) {
         return a->GetActorRuntimeData().combatController != nullptr;   // the POINTER only
@@ -215,15 +244,10 @@ namespace {
             d.expiredPass.fetch_add(1, std::memory_order_relaxed);
             return engineDead;
         }
-        if (HasController(a_this)) {                                       // fighting: not an entry
-            d.inCombatPass.fetch_add(1, std::memory_order_relaxed);
-            return engineDead;
-        }
-
         d.denied.fetch_add(1, std::memory_order_relaxed);   // DENY: StartCombat refuses, nothing done
         if (!d.firstDenyLogged.exchange(true, std::memory_order_relaxed)) {
-            spdlog::info("[ch.22] 0x{} FIRST DENY: the engine asked to put the actor into combat "
-                         "(Actor::StartCombat); refused at its own self-check, before it did anything. "
+            spdlog::info("[ch.22] 0x{} FIRST DENY: the engine called Actor::StartCombat for the actor; refused "
+                         "at its own self-check, before it did anything. "
                          "{:.1f} s of the window left.",
                          Hex(self), static_cast<double>(d.deadlineMs - now) / 1000.0);
         }
@@ -245,25 +269,96 @@ namespace {
         return cur == reinterpret_cast<std::uintptr_t>(&IsDeadHook::thunk);
     }
 
-    // (Re)write this actor's entry: the window restarts now. Inside Drain (game thread).
-    void Apply(RE::FormID id, RE::Actor* actor, const APMF_API::APMF_Param& param, const char* what) {
-        float w       = param.fval;   // ControlMap refused NaN / negative synchronously
-        bool  clamped = false;
+    std::uint64_t WindowMs(const APMF_API::APMF_Param& param, bool* clamped = nullptr) {
+        float w = param.fval;   // ControlMap refused NaN / negative synchronously
         if (!(w > 0.0f)) w = kDefaultWindowSec;
         if (w > kMaxWindowSec) {
-            w       = kMaxWindowSec;
-            clamped = true;
+            w = kMaxWindowSec;
+            if (clamped) *clamped = true;
         }
+        return static_cast<std::uint64_t>(std::llround(static_cast<double>(w) * 1000.0));
+    }
+
+    // End the WINNING claim this entry was written for (deadline `deadline`): record the reason,
+    // EnqueueRelease its handle, log it. MAIN SEAT, OUTSIDE Drain only (Poll / Settle).
+    void EndClaim(RE::FormID id, std::uint64_t deadline, const char* why) {
+        APMF_API::APMF_Param param{};
+        float                basis = 0.0f;
+        APMF_API::Handle     h     = APMF_API::kInvalidHandle;
+        if (!apmf::ControlMap::Get().TryGetOwningClaimBasis(id, APMF_API::kIntent_CombatReentryDeny, param, basis,
+                                                             &h) ||
+            h == APMF_API::kInvalidHandle)
+            return;
+        {
+            std::unique_lock lk(g_mx);
+            const auto it = g_denies.find(id);
+            if (it == g_denies.end() || it->second.deadlineMs != deadline || it->second.ending.load()) return;
+            it->second.ending.store(true);
+            it->second.endedReason.store(why);
+        }
+        apmf::ControlMap::Get().EnqueueRelease(h);
+        spdlog::info("[ch.22] 0x{} deny ended: {} (claim h={}). Harbinger released the claim; engine combat "
+                     "entries pass again. A mod that wants more time sends a new request or Repoints first.",
+                     Hex(id), why, h);
+    }
+
+    // Review F3. Posted by Apply(); runs from mainthread::Pump right after Drain PUBLISHED the
+    // claim, so the winning handle is readable. Moves the provisional deadline to the winning
+    // claim's OWN request / last-Repoint time + its window, and ends a claim whose own window is
+    // already over.
+    void Settle(RE::FormID id, std::uint32_t gen) {
+        APMF_API::APMF_Param param{};
+        float                basis = 0.0f;
+        APMF_API::Handle     h     = APMF_API::kInvalidHandle;
+        if (!apmf::ControlMap::Get().TryGetOwningClaimBasis(id, APMF_API::kIntent_CombatReentryDeny, param, basis,
+                                                             &h) ||
+            h == APMF_API::kInvalidHandle)
+            return;   // released or moved before the pump: nothing to settle
+        std::uint64_t atMs = 0;
+        {
+            std::scoped_lock lk(g_reqMx);
+            if (const auto it = g_reqs.find(h); it != g_reqs.end()) atMs = it->second.atMs;
+        }
+        if (atMs == 0) {
+            spdlog::warn("[ch.22] 0x{} claim h={} has no recorded request time; its window runs from when it was "
+                         "applied.",
+                         Hex(id), h);
+            return;
+        }
+        const auto    now      = apmf::clock::MonotonicMs();
+        std::uint64_t deadline = 0, provisional = 0;
+        {
+            std::unique_lock lk(g_mx);
+            const auto it = g_denies.find(id);
+            if (it == g_denies.end() || it->second.gen != gen || it->second.ending.load()) return;   // moved on
+            provisional             = it->second.deadlineMs;
+            deadline                = atMs + WindowMs(param);
+            it->second.deadlineMs   = deadline;
+            it->second.windowMs     = WindowMs(param);
+        }
+        if (deadline + 50 < provisional) {   // a takeover (or a pump delay): say what is left
+            spdlog::info("[ch.22] 0x{} window runs from claim h={}'s own request: {:.1f} s left.", Hex(id), h,
+                         now >= deadline ? 0.0 : static_cast<double>(deadline - now) / 1000.0);
+        }
+        if (now >= deadline) EndClaim(id, deadline, "window elapsed");
+    }
+
+    // (Re)write this actor's entry with a PROVISIONAL deadline (now + window) and post Settle,
+    // which moves it to the winning claim's own time. Inside Drain (game thread).
+    void Apply(RE::FormID id, RE::Actor* actor, const APMF_API::APMF_Param& param, const char* what) {
+        bool       clamped  = false;
+        const auto windowMs = WindowMs(param, &clamped);
         const auto now      = apmf::clock::MonotonicMs();
-        const auto deadline = now + static_cast<std::uint64_t>(std::llround(static_cast<double>(w) * 1000.0));
         const bool inCombat = actor && HasController(actor);
 
+        std::uint32_t gen = 0;
         {
             std::unique_lock lk(g_mx);
             auto [it, fresh] = g_denies.try_emplace(id);
             Deny& d = it->second;
-            d.deadlineMs = deadline;
-            d.windowSec  = w;
+            d.deadlineMs = now + windowMs;
+            d.windowMs   = windowMs;
+            d.gen = gen  = ++g_nextGen;
             d.ending.store(false, std::memory_order_relaxed);
             d.endedReason.store(nullptr, std::memory_order_relaxed);
             d.hadController.store(inCombat, std::memory_order_relaxed);
@@ -271,24 +366,24 @@ namespace {
             d.seatHitsSeen.store(d.seatHits.load(std::memory_order_relaxed), std::memory_order_relaxed);
             g_count.store(g_denies.size(), std::memory_order_relaxed);
         }
+        apmf::mainthread::Post([id, gen] { Settle(id, gen); });
 
-        spdlog::info("[ch.22] 0x{} combat re-entry deny {} for {:.1f} s{}: the engine's combat ENTRY for this "
-                     "actor is refused at Actor::StartCombat while the window runs and the actor is out of "
-                     "combat. {}",
-                     Hex(id), what, static_cast<double>(w),
+        const bool ours = SlotStillOurs();
+        spdlog::info("[ch.22] 0x{} combat re-entry deny {}, window {:.1f} s{}: every engine Actor::StartCombat for "
+                     "this actor is refused while the window runs (only a ch.21 entry passes). {} Seat slot 0x99: {}.",
+                     Hex(id), what, static_cast<double>(windowMs) / 1000.0,
                      clamped ? fmt::format(" (param.fval {:.1f} clamped to the {:.0f} s maximum)",
                                            static_cast<double>(param.fval), static_cast<double>(kMaxWindowSec))
                              : std::string(),
-                     inCombat ? "The actor IS in combat now: Harbinger stops nothing; entries are refused once "
-                                "the fight ends (call Actor::StopCombat yourself)."
-                              : "The actor is out of combat.");
-        if (!SlotStillOurs()) {
-            static std::atomic<bool> s_warned{ false };
-            if (!s_warned.exchange(true)) {
-                spdlog::warn("[ch.22] Character::IsDead (vtable slot 0x99) no longer points at Harbinger's seat: "
-                             "another DLL wrapped it after Harbinger. The deny works only if that wrapper "
-                             "tail-jumps to the previous entry; watch for 'DENY MISSED'. (Logged once.)");
-            }
+                     inCombat ? "The actor IS in combat now: Harbinger stops nothing (call Actor::StopCombat "
+                                "yourself); its fight gains no new targets through StartCombat."
+                              : "The actor is out of combat.",
+                     ours ? "Harbinger's" : "NOT Harbinger's");
+        if (!ours) {
+            spdlog::warn("[ch.22] 0x{} Character::IsDead (vtable slot 0x99) no longer points at Harbinger's seat: "
+                         "another DLL wrapped it after Harbinger. This claim denies only if that wrapper tail-jumps "
+                         "to the previous entry; watch for 'DENY MISSED'.",
+                         Hex(id));
         }
     }
 
@@ -309,7 +404,7 @@ namespace {
         // Relinquish (INVARIANTS #5a): nothing to restore -- nothing was written. The engine's
         // combat entries pass again from the next call.
         void Release(RE::FormID id, RE::Actor* /*actor*/) override {
-            struct { std::uint32_t hits, denied, inCombat, client, expired, missed; } c{};
+            struct { std::uint32_t hits, denied, client, expired, missed; } c{};
             bool        had = false;
             const char* why = nullptr;
             {
@@ -317,23 +412,28 @@ namespace {
                 if (const auto it = g_denies.find(id); it != g_denies.end()) {
                     had = true;
                     const Deny& d = it->second;
-                    c = { d.seatHits.load(), d.denied.load(), d.inCombatPass.load(), d.clientPass.load(),
-                          d.expiredPass.load(), d.missed.load() };
+                    c = { d.seatHits.load(), d.denied.load(), d.clientPass.load(), d.expiredPass.load(),
+                          d.missed.load() };
                     why = d.endedReason.load();
                     g_denies.erase(it);
                 }
                 g_count.store(g_denies.size(), std::memory_order_relaxed);
+            }
+            {   // the actor's last claim is gone: drop every request time recorded for it
+                std::scoped_lock lk(g_reqMx);
+                std::erase_if(g_reqs, [id](const auto& kv) { return kv.second.actor == id; });
+                g_reqCount.store(g_reqs.size(), std::memory_order_relaxed);
             }
             if (!had) {
                 spdlog::info("[ch.22] 0x{} combat re-entry deny released (no entry state).", Hex(id));
                 return;
             }
             spdlog::info("[ch.22] 0x{} combat re-entry deny released ({}): StartCombat self-checks seen {} -- "
-                         "entries refused {}, passed because already in combat {}, passed as a ch.21 entry {}, "
-                         "passed after the window {}; DENY MISSED {}. Engine combat entries pass again.",
+                         "refused {}, passed as a ch.21 entry {}, passed after the window {}; DENY MISSED {}. "
+                         "Engine combat entries pass again.",
                          Hex(id), why ? fmt::format("ENDED BY HARBINGER: {}", why)
                                       : std::string("by the client, an unload or a load"),
-                         c.hits, c.denied, c.inCombat, c.client, c.expired, c.missed);
+                         c.hits, c.denied, c.client, c.expired, c.missed);
         }
     };
 
@@ -343,6 +443,18 @@ namespace apmf::reentrydeny {
 
     ClientEntryScope::ClientEntryScope(RE::FormID actor) : prev_(t_passActor) { t_passActor = actor; }
     ClientEntryScope::~ClientEntryScope() { t_passActor = prev_; }
+
+    void NoteRequest(APMF_API::Handle handle, RE::FormID actor) {
+        std::scoped_lock lk(g_reqMx);
+        g_reqs.insert_or_assign(handle, Req{ actor, apmf::clock::MonotonicMs() });
+        g_reqCount.store(g_reqs.size(), std::memory_order_relaxed);
+    }
+
+    void NoteRepoint(APMF_API::Handle handle) {
+        if (g_reqCount.load(std::memory_order_relaxed) == 0) return;   // no ch.22 claim anywhere
+        std::scoped_lock lk(g_reqMx);
+        if (const auto it = g_reqs.find(handle); it != g_reqs.end()) it->second.atMs = apmf::clock::MonotonicMs();
+    }
 
     void Install() {
         if (g_installTried.exchange(true)) return;
@@ -449,25 +561,7 @@ namespace apmf::reentrydeny {
             }
             if (!why) continue;
 
-            // End the WINNING claim -- the one this entry was written for.
-            APMF_API::APMF_Param param{};
-            float                basis = 0.0f;
-            APMF_API::Handle     h     = APMF_API::kInvalidHandle;
-            if (!apmf::ControlMap::Get().TryGetOwningClaimBasis(sn.id, APMF_API::kIntent_CombatReentryDeny, param,
-                                                                 basis, &h) ||
-                h == APMF_API::kInvalidHandle)
-                continue;
-            {
-                std::unique_lock lk(g_mx);
-                const auto it = g_denies.find(sn.id);
-                if (it == g_denies.end() || it->second.deadlineMs != sn.deadline || it->second.ending.load()) continue;
-                it->second.ending.store(true);
-                it->second.endedReason.store(why);
-            }
-            apmf::ControlMap::Get().EnqueueRelease(h);
-            spdlog::info("[ch.22] 0x{} deny ended: {} (claim h={}). Harbinger released the claim; engine combat "
-                         "entries pass again. A mod that wants more time sends a new request or Repoints first.",
-                         Hex(sn.id), why, h);
+            EndClaim(sn.id, sn.deadline, why);
         }
     }
 
@@ -478,6 +572,11 @@ namespace apmf::reentrydeny {
             n = g_denies.size();
             g_denies.clear();
             g_count.store(0, std::memory_order_relaxed);
+        }
+        {
+            std::scoped_lock lk(g_reqMx);
+            g_reqs.clear();
+            g_reqCount.store(0, std::memory_order_relaxed);
         }
         if (n != 0) spdlog::info("[ch.22] {} -- dropped {} re-entry deny entr{}.", why, n, n == 1 ? "y" : "ies");
     }
