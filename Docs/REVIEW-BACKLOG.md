@@ -167,6 +167,9 @@ This file tracks REVIEW findings only.
 
 ---
 
+### APMF-B32 (SEV-5) -- ch.23 leash over-denies back-off moves toward the anchor
+Raised against `85ed6af` (`feat/apmf-pursuit-deny`), tier-A Opus 5.5 review 2026-09-25 (reviewer log `scratchpad/agentlogs/review-apmf-pursuit.md`), SEV-5 "over-deny retreat moves"; carried as closing-round F5. The leash rule compares the GOAL (the combat target) against the anchor, not the direction of the move. MaintainOptimalRange's back-off and Surround's Retreat path can move the actor away from its target and TOWARD the anchor; past the radius, with the target farther out still, they are denied too and the actor stands where it is. Reasoning: an over-deny, never a leak; the actor keeps attacking what it can reach. Documented in DENY-COMPLETENESS-AUDIT gap 14 (e) and INTEGRATION's leash limits. **Closure:** a direction-aware rule for these two leaves (read the move's destination, not the target), or measured field evidence that it does not matter.
+
 ## DRAINED
 
 _(none yet)_
@@ -212,3 +215,4 @@ Raised against `ac895c3` (`feat/apmf-combat-entry`), tier-A Opus 5.5 review 2026
 
 ### APMF-B31 (SEV-5) -- ch.21 a brief 3D loss of the target ends the claim
 Raised against `ac895c3`, same review, finding F7. Verbatim as relayed by the coordinator: "a brief 3D loss ends the claim; the same residual as ch.20". Reasoning: `combatentry::Poll` ends the claim on `!target->Is3DLoaded()` checked live on the game thread; a transient 3D rebuild (a transform, a skeleton swap, Reset3D, a script Disable+Enable) seen by one poll ends it. ch.20 has the same residual (its Poll re-checks live, which narrows but does not remove it). The client re-requests.
+

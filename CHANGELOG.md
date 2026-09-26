@@ -1,14 +1,15 @@
 ## Unreleased
 
-- **A mod can now leash an NPC in combat.** Claim `kIntent_CombatAction` with `kCombatActionCat_Pursuit` in `APMF_Param.ival`, an anchor actor in `APMF_Param.target` (usually the player) and a radius in `APMF_Param.fval`. While the NPC is farther than the radius from the anchor, the game's own moves toward its target (closing in, chasing, flanking, repositioning, a ranged NPC closing to range) are refused when that target is farther from the anchor still.
+- **A mod can now leash an NPC in combat.** Claim `kIntent_PursuitLeash` with an anchor actor in `APMF_Param.target` (usually the player) and a radius in `APMF_Param.fval`. While the NPC is farther than the radius from the anchor, the game's own moves toward its target (closing in, chasing, flanking, repositioning, a ranged NPC closing to range) and around its search area when the target is lost are refused when that goal is farther from the anchor still.
 - **A chase that already started is stopped too.** The game runs a whole chase inside one move, so Harbinger also ends a running move once the NPC crosses the radius, the same way the game ends one whose path failed.
-- **The NPC keeps fighting.** Attacks, spells, blocks, dodges and every other move run as the game decides. A target nearer the anchor is always chased. Harbinger does not walk the NPC back.
+- **The NPC keeps fighting.** Attacks, spells, blocks, dodges and every other move run as the game decides. A goal nearer the anchor is always allowed. Harbinger does not walk the NPC back. Past the radius a step back toward the anchor can be refused too, so the NPC may stand where it is.
+- **Its own claim.** The leash does not share a claim with the combat-action deny, so another mod's attack or cast deny on the same NPC does not replace it.
+- Two moves are not leashed: the game pulling the NPC back into the fight's area, and a search walking to a door. The log and the docs say why.
 - It ends with the claim: release, a save load, a new game, or the NPC unloading. An anchor that is dead, unloaded or in another cell holds nothing back.
-- `[CombatAction] bPursuitDeny` is new in `APMF.ini`, default 1. Set it to 0 and every leash request is refused.
-- New API revision (v16). It adds the bit and nothing else, and reads two fields ch.7 did not read before. Check `abiVersion >= 16` before setting it: an older Harbinger accepts the claim and ignores the bit. A mod built against an older revision is unaffected.
-- Both runtimes. The ten moves and the game's own way of ending one were read on the 1.6.1170 and 1.5.97 binaries and are checked at startup. The startup check now covers 181 addresses.
+- `[PursuitLeash] bPursuitLeash` is new in `APMF.ini`, default 1. Set it to 0 and every leash request is refused.
+- New API revision (v16). It adds the intent and nothing else. Check `abiVersion >= 16` before asking for it. An older Harbinger refuses the request. A mod built against an older revision is unaffected. An earlier draft of v16 carried the leash as a combat-action bit, `kCombatActionCat_Pursuit`. It was never released and is gone from the header.
+- Both runtimes. The fourteen moves and the game's own way of ending one were read on the 1.6.1170 and 1.5.97 binaries and are checked at startup. The startup check now covers 185 addresses.
 - Not field-run yet. CI verified only.
-
 - **A mod can now keep an NPC out of combat for a while.** Claim `kIntent_CombatReentryDeny` with a number of seconds in `APMF_Param.fval` (0 means 10, at most 120). While that time runs, the game cannot start a fight for it: when it tries (the NPC sees an enemy, gets hit, an ally is fighting, a script asks), the game's own combat start says no, before it draws a weapon or does anything else.
 - **It is the other half of a retreat.** The mod stops the fight once with the game's own `StopCombat`, and the game can no longer pull the NPC straight back in. Harbinger never stops a fight itself. An NPC that is already fighting keeps fighting, but the game cannot add new foes to its fight while the time runs.
 - **A mod's own combat entry still works.** A `kIntent_CombatEntry` request for the NPC goes through. When that fight ends, the rest of the window keeps the NPC out again.

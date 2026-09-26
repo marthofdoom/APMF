@@ -730,21 +730,24 @@ it records `{node, control}` in a `thread_local` pending-pop and invokes ForceFa
 original `act()`; `PopThunk` then routes that node's very next `pop()` (same thread,
 same step — the runner's protocol, `core/CombatBehaviorRE.h` "The node protocol") to
 ForceFail's original `pop()`. Categories: offense leaves (12 names) and the four cast
-leaves (Cast|Offense), and (ABI v16) the **PURSUIT** leash on the ten target-closing
-leaves (`kPursuitLeafNames`: Advance, Chase, FindAttackLocation, Flank, FlankDistant,
-MaintainOptimalRange, PursueTarget, Reposition, Stalk, Surround). Pursuit is
-CONDITIONAL: `PursuitDenies()` reads the per-actor leash (`g_leash`, anchor HANDLE +
-radius, written on the game thread by `SetLeash`/`ClearLeash` from `channels/CombatAction.cpp`,
-dropped by `ResetLeash` at load/revert in `plugin.cpp`) and denies only while
-actor→anchor > radius and target→anchor > actor→anchor (same cell/worldspace, live
-anchor). Two seats: the act() ForceFail pair above, and a slot **0x04 (update)**
-`UpdateThunk` on the ten leaves only that ends an already-running leaf with the
-engine's own `SetFailed(thread,1)` + `Ascend(thread)` (verified rows
-`ActionGate.Pursuit.SetFailed/Ascend`) after checking `cur_node == this && phase == 1`.
-Arms only when INI `[CombatAction] bPursuitDeny`, the ForceFail pair, both rows and
-act+pop+update on all ten leaves are present (`PursuitArmed()`; ControlMap refuses a
-Pursuit request otherwise). `PursuitHeartbeat()` (Arbiter, ~30 s, zeros included)
-prints per-leaf seen / denied-at-act / ended-at-update and the pass reasons.
+leaves (Cast|Offense).
+**ch.23 PURSUIT LEASH (ABI v16, `kIntent_PursuitLeash`) lives here too, on its own intent.**
+14 leash leaves (`g_leashLeaves`): the ten pursuit leaves (`kPursuitLeafNames`, goal = the
+combat target via the resolving controller's `targetHandle`) and the four search leaves
+(`apmf::cbt::kSearchLeaves`, goal = the combat group's search centre, `CombatGroup+0x100`,
+valid when `+0x110` is non-null -- the engine's own unlocked read). They carry NO ch.7
+category; `ActThunk` routes them (`g_pursuitIdx`) to `LeashAct` BEFORE any ch.7 logic, which
+reads the ch.23 winner only. `PursuitDenies()` = the per-actor leash (`g_leash`, anchor
+HANDLE + radius, written on the game thread by `SetLeash`/`ClearLeash` from
+`channels/PursuitLeash.cpp`, dropped by `ResetLeash` at load/revert) and denies only while
+actor->anchor > radius and goal->anchor > actor->anchor (same cell/worldspace, live anchor).
+Two seats: act() = the ForceFail pair (act/pop installed on the four search vtables by
+Install, same thunks, same maps); slot **0x04** `UpdateThunk` on the 14 leaves ends an
+already-running leaf with the engine's `SetFailed(thread,1)` + `Ascend(thread)` (verified rows
+`ActionGate.Pursuit.SetFailed/Ascend`) after checking `cur_node == this && phase == 1`. Arms only
+with INI `[PursuitLeash] bPursuitLeash`, the ForceFail pair, both rows and act+pop+update on all
+14 (`PursuitArmed()`; ControlMap refuses ch.23 otherwise). `PursuitHeartbeat()` (Arbiter, ~30 s,
+zeros included) prints per-leaf seen / denied-at-act / ended-at-update and the pass reasons.
 **RETIRED 2026-09-05 (feat/ai-cast-seats-impl), do not re-add without re-reading why:**
 the `CombatBehaviorContextMagic` CreateContextNode deny (`kCastContextNodes`) is GONE —
 hooks and classification both — and so are the two IMPLICIT deny sources
@@ -770,23 +773,22 @@ to this gate today; only an explicit `kIntent_CombatAction` claim arms anything.
   `kIntent_CombatAction(Cast|Offense)` claim now suppresses only the four FIRING leaves,
   not the CONTEXT-BUILD path, so the AI may build a magic context and equip a spell it
   then cannot fire (Docs/DENY-COMPLETENESS-AUDIT.md, open gap).
-  **Pursuit (ABI v16) — what breaks:** the update() half must END a running leaf only
-  through the engine's `SetFailed` + `Ascend` pair, never a raw field write, never
-  SetFailed alone, never a push/pop of its own (the node's OWN pop() must run after it —
-  INVARIANTS #18 "the update() half"); keep the `cur_node`/`phase` check in front of it.
-  Never arm the category with only the act() half (a chase begun inside the radius would
-  run to the target). The seats never look up a form: the anchor is a handle resolved on
-  the game thread; keep it that way. The rule's target distance comes from the SAME
-  controller that resolved the actor (`ResolveController`). Open items: DENY-COMPLETENESS-AUDIT
-  gap 14 (not field-observed; over-deny of MaintainOptimalRange/Surround back-offs).
+  **ch.23 leash -- what breaks:** the update() half must END a running leaf only through the
+  engine's `SetFailed` + `Ascend` pair, never a raw field write, never SetFailed alone, never a
+  push/pop of its own (the node's OWN pop() must run after it -- INVARIANTS #18 "the update()
+  half"); keep the `cur_node`/`phase` check in front of it. Never arm with only the act() half.
+  Never give a leash leaf a ch.7 category, and never let ch.7's mask decide a leash leaf (ch.23
+  is its own facet). The seats never look up a form: the anchor is a handle resolved on the
+  game thread. The target distance comes from the SAME controller that resolved the actor
+  (`ResolveController`). Open items: DENY-COMPLETENESS-AUDIT gap 14; REVIEW-BACKLOG APMF-B32.
 
 ### `native/core/CombatBehaviorRE.h` — the local RE:: extension for the combat tree (measured)
 The `CombatBehaviorTreeNode` layout (10 vfuncs: act 0x02 / pop 0x03 / update 0x04 /
 on_interrupted 0x05), `TreeControl` (+0x158 master), `ControllerMini` (attackerHandle
-0x28, targetHandle 0x2C (ABI v16), `static_assert` < 0x68), the 70 leaf VariantID triples,
-`kCastContextNodes`, the update-seat block (runner step, SetFailed/Ascend bodies both
-runtimes, `kThreadCurNode`/`kThreadPhase`, the corrected 2026-09-03 crash history), and
-"The node protocol" — the disassembly-measured CombatBehaviorThread layout + the
+0x28, targetHandle 0x2C, `static_assert` < 0x68), the 70 leaf VariantID triples, the four
+ch.23 search leaves (`kSearchLeaves`) and the group search-centre offsets, `kCastContextNodes`,
+the update-seat block (runner step, SetFailed/Ascend both runtimes, the TLS/control identity
+proof, the corrected 2026-09-03 crash history), and "The node protocol" — the disassembly-measured CombatBehaviorThread layout + the
 push/pop sizes per node kind (AE IDs cited as evidence only; no hook targets an ID —
 every hook here is a vtable slot).
 - **What breaks:** the VariantID triples are copied verbatim from CPR's pinned
@@ -1017,7 +1019,7 @@ tool) still exist but are **unreachable unless the keyboard test surface is arme
 ### `native/channels/*.cpp` — one module per facet (FULL documented catalog)
 Each: a `Channel` subclass + `APMF_REGISTER_CHANNEL`, per-NPC `Engage`/`Release`.
 The first release shipped the documented catalog of 13 channels as a baseline
-benchmark; the table below is the CURRENT set — 21 files, 21 rows (ch.22 `CombatReentryDeny`, ch.21 `CombatEntry` and ch.20 `TargetPin` added 2026-09-25; ch.7
+benchmark; the table below is the CURRENT set — 22 files, 22 rows (ch.23 `PursuitLeash` added 2026-09-25 (ABI v16); ch.22 `CombatReentryDeny`, ch.21 `CombatEntry` and ch.20 `TargetPin` added 2026-09-25; ch.7
 `CombatAction` and ch.9 `OfferPackage` were missing from it until 2026-09-07; ch.17
 `EquipAuthority` added 2026-09-15; ch.19 `Travel` added 2026-09-22 — ch.18 is RESERVED
 for an attack-selection design that is NOT YET ON MAIN, so the intent numbers skip it). Each `ServesIntent()` maps to an `APMF_API::Intent`. Test keys in
@@ -1037,7 +1039,7 @@ parentheses.
 | `Attribute.cpp` | 11 | disposition (Num2) | 4 AVs: aggression/confidence/assistance/morality | source-block |
 | `Idle.cpp` | 12 | idle/anim (Num+) | `NotifyAnimationGraph("IdleForceDefaultState")` | one-shot |
 | `ShoutPower.cpp` | 14 | shout/power select (Num*) | **ARBITRATION-ONLY** — records the voice-slot owner and the chosen shout in `param.form`; makes NO engine write. It previously called `ActorEquipManager::EquipShout` directly (the #0 anti-pattern ch.6/ch.8 were fixed for); the CLIENT issues its own `EquipShout`. `Release` has nothing to undo (corrected 2026-09-07) | arbitration-only (#0); client executes |
-| `CombatAction.cpp` | 7 | combat-action category deny (NumpadEnter) | Arbitration + claim lifecycle only; the deny is `core/ActionGate.cpp`'s T1 paired act()/pop() on the 70 combat behavior-tree leaves, for the categories named in `param.ival` (Offense, Cast; ABI v16 Pursuit, whose anchor `param.target` + radius `param.fval` it hands to `actiongate::SetLeash` at Engage/OnOwnerChanged and clears at Release). The test key carries no category, so a test claim denies nothing | claim + T1 enforcement |
+| `CombatAction.cpp` | 7 | combat-action category deny (NumpadEnter) | Arbitration + claim lifecycle only; the deny is `core/ActionGate.cpp`'s T1 paired act()/pop() on the 70 combat behavior-tree leaves, for the categories named in `param.ival` (`kCombatActionCat_Offense` today). The test key carries no category, so a test claim denies nothing | claim + T1 enforcement |
 | `OfferPackage.cpp` | 9 | package-procedure activity (NumpadSlash) | Arbitration + claim lifecycle + the `EvaluatePackage(true,false)` nudge, `mainthread::Post`ed so it lands PAST the claim's publish; the redirect itself is `core/PackageGate.cpp`'s T3 0x49 hook returning the claim's `param.form`. The test key carries no package, so a test claim offers nothing | claim + T3 enforcement; the ENGINE runs the package natively |
 | `Equipment.cpp` | 15 | equip/unequip (Num.) | `GetEquippedObject` + `UnequipObject`/`EquipObject` (melee-vs-ranged lever) | source-block |
 | `Detection.cpp` | 16 | stealth (Num8) | `kMovementNoiseMult` + `kDetectLifeRange` AVs | source-block |
@@ -1046,6 +1048,7 @@ parentheses.
 | `TargetPin.cpp` (+ `TargetPin.h`) | 20 | PIN this actor's combat target (`kIntent_TargetPin`, ABI v13; no test key -- the crosshair surface names one ref and a pin needs an actor AND a target) | **SOURCE DENY:** write_vfunc slot 6 (`SelectTarget`) on `VTABLE_CombatTargetSelectorStandard` and `...Fixed`, chaining; the answer is replaced with the winning claim's target only when the engine answered non-zero and the target is in `combatGroup->targets` (group read lock) and not `kTargetLost`. `targetpin::Poll()` on `Arbiter::OncePerFrame` ENDS the claim (EnqueueRelease, reason logged) when the target is lost / dead / disabled / unloaded / unresolvable or the owner dies -- the only place APMF releases a client's pin claim. Character slot 0xE4 hooked OBSERVE-ONLY (`SOURCE SEAT MISSED` / `OVERWRITTEN`). Per-actor handle map (`shared_mutex`) filled on the game thread; `ResetAll` at revert + kPreLoadGame. All three seats verified before any is written. **What breaks:** the raw selector offset +0x10 is guarded only by the per-call vtable-identity test -- never read it without that test; never re-add an after-the-update rewrite (it would mask a source miss, principle 7); open review items `Docs/REVIEW-BACKLOG.md` APMF-B26 (cross-thread StopCombat), APMF-B27 (MFO hook order), APMF-B28, APMF-B29. `INVARIANTS #0 (f)` | source-block (DENY) |
 | `CombatEntry.cpp` (+ `CombatEntry.h`) | 21 | ENTER COMBAT against a named target (`kIntent_CombatEntry`, ABI v14; no test key -- it needs an actor AND a target) | **ONE ENGINE CALL, NO SEAT:** `Engage` / `OnOwnerChanged` resolve the target on the game thread and `mainthread::Post` ONE task that re-validates the published claim and calls `actor->StartCombat(target, nullptr)` (fork binding, `RELOCATION_ID(37608, 38561)`, 3-arg form verified on both images). Gates in the task: actor loaded, alive, `currentProcess != null` (StartCombat dereferences it unchecked), target loaded / enabled / alive. Release calls NO StopCombat. NEVER live and inert: `EndClaim` (from Pump / Poll, never inside Drain) releases the claim on an engine refusal, an entry that cannot be attempted, "combat ended" (controller POINTER null after a successful entry), owner dead, target dead / disabled / unloaded / unresolvable. Per-actor map touched on the main seat only (no lock); `ResetAll` at revert + kPreLoadGame. Passive rate-limited entry log (entered / group member on a new fight / whether a ch.20 claim names the target). **What breaks:** never call StartCombat with two arguments (garbage R8 = the ch.6 CTD) or for an actor with no process; never re-enter on a timer or when the engine ends combat (that is SUSTAINING a decision, #0); never add a StopCombat on release (an undo, #0 (g) condition 4); never dereference the controller or group here (use the pointer; `IsInCombat` reads [cc+0x43]) -- APMF-B26 (`Docs/REVIEW-BACKLOG.md`); never EnqueueRelease from inside Drain; keep `engineGaveUp` across Apply (a rival claim naming the same target must not re-enter after "combat ended" / "engine refused", #0 (g) condition 3). Open review items: APMF-B26, APMF-B30 (StopCombat+StartCombat inside one Poll window), APMF-B31 (brief 3D loss ends the claim). `INVARIANTS #0 (g)` | one-shot engine call (#0 (g)) |
 | `CombatReentryDeny.cpp` (+ `CombatReentryDeny.h`) | 22 | DENY every engine `StartCombat` for an actor during a bounded window (`kIntent_CombatReentryDeny`, ABI v15; no test key) | **SOURCE DENY at `Actor::StartCombat`'s own self-check:** `IsDeadHook` = write_vfunc on Character slot 0x99 (`IsDead`), chaining; `AnswerSelfCheck` runs only when `_ReturnAddress()` == `g_siteRet` (the verified call-site row `ReentryDeny.StartCombat.SelfIsDeadCall` + 11: AE `0x6B69CA` / SE `0x625248`) and answers "dead" (StartCombat refuses before its spinlock / equip / anything) for the WINNING claim inside its window, EVERY call (new entry and in-combat target-add, closing-round option (a)) except ch.21's own entry (`ClientEntryScope`, thread-local, held by `CombatEntry.cpp::Enter` around its StartCombat). The seat reads no actor state. WINDOW: `param.fval` s (0 = 10, clamped 120) from the claim's OWN request / last Repoint -- `NoteRequest` / `NoteRepoint` (called from `ControlMap::EnqueueRequest` / `EnqueueRepoint`, any thread, `g_reqs` under its own mutex); `Apply` (inside Drain) sets a provisional deadline and posts `Settle`, which after Publish reads the winning handle and sets the real deadline (ending a takeover with no time left). Map under `shared_mutex` (unique on the game thread, shared in the seat, which may run on ANY thread). `Poll` (Arbiter seat, 250 ms) ends the claim on "window elapsed" / "owner dead" via `EndClaim` (EnqueueRelease, never inside Drain) and runs the DENY-MISS detector (controller appeared under a live window with no ch.21 pass). `g_siteSeen` + the one-time `seat OBSERVED` log (principle 5); every Engage / Repoint line names the slot-0x99 owner. `ResetAll` at revert + kPreLoadGame (also clears `g_reqs`). **What breaks:** never answer at any return address but StartCombat's SELF check (the target's `IsDead(false)` at AE `0x6B6A0A` is another actor's facet; any other site would lie to the whole engine); never read the controller in the seat (the cross-thread StopCombat race the closing round removed); never let the seat call an engine function or take an engine lock (it can run inside a BSJobs detection job); never drop the `ClientEntryScope` in ch.21 (a client's declared entry would be refused by its own deny); never drop `NoteRequest` / `NoteRepoint` from ControlMap (every window would run from apply time again, F3); never add a StopCombat here (the client's call, #0 (h) condition 1); never EnqueueRelease from inside Drain; keep the call-site row's 11-byte check (it is what pins the exact instruction). `INVARIANTS #0 (h)` | source deny (#0 (h)) |
+| `PursuitLeash.cpp` | 23 | LEASH an actor's in-combat pursuit + search to an anchor actor (`kIntent_PursuitLeash`, ABI v16; no test key) | Arbitration + claim lifecycle only: `Engage` / `OnOwnerChanged` hand `param.target` (anchor) + `param.fval` (radius) to `actiongate::SetLeash`; `Release` calls `ClearLeash`. The enforcement is `core/ActionGate.cpp` (the ch.23 block: act/pop ForceFail pair + the slot-0x04 update seat on 14 leaves). Synchronous refusals in `ControlMap::EnqueueRequest`. **What breaks:** see ActionGate's ch.23 note | claim + T1 enforcement |
 
 - **What breaks (all channels):** each must (1) keep the package coherent — none
   substitutes the package (§5); (2) capture-and-restore engine state in `Release`,

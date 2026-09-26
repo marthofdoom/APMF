@@ -4,41 +4,40 @@ Updated 2026-09-25. Current version **v0.9.8**. The current state of the build: 
 shipped, what's probe-gated, what's next. Keep this current in the SAME change as any
 build/finding/workflow change.
 
-## HEAD OF WORK 2026-09-25 -- ch.7 PURSUIT LEASH (`kCombatActionCat_Pursuit`, ABI v16), branch `feat/apmf-pursuit-deny`, NOT merged
+## HEAD OF WORK 2026-09-25 -- ch.23 PURSUIT LEASH (`kIntent_PursuitLeash`, ABI v16), branch `feat/apmf-pursuit-deny`, NOT merged
 
 ClickUp 86e3ex5ve, batch L, tier A (new engine seat + ABI). From MFO's confidence / leash assessment: MFO has
-no in-combat leash; the engine chases a foe at any distance from the player. This is the client need ch.7's
-"movement deliberately not assigned a bit" comment waited for.
-- **What:** a new ch.7 category bit, `kCombatActionCat_Pursuit = 1u << 2`. The anchor rides the EXISTING
-  `param.target`, the radius the EXISTING `param.fval` (ch.7 read neither before), so no struct change and no
-  new intent. ABI v16 = the bit only (the v11 `kCastFlag_AtPosition` shape): an older APMF accepts the claim
-  and ignores the bit, so a client checks `abiVersion >= 16`. Chosen over a new intent because the deny IS a
-  ch.7 leaf-category deny on ch.7's own seats; a second intent on the same leaves would need its own
-  arbitration against ch.7. Cost, stated: one winning ch.7 claim per actor carries offense, cast and the leash
-  together (INTEGRATION.md "It shares ch.7").
-- **Leaves (both unpacked images, by the CombatPath type each builds):** Advance, Reposition, Chase
-  (Generic<FindTargetLocation> -> Ref); PursueTarget, Stalk (Standard|Flight -> Ref); Flank (Generic<Flank> ->
-  Ref); FlankDistant (Generic<FlankDistant> -> Location); Surround (Standard|Flight -> Ref + Retreat);
-  MaintainOptimalRange (StraightPath, the ranged Out-of-Range move); FindAttackLocation (the ranged
-  reposition). Tree contexts: Close Movement (Out of Range: Advance), Flanking Movement, Low Combat (Pursue),
-  Ranged Movement.
-- **Rule:** deny while actor->anchor > radius AND target->anchor > actor->anchor (same cell/worldspace, live
-  anchor); a target nearer the anchor is always allowed.
-- **Two seats:** act() = the existing ForceFail pair; NEW update() = vtable slot 0x04 on the ten leaves,
-  ending a running leaf through the engine's own `SetFailed(thread,1)` + `Ascend(thread)` (AE 47496/47484,
-  SE 46240/46229 -- the same two calls `ForceFail::act()` makes). Needed because an Advance runs its whole
-  path in ONE leaf (its update ends only when the path completes or fails). INVARIANTS #18 "the update() half".
-  The category arms only with both halves on all ten leaves.
-- **Verified rows:** the ten leaf rows list slot 0x04; new function rows `ActionGate.Pursuit.SetFailed` /
-  `.Ascend`. 181/181 both runtimes.
-- **Found on the way:** the 2026-09-03 T1 probe "SetFailed" crash called 0x5572A0 = id 33171, the data-stack
-  PUSH (ForceFail::act's first call), not SetFailed (its second). Recorded in `core/CombatBehaviorRE.h`.
-- **Principle 5, NOT YET OBSERVED:** the `[ch.7] pursuit H` heartbeat counts every pursuit leaf's act() for any
-  actor. The first field log must show non-zero `seen` for the leaves a leashed follower uses, then `DENIED at
-  act()` / `ENDED at update()` with `update-anomaly=0`, and the follower stopping at the radius without freezing,
-  before MFO relies on it. MFO adoption is a separate brief.
-- **Ends:** Release, outranked, load / revert (`ResetLeash`), unload. A dead owner runs no tree. Nothing written
-  outside the behaviour thread's own state, through the engine's own functions.
+no in-combat leash; the engine chases a foe at any distance from the player.
+- **What:** intent 23, channel `channels/PursuitLeash.cpp` (arbitration), enforcement in `core/ActionGate.cpp`
+  on ch.7's leaf seats. The client names {actor, anchor = `param.target`, radius = `param.fval`}. ABI v16 = the
+  intent only (no struct, slot or field). **Closing round F2 (coordinator's decision):** the first draft was a
+  ch.7 category bit (`kCombatActionCat_Pursuit`); it is withdrawn (v16 never released) so the leash has its
+  OWN arbitration, independent of ch.7's offense/cast winner, and an older APMF refuses it by name.
+- **Leaves (both unpacked images, by the CombatPath type each builds):** goal = the combat TARGET: Advance,
+  Reposition, Chase (Generic<FindTargetLocation> -> Ref); PursueTarget, Stalk (Standard|Flight -> Ref); Flank;
+  FlankDistant; Surround; MaintainOptimalRange; FindAttackLocation. Goal = the group's SEARCH CENTRE
+  (closing-round F1): Search, SearchCenter, SearchLocation, SearchWander (`NodeObject1<T,
+  COMBAT_SEARCH_PRIORITY>`, the 'Search' tree Low Combat's Search branch uses; AE vtables 214189 `0x18E7718` /
+  214215 `0x18E7878` / 214176 `0x18E7668` / 214202 `0x18E77C8`, SE 267082 `0x16A2090` / 267084 `0x16A21F0` /
+  267081 `0x16A1FE0` / 267083 `0x16A2140`); the centre is `CombatGroup+0x100` (valid when `+0x110` != 0), read
+  exactly as SearchCenter::Enter reads it (AE 49520 / SE 48536). ReturnToCombatArea and SearchInvestigateDoor
+  are documented gaps (audit gap 14).
+- **Rule:** deny while actor->anchor > radius AND goal->anchor > actor->anchor (same cell/worldspace, live anchor).
+- **Two seats:** act() = the ForceFail pair; update() = vtable slot 0x04 on the 14 leaves, ending a running leaf
+  through the engine's own `SetFailed(thread,1)` + `Ascend(thread)` (AE 47496/47484, SE 46240/46229). INVARIANTS
+  #18 "the update() half". Arms only with both halves on all 14. Tier-A review PROVED the update seat and the
+  TLS/control identity (cited in `core/CombatBehaviorRE.h`) and found the re-selection spin bounded (every
+  Repeat has a delay > 0).
+- **Verified rows:** ten leaf rows list slot 0x04; four new search vtable rows; function rows
+  `ActionGate.Pursuit.SetFailed` / `.Ascend`. 185/185 both runtimes.
+- **Found on the way:** the 2026-09-03 T1 probe "SetFailed" crash called 0x5572A0 = id 33171, the data-stack PUSH.
+- **Accepted over-deny (F4, backlog APMF-B32):** back-off moves toward the anchor (MaintainOptimalRange,
+  Surround's Retreat) are denied too past the radius; the actor stands still.
+- **Principle 5, NOT YET OBSERVED:** the `[ch.23] pursuit H` heartbeat counts every leash leaf's act() for any
+  actor. The first field log must show non-zero `seen`, then `DENIED at act()` / `ENDED at update()` with
+  `update-anomaly=0`, and the follower stopping at the radius without freezing, before MFO relies on it. MFO
+  adoption is a separate brief (its `APMF_API.h` must be mirrored to v16).
+- **Ends:** Release, outranked, load / revert (`ResetLeash`), unload. A dead owner runs no tree.
 
 ## HEAD OF WORK 2026-09-25 -- ch.22 COMBAT RE-ENTRY DENY (`kIntent_CombatReentryDeny`, ABI v15), branch `feat/apmf-reentry-deny`, NOT merged
 

@@ -1519,61 +1519,58 @@ another DLL wrapped the same engine function after Harbinger.
   field log must show `seat OBSERVED`, then `FIRST DENY` for a claimed retreat and no `DENY MISSED`,
   before a client relies on it (CLAUDE.md principle 5).
 
-## Leashing an NPC in combat (ABI v16, `kCombatActionCat_Pursuit`)
+## Leashing an NPC in combat (ABI v16, `kIntent_PursuitLeash`)
 
 Without a leash the engine chases a foe at any distance: a follower that locks onto a fleeing
-bandit runs after it across the map while you fight something else. The pursuit bit of
-`kIntent_CombatAction` (ch.7) ties the NPC's combat moves to an ANCHOR actor you name (usually
-the player) and a radius you choose.
+bandit runs after it across the map while you fight something else. `kIntent_PursuitLeash`
+(ch.23) ties the NPC's combat moves to an ANCHOR actor you name (usually the player) and a
+radius you choose.
 
 ### The contract
 
-* **It denies the engine's moves toward the target, and only when they would take the NPC
-  farther away.** Ten combat behaviour-tree leaves move an NPC toward its combat target: Advance
+* **It denies the engine's moves toward the NPC's goal, and only when they would take the NPC
+  farther away.** Ten combat behaviour-tree leaves move an NPC toward its combat TARGET: Advance
   (the melee close-in), Reposition, Chase, Stalk, Flank, FlankDistant, Surround, PursueTarget,
   MaintainOptimalRange (a ranged NPC closing to its range) and FindAttackLocation (a ranged NPC
-  moving for a shot). While the NPC is farther than the radius from the anchor AND its target is
-  farther from the anchor than the NPC is, such a leaf is refused before it starts, and one that
-  is already running (it began inside the radius) is ended. A target nearer the anchor is always
-  chased: a straight run toward it never ends farther from the anchor than the NPC already is.
+  moving for a shot). Four more move it around its combat group's SEARCH area when the target is
+  lost: Search, SearchCenter, SearchLocation, SearchWander (their goal is the group's search
+  centre). While the NPC is farther than the radius from the anchor AND that goal is farther from
+  the anchor than the NPC is, such a leaf is refused before it starts, and one that is already
+  running (it began inside the radius) is ended. A goal nearer the anchor is always allowed: a
+  straight run toward it never ends farther from the anchor than the NPC already is.
 * **It stops nothing else.** Attacks, spells, shouts, blocks, dodges, circling, backing off,
   fleeing and the NPC's package all run as the engine decides. An NPC past the radius keeps
   fighting whatever comes to it and shoots or casts at whatever it can reach. It does not walk
   back to the anchor: that is yours to do (or to leave to its follow package once the fight ends).
 * **It needs the anchor in the same place.** If the anchor is dead, unloaded, or in another cell
   or worldspace, nothing is denied until it is back.
-* **It shares ch.7 with the other categories.** The pursuit bit rides the same claim as
-  `kCombatActionCat_Offense` / `kCombatActionCat_Cast`, so one claim can ask for any mix. The
-  claim with the highest basis on the NPC wins the whole ch.7 facet, bits and leash together.
-  If you already hold a ch.7 claim on the NPC, OR the pursuit bit into it and Repoint it; a second
-  claim of your own only arbitrates against the first.
+* **Its own facet.** The leash is arbitrated on its own, separately from `kIntent_CombatAction`
+  (ch.7). Another mod's ch.7 offense or cast deny on the same NPC neither replaces your leash nor
+  is replaced by it. Between two leashes on one NPC, the higher basis wins.
 
 ### How the leash ends
 
-It holds while your claim holds. Your own Release, an outranking ch.7 claim (its own bits and
-leash then apply), a save load, a new game or the NPC unloading end it. A dead NPC runs no combat
-tree, so nothing is denied for it. Repoint with a new `target` / `fval` to move the anchor or
-change the radius; Repoint without the bit to drop the leash and keep the other categories.
+It holds while your claim holds. Your own Release, an outranking ch.23 claim, a save load, a new
+game or the NPC unloading end it. A dead NPC runs no combat tree, so nothing is denied for it.
+Repoint with a new `target` / `fval` to move the anchor or change the radius.
 
 ### The recipe: in-combat leash to the player
 
 ```cpp
 using namespace APMF_API;
 
-// One ch.7 claim per follower. Keep the handle; Repoint it when the radius changes.
+// One leash claim per follower. Keep the handle; Repoint it when the radius changes.
 Handle LeashToPlayer(RE::FormID follower, float radius /* game units, e.g. 2048 */) {
     if (!g_apmf || g_apmf->abiVersion < 16) return kInvalidHandle;   // older: keep your own leash
     APMF_Param p{};
-    p.ival   = kCombatActionCat_Pursuit;       // OR in Offense / Cast if you deny those too
     p.target = 0x14;                            // the anchor: the player
     p.fval   = radius;                          // > 0; the leash radius
-    return g_apmf->RequestEx(follower, kIntent_CombatAction, /*basis=*/50.0f, &p);
+    return g_apmf->RequestEx(follower, kIntent_PursuitLeash, /*basis=*/50.0f, &p);
     // kInvalidHandle: refused at the call; the log says why (see below).
 }
 
 void SetLeashRadius(Handle h, float radius) {   // e.g. from an MCM slider
     APMF_Param p{};
-    p.ival   = kCombatActionCat_Pursuit;
     p.target = 0x14;
     p.fval   = radius;
     g_apmf->Repoint(h, &p);
@@ -1590,36 +1587,32 @@ every fight.
 
 | field | meaning |
 |---|---|
-| `param.ival` | The category mask. `kCombatActionCat_Pursuit` turns the leash on. |
-| `param.target` | The anchor actor's FormID. REQUIRED with the bit; 0 or the NPC itself is refused. |
-| `param.fval` | The radius in game units. REQUIRED with the bit; 0, negative or NaN is refused. |
+| `param.target` | The anchor actor's FormID. REQUIRED; 0 or the NPC itself is refused. |
+| `param.fval` | The radius in game units. REQUIRED; 0, negative or NaN is refused. |
 | everything else | Not read. |
-
-Without the pursuit bit, `target` and `fval` are not read and ch.7 behaves exactly as before v16.
 
 ### When a claim is refused
 
-* **At the call (`kInvalidHandle`, logged `[apmf][combat-action] pursuit claim refused`):** the
-  leash is not armed (VR, a runtime other than exactly 1.6.1170 or 1.5.97, `[CombatAction]
-  bPursuitDeny=0` in `APMF.ini`, the address self-check refused a leaf or the engine's
-  SetFailed / Ascend, or before kDataLoaded), no anchor, the NPC as its own anchor, a radius that is
-  not a positive number, or the NPC is the player.
-* **Not refused, and not leashed:** a Harbinger older than v16 accepts the claim and ignores the
-  bit. That is why you check `abiVersion >= 16` before setting it.
+* **At the call (`kInvalidHandle`):** a Harbinger older than v16 ("no channel serves intent 23").
+  Logged `[apmf][pursuit-leash] claim refused`: the leash is not armed (VR, a runtime other than
+  exactly 1.6.1170 or 1.5.97, `[PursuitLeash] bPursuitLeash=0` in `APMF.ini`, the address
+  self-check refused a leaf or the engine's SetFailed / Ascend, or before kDataLoaded), no anchor,
+  the NPC as its own anchor, a radius that is not a positive number, or the NPC is the player.
 * **At Engage (the claim stands, the leash is not set, logged `pursuit leash NOT set`):** the anchor
-  FormID is not a loaded Actor. The claim's other bits still deny. Repoint once the anchor loads.
+  FormID is not a loaded Actor. Repoint once the anchor loads.
 
 ### What a good log looks like
 
 ```
-[ch.7] PURSUIT leash armed on 10 leaves (act+pop deny pair, update() ended through SetFailed+Ascend): ...
-[ch.7] 0x... combat-action facet CLAIMED (deny mask 0x04). ...
-[ch.7] 0x... pursuit LEASH set: anchor 0x00000014, radius 2048. ...
-[ch.7] 0x... PURSUIT ENDED at update() CombatBehaviorAdvance: the actor is 2051 from its anchor
+[ch.23] PURSUIT LEASH armed on 14 leaves (act+pop deny pair, update() ended through SetFailed+Ascend). ...
+[ch.23] 0x... pursuit-leash facet CLAIMED (anchor 0x00000014, radius 2048).
+[ch.23] 0x... pursuit LEASH set: anchor 0x00000014, radius 2048. ...
+[ch.23] 0x... LEASH ENDED at update() CombatBehaviorAdvance: the actor is 2051 from its anchor
         (radius 2048) and its target 3310 -- the move would take it farther. ...
-[ch.7] 0x... PURSUIT DENIED at act() CombatBehaviorAdvance: the actor is 2060 from its anchor ...
-[ch.7] pursuit H leashes=1 leaf=seen/denied-at-act/ended-at-update: Advance=412/37/9 Chase=0/0/0 ...
-[ch.7] pursuit H pass inside=3120 closer=85 no-anchor=0 other-space=0 no-target=2 stale=0 update-anomaly=0
+[ch.23] 0x... LEASH DENIED at act() CombatBehaviorSearchWander: the actor is 2300 from its anchor
+        (radius 2048) and its search centre 2900 -- ...
+[ch.23] pursuit H leashes=1 leaf=seen/denied-at-act/ended-at-update: Advance=412/37/9 Chase=0/0/0 ...
+[ch.23] pursuit H pass inside=3120 closer=85 no-anchor=0 other-space=0 no-goal=2 stale=0 update-anomaly=0
 ```
 
 The two `pursuit H` lines print every 30 s while any leash is set, zeros included. `seen` counts every
@@ -1628,12 +1621,18 @@ time any NPC starts that leaf; a leaf you expect but never see is a leaf that NP
 
 ### Limits worth knowing
 
-* **It leashes the ten moves toward the target, not every step.** Local moves (circling, strafing,
-  backing off, dodging), flight, flee and cover moves, a stagger or a knockback are not leaf moves
-  toward the target and are not denied, so an NPC can end up a little past the radius. It does not
-  pull the NPC back.
-* **Two leaves can also back away.** MaintainOptimalRange and Surround sometimes move AWAY from the
-  target; past the radius, with the target farther out still, those are denied too.
+* **It leashes the 14 moves toward the goal, not every step.** Local moves (circling, strafing,
+  backing off, dodging), flight, flee and cover moves, a stagger or a knockback are not denied, so
+  an NPC can end up a little past the radius. It does not pull the NPC back.
+* **Two moves are not leashed on purpose.** ReturnToCombatArea (the engine pulling the NPC back
+  into the fight's area; its goal is that area, not a target) and SearchInvestigateDoor (its goal
+  is a door, which can lead through a load door). See `Docs/DENY-COMPLETENESS-AUDIT.md` gap 14.
+* **Search is judged by the search centre.** A search move can end up to the group's search radius
+  past the centre the rule measured.
+* **Accepted over-deny: a step back can be refused too.** MaintainOptimalRange and Surround sometimes
+  move AWAY from the target and toward the anchor. Past the radius, with the target farther out
+  still, those are denied as well: the NPC stands where it is (still fighting what it can reach)
+  instead of stepping back.
 * **Not saved.** A save load, a new game or the NPC unloading drops the claim.
 * **Built, CI-verified, not yet field-run, and the leaves are not yet OBSERVED on a deck.** The first
   field log must show non-zero `seen` counts, then `DENIED at act()` / `ENDED at update()` for a
@@ -1667,7 +1666,7 @@ columns, one doesn't imply the other.
 | `kIntent_WeaponDrawn` (ch.4) | Draw/sheathe | none | Built, not yet battle-tested |
 | `kIntent_Headtrack` (ch.5) | Look-at target | `form` (reserved, not yet read) | **Field-proven** for the look-up behavior itself (deck-tested). Known-incomplete as a deny gate: the AI writes several headtrack slots and APMF owns only one, so an aggressive competing source can still win the head back. |
 | `kIntent_CombatTarget` (ch.6) | Claim the combat-target facet | `form` (the target actor) | **Field-proven, in active production use.** MFO drives its combat targeting through this facet every fight. Arbitration only: APMF records the owner and the client writes the target itself. Denying a competing framework's own target write is still a future gap. |
-| `kIntent_CombatAction` (ch.7) | Deny named combat behavior-tree leaf categories (attack, bash, ranged attack, cast leaves, and more, grouped by category). ABI v16: the pursuit category, an in-combat leash to an anchor actor | `ival` (a `CombatActionCategory` bitmask); with `kCombatActionCat_Pursuit`, `target` (the anchor) and `fval` (the radius) | **Field-proven** for offense. Graduated from a live deck probe: the deny fired, the tree fell back cleanly, no crash. **The pursuit leash (v16) is built, CI-verified, not yet field-run.** |
+| `kIntent_CombatAction` (ch.7) | Deny named combat behavior-tree leaf categories (attack, bash, ranged attack, cast leaves, and more, grouped by category) | `ival` (a `CombatActionCategory` bitmask) | **Field-proven.** Graduated from a live deck probe: the deny fired, the tree fell back cleanly, no crash. |
 | `kIntent_SelectSpell` (ch.8) | Claim the casting facet | `form` (the spell FormID) | **Field-proven, for the owned/exact cast.** A follower AI-fired an animated spell allowed only through APMF's cast-check gate, live in combat, no whack-a-mole, no crash. This covers the single claimed spell as the actor's only castable choice. The graduated multi-spell allow list (`SetSpellAllowList`, v4) is a separate capability and is not yet proven. Denying a competing framework's own spell selection is also still a future gap. |
 | `kIntent_Cast` (ch.8b) | **Make the NPC's own AI cast a chosen spell at a chosen target.** ABI v5, use `RequestCast` | `APMF_CastRequest` (spell, proxy, target, flags, ttlMs) | **Field-proven** for heal-other on a follower AND for offense (17 animated offense fires in the 2026-09-06 deck session; the Offensive caster seat shipped in v0.9.2 — the "still being ported" note here was stale, corrected 2026-09-07). APMF makes no equip, anim or cast call. **Know what a claim does NOT cover, and what you must do about it:** it governs ONE hand, so the other hand keeps casting whatever the NPC's own AI picks — claim that hand too, with `kCastFlag_DenyHandOnly`, if you want the actor closed (a deny-only claim drives nothing and admits nothing, including your own spells). It expires at `ttlMs`: `Repoint` the live claim to RENEW the deadline rather than releasing and re-requesting, or foreign spells equip and charge in the gap between the two. And a spell already charging when your claim arrives is not interrupted. Both mechanisms landed on `main` 2026-09-07 and are not in a tagged release yet. See `Docs/DENY-COMPLETENESS-AUDIT.md` open gaps 9-13. |
 | `kIntent_OfferPackage` (ch.9) | Claim the package-offer facet | `form` (the TESPackage FormID) | **Proven WHEN NUDGED (corrected 2026-09-07).** The 0x49 redirect answers whenever the engine asks while a published claim stands — 16/16 deck wins, every one of them following an explicit `EvaluatePackage` nudge, with ZERO hits from the engine's own evaluation cadence over ~75 s. It is not self-sustaining: if nothing nudges, nothing re-asks. The earlier "field-proven for engage/release" credit belonged to the retired PROBE; the graduated channel's own first field run engaged **0 of 6** dispatches because its nudge fired before the claim published. Fixed on `main` as of 2026-09-07 (the nudge is posted one hop past the claim's publish); untagged, and not yet re-run on a deck. Save/load persistence of an engaged claim is still unexercised. |
@@ -1683,6 +1682,7 @@ columns, one doesn't imply the other.
 | `kIntent_TargetPin` (ch.20, ABI v13) | **Pin the actor's combat target.** Harbinger answers the engine's own target selector with your target while the actor is fighting and your target is one of its group's combat targets. Never starts combat | `form` (the target ACTOR, REQUIRED) | Built, not yet battle-tested. CI verified only. The selector seat has not been observed running in a game yet. |
 | `kIntent_CombatEntry` (ch.21, ABI v14) | **Start a fight.** Harbinger calls the engine's own `StartCombat` once against your target (once more per Repoint). Never re-enters, never stops the fight; the claim ENDS on a refusal or when the fight ends. Pin the same target after it entered to make it fight THAT one | `form` (the target ACTOR, REQUIRED) | Built, not yet battle-tested. CI verified only. |
 | `kIntent_CombatReentryDeny` (ch.22, ABI v15) | **Stay out of the fight.** For a window you choose, every engine `StartCombat` for the NPC is refused at its own self-check. Stops nothing; your own ch.21 entry passes. Ends by itself when the window (counted from your request) elapses or the NPC dies. Recipe: claim, then `StopCombat` once on the first tick the claim is live | `fval` (window seconds; 0 = 10, max 120) | Built, not yet battle-tested. CI verified only; the seat is not yet observed on a deck. |
+| `kIntent_PursuitLeash` (ch.23, ABI v16) | **Leash the NPC's in-combat pursuit and search to an anchor actor.** Moves toward a goal farther from the anchor are refused while the NPC is past the radius | `target` (the anchor), `fval` (the radius) | Built, not yet battle-tested. CI verified only; the leaves are not yet observed on a deck. |
 
 Where a field is marked "reserved, not yet read", the channel currently
 applies a fixed built-in behavior and ignores whatever you pass in that field.
