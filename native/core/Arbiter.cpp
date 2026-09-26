@@ -11,6 +11,7 @@
 #include "channels/Travel.h"
 #include "channels/TargetPin.h"
 #include "channels/CombatEntry.h"
+#include "channels/Idle.h"
 #include "channels/CombatReentryDeny.h"
 
 namespace apmf {
@@ -100,6 +101,12 @@ namespace apmf {
         // combat and writes no engine state. Self-throttled; one relaxed atomic load while
         // nothing is claimed.
         apmf::combatentry::Poll();
+
+        // ch.12 idle v2 (kIntent_Idle with a form, ABI v17) END-OF-CLAIM MONITOR + OBSERVATION
+        // LOG, same seat and shape: it ends a v2 idle claim whose owner died and writes the one
+        // animation-confirmation line per accepted play. It writes no engine state.
+        // Self-throttled; one relaxed atomic load while no v2 idle is claimed.
+        apmf::idle::Poll();
 
         // ch.22 (kIntent_CombatReentryDeny) END-OF-WINDOW MONITOR, same seat and shape: it ends a
         // deny claim when its window elapses or the owner dies, and logs a DENY MISS (the actor

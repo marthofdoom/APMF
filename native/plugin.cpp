@@ -21,6 +21,7 @@
 #include "channels/Travel.h"
 #include "channels/TargetPin.h"
 #include "channels/CombatEntry.h"
+#include "channels/Idle.h"
 #include "channels/CombatReentryDeny.h"
 #include "core/PositionCast.h"
 #include "core/SpaceQuery.h"
@@ -84,6 +85,8 @@ namespace {
         // An entry task still queued is dropped by the Discard below; one that somehow ran
         // would find no entry and drop itself.
         apmf::combatentry::ResetAll("revert/new game");
+        // ch.12 idle v2 (ABI v17): same, for the idle entries of the outgoing world.
+        apmf::idle::ResetAll("revert/new game");
         // ch.22: same, for the re-entry deny entries of the outgoing world.
         apmf::reentrydeny::ResetAll("revert/new game");
         // ch.23 pursuit leash (ABI v16): same, for the leash entries (anchor handles of the outgoing world).
@@ -147,6 +150,11 @@ namespace {
                                                   // exact 1.6.1170 / 1.5.97, VR-refused, [CombatEntry]
                                                   // bCombatEntry, SeatVerified on StartCombat. A refusal
                                                   // REFUSES kIntent_CombatEntry claims.
+            apmf::idle::Install();               // ch.12 IDLE v2 (ABI v17): installs NO hook. Gates the one
+                                                  // AIProcess::PlayIdle call per engage (INVARIANTS #0 (c)):
+                                                  // exact 1.6.1170 / 1.5.97, VR-refused, SeatVerified on
+                                                  // SetupSpecialIdle. A refusal REFUSES kIntent_Idle claims
+                                                  // that carry a form; the form-free v1 idle is not gated.
             apmf::reentrydeny::Install();        // ch.22 COMBAT RE-ENTRY DENY (ABI v15): Character vtable slot
                                                   // 0x99 (IsDead), chaining, answering only at
                                                   // Actor::StartCombat's own self-check (INVARIANTS #0 (h)).
@@ -235,6 +243,8 @@ namespace {
             // ch.21: same -- no entry crosses the load (the queued entry task, if any, is
             // flushed with the main-thread queue below).
             apmf::combatentry::ResetAll("kPreLoadGame");
+            // ch.12 idle v2 (ABI v17): same -- no idle entry crosses the load.
+            apmf::idle::ResetAll("kPreLoadGame");
             // ch.22: same -- no re-entry deny crosses the load.
             apmf::reentrydeny::ResetAll("kPreLoadGame");
             // ch.23 pursuit leash (ABI v16): same -- no leash entry crosses the load.
