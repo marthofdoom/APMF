@@ -4,6 +4,38 @@ Updated 2026-09-25. Current version **v0.9.8**. The current state of the build: 
 shipped, what's probe-gated, what's next. Keep this current in the SAME change as any
 build/finding/workflow change.
 
+## HEAD OF WORK 2026-09-25 -- ch.22 COMBAT RE-ENTRY DENY (`kIntent_CombatReentryDeny`, ABI v15), branch `feat/apmf-reentry-deny`, NOT merged
+
+ClickUp 86e3ex5v9, batch L, tier A (new engine seat + ABI). From MFO's confidence / leash assessment: a
+retreating follower is pulled back into combat by the engine every tick, so MFO re-issues `StopCombat` every
+tick (the churn MFO's INVARIANTS #22a forbids). With a deny claim held, the client calls `StopCombat` ONCE.
+- **What:** intent 22, channel `channels/CombatReentryDeny.cpp`. The client names {actor, window seconds}
+  (`param.fval`; 0 = 10 s, clamped to 120 s). While the winning claim holds, the window runs and the actor has
+  no combat controller, the engine's own combat ENTRY for that actor is refused. `INVARIANTS #0 (h)` (seven
+  conditions) is the amendment. MFO adoption is a separate brief.
+- **Engine facts (both unpacked images):** a `CombatController` is built only by CombatManager AE 46873 /
+  46874 (SE 45573 / 45574), whose only callers are inside `Actor::StartCombat`; the ctor's one other caller
+  (AE 37650 / SE 36642) is the save-load rebuild. So every entry (detection, attacked, ally, group join,
+  script, mod) is `StartCombat` with that actor as `this`. StartCombat is non-virtual with ten callers per
+  runtime (patching it or them = #17 call-site patch). Its fourth refusal check is the VIRTUAL `IsDead(true)`
+  on `this` via Character slot 0x99 (AE call `0x6B69C4` / return `0x6B69CA`; SE `0x625242` / `0x625248`), before
+  its spinlock, re-arm equip and every side effect; a true answer goes straight to `return false`.
+- **The seat:** write_vfunc on Character slot 0x99 (AE `0x674ED0` id 37483 / SE `0x5E3160` id 36484,
+  `bool(const Actor*, bool)`), chained; answers "dead" only when `_ReturnAddress()` is that one site. ch.21's
+  own StartCombat passes (thread-local `ClientEntryScope` in `CombatEntry.cpp::Enter`). Candidates rejected:
+  a #17a call-site seat at the internal CombatManager calls (leaks StartCombat's pre-build side effects on
+  every retry), a StartCombat entry detour or ten caller patches (#17), the ch.20 slot-6 seat (never runs out
+  of combat: no controller, no UpdateTarget), writing the boolFlags bit 11 (engine-state write + undo).
+- **Verified rows:** Character row now lists slot 0x99; new call-site row
+  `ReentryDeny.StartCombat.SelfIsDeadCall` (StartCombat's signature + 11 bytes `B2 01 48 8B CF FF 90 C8 04 00 00`
+  at +0x8F AE / +0x8D SE, byte-checked again at runtime). 179/179 both runtimes.
+- **Principle 5, NOT YET OBSERVED:** the first field log must show `[ch.22] seat OBSERVED` and, for a claimed
+  retreat, `FIRST DENY` and no `DENY MISSED`, before MFO relies on it. Known miss path: a DLL wrapping slot
+  0x99 after APMF with a non-tail call (Engage warns once when the slot is not ours).
+- **Ends:** `window elapsed` / `owner dead` (Poll, EnqueueRelease), Release, outranked, load / revert
+  (`ResetAll`). Nothing written, nothing undone.
+- **ABI v15** adds the intent only (no struct, slot or field; `fval` is an existing field).
+
 ## HEAD OF WORK 2026-09-25 -- ch.21 COMBAT ENTRY (`kIntent_CombatEntry`, ABI v14), branch `feat/apmf-combat-entry`, NOT merged
 
 ClickUp 86e3940zb, batch L, tier A (new engine call + ABI). marth approved 2026-09-25: a third-party modder

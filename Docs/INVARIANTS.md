@@ -30,7 +30,8 @@ stance-toggle); a forbidden generate calls a function that picks WHAT the AI dec
 makes is action (e) below, ADOPTED 2026-09-23 by marth: from an APMF-owned MARKER, never from
 the actor, for a spell and a point the client declared, and under condition (8) it is not an
 endpoint. The one `StartCombat` APMF makes is action (g) below, ADOPTED 2026-09-25 by marth: once per
-client declaration, against the target the client named, through the engine's own entry function.) **Cautionary case:** ch.6
+client declaration, against the target the client named, through the engine's own entry function. Action (h) below
+denies that same entry function's answer for a declared actor and window; it calls nothing.) **Cautionary case:** ch.6
 combat-target once called `StartCombat` (to command a target) — wrong LAYER, and
 with a bad reloc signature it was a hard AV (EXCEPTION_ACCESS_VIOLATION inside
 StartCombat). The deny-only rule made that whole crash class structurally
@@ -229,6 +230,54 @@ target. It is legal only while ALL of these hold:
 8. **The world's reaction belongs to the client** (principle 2 scope, marth 2026-09-25): "if a user uses
    it to cause chaos, chaos ensues." Crime, bounty, faction and aggression changes, allies and guards
    joining, combat music -- all happen as the engine does them and are not denied or undone.
+
+**ADDED 2026-09-25 (ClickUp 86e3ex5v9, batch L, from MFO's confidence / leash assessment: a retreating
+follower is pulled back into combat every tick, so the client re-issues `StopCombat` every tick). The
+eighth legal action (ABI v15, `channels/CombatReentryDeny.cpp`): (h) DENY COMBAT RE-ENTRY FOR A BOUNDED
+WINDOW -- refuse the engine's own combat entry for a declared actor at the entry function's own
+self-check.** It turns the engine's own "enter combat" into the engine's own "refuse", which is a DENY of
+an engine decision; it is written here, beside (f) and (g), rather than done quietly. The client declares
+{actor, window seconds} with `kIntent_CombatReentryDeny` (`param.fval`; 0 = 10 s, clamped to 120 s).
+**Where entry happens.** An actor is in combat exactly when it has a `CombatController`. Outside save
+loading, a controller is built only by CombatManager AE 46873 / 46874 (SE 45573 / 45574), whose only
+callers are inside `Actor::StartCombat` (AE id 38561 `0x6B6930`, SE id 37608 `0x6251B0`); the controller
+constructor's one other caller (AE 37650 / SE 36642) is the save-load rebuild. So every entry -- detection,
+being attacked, an ally's fight, a group join, a script, another mod -- is `StartCombat` with that actor as
+`this`. `StartCombat` is not virtual and has ten callers per runtime, so neither its entry nor its callers
+may be patched (#17). **The seat.** Its fourth refusal check is a VIRTUAL call on the actor itself,
+`IsDead(true)` through Character vtable slot 0x99 (AE `0x6B69C4`, return `0x6B69CA`; SE `0x625242`, return
+`0x625248`), made before its global spinlock, its re-arm equip and everything else it does; a true answer
+jumps straight to its refusal epilogue. APMF's `write_vfunc` on slot 0x99 chains the original and changes its
+answer only at that one return address. It is legal only while ALL of these hold:
+1. **A deny, never an entry, never a stop.** The only change is StartCombat's own YES to its own NO, through
+   a check it already makes, before it has done anything. APMF calls no engine function, writes no engine
+   state, and never takes an actor out of a fight it is in: an actor that already has a controller passes
+   (the engine may add targets to its fight). Ending the fight is the client's call (`StopCombat`, once).
+2. **Scoped to one call site.** Every other `IsDead` caller -- thousands per frame -- gets the original
+   answer; the return-address compare is the thunk's first act after the original. The site is a verified
+   call-site row (`ReentryDeny.StartCombat.SelfIsDeadCall`: StartCombat's signature, then the eleven bytes
+   `B2 01 48 8B CF FF 90 C8 04 00 00` at +0x8F AE / +0x8D SE, byte-checked again at runtime by
+   `REL::SelfCheck`). The TARGET's own `IsDead(false)` check inside StartCombat (a different return address)
+   is never answered: another actor's entry against this one is that actor's facet.
+3. **Bounded, and it ends by itself.** The window runs from Engage (a Repoint restarts it). When it elapses
+   or the owner dies, `reentrydeny::Poll` (the ch.19 / ch.20 / ch.21 monitor seat) releases the claim and
+   logs `deny ended: <reason>`. Released, outranked or dropped (unload, save load, revert): the engine's
+   entries pass again. Nothing is saved; nothing is undone (nothing was written).
+4. **A client's declared entry passes (precedence).** ch.21's one `StartCombat` for the actor runs inside
+   a thread-local `ClientEntryScope` and is let through, whoever's ch.21 claim it is: both are declared
+   decisions, and the deny is against the ENGINE drawing the actor in. It does not end the deny claim.
+5. **Observed before relied on (principle 5), and a miss is loud (principle 7).** The seat logs its first
+   StartCombat self-check of the session (`seat OBSERVED`) whether or not a claim exists, and
+   `reentrydeny::Poll` logs `DENY MISSED` when a denied actor gains a controller under a live window
+   without a ch.21 entry passing. The one known way to miss: a DLL that wraps slot 0x99 AFTER APMF with a
+   thunk that CALLS (rather than tail-jumps to) the previous entry hides StartCombat's return address;
+   Engage warns once when the slot no longer holds APMF's thunk. No retry, no fallback, no re-assert.
+6. **Scope is closed by name.** Exactly 1.6.1170 or 1.5.97, not VR, the Character vtable only (never the
+   player), `[CombatReentryDeny] bCombatReentryDeny`, the address self-check on the Character vtable and the
+   call-site row. Denying the in-combat target-add path, denying other actors' entries against this one,
+   or ending combat are each a new amendment, not a code change.
+7. **The world's reaction belongs to the client** (principle 2 scope). Enemies may keep attacking an actor
+   that cannot fight back; that is their facet and the client's declared consequence.
 
 **#20 — COMPOSED ANSWERS: APMF may answer the ENGINE'S OWN DECISION SEATS so the
 AI decides what a claim asks for — and exactly ONE of those answers may skip the
@@ -825,7 +874,9 @@ thing that derails one. Concretely:
 - **Engine-answer-first.** Every thunk calls the stored original before deciding
   anything; it only ever flips the engine's own YES to NO, only for an actor APMF
   itself holds a claim on. Never invent a YES, never manufacture behavior, never
-  re-assert (#0). **ONE bounded exception exists in the whole codebase** — ch.8b's
+  re-assert (#0). (ch.22's slot-0x99 seat changes `IsDead`'s answer at `StartCombat`'s own
+  self-check only; in `StartCombat`'s terms that is its YES turned to NO, before it acts -- #0 (h).)
+  **ONE bounded exception exists in the whole codebase** — ch.8b's
   `CheckShouldEquip` seat, where the original is structurally un-redirectable and
   chaining would answer nothing at all. #20 states its three conditions; a second
   exception needs the same argument made explicitly, not an appeal to the first.
