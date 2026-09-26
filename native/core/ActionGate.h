@@ -20,16 +20,16 @@ namespace apmf::actiongate {
     // disabled (the default). Prints even when every counter is zero.
     void PfpHeartbeat();
 
-    // ch.7 PURSUIT (ABI v16, kCombatActionCat_Pursuit) -- the in-combat leash. See
-    // ActionGate.cpp's PURSUIT section for the leaves, the rule and the two seats.
+    // ch.23 PURSUIT LEASH (ABI v16, kIntent_PursuitLeash) -- the in-combat leash, its own
+    // intent on ch.7's leaf seats. See ActionGate.cpp's PURSUIT LEASH section for the leaves,
+    // the rule and the two seats.
     // True once Install() armed every half (INI, ForceFail pair, verified SetFailed/Ascend,
-    // act+pop+update on all ten leaves). ControlMap refuses a Pursuit request while false.
+    // act+pop+update on all 14 leaves). ControlMap refuses a ch.23 request while false.
     bool        PursuitArmed();
     const char* PursuitNotArmedReason();
-    // GAME THREAD ONLY (ch.7 Engage / OnOwnerChanged / Release). SetLeash resolves the
+    // GAME THREAD ONLY (ch.23 Engage / OnOwnerChanged / Release). SetLeash resolves the
     // winning claim's anchor (param.target) to a handle and stores it with the radius
-    // (param.fval); a claim without the Pursuit bit, or with an unusable anchor/radius,
-    // clears the entry instead (logged). The seats read the entry; the published claim
+    // (param.fval); an unusable anchor/radius clears the entry instead (logged). The seats read the entry; the published claim
     // stays the gate.
     void SetLeash(RE::FormID a_id, const APMF_API::APMF_Param& a_param);
     void ClearLeash(RE::FormID a_id);

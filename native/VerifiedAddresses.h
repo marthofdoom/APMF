@@ -14,7 +14,7 @@
 
 namespace apmf::VerifiedAddresses
 {
-	// 1.6.1170.0: 181 rows
+	// 1.6.1170.0: 185 rows
 	inline constexpr REL::SelfCheck::Row kRows_1_6_1170[] = {
 		{ 207886, 0x18A5558, 0x0, 0, {  }, "Character" },
 		{ 212096, 0x18D7388, 0x0, 0, {  }, "CombatTargetSelectorStandard" },
@@ -141,6 +141,10 @@ namespace apmf::VerifiedAddresses
 		{ 213460, 0x18E20E8, 0x0, 0, {  }, "Leaf.CombatBehaviorTakeoff" },
 		{ 213338, 0x18E1000, 0x0, 0, {  }, "Leaf.CombatBehaviorTrackTarget" },
 		{ 214382, 0x18E8BD0, 0x0, 0, {  }, "Leaf.CombatBehaviorWaitBehindCover" },
+		{ 214189, 0x18E7718, 0x0, 0, {  }, "Leaf.CombatBehaviorSearch" },
+		{ 214215, 0x18E7878, 0x0, 0, {  }, "Leaf.CombatBehaviorSearchCenter" },
+		{ 214176, 0x18E7668, 0x0, 0, {  }, "Leaf.CombatBehaviorSearchLocation" },
+		{ 214202, 0x18E77C8, 0x0, 0, {  }, "Leaf.CombatBehaviorSearchWander" },
 		{ 393096, 0x2044D78, 0x0, 0, {  }, "RTTI.MagicCaster" },
 		{ 395440, 0x207ECC8, 0x0, 0, {  }, "RTTI.CombatInventoryItem" },
 		{ 395744, 0x208C578, 0x0, 0, {  }, "RTTI.CombatMagicCaster" },
@@ -199,7 +203,7 @@ namespace apmf::VerifiedAddresses
 		{ 38561, 0x6B6930, 0x8F, 11, { 0xB2, 0x01, 0x48, 0x8B, 0xCF, 0xFF, 0x90, 0xC8, 0x04, 0x00, 0x00 }, "ReentryDeny.StartCombat.SelfIsDeadCall" },
 	};
 
-	// 1.5.97.0: 181 rows
+	// 1.5.97.0: 185 rows
 	inline constexpr REL::SelfCheck::Row kRows_1_5_97[] = {
 		{ 261397, 0x165DA40, 0x0, 0, {  }, "Character" },
 		{ 265605, 0x1690A98, 0x0, 0, {  }, "CombatTargetSelectorStandard" },
@@ -326,6 +330,10 @@ namespace apmf::VerifiedAddresses
 		{ 266617, 0x169C460, 0x0, 0, {  }, "Leaf.CombatBehaviorTakeoff" },
 		{ 266500, 0x169B018, 0x0, 0, {  }, "Leaf.CombatBehaviorTrackTarget" },
 		{ 267193, 0x16A36F8, 0x0, 0, {  }, "Leaf.CombatBehaviorWaitBehindCover" },
+		{ 267082, 0x16A2090, 0x0, 0, {  }, "Leaf.CombatBehaviorSearch" },
+		{ 267084, 0x16A21F0, 0x0, 0, {  }, "Leaf.CombatBehaviorSearchCenter" },
+		{ 267081, 0x16A1FE0, 0x0, 0, {  }, "Leaf.CombatBehaviorSearchLocation" },
+		{ 267083, 0x16A2140, 0x0, 0, {  }, "Leaf.CombatBehaviorSearchWander" },
 		{ 513999, 0x1E1DB58, 0x0, 0, {  }, "RTTI.MagicCaster" },
 		{ 687590, 0x1E55718, 0x0, 0, {  }, "RTTI.CombatInventoryItem" },
 		{ 687618, 0x1E56228, 0x0, 0, {  }, "RTTI.CombatMagicCaster" },

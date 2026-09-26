@@ -184,12 +184,16 @@ namespace apmf::actiongate {
         } };
 
         // ====================================================================
-        // PURSUIT -- the in-combat LEASH (ABI v16, kCombatActionCat_Pursuit, ClickUp
-        // 86e3ex5ve batch L, 2026-09-25). The ten leaves whose CombatPath goal is the
-        // COMBAT TARGET (a CombatPathDestinationRef to it, or a goal policy that searches
-        // a spot relative to it), measured on both unpacked executables by walking each
-        // leaf's act()/update() call graph to the CombatPath type it builds (agentlog
-        // apmf-pursuit.md "RE step A"):
+        // PURSUIT LEASH -- ch.23, kIntent_PursuitLeash (ABI v16, ClickUp 86e3ex5ve batch L,
+        // 2026-09-25). Its OWN intent, arbitrated separately from ch.7: these leaves carry NO
+        // ch.7 category (g_category never names them), and the seats below consult the
+        // ch.23 winner only. They share ch.7's act()/pop() thunks (one install per slot per
+        // vtable -- a second hook on the same slot would chain two APMF thunks) and the
+        // ForceFail pair.
+        //
+        // THE TEN PURSUIT LEAVES -- goal = the COMBAT TARGET. Measured on both unpacked
+        // executables by walking each leaf's act()/update() call graph to the CombatPath type
+        // it builds (agentlog apmf-pursuit.md "RE step A"):
         //   Advance, Reposition, Chase      Generic<FindTargetLocation> -> Ref   (melee close-in / out of position; flank chase)
         //   PursueTarget, Stalk             Standard|Flight -> Ref               (low-combat pursue; flanking stalk)
         //   Flank                           Generic<Flank> -> Ref
@@ -197,26 +201,37 @@ namespace apmf::actiongate {
         //   Surround                        Standard|Flight -> Ref (+ Generic<Retreat>)
         //   MaintainOptimalRange            StraightPath -> Location             (the ranged close-to-range)
         //   FindAttackLocation              Generic<FindAttackLocation>          (the ranged reposition)
-        // NOT here, on purpose: CheckUnreachableTarget (a reachability test, not a move
-        // the leash owns), TrackTarget (no path), the local StraightPath moves (Circle*,
-        // Strafe, Backoff, Fallback*, DodgeThreat, FindLateralAttackLocation), Orbit*, the
-        // flee/cover/hide/exit-water/return-to-combat-area moves (not target-closing) and
-        // FindAllyAttackLocation (ally-relative).
-        // A pursuit leaf is denied ONLY for an actor whose winning ch.7 claim sets the
-        // Pursuit bit AND carries a resolved leash (anchor + radius), and only while
-        //   dist(actor, anchor) > radius  AND  dist(target, anchor) > dist(actor, anchor)
-        // -- "the move would take it FARTHER": moving straight toward the target never
-        // leaves the anchor farther than max(dActor, dTarget), so a target nearer the
-        // anchor than the actor is always allowed (it still fights whatever comes in).
+        // THE FOUR SEARCH LEAVES -- goal = the combat GROUP's SEARCH CENTRE (CombatGroup
+        // +0x100, the position SearchCenter::Enter itself reads; core/CombatBehaviorRE.h
+        // kSearchLeaves): Search, SearchCenter, SearchLocation, SearchWander -- the 'Search'
+        // tree that Low Combat's Search branch and the combat search use. Not in the 70-leaf
+        // catalog, so ch.23 installs act/pop on them as well as update.
+        // NOT here, on purpose: CheckUnreachableTarget (a reachability test), TrackTarget (no
+        // path), the local StraightPath moves (Circle*, Strafe, Backoff, Fallback*,
+        // DodgeThreat, FindLateralAttackLocation), Orbit*, flee/cover/hide/exit-water,
+        // FindAllyAttackLocation (ally-relative), SearchInvestigateDoor (its goal is a DOOR,
+        // not the search centre) and ReturnToCombatArea (its goal is the combat area, not a
+        // target -- DENY-COMPLETENESS-AUDIT gap 14 says why neither fits the rule).
+        //
+        // THE RULE, for an actor whose winning ch.23 claim has a resolved leash:
+        //   dist(actor, anchor) > radius  AND  dist(goal, anchor) > dist(actor, anchor)
+        // -- "the move would take it FARTHER": moving straight toward the goal never leaves
+        // the anchor farther than max(dActor, dGoal), so a goal nearer the anchor than the
+        // actor is always allowed (it still fights whatever comes in).
         // Two seats, both the engine's own protocol (core/CombatBehaviorRE.h):
-        //   act()    -- the existing ForceFail act()+pop() PAIR (the leaf never starts);
-        //   update() -- slot 0x04, NEW: a leaf already running (it began inside the radius
-        //               and has since carried the actor out) is ended through its own
-        //               failure exit, SetFailed(thread, 1) + Ascend(thread); the runner
-        //               then calls the node's OWN pop(). Without this half a chase begun
-        //               inside the radius runs to the target, however far (an Advance
-        //               runs its whole path in one leaf) -- an act()-only leash leaks on
-        //               every chase, so the category is refused unless BOTH halves arm.
+        //   act()    -- the ForceFail act()+pop() PAIR (the leaf never starts);
+        //   update() -- slot 0x04: a leaf already running (it began inside the radius and has
+        //               since carried the actor out) is ended through its own failure exit,
+        //               SetFailed(thread, 1) + Ascend(thread); the runner then calls the
+        //               node's OWN pop(). Without this half a chase begun inside the radius
+        //               runs to the target, however far (an Advance runs its whole path in
+        //               one leaf) -- so the leash is refused unless BOTH halves arm on all 14.
+        enum class Goal : std::uint8_t { kTarget, kSearchCentre };
+        struct LeashLeaf {
+            const char*    name;
+            REL::VariantID vtbl;
+            Goal           goal;
+        };
         constexpr std::array<const char*, 10> kPursuitLeafNames{ {
             "CombatBehaviorAdvance",
             "CombatBehaviorChase",
@@ -229,11 +244,14 @@ namespace apmf::actiongate {
             "CombatBehaviorStalk",
             "CombatBehaviorSurround",
         } };
-        constexpr std::size_t kPursuitN = kPursuitLeafNames.size();
+        constexpr std::size_t kPursuitN = kPursuitLeafNames.size() + apmf::cbt::kSearchLeaves.size();   // 14
 
-        // vtable -> original update() (slot 0x04), pursuit leaves only.
+        // Filled at Install(): index -> {name, vtable, goal}. Index < 10 = pursuit, >= 10 = search.
+        std::array<LeashLeaf, kPursuitN> g_leashLeaves{};
+
+        // vtable -> original update() (slot 0x04), leash leaves only.
         std::unordered_map<std::uintptr_t, std::uintptr_t> g_origUpdate;
-        // vtable -> index into kPursuitLeafNames (for the per-leaf counters).
+        // vtable -> index into g_leashLeaves (a leash leaf; also the per-leaf counters).
         std::unordered_map<std::uintptr_t, std::size_t>    g_pursuitIdx;
         // The engine's leaf-failure exit (verified function rows, or the category is refused).
         std::atomic<std::uintptr_t> g_setFailed{ 0 };
@@ -241,11 +259,11 @@ namespace apmf::actiongate {
         std::atomic<bool>           g_pursuitArmed{ false };
         std::atomic<const char*>    g_pursuitNotArmedWhy{ "not installed yet (before kDataLoaded)" };
 
-        // The per-actor leash, written ONLY on the game thread (ch.7 Engage / OnOwnerChanged /
+        // The per-actor leash, written ONLY on the game thread (ch.23 Engage / OnOwnerChanged /
         // Release, and the load reset), read by the seats under a shared_lock. The anchor is
         // resolved to a HANDLE on the game thread (the seats never look up a form -- the
-        // ch.20 precedent). The published claim is still the gate: no winning ch.7 claim with
-        // the Pursuit bit -> no deny, whatever this map holds.
+        // ch.20 precedent). The published claim is still the gate: no winning ch.23 claim ->
+        // no deny, whatever this map holds.
         struct Leash {
             RE::FormID      anchorFid = 0;
             RE::ActorHandle anchor{};
@@ -256,16 +274,16 @@ namespace apmf::actiongate {
         std::atomic<std::size_t>               g_leashCount{ 0 };
 
         // RULE C counters (printed by PursuitHeartbeat even at zero). "seen" counts every
-        // pursuit-leaf act() on ANY actor -- the anchor that proves the leaves run at all
+        // leash-leaf act() on ANY actor -- the anchor that proves the leaves run at all
         // (principle 5); the rest are for leashed actors only.
         std::array<std::atomic<std::uint64_t>, kPursuitN> g_pSeen{};      // act(), any actor
         std::array<std::atomic<std::uint64_t>, kPursuitN> g_pDenyAct{};   // act() denied (never started)
         std::array<std::atomic<std::uint64_t>, kPursuitN> g_pEndUpd{};    // running leaf ended at update()
         std::atomic<std::uint64_t> g_pPassInside{ 0 };      // actor within the radius
-        std::atomic<std::uint64_t> g_pPassCloser{ 0 };      // target no farther from the anchor than the actor
+        std::atomic<std::uint64_t> g_pPassCloser{ 0 };      // goal no farther from the anchor than the actor
         std::atomic<std::uint64_t> g_pPassNoAnchor{ 0 };    // anchor unresolved / unloaded / dead / self
         std::atomic<std::uint64_t> g_pPassOtherSpace{ 0 };  // anchor in another cell / worldspace
-        std::atomic<std::uint64_t> g_pPassNoTarget{ 0 };    // no combat target to measure
+        std::atomic<std::uint64_t> g_pPassNoTarget{ 0 };    // no goal to measure (no target / no search centre)
         std::atomic<std::uint64_t> g_pPassStale{ 0 };       // no leash entry, or it names another anchor
         std::atomic<std::uint64_t> g_pUpdAnomaly{ 0 };      // update() for a node that is not cur_node / phase != 1
         std::atomic<bool>          g_pUpdAnomalyLogged{ false };
@@ -440,7 +458,7 @@ namespace apmf::actiongate {
             return 0;
         }
 
-        // ch.7 PURSUIT: the same two +0x158 hypotheses as ResolveDeliberatingActor, in the
+        // ch.23 PURSUIT LEASH: the same two +0x158 hypotheses as ResolveDeliberatingActor, in the
         // same order, but returning the controller that named the actor too -- the combat
         // target is read from THAT controller (targetHandle, +0x2C), never from a guess.
         apmf::cbt::ControllerMini* ResolveController(void* a_control, RE::NiPointer<RE::Actor>& a_actor) {
@@ -465,13 +483,15 @@ namespace apmf::actiongate {
             return nullptr;
         }
 
-        // THE leash decision, shared by the act() and update() seats (see the PURSUIT section).
-        // Runs on a combat behaviour thread: the leash entry is copied out under a shared_lock
-        // (released before any engine call), the actors come from handle-table reads, and the
-        // distances from the references' own data.location. Never a form lookup. Every
-        // pass-through reason is counted (RULE C), so a leash that never bites says why.
-        bool PursuitDenies(void* a_control, RE::FormID a_actorFid, const APMF_API::APMF_Param& a_claim,
-                           float& a_dActor, float& a_dTarget, float& a_radius) {
+        // THE leash decision, shared by the act() and update() seats (see the PURSUIT LEASH
+        // section). Runs on a combat behaviour thread: the leash entry is copied out under a
+        // shared_lock (released before any engine call), the actors come from handle-table
+        // reads, the distances from the references' own data.location and, for a search leaf,
+        // from the combat group's search centre read exactly as SearchCenter::Enter reads it
+        // (unlocked, CombatBehaviorRE.h). Never a form lookup. Every pass-through reason is
+        // counted (RULE C), so a leash that never bites says why.
+        bool PursuitDenies(void* a_control, RE::FormID a_actorFid, const APMF_API::APMF_Param& a_claim, Goal a_goal,
+                           float& a_dActor, float& a_dGoal, float& a_radius) {
             Leash l{};
             {
                 std::shared_lock lk(g_leashMx);
@@ -510,23 +530,34 @@ namespace apmf::actiongate {
                 g_pPassInside.fetch_add(1, std::memory_order_relaxed);
                 return false;
             }
-            const auto target = ctrl->targetHandle.get();
-            if (!target) {
-                g_pPassNoTarget.fetch_add(1, std::memory_order_relaxed);
-                return false;
+            RE::NiPoint3 goal{};
+            if (a_goal == Goal::kTarget) {
+                const auto target = ctrl->targetHandle.get();
+                if (!target) {
+                    g_pPassNoTarget.fetch_add(1, std::memory_order_relaxed);
+                    return false;
+                }
+                goal = target->GetPosition();
+            } else {
+                const auto group = reinterpret_cast<std::uintptr_t>(ctrl->combatGroup);
+                if (!group || !*reinterpret_cast<void* const*>(group + apmf::cbt::kGroupSearchLocSpace)) {
+                    g_pPassNoTarget.fetch_add(1, std::memory_order_relaxed);
+                    return false;
+                }
+                goal = *reinterpret_cast<const RE::NiPoint3*>(group + apmf::cbt::kGroupSearchLoc);
             }
-            const float dT = target->GetPosition().GetDistance(pA);
-            if (!(dT > dS)) {
+            const float dG = goal.GetDistance(pA);
+            if (!(dG > dS)) {
                 g_pPassCloser.fetch_add(1, std::memory_order_relaxed);
                 return false;
             }
-            a_dActor  = dS;
-            a_dTarget = dT;
-            a_radius  = l.radius;
+            a_dActor = dS;
+            a_dGoal  = dG;
+            a_radius = l.radius;
             return true;
         }
 
-        void LogPursuitDeny(RE::FormID a_id, bool a_atUpdate, std::size_t a_idx, float a_dS, float a_dT, float a_r) {
+        void LogPursuitDeny(RE::FormID a_id, bool a_atUpdate, std::size_t a_idx, float a_dS, float a_dG, float a_r) {
             const auto now = apmf::clock::MonotonicMs();
             {
                 std::scoped_lock lk(g_pLogMx);
@@ -534,12 +565,18 @@ namespace apmf::actiongate {
                 if (last != 0 && now - last < kPursuitLogGapMs) return;   // counted either way; the line is rate-limited
                 last = now;
             }
-            spdlog::info("[ch.7] 0x{} PURSUIT {} {}: the actor is {:.0f} from its anchor (radius {:.0f}) and its "
-                         "target {:.0f} -- the move would take it farther. (Counts per leaf in the [ch.7] pursuit "
+            const bool search = a_idx < kPursuitN && g_leashLeaves[a_idx].goal == Goal::kSearchCentre;
+            spdlog::info("[ch.23] 0x{} LEASH {} {}: the actor is {:.0f} from its anchor (radius {:.0f}) and its "
+                         "{} {:.0f} -- the move would take it farther. (Counts per leaf in the [ch.23] pursuit "
                          "heartbeat; this line is limited to one per {} ms per actor.)",
                          apmf::log::Hex(a_id), a_atUpdate ? "ENDED at update()" : "DENIED at act()",
-                         a_idx < kPursuitN ? kPursuitLeafNames[a_idx] : "?", a_dS, a_r, a_dT, kPursuitLogGapMs);
+                         a_idx < kPursuitN ? g_leashLeaves[a_idx].name : "?", a_dS, a_r,
+                         search ? "search centre" : "target", a_dG, kPursuitLogGapMs);
         }
+
+        // ch.23 act() half: a leash leaf's act(). NOT a ch.7 path -- these leaves carry no ch.7
+        // category -- so ch.7's own logic never sees them. Deny = the same ForceFail PAIR.
+        void* LeashAct(void* a_this, void* a_control, apmf::cbt::Act_t a_orig, std::size_t a_idx);
 
         // PFP Phase 0 -- OBSERVE ONLY (see the PFP section above). Called from
         // ActThunk BEFORE the leafCat==0 early-return, since every movement leaf
@@ -604,17 +641,12 @@ namespace apmf::actiongate {
             // above ActThunk for the full design.
             if (g_mvcbtEnabled.load(std::memory_order_relaxed)) PfpObserveMovementLeaf(vt, a_control);
 
-            if (leafCat == 0) return orig(a_this, a_control);   // never a denyable leaf -- skip everything below
+            // ch.23 PURSUIT LEASH (ABI v16): its own seat logic on its own intent. g_pursuitIdx
+            // is filled only when the leash armed, and none of its leaves has a ch.7 category.
+            if (const auto pit = g_pursuitIdx.find(vt); pit != g_pursuitIdx.end())
+                return LeashAct(a_this, a_control, orig, pit->second);
 
-            // ch.7 PURSUIT (ABI v16): count every pursuit-leaf act(), any actor -- the RULE C
-            // anchor that shows the leaves run at all (principle 5). One relaxed increment.
-            std::size_t pIdx = kPursuitN;
-            if (leafCat & APMF_API::kCombatActionCat_Pursuit) {
-                if (const auto pit = g_pursuitIdx.find(vt); pit != g_pursuitIdx.end()) {
-                    pIdx = pit->second;
-                    g_pSeen[pIdx].fetch_add(1, std::memory_order_relaxed);
-                }
-            }
+            if (leafCat == 0) return orig(a_this, a_control);   // never a denyable leaf -- skip everything below
 
             if (apmf::ControlMap::Get().ControlledCount() == 0)
                 return orig(a_this, a_control);   // near-zero cost: nothing claimed anywhere
@@ -643,17 +675,6 @@ namespace apmf::actiongate {
                 return orig(a_this, a_control);   // no claim on this actor -- nothing to own
             if ((denyMask & leafCat) == 0)
                 return orig(a_this, a_control);   // claims don't name this leaf's category -- allow
-
-            // ch.7 PURSUIT (ABI v16): a pursuit leaf is denied only while the leash says the
-            // move would take the actor FARTHER from its anchor (PursuitDenies). Every other
-            // case runs the leaf natively. The deny itself is the same ForceFail pair below.
-            if (leafCat == APMF_API::kCombatActionCat_Pursuit) {
-                float dS = 0.0f, dT = 0.0f, r = 0.0f;
-                if (!PursuitDenies(a_control, actorFid, caClaim, dS, dT, r))
-                    return orig(a_this, a_control);
-                if (pIdx < kPursuitN) g_pDenyAct[pIdx].fetch_add(1, std::memory_order_relaxed);
-                LogPursuitDeny(actorFid, false, pIdx, dS, dT, r);
-            }
 
             const auto denyAct = g_forceFailAct.load(std::memory_order_relaxed);
             if (!denyAct) return orig(a_this, a_control);   // deny mechanism unresolved -- degrade, never crash
@@ -703,8 +724,31 @@ namespace apmf::actiongate {
             reinterpret_cast<Pop_t>(oit->second)(a_this, a_control);
         }
 
-        // ch.7 PURSUIT, the update() half (slot 0x04, the ten pursuit leaves only). A pursuit
-        // leaf that is ALREADY RUNNING when the leash starts to hold -- it began inside the
+        void* LeashAct(void* a_this, void* a_control, apmf::cbt::Act_t a_orig, std::size_t a_idx) {
+            // RULE C anchor (principle 5): every leash-leaf act(), any actor. One relaxed increment.
+            g_pSeen[a_idx].fetch_add(1, std::memory_order_relaxed);
+            if (g_leashCount.load(std::memory_order_relaxed) == 0 || apmf::ControlMap::Get().ControlledCount() == 0)
+                return a_orig(a_this, a_control);
+            const RE::FormID actorFid = ResolveDeliberatingActor(a_control);
+            if (actorFid == 0) return a_orig(a_this, a_control);   // unresolvable -- passthrough (#17)
+            APMF_API::APMF_Param claim{};
+            if (!apmf::ControlMap::Get().TryGetOwningClaim(actorFid, APMF_API::kIntent_PursuitLeash, claim))
+                return a_orig(a_this, a_control);                  // not leashed -- the leaf runs natively
+            float dS = 0.0f, dG = 0.0f, r = 0.0f;
+            if (!PursuitDenies(a_control, actorFid, claim, g_leashLeaves[a_idx].goal, dS, dG, r))
+                return a_orig(a_this, a_control);
+            const auto denyAct = g_forceFailAct.load(std::memory_order_relaxed);
+            if (!denyAct) return a_orig(a_this, a_control);        // unreachable: the leash never arms without it
+            g_pDenyAct[a_idx].fetch_add(1, std::memory_order_relaxed);
+            LogPursuitDeny(actorFid, false, a_idx, dS, dG, r);
+            // The ForceFail PAIR, exactly as ch.7's ActThunk does it (see there).
+            t_pending = PendingPop{ a_this, a_control };
+            reinterpret_cast<apmf::cbt::Act_t>(denyAct)(a_this, a_control);
+            return a_control;
+        }
+
+        // ch.23, the update() half (slot 0x04, the 14 leash leaves only). A leash leaf
+        // that is ALREADY RUNNING when the leash starts to hold -- it began inside the
         // radius and has since carried the actor out -- is ended through the engine's own
         // leaf-failure exit: SetFailed(thread, 1) + Ascend(thread), exactly what the leaf's
         // own update does when its path fails (core/CombatBehaviorRE.h). The runner then
@@ -722,24 +766,27 @@ namespace apmf::actiongate {
             if (!g_pursuitArmed.load(std::memory_order_relaxed) || g_leashCount.load(std::memory_order_relaxed) == 0 ||
                 apmf::ControlMap::Get().ControlledCount() == 0)
                 return orig(a_this, a_control);
+            const auto pit = g_pursuitIdx.find(vt);
+            if (pit == g_pursuitIdx.end()) return orig(a_this, a_control);
+            const std::size_t idx = pit->second;
 
             RE::NiPointer<RE::Actor> self;
             if (!ResolveController(a_control, self) || !self) return orig(a_this, a_control);
             const RE::FormID     fid = self->GetFormID();
             APMF_API::APMF_Param claim{};
-            if (!apmf::ControlMap::Get().TryGetOwningClaim(fid, APMF_API::kIntent_CombatAction, claim) ||
-                (static_cast<std::uint32_t>(claim.ival) & APMF_API::kCombatActionCat_Pursuit) == 0)
+            if (!apmf::ControlMap::Get().TryGetOwningClaim(fid, APMF_API::kIntent_PursuitLeash, claim))
                 return orig(a_this, a_control);   // this actor is not leashed -- the leaf runs natively
 
-            float dS = 0.0f, dT = 0.0f, r = 0.0f;
-            if (!PursuitDenies(a_control, fid, claim, dS, dT, r)) return orig(a_this, a_control);
+            float dS = 0.0f, dG = 0.0f, r = 0.0f;
+            if (!PursuitDenies(a_control, fid, claim, g_leashLeaves[idx].goal, dS, dG, r))
+                return orig(a_this, a_control);
 
             const auto thread = reinterpret_cast<std::uintptr_t>(a_control);
             if (*reinterpret_cast<void* const*>(thread + apmf::cbt::kThreadCurNode) != a_this ||
                 *reinterpret_cast<const std::uint32_t*>(thread + apmf::cbt::kThreadPhase) != 1) {
                 g_pUpdAnomaly.fetch_add(1, std::memory_order_relaxed);
                 if (!g_pUpdAnomalyLogged.exchange(true))
-                    spdlog::warn("[ch.7] pursuit update() ANOMALY: the node is not the thread's cur_node in phase 1 "
+                    spdlog::warn("[ch.23] leash update() ANOMALY: the node is not the thread's cur_node in phase 1 "
                                  "-- the leaf was NOT ended, it ran natively. Counted in the heartbeat; if this "
                                  "recurs the runner protocol in core/CombatBehaviorRE.h needs re-measuring.");
                 return orig(a_this, a_control);
@@ -747,13 +794,8 @@ namespace apmf::actiongate {
 
             reinterpret_cast<apmf::cbt::SetFailed_t>(g_setFailed.load(std::memory_order_relaxed))(a_control, true);
             reinterpret_cast<apmf::cbt::Ascend_t>(g_ascend.load(std::memory_order_relaxed))(a_control);
-
-            std::size_t idx = kPursuitN;
-            if (const auto pit = g_pursuitIdx.find(vt); pit != g_pursuitIdx.end()) {
-                idx = pit->second;
-                g_pEndUpd[idx].fetch_add(1, std::memory_order_relaxed);
-            }
-            LogPursuitDeny(fid, true, idx, dS, dT, r);
+            g_pEndUpd[idx].fetch_add(1, std::memory_order_relaxed);
+            LogPursuitDeny(fid, true, idx, dS, dG, r);
         }
 
         // A vtable is deniable only when BOTH halves of the pair were installed on
@@ -848,16 +890,18 @@ namespace apmf::actiongate {
                      "actor; every other leaf is never looked up and never denied.", n, n, nPop, classified);
 
         // ================================================================
-        // ch.7 PURSUIT (ABI v16) -- the in-combat leash. Arms ONLY when every half is there:
-        // the INI switch, the ForceFail pair (the act() half), the verified SetFailed + Ascend
-        // rows (the update() half's engine calls), and act + pop + update installed on ALL ten
-        // pursuit vtables. Anything less is refused whole and logged: a leash that denies a
-        // leaf's start but lets a running chase continue is exactly the partial deny #18 forbids.
+        // ch.23 PURSUIT LEASH (ABI v16). Arms ONLY when every half is there: the INI switch,
+        // the ForceFail pair (the act() half), the verified SetFailed + Ascend rows (the
+        // update() half's engine calls), and act + pop + update installed on ALL 14 leash
+        // vtables (the ten pursuit leaves already carry ch.7's act/pop; the four search leaves
+        // get theirs here, same thunks, same maps). Anything less is refused whole and logged:
+        // a leash that denies a leaf's start but lets a running chase continue is exactly the
+        // partial deny #18 forbids.
         // ================================================================
         {
             const char* why = nullptr;
-            if (GetPrivateProfileIntA("CombatAction", "bPursuitDeny", 1, "Data/SKSE/Plugins/APMF.ini") == 0) {
-                why = "[CombatAction] bPursuitDeny=0 in APMF.ini";
+            if (GetPrivateProfileIntA("PursuitLeash", "bPursuitLeash", 1, "Data/SKSE/Plugins/APMF.ini") == 0) {
+                why = "[PursuitLeash] bPursuitLeash=0 in APMF.ini";
             } else if (!g_forceFailAct.load(std::memory_order_relaxed) ||
                        !g_forceFailPop.load(std::memory_order_relaxed)) {
                 why = "the ForceFail act()/pop() pair did not resolve (the act() half of the leash)";
@@ -869,40 +913,52 @@ namespace apmf::actiongate {
                 if (!sfOk || !asOk) {
                     why = "the address self-check refused SetFailed / Ascend (the update() half of the leash)";
                 } else {
-                    std::array<REL::VariantID, kPursuitN> pvt{};
-                    bool                                   allNamed = true;
-                    for (std::size_t p = 0; p < kPursuitN; ++p) {
+                    bool allNamed = true;
+                    for (std::size_t p = 0; p < kPursuitLeafNames.size(); ++p) {
                         bool found = false;
                         for (const auto& leaf : apmf::cbt::kLeaves) {
                             if (std::string_view(leaf.name) != kPursuitLeafNames[p]) continue;
-                            pvt[p] = leaf.vtbl;
-                            found  = true;
+                            g_leashLeaves[p] = LeashLeaf{ leaf.name, leaf.vtbl, Goal::kTarget };
+                            found            = true;
                             break;
                         }
                         if (!found) {
                             allNamed = false;
-                            spdlog::warn("[ch.7] pursuit leaf '{}' has no entry in the 70-leaf catalog.",
+                            spdlog::warn("[ch.23] pursuit leaf '{}' has no entry in the 70-leaf catalog.",
                                          kPursuitLeafNames[p]);
                         }
+                    }
+                    for (std::size_t k = 0; k < apmf::cbt::kSearchLeaves.size(); ++k) {
+                        const auto& leaf = apmf::cbt::kSearchLeaves[k];
+                        g_leashLeaves[kPursuitLeafNames.size() + k] = LeashLeaf{ leaf.name, leaf.vtbl, Goal::kSearchCentre };
                     }
                     if (!allNamed) {
                         why = "a pursuit leaf is missing from the leaf catalog";
                     } else {
-                        const int nUpd = allowance::InstallOnVtables(pvt, 0x04, &UpdateThunk, expectedTD.get(),
-                                                                     "ch.7-pursuit-update", g_origUpdate);
+                        std::array<REL::VariantID, kPursuitN>                  pvt{};
+                        std::array<REL::VariantID, apmf::cbt::kSearchLeaves.size()> svt{};
+                        for (std::size_t p = 0; p < kPursuitN; ++p) pvt[p] = g_leashLeaves[p].vtbl;
+                        for (std::size_t k = 0; k < svt.size(); ++k) svt[k] = apmf::cbt::kSearchLeaves[k].vtbl;
+                        const int nSAct = allowance::InstallOnVtables(svt, 0x02, &ActThunk, expectedTD.get(),
+                                                                      "ch.23-search", g_orig);
+                        const int nSPop = allowance::InstallOnVtables(svt, 0x03, &PopThunk, expectedTD.get(),
+                                                                      "ch.23-search-pop", g_origPop);
+                        const int nUpd  = allowance::InstallOnVtables(pvt, 0x04, &UpdateThunk, expectedTD.get(),
+                                                                      "ch.23-update", g_origUpdate);
                         std::size_t armed = 0;
                         for (std::size_t p = 0; p < kPursuitN; ++p) {
                             REL::Relocation<std::uintptr_t> vt{ pvt[p] };
-                            if (Paired(vt.address()) && g_origUpdate.contains(vt.address())) ++armed;
+                            if (Paired(vt.address()) && g_origUpdate.contains(vt.address()) &&
+                                !g_category.contains(vt.address()))   // never a ch.7-classified leaf
+                                ++armed;
                         }
                         if (armed != kPursuitN) {
-                            why = "act + pop + update did not all install on every pursuit leaf";
-                            spdlog::warn("[ch.7] pursuit: {} of {} leaves have act+pop+update ({} update hook(s) "
-                                         "installed) -- refusing the WHOLE category.", armed, kPursuitN, nUpd);
+                            why = "act + pop + update did not all install on every leash leaf";
+                            spdlog::warn("[ch.23] leash: {} of {} leaves have act+pop+update (search act {} / pop {}, "
+                                         "update {}) -- refusing the WHOLE leash.", armed, kPursuitN, nSAct, nSPop, nUpd);
                         } else {
                             for (std::size_t p = 0; p < kPursuitN; ++p) {
                                 REL::Relocation<std::uintptr_t> vt{ pvt[p] };
-                                g_category[vt.address()] |= APMF_API::kCombatActionCat_Pursuit;
                                 g_pursuitIdx[vt.address()] = p;
                             }
                             g_setFailed.store(setFailed.address(), std::memory_order_relaxed);
@@ -913,16 +969,17 @@ namespace apmf::actiongate {
             }
             if (why) {
                 g_pursuitNotArmedWhy.store(why, std::memory_order_release);
-                spdlog::warn("[ch.7] PURSUIT leash NOT armed: {}. A kIntent_CombatAction request with "
-                             "kCombatActionCat_Pursuit is refused at the call; every other category works.", why);
+                spdlog::warn("[ch.23] PURSUIT LEASH NOT armed: {}. Every kIntent_PursuitLeash request is refused at "
+                             "the call; ch.7 is unaffected.", why);
             } else {
                 g_pursuitNotArmedWhy.store(nullptr, std::memory_order_release);
                 g_pursuitArmed.store(true, std::memory_order_release);
-                spdlog::info("[ch.7] PURSUIT leash armed on {} leaves (act+pop deny pair, update() ended through "
-                             "SetFailed+Ascend): Advance, Chase, FindAttackLocation, Flank, FlankDistant, "
-                             "MaintainOptimalRange, PursueTarget, Reposition, Stalk, Surround. A kIntent_CombatAction "
-                             "claim with kCombatActionCat_Pursuit, an anchor (param.target) and a radius (param.fval) "
-                             "denies them only while the move would take the actor farther from the anchor.",
+                spdlog::info("[ch.23] PURSUIT LEASH armed on {} leaves (act+pop deny pair, update() ended through "
+                             "SetFailed+Ascend). Goal = the combat target: Advance, Chase, FindAttackLocation, Flank, "
+                             "FlankDistant, MaintainOptimalRange, PursueTarget, Reposition, Stalk, Surround. Goal = the "
+                             "group's search centre: Search, SearchCenter, SearchLocation, SearchWander. A "
+                             "kIntent_PursuitLeash claim (anchor = param.target, radius = param.fval) denies them only "
+                             "while the move would take the actor farther from the anchor.",
                              kPursuitN);
             }
         }
@@ -982,7 +1039,7 @@ namespace apmf::actiongate {
         spdlog::info("[pfp] mvcbt H stage=MC2-ch1 hits={}", g_mvcbtCh1Hits.load(std::memory_order_relaxed));
     }
 
-    // ---- ch.7 PURSUIT (ABI v16): the leash table, written on the game thread only ----
+    // ---- ch.23 PURSUIT LEASH (ABI v16): the leash table, written on the game thread only ----
 
     bool PursuitArmed() { return g_pursuitArmed.load(std::memory_order_acquire); }
 
@@ -992,10 +1049,6 @@ namespace apmf::actiongate {
     }
 
     void SetLeash(RE::FormID a_id, const APMF_API::APMF_Param& a_param) {
-        if ((static_cast<std::uint32_t>(a_param.ival) & APMF_API::kCombatActionCat_Pursuit) == 0) {
-            ClearLeash(a_id);   // this winning claim names no pursuit deny: nothing to leash
-            return;
-        }
         const char*     why = nullptr;
         RE::ActorHandle h{};
         if (!g_pursuitArmed.load(std::memory_order_acquire)) {
@@ -1016,8 +1069,8 @@ namespace apmf::actiongate {
         }
         if (why) {
             ClearLeash(a_id);
-            spdlog::warn("[ch.7] 0x{} pursuit leash NOT set: {}. The claim's pursuit bit denies nothing; its other "
-                         "categories are unaffected. Repoint with a valid anchor + radius to arm it.",
+            spdlog::warn("[ch.23] 0x{} pursuit leash NOT set: {}. The claim stands and denies nothing. Repoint "
+                         "with a valid anchor + radius to arm it.",
                          apmf::log::Hex(a_id), why);
             return;
         }
@@ -1026,8 +1079,8 @@ namespace apmf::actiongate {
             g_leash[a_id] = Leash{ a_param.target, h, a_param.fval };
             g_leashCount.store(g_leash.size(), std::memory_order_relaxed);
         }
-        spdlog::info("[ch.7] 0x{} pursuit LEASH set: anchor 0x{}, radius {:.0f}. While the actor is farther than "
-                     "the radius from the anchor, a pursuit leaf whose target is farther still is denied at act() "
+        spdlog::info("[ch.23] 0x{} pursuit LEASH set: anchor 0x{}, radius {:.0f}. While the actor is farther than "
+                     "the radius from the anchor, a leash leaf whose goal is farther still is denied at act() "
                      "and ended at update(); every other leaf and every other move runs natively.",
                      apmf::log::Hex(a_id), apmf::log::Hex(a_param.target), a_param.fval);
     }
@@ -1043,7 +1096,7 @@ namespace apmf::actiongate {
             std::scoped_lock lk(g_pLogMx);
             g_pLastLogMs.erase(a_id);
         }
-        if (erased) spdlog::info("[ch.7] 0x{} pursuit leash cleared.", apmf::log::Hex(a_id));
+        if (erased) spdlog::info("[ch.23] 0x{} pursuit leash cleared.", apmf::log::Hex(a_id));
     }
 
     void ResetLeash(const char* a_why) {
@@ -1058,7 +1111,7 @@ namespace apmf::actiongate {
             std::scoped_lock lk(g_pLogMx);
             g_pLastLogMs.clear();
         }
-        if (n != 0) spdlog::info("[ch.7] {} -- dropped {} pursuit leash entr{}.", a_why, n, n == 1 ? "y" : "ies");
+        if (n != 0) spdlog::info("[ch.23] {} -- dropped {} pursuit leash entr{}.", a_why, n, n == 1 ? "y" : "ies");
     }
 
     void PursuitHeartbeat() {
@@ -1073,15 +1126,15 @@ namespace apmf::actiongate {
 
         std::string perLeaf;
         for (std::size_t p = 0; p < kPursuitN; ++p) {
-            std::string_view name = kPursuitLeafNames[p];
+            std::string_view name = g_leashLeaves[p].name ? g_leashLeaves[p].name : "?";
             if (name.starts_with("CombatBehavior")) name.remove_prefix(14);
             perLeaf += fmt::format(" {}={}/{}/{}", name, g_pSeen[p].load(std::memory_order_relaxed),
                                    g_pDenyAct[p].load(std::memory_order_relaxed),
                                    g_pEndUpd[p].load(std::memory_order_relaxed));
         }
-        spdlog::info("[ch.7] pursuit H leashes={} leaf=seen/denied-at-act/ended-at-update:{}",
+        spdlog::info("[ch.23] pursuit H leashes={} leaf=seen/denied-at-act/ended-at-update:{}",
                      g_leashCount.load(std::memory_order_relaxed), perLeaf);
-        spdlog::info("[ch.7] pursuit H pass inside={} closer={} no-anchor={} other-space={} no-target={} stale={} "
+        spdlog::info("[ch.23] pursuit H pass inside={} closer={} no-anchor={} other-space={} no-goal={} stale={} "
                      "update-anomaly={}",
                      g_pPassInside.load(std::memory_order_relaxed), g_pPassCloser.load(std::memory_order_relaxed),
                      g_pPassNoAnchor.load(std::memory_order_relaxed), g_pPassOtherSpace.load(std::memory_order_relaxed),

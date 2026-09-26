@@ -66,7 +66,7 @@ namespace apmf {
         // core/ActionGate.cpp's PFP section.
         apmf::actiongate::PfpHeartbeat();
 
-        // ch.7 PURSUIT leash heartbeat (ABI v16), same RULE C shape: every ~30 s while any
+        // ch.23 PURSUIT LEASH heartbeat (ABI v16), same RULE C shape: every ~30 s while any
         // leash is set, zeros included; one relaxed load when none is.
         apmf::actiongate::PursuitHeartbeat();
 

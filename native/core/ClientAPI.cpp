@@ -220,9 +220,8 @@ namespace {
     // v10: the object stays an APMF_API_v12 and `abiVersion` reports 13. ABI v14 (ch.21
     // kIntent_CombatEntry) adds NO slot either: still an APMF_API_v12, `abiVersion` 14.
     // ABI v15 (ch.22 kIntent_CombatReentryDeny) adds NO slot either: still an APMF_API_v12,
-    // `abiVersion` 15. ABI v16 (ch.7 kCombatActionCat_Pursuit, a category bit reading the
-    // existing param.target / param.fval) adds NO slot either: still an APMF_API_v12,
-    // `abiVersion` 16.
+    // `abiVersion` 15. ABI v16 (ch.23 kIntent_PursuitLeash, reading the existing
+    // param.target / param.fval) adds NO slot either: still an APMF_API_v12, `abiVersion` 16.
     // ABI v11 layout proof (review F8d): the two query slots start exactly where the
     // v9 prefix ends, so a v1..v10 client reading its own prefix never overlaps them.
     // offsetof on a derived struct is conditionally-supported; MSVC (the only compiler

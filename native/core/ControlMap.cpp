@@ -11,7 +11,7 @@
 #include "channels/TargetPin.h"  // ch.20 Installed()/NotInstalledReason() for the synchronous refusal
 #include "channels/CombatEntry.h"  // ch.21 Installed()/NotInstalledReason() for the synchronous refusal
 #include "channels/CombatReentryDeny.h"  // ch.22 Installed()/NotInstalledReason() for the synchronous refusal
-#include "core/ActionGate.h"  // ch.7 pursuit (ABI v16) PursuitArmed()/PursuitNotArmedReason() for the synchronous refusal
+#include "core/ActionGate.h"  // ch.23 pursuit leash (ABI v16) PursuitArmed()/PursuitNotArmedReason() for the synchronous refusal
 #include "core/PositionCast.h"  // ABI v11 position cast: poscast::Enqueue (one-shot, never a claim); MarkersSupported (ch.19)
 
 #include <cmath>
@@ -214,22 +214,19 @@ namespace apmf {
             }
         }
 
-        // ch.7 PURSUIT (ABI v16): a kIntent_CombatAction request whose ival carries
-        // kCombatActionCat_Pursuit is REFUSED synchronously when the leash is not armed (VR,
-        // a runtime other than 1.6.1170 / 1.5.97, [CombatAction] bPursuitDeny=0, a self-check
-        // refusal, before kDataLoaded), when it names no anchor (param.target 0) or the actor
-        // itself as the anchor, when the radius (param.fval) is not a positive number, and for
-        // the player (who runs no combat behaviour tree). Same "seat down = claim refused"
-        // contract as ch.20 / ch.22. Whether param.target is a loaded Actor needs a form lookup
-        // and is decided at Engage (core/ActionGate.cpp SetLeash) and logged there. A request
-        // WITHOUT the Pursuit bit is untouched: every pre-v16 ch.7 claim behaves as before.
-        if (intent == APMF_API::kIntent_CombatAction && param &&
-            (static_cast<std::uint32_t>(param->ival) & APMF_API::kCombatActionCat_Pursuit) != 0) {
+        // ch.23 (ABI v16): a kIntent_PursuitLeash claim is REFUSED synchronously when the leash
+        // is not armed (VR, a runtime other than 1.6.1170 / 1.5.97, [PursuitLeash] bPursuitLeash=0,
+        // a self-check refusal, before kDataLoaded), when it names no anchor (param.target 0) or
+        // the actor itself as the anchor, when the radius (param.fval) is not a positive number,
+        // and for the player (who runs no combat behaviour tree). Same "seat down = claim refused"
+        // contract as ch.20 / ch.22. Whether param.target is a loaded Actor needs a form lookup and
+        // is decided at Engage (core/ActionGate.cpp SetLeash) and logged there.
+        if (intent == APMF_API::kIntent_PursuitLeash) {
             const char* why = nullptr;
             if (!apmf::actiongate::PursuitArmed())
                 why = apmf::actiongate::PursuitNotArmedReason();
-            else if (param->target == 0)
-                why = "no anchor (param.target is 0) -- kCombatActionCat_Pursuit REQUIRES param.target = the anchor actor";
+            else if (!param || param->target == 0)
+                why = "no anchor (param.target is 0) -- kIntent_PursuitLeash REQUIRES param.target = the anchor actor";
             else if (param->target == actor)
                 why = "the anchor is the actor itself";
             else if (!std::isfinite(param->fval) || !(param->fval > 0.0f))
@@ -237,8 +234,7 @@ namespace apmf {
             else if (actor == 0x14)
                 why = "the actor is the player (the pursuit leash is for NPCs)";
             if (why) {
-                spdlog::warn("[apmf][combat-action] pursuit claim refused -- actor 0x{}: {}.", apmf::log::Hex(actor),
-                             why);
+                spdlog::warn("[apmf][pursuit-leash] claim refused -- actor 0x{}: {}.", apmf::log::Hex(actor), why);
                 return APMF_API::kInvalidHandle;
             }
         }

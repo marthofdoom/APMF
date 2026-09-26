@@ -86,7 +86,7 @@ namespace {
         apmf::combatentry::ResetAll("revert/new game");
         // ch.22: same, for the re-entry deny entries of the outgoing world.
         apmf::reentrydeny::ResetAll("revert/new game");
-        // ch.7 pursuit (ABI v16): same, for the leash entries (anchor handles of the outgoing world).
+        // ch.23 pursuit leash (ABI v16): same, for the leash entries (anchor handles of the outgoing world).
         apmf::actiongate::ResetLeash("revert/new game");
         // ABI v11 position cast: forget any marker still waiting for its one-frame
         // delete (its Retire task is dropped by the Discard below). The references
@@ -237,7 +237,7 @@ namespace {
             apmf::combatentry::ResetAll("kPreLoadGame");
             // ch.22: same -- no re-entry deny crosses the load.
             apmf::reentrydeny::ResetAll("kPreLoadGame");
-            // ch.7 pursuit (ABI v16): same -- no leash entry crosses the load.
+            // ch.23 pursuit leash (ABI v16): same -- no leash entry crosses the load.
             apmf::actiongate::ResetLeash("kPreLoadGame");
             // ABI v11 position cast: same as the revert path -- forget, never touch.
             apmf::poscast::ResetAll("kPreLoadGame");

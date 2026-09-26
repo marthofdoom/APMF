@@ -1,7 +1,6 @@
 #include "PCH.h"
 #include "core/Log.h"
 #include "core/Registry.h"
-#include "core/ActionGate.h"
 
 // ============================================================================
 // Channel 7 -- COMBAT ACTIONS. Arbitration + claim lifecycle ONLY here; the
@@ -16,13 +15,7 @@
 // the winning claim's actor; everything else (movement, block, dodge, cover,
 // search, the selector nodes, ...) keeps firing natively -- this channel
 // itself makes NO engine write, exactly like ch.8/ch.6/ch.14's arbitration-
-// only shape. Engage/OnOwnerChanged/Release log the claim lifecycle and (ABI
-// v16) hand the winning claim's pursuit LEASH -- anchor = param.target, radius =
-// param.fval, read only when ival carries kCombatActionCat_Pursuit -- to
-// ActionGate's leash table on the game thread (SetLeash / ClearLeash). The leash
-// ends with the claim: Release, a save load or new game (plugin.cpp ResetLeash),
-// or the actor unloading; an owner that dies runs no combat tree, so nothing is
-// denied for it (and the seats never deny for a dead or missing anchor).
+// only shape. Engage/OnOwnerChanged/Release only log the claim lifecycle.
 // ============================================================================
 
 namespace {
@@ -45,18 +38,15 @@ namespace {
             spdlog::info("[ch.7] 0x{} combat-action facet CLAIMED (deny mask 0x{}). Arbitration only -- "
                          "core/ActionGate.cpp's T1 leaf hook is what actually denies the named categories.",
                          apmf::log::Hex(id), apmf::log::Hex(static_cast<std::uint32_t>(param.ival), 2));
-            apmf::actiongate::SetLeash(id, param);   // ABI v16: no Pursuit bit -> clears (no-op)
         }
 
         void OnOwnerChanged(RE::FormID id, RE::Actor* /*actor*/, const APMF_API::APMF_Param& param) override {
             spdlog::info("[ch.7] 0x{} combat-action claim RE-POINTED (deny mask 0x{}).",
                          apmf::log::Hex(id), apmf::log::Hex(static_cast<std::uint32_t>(param.ival), 2));
-            apmf::actiongate::SetLeash(id, param);   // the new winner's leash (or none)
         }
 
         void Release(RE::FormID id, RE::Actor* /*actor*/) override {
             spdlog::info("[ch.7] 0x{} combat-action facet released.", apmf::log::Hex(id));
-            apmf::actiongate::ClearLeash(id);
         }
     };
 

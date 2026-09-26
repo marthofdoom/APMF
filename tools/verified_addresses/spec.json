@@ -958,7 +958,7 @@
     "0x03",
     "0x04"
    ],
-   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp; 0x04 = ch.7 pursuit update() seat (ActionGate.cpp UpdateThunk, ABI v16)",
+   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp; 0x04 = ch.23 pursuit-leash update() seat (ActionGate.cpp UpdateThunk, ABI v16)",
    "doc": "ADDRESS-TABLE-2026-09-15.md:289"
   },
   {
@@ -1146,7 +1146,7 @@
     "0x03",
     "0x04"
    ],
-   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp; 0x04 = ch.7 pursuit update() seat (ActionGate.cpp UpdateThunk, ABI v16)",
+   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp; 0x04 = ch.23 pursuit-leash update() seat (ActionGate.cpp UpdateThunk, ABI v16)",
    "doc": "ADDRESS-TABLE-2026-09-15.md:300"
   },
   {
@@ -1504,7 +1504,7 @@
     "0x03",
     "0x04"
    ],
-   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp; 0x04 = ch.7 pursuit update() seat (ActionGate.cpp UpdateThunk, ABI v16)",
+   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp; 0x04 = ch.23 pursuit-leash update() seat (ActionGate.cpp UpdateThunk, ABI v16)",
    "doc": "ADDRESS-TABLE-2026-09-15.md:321"
   },
   {
@@ -1573,7 +1573,7 @@
     "0x03",
     "0x04"
    ],
-   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp; 0x04 = ch.7 pursuit update() seat (ActionGate.cpp UpdateThunk, ABI v16)",
+   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp; 0x04 = ch.23 pursuit-leash update() seat (ActionGate.cpp UpdateThunk, ABI v16)",
    "doc": "ADDRESS-TABLE-2026-09-15.md:325"
   },
   {
@@ -1591,7 +1591,7 @@
     "0x03",
     "0x04"
    ],
-   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp; 0x04 = ch.7 pursuit update() seat (ActionGate.cpp UpdateThunk, ABI v16)",
+   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp; 0x04 = ch.23 pursuit-leash update() seat (ActionGate.cpp UpdateThunk, ABI v16)",
    "doc": "ADDRESS-TABLE-2026-09-15.md:326"
   },
   {
@@ -1796,7 +1796,7 @@
     "0x03",
     "0x04"
    ],
-   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp; 0x04 = ch.7 pursuit update() seat (ActionGate.cpp UpdateThunk, ABI v16)",
+   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp; 0x04 = ch.23 pursuit-leash update() seat (ActionGate.cpp UpdateThunk, ABI v16)",
    "doc": "ADDRESS-TABLE-2026-09-15.md:338"
   },
   {
@@ -1916,7 +1916,7 @@
     "0x03",
     "0x04"
    ],
-   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp; 0x04 = ch.7 pursuit update() seat (ActionGate.cpp UpdateThunk, ABI v16)",
+   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp; 0x04 = ch.23 pursuit-leash update() seat (ActionGate.cpp UpdateThunk, ABI v16)",
    "doc": "ADDRESS-TABLE-2026-09-15.md:345"
   },
   {
@@ -1968,7 +1968,7 @@
     "0x03",
     "0x04"
    ],
-   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp; 0x04 = ch.7 pursuit update() seat (ActionGate.cpp UpdateThunk, ABI v16)",
+   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp; 0x04 = ch.23 pursuit-leash update() seat (ActionGate.cpp UpdateThunk, ABI v16)",
    "doc": "ADDRESS-TABLE-2026-09-15.md:348"
   },
   {
@@ -2054,7 +2054,7 @@
     "0x03",
     "0x04"
    ],
-   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp; 0x04 = ch.7 pursuit update() seat (ActionGate.cpp UpdateThunk, ABI v16)",
+   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp; 0x04 = ch.23 pursuit-leash update() seat (ActionGate.cpp UpdateThunk, ABI v16)",
    "doc": "ADDRESS-TABLE-2026-09-15.md:353"
   },
   {
@@ -2089,7 +2089,7 @@
     "0x03",
     "0x04"
    ],
-   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp; 0x04 = ch.7 pursuit update() seat (ActionGate.cpp UpdateThunk, ABI v16)",
+   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp; 0x04 = ch.23 pursuit-leash update() seat (ActionGate.cpp UpdateThunk, ABI v16)",
    "doc": "ADDRESS-TABLE-2026-09-15.md:355"
   },
   {
@@ -2142,6 +2142,78 @@
    ],
    "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
    "doc": "ADDRESS-TABLE-2026-09-15.md:358"
+  },
+  {
+   "seat": "Leaf.CombatBehaviorSearch",
+   "kind": "vtable",
+   "construct": "apmf::cbt::kSearchLeaves[\"CombatBehaviorSearch\"]",
+   "rtti": ".?AV?$CombatBehaviorTreeNodeObject1@VCombatBehaviorSearch@@W4COMBAT_SEARCH_PRIORITY@@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 214189,
+    "1.5.97": 267082
+   },
+   "slots": [
+    "0x02",
+    "0x03",
+    "0x04"
+   ],
+   "source": "native/core/CombatBehaviorRE.h (kSearchLeaves); ActionGate.cpp ch.23 pursuit leash (act/pop/update)",
+   "doc": "MIT fork Offsets_VTABLE.h:3822 (VTABLE_CombatBehaviorTreeNodeObject1_CombatBehaviorSearch_COMBAT_SEARCH_PRIORITY_)"
+  },
+  {
+   "seat": "Leaf.CombatBehaviorSearchCenter",
+   "kind": "vtable",
+   "construct": "apmf::cbt::kSearchLeaves[\"CombatBehaviorSearchCenter\"]",
+   "rtti": ".?AV?$CombatBehaviorTreeNodeObject1@VCombatBehaviorSearchCenter@@W4COMBAT_SEARCH_PRIORITY@@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 214215,
+    "1.5.97": 267084
+   },
+   "slots": [
+    "0x02",
+    "0x03",
+    "0x04"
+   ],
+   "source": "native/core/CombatBehaviorRE.h (kSearchLeaves); ActionGate.cpp ch.23 pursuit leash (act/pop/update)",
+   "doc": "MIT fork Offsets_VTABLE.h:3826 (VTABLE_CombatBehaviorTreeNodeObject1_CombatBehaviorSearchCenter_COMBAT_SEARCH_PRIORITY_)"
+  },
+  {
+   "seat": "Leaf.CombatBehaviorSearchLocation",
+   "kind": "vtable",
+   "construct": "apmf::cbt::kSearchLeaves[\"CombatBehaviorSearchLocation\"]",
+   "rtti": ".?AV?$CombatBehaviorTreeNodeObject1@VCombatBehaviorSearchLocation@@W4COMBAT_SEARCH_PRIORITY@@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 214176,
+    "1.5.97": 267081
+   },
+   "slots": [
+    "0x02",
+    "0x03",
+    "0x04"
+   ],
+   "source": "native/core/CombatBehaviorRE.h (kSearchLeaves); ActionGate.cpp ch.23 pursuit leash (act/pop/update)",
+   "doc": "MIT fork Offsets_VTABLE.h:3820 (VTABLE_CombatBehaviorTreeNodeObject1_CombatBehaviorSearchLocation_COMBAT_SEARCH_PRIORITY_)"
+  },
+  {
+   "seat": "Leaf.CombatBehaviorSearchWander",
+   "kind": "vtable",
+   "construct": "apmf::cbt::kSearchLeaves[\"CombatBehaviorSearchWander\"]",
+   "rtti": ".?AV?$CombatBehaviorTreeNodeObject1@VCombatBehaviorSearchWander@@W4COMBAT_SEARCH_PRIORITY@@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 214202,
+    "1.5.97": 267083
+   },
+   "slots": [
+    "0x02",
+    "0x03",
+    "0x04"
+   ],
+   "source": "native/core/CombatBehaviorRE.h (kSearchLeaves); ActionGate.cpp ch.23 pursuit leash (act/pop/update)",
+   "doc": "MIT fork Offsets_VTABLE.h:3824 (VTABLE_CombatBehaviorTreeNodeObject1_CombatBehaviorSearchWander_COMBAT_SEARCH_PRIORITY_)"
   },
   {
    "seat": "RTTI.MagicCaster",
@@ -2281,7 +2353,7 @@
     "1.6.1170": "83 B9 48 01 00 00 01 77 09 0F B6 C2 89 81 48 01 00 00",
     "1.5.97": "83 B9 48 01 00 00 01 77 0D 33 C0 84 D2 0F 95 C0"
    },
-   "source": "native/core/ActionGate.cpp (Install, ch.7 pursuit update() half)",
+   "source": "native/core/ActionGate.cpp (Install, ch.23 pursuit-leash update() half)",
    "doc": "CombatBehaviorThread::SetFailed(thread, bool): state +0x148 := failed if <= 1 (core/CombatBehaviorRE.h)"
   },
   {
@@ -2296,7 +2368,7 @@
     "1.6.1170": "48 8B 81 38 01 00 00 48 85 C0 74 15 48 8B 40 10",
     "1.5.97": "48 8B 81 38 01 00 00 48 85 C0 74 15 48 8B 40 10"
    },
-   "source": "native/core/ActionGate.cpp (Install, ch.7 pursuit update() half)",
+   "source": "native/core/ActionGate.cpp (Install, ch.23 pursuit-leash update() half)",
    "doc": "CombatBehaviorThread::Ascend(thread): cur_node +0x138 := parent, phase +0x14C := 0 (core/CombatBehaviorRE.h)"
   },
   {
