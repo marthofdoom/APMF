@@ -1600,11 +1600,12 @@ Without the pursuit bit, `target` and `fval` are not read and ch.7 behaves exact
 ### When a claim is refused
 
 * **At the call (`kInvalidHandle`, logged `[apmf][combat-action] pursuit claim refused`):** the
-  leash is not armed (Harbinger older than v16 does not refuse; it accepts and ignores the bit, so
-  check `abiVersion` first; VR; a runtime other than exactly 1.6.1170 or 1.5.97; `[CombatAction]
-  bPursuitDeny=0` in `APMF.ini`; the address self-check refused a leaf or the engine's
-  SetFailed / Ascend; before kDataLoaded), no anchor, the NPC as its own anchor, a radius that is not
-  a positive number, or the NPC is the player.
+  leash is not armed (VR, a runtime other than exactly 1.6.1170 or 1.5.97, `[CombatAction]
+  bPursuitDeny=0` in `APMF.ini`, the address self-check refused a leaf or the engine's
+  SetFailed / Ascend, or before kDataLoaded), no anchor, the NPC as its own anchor, a radius that is
+  not a positive number, or the NPC is the player.
+* **Not refused, and not leashed:** a Harbinger older than v16 accepts the claim and ignores the
+  bit. That is why you check `abiVersion >= 16` before setting it.
 * **At Engage (the claim stands, the leash is not set, logged `pursuit leash NOT set`):** the anchor
   FormID is not a loaded Actor. The claim's other bits still deny. Repoint once the anchor loads.
 
