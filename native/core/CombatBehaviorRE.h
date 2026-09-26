@@ -246,7 +246,7 @@ namespace apmf::cbt {
     //                   SE 267081 0x16A1FE0 act 0x821840 pop 0x821A50 update 0x824810
     //   SearchWander    AE 214202 0x18E77C8 act 0x8B9D00 pop 0x8BA0E0 update 0x8BB390
     //                   SE 267083 0x16A2140 act 0x821870 pop 0x821AB0 update 0x824820
-    // act() = push 8, store the node's priority (+0x28) into the Search context, then T::Enter;
+    // act() = push 0x10 (one NiPointer; pop releases it at top-0x10), store the node's priority (+0x28) into the Search context, then T::Enter;
     // update (slot 4) = the same `(node, thread)` shape as every other leaf. All four live in the
     // 'Search' tree (AE builder 49529: Search Context > Search Repeat > Search Parallel > Search
     // Selector {Search Center, Search Wander, Search Unimportant Location, Search Location}), which
