@@ -21,6 +21,7 @@
 #include "channels/Travel.h"
 #include "channels/TargetPin.h"
 #include "channels/CombatEntry.h"
+#include "channels/CombatReentryDeny.h"
 #include "core/PositionCast.h"
 #include "core/SpaceQuery.h"
 
@@ -83,6 +84,8 @@ namespace {
         // An entry task still queued is dropped by the Discard below; one that somehow ran
         // would find no entry and drop itself.
         apmf::combatentry::ResetAll("revert/new game");
+        // ch.22: same, for the re-entry deny entries of the outgoing world.
+        apmf::reentrydeny::ResetAll("revert/new game");
         // ABI v11 position cast: forget any marker still waiting for its one-frame
         // delete (its Retire task is dropped by the Discard below). The references
         // belong to the world being replaced, so none is touched.
@@ -142,6 +145,13 @@ namespace {
                                                   // exact 1.6.1170 / 1.5.97, VR-refused, [CombatEntry]
                                                   // bCombatEntry, SeatVerified on StartCombat. A refusal
                                                   // REFUSES kIntent_CombatEntry claims.
+            apmf::reentrydeny::Install();        // ch.22 COMBAT RE-ENTRY DENY (ABI v15): Character vtable slot
+                                                  // 0x99 (IsDead), chaining, answering only at
+                                                  // Actor::StartCombat's own self-check (INVARIANTS #0 (h)).
+                                                  // Exact 1.6.1170 / 1.5.97, VR-refused, [CombatReentryDeny]
+                                                  // bCombatReentryDeny, SeatVerified on the vtable and the
+                                                  // call-site row. A refusal REFUSES kIntent_CombatReentryDeny
+                                                  // claims.
             apmf::poscast::Install();            // ABI v11 POSITION CAST: runtime gate (1.6.1170 / 1.5.97,
                                                   // never VR) + [PositionCast] + the XMarker base. Installs NO
                                                   // hook. Refused -> kCastFlag_AtPosition requests are refused.
@@ -223,6 +233,8 @@ namespace {
             // ch.21: same -- no entry crosses the load (the queued entry task, if any, is
             // flushed with the main-thread queue below).
             apmf::combatentry::ResetAll("kPreLoadGame");
+            // ch.22: same -- no re-entry deny crosses the load.
+            apmf::reentrydeny::ResetAll("kPreLoadGame");
             // ABI v11 position cast: same as the revert path -- forget, never touch.
             apmf::poscast::ResetAll("kPreLoadGame");
             // Flush the confirmed-main task queue. NOTHING Pump()s between here and

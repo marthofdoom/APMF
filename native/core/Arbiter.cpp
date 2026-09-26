@@ -11,6 +11,7 @@
 #include "channels/Travel.h"
 #include "channels/TargetPin.h"
 #include "channels/CombatEntry.h"
+#include "channels/CombatReentryDeny.h"
 
 namespace apmf {
 
@@ -95,6 +96,12 @@ namespace apmf {
         // combat and writes no engine state. Self-throttled; one relaxed atomic load while
         // nothing is claimed.
         apmf::combatentry::Poll();
+
+        // ch.22 (kIntent_CombatReentryDeny) END-OF-WINDOW MONITOR, same seat and shape: it ends a
+        // deny claim when its window elapses or the owner dies, and logs a DENY MISS (the actor
+        // entered combat under a live window without a ch.21 entry passing the seat). It writes
+        // no engine state. Self-throttled; one relaxed atomic load while nothing is claimed.
+        apmf::reentrydeny::Poll();
     }
 
     void Arbiter::ReleaseAll(const char* why) {

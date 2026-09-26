@@ -16,9 +16,10 @@
     "0xAD",
     "0x49",
     "0xDF",
-    "0xE4"
+    "0xE4",
+    "0x99"
    ],
-   "source": "native/core/Hook.cpp:94; PackageGate.cpp:296; NonAliasProbe.cpp:216; channels/TargetPin.cpp:460 (observer)",
+   "source": "native/core/Hook.cpp:94; PackageGate.cpp:296; NonAliasProbe.cpp:216; channels/TargetPin.cpp:460 (observer); channels/CombatReentryDeny.cpp (0x99, the ch.22 seat)",
    "doc": "ADDRESS-TABLE-2026-09-15.md:64"
   },
   {
@@ -3172,6 +3173,26 @@
    },
    "source": "native/channels/CombatEntry.cpp:243 (call), :399 (SeatVerified)",
    "doc": "ch.21 combat entry, INVARIANTS #0 (g); ADDRESS-TABLE-2026-09-15.md:396"
+  },
+  {
+   "seat": "ReentryDeny.StartCombat.SelfIsDeadCall",
+   "kind": "callsite",
+   "construct": "Actor::StartCombat's own self-check `mov dl,1; mov rcx,rdi; call [rax+0x4C8]` (Character slot 0x99, IsDead(true)); ch.22 answers only when its return address is this row + 11",
+   "ids": {
+    "1.6.1170": 38561,
+    "1.5.97": 37608
+   },
+   "sig": {
+    "1.6.1170": "4C 8B DC 55 56 57 41 54 41 55 41 56 41 57 48 83 EC 50 49 C7 43 A8 FE FF FF FF 49 89 5B 10 0F 29 74 24 40 49 8B E8",
+    "1.5.97": "4C 8B DC 56 57 41 54 41 56 41 57 48 83 EC 50 49 C7 43 B8 FE FF FF FF 49 89 5B 10 49 89 6B 18 0F 29 74 24 40 49 8B E8"
+   },
+   "source": "native/channels/CombatReentryDeny.cpp (Install: SeatVerified; g_siteRet = row + 11)",
+   "offset": {
+    "1.6.1170": "0x8F",
+    "1.5.97": "0x8D"
+   },
+   "bytes": "B2 01 48 8B CF FF 90 C8 04 00 00",
+   "doc": "ch.22 combat re-entry deny, INVARIANTS #0 (h); scratchpad apmf-reentry.md (AE 0x6B69BF, ret 0x6B69CA; SE 0x62523D, ret 0x625248)"
   }
  ],
  "layout_facts": [
@@ -3447,6 +3468,20 @@
    "where": "channels/CombatEntry.cpp:162",
    "verified_by": "StopCombat 1.6.1170 0x6B70A0 / 1.5.97 0x625920 frees the controller and stores 0 there (AE 0x6B7235); Actor::IsInCombat (0x6B6DD0 / 0x625660) is NOT used because it reads [controller+0x43]",
    "gate": "main thread, Poll / Enter"
+  },
+  {
+   "what": "Actor::IsDead signature (Character vtable slot 0x99, the ch.22 seat): bool(const Actor* this, bool notEssential)",
+   "value": "rcx this, dl bool, al = bool; a leaf (no stack frame, no calls)",
+   "where": "channels/CombatReentryDeny.cpp IsDeadHook::thunk",
+   "verified_by": "1.6.1170 slot 0x99 -> 0x674ED0 (id 37483) / 1.5.97 -> 0x5E3160 (id 36484): reads lifeState [rcx+0xC8] / [rcx+0xC0], tests dl, returns al; PlayerCharacter slot 0x99 is the same function",
+   "gate": "VR refused + exact 1.6.1170/1.5.97 + INI bCombatReentryDeny + self-check (Character vtable + call-site row)"
+  },
+  {
+   "what": "StartCombat's self-check refusal has no side effect (ch.22 answers 'dead' there)",
+   "value": "IsDead(this,true) true -> jne to the epilogue: xor r14b; restore TLS [+0x768]; return false",
+   "where": "channels/CombatReentryDeny.cpp header 'THE SEAT'",
+   "verified_by": "1.6.1170 0x6B69CA test al,al; jne 0x6B6D9B (before the global spinlock at 0x6B6A85, the re-arm equip 38893, 46873/46874); 1.5.97 0x625248 test al,al; jne 0x625623 (lock at 0x625303)",
+   "gate": "the call-site row's 11-byte check pins the exact instruction"
   }
  ]
 }

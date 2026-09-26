@@ -10,6 +10,7 @@
 #include "channels/Travel.h"  // ch.19 Installed()/NotInstalledReason() for the synchronous refusal
 #include "channels/TargetPin.h"  // ch.20 Installed()/NotInstalledReason() for the synchronous refusal
 #include "channels/CombatEntry.h"  // ch.21 Installed()/NotInstalledReason() for the synchronous refusal
+#include "channels/CombatReentryDeny.h"  // ch.22 Installed()/NotInstalledReason() for the synchronous refusal
 #include "core/PositionCast.h"  // ABI v11 position cast: poscast::Enqueue (one-shot, never a claim); MarkersSupported (ch.19)
 
 #include <cmath>
@@ -208,6 +209,31 @@ namespace apmf {
                 why = "the actor is the player (ch.21 puts NPCs into combat only; the player may be the target)";
             if (why) {
                 spdlog::warn("[apmf][combat-entry] claim refused -- actor 0x{}: {}.", apmf::log::Hex(actor), why);
+                return APMF_API::kInvalidHandle;
+            }
+        }
+
+        // ch.22 (ABI v15): a kIntent_CombatReentryDeny claim is REFUSED synchronously when its
+        // seat is not installed (VR, a runtime other than 1.6.1170 / 1.5.97, [CombatReentryDeny]
+        // bCombatReentryDeny=0, a self-check refusal, or before kDataLoaded), when param.fval
+        // (the window in seconds) is negative or not a number, and for the player. fval 0 is
+        // the 10 s default; above 120 s it is clamped at Engage (logged there).
+        if (intent == APMF_API::kIntent_CombatReentryDeny) {
+            if (!apmf::reentrydeny::Installed()) {
+                static std::atomic<bool> s_logged{ false };
+                if (!s_logged.exchange(true))
+                    spdlog::warn("[apmf][reentry-deny] claim refused: seat not installed ({}) -- actor 0x{}; the "
+                                 "client keeps the actor out of combat its own way. (Logged once.)",
+                                 apmf::reentrydeny::NotInstalledReason(), apmf::log::Hex(actor));
+                return APMF_API::kInvalidHandle;
+            }
+            const char* why = nullptr;
+            if (param && (std::isnan(param->fval) || param->fval < 0.0f))
+                why = "param.fval (the window in seconds) is negative or not a number (0 = the 10 s default)";
+            else if (actor == 0x14)
+                why = "the actor is the player (ch.22 keeps NPCs out of combat only)";
+            if (why) {
+                spdlog::warn("[apmf][reentry-deny] claim refused -- actor 0x{}: {}.", apmf::log::Hex(actor), why);
                 return APMF_API::kInvalidHandle;
             }
         }
