@@ -103,9 +103,38 @@ namespace apmf::cbt {
         void*            blackboard;           // 0x18
         void*            behaviorController;   // 0x20 -- the CPR-hypothesis hop (see TreeControl comment)
         RE::ActorHandle  attackerHandle;        // 0x28
+        RE::ActorHandle  targetHandle;          // 0x2C -- the combat target (ch.7 pursuit leash, ABI v16).
+                                                //   Same as RE::CombatController::targetHandle in the MIT
+                                                //   fork (C/CombatController.h:99, "// 2C"), below the 0x68
+                                                //   AE layout split, so identical on 1.6.1170 and 1.5.97.
     };
     static_assert(offsetof(ControllerMini, attackerHandle) == 0x28);
     static_assert(offsetof(ControllerMini, attackerHandle) < 0x68);
+    static_assert(offsetof(ControllerMini, targetHandle) == 0x2C);
+    static_assert(offsetof(ControllerMini, targetHandle) < 0x68);
+
+    // ---- The update seat (slot 0x04) and the engine's own leaf-failure exit (ch.7 pursuit,
+    // ABI v16, 2026-09-25; measured on BOTH unpacked executables, agentlog apmf-pursuit.md) ----
+    //   Runner step (AE 47483 0x85DBA0 / SE 46228): phase 2 -> act() [slot 2]; then, while
+    //     phase == 1 and flags & 3 == 0, update(node, thread) [slot 4] (slot 5 instead when
+    //     state == 2); then, when phase == 0, pop() [slot 3] on the node captured at the START
+    //     of the step (the same node whose act()/update() just ran), depth--.
+    //   A movement leaf's update runs its CombatPath to completion: Advance::Update (AE 47899
+    //     0x86DD60 / SE 46704 0x7D6980) ends with SetFailed(thread, 1) + Ascend(thread) when its
+    //     path FAILS and Ascend(thread) alone when it completes. A leaf that is never ended keeps
+    //     running for the whole chase -- which is why an act()-only deny cannot leash it.
+    //   SetFailed: AE 47496 0x85E0A0 / SE 46240 0x7C6D30 -- `if (thread->state(+0x148) <= 1)
+    //     thread->state = dl` (AE stores dl, SE stores dl != 0).
+    //   Ascend:    AE 47484 0x85DD70 / SE 46229 0x7C69D0 -- `if (cur = thread->cur_node(+0x138))
+    //     { thread->cur_node = cur->parent(+0x10); thread->phase(+0x14C) = 0; }`.
+    //   So ending a running leaf from ITS update with SetFailed(thread,1) + Ascend(thread) is the
+    //     leaf's own failure exit: the runner then calls that node's OWN pop(), which removes
+    //     exactly what its own act() pushed -- the data stack stays balanced by construction.
+    inline constexpr std::size_t kThreadCurNode = 0x138;   // CombatBehaviorThread::cur_node
+    inline constexpr std::size_t kThreadPhase   = 0x14C;   // CombatBehaviorThread::phase (1 = update)
+    using Update_t    = void (*)(void* a_this, void* a_control);   // slot 4, (node, thread)
+    using SetFailed_t = void (*)(void* a_thread, bool a_failed);    // AE 47496 / SE 46240
+    using Ascend_t    = void (*)(void* a_thread);                   // AE 47484 / SE 46229
 
     struct LeafEntry {
         const char*      name;

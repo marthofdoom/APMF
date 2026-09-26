@@ -14,7 +14,7 @@
 
 namespace apmf::VerifiedAddresses
 {
-	// 1.6.1170.0: 179 rows
+	// 1.6.1170.0: 181 rows
 	inline constexpr REL::SelfCheck::Row kRows_1_6_1170[] = {
 		{ 207886, 0x18A5558, 0x0, 0, {  }, "Character" },
 		{ 212096, 0x18D7388, 0x0, 0, {  }, "CombatTargetSelectorStandard" },
@@ -151,6 +151,8 @@ namespace apmf::VerifiedAddresses
 		{ 37489, 0x6750D0, 0x0, 0, {  }, "MovementDeny.SetDontMove" },
 		{ 37894, 0x697110, 0x0, 0, {  }, "MovementDeny.KeepOffsetFromActor" },
 		{ 37895, 0x697250, 0x0, 0, {  }, "MovementDeny.ClearKeepOffsetFromActor" },
+		{ 47496, 0x85E0A0, 0x0, 0, {  }, "ActionGate.Pursuit.SetFailed" },
+		{ 47484, 0x85DD70, 0x0, 0, {  }, "ActionGate.Pursuit.Ascend" },
 		{ 38929, 0x6CBE30, 0x0, 0, {  }, "EquipSink.Worker" },
 		{ 38894, 0x6C9820, 0x170, 1, { 0xE8 }, "EquipSink.Site.EquipObject" },
 		{ 38893, 0x6C9730, 0xBC, 1, { 0xE8 }, "EquipSink.Site.EquipObjectList" },
@@ -197,7 +199,7 @@ namespace apmf::VerifiedAddresses
 		{ 38561, 0x6B6930, 0x8F, 11, { 0xB2, 0x01, 0x48, 0x8B, 0xCF, 0xFF, 0x90, 0xC8, 0x04, 0x00, 0x00 }, "ReentryDeny.StartCombat.SelfIsDeadCall" },
 	};
 
-	// 1.5.97.0: 179 rows
+	// 1.5.97.0: 181 rows
 	inline constexpr REL::SelfCheck::Row kRows_1_5_97[] = {
 		{ 261397, 0x165DA40, 0x0, 0, {  }, "Character" },
 		{ 265605, 0x1690A98, 0x0, 0, {  }, "CombatTargetSelectorStandard" },
@@ -334,6 +336,8 @@ namespace apmf::VerifiedAddresses
 		{ 36490, 0x5E3330, 0x0, 0, {  }, "MovementDeny.SetDontMove" },
 		{ 36870, 0x603990, 0x0, 0, {  }, "MovementDeny.KeepOffsetFromActor" },
 		{ 36871, 0x603AC0, 0x0, 0, {  }, "MovementDeny.ClearKeepOffsetFromActor" },
+		{ 46240, 0x7C6D30, 0x0, 0, {  }, "ActionGate.Pursuit.SetFailed" },
+		{ 46229, 0x7C69D0, 0x0, 0, {  }, "ActionGate.Pursuit.Ascend" },
 		{ 37974, 0x639E20, 0x0, 0, {  }, "EquipSink.Worker" },
 		{ 37938, 0x637A80, 0xE5, 1, { 0xE8 }, "EquipSink.Site.EquipObject" },
 		{ 37937, 0x637990, 0xBC, 1, { 0xE8 }, "EquipSink.Site.EquipObjectList" },

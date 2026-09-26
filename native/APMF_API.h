@@ -136,7 +136,16 @@ namespace APMF_API {
     // channel for intent 22 and REFUSES the request (kInvalidHandle, "no channel serves intent
     // 22" in its log), which is the documented degrade -- keep the actor out of combat your own
     // way.
-    inline constexpr std::uint32_t kABIVersion = 15;
+    //
+    // ABI v16 (2026-09-25) adds the kCombatActionCat_Pursuit bit to ch.7 (kIntent_CombatAction)
+    // and NOTHING else: no intent, no struct, no function-pointer slot, no APMF_Param field. The
+    // pursuit LEASH reads two EXISTING param fields ch.7 never read before -- param.target (the
+    // ANCHOR actor) and param.fval (the radius, game units) -- and only when ival carries the
+    // bit, so every pre-v16 ch.7 claim is byte-unaffected. A client must see abiVersion >= 16
+    // before it sets the bit: an OLDER APMF classifies no leaf with it and ACCEPTS the claim
+    // while denying nothing for that bit (its other bits still deny) -- the same shape as v11's
+    // kCastFlag_AtPosition. Degrade: keep your own leash (e.g. an out-of-combat retreat).
+    inline constexpr std::uint32_t kABIVersion = 16;
 
     // The exported query function's undecorated name and pointer type.
     // const APMF_API_v1* APMF_GetInterface(std::uint32_t abiVersion);
@@ -235,7 +244,10 @@ namespace APMF_API {
                                      //       CATEGORIES. Mode: DENY (graduated from a
                                      //       field-proven probe, Docs/PROBE-ALLOWANCE.md).
                                      //       Param: ival (a CombatActionCategory bitmask,
-                                     //       see below).
+                                     //       see below). ABI v16: when ival carries
+                                     //       kCombatActionCat_Pursuit, param.target is the
+                                     //       leash ANCHOR actor and param.fval its radius
+                                     //       (game units, > 0); both are REQUIRED then.
         kIntent_OfferPackage  = 15,  // ch.9  CLAIM the package-offer facet. Mode: DENY
                                      //       (redirects the package offer to the claimed
                                      //       package; graduated from a field-proven probe).
@@ -944,10 +956,11 @@ namespace APMF_API {
     // OWN classified category bit is set in the winning claim's mask -- an
     // all-zero mask (or no claim at all) denies nothing, never a blanket lock.
     // APPEND-ONLY: never renumber an existing bit; OR in a new bit at the next
-    // free position for a future category (defense/movement/utility are
-    // deliberately NOT assigned a bit yet -- Docs/ALLOWANCE-TEMPLATE.md §3's T1
-    // row lists them as never-denied by design until a real client need names
-    // one).
+    // free position for a future category (defense/utility are deliberately NOT
+    // assigned a bit yet -- Docs/ALLOWANCE-TEMPLATE.md §3's T1 row lists them as
+    // never-denied by design until a real client need names one; MOVEMENT got its
+    // first, narrow bit at ABI v16: kCombatActionCat_Pursuit, the in-combat leash,
+    // named by MFO's batch L. Every other movement leaf stays never-denied).
     enum CombatActionCategory : std::uint32_t {
         kCombatActionCat_None    = 0,
         kCombatActionCat_Offense = 1u << 0,   // Attack/AttackLow/Bash/RangedAttack/SpecialAttack/
@@ -958,6 +971,19 @@ namespace APMF_API {
                                                // several bits: the four cast leaves carry BOTH Offense
                                                // and Cast). A kIntent_Cast claim denies ONLY these,
                                                // leaving attack/ranged/movement leaves firing.
+        kCombatActionCat_Pursuit = 1u << 2,   // ABI v16. The in-combat LEASH: the ten leaves that move
+                                               // the actor toward its COMBAT TARGET (Advance, Chase,
+                                               // FindAttackLocation, Flank, FlankDistant,
+                                               // MaintainOptimalRange, PursueTarget, Reposition, Stalk,
+                                               // Surround). CONDITIONAL, unlike the two bits above: a
+                                               // pursuit leaf is denied only while the actor is farther
+                                               // than param.fval from the ANCHOR actor param.target AND
+                                               // its target is farther from the anchor than it is (the
+                                               // move would take it farther). A leaf already running
+                                               // when that becomes true is ended at its update(). Both
+                                               // fields are REQUIRED with this bit; a request without
+                                               // them, or while the leash is not armed, is refused
+                                               // (kInvalidHandle). Needs abiVersion >= 16.
     };
 
     // ── Cast flags (kIntent_Cast / APMF_CastRequest::flags, ABI v5) ─────────────
@@ -1322,6 +1348,12 @@ namespace APMF_API {
     //   form   kIntent_OfferPackage    the TESPackage FormID
     //   form   kIntent_Equipment       optional, gates re-equip when set (see above)
     //   ival   kIntent_CombatAction    a CombatActionCategory bitmask (see below)
+    //   target kIntent_CombatAction    ABI v16: the leash ANCHOR actor, read ONLY when ival has
+    //                                  kCombatActionCat_Pursuit (then REQUIRED; 0 or the actor
+    //                                  itself is refused). Ignored otherwise.
+    //   fval   kIntent_CombatAction    ABI v16: the leash RADIUS in game units, read ONLY when ival
+    //                                  has kCombatActionCat_Pursuit (then REQUIRED, > 0; 0,
+    //                                  negative or NaN is refused). Ignored otherwise.
     //   form   kIntent_Cast            the spell (degenerate RequestEx form); RequestCast for
     //   ival   kIntent_Cast            the rich payload -- ival = CastFlags on the degenerate form
     //                                  (req.target / req.flags' hand + stop-percent are read by
@@ -1348,10 +1380,11 @@ namespace APMF_API {
     //                                  negative / NaN refused). No other field is read.
     //   none   every other Intent      accepted, not yet read by the channel
     //
-    // fval is read ONLY by kIntent_Travel (ABI v10) and kIntent_CombatReentryDeny (ABI v15);
-    // it stays reserved for a
-    // future per-request bias on ch.11, scale on ch.1a, factor on ch.16. target is
-    // not read by any Intent OTHER than kIntent_SelectSpell yet. pos is read by
+    // fval is read ONLY by kIntent_Travel (ABI v10), kIntent_CombatReentryDeny (ABI v15) and
+    // kIntent_CombatAction with kCombatActionCat_Pursuit (ABI v16); it stays reserved for a
+    // future per-request bias on ch.11, scale on ch.1a, factor on ch.16. target is read by
+    // kIntent_CombatAction with kCombatActionCat_Pursuit (ABI v16, the anchor) and was by
+    // kIntent_SelectSpell (retired). pos is read by
     // kIntent_Cast with kCastFlag_AtPosition and by kIntent_Travel with kTravel_ToPosition
     // (both ABI v11). Without its flag, kIntent_Travel refuses a non-zero pos.
     // ─────────────────────────────────────────────────────────────────────────────
