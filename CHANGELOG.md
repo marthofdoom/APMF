@@ -1,3 +1,15 @@
+## Unreleased
+
+- **A mod can now keep an NPC out of combat for a while.** Claim `kIntent_CombatReentryDeny` with a number of seconds in `APMF_Param.fval` (0 means 10, at most 120). While that time runs, the game cannot start a fight for it: when it tries (the NPC sees an enemy, gets hit, an ally is fighting, a script asks), the game's own combat start says no, before it draws a weapon or does anything else.
+- **It is the other half of a retreat.** The mod stops the fight once with the game's own `StopCombat`, and the game can no longer pull the NPC straight back in. Harbinger never stops a fight itself. An NPC that is already fighting keeps fighting, but the game cannot add new foes to its fight while the time runs.
+- **A mod's own combat entry still works.** A `kIntent_CombatEntry` request for the NPC goes through. When that fight ends, the rest of the window keeps the NPC out again.
+- **It ends by itself** when the time runs out or the NPC dies, and the log says which. Nothing is undone because nothing was written. The time counts from the mod's own request, so a request that takes over from another mod's gets only what is left of its own time.
+- **Harbinger checks its own work.** The first time the game starts any fight, the log says the check was seen. If an NPC gets into combat while its window runs anyway, the log says `DENY MISSED`.
+- `[CombatReentryDeny] bCombatReentryDeny` is new in `APMF.ini`, default 1. Set it to 0 and every request is refused.
+- New API revision (v15). It adds the intent and nothing else. Check `abiVersion >= 15` before asking for it. An older Harbinger refuses the request. A mod built against an older revision is unaffected.
+- Both runtimes. The spot in the game's combat start was read on the 1.6.1170 and 1.5.97 binaries and is byte-checked at startup; any other build is refused by name. VR is refused. The startup check now covers 179 addresses.
+- Not field-run yet. CI verified only.
+
 ## v0.9.9 -- Start a fight and pin the target
 
 - **A mod can now start a fight.** Claim `kIntent_CombatEntry` with the target actor in `APMF_Param.form`, and Harbinger asks the game once to put the NPC into combat against that target, with the game's own call for starting a fight. The game can say no (a restrained or dead NPC, a target too far away). Then the request ends and the log says why.

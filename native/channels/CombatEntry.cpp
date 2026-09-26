@@ -1,6 +1,7 @@
 #include "PCH.h"
 #include "channels/CombatEntry.h"
 #include "channels/TargetPin.h"   // Installed(): whether the ch.20 pin could engage, for the entry log
+#include "channels/CombatReentryDeny.h"   // ClientEntryScope: this entry passes a ch.22 re-entry deny
 #include "core/Allowance.h"       // SeatVerified(): the mit-3.7 F1 self-check gate
 #include "core/Clock.h"
 #include "core/ControlMap.h"
@@ -253,8 +254,13 @@ namespace {
 
         // THE CALL. Once. The fork's binding: RELOCATION_ID(37608, 38561), bool(Actor*,
         // Actor*, void*); nullptr third argument = "no group to join" (the engine's own
-        // usage, AE 0x7505A3).
-        const bool ok = actor->StartCombat(target, nullptr);
+        // usage, AE 0x7505A3). The scope lets it through a ch.22 re-entry deny on this actor:
+        // a client's declared entry is not denied (INVARIANTS #0 (h) condition 4).
+        bool ok = false;
+        {
+            const apmf::reentrydeny::ClientEntryScope pass(id);
+            ok = actor->StartCombat(target, nullptr);
+        }
 
         Entry& e = it->second;   // no insertion/erase since `it` was taken (StartCombat never calls back into us)
         ++e.attempts;

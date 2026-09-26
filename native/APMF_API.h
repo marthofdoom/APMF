@@ -127,7 +127,16 @@ namespace APMF_API {
     // before it asks for the intent: an OLDER APMF has no channel for intent 21 and
     // REFUSES the request (kInvalidHandle, "no channel serves intent 21" in its log),
     // which is the documented degrade -- start the fight your own way.
-    inline constexpr std::uint32_t kABIVersion = 14;
+    //
+    // ABI v15 (2026-09-25) adds kIntent_CombatReentryDeny (ch.22) and NOTHING else: no struct,
+    // no function-pointer slot, no APMF_Param field -- the v10 / v13 / v14 shape again. ch.22
+    // rides the EXISTING RequestEx/Repoint/Release slots and reads the EXISTING param.fval (the
+    // window in seconds), so there is no APMF_API_v15 struct and a v14 client is byte-unaffected.
+    // A client must see abiVersion >= 15 before it asks for the intent: an OLDER APMF has no
+    // channel for intent 22 and REFUSES the request (kInvalidHandle, "no channel serves intent
+    // 22" in its log), which is the documented degrade -- keep the actor out of combat your own
+    // way.
+    inline constexpr std::uint32_t kABIVersion = 15;
 
     // The exported query function's undecorated name and pointer type.
     // const APMF_API_v1* APMF_GetInterface(std::uint32_t abiVersion);
@@ -540,6 +549,64 @@ namespace APMF_API {
                                      //       player. The TARGET may be the player. A target that
                                      //       is not an Actor is found one frame later and ENDS the
                                      //       claim (above).
+
+        kIntent_CombatReentryDeny = 22, // ch.22 KEEP this actor OUT OF COMBAT for a bounded window
+                                     //       (ABI v15, ClickUp 86e3ex5v9). Mode: DENY the ENGINE'S
+                                     //       OWN COMBAT ENTRY for this actor at its source
+                                     //       (INVARIANTS #0 (h)). A BOUNDED claim: it ends by itself.
+                                     //       Param: fval = the WINDOW in seconds (0 => 10 s; above
+                                     //       120 s it is clamped to 120, logged; negative or NaN is
+                                     //       refused). form / ival / target / pos are not read.
+                                     //
+                                     //       WHAT IT DOES. Every way the engine puts an actor into
+                                     //       combat (it sees an enemy, it is attacked, an ally is
+                                     //       fighting, a script or another mod calls StartCombat) goes
+                                     //       through one engine function, Actor::StartCombat. While
+                                     //       the claim holds and its window runs, APMF makes that
+                                     //       function refuse for this actor EVERY time, before it does
+                                     //       anything (no weapon draw, no equip, no alarm). The actor
+                                     //       keeps doing what its package says.
+                                     //
+                                     //       IT STOPS NOTHING. An actor that is already in combat is
+                                     //       not taken out of it (it only gains no new foes through
+                                     //       StartCombat). The recipe for a retreat is: claim this, and
+                                     //       on the first tick IsClaimLive(handle) reads true (the
+                                     //       claim is applied at the next drain; before that the handle
+                                     //       is PENDING, not ended) call Actor::StopCombat ONCE yourself
+                                     //       (INTEGRATION.md "retreat: StopCombat once + deny
+                                     //       re-entry"). From then on
+                                     //       the engine cannot pull the actor back in until the window
+                                     //       ends. Other actors may still attack it: their fight is
+                                     //       their facet. Nothing is undone when the claim ends:
+                                     //       nothing was written.
+                                     //
+                                     //       YOUR OWN kIntent_CombatEntry IS NOT DENIED. A ch.21 entry
+                                     //       for the actor (yours or another client's) is a declared
+                                     //       decision and passes. It does not end this claim: once
+                                     //       that fight ends, the window (if still running) refuses the
+                                     //       engine's re-entries again.
+                                     //
+                                     //       THE CLAIM ENDS, AND APMF RELEASES IT ITSELF (the log names
+                                     //       the reason, IsClaimLive(handle) turns false), when the
+                                     //       window elapses ("window elapsed") or the actor dies
+                                     //       ("owner dead"). The window runs from the claim's OWN
+                                     //       request (or last Repoint): a claim that takes over from a
+                                     //       released rival gets only what is left of it, and ends at
+                                     //       once if nothing is. Repoint(handle, &param) restarts the
+                                     //       window from that moment with the new fval. Your own
+                                     //       Release, an outranking claim, a save load, a new game or
+                                     //       the actor unloading also end it (never saved).
+                                     //
+                                     //       FIELD STATUS: the seat must be OBSERVED on the deck (the
+                                     //       log line "[ch.22] seat OBSERVED") before a client relies on
+                                     //       it (CLAUDE.md principle 5). "[ch.22] ... DENY MISSED" in
+                                     //       the log means the actor entered combat anyway: report it.
+                                     //
+                                     //       REFUSED SYNCHRONOUSLY (kInvalidHandle, logged): VR, a
+                                     //       runtime other than 1.6.1170 / 1.5.97, [CombatReentryDeny]
+                                     //       bCombatReentryDeny=0, a self-check refusal, before
+                                     //       kDataLoaded, a negative or NaN fval, or the actor is the
+                                     //       player.
     };
 
     // ── Travel flags (kIntent_Travel's param.ival, ABI v10) ─────────────────────
@@ -1277,9 +1344,12 @@ namespace APMF_API {
     //   form   kIntent_CombatEntry     ABI v14: the TARGET actor (REQUIRED; 0 or the actor itself
     //                                  is refused; the player may be the target, not the actor).
     //                                  No other field is read.
+    //   fval   kIntent_CombatReentryDeny  ABI v15: the WINDOW in seconds (0 => 10 s; clamped to 120;
+    //                                  negative / NaN refused). No other field is read.
     //   none   every other Intent      accepted, not yet read by the channel
     //
-    // fval is read ONLY by kIntent_Travel (ABI v10); it stays reserved for a
+    // fval is read ONLY by kIntent_Travel (ABI v10) and kIntent_CombatReentryDeny (ABI v15);
+    // it stays reserved for a
     // future per-request bias on ch.11, scale on ch.1a, factor on ch.16. target is
     // not read by any Intent OTHER than kIntent_SelectSpell yet. pos is read by
     // kIntent_Cast with kCastFlag_AtPosition and by kIntent_Travel with kTravel_ToPosition

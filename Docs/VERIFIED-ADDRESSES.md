@@ -10,13 +10,13 @@ nothing when one does not. At startup `REL::SelfCheck::Run` repeats the comparis
 game actually loaded. A row that fails refuses THAT seat by name in the log; the expected RVA is never
 used in place of the library's answer.
 
-Offline result of this generation: 1.6.1170.0 178/178 verified, 0 refused, 1.5.97.0 178/178 verified, 0 refused.
+Offline result of this generation: 1.6.1170.0 179/179 verified, 0 refused, 1.5.97.0 179/179 verified, 0 refused.
 
 ## Rows
 
 | seat | kind | id 1.6.1170 | RVA 1.6.1170 | id 1.5.97 | RVA 1.5.97 | derived by | hooked slots -> engine function (1.6.1170 / 1.5.97) | code | doc |
 |---|---|---|---|---|---|---|---|---|---|
-| Character | vtable | 207886 | 0x18A5558 | 261397 | 0x165DA40 | RTTI .?AVCharacter@@ (COL offset 0) | 0xAD: 0x667D40 / 0x5D6FB0<br>0x49: 0x66CB60 / 0x5DB180<br>0xDF: 0x67EAD0 / 0x5EC760<br>0xE4: 0x6B6E70 / 0x625700 | native/core/Hook.cpp:94; PackageGate.cpp:296; NonAliasProbe.cpp:216; channels/TargetPin.cpp:460 (observer) | ADDRESS-TABLE-2026-09-15.md:64 |
+| Character | vtable | 207886 | 0x18A5558 | 261397 | 0x165DA40 | RTTI .?AVCharacter@@ (COL offset 0) | 0xAD: 0x667D40 / 0x5D6FB0<br>0x49: 0x66CB60 / 0x5DB180<br>0xDF: 0x67EAD0 / 0x5EC760<br>0xE4: 0x6B6E70 / 0x625700<br>0x99: 0x674ED0 / 0x5E3160 | native/core/Hook.cpp:94; PackageGate.cpp:296; NonAliasProbe.cpp:216; channels/TargetPin.cpp:460 (observer); channels/CombatReentryDeny.cpp (0x99, the ch.22 seat) | ADDRESS-TABLE-2026-09-15.md:64 |
 | CombatTargetSelectorStandard | vtable | 212096 | 0x18D7388 | 265605 | 0x1690A98 | RTTI .?AVCombatTargetSelectorStandard@@ (COL offset 0) | 0x06: 0x84CFE0 / 0x7B5E50 | native/channels/TargetPin.cpp:458 | ch.20 source deny; UpdateTarget AE 0x559930 / SE 0x4FE300 calls slot 6 |
 | CombatTargetSelectorFixed | vtable | 212098 | 0x18D73C8 | 265607 | 0x1690AF8 | RTTI .?AVCombatTargetSelectorFixed@@ (COL offset 0) | 0x06: 0x84DAF0 / 0x7B6920 | native/channels/TargetPin.cpp:459 | ch.20 source deny; UpdateTarget AE 0x559930 / SE 0x4FE300 calls slot 6 |
 | PlayerCharacter | vtable | 208040 | 0x18AB9C0 | 261916 | 0x16635E0 | RTTI .?AVPlayerCharacter@@ (COL offset 0) | 0xAD: 0x732660 / 0x69E580 | native/core/Hook.cpp:97 | ADDRESS-TABLE-2026-09-15.md:69 |
@@ -194,6 +194,7 @@ Offline result of this generation: 1.6.1170.0 178/178 verified, 0 refused, 1.5.9
 | CommonLib.BSReadWriteLock.LockForRead | function | 68233 | 0xCC90C0 | 66976 | 0xC072D0 | signature (32 bytes, unique in .text) |  | CommonLib mit-3.7 fde0f3ae include/RE/T/TESForm.h LookupByID/LookupByEditorID (BSReadLockGuard) | ADDRESS-TABLE-2026-09-15.md ADDENDUM 2026-09-24 F1b |
 | CommonLib.BSReadWriteLock.UnlockForRead | function | 68239 | 0xCC9380 | 66982 | 0xC07590 | signature (16 bytes, unique in .text) |  | CommonLib mit-3.7 fde0f3ae include/RE/T/TESForm.h LookupByID/LookupByEditorID (BSReadLockGuard) | ADDRESS-TABLE-2026-09-15.md ADDENDUM 2026-09-24 F1b |
 | CombatEntry.Actor.StartCombat | function | 38561 | 0x6B6930 | 37608 | 0x6251B0 | signature (38 bytes, unique in .text) |  | native/channels/CombatEntry.cpp:243 (call), :399 (SeatVerified) | ch.21 combat entry, INVARIANTS #0 (g); ADDRESS-TABLE-2026-09-15.md:396 |
+| ReentryDeny.StartCombat.SelfIsDeadCall | callsite | 38561 | 0x6B6930 +0x8F B2 01 48 8B CF FF 90 C8 04 00 00 | 37608 | 0x6251B0 +0x8D B2 01 48 8B CF FF 90 C8 04 00 00 | signature (38 bytes, unique in .text) |  | native/channels/CombatReentryDeny.cpp (Install: SeatVerified; g_siteRet = row + 11) | ch.22 combat re-entry deny, INVARIANTS #0 (h); scratchpad apmf-reentry.md (AE 0x6B69BF, ret 0x6B69CA; SE 0x62523D, ret 0x625248) |
 | EquipSink.Path.OutfitApply.24234 | function | - | - | 24234 | 0x364710 | signature (21 bytes, unique in .text) |  | native/core/EquipSink.cpp:158 |  |
 | EquipSink.Path.AddWornOutfit.19266 | function | - | - | 19266 | 0x28DDA0 | signature (17 bytes, unique in .text) |  | native/core/EquipSink.cpp:159 |  |
 | EquipSink.Path.AiCommand.38618 | function | - | - | 38618 | 0x669210 | signature (33 bytes, unique in .text) |  | native/core/EquipSink.cpp:160 |  |
@@ -270,6 +271,8 @@ audit covers everything the DLL installs or reads.
 | Actor::StartCombat signature (ch.21, the ONE call): bool(Actor* this, Actor* target, CombatGroup* join) | rcx this, rdx target, r8 group-to-join (nullptr), al = bool | channels/CombatEntry.cpp:243 | 1.6.1170 0x6B6930 / 1.5.97 0x6251B0 prologue: mov rbp,r8; mov rsi,rdx; mov rdi,rcx; r8 used as [rbp+0x30] members count + CombatManager 46874 / 45574 (join path); return movzx eax,r14b; engine caller 40814 passes xor r8d,r8d at 0x7505A3 | VR refused + exact 1.6.1170/1.5.97 + INI bCombatEntry + self-check |
 | Actor currentProcess must be non-null before StartCombat (dereferenced unchecked) | ACTOR_RUNTIME_DATA::currentProcess (SE 0xF0 / AE 0xF8) | channels/CombatEntry.cpp:223 | 1.6.1170 0x6B69E3 mov rcx,[rdi+0xF8]; call 39445 reads [rcx+0x10] with no null test; 1.5.97 0x625261 -> 38447 same | checked in Enter() before the call |
 | ch.21 fight-ended test: the actor's combatController POINTER only (null = combat ended); the controller is never dereferenced | ACTOR_RUNTIME_DATA::combatController (SE 0x158 / AE 0x160) | channels/CombatEntry.cpp:162 | StopCombat 1.6.1170 0x6B70A0 / 1.5.97 0x625920 frees the controller and stores 0 there (AE 0x6B7235); Actor::IsInCombat (0x6B6DD0 / 0x625660) is NOT used because it reads [controller+0x43] | main thread, Poll / Enter |
+| Actor::IsDead signature (Character vtable slot 0x99, the ch.22 seat): bool(const Actor* this, bool notEssential) | rcx this, dl bool, al = bool; a leaf (no stack frame, no calls) | channels/CombatReentryDeny.cpp IsDeadHook::thunk | 1.6.1170 slot 0x99 -> 0x674ED0 (id 37483) / 1.5.97 -> 0x5E3160 (id 36484): reads lifeState [rcx+0xC8] / [rcx+0xC0], tests dl, returns al; PlayerCharacter slot 0x99 is the same function | VR refused + exact 1.6.1170/1.5.97 + INI bCombatReentryDeny + self-check (Character vtable + call-site row) |
+| StartCombat's self-check refusal has no side effect (ch.22 answers 'dead' there) | IsDead(this,true) true -> jne to the epilogue: xor r14b; restore TLS [+0x768]; return false | channels/CombatReentryDeny.cpp header 'THE SEAT' | 1.6.1170 0x6B69CA test al,al; jne 0x6B6D9B (before the global spinlock at 0x6B6A85, the re-arm equip 38893, 46873/46874); 1.5.97 0x625248 test al,al; jne 0x625623 (lock at 0x625303) | the call-site row's 11-byte check pins the exact instruction |
 
 ## Regenerating
 
