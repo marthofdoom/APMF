@@ -730,7 +730,21 @@ it records `{node, control}` in a `thread_local` pending-pop and invokes ForceFa
 original `act()`; `PopThunk` then routes that node's very next `pop()` (same thread,
 same step — the runner's protocol, `core/CombatBehaviorRE.h` "The node protocol") to
 ForceFail's original `pop()`. Categories: offense leaves (12 names) and the four cast
-leaves (Cast|Offense).
+leaves (Cast|Offense), and (ABI v16) the **PURSUIT** leash on the ten target-closing
+leaves (`kPursuitLeafNames`: Advance, Chase, FindAttackLocation, Flank, FlankDistant,
+MaintainOptimalRange, PursueTarget, Reposition, Stalk, Surround). Pursuit is
+CONDITIONAL: `PursuitDenies()` reads the per-actor leash (`g_leash`, anchor HANDLE +
+radius, written on the game thread by `SetLeash`/`ClearLeash` from `channels/CombatAction.cpp`,
+dropped by `ResetLeash` at load/revert in `plugin.cpp`) and denies only while
+actor→anchor > radius and target→anchor > actor→anchor (same cell/worldspace, live
+anchor). Two seats: the act() ForceFail pair above, and a slot **0x04 (update)**
+`UpdateThunk` on the ten leaves only that ends an already-running leaf with the
+engine's own `SetFailed(thread,1)` + `Ascend(thread)` (verified rows
+`ActionGate.Pursuit.SetFailed/Ascend`) after checking `cur_node == this && phase == 1`.
+Arms only when INI `[CombatAction] bPursuitDeny`, the ForceFail pair, both rows and
+act+pop+update on all ten leaves are present (`PursuitArmed()`; ControlMap refuses a
+Pursuit request otherwise). `PursuitHeartbeat()` (Arbiter, ~30 s, zeros included)
+prints per-leaf seen / denied-at-act / ended-at-update and the pass reasons.
 **RETIRED 2026-09-05 (feat/ai-cast-seats-impl), do not re-add without re-reading why:**
 the `CombatBehaviorContextMagic` CreateContextNode deny (`kCastContextNodes`) is GONE —
 hooks and classification both — and so are the two IMPLICIT deny sources
@@ -756,11 +770,22 @@ to this gate today; only an explicit `kIntent_CombatAction` claim arms anything.
   `kIntent_CombatAction(Cast|Offense)` claim now suppresses only the four FIRING leaves,
   not the CONTEXT-BUILD path, so the AI may build a magic context and equip a spell it
   then cannot fire (Docs/DENY-COMPLETENESS-AUDIT.md, open gap).
+  **Pursuit (ABI v16) — what breaks:** the update() half must END a running leaf only
+  through the engine's `SetFailed` + `Ascend` pair, never a raw field write, never
+  SetFailed alone, never a push/pop of its own (the node's OWN pop() must run after it —
+  INVARIANTS #18 "the update() half"); keep the `cur_node`/`phase` check in front of it.
+  Never arm the category with only the act() half (a chase begun inside the radius would
+  run to the target). The seats never look up a form: the anchor is a handle resolved on
+  the game thread; keep it that way. The rule's target distance comes from the SAME
+  controller that resolved the actor (`ResolveController`). Open items: DENY-COMPLETENESS-AUDIT
+  gap 14 (not field-observed; over-deny of MaintainOptimalRange/Surround back-offs).
 
 ### `native/core/CombatBehaviorRE.h` — the local RE:: extension for the combat tree (measured)
 The `CombatBehaviorTreeNode` layout (10 vfuncs: act 0x02 / pop 0x03 / update 0x04 /
 on_interrupted 0x05), `TreeControl` (+0x158 master), `ControllerMini` (attackerHandle
-0x28, `static_assert` < 0x68), the 70 leaf VariantID triples, `kCastContextNodes`, and
+0x28, targetHandle 0x2C (ABI v16), `static_assert` < 0x68), the 70 leaf VariantID triples,
+`kCastContextNodes`, the update-seat block (runner step, SetFailed/Ascend bodies both
+runtimes, `kThreadCurNode`/`kThreadPhase`, the corrected 2026-09-03 crash history), and
 "The node protocol" — the disassembly-measured CombatBehaviorThread layout + the
 push/pop sizes per node kind (AE IDs cited as evidence only; no hook targets an ID —
 every hook here is a vtable slot).
@@ -1012,7 +1037,7 @@ parentheses.
 | `Attribute.cpp` | 11 | disposition (Num2) | 4 AVs: aggression/confidence/assistance/morality | source-block |
 | `Idle.cpp` | 12 | idle/anim (Num+) | `NotifyAnimationGraph("IdleForceDefaultState")` | one-shot |
 | `ShoutPower.cpp` | 14 | shout/power select (Num*) | **ARBITRATION-ONLY** — records the voice-slot owner and the chosen shout in `param.form`; makes NO engine write. It previously called `ActorEquipManager::EquipShout` directly (the #0 anti-pattern ch.6/ch.8 were fixed for); the CLIENT issues its own `EquipShout`. `Release` has nothing to undo (corrected 2026-09-07) | arbitration-only (#0); client executes |
-| `CombatAction.cpp` | 7 | combat-action category deny (NumpadEnter) | Arbitration + claim lifecycle only; the deny is `core/ActionGate.cpp`'s T1 paired act()/pop() on the 70 combat behavior-tree leaves, for the categories named in `param.ival` (`kCombatActionCat_Offense` today). The test key carries no category, so a test claim denies nothing | claim + T1 enforcement |
+| `CombatAction.cpp` | 7 | combat-action category deny (NumpadEnter) | Arbitration + claim lifecycle only; the deny is `core/ActionGate.cpp`'s T1 paired act()/pop() on the 70 combat behavior-tree leaves, for the categories named in `param.ival` (Offense, Cast; ABI v16 Pursuit, whose anchor `param.target` + radius `param.fval` it hands to `actiongate::SetLeash` at Engage/OnOwnerChanged and clears at Release). The test key carries no category, so a test claim denies nothing | claim + T1 enforcement |
 | `OfferPackage.cpp` | 9 | package-procedure activity (NumpadSlash) | Arbitration + claim lifecycle + the `EvaluatePackage(true,false)` nudge, `mainthread::Post`ed so it lands PAST the claim's publish; the redirect itself is `core/PackageGate.cpp`'s T3 0x49 hook returning the claim's `param.form`. The test key carries no package, so a test claim offers nothing | claim + T3 enforcement; the ENGINE runs the package natively |
 | `Equipment.cpp` | 15 | equip/unequip (Num.) | `GetEquippedObject` + `UnequipObject`/`EquipObject` (melee-vs-ranged lever) | source-block |
 | `Detection.cpp` | 16 | stealth (Num8) | `kMovementNoiseMult` + `kDetectLifeRange` AVs | source-block |

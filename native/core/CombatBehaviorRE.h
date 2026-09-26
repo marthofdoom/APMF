@@ -130,6 +130,15 @@ namespace apmf::cbt {
     //   So ending a running leaf from ITS update with SetFailed(thread,1) + Ascend(thread) is the
     //     leaf's own failure exit: the runner then calls that node's OWN pop(), which removes
     //     exactly what its own act() pushed -- the data stack stays balanced by construction.
+    //   CombatBehaviorForceFail::act() (AE 49702 0x8B9D90 / SE 48692 0x8218A0) is literally
+    //     push(4) + SetFailed(thread, 1) + Ascend(thread), calling THESE two functions (it reads
+    //     the thread from TLS; the runner's `control` is that same thread -- the field-proven
+    //     ch.7 act() deny depends on it, and the update seat re-checks cur_node/phase first).
+    //   HISTORY, corrected here: the 2026-09-03 T1 probe crash (Docs/PROBE-ALLOWANCE.md) took
+    //     ForceFail::act()'s FIRST E8 call to be SetFailed. That call is 0x5572A0 = AE id 33171,
+    //     the data-stack PUSH `(thread, out, size)` -- so the probe called the push with a bool
+    //     as its out-pointer (the `mov [rdi],rbx`, rdi=1 fault). SetFailed itself is the SECOND
+    //     call. Its signature was never the problem; the address was.
     inline constexpr std::size_t kThreadCurNode = 0x138;   // CombatBehaviorThread::cur_node
     inline constexpr std::size_t kThreadPhase   = 0x14C;   // CombatBehaviorThread::phase (1 = update)
     using Update_t    = void (*)(void* a_this, void* a_control);   // slot 4, (node, thread)
