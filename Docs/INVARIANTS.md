@@ -14,8 +14,14 @@ losing source at its source (AV writes, movement full-block, detection AVs, pack
 yield, pausing an actor's own in-progress dialogue); and (c) PROMOTE A BOUNDED,
 ONE-SHOT, CLIENT-REQUESTED ACTION for a facet that has no meaningful "deny" form and
 involves no AI decision to arbitrate around — a single anim-graph event, a sticky
-draw/sheathe, a stance toggle — fired ONCE at Engage/Release, on the game thread,
-with no per-tick `Tick` work and no re-assert loop. A channel MUST NEVER call a
+draw/sheathe, a stance toggle, the client's named idle — fired ONCE at Engage/Release, on the game thread,
+with no per-tick `Tick` work and no re-assert loop. (ch.12 idle v2, ABI v17, 2026-09-25: ONE
+`AIProcess::PlayIdle(actor, idle, target)` at Engage for the TESIdleForm and the reference the
+client declared in `param.form` / `param.target`, one more per Repoint / owner change because each
+is a new declaration, and at Release ONE `IdleForceDefaultState` ONLY when that idle is still HELD —
+the actor's graph has not raised `IdleStop` since the call. A one-shot idle that ended by itself
+gets nothing at Release. The claim ends on a refused or unplayable idle and on the owner's death;
+it is never re-played by Harbinger. Still (c): the idle is the client's, not an AI selection.) A channel MUST NEVER call a
 function that SELECTS WHAT an AI will decide to do when the client already has its
 own proven mechanism for making that selection — NOT `Actor::StartCombat`, NOT
 `MagicCaster::CastSpellImmediate`, NOT a movement drive-feed, NOT a direct
