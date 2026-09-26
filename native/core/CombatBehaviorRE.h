@@ -148,40 +148,6 @@ namespace apmf::cbt {
     inline constexpr std::size_t kThreadPhase   = 0x14C;   // CombatBehaviorThread::phase (1 = update)
     using Update_t    = void (*)(void* a_this, void* a_control);   // slot 4, (node, thread)
 
-    // ---- The SEARCH leaves (ch.23 pursuit leash, ABI v16). NOT in kLeaves: they are
-    // `CombatBehaviorTreeNodeObject1<T, COMBAT_SEARCH_PRIORITY>` (a leaf with one stored
-    // parameter), same base class and same 10-slot layout. VariantID triples as the MIT fork
-    // ships them (Offsets_VTABLE.h:3820-3826, marthofdoom/CommonLibSSE-NG mit-3.7 fde0f3ae), each
-    // also derived from OUR unpacked executables by RTTI walk (spec.json rows Leaf.Search*):
-    //   Search          AE 214189 0x18E7718 act 0x8B9BD0 pop 0x8B9E60 update 0x8BB2D0
-    //                   SE 267082 0x16A2090 act 0x8217E0 pop 0x821960 update 0x8247E0
-    //   SearchCenter    AE 214215 0x18E7878 act 0x8B9C20 pop 0x8B9EB0 update 0x8BB2E0
-    //                   SE 267084 0x16A21F0 act 0x821810 pop 0x8219B0 update 0x8247F0
-    //   SearchLocation  AE 214176 0x18E7668 act 0x8B9CB0 pop 0x8BA080 update 0x8BB380
-    //                   SE 267081 0x16A1FE0 act 0x821840 pop 0x821A50 update 0x824810
-    //   SearchWander    AE 214202 0x18E77C8 act 0x8B9D00 pop 0x8BA0E0 update 0x8BB390
-    //                   SE 267083 0x16A2140 act 0x821870 pop 0x821AB0 update 0x824820
-    // act() = push 8, store the node's priority (+0x28) into the Search context, then T::Enter;
-    // update (slot 4) = the same `(node, thread)` shape as every other leaf. All four live in the
-    // 'Search' tree (AE builder 49529: Search Context > Search Repeat > Search Parallel > Search
-    // Selector {Search Center, Search Wander, Search Unimportant Location, Search Location}), which
-    // is the 'Search' branch the Low Combat selector (AE 49049) looks up by name. Their paths:
-    // Search = Generic<Search> -> None, SearchWander = Generic<SearchWander> -> None, SearchCenter =
-    // Standard|Flight -> Location, SearchLocation = Standard|Flight|RotatePath -> Location -- all
-    // around the combat GROUP's search centre.
-    inline constexpr std::array<LeafEntry, 4> kSearchLeaves{ {
-        { "CombatBehaviorSearch", REL::VariantID(267082, 214189, 0x1725190) },
-        { "CombatBehaviorSearchCenter", REL::VariantID(267084, 214215, 0x17252f0) },
-        { "CombatBehaviorSearchLocation", REL::VariantID(267081, 214176, 0x17250e0) },
-        { "CombatBehaviorSearchWander", REL::VariantID(267083, 214202, 0x1725240) },
-    } };
-    // The search centre the four read: SearchCenter::Enter (AE 49520 0x8B29C0 / SE 48536
-    // 0x81BCA0) loads CombatController+0x00 (the CombatGroup), then group+0x100/+0x104/+0x108
-    // (the position) and group+0x110 (non-null = a valid location) -- RE::CombatGroup::
-    // searchTargetLoc (a BGSWorldLocation: pos +0x00, cellOrWorldSpace +0x10 after alignment), the
-    // same offsets on both runtimes, read by the engine WITHOUT the group lock.
-    inline constexpr std::size_t kGroupSearchLoc      = 0x100;   // NiPoint3
-    inline constexpr std::size_t kGroupSearchLocSpace = 0x110;   // TESForm* (cell or worldspace)
     using SetFailed_t = void (*)(void* a_thread, bool a_failed);    // AE 47496 / SE 46240
     using Ascend_t    = void (*)(void* a_thread);                   // AE 47484 / SE 46229
 
@@ -266,6 +232,41 @@ namespace apmf::cbt {
         { "CombatBehaviorTrackTarget", REL::VariantID(266500, 213338, 0x171e118) },
         { "CombatBehaviorWaitBehindCover", REL::VariantID(267193, 214382, 0x17267f8) },
     } };
+
+    // ---- The SEARCH leaves (ch.23 pursuit leash, ABI v16). NOT in kLeaves: they are
+    // `CombatBehaviorTreeNodeObject1<T, COMBAT_SEARCH_PRIORITY>` (a leaf with one stored
+    // parameter), same base class and same 10-slot layout. VariantID triples as the MIT fork
+    // ships them (Offsets_VTABLE.h:3820-3826, marthofdoom/CommonLibSSE-NG mit-3.7 fde0f3ae), each
+    // also derived from OUR unpacked executables by RTTI walk (spec.json rows Leaf.Search*):
+    //   Search          AE 214189 0x18E7718 act 0x8B9BD0 pop 0x8B9E60 update 0x8BB2D0
+    //                   SE 267082 0x16A2090 act 0x8217E0 pop 0x821960 update 0x8247E0
+    //   SearchCenter    AE 214215 0x18E7878 act 0x8B9C20 pop 0x8B9EB0 update 0x8BB2E0
+    //                   SE 267084 0x16A21F0 act 0x821810 pop 0x8219B0 update 0x8247F0
+    //   SearchLocation  AE 214176 0x18E7668 act 0x8B9CB0 pop 0x8BA080 update 0x8BB380
+    //                   SE 267081 0x16A1FE0 act 0x821840 pop 0x821A50 update 0x824810
+    //   SearchWander    AE 214202 0x18E77C8 act 0x8B9D00 pop 0x8BA0E0 update 0x8BB390
+    //                   SE 267083 0x16A2140 act 0x821870 pop 0x821AB0 update 0x824820
+    // act() = push 8, store the node's priority (+0x28) into the Search context, then T::Enter;
+    // update (slot 4) = the same `(node, thread)` shape as every other leaf. All four live in the
+    // 'Search' tree (AE builder 49529: Search Context > Search Repeat > Search Parallel > Search
+    // Selector {Search Center, Search Wander, Search Unimportant Location, Search Location}), which
+    // is the 'Search' branch the Low Combat selector (AE 49049) looks up by name. Their paths:
+    // Search = Generic<Search> -> None, SearchWander = Generic<SearchWander> -> None, SearchCenter =
+    // Standard|Flight -> Location, SearchLocation = Standard|Flight|RotatePath -> Location -- all
+    // around the combat GROUP's search centre.
+    inline constexpr std::array<LeafEntry, 4> kSearchLeaves{ {
+        { "CombatBehaviorSearch", REL::VariantID(267082, 214189, 0x1725190) },
+        { "CombatBehaviorSearchCenter", REL::VariantID(267084, 214215, 0x17252f0) },
+        { "CombatBehaviorSearchLocation", REL::VariantID(267081, 214176, 0x17250e0) },
+        { "CombatBehaviorSearchWander", REL::VariantID(267083, 214202, 0x1725240) },
+    } };
+    // The search centre the four read: SearchCenter::Enter (AE 49520 0x8B29C0 / SE 48536
+    // 0x81BCA0) loads CombatController+0x00 (the CombatGroup), then group+0x100/+0x104/+0x108
+    // (the position) and group+0x110 (non-null = a valid location) -- RE::CombatGroup::
+    // searchTargetLoc (a BGSWorldLocation: pos +0x00, cellOrWorldSpace +0x10 after alignment), the
+    // same offsets on both runtimes, read by the engine WITHOUT the group lock.
+    inline constexpr std::size_t kGroupSearchLoc      = 0x100;   // NiPoint3
+    inline constexpr std::size_t kGroupSearchLocSpace = 0x110;   // TESForm* (cell or worldspace)
 
     // ---- Cast/equip CONTEXT-CREATION nodes (deny-completeness, 2026-09-04) ----
     // These are NOT leaves. They are `CombatBehaviorTreeCreateContextNode*`
