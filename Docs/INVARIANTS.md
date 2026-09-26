@@ -981,6 +981,30 @@ The rule is the explicit form of #0/#1: #1 says "block the foreign input"; #18 a
   to resolve, and documents the measured protocol (`core/CombatBehaviorRE.h`
   "The node protocol") rather than inferring it from a class declaration. #17's
   "engine-answer-first, flip YES→NO" applies to the whole protocol, not one slot.
+- **A deny of a RUNNING node uses the node's own failure exit — the update() half
+  (ch.23 pursuit leash, `kIntent_PursuitLeash`, ABI v16, 2026-09-25).** A movement leaf runs its whole path
+  inside ONE leaf (Advance's update ends only when its CombatPath completes or fails),
+  so a deny that only refuses act() cannot stop a leaf that started before the deny's
+  condition held — for a leash, every chase begun inside the radius. The leash
+  therefore has a second seat, slot 0x04 (update, `(node, thread)`) on its 14 leaves (ten
+  pursuit + four search), and ends a running leaf with exactly what the leaf's own update does when its
+  path fails and what `ForceFail::act()` does after its push: the engine's
+  `SetFailed(thread, 1)` + `Ascend(thread)` (AE 47496 / 47484, SE 46240 / 46229, verified
+  function rows). **What it writes, stated:** through those two engine functions only,
+  the thread's `state` (+0x148, to failed if not already interrupted), `cur_node`
+  (+0x138, to the node's parent) and `phase` (+0x14C, to 0). It pushes and pops nothing:
+  the runner then calls the node's OWN pop(), which removes what the node's own act()
+  pushed, so the act()/pop() balance above holds by construction. Before calling them
+  the seat checks the runner state is exactly "this node is `cur_node`, phase 1"; any
+  other state passes through to the original update and is counted. Never a raw write
+  of those fields, never SetFailed alone (a failed-but-not-ascended node would be
+  updated again next step). The act() half of the same leash is the unchanged ForceFail
+  pair; the leash arms only when BOTH halves install on all 14 leaves. The runner's `control`
+  and the TLS thread the engine's own leaves use are the same object (proof cited in
+  `core/CombatBehaviorRE.h`). (The
+  2026-09-03 T1 probe crash that made "hand-rolled SetFailed" a warning called 0x5572A0
+  = id 33171, the data-stack PUSH, believing it was SetFailed — `core/CombatBehaviorRE.h`
+  records the correction.)
 - **A path you cannot yet close is a DOCUMENTED GAP, never a silent one.** If an
   enumerated path has no clean, RTTI-verified (#17), version-robust seat on the
   pinned CommonLib, DO NOT hook a blind slot and DO NOT pretend the facet is

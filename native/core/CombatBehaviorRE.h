@@ -103,9 +103,53 @@ namespace apmf::cbt {
         void*            blackboard;           // 0x18
         void*            behaviorController;   // 0x20 -- the CPR-hypothesis hop (see TreeControl comment)
         RE::ActorHandle  attackerHandle;        // 0x28
+        RE::ActorHandle  targetHandle;          // 0x2C -- the combat target (ch.23 pursuit leash, ABI v16).
+                                                //   Same as RE::CombatController::targetHandle in the MIT
+                                                //   fork (C/CombatController.h:99, "// 2C"), below the 0x68
+                                                //   AE layout split, so identical on 1.6.1170 and 1.5.97.
     };
     static_assert(offsetof(ControllerMini, attackerHandle) == 0x28);
     static_assert(offsetof(ControllerMini, attackerHandle) < 0x68);
+    static_assert(offsetof(ControllerMini, targetHandle) == 0x2C);
+    static_assert(offsetof(ControllerMini, targetHandle) < 0x68);
+
+    // ---- The update seat (slot 0x04) and the engine's own leaf-failure exit (ch.23 pursuit leash,
+    // ABI v16, 2026-09-25; measured on BOTH unpacked executables, agentlog apmf-pursuit.md) ----
+    //   Runner step (AE 47483 0x85DBA0 / SE 46228): phase 2 -> act() [slot 2]; then, while
+    //     phase == 1 and flags & 3 == 0, update(node, thread) [slot 4] (slot 5 instead when
+    //     state == 2); then, when phase == 0, pop() [slot 3] on the node captured at the START
+    //     of the step (the same node whose act()/update() just ran), depth--.
+    //   A movement leaf's update runs its CombatPath to completion: Advance::Update (AE 47899
+    //     0x86DD60 / SE 46704 0x7D6980) ends with SetFailed(thread, 1) + Ascend(thread) when its
+    //     path FAILS and Ascend(thread) alone when it completes. A leaf that is never ended keeps
+    //     running for the whole chase -- which is why an act()-only deny cannot leash it.
+    //   SetFailed: AE 47496 0x85E0A0 / SE 46240 0x7C6D30 -- `if (thread->state(+0x148) <= 1)
+    //     thread->state = dl` (AE stores dl, SE stores dl != 0).
+    //   Ascend:    AE 47484 0x85DD70 / SE 46229 0x7C69D0 -- `if (cur = thread->cur_node(+0x138))
+    //     { thread->cur_node = cur->parent(+0x10); thread->phase(+0x14C) = 0; }`.
+    //   So ending a running leaf from ITS update with SetFailed(thread,1) + Ascend(thread) is the
+    //     leaf's own failure exit: the runner then calls that node's OWN pop(), which removes
+    //     exactly what its own act() pushed -- the data stack stays balanced by construction.
+    //   CombatBehaviorForceFail::act() (AE 49702 0x8B9D90 / SE 48692 0x8218A0) is literally
+    //     push(4) + SetFailed(thread, 1) + Ascend(thread), calling THESE two functions. It reads
+    //     the thread from TLS (gs:[0x58] slot, +0x6A0) while the seats pass the runner's
+    //     `control`; they are the SAME object, PROVEN from the disassembly (tier-A review,
+    //     agentlog review-apmf-pursuit.md): the runner's only caller on AE (0x858B10) stores
+    //     its thread argument into [tls+0x6A0] at 0x858B56 and then calls the runner with that
+    //     same register; on SE the runner (46228) has three callers and each stores the same
+    //     object into tls+0x6A0 first (0x7C1786, 0x7C18B2, 0x7C19A2). The update seat still
+    //     re-checks cur_node/phase before ending a leaf.
+    //   HISTORY, corrected here: the 2026-09-03 T1 probe crash (Docs/PROBE-ALLOWANCE.md) took
+    //     ForceFail::act()'s FIRST E8 call to be SetFailed. That call is 0x5572A0 = AE id 33171,
+    //     the data-stack PUSH `(thread, out, size)` -- so the probe called the push with a bool
+    //     as its out-pointer (the `mov [rdi],rbx`, rdi=1 fault). SetFailed itself is the SECOND
+    //     call. Its signature was never the problem; the address was.
+    inline constexpr std::size_t kThreadCurNode = 0x138;   // CombatBehaviorThread::cur_node
+    inline constexpr std::size_t kThreadPhase   = 0x14C;   // CombatBehaviorThread::phase (1 = update)
+    using Update_t    = void (*)(void* a_this, void* a_control);   // slot 4, (node, thread)
+
+    using SetFailed_t = void (*)(void* a_thread, bool a_failed);    // AE 47496 / SE 46240
+    using Ascend_t    = void (*)(void* a_thread);                   // AE 47484 / SE 46229
 
     struct LeafEntry {
         const char*      name;
@@ -188,6 +232,41 @@ namespace apmf::cbt {
         { "CombatBehaviorTrackTarget", REL::VariantID(266500, 213338, 0x171e118) },
         { "CombatBehaviorWaitBehindCover", REL::VariantID(267193, 214382, 0x17267f8) },
     } };
+
+    // ---- The SEARCH leaves (ch.23 pursuit leash, ABI v16). NOT in kLeaves: they are
+    // `CombatBehaviorTreeNodeObject1<T, COMBAT_SEARCH_PRIORITY>` (a leaf with one stored
+    // parameter), same base class and same 10-slot layout. VariantID triples as the MIT fork
+    // ships them (Offsets_VTABLE.h:3820-3826, marthofdoom/CommonLibSSE-NG mit-3.7 fde0f3ae), each
+    // also derived from OUR unpacked executables by RTTI walk (spec.json rows Leaf.Search*):
+    //   Search          AE 214189 0x18E7718 act 0x8B9BD0 pop 0x8B9E60 update 0x8BB2D0
+    //                   SE 267082 0x16A2090 act 0x8217E0 pop 0x821960 update 0x8247E0
+    //   SearchCenter    AE 214215 0x18E7878 act 0x8B9C20 pop 0x8B9EB0 update 0x8BB2E0
+    //                   SE 267084 0x16A21F0 act 0x821810 pop 0x8219B0 update 0x8247F0
+    //   SearchLocation  AE 214176 0x18E7668 act 0x8B9CB0 pop 0x8BA080 update 0x8BB380
+    //                   SE 267081 0x16A1FE0 act 0x821840 pop 0x821A50 update 0x824810
+    //   SearchWander    AE 214202 0x18E77C8 act 0x8B9D00 pop 0x8BA0E0 update 0x8BB390
+    //                   SE 267083 0x16A2140 act 0x821870 pop 0x821AB0 update 0x824820
+    // act() = push 8, store the node's priority (+0x28) into the Search context, then T::Enter;
+    // update (slot 4) = the same `(node, thread)` shape as every other leaf. All four live in the
+    // 'Search' tree (AE builder 49529: Search Context > Search Repeat > Search Parallel > Search
+    // Selector {Search Center, Search Wander, Search Unimportant Location, Search Location}), which
+    // is the 'Search' branch the Low Combat selector (AE 49049) looks up by name. Their paths:
+    // Search = Generic<Search> -> None, SearchWander = Generic<SearchWander> -> None, SearchCenter =
+    // Standard|Flight -> Location, SearchLocation = Standard|Flight|RotatePath -> Location -- all
+    // around the combat GROUP's search centre.
+    inline constexpr std::array<LeafEntry, 4> kSearchLeaves{ {
+        { "CombatBehaviorSearch", REL::VariantID(267082, 214189, 0x1725190) },
+        { "CombatBehaviorSearchCenter", REL::VariantID(267084, 214215, 0x17252f0) },
+        { "CombatBehaviorSearchLocation", REL::VariantID(267081, 214176, 0x17250e0) },
+        { "CombatBehaviorSearchWander", REL::VariantID(267083, 214202, 0x1725240) },
+    } };
+    // The search centre the four read: SearchCenter::Enter (AE 49520 0x8B29C0 / SE 48536
+    // 0x81BCA0) loads CombatController+0x00 (the CombatGroup), then group+0x100/+0x104/+0x108
+    // (the position) and group+0x110 (non-null = a valid location) -- RE::CombatGroup::
+    // searchTargetLoc (a BGSWorldLocation: pos +0x00, cellOrWorldSpace +0x10 after alignment), the
+    // same offsets on both runtimes, read by the engine WITHOUT the group lock.
+    inline constexpr std::size_t kGroupSearchLoc      = 0x100;   // NiPoint3
+    inline constexpr std::size_t kGroupSearchLocSpace = 0x110;   // TESForm* (cell or worldspace)
 
     // ---- Cast/equip CONTEXT-CREATION nodes (deny-completeness, 2026-09-04) ----
     // These are NOT leaves. They are `CombatBehaviorTreeCreateContextNode*`

@@ -66,6 +66,10 @@ namespace apmf {
         // core/ActionGate.cpp's PFP section.
         apmf::actiongate::PfpHeartbeat();
 
+        // ch.23 PURSUIT LEASH heartbeat (ABI v16), same RULE C shape: every ~30 s while any
+        // leash is set, zeros included; one relaxed load when none is.
+        apmf::actiongate::PursuitHeartbeat();
+
         // "Does 0x49 actually redirect?" probe (marth 2026-09-06, core/PackageGate.cpp).
         // Same RULE C shape as the PfpHeartbeat above: self-throttled internally
         // (~30s), INI-gated ([PackageGate] EnableRedirectLog, default ON), one

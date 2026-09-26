@@ -1519,6 +1519,126 @@ another DLL wrapped the same engine function after Harbinger.
   field log must show `seat OBSERVED`, then `FIRST DENY` for a claimed retreat and no `DENY MISSED`,
   before a client relies on it (CLAUDE.md principle 5).
 
+## Leashing an NPC in combat (ABI v16, `kIntent_PursuitLeash`)
+
+Without a leash the engine chases a foe at any distance: a follower that locks onto a fleeing
+bandit runs after it across the map while you fight something else. `kIntent_PursuitLeash`
+(ch.23) ties the NPC's combat moves to an ANCHOR actor you name (usually the player) and a
+radius you choose.
+
+### The contract
+
+* **It denies the engine's moves toward the NPC's goal, and only when they would take the NPC
+  farther away.** Ten combat behaviour-tree leaves move an NPC toward its combat TARGET: Advance
+  (the melee close-in), Reposition, Chase, Stalk, Flank, FlankDistant, Surround, PursueTarget,
+  MaintainOptimalRange (a ranged NPC closing to its range) and FindAttackLocation (a ranged NPC
+  moving for a shot). Four more move it around its combat group's SEARCH area when the target is
+  lost: Search, SearchCenter, SearchLocation, SearchWander (their goal is the group's search
+  centre). While the NPC is farther than the radius from the anchor AND that goal is farther from
+  the anchor than the NPC is, such a leaf is refused before it starts, and one that is already
+  running (it began inside the radius) is ended. A goal nearer the anchor is always allowed: a
+  straight run toward it never ends farther from the anchor than the NPC already is.
+* **It stops nothing else.** Attacks, spells, shouts, blocks, dodges, circling, backing off,
+  fleeing and the NPC's package all run as the engine decides. An NPC past the radius keeps
+  fighting whatever comes to it and shoots or casts at whatever it can reach. It does not walk
+  back to the anchor: that is yours to do (or to leave to its follow package once the fight ends).
+* **It needs the anchor in the same place.** If the anchor is dead, unloaded, or in another cell
+  or worldspace, nothing is denied until it is back.
+* **Its own facet.** The leash is arbitrated on its own, separately from `kIntent_CombatAction`
+  (ch.7). Another mod's ch.7 offense or cast deny on the same NPC neither replaces your leash nor
+  is replaced by it. Between two leashes on one NPC, the higher basis wins.
+
+### How the leash ends
+
+It holds while your claim holds. Your own Release, an outranking ch.23 claim, a save load, a new
+game or the NPC unloading end it. A dead NPC runs no combat tree, so nothing is denied for it.
+Repoint with a new `target` / `fval` to move the anchor or change the radius.
+
+### The recipe: in-combat leash to the player
+
+```cpp
+using namespace APMF_API;
+
+// One leash claim per follower. Keep the handle; Repoint it when the radius changes.
+Handle LeashToPlayer(RE::FormID follower, float radius /* game units, e.g. 2048 */) {
+    if (!g_apmf || g_apmf->abiVersion < 16) return kInvalidHandle;   // older: keep your own leash
+    APMF_Param p{};
+    p.target = 0x14;                            // the anchor: the player
+    p.fval   = radius;                          // > 0; the leash radius
+    return g_apmf->RequestEx(follower, kIntent_PursuitLeash, /*basis=*/50.0f, &p);
+    // kInvalidHandle: refused at the call; the log says why (see below).
+}
+
+void SetLeashRadius(Handle h, float radius) {   // e.g. from an MCM slider
+    APMF_Param p{};
+    p.target = 0x14;
+    p.fval   = radius;
+    g_apmf->Repoint(h, &p);
+}
+
+void Unleash(Handle h) { g_apmf->Release(h); }
+```
+
+Pick the radius from how far your followers normally stand plus a fight's width: the leash only
+stops moves while the NPC is already past it, so a radius smaller than your follow distance leashes
+every fight.
+
+### Parameter fields
+
+| field | meaning |
+|---|---|
+| `param.target` | The anchor actor's FormID. REQUIRED; 0 or the NPC itself is refused. |
+| `param.fval` | The radius in game units. REQUIRED; 0, negative or NaN is refused. |
+| everything else | Not read. |
+
+### When a claim is refused
+
+* **At the call (`kInvalidHandle`):** a Harbinger older than v16 ("no channel serves intent 23").
+  Logged `[apmf][pursuit-leash] claim refused`: the leash is not armed (VR, a runtime other than
+  exactly 1.6.1170 or 1.5.97, `[PursuitLeash] bPursuitLeash=0` in `APMF.ini`, the address
+  self-check refused a leaf or the engine's SetFailed / Ascend, or before kDataLoaded), no anchor,
+  the NPC as its own anchor, a radius that is not a positive number, or the NPC is the player.
+* **At Engage (the claim stands, the leash is not set, logged `pursuit leash NOT set`):** the anchor
+  FormID is not a loaded Actor. Repoint once the anchor loads.
+
+### What a good log looks like
+
+```
+[ch.23] PURSUIT LEASH armed on 14 leaves (act+pop deny pair, update() ended through SetFailed+Ascend). ...
+[ch.23] 0x... pursuit-leash facet CLAIMED (anchor 0x00000014, radius 2048).
+[ch.23] 0x... pursuit LEASH set: anchor 0x00000014, radius 2048. ...
+[ch.23] 0x... LEASH ENDED at update() CombatBehaviorAdvance: the actor is 2051 from its anchor
+        (radius 2048) and its target 3310 -- the move would take it farther. ...
+[ch.23] 0x... LEASH DENIED at act() CombatBehaviorSearchWander: the actor is 2300 from its anchor
+        (radius 2048) and its search centre 2900 -- ...
+[ch.23] pursuit H leashes=1 leaf=seen/denied-at-act/ended-at-update: Advance=412/37/9 Chase=0/0/0 ...
+[ch.23] pursuit H pass inside=3120 closer=85 no-anchor=0 other-space=0 no-goal=2 stale=0 update-anomaly=0
+```
+
+The two `pursuit H` lines print every 30 s while any leash is set, zeros included. `seen` counts every
+time any NPC starts that leaf; a leaf you expect but never see is a leaf that NPC does not use.
+**`update-anomaly` above 0 is a bug report**, and so is any `[ch.7] paired-pop protocol ANOMALY`.
+
+### Limits worth knowing
+
+* **It leashes the 14 moves toward the goal, not every step.** Local moves (circling, strafing,
+  backing off, dodging), flight, flee and cover moves, a stagger or a knockback are not denied, so
+  an NPC can end up a little past the radius. It does not pull the NPC back.
+* **Two moves are not leashed on purpose.** ReturnToCombatArea (the engine pulling the NPC back
+  into the fight's area; its goal is that area, not a target) and SearchInvestigateDoor (its goal
+  is a door, which can lead through a load door). See `Docs/DENY-COMPLETENESS-AUDIT.md` gap 14.
+* **Search is judged by the search centre.** A search move can end up to the group's search radius
+  past the centre the rule measured.
+* **Accepted over-deny: a step back can be refused too.** MaintainOptimalRange and Surround sometimes
+  move AWAY from the target and toward the anchor. Past the radius, with the target farther out
+  still, those are denied as well: the NPC stands where it is (still fighting what it can reach)
+  instead of stepping back.
+* **Not saved.** A save load, a new game or the NPC unloading drops the claim.
+* **Built, CI-verified, not yet field-run, and the leaves are not yet OBSERVED on a deck.** The first
+  field log must show non-zero `seen` counts, then `DENIED at act()` / `ENDED at update()` for a
+  leashed follower that stops at the radius without freezing, with `update-anomaly=0`, before a client
+  relies on it (CLAUDE.md principle 5).
+
 ## The facet table
 
 Every facet is one `Intent` value in `native/APMF_API.h`. The proof tier says
@@ -1562,6 +1682,7 @@ columns, one doesn't imply the other.
 | `kIntent_TargetPin` (ch.20, ABI v13) | **Pin the actor's combat target.** Harbinger answers the engine's own target selector with your target while the actor is fighting and your target is one of its group's combat targets. Never starts combat | `form` (the target ACTOR, REQUIRED) | Built, not yet battle-tested. CI verified only. The selector seat has not been observed running in a game yet. |
 | `kIntent_CombatEntry` (ch.21, ABI v14) | **Start a fight.** Harbinger calls the engine's own `StartCombat` once against your target (once more per Repoint). Never re-enters, never stops the fight; the claim ENDS on a refusal or when the fight ends. Pin the same target after it entered to make it fight THAT one | `form` (the target ACTOR, REQUIRED) | Built, not yet battle-tested. CI verified only. |
 | `kIntent_CombatReentryDeny` (ch.22, ABI v15) | **Stay out of the fight.** For a window you choose, every engine `StartCombat` for the NPC is refused at its own self-check. Stops nothing; your own ch.21 entry passes. Ends by itself when the window (counted from your request) elapses or the NPC dies. Recipe: claim, then `StopCombat` once on the first tick the claim is live | `fval` (window seconds; 0 = 10, max 120) | Built, not yet battle-tested. CI verified only; the seat is not yet observed on a deck. |
+| `kIntent_PursuitLeash` (ch.23, ABI v16) | **Leash the NPC's in-combat pursuit and search to an anchor actor.** Moves toward a goal farther from the anchor are refused while the NPC is past the radius | `target` (the anchor), `fval` (the radius) | Built, not yet battle-tested. CI verified only; the leaves are not yet observed on a deck. |
 
 Where a field is marked "reserved, not yet read", the channel currently
 applies a fixed built-in behavior and ignores whatever you pass in that field.

@@ -136,7 +136,17 @@ namespace APMF_API {
     // channel for intent 22 and REFUSES the request (kInvalidHandle, "no channel serves intent
     // 22" in its log), which is the documented degrade -- keep the actor out of combat your own
     // way.
-    inline constexpr std::uint32_t kABIVersion = 15;
+    //
+    // ABI v16 (2026-09-25) adds kIntent_PursuitLeash (ch.23) and NOTHING else: no struct, no
+    // function-pointer slot, no APMF_Param field -- the v13 / v14 / v15 shape. ch.23 rides the
+    // EXISTING RequestEx/Repoint/Release slots and reads the EXISTING param.target (the ANCHOR
+    // actor) and param.fval (the radius, game units). A client must see abiVersion >= 16 before
+    // it asks for the intent: an OLDER APMF has no channel for intent 23 and REFUSES the request
+    // (kInvalidHandle, "no channel serves intent 23" in its log), which is the documented degrade
+    // -- keep your own leash. (An earlier, never-released v16 draft carried the leash as a ch.7
+    // category bit, kCombatActionCat_Pursuit; it was withdrawn before any release, so no client
+    // ever saw it. The leash is its own facet, arbitrated separately from ch.7.)
+    inline constexpr std::uint32_t kABIVersion = 16;
 
     // The exported query function's undecorated name and pointer type.
     // const APMF_API_v1* APMF_GetInterface(std::uint32_t abiVersion);
@@ -607,6 +617,49 @@ namespace APMF_API {
                                      //       bCombatReentryDeny=0, a self-check refusal, before
                                      //       kDataLoaded, a negative or NaN fval, or the actor is the
                                      //       player.
+
+        kIntent_PursuitLeash = 23,   // ch.23 LEASH this actor's in-combat PURSUIT to an anchor actor
+                                     //       (ABI v16, ClickUp 86e3ex5ve). Mode: DENY, CONDITIONAL.
+                                     //       Param: target = the ANCHOR actor (REQUIRED; 0 or the
+                                     //       actor itself refused); fval = the RADIUS in game units
+                                     //       (REQUIRED, > 0). form / ival / pos are not read.
+                                     //
+                                     //       WHAT IT DOES. While the actor is farther than the radius
+                                     //       from the anchor, the combat behaviour-tree moves that
+                                     //       take it toward its goal are refused when that goal is
+                                     //       farther from the anchor than the actor is (the move
+                                     //       would take it farther). The goal is the combat TARGET
+                                     //       for the ten pursuit leaves (Advance, Chase,
+                                     //       FindAttackLocation, Flank, FlankDistant,
+                                     //       MaintainOptimalRange, PursueTarget, Reposition, Stalk,
+                                     //       Surround) and the combat group's SEARCH CENTER for the
+                                     //       four search leaves (Search, SearchCenter,
+                                     //       SearchLocation, SearchWander). A leaf is refused before
+                                     //       it starts, and one already running is ended the way the
+                                     //       engine ends a leaf whose path failed. Every other move,
+                                     //       every attack, spell and block runs natively; the actor is
+                                     //       never walked back.
+                                     //
+                                     //       ITS OWN FACET: arbitrated separately from ch.7
+                                     //       (kIntent_CombatAction). A ch.7 claim by another mod
+                                     //       neither replaces nor is replaced by a leash.
+                                     //
+                                     //       ENDS: Release, an outranking ch.23 claim, a save load, a
+                                     //       new game, or the actor unloading. A dead actor runs no
+                                     //       combat tree; a dead, unloaded or other-cell anchor holds
+                                     //       nothing back.
+                                     //
+                                     //       REFUSED SYNCHRONOUSLY (kInvalidHandle, logged): an APMF
+                                     //       older than v16 ("no channel serves intent 23"), VR, a
+                                     //       runtime other than 1.6.1170 / 1.5.97, [PursuitLeash]
+                                     //       bPursuitLeash=0, a self-check refusal, before
+                                     //       kDataLoaded, target 0 or the actor itself, a radius that
+                                     //       is not a positive number, or the actor is the player. An
+                                     //       anchor that is not a loaded Actor is found at Engage:
+                                     //       the claim stands and denies nothing (logged).
+                                     //
+                                     //       FIELD STATUS: built, CI-verified, NOT yet observed on a
+                                     //       deck (the "[ch.23] pursuit H" heartbeat counts the leaves).
     };
 
     // ── Travel flags (kIntent_Travel's param.ival, ABI v10) ─────────────────────
@@ -947,7 +1000,8 @@ namespace APMF_API {
     // free position for a future category (defense/movement/utility are
     // deliberately NOT assigned a bit yet -- Docs/ALLOWANCE-TEMPLATE.md §3's T1
     // row lists them as never-denied by design until a real client need names
-    // one).
+    // one. The in-combat pursuit LEASH is not a category here: it is its own
+    // intent, kIntent_PursuitLeash (ch.23, ABI v16), on the same leaf seats).
     enum CombatActionCategory : std::uint32_t {
         kCombatActionCat_None    = 0,
         kCombatActionCat_Offense = 1u << 0,   // Attack/AttackLow/Bash/RangedAttack/SpecialAttack/
@@ -1346,12 +1400,17 @@ namespace APMF_API {
     //                                  No other field is read.
     //   fval   kIntent_CombatReentryDeny  ABI v15: the WINDOW in seconds (0 => 10 s; clamped to 120;
     //                                  negative / NaN refused). No other field is read.
+    //   target kIntent_PursuitLeash    ABI v16: the ANCHOR actor (REQUIRED; 0 or the actor itself
+    //                                  is refused).
+    //   fval   kIntent_PursuitLeash    ABI v16: the RADIUS in game units (REQUIRED, > 0; 0,
+    //                                  negative or NaN is refused). No other field is read.
     //   none   every other Intent      accepted, not yet read by the channel
     //
-    // fval is read ONLY by kIntent_Travel (ABI v10) and kIntent_CombatReentryDeny (ABI v15);
-    // it stays reserved for a
-    // future per-request bias on ch.11, scale on ch.1a, factor on ch.16. target is
-    // not read by any Intent OTHER than kIntent_SelectSpell yet. pos is read by
+    // fval is read ONLY by kIntent_Travel (ABI v10), kIntent_CombatReentryDeny (ABI v15) and
+    // kIntent_PursuitLeash (ABI v16); it stays reserved for a
+    // future per-request bias on ch.11, scale on ch.1a, factor on ch.16. target is read by
+    // kIntent_PursuitLeash (ABI v16, the anchor) and was by kIntent_SelectSpell (retired).
+    // pos is read by
     // kIntent_Cast with kCastFlag_AtPosition and by kIntent_Travel with kTravel_ToPosition
     // (both ABI v11). Without its flag, kIntent_Travel refuses a non-zero pos.
     // ─────────────────────────────────────────────────────────────────────────────
