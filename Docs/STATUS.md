@@ -10,8 +10,8 @@ ClickUp 86e3ex5v9, batch L, tier A (new engine seat + ABI). From MFO's confidenc
 retreating follower is pulled back into combat by the engine every tick, so MFO re-issues `StopCombat` every
 tick (the churn MFO's INVARIANTS #22a forbids). With a deny claim held, the client calls `StopCombat` ONCE.
 - **What:** intent 22, channel `channels/CombatReentryDeny.cpp`. The client names {actor, window seconds}
-  (`param.fval`; 0 = 10 s, clamped to 120 s). While the winning claim holds, the window runs and the actor has
-  no combat controller, the engine's own combat ENTRY for that actor is refused. `INVARIANTS #0 (h)` (seven
+  (`param.fval`; 0 = 10 s, clamped to 120 s). While the winning claim holds and its window runs, every engine
+  `StartCombat` for that actor is refused (closing round F2). `INVARIANTS #0 (h)` (seven
   conditions) is the amendment. MFO adoption is a separate brief.
 - **Engine facts (both unpacked images):** a `CombatController` is built only by CombatManager AE 46873 /
   46874 (SE 45573 / 45574), whose only callers are inside `Actor::StartCombat`; the ctor's one other caller
@@ -35,6 +35,16 @@ tick (the churn MFO's INVARIANTS #22a forbids). With a deny claim held, the clie
 - **Ends:** `window elapsed` / `owner dead` (Poll, EnqueueRelease), Release, outranked, load / revert
   (`ResetAll`). Nothing written, nothing undone.
 - **ABI v15** adds the intent only (no struct, slot or field; `fval` is an existing field).
+- **Closing round (tier-A review clean, nothing above SEV-3; review log agentlogs/review-apmf-reentry.md):**
+  F1 -- both INTEGRATION recipes (ch.22 retreat, ch.21 enter + pin) treat a handle that has never read live
+  as PENDING, not ended (the claim applies at the next Drain; `IsClaimLive` reads the published snapshot);
+  the retreat calls `StopCombat` on the first tick the claim is live. F2 (option a) -- while the window runs
+  EVERY StartCombat for the actor is refused, including the in-combat target-add; only ch.21's
+  `ClientEntryScope` passes; the seat reads no actor state (removes the controller-pointer race with a
+  cross-thread StopCombat). F3 -- the window runs from the claim's OWN request / last Repoint
+  (`NoteRequest` / `NoteRepoint` from ControlMap, `Settle` after Publish), so a takeover gets only the
+  remainder and ends at once if none. F4 -- every Engage / Repoint line names the slot-0x99 owner and warns
+  per claim when it is not ours.
 
 ## HEAD OF WORK 2026-09-25 -- ch.21 COMBAT ENTRY (`kIntent_CombatEntry`, ABI v14), branch `feat/apmf-combat-entry`, NOT merged
 

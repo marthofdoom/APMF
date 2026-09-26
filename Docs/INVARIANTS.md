@@ -250,17 +250,25 @@ may be patched (#17). **The seat.** Its fourth refusal check is a VIRTUAL call o
 jumps straight to its refusal epilogue. APMF's `write_vfunc` on slot 0x99 chains the original and changes its
 answer only at that one return address. It is legal only while ALL of these hold:
 1. **A deny, never an entry, never a stop.** The only change is StartCombat's own YES to its own NO, through
-   a check it already makes, before it has done anything. APMF calls no engine function, writes no engine
-   state, and never takes an actor out of a fight it is in: an actor that already has a controller passes
-   (the engine may add targets to its fight). Ending the fight is the client's call (`StopCombat`, once).
+   a check it already makes, before it has done anything. While the window runs EVERY StartCombat for the
+   actor is refused (closing-round ruling, option (a)): a new entry, and the in-combat path that adds a
+   target to a fight already running. The seat reads no actor state beyond the FormID (in particular not the
+   controller pointer, so no race with a `StopCombat` on another thread). APMF calls no engine function,
+   writes no engine state, and never takes an actor out of a fight it is in: that fight goes on, it only
+   gains no targets through StartCombat. Ending it is the client's call (`StopCombat`, once).
 2. **Scoped to one call site.** Every other `IsDead` caller -- thousands per frame -- gets the original
    answer; the return-address compare is the thunk's first act after the original. The site is a verified
    call-site row (`ReentryDeny.StartCombat.SelfIsDeadCall`: StartCombat's signature, then the eleven bytes
    `B2 01 48 8B CF FF 90 C8 04 00 00` at +0x8F AE / +0x8D SE, byte-checked again at runtime by
    `REL::SelfCheck`). The TARGET's own `IsDead(false)` check inside StartCombat (a different return address)
    is never answered: another actor's entry against this one is that actor's facet.
-3. **Bounded, and it ends by itself.** The window runs from Engage (a Repoint restarts it). When it elapses
-   or the owner dies, `reentrydeny::Poll` (the ch.19 / ch.20 / ch.21 monitor seat) releases the claim and
+3. **Bounded, and it ends by itself.** The window runs from the claim's OWN request time (a Repoint of that
+   claim restarts it): ControlMap records it per handle at `EnqueueRequest` / `EnqueueRepoint`, and after the
+   Drain that applied the claim publishes, `Settle` sets the deadline from the WINNING handle's time. A claim
+   that takes over from a released rival therefore gets only what is left of its own window, and one whose
+   window is already over ends at once (the ch.21 "no stale declaration" line). Until `Settle` runs -- one
+   main-thread pump -- the deadline is provisional (apply time + window). When the window elapses or the
+   owner dies, `reentrydeny::Poll` (the ch.19 / ch.20 / ch.21 monitor seat) releases the claim and
    logs `deny ended: <reason>`. Released, outranked or dropped (unload, save load, revert): the engine's
    entries pass again. Nothing is saved; nothing is undone (nothing was written).
 4. **A client's declared entry passes (precedence).** ch.21's one `StartCombat` for the actor runs inside
@@ -269,13 +277,16 @@ answer only at that one return address. It is legal only while ALL of these hold
 5. **Observed before relied on (principle 5), and a miss is loud (principle 7).** The seat logs its first
    StartCombat self-check of the session (`seat OBSERVED`) whether or not a claim exists, and
    `reentrydeny::Poll` logs `DENY MISSED` when a denied actor gains a controller under a live window
-   without a ch.21 entry passing. The one known way to miss: a DLL that wraps slot 0x99 AFTER APMF with a
-   thunk that CALLS (rather than tail-jumps to) the previous entry hides StartCombat's return address;
-   Engage warns once when the slot no longer holds APMF's thunk. No retry, no fallback, no re-assert.
+   without a ch.21 entry passing (sampled every 250 ms, so a StopCombat and a new entry inside one sample
+   are not seen as a transition -- a limit of the detector, not of the deny). The remaining known miss
+   path is a DLL that wraps slot 0x99 AFTER APMF with a thunk that CALLS (rather than tail-jumps to) the
+   previous entry, which hides StartCombat's return address; every Engage / Repoint line names the slot's
+   owner and warns for that claim when it is not APMF's thunk (the claim is not refused). No retry, no
+   fallback, no re-assert.
 6. **Scope is closed by name.** Exactly 1.6.1170 or 1.5.97, not VR, the Character vtable only (never the
    player), `[CombatReentryDeny] bCombatReentryDeny`, the address self-check on the Character vtable and the
-   call-site row. Denying the in-combat target-add path, denying other actors' entries against this one,
-   or ending combat are each a new amendment, not a code change.
+   call-site row. Denying other actors' entries against this one, ending combat, or passing any caller
+   other than ch.21's `ClientEntryScope` are each a new amendment, not a code change.
 7. **The world's reaction belongs to the client** (principle 2 scope). Enemies may keep attacking an actor
    that cannot fight back; that is their facet and the client's declared consequence.
 

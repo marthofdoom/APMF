@@ -1257,11 +1257,30 @@ not end) while your target is not yet one of the group's combat targets, and tak
 combat update after the entry put it there. Your code never needs to look at the NPC's combat state
 itself; watch the two handles with `IsClaimLive`.
 
+**"Not live yet" is not "ended".** A request is applied at Harbinger's next drain, and `IsClaimLive`
+reads the PUBLISHED state, so a handle you were just given reads false until that drain. Treat a
+handle that has never read live as PENDING. Only a handle that WAS live and now is not has ended.
+Releasing on the first false read throws away the request before it is applied (the queued entry
+then finds no claim and is dropped as stale).
+
 ```cpp
 using namespace APMF_API;
 
-struct Fight { Handle entry = kInvalidHandle; Handle pin = kInvalidHandle; };
+struct Fight {
+    Handle entry = kInvalidHandle, pin = kInvalidHandle;
+    bool   entrySeen = false, pinSeen = false;   // has IsClaimLive ever read true for it?
+    int    pendingTicks = 0;                     // ticks spent waiting for the first live read
+};
 std::unordered_map<RE::FormID, Fight> g_fight;   // one per actor
+
+// true = this handle has ENDED (it was live and is not any more). A handle that has never read live
+// is still pending and is NOT ended.
+bool Ended(Handle h, bool& seen) {
+    if (h == kInvalidHandle) return false;
+    const bool live = g_apmf->IsClaimLive(h);
+    if (live) seen = true;
+    return seen && !live;
+}
 
 void StopFight(RE::FormID actor) {
     if (auto it = g_fight.find(actor); it != g_fight.end()) {
@@ -1286,10 +1305,14 @@ void FightThis(RE::FormID actor, RE::FormID target) {
 // Your own per-frame (or per-tick) update.
 void TickFights() {
     for (auto it = g_fight.begin(); it != g_fight.end();) {
-        const auto& f = it->second;
+        auto& f = it->second;
+        const bool entryEnded = Ended(f.entry, f.entrySeen);
+        const bool pinEnded   = Ended(f.pin, f.pinSeen);
+        // A request Harbinger dropped before applying it never turns live: give up after a while.
+        const bool stuck = !f.entrySeen && ++f.pendingTicks > 120;
         // Harbinger ended one of them (the log says why): drop both. To try again, call
         // FightThis() again -- that is a NEW request.
-        if (!g_apmf->IsClaimLive(f.entry) || (f.pin != kInvalidHandle && !g_apmf->IsClaimLive(f.pin))) {
+        if (entryEnded || pinEnded || stuck) {
             g_apmf->Release(f.pin);
             g_apmf->Release(f.entry);
             it = g_fight.erase(it);
@@ -1366,13 +1389,14 @@ number of seconds you choose. It is the other half of a retreat: you end the fig
 
 ### The contract
 
-* **It denies the engine's combat ENTRY, and nothing else.** Every way the engine starts a fight for
+* **It denies the engine's combat start, and nothing else.** Every way the engine starts a fight for
   an NPC (it sees an enemy, it is attacked, an ally is fighting, a script or another mod calls
-  `StartCombat`) goes through one engine function, `Actor::StartCombat`. While your claim holds, the
-  window runs and the NPC is OUT OF COMBAT, that function refuses for this NPC before it does
-  anything: no weapon draw, no re-arm equip, no alarm. The NPC keeps running its own package.
-* **It stops nothing.** An NPC that is in combat when you claim stays in combat, and the engine may
-  still add foes to that fight. Harbinger never calls `StopCombat`. You call it, once (the recipe).
+  `StartCombat`) goes through one engine function, `Actor::StartCombat`. While your claim holds and
+  the window runs, that function refuses for this NPC every time, before it does anything: no weapon
+  draw, no re-arm equip, no alarm. The NPC keeps running its own package.
+* **It stops nothing.** An NPC that is in combat when you claim stays in combat. It gains no new foes
+  through `StartCombat` while the window runs, but the fight it is in goes on. Harbinger never calls
+  `StopCombat`. You call it, once (the recipe).
 * **Your own `kIntent_CombatEntry` is not denied.** A ch.21 entry for the NPC (yours or another
   mod's) is a declared decision and goes through. It does not end this claim: when that fight ends,
   the window (if it is still running) refuses the engine's re-entries again.
@@ -1393,45 +1417,64 @@ turns false, when:
 Your own Release, an outranking claim, a save load, a new game or the NPC unloading also end it.
 `Repoint(handle, &param)` restarts the window from that moment with the new `fval`.
 
+**A window runs from its own request.** If two mods claim the same NPC and the higher one is
+released, the other claim takes over with what is LEFT of its own window, counted from when it
+was requested (or last Repointed). If nothing is left, it ends at once with `window elapsed`.
+
 ### The recipe: retreat = StopCombat once + deny re-entry
+
+Claim first, and call `StopCombat` on the first tick the claim reads LIVE. A request is applied at
+Harbinger's next drain, and `IsClaimLive` reads the PUBLISHED state, so a handle you were just given
+reads false until then. "Not live yet" means PENDING, never ended. Calling `StopCombat` before the
+claim is live leaves a gap in which the engine can pull the NPC straight back in; the deny is not
+applied yet.
 
 ```cpp
 using namespace APMF_API;
 
-std::unordered_map<RE::FormID, Handle> g_retreat;   // one per actor
+struct Retreat {
+    Handle h = kInvalidHandle;
+    bool   live = false;        // has IsClaimLive ever read true? (then StopCombat was called)
+    int    pendingTicks = 0;
+};
+std::unordered_map<RE::FormID, Retreat> g_retreat;   // one per actor
 
-// Main thread (StopCombat is an engine call on the actor; make it where you make your other ones).
-void Retreat(RE::Actor* npc, float seconds) {
+void StartRetreat(RE::FormID id, float seconds) {
     if (!g_apmf || g_apmf->abiVersion < 15) return;     // absent or older than v15: your own way
-    const RE::FormID id = npc->GetFormID();
     APMF_Param p{};
     p.fval = seconds;                                    // the window; 0 = 10 s, at most 120 s
-    Handle h = g_apmf->RequestEx(id, kIntent_CombatReentryDeny, /*basis=*/50.0f, &p);
+    const Handle h = g_apmf->RequestEx(id, kIntent_CombatReentryDeny, /*basis=*/50.0f, &p);
     if (h == kInvalidHandle) return;                     // refused at the call (the log says why)
-    if (auto old = g_retreat.find(id); old != g_retreat.end()) g_apmf->Release(old->second);
-    g_retreat[id] = h;
-    npc->StopCombat();                                   // ONCE. The deny keeps the engine from undoing it.
+    if (auto old = g_retreat.find(id); old != g_retreat.end()) g_apmf->Release(old->second.h);
+    g_retreat[id] = Retreat{ h };                        // PENDING until the next drain applies it
 }
 
 void EndRetreat(RE::FormID id) {                         // e.g. the NPC reached safety, or healed
     if (auto it = g_retreat.find(id); it != g_retreat.end()) {
-        g_apmf->Release(it->second);                     // engine combat entries pass again
+        g_apmf->Release(it->second.h);                   // engine combat entries pass again
         g_retreat.erase(it);
     }
 }
 
-void TickRetreats() {                                    // your own per-tick update
+// Your own per-tick update, on the MAIN thread (StopCombat is an engine call on the actor).
+void TickRetreats() {
     for (auto it = g_retreat.begin(); it != g_retreat.end();) {
-        if (!g_apmf->IsClaimLive(it->second)) { it = g_retreat.erase(it); continue; }  // window over / dead
+        auto& r = it->second;
+        const bool liveNow = g_apmf->IsClaimLive(r.h);
+        if (liveNow && !r.live) {                        // first live tick: the deny is applied
+            r.live = true;
+            if (auto* npc = RE::TESForm::LookupByID<RE::Actor>(it->first)) npc->StopCombat();   // ONCE
+        }
+        if (!liveNow && r.live) { it = g_retreat.erase(it); continue; }   // ended: window over / dead
+        if (!r.live && ++r.pendingTicks > 120) {         // a request that never applied: give up
+            g_apmf->Release(r.h);
+            it = g_retreat.erase(it);
+            continue;
+        }
         ++it;
     }
 }
 ```
-
-The claim is made BEFORE the `StopCombat`: a claim is applied on the next Harbinger drain, so an
-engine re-entry that lands between your `StopCombat` and that drain would not be refused yet. If you
-see the NPC back in combat right away, that is the first thing to check. Claiming first costs
-nothing: while the NPC is still in combat the deny passes everything.
 
 ### Parameter fields
 
@@ -1452,13 +1495,14 @@ nothing: while the NPC is still in combat the deny passes everything.
 
 ```
 [ch.22] seat OBSERVED: Actor::StartCombat's own self-check reached the Character::IsDead seat ...
-[ch.22] 0x... combat re-entry deny ENGAGED for 10.0 s: ... The actor IS in combat now: Harbinger
-        stops nothing; entries are refused once the fight ends (call Actor::StopCombat yourself).
-[ch.22] 0x... FIRST DENY: the engine asked to put the actor into combat (Actor::StartCombat);
-        refused at its own self-check, before it did anything. 9.6 s of the window left.
+[ch.22] 0x... combat re-entry deny ENGAGED, window 10.0 s: every engine Actor::StartCombat for this
+        actor is refused while the window runs (only a ch.21 entry passes). The actor IS in combat
+        now: Harbinger stops nothing (call Actor::StopCombat yourself); ... Seat slot 0x99: Harbinger's.
+[ch.22] 0x... FIRST DENY: the engine called Actor::StartCombat for the actor; refused at its own
+        self-check, before it did anything. 9.6 s of the window left.
 [ch.22] 0x... deny ended: window elapsed (claim h=...). ...
 [ch.22] 0x... combat re-entry deny released (ENDED BY HARBINGER: window elapsed): StartCombat
-        self-checks seen 41 -- entries refused 38, passed because already in combat 3, ...
+        self-checks seen 41 -- refused 41, passed as a ch.21 entry 0, ...
 ```
 
 `seat OBSERVED` appears once per session, the first time any NPC's combat entry reaches the seat,
@@ -1468,7 +1512,8 @@ another DLL wrapped the same engine function after Harbinger.
 
 ### Limits worth knowing
 
-* **Entry only.** An NPC already in combat is not affected; end the fight yourself.
+* **It does not end a fight.** An NPC already in combat stays in it (it only gains no new foes through
+  `StartCombat`); end the fight yourself.
 * **Not saved.** A save load, a new game or the NPC unloading drops the claim.
 * **Built, CI-verified, not yet field-run, and the seat is not yet OBSERVED on a deck.** The first
   field log must show `seat OBSERVED`, then `FIRST DENY` for a claimed retreat and no `DENY MISSED`,
@@ -1516,7 +1561,7 @@ columns, one doesn't imply the other.
 | `kIntent_Travel` (ch.19) | **Walk this actor to a destination** (ABI v11: or to a world point, `kTravel_ToPosition`, via an APMF-owned XMarker). APMF points its own travel package at it and offers that package through an internal ch.9 claim at YOUR basis. The leg ends on arrival, on the actor entering combat, on the destination being gone, or (ABI v12) BLOCKED. ABI v12: `GetTravelLegState` says which, and `kTravel_SpeedSet` sets the gait | `form` (the DESTINATION, REQUIRED -- an object REFERENCE or a CELL, and it need not be loaded or nearby), `fval` (arrival radius, 0 => 75u, clamped 50-512, not used for a cell), `ival` (a `TravelFlags` bitmask) |a refused claim means the channel is off in APMF.ini, VR, the esl is missing, or eight legs are already running|
 | `kIntent_TargetPin` (ch.20, ABI v13) | **Pin the actor's combat target.** Harbinger answers the engine's own target selector with your target while the actor is fighting and your target is one of its group's combat targets. Never starts combat | `form` (the target ACTOR, REQUIRED) | Built, not yet battle-tested. CI verified only. The selector seat has not been observed running in a game yet. |
 | `kIntent_CombatEntry` (ch.21, ABI v14) | **Start a fight.** Harbinger calls the engine's own `StartCombat` once against your target (once more per Repoint). Never re-enters, never stops the fight; the claim ENDS on a refusal or when the fight ends. Pin the same target after it entered to make it fight THAT one | `form` (the target ACTOR, REQUIRED) | Built, not yet battle-tested. CI verified only. |
-| `kIntent_CombatReentryDeny` (ch.22, ABI v15) | **Stay out of the fight.** For a window you choose, the engine's own combat entry for the NPC is refused at `StartCombat`'s own self-check while the NPC is out of combat. Stops nothing; your own ch.21 entry passes. Ends by itself when the window elapses or the NPC dies. Recipe: claim, then `StopCombat` once | `fval` (window seconds; 0 = 10, max 120) | Built, not yet battle-tested. CI verified only; the seat is not yet observed on a deck. |
+| `kIntent_CombatReentryDeny` (ch.22, ABI v15) | **Stay out of the fight.** For a window you choose, every engine `StartCombat` for the NPC is refused at its own self-check. Stops nothing; your own ch.21 entry passes. Ends by itself when the window (counted from your request) elapses or the NPC dies. Recipe: claim, then `StopCombat` once on the first tick the claim is live | `fval` (window seconds; 0 = 10, max 120) | Built, not yet battle-tested. CI verified only; the seat is not yet observed on a deck. |
 
 Where a field is marked "reserved, not yet read", the channel currently
 applies a fixed built-in behavior and ignores whatever you pass in that field.

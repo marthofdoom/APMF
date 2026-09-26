@@ -562,16 +562,19 @@ namespace APMF_API {
                                      //       combat (it sees an enemy, it is attacked, an ally is
                                      //       fighting, a script or another mod calls StartCombat) goes
                                      //       through one engine function, Actor::StartCombat. While
-                                     //       the claim holds and the actor is OUT OF COMBAT, APMF makes
-                                     //       that function refuse for this actor, before it does
+                                     //       the claim holds and its window runs, APMF makes that
+                                     //       function refuse for this actor EVERY time, before it does
                                      //       anything (no weapon draw, no equip, no alarm). The actor
                                      //       keeps doing what its package says.
                                      //
                                      //       IT STOPS NOTHING. An actor that is already in combat is
-                                     //       not taken out of it, and the engine may still add foes to
-                                     //       its fight. The recipe for a retreat is: claim this, then
-                                     //       call Actor::StopCombat ONCE yourself (INTEGRATION.md
-                                     //       "retreat: StopCombat once + deny re-entry"). From then on
+                                     //       not taken out of it (it only gains no new foes through
+                                     //       StartCombat). The recipe for a retreat is: claim this, and
+                                     //       on the first tick IsClaimLive(handle) reads true (the
+                                     //       claim is applied at the next drain; before that the handle
+                                     //       is PENDING, not ended) call Actor::StopCombat ONCE yourself
+                                     //       (INTEGRATION.md "retreat: StopCombat once + deny
+                                     //       re-entry"). From then on
                                      //       the engine cannot pull the actor back in until the window
                                      //       ends. Other actors may still attack it: their fight is
                                      //       their facet. Nothing is undone when the claim ends:
@@ -586,7 +589,10 @@ namespace APMF_API {
                                      //       THE CLAIM ENDS, AND APMF RELEASES IT ITSELF (the log names
                                      //       the reason, IsClaimLive(handle) turns false), when the
                                      //       window elapses ("window elapsed") or the actor dies
-                                     //       ("owner dead"). Repoint(handle, &param) restarts the
+                                     //       ("owner dead"). The window runs from the claim's OWN
+                                     //       request (or last Repoint): a claim that takes over from a
+                                     //       released rival gets only what is left of it, and ends at
+                                     //       once if nothing is. Repoint(handle, &param) restarts the
                                      //       window from that moment with the new fval. Your own
                                      //       Release, an outranking claim, a save load, a new game or
                                      //       the actor unloading also end it (never saved).
