@@ -14,6 +14,11 @@
 #include <unordered_map>
 #include <vector>
 
+// Win32 INI reader, declared by hand (the PCH does not pull in <Windows.h>) -- the same
+// one-line import channels/CombatEntry.cpp and channels/Travel.cpp use.
+extern "C" __declspec(dllimport) unsigned long __stdcall GetPrivateProfileIntA(
+    const char* lpAppName, const char* lpKeyName, int nDefault, const char* lpFileName);
+
 // ============================================================================
 // Channel 12 -- IDLE / ANIMATION. SANCTIONED BOUNDED ONE-SHOT PROMOTE (INVARIANTS
 // #0(c), CHANNEL-MAP ch.12): play an animation. This facet has no meaningful deny
@@ -66,6 +71,13 @@
 // it). A looping idle raises nothing until something ends it. So:
 //     HELD = PlayIdle accepted the idle AND the actor's graph has not raised
 //            "IdleStop" since the call.
+// HELD IS INFERRED, NOT YET OBSERVED: that the graph's IdleStop reaches this sink is the
+// castobs precedent, not a field capture of IdleStop itself. The first field log must show
+// IdleStop in a one-shot idle's Release tag list (STATUS field check).
+// FURNITURE GUARD (review F1): the reset is NEVER sent while the actor's sit/sleep state is
+// not kNormal (sitting, sleeping, entering or leaving furniture): IdleForceDefaultState
+// there would pop the actor out of the furniture pose. A false "held" is harmless only
+// because of this guard plus the loaded / alive checks.
 // A per-actor BSAnimationGraphEvent sink (the core/CastObserve.cpp precedent, whose
 // clip-trigger events were captured on the deck 2026-09-04) records it. Release sends
 // IdleForceDefaultState only when HELD, the actor is loaded and alive; otherwise it
@@ -107,6 +119,7 @@ namespace {
 
     using apmf::log::Hex;
 
+    constexpr const char*   kIni           = "Data/SKSE/Plugins/APMF.ini";
     constexpr std::uint64_t kConfirmWaitMs = 3000;   // no graph event this long after an accepted play = say so
     constexpr std::size_t   kFirstTags     = 8;      // graph events kept for the confirmation line
 
@@ -363,6 +376,26 @@ namespace {
         apmf::mainthread::Post([id, gen, what] { Play(id, gen, what); });
     }
 
+    // The Release-time reset decision, shared by Release and a form-0 owner change (review
+    // F3). Sends IdleForceDefaultState ONLY for a held idle on a loaded, living actor that is
+    // not in furniture (review F1). Returns the log text. Inside Drain, game thread.
+    std::string ResetIfHeld(const Entry& e, const Obs& o, RE::Actor* actor) {
+        if (!e.live) return "no reset (no idle was accepted)";
+        if (o.idleStop)
+            return fmt::format("no reset (not held: the graph raised IdleStop {} ms after the call)",
+                               o.idleStopMs - o.playMs);
+        if (!actor) return "no reset (held, but the actor did not resolve: unloaded or deleted)";
+        if (!actor->Is3DLoaded()) return "no reset (held, but the actor is not loaded)";
+        if (actor->IsDead()) return "no reset (held, but the actor is dead)";
+        if (const auto sit = actor->AsActorState()->GetSitSleepState(); sit != RE::SIT_SLEEP_STATE::kNormal)
+            return fmt::format("no reset (held, but the actor is in furniture: sit/sleep state {}; the reset would "
+                               "pop it out)",
+                               static_cast<std::uint32_t>(sit));
+        const bool ok = actor->NotifyAnimationGraph("IdleForceDefaultState");
+        return fmt::format("HELD (no IdleStop in {} ms) -> IdleForceDefaultState accepted={}",
+                           apmf::clock::MonotonicMs() - o.playMs, ok);
+    }
+
     class IdleChannel final : public apmf::Channel {
     public:
         const char*      Name() const override { return "idle-anim"; }
@@ -389,9 +422,26 @@ namespace {
         }
 
         // A new winning declaration (a Repoint, or another claim taking over). v2: one more
-        // PlayIdle for the new idle. v1 (form 0): nothing, as before v2 existed.
-        void OnOwnerChanged(RE::FormID id, RE::Actor* /*actor*/, const APMF_API::APMF_Param& param) override {
-            if (param.form != 0) ApplyV2(id, param, "RE-POINTED");
+        // PlayIdle for the new idle. Form 0 with no v2 entry: nothing, as before v2 existed.
+        // Form 0 over a v2 entry (review F3): the v2 idle is no longer declared, so it gets
+        // the Release-style reset (held + furniture guard) and its entry is dropped; the v1
+        // claim then has nothing, exactly as a fresh v1 owner change would.
+        void OnOwnerChanged(RE::FormID id, RE::Actor* actor, const APMF_API::APMF_Param& param) override {
+            if (param.form != 0) {
+                ApplyV2(id, param, "RE-POINTED");
+                return;
+            }
+            const auto it = g_entries.find(id);
+            if (it == g_entries.end()) return;
+            const Entry e = it->second;
+            g_entries.erase(it);
+            g_count.store(g_entries.size(), std::memory_order_relaxed);
+            const Obs o = Disarm(id);
+            if (actor) actor->RemoveAnimationGraphEventSink(SinkFor(id));
+            spdlog::info("[ch.12] 0x{} idle owner changed to a form-free (v1) claim: the v2 idle {} (0x{}) is dropped. "
+                         "Reset: {}.",
+                         Hex(id), e.idleName.empty() ? std::string("?") : e.idleName, Hex(e.idle),
+                         ResetIfHeld(e, o, actor));
         }
 
         // Relinquish (INVARIANTS #5a). A v1 claim has no entry: nothing to restore, as before.
@@ -405,23 +455,7 @@ namespace {
             const Obs o = Disarm(id);
             if (actor) actor->RemoveAnimationGraphEventSink(SinkFor(id));
 
-            std::string reset;
-            if (!e.live) {
-                reset = "no reset (no idle was accepted)";
-            } else if (o.idleStop) {
-                reset = fmt::format("no reset (not held: the graph raised IdleStop {} ms after the call)",
-                                    o.idleStopMs - o.playMs);
-            } else if (!actor) {
-                reset = "no reset (held, but the actor did not resolve: unloaded or deleted)";
-            } else if (!actor->Is3DLoaded()) {
-                reset = "no reset (held, but the actor is not loaded)";
-            } else if (actor->IsDead()) {
-                reset = "no reset (held, but the actor is dead)";
-            } else {
-                const bool ok = actor->NotifyAnimationGraph("IdleForceDefaultState");
-                reset = fmt::format("HELD (no IdleStop in {} ms) -> IdleForceDefaultState accepted={}",
-                                    apmf::clock::MonotonicMs() - o.playMs, ok);
-            }
+            const std::string reset = ResetIfHeld(e, o, actor);
             spdlog::info("[ch.12] 0x{} idle released ({}) (idle {} 0x{}, target 0x{}): PlayIdle called {} time(s) -- "
                          "accepted {}, refused {}. Release: {}. Graph events seen: {} [{}].",
                          Hex(id),
@@ -445,6 +479,8 @@ namespace apmf::idle {
         } else if (!REL::Module::IsExactly(SKSE::RUNTIME_SSE_1_6_1170) &&
                    !REL::Module::IsExactly(SKSE::RUNTIME_SSE_1_5_97)) {
             why = "runtime is not exactly 1.6.1170 or 1.5.97 (PlayIdle is verified on those two only)";
+        } else if (GetPrivateProfileIntA("Idle", "bIdleV2", 1, kIni) == 0) {
+            why = "[Idle] bIdleV2=0 in Data/SKSE/Plugins/APMF.ini";
         } else if (!apmf::allowance::SeatVerified(
                        REL::Relocation<std::uintptr_t>{ RELOCATION_ID(38290, 39256) }.address(),
                        "Idle.AIProcess.SetupSpecialIdle")) {

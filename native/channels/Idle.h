@@ -13,7 +13,7 @@
 
 namespace apmf::idle {
 
-    // Gate the v2 (form) path: exactly 1.6.1170 / 1.5.97, not VR, and the address
+    // Gate the v2 (form) path: exactly 1.6.1170 / 1.5.97, not VR, [Idle] bIdleV2=1, and the address
     // self-check on AIProcess::SetupSpecialIdle (the engine function PlayIdle calls).
     // Installs NO hook. Call at kDataLoaded. Idempotent. A refusal keeps its reason for
     // NotInstalledReason. The v1 (form-free) path is not gated by this. GAME THREAD.

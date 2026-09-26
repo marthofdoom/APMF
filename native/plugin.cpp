@@ -152,8 +152,8 @@ namespace {
                                                   // REFUSES kIntent_CombatEntry claims.
             apmf::idle::Install();               // ch.12 IDLE v2 (ABI v17): installs NO hook. Gates the one
                                                   // AIProcess::PlayIdle call per engage (INVARIANTS #0 (c)):
-                                                  // exact 1.6.1170 / 1.5.97, VR-refused, SeatVerified on
-                                                  // SetupSpecialIdle. A refusal REFUSES kIntent_Idle claims
+                                                  // exact 1.6.1170 / 1.5.97, VR-refused, [Idle] bIdleV2,
+                                                  // SeatVerified on SetupSpecialIdle. A refusal REFUSES kIntent_Idle claims
                                                   // that carry a form; the form-free v1 idle is not gated.
             apmf::reentrydeny::Install();        // ch.22 COMBAT RE-ENTRY DENY (ABI v15): Character vtable slot
                                                   // 0x99 (IsDead), chaining, answering only at

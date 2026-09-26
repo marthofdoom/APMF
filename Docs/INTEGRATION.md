@@ -1663,7 +1663,11 @@ Harbinger never picks the idle. It plays yours once and gets out of the way.
   event `IdleStop` and the NPC returns to its default state. At Release, Harbinger sends
   `IdleForceDefaultState` ONLY when that has NOT happened since the call (a looping idle that is
   still playing). An idle that already ended gets nothing, so Release never pops the NPC out of
-  whatever it is doing by then.
+  whatever it is doing by then. It is also never sent while the NPC is in furniture (sitting,
+  sleeping, getting in or out). "Held" is INFERRED from the graph event `IdleStop` and is not yet
+  observed on a deck: the first field log must show `IdleStop` in a one-shot idle's Release line.
+  A form-free Repoint (or a form-free claim taking over) drops the v2 idle with the same guarded
+  reset.
 * **It does not hold the NPC still.** The NPC's package keeps running. A follower whose follow
   package walks it toward you walks off the lock mid-animation. Claim `kIntent_MovementBlock` (ch.1)
   for the length of the idle if you need it to stay put, and walk it there first with
@@ -1729,7 +1733,8 @@ line names why.
 ### When a claim is refused
 
 * **At the call (`kInvalidHandle`), `form` set only,** logged `[apmf][idle] idle v2 claim
-  refused`: v2 is not available (VR, a runtime other than exactly 1.6.1170 or 1.5.97, the address
+  refused`: v2 is not available (VR, a runtime other than exactly 1.6.1170 or 1.5.97,
+  `[Idle] bIdleV2=0` in `APMF.ini`, the address
   self-check refused `SetupSpecialIdle`, or before kDataLoaded), or `target` is the NPC itself.
 * **On the main thread (the claim is ended, logged `NOT PLAYED` / `the engine REFUSED`):** see
   "How the claim ends".
@@ -1758,7 +1763,8 @@ are what the first field run records.
   manager, package or combat from playing over it.
 * **Held is read from the graph event `IdleStop`**, which the vanilla one-shot interaction idles
   raise when they end. An idle that ends WITHOUT raising `IdleStop` counts as held, and gets
-  `IdleForceDefaultState` at Release: harmless on an NPC already in its default state.
+  `IdleForceDefaultState` at Release: harmless on an NPC already in its default state, and never sent
+  to an NPC in furniture.
 * **Humanoid idles need a humanoid.** An IDLE from the character behaviour has no clip in a
   creature's graph. Check the confirmation line before relying on a creature.
 * **Not saved.** A save load, a new game or the NPC unloading drops the claim.

@@ -26,8 +26,15 @@ Harbinger H1, batch L, tier A (ABI). Shared by MFO lockpicking (ClickUp 86e3edgh
   sneaking after. No kneel in vanilla. `IdleActivatePickUpLow` is REFUSED against a container (its own
   IsCarryable condition on the target).
 - **Ends:** refused / unplayable idle, owner death (`Poll`), Release, unload, load / revert (`ResetAll`).
-- **Principle 5, NOT YET OBSERVED:** the first field log must show `ANIMATION CONFIRMED` for IdleLockPick
-  (and the Release line's held / not-held reason). MFO adoption is a separate brief (mirror `APMF_API.h` v17).
+- **Closing round (review CLEAN, nothing above SEV-3):** F1 the Release reset is never sent while
+  `GetSitSleepState() != kNormal` (furniture); F2 `[Idle] bIdleV2` (default 1) in `APMF.ini` refuses form
+  claims at the call; F3 a form-free owner change over a v2 idle runs the same guarded reset and drops the entry.
+- **FIELD CHECKS (principle 5, NOT YET OBSERVED):**
+  1. `ANIMATION CONFIRMED` for IdleLockPick on a follower.
+  2. **"Held" is INFERRED from `IdleStop`:** a one-shot idle's Release line must list `IdleStop` in its tag
+     list and say `not held`. If it never appears, every idle is treated as held (reset at Release, guarded).
+  3. A crouched follower stands for the pick and resumes sneaking after.
+  MFO adoption is a separate brief (mirror `APMF_API.h` v17).
 
 ## HEAD OF WORK 2026-09-25 -- ch.23 PURSUIT LEASH (`kIntent_PursuitLeash`, ABI v16), branch `feat/apmf-pursuit-deny`, NOT merged
 

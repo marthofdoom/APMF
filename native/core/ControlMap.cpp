@@ -217,8 +217,8 @@ namespace apmf {
 
         // ch.12 v2 (ABI v17): a kIntent_Idle claim that carries a FORM (param.form != 0: play
         // this IDLE at param.target) is REFUSED synchronously when the v2 path is not available
-        // (VR, a runtime other than 1.6.1170 / 1.5.97, the SetupSpecialIdle self-check refused,
-        // or before kDataLoaded) and when param.target names the actor itself. A form-free
+        // (VR, a runtime other than 1.6.1170 / 1.5.97, [Idle] bIdleV2=0, the SetupSpecialIdle
+        // self-check refused, or before kDataLoaded) and when param.target names the actor itself. A form-free
         // claim (v1) is never refused here. Whether param.form is an IDLE record and
         // param.target a loaded reference needs a form lookup, so it is decided on the game
         // thread (channels/Idle.cpp) and logged there.
