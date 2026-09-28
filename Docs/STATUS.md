@@ -50,7 +50,7 @@ bGateProbe2` (default 1 while testing). Code: `channels/Travel.cpp` `GateProbe2`
      the reachability query (M3) will use.
   MFO adoption: none needed (log only).
 - **Before the release cut:** `bGateProbe2` goes to 0 in `APMF.ini` (it is 1 only for the field test).
-- **Travel.cpp split required before further Travel work** (2492 / 2500 lines; REVIEW-BACKLOG APMF-B33).
+- **Travel.cpp split required before further Travel work** (2494 / 2500 lines; REVIEW-BACKLOG APMF-B33).
 - Closing round (tier-A review CLEAN, nothing above SEV-3): each NavMesh is held by a strong ref while read, the
   navmesh-safety comment now credits game-thread serialisation (obstacle cuts are copy-on-write), one
   triangle+vertex budget per probe, and the graph state prints the live CLONE first with the template labelled.

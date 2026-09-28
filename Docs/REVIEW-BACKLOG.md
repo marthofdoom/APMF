@@ -175,7 +175,7 @@ Raised against `6883032` (`feat/apmf-gate-probe2`), tier-A Opus 5.5 review 2026-
 `scratchpad/agentlogs/review-apmf-gate-probe2.md`). Verbatim from the reviewer log: "SEV-4: Travel.cpp
 2482/2500" and "SEV-5: budget per-location x2 + vertex loop unbudgeted + per-actor (multi-follower same frame)".
 - **Reasoning:** the budget half is fixed in the closing round (one triangle+vertex budget per probe). What
-  remains: the file is at 2492 lines, so ANY further Travel work needs a Travel.cpp split first (its own tier-A
+  remains: the file is at 2494 lines, so ANY further Travel work needs a Travel.cpp split first (its own tier-A
   brief). And the probe is rate-limited per ACTOR, so three followers blocked in one frame run three probes
   (each bounded; the field `us` figure will size whether a global limit is needed).
 - **Assigned:** the Travel.cpp split brief (before further Travel work); the per-actor limit after the field

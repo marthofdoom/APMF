@@ -1126,14 +1126,14 @@ parentheses.
   fields + `mainthread::Post` the `GetOpenState` re-reads. Armed only when the self-check
   verifies `Travel.GetOpenState`, `Travel.ScriptEventSourceHolder.GetSingleton` and TES::GetCell
   on an exact build. Passive: it must never write anything. GATE PROBE 2 (`[Travel] bGateProbe2`,
-  Travel.cpp:1287 header, `P2Locate`:1376, `P2Graph`:1489, `P2Collision`:1516, `GateProbe2`:1551, armed
-  :2133, called :2423 right after `GateProbe`; the destination is captured BEFORE `EndLeg` because EndLeg
+  Travel.cpp:1287 header, `P2Locate`:1376, `P2Graph`:1491, `P2Collision`:1518, `GateProbe2`:1553, armed
+  :2135, called :2425 right after `GateProbe`; the destination is captured BEFORE `EndLeg` because EndLeg
   deletes a point leg's marker): navmesh at stall and destination (safe by GAME-THREAD serialisation, not the
   cell `spinLock`, which guards only the mesh array; obstacle cuts are copy-on-write into a NEW NavMesh; each
   mesh is held by a `BSTSmartPointer` while read; ONE 262144 triangle+vertex budget per probe), then DOOR/ACTI/Obstacle refs near the stall->destination segment by bound box (collected under the
   cell lock, measured after), with graph state and Havok body. Raw offsets: spec.json layout_facts (the five
   probe-2 rows); every object is vtable-checked against a self-check row before a member read. Travel.cpp is
-  2492 lines: the next addition there is a STOP (2500 cap). A Travel.cpp split is REQUIRED before any
+  2494 lines: the next addition there is a STOP (2500 cap). A Travel.cpp split is REQUIRED before any
   further Travel work (REVIEW-BACKLOG APMF-B33). Deferred review items:
   REVIEW-BACKLOG APMF-B24 and APMF-B25 (read B25 R2-2 before touching `OnOwnerChanged`'s refusal
   teardown). `GetLegState` tests the caller's size against the FROZEN `kTravelLegInfoV12Size`
