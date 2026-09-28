@@ -1383,10 +1383,12 @@ namespace {
             auto*               arr = rd.navMeshes;
             if (!arr) continue;
             for (const auto& meshPtr : arr->navMeshes) {
-                const RE::BSTSmartPointer<RE::NavMesh> hold = meshPtr;   // a strong ref while read
-                RE::NavMesh*                           nm   = hold.get();
+                RE::NavMesh* nm = meshPtr.get();
                 if (!nm) continue;
-                const RE::BSNavmesh& bn = *nm;
+                // A strong ref while read, through the BSNavmesh base (its intrusive count;
+                // BSTSmartPointer<NavMesh> is ambiguous: NavMesh inherits two operator deletes).
+                const RE::BSTSmartPointer<RE::BSNavmesh> hold{ static_cast<RE::BSNavmesh*>(nm) };
+                const RE::BSNavmesh&                     bn = *hold;
                 ++o.meshes;
                 const auto& vs = bn.vertices;
                 const std::uint32_t vcount = vs.size();
