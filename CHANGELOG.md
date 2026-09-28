@@ -1,5 +1,6 @@
 ## Unreleased
 
+- **Harbinger keeps its last five logs.** At launch APMF.log moves to APMF.log.1, the older ones move up to APMF.log.5 and the oldest is dropped. Before, every launch wiped the log. A crash or freeze session's log now survives a few relaunches. A log that cannot be moved is noted in the new log and startup goes on.
 - **A second passive gate probe.** When a walk ends blocked, Harbinger now also logs the navmesh under the spot and under the destination, and the doors, activators and obstacles along the straight line between them, with their animation state and collision. It changes nothing. `[Travel] bGateProbe2` is new in `APMF.ini`, default 1 while this is being tested. Not field-run yet.
 - **A mod can now play a chosen animation at a target.** Claim `kIntent_Idle` with an IDLE record in `APMF_Param.form` and, if it needs one, the reference to play it at in `APMF_Param.target`. Harbinger plays it once with the game's own call, the same one the game's scripts use. A follower can pick a lock with `IdleLockPick` or hand something over with `IdleGive`.
 - **Harbinger plays it and lets go.** One play per request. A Repoint with an idle plays it again. The game checks the idle's own conditions and can say no. Then the request ends and the log says why.
