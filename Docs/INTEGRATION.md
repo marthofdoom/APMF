@@ -955,6 +955,13 @@ record flags (Obstacle, NavMesh filter) and `GetOpenState`, then logs OPEN-CLOSE
 ACTIVATE events near the stall for ten minutes, with the gates' open state read again
 right after the event and 4 s later. Lines are tagged `[travel-gate]`.
 
+A second passive probe (`[travel-gate2]`, `[Travel] bGateProbe2`, log only) runs at the same
+BLOCKED end. It reads the navmesh under the stall and under the destination (triangle, vertical
+gap, the mesh's door and obstacle data) and lists the doors, activators and Obstacle-flagged
+objects whose bounds lie near the straight line from the stall to the destination, with their
+animation-graph state and collision. It exists to find the signal a pre-dispatch reachability
+query can use; nothing reads it back, and a client must not parse it.
+
 ### Gait (ABI v12)
 
 Requires `abiVersion >= 12`. An older APMF stores the bits and walks at its authored

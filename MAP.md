@@ -1125,7 +1125,14 @@ parentheses.
   logs events near a watched stall for 10 min; sinks run on engine threads and only read plain
   fields + `mainthread::Post` the `GetOpenState` re-reads. Armed only when the self-check
   verifies `Travel.GetOpenState`, `Travel.ScriptEventSourceHolder.GetSingleton` and TES::GetCell
-  on an exact build. Passive: it must never write anything. Deferred review items:
+  on an exact build. Passive: it must never write anything. GATE PROBE 2 (`[Travel] bGateProbe2`,
+  Travel.cpp:1287 header, `P2Locate`:1373, `P2Graph`:1480, `P2Collision`:1507, `GateProbe2`:1542, armed
+  :2123, called :2413 right after `GateProbe`; the destination is captured BEFORE `EndLeg` because EndLeg
+  deletes a point leg's marker): navmesh at stall and destination (cell `spinLock` held, 262144-triangle
+  budget), then DOOR/ACTI/Obstacle refs near the stall->destination segment by bound box (collected under the
+  cell lock, measured after), with graph state and Havok body. Raw offsets: spec.json layout_facts (the five
+  probe-2 rows); every object is vtable-checked against a self-check row before a member read. Travel.cpp is
+  2480+ lines: the next addition there is a STOP (2500 cap). Deferred review items:
   REVIEW-BACKLOG APMF-B24 and APMF-B25 (read B25 R2-2 before touching `OnOwnerChanged`'s refusal
   teardown). `GetLegState` tests the caller's size against the FROZEN `kTravelLegInfoV12Size`
   (72), never `sizeof` — appended fields are written only inside the caller's size.

@@ -1,5 +1,6 @@
 ## Unreleased
 
+- **A second passive gate probe.** When a walk ends blocked, Harbinger now also logs the navmesh under the spot and under the destination, and the doors, activators and obstacles along the straight line between them, with their animation state and collision. It changes nothing. `[Travel] bGateProbe2` is new in `APMF.ini`, default 1 while this is being tested. Not field-run yet.
 - **A mod can now play a chosen animation at a target.** Claim `kIntent_Idle` with an IDLE record in `APMF_Param.form` and, if it needs one, the reference to play it at in `APMF_Param.target`. Harbinger plays it once with the game's own call, the same one the game's scripts use. A follower can pick a lock with `IdleLockPick` or hand something over with `IdleGive`.
 - **Harbinger plays it and lets go.** One play per request. A Repoint with an idle plays it again. The game checks the idle's own conditions and can say no. Then the request ends and the log says why.
 - **Release only resets a pose that is still held.** A one-shot animation ends by itself. Release sends the reset only when the animation has not ended, so it never pulls the NPC out of whatever it is doing by then. It is never sent to an NPC sitting or lying in furniture.
