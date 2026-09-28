@@ -3320,6 +3320,48 @@
    },
    "bytes": "B2 01 48 8B CF FF 90 C8 04 00 00",
    "doc": "ch.22 combat re-entry deny, INVARIANTS #0 (h); scratchpad apmf-reentry.md (AE 0x6B69BF, ret 0x6B69CA; SE 0x62523D, ret 0x625248)"
+  },
+  {
+   "seat": "BShkbAnimationGraph",
+   "kind": "vtable",
+   "construct": "RE::VTABLE_BShkbAnimationGraph[0]",
+   "rtti": ".?AVBShkbAnimationGraph@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 232870,
+    "1.5.97": 282351
+   },
+   "slots": [],
+   "source": "native/channels/Travel.cpp (GateProbe2 anim-graph read: vtable identity before any member read; SeatVerified in Install)",
+   "doc": "ABI v12 passive gate probe 2 (feat/apmf-gate-probe2); scratchpad agentlogs/apmf-reachability.md"
+  },
+  {
+   "seat": "hkbBehaviorGraph",
+   "kind": "vtable",
+   "construct": "RE::VTABLE_hkbBehaviorGraph[0]",
+   "rtti": ".?AVhkbBehaviorGraph@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 220287,
+    "1.5.97": 275301
+   },
+   "slots": [],
+   "source": "native/channels/Travel.cpp (GateProbe2 anim-graph read: vtable identity before any member read; SeatVerified in Install)",
+   "doc": "ABI v12 passive gate probe 2 (feat/apmf-gate-probe2); scratchpad agentlogs/apmf-reachability.md"
+  },
+  {
+   "seat": "hkbStateMachine",
+   "kind": "vtable",
+   "construct": "RE::VTABLE_hkbStateMachine[0]",
+   "rtti": ".?AVhkbStateMachine@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 226812,
+    "1.5.97": 278793
+   },
+   "slots": [],
+   "source": "native/channels/Travel.cpp (GateProbe2 anim-graph read: vtable identity before any member read; SeatVerified in Install)",
+   "doc": "ABI v12 passive gate probe 2 (feat/apmf-gate-probe2); scratchpad agentlogs/apmf-reachability.md"
   }
  ],
  "layout_facts": [
@@ -3616,6 +3658,41 @@
    "where": "channels/CombatReentryDeny.cpp header 'THE SEAT'",
    "verified_by": "1.6.1170 0x6B69CA test al,al; jne 0x6B6D9B (before the global spinlock at 0x6B6A85, the re-arm equip 38893, 46873/46874); 1.5.97 0x625248 test al,al; jne 0x625623 (lock at 0x625303)",
    "gate": "the call-site row's 11-byte check pins the exact instruction"
+  },
+  {
+   "what": "BSNavmesh member offsets (NavMesh + 0x28)",
+   "value": "vertices 0x10, triangles 0x28, doorPortals 0x58 (elt 0x10), closedDoors 0x70 (elt 0x10), obstacles 0xD0 (elt 8), triangleToObstacleMap 0xE8 (ptr to a 0x30-byte BSTHashMap<u16,ptr>, entry 0x18), sizeof 0x118",
+   "where": "channels/Travel.cpp GateProbe2 (passive, [Travel] bGateProbe2)",
+   "verified_by": "BSNavmesh dtor 1.6.1170 0x11C20B0 / 1.5.97 0x10CBBC0 (delete size 0x118 at 0x11CD289 / 0x10D6659); NavMesh third-vtable thunk `sub rcx,0x28` 0x4B8DD4 / 0x45C164; map dtor 0x11CCFE0 / 0x10D5EA0 (cap @+4, entries @+0x20 of the table at +8)",
+   "gate": "exact 1.6.1170 / 1.5.97 only (probe2 not armed elsewhere)"
+  },
+  {
+   "what": "BSNavmeshTriangle / vertex strides",
+   "value": "triangle 0x10 (u16 vertices[3] @0, flags @0xC), vertex 0xC",
+   "where": "channels/Travel.cpp GateProbe2 (passive, [Travel] bGateProbe2)",
+   "verified_by": "BSNavmesh GetEdgeVertices 1.6.1170 id 91074 0x11C2C50 (tri<<3 words, idx*12); 1.5.97 0x10D26A9 / 0x10D2A23 same shape",
+   "gate": "exact 1.6.1170 / 1.5.97 only (probe2 not armed elsewhere)"
+  },
+  {
+   "what": "Havok member offsets (engine hkClassMember reflection, identical on both)",
+   "value": "hkbCharacter.behaviorGraph 0x58; hkbBehaviorGraph.rootGenerator 0x80 / rootGeneratorClone 0x90; hkbStateMachine.currentStateId 0x80, isActive 0x88, states 0x90; StateInfo.name 0x60, stateId 0x68; hkpWorldObject.world 0x10, collidable 0x20 (+broadPhaseHandle 0x24 +collisionFilterInfo 0x8 = 0x4C); hkpEntity.motion 0x150, hkpMotion.type 0x10 (= 0x160)",
+   "where": "channels/Travel.cpp GateProbe2 (passive, [Travel] bGateProbe2)",
+   "verified_by": "reflection tables e.g. hkbStateMachine members 1.6.1170 0x201E340 / 1.5.97 0x1DFA970",
+   "gate": "exact 1.6.1170 / 1.5.97 only (probe2 not armed elsewhere)"
+  },
+  {
+   "what": "Bethesda wrappers used by probe2",
+   "value": "NiAVObject.collisionObject 0x40; bhkNiCollisionObject.body 0x20; bhkRefObject.referencedObject 0x10; NiObject slot 0x12 AsBhkNiCollisionObject, 0x15 AsBhkRigidBody; BSAnimationGraphManager.graphs 0x40; REFR IAnimationGraphManagerHolder at +0x38, slot 2 GetAnimationGraphManagerImpl",
+   "where": "channels/Travel.cpp GateProbe2 (passive, [Travel] bGateProbe2)",
+   "verified_by": "collision traversal 0x3FEA00 / 0x3A6460; bhkNiCollisionObject dtor 0xEA5290 / 0xDC5A20; bhk vtables slots; graph-manager dtor 0xBA3883 / 0xAE1BB3; holder slot 2 0x2F7120 / 0x2A3BF0",
+   "gate": "exact 1.6.1170 / 1.5.97 only (probe2 not armed elsewhere)"
+  },
+  {
+   "what": "BShkbAnimationGraph.behaviorGraph",
+   "value": "0x208, and characterInstance 0xC0 (+0x58)",
+   "where": "channels/Travel.cpp GateProbe2 (passive, [Travel] bGateProbe2)",
+   "verified_by": "NOT disassembled: runtime cross-check -- both reads must name the same pointer AND its vtable must be the verified hkbBehaviorGraph row, else the state read is skipped and logged",
+   "gate": "exact 1.6.1170 / 1.5.97 only (probe2 not armed elsewhere)"
   }
  ]
 }

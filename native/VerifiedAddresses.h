@@ -14,7 +14,7 @@
 
 namespace apmf::VerifiedAddresses
 {
-	// 1.6.1170.0: 186 rows
+	// 1.6.1170.0: 189 rows
 	inline constexpr REL::SelfCheck::Row kRows_1_6_1170[] = {
 		{ 207886, 0x18A5558, 0x0, 0, {  }, "Character" },
 		{ 212096, 0x18D7388, 0x0, 0, {  }, "CombatTargetSelectorStandard" },
@@ -202,9 +202,12 @@ namespace apmf::VerifiedAddresses
 		{ 38561, 0x6B6930, 0x0, 0, {  }, "CombatEntry.Actor.StartCombat" },
 		{ 39256, 0x6DDE70, 0x0, 0, {  }, "Idle.AIProcess.SetupSpecialIdle" },
 		{ 38561, 0x6B6930, 0x8F, 11, { 0xB2, 0x01, 0x48, 0x8B, 0xCF, 0xFF, 0x90, 0xC8, 0x04, 0x00, 0x00 }, "ReentryDeny.StartCombat.SelfIsDeadCall" },
+		{ 232870, 0x19881F8, 0x0, 0, {  }, "BShkbAnimationGraph" },
+		{ 220287, 0x1941450, 0x0, 0, {  }, "hkbBehaviorGraph" },
+		{ 226812, 0x1964250, 0x0, 0, {  }, "hkbStateMachine" },
 	};
 
-	// 1.5.97.0: 186 rows
+	// 1.5.97.0: 189 rows
 	inline constexpr REL::SelfCheck::Row kRows_1_5_97[] = {
 		{ 261397, 0x165DA40, 0x0, 0, {  }, "Character" },
 		{ 265605, 0x1690A98, 0x0, 0, {  }, "CombatTargetSelectorStandard" },
@@ -392,6 +395,9 @@ namespace apmf::VerifiedAddresses
 		{ 37608, 0x6251B0, 0x0, 0, {  }, "CombatEntry.Actor.StartCombat" },
 		{ 38290, 0x64B140, 0x0, 0, {  }, "Idle.AIProcess.SetupSpecialIdle" },
 		{ 37608, 0x6251B0, 0x8D, 11, { 0xB2, 0x01, 0x48, 0x8B, 0xCF, 0xFF, 0x90, 0xC8, 0x04, 0x00, 0x00 }, "ReentryDeny.StartCombat.SelfIsDeadCall" },
+		{ 282351, 0x1741A20, 0x0, 0, {  }, "BShkbAnimationGraph" },
+		{ 275301, 0x16FADB0, 0x0, 0, {  }, "hkbBehaviorGraph" },
+		{ 278793, 0x171DB80, 0x0, 0, {  }, "hkbStateMachine" },
 	};
 
 	inline constexpr REL::SelfCheck::Table kTables[] = {
