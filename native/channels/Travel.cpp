@@ -1315,9 +1315,12 @@ namespace {
     //   disassembled: it is read only when it equals characterInstance(0xC0).behaviorGraph
     //   and carries the verified hkbBehaviorGraph vtable. Every object is vtable-checked
     //   against a self-check row BEFORE any member of it is read.
-    // GAME THREAD (Poll, at a BLOCKED end), the same seat as probe 1. Navmesh reads hold the
-    // cell's own spinLock. Bounded: once per actor per kP2RepeatMs at the same place,
-    // kP2TriBudget triangles per location, kP2MaxRefs refs, 256 samples per segment.
+    // GAME THREAD (Poll, at a BLOCKED end), the same seat as probe 1. What makes the navmesh
+    // read safe is game-thread serialisation, NOT the cell spinLock (held only for the mesh
+    // array): obstacle cuts are copy-on-write (ObstacleTaskData builds a NEW NavMesh on a
+    // worker, 1.6.1170 0x4CE690, and publishes it through the manager's queue), and each mesh
+    // is held by a strong reference while it is read. Bounded: once per actor per kP2RepeatMs
+    // at the same place, kP2TriBudget triangles + vertices per PROBE, kP2MaxRefs refs.
     constexpr float         kP2SegMargin = 160.0f;
     constexpr std::size_t   kP2MaxRefs   = 10;
     constexpr std::size_t   kP2TriBudget = 262144;
@@ -1370,7 +1373,8 @@ namespace {
 
     // Locates a_p on the loaded navmesh of a_cells. Among the triangles whose XY contains
     // the point, the one with the smallest |vertical gap| wins. Reads only.
-    void P2Locate(const std::vector<RE::TESObjectCELL*>& a_cells, const RE::NiPoint3& a_p, MeshSpot& o) {
+    void P2Locate(const std::vector<RE::TESObjectCELL*>& a_cells, const RE::NiPoint3& a_p, MeshSpot& o,
+                  std::size_t& a_work) {
         float bestAbs  = std::numeric_limits<float>::max();
         float bestVert = std::numeric_limits<float>::max();
         for (auto* cell : a_cells) {
@@ -1379,20 +1383,25 @@ namespace {
             auto*               arr = rd.navMeshes;
             if (!arr) continue;
             for (const auto& meshPtr : arr->navMeshes) {
-                RE::NavMesh* nm = meshPtr.get();
+                const RE::BSTSmartPointer<RE::NavMesh> hold = meshPtr;   // a strong ref while read
+                RE::NavMesh*                           nm   = hold.get();
                 if (!nm) continue;
                 const RE::BSNavmesh& bn = *nm;
                 ++o.meshes;
                 const auto& vs = bn.vertices;
                 const std::uint32_t vcount = vs.size();
                 for (const auto& v : vs) {
+                    if (++a_work > kP2TriBudget) {
+                        o.budgetHit = true;
+                        break;
+                    }
                     const float d = a_p.GetDistance(v.location);
                     if (d < bestVert) bestVert = d;
                 }
                 bool   hitHere = false;
                 std::uint32_t hitTri = 0;
                 for (std::uint32_t t = 0; t < bn.triangles.size(); ++t) {
-                    if (o.tris >= kP2TriBudget) {
+                    if (o.budgetHit || ++a_work > kP2TriBudget) {
                         o.budgetHit = true;
                         break;
                     }
@@ -1497,8 +1506,8 @@ namespace {
                 out += std::format(" [{}] behaviorGraph vtable mismatch -- not read", i);
                 continue;
             }
-            out += std::format(" [{}] root: {}; clone: {}", i, P2Sm(Rd<std::uintptr_t>(bg + 0x80)),
-                               P2Sm(Rd<std::uintptr_t>(bg + 0x90)));
+            out += std::format(" [{}] live (clone): {}; template: {}", i, P2Sm(Rd<std::uintptr_t>(bg + 0x90)),
+                               P2Sm(Rd<std::uintptr_t>(bg + 0x80)));
         }
         return out;
     }
@@ -1552,8 +1561,9 @@ namespace {
         auto* cell = a_actor->GetParentCell();
         std::vector<RE::TESObjectCELL*> stallCells;
         P2Cells(cell, a_stall, stallCells);
-        MeshSpot stallSpot;
-        P2Locate(stallCells, a_stall, stallSpot);
+        std::size_t work = 0;   // one triangle + vertex budget for the whole probe
+        MeshSpot    stallSpot;
+        P2Locate(stallCells, a_stall, stallSpot, work);
 
         MeshSpot                        destSpot;
         std::vector<RE::TESObjectCELL*> destCells;
@@ -1564,7 +1574,7 @@ namespace {
                 dc        = tes ? tes->GetCell(a_destPos) : nullptr;
             }
             P2Cells(dc ? dc : cell, a_destPos, destCells);
-            P2Locate(destCells, a_destPos, destSpot);
+            P2Locate(destCells, a_destPos, destSpot, work);
         }
 
         // (4) references whose bound box is near the stall->destination segment.

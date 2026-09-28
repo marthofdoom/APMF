@@ -170,6 +170,17 @@ This file tracks REVIEW findings only.
 ### APMF-B32 (SEV-5) -- ch.23 leash over-denies back-off moves toward the anchor
 Raised against `85ed6af` (`feat/apmf-pursuit-deny`), tier-A Opus 5.5 review 2026-09-25 (reviewer log `scratchpad/agentlogs/review-apmf-pursuit.md`), SEV-5 "over-deny retreat moves"; carried as closing-round F5. The leash rule compares the GOAL (the combat target) against the anchor, not the direction of the move. MaintainOptimalRange's back-off and Surround's Retreat path can move the actor away from its target and TOWARD the anchor; past the radius, with the target farther out still, they are denied too and the actor stands where it is. Reasoning: an over-deny, never a leak; the actor keeps attacking what it can reach. Documented in DENY-COMPLETENESS-AUDIT gap 14 (e) and INTEGRATION's leash limits. **Closure:** a direction-aware rule for these two leaves (read the move's destination, not the target), or measured field evidence that it does not matter.
 
+### APMF-B33 (SEV-4 + SEV-5) -- Travel.cpp at the 2500 cap; probe 2's per-actor limit
+Raised against `6883032` (`feat/apmf-gate-probe2`), tier-A Opus 5.5 review 2026-09-28 (reviewer log
+`scratchpad/agentlogs/review-apmf-gate-probe2.md`). Verbatim from the reviewer log: "SEV-4: Travel.cpp
+2482/2500" and "SEV-5: budget per-location x2 + vertex loop unbudgeted + per-actor (multi-follower same frame)".
+- **Reasoning:** the budget half is fixed in the closing round (one triangle+vertex budget per probe). What
+  remains: the file is at 2492 lines, so ANY further Travel work needs a Travel.cpp split first (its own tier-A
+  brief). And the probe is rate-limited per ACTOR, so three followers blocked in one frame run three probes
+  (each bounded; the field `us` figure will size whether a global limit is needed).
+- **Assigned:** the Travel.cpp split brief (before further Travel work); the per-actor limit after the field
+  cost numbers.
+
 ## DRAINED
 
 _(none yet)_
