@@ -1,8 +1,59 @@
 # APMF STATUS — living handoff (start here)
 
-Updated 2026-09-25. Current version **v0.9.8**. The current state of the build: what's
+Updated 2026-09-28. Current version **v0.9.8**. The current state of the build: what's
 shipped, what's probe-gated, what's next. Keep this current in the SAME change as any
 build/finding/workflow change.
+
+## HEAD OF WORK 2026-09-28 -- PASSIVE GATE PROBE 2 (`[travel-gate2]`), branch `feat/apmf-gate-probe2`, NOT merged
+
+Loot round M3 prerequisite (batch L). The 2026-09-26 field logs (Harbinger c0f0e43) could not pick a
+reachability signal: every ACTIVATOR reads `GetOpenState == Closed` (weapon racks, mannequins and the Dawnguard
+gates, which are PLACED OPEN per their `default2StateActivator` VMAD), no stall sat next to a gate, and the
+repeated blocks were a vendor chest under the floor and an item 640u above the stall. Probe 2 logs, per
+BLOCKED leg, what a reachability query would have to rely on. OBSERVE-ONLY, no ABI change, `[Travel]
+bGateProbe2` (default 1 while testing). Code: `channels/Travel.cpp` `GateProbe2` (see MAP.md).
+- **Logged:** (1) the destination position, on-mesh or not, the vertical gap to its triangle; (2) navmesh form
+  id + triangle index + flags at the stall and at the destination, that mesh's doorPortals / closedDoors /
+  obstacles / triangleToObstacleMap sizes and whether the triangle is a map key; (4) every DOOR / ACTIVATOR /
+  Obstacle-flagged ref whose BOUND BOX is within 160u of the stall->destination segment, with the base's
+  plugin, the behaviour graph's OpenClose state machine state (template and clone) and the Havok body
+  (in world, layer, motion type, height of the body node over the ref origin). One compact line + a detail block.
+- **Not logged: (3) the engine's own path goal.** No layout for `MovementControllerNPC` -> MovementPathManager
+  -> `BSPathingSolution` exists in any CommonLib (fork or alandtse). Chain to RE, both images: Actor
+  `movementController` (+0x148 runtime data) -> `MovementPathManagerArbiter` (vtables AE 245850 / SE 294495) ->
+  `MovementPathManagerAgent` (AE 245842 / SE 294491) -> the current `BSPathingSolution` -> its last
+  `BSPathingLocation`. The engine does have a closest-point solve (`PathingRequestClosePoint` RTTI), which is the
+  suspected cause of the under-the-item stalls. Its own brief.
+- **Verified (both runtimes, spec.json layout_facts + 3 new vtable rows, 189/189):** BSNavmesh member offsets
+  from its destructor and GetEdgeVertices; Havok members from the engine's hkClassMember reflection; the
+  Bethesda wrappers from their destructors / vtables. `BShkbAnimationGraph.behaviorGraph` (0x208) is the one
+  read NOT disassembled: it is used only when it equals `characterInstance.behaviorGraph` and carries the
+  verified hkbBehaviorGraph vtable.
+- **FIELD CHECKS (principle 5, NOT YET OBSERVED):**
+  1. `[travel-gate2] probe 2 ARMED` at startup.
+  2. Every BLOCKED leg has one `[travel-gate2] ... BLOCKED at` line and its `stall:` / `dest:` lines. Note the
+     `us` cost. The Fort Dawnguard vendor-chest stall should read dest OFF-MESH or a large negative gap.
+  3. **marth's controlled lever-portcullis test** (the decisive one):
+     a. Pick a vanilla lever portcullis with loot behind it, player on the lever side (e.g. a Nordic ruin
+        `NorPortcullis` / `NorPortcullisLarge01` with a `NorLever01`). Two or three followers, a loot rule that
+        wants the items behind it (valuables or gold). Fresh load, gate CLOSED (never touched this load).
+     b. Stand still on the lever side and let the followers try. Wait for `[travel-leg] ... ABANDONED ...
+        BLOCKED` and the `[travel-gate2]` block that follows (need at least one; two is better).
+     c. Pull the lever. Wait until the gate is fully up (about 5 s). Do not move far.
+     d. Let the followers try again (the loot re-admit, or walk off 20 m and back to re-trigger the scan).
+        If a leg blocks again, that is data too.
+     e. Pull the lever again to close it, repeat b once.
+     f. Send the APMF.log and MFO.log, and say roughly when (clock time) each lever pull happened.
+     What the logs must answer: does the gate appear in the segment list; does its graph state read
+     Closed vs Opened; does its body's `inWorld` / `dz` change with the lever; is the stall triangle
+     `triMapped=true` or `obstacleMap` non-zero while closed. Whatever changes with the lever is the signal
+     the reachability query (M3) will use.
+  MFO adoption: none needed (log only).
+- **Before the release cut:** `bGateProbe2` goes to 0 in `APMF.ini` (it is 1 only for the field test).
+- **Travel.cpp split required before further Travel work** (2494 / 2500 lines; REVIEW-BACKLOG APMF-B33).
+- Closing round (tier-A review CLEAN, nothing above SEV-3): each NavMesh is held by a strong ref while read, the
+  navmesh-safety comment now credits game-thread serialisation (obstacle cuts are copy-on-write), one
+  triangle+vertex budget per probe, and the graph state prints the live CLONE first with the template labelled.
 
 ## HEAD OF WORK 2026-09-25 -- ch.12 IDLE v2 (`kIntent_Idle` + a form and a target, ABI v17), branch `feat/apmf-idle-v2`, NOT merged
 
