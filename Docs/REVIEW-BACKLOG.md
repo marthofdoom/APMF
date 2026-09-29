@@ -181,6 +181,32 @@ Raised against `6883032` (`feat/apmf-gate-probe2`), tier-A Opus 5.5 review 2026-
 - **Assigned:** the Travel.cpp split brief (before further Travel work); the per-actor limit after the field
   cost numbers.
 
+### APMF-B34 (SEV-4 / SEV-5) -- ch.12 idle entry confirmation, review round 1 items (deferred)
+Raised against `18be6ec` (`fix/apmf-idle-confirm`), tier-A Opus 5.5 review 2026-09-29, round 1 (verdict FIX FIRST;
+the SEV-2 and SEV-3 items were fixed on the same branch in `c5f435a`). Verbatim from the reviewer's log
+(`scratchpad/agentlogs/review-apmf-idle-confirm.md`, "ROUND-1 FINDINGS (against 18be6ec)"):
+- R1 SEV-4: carry on a same-idle re-play reports CONFIRMED (labelled carry) even if the re-play itself does nothing.
+- R1 SEV-4: toNestedStateId (TransitionInfo +0x3C) ignored: entry set can be short (NO TRANSITION unaffected).
+- R1 SEV-4: thin data behind 3000 ms (7 field IdleGive plays, entry time unknown in 1).
+- R1 SEV-5: unhandled generator classes (BGSGamebryoSequenceGenerator, hkbReferencePoseGenerator) -> unknown -> incomplete (conservative); no SEH around engine reads (house style).
+- **Fixed in round 1 (not deferred):** `Names::Get` null data check (`Names::Valid`).
+- (This entry was first filed in `c5f435a` under the number APMF-B32, which collided with the existing ch.23
+  entry; renumbered here.)
+
+### APMF-B35 (SEV-3 OPEN + SEV-4 / SEV-5) -- ch.12 idle entry confirmation, review round 2 items
+Raised against `c5f435a` (`fix/apmf-idle-confirm`), tier-A Opus 5.5 review 2026-09-29, round 2 (verdict MERGE:
+nothing above SEV-3; R2-4 must be recorded OPEN). Verbatim from the reviewer's log, "ROUND-2 FINDINGS (against
+c5f435a)":
+- **OPEN (SEV-3, not fixed; the WEAK label does not close it).** R2-4 SEV-3: WEAK is a LABEL only; a confirmation on a shared event still counts as PLAYED and keeps the claim live. STATUS says both MFO idles' entry sets are entirely shared, so R1 SEV-3.2 (the false-CONFIRMED class of the 2026-09-28 bug) is narrowed and logged, not closed. Scenario: IdleLockPick accepted but not taken by the graph; within 3 s the follower leaves MT_State for another non-offset idle / furniture / dialogue idle -> IdleOffsetStop -> "ANIMATION CONFIRMED (WEAK ...)" -> MFO's lockpick claim stays live though nothing played. The code comment cites "review 18be6ec SEV-3.2" as handled, and APMF-B32 does not record it as open. Needs a backlog entry (rule 9) naming it open; a real fix would require a specific event or a state check (e.g. the graph's active state / the dest's enter event order).
+  Note: the `Idle.cpp` header comment still cites "review 18be6ec SEV-3.2" next to the WEAK label; per this
+  finding the label narrows and logs the false-CONFIRMED class, it does not close it.
+- R2-1 SEV-4: hkbStateMachine's own event-driven fields (returnToPreviousStateEventId 0x6C, randomTransitionEventId 0x70, transitionToNextHigher/LowerStateEventId 0x74/0x78) change state on an event but are not read. Tux uses randomTransitionEventId in 4 SMs, all on events that also have TransitionInfos -> no false NO TRANSITION today. Scenario: a modded graph routes an idle's event only through such a field -> complete walk, 0 transitions -> NO TRANSITION -> claim ended. Fix: count an SM whose field equals the event as a transition (or as a blind spot).
+- R2-2 SEV-4 (pre-existing design, not new in c5f435a): NO TRANSITION trusts the idle form's own animEventName. TESIdleForm kSequence / kParent / childIdles may make the engine play a child's event (SetupSpecialIdle behaviour unverified). Not hit by IdleGive/IdleLockPick (transitions exist). Fix: no NO TRANSITION for an idle with childIdles or kSequence (UNCONFIRMABLE), or verify in disasm.
+- R2-3 SEV-4: the verdict does not re-check the actor is still loaded / high process / not ragdolled. Scenario: player goes through a load door 1 s after a follower's IdleGive and the follower is left behind (or unloads) -> 3 s of world time later NOT CONFIRMED "the graph never entered the idle" -> claim ends. Ending is right (the idle did not play/was cut) but the reason text misattributes; say "actor unloaded / left high process" instead.
+- **FIXED (docs, same round):** R2-5 SEV-5: STATUS field check 2 says the play line shows "entry events [...]"; for IdleGive (source-exit only) EntryText prints "source-exit events [...]". STATUS field check 2 now names both forms.
+- R2-6 SEV-5: Entry::weak is computed (Play) and never read: dead field.
+- **FIXED (docs, same round):** R2-7 SEV-5: APMF-B32 says R1 SEV-5 items were "relayed without separate text" -> now in full above; B32 can cite this log. APMF-B34 now cites the log verbatim.
+
 ## DRAINED
 
 _(none yet)_
@@ -226,4 +252,3 @@ Raised against `ac895c3` (`feat/apmf-combat-entry`), tier-A Opus 5.5 review 2026
 
 ### APMF-B31 (SEV-5) -- ch.21 a brief 3D loss of the target ends the claim
 Raised against `ac895c3`, same review, finding F7. Verbatim as relayed by the coordinator: "a brief 3D loss ends the claim; the same residual as ch.20". Reasoning: `combatentry::Poll` ends the claim on `!target->Is3DLoaded()` checked live on the game thread; a transient 3D rebuild (a transform, a skeleton swap, Reset3D, a script Disable+Enable) seen by one poll ends it. ch.20 has the same residual (its Poll re-checks live, which narrows but does not remove it). The client re-requests.
-

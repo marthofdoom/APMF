@@ -7,11 +7,14 @@
 #include "core/MainThread.h"
 #include "core/Registry.h"
 
+#include <algorithm>
+#include <cstring>
 #include <memory>
 #include <mutex>
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 // Win32 INI reader, declared by hand (the PCH does not pull in <Windows.h>) -- the same
@@ -69,11 +72,55 @@ extern "C" __declspec(dllimport) unsigned long __stdcall GetPrivateProfileIntA(
 // trigger at the end of the clip, about 5.6 s; InteractionObjectState, the state the
 // interaction idles play in, raises IdleStop on exit and returns to MT_Default_State on
 // it). A looping idle raises nothing until something ends it. So:
-//     HELD = PlayIdle accepted the idle AND the actor's graph has not raised
-//            "IdleStop" since the call.
-// HELD IS INFERRED, NOT YET OBSERVED: that the graph's IdleStop reaches this sink is the
-// castobs precedent, not a field capture of IdleStop itself. The first field log must show
-// IdleStop in a one-shot idle's Release tag list (STATUS field check).
+//     HELD = PlayIdle accepted the idle AND the graph was seen ENTERING it (below) AND
+//            the graph has not raised "IdleStop" since that entry.
+// (Field 2026-09-25..28: IdleStop does reach this sink; every IdleGive release listed it.)
+//
+// ENTRY CONFIRMATION (field 2026-09-28: an IdleLockPick that PlayIdle accepted and the old
+// code called "ANIMATION CONFIRMED" never played; ANY graph event used to count, and the
+// events were the combat graph's own). "PlayIdle returned true" only means the engine
+// accepted or QUEUED the action. The idle is CONFIRMED only when the actor's graph raises
+// one of the idle's ENTRY EVENTS after the call: the notify events a transition on the
+// idle's own animation event raises when it fires. They are read from the actor's live
+// behaviour graph at the call (ResolveEntry, below), for any idle any client names:
+//   for every state machine transition whose event is the idle's animEventName: the
+//   destination state's enterNotifyEvents and the enterNotifyEvents of the start state of
+//   a state machine nested in the destination; ONLY when none exist, the source state's
+//   exitNotifyEvents (not for a wildcard). Each entry event also carries how many OTHER
+//   transitions raise it; a confirmation on a shared one is logged WEAK evidence (review
+//   18be6ec SEV-3.2; IdleOffsetStop is raised by ~105 others). Liveness is the same. Vanilla + Tuxborn's Nemesis graphs (offline, same walk):
+//   IdleLockPick -> MT_BehaviorGraph>InteractionObjectState, {IdleOffsetStop, OffsetStop};
+//   IdleGive -> MT_RootBehavior MT_State>NonOffsetIdles, {IdleOffsetStop} (MT_State exit).
+//   Every field IdleGive play listed IdleOffsetStop first; the lockpick listed neither.
+// Outcomes, one line per play from Poll:
+//   CONFIRMED      an entry event arrived (named, with its time);
+//   NOT CONFIRMED  none arrived within kConfirmWaitMs of WORLD time (and kConfirmMinFrames
+//                  frames; a menu pause does not count) -> WARN and Harbinger ENDS the claim
+//                  (IsClaimLive goes false: the client sees the idle did not play);
+//   NO TRANSITION  a COMPLETE walk (EntryInfo::Blind() == 0: no unknown class, unlinked
+//                  reference, out-of-range event id, unresolved target, wrong-class object or
+//                  unwalked graph) found no transition on the idle's event -> the idle cannot
+//                  play on this actor's graph -> WARN and the claim ENDS at the first Poll;
+//   UNCONFIRMABLE  no entry event could be resolved (the destination raises none, the walk
+//                  was incomplete, the graph could not be read, an event id fell outside its
+//                  graph's name table = "id space broken", or [Idle] bIdleConfirm=0) -> WARN,
+//                  the claim stays, and HELD falls back to "no IdleStop since the call".
+// An IdleStop that arrives BEFORE any entry event is not this idle's (the lockpick's came
+// at +2961 ms from the combat graph) and is reported as such, never as the idle's end.
+// The clip's length is NOT readable here (the template clip carries only an end-relative
+// IdleStop trigger; the duration lives in the runtime animation binding) and the ABI has
+// no field for a client to declare it, so the entry->IdleStop time is LOGGED for the
+// reader to compare with the clip instead of being judged.
+// THE GRAPH READ (GAME THREAD, once per play, read-only): BShkbAnimationGraph and
+// hkbBehaviorGraph are identified by their SELF-CHECKED vtables (the rows Travel's gate
+// probe 2 already verifies on 1.6.1170 and 1.5.97) and BShkbAnimationGraph.behaviorGraph
+// (0x208) is read only when it equals characterInstance(0xC0).behaviorGraph (0x58), the
+// probe-2 guard. Every other Havok object is identified by its MSVC RTTI name before a
+// member is read. Only the behaviour TEMPLATES are walked (immutable after load; the
+// manager is held by a smart pointer). Member offsets are the Havok 2010 x64 in-place
+// packfile layout, read off the fixups of the shipped behaviour files; the reference
+// generator's linked graph at +0x50 is what its own getChildren returns (AE 0xACCD40,
+// SE 0xA0B170). Bounded by kWalkMaxNodes.
 // FURNITURE GUARD (review F1): the reset is NEVER sent while the actor's sit/sleep state is
 // not kNormal (sitting, sleeping, entering or leaving furniture): IdleForceDefaultState
 // there would pop the actor out of the furniture pose. A false "held" is harmless only
@@ -81,8 +128,7 @@ extern "C" __declspec(dllimport) unsigned long __stdcall GetPrivateProfileIntA(
 // A per-actor BSAnimationGraphEvent sink (the core/CastObserve.cpp precedent, whose
 // clip-trigger events were captured on the deck 2026-09-04) records it. Release sends
 // IdleForceDefaultState only when HELD, the actor is loaded and alive; otherwise it
-// sends nothing and says why. The same sink gives the observation log: the first graph
-// events after the call (the animation confirmation) or a loud "no animation event".
+// sends nothing and says why. The same sink records the entry evidence above.
 //
 // CROUCH (for clients; nothing here writes sneak). In mt_behavior the sneak locomotion
 // lives INSIDE MT_Default_State, and IdleLockPick is an unconditional local wildcard on
@@ -96,7 +142,8 @@ extern "C" __declspec(dllimport) unsigned long __stdcall GetPrivateProfileIntA(
 // on the Release line -- when: the idle could not be played (the form is not an IDLE,
 // the target is not a loaded reference, the actor is not loaded / dead / has no AI
 // process or no high process data), the engine refused it (PlayIdle returned false),
-// or the owner died (Poll). An unload is the ControlMap's own sweep (it releases every
+// the actor's graph has no transition on the idle's event, the idle was NOT CONFIRMED
+// (above), or the owner died (Poll). An unload is the ControlMap's own sweep (it releases every
 // channel of an unloaded actor); a save load / revert / new game drops every claim
 // (ControlMap::Clear) and ResetAll drops the entries. A client that wants another
 // idle sends a Repoint or a new request.
@@ -109,10 +156,14 @@ extern "C" __declspec(dllimport) unsigned long __stdcall GetPrivateProfileIntA(
 // whatever thread updates the actor's graph, so its record (g_obs) is behind g_obsMx
 // and holds only plain values; the sink makes no engine call.
 //
-// VERSION ROBUSTNESS. The only new engine address is SetupSpecialIdle's, a verified row
+// VERSION ROBUSTNESS. The only engine address called is SetupSpecialIdle's, a verified row
 // on both runtimes (spec.json "Idle.AIProcess.SetupSpecialIdle"), refused unless it
-// verifies; exact 1.6.1170 / 1.5.97 only; VR refused by name. The only raw reads are the
-// actor's currentProcess and its high pointer, through the fork's accessors.
+// verifies; exact 1.6.1170 / 1.5.97 only; VR refused by name. The entry read uses three
+// more EXISTING rows (vtables BShkbAnimationGraph / hkbBehaviorGraph / hkbStateMachine,
+// both runtimes) and the RTTI names, which exist on both (checked in both unpacked
+// images); if a row fails, confirmation is NOT ARMED (said once) and every play is
+// UNCONFIRMABLE -- the play itself is unaffected. Raw reads: the actor's currentProcess
+// and high pointer (fork accessors) and the Havok template members listed above.
 // ============================================================================
 
 namespace {
@@ -120,8 +171,11 @@ namespace {
     using apmf::log::Hex;
 
     constexpr const char*   kIni           = "Data/SKSE/Plugins/APMF.ini";
-    constexpr std::uint64_t kConfirmWaitMs = 3000;   // no graph event this long after an accepted play = say so
+    constexpr std::uint64_t kConfirmWaitMs = 3000;   // no ENTRY event in this much WORLD time after an accepted play = NOT CONFIRMED
+    constexpr std::uint32_t kConfirmMinFrames = 30;  // ... and at least this many world ticks (a hitch cannot end it)
+    constexpr std::uint64_t kTickClampMs   = 100;    // one Poll-to-Poll gap counts at most this much world time
     constexpr std::size_t   kFirstTags     = 8;      // graph events kept for the confirmation line
+    constexpr std::uint32_t kWalkMaxNodes  = 60000;  // vanilla + Tuxborn's Nemesis graphs: ~6000 nodes in 17 graphs
 
     std::atomic<bool>        g_installed{ false };
     std::atomic<bool>        g_installTried{ false };
@@ -138,13 +192,459 @@ namespace {
         return true;
     }
 
+    // ---- ENTRY RESOLUTION (GAME THREAD; see the header, "ENTRY CONFIRMATION"). ----
+    // The three self-checked vtables, written once in Install before g_entryReady.
+    std::atomic<bool>        g_entryReady{ false };
+    std::atomic<const char*> g_entryNotArmed{ "before kDataLoaded" };
+    std::uintptr_t           g_vtAnimGraph     = 0;
+    std::uintptr_t           g_vtBehaviorGraph = 0;
+    std::uintptr_t           g_vtStateMachine  = 0;
+
+    template <class T>
+    T Rd(std::uintptr_t a_addr) {
+        return *reinterpret_cast<const T*>(a_addr);
+    }
+
+    enum class Kind : std::uint8_t {
+        kOther,
+        kStateMachine,
+        kStateInfo,
+        kTransitionArray,
+        kEventPropertyArray,
+        kModifierGenerator,
+        kBlenderGenerator,   // also hkbPoseMatchingGenerator (derives from it; same children)
+        kBlenderChild,
+        kManualSelector,
+        kBoneSwitch,
+        kBoneSwitchData,
+        kCyclicBlend,
+        kOffsetAnimation,
+        kStateTagging,
+        kSyncClip,
+        kBehaviorReference,
+        kBehaviorGraph,
+        kGraphData,
+        kStringData,
+        kClip,
+    };
+
+    // MSVC RTTI name -> kind. Every name checked present in both unpacked images.
+    Kind KindFromName(std::string_view n) {
+        static constexpr std::pair<std::string_view, Kind> kNames[] = {
+            { ".?AVhkbStateMachine@@", Kind::kStateMachine },
+            { ".?AVStateInfo@hkbStateMachine@@", Kind::kStateInfo },
+            { ".?AVTransitionInfoArray@hkbStateMachine@@", Kind::kTransitionArray },
+            { ".?AVEventPropertyArray@hkbStateMachine@@", Kind::kEventPropertyArray },
+            { ".?AVhkbModifierGenerator@@", Kind::kModifierGenerator },
+            { ".?AVhkbBlenderGenerator@@", Kind::kBlenderGenerator },
+            { ".?AVhkbPoseMatchingGenerator@@", Kind::kBlenderGenerator },
+            { ".?AVhkbBlenderGeneratorChild@@", Kind::kBlenderChild },
+            { ".?AVhkbManualSelectorGenerator@@", Kind::kManualSelector },
+            { ".?AVBSBoneSwitchGenerator@@", Kind::kBoneSwitch },
+            { ".?AVBSBoneSwitchGeneratorBoneData@@", Kind::kBoneSwitchData },
+            { ".?AVBSCyclicBlendTransitionGenerator@@", Kind::kCyclicBlend },
+            { ".?AVBSOffsetAnimationGenerator@@", Kind::kOffsetAnimation },
+            { ".?AVBSiStateTaggingGenerator@@", Kind::kStateTagging },
+            { ".?AVBSSynchronizedClipGenerator@@", Kind::kSyncClip },
+            { ".?AVhkbBehaviorReferenceGenerator@@", Kind::kBehaviorReference },
+            { ".?AVhkbBehaviorGraph@@", Kind::kBehaviorGraph },
+            { ".?AVhkbBehaviorGraphData@@", Kind::kGraphData },
+            { ".?AVhkbBehaviorGraphStringData@@", Kind::kStringData },
+            { ".?AVhkbClipGenerator@@", Kind::kClip },
+        };
+        for (const auto& [name, k] : kNames)
+            if (name == n) return k;
+        return Kind::kOther;
+    }
+
+    bool InSeg(std::uintptr_t a_p, const REL::Segment& a_s, std::size_t a_len) {
+        return a_p >= a_s.address() && a_p + a_len <= a_s.address() + a_s.size();
+    }
+
+    // The object's class, from its vtable's CompleteObjectLocator (vtable - 8) -> type
+    // descriptor name. The vtable, the locator and the descriptor must each lie in the game
+    // image (.rdata / .rdata / .data) or the object is kOther and nothing more of it is read.
+    // Cached per vtable (GAME THREAD only).
+    std::unordered_map<std::uintptr_t, Kind> g_kinds;
+    Kind KindOf(std::uintptr_t a_obj) {
+        const auto vt = Rd<std::uintptr_t>(a_obj);
+        if (const auto it = g_kinds.find(vt); it != g_kinds.end()) return it->second;
+        Kind       k     = Kind::kOther;
+        const auto& mod  = REL::Module::get();
+        const auto rdata = mod.segment(REL::Segment::rdata);
+        const auto data  = mod.segment(REL::Segment::data);
+        if (vt >= sizeof(void*) && InSeg(vt - sizeof(void*), rdata, sizeof(void*))) {
+            const auto col = Rd<std::uintptr_t>(vt - sizeof(void*));
+            if (InSeg(col, rdata, sizeof(RE::RTTI::CompleteObjectLocator)) && Rd<std::uint32_t>(col) == 1) {
+                const auto td = mod.base() + Rd<std::uint32_t>(col + 0x0C);   // COL.typeDescriptor (RVA)
+                if (InSeg(td, data, 0x10 + 4)) {
+                    const char* name = reinterpret_cast<const char*>(td + 0x10);   // type_info::_name
+                    k                = KindFromName(std::string_view(name, strnlen(name, 96)));
+                }
+            }
+        }
+        // The two classes with a self-checked vtable must match it too (the RTTI walk and the
+        // verified row agree, or the object is not trusted).
+        if ((k == Kind::kStateMachine && vt != g_vtStateMachine) || (k == Kind::kBehaviorGraph && vt != g_vtBehaviorGraph))
+            k = Kind::kOther;
+        g_kinds.emplace(vt, k);
+        return k;
+    }
+
+    bool Is(std::uintptr_t a_obj, Kind a_k) { return a_obj && KindOf(a_obj) == a_k; }
+
+    // hkStringPtr: the char* with the "owned" flag in bit 0.
+    const char* HkStr(std::uintptr_t a_field) {
+        return reinterpret_cast<const char*>(Rd<std::uintptr_t>(a_field) & ~std::uintptr_t{ 1 });
+    }
+
+    struct EntryInfo {
+        std::vector<std::string> events;        // the entry events waited for (enter ones when any exist)
+        std::vector<std::string> enter;         // destination / nested-start ENTER events (preferred)
+        std::vector<std::string> exits;         // source-state EXIT events (used only when no enter event exists)
+        std::vector<std::uint32_t> shared;      // per events[i]: OTHER transitions that raise it too
+        std::string              dests;         // "Machine>State" for the log
+        std::uint32_t            transitions = 0;
+        std::uint32_t            graphs = 0;
+        std::uint32_t            nodes = 0;
+        // BLIND SPOTS (review 18be6ec SEV-2): each one makes the walk INCOMPLETE, so a
+        // "no transition" answer is only ever given after a walk that saw everything.
+        std::uint32_t            unknown = 0;     // generator nodes of a class the walk does not descend
+        std::uint32_t            unlinked = 0;    // behaviour references with no linked graph
+        std::uint32_t            badIds = 0;      // event ids outside their graph's name table
+        std::uint32_t            unresolved = 0;  // transitions whose target state is not in the machine
+        std::uint32_t            skipped = 0;     // objects of the wrong class where a known one belongs
+        std::uint32_t            badGraphs = 0;   // graphs failing the vtable / layout guard, or without names
+        bool                     truncated = false;
+        std::string              unreadable;    // set when no walk happened, with the reason
+        std::uint32_t Blind() const { return unknown + unlinked + badIds + unresolved + skipped + badGraphs; }
+        bool Complete() const { return unreadable.empty() && Blind() == 0 && !truncated && graphs != 0; }
+    };
+
+    void AddName(std::vector<std::string>& a_v, const char* a_name) {
+        if (!a_name || !*a_name) return;
+        for (const auto& e : a_v)
+            if (IEquals(e, a_name)) return;
+        a_v.emplace_back(a_name);
+    }
+
+    std::string Lower(std::string_view a_s) {
+        std::string r(a_s);
+        for (auto& c : r)
+            if (c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a');
+        return r;
+    }
+
+    // Walks the TEMPLATES of one actor graph. Offsets: Havok 2010 x64 in-place layout (header).
+    class EntryWalk {
+    public:
+        EntryWalk(std::string_view a_event, EntryInfo& a_out) : event(a_event), out(a_out) {}
+
+        void Graph(std::uintptr_t a_bg) {
+            if (!a_bg || Rd<std::uintptr_t>(a_bg) != g_vtBehaviorGraph || !graphsSeen.insert(a_bg).second) return;
+            ++out.graphs;
+            // hkbBehaviorGraph.data 0x88 -> hkbBehaviorGraphData.stringData 0x78 -> eventNames hkArray 0x10.
+            const auto data = Rd<std::uintptr_t>(a_bg + 0x88);
+            const auto sd   = Is(data, Kind::kGraphData) ? Rd<std::uintptr_t>(data + 0x78) : 0;
+            if (!Is(sd, Kind::kStringData)) {
+                ++out.badGraphs;
+                return;
+            }
+            Names names{ Rd<std::uintptr_t>(sd + 0x10), Rd<std::int32_t>(sd + 0x18) };
+            std::vector<std::uintptr_t> stack{ Rd<std::uintptr_t>(a_bg + 0x80) };   // rootGenerator (template)
+            while (!stack.empty()) {
+                const auto o = stack.back();
+                stack.pop_back();
+                if (!o || !seen.insert(o).second) continue;
+                if (++out.nodes > kWalkMaxNodes) {
+                    out.truncated = true;
+                    return;
+                }
+                switch (KindOf(o)) {
+                case Kind::kStateMachine:
+                    Machine(o, names, stack);
+                    break;
+                case Kind::kModifierGenerator:
+                case Kind::kCyclicBlend:
+                case Kind::kStateTagging:
+                case Kind::kSyncClip:
+                    stack.push_back(Rd<std::uintptr_t>(o + 0x50));
+                    break;
+                case Kind::kOffsetAnimation:
+                    stack.push_back(Rd<std::uintptr_t>(o + 0x50));
+                    stack.push_back(Rd<std::uintptr_t>(o + 0x60));
+                    break;
+                case Kind::kBlenderGenerator:
+                    Children(o + 0x60, Kind::kBlenderChild, 0x30, stack);
+                    break;
+                case Kind::kManualSelector:
+                    Children(o + 0x48, Kind::kOther, 0, stack);
+                    break;
+                case Kind::kBoneSwitch:
+                    stack.push_back(Rd<std::uintptr_t>(o + 0x50));
+                    Children(o + 0x58, Kind::kBoneSwitchData, 0x30, stack);
+                    break;
+                case Kind::kBehaviorReference:
+                    if (const auto linked = Rd<std::uintptr_t>(o + 0x50); linked)
+                        pending.push_back(linked);
+                    else
+                        ++out.unlinked;
+                    break;
+                case Kind::kClip:
+                    break;
+                default:
+                    ++out.unknown;
+                    break;
+                }
+            }
+        }
+
+        void Drain() {
+            while (!pending.empty() && !out.truncated) {
+                const auto bg = pending.back();
+                pending.pop_back();
+                if (Rd<std::uintptr_t>(bg) != g_vtBehaviorGraph) {
+                    ++out.badGraphs;   // a linked "graph" that is not one
+                    continue;
+                }
+                Graph(bg);
+            }
+        }
+
+        // After the walk: the events to wait for (ENTER events when any exist, else the
+        // source EXIT events) and, for each, how many OTHER transitions raise it too.
+        void Finish() {
+            out.events = !out.enter.empty() ? out.enter : out.exits;
+            out.shared.clear();
+            for (const auto& e : out.events) {
+                const auto it = raisedByOthers.find(Lower(e));
+                out.shared.push_back(it == raisedByOthers.end() ? 0 : it->second);
+            }
+        }
+
+    private:
+        struct Names {
+            std::uintptr_t data;
+            std::int32_t   size;
+            bool           Valid(std::int32_t i) const { return data && i >= 0 && i < size; }
+            const char*    Get(std::int32_t i) const { return Valid(i) ? HkStr(data + 8 * static_cast<std::uintptr_t>(i)) : nullptr; }
+        };
+
+        // hkArray at a_arr (data 0x0, size 0x8) of object pointers. a_wrap != kOther: each element
+        // is a wrapper of that kind whose generator sits at +a_genOff.
+        void Children(std::uintptr_t a_arr, Kind a_wrap, std::uintptr_t a_genOff, std::vector<std::uintptr_t>& a_stack) {
+            const auto p = Rd<std::uintptr_t>(a_arr);
+            const auto n = Rd<std::int32_t>(a_arr + 8);
+            if (!p || n <= 0) return;
+            for (std::int32_t i = 0; i < n; ++i) {
+                const auto x = Rd<std::uintptr_t>(p + 8 * static_cast<std::uintptr_t>(i));
+                if (a_wrap == Kind::kOther)
+                    a_stack.push_back(x);
+                else if (Is(x, a_wrap))
+                    a_stack.push_back(Rd<std::uintptr_t>(x + a_genOff));
+                else if (x)
+                    ++out.skipped;
+            }
+        }
+
+        // An EventPropertyArray -> its names, appended to a_to.
+        void Notify(std::uintptr_t a_arr, const Names& a_names, std::vector<std::string>& a_to) {
+            if (!a_arr) return;
+            if (!Is(a_arr, Kind::kEventPropertyArray)) {
+                ++out.skipped;
+                return;
+            }
+            const auto p = Rd<std::uintptr_t>(a_arr + 0x10);
+            const auto n = Rd<std::int32_t>(a_arr + 0x18);
+            for (std::int32_t i = 0; p && i < n; ++i) {   // hkbEventProperty: id 0x0, payload 0x8; 0x10 each
+                const auto id = Rd<std::int32_t>(p + 0x10 * static_cast<std::uintptr_t>(i));
+                if (!a_names.Valid(id)) {
+                    ++out.badIds;
+                    continue;
+                }
+                AddName(a_to, a_names.Get(id));
+            }
+        }
+
+        std::uintptr_t StateById(std::uintptr_t a_sm, std::int32_t a_id) {
+            const auto p = Rd<std::uintptr_t>(a_sm + 0x90);
+            const auto n = Rd<std::int32_t>(a_sm + 0x98);
+            for (std::int32_t i = 0; p && i < n; ++i) {
+                const auto s = Rd<std::uintptr_t>(p + 8 * static_cast<std::uintptr_t>(i));
+                if (Is(s, Kind::kStateInfo) && Rd<std::int32_t>(s + 0x68) == a_id) return s;
+            }
+            return 0;
+        }
+
+        // The start state of a state machine nested (through single-child wrappers) in a_gen.
+        void NestedStart(std::uintptr_t a_gen, const Names& a_names, std::vector<std::string>* a_to) {
+            for (int depth = 0; a_gen && depth < 8; ++depth) {
+                const Kind k = KindOf(a_gen);
+                if (k == Kind::kStateMachine) {
+                    const auto s = StateById(a_gen, Rd<std::int32_t>(a_gen + 0x68));   // startStateId
+                    if (!s) {
+                        ++out.unresolved;
+                        return;
+                    }
+                    Notify(Rd<std::uintptr_t>(s + 0x40), a_names, *a_to);
+                    a_gen = Rd<std::uintptr_t>(s + 0x58);
+                } else if (k == Kind::kModifierGenerator || k == Kind::kStateTagging || k == Kind::kCyclicBlend) {
+                    a_gen = Rd<std::uintptr_t>(a_gen + 0x50);
+                } else {
+                    return;
+                }
+            }
+        }
+
+        // hkbStateMachine.TransitionInfoArray: hkArray 0x10 of 0x48-byte TransitionInfo
+        // (eventId 0x30, toStateId 0x34). EVERY transition's id is range-checked (a broken id
+        // space would make "no transition" a lie), and every transition's raised events are
+        // counted so a shared entry event can be labelled weak evidence.
+        void Transitions(std::uintptr_t a_sm, std::uintptr_t a_arr, std::uintptr_t a_from, const Names& a_names) {
+            if (!a_arr) return;
+            if (!Is(a_arr, Kind::kTransitionArray)) {
+                ++out.skipped;
+                return;
+            }
+            const auto p = Rd<std::uintptr_t>(a_arr + 0x10);
+            const auto n = Rd<std::int32_t>(a_arr + 0x18);
+            for (std::int32_t i = 0; p && i < n; ++i) {
+                const auto t  = p + 0x48 * static_cast<std::uintptr_t>(i);
+                const auto id = Rd<std::int32_t>(t + 0x30);
+                if (!a_names.Valid(id)) {
+                    ++out.badIds;
+                    continue;
+                }
+                const char* ev   = a_names.Get(id);
+                const bool  ours = ev && IEquals(ev, event);
+                const auto  dest = StateById(a_sm, Rd<std::int32_t>(t + 0x34));
+                if (!dest) {
+                    ++out.unresolved;
+                    continue;
+                }
+                std::vector<std::string> enter, exits;
+                Notify(Rd<std::uintptr_t>(dest + 0x40), a_names, enter);             // dest enterNotifyEvents
+                if (a_from) Notify(Rd<std::uintptr_t>(a_from + 0x48), a_names, exits);  // source exitNotifyEvents
+                if (!ours) {
+                    for (const auto& x : enter) ++raisedByOthers[Lower(x)];
+                    for (const auto& x : exits) ++raisedByOthers[Lower(x)];
+                    continue;
+                }
+                ++out.transitions;
+                for (const auto& x : enter) AddName(out.enter, x.c_str());
+                for (const auto& x : exits) AddName(out.exits, x.c_str());
+                NestedStart(Rd<std::uintptr_t>(dest + 0x58), a_names, &out.enter);
+                if (out.dests.size() < 200) {
+                    const char* smn = HkStr(a_sm + 0x38);
+                    const char* stn = HkStr(dest + 0x60);
+                    out.dests += fmt::format("{}{}>{}", out.dests.empty() ? "" : ", ", smn ? smn : "?", stn ? stn : "?");
+                }
+            }
+        }
+
+        // hkbStateMachine: states hkArray<StateInfo*> 0x90, wildcardTransitions 0xA0.
+        // StateInfo: enter 0x40, exit 0x48, transitions 0x50, generator 0x58, name 0x60, id 0x68.
+        void Machine(std::uintptr_t a_sm, const Names& a_names, std::vector<std::uintptr_t>& a_stack) {
+            Transitions(a_sm, Rd<std::uintptr_t>(a_sm + 0xA0), 0, a_names);
+            const auto p = Rd<std::uintptr_t>(a_sm + 0x90);
+            const auto n = Rd<std::int32_t>(a_sm + 0x98);
+            for (std::int32_t i = 0; p && i < n; ++i) {
+                const auto s = Rd<std::uintptr_t>(p + 8 * static_cast<std::uintptr_t>(i));
+                if (!Is(s, Kind::kStateInfo)) {
+                    ++out.skipped;
+                    continue;
+                }
+                a_stack.push_back(Rd<std::uintptr_t>(s + 0x58));
+                Transitions(a_sm, Rd<std::uintptr_t>(s + 0x50), s, a_names);
+            }
+        }
+
+        std::string_view                   event;
+        EntryInfo&                         out;
+        std::unordered_set<std::uintptr_t> seen;
+        std::unordered_set<std::uintptr_t> graphsSeen;
+        std::vector<std::uintptr_t>        pending;
+        std::unordered_map<std::string, std::uint32_t> raisedByOthers;   // lower-case event -> other transitions
+    };
+
+    // GAME THREAD, before the PlayIdle call. Never throws; a graph it cannot read says why.
+    EntryInfo ResolveEntry(RE::Actor* a_actor, const char* a_event) {
+        EntryInfo out;
+        if (!g_entryReady.load(std::memory_order_acquire)) {
+            out.unreadable = fmt::format("entry confirmation not armed ({})", g_entryNotArmed.load(std::memory_order_acquire));
+            return out;
+        }
+        if (!a_event || !*a_event) {
+            out.unreadable = "the idle names no animation event";
+            return out;
+        }
+        RE::BSTSmartPointer<RE::BSAnimationGraphManager> mgr;   // held for the whole walk
+        if (!a_actor->GetAnimationGraphManager(mgr) || !mgr) {
+            out.unreadable = "the actor has no animation graph";
+            return out;
+        }
+        EntryWalk walk(a_event, out);
+        for (std::uint32_t i = 0; i < mgr->graphs.size(); ++i) {
+            const auto g = reinterpret_cast<std::uintptr_t>(mgr->graphs[i].get());
+            if (!g) continue;
+            if (i >= 2) {   // never seen on an NPC (1st/3rd person is 2): not walked, so the walk is incomplete
+                ++out.badGraphs;
+                continue;
+            }
+            if (Rd<std::uintptr_t>(g) != g_vtAnimGraph) {
+                ++out.badGraphs;
+                continue;
+            }
+            const auto bg = Rd<std::uintptr_t>(g + 0x208);
+            if (!bg || bg != Rd<std::uintptr_t>(g + 0xC0 + 0x58) || Rd<std::uintptr_t>(bg) != g_vtBehaviorGraph) {
+                ++out.badGraphs;   // the probe-2 layout guard
+                continue;
+            }
+            walk.Graph(bg);
+            walk.Drain();
+        }
+        walk.Finish();
+        if (out.graphs == 0) out.unreadable = "no behaviour graph passed the layout / vtable checks";
+        return out;
+    }
+
+    std::string EntryText(const EntryInfo& a_e) {
+        std::string ev;
+        for (std::size_t i = 0; i < a_e.events.size(); ++i)
+            ev += fmt::format("{}{} ({})", ev.empty() ? "" : ", ", a_e.events[i],
+                              a_e.shared[i] ? fmt::format("also raised by {} other transition(s)", a_e.shared[i])
+                                            : std::string("specific"));
+        std::string blind;
+        auto        add = [&](std::uint32_t n, const char* what) {
+            if (n) blind += fmt::format(", {} {}", n, what);
+        };
+        add(a_e.unknown, "node(s) of an unwalked class");
+        add(a_e.unlinked, "unlinked reference(s)");
+        add(a_e.badIds, "OUT-OF-RANGE event id(s)");
+        add(a_e.unresolved, "unresolved target state(s)");
+        add(a_e.skipped, "object(s) of an unexpected class");
+        add(a_e.badGraphs, "graph(s) not walked (guard / names / index)");
+        return fmt::format("{} events [{}] from {} transition(s){}{}; walked {} graph(s), {} node(s){}{}{}",
+                           a_e.enter.empty() && !a_e.exits.empty() ? "source-exit" : "entry",
+                           ev.empty() ? std::string("none") : ev, a_e.transitions, a_e.dests.empty() ? "" : " to ", a_e.dests,
+                           a_e.graphs, a_e.nodes, blind, a_e.truncated ? ", TRUNCATED" : "",
+                           a_e.Complete() ? " (complete)" : " (INCOMPLETE)");
+    }
+
     // ---- The anim-graph observation (ANY THREAD for the sink, under g_obsMx). ----
     struct Obs {
         bool                     armed = false;
         std::uint32_t            gen = 0;        // the play this record belongs to
         std::uint64_t            playMs = 0;
-        bool                     idleStop = false;
+        RE::FormID               idle = 0;       // the idle this play is for
+        std::vector<std::string> entry;          // the idle's entry events (empty = unconfirmable)
+        bool                     entered = false;
+        std::uint64_t            enteredMs = 0;
+        std::string              enterTag;
+        bool                     idleStop = false;   // IdleStop after the entry (or, unconfirmable: any IdleStop)
         std::uint64_t            idleStopMs = 0;
+        bool                     strayStop = false;  // an IdleStop BEFORE any entry event: not this idle's
+        std::uint64_t            strayStopMs = 0;
         std::uint32_t            events = 0;
         std::vector<std::string> first;          // the first kFirstTags tags after the call
     };
@@ -169,9 +669,32 @@ namespace {
             Obs& o = it->second;
             ++o.events;
             if (o.first.size() < kFirstTags) o.first.emplace_back(tag);
-            if (!o.idleStop && IEquals(tag, "IdleStop")) {
-                o.idleStop   = true;
-                o.idleStopMs = apmf::clock::MonotonicMs();
+            bool entryNow = false;
+            if (!o.entered) {
+                for (const auto& e : o.entry) {
+                    if (IEquals(tag, e)) {
+                        o.entered   = true;
+                        o.enteredMs = apmf::clock::MonotonicMs();
+                        o.enterTag.assign(tag);
+                        entryNow = true;
+                        break;
+                    }
+                }
+            }
+            // An IdleStop is the idle's end only AFTER its entry (and not the very event that
+            // proved the entry, e.g. an IdleStop that is a source state's exit notify). Before
+            // any entry it belongs to something else. With no entry events to wait for
+            // (unconfirmable) any IdleStop counts, the pre-fix rule.
+            if (!entryNow && IEquals(tag, "IdleStop")) {
+                if (o.entry.empty() || o.entered) {
+                    if (!o.idleStop) {
+                        o.idleStop   = true;
+                        o.idleStopMs = apmf::clock::MonotonicMs();
+                    }
+                } else if (!o.strayStop) {
+                    o.strayStop   = true;
+                    o.strayStopMs = apmf::clock::MonotonicMs();
+                }
             }
             return RE::BSEventNotifyControl::kContinue;
         }
@@ -190,12 +713,28 @@ namespace {
         return s.get();
     }
 
-    void Arm(RE::FormID id, std::uint32_t gen) {
+    // A re-play (Repoint / owner change) of the SAME idle while the previous play is still
+    // in it (entered, no IdleStop since) carries that entry: the graph is already in the
+    // idle's state, where a transition to the same state may raise nothing (MFO re-plays
+    // the lockpick once per clip length). Anything else starts a fresh observation.
+    void Arm(RE::FormID id, std::uint32_t gen, RE::FormID idle, const std::vector<std::string>& entry) {
         std::scoped_lock lock(g_obsMx);
         Obs o{};
         o.armed  = true;
         o.gen    = gen;
         o.playMs = apmf::clock::MonotonicMs();
+        o.idle   = idle;
+        o.entry  = entry;
+        if (const auto it = g_obs.find(id); it != g_obs.end()) {
+            const Obs& prev = it->second;
+            if (prev.armed && prev.idle == idle && prev.entered && !prev.idleStop && !entry.empty()) {
+                o.entered   = true;
+                o.enteredMs = o.playMs;   // times on this play's clock (the entry itself was earlier)
+                o.enterTag  = prev.enterTag.starts_with("(still")
+                                  ? prev.enterTag
+                                  : "(still in the idle from the previous call: " + prev.enterTag + ")";
+            }
+        }
         g_obs.insert_or_assign(id, std::move(o));
     }
 
@@ -223,6 +762,13 @@ namespace {
         return s.empty() ? std::string("none") : s;
     }
 
+    // "an IdleStop at +N ms was NOT this idle's ..." or "".
+    std::string StrayText(const Obs& o) {
+        return o.strayStop ? fmt::format("; an IdleStop at +{} ms was NOT this idle's (it came before any entry event)",
+                                          o.strayStopMs - o.playMs)
+                           : std::string();
+    }
+
     // ---- The per-actor v2 entry (GAME THREAD ONLY). ----
     struct Entry {
         RE::FormID    idle = 0;          // the claim's param.form this entry was resolved for
@@ -236,9 +782,25 @@ namespace {
         bool          ending = false;    // Harbinger is releasing this claim
         std::string   idleName;          // EDID + anim event, for the logs
         std::string   endedReason;       // for the Release line
+        std::string   entryText;         // the resolved entry events + walk stats (EntryText)
+        std::string   unconfirmable;     // why no entry event could be resolved ("" = confirmable)
+        bool          noTransition = false;   // a COMPLETE walk found no transition on the idle's event
+        bool          weak = false;           // every entry event is also raised by other transitions
+        std::vector<std::pair<std::string, std::uint32_t>> waitShared;   // entry event -> other transitions raising it
+        std::uint64_t playWorldMs = 0;        // g_worldMs / g_worldFrames at the call
+        std::uint64_t playFrame   = 0;
     };
 
     std::unordered_map<RE::FormID, Entry> g_entries;
+
+    // WORLD-TICK CLOCK (review 18be6ec SEV-3.1). Poll runs from the player's Update seat
+    // (Arbiter::OncePerFrame), which does not run while the game is paused in a menu; the
+    // gap between two calls is clamped to kTickClampMs, so a pause, a load screen or a hitch
+    // adds at most one clamp. The NOT CONFIRMED window is measured on this clock plus a frame
+    // count, never on wall time. GAME THREAD.
+    std::uint64_t g_worldMs     = 0;
+    std::uint64_t g_worldFrames = 0;
+    std::uint64_t g_lastTickMs  = 0;
     std::atomic<std::size_t>              g_count{ 0 };   // Poll's pre-gate
     std::uint32_t                         g_nextGen = 0;
 
@@ -325,10 +887,40 @@ namespace {
         const char* evn  = idle->animEventName.c_str();
         it->second.idleName = fmt::format("{} (event {})", (edid && *edid) ? edid : "?", (evn && *evn) ? evn : "?");
 
-        // Observe from BEFORE the call: the graph may answer inside it. AddAnimationGraphEventSink
-        // returns false when this sink is already on the graph (a re-point) or there is no graph.
+        // The idle's entry events in THIS actor's graph (ENTRY CONFIRMATION, header). Read-only.
+        {
+            const EntryInfo ei     = ResolveEntry(actor, evn);
+            Entry&          en     = it->second;
+            en.entryText           = ei.unreadable.empty() ? EntryText(ei) : ei.unreadable;
+            en.noTransition        = ei.Complete() && ei.transitions == 0;
+            en.unconfirmable.clear();
+            en.weak                = !ei.events.empty() && std::all_of(ei.shared.begin(), ei.shared.end(),
+                                                                       [](std::uint32_t n) { return n != 0; });
+            std::vector<std::string> waitFor = ei.events;
+            en.waitShared.clear();
+            for (std::size_t k = 0; k < ei.events.size(); ++k) en.waitShared.emplace_back(ei.events[k], ei.shared[k]);
+            en.playWorldMs = g_worldMs;
+            en.playFrame   = g_worldFrames;
+            if (ei.badIds != 0) {
+                // The graph's event ids do not fit its own name table: every name the walk read
+                // is suspect, so nothing is judged (review 18be6ec SEV-2).
+                en.unconfirmable = fmt::format("EVENT ID SPACE BROKEN: {} event id(s) outside the graph's name table",
+                                               ei.badIds);
+                waitFor.clear();
+                spdlog::error("[ch.12] 0x{} idle {}: the behaviour-graph read found {} event id(s) outside their "
+                              "graph's name table -- the id space is not what the walk assumes. This play is "
+                              "UNCONFIRMABLE ({}).",
+                              Hex(id), it->second.idleName, ei.badIds, en.entryText);
+            } else if (!en.noTransition && ei.events.empty())
+                en.unconfirmable = !ei.unreadable.empty() ? ei.unreadable
+                                   : ei.transitions == 0
+                                       ? std::string("no transition on the idle's event was found and the walk was incomplete")
+                                       : std::string("the transition(s) on the idle's event raise no notify event");
+            // Observe from BEFORE the call: the graph may answer inside it. AddAnimationGraphEventSink
+            // returns false when this sink is already on the graph (a re-point) or there is no graph.
+            Arm(id, gen, idleId, waitFor);
+        }
         const bool sinkAdded = actor->AddAnimationGraphEventSink(SinkFor(id));
-        Arm(id, gen);
 
         // THE CALL. Once. The fork's binding: RELOCATION_ID(38290, 39256).
         const bool ok = proc->PlayIdle(actor, idle, target);
@@ -348,10 +940,14 @@ namespace {
             EndClaim(id, gen, "engine refused the idle (PlayIdle returned false)");
             return;
         }
-        spdlog::info("[ch.12] 0x{} idle {} {} (0x{}) at target 0x{}: REQUESTED -> PlayIdle returned TRUE (accepted; "
-                     "sink {}; the graph's own events confirm it below).",
+        spdlog::info("[ch.12] 0x{} idle {} {} (0x{}) at target 0x{}: REQUESTED -> PlayIdle returned TRUE (accepted or "
+                     "queued, not yet played; sink {}). Confirmation waits for: {}.",
                      Hex(id), what, e.idleName, Hex(idleId), Hex(tf),
-                     sinkAdded ? "added" : "already on the graph, or no graph");
+                     sinkAdded ? "added" : "already on the graph, or no graph",
+                     e.noTransition                     ? fmt::format("NOTHING (no transition on the idle's event: {})", e.entryText)
+                     : e.unconfirmable.empty()          ? e.entryText
+                     : e.unconfirmable == e.entryText ? fmt::format("NOTHING (unconfirmable: {})", e.unconfirmable)
+                                                      : fmt::format("NOTHING (unconfirmable: {}; {})", e.unconfirmable, e.entryText));
     }
 
     // (Re)write this actor's entry and post ONE task. Inside Drain: nothing here writes the
@@ -376,14 +972,29 @@ namespace {
         apmf::mainthread::Post([id, gen, what] { Play(id, gen, what); });
     }
 
+    // One phrase for the Release line: what the entry evidence said.
+    std::string EntryState(const Entry& e, const Obs& o) {
+        if (!e.live) return "n/a";
+        if (o.entered) return fmt::format("CONFIRMED by '{}' at +{} ms", o.enterTag, o.enteredMs - o.playMs);
+        if (e.noTransition) return "NO TRANSITION on the idle's event in this actor's graph";
+        if (!e.unconfirmable.empty()) return fmt::format("unconfirmable ({})", e.unconfirmable);
+        return "NOT observed";
+    }
+
     // The Release-time reset decision, shared by Release and a form-0 owner change (review
     // F3). Sends IdleForceDefaultState ONLY for a held idle on a loaded, living actor that is
     // not in furniture (review F1). Returns the log text. Inside Drain, game thread.
     std::string ResetIfHeld(const Entry& e, const Obs& o, RE::Actor* actor) {
         if (!e.live) return "no reset (no idle was accepted)";
+        if (e.noTransition) return "no reset (the actor's graph has no transition on the idle's event: nothing played)";
+        if (!o.entry.empty() && !o.entered)
+            return "no reset (the graph was never seen entering the idle: nothing of this claim's to stop)";
         if (o.idleStop)
-            return fmt::format("no reset (not held: the graph raised IdleStop {} ms after the call)",
-                               o.idleStopMs - o.playMs);
+            return o.entered ? fmt::format("no reset (not held: the graph raised IdleStop {} ms after the call, {} ms "
+                                           "after the entry)",
+                                           o.idleStopMs - o.playMs, o.idleStopMs - o.enteredMs)
+                             : fmt::format("no reset (not held: the graph raised IdleStop {} ms after the call)",
+                                           o.idleStopMs - o.playMs);
         if (!actor) return "no reset (held, but the actor did not resolve: unloaded or deleted)";
         if (!actor->Is3DLoaded()) return "no reset (held, but the actor is not loaded)";
         if (actor->IsDead()) return "no reset (held, but the actor is dead)";
@@ -392,7 +1003,8 @@ namespace {
                                "pop it out)",
                                static_cast<std::uint32_t>(sit));
         const bool ok = actor->NotifyAnimationGraph("IdleForceDefaultState");
-        return fmt::format("HELD (no IdleStop in {} ms) -> IdleForceDefaultState accepted={}",
+        return fmt::format("HELD ({}no IdleStop in {} ms) -> IdleForceDefaultState accepted={}",
+                           o.entered ? fmt::format("entered at +{} ms, ", o.enteredMs - o.playMs) : std::string(),
                            apmf::clock::MonotonicMs() - o.playMs, ok);
     }
 
@@ -457,12 +1069,12 @@ namespace {
 
             const std::string reset = ResetIfHeld(e, o, actor);
             spdlog::info("[ch.12] 0x{} idle released ({}) (idle {} 0x{}, target 0x{}): PlayIdle called {} time(s) -- "
-                         "accepted {}, refused {}. Release: {}. Graph events seen: {} [{}].",
+                         "accepted {}, refused {}. Entry: {}. Release: {}. Graph events seen: {} [{}]{}.",
                          Hex(id),
                          e.endedReason.empty() ? std::string("by the client, an unload or a load")
                                                : fmt::format("ENDED BY HARBINGER: {}", e.endedReason),
                          e.idleName.empty() ? std::string("?") : e.idleName, Hex(e.idle), Hex(e.target), e.plays,
-                         e.accepted, e.refused, reset, o.events, TagList(o));
+                         e.accepted, e.refused, EntryState(e, o), reset, o.events, TagList(o), StrayText(o));
         }
     };
 
@@ -496,6 +1108,38 @@ namespace apmf::idle {
         g_installed.store(true, std::memory_order_release);
         spdlog::info("[ch.12] idle v2 available: one AIProcess::PlayIdle(actor, idle, target) per engage / re-point, "
                      "on the main thread; IdleForceDefaultState at release only for a held idle. No hook.");
+
+        // Entry confirmation. Kill switch first (review 18be6ec SEV-3.3): off = no graph read at
+        // all and every play UNCONFIRMABLE, said once here.
+        if (GetPrivateProfileIntA("Idle", "bIdleConfirm", 1, kIni) == 0) {
+            g_entryNotArmed.store("[Idle] bIdleConfirm=0 in Data/SKSE/Plugins/APMF.ini", std::memory_order_release);
+            spdlog::warn("[ch.12] idle entry confirmation OFF -- [Idle] bIdleConfirm=0. No behaviour-graph read; every "
+                         "idle play is logged UNCONFIRMABLE and its claim is never ended for not playing.");
+            return;
+        }
+        // The three vtables the graph read identifies objects by (the rows Travel's gate probe 2
+        // verifies too). A refusal leaves every play UNCONFIRMABLE.
+        const auto vtA = REL::Relocation<std::uintptr_t>{ RE::VTABLE_BShkbAnimationGraph[0] }.address();
+        const auto vtB = REL::Relocation<std::uintptr_t>{ RE::VTABLE_hkbBehaviorGraph[0] }.address();
+        const auto vtS = REL::Relocation<std::uintptr_t>{ RE::VTABLE_hkbStateMachine[0] }.address();
+        bool       ok  = apmf::allowance::SeatVerified(vtA, "Idle.Confirm.BShkbAnimationGraph");
+        ok             = apmf::allowance::SeatVerified(vtB, "Idle.Confirm.hkbBehaviorGraph") && ok;
+        ok             = apmf::allowance::SeatVerified(vtS, "Idle.Confirm.hkbStateMachine") && ok;
+        if (!ok) {
+            g_entryNotArmed.store("the self-check refused a vtable the graph read identifies objects by",
+                                  std::memory_order_release);
+            spdlog::error("[ch.12] idle entry confirmation NOT ARMED -- the mit-3.7 self-check refused a vtable it "
+                          "identifies objects by. Every idle play will be logged UNCONFIRMABLE.");
+            return;
+        }
+        g_vtAnimGraph     = vtA;
+        g_vtBehaviorGraph = vtB;
+        g_vtStateMachine  = vtS;
+        g_entryReady.store(true, std::memory_order_release);
+        spdlog::info("[ch.12] idle entry confirmation armed: an idle counts as played only when the actor's graph "
+                     "raises one of the notify events of a transition on the idle's own event (read from the graph "
+                     "at the call); none within {} ms = NOT CONFIRMED and the claim ends.",
+                     kConfirmWaitMs);
     }
 
     bool V2Installed() { return g_installed.load(std::memory_order_relaxed); }
@@ -506,6 +1150,12 @@ namespace apmf::idle {
     }
 
     void Poll() {
+        {   // the world-tick clock advances on every call, entries or not
+            const std::uint64_t t = apmf::clock::MonotonicMs();
+            if (g_lastTickMs != 0) g_worldMs += (std::min)(t - g_lastTickMs, kTickClampMs);
+            g_lastTickMs = t;
+            ++g_worldFrames;
+        }
         if (g_count.load(std::memory_order_relaxed) == 0) return;
         static std::uint64_t s_lastMs = 0;
         const std::uint64_t  now      = apmf::clock::MonotonicMs();
@@ -529,18 +1179,55 @@ namespace apmf::idle {
             if (it == g_entries.end() || it->second.gen != sn.gen || it->second.confirmLogged) continue;
             const Obs o = Peek(sn.id);
             if (!o.armed || o.gen != sn.gen) continue;
-            if (o.events != 0 && (o.idleStop || o.first.size() >= kFirstTags || now - o.playMs >= kConfirmWaitMs)) {
-                it->second.confirmLogged = true;
-                spdlog::info("[ch.12] 0x{} idle {}: ANIMATION CONFIRMED by the graph ({} event(s) in {} ms: {}){}.",
-                             Hex(sn.id), it->second.idleName, o.events, now - o.playMs, TagList(o),
-                             o.idleStop ? fmt::format("; IdleStop at +{} ms (one-shot, ended by itself)",
-                                                      o.idleStopMs - o.playMs)
+            Entry&              e       = it->second;
+            const std::uint64_t worldMs = g_worldMs - e.playWorldMs;
+            const bool          over    = worldMs >= kConfirmWaitMs && g_worldFrames - e.playFrame >= kConfirmMinFrames;
+            if (o.entered) {
+                // CONFIRMED: an entry event of THIS idle arrived after the call.
+                e.confirmLogged = true;
+                // Evidence strength (review 18be6ec SEV-3.2): an entry event other transitions
+                // raise too is WEAK evidence. Liveness is the same either way.
+                std::string strength = "specific evidence";
+                for (const auto& [name, n] : e.waitShared)
+                    if (IEquals(name, o.enterTag) && n != 0)
+                        strength = fmt::format("WEAK evidence: '{}' is also raised by {} other transition(s)", name, n);
+                if (o.enterTag.starts_with("(still")) strength = "carried from the previous call";
+                spdlog::info("[ch.12] 0x{} idle {}: ANIMATION CONFIRMED ({}) -- the graph raised the entry event '{}' at "
+                             "+{} ms ({}). Events so far: {} [{}]{}.",
+                             Hex(sn.id), e.idleName, strength, o.enterTag, o.enteredMs - o.playMs, e.entryText, o.events,
+                             TagList(o),
+                             o.idleStop ? fmt::format("; IdleStop at +{} ms, {} ms after the entry (one-shot, ended by "
+                                                      "itself: compare with the clip's length)",
+                                                      o.idleStopMs - o.playMs, o.idleStopMs - o.enteredMs)
                                         : std::string("; no IdleStop yet (still playing, or held)"));
-            } else if (o.events == 0 && now - o.playMs >= kConfirmWaitMs) {
-                it->second.confirmLogged = true;
-                spdlog::warn("[ch.12] 0x{} idle {}: NO ANIMATION EVENT from the actor's graph in {} ms after "
-                             "PlayIdle returned true (accepted, but not observed playing).",
-                             Hex(sn.id), it->second.idleName, now - o.playMs);
+            } else if (e.noTransition) {
+                // The idle cannot enter this graph at all: end the claim at once.
+                e.confirmLogged = true;
+                spdlog::warn("[ch.12] 0x{} idle {}: ANIMATION NOT CONFIRMED -- the actor's behaviour graph has NO "
+                             "transition on the idle's event ({}), so it cannot play on this actor although PlayIdle "
+                             "returned true.",
+                             Hex(sn.id), e.idleName, e.entryText);
+                EndClaim(sn.id, sn.gen, "idle not played: the actor's graph has no transition on its event");
+            } else if (!e.unconfirmable.empty()) {
+                if (over) {
+                    e.confirmLogged = true;
+                    spdlog::warn("[ch.12] 0x{} idle {}: UNCONFIRMABLE -- {}. PlayIdle returned true; whether the clip "
+                                 "played is UNKNOWN (the claim stays; held = no IdleStop since the call). Graph events "
+                                 "in {} ms: {} [{}]{}.",
+                                 Hex(sn.id), e.idleName, e.unconfirmable, now - o.playMs, o.events, TagList(o),
+                                 o.idleStop ? fmt::format("; IdleStop at +{} ms", o.idleStopMs - o.playMs) : std::string());
+                }
+            } else if (over) {
+                // NOT CONFIRMED: none of the idle's entry events arrived. What did arrive is someone
+                // else's (the 2026-09-28 lockpick: IdleStop, tailCombatState, attackStop, Pie...).
+                e.confirmLogged = true;
+                spdlog::warn("[ch.12] 0x{} idle {}: ANIMATION NOT CONFIRMED -- none of its entry events arrived in {} "
+                             "ms of world time ({} frames, {} ms wall) ({}); PlayIdle returned true but the graph never "
+                             "entered the idle. Unrelated graph events: {} [{}]{}. Harbinger ends the claim.",
+                             Hex(sn.id), e.idleName, worldMs, g_worldFrames - e.playFrame, now - o.playMs, e.entryText,
+                             o.events, TagList(o), StrayText(o));
+                EndClaim(sn.id, sn.gen,
+                         fmt::format("idle not observed playing (no entry event in {} ms of world time)", worldMs));
             }
         }
     }
