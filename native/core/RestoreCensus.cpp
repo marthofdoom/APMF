@@ -8,7 +8,6 @@
 #include <mutex>
 #include <string>
 #include <unordered_map>
-#include <unordered_set>
 #include <vector>
 
 // Win32 INI read, declared by hand exactly like core/CastSeats.cpp does (PCH does
@@ -89,7 +88,7 @@ namespace apmf::restorecensus {
         std::uint32_t g_budgetDropped   = 0;
         bool          g_iniRead         = false;
         std::uint32_t g_opened = 0, g_closed = 0, g_zeroClosed = 0, g_engagedClosed = 0;
-        std::unordered_map<RE::FormID, bool> g_shapeCache;   // driven form -> restore-shaped
+        std::unordered_map<RE::FormID, bool> g_shapeCache;   // load-order driven form -> restore-shaped
 
         const char* HandName(char h) {
             return h == 'L' ? "left" : h == 'R' ? "right" : h == 'D' ? "both (dual)" : "?";
@@ -116,7 +115,9 @@ namespace apmf::restorecensus {
                               av == RE::ActorValue::kStamina);
                 }
             }
-            g_shapeCache.emplace(a_form, shaped);
+            // Never cache a runtime-minted (0xFF) form: delivery-flip proxies are pooled, so an id
+            // can name a different spell after a release. Load-order forms are stable.
+            if ((a_form >> 24) != 0xFF) g_shapeCache.emplace(a_form, shaped);
             return shaped;
         }
 
