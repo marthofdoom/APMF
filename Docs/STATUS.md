@@ -16,8 +16,8 @@ build/finding/workflow change.
 
 Design: MFO scratchpad `animheal-design.md` (phases 0a-4, decisions D1-D8). Agent log `apmf-animheal-p1.md`.
 
-**Phase 1 (tier A): a cast claim no longer reaches the non-hand casters.** `core/CastGate.cpp` read the ch.8b
-claim for the instant and other casters through the ACTOR-WIDE floor, so a claim on one hand refused the
+**Phase 1 (tier A): a cast claim no longer reaches the instant caster.** `core/CastGate.cpp` read the ch.8b
+claim for the instant caster through the ACTOR-WIDE floor, so a claim on one hand refused the
 claimant's own direct casts, the AI's potions, and a running instant-caster concentration channel. Field:
 2026-09-21 `hand=?` 7-9 ms after an MFO `FORCE-CAST`, 2026-09-28 48 `hand=?` denies of MFO's stream forms
 `FF0011D8`/`FF0021AF` plus a Serana potion and Drain Life. Disassembled (both runtimes): `CastSpellImmediate`
@@ -25,11 +25,15 @@ claimant's own direct casts, the AI's potions, and a running instant-caster conc
 `MagicCaster::UpdateImpl` (AE 34400 / SE 33622) every tick through the cast tick (AE 34407 `0x5BBD40` / SE 33629
 `0x54C950`, 0x0A call at AE `0x5BBDE0` / SE `0x54C9F5`), and a NO (other than reason 8) calls
 `InterruptCast(true)` (AE 34408 / SE 33630). So the deny CUT MFO's instant-caster heal streams on the engine
-side. Now: ch.8b is read for the LEFT/RIGHT casters only; the non-hand casters answer to the ch.8 allow-list
-alone. INVARIANTS #18 amended, DENY-COMPLETENESS-AUDIT "Non-hand casters" has the enumeration. **Not fixed by
+side. Now: the instant caster reads no cast claim and answers to the ch.8 allow-list alone. The voice caster
+(`kOther`) stays on the actor-wide floor (review F1 on `58a4438`, DECIDED): a busy voice caster makes a hand's
+`CheckCast` return `kCastWhileShouting`, so an unclaimed shout would block the claimed hand from starting. INVARIANTS #18 amended, DENY-COMPLETENESS-AUDIT "Non-hand casters" has the enumeration. **Not fixed by
 this alone:** all 48 of Jesper's 09-28 denies also had ch.8 select DENY (MFO does not list its own stream
 forms). That is MFO phase 1m. Log: `hand=?(instant)` / `hand=?(other)`, ch.8b `n/a`, and a throttled
-`[t2c] ... CheckCast ADMITTED ... on the <source> caster` when the old read would have refused.
+`[t2c] ... CheckCast ADMITTED ... on the instant caster` when the old read would have refused. Review round 1
+(`58a4438`): F1 above; F2 fixed (the census and `core/CastObserve.cpp` read `magicCasters[src]` instead of the
+allocating `Actor::GetMagicCaster`); F3/F4/F5 in REVIEW-BACKLOG APMF-B37..B39 (F4: the two new census files were
+confirmed IN SCOPE by the coordinator).
 
 **Phase 0b (tier B, no new hook): the Restore-caster census**, `core/RestoreCensus.{h,cpp}`,
 `[Probe] bRestoreCensus` default **1** (PRE-RELEASE CHECKLIST). Per restore-shaped cast claim window (actor,
@@ -57,11 +61,15 @@ AE 1.6.1170, SE counterparts by the same slots), not yet OBSERVED:
   every seat requires one (`CastSeats.cpp` `ClaimNamesThisCast`, `EquipGate.cpp` `hasHandSeat`). So a self claim
   gets no seat answer at all: 0x0F chains to the vanilla should-restore (the 15 s timer after any Restore
   unequip, and health under about half), and 0x06 chains to the native test. An ally claim has a handle, so 0x0F
-  answers YES at once. That fits 2026-09-08: self 16.7 s (about the 15 s timer plus a lap), ally 0.6 s. The census
+  answers YES at once. **The same missing handle also switches off EquipGate's 0x0F deny-complete for the
+  claimed hand** (it needs `hasHandSeat || handDenyOnly`; review F5, APMF-B39): under a self heal claim the combat
+  AI may arm another spell into the claimed hand, and CastGate still refuses its charge per hand, so the hand can
+  sit holding a spell it may not cast. That fits 2026-09-08: self 16.7 s (about the 15 s timer plus a lap), ally 0.6 s. The census
   will show it (self windows with claim YES=0).
 - **Phase 3 therefore needs no new upstream seat for self heals first.** The eligibility answers already exist
   (0x0F non-chaining YES, 0x06). The candidate is to give a self claim a target: resolve castTarget 0 (or the
-  claimant) to the claimant's own handle, so the seats serve it. A kSelf spell ignores `desiredTarget`, so 0x0A
+  claimant) to the claimant's own handle, so the seats serve it AND 0x0F's deny-complete covers its hand (one fix
+  closes both). A kSelf spell ignores `desiredTarget`, so 0x0A
   returning self is harmless. Tier A, its own brief, after the census confirms the gap in the field.
 
 ## HEAD OF WORK 2026-09-29 -- RANGED-SELECT PROBE, PHASE 1 (`[ranged-probe]`), branch `feat/apmf-ranged-select-probe`, NOT merged
