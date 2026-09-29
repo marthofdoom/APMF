@@ -269,7 +269,9 @@ AI deliberation is untouched.
 > "The deny-only hand claim" section below for what a floored hand admits, and open gap 9). `Hand::kUnknown` (a caster with `kOther`/`kInstant`
 source, or an item whose slot is neither vanilla hand — e.g. `kEitherHandEquip`)
 degrades exactly to the old `AllowedCast(actor, subjectForm)` actor-wide floor —
-never a guess. `ControlMap::TryGetCastClaim` grew an optional `outFlags` parameter
+never a guess. **AMENDED 2026-09-29 for the casters (INVARIANTS #18, "Non-hand
+casters" below):** `CheckCast` on a `kOther`/`kInstant` caster no longer reads ch.8b at
+all; the actor-wide floor survives only for EquipGate's neither-hand item slot. `ControlMap::TryGetCastClaim` grew an optional `outFlags` parameter
 (default `nullptr`, existing callers unaffected) to expose the claim's `CastFlags`
 for this. **"Untouched" is the correct behaviour of a claim that said nothing about
 that hand — and since 2026-09-06 a client CAN say something about it: see "The
@@ -296,6 +298,43 @@ context window (the built `CombatBehaviorContextMagic` DOES know its caster, but
 reading it at the node seat is an offset read this pass will not invent) or leaning
 on (a)/(b)'s per-hand narrowing alone.
 
+## Non-hand casters (INVARIANTS #18 amendment, fix/apmf-cast-instant-caster, 2026-09-29)
+
+An actor owns four `ActorMagicCaster`s, one per `MagicSystem::CastingSource`: `kLeftHand`,
+`kRightHand`, `kOther` and `kInstant`. `core/CastGate.cpp` (0x0A) resolves which one is
+deliberating from `GetCastingSource()`. **Rule now:** a `kIntent_Cast` claim, driving or
+deny-only, is read for the two HAND casters only. The two non-hand casters answer to the
+ch.8 allow-list alone.
+
+**Enumeration: the claimed facet and every path to it.** The facet a cast claim holds is
+"what the claimed hand's caster charges and releases, at whom, for how long". Paths that
+reach it: (a) the hand caster's own `CheckCast` (0x0A, per hand, unchanged); (b) the
+combat AI's equip of a spell or staff into that hand (0x0F `CheckShouldEquip`, per hand,
+unchanged); (c) the Restore/Offensive caster seats 0x06/0x07/0x0A/0x0D (by driven form,
+unchanged); (d) a foreign charge already in flight when the claim lands (open gap 13,
+unchanged). A non-hand caster is none of these: it is a separate `MagicCaster` object
+with its own `currentSpell` and `state`, it has no equip slot the combat AI arms, and it
+cannot charge, release or re-arm the claimed hand. The engine's own exclusion reasons
+(`kCastWhileShouting` / `kShoutWhileCasting`) still guard a hand cast against a shout.
+
+**What the non-hand casters carry, and who governs each after the amendment.**
+
+| Non-hand use | Caster (evidence) | Governed by | Hand facet? |
+|---|---|---|---|
+| A client's own direct cast (`CastSpellImmediate`), incl. a concentration stream left running | kInstant (field `hand=?` lines 7-9 ms after MFO `FORCE-CAST`; the channel tick AE 34407 / SE 33629 re-runs 0x0A and interrupts on NO) | ch.8 allow-list, if the client holds one. The client lists its own forms (MFO phase 1m) | No |
+| Papyrus / script casts | kInstant (SKSE and Papyrus convention; not disassembled in this pass) | ch.8 allow-list | No |
+| Potions and other consumables used by the AI | non-hand (field: Serana `Potion of Vigorous Magicka` `hand=?` 2026-09-28) | ch.8 allow-list (MFO enumerates potions onto it since 2026-09-26); ch.17 never refuses ALCH | No |
+| Powers and shouts | kOther (SKSE Papyrus `GetEquippedSpell(2)` = the power slot; not disassembled in this pass) | ch.14 (arbitrate-only, documented partial) and ch.7 (`CastShout` leaf) | No |
+| Weapon enchantment procs | applied without a 0x0A deliberation as far as this pass looked (`CastSpellImmediate` makes no 0x0A call) | not a cast choice | No |
+
+**Holes.** None in the claimed facet: every path (a)-(d) is exactly as it was. The one
+thing that changes is that a claim no longer silences what it never named. A client
+that wants the non-hand casters narrowed has the sentence for it: ch.8 (actor-wide
+allow-list), ch.14 or ch.7. **UNVERIFIED and observed next field cycle:** which non-hand
+source each deny or admit comes from. The gate now prints `hand=?(instant)` /
+`hand=?(other)` and `CheckCast ADMITTED ... on the <source> caster`, so the two
+"convention, not disassembled" rows above are checked by the next deck log (principle 5).
+
 ## The deny-only hand claim (`kCastFlag_DenyHandOnly`, 2026-09-06)
 
 **The hole it closes.** The per-hand pass above deliberately leaves the OTHER hand
@@ -321,14 +360,20 @@ on a resolved target handle, and it has neither.
 The floor names no form, so there is nothing for either gate to let through. The
 rule for clients is therefore *claim before you expect the AI to arm anything on a
 floored hand* — a driving claim reopens it, an unclaimed cast does not. This does NOT
-reach a client's own DIRECT force: a `GetMagicCaster(kInstant)->CastSpellImmediate()`
-never consults `CheckCast` (slot 0x01 vs slot 0x0A), which is field-established twice
-over — MFO hooks the same 0x0A slot and records that its kInstant direct force "does
-NOT deliberate through these hooks, so it is never vetoed and needs no bound"
-(`CasterConsent.cpp`), and MFO's `ENGINE_NOTES` §0.9 measured a zero-magicka follower
-casting through `CastSpellImmediate` indefinitely, which a `CheckCast` consult would
-have refused outright. The floor closes the hand to the AI's DELIBERATION, which is
-exactly and only what it claims to do.
+reach a client's own DIRECT force on the instant caster. **CORRECTED 2026-09-29.** This
+paragraph used to say the floor could not reach it because `CastSpellImmediate` "never
+consults `CheckCast`". That is true of the CALL (AE 34404 `0x5BB9C0` / SE 33626
+`0x54C5F0` makes no slot-0x0A call) and FALSE for what it leaves behind: a
+concentration spell cast that way keeps running on the instant caster, and
+`MagicCaster::UpdateImpl` (AE 34400 / SE 33622) re-runs `CheckCast` on every channel
+tick (AE 34407 / SE 33629) and calls `InterruptCast(true)` on a NO. Field 2026-09-21
+(`hand=?` 7-9 ms after an MFO `FORCE-CAST`) and 2026-09-28 (48 `hand=?` denies of MFO's
+own stream forms, a refused Serana potion) show `CheckCast` reached on a non-hand caster
+under a hand claim. Since the INVARIANTS #18 non-hand amendment the floor and every other
+cast claim are read on the hand casters ONLY, so a floor now closes the hand to the AI's
+deliberation and reaches nothing else, which is exactly and only what it claims to do.
+The ch.8 allow-list still reaches the non-hand casters: a client holding a ch.8 claim must
+list its own direct-road forms.
 
 **Arbitration.** All seven winner-selections in `core/ControlMap.cpp` (ApplyRequest's
 oldBest, ApplyRelease's ownerOf, ApplyRepoint's best, and the four cast reads) now go

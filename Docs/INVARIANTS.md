@@ -971,6 +971,34 @@ The rule is the explicit form of #0/#1: #1 says "block the foreign input"; #18 a
   `CombatBehaviorTreeControl` carry none) stays PER-ACTOR and is a DOCUMENTED gap
   (next bullet), never silently presented as per-hand. See
   `Docs/DENY-COMPLETENESS-AUDIT.md`'s "per-hand pass" section.
+- **A HAND FACET IS DENIED ON HAND CASTERS ONLY — the non-hand caster amendment
+  (fix/apmf-cast-instant-caster, 2026-09-29).** A `kIntent_Cast` claim (driving or
+  `kCastFlag_DenyHandOnly`) occupies a HAND. Its deny is read at `CheckCast` (0x0A) for
+  the LEFT and RIGHT hand casters only. The two NON-HAND casters an actor owns
+  (`MagicSystem::CastingSource::kInstant` and `kOther`) are not a hand, so no cast claim
+  governs them: they answer to the ch.8 allow-list (`kIntent_SelectSpell` +
+  `SetSpellAllowList`) alone, which is the actor-wide sentence a client declares. The
+  pre-amendment rule sent them to the ACTOR-WIDE ch.8b floor ("kUnknown degrades to the
+  per-actor floor"), which is a per-hand claim reaching a facet it never named: it refused
+  the claimant's own direct casts, the AI's potions, and — because the engine re-runs
+  `CheckCast` on every tick of a running concentration channel and calls
+  `InterruptCast(true)` on a NO (AE 34407 `0x5BBD40` / SE 33629 `0x54C950`, call at AE
+  `0x5BBDE0` / SE `0x54C9F5`) — it CUT a running instant-caster channel (field 2026-09-21
+  and 2026-09-28, `hand=?` lines). **Why this opens no hole** (principle 2, the full
+  enumeration is `Docs/DENY-COMPLETENESS-AUDIT.md` "Non-hand casters"): the claimed facet
+  is what the claimed hand's caster charges and releases. A non-hand caster is a separate
+  `MagicCaster` object with its own state; nothing it does occupies, charges or re-arms
+  the claimed hand, and the claimed hand's own caster still reads the claim at 0x0A, with
+  0x0F and the five seats untouched. What runs on the non-hand casters (script and
+  client direct casts, potions and other consumables, powers and shouts) is not a hand
+  cast: a client that wants those narrowed says so through ch.8 (listing its own direct
+  forms, including delivery-flip or stream forms it mints), ch.14 or ch.7. The
+  `Allowance::AllowedCastForHand(kUnknown)` actor-wide floor is unchanged for its other
+  caller (EquipGate, an item whose slot is neither vanilla hand), which is still a hand
+  equip question. The gate says which caster it refused (`hand=?(instant)` /
+  `hand=?(other)`, ch.8b column `n/a`) and logs `CheckCast ADMITTED ... on the <source>
+  caster` whenever the pre-amendment read would have refused, so the field sees the
+  amendment run.
 - **A deny must honor the denied seat's OWN PROTOCOL — the act()/pop() pair
   lesson (feat/ai-cast-suppress, 2026-09-04, the recurring deck CTD).** Denying a
   behavior-tree node means making it FAIL the way the engine's own `ForceFail`
