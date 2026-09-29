@@ -227,3 +227,21 @@ Raised against `ac895c3` (`feat/apmf-combat-entry`), tier-A Opus 5.5 review 2026
 ### APMF-B31 (SEV-5) -- ch.21 a brief 3D loss of the target ends the claim
 Raised against `ac895c3`, same review, finding F7. Verbatim as relayed by the coordinator: "a brief 3D loss ends the claim; the same residual as ch.20". Reasoning: `combatentry::Poll` ends the claim on `!target->Is3DLoaded()` checked live on the game thread; a transient 3D rebuild (a transform, a skeleton swap, Reset3D, a script Disable+Enable) seen by one poll ends it. ch.20 has the same residual (its Poll re-checks live, which narrows but does not remove it). The client re-requests.
 
+### APMF-B32 (SEV-4 / SEV-5) -- ch.12 idle entry confirmation review items (deferred)
+Raised against `18be6ec` (`fix/apmf-idle-confirm`), tier-A Opus 5.5 review 2026-09-29 (reviewer log
+`scratchpad/agentlogs/review-apmf-idle-confirm.md`; verdict FIX FIRST, the SEV-2/SEV-3 items fixed on the same
+branch). Text as relayed by the coordinator (the reviewer's log holds the reasoning notes quoted below):
+- **SEV-4 "the Repoint carry overstating".** A same-idle re-play armed while the previous play is still in the
+  idle is reported CONFIRMED (carried) even if the clip ends a moment later and the re-play itself does nothing.
+  Reviewer note: "carry = labeled carry" -- it is labelled "carried from the previous call" in the log.
+- **SEV-4 "toNestedStateId ignored".** A transition that targets a nested state (`toNestedStateId`, TransitionInfo
+  +0x3C) is resolved only to its top-level destination; the nested state's own enter events are not added. The
+  walk still finds the transition (so NO TRANSITION is not affected); only the entry set can be short.
+- **SEV-4 "the thin data behind 3000 ms".** The window rests on seven field IdleGive plays (entry under 200 ms in
+  six; one unknown, IdleStop at +2145 ms). Reviewer note: "IdleGive entry time unknown in 1 of 7 plays". A queued
+  idle that enters later than the window has its claim ended first.
+- **SEV-5 items.** Relayed without separate text; see the reviewer log. Among the notes: generator classes the walk
+  does not descend (`BGSGamebryoSequenceGenerator`, `hkbReferencePoseGenerator`) count as unknown and make the walk
+  incomplete (conservative); APMF has no SEH around engine reads (house style).
+- **Fixed in the same round (not deferred):** `Names::Get` null data check.
+

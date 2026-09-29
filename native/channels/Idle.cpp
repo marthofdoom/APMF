@@ -7,6 +7,7 @@
 #include "core/MainThread.h"
 #include "core/Registry.h"
 
+#include <algorithm>
 #include <cstring>
 #include <memory>
 #include <mutex>
@@ -83,21 +84,27 @@ extern "C" __declspec(dllimport) unsigned long __stdcall GetPrivateProfileIntA(
 // idle's own animation event raises when it fires. They are read from the actor's live
 // behaviour graph at the call (ResolveEntry, below), for any idle any client names:
 //   for every state machine transition whose event is the idle's animEventName: the
-//   destination state's enterNotifyEvents, the source state's exitNotifyEvents (not for a
-//   wildcard), and the enterNotifyEvents of the start state of a state machine nested in
-//   the destination. Vanilla + Tuxborn's Nemesis graphs (offline, same walk):
+//   destination state's enterNotifyEvents and the enterNotifyEvents of the start state of
+//   a state machine nested in the destination; ONLY when none exist, the source state's
+//   exitNotifyEvents (not for a wildcard). Each entry event also carries how many OTHER
+//   transitions raise it; a confirmation on a shared one is logged WEAK evidence (review
+//   18be6ec SEV-3.2; IdleOffsetStop is raised by ~105 others). Liveness is the same. Vanilla + Tuxborn's Nemesis graphs (offline, same walk):
 //   IdleLockPick -> MT_BehaviorGraph>InteractionObjectState, {IdleOffsetStop, OffsetStop};
 //   IdleGive -> MT_RootBehavior MT_State>NonOffsetIdles, {IdleOffsetStop} (MT_State exit).
 //   Every field IdleGive play listed IdleOffsetStop first; the lockpick listed neither.
 // Outcomes, one line per play from Poll:
 //   CONFIRMED      an entry event arrived (named, with its time);
-//   NOT CONFIRMED  none arrived within kConfirmWaitMs -> WARN and Harbinger ENDS the claim
+//   NOT CONFIRMED  none arrived within kConfirmWaitMs of WORLD time (and kConfirmMinFrames
+//                  frames; a menu pause does not count) -> WARN and Harbinger ENDS the claim
 //                  (IsClaimLive goes false: the client sees the idle did not play);
-//   NO TRANSITION  a complete walk found no transition on the idle's event -> the idle
-//                  cannot play on this actor's graph -> WARN and the claim ENDS at the call;
+//   NO TRANSITION  a COMPLETE walk (EntryInfo::Blind() == 0: no unknown class, unlinked
+//                  reference, out-of-range event id, unresolved target, wrong-class object or
+//                  unwalked graph) found no transition on the idle's event -> the idle cannot
+//                  play on this actor's graph -> WARN and the claim ENDS at the first Poll;
 //   UNCONFIRMABLE  no entry event could be resolved (the destination raises none, the walk
-//                  was incomplete, or the graph could not be read) -> WARN, the claim stays,
-//                  and HELD falls back to "no IdleStop since the call" (the pre-fix rule).
+//                  was incomplete, the graph could not be read, an event id fell outside its
+//                  graph's name table = "id space broken", or [Idle] bIdleConfirm=0) -> WARN,
+//                  the claim stays, and HELD falls back to "no IdleStop since the call".
 // An IdleStop that arrives BEFORE any entry event is not this idle's (the lockpick's came
 // at +2961 ms from the combat graph) and is reported as such, never as the idle's end.
 // The clip's length is NOT readable here (the template clip carries only an end-relative
@@ -164,7 +171,9 @@ namespace {
     using apmf::log::Hex;
 
     constexpr const char*   kIni           = "Data/SKSE/Plugins/APMF.ini";
-    constexpr std::uint64_t kConfirmWaitMs = 3000;   // no ENTRY event this long after an accepted play = NOT CONFIRMED
+    constexpr std::uint64_t kConfirmWaitMs = 3000;   // no ENTRY event in this much WORLD time after an accepted play = NOT CONFIRMED
+    constexpr std::uint32_t kConfirmMinFrames = 30;  // ... and at least this many world ticks (a hitch cannot end it)
+    constexpr std::uint64_t kTickClampMs   = 100;    // one Poll-to-Poll gap counts at most this much world time
     constexpr std::size_t   kFirstTags     = 8;      // graph events kept for the confirmation line
     constexpr std::uint32_t kWalkMaxNodes  = 60000;  // vanilla + Tuxborn's Nemesis graphs: ~6000 nodes in 17 graphs
 
@@ -290,23 +299,40 @@ namespace {
     }
 
     struct EntryInfo {
-        std::vector<std::string> events;        // the idle's entry events (deduplicated, case-insensitive)
+        std::vector<std::string> events;        // the entry events waited for (enter ones when any exist)
+        std::vector<std::string> enter;         // destination / nested-start ENTER events (preferred)
+        std::vector<std::string> exits;         // source-state EXIT events (used only when no enter event exists)
+        std::vector<std::uint32_t> shared;      // per events[i]: OTHER transitions that raise it too
         std::string              dests;         // "Machine>State" for the log
         std::uint32_t            transitions = 0;
         std::uint32_t            graphs = 0;
         std::uint32_t            nodes = 0;
-        std::uint32_t            unknown = 0;   // generator nodes of a class the walk does not descend
-        std::uint32_t            unlinked = 0;  // behaviour references with no linked graph
+        // BLIND SPOTS (review 18be6ec SEV-2): each one makes the walk INCOMPLETE, so a
+        // "no transition" answer is only ever given after a walk that saw everything.
+        std::uint32_t            unknown = 0;     // generator nodes of a class the walk does not descend
+        std::uint32_t            unlinked = 0;    // behaviour references with no linked graph
+        std::uint32_t            badIds = 0;      // event ids outside their graph's name table
+        std::uint32_t            unresolved = 0;  // transitions whose target state is not in the machine
+        std::uint32_t            skipped = 0;     // objects of the wrong class where a known one belongs
+        std::uint32_t            badGraphs = 0;   // graphs failing the vtable / layout guard, or without names
         bool                     truncated = false;
         std::string              unreadable;    // set when no walk happened, with the reason
-        bool Complete() const { return unreadable.empty() && unknown == 0 && unlinked == 0 && !truncated && graphs != 0; }
+        std::uint32_t Blind() const { return unknown + unlinked + badIds + unresolved + skipped + badGraphs; }
+        bool Complete() const { return unreadable.empty() && Blind() == 0 && !truncated && graphs != 0; }
     };
 
-    void AddEvent(EntryInfo& a_out, const char* a_name) {
+    void AddName(std::vector<std::string>& a_v, const char* a_name) {
         if (!a_name || !*a_name) return;
-        for (const auto& e : a_out.events)
+        for (const auto& e : a_v)
             if (IEquals(e, a_name)) return;
-        a_out.events.emplace_back(a_name);
+        a_v.emplace_back(a_name);
+    }
+
+    std::string Lower(std::string_view a_s) {
+        std::string r(a_s);
+        for (auto& c : r)
+            if (c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a');
+        return r;
     }
 
     // Walks the TEMPLATES of one actor graph. Offsets: Havok 2010 x64 in-place layout (header).
@@ -320,7 +346,10 @@ namespace {
             // hkbBehaviorGraph.data 0x88 -> hkbBehaviorGraphData.stringData 0x78 -> eventNames hkArray 0x10.
             const auto data = Rd<std::uintptr_t>(a_bg + 0x88);
             const auto sd   = Is(data, Kind::kGraphData) ? Rd<std::uintptr_t>(data + 0x78) : 0;
-            if (!Is(sd, Kind::kStringData)) return;
+            if (!Is(sd, Kind::kStringData)) {
+                ++out.badGraphs;
+                return;
+            }
             Names names{ Rd<std::uintptr_t>(sd + 0x10), Rd<std::int32_t>(sd + 0x18) };
             std::vector<std::uintptr_t> stack{ Rd<std::uintptr_t>(a_bg + 0x80) };   // rootGenerator (template)
             while (!stack.empty()) {
@@ -374,7 +403,22 @@ namespace {
             while (!pending.empty() && !out.truncated) {
                 const auto bg = pending.back();
                 pending.pop_back();
+                if (Rd<std::uintptr_t>(bg) != g_vtBehaviorGraph) {
+                    ++out.badGraphs;   // a linked "graph" that is not one
+                    continue;
+                }
                 Graph(bg);
+            }
+        }
+
+        // After the walk: the events to wait for (ENTER events when any exist, else the
+        // source EXIT events) and, for each, how many OTHER transitions raise it too.
+        void Finish() {
+            out.events = !out.enter.empty() ? out.enter : out.exits;
+            out.shared.clear();
+            for (const auto& e : out.events) {
+                const auto it = raisedByOthers.find(Lower(e));
+                out.shared.push_back(it == raisedByOthers.end() ? 0 : it->second);
             }
         }
 
@@ -382,7 +426,8 @@ namespace {
         struct Names {
             std::uintptr_t data;
             std::int32_t   size;
-            const char*    Get(std::int32_t i) const { return (i >= 0 && i < size) ? HkStr(data + 8 * static_cast<std::uintptr_t>(i)) : nullptr; }
+            bool           Valid(std::int32_t i) const { return data && i >= 0 && i < size; }
+            const char*    Get(std::int32_t i) const { return Valid(i) ? HkStr(data + 8 * static_cast<std::uintptr_t>(i)) : nullptr; }
         };
 
         // hkArray at a_arr (data 0x0, size 0x8) of object pointers. a_wrap != kOther: each element
@@ -397,15 +442,28 @@ namespace {
                     a_stack.push_back(x);
                 else if (Is(x, a_wrap))
                     a_stack.push_back(Rd<std::uintptr_t>(x + a_genOff));
+                else if (x)
+                    ++out.skipped;
             }
         }
 
-        void Notify(std::uintptr_t a_arr, const Names& a_names) {   // an EventPropertyArray -> names
-            if (!Is(a_arr, Kind::kEventPropertyArray)) return;
+        // An EventPropertyArray -> its names, appended to a_to.
+        void Notify(std::uintptr_t a_arr, const Names& a_names, std::vector<std::string>& a_to) {
+            if (!a_arr) return;
+            if (!Is(a_arr, Kind::kEventPropertyArray)) {
+                ++out.skipped;
+                return;
+            }
             const auto p = Rd<std::uintptr_t>(a_arr + 0x10);
             const auto n = Rd<std::int32_t>(a_arr + 0x18);
-            for (std::int32_t i = 0; p && i < n; ++i)   // hkbEventProperty: id 0x0, payload 0x8; 0x10 each
-                AddEvent(out, a_names.Get(Rd<std::int32_t>(p + 0x10 * static_cast<std::uintptr_t>(i))));
+            for (std::int32_t i = 0; p && i < n; ++i) {   // hkbEventProperty: id 0x0, payload 0x8; 0x10 each
+                const auto id = Rd<std::int32_t>(p + 0x10 * static_cast<std::uintptr_t>(i));
+                if (!a_names.Valid(id)) {
+                    ++out.badIds;
+                    continue;
+                }
+                AddName(a_to, a_names.Get(id));
+            }
         }
 
         std::uintptr_t StateById(std::uintptr_t a_sm, std::int32_t a_id) {
@@ -419,13 +477,16 @@ namespace {
         }
 
         // The start state of a state machine nested (through single-child wrappers) in a_gen.
-        void NestedStart(std::uintptr_t a_gen, const Names& a_names) {
+        void NestedStart(std::uintptr_t a_gen, const Names& a_names, std::vector<std::string>* a_to) {
             for (int depth = 0; a_gen && depth < 8; ++depth) {
                 const Kind k = KindOf(a_gen);
                 if (k == Kind::kStateMachine) {
                     const auto s = StateById(a_gen, Rd<std::int32_t>(a_gen + 0x68));   // startStateId
-                    if (!s) return;
-                    Notify(Rd<std::uintptr_t>(s + 0x40), a_names);
+                    if (!s) {
+                        ++out.unresolved;
+                        return;
+                    }
+                    Notify(Rd<std::uintptr_t>(s + 0x40), a_names, *a_to);
                     a_gen = Rd<std::uintptr_t>(s + 0x58);
                 } else if (k == Kind::kModifierGenerator || k == Kind::kStateTagging || k == Kind::kCyclicBlend) {
                     a_gen = Rd<std::uintptr_t>(a_gen + 0x50);
@@ -436,21 +497,43 @@ namespace {
         }
 
         // hkbStateMachine.TransitionInfoArray: hkArray 0x10 of 0x48-byte TransitionInfo
-        // (eventId 0x30, toStateId 0x34).
+        // (eventId 0x30, toStateId 0x34). EVERY transition's id is range-checked (a broken id
+        // space would make "no transition" a lie), and every transition's raised events are
+        // counted so a shared entry event can be labelled weak evidence.
         void Transitions(std::uintptr_t a_sm, std::uintptr_t a_arr, std::uintptr_t a_from, const Names& a_names) {
-            if (!Is(a_arr, Kind::kTransitionArray)) return;
+            if (!a_arr) return;
+            if (!Is(a_arr, Kind::kTransitionArray)) {
+                ++out.skipped;
+                return;
+            }
             const auto p = Rd<std::uintptr_t>(a_arr + 0x10);
             const auto n = Rd<std::int32_t>(a_arr + 0x18);
             for (std::int32_t i = 0; p && i < n; ++i) {
-                const auto  t  = p + 0x48 * static_cast<std::uintptr_t>(i);
-                const char* ev = a_names.Get(Rd<std::int32_t>(t + 0x30));
-                if (!ev || !IEquals(ev, event)) continue;
-                const auto dest = StateById(a_sm, Rd<std::int32_t>(t + 0x34));
-                if (!dest) continue;
+                const auto t  = p + 0x48 * static_cast<std::uintptr_t>(i);
+                const auto id = Rd<std::int32_t>(t + 0x30);
+                if (!a_names.Valid(id)) {
+                    ++out.badIds;
+                    continue;
+                }
+                const char* ev   = a_names.Get(id);
+                const bool  ours = ev && IEquals(ev, event);
+                const auto  dest = StateById(a_sm, Rd<std::int32_t>(t + 0x34));
+                if (!dest) {
+                    ++out.unresolved;
+                    continue;
+                }
+                std::vector<std::string> enter, exits;
+                Notify(Rd<std::uintptr_t>(dest + 0x40), a_names, enter);             // dest enterNotifyEvents
+                if (a_from) Notify(Rd<std::uintptr_t>(a_from + 0x48), a_names, exits);  // source exitNotifyEvents
+                if (!ours) {
+                    for (const auto& x : enter) ++raisedByOthers[Lower(x)];
+                    for (const auto& x : exits) ++raisedByOthers[Lower(x)];
+                    continue;
+                }
                 ++out.transitions;
-                Notify(Rd<std::uintptr_t>(dest + 0x40), a_names);                // dest enterNotifyEvents
-                if (a_from) Notify(Rd<std::uintptr_t>(a_from + 0x48), a_names);   // source exitNotifyEvents
-                NestedStart(Rd<std::uintptr_t>(dest + 0x58), a_names);
+                for (const auto& x : enter) AddName(out.enter, x.c_str());
+                for (const auto& x : exits) AddName(out.exits, x.c_str());
+                NestedStart(Rd<std::uintptr_t>(dest + 0x58), a_names, &out.enter);
                 if (out.dests.size() < 200) {
                     const char* smn = HkStr(a_sm + 0x38);
                     const char* stn = HkStr(dest + 0x60);
@@ -467,7 +550,10 @@ namespace {
             const auto n = Rd<std::int32_t>(a_sm + 0x98);
             for (std::int32_t i = 0; p && i < n; ++i) {
                 const auto s = Rd<std::uintptr_t>(p + 8 * static_cast<std::uintptr_t>(i));
-                if (!Is(s, Kind::kStateInfo)) continue;
+                if (!Is(s, Kind::kStateInfo)) {
+                    ++out.skipped;
+                    continue;
+                }
                 a_stack.push_back(Rd<std::uintptr_t>(s + 0x58));
                 Transitions(a_sm, Rd<std::uintptr_t>(s + 0x50), s, a_names);
             }
@@ -478,6 +564,7 @@ namespace {
         std::unordered_set<std::uintptr_t> seen;
         std::unordered_set<std::uintptr_t> graphsSeen;
         std::vector<std::uintptr_t>        pending;
+        std::unordered_map<std::string, std::uint32_t> raisedByOthers;   // lower-case event -> other transitions
     };
 
     // GAME THREAD, before the PlayIdle call. Never throws; a graph it cannot read says why.
@@ -497,26 +584,51 @@ namespace {
             return out;
         }
         EntryWalk walk(a_event, out);
-        for (std::uint32_t i = 0; i < mgr->graphs.size() && i < 2; ++i) {
+        for (std::uint32_t i = 0; i < mgr->graphs.size(); ++i) {
             const auto g = reinterpret_cast<std::uintptr_t>(mgr->graphs[i].get());
-            if (!g || Rd<std::uintptr_t>(g) != g_vtAnimGraph) continue;
+            if (!g) continue;
+            if (i >= 2) {   // never seen on an NPC (1st/3rd person is 2): not walked, so the walk is incomplete
+                ++out.badGraphs;
+                continue;
+            }
+            if (Rd<std::uintptr_t>(g) != g_vtAnimGraph) {
+                ++out.badGraphs;
+                continue;
+            }
             const auto bg = Rd<std::uintptr_t>(g + 0x208);
-            if (!bg || bg != Rd<std::uintptr_t>(g + 0xC0 + 0x58)) continue;   // the probe-2 layout guard
+            if (!bg || bg != Rd<std::uintptr_t>(g + 0xC0 + 0x58) || Rd<std::uintptr_t>(bg) != g_vtBehaviorGraph) {
+                ++out.badGraphs;   // the probe-2 layout guard
+                continue;
+            }
             walk.Graph(bg);
             walk.Drain();
         }
+        walk.Finish();
         if (out.graphs == 0) out.unreadable = "no behaviour graph passed the layout / vtable checks";
         return out;
     }
 
     std::string EntryText(const EntryInfo& a_e) {
         std::string ev;
-        for (const auto& e : a_e.events) ev += (ev.empty() ? "" : ", ") + e;
-        return fmt::format("entry events [{}] from {} transition(s){}{}; walked {} graph(s), {} node(s){}{}{}",
+        for (std::size_t i = 0; i < a_e.events.size(); ++i)
+            ev += fmt::format("{}{} ({})", ev.empty() ? "" : ", ", a_e.events[i],
+                              a_e.shared[i] ? fmt::format("also raised by {} other transition(s)", a_e.shared[i])
+                                            : std::string("specific"));
+        std::string blind;
+        auto        add = [&](std::uint32_t n, const char* what) {
+            if (n) blind += fmt::format(", {} {}", n, what);
+        };
+        add(a_e.unknown, "node(s) of an unwalked class");
+        add(a_e.unlinked, "unlinked reference(s)");
+        add(a_e.badIds, "OUT-OF-RANGE event id(s)");
+        add(a_e.unresolved, "unresolved target state(s)");
+        add(a_e.skipped, "object(s) of an unexpected class");
+        add(a_e.badGraphs, "graph(s) not walked (guard / names / index)");
+        return fmt::format("{} events [{}] from {} transition(s){}{}; walked {} graph(s), {} node(s){}{}{}",
+                           a_e.enter.empty() && !a_e.exits.empty() ? "source-exit" : "entry",
                            ev.empty() ? std::string("none") : ev, a_e.transitions, a_e.dests.empty() ? "" : " to ", a_e.dests,
-                           a_e.graphs, a_e.nodes, a_e.unknown ? fmt::format(", {} of an unwalked class", a_e.unknown) : "",
-                           a_e.unlinked ? fmt::format(", {} unlinked reference(s)", a_e.unlinked) : "",
-                           a_e.truncated ? ", TRUNCATED" : "");
+                           a_e.graphs, a_e.nodes, blind, a_e.truncated ? ", TRUNCATED" : "",
+                           a_e.Complete() ? " (complete)" : " (INCOMPLETE)");
     }
 
     // ---- The anim-graph observation (ANY THREAD for the sink, under g_obsMx). ----
@@ -673,9 +785,22 @@ namespace {
         std::string   entryText;         // the resolved entry events + walk stats (EntryText)
         std::string   unconfirmable;     // why no entry event could be resolved ("" = confirmable)
         bool          noTransition = false;   // a COMPLETE walk found no transition on the idle's event
+        bool          weak = false;           // every entry event is also raised by other transitions
+        std::vector<std::pair<std::string, std::uint32_t>> waitShared;   // entry event -> other transitions raising it
+        std::uint64_t playWorldMs = 0;        // g_worldMs / g_worldFrames at the call
+        std::uint64_t playFrame   = 0;
     };
 
     std::unordered_map<RE::FormID, Entry> g_entries;
+
+    // WORLD-TICK CLOCK (review 18be6ec SEV-3.1). Poll runs from the player's Update seat
+    // (Arbiter::OncePerFrame), which does not run while the game is paused in a menu; the
+    // gap between two calls is clamped to kTickClampMs, so a pause, a load screen or a hitch
+    // adds at most one clamp. The NOT CONFIRMED window is measured on this clock plus a frame
+    // count, never on wall time. GAME THREAD.
+    std::uint64_t g_worldMs     = 0;
+    std::uint64_t g_worldFrames = 0;
+    std::uint64_t g_lastTickMs  = 0;
     std::atomic<std::size_t>              g_count{ 0 };   // Poll's pre-gate
     std::uint32_t                         g_nextGen = 0;
 
@@ -769,14 +894,31 @@ namespace {
             en.entryText           = ei.unreadable.empty() ? EntryText(ei) : ei.unreadable;
             en.noTransition        = ei.Complete() && ei.transitions == 0;
             en.unconfirmable.clear();
-            if (!en.noTransition && ei.events.empty())
+            en.weak                = !ei.events.empty() && std::all_of(ei.shared.begin(), ei.shared.end(),
+                                                                       [](std::uint32_t n) { return n != 0; });
+            std::vector<std::string> waitFor = ei.events;
+            en.waitShared.clear();
+            for (std::size_t k = 0; k < ei.events.size(); ++k) en.waitShared.emplace_back(ei.events[k], ei.shared[k]);
+            en.playWorldMs = g_worldMs;
+            en.playFrame   = g_worldFrames;
+            if (ei.badIds != 0) {
+                // The graph's event ids do not fit its own name table: every name the walk read
+                // is suspect, so nothing is judged (review 18be6ec SEV-2).
+                en.unconfirmable = fmt::format("EVENT ID SPACE BROKEN: {} event id(s) outside the graph's name table",
+                                               ei.badIds);
+                waitFor.clear();
+                spdlog::error("[ch.12] 0x{} idle {}: the behaviour-graph read found {} event id(s) outside their "
+                              "graph's name table -- the id space is not what the walk assumes. This play is "
+                              "UNCONFIRMABLE ({}).",
+                              Hex(id), it->second.idleName, ei.badIds, en.entryText);
+            } else if (!en.noTransition && ei.events.empty())
                 en.unconfirmable = !ei.unreadable.empty() ? ei.unreadable
                                    : ei.transitions == 0
                                        ? std::string("no transition on the idle's event was found and the walk was incomplete")
                                        : std::string("the transition(s) on the idle's event raise no notify event");
             // Observe from BEFORE the call: the graph may answer inside it. AddAnimationGraphEventSink
             // returns false when this sink is already on the graph (a re-point) or there is no graph.
-            Arm(id, gen, idleId, ei.events);
+            Arm(id, gen, idleId, waitFor);
         }
         const bool sinkAdded = actor->AddAnimationGraphEventSink(SinkFor(id));
 
@@ -967,8 +1109,16 @@ namespace apmf::idle {
         spdlog::info("[ch.12] idle v2 available: one AIProcess::PlayIdle(actor, idle, target) per engage / re-point, "
                      "on the main thread; IdleForceDefaultState at release only for a held idle. No hook.");
 
-        // Entry confirmation: the three vtables the graph read identifies objects by (the rows
-        // Travel's gate probe 2 verifies too). A refusal leaves every play UNCONFIRMABLE.
+        // Entry confirmation. Kill switch first (review 18be6ec SEV-3.3): off = no graph read at
+        // all and every play UNCONFIRMABLE, said once here.
+        if (GetPrivateProfileIntA("Idle", "bIdleConfirm", 1, kIni) == 0) {
+            g_entryNotArmed.store("[Idle] bIdleConfirm=0 in Data/SKSE/Plugins/APMF.ini", std::memory_order_release);
+            spdlog::warn("[ch.12] idle entry confirmation OFF -- [Idle] bIdleConfirm=0. No behaviour-graph read; every "
+                         "idle play is logged UNCONFIRMABLE and its claim is never ended for not playing.");
+            return;
+        }
+        // The three vtables the graph read identifies objects by (the rows Travel's gate probe 2
+        // verifies too). A refusal leaves every play UNCONFIRMABLE.
         const auto vtA = REL::Relocation<std::uintptr_t>{ RE::VTABLE_BShkbAnimationGraph[0] }.address();
         const auto vtB = REL::Relocation<std::uintptr_t>{ RE::VTABLE_hkbBehaviorGraph[0] }.address();
         const auto vtS = REL::Relocation<std::uintptr_t>{ RE::VTABLE_hkbStateMachine[0] }.address();
@@ -1000,6 +1150,12 @@ namespace apmf::idle {
     }
 
     void Poll() {
+        {   // the world-tick clock advances on every call, entries or not
+            const std::uint64_t t = apmf::clock::MonotonicMs();
+            if (g_lastTickMs != 0) g_worldMs += (std::min)(t - g_lastTickMs, kTickClampMs);
+            g_lastTickMs = t;
+            ++g_worldFrames;
+        }
         if (g_count.load(std::memory_order_relaxed) == 0) return;
         static std::uint64_t s_lastMs = 0;
         const std::uint64_t  now      = apmf::clock::MonotonicMs();
@@ -1023,13 +1179,22 @@ namespace apmf::idle {
             if (it == g_entries.end() || it->second.gen != sn.gen || it->second.confirmLogged) continue;
             const Obs o = Peek(sn.id);
             if (!o.armed || o.gen != sn.gen) continue;
-            Entry& e = it->second;
+            Entry&              e       = it->second;
+            const std::uint64_t worldMs = g_worldMs - e.playWorldMs;
+            const bool          over    = worldMs >= kConfirmWaitMs && g_worldFrames - e.playFrame >= kConfirmMinFrames;
             if (o.entered) {
                 // CONFIRMED: an entry event of THIS idle arrived after the call.
                 e.confirmLogged = true;
-                spdlog::info("[ch.12] 0x{} idle {}: ANIMATION CONFIRMED -- the graph raised the entry event '{}' at "
+                // Evidence strength (review 18be6ec SEV-3.2): an entry event other transitions
+                // raise too is WEAK evidence. Liveness is the same either way.
+                std::string strength = "specific evidence";
+                for (const auto& [name, n] : e.waitShared)
+                    if (IEquals(name, o.enterTag) && n != 0)
+                        strength = fmt::format("WEAK evidence: '{}' is also raised by {} other transition(s)", name, n);
+                if (o.enterTag.starts_with("(still")) strength = "carried from the previous call";
+                spdlog::info("[ch.12] 0x{} idle {}: ANIMATION CONFIRMED ({}) -- the graph raised the entry event '{}' at "
                              "+{} ms ({}). Events so far: {} [{}]{}.",
-                             Hex(sn.id), e.idleName, o.enterTag, o.enteredMs - o.playMs, e.entryText, o.events,
+                             Hex(sn.id), e.idleName, strength, o.enterTag, o.enteredMs - o.playMs, e.entryText, o.events,
                              TagList(o),
                              o.idleStop ? fmt::format("; IdleStop at +{} ms, {} ms after the entry (one-shot, ended by "
                                                       "itself: compare with the clip's length)",
@@ -1044,7 +1209,7 @@ namespace apmf::idle {
                              Hex(sn.id), e.idleName, e.entryText);
                 EndClaim(sn.id, sn.gen, "idle not played: the actor's graph has no transition on its event");
             } else if (!e.unconfirmable.empty()) {
-                if (now - o.playMs >= kConfirmWaitMs) {
+                if (over) {
                     e.confirmLogged = true;
                     spdlog::warn("[ch.12] 0x{} idle {}: UNCONFIRMABLE -- {}. PlayIdle returned true; whether the clip "
                                  "played is UNKNOWN (the claim stays; held = no IdleStop since the call). Graph events "
@@ -1052,16 +1217,17 @@ namespace apmf::idle {
                                  Hex(sn.id), e.idleName, e.unconfirmable, now - o.playMs, o.events, TagList(o),
                                  o.idleStop ? fmt::format("; IdleStop at +{} ms", o.idleStopMs - o.playMs) : std::string());
                 }
-            } else if (now - o.playMs >= kConfirmWaitMs) {
+            } else if (over) {
                 // NOT CONFIRMED: none of the idle's entry events arrived. What did arrive is someone
                 // else's (the 2026-09-28 lockpick: IdleStop, tailCombatState, attackStop, Pie...).
                 e.confirmLogged = true;
                 spdlog::warn("[ch.12] 0x{} idle {}: ANIMATION NOT CONFIRMED -- none of its entry events arrived in {} "
-                             "ms ({}); PlayIdle returned true but the graph never entered the idle. Unrelated graph "
-                             "events: {} [{}]{}. Harbinger ends the claim.",
-                             Hex(sn.id), e.idleName, now - o.playMs, e.entryText, o.events, TagList(o), StrayText(o));
+                             "ms of world time ({} frames, {} ms wall) ({}); PlayIdle returned true but the graph never "
+                             "entered the idle. Unrelated graph events: {} [{}]{}. Harbinger ends the claim.",
+                             Hex(sn.id), e.idleName, worldMs, g_worldFrames - e.playFrame, now - o.playMs, e.entryText,
+                             o.events, TagList(o), StrayText(o));
                 EndClaim(sn.id, sn.gen,
-                         fmt::format("idle not observed playing (no entry event in {} ms)", now - o.playMs));
+                         fmt::format("idle not observed playing (no entry event in {} ms of world time)", worldMs));
             }
         }
     }

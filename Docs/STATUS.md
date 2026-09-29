@@ -1,8 +1,32 @@
 # APMF STATUS — living handoff (start here)
 
-Updated 2026-09-28. Current version **v0.9.8**. The current state of the build: what's
+Updated 2026-09-29. Current version **v0.9.8**. The current state of the build: what's
 shipped, what's probe-gated, what's next. Keep this current in the SAME change as any
 build/finding/workflow change.
+
+## HEAD OF WORK 2026-09-29 -- ch.12 IDLE ENTRY CONFIRMATION, branch `fix/apmf-idle-confirm`, NOT merged
+
+Field 2026-09-28 (`field0928c`, APMF.log.1 20:14:34): an IdleLockPick for Cicero was logged "ANIMATION CONFIRMED"
+on the combat graph's own events (IdleStop +2961 ms, tailCombatState, attackStop, Pie x5) and never played:
+`Idle.cpp` counted ANY graph event. Now an accepted play is CONFIRMED only when the actor's graph raises one of
+the idle's own ENTRY events, read per play from the actor's behaviour graph (see MAP.md Idle.cpp row). No ABI
+change: the result reaches the client through claim liveness (NOT CONFIRMED / NO TRANSITION end the claim).
+Offline (vanilla + Tuxborn Nemesis graphs, 17 graphs, ~6000 nodes, 2511 transitions, 0 blind spots):
+IdleLockPick -> MT_BehaviorGraph>InteractionObjectState, entry {IdleOffsetStop, OffsetStop}; IdleGive ->
+MT_State>NonOffsetIdles, entry {IdleOffsetStop} (source exit; no enter event). Both are SHARED events (WEAK).
+Kill switch `[Idle] bIdleConfirm` (default 1). Tier A (new engine-structure read).
+**Field checks (next deploy):**
+1. Startup: `[ch.12] idle entry confirmation armed` (not `NOT ARMED` / `OFF`).
+2. Each play's `REQUESTED -> PlayIdle returned TRUE ... Confirmation waits for: entry events [...]` line shows
+   the walk as `(complete)` with non-zero graphs/nodes and no `OUT-OF-RANGE event id` / `EVENT ID SPACE BROKEN`.
+   If it shows unlinked references or zero transitions for IdleGive / IdleLockPick, the runtime template read
+   differs from the files (stop and diagnose; do not trust NO TRANSITION lines).
+3. A real lockpick: `ANIMATION CONFIRMED (WEAK evidence ...) -- ... 'IdleOffsetStop' at +X ms`, and the Release
+   line `Entry: CONFIRMED ...` with IdleStop about 5600 ms after the entry. marth SEES the animation.
+4. A lockpick attempted in combat / weapon drawn: `ANIMATION NOT CONFIRMED -- none of its entry events arrived
+   in 3xxx ms of world time ... Harbinger ends the claim`, and MFO logs `idleEnded` (nothing unlocked).
+5. LOTD / crate deposits (IdleGive) still complete: CONFIRMED lines, no NO TRANSITION.
+6. Pause in a menu during an idle: no NOT CONFIRMED caused by the pause (world-time window).
 
 ## HEAD OF WORK 2026-09-28 -- PASSIVE GATE PROBE 2 (`[travel-gate2]`), branch `feat/apmf-gate-probe2`, NOT merged
 
