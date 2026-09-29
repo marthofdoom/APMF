@@ -524,6 +524,7 @@ namespace {
         bool                     armed = false;
         std::uint32_t            gen = 0;        // the play this record belongs to
         std::uint64_t            playMs = 0;
+        RE::FormID               idle = 0;       // the idle this play is for
         std::vector<std::string> entry;          // the idle's entry events (empty = unconfirmable)
         bool                     entered = false;
         std::uint64_t            enteredMs = 0;
@@ -600,13 +601,28 @@ namespace {
         return s.get();
     }
 
-    void Arm(RE::FormID id, std::uint32_t gen, const std::vector<std::string>& entry) {
+    // A re-play (Repoint / owner change) of the SAME idle while the previous play is still
+    // in it (entered, no IdleStop since) carries that entry: the graph is already in the
+    // idle's state, where a transition to the same state may raise nothing (MFO re-plays
+    // the lockpick once per clip length). Anything else starts a fresh observation.
+    void Arm(RE::FormID id, std::uint32_t gen, RE::FormID idle, const std::vector<std::string>& entry) {
         std::scoped_lock lock(g_obsMx);
         Obs o{};
         o.armed  = true;
         o.gen    = gen;
         o.playMs = apmf::clock::MonotonicMs();
+        o.idle   = idle;
         o.entry  = entry;
+        if (const auto it = g_obs.find(id); it != g_obs.end()) {
+            const Obs& prev = it->second;
+            if (prev.armed && prev.idle == idle && prev.entered && !prev.idleStop && !entry.empty()) {
+                o.entered   = true;
+                o.enteredMs = o.playMs;   // times on this play's clock (the entry itself was earlier)
+                o.enterTag  = prev.enterTag.starts_with("(still")
+                                  ? prev.enterTag
+                                  : "(still in the idle from the previous call: " + prev.enterTag + ")";
+            }
+        }
         g_obs.insert_or_assign(id, std::move(o));
     }
 
@@ -760,7 +776,7 @@ namespace {
                                        : std::string("the transition(s) on the idle's event raise no notify event");
             // Observe from BEFORE the call: the graph may answer inside it. AddAnimationGraphEventSink
             // returns false when this sink is already on the graph (a re-point) or there is no graph.
-            Arm(id, gen, ei.events);
+            Arm(id, gen, idleId, ei.events);
         }
         const bool sinkAdded = actor->AddAnimationGraphEventSink(SinkFor(id));
 
