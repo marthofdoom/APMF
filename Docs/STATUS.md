@@ -4,6 +4,92 @@ Updated 2026-09-29. Current version **v0.9.8**. The current state of the build: 
 shipped, what's probe-gated, what's next. Keep this current in the SAME change as any
 build/finding/workflow change.
 
+## PRE-RELEASE CHECKLIST -- field-test probes that must go back to 0 before a release cut
+
+- `[Probe] bRangedSelect` -> 0 in `APMF.ini` AND the code default in `core/ActionGate.cpp` `RangedProbeInstall`
+  and `core/AiCastSeats.cpp` `Install` (both read the key with default 1 during the field cycle).
+- `[Travel] bGateProbe2` -> 0 in `APMF.ini` (see its HEAD OF WORK entry below).
+
+## HEAD OF WORK 2026-09-29 -- RANGED-SELECT PROBE, PHASE 1 (`[ranged-probe]`), branch `feat/apmf-ranged-select-probe`, NOT merged
+
+Field 2026-09-28 (diag-dragon-melee): Cicero, melee-only (MFO's ch.17 declaration owned Armor+Right+Left with two
+swords), fought Alduin in the air. The engine kept SELECTING the Glass Bow (114 ch.17 refusals at EquipObject,
+`path=CombatNode ret=877F1B`, about every 2 s) and kept a RANGED plan (MaintainOptimalRange /
+FindAttackLocation) that walked him off a cliff. marth approved fix "A": make "no bow" complete at SELECTION so
+the engine plans melee and runs its own unreachable-target handling. Principle 5: this phase OBSERVES ONLY.
+PASSIVE, no ABI change, `[Probe] bRangedSelect` (default **1** while testing; PRE-RELEASE CHECKLIST above).
+
+**What the engine does (disassembled, 1.6.1170 and 1.5.97; agentlog `apmf-ranged-select-probe.md`):**
+- SELECTION = CombatInventory evaluate, AE 44899 `0x8134C0` / SE 43666 `0x7790A0`. Per item of each category:
+  slot occupancy, range tests, then `CheckShouldEquip` (vfunc 0x0F), then `GetResource` (0x10), then the item is
+  added to the primary (`+0x118`, passes at AE `0x813AF2` / `0x813D38`) or secondary (`+0x148`, `0x814270` /
+  `0x8144B2`) CombatEquipment set. Pre-loop helper AE 44868 also calls 0x0F (`0x80FF32`); SE sites `0x775F01`,
+  `0x77977D`, `0x779959`, `0x779EA0`, `0x77A079`.
+- Melee, Ranged and Shield do NOT override 0x0F: all hold the base `return !IsFleeing(ctrl)` (AE `0x817FC0`, SE
+  `0x77DC90`; regenerated spec row confirms it on the Ranged vtable). A bow is refused at selection only while
+  the actor flees. **This slot on the Ranged vtable is the phase-2 deny seat.**
+- `path=CombatNode` = two LEAVES: `CombatBehaviorEquipObject` (act AE 47732 -> 48124; its EquipObject call
+  returns to `0x877F1B`, the ret of all 114 bow refusals) and `CombatBehaviorEquipRangedWeapon` (47733 -> 48126:
+  equips the ammo, then 48124). Both take the item from the current context (`thread+0x128` window,
+  CombatInventoryItem* at context+8). Hypothesis the probe tests: the tree keeps a Ranged branch because the
+  INVENTORY keeps admitting the bow, and the ch.17 sink refuses only the final equip, too late for the plan.
+- **The existing Shield 0x0F seat does NOT stop shield selection for a ch.17 claimant**: it is the TASK2
+  dual-wield preference (`ShieldEquipGateThunk`), gated on `[EquipGate] EnableDualWieldPreference` (0 in the
+  repo's APMF.ini, so it is not installed; the deck copy was not re-read, deck asleep) and, when on, it keys on dual-wield perks and a second one-hander,
+  never on ch.17. The field log's 18 `Riften Guard's Shield` refusals at `ret=877F1B` are the same shape as the
+  bow: admitted at selection, refused at equip. So there is no field-proven Shield selection seat to copy yet;
+  the probe observes the Ranged one directly.
+- `CombatBehaviorCheckUnreachableTarget` (update AE 49240 / SE 48214; audit gap 14 leaves it ungated): fails
+  at once (SetFailed + Ascend) when its combat blackboard value is <= 0; otherwise it periodically paths from
+  the actor to its target: path reaches the target -> writes 0 and succeeds; path ends short -> writes the gap
+  distance and KEEPS RUNNING; no path -> writes nothing. Outcome = thread state at its pop() (0 / 1 / 2).
+
+**Probe lines (`[ranged-probe]`, only for actors holding a winning ch.17 claim; per-key 10 s rate limit with a
+`(+N since last)` count; 6000-line session cap, logged when tripped):**
+- `SELECT-GATE Ranged CheckShouldEquip item=... engine=YES|NO site=set118-pass1|... owned= competes= inSet=
+  sink=<verdict> phase2=WOULD-REFUSE here|no change` -- the new observe seat (`core/AiCastSeats.cpp`
+  `RangedEquipProbeThunk`, Ranged vtable slot 0x0F only, engine answer returned unmodified).
+- `EQUIP-LEAF leaf=EquipObject|EquipRangedWeapon item=... class=Melee|Ranged|Shield|Torch|other ... sink=` --
+  what the tree is about to equip (read-only context read in ch.7's existing act thunk).
+- `UNREACHABLE-CHECK state=0|1|2 REACHABLE|FAILED|INTERRUPTED ran=<ms>` -- CheckUnreachableTarget's outcome
+  (ch.7's existing pop thunk).
+- `LEAVES last ~15s while the ch.17 claim owned a hand (owned=...): MaintainOptimalRange x12, ...` -- per actor,
+  composite nodes left out.
+- `H gate0x0F armed= seen= claimed= engineYes= engineNo= wouldRefuse= | leaves armed= claimedActs= equipLeaf=
+  equipWouldDeny= | unreachable seen= claimedRuns= out ok/failed/interrupted/other= | lines= dropped=` every
+  ~30 s, zeros included (RULE C).
+- Cost: act()/pop() run once per node ENTRY, not per frame. Per leaf act of any combat actor: one hash lookup,
+  the ControlledCount pre-gate, one handle resolve and one RCU claim read; claimants add one short lock. The
+  0x0F seat runs per inventory evaluation. No engine call, lookup or allocation on the unclaimed path.
+
+**FIELD CHECKS (next session, principle 5, NOT YET OBSERVED):**
+1. Startup: `[ranged-probe] Ranged CheckShouldEquip (slot 0x0F) OBSERVED on vtable ...` (it should say the slot
+   held the disassembled base function) and `[ranged-probe] ARMED ... EquipObject observed, EquipRangedWeapon
+   observed, CheckUnreachableTarget outcome observed`. No `REFUSED` / `NOT observed`.
+2. **marth's test:** a melee-only follower (MFO declaration owning both hands with melee weapons) carrying a bow
+   and arrows, against a FLYING dragon. Stand somewhere safe (open ground, not a cliff edge) and let the fight
+   run 2-3 minutes with the dragon airborne for at least part of it. A ground melee fight (bandits) first, for
+   a baseline, is useful. Send APMF.log and MFO.log with rough clock times of take-off / landing.
+3. What the log must show: `SELECT-GATE ... 'Glass Bow' engine=YES ... phase2=WOULD-REFUSE here` lines (the seat
+   runs for the claimant, which pass sites fire, how often); `EQUIP-LEAF ... class=Ranged ... sink=WOULD-DENY`
+   in step with the MFO/APMF `equip-obs ... verdict=deny name='Glass Bow'` lines; the LEAVES summaries (which
+   ranged / melee leaves run while the swords are owned); `UNREACHABLE-CHECK` lines while the dragon flies
+   (does the check run at all for this actor, and does it end REACHABLE / FAILED / INTERRUPTED).
+
+**What decides the phase-2 design:**
+- If `SELECT-GATE` fires for the claimant with the bow at `set118-*` (and/or `set148-*`) and `wouldRefuse`
+  tracks the equip-obs refusals, phase 2 = answer NO at this same seat (Ranged vtable 0x0F, engine answer
+  first, NO only for a ch.17 claimant whose sink verdict is WOULD-DENY): same shape as `ShieldEquipGateThunk`,
+  keyed on ch.17 instead of perks. If the claimant's bow never reaches the seat (e.g. only `pre-loop` fires),
+  the selection path differs from the disassembly and the seat must be re-derived before any deny.
+- If `UNREACHABLE-CHECK` never runs for a sword-holding claimant while the dragon flies, or always ends FAILED
+  (gate <= 0), removing the bow alone will not produce the engine's unreachable handling: MFO's tier-B
+  fallback (skip / leash-tighten a flying foe for a melee-declared follower) is needed as well.
+- The LEAVES summary under the ranged plan versus the baseline shows whether the tree leaves the ranged branch
+  once the bow can no longer be admitted (for phase 2's field check).
+- Same question for the Shield: if `EQUIP-LEAF ... class=Shield ... WOULD-DENY` recurs, the same deny belongs
+  on the Shield vtable's 0x0F too (ch.17-keyed, alongside or instead of the TASK2 preference). Out of scope here.
+
 ## HEAD OF WORK 2026-09-29 -- ch.12 IDLE ENTRY CONFIRMATION, branch `fix/apmf-idle-confirm`, NOT merged
 
 Field 2026-09-28 (`field0928c`, APMF.log.1 20:14:34): an IdleLockPick for Cicero was logged "ANIMATION CONFIRMED"
