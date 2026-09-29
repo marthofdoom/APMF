@@ -18,6 +18,15 @@ This file tracks REVIEW findings only.
 ---
 
 ## OPEN
+### APMF-B37 (SEV-5, FIXED in docs) -- census MAP rule on CensusNote order at 0x0A
+Raised against `58a4438` (`fix/apmf-cast-instant-caster`), tier-A Opus 5.5 review 2026-09-29 (reviewer log `scratchpad/agentlogs/review-apmf-instant-caster.md`), finding F3. Verbatim: "F3 SEV-5: MAP says CensusNote "must stay after the seat's own answer is decided"; on 0x0A it is called before orig (harmless, but the rule as written is not what the code does)." Reasoning: the 0x0A note reads only `this`/`cc` and touches no argument, so the order is harmless; the rule was worded wrong. MAP now states the real rule (never change an answer or an argument; after the answer at 0x06, before `orig` at 0x0A). Kept here for the drain record.
+
+### APMF-B38 (SEV-4 process, CLOSED by decision) -- the census added two new files
+Raised against `58a4438`, same review, finding F4. Verbatim: "Scope: RestoreCensus.{h,cpp} are NEW files. The coordinator's brief names "a passive Restore-caster census" but no file; the design's file column lists AiCastSeats/CastSeats/CastObserve. APMF CLAUDE.md rule 1 requires a new file to be named in the brief. Separate concern, GLOB build, justified -- coordinator to confirm (F4 SEV-4 process)." Decision (coordinator, 2026-09-29): confirmed IN SCOPE; the census was requested. No code action.
+
+### APMF-B39 (SEV-3 OPEN, pre-existing; phase 3) -- a self cast claim has no target handle, so 0x0F's deny-complete is off for its hand
+Raised against `58a4438`, same review, finding F5. Verbatim: "F5 SEV-3 (pre-existing, docs): the same missing handle ALSO switches off EquipGate's 0x0F deny-complete for the claimed hand (needs hasHandSeat || handDenyOnly). Under a self heal claim the combat AI may arm another spell into the claimed hand; CastGate still refuses its charge per hand, so the hand can sit holding a spell it may not cast. Add this to STATUS phase 0c / the phase-3 brief (resolving castTarget 0 to the claimant's own handle fixes both)." Reasoning: `ControlMap.cpp` resolves `castTargetHandle` only for a non-zero target; `EquipGate.cpp` `hasHandSeat = haveHandClaim && handSeat.targetHandle`; MFO sends self heals with target 0. Documented in STATUS phase 0c and MAP. **Closure:** the phase-3 brief (give a self claim the claimant's own handle), its own tier-A round. Not deferrable past phase 3: the next field cycle exercises self heal claims only if MFO phase 2 lands first.
+
 ### APMF-B36 (SEV-4 / SEV-5; F2 = PHASE-2 PREREQUISITE) -- [Probe] bRangedSelect ranged-select probe review items
 Raised against `827f320` (`feat/apmf-ranged-select-probe`), tier-A Opus 5.5 review 2026-09-29 (verdict: nothing above
 SEV-3; F1 promoted by carve-out (b) and FIXED on the branch before merge). Verbatim from the reviewer's log

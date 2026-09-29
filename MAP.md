@@ -433,7 +433,13 @@ Offensive caster, never Restore, so a claim on it was inert):
   `MagicCaster::CheckCast` inside `CastSpell`; hand-idle/`bMLh_Ready` by the leaf's
   own 0x89f3c0; the equip by seat 0x0F). Bypasses only the vanilla health threshold,
   the effect-already-active test and the 15s restrict-timer window — the exact policy
-  the claim replaces.
+  the claim replaces. **ONLY for a claim with a resolved target handle** (2026-09-29,
+  phase 0c): a SELF claim sent with castTarget 0 has none, so `ClaimNamesThisCast` and
+  EquipGate's 0x0F bypass both chain native and the vanilla restore gate decides (AE
+  45371 / SE 43979: 15 s `MagicRestoreRestrictionTimer`, health < lerp(0, 0.5, ctrl)).
+  The same missing handle also switches off EquipGate's 0x0F deny-complete for a self
+  claim's hand (review F5, APMF-B39). STATUS "Phase 0c". 0x06 and 0x0A also feed the Restore census (`CensusNote`, Restore
+  vtable only, read-only; `core/RestoreCensus`).
 - `0x0A GetMagicTarget` -> `out->handle = claim target's native handle; out->ptr =
   nullptr`. THREE args with a hidden 16-byte sret out-slot (CommonLib declares two and
   is WRONG — the bug that CTD'd the passive probe). Handle form is the lifetime-safe
@@ -661,6 +667,41 @@ isn't the winning `kIntent_SelectSpell` claim's `param.form`; sets
   resolves the hand via `a_this->GetCastingSource()` (slot 0x15, ordinary
   unhooked virtual call) and feeds `Allowance::AllowedCastForHand`, so a
   single-hand cast claim leaves the OTHER hand's charge decision untouched.
+  **INSTANT CASTER (INVARIANTS #18 amendment, 2026-09-29, `instantCaster` in
+  `CheckCastThunk`):** for `kInstant` ONLY the ch.8b read is skipped
+  (`castAllows = true`); ch.8 select and the H1 positive override still apply. Do NOT
+  route it back through `AllowedCastForHand(kUnknown)` — that actor-wide floor refused
+  a client's own direct casts, the AI's potions, and cut a running instant-caster
+  concentration channel (the engine re-runs 0x0A every channel tick and calls
+  `InterruptCast(true)` on NO: AE 34407 / SE 33629). **Do NOT exempt the voice caster
+  (`kOther`)** (review F1, DECIDED): a busy voice caster makes a hand's CheckCast return
+  `kCastWhileShouting` (AE `0x5B19B6`), so an unclaimed shout would block the claimed hand
+  from starting; it stays on the actor-wide floor. The deny line prints
+  `hand=?(instant)` with ch.8b `n/a`, or `hand=?(other)` with the floor's answer;
+  `CheckCast ADMITTED ... on the instant caster` marks a cast the pre-amendment read would
+  have refused. EquipGate keeps the `kUnknown` actor-wide floor for its neither-hand slot.
+
+### `native/core/RestoreCensus.{h,cpp}` — phase 0b Restore-caster census (PASSIVE probe)
+Read-only. `[Probe] bRestoreCensus` (code default 1 for the field; STATUS pre-release
+checklist). Two feeds: `NoteRestoreSeat` from `core/CastSeats.cpp` `CensusNote` at seats
+0x06/0x0A, **Restore caster vtable only** (combat thread, one leaf lock, never an engine
+call under it); `Poll` from `Arbiter::OncePerFrame` after `castobserve::Poll` (game
+thread, ~200 ms, engine reads first with no lock). A window = (actor, claimed hand, driven
+form) of a live, driving, restore-shaped `kIntent_Cast` claim (costliest effect a
+non-hostile Value/PeakValue/DualValue modifier on Health/Magicka/Stamina). Lines:
+`[census] ... OPEN`, `ENGAGE`, `STILL ZERO` (2/5/10/20/40 s), `CLOSE ... VERDICT`,
+`HEARTBEAT` (60 s, always). Budget 30 lines / 10 s (heartbeat exempt).
+- **What breaks:** `CensusNote` must never change a seat's answer or its arguments. At
+  0x06 it runs after the answer is decided (the claim path is always YES; the native path
+  records `orig`'s value). At 0x0A it runs BEFORE `orig` and only reads `this`/`cc`
+  (review F3, APMF-B37). It filters on `g_restoreVtable` so the Offensive caster is never
+  counted. "Caster seen" means first seen at a seat (construction is NOT hooked). Hand
+  state is read from `GetActorRuntimeData().magicCasters[src]`, NEVER
+  `Actor::GetMagicCaster`, which allocates a caster when the slot is null (review F2; the
+  same fix is in `core/CastObserve.cpp`). A self claim (castTarget 0) has no
+  `targetHandle`, so the seats chain native and the census records `claim YES=0` for it:
+  that is the phase-0c finding, not a census bug. Open review items: REVIEW-BACKLOG
+  APMF-B37..B39.
 
 ### `native/core/EquipGate.cpp` — T2a: CheckShouldEquip allowance (per-item equip gate)
 Hooks `CombatInventoryItem::CheckShouldEquip` (vtable slot **0x0F**) on the 30

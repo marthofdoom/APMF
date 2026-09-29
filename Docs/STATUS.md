@@ -14,6 +14,68 @@ list and was left as it is. `[Idle] bIdleConfirm` is a feature, not a probe.
 - `[Probe] bRangedSelect` -> 0 in `APMF.ini` AND the code default in `core/ActionGate.cpp` `RangedProbeInstall`
   and `core/AiCastSeats.cpp` `Install` (both read the key with default 1 during the field cycle).
 - `[Travel] bGateProbe2` -> 0 in `APMF.ini` (see its HEAD OF WORK entry below).
+- `[Probe] bRestoreCensus` -> 0 in `APMF.ini` AND the code default in `core/RestoreCensus.cpp` `Poll`
+  (reads the key with default 1 during the field cycle). See the ANIMATED HEALS head of work below.
+
+## HEAD OF WORK 2026-09-29 -- ANIMATED HEALS, PHASES 1 + 0b + 0c, branch `fix/apmf-cast-instant-caster`, NOT merged
+
+Design: MFO scratchpad `animheal-design.md` (phases 0a-4, decisions D1-D8). Agent log `apmf-animheal-p1.md`.
+
+**Phase 1 (tier A): a cast claim no longer reaches the instant caster.** `core/CastGate.cpp` read the ch.8b
+claim for the instant caster through the ACTOR-WIDE floor, so a claim on one hand refused the
+claimant's own direct casts, the AI's potions, and a running instant-caster concentration channel. Field:
+2026-09-21 `hand=?` 7-9 ms after an MFO `FORCE-CAST`, 2026-09-28 48 `hand=?` denies of MFO's stream forms
+`FF0011D8`/`FF0021AF` plus a Serana potion and Drain Life. Disassembled (both runtimes): `CastSpellImmediate`
+(AE 34404 / SE 33626) makes no 0x0A call, but a concentration spell it leaves running is re-checked by
+`MagicCaster::UpdateImpl` (AE 34400 / SE 33622) every tick through the cast tick (AE 34407 `0x5BBD40` / SE 33629
+`0x54C950`, 0x0A call at AE `0x5BBDE0` / SE `0x54C9F5`), and a NO (other than reason 8) calls
+`InterruptCast(true)` (AE 34408 / SE 33630). So the deny CUT MFO's instant-caster heal streams on the engine
+side. Now: the instant caster reads no cast claim and answers to the ch.8 allow-list alone. The voice caster
+(`kOther`) stays on the actor-wide floor (review F1 on `58a4438`, DECIDED): a busy voice caster makes a hand's
+`CheckCast` return `kCastWhileShouting`, so an unclaimed shout would block the claimed hand from starting. INVARIANTS #18 amended, DENY-COMPLETENESS-AUDIT "Non-hand casters" has the enumeration. **Not fixed by
+this alone:** all 48 of Jesper's 09-28 denies also had ch.8 select DENY (MFO does not list its own stream
+forms). That is MFO phase 1m. Log: `hand=?(instant)` / `hand=?(other)`, ch.8b `n/a`, and a throttled
+`[t2c] ... CheckCast ADMITTED ... on the instant caster` when the old read would have refused. Review round 1
+(`58a4438`): F1 above; F2 fixed (the census and `core/CastObserve.cpp` read `magicCasters[src]` instead of the
+allocating `Actor::GetMagicCaster`); F3/F4/F5 in REVIEW-BACKLOG APMF-B37..B39 (F4: the two new census files were
+confirmed IN SCOPE by the coordinator).
+
+**Phase 0b (tier B, no new hook): the Restore-caster census**, `core/RestoreCensus.{h,cpp}`,
+`[Probe] bRestoreCensus` default **1** (PRE-RELEASE CHECKLIST). Per restore-shaped cast claim window (actor,
+hand, driven form): `[census] ... OPEN` (spell, proxy, self/ally, conc, combat controller yes/NO), `ENGAGE`
+(the claimed hand holds the driven form, time from OPEN, first seat, first claim YES), `STILL ZERO` at
+2/5/10/20/40 s, `CLOSE ... VERDICT` (ENGAGED / RESTORE DELIBERATED, never engaged / ZERO) with Restore casters
+seen, seat 0x06 claim YES vs native YES, seat 0x0A, other restore items, polls without a controller, target
+changes, and a 60 s `HEARTBEAT`. Fed by seats 0x06/0x0A on the Restore caster vtable only and a 200 ms game
+thread poll. Construction itself is not hooked. Not field-run yet.
+
+**Phase 0c (research, no code): where "should I heal" lives, and why self waited.** RESEARCHED (disassembly,
+AE 1.6.1170, SE counterparts by the same slots), not yet OBSERVED:
+- The vanilla decision is the Restore ITEM's `CheckShouldEquip` (item slot 0x0F, AE 46304 / SE 44761) = base
+  check AND should-restore (AE 45371 `0x81F7C0` / SE 43979 `0x783590`), shared by all five Restore templates
+  (Magic, Staff, Scroll, Potion, Shout). Should-restore: (1) the blackboard `MagicRestoreRestrictionTimer` must
+  have run out, (2) AE 45342, (3) the target is the ATTACKER for a kSelf spell, else the combat TARGET, (4) no
+  effect already active (AE 45344), (5) AE 45343, (6) the AV below lerp(fCombatRestore{Health|Magicka}PercentMin,
+  Max, AE 50638(ctrl)). GMST defaults on both runtimes: Health 0.0-0.5, Magicka 0.25-0.40,
+  `fCombatRestoreHealthRestrictTime` 15.0, `fCombatRestoreMagickaRestrictTime` 10.0.
+- The timer is written by every Restore item's `Unequip` (item slot 0x12, AE 46306 / SE 45496) for
+  RestrictTime(av) (AE 50673 / SE 49746). The Restore caster's native `CheckStartCast` (AE 45372 / SE 43980)
+  reads it too.
+- **The self vs ally gap is on Harbinger's side of the line.** MFO sends a self heal claim with castTarget 0
+  (`ComposedCast.cpp:326`). `ControlMap::ApplyRequest` resolves a target handle only for a non-zero target, and
+  every seat requires one (`CastSeats.cpp` `ClaimNamesThisCast`, `EquipGate.cpp` `hasHandSeat`). So a self claim
+  gets no seat answer at all: 0x0F chains to the vanilla should-restore (the 15 s timer after any Restore
+  unequip, and health under about half), and 0x06 chains to the native test. An ally claim has a handle, so 0x0F
+  answers YES at once. **The same missing handle also switches off EquipGate's 0x0F deny-complete for the
+  claimed hand** (it needs `hasHandSeat || handDenyOnly`; review F5, APMF-B39): under a self heal claim the combat
+  AI may arm another spell into the claimed hand, and CastGate still refuses its charge per hand, so the hand can
+  sit holding a spell it may not cast. That fits 2026-09-08: self 16.7 s (about the 15 s timer plus a lap), ally 0.6 s. The census
+  will show it (self windows with claim YES=0).
+- **Phase 3 therefore needs no new upstream seat for self heals first.** The eligibility answers already exist
+  (0x0F non-chaining YES, 0x06). The candidate is to give a self claim a target: resolve castTarget 0 (or the
+  claimant) to the claimant's own handle, so the seats serve it AND 0x0F's deny-complete covers its hand (one fix
+  closes both). A kSelf spell ignores `desiredTarget`, so 0x0A
+  returning self is harmless. Tier A, its own brief, after the census confirms the gap in the field.
 
 ## HEAD OF WORK 2026-09-29 -- RANGED-SELECT PROBE, PHASE 1 (`[ranged-probe]`), branch `feat/apmf-ranged-select-probe`, NOT merged
 

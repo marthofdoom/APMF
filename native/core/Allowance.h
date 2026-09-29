@@ -145,8 +145,12 @@ namespace apmf::allowance {
     // static_assert'd offset) compared against
     // BGSDefaultObjectManager::GetObject<BGSEquipSlot>(kLeftHandEquip /
     // kRightHandEquip). kUnknown means the seat could not resolve a hand for THIS
-    // call (e.g. MagicCaster::kOther/kInstant, or an equip slot that is neither
-    // vanilla hand slot) -- degrade to the actor-wide floor, never guess.
+    // call (an equip slot that is neither vanilla hand slot) -- degrade to the
+    // actor-wide floor, never guess. CastGate ALSO maps the two non-hand casters
+    // (MagicCaster::kOther/kInstant) to kUnknown. The voice caster (kOther) still
+    // reads this actor-wide floor (it interlocks with the hands); since the
+    // INVARIANTS #18 amendment (2026-09-29) the INSTANT caster does not ask at all:
+    // no cast claim governs it (core/CastGate.cpp).
     enum class Hand { kUnknown, kLeft, kRight };
 
     // Hand-aware ch.8b allowance. feat/per-hand-cast-claims (2026-09-06): TWO

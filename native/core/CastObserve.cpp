@@ -102,11 +102,23 @@ namespace apmf::castobserve {
             }
         }
 
+        static_assert(offsetof(RE::Actor::ACTOR_RUNTIME_DATA, magicCasters) == 0xC0,
+                      "magicCasters moved -- re-verify Character::GetMagicCaster's slot read (AE 0x6C20D0 "
+                      "+0x1A8, SE 0x6301C0 +0x1A0) before trusting this read");
+
         // Read one hand's caster; log on a state/spell transition. Returns whether the
         // actor appears to be actively casting (so the poll can register the sink).
         bool ObserveHand(RE::Actor* a_actor, RE::MagicSystem::CastingSource a_src,
                          std::size_t a_srcIdx, const char* a_srcName) {
-            auto* mc = a_actor->GetMagicCaster(a_src);
+            // READ the slot, never `Actor::GetMagicCaster`: that call (Character vtable slot 0x5C,
+            // AE 0x6C20D0 / SE 0x6301C0) ALLOCATES and installs a new ActorMagicCaster when the
+            // slot is null, unlocked, off the actor's own update -- a write from a probe that must
+            // be passive (review F2 on 58a4438). `magicCasters[]` is indexed by CastingSource, the
+            // `[actor + src*8 + 0x1A8]` AE / `+0x1A0` SE read that function itself starts with.
+            // Null = this actor has no such caster yet = nothing to observe.
+            const auto idx = static_cast<std::size_t>(a_src);
+            if (idx >= 4) return false;
+            auto* mc = a_actor->GetActorRuntimeData().magicCasters[idx];
             if (!mc) return false;
 
             const std::uint32_t st    = static_cast<std::uint32_t>(mc->state.get());

@@ -1,3 +1,8 @@
+## Unreleased
+
+- **A mod's claim on a hand no longer blocks its instant casts.** A cast claim holds one hand. Harbinger used to apply it to the NPC's instant caster too. So a mod's own direct heal, a potion the NPC drank, and a running heal stream were refused while the claim stood. Now the instant caster follows the mod's spell list alone. Shouts and powers are still held back while a claim stands, because a shout stops the claimed hand from starting its cast. The log says which caster a refusal was on and notes each cast the old rule would have refused. Not field-run yet.
+- **A passive census of the game's healing decision.** For an NPC a mod has told to cast a healing or restoring spell, Harbinger now logs whether the game's combat AI ever reaches its own restore caster for that spell, how long it took, whether the hand took the spell, and the case where it never does. It changes nothing. `[Probe] bRestoreCensus` is new in `APMF.ini`, default 1 while this is being tested. Not field-run yet.
+
 ## v0.9.10 -- Keep a follower out of the fight, leash it, and play an animation at a target
 
 - **A mod can now keep an NPC out of combat for a while.** Claim `kIntent_CombatReentryDeny` with a number of seconds in `APMF_Param.fval` (0 means 10, at most 120). While that time runs, the game cannot start a fight for it: when it tries (the NPC sees an enemy, gets hit, an ally is fighting, a script asks), the game's own combat start says no, before it draws a weapon or does anything else.
