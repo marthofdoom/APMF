@@ -71,7 +71,7 @@ namespace apmf::castgate {
         std::mutex                                       g_rlMx;
         std::unordered_map<std::uint64_t, std::uint64_t> g_lastDenyLogMs;
 
-        // The non-hand ADMIT line (INVARIANTS #18 amendment, 2026-09-29) keeps its own
+        // The instant-caster ADMIT line (INVARIANTS #18 amendment, 2026-09-29) keeps its own
         // table on the same lock, so a deny and an admit for one (actor, spell) never
         // suppress each other.
         std::unordered_map<std::uint64_t, std::uint64_t> g_lastAdmitLogMs;
@@ -134,14 +134,15 @@ namespace apmf::castgate {
             // other/instant), and MagicCaster::GetCastingSource() (vtable slot 0x15,
             // declared on MagicCaster itself, an ordinary unhooked virtual call, same
             // safety as GetCasterAsActor above) reports exactly which one THIS
-            // deliberation is for. kOther/kInstant are the two NON-HAND casters and
-            // resolve to kUnknown.
+            // deliberation is for. kOther (the voice caster) and kInstant are the two
+            // NON-HAND casters and resolve to kUnknown.
             const auto src = a_this->GetCastingSource();
             const auto callerHand =
                 (src == RE::MagicSystem::CastingSource::kLeftHand)  ? allowance::Hand::kLeft  :
                 (src == RE::MagicSystem::CastingSource::kRightHand) ? allowance::Hand::kRight :
                                                                        allowance::Hand::kUnknown;
-            const bool handCaster = (callerHand != allowance::Hand::kUnknown);
+            const bool handCaster    = (callerHand != allowance::Hand::kUnknown);
+            const bool instantCaster = (src == RE::MagicSystem::CastingSource::kInstant);
 
             // ---- H1 (2026-09-05 drive-chain review): APMF's OWN driven form
             // OVERRIDES the ch.8 narrow, it is not co-required with it. ----
@@ -173,23 +174,24 @@ namespace apmf::castgate {
             // one read also means both branches necessarily agree with each other
             // and with the deny line's own report of why.
             //
-            // ---- ch.8b IS A HAND FACET (INVARIANTS #18 amendment, 2026-09-29,
-            // fix/apmf-cast-instant-caster). A kIntent_Cast claim (driving or deny-only)
-            // occupies a HAND; its deny is read ONLY for the left/right hand casters. The
-            // instant and other casters are not a hand, so no cast claim governs them:
-            // they are gated by the ch.8 allow-list alone (below), which is what a client
-            // declares for the actor as a whole. Before this amendment the non-hand
-            // casters fell through to the ACTOR-WIDE ch.8b floor, so a claim on ONE hand
-            // refused the claimant's own direct casts, its potions, and a running
-            // concentration channel on the instant caster (the engine re-runs CheckCast
-            // on every channel tick and interrupts on NO: AE 34407 / SE 33629) -- the
-            // 2026-09-21 and 2026-09-28 `hand=?` denies. `Allowance::AllowedCastForHand
-            // (kUnknown)` keeps its actor-wide meaning for its other caller (EquipGate, an
-            // item whose slot is neither vanilla hand); only THIS gate knows the caster is
-            // not a hand at all. Deny-completeness for the claimed hand is unchanged: the
-            // claimed hand's own caster still reads its claim here, and 0x0F / the seats
-            // are untouched. Docs/DENY-COMPLETENESS-AUDIT.md "Non-hand casters".
-            const bool castAllows = handCaster ? allowance::AllowedCastForHand(fid, subjectForm, callerHand) : true;
+            // ---- THE INSTANT CASTER IS NOT GOVERNED BY ch.8b (INVARIANTS #18 amendment,
+            // 2026-09-29, fix/apmf-cast-instant-caster). A kIntent_Cast claim (driving or
+            // deny-only) occupies a HAND; the hand casters read it per hand. The INSTANT
+            // caster is decoupled from the hands (CheckCast AE 34145 / SE 33364 lets an
+            // instant cast block a hand only through kMultipleCast for the Invisibility
+            // archetype), so no cast claim governs it: it answers to the ch.8 allow-list
+            // alone (below). Before this amendment it fell through to the ACTOR-WIDE ch.8b
+            // floor, so a claim on ONE hand refused the claimant's own direct casts, the
+            // AI's potions, and a running instant-caster concentration channel (the engine
+            // re-runs CheckCast on every channel tick and interrupts on NO: AE 34407 / SE
+            // 33629) -- the 2026-09-21 and 2026-09-28 `hand=?` denies.
+            // The VOICE caster (kOther: shouts, powers) STAYS on the actor-wide floor
+            // (review F1, DECIDED): it is interlocked with the hands. While it holds a
+            // spell, CheckCast on a HAND caster returns kCastWhileShouting (the busy mask
+            // over magicCasters[0..3], AE 0x6C3D60), so an unclaimed shout blocks the
+            // claimed hand from STARTING -- a real path into the claimed facet, closed by
+            // denying it here. Docs/DENY-COMPLETENESS-AUDIT.md "Non-hand casters".
+            const bool castAllows = instantCaster ? true : allowance::AllowedCastForHand(fid, subjectForm, callerHand);
             if (castAllows && allowance::CastClaimNamesForHand(fid, subjectForm, callerHand))
                 return engineSays;
 
@@ -202,12 +204,12 @@ namespace apmf::castgate {
             const bool selectAllows = allowance::Allowed(fid, APMF_API::kIntent_SelectSpell, subjectForm);
             if (selectAllows && castAllows) {
                 // Principle 5: make the amendment OBSERVABLE. When the pre-amendment
-                // actor-wide read would have refused this non-hand cast, say that it was
-                // admitted and why. Read only on this (already-allowed, non-hand) path.
-                if (!handCaster && !allowance::AllowedCastForHand(fid, subjectForm, allowance::Hand::kUnknown) &&
+                // actor-wide read would have refused this instant-caster cast, say that it
+                // was admitted and why. Read only on this (already-allowed, instant) path.
+                if (instantCaster && !allowance::AllowedCastForHand(fid, subjectForm, allowance::Hand::kUnknown) &&
                     AdmitLogDue(fid, subjectForm)) {
                     spdlog::info("[t2c] 0x{} '{}' CheckCast ADMITTED spell=0x{} '{}' on the {} caster -- a ch.8b "
-                                 "cast claim holds a HAND and does not govern a non-hand caster (INVARIANTS #18 "
+                                 "cast claim holds a HAND and does not govern the instant caster (INVARIANTS #18 "
                                  "amendment); ch.8 select ALLOW. Before the amendment this was a hand=? deny.",
                                  apmf::log::Hex(fid), actor->GetName() ? actor->GetName() : "?",
                                  apmf::log::Hex(subjectForm),
@@ -225,7 +227,8 @@ namespace apmf::castgate {
             // (actor, spell); nothing else about the decision changes.
             if (DenyLogDue(fid, subjectForm)) {
                 // A non-hand caster keeps the literal `hand=?` (existing greps) and names
-                // its source; its ch.8b column reads n/a because no cast claim governs it.
+                // its source; the instant caster's ch.8b column reads n/a because no cast
+                // claim governs it (the voice caster's is the actor-wide floor's answer).
                 spdlog::info("[t2c] 0x{} '{}' CheckCast DENIED spell=0x{} '{}' hand={}{} (ch.8 select {}, "
                              "ch.8b cast {}) -- engine had said YES; returned kMultipleCast so the AI "
                              "re-deliberates instead of charging this spell.",
@@ -238,7 +241,7 @@ namespace apmf::castgate {
                                                 src == RE::MagicSystem::CastingSource::kOther   ? "(other)"   :
                                                                                                   "(unknown)"),
                              selectAllows ? "ALLOW" : "DENY",
-                             !handCaster ? "n/a (non-hand caster)" : castAllows ? "ALLOW" : "DENY");
+                             instantCaster ? "n/a (instant caster)" : castAllows ? "ALLOW" : "DENY");
             }
             return false;
         }
@@ -264,8 +267,9 @@ namespace apmf::castgate {
                                                    expectedTD.get(), "t2c", g_orig);
         spdlog::info("[t2c] CheckCast allowance hooked on {} vtable(s) (ActorMagicCaster[0], "
                      "hard pre-charge gate) -- ch.8 casting-select claims now enforced here. ch.8b cast "
-                     "claims are read for the LEFT/RIGHT hand casters only; the instant and other casters "
-                     "answer to the ch.8 allow-list alone (INVARIANTS #18 amendment 2026-09-29).", n);
+                     "claims are read per hand on the LEFT/RIGHT casters and actor-wide on the voice caster; "
+                     "the instant caster answers to the ch.8 allow-list alone (INVARIANTS #18 amendment "
+                     "2026-09-29).", n);
     }
 
 }
