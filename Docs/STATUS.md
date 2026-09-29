@@ -13,11 +13,12 @@ the idle's own ENTRY events, read per play from the actor's behaviour graph (see
 change: the result reaches the client through claim liveness (NOT CONFIRMED / NO TRANSITION end the claim).
 Offline (vanilla + Tuxborn Nemesis graphs, 17 graphs, ~6000 nodes, 2511 transitions, 0 blind spots):
 IdleLockPick -> MT_BehaviorGraph>InteractionObjectState, entry {IdleOffsetStop, OffsetStop}; IdleGive ->
-MT_State>NonOffsetIdles, entry {IdleOffsetStop} (source exit; no enter event). Both are SHARED events (WEAK).
+MT_State>NonOffsetIdles, entry {IdleOffsetStop} (source exit; no enter event). Both are SHARED events (WEAK): a WEAK confirmation still keeps the claim live (APMF-B35 R2-4, OPEN).
 Kill switch `[Idle] bIdleConfirm` (default 1). Tier A (new engine-structure read).
 **Field checks (next deploy):**
 1. Startup: `[ch.12] idle entry confirmation armed` (not `NOT ARMED` / `OFF`).
-2. Each play's `REQUESTED -> PlayIdle returned TRUE ... Confirmation waits for: entry events [...]` line shows
+2. Each play's `REQUESTED -> PlayIdle returned TRUE ... Confirmation waits for: entry events [...]` line (for
+   IdleGive, whose only events are its source state's exit events, it reads `source-exit events [...]`) shows
    the walk as `(complete)` with non-zero graphs/nodes and no `OUT-OF-RANGE event id` / `EVENT ID SPACE BROKEN`.
    If it shows unlinked references or zero transitions for IdleGive / IdleLockPick, the runtime template read
    differs from the files (stop and diagnose; do not trust NO TRANSITION lines).
