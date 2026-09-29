@@ -4,6 +4,7 @@
 #include "core/ControlMap.h"
 #include "core/NonAliasProbe.h"
 #include "core/CastObserve.h"
+#include "core/RestoreCensus.h"
 #include "core/ActionGate.h"
 #include "core/PackageGate.h"
 #include "core/MainThread.h"
@@ -59,6 +60,12 @@ namespace apmf {
         // replicate it. Always-on, per-actor rate-limited, self-throttled (~100ms) --
         // no hotkey, no toggle, never mutates. See core/CastObserve.h.
         apmf::castobserve::Poll();
+
+        // PHASE 0b RESTORE-CASTER CENSUS (2026-09-29). PASSIVE, [Probe] bRestoreCensus (default 1
+        // while field testing, STATUS pre-release checklist). Self-throttled ~200 ms; opens a window
+        // per restore-shaped cast claim and prints what the engine's Restore caster did, including
+        // nothing. Runs after Drain() so it reads the snapshot just published. See core/RestoreCensus.h.
+        apmf::restorecensus::Poll();
 
         // PFP Phase 0 (marth 2026-09-06) -- movement-leaf probe heartbeat (RULE C:
         // print the stage's hit count even when zero, so a dead anchor is never

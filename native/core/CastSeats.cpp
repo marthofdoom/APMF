@@ -4,6 +4,7 @@
 #include "core/Allowance.h"
 #include "core/ControlMap.h"
 #include "core/CastSeats.h"
+#include "core/RestoreCensus.h"
 
 // Win32 INI read for the one kill-switch below. Declared by hand, exactly like
 // core/AiCastSeats.cpp and core/Hook.cpp do -- PCH does not pull in <Windows.h>,
@@ -149,6 +150,22 @@ namespace apmf::castseats {
             return true;
         }
 
+        // PHASE 0b RESTORE CENSUS (core/RestoreCensus.h). PASSIVE: counts one Restore-caster
+        // seat call into an open census window. Restore vtable ONLY (never the Offensive
+        // caster these thunks also serve), and a single relaxed pre-gate when no claim
+        // window is open, so the common path costs two atomic loads. Changes no answer.
+        void CensusNote(std::uintptr_t a_vt, RE::CombatMagicCaster* a_this, RE::CombatController* a_cc,
+                        std::uint32_t a_seat, bool a_claimAnswered, bool a_answer) {
+            if (a_vt != g_restoreVtable.load(std::memory_order_relaxed) || !apmf::restorecensus::Active()) return;
+            if (!a_this || !a_cc) return;
+            auto  attPtr = a_cc->attackerHandle.get();   // NiPointer<Actor>, refcounted for this scope
+            auto* actor  = attPtr.get();
+            if (!actor) return;
+            apmf::restorecensus::NoteRestoreSeat(actor->GetFormID(), a_this,
+                                                 a_this->magicItem ? a_this->magicItem->GetFormID() : 0, a_seat,
+                                                 a_claimAnswered, a_answer);
+        }
+
         // ====================================================================
         // THE ONE CLAIM TEST every seat shares.
         //
@@ -220,7 +237,12 @@ namespace apmf::castseats {
             const auto orig = reinterpret_cast<CheckStartCast_t>(oit->second);
 
             SeatMatch m{};
-            if (!ClaimNamesThisCast(a_this, a_cc, m)) return orig(a_this, a_cc);
+            if (!ClaimNamesThisCast(a_this, a_cc, m)) {
+                const bool native = orig(a_this, a_cc);
+                CensusNote(vt, a_this, a_cc, kCheckStartCast, false, native);
+                return native;
+            }
+            CensusNote(vt, a_this, a_cc, kCheckStartCast, true, true);
 
             // ANSWER FROM THE CLAIM (the claim is the authority on WHETHER).
             //
@@ -304,7 +326,11 @@ namespace apmf::castseats {
             // and never read before `orig` has filled it. On the chain path it is
             // forwarded through completely unchanged.
             SeatMatch m{};
-            if (!a_out || !ClaimNamesThisCast(a_this, a_cc, m)) return orig(a_this, a_out, a_cc);
+            if (!a_out || !ClaimNamesThisCast(a_this, a_cc, m)) {
+                CensusNote(vt, a_this, a_cc, kGetMagicTarget, false, false);
+                return orig(a_this, a_out, a_cc);
+            }
+            CensusNote(vt, a_this, a_cc, kGetMagicTarget, true, false);
 
             a_out->handle = m.claim.targetHandle.native_handle();
             a_out->ptr    = nullptr;   // handle has precedence at every consumer; ptr is only read when handle==0
