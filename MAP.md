@@ -585,7 +585,8 @@ windows, e.g. an AUTO fan) and a 60 s HEARTBEAT with engine-wide per-type fire c
   never branch on it. The Armor caster vtable IS a real `CombatMagicCaster` on both runtimes (RTTI
   hierarchy walk; ENGINE_NOTES §0.28 does not hold for these binaries) and has its own VerifiedAddresses
   row since this change; the `DerivesFrom` walk at install stays the guard. A type that failed to install
-  reads as zero: the install line names it.
+  reads as zero: the install line names it. Never call `Actor::GetMagicCaster` here (it allocates on a
+  null slot): read `magicCasters[]` directly. Open review items: `Docs/REVIEW-BACKLOG.md` APMF-B40.
 
 ### `native/core/Input.{h,cpp}` — test surface (OPT-IN, DEFAULT OFF)
 `InputSink` (keyboard button-down) → `Arbiter::DispatchHotkey` (+ each probe's

@@ -412,9 +412,21 @@ namespace apmf::castertypecensus {
             bool          instant = false; // kInstant caster holding spell/proxy, state != 0
         };
 
+        // ACTOR_RUNTIME_DATA starts at Actor+0xE0 (SE) / +0xE8 (AE); +0xC0 inside it is the
+        // disassembled +0x1A0 / +0x1A8 of Character::GetMagicCaster on both runtimes.
+        static_assert(offsetof(RE::Actor::ACTOR_RUNTIME_DATA, magicCasters) == 0xC0,
+                      "magicCasters moved -- re-verify Character::GetMagicCaster's slot read (AE 0x6C20D0 "
+                      "+0x1A8, SE 0x6301C0 +0x1A0) before trusting this read");
+
         std::uint32_t HandHolds(RE::Actor* a_actor, RE::MagicSystem::CastingSource a_src, RE::FormID a_spell,
                                 RE::FormID a_proxy) {
-            auto* mc = a_actor->GetMagicCaster(a_src);
+            // READ the slot, never `Actor::GetMagicCaster`: that call (Character vtable slot 0x5C,
+            // AE 0x6C20D0 / SE 0x6301C0) ALLOCATES and installs a new ActorMagicCaster when the
+            // slot is null. `magicCasters[]` is indexed by CastingSource (kLeftHand 0, kRightHand 1,
+            // kInstant 3). Null = no caster = holds nothing.
+            const auto idx = static_cast<std::size_t>(a_src);
+            if (idx >= 4) return 0;
+            auto* mc = a_actor->GetActorRuntimeData().magicCasters[idx];
             if (!mc || !mc->currentSpell) return 0;
             const auto f = mc->currentSpell->GetFormID();
             if (f != a_spell && (a_proxy == 0 || f != a_proxy)) return 0;

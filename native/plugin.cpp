@@ -200,7 +200,7 @@ namespace {
                                                   // AFTER castseats so it sits OUTSIDE the claim seats
                                                   // and logs the answer the whole chain gives.
                                                   // Exact-version gate + VR refusal inside.
-            apmf::nativebitprobe::Install();    // native-bit probe (throwaway; no VR gate needed).
+            apmf::nativebitprobe::Install();     // native-bit probe (throwaway; no VR gate needed).
                                                   // CONFIG-GATED, default OFF -- it is the only probe that
                                                   // MUTATES a live actor, so it no-ops unless
                                                   // [Probe.NativeBit] Enable=1 in APMF.ini.
