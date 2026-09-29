@@ -433,13 +433,20 @@ discipline as MFO's:
 - `./release.sh 0.9.5` stamps `project(APMF VERSION ...)` in `native/CMakeLists.txt`, names
   `MinReleaseForAbi`'s "the first release after 0.9.4" placeholder (REVIEW-BACKLOG APMF-B10) in the
   same commit, commits "Bump version to 0.9.5" and pushes. Then wait for CI.
-- `./release.sh` refuses a dirty tree, checks `CHANGELOG.md` has the entry, verifies the newest
-  GREEN `native` run built the same **native/ TREE** as HEAD (not the same sha, because APMF's CI
+- `./release.sh --run <run-id>` refuses a dirty tree, checks `CHANGELOG.md` has the entry, verifies
+  that GREEN `native` run (named by the operator, see below) built the same **native/ TREE** as HEAD (not the same sha, because APMF's CI
   only fires on `native/**` and a docs commit has no run at all), downloads `APMF-dll`,
   **regenerates the ESL and fails if it differs from the committed file**, stages the three files,
   checks each one is present by name, writes `releases/vX.Y.Z/MANIFEST.txt` (commit, ci run id,
   sha256 of dll + esl + zip), zips, and tags. Releases and tags are immutable, nothing is ever
   overwritten. `*.zip` is gitignored, `MANIFEST.txt` is tracked.
+- **The CI run is picked by hand, every time (2026-09-29).** Phase 2 used to take the newest green
+  `native` run on ANY branch, so a parallel branch build made it refuse (or, with an identical tree,
+  pick a run nobody chose). Now `--run <run-id>` is required. A bare `./release.sh` lists the last
+  green `native` runs with branch, sha and a mark on the ones whose `native/` tree matches HEAD.
+  The run must be `completed/success`, have HEAD's `native/` tree and still hold `APMF-dll`, or the
+  release stops before anything is written. `./release.sh --run <run-id> --dry-run` runs exactly
+  those checks and stops. The manifest's `ci run:` line now also carries the run's sha.
 
 **QUEUED, and deliberately NOT in this cut.** None of these is started, and none of them is a v2
 of travel. Intents stay orthogonal (marth 2026-09-22: "We should avoid combining intents anyway").
