@@ -174,9 +174,22 @@ namespace apmf::restorecensus {
             bool                holds    = false;  // that caster's currentSpell == driven, state != 0
         };
 
+        // ACTOR_RUNTIME_DATA starts at Actor+0xE0 (SE) / +0xE8 (AE); +0xC0 inside it is the
+        // disassembled +0x1A0 / +0x1A8 of Character::GetMagicCaster on both runtimes.
+        static_assert(offsetof(RE::Actor::ACTOR_RUNTIME_DATA, magicCasters) == 0xC0,
+                      "magicCasters moved -- re-verify Character::GetMagicCaster's slot read (AE 0x6C20D0 "
+                      "+0x1A8, SE 0x6301C0 +0x1A0) before trusting this read");
+
         std::uint32_t HandState(RE::Actor* a_actor, RE::MagicSystem::CastingSource a_src, RE::FormID a_driven,
                                 bool& a_holds) {
-            auto* mc = a_actor->GetMagicCaster(a_src);
+            // READ the slot, never `Actor::GetMagicCaster`: that call (Character vtable slot 0x5C,
+            // AE 0x6C20D0 / SE 0x6301C0) ALLOCATES and installs a new ActorMagicCaster when the
+            // slot is null, unlocked, off the actor's own update. `magicCasters[]` is indexed by
+            // CastingSource (the same `[actor + src*8 + 0x1A8]` AE / `+0x1A0` SE read that
+            // function starts with). Null = no caster = nothing to observe.
+            const auto idx = static_cast<std::size_t>(a_src);
+            if (idx >= 4) return 0;
+            auto* mc = a_actor->GetActorRuntimeData().magicCasters[idx];
             if (!mc) return 0;
             const auto st  = static_cast<std::uint32_t>(mc->state.get());
             const auto sid = mc->currentSpell ? mc->currentSpell->GetFormID() : 0;
