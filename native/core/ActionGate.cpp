@@ -5,11 +5,16 @@
 #include "core/CombatBehaviorRE.h"
 #include "core/ControlMap.h"
 #include "core/ActionGate.h"
+#include "core/AiCastSeats.h"   // RangedGateProbeCounts (the [Probe] bRangedSelect heartbeat)
+#include "core/EquipSink.h"     // Categorize / CategoryNames (the probe mirrors the sink verdict)
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <mutex>
 #include <shared_mutex>
+#include <string_view>
+#include <vector>
 
 // Win32 INI read for [Probe.mvcbt] -- same hand-declared extern every other
 // INI-gated file in this project uses (PCH does not pull in <Windows.h>).
@@ -624,11 +629,232 @@ namespace apmf::actiongate {
             }
         }
 
+        // ====================================================================
+        // RANGED-SELECT PROBE ([Probe] bRangedSelect, 2026-09-29) -- PHASE 1, PASSIVE.
+        //
+        // WHY. A melee-only follower whose ch.17 declaration owns Right+Left (swords) fought a
+        // flying dragon: the combat AI kept SELECTING the Glass Bow (the ch.17 sink refused it
+        // 114 times at EquipObject, path=CombatNode) and kept a RANGED plan (MaintainOptimalRange /
+        // FindAttackLocation). Nothing in Harbinger refuses a Ranged item at SELECTION, so the
+        // deny is incomplete at that layer (principle 2). Phase 2 would refuse it at the Ranged
+        // CheckShouldEquip seat. Principle 5: this phase only OBSERVES, so the next field session
+        // shows that seat and the engine's unreachable-target handling actually running.
+        //
+        // WHAT THE ENGINE DOES (measured on both unpacked executables, agentlog
+        // apmf-ranged-select-probe.md):
+        //   * SELECTION = CombatInventory's evaluate (AE 44899 0x8134C0 / SE 43666 0x7790A0).
+        //     For every item of every category it tests slot occupancy and range, then calls the
+        //     item's CheckShouldEquip (vfunc 0x0F) and, on YES, GetResource (0x10) and adds the
+        //     item to the primary (+0x118) or secondary (+0x148) CombatEquipment set. The Melee,
+        //     Ranged and Shield items do not override 0x0F: all three hold the base
+        //     `return !IsFleeing(ctrl)` (AE 0x817FC0 / SE 0x77DC90). A bow is therefore refused at
+        //     selection only while the actor flees. core/AiCastSeats.cpp observes that call on
+        //     the Ranged vtable.
+        //   * "path=CombatNode" in the equip-obs log is two LEAVES: CombatBehaviorEquipObject
+        //     (act AE 47732 -> 48124, whose EquipObject call returns to 0x877F1B, the ret= of all
+        //     114 bow refusals) and CombatBehaviorEquipRangedWeapon (act 47733 -> 48126: equips
+        //     the item's ammo, then runs 48124). Both read the item from the CURRENT context:
+        //     window = thread+0x128 {pointer to the data base, u32 offset at +0x130}, context =
+        //     *window + offset, CombatInventoryItem* at context+8 (SE 46955/46957 read the same
+        //     offsets). The probe reads those bytes BEFORE the leaf runs -- the same bytes the
+        //     leaf reads unconditionally a few instructions later.
+        //   * CombatBehaviorCheckUnreachableTarget (act = push 0x10 {path request, timer}; update
+        //     AE 49240 / SE 48214): if its combat blackboard value is <= 0 it fails at once
+        //     (SetFailed + Ascend, the leaf's ONLY SetFailed). Otherwise it periodically paths
+        //     from the actor to its target: when the path reaches the target it writes 0 and
+        //     ascends (success); when the path ends short it writes the gap distance and keeps
+        //     running; a failed path writes nothing. So its outcome is the thread state at its
+        //     pop() (the runner 47483 calls the node's pop() with the state untouched): 0 =
+        //     REACHABLE, 1 = FAILED (gate <= 0), 2 = INTERRUPTED (its parent moved on while it
+        //     was still running, i.e. the target was never proven reachable in that run).
+        //
+        // SCOPE: actors holding a winning ch.17 claim (ControlMap::TryGetEquipSet). Leaf counts
+        // (the "which leaves run" summary) are kept only while that claim OWNS a hand
+        // (Right or Left). Composite nodes (selectors, Sequence, Parallel, Repeat, the dynamic
+        // conditional) are counted but left out of the summary line.
+        //
+        // COST: act() and pop() run once per node ENTRY, not per frame. With the flag on, a
+        // leaf act() for any combat actor pays one hash lookup (vtable -> leaf index), the
+        // ControlledCount() pre-gate, the actor handle resolve and one RCU claim read; a
+        // claimed actor adds one short leaf lock. pop() adds one compare, except for the one
+        // CheckUnreachableTarget vtable. No engine call, no form lookup, no allocation on the
+        // unclaimed path. Lines are rate-limited per key (kRsLineMs) and capped per session.
+        // ====================================================================
+        std::atomic<bool> g_rsEnabled{ false };   // the leaf half armed
+        std::atomic<bool> g_rsIniOn{ false };     // [Probe] bRangedSelect read as 1 (the heartbeat's gate)
+        std::unordered_map<std::uintptr_t, std::uint8_t> g_rsLeafIdx;          // vtable -> kLeaves index (Install only)
+        std::array<bool, apmf::cbt::kLeaves.size()>      g_rsComposite{};      // left out of the summary line
+        std::uintptr_t g_rsEquipObjectVt = 0;    // Install only, then read-only
+        std::uintptr_t g_rsEquipRangedVt = 0;
+        std::uintptr_t g_rsUnreachableVt = 0;
+        struct RsClassVt { const char* tag; std::uintptr_t vt; };
+        std::array<RsClassVt, 4> g_rsClassVt{ { { "Melee", 0 }, { "Ranged", 0 }, { "Shield", 0 }, { "Torch", 0 } } };
+
+        // Context window (CombatBehaviorThread) -- see the section comment for the evidence.
+        constexpr std::size_t kThreadWindowPtr = 0x128;
+        constexpr std::size_t kThreadWindowOff = 0x130;
+        constexpr std::size_t kThreadState     = 0x148;   // 0 run / 1 failed / 2 interrupted
+        constexpr std::size_t kEquipCtxItem    = 0x08;    // CombatInventoryItem* in the equip context
+
+        constexpr std::uint64_t kRsLineMs         = 10000;   // per-key line cadence
+        constexpr std::uint64_t kRsSummaryMs      = 15000;
+        constexpr std::uint64_t kRsHeartbeatMs    = 30000;
+        constexpr std::uint64_t kRsLineCap        = 6000;    // per session; the heartbeat keeps counting past it
+
+        struct RsActor {
+            std::array<std::uint32_t, apmf::cbt::kLeaves.size()> leafCount{};
+            std::uint32_t owned        = 0;
+            std::uint64_t unreachActMs = 0;
+        };
+        struct RsLine { std::uint64_t lastMs = 0; std::uint32_t suppressed = 0; };
+        std::mutex                                  g_rsMx;       // leaf lock: no engine call, no log under it
+        std::unordered_map<RE::FormID, RsActor>     g_rsActors;
+        std::unordered_map<std::uint64_t, RsLine>   g_rsLines;
+        std::atomic<std::uint64_t> g_rsActs{ 0 };            // leaf act()s by a ch.17 claimant
+        std::atomic<std::uint64_t> g_rsEquipLeaf{ 0 };       // EquipObject / EquipRangedWeapon act()s by a claimant
+        std::atomic<std::uint64_t> g_rsEquipWouldDeny{ 0 };  // ... whose item the sink would refuse
+        std::atomic<std::uint64_t> g_rsUnreachSeen{ 0 };     // CheckUnreachableTarget act(), any actor (anchor)
+        std::atomic<std::uint64_t> g_rsUnreachRuns{ 0 };     // ... by a claimant
+        std::array<std::atomic<std::uint64_t>, 4> g_rsUnreachOut{};   // claimant pops by state 0/1/2/other
+        std::atomic<std::uint64_t> g_rsLineCount{ 0 };
+        std::uint64_t              g_rsLastSummaryMs   = 0;   // main thread only (the heartbeat)
+        std::uint64_t              g_rsLastHeartbeatMs = 0;
+
+        std::uint64_t RsKey(RE::FormID a_actor, std::uint32_t a_kind, std::uint32_t a_extra) {
+            return (static_cast<std::uint64_t>(a_actor) << 32) ^ (static_cast<std::uint64_t>(a_kind) << 28) ^ a_extra;
+        }
+        // Rate limit one line key: due on its first sighting, then at most once per kRsLineMs;
+        // `a_suppressed` is how many were skipped since the last printed one (never hidden).
+        bool RsLineDue(std::uint64_t a_key, std::uint32_t& a_suppressed) {
+            const auto       now = apmf::clock::MonotonicMs();
+            std::scoped_lock lk(g_rsMx);
+            auto&            l = g_rsLines[a_key];
+            if (l.lastMs != 0 && now - l.lastMs < kRsLineMs) {
+                ++l.suppressed;
+                return false;
+            }
+            a_suppressed = l.suppressed;
+            l            = { now, 0 };
+            return true;
+        }
+        const char* RsClassOf(std::uintptr_t a_vt) {
+            for (const auto& c : g_rsClassVt)
+                if (c.vt && c.vt == a_vt) return c.tag;
+            return "other";
+        }
+        const char* RsLeafName(std::size_t a_idx) {
+            std::string_view n = apmf::cbt::kLeaves[a_idx].name;
+            constexpr std::string_view kPrefix = "CombatBehavior";
+            if (n.starts_with(kPrefix)) n.remove_prefix(kPrefix.size());
+            return n.data();   // a suffix of a string literal: still NUL-terminated
+        }
+
+        // The EquipObject / EquipRangedWeapon leaf is about to equip the context's item.
+        void RangedProbeEquipLeaf(RE::FormID a_fid, std::size_t a_leafIdx, std::uint32_t a_kind, void* a_control) {
+            const auto thread = reinterpret_cast<std::uintptr_t>(a_control);
+            auto* const winPtr = *reinterpret_cast<std::uintptr_t* const*>(thread + kThreadWindowPtr);
+            if (!winPtr) return;   // the engine would fault here; the probe just stays silent
+            const auto base = *winPtr;
+            if (!base) return;
+            const auto ctx  = base + *reinterpret_cast<const std::uint32_t*>(thread + kThreadWindowOff);
+            auto* item      = *reinterpret_cast<RE::CombatInventoryItem* const*>(ctx + kEquipCtxItem);
+            if (!item) return;
+            const auto itemVt = *reinterpret_cast<const std::uintptr_t*>(item);
+            RE::TESForm* form = item->item;
+            const auto   formId = form ? form->GetFormID() : 0;
+
+            actiongate::RangedProbeView v{};
+            if (!actiongate::RangedProbeClassify(a_fid, form, item->itemSlot.equipSlot, v)) return;
+            g_rsEquipLeaf.fetch_add(1, std::memory_order_relaxed);
+            if (v.wouldDeny) g_rsEquipWouldDeny.fetch_add(1, std::memory_order_relaxed);
+
+            std::uint32_t suppressed = 0;
+            if (!RsLineDue(RsKey(a_fid, a_kind, formId), suppressed)) return;
+            if (!actiongate::RangedProbeLineBudget()) return;
+            char owned[48], competes[48];
+            spdlog::info("[ranged-probe] 0x{} EQUIP-LEAF leaf={} item=0x{} '{}' class={} owned={} competes={} "
+                         "inSet={} sink={} (+{} since last)",
+                         apmf::log::Hex(a_fid), RsLeafName(a_leafIdx), apmf::log::Hex(formId),
+                         form && form->GetName() ? form->GetName() : "?", RsClassOf(itemVt),
+                         apmf::equipsink::CategoryNames(v.owned, owned, sizeof(owned)),
+                         apmf::equipsink::CategoryNames(v.competes, competes, sizeof(competes)), v.inSet ? 1 : 0,
+                         v.verdict, suppressed);
+        }
+
+        // act() side: every leaf, for a ch.17 claimant. Before the leaf's own act() runs.
+        void RangedProbeObserveAct(std::uintptr_t a_vt, void* a_control) {
+            const auto lit = g_rsLeafIdx.find(a_vt);
+            if (lit == g_rsLeafIdx.end()) return;
+            const bool unreach = (a_vt == g_rsUnreachableVt);
+            if (unreach) g_rsUnreachSeen.fetch_add(1, std::memory_order_relaxed);   // RULE C anchor, any actor
+            if (apmf::ControlMap::Get().ControlledCount() == 0) return;
+            const RE::FormID fid = ResolveDeliberatingActor(a_control);
+            if (fid == 0) return;
+            apmf::EquipSetView view{};
+            if (!apmf::ControlMap::Get().TryGetEquipSet(fid, view)) return;   // not a ch.17 claimant
+
+            g_rsActs.fetch_add(1, std::memory_order_relaxed);
+            const std::size_t idx        = lit->second;
+            const bool        handsOwned = (view.owned & (APMF_API::kEquipCat_Right | APMF_API::kEquipCat_Left)) != 0;
+            {
+                std::scoped_lock lk(g_rsMx);
+                auto&            a = g_rsActors[fid];
+                a.owned            = view.owned;
+                if (handsOwned) ++a.leafCount[idx];
+                if (unreach) a.unreachActMs = apmf::clock::MonotonicMs();
+            }
+            if (unreach) g_rsUnreachRuns.fetch_add(1, std::memory_order_relaxed);
+            if (a_vt == g_rsEquipObjectVt) RangedProbeEquipLeaf(fid, idx, 1, a_control);
+            else if (a_vt == g_rsEquipRangedVt) RangedProbeEquipLeaf(fid, idx, 2, a_control);
+        }
+
+        // pop() side: CheckUnreachableTarget only. The thread state is read BEFORE the node's
+        // own pop() runs (the runner leaves it untouched between the leaf's last update and pop).
+        void RangedProbeObserveUnreachablePop(void* a_control) {
+            if (apmf::ControlMap::Get().ControlledCount() == 0) return;
+            const RE::FormID fid = ResolveDeliberatingActor(a_control);
+            if (fid == 0) return;
+            apmf::EquipSetView view{};
+            if (!apmf::ControlMap::Get().TryGetEquipSet(fid, view)) return;
+
+            const auto state = *reinterpret_cast<const std::uint32_t*>(reinterpret_cast<std::uintptr_t>(a_control) +
+                                                                        kThreadState);
+            const std::size_t slot = state <= 2 ? state : 3;
+            g_rsUnreachOut[slot].fetch_add(1, std::memory_order_relaxed);
+            std::uint64_t ranMs = 0;
+            {
+                const auto       now = apmf::clock::MonotonicMs();
+                std::scoped_lock lk(g_rsMx);
+                auto&            a = g_rsActors[fid];
+                if (a.unreachActMs) ranMs = now - a.unreachActMs;
+                a.unreachActMs = 0;
+            }
+            static constexpr const char* kOutcome[4] = {
+                "REACHABLE (its path reached the target: it wrote 0 and succeeded)",
+                "FAILED (thread state 1: its blackboard gate was <= 0, the check did not run)",
+                "INTERRUPTED (its parent moved on while it still ran: the target was never proven reachable)",
+                "UNEXPECTED thread state (not 0/1/2 -- re-measure the runner)",
+            };
+            std::uint32_t suppressed = 0;
+            if (!RsLineDue(RsKey(fid, 12, static_cast<std::uint32_t>(slot)), suppressed)) return;
+            if (!actiongate::RangedProbeLineBudget()) return;
+            char owned[48];
+            spdlog::info("[ranged-probe] 0x{} UNREACHABLE-CHECK state={} {} ran={}ms owned={} (+{} since last)",
+                         apmf::log::Hex(fid), state, kOutcome[slot], ranMs,
+                         apmf::equipsink::CategoryNames(view.owned, owned, sizeof(owned)), suppressed);
+        }
+
+        void RangedProbeInstall();   // defined after Install(), same anonymous namespace
+
         void* ActThunk(void* a_this, void* a_control) {
             const auto vt  = *reinterpret_cast<std::uintptr_t*>(a_this);
             const auto oit = g_orig.find(vt);
             if (oit == g_orig.end()) return a_control;   // foreign vtable -- benign, touch nothing
             auto orig = reinterpret_cast<apmf::cbt::Act_t>(oit->second);
+
+            // [Probe] bRangedSelect -- OBSERVE ONLY, before the leaf's own act() and before any
+            // deny below (a denied leaf is still reported as chosen). Never alters the call.
+            if (g_rsEnabled.load(std::memory_order_acquire)) RangedProbeObserveAct(vt, a_control);   // acquire: pairs with Install's release
 
             const auto cit    = g_category.find(vt);
             const auto leafCat = cit != g_category.end() ? cit->second : 0u;
@@ -721,6 +947,10 @@ namespace apmf::actiongate {
             const auto vt  = *reinterpret_cast<std::uintptr_t*>(a_this);
             const auto oit = g_origPop.find(vt);
             if (oit == g_origPop.end()) return;   // foreign vtable -- no original to recover; touch nothing
+            // [Probe] bRangedSelect -- OBSERVE ONLY: the CheckUnreachableTarget outcome, read from the
+            // thread state before the node's own pop() (never on the denied-pair path above).
+            if (g_rsEnabled.load(std::memory_order_acquire) && g_rsUnreachableVt != 0 && vt == g_rsUnreachableVt)
+                RangedProbeObserveUnreachablePop(a_control);
             reinterpret_cast<Pop_t>(oit->second)(a_this, a_control);
         }
 
@@ -1017,7 +1247,59 @@ namespace apmf::actiongate {
                      "[Probe.mvcbt] Enable=0 in Data/SKSE/Plugins/APMF.ini is the default (OFF).",
                      g_mvcbtEnabled.load(std::memory_order_relaxed) ? "ARMED" : "installed, disabled",
                      mvConfirmed + mvHypothesis, mvConfirmed, mvHypothesis, apmf::cbt::kLeaves.size());
+
+        RangedProbeInstall();
     }
+
+    namespace {
+    // ---- [Probe] bRangedSelect (PASSIVE; see the RANGED-SELECT PROBE section) ----
+    // Installed after the act/pop thunks above: it rides them and adds no seat of its own here.
+    // Arms only when the INI flag is on AND act() is installed on the leaf table; each of the
+    // three named leaves is armed only when its own act (and, for CheckUnreachableTarget, pop)
+    // was installed, and says so when it was not.
+    void RangedProbeInstall() {
+        if (GetPrivateProfileIntA("Probe", "bRangedSelect", 1, "Data/SKSE/Plugins/APMF.ini") == 0) {
+            spdlog::info("[ranged-probe] NOT armed -- [Probe] bRangedSelect=0.");
+            return;
+        }
+        g_rsIniOn.store(true, std::memory_order_relaxed);   // the heartbeat also reports the 0x0F seat
+        for (std::size_t i = 0; i < apmf::cbt::kLeaves.size(); ++i) {
+            REL::Relocation<std::uintptr_t> vt{ apmf::cbt::kLeaves[i].vtbl };
+            if (!g_orig.contains(vt.address())) continue;   // act() not installed on it: nothing to observe
+            g_rsLeafIdx[vt.address()] = static_cast<std::uint8_t>(i);
+            const std::string_view n  = apmf::cbt::kLeaves[i].name;
+            g_rsComposite[i] = n.find("Selector") != std::string_view::npos || n == "CombatBehaviorSequence" ||
+                               n == "CombatBehaviorParallel" || n == "CombatBehaviorRepeat" ||
+                               n == "CombatBehaviorDynamicConditionalNode";
+            if (n == "CombatBehaviorEquipObject") g_rsEquipObjectVt = vt.address();
+            else if (n == "CombatBehaviorEquipRangedWeapon") g_rsEquipRangedVt = vt.address();
+            else if (n == "CombatBehaviorCheckUnreachableTarget" && g_origPop.contains(vt.address()))
+                g_rsUnreachableVt = vt.address();
+        }
+        if (g_rsLeafIdx.empty()) {
+            spdlog::warn("[ranged-probe] NOT armed -- no leaf act() is installed (ch.7 install refused), so there "
+                         "is nothing to observe. The Ranged 0x0F seat (core/AiCastSeats.cpp) is separate.");
+            return;
+        }
+        // Item class names for the EQUIP-LEAF line: the four weapon-class vtables GROUP C resolves
+        // (verified rows CombatInventoryItem<class>). A refused row prints "other" -- logging only.
+        const REL::VariantID classIds[4] = { RE::VTABLE_CombatInventoryItemMelee[0], RE::VTABLE_CombatInventoryItemRanged[0],
+                                             RE::VTABLE_CombatInventoryItemShield[0], RE::VTABLE_CombatInventoryItemTorch[0] };
+        for (std::size_t i = 0; i < g_rsClassVt.size(); ++i) {
+            REL::Relocation<std::uintptr_t> vt{ classIds[i] };
+            if (allowance::SeatVerified(vt.address(), fmt::format("ActionGate.RangedProbe.Class.{}", g_rsClassVt[i].tag)))
+                g_rsClassVt[i].vt = vt.address();
+        }
+        g_rsEnabled.store(true, std::memory_order_release);
+        spdlog::info("[ranged-probe] ARMED (PASSIVE, [Probe] bRangedSelect=1) -- observing {} leaf act()s for "
+                     "ch.17 claimants; EquipObject {}, EquipRangedWeapon {}, CheckUnreachableTarget outcome {}. "
+                     "Never denies, never writes engine state. The Ranged CheckShouldEquip (0x0F) seat is "
+                     "core/AiCastSeats.cpp's (see its own install line). Set bRangedSelect=0 before a release cut.",
+                     g_rsLeafIdx.size(), g_rsEquipObjectVt ? "observed" : "NOT observed (act not installed)",
+                     g_rsEquipRangedVt ? "observed" : "NOT observed (act not installed)",
+                     g_rsUnreachableVt ? "observed" : "NOT observed (act/pop not installed)");
+    }
+    }   // namespace (anonymous)
 
     void PfpHeartbeat() {
         // RULE C -- prints ONCE per interval, INCLUDING ZERO counts, so silence
@@ -1140,6 +1422,103 @@ namespace apmf::actiongate {
                      g_pPassNoAnchor.load(std::memory_order_relaxed), g_pPassOtherSpace.load(std::memory_order_relaxed),
                      g_pPassNoTarget.load(std::memory_order_relaxed), g_pPassStale.load(std::memory_order_relaxed),
                      g_pUpdAnomaly.load(std::memory_order_relaxed));
+    }
+
+    // ---- [Probe] bRangedSelect: the public half (see ActionGate.h and the RANGED-SELECT PROBE section) ----
+
+    bool RangedProbeClassify(RE::FormID a_actor, RE::TESForm* a_item, const RE::BGSEquipSlot* a_slot,
+                             RangedProbeView& a_out) {
+        apmf::EquipSetView set{};
+        if (!apmf::ControlMap::Get().TryGetEquipSet(a_actor, set)) return false;   // not a ch.17 claimant
+        const auto* obj    = a_item ? a_item->As<RE::TESBoundObject>() : nullptr;
+        const auto  itemId = a_item ? a_item->GetFormID() : 0;
+        a_out          = RangedProbeView{};
+        a_out.owned    = set.owned;
+        a_out.denied   = set.denied;
+        a_out.competes = apmf::equipsink::Categorize(obj, a_slot);   // the sink's ONE category map
+        for (std::uint32_t i = 0; i < set.count; ++i)
+            if (itemId != 0 && set.forms[i] == itemId) { a_out.inSet = true; break; }
+        // The sink's verdict steps 2-6 (core/EquipSink.cpp), in its order. Steps 0-1 (script /
+        // player-menu exemptions) are caller exemptions that an AI decision never has.
+        if ((a_out.competes & set.denied) != 0) {
+            a_out.wouldDeny = true;
+            a_out.verdict   = "WOULD-DENY (denied category)";
+        } else if ((a_out.competes & set.owned) != 0) {
+            if (set.count == 0) {
+                a_out.verdict = "pass (owned category, nothing declared yet)";
+            } else if (a_out.inSet) {
+                a_out.verdict = "pass (owned category, declared item)";
+            } else {
+                a_out.wouldDeny = true;
+                a_out.verdict   = "WOULD-DENY (owned category, off the declared set)";
+            }
+        } else {
+            a_out.verdict = "pass (competes for nothing the claim owns)";
+        }
+        return true;
+    }
+
+    bool RangedProbeLineBudget() {
+        const auto n = g_rsLineCount.fetch_add(1, std::memory_order_relaxed);
+        if (n < kRsLineCap) return true;
+        if (n == kRsLineCap)
+            spdlog::warn("[ranged-probe] line cap ({}) reached -- further probe lines are suppressed this session; "
+                         "the ~30 s heartbeat keeps counting. Not a mask: the cap and this trip are logged (#7).",
+                         kRsLineCap);
+        return false;
+    }
+
+    void RangedProbeHeartbeat() {
+        if (!g_rsIniOn.load(std::memory_order_relaxed)) return;   // flag off: one relaxed load per frame
+        const auto now          = apmf::clock::MonotonicMs();
+        const bool summaryDue   = now - g_rsLastSummaryMs >= kRsSummaryMs;
+        const bool heartbeatDue = now - g_rsLastHeartbeatMs >= kRsHeartbeatMs;
+        if (!summaryDue && !heartbeatDue) return;
+
+        if (summaryDue) {
+            g_rsLastSummaryMs = now;   // game-thread-only writer
+            struct Pending { RE::FormID fid; std::uint32_t owned; std::string leaves; };
+            std::vector<Pending> out;
+            {
+                std::scoped_lock lk(g_rsMx);   // copy out, log after the lock is released
+                for (auto& [fid, a] : g_rsActors) {
+                    std::vector<std::pair<std::uint32_t, std::size_t>> ranked;
+                    for (std::size_t i = 0; i < a.leafCount.size(); ++i)
+                        if (a.leafCount[i] != 0 && !g_rsComposite[i]) ranked.emplace_back(a.leafCount[i], i);
+                    a.leafCount.fill(0);
+                    if (ranked.empty()) continue;
+                    std::sort(ranked.begin(), ranked.end(), [](const auto& x, const auto& y) { return x.first > y.first; });
+                    std::string leaves;
+                    for (std::size_t k = 0; k < ranked.size() && k < 20; ++k)
+                        leaves += fmt::format("{}{} x{}", k ? ", " : "", RsLeafName(ranked[k].second), ranked[k].first);
+                    out.push_back({ fid, a.owned, std::move(leaves) });
+                }
+            }
+            for (const auto& p : out) {
+                char owned[48];
+                spdlog::info("[ranged-probe] 0x{} LEAVES last ~{}s while the ch.17 claim owned a hand (owned={}): {}",
+                             apmf::log::Hex(p.fid), kRsSummaryMs / 1000,
+                             apmf::equipsink::CategoryNames(p.owned, owned, sizeof(owned)), p.leaves);
+            }
+        }
+
+        if (heartbeatDue) {
+            g_rsLastHeartbeatMs = now;
+            const auto gate  = apmf::aicastseats::RangedGateProbeCounts();
+            const auto lines = g_rsLineCount.load(std::memory_order_relaxed);
+            spdlog::info("[ranged-probe] H gate0x0F armed={} seen={} claimed={} engineYes={} engineNo={} "
+                         "wouldRefuse={} | leaves armed={} claimedActs={} equipLeaf={} equipWouldDeny={} | "
+                         "unreachable seen={} claimedRuns={} out ok/failed/interrupted/other={}/{}/{}/{} | "
+                         "lines={} dropped={}",
+                         gate.armed ? 1 : 0, gate.seen, gate.claimed, gate.yes, gate.no, gate.wouldRefuse,
+                         g_rsEnabled.load(std::memory_order_relaxed) ? 1 : 0,
+                         g_rsActs.load(std::memory_order_relaxed), g_rsEquipLeaf.load(std::memory_order_relaxed),
+                         g_rsEquipWouldDeny.load(std::memory_order_relaxed),
+                         g_rsUnreachSeen.load(std::memory_order_relaxed), g_rsUnreachRuns.load(std::memory_order_relaxed),
+                         g_rsUnreachOut[0].load(std::memory_order_relaxed), g_rsUnreachOut[1].load(std::memory_order_relaxed),
+                         g_rsUnreachOut[2].load(std::memory_order_relaxed), g_rsUnreachOut[3].load(std::memory_order_relaxed),
+                         std::min<std::uint64_t>(lines, kRsLineCap), lines > kRsLineCap ? lines - kRsLineCap : 0);
+        }
     }
 
 }

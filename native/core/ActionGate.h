@@ -40,4 +40,34 @@ namespace apmf::actiongate {
     // every ~30 s while any leash is set, zeros included. Cheap otherwise.
     void PursuitHeartbeat();
 
+    // ---- [Probe] bRangedSelect (2026-09-29, PHASE 1 of the Ranged-selection deny): a PASSIVE
+    // probe. It never denies, never writes engine state and never changes a return value. For
+    // an actor holding a winning ch.17 (kIntent_EquipAuthority) claim it logs, rate-limited:
+    // the combat AI's Ranged admission decision (core/AiCastSeats.cpp, CheckShouldEquip 0x0F on
+    // the Ranged vtable), the item the EquipObject / EquipRangedWeapon leaves are about to equip,
+    // each CheckUnreachableTarget run and its outcome, and which leaves run while the claim owns
+    // a hand. See ActionGate.cpp's RANGED-SELECT PROBE section and Docs/STATUS.md.
+    //
+    // How the ch.17 equip sink WOULD judge `a_item` in `a_slot` for `a_actor` right now (the
+    // sink's verdict steps 2-6, core/EquipSink.cpp; the script / player-menu exemptions do not
+    // apply to an AI decision). Returns false when the actor holds no winning ch.17 claim (not
+    // in the probe's scope). Any thread: one RCU read (ControlMap::TryGetEquipSet), no lock.
+    struct RangedProbeView {
+        std::uint32_t owned     = 0;
+        std::uint32_t denied    = 0;
+        std::uint32_t competes  = 0;
+        bool          inSet     = false;
+        bool          wouldDeny = false;
+        const char*   verdict   = "";
+    };
+    bool RangedProbeClassify(RE::FormID a_actor, RE::TESForm* a_item, const RE::BGSEquipSlot* a_slot,
+                             RangedProbeView& a_out);
+    // One probe line against the session cap (the probe runs in every session while it is ON).
+    // False once the cap is reached; the trip is logged once and the heartbeat keeps counting.
+    bool RangedProbeLineBudget();
+    // Once per frame from Arbiter::OncePerFrame (game thread): per-actor leaf summaries every
+    // ~15 s for actors that ran leaves, and a RULE C totals line every ~30 s, zeros included.
+    // One relaxed load when the probe is OFF.
+    void RangedProbeHeartbeat();
+
 }

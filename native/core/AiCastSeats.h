@@ -109,4 +109,17 @@ namespace apmf::aicastseats {
     // Idempotent.
     void Install();
 
+    // [Probe] bRangedSelect: the Ranged CheckShouldEquip (0x0F) observe seat's counters, read by
+    // apmf::actiongate::RangedProbeHeartbeat for its RULE C line. `armed` is false when the seat
+    // did not install (flag off, GROUP C off or refused, VR, an unconfirmed runtime).
+    struct RangedGateCounts {
+        std::uint64_t seen        = 0;   // every call, any actor (the anchor is alive)
+        std::uint64_t claimed     = 0;   // calls for an actor holding a ch.17 claim
+        std::uint64_t yes         = 0;   // ... where the engine admitted the Ranged item
+        std::uint64_t no          = 0;   // ... where the engine refused it (fleeing)
+        std::uint64_t wouldRefuse = 0;   // engine YES while the ch.17 sink would deny that item
+        bool          armed       = false;
+    };
+    RangedGateCounts RangedGateProbeCounts();
+
 }

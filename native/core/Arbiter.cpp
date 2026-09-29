@@ -71,6 +71,10 @@ namespace apmf {
         // leash is set, zeros included; one relaxed load when none is.
         apmf::actiongate::PursuitHeartbeat();
 
+        // [Probe] bRangedSelect (PASSIVE, phase 1 of the Ranged-selection deny): per-actor leaf
+        // summaries ~15 s and a RULE C totals line ~30 s, zeros included. One relaxed load when OFF.
+        apmf::actiongate::RangedProbeHeartbeat();
+
         // "Does 0x49 actually redirect?" probe (marth 2026-09-06, core/PackageGate.cpp).
         // Same RULE C shape as the PfpHeartbeat above: self-throttled internally
         // (~30s), INI-gated ([PackageGate] EnableRedirectLog, default ON), one
