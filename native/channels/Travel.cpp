@@ -2129,10 +2129,10 @@ namespace apmf::travel {
                              "{:.0f}u of the stall, then OPEN-CLOSE / ACTIVATE events near it for {} min.",
                              kProbeRadius, kWatchMs / 60000);
 
-                // Probe 2 (passive, [Travel] bGateProbe2, default ON while testing): arms only
+                // Probe 2 (passive, [Travel] bGateProbe2, default OFF since v0.9.10): arms only
                 // with probe 1 (it reuses probe 1's verified GetOpenState / TES::GetCell) and
                 // when the three vtables it identifies objects by verify on this exact build.
-                if (GetPrivateProfileIntA("Travel", "bGateProbe2", 1, "Data/SKSE/Plugins/APMF.ini") == 0) {
+                if (GetPrivateProfileIntA("Travel", "bGateProbe2", 0, "Data/SKSE/Plugins/APMF.ini") == 0) {
                     spdlog::info("[travel-gate2] probe 2 NOT armed -- [Travel] bGateProbe2=0.");
                 } else {
                     const auto vtA = REL::Relocation<std::uintptr_t>{ RE::VTABLE_BShkbAnimationGraph[0] }.address();

@@ -1248,9 +1248,9 @@ namespace apmf::aicastseats {
         const bool dualWieldPref = GetPrivateProfileIntA("EquipGate", "EnableDualWieldPreference", 0,
                                                           "Data/SKSE/Plugins/APMF.ini") != 0;
         // [Probe] bRangedSelect (2026-09-29): the PASSIVE Ranged CheckShouldEquip (0x0F) observe seat.
-        // Default 1 while the Ranged-selection field cycle runs; back to 0 before a release cut
-        // (Docs/STATUS.md). Same key core/ActionGate.cpp reads for the leaf half.
-        const bool rangedProbe = GetPrivateProfileIntA("Probe", "bRangedSelect", 1,
+        // Default 0 (reset for the v0.9.10 cut, Docs/STATUS.md PRE-RELEASE CHECKLIST); set 1 in the INI
+        // for a field test. Same key core/ActionGate.cpp reads for the leaf half.
+        const bool rangedProbe = GetPrivateProfileIntA("Probe", "bRangedSelect", 0,
                                                         "Data/SKSE/Plugins/APMF.ini") != 0;
         int nScore = 0, nStart = 0, nStop = 0, nTgt = 0, nWeaponScore = 0, nWeaponRefused = 0;
         int nShieldEquip = 0;
