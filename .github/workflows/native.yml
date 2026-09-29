@@ -6,11 +6,27 @@ on:
       - "native/**"
       - ".github/workflows/native.yml"
   workflow_dispatch:
+    inputs:
+      # PROOF BUILD for a TU split (CLAUDE.md, MFO's tools/splitcheck): /Od turns
+      # the optimizer off, so each function compiles from its own source alone and
+      # `splitcheck --strict` can demand byte identity between main and the split
+      # branch. NEVER shipped: the release DLL is always the normal build (a push
+      # run, or a dispatch with noopt=false). Mirrors MFO's native.yml.
+      noopt:
+        description: "Proof build: compile with /Od (optimizer off, so no inlining). Not a shippable DLL."
+        type: boolean
+        default: false
+      source_ref:
+        description: "Build this commit instead of the dispatched ref (e.g. main's SHA as the proof baseline)."
+        type: string
+        default: ""
 
 # A newer push supersedes an in-flight build (cold vcpkg builds are ~30 min;
-# racing runs all try to populate the same cache and none wins).
+# racing runs all try to populate the same cache and none wins). A manual
+# dispatch gets a group of its own, so proof builds of two commits can run side
+# by side without cancelling each other.
 concurrency:
-  group: native-${{ github.ref }}
+  group: ${{ github.event_name == 'workflow_dispatch' && format('native-dispatch-{0}', github.run_id) || format('native-{0}', github.ref) }}
   cancel-in-progress: true
 
 jobs:
@@ -21,6 +37,8 @@ jobs:
         working-directory: native
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_ref || github.sha }}
 
       - uses: ilammy/msvc-dev-cmd@v1
 
@@ -37,7 +55,17 @@ jobs:
           restore-keys: vcpkg-
 
       - name: Configure
+        if: ${{ inputs.noopt != true }}
         run: cmake --preset release
+        env:
+          VCPKG_ROOT: C:\vcpkg
+
+      # Only APMF's own sources get /Od: the vcpkg ports are built by vcpkg with
+      # their own triplet flags, so the dependency cache is shared with the
+      # normal build.
+      - name: Configure (proof build, optimizer off)
+        if: ${{ inputs.noopt == true }}
+        run: cmake --preset release "-DCMAKE_CXX_FLAGS_RELEASE=/Od /DNDEBUG"
         env:
           VCPKG_ROOT: C:\vcpkg
 
@@ -54,6 +82,19 @@ jobs:
       - name: Build
         run: cmake --build build/release
 
+      # PROVENANCE (splitcheck --proof refuses unpaired builds): EVERY run records
+      # the commit it actually compiled (differs from the run's headSha when
+      # source_ref is set) and the optimizer flag, as its OWN artifact
+      # (APMF-build-info), never inside APMF-dll -- that zip stays exactly
+      # APMF.dll + APMF.pdb. noinline is always false here (APMF has no /Ob0
+      # build); the key is kept so the record matches MFO's format.
+      - name: Record the built commit
+        run: |
+          git rev-parse HEAD
+          New-Item -ItemType Directory -Force -Path build/buildinfo | Out-Null
+          $dll = (Get-FileHash -Algorithm SHA256 build/release/APMF.dll).Hash.ToLower()
+          "built=$(git rev-parse HEAD) noinline=false noopt=${{ inputs.noopt == true }} dll_sha256=$dll" | Out-File -FilePath build/buildinfo/build-info.txt -Encoding ascii
+
       - name: Upload DLL
         uses: actions/upload-artifact@v4
         with:
@@ -61,4 +102,13 @@ jobs:
           path: |
             native/build/release/APMF.dll
             native/build/release/APMF.pdb
+          if-no-files-found: error
+
+      # AFTER the DLL: an artifact-service failure on this small record must
+      # never cost the release's APMF-dll upload.
+      - name: Upload build info
+        uses: actions/upload-artifact@v4
+        with:
+          name: APMF-build-info
+          path: native/build/buildinfo/build-info.txt
           if-no-files-found: error
