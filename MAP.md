@@ -550,6 +550,20 @@ Still OFF by default.
   bias no longer applies HERE at all: after F5 it belongs to the SPELL/STAFF seat
   (`SteerScoreForCastClaim`, `AiCastSeats.cpp:523-551`), driven by a ch.8b cast claim
   on the item's own hand. GROUP C keeps its observe-only probe and no steer.
+  **[Probe] bRangedSelect (2026-09-29, phase 1 of the Ranged-selection deny, default 1 during the field
+  cycle, STATUS PRE-RELEASE CHECKLIST):** `RangedEquipProbeThunk` observes `CheckShouldEquip` (0x0F) on the
+  RANGED vtable only, installed inside the GROUP C loop after that vtable's 0x0C identity check (so it needs
+  `EnableWeaponScoreProbe=1`). Calls the original first and returns it unmodified; for a ch.17 claimant it
+  logs the engine answer, the call site (per-runtime return-address labels `kRetAE`/`kRetSE`: pre-loop 44868 /
+  43637, evaluate 44899 / 43666 passes set118/set148) and the sink verdict from
+  `actiongate::RangedProbeClassify`. The slot's value is compared (log only) with the disassembled base
+  `!IsFleeing` (AE 0x817FC0 / SE 0x77DC90, shared by Melee/Ranged/Shield); a foreign hook is chained, a null
+  slot refused. Counters feed `actiongate::RangedProbeHeartbeat` via `RangedGateProbeCounts()`.
+  - **What breaks:** this is the seat a phase-2 deny would answer NO at; it is observe-only now. Never
+    install it on the Melee or Shield vtable from this block (same base function, different facet). The
+    spec row `CombatInventoryItemRanged` lists slot 0x0F; the call-site labels are cosmetic, exact-version.
+    Open review items: REVIEW-BACKLOG APMF-B36 (F2 = phase-2 prerequisite: refuse the deny unless the slot
+    holds the base).
 
 ### `native/core/Input.{h,cpp}` — test surface (OPT-IN, DEFAULT OFF)
 `InputSink` (keyboard button-down) → `Arbiter::DispatchHotkey` (+ each probe's
@@ -781,6 +795,22 @@ to this gate today; only an explicit `kIntent_CombatAction` claim arms anything.
   is its own facet). The seats never look up a form: the anchor is a handle resolved on the
   game thread. The target distance comes from the SAME controller that resolved the actor
   (`ResolveController`). Open items: DENY-COMPLETENESS-AUDIT gap 14; REVIEW-BACKLOG APMF-B32.
+  **[Probe] bRangedSelect (2026-09-29, PASSIVE, default 1 during the field cycle):** rides the existing
+  act()/pop() thunks, no seat of its own (`RangedProbeInstall`, the RANGED-SELECT PROBE section above
+  `ActThunk`). In `ActThunk`, BEFORE any deny: for a ch.17 claimant (`ControlMap::TryGetEquipSet`) it counts
+  the leaf (only while the claim owns Right or Left) and, for `EquipObject` / `EquipRangedWeapon`, reads the
+  context item (`thread+0x128` window, `+0x130` offset, CombatInventoryItem* at context+8 -- the bytes AE
+  48124/48126 and SE 46955/46957 read) and logs it with `RangedProbeClassify`'s sink verdict (the sink's steps
+  2-6 over `equipsink::Categorize`). In `PopThunk`, on the normal path only, for `CheckUnreachableTarget`: the
+  thread state (`+0x148`) before the node's own pop() = its outcome. `RangedProbeHeartbeat` (Arbiter, game
+  thread) prints per-actor leaf summaries ~15 s and a RULE C line ~30 s.
+  - **What breaks:** the observer must stay read-only and must never sit on the denied-pair path of
+    `PopThunk` (the pending ForceFail pop returns before it). `g_rsLeafIdx` and the three leaf vtables are
+    written once in `RangedProbeInstall` and published by the `g_rsEnabled` release store; keep the thunks'
+    acquire loads. The context offsets are measured, not CommonLib's; re-measure before reusing them.
+    The window is read ONLY when the leaf's own attack-state test would read it (`RsEquipLeafWouldReadWindow`,
+    review F1: AE 48124/48126 `cmp [actor+0xC8],0x10000000`, SE 46955/46957 `test [actor+0xC0],0xF0000000`)
+    and only below the window header's top. Open review items: REVIEW-BACKLOG APMF-B36.
 
 ### `native/core/CombatBehaviorRE.h` — the local RE:: extension for the combat tree (measured)
 The `CombatBehaviorTreeNode` layout (10 vfuncs: act 0x02 / pop 0x03 / update 0x04 /

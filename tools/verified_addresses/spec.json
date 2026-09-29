@@ -893,7 +893,7 @@
    "slots": [
     "0x0C"
    ],
-   "source": "native/core/AiCastSeats.cpp:377",
+   "source": "native/core/AiCastSeats.cpp:381",
    "doc": "ADDRESS-TABLE-2026-09-15.md:150"
   },
   {
@@ -907,9 +907,10 @@
     "1.5.97": 264525
    },
    "slots": [
-    "0x0C"
+    "0x0C",
+    "0x0F"
    ],
-   "source": "native/core/AiCastSeats.cpp:377"
+   "source": "native/core/AiCastSeats.cpp:381; slot 0x0F = [Probe] bRangedSelect observe seat (RangedEquipProbeThunk)"
   },
   {
    "seat": "CombatInventoryItemShield",
@@ -925,7 +926,7 @@
     "0x0C",
     "0x0F"
    ],
-   "source": "native/core/AiCastSeats.cpp:377",
+   "source": "native/core/AiCastSeats.cpp:381",
    "doc": "ADDRESS-TABLE-2026-09-15.md:156"
   },
   {
@@ -941,7 +942,7 @@
    "slots": [
     "0x0C"
    ],
-   "source": "native/core/AiCastSeats.cpp:377"
+   "source": "native/core/AiCastSeats.cpp:381"
   },
   {
    "seat": "Leaf.CombatBehaviorAdvance",
@@ -2235,7 +2236,7 @@
     "1.6.1170": 395440,
     "1.5.97": 687590
    },
-   "source": "native/core/EquipGate.cpp:668; AiCastSeats.cpp:1176"
+   "source": "native/core/EquipGate.cpp:668; AiCastSeats.cpp:1297"
   },
   {
    "seat": "RTTI.CombatMagicCaster",
@@ -2246,7 +2247,7 @@
     "1.6.1170": 395744,
     "1.5.97": 687618
    },
-   "source": "native/core/AiCastSeats.cpp:1236; CastSeats.cpp:511"
+   "source": "native/core/AiCastSeats.cpp:1357; CastSeats.cpp:511"
   },
   {
    "seat": "RTTI.Character",

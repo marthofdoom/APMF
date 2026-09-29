@@ -4,10 +4,15 @@
 #include "core/Clock.h"
 #include "core/ControlMap.h"
 #include "core/AiCastSeats.h"
+#include "core/ActionGate.h"   // RangedProbeClassify / RangedProbeLineBudget ([Probe] bRangedSelect)
+#include "core/EquipSink.h"    // CategoryNames
 
 #include <array>
 #include <cmath>
 #include <string_view>
+#include <intrin.h>   // _ReturnAddress (core/EquipGate.cpp precedent)
+#include <mutex>
+#include <unordered_map>
 
 // Win32 INI read for the two group flags below. Declared by hand, exactly
 // like Hook.cpp's GetCurrentThreadId() -- PCH does not pull in <Windows.h>,
@@ -874,6 +879,119 @@ namespace apmf::aicastseats {
         }
 
         // ======================================================================
+        // [Probe] bRangedSelect (2026-09-29) -- PHASE 1 of the Ranged-selection deny. OBSERVE
+        // ONLY: CheckShouldEquip (0x0F) on the RANGED weapon-class vtable, the seat a phase-2
+        // deny would answer NO at (core/ActionGate.cpp's RANGED-SELECT PROBE section has the
+        // whole picture). Calls the original FIRST and returns exactly its answer, always.
+        //
+        // THE SEAT, measured on both unpacked executables: CombatInventory's evaluate (AE 44899 /
+        // SE 43666) calls item->CheckShouldEquip(controller) for every candidate that passed the
+        // slot and range tests, and adds it to an equipment set only on YES. Ranged does not
+        // override 0x0F: its slot holds the shared base `sub rsp,0x28; mov rcx,rdx; call
+        // IsFleeing; test al,al; sete al; ret` -- AE 0x817FC0 (IsFleeing AE 33232), SE 0x77DC90
+        // (SE 32485) -- so the signature is bool(CombatInventoryItem*, CombatController*), a
+        // scalar return (no hidden out-slot possible), the same shape ShieldEquip_t already runs
+        // on the same slot of the Shield vtable. The vtable is the one GROUP C just identity-
+        // checked at slot 0x0C, and it is a verified row (CombatInventoryItemRanged): the self-
+        // check proves the VTABLE; slot 0x0F's value is verified offline (spec.json lists 0x0F,
+        // the doc row reads the base) and compared here for the LOG only (review F2). A phase-2
+        // DENY here must instead refuse unless the slot holds the base (APMF-B36). Its call sites (return addresses) are
+        // labelled per exact runtime below; anything else prints "unlabelled".
+        //
+        // It is installed on the Ranged vtable ONLY (the Melee and Shield vtables hold the same
+        // base function in their own slots; this write touches none of them).
+        // ======================================================================
+        using RangedEquip_t = bool (*)(RE::CombatInventoryItem*, RE::CombatController*);
+        constexpr std::uintptr_t    kCheckShouldEquipBaseAE = 0x817FC0;   // 1.6.1170, shared Melee/Ranged/Shield 0x0F
+        constexpr std::uintptr_t    kCheckShouldEquipBaseSE = 0x77DC90;   // 1.5.97
+        std::atomic<std::uintptr_t> g_rangedVtableAddr{ 0 };
+        std::uintptr_t              g_rangedEquipOrig = 0;   // set ONCE at install
+        std::atomic<bool>           g_rangedGateArmed{ false };
+        std::atomic<std::uint64_t>  g_rgSeen{ 0 }, g_rgClaimed{ 0 }, g_rgYes{ 0 }, g_rgNo{ 0 }, g_rgWouldRefuse{ 0 };
+        std::mutex                                                g_rgRlMx;
+        std::unordered_map<std::uint64_t, std::pair<std::uint64_t, std::uint32_t>> g_rgRl;   // key -> {lastMs, suppressed}
+        constexpr std::uint64_t kRangedGateLineMs = 10000;
+
+        struct RetLabel { std::uintptr_t rva; const char* name; };
+        // Return addresses of the five `call qword ptr [rax+0x78]` sites (3-byte call, ret = site+3).
+        // AE: pre-loop 44868+0x262 (0x80FF32); evaluate 44899 at 0x813AF2 / 0x813D38 (the two
+        // passes that fill the primary set +0x118) and 0x814270 / 0x8144B2 (the secondary set
+        // +0x148). SE: 43637 at 0x775F01; 43666 at 0x77977D / 0x779959 / 0x779EA0 / 0x77A079,
+        // same order (the third adds to +0x148 on SE too).
+        constexpr RetLabel kRetAE[] = { { 0x80FF35, "pre-loop" }, { 0x813AF5, "set118-pass1" }, { 0x813D3B, "set118-pass2" },
+                                        { 0x814273, "set148-pass1" }, { 0x8144B5, "set148-pass2" } };
+        constexpr RetLabel kRetSE[] = { { 0x775F04, "pre-loop" }, { 0x779780, "set118-pass1" }, { 0x77995C, "set118-pass2" },
+                                        { 0x779EA3, "set148-pass1" }, { 0x77A07C, "set148-pass2" } };
+
+        const char* RangedCallSite(std::uintptr_t a_rva) {
+            static const bool onAE = IsRuntime1_6_1170();
+            static const bool onSE = IsRuntime1_5_97();
+            if (onAE) for (const auto& r : kRetAE) if (r.rva == a_rva) return r.name;
+            if (onSE) for (const auto& r : kRetSE) if (r.rva == a_rva) return r.name;
+            return "unlabelled";
+        }
+
+        bool RangedEquipProbeThunk(RE::CombatInventoryItem* a_this, RE::CombatController* a_cc) {
+            const auto retRva = reinterpret_cast<std::uintptr_t>(_ReturnAddress()) - REL::Module::get().base();
+            const auto vt         = *reinterpret_cast<std::uintptr_t*>(a_this);
+            const auto expectedVt = g_rangedVtableAddr.load(std::memory_order_acquire);
+            RangedEquip_t orig;
+            if (vt == expectedVt && g_rangedEquipOrig != 0) {
+                orig = reinterpret_cast<RangedEquip_t>(g_rangedEquipOrig);
+            } else {
+                // Structurally unreachable (installed on the one Ranged vtable). Never fabricate
+                // an answer: recover the live original of whatever vtable called us.
+                spdlog::error("[ranged-probe] Ranged 0x0F: vtable 0x{} != installed Ranged vtable 0x{} -- "
+                              "recovering the LIVE original instead of fabricating a result.",
+                              apmf::log::Hex(vt, 16), apmf::log::Hex(expectedVt, 16));
+                orig = RecoverLiveOriginal<RangedEquip_t>(vt, kCheckShouldEquip);
+            }
+
+            const bool result = orig(a_this, a_cc);   // ENGINE ANSWERS FIRST -- returned unmodified below
+            g_rgSeen.fetch_add(1, std::memory_order_relaxed);
+            if (!a_cc || apmf::ControlMap::Get().ControlledCount() == 0) return result;
+
+            auto actorPtr = a_cc->attackerHandle.get();   // NiPointer<Actor>, held for the reads below
+            auto* actor   = actorPtr.get();
+            if (!actor) return result;
+            const auto fid = actor->GetFormID();
+
+            RE::TESForm* const item = a_this->item;
+            apmf::actiongate::RangedProbeView v{};
+            if (!apmf::actiongate::RangedProbeClassify(fid, item, a_this->itemSlot.equipSlot, v)) return result;
+            g_rgClaimed.fetch_add(1, std::memory_order_relaxed);
+            (result ? g_rgYes : g_rgNo).fetch_add(1, std::memory_order_relaxed);
+            const bool wouldRefuse = result && v.wouldDeny;
+            if (wouldRefuse) g_rgWouldRefuse.fetch_add(1, std::memory_order_relaxed);
+
+            const auto    itemId     = item ? item->GetFormID() : 0;
+            std::uint32_t suppressed = 0;
+            {
+                const auto       now = apmf::clock::MonotonicMs();
+                const auto       key = RlKey(fid, itemId) ^ (result ? 0x1ull : 0x0ull);
+                std::scoped_lock lk(g_rgRlMx);
+                auto&            e = g_rgRl[key];
+                if (e.first != 0 && now - e.first < kRangedGateLineMs) {
+                    ++e.second;
+                    return result;
+                }
+                suppressed = e.second;
+                e          = { now, 0 };
+            }
+            if (!apmf::actiongate::RangedProbeLineBudget()) return result;
+            char owned[48], competes[48];
+            spdlog::info("[ranged-probe] 0x{} '{}' SELECT-GATE Ranged CheckShouldEquip item=0x{} '{}' engine={} "
+                         "site={} (ret 0x{}) owned={} competes={} inSet={} sink={} phase2={} (+{} since last)",
+                         apmf::log::Hex(fid), actor->GetName() ? actor->GetName() : "?", apmf::log::Hex(itemId),
+                         item && item->GetName() ? item->GetName() : "?", result ? "YES" : "NO",
+                         RangedCallSite(retRva), apmf::log::Hex(retRva),
+                         apmf::equipsink::CategoryNames(v.owned, owned, sizeof(owned)),
+                         apmf::equipsink::CategoryNames(v.competes, competes, sizeof(competes)), v.inSet ? 1 : 0,
+                         v.verdict, wouldRefuse ? "WOULD-REFUSE here" : "no change", suppressed);
+            return result;
+        }
+
+        // ======================================================================
         // SEAT 2 -- WHETHER to cast. CombatMagicCaster::CheckStartCast, vfunc 0x06.
         //
         // THIS PROBE IS THE INNER HOOK on this slot when MFO is also present
@@ -1129,6 +1247,11 @@ namespace apmf::aicastseats {
         // hardcodes the [AiCastSeats] section) for that reason.
         const bool dualWieldPref = GetPrivateProfileIntA("EquipGate", "EnableDualWieldPreference", 0,
                                                           "Data/SKSE/Plugins/APMF.ini") != 0;
+        // [Probe] bRangedSelect (2026-09-29): the PASSIVE Ranged CheckShouldEquip (0x0F) observe seat.
+        // Default 1 while the Ranged-selection field cycle runs; back to 0 before a release cut
+        // (Docs/STATUS.md). Same key core/ActionGate.cpp reads for the leaf half.
+        const bool rangedProbe = GetPrivateProfileIntA("Probe", "bRangedSelect", 1,
+                                                        "Data/SKSE/Plugins/APMF.ini") != 0;
         int nScore = 0, nStart = 0, nStop = 0, nTgt = 0, nWeaponScore = 0, nWeaponRefused = 0;
         int nShieldEquip = 0;
 
@@ -1379,6 +1502,35 @@ namespace apmf::aicastseats {
                             ++nShieldEquip;
                         }
                     }
+
+                    // [Probe] bRangedSelect -- Ranged ONLY, after the SAME 0x0C identity check
+                    // passed for this exact vtable object. OBSERVE-ONLY (RangedEquipProbeThunk).
+                    // The live slot is compared with the disassembled base function for THIS
+                    // runtime; another DLL's hook there is logged and chained, never refused
+                    // (the thunk only observes), a null slot is refused.
+                    if (rangedProbe && std::string_view(spec.tag) == "Ranged") {
+                        const auto curEquipFn = reinterpret_cast<std::uintptr_t>(
+                            RecoverLiveOriginal<RangedEquip_t>(vt.address(), kCheckShouldEquip));
+                        REL::Relocation<std::uintptr_t> baseFn{
+                            REL::Offset(onAE1170 ? kCheckShouldEquipBaseAE : kCheckShouldEquipBaseSE) };
+                        if (curEquipFn == 0) {
+                            spdlog::error("[ranged-probe] Ranged vtable 0x{} slot 0x0F holds a null pointer -- "
+                                          "REFUSED (the Ranged selection seat is NOT observed; never a blind "
+                                          "vtable write).", apmf::log::Hex(vt.address(), 16));
+                        } else {
+                            g_rangedEquipOrig = curEquipFn;
+                            g_rangedVtableAddr.store(vt.address(), std::memory_order_release);
+                            vt.write_vfunc(kCheckShouldEquip, &RangedEquipProbeThunk);
+                            g_rangedGateArmed.store(true, std::memory_order_release);
+                            spdlog::info("[ranged-probe] Ranged CheckShouldEquip (slot 0x0F) OBSERVED on vtable 0x{} "
+                                         "(the vtable GROUP C just identity-checked); the slot held {} 0x{}. "
+                                         "Passive: the engine's answer is returned unmodified.",
+                                         apmf::log::Hex(vt.address(), 16),
+                                         curEquipFn == baseFn.address() ? "the disassembled base function"
+                                                                        : "ANOTHER function (a prior hook, chained)",
+                                         apmf::log::Hex(curEquipFn, 16));
+                        }
+                    }
                 }
             }
         }   // groupC
@@ -1390,6 +1542,10 @@ namespace apmf::aicastseats {
         g_itemScoreProbeEnabled.store(groupA, std::memory_order_relaxed);
         g_scoreSteerEnabled.store(scoreSteer && nScore > 0, std::memory_order_relaxed);
         g_dualWieldPrefEnabled.store(dualWieldPref && nShieldEquip > 0, std::memory_order_relaxed);
+        if (rangedProbe && !g_rangedGateArmed.load(std::memory_order_relaxed))
+            spdlog::warn("[ranged-probe] Ranged CheckShouldEquip (0x0F) NOT observed -- it rides GROUP C, which "
+                         "is {} on this build (see the GROUP C lines above). The leaf half "
+                         "(core/ActionGate.cpp) is independent.", groupC ? "not installed for Ranged" : "OFF");
 
         spdlog::info("[aicastseats] OBSERVE-ONLY seat probe: GROUP A (item score) {} -- CalculateScore "
                      "on {} item vtable(s). GROUP B (caster seats) {} -- CheckStartCast/CheckStopCast/"
@@ -1417,6 +1573,17 @@ namespace apmf::aicastseats {
                      !dualWieldPref ? "flag is off" :
                      nShieldEquip == 0 ? "flag is on but the Shield CheckShouldEquip install was refused, so it cannot fire" :
                                          "Shield admission-deny is live");
+    }
+
+    RangedGateCounts RangedGateProbeCounts() {
+        RangedGateCounts c{};
+        c.seen        = g_rgSeen.load(std::memory_order_relaxed);
+        c.claimed     = g_rgClaimed.load(std::memory_order_relaxed);
+        c.yes         = g_rgYes.load(std::memory_order_relaxed);
+        c.no          = g_rgNo.load(std::memory_order_relaxed);
+        c.wouldRefuse = g_rgWouldRefuse.load(std::memory_order_relaxed);
+        c.armed       = g_rangedGateArmed.load(std::memory_order_relaxed);
+        return c;
     }
 
 }
