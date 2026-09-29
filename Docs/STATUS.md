@@ -365,6 +365,10 @@ ClickUp 86e3cr9u7, tier A (new engine seat + ABI). marth approved 2026-09-25 ("y
 - **State:** CI-only, not field-run, awaiting the tier-A Opus review. The MFO side (retire `Targeting.cpp`'s pin,
   become a client) is a separate brief.
 
+## ✅ SHIPPED v0.9.10 (cut 2026-09-29) -- KEEP A FOLLOWER OUT OF THE FIGHT, LEASH IT, AND PLAY AN ANIMATION AT A TARGET
+
+GitHub tag `v0.9.10`. DLL `f904359a…` (CI run 36612695163, main 3c38409). The esl is still required. NOT on Nexus yet: marth uploads. Field status is in the CHANGELOG v0.9.10 block: ch.22/ch.23/idle v2/gate probe 2/log rotation ran in the field; the idle entry confirmation and the ranged probe did not. Pre-release probes reset: bGateProbe2=0, bRangedSelect=0 (INI + code). The release was cut with `release.sh --run 36612695163` (the new run selector). Cast-animation work (fix/apmf-cast-instant-caster, feat/apmf-castertype-probe) is NOT in this release: marth's release gate says no further release until every in-combat cast is animated.
+
 ## ✅ SHIPPED v0.9.9 (cut 2026-09-25) -- START A FIGHT AND PIN THE TARGET (ABI v14)
 
 GitHub tag `v0.9.9`. DLL `c24dba59…`, esl unchanged (still required). NOT on Nexus yet: marth tests first. Not field-run.
