@@ -750,13 +750,46 @@ namespace apmf::actiongate {
         }
 
         // The EquipObject / EquipRangedWeapon leaf is about to equip the context's item.
+        // REVIEW F1 (827f320): both equip leaves test the actor BEFORE they touch the context
+        // window, and on that test they fail without reading it -- the probe must not read what
+        // the engine skipped. Measured, both runtimes:
+        //   AE 48124 0x877DDD `cmp dword [actor+0xC8],0x10000000; jae 0x877F57` (SetFailed+Ascend)
+        //   AE 48126 0x878150 `cmp dword [actor+0xC8],0x10000000; jae 0x8781F5` (SetFailed+Ascend)
+        //   SE 46955 0x7E0724 `test dword [actor+0xC0],0xF0000000; jne 0x7E085D`
+        //   SE 46957 0x7E0AA0 `test dword [actor+0xC0],0xF0000000; jne 0x7E0B4A`
+        // actor+0xC8 (AE) / +0xC0 (SE) = ActorState (Actor+0xC0 / +0xB8, CommonLib AsActorState)
+        // + actorState1 (+0x08); bits 28-31 = meleeAttackState. So the leaf equips only while
+        // GetAttackState() == kNone. The engine takes the actor from the controller at
+        // [thread+0x158]+0x20 (a cached pointer or that controller's attackerHandle @0x28): the
+        // probe resolves the same controller's handle and refuses to read on any doubt.
+        bool RsEquipLeafWouldReadWindow(void* a_control) {
+            auto* tc = reinterpret_cast<apmf::cbt::TreeControl*>(a_control);
+            if (!tc || !tc->master_controller) return false;
+            void* hop = *reinterpret_cast<void* const*>(reinterpret_cast<std::uintptr_t>(tc->master_controller) + 0x20);
+            if (!hop) return false;
+            auto actor = reinterpret_cast<apmf::cbt::ControllerMini*>(hop)->attackerHandle.get();
+            if (!actor) return false;
+            const auto* st = actor->AsActorState();
+            return st && st->GetAttackState() == RE::ATTACK_STATE_ENUM::kNone;
+        }
+        static_assert(offsetof(RE::ActorState, actorState1) == 0x08,
+                      "ActorState::actorState1 moved -- re-measure the equip leaves' attack-state test (F1)");
+
         void RangedProbeEquipLeaf(RE::FormID a_fid, std::size_t a_leafIdx, std::uint32_t a_kind, void* a_control) {
+            if (!RsEquipLeafWouldReadWindow(a_control)) return;   // F1: the engine diverts before its read
             const auto thread = reinterpret_cast<std::uintptr_t>(a_control);
             auto* const winPtr = *reinterpret_cast<std::uintptr_t* const*>(thread + kThreadWindowPtr);
             if (!winPtr) return;   // the engine would fault here; the probe just stays silent
             const auto base = *winPtr;
             if (!base) return;
-            const auto ctx  = base + *reinterpret_cast<const std::uint32_t*>(thread + kThreadWindowOff);
+            // F1 bound: the window points at a data-stack header {base +0x00, capacity +0x08, top
+            // +0x0C} (the push AE 33171 grows exactly that header; its out-pair is {header, oldTop},
+            // which is what a context window stores). A live context lies below the top, so the
+            // item slot must end at or below it.
+            const auto off = *reinterpret_cast<const std::uint32_t*>(thread + kThreadWindowOff);
+            const auto top = *reinterpret_cast<const std::uint32_t*>(reinterpret_cast<std::uintptr_t>(winPtr) + 0x0C);
+            if (static_cast<std::uint64_t>(off) + kEquipCtxItem + sizeof(void*) > top) return;
+            const auto ctx  = base + off;
             auto* item      = *reinterpret_cast<RE::CombatInventoryItem* const*>(ctx + kEquipCtxItem);
             if (!item) return;
             const auto itemVt = *reinterpret_cast<const std::uintptr_t*>(item);

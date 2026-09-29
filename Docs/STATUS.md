@@ -26,7 +26,9 @@ PASSIVE, no ABI change, `[Probe] bRangedSelect` (default **1** while testing; PR
   `0x8144B2`) CombatEquipment set. Pre-loop helper AE 44868 also calls 0x0F (`0x80FF32`); SE sites `0x775F01`,
   `0x77977D`, `0x779959`, `0x779EA0`, `0x77A079`.
 - Melee, Ranged and Shield do NOT override 0x0F: all hold the base `return !IsFleeing(ctrl)` (AE `0x817FC0`, SE
-  `0x77DC90`; regenerated spec row confirms it on the Ranged vtable). A bow is refused at selection only while
+  `0x77DC90`). What is verified, exactly (review F2): the self-check (189/189 rows) proves the Ranged VTABLE
+  identity; the slot-0x0F value is verified OFFLINE (the regenerated doc row reads 0x817FC0 / 0x77DC90) and is
+  compared at install for the LOG only -- the generated header holds no slot data, so it could not change. A bow is refused at selection only while
   the actor flees. **This slot on the Ranged vtable is the phase-2 deny seat.**
 - `path=CombatNode` = two LEAVES: `CombatBehaviorEquipObject` (act AE 47732 -> 48124; its EquipObject call
   returns to `0x877F1B`, the ret of all 114 bow refusals) and `CombatBehaviorEquipRangedWeapon` (47733 -> 48126:
@@ -50,7 +52,8 @@ PASSIVE, no ABI change, `[Probe] bRangedSelect` (default **1** while testing; PR
   sink=<verdict> phase2=WOULD-REFUSE here|no change` -- the new observe seat (`core/AiCastSeats.cpp`
   `RangedEquipProbeThunk`, Ranged vtable slot 0x0F only, engine answer returned unmodified).
 - `EQUIP-LEAF leaf=EquipObject|EquipRangedWeapon item=... class=Melee|Ranged|Shield|Torch|other ... sink=` --
-  what the tree is about to equip (read-only context read in ch.7's existing act thunk).
+  what the tree is about to equip (read-only context read in ch.7's existing act thunk; read only when the
+  leaf's own attack-state test would let it read, and bounded by the data-stack top -- review F1).
 - `UNREACHABLE-CHECK state=0|1|2 REACHABLE|FAILED|INTERRUPTED ran=<ms>` -- CheckUnreachableTarget's outcome
   (ch.7's existing pop thunk).
 - `LEAVES last ~15s while the ch.17 claim owned a hand (owned=...): MaintainOptimalRange x12, ...` -- per actor,
@@ -60,7 +63,8 @@ PASSIVE, no ABI change, `[Probe] bRangedSelect` (default **1** while testing; PR
   ~30 s, zeros included (RULE C).
 - Cost: act()/pop() run once per node ENTRY, not per frame. Per leaf act of any combat actor: one hash lookup,
   the ControlledCount pre-gate, one handle resolve and one RCU claim read; claimants add one short lock. The
-  0x0F seat runs per inventory evaluation. No engine call, lookup or allocation on the unclaimed path.
+  0x0F seat runs per inventory evaluation. With any claim live, the unclaimed path still costs 1-2 handle-table
+  lookups per leaf act (the actor resolve); no form lookup, no allocation, no log (review F3).
 
 **FIELD CHECKS (next session, principle 5, NOT YET OBSERVED):**
 1. Startup: `[ranged-probe] Ranged CheckShouldEquip (slot 0x0F) OBSERVED on vtable ...` (it should say the slot
@@ -75,6 +79,9 @@ PASSIVE, no ABI change, `[Probe] bRangedSelect` (default **1** while testing; PR
    in step with the MFO/APMF `equip-obs ... verdict=deny name='Glass Bow'` lines; the LEAVES summaries (which
    ranged / melee leaves run while the swords are owned); `UNREACHABLE-CHECK` lines while the dragon flies
    (does the check run at all for this actor, and does it end REACHABLE / FAILED / INTERRUPTED).
+
+Review (tier A, 827f320): F1 fixed in this branch; F2-F6 deferred as APMF-B36 (Docs/REVIEW-BACKLOG.md). **F2 is a
+PHASE-2 PREREQUISITE:** the deny must refuse to install unless slot 0x0F holds the disassembled base.
 
 **What decides the phase-2 design:**
 - If `SELECT-GATE` fires for the claimant with the bow at `set118-*` (and/or `set148-*`) and `wouldRefuse`

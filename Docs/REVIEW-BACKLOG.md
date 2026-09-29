@@ -18,6 +18,19 @@ This file tracks REVIEW findings only.
 ---
 
 ## OPEN
+### APMF-B36 (SEV-4 / SEV-5; F2 = PHASE-2 PREREQUISITE) -- [Probe] bRangedSelect ranged-select probe review items
+Raised against `827f320` (`feat/apmf-ranged-select-probe`), tier-A Opus 5.5 review 2026-09-29 (verdict: nothing above
+SEV-3; F1 promoted by carve-out (b) and FIXED on the branch before merge). Verbatim from the reviewer's log
+(scratchpad agentlogs/review-apmf-ranged-probe.md, "FINDINGS"):
+- **FIXED (same branch, carve-out b):** F1 SEV-4: the "the engine reads the same bytes a few instructions later" argument holds on every path EXCEPT 48124's early actor-state fail (0x877DDD `cmp [actor+0xC8],0x10000000; jae` -> SetFailed+Ascend, the window is never read). In that case the probe reads the window the engine skipped. The window is set by the parent node, independent of that actor check, so in practice it is still valid; the residual is a stale/garbage ctx making the probe dereference `item` (vtable, +0x10, GetName vfunc) on the combat thread = a CTD the engine would not have had. Scenario: none observed; needs a parent that runs the Equip leaf with no context pushed for an actor failing the +0xC8 test. Fix (backlog): bound the offset by the context buffer's size before reading ctx+8, or read the window only when the leaf's own actor test would pass. Empty window: ptr null -> probe returns silently (engine would fault).
+  Fix: `core/ActionGate.cpp` `RsEquipLeafWouldReadWindow` mirrors the attack-state test of all four leaf bodies (AE 48124 0x877DDD / 48126 0x878150, SE 46955 0x7E0724 / 46957 0x7E0AA0) and `RangedProbeEquipLeaf` also bounds `off + 0x10` by the window header's top (+0x0C).
+- **PHASE-2 PREREQUISITE (write into the phase-2 brief):** F2 SEV-4: "189/189 + byte-identical header" does not prove slot 0x0F: slots are doc-only in the generator, the header cannot change, and SeatVerified checks the vtable address. Adequate for an observe-only chaining thunk (the Shield TASK2 precedent), but the phase-2 DENY at this seat alters the answer and must add an install-time guard (refuse unless the slot holds the disassembled base, or log-and-refuse a foreign hook), and the docs/author claim should say "vtable verified; slot 0x0F verified offline (doc row) and compared at install for the log".
+  (Docs wording corrected on the branch: STATUS and the AiCastSeats.cpp seat comment.)
+- **FIXED (docs, same branch):** F3 SEV-5: STATUS says "No engine call, lookup or allocation on the unclaimed path"; with any claim live the unclaimed path does 1-2 handle-table lookups per leaf act (the code comment's "no form lookup" is accurate). Wording.
+- F4 SEV-5: the LEAVES summaries are outside the 6000-line cap (about 0.6 MB/h at four claimed followers in constant combat). Acceptable for a field cycle; noted.
+- F5 SEV-5: RsKey = (actor<<32) ^ (kind<<28) ^ formId: the full 32-bit formId overlaps the kind bits, so EQUIP-LEAF keys for different kinds/forms can collide and share one 10 s rate slot. Logging only.
+- F6 SEV-5: unreachActMs is set at act and cleared only at an observed pop; a pop on the denied-pair path would leave it stale (ran= too long). Unreachable today (CheckUnreachableTarget is never denied).
+
 
 ### APMF-B1 — `APMF_API.h`'s Repoint contract omits the FromPackage carve-out
 - **Raised:** Fable review of `019e70e`/`22154fe`/`59764a8` (finding 2, MEDIUM). Left out of that branch deliberately and correctly — the header is byte-shared and append-only.

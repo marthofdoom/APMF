@@ -562,6 +562,8 @@ Still OFF by default.
   - **What breaks:** this is the seat a phase-2 deny would answer NO at; it is observe-only now. Never
     install it on the Melee or Shield vtable from this block (same base function, different facet). The
     spec row `CombatInventoryItemRanged` lists slot 0x0F; the call-site labels are cosmetic, exact-version.
+    Open review items: REVIEW-BACKLOG APMF-B36 (F2 = phase-2 prerequisite: refuse the deny unless the slot
+    holds the base).
 
 ### `native/core/Input.{h,cpp}` — test surface (OPT-IN, DEFAULT OFF)
 `InputSink` (keyboard button-down) → `Arbiter::DispatchHotkey` (+ each probe's
@@ -806,6 +808,9 @@ to this gate today; only an explicit `kIntent_CombatAction` claim arms anything.
     `PopThunk` (the pending ForceFail pop returns before it). `g_rsLeafIdx` and the three leaf vtables are
     written once in `RangedProbeInstall` and published by the `g_rsEnabled` release store; keep the thunks'
     acquire loads. The context offsets are measured, not CommonLib's; re-measure before reusing them.
+    The window is read ONLY when the leaf's own attack-state test would read it (`RsEquipLeafWouldReadWindow`,
+    review F1: AE 48124/48126 `cmp [actor+0xC8],0x10000000`, SE 46955/46957 `test [actor+0xC0],0xF0000000`)
+    and only below the window header's top. Open review items: REVIEW-BACKLOG APMF-B36.
 
 ### `native/core/CombatBehaviorRE.h` — the local RE:: extension for the combat tree (measured)
 The `CombatBehaviorTreeNode` layout (10 vfuncs: act 0x02 / pop 0x03 / update 0x04 /

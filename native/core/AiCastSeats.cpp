@@ -892,8 +892,10 @@ namespace apmf::aicastseats {
         // (SE 32485) -- so the signature is bool(CombatInventoryItem*, CombatController*), a
         // scalar return (no hidden out-slot possible), the same shape ShieldEquip_t already runs
         // on the same slot of the Shield vtable. The vtable is the one GROUP C just identity-
-        // checked at slot 0x0C, and it is a verified row (CombatInventoryItemRanged, slots 0x0C
-        // and 0x0F in tools/verified_addresses/spec.json). Its call sites (return addresses) are
+        // checked at slot 0x0C, and it is a verified row (CombatInventoryItemRanged): the self-
+        // check proves the VTABLE; slot 0x0F's value is verified offline (spec.json lists 0x0F,
+        // the doc row reads the base) and compared here for the LOG only (review F2). A phase-2
+        // DENY here must instead refuse unless the slot holds the base (APMF-B36). Its call sites (return addresses) are
         // labelled per exact runtime below; anything else prints "unlabelled".
         //
         // It is installed on the Ranged vtable ONLY (the Melee and Shield vtables hold the same
