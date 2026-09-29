@@ -9,6 +9,132 @@ build/finding/workflow change.
 - `[Probe] bRangedSelect` -> 0 in `APMF.ini` AND the code default in `core/ActionGate.cpp` `RangedProbeInstall`
   and `core/AiCastSeats.cpp` `Install` (both read the key with default 1 during the field cycle).
 - `[Travel] bGateProbe2` -> 0 in `APMF.ini` (see its HEAD OF WORK entry below).
+- `[Probe] bCasterTypeCensus` -> 0 in `APMF.ini` AND the code default in `core/CasterTypeCensus.cpp` `Install`
+  (reads the key with default 1 during the field cycle).
+
+## HEAD OF WORK 2026-09-29 -- CASTER-TYPE CENSUS (`[ctcensus]`), branch `feat/apmf-castertype-probe`, NOT merged
+
+Design Q-L (combat-substrate design §8/§12): the release gate needs every in-combat cast animated, and
+Harbinger's ch.8b seats sit on 2 of the engine's 15 `CombatMagicCaster` types. Before "widen seat 0" or
+"seat more types", OBSERVE which type the engine builds and fires per claimed spell (principle 5). PASSIVE,
+no ABI change, `[Probe] bCasterTypeCensus` (default **1** while testing; PRE-RELEASE CHECKLIST above).
+marth 2026-09-29: the animated requirement is AE 1.6.1170; 1.5.97 may keep an unanimated road where needed.
+AUTO fans become N real animated casts, lowest HP first.
+
+**What the engine does (disassembled, 1.6.1170 AND 1.5.97; agentlog `apmf-castertype-probe.md`, tools
+`scratchpad/re-ct/`):**
+- **Classify.** `CombatMagicItemData` slot 1 (AE 45321 `0x81D830` / SE 43931 `0x7811F0`) keys each effect as
+  `archetype<<16 | avByte<<8 | hostile<<1 | self`. `self` = the resolver's `+0x4c` (spell delivery == Self at
+  ctor; seat 0 flips it). `avByte` = the effect's primary AV for the 17 archetypes whose info flag bit 1 is set
+  (AE `0x1FD3028` / SE `0x1DB0028`: ValueMod, Absorb, DualValueMod, Calm, Demoralize, Frenzy, Invisibility,
+  NightEye, Paralysis, TurnUndead, ValueAndParts, AccumulateMagnitude, PeakValueMod, Rally, EnhanceWeapon,
+  Banish, GrabActor), else 0xFF; those archetypes get a second lookup on the secondary AV. The spell's item,
+  and so its caster type, is the row of its HIGHEST-scoring effect (AE 45325 `0x81DBA0` keeps the best row
+  with a non-null creator).
+- **The table** (AE `0x20163B0` / SE `0x1DF2B00`, 23 rows, identical on both):
+
+  | Key (archetype, AV, self, hostile) | Caster |
+  |---|---|
+  | ValueMod Health, other, hostile | **Offensive** |
+  | ValueMod Magicka / Stamina, other, hostile | no caster (null creator) |
+  | Stagger / Disarm, other, hostile | Stagger / Disarm |
+  | CommandSummoned, Banish (AV 1), TurnUndead (AV 1), hostile | TargetEffect |
+  | Paralysis (AV Paralysis), hostile | Paralyze |
+  | Script, hostile (other) or non-hostile (self) | Script |
+  | ValueMod Health / Magicka, self, beneficial | **Restore** |
+  | ValueMod Stamina, self, beneficial | no caster |
+  | ValueMod WardPower, self | Ward |
+  | SummonCreature, self or other | Summon |
+  | Cloak, self | Cloak |
+  | Light, self | Light |
+  | Invisibility (AV Invisibility), self | Invisibility |
+  | BoundWeapon, self | BoundItem |
+  | ValueMod DamageResist, self | Armor |
+  | Reanimate, other | Reanimate |
+
+  NO row at all: Calm, Demoralize (Fear), Frenzy, Rally (Courage), every other ValueMod AV (fortify skills,
+  resists, Muffle's noise AV), NightEye, DetectLife, Telekinesis, Dispel, cures, and every BENEFICIAL spell
+  delivered at another actor except Summon. Those never get a `CombatInventoryItem`, so no caster, ever.
+- **Build.** `CombatBehaviorContextMagic` ctor (AE `0x89EAE0`) calls item vfunc 0x16 (the spell) and 0x15
+  `CreateCaster` (Restore item AE `0x832510` -> ctor `0x81F710`). `EquipGate` 0x0F already covers all 15
+  magic item vtables (Armor included), so a claimed item is admitted at equip whatever its type.
+- **Fire.** `NotifyStartCast` (caster 0x0B, `void(this, CombatController*)`) is called when the hand caster is
+  released (after AE 34445 `0x5BF0B0` / SE 33665 `0x54FA30` sets its state 3 -> 4): AE `0x89F2B0`, `0x89FEB0`,
+  `0x8A2369`; SE `0x808A30`. For concentration it is called right after StartCast succeeds (AE `0x89EFB8`).
+- **Per-type overrides** (caster vtable slots): 0x06 CheckStartCast, every type (its own native "should I";
+  GMSTs: Ward cooldown + magicka limit + duration, Summon duration, Stagger / Disarm distance, Cloak distance +
+  tactical duration, Armor distance, Reanimate a corpse search). 0x07 CheckStopCast: Offensive, Ward, Restore,
+  Stagger, Cloak, Light, Armor (the rest base). 0x08/0x09 only Offensive. **0x0A GetMagicTarget and 0x0D
+  SetupAimController: only Reanimate overrides (the corpse).** 0x0B: Offensive, Restore. 0x0C: Offensive,
+  Restore, Summon, Disarm, Paralyze, Script, Reanimate.
+- **Armor is a real caster.** `VTABLE_CombatMagicCasterArmor` (AE 211222 `0x18CD4D0`, SE 265023 `0x1687268`)
+  walks to `{Armor, CombatMagicCaster, CombatObject, NiRefObject}` on both. ENGINE_NOTES §0.28 ("a vtable
+  symbol with no class") does not hold for these binaries. It now has a VerifiedAddresses row (190/190 both).
+- **1.5.97 seat 0 (design R15): already seated.** `core/CastClassify.cpp` installs on 1.6.1170 AND 1.5.97
+  since the 2026-09-15 pass; the SE visitor `0x7811F0` reads `+0x4c`, `+0xC0`, `+0xC4` exactly like AE. The
+  design's R15 row and CHANNEL-MAP 8b's "SEAT 0 is AE-only" are stale (not edited in this branch).
+
+**What that means for Q-L (from the disassembly; the census has to confirm it):**
+- Seat 0 only flips the self byte. Widened to every claimed beneficial form it moves a spell cast AT ANOTHER
+  actor into the SELF row of the same effect: heal / magicka -> Restore, DamageResist -> Armor, Cloak -> Cloak,
+  Light -> Light, Invisibility -> Invisibility, BoundWeapon -> BoundItem, WardPower -> Ward. **It cannot put a
+  spell into Restore or Offensive**, and it cannot help a spell whose effect has no row.
+- Self-delivered spells already key their own row natively (self heals Restore, Oakflesh Armor, Candlelight
+  Light, wards Ward, conjurations Summon, bound weapons BoundItem, cloaks Cloak). For them the question is not
+  classification: it is whether the engine BUILDS and FIRES that type under a claim with only 0x0F forcing the
+  equip and that type's OWN CheckStartCast deciding (no claim seat answers WHETHER on those 13 types).
+- "Classify everything into Restore/Offensive" would need a different seat-0 answer (substituting the row the
+  classifier keeps, i.e. engine table data as new addresses), not a wider version of today's. Restore /
+  Offensive would then answer WHETHER/WHERE/HOW LONG from the claim; the hand still casts the spell with its own
+  delivery. A summon or buff through Restore loses nothing Restore overrides except its native gates, but a
+  Reanimate through Offensive loses its corpse targeting (0x0A / 0x0D). That is a design question, not
+  something this probe does.
+
+**The probe.** `native/core/CasterTypeCensus.{h,cpp}`, seats 0x06 + 0x0B on all 15 caster vtables (observe
+only; 0x06 after the chain answers, 0x0B before chaining a void), windows per (actor, hand, driven form,
+target) from the published claims, `Poll()` on the Arbiter seat. Log lines (`[ctcensus]`):
+- `OPEN #s.i driven= spell= hand= target=(self|other) conc= controller= [| series continues, N ms after the
+  previous window's fire] | predicted native[...] seat0[...]`
+- `BUILT type=T item= ... at +N ms -- CheckStartCast answered YES|NO` (first caster of the driven form)
+- `FIRED type=T item= ... at +N ms (first build +M ms)` (NotifyStartCast of the driven form)
+- `OTHER BUILT|FIRED type=T item=` (the engine casting something the claim did not name)
+- `HAND hand= holds X state=2..4` (the claimed hand charging the claimed spell = the animated path)
+- `INSTANT caster holds X` (the direct, unanimated road)
+- `ZERO +3|10|30 s: ... NO caster was built ... controller ... other built/fired ... predicted ...`
+- `CLOSE #s.i ... | VERDICT: FIRED via T (ANIMATED | no hand charge seen) | BUILT T NOT FIRED | NOT BUILT: NO
+  CONTROLLER | NOT BUILT (predicted ...)` with every timestamp and count
+- `SERIES #s: N back-to-back window(s), K fired | [i driven->target fired +ms | built-not-fired | ZERO] ...`
+- `HEARTBEAT` every 60 s, zeros included: seats installed, windows, per-type built/fired for claims, and
+  ENGINE-WIDE per-type fires and CheckStartCast calls for every actor.
+Anim tags BeginCast / SpellFire come from `core/CastObserve.cpp`'s existing sink (registered once that actor has
+cast anything, so a first cast can be missed).
+
+**What the field session must show (AE 1.6.1170, Harbinger present, in combat).** The census only sees
+CLAIMS: today MFO claims R1 (FF offense), R2 (concentration offense), R7 (self concentration non-restoration)
+and R11 (ally buff FF); heals, self buffs, wards, summons and AUTO fans are still direct in MFO `main`. So the
+session needs an MFO build that files a claim for each kind (animheal phase 2 for heals; the same road for
+self buffs, a ward, a summon, a reanimate, Candlelight, an ally buff, and one AUTO fan as N claims). Per kind,
+at least 3 windows. Read the CLOSE verdicts and the HEARTBEAT, never arrival-shaped lines.
+
+**How it decides, per kind:**
+1. `FIRED via T ... ANIMATED`, first fire within a few seconds in most windows: works as is. Nothing to seat.
+   If T is not Restore / Offensive, the fire time is the engine's own choice for T (for example Armor casts
+   when a foe is within `fCombatMagicArmorDistanceMax`); if that timing is not acceptable, seat 0x06 on T.
+2. `BUILT T NOT FIRED` (CheckStartCast NO): **seat more types**, exactly the WHETHER seat (0x06) on T, the
+   type the census proves is built. Nothing else.
+3. `NOT BUILT`, predicted row T exists, controller present: the engine never reaches T's magic context under
+   the claim. Neither answer is proven by this alone; it is the upstream gate (RC-3 class). Compare with the
+   Restore windows: if Restore claims BUILD and FIRE reliably, **widening seat 0 into a row substitution** for
+   this kind is the candidate; if they do not, research the upstream gate first.
+4. `NOT BUILT`, predicted `no-row` (native and seat0): only a classify change can serve it: **widen seat 0**
+   (a row substitution, a new design and a marth call), or the kind stays unanimated.
+5. `NOT BUILT: NO CONTROLLER`: not a caster question (R13, ch.21 entry).
+6. `INSTANT` with no build: the client used the direct road; not a Harbinger question.
+7. AUTO fans: a SERIES where every window is `fired`, with the gap from the previous fire to the next OPEN, is
+   the proof that back-to-back claimed casts on successive allies animate. A `ZERO` or `built-not-fired` inside
+   a series means a Repoint / re-claim does not re-arm the engine, and is its own finding.
+**Overall:** mostly (2) -> seat more types, one 0x06 seat per proven-built type. Mostly (3)/(4) -> widen seat
+0 as a row substitution. A mix -> both, each only where its census shows the need.
 
 ## HEAD OF WORK 2026-09-29 -- RANGED-SELECT PROBE, PHASE 1 (`[ranged-probe]`), branch `feat/apmf-ranged-select-probe`, NOT merged
 

@@ -565,6 +565,28 @@ Still OFF by default.
     Open review items: REVIEW-BACKLOG APMF-B36 (F2 = phase-2 prerequisite: refuse the deny unless the slot
     holds the base).
 
+### `native/core/CasterTypeCensus.{h,cpp}` — PASSIVE caster-type census, `[ctcensus]` (2026-09-29)
+Answers design Q-L by observation: for every live DRIVING `kIntent_Cast` claim, which of the 15
+`CombatMagicCaster` types the engine built for the driven form, whether it fired it, and the ZERO case.
+Two observe-only seats on all 15 caster vtables (`CasterVtables()`, incl. Armor): **0x06 CheckStartCast**
+(chain first, log the returned answer: "BUILT") and **0x0B NotifyStartCast** (void, observe then chain:
+"FIRED", the engine's release from the hand; AE callers 0x89F2B0 / 0x89FEB0 / 0x8A2369, concentration
+0x89EFB8; SE 0x808A30). Game-thread `Poll()` (Arbiter, after `nonaliasprobe`) opens one window per
+(actor, hand, driven, target), reads the claimed hand's MagicCaster state and the kInstant caster, labels
+the window with its PREDICTED classify row (`kRows`, the engine's 23-row table decoded from AE 0x20163B0 /
+SE 0x1DF2B00, identical; `kAvArchetypes` from the flag table AE 0x1FD3028 / SE 0x1DB0028), prints
+OPEN / BUILT / FIRED / OTHER / HAND / INSTANT / ZERO (3, 10, 30 s) / CLOSE (verdict) / SERIES (back-to-back
+windows, e.g. an AUTO fan) and a 60 s HEARTBEAT with engine-wide per-type fire counts (every actor).
+`core/CastObserve.cpp`'s anim sink forwards BeginCast/SpellFire tags (`NoteAnimEvent`).
+`[Probe] bCasterTypeCensus` (code default 1, PRE-RELEASE CHECKLIST in STATUS). Installed after
+`castseats::Install` (outermost on 0x06). Exact-version gate (1.6.1170 / 1.5.97), VR refused.
+- **What breaks:** the thunks must never alter the chain's answer or skip `orig`. `g_mx` is a leaf lock:
+  never log or call the engine under it (lines are collected, logged after). `kRows` is a LABEL only;
+  never branch on it. The Armor caster vtable IS a real `CombatMagicCaster` on both runtimes (RTTI
+  hierarchy walk; ENGINE_NOTES §0.28 does not hold for these binaries) and has its own VerifiedAddresses
+  row since this change; the `DerivesFrom` walk at install stays the guard. A type that failed to install
+  reads as zero: the install line names it.
+
 ### `native/core/Input.{h,cpp}` — test surface (OPT-IN, DEFAULT OFF)
 `InputSink` (keyboard button-down) → `Arbiter::DispatchHotkey` (+ each probe's
 `OnHotkey`). `LogHelp` enumerates the registry's hotkeys.
