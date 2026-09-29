@@ -1,6 +1,7 @@
 #include "PCH.h"
 #include "core/Log.h"
 #include "core/CastObserve.h"
+#include "core/CasterTypeCensus.h"
 #include "core/Clock.h"
 
 #include <array>
@@ -60,6 +61,10 @@ namespace apmf::castobserve {
                     const char* tagC = a_event->tag.c_str();
                     const std::string_view tag = tagC ? std::string_view(tagC) : std::string_view{};
                     if (!tag.empty() && IsCastRelevant(tag)) {
+                        // Caster-type census (core/CasterTypeCensus.h): counts BeginCast /
+                        // SpellFire tags for an actor with an open claim window. Undeduped,
+                        // relaxed pre-gate when no window is open, never mutates.
+                        apmf::castertypecensus::NoteAnimEvent(fid, tag);
                         bool emit = false;
                         {
                             const auto now = apmf::clock::MonotonicMs();

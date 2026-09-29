@@ -130,9 +130,10 @@
     "0x06",
     "0x07",
     "0x0A",
+    "0x0B",
     "0x0D"
    ],
-   "source": "native/core/AiCastSeats.cpp (Group B); CastSeats.cpp:512",
+   "source": "native/core/AiCastSeats.cpp (Group B); CastSeats.cpp:512; CasterTypeCensus.cpp (0x06, 0x0B)",
    "doc": "ADDRESS-TABLE-2026-09-15.md:72"
   },
   {
@@ -149,9 +150,10 @@
     "0x06",
     "0x07",
     "0x0A",
+    "0x0B",
     "0x0D"
    ],
-   "source": "native/core/AiCastSeats.cpp (Group B); CastSeats.cpp:512",
+   "source": "native/core/AiCastSeats.cpp (Group B); CastSeats.cpp:512; CasterTypeCensus.cpp (0x06, 0x0B)",
    "doc": "ADDRESS-TABLE-2026-09-15.md:72"
   },
   {
@@ -167,9 +169,10 @@
    "slots": [
     "0x06",
     "0x07",
-    "0x0A"
+    "0x0A",
+    "0x0B"
    ],
-   "source": "native/core/AiCastSeats.cpp (Group B)",
+   "source": "native/core/AiCastSeats.cpp (Group B); CasterTypeCensus.cpp (0x06, 0x0B)",
    "doc": "ADDRESS-TABLE-2026-09-15.md:72"
   },
   {
@@ -185,9 +188,10 @@
    "slots": [
     "0x06",
     "0x07",
-    "0x0A"
+    "0x0A",
+    "0x0B"
    ],
-   "source": "native/core/AiCastSeats.cpp (Group B)",
+   "source": "native/core/AiCastSeats.cpp (Group B); CasterTypeCensus.cpp (0x06, 0x0B)",
    "doc": "ADDRESS-TABLE-2026-09-15.md:72"
   },
   {
@@ -203,9 +207,10 @@
    "slots": [
     "0x06",
     "0x07",
-    "0x0A"
+    "0x0A",
+    "0x0B"
    ],
-   "source": "native/core/AiCastSeats.cpp (Group B)",
+   "source": "native/core/AiCastSeats.cpp (Group B); CasterTypeCensus.cpp (0x06, 0x0B)",
    "doc": "ADDRESS-TABLE-2026-09-15.md:72"
   },
   {
@@ -221,9 +226,10 @@
    "slots": [
     "0x06",
     "0x07",
-    "0x0A"
+    "0x0A",
+    "0x0B"
    ],
-   "source": "native/core/AiCastSeats.cpp (Group B)",
+   "source": "native/core/AiCastSeats.cpp (Group B); CasterTypeCensus.cpp (0x06, 0x0B)",
    "doc": "ADDRESS-TABLE-2026-09-15.md:72"
   },
   {
@@ -239,9 +245,10 @@
    "slots": [
     "0x06",
     "0x07",
-    "0x0A"
+    "0x0A",
+    "0x0B"
    ],
-   "source": "native/core/AiCastSeats.cpp (Group B)",
+   "source": "native/core/AiCastSeats.cpp (Group B); CasterTypeCensus.cpp (0x06, 0x0B)",
    "doc": "ADDRESS-TABLE-2026-09-15.md:72"
   },
   {
@@ -257,9 +264,10 @@
    "slots": [
     "0x06",
     "0x07",
-    "0x0A"
+    "0x0A",
+    "0x0B"
    ],
-   "source": "native/core/AiCastSeats.cpp (Group B)",
+   "source": "native/core/AiCastSeats.cpp (Group B); CasterTypeCensus.cpp (0x06, 0x0B)",
    "doc": "ADDRESS-TABLE-2026-09-15.md:72"
   },
   {
@@ -275,9 +283,10 @@
    "slots": [
     "0x06",
     "0x07",
-    "0x0A"
+    "0x0A",
+    "0x0B"
    ],
-   "source": "native/core/AiCastSeats.cpp (Group B)",
+   "source": "native/core/AiCastSeats.cpp (Group B); CasterTypeCensus.cpp (0x06, 0x0B)",
    "doc": "ADDRESS-TABLE-2026-09-15.md:72"
   },
   {
@@ -293,10 +302,28 @@
    "slots": [
     "0x06",
     "0x07",
-    "0x0A"
+    "0x0A",
+    "0x0B"
    ],
-   "source": "native/core/AiCastSeats.cpp (Group B)",
+   "source": "native/core/AiCastSeats.cpp (Group B); CasterTypeCensus.cpp (0x06, 0x0B)",
    "doc": "ADDRESS-TABLE-2026-09-15.md:72"
+  },
+  {
+   "seat": "CombatMagicCasterArmor",
+   "kind": "vtable",
+   "construct": "RE::VTABLE_CombatMagicCasterArmor[0]",
+   "rtti": ".?AVCombatMagicCasterArmor@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 211222,
+    "1.5.97": 265023
+   },
+   "slots": [
+    "0x06",
+    "0x0B"
+   ],
+   "source": "native/core/CasterTypeCensus.cpp (0x06, 0x0B)",
+   "doc": "feat/apmf-castertype-probe 2026-09-29: RTTI hierarchy {Armor, CombatMagicCaster, CombatObject, NiRefObject} on both runtimes; ENGINE_NOTES 0.28's 'no class' does not hold here"
   },
   {
    "seat": "CombatMagicCasterTargetEffect",
@@ -311,9 +338,10 @@
    "slots": [
     "0x06",
     "0x07",
-    "0x0A"
+    "0x0A",
+    "0x0B"
    ],
-   "source": "native/core/AiCastSeats.cpp (Group B)",
+   "source": "native/core/AiCastSeats.cpp (Group B); CasterTypeCensus.cpp (0x06, 0x0B)",
    "doc": "ADDRESS-TABLE-2026-09-15.md:72"
   },
   {
@@ -329,9 +357,10 @@
    "slots": [
     "0x06",
     "0x07",
-    "0x0A"
+    "0x0A",
+    "0x0B"
    ],
-   "source": "native/core/AiCastSeats.cpp (Group B)",
+   "source": "native/core/AiCastSeats.cpp (Group B); CasterTypeCensus.cpp (0x06, 0x0B)",
    "doc": "ADDRESS-TABLE-2026-09-15.md:72"
   },
   {
@@ -347,9 +376,10 @@
    "slots": [
     "0x06",
     "0x07",
-    "0x0A"
+    "0x0A",
+    "0x0B"
    ],
-   "source": "native/core/AiCastSeats.cpp (Group B)",
+   "source": "native/core/AiCastSeats.cpp (Group B); CasterTypeCensus.cpp (0x06, 0x0B)",
    "doc": "ADDRESS-TABLE-2026-09-15.md:72"
   },
   {
@@ -365,9 +395,10 @@
    "slots": [
     "0x06",
     "0x07",
-    "0x0A"
+    "0x0A",
+    "0x0B"
    ],
-   "source": "native/core/AiCastSeats.cpp (Group B)",
+   "source": "native/core/AiCastSeats.cpp (Group B); CasterTypeCensus.cpp (0x06, 0x0B)",
    "doc": "ADDRESS-TABLE-2026-09-15.md:72"
   },
   {

@@ -27,6 +27,41 @@ Raised against `58a4438`, same review, finding F4. Verbatim: "Scope: RestoreCens
 ### APMF-B39 (SEV-3 OPEN, pre-existing; phase 3) -- a self cast claim has no target handle, so 0x0F's deny-complete is off for its hand
 Raised against `58a4438`, same review, finding F5. Verbatim: "F5 SEV-3 (pre-existing, docs): the same missing handle ALSO switches off EquipGate's 0x0F deny-complete for the claimed hand (needs hasHandSeat || handDenyOnly). Under a self heal claim the combat AI may arm another spell into the claimed hand; CastGate still refuses its charge per hand, so the hand can sit holding a spell it may not cast. Add this to STATUS phase 0c / the phase-3 brief (resolving castTarget 0 to the claimant's own handle fixes both)." Reasoning: `ControlMap.cpp` resolves `castTargetHandle` only for a non-zero target; `EquipGate.cpp` `hasHandSeat = haveHandClaim && handSeat.targetHandle`; MFO sends self heals with target 0. Documented in STATUS phase 0c and MAP. **Closure:** the phase-3 brief (give a self claim the claimant's own handle), its own tier-A round. Not deferrable past phase 3: the next field cycle exercises self heal claims only if MFO phase 2 lands first.
 
+### APMF-B40 (SEV-4 x3 + SEV-5) -- [ctcensus] caster-type census probe review items
+Raised against `16ac6f5` (`feat/apmf-castertype-probe`), tier-A Opus 5.5 review 2026-09-29 (verdict: nothing above
+SEV-3; the one SEV-3, `HandHolds` calling the allocating `GetMagicCaster`, and SEV-5 (b), the whitespace edit, were
+FIXED on the branch before merge; SEV-5 (a) is a docs correction in the MFO repo, listed below). Verbatim from the
+reviewer's log (scratchpad agentlogs/review-apmf-castertype-probe.md, "Findings"):
+
+- **SEV-4: one line budget for everything, so combat-thread "OTHER" lines can crowd out CLOSE verdicts.**
+  `LineDue()` gives 60 lines per 10 s, shared by the combat-thread `OTHER FIRED` lines (`:335-342`) and by the
+  Poll lines. `OTHER FIRED` is not deduplicated: it logs on every 0x0B fire of any non-driven spell by a claimed
+  actor. The CLOSE and SERIES lines, which are the data the probe exists for, are flushed LAST in each Poll
+  (`:774`). In a busy multi-caster fight, OTHER FIRED lines can use up the window, and the CLOSE verdicts are the
+  lines that get dropped. The heartbeat reports `lines dropped`, so the loss is visible, not silent. Suggested
+  fix: a separate budget for CLOSE/SERIES, or one OTHER FIRED line per (window, type) with counts kept for the CLOSE
+  line.
+- **SEV-4: the per-window anim counts depend on CastObserve having registered a sink.**
+  `NoteAnimEvent` only receives events from CastObserve's per-actor sink. CastObserve registers that sink only
+  after it has seen the actor casting (`CastObserve.cpp` Poll, `if (casting)`). So the first claimed cast of an
+  actor that has not cast before can end its window with `anim SpellFire 0 BeginCast 0`, even though the hand
+  animated. The verdict relies on `firstChargeMs` (the hand-state poll) for "ANIMATED", so the verdict is right.
+  But the `anim SpellFire N` figure in FIRED verdicts undercounts on the first window per actor. Record this so
+  the field read does not treat 0 as "did not animate".
+- **SEV-4: attribution takes the first matching window.**
+  In `Observe` (`:298-299`), a build or fire for an item goes to the FIRST window with that driven form. Two
+  windows on one actor with the same driven form and different targets would all count on the first one. One case
+  is L and R each holding a claim for the same spell on different targets. A repoint is not affected: its old
+  window is closed in the same Poll that opens the new one, before any seat can see both. This only affects the
+  data, not safety.
+- **SEV-5 (a): stale Armor claims in docs and comments elsewhere.** (Not fixable in this repo: ENGINE_NOTES §0.28
+  and `CasterConsent.cpp:372` live in the MFO repo. Open there.)
+  The branch shows that VTABLE_CombatMagicCasterArmor is a real CombatMagicCaster on both runtimes. I re-verified
+  this: the COL/CHD hierarchy is {Armor, CombatMagicCaster, CombatObject, NiRefObject} on AE 0x18CD4D0 and SE
+  0x1687268. ENGINE_NOTES §0.28 and MFO `CasterConsent.cpp:372` ("a symbol with NO class -- excluded") still say
+  the opposite. The branch records this in the spec row and STATUS only. Backlog a docs correction.
+  (Line numbers above are against `16ac6f5`; the fix commit shifted `CasterTypeCensus.cpp` by +12 lines after `:415`.)
+
 ### APMF-B36 (SEV-4 / SEV-5; F2 = PHASE-2 PREREQUISITE) -- [Probe] bRangedSelect ranged-select probe review items
 Raised against `827f320` (`feat/apmf-ranged-select-probe`), tier-A Opus 5.5 review 2026-09-29 (verdict: nothing above
 SEV-3; F1 promoted by carve-out (b) and FIXED on the branch before merge). Verbatim from the reviewer's log
