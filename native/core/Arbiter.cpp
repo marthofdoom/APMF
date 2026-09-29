@@ -2,6 +2,7 @@
 #include "core/Log.h"
 #include "core/Arbiter.h"
 #include "core/ControlMap.h"
+#include "core/CasterTypeCensus.h"
 #include "core/NonAliasProbe.h"
 #include "core/CastObserve.h"
 #include "core/ActionGate.h"
@@ -52,6 +53,13 @@ namespace apmf {
         // switch and self-throttled to ~250ms internally, so this call costs one
         // relaxed atomic load whenever the probe is off (the default).
         apmf::nonaliasprobe::PollClaimedPackages();
+
+        // CASTER-TYPE CENSUS (2026-09-29). PASSIVE, [Probe] bCasterTypeCensus (default 1 while
+        // field testing, STATUS pre-release checklist). Runs after Drain() so it reads the claim
+        // snapshot just published; opens a window per driving cast claim and prints which
+        // CombatMagicCaster type the engine built and fired for it, including nothing.
+        // Self-throttled ~200 ms; one relaxed load when not armed. See core/CasterTypeCensus.h.
+        apmf::castertypecensus::Poll();
 
         // OBSERVE-AND-REPLICATE cast-path probe (marth 2026-09-04). Fully passive:
         // reads loaded high-process actors' MagicCaster state + registers a passive

@@ -18,6 +18,7 @@
 #include "core/NonAliasProbe.h"
 #include "core/AiCastSeats.h"
 #include "core/CastClassify.h"
+#include "core/CasterTypeCensus.h"
 #include "channels/Travel.h"
 #include "channels/TargetPin.h"
 #include "channels/CombatEntry.h"
@@ -192,7 +193,14 @@ namespace {
                                                   // "what the AI wanted" against "what the claim
                                                   // answered". The 5th seat (0x0F CheckShouldEquip)
                                                   // lives in equipgate above. VR-refused inside.
-            apmf::nativebitprobe::Install();     // native-bit probe (throwaway; no VR gate needed).
+            apmf::castertypecensus::Install();   // PASSIVE caster-type census (2026-09-29): 0x06
+                                                  // CheckStartCast + 0x0B NotifyStartCast observed on
+                                                  // all 15 caster types, [Probe] bCasterTypeCensus
+                                                  // (default 1 for the field, reset before release).
+                                                  // AFTER castseats so it sits OUTSIDE the claim seats
+                                                  // and logs the answer the whole chain gives.
+                                                  // Exact-version gate + VR refusal inside.
+            apmf::nativebitprobe::Install();    // native-bit probe (throwaway; no VR gate needed).
                                                   // CONFIG-GATED, default OFF -- it is the only probe that
                                                   // MUTATES a live actor, so it no-ops unless
                                                   // [Probe.NativeBit] Enable=1 in APMF.ini.
