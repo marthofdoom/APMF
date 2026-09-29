@@ -1,10 +1,15 @@
 # APMF STATUS — living handoff (start here)
 
-Updated 2026-09-29. Current version **v0.9.8**. The current state of the build: what's
+Updated 2026-09-29. Current version **v0.9.10**. The current state of the build: what's
 shipped, what's probe-gated, what's next. Keep this current in the SAME change as any
 build/finding/workflow change.
 
 ## PRE-RELEASE CHECKLIST -- field-test probes that must go back to 0 before a release cut
+
+DONE for v0.9.10 (2026-09-29): both keys are 0 in the shipped `APMF.ini` and in every code default
+(`channels/Travel.cpp` bGateProbe2, `core/ActionGate.cpp` + `core/AiCastSeats.cpp` bRangedSelect). A new field
+cycle that sets either to 1 re-opens this list. `[AiCastSeats] EnableWeaponScoreProbe` (default 1) is not on this
+list and was left as it is. `[Idle] bIdleConfirm` is a feature, not a probe.
 
 - `[Probe] bRangedSelect` -> 0 in `APMF.ini` AND the code default in `core/ActionGate.cpp` `RangedProbeInstall`
   and `core/AiCastSeats.cpp` `Install` (both read the key with default 1 during the field cycle).
@@ -17,7 +22,7 @@ swords), fought Alduin in the air. The engine kept SELECTING the Glass Bow (114 
 `path=CombatNode ret=877F1B`, about every 2 s) and kept a RANGED plan (MaintainOptimalRange /
 FindAttackLocation) that walked him off a cliff. marth approved fix "A": make "no bow" complete at SELECTION so
 the engine plans melee and runs its own unreachable-target handling. Principle 5: this phase OBSERVES ONLY.
-PASSIVE, no ABI change, `[Probe] bRangedSelect` (default **1** while testing; PRE-RELEASE CHECKLIST above).
+PASSIVE, no ABI change, `[Probe] bRangedSelect` (default **0** since v0.9.10, 1 only for a field cycle; PRE-RELEASE CHECKLIST above).
 
 **What the engine does (disassembled, 1.6.1170 and 1.5.97; agentlog `apmf-ranged-select-probe.md`):**
 - SELECTION = CombatInventory evaluate, AE 44899 `0x8134C0` / SE 43666 `0x7790A0`. Per item of each category:
@@ -129,7 +134,7 @@ reachability signal: every ACTIVATOR reads `GetOpenState == Closed` (weapon rack
 gates, which are PLACED OPEN per their `default2StateActivator` VMAD), no stall sat next to a gate, and the
 repeated blocks were a vendor chest under the floor and an item 640u above the stall. Probe 2 logs, per
 BLOCKED leg, what a reachability query would have to rely on. OBSERVE-ONLY, no ABI change, `[Travel]
-bGateProbe2` (default 1 while testing). Code: `channels/Travel.cpp` `GateProbe2` (see MAP.md).
+bGateProbe2` (default 0 since v0.9.10). Code: `channels/Travel.cpp` `GateProbe2` (see MAP.md).
 - **Logged:** (1) the destination position, on-mesh or not, the vertical gap to its triangle; (2) navmesh form
   id + triangle index + flags at the stall and at the destination, that mesh's doorPortals / closedDoors /
   obstacles / triangleToObstacleMap sizes and whether the triangle is a map key; (4) every DOOR / ACTIVATOR /

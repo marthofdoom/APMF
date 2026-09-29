@@ -550,8 +550,8 @@ Still OFF by default.
   bias no longer applies HERE at all: after F5 it belongs to the SPELL/STAFF seat
   (`SteerScoreForCastClaim`, `AiCastSeats.cpp:523-551`), driven by a ch.8b cast claim
   on the item's own hand. GROUP C keeps its observe-only probe and no steer.
-  **[Probe] bRangedSelect (2026-09-29, phase 1 of the Ranged-selection deny, default 1 during the field
-  cycle, STATUS PRE-RELEASE CHECKLIST):** `RangedEquipProbeThunk` observes `CheckShouldEquip` (0x0F) on the
+  **[Probe] bRangedSelect (2026-09-29, phase 1 of the Ranged-selection deny, default 0 since v0.9.10, set 1
+  for a field cycle, STATUS PRE-RELEASE CHECKLIST):** `RangedEquipProbeThunk` observes `CheckShouldEquip` (0x0F) on the
   RANGED vtable only, installed inside the GROUP C loop after that vtable's 0x0C identity check (so it needs
   `EnableWeaponScoreProbe=1`). Calls the original first and returns it unmodified; for a ch.17 claimant it
   logs the engine answer, the call site (per-runtime return-address labels `kRetAE`/`kRetSE`: pre-loop 44868 /
@@ -795,7 +795,7 @@ to this gate today; only an explicit `kIntent_CombatAction` claim arms anything.
   is its own facet). The seats never look up a form: the anchor is a handle resolved on the
   game thread. The target distance comes from the SAME controller that resolved the actor
   (`ResolveController`). Open items: DENY-COMPLETENESS-AUDIT gap 14; REVIEW-BACKLOG APMF-B32.
-  **[Probe] bRangedSelect (2026-09-29, PASSIVE, default 1 during the field cycle):** rides the existing
+  **[Probe] bRangedSelect (2026-09-29, PASSIVE, default 0 since v0.9.10):** rides the existing
   act()/pop() thunks, no seat of its own (`RangedProbeInstall`, the RANGED-SELECT PROBE section above
   `ActThunk`). In `ActThunk`, BEFORE any deny: for a ch.17 claimant (`ControlMap::TryGetEquipSet`) it counts
   the leaf (only while the claim owns Right or Left) and, for `EquipObject` / `EquipRangedWeapon`, reads the

@@ -1291,7 +1291,7 @@ namespace apmf::actiongate {
     // three named leaves is armed only when its own act (and, for CheckUnreachableTarget, pop)
     // was installed, and says so when it was not.
     void RangedProbeInstall() {
-        if (GetPrivateProfileIntA("Probe", "bRangedSelect", 1, "Data/SKSE/Plugins/APMF.ini") == 0) {
+        if (GetPrivateProfileIntA("Probe", "bRangedSelect", 0, "Data/SKSE/Plugins/APMF.ini") == 0) {
             spdlog::info("[ranged-probe] NOT armed -- [Probe] bRangedSelect=0.");
             return;
         }
