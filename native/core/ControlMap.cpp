@@ -836,6 +836,35 @@ namespace apmf {
             // An unresolvable/non-actor target leaves the handle invalid -- the seats
             // then behave exactly as they do for a dead target (0x0A hands back nothing
             // to redirect, 0x07 stops the channel), never a guess.
+            //
+            // ---- A SELF CLAIM NAMES THE CLAIMANT (APMF-B39, 2026-09-29) -----------
+            // APMF_CastRequest::target documents 0 as SELF, and that is how a client
+            // says "cast this on yourself" (MFO sends its self heals that way). It
+            // used to stay 0 here, so no handle was resolved, and every seat needs
+            // one: ClaimNamesThisCast (core/CastSeats.cpp) chained 0x06/0x0A/0x07/
+            // 0x0D to native, 0x0F never answered YES (the vanilla should-restore
+            // test ran instead: the 15 s MagicRestoreRestrictionTimer, health under
+            // about half), and 0x0F's deny-complete stayed OFF for the claimed hand
+            // (core/EquipGate.cpp needs hasHandSeat || handDenyOnly), so the AI could
+            // arm another spell into it. A self claim now names the claimant's OWN
+            // FormID, exactly the shape a client that passes its own FormID has
+            // always produced, and the resolution just below gives it the claimant's
+            // handle. Every seat then serves it as it serves an ally claim. No proxy
+            // is minted for it: the mint below requires castTarget != op.actor.
+            // RequestCast only (Kind::kCast): the degenerate RequestEx(kIntent_Cast)
+            // form is documented as carrying NO target (APMF_API.h kIntent_Cast) and
+            // keeps that meaning. A deny-only claim keeps target 0 (it drives nothing
+            // and must never seat), and a claim that names no spell has nothing to
+            // serve. Done AFTER the FromPackage extraction so a package's own target
+            // still wins over "self". Runtime-independent (a FormID and a handle, on
+            // the writer thread), so 1.6.1170 and 1.5.97 take the same line.
+            if (op.kind == PendingOp::Kind::kCast && !denyHandOnly && spell != 0 && castTarget == 0) {
+                castTarget = op.actor;
+                spdlog::info("[ch.8b] 0x{} SELF cast claim (h={}, spell 0x{}, target 0 = self): resolved to the "
+                             "claimant's own handle, so the seats (0x0F YES + deny-complete, 0x06, 0x0A, 0x07, "
+                             "0x0D) serve it exactly as they serve an ally claim.",
+                             apmf::log::Hex(op.actor), op.handle, apmf::log::Hex(spell));
+            }
             if (castTarget != 0) {
                 if (auto* tgt = RE::TESForm::LookupByID<RE::Actor>(castTarget)) {
                     castTargetHandle = tgt->GetHandle();
