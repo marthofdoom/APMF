@@ -69,7 +69,9 @@ namespace apmf {
     struct CastSeatClaim {
         RE::FormID      spell      = 0;   // param.form -- the spell the claim names
         RE::FormID      proxy      = 0;   // castProxy -- its delivery-flip substitute (0 if none)
-        RE::FormID      target     = 0;   // castTarget FormID (0 == none/self)
+        RE::FormID      target     = 0;   // castTarget FormID. A RequestCast self claim (client target 0)
+                                          //   stores the CLAIMANT's own FormID here (APMF-B39); 0 only on a
+                                          //   deny-only claim or a degenerate RequestEx(kIntent_Cast) claim
         RE::ActorHandle targetHandle{};   // resolved once on the writer thread; invalid if unresolved
         std::uint32_t   flags      = 0;   // APMF_API::kCastFlag_* (hand hint, concentration, stop-pct)
         std::uint64_t   expiresMs  = 0;   // monotonic-ms hard cap; 0 == none (never for a real cast claim)
