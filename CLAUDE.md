@@ -21,8 +21,9 @@ site), `Docs/DENY-COMPLETENESS-AUDIT.md`, `Docs/HOOK-SITE-COVERAGE.md`, `Docs/ST
 - **Delegate bulk file-reads to a subagent** and keep only its conclusion.
 - **ONE complete brief per agent, run to completion.** Small greps/reads/edits INLINE;
   spawn an agent only for genuinely bulk work. One agent per build tree — two agents
-  on one tree corrupt files. CHEAP model for workers (Sonnet; Haiku for trivial);
-  reserve the expensive models for diff-REVIEWS, deep RE, and risky threading work.
+  on one tree corrupt files. Sonnet 5.5 writes most code (`sonnet-coder`; tier-A
+  changes stay on Opus 5.5; `sonnet-chore` at low effort for menial work); Opus 5.5 does every
+  review; Fable only for escalations.
 - **Never read vendored code**, `build/`, or `.git/`.
 - **Probes must be FULLY PASSIVE:** no hotkeys, no toggles. Always-on rate-limited or
   config-gated logging only (`Data/SKSE/Plugins/APMF.ini`, default OFF).
@@ -59,6 +60,7 @@ never read past the end of a shorter interface struct.
 > are left verbatim too. The standing review model is still the cheap one: the author names its 1-5
 > uncertain spots and the reviewer answers only those, unless the change is co-save / ABI / a new engine
 > seat / a TU split.
+> Update 2026-09-30: Fable returns ONLY as an escalation (Opus repeatedly wrong, deep reverse engineering, or a failure Opus can't crack) — never a routine review.
 
 ## SCOPE DISCIPLINE — the git system only catches regressions if nobody skips it
 
@@ -217,11 +219,14 @@ was added) with the deny-set that makes it safe — do NOT quietly violate it.
    STOP-and-report to marth, not a decision the worker or the coordinator makes alone.
    (Why: the 2026-09-06 deny/heal failure shipped as a reviewed, CI-green, deliberate change. Deferred
    findings are how a known defect reaches the deck wearing a review's approval.)
-3. **AN OPUS AGENT WRITES THE CODE — INCLUDING SMALL CHANGES.** Not a cheap model, and NOT the coordinator
-   itself. marth set the threshold LOW on purpose: *"by reasonably sized I mean smaller. but we cant afford
-   the sloppy work weve been getting from teh cheap agents."* The driver is QUALITY, not token size.
-   Cheap models (Sonnet/Haiku) are NOT for authoring code at all — reserve them for non-authoring mechanical
-   grinds, and check their work even there. The coordinator dispatches, reads diffs, and directs corrections
+3. **SONNET 5.5 WRITES MOST CODE (marth 2026-09-30; supersedes the 2026-09-06 "Opus agent writes all
+   code" rule).** Author = `sonnet-coder` (Agent tool model `sonnet`), NOT the coordinator itself. EXCEPTION:
+   tier-A changes (engine seats/hooks, ABI, byte-shared headers, co-save format, threading, TU splits) are still
+   authored by Opus 5.5. Very menial tasks go to Sonnet 5.5 at LOW effort (`sonnet-chore`); check its work.
+   HISTORY (why the Opus review gate stays): on 2026-09-06 marth ruled cheap models out of authoring —
+   *"by reasonably sized I mean smaller. but we cant afford the sloppy work weve been getting from teh cheap
+   agents."* Sonnet 5.5 passed its 2026-09-30 trial; the Opus diff review is what catches that class now.
+   The coordinator dispatches, reads diffs, directs corrections
    back to the worker holding the file context; hand-edits are for context-free one-liners only.
 
 9. **REVIEW CYCLES MUST CONVERGE — SEVERITY FLOOR + A DEFERRED BACKLOG (marth 2026-09-08).** A review round
