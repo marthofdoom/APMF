@@ -22,6 +22,25 @@ namespace apmf {
     namespace {
         constexpr std::uint64_t kObsEvery = 60;   // per-NPC observability ~1/s @ 60fps
 
+        // Per-(actor, spell) log throttle for the self-claim warning in
+        // ApplyRequest (APMF-B39 review F1/F5). Same shape and cadence as the
+        // seats' LogDue (core/CastClassify.cpp, core/CastSeats.cpp): a client
+        // re-requesting every frame must not flood the log.
+        constexpr std::uint64_t kSelfClaimLogThrottleMs = 1500;
+
+        std::mutex                                       g_selfClaimLogMx;
+        std::unordered_map<std::uint64_t, std::uint64_t> g_selfClaimLastLogMs;
+
+        bool SelfClaimLogDue(RE::FormID a_actor, RE::FormID a_spell) {
+            const auto now = apmf::clock::MonotonicMs();
+            const auto key = (static_cast<std::uint64_t>(a_actor) << 32) | static_cast<std::uint64_t>(a_spell);
+            std::scoped_lock lk(g_selfClaimLogMx);
+            auto& last = g_selfClaimLastLogMs[key];
+            if (now - last < kSelfClaimLogThrottleMs) return false;
+            last = now;
+            return true;
+        }
+
         const char* PkgTypeName(RE::TESPackage* pkg) {
             if (!pkg) return "<none>";
             const char* n = pkg->GetObjectTypeName();
@@ -839,18 +858,32 @@ namespace apmf {
             //
             // ---- A SELF CLAIM NAMES THE CLAIMANT (APMF-B39, 2026-09-29) -----------
             // APMF_CastRequest::target documents 0 as SELF, and that is how a client
-            // says "cast this on yourself" (MFO sends its self heals that way). It
-            // used to stay 0 here, so no handle was resolved, and every seat needs
-            // one: ClaimNamesThisCast (core/CastSeats.cpp) chained 0x06/0x0A/0x07/
-            // 0x0D to native, 0x0F never answered YES (the vanilla should-restore
-            // test ran instead: the 15 s MagicRestoreRestrictionTimer, health under
-            // about half), and 0x0F's deny-complete stayed OFF for the claimed hand
+            // says "cast this on yourself". (What MFO sends that way today: its
+            // non-restoration kSelf concentration self casts, e.g. Detect Life/Dead
+            // or a cloak. MFO's self HEALS go the direct road since 2026-09-21 and
+            // reach APMF only once MFO's animated-heal phase 2 lands.) It used to
+            // stay 0 here, so no handle was resolved, and every seat needs one:
+            // ClaimNamesThisCast (core/CastSeats.cpp) chained 0x06/0x0A/0x07/0x0D
+            // to native, 0x0F never answered YES (the vanilla should-restore test
+            // ran instead), and 0x0F's deny-complete stayed OFF for the claimed hand
             // (core/EquipGate.cpp needs hasHandSeat || handDenyOnly), so the AI could
             // arm another spell into it. A self claim now names the claimant's OWN
-            // FormID, exactly the shape a client that passes its own FormID has
-            // always produced, and the resolution just below gives it the claimant's
-            // handle. Every seat then serves it as it serves an ally claim. No proxy
-            // is minted for it: the mint below requires castTarget != op.actor.
+            // FormID, and the resolution just below gives it the claimant's handle.
+            // Every seat then serves it as it serves an ally claim. No proxy is
+            // minted for it: the mint below requires castTarget != op.actor.
+            //
+            // kSelf DELIVERY ONLY (review F1/F2). A kSelf spell lands on the caster
+            // whatever the seats say (FindTargets' Self branch), and 0x0D never
+            // builds for it (49081 builds the aim controller only for kAimed /
+            // kTargetActor). For any OTHER delivery, a self handle would make the
+            // Offensive seats aim the spell AT THE CASTER (0x0A self handle, 0x0D
+            // self aim override): a ray that can never hit its own shooter, a hand
+            // stuck on a spell that never fires, or a kTargetActor spell applied to
+            // the claimant. So a non-kSelf spell claimed at target 0 keeps target 0
+            // exactly as before APMF-B39 (no handle, the seats chain to native, the
+            // AI aims it at its own target) and is logged, rate-limited.
+            // Same LookupByID<SpellItem> + GetDelivery pair as the proxy mint below.
+            //
             // RequestCast only (Kind::kCast): the degenerate RequestEx(kIntent_Cast)
             // form is documented as carrying NO target (APMF_API.h kIntent_Cast) and
             // keeps that meaning. A deny-only claim keeps target 0 (it drives nothing
@@ -859,11 +892,22 @@ namespace apmf {
             // still wins over "self". Runtime-independent (a FormID and a handle, on
             // the writer thread), so 1.6.1170 and 1.5.97 take the same line.
             if (op.kind == PendingOp::Kind::kCast && !denyHandOnly && spell != 0 && castTarget == 0) {
-                castTarget = op.actor;
-                spdlog::info("[ch.8b] 0x{} SELF cast claim (h={}, spell 0x{}, target 0 = self): resolved to the "
-                             "claimant's own handle, so the seats (0x0F YES + deny-complete, 0x06, 0x0A, 0x07, "
-                             "0x0D) serve it exactly as they serve an ally claim.",
-                             apmf::log::Hex(op.actor), op.handle, apmf::log::Hex(spell));
+                auto* selfSp = RE::TESForm::LookupByID<RE::SpellItem>(spell);
+                if (selfSp && selfSp->GetDelivery() == RE::MagicSystem::Delivery::kSelf) {
+                    castTarget = op.actor;
+                    if (SelfClaimLogDue(op.actor, spell)) {
+                        spdlog::info("[ch.8b] 0x{} SELF cast claim (h={}, spell 0x{}, kSelf, target 0 = self): "
+                                     "resolved to the claimant's own handle, so the seats (0x0F YES + "
+                                     "deny-complete, 0x06, 0x0A, 0x07) serve it exactly as they serve an ally claim.",
+                                     apmf::log::Hex(op.actor), op.handle, apmf::log::Hex(spell));
+                    }
+                } else if (SelfClaimLogDue(op.actor, spell)) {
+                    spdlog::warn("[ch.8b] 0x{} cast claim (h={}, spell 0x{}) names target 0 = self, but the spell's "
+                                 "delivery is {} (not kSelf; -1 = not a SpellItem): left UNRESOLVED as before APMF-B39, so the seats will "
+                                 "not serve it (no 0x0F YES / deny-complete) and the AI aims it at its own target.",
+                                 apmf::log::Hex(op.actor), op.handle, apmf::log::Hex(spell),
+                                 selfSp ? static_cast<int>(selfSp->GetDelivery()) : -1);
+                }
             }
             if (castTarget != 0) {
                 if (auto* tgt = RE::TESForm::LookupByID<RE::Actor>(castTarget)) {

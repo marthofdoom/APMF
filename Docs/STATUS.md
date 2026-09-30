@@ -61,8 +61,8 @@ AE 1.6.1170, SE counterparts by the same slots), not yet OBSERVED:
 - The timer is written by every Restore item's `Unequip` (item slot 0x12, AE 46306 / SE 45496) for
   RestrictTime(av) (AE 50673 / SE 49746). The Restore caster's native `CheckStartCast` (AE 45372 / SE 43980)
   reads it too.
-- **The self vs ally gap is on Harbinger's side of the line** (FIXED by phase 3a below, APMF-B39 closed). MFO sends a self heal claim with castTarget 0
-  (`ComposedCast.cpp:326`). `ControlMap::ApplyRequest` resolves a target handle only for a non-zero target, and
+- **The self vs ally gap is on Harbinger's side of the line** (FIXED by phase 3a below, APMF-B39 closed). MFO's composed road sends a self heal claim with castTarget 0
+  (`ComposedCast.cpp:326`; current MFO does not route self heals there, see Phase 3a). `ControlMap::ApplyRequest` resolves a target handle only for a non-zero target, and
   every seat requires one (`CastSeats.cpp` `ClaimNamesThisCast`, `EquipGate.cpp` `hasHandSeat`). So a self claim
   gets no seat answer at all: 0x0F chains to the vanilla should-restore (the 15 s timer after any Restore
   unequip, and health under about half), and 0x06 chains to the native test. An ally claim has a handle, so 0x0F
@@ -79,27 +79,43 @@ AE 1.6.1170, SE counterparts by the same slots), not yet OBSERVED:
 
 **Phase 3a (tier A, code): a self claim now names the claimant, branch `fix/apmf-self-claim-handle`, NOT merged.**
 APMF-B39 CLOSED. `ControlMap::ApplyRequest` (the "A SELF CLAIM NAMES THE CLAIMANT" block, just before the target
-resolution) turns a RequestCast claim's target 0 into the claimant's own FormID, so the claim resolves to the
-claimant's handle. That is the shape a client passing its own FormID always had: `ClaimNamesThisCast` matches, 0x0F
-answers YES (non-chaining) and its deny-complete covers the claimed hand, 0x06 answers YES from the claim, 0x0A hands
-the engine the caster's own handle, 0x07 stops at the claim's stop percent of the caster's own AV, seat 0 treats it
-like an ally claim, and no delivery-flip proxy is minted (the mint needs `castTarget != op.actor`). Seat 0x0D does
-nothing for a kSelf spell: the engine builds a `CombatProjectileAimController` only for Aimed / TargetActor delivery
-(AE 49081 `0x89EAE0`, `GetDelivery` vcall at `0x89EBF3`, cases 2 and 3), so the aim seat's vtable test fails.
-Unchanged, on purpose: a deny-only claim and the degenerate `RequestEx(kIntent_Cast)` claim keep target 0 and no
-handle. Runtime-independent (writer thread, a FormID and a handle), so 1.6.1170 and 1.5.97 take the same line.
-New log: `[ch.8b] 0x<actor> SELF cast claim (h=<n>, spell 0x<spell>, target 0 = self): resolved to the claimant's
-own handle ...`, once per RequestCast self claim. The seat lines now print the actor's own FormID as the target.
-**FIELD CHECK (the next session with MFO self heal claims and `[Probe] bRestoreCensus=1` must show):**
-- every self heal claim logs the `SELF cast claim ... resolved` line;
-- its `[census] ... OPEN` window says `self`, and `ENGAGE` follows within about 1 s (ally claims took 0.6 s on
-  2026-09-08), with a `first claim YES` time on it and a `[t2a seat 0x0F] ... -> YES (non-chaining ...)` line for its spell;
-- NO self window runs through `STILL ZERO` at 2/5/10 s and none closes `RESTORE DELIBERATED, the hand never took the driven form` or
-  `ZERO`, and no self heal waits the 15 s `MagicRestoreRestrictionTimer` (the 16.7 s self wait of 2026-09-08);
-- while a self claim stands, `[t2a seat 0x0F] ... -> NO (deny-complete: a cast claim stands ...)` lines appear for
-  other spells on the claimed hand, and none of them is armed into it.
-A self window with `claim YES=0`, or a self ENGAGE later than about 2 s, is a regression: it goes to Opus 5.5 with
-the census lines.
+resolution) turns a RequestCast claim's target 0 into the claimant's own FormID, **only when the claimed spell's
+delivery is kSelf** (`LookupByID<SpellItem>` + `GetDelivery`, the proxy mint's pair; review F1/F2). The claim then
+resolves to the claimant's handle. That is the shape a client passing its own FormID always had: `ClaimNamesThisCast`
+matches, 0x0F answers YES (non-chaining) and its deny-complete covers the claimed hand, 0x06 answers YES from the
+claim, 0x0A hands the engine the caster's own handle (a kSelf spell lands on the caster anyway, FindTargets' Self
+branch), 0x07 stops at the claim's stop percent of the caster's own AV (Restore vtable; the Offensive vtable stops on
+TTL or death), seat 0 skips it (a kSelf spell already keys the self row), and no delivery-flip proxy is minted (the
+mint needs `castTarget != op.actor`). Seat 0x0D does nothing for a kSelf spell: the engine builds a
+`CombatProjectileAimController` only for Aimed / TargetActor delivery (AE 49081 `0x89EAE0`, `GetDelivery` vcall at
+`0x89EBF3`, cases 2 and 3). A NON-kSelf spell claimed at target 0 (for example a board rule "Cast on self: Flames")
+keeps target 0 and no handle exactly as before this branch: the seats chain to native and the AI aims it at its own
+target. Resolving it would have aimed the spell AT the caster (0x0A/0x0D self handle), a hand stuck on a cast that
+never fires. Unchanged, on purpose: a deny-only claim and the degenerate `RequestEx(kIntent_Cast)` claim keep target 0
+and no handle (APMF-B41). Runtime-independent (writer thread, a FormID and a handle), so 1.6.1170 and 1.5.97 take the
+same line.
+New logs, both rate-limited per (actor, spell) at 1.5 s: `[ch.8b] 0x<actor> SELF cast claim (h=<n>, spell 0x<spell>,
+kSelf, target 0 = self): resolved to the claimant's own handle ...` (info), and `[ch.8b] 0x<actor> cast claim (h=<n>,
+spell 0x<spell>) names target 0 = self, but the spell's delivery is <n> (not kSelf): left UNRESOLVED ...` (warn). The
+seat lines now print the actor's own FormID as the target for a kSelf self claim.
+**What MFO sends today (checked against MFO main 2b2de7b; re-check against the DLL actually on the deck before the
+session):** NO self HEAL claims. Since `fix/mfo-combat-restoration-direct` (2026-09-21) MFO's self heals take the
+direct-force road: `CastSelfDirect` asks `ComposedCast::Try` only for `!IsRestorationSpell`, and every heal is
+restoration. The only MFO traffic this branch changes is `cast/Direct.cpp` ~872: a non-restoration CONCENTRATION self
+cast claimed with target 0 and the left hand (for example Detect Life / Detect Dead, or a concentration cloak). Self
+HEAL claims will reach Harbinger only once MFO's animated-heal phase 2 lands; the self-heal census check (ENGAGE within
+about 1 s, no 15 s `MagicRestoreRestrictionTimer` wait like the 16.7 s self wait of 2026-09-08) waits for that.
+**FIELD CHECK (the next session with an MFO "Cast on self" concentration rule on a kSelf spell, e.g. Detect Life):**
+- the claim logs the `SELF cast claim ... kSelf ... resolved` line (at most once per 1.5 s per actor and spell);
+- while it stands, `[t2a seat 0x0F] ... -> NO (deny-complete: a cast claim stands ...)` lines appear for other spells
+  on the claimed (left) hand, and none of them is armed into it; a `0x0F ... -> YES (non-chaining ...)` line appears
+  for the claimed spell if the engine asks;
+- the spell's own seat lines (0x06 / 0x0A / 0x07) may NOT appear: Detect Life's caster is probably neither the Restore
+  nor the Offensive type, so absent seat lines alone are not a regression;
+- a "Cast on self" rule on a NON-kSelf spell logs the `not kSelf ... left UNRESOLVED` warning and behaves exactly as
+  before this branch (cast at the AI's own target, no deny-complete on the hand).
+Zero `SELF cast claim` lines for HEALS is expected on current MFO and is NOT a regression. A kSelf self claim with no
+`SELF cast claim` line, or a non-kSelf one that logs it, is a regression: it goes to Opus 5.5 with the lines.
 
 - `[Probe] bCasterTypeCensus` -> 0 in `APMF.ini` AND the code default in `core/CasterTypeCensus.cpp` `Install`
   (reads the key with default 1 during the field cycle).

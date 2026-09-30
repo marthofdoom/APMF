@@ -434,17 +434,23 @@ Offensive caster, never Restore, so a claim on it was inert):
   own 0x89f3c0; the equip by seat 0x0F). Bypasses only the vanilla health threshold,
   the effect-already-active test and the 15s restrict-timer window — the exact policy
   the claim replaces. **ONLY for a claim with a resolved target handle.** A SELF claim
-  (RequestCast with target 0) is resolved to the CLAIMANT's own FormID and handle in
-  `ControlMap::ApplyRequest` (the "A SELF CLAIM NAMES THE CLAIMANT" block, APMF-B39 CLOSED
-  2026-09-29), so every seat and EquipGate's 0x0F YES + deny-complete serve it like an
-  ally claim. Before that it had no handle: the seats chained native and the vanilla
+  (RequestCast with target 0) ON A kSelf-DELIVERY SPELL is resolved to the CLAIMANT's own
+  FormID and handle in `ControlMap::ApplyRequest` (the "A SELF CLAIM NAMES THE CLAIMANT"
+  block, APMF-B39 CLOSED 2026-09-29), so every seat and EquipGate's 0x0F YES +
+  deny-complete serve it like an ally claim. A NON-kSelf spell claimed at target 0 keeps
+  target 0 and no handle (as before B39) and logs a rate-limited `not kSelf` warning
+  (`SelfClaimLogDue`). Before that it had no handle: the seats chained native and the vanilla
   restore gate decided (AE 45371 / SE 43979: 15 s `MagicRestoreRestrictionTimer`,
   health < lerp(0, 0.5, ctrl)), and 0x0F's deny-complete was off for its hand. Still
   handle-less, on purpose: a deny-only claim and a degenerate `RequestEx(kIntent_Cast)`
   claim (documented as carrying no target). **What breaks:** dropping that block, or
   moving it before the FromPackage extraction or out from under `!denyHandOnly`, reopens
-  the self gap or seats a deny-only floor; the proxy mint's `castTarget != op.actor`
-  test is what keeps a self claim from minting a delivery-flip proxy. STATUS "Phase 0c". 0x06 and 0x0A also feed the Restore census (`CensusNote`, Restore
+  the self gap or seats a deny-only floor; dropping its kSelf-delivery test hands a
+  kAimed / kTargetActor spell the caster's OWN handle, so 0x0A/0x0D aim it at the caster
+  (a stuck hand, or a kTargetActor spell applied to the claimant; review F1/F2 of
+  `5250fb2`); the proxy mint's `castTarget != op.actor`
+  test is what keeps a self claim from minting a delivery-flip proxy. Open review items:
+  REVIEW-BACKLOG APMF-B41 (the degenerate kIntent_Cast doc sentence). STATUS "Phase 0c". 0x06 and 0x0A also feed the Restore census (`CensusNote`, Restore
   vtable only, read-only; `core/RestoreCensus`).
 - `0x0A GetMagicTarget` -> `out->handle = claim target's native handle; out->ptr =
   nullptr`. THREE args with a hidden 16-byte sret out-slot (CommonLib declares two and
@@ -727,11 +733,11 @@ non-hostile Value/PeakValue/DualValue modifier on Health/Magicka/Stamina). Lines
   counted. "Caster seen" means first seen at a seat (construction is NOT hooked). Hand
   state is read from `GetActorRuntimeData().magicCasters[src]`, NEVER
   `Actor::GetMagicCaster`, which allocates a caster when the slot is null (review F2; the
-  same fix is in `core/CastObserve.cpp`). A self claim now carries the claimant's own
+  same fix is in `core/CastObserve.cpp`). A self claim on a kSelf spell now carries the claimant's own
   `targetHandle` (APMF-B39, closed 2026-09-29), so its window should ENGAGE with `claim
   YES` like an ally's; a self window with `claim YES=0` after that fix is a regression,
   not the phase-0c finding. Census `self` = target 0 OR target == the actor, so both the
-  old and the new shape read as self. Review items: REVIEW-BACKLOG APMF-B37..B39 (all closed).
+  old and the new shape read as self. Review items: REVIEW-BACKLOG APMF-B37..B39 (all closed), APMF-B41/B42 (self-claim review).
 
 ### `native/core/EquipGate.cpp` — T2a: CheckShouldEquip allowance (per-item equip gate)
 Hooks `CombatInventoryItem::CheckShouldEquip` (vtable slot **0x0F**) on the 30
