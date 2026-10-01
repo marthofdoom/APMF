@@ -1,8 +1,15 @@
 # APMF STATUS — living handoff (start here)
 
-Updated 2026-09-29. Current version **v0.9.10**. The current state of the build: what's
+Updated 2026-10-01. Current version **v0.9.11**. The current state of the build: what's
 shipped, what's probe-gated, what's next. Keep this current in the SAME change as any
 build/finding/workflow change.
+
+## SHIPPED 2026-10-01 -- v0.9.11 "Every healing spell can be cast with its animation"
+
+Commit `d9ff0ef`, CI run 36880184203, tag `v0.9.11` pushed. Zip `releases/v0.9.11/APMF-v0.9.11.zip`. APMF.dll deployed
+to the Deck (ESL unchanged, the Deck's APMF.ini left as is). Headline: a claimed heal the engine does not class as
+Restore (e.g. PeakValueModifier, Mysticism's Close Greater Wounds) is served by the engine's own Restore-Health row
+at seat 0. **FIELD-TEST PENDING**, deploy and test as a pair with MFO v2.0.16.
 
 ## PRE-RELEASE CHECKLIST -- field-test probes that must go back to 0 before a release cut
 
