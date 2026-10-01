@@ -417,6 +417,13 @@ the same forced answer within one classify pass — see the .cpp's comment).
   Install ordering vs `core/EquipGate.cpp`/`core/CastSeats.cpp` does not matter
   (disjoint vtable). Runs on the combat thread; one lock-free RCU read
   (`TryGetCastSeatClaim`), no mutex, no engine call besides the chained original.
+  **`ServeUnclassedHeal` EXIT LOGS (apmf-restore-serve-exitlogs):** every early exit of the
+  unclassed-heal serve (`NotServed()` + `enum NoServe`, above `ServeUnclassedHeal`) logs
+  `[restore-serve] <spell> (<id>) NOT served: <reason> (<values>)` once per (spell, reason),
+  dedup set `g_noServeLogged` under the leaf mutex `g_healLogMx`. Logging only; the exits
+  and their order are unchanged. Exits that fire for every classified spell (not heal-shaped,
+  already classed) are claim-gated: one extra RCU claim read, only on those exits. Keep any
+  new exit routed through `NotServed`.
 
 ### `native/core/CastSeats.{h,cpp}` — ch.8b: THE ENGINE CAST SEATS (the keystone)
 While a `kIntent_Cast` claim {actor A, spell S, target T} stands, APMF answers the
