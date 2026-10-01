@@ -103,6 +103,21 @@
    "doc": "ADDRESS-TABLE-2026-09-15.md:40"
   },
   {
+   "seat": "CastClassify.KeepBestRow",
+   "kind": "function",
+   "construct": "kKeepBestRow(43934, 45325)",
+   "ids": {
+    "1.6.1170": 45325,
+    "1.5.97": 43934
+   },
+   "sig": {
+    "1.6.1170": "48 89 5C 24 08 48 89 74 24 10 57 48 83 EC 40 0F 29 74 24 30 49 8B F8",
+    "1.5.97": "48 89 5C 24 08 48 89 74 24 10 57 48 83 EC 40 0F 29 74 24 30 49 8B F8"
+   },
+   "source": "native/core/CastClassify.cpp:80",
+   "doc": "STATUS.md:142"
+  },
+  {
    "seat": "CombatProjectileAimController",
    "kind": "vtable",
    "construct": "RE::VTABLE_CombatProjectileAimController[0]",

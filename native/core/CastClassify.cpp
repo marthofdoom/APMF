@@ -6,6 +6,7 @@
 #include "core/CastClassify.h"
 
 #include <cstring>
+#include <unordered_set>
 
 // Win32 INI read for the one kill-switch below. Declared by hand, exactly like
 // core/AiCastSeats.cpp / core/CastSeats.cpp / core/Hook.cpp do -- PCH does not
@@ -63,6 +64,63 @@ namespace apmf::castclassify {
         constexpr std::uintptr_t kSelfFlagOffset = 0x4c;   // std::uint8_t -- (spell->GetDelivery()==kSelf) at ctor time
 
         constexpr std::size_t kClassifySlot = 1;   // CombatMagicItemData vtable slot 1 -- the per-effect visitor
+
+        // ---- UNCLASSED HEAL (marth 2026-09-30: "If we can detect it's a heal and that it's not
+        // properly classed, go ahead and proxy it."). The visitor (AE 0x81D830 / SE 0x7811F0) keys
+        // each effect into the engine's 23-row table and hands the matched row to KEEP-BEST
+        // (AE 45325 0x81DBA0 / SE 43934 0x7815A0: `void(resolver, Effect*, row*, float weight)`,
+        // weight 1.0 for the primary AV). A heal whose archetype is not ValueModifier (Mysticism's
+        // Restore Health is PeakValueModifier, a34/av24) has NO row, so the engine never mints a
+        // Restore item. For a CLAIMED driven form only, the thunk hands that effect to KEEP-BEST
+        // with the engine's own Restore-Health row (table AE 382289 / SE 509694, row 10 =
+        // {ValueModifier, Health, self, beneficial}). Disassembly (agentlog apmf-unclassed-heal):
+        // the Restore creator/ctor (AE 0x824510 -> 0x81F710) and every Restore caster slot read
+        // only the effect's PRIMARY AV (+0xC4 -> caster +0x28), never the archetype. The hand still
+        // casts the spell exactly as authored.
+        constexpr REL::VariantID kKeepBestRow(43934, 45325, 0);
+        constexpr REL::VariantID kClassifyTable(509694, 382289, 0);
+        constexpr std::size_t    kRowSize          = 48;
+        constexpr std::size_t    kRestoreHealthRow = 10;
+
+        using KeepBest_t = void (*)(void*, const RE::Effect*, const void*, float);
+        KeepBest_t  g_keepBest   = nullptr;   // set once at Install, before the vtable write
+        const void* g_restoreRow = nullptr;
+
+        std::mutex                     g_healLogMx;
+        std::unordered_set<RE::FormID> g_healLogged;   // once per spell
+
+        void ServeUnclassedHeal(void* a_this, void* a_effect, RE::MagicItem* a_spell, RE::CombatController* a_cc,
+                                std::uint8_t a_selfFlag) {
+            if (!g_keepBest || !g_restoreRow || !a_spell || !a_cc) return;
+            const auto* eff = reinterpret_cast<const RE::Effect*>(a_effect);
+            if (!eff || !eff->baseEffect) return;
+            const auto* mgef = eff->baseEffect;
+            const auto  arch = mgef->GetArchetype();
+            // A heal: same shape as core/RestoreCensus.cpp RestoreShaped(), narrowed to Health.
+            const bool heal = !mgef->IsHostile() && !mgef->IsDetrimental() &&
+                              mgef->data.primaryAV == RE::ActorValue::kHealth && eff->effectItem.magnitude > 0.0f &&
+                              (arch == RE::EffectArchetypes::ArchetypeID::kValueModifier ||
+                               arch == RE::EffectArchetypes::ArchetypeID::kPeakValueModifier ||
+                               arch == RE::EffectArchetypes::ArchetypeID::kDualValueModifier);
+            if (!heal) return;
+            // Not properly classed: the only Restore-Health key is (ValueModifier, Health, self=1, beneficial).
+            if (arch == RE::EffectArchetypes::ArchetypeID::kValueModifier && a_selfFlag == 1) return;
+            auto  attPtr = a_cc->attackerHandle.get();
+            auto* actor  = attPtr.get();
+            if (!actor) return;
+            const RE::FormID    fid       = actor->GetFormID();
+            const RE::FormID    spellForm = a_spell->GetFormID();
+            apmf::CastSeatClaim seat{};
+            if (!apmf::ControlMap::Get().TryGetCastSeatClaimForForm(fid, spellForm, seat) || !seat.targetHandle) return;
+
+            g_keepBest(a_this, eff, g_restoreRow, 1.0f);
+
+            std::scoped_lock lk(g_healLogMx);
+            if (g_healLogged.insert(spellForm).second)
+                spdlog::info("[ch.8b] heal {:08X} not Restore-classed by the engine -> served as Restore (effect "
+                             "{:08X} archetype {} on Health has no Restore row; actor {:08X}, claimed spell {:08X})",
+                             spellForm, mgef->GetFormID(), static_cast<std::uint32_t>(arch), fid, seat.spell);
+        }
 
         constexpr std::uint64_t kLogThrottleMs = 1500;   // matches every other seat's cadence in this codebase
 
@@ -233,7 +291,9 @@ namespace apmf::castclassify {
                 }
             }
 
-            return orig(a_this, a_effect);   // THE ENGINE'S OWN CLASSIFICATION LOGIC, SEEING WHATEVER WE SET ABOVE
+            const auto r = orig(a_this, a_effect);   // THE ENGINE'S OWN CLASSIFICATION LOGIC, SEEING WHATEVER WE SET ABOVE
+            ServeUnclassedHeal(a_this, a_effect, spellPtr, ccPtr, *selfFlag);
+            return r;
         }
 
         bool ReadIniFlag(const char* a_key, long a_default) {
@@ -311,6 +371,34 @@ namespace apmf::castclassify {
                           "RTTI name '{}' (got '{}') -- REFUSED (not installed; never a blind vtable write).",
                           apmf::log::Hex(vt.address(), 16), kExpectedMangledName, name ? name : "<unresolved>");
             return;
+        }
+
+        // Unclassed-heal serving (see ServeUnclassedHeal). Optional: if either piece fails its
+        // check, seat 0 still installs and only this part is refused, loudly.
+        {
+            REL::Relocation<std::uintptr_t> kb{ kKeepBestRow };
+            REL::Relocation<std::uintptr_t> tbl{ kClassifyTable };
+            const auto row  = tbl.address() + kRestoreHealthRow * kRowSize;
+            const auto next = row + kRowSize;   // row 11: ValueModifier / Magicka, the same Restore creator
+            const bool rowOk =
+                tbl.address() != 0 && *reinterpret_cast<const std::uint32_t*>(row) == 0 &&
+                *reinterpret_cast<const std::int32_t*>(row + 4) == static_cast<std::int32_t>(RE::ActorValue::kHealth) &&
+                *reinterpret_cast<const std::uint8_t*>(row + 8) == 1 && *reinterpret_cast<const std::uint8_t*>(row + 9) == 0 &&
+                *reinterpret_cast<const float*>(row + 0xC) == 1.0f && *reinterpret_cast<const std::uintptr_t*>(row + 0x18) != 0 &&
+                *reinterpret_cast<const std::int32_t*>(next + 4) == static_cast<std::int32_t>(RE::ActorValue::kMagicka) &&
+                *reinterpret_cast<const std::uintptr_t*>(next + 0x18) == *reinterpret_cast<const std::uintptr_t*>(row + 0x18);
+            if (!allowance::SeatVerified(kb.address(), "CastClassify.KeepBestRow")) {
+                spdlog::error("[ch.8b seat 0] unclassed-heal serving NOT enabled (self-check refused KeepBestRow).");
+            } else if (!rowOk) {
+                spdlog::error("[ch.8b seat 0] unclassed-heal serving NOT enabled: classify table row {} at 0x{} is not "
+                              "{{ValueModifier, Health, self, beneficial, weight 1, Restore creator}}.",
+                              kRestoreHealthRow, apmf::log::Hex(row, 16));
+            } else {
+                g_keepBest   = reinterpret_cast<KeepBest_t>(kb.address());
+                g_restoreRow = reinterpret_cast<const void*>(row);
+                spdlog::info("[ch.8b seat 0] unclassed-heal serving enabled (KeepBestRow 0x{}, Restore-Health row 0x{}).",
+                             apmf::log::Hex(kb.address(), 16), apmf::log::Hex(row, 16));
+            }
         }
 
         g_orig[vt.address()] = vt.write_vfunc(kClassifySlot, &ClassifyThunk);

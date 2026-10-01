@@ -14,7 +14,7 @@
 
 namespace apmf::VerifiedAddresses
 {
-	// 1.6.1170.0: 190 rows
+	// 1.6.1170.0: 191 rows
 	inline constexpr REL::SelfCheck::Row kRows_1_6_1170[] = {
 		{ 207886, 0x18A5558, 0x0, 0, {  }, "Character" },
 		{ 212096, 0x18D7388, 0x0, 0, {  }, "CombatTargetSelectorStandard" },
@@ -22,6 +22,7 @@ namespace apmf::VerifiedAddresses
 		{ 208040, 0x18AB9C0, 0x0, 0, {  }, "PlayerCharacter" },
 		{ 205828, 0x187B8B0, 0x0, 0, {  }, "ActorMagicCaster" },
 		{ 211955, 0x18D5120, 0x0, 0, {  }, "CombatMagicItemData" },
+		{ 45325, 0x81DBA0, 0x0, 0, {  }, "CastClassify.KeepBestRow" },
 		{ 210081, 0x18C59A8, 0x0, 0, {  }, "CombatProjectileAimController" },
 		{ 211104, 0x18CC4A0, 0x0, 0, {  }, "CombatMagicCasterOffensive" },
 		{ 211142, 0x18CC890, 0x0, 0, {  }, "CombatMagicCasterRestore" },
@@ -208,7 +209,7 @@ namespace apmf::VerifiedAddresses
 		{ 226812, 0x1964250, 0x0, 0, {  }, "hkbStateMachine" },
 	};
 
-	// 1.5.97.0: 190 rows
+	// 1.5.97.0: 191 rows
 	inline constexpr REL::SelfCheck::Row kRows_1_5_97[] = {
 		{ 261397, 0x165DA40, 0x0, 0, {  }, "Character" },
 		{ 265605, 0x1690A98, 0x0, 0, {  }, "CombatTargetSelectorStandard" },
@@ -216,6 +217,7 @@ namespace apmf::VerifiedAddresses
 		{ 261916, 0x16635E0, 0x0, 0, {  }, "PlayerCharacter" },
 		{ 257613, 0x1637490, 0x0, 0, {  }, "ActorMagicCaster" },
 		{ 265000, 0x1686BF8, 0x0, 0, {  }, "CombatMagicItemData" },
+		{ 43934, 0x7815A0, 0x0, 0, {  }, "CastClassify.KeepBestRow" },
 		{ 264187, 0x167E2A8, 0x0, 0, {  }, "CombatProjectileAimController" },
 		{ 265003, 0x1686CA0, 0x0, 0, {  }, "CombatMagicCasterOffensive" },
 		{ 265007, 0x1686DC8, 0x0, 0, {  }, "CombatMagicCasterRestore" },
