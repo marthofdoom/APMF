@@ -10,7 +10,7 @@ nothing when one does not. At startup `REL::SelfCheck::Run` repeats the comparis
 game actually loaded. A row that fails refuses THAT seat by name in the log; the expected RVA is never
 used in place of the library's answer.
 
-Offline result of this generation: 1.6.1170.0 190/190 verified, 0 refused, 1.5.97.0 190/190 verified, 0 refused.
+Offline result of this generation: 1.6.1170.0 191/191 verified, 0 refused, 1.5.97.0 191/191 verified, 0 refused.
 
 ## Rows
 
@@ -22,6 +22,7 @@ Offline result of this generation: 1.6.1170.0 190/190 verified, 0 refused, 1.5.9
 | PlayerCharacter | vtable | 208040 | 0x18AB9C0 | 261916 | 0x16635E0 | RTTI .?AVPlayerCharacter@@ (COL offset 0) | 0xAD: 0x732660 / 0x69E580 | native/core/Hook.cpp:97 | ADDRESS-TABLE-2026-09-15.md:69 |
 | ActorMagicCaster | vtable | 205828 | 0x187B8B0 | 257613 | 0x1637490 | RTTI .?AVActorMagicCaster@@ (COL offset 0) | 0x0A: 0x5B1610 / 0x5427B0 | native/core/CastGate.cpp:199 | ADDRESS-TABLE-2026-09-15.md:65 |
 | CombatMagicItemData | vtable | 211955 | 0x18D5120 | 265000 | 0x1686BF8 | RTTI .?AVCombatMagicItemData@@ (COL offset 0) | 0x01: 0x81D830 / 0x7811F0 | native/core/CastClassify.cpp:31 | ADDRESS-TABLE-2026-09-15.md:40 |
+| CastClassify.KeepBestRow | function | 45325 | 0x81DBA0 | 43934 | 0x7815A0 | signature (23 bytes, unique in .text) |  | native/core/CastClassify.cpp:80 | STATUS.md:142 |
 | CombatProjectileAimController | vtable | 210081 | 0x18C59A8 | 264187 | 0x167E2A8 | RTTI .?AVCombatProjectileAimController@@ (COL offset 0) |  | native/core/CastSeats.cpp:535 | ADDRESS-TABLE-2026-09-15.md:175 |
 | CombatMagicCasterOffensive | vtable | 211104 | 0x18CC4A0 | 265003 | 0x1686CA0 | RTTI .?AVCombatMagicCasterOffensive@@ (COL offset 0) | 0x06: 0x81E7B0 / 0x7824C0<br>0x07: 0x81E7F0 / 0x782500<br>0x0A: 0x81E020 / 0x781CB0<br>0x0B: 0x81EA30 / 0x782780<br>0x0D: 0x81E0B0 / 0x781D00 | native/core/AiCastSeats.cpp (Group B); CastSeats.cpp:512; CasterTypeCensus.cpp (0x06, 0x0B) | ADDRESS-TABLE-2026-09-15.md:72 |
 | CombatMagicCasterRestore | vtable | 211142 | 0x18CC890 | 265007 | 0x1686DC8 | RTTI .?AVCombatMagicCasterRestore@@ (COL offset 0) | 0x06: 0x81F980 / 0x7836D0<br>0x07: 0x81FAF0 / 0x7837E0<br>0x0A: 0x81E020 / 0x781CB0<br>0x0B: 0x81FC60 / 0x7838F0<br>0x0D: 0x81E0B0 / 0x781D00 | native/core/AiCastSeats.cpp (Group B); CastSeats.cpp:512; CasterTypeCensus.cpp (0x06, 0x0B) | ADDRESS-TABLE-2026-09-15.md:72 |
