@@ -6,6 +6,8 @@
 #include "core/CastClassify.h"
 
 #include <cstring>
+#include <set>
+#include <tuple>
 #include <unordered_set>
 
 // Win32 INI read for the one kill-switch below. Declared by hand, exactly like
@@ -89,11 +91,91 @@ namespace apmf::castclassify {
         std::mutex                     g_healLogMx;
         std::unordered_set<RE::FormID> g_healLogged;   // once per spell
 
+        // ---- EXIT LOGS (apmf-restore-serve-exitlogs). Field: Close Greater Wounds never logged "served
+        // as Restore" and ServeUnclassedHeal has silent early exits, so the log could not name the
+        // rejecting check. Every exit now says so, once per (spell FormID, reason). LOGGING ONLY: no
+        // exit, order or value below changed. Runs on the combat thread (ClassifyThunk is the engine's
+        // CombatMagicItemData slot-1 visitor); dedup is the same leaf mutex + set pattern as g_healLogged
+        // above (nothing is held across any other lock or engine call).
+        enum class NoServe : std::uint8_t {
+            NoKeepBest = 1, NoSpellOrController, NoEffect, NoBaseEffect, NotHealShaped, AlreadyClassed, NoAttacker,
+            NoClaim, ClaimNoTarget
+        };
+
+        std::unordered_set<std::uint64_t> g_noServeLogged;   // (spell FormID << 8) | tag, guarded by g_healLogMx
+        // Exits 8 and 9 dedup per (spell, actor, reason): an unclaimed NPC reaching NoClaim first must not
+        // suppress the follower's own line. Separate set, so its key can never collide with the one above.
+        std::set<std::tuple<RE::FormID, RE::FormID, std::uint8_t>> g_noServeActorLogged;   // guarded by g_healLogMx
+        constexpr std::uint8_t kUnclaimedTag = 0x80;   // OR'd into the reason: "classified, but no live claim"
+
+        // Loose heal shape for the unclaimed fallback: beneficial, Health, magnitude > 0, ANY archetype.
+        // (The archetype test is part of `heal` below; a spell rejected by it is exactly what must stay visible.)
+        bool LooseHealShaped(const RE::Effect* a_eff) {
+            if (!a_eff || !a_eff->baseEffect) return false;
+            const auto* m = a_eff->baseEffect;
+            return !m->IsHostile() && !m->IsDetrimental() && m->data.primaryAV == RE::ActorValue::kHealth &&
+                   a_eff->effectItem.magnitude > 0.0f;
+        }
+
+        // `a_needClaim`: for the exits that fire for EVERY spell the engine classifies, log only when a live
+        // claim drives this spell on this actor -- otherwise the log would name every spell in the game.
+        // EXCEPTION (`a_looseHeal`): a heal-shaped effect with NO live claim is logged once per spell under
+        // a distinct reason tag, so "never classified" and "classified without a claim" can be told apart.
+        // When the actor cannot be resolved the claim cannot be checked and the exit is logged.
+        // `a_actorKey` != 0 keys the dedup by (spell, actor) instead of per spell.
+        template <class Detail>
+        void NotServed(RE::MagicItem* a_spell, RE::CombatController* a_cc, NoServe a_why, const char* a_reason,
+                       bool a_needClaim, bool a_looseHeal, RE::FormID a_actorKey, Detail&& a_detail) {
+            const RE::FormID spellForm = a_spell ? a_spell->GetFormID() : 0;
+            bool             unclaimed = false;
+            if (a_needClaim && a_spell && a_cc) {
+                auto attPtr = a_cc->attackerHandle.get();
+                if (auto* actor = attPtr.get()) {
+                    apmf::CastSeatClaim seat{};
+                    if (!apmf::ControlMap::Get().TryGetCastSeatClaimForForm(actor->GetFormID(), spellForm, seat)) {
+                        if (!a_looseHeal) return;
+                        unclaimed = true;
+                    }
+                }
+            }
+            const auto tag = static_cast<std::uint8_t>(static_cast<std::uint8_t>(a_why) | (unclaimed ? kUnclaimedTag : 0));
+            {
+                std::scoped_lock lk(g_healLogMx);
+                const bool fresh = a_actorKey
+                                       ? g_noServeActorLogged.emplace(spellForm, a_actorKey, tag).second
+                                       : g_noServeLogged.insert((static_cast<std::uint64_t>(spellForm) << 8) | tag).second;
+                if (!fresh) return;
+            }
+            const char* name = a_spell && a_spell->GetName() ? a_spell->GetName() : "?";
+            if (unclaimed)
+                spdlog::info("[restore-serve] {} ({:08X}) NOT served: {} (no live claim on this actor at classify time; {})",
+                             name, spellForm, a_reason, a_detail());
+            else
+                spdlog::info("[restore-serve] {} ({:08X}) NOT served: {} ({})", name, spellForm, a_reason, a_detail());
+        }
+
         void ServeUnclassedHeal(void* a_this, void* a_effect, RE::MagicItem* a_spell, RE::CombatController* a_cc,
                                 std::uint8_t a_selfFlag) {
-            if (!g_keepBest || !g_restoreRow || !a_spell || !a_cc) return;
+            if (!g_keepBest || !g_restoreRow || !a_spell || !a_cc) {
+                if (a_spell && a_cc)
+                    NotServed(a_spell, a_cc, NoServe::NoKeepBest, "KeepBest/Restore row not enabled at install", true,
+                              LooseHealShaped(reinterpret_cast<const RE::Effect*>(a_effect)), 0,
+                              [&] { return fmt::format("keepBest={} restoreRow={}", g_keepBest != nullptr, g_restoreRow != nullptr); });
+                else
+                    NotServed(a_spell, a_cc, NoServe::NoSpellOrController, "spell or combat controller null", false, false, 0,
+                              [&] { return fmt::format("spell={} cc={}", a_spell != nullptr, a_cc != nullptr); });
+                return;
+            }
             const auto* eff = reinterpret_cast<const RE::Effect*>(a_effect);
-            if (!eff || !eff->baseEffect) return;
+            if (!eff) {
+                NotServed(a_spell, a_cc, NoServe::NoEffect, "effect pointer null", true, false, 0, [&] { return std::string("effect=null"); });
+                return;
+            }
+            if (!eff->baseEffect) {
+                NotServed(a_spell, a_cc, NoServe::NoBaseEffect, "effect has no base effect", true, false, 0,
+                          [&] { return std::string("baseEffect=null"); });
+                return;
+            }
             const auto* mgef = eff->baseEffect;
             const auto  arch = mgef->GetArchetype();
             // A heal: same shape as core/RestoreCensus.cpp RestoreShaped(), narrowed to Health.
@@ -102,16 +184,46 @@ namespace apmf::castclassify {
                               (arch == RE::EffectArchetypes::ArchetypeID::kValueModifier ||
                                arch == RE::EffectArchetypes::ArchetypeID::kPeakValueModifier ||
                                arch == RE::EffectArchetypes::ArchetypeID::kDualValueModifier);
-            if (!heal) return;
+            if (!heal) {
+                NotServed(a_spell, a_cc, NoServe::NotHealShaped, "effect is not heal-shaped", true, LooseHealShaped(eff), 0, [&] {
+                    return fmt::format("effect {:08X} hostile={} detrimental={} primaryAV={} magnitude={} archetype={}",
+                                       mgef->GetFormID(), mgef->IsHostile(), mgef->IsDetrimental(),
+                                       static_cast<std::int32_t>(mgef->data.primaryAV), eff->effectItem.magnitude,
+                                       static_cast<std::uint32_t>(arch));
+                });
+                return;
+            }
             // Not properly classed: the only Restore-Health key is (ValueModifier, Health, self=1, beneficial).
-            if (arch == RE::EffectArchetypes::ArchetypeID::kValueModifier && a_selfFlag == 1) return;
+            if (arch == RE::EffectArchetypes::ArchetypeID::kValueModifier && a_selfFlag == 1) {
+                NotServed(a_spell, a_cc, NoServe::AlreadyClassed, "engine already classes it as Restore", true, true, 0, [&] {
+                    return fmt::format("effect {:08X} archetype={} selfFlag={} (read after seat-0's own force)",
+                                       mgef->GetFormID(), static_cast<std::uint32_t>(arch), a_selfFlag);
+                });
+                return;
+            }
             auto  attPtr = a_cc->attackerHandle.get();
             auto* actor  = attPtr.get();
-            if (!actor) return;
+            if (!actor) {
+                NotServed(a_spell, a_cc, NoServe::NoAttacker, "combat controller attacker handle did not resolve", false, false, 0,
+                          [&] { return std::string("attackerHandle.get()=null"); });
+                return;
+            }
             const RE::FormID    fid       = actor->GetFormID();
             const RE::FormID    spellForm = a_spell->GetFormID();
             apmf::CastSeatClaim seat{};
-            if (!apmf::ControlMap::Get().TryGetCastSeatClaimForForm(fid, spellForm, seat) || !seat.targetHandle) return;
+            const bool          haveClaim = apmf::ControlMap::Get().TryGetCastSeatClaimForForm(fid, spellForm, seat);
+            if (!haveClaim || !seat.targetHandle) {
+                if (!haveClaim) {
+                    NotServed(a_spell, a_cc, NoServe::NoClaim, "no live cast claim drives this spell on this actor", false, false, fid,
+                              [&] { return fmt::format("actor {:08X} spell {:08X}", fid, spellForm); });
+                } else {
+                    NotServed(a_spell, a_cc, NoServe::ClaimNoTarget, "claim stands but has no target handle", false, false, fid, [&] {
+                        return fmt::format("actor {:08X} claim spell {:08X} proxy {:08X} targetHandle=0", fid, seat.spell,
+                                           seat.proxy);
+                    });
+                }
+                return;
+            }
 
             g_keepBest(a_this, eff, g_restoreRow, 1.0f);
 

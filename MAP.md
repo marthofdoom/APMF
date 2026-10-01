@@ -415,8 +415,23 @@ the same forced answer within one classify pass — see the .cpp's comment).
   (Fable tier-3 on c70767c, SEV-4). INI kill-switch `[CastSeats]
   EnableSeat0Classify` (default 1).
   Install ordering vs `core/EquipGate.cpp`/`core/CastSeats.cpp` does not matter
-  (disjoint vtable). Runs on the combat thread; one lock-free RCU read
-  (`TryGetCastSeatClaim`), no mutex, no engine call besides the chained original.
+  (disjoint vtable). Runs on the combat thread; the classify path itself does one lock-free
+  RCU read (`TryGetCastSeatClaim`) and calls the chained original. `ServeUnclassedHeal` also
+  takes the leaf mutex `g_healLogMx` once per served/NOT-served log line (dedup), never across
+  an engine call.
+  **`ServeUnclassedHeal` EXIT LOGS (apmf-restore-serve-exitlogs):** every early exit of the
+  unclassed-heal serve (`NotServed()` + `enum NoServe`, above `ServeUnclassedHeal`) logs
+  `[restore-serve] <spell> (<id>) NOT served: <reason> (<values>)` once per (spell, reason)
+  under the leaf mutex `g_healLogMx` (set `g_noServeLogged`). Exits 8/9 (NoClaim,
+  ClaimNoTarget) dedup per (spell, actor, reason) in `g_noServeActorLogged`, so an unclaimed
+  NPC never hides the follower's line. Logging only; the exits and their order are unchanged.
+  Exits 1, 3, 4, 5 and 6 fire for every classified spell, so they are claim-gated: each does
+  one `attackerHandle.get()` plus one RCU claim read (`TryGetCastSeatClaimForForm`) and logs
+  only when a claim drives the spell. Exception: for a loosely heal-shaped effect (beneficial,
+  Health, magnitude > 0, any archetype; exits 1, 5, 6) with no live claim, one line per spell
+  is logged anyway with `(no live claim on this actor at classify time; ...)` under reason
+  tag `|0x80`. So "never classified" is distinguishable from "classified without a claim".
+  Exits 3/4 (no effect / base effect) stay gated. Keep any new exit routed through `NotServed`.
 
 ### `native/core/CastSeats.{h,cpp}` — ch.8b: THE ENGINE CAST SEATS (the keystone)
 While a `kIntent_Cast` claim {actor A, spell S, target T} stands, APMF answers the

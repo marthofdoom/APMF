@@ -272,6 +272,12 @@ c5f435a)":
 - R2-6 SEV-5: Entry::weak is computed (Play) and never read: dead field.
 - **FIXED (docs, same round):** R2-7 SEV-5: APMF-B32 says R1 SEV-5 items were "relayed without separate text" -> now in full above; B32 can cite this log. APMF-B34 now cites the log verbatim.
 
+### APMF-B43 (SEV-5) -- per-classify cost of the claim gate on the NotHealShaped path (restore-serve exit logs)
+Raised against `34d8a812` (`fix/apmf-restore-serve-exitlogs`), Opus 5.5 review 2026-10-01, finding F2. Reasoning (as given): the claim gate in `NotServed` does one `attackerHandle.get()` plus one RCU `TryGetCastSeatClaimForForm` on every unserved, non-heal effect classify. It is bounded and lock-free, but it does not decay for unclaimed spells, because they are never inserted into the dedup set.
+
+### APMF-B44 (SEV-5) -- bad_alloc from the dedup insert or fmt::format on the combat thread (restore-serve exit logs)
+Raised against `34d8a812`, same review, finding F3. Reasoning (as given): `std::unordered_set::insert` and `fmt::format` can throw `bad_alloc` on the combat thread. It is the same exposure as the existing `g_healLogged` insert in `ServeUnclassedHeal`, so not new in kind.
+
 ## DRAINED
 
 _(none yet)_

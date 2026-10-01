@@ -1,5 +1,7 @@
 ## Unreleased
 
+- **The log now says why Harbinger did not hand a heal to the game's healing caster.** Close Greater Wounds still did not cast, and the log never showed Harbinger serving it, so there was no way to tell which check turned it away. Each early exit of that step now writes one line per spell and reason: `[restore-serve] <spell> (<id>) NOT served: <reason> (<values compared>)`. Nothing is decided differently. Exits that apply to every spell the game classifies (not heal-shaped, already classed as Restore) log only when a mod's cast claim drives that spell. Not field-run yet.
+
 ## v0.9.11 -- Every healing spell can be cast with its animation
 
 - **A heal the game does not recognise as a heal is now cast like one.** Some mod spells heal with an effect type the game never files under healing, so its combat AI never started the cast and the NPC stood still. Mysticism's Close Greater Wounds was one. When a mod claims such a spell as a heal, Harbinger now hands it to the game's own healing caster, so the NPC casts it with the real animation. The spell is cast exactly as written. Only claimed spells are affected.
