@@ -24,6 +24,28 @@ list and was left as it is. `[Idle] bIdleConfirm` is a feature, not a probe.
 - `[Probe] bRestoreCensus` -> 0 in `APMF.ini` AND the code default in `core/RestoreCensus.cpp` `Poll`
   (reads the key with default 1 during the field cycle). See the ANIMATED HEALS head of work below.
 
+## HEAD OF WORK 2026-10-05 -- ABI v18 OWN LINE OF SIGHT + AWARENESS, branch `feat/apmf-own-los-awareness`, NOT merged
+
+Batch A release blocker, ClickUp 86e3h6qj9. Tier A (ABI + new engine calls). Opus author; Opus tier-A review pending.
+- **API (kABIVersion 18):** `APMF_API_v18 : APMF_API_v12` + `GetLineOfSight` (any thread, lock-free) + `SenseActor`
+  (main thread only); `kCastFlag_OwnLineOfSight` (bit 6) and `kTargetPin_OwnLineOfSight` (ch.20 param.ival bit 0).
+  MFO has NOT mirrored the header yet (a later Sonnet round).
+- **core/Sightline:** the own ray (MFO Sightline's recipe; no cone), a lock-free seqlock pair table, pump on
+  `Arbiter::OncePerFrame` (<= 8 pairs/frame, 3 rays each). NO outer world lock: `PickObject` read-locks the world
+  itself and `BSReadWriteLock` is reader-preferring (disassembly, all three builds), which also settles MFO's
+  2026-09-30 "worldLock read across PickObject" freeze hypothesis as NOT a deadlock. A pick the engine skipped
+  (`bhkPickData+0xC0`) is UNAVAILABLE, never visible (MFO Sightline and SpaceQuery do not check it: noted, not changed).
+- **core/Awareness:** sight / hearing (a NEW engine noise from `HighProcessData+0x3D8`, or a target in combat nearby)
+  / proximity / engaged. Noise novelty by stamp change (the AI-clock id is not in the 1.7.104 table).
+- **Seats:** cast seat 0x06 YES only on a fresh VISIBLE for flagged claims; 0x07 stops on two agreeing OCCLUDED.
+  ch.20 pauses a flagged pin unless VISIBLE. Flags refused at the request while the service is not armed.
+- **Rows:** 5 new (`Sightline.*`, `CommonLib.LookupReferenceByHandle`) verify on 1.6.1170 / 1.5.97 / 1.7.104
+  (196 / 196 / 207).
+- **Field proof: none yet.** First run should show `[los] own line of sight armed`, `[aware] SenseActor armed`,
+  `[los]` VISIBLE / OCCLUDED transitions, `[aware] noise` lines while a foe casts or shoots, and the 30 s
+  `[los] heartbeat` / `[aware] heartbeat` counts (principle 5: observe each sense firing before relying on it).
+  New INI keys (both default 1): `[Sightline] bOwnLineOfSight`, `[Awareness] bHearNoise`.
+
 ## HEAD OF WORK 2026-10-05 -- F2b: 1.7.104 SUPPORT, branch `feat/apmf-1.7.104`, NOT merged
 
 Builds on G1 (below; merged to main as b11a0c7). Nothing placed is refused on 1.7.104; no APMF_API.h or co-save change.

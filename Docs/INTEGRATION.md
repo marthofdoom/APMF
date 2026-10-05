@@ -1778,6 +1778,50 @@ are what the first field run records.
 * **Built, CI-verified, not yet field-run.** The first field log must show `ANIMATION CONFIRMED`
   for `IdleLockPick` before a client relies on it (CLAUDE.md principle 5).
 
+## Line of sight and awareness (ABI v18)
+
+The contract is `APMF_API.h`, "ABI v18: LINE OF SIGHT AND AWARENESS". Check `abiVersion >= 18`
+first: an older Harbinger ignores both flag bits without a word.
+
+### Recipes
+
+* **Cast only at what the caster can see.** Add `kCastFlag_OwnLineOfSight` to the cast claim's
+  flags. Seat 0x06 then starts the cast only on a fresh VISIBLE; a held stream stops after two
+  OCCLUDED readings. Your claim stands while the target is hidden, so keep heart-beating it with
+  `Repoint` as usual. The first cast after a claim waits a frame or two for the first verdict.
+* **Pin only what the actor can see.** Put `kTargetPin_OwnLineOfSight` in the pin's `param.ival`.
+  The pin pauses while the target is hidden; the engine's own pick fights meanwhile.
+* **Choose a target you can see.** Call `GetLineOfSight(follower, candidate, &info)` from any
+  thread, every time you need the answer. The first call for a pair returns `kLos_Unknown`
+  and queues it; a frame or two later the verdict is there. `kLos_Unknown`,
+  `kLos_Unavailable` and `kLos_Unsupported` are NOT "seen".
+* **Engage on sense, not on sight alone.** From the main thread (MFO's `MainThread::Post`), for
+  each hostile candidate your own rules accept, call `SenseActor` with `viewer` = the follower,
+  `anchor` = the player, ranges 0 for the defaults, and engage when `senses != 0` (or the subset
+  you want; `kSense_Hearing | kSense_Engaged` alone gives "they heard it"). Hostility, crime,
+  factions and "unaggressive" stay your call: Harbinger senses, it does not judge.
+
+### What a good log looks like
+
+```
+[los] own line of sight armed on 1.6.1170.0: 256 pair slots, ...
+[aware] SenseActor armed (main thread only): ...
+[los] 0x0001A6A4 -> 0x000D3C8F: VISIBLE (own ray, torso clear)
+[aware] noise: 0x000D3C8F made a NEW engine noise -- level <the engine's value> at ... (ref 0x000D3C8F)
+[aware] senses: 0x0001A6A4 -> 0x000D3C8F: HEARING(noise, near anchor)+ENGAGED(anchor) (d=1830; sight OCCLUDED; ...)
+[ch.8b seat 0x06] 0x0001A6A4 CheckStartCast -> NO (own line of sight to 0x00000014 is OCCLUDED, all 3 rays blocked) ...
+[los] heartbeat 30 s: tracked 3 pair(s); asks ..., measured ... (... rays): visible ..., occluded ..., ...
+```
+
+### Limits worth knowing
+
+* **Another actor's body on the line blocks a ray** (the ray is a "could a body walk here" test on the
+  character-controller layer). Three rays at feet, chest and head make a full block rare.
+* **A noise made before Harbinger first looked at an actor is not heard.** The first `SenseActor` naming
+  a target records a baseline. Query candidates every probe, not only when you are about to engage.
+* **Built, CI-verified, not yet field-run.** Each sense must be seen firing in a field log before a client
+  relies on it (CLAUDE.md principle 5).
+
 ## The facet table
 
 Every facet is one `Intent` value in `native/APMF_API.h`. The proof tier says
