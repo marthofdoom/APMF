@@ -1,4 +1,4 @@
-## Unreleased
+## v0.10.0 -- Skyrim 1.7.104 support
 
 - **Harbinger now runs on Skyrim 1.7.104 (Steam).** Every hook, call and engine value it uses was checked against the 1.7.104 game file. The functions it hooks and calls have the same code as on 1.6.1170, at different addresses, so every feature opens there. One engine table moved: the default-object init flags now sit at 0xBC0, and Harbinger reads them through the fixed accessor. 1.7.104 has no Address Library. The id table for it is built into Harbinger's DLL, so there is nothing extra to download. Harbinger checks each hook address against it at load. A hook whose address does not check out stays off and says so in the log.
 - **A mod's claim is now refused at once on a game version Harbinger does not support.** It used to hand back a claim that nothing would ever act on. Now the mod gets "no claim" straight away, so its own fallback runs. The same happens if Harbinger's main hook could not be installed.
