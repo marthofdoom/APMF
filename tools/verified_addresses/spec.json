@@ -2962,7 +2962,10 @@
    "sig": {
     "1.5.97": "48 8B C4 44 88 48 20 48 89 50 10 48 89 48 08 55 56 48 8D 68 88"
    },
-   "source": "native/core/EquipSink.cpp:158"
+   "source": "native/core/EquipSink.cpp:158",
+   "twin": {
+    "1.6.1170": "EquipSink.Path.OutfitApply.418622"
+   }
   },
   {
    "seat": "EquipSink.Path.AddWornOutfit.19266",
@@ -2974,7 +2977,10 @@
    "sig": {
     "1.5.97": "48 85 D2 0F 84 ?? ?? ?? ?? 48 8B C4 48 89 48 08 53"
    },
-   "source": "native/core/EquipSink.cpp:159"
+   "source": "native/core/EquipSink.cpp:159",
+   "twin": {
+    "1.6.1170": "EquipSink.Path.AddWornOutfit.19692"
+   }
   },
   {
    "seat": "EquipSink.Path.AiCommand.38618",
@@ -2986,7 +2992,10 @@
    "sig": {
     "1.5.97": "48 8B C4 55 56 57 41 54 41 55 41 56 41 57 48 8D 68 98 48 81 EC 30 01 00 00 48 C7 45 B0 FE FF FF FF"
    },
-   "source": "native/core/EquipSink.cpp:160"
+   "source": "native/core/EquipSink.cpp:160",
+   "twin": {
+    "1.6.1170": "EquipSink.Path.AiCommand.39649"
+   }
   },
   {
    "seat": "EquipSink.Path.AiCommand.38619",
@@ -2998,7 +3007,10 @@
    "sig": {
     "1.5.97": "48 8B C4 55 56 57 41 54 41 55 41 56 41 57 48 8D A8 F8 FE FF FF 48 81 EC D0 01 00 00 48 C7 45 F8 FE FF FF FF"
    },
-   "source": "native/core/EquipSink.cpp:161"
+   "source": "native/core/EquipSink.cpp:161",
+   "twin": {
+    "1.6.1170": "EquipSink.Path.AiCommand.39650"
+   }
   },
   {
    "seat": "EquipSink.Path.RemoveItemReequip.36781",
@@ -3010,7 +3022,10 @@
    "sig": {
     "1.5.97": "4C 8B DC 49 89 5B 10 49 89 6B 18 49 89 73 20 57 48 83 EC 50 8B 05 ?? ?? ?? ??"
    },
-   "source": "native/core/EquipSink.cpp:162"
+   "source": "native/core/EquipSink.cpp:162",
+   "twin": {
+    "1.6.1170": "EquipSink.Path.RemoveItemReequip.37797"
+   }
   },
   {
    "seat": "EquipSink.Path.RemoveItemReequip.19263",
@@ -3022,7 +3037,10 @@
    "sig": {
     "1.5.97": "48 89 5C 24 18 55 57 41 56 48 83 EC 50 8B 05 ?? ?? ?? ??"
    },
-   "source": "native/core/EquipSink.cpp:163"
+   "source": "native/core/EquipSink.cpp:163",
+   "twin": {
+    "1.6.1170": "EquipSink.Path.RemoveItemReequip.19689"
+   }
   },
   {
    "seat": "EquipSink.Path.RemoveItemReequip.15821",
@@ -3034,7 +3052,10 @@
    "sig": {
     "1.5.97": "4C 89 4C 24 20 4C 89 44 24 18 48 89 54 24 10 48 89 4C 24 08 55 53 56 57 48 8D AC 24 A8 FE FF FF"
    },
-   "source": "native/core/EquipSink.cpp:164"
+   "source": "native/core/EquipSink.cpp:164",
+   "twin": {
+    "1.6.1170": "EquipSink.Path.RemoveItemReequip.16059"
+   }
   },
   {
    "seat": "EquipSink.Path.CombatNode.46957",
@@ -3046,7 +3067,10 @@
    "sig": {
     "1.5.97": "4C 8B DC 41 57 48 81 EC B0 00 00 00 49 C7 43 98 FE FF FF FF"
    },
-   "source": "native/core/EquipSink.cpp:165"
+   "source": "native/core/EquipSink.cpp:165",
+   "twin": {
+    "1.6.1170": "EquipSink.Path.CombatNode.48126"
+   }
   },
   {
    "seat": "EquipSink.Path.CombatNode.46955",
@@ -3058,7 +3082,10 @@
    "sig": {
     "1.5.97": "4C 8B DC 41 54 41 56 41 57 48 81 EC B0 00 00 00"
    },
-   "source": "native/core/EquipSink.cpp:166"
+   "source": "native/core/EquipSink.cpp:166",
+   "twin": {
+    "1.6.1170": "EquipSink.Path.CombatNode.48124"
+   }
   },
   {
    "seat": "EquipSink.Path.Script.53861",
@@ -3070,7 +3097,10 @@
    "sig": {
     "1.5.97": "48 8B C4 57 41 54 41 55 41 56 41 57 48 83 EC 70 48 C7 40 B8 FE FF FF FF 48 89 58 08 48 89 68 10"
    },
-   "source": "native/core/EquipSink.cpp:167"
+   "source": "native/core/EquipSink.cpp:167",
+   "twin": {
+    "1.6.1170": "EquipSink.Path.Script.54661"
+   }
   },
   {
    "seat": "EquipSink.Path.Console.21869",
@@ -3082,7 +3112,10 @@
    "sig": {
     "1.5.97": "4C 8B DC 55 41 54 41 55 41 56 41 57 49 8D 6B C1"
    },
-   "source": "native/core/EquipSink.cpp:168"
+   "source": "native/core/EquipSink.cpp:168",
+   "twin": {
+    "1.6.1170": "EquipSink.Path.Console.22351"
+   }
   },
   {
    "seat": "EquipSink.Path.PlayerMenu.28629",
@@ -3094,7 +3127,10 @@
    "sig": {
     "1.5.97": "48 8B C4 48 89 50 10 48 89 48 08 55 53 56 57 41 54 41 55 41 56 41 57 48 8D A8 A8 FC FF FF"
    },
-   "source": "native/core/EquipSink.cpp:169"
+   "source": "native/core/EquipSink.cpp:169",
+   "twin": {
+    "1.6.1170": "EquipSink.Path.PlayerMenu.29383"
+   }
   },
   {
    "seat": "EquipSink.Path.PlayerMenu.28593",
@@ -3106,7 +3142,10 @@
    "sig": {
     "1.5.97": "48 8B C4 48 89 50 10 48 89 48 08 55 53 56 57 41 54 41 55 41 56 41 57 48 8D A8 78 FE FF FF"
    },
-   "source": "native/core/EquipSink.cpp:170"
+   "source": "native/core/EquipSink.cpp:170",
+   "twin": {
+    "1.6.1170": "EquipSink.Path.PlayerMenu.29346"
+   }
   },
   {
    "seat": "EquipSink.Path.PlayerMenu.37951",
@@ -3118,7 +3157,10 @@
    "sig": {
     "1.5.97": "48 89 5C 24 08 4C 89 44 24 18 55 56 57 41 54 41 55 41 56 41 57 48 83 EC 60"
    },
-   "source": "native/core/EquipSink.cpp:171"
+   "source": "native/core/EquipSink.cpp:171",
+   "twin": {
+    "1.6.1170": "EquipSink.Path.PlayerMenu.38907"
+   }
   },
   {
    "seat": "EquipSink.Path.WorkerReentry.37957",
@@ -3130,7 +3172,10 @@
    "sig": {
     "1.5.97": "48 85 D2 0F 84 ?? ?? ?? ?? 48 89 5C 24 20 56 57 41 56 48 83 EC 50"
    },
-   "source": "native/core/EquipSink.cpp:172"
+   "source": "native/core/EquipSink.cpp:172",
+   "twin": {
+    "1.6.1170": "EquipSink.Path.WorkerReentry.38913"
+   }
   },
   {
    "seat": "EquipSink.Path.QueuedApply.37950",
@@ -3142,7 +3187,10 @@
    "sig": {
     "1.5.97": "48 85 D2 0F 84 ?? ?? ?? ?? 48 8B C4 55 56 57 48 83 EC 70 48 8B FA"
    },
-   "source": "native/core/EquipSink.cpp:173"
+   "source": "native/core/EquipSink.cpp:173",
+   "twin": {
+    "1.6.1170": "EquipSink.Path.QueuedApply.38906"
+   }
   },
   {
    "seat": "EquipSink.Path.QueuedApply.38789",
@@ -3154,7 +3202,10 @@
    "sig": {
     "1.5.97": "48 89 74 24 20 57 48 83 EC 60 48 8B 79 08 48 8B F2"
    },
-   "source": "native/core/EquipSink.cpp:174"
+   "source": "native/core/EquipSink.cpp:174",
+   "twin": {
+    "1.6.1170": "EquipSink.Path.QueuedApply.39814"
+   }
   },
   {
    "seat": "EquipSink.Path.AiCommand.38606",
@@ -3166,7 +3217,10 @@
    "sig": {
     "1.5.97": "48 8B C4 55 53 56 57 41 54 41 55 41 56 41 57 48 8D 68 88 48 81 EC 38 01 00 00 48 C7 45 98 FE FF FF FF"
    },
-   "source": "native/core/EquipSink.cpp:178"
+   "source": "native/core/EquipSink.cpp:178",
+   "twin": {
+    "1.6.1170": "EquipSink.Path.AiCommand.39637"
+   }
   },
   {
    "seat": "EquipSink.Path.AiCommand.38902",
@@ -3178,7 +3232,10 @@
    "sig": {
     "1.5.97": "48 89 5C 24 08 48 89 6C 24 10 48 89 74 24 18 57 48 83 EC 60 48 8B FA"
    },
-   "source": "native/core/EquipSink.cpp:179"
+   "source": "native/core/EquipSink.cpp:179",
+   "twin": {
+    "1.6.1170": "EquipSink.Path.AiCommand.39948"
+   }
   },
   {
    "seat": "EquipSink.Path.AiCommand.38624",
@@ -3190,7 +3247,10 @@
    "sig": {
     "1.5.97": "48 8B C4 55 56 57 41 54 41 55 41 56 41 57 48 8D 68 A1 48 81 EC 00 01 00 00 48 C7 45 07 FE FF FF FF 48 89 58 08 0F 29 70 B8 4D 8B F8"
    },
-   "source": "native/core/EquipSink.cpp:180"
+   "source": "native/core/EquipSink.cpp:180",
+   "twin": {
+    "1.6.1170": "EquipSink.Path.AiCommand.39655"
+   }
   },
   {
    "seat": "EquipSink.Path.AiCommand.38614",
@@ -3202,7 +3262,10 @@
    "sig": {
     "1.5.97": "48 89 5C 24 10 48 89 6C 24 18 56 57 41 56 48 83 EC 40 48 83 79 20 00"
    },
-   "source": "native/core/EquipSink.cpp:181"
+   "source": "native/core/EquipSink.cpp:181",
+   "twin": {
+    "1.6.1170": "EquipSink.Path.AiCommand.39645"
+   }
   },
   {
    "seat": "EquipSink.Path.AiCommand.36510",
@@ -3214,7 +3277,10 @@
    "sig": {
     "1.5.97": "48 8B C4 57 41 54 41 55 41 56 41 57 48 83 EC 70 48 C7 40 C8 FE FF FF FF 48 89 58 10 48 89 68 18 48 89 70 20 49 8B F1"
    },
-   "source": "native/core/EquipSink.cpp:182"
+   "source": "native/core/EquipSink.cpp:182",
+   "twin": {
+    "1.6.1170": "EquipSink.Path.AiCommand.37510"
+   }
   },
   {
    "seat": "EquipSink.Path.DropObject.36520",
@@ -3226,7 +3292,10 @@
    "sig": {
     "1.5.97": "48 8B C4 55 56 57 41 54 41 55 41 56 41 57 48 81 EC 90 00 00 00 48 C7 40 A8 FE FF FF FF"
    },
-   "source": "native/core/EquipSink.cpp:183"
+   "source": "native/core/EquipSink.cpp:183",
+   "twin": {
+    "1.6.1170": "EquipSink.Path.DropObject.37520"
+   }
   },
   {
    "seat": "EquipSink.Path.PickUpObject.36521",
@@ -3238,7 +3307,10 @@
    "sig": {
     "1.5.97": "44 88 4C 24 20 55 56 57 41 54 41 55 41 56 41 57 48 83 EC 70"
    },
-   "source": "native/core/EquipSink.cpp:184"
+   "source": "native/core/EquipSink.cpp:184",
+   "twin": {
+    "1.6.1170": "EquipSink.Path.PickUpObject.37521"
+   }
   },
   {
    "seat": "EquipSink.Path.BoundItem.37942",
@@ -3250,7 +3322,10 @@
    "sig": {
     "1.5.97": "48 85 D2 0F 84 ?? ?? ?? ?? 48 8B C4 56 57 41 54 41 56 41 57 48 81 EC 80 00 00 00 48 C7 40 A8 FE FF FF FF"
    },
-   "source": "native/core/EquipSink.cpp:185"
+   "source": "native/core/EquipSink.cpp:185",
+   "twin": {
+    "1.6.1170": "EquipSink.Path.BoundItem.38898"
+   }
   },
   {
    "seat": "EquipSink.Path.ProcedureEat.27700",
@@ -3262,7 +3337,10 @@
    "sig": {
     "1.5.97": "40 55 56 41 56 41 57 48 83 EC 48 48 8B 02 4C 8B FA"
    },
-   "source": "native/core/EquipSink.cpp:186"
+   "source": "native/core/EquipSink.cpp:186",
+   "twin": {
+    "1.6.1170": "EquipSink.Path.ProcedureEat.28422"
+   }
   },
   {
    "seat": "EquipSink.Path.InventoryReequip.40241",
@@ -3274,7 +3352,10 @@
    "sig": {
     "1.5.97": "48 8B C4 56 57 41 54 41 56 41 57 48 81 EC D0 00 00 00 48 C7 44 24 60 FE FF FF FF"
    },
-   "source": "native/core/EquipSink.cpp:187"
+   "source": "native/core/EquipSink.cpp:187",
+   "twin": {
+    "1.6.1170": "EquipSink.Path.InventoryReequip.41244"
+   }
   },
   {
    "seat": "EquipSink.Path.StartCombat.37608",
@@ -3286,7 +3367,10 @@
    "sig": {
     "1.5.97": "4C 8B DC 56 57 41 54 41 56 41 57 48 83 EC 50 49 C7 43 B8 FE FF FF FF 49 89 5B 10 49 89 6B 18 0F 29 74 24 40 49 8B E8"
    },
-   "source": "native/core/EquipSink.cpp:188"
+   "source": "native/core/EquipSink.cpp:188",
+   "twin": {
+    "1.6.1170": "EquipSink.Path.StartCombat.38561"
+   }
   },
   {
    "seat": "CommonLib.BSReadWriteLock.LockForRead",

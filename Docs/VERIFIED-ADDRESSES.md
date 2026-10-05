@@ -12,9 +12,10 @@ used in place of the library's answer.
 
 Offline result of this generation: 1.6.1170.0 191/191 verified, 0 refused, 1.5.97.0 191/191 verified, 0 refused.
 
-1.7.104.0 has NO Address Library. Its column is OUR OWN id map (`_research/1.7.104-idmap/idmap-1.7.104.csv`, keyed by
-the 1.6.1170 id) re-verified against the plaintext 1.7.104 executable by the same row-kind checks (see the script
-docstring). Offline result: 1.7.104.0 199/230 verified, 31 NOT verified. A not-verified seat has no row in the 1.7.104 table,
+1.7.104.0 has NO Address Library. Its column is OUR OWN id map: the MIT id table the CommonLibSSE-NG fork publishes
+(`data/mit-idtable-v1-1-7-104-0.bin`, the file SelfCheck queries at runtime; authoritative) with the evidence CSVs beside it, keyed by
+the 1.6.1170 id, re-verified against the plaintext 1.7.104 executable by the same row-kind checks (see the script
+docstring). Offline result: 1.7.104.0 202/230 verified, 28 NOT verified (28 of them BY DESIGN: 1.5.97-only labels whose AE twin row carries the 1.7.104 fact). A not-verified seat has no row in the 1.7.104 table,
 so `IsVerifiedAddress` is false and the seat is refused by name. The table of `Not verified on 1.7.104` is below.
 
 ## Rows
@@ -26,8 +27,8 @@ so `IsVerifiedAddress` is false and the seat is refused by name. The table of `N
 | CombatTargetSelectorFixed | vtable | 212098 | 0x18D73C8 | 265607 | 0x1690AF8 | 212098 | 0x1955990 | RTTI .?AVCombatTargetSelectorFixed@@ (COL offset 0) | 0x06: 0x84DAF0 / 0x7B6920 / 0x862B50 | native/channels/TargetPin.cpp:459 | ch.20 source deny; UpdateTarget AE 0x559930 / SE 0x4FE300 calls slot 6 |
 | PlayerCharacter | vtable | 208040 | 0x18AB9C0 | 261916 | 0x16635E0 | 208040 | 0x19296C0 | RTTI .?AVPlayerCharacter@@ (COL offset 0) | 0xAD: 0x732660 / 0x69E580 / 0x745200 | native/core/Hook.cpp:97 | ADDRESS-TABLE-2026-09-15.md:69 |
 | ActorMagicCaster | vtable | 205828 | 0x187B8B0 | 257613 | 0x1637490 | 205828 | 0x18F6150 | RTTI .?AVActorMagicCaster@@ (COL offset 0) | 0x0A: 0x5B1610 / 0x5427B0 / 0x5C0150 | native/core/CastGate.cpp:199 | ADDRESS-TABLE-2026-09-15.md:65 |
-| CombatMagicItemData | vtable | 211955 | 0x18D5120 | 265000 | 0x1686BF8 | - | - | RTTI .?AVCombatMagicItemData@@ (COL offset 0) | 0x01: 0x81D830 / 0x7811F0 / - | native/core/CastClassify.cpp:31 | ADDRESS-TABLE-2026-09-15.md:40 |
-| CastClassify.KeepBestRow | function | 45325 | 0x81DBA0 | 43934 | 0x7815A0 | - | - | signature (23 bytes, unique in .text) |  | native/core/CastClassify.cpp:80 | STATUS.md:142 |
+| CombatMagicItemData | vtable | 211955 | 0x18D5120 | 265000 | 0x1686BF8 | 211955 | 0x19536E8 | RTTI .?AVCombatMagicItemData@@ (COL offset 0) | 0x01: 0x81D830 / 0x7811F0 / 0x832D20 | native/core/CastClassify.cpp:31 | ADDRESS-TABLE-2026-09-15.md:40 |
+| CastClassify.KeepBestRow | function | 45325 | 0x81DBA0 | 43934 | 0x7815A0 | 45325 | 0x833090 | signature (23 bytes, unique in .text) |  | native/core/CastClassify.cpp:80 | STATUS.md:142 |
 | CombatProjectileAimController | vtable | 210081 | 0x18C59A8 | 264187 | 0x167E2A8 | 210081 | 0x1943F48 | RTTI .?AVCombatProjectileAimController@@ (COL offset 0) |  | native/core/CastSeats.cpp:535 | ADDRESS-TABLE-2026-09-15.md:175 |
 | CombatMagicCasterOffensive | vtable | 211104 | 0x18CC4A0 | 265003 | 0x1686CA0 | 211104 | 0x194ACC0 | RTTI .?AVCombatMagicCasterOffensive@@ (COL offset 0) | 0x06: 0x81E7B0 / 0x7824C0 / 0x833CA0<br>0x07: 0x81E7F0 / 0x782500 / 0x833CE0<br>0x0A: 0x81E020 / 0x781CB0 / 0x833510<br>0x0B: 0x81EA30 / 0x782780 / 0x833F20<br>0x0D: 0x81E0B0 / 0x781D00 / 0x8335A0 | native/core/AiCastSeats.cpp (Group B); CastSeats.cpp:512; CasterTypeCensus.cpp (0x06, 0x0B) | ADDRESS-TABLE-2026-09-15.md:72 |
 | CombatMagicCasterRestore | vtable | 211142 | 0x18CC890 | 265007 | 0x1686DC8 | 211142 | 0x194B0B0 | RTTI .?AVCombatMagicCasterRestore@@ (COL offset 0) | 0x06: 0x81F980 / 0x7836D0 / 0x834E70<br>0x07: 0x81FAF0 / 0x7837E0 / 0x834FE0<br>0x0A: 0x81E020 / 0x781CB0 / 0x833510<br>0x0B: 0x81FC60 / 0x7838F0 / 0x835150<br>0x0D: 0x81E0B0 / 0x781D00 / 0x8335A0 | native/core/AiCastSeats.cpp (Group B); CastSeats.cpp:512; CasterTypeCensus.cpp (0x06, 0x0B) | ADDRESS-TABLE-2026-09-15.md:72 |
@@ -157,7 +158,7 @@ so `IsVerifiedAddress` is false and the seat is refused by name. The table of `N
 | RTTI.CombatMagicCaster | rtti | 395744 | 0x208C578 | 687618 | 0x1E56228 | 395744 | 0x2132BE8 | TypeDescriptor .?AVCombatMagicCaster@@ |  | native/core/AiCastSeats.cpp:1357; CastSeats.cpp:511 |  |
 | RTTI.Character | rtti | 394334 | 0x2060420 | 514043 | 0x1E39330 | 394334 | 0x2103D50 | TypeDescriptor .?AVCharacter@@ |  | native/core/NonAliasProbe.cpp:215 |  |
 | RTTI.CombatAimController | rtti | 395363 | 0x207D000 | 687513 | 0x1E53A48 | 395363 | 0x2121300 | TypeDescriptor .?AVCombatAimController@@ |  | native/core/CastSeats.cpp:536 |  |
-| RTTI.CombatBehaviorTreeNode | rtti | 394204 | 0x205E120 | 686393 | 0x1E37020 | - | - | TypeDescriptor .?AVCombatBehaviorTreeNode@@ |  | native/core/ActionGate.cpp:504 |  |
+| RTTI.CombatBehaviorTreeNode | rtti | 394204 | 0x205E120 | 686393 | 0x1E37020 | 394204 | 0x2101980 | TypeDescriptor .?AVCombatBehaviorTreeNode@@ |  | native/core/ActionGate.cpp:504 |  |
 | PackageGate.EvaluatePackage | function | 37401 | 0x66CCF0 | 36407 | 0x5DB310 | 37401 | 0x67F7B0 | signature (31 bytes, unique in .text) |  | native/core/PackageGate.cpp:341 | ADDRESS-TABLE-2026-09-15.md:144 |
 | MovementDeny.SetDontMove | function | 37489 | 0x6750D0 | 36490 | 0x5E3330 | 37489 | 0x687BA0 | signature (18 bytes, unique in .text) |  | native/channels/MovementDeny.cpp:42 | ADDRESS-TABLE-2026-09-15.md:141 |
 | MovementDeny.KeepOffsetFromActor | function | 37894 | 0x697110 | 36870 | 0x603990 | 37894 | 0x6A9C90 | signature (35 bytes, unique in .text) |  | native/channels/MovementDeny.cpp:52 | ADDRESS-TABLE-2026-09-15.md:142 |
@@ -259,37 +260,34 @@ for them and the seat is refused. Nothing here is a failure on 1.6.1170 or 1.5.9
 
 | seat | 1.6.1170 id | reason |
 |---|---|---|
-| CombatMagicItemData | 211955 | id 211955 is not in the idmap |
-| CastClassify.KeepBestRow | 45325 | id 45325 is not in the idmap |
-| RTTI.CombatBehaviorTreeNode | 394204 | id 394204 is not in the idmap |
-| EquipSink.Path.OutfitApply.24234 | - | no 1.6.1170 (AE) id: the 1.7.104 map is keyed by AE id (1.5.97-only seat) |
-| EquipSink.Path.AddWornOutfit.19266 | - | no 1.6.1170 (AE) id: the 1.7.104 map is keyed by AE id (1.5.97-only seat) |
-| EquipSink.Path.AiCommand.38618 | - | no 1.6.1170 (AE) id: the 1.7.104 map is keyed by AE id (1.5.97-only seat) |
-| EquipSink.Path.AiCommand.38619 | - | no 1.6.1170 (AE) id: the 1.7.104 map is keyed by AE id (1.5.97-only seat) |
-| EquipSink.Path.RemoveItemReequip.36781 | - | no 1.6.1170 (AE) id: the 1.7.104 map is keyed by AE id (1.5.97-only seat) |
-| EquipSink.Path.RemoveItemReequip.19263 | - | no 1.6.1170 (AE) id: the 1.7.104 map is keyed by AE id (1.5.97-only seat) |
-| EquipSink.Path.RemoveItemReequip.15821 | - | no 1.6.1170 (AE) id: the 1.7.104 map is keyed by AE id (1.5.97-only seat) |
-| EquipSink.Path.CombatNode.46957 | - | no 1.6.1170 (AE) id: the 1.7.104 map is keyed by AE id (1.5.97-only seat) |
-| EquipSink.Path.CombatNode.46955 | - | no 1.6.1170 (AE) id: the 1.7.104 map is keyed by AE id (1.5.97-only seat) |
-| EquipSink.Path.Script.53861 | - | no 1.6.1170 (AE) id: the 1.7.104 map is keyed by AE id (1.5.97-only seat) |
-| EquipSink.Path.Console.21869 | - | no 1.6.1170 (AE) id: the 1.7.104 map is keyed by AE id (1.5.97-only seat) |
-| EquipSink.Path.PlayerMenu.28629 | - | no 1.6.1170 (AE) id: the 1.7.104 map is keyed by AE id (1.5.97-only seat) |
-| EquipSink.Path.PlayerMenu.28593 | - | no 1.6.1170 (AE) id: the 1.7.104 map is keyed by AE id (1.5.97-only seat) |
-| EquipSink.Path.PlayerMenu.37951 | - | no 1.6.1170 (AE) id: the 1.7.104 map is keyed by AE id (1.5.97-only seat) |
-| EquipSink.Path.WorkerReentry.37957 | - | no 1.6.1170 (AE) id: the 1.7.104 map is keyed by AE id (1.5.97-only seat) |
-| EquipSink.Path.QueuedApply.37950 | - | no 1.6.1170 (AE) id: the 1.7.104 map is keyed by AE id (1.5.97-only seat) |
-| EquipSink.Path.QueuedApply.38789 | - | no 1.6.1170 (AE) id: the 1.7.104 map is keyed by AE id (1.5.97-only seat) |
-| EquipSink.Path.AiCommand.38606 | - | no 1.6.1170 (AE) id: the 1.7.104 map is keyed by AE id (1.5.97-only seat) |
-| EquipSink.Path.AiCommand.38902 | - | no 1.6.1170 (AE) id: the 1.7.104 map is keyed by AE id (1.5.97-only seat) |
-| EquipSink.Path.AiCommand.38624 | - | no 1.6.1170 (AE) id: the 1.7.104 map is keyed by AE id (1.5.97-only seat) |
-| EquipSink.Path.AiCommand.38614 | - | no 1.6.1170 (AE) id: the 1.7.104 map is keyed by AE id (1.5.97-only seat) |
-| EquipSink.Path.AiCommand.36510 | - | no 1.6.1170 (AE) id: the 1.7.104 map is keyed by AE id (1.5.97-only seat) |
-| EquipSink.Path.DropObject.36520 | - | no 1.6.1170 (AE) id: the 1.7.104 map is keyed by AE id (1.5.97-only seat) |
-| EquipSink.Path.PickUpObject.36521 | - | no 1.6.1170 (AE) id: the 1.7.104 map is keyed by AE id (1.5.97-only seat) |
-| EquipSink.Path.BoundItem.37942 | - | no 1.6.1170 (AE) id: the 1.7.104 map is keyed by AE id (1.5.97-only seat) |
-| EquipSink.Path.ProcedureEat.27700 | - | no 1.6.1170 (AE) id: the 1.7.104 map is keyed by AE id (1.5.97-only seat) |
-| EquipSink.Path.InventoryReequip.40241 | - | no 1.6.1170 (AE) id: the 1.7.104 map is keyed by AE id (1.5.97-only seat) |
-| EquipSink.Path.StartCombat.37608 | - | no 1.6.1170 (AE) id: the 1.7.104 map is keyed by AE id (1.5.97-only seat) |
+| EquipSink.Path.OutfitApply.24234 | - | BY DESIGN: 1.5.97-only label. On 1.6.1170 and 1.7.104 the code reads its AE twin EquipSink.Path.OutfitApply.418622 (AE id 418622, 1.7.104 0x3C4440), whose own row carries the 1.7.104 fact (MAPPED-AE) |
+| EquipSink.Path.AddWornOutfit.19266 | - | BY DESIGN: 1.5.97-only label. On 1.6.1170 and 1.7.104 the code reads its AE twin EquipSink.Path.AddWornOutfit.19692 (AE id 19692, 1.7.104 0x2E8070), whose own row carries the 1.7.104 fact (MAPPED-AE) |
+| EquipSink.Path.AiCommand.38618 | - | BY DESIGN: 1.5.97-only label. On 1.6.1170 and 1.7.104 the code reads its AE twin EquipSink.Path.AiCommand.39649 (AE id 39649, 1.7.104 0x70F670), whose own row carries the 1.7.104 fact (MAPPED-AE) |
+| EquipSink.Path.AiCommand.38619 | - | BY DESIGN: 1.5.97-only label. On 1.6.1170 and 1.7.104 the code reads its AE twin EquipSink.Path.AiCommand.39650 (AE id 39650, 1.7.104 0x710480), whose own row carries the 1.7.104 fact (MAPPED-AE) |
+| EquipSink.Path.RemoveItemReequip.36781 | - | BY DESIGN: 1.5.97-only label. On 1.6.1170 and 1.7.104 the code reads its AE twin EquipSink.Path.RemoveItemReequip.37797 (AE id 37797, 1.7.104 0x6A5370), whose own row carries the 1.7.104 fact (MAPPED-AE) |
+| EquipSink.Path.RemoveItemReequip.19263 | - | BY DESIGN: 1.5.97-only label. On 1.6.1170 and 1.7.104 the code reads its AE twin EquipSink.Path.RemoveItemReequip.19689 (AE id 19689, 1.7.104 0x2E7CC0), whose own row carries the 1.7.104 fact (MAPPED-AE) |
+| EquipSink.Path.RemoveItemReequip.15821 | - | BY DESIGN: 1.5.97-only label. On 1.6.1170 and 1.7.104 the code reads its AE twin EquipSink.Path.RemoveItemReequip.16059 (AE id 16059, 1.7.104 0x22DA70), whose own row carries the 1.7.104 fact (MAPPED-AE) |
+| EquipSink.Path.CombatNode.46957 | - | BY DESIGN: 1.5.97-only label. On 1.6.1170 and 1.7.104 the code reads its AE twin EquipSink.Path.CombatNode.48126 (AE id 48126, 1.7.104 0x88D360), whose own row carries the 1.7.104 fact (MAPPED-AE) |
+| EquipSink.Path.CombatNode.46955 | - | BY DESIGN: 1.5.97-only label. On 1.6.1170 and 1.7.104 the code reads its AE twin EquipSink.Path.CombatNode.48124 (AE id 48124, 1.7.104 0x88CFF0), whose own row carries the 1.7.104 fact (MAPPED-AE) |
+| EquipSink.Path.Script.53861 | - | BY DESIGN: 1.5.97-only label. On 1.6.1170 and 1.7.104 the code reads its AE twin EquipSink.Path.Script.54661 (AE id 54661, 1.7.104 0xA00040), whose own row carries the 1.7.104 fact (MAPPED-AE) |
+| EquipSink.Path.Console.21869 | - | BY DESIGN: 1.5.97-only label. On 1.6.1170 and 1.7.104 the code reads its AE twin EquipSink.Path.Console.22351 (AE id 22351, 1.7.104 0x35C2D0), whose own row carries the 1.7.104 fact (MAPPED-AE) |
+| EquipSink.Path.PlayerMenu.28629 | - | BY DESIGN: 1.5.97-only label. On 1.6.1170 and 1.7.104 the code reads its AE twin EquipSink.Path.PlayerMenu.29383 (AE id 29383, 1.7.104 0x491990), whose own row carries the 1.7.104 fact (MAPPED-AE) |
+| EquipSink.Path.PlayerMenu.28593 | - | BY DESIGN: 1.5.97-only label. On 1.6.1170 and 1.7.104 the code reads its AE twin EquipSink.Path.PlayerMenu.29346 (AE id 29346, 1.7.104 0x48F1D0), whose own row carries the 1.7.104 fact (MAPPED-AE) |
+| EquipSink.Path.PlayerMenu.37951 | - | BY DESIGN: 1.5.97-only label. On 1.6.1170 and 1.7.104 the code reads its AE twin EquipSink.Path.PlayerMenu.38907 (AE id 38907, 1.7.104 0x6DD100), whose own row carries the 1.7.104 fact (MAPPED-AE) |
+| EquipSink.Path.WorkerReentry.37957 | - | BY DESIGN: 1.5.97-only label. On 1.6.1170 and 1.7.104 the code reads its AE twin EquipSink.Path.WorkerReentry.38913 (AE id 38913, 1.7.104 0x6DD7B0), whose own row carries the 1.7.104 fact (MAPPED-AE) |
+| EquipSink.Path.QueuedApply.37950 | - | BY DESIGN: 1.5.97-only label. On 1.6.1170 and 1.7.104 the code reads its AE twin EquipSink.Path.QueuedApply.38906 (AE id 38906, 1.7.104 0x6DCFC0), whose own row carries the 1.7.104 fact (MAPPED-AE) |
+| EquipSink.Path.QueuedApply.38789 | - | BY DESIGN: 1.5.97-only label. On 1.6.1170 and 1.7.104 the code reads its AE twin EquipSink.Path.QueuedApply.39814 (AE id 39814, 1.7.104 0x720D90), whose own row carries the 1.7.104 fact (MAPPED-AE) |
+| EquipSink.Path.AiCommand.38606 | - | BY DESIGN: 1.5.97-only label. On 1.6.1170 and 1.7.104 the code reads its AE twin EquipSink.Path.AiCommand.39637 (AE id 39637, 1.7.104 0x704C70), whose own row carries the 1.7.104 fact (MAPPED-AE) |
+| EquipSink.Path.AiCommand.38902 | - | BY DESIGN: 1.5.97-only label. On 1.6.1170 and 1.7.104 the code reads its AE twin EquipSink.Path.AiCommand.39948 (AE id 39948, 1.7.104 0x7265C0), whose own row carries the 1.7.104 fact (MAPPED-AE) |
+| EquipSink.Path.AiCommand.38624 | - | BY DESIGN: 1.5.97-only label. On 1.6.1170 and 1.7.104 the code reads its AE twin EquipSink.Path.AiCommand.39655 (AE id 39655, 1.7.104 0x7135D0), whose own row carries the 1.7.104 fact (MAPPED-AE) |
+| EquipSink.Path.AiCommand.38614 | - | BY DESIGN: 1.5.97-only label. On 1.6.1170 and 1.7.104 the code reads its AE twin EquipSink.Path.AiCommand.39645 (AE id 39645, 1.7.104 0x70D050), whose own row carries the 1.7.104 fact (MAPPED-AE) |
+| EquipSink.Path.AiCommand.36510 | - | BY DESIGN: 1.5.97-only label. On 1.6.1170 and 1.7.104 the code reads its AE twin EquipSink.Path.AiCommand.37510 (AE id 37510, 1.7.104 0x68A6C0), whose own row carries the 1.7.104 fact (MAPPED-AE) |
+| EquipSink.Path.DropObject.36520 | - | BY DESIGN: 1.5.97-only label. On 1.6.1170 and 1.7.104 the code reads its AE twin EquipSink.Path.DropObject.37520 (AE id 37520, 1.7.104 0x68ACB0), whose own row carries the 1.7.104 fact (MAPPED-AE) |
+| EquipSink.Path.PickUpObject.36521 | - | BY DESIGN: 1.5.97-only label. On 1.6.1170 and 1.7.104 the code reads its AE twin EquipSink.Path.PickUpObject.37521 (AE id 37521, 1.7.104 0x68B0E0), whose own row carries the 1.7.104 fact (MAPPED-AE) |
+| EquipSink.Path.BoundItem.37942 | - | BY DESIGN: 1.5.97-only label. On 1.6.1170 and 1.7.104 the code reads its AE twin EquipSink.Path.BoundItem.38898 (AE id 38898, 1.7.104 0x6DC610), whose own row carries the 1.7.104 fact (MAPPED-AE) |
+| EquipSink.Path.ProcedureEat.27700 | - | BY DESIGN: 1.5.97-only label. On 1.6.1170 and 1.7.104 the code reads its AE twin EquipSink.Path.ProcedureEat.28422 (AE id 28422, 1.7.104 0x464CF0), whose own row carries the 1.7.104 fact (MAPPED-AE) |
+| EquipSink.Path.InventoryReequip.40241 | - | BY DESIGN: 1.5.97-only label. On 1.6.1170 and 1.7.104 the code reads its AE twin EquipSink.Path.InventoryReequip.41244 (AE id 41244, 1.7.104 0x776D10), whose own row carries the 1.7.104 fact (MAPPED-AE) |
+| EquipSink.Path.StartCombat.37608 | - | BY DESIGN: 1.5.97-only label. On 1.6.1170 and 1.7.104 the code reads its AE twin EquipSink.Path.StartCombat.38561 (AE id 38561, 1.7.104 0x6C93B0), whose own row carries the 1.7.104 fact (MAPPED-AE) |
 
 ## Slots and offsets that are not Address Library ids
 
@@ -353,7 +351,9 @@ audit covers everything the DLL installs or reads.
 python3 tools/verified_addresses/gen_verified_addresses.py --spec tools/verified_addresses/spec.json \
     --bin-1.6.1170 <binaries/1.6.1170/SkyrimSE.unpacked.exe> --al-1.6.1170 <versionlib-1-6-1170-0.bin> \
     --bin-1.5.97 <binaries/1.5.97/SkyrimSE.unpacked.exe> --al-1.5.97 <version-1-5-97-0.bin> \
-    --bin-1.7.104 <binaries/1.7.104/SkyrimSE.exe> --idmap <_research/1.7.104-idmap/idmap-1.7.104.csv> \
+    --bin-1.7.104 <binaries/1.7.104/SkyrimSE.exe> --idtable <fork data/mit-idtable-v1-1-7-104-0.bin> \
+    --idmap <fork data/idmap-1.7.104-fork-full.csv> --idmap <fork data/idmap-1.7.104-sync.csv> --idmap <fork data/idmap-1.7.104-fixes.csv> \
+    --se-seats <_research/1.7.104-idmap/se-seats-1.7.104.csv> \
     --header native/VerifiedAddresses.h --doc Docs/VERIFIED-ADDRESSES.md
 ```
 
