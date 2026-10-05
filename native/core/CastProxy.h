@@ -57,18 +57,29 @@ namespace RE { class SpellItem; }
 
 namespace apmf::castproxy {
 
-    // Hand this owner a delivery-flip proxy for `a_src` and TEACH it so the AI's own
-    // inventory can build an item for it. Keyed by (owner, source spell) and
-    // REFERENCE-COUNTED: if the owner already has a live proxy for this exact spell
-    // the SAME form is returned and its ref count goes up by one; otherwise a free
-    // slot is configured for it (ref count 1). A slot holding refs is never
-    // re-pointed at a different spell. Every nonzero return is ONE ref the caller's
-    // claim owns and must give back through Unref exactly once.
+    // Which hand(s) the claim a proxy serves occupies. Part of the proxy's KEY
+    // (review F3, 2026-10-05): the engine seats resolve a claim BY ITS DRIVEN FORM
+    // (ControlMap::TryGetCastSeatClaimForForm), so two live claims on one actor --
+    // e.g. the same heal on the left hand at ally A and on the right hand at ally
+    // B -- must drive two DIFFERENT forms, or every seat resolves both hands to the
+    // first claim's target. A dual claim occupies both hands and is its own key.
+    enum class Hand : std::uint8_t { kRight = 0, kLeft = 1, kDual = 2 };
+
+    // Hand this owner a delivery-flip proxy for `a_src` on `a_hand` and TEACH it so
+    // the AI's own inventory can build an item for it. Keyed by (owner, source
+    // spell, hand) and REFERENCE-COUNTED: if the owner already has a live proxy for
+    // this exact spell on this exact hand key, the SAME form is returned and its ref
+    // count goes up by one; otherwise a free slot is configured for it (ref count 1).
+    // Two live slots never share a form, and a minted form whose FormID is 0 or
+    // collides with another slot's is refused loudly, so the two hands' proxies are
+    // always distinct FormIDs. A slot holding refs is never re-pointed at a
+    // different spell. Every nonzero return is ONE ref the caller's claim owns and
+    // must give back through Unref exactly once.
     // Returns 0 when no slot is free / the actor is not loadable / the form factory
-    // refuses (no ref taken) -- in which case the CALLER must leave the claim's proxy
-    // at 0 rather than let the AI cast the original kSelf form at an ally (it would
-    // silently heal the caster). WRITER/MAIN THREAD ONLY.
-    RE::FormID Acquire(RE::FormID a_owner, RE::SpellItem* a_src);
+    // refuses (no ref taken) -- in which case the CALLER must not let the seats serve
+    // the claim: the original kSelf form cast "at an ally" would silently heal the
+    // caster. WRITER/MAIN THREAD ONLY.
+    RE::FormID Acquire(RE::FormID a_owner, RE::SpellItem* a_src, Hand a_hand);
 
     // Give back ONE claim's ref on `a_proxy` (the FormID Acquire returned to it).
     // Un-teaches + deselects + releases the slot only when the LAST ref goes, so
@@ -93,7 +104,18 @@ namespace apmf::castproxy {
     // A runtime 0xFF dynamic form must never be capturable into the `.ess`; a cast
     // whose proxy is pulled out from under it simply stops being selectable and the
     // AI reverts to its own choice on the next rescore -- never a corrupt save.
-    // MAIN THREAD ONLY (SKSE's save callback seat).
+    // Runs on SKSE's save callback seat (logged with whether that is the Drain
+    // thread). Every swept slot keeps its owner and refs; ReteachLive puts them back.
     void PreSaveSweep();
+
+    // Re-teach every slot that still holds refs (review F1, 2026-10-05). The save
+    // sweep above un-teaches the proxies of claims that are still LIVE, and only
+    // Acquire teaches -- a client that keeps its claim alive with Repoint heartbeats
+    // never calls it again, so its proxy stayed unknown (unselectable) for the rest
+    // of the claim. plugin.cpp's OnSave Posts this through apmf::mainthread, so it
+    // runs on the next Pump (after Drain, on the confirmed main seat), i.e. after
+    // the save call has returned; a load that follows Discard()s it. Logs each
+    // re-teach. WRITER/MAIN THREAD ONLY.
+    void ReteachLive();
 
 }

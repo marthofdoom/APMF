@@ -308,15 +308,22 @@ a delivery-flipped `kTargetActor` COPY (`Configure`: source `data` + shared sour
 `Effect*` by pointer, delivery flipped) that the AI selects and casts instead.
 `Acquire` (mint or SHARE + TRANSIENT `AddSpell`; +1 ref) / `Unref` (-1 ref; un-teach +
 deselect + release the slot only at 0) / `ResetAll` (revert + kPreLoadGame) /
-`PreSaveSweep` (SKSE save). Fixed 8-slot pool keyed by (OWNER, SOURCE SPELL) and
-REF-COUNTED across the live claims naming each form (fix/apmf-proxy-per-claim-refcount,
-2026-10-05): two hands healing with one spell, a dual cast, or a re-aim share ONE form;
-two different kSelf spells get two forms, and a slot holding refs is never re-Configured.
-Each claim that got a form records `Claim::castProxyRef` and owns exactly one ref.
+`PreSaveSweep` (SKSE save) / `ReteachLive` (posted by `OnSave` right after the sweep:
+re-teaches every slot still holding refs on the next Pump, because a Repoint-heartbeated
+claim never calls `Acquire` again). Fixed 8-slot pool keyed by (OWNER, SOURCE SPELL,
+HAND: right / left / dual) and REF-COUNTED across the live claims naming each form
+(fix/apmf-proxy-per-claim-refcount, 2026-10-05): a same-hand re-aim or same-hand rival
+shares ONE form; the same spell on the OTHER hand gets its OWN form, because the seats
+resolve a claim BY DRIVEN FORM (`TryGetCastSeatClaimForForm`) and one shared form aimed
+both hands at the first claim's target; different kSelf spells get different forms, and
+a slot holding refs is never re-Configured. Live slots never share a FormID (a mint
+whose id is 0 or collides is refused loudly). Each claim that got a form records
+`Claim::castProxyRef` and owns exactly one ref. EVERY driving kSelf-at-ally claim takes
+a proxy (no prospective-winner gate); one that cannot get one keeps an INVALID target
+handle, so no seat drives its original form (it would heal the caster).
 WRITER/MAIN THREAD ONLY.
 Called from: `ControlMap::ApplyRequest` (`Acquire`, on the writer thread where form
-lookups are legal, BEFORE the claim publishes; only the prospective winner of the
-claim's OWN hand(s) acquires), and every claim-removal path in `core/ControlMap.cpp`
+lookups are legal, BEFORE the claim publishes), and every claim-removal path in `core/ControlMap.cpp`
 (`ApplyRelease`, dual/single eviction, the Drain unload sweep, `ReleaseAll`) through
 `PostProxyUnref` — deferred one `mainthread::Post` hop so it lands AFTER the removal
 publishes (INVARIANTS #20). Ordering: Acquire is synchronous inside Drain and Unref runs

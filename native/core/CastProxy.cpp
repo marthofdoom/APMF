@@ -1,6 +1,7 @@
 #include "PCH.h"
 #include "core/Log.h"
 #include "core/CastProxy.h"
+#include "core/Hook.h"   // hook::OnMainThread(): which thread the save sweep ran on (log only)
 
 // ============================================================================
 // See core/CastProxy.h for the contract and for WHAT WAS REMOVED here (the whole
@@ -8,20 +9,24 @@
 // now ONLY the delivery-flip proxy pool: mint, transient-teach, un-teach, free,
 // pre-save sweep, revert reset.
 //
-// The pool is fixed-size and keyed by (OWNER, SOURCE SPELL), REFERENCE-COUNTED
-// across the live cast claims that name it (fix/apmf-proxy-per-claim-refcount,
-// 2026-10-05). A proxy is a delivery-flipped copy of ONE spell taught to ONE
-// actor, so that pair is exactly its identity:
-//   * Two live claims on the same actor naming the SAME kSelf spell (left hand +
-//     right hand healing two allies, a dual cast, or a re-aim RequestCast landing
-//     before the old claim's release) SHARE one form, and each holds one ref.
-//     The form stays taught until the LAST of them releases.
+// The pool is fixed-size and keyed by (OWNER, SOURCE SPELL, HAND), REFERENCE-
+// COUNTED across the live cast claims that name it (fix/apmf-proxy-per-claim-
+// refcount, 2026-10-05). A proxy is a delivery-flipped copy of ONE spell taught to
+// ONE actor for ONE hand key (right, left, or dual):
+//   * Two live claims naming the same kSelf spell on the SAME hand key (a re-aim
+//     RequestCast landing before the old claim's release, or a same-hand rival)
+//     SHARE one form, and each holds one ref. The form stays taught until the LAST
+//     of them releases.
+//   * The same spell on the OTHER hand gets a DIFFERENT form (review F3). The
+//     seats resolve a claim by its driven form (TryGetCastSeatClaimForForm), so a
+//     left-hand heal at ally A and a right-hand heal at ally B with one shared form
+//     would both resolve to the first claim's target and B would never be healed.
+//     The cost is that a cross-hand re-aim teaches a new form, which needs a
+//     CombatInventory rebuild -- core/EquipGate.cpp already dirties it while a
+//     cast-seat claim stands.
 //   * Two live claims naming DIFFERENT kSelf spells get DIFFERENT forms. A slot
 //     that holds refs is NEVER re-Configured to another spell (the old per-owner
 //     slot was, so one hand silently cast the other hand's spell).
-// Keying by spell rather than by hand is deliberate: a same-spell re-aim onto the
-// other hand, or a dual cast replacing a single-hand one, keeps the SAME form, so
-// it needs no new CombatInventory item (core/CastProxy.h CLIENT DEPENDENCY).
 // Every claim that got a form from Acquire owns exactly one ref and gives it back
 // through Unref, deferred one main-thread hop past the Publish that removed the
 // claim (Docs/INVARIANTS.md #20). Acquire runs synchronously inside Drain and
@@ -39,7 +44,16 @@ namespace apmf::castproxy {
             RE::FormID     source = 0;         // which real spell it currently mirrors
             RE::FormID     owner  = 0;         // 0 == the slot is free
             std::uint32_t  refs   = 0;         // live claims naming this form; owner != 0 <=> refs > 0
+            Hand           hand   = Hand::kRight;   // the hand key it serves (meaningful while owned)
         };
+
+        const char* HandName(Hand h) {
+            switch (h) {
+            case Hand::kLeft: return "left";
+            case Hand::kDual: return "dual";
+            default:          return "right";
+            }
+        }
         // 8 = two per actor (one per hand: a two-hand heal with two different kSelf
         // spells) for the four actors the old one-slot-per-owner pool served. A slot's form is minted lazily, once, and
         // reused for the rest of the session, so an unused slot costs nothing.
@@ -58,24 +72,24 @@ namespace apmf::castproxy {
 
     }
 
-    RE::FormID Acquire(RE::FormID a_owner, RE::SpellItem* a_src) {
+    RE::FormID Acquire(RE::FormID a_owner, RE::SpellItem* a_src, Hand a_hand) {
         if (!a_src || !a_owner) return 0;
         auto* actor = RE::TESForm::LookupByID<RE::Actor>(a_owner);
         if (!actor) return 0;   // no actor to teach the proxy to -- it could never be selected
 
         const auto sid = a_src->GetFormID();
 
-        // This owner already has a live proxy for THIS spell: share it (one more ref)
-        // and re-teach if a PreSaveSweep un-taught it. Never re-Configured -- its
-        // source is already this spell.
+        // This owner already has a live proxy for THIS spell on THIS hand key: share
+        // it (one more ref) and re-teach if it is somehow unknown. Never
+        // re-Configured -- its source is already this spell.
         for (auto& s : g_slot) {
-            if (s.owner != a_owner || s.source != sid || !s.form) continue;
+            if (s.owner != a_owner || s.source != sid || s.hand != a_hand || !s.form) continue;
             ++s.refs;
             if (!actor->HasSpell(s.form)) actor->AddSpell(s.form);   // TRANSIENT teach
-            spdlog::info("[castproxy] 0x{} SHARES delivery-flip proxy 0x{} for kSelf spell 0x{} "
-                         "(refs {} -> {}).",
+            spdlog::info("[castproxy] 0x{} SHARES delivery-flip proxy 0x{} for kSelf spell 0x{} on the {} "
+                         "hand (refs {} -> {}).",
                          apmf::log::Hex(a_owner), apmf::log::Hex(s.form->GetFormID()),
-                         apmf::log::Hex(sid), s.refs - 1, s.refs);
+                         apmf::log::Hex(sid), HandName(a_hand), s.refs - 1, s.refs);
             return s.form->GetFormID();
         }
 
@@ -85,16 +99,32 @@ namespace apmf::castproxy {
                 auto* f = RE::IFormFactory::GetConcreteFormFactoryByType<RE::SpellItem>();
                 s.form  = f ? static_cast<RE::SpellItem*>(f->Create()) : nullptr;
                 if (!s.form) return 0;
+                // Distinct FormIDs are what let the seats (and a client attributing a
+                // fire to its hand) tell two proxies apart. The engine hands every
+                // created form its own 0xFF id; if that ever fails, refuse loudly
+                // rather than hand two claims one indistinguishable driven form.
+                const auto nid = s.form->GetFormID();
+                bool clash = (nid == 0);
+                for (const auto& o : g_slot)
+                    if (&o != &s && o.form && o.form->GetFormID() == nid) clash = true;
+                if (clash) {
+                    spdlog::error("[castproxy] minted proxy form has FormID 0x{} (zero or already held by "
+                                  "another pool slot) -- REFUSED, no proxy for owner 0x{} spell 0x{}.",
+                                  apmf::log::Hex(nid), apmf::log::Hex(a_owner), apmf::log::Hex(sid));
+                    s.form = nullptr;   // never configured, never taught: nothing borrowed to clear
+                    return 0;
+                }
             }
             Configure(s.form, a_src);   // only ever on a FREE slot (refs == 0)
             s.source = sid;
             s.owner  = a_owner;
             s.refs   = 1;
+            s.hand   = a_hand;
             if (!actor->HasSpell(s.form)) actor->AddSpell(s.form);   // TRANSIENT teach
-            spdlog::info("[castproxy] 0x{} minted delivery-flip proxy 0x{} for kSelf spell 0x{} "
-                         "(kTargetActor copy, shared effects, transiently taught; refs 0 -> 1).",
+            spdlog::info("[castproxy] 0x{} minted delivery-flip proxy 0x{} for kSelf spell 0x{} on the {} "
+                         "hand (kTargetActor copy, shared effects, transiently taught; refs 0 -> 1).",
                          apmf::log::Hex(a_owner), apmf::log::Hex(s.form->GetFormID()),
-                         apmf::log::Hex(sid));
+                         apmf::log::Hex(sid), HandName(a_hand));
             return s.form->GetFormID();
         }
 
@@ -153,13 +183,33 @@ namespace apmf::castproxy {
     void PreSaveSweep() {
         // Belt-and-braces (INVARIANTS #19): a save can be taken at ANY moment, so
         // un-teach + deselect every live proxy before a record is written. Slots stay
-        // owned; Acquire re-teaches on the claim's next Drain pass.
+        // owned with their refs; plugin.cpp's OnSave Posts ReteachLive right after.
+        int swept = 0;
         for (auto& s : g_slot) {
             if (!s.owner || !s.form) continue;
             if (auto* actor = RE::TESForm::LookupByID<RE::Actor>(s.owner)) {
                 actor->DeselectSpell(s.form);
                 actor->RemoveSpell(s.form);
+                ++swept;
             }
+        }
+        if (swept != 0) {
+            spdlog::info("[castproxy] save: un-taught {} live proxy form(s) before the save is written "
+                         "(on the Drain thread: {}); ReteachLive restores them on the next pump.",
+                         swept, apmf::hook::OnMainThread() ? "yes" : "NO");
+        }
+    }
+
+    void ReteachLive() {
+        for (auto& s : g_slot) {
+            if (!s.owner || s.refs == 0 || !s.form) continue;
+            auto* actor = RE::TESForm::LookupByID<RE::Actor>(s.owner);
+            if (!actor || actor->HasSpell(s.form)) continue;
+            actor->AddSpell(s.form);   // TRANSIENT teach, exactly as Acquire does
+            spdlog::info("[castproxy] 0x{} re-taught proxy 0x{} (spell 0x{}, {} hand, refs {}) after the save "
+                         "sweep -- its claim is still live.",
+                         apmf::log::Hex(s.owner), apmf::log::Hex(s.form->GetFormID()),
+                         apmf::log::Hex(s.source), HandName(s.hand), s.refs);
         }
     }
 

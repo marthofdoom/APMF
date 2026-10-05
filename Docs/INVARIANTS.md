@@ -814,9 +814,11 @@ them on the way in. Two rules follow, both learned the expensive way (MFO's
   `CombatInventory` rebuild makes an item for it), and a save taken while it is known
   would persist a reference to a form that will not exist on the next load. So the
   transient is un-taught when the LAST claim naming it releases (`castproxy::Unref`,
-  the single choke point; ref-counted per (owner, spell) since 2026-10-05) and swept unconditionally on the SKSE save callback
+  the single choke point; ref-counted per (owner, spell, hand) since 2026-10-05) and swept unconditionally on the SKSE save callback
   (`castproxy::PreSaveSweep`, called from `plugin.cpp`'s `OnSave` BEFORE any record is
-  written).
+  written). The sweep must be UNDONE for claims still live: `OnSave` posts
+  `castproxy::ReteachLive` to the next Pump, after the save call has returned, or a
+  Repoint-heartbeated claim keeps an un-taught (unselectable) proxy for its whole life.
 - **Clear borrowed pointers before the purge.** The proxy shares the SOURCE spell's
   `Effect*` objects BY POINTER (that is the whole point — same effects, flipped
   delivery). If the dead proxy still holds them at load time, the purge frees a

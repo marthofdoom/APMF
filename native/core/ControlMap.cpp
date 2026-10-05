@@ -69,15 +69,6 @@ namespace apmf {
             return (castFlags & APMF_API::kCastFlag_DualCast) != 0;
         }
 
-        // Do two cast claims compete for at least one hand? A dual claim occupies
-        // both; otherwise each claim's own hand hint decides (DualCast outranks
-        // LeftHand, as in ClaimOccupiesHand). Scopes the proxy mint's "prospective
-        // winner" test to the claims it actually competes with.
-        bool CastHandsOverlap(std::uint32_t a, std::uint32_t b) {
-            if (IsDualCastFlags(a) || IsDualCastFlags(b)) return true;
-            return ((a & APMF_API::kCastFlag_LeftHand) != 0) == ((b & APMF_API::kCastFlag_LeftHand) != 0);
-        }
-
         // Give back a removed claim's ref on its pooled delivery-flip proxy
         // (core/CastProxy.h Unref). Deferred one main-thread hop: Drain runs every
         // removal on its PRIVATE working copy and Publish()es it before returning,
@@ -699,7 +690,7 @@ namespace apmf {
         // claim is actually inserted -- populated in the early conflict check,
         // consumed right before `cc->claims.push_back(newClaim)` (Phase 2), AFTER
         // the new claim's own proxy Acquire, so a proxy the two share keeps a ref
-        // throughout (core/CastProxy.cpp's pool is ref-counted per owner + spell).
+        // throughout (core/CastProxy.cpp's pool is ref-counted per owner + spell + hand).
         std::vector<Handle> toEvict;
         if (op.intent == APMF_API::kIntent_Cast) {
             // Flags: the kCast op carries them in castFlags; a degenerate
@@ -978,43 +969,36 @@ namespace apmf {
             if (castProxy == 0 && castTargetHandle && castTarget != op.actor) {
                 if (auto* sp = RE::TESForm::LookupByID<RE::SpellItem>(spell)) {
                     if (sp->GetDelivery() == RE::MagicSystem::Delivery::kSelf) {
-                        // Only the PROSPECTIVE WINNER of the hand(s) this claim occupies
-                        // may take a proxy. The pool is ref-counted per (owner, spell), so
-                        // a loser can no longer re-target the winner's form -- but every
-                        // proxy is TAUGHT to the actor, and a loser's proxy would be one
-                        // more spell the AI may pick up for a hand nothing claims. Scoped
-                        // to the claims competing for the SAME hand(s) (CastHandsOverlap):
-                        // a claim on the OTHER hand is not a rival, and counting it would
-                        // refuse a proxy to the lower-basis hand of a two-hand heal. Peek
-                        // at the working map WITHOUT creating an entry (map.find, never
-                        // operator[]) -- deliberate: this whole block runs before
-                        // `map[op.actor]` for exactly that reason. A loser simply gets no
-                        // proxy, which is correct: it is not driving anything.
-                        float bestBasis = 0.0f;
-                        bool  haveBest  = false;
-                        if (auto npcIt = map.find(op.actor); npcIt != map.end()) {
-                            for (const auto& cc2 : npcIt->second.channels) {
-                                if (cc2.channel != channel) continue;
-                                for (const auto& cl : cc2.claims) {
-                                    if (!CastHandsOverlap(cl.castFlags, castFlags)) continue;   // other hand -- not a rival
-                                    if (!haveBest || cl.basis > bestBasis) { bestBasis = cl.basis; haveBest = true; }
-                                }
-                            }
-                        }
-                        if (haveBest && op.basis < bestBasis) {
-                            spdlog::info("[ch.8b] 0x{} cast claim (basis {:.1f}) loses to the incumbent on its "
-                                         "hand (basis {:.1f}) -- no delivery-flip proxy taken for it (a proxy "
-                                         "is taught to the actor; a loser's would be an extra AI choice).",
-                                         apmf::log::Hex(op.actor), op.basis, bestBasis);
-                        } else {
-                            castProxy    = apmf::castproxy::Acquire(op.actor, sp);
-                            castProxyRef = (castProxy != 0);   // a nonzero return IS one ref this claim owns
-                            if (castProxy == 0)
-                                spdlog::warn("[ch.8b] 0x{} claimed a kSelf spell 0x{} at another actor but "
-                                             "no delivery-flip proxy could be minted -- the seats will NOT "
-                                             "force the original form (it would land on the caster). The "
-                                             "claim still stands as a plain deny.",
-                                             apmf::log::Hex(op.actor), apmf::log::Hex(spell));
+                        // EVERY driving claim takes its own proxy ref (review F2,
+                        // 2026-10-05). The old "prospective winner only" gate left a
+                        // same-hand basis loser with NO proxy, so when the winner
+                        // released and the loser became the hand's owner, the seats
+                        // drove its ORIGINAL kSelf form and the caster healed itself.
+                        // Under the ref-counted pool a loser holding a proxy is safe:
+                        // the pool never re-targets a form a claim names, and while the
+                        // loser's form is not its hand's owner it is denied like any
+                        // other competing item (core/EquipGate.cpp's 0x0F completeness).
+                        // The hand is part of the proxy's key (review F3) so each hand's
+                        // claim drives its own form and the seats can tell them apart.
+                        const auto hand =
+                            IsDualCastFlags(castFlags)                         ? apmf::castproxy::Hand::kDual
+                            : (castFlags & APMF_API::kCastFlag_LeftHand) != 0  ? apmf::castproxy::Hand::kLeft
+                                                                               : apmf::castproxy::Hand::kRight;
+                        castProxy    = apmf::castproxy::Acquire(op.actor, sp, hand);
+                        castProxyRef = (castProxy != 0);   // a nonzero return IS one ref this claim owns
+                        if (castProxy == 0) {
+                            // No proxy: the only form this claim could drive is the
+                            // ORIGINAL kSelf spell, which lands on the CASTER whatever the
+                            // seats say. Leave the target handle INVALID so no seat serves
+                            // it (CastSeats' ClaimNamesThisCast and EquipGate's hand seat
+                            // both require one). The claim still occupies its hand, so the
+                            // per-hand deny stands: a plain deny, exactly as logged.
+                            castTargetHandle = RE::ActorHandle{};
+                            spdlog::warn("[ch.8b] 0x{} claimed kSelf spell 0x{} at another actor (0x{}) but no "
+                                         "delivery-flip proxy could be had -- the claim's target is left "
+                                         "UNRESOLVED so no seat drives the original form (it would land on the "
+                                         "caster). The claim stands as a plain deny of its hand.",
+                                         apmf::log::Hex(op.actor), apmf::log::Hex(spell), apmf::log::Hex(castTarget));
                         }
                     }
                 }
@@ -1043,10 +1027,10 @@ namespace apmf {
         // feat/per-hand-cast-claims Phase 2: evict every claim the early
         // dual-vs-single-hand collision check (above) found this WINNING claim
         // conflicts with. Done here, AFTER the new claim's own Acquire: an evicted
-        // claim gives back its OWN proxy ref (posted past this Drain's Publish), and
-        // when the new claim names the same spell its Acquire already took a second
-        // ref on the same form, so the shared form survives the eviction untouched
-        // (core/CastProxy.cpp, ref-counted per owner + spell).
+        // claim gives back its OWN proxy ref (posted past this Drain's Publish). The
+        // proxy key includes the hand (dual is its own key), so a dual claim evicting
+        // single-hand claims holds its own form; the evicted forms are un-taught once
+        // their last ref goes (core/CastProxy.cpp, ref-counted per owner + spell + hand).
         for (const Handle evictHandle : toEvict) {
             for (auto it = cc->claims.begin(); it != cc->claims.end(); ++it) {
                 if (it->handle != evictHandle) continue;
@@ -1187,9 +1171,9 @@ namespace apmf {
 
             // fix/apmf-proxy-per-claim-refcount: the departing claim gives back ITS
             // OWN ref, never the owner's whole proxy. The pool is ref-counted per
-            // (owner, spell), so a form another live claim still names (the other
-            // hand healing a second ally with the same spell, or a re-aim RequestCast
-            // applied earlier in this same Drain) keeps its other ref and stays
+            // (owner, spell, hand), so a form another live claim still names (a re-aim
+            // RequestCast on the same hand applied earlier in this same Drain, or a
+            // same-hand rival) keeps its other ref and stays
             // taught; the form is un-taught only when its LAST claim goes. Posted
             // past this Drain's Publish (INVARIANTS #20). This replaces both the
             // owner-wide castproxy::Free the channel-level Release used to post on
