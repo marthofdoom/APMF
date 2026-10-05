@@ -680,18 +680,28 @@ namespace apmf::equipsink {
         // verified against SE ids it does not have). The sites, offsets and frame
         // depths are disassembly-verified on 1.6.1170 and 1.5.97 ONLY (rule 11);
         // any other build is GATED here, by name -- not a site-verify failure.
+        // F2b (2026-10-05): 1.7.104 reads the AE tables. EquipObject (38894, 117 insns),
+        // the list sibling (38893) and the worker (38929) are identical there, both E8s
+        // sit at +0x170 / +0xBC and land on the worker, so the depths hold; every one of
+        // the 39 EquipObject/sibling call sites lies in the same AE path function at the
+        // same offset (Docs/VERIFIED-ADDRESSES.md "1.7.104 proof"). The caller table on
+        // 1.7.104 is the fork's MIT id table, which maps fewer ids than an Address Library:
+        // the 37 path call sites still classify to their own path id, and the two unnamed
+        // callers (AE 16104 / 52410 twins, absent from that table) classify to a different
+        // Unknown(<id>) than on 1.6.1170 -- a log id only, kEngine either way.
         const auto ver      = REL::Module::get().version();
         const bool onAE1170 = ver == REL::Version{ 1, 6, 1170, 0 };
         const bool onSE597  = ver == REL::Version{ 1, 5, 97, 0 };
-        if (!onAE1170 && !onSE597) {
-            g_notInstalledReason.store("runtime gated (not 1.6.1170 / 1.5.97)", std::memory_order_release);
+        const bool on17104  = allowance::IsRuntime1_7_104();
+        if (!onAE1170 && !onSE597 && !on17104) {
+            g_notInstalledReason.store("runtime gated (not 1.6.1170 / 1.5.97 / 1.7.104)", std::memory_order_release);
             spdlog::warn("[apmf][equip-sink] runtime {} gated -- the two worker call sites and their frame "
-                         "depths are disassembly-verified on 1.6.1170 and 1.5.97 only; seat NOT installed "
+                         "depths are disassembly-verified on 1.6.1170, 1.5.97 and 1.7.104 only; seat NOT installed "
                          "(kIntent_EquipAuthority claims are REFUSED on this runtime: seat not installed).",
                          ver.string("."));
             return;
         }
-        const bool ae = onAE1170;
+        const bool ae = onAE1170 || on17104;
         const SiteSpec* sites = ae ? kSitesAE : kSitesSE;
         g_paths     = ae ? kPathsAE : kPathsSE;
         g_pathCount = ae ? std::size(kPathsAE) : std::size(kPathsSE);

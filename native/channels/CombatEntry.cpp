@@ -425,10 +425,9 @@ namespace apmf::combatentry {
 
         const char* why = nullptr;
         if (REL::Module::IsVR()) {
-            why = "VR runtime (StartCombat is verified on 1.6.1170 and 1.5.97 only)";
-        } else if (!REL::Module::IsExactly(SKSE::RUNTIME_SSE_1_6_1170) &&
-                   !REL::Module::IsExactly(SKSE::RUNTIME_SSE_1_5_97)) {
-            why = "runtime is not exactly 1.6.1170 or 1.5.97 (StartCombat is verified on those two only)";
+            why = "VR runtime (StartCombat is verified on 1.6.1170, 1.5.97 and 1.7.104 only)";
+        } else if (!apmf::allowance::RuntimeSupported()) {   // F2b: 1.7.104 proven (StartCombat 38561 identical)
+            why = "runtime is not exactly 1.6.1170, 1.5.97 or 1.7.104 (StartCombat is verified on those three only)";
         } else if (GetPrivateProfileIntA("CombatEntry", "bCombatEntry", 1, kIni) == 0) {
             why = "[CombatEntry] bCombatEntry=0 in Data/SKSE/Plugins/APMF.ini";
         } else if (!apmf::allowance::SeatVerified(

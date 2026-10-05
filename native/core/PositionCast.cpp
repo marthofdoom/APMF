@@ -467,16 +467,19 @@ namespace apmf::poscast {
         if (g_installed.load(std::memory_order_relaxed)) return;
 
         if (REL::Module::IsVR()) {
-            g_reason.store("VR runtime (the cast-core evidence was read on 1.6.1170 and 1.5.97 only)");
+            g_reason.store("VR runtime (the cast-core evidence was read on 1.6.1170, 1.5.97 and 1.7.104 only)");
             spdlog::warn("[poscast] NOT installed -- {}.", g_reason.load());
             return;
         }
         // CLAUDE.md rule 11: the exact two runtimes whose cast core, NonActorMagicCaster,
         // RemoteCast, Disable and SetDelete were read (Docs/ADDRESS-TABLE-2026-09-15.md,
         // ADDENDUM 2026-09-23). Never a family test.
+        // F2b: 1.7.104 too (CreateReferenceAtLocation 13723, TES::GetCell 13322, InterruptCast
+        // 34408, the TESObjectREFR 0x23/0x5C/0x89 and NonActorMagicCaster slot-1 functions are
+        // identical there; Docs/VERIFIED-ADDRESSES.md "1.7.104 proof").
         const auto game = REL::Module::get().version();
-        if (game != REL::Version{ 1, 6, 1170, 0 } && game != REL::Version{ 1, 5, 97, 0 }) {
-            g_reason.store("runtime not verified for the position cast (only 1.6.1170 and 1.5.97 are)");
+        if (game != REL::Version{ 1, 6, 1170, 0 } && game != REL::Version{ 1, 5, 97, 0 } && !allowance::IsRuntime1_7_104()) {
+            g_reason.store("runtime not verified for the position cast (only 1.6.1170, 1.5.97 and 1.7.104 are)");
             spdlog::warn("[poscast] NOT installed -- {} (running {}).", g_reason.load(), game.string("."));
             return;
         }

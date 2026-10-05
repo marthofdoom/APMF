@@ -211,8 +211,8 @@ namespace apmf::nonaliasprobe {
             return;
         }
         if (!allowance::RuntimeSupported()) {   // G1: exact build, never the 1.6 path by bucket
-            spdlog::error("[nonaliasprobe] runtime {} is not exactly 1.6.1170 or 1.5.97 -- the 0xDF index is "
-                          "verified on those two only; PutCreatedPackage observe hook NOT installed (REFUSED; the "
+            spdlog::error("[nonaliasprobe] runtime {} is not exactly 1.6.1170, 1.5.97 or 1.7.104 -- the 0xDF index is "
+                          "verified on those three only; PutCreatedPackage observe hook NOT installed (REFUSED; the "
                           "INI observe switch and the 0x49 assist are unaffected).",
                           REL::Module::get().version().string("."));
             return;

@@ -225,7 +225,7 @@ namespace {
                 apmf::input::Register();
                 apmf::input::LogHelp();          // no-op unless the surface actually armed
             } else {
-                spdlog::warn("[input] runtime {} is not exactly 1.6.1170 or 1.5.97 (VR included) -- hooks "
+                spdlog::warn("[input] runtime {} is not exactly 1.6.1170, 1.5.97 or 1.7.104 (VR included) -- hooks "
                              "refused, input test surface NOT armed.",
                              REL::Module::get().version().string("."));
             }
@@ -319,6 +319,7 @@ SKSEPluginLoad(const SKSE::LoadInterface* a_skse) {
     // 1.7.104 would classify as SE with no address library behind it). "open"
     // here is the runtime gate only; each seat's own INI switch and RTTI/expected-
     // value checks still decide whether it actually installs, and log that.
+    // F2b (2026-10-05): 1.7.104 is the third supported build (see core/Allowance.h).
     // G1 (2026-10-04): the same line names whether the runtime is SUPPORTED at all --
     // apmf::allowance::RuntimeSupported(), the exact-version predicate every runtime-
     // dependent Install() now asks. Off the pair, every such seat refuses by name.
@@ -326,11 +327,13 @@ SKSEPluginLoad(const SKSE::LoadInterface* a_skse) {
         const auto game     = REL::Module::get().version();
         const bool placed   = apmf::allowance::RuntimeSupported();
         if (placed) {
-            spdlog::info("[runtime] {}: SUPPORTED (exactly 1.6.1170 or 1.5.97) -- cast-classify open, "
-                         "group-C open, equip-sink open",
-                         game.string("."));
+            spdlog::info("[runtime] {}: SUPPORTED (exactly 1.6.1170, 1.5.97 or 1.7.104) -- cast-classify open, "
+                         "group-C open, equip-sink open{}",
+                         game.string("."),
+                         apmf::allowance::IsRuntime1_7_104() ? " (1.7.104: AE ids through the CommonLibSSE-NG fork's MIT id "
+                                                               "table, each seat proven on this build)" : "");
         } else {
-            spdlog::error("[runtime] {}: NOT SUPPORTED (only exactly 1.6.1170 and 1.5.97 are) -- every "
+            spdlog::error("[runtime] {}: NOT SUPPORTED (only exactly 1.6.1170, 1.5.97 and 1.7.104 are) -- every "
                           "runtime-dependent seat is REFUSED; cast-classify gated, group-C gated, equip-sink gated",
                           game.string("."));
         }

@@ -8,6 +8,8 @@
 #include "core/CastProxy.h"         // castproxy::Acquire/Free (ch.8b kSelf delivery-flip, writer thread)
 #include "core/MainThread.h"        // mainthread::Post (defer proxy teardown past this Drain's Publish)
 #include "channels/Travel.h"  // ch.19 Installed()/NotInstalledReason() for the synchronous refusal
+#include "core/Allowance.h"    // RuntimeSupported(): APMF-B45 refusal on an unsupported runtime
+#include "core/Hook.h"         // hook::RefusedReason(): APMF-B45 refusal when nothing will drain
 #include "channels/TargetPin.h"  // ch.20 Installed()/NotInstalledReason() for the synchronous refusal
 #include "channels/CombatEntry.h"  // ch.21 Installed()/NotInstalledReason() for the synchronous refusal
 #include "channels/Idle.h"  // ch.12 v2 V2Installed()/NotInstalledReason() for the synchronous refusal
@@ -92,8 +94,29 @@ namespace apmf {
 
     // ---- Client/API side (ANY thread): enqueue only, never touch the map. ----
 
+    // APMF-B45 (raised against 53555c9, fixed in F2b): a claim is REFUSED (kInvalidHandle)
+    // when nothing will ever drain or engage it -- an unsupported runtime (known from load),
+    // or the 0xAD arbiter seat refused at kDataLoaded (VR, runtime, self-check). Before this a
+    // handle was handed out and silently never served. Logged once; the reason cannot change.
+    // Any thread (an atomic read and an exact-version compare).
+    static const char* NoDrainReason() {
+        if (!apmf::allowance::RuntimeSupported())
+            return "unsupported runtime (only exactly 1.6.1170, 1.5.97 and 1.7.104 are)";
+        return apmf::hook::RefusedReason();
+    }
+    static Handle RefuseNoDrain(RE::FormID actor, const char* what, const char* why) {
+        static std::atomic<bool> s_logged{ false };
+        if (!s_logged.exchange(true))
+            spdlog::error("[api] {} REFUSED (actor 0x{}): {} -- nothing would ever drain or engage the claim, "
+                          "so no handle is issued and the client's own degrade path runs. (Logged once; every "
+                          "later request is refused the same way.)",
+                          what, apmf::log::Hex(actor), why);
+        return APMF_API::kInvalidHandle;
+    }
+
     Handle ControlMap::EnqueueRequest(RE::FormID actor, Intent intent, float basis,
                                       const APMF_API::APMF_Param* param) {
+        if (const char* why = NoDrainReason()) return RefuseNoDrain(actor, "Request", why);
         // Registry is immutable after load, so this read is thread-safe.
         if (!Registry::Get().ChannelForIntent(intent)) {
             spdlog::warn("[api] Request REFUSED -- no channel serves intent {} (actor 0x{}).",
@@ -138,7 +161,7 @@ namespace apmf {
             if (param && (static_cast<std::uint32_t>(param->ival) & APMF_API::kTravel_ToPosition) != 0) {
                 const char* why = nullptr;
                 if (!apmf::poscast::MarkersSupported())
-                    why = "XMarker placement is not available (VR, a runtime other than 1.6.1170 / 1.5.97, or "
+                    why = "XMarker placement is not available (VR, a runtime other than 1.6.1170 / 1.5.97 / 1.7.104, or "
                           "before kDataLoaded)";
                 else if (param->form != 0)
                     why = "param.form is set as well as kTravel_ToPosition -- a destination is a form OR a point, "
@@ -481,6 +504,7 @@ namespace apmf {
     // ApplyRequest (form lookups are legal there, not here off-thread).
     Handle ControlMap::EnqueueCast(RE::FormID actor, float basis,
                                    const APMF_API::APMF_CastRequest* req) {
+        if (const char* why = NoDrainReason()) return RefuseNoDrain(actor, "RequestCast", why);
         if (!Registry::Get().ChannelForIntent(APMF_API::kIntent_Cast)) {
             spdlog::warn("[api] RequestCast REFUSED -- no channel serves kIntent_Cast (actor 0x{}).",
                          apmf::log::Hex(actor));

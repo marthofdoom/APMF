@@ -493,18 +493,19 @@ namespace apmf::castertypecensus {
 
     void Install() {
         if (REL::Module::IsVR()) {
-            spdlog::warn("[ctcensus] VR runtime -- caster-type census NOT installed (seats verified on 1.6.1170 "
-                         "and 1.5.97 only).");
+            spdlog::warn("[ctcensus] VR runtime -- caster-type census NOT installed (seats verified on 1.6.1170, "
+                         "1.5.97 and 1.7.104 only).");
             return;
         }
         // Exact-binary gate (CLAUDE.md rule 11), the same two-version predicate
         // core/CastClassify.cpp and core/AiCastSeats.cpp's Group C use.
+        // F2b: 1.7.104 too -- every CombatMagicCaster* slot function is identical there.
         const auto ver      = REL::Module::get().version();
         const bool onAE1170 = ver == REL::Version{ 1, 6, 1170, 0 };
         const bool onSE597  = ver == REL::Version{ 1, 5, 97, 0 };
-        if (!onAE1170 && !onSE597) {
+        if (!onAE1170 && !onSE597 && !allowance::IsRuntime1_7_104()) {
             spdlog::warn("[ctcensus] runtime {} -- the 0x06/0x0B caster seats are disassembly-confirmed on "
-                         "1.6.1170 and 1.5.97 only; census NOT installed.", ver.string("."));
+                         "1.6.1170, 1.5.97 and 1.7.104 only; census NOT installed.", ver.string("."));
             return;
         }
         if (g_installed.exchange(true)) return;

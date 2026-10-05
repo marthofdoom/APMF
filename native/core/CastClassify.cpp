@@ -433,12 +433,17 @@ namespace apmf::castclassify {
         // refused by name, nothing is guessed. core/AiCastSeats.cpp's Group C
         // gate and plugin.cpp's `[runtime]` startup line apply this same
         // two-version predicate.
+        // F2b (2026-10-05): 1.7.104 opens too -- the ctor (AE 0x81D5A0 / 1.7.104 0x832A90),
+        // the slot-1 visitor (0x81D830 / 0x832D20) and KeepBestRow (45325) are instruction-
+        // for-instruction identical with every displacement, and the classify table (382289)
+        // holds the same 23 rows (Docs/VERIFIED-ADDRESSES.md "1.7.104 proof").
         const auto ver       = REL::Module::get().version();
         const bool onAE1170  = ver == REL::Version{ 1, 6, 1170, 0 };
         const bool onSE597   = ver == REL::Version{ 1, 5, 97, 0 };
-        if (!onAE1170 && !onSE597) {
+        const bool on17104   = allowance::IsRuntime1_7_104();
+        if (!onAE1170 && !onSE597 && !on17104) {
             spdlog::warn("[ch.8b seat 0] runtime {} -- the +0x10/+0x18/+0x4c CombatMagicItemData offsets "
-                         "this seat reads are disassembly-CONFIRMED on 1.6.1170 and 1.5.97 only. "
+                         "this seat reads are disassembly-CONFIRMED on 1.6.1170, 1.5.97 and 1.7.104 only. "
                          "Refusing to install rather than guess a struct layout carries across runtimes "
                          "unchanged (CLAUDE.md rule 11). Heal-OTHER stays absent on this runtime; the "
                          "direct-force degrade path is unaffected.",

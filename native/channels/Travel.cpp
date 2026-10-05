@@ -703,7 +703,7 @@ namespace {
         if (!g_gaitVerified) {
             if (want != 0xFFFFFFFFu) {
                 spdlog::error("[travel-gait] 0x{} declared gait {} NOT applied -- the running build ({}) is not one the "
-                              "package speed path was read on (1.6.1170 / 1.5.97). The leg walks at the record's "
+                              "package speed path was read on (1.6.1170 / 1.5.97 / 1.7.104). The leg walks at the record's "
                               "authored speed, and GetTravelLegState reports speed = none.",
                               Hex(a_id), SpeedName(want), REL::Module::get().version().string("."));
             }
@@ -2048,7 +2048,7 @@ namespace apmf::travel {
             return;
         }
         if (!apmf::allowance::RuntimeSupported()) {   // G1: ch.9's 0x49 seat refuses off the exact pair
-            g_notInstalledReason.store("runtime is not exactly 1.6.1170 or 1.5.97 (ch.9's 0x49 seat is "
+            g_notInstalledReason.store("runtime is not exactly 1.6.1170, 1.5.97 or 1.7.104 (ch.9's 0x49 seat is "
                                        "refused there, so travel has no delivery mechanism)",
                                        std::memory_order_release);
             spdlog::error("[travel] NOT installed -- {} (running {}).",
@@ -2105,19 +2105,23 @@ namespace apmf::travel {
             g_authoredPrefSpeed[i] = g_pkg[i]->packData.packFlags.all(RE::PACKAGE_DATA::GeneralFlag::kPreferredSpeed);
             g_authoredSpeed[i]     = g_pkg[i]->packData.maxSpeed.underlying();
         }
+        // F2b: 1.7.104 too -- the package-start copy (AE 0x6CE2C0), the maxSpeed getter
+        // (0x491340), the movement reader (0x482800) and the running-ActorPackage pick
+        // (0x70F590) are identical there, as are the gate probe's three calls.
         const auto game  = REL::Module::get().version();
-        const bool exact = game == REL::Version{ 1, 6, 1170, 0 } || game == REL::Version{ 1, 5, 97, 0 };
+        const bool exact = game == REL::Version{ 1, 6, 1170, 0 } || game == REL::Version{ 1, 5, 97, 0 } ||
+                           apmf::allowance::IsRuntime1_7_104();
         g_gaitVerified   = exact;
         spdlog::info("[travel-gait] {} -- authored record speed {} (flag 0x2000 {}). A leg with kTravel_SpeedSet "
                      "writes its own gait into its record before the package is offered.",
-                     exact ? "gait ARMED" : "gait NOT armed (this build is not 1.6.1170 / 1.5.97; a declared gait is "
+                     exact ? "gait ARMED" : "gait NOT armed (this build is not 1.6.1170 / 1.5.97 / 1.7.104; a declared gait is "
                                             "refused by name per leg)",
                      g_pkg[0] ? SpeedName(g_authoredSpeed[0]) : "?", g_pkg[0] && g_authoredPrefSpeed[0] ? "set" : "clear");
 
         // ABI v12 PASSIVE GATE PROBE: arms only when every engine address it calls verifies
         // on an exact build. A refusal leaves travel itself untouched.
         if (!exact) {
-            spdlog::warn("[travel-gate] probe NOT armed -- runtime {} is not verified (only 1.6.1170 and 1.5.97 are).",
+            spdlog::warn("[travel-gate] probe NOT armed -- runtime {} is not verified (only 1.6.1170, 1.5.97 and 1.7.104 are).",
                          game.string("."));
         } else {
             bool verified = apmf::allowance::SeatVerified(

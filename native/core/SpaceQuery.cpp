@@ -125,13 +125,15 @@ namespace apmf::spacequery {
     void Install() {
         if (g_ready.load(std::memory_order_relaxed)) return;
         if (REL::Module::IsVR()) {
-            spdlog::warn("[space] queries NOT armed -- VR runtime (the pick and hostility calls were read on 1.6.1170 "
-                         "and 1.5.97 only). Every v11 query answers Unsupported.");
+            spdlog::warn("[space] queries NOT armed -- VR runtime (the pick and hostility calls were read on 1.6.1170, "
+                         "1.5.97 and 1.7.104 only). Every v11 query answers Unsupported.");
             return;
         }
+        // F2b: 1.7.104 too (IsHostileToActor 37537 and bhkWorld slot 0x33 identical; bhkWorld
+        // fields through +0xC5A0, worldLock +0xC598 included, unchanged there).
         const auto game = REL::Module::get().version();
-        if (game != REL::Version{ 1, 6, 1170, 0 } && game != REL::Version{ 1, 5, 97, 0 }) {
-            spdlog::warn("[space] queries NOT armed -- runtime {} is not verified (only 1.6.1170 and 1.5.97 are). "
+        if (game != REL::Version{ 1, 6, 1170, 0 } && game != REL::Version{ 1, 5, 97, 0 } && !allowance::IsRuntime1_7_104()) {
+            spdlog::warn("[space] queries NOT armed -- runtime {} is not verified (only 1.6.1170, 1.5.97 and 1.7.104 are). "
                          "Every v11 query answers Unsupported.", game.string("."));
             return;
         }
