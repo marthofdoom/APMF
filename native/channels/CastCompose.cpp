@@ -1,8 +1,6 @@
 #include "PCH.h"
 #include "core/Log.h"
 #include "core/Registry.h"
-#include "core/CastProxy.h"
-#include "core/MainThread.h"
 #include "channels/CastCompose.h"
 
 // ============================================================================
@@ -39,9 +37,9 @@
 // core/ActionGate.cpp's RETIRED header block. A ch.7 kIntent_CombatAction claim can
 // still deny casting outright -- that is a different, still-live intent.
 //
-// This channel itself stays LOG-ONLY plus ONE lifecycle duty: releasing the
-// delivery-flip proxy (core/CastProxy.h) one main-thread hop AFTER the cleared claim
-// publishes -- see Release() for why the ordering is load-bearing.
+// This channel itself is LOG-ONLY. The delivery-flip proxy (core/CastProxy.h) is
+// ref-counted per claim and given back by core/ControlMap.cpp wherever a claim
+// leaves the map, one main-thread hop after that removal publishes.
 // A cast is NEVER a package: PackageGate's 0x49 thunk only reads
 // kIntent_OfferPackage, so a kIntent_Cast claim is invisible to it.
 // ============================================================================
@@ -111,19 +109,15 @@ namespace {
                          "the cleared claim publishes; the AI reverts to its own choice on its next "
                          "equipment rescore.", apmf::log::Hex(id));
 
-            // RELEASE ORDERING (Docs/INVARIANTS.md #20). This runs INSIDE
-            // ControlMap::Drain, on the writer thread, while the release is still only
-            // in the writer's PRIVATE working copy -- the cleared claim has not been
-            // Publish()ed yet, so a combat-thread seat can still see the old generation
-            // for the rest of this frame. Un-teaching the delivery-flip proxy HERE would
-            // therefore pull the form out from under a claim the seats still consider
-            // live. So the teardown is deferred exactly one main-thread hop:
-            // apmf::mainthread::Pump() runs in Arbiter::OncePerFrame IMMEDIATELY AFTER
-            // Drain() returns, i.e. strictly after Publish(). By then every seat already
-            // reads "no claim" and chains to the engine, and freeing the proxy can race
-            // nothing. Same confirmed-main seat, so the AddSpell/RemoveSpell calls stay
-            // legal (core/MainThread.h).
-            apmf::mainthread::Post([id] { apmf::castproxy::Free(id); });
+            // NO PROXY TEARDOWN HERE (fix/apmf-proxy-per-claim-refcount, 2026-10-05).
+            // This used to post an owner-wide castproxy::Free(id) one main-thread hop
+            // later. A channel-level Release cannot know which claim left, and with
+            // two live claims per actor that Free pulled a shared proxy out from under
+            // a claim RequestCast had just applied in the same Drain (a heal re-aim:
+            // the new claim re-acquired the owner's proxy, then this Free un-taught
+            // it after Publish). The proxy is now ref-counted per claim and every
+            // claim-removal path in core/ControlMap.cpp gives back its OWN ref,
+            // deferred past Publish exactly as before (INVARIANTS #20).
         }
         // No Tick: the claim's effect lives entirely in the seat/gate consults
         // (INVARIANTS #1) -- no re-assert, no per-frame write.

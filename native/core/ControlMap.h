@@ -464,6 +464,13 @@ namespace apmf {
             // the out-of-range bits in the last scope that had any (0 == none), so
             // an identical re-send does not re-log.
             std::uint32_t  equipBadScopeBits = 0;
+            // ch.8b: true when `castProxy` came from castproxy::Acquire, i.e. this
+            // claim OWNS one ref on that pooled form and must give it back through
+            // castproxy::Unref (posted one main-thread hop after its removal
+            // publishes) wherever it leaves the map. False for every other claim,
+            // including one carrying a client-supplied req.proxy, which APMF never
+            // taught and must never un-teach. POD, appended at the END.
+            bool           castProxyRef = false;
         };
 
         // ---- THE ONE CLAIM COMPARATOR (2026-09-06) ------------------------------

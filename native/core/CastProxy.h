@@ -46,8 +46,9 @@
 //
 // THREADING. Every entry point here is WRITER/MAIN-THREAD ONLY -- the
 // `ControlMap::Drain` seat (where `Acquire` runs, from `ApplyRequest`), the
-// `apmf::mainthread` pump (where `Free` runs, one hop AFTER the release has been
-// published -- see channels/CastCompose.cpp), and the SKSE save/revert/preload
+// `apmf::mainthread` pump (where `Unref` runs, one hop AFTER the claim's removal
+// has been published -- see core/ControlMap.cpp PostProxyUnref; Drain and Pump
+// share the one confirmed-main seat, Arbiter::OncePerFrame), and the SKSE save/revert/preload
 // callbacks. It makes engine calls (`AddSpell`/`RemoveSpell`/`DeselectSpell`) and
 // must never be reached from a combat-thread seat.
 // ============================================================================
@@ -56,23 +57,39 @@ namespace RE { class SpellItem; }
 
 namespace apmf::castproxy {
 
-    // Mint (or re-target) this owner's delivery-flip proxy for `a_src` and TEACH
-    // it to the owner so the AI's own inventory can build an item for it.
-    // Returns the proxy's FormID, or 0 when no slot is free / the actor is not
-    // loadable / the form factory refuses -- in which case the CALLER must leave
-    // the claim's proxy at 0 rather than let the AI cast the original kSelf form
-    // at an ally (it would silently heal the caster). WRITER/MAIN THREAD ONLY.
-    RE::FormID Acquire(RE::FormID a_owner, RE::SpellItem* a_src);
+    // Which hand(s) the claim a proxy serves occupies. Part of the proxy's KEY
+    // (review F3, 2026-10-05): the engine seats resolve a claim BY ITS DRIVEN FORM
+    // (ControlMap::TryGetCastSeatClaimForForm), so two live claims on one actor --
+    // e.g. the same heal on the left hand at ally A and on the right hand at ally
+    // B -- must drive two DIFFERENT forms, or every seat resolves both hands to the
+    // first claim's target. A dual claim occupies both hands and is its own key.
+    enum class Hand : std::uint8_t { kRight = 0, kLeft = 1, kDual = 2 };
 
-    // Un-teach + deselect + release this owner's slot. Idempotent; a no-op for an
-    // owner with no slot. MUST run AFTER the cleared claim has been published
-    // (channels/CastCompose.cpp defers it through apmf::mainthread::Post for
-    // exactly that reason -- see Docs/INVARIANTS.md #20's release-ordering rule).
-    // WRITER/MAIN THREAD ONLY.
-    void Free(RE::FormID a_owner);
+    // Hand this owner a delivery-flip proxy for `a_src` on `a_hand` and TEACH it so
+    // the AI's own inventory can build an item for it. Keyed by (owner, source
+    // spell, hand) and REFERENCE-COUNTED: if the owner already has a live proxy for
+    // this exact spell on this exact hand key, the SAME form is returned and its ref
+    // count goes up by one; otherwise a free slot is configured for it (ref count 1).
+    // Two live slots never share a form, and a minted form whose FormID is 0 or
+    // collides with another slot's is refused loudly, so the two hands' proxies are
+    // always distinct FormIDs. A slot holding refs is never re-pointed at a
+    // different spell. Every nonzero return is ONE ref the caller's claim owns and
+    // must give back through Unref exactly once.
+    // Returns 0 when no slot is free / the actor is not loadable / the form factory
+    // refuses (no ref taken) -- in which case the CALLER must not let the seats serve
+    // the claim: the original kSelf form cast "at an ally" would silently heal the
+    // caster. WRITER/MAIN THREAD ONLY.
+    RE::FormID Acquire(RE::FormID a_owner, RE::SpellItem* a_src, Hand a_hand);
 
-    // This owner's live proxy FormID, or 0. WRITER/MAIN THREAD ONLY.
-    RE::FormID FormForOwner(RE::FormID a_owner);
+    // Give back ONE claim's ref on `a_proxy` (the FormID Acquire returned to it).
+    // Un-teaches + deselects + releases the slot only when the LAST ref goes, so
+    // releasing one hand's claim never pulls the form out from under another live
+    // claim that names it. Logged once per change, with the ref count. The single
+    // choke point every claim-removal path reaches (ControlMap's ApplyRelease,
+    // dual/single eviction, unload sweep and ReleaseAll). MUST run AFTER the
+    // removal has been published -- the callers defer it through
+    // apmf::mainthread::Post (Docs/INVARIANTS.md #20). WRITER/MAIN THREAD ONLY.
+    void Unref(RE::FormID a_owner, RE::FormID a_proxy);
 
     // Drop ALL proxy state (revert / new game / kPreLoadGame). Clears every form's
     // BORROWED source `Effect*` FIRST, then nulls the slot, so the load-time form
@@ -87,7 +104,18 @@ namespace apmf::castproxy {
     // A runtime 0xFF dynamic form must never be capturable into the `.ess`; a cast
     // whose proxy is pulled out from under it simply stops being selectable and the
     // AI reverts to its own choice on the next rescore -- never a corrupt save.
-    // MAIN THREAD ONLY (SKSE's save callback seat).
+    // Runs on SKSE's save callback seat (logged with whether that is the Drain
+    // thread). Every swept slot keeps its owner and refs; ReteachLive puts them back.
     void PreSaveSweep();
+
+    // Re-teach every slot that still holds refs (review F1, 2026-10-05). The save
+    // sweep above un-teaches the proxies of claims that are still LIVE, and only
+    // Acquire teaches -- a client that keeps its claim alive with Repoint heartbeats
+    // never calls it again, so its proxy stayed unknown (unselectable) for the rest
+    // of the claim. plugin.cpp's OnSave Posts this through apmf::mainthread, so it
+    // runs on the next Pump (after Drain, on the confirmed main seat), i.e. after
+    // the save call has returned; a load that follows Discard()s it. Logs each
+    // re-teach. WRITER/MAIN THREAD ONLY.
+    void ReteachLive();
 
 }

@@ -54,6 +54,12 @@ namespace {
         // ABI v11: record every live APMF XMarker (position casts + ch.19 position
         // legs) so the load of THIS save can delete the ones it captured.
         apmf::poscast::SaveMarkers(intf);
+        // The sweep above also un-taught the proxies of claims that are still LIVE,
+        // and only castproxy::Acquire teaches -- a client heartbeating its claim with
+        // Repoint never calls it again (review F1, 2026-10-05). Re-teach them one
+        // main-thread hop later: the next Pump runs after this save call has returned
+        // (Arbiter::OncePerFrame, after Drain), and a load that follows Discard()s it.
+        apmf::mainthread::Post([] { apmf::castproxy::ReteachLive(); });
     }
     void OnLoad(SKSE::SerializationInterface* intf) {
         std::uint32_t type = 0, version = 0, length = 0;
@@ -68,7 +74,7 @@ namespace {
         // the incoming save's overrides on kPostLoadGame.
         apmf::ControlMap::Get().Clear();
         // ControlMap::Clear() deliberately does NOT call channel->Release, so the
-        // delivery-flip proxy pool would otherwise survive the wipe -- leaving all 4
+        // delivery-flip proxy pool would otherwise survive the wipe -- leaving its
         // slots owned by actors that no longer exist (every later ally heal declining
         // with "proxy pool overflow") and dead 0xFF proxy forms still holding the
         // source spells' borrowed Effect* into the load-time purge. ResetAll closes
@@ -235,8 +241,8 @@ namespace {
             // every channel's claims (including these) through the generic
             // ControlMap path; unlike the old probes, these are real channels.
             apmf::Arbiter::Get().ReleaseAll("kPreLoadGame");
-            // ReleaseAll drops every cast claim through the channel (whose Release
-            // frees its proxy); this additionally nulls the proxy pool's 0xFF forms
+            // ReleaseAll drops every cast claim (each posts its own proxy Unref, which
+            // the Discard() below drops unrun); this resets the pool itself and nulls its 0xFF forms
             // after clearing their borrowed source Effect*, so the incoming load's form
             // purge can never free a live spell's effect array through a dead proxy
             // (INVARIANTS #19 -- MFO's Actuation_Direct.cpp lesson).

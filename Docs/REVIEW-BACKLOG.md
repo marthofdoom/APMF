@@ -278,6 +278,9 @@ Raised against `34d8a812` (`fix/apmf-restore-serve-exitlogs`), Opus 5.5 review 2
 ### APMF-B44 (SEV-5) -- bad_alloc from the dedup insert or fmt::format on the combat thread (restore-serve exit logs)
 Raised against `34d8a812`, same review, finding F3. Reasoning (as given): `std::unordered_set::insert` and `fmt::format` can throw `bad_alloc` on the combat thread. It is the same exposure as the existing `g_healLogged` insert in `ServeUnclassedHeal`, so not new in kind.
 
+### APMF-B48 (SEV-4) -- a delivery-flip proxy may survive in a persistent follower's spell list across a load purge
+Raised against `78b057c` (`fix/apmf-proxy-per-claim-refcount`), tier-A Opus 5.5 review 2026-10-05 (reviewer log `scratchpad/agentlogs/review-apmf-proxy.md`), finding F4. Text as relayed by the coordinator (the reviewer log holds only a summary, so the reviewer's own wording is not on disk): "F4 SEV-4: a proxy may survive in a persistent follower's spell list across a load purge, plus the test to verify it." Reasoning: on kPreLoadGame, `ReleaseAll` posts each claim's `castproxy::Unref`, and that post is then `Discard()`ed unrun. `castproxy::ResetAll` clears the forms' borrowed `Effect*` and nulls the slots, but it makes no engine call. So nothing un-teaches a proxy that was still taught when the load began. A persistent follower's actor survives the world swap, so its runtime spell list may still point at the 0xFF form when the load-time purge frees it. Test: hold a proxied ally-heal claim (MFO per-hand heal at an ally) on a persistent follower, then load a DIFFERENT save without saving first. Inspect that follower's spell list (ReSaver on a save taken right after the load) and check `APMF.log` for `[castproxy]` lines. A 0xFF entry, or a CTD on the follower's next spell-list walk, confirms it. Closure if confirmed: un-teach every owned slot in `ResetAll` on the kPreLoadGame path, while the outgoing actors still resolve, before the slots are nulled. (The revert path must stay call-free.)
+
 ## DRAINED
 
 _(none yet)_
@@ -345,3 +348,11 @@ by the coordinator): "ControlMap.cpp NoDrainReason/RefuseNoDrain (~:97-117): a c
 refuses at the request on an unsupported runtime (known from load) and after `hook::RefusedReason()` is set; on a
 SUPPORTED runtime a claim queued before kDataLoaded is accepted (it will drain once the hook installs) and, if the 0xAD
 install is then refused by the self-check, stays undrained. Documented here; not fixed in F2b.
+
+### APMF-B49 (SEV-3/4/5) -- proxy refcount round-2 review follow-ups
+Raised against e2a77a8 (`fix/apmf-proxy-per-claim-refcount`, Opus tier-A re-check MERGE), 2026-10-05.
+- SEV-3, pre-existing, DECK CHECK BEFORE RELEASE: PreSaveSweep likely runs too late to keep proxies out of the .ess. SKSE runs plugin save callbacks from SkyrimVM::SaveGlobalData (globalDataTable3, type 1001), which the .ess places after changeForms, so the actor change form (with the AddSpell'd 0xFF proxy) may already be captured. INVARIANTS #19's "sweep before a record is written" premise may be wrong. Verify: save with a proxied ally-heal claim live, ReSaver-dump the follower's spell list, look for a 0xFF entry. If present: the sweep needs an earlier seat (before change-form generation), its own tier-A item, before release, with APMF-B48. If clean: close.
+- SEV-4: TryGetCastSeatClaimForForm returns the first matching claim in vector order, not the BetterClaim winner. Diverges only when a later same-hand same-spell claim has a strictly higher basis (never under MFO's uniform kOwnBasis). Fix: pick the BetterClaim-best among matches.
+- SEV-5: the refused-mint path (zero/duplicate FormID) drops the created form without freeing it (leaks until load purge; error-logged every time).
+- SEV-5: the F2 log says "plain deny of its hand", but AllowedCastForHand (Allowance.cpp:148) still admits the original kSelf spell on that hand, so the AI may still self-heal by its own vanilla choice. Nothing is forced. Wording only.
+- Note: the save callback is main-thread synchronous per SKSE64 source (Hooks_Papyrus.cpp SaveGlobalData_Hook); the new PreSaveSweep "on the Drain thread: yes/NO" line confirms it in the field. A NO is a SEV-1 threading finding.

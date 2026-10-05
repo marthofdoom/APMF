@@ -353,8 +353,8 @@ snapshot; the instant the claim is gone from the published generation, every sea
 chains again. So nothing a release does may become visible to those seats BEFORE
 that publish. Concretely: `channel->Release` runs inside `ControlMap::Drain`,
 while the removal is still only in the writer's PRIVATE working copy — so ch.8b's
-proxy teardown (`castproxy::Free`, which un-teaches a form the seats may still be
-naming) is deferred exactly one main-thread hop through `apmf::mainthread::Post`,
+proxy teardown (`castproxy::Unref`, which un-teaches a form the seats may still be
+naming once its last claim's ref goes) is deferred exactly one main-thread hop through `apmf::mainthread::Post`,
 which `Arbiter::OncePerFrame` pumps immediately AFTER `Drain()` returns, i.e.
 strictly after `Publish()`. Any future release-time engine write inherits this:
 publish first, mutate second.
@@ -813,10 +813,12 @@ them on the way in. Two rules follow, both learned the expensive way (MFO's
   caster only so the AI's own equip selector can choose it (and so the
   `CombatInventory` rebuild makes an item for it), and a save taken while it is known
   would persist a reference to a form that will not exist on the next load. So the
-  transient is un-taught when the claim releases (`castproxy::Free`, the single choke
-  point) and swept unconditionally on the SKSE save callback
+  transient is un-taught when the LAST claim naming it releases (`castproxy::Unref`,
+  the single choke point; ref-counted per (owner, spell, hand) since 2026-10-05) and swept unconditionally on the SKSE save callback
   (`castproxy::PreSaveSweep`, called from `plugin.cpp`'s `OnSave` BEFORE any record is
-  written).
+  written). The sweep must be UNDONE for claims still live: `OnSave` posts
+  `castproxy::ReteachLive` to the next Pump, after the save call has returned, or a
+  Repoint-heartbeated claim keeps an un-taught (unselectable) proxy for its whole life.
 - **Clear borrowed pointers before the purge.** The proxy shares the SOURCE spell's
   `Effect*` objects BY POINTER (that is the whole point — same effects, flipped
   delivery). If the dead proxy still holds them at load time, the purge frees a
