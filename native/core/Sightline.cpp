@@ -29,7 +29,20 @@ namespace apmf::sightline {
         constexpr float kTorsoFrac     = 0.55f;
         constexpr float kHeadFrac      = 0.90f;
         constexpr float kNominalHeight = 120.0f;   // a height that reads as nothing falls back to this
-        constexpr float kTargetMargin  = 48.0f;    // each ray ends this short of its point (the target's capsule)
+        // Each ray ends this far short of its point, so the TARGET's own capsule is never what
+        // blocks it (a kCharController ray stops on any actor capsule). Review SEV-3 (6d84bab): a
+        // fixed 48u cleared a humanoid but not a giant, a mammoth or a dragon, whose capsule
+        // reaches far past 48u from its axis -- every ray hit the target itself and read OCCLUDED.
+        // The margin is now sized per target from its OWN bound box: the horizontal half-diagonal
+        // of GetBoundMin/GetBoundMax (Character slots 0x73/0x74, the same box and the same scale
+        // TESObjectREFR::GetHeight uses -- disassembly, all three builds: min = c - e, max = c + e
+        // of the process's bound object, middleHigh +0x180, centre +0x18 / half-extent +0x24),
+        // times the reference's base scale, plus kMarginPad, never below kMinTargetMargin. The
+        // half-DIAGONAL (not the larger half-extent) because the box is not rotated with the
+        // actor, so the capsule can sit across either axis.
+        constexpr float kMinTargetMargin = 48.0f;    // the humanoid value MFO field-proved
+        constexpr float kMarginPad       = 16.0f;    // clearance past the bound's edge
+        constexpr float kMaxTargetMargin = 1024.0f;  // a bound that reads larger than this is nonsense: clamp
 
         // ---- the table ----
         constexpr std::size_t   kSlots  = 256;     // power of two
@@ -65,8 +78,17 @@ namespace apmf::sightline {
             g_occluded{ 0 }, g_unavail{ 0 }, g_pickSkipped{ 0 }, g_tableFull{ 0 }, g_dropped{ 0 },
             g_seatHold{ 0 }, g_seatPass{ 0 }, g_seatStop{ 0 };
 
-        // Main-thread only (no lock): per-pair unavailability log throttle.
+        constexpr std::uint64_t kTransitionLogMs = 2000;   // [los] VISIBLE/OCCLUDED lines, per pair
+
+        // Main-thread only (no lock): per-pair log throttles.
         std::unordered_map<std::uint64_t, std::uint64_t> g_unavailLog;
+        std::unordered_map<std::uint64_t, std::uint64_t> g_transLog;
+        std::atomic<std::uint64_t>                       g_transSuppressed{ 0 }, g_syncDeferred{ 0 };
+
+        // MeasureNow's per-frame budget (review SEV-4): Pump() advances the frame, MeasureNow
+        // counts its own ray-casting measurements in it. Main thread only.
+        std::uint64_t g_frame = 0, g_syncFrame = ~0ull;
+        std::uint32_t g_syncThisFrame = 0;
         std::uint64_t                                    g_lastHeartbeatMs = 0;
         std::uint64_t                                    g_lastTableFullLogMs = 0;
 
@@ -196,6 +218,7 @@ namespace apmf::sightline {
             std::uint32_t verdict = APMF_API::kLos_Unavailable;
             std::uint32_t sample  = 0;
             std::uint32_t why     = APMF_API::kLosWhy_None;
+            float         margin  = 0.0f;   // the end margin used (0 = no ray reached that point); for the log
         };
 
         bool LoadedRef(const RE::Actor* a) {
@@ -249,12 +272,21 @@ namespace apmf::sightline {
             RE::NiPoint3 eye{}, dir{};
             a_viewer->GetEyeVector(eye, dir, false);
 
-            // The target: feet / torso / head. TESObjectREFR::GetHeight() const is the
-            // READ-ONLY height (bound height x scale; Character slots 0x73 / 0x74). Actor::
-            // GetHeight is not used: it writes the high process's cached height.
-            const RE::NiPoint3 feet = a_target->GetPosition();
-            float              h    = static_cast<const RE::TESObjectREFR*>(a_target)->GetHeight();
+            // The target: feet / torso / head, and the end margin, from ONE read of its bound box
+            // (Character slots 0x73 / 0x74) and its base scale -- exactly the inputs of the
+            // read-only TESObjectREFR::GetHeight() const (bound height x scale). Actor::GetHeight
+            // is not used: it writes the high process's cached height.
+            const RE::NiPoint3 feet  = a_target->GetPosition();
+            const RE::NiPoint3 bmin  = a_target->GetBoundMin();
+            const RE::NiPoint3 bmax  = a_target->GetBoundMax();
+            const float        base  = a_target->GetBaseHeight();
+            float              h     = (bmax.z - bmin.z) * base;
             if (!std::isfinite(h) || h <= 1.0f) h = kNominalHeight;
+            const float hx = 0.5f * (bmax.x - bmin.x), hy = 0.5f * (bmax.y - bmin.y);
+            float       margin = std::sqrt(hx * hx + hy * hy) * base + kMarginPad;
+            if (!std::isfinite(margin)) margin = kMinTargetMargin;
+            margin = std::clamp(margin, kMinTargetMargin, kMaxTargetMargin);
+            out.margin = margin;
             const RE::NiPoint3 samples[3] = {
                 { feet.x, feet.y, feet.z + kFeetLift },
                 { feet.x, feet.y, feet.z + h * kTorsoFrac },
@@ -267,12 +299,12 @@ namespace apmf::sightline {
                 const RE::NiPoint3 seg = samples[i] - eye;
                 const float        len = seg.Length();
                 if (!std::isfinite(len)) continue;
-                if (len <= kTargetMargin) {   // point-blank: nothing can stand in the gap
+                if (len <= margin) {   // inside the target's own bound: nothing can stand in the gap
                     out.verdict = APMF_API::kLos_Visible;
                     out.sample  = i + 1;
                     return out;
                 }
-                const float        f  = (len - kTargetMargin) / len;
+                const float        f  = (len - margin) / len;
                 const RE::NiPoint3 to{ eye.x + seg.x * f, eye.y + seg.y * f, eye.z + seg.z * f };
 
                 RE::bhkPickData pick;
@@ -332,14 +364,25 @@ namespace apmf::sightline {
                                  Hex(v), Hex(t), WhyName(a_ray.why), kUnavailLogMs / 1000);
                 }
             } else if (prev.verdict != a_ray.verdict || prev.ageMs > APMF_API::kLosFreshMs) {
-                // Transition-only: a stable verdict at refresh cadence would flood the log.
-                if (a_ray.verdict == APMF_API::kLos_Visible)
-                    spdlog::info("[los] 0x{} -> 0x{}: VISIBLE (own ray, {} clear)", Hex(v), Hex(t),
-                                 SampleName(a_ray.sample));
-                else
-                    spdlog::info("[los] 0x{} -> 0x{}: OCCLUDED ({})", Hex(v), Hex(t),
-                                 a_ray.why == APMF_API::kLosWhy_OtherWorld ? "target in another havok world"
-                                                                           : "own ray, all 3 rays blocked");
+                // Transition-only: a stable verdict at refresh cadence would flood the log. And
+                // (review SEV-4) at most one transition line per pair per kTransitionLogMs: a
+                // borderline line flickering at the 250 ms refresh would still flood it. The
+                // suppressed ones are counted in the heartbeat; the table always holds the truth.
+                if (g_transLog.size() > 1024) g_transLog.clear();
+                auto& last = g_transLog[a_key];
+                if (Since(a_nowMs, last) < kTransitionLogMs) {
+                    g_transSuppressed.fetch_add(1, std::memory_order_relaxed);
+                } else {
+                    last = a_nowMs;
+                    if (a_ray.verdict == APMF_API::kLos_Visible)
+                        spdlog::info("[los] 0x{} -> 0x{}: VISIBLE (own ray, {} clear, end margin {:.0f}u)", Hex(v),
+                                     Hex(t), SampleName(a_ray.sample), a_ray.margin);
+                    else
+                        spdlog::info("[los] 0x{} -> 0x{}: OCCLUDED ({}, end margin {:.0f}u)", Hex(v), Hex(t),
+                                     a_ray.why == APMF_API::kLosWhy_OtherWorld ? "target in another havok world"
+                                                                               : "own ray, all 3 rays blocked",
+                                     a_ray.margin);
+                }
             }
             return Unpack(Pack(a_ray.verdict, a_ray.sample, a_ray.why, occRun), a_nowMs, a_nowMs);
         }
@@ -368,13 +411,14 @@ namespace apmf::sightline {
             const auto asks = x(g_asks), queued = x(g_queued), meas = x(g_measures), rays = x(g_rays),
                        vis = x(g_visible), occ = x(g_occluded), un = x(g_unavail), skip = x(g_pickSkipped),
                        full = x(g_tableFull), drop = x(g_dropped), hold = x(g_seatHold), pass = x(g_seatPass),
-                       stop = x(g_seatStop);
-            if (tracked == 0 && asks == 0 && meas == 0) return;   // nothing asked for: stay quiet
+                       stop = x(g_seatStop), quiet = x(g_transSuppressed), deferred = x(g_syncDeferred);
+            if (tracked == 0 && asks == 0 && meas == 0 && deferred == 0) return;   // nothing asked for: stay quiet
             spdlog::info("[los] heartbeat {} s: tracked {} pair(s); asks {} (new {}), measured {} ({} rays): visible {}, "
                          "occluded {}, unavailable {} (pick skipped {}); dropped idle {}, table full {}; seats: "
-                         "passed {}, held/paused {}, channels stopped {}.",
+                         "passed {}, held/paused {}, channels stopped {}; SenseActor sight over the per-frame cap {}; "
+                         "transition lines rate-limited away {}.",
                          kHeartbeatMs / 1000, tracked, asks, queued, meas, rays, vis, occ, un, skip, drop, full, pass,
-                         hold, stop);
+                         hold, stop, deferred, quiet);
         }
 
     }
@@ -516,13 +560,14 @@ namespace apmf::sightline {
         return verdict;
     }
 
-    Reading MeasureNow(RE::Actor* a_viewer, RE::Actor* a_target, bool& a_reused) {
-        a_reused = false;
+    Reading MeasureNow(RE::Actor* a_viewer, RE::Actor* a_target, bool& a_reused, bool& a_deferred) {
+        a_reused   = false;
+        a_deferred = false;
         Reading out;
         if (!Armed() || !a_viewer || !a_target || a_viewer == a_target) return out;
         const std::uint64_t key = Key(a_viewer->GetFormID(), a_target->GetFormID());
         const std::uint64_t now = apmf::clock::MonotonicMs();
-        Slot*               s   = EnsureMain(key, now);
+        Slot*               s   = EnsureMain(key, now);   // also queues the pair for the pump
         if (s) {
             const std::uint64_t m = s->measuredMs.load(std::memory_order_relaxed);
             if (m != 0 && Since(now, m) < APMF_API::kLosRefreshMs) {
@@ -530,6 +575,24 @@ namespace apmf::sightline {
                 return Unpack(s->word.load(std::memory_order_relaxed), m, now);
             }
         }
+        // The per-frame cap (review SEV-4): past kLosMaxSyncPairsPerFrame ray-casting measurements
+        // this frame, no ray. A FRESH stored verdict still answers; otherwise UNKNOWN (not seen),
+        // and the pump measures the pair (EnsureMain above marked it asked-for).
+        if (g_syncFrame != g_frame) {
+            g_syncFrame     = g_frame;
+            g_syncThisFrame = 0;
+        }
+        if (g_syncThisFrame >= APMF_API::kLosMaxSyncPairsPerFrame) {
+            a_deferred = true;
+            g_syncDeferred.fetch_add(1, std::memory_order_relaxed);
+            if (s) {
+                const Reading r = Unpack(s->word.load(std::memory_order_relaxed),
+                                         s->measuredMs.load(std::memory_order_relaxed), now);
+                if (r.verdict != APMF_API::kLos_Unknown && r.ageMs <= APMF_API::kLosFreshMs) return r;
+            }
+            return out;
+        }
+        ++g_syncThisFrame;
         const RayOut ray = CastOwnRay(a_viewer, a_target);
         if (s) return Store(*s, key, ray, now);
         // Not trackable right now (table full): answer with the measurement, store nothing.
@@ -541,6 +604,7 @@ namespace apmf::sightline {
     void Pump() {
         if (!Armed() || !apmf::hook::OnMainThread()) return;
         const std::uint64_t now = apmf::clock::MonotonicMs();
+        ++g_frame;   // a new frame: MeasureNow's per-frame budget starts over
 
         // 1. Pairs readers asked for that are not tracked yet.
         for (auto& cell : g_ring) {
@@ -559,6 +623,7 @@ namespace apmf::sightline {
                 Publish(s, 0, 0, 0);
                 s.askedMs.store(0, std::memory_order_relaxed);
                 g_unavailLog.erase(k);
+                g_transLog.erase(k);
                 g_dropped.fetch_add(1, std::memory_order_relaxed);
                 continue;
             }
@@ -592,6 +657,7 @@ namespace apmf::sightline {
         }
         for (auto& cell : g_ring) cell.store(0, std::memory_order_relaxed);
         g_unavailLog.clear();
+        g_transLog.clear();
         if (n != 0) spdlog::info("[los] {} -- dropped {} tracked line-of-sight pair(s).", a_why, n);
     }
 

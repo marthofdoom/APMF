@@ -336,15 +336,16 @@ namespace apmf {
             }
         }
 
-        // ABI v18: a kIntent_Cast RequestEx (the degenerate form, flags in param.ival) carrying
-        // kCastFlag_OwnLineOfSight asks for a judgment Harbinger cannot give while the
-        // line-of-sight service is not armed -- refused, so the client keeps its own test.
+        // ABI v18 (review SEV-3): kCastFlag_OwnLineOfSight on the DEGENERATE RequestEx(kIntent_Cast)
+        // form is REFUSED, always. That form carries no target (castTarget stays 0), so the seats
+        // have no line to judge and the bit would be a silent no-op: the casts would fire with no
+        // test and nothing said. The bit needs RequestCast with req.target set.
         if (intent == APMF_API::kIntent_Cast && param &&
-            (static_cast<std::uint32_t>(param->ival) & APMF_API::kCastFlag_OwnLineOfSight) != 0 &&
-            !apmf::sightline::Armed()) {
-            spdlog::warn("[api] cast claim REFUSED (actor 0x{}): kCastFlag_OwnLineOfSight is set but the line-of-sight "
-                         "service is not armed ({}); the client keeps its own test.",
-                         apmf::log::Hex(actor), apmf::sightline::NotArmedReason());
+            (static_cast<std::uint32_t>(param->ival) & APMF_API::kCastFlag_OwnLineOfSight) != 0) {
+            spdlog::warn("[api] cast claim REFUSED (actor 0x{}): kCastFlag_OwnLineOfSight on RequestEx(kIntent_Cast). "
+                         "That form carries no target, so there is no line to judge. Use RequestCast with "
+                         "req.target set.",
+                         apmf::log::Hex(actor));
             return APMF_API::kInvalidHandle;
         }
 
@@ -1314,6 +1315,19 @@ namespace apmf {
                              "nothing changed. A position cast is a one-shot RequestEx, not a claim; send it on its "
                              "own and keep this claim's Repoint for its heartbeat.",
                              apmf::log::Hex(formID), handle);
+                return false;   // nothing changed -> no publish
+            }
+
+            // ABI v18 (review SEV-4): the same refusal RequestEx makes. A Repoint that puts
+            // kTargetPin_OwnLineOfSight onto a ch.20 claim while the line-of-sight service is
+            // not armed would leave a pin that pauses forever. Refused by name, the whole
+            // Repoint dropped (the claim keeps its previous param).
+            if (channel == Registry::Get().ChannelForIntent(APMF_API::kIntent_TargetPin) &&
+                (static_cast<std::uint32_t>(param.ival) & APMF_API::kTargetPin_OwnLineOfSight) != 0 &&
+                !apmf::sightline::Armed()) {
+                spdlog::warn("[ch.20] 0x{} Repoint on target-pin claim h={} carried kTargetPin_OwnLineOfSight but the "
+                             "line-of-sight service is not armed ({}) -- REFUSED, nothing changed.",
+                             apmf::log::Hex(formID), handle, apmf::sightline::NotArmedReason());
                 return false;   // nothing changed -> no publish
             }
 

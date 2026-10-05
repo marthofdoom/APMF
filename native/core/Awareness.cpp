@@ -61,14 +61,16 @@ namespace apmf::awareness {
         std::unordered_map<RE::FormID, NoiseRec> g_noise;
 
         struct PairState {
-            std::uint32_t senses     = 0xFFFFFFFFu;   // never answered
+            std::uint32_t senses     = 0xFFFFFFFFu;   // the last LOGGED sense set; never answered
             std::uint64_t lastMs     = 0;
+            std::uint64_t lastLogMs  = 0;             // review SEV-4: <= 1 senses line per pair per kSensesLogMs
         };
+        constexpr std::uint64_t kSensesLogMs = 2000;
         std::unordered_map<std::uint64_t, PairState> g_pairs;
 
         struct Counters {
             std::uint64_t queries = 0, sensed = 0, sight = 0, hearNoise = 0, hearCombat = 0, proximity = 0,
-                          engaged = 0, noises = 0, baselines = 0;
+                          engaged = 0, noises = 0, baselines = 0, quiet = 0;
         } g_c;   // main thread only
         std::atomic<std::uint64_t> g_refused{ 0 };      // any thread (a refusal can come from any thread)
         std::atomic<std::uint64_t> g_refuseLogMs{ 0 };  // any thread
@@ -175,9 +177,10 @@ namespace apmf::awareness {
             if (g_c.queries == 0 && refused == 0) return;
             spdlog::info("[aware] heartbeat {} s: {} SenseActor call(s) ({} refused); sensed {} -- sight {}, hearing: "
                          "noise {} / combat {}, proximity {}, engaged {}; new engine noises seen {}, first looks "
-                         "(baselines) {}; tracked actors {}.",
+                         "(baselines) {}; tracked actors {}; senses lines rate-limited away {}.",
                          kHeartbeatMs / 1000, g_c.queries, refused, g_c.sensed, g_c.sight, g_c.hearNoise,
-                         g_c.hearCombat, g_c.proximity, g_c.engaged, g_c.noises, g_c.baselines, g_noise.size());
+                         g_c.hearCombat, g_c.proximity, g_c.engaged, g_c.noises, g_c.baselines, g_noise.size(),
+                         g_c.quiet);
             g_c = Counters{};
         }
 
@@ -314,9 +317,10 @@ namespace apmf::awareness {
                 if (dist > sightRange) {
                     detail |= APMF_API::kAwareDetail_SightOutOfRange;
                 } else {
-                    bool       reused = false;
-                    const auto r      = apmf::sightline::MeasureNow(viewer, target, reused);
+                    bool       reused = false, deferred = false;
+                    const auto r      = apmf::sightline::MeasureNow(viewer, target, reused, deferred);
                     if (reused) detail |= APMF_API::kAwareDetail_SightReused;
+                    if (deferred) detail |= APMF_API::kAwareDetail_SightDeferred;
                     a_out->sightVerdict = r.verdict;
                     if (r.verdict == APMF_API::kLos_Visible) {
                         senses |= APMF_API::kSense_Sight;
@@ -394,7 +398,13 @@ namespace apmf::awareness {
 
         // [aware] senses: transition-only per (viewer, target).
         auto& ps = g_pairs[(static_cast<std::uint64_t>(a_q->viewer) << 32) | a_q->target];
-        if (ps.senses != senses) {
+        // A change inside kSensesLogMs of the pair's last line is counted, not printed, and
+        // ps.senses keeps the last PRINTED set, so a change that persists is printed once the
+        // window passes; a flicker that returns to the printed set prints nothing.
+        if (ps.senses != senses && Since(now, ps.lastLogMs) < kSensesLogMs) {
+            ++g_c.quiet;
+        } else if (ps.senses != senses) {
+            ps.lastLogMs = now;
             spdlog::info("[aware] senses: 0x{} -> 0x{}: {} (d={:.0f}; sight {}{}; noise lvl {} age {:.1f}s at {:.0f}u; "
                          "anchor 0x{})",
                          Hex(a_q->viewer), Hex(a_q->target), SenseText(senses, detail), a_out->distance,

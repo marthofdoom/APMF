@@ -1785,8 +1785,9 @@ first: an older Harbinger ignores both flag bits without a word.
 
 ### Recipes
 
-* **Cast only at what the caster can see.** Add `kCastFlag_OwnLineOfSight` to the cast claim's
-  flags. Seat 0x06 then starts the cast only on a fresh VISIBLE; a held stream stops after two
+* **Cast only at what the caster can see.** Add `kCastFlag_OwnLineOfSight` to `req.flags` of a
+  `RequestCast` that names `req.target` (the degenerate `RequestEx(kIntent_Cast)` form has no target,
+  so the bit is refused there). Seat 0x06 then starts the cast only on a fresh VISIBLE; a held stream stops after two
   OCCLUDED readings. Your claim stands while the target is hidden, so keep heart-beating it with
   `Repoint` as usual. The first cast after a claim waits a frame or two for the first verdict.
 * **Pin only what the actor can see.** Put `kTargetPin_OwnLineOfSight` in the pin's `param.ival`.

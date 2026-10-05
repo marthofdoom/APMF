@@ -94,8 +94,11 @@ namespace apmf::sightline {
 
     // MAIN THREAD ONLY. Measure the pair now -- unless it was measured less than
     // kLosRefreshMs ago, in which case that measurement is returned and `a_reused` is set
-    // -- store it, and return it. The caller has already checked the thread.
-    Reading MeasureNow(RE::Actor* a_viewer, RE::Actor* a_target, bool& a_reused);
+    // -- store it, and return it. At most kLosMaxSyncPairsPerFrame ray-casting calls per
+    // frame (Pump advances the frame): past that `a_deferred` is set, no ray is cast, and a
+    // FRESH stored verdict answers or the Reading is Unknown (the pair stays queued for the
+    // pump). The caller has already checked the thread.
+    Reading MeasureNow(RE::Actor* a_viewer, RE::Actor* a_target, bool& a_reused, bool& a_deferred);
 
     // MAIN THREAD (Arbiter::OncePerFrame, after ControlMap::Drain). See the header.
     void Pump();

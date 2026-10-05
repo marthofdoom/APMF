@@ -1311,8 +1311,10 @@ namespace APMF_API {
         // ── OWN LINE OF SIGHT (ABI v18, 2026-10-05; bit 6 was free) ─────────────
         kCastFlag_OwnLineOfSight = 1u << 6,  // Judge this claim's line of sight with HARBINGER'S OWN RAY
                                              //   (see "ABI v18: LINE OF SIGHT AND AWARENESS") instead of
-                                             //   none at all. Read from RequestCast's req.flags, or from
-                                             //   param.ival on the degenerate RequestEx form.
+                                             //   none at all. RequestCast ONLY (req.flags, with req.target
+                                             //   set): the degenerate RequestEx(kIntent_Cast) form carries no
+                                             //   target, so the bit there is REFUSED (kInvalidHandle, logged),
+                                             //   never accepted as a silent no-op.
                                              //
                                              //   WHY. Without this bit the claim is the authority on WHETHER
                                              //   to cast (seat 0x06 answers YES from the claim), so a claim
@@ -2057,8 +2059,11 @@ namespace APMF_API {
     //     one in front. Line of sight is geometry, not attention.
     //   * TO three points on the target: its feet + 16 units, 55% and 90% of its height
     //     (its bound height times its scale; 120 units when that reads as nothing). Each
-    //     ray ends 48 units short of its point, so the target's own body is never the
-    //     thing that blocks it. A target within 48 units is VISIBLE.
+    //     ray ends short of its point by the TARGET's own size -- the horizontal half-diagonal
+    //     of its bound box times its scale, plus 16 units, never less than 48 (a humanoid's
+    //     value) and never more than 1024 -- so the target's own body (a giant's, a mammoth's
+    //     or a dragon's included) is never the thing that blocks it. A target closer than
+    //     that margin is VISIBLE.
     //   * ON the character-controller collision layer, in the viewer's own collision group
     //     (its own capsule is skipped): "could a walking body travel this line". Walls,
     //     closed doors and tent walls block; an open doorway, a railing under the line or
@@ -2079,8 +2084,12 @@ namespace APMF_API {
     // three builds: AE 0xE86560, SE 0xDA7580, 1.7.104 0x104BE80); Harbinger holds no lock
     // of its own across a ray and takes no outer world lock. At most 3 rays per pair
     // measurement. Cached pairs are re-measured at most once every kLosRefreshMs and at
-    // most kLosMaxPairsPerFrame pairs per frame (oldest first), so the main-thread cost is
-    // bounded at 3 x kLosMaxPairsPerFrame rays per frame whatever the clients ask.
+    // most kLosMaxPairsPerFrame pairs per frame (oldest first). SenseActor's synchronous
+    // sight test has its OWN per-frame cap, kLosMaxSyncPairsPerFrame: past it, the query
+    // answers from the pair's stored verdict (fresh only) or not at all
+    // (kAwareDetail_SightDeferred), and the pair is queued for the pump. So the main-thread
+    // cost is bounded at 3 x (kLosMaxPairsPerFrame + kLosMaxSyncPairsPerFrame) rays per frame
+    // whatever the clients ask.
     //
     // WHO KEEPS A PAIR MEASURED. A pair is measured while something ASKS for it: a
     // GetLineOfSight call, a cast seat or target-pin seat reading it for a claim with an
@@ -2132,6 +2141,7 @@ namespace APMF_API {
     inline constexpr std::uint32_t kLosRefreshMs        = 250;    // a pair is re-measured at most this often
     inline constexpr std::uint32_t kLosInterestMs       = 2000;   // a pair nobody asked for in this long is dropped
     inline constexpr std::uint32_t kLosMaxPairsPerFrame = 8;      // pairs measured per frame, at most 3 rays each
+    inline constexpr std::uint32_t kLosMaxSyncPairsPerFrame = 8;  // SenseActor's own synchronous measurements per frame
 
     // ── kIntent_TargetPin flags (param.ival, ABI v18) ──────────────────────────
     // APPEND-ONLY: never renumber a bit; OR in a new bit at the next free position.
@@ -2159,8 +2169,10 @@ namespace APMF_API {
     //
     //   kSense_Sight      The OWN RAY (above) from the viewer to the target is VISIBLE and the
     //                     target is within sightRange. Measured now, unless this pair was
-    //                     measured less than kLosRefreshMs ago (that verdict is reused). It also
-    //                     refreshes the pair for GetLineOfSight.
+    //                     measured less than kLosRefreshMs ago (that verdict is reused), or this
+    //                     frame's kLosMaxSyncPairsPerFrame is spent (kAwareDetail_SightDeferred:
+    //                     a fresh stored verdict answers, else sight is not sensed this call). It
+    //                     also refreshes the pair for GetLineOfSight.
     //   kSense_Hearing    Either route (AwareDetail says which):
     //                     NOISE: the target made a NEW engine noise in the last
     //                     kAwareNoiseWindowMs, of a level above 0, at a point within
@@ -2186,7 +2198,8 @@ namespace APMF_API {
     //
     // THREADING: SYNCHRONOUS, TRUE MAIN THREAD ONLY (the sight ray), exactly like the v11 space
     // queries. Any other thread returns kQuery_NotMainThread and does nothing. Cost: at most 3
-    // rays (none when the pair's verdict is younger than kLosRefreshMs), plus member reads.
+    // rays (none when the pair's verdict is younger than kLosRefreshMs, or once this frame's
+    // kLosMaxSyncPairsPerFrame synchronous measurements are spent), plus member reads.
     // It claims nothing, holds nothing and changes nothing in the game.
 
     enum AwareSense : std::uint32_t {
@@ -2217,6 +2230,9 @@ namespace APMF_API {
         kAwareDetail_NoiseBaseline    = 1u << 7,   // first look at this target's noise: baseline recorded
         kAwareDetail_NoiseRouteOff    = 1u << 8,   // [Awareness] bHearNoise=0: the NOISE route is off
         kAwareDetail_SightReused      = 1u << 9,   // the sight verdict was a measurement < kLosRefreshMs old
+        kAwareDetail_SightDeferred    = 1u << 10,  // this frame's kLosMaxSyncPairsPerFrame was spent: no ray; the
+                                                   //   stored verdict answered if fresh, else sight is UNKNOWN (not
+                                                   //   seen) and the pair is queued for the pump
     };
 
     inline constexpr float         kAwareDefaultSightRange     = 4096.0f;   // sightRange 0 => this
