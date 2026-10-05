@@ -306,19 +306,30 @@ always lands on the CASTER's own reference — the Self branch never reads
 `desiredTarget`, so seat 0x0A cannot aim Fast Healing at an ally. So this module mints
 a delivery-flipped `kTargetActor` COPY (`Configure`: source `data` + shared source
 `Effect*` by pointer, delivery flipped) that the AI selects and casts instead.
-`Acquire` (mint/re-target + TRANSIENT `AddSpell`) / `Free` (un-teach + deselect +
-release the slot) / `FormForOwner` / `ResetAll` (revert + kPreLoadGame) /
-`PreSaveSweep` (SKSE save). Fixed 4-slot pool keyed by OWNER, not hand (a dual cast
-shares one form). WRITER/MAIN THREAD ONLY.
+`Acquire` (mint or SHARE + TRANSIENT `AddSpell`; +1 ref) / `Unref` (-1 ref; un-teach +
+deselect + release the slot only at 0) / `ResetAll` (revert + kPreLoadGame) /
+`PreSaveSweep` (SKSE save). Fixed 8-slot pool keyed by (OWNER, SOURCE SPELL) and
+REF-COUNTED across the live claims naming each form (fix/apmf-proxy-per-claim-refcount,
+2026-10-05): two hands healing with one spell, a dual cast, or a re-aim share ONE form;
+two different kSelf spells get two forms, and a slot holding refs is never re-Configured.
+Each claim that got a form records `Claim::castProxyRef` and owns exactly one ref.
+WRITER/MAIN THREAD ONLY.
 Called from: `ControlMap::ApplyRequest` (`Acquire`, on the writer thread where form
-lookups are legal, BEFORE the claim publishes), `channels/CastCompose.cpp`'s
-`Release` (`Free`, deferred one `mainthread::Post` hop so it lands AFTER the cleared
-claim publishes — INVARIANTS #20), `plugin.cpp` (`ResetAll` on revert + kPreLoadGame,
-`PreSaveSweep` on save).
+lookups are legal, BEFORE the claim publishes; only the prospective winner of the
+claim's OWN hand(s) acquires), and every claim-removal path in `core/ControlMap.cpp`
+(`ApplyRelease`, dual/single eviction, the Drain unload sweep, `ReleaseAll`) through
+`PostProxyUnref` — deferred one `mainthread::Post` hop so it lands AFTER the removal
+publishes (INVARIANTS #20). Ordering: Acquire is synchronous inside Drain and Unref runs
+in the Pump after it, so a same-Drain re-acquire always increments before the old
+claim decrements. `plugin.cpp` (`ResetAll` on revert + kPreLoadGame, `PreSaveSweep` on
+save). `channels/CastCompose.cpp`'s `Release` no longer frees anything (its owner-wide
+`Free` was the bug).
 - **What breaks:** both halves of INVARIANTS #19. (a) A proxy KNOWN to the actor when
   a save is taken persists a reference to a 0xFF dynamic form that will not exist on
   the next load — `PreSaveSweep` must stay wired into `OnSave` BEFORE any record is
-  written, and `Free` must stay the single choke point every release path reaches.
+  written, and `Unref` must stay the single choke point every claim-removal path
+  reaches, exactly once per `castProxyRef` claim (a missed Unref leaks a taught form;
+  an extra one un-teaches a form a live claim still names — the 2026-10-05 SEV-2).
   (b) `Configure` shares the SOURCE spell's `Effect*` BY POINTER, so `ResetAll` must
   clear `effects` FIRST and only then null the slot, or the load-time purge frees a
   LIVE spell's effect array through the dead proxy (MFO's `Actuation_Direct.cpp`
@@ -1191,7 +1202,7 @@ parentheses.
 | `Headtrack.cpp` | 5 | look-at (Num3) | `AIProcess::SetHeadtrackTarget` (own point slot) | **known-incomplete block (Tick re-assert; loses to a package-locked follower)** |
 | `CombatTarget.cpp` | 6 | combat-target CLAIM (Num-) | **ARBITRATION-ONLY** — records the owner; makes NO engine combat call (no `StartCombat`, no `currentCombatTarget` write). The CLIENT commands the target. Release relinquishes | arbitration-only (#0); client executes |
 | `CastingSelect.cpp` | 8 | casting CLAIM (Num4) | Log-only + a REAL allowance one layer down: `core/CastGate.cpp` (T2c CheckCast) + `core/EquipGate.cpp` (T2a CheckShouldEquip) deny any spell/item that isn't the claimed `param.form`. Makes NO engine write. The `+ACT` drive opt-in it briefly carried is RETIRED (`ival`/`target`/`pos` accepted-and-ignored, bits stay RESERVED in the byte-frozen ABI) — for a cast APMF should MAKE happen, use `kIntent_Cast` (ch.8b) | claim + T2 enforcement; client's own AI executes |
-| `CastCompose.cpp` | 8b | cast EXECUTION claim (`RequestCast`, ABI v5) | Log-only, PLUS one lifecycle duty: `Release` frees the delivery-flip proxy one `mainthread::Post` hop AFTER the cleared claim publishes (INVARIANTS #20). The claim's real effect is the FIVE ENGINE SEATS (`core/CastSeats.cpp` 0x06/0x07/0x0A/0x0D + `core/EquipGate.cpp` 0x0F) — the NPC's own AI performs the cast | claim + seat answers; the ENGINE executes |
+| `CastCompose.cpp` | 8b | cast EXECUTION claim (`RequestCast`, ABI v5) | Log-only. (The delivery-flip proxy is ref-counted per claim and given back by `core/ControlMap.cpp`'s claim-removal paths, one `mainthread::Post` hop after the removal publishes — INVARIANTS #20.) The claim's real effect is the FIVE ENGINE SEATS (`core/CastSeats.cpp` 0x06/0x07/0x0A/0x0D + `core/EquipGate.cpp` 0x0F) — the NPC's own AI performs the cast | claim + seat answers; the ENGINE executes |
 | `Dialogue.cpp` | 10 | dialogue (Num6) | `PauseCurrentDialogue()` | one-shot |
 | `Attribute.cpp` | 11 | disposition (Num2) | 4 AVs: aggression/confidence/assistance/morality | source-block |
 | `Idle.cpp` (+ `Idle.h`) | 12 | idle/anim (Num+) | v1: `NotifyAnimationGraph("IdleForceDefaultState")`. v2 (ABI v17, `param.form` != 0): `AIProcess::PlayIdle(actor, idle, target)` posted past Publish + re-validated (`Play`), ends the claim on a refusal / owner death (`EndClaim`, `apmf::idle::Poll` from `Arbiter::OncePerFrame`), per-actor anim sink records `IdleStop` = not held; `Release` sends `IdleForceDefaultState` only when held. Gate `apmf::idle::Install` (kDataLoaded, SeatVerified `Idle.AIProcess.SetupSpecialIdle`); sync refusal in `ControlMap::EnqueueRequest`; `ResetAll` at kPreLoadGame / revert (`plugin.cpp`). **What breaks:** never call PlayIdle for an actor with no process or no high process data (the engine returns false on a null high; keep the named check); never re-play on a timer or when the idle ends (#0 (c): one call per declaration); never send IdleForceDefaultState at Release for an idle whose graph raised IdleStop (it would pop an actor out of whatever it is doing now); never drop the sit/sleep != kNormal guard in `ResetIfHeld` (shared by Release and a form-0 owner change; review F1: a false "held" must not eject an actor from furniture); keep `[Idle] bIdleV2` feeding `g_notInstalledReason` (review F2); never make an engine call from the anim sink (it runs on the graph-update thread; plain values under `g_obsMx` only); never EnqueueRelease from inside Drain; keep v1 (`param.form` 0) byte-for-byte: no gate, no Release action. **Entry confirmation (fix/apmf-idle-confirm):** an accepted play counts as PLAYED only when the actor's graph raises one of the idle's own ENTRY events (destination enterNotify + nested start-state enter; source exitNotify only when no enter event exists), resolved per play by `ResolveEntry` / `EntryWalk`, a read-only walk of the behaviour TEMPLATES (vtables BShkbAnimationGraph / hkbBehaviorGraph / hkbStateMachine self-checked, every other Havok object identified by its RTTI name before a member is read; Havok 2010 x64 in-place offsets documented in the file header). None in 3000 ms of WORLD time (+30 frames; `g_worldMs`, Poll-to-Poll gaps clamped to 100 ms) = ANIMATION NOT CONFIRMED and `EndClaim`; NO TRANSITION (only after a COMPLETE walk) = `EndClaim`; otherwise UNCONFIRMABLE (claim kept, legacy held rule). `[Idle] bIdleConfirm` (default 1) is the kill switch. **What breaks:** never count ANY graph event as confirmation again (the 2026-09-28 lockpick); never answer NO TRANSITION from a walk with a blind spot (unknown class, unlinked reference, out-of-range event id, unresolved target, wrong-class object, unwalked graph -- `EntryInfo::Blind`); an out-of-range event id makes the play UNCONFIRMABLE (id space broken), never judged; never read a Havok member before the object's class is identified; never time the window on wall clock (a menu pause would end live claims); an IdleStop before any entry event is not the idle's end; an entry event other transitions raise too is logged WEAK evidence (IdleOffsetStop: ~105 others). Open findings: `Docs/REVIEW-BACKLOG.md` APMF-B34 (round 1) and APMF-B35 (round 2; R2-4 SEV-3 OPEN: WEAK is a label only, a false CONFIRMED on a shared entry event keeps the claim live). | one-shot promote (#0c) |
