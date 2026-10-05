@@ -93,7 +93,7 @@ namespace apmf::spacequery {
                 }
                 return RE::BSContainer::ForEachResult::kContinue;
             };
-            if (auto* pl = RE::ProcessLists::GetSingleton()) pl->ForEachHighActor(test);
+            if (auto* pl = RE::ProcessLists::GetSingleton()) pl->ForEachHighActor([&](RE::Actor* a_p) { return test(*a_p); });  // upstream sync: pointer callback
             if (!found) {
                 // The player is not assumed to be in the high list; testing it twice is harmless here.
                 if (auto* player = RE::PlayerCharacter::GetSingleton()) test(*player);
@@ -351,7 +351,8 @@ namespace apmf::spacequery {
         // The player is considered exactly once: skipped inside the high-list pass (in
         // case a runtime lists it there) and tested on its own after.
         if (auto* pl = RE::ProcessLists::GetSingleton()) {
-            pl->ForEachHighActor([&](RE::Actor& a) {
+            pl->ForEachHighActor([&](RE::Actor* a_p) {
+                RE::Actor& a = *a_p;  // upstream sync: ForEach callbacks take a pointer
                 return (player && &a == player) ? RE::BSContainer::ForEachResult::kContinue : consider(a);
             });
         }

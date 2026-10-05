@@ -1006,7 +1006,8 @@ namespace {
             return RE::BSContainer::ForEachResult::kContinue;
         };
         if (auto* pl = RE::ProcessLists::GetSingleton()) {
-            pl->ForEachHighActor([&](RE::Actor& o) {
+            pl->ForEachHighActor([&](RE::Actor* o_p) {
+                RE::Actor& o = *o_p;  // upstream sync: ForEach callbacks take a pointer
                 return (player && &o == player) ? RE::BSContainer::ForEachResult::kContinue : consider(o);
             });
         }
@@ -1241,7 +1242,8 @@ namespace {
         };
         std::vector<Hit> hits;
         for (auto* c : cells) {
-            c->ForEachReferenceInRange(a_stall, kProbeRadius, [&](RE::TESObjectREFR& r) {
+            c->ForEachReferenceInRange(a_stall, kProbeRadius, [&](RE::TESObjectREFR* r_p) {
+                RE::TESObjectREFR& r = *r_p;  // upstream sync: ForEach callbacks take a pointer
                 const auto* b = r.GetBaseObject();
                 if (b && (b->GetFormType() == RE::FormType::Door || b->GetFormType() == RE::FormType::Activator))
                     hits.push_back(Hit{ r.GetPosition().GetDistance(a_stall), RE::NiPointer<RE::TESObjectREFR>(&r) });
@@ -1599,7 +1601,8 @@ namespace {
             // Collect under the cell lock (types and flags only), measure after it.
             std::vector<RE::NiPointer<RE::TESObjectREFR>> cand;
             for (auto* c : cells) {
-                c->ForEachReferenceInRange(mid, segLen * 0.5f + kP2SegMargin + 1024.0f, [&](RE::TESObjectREFR& r) {
+                c->ForEachReferenceInRange(mid, segLen * 0.5f + kP2SegMargin + 1024.0f, [&](RE::TESObjectREFR* r_p) {
+                    RE::TESObjectREFR& r = *r_p;  // upstream sync: ForEach callbacks take a pointer
                     const auto* b = r.GetBaseObject();
                     if (!b) return RE::BSContainer::ForEachResult::kContinue;
                     const bool gateType = b->GetFormType() == RE::FormType::Door ||
