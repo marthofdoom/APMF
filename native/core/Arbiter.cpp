@@ -10,6 +10,7 @@
 #include "core/PackageGate.h"
 #include "core/MainThread.h"
 #include "core/Registry.h"
+#include "core/Sightline.h"
 #include "channels/Travel.h"
 #include "channels/TargetPin.h"
 #include "channels/CombatEntry.h"
@@ -47,6 +48,11 @@ namespace apmf {
         // rule; channels/CastCompose.cpp). See core/MainThread.h for why this seat
         // and not SKSE's AddTask.
         apmf::mainthread::Pump();
+
+        // ABI v18 OWN LINE OF SIGHT (core/Sightline.h). The one place its rays are cast for the
+        // table: asked-for pairs are (re)measured here, at most kLosMaxPairsPerFrame per frame
+        // (3 rays each), no lock held across a ray. One relaxed load when not armed.
+        apmf::sightline::Pump();
 
         // Docs/SPEC-PACKAGE-HOLD.md §4.1 item 1 -- OBSERVE-ONLY package-drift
         // correlation probe. Reuses this EXISTING once-per-frame game-thread seat

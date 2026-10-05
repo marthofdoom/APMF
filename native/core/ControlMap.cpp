@@ -16,6 +16,7 @@
 #include "channels/CombatReentryDeny.h"  // ch.22 Installed()/NotInstalledReason() for the synchronous refusal
 #include "core/ActionGate.h"  // ch.23 pursuit leash (ABI v16) PursuitArmed()/PursuitNotArmedReason() for the synchronous refusal
 #include "core/PositionCast.h"  // ABI v11 position cast: poscast::Enqueue (one-shot, never a claim); MarkersSupported (ch.19)
+#include "core/Sightline.h"  // ABI v18 own line of sight: Armed()/NotArmedReason() for the synchronous refusal
 
 #include <cmath>
 
@@ -223,6 +224,15 @@ namespace apmf {
                 why = "the target is the actor itself";
             else if (actor == 0x14)
                 why = "the actor is the player (ch.20 pins NPC combat targets only)";
+            // ABI v18: kTargetPin_OwnLineOfSight asks for a judgment Harbinger cannot give while
+            // the line-of-sight service is down -- refused, so the client keeps its own test.
+            if (!why && (static_cast<std::uint32_t>(param->ival) & APMF_API::kTargetPin_OwnLineOfSight) != 0 &&
+                !apmf::sightline::Armed()) {
+                spdlog::warn("[apmf][target-pin] claim refused -- actor 0x{}: kTargetPin_OwnLineOfSight is set but the "
+                             "line-of-sight service is not armed ({}); the client keeps its own test.",
+                             apmf::log::Hex(actor), apmf::sightline::NotArmedReason());
+                return APMF_API::kInvalidHandle;
+            }
             if (why) {
                 spdlog::warn("[apmf][target-pin] claim refused -- actor 0x{}: {}.", apmf::log::Hex(actor), why);
                 return APMF_API::kInvalidHandle;
@@ -324,6 +334,18 @@ namespace apmf {
                 spdlog::warn("[apmf][reentry-deny] claim refused -- actor 0x{}: {}.", apmf::log::Hex(actor), why);
                 return APMF_API::kInvalidHandle;
             }
+        }
+
+        // ABI v18: a kIntent_Cast RequestEx (the degenerate form, flags in param.ival) carrying
+        // kCastFlag_OwnLineOfSight asks for a judgment Harbinger cannot give while the
+        // line-of-sight service is not armed -- refused, so the client keeps its own test.
+        if (intent == APMF_API::kIntent_Cast && param &&
+            (static_cast<std::uint32_t>(param->ival) & APMF_API::kCastFlag_OwnLineOfSight) != 0 &&
+            !apmf::sightline::Armed()) {
+            spdlog::warn("[api] cast claim REFUSED (actor 0x{}): kCastFlag_OwnLineOfSight is set but the line-of-sight "
+                         "service is not armed ({}); the client keeps its own test.",
+                         apmf::log::Hex(actor), apmf::sightline::NotArmedReason());
+            return APMF_API::kInvalidHandle;
         }
 
         // ABI v11: a kIntent_Cast RequestEx carrying kCastFlag_AtPosition is a
@@ -517,6 +539,13 @@ namespace apmf {
                          "APMF_CastRequest has none. Send a position cast through RequestEx with "
                          "param.form = the spell, param.ival = kCastFlag_AtPosition, param.pos = the point.",
                          apmf::log::Hex(actor));
+            return APMF_API::kInvalidHandle;
+        }
+        // ABI v18: kCastFlag_OwnLineOfSight needs the line-of-sight service (see EnqueueRequest).
+        if (req && (req->flags & APMF_API::kCastFlag_OwnLineOfSight) != 0 && !apmf::sightline::Armed()) {
+            spdlog::warn("[api] RequestCast REFUSED (actor 0x{}): kCastFlag_OwnLineOfSight is set but the "
+                         "line-of-sight service is not armed ({}); the client keeps its own test.",
+                         apmf::log::Hex(actor), apmf::sightline::NotArmedReason());
             return APMF_API::kInvalidHandle;
         }
         const Handle h = m_nextHandle.fetch_add(1, std::memory_order_relaxed);
