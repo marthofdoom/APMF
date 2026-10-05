@@ -1,8 +1,16 @@
 # APMF STATUS — living handoff (start here)
 
-Updated 2026-10-04. Current version **v0.9.11**. The current state of the build: what's
+Updated 2026-10-05. Current version **v0.10.0**. The current state of the build: what's
 shipped, what's probe-gated, what's next. Keep this current in the SAME change as any
 build/finding/workflow change.
+
+## SHIPPED 2026-10-05 -- v0.10.0 "Skyrim 1.7.104 support"
+
+Stamp commit `714d4f2`, CI run 37379632348, tag `v0.10.0`. Zip `releases/v0.10.0/APMF-v0.10.0.zip` (sha256
+`c177618f...`, NOT uploaded to Nexus yet, marth uploads). DLL sha256 `8d36faf2...`. Headline: Harbinger opens on 1.7.104
+(202/202 verified rows, id table built into the DLL), refuses unservable claims at once, exact-version gates on every
+hook. Nexus kit (description + changelog bbcode) is in `releases/v0.10.0/`. Deployed to LoreRim on this machine. FIELD-TEST
+PENDING on 1.7.104: nobody has run it there yet. Deploy and test as a pair with MFO v2.1.0.
 
 ## SHIPPED 2026-10-01 -- v0.9.11 "Every healing spell can be cast with its animation"
 

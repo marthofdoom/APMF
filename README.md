@@ -1,7 +1,7 @@
 # AI Package Management Framework (APMF)
 
 APMF ("Harbinger") is an SKSE framework for Skyrim on Windows. Its cast seats
-open on **Anniversary Edition 1.6.1170** and **Special Edition 1.5.97**, behind
+open on **Anniversary Edition 1.6.1170**, **Special Edition 1.5.97** and **1.7.104** (Steam), behind
 exact-version gates that refuse any other build by name, and VR is refused
 outright. (This line said AE only until v0.9.5, which placed the verified 1.5.97
 values.) It's a scalpel, not a takeover. A mod claims exactly the facet of an
