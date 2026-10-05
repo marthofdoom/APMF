@@ -26,13 +26,39 @@ struct-member offsets are accessor/Address-Library covered but more version-sens
 OPEN (22 channels + sub-splits: 1-17 plus ch.19, ch.20, ch.21, ch.22 and ch.23; ch.18 is RESERVED for an attack-selection design that
 is NOT YET ON MAIN and has not been authored). Combat-target / combat-actions / casting (⭐) carry the weight.
 
-**Runtime gate (G1, 2026-10-04): every seat and engine call below is EXACT-VERSION.** Each channel's
-`Install()` (and ch.1's `Engage()`) asks `apmf::allowance::RuntimeSupported()` (`core/Allowance.h`:
-`REL::Module::IsExactly(SKSE::RUNTIME_SSE_1_6_1170) || IsExactly(SKSE::RUNTIME_SSE_1_5_97)`) or an
-equivalent literal compare, and REFUSES by name on anything else: VR, any other 1.6.x / 1.5.x, and
-1.7.104 until F2 places it. No gate tests the `IsAE()`/`IsSE()` buckets, so no build falls through to
-the 1.6 path. `plugin.cpp` logs `[runtime] <version>: SUPPORTED` or `NOT SUPPORTED` once at load. "VR
-refused" in a row below means this gate (VR is one of the refused builds).
+**Runtime gate (G1 2026-10-04, F2b 2026-10-05): every seat and engine call below is EXACT-VERSION.** Each
+channel's `Install()` (and ch.1's `Engage()`) asks `apmf::allowance::RuntimeSupported()` (`core/Allowance.h`:
+exactly 1.6.1170, 1.5.97 or 1.7.104) or an equivalent literal compare, and REFUSES by name on anything else:
+VR and any other 1.6.x / 1.5.x / 1.7.x. No gate tests the `IsAE()`/`IsSE()` buckets, so no build falls through
+to the 1.6 path. `plugin.cpp` logs `[runtime] <version>: SUPPORTED` or `NOT SUPPORTED` once at load. "VR
+refused" in a row below means this gate (VR is one of the refused builds). On an unsupported build, or once
+the 0xAD arbiter seat is refused, `ControlMap` refuses every new claim with `kInvalidHandle` (APMF-B45).
+
+**1.7.104 (F2b).** 1.7.104 is an AE-column build: ids resolve through the CommonLibSSE-NG fork's MIT id table,
+and every seat that opens there was proven on the 1.7.104 binary (`Docs/VERIFIED-ADDRESSES.md` "1.7.104
+proof"). Status per channel:
+
+| ch. | Channel | Seat(s) / engine calls | 1.7.104 | Proof |
+|---|---|---|---|---|
+| all | arbiter | `Character` / `PlayerCharacter` slot 0xAD (`core/Hook.cpp`) | open | slot functions same signature and frame; only stack locals and PlayerCharacter fields differ |
+| 1 | Movement | SetDontMove 37489, KeepOffsetFromActor 37894, ClearKeepOffsetFromActor 37895 | open | all three identical |
+| 1a | Gait | ch.19's record speed path (`channels/Travel.cpp` ApplyGait) | open | package-start copy, maxSpeed getter, movement reader, ActorPackage pick identical |
+| 2-5, 10, 11, 13, 14, 15, 16 | facing, stance, weapon draw, headtracking, dialogue, AI attributes, mood, shouts, equipment, detection | no seat of their own; CommonLib calls through the arbiter | open | Actor layout below 0x2D8 unchanged; Headtrack Get/SetHeadtrackTarget 39484 / 39887 identical |
+| 6 | Combat-target | arbitration through the arbiter | open | as above |
+| 7 / 7a / 23 | Combat actions, pursuit leash | 70 behaviour-tree leaf vtables, act/pop/update slots (`core/ActionGate.cpp`); SetFailed 47496, Ascend 47484 | open | every leaf slot function identical (balanced act/pop holds); TreeControl +0x158 and the thread window +0x128 / +0x130 identical |
+| 8 / 8a | Casting select / L-R | CheckCast `ActorMagicCaster` slot 0x0A (`core/CastGate.cpp`); CheckShouldEquip slot 0x0F on 30 `CombatInventoryItemMagicT` vtables (`core/EquipGate.cpp`) | open | slot functions identical; DOBJ hand slots through the fork accessor |
+| 8b | Cast execution | seat 0 classify (`core/CastClassify.cpp`); 0x06 / 0x07 / 0x0A / 0x0D on Restore + Offensive (`core/CastSeats.cpp`); census | open | CombatMagicItemData ctor/visitor/KeepBest identical; aim +0x30 / +0x28 ctor identical; GetMagicTarget Out16 identical |
+| 9 | Package activity | `Character` slot 0x49 (`core/PackageGate.cpp`), EvaluatePackage 37401 | open | slot function and 37401 identical |
+| 12 | Idle | SetupSpecialIdle 39256, StopCurrentIdle 39257, graph reads | open | identical; BShkbAnimationGraph / hkbBehaviorGraph / hkbStateMachine code unchanged |
+| 17 | Equip authority | EquipObject sites +0x170 / +0xBC -> worker 38929 (`core/EquipSink.cpp`) | open (AE tables) | EquipObject, sibling and worker identical; all 39 caller sites in the same path functions |
+| 19 | Travel | ch.9's 0x49 seat; gate probe (GetOpenState 14288, ScriptEventSourceHolder 14298, TES::GetCell 13322) | open | identical (14288 differs only in its switch table) |
+| 20 | Target pin | selector slot 0x06 on Standard / Fixed, `Character` 0xE4 observer, CombatGroup targets | open | slot functions identical; CombatGroup +0x08 / +0x160, CombatTarget +0xA6 identical |
+| 21 | Combat entry | Actor::StartCombat 38561 | open | identical (313 insns) |
+| 22 | Combat re-entry deny | `Character` slot 0x99; StartCombat self-check call at +0x8F | open | both identical; the 1.7.104 row verifies the call bytes at +0x8F |
+| v11 | Position cast / space queries | CreateReferenceAtLocation 13723, TES::GetCell 13322, InterruptCast 34408, TESObjectREFR 0x23/0x5C/0x89, NonActorMagicCaster slot 1; IsHostileToActor 37537, bhkWorld slot 0x33 | open | identical; bhkWorld worldLock +0xC598 unchanged |
+
+Nothing APMF places is refused on 1.7.104. The 28 1.5.97-only EquipSink path labels have no 1.7.104 row by
+design: on 1.7.104 the code reads their AE-labelled twins.
 
 ## Table
 

@@ -376,3 +376,105 @@ python3 tools/verified_addresses/gen_verified_addresses.py --spec tools/verified
   1.6.1170 signature is cut at the RVA and must hit exactly the idmap RVA (`rva:0x...` rows). The 1.6.1170 and
   1.5.97 tables do not get them.
 - Keep `gen_verified_addresses.py` identical in MFO and APMF.
+
+
+<!-- HAND-MAINTAINED BELOW: preserved verbatim by gen_verified_addresses.py -->
+
+## 1.7.104 proof (F2b, 2026-10-05)
+
+There is no 1.7.104 install. Everything below is proven on the plaintext 1.7.104 executable against the
+unpacked 1.6.1170 one (`marth-follower-overhaul/binaries/`). "Identical" means a full-function compare
+(exception-directory extent, call and RIP targets normalised): every instruction, every `[reg+disp]` and
+every immediate the same. The ids resolve through the CommonLibSSE-NG fork's published MIT id table
+(revision 3, keyed by the 1.6.1170 id); the table above is generated against that exact file.
+
+### What was checked across the board
+
+- **Hooked vtable slots.** All 241 distinct slot functions APMF writes (every `slots` entry above) were
+  compared. 239 are identical. The two `Update` (0xAD) functions differ only in stack locals and in
+  PlayerCharacter fields at or above 0x2D8 (+8 on 1.7.104); prologue and signature are the same.
+- **Class layouts.** 27,249 slot-function pairs from every mapped vtable (143,324 memory operands) were
+  compared and every changed displacement attributed to its RTTI class. Zero changes in: ActorMagicCaster,
+  MagicCaster, NonActorMagicCaster, every CombatMagicCaster*, every CombatInventoryItem*, every
+  CombatBehaviorTreeNodeObject<*>, CombatAimController, CombatProjectileAimController, CombatMagicItemData,
+  CombatTargetSelector*, TESPackage, every BGSPackageData*, TESCustomPackageData, TESObjectCELL,
+  TESWorldSpace, NavMesh, NavMeshInfoMap, TESObjectACTI, hkbBehaviorGraph, hkbStateMachine,
+  BShkbAnimationGraph, BSWin32KeyboardDevice, ButtonEvent. In Actor, Character and TESObjectREFR code every
+  changed displacement is 0x48C or higher (past Actor's 0x2B0 size: PlayerCharacter and other singletons).
+- **Functions APMF calls or hooks by id.** The 49 function/callsite/ripref rows above: 42 identical, 7
+  differ only at switch-table bases or PlayerCharacter fields (Travel.GetOpenState and six EquipSink path
+  labels, which are classification ids, not calls).
+
+### Must-verify items
+
+| item | 1.6.1170 | 1.7.104 | proof (1.6.1170 / 1.7.104 RVA) | verdict |
+|---|---|---|---|---|
+| Actor runtime data base | +0xE8 (RelocateMemberIfNewer 1.6.629) | +0xE8 | fork picks the newer offset on 1.7.104; Actor ctor 0x65E270 / 0x670C60 writes the same fields (two extra zero-inits of editorLocCoord) | same |
+| Actor::currentProcess | +0xF8 | +0xF8 | 60 identical accesses in the 56 CommonLib Actor methods (e.g. 37230 `cmp [rcx+0xF8],0`) | same |
+| Actor::combatController | +0x160 | +0x160 | 6 identical (37401 0x66CDA3 / 0x67F863) | same |
+| Actor::magicCasters[] | +0x1A8 | +0x1A8 | 38757 0x6C3BE2 / 0x6D66A2 `lea rbx,[rcx+0x1A8]` | same |
+| Actor::boolFlags | +0x204 | +0x204 | 7 identical (37612 0x680773 / 0x693233) | same |
+| Actor::boolBits | +0xE8 | +0xE8 | 15 identical | same |
+| Actor::currentCombatTarget | +0x104 | +0x104 | 3 identical (0x6B7914 / 0x6CA394) | same |
+| AIProcess::middleHigh / high | +0x08 / +0x10 | same | process-level setter 0x6DD59A-fn / 0x6F014A-fn identical (199 insns, writes [+8] / [+0x10]) | same |
+| AIProcess::currentPackage | +0x18 | +0x18 | 3 identical currentProcess->currentPackage chains (0x681F8E / 0x694A5E) | same |
+| MiddleHighProcessData size / runOncePackage / lastIdlePlayed | 0x338 / +0x58 / +0x280 | same | 11 / 11 `0x338` allocations; init 0x7202D0 / 0x732DE0 identical (251 insns, `lea [rdi+0x58]`, `[rdi+0x280]`) | same |
+| HighProcessData size / currentProcessIdle | 0x478 / +0x348 | same | 6 / 6 `0x478` allocations; init 0x708AB0 / 0x71B5F0 identical (325 insns, `[rdi+0x348]`) | same |
+| CombatController below 0x68 (attackerHandle +0x28, combatGroup +0x10, targetHandle +0x2C) | as left | same | fork: ctor 0x558070 / 0x55FEE0 all displacements +0; GetMagicTarget 0x81E020 / 0x833510 identical | same |
+| CombatGroup targets / lock / CombatTarget stride, flags | +0x08 / +0x160 / 0xA8, +0xA6 | same | 7 functions with `imul 0xA8` + `[+0x160]`: 6 identical, 1 differs only in stack frame; flag set 0x8053EA / 0x819EF0 `or cx,2`, read 0x802B61 / 0x8179C1 | same |
+| MagicCaster / ActorMagicCaster | sizes 0x48 / 0x100 | same | class code 114 + 359 operands identical, 0 changed | same |
+| ProcessLists::highActorHandles | +0x30 (data) / +0x40 (size) | same | 40 singleton (400315) users read [+0x30/+0x40]; their 26 functions: 16 identical, 10 differ only elsewhere (PlayerCharacter, switch tables) | same |
+| ButtonEvent device for the keyboard (core/Input.cpp:34) | 0 = kKeyboard | 0 = kKeyboard | keyboard device ctor 0xCDDCC0 / 0xE124D0 identical: `xor ecx,ecx; mov [rbx+8],ecx`; both AddButtonEvent callers (0xD6F410 / 0xD6F530 on 1.7.104) pass `[device+8]`; factory 0xD6EBA0 case 0 builds it. The virtual keyboard's move to slot 5 does not touch kKeyboard | same |
+| DOBJ hand slots (EquipGate, AiCastSeats) | kLeftHandEquip 19, kRightHandEquip 20 | 19, 20 | 1.7.104 inserts at 188 and 263+ (fork); both now read through the fork's `GetObject` (index translation, init flags at +0xBC0) | same index, accessor used |
+| bhkWorld worldLock (SpaceQuery) | +0xC598 | +0xC598 | fields to +0xC5A0 identical (15 uses), the +0x108 shift starts at +0xC5E8; the one `lea rcx,[rsi+0xC598]` function keeps it | same |
+| TESObjectCELL runtime data (worldSpace, spinLock, navMeshes) | base +0x68 | +0x68 | TESObjectCELL code 238 operands identical | same |
+| BT thread window / master controller (ActionGate) | +0x128/+0x130, +0x158 | same | leaf 48124 identical (158 insns, `movups xmm0,[rax+0x128]`); +0x158 25 identical leaf uses | same |
+| CombatMagicItemData +0x10/+0x18/+0x4C (CastClassify) | as left | same | ctor 0x81D5A0 / 0x832A90 identical; visitor 0x81D830 / 0x832D20 identical | same |
+| Classify table 382289 row 10 | {0, Health, 1, 1.0f, creator} | same | all 23 x 48-byte rows: 0 non-pointer differences | same |
+| CombatProjectileAimController +0x30 / +0x28 (CastSeats aim) | as left | same | ctor 0x7F51C0 / 0x809EE0 identical (`[rbx+0x28]=rdx`, `[rbx+0x30]=ecx`) | same |
+| GetMagicTarget sret Out16 | {u32 @0, ptr @8} | same | 0x81E020 / 0x833510 identical, `[rdi]=eax`, `[rdi+8]=rcx` | same |
+| EquipSink worker / sites / depths | 38929; +0x170, +0xBC; 0x80, 0x70 | same | EquipObject 38894 identical (117); 38893 and 38929 identical over 0x400 bytes; E8s at +0x170 / +0xBC land on 0x6DE920 | same |
+| Travel gait path | 38970 copy, 29543 getter, 0x482800 reader, 0x70F590 pick | twins 0x6E0DB0, 0x498860, 0x489D20, 0x7220D0 | all identical | same |
+
+### The 11 raw-RVA rows
+
+Each 1.6.1170 body's signature, cut at the RVA, hits exactly one place in the 1.7.104 `.text`: the fork id
+map's RVA. The code now carries the 1.7.104 value next to the 1.6.1170 one.
+
+| seat | 1.6.1170 | 1.7.104 | proof | verdict |
+|---|---|---|---|---|
+| AiCastSeats.Melee.CalculateScore | 0x8183E0 | 0x82D2C0 | Melee vtable slot 0x0C on both, identical | open |
+| AiCastSeats.Ranged.CalculateScore | 0x8188B0 | 0x82D790 | Ranged slot 0x0C, identical | open |
+| AiCastSeats.Shield.CalculateScore | 0x818DF0 | 0x82DCD0 | Shield slot 0x0C, identical | open |
+| AiCastSeats.Torch.CalculateScore | 0x819480 | 0x82E360 | Torch slot 0x0C, identical | open |
+| AiCastSeats.kCheckShouldEquipBaseAE | 0x817FC0 | 0x82CEA0 | Ranged/Shield slot 0x0F, identical (log compare only) | open |
+| EquipGate.CallSiteName.pre-loop | 0x80FCD0 | 0x824BB0 | 44868 identical | label |
+| EquipGate.CallSiteName.return-813AF2 | 0x813AF2 | 0x8289D2 | 44899 0x8134C0 / 0x8283A0 identical, same offset, `call [rax+0x78]` | label |
+| EquipGate.CallSiteName.return-813D38 | 0x813D38 | 0x828C18 | same | label |
+| EquipGate.CallSiteName.return-814270 | 0x814270 | 0x829150 | same | label |
+| EquipGate.CallSiteName.return-8144B2 | 0x8144B2 | 0x829392 | same | label |
+| NonAliasProbe.CombatMagicCaster.GetMagicTarget | 0x81E020 | 0x833510 | identical (not a literal in code: documentation of the Out16 shape) | open |
+
+AiCastSeats' own return-address labels (not rows) map the same way: 0x80FF35 / 0x813AF5 / 0x813D3B / 0x814273
+/ 0x8144B5 become 0x824E15 / 0x8289D5 / 0x828C1B / 0x829153 / 0x829395.
+
+Observation, not changed (1.6.1170 too): EquipGate's CallSiteName table holds the `call` instructions and
+44868's entry, not return addresses, so it never matches `_ReturnAddress()`. The labels are log-only.
+
+### The five weaker SE pairings (EquipSink path labels)
+
+These pair a 1.5.97 path label with its 1.6.1170 twin. On 1.7.104 the code reads the AE-labelled rows,
+which are proven directly (every one of the 39 EquipObject / list-sibling call sites sits in the same AE
+path function at the same offset on 1.7.104). The SE pairing was confirmed by disassembly anyway:
+
+| SE label | AE twin | 1.7.104 | evidence | verdict |
+|---|---|---|---|---|
+| OutfitApply.24234 | 418622 | 0x3C4440 | 12 callers with the same call offsets on all three, including Actor vtable slots 138 and 16 (RTTI) | confirmed |
+| CombatNode.46957 | 48126 | 0x88D360 | reached only by a tail jump from `CombatBehaviorTreeNodeObject<CombatBehaviorEquipRangedWeapon>` slot 2 on all three (RTTI) | confirmed |
+| CombatNode.46955 | 48124 | 0x88CFF0 | called only from 46957+0x173 / 48126+0x13E / 1.7.104 the same | confirmed |
+| QueuedApply.38789 | 39814 | 0x720D90 | the same four-function call graph (38133 -> 39446 -> 40367 -> 38789, and 38133 -> 38789) as 39089 -> 40522 -> 41381 -> 39814, same call offsets on 1.7.104 | confirmed |
+| AiCommand.38902 | 39948 | 0x7265C0 | called only from the AI command dispatcher (38606+0x798 / 39637+0x8B1 / 1.7.104 the same) | confirmed |
+
+The two EquipObject callers that are not path rows (1.6.1170 16104 and 52410) are not in the MIT id table.
+On 1.7.104 the caller classifier (nearest id at or below the return address) logs them as Unknown(16099) and
+Unknown(52271) instead of Unknown(16104) / Unknown(52410). Both are kEngine either way: a log id only.

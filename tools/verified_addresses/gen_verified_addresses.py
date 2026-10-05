@@ -81,6 +81,7 @@ RUNTIMES = {
 AL_RUNTIMES = [rt for rt, m in RUNTIMES.items() if not m.get('idmap')]
 IDMAP_RT = '1.7.104'
 AE_RT = '1.6.1170'   # the idmap is keyed by this runtime's ids
+HAND_MARKER = '<!-- HAND-MAINTAINED BELOW: preserved verbatim by gen_verified_addresses.py -->'
 
 
 # ---------------------------------------------------------------- PE image
@@ -820,7 +821,16 @@ def write_doc(spec, rows, unver, path, args):
     L.append('  1.5.97 tables do not get them.')
     L.append('- Keep `gen_verified_addresses.py` identical in MFO and APMF.')
     L.append('')
-    open(path, 'w', newline='\n').write('\n'.join(L))
+    # A hand-maintained tail (the 1.7.104 proof tables) below this marker survives regeneration.
+    try:
+        old = open(path, newline='').read()
+    except FileNotFoundError:
+        old = ''
+    k = old.find(HAND_MARKER)
+    if k >= 0:
+        L.append('')
+        L.append(old[k:].rstrip('\n'))
+    open(path, 'w', newline='\n').write('\n'.join(L) + ('\n' if k >= 0 else ''))
 
 
 def main():

@@ -324,5 +324,8 @@ Raised against `ac895c3` (`feat/apmf-combat-entry`), tier-A Opus 5.5 review 2026
 ### APMF-B31 (SEV-5) -- ch.21 a brief 3D loss of the target ends the claim
 Raised against `ac895c3`, same review, finding F7. Verbatim as relayed by the coordinator: "a brief 3D loss ends the claim; the same residual as ch.20". Reasoning: `combatentry::Poll` ends the claim on `!target->Is3DLoaded()` checked live on the game thread; a transient 3D rebuild (a transform, a skeleton swap, Reset3D, a script Disable+Enable) seen by one poll ends it. ch.20 has the same residual (its Poll re-checks live, which narrows but does not remove it). The client re-requests.
 
-### APMF-B45 (SEV-4) -- claims are handed out on an unsupported runtime where nothing will ever drain them
+### APMF-B45 (SEV-4) -- FIXED in F2b (`feat/apmf-1.7.104`, 2026-10-05) -- claims are handed out on an unsupported runtime where nothing will ever drain them
 Raised against 53555c9 (`fix/apmf-g1-exact-gates`, Opus tier-A review), 2026-10-05. Reviewer (verbatim): "On an unsupported runtime (VR before this change, now also any other 1.6.x/1.5.x and 1.7.104 until F2), ClientAPI still hands out claim handles for every intent. Nothing will ever Drain or Engage them, because the 0xAD Hook is refused." Fix when drained: refuse claims at the API (kInvalidHandle, as EquipAuthority already does) or expose a runtime-supported query when 0xAD is not installed. Also SEV-5 notes: the MovementDeny ch.1 Engage/Release gates are an unreachable backstop (say so in the docs), and Travel.cpp:2105 `g_gaitVerified` is now always true after the Install gate.
+**Fix (F2b):** `ControlMap::EnqueueRequest` / `EnqueueCast` return kInvalidHandle (logged once) when
+`allowance::RuntimeSupported()` is false or `hook::RefusedReason()` reports the 0xAD seat refused (VR, runtime,
+self-check). The two SEV-5 notes stay open (ch.1's gates and `g_gaitVerified` are still unreachable backstops).

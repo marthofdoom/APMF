@@ -100,14 +100,16 @@ Full design is in [design.md](design.md).
 
 ## Requirements
 
-- Skyrim on **Windows**: Anniversary Edition **1.6.1170** or Special Edition
-  **1.5.97**. The cast-classify seat (`core/CastClassify.cpp`) and the weapon-score
-  seat (`core/AiCastSeats.cpp` Group C) are placed per runtime from values verified
-  against each binary, and both open on both. Any other build is refused by name,
-  including a 1.6.x that isn't 1170, so nothing runs unverified. VR is refused at
-  install throughout, and 1.7.104 is unsupported because there's no address library
-  for it. (Corrected at v0.9.5. This said AE only, the cast path refuses to install
-  on SE 1.5.97.)
+- Skyrim on **Windows**: Anniversary Edition **1.6.1170**, Special Edition **1.5.97**, or
+  **1.7.104** (Steam). Every hook and every engine value Harbinger uses was checked on
+  each of these three builds, and each opens on all three. Any other build is refused
+  by name, including a 1.6.x that isn't 1170, so nothing runs unverified. VR is refused
+  at install throughout.
+- On **1.7.104** there is no Address Library. Harbinger reads the id table published
+  with the CommonLibSSE-NG fork it is built on, `mit-idtable-v1-1-7-104-0.bin` in
+  `Data/SKSE/Plugins/`. Without that file the game stops at load with a message
+  naming it. Where players get that file (bundled with Harbinger, or one shared
+  download) is **pending marth's decision**.
 - Build: CMake 3.21+, a C++23 compiler, [vcpkg](https://vcpkg.io) with the
   `commonlibsse-ng` port (see `native/vcpkg.json` / `native/vcpkg-configuration.json`).
 - A client mod links only against `native/APMF_API.h`, a plain C-ABI header
