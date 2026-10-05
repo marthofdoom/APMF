@@ -9,6 +9,11 @@
 // byte signature) and then matched against the Address Library for that build; the
 // generator refuses to write this file if they disagree. REL::SelfCheck::Run() compares the
 // library in use at runtime against these rows. See REL/SelfCheck.h.
+//
+// 1.7.104.0 has no Address Library: its rows are the ids of OUR OWN id map (keyed by the 1.6.1170
+// id), each re-verified against the 1.7.104 executable. A seat that did not verify has NO row in
+// that table (listed in a comment there), so IsVerifiedAddress() is false for it and the seat is
+// refused. The Row/Table shapes are the same for every runtime.
 
 #include "REL/SelfCheck.h"
 
@@ -404,8 +409,244 @@ namespace apmf::VerifiedAddresses
 		{ 278793, 0x171DB80, 0x0, 0, {  }, "hkbStateMachine" },
 	};
 
+	// 1.7.104.0: 199 rows
+	// 31 NOT VERIFIED on 1.7.104.0, deliberately absent from this table (the seat is refused):
+	//   CombatMagicItemData (1.6.1170 id 211955): id 211955 is not in the idmap
+	//   CastClassify.KeepBestRow (1.6.1170 id 45325): id 45325 is not in the idmap
+	//   RTTI.CombatBehaviorTreeNode (1.6.1170 id 394204): id 394204 is not in the idmap
+	//   EquipSink.Path.OutfitApply.24234 (1.6.1170 id -): no 1.6.1170 (AE) id: the 1.7.104 map is keyed by AE id (1.5.97-only seat)
+	//   EquipSink.Path.AddWornOutfit.19266 (1.6.1170 id -): no 1.6.1170 (AE) id: the 1.7.104 map is keyed by AE id (1.5.97-only seat)
+	//   EquipSink.Path.AiCommand.38618 (1.6.1170 id -): no 1.6.1170 (AE) id: the 1.7.104 map is keyed by AE id (1.5.97-only seat)
+	//   EquipSink.Path.AiCommand.38619 (1.6.1170 id -): no 1.6.1170 (AE) id: the 1.7.104 map is keyed by AE id (1.5.97-only seat)
+	//   EquipSink.Path.RemoveItemReequip.36781 (1.6.1170 id -): no 1.6.1170 (AE) id: the 1.7.104 map is keyed by AE id (1.5.97-only seat)
+	//   EquipSink.Path.RemoveItemReequip.19263 (1.6.1170 id -): no 1.6.1170 (AE) id: the 1.7.104 map is keyed by AE id (1.5.97-only seat)
+	//   EquipSink.Path.RemoveItemReequip.15821 (1.6.1170 id -): no 1.6.1170 (AE) id: the 1.7.104 map is keyed by AE id (1.5.97-only seat)
+	//   EquipSink.Path.CombatNode.46957 (1.6.1170 id -): no 1.6.1170 (AE) id: the 1.7.104 map is keyed by AE id (1.5.97-only seat)
+	//   EquipSink.Path.CombatNode.46955 (1.6.1170 id -): no 1.6.1170 (AE) id: the 1.7.104 map is keyed by AE id (1.5.97-only seat)
+	//   EquipSink.Path.Script.53861 (1.6.1170 id -): no 1.6.1170 (AE) id: the 1.7.104 map is keyed by AE id (1.5.97-only seat)
+	//   EquipSink.Path.Console.21869 (1.6.1170 id -): no 1.6.1170 (AE) id: the 1.7.104 map is keyed by AE id (1.5.97-only seat)
+	//   EquipSink.Path.PlayerMenu.28629 (1.6.1170 id -): no 1.6.1170 (AE) id: the 1.7.104 map is keyed by AE id (1.5.97-only seat)
+	//   EquipSink.Path.PlayerMenu.28593 (1.6.1170 id -): no 1.6.1170 (AE) id: the 1.7.104 map is keyed by AE id (1.5.97-only seat)
+	//   EquipSink.Path.PlayerMenu.37951 (1.6.1170 id -): no 1.6.1170 (AE) id: the 1.7.104 map is keyed by AE id (1.5.97-only seat)
+	//   EquipSink.Path.WorkerReentry.37957 (1.6.1170 id -): no 1.6.1170 (AE) id: the 1.7.104 map is keyed by AE id (1.5.97-only seat)
+	//   EquipSink.Path.QueuedApply.37950 (1.6.1170 id -): no 1.6.1170 (AE) id: the 1.7.104 map is keyed by AE id (1.5.97-only seat)
+	//   EquipSink.Path.QueuedApply.38789 (1.6.1170 id -): no 1.6.1170 (AE) id: the 1.7.104 map is keyed by AE id (1.5.97-only seat)
+	//   EquipSink.Path.AiCommand.38606 (1.6.1170 id -): no 1.6.1170 (AE) id: the 1.7.104 map is keyed by AE id (1.5.97-only seat)
+	//   EquipSink.Path.AiCommand.38902 (1.6.1170 id -): no 1.6.1170 (AE) id: the 1.7.104 map is keyed by AE id (1.5.97-only seat)
+	//   EquipSink.Path.AiCommand.38624 (1.6.1170 id -): no 1.6.1170 (AE) id: the 1.7.104 map is keyed by AE id (1.5.97-only seat)
+	//   EquipSink.Path.AiCommand.38614 (1.6.1170 id -): no 1.6.1170 (AE) id: the 1.7.104 map is keyed by AE id (1.5.97-only seat)
+	//   EquipSink.Path.AiCommand.36510 (1.6.1170 id -): no 1.6.1170 (AE) id: the 1.7.104 map is keyed by AE id (1.5.97-only seat)
+	//   EquipSink.Path.DropObject.36520 (1.6.1170 id -): no 1.6.1170 (AE) id: the 1.7.104 map is keyed by AE id (1.5.97-only seat)
+	//   EquipSink.Path.PickUpObject.36521 (1.6.1170 id -): no 1.6.1170 (AE) id: the 1.7.104 map is keyed by AE id (1.5.97-only seat)
+	//   EquipSink.Path.BoundItem.37942 (1.6.1170 id -): no 1.6.1170 (AE) id: the 1.7.104 map is keyed by AE id (1.5.97-only seat)
+	//   EquipSink.Path.ProcedureEat.27700 (1.6.1170 id -): no 1.6.1170 (AE) id: the 1.7.104 map is keyed by AE id (1.5.97-only seat)
+	//   EquipSink.Path.InventoryReequip.40241 (1.6.1170 id -): no 1.6.1170 (AE) id: the 1.7.104 map is keyed by AE id (1.5.97-only seat)
+	//   EquipSink.Path.StartCombat.37608 (1.6.1170 id -): no 1.6.1170 (AE) id: the 1.7.104 map is keyed by AE id (1.5.97-only seat)
+	inline constexpr REL::SelfCheck::Row kRows_1_7_104[] = {
+		{ 207886, 0x1923258, 0x0, 0, {  }, "Character" },
+		{ 212096, 0x1955950, 0x0, 0, {  }, "CombatTargetSelectorStandard" },
+		{ 212098, 0x1955990, 0x0, 0, {  }, "CombatTargetSelectorFixed" },
+		{ 208040, 0x19296C0, 0x0, 0, {  }, "PlayerCharacter" },
+		{ 205828, 0x18F6150, 0x0, 0, {  }, "ActorMagicCaster" },
+		{ 210081, 0x1943F48, 0x0, 0, {  }, "CombatProjectileAimController" },
+		{ 211104, 0x194ACC0, 0x0, 0, {  }, "CombatMagicCasterOffensive" },
+		{ 211142, 0x194B0B0, 0x0, 0, {  }, "CombatMagicCasterRestore" },
+		{ 211118, 0x194AE58, 0x0, 0, {  }, "CombatMagicCasterWard" },
+		{ 211146, 0x194B2A8, 0x0, 0, {  }, "CombatMagicCasterSummon" },
+		{ 211154, 0x194B420, 0x0, 0, {  }, "CombatMagicCasterStagger" },
+		{ 211166, 0x194B558, 0x0, 0, {  }, "CombatMagicCasterDisarm" },
+		{ 211176, 0x194B6F0, 0x0, 0, {  }, "CombatMagicCasterCloak" },
+		{ 211186, 0x194B868, 0x0, 0, {  }, "CombatMagicCasterLight" },
+		{ 211200, 0x194BA00, 0x0, 0, {  }, "CombatMagicCasterInvisibility" },
+		{ 211210, 0x194BB78, 0x0, 0, {  }, "CombatMagicCasterBoundItem" },
+		{ 211222, 0x194BCF0, 0x0, 0, {  }, "CombatMagicCasterArmor" },
+		{ 211232, 0x194BE88, 0x0, 0, {  }, "CombatMagicCasterTargetEffect" },
+		{ 211270, 0x194C200, 0x0, 0, {  }, "CombatMagicCasterParalyze" },
+		{ 211276, 0x194C398, 0x0, 0, {  }, "CombatMagicCasterScript" },
+		{ 211973, 0x19538E0, 0x0, 0, {  }, "CombatMagicCasterReanimate" },
+		{ 211706, 0x194F838, 0x0, 0, {  }, "CombatInventoryItemMagicT.MagicOffensive" },
+		{ 211612, 0x194EDB8, 0x0, 0, {  }, "CombatInventoryItemMagicT.MagicRestore" },
+		{ 211658, 0x194F2F8, 0x0, 0, {  }, "CombatInventoryItemMagicT.MagicWard" },
+		{ 211568, 0x194E858, 0x0, 0, {  }, "CombatInventoryItemMagicT.MagicSummon" },
+		{ 211524, 0x194E338, 0x0, 0, {  }, "CombatInventoryItemMagicT.MagicStagger" },
+		{ 211480, 0x194DDD8, 0x0, 0, {  }, "CombatInventoryItemMagicT.MagicDisarm" },
+		{ 211436, 0x194D8B8, 0x0, 0, {  }, "CombatInventoryItemMagicT.MagicCloak" },
+		{ 211390, 0x194D378, 0x0, 0, {  }, "CombatInventoryItemMagicT.MagicLight" },
+		{ 211346, 0x194CE18, 0x0, 0, {  }, "CombatInventoryItemMagicT.MagicInvisibility" },
+		{ 211302, 0x194C890, 0x0, 0, {  }, "CombatInventoryItemMagicT.MagicBoundItem" },
+		{ 211204, 0x194BC30, 0x0, 0, {  }, "CombatInventoryItemMagicT.MagicTargetEffect" },
+		{ 211092, 0x194AD38, 0x0, 0, {  }, "CombatInventoryItemMagicT.MagicParalyze" },
+		{ 211050, 0x194A7A0, 0x0, 0, {  }, "CombatInventoryItemMagicT.MagicScript" },
+		{ 211148, 0x194B498, 0x0, 0, {  }, "CombatInventoryItemMagicT.MagicReanimate" },
+		{ 211254, 0x194C2B8, 0x0, 0, {  }, "CombatInventoryItemMagicT.MagicArmor" },
+		{ 211688, 0x194F638, 0x0, 0, {  }, "CombatInventoryItemMagicT.StaffOffensive" },
+		{ 211608, 0x194EC38, 0x0, 0, {  }, "CombatInventoryItemMagicT.StaffRestore" },
+		{ 211642, 0x194F0F8, 0x0, 0, {  }, "CombatInventoryItemMagicT.StaffWard" },
+		{ 211552, 0x194E658, 0x0, 0, {  }, "CombatInventoryItemMagicT.StaffSummon" },
+		{ 211508, 0x194E138, 0x0, 0, {  }, "CombatInventoryItemMagicT.StaffStagger" },
+		{ 211464, 0x194DBD8, 0x0, 0, {  }, "CombatInventoryItemMagicT.StaffDisarm" },
+		{ 211420, 0x194D6B8, 0x0, 0, {  }, "CombatInventoryItemMagicT.StaffCloak" },
+		{ 211380, 0x194D198, 0x0, 0, {  }, "CombatInventoryItemMagicT.StaffLight" },
+		{ 211330, 0x194CBB0, 0x0, 0, {  }, "CombatInventoryItemMagicT.StaffInvisibility" },
+		{ 211284, 0x194C670, 0x0, 0, {  }, "CombatInventoryItemMagicT.StaffBoundItem" },
+		{ 211182, 0x194B920, 0x0, 0, {  }, "CombatInventoryItemMagicT.StaffTargetEffect" },
+		{ 211076, 0x194AAC0, 0x0, 0, {  }, "CombatInventoryItemMagicT.StaffParalyze" },
+		{ 211034, 0x194A5A0, 0x0, 0, {  }, "CombatInventoryItemMagicT.StaffScript" },
+		{ 211128, 0x194B168, 0x0, 0, {  }, "CombatInventoryItemMagicT.StaffReanimate" },
+		{ 211234, 0x194C020, 0x0, 0, {  }, "CombatInventoryItemMagicT.StaffArmor" },
+		{ 210297, 0x19475C8, 0x0, 0, {  }, "CombatInventoryItemMelee" },
+		{ 210299, 0x1947678, 0x0, 0, {  }, "CombatInventoryItemRanged" },
+		{ 210301, 0x1947728, 0x0, 0, {  }, "CombatInventoryItemShield" },
+		{ 210305, 0x1947888, 0x0, 0, {  }, "CombatInventoryItemTorch" },
+		{ 212694, 0x195AC88, 0x0, 0, {  }, "Leaf.CombatBehaviorAdvance" },
+		{ 213789, 0x1962610, 0x0, 0, {  }, "Leaf.CombatBehaviorAttack" },
+		{ 214395, 0x1967270, 0x0, 0, {  }, "Leaf.CombatBehaviorAttackFromCover" },
+		{ 213640, 0x1961370, 0x0, 0, {  }, "Leaf.CombatBehaviorAttackLow" },
+		{ 212785, 0x195B158, 0x0, 0, {  }, "Leaf.CombatBehaviorBackoff" },
+		{ 212595, 0x1959BE0, 0x0, 0, {  }, "Leaf.CombatBehaviorBash" },
+		{ 212608, 0x1959C90, 0x0, 0, {  }, "Leaf.CombatBehaviorBlock" },
+		{ 212582, 0x1959B30, 0x0, 0, {  }, "Leaf.CombatBehaviorBlockAttack" },
+		{ 213735, 0x1961E30, 0x0, 0, {  }, "Leaf.CombatBehaviorCastConcentrationSpell" },
+		{ 213720, 0x1961D28, 0x0, 0, {  }, "Leaf.CombatBehaviorCastImmediateSpell" },
+		{ 214280, 0x1966450, 0x0, 0, {  }, "Leaf.CombatBehaviorCastShout" },
+		{ 213109, 0x195D9D0, 0x0, 0, {  }, "Leaf.CombatBehaviorChase" },
+		{ 213917, 0x19639D8, 0x0, 0, {  }, "Leaf.CombatBehaviorCheckUnreachableTarget" },
+		{ 212668, 0x195AB28, 0x0, 0, {  }, "Leaf.CombatBehaviorChildSelector_ConditionalChildSelector_" },
+		{ 212746, 0x195AF48, 0x0, 0, {  }, "Leaf.CombatBehaviorChildSelector_RandomValueChildSelector_" },
+		{ 212424, 0x1958C08, 0x0, 0, {  }, "Leaf.CombatBehaviorChildSelector_ValueChildSelector_" },
+		{ 212772, 0x195B0A8, 0x0, 0, {  }, "Leaf.CombatBehaviorCircle" },
+		{ 212720, 0x195ADE8, 0x0, 0, {  }, "Leaf.CombatBehaviorCircleDistant" },
+		{ 213551, 0x1960B80, 0x0, 0, {  }, "Leaf.CombatBehaviorDiveBomb" },
+		{ 212546, 0x1959598, 0x0, 0, {  }, "Leaf.CombatBehaviorDodgeThreat" },
+		{ 214430, 0x1967570, 0x0, 0, {  }, "Leaf.CombatBehaviorDrinkPotion" },
+		{ 212411, 0x1958B58, 0x0, 0, {  }, "Leaf.CombatBehaviorDynamicConditionalNode" },
+		{ 212437, 0x1958CB8, 0x0, 0, {  }, "Leaf.CombatBehaviorEquipObject" },
+		{ 212450, 0x1958D68, 0x0, 0, {  }, "Leaf.CombatBehaviorEquipRangedWeapon" },
+		{ 212478, 0x1958F20, 0x0, 0, {  }, "Leaf.CombatBehaviorEquipShout" },
+		{ 212463, 0x1958E18, 0x0, 0, {  }, "Leaf.CombatBehaviorEquipSpell" },
+		{ 213943, 0x1963B38, 0x0, 0, {  }, "Leaf.CombatBehaviorExitWater" },
+		{ 212759, 0x195AFF8, 0x0, 0, {  }, "Leaf.CombatBehaviorFallback" },
+		{ 205291, 0x18ED320, 0x0, 0, {  }, "Leaf.CombatBehaviorFallbackSelector_NextChildSelector_" },
+		{ 213512, 0x1960970, 0x0, 0, {  }, "Leaf.CombatBehaviorFallbackSelector_WeightedRandomChildSelector_" },
+		{ 212681, 0x195ABD8, 0x0, 0, {  }, "Leaf.CombatBehaviorFallbackToRanged" },
+		{ 212925, 0x195C378, 0x0, 0, {  }, "Leaf.CombatBehaviorFindAllyAttackLocation" },
+		{ 212912, 0x195C2C8, 0x0, 0, {  }, "Leaf.CombatBehaviorFindAttackLocation" },
+		{ 214365, 0x1967060, 0x0, 0, {  }, "Leaf.CombatBehaviorFindCover" },
+		{ 212899, 0x195C218, 0x0, 0, {  }, "Leaf.CombatBehaviorFindLateralAttackLocation" },
+		{ 212262, 0x1957F98, 0x0, 0, {  }, "Leaf.CombatBehaviorFindWeapon" },
+		{ 213096, 0x195D920, 0x0, 0, {  }, "Leaf.CombatBehaviorFlank" },
+		{ 213122, 0x195DA80, 0x0, 0, {  }, "Leaf.CombatBehaviorFlankDistant" },
+		{ 213321, 0x195F468, 0x0, 0, {  }, "Leaf.CombatBehaviorFlee" },
+		{ 213295, 0x195F308, 0x0, 0, {  }, "Leaf.CombatBehaviorFleeThroughDoor" },
+		{ 213282, 0x195F258, 0x0, 0, {  }, "Leaf.CombatBehaviorFleeToAlly" },
+		{ 213308, 0x195F3B8, 0x0, 0, {  }, "Leaf.CombatBehaviorFleeToCover" },
+		{ 213577, 0x1960CE0, 0x0, 0, {  }, "Leaf.CombatBehaviorFlyingAttack" },
+		{ 214228, 0x1965F18, 0x0, 0, {  }, "Leaf.CombatBehaviorForceFail" },
+		{ 213405, 0x195F990, 0x0, 0, {  }, "Leaf.CombatBehaviorForceSuccess" },
+		{ 213525, 0x1960A20, 0x0, 0, {  }, "Leaf.CombatBehaviorGroundAttack" },
+		{ 213364, 0x195F728, 0x0, 0, {  }, "Leaf.CombatBehaviorHide" },
+		{ 213538, 0x1960AD0, 0x0, 0, {  }, "Leaf.CombatBehaviorHover" },
+		{ 213609, 0x1960F48, 0x0, 0, {  }, "Leaf.CombatBehaviorLand" },
+		{ 214013, 0x1964420, 0x0, 0, {  }, "Leaf.CombatBehaviorMaintainOptimalRange" },
+		{ 213499, 0x19608C0, 0x0, 0, {  }, "Leaf.CombatBehaviorOrbit" },
+		{ 213486, 0x1960810, 0x0, 0, {  }, "Leaf.CombatBehaviorOrbitDistant" },
+		{ 212197, 0x1957630, 0x0, 0, {  }, "Leaf.CombatBehaviorParallel" },
+		{ 212491, 0x1958FD0, 0x0, 0, {  }, "Leaf.CombatBehaviorPause" },
+		{ 213564, 0x1960C30, 0x0, 0, {  }, "Leaf.CombatBehaviorPerchAttack" },
+		{ 213705, 0x1961C20, 0x0, 0, {  }, "Leaf.CombatBehaviorPrepareDualCast" },
+		{ 213653, 0x1961420, 0x0, 0, {  }, "Leaf.CombatBehaviorPursueTarget" },
+		{ 205304, 0x18ED3D0, 0x0, 0, {  }, "Leaf.CombatBehaviorRangedAttack" },
+		{ 205278, 0x18ED270, 0x0, 0, {  }, "Leaf.CombatBehaviorRepeat" },
+		{ 212733, 0x195AE98, 0x0, 0, {  }, "Leaf.CombatBehaviorReposition" },
+		{ 213930, 0x1963A88, 0x0, 0, {  }, "Leaf.CombatBehaviorReturnToCombatArea" },
+		{ 214241, 0x1965FC8, 0x0, 0, {  }, "Leaf.CombatBehaviorSearchInvestigateDoor" },
+		{ 212249, 0x1957EE8, 0x0, 0, {  }, "Leaf.CombatBehaviorSequence" },
+		{ 213776, 0x1962560, 0x0, 0, {  }, "Leaf.CombatBehaviorSpecialAttack" },
+		{ 213083, 0x195D870, 0x0, 0, {  }, "Leaf.CombatBehaviorStalk" },
+		{ 214026, 0x19644D0, 0x0, 0, {  }, "Leaf.CombatBehaviorStrafe" },
+		{ 212707, 0x195AD38, 0x0, 0, {  }, "Leaf.CombatBehaviorSurround" },
+		{ 213460, 0x19606B0, 0x0, 0, {  }, "Leaf.CombatBehaviorTakeoff" },
+		{ 213338, 0x195F5C8, 0x0, 0, {  }, "Leaf.CombatBehaviorTrackTarget" },
+		{ 214382, 0x19671C0, 0x0, 0, {  }, "Leaf.CombatBehaviorWaitBehindCover" },
+		{ 214189, 0x1965D08, 0x0, 0, {  }, "Leaf.CombatBehaviorSearch" },
+		{ 214215, 0x1965E68, 0x0, 0, {  }, "Leaf.CombatBehaviorSearchCenter" },
+		{ 214176, 0x1965C58, 0x0, 0, {  }, "Leaf.CombatBehaviorSearchLocation" },
+		{ 214202, 0x1965DB8, 0x0, 0, {  }, "Leaf.CombatBehaviorSearchWander" },
+		{ 393096, 0x20E8608, 0x0, 0, {  }, "RTTI.MagicCaster" },
+		{ 395440, 0x21233A8, 0x0, 0, {  }, "RTTI.CombatInventoryItem" },
+		{ 395744, 0x2132BE8, 0x0, 0, {  }, "RTTI.CombatMagicCaster" },
+		{ 394334, 0x2103D50, 0x0, 0, {  }, "RTTI.Character" },
+		{ 395363, 0x2121300, 0x0, 0, {  }, "RTTI.CombatAimController" },
+		{ 37401, 0x67F7B0, 0x0, 0, {  }, "PackageGate.EvaluatePackage" },
+		{ 37489, 0x687BA0, 0x0, 0, {  }, "MovementDeny.SetDontMove" },
+		{ 37894, 0x6A9C90, 0x0, 0, {  }, "MovementDeny.KeepOffsetFromActor" },
+		{ 37895, 0x6A9DD0, 0x0, 0, {  }, "MovementDeny.ClearKeepOffsetFromActor" },
+		{ 47496, 0x8732D0, 0x0, 0, {  }, "ActionGate.Pursuit.SetFailed" },
+		{ 47484, 0x872FA0, 0x0, 0, {  }, "ActionGate.Pursuit.Ascend" },
+		{ 38929, 0x6DE920, 0x0, 0, {  }, "EquipSink.Worker" },
+		{ 38894, 0x6DC310, 0x170, 1, { 0xE8 }, "EquipSink.Site.EquipObject" },
+		{ 38893, 0x6DC220, 0xBC, 1, { 0xE8 }, "EquipSink.Site.EquipObjectList" },
+		{ 13723, 0x1BC1C0, 0x0, 0, {  }, "PositionCast.CreateReferenceAtLocation" },
+		{ 13322, 0x1A3C60, 0x0, 0, {  }, "PositionCast.TES.GetCell" },
+		{ 34408, 0x5CAAE0, 0x0, 0, {  }, "PositionCast.InterruptCast" },
+		{ 37537, 0x68C9D0, 0x0, 0, {  }, "SpaceQuery.IsHostileToActor" },
+		{ 14288, 0x1DA110, 0x0, 0, {  }, "Travel.GetOpenState" },
+		{ 14298, 0x1DA8F0, 0x0, 0, {  }, "Travel.ScriptEventSourceHolder.GetSingleton" },
+		{ 190259, 0x18277C0, 0x0, 0, {  }, "TESObjectREFR" },
+		{ 206007, 0x18F9D00, 0x0, 0, {  }, "NonActorMagicCaster" },
+		{ 238918, 0x1A7CDA8, 0x0, 0, {  }, "bhkWorld" },
+		{ 418622, 0x3C4440, 0x0, 0, {  }, "EquipSink.Path.OutfitApply.418622" },
+		{ 19692, 0x2E8070, 0x0, 0, {  }, "EquipSink.Path.AddWornOutfit.19692" },
+		{ 39649, 0x70F670, 0x0, 0, {  }, "EquipSink.Path.AiCommand.39649" },
+		{ 39650, 0x710480, 0x0, 0, {  }, "EquipSink.Path.AiCommand.39650" },
+		{ 37797, 0x6A5370, 0x0, 0, {  }, "EquipSink.Path.RemoveItemReequip.37797" },
+		{ 19689, 0x2E7CC0, 0x0, 0, {  }, "EquipSink.Path.RemoveItemReequip.19689" },
+		{ 16059, 0x22DA70, 0x0, 0, {  }, "EquipSink.Path.RemoveItemReequip.16059" },
+		{ 48126, 0x88D360, 0x0, 0, {  }, "EquipSink.Path.CombatNode.48126" },
+		{ 48124, 0x88CFF0, 0x0, 0, {  }, "EquipSink.Path.CombatNode.48124" },
+		{ 54661, 0xA00040, 0x0, 0, {  }, "EquipSink.Path.Script.54661" },
+		{ 22351, 0x35C2D0, 0x0, 0, {  }, "EquipSink.Path.Console.22351" },
+		{ 29383, 0x491990, 0x0, 0, {  }, "EquipSink.Path.PlayerMenu.29383" },
+		{ 29346, 0x48F1D0, 0x0, 0, {  }, "EquipSink.Path.PlayerMenu.29346" },
+		{ 38907, 0x6DD100, 0x0, 0, {  }, "EquipSink.Path.PlayerMenu.38907" },
+		{ 38913, 0x6DD7B0, 0x0, 0, {  }, "EquipSink.Path.WorkerReentry.38913" },
+		{ 38906, 0x6DCFC0, 0x0, 0, {  }, "EquipSink.Path.QueuedApply.38906" },
+		{ 39814, 0x720D90, 0x0, 0, {  }, "EquipSink.Path.QueuedApply.39814" },
+		{ 39637, 0x704C70, 0x0, 0, {  }, "EquipSink.Path.AiCommand.39637" },
+		{ 39948, 0x7265C0, 0x0, 0, {  }, "EquipSink.Path.AiCommand.39948" },
+		{ 39655, 0x7135D0, 0x0, 0, {  }, "EquipSink.Path.AiCommand.39655" },
+		{ 39645, 0x70D050, 0x0, 0, {  }, "EquipSink.Path.AiCommand.39645" },
+		{ 37510, 0x68A6C0, 0x0, 0, {  }, "EquipSink.Path.AiCommand.37510" },
+		{ 37520, 0x68ACB0, 0x0, 0, {  }, "EquipSink.Path.DropObject.37520" },
+		{ 37521, 0x68B0E0, 0x0, 0, {  }, "EquipSink.Path.PickUpObject.37521" },
+		{ 38898, 0x6DC610, 0x0, 0, {  }, "EquipSink.Path.BoundItem.38898" },
+		{ 28422, 0x464CF0, 0x0, 0, {  }, "EquipSink.Path.ProcedureEat.28422" },
+		{ 41244, 0x776D10, 0x0, 0, {  }, "EquipSink.Path.InventoryReequip.41244" },
+		{ 38561, 0x6C93B0, 0x0, 0, {  }, "EquipSink.Path.StartCombat.38561" },
+		{ 68233, 0xCE3250, 0x0, 0, {  }, "CommonLib.BSReadWriteLock.LockForRead" },
+		{ 68239, 0xCE3510, 0x0, 0, {  }, "CommonLib.BSReadWriteLock.UnlockForRead" },
+		{ 38561, 0x6C93B0, 0x0, 0, {  }, "CombatEntry.Actor.StartCombat" },
+		{ 39256, 0x6F0A20, 0x0, 0, {  }, "Idle.AIProcess.SetupSpecialIdle" },
+		{ 38561, 0x6C93B0, 0x8F, 11, { 0xB2, 0x01, 0x48, 0x8B, 0xCF, 0xFF, 0x90, 0xC8, 0x04, 0x00, 0x00 }, "ReentryDeny.StartCombat.SelfIsDeadCall" },
+		{ 232870, 0x1A07D78, 0x0, 0, {  }, "BShkbAnimationGraph" },
+		{ 220287, 0x19C09F0, 0x0, 0, {  }, "hkbBehaviorGraph" },
+		{ 226812, 0x19E37F0, 0x0, 0, {  }, "hkbStateMachine" },
+		{ 0, 0x82D2C0, 0x0, 0, {  }, "AiCastSeats.Melee.CalculateScore" },
+		{ 0, 0x82D790, 0x0, 0, {  }, "AiCastSeats.Ranged.CalculateScore" },
+		{ 0, 0x82DCD0, 0x0, 0, {  }, "AiCastSeats.Shield.CalculateScore" },
+		{ 0, 0x82E360, 0x0, 0, {  }, "AiCastSeats.Torch.CalculateScore" },
+		{ 0, 0x82CEA0, 0x0, 0, {  }, "AiCastSeats.kCheckShouldEquipBaseAE" },
+		{ 0, 0x824BB0, 0x0, 0, {  }, "EquipGate.CallSiteName.pre-loop" },
+		{ 0, 0x8289D2, 0x0, 0, {  }, "EquipGate.CallSiteName.return-813AF2" },
+		{ 0, 0x828C18, 0x0, 0, {  }, "EquipGate.CallSiteName.return-813D38" },
+		{ 0, 0x829150, 0x0, 0, {  }, "EquipGate.CallSiteName.return-814270" },
+		{ 0, 0x829392, 0x0, 0, {  }, "EquipGate.CallSiteName.return-8144B2" },
+		{ 0, 0x833510, 0x0, 0, {  }, "NonAliasProbe.CombatMagicCaster.GetMagicTarget" },
+	};
+
 	inline constexpr REL::SelfCheck::Table kTables[] = {
 		{ REL::Version(1, 6, 1170, 0), kRows_1_6_1170, std::size(kRows_1_6_1170) },
 		{ REL::Version(1, 5, 97, 0), kRows_1_5_97, std::size(kRows_1_5_97) },
+		{ REL::Version(1, 7, 104, 0), kRows_1_7_104, std::size(kRows_1_7_104) },
 	};
 }

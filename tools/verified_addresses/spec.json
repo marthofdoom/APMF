@@ -3741,5 +3741,62 @@
    "verified_by": "NOT disassembled: runtime cross-check -- both reads must name the same pointer AND its vtable must be the verified hkbBehaviorGraph row, else the state read is skipped and logged",
    "gate": "exact 1.6.1170 / 1.5.97 only (probe2 not armed elsewhere)"
   }
+ ],
+ "raw_rvas": [
+  {
+   "seat": "AiCastSeats.Melee.CalculateScore",
+   "rva": "0x8183E0",
+   "source": "AiCastSeats Melee calcScore slot 0x0C"
+  },
+  {
+   "seat": "AiCastSeats.Ranged.CalculateScore",
+   "rva": "0x8188B0",
+   "source": "AiCastSeats Ranged calcScore slot 0x0C"
+  },
+  {
+   "seat": "AiCastSeats.Shield.CalculateScore",
+   "rva": "0x818DF0",
+   "source": "AiCastSeats Shield calcScore slot 0x0C"
+  },
+  {
+   "seat": "AiCastSeats.Torch.CalculateScore",
+   "rva": "0x819480",
+   "source": "AiCastSeats Torch calcScore slot 0x0C"
+  },
+  {
+   "seat": "AiCastSeats.kCheckShouldEquipBaseAE",
+   "rva": "0x817FC0",
+   "source": "AiCastSeats kCheckShouldEquipBaseAE"
+  },
+  {
+   "seat": "EquipGate.CallSiteName.pre-loop",
+   "rva": "0x80FCD0",
+   "source": "EquipGate CallSiteName pre-loop"
+  },
+  {
+   "seat": "EquipGate.CallSiteName.return-813AF2",
+   "rva": "0x813AF2",
+   "source": "EquipGate CallSiteName selector return address"
+  },
+  {
+   "seat": "EquipGate.CallSiteName.return-813D38",
+   "rva": "0x813D38",
+   "source": "EquipGate CallSiteName selector return address"
+  },
+  {
+   "seat": "EquipGate.CallSiteName.return-814270",
+   "rva": "0x814270",
+   "source": "EquipGate CallSiteName selector return address"
+  },
+  {
+   "seat": "EquipGate.CallSiteName.return-8144B2",
+   "rva": "0x8144B2",
+   "source": "EquipGate CallSiteName selector return address"
+  },
+  {
+   "seat": "NonAliasProbe.CombatMagicCaster.GetMagicTarget",
+   "rva": "0x81E020",
+   "source": "NonAliasProbe/CastSeats GetMagicTarget (CombatMagicCaster slot 0x0A)"
+  }
  ]
 }
