@@ -217,7 +217,7 @@ namespace {
             // throwaway hotkey-driven claim set is superseded by real ControlMap claims,
             // never left installed alongside the real channels on the same vtables
             // (Docs/INVARIANTS.md #17).
-            if (!REL::Module::IsVR()) {          // no drain seat on VR -> no test surface
+            if (apmf::allowance::RuntimeSupported()) {   // G1: no drain seat off the exact pair -> no test surface
                 // OPT-IN, default OFF: Register() adds no keyboard sink unless
                 // [Input] EnableTestSurface=1 in Data/SKSE/Plugins/APMF.ini, so in a
                 // shipped game no scancode can claim a channel or reach either probe
@@ -225,7 +225,9 @@ namespace {
                 apmf::input::Register();
                 apmf::input::LogHelp();          // no-op unless the surface actually armed
             } else {
-                spdlog::warn("[input] VR runtime -- hooks refused, input test surface NOT armed.");
+                spdlog::warn("[input] runtime {} is not exactly 1.6.1170 or 1.5.97 (VR included) -- hooks "
+                             "refused, input test surface NOT armed.",
+                             REL::Module::get().version().string("."));
             }
             break;
         case SKSE::MessagingInterface::kPreLoadGame:
@@ -317,12 +319,21 @@ SKSEPluginLoad(const SKSE::LoadInterface* a_skse) {
     // 1.7.104 would classify as SE with no address library behind it). "open"
     // here is the runtime gate only; each seat's own INI switch and RTTI/expected-
     // value checks still decide whether it actually installs, and log that.
+    // G1 (2026-10-04): the same line names whether the runtime is SUPPORTED at all --
+    // apmf::allowance::RuntimeSupported(), the exact-version predicate every runtime-
+    // dependent Install() now asks. Off the pair, every such seat refuses by name.
     {
         const auto game     = REL::Module::get().version();
-        const bool placed   = game == REL::Version{ 1, 6, 1170, 0 } || game == REL::Version{ 1, 5, 97, 0 };
-        spdlog::info("[runtime] {}: cast-classify {}, group-C {}, equip-sink {}",
-                     game.string("."), placed ? "open" : "gated", placed ? "open" : "gated",
-                     placed ? "open" : "gated");
+        const bool placed   = apmf::allowance::RuntimeSupported();
+        if (placed) {
+            spdlog::info("[runtime] {}: SUPPORTED (exactly 1.6.1170 or 1.5.97) -- cast-classify open, "
+                         "group-C open, equip-sink open",
+                         game.string("."));
+        } else {
+            spdlog::error("[runtime] {}: NOT SUPPORTED (only exactly 1.6.1170 and 1.5.97 are) -- every "
+                          "runtime-dependent seat is REFUSED; cast-classify gated, group-C gated, equip-sink gated",
+                          game.string("."));
+        }
     }
     // mit-3.7 F1: compare the loaded Address Library with our own table of every
     // hooked / called address (VerifiedAddresses.h). Every install asks

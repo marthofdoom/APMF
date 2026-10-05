@@ -46,6 +46,20 @@ namespace apmf::allowance {
     void LogSelfCheck();   // the startup lines: "[selfcheck] ... N/N verified"
     bool SeatVerified(std::uintptr_t address, std::string_view seat);
 
+    // ── EXACT-VERSION RUNTIME GATE (G1, 2026-10-04) ──────────────────────────
+    // True ONLY on exactly 1.6.1170.0 or exactly 1.5.97.0: the two builds every
+    // vtable slot, member offset, call site and id APMF places was read on.
+    // Every runtime-dependent Install()/Engage() asks this and REFUSES, loudly and
+    // by name, on anything else (VR, any other 1.6.x / 1.5.x, and 1.7.x until F2
+    // places it) -- it never falls through to the 1.6 path. Never
+    // REL::Module::IsAE()/IsSE(): those are buckets (IsSE() is the `default:` arm
+    // for every minor that is not 4 or 6). IsExactly / RUNTIME_SSE_1_6_1170 are the
+    // mit-3.7 fork's (include/REL/Relocation.h, include/SKSE/Version.h).
+    [[nodiscard]] inline bool RuntimeSupported() noexcept {
+        return REL::Module::IsExactly(SKSE::RUNTIME_SSE_1_6_1170) ||
+               REL::Module::IsExactly(SKSE::RUNTIME_SSE_1_5_97);
+    }
+
     // Walk `vtableAddr`'s RTTI and confirm the class hierarchy includes
     // `expectedTypeDescriptor` -- either AS the class itself or one of its
     // bases. Standard MSVC x64 layout: the CompleteObjectLocator* sits at

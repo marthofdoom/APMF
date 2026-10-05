@@ -1,6 +1,6 @@
 # APMF STATUS — living handoff (start here)
 
-Updated 2026-10-01. Current version **v0.9.11**. The current state of the build: what's
+Updated 2026-10-04. Current version **v0.9.11**. The current state of the build: what's
 shipped, what's probe-gated, what's next. Keep this current in the SAME change as any
 build/finding/workflow change.
 
@@ -23,6 +23,23 @@ list and was left as it is. `[Idle] bIdleConfirm` is a feature, not a probe.
 - `[Travel] bGateProbe2` -> 0 in `APMF.ini` (see its HEAD OF WORK entry below).
 - `[Probe] bRestoreCensus` -> 0 in `APMF.ini` AND the code default in `core/RestoreCensus.cpp` `Poll`
   (reads the key with default 1 during the field cycle). See the ANIMATED HEALS head of work below.
+
+## HEAD OF WORK 2026-10-04 -- G1 EXACT-VERSION GATE SWEEP, branch `fix/apmf-g1-exact-gates`, NOT merged
+
+Must ship before 1.7.104 support (F2: the fork will file 1.7 in the AE column, so every `IsAE()` bucket test
+and every `IsVR()`-only guard would then admit 1.7.104 to 1.6 slots and offsets).
+- `core/Allowance.h`: `allowance::RuntimeSupported()` = `REL::Module::IsExactly(SKSE::RUNTIME_SSE_1_6_1170) ||
+  IsExactly(SKSE::RUNTIME_SSE_1_5_97)` (mit-3.7 fork symbols).
+- Every install that tested `IsVR()` alone now also refuses, by name and at error level, any build that is not
+  exactly one of the two: Hook (0xAD), CastGate, EquipGate, ActionGate, PackageGate (0x49), Travel, NonAliasProbe
+  (0xDF), AiCastSeats groups A/B, CastSeats, the input test surface, ch.1 Engage (Release is a no-op there).
+- Already exact, unchanged: PositionCast, SpaceQuery, EquipSink, CasterTypeCensus, CastClassify, AiCastSeats group
+  C, Travel gait/gate probe (literal `REL::Version` compares) and ch.20/21/22/12 (`IsExactly` pairs). Log labels
+  only, unchanged: EquipGate `CallSiteName`, AiCastSeats `RangedCallSite`, Travel gait line, plugin banner.
+- `[runtime] <version>: SUPPORTED ...` (info) or `NOT SUPPORTED ... every runtime-dependent seat is REFUSED`
+  (error) is the one startup line.
+- 1.6.1170 and 1.5.97: no change in effect (each new gate is true there). VR: same refusals, different log text.
+- Field observable: the `[runtime] 1.6.1170.0: SUPPORTED` line, then the usual install lines, no new REFUSED line.
 
 ## HEAD OF WORK 2026-09-29 -- ANIMATED HEALS, PHASES 1 + 0b + 0c, branch `fix/apmf-cast-instant-caster`, NOT merged
 

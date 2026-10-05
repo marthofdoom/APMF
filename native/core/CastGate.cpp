@@ -254,6 +254,12 @@ namespace apmf::castgate {
                          "verified; CheckCast allowance NOT installed.");
             return;
         }
+        if (!allowance::RuntimeSupported()) {   // G1: exact build, never the 1.6 path by bucket
+            spdlog::error("[t2c] runtime {} is not exactly 1.6.1170 or 1.5.97 -- the ActorMagicCaster CheckCast "
+                          "slot is verified on those two only; CheckCast allowance NOT installed (REFUSED).",
+                          REL::Module::get().version().string("."));
+            return;
+        }
         if (g_installed.exchange(true)) return;
 
         // Expected RTTI base: MagicCaster (CheckCast is declared there; every

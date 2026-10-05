@@ -640,6 +640,13 @@ namespace apmf::equipgate {
                          "verified; CheckShouldEquip allowance NOT installed.");
             return;
         }
+        if (!allowance::RuntimeSupported()) {   // G1: exact build, never the 1.6 path by bucket
+            spdlog::error("[t2a] runtime {} is not exactly 1.6.1170 or 1.5.97 -- the CombatInventoryItem "
+                          "CheckShouldEquip slot and the objects[] read are verified on those two only; "
+                          "CheckShouldEquip allowance NOT installed (REFUSED).",
+                          REL::Module::get().version().string("."));
+            return;
+        }
         if (g_installed.exchange(true)) return;
 
         g_logEnabled.store(GetPrivateProfileIntA("EquipGate", "EnableEquipGateLog", 0,

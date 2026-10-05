@@ -26,9 +26,11 @@ block, not an acceptable pattern (INVARIANTS #1).
 
 ### `native/plugin.cpp` — entry (thin)
 `SKSEPluginLoad` → log setup + messaging listener + ONE `[runtime] <version>:
-cast-classify <open|gated>, group-C <open|gated>` line (2026-09-15): the exact-version
-predicate (`1.6.1170 || 1.5.97`) the two per-binary-literal seats gate on, logged once
-at load so a deck log states its placement state up front. `kDataLoaded` installs the
+SUPPORTED|NOT SUPPORTED ... cast-classify <open|gated>, group-C <open|gated>, equip-sink
+<open|gated>` line (2026-09-15; SUPPORTED/NOT SUPPORTED added by G1 2026-10-04): the
+exact-version predicate (`1.6.1170 || 1.5.97`, `allowance::RuntimeSupported()`) every
+runtime-dependent seat gates on, logged once at load so a deck log states its placement
+state up front. `kDataLoaded` installs the
 hook, registers the input sink, logs the hotkey help. `kPreLoadGame` →
 `Arbiter::ReleaseAll`.
 - **What breaks if you change this:** if `kPreLoadGame` stops calling
@@ -44,6 +46,17 @@ hook, registers the input sink, logs the hotkey help. `kPreLoadGame` →
   pinned 3.7.0 `IsSE()` is the `default:` arm, so 1.7.104 reads as SE — though it never
   reaches this line: CommonLib terminates at `SKSE::Init` with the address-library
   dialog on 1.7.104; APMF's gates never run there.
+  **G1 exact-version sweep (2026-10-04):** `core/Allowance.h` now carries
+  `allowance::RuntimeSupported()` (`REL::Module::IsExactly(SKSE::RUNTIME_SSE_1_6_1170) ||
+  IsExactly(SKSE::RUNTIME_SSE_1_5_97)`, the mit-3.7 fork's). Every install that used to
+  test `IsVR()` alone (Hook, CastGate, EquipGate, ActionGate, PackageGate, Travel,
+  NonAliasProbe, AiCastSeats A/B, CastSeats, the input test surface here, ch.1's
+  Engage/Release) now also refuses, by name, any build that is not exactly one of the
+  two. The `[runtime]` line uses that helper. The literal-compare copies above (and in
+  PositionCast, SpaceQuery, EquipSink, CasterTypeCensus, Travel's gait/gate probe) and
+  the four `IsExactly` pairs in the ch.20/21/22/12 Installs evaluate the SAME predicate;
+  if a third binary is ever admitted, change all of them (grep `RuntimeSupported`,
+  `IsExactly`, `Version{ 1, 6, 1170`). Never add an `IsAE()/IsSE()` test for a path.
   **ABI v11 (2026-09-23):** `kDataLoaded` also runs `poscast::Install()` and
   `spacequery::Install()`, and both revert and `kPreLoadGame` call
   `poscast::ResetAll()` BEFORE `mainthread::Discard()`. Those two Installs carry two
@@ -206,7 +219,8 @@ this thread, see #12). `[threadcheck]` (retired to an informational one-time log
 `PlayerCharacter`/Drain seat — expected post-RCU, no longer a warning. `Install()`
 also logs, once, whether the RCU snapshot pointer is actually lock-free on this
 toolchain (`ControlMap::SnapshotIsLockFree()`) — disclosed, never assumed.
-VR-refused. Installed once. `OnMainThread()` (ABI v11) compares the calling thread
+Refused off exactly 1.6.1170 / 1.5.97, VR included (G1 2026-10-04,
+`allowance::RuntimeSupported()`). Installed once. `OnMainThread()` (ABI v11) compares the calling thread
 with the id the PlayerCharacter seat records (`g_drainThreadId`); the space queries
 refuse to run when it is false.
 - **What breaks:** the index `0x0AD` is the whole version-robustness thesis
@@ -502,14 +516,18 @@ The FIFTH seat (`0x0F CheckShouldEquip`) lives in `core/EquipGate.cpp` — see t
   ctor zeroes `[+0x30]` and the projectile aim vfunc7 reads it first on 1.6.1170,
   1.5.97 and 1.7.104. Same for `Out16` (the `GetMagicTarget` hidden sret out-slot,
   "GetMagicTarget sret" row: identical `{u32 @0, ptr @8}` on all three; SE `0x781CB0`
-  + helper `0x782100`). Do not add a version gate to either; do re-cite the table if
-  the shape is ever re-derived.
+  + helper `0x782100`). Do not add a version gate to either construct; do re-cite the
+  table if the shape is ever re-derived. G1 (2026-10-04): the whole `castseats::Install`
+  is exact-version gated (`allowance::RuntimeSupported()`) because its slot indices are
+  per-runtime facts, so these constructs are never reached off 1.6.1170 / 1.5.97; 1.7.104
+  stays refused until F2 places it.
   Installed AFTER `core/AiCastSeats.cpp` on purpose so that passive probe keeps
   logging the ENGINE's raw answer beneath these.
 
 ### `native/core/AiCastSeats.{h,cpp}` — OBSERVE-ONLY: the AI cast/equip-decision seats
 Three independently-flagged, chain-unconditionally probes (`Install()`), all
-`[AiCastSeats]`-INI-gated, all VR-refused: **GROUP A** — `CalculateScore` (0x0C) on
+`[AiCastSeats]`-INI-gated, all refused off exactly 1.6.1170 / 1.5.97 (VR included; G1
+2026-10-04, `allowance::RuntimeSupported()` at the top of `Install()`): **GROUP A** — `CalculateScore` (0x0C) on
 the 30 magic/staff `CombatInventoryItem` vtables (`EnableItemScoreProbe`, default
 OFF). **GROUP B** — `CheckStartCast`/`CheckStopCast`/`GetMagicTarget` (0x06/0x07/0x0A)
 on the 14 `CombatMagicCaster` vtables (`EnableCasterSeatProbe`, default OFF). **GROUP
@@ -705,7 +723,8 @@ the same class, not separate casters — patching them clobbers unrelated engine
 vtables). Resolver = `MagicCaster::GetCasterAsActor` (an ordinary virtual call
 through the object's own unhooked slot 0x0C). Denies any spell whose FormID
 isn't the winning `kIntent_SelectSpell` claim's `param.form`; sets
-`CannotCastReason::kMultipleCast` on deny. VR-refused, install-once
+`CannotCastReason::kMultipleCast` on deny. Refused off exactly 1.6.1170 / 1.5.97 (VR
+included; G1 2026-10-04), install-once
 (`plugin.cpp` kDataLoaded, after `hook::Install()`).
 - **What breaks:** this is the PRIMARY cast allowance — CheckStartCast (T2's
   advisory twin, not built) leaks (a denied spell still fires per MFO field
@@ -761,7 +780,7 @@ the identical set MFO's own `CombatStyle.cpp` equip gate patches (mirrored here
 APMF-side, mutex-free). Resolver = `CombatController::attackerHandle` @0x28
 (`static_assert`s pin it `<0x68`, AE-safe). Denies any spell/staff item whose
 FormID isn't the winning `kIntent_SelectSpell` claim's `param.form`.
-VR-refused, install-once.
+Refused off exactly 1.6.1170 / 1.5.97 (VR included; G1 2026-10-04), install-once.
 - **What breaks:** deliberately NOT the design doc's aspirational 87-vtable /
   Melee-Ranged-Shield-Torch count — verified 2026-09-02 against the pinned
   upstream that those 4 categories have NO CONCRETE C++ CLASS in the pinned
@@ -825,7 +844,8 @@ VR-refused, install-once.
   regardless of that flag.
 
 ### `native/core/ActionGate.{h,cpp}` — T1: the combat behavior-tree allowance (ch.7 ONLY)
-`Install()` (kDataLoaded, VR-refused, install-once) hooks the 70
+`Install()` (kDataLoaded, refused off exactly 1.6.1170 / 1.5.97 with VR included (G1
+2026-10-04), install-once) hooks the 70
 `VTABLE_CombatBehaviorTreeNodeObject_*` leaves (`apmf::cbt::kLeaves`) at vtable slot
 **0x02 (act)** and slot **0x03 (pop)**, RTTI-verified through
 `allowance::InstallOnVtables`. `ActThunk` resolves the deliberating actor from
@@ -924,7 +944,7 @@ every hook here is a vtable slot).
 2026-09-03 and MAP kept documenting the deleted throwaway for four days.)**
 `Install()` ← `plugin.cpp` kDataLoaded: `write_vfunc` **0x49**
 `CheckForCurrentAliasPackage` on `VTABLE_Character[0]` ONLY (never PlayerCharacter —
-§0.38), VR-refused. Thunk `TESPackage*(Actor*)`: if the actor holds the winning
+§0.38), refused off exactly 1.6.1170 / 1.5.97 with VR included (G1 2026-10-04). Thunk `TESPackage*(Actor*)`: if the actor holds the winning
 `kIntent_OfferPackage` claim (lock-free RCU `TryGetOwningClaim`), return the package
 FormID that claim NAMES (`APMF_Param::form`); a FormID that does not resolve falls back
 to `original(self)` — NEVER a fabricated null (§0.25 "claimed with nothing = rooted").
@@ -1136,7 +1156,9 @@ tool) still exist but are **unreachable unless the keyboard test surface is arme
   0xDF is a 1.6.1170-pinned raw index (Docs/PROBE-NONALIAS-PACKAGE.md §2) — no named
   CommonLib binding exists to prefer over it today. CONFIRMED on 1.5.97 (table
   2026-09-15, `VTABLE_Character` row): 298-slot `Character` vtable on 1.6.1170, 1.5.97
-  and 1.7.104, slot 0xDF the same 12-callee function id-for-id on SE — no runtime gate.
+  and 1.7.104, slot 0xDF the same 12-callee function id-for-id on SE. G1 (2026-10-04):
+  the 0xDF hook is now exact-version gated anyway (`allowance::RuntimeSupported()`), so
+  1.7.104 stays refused until F2 places it; the INI switch and the 0x49 assist are not.
 
 ### `native/channels/*.cpp` — one module per facet (FULL documented catalog)
 Each: a `Channel` subclass + `APMF_REGISTER_CHANNEL`, per-NPC `Engage`/`Release`.
@@ -1182,7 +1204,8 @@ parentheses.
   arbitration-only, no `Tick`; **ch.19 deliberately does NOT override `Tick` either** —
   its monitor runs on the confirmed-main `OncePerFrame` seat because `Tick` is
   multi-threaded and the monitor makes engine LOS/detection calls). Movement FULL block +
-  KeepOffset (the DENY gate) use Address-Library IDs (#8), VR-refused.
+  KeepOffset (the DENY gate) use Address-Library IDs (#8), refused at Engage (loud) and a
+no-op at Release off exactly 1.6.1170 / 1.5.97, VR included (G1 2026-10-04).
 - **What breaks (ch.19 specifically — it is the ONE channel that files an internal claim on
   another channel; `core/ControlMap.h`'s `TryGetOwningClaimBasis` exists only for it):**
   (1) THE INTERNAL ch.9 OFFER IS TRAVEL'S IMPLEMENTATION, NOT A COMPOSED CLIENT INTENT — do

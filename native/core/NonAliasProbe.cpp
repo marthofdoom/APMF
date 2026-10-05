@@ -210,6 +210,13 @@ namespace apmf::nonaliasprobe {
                          "0x49 assist, which need no vtable index, are unaffected).");
             return;
         }
+        if (!allowance::RuntimeSupported()) {   // G1: exact build, never the 1.6 path by bucket
+            spdlog::error("[nonaliasprobe] runtime {} is not exactly 1.6.1170 or 1.5.97 -- the 0xDF index is "
+                          "verified on those two only; PutCreatedPackage observe hook NOT installed (REFUSED; the "
+                          "INI observe switch and the 0x49 assist are unaffected).",
+                          REL::Module::get().version().string("."));
+            return;
+        }
         if (g_installed.exchange(true)) return;
 
         REL::Relocation<void*> expectedTD{ RE::RTTI_Character };
