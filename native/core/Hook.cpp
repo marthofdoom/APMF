@@ -82,8 +82,12 @@ namespace apmf::hook {
         };
 
         std::atomic<bool> g_installed{ false };
+        // APMF-B45: set once Install() has refused the seat (never cleared: nothing re-runs it).
+        std::atomic<const char*> g_refusedReason{ nullptr };
 
     }
+
+    const char* RefusedReason() { return g_refusedReason.load(std::memory_order_acquire); }
 
     bool OnMainThread() {
         const std::uint32_t mainTid = g_drainThreadId.load(std::memory_order_relaxed);
@@ -93,12 +97,14 @@ namespace apmf::hook {
     void Install() {
         if (REL::Module::IsVR()) {
             spdlog::warn("[hook] VR runtime -- 0xAD index unverified for VR; hooks NOT installed.");
+            g_refusedReason.store("VR runtime (the 0xAD arbiter seat is not installed)", std::memory_order_release);
             return;
         }
         if (!allowance::RuntimeSupported()) {   // G1: exact build, never the 1.6 path by bucket
-            spdlog::error("[hook] runtime {} is not exactly 1.6.1170 or 1.5.97 -- the 0xAD arbiter seat is "
-                          "verified on those two only; hooks NOT installed (REFUSED).",
+            spdlog::error("[hook] runtime {} is not exactly 1.6.1170, 1.5.97 or 1.7.104 -- the 0xAD arbiter seat is "
+                          "verified on those three only; hooks NOT installed (REFUSED).",
                           REL::Module::get().version().string("."));
+            g_refusedReason.store("unsupported runtime (the 0xAD arbiter seat is not installed)", std::memory_order_release);
             return;
         }
         if (g_installed.exchange(true)) return;
@@ -111,6 +117,7 @@ namespace apmf::hook {
             !allowance::SeatVerified(pcVtblCheck.address(), "Hook.PlayerCharacter.Update")) {
             g_installed.store(false);
             spdlog::error("[hook] 0xAD arbiter seat NOT installed (self-check refused a vtable).");
+            g_refusedReason.store("the self-check refused the 0xAD arbiter seat's vtable", std::memory_order_release);
             return;
         }
         CharacterUpdateHook::func = charVtbl.write_vfunc(CharacterUpdateHook::idx, CharacterUpdateHook::thunk);

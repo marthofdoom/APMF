@@ -324,5 +324,24 @@ Raised against `ac895c3` (`feat/apmf-combat-entry`), tier-A Opus 5.5 review 2026
 ### APMF-B31 (SEV-5) -- ch.21 a brief 3D loss of the target ends the claim
 Raised against `ac895c3`, same review, finding F7. Verbatim as relayed by the coordinator: "a brief 3D loss ends the claim; the same residual as ch.20". Reasoning: `combatentry::Poll` ends the claim on `!target->Is3DLoaded()` checked live on the game thread; a transient 3D rebuild (a transform, a skeleton swap, Reset3D, a script Disable+Enable) seen by one poll ends it. ch.20 has the same residual (its Poll re-checks live, which narrows but does not remove it). The client re-requests.
 
-### APMF-B45 (SEV-4) -- claims are handed out on an unsupported runtime where nothing will ever drain them
+### APMF-B45 (SEV-4) -- FIXED in F2b (`feat/apmf-1.7.104`, 2026-10-05) -- claims are handed out on an unsupported runtime where nothing will ever drain them
 Raised against 53555c9 (`fix/apmf-g1-exact-gates`, Opus tier-A review), 2026-10-05. Reviewer (verbatim): "On an unsupported runtime (VR before this change, now also any other 1.6.x/1.5.x and 1.7.104 until F2), ClientAPI still hands out claim handles for every intent. Nothing will ever Drain or Engage them, because the 0xAD Hook is refused." Fix when drained: refuse claims at the API (kInvalidHandle, as EquipAuthority already does) or expose a runtime-supported query when 0xAD is not installed. Also SEV-5 notes: the MovementDeny ch.1 Engage/Release gates are an unreachable backstop (say so in the docs), and Travel.cpp:2105 `g_gaitVerified` is now always true after the Install gate.
+**Fix (F2b):** `ControlMap::EnqueueRequest` / `EnqueueCast` return kInvalidHandle (logged once) when
+`allowance::RuntimeSupported()` is false or `hook::RefusedReason()` reports the 0xAD seat refused (VR, runtime,
+self-check). The two SEV-5 notes stay open (ch.1's gates and `g_gaitVerified` are still unreachable backstops).
+
+### APMF-B46 (SEV-5) -- EquipGate CallSiteName never matches a return address
+Raised against 443b172 (`feat/apmf-1.7.104`, Opus tier-A review, verdict MERGE), 2026-10-05. Reviewer finding (as relayed
+by the coordinator): "EquipGate.cpp:197-219 vs :269: `CallSiteName` compares a `_ReturnAddress()` RVA against
+call-site/function-start literals and never matches. This predates the branch and was copied into the 1.7.104 arm. Log
+labels only." Reasoning: the table holds the `call [rax+0x78]` instructions (0x813AF2 ...) and 44868's start (0x80FCD0),
+not return addresses (site+3; AiCastSeats' kRetAE has the right shape), so every line logs "unknown". Nothing gates on
+the label. Fix when drained: use the return addresses (site+3) on 1.6.1170 and 1.7.104 and re-derive the pre-loop entry.
+
+### APMF-B47 (SEV-5) -- a claim made before kDataLoaded can outlive a refused 0xAD install
+Raised against 443b172 (`feat/apmf-1.7.104`, Opus tier-A review, verdict MERGE), 2026-10-05. Reviewer finding (as relayed
+by the coordinator): "ControlMap.cpp NoDrainReason/RefuseNoDrain (~:97-117): a client that claims before kDataLoaded
+`hook::Install`, followed by a refused install, leaves a handle that never drains. Document it." Reasoning: B45's fix
+refuses at the request on an unsupported runtime (known from load) and after `hook::RefusedReason()` is set; on a
+SUPPORTED runtime a claim queued before kDataLoaded is accepted (it will drain once the hook installs) and, if the 0xAD
+install is then refused by the self-check, stays undrained. Documented here; not fixed in F2b.

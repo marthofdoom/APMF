@@ -83,8 +83,8 @@ namespace {
         void Engage(RE::FormID id, RE::Actor* actor, const APMF_API::APMF_Param& /*param*/) override {
             if (!actor) return;
             if (!apmf::allowance::RuntimeSupported()) {   // G1: reloc IDs verified on the exact pair only
-                spdlog::error("[ch.1] 0x{} FULL block REFUSED -- runtime {} is not exactly 1.6.1170 or 1.5.97 "
-                              "(SetDontMove / KeepOffsetFromActor are verified on those two only).",
+                spdlog::error("[ch.1] 0x{} FULL block REFUSED -- runtime {} is not exactly 1.6.1170, 1.5.97 or 1.7.104 "
+                              "(SetDontMove / KeepOffsetFromActor are verified on those three only).",
                               apmf::log::Hex(id), REL::Module::get().version().string("."));
                 return;
             }

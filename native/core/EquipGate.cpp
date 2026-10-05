@@ -191,9 +191,23 @@ namespace apmf::equipgate {
         // number) but labelled "unlabelled" rather than "unknown" -- a match of
         // an SE address against an AE literal would be a coincidence, never a
         // fact, so the table is not even consulted there.
+        // F2b (2026-10-05): a 1.7.104 table, the same five addresses there (44868 0x824BB0 and
+        // 44899 0x8283A0 are identical to 1.6.1170's, so every offset holds; VerifiedAddresses
+        // raw-RVA rows EquipGate.CallSiteName.*).
         const char* CallSiteName(std::uintptr_t a_rva) {
             static const bool onAE1170 = REL::Module::get().version() == REL::Version{ 1, 6, 1170, 0 };
-            if (!onAE1170) return "unlabelled (call-site table is 1.6.1170-only)";
+            static const bool on17104  = allowance::IsRuntime1_7_104();
+            if (on17104) {
+                switch (a_rva) {
+                    case 0x824bb0: return "pre-loop";
+                    case 0x8289d2:
+                    case 0x828c18:
+                    case 0x829150:
+                    case 0x829392: return "selector";
+                    default:       return "unknown";
+                }
+            }
+            if (!onAE1170) return "unlabelled (call-site table is 1.6.1170 / 1.7.104 only)";
             switch (a_rva) {
                 case 0x80fcd0: return "pre-loop";
                 case 0x813af2:
@@ -221,32 +235,26 @@ namespace apmf::equipgate {
         std::atomic<RE::BGSEquipSlot*> g_leftHandSlot{ nullptr };
         std::atomic<RE::BGSEquipSlot*> g_rightHandSlot{ nullptr };
 
-        // Resolve one Left/Right/Voice default-object slot DIRECTLY from
-        // BGSDefaultObjectManager::objects[idx] rather than through CommonLib's own
-        // GetObject/IsObjectInitialized (pinned rev c4ab853d095e81e3390b282d7ba01ab2f24ebf25):
-        // IsObjectInitialized is written `REL::RelocateMember<bool*>(this, 0xB80, 0xBA8)[idx]`,
-        // and RelocateMember's (a_seAndAE, a_vr) pair applies 0xB80 to BOTH SE and
-        // AE alike (0xBA8 is the VR-only offset) -- but AE actually appends MORE
-        // default-object slots onto `objects[]` than SE before its own bool
-        // objectInit[] array begins, so on AE 0xB80 lands inside the TAIL of the
-        // (longer) objects[] pointer array, not the flag array, and the byte read
-        // back is a live TESForm*'s raw bytes reinterpreted as a bool -- 2026-09-06
-        // field diagnosis, root cause of "left-hand slot 0x0". `objects[]` itself
-        // (offset 0x020, right after TESForm) is NOT affected by that divergence
-        // for a LOW index like kLeftHandEquip(19)/kRightHandEquip(20)/kVoiceEquip(22)
-        // -- those sit far before where AE's extra entries are appended -- so read
-        // the pointer straight out of the array and validate it with the
-        // RTTI-checked As<T>() instead of trusting the broken initialized flag: a
-        // garbage/wrong-type pointer just fails the cast. Returns nullptr (and
-        // logs loudly) rather than silently degrading to any-hand on a bad
-        // resolution (principle 7 -- never mask a failure).
+        // Resolve one Left/Right/Voice default-object slot through the mit-3.7 fork's
+        // BGSDefaultObjectManager::GetObject (exact-build init-flag offset + index
+        // translation). HISTORY: until F2b this read objects[idx] directly, because the
+        // pinned upstream 3.7.0 IsObjectInitialized read its flag through a wrong AE
+        // offset (2026-09-06 field diagnosis, root cause of "left-hand slot 0x0"); the
+        // fork's F1 fixed that accessor. The result is still validated with the
+        // RTTI-checked As<T>(). Returns nullptr (and logs loudly) rather than silently
+        // degrading to any-hand on a bad resolution (principle 7 -- never mask a failure).
         RE::BGSEquipSlot* ResolveHandSlot(RE::BGSDefaultObjectManager* dobj, RE::DEFAULT_OBJECT idx,
                                           const char* which) {
+            // F2b (2026-10-05): through the fork's accessor, no longer objects[] directly. The
+            // mit-3.7 fork fixed the init-flag offset this function was written around (1.6.1170
+            // +0xB90, 1.5.97 +0xB80, 1.7.104 +0xBC0) and translates the 1.5.97-numbered index
+            // to the running build's (1.7.104 inserts an entry at 188 and five at 263; hand
+            // slots 19/20 sit below both, so the index is unchanged on all three builds).
             const auto        i   = static_cast<std::size_t>(idx);
-            RE::TESForm* const raw = dobj->objects[i];
+            RE::TESForm* const raw = dobj->GetObject(idx);
             auto* const        slot = raw ? raw->As<RE::BGSEquipSlot>() : nullptr;
             if (!slot) {
-                spdlog::error("[t2a] BGSDefaultObjectManager::objects[{}] did not resolve to a "
+                spdlog::error("[t2a] BGSDefaultObjectManager::GetObject({}) did not resolve to a "
                               "BGSEquipSlot for the {} hand (raw = {}) -- per-hand deny REFUSED for "
                               "that hand, not silently degraded to any-hand.",
                               i, which, static_cast<void*>(raw));
@@ -641,8 +649,8 @@ namespace apmf::equipgate {
             return;
         }
         if (!allowance::RuntimeSupported()) {   // G1: exact build, never the 1.6 path by bucket
-            spdlog::error("[t2a] runtime {} is not exactly 1.6.1170 or 1.5.97 -- the CombatInventoryItem "
-                          "CheckShouldEquip slot and the objects[] read are verified on those two only; "
+            spdlog::error("[t2a] runtime {} is not exactly 1.6.1170, 1.5.97 or 1.7.104 -- the CombatInventoryItem "
+                          "CheckShouldEquip slot and the objects[] read are verified on those three only; "
                           "CheckShouldEquip allowance NOT installed (REFUSED).",
                           REL::Module::get().version().string("."));
             return;

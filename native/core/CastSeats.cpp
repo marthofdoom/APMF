@@ -519,8 +519,8 @@ namespace apmf::castseats {
             return;
         }
         if (!allowance::RuntimeSupported()) {   // G1: exact build, never the 1.6 path by bucket
-            spdlog::error("[ch.8b seats] runtime {} is not exactly 1.6.1170 or 1.5.97 -- the CombatMagicCaster "
-                          "slot indices and the aim +0x30 override are verified on those two only; the engine "
+            spdlog::error("[ch.8b seats] runtime {} is not exactly 1.6.1170, 1.5.97 or 1.7.104 -- the CombatMagicCaster "
+                          "slot indices and the aim +0x30 override are verified on those three only; the engine "
                           "cast seats were NOT installed (REFUSED). A kIntent_Cast claim stays a pure "
                           "arbitration+deny claim (the AI casts its own choice).",
                           REL::Module::get().version().string("."));

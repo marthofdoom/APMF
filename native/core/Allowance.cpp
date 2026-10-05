@@ -21,7 +21,7 @@ namespace apmf::allowance {
         const auto& r = SelfCheckResult();
         if (!r.Covered()) {
             spdlog::error("[selfcheck] {}: game {} has NO verified address table (verified: 1.6.1170.0, "
-                          "1.5.97.0) -- every self-checked seat is REFUSED",
+                          "1.5.97.0, 1.7.104.0) -- every self-checked seat is REFUSED",
                           REL::SelfCheck::kLibrary, r.GameVersion().string("."));
             return;
         }

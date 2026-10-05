@@ -106,13 +106,13 @@ admits the binary; "no gate" = the construct is layout-identical by evidence and
 
 | # | Site | Construct | 1.6.1170 | 1.5.97 | 1.7.104 | Gate | CONFIRMED-table row |
 |---|---|---|---|---|---|---|---|
-| A | `native/core/CastClassify.cpp` (`kSpellOffset/kCtrlOffset/kSelfFlagOffset`, `Install()`) | `CombatMagicItemData` +0x10/+0x18/+0x4c, slot 1 thunk | **open** (thunk `0x81D830`) | **open** (thunk `0x7811F0`, id 43931; ctor `0x780F5C` stores the same three fields) | **never reached** — offsets identical on paper (`0x832D20`) but no address library: CommonLib terminates at `SKSE::Init` with the address-library dialog on 1.7.104; APMF's gates never run | exact version `1.6.1170 \|\| 1.5.97` (NOT `IsAE()/IsSE()` — 3.7.0's `IsSE()` is the `default:` arm); the real wrong-id guard is the RTTI mangled-name compare | "CastClassify.h SEAT 0", slot-1 row |
-| B | `native/core/AiCastSeats.cpp` GROUP C (`kWeaponClasses`, `Install()`) | vtables via `VTABLE_CombatInventoryItem{Melee,Ranged,Shield,Torch}[0]` (SE 264523/264525/264527/264531, AE 210297/210299/210301/210305); slot-0x0C expected value per runtime | **open** — expected `0x8183e0/0x8188b0/0x818df0/0x819480` | **open** — expected `0x77e0a0/0x77e550/0x77eac0/0x77f0e0` (Shield/Torch are 0xF-byte arg-swap thunks; the slot value is still the class's own entry) | **never reached** — values confirmed (`0x82D2C0/0x82D790/0x82DCD0/0x82E360`) but no library: CommonLib terminates at `SKSE::Init` with the address-library dialog on 1.7.104; APMF's gates never run; not placed by marth's decision | same exact-version predicate as A (inlined per file, not a shared helper); the real wrong-id guard is the slot-0x0C expected-value compare per class (a `vt.address()==0` test precedes it as unreachable belt-and-braces — 3.7.0 never nulls a missing id) | "Group C: weapon-class CalculateScore seats" (8 rows) |
-| B2 | `native/core/AiCastSeats.cpp` TASK2 (`EnableDualWieldPreference`, inside the Group C loop) | Shield vtable slot 0x0F `CheckShouldEquip`, `ShieldEquip_t = bool(CombatInventoryItem*, CombatController*)` | **open** — slot 0x0F `0x817FC0` on vtable `0x18C9188` (21 slots) | **open** — slot 0x0F `0x77DC90` on vtable `0x1681C28` (21 slots); body `sub rsp,0x28; mov rcx,rdx; call 0x4FDE10; test al,al; sete al; add rsp,0x28; ret`, byte-shape-identical to AE | never reached (as B) | rides B's gate + B's 0x0C identity pass for the Shield entry; INI default 0 | "Group C", Shield `CheckShouldEquip (slot 0x0F)` row (added post-confirmation, reviewer re-derived) |
-| C | `native/core/CastSeats.cpp` (`kAimTargetOverride`) | `CombatAimController` +0x30 aim override | no gate | no gate — ctor zeroes `[+0x30]`, vfunc7 reads it first | no gate of its own (same evidence); refused with the whole seat until F2 | construct ungated; the `castseats::Install` that reaches it is exact-version gated since G1 (2026-10-04); INI switch + install RTTI + per-call vtable identity (unchanged) | "MFO layout facts", CombatController row (c) |
+| A | `native/core/CastClassify.cpp` (`kSpellOffset/kCtrlOffset/kSelfFlagOffset`, `Install()`) | `CombatMagicItemData` +0x10/+0x18/+0x4c, slot 1 thunk | **open** (thunk `0x81D830`) | **open** (thunk `0x7811F0`, id 43931; ctor `0x780F5C` stores the same three fields) | **open** (F2b) — thunk `0x832D20`; ctor `0x832A90` and the visitor identical to 1.6.1170, KeepBestRow 45325 -> `0x833090`, classify table rows identical | exact version `1.6.1170 \|\| 1.5.97 \|\| 1.7.104` (NOT `IsAE()/IsSE()` — 3.7.0's `IsSE()` is the `default:` arm); the real wrong-id guard is the RTTI mangled-name compare | "CastClassify.h SEAT 0", slot-1 row |
+| B | `native/core/AiCastSeats.cpp` GROUP C (`kWeaponClasses`, `Install()`) | vtables via `VTABLE_CombatInventoryItem{Melee,Ranged,Shield,Torch}[0]` (SE 264523/264525/264527/264531, AE 210297/210299/210301/210305); slot-0x0C expected value per runtime | **open** — expected `0x8183e0/0x8188b0/0x818df0/0x819480` | **open** — expected `0x77e0a0/0x77e550/0x77eac0/0x77f0e0` (Shield/Torch are 0xF-byte arg-swap thunks; the slot value is still the class's own entry) | **open** (F2b) — expected `0x82D2C0/0x82D790/0x82DCD0/0x82E360` (`calcScoreRva17`), each the 1.6.1170 body, identical | same exact-version predicate as A (inlined per file, not a shared helper); the real wrong-id guard is the slot-0x0C expected-value compare per class (a `vt.address()==0` test precedes it as unreachable belt-and-braces — 3.7.0 never nulls a missing id) | "Group C: weapon-class CalculateScore seats" (8 rows) |
+| B2 | `native/core/AiCastSeats.cpp` TASK2 (`EnableDualWieldPreference`, inside the Group C loop) | Shield vtable slot 0x0F `CheckShouldEquip`, `ShieldEquip_t = bool(CombatInventoryItem*, CombatController*)` | **open** — slot 0x0F `0x817FC0` on vtable `0x18C9188` (21 slots) | **open** — slot 0x0F `0x77DC90` on vtable `0x1681C28` (21 slots); body `sub rsp,0x28; mov rcx,rdx; call 0x4FDE10; test al,al; sete al; add rsp,0x28; ret`, byte-shape-identical to AE | **open** (F2b) — slot 0x0F `0x82CEA0`, identical | rides B's gate + B's 0x0C identity pass for the Shield entry; INI default 0 | "Group C", Shield `CheckShouldEquip (slot 0x0F)` row (added post-confirmation, reviewer re-derived) |
+| C | `native/core/CastSeats.cpp` (`kAimTargetOverride`) | `CombatAimController` +0x30 aim override | no gate | no gate — ctor zeroes `[+0x30]`, vfunc7 reads it first | **open** (F2b) — aim ctor `0x809EE0` identical (`[+0x28]`, `[+0x30]`) | construct ungated; the `castseats::Install` that reaches it is exact-version gated since G1 (2026-10-04); INI switch + install RTTI + per-call vtable identity (unchanged) | "MFO layout facts", CombatController row (c) |
 | D | `native/core/CastSeats.cpp` / `native/core/AiCastSeats.cpp` (`Out16`) | `GetMagicTarget` hidden sret `{u32 @0, ptr @8}` | no gate (`0x81e020`) | no gate (`0x781CB0` + helper `0x782100`) | no gate (same ABI) | none needed | "GetMagicTarget sret" row |
-| E | `native/core/EquipGate.cpp` (`CallSiteName`) | 0x0F call-site LABEL table (`0x80fcd0`, `0x813af2/0x813d38/0x814270/0x8144b2`) | consulted | not consulted — prints the live RVA as "unlabelled" | not consulted | exact version `1.6.1170`; cosmetic, nothing gates on it | none (SE call sites were not derived) |
-| F | `native/core/NonAliasProbe.cpp` (`kPutCreatedPackage`) | `Character` vtable slot 0xDF | no gate | no gate — 298-slot vtable, same 12-callee function id-for-id | refused until F2 (298 slots, AE==1.7 body match on paper) | exact version `1.6.1170 \|\| 1.5.97` since G1 (2026-10-04, `allowance::RuntimeSupported()`); was VR-refused only | `Targeting.cpp:162` `VTABLE_Character` row |
+| E | `native/core/EquipGate.cpp` (`CallSiteName`) | 0x0F call-site LABEL table (`0x80fcd0`, `0x813af2/0x813d38/0x814270/0x8144b2`) | consulted | not consulted — prints the live RVA as "unlabelled" | consulted (F2b) — `0x824bb0`, `0x8289d2/0x828c18/0x829150/0x829392` | exact version `1.6.1170` / `1.7.104`; cosmetic, nothing gates on it. NOTE: these are the `call` instructions (and 44868's start), not return addresses, so they never match `_ReturnAddress()`; pre-existing, log-only | none (SE call sites were not derived) |
+| F | `native/core/NonAliasProbe.cpp` (`kPutCreatedPackage`) | `Character` vtable slot 0xDF | no gate | no gate — 298-slot vtable, same 12-callee function id-for-id | **open** (F2b) — slot 0xDF `0x691590`, identical (202 insns) | exact version `1.6.1170 \|\| 1.5.97 \|\| 1.7.104` (F2b) since G1 (2026-10-04, `allowance::RuntimeSupported()`); was VR-refused only | `Targeting.cpp:162` `VTABLE_Character` row |
 
 Also confirmed on 1.5.97 with no change needed (RTTI-verified at install, no version gate): the
 14 `CombatMagicCaster` seat vtables (`CastSeats.cpp`, `AiCastSeats.cpp` GROUP B), the 30
@@ -125,18 +125,38 @@ the 72 `CombatBehaviorTree` leaf triples (`ActionGate.cpp`). `plugin.cpp` logs
 `[runtime] <version>: SUPPORTED|NOT SUPPORTED ... cast-classify <open|gated>, group-C <open|gated>, equip-sink <open|gated>` once at load.
 **G1 (2026-10-04):** every seat that used to be VR-refused only is now refused on any build that
 is not exactly 1.6.1170 or 1.5.97 (`allowance::RuntimeSupported()` in `core/Allowance.h`), so no
-build reaches a 1.6 slot, offset or id through the `IsAE()`/`IsSE()` buckets.
+build reaches a 1.6 slot, offset or id through the `IsAE()`/`IsSE()` buckets. F2b (2026-10-05) adds
+exactly 1.7.104 to that predicate.
 
-**1.7.104: nothing placed, and nothing of APMF's runs.** No address library exists for it, and
-CommonLib terminates at `SKSE::Init` with the address-library dialog on 1.7.104
-(`src/SKSE/API.cpp:78-79` → `IDDatabase::load_file(..., failOnError=true)`); APMF's gates never
-run. (The earlier "every `VariantID` resolves to null" wording was wrong: in 3.7.0
-`IDDatabase::id2offset` `report_and_fail`s past the end of the table and otherwise `lower_bound`s
-with no equality check off VR, so a missing id is a silent next-id offset, never a null.) A 1.7
-path would be a `REL::Offset` literal table behind an exact-version check, which is a design
-decision for marth, not a placement. Rows A/B's exact-version gates are for the binaries that DO
-load; their real wrong-id guards are the RTTI-name compare (A) and the slot-0x0C expected-value
-compare (B).
+**1.7.104 (F2b, 2026-10-05): every APMF seat is placed and open.** The CommonLibSSE-NG fork reads
+its own MIT id table on 1.7.104 (keyed by the 1.6.1170 id) and files 1.7.x in the AE column, so every
+`RELOCATION_ID` resolves to its AE id there. `RuntimeSupported()` is exactly 1.6.1170, 1.5.97 or
+1.7.104; the per-runtime literals carry their own 1.7.104 values (rows A-F above, plus EquipSink's AE
+tables and ch.22's self-check offset +0x8F). Each was proven on the 1.7.104 binary, and the generated
+`VerifiedAddresses.h` 1.7.104 table re-verifies every address at load against the table the game actually
+read (`Docs/VERIFIED-ADDRESSES.md`, including its "1.7.104 proof" section). The 1.7.104 column is
+documented per seat in the table below. No seat is refused on 1.7.104.
+
+| Seat | File | 1.7.104 | Proof (1.6.1170 -> 1.7.104) |
+|---|---|---|---|
+| 0xAD arbiter (Character / PlayerCharacter) | `core/Hook.cpp` | open | `0x667D40 -> 0x67A7E0`, `0x732660 -> 0x745200`: same signature and frame |
+| ch.9 0x49 (CheckForCurrentAliasPackage) | `core/PackageGate.cpp` | open | `0x66CB60 -> 0x67F620` identical; EvaluatePackage 37401 identical |
+| 0xDF observe (PutCreatedPackage) | `core/NonAliasProbe.cpp` | open | `0x67EAD0 -> 0x691590` identical |
+| CheckCast 0x0A (ActorMagicCaster) | `core/CastGate.cpp` | open | `0x5B1610 -> 0x5C0150` identical |
+| CheckShouldEquip 0x0F (30 MagicT vtables) | `core/EquipGate.cpp` | open | 30 slot functions identical; hand slots via the fork's DOBJ `GetObject` |
+| ch.7 leaves act/pop/update (70 vtables) | `core/ActionGate.cpp` | open | every slot function identical |
+| ch.8b 0x06/0x07/0x0A/0x0D (Restore, Offensive) | `core/CastSeats.cpp` | open | identical; aim ctor `0x7F51C0 -> 0x809EE0`; GetMagicTarget `0x81E020 -> 0x833510` |
+| ch.8b seat 0 classify | `core/CastClassify.cpp` | open | row A |
+| AiCastSeats A (0x0C/0x0F), B (0x06/0x07/0x0A), C (0x0C), ranged probe | `core/AiCastSeats.cpp` | open | slot functions identical; row B / B2 values |
+| caster census 0x06/0x0B | `core/CasterTypeCensus.cpp` | open | 15 caster vtables' slot functions identical |
+| ch.17 equip sink (+0x170 / +0xBC E8 -> worker) | `core/EquipSink.cpp` | open | EquipObject 38894, sibling 38893, worker 38929 identical; 39 caller sites in the same path functions |
+| ch.20 selector 0x06 + Character 0xE4 | `channels/TargetPin.cpp` | open | `0x84CFE0 -> 0x862040`, `0x84DAF0 -> 0x862B50`, `0x6B6E70 -> 0x6C98F0` identical |
+| ch.22 Character 0x99 + StartCombat +0x8F | `channels/CombatReentryDeny.cpp` | open | `0x674ED0 -> 0x6879A0` identical; StartCombat 38561 identical |
+| ch.21 StartCombat call | `channels/CombatEntry.cpp` | open | 38561 identical |
+| ch.12 PlayIdle + graph confirmation | `channels/Idle.cpp` | open | 39256 / 39257 identical; graph classes unchanged |
+| ch.19 travel, gait, gate probe | `channels/Travel.cpp` | open | gait path and probe calls identical |
+| ch.1 movement calls | `channels/MovementDeny.cpp` | open | 37489 / 37894 / 37895 identical |
+| v11 position cast / space queries | `core/PositionCast.cpp`, `core/SpaceQuery.cpp` | open | 13723 / 13322 / 34408 / 37537 and slots 0x23/0x5C/0x89, NonActorMagicCaster 1, bhkWorld 0x33 identical |
 
 Not a hook site (checked and ruled out): `native/core/NativeBitProbe.cpp` only toggles
 `Actor::BOOL_FLAGS` bits via the ordinary `GetActorRuntimeData().boolFlags` accessor — no

@@ -461,10 +461,9 @@ namespace apmf::reentrydeny {
 
         const char* why = nullptr;
         if (REL::Module::IsVR()) {
-            why = "VR runtime (the seat is verified on 1.6.1170 and 1.5.97 only)";
-        } else if (!REL::Module::IsExactly(SKSE::RUNTIME_SSE_1_6_1170) &&
-                   !REL::Module::IsExactly(SKSE::RUNTIME_SSE_1_5_97)) {
-            why = "runtime is not exactly 1.6.1170 or 1.5.97 (the seat is verified on those two only)";
+            why = "VR runtime (the seat is verified on 1.6.1170, 1.5.97 and 1.7.104 only)";
+        } else if (!apmf::allowance::RuntimeSupported()) {   // F2b: 1.7.104 proven (StartCombat + slot 0x99 identical)
+            why = "runtime is not exactly 1.6.1170, 1.5.97 or 1.7.104 (the seat is verified on those three only)";
         } else if (GetPrivateProfileIntA("CombatReentryDeny", "bCombatReentryDeny", 1, kIni) == 0) {
             why = "[CombatReentryDeny] bCombatReentryDeny=0 in Data/SKSE/Plugins/APMF.ini";
         }
@@ -480,7 +479,7 @@ namespace apmf::reentrydeny {
         REL::Relocation<std::uintptr_t> vtChar{ RE::VTABLE_Character[0] };
         const std::uintptr_t startCombat = REL::Relocation<std::uintptr_t>{ RELOCATION_ID(37608, 38561) }.address();
         const std::uintptr_t site =
-            startCombat + (REL::Module::IsExactly(SKSE::RUNTIME_SSE_1_6_1170) ? kSelfCheckOffsetAE : kSelfCheckOffsetSE);
+            startCombat + (apmf::allowance::RuntimeAEColumn() ? kSelfCheckOffsetAE : kSelfCheckOffsetSE);   // F2b: 1.7.104 = +0x8F
         bool ok = apmf::allowance::SeatVerified(vtChar.address(), "CombatReentryDeny.Character.IsDead(0x99)");
         ok = apmf::allowance::SeatVerified(site, "ReentryDeny.StartCombat.SelfIsDeadCall") && ok;
         if (!ok) {

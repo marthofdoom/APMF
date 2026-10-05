@@ -374,15 +374,19 @@ namespace apmf::aicastseats {
             std::uintptr_t calcScoreRvaAE;   // 1.6.1170: this class's OWN CalculateScore RVA -- the install-time gate
             std::uintptr_t calcScoreRvaSE;   // 1.5.97: the slot-0x0C entry RVA (Shield/Torch are arg-swap thunks)
             int            category;         // engine arbitration category (informational)
+            std::uintptr_t calcScoreRva17;   // 1.7.104: the same function there (F2b; VerifiedAddresses raw rows)
         };
         // CONFIRMED table (2026-09-15) "Group C: weapon-class CalculateScore seats",
         // every cell CONFIRMED on both runtimes. Vtables resolve via the address
         // library; only the slot-0x0C expected values are literals, one per runtime.
         constexpr WeaponClassSpec kWeaponClasses[] = {
-            { "Melee",  RE::VTABLE_CombatInventoryItemMelee[0],  0x8183e0, 0x77e0a0, 0 },
-            { "Ranged", RE::VTABLE_CombatInventoryItemRanged[0], 0x8188b0, 0x77e550, 0 },
-            { "Shield", RE::VTABLE_CombatInventoryItemShield[0], 0x818df0, 0x77eac0, 3 },
-            { "Torch",  RE::VTABLE_CombatInventoryItemTorch[0],  0x819480, 0x77f0e0, 3 },
+            // 1.7.104 column (F2b): each 1.6.1170 body's unique signature hits exactly the
+            // fork id map's RVA in the 1.7.104 executable (VerifiedAddresses raw-RVA rows
+            // AiCastSeats.<class>.CalculateScore), and the function is identical there.
+            { "Melee",  RE::VTABLE_CombatInventoryItemMelee[0],  0x8183e0, 0x77e0a0, 0, 0x82d2c0 },
+            { "Ranged", RE::VTABLE_CombatInventoryItemRanged[0], 0x8188b0, 0x77e550, 0, 0x82d790 },
+            { "Shield", RE::VTABLE_CombatInventoryItemShield[0], 0x818df0, 0x77eac0, 3, 0x82dcd0 },
+            { "Torch",  RE::VTABLE_CombatInventoryItemTorch[0],  0x819480, 0x77f0e0, 3, 0x82e360 },
         };
 
         // Exact-binary gate for the per-runtime literals above (CLAUDE.md rule 11).
@@ -398,6 +402,7 @@ namespace apmf::aicastseats {
         // line apply the identical two-version predicate; keep the three in step.
         bool IsRuntime1_6_1170() { return REL::Module::get().version() == REL::Version{ 1, 6, 1170, 0 }; }
         bool IsRuntime1_5_97()   { return REL::Module::get().version() == REL::Version{ 1, 5, 97, 0 }; }
+        bool IsRuntime1_7_104()  { return allowance::IsRuntime1_7_104(); }   // F2b
 
         struct WeaponClassInfo { const char* tag; int category; };
         std::unordered_map<std::uintptr_t, WeaponClassInfo> g_weaponClassInfo;
@@ -420,20 +425,22 @@ namespace apmf::aicastseats {
         std::atomic<RE::BGSEquipSlot*> g_rightHandSlot{ nullptr };
 
         // Own copy of core/EquipGate.cpp's ResolveHandSlot -- see that file's copy
-        // for the full root-cause writeup (pinned CommonLib rev c4ab853d, AE-only
-        // IsObjectInitialized offset bug misreads a live TESForm*'s bytes as a
-        // bool). Bypasses GetObject/IsObjectInitialized entirely: reads
-        // objects[idx] directly (safe for a low index like kLeftHandEquip(19)/
-        // kRightHandEquip(20), well before AE's extra appended entries) and
-        // validates with As<T>(); a bad resolution REFUSES (nullptr + loud log)
-        // rather than silently degrading to any-hand (principle 7).
+        // for the history (it read objects[idx] directly around the pinned 3.7.0
+        // IsObjectInitialized offset bug until F2b; it now goes through the fork's
+        // fixed GetObject) and validates with As<T>(); a bad resolution REFUSES
+        // (nullptr + loud log) rather than silently degrading to any-hand (principle 7).
         RE::BGSEquipSlot* ResolveHandSlot(RE::BGSDefaultObjectManager* dobj, RE::DEFAULT_OBJECT idx,
                                           const char* which) {
+            // F2b (2026-10-05): through the fork's accessor, no longer objects[] directly. The
+            // mit-3.7 fork fixed the init-flag offset this function was written around (1.6.1170
+            // +0xB90, 1.5.97 +0xB80, 1.7.104 +0xBC0) and translates the 1.5.97-numbered index
+            // to the running build's (1.7.104 inserts an entry at 188 and five at 263; hand
+            // slots 19/20 sit below both, so the index is unchanged on all three builds).
             const auto        i   = static_cast<std::size_t>(idx);
-            RE::TESForm* const raw = dobj->objects[i];
+            RE::TESForm* const raw = dobj->GetObject(idx);
             auto* const        slot = raw ? raw->As<RE::BGSEquipSlot>() : nullptr;
             if (!slot) {
-                spdlog::error("[aicast] BGSDefaultObjectManager::objects[{}] did not resolve to a "
+                spdlog::error("[aicast] BGSDefaultObjectManager::GetObject({}) did not resolve to a "
                               "BGSEquipSlot for the {} hand (raw = {}) -- per-hand resolution REFUSED "
                               "for that hand, not silently degraded to any-hand.",
                               i, which, static_cast<void*>(raw));
@@ -904,6 +911,7 @@ namespace apmf::aicastseats {
         using RangedEquip_t = bool (*)(RE::CombatInventoryItem*, RE::CombatController*);
         constexpr std::uintptr_t    kCheckShouldEquipBaseAE = 0x817FC0;   // 1.6.1170, shared Melee/Ranged/Shield 0x0F
         constexpr std::uintptr_t    kCheckShouldEquipBaseSE = 0x77DC90;   // 1.5.97
+        constexpr std::uintptr_t    kCheckShouldEquipBase17 = 0x82CEA0;   // 1.7.104 (F2b; raw-RVA row, identical body)
         std::atomic<std::uintptr_t> g_rangedVtableAddr{ 0 };
         std::uintptr_t              g_rangedEquipOrig = 0;   // set ONCE at install
         std::atomic<bool>           g_rangedGateArmed{ false };
@@ -922,12 +930,18 @@ namespace apmf::aicastseats {
                                         { 0x814273, "set148-pass1" }, { 0x8144B5, "set148-pass2" } };
         constexpr RetLabel kRetSE[] = { { 0x775F04, "pre-loop" }, { 0x779780, "set118-pass1" }, { 0x77995C, "set118-pass2" },
                                         { 0x779EA3, "set148-pass1" }, { 0x77A07C, "set148-pass2" } };
+        // 1.7.104 (F2b): 44868 (0x824BB0) and 44899 (0x8283A0) are identical there, so each
+        // return address keeps its offset; each follows a `call [rax+0x78]`.
+        constexpr RetLabel kRet17[] = { { 0x824E15, "pre-loop" }, { 0x8289D5, "set118-pass1" }, { 0x828C1B, "set118-pass2" },
+                                        { 0x829153, "set148-pass1" }, { 0x829395, "set148-pass2" } };
 
         const char* RangedCallSite(std::uintptr_t a_rva) {
             static const bool onAE = IsRuntime1_6_1170();
             static const bool onSE = IsRuntime1_5_97();
+            static const bool on17 = IsRuntime1_7_104();
             if (onAE) for (const auto& r : kRetAE) if (r.rva == a_rva) return r.name;
             if (onSE) for (const auto& r : kRetSE) if (r.rva == a_rva) return r.name;
+            if (on17) for (const auto& r : kRet17) if (r.rva == a_rva) return r.name;
             return "unlabelled";
         }
 
@@ -1214,8 +1228,8 @@ namespace apmf::aicastseats {
             return;
         }
         if (!allowance::RuntimeSupported()) {   // G1: exact build for groups A/B too (C keeps its own gate)
-            spdlog::error("[aicastseats] runtime {} is not exactly 1.6.1170 or 1.5.97 -- the CombatInventoryItem/"
-                          "CombatMagicCaster slot indices are verified on those two only; the observe-only seat "
+            spdlog::error("[aicastseats] runtime {} is not exactly 1.6.1170, 1.5.97 or 1.7.104 -- the CombatInventoryItem/"
+                          "CombatMagicCaster slot indices are verified on those three only; the observe-only seat "
                           "probe was NOT installed (REFUSED).",
                           REL::Module::get().version().string("."));
             return;
@@ -1405,8 +1419,10 @@ namespace apmf::aicastseats {
         if (groupC) {
             const bool onAE1170 = IsRuntime1_6_1170();
             const bool onSE597  = IsRuntime1_5_97();
-            if (!onAE1170 && !onSE597) {
-                spdlog::warn("[aicastseats] GROUP C (weapon-class item score) is placed on 1.6.1170 and 1.5.97 "
+            const bool on17104  = IsRuntime1_7_104();
+            const char* const rtName = onAE1170 ? "1.6.1170" : on17104 ? "1.7.104" : "1.5.97";
+            if (!onAE1170 && !onSE597 && !on17104) {
+                spdlog::warn("[aicastseats] GROUP C (weapon-class item score) is placed on 1.6.1170, 1.5.97 and 1.7.104 "
                              "only -- the slot-0x0C CalculateScore expected values its install gate compares "
                              "are per-binary literals and this build is {} (no confirmed values for it). "
                              "NOT installed on this build.",
@@ -1415,7 +1431,7 @@ namespace apmf::aicastseats {
                 for (const auto& spec : kWeaponClasses) {
                     REL::Relocation<std::uintptr_t> vt{ spec.vtable };
                     REL::Relocation<std::uintptr_t> expectedFn{
-                        REL::Offset(onAE1170 ? spec.calcScoreRvaAE : spec.calcScoreRvaSE) };
+                        REL::Offset(onAE1170 ? spec.calcScoreRvaAE : on17104 ? spec.calcScoreRva17 : spec.calcScoreRvaSE) };
                     // Belt-and-braces, UNREACHABLE by construction (Fable tier-3 on
                     // c70767c, SEV-4): in the pinned 3.7.0 a VariantID does NOT resolve
                     // to null for a missing id -- `VariantID::address()` (Relocation.h
@@ -1458,7 +1474,7 @@ namespace apmf::aicastseats {
                                       "installed; never a blind vtable write; the per-runtime expected-value "
                                       "table may be stale for this build).",
                                       spec.tag, apmf::log::Hex(vt.address(), 16), apmf::log::Hex(curFn, 16),
-                                      onAE1170 ? "1.6.1170" : "1.5.97", apmf::log::Hex(expectedFn.address(), 16));
+                                      rtName, apmf::log::Hex(expectedFn.address(), 16));
                         ++nWeaponRefused;
                         continue;
                     }
@@ -1519,7 +1535,7 @@ namespace apmf::aicastseats {
                         const auto curEquipFn = reinterpret_cast<std::uintptr_t>(
                             RecoverLiveOriginal<RangedEquip_t>(vt.address(), kCheckShouldEquip));
                         REL::Relocation<std::uintptr_t> baseFn{
-                            REL::Offset(onAE1170 ? kCheckShouldEquipBaseAE : kCheckShouldEquipBaseSE) };
+                            REL::Offset(onAE1170 ? kCheckShouldEquipBaseAE : on17104 ? kCheckShouldEquipBase17 : kCheckShouldEquipBaseSE) };
                         if (curEquipFn == 0) {
                             spdlog::error("[ranged-probe] Ranged vtable 0x{} slot 0x0F holds a null pointer -- "
                                           "REFUSED (the Ranged selection seat is NOT observed; never a blind "
