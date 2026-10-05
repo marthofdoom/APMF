@@ -65,6 +65,7 @@ hook, registers the input sink, logs the hotkey help. `kPreLoadGame` →
   **APMF-B45 (F2b):** `ControlMap::EnqueueRequest` / `EnqueueCast` refuse a new claim
   (kInvalidHandle, logged once) when `RuntimeSupported()` is false or
   `hook::RefusedReason()` (`core/Hook.h`) says the 0xAD seat was refused.
+  Open: REVIEW-BACKLOG APMF-B47 (a claim queued before kDataLoaded outlives a refused 0xAD install).
   **ABI v11 (2026-09-23):** `kDataLoaded` also runs `poscast::Install()` and
   `spacequery::Install()`, and both revert and `kPreLoadGame` call
   `poscast::ResetAll()` BEFORE `mainthread::Discard()`. Those two Installs carry two
@@ -808,11 +809,14 @@ Refused off exactly 1.6.1170 / 1.5.97 / 1.7.104 (VR included; G1 2026-10-04), in
   same per-hand guarantee as CastGate above. RUNTIMES (CONFIRMED table
   2026-09-15): the 30 item VariantIDs (28 + the two `_CombatMagicCasterArmor_`
   rows) decode to RTTI-verified vtables on 1.6.1170 and 1.5.97 with slot 0x0F a
-  per-instantiation function on both; the direct `objects[19]/[20]` read is
-  layout-safe on SE (364 entries) and AE (366); the `CallSiteName` 0x0F call-site
-  label table (`0x80fcd0` pre-loop, `0x813af2/0x813d38/0x814270/0x8144b2`
-  selector) is 1.6.1170-ONLY and is consulted only there — on any other binary the
-  live RVA still prints, labelled "unlabelled", never matched against AE literals.
+  per-instantiation function on both (and on 1.7.104, F2b); the hand slots 19/20 are
+  read through the fork's DOBJ `GetObject` since F2b (init flags +0xB90 / +0xB80 /
+  +0xBC0 per build); the `CallSiteName` 0x0F call-site label table (`0x80fcd0`
+  pre-loop, `0x813af2/0x813d38/0x814270/0x8144b2` selector; 1.7.104 `0x824bb0`,
+  `0x8289d2/0x828c18/0x829150/0x829392`) is consulted on those two builds only — on
+  any other binary the live RVA still prints, labelled "unlabelled". Open:
+  REVIEW-BACKLOG APMF-B46 (those literals are call sites, not return addresses, so
+  they never match; log labels only).
   `kIntent_SelectSpell`/
   `kIntent_Equipment` (`Allowed`, not `AllowedCastForHand`) stay actor-wide —
   unchanged, per-hand was scoped to `kIntent_Cast` only.

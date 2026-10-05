@@ -12,11 +12,15 @@ used in place of the library's answer.
 
 Offline result of this generation: 1.6.1170.0 191/191 verified, 0 refused, 1.5.97.0 191/191 verified, 0 refused.
 
-1.7.104.0 has NO Address Library. Its column is OUR OWN id map: the MIT id table the CommonLibSSE-NG fork publishes
-(`data/mit-idtable-v1-1-7-104-0.bin`, the file SelfCheck queries at runtime; authoritative) with the evidence CSVs beside it, keyed by
+1.7.104.0 has NO Address Library. Its column is OUR OWN id map: the MIT id table of the CommonLibSSE-NG fork
+(`data/mit-idtable-v1-1-7-104-0.bin`, revision 3, 17751 records, SkyrimSE.exe TimeDateStamp 0x6A8C7046; built into every plugin, it is
+what SelfCheck queries at runtime; authoritative) with the evidence CSVs beside it, keyed by
 the 1.6.1170 id, re-verified against the plaintext 1.7.104 executable by the same row-kind checks (see the script
 docstring). Offline result: 1.7.104.0 202/230 verified, 28 NOT verified (28 of them BY DESIGN: 1.5.97-only labels whose AE twin row carries the 1.7.104 fact). A not-verified seat has no row in the 1.7.104 table,
 so `IsVerifiedAddress` is false and the seat is refused by name. The table of `Not verified on 1.7.104` is below.
+
+These rows prove the ADDRESSES. That each hooked slot holds the same function body on 1.7.104, and that every
+CommonLib layout APMF reads is the same there, is proven separately in the "1.7.104 proof" section below.
 
 ## Rows
 

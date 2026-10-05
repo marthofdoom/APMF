@@ -421,7 +421,7 @@ def load_mit_table(path, img):
     verified here is verified against exactly the table SelfCheck will query at runtime."""
     d = open(path, 'rb').read()
     (magic, major, _minor, hsize, v0, v1, v2, v3, tds, soi, count, rsize, flags, revision,
-     _module) = struct.unpack_from(MIT_HEADER_FMT, d, 0)
+     module) = struct.unpack_from(MIT_HEADER_FMT, d, 0)
     if magic != MIT_MAGIC or major != 1 or flags != 0 or len(d) != hsize + rsize * count + 8:
         sys.exit('%s: not a format-1 MIT id table' % path)
     h = 0xCBF29CE484222325
@@ -435,26 +435,35 @@ def load_mit_table(path, img):
     if (v0, v1, v2, v3) != RUNTIMES[IDMAP_RT]['version'] or tds != exe_tds or soi != exe_soi:
         sys.exit('%s: table is for %d.%d.%d.%d TimeDateStamp 0x%X SizeOfImage 0x%X, the executable is 0x%X / 0x%X' % (
             path, v0, v1, v2, v3, tds, soi, exe_tds, exe_soi))
-    t = {}
+    t, prev = {}, -1
     for k in range(count):
         i, r = struct.unpack_from('<QQ', d, hsize + rsize * k)
+        if i <= prev:
+            sys.exit('%s: records not ascending at id %d (after %d)' % (path, i, prev))
+        prev = i
         t[i] = r
-    return t, revision
+    return t, dict(revision=revision, count=count, tds=tds, soi=soi, module=module.rstrip(b'\0').decode(errors='replace'))
 
 
 def load_idmap(paths, table):
     """idmap CSVs (the fork's data/ files, each row with its evidence) -> {1.6.1170 id (int) or
-    'rva:0x...' (str, a raw 1.6.1170 RVA): row}. An id in two files must carry the same 1.7.104 RVA.
-    For an id, the published table is authoritative: a CSV RVA that disagrees with it stops the
+    'rva:0x...' (str, a raw 1.6.1170 RVA): row}. Where a CSV has a final_state column only MAPPED rows
+    count. Two MAPPED rows for one key with different 1.7.104 RVAs stop the generation; an unresolved
+    row beside a mapped one is tolerated (the mapped one wins). For an id, the published table is authoritative: a CSV RVA that disagrees with it stops the
     generation, and a CSV row whose id the table does not hold is marked NOT-IN-TABLE (SelfCheck
     would fail it at runtime), so it never yields a 1.7.104 row."""
     m = {}
     for path in paths:
         for r in csv.DictReader(open(path, newline='')):
+            if r.get('final_state') not in (None, '', 'MAPPED'):
+                continue
             k = int(r['id']) if r['id'].isdigit() else r['id']
-            if k in m and m[k]['rva_1_7_104'] != r['rva_1_7_104']:
-                sys.exit('idmap: id %s is %s in one file and %s in %s' % (k, m[k]['rva_1_7_104'], r['rva_1_7_104'], path))
-            m[k] = dict(r)
+            old = m.get(k)
+            if old is not None and old['rva_1_7_104'].startswith('0x') and r['rva_1_7_104'].startswith('0x') \
+                    and int(old['rva_1_7_104'], 16) != int(r['rva_1_7_104'], 16):
+                sys.exit('idmap: id %s is %s in one CSV and %s in %s' % (k, old['rva_1_7_104'], r['rva_1_7_104'], path))
+            if old is None or not old['rva_1_7_104'].startswith('0x'):
+                m[k] = dict(r)
     for k, r in m.items():
         if not isinstance(k, int) or not r['rva_1_7_104'].startswith('0x'):
             continue
@@ -723,12 +732,21 @@ def write_doc(spec, rows, unver, path, args):
     L.append('')
     L.append('Offline result of this generation: ' + ', '.join('%s.0 %d/%d verified, 0 refused' % (rt, len(rows[rt]), len(rows[rt])) for rt in AL_RUNTIMES) + '.')
     L.append('')
-    L.append('1.7.104.0 has NO Address Library. Its column is OUR OWN id map: the MIT id table the CommonLibSSE-NG fork publishes')
-    L.append('(`data/mit-idtable-v1-1-7-104-0.bin`, the file SelfCheck queries at runtime; authoritative) with the evidence CSVs beside it, keyed by')
+    t = args.idtable_info
+    L.append('1.7.104.0 has NO Address Library. Its column is OUR OWN id map: the MIT id table of the CommonLibSSE-NG fork')
+    L.append('(`data/mit-idtable-v1-1-7-104-0.bin`, revision %d, %d records, %s TimeDateStamp 0x%X; built into every plugin, it is' % (
+        t['revision'], t['count'], t['module'], t['tds']))
+    L.append('what SelfCheck queries at runtime; authoritative) with the evidence CSVs beside it, keyed by')
     L.append('the 1.6.1170 id, re-verified against the plaintext 1.7.104 executable by the same row-kind checks (see the script')
     L.append('docstring). Offline result: 1.7.104.0 %d/%d verified, %d NOT verified (%d of them BY DESIGN: 1.5.97-only labels whose AE twin row carries the 1.7.104 fact). A not-verified seat has no row in the 1.7.104 table,' % (
         len(rows[IDMAP_RT]), len(rows[IDMAP_RT]) + len(unver), len(unver), sum(1 for u in unver if u.get('twin'))))
     L.append('so `IsVerifiedAddress` is false and the seat is refused by name. The table of `Not verified on 1.7.104` is below.')
+    L.append('')
+    L.append('These rows prove the ADDRESSES. That each hooked slot holds the same function body on 1.7.104, and that every')
+    if spec['repo'] == 'MFO':
+        L.append('CommonLib layout %s reads is the same there, is proven separately in `Docs/ENGINE_NOTES.md` section 0.49.' % spec['repo'])
+    else:
+        L.append('CommonLib layout %s reads is the same there, is proven separately in the "1.7.104 proof" section below.' % spec['repo'])
     L.append('')
     L.append('## Rows')
     L.append('')
@@ -873,8 +891,8 @@ def main():
         for e in errors:
             print('  ' + e)
         sys.exit(1)
-    table, revision = load_mit_table(a.idtable, imgs[IDMAP_RT])
-    print('%s.0: published MIT id table revision %d, %d records' % (IDMAP_RT, revision, len(table)))
+    table, a.idtable_info = load_mit_table(a.idtable, imgs[IDMAP_RT])
+    print('%s.0: published MIT id table revision %d, %d records' % (IDMAP_RT, a.idtable_info['revision'], len(table)))
     rows[IDMAP_RT], unver = derive_idmap(spec, imgs[IDMAP_RT], imgs[AE_RT], load_idmap(a.idmap, table), rows[AE_RT],
                                          load_se_seats(a.se_seats))
     write_header(spec, rows, unver, a.header)

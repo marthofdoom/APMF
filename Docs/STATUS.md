@@ -27,11 +27,12 @@ list and was left as it is. `[Idle] bIdleConfirm` is a feature, not a probe.
 ## HEAD OF WORK 2026-10-05 -- F2b: 1.7.104 SUPPORT, branch `feat/apmf-1.7.104`, NOT merged
 
 Builds on G1 (below; merged to main as b11a0c7). Nothing placed is refused on 1.7.104; no APMF_API.h or co-save change.
-- Build: registry baseline `d568e7f7` (port commonlibsse-ng 3.7.0#17 -> fork main `71021ae0`, upstream sync 2024-09 +
-  F2a 1.7.104 + MIT id table revision 3), no `reference`. Upstream sync adaptation: ForEachHighActor /
+- Build: registry baseline `5ae02e4` (port commonlibsse-ng 3.7.0#20 -> fork main `57be9d67`: upstream sync 2024-09 +
+  F2a 1.7.104 + MIT id table revision 3 BUILT INTO the library, plus the SkyrimVM 1.7.104 layout and SeekNextForm
+  argument fixes, neither used by APMF), no `reference`. First round was on `d568e7f7` (#17 -> `71021ae0`). Upstream sync adaptation: ForEachHighActor /
   ForEachReferenceInRange take pointer callbacks (Travel.cpp x3, SpaceQuery.cpp x2).
-- `VerifiedAddresses.h`: the 1.7.104 table comes from the fork's published `mit-idtable-v1-1-7-104-0.bin` (the file
-  SelfCheck queries in game) plus the fork's evidence CSVs. 191/191 id rows + 11 raw-RVA rows verify; the 28 1.5.97-only
+- `VerifiedAddresses.h`: the 1.7.104 table comes from the fork's `mit-idtable-v1-1-7-104-0.bin` (built into the DLL; the
+  table SelfCheck queries in game; same bytes in 71021ae0 and 57be9d67) plus the fork's evidence CSVs. 191/191 id rows + 11 raw-RVA rows verify; the 28 1.5.97-only
   EquipSink path labels are listed BY DESIGN (their AE twins carry the 1.7.104 facts). 1.6.1170 / 1.5.97 tables
   byte-identical. The generator keeps a hand-maintained tail in `Docs/VERIFIED-ADDRESSES.md`: the "1.7.104 proof"
   section (must-verify table, the 11 raw RVAs, the five SE pairings).
@@ -44,8 +45,8 @@ Builds on G1 (below; merged to main as b11a0c7). Nothing placed is refused on 1.
 - Docs: CHANNEL-MAP (1.7.104 per channel), HOOK-SITE-COVERAGE (1.7.104 per seat), README, CHANGELOG.
 - Field proof: none possible (no 1.7.104 install). Everything is disassembly-proven. First 1.7.104 run should check
   the `[selfcheck] ... 1.7.104.0 202/202 verified` and `[runtime] 1.7.104.0: SUPPORTED` lines.
-- Open for marth: where players get `mit-idtable-v1-1-7-104-0.bin` (bundled vs one shared download). The local
-  `assets/nexus-description.bbcode` still says AE only; rebuild it from the LIVE Nexus text, not this file.
+- Distribution: decided (marth) -- the 1.7.104 id table is built into every DLL; players download nothing extra.
+  The local `assets/nexus-description.bbcode` still says AE only; rebuild it from the LIVE Nexus text, not this file.
 
 ## HEAD OF WORK 2026-10-04 -- G1 EXACT-VERSION GATE SWEEP, branch `fix/apmf-g1-exact-gates`, NOT merged
 

@@ -58,7 +58,7 @@ namespace apmf::allowance {
     // include/SKSE/Version.h).
     //
     // 1.7.104.0 (F2b) is an AE-COLUMN build: the fork resolves every RELOCATION_ID to
-    // its AE id through its MIT id table (data/mit-idtable-v1-1-7-104-0.bin), and
+    // its AE id through its MIT id table (data/mit-idtable-v1-1-7-104-0.bin, built into the DLL), and
     // VerifiedAddresses.h carries a 1.7.104 table checked against that file. Every
     // seat that opens there was proven on the 1.7.104 binary per seat
     // (Docs/VERIFIED-ADDRESSES.md "1.7.104 proof": the same slot functions, struct
