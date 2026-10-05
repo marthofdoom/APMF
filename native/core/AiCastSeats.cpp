@@ -1213,6 +1213,13 @@ namespace apmf::aicastseats {
                          "indices are SE/AE-only verified; the observe-only seat probe was NOT installed.");
             return;
         }
+        if (!allowance::RuntimeSupported()) {   // G1: exact build for groups A/B too (C keeps its own gate)
+            spdlog::error("[aicastseats] runtime {} is not exactly 1.6.1170 or 1.5.97 -- the CombatInventoryItem/"
+                          "CombatMagicCaster slot indices are verified on those two only; the observe-only seat "
+                          "probe was NOT installed (REFUSED).",
+                          REL::Module::get().version().string("."));
+            return;
+        }
         if (g_installed.exchange(true)) return;
 
         // TASK 2 (marth 2026-09-05): the 2026-09-05 deck run produced a NEW crash

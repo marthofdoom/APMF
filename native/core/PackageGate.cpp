@@ -292,6 +292,13 @@ namespace apmf::packagegate {
                          "package-offer allowance NOT installed.");
             return;
         }
+        if (!allowance::RuntimeSupported()) {   // G1: exact build, never the 1.6 path by bucket
+            spdlog::error("[ch.9] runtime {} is not exactly 1.6.1170 or 1.5.97 -- the 0x49 index and the "
+                          "EvaluatePackage id are verified on those two only; package-offer allowance NOT "
+                          "installed (REFUSED).",
+                          REL::Module::get().version().string("."));
+            return;
+        }
         if (g_installed.exchange(true)) return;
 
         REL::Relocation<std::uintptr_t> charVtbl{ RE::VTABLE_Character[0] };

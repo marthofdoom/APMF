@@ -81,7 +81,13 @@ namespace {
         }
 
         void Engage(RE::FormID id, RE::Actor* actor, const APMF_API::APMF_Param& /*param*/) override {
-            if (!actor || REL::Module::IsVR()) return;   // reloc IDs are SE/AE only
+            if (!actor) return;
+            if (!apmf::allowance::RuntimeSupported()) {   // G1: reloc IDs verified on the exact pair only
+                spdlog::error("[ch.1] 0x{} FULL block REFUSED -- runtime {} is not exactly 1.6.1170 or 1.5.97 "
+                              "(SetDontMove / KeepOffsetFromActor are verified on those two only).",
+                              apmf::log::Hex(id), REL::Module::get().version().string("."));
+                return;
+            }
             const RE::ActorHandle self = actor->GetHandle();
             const RE::NiPoint3    zero{ 0.0f, 0.0f, 0.0f };
             Native::KeepOffsetFromActor(actor, self, zero, zero, 20.0f, 10.0f);  // goal := my own spot
@@ -91,7 +97,8 @@ namespace {
         }
 
         void Release(RE::FormID id, RE::Actor* actor) override {
-            if (!actor || REL::Module::IsVR()) return;   // no persisted state to clean if actor is gone
+            if (!actor) return;                                   // no persisted state to clean if actor is gone
+            if (!apmf::allowance::RuntimeSupported()) return;     // G1: Engage refused, nothing to undo
             Native::ClearKeepOffsetFromActor(actor);
             Native::SetDontMove(actor, false);
             spdlog::info("[ch.1] 0x{} block released -- goal + mover restored, AI resumes locomotion.", apmf::log::Hex(id));

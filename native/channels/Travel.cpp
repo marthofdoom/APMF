@@ -2044,6 +2044,15 @@ namespace apmf::travel {
                          g_notInstalledReason.load(std::memory_order_relaxed));
             return;
         }
+        if (!apmf::allowance::RuntimeSupported()) {   // G1: ch.9's 0x49 seat refuses off the exact pair
+            g_notInstalledReason.store("runtime is not exactly 1.6.1170 or 1.5.97 (ch.9's 0x49 seat is "
+                                       "refused there, so travel has no delivery mechanism)",
+                                       std::memory_order_release);
+            spdlog::error("[travel] NOT installed -- {} (running {}).",
+                          g_notInstalledReason.load(std::memory_order_relaxed),
+                          REL::Module::get().version().string("."));
+            return;
+        }
 
         if (GetPrivateProfileIntA("Travel", "bTravel", 1, "Data/SKSE/Plugins/APMF.ini") == 0) {
             g_notInstalledReason.store("[Travel] bTravel=0 in Data/SKSE/Plugins/APMF.ini",

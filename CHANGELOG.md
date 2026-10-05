@@ -1,5 +1,6 @@
 ## Unreleased
 
+- **Harbinger now runs its game hooks only on the two game versions they were checked on.** Those are 1.6.1170 and 1.5.97. On any other version, VR included, each hook says in the log that it was refused and why. It never borrows the 1.6 settings. The first log line now says whether the game version is supported. Nothing changes on 1.6.1170 or 1.5.97. This has to be in place before 1.7.104 support. Not field-run yet.
 - **The log now says why Harbinger did not hand a heal to the game's healing caster.** Close Greater Wounds still did not cast, and the log never showed Harbinger serving it, so there was no way to tell which check turned it away. Each early exit of that step now writes one line per spell and reason: `[restore-serve] <spell> (<id>) NOT served: <reason> (<values compared>)`. Nothing is decided differently. Exits that apply to every spell the game classifies (not heal-shaped, already classed as Restore) log only when a mod's cast claim drives that spell. Not field-run yet.
 
 ## v0.9.11 -- Every healing spell can be cast with its animation

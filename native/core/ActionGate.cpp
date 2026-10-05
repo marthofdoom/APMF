@@ -1074,6 +1074,13 @@ namespace apmf::actiongate {
                          "combat-action allowance NOT installed.");
             return;
         }
+        if (!allowance::RuntimeSupported()) {   // G1: exact build, never the 1.6 path by bucket
+            spdlog::error("[ch.7] runtime {} is not exactly 1.6.1170 or 1.5.97 -- the 70 leaf vtables and the "
+                          "act()/pop() slots are verified on those two only; combat-action allowance NOT "
+                          "installed (REFUSED).",
+                          REL::Module::get().version().string("."));
+            return;
+        }
         if (g_installed.exchange(true)) return;
 
         std::array<REL::VariantID, 70> vtables{};

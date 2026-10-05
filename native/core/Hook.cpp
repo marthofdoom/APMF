@@ -95,6 +95,12 @@ namespace apmf::hook {
             spdlog::warn("[hook] VR runtime -- 0xAD index unverified for VR; hooks NOT installed.");
             return;
         }
+        if (!allowance::RuntimeSupported()) {   // G1: exact build, never the 1.6 path by bucket
+            spdlog::error("[hook] runtime {} is not exactly 1.6.1170 or 1.5.97 -- the 0xAD arbiter seat is "
+                          "verified on those two only; hooks NOT installed (REFUSED).",
+                          REL::Module::get().version().string("."));
+            return;
+        }
         if (g_installed.exchange(true)) return;
 
         REL::Relocation<std::uintptr_t> charVtbl{ RE::VTABLE_Character[0] };
