@@ -115,6 +115,15 @@ SEV-3; F1 promoted by carve-out (b) and FIXED on the branch before merge). Verba
 
 ---
 
+### APMF-B7 — the once-logged claim refusal reason can be stale after a later Install refusal
+- **Raised:** Fable tier-3 on `a369e9f`, SEV-5; text as relayed by the coordinator.
+- **Severity:** SEV-5.
+- **Finding (verbatim, as relayed):** "ControlMap.cpp:82-88 once-logged refusal reason vs a later Install refusal".
+- **Reasoning:** `EnqueueRequest` logs the seat-not-installed refusal ONCE with `NotInstalledReason()` at that moment. A client that requests before kDataLoaded logs "not yet installed (Install runs at kDataLoaded)"; if `Install()` then refuses for another reason (INI off, site-verify), that reason is never printed by this line (the `[apmf][equip-sink]` install line still carries it). Fix shape: log once PER DISTINCT reason string, not once ever.
+- **Assigned:** none.
+
+- REOPENED 2026-10-06 (Opus spot-check): back to LIVE. It is the refusal logging in `ControlMap::EnqueueRequest` when the equip-sink seat is not installed: the claim/deny seat the weighting rework keeps, not the declaration road.
+
 ### APMF-B13 — ch.19 has no way for a client to learn what the claim is actually doing
 - **Raised:** Fable tier-3 on `2d6108f`, SEV-4 (plus a related gap found in the same round); text as relayed by the coordinator.
 - **Severity:** SEV-4.
@@ -513,15 +522,6 @@ Raised against `5dcefa7`, same review, finding F3. MFO's `native/Targeting.cpp` 
 - **Assigned:** none.
 
 - CLOSED 2026-10-06 (triage): SUPERSEDED by ClickUp 86e3jwmk7 -- error text in ch.17 `Enforce`'s hand-slot resolve (`resolveHandSlots`); the declared-set enforce pass is what the rework replaces with weighting.
-
-### APMF-B7 — the once-logged claim refusal reason can be stale after a later Install refusal
-- **Raised:** Fable tier-3 on `a369e9f`, SEV-5; text as relayed by the coordinator.
-- **Severity:** SEV-5.
-- **Finding (verbatim, as relayed):** "ControlMap.cpp:82-88 once-logged refusal reason vs a later Install refusal".
-- **Reasoning:** `EnqueueRequest` logs the seat-not-installed refusal ONCE with `NotInstalledReason()` at that moment. A client that requests before kDataLoaded logs "not yet installed (Install runs at kDataLoaded)"; if `Install()` then refuses for another reason (INI off, site-verify), that reason is never printed by this line (the `[apmf][equip-sink]` install line still carries it). Fix shape: log once PER DISTINCT reason string, not once ever.
-- **Assigned:** none.
-
-- CLOSED 2026-10-06 (triage): SUPERSEDED by ClickUp 86e3jwmk7 -- the once-logged seat-not-installed refusal reason is the ch.17 declaration claim's refusal path in `ControlMap::EnqueueRequest`; the declaration road is retired by the rework.
 
 ### APMF-B8 — the "seat not installed" branch in Enforce is unreachable under the v8 refusal
 - **Raised:** Fable tier-3 on `a369e9f`, SEV-5; text as relayed by the coordinator.
