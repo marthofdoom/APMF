@@ -5,6 +5,7 @@
 #include "core/ControlMap.h"
 #include "core/Log.h"
 #include "core/Registry.h"
+#include "core/Sightline.h"   // ABI v18 kTargetPin_OwnLineOfSight
 
 #include <shared_mutex>
 
@@ -169,6 +170,8 @@ namespace {
         mutable std::atomic<std::uint32_t> notCombatTarget{ 0 }; // pin not in combatGroup->targets
         mutable std::atomic<std::uint32_t> targetGone{ 0 };      // target dead/disabled/unloaded/unresolved
         mutable std::atomic<std::uint32_t> targetLost{ 0 };      // group entry flagged kTargetLost
+        mutable std::atomic<std::uint32_t> notInSight{ 0 };      // ABI v18: own ray not VISIBLE, pin paused
+        mutable std::atomic<std::uint64_t> lastNotInSightLogMs{ 0 };
         // observer
         mutable std::atomic<std::uint32_t> seatMissed{ 0 };      // aimed elsewhere, seat never called
         mutable std::atomic<std::uint32_t> overwritten{ 0 };     // seat pinned, something wrote after
@@ -315,6 +318,27 @@ namespace {
                              n);
             }
             return;
+        }
+        // ABI v18 kTargetPin_OwnLineOfSight: the client asked for the pin only while the actor
+        // can SEE the target by Harbinger's own ray. Not VISIBLE (occluded, unknown = not
+        // measured yet or stale, unavailable) -> PAUSE: the engine's own pick stands this
+        // update, like the pauses above. Lock-free read by FormID; it also keeps the pair
+        // measured while the seat polls.
+        if ((static_cast<std::uint32_t>(claim.ival) & APMF_API::kTargetPin_OwnLineOfSight) != 0) {
+            const auto r = apmf::sightline::Read(self, claim.form, true);
+            const auto v = apmf::sightline::FreshVerdict(r);
+            if (v != APMF_API::kLos_Visible) {
+                decline();
+                apmf::sightline::NoteSeatHold();
+                const auto n = pin.notInSight.fetch_add(1, std::memory_order_relaxed) + 1;
+                if (RateOk(pin.lastNotInSightLogMs)) {
+                    spdlog::info("[ch.20] 0x{} pin 0x{} PAUSED: own line of sight is {} -- the engine's own pick "
+                                 "stands until the target is visible again. ({} so far)",
+                                 Hex(self), Hex(claim.form), apmf::sightline::VerdictName(v), n);
+                }
+                return;
+            }
+            apmf::sightline::NoteSeatPass();
         }
 
         *a_out = pin.handle.native_handle();   // DENY the engine's pick at its source
@@ -464,9 +488,11 @@ namespace {
                          Hex(id), what, Hex(tf), why);
         } else {
             spdlog::info("[ch.20] 0x{} target-pin {} -> target 0x{}. The engine's target selection is answered "
-                         "with it while the actor is fighting and it is one of the group's combat targets; never "
+                         "with it while the actor is fighting and it is one of the group's combat targets{}; never "
                          "starts combat.",
-                         Hex(id), what, Hex(tf));
+                         Hex(id), what, Hex(tf),
+                         (static_cast<std::uint32_t>(param.ival) & APMF_API::kTargetPin_OwnLineOfSight) != 0
+                             ? " and Harbinger's own ray sees it (ABI v18 kTargetPin_OwnLineOfSight)" : "");
         }
     }
 
@@ -487,7 +513,7 @@ namespace {
         // Relinquish (INVARIANTS #5a): nothing to restore. The engine's own selection
         // answers again from the next combat update on.
         void Release(RE::FormID id, RE::Actor* /*actor*/) override {
-            struct { std::uint32_t hits, denied, held, none, notTgt, gone, lost, missed, over; } c{};
+            struct { std::uint32_t hits, denied, held, none, notTgt, gone, lost, missed, over, notSeen; } c{};
             RE::FormID  t   = 0;
             bool        had = false;
             const char* why = nullptr;
@@ -499,7 +525,7 @@ namespace {
                     t = p.target;
                     c = { p.seatHits.load(), p.denied.load(), p.held.load(), p.noEngineTarget.load(),
                           p.notCombatTarget.load(), p.targetGone.load(), p.targetLost.load(), p.seatMissed.load(),
-                          p.overwritten.load() };
+                          p.overwritten.load(), p.notInSight.load() };
                     why = p.endedReason.load();
                     g_pins.erase(it);
                 }
@@ -508,11 +534,12 @@ namespace {
             if (had) {
                 spdlog::info("[ch.20] 0x{} target-pin released ({}) (target 0x{}): selector seat called {} time(s) -- "
                              "denied the engine's pick {}, engine already on the pin {}, engine had no target {}, "
-                             "pin not a combat target {}, target gone {}, target lost {}; observer: seat missed {}, "
-                             "overwritten after the seat {}. The engine's own selection answers again.",
+                             "pin not a combat target {}, target gone {}, target lost {}, paused not in sight {}; "
+                             "observer: seat missed {}, overwritten after the seat {}. The engine's own selection "
+                             "answers again.",
                              Hex(id), why ? fmt::format("ENDED BY HARBINGER: {}", why) : std::string("by the client, "
                              "an unload or a load"), Hex(t), c.hits, c.denied, c.held, c.none, c.notTgt, c.gone,
-                             c.lost, c.missed, c.over);
+                             c.lost, c.notSeen, c.missed, c.over);
             } else {
                 spdlog::info("[ch.20] 0x{} target-pin released (it was inert).", Hex(id));
             }

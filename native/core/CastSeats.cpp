@@ -5,6 +5,7 @@
 #include "core/ControlMap.h"
 #include "core/CastSeats.h"
 #include "core/RestoreCensus.h"
+#include "core/Sightline.h"   // ABI v18 kCastFlag_OwnLineOfSight
 
 // Win32 INI read for the one kill-switch below. Declared by hand, exactly like
 // core/AiCastSeats.cpp and core/Hook.cpp do -- PCH does not pull in <Windows.h>,
@@ -224,6 +225,17 @@ namespace apmf::castseats {
             return true;
         }
 
+        // ABI v18 kCastFlag_OwnLineOfSight: does this claim ask Harbinger to judge its line of
+        // sight, and is there a line to judge? A self target (the claimant's own FormID, APMF-B39)
+        // and a deny-only hand claim have none. The verdict is read lock-free from
+        // core/Sightline.h's table (FormIDs only, no form lookup), which also marks the pair
+        // asked-for so the main thread keeps measuring it while the seats poll.
+        bool OwnLosApplies(const SeatMatch& m) {
+            return (m.claim.flags & APMF_API::kCastFlag_OwnLineOfSight) != 0 &&
+                   (m.claim.flags & APMF_API::kCastFlag_DenyHandOnly) == 0 && m.claim.target != 0 &&
+                   m.claim.target != m.actor;
+        }
+
         // ====================================================================
         // SEAT 0x06 -- WHETHER. CombatMagicCasterRestore::CheckStartCast.
         // ====================================================================
@@ -241,6 +253,30 @@ namespace apmf::castseats {
                 const bool native = orig(a_this, a_cc);
                 CensusNote(vt, a_this, a_cc, kCheckStartCast, false, native);
                 return native;
+            }
+            // ABI v18 kCastFlag_OwnLineOfSight: the claim asked Harbinger to judge WHETHER the line
+            // to its target is open. YES only on a fresh own-ray VISIBLE; anything else (OCCLUDED,
+            // UNKNOWN = not measured yet or stale, UNAVAILABLE = the ray could not be cast) is NO
+            // for this poll -- the claim stands and the next poll asks again. Never visible by
+            // fallback (principle 7).
+            if (OwnLosApplies(m)) {
+                const auto r = apmf::sightline::Read(m.actor, m.claim.target, true);
+                const auto v = apmf::sightline::FreshVerdict(r);
+                if (v != APMF_API::kLos_Visible) {
+                    CensusNote(vt, a_this, a_cc, kCheckStartCast, true, false);
+                    apmf::sightline::NoteSeatHold();
+                    if (LogDue(m.actor, m.claim.target, kCheckStartCast))
+                        spdlog::info("[ch.8b seat 0x06] 0x{} CheckStartCast -> NO (own line of sight to 0x{} is {}, {}) "
+                                     "-- the claim stands; the next poll asks again.",
+                                     apmf::log::Hex(m.actor), apmf::log::Hex(m.claim.target),
+                                     apmf::sightline::VerdictName(v),
+                                     v == APMF_API::kLos_Unknown     ? "not measured yet, or older than 1 s"
+                                     : v == APMF_API::kLos_Unsupported ? "the line-of-sight service is not armed"
+                                     : r.why != 0                    ? apmf::sightline::WhyName(r.why)
+                                                                     : "all 3 rays blocked");
+                    return false;
+                }
+                apmf::sightline::NoteSeatPass();
             }
             CensusNote(vt, a_this, a_cc, kCheckStartCast, true, true);
 
@@ -392,6 +428,17 @@ namespace apmf::castseats {
                     why = "target no longer resolves";
                 } else if (target->IsDead()) {
                     why = "target is dead";
+                } else if (OwnLosApplies(m) && [&m] {
+                               // ABI v18: two CONSECUTIVE OCCLUDED measurements (the table's occRun:
+                               // readings at most 3 s apart) and the newest one fresh. A single
+                               // borderline reading does not cut a beam; UNKNOWN / UNAVAILABLE never
+                               // stop a running channel.
+                               const auto r = apmf::sightline::Read(m.actor, m.claim.target, true);
+                               return r.verdict == APMF_API::kLos_Occluded && r.occRun >= 2 &&
+                                      r.ageMs <= APMF_API::kLosFreshMs;
+                           }()) {
+                    why = "own line of sight OCCLUDED on two consecutive measurements";
+                    apmf::sightline::NoteSeatStop();
                 } else if (vt == g_restoreVtable.load(std::memory_order_relaxed)) {
                     // RESTORE ONLY (2026-09-06): `primaryAV` is a real member on
                     // `CombatMagicCasterRestore`'s OWN concrete layout past the shared

@@ -3,6 +3,8 @@
 #include "core/ControlMap.h"
 #include "core/EquipSink.h"
 #include "core/SpaceQuery.h"
+#include "core/Awareness.h"
+#include "core/Sightline.h"
 #include "channels/Travel.h"
 
 // The C-ABI implementation behind APMF_API.h. These free functions forward to the
@@ -172,14 +174,36 @@ namespace {
         }
     }
 
+    // ABI v18: Harbinger's own-ray line of sight (see APMF_API_v18's doc comment). Any
+    // thread, lock-free: core/Sightline.cpp reads its seqlock table and marks the pair
+    // asked-for. A throw never crosses the boundary: it becomes kLos_Unknown, nothing written.
+    std::uint32_t APMF_GetLineOfSight(RE::FormID viewer, RE::FormID target, APMF_API::APMF_LosInfo* out) {
+        try {
+            return apmf::sightline::GetLineOfSight(viewer, target, out);
+        } catch (...) {
+            return APMF_API::kLos_Unknown;
+        }
+    }
+
+    // ABI v18: the awareness query. Synchronous and main-thread-only by contract; the
+    // refusal for any other thread lives inside core/Awareness.cpp. A throw becomes
+    // kQuery_Failed.
+    std::uint32_t APMF_SenseActor(const APMF_API::APMF_AwarenessQuery* q, APMF_API::APMF_AwarenessResult* out) {
+        try {
+            return apmf::awareness::SenseActor(q, out);
+        } catch (...) {
+            return APMF_API::kQuery_Failed;
+        }
+    }
+
     // ABI -> the first APMF release that implements it, for the "client too new"
     // refusal log below (MFO wiring review SEV-3 F4): a user running an older
     // APMF under a newer client must be able to read WHICH APMF they need. Keep in
     // step with kABIVersion bumps (git tags: v0.2.0 v1, v0.2.3 v2, v0.3.0-rc.1 v3,
     // v0.3.0-rc.3 v4, v0.9.1 v5, v0.9.3 v6; v7, v8, v9 and v10 ship together in the
     // first release after 0.9.4 -- REVIEW-BACKLOG APMF-B10: name it at the cut; v11 and
-    // v12 ship together in 0.9.8; v13 and v14 ship in 0.9.9; v15, v16 and v17 are Unreleased in
-    // CHANGELOG.md -- name their release here at the cut).
+    // v12 ship together in 0.9.8; v13 and v14 ship in 0.9.9; v15, v16 and v17 ship in 0.9.10;
+    // v18 is Unreleased in CHANGELOG.md -- name its release here at the cut).
     const char* MinReleaseForAbi(std::uint32_t abi) {
         switch (abi) {
         case 1:  return "0.2.0";
@@ -199,12 +223,13 @@ namespace {
         case 15:
         case 16:
         case 17: return "0.9.10";
+        case 18: return "the first release after 0.9.11 (ABI v18 is unreleased)";
         default: return "a release newer than this one";
         }
     }
 
     // The single static POD interface handed to clients. It is the NEWEST revision
-    // (APMF_API_v12), constant-initialized (the pointers are to static functions), so
+    // (APMF_API_v18 since ABI v18), constant-initialized (the pointers are to static functions), so
     // it is valid the instant the DLL loads. Because each revision's leading members
     // are exactly the previous revision's (v9 extends v8 extends v7 extends v6
     // extends v5 extends v4, base laid out first), a v1..v8 client reading it through
@@ -240,8 +265,15 @@ namespace {
                   "APMF_API_v12's slot must start right after the v11 prefix");
     static_assert(sizeof(APMF_API::APMF_API_v12) == sizeof(APMF_API::APMF_API_v11) + sizeof(void*),
                   "APMF_API_v12 = the v11 prefix plus exactly one function pointer");
+    // ABI v18 (own line of sight + awareness) appends TWO slots to the v12 prefix, so the
+    // object is now an APMF_API_v18 and `abiVersion` reports 18. Same two-form layout proof.
+    static_assert(offsetof(APMF_API::APMF_API_v18, GetLineOfSight) == sizeof(APMF_API::APMF_API_v12),
+                  "APMF_API_v18's first slot must start right after the v12 prefix");
+    static_assert(sizeof(APMF_API::APMF_API_v18) == sizeof(APMF_API::APMF_API_v12) + 2 * sizeof(void*),
+                  "APMF_API_v18 = the v12 prefix plus exactly two function pointers");
 
-    constexpr APMF_API::APMF_API_v12 g_api{
+    constexpr APMF_API::APMF_API_v18 g_api{
+        {
         {
         {
         {
@@ -272,6 +304,9 @@ namespace {
         &APMF_FindHostilesInSpace,
         },
         &APMF_GetTravelLegState,
+        },
+        &APMF_GetLineOfSight,
+        &APMF_SenseActor,
     };
 
 }

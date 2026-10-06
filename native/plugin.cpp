@@ -26,6 +26,8 @@
 #include "channels/CombatReentryDeny.h"
 #include "core/PositionCast.h"
 #include "core/SpaceQuery.h"
+#include "core/Sightline.h"
+#include "core/Awareness.h"
 
 // ============================================================================
 // APMF -- AI Package Management Framework. Entry point (thin).
@@ -102,6 +104,9 @@ namespace {
         // delete (its Retire task is dropped by the Discard below). The references
         // belong to the world being replaced, so none is touched.
         apmf::poscast::ResetAll("revert/new game");
+        // ABI v18: same, for the line-of-sight pairs and the awareness noise baselines.
+        apmf::sightline::ResetAll("revert/new game");
+        apmf::awareness::ResetAll("revert/new game");
         // ...and forget the outgoing world's marker LEDGER. This must precede the load
         // callback (which reads the incoming save's record); SKSE runs revert first.
         apmf::poscast::RevertMarkers();
@@ -173,6 +178,13 @@ namespace {
                                                   // never VR) + [PositionCast] + the XMarker base. Installs NO
                                                   // hook. Refused -> kCastFlag_AtPosition requests are refused.
             apmf::spacequery::Install();         // ABI v11 SPACE QUERIES: runtime gate only (read-only calls).
+            apmf::sightline::Install();          // ABI v18 OWN LINE OF SIGHT: exact-version gate, [Sightline]
+                                                  // bOwnLineOfSight, SeatVerified on every address the ray uses.
+                                                  // Installs NO hook (its pump rides Arbiter::OncePerFrame). Not
+                                                  // armed -> GetLineOfSight UNSUPPORTED and the two own-LoS bits
+                                                  // are refused at the request.
+            apmf::awareness::Install();          // ABI v18 AWARENESS (SenseActor): needs the line-of-sight
+                                                  // service armed (so AFTER it) + its own two rows. No hook.
             apmf::equipsink::Install();          // ch.17 ENGINE-EQUIP SINK: the ONE #17a call-site seat
                                                   // (ActorEquipManager worker, two internal E8 sites per
                                                   // runtime, byte-verified before any write; a mismatch
@@ -267,6 +279,10 @@ namespace {
             apmf::actiongate::ResetLeash("kPreLoadGame");
             // ABI v11 position cast: same as the revert path -- forget, never touch.
             apmf::poscast::ResetAll("kPreLoadGame");
+            // ABI v18: no line-of-sight pair or noise baseline crosses the load (FormIDs of the
+            // outgoing world; a persistent NPC's id survives, its geometry does not).
+            apmf::sightline::ResetAll("kPreLoadGame");
+            apmf::awareness::ResetAll("kPreLoadGame");
             // Flush the confirmed-main task queue. NOTHING Pump()s between here and
             // the first player Update AFTER the load, so anything ReleaseAll just
             // posted (ch.9's release nudge; ch.8b's proxy teardown) would otherwise

@@ -99,7 +99,14 @@ ch.18 attack-selection spec); **ABI v12 adds `APMF_API_v12 : APMF_API_v11` with 
 `GetTravelLegState(FormID, APMF_TravelLegInfo*)`, the 72-byte POD `APMF_TravelLegInfo` (size
 field first, static_assert-pinned; +60 ownerHandle, +64 blocker, +68 blockerKind), the
 `TravelLegState` and `TravelBlocker` enums, and the travel gait bits
-`kTravel_SpeedSet` (1<<2) + `kTravel_SpeedMask` (bits 3-4 = the engine's PreferredSpeed)**, the
+`kTravel_SpeedSet` (1<<2) + `kTravel_SpeedMask` (bits 3-4 = the engine's PreferredSpeed)**;
+**ABI v18 adds `APMF_API_v18 : APMF_API_v12` with TWO slots, `GetLineOfSight(viewer, target,
+APMF_LosInfo*)` (any thread, lock-free) and `SenseActor(const APMF_AwarenessQuery*,
+APMF_AwarenessResult*)` (main thread only), the PODs `APMF_LosInfo` (24 B), `APMF_AwarenessQuery`
+(32 B), `APMF_AwarenessResult` (48 B), the enums `LosVerdict`, `LosWhy`, `TargetPinFlags`,
+`AwareSense`, `AwareFlags`, `AwareDetail`, the `kLos*` / `kAware*` timing and range constants,
+`kCastFlag_OwnLineOfSight` (CastFlags bit 6) and `kTargetPin_OwnLineOfSight` (kIntent_TargetPin
+param.ival bit 0)** (core/Sightline.h, core/Awareness.h), the
 `Intent` enum, `Handle`, and the exported query-fn name. No C++ class / STL / vtable
 crosses the boundary. **The current `kABIVersion` is stated ONLY in the header**
 (INVARIANTS #14b — this line said 3 while the header was at 6).
@@ -112,7 +119,7 @@ crosses the boundary. **The current `kABIVersion` is stated ONLY in the header**
 
 ### `native/core/ClientAPI.{h,cpp}` — the C-ABI implementation
 The exported `APMF_GetInterface(abiVersion)` hands over the static POD newest-struct
-object (`APMF_API_v12` since ABI v12 — read the header, not this line) as a base
+object (`APMF_API_v18` since ABI v18 — read the header, not this line) as a base
 `APMF_API_v1*`; a client casts up to the newest struct it uses. It returns **nullptr**
 when the client asks for a version NEWER than this APMF implements (`:125-128`), which
 is why a needless `kABIVersion` bump is expensive (INVARIANTS #14b). Its
@@ -126,6 +133,10 @@ ABI v11 adds `FindEmptySpace` / `FindHostilesInSpace` → `core/SpaceQuery.cpp` 
 ABI v12 adds `GetTravelLegState` → `travel::GetLegState` (`channels/Travel.cpp`, a
 `try/catch(...)` returning `kLeg_None`), and `MinReleaseForAbi(12)` = `0.9.8` (v11 and v12
 ship together; both static_assert pairs pin the prefix ends).
+ABI v18 adds `GetLineOfSight` → `sightline::GetLineOfSight` (a `try/catch(...)` returning
+`kLos_Unknown`) and `SenseActor` → `awareness::SenseActor` (`kQuery_Failed`); the object is an
+`APMF_API_v18` now (a third static_assert pair pins the v12 prefix end), and
+`MinReleaseForAbi(18)` names "the first release after 0.9.11" until the cut.
 The "client too new" null (`abiVersion > kABIVersion`) logs the running APMF version
 (`SKSE::PluginDeclaration::GetSingleton()`) and `MinReleaseForAbi(abi)` — a table that must
 be extended on every `kABIVersion` bump.
@@ -419,6 +430,80 @@ Runtime gate as PositionCast (`Install` at kDataLoaded).
   past the caller's `size` (append-only structs: always honour `out->size`). Using a
   hand-kept faction list instead of `IsHostileToActor`. The "stair helper counts as
   ground" choice is a judgement call, not engine evidence (see the file comment).
+  Note (ABI v18 finding, not changed here): `Cast` does not check `bhkPickData::unkC0`
+  (+0xC0), which `PickObject`'s engine early-out sets when it returns WITHOUT casting --
+  such a ray reads as "no hit". core/Sightline.cpp treats it as UNAVAILABLE. Open: APMF-B52.
+
+### `native/core/Sightline.{h,cpp}` — ABI v18 OWN LINE OF SIGHT (2026-10-05, ClickUp 86e3h6qj9)
+Harbinger's own-ray verdict for an ordered (viewer, target) pair, replacing the engine's
+cached `Actor::HasLineOfSight` (AE 53829 0x9BA120: for an NPC viewer a cached byte of the
+AIProcess LOS cache, no ray). The ray (MFO Sightline's own-ray recipe): from
+`GetEyeVector`'s origin (Character 0xC2; NO facing / cone), to feet+16 / 55% / 90% of
+`TESObjectREFR::GetHeight() const` (0x73/0x74; NOT `Actor::GetHeight`, which writes the
+cached height), each ray ending short by the TARGET's own size (review SEV-3, 2026-10-05:
+the fixed 48u read giants / mammoths / dragons as OCCLUDED by their own capsule): bound
+half-diagonal x base scale + 16, clamped [48, 1024], from the same GetBoundMin/Max read
+(min = c - e, max = c + e of middleHigh +0x180, disassembly, all three builds); layer
+`kCharController` with the viewer's own group
+(`Actor::GetCollisionFilterInfo`, row); any clear = VISIBLE, all blocked = OCCLUDED, other
+havok world = OCCLUDED/`kLosWhy_OtherWorld`, cannot cast = UNAVAILABLE (+why), and a pick
+that came back with `+0xC0` set (the engine's early-out, nothing cast) = UNAVAILABLE
+`kLosWhy_PickSkipped`. Storage: 256 seqlock slots (`Read` lock-free from ANY thread; the
+main thread is the only writer), a 64-cell lock-free request ring for unknown pairs,
+`askedMs` outside the seqlock payload. `Pump()` (Arbiter::OncePerFrame, after
+`mainthread::Pump`) drains the ring, drops pairs unasked for `kLosInterestMs` (2 s),
+re-measures <= `kLosMaxPairsPerFrame` (8) pairs older than `kLosRefreshMs` (250 ms), oldest
+first. `MeasureNow` (main, for SenseActor) reuses a < 250 ms verdict and casts for at most
+`kLosMaxSyncPairsPerFrame` (8) pairs per frame (Pump advances `g_frame`); past that it answers
+from a fresh stored verdict or Unknown (`kAwareDetail_SightDeferred`), so the hard bound is
+3 x (8 + 8) rays per frame. `[los]` VISIBLE/OCCLUDED lines are at most one per pair per 2 s
+(suppressed ones counted in the heartbeat). Consumers:
+`GetLineOfSight` (C-ABI), CastSeats 0x06/0x07 (`kCastFlag_OwnLineOfSight`), TargetPin's
+selector seat (`kTargetPin_OwnLineOfSight`), Awareness. `[los]` transition lines, a
+rate-limited UNAVAILABLE warn per pair (10 s), a 30 s heartbeat. INI `[Sightline]
+bOwnLineOfSight` (default 1). Rows: bhkWorld (0x33), Character (0xC2/0x73/0x74),
+`Sightline.Actor.GetCollisionFilterInfo`, `Sightline.TESObjectCELL.GetbhkWorld`,
+`Sightline.bhkWorld.WorldScale` (ripref via `AIProcess::KnockExplosion`).
+- **LOCK SCOPE (the 2026-09-30 MFO freeze hypothesis, settled by disassembly):** NO lock is
+  taken around a ray. `PickObject` read-locks `worldLock` itself on all three builds (AE
+  0xE86560 +0x115 -> 0xCC90C0), and `BSReadWriteLock` is reader-preferring (LockForRead
+  waits only while a writer HOLDS bit 31; LockForWrite is a bare CAS 0 -> 0x80000001, no
+  pending bit), so the old outer read guard was a recursive read that cannot deadlock against
+  a waiting writer -- and is redundant. **Never add an outer world lock here, and never hold
+  any lock across a ray.**
+- **What breaks:** a ray off the main thread (only `Pump`/`MeasureNow` cast, both main);
+  a mutex on the `Read` path (the cast and pin seats call it on combat threads and must stay
+  lock-free); writing a slot from any thread but main (single-writer seqlock); treating
+  UNKNOWN / UNAVAILABLE / a skipped pick as visible (principle 7 -- a cast into a wall);
+  raw `now - askedMs` (another thread's later stamp wraps it: use `Since`); widening the
+  per-frame budgets without re-deriving the cost (3 rays x pairs per frame, pump + sync); a
+  fixed end margin again (big creatures read OCCLUDED by their own capsule); changing the
+  ray's samples / layer / margin without saying so in APMF_API.h (MFO mirrors the contract).
+  Open review items (6d84bab): `Docs/REVIEW-BACKLOG.md` APMF-B50 (SpaceQuery's skipped pick),
+  APMF-B53 (a)-(c), (e), (f).
+
+### `native/core/Awareness.{h,cpp}` — ABI v18 AWARENESS, `SenseActor` (read-only)
+Omnidirectional multi-sense "does viewer sense target": SIGHT (Sightline own ray, within
+sightRange), HEARING (a NEW engine noise -- `HighProcessData::actorsGeneratedDetectionEvent`
++0x3D8, the record only `AIProcess::SetActorsDetectionEvent` writes (SE 38311 / AE 39286 /
+1.7.104 0x6F2560), level > 0, within kAwareNoiseWindowMs 3 s, within hearRadius of the
+viewer or the anchor; or the target `IsInCombat` (Character 0xE3) within hearRadius),
+PROXIMITY (3D), ENGAGED (in combat and `currentCombatTarget` is the viewer or anchor;
+`LookupReferenceByHandle` row). Noise NOVELTY, not age: the event's stamp is the engine AI
+clock (AE id 404125), which is absent from the 1.7.104 MIT table, so it is never read; a
+noise is new when the stamp changed since Harbinger last looked, aged on our own clock; the
+first look is a baseline. Main thread only (`hook::OnMainThread`), main-thread maps (no
+lock). `[aware] noise` / `[aware] senses` (transition) / heartbeat. INI `[Awareness]
+bHearNoise` (default 1). Static asserts pin AIProcess::high +0x10, +0x3D8 and the 0x18-byte
+event layout (verified in SetActorsDetectionEvent on all three builds).
+- **What breaks:** reading the AI clock global (fatal on 1.7.104: id absent); deciding
+  hostility here (the client's call); a call off the main thread doing work; reading the
+  event other than as ONE 0x18-byte copy-out. Known exposure: the event object is freed only
+  at the high-process teardown (AE 41406), not proven main-thread-only -- the same exposure
+  as any main-thread read of another actor's high process. `[aware] senses` lines are at most
+  one per pair per 2 s (counted in the heartbeat); the sight sense obeys MeasureNow's per-frame
+  cap (`kAwareDetail_SightDeferred`). Open review items (6d84bab): `Docs/REVIEW-BACKLOG.md`
+  APMF-B50 (the event free on an untraced path), APMF-B51 (`level > 0`), APMF-B53 (c), (d).
 
 ### `native/core/CastClassify.{h,cpp}` — ch.8b SEAT 0: CLASSIFY (2026-09-05)
 **THE ROOT-CAUSE FIX** the other five seats sat downstream of and could never reach:
@@ -508,6 +593,17 @@ Offensive caster, never Restore, so a claim on it was inert):
   test is what keeps a self claim from minting a delivery-flip proxy. Open review items:
   REVIEW-BACKLOG APMF-B41 (the degenerate kIntent_Cast doc sentence). STATUS "Phase 0c". 0x06 and 0x0A also feed the Restore census (`CensusNote`, Restore
   vtable only, read-only; `core/RestoreCensus`).
+  **ABI v18 `kCastFlag_OwnLineOfSight` (`OwnLosApplies`: the bit, not deny-only, target not 0
+  and not the claimant):** 0x06 answers YES only on a fresh (<= 1 s) own-ray VISIBLE from
+  `sightline::Read(actor, claim.target)` (lock-free, FormIDs, marks the pair asked-for) and NO
+  otherwise (OCCLUDED / UNKNOWN / UNAVAILABLE / UNSUPPORTED; the census sees `false`); 0x07
+  STOPS a channel on two consecutive OCCLUDED readings (occRun >= 2, newest <= 1 s), after
+  the TTL / target checks; UNKNOWN / UNAVAILABLE never stop. **What breaks:** reading the
+  verdict any other way than `Read` (a lock or a form lookup on the combat thread); letting
+  a non-VISIBLE verdict answer YES. The bit only means anything on RequestCast (a target): the
+  degenerate `RequestEx(kIntent_Cast)` form has no target, so `ControlMap::EnqueueRequest`
+  REFUSES the bit there by name (review SEV-3, 6d84bab) -- never let it through as a no-op.
+  Only the Restore and Offensive caster vtables carry these seats (APMF-B53 (e)).
 - `0x0A GetMagicTarget` -> `out->handle = claim target's native handle; out->ptr =
   nullptr`. THREE args with a hidden 16-byte sret out-slot (CommonLib declares two and
   is WRONG — the bug that CTD'd the passive probe). Handle form is the lifetime-safe
@@ -1220,7 +1316,7 @@ parentheses.
 | `Detection.cpp` | 16 | stealth (Num8) | `kMovementNoiseMult` + `kDetectLifeRange` AVs | source-block |
 | `EquipAuthority.cpp` | 17 | ENGINE-EQUIP facet, WHOLE by default, SCOPED by category from ABI v9 (`kIntent_EquipAuthority`, ABI v7/v8/v9; no test key) | Arbitration + claim lifecycle (standing, no TTL) + the ONE #17a-licensed equip: on every applied `SetEquipSet`/`SetEquipSetEx` for the owning claim (and on a win/repoint, and on a CHANGED `SetEquipScope`) it POSTS one `mainthread` hop that lands after `Publish()` and equips each declared item the actor is not wearing via `ActorEquipManager::EquipObject` (queued, not forced; v8: with the declared hand's `BGSEquipSlot` 0x13F42/0x13F43 by `LookupByID`, "worn" = in THAT hand, same form allowed once per hand) inside `equipsink::ApmfEquipScope`; skips a declared non-governed form type (ARMO/WEAP/AMMO/LIGH only); v9: skips (counts `skipped-unowned`/`skipped-denied`, names once per actor+set signature) any entry whose `equipsink::Categorize(obj, declaredHandEQUP)` bits are not ALL owned or ANY denied — never equips or evicts into an unowned category; never unequips; no re-assert (every declaration walks the inventory; an item APMF already queued is held 3 s from its issue before it is queued again, per (form, hand)). The deny is `core/EquipSink.cpp`'s call-site seat. `Release` relinquishes (nothing to undo). Refuses `kEquipAuth_DenyUnequip` (reserved). Open findings: `Docs/REVIEW-BACKLOG.md` APMF-B5, B6, B8, B9 | claim + #17a seat; APMF equips the DECLARED set, the ENGINE keeps its hands off |
 | `Travel.cpp` | 19 | WALK this actor to a destination — an object REFERENCE (arrival = distance <= radius) or a CELL (arrival = parent-cell identity; the radius is not consulted) — (`kIntent_Travel`, ABI v10; no test key — the crosshair surface can name only ONE ref and ch.19 needs an actor AND a destination, so a hotkey would mean APMF inventing intent) | **ADDS NO SEAT; CLAIMS NO OTHER INTENT.** One `mainthread::Post` hop past `Drain`'s `Publish`, it files ONE internal ch.9 `kIntent_OfferPackage` claim naming an APMF-OWNED Travel package from `Data/APMF.esl`, whose `Place to Travel` Location input `core/PackageData.cpp` points at the destination. TWO kinds, chosen by the FormID's own record type: an object REFERENCE (`kNearReference`, a 4-byte handle -- `SetTravelTarget`) or a CELL (`kInCell`, an 8-byte form POINTER -- `SetTravelCell`). The two write DIFFERENT members of the same 8-byte union, which is why they are separate functions with separate types; both member choices were read off the engine's own locType switch on both unpacked images. Every other locType is REFUSED -- see `Docs/DENY-COMPLETENESS-AUDIT.md` row 19 (h). A world POSITION is REFUSED unless the claim sets `kTravel_ToPosition` (ABI v11), in which case APMF places its own XMarker and runs a REFERENCE leg to it (see What breaks (7)). That offer is travel's IMPLEMENTATION, not a composed client intent; it is filed at the CLIENT's basis (read back through `ControlMap::TryGetOwningClaimBasis`) and RE-FILED — request-new-then-release-old, in one `Drain` — when the winner's basis moves, because a claim's basis is immutable. The leg is ENDED (offer released, package slot freed) by the per-frame monitor `travel::Poll()` on `Arbiter::OncePerFrame` on ARRIVAL (distance for a ref, PARENT-CELL IDENTITY for a cell), on `Actor::IsInCombat()`, or on the destination being gone — plus a 120 s STUCK safety net that logs a failure and retries nothing. **No LOS test, no detection test, no `StartCombat`, no 0xE4 PIN, so INVARIANTS #0 is untouched.** 8 concurrent legs; a 9th is refused and logged. Ships OBSERVE-ONLY | one internal ch.9 offer; the ENGINE runs the package natively |
-| `TargetPin.cpp` (+ `TargetPin.h`) | 20 | PIN this actor's combat target (`kIntent_TargetPin`, ABI v13; no test key -- the crosshair surface names one ref and a pin needs an actor AND a target) | **SOURCE DENY:** write_vfunc slot 6 (`SelectTarget`) on `VTABLE_CombatTargetSelectorStandard` and `...Fixed`, chaining; the answer is replaced with the winning claim's target only when the engine answered non-zero and the target is in `combatGroup->targets` (group read lock) and not `kTargetLost`. `targetpin::Poll()` on `Arbiter::OncePerFrame` ENDS the claim (EnqueueRelease, reason logged) when the target is lost / dead / disabled / unloaded / unresolvable or the owner dies -- the only place APMF releases a client's pin claim. Character slot 0xE4 hooked OBSERVE-ONLY (`SOURCE SEAT MISSED` / `OVERWRITTEN`). Per-actor handle map (`shared_mutex`) filled on the game thread; `ResetAll` at revert + kPreLoadGame. All three seats verified before any is written. **What breaks:** the raw selector offset +0x10 is guarded only by the per-call vtable-identity test -- never read it without that test; never re-add an after-the-update rewrite (it would mask a source miss, principle 7); open review items `Docs/REVIEW-BACKLOG.md` APMF-B26 (cross-thread StopCombat), APMF-B27 (MFO hook order), APMF-B28, APMF-B29. `INVARIANTS #0 (f)` | source-block (DENY) |
+| `TargetPin.cpp` (+ `TargetPin.h`) | 20 | PIN this actor's combat target (`kIntent_TargetPin`, ABI v13; no test key -- the crosshair surface names one ref and a pin needs an actor AND a target) | **SOURCE DENY:** write_vfunc slot 6 (`SelectTarget`) on `VTABLE_CombatTargetSelectorStandard` and `...Fixed`, chaining; the answer is replaced with the winning claim's target only when the engine answered non-zero and the target is in `combatGroup->targets` (group read lock) and not `kTargetLost`. `targetpin::Poll()` on `Arbiter::OncePerFrame` ENDS the claim (EnqueueRelease, reason logged) when the target is lost / dead / disabled / unloaded / unresolvable or the owner dies -- the only place APMF releases a client's pin claim. Character slot 0xE4 hooked OBSERVE-ONLY (`SOURCE SEAT MISSED` / `OVERWRITTEN`). Per-actor handle map (`shared_mutex`) filled on the game thread; `ResetAll` at revert + kPreLoadGame. All three seats verified before any is written. ABI v18 `kTargetPin_OwnLineOfSight` (param.ival bit 0): after the lost / absent checks, the pin PAUSES (declines, `notInSight` counted, `[ch.20] ... PAUSED` rate-limited) unless `sightline::Read(actor, target)` is a fresh VISIBLE; refused at the request when the line-of-sight service is not armed, and a Repoint that adds it then is refused too (`ControlMap::ApplyRepoint`, whole Repoint dropped). Open review item APMF-B51 (a) (pin cold start). **What breaks:** the raw selector offset +0x10 is guarded only by the per-call vtable-identity test -- never read it without that test; never re-add an after-the-update rewrite (it would mask a source miss, principle 7); open review items `Docs/REVIEW-BACKLOG.md` APMF-B26 (cross-thread StopCombat), APMF-B27 (MFO hook order), APMF-B28, APMF-B29. `INVARIANTS #0 (f)` | source-block (DENY) |
 | `CombatEntry.cpp` (+ `CombatEntry.h`) | 21 | ENTER COMBAT against a named target (`kIntent_CombatEntry`, ABI v14; no test key -- it needs an actor AND a target) | **ONE ENGINE CALL, NO SEAT:** `Engage` / `OnOwnerChanged` resolve the target on the game thread and `mainthread::Post` ONE task that re-validates the published claim and calls `actor->StartCombat(target, nullptr)` (fork binding, `RELOCATION_ID(37608, 38561)`, 3-arg form verified on both images). Gates in the task: actor loaded, alive, `currentProcess != null` (StartCombat dereferences it unchecked), target loaded / enabled / alive. Release calls NO StopCombat. NEVER live and inert: `EndClaim` (from Pump / Poll, never inside Drain) releases the claim on an engine refusal, an entry that cannot be attempted, "combat ended" (controller POINTER null after a successful entry), owner dead, target dead / disabled / unloaded / unresolvable. Per-actor map touched on the main seat only (no lock); `ResetAll` at revert + kPreLoadGame. Passive rate-limited entry log (entered / group member on a new fight / whether a ch.20 claim names the target). **What breaks:** never call StartCombat with two arguments (garbage R8 = the ch.6 CTD) or for an actor with no process; never re-enter on a timer or when the engine ends combat (that is SUSTAINING a decision, #0); never add a StopCombat on release (an undo, #0 (g) condition 4); never dereference the controller or group here (use the pointer; `IsInCombat` reads [cc+0x43]) -- APMF-B26 (`Docs/REVIEW-BACKLOG.md`); never EnqueueRelease from inside Drain; keep `engineGaveUp` across Apply (a rival claim naming the same target must not re-enter after "combat ended" / "engine refused", #0 (g) condition 3). Open review items: APMF-B26, APMF-B30 (StopCombat+StartCombat inside one Poll window), APMF-B31 (brief 3D loss ends the claim). `INVARIANTS #0 (g)` | one-shot engine call (#0 (g)) |
 | `CombatReentryDeny.cpp` (+ `CombatReentryDeny.h`) | 22 | DENY every engine `StartCombat` for an actor during a bounded window (`kIntent_CombatReentryDeny`, ABI v15; no test key) | **SOURCE DENY at `Actor::StartCombat`'s own self-check:** `IsDeadHook` = write_vfunc on Character slot 0x99 (`IsDead`), chaining; `AnswerSelfCheck` runs only when `_ReturnAddress()` == `g_siteRet` (the verified call-site row `ReentryDeny.StartCombat.SelfIsDeadCall` + 11: AE `0x6B69CA` / SE `0x625248`) and answers "dead" (StartCombat refuses before its spinlock / equip / anything) for the WINNING claim inside its window, EVERY call (new entry and in-combat target-add, closing-round option (a)) except ch.21's own entry (`ClientEntryScope`, thread-local, held by `CombatEntry.cpp::Enter` around its StartCombat). The seat reads no actor state. WINDOW: `param.fval` s (0 = 10, clamped 120) from the claim's OWN request / last Repoint -- `NoteRequest` / `NoteRepoint` (called from `ControlMap::EnqueueRequest` / `EnqueueRepoint`, any thread, `g_reqs` under its own mutex); `Apply` (inside Drain) sets a provisional deadline and posts `Settle`, which after Publish reads the winning handle and sets the real deadline (ending a takeover with no time left). Map under `shared_mutex` (unique on the game thread, shared in the seat, which may run on ANY thread). `Poll` (Arbiter seat, 250 ms) ends the claim on "window elapsed" / "owner dead" via `EndClaim` (EnqueueRelease, never inside Drain) and runs the DENY-MISS detector (controller appeared under a live window with no ch.21 pass). `g_siteSeen` + the one-time `seat OBSERVED` log (principle 5); every Engage / Repoint line names the slot-0x99 owner. `ResetAll` at revert + kPreLoadGame (also clears `g_reqs`). **What breaks:** never answer at any return address but StartCombat's SELF check (the target's `IsDead(false)` at AE `0x6B6A0A` is another actor's facet; any other site would lie to the whole engine); never read the controller in the seat (the cross-thread StopCombat race the closing round removed); never let the seat call an engine function or take an engine lock (it can run inside a BSJobs detection job); never drop the `ClientEntryScope` in ch.21 (a client's declared entry would be refused by its own deny); never drop `NoteRequest` / `NoteRepoint` from ControlMap (every window would run from apply time again, F3); never add a StopCombat here (the client's call, #0 (h) condition 1); never EnqueueRelease from inside Drain; keep the call-site row's 11-byte check (it is what pins the exact instruction). `INVARIANTS #0 (h)` | source deny (#0 (h)) |
 | `PursuitLeash.cpp` | 23 | LEASH an actor's in-combat pursuit + search to an anchor actor (`kIntent_PursuitLeash`, ABI v16; no test key) | Arbitration + claim lifecycle only: `Engage` / `OnOwnerChanged` hand `param.target` (anchor) + `param.fval` (radius) to `actiongate::SetLeash`; `Release` calls `ClearLeash`. The enforcement is `core/ActionGate.cpp` (the ch.23 block: act/pop ForceFail pair + the slot-0x04 update seat on 14 leaves). Synchronous refusals in `ControlMap::EnqueueRequest`. **What breaks:** see ActionGate's ch.23 note | claim + T1 enforcement |

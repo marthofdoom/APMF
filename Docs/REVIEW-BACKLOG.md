@@ -356,3 +356,41 @@ Raised against e2a77a8 (`fix/apmf-proxy-per-claim-refcount`, Opus tier-A re-chec
 - SEV-5: the refused-mint path (zero/duplicate FormID) drops the created form without freeing it (leaks until load purge; error-logged every time).
 - SEV-5: the F2 log says "plain deny of its hand", but AllowedCastForHand (Allowance.cpp:148) still admits the original kSelf spell on that hand, so the AI may still self-heal by its own vanilla choice. Nothing is forced. Wording only.
 - Note: the save callback is main-thread synchronous per SKSE64 source (Hooks_Papyrus.cpp SaveGlobalData_Hook); the new PreSaveSweep "on the Drain thread: yes/NO" line confirms it in the field. A NO is a SEV-1 threading finding.
+### APMF-B50 (SEV-4) -- awareness: the detection-event read vs its free on an untraced path
+Raised against 6d84bab (`feat/apmf-own-los-awareness`, Opus tier-3 review, verdict MERGE), 2026-10-05. Finding (verbatim
+as relayed by the coordinator): "the detection-event UAF exposure on the untraced ProcessLists path". Reasoning: SenseActor
+copies `HighProcessData+0x3D8`'s 0x18-byte DetectionEvent on the main thread; the event is freed only by AE 0x6DFAF0, called
+only from 41406 (high-process teardown), reached from 40744 <- 35652 / 40438 / 40745 (ProcessLists-side process-level
+changes), whose thread was not traced. Fix when drained: trace 35652 / 40438 / 40745 to their threads; if any is off the
+main thread, read the event under the engine's own guard for that path or drop the noise route on 1.6.1170 / 1.5.97 /
+1.7.104 until it is. `core/Awareness.cpp` LookAtNoise.
+
+### APMF-B51 (SEV-4) -- awareness: the hearing `level > 0` filter may drop hits
+Raised against 6d84bab, 2026-10-05. Finding (verbatim as relayed): "the hearing `level > 0` filter (hits pass 0; confirm in
+the field)". Reasoning: AE 34993 calls SetActorsDetectionEvent with the level from `0x416070(0)` (SOUND_LEVEL 0 mapped
+through a global); if that maps to 0, every such noise is filtered out as "silent". Fix when drained: read the `[aware]
+noise` lines of the first field run (they print the level of every new noise), then decide whether level 0 counts.
+
+### APMF-B52 (SEV-4) -- SpaceQuery reads a skipped pick as "no hit"
+Raised against 6d84bab, 2026-10-05. Finding (verbatim as relayed): "PickObject's early-out already read as \"clear\" by
+`SpaceQuery.cpp:71` on main". Reasoning: `PickObject` (bhkWorld slot 0x33) can return WITHOUT casting and set
+`bhkPickData+0xC0` (its only writer in the function, all three builds); `spacequery::Cast` reads `rayOutput.HasHit()` only,
+so a skipped walk / ground / clearance ray reads as clear (a false Ok / a false NoGround). core/Sightline.cpp already
+treats it as UNAVAILABLE. Fix when drained: check `pick.unkC0` in `Cast` and fail the query (a new status is ABI: reuse
+kQuery_Failed or kQuery_NoWorld with a logged reason). MFO's own Sightline has the same gap (MFO side).
+
+### APMF-B53 (SEV-5 x6) -- own line of sight / awareness small items
+Raised against 6d84bab, 2026-10-05, the review's SEV-5s (verbatim as relayed): "pin cold start, `TableFull` never emitted,
+GetBound scratch statics, the stale noise baseline, the seat-coverage doc wording, and the ControlMap.cpp split proposal".
+Notes: (a) pin cold start -- a kTargetPin_OwnLineOfSight pin pauses for the first frame or two until its pair's first
+verdict; (b) `kLosWhy_TableFull` is declared but `GetLineOfSight` never reports it (a full probe window reads Unknown);
+(c) GetBoundMin/Max (Character 0x73/0x74) write engine static scratch globals, so a concurrent engine call can tear the
+height/margin read (ray endpoints only); (d) a noise baseline taken long ago stays the baseline -- an actor not queried for
+up to 60 s keeps an old stamp, and a single new noise after that is heard with an age measured from Harbinger's look, not
+the noise; (e) the seat-coverage wording in the docs (which caster vtables the 0x06/0x07 gate covers) should say Restore
+and Offensive only; (f) ControlMap.cpp is 2250+ lines: propose its split as its own round.
+
+### APMF-B54 (SEV-4) -- own LoS margin: hit-body identity and the BBX-contains-capsule assumption
+Raised against 44ee2e2 (`feat/apmf-own-los-awareness`, Opus round-2 re-check MERGE), 2026-10-05.
+- The per-target end margin (bound half-diagonal x GetBaseHeight + 16, clamp [48,1024]) ignores any obstacle within the margin of the target, and a viewer inside it reads VISIBLE through a wall. Errs toward VISIBLE only, only inside the target's own bound; humanoids keep the field-proven 48u. Proper fix: cast to the point and treat a hit as clear only if the hit body is the target's own collidable / group.
+- The bound source (middleHigh->unk180, centre +0x18 / half-extent +0x24, a BSBound BBX shape) is proven; that a modded creature's char-controller capsule fits inside its BBX is not. Field check: [los] margin on giants / dragons in the open should read VISIBLE.

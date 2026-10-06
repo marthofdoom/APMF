@@ -19,7 +19,7 @@
 
 namespace apmf::VerifiedAddresses
 {
-	// 1.6.1170.0: 191 rows
+	// 1.6.1170.0: 196 rows
 	inline constexpr REL::SelfCheck::Row kRows_1_6_1170[] = {
 		{ 207886, 0x18A5558, 0x0, 0, {  }, "Character" },
 		{ 212096, 0x18D7388, 0x0, 0, {  }, "CombatTargetSelectorStandard" },
@@ -212,9 +212,14 @@ namespace apmf::VerifiedAddresses
 		{ 232870, 0x19881F8, 0x0, 0, {  }, "BShkbAnimationGraph" },
 		{ 220287, 0x1941450, 0x0, 0, {  }, "hkbBehaviorGraph" },
 		{ 226812, 0x1964250, 0x0, 0, {  }, "hkbStateMachine" },
+		{ 37560, 0x67E120, 0x0, 0, {  }, "Sightline.Actor.GetCollisionFilterInfo" },
+		{ 18995, 0x2B8D30, 0x0, 0, {  }, "Sightline.TESObjectCELL.GetbhkWorld" },
+		{ 39895, 0x710C80, 0x2CA, 15, { 0xF3, 0x0F, 0x10, 0x15, 0x8A, 0x3A, 0x07, 0x01, 0x48, 0x8D, 0x55, 0xD0, 0xF3, 0x0F, 0x10 }, "Sightline.AIProcess.KnockExplosion" },
+		{ 188105, 0x17849DC, 0x0, 0, {  }, "Sightline.bhkWorld.WorldScale" },
+		{ 12332, 0x179710, 0x0, 0, {  }, "CommonLib.LookupReferenceByHandle" },
 	};
 
-	// 1.5.97.0: 191 rows
+	// 1.5.97.0: 196 rows
 	inline constexpr REL::SelfCheck::Row kRows_1_5_97[] = {
 		{ 261397, 0x165DA40, 0x0, 0, {  }, "Character" },
 		{ 265605, 0x1690A98, 0x0, 0, {  }, "CombatTargetSelectorStandard" },
@@ -407,9 +412,14 @@ namespace apmf::VerifiedAddresses
 		{ 282351, 0x1741A20, 0x0, 0, {  }, "BShkbAnimationGraph" },
 		{ 275301, 0x16FADB0, 0x0, 0, {  }, "hkbBehaviorGraph" },
 		{ 278793, 0x171DB80, 0x0, 0, {  }, "hkbStateMachine" },
+		{ 36559, 0x5EBD90, 0x0, 0, {  }, "Sightline.Actor.GetCollisionFilterInfo" },
+		{ 18536, 0x2654C0, 0x0, 0, {  }, "Sightline.TESObjectCELL.GetbhkWorld" },
+		{ 38858, 0x67D4A0, 0x387, 15, { 0xF3, 0x0F, 0x10, 0x15, 0x1D, 0x2E, 0xEC, 0x00, 0xF3, 0x0F, 0x59, 0xC2, 0xF3, 0x0F, 0x11 }, "Sightline.AIProcess.KnockExplosion" },
+		{ 231896, 0x154064C, 0x0, 0, {  }, "Sightline.bhkWorld.WorldScale" },
+		{ 12204, 0x1329D0, 0x0, 0, {  }, "CommonLib.LookupReferenceByHandle" },
 	};
 
-	// 1.7.104.0: 202 rows
+	// 1.7.104.0: 207 rows
 	// 28 NOT VERIFIED on 1.7.104.0, deliberately absent from this table (the seat is refused):
 	//   EquipSink.Path.OutfitApply.24234 (1.6.1170 id -): BY DESIGN: 1.5.97-only label. On 1.6.1170 and 1.7.104 the code reads its AE twin EquipSink.Path.OutfitApply.418622 (AE id 418622, 1.7.104 0x3C4440), whose own row carries the 1.7.104 fact (MAPPED-AE)
 	//   EquipSink.Path.AddWornOutfit.19266 (1.6.1170 id -): BY DESIGN: 1.5.97-only label. On 1.6.1170 and 1.7.104 the code reads its AE twin EquipSink.Path.AddWornOutfit.19692 (AE id 19692, 1.7.104 0x2E8070), whose own row carries the 1.7.104 fact (MAPPED-AE)
@@ -631,6 +641,11 @@ namespace apmf::VerifiedAddresses
 		{ 232870, 0x1A07D78, 0x0, 0, {  }, "BShkbAnimationGraph" },
 		{ 220287, 0x19C09F0, 0x0, 0, {  }, "hkbBehaviorGraph" },
 		{ 226812, 0x19E37F0, 0x0, 0, {  }, "hkbStateMachine" },
+		{ 37560, 0x690BE0, 0x0, 0, {  }, "Sightline.Actor.GetCollisionFilterInfo" },
+		{ 18995, 0x2BE9B0, 0x0, 0, {  }, "Sightline.TESObjectCELL.GetbhkWorld" },
+		{ 39895, 0x7237C0, 0x2CA, 15, { 0xF3, 0x0F, 0x10, 0x15, 0xCA, 0xA3, 0x0D, 0x01, 0x48, 0x8D, 0x55, 0xD0, 0xF3, 0x0F, 0x10 }, "Sightline.AIProcess.KnockExplosion" },
+		{ 188105, 0x17FDE5C, 0x0, 0, {  }, "Sightline.bhkWorld.WorldScale" },
+		{ 12332, 0x17ED00, 0x0, 0, {  }, "CommonLib.LookupReferenceByHandle" },
 		{ 0, 0x82D2C0, 0x0, 0, {  }, "AiCastSeats.Melee.CalculateScore" },
 		{ 0, 0x82D790, 0x0, 0, {  }, "AiCastSeats.Ranged.CalculateScore" },
 		{ 0, 0x82DCD0, 0x0, 0, {  }, "AiCastSeats.Shield.CalculateScore" },
