@@ -1073,7 +1073,8 @@ namespace apmf {
                             spdlog::warn("[ch.8b] 0x{} claimed kSelf spell 0x{} at another actor (0x{}) but no "
                                          "delivery-flip proxy could be had -- the claim's target is left "
                                          "UNRESOLVED so no seat drives the original form (it would land on the "
-                                         "caster). The claim stands as a plain deny of its hand.",
+                                         "caster). The claim still occupies its hand, but nothing is forced: the original kSelf spell is "
+                                         "still admitted on that hand (AllowedCastForHand), so the AI may cast it by its own choice.",
                                          apmf::log::Hex(op.actor), apmf::log::Hex(spell), apmf::log::Hex(castTarget));
                         }
                     }
@@ -1150,8 +1151,9 @@ namespace apmf {
                             castTargetHandle = RE::ActorHandle{};
                             spdlog::warn("[ch.8b] 0x{} claimed spell 0x{} (delivery {}) at ITSELF but no self-flip "
                                          "proxy could be had -- the claim's target is left UNRESOLVED so no seat aims "
-                                         "the original form at its own caster. The claim stands as a plain deny of "
-                                         "its hand.",
+                                         "the original form at its own caster. The claim still occupies its hand "
+                                         "but forces nothing: the AI may still cast the original spell on that hand by "
+                                         "its own choice (AllowedCastForHand admits it).",
                                          apmf::log::Hex(op.actor), apmf::log::Hex(spell), static_cast<int>(delivery));
                         } else if (SelfClaimLogDue(op.actor, spell)) {
                             spdlog::info("[ch.8b] 0x{} SELF cast claim (h={}, spell 0x{}, delivery {}) drives self-flip "
@@ -2174,9 +2176,9 @@ namespace apmf {
         // and core/CastClassify.cpp's SEAT 0 never resolve a hand -- they already
         // know the candidate FORM they are deliberating about. Search every LIVE
         // (unexpired) claim on the cast channel for the one whose driven form
-        // (proxy, else spell) equals `form`; NOT an arbitration -- the two
-        // concurrent claims never compete for the same magic-item instance, so
-        // there is nothing to pick a "winner" between here.
+        // (proxy, else spell) equals `form`. Two claims on different forms never
+        // compete for one magic-item instance; if several share the form, the
+        // BetterClaim-best answers (APMF-B49).
         out = CastSeatClaim{};
         if (form == 0) return false;
         if (m_anyControlled.load(std::memory_order_relaxed) == 0) return false;
@@ -2194,19 +2196,24 @@ namespace apmf {
         const auto nowMs = apmf::clock::MonotonicMs();
         for (const auto& cs : npc.channels) {
             if (cs.channel != channel) continue;
+            // APMF-B49: when several live claims drive the same form (a same-hand,
+            // same-spell pair), answer with the BetterClaim-best of them, not the first
+            // in vector order -- the ONE comparator (ControlMap.h).
+            const Claim* best = nullptr;
             for (const auto& c : cs.claims) {
                 if (c.expiresMs != 0 && nowMs >= c.expiresMs) continue;   // gone -- do not let it match
                 const RE::FormID driven = c.castProxy ? c.castProxy : c.param.form;
                 if (driven == 0 || driven != form) continue;
-                out.spell        = c.param.form;
-                out.proxy        = c.castProxy;
-                out.target       = c.castTarget;
-                out.targetHandle = c.castTargetHandle;
-                out.flags        = c.castFlags;
-                out.expiresMs    = c.expiresMs;
-                return true;
+                if (!best || BetterClaim(c, *best)) best = &c;
             }
-            return false;
+            if (!best) return false;
+            out.spell        = best->param.form;
+            out.proxy        = best->castProxy;
+            out.target       = best->castTarget;
+            out.targetHandle = best->castTargetHandle;
+            out.flags        = best->castFlags;
+            out.expiresMs    = best->expiresMs;
+            return true;
         }
         return false;   // controlled, but not on the cast channel
     }

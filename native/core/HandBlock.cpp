@@ -197,7 +197,10 @@ namespace apmf::handblock {
             // The hand(s) this candidate would take, from THE one category map with the
             // item's OWN slot (AE 48124 equips [item+0x20] as the slot). A two-hander or a
             // bow competes for both; a one-hander with an EitherHand / foreign / null slot
-            // competes for both (Categorize's conservative rule); a shield or a torch, the left.
+            // competes for both (Categorize's conservative rule, which the SINK still applies; at
+            // THIS seat that branch is unreachable: CombatInventory AddItem (AE 0x811AC0) splits a
+            // multi-parent slot into per-parent items, so a one-hander arrives as a RightHand
+            // item plus a LeftHand clone -- APMF-B66 F10); a shield or a torch, the left.
             const std::uint32_t competes =
                 apmf::equipsink::Categorize(bound, a_this->itemSlot.equipSlot) &
                 (APMF_API::kEquipCat_Right | APMF_API::kEquipCat_Left);

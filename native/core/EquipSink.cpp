@@ -544,6 +544,9 @@ namespace apmf::equipsink {
                 const bool l = (hold.held & APMF_API::kEquipCat_Left) != 0;
                 const bool spellsOnly = (!r || hold.spellsOnlyR) && (!l || hold.spellsOnlyL);
                 const bool floorOnly  = (!r || hold.denyOnlyR) && (!l || hold.denyOnlyL);
+                // A MIXED hold (e.g. R on a spells-only floor, L under a driving claim) matches
+                // neither floor label, so it reads "a cast claim" for the whole pair (APMF-B67
+                // F6: label only, the refusal is right). The label names the claim, not each hand.
                 if (r && l)
                     verdict = spellsOnly ? "deny (hands R+L held by a spells-only floor: a staff)"
                             : floorOnly  ? "deny (hands R+L held by a deny-only floor)"
