@@ -339,6 +339,10 @@ namespace apmf {
         // seat 0x06 (whose gaps run past kLosInterestMs). Same RCU reader discipline as
         // ClaimedActors; appends to `out` (the caller clears it).
         void OwnLosCastPairs(std::vector<std::pair<RE::FormID, RE::FormID>>& out) const;
+        // The same for ch.20 (kIntent_TargetPin): every live pin claim with
+        // kTargetPin_OwnLineOfSight in param.ival, (actor, param.form) when the target is not
+        // the actor -- the pairs channels/TargetPin.cpp's selector seat reads.
+        void OwnLosPinPairs(std::vector<std::pair<RE::FormID, RE::FormID>>& out) const;
 
         // ---- ch.17 EquipAuthority seat read: ANY thread (RCU reader). The
         // engine-equip sink (core/EquipSink.cpp) calls this from whatever thread

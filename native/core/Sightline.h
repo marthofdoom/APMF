@@ -32,22 +32,27 @@
 // frame: drain the request ring into slots, drop pairs nobody asked for in
 // kLosInterestMs, and re-measure at most kLosMaxPairsPerFrame pairs whose newest
 // measurement is at least kLosRefreshMs old, oldest first. Every kLosRefreshMs it also
-// asks for the pair of every STANDING kCastFlag_OwnLineOfSight cast claim
-// (ControlMap::OwnLosCastPairs), so such a pair is tracked for as long as its claim stands
-// and not only while the engine happens to poll seat 0x06 (fix/apmf-los-false-occlusion:
-// those polls came 2-5 s apart in field session 1006c, past kLosInterestMs, and every poll
-// read UNKNOWN).
+// asks for the pair of every STANDING kCastFlag_OwnLineOfSight cast claim and every
+// kTargetPin_OwnLineOfSight pin claim (ControlMap::OwnLosCastPairs / OwnLosPinPairs), so such
+// a pair is tracked for as long as its claim stands and not only while the engine happens to
+// poll the seat (fix/apmf-los-false-occlusion: seat 0x06 polls came 2-5 s apart in field
+// session 1006c, past kLosInterestMs, and every poll read UNKNOWN).
 //
 // THE HIT FILTER (fix/apmf-los-false-occlusion). Each ray is cast with Harbinger's own
 // closest-hit collector in bhkPickData +0xA8 (Sightline.cpp LosCollector: the engine's
-// PickObject casts with it on all three builds). It steps past the viewer's own body and
-// past a PHANTOM that is not a character controller (trigger, acoustic-space, actor-zone,
-// trap-trigger volumes: overlap volumes nothing walks into, which the character-controller
-// layer nevertheless collides with). A nearest hit carrying the TARGET's own collision
-// group has reached the target: that ray is clear. Other actors' bodies and every solid
-// body still block. Each OCCLUDED measurement logs what stopped each ray (layer, phantom or
-// body, group, the owning reference via TESHavokUtilities::FindCollidableRef, viewer /
-// target / player / teammate / other actor, hit distance of the eye-to-point distance).
+// PickObject casts with it on all three builds). It steps past the viewer's own body, past
+// every hit on a layer a SPELL passes through (not in L_SPELL's COLL collides-with set:
+// TRANSPARENT, PROJECTILE, SPELL, CLOUDTRAP, ACOUSTIC_SPACE, ACTORZONE, STAIRHELPER,
+// COLLISIONBOX, CAMERA, SPELLEXPLOSION, LIVING_AND_DEAD_ACTORS, TRAP_TRIGGER) and past any
+// PHANTOM (trigger / gas volumes) -- except a CHARCONTROLLER hit: another actor's capsule
+// always blocks (marth: "spells cant go through npcs or sarcophogi"). A nearest hit carrying
+// the TARGET's own collision group has reached the target: that ray is clear. Statics,
+// animstatics, props, clutter, terrain and every other solid body block. The ray never meets a
+// ragdoll (BIPED / DEADBIP are outside the CHARCONTROLLER layer's set): a dead body never
+// occludes. Each OCCLUDED measurement logs what stopped each ray (layer, phantom or body,
+// group, the owning reference via TESHavokUtilities::FindCollidableRef, viewer / target /
+// player / teammate / other actor, hit distance of the eye-to-point distance), at most once
+// per pair per 2 s and 5 per second overall.
 //
 // LOCK SCOPE (the 2026-09-30 freeze hypothesis). Harbinger takes NO lock around a
 // ray. bhkWorld::PickObject (vtable slot 0x33) takes the world's worldLock for READ

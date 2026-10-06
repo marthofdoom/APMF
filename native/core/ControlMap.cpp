@@ -2311,6 +2311,29 @@ namespace apmf {
         }
     }
 
+    void ControlMap::OwnLosPinPairs(std::vector<std::pair<RE::FormID, RE::FormID>>& out) const {
+        // Same discipline as OwnLosCastPairs. Pin claims carry no TTL (expiresMs 0); the check
+        // stays for symmetry.
+        if (m_anyControlled.load(std::memory_order_relaxed) == 0) return;
+
+        std::shared_ptr<const MapType> snap = m_published.load(std::memory_order_acquire);
+        auto* channel = Registry::Get().ChannelForIntent(APMF_API::kIntent_TargetPin);
+        if (!channel) return;
+
+        const auto nowMs = apmf::clock::MonotonicMs();
+        for (const auto& [fid, npc] : *snap) {
+            for (const auto& cs : npc.channels) {
+                if (cs.channel != channel) continue;
+                for (const auto& c : cs.claims) {
+                    if (c.expiresMs != 0 && nowMs >= c.expiresMs) continue;
+                    if ((static_cast<std::uint32_t>(c.param.ival) & APMF_API::kTargetPin_OwnLineOfSight) == 0) continue;
+                    if (c.param.form == 0 || c.param.form == fid) continue;
+                    out.emplace_back(fid, c.param.form);
+                }
+            }
+        }
+    }
+
     bool ControlMap::TryGetEquipSet(RE::FormID actor, EquipSetView& out) const {
         // ANY thread -- core/EquipSink.cpp's thunk calls this from whatever engine
         // thread performs an equip. Same RCU discipline as TryGetOwningClaim:

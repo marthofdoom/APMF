@@ -474,17 +474,19 @@ main thread is the only writer), a 64-cell lock-free request ring for unknown pa
 `mainthread::Pump`) drains the ring, drops pairs unasked for `kLosInterestMs` (2 s),
 re-measures <= `kLosMaxPairsPerFrame` (8) pairs older than `kLosRefreshMs` (250 ms), oldest
 first. Every 250 ms Pump also asks for the pair of every standing `kCastFlag_OwnLineOfSight`
-cast claim (`ControlMap::OwnLosCastPairs`, same predicate as CastSeats' `OwnLosApplies`), so the
-pair lives as long as the claim, not only while seat 0x06 polls (its 2-5 s gaps, past the 2 s
-interest window, made every poll read UNKNOWN in session 1006c; fix/apmf-los-false-occlusion).
-THE HIT FILTER (same fix): each pick carries `LosCollector` in `bhkPickData` +0xA8 (PickObject's
-closest-hit collector slot, disassembled on all three builds); it skips the viewer's own group
-and any PHANTOM that is not on the character-controller layer (trigger / acoustic-space /
-actor-zone / trap-trigger volumes), and a nearest hit in the TARGET's own collision group reads
-as "reached" (that ray is clear). Other actors and solid bodies still block. Each OCCLUDED
-measurement logs `[los] ... OCCLUDED by -- feet: L_<layer>(n) body|phantom group g [= the
-VIEWER's/TARGET's own] ref 0x.. <TYPE> '<name>' [actor: ...] at Xu of Yu; torso ...; head ...`
-(per pair, 2 s), names via the LOG-ONLY row `Sightline.TESHavokUtilities.FindCollidableRef`. `MeasureNow` (main, for SenseActor) reuses a < 250 ms verdict and casts for at most
+cast claim and `kTargetPin_OwnLineOfSight` pin claim (`ControlMap::OwnLosCastPairs` /
+`OwnLosPinPairs`), so the pair lives as long as the claim, not only while the seat polls (seat
+0x06's 2-5 s gaps, past the 2 s interest window, made every poll read UNKNOWN in session 1006c;
+fix/apmf-los-false-occlusion). THE HIT FILTER (same fix): each pick carries `LosCollector` in
+`bhkPickData` +0xA8 (PickObject's closest-hit collector slot, disassembled on all three builds);
+it skips the viewer's own group, every layer NOT in L_SPELL's COLL collides-with set
+(`kSpellBlocks`: STAIRHELPER, TRANSPARENT, COLLISIONBOX, CAMERA, ACOUSTIC_SPACE, ACTORZONE,
+TRAP_TRIGGER, CLOUDTRAP, PROJECTILE, SPELL, SPELLEXPLOSION, LIVING_AND_DEAD_ACTORS pass) and any
+phantom (TRIGGER / GASTRAP volumes) -- never a CHARCONTROLLER hit (marth: actors block). A
+nearest hit in the TARGET's own collision group reads as "reached" (that ray is clear). Each
+OCCLUDED measurement logs `[los] ... OCCLUDED by -- feet: L_<layer>(n) body|phantom group g [=
+the VIEWER's/TARGET's own] ref 0x.. <TYPE> '<name>' [actor: ...] at Xu of Yu; torso ...; head ...`
+(per pair 2 s, 5/s overall), names via the LOG-ONLY row `Sightline.TESHavokUtilities.FindCollidableRef`. `MeasureNow` (main, for SenseActor) reuses a < 250 ms verdict and casts for at most
 `kLosMaxSyncPairsPerFrame` (8) pairs per frame (Pump advances `g_frame`); past that it answers
 from a fresh stored verdict or Unknown (`kAwareDetail_SightDeferred`), so the hard bound is
 3 x (8 + 8) rays per frame. `[los]` VISIBLE/OCCLUDED lines are at most one per pair per 2 s
