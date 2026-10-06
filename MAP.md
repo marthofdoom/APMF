@@ -558,6 +558,31 @@ the same forced answer within one classify pass — see the .cpp's comment).
   is logged anyway with `(no live claim on this actor at classify time; ...)` under reason
   tag `|0x80`. So "never classified" is distinguishable from "classified without a claim".
   Exits 3/4 (no effect / base effect) stay gated. Keep any new exit routed through `NotServed`.
+- **PLACEMENT SPELLS + ROWLESS ROW SUBSTITUTION (feat/apmf-buff-summon-seats, 2026-10-05).**
+  `IsPlacementSpell` (exported): a spell with a SummonCreature or Reanimate effect is never
+  self-forced (spell-level; Reanimate's only row is {Reanimate, OTHER}, so forcing self dropped
+  it from every row; Summon's rows 14/15 share one creator), and `ControlMap::ApplyRequest`
+  resolves a target-0 claim on it to the claimant (APMF-B39's block, call-site edit).
+  `ServeRowless` (after the chained visitor, after `ServeUnclassedHeal`): for a CLAIMED driven
+  form with a target handle whose effects key NO row with a creator (and none is heal-shaped),
+  each effect goes to KEEP-BEST with the engine's own Script row (row 22 beneficial / row 9
+  hostile). Script's creator builds a bare 0x20-byte `CombatMagicCasterScript`; its slots read
+  nothing archetype-specific (0x0C sets a blackboard timer from the effect's own aiDelayTimer);
+  the row scores by the effect's own aiScore and KEEP-BEST's best starts at -1.0. Restore is
+  not used for rowless (its 0x07 reads the effect's AV as a restore percent; its 0x0B/0x0C set
+  the 15 s MagicRestoreRestrictionTimer). The "keys a row" test replicates the visitor key
+  (`kAvKeyedArchetypes`, primary then secondary AV) against `kExpectedRows`, and Install
+  compares all 23 LIVE table rows with `kExpectedRows` (+ both Script rows share one creator)
+  before enabling it; any mismatch refuses only this part, loudly. **The lookup MAP holds
+  every ValueModifier row again under archetypes 4 / 5 / 32 / 34** (map builder AE 0x81DCA0 /
+  SE 0x7816C0 / 1.7.104 0x833190) -- so a PeakValueModifier Health self heal (Close Greater
+  Wounds) DOES key the Restore row natively, contrary to `ServeUnclassedHeal`'s banner;
+  `ServeUnclassedHeal`'s `AlreadyClassed` test only knows arch 0 and so calls KEEP-BEST a second
+  time with the SAME row for those (same row kept; adds to the resolver's +0x48 score sum).
+  Left unchanged here (not this brief's scope); open for the heal road.
+  **What breaks:** feeding a non-claimed spell to `ServeRowless`; deciding "rowless" from
+  anything but the replicated key (a native row must always win); adding a row without updating
+  `kExpectedRows` (Install then refuses, by design). Open review items: APMF-B58 (b)(c), APMF-B59 (d)(e)(f).
 
 ### `native/core/CastSeats.{h,cpp}` — ch.8b: THE ENGINE CAST SEATS (the keystone)
 While a `kIntent_Cast` claim {actor A, spell S, target T} stands, APMF answers the
@@ -565,11 +590,34 @@ vfunc seats the combat AI's OWN cast decision is built out of, so the NPC's own 
 selects, equips, charges, aims, fires and channels S at T — engine animation, engine
 magicka, engine LOS/interrupts. **APMF makes no `EquipSpell`, `CastSpell`,
 `CastSpellImmediate`, `NotifyAnimationGraph` or caster-state write anywhere.**
-FOUR seats here, on `VTABLE_CombatMagicCasterRestore[0]` **and
-`VTABLE_CombatMagicCasterOffensive[0]`** ONLY — 2 of the 14 caster vtables,
-RTTI-verified (`CastSeats.cpp:483-500`; Offensive added in v0.9.2 by
-`feat/offense-seat-scope` because a claimed HOSTILE spell classifies into the
-Offensive caster, never Restore, so a claim on it was inert):
+FOUR seats here, on **TEN caster vtables** since `feat/apmf-buff-summon-seats` (2026-10-05):
+Restore, Offensive, Ward, Summon, Cloak, Light, Invisibility, BoundItem, Armor, Script
+(`SeatTypes()` in `CastSeats.cpp`), RTTI-verified, each a VerifiedAddresses vtable row on all three
+builds with its hooked slot functions listed in `Docs/VERIFIED-ADDRESSES.md`. Never Stagger, Disarm,
+TargetEffect, Paralyze or Reanimate. History: Restore only, then + Offensive in v0.9.2
+(`feat/offense-seat-scope`, a claimed HOSTILE spell classifies into Offensive); the 2026-10-05 widening
+serves claimed self buffs (Oakflesh -> Armor, Candlelight -> Light, wards, cloaks, bound weapons,
+Invisibility), buffs at another actor (their delivery-flip proxy keys the same row through seat 0),
+summons (Summon) and rowless spells (seat 0's Script substitution). On those types the shared base
+0x0A aimed a non-kSelf form at the combat target (the FOE) and 0x06 was the type's own native gate.
+**NATIVE PLACEMENT:** a claim whose target is the claimant on a NON-kSelf spell (ControlMap resolves
+that only for a summon / reanimate spell, `castclassify::IsPlacementSpell`) keeps the engine's own
+placement: 0x0A chains, 0x0D leaves the engine default; 0x06 / 0x07 still answer from the claim.
+**COMPOSED WHETHER (round 2, review SEV-2/SEV-3 of 3903988):** on the eight new types 0x06's claim YES
+also needs the engine's own redundancy check -- `AlreadyApplied` replicates `0x81E6C0` (target via
+GetMagicTarget; Light/Armor/Invisibility/Script/Cloak/Ward) and `0x81E400` (the CASTER; Summon/BoundItem):
+"an active effect whose spell IS this magicItem", skipped for concentration (functor MagicCastOnTarget,
+`ActiveEffect+0x40`, identical on all three builds; neither id is in the fork's 1.7.104 table, so it is
+re-implemented through the fork's members, not called). Light serves only kSelf / kTargetActor delivery
+(an aimed / location Light spell leaves no active effect to bound). Ward keeps its own magicka floor
+(GMST `fCombatMagicWardMagickaCastLimit`, read by name at install; Ward is NOT seated without it): 0x06
+refuses and 0x07 stops below it. `NativePlacement` also requires `IsPlacementSpell` (an explicit self
+target on Heal Other must never chain 0x0A to the foe). Open: APMF-B58 / APMF-B59.
+**What breaks:** dropping the bound re-casts persistent effects every hand cycle (Light = the 2026-08-19
+CTD shape, summons re-summon); seating Light for a non-actor-borne delivery has no bound.
+**PROBES (principle 5):** `[ch.8b seats] FIRST claim answer on the <Type> caster, seat 0xNN ...` once
+per (type, seat), and `castseats::SeatCountsLine()` (per-type claim-answer counts 0x06/0x07/0x0A/0x0D,
+plus native-placement 0x0A calls) in the `[ctcensus] HEARTBEAT`.
 - `0x06 CheckStartCast` -> TRUE from the claim (magicka stays enforced by
   `MagicCaster::CheckCast` inside `CastSpell`; hand-idle/`bMLh_Ready` by the leaf's
   own 0x89f3c0; the equip by seat 0x0F). Bypasses only the vanilla health threshold,
@@ -603,7 +651,8 @@ Offensive caster, never Restore, so a claim on it was inert):
   a non-VISIBLE verdict answer YES. The bit only means anything on RequestCast (a target): the
   degenerate `RequestEx(kIntent_Cast)` form has no target, so `ControlMap::EnqueueRequest`
   REFUSES the bit there by name (review SEV-3, 6d84bab) -- never let it through as a no-op.
-  Only the Restore and Offensive caster vtables carry these seats (APMF-B53 (e)).
+  Every seated caster type carries these seats (ten since feat/apmf-buff-summon-seats; APMF-B53 (e)'s
+  "Restore and Offensive only" wording predates that).
 - `0x0A GetMagicTarget` -> `out->handle = claim target's native handle; out->ptr =
   nullptr`. THREE args with a hidden 16-byte sret out-slot (CommonLib declares two and
   is WRONG — the bug that CTD'd the passive probe). Handle form is the lifetime-safe
@@ -619,9 +668,11 @@ Offensive caster, never Restore, so a claim on it was inert):
   `desiredTarget`) and for a concentration heal's tolerance/LOS re-checks.
 The FIFTH seat (`0x0F CheckShouldEquip`) lives in `core/EquipGate.cpp` — see there.
 - **What breaks:** **SCOPE IS THE SAFETY ARGUMENT.** `GetMagicTarget`'s implementation
-  (0x81e020) is the BASE, shared by 13 of the 14 caster vtables. Widening the install
-  list beyond {Restore, Offensive} aims Stagger/Disarm/Reanimate/Summon/Ward HOSTILE
-  effects at the ally. (Corrected 2026-09-07: this note used to say "beyond Restore",
+  (0x81e020) is the BASE, shared by 14 of the 15 caster vtables (Reanimate overrides it).
+  Adding Stagger / Disarm / TargetEffect / Paralyze to the install list would let a claim aim
+  their HOSTILE effects; adding Reanimate would replace its corpse targeting (its own 0x06
+  corpse search feeds its own 0x0A / 0x0D). Removing `NativePlacement` aims a summon at its
+  own caster. (2026-10-05: the list is ten types, see above.) (Corrected 2026-09-07: this note used to say "beyond Restore",
   which by then pointed the wrong way — Offensive has been in the list since v0.9.2 and
   is what makes an offense claim work at all. The rule is "no vtable a live claim does
   not need", not "Restore".) The second gate (`ClaimNamesThisCast`: deliberating actor holds the claim AND
@@ -761,6 +812,11 @@ windows, e.g. an AUTO fan) and a 60 s HEARTBEAT with engine-wide per-type fire c
   row since this change; the `DerivesFrom` walk at install stays the guard. A type that failed to install
   reads as zero: the install line names it. Never call `Actor::GetMagicCaster` here (it allocates on a
   null slot): read `magicCasters[]` directly. Open review items: `Docs/REVIEW-BACKLOG.md` APMF-B40.
+  2026-10-05 (feat/apmf-buff-summon-seats): `LookupRow` knows the map's ValueModifier aliases
+  (archetypes 4/5/32/34), `PredictRows` skips the self flip for placement spells and appends
+  ` sub[Script]` when seat 0's rowless substitution applies, and the HEARTBEAT carries
+  `claim seats answered 0x06/0x07/0x0A/0x0D [...]` from `castseats::SeatCountsLine()`. Labels
+  only; never branch on them.
 
 ### `native/core/Input.{h,cpp}` — test surface (OPT-IN, DEFAULT OFF)
 `InputSink` (keyboard button-down) → `Arbiter::DispatchHotkey` (+ each probe's

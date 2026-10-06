@@ -437,7 +437,8 @@ construction.
 > 1. **"denies, never drives" and "the CLIENT executes its own animated cast" are
 >    RETIRED.** A `kIntent_Cast` claim COMPOSES (#0 action (d), #20): APMF answers the
 >    engine's own cast-decision seats (0x06/0x07/0x0A/0x0D on the Restore + Offensive
->    caster vtables, plus 0x0F) and the NPC's OWN AI selects, equips, charges, aims,
+>    caster vtables -- ten caster types since 2026-10-05, feat/apmf-buff-summon-seats --
+>    plus 0x0F) and the NPC's OWN AI selects, equips, charges, aims,
 >    fires and channels the claimed spell. APMF still makes NO cast write of its own —
 >    that part of the rule stands, and it is the part #0 is really about.
 > 2. **The T1 cast-leaf deny is NOT part of this claim any more.** `kIntent_Cast` no

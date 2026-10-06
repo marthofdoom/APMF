@@ -6,6 +6,10 @@
 #include "core/CastSeats.h"
 #include "core/RestoreCensus.h"
 #include "core/Sightline.h"   // ABI v18 kCastFlag_OwnLineOfSight
+#include "core/CastClassify.h"  // IsPlacementSpell (NativePlacement gate)
+
+#include <cstring>
+#include <vector>
 
 // Win32 INI read for the one kill-switch below. Declared by hand, exactly like
 // core/AiCastSeats.cpp and core/Hook.cpp do -- PCH does not pull in <Windows.h>,
@@ -135,6 +139,79 @@ namespace apmf::castseats {
         // claim TTL and target-death, see CheckStopCastThunk).
         std::atomic<std::uintptr_t> g_restoreVtable{ 0 };
 
+        // ---- THE SEATED CASTER TYPES (feat/apmf-buff-summon-seats widened the list from {Restore,
+        // Offensive}). Each is a VerifiedAddresses vtable row on 1.6.1170 / 1.5.97 / 1.7.104 and is
+        // RTTI-derivation-checked at install (allowance::InstallOnVtables). Slot functions on the
+        // three builds (disassembled, agentlog apmf-buff-summon-seats, Docs/VERIFIED-ADDRESSES.md):
+        // 0x0A is the SHARED base GetMagicTarget (AE 0x81E020 / SE 0x781CB0 / 1.7.104 0x833510) and
+        // 0x0D the shared bare `ret` (0x81E0B0 / 0x781D00 / 0x8335A0) on every type below; 0x06 and
+        // 0x07 are per-type, every one `bool(CombatMagicCaster*, CombatController*)` (rdx = the
+        // controller, AL returned) on all three. NOT seated: Stagger, Disarm, TargetEffect,
+        // Paralyze (hostile, no claim needs them) and Reanimate (its own 0x06 corpse search, 0x0A
+        // and 0x0D are what aim it -- a claim's answer would replace the corpse).
+        // REDUNDANCY BOUND (review SEV-2 of 3903988). Every newly seated type's OWN 0x06 refuses a
+        // cast whose effect is already on its recipient; a claim answering YES alone re-cast the spell
+        // every hand cycle while the claim stood (Light spam = the 2026-08-19 CTD shape; summons
+        // re-summoning; buffs burning magicka). The claim's YES is now COMPOSED with that engine check:
+        //   kTarget: `!0x81E6C0(this, cc)` in the type's 0x06 (Light AE 0x821390 / SE 0x785000 /
+        //            1.7.104 0x836880, Armor, Invisibility, Script, Cloak, Ward): GetMagicTarget (slot
+        //            0x0A, i.e. the claim's target through this file's own 0x0A) then "does that actor
+        //            carry an active effect whose spell IS this caster's magicItem" (skipped for a
+        //            concentration spell). AE 0x81E6C0 / SE 0x7823E0 / 1.7.104 0x833BB0.
+        //   kCaster: `!0x81E400(attacker, magicItem)` in Summon / BoundItem 0x06 (AE 0x8203B0 /
+        //            0x821910): the same walk on the CASTER (a summon's / bound weapon's effect lives on
+        //            the caster). AE 0x81E400 / SE 0x782090 (inlined into SE BoundItem) / 1.7.104 0x8338F0.
+        // Both walk MagicTarget::GetActiveEffectList (vfunc 7) with the functor MagicCastOnTarget
+        // (AE vtable 0x18D53E8, Accept 0x838A30: `effect+0x40 == magicItem`). Neither function's id is in
+        // the fork's 1.7.104 table, so it is not CALLED: AlreadyApplied() below is that walk, line for line,
+        // through the fork's own MagicTarget / ActiveEffect members. Restore / Offensive keep their
+        // existing claim answer (kNone).
+        enum class Bound : std::uint8_t { kNone, kTarget, kCaster };
+        struct SeatType {
+            REL::VariantID id;
+            const char*    name;
+            Bound          bound;
+        };
+        constexpr std::size_t kSeatTypes = 10;
+        const std::array<SeatType, kSeatTypes>& SeatTypes() {
+            static const std::array<SeatType, kSeatTypes> s{ {
+                { RE::VTABLE_CombatMagicCasterRestore[0], "Restore", Bound::kNone },
+                { RE::VTABLE_CombatMagicCasterOffensive[0], "Offensive", Bound::kNone },
+                { RE::VTABLE_CombatMagicCasterWard[0], "Ward", Bound::kTarget },
+                { RE::VTABLE_CombatMagicCasterSummon[0], "Summon", Bound::kCaster },
+                { RE::VTABLE_CombatMagicCasterCloak[0], "Cloak", Bound::kTarget },
+                { RE::VTABLE_CombatMagicCasterLight[0], "Light", Bound::kTarget },
+                { RE::VTABLE_CombatMagicCasterInvisibility[0], "Invisibility", Bound::kTarget },
+                { RE::VTABLE_CombatMagicCasterBoundItem[0], "BoundItem", Bound::kCaster },
+                { RE::VTABLE_CombatMagicCasterArmor[0], "Armor", Bound::kTarget },
+                { RE::VTABLE_CombatMagicCasterScript[0], "Script", Bound::kTarget },
+            } };
+            return s;
+        }
+        // Resolved address per type (set once at install), and PASSIVE per-type counters of the
+        // calls a claim ANSWERED, per seat: [type][0x06, 0x07, 0x0A, 0x0D]. Principle 5: the first
+        // claim answer on each (type, seat) logs one FIRST line, and SeatCountsLine() feeds the
+        // [ctcensus] HEARTBEAT, so a field run shows which of these seats ever execute.
+        std::array<std::atomic<std::uintptr_t>, kSeatTypes>                       g_typeVt{};
+        std::array<std::array<std::atomic<std::uint32_t>, 4>, kSeatTypes>         g_claimCalls{};
+        std::array<std::array<std::atomic<bool>, 4>, kSeatTypes>                  g_firstLogged{};
+        std::array<std::atomic<std::uint32_t>, kSeatTypes>                        g_nativePlacement{};
+
+        int TypeIndex(std::uintptr_t a_vt) {
+            for (std::size_t i = 0; i < kSeatTypes; ++i)
+                if (g_typeVt[i].load(std::memory_order_relaxed) == a_vt) return static_cast<int>(i);
+            return -1;
+        }
+
+        int SeatIndex(std::uint32_t a_seat) {
+            switch (a_seat) {
+            case 0x06: return 0;
+            case 0x07: return 1;
+            case 0x0A: return 2;
+            default:   return 3;   // 0x0D
+            }
+        }
+
         // ---- one shared throttle table for all four seats (leaf lock, never held
         // across an engine call). Key = (actorFormID << 32 | subjectFormID). ----
         std::mutex                                       g_rlMx;
@@ -225,6 +302,73 @@ namespace apmf::castseats {
             return true;
         }
 
+        // PASSIVE (principle 5): count one claim-answered seat call on this caster type and log the
+        // FIRST one per (type, seat) since install. Relaxed atomics only; the one log line is outside
+        // any lock. Changes no answer.
+        void NoteClaimAnswer(std::uintptr_t a_vt, std::uint32_t a_seat, const SeatMatch& m, const char* a_what) {
+            const int t = TypeIndex(a_vt);
+            if (t < 0) return;
+            const int k = SeatIndex(a_seat);
+            g_claimCalls[t][k].fetch_add(1, std::memory_order_relaxed);
+            if (g_firstLogged[t][k].exchange(true, std::memory_order_relaxed)) return;
+            spdlog::info("[ch.8b seats] FIRST claim answer on the {} caster, seat 0x{:02X}: actor 0x{} driven 0x{} "
+                         "target 0x{} -> {}. (Proves this seat executes on this type; counts in the [ctcensus] "
+                         "HEARTBEAT.)",
+                         SeatTypes()[t].name, a_seat, apmf::log::Hex(m.actor), apmf::log::Hex(m.driven),
+                         apmf::log::Hex(m.claim.target), a_what);
+        }
+
+        // NATIVE PLACEMENT (feat/apmf-buff-summon-seats, 86e3dvkwm): a claim whose target is the
+        // claimant itself on a spell that is NOT kSelf-delivered. ControlMap only resolves that for a
+        // SUMMON / REANIMATE spell (castclassify::IsPlacementSpell): their caster type places them,
+        // so WHERE stays the engine's (0x0A chains, 0x0D leaves the engine default), while WHETHER and
+        // HOW LONG (0x06 / 0x07) answer from the claim. Never aims a ray or a projectile at its own
+        // caster (the reason APMF-B39 keeps every other non-kSelf target-0 claim unresolved).
+        // GetDelivery is the spell's own virtual (slot 0x57), the same call the base GetMagicTarget
+        // makes on this thread.
+        // Review SEV-3 (3903988): gated on the SPELL being a placement spell, not only on the
+        // (target == claimant, non-kSelf) pair -- an explicit self target or a client's own proxy can
+        // produce that pair for Heal Other / Courage / Magelight, and chaining 0x0A there would hand the
+        // beneficial spell to the combat target. IsPlacementSpell reads form data only.
+        bool NativePlacement(RE::CombatMagicCaster* a_this, const SeatMatch& m) {
+            return m.claim.target == m.actor && a_this->magicItem &&
+                   a_this->magicItem->GetDelivery() != RE::MagicSystem::Delivery::kSelf &&
+                   apmf::castclassify::IsPlacementSpell(a_this->magicItem);
+        }
+
+        // The engine's "already applied" walk (see Bound above), on the COMBAT thread exactly where the
+        // type's own 0x06 runs it: no lock (the engine takes none), FormIDs never looked up.
+        static_assert(offsetof(RE::ActiveEffect, spell) == 0x40,
+                      "ActiveEffect::spell moved -- MagicCastOnTarget::Accept (AE 0x838A30) reads +0x40");
+        bool AlreadyApplied(RE::Actor* a_actor, RE::MagicItem* a_item) {
+            if (!a_actor || !a_item) return false;   // the engine's own null path: "not applied"
+            if (a_item->GetCastingType() == RE::MagicSystem::CastingType::kConcentration) return false;
+            auto* list = a_actor->AsMagicTarget()->GetActiveEffectList();
+            if (!list) return false;
+            for (auto* ae : *list)
+                if (ae && ae->spell == a_item) return true;
+            return false;
+        }
+
+        // WARD MAGICKA FLOOR (review SEV-3 of 3903988). The Ward caster's own 0x07 (AE 0x81EF90 / SE
+        // 0x782DC0 / 1.7.104 0x834480) stops the channel when the CASTER's Magicka percent (AV 0x19,
+        // current / permanent: AE 0x666F60) is below the GMST fCombatMagicWardMagickaCastLimit (0.25).
+        // The claim's 0x07 replaced that, so a claimed ward drained to empty each window. Composed back:
+        // 0x07 stops and 0x06 refuses below the same floor. Read by name at install (game thread).
+        RE::Setting* g_wardFloor = nullptr;
+        std::atomic<std::uintptr_t> g_wardVtable{ 0 };
+        std::atomic<std::uintptr_t> g_lightVtable{ 0 };
+
+        bool WardMagickaLow(RE::Actor* a_caster, float& a_pct, float& a_floor) {
+            a_pct = a_floor = 0.0f;
+            if (!a_caster || !g_wardFloor) return false;
+            a_floor     = g_wardFloor->GetFloat();
+            auto* avo   = a_caster->AsActorValueOwner();
+            const float perm = avo->GetPermanentActorValue(RE::ActorValue::kMagicka);
+            a_pct = perm != 0.0f ? avo->GetActorValue(RE::ActorValue::kMagicka) / perm : 0.0f;
+            return a_pct < a_floor;
+        }
+
         // ABI v18 kCastFlag_OwnLineOfSight: does this claim ask Harbinger to judge its line of
         // sight, and is there a line to judge? A self target (the claimant's own FormID, APMF-B39)
         // and a deny-only hand claim have none. The verdict is read lock-free from
@@ -264,6 +408,7 @@ namespace apmf::castseats {
                 const auto v = apmf::sightline::FreshVerdict(r);
                 if (v != APMF_API::kLos_Visible) {
                     CensusNote(vt, a_this, a_cc, kCheckStartCast, true, false);
+                    NoteClaimAnswer(vt, kCheckStartCast, m, "NO (own line of sight)");
                     apmf::sightline::NoteSeatHold();
                     if (LogDue(m.actor, m.claim.target, kCheckStartCast))
                         spdlog::info("[ch.8b seat 0x06] 0x{} CheckStartCast -> NO (own line of sight to 0x{} is {}, {}) "
@@ -278,7 +423,42 @@ namespace apmf::castseats {
                 }
                 apmf::sightline::NoteSeatPass();
             }
+            // COMPOSED WHETHER (review SEV-2 / SEV-3 of 3903988): on the bounded types the claim's YES
+            // also needs the engine's own "not already applied" answer, the Light caster only serves a
+            // spell whose effect lands on an actor (the only place that bound can see it), and the Ward
+            // caster keeps its magicka floor. Each NO is the engine's own reason, logged; the claim stands.
+            if (const int t = TypeIndex(vt); t >= 0 && SeatTypes()[t].bound != Bound::kNone) {
+                const char* no = nullptr;
+                const auto  dlv = a_this->magicItem->GetDelivery();
+                float       pct = 0.0f, fl = 0.0f;
+                auto        casterPtr = a_cc->attackerHandle.get();
+                if (vt == g_lightVtable.load(std::memory_order_relaxed) &&
+                    dlv != RE::MagicSystem::Delivery::kSelf && dlv != RE::MagicSystem::Delivery::kTargetActor) {
+                    no = "a Light spell that is not self / target-actor delivered leaves no active effect to bound it";
+                } else if (vt == g_wardVtable.load(std::memory_order_relaxed) &&
+                           WardMagickaLow(casterPtr.get(), pct, fl)) {
+                    no = "caster Magicka below fCombatMagicWardMagickaCastLimit";
+                } else {
+                    auto  tgtPtr = SeatTypes()[t].bound == Bound::kCaster ? RE::NiPointer<RE::Actor>{} : m.claim.targetHandle.get();
+                    auto* who    = SeatTypes()[t].bound == Bound::kCaster ? casterPtr.get() : tgtPtr.get();
+                    if (AlreadyApplied(who, a_this->magicItem))
+                        no = SeatTypes()[t].bound == Bound::kCaster ? "its effect is already active on the caster"
+                                                                     : "its effect is already active on the target";
+                }
+                if (no) {
+                    CensusNote(vt, a_this, a_cc, kCheckStartCast, true, false);
+                    NoteClaimAnswer(vt, kCheckStartCast, m, "NO (engine bound)");
+                    if (LogDue(m.actor, m.driven ^ 0x40000000u, kCheckStartCast))
+                        spdlog::info("[ch.8b seat 0x06] 0x{} CheckStartCast -> NO on the {} caster: {} (spell 0x{}, "
+                                     "target 0x{}{}) -- the claim stands; the engine's own bound, composed.",
+                                     apmf::log::Hex(m.actor), SeatTypes()[t].name, no, apmf::log::Hex(m.driven),
+                                     apmf::log::Hex(m.claim.target),
+                                     fl > 0.0f ? fmt::format(", magicka {:.2f} < {:.2f}", pct, fl) : std::string());
+                    return false;
+                }
+            }
             CensusNote(vt, a_this, a_cc, kCheckStartCast, true, true);
+            NoteClaimAnswer(vt, kCheckStartCast, m, "YES");
 
             // ANSWER FROM THE CLAIM (the claim is the authority on WHETHER).
             //
@@ -368,16 +548,25 @@ namespace apmf::castseats {
             }
             CensusNote(vt, a_this, a_cc, kGetMagicTarget, true, false);
 
+            if (NativePlacement(a_this, m)) {
+                const int t = TypeIndex(vt);
+                if (t >= 0) g_nativePlacement[t].fetch_add(1, std::memory_order_relaxed);
+                NoteClaimAnswer(vt, kGetMagicTarget, m, "native placement (summon / reanimate self claim)");
+                return orig(a_this, a_out, a_cc);
+            }
+            NoteClaimAnswer(vt, kGetMagicTarget, m, "claimed target handle");
+
             a_out->handle = m.claim.targetHandle.native_handle();
             a_out->ptr    = nullptr;   // handle has precedence at every consumer; ptr is only read when handle==0
 
             if (LogDue(m.actor, m.driven, kGetMagicTarget))
                 spdlog::info("[ch.8b seat 0x0A] 0x{} GetMagicTarget -> claimed target 0x{} (handle 0x{}), "
-                             "spell 0x{}{}. Restore + Offensive vtables only -- Stagger/Disarm/Reanimate and "
-                             "the other 11 caster categories share this base impl and are never redirected.",
+                             "spell 0x{}{}, {} caster. Seated types only -- Stagger/Disarm/TargetEffect/Paralyze/"
+                             "Reanimate share this base impl (or their own) and are never redirected.",
                              apmf::log::Hex(m.actor), apmf::log::Hex(m.claim.target),
                              apmf::log::Hex(a_out->handle), apmf::log::Hex(m.driven),
-                             m.claim.proxy ? " (delivery-flip proxy)" : "");
+                             m.claim.proxy ? " (delivery-flip proxy)" : "",
+                             TypeIndex(vt) >= 0 ? SeatTypes()[TypeIndex(vt)].name : "?");
             return a_out;
         }
 
@@ -396,6 +585,7 @@ namespace apmf::castseats {
 
             SeatMatch m{};
             if (!ClaimNamesThisCast(a_this, a_cc, m)) return orig(a_this, a_cc);
+            NoteClaimAnswer(vt, kCheckStopCast, m, "answered from the claim");
 
             // ANSWER FROM THE CLAIM. Left native, this seat stops the channel when the
             // target reaches thr+0.25 of the ATTACKER's `defensiveMult`-derived
@@ -419,8 +609,12 @@ namespace apmf::castseats {
             const auto nowMs = apmf::clock::MonotonicMs();
             const char* why  = nullptr;
 
+            float wPct = 0.0f, wFloor = 0.0f;
             if (m.claim.expiresMs != 0 && nowMs >= m.claim.expiresMs) {
                 why = "claim TTL (hard cap)";
+            } else if (vt == g_wardVtable.load(std::memory_order_relaxed) &&
+                       [&] { auto c = a_cc->attackerHandle.get(); return WardMagickaLow(c.get(), wPct, wFloor); }()) {
+                why = "Ward: caster Magicka below fCombatMagicWardMagickaCastLimit (the Ward caster's own floor, composed)";
             } else {
                 auto  tgtPtr = m.claim.targetHandle.get();   // NiPointer<Actor>
                 auto* target = tgtPtr.get();
@@ -532,7 +726,9 @@ namespace apmf::castseats {
             auto* cc = *reinterpret_cast<RE::CombatController**>(
                 reinterpret_cast<std::uintptr_t>(a_aim) + 0x28);
 
-            if (ClaimNamesThisCast(a_this, cc, m)) {
+            const bool claimed = ClaimNamesThisCast(a_this, cc, m);
+            if (claimed) NoteClaimAnswer(vt, kSetupAimController, m, NativePlacement(a_this, m) ? "engine default (native placement)" : "aim override");
+            if (claimed && !NativePlacement(a_this, m)) {
                 const std::uint32_t h = m.claim.targetHandle.native_handle();
                 if (*slot != h) {
                     *slot = h;
@@ -544,7 +740,8 @@ namespace apmf::castseats {
                                      apmf::log::Hex(h));
                 }
             } else if (*slot != 0) {
-                // No claim on this cast: restore the engine's own ctor default, so this
+                // No claim on this cast (or a native-placement claim, which keeps the engine's own
+                // aim): restore the engine's own ctor default, so this
                 // seat can never leave one of ITS OWN overrides on a later controller
                 // (the N2 staleness question). Never writes anything the engine would
                 // not itself have written.
@@ -589,9 +786,39 @@ namespace apmf::castseats {
         // RTTI-verified (`DerivesFrom`) exactly like every other seat in this
         // codebase; a symbol that does not derive CombatMagicCaster is skipped,
         // never hooked blind (the CombatMagicCasterArmor lesson, #17).
+        //
+        // WIDENED 2026-10-05 (feat/apmf-buff-summon-seats, batch A): + Ward, Summon, Cloak, Light,
+        // Invisibility, BoundItem, Armor and Script (SeatTypes() above). A claimed self buff keys its
+        // own row (Oakflesh -> Armor, Candlelight -> Light, a ward -> Ward, a cloak -> Cloak, a bound
+        // weapon -> BoundItem, Invisibility), a buff at ANOTHER actor keys the same row through seat 0's
+        // self flip on its delivery-flip proxy, a summon keys Summon, and a rowless spell keys Script
+        // through seat 0's row substitution. On those casters the shared base 0x0A aims a non-kSelf
+        // form at the COMBAT TARGET (the foe) and 0x06 is the type's own native "should I" -- so a
+        // claim on any of them was inert or mis-aimed without these seats. The rule stays "no vtable
+        // a live claim does not need": still never Stagger, Disarm, TargetEffect, Paralyze, Reanimate.
+        // The same two gates make each one safe (RTTI derivation at install; the DRIVEN-FORM match
+        // for the deliberating actor on every call).
         REL::Relocation<void*> casterTD{ RE::RTTI_CombatMagicCaster };
-        const REL::VariantID   kEngineSeatVtables[] = { RE::VTABLE_CombatMagicCasterRestore[0],
-                                                         RE::VTABLE_CombatMagicCasterOffensive[0] };
+        // Ward is seated only with its magicka floor in hand (review SEV-3): the GMST is read by name
+        // here, at kDataLoaded on the game thread; if it cannot be found the Ward caster is NOT seated
+        // (loudly), never seated without its floor.
+        if (auto* gsc = RE::GameSettingCollection::GetSingleton())
+            g_wardFloor = gsc->GetSetting("fCombatMagicWardMagickaCastLimit");
+        std::vector<REL::VariantID> kEngineSeatVtables;
+        for (std::size_t i = 0; i < kSeatTypes; ++i) {
+            REL::Relocation<std::uintptr_t> tv{ SeatTypes()[i].id };
+            const bool isWard = std::strcmp(SeatTypes()[i].name, "Ward") == 0;
+            if (isWard) g_wardVtable.store(tv.address(), std::memory_order_relaxed);
+            if (std::strcmp(SeatTypes()[i].name, "Light") == 0) g_lightVtable.store(tv.address(), std::memory_order_relaxed);
+            if (isWard && !g_wardFloor) {
+                spdlog::error("[ch.8b seats] GMST fCombatMagicWardMagickaCastLimit not found -- the Ward caster is NOT "
+                              "seated (a claimed ward would drain the caster's Magicka with no floor). A ward claim "
+                              "stays a deny + equip claim; the engine's own Ward gates decide.");
+                continue;
+            }
+            kEngineSeatVtables.push_back(SeatTypes()[i].id);
+            g_typeVt[i].store(tv.address(), std::memory_order_relaxed);   // label + counters only
+        }
 
         // Resolved once here (not just installed on) so seat 0x07 can identity-check
         // it per call before ever reading CombatMagicCasterRestore::primaryAV -- that
@@ -634,13 +861,28 @@ namespace apmf::castseats {
                          "re-checks will track the combat target.");
         }
 
-        spdlog::info("[ch.8b seats] engine cast seats installed on the Restore + Offensive caster vtables "
-                     "ONLY (never Stagger/Disarm/Reanimate/the other 11): "
-                     "0x06 CheckStartCast {}, 0x07 CheckStopCast {}, 0x0A GetMagicTarget {}, "
-                     "0x0D SetupAimController {}. While a kIntent_Cast claim stands, the NPC's OWN AI "
-                     "casts the claimed spell at the claimed target -- APMF makes no equip, anim or "
-                     "cast write of any kind.",
-                     nStart, nStop, nTgt, nAim);
+        spdlog::info("[ch.8b seats] engine cast seats installed on {} caster vtables (Restore, Offensive, Ward, "
+                     "Summon, Cloak, Light, Invisibility, BoundItem, Armor, Script; never Stagger/Disarm/"
+                     "TargetEffect/Paralyze/Reanimate): 0x06 CheckStartCast {}/{}, 0x07 CheckStopCast {}/{}, "
+                     "0x0A GetMagicTarget {}/{}, 0x0D SetupAimController {}/{}. While a kIntent_Cast claim "
+                     "stands, the NPC's OWN AI casts the claimed spell at the claimed target -- APMF makes "
+                     "no equip, anim or cast write of any kind.",
+                     kEngineSeatVtables.size(), nStart, kEngineSeatVtables.size(), nStop, kEngineSeatVtables.size(), nTgt,
+                     kEngineSeatVtables.size(), nAim, kEngineSeatVtables.size());
+    }
+
+    std::string SeatCountsLine() {
+        std::string s;
+        for (std::size_t t = 0; t < kSeatTypes; ++t) {
+            const auto a = g_claimCalls[t][0].load(std::memory_order_relaxed);
+            const auto b = g_claimCalls[t][1].load(std::memory_order_relaxed);
+            const auto c = g_claimCalls[t][2].load(std::memory_order_relaxed);
+            const auto d = g_claimCalls[t][3].load(std::memory_order_relaxed);
+            const auto n = g_nativePlacement[t].load(std::memory_order_relaxed);
+            s += fmt::format("{}{}={}/{}/{}/{}", t ? "," : "", SeatTypes()[t].name, a, b, c, d);
+            if (n) s += fmt::format("(native-placement {})", n);
+        }
+        return s;
     }
 
 }

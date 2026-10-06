@@ -32,6 +32,52 @@ list and was left as it is. `[Idle] bIdleConfirm` is a feature, not a probe.
 - `[Probe] bRestoreCensus` -> 0 in `APMF.ini` AND the code default in `core/RestoreCensus.cpp` `Poll`
   (reads the key with default 1 during the field cycle). See the ANIMATED HEALS head of work below.
 
+## HEAD OF WORK 2026-10-05 -- BUFF / SUMMON / ROWLESS CAST SEATS (batch A), branch `feat/apmf-buff-summon-seats`, NOT merged
+
+Batch A release gate: MFO must deliver every in-combat cast kind as an ANIMATED claim. MFO's self-buff branch
+(`feat/mfo-remaining-cast-kinds`) found four Harbinger gaps. No ABI change (the claim API already carries all of it).
+Agentlog `apmf-buff-summon-seats.md`, RE helpers `scratchpad/re-bs/` (ae / se / 1.7.104 through the MIT table).
+- **Seat coverage.** 0x06 / 0x07 / 0x0A / 0x0D now sit on Ward, Summon, Cloak, Light, Invisibility, BoundItem, Armor
+  and Script too (10 types; never Stagger, Disarm, TargetEffect, Paralyze, Reanimate). Same thunks, same driven-form
+  gate. Disassembled on all three builds: 0x0A is the shared base (AE 0x81E020 / SE 0x781CB0 / 1.7.104 0x833510,
+  `{u32 handle, ptr}` sret, kSelf -> attacker else the combat target), 0x0D the shared bare `ret` (0x81E0B0 /
+  0x781D00 / 0x8335A0), every per-type 0x06 / 0x07 is `bool(caster, CombatController*)`. Per-type slot addresses:
+  `Docs/VERIFIED-ADDRESSES.md` (vtable rows already verified on all three; spec `slots` updated).
+- **Summon (ClickUp 86e3dvkwm).** Seat on Summon; seat 0 never forces a SummonCreature / Reanimate spell's self flag
+  (Reanimate's only row is {Reanimate, other}: forcing dropped it from every row); a target-0 claim on such a spell
+  resolves to the claimant (`IsPlacementSpell`, the APMF-B39 block); 0x0A / 0x0D keep the engine's own placement for
+  that self claim (`NativePlacement`), 0x06 / 0x07 answer from the claim. Reanimate gets no caster seats: its own
+  0x06 corpse search feeds its own 0x0A / 0x0D. A reanimate claim is served by seat 0 + 0x0F only (equip admitted,
+  other spells denied); WHETHER (a corpse exists) stays the engine's.
+- **Round 2 (review FIX FIRST on 3903988).** The eight new types compose the claim's 0x06 YES with the engine's
+  own "already applied" check (an active effect of this very spell on the target, or on the caster for Summon /
+  BoundItem), so a buff, light or summon fires once and the claim then reads `NO on the <Type> caster: its effect
+  is already active`. Light only for kSelf / kTargetActor spells. Wards keep the engine's magicka floor
+  (fCombatMagicWardMagickaCastLimit): `CheckStopCast -> STOP (Ward: caster Magicka below ...)`. Backlog
+  APMF-B58 / APMF-B59.
+- **Rowless.** A claimed spell with no caster row is handed to KEEP-BEST with the engine's Script row (22 beneficial,
+  9 hostile). Covers Muffle, fortify / resist, Night Eye, Detect Life, cures, Dispel, Calm / Fear / Frenzy / Courage,
+  restore Stamina (row with a null creator), damage Magicka / Stamina. Not for heal-shaped spells (the heal road).
+  Gated at install on all 23 live table rows matching the decoded copy.
+- **FINDING (not changed here).** The classify lookup map also files every ValueModifier row under Absorb (4),
+  DualValueModifier (5), AccumulateMagnitude (32) and PeakValueModifier (34), on all three builds. So Close Greater
+  Wounds (PeakValueModifier, Health, self) keys Restore natively, and `ServeUnclassedHeal` re-keeps the same row.
+  Harmless (same row), but the "PeakValueModifier has no row" premise of v0.9.11 is wrong. The census labels now
+  include the aliases.
+
+**What the field session must show (AE 1.6.1170, `[Probe] bCasterTypeCensus=1`, an MFO build that claims each kind).**
+Per kind, at least 3 `[ctcensus]` windows and their CLOSE verdicts; plus one `[ch.8b seats] FIRST claim answer on the
+<Type> caster, seat 0xNN` line per seated type the run exercised, and the HEARTBEAT's `claim seats answered
+0x06/0x07/0x0A/0x0D [...]`. Kinds: Oakflesh self (Armor), Oakflesh on an ally (Armor via proxy, 0x0A/0x0D at the
+ally), Candlelight (Light), a ward (Ward, a channel bounded by the claim TTL), a cloak (Cloak), a bound weapon
+(BoundItem), Invisibility, Conjure Familiar (Summon, `native placement` count > 0), Raise Zombie with a corpse
+nearby (Reanimate, no seat lines expected; with NO corpse an expected `BUILT ... NOT FIRED` -- the hand holds
+the spell until the claim's TTL, APMF-B58 (a), and MFO's never-fired release frees it), Muffle and a Fortify spell (`served as Script`, then Script BUILT /
+FIRED), Courage on an ally (Script via the rowless road), Calm at a foe (Script hostile row), and one AUTO buff fan as
+N claims (a SERIES). Decide per kind with the rules in the CASTER-TYPE CENSUS entry below: FIRED ANIMATED = done; BUILT
+NOT FIRED on a seated type = an upstream gate, goes to Opus with the lines; NOT BUILT with `sub[Script]` = the
+substitution did not take, also to Opus.
+
 ## HEAD OF WORK 2026-10-05 -- ABI v18 OWN LINE OF SIGHT + AWARENESS, branch `feat/apmf-own-los-awareness`, NOT merged
 
 Batch A release blocker, ClickUp 86e3h6qj9. Tier A (ABI + new engine calls). Opus author; Opus tier-A review pending.

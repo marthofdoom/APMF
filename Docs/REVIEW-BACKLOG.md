@@ -394,3 +394,36 @@ and Offensive only; (f) ControlMap.cpp is 2250+ lines: propose its split as its 
 Raised against 44ee2e2 (`feat/apmf-own-los-awareness`, Opus round-2 re-check MERGE), 2026-10-05.
 - The per-target end margin (bound half-diagonal x GetBaseHeight + 16, clamp [48,1024]) ignores any obstacle within the margin of the target, and a viewer inside it reads VISIBLE through a wall. Errs toward VISIBLE only, only inside the target's own bound; humanoids keep the field-proven 48u. Proper fix: cast to the point and treat a hit as clear only if the hit body is the target's own collidable / group.
 - The bound source (middleHigh->unk180, centre +0x18 / half-extent +0x24, a BSBound BBX shape) is proven; that a modded creature's char-controller capsule fits inside its BBX is not. Field check: [los] margin on giants / dragons in the open should read VISIBLE.
+
+### APMF-B58 (SEV-4 x3) -- buff / summon / rowless cast seats
+Raised against 3903988 (`feat/apmf-buff-summon-seats`, Opus tier-3 FIX FIRST), 2026-10-05. Ids chosen after
+`feat/apmf-combat-moveto`'s APMF-B55..B57 (that branch is not merged yet): the merge must keep both sets distinct.
+Verbatim:
+- (a) "Reanimate hand-hold when no corpse (Q5). Unseated; target-0 claim gets 0x0F YES + deny-complete on that hand;
+  Reanimate's own 0x06 corpse search says NO, so the hand sits on Raise Zombie until TTL. Bounded and correct by
+  contract (WHETHER is the engine's); MFO's never-fired release covers it. Should be documented as an expected
+  'BUILT NOT FIRED'." -- Documented in STATUS (the buff-seats HEAD OF WORK field list).
+- (b) "Mixed-hostility spells: SpellRowless re-evaluates every effect under the current self flag
+  (CastClassify.cpp:347-358) but seat 0 sets the flag per-effect as visited (:536), so an earlier hostile effect
+  that natively keyed a row under self=0 can be judged rowless under self=1 -> Script could compete with the native
+  row. Rare."
+- (c) "Summon-plus-other-effect spells: any spell with a Summon effect makes the whole claim NativePlacement even if
+  it keyed into a different caster (e.g. Armor). Mod-only." (Since the round-2 fix NativePlacement also requires
+  `IsPlacementSpell`, which is the same whole-spell test, so (c) stands as written.)
+Reviewer reasoning: all three are bounded and rare; none exercised by the vanilla kinds of the next field cycle.
+- SEV-4 (round-2 re-check, e60f64f): a pooled proxy slot re-pointed to another source spell can leave a stale active effect whose `spell` is that same slot form (e.g. a Candlelight proxy effect still on ally A after the slot now carries Oakflesh). AlreadyApplied then answers NO for up to that effect's remaining duration; the claim stands unfired, bounded by TTL and the client's never-fired release.
+- SEV-4 (round-2, e60f64f): a claimed ward omits the native Ward 0x07 no-threat grace, so it stays up while claimed and oscillates around the 25% magicka floor. Bounded by the floor and TTL.
+
+### APMF-B59 (SEV-5 x3) -- buff / summon / rowless cast seats, small items
+Raised against 3903988, 2026-10-05. Verbatim:
+- (d) "Script caster 0x0C (AE 0x823080) writes the actor-wide Script restrict-timer blackboard key (the same key the
+  Script item's 0x0F helper 0x822E50 reads) with the claimed effect's aiDelayTimer -> native Script-row spells
+  delayed by that (usually 0)."
+- (e) "ServeUnclassedHeal double-keep (author's out-of-brief finding): KeepBest always adds to +0x48 sum which
+  becomes the item score (+0x3C via 0x8133A0..0x8133F0), so Close Greater Wounds' item score roughly doubles -- only
+  for the claimed driven form whose hand is already 0x0F-YES/deny-complete. Harmless. Banner premise should be
+  corrected." -- Banner corrected in round 2 (`core/CastClassify.cpp` UNCLASSED HEAL comment); the double keep stays.
+- (f) "Rowless item score = sum of aiScores, 0 for many vanilla MGEFs; whether a score-0 item is ever picked is a
+  field question (STATUS's 'NOT BUILT with sub[Script]' path covers it)."
+- SEV-5 (round-2, e60f64f): with permanent Magicka 0, native 0x666F60 returns a constant while the copy treats it as low (unreachable: no ward at 0 max Magicka).
+- SEV-5 (round-2, e60f64f): AlreadyApplied is a proven member-level copy of AE 0x81E6C0 / 0x81E400 because ids 45349 / 45344 are absent from the fork's 1.7.104 table. Adding them at the next fork table revision would let it call the engine directly.

@@ -70,6 +70,16 @@
 //     struct layout is refused explicitly at install, never silently assumed
 //     to carry across runtimes.
 //
+// TWO MORE ANSWERS (feat/apmf-buff-summon-seats, 2026-10-05):
+//   * PLACEMENT SPELLS (Summon / Reanimate) are never forced -- their native key
+//     is the right one, and Reanimate's only row is the non-self one.
+//   * ROWLESS ROW SUBSTITUTION: a claimed spell none of whose effects keys a
+//     caster row (Muffle, fortify / resist, Night Eye, Detect Life, cures, Calm /
+//     Frenzy / Fear / Courage, ...) is handed to the engine's own KEEP-BEST with
+//     the engine's own Script row of the same hostility, so the AI builds the
+//     generic Script caster for it and the claim seats answer it. The hand still
+//     casts the spell as authored. See ServeRowless in the .cpp.
+//
 // See core/CastClassify.cpp for the exact offsets, the mangled-name evidence,
 // and the log-line shape (rate-limited, INI-gated, matching every other probe
 // in this codebase).
@@ -84,5 +94,12 @@ namespace apmf::castclassify {
     // answer for whatever object the table then mints. VR- and non-AE-refused
     // (see the file banner). Idempotent / install-once.
     void Install();
+
+    // A spell with a SummonCreature or Reanimate effect (feat/apmf-buff-summon-seats, ClickUp
+    // 86e3dvkwm). Seat 0 never forces its self flag (Reanimate's only row is the non-self one),
+    // and ControlMap::ApplyRequest resolves a target-0 claim on it to the claimant (the caster
+    // type places it: the summon's own placement, Reanimate's own corpse). Any thread; reads
+    // form data only.
+    bool IsPlacementSpell(const RE::MagicItem* a_spell);
 
 }

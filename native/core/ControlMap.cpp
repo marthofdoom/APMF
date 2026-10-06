@@ -5,6 +5,7 @@
 #include "core/Registry.h"
 #include "core/Clock.h"
 #include "channels/CastCompose.h"   // castcompose::ExtractFromPackage (ch.8b FromPackage read)
+#include "core/CastClassify.h"       // IsPlacementSpell (summon / reanimate self-claim match)
 #include "core/CastProxy.h"         // castproxy::Acquire/Unref (ch.8b kSelf delivery-flip, writer thread)
 #include "core/MainThread.h"        // mainthread::Post (defer proxy teardown past this Drain's Publish)
 #include "channels/Travel.h"  // ch.19 Installed()/NotInstalledReason() for the synchronous refusal
@@ -962,13 +963,21 @@ namespace apmf {
             // the writer thread), so 1.6.1170 and 1.5.97 take the same line.
             if (op.kind == PendingOp::Kind::kCast && !denyHandOnly && spell != 0 && castTarget == 0) {
                 auto* selfSp = RE::TESForm::LookupByID<RE::SpellItem>(spell);
-                if (selfSp && selfSp->GetDelivery() == RE::MagicSystem::Delivery::kSelf) {
+                // feat/apmf-buff-summon-seats (86e3dvkwm): a SUMMON / REANIMATE spell names no recipient
+                // either -- its caster type places it -- so target 0 resolves to the claimant too. The
+                // seats keep the engine's own placement for it (core/CastSeats.cpp NativePlacement:
+                // 0x0A / 0x0D chain native for a self target on a non-kSelf spell).
+                const bool placement = selfSp && selfSp->GetDelivery() != RE::MagicSystem::Delivery::kSelf &&
+                                       apmf::castclassify::IsPlacementSpell(selfSp);
+                if (selfSp && (selfSp->GetDelivery() == RE::MagicSystem::Delivery::kSelf || placement)) {
                     castTarget = op.actor;
                     if (SelfClaimLogDue(op.actor, spell)) {
-                        spdlog::info("[ch.8b] 0x{} SELF cast claim (h={}, spell 0x{}, kSelf, target 0 = self): "
+                        spdlog::info("[ch.8b] 0x{} SELF cast claim (h={}, spell 0x{}, {}, target 0 = self): "
                                      "resolved to the claimant's own handle, so the seats (0x0F YES + "
-                                     "deny-complete, 0x06, 0x0A, 0x07) serve it exactly as they serve an ally claim.",
-                                     apmf::log::Hex(op.actor), op.handle, apmf::log::Hex(spell));
+                                     "deny-complete, 0x06, 0x0A, 0x07) serve it exactly as they serve an ally claim{}.",
+                                     apmf::log::Hex(op.actor), op.handle, apmf::log::Hex(spell),
+                                     placement ? "summon/reanimate" : "kSelf",
+                                     placement ? " (0x0A/0x0D keep the engine's own placement)" : "");
                     }
                 } else if (SelfClaimLogDue(op.actor, spell)) {
                     spdlog::warn("[ch.8b] 0x{} cast claim (h={}, spell 0x{}) names target 0 = self, but the spell's "

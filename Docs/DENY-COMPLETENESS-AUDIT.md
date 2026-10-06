@@ -315,7 +315,7 @@ and the decision was to keep it on the floor.)
 reach it: (a) the hand caster's own `CheckCast` (0x0A, per hand, unchanged); (b) the
 combat AI's equip of a spell or staff into that hand (0x0F `CheckShouldEquip`, per hand,
 unchanged); (c) the Restore/Offensive caster seats 0x06/0x07/0x0A/0x0D (by driven form,
-unchanged); (d) a foreign charge already in flight when the claim lands (open gap 13,
+unchanged; ten caster types since 2026-10-05, feat/apmf-buff-summon-seats); (d) a foreign charge already in flight when the claim lands (open gap 13,
 unchanged); (e) **the engine's cross-caster interlock inside `CheckCast`** (AE 34145 /
 SE 33364): a busy mask over `magicCasters[0..3]` (AE `0x6C3D60`) refuses a HAND start with
 `kCastWhileShouting` (AE `0x5B19B6`) while the VOICE caster holds a spell, refuses a VOICE
