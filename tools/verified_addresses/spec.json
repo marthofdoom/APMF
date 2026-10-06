@@ -1326,10 +1326,9 @@
    },
    "slots": [
     "0x02",
-    "0x03",
-    "0x04"
+    "0x03"
    ],
-   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp; channels/CombatApproach.cpp (ch.24 deny bracket on update 0x04)",
+   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
    "doc": "ADDRESS-TABLE-2026-09-15.md:301"
   },
   {

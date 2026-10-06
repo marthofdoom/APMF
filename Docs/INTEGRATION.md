@@ -1839,9 +1839,11 @@ recipient is out of sight: move toward the recipient until the line clears, then
   radius R. Attacks, spells in both hands, blocks, the combat target, equipment, shouts and
   potions run exactly as the engine decides. The engine also reads the area outside movement:
   its attack and bash pick rejects an attack whose end point is outside the area, its target
-  score penalises a foe outside it, its invisibility / bound-weapon cast test and its
-  unreachable-target check look at it. Each of those is shown the engine's OWN area, so the
-  claim drops no attack and changes no other decision.
+  score penalises a foe outside it, and its invisibility / bound-weapon cast test looks at it.
+  Each of those is shown the engine's OWN area, so the claim drops no attack and changes no
+  other decision. Two engine checks belong to the MOVEMENT half and do follow the bound: the
+  unreachable-target check only tests targets inside the area (outside it the engine does not
+  try to path, which is what a bound means), and the weapon pickup below.
 * **One movement-side effect to know (review F7).** The engine's Acquire Weapon move (picking up
   a dropped weapon) belongs to its movement half and looks only inside the area: while the claim
   stands, a disarmed NPC picks up only weapons within R of X.

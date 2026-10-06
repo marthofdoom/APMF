@@ -417,3 +417,18 @@ CombatBehaviorFindWeapon (AE 0x8610C0, IsInCombatArea x2) is the Acquire Weapon 
 the bound: while a ch.24 claim stands a disarmed actor only considers dropped weapons within R of X. Documented in
 `Docs/INTEGRATION.md` (ch.24 contract) and `Docs/DENY-COMPLETENESS-AUDIT.md` row 24 (a) in round 2. Open only if marth wants the
 weapon search bracketed like the attack pick.
+
+### APMF-B60 (SEV-4) -- ch.24: heavy slow time can stretch S1 past the stall floor
+Raised against acb832b (`feat/apmf-combat-moveto`, Opus round-2 re-check), 2026-10-06. Finding (verbatim as relayed): "R2-3
+(heavy slow-time stretching S1's period past the 3 s stall floor)". Reasoning: S1's 0.25 s period is GAME time; the stall
+floor (kStallMs 3000) counts on the world-tick clock, which advances with real frames (clamped 100 ms each). Under a strong
+slow-time effect (a slowdown shout, a mod's time scale) twelve game-time periods can exceed three world seconds and a live
+claim ends kApproachState_EngineDropped falsely. Fix when drained: scale the floor by the game's time multiplier, or count
+missed S1 periods in game time.
+
+### APMF-B61 (SEV-4) -- ch.24: the F3 put-back waits on the target selector; its exclusive-lock scan
+Raised against acb832b, 2026-10-06 (the re-check's spot-1 items). (a) The put-back of a finished claim's area runs only from
+the CombatTargetSelectorStandard slot-6 seat, so an actor whose standard selector is not run keeps its area until the save
+restore or the 60 s world-time purge. (b) While any record is marked for put-back (up to 60 s), every SelectTarget of EVERY
+actor takes g_areaMx EXCLUSIVE and scans the table; bounded by the table size (a handful), but a contention point on the
+combat jobs. Fix when drained: pre-filter on the controller (a lock-free set of pending controllers), shared lock for the scan.

@@ -2,7 +2,7 @@
 #include "channels/CombatApproach.h"
 #include "core/Allowance.h"   // SeatVerified / DerivesFrom / RuntimeSupported (mit-3.7 F1, G1)
 #include "core/Clock.h"
-#include "core/CombatBehaviorRE.h"   // kLeaves: the Attack / Bash / CheckUnreachableTarget leaf vtables (S5)
+#include "core/CombatBehaviorRE.h"   // kLeaves: the Attack / Bash leaf vtables (S5)
 #include "core/ControlMap.h"
 #include "core/Hook.h"   // OnMainThread (review F6: the save-thread check)
 #include "core/Log.h"
@@ -84,11 +84,16 @@ extern "C" __declspec(dllimport) unsigned long __stdcall GetPrivateProfileIntA(
 //      the combat TARGET is inside the current area (AE helper 0x55B6D0 -> vfunc 0x05); inside the
 //      bracket it sees the engine's own area, so those casts are decided exactly as without the
 //      claim. (EquipGate hooks four of the same slots; both chain, either order.)
-//   S5 CombatBehaviorAttack / CombatBehaviorBash act() (slot 0x02) and CombatBehaviorCheck-
-//      UnreachableTarget update() (slot 0x04): deny BRACKETS (review F1 / F4 on 274d7e4). The
-//      attack pick rejects every attack whose end point is outside the current area, and the
-//      unreachable-target check skips its reachability test for a target outside it; inside the
-//      bracket both see the engine's own area. (ActionGate hooks the two act() slots too; chains.)
+//   S5 CombatBehaviorAttack / CombatBehaviorBash act() (slot 0x02): deny BRACKETS (review F1 on
+//      274d7e4). The attack pick rejects every attack whose end point is outside the current
+//      area; inside the bracket it sees the engine's own area. (ActionGate hooks the same act()
+//      slots; chains.) CheckUnreachableTarget is NOT bracketed (review R2-1 on acb832b): it is
+//      part of the movement facet. Its update (AE 0x8AD220 -> 0x8A6660) skips the reachability
+//      test for a target outside the area -- "outside my area, do not test" IS what a bound
+//      means -- and a bracket cannot change the outcome anyway: the path request it builds
+//      (0x8D7180, +0xBA |= 1) is validated later (slot 6 0x8C4ED0 -> 0x55B820 -> area slot 10
+//      0x7F9D10) on the REAL current area, which confines the path to the R-disc and would mark
+//      every target beyond R unreachable.
 //   S6 CombatAreaStandard vfunc 0x06 (IsInside(NiPoint3*, extra)): OBSERVE-ONLY. When the point
 //      is the claimed actor's own position (IsActorInArea passes &actor->data.location), the
 //      engine's answer is recorded: that is the movement selector's own "outside -> return to
@@ -103,7 +108,7 @@ extern "C" __declspec(dllimport) unsigned long __stdcall GetPrivateProfileIntA(
 // forced reselect at flee start (AE 33258) -- restores the engine's pick for the rest of that
 // tree step only, and Flee outranks Return To Combat Area anyway. Facets the area switches on
 // that are NOT movement are DENIED -- every engine reader of the area classified by tree half in
-// Docs/DENY-COMPLETENESS-AUDIT.md row 24: the attack / bash pick and CheckUnreachableTarget (S5),
+// Docs/DENY-COMPLETENESS-AUDIT.md row 24: the attack / bash pick (S5),
 // the target score penalty (S3), the invisibility / bound-item cast test (S4). The Acquire Weapon
 // link (it looks for dropped weapons inside the area) sits INSIDE the engine's Movement half and
 // is part of the facet. On release the engine's next update (<= 0.25 s) recomputes the area from
@@ -562,14 +567,12 @@ namespace {
     //   SE 0x80E9A0 / 0x7D5350, 1.7.104 0x8BA700 / 0x881720) run the attack pick (AE 0x8A28B0),
     //   which rejects every attack whose END POINT is outside the current area (AE 0x8A2EE0 ->
     //   IsInCombatArea at 0x8A3186): with the bound around X, a melee actor outside it would
-    //   attack nothing. CheckUnreachableTarget update() (slot 0x04; AE 0x8AD220, SE 0x816450,
-    //   1.7.104 0x8C2790) skips its reachability test when the TARGET is outside the area (AE
-    //   0x8A6660, area test at 0x8A6B29). Inside the bracket both see the engine's own area.
+    //   attack nothing. Inside the bracket it sees the engine's own area. (CheckUnreachableTarget is
+    //   deliberately NOT bracketed: review R2-1, see the header.)
     // ======================================================================
     using NodeAct_t    = void* (*)(void*, void*);   // apmf::cbt::Act_t (slot 0x02)
-    using NodeUpdate_t = void (*)(void*, void*);    // apmf::cbt::Update_t (slot 0x04)
     std::atomic<std::uintptr_t> g_vtAttack{ 0 }, g_vtBash{ 0 };
-    std::atomic<std::uintptr_t> g_origAttackAct{ 0 }, g_origBashAct{ 0 }, g_origUnreachableUpdate{ 0 };
+    std::atomic<std::uintptr_t> g_origAttackAct{ 0 }, g_origBashAct{ 0 };
 
     void* LeafActThunk(void* a_this, void* a_control) {
         const auto vt   = a_this ? *reinterpret_cast<const std::uintptr_t*>(a_this) : 0;
@@ -580,14 +583,6 @@ namespace {
         g_s5Brackets.fetch_add(1, std::memory_order_relaxed);
         ViewBracket b;
         return orig(a_this, a_control);
-    }
-
-    void UnreachableUpdateThunk(void* a_this, void* a_control) {
-        const auto orig = reinterpret_cast<NodeUpdate_t>(g_origUnreachableUpdate.load(std::memory_order_relaxed));
-        if (g_touchedCount.load(std::memory_order_relaxed) == 0) return orig(a_this, a_control);
-        g_s5Brackets.fetch_add(1, std::memory_order_relaxed);
-        ViewBracket b;
-        orig(a_this, a_control);
     }
 
     // ======================================================================
@@ -755,16 +750,13 @@ namespace apmf::combatapproach {
         };
         const REL::VariantID* idAttack = leafId("CombatBehaviorAttack");
         const REL::VariantID* idBash   = leafId("CombatBehaviorBash");
-        const REL::VariantID* idUnr    = leafId("CombatBehaviorCheckUnreachableTarget");
-        if (!idAttack || !idBash || !idUnr) {
-            spdlog::error("[ch.24] a leaf is missing from apmf::cbt::kLeaves (Attack / Bash / CheckUnreachableTarget).");
+        if (!idAttack || !idBash) {
+            spdlog::error("[ch.24] a leaf is missing from apmf::cbt::kLeaves (Attack / Bash).");
             ok = false;
         } else {
-            REL::Relocation<std::uintptr_t> a{ *idAttack }, b{ *idBash }, u{ *idUnr };
+            REL::Relocation<std::uintptr_t> a{ *idAttack }, b{ *idBash };
             ok = apmf::allowance::SeatVerified(a.address(), "CombatApproach.Leaf.CombatBehaviorAttack (0x02 bracket)") && ok;
             ok = apmf::allowance::SeatVerified(b.address(), "CombatApproach.Leaf.CombatBehaviorBash (0x02 bracket)") && ok;
-            ok = apmf::allowance::SeatVerified(u.address(),
-                                               "CombatApproach.Leaf.CombatBehaviorCheckUnreachableTarget (0x04 bracket)") && ok;
         }
         REL::Relocation<void*> expectedTD{ RE::RTTI_CombatInventoryItem };
         ok = apmf::allowance::SeatVerified(reinterpret_cast<std::uintptr_t>(expectedTD.get()),
@@ -797,12 +789,11 @@ namespace apmf::combatapproach {
         }
         g_origSelect.store(vtSel.write_vfunc(kSlotSelect, &SelectThunk), std::memory_order_relaxed);
         {   // S5 (all deny brackets go in before S1 can carry a bound)
-            REL::Relocation<std::uintptr_t> a{ *idAttack }, b{ *idBash }, u{ *idUnr };
+            REL::Relocation<std::uintptr_t> a{ *idAttack }, b{ *idBash };
             g_vtAttack.store(a.address(), std::memory_order_relaxed);
             g_vtBash.store(b.address(), std::memory_order_relaxed);
             g_origAttackAct.store(a.write_vfunc(0x02, &LeafActThunk), std::memory_order_relaxed);
             g_origBashAct.store(b.write_vfunc(0x02, &LeafActThunk), std::memory_order_relaxed);
-            g_origUnreachableUpdate.store(u.write_vfunc(0x04, &UnreachableUpdateThunk), std::memory_order_relaxed);
         }
         g_origIsInsidePos.store(vtStd.write_vfunc(kSlotIsInsidePos, &IsInsidePosThunk), std::memory_order_relaxed);
         g_origIsInsideLoc.store(vtStd.write_vfunc(kSlotIsInsideLoc, &IsInsideLocThunk), std::memory_order_relaxed);
@@ -811,8 +802,8 @@ namespace apmf::combatapproach {
         spdlog::info("[ch.24] combat-approach seats installed: CombatAreaStandard Update (0x0B, carries the bound), "
                      "IsInside(WorldLocation) (0x05, the engine's own area inside a deny bracket), IsInside(point) "
                      "(0x06, observe-only); deny brackets on CombatTargetSelectorStandard SelectTarget (0x06) and "
-                     "{} invisibility / bound-item CheckShouldEquip (0x0F), Attack / Bash act (0x02) and "
-                     "CheckUnreachableTarget update (0x04). All chaining.",
+                     "{} invisibility / bound-item CheckShouldEquip (0x0F) and Attack / Bash act (0x02). All "
+                     "chaining.",
                      g_origShouldEquip.size());
     }
 
@@ -1020,7 +1011,7 @@ namespace apmf::combatapproach {
         g_lastHeartbeatMs = now;
         spdlog::info("[ch.24] heartbeat: {} claim(s); standard-area updates seen {} (any actor), bound applied {}, "
                      "engine geometry restored first {}, outranked {}, disabled {}; vanilla answers inside deny "
-                     "brackets {} (target-selector brackets {}, inv/bound brackets {}, attack/bash/unreachable brackets {}); "
+                     "brackets {} (target-selector brackets {}, inv/bound brackets {}, attack/bash brackets {}); "
                      "engine inside/outside verdicts on the bound {} ({} outside); ended by Harbinger {}; engine areas "
                      "put back after an end {}; areas carrying a bound now {}.",
                      n, g_s1Seen.load(), g_s1Applied.load(), g_s1Restored.load(), g_s1Yielded.load(),
@@ -1054,8 +1045,12 @@ namespace apmf::combatapproach {
                     if (static_cast<void*>(a) == it->first) { live = true; break; }
             }
             // PutBack also re-activates the area of a FINISHED claim (F3), so neither X / R nor the
-            // engine's failed-path deactivation reaches the .ess.
-            if (live && PutBack(it->first, t)) ++restored;
+            // engine's failed-path deactivation reaches the .ess. A LIVE claim's area found INACTIVE
+            // (+0x2C == 0) carrying our bound was deactivated by the engine's own failed path to X --
+            // nothing else clears it on an area S1 wrote -- so it is re-activated too (review R2-2).
+            Touched tt = t;
+            if (live && At<std::uint8_t>(it->first, kAreaActive) == 0) tt.reactivate = true;
+            if (live && PutBack(it->first, tt)) ++restored;
             else ++dropped;
         }
         g_touchedCount.store(0, std::memory_order_relaxed);

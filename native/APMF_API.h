@@ -749,11 +749,12 @@ namespace APMF_API {
                                      //       it keeps moving tactically inside R. The engine also reads
                                      //       the area OUTSIDE movement: the attack and bash pick (an
                                      //       attack whose end point is outside the area is rejected),
-                                     //       the target selector's score, the invisibility / bound
-                                     //       weapon cast decisions and the unreachable-target check.
-                                     //       Every one of those is answered with the engine's OWN
-                                     //       area, not the bound, so no other action is dropped or
-                                     //       changed by the claim.
+                                     //       the target selector's score and the invisibility / bound
+                                     //       weapon cast decisions. Every one of those is answered
+                                     //       with the engine's OWN area, not the bound, so no other
+                                     //       action is dropped or changed by the claim. (Its
+                                     //       unreachable-target check and its weapon pickup belong to
+                                     //       the MOVEMENT half and follow the bound.)
                                      //
                                      //       THEY FORCE, THEY WIN. A package's HOLD POSITION area
                                      //       outranks the standard area in the engine's own pick, and
