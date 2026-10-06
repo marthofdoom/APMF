@@ -509,3 +509,9 @@ Same review, finding F5. As relayed: "`bEquipDenyScript` now reaches cast-only a
 On an actor with no ch.17 claim, the sink step reads the INI `bEquipDenyScript` (the claim flags are 0), so with it
 set a Papyrus / console equip into a hand a cast claim holds is refused too. The APMF.ini comment still describes it as
 the ch.17 declared-set exemption only. Fix when drained: widen the comment (or scope the INI to ch.17 actors).
+
+### APMF-B66 (SEV-5 x2) -- hand-claim block review follow-ups F9, F10
+Raised against 1cc0bc9 (`fix/apmf-hand-claim-blocks-equip`, Opus tier-3 review MERGE), 2026-10-06.
+- F9 (SEV-5): an extra handle lookup per combat leaf. `ActionGate.cpp:890` resolves the actor handle on every leaf `act()` of every combatant whenever any actor is watched. Cost only, no correctness problem.
+- F10 (SEV-5): comment and MAP wording. "EitherHand/null -> both" at the 0x0F seat is unreachable: CombatInventory AddItem (AE 0x811AC0) splits a multi-parent slot into per-parent items (Clone, vfunc 0x0D), so a one-hander becomes a RightHand item plus a LeftHand clone.
+- DECIDED (marth 2026-10-06), review F2: a direct `EquipObject` from another SKSE DLL into a hand held by a cast claim is REFUSED. marth: "mfo asks harbinger to block it. Later its arbitrated". Papyrus / skse64 script equips, console and player-menu equips stay exempt. Becomes per-facet priority arbitration with the weighting rework (86e3jwmk7 / 86e3k3upc).
