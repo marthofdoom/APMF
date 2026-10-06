@@ -476,9 +476,14 @@ namespace apmf::equipsink {
             // live cast claim (a deny-only floor included), the claim's own spell/proxy
             // excepted. One RCU read per hand. An actor reached here only through the
             // block (no ch.17 claim) whose equip does not touch a held hand leaves exactly
-            // as before: untouched and unlogged.
+            // as before: untouched and unlogged. A spells-only floor (ABI v20,
+            // kCastFlag_FloorSpellsOnly) holds its hand here only against a staff (the one
+            // spell-like governed type; a spell or scroll never reaches this worker), so a
+            // one-hander, shield or torch into it passes. A two-hander, a bow or a no-hand
+            // item competes for the other hand too and is still refused by a claim there.
             apmf::handblock::HandHold hold{};
-            const bool handHeld = apmf::handblock::HeldFor(actorId, competes, itemId, hold);
+            const bool handHeld = apmf::handblock::HeldFor(actorId, competes, itemId,
+                                                           apmf::handblock::SpellLike(obj), hold);
             if (!equipClaimed && !handHeld) { g_worker(mgr, actor, obj, data); return; }
 
             const bool observe    = g_observeOnly.load(std::memory_order_relaxed) ||
@@ -532,10 +537,25 @@ namespace apmf::equipsink {
                 verdict = "allow";   // owned=0: nothing the claim holds is at stake
             }
             if (handBlock) {
-                verdict    = (hold.held & APMF_API::kEquipCat_Right) && (hold.held & APMF_API::kEquipCat_Left)
-                                 ? "deny (hands R+L held by a cast claim)"
-                             : (hold.held & APMF_API::kEquipCat_Right) ? "deny (hand R held by a cast claim)"
-                                                                       : "deny (hand L held by a cast claim)";
+                // Says WHAT holds the hand (a driving claim, a deny-only floor, or a
+                // spells-only floor refusing a staff). `verdict` is stored as a pointer by
+                // castobserve::NoteEquip, so every text here is a string literal.
+                const bool r = (hold.held & APMF_API::kEquipCat_Right) != 0;
+                const bool l = (hold.held & APMF_API::kEquipCat_Left) != 0;
+                const bool spellsOnly = (!r || hold.spellsOnlyR) && (!l || hold.spellsOnlyL);
+                const bool floorOnly  = (!r || hold.denyOnlyR) && (!l || hold.denyOnlyL);
+                if (r && l)
+                    verdict = spellsOnly ? "deny (hands R+L held by a spells-only floor: a staff)"
+                            : floorOnly  ? "deny (hands R+L held by a deny-only floor)"
+                                         : "deny (hands R+L held by a cast claim)";
+                else if (r)
+                    verdict = spellsOnly ? "deny (hand R held by a spells-only floor: a staff)"
+                            : floorOnly  ? "deny (hand R held by a deny-only floor)"
+                                         : "deny (hand R held by a cast claim)";
+                else
+                    verdict = spellsOnly ? "deny (hand L held by a spells-only floor: a staff)"
+                            : floorOnly  ? "deny (hand L held by a deny-only floor)"
+                                         : "deny (hand L held by a cast claim)";
                 callWorker = false;
             } else if (refuse) {
                 if (observe) verdict = "would-deny";

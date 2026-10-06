@@ -715,7 +715,12 @@ the header had moved on. A restated version number is a copy that cannot be kept
   which is a masked failure (CLAUDE.md principle 7), not a correct degrade. Such a bit
   rides a bump that exists anyway (here v12, for `GetTravelLegState`) and its doc tells
   the client to gate it on `abiVersion`. Never bump for such a bit alone without asking
-  whether the degrade is really wrong.
+  whether the degrade is really wrong. **The one bump made for a bit alone: v20,
+  `kCastFlag_FloorSpellsOnly` (2026-10-06).** The question was asked and the answer is yes:
+  the v19 build carrying the hand-claim block ignores the bit and keeps a melee follower's
+  floored hand disarmed, silently, and a client cannot tell that v19 from an earlier one.
+  MFO requests its MINIMUM ABI (not `kABIVersion`), so the bump costs it nothing against an
+  older APMF.dll.
 - **Why the asymmetry matters HERE.** `APMF_GetInterface(v)` returns **nullptr** when
   `v > kABIVersion` (`core/ClientAPI.cpp:125-128`), and MFO calls
   `fn(APMF_API::kABIVersion)` ONCE, with no downward retry: on null it logs "APMF
@@ -908,6 +913,14 @@ thing that derails one. Concretely:
   engine answer first); the sink
   is the backstop for every other path and for a combat choice made before the claim
   published.
+  **AMENDED 2026-10-06 again (ABI v20, `fix/apmf-floor-spells-only`).** A floor that also
+  carries `kCastFlag_FloorSpellsOnly` holds its hand ONLY against a spell-like item (a spell,
+  a scroll, a staff; `handblock::SpellLike`): a one-handed weapon, a shield or a torch in the
+  floored hand passes both the 0x0F seat and this sink step; a two-hander, a bow or a no-hand
+  item (unarmed) still competes for the other hand too and is refused while a driving cast
+  claim holds it. marth chose this "spells-only reservation"
+  after the field showed a melee follower's floored hand refusing 119 weapon equips in 40 s.
+  A driving cast claim, and a floor without the bit, keep the full block above.
   Under #17a the facet is taken WHOLE (declare the worn set → APMF equips it and refuses
   everything else until the client re-declares or releases), which is full control of the
   facet exactly as a per-path deny would be. Any further call-site seat needs its own

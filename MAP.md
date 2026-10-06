@@ -1375,6 +1375,18 @@ cause 2 (a dagger equipped into the deny-only right hand 32 ms before the left h
   actor with no ch.17 claim): `verdict=deny (hand R held by a cast claim)`, worker not called, enforced
   whatever `bEquipObserveOnly` says. INVARIANTS #17a(5) as amended.
 - `[HandBlock] bHandClaimBlocksEquip` (default 1) switches both halves.
+- **Spells-only floors (ABI v20, 2026-10-06, `fix/apmf-floor-spells-only`).** A floor carrying
+  `kCastFlag_DenyHandOnly | kCastFlag_FloorSpellsOnly` holds its hand in `HeldFor` ONLY when the
+  competing item is `SpellLike` (a spell, a scroll, or a staff via `TESObjectWEAP::IsStaff`), so a
+  one-handed weapon / shield / torch in the floored hand passes both halves for it; a two-hander, a bow
+  or a no-hand item (unarmed, EitherHand / null slot) still competes for BOTH hands (`Categorize`) and
+  is refused while a driving claim holds the other hand (the field's bow 32 and Unarmed 22 refusals
+  continue; correct by marth's rule). Field origin: Cicero's floored right
+  hand refused his bow, swords and fists 119 times in 40 s. The spell side of the floor is NOT here
+  and is unchanged (CastGate 0x0A, EquipGate 0x0F on the magic/staff items). A driving claim and a
+  floor without the bit keep the full block. Lines say WHAT holds the hand: the 0x0F line's
+  `R=` / `L=` are `HoldDesc` ("claim (spell 0x...)", "deny-only floor", "spells-only floor"), the sink
+  verdict is `deny (hand R held by a cast claim | a deny-only floor | a spells-only floor: a staff)`.
 - **What breaks:** (1) **Install order**: `plugin.cpp` calls `handblock::Install()` right after
   `equipgate::Install()` and BEFORE `aicastseats::Install()`, because the install REFUSES a class whose
   slot 0x0F does not hold this build's disassembled engine function (APMF-B36 F2: a deny must know what
@@ -1384,7 +1396,13 @@ cause 2 (a dagger equipped into the deny-only right hand 32 ms before the left h
   ever drives a staff through a cast claim relies on that. (4) Thread: combat thread at 0x0F, any thread
   at the sink; RCU reads and member reads only, no form lookup. (5) Torch's literal differs from the
   base; a new build needs both columns. (6) The script / console / player-menu exemptions stay above
-  the sink step (a quest script or the player can still arm a held hand).
+  the sink step (a quest script or the player can still arm a held hand). (7) `SpellLike` is the ONE
+  definition of "spell-like" for the spells-only floor at both halves; a staff MUST stay spell-like
+  (it starts a spell in the hand, which is what the floor exists to stop). `AnyHandHeld` asks with
+  `a_spellLike = true` because it is only the sink's pre-gate. (8) The sink's verdict texts are
+  stored as POINTERS by `castobserve::NoteEquip`: literals only. Open backlog: APMF-B67 (spells-only
+  floor review: CHANGELOG heading, `MinReleaseForAbi` text, INVARIANTS #14b stale bullet, mixed-hold
+  sink label).
 
 ### `native/core/CastObserve.{h,cpp}` — passive cast observation, `[castobs]`
 The 0xAD-era observe-and-replicate probe (CASTER state transitions every 100 ms, the per-actor anim sink
@@ -1398,8 +1416,13 @@ diagnosis lines for WATCHED actors (a live `kIntent_Cast` claim, refreshed every
 - `[castobs] CHANNEL-END`: for a claim whose driven form is a concentration cast, the claimed hand's
   caster is read every frame; when it returns to 0 after running (state >= 4 holding the driven form):
   the state transitions with ms offsets, seat 0x07 STOP reasons, CheckCast NOs on that hand, cast anim
-  tags, whether the claim still stood, magicka %, Harbinger's stored own-LoS reading, and
-  "engine LoS re-check: not seated" (that engine check has no seat; it is not guessed).
+  tags, the behaviour-tree leaves entered in the last 1 s (the same ring INTERRUPT-ATTRIB prints,
+  added 2026-10-06 `fix/apmf-floor-spells-only`), whether the claim still stood, magicka %,
+  Harbinger's stored own-LoS reading, and "engine LoS re-check: not seated" (that engine check has no
+  seat; it is not guessed). The CALLER of the InterruptCast / NotifyStopCast that ended the channel is
+  NOT printed: this line is a per-frame poll of caster state and InterruptCast reaches Harbinger only as
+  an anim-graph output event, so no frame of that call is ever on the stack here; naming it needs a new
+  seat on `MagicCaster::InterruptCast`, which has not been built.
 Recorders (`NoteEquip` / `NoteLeafAct` / `NoteCaster` / `NoteCheckCast` / `NoteStopCast`, any thread,
 leaf lock, no engine call) are fed by one line each in `core/EquipSink.cpp`, `core/ActionGate.cpp`
 `ActThunk`, `core/CasterTypeCensus.cpp` `Observe`, `core/CastGate.cpp` (engine NO and Harbinger deny) and
