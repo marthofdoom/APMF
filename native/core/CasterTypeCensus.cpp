@@ -4,6 +4,8 @@
 #include "core/Allowance.h"
 #include "core/ControlMap.h"
 #include "core/CasterTypeCensus.h"
+#include "core/CastClassify.h"   // IsPlacementSpell (label only)
+#include "core/CastSeats.h"      // SeatCountsLine (heartbeat only)
 
 #include <algorithm>
 #include <array>
@@ -135,10 +137,14 @@ namespace apmf::castertypecensus {
         }
 
         // -2 = no row at all; kNoCaster = a row with a null creator; else a type index.
+        // feat/apmf-buff-summon-seats: the lookup MAP (built by AE 0x81DCA0 / SE 0x7816C0 / 1.7.104
+        // 0x833190) also holds every ValueModifier (0) row under Absorb (4), DualValueModifier (5),
+        // AccumulateMagnitude (32) and PeakValueModifier (34); this label used to miss those.
         int LookupRow(std::int32_t a_arch, std::int32_t a_av, bool a_self, bool a_hostile) {
             const std::uint8_t keyAv = ArchUsesAv(a_arch) ? static_cast<std::uint8_t>(a_av & 0xFF) : 0xFF;
+            const bool         vmAlias = a_arch == 4 || a_arch == 5 || a_arch == 32 || a_arch == 34;
             for (const auto& r : kRows) {
-                if (r.arch == a_arch && static_cast<std::uint8_t>(r.av & 0xFF) == keyAv &&
+                if ((r.arch == a_arch || (vmAlias && r.arch == 0)) && static_cast<std::uint8_t>(r.av & 0xFF) == keyAv &&
                     r.self == (a_self ? 1 : 0) && r.hostile == (a_hostile ? 1 : 0))
                     return r.type;
             }
@@ -159,6 +165,9 @@ namespace apmf::castertypecensus {
             if (!a_spell) return "spell?";
             const bool nativeSelf = a_spell->GetDelivery() == RE::MagicSystem::Delivery::kSelf;
             bool       flag       = nativeSelf;
+            // core/CastClassify.cpp never forces a SUMMON / REANIMATE spell (feat/apmf-buff-summon-seats).
+            const bool  placement = apmf::castclassify::IsPlacementSpell(a_spell);
+            bool        anyCaster = false, anyHeal = false;   // under seat 0's flag: the rowless substitution test
             std::string nat, s0;
             int         i = 0;
             for (auto* eff : a_spell->effects) {
@@ -168,7 +177,15 @@ namespace apmf::castertypecensus {
                 const auto  pav  = static_cast<std::int32_t>(mgef->data.primaryAV);
                 const auto  sav  = static_cast<std::int32_t>(mgef->data.secondaryAV);
                 const bool  host = mgef->IsHostile();
-                if (a_seat0Applies && !flag && !host) flag = true;
+                if (a_seat0Applies && !flag && !host && !placement) flag = true;
+                {
+                    const int r1 = LookupRow(arch, pav, flag, host);
+                    const int r2 = (ArchUsesAv(arch) && sav != -1) ? LookupRow(arch, sav, flag, host) : -2;
+                    if (r1 >= 0 || r2 >= 0) anyCaster = true;
+                    if (!host && !mgef->IsDetrimental() && mgef->data.primaryAV == RE::ActorValue::kHealth &&
+                        eff->effectItem.magnitude > 0.0f)
+                        anyHeal = true;
+                }
                 auto one = [&](bool a_self) {
                     std::string s = fmt::format("e{}:a{}/av{}{}={}", i, arch, pav, host ? "/H" : "",
                                                 RowName(LookupRow(arch, pav, a_self, host)));
@@ -183,7 +200,10 @@ namespace apmf::castertypecensus {
                 if (i >= 4) break;   // a line, not a dump
             }
             if (nat.empty()) return "no-effects";
-            return fmt::format("native[{}] seat0[{}]", nat, s0);
+            // Seat 0's rowless row substitution (core/CastClassify.cpp ServeRowless): no effect keys a caster
+            // row and none is heal-shaped -> the engine's own Script row. (Counted over the first 4 effects.)
+            return fmt::format("native[{}] seat0[{}]{}", nat, s0,
+                               a_seat0Applies && !anyCaster && !anyHeal ? " sub[Script]" : "");
         }
 
         // ---- config + global counters ----
@@ -803,11 +823,12 @@ namespace apmf::castertypecensus {
             };
             spdlog::info("[ctcensus] HEARTBEAT seats 0x06={}/15 0x0B={}/15 | windows open={} opened-series={} closed={} "
                          "zero-built={} | claimed: built [{}] fired [{}] other-built [{}] | ENGINE-WIDE (every actor) "
-                         "fires [{}] CheckStartCast calls [{}] | lines dropped {} | foreign-vtable entries {}",
+                         "fires [{}] CheckStartCast calls [{}] | claim seats answered 0x06/0x07/0x0A/0x0D [{}] | "
+                         "lines dropped {} | foreign-vtable entries {}",
                          g_nStart.load(), g_nNotify.load(), g_openWindows.load(std::memory_order_relaxed), g_opened,
                          g_closed, g_hbZero, arr(g_hbBuiltDriven), arr(g_hbFiredDriven), arr(g_hbBuiltOther),
-                         all(g_firesAll), all(g_callsAll), g_dropped.load(std::memory_order_relaxed),
-                         g_foreign.load(std::memory_order_relaxed));
+                         all(g_firesAll), all(g_callsAll), apmf::castseats::SeatCountsLine(),
+                         g_dropped.load(std::memory_order_relaxed), g_foreign.load(std::memory_order_relaxed));
         }
     }
 

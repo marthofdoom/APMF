@@ -23,6 +23,24 @@ extern "C" __declspec(dllimport) unsigned long __stdcall GetPrivateProfileIntA(
 
 namespace apmf::castclassify {
 
+    // ---- PLACEMENT SPELLS (feat/apmf-buff-summon-seats, ClickUp 86e3dvkwm). A spell with a
+    // SummonCreature (18) or Reanimate (22) effect. Their caster types choose WHERE the spell
+    // lands themselves (the summon's own placement; Reanimate's own corpse search, which
+    // overrides 0x0A/0x0D on all three builds), so a claim on one names no recipient: target 0 =
+    // "the claimant casts it", resolved to the claimant's own handle by ControlMap::ApplyRequest.
+    // Seat 0 never forces their self flag (see ClassifyThunk). Any thread: form data reads only.
+    bool IsPlacementSpell(const RE::MagicItem* a_spell) {
+        if (!a_spell) return false;
+        for (const auto* eff : a_spell->effects) {
+            if (!eff || !eff->baseEffect) continue;
+            const auto arch = eff->baseEffect->GetArchetype();
+            if (arch == RE::EffectArchetypes::ArchetypeID::kSummonCreature ||
+                arch == RE::EffectArchetypes::ArchetypeID::kReanimate)
+                return true;
+        }
+        return false;
+    }
+
     namespace {
 
         // ---- THE ONE VTABLE (RE notebook J7/J9). Not a CommonLib symbol -- see
@@ -234,6 +252,150 @@ namespace apmf::castclassify {
                              spellForm, mgef->GetFormID(), static_cast<std::uint32_t>(arch), fid, seat.spell);
         }
 
+        // ==== ROWLESS ROW SUBSTITUTION (feat/apmf-buff-summon-seats) ====================================
+        // A claimed spell NONE of whose effects keys a caster row (Muffle, fortify / resist ValueModifiers,
+        // Night Eye, Detect Life, cures, Dispel, Calm / Frenzy / Fear / Courage, restore Stamina, damage
+        // Magicka / Stamina) gets no CombatInventoryItem, so no caster, so it can never be cast by the AI.
+        // For a CLAIMED driven form only, each of its effects is handed to KEEP-BEST with the engine's OWN
+        // Script row of the same hostility: row 22 {Script, self, beneficial} or row 9 {Script, other,
+        // hostile} -- the row the engine itself uses for effects it has no special logic for.
+        //
+        // Why Script (disassembly, all three builds, agentlog apmf-buff-summon-seats): its creator (AE
+        // 0x824290 / SE 0x7879B0 / 1.7.104 0x839780) builds CombatInventoryItemMagicT<*, Script>, whose
+        // CreateCaster (AE 0x827AE0) allocates a bare 0x20-byte CombatMagicCasterScript (ctor AE 0x837C80:
+        // nothing past the CombatMagicCaster base). Its slots read nothing archetype-specific: 0x05 is a
+        // range category, 0x06 the shared base start checks (AE 0x81E500 && 0x81E6C0), 0x07 the base
+        // `return false`, 0x0A / 0x0D the shared base, 0x0C a blackboard restrict timer of the effect's OWN
+        // aiDelayTimer (EffectSetting +0x150). The row scores the effect by its OWN aiScore (+0x14C, row
+        // f4 AE 0x823260); KEEP-BEST's best score starts at -1.0 (resolver ctor AE 0x81D5A0), so a 0
+        // aiScore is still kept. The hand casts the spell exactly as authored (its own effects, delivery,
+        // magnitude): the row only decides which caster object answers the seats.
+        // Restore (the heal road's row) is NOT used here: its 0x07 measures the effect's primary AV as a
+        // restore percent (a Fortify skill would stop a channel at once) and its 0x0B/0x0C set the 15 s
+        // MagicRestoreRestrictionTimer that gates the actor's own native self heals.
+        //
+        // "Keys a caster row" is the classifier's own lookup (AE 0x81D830): key = archetype<<16 |
+        // avByte<<8 | hostile<<1 | self, avByte = the primary AV for the AV-keyed archetypes else 0xFF, then
+        // the secondary AV for AV-keyed archetypes. The lookup map (built by AE 0x81DCA0 / SE 0x7816C0 /
+        // 1.7.104 0x833190) holds the 23 table rows AND every ValueModifier row again under Absorb (4),
+        // DualValueModifier (5), AccumulateMagnitude (32) and PeakValueModifier (34). A row with a null
+        // creator (restore Stamina self, damage Magicka / Stamina) builds no item, so it counts as rowless.
+        // g_rows is the LIVE table, read and checked against kExpectedRows at install.
+        struct TableRow {
+            std::int32_t arch;
+            std::int32_t av;   // -1 = none
+            std::uint8_t self;
+            std::uint8_t hostile;
+            bool         creator;   // non-null creator = the row builds an item
+        };
+        constexpr std::size_t kTableRows = 23;
+        constexpr std::array<TableRow, kTableRows> kExpectedRows{ {
+            { 0, 24, 0, 1, true },  { 0, 25, 0, 1, false }, { 0, 26, 0, 1, false }, { 33, -1, 0, 1, true },
+            { 9, -1, 0, 1, true },  { 10, -1, 0, 1, true }, { 42, 1, 0, 1, true },  { 24, 1, 0, 1, true },
+            { 21, 53, 0, 1, true }, { 1, -1, 0, 1, true },  { 0, 24, 1, 0, true },  { 0, 25, 1, 0, true },
+            { 0, 26, 1, 0, false }, { 0, 63, 1, 0, true },  { 18, -1, 1, 0, true }, { 18, -1, 0, 0, true },
+            { 35, -1, 1, 0, true }, { 12, -1, 1, 0, true }, { 11, 54, 1, 0, true }, { 17, -1, 1, 0, true },
+            { 0, 39, 1, 0, true },  { 22, -1, 0, 0, true }, { 1, -1, 1, 0, true },
+        } };
+        constexpr std::size_t kScriptHostileRow    = 9;    // {Script, other, hostile}
+        constexpr std::size_t kScriptBeneficialRow = 22;   // {Script, self, beneficial}
+        // Archetypes whose info flag bit 1 is set (AE 0x1FD3028 / SE 0x1DB0028 / 1.7.104 0x2076028,
+        // identical): the AV is part of the key.
+        constexpr std::array<std::int32_t, 17> kAvKeyedArchetypes{ { 0, 4, 5, 6, 7, 8, 11, 14, 21, 24, 31, 32, 34,
+                                                                     38, 39, 42, 45 } };
+        // The map builder's ValueModifier aliases.
+        constexpr std::array<std::int32_t, 4> kValueModAliases{ { 4, 5, 32, 34 } };
+
+        bool        g_rowlessOk       = false;     // set once at Install, before the vtable write
+        KeepBest_t  g_keepBestRowless = nullptr;   // KeepBestRow, verified separately from the heal road's
+        const void* g_scriptRow[2]{};      // [0] beneficial (row 22), [1] hostile (row 9)
+
+        std::set<std::tuple<RE::FormID, RE::FormID, std::uint8_t>> g_rowlessLogged;   // guarded by g_healLogMx
+
+        bool AvKeyed(std::int32_t a_arch) {
+            return std::find(kAvKeyedArchetypes.begin(), kAvKeyedArchetypes.end(), a_arch) != kAvKeyedArchetypes.end();
+        }
+
+        bool KeyHitsCasterRow(std::int32_t a_arch, std::uint8_t a_avByte, std::uint8_t a_self, std::uint8_t a_hostile) {
+            const bool alias =
+                std::find(kValueModAliases.begin(), kValueModAliases.end(), a_arch) != kValueModAliases.end();
+            for (const auto& r : kExpectedRows) {   // equal to the live table: Install refuses otherwise
+                if (!r.creator || r.self != a_self || r.hostile != a_hostile) continue;
+                if (static_cast<std::uint8_t>(r.av & 0xFF) != a_avByte) continue;
+                if (r.arch == a_arch || (alias && r.arch == 0)) return true;
+            }
+            return false;
+        }
+
+        // Does this effect, under the resolver's self flag, key a row that builds an item?
+        bool EffectKeysCasterRow(const RE::Effect* a_eff, std::uint8_t a_self) {
+            const auto* m    = a_eff->baseEffect;
+            const auto  arch = static_cast<std::int32_t>(m->GetArchetype());
+            const auto  host = static_cast<std::uint8_t>(m->IsHostile() ? 1 : 0);
+            if (!AvKeyed(arch)) return KeyHitsCasterRow(arch, 0xFF, a_self, host);
+            if (KeyHitsCasterRow(arch, static_cast<std::uint8_t>(static_cast<std::int32_t>(m->data.primaryAV) & 0xFF),
+                                 a_self, host))
+                return true;
+            const auto sav = static_cast<std::int32_t>(m->data.secondaryAV);
+            return sav != -1 && KeyHitsCasterRow(arch, static_cast<std::uint8_t>(sav & 0xFF), a_self, host);
+        }
+
+        enum class RowlessWhy : std::uint8_t { Served = 1, OtherEffectKeyed, HealShaped };
+
+        // The whole spell: no effect keys a caster row, and none is heal-shaped (the heal road above owns
+        // those, with the Restore row). `a_keyed` names the first effect that does key one.
+        RowlessWhy SpellRowless(const RE::MagicItem* a_spell, std::uint8_t a_self, RE::FormID& a_keyed) {
+            for (const auto* e : a_spell->effects) {
+                if (!e || !e->baseEffect) continue;
+                if (LooseHealShaped(e)) { a_keyed = e->baseEffect->GetFormID(); return RowlessWhy::HealShaped; }
+                if (EffectKeysCasterRow(e, a_self)) { a_keyed = e->baseEffect->GetFormID(); return RowlessWhy::OtherEffectKeyed; }
+            }
+            return RowlessWhy::Served;
+        }
+
+        // COMBAT thread, after the chained visitor. Cheap path first: an effect that keys a caster row
+        // (almost every effect the engine classifies) returns before any claim read.
+        void ServeRowless(void* a_this, void* a_effect, RE::MagicItem* a_spell, RE::CombatController* a_cc,
+                          std::uint8_t a_selfFlag) {
+            if (!g_rowlessOk || !g_keepBestRowless || !a_spell || !a_cc || !a_effect) return;
+            const auto* eff = reinterpret_cast<const RE::Effect*>(a_effect);
+            if (!eff->baseEffect || EffectKeysCasterRow(eff, a_selfFlag)) return;
+
+            auto  attPtr = a_cc->attackerHandle.get();
+            auto* actor  = attPtr.get();
+            if (!actor) return;
+            const RE::FormID    fid       = actor->GetFormID();
+            const RE::FormID    spellForm = a_spell->GetFormID();
+            apmf::CastSeatClaim seat{};
+            if (!apmf::ControlMap::Get().TryGetCastSeatClaimForForm(fid, spellForm, seat) || !seat.targetHandle) return;
+
+            RE::FormID keyed = 0;
+            const auto why   = SpellRowless(a_spell, a_selfFlag, keyed);
+            const bool hostile = eff->baseEffect->IsHostile();
+            if (why == RowlessWhy::Served) g_keepBestRowless(a_this, eff, g_scriptRow[hostile ? 1 : 0], 1.0f);
+
+            {
+                std::scoped_lock lk(g_healLogMx);
+                if (!g_rowlessLogged.emplace(spellForm, fid, static_cast<std::uint8_t>(why)).second) return;
+            }
+            const char* name = a_spell->GetName() ? a_spell->GetName() : "?";
+            if (why == RowlessWhy::Served)
+                spdlog::info("[ch.8b seat 0] {} ({:08X}) has NO caster row (effect {:08X} archetype {} primaryAV {} "
+                             "hostile={} selfFlag={}) -> served as Script (row {}); actor {:08X}, claimed spell {:08X}. "
+                             "The hand casts the spell as authored; the Script caster answers the seats.",
+                             name, spellForm, eff->baseEffect->GetFormID(),
+                             static_cast<std::uint32_t>(eff->baseEffect->GetArchetype()),
+                             static_cast<std::int32_t>(eff->baseEffect->data.primaryAV), hostile, a_selfFlag,
+                             hostile ? kScriptHostileRow : kScriptBeneficialRow, fid, seat.spell);
+            else
+                spdlog::info("[ch.8b seat 0] {} ({:08X}) effect {:08X} has no caster row but is NOT substituted: {} "
+                             "(effect {:08X}); actor {:08X}.",
+                             name, spellForm, eff->baseEffect->GetFormID(),
+                             why == RowlessWhy::HealShaped ? "the spell is heal-shaped (the heal road owns it)"
+                                                           : "another effect of the spell keys its own caster row",
+                             keyed, fid);
+        }
+
         constexpr std::uint64_t kLogThrottleMs = 1500;   // matches every other seat's cadence in this codebase
 
         std::mutex                                       g_rlMx;
@@ -355,7 +517,22 @@ namespace apmf::castclassify {
                             // never assumed, before it is ever called.
                             const auto* eff     = reinterpret_cast<const RE::Effect*>(a_effect);
                             const bool  hostile = eff && eff->baseEffect && eff->IsHostile();
-                            if (!hostile) {
+                            // PLACEMENT SPELLS ARE NEVER FORCED (86e3dvkwm, spell-level). Reanimate has ONE
+                            // row, {Reanimate, OTHER, beneficial} (row 21): forcing self=1 would key no row
+                            // at all and the claimed spell would get no item. Summon keys the same creator
+                            // from both rows 14 and 15, so leaving it native changes nothing and keeps the
+                            // engine's own key exactly. Checked on the whole spell, so no later effect of a
+                            // placement spell can flip the flag either.
+                            const bool placement = IsPlacementSpell(spellPtr);
+                            if (placement) {
+                                if (LogDue(fid, spellForm))
+                                    spdlog::info(
+                                        "[ch.8b seat 0] 0x{} CLASSIFY spell=0x{} '{}' selfFlag {} -- matches the live "
+                                        "cast claim's driven form, a SUMMON / REANIMATE spell: NOT forced (it keys "
+                                        "its own Summon / Reanimate row natively).",
+                                        apmf::log::Hex(fid), apmf::log::Hex(spellForm),
+                                        spellPtr->GetName() ? spellPtr->GetName() : "?", before);
+                            } else if (!hostile) {
                                 *selfFlag = 1;   // SET BEFORE CHAINING -- orig() reads this field itself
                                 if (LogDue(fid, spellForm))
                                     spdlog::info(
@@ -405,6 +582,7 @@ namespace apmf::castclassify {
 
             const auto r = orig(a_this, a_effect);   // THE ENGINE'S OWN CLASSIFICATION LOGIC, SEEING WHATEVER WE SET ABOVE
             ServeUnclassedHeal(a_this, a_effect, spellPtr, ccPtr, *selfFlag);
+            ServeRowless(a_this, a_effect, spellPtr, ccPtr, *selfFlag);
             return r;
         }
 
@@ -515,6 +693,51 @@ namespace apmf::castclassify {
                 g_restoreRow = reinterpret_cast<const void*>(row);
                 spdlog::info("[ch.8b seat 0] unclassed-heal serving enabled (KeepBestRow 0x{}, Restore-Health row 0x{}).",
                              apmf::log::Hex(kb.address(), 16), apmf::log::Hex(row, 16));
+            }
+        }
+
+        // Rowless row substitution (see ServeRowless). Optional like the heal road: refused alone, loudly,
+        // if KeepBestRow fails the self-check or the LIVE table differs from kExpectedRows in any row
+        // (archetype, AV, self, hostile, creator null or not) -- the substitution decision is made from
+        // kExpectedRows, so it is only sound while the engine's table is exactly that. Both Script rows
+        // must carry the same non-null creator (the one Script item / caster family).
+        {
+            REL::Relocation<std::uintptr_t> kb{ kKeepBestRow };
+            REL::Relocation<std::uintptr_t> tbl{ kClassifyTable };
+            std::string                     bad;
+            if (tbl.address() == 0) bad = "classify table resolved to 0";
+            for (std::size_t i = 0; bad.empty() && i < kTableRows; ++i) {
+                const auto  r  = tbl.address() + i * kRowSize;
+                const auto& ex = kExpectedRows[i];
+                const auto  arch = *reinterpret_cast<const std::int32_t*>(r);
+                const auto  av   = *reinterpret_cast<const std::int32_t*>(r + 4);
+                const auto  self = *reinterpret_cast<const std::uint8_t*>(r + 8);
+                const auto  host = *reinterpret_cast<const std::uint8_t*>(r + 9);
+                const bool  cr   = *reinterpret_cast<const std::uintptr_t*>(r + 0x18) != 0;
+                if (arch != ex.arch || av != ex.av || self != ex.self || host != ex.hostile || cr != ex.creator)
+                    bad = fmt::format("row {} is {{arch {}, av {}, self {}, hostile {}, creator {}}}, expected "
+                                      "{{arch {}, av {}, self {}, hostile {}, creator {}}}",
+                                      i, arch, av, self, host, cr, ex.arch, ex.av, ex.self, ex.hostile, ex.creator);
+            }
+            const auto rowB = tbl.address() + kScriptBeneficialRow * kRowSize;
+            const auto rowH = tbl.address() + kScriptHostileRow * kRowSize;
+            if (bad.empty() &&
+                *reinterpret_cast<const std::uintptr_t*>(rowB + 0x18) != *reinterpret_cast<const std::uintptr_t*>(rowH + 0x18))
+                bad = "the two Script rows (9, 22) do not share one creator";
+            if (!allowance::SeatVerified(kb.address(), "CastClassify.KeepBestRow.Rowless")) {
+                spdlog::error("[ch.8b seat 0] rowless row substitution NOT enabled (self-check refused KeepBestRow).");
+            } else if (!bad.empty()) {
+                spdlog::error("[ch.8b seat 0] rowless row substitution NOT enabled: classify table at 0x{}: {}. A claimed "
+                              "spell with no caster row stays without an item (never a guessed row).",
+                              apmf::log::Hex(tbl.address(), 16), bad);
+            } else {
+                g_keepBestRowless = reinterpret_cast<KeepBest_t>(kb.address());
+                g_scriptRow[0]    = reinterpret_cast<const void*>(rowB);
+                g_scriptRow[1]    = reinterpret_cast<const void*>(rowH);
+                g_rowlessOk       = true;
+                spdlog::info("[ch.8b seat 0] rowless row substitution enabled (KeepBestRow 0x{}, Script rows 0x{} "
+                             "beneficial / 0x{} hostile; all 23 table rows match).",
+                             apmf::log::Hex(kb.address(), 16), apmf::log::Hex(rowB, 16), apmf::log::Hex(rowH, 16));
             }
         }
 

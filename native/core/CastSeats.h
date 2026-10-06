@@ -45,6 +45,14 @@
 // `GetMagicTarget`'s implementation (0x81e020) is the BASE, SHARED by 13 of the
 // 14 caster vtables -- including Stagger, Disarm and Reanimate. An unscoped
 // redirect would aim HOSTILE effects at the ally. So:
+//   * WIDENED 2026-10-05 (feat/apmf-buff-summon-seats): these seats now install on
+//     TEN caster vtables -- Restore, Offensive, Ward, Summon, Cloak, Light,
+//     Invisibility, BoundItem, Armor, Script -- every type a claimed buff, ward,
+//     summon or rowless spell keys (see CastSeats.cpp SeatTypes()); still never
+//     Stagger, Disarm, TargetEffect, Paralyze or Reanimate. A summon / reanimate
+//     SELF claim keeps the engine's own placement (0x0A chains, 0x0D leaves the
+//     engine default; NativePlacement in the .cpp). The paragraph below is the
+//     2026-09-06 history of the scope rule:
 //   * these seats install on `VTABLE_CombatMagicCasterRestore` AND
 //     `VTABLE_CombatMagicCasterOffensive` ONLY (2026-09-06: a claimed hostile
 //     spell -- e.g. Firebolt -- classifies into the Offensive caster, never
@@ -90,5 +98,11 @@ namespace apmf::castseats {
     // chains newest-first: last installed sits outermost). VR-refused (the vtable
     // indices are SE/AE-verified only). Idempotent / install-once.
     void Install();
+
+    // PASSIVE (principle 5, feat/apmf-buff-summon-seats): per seated caster type, the number of
+    // seat calls a live claim ANSWERED, "Type=0x06/0x07/0x0A/0x0D" (plus the 0x0A calls that kept
+    // the engine's own placement for a summon / reanimate self claim). Relaxed atomic reads; any
+    // thread. Printed by the [ctcensus] HEARTBEAT.
+    std::string SeatCountsLine();
 
 }
