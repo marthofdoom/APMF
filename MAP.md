@@ -582,7 +582,7 @@ the same forced answer within one classify pass — see the .cpp's comment).
   Left unchanged here (not this brief's scope); open for the heal road.
   **What breaks:** feeding a non-claimed spell to `ServeRowless`; deciding "rowless" from
   anything but the replicated key (a native row must always win); adding a row without updating
-  `kExpectedRows` (Install then refuses, by design).
+  `kExpectedRows` (Install then refuses, by design). Open review items: APMF-B58 (b)(c), APMF-B59 (d)(e)(f).
 
 ### `native/core/CastSeats.{h,cpp}` — ch.8b: THE ENGINE CAST SEATS (the keystone)
 While a `kIntent_Cast` claim {actor A, spell S, target T} stands, APMF answers the
@@ -603,6 +603,18 @@ summons (Summon) and rowless spells (seat 0's Script substitution). On those typ
 **NATIVE PLACEMENT:** a claim whose target is the claimant on a NON-kSelf spell (ControlMap resolves
 that only for a summon / reanimate spell, `castclassify::IsPlacementSpell`) keeps the engine's own
 placement: 0x0A chains, 0x0D leaves the engine default; 0x06 / 0x07 still answer from the claim.
+**COMPOSED WHETHER (round 2, review SEV-2/SEV-3 of 3903988):** on the eight new types 0x06's claim YES
+also needs the engine's own redundancy check -- `AlreadyApplied` replicates `0x81E6C0` (target via
+GetMagicTarget; Light/Armor/Invisibility/Script/Cloak/Ward) and `0x81E400` (the CASTER; Summon/BoundItem):
+"an active effect whose spell IS this magicItem", skipped for concentration (functor MagicCastOnTarget,
+`ActiveEffect+0x40`, identical on all three builds; neither id is in the fork's 1.7.104 table, so it is
+re-implemented through the fork's members, not called). Light serves only kSelf / kTargetActor delivery
+(an aimed / location Light spell leaves no active effect to bound). Ward keeps its own magicka floor
+(GMST `fCombatMagicWardMagickaCastLimit`, read by name at install; Ward is NOT seated without it): 0x06
+refuses and 0x07 stops below it. `NativePlacement` also requires `IsPlacementSpell` (an explicit self
+target on Heal Other must never chain 0x0A to the foe). Open: APMF-B58 / APMF-B59.
+**What breaks:** dropping the bound re-casts persistent effects every hand cycle (Light = the 2026-08-19
+CTD shape, summons re-summon); seating Light for a non-actor-borne delivery has no bound.
 **PROBES (principle 5):** `[ch.8b seats] FIRST claim answer on the <Type> caster, seat 0xNN ...` once
 per (type, seat), and `castseats::SeatCountsLine()` (per-type claim-answer counts 0x06/0x07/0x0A/0x0D,
 plus native-placement 0x0A calls) in the `[ctcensus] HEARTBEAT`.

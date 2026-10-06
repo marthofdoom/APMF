@@ -49,6 +49,12 @@ Agentlog `apmf-buff-summon-seats.md`, RE helpers `scratchpad/re-bs/` (ae / se / 
   that self claim (`NativePlacement`), 0x06 / 0x07 answer from the claim. Reanimate gets no caster seats: its own
   0x06 corpse search feeds its own 0x0A / 0x0D. A reanimate claim is served by seat 0 + 0x0F only (equip admitted,
   other spells denied); WHETHER (a corpse exists) stays the engine's.
+- **Round 2 (review FIX FIRST on 3903988).** The eight new types compose the claim's 0x06 YES with the engine's
+  own "already applied" check (an active effect of this very spell on the target, or on the caster for Summon /
+  BoundItem), so a buff, light or summon fires once and the claim then reads `NO on the <Type> caster: its effect
+  is already active`. Light only for kSelf / kTargetActor spells. Wards keep the engine's magicka floor
+  (fCombatMagicWardMagickaCastLimit): `CheckStopCast -> STOP (Ward: caster Magicka below ...)`. Backlog
+  APMF-B58 / APMF-B59.
 - **Rowless.** A claimed spell with no caster row is handed to KEEP-BEST with the engine's Script row (22 beneficial,
   9 hostile). Covers Muffle, fortify / resist, Night Eye, Detect Life, cures, Dispel, Calm / Fear / Frenzy / Courage,
   restore Stamina (row with a null creator), damage Magicka / Stamina. Not for heal-shaped spells (the heal road).
@@ -65,7 +71,8 @@ Per kind, at least 3 `[ctcensus]` windows and their CLOSE verdicts; plus one `[c
 0x06/0x07/0x0A/0x0D [...]`. Kinds: Oakflesh self (Armor), Oakflesh on an ally (Armor via proxy, 0x0A/0x0D at the
 ally), Candlelight (Light), a ward (Ward, a channel bounded by the claim TTL), a cloak (Cloak), a bound weapon
 (BoundItem), Invisibility, Conjure Familiar (Summon, `native placement` count > 0), Raise Zombie with a corpse
-nearby (Reanimate, no seat lines expected), Muffle and a Fortify spell (`served as Script`, then Script BUILT /
+nearby (Reanimate, no seat lines expected; with NO corpse an expected `BUILT ... NOT FIRED` -- the hand holds
+the spell until the claim's TTL, APMF-B58 (a), and MFO's never-fired release frees it), Muffle and a Fortify spell (`served as Script`, then Script BUILT /
 FIRED), Courage on an ally (Script via the rowless road), Calm at a foe (Script hostile row), and one AUTO buff fan as
 N claims (a SERIES). Decide per kind with the rules in the CASTER-TYPE CENSUS entry below: FIRED ANIMATED = done; BUILT
 NOT FIRED on a seated type = an upstream gate, goes to Opus with the lines; NOT BUILT with `sub[Script]` = the

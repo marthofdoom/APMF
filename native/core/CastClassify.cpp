@@ -89,9 +89,13 @@ namespace apmf::castclassify {
         // properly classed, go ahead and proxy it."). The visitor (AE 0x81D830 / SE 0x7811F0) keys
         // each effect into the engine's 23-row table and hands the matched row to KEEP-BEST
         // (AE 45325 0x81DBA0 / SE 43934 0x7815A0: `void(resolver, Effect*, row*, float weight)`,
-        // weight 1.0 for the primary AV). A heal whose archetype is not ValueModifier (Mysticism's
-        // Restore Health is PeakValueModifier, a34/av24) has NO row, so the engine never mints a
-        // Restore item. For a CLAIMED driven form only, the thunk hands that effect to KEEP-BEST
+        // weight 1.0 for the primary AV). CORRECTED 2026-10-05 (APMF-B59 (e)): the premise that a
+        // PeakValueModifier heal (Mysticism's Restore Health, a34/av24) has NO row is WRONG -- the
+        // lookup map also files every ValueModifier row under archetypes 4 / 5 / 32 / 34 (map builder
+        // AE 0x81DCA0 / SE 0x7816C0 / 1.7.104 0x833190), so it keys the Restore row natively and the
+        // serve below keeps the SAME row a second time (harmless; the +0x48 score sum doubles for the
+        // claimed form only). A heal whose archetype is outside {0, 4, 5, 32, 34} still has no row.
+        // For a CLAIMED driven form only, the thunk hands that effect to KEEP-BEST
         // with the engine's own Restore-Health row (table AE 382289 / SE 509694, row 10 =
         // {ValueModifier, Health, self, beneficial}). Disassembly (agentlog apmf-unclassed-heal):
         // the Restore creator/ctor (AE 0x824510 -> 0x81F710) and every Restore caster slot read
