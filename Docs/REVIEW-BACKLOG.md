@@ -411,6 +411,8 @@ Verbatim:
   it keyed into a different caster (e.g. Armor). Mod-only." (Since the round-2 fix NativePlacement also requires
   `IsPlacementSpell`, which is the same whole-spell test, so (c) stands as written.)
 Reviewer reasoning: all three are bounded and rare; none exercised by the vanilla kinds of the next field cycle.
+- SEV-4 (round-2 re-check, e60f64f): a pooled proxy slot re-pointed to another source spell can leave a stale active effect whose `spell` is that same slot form (e.g. a Candlelight proxy effect still on ally A after the slot now carries Oakflesh). AlreadyApplied then answers NO for up to that effect's remaining duration; the claim stands unfired, bounded by TTL and the client's never-fired release.
+- SEV-4 (round-2, e60f64f): a claimed ward omits the native Ward 0x07 no-threat grace, so it stays up while claimed and oscillates around the 25% magicka floor. Bounded by the floor and TTL.
 
 ### APMF-B59 (SEV-5 x3) -- buff / summon / rowless cast seats, small items
 Raised against 3903988, 2026-10-05. Verbatim:
@@ -423,3 +425,5 @@ Raised against 3903988, 2026-10-05. Verbatim:
   corrected." -- Banner corrected in round 2 (`core/CastClassify.cpp` UNCLASSED HEAL comment); the double keep stays.
 - (f) "Rowless item score = sum of aiScores, 0 for many vanilla MGEFs; whether a score-0 item is ever picked is a
   field question (STATUS's 'NOT BUILT with sub[Script]' path covers it)."
+- SEV-5 (round-2, e60f64f): with permanent Magicka 0, native 0x666F60 returns a constant while the copy treats it as low (unreachable: no ward at 0 max Magicka).
+- SEV-5 (round-2, e60f64f): AlreadyApplied is a proven member-level copy of AE 0x81E6C0 / 0x81E400 because ids 45349 / 45344 are absent from the fork's 1.7.104 table. Adding them at the next fork table revision would let it call the engine directly.
