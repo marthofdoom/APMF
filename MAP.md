@@ -338,6 +338,16 @@ whose id is 0 or collides is refused loudly). Each claim that got a form records
 `Claim::castProxyRef` and owns exactly one ref. EVERY driving kSelf-at-ally claim takes
 a proxy (no prospective-winner gate); one that cannot get one keeps an INVALID target
 handle, so no seat drives its original form (it would heal the caster).
+**SELF-FLIP (feat/apmf-self-delivery-proxy, 2026-10-05):** the pool also mints the REVERSE copy --
+`Flip::kToSelf`, delivery kSelf -- for an Aimed / Touch / TargetActor beneficial spell claimed at the claimant itself
+(the SELF-FLIP block in `ControlMap::ApplyRequest`, right after the delivery-flip block). The flip direction is
+part of the key and must match the source's delivery (`Acquire` refuses otherwise). A kSelf mint arms a passive
+per-pump LANDING watch (`WatchTick`, self-reposting `mainthread::Post`) that logs `LANDED on the caster` or `NOT
+seen on the caster`. Disassembly (all three builds, STATUS "SELF-FLIP PROXY"): the copy keys the native self row
+(ctor `[+0x4c]` = GetDelivery()==kSelf), gets no aim controller (49081: delivery 2/3 only), and FindTargets' Self
+branch lands it on `desiredTarget` when that is an Actor (0x0A answers the claimant) else the caster. NOTE: that
+branch DOES read `desiredTarget` (+0x20); the "never reads desiredTarget" wording above and in INVARIANTS #19 is
+not what the code does (left for the reviewer).
 WRITER/MAIN THREAD ONLY.
 Called from: `ControlMap::ApplyRequest` (`Acquire`, on the writer thread where form
 lookups are legal, BEFORE the claim publishes), and every claim-removal path in `core/ControlMap.cpp`
@@ -644,7 +654,10 @@ plus native-placement 0x0A calls) in the `[ctcensus] HEARTBEAT`.
   kAimed / kTargetActor spell the caster's OWN handle, so 0x0A/0x0D aim it at the caster
   (a stuck hand, or a kTargetActor spell applied to the claimant; review F1/F2 of
   `5250fb2`); the proxy mint's `castTarget != op.actor`
-  test is what keeps a self claim from minting a delivery-flip proxy. Open review items:
+  test is what keeps a self claim from minting a delivery-flip proxy. An EXPLICIT self target (the claimant's own
+  FormID) on a Touch / Aimed / TargetActor BUFF instead mints a SELF-FLIP proxy (kSelf copy; the block right after
+  the delivery flip, feat/apmf-self-delivery-proxy) so no seat aims it at its own caster; hostile and non-placement
+  kTargetLocation spells are declined (logged) and keep the old behaviour. Open review items:
   REVIEW-BACKLOG APMF-B41 (the degenerate kIntent_Cast doc sentence). STATUS "Phase 0c". 0x06 and 0x0A also feed the Restore census (`CensusNote`, Restore
   vtable only, read-only; `core/RestoreCensus`).
   **ABI v18 `kCastFlag_OwnLineOfSight` (`OwnLosApplies`: the bit, not deny-only, target not 0

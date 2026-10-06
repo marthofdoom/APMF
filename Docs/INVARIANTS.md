@@ -804,7 +804,8 @@ documenting the same boundary.
 
 **#19 — A RUNTIME-MINTED FORM MUST NEVER BE REACHABLE FROM A SAVE, AND MUST DROP
 ITS BORROWED POINTERS BEFORE A LOAD.** The cast drive mints delivery-flip proxy
-`SpellItem`s through `IFormFactory` (`core/CastProxy.{h,cpp}` -- renamed from
+`SpellItem`s through `IFormFactory` (both directions since 2026-10-05: kSelf -> kTargetActor for an ally, and the
+self-flip Aimed/Touch/TargetActor -> kSelf for a buff claimed at the caster itself) (`core/CastProxy.{h,cpp}` -- renamed from
 `CastExecutor` when the forced drive was retired; the pool outlived the drive because
 the engine's `FindTargets` Self branch always lands on the caster).
 These are dynamic `0xFF` forms: they do NOT survive a load, and the engine purges

@@ -23,6 +23,23 @@
 // `delivery = kTargetActor`) that the AI selects and casts instead. That copy is
 // what this pool mints.
 //
+// THE REVERSE FLIP (feat/apmf-self-delivery-proxy, marth 2026-10-05: "a self cast is
+// valid if its needed, just needs to be animated"). An AIMED / TOUCH / TARGET-ACTOR
+// beneficial spell claimed at the claimant itself (an explicit self target) has the
+// opposite problem: aimed, it is a projectile at its own shooter; touch, a reach test
+// that cannot pick the caster; target-actor, an aim controller pointed at itself
+// (APMF-B39 F1/F2). So the pool also mints a SELF-FLIP copy (`delivery = kSelf`,
+// same shared effects) and the seats drive that. A kSelf form takes the engine's own
+// self road, the one a native Oakflesh self claim already takes: the classifier keys
+// its self=1 row natively (CombatMagicItemData ctor [+0x4c] = GetDelivery()==kSelf,
+// AE 0x81D5BC / SE 0x780F5C / 1.7.104 0x832AAC), no aim controller is built (49081
+// builds one for Aimed/TargetActor only: AE 0x89EBF3 / SE 0x808392 / 1.7.104
+// 0x8B4093), and FindTargets' Self branch (AE 0x5BC98A / SE 0x54D508 / 1.7.104
+// 0x5CB4D1) applies it to the caster (desiredTarget if it resolves to an Actor --
+// seat 0x0A answers the claimant -- else the caster itself; no projectile). The
+// direction of a flip is fixed by the SOURCE's delivery (kSelf -> kTargetActor,
+// anything else -> kSelf), and the direction is part of the pool key.
+//
 // Two lifecycle rules ride on it, both INVARIANTS #19 (a runtime-minted form must
 // never be reachable from a save, and must drop its borrowed pointers before a
 // load):
@@ -65,9 +82,16 @@ namespace apmf::castproxy {
     // first claim's target. A dual claim occupies both hands and is its own key.
     enum class Hand : std::uint8_t { kRight = 0, kLeft = 1, kDual = 2 };
 
-    // Hand this owner a delivery-flip proxy for `a_src` on `a_hand` and TEACH it so
-    // the AI's own inventory can build an item for it. Keyed by (owner, source
-    // spell, hand) and REFERENCE-COUNTED: if the owner already has a live proxy for
+    // Which way a proxy flips its source's delivery. kToTargetActor: a kSelf spell
+    // claimed at ANOTHER actor (the original delivery flip). kToSelf: an Aimed / Touch /
+    // TargetActor spell claimed at the claimant ITSELF (the self-flip proxy,
+    // feat/apmf-self-delivery-proxy). Part of the pool key; Acquire refuses a direction
+    // the source's own delivery does not call for.
+    enum class Flip : std::uint8_t { kToTargetActor = 0, kToSelf = 1 };
+
+    // Hand this owner a delivery-flip proxy for `a_src` on `a_hand`, flipped `a_flip`,
+    // and TEACH it so the AI's own inventory can build an item for it. Keyed by (owner,
+    // source spell, hand, flip) and REFERENCE-COUNTED: if the owner already has a live proxy for
     // this exact spell on this exact hand key, the SAME form is returned and its ref
     // count goes up by one; otherwise a free slot is configured for it (ref count 1).
     // Two live slots never share a form, and a minted form whose FormID is 0 or
@@ -76,10 +100,16 @@ namespace apmf::castproxy {
     // different spell. Every nonzero return is ONE ref the caller's claim owns and
     // must give back through Unref exactly once.
     // Returns 0 when no slot is free / the actor is not loadable / the form factory
-    // refuses (no ref taken) -- in which case the CALLER must not let the seats serve
-    // the claim: the original kSelf form cast "at an ally" would silently heal the
-    // caster. WRITER/MAIN THREAD ONLY.
-    RE::FormID Acquire(RE::FormID a_owner, RE::SpellItem* a_src, Hand a_hand);
+    // refuses, or `a_flip` does not match the source's delivery (kToTargetActor needs a
+    // kSelf source, kToSelf a non-kSelf one) (no ref taken) -- in which case the CALLER
+    // must not let the seats serve the claim: the original kSelf form cast "at an ally"
+    // would silently heal the caster, and the original aimed form cast "at the caster"
+    // is a ray at its own shooter. WRITER/MAIN THREAD ONLY.
+    // A kToSelf mint also arms a passive LANDING watch (principle 5): once per frame on
+    // the confirmed-main pump it looks for an active effect of the proxy on the owner,
+    // logs `[castproxy] ... self-flip proxy ... LANDED on the caster` once, or, 5 s after
+    // the slot's last ref went without one, `... NOT seen on the caster`. Read-only.
+    RE::FormID Acquire(RE::FormID a_owner, RE::SpellItem* a_src, Hand a_hand, Flip a_flip);
 
     // Give back ONE claim's ref on `a_proxy` (the FormID Acquire returned to it).
     // Un-teaches + deselects + releases the slot only when the LAST ref goes, so
@@ -96,8 +126,9 @@ namespace apmf::castproxy {
     // purge can never free a live spell's effect array through a dead proxy, and
     // the fixed-size pool can never stay permanently occupied by an owner that no
     // longer exists (`ControlMap::Clear()` deliberately does not call
-    // `channel->Release`, so nothing else would reset it). Makes no engine calls.
-    // MAIN THREAD ONLY (the SKSE revert / kPreLoadGame seat).
+    // `channel->Release`, so nothing else would reset it). Also drops every self-flip
+    // landing watch (its queued tick is Discard()ed by the caller right after). Makes
+    // no engine calls. MAIN THREAD ONLY (the SKSE revert / kPreLoadGame seat).
     void ResetAll();
 
     // Un-teach + deselect every live proxy, keeping the slots (SKSE save callback).
