@@ -19,7 +19,7 @@
 
 namespace apmf::VerifiedAddresses
 {
-	// 1.6.1170.0: 203 rows
+	// 1.6.1170.0: 204 rows
 	inline constexpr REL::SelfCheck::Row kRows_1_6_1170[] = {
 		{ 207886, 0x18A5558, 0x0, 0, {  }, "Character" },
 		{ 212096, 0x18D7388, 0x0, 0, {  }, "CombatTargetSelectorStandard" },
@@ -85,6 +85,7 @@ namespace apmf::VerifiedAddresses
 		{ 210299, 0x18C90D8, 0x0, 0, {  }, "CombatInventoryItemRanged" },
 		{ 210301, 0x18C9188, 0x0, 0, {  }, "CombatInventoryItemShield" },
 		{ 210305, 0x18C92E8, 0x0, 0, {  }, "CombatInventoryItemTorch" },
+		{ 210303, 0x18C9238, 0x0, 0, {  }, "CombatInventoryItemOneHandedBlock" },
 		{ 212694, 0x18DC6C0, 0x0, 0, {  }, "Leaf.CombatBehaviorAdvance" },
 		{ 213789, 0x18E4048, 0x0, 0, {  }, "Leaf.CombatBehaviorAttack" },
 		{ 214395, 0x18E8C80, 0x0, 0, {  }, "Leaf.CombatBehaviorAttackFromCover" },
@@ -226,7 +227,7 @@ namespace apmf::VerifiedAddresses
 		{ 12332, 0x179710, 0x0, 0, {  }, "CommonLib.LookupReferenceByHandle" },
 	};
 
-	// 1.5.97.0: 203 rows
+	// 1.5.97.0: 204 rows
 	inline constexpr REL::SelfCheck::Row kRows_1_5_97[] = {
 		{ 261397, 0x165DA40, 0x0, 0, {  }, "Character" },
 		{ 265605, 0x1690A98, 0x0, 0, {  }, "CombatTargetSelectorStandard" },
@@ -292,6 +293,7 @@ namespace apmf::VerifiedAddresses
 		{ 264525, 0x1681B58, 0x0, 0, {  }, "CombatInventoryItemRanged" },
 		{ 264527, 0x1681C28, 0x0, 0, {  }, "CombatInventoryItemShield" },
 		{ 264531, 0x1681DD0, 0x0, 0, {  }, "CombatInventoryItemTorch" },
+		{ 264529, 0x1681CF8, 0x0, 0, {  }, "CombatInventoryItemOneHandedBlock" },
 		{ 266096, 0x16960B0, 0x0, 0, {  }, "Leaf.CombatBehaviorAdvance" },
 		{ 266747, 0x169E5A0, 0x0, 0, {  }, "Leaf.CombatBehaviorAttack" },
 		{ 267194, 0x16A37A8, 0x0, 0, {  }, "Leaf.CombatBehaviorAttackFromCover" },
@@ -433,7 +435,7 @@ namespace apmf::VerifiedAddresses
 		{ 12204, 0x1329D0, 0x0, 0, {  }, "CommonLib.LookupReferenceByHandle" },
 	};
 
-	// 1.7.104.0: 214 rows
+	// 1.7.104.0: 217 rows
 	// 28 NOT VERIFIED on 1.7.104.0, deliberately absent from this table (the seat is refused):
 	//   EquipSink.Path.OutfitApply.24234 (1.6.1170 id -): BY DESIGN: 1.5.97-only label. On 1.6.1170 and 1.7.104 the code reads its AE twin EquipSink.Path.OutfitApply.418622 (AE id 418622, 1.7.104 0x3C4440), whose own row carries the 1.7.104 fact (MAPPED-AE)
 	//   EquipSink.Path.AddWornOutfit.19266 (1.6.1170 id -): BY DESIGN: 1.5.97-only label. On 1.6.1170 and 1.7.104 the code reads its AE twin EquipSink.Path.AddWornOutfit.19692 (AE id 19692, 1.7.104 0x2E8070), whose own row carries the 1.7.104 fact (MAPPED-AE)
@@ -528,6 +530,7 @@ namespace apmf::VerifiedAddresses
 		{ 210299, 0x1947678, 0x0, 0, {  }, "CombatInventoryItemRanged" },
 		{ 210301, 0x1947728, 0x0, 0, {  }, "CombatInventoryItemShield" },
 		{ 210305, 0x1947888, 0x0, 0, {  }, "CombatInventoryItemTorch" },
+		{ 210303, 0x19477D8, 0x0, 0, {  }, "CombatInventoryItemOneHandedBlock" },
 		{ 212694, 0x195AC88, 0x0, 0, {  }, "Leaf.CombatBehaviorAdvance" },
 		{ 213789, 0x1962610, 0x0, 0, {  }, "Leaf.CombatBehaviorAttack" },
 		{ 214395, 0x1967270, 0x0, 0, {  }, "Leaf.CombatBehaviorAttackFromCover" },
@@ -672,6 +675,8 @@ namespace apmf::VerifiedAddresses
 		{ 0, 0x82DCD0, 0x0, 0, {  }, "AiCastSeats.Shield.CalculateScore" },
 		{ 0, 0x82E360, 0x0, 0, {  }, "AiCastSeats.Torch.CalculateScore" },
 		{ 0, 0x82CEA0, 0x0, 0, {  }, "AiCastSeats.kCheckShouldEquipBaseAE" },
+		{ 0, 0x82E640, 0x0, 0, {  }, "HandBlock.Torch.CheckShouldEquip" },
+		{ 0, 0x82E1E0, 0x0, 0, {  }, "HandBlock.OneHandedBlock.CheckShouldEquip" },
 		{ 0, 0x824BB0, 0x0, 0, {  }, "EquipGate.CallSiteName.pre-loop" },
 		{ 0, 0x8289D2, 0x0, 0, {  }, "EquipGate.CallSiteName.return-813AF2" },
 		{ 0, 0x828C18, 0x0, 0, {  }, "EquipGate.CallSiteName.return-813D38" },

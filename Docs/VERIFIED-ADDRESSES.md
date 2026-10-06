@@ -10,13 +10,13 @@ nothing when one does not. At startup `REL::SelfCheck::Run` repeats the comparis
 game actually loaded. A row that fails refuses THAT seat by name in the log; the expected RVA is never
 used in place of the library's answer.
 
-Offline result of this generation: 1.6.1170.0 203/203 verified, 0 refused, 1.5.97.0 203/203 verified, 0 refused.
+Offline result of this generation: 1.6.1170.0 204/204 verified, 0 refused, 1.5.97.0 204/204 verified, 0 refused.
 
 1.7.104.0 has NO Address Library. Its column is OUR OWN id map: the MIT id table of the CommonLibSSE-NG fork
 (`data/mit-idtable-v1-1-7-104-0.bin`, revision 3, 17751 records, SkyrimSE.exe TimeDateStamp 0x6A8C7046; built into every plugin, it is
 what SelfCheck queries at runtime; authoritative) with the evidence CSVs beside it, keyed by
 the 1.6.1170 id, re-verified against the plaintext 1.7.104 executable by the same row-kind checks (see the script
-docstring). Offline result: 1.7.104.0 214/242 verified, 28 NOT verified (28 of them BY DESIGN: 1.5.97-only labels whose AE twin row carries the 1.7.104 fact). A not-verified seat has no row in the 1.7.104 table,
+docstring). Offline result: 1.7.104.0 217/245 verified, 28 NOT verified (28 of them BY DESIGN: 1.5.97-only labels whose AE twin row carries the 1.7.104 fact). A not-verified seat has no row in the 1.7.104 table,
 so `IsVerifiedAddress` is false and the seat is refused by name. The table of `Not verified on 1.7.104` is below.
 
 These rows prove the ADDRESSES. That each hooked slot holds the same function body on 1.7.104, and that every
@@ -86,10 +86,11 @@ CommonLib layout APMF reads is the same there, is proven separately in the "1.7.
 | CombatInventoryItemMagicT.ScrollBoundItem | vtable | 211274 | 0x18CDCB0 | 265336 | 0x168C168 | 211274 | 0x194C4D0 | RTTI .?AV?$CombatInventoryItemMagicT@VCombatInventoryItemScroll@@VCombatMagicCasterBoundItem@@@@ (COL offset 0) | 0x0F: 0x82BCB0 / 0x796A60 / 0x8411A0 | native/channels/CombatApproach.cpp (ch.24 deny bracket on 0x0F CheckShouldEquip) | ABI v19 ch.24; slot 0x0F calls the caster's area test (AE 0x821470/0x821710 -> CombatController 0x55B6D0 -> area vfunc 0x05) |
 | CombatInventoryItemMagicT.PotionBoundItem | vtable | 211278 | 0x18CDD70 | 265337 | 0x168C228 | 211278 | 0x194C590 | RTTI .?AV?$CombatInventoryItemMagicT@VCombatInventoryItemPotion@@VCombatMagicCasterBoundItem@@@@ (COL offset 0) | 0x0F: 0x82BF00 / 0x7965F0 / 0x8413F0 | native/channels/CombatApproach.cpp (ch.24 deny bracket on 0x0F CheckShouldEquip) | ABI v19 ch.24; slot 0x0F calls the caster's area test (AE 0x821470/0x821710 -> CombatController 0x55B6D0 -> area vfunc 0x05) |
 | CombatInventoryItemMagicT.ShoutBoundItem | vtable | 211294 | 0x18CDF70 | 265339 | 0x168C3A8 | 211294 | 0x194C790 | RTTI .?AV?$CombatInventoryItemMagicT@VCombatInventoryItemShout@@VCombatMagicCasterBoundItem@@@@ (COL offset 0) | 0x0F: 0x82C450 / 0x796ED0 / 0x841940 | native/channels/CombatApproach.cpp (ch.24 deny bracket on 0x0F CheckShouldEquip) | ABI v19 ch.24; slot 0x0F calls the caster's area test (AE 0x821470/0x821710 -> CombatController 0x55B6D0 -> area vfunc 0x05) |
-| CombatInventoryItemMelee | vtable | 210297 | 0x18C9028 | 264523 | 0x1681A88 | 210297 | 0x19475C8 | RTTI .?AVCombatInventoryItemMelee@@ (COL offset 0) | 0x0C: 0x8183E0 / 0x77E0A0 / 0x82D2C0 | native/core/AiCastSeats.cpp:381 | ADDRESS-TABLE-2026-09-15.md:150 |
-| CombatInventoryItemRanged | vtable | 210299 | 0x18C90D8 | 264525 | 0x1681B58 | 210299 | 0x1947678 | RTTI .?AVCombatInventoryItemRanged@@ (COL offset 0) | 0x0C: 0x8188B0 / 0x77E550 / 0x82D790<br>0x0F: 0x817FC0 / 0x77DC90 / 0x82CEA0 | native/core/AiCastSeats.cpp:381; slot 0x0F = [Probe] bRangedSelect observe seat (RangedEquipProbeThunk) |  |
-| CombatInventoryItemShield | vtable | 210301 | 0x18C9188 | 264527 | 0x1681C28 | 210301 | 0x1947728 | RTTI .?AVCombatInventoryItemShield@@ (COL offset 0) | 0x0C: 0x818DF0 / 0x77EAC0 / 0x82DCD0<br>0x0F: 0x817FC0 / 0x77DC90 / 0x82CEA0 | native/core/AiCastSeats.cpp:381 | ADDRESS-TABLE-2026-09-15.md:156 |
-| CombatInventoryItemTorch | vtable | 210305 | 0x18C92E8 | 264531 | 0x1681DD0 | 210305 | 0x1947888 | RTTI .?AVCombatInventoryItemTorch@@ (COL offset 0) | 0x0C: 0x819480 / 0x77F0E0 / 0x82E360 | native/core/AiCastSeats.cpp:381 |  |
+| CombatInventoryItemMelee | vtable | 210297 | 0x18C9028 | 264523 | 0x1681A88 | 210297 | 0x19475C8 | RTTI .?AVCombatInventoryItemMelee@@ (COL offset 0) | 0x0C: 0x8183E0 / 0x77E0A0 / 0x82D2C0<br>0x0F: 0x817FC0 / 0x77DC90 / 0x82CEA0 | native/core/AiCastSeats.cpp:381; slot 0x0F = core/HandBlock.cpp hand-claim block (deny; refused unless the slot holds the engine function at install) | ADDRESS-TABLE-2026-09-15.md:150 |
+| CombatInventoryItemRanged | vtable | 210299 | 0x18C90D8 | 264525 | 0x1681B58 | 210299 | 0x1947678 | RTTI .?AVCombatInventoryItemRanged@@ (COL offset 0) | 0x0C: 0x8188B0 / 0x77E550 / 0x82D790<br>0x0F: 0x817FC0 / 0x77DC90 / 0x82CEA0 | native/core/AiCastSeats.cpp:381; slot 0x0F = [Probe] bRangedSelect observe seat (RangedEquipProbeThunk) and core/HandBlock.cpp hand-claim block (deny, installed first; refused unless the slot holds the engine function) |  |
+| CombatInventoryItemShield | vtable | 210301 | 0x18C9188 | 264527 | 0x1681C28 | 210301 | 0x1947728 | RTTI .?AVCombatInventoryItemShield@@ (COL offset 0) | 0x0C: 0x818DF0 / 0x77EAC0 / 0x82DCD0<br>0x0F: 0x817FC0 / 0x77DC90 / 0x82CEA0 | native/core/AiCastSeats.cpp:381; slot 0x0F = TASK2 ShieldEquipGateThunk (default off) and core/HandBlock.cpp hand-claim block (deny, installed first; refused unless the slot holds the engine function) | ADDRESS-TABLE-2026-09-15.md:156 |
+| CombatInventoryItemTorch | vtable | 210305 | 0x18C92E8 | 264531 | 0x1681DD0 | 210305 | 0x1947888 | RTTI .?AVCombatInventoryItemTorch@@ (COL offset 0) | 0x0C: 0x819480 / 0x77F0E0 / 0x82E360<br>0x0F: 0x819760 / 0x77F350 / 0x82E640 | native/core/AiCastSeats.cpp:381; slot 0x0F = core/HandBlock.cpp hand-claim block (Torch OVERRIDES 0x0F; refused unless the slot holds it at install) |  |
+| CombatInventoryItemOneHandedBlock | vtable | 210303 | 0x18C9238 | 264529 | 0x1681CF8 | 210303 | 0x19477D8 | RTTI .?AVCombatInventoryItemOneHandedBlock@@ (COL offset 0) | 0x0F: 0x819300 / 0x77EF60 / 0x82E1E0 | native/core/HandBlock.cpp kClasses (review F1): the unarmed off-hand block item (slot kLeftHandEquip); OVERRIDES 0x0F; refused unless the slot holds it at install |  |
 | Leaf.CombatBehaviorAdvance | vtable | 212694 | 0x18DC6C0 | 266096 | 0x16960B0 | 212694 | 0x195AC88 | RTTI .?AV?$CombatBehaviorTreeNodeObject@VCombatBehaviorAdvance@@@@ (COL offset 0) | 0x02: 0x874260 / 0x7DCF20 / 0x8894D0<br>0x03: 0x874550 / 0x7DD100 / 0x8897C0<br>0x04: 0x877500 / 0x7DFF20 / 0x88C7B0 | native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp; 0x04 = ch.23 pursuit-leash update() seat (ActionGate.cpp UpdateThunk, ABI v16) | ADDRESS-TABLE-2026-09-15.md:289 |
 | Leaf.CombatBehaviorAttack | vtable | 213789 | 0x18E4048 | 266747 | 0x169E5A0 | 213789 | 0x1962610 | RTTI .?AV?$CombatBehaviorTreeNodeObject@VCombatBehaviorAttack@@@@ (COL offset 0) | 0x02: 0x8A5230 / 0x80E9A0 / 0x8BA700<br>0x03: 0x8A5340 / 0x80EA60 / 0x8BA810 | native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp; channels/CombatApproach.cpp (ch.24 deny bracket on act 0x02) | ADDRESS-TABLE-2026-09-15.md:290 |
 | Leaf.CombatBehaviorAttackFromCover | vtable | 214395 | 0x18E8C80 | 267194 | 0x16A37A8 | 214395 | 0x1967270 | RTTI .?AV?$CombatBehaviorTreeNodeObject@VCombatBehaviorAttackFromCover@@@@ (COL offset 0) | 0x02: 0x8C16C0 / 0x8298F0 / 0x8D6CC0<br>0x03: 0x8C1860 / 0x829A30 / 0x8D6E60 | native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp | ADDRESS-TABLE-2026-09-15.md:291 |
@@ -262,6 +263,8 @@ CommonLib layout APMF reads is the same there, is proven separately in the "1.7.
 | AiCastSeats.Shield.CalculateScore | raw rva | - | - | - | - | - | 0x82DCD0 | raw RVA: 1.6.1170 0x818DF0 signature (33 bytes) unique at the idmap RVA |  | AiCastSeats Shield calcScore slot 0x0C |  |
 | AiCastSeats.Torch.CalculateScore | raw rva | - | - | - | - | - | 0x82E360 | raw RVA: 1.6.1170 0x819480 signature (28 bytes) unique at the idmap RVA |  | AiCastSeats Torch calcScore slot 0x0C |  |
 | AiCastSeats.kCheckShouldEquipBaseAE | raw rva | - | - | - | - | - | 0x82CEA0 | raw RVA: 1.6.1170 0x817FC0 signature (34 bytes) unique at the idmap RVA |  | AiCastSeats kCheckShouldEquipBaseAE |  |
+| HandBlock.Torch.CheckShouldEquip | raw rva | - | - | - | - | - | 0x82E640 | raw RVA: 1.6.1170 0x819760 signature (33 bytes) unique at the idmap RVA |  | HandBlock kClasses Torch equipAE (Torch slot 0x0F) |  |
+| HandBlock.OneHandedBlock.CheckShouldEquip | raw rva | - | - | - | - | - | 0x82E1E0 | raw RVA: 1.6.1170 0x819300 signature (16 bytes) unique at the idmap RVA |  | HandBlock kClasses OneHandedBlock equipAE (OneHandedBlock slot 0x0F) |  |
 | EquipGate.CallSiteName.pre-loop | raw rva | - | - | - | - | - | 0x824BB0 | raw RVA: 1.6.1170 0x80FCD0 signature (21 bytes) unique at the idmap RVA |  | EquipGate CallSiteName pre-loop |  |
 | EquipGate.CallSiteName.return-813AF2 | raw rva | - | - | - | - | - | 0x8289D2 | raw RVA: 1.6.1170 0x813AF2 signature (18 bytes) unique at the idmap RVA |  | EquipGate CallSiteName selector return address |  |
 | EquipGate.CallSiteName.return-813D38 | raw rva | - | - | - | - | - | 0x828C18 | raw RVA: 1.6.1170 0x813D38 signature (18 bytes) unique at the idmap RVA |  | EquipGate CallSiteName selector return address |  |
@@ -532,3 +535,29 @@ facet); its rows below stay as the record of what was compared:
 
 Each slot reaches IsInCombatArea (AE 0x55B310 / SE 0x4FFA60 / 1.7.104 0x563180) through exactly these functions on all
 three builds (call-graph walk); the two act() slots are the attack pick's only callers.
+
+### Regenerating THIS repo's table exactly (APMF's own idmap evidence, 2026-10-06)
+
+The generic command in "Regenerating" above is shared with MFO (the generator is kept identical in both repos)
+and omits each repo's own evidence CSV. For APMF, this command reproduces `native/VerifiedAddresses.h` byte for
+byte (the generator asserts the 1.7.104 exe md5 and the id table's PE match; the fork data files are those of
+the CommonLibSSE-NG fork at `57be9d67`, unchanged since):
+
+```
+python3 tools/verified_addresses/gen_verified_addresses.py --spec tools/verified_addresses/spec.json \
+    --bin-1.6.1170 <binaries/1.6.1170/SkyrimSE.unpacked.exe> --al-1.6.1170 <versionlib-1-6-1170-0.bin> \
+    --bin-1.5.97 <binaries/1.5.97/SkyrimSE.unpacked.exe> --al-1.5.97 <version-1-5-97-0.bin> \
+    --bin-1.7.104 <binaries/1.7.104/SkyrimSE.exe> --idtable <fork data/mit-idtable-v1-1-7-104-0.bin> \
+    --idmap <fork data/idmap-1.7.104-fork-full.csv> --idmap <fork data/idmap-1.7.104-sync.csv> --idmap <fork data/idmap-1.7.104-fixes.csv> \
+    --idmap tools/verified_addresses/idmap-1.7.104-apmf.csv \
+    --se-seats <_research/1.7.104-idmap/se-seats-1.7.104.csv> \
+    --header native/VerifiedAddresses.h --doc Docs/VERIFIED-ADDRESSES.md
+```
+
+`tools/verified_addresses/idmap-1.7.104-apmf.csv` (committed, next to the generator) holds the raw-RVA claims for
+the two slot-0x0F functions the fork's id table and idmaps do not carry: the Torch item's (AE id 45069 at 0x819760,
+SE 43850 at 0x77F350, claimed 1.7.104 0x82E640) and the OneHandedBlock item's (AE id 45056 at 0x819300, SE 43837
+at 0x77EF60, claimed 1.7.104 0x82E1E0). The generator proves each claim itself: the 1.6.1170 signature cut at the
+AE RVA (33 bytes for Torch) matches the claimed 1.7.104 RVA and nowhere else. Without the file those two raw rows
+drop from the 1.7.104 table and `core/HandBlock.cpp` refuses Torch and OneHandedBlock on 1.7.104 (by name).
+Moving those ids into the fork's 1.7.104 table is backlog APMF-B63.

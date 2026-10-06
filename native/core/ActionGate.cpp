@@ -7,6 +7,7 @@
 #include "core/ActionGate.h"
 #include "core/AiCastSeats.h"   // RangedGateProbeCounts (the [Probe] bRangedSelect heartbeat)
 #include "core/EquipSink.h"     // Categorize / CategoryNames (the probe mirrors the sink verdict)
+#include "core/CastObserve.h"   // NoteLeafAct (castobs interrupt attribution)
 
 #include <algorithm>
 #include <array>
@@ -884,6 +885,9 @@ namespace apmf::actiongate {
             const auto oit = g_orig.find(vt);
             if (oit == g_orig.end()) return a_control;   // foreign vtable -- benign, touch nothing
             auto orig = reinterpret_cast<apmf::cbt::Act_t>(oit->second);
+
+            // castobs interrupt attribution (2026-10-06): the leaf a WATCHED actor's tree enters. Observe only.
+            if (apmf::castobserve::AnyWatched()) apmf::castobserve::NoteLeafAct(ResolveDeliberatingActor(a_control), vt);
 
             // [Probe] bRangedSelect -- OBSERVE ONLY, before the leaf's own act() and before any
             // deny below (a denied leaf is still reported as chosen). Never alters the call.

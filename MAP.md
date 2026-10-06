@@ -790,6 +790,9 @@ Still OFF by default.
   `DIAG-2026-09-06-deny-heal-failures.md` row P5 lists exactly that as a plausible
   cause of a claimed heal holding a hand only briefly. What the ordering table
   `[1,2,4,0,3,5,0,6]` buys is that OUR steer cannot make it worse.
+  **CORRECTED 2026-10-06:** 0x0F IS hookable on the weapon leaves, and `core/HandBlock.cpp` now
+  denies weapon admission there into a hand a live cast claim holds (gap 10 closed; see that
+  file's entry). It installs BEFORE this file, so the Ranged probe and Shield TASK2 wrap it.
   `kScoreSteerBias` is **1000.0f** (`AiCastSeats.cpp:501`), right-sized 2026-09-06 to
   measured magnitudes (Falmer War Axe 194, bow 81, magic 0.08-29) — it replaced an
   unmeasured 100000.0f placeholder, which this line quoted until 2026-09-07. And the
@@ -988,7 +991,8 @@ Refused off exactly 1.6.1170 / 1.5.97 / 1.7.104 (VR included; G1 2026-10-04), in
   `VTABLE_CombatInventoryItem{Melee,Ranged,Shield,Torch}`, now used by
   `core/AiCastSeats.cpp` GROUP C; what is missing is the C++ class, so 0x0F's
   per-class semantics on those leaves remain unverified and this gate still does
-  not hook them), and
+  not hook them; 2026-10-06: `core/HandBlock.cpp` hooks 0x0F on those four leaves for the
+  hand-claim block, with the slot functions read per build), and
   potion/scroll/shout are deliberately excluded on the SAME v1.0.32 gameplay
   lesson MFO's own gate already proved (denying them would only ever be a
   false-positive block on combat drinking/shouting). Widen only on new header
@@ -1247,7 +1251,12 @@ Light+Left); `competes & set.denied` = `black`, `competes & set.owned` = `owned`
 Console without `kEquipAuth_DenyScript`/INI `bEquipDenyScript` → allow; `PlayerMenu`
 (`PathKind::kPlayerMenu`, the three per-runtime ids) without the claim's
 `kEquipAuth_DenyPlayerMenu` → `allow (player agency)` (v8: player agency, no INI twin) — both
-exemptions sit ABOVE the masks; `black` → refuse EVEN IF IN-SET; `owned` → no declaration
+exemptions sit ABOVE the masks; **step 1a (2026-10-06, the hand-claim block):** the item's
+`Categorize` hand bits hit a hand a live `kIntent_Cast` claim holds (`handblock::HeldFor`, the
+claim's own spell/proxy excepted) → `deny (hand R|L|R+L held by a cast claim)`, worker not
+called, EVEN IF IN-SET and whatever observe-only says (an actor with NO ch.17 claim reaches the
+verdict only through this step's `AnyHandHeld` pre-gate, with an emptied view, owned=0, and leaves
+untouched and unlogged when its equip hits no held hand; INVARIANTS #17a(5) as amended); `black` → refuse EVEN IF IN-SET; `owned` → no declaration
 (`count==0`) or item in the declared set (FormID compare — the v8 hand is NOT consulted here) →
 allow, else refuse; neither owned nor denied → allow (`owned=0`, the engine's category).
 A refusal is `would-deny` + call under observe-only
@@ -1336,6 +1345,69 @@ eslot=<none|R|L|E|hex> verdict=` line per decision (`E` = EitherHand 0x13F44, a 
   7; B10 `MinReleaseForAbi`'s v7/v8 placeholder must be named at the cut) (ch.15's probe re-equip is
   `External(APMF.dll)` on a ch.17 actor; a detour target inside a trampoline page prints
   `detoured by ?`; the truncation log fires at Apply) — read them before editing this seat.
+
+### `native/core/HandBlock.{h,cpp}` — the HAND-CLAIM BLOCK (2026-10-06, `fix/apmf-hand-claim-blocks-equip`)
+marth: "harbinger taking a hand for an action means other actions on that hand are blocked for the
+duration". A hand held by a LIVE `kIntent_Cast` claim (driving, or a `kCastFlag_DenyHandOnly` floor;
+`ControlMap::TryGetCastClaimForHand`, lapsed claims excluded) refuses every other weapon / shield /
+torch equip into it. Spells/staves were already refused per hand at `core/EquipGate.cpp`; this closes
+the weapon half (DENY-COMPLETENESS-AUDIT gap 10). Field origin: `_research/field-1006-heal-diagnosis.md`
+cause 2 (a dagger equipped into the deny-only right hand 32 ms before the left heal was interrupted).
+- **The 0x0F seat (this file).** `CheckShouldEquip` (slot 0x0F, `bool(CombatInventoryItem*,
+  CombatController*)`, scalar return) on the four weapon-class item vtables Melee / Ranged / Shield /
+  Torch AND the unarmed `OneHandedBlock` item (review F1: built over the unarmed weapon with slot
+  kLeftHandEquip; its own 0x0F AE 0x819300 / SE 0x77EF60 / 1.7.104 0x82E1E0) (VerifiedAddresses rows
+  `CombatInventoryItem*`, `SeatVerified` per vtable). CombatInventory's
+  evaluate (AE 44899 / SE 43666) and pre-loop (AE 44868 / SE 43637) skip a candidate on NO, so the
+  item never enters the equipment set and the EquipObject leaf (AE 48124) never gets it. Engine answer
+  first; only YES turns to NO, for an item whose `equipsink::Categorize(item, itemSlot.equipSlot)` hand
+  bits (2H / bow -> both; a one-hander by its own slot, EitherHand / null -> both; shield / torch ->
+  left) hit a held hand. Slot functions per build: Melee/Ranged/Shield `!IsFleeing` base AE 0x817FC0 /
+  SE 0x77DC90 / 1.7.104 0x82CEA0; Torch OVERRIDES the slot, AE 0x819760 / SE 0x77F350 / 1.7.104
+  0x82E640 (1.7.104 raw rows `AiCastSeats.kCheckShouldEquipBaseAE` / `HandBlock.Torch.CheckShouldEquip`,
+  `HandBlock.OneHandedBlock.CheckShouldEquip`; the two HandBlock rows are proven through the committed
+  `tools/verified_addresses/idmap-1.7.104-apmf.csv`, backlog APMF-B63). Line: `[handblock 0x0F] <actor>
+  CheckShouldEquip <class> item=... competes=... -> NO (hand R held by a cast claim: R=... L=...)
+  site=pre-loop|evaluate`, 1.5 s per (actor, item) and a global 100/s cap (dropped lines counted on
+  the next one). `EngineAnswerFor` / `IsThunk` let the Ranged probe (chained OUTSIDE this seat) log
+  `engine=` (the engine's own answer) and `handblock=` separately and name this thunk at install.
+- **The sink step.** `core/EquipSink.cpp` verdict step 1a calls `HeldFor` (`AnyHandHeld` pre-gate for an
+  actor with no ch.17 claim): `verdict=deny (hand R held by a cast claim)`, worker not called, enforced
+  whatever `bEquipObserveOnly` says. INVARIANTS #17a(5) as amended.
+- `[HandBlock] bHandClaimBlocksEquip` (default 1) switches both halves.
+- **What breaks:** (1) **Install order**: `plugin.cpp` calls `handblock::Install()` right after
+  `equipgate::Install()` and BEFORE `aicastseats::Install()`, because the install REFUSES a class whose
+  slot 0x0F does not hold this build's disassembled engine function (APMF-B36 F2: a deny must know what
+  it wraps). Moving it after AiCastSeats' Ranged probe / Shield TASK2 would refuse Ranged/Shield
+  whenever those probes are on. (2) The hand map is `equipsink::Categorize` -- never a second map (MAP
+  EquipSink 8b). (3) The claim's own spell/proxy is never refused (`HeldFor`'s `a_item`); a client that
+  ever drives a staff through a cast claim relies on that. (4) Thread: combat thread at 0x0F, any thread
+  at the sink; RCU reads and member reads only, no form lookup. (5) Torch's literal differs from the
+  base; a new build needs both columns. (6) The script / console / player-menu exemptions stay above
+  the sink step (a quest script or the player can still arm a held hand).
+
+### `native/core/CastObserve.{h,cpp}` — passive cast observation, `[castobs]`
+The 0xAD-era observe-and-replicate probe (CASTER state transitions every 100 ms, the per-actor anim sink
+that also feeds `castertypecensus::NoteAnimEvent`), plus, since 2026-10-06, two always-on, rate-limited
+diagnosis lines for WATCHED actors (a live `kIntent_Cast` claim, refreshed every 100 ms, at most 16):
+- `[castobs] INTERRUPT-ATTRIB`: on an `InterruptCast` anim tag, printed on the game thread at the next
+  frame: each hand's claim (spell / proxy / deny-only), each hand's and the instant caster's MagicCaster
+  state + spell, whether a CombatController exists, the behaviour-tree leaves entered in the last 1 s,
+  the CombatMagicCasters built / fired in the last 1 s, CheckCast NOs in the last 500 ms (engine or
+  Harbinger, with the reason) and the governed equips in the last 100 ms (path + sink verdict).
+- `[castobs] CHANNEL-END`: for a claim whose driven form is a concentration cast, the claimed hand's
+  caster is read every frame; when it returns to 0 after running (state >= 4 holding the driven form):
+  the state transitions with ms offsets, seat 0x07 STOP reasons, CheckCast NOs on that hand, cast anim
+  tags, whether the claim still stood, magicka %, Harbinger's stored own-LoS reading, and
+  "engine LoS re-check: not seated" (that engine check has no seat; it is not guessed).
+Recorders (`NoteEquip` / `NoteLeafAct` / `NoteCaster` / `NoteCheckCast` / `NoteStopCast`, any thread,
+leaf lock, no engine call) are fed by one line each in `core/EquipSink.cpp`, `core/ActionGate.cpp`
+`ActThunk`, `core/CasterTypeCensus.cpp` `Observe`, `core/CastGate.cpp` (engine NO and Harbinger deny) and
+`core/CastSeats.cpp` seat 0x07.
+- **What breaks:** the recorders must stay observe-only and lock-leaf (never log or call the engine
+  under `g_recMx`); string arguments are stored as pointers, so they must stay literals. The sink never
+  reads the actor off its thread: the attribution is formatted on the game thread. The leaf-name map
+  resolves ch.7's VariantIDs only on the three supported builds (an id miss is fatal in the fork).
 
 ### `native/core/NonAliasProbe.{h,cpp}` — OBSERVE-ONLY 0xDF hook + 0x49 assist + RTTI dumper
 Docs/PROBE-NONALIAS-PACKAGE.md's runtime probe: does `Actor::CheckForCurrentAliasPackage`

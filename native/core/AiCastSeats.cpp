@@ -4,6 +4,7 @@
 #include "core/Clock.h"
 #include "core/ControlMap.h"
 #include "core/AiCastSeats.h"
+#include "core/HandBlock.h"   // review F3: the Ranged probe attributes the hand-claim block's NO
 #include "core/ActionGate.h"   // RangedProbeClassify / RangedProbeLineBudget ([Probe] bRangedSelect)
 #include "core/EquipSink.h"    // CategoryNames
 
@@ -962,6 +963,10 @@ namespace apmf::aicastseats {
             }
 
             const bool result = orig(a_this, a_cc);   // ENGINE ANSWERS FIRST -- returned unmodified below
+            // Review F3 (2026-10-06): core/HandBlock.cpp sits BENEATH this probe on the same slot;
+            // report the engine's own answer and the hand-claim block's NO separately.
+            bool       hbRefused = false;
+            const bool engineAns = apmf::handblock::EngineAnswerFor(a_this, result, hbRefused);
             g_rgSeen.fetch_add(1, std::memory_order_relaxed);
             if (!a_cc || apmf::ControlMap::Get().ControlledCount() == 0) return result;
 
@@ -974,7 +979,7 @@ namespace apmf::aicastseats {
             apmf::actiongate::RangedProbeView v{};
             if (!apmf::actiongate::RangedProbeClassify(fid, item, a_this->itemSlot.equipSlot, v)) return result;
             g_rgClaimed.fetch_add(1, std::memory_order_relaxed);
-            (result ? g_rgYes : g_rgNo).fetch_add(1, std::memory_order_relaxed);
+            (engineAns ? g_rgYes : g_rgNo).fetch_add(1, std::memory_order_relaxed);
             const bool wouldRefuse = result && v.wouldDeny;
             if (wouldRefuse) g_rgWouldRefuse.fetch_add(1, std::memory_order_relaxed);
 
@@ -995,9 +1000,10 @@ namespace apmf::aicastseats {
             if (!apmf::actiongate::RangedProbeLineBudget()) return result;
             char owned[48], competes[48];
             spdlog::info("[ranged-probe] 0x{} '{}' SELECT-GATE Ranged CheckShouldEquip item=0x{} '{}' engine={} "
-                         "site={} (ret 0x{}) owned={} competes={} inSet={} sink={} phase2={} (+{} since last)",
+                         "handblock={} site={} (ret 0x{}) owned={} competes={} inSet={} sink={} phase2={} (+{} since last)",
                          apmf::log::Hex(fid), actor->GetName() ? actor->GetName() : "?", apmf::log::Hex(itemId),
-                         item && item->GetName() ? item->GetName() : "?", result ? "YES" : "NO",
+                         item && item->GetName() ? item->GetName() : "?", engineAns ? "YES" : "NO",
+                         hbRefused ? "NO(hand held by a cast claim)" : "-",
                          RangedCallSite(retRva), apmf::log::Hex(retRva),
                          apmf::equipsink::CategoryNames(v.owned, owned, sizeof(owned)),
                          apmf::equipsink::CategoryNames(v.competes, competes, sizeof(competes)), v.inSet ? 1 : 0,
@@ -1549,8 +1555,10 @@ namespace apmf::aicastseats {
                                          "(the vtable GROUP C just identity-checked); the slot held {} 0x{}. "
                                          "Passive: the engine's answer is returned unmodified.",
                                          apmf::log::Hex(vt.address(), 16),
-                                         curEquipFn == baseFn.address() ? "the disassembled base function"
-                                                                        : "ANOTHER function (a prior hook, chained)",
+                                         curEquipFn == baseFn.address()           ? "the disassembled base function"
+                                         : apmf::handblock::IsThunk(curEquipFn)   ? "Harbinger's hand-claim block "
+                                                                                    "(core/HandBlock.cpp, chained; the base beneath it)"
+                                                                                  : "ANOTHER function (a prior hook, chained)",
                                          apmf::log::Hex(curEquipFn, 16));
                         }
                     }
