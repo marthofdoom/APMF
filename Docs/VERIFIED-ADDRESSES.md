@@ -10,13 +10,13 @@ nothing when one does not. At startup `REL::SelfCheck::Run` repeats the comparis
 game actually loaded. A row that fails refuses THAT seat by name in the log; the expected RVA is never
 used in place of the library's answer.
 
-Offline result of this generation: 1.6.1170.0 204/204 verified, 0 refused, 1.5.97.0 204/204 verified, 0 refused.
+Offline result of this generation: 1.6.1170.0 205/205 verified, 0 refused, 1.5.97.0 205/205 verified, 0 refused.
 
 1.7.104.0 has NO Address Library. Its column is OUR OWN id map: the MIT id table of the CommonLibSSE-NG fork
 (`data/mit-idtable-v1-1-7-104-0.bin`, revision 3, 17751 records, SkyrimSE.exe TimeDateStamp 0x6A8C7046; built into every plugin, it is
 what SelfCheck queries at runtime; authoritative) with the evidence CSVs beside it, keyed by
 the 1.6.1170 id, re-verified against the plaintext 1.7.104 executable by the same row-kind checks (see the script
-docstring). Offline result: 1.7.104.0 217/245 verified, 28 NOT verified (28 of them BY DESIGN: 1.5.97-only labels whose AE twin row carries the 1.7.104 fact). A not-verified seat has no row in the 1.7.104 table,
+docstring). Offline result: 1.7.104.0 218/246 verified, 28 NOT verified (28 of them BY DESIGN: 1.5.97-only labels whose AE twin row carries the 1.7.104 fact). A not-verified seat has no row in the 1.7.104 table,
 so `IsVerifiedAddress` is false and the seat is refused by name. The table of `Not verified on 1.7.104` is below.
 
 These rows prove the ADDRESSES. That each hooked slot holds the same function body on 1.7.104, and that every
@@ -227,6 +227,7 @@ CommonLib layout APMF reads is the same there, is proven separately in the "1.7.
 | hkbStateMachine | vtable | 226812 | 0x1964250 | 278793 | 0x171DB80 | 226812 | 0x19E37F0 | RTTI .?AVhkbStateMachine@@ (COL offset 0) |  | native/channels/Travel.cpp (GateProbe2 anim-graph read: vtable identity before any member read; SeatVerified in Install) | ABI v12 passive gate probe 2 (feat/apmf-gate-probe2); scratchpad agentlogs/apmf-reachability.md |
 | Sightline.Actor.GetCollisionFilterInfo | function | 37560 | 0x67E120 | 36559 | 0x5EBD90 | 37560 | 0x690BE0 | signature (21 bytes, unique in .text) |  | native/core/Sightline.cpp (the ray's collision filter: the viewer's own system group) | ABI v18 own-ray LoS; body = process->GetCharController()->vfunc +0x40 into *out, 0 when no controller (AE 0x67E120 / SE 0x5EBD90 / 1.7.104 0x690BE0) |
 | Sightline.TESObjectCELL.GetbhkWorld | function | 18995 | 0x2B8D30 | 18536 | 0x2654C0 | 18995 | 0x2BE9B0 | signature (22 bytes, unique in .text) |  | native/core/Sightline.cpp (the havok world a ray is cast in) | ABI v18 own-ray LoS (AE 0x2B8D30 / SE 0x2654C0 / 1.7.104 0x2BE9B0) |
+| Sightline.TESHavokUtilities.FindCollidableRef | function | 26003 | 0x3FD3D0 | 25466 | 0x3A4DD0 | 26003 | 0x404740 | signature (30 bytes, unique in .text) |  | native/core/Sightline.cpp (names the reference that owns the collidable an OCCLUDED ray stopped on, for the [los] occlusion line; never decides a verdict) | fix/apmf-los-false-occlusion 2026-10-06; body = owner (collidable + ownerOffset) -> NiAVObject (AE 0xE8C250) -> reference (AE 0x2E8750), refcounted, no lock (AE 0x3FD3D0 / SE 0x3A4DD0 / 1.7.104 0x404740) |
 | Sightline.AIProcess.KnockExplosion | ripref | 39895 | 0x710C80 +0x2CA F3 0F 10 15 8A 3A 07 01 48 8D 55 D0 F3 0F 10 | 38858 | 0x67D4A0 +0x387 F3 0F 10 15 1D 2E EC 00 F3 0F 59 C2 F3 0F 11 | 39895 | 0x7237C0 +0x2CA F3 0F 10 15 CA A3 0D 01 48 8D 55 D0 F3 0F 10 | signature (23 bytes, unique in .text) |  | native/core/Sightline.cpp (RE::bhkWorld::GetWorldScale: game units -> havok units for the ray ends; never called) | ABI v18 own-ray LoS; the only CommonLib-named function that reads the global (AE +0x2CA, SE +0x387, 1.7.104 +0x2CA); .rdata 0.0142875 on all three |
 | Sightline.bhkWorld.WorldScale | ripref global | 188105 | 0x17849DC | 231896 | 0x154064C | 188105 | 0x17FDE5C | RIP-relative reference at Sightline.AIProcess.KnockExplosion +0x2CA (id 39895) |  | native/core/Sightline.cpp (RE::bhkWorld::GetWorldScale: game units -> havok units for the ray ends; never called) | ABI v18 own-ray LoS; the only CommonLib-named function that reads the global (AE +0x2CA, SE +0x387, 1.7.104 +0x2CA); .rdata 0.0142875 on all three |
 | CommonLib.LookupReferenceByHandle | function | 12332 | 0x179710 | 12204 | 0x1329D0 | 12332 | 0x17ED00 | signature (274 bytes, unique in .text) |  | native/core/Awareness.cpp (a foe's currentCombatTarget -> the actor it is fighting; the noise event's ref for the log) | ABI v18 awareness (AE 0x179710 / SE 0x1329D0 / 1.7.104 0x17ED00) |
