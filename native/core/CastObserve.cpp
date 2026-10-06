@@ -374,7 +374,8 @@ namespace apmf::castobserve {
         std::string ClaimDesc(RE::FormID a_actor, apmf::CastHand a_hand) {
             apmf::CastSeatClaim c{};
             if (!apmf::ControlMap::Get().TryGetCastSeatClaimForHand(a_actor, a_hand, c)) return "-";
-            if (c.flags & APMF_API::kCastFlag_DenyHandOnly) return "deny-only floor";
+            if (c.flags & APMF_API::kCastFlag_DenyHandOnly)
+                return (c.flags & APMF_API::kCastFlag_FloorSpellsOnly) ? "spells-only floor" : "deny-only floor";
             std::string d = "0x" + apmf::log::Hex(c.spell);
             if (c.proxy) d += " via 0x" + apmf::log::Hex(c.proxy);
             if (c.flags & APMF_API::kCastFlag_Concentration) d += " conc";
@@ -483,14 +484,18 @@ namespace apmf::castobserve {
             }
             spdlog::info("[castobs] CHANNEL-END t={} 0x{} '{}' hand={} driven=0x{} spell=0x{} target=0x{} -- the "
                          "claimed hand's caster returned to 0 after {} ms of channel | states {} | seat 0x07 (last {} "
-                         "ms): {} | CheckCast NO on this hand (last {} ms): {} | cast anim tags (last {} ms): {} | claim "
-                         "{} | magicka {} | own line of sight {} | engine LoS re-check: not seated (unobserved){}",
+                         "ms): {} | CheckCast NO on this hand (last {} ms): {} | cast anim tags (last {} ms): {} | action "
+                         "(leaves, last {} ms): {} | claim {} | magicka {} | own line of sight {} | engine LoS re-check: "
+                         "not seated (unobserved){}",
                          a_now, apmf::log::Hex(a_w.actor), a_actor->GetName() ? a_actor->GetName() : "?",
                          a_w.hand == 0 ? "L" : "R", apmf::log::Hex(a_w.driven), apmf::log::Hex(a_w.spell),
                          apmf::log::Hex(a_w.target), a_w.firstActiveMs ? a_now - a_w.firstActiveMs : 0, states,
                          kChannelWindowMs, FormatRing(snap.stop, Ev::kStop, a_now, kChannelWindowMs),
                          kChannelWindowMs, FormatRing(snap.check, Ev::kCheckCast, a_now, kChannelWindowMs, a_w.hand),
                          kChannelWindowMs, FormatRing(snap.anim, Ev::kAnim, a_now, kChannelWindowMs),
+                         // The same behaviour-tree leaf ring INTERRUPT-ATTRIB prints (the AI's
+                         // current ACTION around the end of the channel), same window.
+                         kLeafWindowMs, FormatRing(snap.leaf, Ev::kLeaf, a_now, kLeafWindowMs),
                          sameClaim ? "still stands" : claimHere ? "replaced on this hand" : "gone (released or lapsed)",
                          pct < 0.0f ? std::string("?") : fmt::format("{:.0f}%", pct), los,
                          dropped ? fmt::format(" ({} castobs line(s) dropped by the rate cap before this one)", dropped)

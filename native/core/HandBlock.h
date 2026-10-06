@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
 
 // ============================================================================
 // HAND-CLAIM BLOCK (fix/apmf-hand-claim-blocks-equip, 2026-10-06).
@@ -35,6 +36,14 @@
 // al,al; je`), so a NO keeps the item out of the equipment set and the behaviour
 // tree's EquipObject leaf (AE 48124) never receives it. Engine answer first: the
 // original is always called and only its YES is ever turned to NO (INVARIANTS #17).
+//
+// SPELLS-ONLY FLOORS (ABI v20, fix/apmf-floor-spells-only, 2026-10-06). A
+// kCastFlag_DenyHandOnly floor that ALSO carries kCastFlag_FloorSpellsOnly reserves its
+// hand against spells only (APMF_API.h, that flag): for this rule such a floor holds the
+// hand ONLY against a spell-like item (SpellLike below: a spell, a scroll, a staff), so a
+// weapon, a shield, a torch or the unarmed block passes both halves. Field 2026-10-06:
+// Cicero's floored right hand refused his bow, swords and fists 119 times in 40 s. A
+// driving cast claim and a floor without the bit keep the full block.
 // ============================================================================
 
 namespace apmf::handblock {
@@ -52,23 +61,37 @@ namespace apmf::handblock {
 
     // What a live cast claim holds, for one competing equip.
     struct HandHold {
-        std::uint32_t held       = 0;   // APMF_API::kEquipCat_Right / kEquipCat_Left bits held
-        RE::FormID    spellR     = 0;   // the right-hand claim's named spell (0 = deny-only floor)
-        RE::FormID    spellL     = 0;
-        bool          denyOnlyR  = false;
-        bool          denyOnlyL  = false;
+        std::uint32_t held        = 0;   // APMF_API::kEquipCat_Right / kEquipCat_Left bits held
+        RE::FormID    spellR      = 0;   // the right-hand claim's named spell (0 = deny-only floor)
+        RE::FormID    spellL      = 0;
+        bool          denyOnlyR   = false;
+        bool          denyOnlyL   = false;
+        bool          spellsOnlyR = false;   // the right-hand floor carries kCastFlag_FloorSpellsOnly
+        bool          spellsOnlyL = false;
     };
+
+    // Is `a_item` a SPELL-LIKE equip for the spells-only floor: a spell, a scroll, or a
+    // staff (a weapon that casts)? Anything else (a weapon, a shield, a torch, unarmed,
+    // null) is not. A form-type read and TESObjectWEAP::IsStaff only, any thread.
+    bool SpellLike(const RE::TESForm* a_item);
 
     // ANY THREAD (combat thread at 0x0F, the equip thread at the sink). Lock-free RCU
     // reads only, no form lookup. Of the hands in `a_competes` (EquipCategory bits;
     // only kEquipCat_Right / kEquipCat_Left are read), which are held by a live
     // kIntent_Cast claim on `a_actor`? The claim's OWN spell or proxy (`a_item`) is
-    // never refused: it is the action that holds the hand, not another one.
+    // never refused: it is the action that holds the hand, not another one. A
+    // spells-only floor (kCastFlag_DenyHandOnly | kCastFlag_FloorSpellsOnly) holds its
+    // hand only when `a_spellLike` (SpellLike of the competing item) is true.
     // False (and `a_out.held == 0`) when the switch is off or nothing is held.
-    bool HeldFor(RE::FormID a_actor, std::uint32_t a_competes, RE::FormID a_item, HandHold& a_out);
+    bool HeldFor(RE::FormID a_actor, std::uint32_t a_competes, RE::FormID a_item, bool a_spellLike, HandHold& a_out);
 
-    // ANY THREAD. Cheap pre-gate for the sink: does any live cast claim hold a hand?
+    // ANY THREAD. Cheap pre-gate for the sink: does any live cast claim hold a hand
+    // (a spells-only floor included: HeldFor then decides per item)?
     bool AnyHandHeld(RE::FormID a_actor);
+
+    // Log text for one hand of a HandHold: "-", "spells-only floor", "deny-only floor" or
+    // "claim (spell 0x...)" -- says whether the refusal came from a claim or a floor.
+    std::string HoldDesc(const HandHold& a_hold, std::uint32_t a_handBit);
 
     // Review F3 (for core/AiCastSeats.cpp's Ranged probe, chained OUTSIDE this seat): is `a_fn`
     // this file's 0x0F thunk? (the probe's install line names it instead of "a prior hook").

@@ -32,7 +32,20 @@ list and was left as it is. `[Idle] bIdleConfirm` is a feature, not a probe.
 - `[Probe] bRestoreCensus` -> 0 in `APMF.ini` AND the code default in `core/RestoreCensus.cpp` `Poll`
   (reads the key with default 1 during the field cycle). See the ANIMATED HEALS head of work below.
 
-## HEAD OF WORK 2026-10-06 -- HAND-CLAIM BLOCK (batch A), branch `fix/apmf-hand-claim-blocks-equip`, NOT merged
+## HEAD OF WORK 2026-10-06 -- SPELLS-ONLY FLOOR (ABI v20), branch `fix/apmf-floor-spells-only`, NOT merged
+
+Field 2026-10-06 (SEV-2 regression of the hand-claim block below, merged in 42758a7): MFO floors the idle hand
+while one hand drives a cast, and the hand-claim block refused Cicero's bow, swords and fists into that floored
+hand 119 times in 40 s. marth chose "spells-only reservation". New `kCastFlag_FloorSpellsOnly` (CastFlags bit 7)
+arriving in ABI v20 (a bump with no struct and no slot; INVARIANTS #14b's exception, written there): a floor carrying it holds
+its hand in `handblock::HeldFor` only against a spell-like item (spell, scroll, staff), so the 0x0F seat and the
+equip-sink step pass weapons / shields / torches / unarmed. Spell side unchanged (CastGate 0x0A, EquipGate 0x0F).
+Driving claims and floors without the bit unchanged. `[castobs] CHANNEL-END` now carries the leaf ring;
+hand-block lines name claim / deny-only floor / spells-only floor. The InterruptCast caller is NOT logged (needs a
+new seat, not built). Ships with MFO `fix/mfo-floor-spells-only` (byte-identical `APMF_API.h`). Agentlog
+`spells-only-floor.md`. FIELD-TEST PENDING.
+
+## HEAD OF WORK 2026-10-06 -- HAND-CLAIM BLOCK (batch A), branch `fix/apmf-hand-claim-blocks-equip`, MERGED (42758a7)
 
 Field 2026-10-06 (`_research/field-1006-heal-diagnosis.md` cause 2): a dagger was equipped into the right hand MFO
 had released to a deny-only floor, 32 ms before the left-hand heal was interrupted. marth: "harbinger taking a hand

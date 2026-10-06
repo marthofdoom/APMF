@@ -203,8 +203,11 @@ namespace apmf::handblock {
                 (APMF_API::kEquipCat_Right | APMF_API::kEquipCat_Left);
             if (!competes) return engine;
 
+            // A spells-only floor (ABI v20) holds its hand only against a spell-like item;
+            // the weapon-class leaves carry weapons / shields / torches / unarmed, so for
+            // them it normally holds nothing (SpellLike is still asked, never assumed).
             HandHold hold{};
-            if (!HeldFor(fid, competes, itemId, hold)) return engine;
+            if (!HeldFor(fid, competes, itemId, SpellLike(item), hold)) return engine;
 
             g_denies.fetch_add(1, std::memory_order_relaxed);
             t_last.refused = true;
@@ -212,17 +215,12 @@ namespace apmf::handblock {
             if (LineDue(fid, itemId, dropped)) {
                 char comp[48];
                 spdlog::info("[handblock 0x0F] 0x{} '{}' CheckShouldEquip {} item=0x{} '{}' competes={} -> NO (hand {} "
-                             "held by a cast claim: R={} L={}) -- engine had said YES; the item stays out of the "
+                             "held: R={} L={}) -- engine had said YES; the item stays out of the "
                              "equipment set for the claim's duration. site={} (ret 0x{}){}",
                              apmf::log::Hex(fid), actor->GetName() ? actor->GetName() : "?", tag, apmf::log::Hex(itemId),
                              item->GetName() ? item->GetName() : "?",
                              apmf::equipsink::CategoryNames(competes, comp, sizeof(comp)), HeldName(hold.held),
-                             !(hold.held & APMF_API::kEquipCat_Right) ? std::string("-")
-                                 : hold.denyOnlyR ? std::string("deny-only floor")
-                                                  : "spell 0x" + apmf::log::Hex(hold.spellR),
-                             !(hold.held & APMF_API::kEquipCat_Left) ? std::string("-")
-                                 : hold.denyOnlyL ? std::string("deny-only floor")
-                                                  : "spell 0x" + apmf::log::Hex(hold.spellL),
+                             HoldDesc(hold, APMF_API::kEquipCat_Right), HoldDesc(hold, APMF_API::kEquipCat_Left),
                              SiteName(retRva), apmf::log::Hex(retRva),
                              dropped ? fmt::format(" ({} [handblock 0x0F] line(s) dropped by the {}/s cap before this one)",
                                                    dropped, kCapPerSec)
@@ -256,7 +254,22 @@ namespace apmf::handblock {
         return r && l ? "R+L" : r ? "R" : l ? "L" : "-";
     }
 
-    bool HeldFor(RE::FormID a_actor, std::uint32_t a_competes, RE::FormID a_item, HandHold& a_out) {
+    bool SpellLike(const RE::TESForm* a_item) {
+        if (!a_item) return false;
+        if (a_item->Is(RE::FormType::Spell) || a_item->Is(RE::FormType::Scroll)) return true;
+        if (const auto* w = a_item->As<RE::TESObjectWEAP>()) return w->IsStaff();   // a staff casts
+        return false;
+    }
+
+    std::string HoldDesc(const HandHold& a_hold, std::uint32_t a_handBit) {
+        if (!(a_hold.held & a_handBit)) return "-";
+        const bool right = a_handBit == APMF_API::kEquipCat_Right;
+        if (right ? a_hold.spellsOnlyR : a_hold.spellsOnlyL) return "spells-only floor";
+        if (right ? a_hold.denyOnlyR : a_hold.denyOnlyL)     return "deny-only floor";
+        return "claim (spell 0x" + apmf::log::Hex(right ? a_hold.spellR : a_hold.spellL) + ")";
+    }
+
+    bool HeldFor(RE::FormID a_actor, std::uint32_t a_competes, RE::FormID a_item, bool a_spellLike, HandHold& a_out) {
         a_out = HandHold{};
         if (!g_enabled.load(std::memory_order_relaxed) || a_actor == 0) return false;
         auto& cm = apmf::ControlMap::Get();
@@ -274,16 +287,24 @@ namespace apmf::handblock {
             if (!cm.TryGetCastClaimForHand(a_actor, s.hand, spell, proxy, &flags)) continue;
             if (a_item != 0 && (a_item == spell || a_item == proxy)) continue;   // the claim's own action
             const bool denyOnly = (flags & APMF_API::kCastFlag_DenyHandOnly) != 0;
+            // ABI v20: a floor carrying kCastFlag_FloorSpellsOnly reserves the hand against
+            // spells only (the bit means nothing without kCastFlag_DenyHandOnly: a driving
+            // claim keeps the full block). A weapon / shield / torch / unarmed passes.
+            const bool spellsOnly = denyOnly && (flags & APMF_API::kCastFlag_FloorSpellsOnly) != 0;
+            if (spellsOnly && !a_spellLike) continue;
             a_out.held |= s.bit;
-            if (s.bit == APMF_API::kEquipCat_Right) { a_out.spellR = spell; a_out.denyOnlyR = denyOnly; }
-            else                                    { a_out.spellL = spell; a_out.denyOnlyL = denyOnly; }
+            if (s.bit == APMF_API::kEquipCat_Right) { a_out.spellR = spell; a_out.denyOnlyR = denyOnly; a_out.spellsOnlyR = spellsOnly; }
+            else                                    { a_out.spellL = spell; a_out.denyOnlyL = denyOnly; a_out.spellsOnlyL = spellsOnly; }
         }
         return a_out.held != 0;
     }
 
     bool AnyHandHeld(RE::FormID a_actor) {
         HandHold h{};
-        return HeldFor(a_actor, APMF_API::kEquipCat_Right | APMF_API::kEquipCat_Left, 0, h);
+        // a_spellLike = true: a spells-only floor still counts as holding a hand for the
+        // pre-gate; the per-item HeldFor call that follows decides whether it holds it
+        // against THIS item.
+        return HeldFor(a_actor, APMF_API::kEquipCat_Right | APMF_API::kEquipCat_Left, 0, true, h);
     }
 
     void Install() {
@@ -353,7 +374,8 @@ namespace apmf::handblock {
         if (n == static_cast<int>(kNumClasses)) {
             spdlog::info("[handblock] INSTALLED: CheckShouldEquip (0x0F) on the Melee, Ranged, Shield, Torch and "
                          "OneHandedBlock item vtables (each slot held this build's engine function). A hand held by a live cast claim (a "
-                         "deny-only floor included) refuses every weapon / shield / torch candidate competing for it; "
+                         "deny-only floor included; a spells-only floor, ABI v20, refuses spell-like items only) refuses "
+                         "every weapon / shield / torch candidate competing for it; "
                          "the engine answers first, only its YES turns to NO. The equip-sink step rides the ch.17 "
                          "seat (its own [apmf][equip-sink] INSTALLED line says whether that seat is live).");
         } else {

@@ -516,6 +516,13 @@ the METHODOLOGY rule at the top of this file says a narrowed scope is a gap entr
     are switched by `[HandBlock] bHandClaimBlocksEquip` (default 1). The 0x0F half refuses
     a class whose slot does not hold the disassembled engine function at install
     (APMF-B36 F2).
+    **NARROWED BY CLIENT CHOICE 2026-10-06 (ABI v20, `kCastFlag_FloorSpellsOnly`).** A
+    floor carrying that bit holds its hand only against spell-like items (spell, scroll,
+    staff), so weapons, shields, torches and the unarmed block pass both halves for it. This
+    is not a new hole: the client declared the narrower facet ("no second SPELL here"), and
+    the spell side of that floor is unchanged (CastGate 0x0A and EquipGate 0x0F still deny
+    every spell and staff on the hand). A driving claim and a floor without the bit keep
+    the full block.
 11. **The TTL expiry gap (DIAG P6, RC2).** A `kIntent_Cast` claim hard-expires at its
     TTL (6 s in MFO's usage) and every seat, gate and steer chains natively from the
     moment it expires until the client's next `RequestCast` publishes — measured at
