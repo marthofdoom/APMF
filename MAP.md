@@ -473,7 +473,18 @@ main thread is the only writer), a 64-cell lock-free request ring for unknown pa
 `askedMs` outside the seqlock payload. `Pump()` (Arbiter::OncePerFrame, after
 `mainthread::Pump`) drains the ring, drops pairs unasked for `kLosInterestMs` (2 s),
 re-measures <= `kLosMaxPairsPerFrame` (8) pairs older than `kLosRefreshMs` (250 ms), oldest
-first. `MeasureNow` (main, for SenseActor) reuses a < 250 ms verdict and casts for at most
+first. Every 250 ms Pump also asks for the pair of every standing `kCastFlag_OwnLineOfSight`
+cast claim (`ControlMap::OwnLosCastPairs`, same predicate as CastSeats' `OwnLosApplies`), so the
+pair lives as long as the claim, not only while seat 0x06 polls (its 2-5 s gaps, past the 2 s
+interest window, made every poll read UNKNOWN in session 1006c; fix/apmf-los-false-occlusion).
+THE HIT FILTER (same fix): each pick carries `LosCollector` in `bhkPickData` +0xA8 (PickObject's
+closest-hit collector slot, disassembled on all three builds); it skips the viewer's own group
+and any PHANTOM that is not on the character-controller layer (trigger / acoustic-space /
+actor-zone / trap-trigger volumes), and a nearest hit in the TARGET's own collision group reads
+as "reached" (that ray is clear). Other actors and solid bodies still block. Each OCCLUDED
+measurement logs `[los] ... OCCLUDED by -- feet: L_<layer>(n) body|phantom group g [= the
+VIEWER's/TARGET's own] ref 0x.. <TYPE> '<name>' [actor: ...] at Xu of Yu; torso ...; head ...`
+(per pair, 2 s), names via the LOG-ONLY row `Sightline.TESHavokUtilities.FindCollidableRef`. `MeasureNow` (main, for SenseActor) reuses a < 250 ms verdict and casts for at most
 `kLosMaxSyncPairsPerFrame` (8) pairs per frame (Pump advances `g_frame`); past that it answers
 from a fresh stored verdict or Unknown (`kAwareDetail_SightDeferred`), so the hard bound is
 3 x (8 + 8) rays per frame. `[los]` VISIBLE/OCCLUDED lines are at most one per pair per 2 s
@@ -493,7 +504,10 @@ bOwnLineOfSight` (default 1). Rows: bhkWorld (0x33), Character (0xC2/0x73/0x74),
   any lock across a ray.**
 - **What breaks:** a ray off the main thread (only `Pump`/`MeasureNow` cast, both main);
   a mutex on the `Read` path (the cast and pin seats call it on combat threads and must stay
-  lock-free); writing a slot from any thread but main (single-writer seqlock); treating
+  lock-free); the collector's layout (`rayHit` at +0x10 is what PickObject resets and copies; slot 0 =
+  addRayHit, slot 1 = dtor -- never reorder its virtuals or members before `rayHit`); calling
+  FindCollidableRef anywhere but the main thread right after the pick (it is a log name, never
+  a verdict input); writing a slot from any thread but main (single-writer seqlock); treating
   UNKNOWN / UNAVAILABLE / a skipped pick as visible (principle 7 -- a cast into a wall);
   raw `now - askedMs` (another thread's later stamp wraps it: use `Since`); widening the
   per-frame budgets without re-deriving the cost (3 rays x pairs per frame, pump + sync); a

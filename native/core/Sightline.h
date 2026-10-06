@@ -31,7 +31,23 @@
 // THE PUMP. Arbiter::OncePerFrame (the confirmed main seat) calls Pump() once per
 // frame: drain the request ring into slots, drop pairs nobody asked for in
 // kLosInterestMs, and re-measure at most kLosMaxPairsPerFrame pairs whose newest
-// measurement is at least kLosRefreshMs old, oldest first.
+// measurement is at least kLosRefreshMs old, oldest first. Every kLosRefreshMs it also
+// asks for the pair of every STANDING kCastFlag_OwnLineOfSight cast claim
+// (ControlMap::OwnLosCastPairs), so such a pair is tracked for as long as its claim stands
+// and not only while the engine happens to poll seat 0x06 (fix/apmf-los-false-occlusion:
+// those polls came 2-5 s apart in field session 1006c, past kLosInterestMs, and every poll
+// read UNKNOWN).
+//
+// THE HIT FILTER (fix/apmf-los-false-occlusion). Each ray is cast with Harbinger's own
+// closest-hit collector in bhkPickData +0xA8 (Sightline.cpp LosCollector: the engine's
+// PickObject casts with it on all three builds). It steps past the viewer's own body and
+// past a PHANTOM that is not a character controller (trigger, acoustic-space, actor-zone,
+// trap-trigger volumes: overlap volumes nothing walks into, which the character-controller
+// layer nevertheless collides with). A nearest hit carrying the TARGET's own collision
+// group has reached the target: that ray is clear. Other actors' bodies and every solid
+// body still block. Each OCCLUDED measurement logs what stopped each ray (layer, phantom or
+// body, group, the owning reference via TESHavokUtilities::FindCollidableRef, viewer /
+// target / player / teammate / other actor, hit distance of the eye-to-point distance).
 //
 // LOCK SCOPE (the 2026-09-30 freeze hypothesis). Harbinger takes NO lock around a
 // ray. bhkWorld::PickObject (vtable slot 0x33) takes the world's worldLock for READ
@@ -58,6 +74,8 @@
 // GetEyeVector, 0x73/0x74 GetBoundMin/Max), Sightline.Actor.GetCollisionFilterInfo,
 // Sightline.TESObjectCELL.GetbhkWorld, Sightline.bhkWorld.WorldScale (ripref through
 // AIProcess::KnockExplosion). Install() refuses the whole service if any one fails.
+// Sightline.TESHavokUtilities.FindCollidableRef is LOG ONLY: refused, the occlusion line
+// omits the reference and the service still arms.
 // INI: Data/SKSE/Plugins/APMF.ini [Sightline] bOwnLineOfSight (default 1) -- 0 turns the
 // service off: GetLineOfSight answers kLos_Unsupported, SenseActor kQuery_Unsupported,
 // and the two own-line-of-sight bits are refused at the request.
