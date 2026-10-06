@@ -24,6 +24,7 @@
 #include "channels/CombatEntry.h"
 #include "channels/Idle.h"
 #include "channels/CombatReentryDeny.h"
+#include "channels/CombatApproach.h"
 #include "core/PositionCast.h"
 #include "core/SpaceQuery.h"
 #include "core/Sightline.h"
@@ -100,6 +101,9 @@ namespace {
         apmf::reentrydeny::ResetAll("revert/new game");
         // ch.23 pursuit leash (ABI v16): same, for the leash entries (anchor handles of the outgoing world).
         apmf::actiongate::ResetLeash("revert/new game");
+        // ch.24 combat approach (ABI v19): same, for its claim entries and the area records of the
+        // outgoing world (no engine write: the areas belong to the world being replaced).
+        apmf::combatapproach::ResetAll("revert/new game");
         // ABI v11 position cast: forget any marker still waiting for its one-frame
         // delete (its Retire task is dropped by the Discard below). The references
         // belong to the world being replaced, so none is touched.
@@ -167,6 +171,16 @@ namespace {
                                                   // exact 1.6.1170 / 1.5.97, VR-refused, [Idle] bIdleV2,
                                                   // SeatVerified on SetupSpecialIdle. A refusal REFUSES kIntent_Idle claims
                                                   // that carry a form; the form-free v1 idle is not gated.
+            apmf::combatapproach::Install();     // ch.24 COMBAT APPROACH (ABI v19): CombatAreaStandard vtable
+                                                  // slots 0x0B (Update: carries the bound), 0x05 (IsInside
+                                                  // (WorldLocation): the engine's own area inside a deny bracket)
+                                                  // and 0x06 (observe-only); deny brackets on
+                                                  // CombatTargetSelectorStandard 0x06 and the ten invisibility /
+                                                  // bound-item CheckShouldEquip 0x0F. All write_vfunc, chaining,
+                                                  // either order with ch.20 / EquipGate on the shared slots.
+                                                  // Exact 1.6.1170 / 1.5.97 / 1.7.104, VR-refused, [CombatApproach]
+                                                  // bCombatApproach, SeatVerified on every vtable; all or nothing.
+                                                  // A refusal REFUSES kIntent_CombatApproach claims.
             apmf::reentrydeny::Install();        // ch.22 COMBAT RE-ENTRY DENY (ABI v15): Character vtable slot
                                                   // 0x99 (IsDead), chaining, answering only at
                                                   // Actor::StartCombat's own self-check (INVARIANTS #0 (h)).
@@ -277,6 +291,8 @@ namespace {
             apmf::reentrydeny::ResetAll("kPreLoadGame");
             // ch.23 pursuit leash (ABI v16): same -- no leash entry crosses the load.
             apmf::actiongate::ResetLeash("kPreLoadGame");
+            // ch.24 combat approach (ABI v19): same -- no approach entry or area record crosses the load.
+            apmf::combatapproach::ResetAll("kPreLoadGame");
             // ABI v11 position cast: same as the revert path -- forget, never touch.
             apmf::poscast::ResetAll("kPreLoadGame");
             // ABI v18: no line-of-sight pair or noise baseline crosses the load (FormIDs of the
@@ -295,6 +311,12 @@ namespace {
             if (const auto dropped = apmf::mainthread::Discard(); dropped != 0)
                 spdlog::info("[mainthread] kPreLoadGame -- dropped {} queued task(s) at the load boundary.",
                              dropped);
+            break;
+        case SKSE::MessagingInterface::kSaveGame:
+            // ch.24 (ABI v19): SKSE sends this BEFORE the game writes the save. Put the engine's own
+            // geometry back into every combat area carrying a bound, so no claim is written into the
+            // .ess (the standard area is saved with its fields). The next area update re-applies it.
+            apmf::combatapproach::RestoreBeforeSave();
             break;
         case SKSE::MessagingInterface::kPostLoadGame:
             apmf::av::ApplyPending();             // restore any stranded AV overrides

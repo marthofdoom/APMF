@@ -427,3 +427,40 @@ Raised against 3903988, 2026-10-05. Verbatim:
   field question (STATUS's 'NOT BUILT with sub[Script]' path covers it)."
 - SEV-5 (round-2, e60f64f): with permanent Magicka 0, native 0x666F60 returns a constant while the copy treats it as low (unreachable: no ward at 0 max Magicka).
 - SEV-5 (round-2, e60f64f): AlreadyApplied is a proven member-level copy of AE 0x81E6C0 / 0x81E400 because ids 45349 / 45344 are absent from the fork's 1.7.104 table. Adding them at the next fork table revision would let it call the engine directly.
+### APMF-B55 (SEV-4) -- ch.24: the pursuit-leash test is coarse
+Raised against 274d7e4 (`feat/apmf-combat-moveto`, Opus tier-3 review), 2026-10-06. Finding (verbatim as relayed): "F5 SEV-4
+leash coarse". Reasoning: `channels/CombatApproach.cpp` Poll holds a claim as kApproachState_Leashed only when NO point within R
+of X lies inside the ch.23 leash disc (dist(X, anchor) - R > leash radius). A goal disc that only grazes the leash still applies
+the bound, so the engine's path back can leave the leash on the way, and the actor can stop at a point of the disc outside the
+leash. Fix when drained: decide with marth whether the bound should require X itself inside the leash, or clamp the centre to
+the leash disc.
+
+### APMF-B56 (SEV-4) -- ch.24: the save-path restore thread
+Raised against 274d7e4, 2026-10-06. Finding (verbatim as relayed): "F6 SEV-4 save-thread assert". Reasoning: RestoreBeforeSave
+(kSaveGame) reads each actor's controller and areas array and writes area fields; the save runs on Main::Update's save path
+(AE Main::Update 0x645EA0 @0x6468CF -> 36601 -> 35732 -> Save_Impl 35727), the thread of the engine's own
+CombatController::SaveGame, but no job-graph barrier against the UpdateCombat jobs was traced (ENGINE_NOTES 0.47 NOT FOUND (a)).
+DONE in round 2: a once-per-session warning when kSaveGame arrives off `apmf::hook::OnMainThread()`. Still open: the barrier
+itself; read the field log for the warning.
+
+### APMF-B57 (SEV-4) -- ch.24: FindWeapon looks only inside the bound
+Raised against 274d7e4, 2026-10-06. Finding (verbatim as relayed): "F7 SEV-4 FindWeapon effect undocumented". Reasoning:
+CombatBehaviorFindWeapon (AE 0x8610C0, IsInCombatArea x2) is the Acquire Weapon link of the engine's MOVEMENT half, so it carries
+the bound: while a ch.24 claim stands a disarmed actor only considers dropped weapons within R of X. Documented in
+`Docs/INTEGRATION.md` (ch.24 contract) and `Docs/DENY-COMPLETENESS-AUDIT.md` row 24 (a) in round 2. Open only if marth wants the
+weapon search bracketed like the attack pick.
+
+### APMF-B60 (SEV-4) -- ch.24: heavy slow time can stretch S1 past the stall floor
+Raised against acb832b (`feat/apmf-combat-moveto`, Opus round-2 re-check), 2026-10-06. Finding (verbatim as relayed): "R2-3
+(heavy slow-time stretching S1's period past the 3 s stall floor)". Reasoning: S1's 0.25 s period is GAME time; the stall
+floor (kStallMs 3000) counts on the world-tick clock, which advances with real frames (clamped 100 ms each). Under a strong
+slow-time effect (a slowdown shout, a mod's time scale) twelve game-time periods can exceed three world seconds and a live
+claim ends kApproachState_EngineDropped falsely. Fix when drained: scale the floor by the game's time multiplier, or count
+missed S1 periods in game time.
+
+### APMF-B61 (SEV-4) -- ch.24: the F3 put-back waits on the target selector; its exclusive-lock scan
+Raised against acb832b, 2026-10-06 (the re-check's spot-1 items). (a) The put-back of a finished claim's area runs only from
+the CombatTargetSelectorStandard slot-6 seat, so an actor whose standard selector is not run keeps its area until the save
+restore or the 60 s world-time purge. (b) While any record is marked for put-back (up to 60 s), every SelectTarget of EVERY
+actor takes g_areaMx EXCLUSIVE and scans the table; bounded by the table size (a handful), but a contention point on the
+combat jobs. Fix when drained: pre-filter on the controller (a lock-free set of pending controllers), shared lock for the scan.

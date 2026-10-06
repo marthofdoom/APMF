@@ -77,6 +77,28 @@ FIRED), Courage on an ally (Script via the rowless road), Calm at a foe (Script 
 N claims (a SERIES). Decide per kind with the rules in the CASTER-TYPE CENSUS entry below: FIRED ANIMATED = done; BUILT
 NOT FIRED on a seated type = an upstream gate, goes to Opus with the lines; NOT BUILT with `sub[Script]` = the
 substitution did not take, also to Opus.
+## HEAD OF WORK 2026-10-05 -- ch.24 COMBAT APPROACH (ABI v19), branch `feat/apmf-combat-moveto`, NOT merged
+
+Batch A release blocker (the held heal on an occluded recipient: marth "it should do loots moveto towards the actor").
+Tier A (ABI + new engine seats). Opus author; Opus tier-A review pending.
+- **Research (disassembly, all three builds, RE log scratchpad `agentlogs/apmf-combat-moveto.md`):** the combat tree
+  splits into parallel Movement and Action halves; the Movement half keeps the actor inside its CURRENT COMBAT AREA
+  (Return To Combat Area outranks the ordinary moves; nine leaves clamp to the area). The area is a PRIORITY pick in
+  `CombatController::UpdateAreas` (standard 1, package HoldPosition 3), not a weighted choice. ch.19 cannot carry into
+  combat: the Movement half always runs a move (Close Movement is the constant default), and a kIgnoreCombat package
+  pauses the whole tree (every facet dropped).
+- **Mechanism:** the actor's own CombatAreaStandard carries X / R (vfunc 0x0B, restore-run-write, period 0.25 s). Deny
+  brackets keep the area out of the target score and the invisibility / bound-item cast test. All write_vfunc, chaining.
+  A package's HoldPosition still wins; a ch.23 leash that excludes the goal holds the claim. Ends (and Harbinger
+  releases the claim) on arrival (unless kApproach_Hold), X lost, combat over, the engine dropping the bound (3 s floor,
+  logged), the actor gone. `RestoreBeforeSave` at kSaveGame keeps the bound out of the .ess.
+- **API (kABIVersion 19):** `kIntent_CombatApproach = 24`, `CombatApproachFlags`, `CombatApproachState`,
+  `APMF_CombatApproachInfo` (48 B), `APMF_API_v19::GetCombatApproachState`. MFO has NOT mirrored the header yet.
+- **Rows:** 7 new vtable rows (CombatAreaStandard + six CheckShouldEquip item vtables); 203 / 203 / 214 verified.
+  Every new slot function and caller is identical on 1.7.104 (`Docs/VERIFIED-ADDRESSES.md` "ch.24").
+- **Field proof: none yet.** First run should show `[ch.24] combat-approach seats installed`, `[ch.24] seat OBSERVED`,
+  then for a claimed actor the 3 s line with `area carried the bound N`, `engine: OUTSIDE` turning `INSIDE` and the
+  distance falling. New INI key `[CombatApproach] bCombatApproach` (default 1).
 
 ## HEAD OF WORK 2026-10-05 -- ABI v18 OWN LINE OF SIGHT + AWARENESS, branch `feat/apmf-own-los-awareness`, NOT merged
 
