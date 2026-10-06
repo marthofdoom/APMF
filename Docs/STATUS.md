@@ -1,8 +1,15 @@
 # APMF STATUS — living handoff (start here)
 
-Updated 2026-10-06. Current version **v0.10.0**. The current state of the build: what's
+Updated 2026-10-06. Current version **v0.11.0**. The current state of the build: what's
 shipped, what's probe-gated, what's next. Keep this current in the SAME change as any
 build/finding/workflow change.
+
+## SHIPPED 2026-10-06 -- v0.11.0 "Animated casts for every spell, line of sight and combat approach"
+
+Stamp commit `a34c25e`, CI run 37536701631, tag `v0.11.0`. Zip `releases/v0.11.0/APMF-v0.11.0.zip` (sha256 `a0103384...`, NOT uploaded
+to Nexus yet, marth uploads). DLL sha256 `3928a3e4...`. Headline: ABI v18 (own line of sight, SenseActor), v19 (seats for buff, ward,
+cloak, light, bound weapon, invisibility, summon, combat approach) and v20 (spells-only hand floor). `MinReleaseForAbi` 18/19/20 names
+0.11.0. APMF-B67 F3/F4 drained at this cut. FIELD-TEST PENDING, deploy and test as a pair with MFO v2.2.0.
 
 ## SHIPPED 2026-10-05 -- v0.10.0 "Skyrim 1.7.104 support"
 
