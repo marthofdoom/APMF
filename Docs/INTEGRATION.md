@@ -391,6 +391,10 @@ Rules of the road:
   outside the engine (`External(APMF.dll)`) and is refused unless the weapon
   is in the declared set. Ch.15's param form (gate only) makes no equip and
   is unaffected.
+- **A refused equip is never re-issued (APMF-B64).** `channels/EquipAuthority.cpp` has no
+  tick: it equips only when you declare. If the hand-claim block refused a declared weapon
+  because a cast claim held that hand, APMF does not equip it again when the hand frees.
+  Re-declare the set (`SetEquipSet` / `SetEquipSetEx`) after the cast claim releases.
 - **APMF never adds items.** A declared item the actor does not own is skipped
   and logged. Give it to them first.
 - **Unequips are not refused.** `kEquipAuth_DenyUnequip` is reserved and a

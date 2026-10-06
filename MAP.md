@@ -441,7 +441,9 @@ nearest first, cap `kMaxHostileResults` = 64). Rays: `bhkPickData` +
 `bhkWorld::PickObject` under `worldLock` (read), filter
 `(originActorSystemGroup << 16) | kCharController` (MFO Sightline's field-proven recipe);
 ground = layers static/terrain/ground (the engine's own Target Location placement rule)
-plus the stair helper. Synchronous; `hook::OnMainThread()` or `kQuery_NotMainThread`.
+plus the stair helper. A ray whose pick comes back with `bhkPickData::unkC0` set was NOT cast
+(the engine's early-out): `Cast` flags it `skipped` and the query returns `kQuery_Failed`, never
+"clear" (APMF-B52, same rule as `core/Sightline.cpp`). Synchronous; `hook::OnMainThread()` or `kQuery_NotMainThread`.
 Runtime gate as PositionCast (`Install` at kDataLoaded).
 - **What breaks:** calling either off the main thread (havok world and the hostility
   test are main-thread state; the refusal is the guard, do not remove it). Writing
@@ -497,8 +499,8 @@ bOwnLineOfSight` (default 1). Rows: bhkWorld (0x33), Character (0xC2/0x73/0x74),
   per-frame budgets without re-deriving the cost (3 rays x pairs per frame, pump + sync); a
   fixed end margin again (big creatures read OCCLUDED by their own capsule); changing the
   ray's samples / layer / margin without saying so in APMF_API.h (MFO mirrors the contract).
-  Open review items (6d84bab): `Docs/REVIEW-BACKLOG.md` APMF-B50 (SpaceQuery's skipped pick),
-  APMF-B53 (a)-(c), (e), (f).
+  Open review items (6d84bab): `Docs/REVIEW-BACKLOG.md` APMF-B50, APMF-B53 (a)-(c), (e), (f)
+  (APMF-B52, SpaceQuery's skipped pick, is drained).
 
 ### `native/core/Awareness.{h,cpp}` — ABI v18 AWARENESS, `SenseActor` (read-only)
 Omnidirectional multi-sense "does viewer sense target": SIGHT (Sightline own ray, within
@@ -1361,8 +1363,9 @@ cause 2 (a dagger equipped into the deny-only right hand 32 ms before the left h
   evaluate (AE 44899 / SE 43666) and pre-loop (AE 44868 / SE 43637) skip a candidate on NO, so the
   item never enters the equipment set and the EquipObject leaf (AE 48124) never gets it. Engine answer
   first; only YES turns to NO, for an item whose `equipsink::Categorize(item, itemSlot.equipSlot)` hand
-  bits (2H / bow -> both; a one-hander by its own slot, EitherHand / null -> both; shield / torch ->
-  left) hit a held hand. Slot functions per build: Melee/Ranged/Shield `!IsFleeing` base AE 0x817FC0 /
+  bits (2H / bow -> both; a one-hander by its own slot [at this seat EitherHand / null never
+  arrives: AddItem splits a multi-parent slot into a RightHand item plus a LeftHand clone, APMF-B66 F10;
+  the sink's Categorize still treats it as both]; shield / torch -> left) hit a held hand. Slot functions per build: Melee/Ranged/Shield `!IsFleeing` base AE 0x817FC0 /
   SE 0x77DC90 / 1.7.104 0x82CEA0; Torch OVERRIDES the slot, AE 0x819760 / SE 0x77F350 / 1.7.104
   0x82E640 (1.7.104 raw rows `AiCastSeats.kCheckShouldEquipBaseAE` / `HandBlock.Torch.CheckShouldEquip`,
   `HandBlock.OneHandedBlock.CheckShouldEquip`; the two HandBlock rows are proven through the committed

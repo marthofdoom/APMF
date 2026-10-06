@@ -55,6 +55,7 @@ namespace apmf::spacequery {
             bool          hit      = false;
             float         fraction = 1.0f;
             RE::COL_LAYER layer    = RE::COL_LAYER::kUnidentified;
+            bool          skipped  = false;   // PickObject's early-out: nothing was cast (bhkPickData::unkC0)
         };
 
         // One closest-hit ray. Caller holds world->worldLock (read). bhkWorld::PickObject
@@ -70,6 +71,12 @@ namespace apmf::spacequery {
             pick.rayInput.filterInfo                  = a_filter;
             a_world->PickObject(pick);
             RayHit r;
+            // APMF-B52: the engine's early-out sets +0xC0 and casts nothing, so the ray
+            // is UNMEASURED, never "clear" (core/Sightline.cpp treats it the same way).
+            if (pick.unkC0) {
+                r.skipped = true;
+                return r;
+            }
             if (pick.rayOutput.HasHit()) {
                 r.hit      = true;
                 r.fraction = pick.rayOutput.hitFraction;
@@ -239,7 +246,9 @@ namespace apmf::spacequery {
             // 1. The walk: chest height, origin -> point.
             const RE::NiPoint3 chest{ feet.x, feet.y, feet.z + kChestHeight };
             const RE::NiPoint3 walkTo{ chest.x + dir.x * distance, chest.y + dir.y * distance, chest.z };
-            if (const auto w = Cast(world, chest, walkTo, filter); w.hit) {
+            const auto w = Cast(world, chest, walkTo, filter);
+            if (w.skipped) return finish(APMF_API::kQuery_Failed, 0, "the engine skipped a ray (PickObject early-out): the query is unmeasured");
+            if (w.hit) {
                 const float walked = w.fraction * distance - clearance;
                 if (!clampToWall || walked <= 0.0f) {
                     return finish(APMF_API::kQuery_Blocked, static_cast<std::uint32_t>(w.layer),
@@ -254,6 +263,7 @@ namespace apmf::spacequery {
             const RE::NiPoint3 downFrom{ chest.x + dir.x * distance, chest.y + dir.y * distance, chest.z };
             const RE::NiPoint3 downTo{ downFrom.x, downFrom.y, feet.z - maxDrop };
             const auto g = Cast(world, downFrom, downTo, filter);
+            if (g.skipped) return finish(APMF_API::kQuery_Failed, 0, "the engine skipped a ray (PickObject early-out): the query is unmeasured");
             if (!g.hit)
                 return finish(APMF_API::kQuery_NoGround, 0,
                               std::format("nothing within {:.0f}u below the origin's feet at the point", maxDrop));
@@ -273,7 +283,9 @@ namespace apmf::spacequery {
             for (int i = 0; i < 8; ++i) {
                 const float a = static_cast<float>(i) * 0.78539816f;   // 45 degrees
                 const RE::NiPoint3 to{ knee.x + std::sin(a) * clearance, knee.y + std::cos(a) * clearance, knee.z };
-                if (const auto c = Cast(world, knee, to, filter); c.hit)
+                const auto c = Cast(world, knee, to, filter);
+                if (c.skipped) return finish(APMF_API::kQuery_Failed, 0, "the engine skipped a ray (PickObject early-out): the query is unmeasured");
+                if (c.hit)
                     return finish(APMF_API::kQuery_NoClearance, static_cast<std::uint32_t>(c.layer),
                                   std::format("layer {} within {:.0f}u of the point", static_cast<std::uint32_t>(c.layer),
                                               c.fraction * clearance));
@@ -286,6 +298,7 @@ namespace apmf::spacequery {
                 const RE::NiPoint3 from{ x, y, ground.z + kRingStep };
                 const RE::NiPoint3 to{ x, y, ground.z - kRingStep };
                 const auto r = Cast(world, from, to, filter);
+                if (r.skipped) return finish(APMF_API::kQuery_Failed, 0, "the engine skipped a ray (PickObject early-out): the query is unmeasured");
                 if (!r.hit || !IsGroundLayer(r.layer))
                     return finish(APMF_API::kQuery_Ledge, r.hit ? static_cast<std::uint32_t>(r.layer) : 0,
                                   r.hit ? std::format("the clearance ring meets layer {}, not ground",

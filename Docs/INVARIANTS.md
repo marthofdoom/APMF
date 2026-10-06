@@ -722,12 +722,13 @@ the header had moved on. A restated version number is a copy that cannot be kept
   MFO requests its MINIMUM ABI (not `kABIVersion`), so the bump costs it nothing against an
   older APMF.dll.
 - **Why the asymmetry matters HERE.** `APMF_GetInterface(v)` returns **nullptr** when
-  `v > kABIVersion` (`core/ClientAPI.cpp:125-128`), and MFO calls
-  `fn(APMF_API::kABIVersion)` ONCE, with no downward retry: on null it logs "APMF
-  refused ABI v{} (too old) -- owned-cast model OFF" and disables the whole owned-cast
-  model (`native/APMFBridge.cpp:398-403`). So a gratuitous bump does not degrade a
-  feature — it turns the reference client's entire cast integration off against every
-  older APMF.dll in the field. Bump when a slot genuinely needs a version test; never
+  `v > kABIVersion` (`core/ClientAPI.cpp:125-128`). MFO asks for its MINIMUM ABI
+  (`kRequestAbi = 10`, `native/apmf/Bridge.cpp`) ONCE, with no downward retry: on null
+  it logs "APMF refused ABI v{} (too old) -- owned-cast model OFF" and disables the
+  whole owned-cast model. A client that asked for `kABIVersion` instead would turn its
+  entire cast integration off against every older APMF.dll in the field, so a
+  gratuitous bump is a cost to any such client. (Amended APMF-B67 F5: the older text
+  said MFO calls `fn(kABIVersion)` and cited the dead `native/APMFBridge.cpp:398-403`.) Bump when a slot genuinely needs a version test; never
   as bookkeeping.
 - **PROPAGATION.** The header is byte-shared. A change to it lands in MFO's
   `native/APMF_API.h` in the SAME deploy pair, and `md5sum` must match on both repos at

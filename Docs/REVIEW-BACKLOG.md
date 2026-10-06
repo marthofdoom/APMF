@@ -353,9 +353,9 @@ install is then refused by the self-check, stays undrained. Documented here; not
 Raised against e2a77a8 (`fix/apmf-proxy-per-claim-refcount`, Opus tier-A re-check MERGE), 2026-10-05.
 - SEV-3, pre-existing, DECK CHECK BEFORE RELEASE: PreSaveSweep likely runs too late to keep proxies out of the .ess. SKSE runs plugin save callbacks from SkyrimVM::SaveGlobalData (globalDataTable3, type 1001), which the .ess places after changeForms, so the actor change form (with the AddSpell'd 0xFF proxy) may already be captured. INVARIANTS #19's "sweep before a record is written" premise may be wrong. Verify: save with a proxied ally-heal claim live, ReSaver-dump the follower's spell list, look for a 0xFF entry. If present: the sweep needs an earlier seat (before change-form generation), its own tier-A item, before release, with APMF-B48. If clean: close.
   EXTENDED (feat/apmf-self-delivery-proxy review F1, SEV-3, raised against 2c8c151, 2026-10-06): the same save must ALSO dump the ACTIVE-EFFECT list of the caster (and of any ally that received a proxied buff). Since the self-flip proxy a buff whose `ActiveEffect::spell` is a 0xFF proxy form sits on the CASTER for its whole duration (the forward flip already left such effects on allies); `PreSaveSweep` un-teaches the spell but cannot touch an applied effect. Verify: hold a self-flip claim (e.g. MFO's Fade Other / Oakflesh-style aimed or touch buff at the follower itself) until it lands (`[castproxy] ... LANDED on the caster`), save, ReSaver-dump the follower's active effects: an effect whose spell is a 0xFF form that survives the reload (or a load error / CTD on it) confirms. Reviewer reasoning: the save path for a 0xFF unregistered spell inside an ActiveEffect record is untraced; deck check before release.
-- SEV-4: TryGetCastSeatClaimForForm returns the first matching claim in vector order, not the BetterClaim winner. Diverges only when a later same-hand same-spell claim has a strictly higher basis (never under MFO's uniform kOwnBasis). Fix: pick the BetterClaim-best among matches.
-- SEV-5: the refused-mint path (zero/duplicate FormID) drops the created form without freeing it (leaks until load purge; error-logged every time).
-- SEV-5: the F2 log says "plain deny of its hand", but AllowedCastForHand (Allowance.cpp:148) still admits the original kSelf spell on that hand, so the AI may still self-heal by its own vanilla choice. Nothing is forced. Wording only.
+- **DRAINED (e32a999, `fix/apmf-post-0.11.0`):** SEV-4: TryGetCastSeatClaimForForm returns the first matching claim in vector order, not the BetterClaim winner. Diverges only when a later same-hand same-spell claim has a strictly higher basis (never under MFO's uniform kOwnBasis). Fix: pick the BetterClaim-best among matches.
+- **OPEN, skipped in the e32a999 round (freeing a form whose FormID clashes could drop the other holder's map entry; the free API is unverified):** SEV-5: the refused-mint path (zero/duplicate FormID) drops the created form without freeing it (leaks until load purge; error-logged every time).
+- **DRAINED (e32a999):** SEV-5: the F2 log says "plain deny of its hand", but AllowedCastForHand (Allowance.cpp:148) still admits the original kSelf spell on that hand, so the AI may still self-heal by its own vanilla choice. Nothing is forced. Wording only.
 - Note: the save callback is main-thread synchronous per SKSE64 source (Hooks_Papyrus.cpp SaveGlobalData_Hook); the new PreSaveSweep "on the Drain thread: yes/NO" line confirms it in the field. A NO is a SEV-1 threading finding.
 ### APMF-B50 (SEV-4) -- awareness: the detection-event read vs its free on an untraced path
 Raised against 6d84bab (`feat/apmf-own-los-awareness`, Opus tier-3 review, verdict MERGE), 2026-10-05. Finding (verbatim
@@ -373,6 +373,7 @@ through a global); if that maps to 0, every such noise is filtered out as "silen
 noise` lines of the first field run (they print the level of every new noise), then decide whether level 0 counts.
 
 ### APMF-B52 (SEV-4) -- SpaceQuery reads a skipped pick as "no hit"
+**DRAINED (e32a999, `fix/apmf-post-0.11.0`).** `SpaceQuery.cpp` `Cast` checks `unkC0` and every query returns `kQuery_Failed` with a logged reason (no ABI change). MFO's Sightline gap is MFO-side, still open.
 Raised against 6d84bab, 2026-10-05. Finding (verbatim as relayed): "PickObject's early-out already read as \"clear\" by
 `SpaceQuery.cpp:71` on main". Reasoning: `PickObject` (bhkWorld slot 0x33) can return WITHOUT casting and set
 `bhkPickData+0xC0` (its only writer in the function, all three builds); `spacequery::Cast` reads `rayOutput.HasHit()` only,
@@ -498,6 +499,7 @@ and 45056 (OneHandedBlock 0x0F, 0x819300; SE 43837) into the CommonLibSSE-NG for
 next fork revision, then retire the APMF-local CSV rows.
 
 ### APMF-B64 (SEV-4) -- hand-claim block: a refused ch.17 equip is never re-issued
+**DRAINED (e32a999, `fix/apmf-post-0.11.0`).** Documented in `Docs/INTEGRATION.md` (ch.17 notes: re-declare after the cast claim releases).
 Same review, finding F4. As relayed: "a refused ch.17 equip is never re-issued; document it in INTEGRATION".
 Reviewer's reasoning (log `scratchpad/agentlogs/review-apmf-handblock.md`): channels/EquipAuthority.cpp has no tick;
 it equips only on a declaration, so a declared weapon the hand-claim block refused while a cast claim held the hand
@@ -505,6 +507,7 @@ is not equipped again when the hand frees. The client must re-declare. Fix when 
 Docs/INTEGRATION.md (or re-issue on the hand's release).
 
 ### APMF-B65 (SEV-4/5, docs) -- hand-claim block: `bEquipDenyScript` now reaches cast-only actors
+**DRAINED (e32a999, `fix/apmf-post-0.11.0`).** `Data/SKSE/Plugins/APMF.ini` comment widened to the cast-only-actor scope.
 Same review, finding F5. As relayed: "`bEquipDenyScript` now reaches cast-only actors; fix the INI comment scope".
 On an actor with no ch.17 claim, the sink step reads the INI `bEquipDenyScript` (the claim flags are 0), so with it
 set a Papyrus / console equip into a hand a cast claim holds is refused too. The APMF.ini comment still describes it as
@@ -513,12 +516,16 @@ the ch.17 declared-set exemption only. Fix when drained: widen the comment (or s
 ### APMF-B66 (SEV-5 x2) -- hand-claim block review follow-ups F9, F10
 Raised against 1cc0bc9 (`fix/apmf-hand-claim-blocks-equip`, Opus tier-3 review MERGE), 2026-10-06.
 - F9 (SEV-5): an extra handle lookup per combat leaf. `ActionGate.cpp:890` resolves the actor handle on every leaf `act()` of every combatant whenever any actor is watched. Cost only, no correctness problem.
-- F10 (SEV-5): comment and MAP wording. "EitherHand/null -> both" at the 0x0F seat is unreachable: CombatInventory AddItem (AE 0x811AC0) splits a multi-parent slot into per-parent items (Clone, vfunc 0x0D), so a one-hander becomes a RightHand item plus a LeftHand clone.
+- **DRAINED (e32a999):** F10 (SEV-5): comment and MAP wording. "EitherHand/null -> both" at the 0x0F seat is unreachable: CombatInventory AddItem (AE 0x811AC0) splits a multi-parent slot into per-parent items (Clone, vfunc 0x0D), so a one-hander becomes a RightHand item plus a LeftHand clone.
 - DECIDED (marth 2026-10-06), review F2: a direct `EquipObject` from another SKSE DLL into a hand held by a cast claim is REFUSED. marth: "mfo asks harbinger to block it. Later its arbitrated". Papyrus / skse64 script equips, console and player-menu equips stay exempt. Becomes per-facet priority arbitration with the weighting rework (86e3jwmk7 / 86e3k3upc).
 
 ### APMF-B67 (SEV-4 x2, SEV-5 x2) -- spells-only floor (ABI v20) review: deferred F3-F6
 Raised against `7bf4548` (`fix/apmf-floor-spells-only`, Opus tier-3 review, nothing above SEV-3), 2026-10-06. Text verbatim as relayed.
 - **DRAINED at the v0.11.0 cut** (CHANGELOG entries moved into a `## v0.11.0` block). F3 (SEV-4): "A CHANGELOG entry for ABI v20 sits under the RELEASED `## v0.10.0` heading. v0.10.0 is ABI 17, tagged 2026-10-05. This is a pre-existing pattern for v18/v19 too. Fix at the next cut by moving all post-0.10.0 entries into an Unreleased block." Reasoning: release notes would credit v0.10.0 with features it does not ship; harmless until a cut, so drained at the cut.
 - **DRAINED at the v0.11.0 cut** (`MinReleaseForAbi` 18/19/20 now return "0.11.0"). F4 (SEV-4): "The `MinReleaseForAbi` text at ClientAPI.cpp:238, \"the first release after 0.9.11\", is stale for 18/19/20. Name the real release at the cut." Reasoning: log text only (the "client too new" refusal line); the real release name is only known at the cut.
-- F5 (SEV-5): "In INVARIANTS #14b, the next bullet still says MFO calls `fn(kABIVersion)` and cites the dead `native/APMFBridge.cpp:398-403`. MFO actually asks for `kRequestAbi=10` (Bridge.cpp:922)." Reasoning: stale doc; the amended #14b text already states the current fact, the older bullet contradicts it.
-- F6 (SEV-5): "With a staff, R on a spells-only floor and L under a claim, the sink verdict reads \"hands R+L held by a cast claim\". The refusal is correct; only the label is loose." Reasoning: `core/EquipSink.cpp` step 1a picks one label for both hands; a mixed hold falls to the claim label. Log wording only.
+- **DRAINED (e32a999):** F5 (SEV-5): "In INVARIANTS #14b, the next bullet still says MFO calls `fn(kABIVersion)` and cites the dead `native/APMFBridge.cpp:398-403`. MFO actually asks for `kRequestAbi=10` (Bridge.cpp:922)." Reasoning: stale doc; the amended #14b text already states the current fact, the older bullet contradicts it.
+- **DRAINED (e32a999, comment only: the mixed-hold label is documented in the code; no string changed):** F6 (SEV-5): "With a staff, R on a spells-only floor and L under a claim, the sink verdict reads \"hands R+L held by a cast claim\". The refusal is correct; only the label is loose." Reasoning: `core/EquipSink.cpp` step 1a picks one label for both hands; a mixed hold falls to the claim label. Log wording only.
+### APMF-B68 (SEV-5) -- kQuery_Failed doc in the byte-shared header (post-0.11.0 drain review)
+Raised against `407bb7a` (`fix/apmf-post-0.11.0`, Opus tier-B review, MERGE OK), 2026-10-06. Text as relayed.
+- B-1 (SEV-5): "`APMF_API.h:2016` and `:2409` still document `kQuery_Failed` as \"an exception was caught; nothing was returned\". It now also means \"a ray was skipped, retry later\". Fixing that comment in a byte-shared header needs a mirrored edit in MFO's copy, so do it in a later header round." Reasoning: comment-only, but the header is byte-shared, so it waits for the next APMF_API.h round.
+
