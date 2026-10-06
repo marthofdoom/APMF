@@ -518,7 +518,10 @@ the METHODOLOGY rule at the top of this file says a narrowed scope is a gap entr
     (APMF-B36 F2).
     **NARROWED BY CLIENT CHOICE 2026-10-06 (ABI v20, `kCastFlag_FloorSpellsOnly`).** A
     floor carrying that bit holds its hand only against spell-like items (spell, scroll,
-    staff), so weapons, shields, torches and the unarmed block pass both halves for it. This
+    staff): a one-handed weapon, a shield or a torch in the floored hand passes both halves
+    for it, while a two-hander, a bow or a no-hand item (unarmed, EitherHand / null slot)
+    still competes for both hands (`Categorize`) and is refused while a driving claim holds
+    the other hand. This
     is not a new hole: the client declared the narrower facet ("no second SPELL here"), and
     the spell side of that floor is unchanged (CastGate 0x0A and EquipGate 0x0F still deny
     every spell and staff on the hand). A driving claim and a floor without the bit keep

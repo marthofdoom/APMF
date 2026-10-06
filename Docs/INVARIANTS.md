@@ -915,8 +915,10 @@ thing that derails one. Concretely:
   published.
   **AMENDED 2026-10-06 again (ABI v20, `fix/apmf-floor-spells-only`).** A floor that also
   carries `kCastFlag_FloorSpellsOnly` holds its hand ONLY against a spell-like item (a spell,
-  a scroll, a staff; `handblock::SpellLike`): a weapon, shield, torch or the unarmed block
-  passes both the 0x0F seat and this sink step. marth chose this "spells-only reservation"
+  a scroll, a staff; `handblock::SpellLike`): a one-handed weapon, a shield or a torch in the
+  floored hand passes both the 0x0F seat and this sink step; a two-hander, a bow or a no-hand
+  item (unarmed) still competes for the other hand too and is refused while a driving cast
+  claim holds it. marth chose this "spells-only reservation"
   after the field showed a melee follower's floored hand refusing 119 weapon equips in 40 s.
   A driving cast claim, and a floor without the bit, keep the full block above.
   Under #17a the facet is taken WHOLE (declare the worn set → APMF equips it and refuses

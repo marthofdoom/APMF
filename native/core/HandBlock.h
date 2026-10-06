@@ -41,7 +41,9 @@
 // kCastFlag_DenyHandOnly floor that ALSO carries kCastFlag_FloorSpellsOnly reserves its
 // hand against spells only (APMF_API.h, that flag): for this rule such a floor holds the
 // hand ONLY against a spell-like item (SpellLike below: a spell, a scroll, a staff), so a
-// weapon, a shield, a torch or the unarmed block passes both halves. Field 2026-10-06:
+// one-handed weapon, a shield or a torch in the floored hand passes both halves. A
+// two-hander, a bow or an item the engine has not given a hand (unarmed) still competes for
+// the other hand too and is refused while a driving claim holds it. Field 2026-10-06:
 // Cicero's floored right hand refused his bow, swords and fists 119 times in 40 s. A
 // driving cast claim and a floor without the bit keep the full block.
 // ============================================================================

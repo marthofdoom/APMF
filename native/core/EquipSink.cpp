@@ -479,7 +479,8 @@ namespace apmf::equipsink {
             // as before: untouched and unlogged. A spells-only floor (ABI v20,
             // kCastFlag_FloorSpellsOnly) holds its hand here only against a staff (the one
             // spell-like governed type; a spell or scroll never reaches this worker), so a
-            // weapon, shield, torch or unarmed equip into it passes.
+            // one-hander, shield or torch into it passes. A two-hander, a bow or a no-hand
+            // item competes for the other hand too and is still refused by a claim there.
             apmf::handblock::HandHold hold{};
             const bool handHeld = apmf::handblock::HeldFor(actorId, competes, itemId,
                                                            apmf::handblock::SpellLike(obj), hold);

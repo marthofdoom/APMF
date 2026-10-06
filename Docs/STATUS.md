@@ -39,7 +39,9 @@ while one hand drives a cast, and the hand-claim block refused Cicero's bow, swo
 hand 119 times in 40 s. marth chose "spells-only reservation". New `kCastFlag_FloorSpellsOnly` (CastFlags bit 7)
 arriving in ABI v20 (a bump with no struct and no slot; INVARIANTS #14b's exception, written there): a floor carrying it holds
 its hand in `handblock::HeldFor` only against a spell-like item (spell, scroll, staff), so the 0x0F seat and the
-equip-sink step pass weapons / shields / torches / unarmed. Spell side unchanged (CastGate 0x0A, EquipGate 0x0F).
+equip-sink step pass a one-handed weapon / shield / torch into the floored hand; a two-hander, a bow or an item the
+engine has not given a hand (unarmed) still competes for the driving hand too and is refused while that cast claim
+stands (so the bow 32 and Unarmed 22 of the 119 field refusals continue, by marth's rule). Spell side unchanged (CastGate 0x0A, EquipGate 0x0F).
 Driving claims and floors without the bit unchanged. `[castobs] CHANNEL-END` now carries the leaf ring;
 hand-block lines name claim / deny-only floor / spells-only floor. The InterruptCast caller is NOT logged (needs a
 new seat, not built). Ships with MFO `fix/mfo-floor-spells-only` (byte-identical `APMF_API.h`). Agentlog

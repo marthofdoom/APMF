@@ -1378,7 +1378,10 @@ cause 2 (a dagger equipped into the deny-only right hand 32 ms before the left h
 - **Spells-only floors (ABI v20, 2026-10-06, `fix/apmf-floor-spells-only`).** A floor carrying
   `kCastFlag_DenyHandOnly | kCastFlag_FloorSpellsOnly` holds its hand in `HeldFor` ONLY when the
   competing item is `SpellLike` (a spell, a scroll, or a staff via `TESObjectWEAP::IsStaff`), so a
-  weapon / shield / torch / unarmed passes both halves for it. Field origin: Cicero's floored right
+  one-handed weapon / shield / torch in the floored hand passes both halves for it; a two-hander, a bow
+  or a no-hand item (unarmed, EitherHand / null slot) still competes for BOTH hands (`Categorize`) and
+  is refused while a driving claim holds the other hand (the field's bow 32 and Unarmed 22 refusals
+  continue; correct by marth's rule). Field origin: Cicero's floored right
   hand refused his bow, swords and fists 119 times in 40 s. The spell side of the floor is NOT here
   and is unchanged (CastGate 0x0A, EquipGate 0x0F on the magic/staff items). A driving claim and a
   floor without the bit keep the full block. Lines say WHAT holds the hand: the 0x0F line's
@@ -1397,7 +1400,9 @@ cause 2 (a dagger equipped into the deny-only right hand 32 ms before the left h
   definition of "spell-like" for the spells-only floor at both halves; a staff MUST stay spell-like
   (it starts a spell in the hand, which is what the floor exists to stop). `AnyHandHeld` asks with
   `a_spellLike = true` because it is only the sink's pre-gate. (8) The sink's verdict texts are
-  stored as POINTERS by `castobserve::NoteEquip`: literals only.
+  stored as POINTERS by `castobserve::NoteEquip`: literals only. Open backlog: APMF-B67 (spells-only
+  floor review: CHANGELOG heading, `MinReleaseForAbi` text, INVARIANTS #14b stale bullet, mixed-hold
+  sink label).
 
 ### `native/core/CastObserve.{h,cpp}` — passive cast observation, `[castobs]`
 The 0xAD-era observe-and-replicate probe (CASTER state transitions every 100 ms, the per-actor anim sink

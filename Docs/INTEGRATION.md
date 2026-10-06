@@ -165,6 +165,34 @@ supplies the one missing classification decision and the engine does the rest.
 - **AE 1.6.1170 only.** The cast path refuses to install on other runtimes and on VR
   rather than guessing at offsets. Kill switches live in `Data/SKSE/Plugins/APMF.ini`.
 
+### Spells-only floor (ABI v20, `kCastFlag_FloorSpellsOnly`)
+
+`kCastFlag_FloorSpellsOnly` (CastFlags bit 7) changes what a `kCastFlag_DenyHandOnly` floor
+refuses. It means nothing without that flag: a hand a driving cast claim holds always blocks
+every other equip ("Harbinger taking a hand for an action means other actions on that hand
+are blocked for the duration").
+
+- **Without the bit** a floor refuses every spell and staff on its hand (CastGate 0x0A,
+  EquipGate 0x0F on the magic/staff items) AND every weapon, shield, torch and the unarmed
+  block competing for that hand (the hand-claim block: `core/HandBlock.cpp` 0x0F on the
+  weapon-class items, plus the `core/EquipSink.cpp` step).
+- **With the bit** the floor refuses spells, scrolls and staffs only (a staff starts a spell
+  in the hand). A one-handed weapon, a shield or a torch going into the floored hand passes.
+  A two-hander, a bow, or an item the engine has not given a hand (unarmed, an EitherHand or
+  null slot) competes for BOTH hands (`equipsink::Categorize`), so while a driving cast claim
+  stands on the other hand it is still refused, by that claim.
+- **Why it exists (field 2026-10-06).** A client that floors the idle hand while the other
+  hand drives a cast wants "no second spell starts there", not "this hand is disarmed".
+  Without the bit a melee follower's floored hand refused 119 equips of its bow, swords and
+  fists in a 40 s fight. With the bit the one-handed swords pass; the bow (32 of those
+  refusals) and Unarmed (22) still compete for the driving hand and stay refused while it
+  is held.
+- **Compatibility.** A new bit in the frozen `flags` word, no field moved, and an ABI bump
+  to v20 with no struct or slot (INVARIANTS #14b's exception). An APMF below v20 ignores the
+  bit. A v19 build carrying the hand-claim block then blocks weapons into the floor; an
+  earlier v19 and every APMF below v19 never blocked weapons for a floor at all. A client
+  cannot tell those two v19 builds apart, so gate on `abiVersion >= 20` before relying on it.
+
 
 ## Casting at a point (ABI v11, `kCastFlag_AtPosition`)
 
@@ -1942,7 +1970,7 @@ columns, one doesn't imply the other.
 | `kIntent_CombatTarget` (ch.6) | Claim the combat-target facet | `form` (the target actor) | **Field-proven, in active production use.** MFO drives its combat targeting through this facet every fight. Arbitration only: APMF records the owner and the client writes the target itself. Denying a competing framework's own target write is still a future gap. |
 | `kIntent_CombatAction` (ch.7) | Deny named combat behavior-tree leaf categories (attack, bash, ranged attack, cast leaves, and more, grouped by category) | `ival` (a `CombatActionCategory` bitmask) | **Field-proven.** Graduated from a live deck probe: the deny fired, the tree fell back cleanly, no crash. |
 | `kIntent_SelectSpell` (ch.8) | Claim the casting facet | `form` (the spell FormID) | **Field-proven, for the owned/exact cast.** A follower AI-fired an animated spell allowed only through APMF's cast-check gate, live in combat, no whack-a-mole, no crash. This covers the single claimed spell as the actor's only castable choice. The graduated multi-spell allow list (`SetSpellAllowList`, v4) is a separate capability and is not yet proven. Denying a competing framework's own spell selection is also still a future gap. |
-| `kIntent_Cast` (ch.8b) | **Make the NPC's own AI cast a chosen spell at a chosen target.** ABI v5, use `RequestCast` | `APMF_CastRequest` (spell, proxy, target, flags, ttlMs) | **Field-proven** for heal-other on a follower AND for offense (17 animated offense fires in the 2026-09-06 deck session; the Offensive caster seat shipped in v0.9.2 — the "still being ported" note here was stale, corrected 2026-09-07). APMF makes no equip, anim or cast call. **Know what a claim does NOT cover, and what you must do about it:** it governs ONE hand, so the other hand keeps casting whatever the NPC's own AI picks — claim that hand too, with `kCastFlag_DenyHandOnly`, if you want the actor closed (a deny-only claim drives nothing and admits nothing, including your own spells). A deny-only floor also refuses weapons, shields, torches and unarmed into its hand; on ABI v20 and newer add `kCastFlag_FloorSpellsOnly` to it if the NPC should keep fighting with that hand (it then refuses spells and staffs only). It expires at `ttlMs`: `Repoint` the live claim to RENEW the deadline rather than releasing and re-requesting, or foreign spells equip and charge in the gap between the two. And a spell already charging when your claim arrives is not interrupted. Both mechanisms landed on `main` 2026-09-07 and are not in a tagged release yet. See `Docs/DENY-COMPLETENESS-AUDIT.md` open gaps 9-13. |
+| `kIntent_Cast` (ch.8b) | **Make the NPC's own AI cast a chosen spell at a chosen target.** ABI v5, use `RequestCast` | `APMF_CastRequest` (spell, proxy, target, flags, ttlMs) | **Field-proven** for heal-other on a follower AND for offense (17 animated offense fires in the 2026-09-06 deck session; the Offensive caster seat shipped in v0.9.2 — the "still being ported" note here was stale, corrected 2026-09-07). APMF makes no equip, anim or cast call. **Know what a claim does NOT cover, and what you must do about it:** it governs ONE hand, so the other hand keeps casting whatever the NPC's own AI picks — claim that hand too, with `kCastFlag_DenyHandOnly`, if you want the actor closed (a deny-only claim drives nothing and admits nothing, including your own spells). A deny-only floor also refuses weapons, shields, torches and unarmed into its hand; on ABI v20 and newer add `kCastFlag_FloorSpellsOnly` so it refuses spells, scrolls and staffs only (a one-hander, shield or torch in that hand passes; a two-hander, bow or unarmed still competes for the driving hand and is refused while that claim stands). See "Spells-only floor" above. It expires at `ttlMs`: `Repoint` the live claim to RENEW the deadline rather than releasing and re-requesting, or foreign spells equip and charge in the gap between the two. And a spell already charging when your claim arrives is not interrupted. Both mechanisms landed on `main` 2026-09-07 and are not in a tagged release yet. See `Docs/DENY-COMPLETENESS-AUDIT.md` open gaps 9-13. |
 | `kIntent_OfferPackage` (ch.9) | Claim the package-offer facet | `form` (the TESPackage FormID) | **Proven WHEN NUDGED (corrected 2026-09-07).** The 0x49 redirect answers whenever the engine asks while a published claim stands — 16/16 deck wins, every one of them following an explicit `EvaluatePackage` nudge, with ZERO hits from the engine's own evaluation cadence over ~75 s. It is not self-sustaining: if nothing nudges, nothing re-asks. The earlier "field-proven for engage/release" credit belonged to the retired PROBE; the graduated channel's own first field run engaged **0 of 6** dispatches because its nudge fired before the claim published. Fixed on `main` as of 2026-09-07 (the nudge is posted one hop past the claim's publish); untagged, and not yet re-run on a deck. Save/load persistence of an engaged claim is still unexercised. |
 | `kIntent_Dialogue` (ch.10) | Pause the actor's own in-progress dialogue | none | Built, not yet battle-tested |
 | `kIntent_Disposition` (ch.11) | Aggression / confidence / assistance / morality bias | `fval` (reserved, not yet read) | **Field-proven.** An actor-value source-block, deck-tested to hold even on a package-locked actor. |

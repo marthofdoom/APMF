@@ -205,7 +205,8 @@ namespace apmf::handblock {
 
             // A spells-only floor (ABI v20) holds its hand only against a spell-like item;
             // the weapon-class leaves carry weapons / shields / torches / unarmed, so for
-            // them it normally holds nothing (SpellLike is still asked, never assumed).
+            // them it normally holds nothing on ITS hand (SpellLike is still asked, never
+            // assumed); a claim on the other hand still holds a 2H / bow / unarmed candidate.
             HandHold hold{};
             if (!HeldFor(fid, competes, itemId, SpellLike(item), hold)) return engine;
 
@@ -289,7 +290,8 @@ namespace apmf::handblock {
             const bool denyOnly = (flags & APMF_API::kCastFlag_DenyHandOnly) != 0;
             // ABI v20: a floor carrying kCastFlag_FloorSpellsOnly reserves the hand against
             // spells only (the bit means nothing without kCastFlag_DenyHandOnly: a driving
-            // claim keeps the full block). A weapon / shield / torch / unarmed passes.
+            // claim keeps the full block). A non-spell item skips THIS hand only; one that
+            // also competes for the other hand (2H, bow, unarmed) is still held there.
             const bool spellsOnly = denyOnly && (flags & APMF_API::kCastFlag_FloorSpellsOnly) != 0;
             if (spellsOnly && !a_spellLike) continue;
             a_out.held |= s.bit;
