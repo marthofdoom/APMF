@@ -12,6 +12,7 @@
 #include "core/CastSeats.h"
 #include "core/CastGate.h"
 #include "core/EquipGate.h"
+#include "core/HandBlock.h"
 #include "core/ActionGate.h"
 #include "core/PackageGate.h"
 #include "core/EquipSink.h"
@@ -140,6 +141,9 @@ namespace {
                                                   // the SAME table row a self-heal uses (CombatMagicItemData
                                                   // vfunc slot 1). AE-only; VR/SE-refused inside.
             apmf::equipgate::Install();          // T2a CheckShouldEquip allowance
+            apmf::handblock::Install();          // hand-claim block (2026-10-06): 0x0F on the Melee/Ranged/
+                                                  // Shield/Torch item vtables. BEFORE aicastseats::Install, so
+                                                  // each slot still holds the engine function it compares.
             apmf::actiongate::Install();         // T1 combat-action allowance (ch.7; VR-refused inside)
             apmf::packagegate::Install();        // T3 package-offer allowance (ch.9; VR-refused inside)
             apmf::travel::Install();             // ch.19 TRAVEL (ABI v10): resolve Data/APMF.esl's

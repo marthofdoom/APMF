@@ -4,6 +4,8 @@
 #include "core/Clock.h"
 #include "core/ControlMap.h"
 #include "core/EquipSink.h"
+#include "core/HandBlock.h"     // the hand-claim block step (marth 2026-10-06)
+#include "core/CastObserve.h"   // NoteEquip: castobs interrupt attribution (passive)
 
 #include <intrin.h>      // _ReturnAddress / _AddressOfReturnAddress (core/EquipGate.cpp precedent)
 #include <algorithm>
@@ -412,13 +414,24 @@ namespace apmf::equipsink {
             if (!actor || !obj || !data || actor->IsPlayerRef()) { g_worker(mgr, actor, obj, data); return; }
             const RE::FormID actorId = actor->GetFormID();
             EquipSetView set;
-            if (!ControlMap::Get().TryGetEquipSet(actorId, set)) { g_worker(mgr, actor, obj, data); return; }
+            // HAND-CLAIM BLOCK (marth 2026-10-06, INVARIANTS #17a condition 5 as amended):
+            // an actor with no ch.17 claim is governed here ONLY while a live kIntent_Cast
+            // claim holds one of its hands, and then only for an equip competing for that
+            // hand (below). No ch.17 claim: the ch.17 masks must say nothing, so the view is
+            // emptied (owned=0) and every non-hand verdict is "allow".
+            const bool equipClaimed = ControlMap::Get().TryGetEquipSet(actorId, set);
+            if (!equipClaimed) {
+                if (!apmf::handblock::AnyHandHeld(actorId)) { g_worker(mgr, actor, obj, data); return; }
+                set       = EquipSetView{};
+                set.owned = 0;
+            }
 
             // A claimed actor. A non-governed form type (a potion, food, a scroll,
             // an ingredient, a book) passes: the worn set is ARMO/WEAP/AMMO/LIGH
             // only. Logged once per (actor, formType) at debug, not per event.
             const RE::FormType formType = obj->GetFormType();
             if (!IsGovernedType(formType)) {
+                if (!equipClaimed) { g_worker(mgr, actor, obj, data); return; }   // not a hand item: not the block's business
                 try {
                     if (FirstUngovernedSight(actorId, formType))
                         spdlog::debug("[apmf][equip-obs] actor={} formType=0x{} verdict=allow (not a governed type: "
@@ -459,6 +472,15 @@ namespace apmf::equipsink {
             const bool          blacked  = (competes & set.denied) != 0;
             const bool          ownedCat = (competes & set.owned)  != 0;
 
+            // The hand-claim block: which hand(s) this equip competes for are held by a
+            // live cast claim (a deny-only floor included), the claim's own spell/proxy
+            // excepted. One RCU read per hand. An actor reached here only through the
+            // block (no ch.17 claim) whose equip does not touch a held hand leaves exactly
+            // as before: untouched and unlogged.
+            apmf::handblock::HandHold hold{};
+            const bool handHeld = apmf::handblock::HeldFor(actorId, competes, itemId, hold);
+            if (!equipClaimed && !handHeld) { g_worker(mgr, actor, obj, data); return; }
+
             const bool observe    = g_observeOnly.load(std::memory_order_relaxed) ||
                                     (set.flags & APMF_API::kEquipAuth_ObserveOnly) != 0;
             const bool denyScript = g_denyScript.load(std::memory_order_relaxed) ||
@@ -473,6 +495,10 @@ namespace apmf::equipsink {
             // The verdict (ABI v9). Order matters and is the whole policy:
             //   0. a script/console equip without DenyScript            -> allow (exempt; above both masks)
             //   1. a PlayerMenu equip without DenyPlayerMenu            -> allow (player agency; above both masks)
+            //   1a. competes for a hand a live CAST claim holds         -> deny, even if in-set (the hand-claim
+            //       block, marth 2026-10-06: "harbinger taking a hand for an action means other actions on that
+            //       hand are blocked for the duration"). Enforced whatever ch.17's observe-only says: it is the
+            //       cast claim's rule, not the declared set's. [HandBlock] bHandClaimBlocksEquip=0 turns it off.
             //   2. competes for a DENIED category                       -> deny, even if in-set
             //   3. competes for an OWNED category, no declaration yet   -> allow (declare->enforce)
             //   4. competes for an OWNED category, a declared item      -> allow
@@ -491,10 +517,13 @@ namespace apmf::equipsink {
             const char* verdict = "allow";
             bool        callWorker = true;
             bool        refuse     = false;
+            bool        handBlock  = false;
             if (scriptPath && !denyScript) {
-                verdict = "allow";
+                verdict = handHeld ? "allow (script exempt; hand held by a cast claim)" : "allow";
             } else if (playerMenuPath && !denyPlayerMenu) {
-                verdict = "allow (player agency)";
+                verdict = handHeld ? "allow (player agency; hand held by a cast claim)" : "allow (player agency)";
+            } else if (handHeld) {
+                handBlock = true;
             } else if (blacked) {
                 refuse  = true;
             } else if (ownedCat) {
@@ -502,10 +531,21 @@ namespace apmf::equipsink {
             } else {
                 verdict = "allow";   // owned=0: nothing the claim holds is at stake
             }
-            if (refuse) {
+            if (handBlock) {
+                verdict    = (hold.held & APMF_API::kEquipCat_Right) && (hold.held & APMF_API::kEquipCat_Left)
+                                 ? "deny (hands R+L held by a cast claim)"
+                             : (hold.held & APMF_API::kEquipCat_Right) ? "deny (hand R held by a cast claim)"
+                                                                       : "deny (hand L held by a cast claim)";
+                callWorker = false;
+            } else if (refuse) {
                 if (observe) verdict = "would-deny";
                 else { verdict = "deny"; callWorker = false; }
             }
+
+            // castobs interrupt attribution (passive): "any equip in the last 100 ms".
+            apmf::castobserve::NoteEquip(actorId, itemId,
+                                         caller.external ? "External" : (caller.known ? caller.name : "Unknown"),
+                                         verdict);
 
             // Log line (Docs/INTEGRATION.md's probe criteria parse these fields).
             // Wrapped: nothing in the logging path may unwind into the engine's

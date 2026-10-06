@@ -433,7 +433,7 @@ namespace apmf::VerifiedAddresses
 		{ 12204, 0x1329D0, 0x0, 0, {  }, "CommonLib.LookupReferenceByHandle" },
 	};
 
-	// 1.7.104.0: 214 rows
+	// 1.7.104.0: 215 rows
 	// 28 NOT VERIFIED on 1.7.104.0, deliberately absent from this table (the seat is refused):
 	//   EquipSink.Path.OutfitApply.24234 (1.6.1170 id -): BY DESIGN: 1.5.97-only label. On 1.6.1170 and 1.7.104 the code reads its AE twin EquipSink.Path.OutfitApply.418622 (AE id 418622, 1.7.104 0x3C4440), whose own row carries the 1.7.104 fact (MAPPED-AE)
 	//   EquipSink.Path.AddWornOutfit.19266 (1.6.1170 id -): BY DESIGN: 1.5.97-only label. On 1.6.1170 and 1.7.104 the code reads its AE twin EquipSink.Path.AddWornOutfit.19692 (AE id 19692, 1.7.104 0x2E8070), whose own row carries the 1.7.104 fact (MAPPED-AE)
@@ -672,6 +672,7 @@ namespace apmf::VerifiedAddresses
 		{ 0, 0x82DCD0, 0x0, 0, {  }, "AiCastSeats.Shield.CalculateScore" },
 		{ 0, 0x82E360, 0x0, 0, {  }, "AiCastSeats.Torch.CalculateScore" },
 		{ 0, 0x82CEA0, 0x0, 0, {  }, "AiCastSeats.kCheckShouldEquipBaseAE" },
+		{ 0, 0x82E640, 0x0, 0, {  }, "HandBlock.Torch.CheckShouldEquip" },
 		{ 0, 0x824BB0, 0x0, 0, {  }, "EquipGate.CallSiteName.pre-loop" },
 		{ 0, 0x8289D2, 0x0, 0, {  }, "EquipGate.CallSiteName.return-813AF2" },
 		{ 0, 0x828C18, 0x0, 0, {  }, "EquipGate.CallSiteName.return-813D38" },

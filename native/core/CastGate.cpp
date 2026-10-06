@@ -3,6 +3,7 @@
 #include "core/Clock.h"
 #include "core/Allowance.h"
 #include "core/CastGate.h"
+#include "core/CastObserve.h"   // NoteCheckCast (castobs channel end / interrupt attribution)
 
 // ============================================================================
 // T2c -- CheckCast, the HARD pre-charge cast gate. Docs/ALLOWANCE-TEMPLATE.md
@@ -119,7 +120,18 @@ namespace apmf::castgate {
             // Let the engine answer FIRST -- the template's core rule. If the
             // engine itself already says no, there is nothing to own.
             const bool engineSays = orig(a_this, a_spell, a_dual, a_cost, a_reason, a_useBase);
-            if (!engineSays) return false;
+            if (!engineSays) {
+                // castobs channel end / interrupt attribution (2026-10-06): the engine's own NO
+                // on a WATCHED actor (a running channel is re-checked here every tick and
+                // interrupted on NO, INVARIANTS #18). Observe only; the answer is the engine's.
+                if (apmf::castobserve::AnyWatched()) {
+                    if (auto* who = a_this->GetCasterAsActor())
+                        apmf::castobserve::NoteCheckCast(who->GetFormID(), static_cast<int>(a_this->GetCastingSource()),
+                                                         a_spell ? a_spell->GetFormID() : 0,
+                                                         a_reason ? static_cast<std::uint32_t>(*a_reason) : 0xFFu, false);
+                }
+                return false;
+            }
 
             // Resolve the deliberating actor via the object's OWN (unhooked)
             // vtable slot 0x0C (MagicCaster::GetCasterAsActor) -- an ordinary
@@ -243,6 +255,8 @@ namespace apmf::castgate {
                              selectAllows ? "ALLOW" : "DENY",
                              instantCaster ? "n/a (instant caster)" : castAllows ? "ALLOW" : "DENY");
             }
+            apmf::castobserve::NoteCheckCast(fid, static_cast<int>(src), subjectForm,
+                                             static_cast<std::uint32_t>(RE::MagicSystem::CannotCastReason::kMultipleCast), true);
             return false;
         }
 

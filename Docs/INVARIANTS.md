@@ -892,6 +892,21 @@ thing that derails one. Concretely:
   undoing it;
   (5) the seat is scoped to actors holding an explicit claim (`kIntent_EquipAuthority`);
   the player and unclaimed actors pass through untouched and unlogged.
+  **AMENDED 2026-10-06 (the hand-claim block, `fix/apmf-hand-claim-blocks-equip`).** marth:
+  "harbinger taking a hand for an action means other actions on that hand are blocked for
+  the duration, thats been standard harbinger procedure." The seat ALSO governs an actor on
+  which a live `kIntent_Cast` claim (a driving claim or a `kCastFlag_DenyHandOnly` floor)
+  holds a hand, and for such an actor WITHOUT a ch.17 claim it refuses exactly one thing: a
+  governed equip (WEAP / ARMO shield / LIGH) whose `Categorize` hand bits hit a held hand,
+  the claim's own spell/proxy excepted. Every other equip on that actor passes untouched and
+  unlogged, as before. It is still a DENY only (condition 4: nothing is manufactured), still
+  an explicit claim's own facet (the hand the client took), and no new site: the same two
+  E8s. The script / console / player-menu exemptions stay ABOVE it; the ch.17 observe-only
+  switch does not apply to it (`[HandBlock] bHandClaimBlocksEquip` is its switch). The
+  combat AI's DECISION is refused one level up at the vtable seat `core/HandBlock.cpp`
+  (`CheckShouldEquip` 0x0F on the four weapon-class leaves, engine answer first); the sink
+  is the backstop for every other path and for a combat choice made before the claim
+  published.
   Under #17a the facet is taken WHOLE (declare the worn set → APMF equips it and refuses
   everything else until the client re-declares or releases), which is full control of the
   facet exactly as a per-path deny would be. Any further call-site seat needs its own

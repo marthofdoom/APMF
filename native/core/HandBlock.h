@@ -1,0 +1,74 @@
+#pragma once
+
+#include <cstdint>
+
+// ============================================================================
+// HAND-CLAIM BLOCK (fix/apmf-hand-claim-blocks-equip, 2026-10-06).
+//
+// marth, verbatim: "harbinger taking a hand for an action means other actions on
+// that hand are blocked for the duration, thats been standard harbinger
+// procedure. And it will stay until we redo using the weighting, which will
+// accomplish the same thing."
+//
+// A hand held by a LIVE kIntent_Cast claim (a driving claim or a
+// kCastFlag_DenyHandOnly floor, read per hand by ControlMap::TryGetCastClaimForHand,
+// lapsed claims excluded) refuses every OTHER equip into that hand for the claim's
+// duration: a weapon, a shield or a torch. The spell/staff half of the same rule
+// already stands at core/EquipGate.cpp (0x0F on the 30 magic/staff item vtables);
+// this file closes the weapon half on the combat AI's decision seat, and
+// core/EquipSink.cpp closes it on the engine-equip worker (every other path,
+// and the backstop for a combat equip chosen before the claim was published).
+//
+// FIELD ORIGIN (Deck 2026-10-06, _research/field-1006-heal-diagnosis.md cause 2):
+// MFO released its right hand to a deny-only floor while a heal held the left; 32 ms
+// later the engine equipped a Royal Elven Dagger into that right hand
+// (`[equip-obs] path=CombatNode verdict=allow`) and the left heal was interrupted.
+// Both seats said yes: the weapon leaves' 0x0F was unhooked (the engine's own
+// `!IsFleeing` answer), and the sink only governed the ch.17 claim's own scope
+// (owned=Armor).
+//
+// THE SEAT (this file): CombatInventoryItem::CheckShouldEquip, vtable slot 0x0F, on
+// the four weapon-class leaves Melee / Ranged / Shield / Torch. CombatInventory's
+// evaluate (AE 44899 / SE 43666 / 1.7.104 same body) and pre-loop (AE 44868 / SE
+// 43637) call it for every candidate and SKIP the item on NO (`call [rax+0x78]; test
+// al,al; je`), so a NO keeps the item out of the equipment set and the behaviour
+// tree's EquipObject leaf (AE 48124) never receives it. Engine answer first: the
+// original is always called and only its YES is ever turned to NO (INVARIANTS #17).
+// ============================================================================
+
+namespace apmf::handblock {
+
+    // kDataLoaded, AFTER equipgate::Install and BEFORE aicastseats::Install (so each
+    // weapon slot 0x0F still holds the disassembled engine function this install
+    // compares against -- REVIEW-BACKLOG APMF-B36 F2: a deny at this seat refuses a
+    // slot it cannot identify). VR and any build but exactly 1.6.1170 / 1.5.97 /
+    // 1.7.104 refused by name. INI [HandBlock] bHandClaimBlocksEquip (default 1)
+    // turns BOTH halves (this seat and the sink step) off.
+    void Install();
+
+    // The INI switch as read at Install (true until Install says otherwise).
+    bool Enabled();
+
+    // What a live cast claim holds, for one competing equip.
+    struct HandHold {
+        std::uint32_t held       = 0;   // APMF_API::kEquipCat_Right / kEquipCat_Left bits held
+        RE::FormID    spellR     = 0;   // the right-hand claim's named spell (0 = deny-only floor)
+        RE::FormID    spellL     = 0;
+        bool          denyOnlyR  = false;
+        bool          denyOnlyL  = false;
+    };
+
+    // ANY THREAD (combat thread at 0x0F, the equip thread at the sink). Lock-free RCU
+    // reads only, no form lookup. Of the hands in `a_competes` (EquipCategory bits;
+    // only kEquipCat_Right / kEquipCat_Left are read), which are held by a live
+    // kIntent_Cast claim on `a_actor`? The claim's OWN spell or proxy (`a_item`) is
+    // never refused: it is the action that holds the hand, not another one.
+    // False (and `a_out.held == 0`) when the switch is off or nothing is held.
+    bool HeldFor(RE::FormID a_actor, std::uint32_t a_competes, RE::FormID a_item, HandHold& a_out);
+
+    // ANY THREAD. Cheap pre-gate for the sink: does any live cast claim hold a hand?
+    bool AnyHandHeld(RE::FormID a_actor);
+
+    // "R", "L", "R+L" or "-" for a held mask (log text).
+    const char* HeldName(std::uint32_t a_held);
+}

@@ -2,6 +2,7 @@
 #include "core/Log.h"
 #include "core/Clock.h"
 #include "core/Allowance.h"
+#include "core/CastObserve.h"   // NoteStopCast (castobs channel end)
 #include "core/ControlMap.h"
 #include "core/CastSeats.h"
 #include "core/RestoreCensus.h"
@@ -659,6 +660,7 @@ namespace apmf::castseats {
             }
 
             if (why) {
+                apmf::castobserve::NoteStopCast(m.actor, why);   // castobs CHANNEL-END reason (observe only)
                 if (LogDue(m.actor, m.driven, kCheckStopCast))
                     spdlog::info("[ch.8b seat 0x07] 0x{} CheckStopCast -> STOP ({}). Engine teardown is its "
                                  "own: InterruptCast(false) + NotifyStopCast.", apmf::log::Hex(m.actor), why);

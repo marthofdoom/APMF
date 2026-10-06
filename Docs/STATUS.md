@@ -1,6 +1,6 @@
 # APMF STATUS — living handoff (start here)
 
-Updated 2026-10-05. Current version **v0.10.0**. The current state of the build: what's
+Updated 2026-10-06. Current version **v0.10.0**. The current state of the build: what's
 shipped, what's probe-gated, what's next. Keep this current in the SAME change as any
 build/finding/workflow change.
 
@@ -31,6 +31,16 @@ list and was left as it is. `[Idle] bIdleConfirm` is a feature, not a probe.
 - `[Travel] bGateProbe2` -> 0 in `APMF.ini` (see its HEAD OF WORK entry below).
 - `[Probe] bRestoreCensus` -> 0 in `APMF.ini` AND the code default in `core/RestoreCensus.cpp` `Poll`
   (reads the key with default 1 during the field cycle). See the ANIMATED HEALS head of work below.
+
+## HEAD OF WORK 2026-10-06 -- HAND-CLAIM BLOCK (batch A), branch `fix/apmf-hand-claim-blocks-equip`, NOT merged
+
+Field 2026-10-06 (`_research/field-1006-heal-diagnosis.md` cause 2): a dagger was equipped into the right hand MFO
+had released to a deny-only floor, 32 ms before the left-hand heal was interrupted. marth: "harbinger taking a hand
+for an action means other actions on that hand are blocked for the duration". New `core/HandBlock.cpp` (0x0F on the
+Melee/Ranged/Shield/Torch item vtables) + `core/EquipSink.cpp` step 1a refuse a weapon / shield / torch into a hand
+a live cast claim holds (INVARIANTS #17a(5) amended, DENY-COMPLETENESS gap 10 closed). `[HandBlock]
+bHandClaimBlocksEquip=1`. No ABI change. Diagnosis lines: `[castobs] INTERRUPT-ATTRIB` and `[castobs] CHANNEL-END`
+(MAP CastObserve). Agentlog `apmf-hand-claim-blocks-equip.md`. Opus tier-3 review PENDING; FIELD-TEST PENDING.
 
 ## HEAD OF WORK 2026-10-05 -- SELF-FLIP PROXY (batch A), branch `feat/apmf-self-delivery-proxy`, NOT merged
 

@@ -4,6 +4,7 @@
 #include "core/Allowance.h"
 #include "core/ControlMap.h"
 #include "core/CasterTypeCensus.h"
+#include "core/CastObserve.h"   // NoteCaster (castobs interrupt attribution)
 #include "core/CastClassify.h"   // IsPlacementSpell (label only)
 #include "core/CastSeats.h"      // SeatCountsLine (heartbeat only)
 
@@ -302,6 +303,9 @@ namespace apmf::castertypecensus {
             const RE::FormID itemForm = item->GetFormID();
             const auto       now      = apmf::clock::MonotonicMs();
             const auto       t        = static_cast<std::size_t>(a_type);
+            // castobs interrupt attribution (2026-10-06): the magic caster the engine is
+            // running for this actor, recorded for a WATCHED actor only (a leaf lock in there).
+            apmf::castobserve::NoteCaster(fid, kTypeNames[t], itemForm, a_fire, a_answer);
 
             Pending p;
             {
