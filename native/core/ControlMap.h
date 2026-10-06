@@ -330,6 +330,20 @@ namespace apmf {
         // hot per-frame path. ----
         std::vector<RE::Actor*> ClaimedActors(Intent intent) const;
 
+        // ABI v18 OWN LINE OF SIGHT, main-thread keep-warm (core/Sightline.cpp Pump,
+        // fix/apmf-los-false-occlusion): every (actor, target) pair a LIVE (unexpired) cast
+        // claim asks Harbinger's own ray to judge -- the exact predicate of CastSeats'
+        // OwnLosApplies (kCastFlag_OwnLineOfSight, not kCastFlag_DenyHandOnly, a target that
+        // is not the actor). The STANDING CLAIM is what asks for the pair, so its verdict is
+        // measured from the claim's publish on, not only while the engine happens to poll
+        // seat 0x06 (whose gaps run past kLosInterestMs). Same RCU reader discipline as
+        // ClaimedActors; appends to `out` (the caller clears it).
+        void OwnLosCastPairs(std::vector<std::pair<RE::FormID, RE::FormID>>& out) const;
+        // The same for ch.20 (kIntent_TargetPin): every live pin claim with
+        // kTargetPin_OwnLineOfSight in param.ival, (actor, param.form) when the target is not
+        // the actor -- the pairs channels/TargetPin.cpp's selector seat reads.
+        void OwnLosPinPairs(std::vector<std::pair<RE::FormID, RE::FormID>>& out) const;
+
         // ---- ch.17 EquipAuthority seat read: ANY thread (RCU reader). The
         // engine-equip sink (core/EquipSink.cpp) calls this from whatever thread
         // the engine performs an equip on. Same discipline as TryGetOwningClaim:

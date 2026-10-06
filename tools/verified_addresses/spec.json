@@ -3670,6 +3670,21 @@
    "doc": "ABI v18 own-ray LoS (AE 0x2B8D30 / SE 0x2654C0 / 1.7.104 0x2BE9B0)"
   },
   {
+   "seat": "Sightline.TESHavokUtilities.FindCollidableRef",
+   "kind": "function",
+   "construct": "RE::TESHavokUtilities::FindCollidableRef (fork mit-3.7: Offset::TESHavokUtilities::FindCollidableRef = RELOCATION_ID(25466, 26003)); SeatVerified in sightline::Install (LOG ONLY: refused -> the occlusion line omits the ref, the ray still arms)",
+   "ids": {
+    "1.6.1170": 26003,
+    "1.5.97": 25466
+   },
+   "sig": {
+    "1.6.1170": "40 57 48 83 EC 30 48 C7 44 24 20 FE FF FF FF 48 89 5C 24 48 48 89 74 24 50 33 F6 48 85 C9",
+    "1.5.97": "40 57 48 83 EC 30 48 C7 44 24 20 FE FF FF FF 48 89 5C 24 48 33 FF 48 85 C9"
+   },
+   "source": "native/core/Sightline.cpp (names the reference that owns the collidable an OCCLUDED ray stopped on, for the [los] occlusion line; never decides a verdict)",
+   "doc": "fix/apmf-los-false-occlusion 2026-10-06; body = owner (collidable + ownerOffset) -> NiAVObject (AE 0xE8C250) -> reference (AE 0x2E8750), refcounted, no lock (AE 0x3FD3D0 / SE 0x3A4DD0 / 1.7.104 0x404740)"
+  },
+  {
    "seat": "Sightline.AIProcess.KnockExplosion",
    "kind": "ripref",
    "construct": "RE::AIProcess::KnockExplosion RELOCATION_ID(38858, 39895): the engine function whose movss reads bhkWorld::WorldScale (proves the global)",

@@ -2,6 +2,7 @@
 #include "core/Sightline.h"
 #include "core/Allowance.h"   // SeatVerified(), RuntimeSupported(): the mit-3.7 F1 self-check gate
 #include "core/Clock.h"
+#include "core/ControlMap.h"   // OwnLosCastPairs: the standing cast claims that keep their pair measured
 #include "core/Hook.h"        // OnMainThread()
 #include "core/Log.h"
 
@@ -77,12 +78,30 @@ namespace apmf::sightline {
         std::atomic<std::uint64_t> g_asks{ 0 }, g_queued{ 0 }, g_measures{ 0 }, g_rays{ 0 }, g_visible{ 0 },
             g_occluded{ 0 }, g_unavail{ 0 }, g_pickSkipped{ 0 }, g_tableFull{ 0 }, g_dropped{ 0 },
             g_seatHold{ 0 }, g_seatPass{ 0 }, g_seatStop{ 0 };
+        // fix/apmf-los-false-occlusion: what the own ray's hits were (relaxed; heartbeat).
+        std::atomic<std::uint64_t> g_targetBody{ 0 }, g_volumePass{ 0 }, g_viewerPass{ 0 }, g_claimWarm{ 0 },
+            g_occDetailSuppressed{ 0 }, g_occDetailGlobalCut{ 0 }, g_claimWarmPin{ 0 };
+
+        // OCCLUDED detail lines, all pairs together: at most this many per second (main thread).
+        constexpr std::uint32_t kOccDetailPerSec = 5;
+        std::uint64_t           g_occDetailSecMs = 0;
+        std::uint32_t           g_occDetailInSec = 0;
+
+        // Sightline.TESHavokUtilities.FindCollidableRef verified (LOG ONLY: names the blocker).
+        std::atomic<bool> g_refLookupOk{ false };
+
+        // The standing own-line-of-sight cast claims are re-read this often (main thread, Pump):
+        // well inside kLosInterestMs, so a pair stays tracked for exactly as long as its claim.
+        constexpr std::uint64_t kClaimWarmMs = 250;
+        std::uint64_t                                    g_lastClaimWarmMs = 0;
+        std::vector<std::pair<RE::FormID, RE::FormID>> g_claimPairs;   // main thread only (reused buffer)
 
         constexpr std::uint64_t kTransitionLogMs = 2000;   // [los] VISIBLE/OCCLUDED lines, per pair
 
         // Main-thread only (no lock): per-pair log throttles.
         std::unordered_map<std::uint64_t, std::uint64_t> g_unavailLog;
         std::unordered_map<std::uint64_t, std::uint64_t> g_transLog;
+        std::unordered_map<std::uint64_t, std::uint64_t> g_occDetailLog;   // per pair: the OCCLUDED detail line
         std::atomic<std::uint64_t>                       g_transSuppressed{ 0 }, g_syncDeferred{ 0 };
 
         // MeasureNow's per-frame budget (review SEV-4): Pump() advances the frame, MeasureNow
@@ -214,11 +233,143 @@ namespace apmf::sightline {
         }
 
         // ---- the own ray (MAIN THREAD ONLY) ----
+
+        // The collision layer names, from the engine's own COLL records (Skyrim.esm, BNAM = the
+        // index). For the log only.
+        const char* LayerName(std::uint32_t a_layer) {
+            static constexpr const char* kNames[] = {
+                "UNIDENTIFIED", "STATIC", "ANIMSTATIC", "TRANSPARENT", "CLUTTER", "WEAPON", "PROJECTILE",
+                "SPELL", "BIPED", "TREES", "PROPS", "WATER", "TRIGGER", "TERRAIN", "TRAP", "NONCOLLIDABLE",
+                "CLOUDTRAP", "GROUND", "PORTAL", "DEBRIS_SMALL", "DEBRIS_LARGE", "ACOUSTIC_SPACE", "ACTORZONE",
+                "PROJECTILEZONE", "GASTRAP", "SHELLCASING", "TRANSPARENT_SMALL", "INVISIBLE_WALL",
+                "TRANSPARENT_SMALL_ANIM", "WARD", "CHARCONTROLLER", "STAIRHELPER", "DEADBIP", "BIPED_NO_CC",
+                "AVOIDBOX", "COLLISIONBOX", "CAMERASPHERE", "DOORDETECTION", "CONEPROJECTILE", "CAMERA",
+                "ITEMPICKER", "LOS", "PATHINGPICK", "CUSTOMPICK1", "CUSTOMPICK2", "SPELLEXPLOSION",
+                "DROPPINGPICK", "DEADACTORZONE", "TRIGGER_FALLINGTRAP", "NAVCUT", "CRITTER", "SPELLTRIGGER",
+                "LIVING_AND_DEAD_ACTORS", "DETECTION", "TRAP_TRIGGER",
+            };
+            return a_layer < std::size(kNames) ? kNames[a_layer] : "?";
+        }
+
+        // hkpTypedBroadPhaseHandle::type (collidable +0x24 +4 = +0x28) for a PHANTOM. Disassembly
+        // (AE): the engine's own pick helpers read the same byte -- 0xE82F7C `cmp [coll+0x28],1`
+        // returns the owner as a rigid body, 0xE82FAC `cmp [coll+0x28],2` returns it as a phantom
+        // (also 0x3FF3FB).
+        constexpr std::int8_t kBroadPhasePhantom = 2;
+
+        // L_SPELL's collides-with set (Skyrim.esm COLL record with BNAM 7, its CNAM list): 0
+        // UNIDENTIFIED, 1 STATIC, 2 ANIMSTATIC, 4 CLUTTER, 5 WEAPON, 8 BIPED, 9 TREES, 10 PROPS,
+        // 11 WATER, 12 TRIGGER, 13 TERRAIN, 14 TRAP, 17 GROUND, 20 DEBRIS_LARGE, 23
+        // PROJECTILEZONE, 24 GASTRAP, 26 TRANSPARENT_SMALL, 27 INVISIBLE_WALL, 28
+        // TRANSPARENT_SMALL_ANIM, 29 WARD, 30 CHARCONTROLLER, 32 DEADBIP, 33 BIPED_NO_CC, 38
+        // CONEPROJECTILE, 40 ITEMPICKER, 41 LOS, 43 CUSTOMPICK1, 44 CUSTOMPICK2, 46 DROPPINGPICK,
+        // 50 CRITTER, 51 SPELLTRIGGER. A static table: the vanilla matrix, not read at runtime.
+        constexpr std::uint64_t kSpellBlocks =
+            (1ull << 0) | (1ull << 1) | (1ull << 2) | (1ull << 4) | (1ull << 5) | (1ull << 8) | (1ull << 9) |
+            (1ull << 10) | (1ull << 11) | (1ull << 12) | (1ull << 13) | (1ull << 14) | (1ull << 17) | (1ull << 20) |
+            (1ull << 23) | (1ull << 24) | (1ull << 26) | (1ull << 27) | (1ull << 28) | (1ull << 29) | (1ull << 30) |
+            (1ull << 32) | (1ull << 33) | (1ull << 38) | (1ull << 40) | (1ull << 41) | (1ull << 43) | (1ull << 44) |
+            (1ull << 46) | (1ull << 50) | (1ull << 51);
+        constexpr std::uint32_t kCharControllerLayer = static_cast<std::uint32_t>(RE::COL_LAYER::kCharController);
+
+        // Can a hit on this collidable stop the ray? (the viewer's own group is tested apart)
+        constexpr bool SpellPassesLayer(std::uint32_t a_layer) {
+            return a_layer < 64 && (kSpellBlocks & (1ull << a_layer)) == 0;
+        }
+
+        // THE HIT FILTER (fix/apmf-los-false-occlusion). A ray-hit collector the engine's own
+        // bhkWorld::PickObject casts with when bhkPickData +0xA8 holds one (disassembly, all three
+        // builds: AE 0xE866F6 / SE 0xDA7716 / 1.7.104 0x104C016 load +0xA8; PickObject resets it
+        // as a closest-hit collector -- +0x08 earlyOut, +0x20 hitFraction, +0x60 root collidable --
+        // casts with hkpWorld::castRay(input, collector), then copies +0x10..+0x60 into
+        // rayOutput when +0x60 is set). Havok calls slot 0 for every hit, in any order:
+        // hkpClosestRayHitCollector's slot 0 (AE 0xB1D9F0 / SE 0xA5BE20 / 1.7.104 0xB3A200) is
+        // addRayHit(this, cdBody, hitInfo), walks cdBody->parent (+0x18) to the root collidable,
+        // and keeps the nearest. This one keeps the nearest hit that can BLOCK, and steps past:
+        //   * the VIEWER's own body (its collision system group -- the filter group already
+        //     excludes it; this is the belt to that brace, counted so a miss shows),
+        //   * any hit on a layer a SPELL passes through: a layer the character-controller ray
+        //     collides with that is NOT in L_SPELL's collides-with set (kSpellBlocks below,
+        //     from Skyrim.esm's own COLL records): TRANSPARENT, PROJECTILE, SPELL, CLOUDTRAP,
+        //     ACOUSTIC_SPACE, ACTORZONE, STAIRHELPER, COLLISIONBOX, CAMERA, SPELLEXPLOSION,
+        //     LIVING_AND_DEAD_ACTORS, TRAP_TRIGGER (stair helpers are everywhere in a Nordic
+        //     tomb, and a ray to the feet met their ramps), and
+        //   * a PHANTOM that is not a character controller (an overlap volume: a TRIGGER or
+        //     GASTRAP box is in L_SPELL's set, but nothing walking and no spell is stopped by
+        //     one; the layer rule alone would leave them blocking).
+        // EXCEPTION, marth 2026-10-06 ("spells cant go through npcs or sarcophogi"): a
+        // CHARCONTROLLER hit -- another actor's capsule -- always blocks (it is also in
+        // L_SPELL's set; the exception holds even if it were not). STATIC, ANIMSTATIC, PROPS,
+        // CLUTTER, TREES, TERRAIN, GROUND, INVISIBLE_WALL and the rest of L_SPELL's set block.
+        // The ray never meets a ragdoll: BIPED and DEADBIP are not in the CHARCONTROLLER layer's
+        // set, so a dead body never occludes; BIPED_NO_CC is, and blocks.
+        // The TARGET's own body is kept as a hit: the caller reads it as "the ray reached it".
+        class LosCollector : public RE::hkpRayHitCollector {
+        public:
+            void AddRayHit(const RE::hkpCdBody& a_body, const RE::hkpShapeRayCastCollectorOutput& a_hit) override {
+                if (!(a_hit.hitFraction < rayHit.hitFraction)) return;   // not nearer than the kept hit
+                const RE::hkpCdBody* root = &a_body;
+                while (root->parent) root = root->parent;
+                const auto*         coll  = static_cast<const RE::hkpCollidable*>(root);
+                const std::uint32_t info  = coll->broadPhaseHandle.collisionFilterInfo;
+                const std::uint32_t layer = info & 0x7F;
+                if (viewerGroup != 0 && (info >> 16) == viewerGroup) {
+                    ++viewerHits;
+                    return;
+                }
+                if (layer != kCharControllerLayer &&   // an actor's capsule always blocks (marth)
+                    (SpellPassesLayer(layer) || coll->broadPhaseHandle.type == kBroadPhasePhantom)) {
+                    ++volumes;
+                    if (a_hit.hitFraction < volumeFraction) {
+                        volumeFraction = a_hit.hitFraction;
+                        volume         = coll;
+                    }
+                    return;
+                }
+                rayHit.normal         = a_hit.normal;
+                rayHit.hitFraction    = a_hit.hitFraction;
+                rayHit.extraInfo      = a_hit.extraInfo;
+                rayHit.shapeKey       = a_hit.shapeKey;
+                rayHit.rootCollidable = coll;
+                earlyOutHitFraction   = a_hit.hitFraction;   // prune what lies beyond it
+            }
+            ~LosCollector() override = default;
+
+            RE::hkpWorldRayCastOutput  rayHit;              // +0x10: the closest-hit layout PickObject expects
+            std::uint32_t              viewerGroup = 0;
+            std::uint32_t              viewerHits  = 0;
+            std::uint32_t              volumes     = 0;
+            float                      volumeFraction = 1.0f;
+            const RE::hkpCollidable*   volume      = nullptr;
+        };
+        static_assert(offsetof(LosCollector, rayHit) == 0x10, "PickObject reads the collector's rayHit at +0x10");
+        static_assert(offsetof(RE::bhkPickData, rayHitCollectorA8) == 0xA8, "PickObject's closest-hit collector slot");
+        static_assert(offsetof(RE::hkpCdBody, parent) == 0x18 && offsetof(RE::hkpCollidable, broadPhaseHandle) == 0x24,
+                      "the hkpCdBody / hkpCollidable fields the collector reads");
+
+        // One ray's account, for the OCCLUDED detail line.
+        struct RayNote {
+            enum : std::uint8_t { kNotCast = 0, kClear, kTargetBody, kBlocked, kSkipped };
+            std::uint8_t             state    = kNotCast;
+            std::int8_t              bpType   = 0;
+            std::uint32_t            layer    = 0;
+            std::uint32_t            group    = 0;
+            float                    hitDist  = 0.0f;   // eye -> the hit
+            float                    total    = 0.0f;   // eye -> the sample point
+            const RE::hkpCollidable* coll     = nullptr;
+            std::uint32_t            volumes  = 0;
+            float                    volDist  = 0.0f;
+            const RE::hkpCollidable* volume   = nullptr;
+            std::uint32_t            viewerHits = 0;
+        };
+
         struct RayOut {
             std::uint32_t verdict = APMF_API::kLos_Unavailable;
             std::uint32_t sample  = 0;
             std::uint32_t why     = APMF_API::kLosWhy_None;
             float         margin  = 0.0f;   // the end margin used (0 = no ray reached that point); for the log
+            std::uint32_t viewerGroup = 0, targetGroup = 0;
+            RayNote       rays[3];
         };
 
         bool LoadedRef(const RE::Actor* a) {
@@ -266,6 +417,15 @@ namespace apmf::sightline {
             a_viewer->GetCollisionFilterInfo(info);   // verified row; the engine returns &info (ignored)
             const std::uint32_t filter =
                 ((info >> 16) << 16) | static_cast<std::uint32_t>(RE::COL_LAYER::kCharController);
+            out.viewerGroup = info >> 16;
+            // The target's own collision group (its controller's): a ray
+            // whose nearest blocking hit carries it has reached the target. 0 when the target has
+            // no controller -- then no hit is read as the target's (the end margin still applies).
+            if (a_target->GetCharController()) {
+                std::uint32_t tinfo = 0;
+                a_target->GetCollisionFilterInfo(tinfo);
+                out.targetGroup = tinfo >> 16;
+            }
 
             // The eye: the engine's own origin (Character slot 0xC2: position + eye height). No
             // facing is read anywhere -- `dir` is discarded.
@@ -296,10 +456,13 @@ namespace apmf::sightline {
             const float scale = RE::bhkWorld::GetWorldScale();   // verified row Sightline.bhkWorld.WorldScale
             bool        skipped = false;
             for (std::uint32_t i = 0; i < 3; ++i) {
-                const RE::NiPoint3 seg = samples[i] - eye;
-                const float        len = seg.Length();
+                RayNote&           note = out.rays[i];
+                const RE::NiPoint3 seg  = samples[i] - eye;
+                const float        len  = seg.Length();
                 if (!std::isfinite(len)) continue;
+                note.total = len;
                 if (len <= margin) {   // inside the target's own bound: nothing can stand in the gap
+                    note.state  = RayNote::kClear;
                     out.verdict = APMF_API::kLos_Visible;
                     out.sample  = i + 1;
                     return out;
@@ -307,22 +470,48 @@ namespace apmf::sightline {
                 const float        f  = (len - margin) / len;
                 const RE::NiPoint3 to{ eye.x + seg.x * f, eye.y + seg.y * f, eye.z + seg.z * f };
 
+                LosCollector collector;
+                collector.viewerGroup = out.viewerGroup;
                 RE::bhkPickData pick;
                 pick.rayInput.from                        = eye * scale;
                 pick.rayInput.to                          = to * scale;
                 pick.rayInput.enableShapeCollectionFilter = false;
                 pick.rayInput.filterInfo                  = filter;
+                pick.rayHitCollectorA8 = reinterpret_cast<RE::hkpClosestRayHitCollector*>(&collector);
                 world->PickObject(pick);   // takes the world's read lock itself (header: LOCK SCOPE)
                 g_rays.fetch_add(1, std::memory_order_relaxed);
                 if (pick.unkC0) {          // the engine's early-out: nothing was cast (header: PICK SKIPPED)
-                    skipped = true;
+                    note.state = RayNote::kSkipped;
+                    skipped    = true;
                     continue;
                 }
-                if (!pick.rayOutput.HasHit()) {
+                const float rayLen = len - margin;
+                note.volumes       = collector.volumes;
+                note.volume        = collector.volume;
+                note.volDist       = collector.volumeFraction * rayLen;
+                note.viewerHits    = collector.viewerHits;
+                if (collector.volumes) g_volumePass.fetch_add(collector.volumes, std::memory_order_relaxed);
+                if (collector.viewerHits) g_viewerPass.fetch_add(collector.viewerHits, std::memory_order_relaxed);
+                const RE::hkpCollidable* hit = collector.rayHit.rootCollidable;
+                if (!hit) {
+                    note.state  = RayNote::kClear;
                     out.verdict = APMF_API::kLos_Visible;
                     out.sample  = i + 1;
                     return out;
                 }
+                note.coll    = hit;
+                note.layer   = hit->broadPhaseHandle.collisionFilterInfo & 0x7F;
+                note.group   = hit->broadPhaseHandle.collisionFilterInfo >> 16;
+                note.bpType  = hit->broadPhaseHandle.type;
+                note.hitDist = collector.rayHit.hitFraction * rayLen;
+                if (out.targetGroup != 0 && note.group == out.targetGroup) {   // the ray reached the target's body
+                    note.state = RayNote::kTargetBody;
+                    g_targetBody.fetch_add(1, std::memory_order_relaxed);
+                    out.verdict = APMF_API::kLos_Visible;
+                    out.sample  = i + 1;
+                    return out;
+                }
+                note.state = RayNote::kBlocked;
             }
             if (skipped) {   // not every ray was cast: no verdict can be claimed
                 g_pickSkipped.fetch_add(1, std::memory_order_relaxed);
@@ -332,6 +521,93 @@ namespace apmf::sightline {
             }
             out.verdict = APMF_API::kLos_Occluded;
             return out;
+        }
+
+        // MAIN THREAD, right after the pick (same frame, no yield): who owns a collidable.
+        std::string DescribeCollidable(const RE::hkpCollidable* a_coll, const RayOut& a_ray, RE::FormID a_viewer,
+                                       RE::FormID a_target) {
+            if (!a_coll) return "none";
+            const std::uint32_t info  = a_coll->broadPhaseHandle.collisionFilterInfo;
+            const std::uint32_t layer = info & 0x7F, group = info >> 16;
+            const char* body = a_coll->broadPhaseHandle.type == kBroadPhasePhantom ? "phantom"
+                             : a_coll->broadPhaseHandle.type == 1               ? "body"
+                                                                                  : "other";
+            const char* who = (a_ray.viewerGroup && group == a_ray.viewerGroup)   ? "the VIEWER's own"
+                            : (a_ray.targetGroup && group == a_ray.targetGroup) ? "the TARGET's own"
+                                                                                  : nullptr;
+            std::string ref = "ref ?";
+            if (g_refLookupOk.load(std::memory_order_relaxed)) {
+                auto* r = RE::TESHavokUtilities::FindCollidableRef(*a_coll);   // verified row (log only)
+                if (!r) {
+                    ref = "no ref";
+                } else {
+                    const RE::FormID fid  = r->GetFormID();
+                    auto*            base = r->GetBaseObject();
+                    const char*      nm   = r->GetName();
+                    ref = fmt::format("ref 0x{} {} '{}'", Hex(fid), base ? RE::FormTypeToString(base->GetFormType()) : "?",
+                                      nm ? nm : "");
+                    if (auto* actor = r->As<RE::Actor>()) {
+                        const char* rel = fid == a_viewer ? "the viewer"
+                                        : fid == a_target ? "the target"
+                                        : actor->IsPlayerRef() ? "the PLAYER"
+                                        : actor->IsPlayerTeammate() ? "a player TEAMMATE"
+                                        : actor->IsDead() ? "a dead actor"
+                                                          : "another actor";
+                        ref += fmt::format(" [actor: {}]", rel);
+                    }
+                }
+            }
+            return fmt::format("L_{}({}) {} group {}{}{} {}", LayerName(layer), layer, body, group, who ? " = " : "",
+                               who ? who : "", ref);
+        }
+
+        // MAIN THREAD: WHAT stopped each of the three rays of an OCCLUDED measurement (every
+        // OCCLUDED one, not only transitions; at most one line per pair per kTransitionLogMs, the
+        // rest counted in the heartbeat). Called in the same frame as the pick, no yield between.
+        void LogOccludedDetail(std::uint64_t a_key, const RayOut& a_ray, std::uint64_t a_nowMs) {
+            if (g_occDetailLog.size() > 1024) g_occDetailLog.clear();
+            auto& last = g_occDetailLog[a_key];
+            if (last != 0 && Since(a_nowMs, last) < kTransitionLogMs) {
+                g_occDetailSuppressed.fetch_add(1, std::memory_order_relaxed);
+                return;
+            }
+            // The global cap (review SEV-4): many pairs turning OCCLUDED at once must not flood
+            // the log. Counted; the per-pair stamp is not taken, so the pair logs next time.
+            if (Since(a_nowMs, g_occDetailSecMs) >= 1000) {
+                g_occDetailSecMs = a_nowMs;
+                g_occDetailInSec = 0;
+            }
+            if (g_occDetailInSec >= kOccDetailPerSec) {
+                g_occDetailGlobalCut.fetch_add(1, std::memory_order_relaxed);
+                return;
+            }
+            ++g_occDetailInSec;
+            last = a_nowMs;
+            const RE::FormID v = KeyViewer(a_key), t = KeyTarget(a_key);
+            std::string      rays;
+            std::uint32_t    volumes = 0, viewerHits = 0;
+            const RayNote*   nearestVol = nullptr;
+            for (std::uint32_t i = 0; i < 3; ++i) {
+                const RayNote& n = a_ray.rays[i];
+                volumes += n.volumes;
+                viewerHits += n.viewerHits;
+                if (n.volume && (!nearestVol || n.volDist < nearestVol->volDist)) nearestVol = &n;
+                rays += fmt::format("{}{}: ", i ? "; " : "", SampleName(i + 1));
+                if (n.state == RayNote::kBlocked)
+                    rays += fmt::format("{} at {:.0f}u of {:.0f}u", DescribeCollidable(n.coll, a_ray, v, t),
+                                        n.hitDist, n.total);
+                else
+                    rays += n.state == RayNote::kNotCast ? "not cast" : "?";
+            }
+            spdlog::info("[los] 0x{} -> 0x{}: OCCLUDED by -- {} (hit distance of eye-to-point distance; end margin "
+                         "{:.0f}u; viewer group {}, target group {}). Passed through: {} hit(s) a spell passes (volumes, stair helpers ...){}{}, {} of the "
+                         "viewer's own body. (per pair, every {} s at most)",
+                         Hex(v), Hex(t), rays, a_ray.margin, a_ray.viewerGroup, a_ray.targetGroup, volumes,
+                         nearestVol ? ", nearest " : "",
+                         nearestVol ? fmt::format("{} at {:.0f}u", DescribeCollidable(nearestVol->volume, a_ray, v, t),
+                                                  nearestVol->volDist)
+                                    : std::string{},
+                         viewerHits, kTransitionLogMs / 1000);
         }
 
         // MAIN THREAD: store a fresh measurement into `s` (which holds a_key) and log a
@@ -375,8 +651,12 @@ namespace apmf::sightline {
                 } else {
                     last = a_nowMs;
                     if (a_ray.verdict == APMF_API::kLos_Visible)
-                        spdlog::info("[los] 0x{} -> 0x{}: VISIBLE (own ray, {} clear, end margin {:.0f}u)", Hex(v),
-                                     Hex(t), SampleName(a_ray.sample), a_ray.margin);
+                        spdlog::info("[los] 0x{} -> 0x{}: VISIBLE (own ray, {} clear, end margin {:.0f}u){}", Hex(v),
+                                     Hex(t), SampleName(a_ray.sample), a_ray.margin,
+                                     a_ray.sample >= 1 && a_ray.sample <= 3 &&
+                                             a_ray.rays[a_ray.sample - 1].state == RayNote::kTargetBody
+                                         ? " -- the ray's nearest hit was the target's own body"
+                                         : "");
                     else
                         spdlog::info("[los] 0x{} -> 0x{}: OCCLUDED ({}, end margin {:.0f}u)", Hex(v), Hex(t),
                                      a_ray.why == APMF_API::kLosWhy_OtherWorld ? "target in another havok world"
@@ -384,6 +664,8 @@ namespace apmf::sightline {
                                      a_ray.margin);
                 }
             }
+            if (a_ray.verdict == APMF_API::kLos_Occluded && a_ray.why != APMF_API::kLosWhy_OtherWorld)
+                LogOccludedDetail(a_key, a_ray, a_nowMs);
             return Unpack(Pack(a_ray.verdict, a_ray.sample, a_ray.why, occRun), a_nowMs, a_nowMs);
         }
 
@@ -411,14 +693,21 @@ namespace apmf::sightline {
             const auto asks = x(g_asks), queued = x(g_queued), meas = x(g_measures), rays = x(g_rays),
                        vis = x(g_visible), occ = x(g_occluded), un = x(g_unavail), skip = x(g_pickSkipped),
                        full = x(g_tableFull), drop = x(g_dropped), hold = x(g_seatHold), pass = x(g_seatPass),
-                       stop = x(g_seatStop), quiet = x(g_transSuppressed), deferred = x(g_syncDeferred);
+                       stop = x(g_seatStop), quiet = x(g_transSuppressed), deferred = x(g_syncDeferred),
+                       tbody = x(g_targetBody), vol = x(g_volumePass), vself = x(g_viewerPass), warm = x(g_claimWarm),
+                       occQuiet = x(g_occDetailSuppressed), occGlobal = x(g_occDetailGlobalCut),
+                       warmPin = x(g_claimWarmPin);
             if (tracked == 0 && asks == 0 && meas == 0 && deferred == 0) return;   // nothing asked for: stay quiet
             spdlog::info("[los] heartbeat {} s: tracked {} pair(s); asks {} (new {}), measured {} ({} rays): visible {}, "
                          "occluded {}, unavailable {} (pick skipped {}); dropped idle {}, table full {}; seats: "
                          "passed {}, held/paused {}, channels stopped {}; SenseActor sight over the per-frame cap {}; "
-                         "transition lines rate-limited away {}.",
+                         "transition lines rate-limited away {}. Rays: nearest hit the target's own body (read as "
+                         "reached) {}, spell-passable hits (volumes, stair helpers ...) passed through {}, viewer's own body passed {}; OCCLUDED detail "
+                         "lines rate-limited away {} (per pair) + {} (global {}/s cap); standing own-line-of-sight claims kept "
+                         "warm: cast {} pair-ask(s), pin {}.",
                          kHeartbeatMs / 1000, tracked, asks, queued, meas, rays, vis, occ, un, skip, drop, full, pass,
-                         hold, stop, deferred, quiet);
+                         hold, stop, deferred, quiet, tbody, vol, vself, occQuiet, occGlobal, kOccDetailPerSec, warm,
+                         warmPin);
         }
 
     }
@@ -481,6 +770,12 @@ namespace apmf::sightline {
             ok = apmf::allowance::SeatVerified(REL::Relocation<std::uintptr_t>{ RELOCATION_ID(231896, 188105) }.address(),
                                                "Sightline.bhkWorld.WorldScale") && ok;
             if (!ok) why = "the mit-3.7 self-check refused an address the ray uses (listed above)";
+            // LOG ONLY (fix/apmf-los-false-occlusion): names the reference an OCCLUDED ray stopped
+            // on. Never decides a verdict, so a refusal drops only the name from the log line.
+            g_refLookupOk.store(apmf::allowance::SeatVerified(
+                                    REL::Relocation<std::uintptr_t>{ RE::Offset::TESHavokUtilities::FindCollidableRef }.address(),
+                                    "Sightline.TESHavokUtilities.FindCollidableRef (log only)"),
+                                std::memory_order_relaxed);
         }
         if (why) {
             g_notArmedReason.store(why, std::memory_order_release);
@@ -612,6 +907,32 @@ namespace apmf::sightline {
             if (k != 0) EnsureMain(k, now);
         }
 
+        // 1b. The STANDING own-line-of-sight cast claims ask for their pair themselves
+        // (fix/apmf-los-false-occlusion). Seat 0x06's polls alone kept a pair asked-for only
+        // while the engine polled it, and its gaps (2-5 s in field session 1006c) ran past
+        // kLosInterestMs: the pair was dropped between polls and every poll read UNKNOWN -- a
+        // cast refused indefinitely. Now a pair is tracked from the claim's publish (measured on
+        // the next pump, never-measured first) for exactly as long as the claim stands, and
+        // re-measured every kLosRefreshMs like any asked-for pair, so the seat's kLosFreshMs
+        // read finds a measurement at most ~kLosRefreshMs old (+ the per-frame queue).
+        if (g_lastClaimWarmMs == 0 || Since(now, g_lastClaimWarmMs) >= kClaimWarmMs) {
+            g_lastClaimWarmMs = now;
+            g_claimPairs.clear();
+            apmf::ControlMap::Get().OwnLosCastPairs(g_claimPairs);
+            for (const auto& [viewer, target] : g_claimPairs) {
+                EnsureMain(Key(viewer, target), now);   // inserts, or stamps askedMs
+                g_claimWarm.fetch_add(1, std::memory_order_relaxed);
+            }
+            // The same for ch.20 pins with kTargetPin_OwnLineOfSight (review SEV-3): the
+            // selector seat's reads are just as sparse, and a dropped pair PAUSED the pin.
+            g_claimPairs.clear();
+            apmf::ControlMap::Get().OwnLosPinPairs(g_claimPairs);
+            for (const auto& [viewer, target] : g_claimPairs) {
+                EnsureMain(Key(viewer, target), now);
+                g_claimWarmPin.fetch_add(1, std::memory_order_relaxed);
+            }
+        }
+
         // 2. Drop pairs nobody asked for; collect the stale ones.
         std::uint32_t idx[kSlots];
         std::size_t   n = 0;
@@ -624,6 +945,7 @@ namespace apmf::sightline {
                 s.askedMs.store(0, std::memory_order_relaxed);
                 g_unavailLog.erase(k);
                 g_transLog.erase(k);
+                g_occDetailLog.erase(k);
                 g_dropped.fetch_add(1, std::memory_order_relaxed);
                 continue;
             }
@@ -658,6 +980,9 @@ namespace apmf::sightline {
         for (auto& cell : g_ring) cell.store(0, std::memory_order_relaxed);
         g_unavailLog.clear();
         g_transLog.clear();
+        g_occDetailLog.clear();
+        g_claimPairs.clear();
+        g_lastClaimWarmMs = 0;
         if (n != 0) spdlog::info("[los] {} -- dropped {} tracked line-of-sight pair(s).", a_why, n);
     }
 

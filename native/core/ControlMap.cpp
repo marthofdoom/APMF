@@ -2285,6 +2285,55 @@ namespace apmf {
         return out;
     }
 
+    void ControlMap::OwnLosCastPairs(std::vector<std::pair<RE::FormID, RE::FormID>>& out) const {
+        // Same RCU discipline as ClaimedActors: relaxed pre-gate, one acquire-load of a LOCAL
+        // frozen snapshot copy, read-only. Expired-but-not-swept claims are treated as gone
+        // (the TryGetCastSeatClaimForForm rule): never keep a pair warm for a claim the
+        // writer's TTL pass is about to release.
+        if (m_anyControlled.load(std::memory_order_relaxed) == 0) return;
+
+        std::shared_ptr<const MapType> snap = m_published.load(std::memory_order_acquire);
+        auto* channel = Registry::Get().ChannelForIntent(APMF_API::kIntent_Cast);
+        if (!channel) return;
+
+        const auto nowMs = apmf::clock::MonotonicMs();
+        for (const auto& [fid, npc] : *snap) {
+            for (const auto& cs : npc.channels) {
+                if (cs.channel != channel) continue;
+                for (const auto& c : cs.claims) {
+                    if (c.expiresMs != 0 && nowMs >= c.expiresMs) continue;
+                    if ((c.castFlags & APMF_API::kCastFlag_OwnLineOfSight) == 0) continue;
+                    if ((c.castFlags & APMF_API::kCastFlag_DenyHandOnly) != 0) continue;
+                    if (c.castTarget == 0 || c.castTarget == fid) continue;
+                    out.emplace_back(fid, c.castTarget);
+                }
+            }
+        }
+    }
+
+    void ControlMap::OwnLosPinPairs(std::vector<std::pair<RE::FormID, RE::FormID>>& out) const {
+        // Same discipline as OwnLosCastPairs. Pin claims carry no TTL (expiresMs 0); the check
+        // stays for symmetry.
+        if (m_anyControlled.load(std::memory_order_relaxed) == 0) return;
+
+        std::shared_ptr<const MapType> snap = m_published.load(std::memory_order_acquire);
+        auto* channel = Registry::Get().ChannelForIntent(APMF_API::kIntent_TargetPin);
+        if (!channel) return;
+
+        const auto nowMs = apmf::clock::MonotonicMs();
+        for (const auto& [fid, npc] : *snap) {
+            for (const auto& cs : npc.channels) {
+                if (cs.channel != channel) continue;
+                for (const auto& c : cs.claims) {
+                    if (c.expiresMs != 0 && nowMs >= c.expiresMs) continue;
+                    if ((static_cast<std::uint32_t>(c.param.ival) & APMF_API::kTargetPin_OwnLineOfSight) == 0) continue;
+                    if (c.param.form == 0 || c.param.form == fid) continue;
+                    out.emplace_back(fid, c.param.form);
+                }
+            }
+        }
+    }
+
     bool ControlMap::TryGetEquipSet(RE::FormID actor, EquipSetView& out) const {
         // ANY thread -- core/EquipSink.cpp's thunk calls this from whatever engine
         // thread performs an equip. Same RCU discipline as TryGetOwningClaim:
