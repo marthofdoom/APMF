@@ -281,6 +281,8 @@ Raised against `34d8a812`, same review, finding F3. Reasoning (as given): `std::
 ### APMF-B48 (SEV-4) -- a delivery-flip proxy may survive in a persistent follower's spell list across a load purge
 Raised against `78b057c` (`fix/apmf-proxy-per-claim-refcount`), tier-A Opus 5.5 review 2026-10-05 (reviewer log `scratchpad/agentlogs/review-apmf-proxy.md`), finding F4. Text as relayed by the coordinator (the reviewer log holds only a summary, so the reviewer's own wording is not on disk): "F4 SEV-4: a proxy may survive in a persistent follower's spell list across a load purge, plus the test to verify it." Reasoning: on kPreLoadGame, `ReleaseAll` posts each claim's `castproxy::Unref`, and that post is then `Discard()`ed unrun. `castproxy::ResetAll` clears the forms' borrowed `Effect*` and nulls the slots, but it makes no engine call. So nothing un-teaches a proxy that was still taught when the load began. A persistent follower's actor survives the world swap, so its runtime spell list may still point at the 0xFF form when the load-time purge frees it. Test: hold a proxied ally-heal claim (MFO per-hand heal at an ally) on a persistent follower, then load a DIFFERENT save without saving first. Inspect that follower's spell list (ReSaver on a save taken right after the load) and check `APMF.log` for `[castproxy]` lines. A 0xFF entry, or a CTD on the follower's next spell-list walk, confirms it. Closure if confirmed: un-teach every owned slot in `ResetAll` on the kPreLoadGame path, while the outgoing actors still resolve, before the slots are nulled. (The revert path must stay call-free.)
 
+- FIELD VERDICT 2026-10-06 (Opus, Tuxborn deck logs): STILL NEEDS DATA -- one load per session in 5 sessions and no live proxy at load in any, so the purge path never ran; needed: load a save written while a delivery-flip proxy is live in a follower's spell list (no logging gap).
+
 ## DRAINED
 
 _(none yet)_
@@ -357,6 +359,8 @@ Raised against e2a77a8 (`fix/apmf-proxy-per-claim-refcount`, Opus tier-A re-chec
 - **OPEN, skipped in the e32a999 round (freeing a form whose FormID clashes could drop the other holder's map entry; the free API is unverified):** SEV-5: the refused-mint path (zero/duplicate FormID) drops the created form without freeing it (leaks until load purge; error-logged every time).
 - **DRAINED (e32a999):** SEV-5: the F2 log says "plain deny of its hand", but AllowedCastForHand (Allowance.cpp:148) still admits the original kSelf spell on that hand, so the AI may still self-heal by its own vanilla choice. Nothing is forced. Wording only.
 - Note: the save callback is main-thread synchronous per SKSE64 source (Hooks_Papyrus.cpp SaveGlobalData_Hook); the new PreSaveSweep "on the Drain thread: yes/NO" line confirms it in the field. A NO is a SEV-1 threading finding.
+
+- FIELD VERDICT 2026-10-06 (Opus, Tuxborn deck logs): STILL NEEDS DATA -- 0 'minted proxy form has FormID' errors across 51 mints (no failure seen), but the drain-thread question is unanswered: PreSaveSweep prints only when swept>0 and no save had a live proxy; needed: save with a live proxy (logging gap: PreSaveSweep line should print thread id even when swept==0).
 ### APMF-B50 (SEV-4) -- awareness: the detection-event read vs its free on an untraced path
 Raised against 6d84bab (`feat/apmf-own-los-awareness`, Opus tier-3 review, verdict MERGE), 2026-10-05. Finding (verbatim
 as relayed by the coordinator): "the detection-event UAF exposure on the untraced ProcessLists path". Reasoning: SenseActor
@@ -371,6 +375,8 @@ Raised against 6d84bab, 2026-10-05. Finding (verbatim as relayed): "the hearing 
 the field)". Reasoning: AE 34993 calls SetActorsDetectionEvent with the level from `0x416070(0)` (SOUND_LEVEL 0 mapped
 through a global); if that maps to 0, every such noise is filtered out as "silent". Fix when drained: read the `[aware]
 noise` lines of the first field run (they print the level of every new noise), then decide whether level 0 counts.
+
+- FIELD VERDICT 2026-10-06 (Opus, Tuxborn deck logs): STILL NEEDS DATA -- [aware] saw 10 SenseActor calls, 'new engine noises seen 0' and 'noise lvl -1' on all 55 senses lines; needed: a session with real hearing events near a follower (logging gap: noise line prints only on a NEW stamp after a baseline, Awareness.cpp:123-148).
 
 ### APMF-B52 (SEV-4) -- SpaceQuery reads a skipped pick as "no hit"
 **DRAINED (e32a999, `fix/apmf-post-0.11.0`).** `SpaceQuery.cpp` `Cast` checks `unkC0` and every query returns `kQuery_Failed` with a logged reason (no ABI change). MFO's Sightline gap is MFO-side, still open.
@@ -397,6 +403,8 @@ Raised against 44ee2e2 (`feat/apmf-own-los-awareness`, Opus round-2 re-check MER
 - The per-target end margin (bound half-diagonal x GetBaseHeight + 16, clamp [48,1024]) ignores any obstacle within the margin of the target, and a viewer inside it reads VISIBLE through a wall. Errs toward VISIBLE only, only inside the target's own bound; humanoids keep the field-proven 48u. Proper fix: cast to the point and treat a hit as clear only if the hit body is the target's own collidable / group.
 - The bound source (middleHigh->unk180, centre +0x18 / half-extent +0x24, a BSBound BBX shape) is proven; that a modded creature's char-controller capsule fits inside its BBX is not. Field check: [los] margin on giants / dragons in the open should read VISIBLE.
 
+- FIELD VERDICT 2026-10-06 (Opus, Tuxborn deck logs): STILL NEEDS DATA -- margins seen 48..492u, and 0x31108656 (492u) was VISIBLE from 3 viewers at APMF.1 12:43:56-58 then UNAVAILABLE not loaded; needed: a hit-body case (logging gap: [los] lines carry no name/race/hit-body identity).
+
 ### APMF-B58 (SEV-4 x3) -- buff / summon / rowless cast seats
 Raised against 3903988 (`feat/apmf-buff-summon-seats`, Opus tier-3 FIX FIRST), 2026-10-05. Ids chosen after
 `feat/apmf-combat-moveto`'s APMF-B55..B57 (that branch is not merged yet): the merge must keep both sets distinct.
@@ -416,6 +424,8 @@ Reviewer reasoning: all three are bounded and rare; none exercised by the vanill
 - SEV-4 (round-2 re-check, e60f64f): a pooled proxy slot re-pointed to another source spell can leave a stale active effect whose `spell` is that same slot form (e.g. a Candlelight proxy effect still on ally A after the slot now carries Oakflesh). AlreadyApplied then answers NO for up to that effect's remaining duration; the claim stands unfired, bounded by TTL and the client's never-fired release.
 - SEV-4 (round-2, e60f64f): a claimed ward omits the native Ward 0x07 no-threat grace, so it stays up while claimed and oscillates around the 25% magicka floor. Bounded by the floor and TTL.
 
+- FIELD VERDICT 2026-10-06 (Opus, Tuxborn deck logs): STILL NEEDS DATA -- slot forms were reused only for the same spell (0xFF000A3D / 0x2F3B8 x2) and ctcensus claimed Ward built=0; no log names an AlreadyApplied NO and the stale-proxy/ward-oscillation case did not occur; needed: a ward re-cast on an already-warded follower (logging gap: ctcensus says only NOT BUILT, never AlreadyApplied).
+
 ### APMF-B59 (SEV-5 x3) -- buff / summon / rowless cast seats, small items
 Raised against 3903988, 2026-10-05. Verbatim:
 - (d) "Script caster 0x0C (AE 0x823080) writes the actor-wide Script restrict-timer blackboard key (the same key the
@@ -429,6 +439,8 @@ Raised against 3903988, 2026-10-05. Verbatim:
   field question (STATUS's 'NOT BUILT with sub[Script]' path covers it)."
 - SEV-5 (round-2, e60f64f): with permanent Magicka 0, native 0x666F60 returns a constant while the copy treats it as low (unreachable: no ward at 0 max Magicka).
 - SEV-5 (round-2, e60f64f): AlreadyApplied is a proven member-level copy of AE 0x81E6C0 / 0x81E400 because ids 45349 / 45344 are absent from the fork's 1.7.104 table. Adding them at the next fork table revision would let it call the engine directly.
+
+- FIELD VERDICT 2026-10-06 (Opus, Tuxborn deck logs): CLOSED (part f only: works as intended) -- Cicero 'Arcane Pull' FE204ACE predicted Script, 'engineScore=0.000 STEERED->1000' at nAPMF 14:25:27.488, FIRED via Script 14:25:40 (5 FIRED total across sessions); the other parts were not exercised.
 ### APMF-B55 (SEV-4) -- ch.24: the pursuit-leash test is coarse
 Raised against 274d7e4 (`feat/apmf-combat-moveto`, Opus tier-3 review), 2026-10-06. Finding (verbatim as relayed): "F5 SEV-4
 leash coarse". Reasoning: `channels/CombatApproach.cpp` Poll holds a claim as kApproachState_Leashed only when NO point within R
@@ -444,6 +456,8 @@ Raised against 274d7e4, 2026-10-06. Finding (verbatim as relayed): "F6 SEV-4 sav
 CombatController::SaveGame, but no job-graph barrier against the UpdateCombat jobs was traced (ENGINE_NOTES 0.47 NOT FOUND (a)).
 DONE in round 2: a once-per-session warning when kSaveGame arrives off `apmf::hook::OnMainThread()`. Still open: the barrier
 itself; read the field log for the warning.
+
+- FIELD VERDICT 2026-10-06 (Opus, Tuxborn deck logs): STILL NEEDS DATA -- 0 [ch.24] save lines in all sessions; RestoreBeforeSave returns early when g_touchedCount==0 so the thread check only runs with a live bound at save; needed: save while a ch.24 bound is live.
 
 ### APMF-B57 (SEV-4) -- ch.24: FindWeapon looks only inside the bound
 Raised against 274d7e4, 2026-10-06. Finding (verbatim as relayed): "F7 SEV-4 FindWeapon effect undocumented". Reasoning:
@@ -489,6 +503,8 @@ APMF-B61 (other open branches may also take B62: renumber at merge if they colli
   effects carry neither flag and a plain ValueModifier archetype (e.g. an unflagged Damage Health) cannot be told from
   a buff by archetype, so an explicit self claim on it would land on the caster. Closing it needs a magnitude-sign /
   AV-direction test or the client's own declaration; the client owns the consequence meanwhile.
+
+- FIELD VERDICT 2026-10-06 (Opus, Tuxborn deck logs): CLOSED (pool-pressure part only) -- only owner 0x750012C6 ever minted, peak concurrent 2 (nAPMF 14:44:17, APMF.1 12:46:35) and 0 'pool overflow' lines; the forward-flip rationale question is not answerable from logs and stays open.
 
 ### APMF-B63 (SEV-4, tooling) -- hand-claim block: the 1.7.104 Torch / OneHandedBlock 0x0F rows live on APMF's own idmap CSV
 Raised against `1cc0bc9` (`fix/apmf-hand-claim-blocks-equip`, Opus tier-3 review, MERGE), 2026-10-06, finding F6. As
