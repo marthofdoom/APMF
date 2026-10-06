@@ -145,7 +145,7 @@ documented per seat in the table below. No seat is refused on 1.7.104.
 | CheckCast 0x0A (ActorMagicCaster) | `core/CastGate.cpp` | open | `0x5B1610 -> 0x5C0150` identical |
 | CheckShouldEquip 0x0F (30 MagicT vtables) | `core/EquipGate.cpp` | open | 30 slot functions identical; hand slots via the fork's DOBJ `GetObject` |
 | ch.7 leaves act/pop/update (70 vtables) | `core/ActionGate.cpp` | open | every slot function identical |
-| ch.8b 0x06/0x07/0x0A/0x0D (Restore, Offensive) | `core/CastSeats.cpp` | open | identical; aim ctor `0x7F51C0 -> 0x809EE0`; GetMagicTarget `0x81E020 -> 0x833510` |
+| ch.8b 0x06/0x07/0x0A/0x0D (Restore, Offensive; + Ward, Summon, Cloak, Light, Invisibility, BoundItem, Armor, Script since feat/apmf-buff-summon-seats, per-type slots in VERIFIED-ADDRESSES.md) | `core/CastSeats.cpp` | open | identical; aim ctor `0x7F51C0 -> 0x809EE0`; GetMagicTarget `0x81E020 -> 0x833510` |
 | ch.8b seat 0 classify | `core/CastClassify.cpp` | open | row A |
 | AiCastSeats A (0x0C/0x0F), B (0x06/0x07/0x0A), C (0x0C), ranged probe | `core/AiCastSeats.cpp` | open | slot functions identical; row B / B2 values |
 | caster census 0x06/0x0B | `core/CasterTypeCensus.cpp` | open | 15 caster vtables' slot functions identical |
