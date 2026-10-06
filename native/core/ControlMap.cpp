@@ -969,8 +969,10 @@ namespace apmf {
             // Every seat then serves it as it serves an ally claim. No proxy is
             // minted for it: the mint below requires castTarget != op.actor.
             //
-            // kSelf DELIVERY ONLY (review F1/F2). A kSelf spell lands on the caster
-            // whatever the seats say (FindTargets' Self branch), and 0x0D never
+            // kSelf DELIVERY ONLY (review F1/F2). A kSelf spell claimed at the caster
+            // lands on the caster: FindTargets' Self branch takes desiredTarget, which
+            // 0x0A feeds with this very handle, else the caster (corrected 2026-10-06,
+            // APMF-B62 -- it does read desiredTarget), and 0x0D never
             // builds for it (49081 builds the aim controller only for kAimed /
             // kTargetActor). For any OTHER delivery, a self handle would make the
             // Offensive seats aim the spell AT THE CASTER (0x0A self handle, 0x0D
@@ -1009,7 +1011,9 @@ namespace apmf {
                 } else if (SelfClaimLogDue(op.actor, spell)) {
                     spdlog::warn("[ch.8b] 0x{} cast claim (h={}, spell 0x{}) names target 0 = self, but the spell's "
                                  "delivery is {} (not kSelf; -1 = not a SpellItem): left UNRESOLVED as before APMF-B39, so the seats will "
-                                 "not serve it (no 0x0F YES / deny-complete) and the AI aims it at its own target.",
+                                 "not serve it (no 0x0F YES / deny-complete) and the AI aims it at its own target. "
+                                 "(A self cast of an aimed / touch / target-actor BUFF names the claimant's own FormID "
+                                 "instead: it then drives a self-flip proxy.)",
                                  apmf::log::Hex(op.actor), op.handle, apmf::log::Hex(spell),
                                  selfSp ? static_cast<int>(selfSp->GetDelivery()) : -1);
                 }
@@ -1025,10 +1029,15 @@ namespace apmf {
             }
 
             // ---- kSelf DELIVERY FLIP: mint + transient-teach the proxy ----------
-            // Disassembly-CERTAIN (FindTargets 0x5bc160 @0x5bc98a): a kSelf-delivery
-            // spell ALWAYS lands on the caster's own reference -- the Self branch never
-            // reads `desiredTarget`, so seat 0x0A cannot aim it at an ally. The only
-            // honest answer is a delivery-flipped COPY the AI selects instead. Minted
+            // A kSelf spell claimed at an ally is driven through a delivery-flipped
+            // kTargetActor COPY the AI selects instead -- the field-proven ally road.
+            // CORRECTED 2026-10-06 (review F6, APMF-B62): this used to say the Self
+            // branch "never reads desiredTarget". It does: FindTargets' Self branch
+            // (AE 0x5BC98A / SE 0x54D508 / 1.7.104 0x5CB4D1) takes desiredTarget (+0x20)
+            // when it is an Actor, else the caster, and seat 0x0A feeds desiredTarget
+            // (AE 0x89EE30 -> 0x5BB720 -> SetDesiredTarget 0x5BE720). Whether the
+            // un-proxied kSelf form would land on the ally is unproven, so the proven
+            // road is kept. Minted
             // HERE, before the claim is published, so a seat can never see a claim
             // naming a proxy the actor does not yet know (core/CastProxy.h). A client
             // that fabricated its OWN proxy (req.proxy != 0) is left alone.
@@ -1050,12 +1059,13 @@ namespace apmf {
                             IsDualCastFlags(castFlags)                         ? apmf::castproxy::Hand::kDual
                             : (castFlags & APMF_API::kCastFlag_LeftHand) != 0  ? apmf::castproxy::Hand::kLeft
                                                                                : apmf::castproxy::Hand::kRight;
-                        castProxy    = apmf::castproxy::Acquire(op.actor, sp, hand);
+                        castProxy    = apmf::castproxy::Acquire(op.actor, sp, hand, apmf::castproxy::Flip::kToTargetActor);
                         castProxyRef = (castProxy != 0);   // a nonzero return IS one ref this claim owns
                         if (castProxy == 0) {
                             // No proxy: the only form this claim could drive is the
-                            // ORIGINAL kSelf spell, which lands on the CASTER whatever the
-                            // seats say. Leave the target handle INVALID so no seat serves
+                            // ORIGINAL kSelf spell, an UNPROVEN road at an ally (APMF-B62:
+                            // it may land on the ally or the caster; never observed). Never
+                            // drive it on a guess. Leave the target handle INVALID so no seat serves
                             // it (CastSeats' ClaimNamesThisCast and EquipGate's hand seat
                             // both require one). The claim still occupies its hand, so the
                             // per-hand deny stands: a plain deny, exactly as logged.
@@ -1065,6 +1075,90 @@ namespace apmf {
                                          "UNRESOLVED so no seat drives the original form (it would land on the "
                                          "caster). The claim stands as a plain deny of its hand.",
                                          apmf::log::Hex(op.actor), apmf::log::Hex(spell), apmf::log::Hex(castTarget));
+                        }
+                    }
+                }
+            }
+
+            // ---- SELF-FLIP: an aimed / touch / target-actor buff claimed AT THE CASTER ----
+            // feat/apmf-self-delivery-proxy (marth 2026-10-05: a self buff delivered aimed or
+            // touch, e.g. Fade Other, "must still be cast animated. Proxy it."). An explicit
+            // self target (castTarget == the claimant's own FormID) on a non-kSelf spell used to
+            // reach the seats as is: 0x0A handed the engine the caster's own handle and 0x0D
+            // aimed the projectile at it -- a ray at its own shooter, a touch that cannot reach
+            // the caster, a target-actor aim controller pointed at itself (APMF-B39 F1/F2: "a
+            // hand stuck on a cast that never fires"). The mirror of the flip above: mint a
+            // kSelf COPY (same shared effects) and drive THAT. A kSelf form takes the engine's
+            // own self road -- the classifier keys its self row natively (CombatMagicItemData
+            // ctor [+0x4c] = GetDelivery()==kSelf), no aim controller is built (49081: Aimed /
+            // TargetActor only), FindTargets' Self branch applies it to the caster, no
+            // projectile -- the same road a kSelf self claim (Oakflesh) already takes.
+            // Gates, each logged rate-limited when it declines:
+            //   * BENEFICIAL only (review F2): no effect whose base effect is HOSTILE or
+            //     DETRIMENTAL (core/CastClassify.cpp's own beneficial test), and none of the
+            //     Calm / Frenzy / Demoralize / Paralysis / Stagger archetypes (round 2: Kematu's
+            //     and Ancano's paralysis, Tolfdir's fireball stagger carry neither flag). "Non-hostile" alone is not "a buff":
+            //     Pacify (Calm, non-hostile) would calm the caster, and Vampire's Bane (sun
+            //     damage, non-hostile but detrimental) would burn the caster and every actor in
+            //     its radius. The ruling is about a buff on oneself; seat 0 also never self-forces
+            //     a hostile effect, and a hostile self copy would key a self+hostile row vanilla
+            //     never populates.
+            //   * Not a SUMMON / REANIMATE spell: those keep NativePlacement (the APMF-B39 block).
+            //   * Not kTargetLocation: vanilla's beneficial target-location spells are all
+            //     placement spells; a non-placement one is projectile-and-explosion shaped (the
+            //     rune family) and is left as it was (marth: batch D with the rune fixes).
+            // Pool overflow -> the target handle is left INVALID (no seat aims the original
+            // form at its own caster); the claim stands as a plain deny of its hand.
+            // A client that brought its OWN proxy (req.proxy != 0) is left alone, as above.
+            if (castProxy == 0 && castTargetHandle && castTarget == op.actor) {
+                auto* sp = RE::TESForm::LookupByID<RE::SpellItem>(spell);
+                if (sp && sp->GetDelivery() != RE::MagicSystem::Delivery::kSelf &&
+                    !apmf::castclassify::IsPlacementSpell(sp)) {
+                    const auto delivery = sp->GetDelivery();
+                    bool       hostile  = false;   // "not a buff": hostile, detrimental, or a mind-affecting archetype
+                    for (const auto* eff : sp->effects) {
+                        if (!eff || !eff->baseEffect) continue;
+                        const auto* mgef = eff->baseEffect;
+                        const auto  arch = mgef->GetArchetype();
+                        if (mgef->IsHostile() || mgef->IsDetrimental() ||
+                            arch == RE::EffectArchetypes::ArchetypeID::kCalm ||
+                            arch == RE::EffectArchetypes::ArchetypeID::kFrenzy ||
+                            arch == RE::EffectArchetypes::ArchetypeID::kDemoralize ||
+                            arch == RE::EffectArchetypes::ArchetypeID::kParalysis ||   // R2: MS08KematuParalysis,
+                            arch == RE::EffectArchetypes::ArchetypeID::kStagger)       // MG08Ancano/Tolfdir: no flags
+                            hostile = true;
+                    }
+                    if (hostile || delivery == RE::MagicSystem::Delivery::kTargetLocation) {
+                        if (SelfClaimLogDue(op.actor, spell)) {
+                            spdlog::warn("[ch.8b] 0x{} cast claim (h={}, spell 0x{}, delivery {}) names the claimant "
+                                         "itself, but {} -- NO self-flip proxy; left as before (the seats aim the "
+                                         "original form at the caster).",
+                                         apmf::log::Hex(op.actor), op.handle, apmf::log::Hex(spell),
+                                         static_cast<int>(delivery),
+                                         hostile ? "the spell is not a buff (a hostile, detrimental, Calm, Frenzy, "
+                                                   "Demoralize, Paralysis or Stagger effect; the self-flip serves buffs only)"
+                                                 : "it is a non-placement target-location spell (rune-shaped; batch D)");
+                        }
+                    } else {
+                        const auto hand =
+                            IsDualCastFlags(castFlags)                         ? apmf::castproxy::Hand::kDual
+                            : (castFlags & APMF_API::kCastFlag_LeftHand) != 0  ? apmf::castproxy::Hand::kLeft
+                                                                               : apmf::castproxy::Hand::kRight;
+                        castProxy    = apmf::castproxy::Acquire(op.actor, sp, hand, apmf::castproxy::Flip::kToSelf);
+                        castProxyRef = (castProxy != 0);   // a nonzero return IS one ref this claim owns
+                        if (castProxy == 0) {
+                            castTargetHandle = RE::ActorHandle{};
+                            spdlog::warn("[ch.8b] 0x{} claimed spell 0x{} (delivery {}) at ITSELF but no self-flip "
+                                         "proxy could be had -- the claim's target is left UNRESOLVED so no seat aims "
+                                         "the original form at its own caster. The claim stands as a plain deny of "
+                                         "its hand.",
+                                         apmf::log::Hex(op.actor), apmf::log::Hex(spell), static_cast<int>(delivery));
+                        } else if (SelfClaimLogDue(op.actor, spell)) {
+                            spdlog::info("[ch.8b] 0x{} SELF cast claim (h={}, spell 0x{}, delivery {}) drives self-flip "
+                                         "proxy 0x{} (kSelf copy): the seats serve the kSelf form, which lands on the "
+                                         "caster through the engine's own self road.",
+                                         apmf::log::Hex(op.actor), op.handle, apmf::log::Hex(spell),
+                                         static_cast<int>(delivery), apmf::log::Hex(castProxy));
                         }
                     }
                 }

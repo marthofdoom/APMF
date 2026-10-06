@@ -352,6 +352,7 @@ install is then refused by the self-check, stays undrained. Documented here; not
 ### APMF-B49 (SEV-3/4/5) -- proxy refcount round-2 review follow-ups
 Raised against e2a77a8 (`fix/apmf-proxy-per-claim-refcount`, Opus tier-A re-check MERGE), 2026-10-05.
 - SEV-3, pre-existing, DECK CHECK BEFORE RELEASE: PreSaveSweep likely runs too late to keep proxies out of the .ess. SKSE runs plugin save callbacks from SkyrimVM::SaveGlobalData (globalDataTable3, type 1001), which the .ess places after changeForms, so the actor change form (with the AddSpell'd 0xFF proxy) may already be captured. INVARIANTS #19's "sweep before a record is written" premise may be wrong. Verify: save with a proxied ally-heal claim live, ReSaver-dump the follower's spell list, look for a 0xFF entry. If present: the sweep needs an earlier seat (before change-form generation), its own tier-A item, before release, with APMF-B48. If clean: close.
+  EXTENDED (feat/apmf-self-delivery-proxy review F1, SEV-3, raised against 2c8c151, 2026-10-06): the same save must ALSO dump the ACTIVE-EFFECT list of the caster (and of any ally that received a proxied buff). Since the self-flip proxy a buff whose `ActiveEffect::spell` is a 0xFF proxy form sits on the CASTER for its whole duration (the forward flip already left such effects on allies); `PreSaveSweep` un-teaches the spell but cannot touch an applied effect. Verify: hold a self-flip claim (e.g. MFO's Fade Other / Oakflesh-style aimed or touch buff at the follower itself) until it lands (`[castproxy] ... LANDED on the caster`), save, ReSaver-dump the follower's active effects: an effect whose spell is a 0xFF form that survives the reload (or a load error / CTD on it) confirms. Reviewer reasoning: the save path for a 0xFF unregistered spell inside an ActiveEffect record is untraced; deck check before release.
 - SEV-4: TryGetCastSeatClaimForForm returns the first matching claim in vector order, not the BetterClaim winner. Diverges only when a later same-hand same-spell claim has a strictly higher basis (never under MFO's uniform kOwnBasis). Fix: pick the BetterClaim-best among matches.
 - SEV-5: the refused-mint path (zero/duplicate FormID) drops the created form without freeing it (leaks until load purge; error-logged every time).
 - SEV-5: the F2 log says "plain deny of its hand", but AllowedCastForHand (Allowance.cpp:148) still admits the original kSelf spell on that hand, so the AI may still self-heal by its own vanilla choice. Nothing is forced. Wording only.
@@ -464,3 +465,26 @@ the CombatTargetSelectorStandard slot-6 seat, so an actor whose standard selecto
 restore or the 60 s world-time purge. (b) While any record is marked for put-back (up to 60 s), every SelectTarget of EVERY
 actor takes g_areaMx EXCLUSIVE and scans the table; bounded by the table size (a handful), but a contention point on the
 combat jobs. Fix when drained: pre-filter on the controller (a lock-free set of pending controllers), shared lock for the scan.
+
+### APMF-B62 (SEV-4 x2) -- self-flip proxy: pool pressure; the forward flip's rationale
+Raised against 2c8c151 (`feat/apmf-self-delivery-proxy`, Opus tier-3 review, MERGE), 2026-10-06. Ids chosen after
+APMF-B61 (other open branches may also take B62: renumber at merge if they collide). Verbatim as relayed:
+- F5 (SEV-4): "self buffs now share the 8-slot pool, and overflow becomes a plain deny." Reasoning: before the
+  self-flip an explicit self kTargetActor claim needed no slot; now every aimed / touch / target-actor self buff takes
+  one of the 8 slots (keyed per owner, spell, hand, flip), next to every ally heal / ally buff. On overflow the claim's
+  target handle is left invalid and the claim stands as a plain deny of its hand (loud `pool overflow` +
+  `no self-flip proxy could be had`). Fix when drained: size the pool from the field's peak concurrent proxies, or
+  per-owner slots.
+- F6 (SEV-5, docs; fixed in round 2 where the reasoning is written): the forward flip's stated reason -- "a kSelf spell
+  lands on the caster whatever the seats say; FindTargets' Self branch never reads desiredTarget" -- is false on all
+  three builds. The Self branch (AE 0x5BC98A / SE 0x54D508 / 1.7.104 0x5CB4D1) takes MagicCaster::desiredTarget
+  (+0x20) when it resolves to an Actor, else the caster; seat 0x0A feeds desiredTarget (AE 0x89EE30 calls the combat
+  caster's 0x0A, resolves the ref and passes it to 0x5BB720, which calls SetDesiredTarget 0x5BE720 at 0x5BB848).
+  OPEN QUESTION left for a later cycle, not answered by either round: whether an UN-proxied kSelf spell claimed at an
+  ally would therefore land on the ally. The forward proxy stays because it is the field-proven road (ally heals,
+  2026-09-05/06); no code depends on the false premise.
+- RESIDUAL of the round-2 gate (raised against e82107b, 2026-10-06): the self-flip refuses any hostile or detrimental
+  base effect and the Calm / Frenzy / Demoralize / Paralysis / Stagger archetypes. A MOD damage / debuff spell whose
+  effects carry neither flag and a plain ValueModifier archetype (e.g. an unflagged Damage Health) cannot be told from
+  a buff by archetype, so an explicit self claim on it would land on the caster. Closing it needs a magnitude-sign /
+  AV-direction test or the client's own declaration; the client owns the consequence meanwhile.

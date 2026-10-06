@@ -254,10 +254,12 @@ namespace apmf::castseats {
         //   * `this->magicItem` must be the claim's DRIVEN form.
         //
         // DRIVEN FORM = the claim's `proxy` when one exists, ELSE its `spell`. Not
-        // "spell OR proxy": when a delivery-flip proxy was minted, the ORIGINAL kSelf
-        // spell must NOT be seat-forced, because the engine's Self branch would land
-        // it on the caster no matter what seat 0x0A says. Forcing only the driven form
-        // is what makes the ally heal correct rather than a silent self-heal.
+        // "spell OR proxy": when a proxy was minted, the ORIGINAL form must NOT be
+        // seat-forced. For the delivery flip, the original kSelf form at an ally is an
+        // unproven road (FindTargets' Self branch DOES take desiredTarget, which 0x0A
+        // feeds -- corrected 2026-10-06, APMF-B62 -- but no field cast has shown where it
+        // lands); for the self-flip, the original aimed / touch form at the caster is a
+        // ray at its own shooter. Forcing only the driven form keeps the proven road.
         //
         // Also requires a RESOLVABLE target handle: with no target there is nothing to
         // redirect to, and the honest answer is to chain and let the AI be the AI.

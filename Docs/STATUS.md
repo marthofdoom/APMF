@@ -32,6 +32,63 @@ list and was left as it is. `[Idle] bIdleConfirm` is a feature, not a probe.
 - `[Probe] bRestoreCensus` -> 0 in `APMF.ini` AND the code default in `core/RestoreCensus.cpp` `Poll`
   (reads the key with default 1 during the field cycle). See the ANIMATED HEALS head of work below.
 
+## HEAD OF WORK 2026-10-05 -- SELF-FLIP PROXY (batch A), branch `feat/apmf-self-delivery-proxy`, NOT merged
+
+marth 2026-10-05: a follower's buff on ITSELF that is delivered aimed or touch (Fade Other, a kTargetActor / aimed /
+touch spell) "must still be cast animated. Proxy it." No ABI change: the client names its own FormID as the target
+(an explicit self target), as MFO's `ExplicitSelfBuff` already does. Agentlog `apmf-self-proxy.md`, RE helpers
+`scratchpad/re/` (capstone over the three unpacked images).
+- **Reverse proxy.** `ControlMap::ApplyRequest` (the SELF-FLIP block after the delivery flip): `castTarget == the
+  claimant`, a resolved handle, delivery Touch / Aimed / TargetActor, not a placement spell, no hostile effect ->
+  `castproxy::Acquire(..., Flip::kToSelf)` mints a kSelf COPY (shared effects) and the claim drives it. Same pool,
+  same (owner, spell, hand) refcount + transient teach + save sweep + ReteachLive; the flip direction is part of the
+  key and must match the source's delivery (Acquire refuses otherwise). Overflow -> handle left invalid, plain deny.
+  Declined (logged, rate-limited, left exactly as before): a spell with a hostile effect; a non-placement
+  kTargetLocation spell (rune-shaped, batch D). Target 0 keeps its APMF-B39 meaning (MFO's target-0 concentration
+  self claims rely on it).
+- **Why a kSelf copy works (disassembled on all three builds).** `SpellItem::GetDelivery` (slot 0x57) is `mov eax,
+  [rcx+0xD4]` = `data.delivery` (AE 0x14F790 / SE 0x105240 / 1.7.104 0x154D20). The CombatMagicItemData ctor stores
+  `[+0x4c] = (GetDelivery()==kSelf)` (AE 0x81D5BC / SE 0x780F5C / 1.7.104 0x832AAC), so the copy keys the native
+  self row (every beneficial self row's creator is a seated type: Restore, Ward, Summon, Cloak, Light, Invisibility,
+  BoundItem, Armor, Script). The aim controller is built only for delivery 2 / 3 (AE 0x89EBF3 / SE 0x808392 /
+  1.7.104 0x8B4093), so 0x0D is inert. FindTargets (AE 34410 0x5BC160 / SE 33632 0x54CD10 / 1.7.104 0x5CACA0)
+  switches on the same vfunc; its Self branch (AE 0x5BC98A / SE 0x54D508 / 1.7.104 0x5CB4D1) takes
+  `MagicCaster::desiredTarget` (+0x20) when it resolves to an Actor (form type 0x3E), else the caster actor, and
+  positions at the caster; no projectile. Seat 0x0A answers the claimant, so it lands on the caster either way.
+  **Correction for the reviewer:** the older line "the Self branch never reads `desiredTarget`" (CastProxy.h,
+  ControlMap.cpp, CHANNEL-MAP, INVARIANTS #19) is not what the code does on any of the three builds; the forward
+  flip's need rests on what feeds desiredTarget for a kSelf cast, not on that branch ignoring it. Left as is here.
+- **Bounds.** `AlreadyApplied` compares `ActiveEffect::spell` with the caster's item = the proxy, which is what the
+  landed effect carries. MFO's up-read uses `HasMagicEffect(mgef)`, which sees the proxy's effects (shared Effect*).
+- **Probes (principle 5).** `[castproxy] ... minted self-flip proxy (kSelf copy) 0x.. for spell 0x.. (delivery
+  N -> 0) ... transiently taught: yes`; `[ch.8b] ... SELF cast claim ... drives self-flip proxy`; the existing
+  `[ctcensus] ... FIRED type=<T> item=<proxy> ... target=<the caster>`; and a new per-pump landing watch:
+  `[castproxy] ... self-flip proxy ... LANDED on the caster: N active effect(s)` or `... NOT seen on the caster`.
+- **Area buffs (research, no code).** In Skyrim / Update / Dawnguard / HearthFires / Dragonborn the beneficial
+  kTargetLocation spells are all SummonCreature (plus two quest Script portals, DA16RitualSpell, MGRSummonDremora).
+  Beneficial area buffs are either kSelf with an area radius (Grand Healing, Call to Arms, Harmony, the DLC2 bard buff,
+  Detect Life / Dead) or Aimed with an area radius whose Missile projectile sets off an EXPLOSION at impact (Rally,
+  Pacify, Vampire's Bane). Runes are hostile kTargetLocation Lobber projectiles with a projectile explosion. None
+  places like a summon, so `NativePlacement` / `IsPlacementSpell` are NOT extended: batch D with the rune fixes.
+- **Round 2 (Opus tier-3 MERGE on 2c8c151, findings F1-F6).** F2: the gate is now BENEFICIAL, not just
+  non-hostile -- any hostile or detrimental base effect, or a Calm / Frenzy / Demoralize archetype, declines the
+  self-flip (Pacify would have calmed the caster, Vampire's Bane burned it). F4: the landing watch no longer walks
+  the owner's active-effect list from the player pump; it runs on the OWNER's OWN update
+  (`castproxy::OnOwnerUpdate`, called from `Arbiter::OnActorUpdate` right after the Character 0xAD original, i.e.
+  the worker that just ran that actor's own effect update), per-watch leaf mutex, try_lock only. F3: a mint picks a
+  free slot already mirroring this source + flip, else a never-minted one, else the one freed longest ago (and says so
+  when that was under 120 s ago); the watch baselines effects of the form already on the owner and ignores them. F5:
+  backlog APMF-B62. F6: the "kSelf always lands on the caster / Self branch never reads desiredTarget" premise is
+  corrected everywhere it was written (CastProxy.h, ControlMap.cpp, CastSeats.{h,cpp}, INVARIANTS #19, CHANNEL-MAP,
+  MAP): the branch takes desiredTarget, which 0x0A feeds; the forward proxy stays as the proven road. F1: APMF-B49's
+  deck check now also dumps the caster's ACTIVE-EFFECT list. Round-2 re-check (MERGE on e82107b) small fixes: a
+  freed slot keeps source + flip (rank-1 reuse could never match), the watch baseline is uncapped, and the gate
+  also refuses Paralysis / Stagger archetypes (unflagged residual in APMF-B62).
+- **Field check.** Fade Other / any kTargetActor or aimed buff claimed at the follower itself: expect the mint line,
+  `FIRED ... item=<proxy> ... target=<follower>`, `LANDED on the caster`, and the effect on the follower only.
+  Also open: an ActiveEffect whose spell is a 0xFF proxy can be on the caster when a save is taken (the forward flip
+  already does this on allies); covered by the REVIEW-BACKLOG save-sweep deck check.
+
 ## HEAD OF WORK 2026-10-05 -- BUFF / SUMMON / ROWLESS CAST SEATS (batch A), branch `feat/apmf-buff-summon-seats`, NOT merged
 
 Batch A release gate: MFO must deliver every in-combat cast kind as an ANIMATED claim. MFO's self-buff branch

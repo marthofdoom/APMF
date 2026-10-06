@@ -317,10 +317,11 @@ a main-thread-safe seat for equip/3D work).
 path. Superseded by `core/CastSeats.cpp`'s five engine seats, which make the NPC's own
 AI perform the cast. Do not resurrect any of it: the fallback in particular is what
 INVARIANTS #0 forbids by name.
-What survived is ONE engine fact the seats cannot answer around
-(disassembly-CERTAIN, `FindTargets` 0x5bc160 @0x5bc98a): a **kSelf-delivery** spell
-always lands on the CASTER's own reference — the Self branch never reads
-`desiredTarget`, so seat 0x0A cannot aim Fast Healing at an ally. So this module mints
+What survived is the field-proven ally road for a **kSelf-delivery** spell. (CORRECTED
+2026-10-06, APMF-B62: the old reason, "the Self branch never reads `desiredTarget`, so a kSelf
+spell always lands on the caster", is false on all three builds -- FindTargets' Self branch
+takes `desiredTarget` (+0x20) when it is an Actor, and seat 0x0A feeds it; the un-proxied
+road is unproven, not impossible.) So this module mints
 a delivery-flipped `kTargetActor` COPY (`Configure`: source `data` + shared source
 `Effect*` by pointer, delivery flipped) that the AI selects and casts instead.
 `Acquire` (mint or SHARE + TRANSIENT `AddSpell`; +1 ref) / `Unref` (-1 ref; un-teach +
@@ -338,6 +339,17 @@ whose id is 0 or collides is refused loudly). Each claim that got a form records
 `Claim::castProxyRef` and owns exactly one ref. EVERY driving kSelf-at-ally claim takes
 a proxy (no prospective-winner gate); one that cannot get one keeps an INVALID target
 handle, so no seat drives its original form (it would heal the caster).
+**SELF-FLIP (feat/apmf-self-delivery-proxy, 2026-10-05):** the pool also mints the REVERSE copy --
+`Flip::kToSelf`, delivery kSelf -- for an Aimed / Touch / TargetActor beneficial spell claimed at the claimant itself
+(the SELF-FLIP block in `ControlMap::ApplyRequest`, right after the delivery-flip block). The flip direction is
+part of the key and must match the source's delivery (`Acquire` refuses otherwise). Gate (review F2): no hostile
+or detrimental effect, no Calm / Frenzy / Demoralize / Paralysis / Stagger archetype. A kSelf mint arms a passive LANDING watch checked
+on the OWNER's OWN update (`castproxy::OnOwnerUpdate`, from `Arbiter::OnActorUpdate` after the Character 0xAD
+original; per-watch leaf mutex, try_lock only; pre-mint effects of a reused slot are a baseline, ignored) that logs
+`LANDED on the caster` or `NOT seen on the caster`. Slot ranking (review F3): a free slot already mirroring this
+source + flip, else never minted, else freed longest ago (APMF-B58). Pool pressure: APMF-B62. Disassembly (all three builds, STATUS "SELF-FLIP PROXY"): the copy keys the native self row
+(ctor `[+0x4c]` = GetDelivery()==kSelf), gets no aim controller (49081: delivery 2/3 only), and FindTargets' Self
+branch lands it on `desiredTarget` when that is an Actor (0x0A answers the claimant) else the caster.
 WRITER/MAIN THREAD ONLY.
 Called from: `ControlMap::ApplyRequest` (`Acquire`, on the writer thread where form
 lookups are legal, BEFORE the claim publishes), and every claim-removal path in `core/ControlMap.cpp`
@@ -644,7 +656,10 @@ plus native-placement 0x0A calls) in the `[ctcensus] HEARTBEAT`.
   kAimed / kTargetActor spell the caster's OWN handle, so 0x0A/0x0D aim it at the caster
   (a stuck hand, or a kTargetActor spell applied to the claimant; review F1/F2 of
   `5250fb2`); the proxy mint's `castTarget != op.actor`
-  test is what keeps a self claim from minting a delivery-flip proxy. Open review items:
+  test is what keeps a self claim from minting a delivery-flip proxy. An EXPLICIT self target (the claimant's own
+  FormID) on a Touch / Aimed / TargetActor BUFF instead mints a SELF-FLIP proxy (kSelf copy; the block right after
+  the delivery flip, feat/apmf-self-delivery-proxy) so no seat aims it at its own caster; hostile and non-placement
+  kTargetLocation spells are declined (logged) and keep the old behaviour. Open review items:
   REVIEW-BACKLOG APMF-B41 (the degenerate kIntent_Cast doc sentence). STATUS "Phase 0c". 0x06 and 0x0A also feed the Restore census (`CensusNote`, Restore
   vtable only, read-only; `core/RestoreCensus`).
   **ABI v18 `kCastFlag_OwnLineOfSight` (`OwnLosApplies`: the bit, not deny-only, target not 0
