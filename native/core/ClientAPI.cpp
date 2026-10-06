@@ -6,6 +6,7 @@
 #include "core/Awareness.h"
 #include "core/Sightline.h"
 #include "channels/Travel.h"
+#include "channels/CombatApproach.h"   // ABI v19 GetCombatApproachState
 
 // The C-ABI implementation behind APMF_API.h. These free functions forward to the
 // in-process multi-NPC engine (core/ControlMap) over its thread-safe enqueue path,
@@ -185,6 +186,16 @@ namespace {
         }
     }
 
+    // ABI v19: ch.24's state (channels/CombatApproach.cpp). Any thread: a copy under the
+    // channel's own lock, no game call. A throw becomes kApproachState_None, nothing written.
+    std::uint32_t APMF_GetCombatApproachState(RE::FormID actor, APMF_API::APMF_CombatApproachInfo* out) {
+        try {
+            return apmf::combatapproach::GetState(actor, out);
+        } catch (...) {
+            return APMF_API::kApproachState_None;
+        }
+    }
+
     // ABI v18: the awareness query. Synchronous and main-thread-only by contract; the
     // refusal for any other thread lives inside core/Awareness.cpp. A throw becomes
     // kQuery_Failed.
@@ -223,13 +234,14 @@ namespace {
         case 15:
         case 16:
         case 17: return "0.9.10";
-        case 18: return "the first release after 0.9.11 (ABI v18 is unreleased)";
+        case 18:
+        case 19: return "the first release after 0.9.11 (ABI v18 and v19 are unreleased)";
         default: return "a release newer than this one";
         }
     }
 
     // The single static POD interface handed to clients. It is the NEWEST revision
-    // (APMF_API_v18 since ABI v18), constant-initialized (the pointers are to static functions), so
+    // (APMF_API_v19 since ABI v19), constant-initialized (the pointers are to static functions), so
     // it is valid the instant the DLL loads. Because each revision's leading members
     // are exactly the previous revision's (v9 extends v8 extends v7 extends v6
     // extends v5 extends v4, base laid out first), a v1..v8 client reading it through
@@ -272,7 +284,15 @@ namespace {
     static_assert(sizeof(APMF_API::APMF_API_v18) == sizeof(APMF_API::APMF_API_v12) + 2 * sizeof(void*),
                   "APMF_API_v18 = the v12 prefix plus exactly two function pointers");
 
-    constexpr APMF_API::APMF_API_v18 g_api{
+    // ABI v19 (ch.24 combat approach) appends ONE slot to the v18 prefix, so the object is now an
+    // APMF_API_v19 and `abiVersion` reports 19. Same two-form layout proof.
+    static_assert(offsetof(APMF_API::APMF_API_v19, GetCombatApproachState) == sizeof(APMF_API::APMF_API_v18),
+                  "APMF_API_v19's slot must start right after the v18 prefix");
+    static_assert(sizeof(APMF_API::APMF_API_v19) == sizeof(APMF_API::APMF_API_v18) + sizeof(void*),
+                  "APMF_API_v19 = the v18 prefix plus exactly one function pointer");
+
+    constexpr APMF_API::APMF_API_v19 g_api{
+        {
         {
         {
         {
@@ -307,6 +327,8 @@ namespace {
         },
         &APMF_GetLineOfSight,
         &APMF_SenseActor,
+        },
+        &APMF_GetCombatApproachState,
     };
 
 }

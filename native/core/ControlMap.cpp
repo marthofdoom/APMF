@@ -15,6 +15,7 @@
 #include "channels/Idle.h"  // ch.12 v2 V2Installed()/NotInstalledReason() for the synchronous refusal
 #include "channels/CombatReentryDeny.h"  // ch.22 Installed()/NotInstalledReason() for the synchronous refusal
 #include "core/ActionGate.h"  // ch.23 pursuit leash (ABI v16) PursuitArmed()/PursuitNotArmedReason() for the synchronous refusal
+#include "channels/CombatApproach.h"  // ch.24 combat approach (ABI v19) Installed()/NotInstalledReason() for the synchronous refusal
 #include "core/PositionCast.h"  // ABI v11 position cast: poscast::Enqueue (one-shot, never a claim); MarkersSupported (ch.19)
 #include "core/Sightline.h"  // ABI v18 own line of sight: Armed()/NotArmedReason() for the synchronous refusal
 
@@ -318,6 +319,32 @@ namespace apmf {
                 why = "the actor is the player (the pursuit leash is for NPCs)";
             if (why) {
                 spdlog::warn("[apmf][pursuit-leash] claim refused -- actor 0x{}: {}.", apmf::log::Hex(actor), why);
+                return APMF_API::kInvalidHandle;
+            }
+        }
+
+        // ch.24 (ABI v19): a kIntent_CombatApproach claim is REFUSED synchronously when its seats are
+        // not installed (VR, a runtime other than 1.6.1170 / 1.5.97 / 1.7.104, [CombatApproach]
+        // bCombatApproach=0, a self-check refusal, before kDataLoaded), when it names no target
+        // (param.target 0) or the actor itself, when the radius (param.fval) is not a positive finite
+        // number, and for the player (who runs no combat behaviour tree). Whether param.target is a
+        // loaded reference needs a form lookup: decided on the game thread (channels/CombatApproach.cpp
+        // Poll ends such a claim as kApproachState_TargetLost, logged).
+        if (intent == APMF_API::kIntent_CombatApproach) {
+            const char* why = nullptr;
+            if (!apmf::combatapproach::Installed())
+                why = apmf::combatapproach::NotInstalledReason();
+            else if (!param || param->target == 0)
+                why = "no target (param.target is 0) -- kIntent_CombatApproach REQUIRES param.target = X, the "
+                      "reference to close on";
+            else if (param->target == actor)
+                why = "the target is the actor itself";
+            else if (!std::isfinite(param->fval) || !(param->fval > 0.0f))
+                why = "param.fval (the radius R, game units) is not a positive finite number";
+            else if (actor == 0x14)
+                why = "the actor is the player (the combat approach is for NPCs)";
+            if (why) {
+                spdlog::warn("[apmf][combat-approach] claim refused -- actor 0x{}: {}.", apmf::log::Hex(actor), why);
                 return APMF_API::kInvalidHandle;
             }
         }

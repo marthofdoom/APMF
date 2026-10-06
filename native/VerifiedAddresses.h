@@ -19,7 +19,7 @@
 
 namespace apmf::VerifiedAddresses
 {
-	// 1.6.1170.0: 196 rows
+	// 1.6.1170.0: 203 rows
 	inline constexpr REL::SelfCheck::Row kRows_1_6_1170[] = {
 		{ 207886, 0x18A5558, 0x0, 0, {  }, "Character" },
 		{ 212096, 0x18D7388, 0x0, 0, {  }, "CombatTargetSelectorStandard" },
@@ -74,6 +74,13 @@ namespace apmf::VerifiedAddresses
 		{ 211034, 0x18CBD80, 0x0, 0, {  }, "CombatInventoryItemMagicT.StaffScript" },
 		{ 211128, 0x18CC948, 0x0, 0, {  }, "CombatInventoryItemMagicT.StaffReanimate" },
 		{ 211234, 0x18CD800, 0x0, 0, {  }, "CombatInventoryItemMagicT.StaffArmor" },
+		{ 210131, 0x18C6328, 0x0, 0, {  }, "CombatAreaStandard" },
+		{ 211310, 0x18CE170, 0x0, 0, {  }, "CombatInventoryItemMagicT.ScrollInvisibility" },
+		{ 211322, 0x18CE290, 0x0, 0, {  }, "CombatInventoryItemMagicT.PotionInvisibility" },
+		{ 211338, 0x18CE4D0, 0x0, 0, {  }, "CombatInventoryItemMagicT.ShoutInvisibility" },
+		{ 211274, 0x18CDCB0, 0x0, 0, {  }, "CombatInventoryItemMagicT.ScrollBoundItem" },
+		{ 211278, 0x18CDD70, 0x0, 0, {  }, "CombatInventoryItemMagicT.PotionBoundItem" },
+		{ 211294, 0x18CDF70, 0x0, 0, {  }, "CombatInventoryItemMagicT.ShoutBoundItem" },
 		{ 210297, 0x18C9028, 0x0, 0, {  }, "CombatInventoryItemMelee" },
 		{ 210299, 0x18C90D8, 0x0, 0, {  }, "CombatInventoryItemRanged" },
 		{ 210301, 0x18C9188, 0x0, 0, {  }, "CombatInventoryItemShield" },
@@ -219,7 +226,7 @@ namespace apmf::VerifiedAddresses
 		{ 12332, 0x179710, 0x0, 0, {  }, "CommonLib.LookupReferenceByHandle" },
 	};
 
-	// 1.5.97.0: 196 rows
+	// 1.5.97.0: 203 rows
 	inline constexpr REL::SelfCheck::Row kRows_1_5_97[] = {
 		{ 261397, 0x165DA40, 0x0, 0, {  }, "Character" },
 		{ 265605, 0x1690A98, 0x0, 0, {  }, "CombatTargetSelectorStandard" },
@@ -274,6 +281,13 @@ namespace apmf::VerifiedAddresses
 		{ 265313, 0x168B028, 0x0, 0, {  }, "CombatInventoryItemMagicT.StaffScript" },
 		{ 265323, 0x168B7A8, 0x0, 0, {  }, "CombatInventoryItemMagicT.StaffReanimate" },
 		{ 265333, 0x168BF28, 0x0, 0, {  }, "CombatInventoryItemMagicT.StaffArmor" },
+		{ 264225, 0x167EA80, 0x0, 0, {  }, "CombatAreaStandard" },
+		{ 265341, 0x168C528, 0x0, 0, {  }, "CombatInventoryItemMagicT.ScrollInvisibility" },
+		{ 265342, 0x168C5E8, 0x0, 0, {  }, "CombatInventoryItemMagicT.PotionInvisibility" },
+		{ 265344, 0x168C768, 0x0, 0, {  }, "CombatInventoryItemMagicT.ShoutInvisibility" },
+		{ 265336, 0x168C168, 0x0, 0, {  }, "CombatInventoryItemMagicT.ScrollBoundItem" },
+		{ 265337, 0x168C228, 0x0, 0, {  }, "CombatInventoryItemMagicT.PotionBoundItem" },
+		{ 265339, 0x168C3A8, 0x0, 0, {  }, "CombatInventoryItemMagicT.ShoutBoundItem" },
 		{ 264523, 0x1681A88, 0x0, 0, {  }, "CombatInventoryItemMelee" },
 		{ 264525, 0x1681B58, 0x0, 0, {  }, "CombatInventoryItemRanged" },
 		{ 264527, 0x1681C28, 0x0, 0, {  }, "CombatInventoryItemShield" },
@@ -419,7 +433,7 @@ namespace apmf::VerifiedAddresses
 		{ 12204, 0x1329D0, 0x0, 0, {  }, "CommonLib.LookupReferenceByHandle" },
 	};
 
-	// 1.7.104.0: 207 rows
+	// 1.7.104.0: 214 rows
 	// 28 NOT VERIFIED on 1.7.104.0, deliberately absent from this table (the seat is refused):
 	//   EquipSink.Path.OutfitApply.24234 (1.6.1170 id -): BY DESIGN: 1.5.97-only label. On 1.6.1170 and 1.7.104 the code reads its AE twin EquipSink.Path.OutfitApply.418622 (AE id 418622, 1.7.104 0x3C4440), whose own row carries the 1.7.104 fact (MAPPED-AE)
 	//   EquipSink.Path.AddWornOutfit.19266 (1.6.1170 id -): BY DESIGN: 1.5.97-only label. On 1.6.1170 and 1.7.104 the code reads its AE twin EquipSink.Path.AddWornOutfit.19692 (AE id 19692, 1.7.104 0x2E8070), whose own row carries the 1.7.104 fact (MAPPED-AE)
@@ -503,6 +517,13 @@ namespace apmf::VerifiedAddresses
 		{ 211034, 0x194A5A0, 0x0, 0, {  }, "CombatInventoryItemMagicT.StaffScript" },
 		{ 211128, 0x194B168, 0x0, 0, {  }, "CombatInventoryItemMagicT.StaffReanimate" },
 		{ 211234, 0x194C020, 0x0, 0, {  }, "CombatInventoryItemMagicT.StaffArmor" },
+		{ 210131, 0x19448C8, 0x0, 0, {  }, "CombatAreaStandard" },
+		{ 211310, 0x194C990, 0x0, 0, {  }, "CombatInventoryItemMagicT.ScrollInvisibility" },
+		{ 211322, 0x194CAB0, 0x0, 0, {  }, "CombatInventoryItemMagicT.PotionInvisibility" },
+		{ 211338, 0x194CD18, 0x0, 0, {  }, "CombatInventoryItemMagicT.ShoutInvisibility" },
+		{ 211274, 0x194C4D0, 0x0, 0, {  }, "CombatInventoryItemMagicT.ScrollBoundItem" },
+		{ 211278, 0x194C590, 0x0, 0, {  }, "CombatInventoryItemMagicT.PotionBoundItem" },
+		{ 211294, 0x194C790, 0x0, 0, {  }, "CombatInventoryItemMagicT.ShoutBoundItem" },
 		{ 210297, 0x19475C8, 0x0, 0, {  }, "CombatInventoryItemMelee" },
 		{ 210299, 0x1947678, 0x0, 0, {  }, "CombatInventoryItemRanged" },
 		{ 210301, 0x1947728, 0x0, 0, {  }, "CombatInventoryItemShield" },

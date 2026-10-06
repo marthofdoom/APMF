@@ -16,6 +16,7 @@
 #include "channels/CombatEntry.h"
 #include "channels/Idle.h"
 #include "channels/CombatReentryDeny.h"
+#include "channels/CombatApproach.h"
 
 namespace apmf {
 
@@ -138,6 +139,17 @@ namespace apmf {
         // entered combat under a live window without a ch.21 entry passing the seat). It writes
         // no engine state. Self-throttled; one relaxed atomic load while nothing is claimed.
         apmf::reentrydeny::Poll();
+
+        // ch.24 (kIntent_CombatApproach, ABI v19) CLAIM MONITOR, same seat and shape: it resolves
+        // each claim's X to a position + cell space for the area seat to carry (the seat never
+        // looks up a form), decides the state (waiting / approaching / holding / yielded / disabled
+        // / leashed) from what the seats saw, ENDS a claim that is over (arrived, X lost, combat
+        // ended, the engine stopped carrying the bound, actor gone) by releasing it, and writes
+        // the per-actor status line. It makes NO engine write itself (the seats do, on the combat
+        // thread). Self-throttled (100 ms); the ~30 s heartbeat prints the seat counters, zeros
+        // included, while any claim exists.
+        apmf::combatapproach::Poll();
+        apmf::combatapproach::Heartbeat();
     }
 
     void Arbiter::ReleaseAll(const char* why) {

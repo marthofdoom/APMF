@@ -39,7 +39,7 @@
    "slots": [
     "0x06"
    ],
-   "source": "native/channels/TargetPin.cpp:458",
+   "source": "native/channels/TargetPin.cpp:458; channels/CombatApproach.cpp (ch.24 deny bracket on 0x06, chaining with ch.20)",
    "doc": "ch.20 source deny; UpdateTarget AE 0x559930 / SE 0x4FE300 calls slot 6"
   },
   {
@@ -570,7 +570,7 @@
     "0x0C",
     "0x0F"
    ],
-   "source": "native/core/EquipGate.cpp:676; AiCastSeats.cpp (Group A)",
+   "source": "native/core/EquipGate.cpp:676; AiCastSeats.cpp (Group A); channels/CombatApproach.cpp (ch.24 deny bracket on 0x0F)",
    "doc": "ADDRESS-TABLE-2026-09-15.md:67"
   },
   {
@@ -587,7 +587,7 @@
     "0x0C",
     "0x0F"
    ],
-   "source": "native/core/EquipGate.cpp:676; AiCastSeats.cpp (Group A)",
+   "source": "native/core/EquipGate.cpp:676; AiCastSeats.cpp (Group A); channels/CombatApproach.cpp (ch.24 deny bracket on 0x0F)",
    "doc": "ADDRESS-TABLE-2026-09-15.md:67"
   },
   {
@@ -825,7 +825,7 @@
     "0x0C",
     "0x0F"
    ],
-   "source": "native/core/EquipGate.cpp:676; AiCastSeats.cpp (Group A)",
+   "source": "native/core/EquipGate.cpp:676; AiCastSeats.cpp (Group A); channels/CombatApproach.cpp (ch.24 deny bracket on 0x0F)",
    "doc": "ADDRESS-TABLE-2026-09-15.md:67"
   },
   {
@@ -842,7 +842,7 @@
     "0x0C",
     "0x0F"
    ],
-   "source": "native/core/EquipGate.cpp:676; AiCastSeats.cpp (Group A)",
+   "source": "native/core/EquipGate.cpp:676; AiCastSeats.cpp (Group A); channels/CombatApproach.cpp (ch.24 deny bracket on 0x0F)",
    "doc": "ADDRESS-TABLE-2026-09-15.md:67"
   },
   {
@@ -929,6 +929,120 @@
    ],
    "source": "native/core/EquipGate.cpp:676; AiCastSeats.cpp (Group A)",
    "doc": "ADDRESS-TABLE-2026-09-15.md:67"
+  },
+  {
+   "seat": "CombatAreaStandard",
+   "kind": "vtable",
+   "construct": "RE::VTABLE_CombatAreaStandard[0]",
+   "rtti": ".?AVCombatAreaStandard@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 210131,
+    "1.5.97": 264225
+   },
+   "slots": [
+    "0x05",
+    "0x06",
+    "0x0B"
+   ],
+   "source": "native/channels/CombatApproach.cpp (ch.24: 0x0B Update carries the bound; 0x05 IsInside(WorldLocation) answers the engine's own area inside a deny bracket; 0x06 IsInside(point) observe-only)",
+   "doc": "ABI v19 ch.24; CombatController::UpdateAreas AE 0x55BF50 / SE 0x5004E0 / 1.7.104 0x563DC0 calls 0x0B then picks the highest-priority active+enabled area; scratchpad agentlogs/apmf-combat-moveto.md"
+  },
+  {
+   "seat": "CombatInventoryItemMagicT.ScrollInvisibility",
+   "kind": "vtable",
+   "construct": "RE::VTABLE_CombatInventoryItemMagicT_CombatInventoryItemScroll_CombatMagicCasterInvisibility_[0]",
+   "rtti": ".?AV?$CombatInventoryItemMagicT@VCombatInventoryItemScroll@@VCombatMagicCasterInvisibility@@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 211310,
+    "1.5.97": 265341
+   },
+   "slots": [
+    "0x0F"
+   ],
+   "source": "native/channels/CombatApproach.cpp (ch.24 deny bracket on 0x0F CheckShouldEquip)",
+   "doc": "ABI v19 ch.24; slot 0x0F calls the caster's area test (AE 0x821470/0x821710 -> CombatController 0x55B6D0 -> area vfunc 0x05)"
+  },
+  {
+   "seat": "CombatInventoryItemMagicT.PotionInvisibility",
+   "kind": "vtable",
+   "construct": "RE::VTABLE_CombatInventoryItemMagicT_CombatInventoryItemPotion_CombatMagicCasterInvisibility_[0]",
+   "rtti": ".?AV?$CombatInventoryItemMagicT@VCombatInventoryItemPotion@@VCombatMagicCasterInvisibility@@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 211322,
+    "1.5.97": 265342
+   },
+   "slots": [
+    "0x0F"
+   ],
+   "source": "native/channels/CombatApproach.cpp (ch.24 deny bracket on 0x0F CheckShouldEquip)",
+   "doc": "ABI v19 ch.24; slot 0x0F calls the caster's area test (AE 0x821470/0x821710 -> CombatController 0x55B6D0 -> area vfunc 0x05)"
+  },
+  {
+   "seat": "CombatInventoryItemMagicT.ShoutInvisibility",
+   "kind": "vtable",
+   "construct": "RE::VTABLE_CombatInventoryItemMagicT_CombatInventoryItemShout_CombatMagicCasterInvisibility_[0]",
+   "rtti": ".?AV?$CombatInventoryItemMagicT@VCombatInventoryItemShout@@VCombatMagicCasterInvisibility@@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 211338,
+    "1.5.97": 265344
+   },
+   "slots": [
+    "0x0F"
+   ],
+   "source": "native/channels/CombatApproach.cpp (ch.24 deny bracket on 0x0F CheckShouldEquip)",
+   "doc": "ABI v19 ch.24; slot 0x0F calls the caster's area test (AE 0x821470/0x821710 -> CombatController 0x55B6D0 -> area vfunc 0x05)"
+  },
+  {
+   "seat": "CombatInventoryItemMagicT.ScrollBoundItem",
+   "kind": "vtable",
+   "construct": "RE::VTABLE_CombatInventoryItemMagicT_CombatInventoryItemScroll_CombatMagicCasterBoundItem_[0]",
+   "rtti": ".?AV?$CombatInventoryItemMagicT@VCombatInventoryItemScroll@@VCombatMagicCasterBoundItem@@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 211274,
+    "1.5.97": 265336
+   },
+   "slots": [
+    "0x0F"
+   ],
+   "source": "native/channels/CombatApproach.cpp (ch.24 deny bracket on 0x0F CheckShouldEquip)",
+   "doc": "ABI v19 ch.24; slot 0x0F calls the caster's area test (AE 0x821470/0x821710 -> CombatController 0x55B6D0 -> area vfunc 0x05)"
+  },
+  {
+   "seat": "CombatInventoryItemMagicT.PotionBoundItem",
+   "kind": "vtable",
+   "construct": "RE::VTABLE_CombatInventoryItemMagicT_CombatInventoryItemPotion_CombatMagicCasterBoundItem_[0]",
+   "rtti": ".?AV?$CombatInventoryItemMagicT@VCombatInventoryItemPotion@@VCombatMagicCasterBoundItem@@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 211278,
+    "1.5.97": 265337
+   },
+   "slots": [
+    "0x0F"
+   ],
+   "source": "native/channels/CombatApproach.cpp (ch.24 deny bracket on 0x0F CheckShouldEquip)",
+   "doc": "ABI v19 ch.24; slot 0x0F calls the caster's area test (AE 0x821470/0x821710 -> CombatController 0x55B6D0 -> area vfunc 0x05)"
+  },
+  {
+   "seat": "CombatInventoryItemMagicT.ShoutBoundItem",
+   "kind": "vtable",
+   "construct": "RE::VTABLE_CombatInventoryItemMagicT_CombatInventoryItemShout_CombatMagicCasterBoundItem_[0]",
+   "rtti": ".?AV?$CombatInventoryItemMagicT@VCombatInventoryItemShout@@VCombatMagicCasterBoundItem@@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 211294,
+    "1.5.97": 265339
+   },
+   "slots": [
+    "0x0F"
+   ],
+   "source": "native/channels/CombatApproach.cpp (ch.24 deny bracket on 0x0F CheckShouldEquip)",
+   "doc": "ABI v19 ch.24; slot 0x0F calls the caster's area test (AE 0x821470/0x821710 -> CombatController 0x55B6D0 -> area vfunc 0x05)"
   },
   {
    "seat": "CombatInventoryItemMelee",
