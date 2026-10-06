@@ -236,7 +236,7 @@ namespace {
         case 17: return "0.9.10";
         case 18:
         case 19:
-        case 20: return "the first release after 0.9.11 (ABI v18, v19 and v20 are unreleased)";
+        case 20: return "0.11.0";
         default: return "a release newer than this one";
         }
     }
