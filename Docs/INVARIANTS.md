@@ -904,7 +904,8 @@ thing that derails one. Concretely:
   E8s. The script / console / player-menu exemptions stay ABOVE it; the ch.17 observe-only
   switch does not apply to it (`[HandBlock] bHandClaimBlocksEquip` is its switch). The
   combat AI's DECISION is refused one level up at the vtable seat `core/HandBlock.cpp`
-  (`CheckShouldEquip` 0x0F on the four weapon-class leaves, engine answer first); the sink
+  (`CheckShouldEquip` 0x0F on the four weapon-class leaves and the unarmed OneHandedBlock item,
+  engine answer first); the sink
   is the backstop for every other path and for a combat choice made before the claim
   published.
   Under #17a the facet is taken WHOLE (declare the worn set → APMF equips it and refuses

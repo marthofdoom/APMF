@@ -37,10 +37,11 @@ list and was left as it is. `[Idle] bIdleConfirm` is a feature, not a probe.
 Field 2026-10-06 (`_research/field-1006-heal-diagnosis.md` cause 2): a dagger was equipped into the right hand MFO
 had released to a deny-only floor, 32 ms before the left-hand heal was interrupted. marth: "harbinger taking a hand
 for an action means other actions on that hand are blocked for the duration". New `core/HandBlock.cpp` (0x0F on the
-Melee/Ranged/Shield/Torch item vtables) + `core/EquipSink.cpp` step 1a refuse a weapon / shield / torch into a hand
+Melee/Ranged/Shield/Torch/OneHandedBlock item vtables) + `core/EquipSink.cpp` step 1a refuse a weapon / shield / torch into a hand
 a live cast claim holds (INVARIANTS #17a(5) amended, DENY-COMPLETENESS gap 10 closed). `[HandBlock]
 bHandClaimBlocksEquip=1`. No ABI change. Diagnosis lines: `[castobs] INTERRUPT-ATTRIB` and `[castobs] CHANNEL-END`
-(MAP CastObserve). Agentlog `apmf-hand-claim-blocks-equip.md`. Opus tier-3 review PENDING; FIELD-TEST PENDING.
+(MAP CastObserve). Agentlog `apmf-hand-claim-blocks-equip.md`. Opus tier-3 review of 1cc0bc9: MERGE; its F1/F3/F6/F7/F8 fixed in round 2 (F2, External-DLL equips into a held
+hand, awaits marth's ruling); backlog APMF-B63..B65. FIELD-TEST PENDING.
 
 ## HEAD OF WORK 2026-10-05 -- SELF-FLIP PROXY (batch A), branch `feat/apmf-self-delivery-proxy`, NOT merged
 

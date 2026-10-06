@@ -1355,7 +1355,9 @@ the weapon half (DENY-COMPLETENESS-AUDIT gap 10). Field origin: `_research/field
 cause 2 (a dagger equipped into the deny-only right hand 32 ms before the left heal was interrupted).
 - **The 0x0F seat (this file).** `CheckShouldEquip` (slot 0x0F, `bool(CombatInventoryItem*,
   CombatController*)`, scalar return) on the four weapon-class item vtables Melee / Ranged / Shield /
-  Torch (VerifiedAddresses rows `CombatInventoryItem*`, `SeatVerified` per vtable). CombatInventory's
+  Torch AND the unarmed `OneHandedBlock` item (review F1: built over the unarmed weapon with slot
+  kLeftHandEquip; its own 0x0F AE 0x819300 / SE 0x77EF60 / 1.7.104 0x82E1E0) (VerifiedAddresses rows
+  `CombatInventoryItem*`, `SeatVerified` per vtable). CombatInventory's
   evaluate (AE 44899 / SE 43666) and pre-loop (AE 44868 / SE 43637) skip a candidate on NO, so the
   item never enters the equipment set and the EquipObject leaf (AE 48124) never gets it. Engine answer
   first; only YES turns to NO, for an item whose `equipsink::Categorize(item, itemSlot.equipSlot)` hand
@@ -1363,9 +1365,12 @@ cause 2 (a dagger equipped into the deny-only right hand 32 ms before the left h
   left) hit a held hand. Slot functions per build: Melee/Ranged/Shield `!IsFleeing` base AE 0x817FC0 /
   SE 0x77DC90 / 1.7.104 0x82CEA0; Torch OVERRIDES the slot, AE 0x819760 / SE 0x77F350 / 1.7.104
   0x82E640 (1.7.104 raw rows `AiCastSeats.kCheckShouldEquipBaseAE` / `HandBlock.Torch.CheckShouldEquip`,
-  the latter proven through `_research/1.7.104-idmap/idmap-1.7.104-handblock.csv`). Line:
-  `[handblock 0x0F] <actor> CheckShouldEquip <class> item=... competes=... -> NO (hand R held by a
-  cast claim: R=... L=...) site=pre-loop|evaluate`, 1.5 s per (actor, item).
+  `HandBlock.OneHandedBlock.CheckShouldEquip`; the two HandBlock rows are proven through the committed
+  `tools/verified_addresses/idmap-1.7.104-apmf.csv`, backlog APMF-B63). Line: `[handblock 0x0F] <actor>
+  CheckShouldEquip <class> item=... competes=... -> NO (hand R held by a cast claim: R=... L=...)
+  site=pre-loop|evaluate`, 1.5 s per (actor, item) and a global 100/s cap (dropped lines counted on
+  the next one). `EngineAnswerFor` / `IsThunk` let the Ranged probe (chained OUTSIDE this seat) log
+  `engine=` (the engine's own answer) and `handblock=` separately and name this thunk at install.
 - **The sink step.** `core/EquipSink.cpp` verdict step 1a calls `HeldFor` (`AnyHandHeld` pre-gate for an
   actor with no ch.17 claim): `verdict=deny (hand R held by a cast claim)`, worker not called, enforced
   whatever `bEquipObserveOnly` says. INVARIANTS #17a(5) as amended.

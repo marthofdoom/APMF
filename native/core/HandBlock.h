@@ -28,7 +28,8 @@
 // (owned=Armor).
 //
 // THE SEAT (this file): CombatInventoryItem::CheckShouldEquip, vtable slot 0x0F, on
-// the four weapon-class leaves Melee / Ranged / Shield / Torch. CombatInventory's
+// the four weapon-class leaves Melee / Ranged / Shield / Torch, plus the unarmed
+// OneHandedBlock item (review F1). CombatInventory's
 // evaluate (AE 44899 / SE 43666 / 1.7.104 same body) and pre-loop (AE 44868 / SE
 // 43637) call it for every candidate and SKIP the item on NO (`call [rax+0x78]; test
 // al,al; je`), so a NO keeps the item out of the equipment set and the behaviour
@@ -68,6 +69,15 @@ namespace apmf::handblock {
 
     // ANY THREAD. Cheap pre-gate for the sink: does any live cast claim hold a hand?
     bool AnyHandHeld(RE::FormID a_actor);
+
+    // Review F3 (for core/AiCastSeats.cpp's Ranged probe, chained OUTSIDE this seat): is `a_fn`
+    // this file's 0x0F thunk? (the probe's install line names it instead of "a prior hook").
+    bool IsThunk(std::uintptr_t a_fn);
+    // SAME THREAD, right after a CheckShouldEquip call through the chain returned
+    // `a_chainAnswer` for `a_item`: the ENGINE's own answer beneath this seat, and in
+    // `a_refused` whether this seat turned it to NO. A call that never reached this seat
+    // returns `a_chainAnswer` with `a_refused == false`.
+    bool EngineAnswerFor(const void* a_item, bool a_chainAnswer, bool& a_refused);
 
     // "R", "L", "R+L" or "-" for a held mask (log text).
     const char* HeldName(std::uint32_t a_held);

@@ -488,3 +488,24 @@ APMF-B61 (other open branches may also take B62: renumber at merge if they colli
   effects carry neither flag and a plain ValueModifier archetype (e.g. an unflagged Damage Health) cannot be told from
   a buff by archetype, so an explicit self claim on it would land on the caster. Closing it needs a magnitude-sign /
   AV-direction test or the client's own declaration; the client owns the consequence meanwhile.
+
+### APMF-B63 (SEV-4, tooling) -- hand-claim block: the 1.7.104 Torch / OneHandedBlock 0x0F rows live on APMF's own idmap CSV
+Raised against `1cc0bc9` (`fix/apmf-hand-claim-blocks-equip`, Opus tier-3 review, MERGE), 2026-10-06, finding F6. As
+relayed: the 1.7.104 Torch row depended on an untracked `_research` CSV. Fixed on the branch by committing the evidence
+as `tools/verified_addresses/idmap-1.7.104-apmf.csv` and writing the exact reproducing command into
+Docs/VERIFIED-ADDRESSES.md (hand-maintained section). OPEN residual: move AE ids 45069 (Torch 0x0F, 0x819760; SE 43850)
+and 45056 (OneHandedBlock 0x0F, 0x819300; SE 43837) into the CommonLibSSE-NG fork's 1.7.104 id table / idmap at the
+next fork revision, then retire the APMF-local CSV rows.
+
+### APMF-B64 (SEV-4) -- hand-claim block: a refused ch.17 equip is never re-issued
+Same review, finding F4. As relayed: "a refused ch.17 equip is never re-issued; document it in INTEGRATION".
+Reviewer's reasoning (log `scratchpad/agentlogs/review-apmf-handblock.md`): channels/EquipAuthority.cpp has no tick;
+it equips only on a declaration, so a declared weapon the hand-claim block refused while a cast claim held the hand
+is not equipped again when the hand frees. The client must re-declare. Fix when drained: document it in
+Docs/INTEGRATION.md (or re-issue on the hand's release).
+
+### APMF-B65 (SEV-4/5, docs) -- hand-claim block: `bEquipDenyScript` now reaches cast-only actors
+Same review, finding F5. As relayed: "`bEquipDenyScript` now reaches cast-only actors; fix the INI comment scope".
+On an actor with no ch.17 claim, the sink step reads the INI `bEquipDenyScript` (the claim flags are 0), so with it
+set a Papyrus / console equip into a hand a cast claim holds is refused too. The APMF.ini comment still describes it as
+the ch.17 declared-set exemption only. Fix when drained: widen the comment (or scope the INI to ch.17 actors).

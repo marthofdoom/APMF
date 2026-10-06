@@ -1121,6 +1121,21 @@
    "source": "native/core/AiCastSeats.cpp:381; slot 0x0F = core/HandBlock.cpp hand-claim block (Torch OVERRIDES 0x0F; refused unless the slot holds it at install)"
   },
   {
+   "seat": "CombatInventoryItemOneHandedBlock",
+   "kind": "vtable",
+   "construct": "RE::VTABLE_CombatInventoryItemOneHandedBlock[0]",
+   "rtti": ".?AVCombatInventoryItemOneHandedBlock@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 210303,
+    "1.5.97": 264529
+   },
+   "slots": [
+    "0x0F"
+   ],
+   "source": "native/core/HandBlock.cpp kClasses (review F1): the unarmed off-hand block item (slot kLeftHandEquip); OVERRIDES 0x0F; refused unless the slot holds it at install"
+  },
+  {
    "seat": "Leaf.CombatBehaviorAdvance",
    "kind": "vtable",
    "construct": "apmf::cbt::kLeaves[\"CombatBehaviorAdvance\"]",
@@ -4059,6 +4074,11 @@
    "seat": "HandBlock.Torch.CheckShouldEquip",
    "rva": "0x819760",
    "source": "HandBlock kClasses Torch equipAE (Torch slot 0x0F)"
+  },
+  {
+   "seat": "HandBlock.OneHandedBlock.CheckShouldEquip",
+   "rva": "0x819300",
+   "source": "HandBlock kClasses OneHandedBlock equipAE (OneHandedBlock slot 0x0F)"
   },
   {
    "seat": "EquipGate.CallSiteName.pre-loop",

@@ -93,13 +93,19 @@ namespace apmf::castobserve {
             default:             return &a_r.anim;
             }
         }
-        void Record(RE::FormID a_actor, Ev a_kind, Event a_ev) {
-            a_ev.ms = apmf::clock::MonotonicMs();
-            std::scoped_lock lk(g_recMx);
-            if (g_recent.size() >= 4 * kMaxWatched && g_recent.find(a_actor) == g_recent.end()) return;   // bounded
-            auto& r = g_recent[a_actor];
-            r.lastMs = a_ev.ms;
-            RingFor(r, a_kind)->push(a_ev);
+        // Called from engine frames (equip worker, combat thread, CheckCast, anim sink): the map
+        // insert may allocate, so nothing may escape (review F7) -- a failed record costs one
+        // diagnosis fact, never an unwind into the engine.
+        void Record(RE::FormID a_actor, Ev a_kind, Event a_ev) noexcept {
+            try {
+                a_ev.ms = apmf::clock::MonotonicMs();
+                std::scoped_lock lk(g_recMx);
+                if (g_recent.size() >= 4 * kMaxWatched && g_recent.find(a_actor) == g_recent.end()) return;   // bounded
+                auto& r = g_recent[a_actor];
+                r.lastMs = a_ev.ms;
+                RingFor(r, a_kind)->push(a_ev);
+            } catch (...) {
+            }
         }
 
         // Pending InterruptCast events (anim thread -> game thread), under g_recMx.
@@ -144,10 +150,13 @@ namespace apmf::castobserve {
                             std::memcpy(ev.tag, tag.data(), n);
                             Record(fid, Ev::kAnim, ev);
                             if (tag == "InterruptCast") {
-                                std::scoped_lock lk(g_recMx);
-                                if (g_pendingInterrupts.size() < 64)
-                                    g_pendingInterrupts.push_back({ fid, apmf::clock::MonotonicMs() });
-                                g_anyPending.store(true, std::memory_order_release);
+                                try {
+                                    std::scoped_lock lk(g_recMx);
+                                    if (g_pendingInterrupts.size() < 64)
+                                        g_pendingInterrupts.push_back({ fid, apmf::clock::MonotonicMs() });
+                                    g_anyPending.store(true, std::memory_order_release);
+                                } catch (...) {
+                                }
                             }
                         }
                         bool emit = false;

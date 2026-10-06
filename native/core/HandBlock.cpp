@@ -39,7 +39,7 @@ namespace apmf::handblock {
 
         using CheckShouldEquip_t = bool (*)(RE::CombatInventoryItem*, RE::CombatController*);
 
-        // The four weapon-class leaves and, per exact runtime, the function slot 0x0F holds
+        // The four weapon-class leaves (+ OneHandedBlock, below) and, per exact runtime, the function slot 0x0F holds
         // in the unpacked executable (read off the vtables, 2026-10-06, this branch's agent
         // log). Melee / Ranged / Shield share the base `sub rsp,0x28; mov rcx,rdx; call
         // IsFleeing; test al,al; sete al; ret` (AE 0x817FC0 -> 33232, SE 0x77DC90 -> 32485,
@@ -50,7 +50,7 @@ namespace apmf::handblock {
         // sret class (the GetMagicTarget CTD) cannot apply. The vtables are VerifiedAddresses
         // rows CombatInventoryItem{Melee,Ranged,Shield,Torch} on all three builds; the slot
         // values are those rows' doc column (0x0F) and the 1.7.104 raw rows
-        // AiCastSeats.kCheckShouldEquipBaseAE / HandBlock.Torch.CheckShouldEquip.
+        // AiCastSeats.kCheckShouldEquipBaseAE / HandBlock.Torch.CheckShouldEquip / HandBlock.OneHandedBlock.CheckShouldEquip.
         struct ClassSpec {
             const char*    tag;
             REL::VariantID vtable;
@@ -63,6 +63,12 @@ namespace apmf::handblock {
             { "Ranged", RE::VTABLE_CombatInventoryItemRanged[0], 0x817FC0, 0x77DC90, 0x82CEA0 },
             { "Shield", RE::VTABLE_CombatInventoryItemShield[0], 0x817FC0, 0x77DC90, 0x82CEA0 },
             { "Torch",  RE::VTABLE_CombatInventoryItemTorch[0],  0x819760, 0x77F350, 0x82E640 },
+            // Review F1 (1cc0bc9): the unarmed "block with a free off-hand" item. CombatInventory
+            // builds it over the unarmed weapon global with slot kLeftHandEquip (AE 0x80F2C5..
+            // 0x80F2F5), and it OVERRIDES 0x0F: AE 0x819300 (id 45056) / SE 0x77EF60 (43837) /
+            // 1.7.104 0x82E1E0, the same `bool(this, controller)` shape (rdx = controller,
+            // IsFleeing first). Without it the left hand had no admission gate for that item.
+            { "OneHandedBlock", RE::VTABLE_CombatInventoryItemOneHandedBlock[0], 0x819300, 0x77EF60, 0x82E1E0 },
         };
         constexpr std::size_t kNumClasses = std::size(kClasses);
 
@@ -83,16 +89,40 @@ namespace apmf::handblock {
         std::mutex                                       g_rlMx;   // leaf lock: no engine call, no log under it
         std::unordered_map<std::uint64_t, std::uint64_t> g_lastLineMs;
 
-        bool LineDue(RE::FormID a_actor, RE::FormID a_item) {
+        // Review F8: a GLOBAL cap on top of the per-(actor, item) cadence, the equip sink's
+        // shape (kCapPerSec lines per second). A line past the cap is counted, and the count
+        // is printed with the next line that is admitted (never hidden).
+        constexpr std::uint32_t kCapPerSec   = 100;
+        std::uint64_t           g_capSecond  = 0;   // under g_rlMx
+        std::uint32_t           g_capUsed    = 0;
+        std::uint32_t           g_capDropped = 0;
+
+        bool LineDue(RE::FormID a_actor, RE::FormID a_item, std::uint32_t& a_droppedBefore) {
             const auto now = apmf::clock::MonotonicMs();
             const auto key = (static_cast<std::uint64_t>(a_actor) << 32) | a_item;
             std::scoped_lock lk(g_rlMx);
             if (g_lastLineMs.size() > 4096) g_lastLineMs.clear();   // bounded; a re-log beats growth
             auto& last = g_lastLineMs[key];
             if (last != 0 && now - last < kLineMs) return false;
-            last = now;
+            if (now / 1000 != g_capSecond) { g_capSecond = now / 1000; g_capUsed = 0; }
+            if (g_capUsed >= kCapPerSec) { ++g_capDropped; return false; }
+            ++g_capUsed;
+            last            = now;
+            a_droppedBefore = g_capDropped;
+            g_capDropped    = 0;
             return true;
         }
+
+        // Review F3: what THIS thread's last pass through the thunk decided, so an observer
+        // chained OUTSIDE it (core/AiCastSeats.cpp's Ranged probe) can report the engine's
+        // own answer and Harbinger's NO separately. Written on every pass that reached the
+        // engine; read only by the same thread right after its own call returned.
+        struct LastPass {
+            const void* item    = nullptr;
+            bool        engine  = false;
+            bool        refused = false;
+        };
+        thread_local LastPass t_last{};
 
         // The return addresses of the 0x0F call sites, per exact runtime (log label only;
         // the same five sites core/AiCastSeats.cpp's Ranged probe labels: pre-loop 44868 /
@@ -149,6 +179,7 @@ namespace apmf::handblock {
             }
 
             const bool engine = orig(a_this, a_cc);   // ENGINE ANSWERS FIRST, always called
+            t_last = LastPass{ a_this, engine, false };
             if (!engine) return false;                 // nothing to narrow
             if (!g_enabled.load(std::memory_order_relaxed) || !a_cc) return engine;
             if (apmf::ControlMap::Get().ControlledCount() == 0) return engine;   // nothing claimed anywhere
@@ -176,11 +207,13 @@ namespace apmf::handblock {
             if (!HeldFor(fid, competes, itemId, hold)) return engine;
 
             g_denies.fetch_add(1, std::memory_order_relaxed);
-            if (LineDue(fid, itemId)) {
+            t_last.refused = true;
+            std::uint32_t dropped = 0;
+            if (LineDue(fid, itemId, dropped)) {
                 char comp[48];
                 spdlog::info("[handblock 0x0F] 0x{} '{}' CheckShouldEquip {} item=0x{} '{}' competes={} -> NO (hand {} "
                              "held by a cast claim: R={} L={}) -- engine had said YES; the item stays out of the "
-                             "equipment set for the claim's duration. site={} (ret 0x{})",
+                             "equipment set for the claim's duration. site={} (ret 0x{}){}",
                              apmf::log::Hex(fid), actor->GetName() ? actor->GetName() : "?", tag, apmf::log::Hex(itemId),
                              item->GetName() ? item->GetName() : "?",
                              apmf::equipsink::CategoryNames(competes, comp, sizeof(comp)), HeldName(hold.held),
@@ -190,7 +223,10 @@ namespace apmf::handblock {
                              !(hold.held & APMF_API::kEquipCat_Left) ? std::string("-")
                                  : hold.denyOnlyL ? std::string("deny-only floor")
                                                   : "spell 0x" + apmf::log::Hex(hold.spellL),
-                             SiteName(retRva), apmf::log::Hex(retRva));
+                             SiteName(retRva), apmf::log::Hex(retRva),
+                             dropped ? fmt::format(" ({} [handblock 0x0F] line(s) dropped by the {}/s cap before this one)",
+                                                   dropped, kCapPerSec)
+                                     : std::string());
             }
             return false;   // THE one narrowing answer: the engine's YES turned to NO
         }
@@ -202,6 +238,17 @@ namespace apmf::handblock {
     }   // namespace
 
     bool Enabled() { return g_enabled.load(std::memory_order_relaxed); }
+
+    bool IsThunk(std::uintptr_t a_fn) {
+        return a_fn != 0 && a_fn == reinterpret_cast<std::uintptr_t>(&CheckShouldEquipThunk);
+    }
+
+    bool EngineAnswerFor(const void* a_item, bool a_chainAnswer, bool& a_refused) {
+        a_refused = false;
+        if (t_last.item != a_item) return a_chainAnswer;   // this call never reached the block
+        a_refused = t_last.refused;
+        return t_last.engine;
+    }
 
     const char* HeldName(std::uint32_t a_held) {
         const bool r = (a_held & APMF_API::kEquipCat_Right) != 0;
@@ -276,9 +323,10 @@ namespace apmf::handblock {
             // prior hook (another DLL) or a null slot refuses this class, loudly. The
             // equip-sink step still covers the hand on every path, the combat one included.
             REL::Relocation<std::uintptr_t> expected{ REL::Offset(onAE ? spec.equipAE : on17 ? spec.equip17 : spec.equipSE) };
-            // 1.7.104 has no Address Library: its two slot functions are raw-RVA rows of that
+            // 1.7.104 has no Address Library: its three slot functions are raw-RVA rows of that
             // build's table (AiCastSeats.kCheckShouldEquipBaseAE 0x82CEA0, HandBlock.Torch.
-            // CheckShouldEquip 0x82E640), so the literal itself is self-checked there. On
+            // CheckShouldEquip 0x82E640, HandBlock.OneHandedBlock.CheckShouldEquip 0x82E1E0), so
+            // the literal itself is self-checked there. On
             // 1.6.1170 / 1.5.97 the literals are the vtable rows' generated 0x0F doc column.
             if (on17 && !allowance::SeatVerified(expected.address(),
                                                  fmt::format("HandBlock.{}.CheckShouldEquip (1.7.104 slot function)", spec.tag))) {
@@ -303,8 +351,8 @@ namespace apmf::handblock {
         }
         g_seatArmed.store(n > 0, std::memory_order_release);
         if (n == static_cast<int>(kNumClasses)) {
-            spdlog::info("[handblock] INSTALLED: CheckShouldEquip (0x0F) on the Melee, Ranged, Shield and Torch item "
-                         "vtables (each slot held this build's engine function). A hand held by a live cast claim (a "
+            spdlog::info("[handblock] INSTALLED: CheckShouldEquip (0x0F) on the Melee, Ranged, Shield, Torch and "
+                         "OneHandedBlock item vtables (each slot held this build's engine function). A hand held by a live cast claim (a "
                          "deny-only floor included) refuses every weapon / shield / torch candidate competing for it; "
                          "the engine answers first, only its YES turns to NO. The equip-sink step rides the ch.17 "
                          "seat (its own [apmf][equip-sink] INSTALLED line says whether that seat is live).");

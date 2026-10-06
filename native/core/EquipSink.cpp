@@ -542,15 +542,16 @@ namespace apmf::equipsink {
                 else { verdict = "deny"; callWorker = false; }
             }
 
-            // castobs interrupt attribution (passive): "any equip in the last 100 ms".
-            apmf::castobserve::NoteEquip(actorId, itemId,
-                                         caller.external ? "External" : (caller.known ? caller.name : "Unknown"),
-                                         verdict);
-
             // Log line (Docs/INTEGRATION.md's probe criteria parse these fields).
             // Wrapped: nothing in the logging path may unwind into the engine's
             // equip frame (a bad_alloc here must cost a log line, never a CTD).
             try {
+                // castobs interrupt attribution (passive): "any equip in the last 100 ms". Inside
+                // the try (review F7): its map insert may allocate, and nothing may unwind into
+                // the engine's equip frame.
+                apmf::castobserve::NoteEquip(actorId, itemId,
+                                             caller.external ? "External" : (caller.known ? caller.name : "Unknown"),
+                                             verdict);
                 const auto     nowMs = apmf::clock::MonotonicMs();
                 const std::uint64_t pathKey = caller.external
                     ? (0x8000000000000000ull ^ std::hash<std::string_view>{}(caller.ext))
