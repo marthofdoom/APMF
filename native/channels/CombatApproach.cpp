@@ -254,6 +254,7 @@ namespace {
         Geo         vanilla{};
         float       vanillaPeriod = 1.0f;
         Geo         ours{};
+        std::uint64_t ms = 0;             // when S1 wrote it (S1 rewrites it every 0.25 s while it carries the bound)
     };
     std::shared_mutex                         g_areaMx;
     std::unordered_map<void*, Touched>        g_touched;
@@ -361,24 +362,25 @@ namespace {
             return;
         }
 
-        Touched t;
-        t.actor         = fid;
-        t.ctl           = ctl;
-        t.actorLoc      = &actor->data.location;
-        t.vanilla       = ReadGeo(a_area);
-        t.vanillaPeriod = At<float>(a_area, kAreaPeriod);
-        t.ours          = e.want;
-        WriteGeo(a_area, t.ours);
-        At<float>(a_area, kAreaPeriod) = kBoundPeriod;
-        e.applied.fetch_add(1, std::memory_order_relaxed);
-        e.lastApplyMs.store(now, std::memory_order_relaxed);
-        elk.unlock();
-
+        // Write + record under the area lock (lock order: entries, then areas -- nothing takes them
+        // the other way round), so RestoreBeforeSave and S2 never see a bound without its record.
         {
             std::unique_lock lk(g_areaMx);
+            Touched t;
+            t.actor         = fid;
+            t.ctl           = ctl;
+            t.actorLoc      = &actor->data.location;
+            t.vanilla       = ReadGeo(a_area);
+            t.vanillaPeriod = At<float>(a_area, kAreaPeriod);
+            t.ours          = e.want;
+            t.ms            = now;
+            WriteGeo(a_area, t.ours);
+            At<float>(a_area, kAreaPeriod) = kBoundPeriod;
             g_touched[a_area] = t;
             g_touchedCount.store(g_touched.size(), std::memory_order_relaxed);
         }
+        e.applied.fetch_add(1, std::memory_order_relaxed);
+        e.lastApplyMs.store(now, std::memory_order_relaxed);
         g_s1Applied.fetch_add(1, std::memory_order_relaxed);
     }
 
@@ -682,6 +684,21 @@ namespace apmf::combatapproach {
         if (now - s_lastMs < kPollMs) return;
         s_lastMs = now;
 
+        // A record S1 has not rewritten for 5 s belongs to an area the engine no longer updates (its
+        // fight ended and the controller is gone, or the engine deactivated it): forget it. Keys are
+        // never dereferenced here -- only S1 (with `this` == the key) and RestoreBeforeSave (after a
+        // live-controller membership test) ever touch the area itself.
+        if (g_touchedCount.load(std::memory_order_relaxed) != 0) {
+            static std::uint64_t s_lastPurgeMs = 0;
+            if (now - s_lastPurgeMs >= 1000) {
+                s_lastPurgeMs = now;
+                std::unique_lock lk(g_areaMx);
+                for (auto it = g_touched.begin(); it != g_touched.end();)
+                    it = (now - it->second.ms > 5000) ? g_touched.erase(it) : std::next(it);
+                g_touchedCount.store(g_touched.size(), std::memory_order_relaxed);
+            }
+        }
+
         std::vector<RE::FormID> ids;
         {
             std::shared_lock lk(g_entryMx);
@@ -779,7 +796,10 @@ namespace apmf::combatapproach {
                 } else if (leashed) {
                     next = APMF_API::kApproachState_Leashed;
                 } else {
-                    if (e.inCombatSinceMs == 0) e.inCombatSinceMs = now;
+                    if (!e.live) {   // (re)starting to carry the bound: the stall clock starts now
+                        e.inCombatSinceMs = now;
+                        e.lastSeenMs.store(0, std::memory_order_relaxed);
+                    }
                     live = true;
                     if (sf & kSeatYielded) next = APMF_API::kApproachState_Yielded;
                     else if (sf & kSeatDisabled) next = APMF_API::kApproachState_Disabled;

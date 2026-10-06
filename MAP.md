@@ -106,7 +106,10 @@ APMF_AwarenessResult*)` (main thread only), the PODs `APMF_LosInfo` (24 B), `APM
 (32 B), `APMF_AwarenessResult` (48 B), the enums `LosVerdict`, `LosWhy`, `TargetPinFlags`,
 `AwareSense`, `AwareFlags`, `AwareDetail`, the `kLos*` / `kAware*` timing and range constants,
 `kCastFlag_OwnLineOfSight` (CastFlags bit 6) and `kTargetPin_OwnLineOfSight` (kIntent_TargetPin
-param.ival bit 0)** (core/Sightline.h, core/Awareness.h), the
+param.ival bit 0)** (core/Sightline.h, core/Awareness.h); **ABI v19 adds `kIntent_CombatApproach = 24`,
+`CombatApproachFlags` (`kApproach_Hold`), `CombatApproachState` (0-13), the POD `APMF_CombatApproachInfo`
+(48 B, size rule frozen at `kCombatApproachInfoV19Size`) and `APMF_API_v19 : APMF_API_v18` with ONE slot,
+`GetCombatApproachState(actor, APMF_CombatApproachInfo*)` (any thread)** (channels/CombatApproach.h), the
 `Intent` enum, `Handle`, and the exported query-fn name. No C++ class / STL / vtable
 crosses the boundary. **The current `kABIVersion` is stated ONLY in the header**
 (INVARIANTS #14b — this line said 3 while the header was at 6).
@@ -119,7 +122,7 @@ crosses the boundary. **The current `kABIVersion` is stated ONLY in the header**
 
 ### `native/core/ClientAPI.{h,cpp}` — the C-ABI implementation
 The exported `APMF_GetInterface(abiVersion)` hands over the static POD newest-struct
-object (`APMF_API_v18` since ABI v18 — read the header, not this line) as a base
+object (`APMF_API_v19` since ABI v19 — read the header, not this line) as a base
 `APMF_API_v1*`; a client casts up to the newest struct it uses. It returns **nullptr**
 when the client asks for a version NEWER than this APMF implements (`:125-128`), which
 is why a needless `kABIVersion` bump is expensive (INVARIANTS #14b). Its
@@ -137,6 +140,9 @@ ABI v18 adds `GetLineOfSight` → `sightline::GetLineOfSight` (a `try/catch(...)
 `kLos_Unknown`) and `SenseActor` → `awareness::SenseActor` (`kQuery_Failed`); the object is an
 `APMF_API_v18` now (a third static_assert pair pins the v12 prefix end), and
 `MinReleaseForAbi(18)` names "the first release after 0.9.11" until the cut.
+ABI v19 adds `GetCombatApproachState` → `combatapproach::GetState` (a `try/catch(...)` returning
+`kApproachState_None`); the object is an `APMF_API_v19` (a fourth static_assert pair pins the v18 prefix
+end), and `MinReleaseForAbi(19)` shares v18's placeholder until the cut.
 The "client too new" null (`abiVersion > kABIVersion`) logs the running APMF version
 (`SKSE::PluginDeclaration::GetSingleton()`) and `MinReleaseForAbi(abi)` — a table that must
 be extended on every `kABIVersion` bump.
@@ -1290,7 +1296,7 @@ tool) still exist but are **unreachable unless the keyboard test surface is arme
 ### `native/channels/*.cpp` — one module per facet (FULL documented catalog)
 Each: a `Channel` subclass + `APMF_REGISTER_CHANNEL`, per-NPC `Engage`/`Release`.
 The first release shipped the documented catalog of 13 channels as a baseline
-benchmark; the table below is the CURRENT set — 22 files, 22 rows (ch.23 `PursuitLeash` added 2026-09-25 (ABI v16); ch.22 `CombatReentryDeny`, ch.21 `CombatEntry` and ch.20 `TargetPin` added 2026-09-25; ch.7
+benchmark; the table below is the CURRENT set — 23 files, 23 rows (ch.24 `CombatApproach` added 2026-10-05 (ABI v19); ch.23 `PursuitLeash` added 2026-09-25 (ABI v16); ch.22 `CombatReentryDeny`, ch.21 `CombatEntry` and ch.20 `TargetPin` added 2026-09-25; ch.7
 `CombatAction` and ch.9 `OfferPackage` were missing from it until 2026-09-07; ch.17
 `EquipAuthority` added 2026-09-15; ch.19 `Travel` added 2026-09-22 — ch.18 is RESERVED
 for an attack-selection design that is NOT YET ON MAIN, so the intent numbers skip it). Each `ServesIntent()` maps to an `APMF_API::Intent`. Test keys in
@@ -1320,7 +1326,20 @@ parentheses.
 | `CombatEntry.cpp` (+ `CombatEntry.h`) | 21 | ENTER COMBAT against a named target (`kIntent_CombatEntry`, ABI v14; no test key -- it needs an actor AND a target) | **ONE ENGINE CALL, NO SEAT:** `Engage` / `OnOwnerChanged` resolve the target on the game thread and `mainthread::Post` ONE task that re-validates the published claim and calls `actor->StartCombat(target, nullptr)` (fork binding, `RELOCATION_ID(37608, 38561)`, 3-arg form verified on both images). Gates in the task: actor loaded, alive, `currentProcess != null` (StartCombat dereferences it unchecked), target loaded / enabled / alive. Release calls NO StopCombat. NEVER live and inert: `EndClaim` (from Pump / Poll, never inside Drain) releases the claim on an engine refusal, an entry that cannot be attempted, "combat ended" (controller POINTER null after a successful entry), owner dead, target dead / disabled / unloaded / unresolvable. Per-actor map touched on the main seat only (no lock); `ResetAll` at revert + kPreLoadGame. Passive rate-limited entry log (entered / group member on a new fight / whether a ch.20 claim names the target). **What breaks:** never call StartCombat with two arguments (garbage R8 = the ch.6 CTD) or for an actor with no process; never re-enter on a timer or when the engine ends combat (that is SUSTAINING a decision, #0); never add a StopCombat on release (an undo, #0 (g) condition 4); never dereference the controller or group here (use the pointer; `IsInCombat` reads [cc+0x43]) -- APMF-B26 (`Docs/REVIEW-BACKLOG.md`); never EnqueueRelease from inside Drain; keep `engineGaveUp` across Apply (a rival claim naming the same target must not re-enter after "combat ended" / "engine refused", #0 (g) condition 3). Open review items: APMF-B26, APMF-B30 (StopCombat+StartCombat inside one Poll window), APMF-B31 (brief 3D loss ends the claim). `INVARIANTS #0 (g)` | one-shot engine call (#0 (g)) |
 | `CombatReentryDeny.cpp` (+ `CombatReentryDeny.h`) | 22 | DENY every engine `StartCombat` for an actor during a bounded window (`kIntent_CombatReentryDeny`, ABI v15; no test key) | **SOURCE DENY at `Actor::StartCombat`'s own self-check:** `IsDeadHook` = write_vfunc on Character slot 0x99 (`IsDead`), chaining; `AnswerSelfCheck` runs only when `_ReturnAddress()` == `g_siteRet` (the verified call-site row `ReentryDeny.StartCombat.SelfIsDeadCall` + 11: AE `0x6B69CA` / SE `0x625248`) and answers "dead" (StartCombat refuses before its spinlock / equip / anything) for the WINNING claim inside its window, EVERY call (new entry and in-combat target-add, closing-round option (a)) except ch.21's own entry (`ClientEntryScope`, thread-local, held by `CombatEntry.cpp::Enter` around its StartCombat). The seat reads no actor state. WINDOW: `param.fval` s (0 = 10, clamped 120) from the claim's OWN request / last Repoint -- `NoteRequest` / `NoteRepoint` (called from `ControlMap::EnqueueRequest` / `EnqueueRepoint`, any thread, `g_reqs` under its own mutex); `Apply` (inside Drain) sets a provisional deadline and posts `Settle`, which after Publish reads the winning handle and sets the real deadline (ending a takeover with no time left). Map under `shared_mutex` (unique on the game thread, shared in the seat, which may run on ANY thread). `Poll` (Arbiter seat, 250 ms) ends the claim on "window elapsed" / "owner dead" via `EndClaim` (EnqueueRelease, never inside Drain) and runs the DENY-MISS detector (controller appeared under a live window with no ch.21 pass). `g_siteSeen` + the one-time `seat OBSERVED` log (principle 5); every Engage / Repoint line names the slot-0x99 owner. `ResetAll` at revert + kPreLoadGame (also clears `g_reqs`). **What breaks:** never answer at any return address but StartCombat's SELF check (the target's `IsDead(false)` at AE `0x6B6A0A` is another actor's facet; any other site would lie to the whole engine); never read the controller in the seat (the cross-thread StopCombat race the closing round removed); never let the seat call an engine function or take an engine lock (it can run inside a BSJobs detection job); never drop the `ClientEntryScope` in ch.21 (a client's declared entry would be refused by its own deny); never drop `NoteRequest` / `NoteRepoint` from ControlMap (every window would run from apply time again, F3); never add a StopCombat here (the client's call, #0 (h) condition 1); never EnqueueRelease from inside Drain; keep the call-site row's 11-byte check (it is what pins the exact instruction). `INVARIANTS #0 (h)` | source deny (#0 (h)) |
 | `PursuitLeash.cpp` | 23 | LEASH an actor's in-combat pursuit + search to an anchor actor (`kIntent_PursuitLeash`, ABI v16; no test key) | Arbitration + claim lifecycle only: `Engage` / `OnOwnerChanged` hand `param.target` (anchor) + `param.fval` (radius) to `actiongate::SetLeash`; `Release` calls `ClearLeash`. The enforcement is `core/ActionGate.cpp` (the ch.23 block: act/pop ForceFail pair + the slot-0x04 update seat on 14 leaves). Synchronous refusals in `ControlMap::EnqueueRequest`. **What breaks:** see ActionGate's ch.23 note | claim + T1 enforcement |
+| `CombatApproach.cpp` (+ `CombatApproach.h`) | 24 | CLOSE to within R of X WHILE IN COMBAT, the in-combat movement goal (`kIntent_CombatApproach`, ABI v19; no test key) | **SUBSTITUTE one unweighted engine input, the actor's standard COMBAT AREA,** through its own vtable (write_vfunc, chaining): S1 vfunc 0x0B Update (restore the engine geometry, run the original, write X/space/R, period 0.25 s), S2 0x05 IsInside(WorldLocation) (engine geometry inside a deny bracket), S6 0x06 observe-only (the engine's own inside/outside verdict for the actor); deny brackets S3 CombatTargetSelectorStandard 0x06 and S4 ten invisibility/bound-item CheckShouldEquip 0x0F. `Poll` (Arbiter, game thread) resolves X, decides the state, ends + releases a finished claim; `RestoreBeforeSave` (kSaveGame) | the engine's Movement half walks the actor back into the area (Return To Combat Area) and clamps its moves to it; nothing else is touched |
 
+- **What breaks (ch.24 `CombatApproach.cpp`, ABI v19):** (1) S1 MUST put the engine geometry back BEFORE calling the
+  original Update (the standard area's centre is STICKY: the engine recomputes it only under conditions, so it must
+  always run on its own last values) and only when the area still carries exactly what S1 wrote (bit-exact + the same
+  controller); never write a field without the per-call vtable check (`== g_vtStd`). (2) The deny brackets are what
+  keep the bound out of the TARGET and CAST facets: S2 answers from the engine geometry only while `t_view > 0`, and the
+  seat set installs ALL or NOTHING (a bound without its brackets is a leak). (3) Never put an APMF object into the
+  controller's areas array or its current-area pointer: the area is saved by index and by its own fields, which is why
+  `RestoreBeforeSave` runs at kSaveGame. (4) The seats never look up a form: X is a position + cell space resolved by
+  `Poll`. (5) The stall end (3 s, a floor over the 0.25 s period) is the principle-7 report of an engine that stopped
+  carrying the bound; do not turn it into a retry. Addresses and the 1.7.104 compare: `Docs/VERIFIED-ADDRESSES.md` "ch.24";
+  RE log: scratchpad `agentlogs/apmf-combat-moveto.md`. Shared slots: ch.20 also hooks selector 0x06, EquipGate also
+  hooks four of the 0x0F slots; all chain, any order.
 - **What breaks (all channels):** each must (1) keep the package coherent — none
   substitutes the package (§5); (2) capture-and-restore engine state in `Release`,
   keyed by the per-NPC state map (guard `actor` null — it may have unloaded); (3)

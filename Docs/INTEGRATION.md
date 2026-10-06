@@ -1823,6 +1823,88 @@ first: an older Harbinger ignores both flag bits without a word.
 * **Built, CI-verified, not yet field-run.** Each sense must be seen firing in a field log before a client
   relies on it (CLAUDE.md principle 5).
 
+## Moving an NPC toward someone in a fight (ABI v19, `kIntent_CombatApproach`)
+
+In combat the engine owns where an NPC walks. A travel claim (ch.19) ends the moment the fight
+starts, and no other facet moved an NPC toward a point while it fights. `kIntent_CombatApproach`
+(ch.24) does: "stay within R of X, and keep fighting". The typical use is a healer whose
+recipient is out of sight: move toward the recipient until the line clears, then let go.
+
+### The contract
+
+* **It bounds the NPC's combat movement, nothing else.** The engine keeps every fighter inside a
+  combat AREA. Its movement half walks the NPC back when it is outside (the engine's own Return To
+  Combat Area move, in the combat gait) and clamps its tactical moves (circling, backing off,
+  strafing, finding a shot) to it. While your claim stands, the NPC's area is centred on X with
+  radius R. Attacks, spells in both hands, blocks, the combat target, equipment, shouts and
+  potions run exactly as the engine decides: the area's influence on target choice and on the
+  invisibility / bound-weapon casts is hidden from those decisions.
+* **They force, they win.** A package that holds the NPC in place (a HoldPosition package) owns
+  the area in the engine's own pick: your claim reads `kApproachState_Yielded` and moves nothing
+  until that package ends. A fleeing NPC, or one in low process, has no standard area:
+  `kApproachState_Disabled`.
+* **It respects a pursuit leash.** If the same NPC holds a ch.23 leash and no point within R of X
+  lies inside the leash, the claim reads `kApproachState_Leashed` and moves nothing.
+* **It does not start a fight and does not leave one.** A claim made out of combat waits
+  (`kApproachState_Waiting`) and applies when combat starts.
+
+### How the claim ends
+
+Harbinger ends it and RELEASES your claim (so a lower claim can take over), and
+`GetCombatApproachState` keeps the reason: `kApproachState_Arrived` (the engine reports the NPC
+inside the area; not with `kApproach_Hold`), `kApproachState_TargetLost` (X gone, dead, disabled,
+unloaded or in another cell), `kApproachState_CombatEnded` (the fight ended after the area was
+applied), `kApproachState_EngineDropped` (the engine stopped carrying the area for 3 s: its own
+path to X failed, or its combat update stopped; logged as a warning), `kApproachState_ActorGone`,
+`kApproachState_Refused` (a Repoint named an invalid target or radius). Your own Release, an
+outranking ch.24 claim, a save load and a new game end it too (`kApproachState_Released`).
+
+### The recipe: move a held healer toward an occluded recipient
+
+```cpp
+if (api->abiVersion >= 19) {
+    APMF_API::APMF_Param p{};
+    p.target = recipient->GetFormID();       // X
+    p.fval   = 256.0f;                        // R, game units
+    p.ival   = APMF_API::kApproach_Hold;      // stay close until you release
+    h = api->RequestEx(healer->GetFormID(), APMF_API::kIntent_CombatApproach, basis, &p);
+}
+// each tick: v18 GetLineOfSight(healer, recipient); when VISIBLE, Release(h).
+// read v19 GetCombatApproachState(healer, &info) to learn why it ended, if it did.
+```
+
+### Parameter fields
+
+| field | meaning |
+|---|---|
+| `target` | X, the reference to close on. REQUIRED. Any loaded reference; the player is allowed. |
+| `fval` | R in game units. REQUIRED, finite, > 0. The engine counts the NPC inside when its distance to X is below R plus its own bound radius. |
+| `ival` | `CombatApproachFlags`: `kApproach_Hold` keeps the area after arrival. 0 ends the claim on arrival. |
+
+### When a claim is refused
+
+Synchronously (kInvalidHandle, logged): an APMF older than v19, VR, a runtime other than
+1.6.1170 / 1.5.97 / 1.7.104, `[CombatApproach] bCombatApproach=0`, a self-check refusal, target
+0 or the NPC itself, a radius that is not positive and finite, or the NPC is the player.
+
+### What a good log looks like
+
+```
+[ch.24] combat-approach seats installed: ...
+[ch.24] seat OBSERVED: CombatAreaStandard::Update (vfunc 0x0B) ran on a combat thread ...
+[ch.24] 0x000A2C94 combat-approach claim ENGAGED: close to within 256 of 0x00000014 (HOLD after arrival) ...
+[ch.24] 0x000A2C94 approach APPROACHING -> X 0x00000014: distance 1450 / R 256; area carried the bound 6 time(s); engine: OUTSIDE (return-to-area selectable), standard area CURRENT; outside answers 9.
+[ch.24] 0x000A2C94 approach HOLDING -> X 0x00000014: distance 231 / R 256; ... engine: INSIDE ...
+```
+
+### Limits worth knowing
+
+* The NPC walks in its COMBAT gait and keeps fighting on the way, so it may stop to swing or cast
+  as the engine decides. That is the point: the claim moves one facet.
+* The area follows X four times a second while it is carried; a fast-moving X is chased, not led.
+* An unreachable X: the engine's own path back fails and it switches the NPC's area off for the
+  rest of that fight; the claim ends `kApproachState_EngineDropped`.
+
 ## The facet table
 
 Every facet is one `Intent` value in `native/APMF_API.h`. The proof tier says
@@ -1867,6 +1949,7 @@ columns, one doesn't imply the other.
 | `kIntent_CombatEntry` (ch.21, ABI v14) | **Start a fight.** Harbinger calls the engine's own `StartCombat` once against your target (once more per Repoint). Never re-enters, never stops the fight; the claim ENDS on a refusal or when the fight ends. Pin the same target after it entered to make it fight THAT one | `form` (the target ACTOR, REQUIRED) | Built, not yet battle-tested. CI verified only. |
 | `kIntent_CombatReentryDeny` (ch.22, ABI v15) | **Stay out of the fight.** For a window you choose, every engine `StartCombat` for the NPC is refused at its own self-check. Stops nothing; your own ch.21 entry passes. Ends by itself when the window (counted from your request) elapses or the NPC dies. Recipe: claim, then `StopCombat` once on the first tick the claim is live | `fval` (window seconds; 0 = 10, max 120) | Built, not yet battle-tested. CI verified only; the seat is not yet observed on a deck. |
 | `kIntent_PursuitLeash` (ch.23, ABI v16) | **Leash the NPC's in-combat pursuit and search to an anchor actor.** Moves toward a goal farther from the anchor are refused while the NPC is past the radius | `target` (the anchor), `fval` (the radius) | Built, not yet battle-tested. CI verified only; the leaves are not yet observed on a deck. |
+| `kIntent_CombatApproach` (ch.24, ABI v19) | **Close to within R of an actor while fighting.** The NPC's own combat area is centred on X with radius R; the engine walks it back toward X and keeps its moves inside, while it keeps attacking and casting. Ends by itself (arrival unless `kApproach_Hold`, X lost, combat over, the engine dropping the bound) and Harbinger releases the claim; `GetCombatApproachState` says why | `target` (X), `fval` (R), `ival` (`CombatApproachFlags`) | Built, CI-verified, not field-run |
 
 Where a field is marked "reserved, not yet read", the channel currently
 applies a fixed built-in behavior and ignores whatever you pass in that field.
