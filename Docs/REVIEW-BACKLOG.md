@@ -440,7 +440,7 @@ Raised against 3903988, 2026-10-05. Verbatim:
 - SEV-5 (round-2, e60f64f): with permanent Magicka 0, native 0x666F60 returns a constant while the copy treats it as low (unreachable: no ward at 0 max Magicka).
 - SEV-5 (round-2, e60f64f): AlreadyApplied is a proven member-level copy of AE 0x81E6C0 / 0x81E400 because ids 45349 / 45344 are absent from the fork's 1.7.104 table. Adding them at the next fork table revision would let it call the engine directly.
 
-- FIELD VERDICT 2026-10-06 (Opus, Tuxborn deck logs): CONFIRMED (part f only) -- Cicero 'Arcane Pull' FE204ACE predicted Script, 'engineScore=0.000 STEERED->1000' at nAPMF 14:25:27.488, FIRED via Script 14:25:40 (5 FIRED total across sessions); the other parts were not exercised.
+- FIELD VERDICT 2026-10-06 (Opus, Tuxborn deck logs): CLOSED (part f only: works as intended) -- Cicero 'Arcane Pull' FE204ACE predicted Script, 'engineScore=0.000 STEERED->1000' at nAPMF 14:25:27.488, FIRED via Script 14:25:40 (5 FIRED total across sessions); the other parts were not exercised.
 ### APMF-B55 (SEV-4) -- ch.24: the pursuit-leash test is coarse
 Raised against 274d7e4 (`feat/apmf-combat-moveto`, Opus tier-3 review), 2026-10-06. Finding (verbatim as relayed): "F5 SEV-4
 leash coarse". Reasoning: `channels/CombatApproach.cpp` Poll holds a claim as kApproachState_Leashed only when NO point within R
