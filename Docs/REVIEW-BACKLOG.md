@@ -115,63 +115,6 @@ SEV-3; F1 promoted by carve-out (b) and FIXED on the branch before merge). Verba
 
 ---
 
-### APMF-B5 — ch.17 Engage log still says "(SetEquipSet, ABI v7)"
-- **Raised:** Fable tier-3 on `a369e9f` (feat/equip-authority-v8), SEV-5; text as relayed by the coordinator.
-- **Severity:** SEV-5.
-- **Finding (verbatim, as relayed):** ":364 Engage log \"(SetEquipSet, ABI v7)\"".
-- **Reasoning:** `channels/EquipAuthority.cpp` `Engage` names only the v7 call; v8's `SetEquipSetEx` is the other declaration path. Cosmetic log text; a reader grepping for v8 adoption would not see it here.
-- **Assigned:** none; drain with the next ch.17 batch.
-
-### APMF-B6 — the hand-EQUP resolve error over-claims "every handed entry skipped"
-- **Raised:** Fable tier-3 on `a369e9f`, SEV-5; text as relayed by the coordinator.
-- **Severity:** SEV-5.
-- **Finding (verbatim, as relayed):** ":226 error text over-claims \"every handed entry skipped\"".
-- **Reasoning:** `Enforce`'s `resolveHandSlots` logs "every handed entry in this pass is skipped" when EITHER hand form fails to resolve, but the per-entry check skips only an entry whose OWN hand slot is null (`if (!equipSlot) { ++unresolved; continue; }`); with one hand resolving, entries for that hand are still equipped. Both forms come from Skyrim.esm at load index 00, so the branch is not expected to fire; the text should say "every entry declared for that hand".
-- **Assigned:** none.
-
-### APMF-B7 — the once-logged claim refusal reason can be stale after a later Install refusal
-- **Raised:** Fable tier-3 on `a369e9f`, SEV-5; text as relayed by the coordinator.
-- **Severity:** SEV-5.
-- **Finding (verbatim, as relayed):** "ControlMap.cpp:82-88 once-logged refusal reason vs a later Install refusal".
-- **Reasoning:** `EnqueueRequest` logs the seat-not-installed refusal ONCE with `NotInstalledReason()` at that moment. A client that requests before kDataLoaded logs "not yet installed (Install runs at kDataLoaded)"; if `Install()` then refuses for another reason (INI off, site-verify), that reason is never printed by this line (the `[apmf][equip-sink]` install line still carries it). Fix shape: log once PER DISTINCT reason string, not once ever.
-- **Assigned:** none.
-
-### APMF-B8 — the "seat not installed" branch in Enforce is unreachable under the v8 refusal
-- **Raised:** Fable tier-3 on `a369e9f`, SEV-5; text as relayed by the coordinator.
-- **Severity:** SEV-5.
-- **Finding (verbatim, as relayed):** "the unreachable \"seat not installed\" branch in Enforce :176-186".
-- **Reasoning:** since `EnqueueRequest` refuses a ch.17 claim while the seat is down, no claim exists for `Enforce` to run against when `Installed()` is false (Install runs once and never uninstalls), so the `g_seatMissing` error path is dead code. Kept as a defensive guard; its message ("declaration ... NOT enforced") describes a state that cannot arise. Either delete it or reword it as an invariant-violation log.
-- **Assigned:** none.
-
-### APMF-B9 — queued-slot carriage through the engine's deferred apply is unobserved
-- **Raised:** Fable tier-3 on `a369e9f`, SEV-5; text as relayed by the coordinator.
-- **Severity:** SEV-5 (probe requirement added to `Docs/INTEGRATION.md` criterion 7 in the closing round).
-- **Finding (verbatim, as relayed):** "queued-slot carriage unobserved (add the probe requirement: one `hand=left` equip line followed by visible dual-wield)".
-- **Reasoning:** `Enforce` passes the `BGSEquipSlot` to `EquipObject(queue=true)`; the slot's survival through the AIProcess queue and the `QueuedApply` re-entry (38906/37950) is argued from the `EquipData` layout, not observed. CLAUDE.md principle 5: a path exists is not a path runs. Closed by the field log, not by code.
-- **Assigned:** the first v8 deck session.
-
-### APMF-B10 — `MinReleaseForAbi` v7/v8 entry must be named at the cut
-- **Raised:** Fable tier-3 on `a369e9f`, SEV-5; text as relayed by the coordinator.
-- **Severity:** SEV-5 (release-checklist item).
-- **Finding (verbatim, as relayed):** "MinReleaseForAbi \"first release after 0.9.4\" must be named at the cut (release checklist)".
-- **Reasoning:** `core/ClientAPI.cpp MinReleaseForAbi` returns the placeholder "the first release after 0.9.4" for ABI v7/v8 because no release carrying them exists yet. Whoever cuts the next release replaces it with the actual version string in the same commit that bumps `project(APMF VERSION ...)`.
-- **v9 (2026-09-16, `feat/equip-authority-v9`):** ABI v9 (`SetEquipScope`) joins the same placeholder entry (`case 7: case 8: case 9:`). v7, v8 and v9 all ship together in that first release; the cut names ONE version string for all three.
-- **Assigned:** the next release cut.
-
-### APMF-B11 — v9 enforce pass counts an already-worn unowned item as `skipped-unowned`
-- **Raised:** Fable tier-A on `3d5cab8`, SEV-5; text as relayed by the coordinator.
-- **Severity:** SEV-5.
-- **Finding (verbatim, as relayed):** "skip-before-worn miscounts an already-worn unowned item as skipped-unowned".
-- **Reasoning:** `channels/EquipAuthority.cpp Enforce` runs the scope skip (`competes & denied` / `competes & ~owned`) BEFORE the inventory/worn test, so a declared item the actor already wears in an unowned category is counted and named as skipped rather than `already-worn`. The pass never equips it either way (correct); only the counter and the once-per-signature warn text are off. Fix = move the scope test after the worn test, or count worn-and-unowned separately.
-- **Assigned:** the v9 backlog drain (before the observe-only flip).
-
-### APMF-B12 — v9 skip warn is once-per-distinct-from-last, not once per signature
-- **Raised:** Fable tier-A on `3d5cab8`, SEV-5; text as relayed by the coordinator.
-- **Severity:** SEV-5.
-- **Finding (verbatim, as relayed):** "warn is once-per-distinct-from-last, not once per signature".
-- **Reasoning:** `ActorMemory::lastSkipSig` holds ONE signature, so alternating declarations A, B, A re-warn for A each time it returns; a true once-per-signature guard needs a bounded set per actor. Bounded, logged, never a pile-up; cosmetic.
-- **Assigned:** the v9 backlog drain (before the observe-only flip).
-
 ### APMF-B13 — ch.19 has no way for a client to learn what the claim is actually doing
 - **Raised:** Fable tier-3 on `2d6108f`, SEV-4 (plus a related gap found in the same round); text as relayed by the coordinator.
 - **Severity:** SEV-4.
@@ -186,13 +129,6 @@ SEV-3; F1 promoted by carve-out (b) and FIXED on the branch before merge). Verba
 - **Finding (verbatim, as relayed):** "the uid-0 static fallback MFO lacks (name it in the port comment too)".
 - **Reasoning:** `core/PackageData.cpp` falls back to UNAM uid 0 for the Travel template's `"Place to Travel"` when BOTH name maps miss; MFO's original carries static fallbacks only for the UseMagic template's SPELL (3) and Target (4) and none for a Location, so MFO declines where this port proceeds. Strictly additive and still guarded by the type-name check before any write, but the two implementations can behave differently on a both-maps miss, which matters when comparing their logs. The divergence is now NAMED in the port comment (done in this round); the entry stays open only for the decision of whether to converge the two.
 - **Assigned:** whichever brief routes MFO's loot travel through APMF's copy (the two implementations merge there anyway).
-
-### APMF-B15 — the observe log names package slot 0 whatever slot would be used
-- **Raised:** Fable tier-3 on `2d6108f`, SEV-5; text as relayed by the coordinator.
-- **Severity:** SEV-5.
-- **Finding (verbatim, as relayed):** "observe log prints g_pkg[0] whatever slot would be used".
-- **Reasoning:** In observe mode no slot is allocated (nothing is claimed), so the line had to name SOME package and named the first. Cosmetic, and the fix landed incidentally in the same round the intent was renamed — the observe line no longer names a package at all, it names the destination, the radius and the basis. Kept as a record of the finding; re-check at the drain that no observe line names a slot it did not allocate.
-- **Assigned:** verify-only at the next drain.
 
 ### APMF-B16 — a leg whose ACTOR does not resolve still offers a package and nudges
 - **Raised:** Fable tier-3 on `2d6108f`, SEV-5; text as relayed by the coordinator.
@@ -313,9 +249,6 @@ Raised against `8d6cc26` (`feat/apmf-travel-leg-state`), tier-A Opus 5.5 review 
 
 ### APMF-B26 (SEV-4, threading carve-out, ACCEPTED by decision) -- ch.20 seat vs a cross-thread StopCombat
 Raised against `5dcefa7` (`feat/apmf-target-pin`), tier-A Opus 5.5 review 2026-09-25, finding F2 (reviewer log `scratchpad/agentlogs/review-apmf-target-pin.md`). The ch.20 seats run inside the actor's own `UpdateCombat` job and read `combatController` (and, since the source-deny rework, its `combatGroup` under the group's read lock). A `StopCombat` on ANOTHER thread against the same actor in that window (a script's `Actor.StopCombat`, a package evaluation, a kill -- MFO ENGINE_NOTES 0.47 item 4) frees the controller inline, with no refcount and no lock, under the read. Decision (coordinator, 2026-09-25): accepted as a known exposure, identical to vanilla's own `UpdateCombat` body and to MFO's Targeting hook. It is written into `channels/TargetPin.cpp`'s header. **Closure:** a `StopCombat` seat (Character vtable slot 0xE5, 1.6.1170 `0x6B70A0` / 1.5.97 `0x625920`) sharing a per-actor lock with the combat seats -- assigned to the combat-substrate task, not this repo's ch.20 work.
-
-### APMF-B27 (SEV-4) -- ch.20 vs MFO's own UpdateCombat target hook (hook order)
-Raised against `5dcefa7`, same review, finding F3. MFO's `native/Targeting.cpp` hooks `Character::UpdateCombat` (slot 0xE4) and writes `currentCombatTarget` + `targetHandle` after the engine for any follower with a gambit latch. Both plugins install at kDataLoaded, so whichever `write_vfunc` runs last wraps the other; the order is SKSE's plugin dispatch order, not ours. Since the source-deny rework ch.20 no longer writes at 0xE4 at all (its answer lands inside `UpdateTarget`), so MFO's hook, running after the whole update, writes LAST in every order and overrides the pin for any actor MFO also latched. The ch.20 observer reports this as `OVERWRITTEN` only when MFO's hook is chained INSIDE it (MFO installed first); in the other order the observer's check runs before MFO's write and sees nothing, so the log cannot be relied on to show it. **Closure:** MFO retires its own write for any actor with a live ch.20 claim (MFO's port task).
 
 ### APMF-B28 (SEV-5 x2) -- ch.20 review small items (c) and (d)
 Raised against `5dcefa7`, same review, SEV-5 items (c) and (d). Verbatim: (c) "The seat calls `spdlog::info` while holding the shared lock. This happens once per engagement and causes no lock inversion." (d) "Pin counters are only reported on Release. On revert, `ResetAll` prints a count only." Reviewer note on the re-review of `9afa8d4`: (c) is now MORE FREQUENT -- the not-a-combat-target line is logged up to every 5 s per pin while `g_pinMx` is held shared -- and (d) still applies. Items (a) (INVARIANTS #2 wording) and (e) ("6 conditions") were fixed in round 2.
@@ -506,14 +439,6 @@ APMF-B61 (other open branches may also take B62: renumber at merge if they colli
 
 - FIELD VERDICT 2026-10-06 (Opus, Tuxborn deck logs): CLOSED (pool-pressure part only) -- only owner 0x750012C6 ever minted, peak concurrent 2 (nAPMF 14:44:17, APMF.1 12:46:35) and 0 'pool overflow' lines; the forward-flip rationale question is not answerable from logs and stays open.
 
-### APMF-B63 (SEV-4, tooling) -- hand-claim block: the 1.7.104 Torch / OneHandedBlock 0x0F rows live on APMF's own idmap CSV
-Raised against `1cc0bc9` (`fix/apmf-hand-claim-blocks-equip`, Opus tier-3 review, MERGE), 2026-10-06, finding F6. As
-relayed: the 1.7.104 Torch row depended on an untracked `_research` CSV. Fixed on the branch by committing the evidence
-as `tools/verified_addresses/idmap-1.7.104-apmf.csv` and writing the exact reproducing command into
-Docs/VERIFIED-ADDRESSES.md (hand-maintained section). OPEN residual: move AE ids 45069 (Torch 0x0F, 0x819760; SE 43850)
-and 45056 (OneHandedBlock 0x0F, 0x819300; SE 43837) into the CommonLibSSE-NG fork's 1.7.104 id table / idmap at the
-next fork revision, then retire the APMF-local CSV rows.
-
 ### APMF-B64 (SEV-4) -- hand-claim block: a refused ch.17 equip is never re-issued
 **DRAINED (e32a999, `fix/apmf-post-0.11.0`).** Documented in `Docs/INTEGRATION.md` (ch.17 notes: re-declare after the cast claim releases).
 Same review, finding F4. As relayed: "a refused ch.17 equip is never re-issued; document it in INTEGRATION".
@@ -545,3 +470,101 @@ Raised against `7bf4548` (`fix/apmf-floor-spells-only`, Opus tier-3 review, noth
 Raised against `407bb7a` (`fix/apmf-post-0.11.0`, Opus tier-B review, MERGE OK), 2026-10-06. Text as relayed.
 - B-1 (SEV-5): "`APMF_API.h:2016` and `:2409` still document `kQuery_Failed` as \"an exception was caught; nothing was returned\". It now also means \"a ray was skipped, retry later\". Fixing that comment in a byte-shared header needs a mirrored edit in MFO's copy, so do it in a later header round." Reasoning: comment-only, but the header is byte-shared, so it waits for the next APMF_API.h round.
 
+### Closed by triage 2026-10-06 (moved from OPEN / PENDING; each text kept verbatim, with its CLOSED line)
+
+### APMF-B10 — `MinReleaseForAbi` v7/v8 entry must be named at the cut
+- **Raised:** Fable tier-3 on `a369e9f`, SEV-5; text as relayed by the coordinator.
+- **Severity:** SEV-5 (release-checklist item).
+- **Finding (verbatim, as relayed):** "MinReleaseForAbi \"first release after 0.9.4\" must be named at the cut (release checklist)".
+- **Reasoning:** `core/ClientAPI.cpp MinReleaseForAbi` returns the placeholder "the first release after 0.9.4" for ABI v7/v8 because no release carrying them exists yet. Whoever cuts the next release replaces it with the actual version string in the same commit that bumps `project(APMF VERSION ...)`.
+- **v9 (2026-09-16, `feat/equip-authority-v9`):** ABI v9 (`SetEquipScope`) joins the same placeholder entry (`case 7: case 8: case 9:`). v7, v8 and v9 all ship together in that first release; the cut names ONE version string for all three.
+- **Assigned:** the next release cut.
+
+- CLOSED 2026-10-06 (triage): OBSOLETE -- done: `core/ClientAPI.cpp` `MinReleaseForAbi` (`:226-229`) now returns "0.9.5" for ABI 7, 8, 9 and 10; the "first release after 0.9.4" placeholder is gone (and 18/19/20 name "0.11.0").
+
+### APMF-B15 — the observe log names package slot 0 whatever slot would be used
+- **Raised:** Fable tier-3 on `2d6108f`, SEV-5; text as relayed by the coordinator.
+- **Severity:** SEV-5.
+- **Finding (verbatim, as relayed):** "observe log prints g_pkg[0] whatever slot would be used".
+- **Reasoning:** In observe mode no slot is allocated (nothing is claimed), so the line had to name SOME package and named the first. Cosmetic, and the fix landed incidentally in the same round the intent was renamed — the observe line no longer names a package at all, it names the destination, the radius and the basis. Kept as a record of the finding; re-check at the drain that no observe line names a slot it did not allocate.
+- **Assigned:** verify-only at the next drain.
+
+- CLOSED 2026-10-06 (triage): OBSOLETE -- the observe mode this entry is about no longer exists: APMF-B13 (a) records marth's ruling that Harbinger has no observe mode (removed 2026-09-23), and `channels/Travel.cpp` has no observe line at all (`grep -i observe` finds none), so no observe line can name a slot it did not allocate.
+
+### APMF-B27 (SEV-4) -- ch.20 vs MFO's own UpdateCombat target hook (hook order)
+Raised against `5dcefa7`, same review, finding F3. MFO's `native/Targeting.cpp` hooks `Character::UpdateCombat` (slot 0xE4) and writes `currentCombatTarget` + `targetHandle` after the engine for any follower with a gambit latch. Both plugins install at kDataLoaded, so whichever `write_vfunc` runs last wraps the other; the order is SKSE's plugin dispatch order, not ours. Since the source-deny rework ch.20 no longer writes at 0xE4 at all (its answer lands inside `UpdateTarget`), so MFO's hook, running after the whole update, writes LAST in every order and overrides the pin for any actor MFO also latched. The ch.20 observer reports this as `OVERWRITTEN` only when MFO's hook is chained INSIDE it (MFO installed first); in the other order the observer's check runs before MFO's write and sees nothing, so the log cannot be relied on to show it. **Closure:** MFO retires its own write for any actor with a live ch.20 claim (MFO's port task).
+
+- CLOSED 2026-10-06 (triage): OBSOLETE -- MFO retired its own UpdateCombat target write on the pin route: MFO `native/Targeting.cpp:69-72` (`anyTarget = !g_pinRoute && ...`) and `:155-158` ("MFO's own UpdateCombat target write is RETIRED" when `APMFBridge::TargetPinOffered()`); MFO's port task ClickUp 86e3eu6fd is complete. This entry's closure condition ("MFO retires its own write") is met.
+
+### APMF-B5 — ch.17 Engage log still says "(SetEquipSet, ABI v7)"
+- **Raised:** Fable tier-3 on `a369e9f` (feat/equip-authority-v8), SEV-5; text as relayed by the coordinator.
+- **Severity:** SEV-5.
+- **Finding (verbatim, as relayed):** ":364 Engage log \"(SetEquipSet, ABI v7)\"".
+- **Reasoning:** `channels/EquipAuthority.cpp` `Engage` names only the v7 call; v8's `SetEquipSetEx` is the other declaration path. Cosmetic log text; a reader grepping for v8 adoption would not see it here.
+- **Assigned:** none; drain with the next ch.17 batch.
+
+- CLOSED 2026-10-06 (triage): SUPERSEDED by ClickUp 86e3jwmk7 -- log wording of ch.17's `Engage` ("SetEquipSet, ABI v7"); ch.17's declared-set path is what the rework retires ("most of the declaration path"). The wording is reviewed again only if the channel survives for the no-weighting cases.
+
+### APMF-B6 — the hand-EQUP resolve error over-claims "every handed entry skipped"
+- **Raised:** Fable tier-3 on `a369e9f`, SEV-5; text as relayed by the coordinator.
+- **Severity:** SEV-5.
+- **Finding (verbatim, as relayed):** ":226 error text over-claims \"every handed entry skipped\"".
+- **Reasoning:** `Enforce`'s `resolveHandSlots` logs "every handed entry in this pass is skipped" when EITHER hand form fails to resolve, but the per-entry check skips only an entry whose OWN hand slot is null (`if (!equipSlot) { ++unresolved; continue; }`); with one hand resolving, entries for that hand are still equipped. Both forms come from Skyrim.esm at load index 00, so the branch is not expected to fire; the text should say "every entry declared for that hand".
+- **Assigned:** none.
+
+- CLOSED 2026-10-06 (triage): SUPERSEDED by ClickUp 86e3jwmk7 -- error text in ch.17 `Enforce`'s hand-slot resolve (`resolveHandSlots`); the declared-set enforce pass is what the rework replaces with weighting.
+
+### APMF-B7 — the once-logged claim refusal reason can be stale after a later Install refusal
+- **Raised:** Fable tier-3 on `a369e9f`, SEV-5; text as relayed by the coordinator.
+- **Severity:** SEV-5.
+- **Finding (verbatim, as relayed):** "ControlMap.cpp:82-88 once-logged refusal reason vs a later Install refusal".
+- **Reasoning:** `EnqueueRequest` logs the seat-not-installed refusal ONCE with `NotInstalledReason()` at that moment. A client that requests before kDataLoaded logs "not yet installed (Install runs at kDataLoaded)"; if `Install()` then refuses for another reason (INI off, site-verify), that reason is never printed by this line (the `[apmf][equip-sink]` install line still carries it). Fix shape: log once PER DISTINCT reason string, not once ever.
+- **Assigned:** none.
+
+- CLOSED 2026-10-06 (triage): SUPERSEDED by ClickUp 86e3jwmk7 -- the once-logged seat-not-installed refusal reason is the ch.17 declaration claim's refusal path in `ControlMap::EnqueueRequest`; the declaration road is retired by the rework.
+
+### APMF-B8 — the "seat not installed" branch in Enforce is unreachable under the v8 refusal
+- **Raised:** Fable tier-3 on `a369e9f`, SEV-5; text as relayed by the coordinator.
+- **Severity:** SEV-5.
+- **Finding (verbatim, as relayed):** "the unreachable \"seat not installed\" branch in Enforce :176-186".
+- **Reasoning:** since `EnqueueRequest` refuses a ch.17 claim while the seat is down, no claim exists for `Enforce` to run against when `Installed()` is false (Install runs once and never uninstalls), so the `g_seatMissing` error path is dead code. Kept as a defensive guard; its message ("declaration ... NOT enforced") describes a state that cannot arise. Either delete it or reword it as an invariant-violation log.
+- **Assigned:** none.
+
+- CLOSED 2026-10-06 (triage): SUPERSEDED by ClickUp 86e3jwmk7 -- the unreachable "seat not installed" branch is in ch.17 `Enforce` (`g_seatMissing`); `Enforce` is the declared-set pass the rework replaces.
+
+### APMF-B9 — queued-slot carriage through the engine's deferred apply is unobserved
+- **Raised:** Fable tier-3 on `a369e9f`, SEV-5; text as relayed by the coordinator.
+- **Severity:** SEV-5 (probe requirement added to `Docs/INTEGRATION.md` criterion 7 in the closing round).
+- **Finding (verbatim, as relayed):** "queued-slot carriage unobserved (add the probe requirement: one `hand=left` equip line followed by visible dual-wield)".
+- **Reasoning:** `Enforce` passes the `BGSEquipSlot` to `EquipObject(queue=true)`; the slot's survival through the AIProcess queue and the `QueuedApply` re-entry (38906/37950) is argued from the `EquipData` layout, not observed. CLAUDE.md principle 5: a path exists is not a path runs. Closed by the field log, not by code.
+- **Assigned:** the first v8 deck session.
+
+- CLOSED 2026-10-06 (triage): SUPERSEDED by ClickUp 86e3jwmk7 -- whether the queued hand slot survives the engine's deferred apply is an `Enforce` (declared-set equip) question; if the declaration road is retired the probe requirement goes with it.
+
+### APMF-B11 — v9 enforce pass counts an already-worn unowned item as `skipped-unowned`
+- **Raised:** Fable tier-A on `3d5cab8`, SEV-5; text as relayed by the coordinator.
+- **Severity:** SEV-5.
+- **Finding (verbatim, as relayed):** "skip-before-worn miscounts an already-worn unowned item as skipped-unowned".
+- **Reasoning:** `channels/EquipAuthority.cpp Enforce` runs the scope skip (`competes & denied` / `competes & ~owned`) BEFORE the inventory/worn test, so a declared item the actor already wears in an unowned category is counted and named as skipped rather than `already-worn`. The pass never equips it either way (correct); only the counter and the once-per-signature warn text are off. Fix = move the scope test after the worn test, or count worn-and-unowned separately.
+- **Assigned:** the v9 backlog drain (before the observe-only flip).
+
+- CLOSED 2026-10-06 (triage): SUPERSEDED by ClickUp 86e3jwmk7 -- the v9 enforce pass's `skipped-unowned` counter is part of ch.17 `Enforce`'s scope skip, the declared-set pass the rework replaces.
+
+### APMF-B12 — v9 skip warn is once-per-distinct-from-last, not once per signature
+- **Raised:** Fable tier-A on `3d5cab8`, SEV-5; text as relayed by the coordinator.
+- **Severity:** SEV-5.
+- **Finding (verbatim, as relayed):** "warn is once-per-distinct-from-last, not once per signature".
+- **Reasoning:** `ActorMemory::lastSkipSig` holds ONE signature, so alternating declarations A, B, A re-warn for A each time it returns; a true once-per-signature guard needs a bounded set per actor. Bounded, logged, never a pile-up; cosmetic.
+- **Assigned:** the v9 backlog drain (before the observe-only flip).
+
+- CLOSED 2026-10-06 (triage): SUPERSEDED by ClickUp 86e3jwmk7 -- the v9 skip-warn signature guard (`ActorMemory::lastSkipSig`) is part of ch.17 `Enforce`, the declared-set pass the rework replaces.
+
+### APMF-B63 (SEV-4, tooling) -- hand-claim block: the 1.7.104 Torch / OneHandedBlock 0x0F rows live on APMF's own idmap CSV
+Raised against `1cc0bc9` (`fix/apmf-hand-claim-blocks-equip`, Opus tier-3 review, MERGE), 2026-10-06, finding F6. As
+relayed: the 1.7.104 Torch row depended on an untracked `_research` CSV. Fixed on the branch by committing the evidence
+as `tools/verified_addresses/idmap-1.7.104-apmf.csv` and writing the exact reproducing command into
+Docs/VERIFIED-ADDRESSES.md (hand-maintained section). OPEN residual: move AE ids 45069 (Torch 0x0F, 0x819760; SE 43850)
+and 45056 (OneHandedBlock 0x0F, 0x819300; SE 43837) into the CommonLibSSE-NG fork's 1.7.104 id table / idmap at the
+next fork revision, then retire the APMF-local CSV rows.
+
+- CLOSED 2026-10-06 (triage): SUPERSEDED by ClickUp 86e3jwgvy -- the open residual (move AE ids 45069 Torch 0x0F and 45056 OneHandedBlock 0x0F into the CommonLibSSE-NG fork's 1.7.104 id table / idmap and retire the APMF-local CSV rows) is exactly the "move Harbinger/MFO verified engine bindings into our CommonLib fork" task (Fork F3).
