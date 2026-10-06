@@ -1,3 +1,10 @@
+## v0.11.1 -- Line of sight no longer sees false walls
+
+- **The line-of-sight check no longer treats the caster's own body, the target's body, invisible trigger and sound volumes, or stair helpers as walls.** Other characters and solid objects still block.
+- **Line of sight for casts and targeting stays fresh while a spell waits.**
+- **Blocked line-of-sight results now log what blocked them.**
+- **Backlog drain.** Best-claim selection and the SpaceQuery skipped-ray check.
+
 ## v0.11.0 -- Animated casts for every spell, line of sight and combat approach
 
 - **A mod can now reserve an NPC's free hand against spells only (ABI v20).** Add `kCastFlag_FloorSpellsOnly` to a hand floor (`kCastFlag_DenyHandOnly`). No other spell, scroll or staff can start in that hand. A one-handed weapon, a shield or a torch can still go in. A two-hander, a bow or bare fists need both hands, so they are still turned down while a cast claim holds the other hand. A floor without the flag still blocks everything, and so does a hand a cast claim drives. In the field a melee follower's floored hand turned down his bow, swords and fists 119 times in one 40 second fight. The swords now pass. Mods that floor a hand should set the flag on ABI v20 and newer.
