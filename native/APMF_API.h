@@ -745,12 +745,15 @@ namespace APMF_API {
                                      //       While this claim is in force the actor's own standard
                                      //       combat area is centred on X with radius R. So the actor
                                      //       walks toward X in its combat gait, keeps fighting and
-                                     //       casting with both hands the whole way (the Action half is
-                                     //       untouched), and once within R it keeps moving tactically
-                                     //       inside R. The area's two leaks into OTHER facets -- the
-                                     //       target selector's score and the invisibility / bound
-                                     //       weapon cast decisions -- see the engine's own area, not
-                                     //       this one.
+                                     //       casting with both hands the whole way, and once within R
+                                     //       it keeps moving tactically inside R. The engine also reads
+                                     //       the area OUTSIDE movement: the attack and bash pick (an
+                                     //       attack whose end point is outside the area is rejected),
+                                     //       the target selector's score, the invisibility / bound
+                                     //       weapon cast decisions and the unreachable-target check.
+                                     //       Every one of those is answered with the engine's OWN
+                                     //       area, not the bound, so no other action is dropped or
+                                     //       changed by the claim.
                                      //
                                      //       THEY FORCE, THEY WIN. A package's HOLD POSITION area
                                      //       outranks the standard area in the engine's own pick, and

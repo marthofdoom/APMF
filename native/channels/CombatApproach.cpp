@@ -2,10 +2,13 @@
 #include "channels/CombatApproach.h"
 #include "core/Allowance.h"   // SeatVerified / DerivesFrom / RuntimeSupported (mit-3.7 F1, G1)
 #include "core/Clock.h"
+#include "core/CombatBehaviorRE.h"   // kLeaves: the Attack / Bash / CheckUnreachableTarget leaf vtables (S5)
 #include "core/ControlMap.h"
+#include "core/Hook.h"   // OnMainThread (review F6: the save-thread check)
 #include "core/Log.h"
 #include "core/Registry.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <memory>
@@ -26,7 +29,9 @@ extern "C" __declspec(dllimport) unsigned long __stdcall GetPrivateProfileIntA(
 //
 // THE FACET. While the claim is in force Harbinger owns ONE thing: where the actor's in-combat
 // movement is bounded to -- "within R of X". Attack selection, both hands' casts, the combat
-// target, blocking, equip and the combat behaviour itself keep running untouched.
+// target, blocking, equip and the combat behaviour itself keep deciding as they would without
+// the claim: every place the engine's ACTION side reads the combat area (S3 / S4 / S5 below) is
+// answered with the engine's own area, never the bound.
 //
 // HOW THE ENGINE DECIDES IN-COMBAT MOVEMENT (disassembly of all three unpacked images,
 // 2026-10-05; scratchpad agentlogs/apmf-combat-moveto.md has the listings and addresses).
@@ -79,6 +84,11 @@ extern "C" __declspec(dllimport) unsigned long __stdcall GetPrivateProfileIntA(
 //      the combat TARGET is inside the current area (AE helper 0x55B6D0 -> vfunc 0x05); inside the
 //      bracket it sees the engine's own area, so those casts are decided exactly as without the
 //      claim. (EquipGate hooks four of the same slots; both chain, either order.)
+//   S5 CombatBehaviorAttack / CombatBehaviorBash act() (slot 0x02) and CombatBehaviorCheck-
+//      UnreachableTarget update() (slot 0x04): deny BRACKETS (review F1 / F4 on 274d7e4). The
+//      attack pick rejects every attack whose end point is outside the current area, and the
+//      unreachable-target check skips its reachability test for a target outside it; inside the
+//      bracket both see the engine's own area. (ActionGate hooks the two act() slots too; chains.)
 //   S6 CombatAreaStandard vfunc 0x06 (IsInside(NiPoint3*, extra)): OBSERVE-ONLY. When the point
 //      is the claimed actor's own position (IsActorInArea passes &actor->data.location), the
 //      engine's answer is recorded: that is the movement selector's own "outside -> return to
@@ -92,11 +102,13 @@ extern "C" __declspec(dllimport) unsigned long __stdcall GetPrivateProfileIntA(
 // HoldPosition area -- WINS by the engine's own priority (they force, they win); the engine's
 // forced reselect at flee start (AE 33258) -- restores the engine's pick for the rest of that
 // tree step only, and Flee outranks Return To Combat Area anyway. Facets the area switches on
-// that are NOT movement -- the target score penalty and the invisibility / bound-item cast
-// test -- are DENIED (S3/S4 show them the engine's own area). The Acquire Weapon link (it looks
-// for dropped weapons inside the area) sits INSIDE the engine's Movement half and is part of
-// the facet. Nothing is undone on release beyond the area: the engine's next update (<= 0.25 s)
-// recomputes it from its own state.
+// that are NOT movement are DENIED -- every engine reader of the area classified by tree half in
+// Docs/DENY-COMPLETENESS-AUDIT.md row 24: the attack / bash pick and CheckUnreachableTarget (S5),
+// the target score penalty (S3), the invisibility / bound-item cast test (S4). The Acquire Weapon
+// link (it looks for dropped weapons inside the area) sits INSIDE the engine's Movement half and
+// is part of the facet. On release the engine's next update (<= 0.25 s) recomputes the area from
+// its own state; an area the engine DEACTIVATED (its own path back to X failed) is put back and
+// re-activated by S3 on the actor's own combat thread (review F3).
 //
 // SAVE. The current area is saved by its INDEX in the controller's areas array (AE 0x559DB0),
 // and the standard area itself is saved with its fields, so RestoreBeforeSave (kSaveGame, before
@@ -138,8 +150,15 @@ namespace {
 
     constexpr float         kBoundPeriod  = 0.25f;   // our refresh while the bound is carried
     constexpr std::uint64_t kPollMs       = 100;
+    // The stall, verdict and purge windows run on the WORLD-TICK clock below, never the wall
+    // clock (review F2 on 274d7e4): the seats run on game time, and Poll does not run while a
+    // menu pauses the game, so a wall clock would end a live claim (and purge its record before
+    // S1 can restore the engine geometry) after any pause longer than the window.
     constexpr std::uint64_t kStallMs      = 3000;    // 12 x the 0.25 s period: a FLOOR (principle 9)
     constexpr std::uint64_t kVerdictMs    = 1500;    // an engine inside/outside answer older than this is stale
+    constexpr std::uint64_t kPurgeMs      = 5000;    // a record S1 has not rewritten for this long is dead
+    constexpr std::uint64_t kPurgeDeadMs  = 60000;   // ...unless it still waits for its F3 reactivation
+    constexpr std::uint64_t kTickClampMs  = 100;     // one Poll-to-Poll gap counts at most this much world time
     constexpr std::uint64_t kLineMs       = 3000;    // per-actor status line
     constexpr std::uint64_t kHeartbeatMs  = 30000;
 
@@ -195,6 +214,7 @@ namespace {
     std::atomic<bool>        g_installTried{ false };
     std::atomic<const char*> g_notInstalledReason{ "before kDataLoaded (the seats install there)" };
     std::uintptr_t           g_vtStd = 0;
+    std::uintptr_t           g_vtSel = 0;   // CombatTargetSelectorStandard (S3's per-call identity check)
 
     using Update_t      = void (*)(void*);
     using IsInsideLoc_t = bool (*)(void*, const void*, float);
@@ -254,19 +274,55 @@ namespace {
         Geo         vanilla{};
         float       vanillaPeriod = 1.0f;
         Geo         ours{};
-        std::uint64_t ms = 0;             // when S1 wrote it (S1 rewrites it every 0.25 s while it carries the bound)
+        std::uint64_t ms = 0;             // WORLD time S1 wrote it (it rewrites it every 0.25 s while carrying the bound)
+        bool        reactivate = false;   // F3: the claim is over; S3 must put the engine's area back (geometry,
+                                          //   period and, if the engine's failed path deactivated it, +0x2C)
     };
     std::shared_mutex                         g_areaMx;
     std::unordered_map<void*, Touched>        g_touched;
     std::atomic<std::size_t>                  g_touchedCount{ 0 };
+    std::atomic<std::size_t> g_reactivateCount{ 0 };   // records with reactivate set (S3's pre-gate)
+
+    // F3 (review on 274d7e4): put the engine's own area back into one recorded area -- the vanilla
+    // geometry and period, and +0x2C (active) when the engine's own Return To Combat Area path to X
+    // failed and cleared it (RTCA update AE 0x8AD2C0, path status 5): UpdateAreas never updates or
+    // selects an inactive area, so without this the actor would fight the rest of that fight with no
+    // standard area. Only an area that still carries exactly what S1 wrote is written. Caller holds
+    // g_areaMx (unique) and has proven the area alive.
+    bool PutBack(void* a_area, const Touched& t) {
+        if (*reinterpret_cast<const std::uintptr_t*>(a_area) != g_vtStd || !SameGeo(ReadGeo(a_area), t.ours))
+            return false;
+        WriteGeo(a_area, t.vanilla);
+        At<float>(a_area, kAreaPeriod) = t.vanillaPeriod;
+        if (t.reactivate) At<std::uint8_t>(a_area, kAreaActive) = 1;   // only a FINISHED claim's area
+        return true;
+    }
+
+    // Mark every record of `a_actor` for F3 (End / Release; game thread).
+    void MarkReactivate(RE::FormID a_actor) {
+        std::unique_lock lk(g_areaMx);
+        for (auto& [area, t] : g_touched)
+            if (t.actor == a_actor && !t.reactivate) {
+                t.reactivate = true;
+                g_reactivateCount.fetch_add(1, std::memory_order_relaxed);
+            }
+    }
 
     thread_local int t_view = 0;   // > 0: a deny bracket (S3/S4) is open on this thread
 
     // ---- RULE C counters (printed even at zero) ----
     std::atomic<std::uint64_t> g_s1Seen{ 0 }, g_s1Applied{ 0 }, g_s1Restored{ 0 }, g_s1Yielded{ 0 },
         g_s1Disabled{ 0 }, g_s2Vanilla{ 0 }, g_s3Brackets{ 0 }, g_s4Brackets{ 0 }, g_s6Verdicts{ 0 },
-        g_s6Outside{ 0 }, g_ended{ 0 };
+        g_s6Outside{ 0 }, g_ended{ 0 }, g_s5Brackets{ 0 }, g_s3PutBack{ 0 };
     std::atomic<bool>          g_s1Observed{ false };
+
+    // WORLD-TICK CLOCK (channels/Idle.cpp / channels/Travel.cpp precedent). Advanced by Poll on
+    // the game thread, every call, by the wall gap CLAMPED to kTickClampMs: a pause, a load
+    // screen or a hitch adds at most one clamp. Read by the seats (combat threads) lock-free.
+    // Starts at 1 so 0 can mean "never".
+    std::atomic<std::uint64_t> g_worldMs{ 1 };
+    std::uint64_t              g_lastTickMs = 0;   // game thread only
+    std::uint64_t WorldNow() { return g_worldMs.load(std::memory_order_relaxed); }
     std::uint64_t              g_lastHeartbeatMs = 0;
 
     void SetState(Entry& e, std::uint32_t s, std::uint64_t now) {
@@ -328,6 +384,7 @@ namespace {
                     At<float>(a_area, kAreaPeriod) = it->second.vanillaPeriod;
                     g_s1Restored.fetch_add(1, std::memory_order_relaxed);
                 }
+                if (it->second.reactivate) g_reactivateCount.fetch_sub(1, std::memory_order_relaxed);
                 g_touched.erase(it);
                 g_touchedCount.store(g_touched.size(), std::memory_order_relaxed);
             }
@@ -345,7 +402,7 @@ namespace {
         const auto eit = g_entries.find(fid);
         if (eit == g_entries.end() || !eit->second->live) return;
         Entry& e = *eit->second;
-        const std::uint64_t now = apmf::clock::MonotonicMs();
+        const std::uint64_t now = WorldNow();
         e.lastSeenMs.store(now, std::memory_order_relaxed);
 
         std::uint32_t sf = 0;
@@ -376,7 +433,7 @@ namespace {
             t.ms            = now;
             WriteGeo(a_area, t.ours);
             At<float>(a_area, kAreaPeriod) = kBoundPeriod;
-            g_touched[a_area] = t;
+            g_touched[a_area] = t;   // step 1 erased any previous record of this area
             g_touchedCount.store(g_touched.size(), std::memory_order_relaxed);
         }
         e.applied.fetch_add(1, std::memory_order_relaxed);
@@ -439,7 +496,7 @@ namespace {
         std::shared_lock elk(g_entryMx);
         if (const auto eit = g_entries.find(fid); eit != g_entries.end()) {
             eit->second->inside.store(answer ? 2u : 1u, std::memory_order_relaxed);
-            eit->second->insideMs.store(apmf::clock::MonotonicMs(), std::memory_order_relaxed);
+            eit->second->insideMs.store(WorldNow(), std::memory_order_relaxed);
             if (!answer) eit->second->outsideCount.fetch_add(1, std::memory_order_relaxed);
         }
         return answer;
@@ -455,8 +512,33 @@ namespace {
         ViewBracket& operator=(const ViewBracket&) = delete;
     };
 
+    // CombatTargetSelectorStandard +0x10 = its CombatController (both constructors on all three builds;
+    // channels/TargetPin.cpp reads it under the same per-call vtable-identity guard).
+    constexpr std::size_t kSelectorCtl = 0x10;
+
+    // F3: on the actor's OWN combat thread (the selector runs inside its controller's update), put the
+    // engine's area back into every finished record of this controller -- the only safe place to write
+    // an area S1 can no longer reach (an inactive area gets no Update call).
+    void ReactivateFor(void* a_self) {
+        if (*reinterpret_cast<const std::uintptr_t*>(a_self) != g_vtSel) return;
+        void* const ctl = At<void*>(a_self, kSelectorCtl);
+        if (!ctl) return;
+        std::unique_lock lk(g_areaMx);
+        for (auto it = g_touched.begin(); it != g_touched.end();) {
+            if (!it->second.reactivate || it->second.ctl != ctl) { ++it; continue; }
+            bool member = false;   // proven alive: in this (running) controller's own areas array
+            for (auto* a : static_cast<RE::CombatController*>(ctl)->GetRuntimeData().areas)
+                if (static_cast<void*>(a) == it->first) { member = true; break; }
+            if (member && PutBack(it->first, it->second)) g_s3PutBack.fetch_add(1, std::memory_order_relaxed);
+            g_reactivateCount.fetch_sub(1, std::memory_order_relaxed);
+            it = g_touched.erase(it);
+        }
+        g_touchedCount.store(g_touched.size(), std::memory_order_relaxed);
+    }
+
     std::uint32_t* SelectThunk(void* a_self, std::uint32_t* a_out) {
         const auto orig = reinterpret_cast<Select_t>(g_origSelect.load(std::memory_order_relaxed));
+        if (a_self && g_reactivateCount.load(std::memory_order_relaxed) != 0) ReactivateFor(a_self);
         if (g_touchedCount.load(std::memory_order_relaxed) == 0) return orig(a_self, a_out);
         g_s3Brackets.fetch_add(1, std::memory_order_relaxed);
         ViewBracket b;
@@ -472,6 +554,40 @@ namespace {
         g_s4Brackets.fetch_add(1, std::memory_order_relaxed);
         ViewBracket b;
         return orig(a_item, a_ctl);
+    }
+
+    // ======================================================================
+    // S5 -- deny brackets on the ACTION half's area consumers (review F1 / F4 on 274d7e4).
+    //   CombatBehaviorAttack and CombatBehaviorBash act() (slot 0x02; AE 0x8A5230 / 0x86C4E0,
+    //   SE 0x80E9A0 / 0x7D5350, 1.7.104 0x8BA700 / 0x881720) run the attack pick (AE 0x8A28B0),
+    //   which rejects every attack whose END POINT is outside the current area (AE 0x8A2EE0 ->
+    //   IsInCombatArea at 0x8A3186): with the bound around X, a melee actor outside it would
+    //   attack nothing. CheckUnreachableTarget update() (slot 0x04; AE 0x8AD220, SE 0x816450,
+    //   1.7.104 0x8C2790) skips its reachability test when the TARGET is outside the area (AE
+    //   0x8A6660, area test at 0x8A6B29). Inside the bracket both see the engine's own area.
+    // ======================================================================
+    using NodeAct_t    = void* (*)(void*, void*);   // apmf::cbt::Act_t (slot 0x02)
+    using NodeUpdate_t = void (*)(void*, void*);    // apmf::cbt::Update_t (slot 0x04)
+    std::atomic<std::uintptr_t> g_vtAttack{ 0 }, g_vtBash{ 0 };
+    std::atomic<std::uintptr_t> g_origAttackAct{ 0 }, g_origBashAct{ 0 }, g_origUnreachableUpdate{ 0 };
+
+    void* LeafActThunk(void* a_this, void* a_control) {
+        const auto vt   = a_this ? *reinterpret_cast<const std::uintptr_t*>(a_this) : 0;
+        const auto orig = reinterpret_cast<NodeAct_t>(
+            (vt == g_vtBash.load(std::memory_order_relaxed) ? g_origBashAct : g_origAttackAct)
+                .load(std::memory_order_relaxed));
+        if (g_touchedCount.load(std::memory_order_relaxed) == 0) return orig(a_this, a_control);
+        g_s5Brackets.fetch_add(1, std::memory_order_relaxed);
+        ViewBracket b;
+        return orig(a_this, a_control);
+    }
+
+    void UnreachableUpdateThunk(void* a_this, void* a_control) {
+        const auto orig = reinterpret_cast<NodeUpdate_t>(g_origUnreachableUpdate.load(std::memory_order_relaxed));
+        if (g_touchedCount.load(std::memory_order_relaxed) == 0) return orig(a_this, a_control);
+        g_s5Brackets.fetch_add(1, std::memory_order_relaxed);
+        ViewBracket b;
+        orig(a_this, a_control);
     }
 
     // ======================================================================
@@ -503,6 +619,7 @@ namespace {
             tgt = e.target; r = e.radius; d = e.distance;
         }
         g_ended.fetch_add(1, std::memory_order_relaxed);
+        MarkReactivate(a_id);   // F3: S3 puts the engine's area back on the actor's own combat thread
         const std::string line = fmt::format(
             "[ch.24] {} approach ENDED for 0x{} -> X 0x{} (R {:.0f}, last distance {:.0f}): the area carried the bound "
             "{} time(s), the engine judged the actor outside it {} time(s); claim h={} released by Harbinger.",
@@ -580,6 +697,7 @@ namespace {
                     applied    = e.applied.load(std::memory_order_relaxed);
                 }
             }
+            if (had) MarkReactivate(id);   // F3
             if (had)
                 spdlog::info("[ch.24] 0x{} combat-approach released ({}); the area carried the bound {} time(s). "
                              "The engine's own combat area answers again from its next update.",
@@ -630,6 +748,24 @@ namespace apmf::combatapproach {
             RE::VTABLE_CombatInventoryItemMagicT_CombatInventoryItemPotion_CombatMagicCasterBoundItem_[0],
             RE::VTABLE_CombatInventoryItemMagicT_CombatInventoryItemShout_CombatMagicCasterBoundItem_[0],
         };
+        auto leafId = [](std::string_view a_name) -> const REL::VariantID* {
+            for (const auto& l : apmf::cbt::kLeaves)
+                if (a_name == l.name) return &l.vtbl;
+            return nullptr;
+        };
+        const REL::VariantID* idAttack = leafId("CombatBehaviorAttack");
+        const REL::VariantID* idBash   = leafId("CombatBehaviorBash");
+        const REL::VariantID* idUnr    = leafId("CombatBehaviorCheckUnreachableTarget");
+        if (!idAttack || !idBash || !idUnr) {
+            spdlog::error("[ch.24] a leaf is missing from apmf::cbt::kLeaves (Attack / Bash / CheckUnreachableTarget).");
+            ok = false;
+        } else {
+            REL::Relocation<std::uintptr_t> a{ *idAttack }, b{ *idBash }, u{ *idUnr };
+            ok = apmf::allowance::SeatVerified(a.address(), "CombatApproach.Leaf.CombatBehaviorAttack (0x02 bracket)") && ok;
+            ok = apmf::allowance::SeatVerified(b.address(), "CombatApproach.Leaf.CombatBehaviorBash (0x02 bracket)") && ok;
+            ok = apmf::allowance::SeatVerified(u.address(),
+                                               "CombatApproach.Leaf.CombatBehaviorCheckUnreachableTarget (0x04 bracket)") && ok;
+        }
         REL::Relocation<void*> expectedTD{ RE::RTTI_CombatInventoryItem };
         ok = apmf::allowance::SeatVerified(reinterpret_cast<std::uintptr_t>(expectedTD.get()),
                                            "CombatApproach.RTTI.CombatInventoryItem") && ok;
@@ -654,11 +790,20 @@ namespace apmf::combatapproach {
         }
 
         g_vtStd = vtStd.address();
+        g_vtSel = vtSel.address();
         for (const auto& id : kItemVtables) {
             REL::Relocation<std::uintptr_t> vt{ id };
             g_origShouldEquip[vt.address()] = vt.write_vfunc(kSlotShouldEquip, &ShouldEquipThunk);
         }
         g_origSelect.store(vtSel.write_vfunc(kSlotSelect, &SelectThunk), std::memory_order_relaxed);
+        {   // S5 (all deny brackets go in before S1 can carry a bound)
+            REL::Relocation<std::uintptr_t> a{ *idAttack }, b{ *idBash }, u{ *idUnr };
+            g_vtAttack.store(a.address(), std::memory_order_relaxed);
+            g_vtBash.store(b.address(), std::memory_order_relaxed);
+            g_origAttackAct.store(a.write_vfunc(0x02, &LeafActThunk), std::memory_order_relaxed);
+            g_origBashAct.store(b.write_vfunc(0x02, &LeafActThunk), std::memory_order_relaxed);
+            g_origUnreachableUpdate.store(u.write_vfunc(0x04, &UnreachableUpdateThunk), std::memory_order_relaxed);
+        }
         g_origIsInsidePos.store(vtStd.write_vfunc(kSlotIsInsidePos, &IsInsidePosThunk), std::memory_order_relaxed);
         g_origIsInsideLoc.store(vtStd.write_vfunc(kSlotIsInsideLoc, &IsInsideLocThunk), std::memory_order_relaxed);
         g_origUpdate.store(vtStd.write_vfunc(kSlotUpdate, &UpdateThunk), std::memory_order_relaxed);
@@ -666,7 +811,8 @@ namespace apmf::combatapproach {
         spdlog::info("[ch.24] combat-approach seats installed: CombatAreaStandard Update (0x0B, carries the bound), "
                      "IsInside(WorldLocation) (0x05, the engine's own area inside a deny bracket), IsInside(point) "
                      "(0x06, observe-only); deny brackets on CombatTargetSelectorStandard SelectTarget (0x06) and "
-                     "{} invisibility / bound-item CheckShouldEquip (0x0F). All chaining.",
+                     "{} invisibility / bound-item CheckShouldEquip (0x0F), Attack / Bash act (0x02) and "
+                     "CheckUnreachableTarget update (0x04). All chaining.",
                      g_origShouldEquip.size());
     }
 
@@ -679,22 +825,34 @@ namespace apmf::combatapproach {
 
     void Poll() {
         if (!g_installed.load(std::memory_order_relaxed)) return;
+        const std::uint64_t now = apmf::clock::MonotonicMs();
+        if (g_lastTickMs != 0)
+            g_worldMs.fetch_add((std::min)(now - g_lastTickMs, kTickClampMs), std::memory_order_relaxed);
+        g_lastTickMs = now;
+        const std::uint64_t wnow = WorldNow();
         static std::uint64_t s_lastMs = 0;
-        const std::uint64_t  now      = apmf::clock::MonotonicMs();
         if (now - s_lastMs < kPollMs) return;
         s_lastMs = now;
 
-        // A record S1 has not rewritten for 5 s belongs to an area the engine no longer updates (its
-        // fight ended and the controller is gone, or the engine deactivated it): forget it. Keys are
+        // A record S1 has not rewritten for kPurgeMs of WORLD time belongs to an area the engine no
+        // longer updates (its fight ended and the controller is gone): forget it. A record waiting for
+        // its F3 reactivation is kept far longer (kPurgeDeadMs), so S3 or RestoreBeforeSave can put the
+        // engine's area back first. Keys are
         // never dereferenced here -- only S1 (with `this` == the key) and RestoreBeforeSave (after a
         // live-controller membership test) ever touch the area itself.
         if (g_touchedCount.load(std::memory_order_relaxed) != 0) {
             static std::uint64_t s_lastPurgeMs = 0;
-            if (now - s_lastPurgeMs >= 1000) {
-                s_lastPurgeMs = now;
+            if (wnow - s_lastPurgeMs >= 1000) {
+                s_lastPurgeMs = wnow;
                 std::unique_lock lk(g_areaMx);
-                for (auto it = g_touched.begin(); it != g_touched.end();)
-                    it = (now - it->second.ms > 5000) ? g_touched.erase(it) : std::next(it);
+                for (auto it = g_touched.begin(); it != g_touched.end();) {
+                    if (wnow - it->second.ms > (it->second.reactivate ? kPurgeDeadMs : kPurgeMs)) {
+                        if (it->second.reactivate) g_reactivateCount.fetch_sub(1, std::memory_order_relaxed);
+                        it = g_touched.erase(it);
+                    } else {
+                        ++it;
+                    }
+                }
                 g_touchedCount.store(g_touched.size(), std::memory_order_relaxed);
             }
         }
@@ -788,7 +946,7 @@ namespace apmf::combatapproach {
                 sf      = e.seatFlags.load(std::memory_order_relaxed);
                 outside = e.outsideCount.load(std::memory_order_relaxed);
                 const std::uint64_t insMs = e.insideMs.load(std::memory_order_relaxed);
-                inside = (insMs != 0 && now - insMs <= kVerdictMs) ? e.inside.load(std::memory_order_relaxed) : 0;
+                inside = (insMs != 0 && wnow - insMs <= kVerdictMs) ? e.inside.load(std::memory_order_relaxed) : 0;
 
                 if (!inCombat) {
                     e.inCombatSinceMs = 0;
@@ -797,7 +955,7 @@ namespace apmf::combatapproach {
                     next = APMF_API::kApproachState_Leashed;
                 } else {
                     if (!e.live) {   // (re)starting to carry the bound: the stall clock starts now
-                        e.inCombatSinceMs = now;
+                        e.inCombatSinceMs = wnow;
                         e.lastSeenMs.store(0, std::memory_order_relaxed);
                     }
                     live = true;
@@ -815,7 +973,7 @@ namespace apmf::combatapproach {
                     // Principle 7: a bound the engine stopped carrying is a FAILURE, said out loud.
                     const std::uint64_t seen  = e.lastSeenMs.load(std::memory_order_relaxed);
                     const std::uint64_t since = seen != 0 ? seen : e.inCombatSinceMs;
-                    if (!endWhy && now - since > kStallMs) {
+                    if (!endWhy && wnow - since > kStallMs) {
                         endWhy   = seen != 0 ? "the engine stopped updating the bound for 3 s (its own path to X failed "
                                                "and it deactivated the area, or its combat update stopped):"
                                              : "the engine never updated the actor's standard combat area in 3 s of "
@@ -862,15 +1020,26 @@ namespace apmf::combatapproach {
         g_lastHeartbeatMs = now;
         spdlog::info("[ch.24] heartbeat: {} claim(s); standard-area updates seen {} (any actor), bound applied {}, "
                      "engine geometry restored first {}, outranked {}, disabled {}; vanilla answers inside deny "
-                     "brackets {} (target-selector brackets {}, inv/bound brackets {}); engine inside/outside "
-                     "verdicts on the bound {} ({} outside); ended by Harbinger {}; areas carrying a bound now {}.",
+                     "brackets {} (target-selector brackets {}, inv/bound brackets {}, attack/bash/unreachable brackets {}); "
+                     "engine inside/outside verdicts on the bound {} ({} outside); ended by Harbinger {}; engine areas "
+                     "put back after an end {}; areas carrying a bound now {}.",
                      n, g_s1Seen.load(), g_s1Applied.load(), g_s1Restored.load(), g_s1Yielded.load(),
                      g_s1Disabled.load(), g_s2Vanilla.load(), g_s3Brackets.load(), g_s4Brackets.load(),
-                     g_s6Verdicts.load(), g_s6Outside.load(), g_ended.load(), g_touchedCount.load());
+                     g_s5Brackets.load(), g_s6Verdicts.load(), g_s6Outside.load(), g_ended.load(), g_s3PutBack.load(),
+                     g_touchedCount.load());
     }
 
     void RestoreBeforeSave() {
         if (g_touchedCount.load(std::memory_order_relaxed) == 0) return;
+        // F6 (review on 274d7e4): SKSE sends kSaveGame from the save path of Main::Update, the thread
+        // the engine's own change-form save (CombatController::SaveGame) runs on right after. Say so
+        // loudly if that ever stops being the thread the player's update seat runs on.
+        if (!apmf::hook::OnMainThread()) {
+            static std::atomic<bool> s_warned{ false };
+            if (!s_warned.exchange(true))
+                spdlog::warn("[ch.24] save: kSaveGame arrived OFF the main (player update) thread -- the area "
+                             "restore below races the combat jobs. (Logged once.)");
+        }
         std::size_t restored = 0, dropped = 0;
         std::unique_lock lk(g_areaMx);
         for (auto it = g_touched.begin(); it != g_touched.end(); it = g_touched.erase(it)) {
@@ -884,16 +1053,13 @@ namespace apmf::combatapproach {
                 for (auto* a : cc->GetRuntimeData().areas)
                     if (static_cast<void*>(a) == it->first) { live = true; break; }
             }
-            if (live && *reinterpret_cast<const std::uintptr_t*>(it->first) == g_vtStd &&
-                SameGeo(ReadGeo(it->first), t.ours)) {
-                WriteGeo(it->first, t.vanilla);
-                At<float>(it->first, kAreaPeriod) = t.vanillaPeriod;
-                ++restored;
-            } else {
-                ++dropped;
-            }
+            // PutBack also re-activates the area of a FINISHED claim (F3), so neither X / R nor the
+            // engine's failed-path deactivation reaches the .ess.
+            if (live && PutBack(it->first, t)) ++restored;
+            else ++dropped;
         }
         g_touchedCount.store(0, std::memory_order_relaxed);
+        g_reactivateCount.store(0, std::memory_order_relaxed);
         lk.unlock();
         spdlog::info("[ch.24] save: put the engine's own geometry back into {} combat area(s) carrying a bound ({} "
                      "no longer alive or already overwritten). The bound is re-applied at the next area update.",
@@ -913,6 +1079,7 @@ namespace apmf::combatapproach {
             a = g_touched.size();
             g_touched.clear();
             g_touchedCount.store(0, std::memory_order_relaxed);
+            g_reactivateCount.store(0, std::memory_order_relaxed);
         }
         if (n != 0 || a != 0)
             spdlog::info("[ch.24] {} -- dropped {} combat-approach entr{} and {} area record(s).", why, n,

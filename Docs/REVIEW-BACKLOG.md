@@ -394,3 +394,26 @@ and Offensive only; (f) ControlMap.cpp is 2250+ lines: propose its split as its 
 Raised against 44ee2e2 (`feat/apmf-own-los-awareness`, Opus round-2 re-check MERGE), 2026-10-05.
 - The per-target end margin (bound half-diagonal x GetBaseHeight + 16, clamp [48,1024]) ignores any obstacle within the margin of the target, and a viewer inside it reads VISIBLE through a wall. Errs toward VISIBLE only, only inside the target's own bound; humanoids keep the field-proven 48u. Proper fix: cast to the point and treat a hit as clear only if the hit body is the target's own collidable / group.
 - The bound source (middleHigh->unk180, centre +0x18 / half-extent +0x24, a BSBound BBX shape) is proven; that a modded creature's char-controller capsule fits inside its BBX is not. Field check: [los] margin on giants / dragons in the open should read VISIBLE.
+
+### APMF-B55 (SEV-4) -- ch.24: the pursuit-leash test is coarse
+Raised against 274d7e4 (`feat/apmf-combat-moveto`, Opus tier-3 review), 2026-10-06. Finding (verbatim as relayed): "F5 SEV-4
+leash coarse". Reasoning: `channels/CombatApproach.cpp` Poll holds a claim as kApproachState_Leashed only when NO point within R
+of X lies inside the ch.23 leash disc (dist(X, anchor) - R > leash radius). A goal disc that only grazes the leash still applies
+the bound, so the engine's path back can leave the leash on the way, and the actor can stop at a point of the disc outside the
+leash. Fix when drained: decide with marth whether the bound should require X itself inside the leash, or clamp the centre to
+the leash disc.
+
+### APMF-B56 (SEV-4) -- ch.24: the save-path restore thread
+Raised against 274d7e4, 2026-10-06. Finding (verbatim as relayed): "F6 SEV-4 save-thread assert". Reasoning: RestoreBeforeSave
+(kSaveGame) reads each actor's controller and areas array and writes area fields; the save runs on Main::Update's save path
+(AE Main::Update 0x645EA0 @0x6468CF -> 36601 -> 35732 -> Save_Impl 35727), the thread of the engine's own
+CombatController::SaveGame, but no job-graph barrier against the UpdateCombat jobs was traced (ENGINE_NOTES 0.47 NOT FOUND (a)).
+DONE in round 2: a once-per-session warning when kSaveGame arrives off `apmf::hook::OnMainThread()`. Still open: the barrier
+itself; read the field log for the warning.
+
+### APMF-B57 (SEV-4) -- ch.24: FindWeapon looks only inside the bound
+Raised against 274d7e4, 2026-10-06. Finding (verbatim as relayed): "F7 SEV-4 FindWeapon effect undocumented". Reasoning:
+CombatBehaviorFindWeapon (AE 0x8610C0, IsInCombatArea x2) is the Acquire Weapon link of the engine's MOVEMENT half, so it carries
+the bound: while a ch.24 claim stands a disarmed actor only considers dropped weapons within R of X. Documented in
+`Docs/INTEGRATION.md` (ch.24 contract) and `Docs/DENY-COMPLETENESS-AUDIT.md` row 24 (a) in round 2. Open only if marth wants the
+weapon search bracketed like the attack pick.
