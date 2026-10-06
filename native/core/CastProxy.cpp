@@ -2,8 +2,7 @@
 #include "core/Log.h"
 #include "core/CastProxy.h"
 #include "core/Hook.h"   // hook::OnMainThread(): which thread the save sweep ran on (log only)
-#include "core/Clock.h"        // MonotonicMs: the self-flip landing watch's grace window
-#include "core/MainThread.h"   // Post: the self-flip landing watch's per-pump tick
+#include "core/Clock.h"        // MonotonicMs: the self-flip landing watch's grace window + slot ranking
 
 // ============================================================================
 // See core/CastProxy.h for the contract and for WHAT WAS REMOVED here (the whole
@@ -56,6 +55,7 @@ namespace apmf::castproxy {
             std::uint32_t  refs   = 0;         // live claims naming this form; owner != 0 <=> refs > 0
             Hand           hand   = Hand::kRight;   // the hand key it serves (meaningful while owned)
             Flip           flip   = Flip::kToTargetActor;   // which way it flips (meaningful while owned)
+            std::uint64_t  freedMs = 0;        // when its last ref went (0 = never freed); slot ranking (F3)
         };
 
         const char* FlipName(Flip f) {
@@ -75,69 +75,56 @@ namespace apmf::castproxy {
         Slot g_slot[8];
 
         // ---- SELF-FLIP LANDING WATCH (principle 5, passive) ----------------------
-        // One per slot, armed by a kToSelf mint. WatchTick runs on the confirmed-main
-        // pump (it re-Posts itself while any watch is active, so it runs once per pump)
-        // and reads the owner's active-effect list for an effect whose spell IS the
-        // slot's proxy form: the cast landed on the caster. Logs once and disarms; or,
-        // 5 s after the slot's last ref went without one, logs that no effect was seen.
-        // Reads only; never changes an answer. Cleared by ResetAll (its queued tick is
-        // dropped by the Discard that follows ResetAll on revert and kPreLoadGame).
+        // One per slot, armed by a kToSelf mint (writer/main thread). The CHECK runs on the
+        // OWNER's OWN update: core/Hook.cpp's Character 0xAD thunk calls
+        // Arbiter::OnActorUpdate -> ControlMap::OnActorUpdate -> castproxy::OnOwnerUpdate right
+        // AFTER that actor's own Actor::Update returned, on whichever worker runs that actor --
+        // the thread that runs the actor's own active-effect update, sequentially, instead of
+        // the player seat reading the list while the NPC's job mutates it (review F4, threading
+        // carve-out (a)). Every other actor pays one relaxed load (g_armedWatches == 0) or eight
+        // relaxed FormID compares. Each watch is guarded by its own LEAF mutex: the writer takes
+        // it to arm / mark released / reset; the update seat only try_locks it (an update never
+        // waits; a contended frame is skipped) and holds it across a pure read of the owner's
+        // own list, never across an engine call that could take another lock.
+        // FIRST sighting records the effects of the slot's form ALREADY on the owner (a reused
+        // slot's stale effect, review F3) as a baseline; only an effect NOT in the baseline
+        // counts as this mint's landing. (Baseline by pointer: a freed effect whose address is
+        // re-used by the new one would read as old -- a false "NOT seen", never a false
+        // "LANDED".) Logs once and disarms; or, kWatchGraceMs after the slot's last ref went
+        // without a landing, logs "NOT seen". An owner that never updates again (unloaded)
+        // keeps its watch until the slot is re-minted or ResetAll -- both say so / clear it.
+        constexpr std::size_t kBaselineMax = 4;
         struct Watch {
-            bool          active     = false;
-            RE::FormID    owner      = 0;
-            RE::FormID    source     = 0;
-            std::uint64_t mintedMs   = 0;
-            std::uint64_t releasedMs = 0;   // 0 while the slot still holds refs
+            std::mutex                 mx;   // leaf
+            std::atomic<RE::FormID>    owner{ 0 };   // 0 = not armed (relaxed pre-gate read)
+            const RE::MagicItem*       form       = nullptr;
+            RE::FormID                 source     = 0;
+            std::uint64_t              mintedMs   = 0;
+            std::uint64_t              releasedMs = 0;   // 0 while the slot still holds refs
+            bool                       baselined  = false;
+            std::uint32_t              baseCount  = 0;
+            const RE::ActiveEffect*    base[kBaselineMax]{};
         };
         Watch g_watch[std::size(g_slot)];
-        bool  g_watchPosted = false;   // a WatchTick is queued on the pump
+        std::atomic<std::uint32_t> g_armedWatches{ 0 };
         constexpr std::uint64_t kWatchGraceMs = 5000;
 
-        void WatchTick();
-
-        void PostWatchTick() {
-            if (g_watchPosted) return;
-            g_watchPosted = true;
-            apmf::mainthread::Post([] { WatchTick(); });
+        // Caller holds w.mx.
+        void Disarm(Watch& w) {
+            if (w.owner.load(std::memory_order_relaxed) != 0) g_armedWatches.fetch_sub(1, std::memory_order_relaxed);
+            w.owner.store(0, std::memory_order_relaxed);
+            w.form = nullptr; w.source = 0; w.mintedMs = 0; w.releasedMs = 0;
+            w.baselined = false; w.baseCount = 0;
         }
 
-        void WatchTick() {
-            g_watchPosted = false;
-            const auto now = apmf::clock::MonotonicMs();
-            bool       any = false;
-            for (std::size_t i = 0; i < std::size(g_slot); ++i) {
-                auto& w = g_watch[i];
-                if (!w.active) continue;
-                const RE::SpellItem* form = g_slot[i].form;
-                std::uint32_t        hits = 0;
-                if (auto* actor = form ? RE::TESForm::LookupByID<RE::Actor>(w.owner) : nullptr) {
-                    if (auto* mt = actor->AsMagicTarget()) {
-                        if (auto* list = mt->GetActiveEffectList()) {
-                            for (auto* ae : *list)
-                                if (ae && ae->spell == form) ++hits;
-                        }
-                    }
-                }
-                if (hits != 0) {
-                    spdlog::info("[castproxy] 0x{} self-flip proxy 0x{} (spell 0x{}) LANDED on the caster: {} active "
-                                 "effect(s) of the proxy on 0x{}, +{} ms after the mint.",
-                                 apmf::log::Hex(w.owner), apmf::log::Hex(form->GetFormID()), apmf::log::Hex(w.source),
-                                 hits, apmf::log::Hex(w.owner), now - w.mintedMs);
-                    w = {};
-                    continue;
-                }
-                if (w.releasedMs != 0 && now - w.releasedMs >= kWatchGraceMs) {
-                    spdlog::info("[castproxy] 0x{} self-flip proxy (spell 0x{}) NOT seen on the caster: no active effect "
-                                 "of it on 0x{} from the mint (+{} ms) to {} ms after its last claim released (never "
-                                 "fired, or an instant / zero-duration effect that left nothing to see).",
-                                 apmf::log::Hex(w.owner), apmf::log::Hex(w.source), apmf::log::Hex(w.owner),
-                                 now - w.mintedMs, kWatchGraceMs);
-                    w = {};
-                    continue;
-                }
-                any = true;
-            }
-            if (any) PostWatchTick();
+        // Caller holds w.mx. Writer/main thread.
+        void Arm(Watch& w, RE::FormID a_owner, const RE::MagicItem* a_form, RE::FormID a_source) {
+            Disarm(w);
+            w.form     = a_form;
+            w.source   = a_source;
+            w.mintedMs = apmf::clock::MonotonicMs();
+            g_armedWatches.fetch_add(1, std::memory_order_relaxed);
+            w.owner.store(a_owner, std::memory_order_release);
         }
 
         // Copy the source's data, flip ONLY the delivery, and SHARE the source's
@@ -185,8 +172,34 @@ namespace apmf::castproxy {
             return s.form->GetFormID();
         }
 
-        for (auto& s : g_slot) {
-            if (s.owner != 0) continue;
+        // Pick the FREE slot to (re-)mint (review F3). A freed proxy form can still be the
+        // `spell` of a live active effect (a buff on an ally, or since the self-flip on the
+        // caster) until that effect runs out; re-pointing it at another spell makes the seats'
+        // AlreadyApplied read that stale effect as the NEW spell's. So, without walking any
+        // actor's effect list from here: (1) a free slot that already mirrors THIS source with
+        // THIS flip (its stale effects ARE this spell's), else (2) a slot never minted, else
+        // (3) the slot freed longest ago. A rank-3 slot freed less than kStaleRiskMs ago is
+        // said out loud (APMF-B58).
+        constexpr std::uint64_t kStaleRiskMs = 120000;
+        Slot* pick = nullptr;
+        int   rank = 4;
+        for (auto& c : g_slot) {
+            if (c.owner != 0) continue;
+            int r = 3;
+            if (c.form && c.source == sid && c.flip == a_flip) r = 1;
+            else if (!c.form) r = 2;
+            if (r < rank || (r == 3 && rank == 3 && c.freedMs < pick->freedMs)) { pick = &c; rank = r; }
+        }
+        if (pick) {
+            auto& s = *pick;
+            if (rank == 3 && s.freedMs != 0) {
+                const auto ago = apmf::clock::MonotonicMs() - s.freedMs;
+                if (ago < kStaleRiskMs)
+                    spdlog::info("[castproxy] re-pointing pool slot form 0x{} (was spell 0x{}, freed {} ms ago) to spell "
+                                 "0x{}: an effect of the old spell may still be up under this form (APMF-B58) -- every "
+                                 "slot is in use or recently freed.",
+                                 apmf::log::Hex(s.form->GetFormID()), apmf::log::Hex(s.source), ago, apmf::log::Hex(sid));
+            }
             if (!s.form) {
                 auto* f = RE::IFormFactory::GetConcreteFormFactoryByType<RE::SpellItem>();
                 s.form  = f ? static_cast<RE::SpellItem*>(f->Create()) : nullptr;
@@ -220,27 +233,27 @@ namespace apmf::castproxy {
                          apmf::log::Hex(a_owner), FlipName(a_flip), apmf::log::Hex(s.form->GetFormID()),
                          apmf::log::Hex(sid), static_cast<int>(a_src->GetDelivery()),
                          static_cast<int>(s.form->GetDelivery()), HandName(a_hand), taught ? "yes" : "NO");
-            const auto slot = static_cast<std::size_t>(&s - g_slot);
-            if (auto& w = g_watch[slot]; w.active) {
-                // The slot was freed and re-minted inside the previous self-flip's grace window:
-                // its form now mirrors another spell, so that watch ends here, said out loud.
-                spdlog::info("[castproxy] 0x{} self-flip proxy (spell 0x{}) NOT seen on the caster before its pool "
-                             "slot was re-minted (+{} ms after its mint).",
-                             apmf::log::Hex(w.owner), apmf::log::Hex(w.source),
-                             apmf::clock::MonotonicMs() - w.mintedMs);
-                w = {};
-            }
-            if (a_flip == Flip::kToSelf) {
-                g_watch[slot] = Watch{ true, a_owner, sid, apmf::clock::MonotonicMs(), 0 };
-                PostWatchTick();
+            {
+                auto&             w = g_watch[static_cast<std::size_t>(&s - g_slot)];
+                std::scoped_lock  lk(w.mx);
+                if (const auto prev = w.owner.load(std::memory_order_relaxed); prev != 0) {
+                    // Re-minted while the previous self-flip's watch was still open: that watch
+                    // ends here, said out loud.
+                    spdlog::info("[castproxy] 0x{} self-flip proxy (spell 0x{}) NOT seen on the caster before its pool "
+                                 "slot was re-minted (+{} ms after its mint).",
+                                 apmf::log::Hex(prev), apmf::log::Hex(w.source),
+                                 apmf::clock::MonotonicMs() - w.mintedMs);
+                    Disarm(w);
+                }
+                if (a_flip == Flip::kToSelf) Arm(w, a_owner, s.form, sid);
             }
             return s.form->GetFormID();
         }
 
         spdlog::warn("[castproxy] pool overflow (owner 0x{}, spell 0x{}, all {} slots held by live cast "
                      "claims) -- the claim gets NO proxy, so the seats will not force the "
-                     "original form (a kSelf form at another actor lands on the caster; an aimed form at the "
-                     "caster is a ray at its own shooter).",
+                     "original form (a kSelf form at another actor is an unproven road, APMF-B62; an aimed form at "
+                     "the caster is a ray at its own shooter).",
                      apmf::log::Hex(a_owner), apmf::log::Hex(sid), static_cast<int>(std::size(g_slot)));
         return 0;
     }
@@ -264,8 +277,13 @@ namespace apmf::castproxy {
             spdlog::info("[castproxy] 0x{} FREED {} 0x{} (spell 0x{}; refs 1 -> 0) -- un-taught, slot "
                          "released.",
                          apmf::log::Hex(a_owner), FlipName(s.flip), apmf::log::Hex(a_proxy), apmf::log::Hex(s.source));
-            if (auto& w = g_watch[static_cast<std::size_t>(&s - g_slot)]; w.active && w.releasedMs == 0)
-                w.releasedMs = apmf::clock::MonotonicMs();   // the landing watch's grace window starts now
+            {
+                auto&            w = g_watch[static_cast<std::size_t>(&s - g_slot)];
+                std::scoped_lock lk(w.mx);
+                if (w.owner.load(std::memory_order_relaxed) != 0 && w.releasedMs == 0)
+                    w.releasedMs = apmf::clock::MonotonicMs();   // the landing watch's grace window starts now
+            }
+            s.freedMs = apmf::clock::MonotonicMs();
             s.owner  = 0;
             s.source = 0;
             return;
@@ -290,8 +308,63 @@ namespace apmf::castproxy {
             if (s.form) s.form->effects.clear();
             s = {};
         }
-        for (auto& w : g_watch) w = {};
-        g_watchPosted = false;   // its queued tick, if any, is Discard()ed by the caller right after
+        for (auto& w : g_watch) {
+            std::scoped_lock lk(w.mx);
+            Disarm(w);
+        }
+    }
+
+    void OnOwnerUpdate(RE::Actor* a_actor) {
+        if (g_armedWatches.load(std::memory_order_relaxed) == 0 || !a_actor) return;
+        const RE::FormID fid = a_actor->GetFormID();
+        for (auto& w : g_watch) {
+            if (w.owner.load(std::memory_order_relaxed) != fid) continue;
+            std::unique_lock lk(w.mx, std::try_to_lock);
+            if (!lk.owns_lock() || w.owner.load(std::memory_order_acquire) != fid || !w.form) continue;
+            const auto now = apmf::clock::MonotonicMs();
+            std::uint32_t hits = 0, stale = 0;
+            auto*         mt   = a_actor->AsMagicTarget();
+            auto*         list = mt ? mt->GetActiveEffectList() : nullptr;
+            if (list) {
+                for (auto* ae : *list) {
+                    if (!ae || ae->spell != w.form) continue;
+                    if (!w.baselined) {
+                        if (w.baseCount < kBaselineMax) w.base[w.baseCount++] = ae;
+                        continue;
+                    }
+                    bool old = false;
+                    for (std::uint32_t i = 0; i < w.baseCount; ++i) old |= (w.base[i] == ae);
+                    old ? ++stale : ++hits;
+                }
+            }
+            if (!w.baselined) {
+                w.baselined = true;
+                if (w.baseCount != 0)
+                    spdlog::info("[castproxy] 0x{} self-flip proxy 0x{} (spell 0x{}): {} effect(s) of this pool form were "
+                                 "already on the caster before the cast (a reused slot's stale effect, APMF-B58) -- "
+                                 "ignored by the landing watch.",
+                                 apmf::log::Hex(fid), apmf::log::Hex(w.form->GetFormID()), apmf::log::Hex(w.source),
+                                 w.baseCount);
+                continue;
+            }
+            if (hits != 0) {
+                spdlog::info("[castproxy] 0x{} self-flip proxy 0x{} (spell 0x{}) LANDED on the caster: {} new active "
+                             "effect(s) of the proxy on 0x{} ({} pre-existing ignored), +{} ms after the mint (seen on "
+                             "the owner's own update).",
+                             apmf::log::Hex(fid), apmf::log::Hex(w.form->GetFormID()), apmf::log::Hex(w.source), hits,
+                             apmf::log::Hex(fid), stale, now - w.mintedMs);
+                Disarm(w);
+                continue;
+            }
+            if (w.releasedMs != 0 && now - w.releasedMs >= kWatchGraceMs) {
+                spdlog::info("[castproxy] 0x{} self-flip proxy (spell 0x{}) NOT seen on the caster: no new active effect "
+                             "of it on 0x{} from the mint (+{} ms) to {} ms after its last claim released (never fired, "
+                             "or an instant / zero-duration effect that left nothing to see).",
+                             apmf::log::Hex(fid), apmf::log::Hex(w.source), apmf::log::Hex(fid), now - w.mintedMs,
+                             kWatchGraceMs);
+                Disarm(w);
+            }
+        }
     }
 
     void PreSaveSweep() {

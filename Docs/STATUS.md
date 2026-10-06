@@ -70,6 +70,18 @@ touch spell) "must still be cast animated. Proxy it." No ABI change: the client 
   Detect Life / Dead) or Aimed with an area radius whose Missile projectile sets off an EXPLOSION at impact (Rally,
   Pacify, Vampire's Bane). Runes are hostile kTargetLocation Lobber projectiles with a projectile explosion. None
   places like a summon, so `NativePlacement` / `IsPlacementSpell` are NOT extended: batch D with the rune fixes.
+- **Round 2 (Opus tier-3 MERGE on 2c8c151, findings F1-F6).** F2: the gate is now BENEFICIAL, not just
+  non-hostile -- any hostile or detrimental base effect, or a Calm / Frenzy / Demoralize archetype, declines the
+  self-flip (Pacify would have calmed the caster, Vampire's Bane burned it). F4: the landing watch no longer walks
+  the owner's active-effect list from the player pump; it runs on the OWNER's OWN update
+  (`castproxy::OnOwnerUpdate`, called from `Arbiter::OnActorUpdate` right after the Character 0xAD original, i.e.
+  the worker that just ran that actor's own effect update), per-watch leaf mutex, try_lock only. F3: a mint picks a
+  free slot already mirroring this source + flip, else a never-minted one, else the one freed longest ago (and says so
+  when that was under 120 s ago); the watch baselines effects of the form already on the owner and ignores them. F5:
+  backlog APMF-B62. F6: the "kSelf always lands on the caster / Self branch never reads desiredTarget" premise is
+  corrected everywhere it was written (CastProxy.h, ControlMap.cpp, CastSeats.{h,cpp}, INVARIANTS #19, CHANNEL-MAP,
+  MAP): the branch takes desiredTarget, which 0x0A feeds; the forward proxy stays as the proven road. F1: APMF-B49's
+  deck check now also dumps the caster's ACTIVE-EFFECT list.
 - **Field check.** Fade Other / any kTargetActor or aimed buff claimed at the follower itself: expect the mint line,
   `FIRED ... item=<proxy> ... target=<follower>`, `LANDED on the caster`, and the effect on the follower only.
   Also open: an ActiveEffect whose spell is a 0xFF proxy can be on the caster when a save is taken (the forward flip

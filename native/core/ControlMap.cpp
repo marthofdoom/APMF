@@ -969,8 +969,10 @@ namespace apmf {
             // Every seat then serves it as it serves an ally claim. No proxy is
             // minted for it: the mint below requires castTarget != op.actor.
             //
-            // kSelf DELIVERY ONLY (review F1/F2). A kSelf spell lands on the caster
-            // whatever the seats say (FindTargets' Self branch), and 0x0D never
+            // kSelf DELIVERY ONLY (review F1/F2). A kSelf spell claimed at the caster
+            // lands on the caster: FindTargets' Self branch takes desiredTarget, which
+            // 0x0A feeds with this very handle, else the caster (corrected 2026-10-06,
+            // APMF-B62 -- it does read desiredTarget), and 0x0D never
             // builds for it (49081 builds the aim controller only for kAimed /
             // kTargetActor). For any OTHER delivery, a self handle would make the
             // Offensive seats aim the spell AT THE CASTER (0x0A self handle, 0x0D
@@ -1027,10 +1029,15 @@ namespace apmf {
             }
 
             // ---- kSelf DELIVERY FLIP: mint + transient-teach the proxy ----------
-            // Disassembly-CERTAIN (FindTargets 0x5bc160 @0x5bc98a): a kSelf-delivery
-            // spell ALWAYS lands on the caster's own reference -- the Self branch never
-            // reads `desiredTarget`, so seat 0x0A cannot aim it at an ally. The only
-            // honest answer is a delivery-flipped COPY the AI selects instead. Minted
+            // A kSelf spell claimed at an ally is driven through a delivery-flipped
+            // kTargetActor COPY the AI selects instead -- the field-proven ally road.
+            // CORRECTED 2026-10-06 (review F6, APMF-B62): this used to say the Self
+            // branch "never reads desiredTarget". It does: FindTargets' Self branch
+            // (AE 0x5BC98A / SE 0x54D508 / 1.7.104 0x5CB4D1) takes desiredTarget (+0x20)
+            // when it is an Actor, else the caster, and seat 0x0A feeds desiredTarget
+            // (AE 0x89EE30 -> 0x5BB720 -> SetDesiredTarget 0x5BE720). Whether the
+            // un-proxied kSelf form would land on the ally is unproven, so the proven
+            // road is kept. Minted
             // HERE, before the claim is published, so a seat can never see a claim
             // naming a proxy the actor does not yet know (core/CastProxy.h). A client
             // that fabricated its OWN proxy (req.proxy != 0) is left alone.
@@ -1056,8 +1063,9 @@ namespace apmf {
                         castProxyRef = (castProxy != 0);   // a nonzero return IS one ref this claim owns
                         if (castProxy == 0) {
                             // No proxy: the only form this claim could drive is the
-                            // ORIGINAL kSelf spell, which lands on the CASTER whatever the
-                            // seats say. Leave the target handle INVALID so no seat serves
+                            // ORIGINAL kSelf spell, an UNPROVEN road at an ally (APMF-B62:
+                            // it may land on the ally or the caster; never observed). Never
+                            // drive it on a guess. Leave the target handle INVALID so no seat serves
                             // it (CastSeats' ClaimNamesThisCast and EquipGate's hand seat
                             // both require one). The claim still occupies its hand, so the
                             // per-hand deny stands: a plain deny, exactly as logged.
@@ -1086,9 +1094,14 @@ namespace apmf {
             // TargetActor only), FindTargets' Self branch applies it to the caster, no
             // projectile -- the same road a kSelf self claim (Oakflesh) already takes.
             // Gates, each logged rate-limited when it declines:
-            //   * BENEFICIAL only (no effect with a hostile base effect). The ruling is about a
-            //     buff on oneself; seat 0 also never self-forces a hostile effect, and a hostile
-            //     self copy would key a self+hostile row vanilla never populates.
+            //   * BENEFICIAL only (review F2): no effect whose base effect is HOSTILE or
+            //     DETRIMENTAL (core/CastClassify.cpp's own beneficial test), and none of the
+            //     Calm / Frenzy / Demoralize archetypes. "Non-hostile" alone is not "a buff":
+            //     Pacify (Calm, non-hostile) would calm the caster, and Vampire's Bane (sun
+            //     damage, non-hostile but detrimental) would burn the caster and every actor in
+            //     its radius. The ruling is about a buff on oneself; seat 0 also never self-forces
+            //     a hostile effect, and a hostile self copy would key a self+hostile row vanilla
+            //     never populates.
             //   * Not a SUMMON / REANIMATE spell: those keep NativePlacement (the APMF-B39 block).
             //   * Not kTargetLocation: vanilla's beneficial target-location spells are all
             //     placement spells; a non-placement one is projectile-and-explosion shaped (the
@@ -1101,9 +1114,17 @@ namespace apmf {
                 if (sp && sp->GetDelivery() != RE::MagicSystem::Delivery::kSelf &&
                     !apmf::castclassify::IsPlacementSpell(sp)) {
                     const auto delivery = sp->GetDelivery();
-                    bool       hostile  = false;
-                    for (const auto* eff : sp->effects)
-                        if (eff && eff->baseEffect && eff->baseEffect->IsHostile()) hostile = true;
+                    bool       hostile  = false;   // "not a buff": hostile, detrimental, or a mind-affecting archetype
+                    for (const auto* eff : sp->effects) {
+                        if (!eff || !eff->baseEffect) continue;
+                        const auto* mgef = eff->baseEffect;
+                        const auto  arch = mgef->GetArchetype();
+                        if (mgef->IsHostile() || mgef->IsDetrimental() ||
+                            arch == RE::EffectArchetypes::ArchetypeID::kCalm ||
+                            arch == RE::EffectArchetypes::ArchetypeID::kFrenzy ||
+                            arch == RE::EffectArchetypes::ArchetypeID::kDemoralize)
+                            hostile = true;
+                    }
                     if (hostile || delivery == RE::MagicSystem::Delivery::kTargetLocation) {
                         if (SelfClaimLogDue(op.actor, spell)) {
                             spdlog::warn("[ch.8b] 0x{} cast claim (h={}, spell 0x{}, delivery {}) names the claimant "
@@ -1111,7 +1132,8 @@ namespace apmf {
                                          "original form at the caster).",
                                          apmf::log::Hex(op.actor), op.handle, apmf::log::Hex(spell),
                                          static_cast<int>(delivery),
-                                         hostile ? "the spell carries a HOSTILE effect (the self-flip serves buffs only)"
+                                         hostile ? "the spell is not a buff (a hostile, detrimental, Calm, Frenzy or "
+                                                   "Demoralize effect; the self-flip serves buffs only)"
                                                  : "it is a non-placement target-location spell (rune-shaped; batch D)");
                         }
                     } else {

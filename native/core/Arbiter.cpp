@@ -1,6 +1,7 @@
 #include "PCH.h"
 #include "core/Log.h"
 #include "core/Arbiter.h"
+#include "core/CastProxy.h"       // castproxy::OnOwnerUpdate (self-flip landing watch, owner seat)
 #include "core/ControlMap.h"
 #include "core/CasterTypeCensus.h"
 #include "core/NonAliasProbe.h"
@@ -36,6 +37,9 @@ namespace apmf {
 
     void Arbiter::OnActorUpdate(RE::Actor* actor) {
         ControlMap::Get().OnActorUpdate(actor);
+        // Self-flip landing watch (feat/apmf-self-delivery-proxy, review F4): checked on the
+        // owner's OWN update, after its Actor::Update. One relaxed load when nothing is armed.
+        apmf::castproxy::OnOwnerUpdate(actor);
     }
 
     void Arbiter::OncePerFrame() {

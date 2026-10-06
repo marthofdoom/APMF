@@ -806,8 +806,10 @@ documenting the same boundary.
 ITS BORROWED POINTERS BEFORE A LOAD.** The cast drive mints delivery-flip proxy
 `SpellItem`s through `IFormFactory` (both directions since 2026-10-05: kSelf -> kTargetActor for an ally, and the
 self-flip Aimed/Touch/TargetActor -> kSelf for a buff claimed at the caster itself) (`core/CastProxy.{h,cpp}` -- renamed from
-`CastExecutor` when the forced drive was retired; the pool outlived the drive because
-the engine's `FindTargets` Self branch always lands on the caster).
+`CastExecutor` when the forced drive was retired; the pool outlived the drive as the
+field-proven ally road -- CORRECTED 2026-10-06, APMF-B62: the old reason "the `FindTargets`
+Self branch always lands on the caster" is false, that branch takes `desiredTarget`, which
+seat 0x0A feeds).
 These are dynamic `0xFF` forms: they do NOT survive a load, and the engine purges
 them on the way in. Two rules follow, both learned the expensive way (MFO's
 `native/Actuation_Direct.cpp` paid for the second one first):

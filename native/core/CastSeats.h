@@ -65,10 +65,11 @@
 // A Restore/Offensive caster that is not the claim's is untouched; it chains.
 //
 // ── kSelf SPELLS STILL NEED THE PROXY ───────────────────────────────────────
-// `FindTargets`' Self branch (0x5bc98a) resolves to the caster's OWN reference
-// and never reads `desiredTarget`, so no seat can aim a kSelf heal at an ally.
-// `ControlMap::ApplyRequest` mints a kTargetActor delivery-flip copy for that
-// case (core/CastProxy.h) and the seats drive THAT form. kTargetActor spells
+// `ControlMap::ApplyRequest` mints a kTargetActor delivery-flip copy of a kSelf
+// spell claimed at an ally (core/CastProxy.h) and the seats drive THAT form -- the
+// field-proven road. (CORRECTED 2026-10-06, APMF-B62: `FindTargets`' Self branch DOES
+// read `desiredTarget` when it is an Actor, and 0x0A feeds it; the old "never reads"
+// premise was wrong, the un-proxied road is simply unproven.) kTargetActor spells
 // (Healing Hands) need no proxy: seat 0x0A's handle becomes `desiredTarget`.
 //
 // ── THREADING ───────────────────────────────────────────────────────────────

@@ -14,14 +14,17 @@
 // animated native cast, with no APMF equip/anim/cast write at all. See
 // Docs/CHANNEL-MAP.md ch.8b and Docs/INVARIANTS.md #20.
 //
-// WHAT SURVIVED, AND WHY IT MUST. One engine fact the seats cannot answer around
-// (disassembly-CERTAIN, `FindTargets` 0x5bc160 @0x5bc98a): a **kSelf-delivery**
-// spell ALWAYS lands on the caster's own reference -- the Self branch reads the
-// caster's ref, not `desiredTarget`, so redirecting `GetMagicTarget` (seat 0x0A)
-// cannot make Fast Healing land on an ally. The only honest fix is a
-// delivery-flipped COPY of the spell (identical data + shared source `Effect*`,
-// `delivery = kTargetActor`) that the AI selects and casts instead. That copy is
-// what this pool mints.
+// WHAT SURVIVED. A delivery-flipped COPY of a kSelf spell (identical data + shared
+// source `Effect*`, `delivery = kTargetActor`) that the AI selects and casts at an
+// ally instead -- the FIELD-PROVEN road for ally heals (2026-09-05/06).
+// CORRECTED 2026-10-06 (review F6, APMF-B62): the reason this used to give -- "a kSelf
+// spell ALWAYS lands on the caster; the Self branch never reads desiredTarget" -- is
+// false on all three builds. FindTargets' Self branch (AE 0x5BC98A / SE 0x54D508 /
+// 1.7.104 0x5CB4D1) applies a kSelf spell to `MagicCaster::desiredTarget` (+0x20) when
+// that resolves to an Actor, else to the caster, and seat 0x0A FEEDS desiredTarget
+// (AE 0x89EE30 -> 0x5BB720 -> SetDesiredTarget 0x5BE720). Whether an un-proxied kSelf
+// claim at an ally would land on the ally is UNPROVEN (never observed); the proxy stays
+// because it is the proven road, not because the other is proven impossible.
 //
 // THE REVERSE FLIP (feat/apmf-self-delivery-proxy, marth 2026-10-05: "a self cast is
 // valid if its needed, just needs to be animated"). An AIMED / TOUCH / TARGET-ACTOR
@@ -70,7 +73,7 @@
 // must never be reached from a combat-thread seat.
 // ============================================================================
 
-namespace RE { class SpellItem; }
+namespace RE { class SpellItem; class Actor; }
 
 namespace apmf::castproxy {
 
@@ -105,10 +108,13 @@ namespace apmf::castproxy {
     // must not let the seats serve the claim: the original kSelf form cast "at an ally"
     // would silently heal the caster, and the original aimed form cast "at the caster"
     // is a ray at its own shooter. WRITER/MAIN THREAD ONLY.
-    // A kToSelf mint also arms a passive LANDING watch (principle 5): once per frame on
-    // the confirmed-main pump it looks for an active effect of the proxy on the owner,
-    // logs `[castproxy] ... self-flip proxy ... LANDED on the caster` once, or, 5 s after
-    // the slot's last ref went without one, `... NOT seen on the caster`. Read-only.
+    // A kToSelf mint also arms a passive LANDING watch (principle 5), checked by
+    // OnOwnerUpdate below on the owner's own update: it logs `[castproxy] ... self-flip
+    // proxy ... LANDED on the caster` once, or, 5 s after the slot's last ref went without
+    // one, `... NOT seen on the caster`. Read-only.
+    // Slot choice for a mint (review F3): a free slot already mirroring this source with
+    // this flip, else a never-minted slot, else the one freed longest ago -- a freed form
+    // can still be the `spell` of a live effect until it runs out (APMF-B58).
     RE::FormID Acquire(RE::FormID a_owner, RE::SpellItem* a_src, Hand a_hand, Flip a_flip);
 
     // Give back ONE claim's ref on `a_proxy` (the FormID Acquire returned to it).
@@ -126,10 +132,19 @@ namespace apmf::castproxy {
     // purge can never free a live spell's effect array through a dead proxy, and
     // the fixed-size pool can never stay permanently occupied by an owner that no
     // longer exists (`ControlMap::Clear()` deliberately does not call
-    // `channel->Release`, so nothing else would reset it). Also drops every self-flip
-    // landing watch (its queued tick is Discard()ed by the caller right after). Makes
+    // `channel->Release`, so nothing else would reset it). Also disarms every self-flip
+    // landing watch (under each watch's leaf mutex). Makes
     // no engine calls. MAIN THREAD ONLY (the SKSE revert / kPreLoadGame seat).
     void ResetAll();
+
+    // The self-flip LANDING WATCH's check (principle 5, passive). Called for EVERY NPC from
+    // core/Hook.cpp's Character 0xAD thunk (via Arbiter::OnActorUpdate), right AFTER that
+    // actor's own Actor::Update, on whichever worker thread runs it -- so the owner's
+    // active-effect list is read on the thread that runs the owner's own effect update, not
+    // from the player seat (review F4). One relaxed load when no watch is armed; otherwise
+    // relaxed FormID compares, and for the owner a try_lock of that watch's leaf mutex (never
+    // waits) and a read of its own list. Logs; changes nothing. ANY THREAD.
+    void OnOwnerUpdate(RE::Actor* a_actor);
 
     // Un-teach + deselect every live proxy, keeping the slots (SKSE save callback).
     // A runtime 0xFF dynamic form must never be capturable into the `.ess`; a cast
