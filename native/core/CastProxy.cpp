@@ -93,7 +93,6 @@ namespace apmf::castproxy {
         // "LANDED".) Logs once and disarms; or, kWatchGraceMs after the slot's last ref went
         // without a landing, logs "NOT seen". An owner that never updates again (unloaded)
         // keeps its watch until the slot is re-minted or ResetAll -- both say so / clear it.
-        constexpr std::size_t kBaselineMax = 4;
         struct Watch {
             std::mutex                 mx;   // leaf
             std::atomic<RE::FormID>    owner{ 0 };   // 0 = not armed (relaxed pre-gate read)
@@ -102,8 +101,9 @@ namespace apmf::castproxy {
             std::uint64_t              mintedMs   = 0;
             std::uint64_t              releasedMs = 0;   // 0 while the slot still holds refs
             bool                       baselined  = false;
-            std::uint32_t              baseCount  = 0;
-            const RE::ActiveEffect*    base[kBaselineMax]{};
+            // Every effect of the form already on the owner at first sighting, UNCAPPED (review
+            // R2-2: Rally / Courage carry 6 effects, a reused slot can hold several casts' worth).
+            std::vector<const RE::ActiveEffect*> base;
         };
         Watch g_watch[std::size(g_slot)];
         std::atomic<std::uint32_t> g_armedWatches{ 0 };
@@ -114,7 +114,7 @@ namespace apmf::castproxy {
             if (w.owner.load(std::memory_order_relaxed) != 0) g_armedWatches.fetch_sub(1, std::memory_order_relaxed);
             w.owner.store(0, std::memory_order_relaxed);
             w.form = nullptr; w.source = 0; w.mintedMs = 0; w.releasedMs = 0;
-            w.baselined = false; w.baseCount = 0;
+            w.baselined = false; w.base.clear();
         }
 
         // Caller holds w.mx. Writer/main thread.
@@ -284,8 +284,10 @@ namespace apmf::castproxy {
                     w.releasedMs = apmf::clock::MonotonicMs();   // the landing watch's grace window starts now
             }
             s.freedMs = apmf::clock::MonotonicMs();
+            // source + flip are KEPT on a free slot (review R2-1): the form still mirrors that
+            // spell, which is what the mint's rank-1 reuse ("same source + flip") matches. Every
+            // other reader of `source` gates on `owner != 0` first (share loop, Unref, ReteachLive).
             s.owner  = 0;
-            s.source = 0;
             return;
         }
         // A claim held a ref that no live slot accounts for. Only a pool reset with a
@@ -329,22 +331,21 @@ namespace apmf::castproxy {
                 for (auto* ae : *list) {
                     if (!ae || ae->spell != w.form) continue;
                     if (!w.baselined) {
-                        if (w.baseCount < kBaselineMax) w.base[w.baseCount++] = ae;
+                        w.base.push_back(ae);
                         continue;
                     }
-                    bool old = false;
-                    for (std::uint32_t i = 0; i < w.baseCount; ++i) old |= (w.base[i] == ae);
+                    const bool old = std::find(w.base.begin(), w.base.end(), ae) != w.base.end();
                     old ? ++stale : ++hits;
                 }
             }
             if (!w.baselined) {
                 w.baselined = true;
-                if (w.baseCount != 0)
+                if (!w.base.empty())
                     spdlog::info("[castproxy] 0x{} self-flip proxy 0x{} (spell 0x{}): {} effect(s) of this pool form were "
                                  "already on the caster before the cast (a reused slot's stale effect, APMF-B58) -- "
                                  "ignored by the landing watch.",
                                  apmf::log::Hex(fid), apmf::log::Hex(w.form->GetFormID()), apmf::log::Hex(w.source),
-                                 w.baseCount);
+                                 w.base.size());
                 continue;
             }
             if (hits != 0) {

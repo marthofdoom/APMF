@@ -483,3 +483,8 @@ APMF-B61 (other open branches may also take B62: renumber at merge if they colli
   OPEN QUESTION left for a later cycle, not answered by either round: whether an UN-proxied kSelf spell claimed at an
   ally would therefore land on the ally. The forward proxy stays because it is the field-proven road (ally heals,
   2026-09-05/06); no code depends on the false premise.
+- RESIDUAL of the round-2 gate (raised against e82107b, 2026-10-06): the self-flip refuses any hostile or detrimental
+  base effect and the Calm / Frenzy / Demoralize / Paralysis / Stagger archetypes. A MOD damage / debuff spell whose
+  effects carry neither flag and a plain ValueModifier archetype (e.g. an unflagged Damage Health) cannot be told from
+  a buff by archetype, so an explicit self claim on it would land on the caster. Closing it needs a magnitude-sign /
+  AV-direction test or the client's own declaration; the client owns the consequence meanwhile.

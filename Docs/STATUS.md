@@ -81,7 +81,9 @@ touch spell) "must still be cast animated. Proxy it." No ABI change: the client 
   backlog APMF-B62. F6: the "kSelf always lands on the caster / Self branch never reads desiredTarget" premise is
   corrected everywhere it was written (CastProxy.h, ControlMap.cpp, CastSeats.{h,cpp}, INVARIANTS #19, CHANNEL-MAP,
   MAP): the branch takes desiredTarget, which 0x0A feeds; the forward proxy stays as the proven road. F1: APMF-B49's
-  deck check now also dumps the caster's ACTIVE-EFFECT list.
+  deck check now also dumps the caster's ACTIVE-EFFECT list. Round-2 re-check (MERGE on e82107b) small fixes: a
+  freed slot keeps source + flip (rank-1 reuse could never match), the watch baseline is uncapped, and the gate
+  also refuses Paralysis / Stagger archetypes (unflagged residual in APMF-B62).
 - **Field check.** Fade Other / any kTargetActor or aimed buff claimed at the follower itself: expect the mint line,
   `FIRED ... item=<proxy> ... target=<follower>`, `LANDED on the caster`, and the effect on the follower only.
   Also open: an ActiveEffect whose spell is a 0xFF proxy can be on the caster when a save is taken (the forward flip

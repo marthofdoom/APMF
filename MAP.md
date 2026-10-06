@@ -343,7 +343,7 @@ handle, so no seat drives its original form (it would heal the caster).
 `Flip::kToSelf`, delivery kSelf -- for an Aimed / Touch / TargetActor beneficial spell claimed at the claimant itself
 (the SELF-FLIP block in `ControlMap::ApplyRequest`, right after the delivery-flip block). The flip direction is
 part of the key and must match the source's delivery (`Acquire` refuses otherwise). Gate (review F2): no hostile
-or detrimental effect, no Calm / Frenzy / Demoralize archetype. A kSelf mint arms a passive LANDING watch checked
+or detrimental effect, no Calm / Frenzy / Demoralize / Paralysis / Stagger archetype. A kSelf mint arms a passive LANDING watch checked
 on the OWNER's OWN update (`castproxy::OnOwnerUpdate`, from `Arbiter::OnActorUpdate` after the Character 0xAD
 original; per-watch leaf mutex, try_lock only; pre-mint effects of a reused slot are a baseline, ignored) that logs
 `LANDED on the caster` or `NOT seen on the caster`. Slot ranking (review F3): a free slot already mirroring this

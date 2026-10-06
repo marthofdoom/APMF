@@ -1096,7 +1096,8 @@ namespace apmf {
             // Gates, each logged rate-limited when it declines:
             //   * BENEFICIAL only (review F2): no effect whose base effect is HOSTILE or
             //     DETRIMENTAL (core/CastClassify.cpp's own beneficial test), and none of the
-            //     Calm / Frenzy / Demoralize archetypes. "Non-hostile" alone is not "a buff":
+            //     Calm / Frenzy / Demoralize / Paralysis / Stagger archetypes (round 2: Kematu's
+            //     and Ancano's paralysis, Tolfdir's fireball stagger carry neither flag). "Non-hostile" alone is not "a buff":
             //     Pacify (Calm, non-hostile) would calm the caster, and Vampire's Bane (sun
             //     damage, non-hostile but detrimental) would burn the caster and every actor in
             //     its radius. The ruling is about a buff on oneself; seat 0 also never self-forces
@@ -1122,7 +1123,9 @@ namespace apmf {
                         if (mgef->IsHostile() || mgef->IsDetrimental() ||
                             arch == RE::EffectArchetypes::ArchetypeID::kCalm ||
                             arch == RE::EffectArchetypes::ArchetypeID::kFrenzy ||
-                            arch == RE::EffectArchetypes::ArchetypeID::kDemoralize)
+                            arch == RE::EffectArchetypes::ArchetypeID::kDemoralize ||
+                            arch == RE::EffectArchetypes::ArchetypeID::kParalysis ||   // R2: MS08KematuParalysis,
+                            arch == RE::EffectArchetypes::ArchetypeID::kStagger)       // MG08Ancano/Tolfdir: no flags
                             hostile = true;
                     }
                     if (hostile || delivery == RE::MagicSystem::Delivery::kTargetLocation) {
@@ -1132,8 +1135,8 @@ namespace apmf {
                                          "original form at the caster).",
                                          apmf::log::Hex(op.actor), op.handle, apmf::log::Hex(spell),
                                          static_cast<int>(delivery),
-                                         hostile ? "the spell is not a buff (a hostile, detrimental, Calm, Frenzy or "
-                                                   "Demoralize effect; the self-flip serves buffs only)"
+                                         hostile ? "the spell is not a buff (a hostile, detrimental, Calm, Frenzy, "
+                                                   "Demoralize, Paralysis or Stagger effect; the self-flip serves buffs only)"
                                                  : "it is a non-placement target-location spell (rune-shaped; batch D)");
                         }
                     } else {
