@@ -1,8 +1,13 @@
 # APMF STATUS — living handoff (start here)
 
-Updated 2026-10-07. Current version **v0.11.3** (DRAFT release, marth publishes after the Deck test). The current state of the build: what's
+Updated 2026-10-07. Current version **v0.11.4** (DRAFT release, marth publishes after the Deck test). The current state of the build: what's
 shipped, what's probe-gated, what's next. Keep this current in the SAME change as any
 build/finding/workflow change.
+
+## CUT 2026-10-07 -- v0.11.4 "Armor comes back after an outfit reset" (DRAFT release)
+
+Stamp commit `6528859`, CI run 37570965799, tag `v0.11.4`. Zip `releases/v0.11.4/APMF-v0.11.4.zip`. DRAFT, marth publishes.
+IsEquipAuthorityEnforced is true while armor is enforced, so MFO's not-worn re-send restores armor an outfit re-apply removed. FIELD-TEST PENDING.
 
 ## CUT 2026-10-07 -- v0.11.3 "Armor choices are enforced" (DRAFT release)
 
