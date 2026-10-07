@@ -1,8 +1,13 @@
 # APMF STATUS — living handoff (start here)
 
-Updated 2026-10-07. Current version **v0.11.2** (DRAFT release, marth publishes after the Deck test). The current state of the build: what's
+Updated 2026-10-07. Current version **v0.11.3** (DRAFT release, marth publishes after the Deck test). The current state of the build: what's
 shipped, what's probe-gated, what's next. Keep this current in the SAME change as any
 build/finding/workflow change.
+
+## CUT 2026-10-07 -- v0.11.3 "Armor choices are enforced" (DRAFT release)
+
+Stamp commit `9d825f4`, CI run 37568116543, tag `v0.11.3`. Zip `releases/v0.11.3/APMF-v0.11.3.zip`. DRAFT, marth publishes. New
+`bEquipEnforceArmor` (default 1): armor verdicts enforced, weapons stay observe-only. FIELD-TEST PENDING.
 
 ## CUT 2026-10-07 -- v0.11.2 "Line of sight looks from the eyes" (DRAFT release)
 
