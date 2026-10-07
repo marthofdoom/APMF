@@ -720,7 +720,13 @@ namespace apmf::equipsink {
     }
     bool Installed()   { return g_installed.load(std::memory_order_acquire); }
     const char* NotInstalledReason() { return g_notInstalledReason.load(std::memory_order_acquire); }
-    bool Enforcing()   { return Installed() && !g_observeOnly.load(std::memory_order_relaxed); }
+    // Enforcing (ABI v8 IsEquipAuthorityEnforced): true when the seat refuses ANYTHING -- the global
+    // switch off, OR armor enforced on its own (bEquipEnforceArmor). Clients gate their "a declared
+    // piece is not worn: re-send it" on this (MFO-B63): an OutfitApply strips the worn body piece
+    // BEFORE equipping the (now refused) outfit, so without the re-send the follower stands bare
+    // (field 1006f, Jesper's Master Robes, marth 2026-10-06).
+    bool Enforcing()   { return Installed() && (!g_observeOnly.load(std::memory_order_relaxed) ||
+                                               g_enforceArmor.load(std::memory_order_relaxed)); }
     bool ObserveOnly() { return g_observeOnly.load(std::memory_order_relaxed); }
     bool DenyScript()  { return g_denyScript.load(std::memory_order_relaxed); }
 
