@@ -1,3 +1,7 @@
+## v0.11.2 -- Line of sight looks from the eyes
+
+- **Line of sight now looks from the follower's eyes instead of their feet.** Uneven floors, steps and trap doors no longer hide foes that are plainly in view.
+
 ## v0.11.1 -- Line of sight no longer sees false walls
 
 - **The line-of-sight check no longer treats the caster's own body, the target's body, invisible trigger and sound volumes, or stair helpers as walls.** Other characters and solid objects still block.
