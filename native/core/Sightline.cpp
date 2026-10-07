@@ -431,6 +431,29 @@ namespace apmf::sightline {
             // facing is read anywhere -- `dir` is discarded.
             RE::NiPoint3 eye{}, dir{};
             a_viewer->GetEyeVector(eye, dir, false);
+            // FIELD 1006d (marth 2026-10-06, "the ray casting is clearly broken"): the slot-0xC2 origin
+            // reads at FOOT level in the field -- a ray to a target ~370u away met a trap door the
+            // viewer stood on at 25u (head) / 31u (torso) / 65u (feet): the STEEPER the ray the NEARER
+            // the hit, which only a start point just under the floor surface gives. So the eye is
+            // taken from the viewer's own bound box, exactly as the target's head sample is (feet +
+            // height x kHeadFrac), and the slot-0xC2 origin is kept only for the one-shot diagnostic.
+            {
+                const RE::NiPoint3 vfeet = a_viewer->GetPosition();
+                const RE::NiPoint3 vmin  = a_viewer->GetBoundMin();
+                const RE::NiPoint3 vmax  = a_viewer->GetBoundMax();
+                float              vh    = (vmax.z - vmin.z) * a_viewer->GetBaseHeight();
+                if (!std::isfinite(vh) || vh <= 1.0f) vh = kNominalHeight;
+                const RE::NiPoint3 engineEye = eye;
+                eye = { vfeet.x, vfeet.y, vfeet.z + vh * kHeadFrac };
+                static std::atomic<int> s_eyeDiag{ 0 };
+                if (s_eyeDiag.fetch_add(1, std::memory_order_relaxed) < 8)
+                    spdlog::info("[los] eye origin: viewer 0x{:08X} feet z {:.1f}, slot-0xC2 origin z {:.1f} "
+                                 "(+{:.1f}), bound-box eye z {:.1f} (+{:.1f}); xy offset of slot-0xC2 {:.1f}u",
+                                 a_viewer->GetFormID(), vfeet.z, engineEye.z, engineEye.z - vfeet.z, eye.z,
+                                 eye.z - vfeet.z,
+                                 std::sqrt((engineEye.x - vfeet.x) * (engineEye.x - vfeet.x) +
+                                           (engineEye.y - vfeet.y) * (engineEye.y - vfeet.y)));
+            }
 
             // The target: feet / torso / head, and the end margin, from ONE read of its bound box
             // (Character slots 0x73 / 0x74) and its base scale -- exactly the inputs of the
