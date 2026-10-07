@@ -1,3 +1,7 @@
+## v0.11.4 -- Armor comes back after an outfit reset
+
+- **A follower whose outfit gets re-applied by the game now gets the armor MFO chose back within a few seconds, instead of standing bare.** Harbinger reports itself as enforcing while armor is enforced.
+
 ## v0.11.3 -- Armor choices are enforced
 
 - **Harbinger now enforces armor choices for its clients, as it was always meant to.** A follower's outfit or a distributed outfit no longer replaces the armor MFO chose. Weapons stay as they were. New setting: `bEquipEnforceArmor` (on by default).
