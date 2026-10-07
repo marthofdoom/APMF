@@ -207,6 +207,10 @@ namespace apmf::equipsink {
         // seat is down. Always a string literal (never freed); cleared to "" on success.
         std::atomic<const char*> g_notInstalledReason{ "not yet installed (Install runs at kDataLoaded)" };
         std::atomic<bool>  g_observeOnly{ true };
+        // [EquipAuthority] bEquipEnforceArmor (marth 2026-10-06): enforce ARMOR verdicts even while
+        // bEquipObserveOnly=1 keeps weapons, shields, torches and ammo observe-only. "MFO is the armor
+        // equip authority until the weighting rework; we are leaving weapon authority as is."
+        std::atomic<bool>  g_enforceArmor{ true };
         std::atomic<bool>  g_denyScript{ false };
         Worker_t           g_worker = nullptr;
         InstalledSite      g_sites[2]{};
@@ -486,7 +490,11 @@ namespace apmf::equipsink {
                                                            apmf::handblock::SpellLike(obj), hold);
             if (!equipClaimed && !handHeld) { g_worker(mgr, actor, obj, data); return; }
 
-            const bool observe    = g_observeOnly.load(std::memory_order_relaxed) ||
+            // Armor-only enforce: an item competing ONLY as plain armor (not a shield, a hand, ammo
+            // or a torch) is enforced even under the global observe-only switch.
+            const bool armorEnforced = g_enforceArmor.load(std::memory_order_relaxed) &&
+                                       competes == APMF_API::kEquipCat_Armor;
+            const bool observe    = (g_observeOnly.load(std::memory_order_relaxed) && !armorEnforced) ||
                                     (set.flags & APMF_API::kEquipAuth_ObserveOnly) != 0;
             const bool denyScript = g_denyScript.load(std::memory_order_relaxed) ||
                                     (set.flags & APMF_API::kEquipAuth_DenyScript) != 0;
@@ -730,6 +738,8 @@ namespace apmf::equipsink {
                             std::memory_order_relaxed);
         g_denyScript.store(GetPrivateProfileIntA("EquipAuthority", "bEquipDenyScript", 0, kIni) != 0,
                            std::memory_order_relaxed);
+        g_enforceArmor.store(GetPrivateProfileIntA("EquipAuthority", "bEquipEnforceArmor", 1, kIni) != 0,
+                             std::memory_order_relaxed);
         if (!enabled) {
             g_notInstalledReason.store("[EquipAuthority] bEquipAuthority=0", std::memory_order_release);
             spdlog::warn("[apmf][equip-sink] [EquipAuthority] bEquipAuthority=0 -- seat NOT installed; "
