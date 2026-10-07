@@ -1,8 +1,15 @@
 # APMF STATUS — living handoff (start here)
 
-Updated 2026-10-06. Current version **v0.11.0**. The current state of the build: what's
+Updated 2026-10-07. Current version **v0.11.1** (DRAFT release, marth publishes after the Deck test). The current state of the build: what's
 shipped, what's probe-gated, what's next. Keep this current in the SAME change as any
 build/finding/workflow change.
+
+## CUT 2026-10-07 -- v0.11.1 "Line of sight no longer sees false walls" (DRAFT release)
+
+Stamp commit `514ada2`, CI run 37549228518, tag `v0.11.1`. Zip `releases/v0.11.1/APMF-v0.11.1.zip` (sha256 `5ca76494...`, DLL sha256
+`080f4ee3...`). GitHub release is a DRAFT, marth publishes it. Own-LoS ray steps past the caster's and target's bodies and spell-passable
+layers, pin pairs kept warm, OCCLUDED lines name the hit, backlog drain (APMF-B49 best-claim, B52). FIELD-TEST PENDING, deploy as a pair
+with MFO v2.2.1.
 
 ## SHIPPED 2026-10-06 -- v0.11.0 "Animated casts for every spell, line of sight and combat approach"
 
