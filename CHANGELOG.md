@@ -1,3 +1,7 @@
+## v0.11.3 -- Armor choices are enforced
+
+- **Harbinger now enforces armor choices for its clients, as it was always meant to.** A follower's outfit or a distributed outfit no longer replaces the armor MFO chose. Weapons stay as they were. New setting: `bEquipEnforceArmor` (on by default).
+
 ## v0.11.2 -- Line of sight looks from the eyes
 
 - **Line of sight now looks from the follower's eyes instead of their feet.** Uneven floors, steps and trap doors no longer hide foes that are plainly in view.
