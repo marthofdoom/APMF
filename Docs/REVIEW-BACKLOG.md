@@ -615,3 +615,25 @@ refusal were fixed on the branch. Deferred, as relayed by the coordinator:
   caster: the driving offensive claim's target, else the combat target).
 - (SEV-5) The `g_lastLog` decision-log throttle map (`core/CastGuard.cpp` LogDue) is never cleared; clear it in
   ResetAll.
+
+### APMF-B71 (SEV-4 x3, SEV-5 x6) -- 1b facet attribution review, deferred items
+Raised against 90ea282 (`feat/apmf-1b-facet-attribution`, Opus tier-3 review
+`scratchpad/agentlogs/review-1b-attr.md`), 2026-10-12. Review verdict MERGE OK, nothing above SEV-3. The tier-C
+doc wording (Papyrus/console StartCombat resolves to Engine) was fixed on the branch in 6dc222d. Deferred:
+- (SEV-4) Count `found=false` (Harbinger's own stack scan failed) separately from a genuinely unnamed caller in
+  the Release counters; today both read as "unattributed".
+- (SEV-4) Papyrus `Actor.StartCombat` and console calls run inside SkyrimSE.exe and resolve to `Engine` (20), not
+  `DirectCalls` (75). Not a regression (still refused as before), but it breaks the 75 > 50 rule and the log
+  names the wrong source. Telling them apart needs new verified addresses (the native's VM frame).
+- (SEV-4) `Sources::ModuleOf` has no negative cache: a no-module caller costs up to 3 `GetModuleHandleExA` calls
+  (loader lock under Wine) per StartCombat through the `FollowStubs` hops, while the seat holds `g_mx` shared,
+  possibly inside a BSJobs job. No deadlock cycle found. Add a negative cache.
+- (SEV-5) `FollowStubs` can misattribute a return address whose next instruction is a `jmp`.
+- (SEV-5) ch.24 yield inference and the drift check can raise false alerts; attribution only, no behaviour.
+- (SEV-5) S1 calls `Decide` on every Update per actor, so `Engine` hit counts dominate the menu (cosmetic).
+- (SEV-5) The client's own DLL passes its own deny (tie goes to the source, logged). Intended; noted.
+- (SEV-5) `ActionGate`'s `ClaimOutranksTree` has no try/catch, unlike ch.22 and ch.24; an allocation throw in
+  `LineDue` / `Unattributed` would unwind into engine frames.
+- (SEV-5) Deny-miss detector (`CombatReentryDeny.cpp`): a source pass and a real miss in the same 250 ms sample
+  hide the miss.
+- NEXT SLICE (not a finding): Cast-facet denies (CastGate, EquipGate, the 8b seats) consulting priorities.
