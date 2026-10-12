@@ -81,7 +81,8 @@ namespace apmf::facetattr {
 
     // The source whose answer a seat replaces, from the function the seat displaced on that
     // vtable (its `orig`). The engine's own function, or another APMF layer -> Engine. A foreign
-    // module hooked INSIDE the seat (installed before Harbinger) -> that module, as a hook
+    // module hooked INSIDE the seat (installed before Harbinger; skse64 included, by its module
+    // name, never as DirectCalls) -> that module, as a hook
     // source -- EXCEPT a module that is also a CLIENT (it files claims): its own hook on the seat
     // is a wrapper of the engine's answer, not an outside writer, so Engine. A displaced function
     // in no module (an unnamed trampoline) -> kNoSource (the degrade rule). Cached per address.

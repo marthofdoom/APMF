@@ -118,6 +118,12 @@ namespace apmf::facetattr {
             // apart by IsSelf); skse64 -> DirectCalls; any other module -> a hook source.
             if (src::IsSelf(a_prevFn)) raw = src::kEngineSource;   // another APMF layer: the engine's answer below it
             else raw = src::ForAddress(a_prevFn, src::Kind::kHook);
+            if (raw == src::kDirectSource) {
+                // skse64 hooked INSIDE the seat is a hook DLL, not "direct calls" (75): name it by module.
+                char name[64]{};
+                src::ModuleNameOf(a_prevFn, name, sizeof(name));
+                raw = name[0] ? src::Register(name, src::Kind::kHook) : src::kNoSource;
+            }
             std::unique_lock lk(g_insideMx);
             if (g_inside.size() < kInsideCap) g_inside.emplace(a_prevFn, raw);
         }
