@@ -109,7 +109,11 @@ APMF_AwarenessResult*)` (main thread only), the PODs `APMF_LosInfo` (24 B), `APM
 param.ival bit 0)** (core/Sightline.h, core/Awareness.h); **ABI v19 adds `kIntent_CombatApproach = 24`,
 `CombatApproachFlags` (`kApproach_Hold`), `CombatApproachState` (0-13), the POD `APMF_CombatApproachInfo`
 (48 B, size rule frozen at `kCombatApproachInfoV19Size`) and `APMF_API_v19 : APMF_API_v18` with ONE slot,
-`GetCombatApproachState(actor, APMF_CombatApproachInfo*)` (any thread)** (channels/CombatApproach.h), the
+`GetCombatApproachState(actor, APMF_CombatApproachInfo*)` (any thread)** (channels/CombatApproach.h);
+**ABI v20 adds `kCastFlag_FloorSpellsOnly` (CastFlags bit 7) only; ABI v21 adds `kIntent_CastGuard = 25` (ch.25)
+and the `CastGuardFlags` (`kCastGuard_LineOfFire` 1<<0, `kCastGuard_ChannelRight` 1<<1, `kCastGuard_ChannelLeft`
+1<<2, `kCastGuard_All` 0x7) and NOTHING else: no struct, no slot (core/CastGuard.h). To stay under 2500 lines the
+v21 change also folded the v13..v16 history paragraphs into one (comments only)**, the
 `Intent` enum, `Handle`, and the exported query-fn name. No C++ class / STL / vtable
 crosses the boundary. **The current `kABIVersion` is stated ONLY in the header**
 (INVARIANTS #14b — this line said 3 while the header was at 6).
@@ -143,6 +147,8 @@ ABI v18 adds `GetLineOfSight` → `sightline::GetLineOfSight` (a `try/catch(...)
 ABI v19 adds `GetCombatApproachState` → `combatapproach::GetState` (a `try/catch(...)` returning
 `kApproachState_None`); the object is an `APMF_API_v19` (a fourth static_assert pair pins the v18 prefix
 end), and `MinReleaseForAbi(19)` shares v18's placeholder until the cut.
+ABI v21 (ch.25 `kIntent_CastGuard`) adds no slot: `MinReleaseForAbi(21)` = "the first release after 0.11.4"
+until the cut.
 The "client too new" null (`abiVersion > kABIVersion`) logs the running APMF version
 (`SKSE::PluginDeclaration::GetSingleton()`) and `MinReleaseForAbi(abi)` — a table that must
 be extended on every `kABIVersion` bump.
@@ -204,6 +210,10 @@ pre-gate, one acquire-load, one lookup, the WINNING claim's set copied out BY VA
 with its `param.ival` flags, (v8) its `slots[]` and (v9) its `owned`/`denied` — ALL FROM THE
 SAME SNAPSHOT READ, so the seat never pairs a set from one generation with a scope from
 another; false for an unclaimed/unloaded actor.
+**ch.25 (ABI v21):** `EnqueueRequest` refuses a `kIntent_CastGuard` claim by `castguard::RefuseReason`;
+`ApplyRequest` grants it a TTL (`castguard::TtlMs(param.fval)`, the cast bounds) so the generic Drain TTL pass and
+Repoint renewal apply. Its readers `TryGetCastGuard` / `CastGuardActors` are declared here but DEFINED in
+`core/CastGuard.cpp` (this file is near the 2500-line cap; a split is its own brief).
 - **What breaks:** the RCU contract (#12) — the working map/`m_index` are mutated
   ONLY on the writer thread (Drain/ReleaseAll/Clear, all the same MAIN thread; API
   calls only enqueue) and published via `Publish()`
@@ -752,6 +762,9 @@ plus native-placement 0x0A calls) in the `[ctcensus] HEARTBEAT`.
   kTargetLocation spells are declined (logged) and keep the old behaviour. Open review items:
   REVIEW-BACKLOG APMF-B41 (the degenerate kIntent_Cast doc sentence). STATUS "Phase 0c". 0x06 and 0x0A also feed the Restore census (`CensusNote`, Restore
   vtable only, read-only; `core/RestoreCensus`).
+  **ch.25 (ABI v21):** 0x06 first asks `castguard::HoldStartCast` (claim-driven or native): an OFFENSIVE item of an
+  actor whose winning guard carries `kCastGuard_LineOfFire` gets NO unless a <= 250 ms measurement says the line is
+  clear (`core/CastGuard`).
   **ABI v18 `kCastFlag_OwnLineOfSight` (`OwnLosApplies`: the bit, not deny-only, target not 0
   and not the claimant):** 0x06 answers YES only on a fresh (<= 1 s) own-ray VISIBLE from
   `sightline::Read(actor, claim.target)` (lock-free, FormIDs, marks the pair asked-for) and NO
@@ -1042,6 +1055,49 @@ included; G1 2026-10-04), install-once
   `hand=?(instant)` with ch.8b `n/a`, or `hand=?(other)` with the floor's answer;
   `CheckCast ADMITTED ... on the instant caster` marks a cast the pre-amendment read would
   have refused. EquipGate keeps the `kUnknown` actor-wide floor for its neither-hand slot.
+  **ch.25 (ABI v21):** on a HAND caster the thunk asks `castguard::DenyCheckCast` right after resolving the hand and
+  BEFORE the H1 override; a YES refuses with `kMultipleCast` (castobs `NoteCheckCast`, byApmf). `castgate::Installed()`
+  (true once the thunk is written) gates every guard claim. See `core/CastGuard`.
+
+### `native/core/CastGuard.{h,cpp}` + `native/channels/CastGuard.cpp` — ch.25 CAST GUARD (ABI v21, 2026-10-12)
+`kIntent_CastGuard`: two per-actor guards on an NPC's OWN casts, moved under Harbinger from MFO's
+CasterConsent hooks (MFO branch `fix/mfo-gates-client-only`): `kCastGuard_LineOfFire` (the friendly-fire hold)
+and `kCastGuard_ChannelRight` / `kCastGuard_ChannelLeft` (MFO's Exact concentration bound, per hand). NO hook of
+its own and no engine address beyond the verified `SpaceQuery.IsHostileToActor` row: it rides
+`core/CastGate.cpp` 0x0A (`castguard::DenyCheckCast`, HAND casters only, called right after the hand is
+resolved and BEFORE the H1 positive override, so claim-driven offensive casts are held too) and
+`core/CastSeats.cpp` 0x06 (`castguard::HoldStartCast`, first thing after the original is recovered, claim or not).
+The channel (`channels/CastGuard.cpp`, ch.25) only logs Engage / OnOwnerChanged / Release. The claim is bounded:
+`ControlMap::ApplyRequest` grants `castguard::TtlMs(param.fval)` (seconds; 0 = `kCastDefaultTtlMs`, clamp
+`kCastMaxTtlMs`) and the generic Repoint renewal keeps it; `EnqueueRequest` refuses by `castguard::RefuseReason`
+(CheckCast gate not installed, no / unknown / zero bits, bad fval, the player, LineOfFire while unarmed).
+The two ControlMap readers `TryGetCastGuard` / `CastGuardActors` are DEFINED in `core/CastGuard.cpp` (ControlMap.cpp
+is near its size cap): best LIVE claim by basis, tie earliest, bits masked to `kCastGuard_All`.
+THE MEASUREMENT: `castguard::Pump` (Arbiter::OncePerFrame, after `sightline::Pump`, main thread) refreshes the seats'
+`g_anyGuard` pre-gate from the snapshot, then measures up to 8 guarded LineOfFire casters per frame (round robin):
+the aim (the live driving cast claim's target when that claim's spell is offensive, else `currentCombatTarget`),
+then every high actor + the player in the caster's worldspace / cell: within `kLinePad` (80u) of the
+caster-to-aim segment (projecting between) and not read OCCLUDED from the caster by `sightline::Read` (asked, so the
+pair stays measured; unknown counts), or nearest to the aim (within 1024u, for the seat's `area + kBlastPad` test).
+Friendly = `!other->IsHostileToActor(caster)`, plus the player and teammates for a teammate caster. Published per
+caster in a 128-slot SEQLOCK table (main writes; readers lock-free); slots of casters no longer guarded are emptied.
+Seats trust a measurement for `kFreshMs` (250 ms): 0x06 answers NO unless fresh and clear; 0x0A refuses only on a
+fresh BLOCKED reading. The channel bound refuses a concentration `SpellItem` on a bounded hand at 0x0A unless
+`allowance::CastClaimNamesForHand` admits it. Every would-be refusal goes through `Decide`: Engine on the Cast facet
+gets a hit and an overruled (refusal stands: the guard's client priority > Engine's) or a stood (allowed, logged).
+Logs: `[ch.25] ... REFUSED / would refuse, ALLOWED ...` (per actor, spell, reason, 1.5 s), a 30 s `[ch.25] HEARTBEAT`.
+Evidence that 0x0A covers the RELEASE: `ActorMagicCaster` slot 3 `RequestCastImpl` and slot 6 `StartCastImpl` both
+`call [vt+0x50]` on 1.6.1170 (`0x5B0840` / `0x5B0A90`), 1.5.97 (`0x541A70` / `0x541CB0`) and 1.7.104 (`0x5BF370` /
+`0x5BF5C0`); on NO, slot 6 runs the cannot-cast handler (AE `0x5B1C20`), which interrupts.
+- **What breaks:** a refusal at 0x0A on an UNKNOWN measurement (it would interrupt a release or a channel tick on
+  no evidence); 0x06 answering clear by fallback (principle 7); moving the 0x0A consult after the H1 override (claim-
+  driven offensive casts would escape the line of fire) or onto the instant / voice caster (the client's direct
+  stream and shouts are out of scope by contract); a lock or a form lookup on the seat path (the seats read FormIDs,
+  the seqlock and one RCU snapshot; `Decide`'s `ClaimPriority` shared lock is taken only on a would-be refusal); a
+  ray or an actor walk off the main thread (Measure is main only; `sightline::Read` is the lock-free ask); dropping
+  the `Decide` priority test (the controller's degrade rule: enforce only against an outranked source); a measurement
+  slot outliving its caster's guard (Pump empties it); adding a decay or let-one-through in Harbinger (client
+  policy, INVARIANTS #18 ch.25 (e)). Open review items: none yet.
 
 ### `native/core/RestoreCensus.{h,cpp}` — phase 0b Restore-caster census (PASSIVE probe)
 Read-only. `[Probe] bRestoreCensus` (code default 1 for the field; STATUS pre-release
@@ -1565,7 +1621,7 @@ tool) still exist but are **unreachable unless the keyboard test surface is arme
 ### `native/channels/*.cpp` — one module per facet (FULL documented catalog)
 Each: a `Channel` subclass + `APMF_REGISTER_CHANNEL`, per-NPC `Engage`/`Release`.
 The first release shipped the documented catalog of 13 channels as a baseline
-benchmark; the table below is the CURRENT set — 23 files, 23 rows (ch.24 `CombatApproach` added 2026-10-05 (ABI v19); ch.23 `PursuitLeash` added 2026-09-25 (ABI v16); ch.22 `CombatReentryDeny`, ch.21 `CombatEntry` and ch.20 `TargetPin` added 2026-09-25; ch.7
+benchmark; the table below is the CURRENT set — 24 files, 24 rows (ch.25 `CastGuard` added 2026-10-12 (ABI v21); ch.24 `CombatApproach` added 2026-10-05 (ABI v19); ch.23 `PursuitLeash` added 2026-09-25 (ABI v16); ch.22 `CombatReentryDeny`, ch.21 `CombatEntry` and ch.20 `TargetPin` added 2026-09-25; ch.7
 `CombatAction` and ch.9 `OfferPackage` were missing from it until 2026-09-07; ch.17
 `EquipAuthority` added 2026-09-15; ch.19 `Travel` added 2026-09-22 — ch.18 is RESERVED
 for an attack-selection design that is NOT YET ON MAIN, so the intent numbers skip it). Each `ServesIntent()` maps to an `APMF_API::Intent`. Test keys in
@@ -1596,6 +1652,7 @@ parentheses.
 | `CombatReentryDeny.cpp` (+ `CombatReentryDeny.h`) | 22 | DENY every engine `StartCombat` for an actor during a bounded window (`kIntent_CombatReentryDeny`, ABI v15; no test key) | **SOURCE DENY at `Actor::StartCombat`'s own self-check:** `IsDeadHook` = write_vfunc on Character slot 0x99 (`IsDead`), chaining; `AnswerSelfCheck` runs only when `_ReturnAddress()` == `g_siteRet` (the verified call-site row `ReentryDeny.StartCombat.SelfIsDeadCall` + 11: AE `0x6B69CA` / SE `0x625248`) and answers "dead" (StartCombat refuses before its spinlock / equip / anything) for the WINNING claim inside its window, EVERY call (new entry and in-combat target-add, closing-round option (a)) except ch.21's own entry (`ClientEntryScope`, thread-local, held by `CombatEntry.cpp::Enter` around its StartCombat). The seat reads no actor state. WINDOW: `param.fval` s (0 = 10, clamped 120) from the claim's OWN request / last Repoint -- `NoteRequest` / `NoteRepoint` (called from `ControlMap::EnqueueRequest` / `EnqueueRepoint`, any thread, `g_reqs` under its own mutex); `Apply` (inside Drain) sets a provisional deadline and posts `Settle`, which after Publish reads the winning handle and sets the real deadline (ending a takeover with no time left). Map under `shared_mutex` (unique on the game thread, shared in the seat, which may run on ANY thread). `Poll` (Arbiter seat, 250 ms) ends the claim on "window elapsed" / "owner dead" via `EndClaim` (EnqueueRelease, never inside Drain) and runs the DENY-MISS detector (controller appeared under a live window with no ch.21 pass). `g_siteSeen` + the one-time `seat OBSERVED` log (principle 5); every Engage / Repoint line names the slot-0x99 owner. `ResetAll` at revert + kPreLoadGame (also clears `g_reqs`). **What breaks:** never answer at any return address but StartCombat's SELF check (the target's `IsDead(false)` at AE `0x6B6A0A` is another actor's facet; any other site would lie to the whole engine); never read the controller in the seat (the cross-thread StopCombat race the closing round removed); never let the seat call an engine function or take an engine lock (it can run inside a BSJobs detection job); never drop the `ClientEntryScope` in ch.21 (a client's declared entry would be refused by its own deny); never drop `NoteRequest` / `NoteRepoint` from ControlMap (every window would run from apply time again, F3); never add a StopCombat here (the client's call, #0 (h) condition 1); never EnqueueRelease from inside Drain; keep the call-site row's 11-byte check (it is what pins the exact instruction). `INVARIANTS #0 (h)` | source deny (#0 (h)) |
 | `PursuitLeash.cpp` | 23 | LEASH an actor's in-combat pursuit + search to an anchor actor (`kIntent_PursuitLeash`, ABI v16; no test key) | Arbitration + claim lifecycle only: `Engage` / `OnOwnerChanged` hand `param.target` (anchor) + `param.fval` (radius) to `actiongate::SetLeash`; `Release` calls `ClearLeash`. The enforcement is `core/ActionGate.cpp` (the ch.23 block: act/pop ForceFail pair + the slot-0x04 update seat on 14 leaves). Synchronous refusals in `ControlMap::EnqueueRequest`. **What breaks:** see ActionGate's ch.23 note | claim + T1 enforcement |
 | `CombatApproach.cpp` (+ `CombatApproach.h`) | 24 | CLOSE to within R of X WHILE IN COMBAT, the in-combat movement goal (`kIntent_CombatApproach`, ABI v19; no test key) | **SUBSTITUTE one unweighted engine input, the actor's standard COMBAT AREA,** through its own vtable (write_vfunc, chaining): S1 vfunc 0x0B Update (restore the engine geometry, run the original, write X/space/R, period 0.25 s), S2 0x05 IsInside(WorldLocation) (engine geometry inside a deny bracket), S6 0x06 observe-only (the engine's own inside/outside verdict for the actor); deny brackets S3 CombatTargetSelectorStandard 0x06, S4 ten invisibility/bound-item CheckShouldEquip 0x0F and S5 CombatBehaviorAttack / Bash act 0x02 (CheckUnreachableTarget deliberately NOT bracketed: part of the movement facet, review R2-1); S3 also puts back (and re-activates) the area of a finished claim on the actor's own thread. `Poll` (Arbiter, game thread) resolves X, decides the state, ends + releases a finished claim; `RestoreBeforeSave` (kSaveGame) | the engine's Movement half walks the actor back into the area (Return To Combat Area) and clamps its moves to it; nothing else is touched |
+| `CastGuard.cpp` | 25 | GUARD an actor's own casts: hold OFFENSIVE casts while a friendly is in the line of fire, bound the AI's own concentration channel per hand (`kIntent_CastGuard`, ABI v21; no test key) | Arbitration + claim lifecycle only (log lines). The DENY lives in `core/CastGate.cpp` 0x0A (hand casters) and `core/CastSeats.cpp` 0x06 through `core/CastGuard` (see that section) | nothing: the engine's own cast simply does not start, or its release / channel tick is refused |
 
 - **What breaks (ch.24 `CombatApproach.cpp`, ABI v19):** (1) S1 MUST put the engine geometry back BEFORE calling the
   original Update (the standard area's centre is STICKY: the engine recomputes it only under conditions, so it must

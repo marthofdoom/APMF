@@ -4,6 +4,22 @@ Updated 2026-10-07. Current version **v0.11.4** (DRAFT release, marth publishes 
 shipped, what's probe-gated, what's next. Keep this current in the SAME change as any
 build/finding/workflow change.
 
+## HEAD OF WORK 2026-10-12 -- ch.25 CAST GUARD (ABI v21), branch `feat/apmf-cast-lof-channel-bound`, NOT merged
+
+MFO is moving its own cast-gate hooks under Harbinger (MFO `fix/mfo-gates-client-only` 020cf41: with Harbinger
+present MFO installs no hook on Harbinger's seats). Two MFO behaviours had no request type; marth ruled to add them.
+New `kIntent_CastGuard = 25` + `CastGuardFlags` (ABI v21, no struct, no slot): `kCastGuard_LineOfFire` holds an
+OFFENSIVE cast while a friendly (not hostile to the caster; the player and teammates for a teammate caster) is in the
+line of fire or the blast, measured every frame by Harbinger (`core/CastGuard`, positions + its own ray for
+exposure); `kCastGuard_ChannelRight` / `Left` refuse the AI's own concentration spell on that hand unless the
+client's live cast claim on that hand names it (MFO's Exact bound; instant caster untouched). Enforced at the seats
+Harbinger already owns: CastGate 0x0A (hand casters: start, release, channel ticks -- RequestCastImpl and
+StartCastImpl both call it, disassembled on all three builds) and CastSeats 0x06. Every refusal is attributed
+(Engine on the Cast facet) and stands only while the client outranks Engine. No new hook, no new address row,
+no co-save change. `APMF_API.h` stays at 2497 lines (v13..v16 history paragraphs folded, comments only). Ships
+with an MFO change that mirrors the header byte-for-byte and files the claim (Docs/INTEGRATION.md "Cast
+guards"). Agentlog `apmf-castgates.md`. Tier A; Opus review pending; FIELD-TEST PENDING.
+
 ## HEAD OF WORK 2026-10-11 -- HARBINGER CONTROLLER PHASE 1a, branch `feat/apmf-controller-1a`, NOT merged
 
 Plan `_research/harbinger-controller-plan-2026-10-11.md` (marth's Q1-Q15). New `core/Sources` (source registry,

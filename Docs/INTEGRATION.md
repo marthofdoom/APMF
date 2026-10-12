@@ -193,6 +193,100 @@ are blocked for the duration").
   earlier v19 and every APMF below v19 never blocked weapons for a floor at all. A client
   cannot tell those two v19 builds apart, so gate on `abiVersion >= 20` before relying on it.
 
+### Cast guards (ABI v21, `kIntent_CastGuard`)
+
+A guard is a rule on an NPC's OWN casts that Harbinger enforces at the cast seats it already
+owns: `core/CastGate.cpp` 0x0A `CheckCast` on the LEFT and RIGHT hand casters, and
+`core/CastSeats.cpp` 0x06 `CheckStartCast`. It installs no hook and drives nothing. Two guards
+exist; one claim may carry either or both (`param.ival`, `CastGuardFlags`).
+
+- **`kCastGuard_LineOfFire` (bit 0): the friendly-fire hold.** An OFFENSIVE cast (any effect
+  whose magic effect is hostile, and not Self delivered; spells, scrolls and staffs alike) is
+  held while a FRIENDLY stands in its line of fire. Friendly: any actor that is not hostile to
+  the caster (the engine's own `Actor::IsHostileToActor`, asked from that actor), and, for a
+  caster that is a player teammate, also the player and every teammate. In the line of fire:
+  within 80 units of the line from the caster to its aim (projecting between the two) and NOT
+  read OCCLUDED from the caster by Harbinger's own ray (a wall between them means the bolt
+  cannot reach it; an unknown or unavailable reading still counts it), or within the spell's
+  largest effect area + 64 units of the aim (MFO's `WouldHitTeammate` rule, area read in the
+  same units MFO used). The aim is the target of the actor's live driving `kIntent_Cast` claim
+  when that claim's spell is itself offensive, else the actor's combat target; no aim means
+  no line, so nothing is held.
+  - **Measured every time.** `castguard::Pump` measures every guarded caster on the main
+    thread every frame (at most 8 per frame, round robin), positions read fresh, never the
+    engine's cached line-of-sight answer. The seats read the newest measurement lock-free and
+    trust it for 250 ms.
+  - **0x06 `CheckStartCast` (advisory, the AI's decision to start):** NO unless a measurement
+    at most 250 ms old says the line is clear. It holds claim-driven casts too: the guard is
+    checked before the claim answers YES.
+  - **0x0A `CheckCast` (hard, hand casters):** refuses (`kMultipleCast`) when a measurement at
+    most 250 ms old says blocked. The engine consults it when a cast STARTS
+    (`ActorMagicCaster::RequestCastImpl`, slot 3), when a charged cast is RELEASED
+    (`StartCastImpl`, slot 6; the engine's own cannot-cast handler then interrupts it) and on
+    every tick of a concentration channel (`UpdateImpl`). Disassembled on all three builds:
+    1.6.1170 `0x5B0840` / `0x5B0A90`, 1.5.97 `0x541A70` / `0x541CB0`, 1.7.104 `0x5BF370` /
+    `0x5BF5C0`, each `call [vtable+0x50]` (slot 0x0A). An unknown measurement never refuses
+    here: a NO at a release or a tick interrupts the cast.
+  - **No decay.** MFO let every fourth held cast through so a tight formation never froze a
+    follower. Harbinger holds for as long as a friendly is in the line; a client that wants a
+    decay drops the bit (Repoint) for a moment.
+- **`kCastGuard_ChannelRight` (bit 1) / `kCastGuard_ChannelLeft` (bit 2): the channel bound.**
+  On a bounded hand the AI's own CONCENTRATION spell (a `SpellItem` cast as concentration) is
+  refused at 0x0A, at its start and on every channel tick, UNLESS a live `kIntent_Cast` claim
+  on that hand names that spell (`allowance::CastClaimNamesForHand`: its spell or its proxy;
+  a dual-cast claim names both hands). That is MFO's Exact concentration bound: the AI may
+  stream a concentration spell only inside the client's own claim. Per hand, so the
+  allow-list's actor-wide reach is not involved. The INSTANT caster is never touched, so a
+  client's direct stream (`CastSpellImmediate` on `kInstant`) keeps running; the voice caster
+  is never touched either. 0x06 has no hand, so the bound is 0x0A only.
+- **Attribution (the Harbinger controller).** The source a guard overrules is the engine's own
+  AI ("Engine" on the Cast facet). A refusal stands only while the guard claim's client
+  outranks Engine there (`APMF_Sources.ini`; defaults client 50, Engine 20). Every would-be
+  refusal counts a hit on Engine plus an overruled (refused) or a stood (allowed, logged
+  "would refuse, ALLOWED"). The client shows on the menu's Cast facet table.
+
+**Parameters.** `RequestEx(actor, kIntent_CastGuard, basis, &param)`: `param.ival` = the
+`CastGuardFlags` (at least one known bit, no unknown bit); `param.fval` = the window in SECONDS
+(0 = `kCastDefaultTtlMs`, 4 s; clamped to `kCastMaxTtlMs`, 15 s). `form`, `target`, `pos` are
+not read. The claim is bounded exactly like a cast claim: it dies at the window unless a
+`Repoint` renews it (each Repoint renews the window granted at request; a Repoint's `fval` is
+not re-read, its `ival` is, so a heartbeat can change the guards). Highest basis wins; ties keep
+the earliest claim; the winner's bits apply alone.
+
+**Refused synchronously (`kInvalidHandle`, logged `[apmf][cast-guard] claim refused`):** an
+APMF older than v21 ("no channel serves intent 25"), the `CheckCast` gate not installed (VR, a
+runtime other than 1.6.1170 / 1.5.97 / 1.7.104, a self-check refusal), no param, an unknown or
+no guard bit, a negative or non-finite `fval`, the player as the actor, and
+`kCastGuard_LineOfFire` while the measurement is not armed (same runtimes, plus the
+`IsHostileToActor` self-check row). Without Harbinger's own line-of-sight service the
+measurement still arms; every friendly near the line then counts (no exposure test).
+
+**The recipe (MFO, a follower).** Hold one guard claim per follower that needs either guard,
+and heartbeat it with `Repoint` on the service tick:
+
+```cpp
+APMF_API::APMF_Param p{};
+p.ival = APMF_API::kCastGuard_LineOfFire;                     // bFriendlyFireHold
+if (exactConcentrationBound)                                   // castControl Exact, conc gambit-managed or no cast gambit
+    p.ival |= APMF_API::kCastGuard_ChannelRight | APMF_API::kCastGuard_ChannelLeft;
+p.fval = 6.0f;                                                 // seconds; renewed by Repoint
+if (api->abiVersion >= 21) {
+    if (!h) h = api->RequestEx(follower, APMF_API::kIntent_CastGuard, basis, &p);
+    else    api->Repoint(h, &p);
+}
+// release when neither guard applies any more: api->Release(h)
+```
+
+**What it does not do.** It does not choose a spell, aim, equip or fire anything; it only says
+no. It does not touch the instant or voice caster. It does not reach a cast already past its
+release (a projectile in flight). A fire-and-forget cast held at 0x06 is simply not started; one
+refused at its release is interrupted by the engine after its charge animation.
+
+**Logs.** `[ch.25] 0x... CheckCast (0x0A) REFUSED spell ... -- line of fire: friendly 0x... is
+within 80u of the line to 0x... (measured N ms ago). Guard h=... (MFO.dll priority 50) outranks
+Engine (priority 20) on the Cast facet.` (per actor, spell and reason, 1.5 s), the channel-bound
+twin, and a 30 s `[ch.25] HEARTBEAT` with the measure / refusal / hold / stood counts.
+
 
 ## Casting at a point (ABI v11, `kCastFlag_AtPosition`)
 
@@ -1977,6 +2071,7 @@ columns, one doesn't imply the other.
 | `kIntent_CombatAction` (ch.7) | Deny named combat behavior-tree leaf categories (attack, bash, ranged attack, cast leaves, and more, grouped by category) | `ival` (a `CombatActionCategory` bitmask) | **Field-proven.** Graduated from a live deck probe: the deny fired, the tree fell back cleanly, no crash. |
 | `kIntent_SelectSpell` (ch.8) | Claim the casting facet | `form` (the spell FormID) | **Field-proven, for the owned/exact cast.** A follower AI-fired an animated spell allowed only through APMF's cast-check gate, live in combat, no whack-a-mole, no crash. This covers the single claimed spell as the actor's only castable choice. The graduated multi-spell allow list (`SetSpellAllowList`, v4) is a separate capability and is not yet proven. Denying a competing framework's own spell selection is also still a future gap. |
 | `kIntent_Cast` (ch.8b) | **Make the NPC's own AI cast a chosen spell at a chosen target.** ABI v5, use `RequestCast` | `APMF_CastRequest` (spell, proxy, target, flags, ttlMs) | **Field-proven** for heal-other on a follower AND for offense (17 animated offense fires in the 2026-09-06 deck session; the Offensive caster seat shipped in v0.9.2 — the "still being ported" note here was stale, corrected 2026-09-07). APMF makes no equip, anim or cast call. **Know what a claim does NOT cover, and what you must do about it:** it governs ONE hand, so the other hand keeps casting whatever the NPC's own AI picks — claim that hand too, with `kCastFlag_DenyHandOnly`, if you want the actor closed (a deny-only claim drives nothing and admits nothing, including your own spells). A deny-only floor also refuses weapons, shields, torches and unarmed into its hand; on ABI v20 and newer add `kCastFlag_FloorSpellsOnly` so it refuses spells, scrolls and staffs only (a one-hander, shield or torch in that hand passes; a two-hander, bow or unarmed still competes for the driving hand and is refused while that claim stands). See "Spells-only floor" above. It expires at `ttlMs`: `Repoint` the live claim to RENEW the deadline rather than releasing and re-requesting, or foreign spells equip and charge in the gap between the two. And a spell already charging when your claim arrives is not interrupted. Both mechanisms landed on `main` 2026-09-07 and are not in a tagged release yet. See `Docs/DENY-COMPLETENESS-AUDIT.md` open gaps 9-13. |
+| `kIntent_CastGuard` (ch.25) | **Guard an NPC's own casts: hold offensive casts while a friendly is in the line of fire; bound the AI's own concentration channel per hand.** ABI v21, use `RequestEx` | `ival` = `CastGuardFlags`, `fval` = window in seconds (Repoint renews) | **Built, CI-verified, not yet field-run.** Enforced at CastGate 0x0A (hand casters) and CastSeats 0x06; no hook of its own, no engine write. See "Cast guards" above. |
 | `kIntent_OfferPackage` (ch.9) | Claim the package-offer facet | `form` (the TESPackage FormID) | **Proven WHEN NUDGED (corrected 2026-09-07).** The 0x49 redirect answers whenever the engine asks while a published claim stands — 16/16 deck wins, every one of them following an explicit `EvaluatePackage` nudge, with ZERO hits from the engine's own evaluation cadence over ~75 s. It is not self-sustaining: if nothing nudges, nothing re-asks. The earlier "field-proven for engage/release" credit belonged to the retired PROBE; the graduated channel's own first field run engaged **0 of 6** dispatches because its nudge fired before the claim published. Fixed on `main` as of 2026-09-07 (the nudge is posted one hop past the claim's publish); untagged, and not yet re-run on a deck. Save/load persistence of an engaged claim is still unexercised. |
 | `kIntent_Dialogue` (ch.10) | Pause the actor's own in-progress dialogue | none | Built, not yet battle-tested |
 | `kIntent_Disposition` (ch.11) | Aggression / confidence / assistance / morality bias | `fval` (reserved, not yet read) | **Field-proven.** An actor-value source-block, deck-tested to hold even on a package-locked actor. |
