@@ -8,11 +8,19 @@
 
 // See core/HarbingerMenu.h. Every signature below is copied from SMF's consumer header
 // (resources/SKSEMenuFramework.h @ dc91824: AddSectionItem ~l.149, igTextUnformatted l.4475,
-// igTextColoredV l.4493, igSeparator l.4365, igSameLine l.4370, igSliderInt l.4744,
-// igBeginTable l.5204, igEndTable l.5209, igTableNextRow l.5214, igTableNextColumn l.5219,
-// igTableSetupColumn l.5229, igTableHeadersRow l.5244, igBeginTabBar l.5334, igEndTabBar
-// l.5339, igBeginTabItem l.5344, igEndTabItem l.5349, igPushID_Str l.4436, igPopID l.4455,
-// igSetNextItemWidth l.4257), never written from memory.
+// igTextColoredV l.4493, igSeparator l.4365, igSameLine l.4370, igSpacing l.4380, igSliderInt l.4744,
+// igCheckbox l.4583, igCollapsingHeader_TreeNodeFlags l.4979, igBeginTooltip l.5108, igEndTooltip
+// l.5113, igIsItemHovered l.5494, igBeginTable l.5204, igEndTable l.5209, igTableNextRow l.5214,
+// igTableNextColumn l.5219, igTableSetupColumn l.5229, igTableHeadersRow l.5244, igPushID_Str l.4436,
+// igPopID l.4455, igSetNextItemWidth l.4257), never written from memory.
+//
+// LAYOUT (marth 2026-10-11, field feedback "It looks very crowded"): one summary line of alerts at
+// the top (expand it to read them), a "hide idle" checkbox (UI state only, never saved), then ONE
+// collapsible header per facet (collapsed by default, open when that facet has an alert), each a
+// table with the same fixed-width columns -- source, kind badge, hits, priority slider -- one compact
+// row per source, idle sources greyed and sorted last, every long detail in the row's hover tooltip.
+// The census rows stay available in a collapsed header at the bottom. Presentation only: the same
+// registry reads, the same slider -> sources::EnqueueSetPriority path.
 
 namespace apmf::harbingermenu {
 
@@ -24,12 +32,13 @@ namespace apmf::harbingermenu {
         struct ImVec4 { float x, y, z, w; };
         using RenderFn = void(__stdcall*)();
 
-        // ImGui flag values from the same header (l.1100-1125, 627, 1065, 1142-1143).
-        constexpr int kTableRowBg        = 1 << 6;
-        constexpr int kTableBorders      = (1 << 7) | (1 << 8) | (1 << 9) | (1 << 10);
-        constexpr int kTableSizingStretch = 3 << 13;
-        constexpr int kTabBarScroll      = 1 << 7;
-        constexpr int kSliderAlwaysClamp = 1 << 4;
+        // ImGui flag values from the same header (l.571, 1065, 1106, 1107, 1142-1143).
+        constexpr int kTableRowBg         = 1 << 6;
+        constexpr int kTableBordersInnerH = 1 << 7;
+        constexpr int kColWidthStretch    = 1 << 3;
+        constexpr int kColWidthFixed      = 1 << 4;
+        constexpr int kSliderAlwaysClamp  = 1 << 4;
+        constexpr int kTreeDefaultOpen    = 1 << 5;
 
         struct Api {
             void (*AddSectionItem)(const char*, RenderFn)                       = nullptr;
@@ -37,17 +46,19 @@ namespace apmf::harbingermenu {
             void (*TextColoredV)(const ImVec4, const char*, va_list)            = nullptr;
             void (*Separator)()                                                 = nullptr;
             void (*SameLine)(float, float)                                      = nullptr;
+            void (*Spacing)()                                                   = nullptr;
             bool (*SliderInt)(const char*, int*, int, int, const char*, int)    = nullptr;
+            bool (*Checkbox)(const char*, bool*)                                = nullptr;
+            bool (*CollapsingHeader)(const char*, int)                          = nullptr;
+            bool (*BeginTooltip)()                                              = nullptr;
+            void (*EndTooltip)()                                                = nullptr;
+            bool (*IsItemHovered)(int)                                          = nullptr;
             bool (*BeginTable)(const char*, int, int, const ImVec2, float)      = nullptr;
             void (*EndTable)()                                                  = nullptr;
             void (*TableNextRow)(int, float)                                    = nullptr;
             bool (*TableNextColumn)()                                           = nullptr;
             void (*TableSetupColumn)(const char*, int, float, unsigned int)     = nullptr;
             void (*TableHeadersRow)()                                           = nullptr;
-            bool (*BeginTabBar)(const char*, int)                               = nullptr;
-            void (*EndTabBar)()                                                 = nullptr;
-            bool (*BeginTabItem)(const char*, bool*, int)                       = nullptr;
-            void (*EndTabItem)()                                                = nullptr;
             void (*PushID)(const char*)                                         = nullptr;
             void (*PopID)()                                                     = nullptr;
             void (*SetNextItemWidth)(float)                                     = nullptr;
@@ -58,18 +69,30 @@ namespace apmf::harbingermenu {
         constexpr ImVec4 kGrey  { 0.55f, 0.55f, 0.55f, 1.0f };
         constexpr ImVec4 kGood  { 0.45f, 0.85f, 0.45f, 1.0f };
         constexpr ImVec4 kHead  { 0.80f, 0.80f, 1.00f, 1.0f };
+        constexpr ImVec4 kWhite { 1.00f, 1.00f, 1.00f, 1.0f };
 
-        // The 1a facets get the master table; the others appear on source tabs once involved.
-        constexpr Facet kMasterFacets[] = { Facet::kTarget, Facet::kDetection, Facet::kPackage, Facet::kEquip };
+        // Column widths (pixels), the same in every facet table so the sliders line up.
+        constexpr float kKindWidth   = 95.0f;
+        constexpr float kHitsWidth   = 70.0f;
+        constexpr float kSliderWidth = 190.0f;
+
+        // UI state only: never written to APMF_Sources.ini (SMF has no per-plugin UI-state store).
+        bool g_hideIdle = false;
+
+        // Facets in display order, with the header label.
+        struct FacetRow { Facet f; const char* label; };
+        constexpr FacetRow kFacets[] = {
+            { Facet::kTarget,       "Targets" },
+            { Facet::kPackage,      "Packages" },
+            { Facet::kEquip,        "Equip" },
+            { Facet::kDetection,    "Detection" },
+            { Facet::kCast,         "Casting" },
+            { Facet::kCombatAction, "Combat actions" },
+            { Facet::kCombat,       "Combat entry and approach" },
+            { Facet::kCore,         "Core" },
+        };
 
         void Text(const std::string& s) { g.TextUnformatted(s.c_str(), nullptr); }
-
-        // "hook + client" for a module that is both (MFO.dll).
-        std::string KindLabel(SourceId id) {
-            const Kind k = KindOf(id);
-            if (IsClient(id) && k != Kind::kClient) return fmt::format("{} + client", KindName(k));
-            return KindName(k);
-        }
         void Colored(const ImVec4& c, const char* fmt, ...) {
             va_list a;
             va_start(a, fmt);
@@ -81,9 +104,17 @@ namespace apmf::harbingermenu {
         std::string Age(std::uint64_t lastMs) {
             if (lastMs == 0) return "never";
             const auto d = (apmf::clock::MonotonicMs() - lastMs) / 1000;
-            if (d < 60) return fmt::format("{} s", d);
-            if (d < 3600) return fmt::format("{} min", d / 60);
-            return fmt::format("{} h", d / 3600);
+            if (d < 60) return fmt::format("{} s ago", d);
+            if (d < 3600) return fmt::format("{} min ago", d / 60);
+            return fmt::format("{} h ago", d / 3600);
+        }
+
+        // The short kind badge.
+        std::string Badge(SourceId id) {
+            const Kind k = KindOf(id);
+            if (IsClient(id) && k != Kind::kClient) return fmt::format("{}+client", KindName(k));
+            if (k == Kind::kDirect) return "direct";
+            return KindName(k);
         }
 
         // The facet's current winner: the highest-priority involved, non-idle source with a
@@ -110,146 +141,123 @@ namespace apmf::harbingermenu {
             g.PopID();
         }
 
-        void FacetsTab() {
-            for (const Facet f : kMasterFacets) {
-                const SourceId win = Winner(f);
-                Colored(kHead, "%s", FacetName(f));
-                g.SameLine(0.0f, -1.0f);
-                Text(win != kNoSource ? fmt::format("-- winner: {} ({})", Name(win), Priority(win, f))
-                                      : std::string("-- no source seen yet"));
-                if (!g.BeginTable(fmt::format("tbl{}", static_cast<int>(f)).c_str(), 6,
-                                  kTableRowBg | kTableBorders | kTableSizingStretch, ImVec2{ 0.0f, 0.0f }, 0.0f))
-                    continue;
-                g.TableSetupColumn("Source", 0, 0.0f, 0);
-                g.TableSetupColumn("Kind", 0, 0.0f, 0);
-                g.TableSetupColumn("Hits", 0, 0.0f, 0);
-                g.TableSetupColumn("Overruled / stood", 0, 0.0f, 0);
-                g.TableSetupColumn("Seen", 0, 0.0f, 0);
-                g.TableSetupColumn("Priority (0 = off)", 0, 0.0f, 0);
-                g.TableHeadersRow();
-                const auto n = Count();
-                for (std::uint32_t i = 0; i < n; ++i) {
-                    const SourceId id = static_cast<SourceId>(i);
-                    if (!Involved(id, f)) continue;
-                    const bool idle = Idle(id);
-                    g.TableNextRow(0, 0.0f);
-                    g.TableNextColumn();
-                    Colored(idle ? kGrey : (id == kUnattributedSource ? kWarn : (id == win ? kGood : ImVec4{ 1, 1, 1, 1 })),
-                            fmt::format("{}{}", Name(id), idle ? " (idle)" : ""));
-                    g.TableNextColumn();
-                    Text(KindLabel(id));
-                    g.TableNextColumn();
-                    Text(std::to_string(Hits(id, f)));
-                    g.TableNextColumn();
-                    Text(fmt::format("{} / {}", Overruled(id, f), Stood(id, f)));
-                    g.TableNextColumn();
-                    Text(Age(LastSeenMs(id, f)));
-                    g.TableNextColumn();
-                    if (id == kUnattributedSource) Colored(kWarn, "always allowed");
-                    else Slider(id, f);
+        void Tooltip(SourceId id, Facet f, const std::vector<SeatView>& seats) {
+            if (!g.IsItemHovered(0) || !g.BeginTooltip()) return;
+            Colored(kHead, std::string(Name(id)));
+            Text(fmt::format("Kind: {}", Badge(id)));
+            Text(fmt::format("{}: {} hit(s), overruled {}, stood {}", FacetName(f), Hits(id, f), Overruled(id, f),
+                             Stood(id, f)));
+            Text(fmt::format("Last seen: {}", Age(LastSeenMs(id, f))));
+            if (Idle(id)) Colored(kGrey, "Idle: not seen during the last 3 game loads. Its priority is kept.");
+            for (const auto& s : seats) {
+                if (s.prev == id) Text(fmt::format("Hooks inside Harbinger's seat {} (installed earlier)", s.seat));
+                if (s.late == id) {
+                    if (s.lostOutermost)
+                        Colored(kWarn, fmt::format("Hooked over Harbinger's seat {}: Harbinger NOT outermost", s.seat));
+                    else
+                        Text(fmt::format("Hooked over Harbinger's seat {} (Harbinger re-hooked on top x{})", s.seat,
+                                         s.rehooks));
                 }
-                g.EndTable();
-                g.Separator();
             }
+            if (id == kUnattributedSource) Colored(kWarn, "Writes Harbinger could not name. Always allowed, never denied.");
+            g.EndTooltip();
         }
 
-        void SourceTab(SourceId id) {
-            Text(fmt::format("{} -- {}", Name(id), KindLabel(id)));
-            if (Idle(id)) Colored(kGrey, "Idle: not seen during the last 3 game loads. Its priorities are kept.");
-            if (!g.BeginTable("src", 5, kTableRowBg | kTableBorders | kTableSizingStretch, ImVec2{ 0.0f, 0.0f }, 0.0f))
-                return;
-            g.TableSetupColumn("Facet", 0, 0.0f, 0);
-            g.TableSetupColumn("Hits", 0, 0.0f, 0);
-            g.TableSetupColumn("Overruled / stood", 0, 0.0f, 0);
-            g.TableSetupColumn("Seen", 0, 0.0f, 0);
-            g.TableSetupColumn("Priority (0 = off)", 0, 0.0f, 0);
-            g.TableHeadersRow();
-            for (int fi = 0; fi < kFacetCount; ++fi) {
-                const Facet f = static_cast<Facet>(fi);
+        void FacetGroup(const FacetRow& fr, const std::vector<Alert>& alerts, const std::vector<SeatView>& seats) {
+            const Facet f = fr.f;
+            // Rows: involved sources, active first, idle last (registration order inside each).
+            std::vector<SourceId> active, idle;
+            const auto n = Count();
+            for (std::uint32_t i = 0; i < n; ++i) {
+                const SourceId id = static_cast<SourceId>(i);
                 if (!Involved(id, f)) continue;
+                (Idle(id) ? idle : active).push_back(id);
+            }
+            if (active.empty() && idle.empty()) return;
+            std::size_t facetAlerts = 0;
+            for (const auto& a : alerts) facetAlerts += (a.facet == f) ? 1 : 0;
+            const SourceId win = Winner(f);
+            const std::string label =
+                fmt::format("{}  -  {}  -  {} source(s){}###facet{}", fr.label,
+                            win != kNoSource ? fmt::format("winner {} ({})", Name(win), Priority(win, f))
+                                             : std::string("no active source"),
+                            active.size() + idle.size(),
+                            facetAlerts ? fmt::format("  -  {} alert(s)", facetAlerts) : std::string(),
+                            static_cast<int>(f));
+            if (!g.CollapsingHeader(label.c_str(), facetAlerts ? kTreeDefaultOpen : 0)) return;
+            if (!g.BeginTable(fmt::format("tbl{}", static_cast<int>(f)).c_str(), 4, kTableRowBg | kTableBordersInnerH,
+                              ImVec2{ 0.0f, 0.0f }, 0.0f))
+                return;
+            g.TableSetupColumn("Source", kColWidthStretch, 0.0f, 0);
+            g.TableSetupColumn("Kind", kColWidthFixed, kKindWidth, 0);
+            g.TableSetupColumn("Hits", kColWidthFixed, kHitsWidth, 0);
+            g.TableSetupColumn("Priority (0 = off)", kColWidthFixed, kSliderWidth, 0);
+            g.TableHeadersRow();
+            const auto row = [&](SourceId id, bool isIdle) {
                 g.TableNextRow(0, 0.0f);
                 g.TableNextColumn();
-                Text(FacetName(f));
+                const ImVec4& c = isIdle ? kGrey : id == kUnattributedSource ? kWarn : id == win ? kGood : kWhite;
+                Colored(c, std::string(Name(id)));
+                Tooltip(id, f, seats);
                 g.TableNextColumn();
-                Text(std::to_string(Hits(id, f)));
+                Colored(isIdle ? kGrey : kWhite, Badge(id));
                 g.TableNextColumn();
-                Text(fmt::format("{} / {}", Overruled(id, f), Stood(id, f)));
-                g.TableNextColumn();
-                Text(Age(LastSeenMs(id, f)));
+                Colored(isIdle ? kGrey : kWhite, std::to_string(Hits(id, f)));
                 g.TableNextColumn();
                 if (id == kUnattributedSource) Colored(kWarn, "always allowed");
                 else Slider(id, f);
-            }
+            };
+            for (const auto id : active) row(id, false);
+            if (!g_hideIdle)
+                for (const auto id : idle) row(id, true);
             g.EndTable();
+            if (g_hideIdle && !idle.empty()) Colored(kGrey, fmt::format("{} idle source(s) hidden", idle.size()));
+            g.Spacing();
         }
 
-        void SeatsTab() {
-            const auto snap = SeatSnapshot();
-            Text(fmt::format("{} Harbinger seat(s) installed; {} involve another mod.", SeatCount(), snap->size()));
-            if (snap->empty()) return;
-            if (!g.BeginTable("seats", 4, kTableRowBg | kTableBorders | kTableSizingStretch, ImVec2{ 0.0f, 0.0f }, 0.0f))
+        void AlertsLine(const std::vector<Alert>& alerts) {
+            if (alerts.empty()) {
+                Colored(kGood, "No alerts: every write was attributed.");
                 return;
-            g.TableSetupColumn("Seat", 0, 0.0f, 0);
-            g.TableSetupColumn("Facet", 0, 0.0f, 0);
-            g.TableSetupColumn("Inside Harbinger (earlier)", 0, 0.0f, 0);
-            g.TableSetupColumn("On top (later)", 0, 0.0f, 0);
-            g.TableHeadersRow();
-            for (const auto& s : *snap) {
-                g.TableNextRow(0, 0.0f);
-                g.TableNextColumn();
-                Text(s.seat);
-                g.TableNextColumn();
-                Text(FacetName(s.facet));
-                g.TableNextColumn();
-                Text(s.prev != kNoSource ? std::string(Name(s.prev)) : std::string("-"));
-                g.TableNextColumn();
-                if (s.lostOutermost) Colored(kWarn, fmt::format("{} -- Harbinger NOT outermost", s.late != kNoSource ? Name(s.late) : "?"));
-                else if (s.rehooks) Text(fmt::format("{} (Harbinger re-hooked on top x{})", s.late != kNoSource ? Name(s.late) : "?", s.rehooks));
-                else Text("-");
             }
-            g.EndTable();
+            const std::string label = fmt::format(
+                "{} alert(s): writes Harbinger could not attribute (allowed, never denied)###alerts", AlertCount());
+            if (!g.CollapsingHeader(label.c_str(), 0)) return;
+            for (const auto& a : alerts)
+                Colored(kWarn, fmt::format("{}  {}  actor 0x{}  {}", Age(a.ms), FacetName(a.facet),
+                                           apmf::log::Hex(a.actor), a.detail));
+            g.Spacing();
+        }
+
+        void CensusDetails(const std::vector<SeatView>& seats) {
+            const std::string label = fmt::format("Seat census: {} seat(s), {} involve another mod###census",
+                                                  SeatCount(), seats.size());
+            if (!g.CollapsingHeader(label.c_str(), 0) || seats.empty()) return;
+            for (const auto& s : seats) {
+                const std::string inside = s.prev != kNoSource ? std::string(Name(s.prev)) : std::string("-");
+                const std::string top    = s.late != kNoSource ? std::string(Name(s.late)) : std::string("-");
+                const std::string line   = fmt::format("{} ({}): inside {}, on top {}{}", s.seat, FacetName(s.facet),
+                                                       inside, top,
+                                                       s.rehooks ? fmt::format(", re-hooked x{}", s.rehooks) : std::string());
+                if (s.lostOutermost) Colored(kWarn, line + " -- Harbinger NOT outermost");
+                else Text(line);
+            }
         }
 
         void __stdcall Render() {
             try {
                 Colored(kHead, "Harbinger -- who drives each AI facet, and who wins.");
-                Text("A mod's claim beats an outside writer only when its priority is higher. 0 = off. "
-                     "Changes apply at once and are saved to Data/SKSE/Plugins/APMF_Sources.ini.");
+                Colored(kGrey, "A claim beats another mod's change only with a higher priority. 0 = off. Saved to "
+                               "APMF_Sources.ini. Hover a source for details.");
+                g.Spacing();
                 const auto alerts = RecentAlerts();
-                if (!alerts.empty()) {
-                    g.Separator();
-                    Colored(kWarn, "ALERT: %llu write(s) Harbinger could not attribute. They were ALLOWED, never denied.",
-                            static_cast<unsigned long long>(AlertCount()));
-                    for (std::size_t i = 0; i < alerts.size() && i < 8; ++i) {
-                        const auto& a = alerts[i];
-                        Colored(kWarn, fmt::format("  {} ago  {}  actor 0x{}  {}", Age(a.ms), FacetName(a.facet),
-                                                   apmf::log::Hex(a.actor), a.detail));
-                    }
-                }
+                const auto seats  = SeatSnapshot();
+                AlertsLine(alerts);
+                g.Checkbox("Hide idle sources", &g_hideIdle);
                 g.Separator();
-                if (!g.BeginTabBar("harbinger", kTabBarScroll)) return;
-                if (g.BeginTabItem("Facets", nullptr, 0)) {
-                    FacetsTab();
-                    g.EndTabItem();
-                }
-                const auto n = Count();
-                for (std::uint32_t i = 0; i < n; ++i) {
-                    const SourceId id = static_cast<SourceId>(i);
-                    bool any = false;
-                    for (int fi = 0; fi < kFacetCount && !any; ++fi) any = Involved(id, static_cast<Facet>(fi));
-                    if (!any) continue;
-                    g.PushID(fmt::format("srctab{}", id).c_str());
-                    if (g.BeginTabItem(std::string(Name(id)).c_str(), nullptr, 0)) {
-                        SourceTab(id);
-                        g.EndTabItem();
-                    }
-                    g.PopID();
-                }
-                if (g.BeginTabItem("Seats", nullptr, 0)) {
-                    SeatsTab();
-                    g.EndTabItem();
-                }
-                g.EndTabBar();
+                for (const auto& fr : kFacets) FacetGroup(fr, alerts, *seats);
+                g.Separator();
+                CensusDetails(*seats);
             } catch (...) {
             }
         }
@@ -279,17 +287,19 @@ namespace apmf::harbingermenu {
         Resolve(m, g.TextColoredV, "igTextColoredV", missing);
         Resolve(m, g.Separator, "igSeparator", missing);
         Resolve(m, g.SameLine, "igSameLine", missing);
+        Resolve(m, g.Spacing, "igSpacing", missing);
         Resolve(m, g.SliderInt, "igSliderInt", missing);
+        Resolve(m, g.Checkbox, "igCheckbox", missing);
+        Resolve(m, g.CollapsingHeader, "igCollapsingHeader_TreeNodeFlags", missing);
+        Resolve(m, g.BeginTooltip, "igBeginTooltip", missing);
+        Resolve(m, g.EndTooltip, "igEndTooltip", missing);
+        Resolve(m, g.IsItemHovered, "igIsItemHovered", missing);
         Resolve(m, g.BeginTable, "igBeginTable", missing);
         Resolve(m, g.EndTable, "igEndTable", missing);
         Resolve(m, g.TableNextRow, "igTableNextRow", missing);
         Resolve(m, g.TableNextColumn, "igTableNextColumn", missing);
         Resolve(m, g.TableSetupColumn, "igTableSetupColumn", missing);
         Resolve(m, g.TableHeadersRow, "igTableHeadersRow", missing);
-        Resolve(m, g.BeginTabBar, "igBeginTabBar", missing);
-        Resolve(m, g.EndTabBar, "igEndTabBar", missing);
-        Resolve(m, g.BeginTabItem, "igBeginTabItem", missing);
-        Resolve(m, g.EndTabItem, "igEndTabItem", missing);
         Resolve(m, g.PushID, "igPushID_Str", missing);
         Resolve(m, g.PopID, "igPopID", missing);
         Resolve(m, g.SetNextItemWidth, "igSetNextItemWidth", missing);

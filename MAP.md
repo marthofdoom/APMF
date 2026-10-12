@@ -353,13 +353,15 @@ and a fresh per-decision line-of-sight call (MFO-B229).
 
 ### `native/core/HarbingerMenu.{h,cpp}` — HARBINGER 1a: the SKSE Menu Framework page
 `Register()` at kDataLoaded: `GetModuleHandleA("SKSEMenuFramework.dll")`, then resolves
-`AddSectionItem` and 18 cimgui `ig*` exports by name (signatures copied from SMF's own consumer
+`AddSectionItem` and 20 cimgui `ig*` exports by name (signatures copied from SMF's own consumer
 header `resources/SKSEMenuFramework.h`, QTR-Modding/SKSE-Menu-Framework-3 @ dc91824; nothing
 vendored). Any export missing -> the page is refused whole, loudly; SMF absent -> one loud line,
-Harbinger runs from the INI (Q10). Page `Harbinger/Sources`: unattributed alerts, a Facets tab
-(per 1a facet: winner, source, kind, hits, overruled/stood, seen-age, priority slider), one tab
-per involved source, a Seats tab (census rows with a foreign module). Idle sources (not seen in
-3 loads, Q14) are greyed and keep their priority.
+Harbinger runs from the INI (Q10). Page `Harbinger/Sources` (layout 2026-10-11): an alerts summary line
+(expandable), a "hide idle" checkbox (UI state only), one collapsible header per facet (collapsed unless it has
+an alert) holding a fixed-column table (source, kind badge, hits, priority slider; idle sources greyed and last;
+details in the hover tooltip), and a collapsed census list at the bottom. Exports: `AddSectionItem` + 20 `ig*`
+(adds igSpacing, igCheckbox, igCollapsingHeader_TreeNodeFlags, igBeginTooltip, igEndTooltip, igIsItemHovered;
+the tab-bar exports are no longer used).
 - **What breaks:** the render callback runs on SMF's render thread — it may only read lock-free
   registry state / the census snapshot and ENQUEUE slider values; never call an `ig*` pointer that
   was not resolved (the refusal resets them all).
