@@ -1417,6 +1417,7 @@ skipped) and `FacetAttribution::Observe` (hit + stood). `[avobs]` first-call OBS
   called directly inside the exe) bypass the seat and are not seen. A hook layered over the seat is handled by
   `LayerOver` + `CallerBelow` (unrecoverable -> "through hook X", not attributed); the 0x04-0x06 originals are read
   and stored in `func` BEFORE each thunk is written (safe_write), so no thunk can run with a null original.
+  Open review findings: Docs/REVIEW-BACKLOG.md APMF-B73.
 
 ### `native/core/PackageData.{h,cpp}` — read a templated package's inputs, point its Location (ch.19 travel)
 `SetTravelTarget(pkg, ref, radius)` and `SetTravelCell(pkg, cell, radius)`: resolve the vanilla
