@@ -626,6 +626,7 @@ event layout (verified in SetActorsDetectionEvent on all three builds).
   APMF-B50 (the event free on an untraced path), APMF-B51 (`level > 0`), APMF-B53 (c), (d).
 
 ### `native/core/CastClassify.{h,cpp}` — ch.8b SEAT 0: CLASSIFY (2026-09-05)
+**HARBINGER 1b CAST SLICE (2026-10-12):** every claim-driven refusal / substitution here is ranked on the Cast facet against the seat's displaced function (`core/FacetAttribution` "CAST SLICE"); never give a claim answer before that test, and never count it on the silent follow-on seats.
 **THE ROOT-CAUSE FIX** the other five seats sat downstream of and could never reach:
 a heal/buff-OTHER spell (kTargetActor/kAimed RestoreHealth — Healing Hands, Heal
 Other, every delivery-flip proxy) was **NEVER GIVEN a `CombatInventoryItem` at all**
@@ -705,6 +706,7 @@ the same forced answer within one classify pass — see the .cpp's comment).
   `kExpectedRows` (Install then refuses, by design). Open review items: APMF-B58 (b)(c), APMF-B59 (d)(e)(f).
 
 ### `native/core/CastSeats.{h,cpp}` — ch.8b: THE ENGINE CAST SEATS (the keystone)
+**HARBINGER 1b CAST SLICE (2026-10-12):** every claim-driven refusal / substitution here is ranked on the Cast facet against the seat's displaced function (`core/FacetAttribution` "CAST SLICE"); never give a claim answer before that test, and never count it on the silent follow-on seats.
 While a `kIntent_Cast` claim {actor A, spell S, target T} stands, APMF answers the
 vfunc seats the combat AI's OWN cast decision is built out of, so the NPC's own AI
 selects, equips, charges, aims, fires and channels S at T — engine animation, engine
@@ -1025,6 +1027,7 @@ mask a live lower-basis one before the Drain sweep.
   thread-safe to call from a hot thunk (it doesn't need to be; install-once).
 
 ### `native/core/CastGate.cpp` — T2c: CheckCast allowance (the hard cast gate)
+**HARBINGER 1b CAST SLICE (2026-10-12):** every claim-driven refusal / substitution here is ranked on the Cast facet against the seat's displaced function (`core/FacetAttribution` "CAST SLICE"); never give a claim answer before that test, and never count it on the silent follow-on seats.
 Hooks `MagicCaster::CheckCast` (vtable slot **0x0A**) on `VTABLE_ActorMagicCaster[0]`
 ONLY (the other two ActorMagicCaster vtable entries are base-subobject vtables of
 the same class, not separate casters — patching them clobbers unrelated engine
@@ -1128,6 +1131,7 @@ non-hostile Value/PeakValue/DualValue modifier on Health/Magicka/Stamina). Lines
   old and the new shape read as self. Review items: REVIEW-BACKLOG APMF-B37..B39 (all closed), APMF-B41/B42 (self-claim review).
 
 ### `native/core/EquipGate.cpp` — T2a: CheckShouldEquip allowance (per-item equip gate)
+**HARBINGER 1b CAST SLICE (2026-10-12):** every claim-driven refusal / substitution here is ranked on the Cast facet against the seat's displaced function (`core/FacetAttribution` "CAST SLICE"); never give a claim answer before that test, and never count it on the silent follow-on seats.
 Hooks `CombatInventoryItem::CheckShouldEquip` (vtable slot **0x0F**) on the 30
 concrete spell/staff `CombatInventoryItemMagicT<item,caster>` instantiations —
 the identical set MFO's own `CombatStyle.cpp` equip gate patches (mirrored here
@@ -1349,6 +1353,19 @@ totals every 30 s (zeros included), `ResetAll()` at revert and kPreLoadGame.
   engages is not evicted (`Docs/DENY-COMPLETENESS-AUDIT.md` gap 15). NOT field-proven yet.
 
 ### `native/core/FacetAttribution.{h,cpp}` — HARBINGER 1b: attribution at the pre-registry seats (2026-10-12)
+**CAST SLICE (2026-10-12):** `InsideSource(prevFn)` (the source a seat replaces = the function it displaced on THAT
+vtable: engine / another APMF layer -> Engine; a foreign module -> that module as a hook (skse64 by name, never
+DirectCalls); a module that is also a CLIENT -> Engine (its hook only wraps the engine's answer); no module ->
+kNoSource, the degrade rule; cached per address), `CastClaimHandle(actor)` (highest-basis live kIntent_Cast claim via
+`ControlMap::CastFacetOutranks(-inf)`; approximate with two different clients' cast claims on one actor),
+`SelectClaimHandle(actor)` (ch.8), `Outranks(...)` (Decide's rule with no counter / alert / log, for the silent
+follow-on seats). Users: `core/CastGate.cpp` (the final 0x0A refusal; both narrowings refusing -> the higher-priority
+claim decides), `core/EquipGate.cpp` (`claimWins` lambda: Restore seat YES, N4, deny-complete, engine-first ch.8 and
+ch.8b refusals; one counted decision per claim kind per call; NOT the completeness fix or ch.15), `core/CastSeats.cpp`
+(`ClaimNamesThisCast(..., prevFn, count)`: 0x06 counts, 0x0A / 0x07 / 0x0D silent, so a cast is wholly claim-driven or
+wholly the engine's), `core/CastClassify.cpp` (`ClaimOutranksClassify`: the force site counts, the two serves are silent).
+Every one keeps the claim's answer on a throw. APMF-B71 folds: `Sources` `ModuleOf` negative cache (4 KiB page, 60 s,
+256 cap) and `ActionGate` `ClaimOutranksTree` try/catch. ch.25 CastGuard untouched.
 Shared by the Combat and CombatAction facets' existing seats (no new seat, no new address, no ABI change).
 `Decide(facet, claimHandle, src, actor, unknownDetail)` = NoteHit + the priority test (`ClaimPriority(handle)` >
 `Priority(src)`, STRICT: a tie stands; a source that IS the claim's client ranks at the claim's priority) +

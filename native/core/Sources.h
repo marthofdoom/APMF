@@ -152,8 +152,8 @@ namespace apmf::sources {
     // the degrade rule above). true = an unattributed write on `f` counts as the LOWEST-priority
     // source (priority 0), so a claim outranks it; the alert and the log stay. Only a facet that
     // already enforces (Target, via ch.20's restore) acts on it; on the others it is stored and
-    // shown only. 1b (core/FacetAttribution): Combat acts on it too (ch.22's unnamed StartCombat
-    // caller). APMF_Sources.ini `[UnknownSources] <Facet>=allow|override`. Any thread, lock-free.
+    // shown only. 1b (core/FacetAttribution): Combat and Cast act on it too (ch.22's unnamed StartCombat
+    // caller; the cast seats' unnamed inside hook). APMF_Sources.ini `[UnknownSources] <Facet>=allow|override`. Any thread, lock-free.
     bool OverrideUnknown(Facet f);
     // The render thread's checkbox. Applied and saved by the next Pump() (main thread).
     void EnqueueSetOverrideUnknown(Facet f, bool on);
