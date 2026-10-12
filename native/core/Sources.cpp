@@ -84,9 +84,9 @@ namespace apmf::sources {
         std::array<int, kFacetCount> g_defClient = Filled<kDefaultClient>();
         // [UnknownSources] <Facet>=allow|override. Written at Init and by Pump (main thread), read anywhere.
         std::atomic<bool>        g_unkOverride[kFacetCount]{};
-        std::atomic<std::int8_t> g_unkPending[kFacetCount]{ -1, -1, -1, -1, -1, -1, -1, -1 };   // -1 none, 0/1 queued
+        std::atomic<std::int8_t> g_unkPending[kFacetCount]{ -1, -1, -1, -1, -1, -1, -1, -1, -1 };   // -1 none, 0/1 queued
         std::atomic<bool>        g_unkPendingAny{ false };
-        static_assert(kFacetCount == 8, "g_unkPending initialiser lists one -1 per facet");
+        static_assert(kFacetCount == 9, "g_unkPending initialiser lists one -1 per facet");
 
         // clients: handle -> {source, issued}
         struct HandleRec { SourceId src; std::uint64_t issuedMs; };
