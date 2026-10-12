@@ -1886,7 +1886,7 @@ recipient is out of sight: move toward the recipient until the line clears, then
   until that package ends. A fleeing NPC, or one in low process, has no standard area:
   `kApproachState_Disabled`.
 * **It respects a pursuit leash.** If the same NPC holds a ch.23 leash and no point within R of X
-  lies inside the leash, the claim reads `kApproachState_Leashed` and moves nothing.
+  lies inside the leash, the claim reads `kApproachState_Leashed` and moves nothing. If X itself is outside the leash but the R-disc still touches it, the goal point is clamped to just inside the leash (APMF-B55, 2026-10-11).
 * **It does not start a fight and does not leave one.** A claim made out of combat waits
   (`kApproachState_Waiting`) and applies when combat starts.
 

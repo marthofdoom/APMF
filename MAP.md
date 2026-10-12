@@ -1530,7 +1530,7 @@ parentheses.
   a new reader found later is a deny hole until bracketed. (7) Stall / verdict / purge run on the WORLD-TICK clock (a
   menu pause must not end a claim). (8) An area of a FINISHED claim is put back (and re-activated, if the engine's failed
   path deactivated it) only by S3 on the actor's own combat thread, or by RestoreBeforeSave. Open review items:
-  `Docs/REVIEW-BACKLOG.md` APMF-B55 (leash coarse), APMF-B56 (save thread), APMF-B57 (FindWeapon: DECIDED 2026-10-11, exempt via an S5 bracket on its act(); the path to the weapon is still confined),
+  `Docs/REVIEW-BACKLOG.md` APMF-B55 (leash graze: DECIDED 2026-10-11, Poll clamps the goal point to `kLeashClampMargin` inside the leash when X is outside it but the R-disc touches it), APMF-B56 (save thread), APMF-B57 (FindWeapon: DECIDED 2026-10-11, exempt via an S5 bracket on its act(); the path to the weapon is still confined),
   APMF-B60 (slow-time stall floor), APMF-B61 (put-back waits on the selector; its exclusive-lock scan).
 - **What breaks (all channels):** each must (1) keep the package coherent — none
   substitutes the package (§5); (2) capture-and-restore engine state in `Release`,
