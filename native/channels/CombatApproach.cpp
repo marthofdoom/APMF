@@ -159,6 +159,7 @@ namespace {
     // clock (review F2 on 274d7e4): the seats run on game time, and Poll does not run while a
     // menu pauses the game, so a wall clock would end a live claim (and purge its record before
     // S1 can restore the engine geometry) after any pause longer than the window.
+    constexpr float         kLeashClampMargin = 16.0f;   // APMF-B55: how far inside the ch.23 leash a clamped goal sits
     constexpr std::uint64_t kStallMs      = 3000;    // 12 x the 0.25 s period: a FLOOR (principle 9)
     constexpr std::uint64_t kVerdictMs    = 1500;    // an engine inside/outside answer older than this is stale
     constexpr std::uint64_t kPurgeMs      = 5000;    // a record S1 has not rewritten for this long is dead
@@ -904,19 +905,34 @@ namespace apmf::combatapproach {
                 continue;
             }
 
-            const RE::NiPoint3 posX = x->GetPosition();
-            const float        dist = actor->GetPosition().GetDistance(posX);
+            const RE::NiPoint3 posXReal = x->GetPosition();
+            RE::NiPoint3       posX     = posXReal;   // the goal point; clamped just inside a grazing leash below
+            float              dist     = actor->GetPosition().GetDistance(posX);
             const bool         inCombat = actor->IsInCombat();
 
             // A ch.23 leash on the same actor: some point within R of X must lie inside it.
             bool leashed = false;
+            bool clamped = false;
             {
                 APMF_API::APMF_Param lp{};
                 if (apmf::ControlMap::Get().TryGetOwningClaim(id, APMF_API::kIntent_PursuitLeash, lp) && lp.target != 0) {
                     auto* anchor = RE::TESForm::LookupByID<RE::Actor>(lp.target);
-                    if (anchor && anchor->Is3DLoaded() && SpaceOf(anchor) == spaceX &&
-                        posX.GetDistance(anchor->GetPosition()) - radius > lp.fval)
-                        leashed = true;
+                    if (anchor && anchor->Is3DLoaded() && SpaceOf(anchor) == spaceX) {
+                        const RE::NiPoint3 ap = anchor->GetPosition();
+                        const float        dx = posXReal.GetDistance(ap);
+                        if (dx - radius > lp.fval) {
+                            leashed = true;
+                        } else if (dx > lp.fval && dx > 0.0f) {
+                            // APMF-B55 (marth 2026-10-11): the disc only GRAZES the leash (X itself is outside it).
+                            // The goal point is clamped to just inside the leash disc, along the anchor -> X line,
+                            // so the engine's path never ends at a point outside the leash.
+                            const float k = std::max(0.0f, lp.fval - kLeashClampMargin) / dx;
+                            posX    = RE::NiPoint3{ ap.x + (posXReal.x - ap.x) * k, ap.y + (posXReal.y - ap.y) * k,
+                                                    ap.z + (posXReal.z - ap.z) * k };
+                            dist    = actor->GetPosition().GetDistance(posX);
+                            clamped = true;
+                        }
+                    }
                 }
             }
 
@@ -989,11 +1005,11 @@ namespace apmf::combatapproach {
             }
             if (logLine)
                 spdlog::info("[ch.24] 0x{} approach {} -> X 0x{}: distance {:.0f} / R {:.0f}; area carried the bound {} "
-                             "time(s); engine: {}, standard area {}; outside answers {}.",
+                             "time(s); engine: {}, standard area {}; outside answers {}{}.",
                              Hex(id), StateName(next), Hex(target), dist, radius, applied,
                              inside == 2 ? "INSIDE" : inside == 1 ? "OUTSIDE (return-to-area selectable)" : "no fresh verdict",
                              (sf & kSeatCurrent) ? "CURRENT" : (sf & kSeatYielded) ? "outranked" : "not current",
-                             outside);
+                             outside, clamped ? "; goal point CLAMPED just inside the ch.23 leash (X grazes it)" : "");
         }
     }
 
