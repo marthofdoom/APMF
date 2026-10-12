@@ -1230,7 +1230,7 @@ A BLOCKED end also runs a passive gate probe that only writes log lines (`[trave
 
 **Refused at engage, one drain later** (the handle is live and inert, the log says why, **release it**): `param.form` names a record that is neither an object reference nor a cell. This one cannot be synchronous, because deciding a form's record type needs a form lookup and the API does not take the engine's form table off the game thread.
 
-Eight concurrent legs is a hard cap. A package's destination lives on the package record, so two actors walking to two places need two records. A ninth simultaneous leg is not served and the log says so. `TODO(verify)`: whether the ninth is refused at the call or reads `kLeg_Failed`. The header lists "all 8 package slots in use" under `kLeg_Failed`, and MFO's code comments treat it as a synchronous refusal.
+Eight concurrent legs is a hard cap. A package's destination lives on the package record, so two actors walking to two places need two records. A ninth simultaneous leg is accepted at the call, because the slot is found when the leg starts on the game thread. The log then says `[travel-leg] ... REFUSED -- all 8 package slots are in use by other legs`, the leg state reads `kLeg_Failed`, and the claim stays live and inert until you release it.
 
 **Lifetime.** Standing, no time limit. `Repoint(handle, &param)` moves the destination in place with no release and no re-claim. A point leg's marker lives exactly as long as the leg, and is deleted when the leg ends for any reason or on a `Repoint` to a new point. Markers are co-saved, so a save made mid-leg cannot leave one behind. A load releases every ch.19 claim. If a leg ended and you want the same place again, `Repoint` it, since the state read tells you it ended.
 
@@ -1401,7 +1401,7 @@ Handle HoldFire(RE::FormID actor) {
 }
 ```
 
-The four cast leaves carry both bits, so `kCombatActionCat_Offense` also stops spell casts, and `kCombatActionCat_Cast` alone stops only the casts. No category denies the melee leaves alone. `TODO(verify)`: whether any client needs "attacks but no casts". The header defines no category for it.
+The four cast leaves carry both bits, so `kCombatActionCat_Offense` also stops spell casts, and `kCombatActionCat_Cast` alone stops only the casts. No category denies the melee leaves alone.
 
 **Version and INI.** ABI 1. No key. Field-proven (graduated from a live deck probe).
 
@@ -2054,7 +2054,7 @@ A refusal at the call returns `kInvalidHandle` and logs the reason in `APMF.log`
 | `kIntent_Cast` | `kCastFlag_OwnLineOfSight` with the service not armed or on the degenerate `RequestEx` form. `kCastFlag_AtPosition` on `RequestCast`. A position cast with a non-finite basis or an owned cast facet | a package with no spell input (`kCastFlag_FromPackage`). A dual claim against a single-hand claim loses by basis |
 | `kIntent_EquipAuthority` | the equip seat is not installed | |
 | `kIntent_Idle` with a form | v2 path not available, `target` equal to the actor | the form is not an IDLE record, the target is not loaded |
-| `kIntent_Travel` | channel not installed (`bTravel=0`, VR, `APMF.esl` missing), no destination, a point without `kTravel_ToPosition`, with it a non-zero form or a non-finite point | the form is neither a reference nor a cell. `TODO(verify)`: the ninth simultaneous leg |
+| `kIntent_Travel` | channel not installed (`bTravel=0`, VR, `APMF.esl` missing), no destination, a point without `kTravel_ToPosition`, with it a non-zero form or a non-finite point | the form is neither a reference nor a cell. A ninth simultaneous leg (reads `kLeg_Failed`) |
 | `kIntent_TargetPin` | seat not installed, `form` 0 or the actor itself, the player as the actor, line of sight flag with the service down | `form` is not an Actor |
 | `kIntent_CombatEntry` | seat not installed, `form` 0 or the actor itself, the player as the actor | `form` is not an Actor (ends the claim) |
 | `kIntent_CombatReentryDeny` | seat not installed, `fval` negative or NaN, the player as the actor | |

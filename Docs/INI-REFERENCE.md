@@ -4,11 +4,15 @@ Every setting Harbinger reads, with its default. This file is generated from the
 
 Harbinger needs no configuration to work. The defaults are the tested configuration.
 
+For what each facet does, its arguments and its rules, see [FACETS.md](FACETS.md). Each section below links to the facet it switches.
+
 ## APMF.ini
 
 Path: `Data/SKSE/Plugins/APMF.ini`. Read once at startup.
 
 ### [CastSeats]
+
+Facet reference: [ch.8b Cast](FACETS.md#ch8b-cast-kintent_cast).
 
 the seats that let a client's chosen spell actually be cast by the NPC's own AI. These are the feature, not diagnostics. Leave them on.
 
@@ -17,6 +21,8 @@ the seats that let a client's chosen spell actually be cast by the NPC's own AI.
 
 ### [EquipGate]
 
+Facet reference: [ch.8 Select spell](FACETS.md#ch8-select-spell-kintent_selectspell), [ch.8b Cast](FACETS.md#ch8b-cast-kintent_cast), [ch.15 Equipment](FACETS.md#ch15-equipment-kintent_equipment).
+
 who is allowed to put something in a claimed hand.
 
 - **`EnableEquipDenyComplete`** (default `1`). While a client holds a hand, the AI may not re-equip a different spell or staff into it. This is what stops a cast being swapped out mid-cast.
@@ -24,6 +30,8 @@ who is allowed to put something in a claimed hand.
 - **`EnableDualWieldPreference`** (default `0`). Prefer a second one-handed weapon over a shield for a perked follower. Off: it needs per-hand score data that does not exist yet.
 
 ### [AiCastSeats]
+
+Facet reference: [ch.8b Cast](FACETS.md#ch8b-cast-kintent_cast).
 
 score observation, and the one score lever.
 
@@ -34,20 +42,26 @@ score observation, and the one score lever.
 
 ### [EquipAuthority]
 
+Facet reference: [ch.17 Equip authority](FACETS.md#ch17-equip-authority-kintent_equipauthority), [probe criteria](FACETS.md#appendix-e-equip-authority-probe-criteria).
+
 the engine-equip facet, taken whole (ABI v7/v8, ch.17). A client declares what a follower wears. APMF equips that set and refuses every other engine equip of armor, weapons, ammo or a torch on that actor (outfit re-apply, AI weapon or armor choice, combat re-arm) until the client re-declares or releases. Potions, food, scrolls, ingredients and books are never governed. The player dressing the follower through the trade or gift menu is allowed unless the client asks for the strict form. The player and any actor without a claim are never touched. Docs/INVARIANTS.md #17a.
 
 - **`bEquipAuthority`** (default `1`). Installs the seat. 0 = the seat is not installed and kIntent_EquipAuthority claims are REFUSED (the client keeps its own equips; logged once).
-- **`bEquipObserveOnly`** (default `1`). 1 = log every verdict as would-deny and refuse nothing. THE FIRST FIELD BUILD SHIPS WITH THIS ON: it stays on until the probe criteria in Docs/INTEGRATION.md pass (every engine re-equip of an off-set item logs would-deny with a named path, zero would-deny with tls>0, zero Unknown paths). Set to 0 to enforce.
+- **`bEquipObserveOnly`** (default `1`). 1 = log every verdict as would-deny and refuse nothing. THE FIRST FIELD BUILD SHIPS WITH THIS ON: it stays on until the probe criteria in Docs/FACETS.md Appendix E pass (every engine re-equip of an off-set item logs would-deny with a named path, zero would-deny with tls>0, zero Unknown paths). Set to 0 to enforce.
 - **`bEquipEnforceArmor`** (default `1`). 1 = enforce ARMOR verdicts even while bEquipObserveOnly=1 (weapons, shields, torches and ammo stay observe-only). marth 2026-10-06: MFO is the armor equip authority until the weighting rework. Set to 0 to make armor observe-only again.
 - **`bEquipDenyScript`** (default `0`). 1 = also refuse Papyrus (EquipItem/EquipItemEx) and console equips of items outside the declared set. Off: scripts are a quest author's deliberate act. Scope (APMF-B65): this also applies on an actor with NO ch.17 claim whose hand a live cast claim holds (the hand-claim block reads it there too): with it set, a Papyrus / console equip into that held hand is refused as well.
 
 ### [HandBlock]
+
+Facet reference: [ch.8b hand floor](FACETS.md#a-hand-floor-kcastflag_denyhandonly), [ch.17 Equip authority](FACETS.md#ch17-equip-authority-kintent_equipauthority).
 
 a hand taken for a cast is closed to every other action. While a cast claim holds a hand (a heal, an attack spell, or a client's "keep this hand empty" floor), the follower cannot put a weapon, a shield or a torch into that hand. The combat AI never picks one for it, and any other equip into it is refused. The other hand is untouched. When the claim ends, the follower arms itself again as usual. This is enforced whatever bEquipObserveOnly says.
 
 - **`bHandClaimBlocksEquip`** (default `1`). 0 = off: a weapon may be equipped into a hand a cast claim holds.
 
 ### [PackageGate]
+
+Facet reference: [ch.9 Offer package](FACETS.md#ch9-offer-package-kintent_offerpackage).
 
 package redirection (what makes a follower walk to a body).
 
@@ -56,11 +70,15 @@ package redirection (what makes a follower walk to a body).
 
 ### [ActorValueObserve]
 
+Facet reference: [actor-value watch](FACETS.md#actor-value-watch-detection-and-actorvalue-facets).
+
 who changes the actor values a mod asked Harbinger to set. While a mod holds a follower's sneak noise, detection range, speed or disposition values through Harbinger, a change to one of them by the game, a script or another mod is named in the log and on the Harbinger page. Watch only: nothing is ever refused or changed.
 
 - **`iActorValueSeat`** (default `1`). 1 = watch, 0 = off.
 
 ### [Travel]
+
+Facet reference: [ch.19 Travel](FACETS.md#ch19-travel-kintent_travel).
 
 ch.19, ABI v10. "Walk this follower over there." A mod names an actor and a destination -- any object in the world, or a whole cell -- and Harbinger walks the actor there under its own travel package (Data/APMF.esl, which ships beside this file), stopping about 75 units short of an object or once the actor is inside a cell, and lets go the moment that actor is in combat. That is the whole feature. Harbinger does not pick a fight, does not claim the target and does not pretend anyone has seen anything. A mod that wants those asks for them separately.
 
@@ -69,11 +87,15 @@ ch.19, ABI v10. "Walk this follower over there." A mod names an actor and a dest
 
 ### [PositionCast]
 
+Facet reference: [position cast](FACETS.md#position-cast-kcastflag_atposition).
+
 ABI v11. "Apply this spell right there." A mod names an actor, a Target Location spell and a point on the ground. Harbinger drops an invisible marker at the point, casts the spell from it in the actor's name, and deletes the marker a frame later. Summons are refused (the game only lets the caster itself summon), and so are runes and other spells that launch a projectile (the game only places those from the player's crosshair).
 
 - **`bPositionCast`** (default `0`). OFF by default: the follower does not animate when a spell is cast this way, and every action needs a proper animation, so this is a building block, not a finished feature. 0 = every position-cast request is REFUSED (logged with the reason). 1 = on. Walking a follower to a point (Travel) works either way.
 
 ### [TargetPin]
+
+Facet reference: [ch.20 Target pin](FACETS.md#ch20-target-pin-kintent_targetpin).
 
 ABI v13. "Fight THIS one." A mod names an actor and a target. While the actor is already fighting, Harbinger answers the game's own "who do I fight" question with that target, as long as the target is one the actor's side is already fighting. It never starts a fight. When the game ends the fight, or the target dies or unloads, the game picks its own targets again.
 
@@ -81,11 +103,15 @@ ABI v13. "Fight THIS one." A mod names an actor and a target. While the actor is
 
 ### [CombatEntry]
 
+Facet reference: [ch.21 Combat entry](FACETS.md#ch21-combat-entry-kintent_combatentry).
+
 ABI v14. "Start a fight with THIS one." A mod names an actor and a target. Harbinger asks the game, once, to put the actor into combat against that target, the same way the game starts any fight. The game may say no. Harbinger never keeps the fight going and never stops it: what happens next is the game's AI (pair it with [TargetPin] to make the actor fight that target and not another). Whatever the world does about the fight (crime, guards, allies joining) is the mod's doing.
 
 - **`bCombatEntry`** (default `1`). 0 = kIntent_CombatEntry claims are REFUSED (the mod starts fights its own way; logged once with the reason).
 
 ### [Idle]
+
+Facet reference: [ch.12 Idle](FACETS.md#ch12-idle-kintent_idle).
 
 ABI v17. "Play THIS animation at THAT." A mod names an actor, an idle (an IDLE record) and optionally a reference to play it at. Harbinger asks the game, once, to play it. The old form-free idle (no idle named) is not affected by this switch.
 
@@ -94,11 +120,15 @@ ABI v17. "Play THIS animation at THAT." A mod names an actor, an idle (an IDLE r
 
 ### [CombatReentryDeny]
 
+Facet reference: [ch.22 Combat re-entry deny](FACETS.md#ch22-combat-re-entry-deny-kintent_combatreentrydeny).
+
 ABI v15. "Stay out of the fight for a while." A mod names an actor and a number of seconds. While that time runs, the game cannot put the actor into combat: when it tries (it sees an enemy, it gets hit, an ally is fighting), the game's own combat start says no. Harbinger never stops a fight that is going on; the mod does that itself, once. The mod's own [CombatEntry] request still works.
 
 - **`bCombatReentryDeny`** (default `1`). 0 = kIntent_CombatReentryDeny claims are REFUSED (the mod keeps the actor out of combat its own way; logged once with the reason).
 
 ### [PursuitLeash]
+
+Facet reference: [ch.23 Pursuit leash](FACETS.md#ch23-pursuit-leash-kintent_pursuitleash).
 
 ABI v16. "Do not chase a fight away from me." A mod names an actor, an anchor actor (often the player) and a radius. While the actor is farther than the radius from the anchor, the game's own combat moves toward its target or its search area (close in, chase, flank, reposition, search) are refused when that goal is farther from the anchor still. The actor keeps fighting what comes to it: attacks, spells, blocks and every other move are untouched.
 
@@ -106,11 +136,15 @@ ABI v16. "Do not chase a fight away from me." A mod names an actor, an anchor ac
 
 ### [CombatApproach]
 
+Facet reference: [ch.24 Combat approach](FACETS.md#ch24-combat-approach-kintent_combatapproach).
+
 ABI v19. "Get within this distance of that actor, and keep fighting." A mod names an actor, a target X and a radius R. While the actor is in combat, its own combat area (the bound the game keeps every fighter inside) is centred on X with radius R: the game walks it back toward X when it is outside and keeps its tactical moves inside. Attacks, both hands' spells, blocks, the combat target and equipment decide as they would without it: every place the game reads the area for them sees its own area. A package that holds the actor in place still wins. Ends on arrival (unless the mod asks to hold), when X is lost, when combat ends, or when the mod releases it.
 
 - **`bCombatApproach`** (default `1`). 0 = kIntent_CombatApproach claims are REFUSED (logged at startup with the reason).
 
 ### [Sightline]
+
+Facet reference: [line of sight](FACETS.md#line-of-sight-getlineofsight), [own line of sight on a cast](FACETS.md#own-line-of-sight-kcastflag_ownlineofsight).
 
 Harbinger's own line of sight (ABI v18). Rays from an actor's eyes to another actor's feet, chest and head, in every direction. Mods ask for it with a flag on a cast claim or a target pin, or ask directly. Another NPC's body blocks the rays, except on a healing or other friendly cast: there the player's and the teammates' bodies do not block.
 
@@ -118,17 +152,23 @@ Harbinger's own line of sight (ABI v18). Rays from an actor's eyes to another ac
 
 ### [Awareness]
 
+Facet reference: [awareness](FACETS.md#awareness-senseactor).
+
 the "does this actor sense that one?" query (ABI v18).
 
 - **`bHearNoise`** (default `1`). 0 = hearing ignores the game's noise records (spells cast, arrows fired or landing, hits). Hearing a fight nearby, sight, being close and being fought still work.
 
 ### [Harbinger]
 
+Facet reference: [sources and priorities](FACETS.md#appendix-a-sources-and-priorities-per-facet), [package and scene source capture](FACETS.md#package-and-scene-source-capture).
+
 who drives each AI facet. Mods that ask Harbinger for a facet, and other mods that change the same facet on their own, are SOURCES. Each one has a priority from 0 to 100 per facet (0 = off). A mod's claim wins over another mod's change only when its priority is higher. Defaults: other mods 20, mods that ask Harbinger 50, Papyrus and console calls 75. A change Harbinger cannot trace to a mod is always allowed and shown as an alert. The priorities live in their own file, Data/SKSE/Plugins/APMF_Sources.ini, keyed by mod name ([Target] SmartNPCTargetSelector.dll=20). The Harbinger page in the SKSE Menu Framework edits it live. Without that framework, edit the file by hand.
 
 - **`bSceneProbe`** (default `1`). A passive probe, ON while it is field tested. It writes log lines only. Logs which game code asks for an actor's scene while a mod has given that actor a package (the scene hold-off is not built yet). 0 = off.
 
 ### [Probe]
+
+Facet reference: [caster-type and restore census](FACETS.md#caster-type-and-restore-census).
 
 a passive probe that is ON while it is being field tested. It only writes log lines and changes nothing in the game.
 
@@ -189,4 +229,4 @@ SomeOutfitMod.dll=0
 
 **`[Defaults]` keys:** `iUnregistered<Facet>` and `iClient<Facet>` (for example `iClientCast=50`) change the default for a whole facet. A name listed in a facet section beats the default.
 
-The generated reference for `APMF.ini` above lists every other key. See also `Docs/HARBINGER-MENU.md`.
+The generated reference for `APMF.ini` above lists every other key. See also `Docs/HARBINGER-MENU.md`. The priority rules, which facet each intent belongs to and what is enforced on each are in [FACETS.md Appendix A](FACETS.md#appendix-a-sources-and-priorities-per-facet).

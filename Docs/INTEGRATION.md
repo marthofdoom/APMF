@@ -1,2191 +1,236 @@
-# Integrating with APMF
+# Integrating with Harbinger (APMF)
 
-A quickstart for SKSE plugin authors who want their mod to share NPC control
-with other mods, instead of fighting them for it.
+A getting-started guide for SKSE plugin authors who want their mod to share NPC control with other mods instead of fighting them for it.
 
-## What APMF is
+This page covers the part every client needs: finding the interface, checking the version, becoming a source, and the claim, heartbeat and release pattern. It does not describe individual facets. Every facet, with its arguments, rules and examples, is in **[FACETS.md](FACETS.md)**.
 
-APMF (AI Package Management Framework, "Harbinger") is a per-facet arbitration
-layer for NPC control. You claim one facet of an actor (its combat target, its
-cast selection, whether it's sneaking, and so on) at a priority you choose, and
-APMF routes that one facet to you while denying whoever else was driving it.
-Everything else about that actor, movement, other packages, the rest of its
-AI, keeps running exactly as it was. When you release the claim, APMF stops
-suppressing and the actor's own AI (or the next-highest claim) takes it back.
+## What Harbinger is
 
-APMF never calls `StartCombat`, `CastSpellImmediate`, or any other
-decision-making engine function on its own initiative. It arbitrates who owns a
-facet and denies the losers. The two exceptions are calls YOU declare, made once
-per declaration: a cast at a point (ABI v11) and a combat entry (ABI v14,
-`kIntent_CombatEntry`, one `StartCombat` against the target you name). A combat re-entry deny (ABI v15,
-`kIntent_CombatReentryDeny`) calls nothing: it makes the engine's own `StartCombat` refuse for an
-NPC you name, for a window you choose.
+Harbinger (the project is APMF, the AI Package Management Framework) is a per-facet arbitration layer for NPC control. You claim one facet of an actor at a priority you choose. Harbinger routes that facet to you and denies whoever else was driving it. Everything else about the actor keeps running exactly as it was: its movement, its other packages, the rest of its AI. When you release the claim, Harbinger stops suppressing and the actor's own AI, or the next best claim, takes the facet back.
 
-For most facets you bring the behavior with your own proven mechanism (your own
-package, your own `currentCombatTarget` write) and APMF makes sure it reaches
-the actor.
+Harbinger is a moderator. It does not generate behaviour. For most facets you bring the behaviour with your own proven mechanism and Harbinger makes sure it reaches the actor. For the cast facet you declare what to cast and at whom, and the NPC's own combat AI does the rest, fully animated. Harbinger makes no cast, equip or animation call of its own.
 
-**The cast facet works differently, and this is the point of ABI v5.** You do
-not bring a cast mechanism at all. You declare *what* to cast and *at whom*, and
-APMF answers the engine's own cast-decision points so that **the NPC's own combat
-AI** selects, equips, charges, aims, fires and channels it. APMF still calls no
-cast, equip or animation function. The animation is the game's own because the
-game is the one casting. See "Making an NPC cast" below.
+There are three small exceptions where Harbinger calls the engine once on your behalf, because you declared it: a combat entry (`StartCombat`, ABI 14), a cast at a point (ABI 11) and the travel package it offers (ABI 10). They are named in [FACETS.md](FACETS.md). A combat re-entry deny (ABI 15) calls nothing. It makes the engine's own `StartCombat` refuse.
 
-## Quickstart
+## Before you start
 
-### 1. Get the interface
+- You build against one file, [`native/APMF_API.h`](../native/APMF_API.h). It is a plain C-ABI header with no CommonLib dependency. Copy it byte for byte. It is append-only, so a client built against any older copy keeps working against every later Harbinger.
+- Harbinger runs on Skyrim AE 1.6.1170, SE 1.5.97 and 1.7.104, and refuses every other build and VR by name. See the [README](../README.md) for requirements.
+- Read [FACETS.md "Shared concepts"](FACETS.md#shared-concepts) once. It explains basis, priority, pending claims, refusal timings and threading, and this page assumes it.
 
-Fetch the interface pointer once, after SKSE has loaded (`kPostLoad` or
-`kDataLoaded` is a good spot), and keep it. APMF exports one C function,
-`APMF_GetInterface`, returning a static POD struct you never free.
+## 1. Find the interface and check the version
+
+Harbinger exports one undecorated C function, `APMF_GetInterface`. It returns a pointer to a static POD struct of function pointers. You never free it. Fetch it once, after SKSE has loaded (`kPostLoad` or `kDataLoaded`), and keep it.
+
+There is no separate `Version()` call. The version is the `abiVersion` field, the first member of every interface struct. `APMF_GetInterface(n)` returns null if the installed Harbinger is older than `n`, and the newest interface for any `n` at or below its own ABI. The interface it hands back reports Harbinger's own ABI in `abiVersion`, whatever you asked for.
 
 ```cpp
+#include <Windows.h>
 #include "APMF_API.h"
 
 namespace MyMod {
 
-    const APMF_API::APMF_API_v6* g_apmf = nullptr;   // pick the newest struct you use
-                                                     // (v6 is current -- APMF_API.h
-                                                     // is the only canonical statement
-                                                     // of kABIVersion, INVARIANTS #14b)
+    // The newest struct. Reading a slot past the end of an older Harbinger's interface
+    // is undefined, so gate EVERY call on abiVersion (see Has below).
+    const APMF_API::APMF_API_v19* g_apmf = nullptr;
 
-    void TryBindAPMF() {
+    // Ask for the LOWEST ABI you can live with. GetInterface returns null for anything
+    // above the installed Harbinger's own, with no downward retry.
+    constexpr std::uint32_t kMinAbi = 5;
+
+    bool Has(std::uint32_t abi) { return g_apmf && g_apmf->abiVersion >= abi; }
+
+    void BindHarbinger() {
         HMODULE h = GetModuleHandleA("APMF.dll");
-        if (!h) return;   // APMF not installed. Degrade gracefully.
+        if (!h) return;                                   // not installed: run your own path
 
         auto fn = reinterpret_cast<APMF_API::GetInterface_t>(
             GetProcAddress(h, APMF_API::kGetInterfaceExport));
         if (!fn) return;
 
-        const APMF_API::APMF_API_v1* base = fn(APMF_API::kABIVersion);
-        if (!base) return;   // The installed APMF is OLDER than the header you built
-                             // against, so it refused outright. This one call has no
-                             // downward retry -- ask for the LOWEST version you can
-                             // work with if you want to keep supporting older APMFs.
+        const APMF_API::APMF_API_v1* base = fn(kMinAbi);
+        if (!base || base->abiVersion < kMinAbi) return;  // installed Harbinger is too old
 
-        if (base->abiVersion >= 6)
-            g_apmf = reinterpret_cast<const APMF_API::APMF_API_v6*>(base);
-        // A client that only needs v2 checks `>= 2` and casts to APMF_API_v2*.
-        // Guard every call site on g_apmf being non-null either way: APMF may be
-        // absent, or older than the ABI version you want.
+        g_apmf = reinterpret_cast<const APMF_API::APMF_API_v19*>(base);
     }
 
 }
 ```
 
-### 2. Claim a facet, release it when done
-
-A claim is a request ("I need this facet on this actor") plus a `basis`, a
-float you choose as your own priority. Higher basis wins the facet. On a tie,
-the earlier claim wins.
+Then every call site reads like this.
 
 ```cpp
-using namespace APMF_API;
-
-Handle g_targetClaim = kInvalidHandle;
-
-void ClaimCombatTarget(RE::FormID actor, RE::FormID target) {
-    if (!g_apmf) return;   // APMF absent or too old. Fall back to your own logic.
-
-    APMF_Param param{};
-    param.form = target;
-    g_targetClaim = g_apmf->RequestEx(actor, kIntent_CombatTarget, /*basis=*/50.0f, &param);
-    if (g_targetClaim == kInvalidHandle) return;   // lost arbitration, or no channel serves this intent
-
-    // You now own the combat-target facet for `actor`. APMF has denied every
-    // other claimant. Drive the behavior yourself, with your own mechanism
-    // (your own currentCombatTarget write, your own targeting AI). APMF does
-    // not do this part for you.
-}
-
-void ReleaseCombatTarget() {
-    if (g_targetClaim == kInvalidHandle) return;
-    g_apmf->Release(g_targetClaim);
-    g_targetClaim = kInvalidHandle;
-}
+if (MyMod::Has(6) && MyMod::g_apmf->IsClaimLive(handle)) { /* ... */ }   // IsClaimLive is ABI 6
 ```
 
-### 3. Repoint an existing claim
+Which ABI introduced which slot, intent and flag is in [FACETS.md "Version gating"](FACETS.md#version-gating) and [Appendix B](FACETS.md#appendix-b-abi-history). Two things catch people out. An unknown intent is refused (`kInvalidHandle`), which is a loud failure. An unknown flag bit is ignored without a word, which is a quiet one. Check `abiVersion` before you set any flag a facet section marks as newer than ABI 5.
 
-If a held claim's subject changes (the target switches, the selected spell
-changes), use `Repoint` instead of releasing and re-requesting. The handle
-stays the same, and the channel updates in place with no release/re-engage
-churn.
+Harbinger logs `APMF_GetInterface` either way. If a client asks for an ABI the installed Harbinger does not have, the log names the release that does.
 
-```cpp
-void RetargetWhileHeld(RE::FormID newTarget) {
-    if (g_targetClaim == kInvalidHandle) return;
-    APMF_Param param{};
-    param.form = newTarget;
-    g_apmf->Repoint(g_targetClaim, &param);
-}
+## 2. You are a source
+
+You do not register anything. Harbinger reads the return address of `Request`, `RequestEx` and `RequestCast` and finds the module that called. The source name is your DLL file name. Make the calls from your own DLL, not through a helper that lives in another one.
+
+Each source has a priority from 0 to 100 on each facet. Your default is 50. A player or you can change it in `Data/SKSE/Plugins/APMF_Sources.ini`, and the [Harbinger menu page](HARBINGER-MENU.md) edits it live.
+
+```ini
+[Cast]
+MyMod.dll=60
 ```
 
-Reserve `Release` for when you are genuinely done with the facet (combat
-ended, the cast finished), not for a routine retarget.
+Priority is how your claim ranks against a foreign source (another mod's hook, the engine, a script). The `basis` you pass with each request is how your claim ranks against other clients' claims. They are different numbers. [FACETS.md "Basis and priority"](FACETS.md#basis-and-priority) has the rules, the defaults, and what happens to a change Harbinger cannot trace.
 
+## 3. The claim pattern
 
-## Making an NPC cast (ABI v5, `kIntent_Cast`)
+Every facet follows the same steps. Claim, wait for it to apply, keep it alive if it is bounded, release it.
 
-Requires `abiVersion >= 5` and `APMF_API_v5`.
+**Claim.** Pick the intent, fill an `APMF_Param` (zero-initialised, set only what the facet reads), and call `RequestEx`. For a cast use `RequestCast`. The call is safe from any thread. It returns a `Handle` at once, or `kInvalidHandle` if Harbinger refuses.
 
-```cpp
-APMF_API::APMF_CastRequest req{};
-req.spell  = spellFormID;     // the spell to cast
-req.proxy  = 0;               // 0 = APMF mints a delivery-flip proxy if the spell is Self-delivery
-req.target = targetActorID;   // 0 = self. Load-bearing: this is where the cast lands.
-req.flags  = APMF_API::kCastFlag_LeftHand          // which hand
-           | APMF_API::kCastFlag_Concentration     // set for a held/channelled stream
-           | APMF_API::MakeStopPct(80);            // stop a channel at 80% of the target's AV
-req.ttlMs  = 4000;                                 // 0 -> default; always clamped, never unbounded
+**A refusal means do it your own way.** The seat is down (VR, an unsupported runtime, the facet switched off in `APMF.ini`) or a parameter is wrong. The reason is in `APMF.log`. Harbinger refuses rather than accepting a claim that would silently do nothing, so your degrade path actually runs. Most refusals are synchronous, but a few can only be found one frame later on the game thread, and then the handle is live and inert. [FACETS.md Appendix C](FACETS.md#appendix-c-refusal-cheat-sheet) lists both for every intent.
 
-APMF_API::Handle h = g_apmf->RequestCast(actorFormID, basis, &req);
-if (h == APMF_API::kInvalidHandle) { /* lost arbitration, or channel not registered */ }
-```
+**Wait for it.** The request is applied on the game thread at Harbinger's next drain. `IsClaimLive` (ABI 6) reads the applied state, so it is false for a claim that is still pending. A handle that has never read live is pending, not ended. Only a handle that was live and no longer is has ended. Set your own bound on how long you wait, and do not count paused-menu time, because the drain runs on the player update.
 
-`req` is copied synchronously, so a stack temporary is fine, and the call is safe
-from any thread. Re-request while you still want the cast; `Release(h)` when you do
-not. The claim is always TTL-bounded so a crashed client cannot strand an NPC.
+**Keep it alive, if it is bounded.** Three facets are bounded and release themselves: the cast claim (ch.8b), the combat re-entry deny (ch.22) and the cast guard (ch.25). To hold a cast or a guard longer than one window, send a `Repoint` before it lapses. A renewal moves the deadline to now plus the window the claim was granted. Do not release and re-request, because the gap leaves the actor unclaimed. Every other claim is standing and needs no heartbeat. A claim that is not bounded can still be ended by Harbinger itself when its goal is over, for example a target pin whose target died. Poll `IsClaimLive` for those.
 
-**What this unlocks.** The vanilla combat AI cannot classify a healing spell aimed
-at someone *else*, so it never builds one as a candidate and never considers casting
-it. That is why NPCs have only ever healed themselves through the game's AI. APMF
-supplies the one missing classification decision and the engine does the rest.
+**Release it.** `Release(handle)` when you are done with the facet. Release a handle even if you think it ended. It is a no-op on a claim Harbinger already released, and it cancels one that is still pending. Reserve `Release` for being done. Use `Repoint` for a mere change of target.
 
-**Practical notes.**
-- If the NPC holds a weapon from another source, use the **left** hand. Contesting the
-  weapon hand means that source re-equips over you and the cast dies.
-- A `kSelf` spell applied at an ally lands on the caster. Leave `proxy = 0` and APMF
-  mints a delivery-flipped copy.
-- Left at `stopPct = 0`, a channel runs to full restoration. Without it the engine stops
-  where its combat style says, which for a heal is roughly a quarter-second pulse.
-- A refused cast (no magicka, hand busy, spell unknown) visibly does not happen. Nothing
-  is faked. Check `APMF.log`.
-- **AE 1.6.1170 only.** The cast path refuses to install on other runtimes and on VR
-  rather than guessing at offsets. Kill switches live in `Data/SKSE/Plugins/APMF.ini`.
+**After a load.** Every claim is released at `kPreLoadGame`. Claims are never saved. Forget your handles on a load and claim again once the game is running.
 
-### Spells-only floor (ABI v20, `kCastFlag_FloorSpellsOnly`)
-
-`kCastFlag_FloorSpellsOnly` (CastFlags bit 7) changes what a `kCastFlag_DenyHandOnly` floor
-refuses. It means nothing without that flag: a hand a driving cast claim holds always blocks
-every other equip ("Harbinger taking a hand for an action means other actions on that hand
-are blocked for the duration").
-
-- **Without the bit** a floor refuses every spell and staff on its hand (CastGate 0x0A,
-  EquipGate 0x0F on the magic/staff items) AND every weapon, shield, torch and the unarmed
-  block competing for that hand (the hand-claim block: `core/HandBlock.cpp` 0x0F on the
-  weapon-class items, plus the `core/EquipSink.cpp` step).
-- **With the bit** the floor refuses spells, scrolls and staffs only (a staff starts a spell
-  in the hand). A one-handed weapon, a shield or a torch going into the floored hand passes.
-  A two-hander, a bow, or an item the engine has not given a hand (unarmed, an EitherHand or
-  null slot) competes for BOTH hands (`equipsink::Categorize`), so while a driving cast claim
-  stands on the other hand it is still refused, by that claim.
-- **Why it exists (field 2026-10-06).** A client that floors the idle hand while the other
-  hand drives a cast wants "no second spell starts there", not "this hand is disarmed".
-  Without the bit a melee follower's floored hand refused 119 equips of its bow, swords and
-  fists in a 40 s fight. With the bit the one-handed swords pass; the bow (32 of those
-  refusals) and Unarmed (22) still compete for the driving hand and stay refused while it
-  is held.
-- **Compatibility.** A new bit in the frozen `flags` word, no field moved, and an ABI bump
-  to v20 with no struct or slot (INVARIANTS #14b's exception). An APMF below v20 ignores the
-  bit. A v19 build carrying the hand-claim block then blocks weapons into the floor; an
-  earlier v19 and every APMF below v19 never blocked weapons for a floor at all. A client
-  cannot tell those two v19 builds apart, so gate on `abiVersion >= 20` before relying on it.
-
-### Cast guards (ABI v21, `kIntent_CastGuard`)
-
-A guard is a rule on an NPC's OWN casts that Harbinger enforces at the cast seats it already
-owns: `core/CastGate.cpp` 0x0A `CheckCast` on the LEFT and RIGHT hand casters, and
-`core/CastSeats.cpp` 0x06 `CheckStartCast`. It installs no hook and drives nothing. Two guards
-exist; one claim may carry either or both (`param.ival`, `CastGuardFlags`).
-
-- **`kCastGuard_LineOfFire` (bit 0): the friendly-fire hold.** An OFFENSIVE cast (any effect
-  whose magic effect is hostile, and not Self delivered; spells, scrolls and staffs alike) is
-  held while a FRIENDLY stands in its line of fire. Friendly: any actor that is not hostile to
-  the caster (the engine's own `Actor::IsHostileToActor`, asked from that actor), and, for a
-  caster that is a player teammate, also the player and every teammate. In the line of fire:
-  within 80 units of the line from the caster to its aim (projecting between the two) and NOT
-  read OCCLUDED from the caster by Harbinger's own ray (a wall between them means the bolt
-  cannot reach it; an unknown or unavailable reading still counts it), or within the spell's
-  largest effect area + 64 units of the aim. The effect area is stored in FEET and converted at
-  64/3 units per foot (Skyrim.esm Fireball: area 15 = 320 units, its explosion radius; Fire
-  Storm: 100 = 2133). MFO's `WouldHitTeammate` read the raw number as units, a blast about 21x
-  too small. Friendlies up to 4096 units from the aim are considered. The aim is the target of the actor's live driving `kIntent_Cast` claim
-  when that claim's spell is itself offensive, else the actor's combat target; no aim means
-  no line, so nothing is held.
-  - **Measured every time.** `castguard::Pump` measures every guarded caster on the main
-    thread every frame (at most 8 per frame, round robin), positions read fresh, never the
-    engine's cached line-of-sight answer. The seats read the newest measurement lock-free and
-    trust it for 250 ms.
-  - **0x06 `CheckStartCast` (advisory, the AI's decision to start):** NO unless a measurement
-    at most 250 ms old says the line is clear. It holds claim-driven casts too: the guard is
-    checked before the claim answers YES.
-  - **0x0A `CheckCast` (hard, hand casters):** refuses (`kMultipleCast`) when a measurement at
-    most 250 ms old says blocked. The engine consults it when a cast STARTS
-    (`ActorMagicCaster::RequestCastImpl`, slot 3), when a charged cast is RELEASED
-    (`StartCastImpl`, slot 6; the engine's own cannot-cast handler then interrupts it) and on
-    every tick of a concentration channel (`UpdateImpl`). Disassembled on all three builds:
-    1.6.1170 `0x5B0840` / `0x5B0A90`, 1.5.97 `0x541A70` / `0x541CB0`, 1.7.104 `0x5BF370` /
-    `0x5BF5C0`, each `call [vtable+0x50]` (slot 0x0A). An unknown measurement never refuses
-    here: a NO at a release or a tick interrupts the cast.
-  - **No decay.** MFO let every fourth held cast through so a tight formation never froze a
-    follower. Harbinger holds for as long as a friendly is in the line; a client that wants a
-    decay drops the bit (Repoint) for a moment.
-- **`kCastGuard_ChannelRight` (bit 1) / `kCastGuard_ChannelLeft` (bit 2): the channel bound.**
-  On a bounded hand the AI's own CONCENTRATION spell (a `SpellItem` cast as concentration) is
-  refused at 0x0A, at its start and on every channel tick, UNLESS a live `kIntent_Cast` claim
-  on that hand names that spell (`allowance::CastClaimNamesForHand`: its spell or its proxy;
-  a dual-cast claim names both hands). That is MFO's Exact concentration bound: the AI may
-  stream a concentration spell only inside the client's own claim. Per hand, so the
-  allow-list's actor-wide reach is not involved. The INSTANT caster is never touched, so a
-  client's direct stream (`CastSpellImmediate` on `kInstant`) keeps running; the voice caster
-  is never touched either. 0x06 has no hand, so the bound is 0x0A only.
-- **Attribution (the Harbinger controller).** The source a guard overrules is the engine's own
-  AI ("Engine" on the Cast facet). A refusal stands only while the guard claim's client
-  outranks Engine there (`APMF_Sources.ini`; defaults client 50, Engine 20). Every would-be
-  refusal counts a hit on Engine plus an overruled (refused) or a stood (allowed, logged
-  "would refuse, ALLOWED"). The client shows on the menu's Cast facet table.
-
-**Parameters.** `RequestEx(actor, kIntent_CastGuard, basis, &param)`: `param.ival` = the
-`CastGuardFlags` (at least one known bit, no unknown bit); `param.fval` = the window in SECONDS
-(0 = `kCastDefaultTtlMs`, 4 s; clamped to `kCastMaxTtlMs`, 15 s). `form`, `target`, `pos` are
-not read. The claim is bounded exactly like a cast claim: it dies at the window unless a
-`Repoint` renews it (each Repoint renews the window granted at request; a Repoint's `fval` is
-not re-read, its `ival` is, so a heartbeat can change the guards). A Repoint is held to the same
-refusal rules as the request: one that would be refused (an unknown bit, no bit,
-`kCastGuard_LineOfFire` while the measurement is not armed) is REFUSED by name and the claim
-keeps its previous bits. Highest basis wins; ties keep
-the earliest claim; the winner's bits apply alone.
-
-**Refused synchronously (`kInvalidHandle`, logged `[apmf][cast-guard] claim refused`):** an
-APMF older than v21 ("no channel serves intent 25"), the `CheckCast` gate not installed (VR, a
-runtime other than 1.6.1170 / 1.5.97 / 1.7.104, a self-check refusal), no param, an unknown or
-no guard bit, a negative or non-finite `fval`, the player as the actor, and
-`kCastGuard_LineOfFire` while the measurement is not armed (same runtimes, plus the
-`IsHostileToActor` self-check row). Without Harbinger's own line-of-sight service the
-measurement still arms; every friendly near the line then counts (no exposure test).
-
-**The recipe (MFO, a follower).** Hold one guard claim per follower that needs either guard,
-and heartbeat it with `Repoint` on the service tick:
+Here is the pattern as one reusable helper. It tracks pending, live and ended, and always releases.
 
 ```cpp
-APMF_API::APMF_Param p{};
-p.ival = APMF_API::kCastGuard_LineOfFire;                     // bFriendlyFireHold
-if (exactConcentrationBound)                                   // castControl Exact, conc gambit-managed or no cast gambit
-    p.ival |= APMF_API::kCastGuard_ChannelRight | APMF_API::kCastGuard_ChannelLeft;
-p.fval = 6.0f;                                                 // seconds; renewed by Repoint
-if (api->abiVersion >= 21) {
-    if (!h) h = api->RequestEx(follower, APMF_API::kIntent_CastGuard, basis, &p);
-    else    api->Repoint(h, &p);
-}
-// release when neither guard applies any more: api->Release(h)
-```
+enum class ClaimState { None, Pending, Live, Ended };
 
-**What it does not do.** It does not choose a spell, aim, equip or fire anything; it only says
-no. A SELF-delivered area spell (Fire Storm, a cloak) is never guarded: only a spell fired at an
-aim has a line of fire (REVIEW-BACKLOG APMF-B70). It does not touch the instant or voice caster. It does not reach a cast already past its
-release (a projectile in flight). A fire-and-forget cast held at 0x06 is simply not started; one
-refused at its release is interrupted by the engine after its charge animation.
+struct TrackedClaim {
+    APMF_API::Handle h        = APMF_API::kInvalidHandle;
+    bool             everLive = false;
+    std::uint32_t    waited   = 0;
 
-**Logs.** `[ch.25] 0x... CheckCast (0x0A) REFUSED spell ... -- line of fire: friendly 0x... is
-within 80u of the line to 0x... (measured N ms ago). Guard h=... (MFO.dll priority 50) outranks
-Engine (priority 20) on the Cast facet.` (per actor, spell and reason, 1.5 s), the channel-bound
-twin, and a 30 s `[ch.25] HEARTBEAT` with the measure / refusal / hold / stood counts.
+    // How many polls to wait for the first live read before calling it ended.
+    // Your own choice. MFO polls every 133 ms and waits 15 unpaused polls.
+    static constexpr std::uint32_t kMaxPending = 15;
 
+    // Any thread. False means refused: do it your own way.
+    bool Open(RE::FormID actor, APMF_API::Intent intent, float basis, const APMF_API::APMF_Param& p) {
+        Close();
+        h = MyMod::g_apmf->RequestEx(actor, intent, basis, &p);
+        everLive = false;
+        waited   = 0;
+        return h != APMF_API::kInvalidHandle;
+    }
 
-## Casting at a point (ABI v11, `kCastFlag_AtPosition`)
+    // Call from your own tick. Needs ABI 6.
+    ClaimState Poll() {
+        if (h == APMF_API::kInvalidHandle) return ClaimState::None;
+        if (MyMod::g_apmf->IsClaimLive(h)) { everLive = true; return ClaimState::Live; }
+        if (!everLive && ++waited < kMaxPending) return ClaimState::Pending;
+        return ClaimState::Ended;               // was live and is not, or never applied
+    }
 
-**Off by default, and not an endpoint.** The position cast is INVARIANTS #0 action (e),
-adopted by marth with a standing condition: the actor does not animate, and proper animations
-are required for ALL actions. Do not ship a user-facing action on this alone. The goal is an
-animated path (the actor's own AI cast aimed at the point through the engine's seats); this is
-a stepping stone or the delivery half of that. `[PositionCast] bPositionCast` defaults to 0,
-and every request is refused by name (`[poscast] request REFUSED ... position cast not
-installed`) until a user sets it to 1. Travel to a point does not depend on it.
+    // Move a held claim without releasing it. Needs ABI 3.
+    void Repoint(const APMF_API::APMF_Param& p) {
+        if (h != APMF_API::kInvalidHandle) MyMod::g_apmf->Repoint(h, &p);
+    }
 
-Requires `abiVersion >= 11`. Check it before you set the bit: an older APMF ignores
-`kCastFlag_AtPosition` and turns the request into an ordinary cast claim aimed at
-`param.target` (0 = the caster itself).
-
-```cpp
-APMF_API::APMF_Param p{};
-p.form = spellID;                           // a SpellItem: Target Location, fire-and-forget, no summon, NO projectile
-p.ival = APMF_API::kCastFlag_AtPosition;    // the flag ALONE; any other cast flag is refused
-p.posX = pt.x; p.posY = pt.y; p.posZ = pt.z; // world point, in the actor's worldspace (indoors: its cell)
-APMF_API::Handle h = g_apmf->RequestEx(actorFormID, APMF_API::kIntent_Cast, basis, &p);
-if (h == APMF_API::kInvalidHandle) { /* refused at the call: see APMF.log */ }
-```
-
-**What happens.** On the next main-thread pump APMF places a non-persistent XMarker
-(Skyrim.esm `0x3B`) at the point and casts the spell FROM it, blamed on the actor:
-`InterruptCast(false)` then `CastSpellImmediate(spell, false, none, 1.0, false, 0.0, actor)`
-on the marker's instant caster. That is the exact sequence the game's own Papyrus
-`Spell.RemoteCast` runs. The actor does not animate, its hands are not touched, and
-APMF charges no magicka (resource policy is yours). The marker is deleted one frame later.
-
-**Why not "the actor casts at a marker".** The game places a Target Location spell cast
-by an NPC at the NPC's own magic node and never reads the target it was handed, on
-both runtimes (`Docs/ADDRESS-TABLE-2026-09-15.md`, ADDENDUM 2026-09-23). That call
-lands at the actor's hand. A marker has no magic node, so a spell it casts lands on it.
-
-**What is refused, each with one `[poscast] ... REFUSED` line naming why:**
-- a spell with a **projectile** on any effect: a rune, a trap, a lobbed shot. The engine
-  launches a Target Location projectile only from the player's crosshair pick, never for a
-  marker caster (both runtimes, `Docs/ADDRESS-TABLE-2026-09-15.md` ADDENDUM 2026-09-23), so it
-  would silently place nothing. Refused on the game thread (logged). What remains is Target Location effects
-  applied at the spot directly.
-- a **summon**. The game applies a summon effect only to the actor that cast it, so a
-  marker cannot summon. An NPC's own summon already lands in front of it: the engine's
-  `SummonCreatureEffect` picks that spot itself. Summon through an ordinary cast.
-- Self, Touch, Aimed or Target Actor delivery. Use `RequestCast` with an actor target.
-- concentration and constant-effect spells.
-- disease, ability and addiction spell types (`RemoteCast` refuses the same three).
-- any other cast flag alongside `kCastFlag_AtPosition`.
-- `RequestCast` with the bit: `APMF_CastRequest` has no position field.
-- **the actor's cast facet is owned**: a live cast claim on that actor would outrank a
-  driving request at your basis (a higher basis, a `kCastFlag_DenyHandOnly` floor included,
-  or an equal basis that drives something). Refused at the call, naming the claim.
-- a point outdoors in a cell that is not loaded and attached, or not in the actor's
-  worldspace (the marker goes in the cell that CONTAINS the point, found with
-  `TES::GetCell`; indoors it is the actor's cell).
-- a `Repoint` carrying `kCastFlag_AtPosition` on a live cast claim (nothing changes).
-- a dead or unloaded actor, a cell that is not attached, or more than 16 markers alive
-  at once (they live one frame, so that is a burst of 16+ casts in one frame).
-AT THE CALL (`kInvalidHandle`): the flag, the point, a non-finite basis, and the facet check.
-ON THE GAME THREAD, one `[poscast] request N REFUSED ...` line: the spell checks (APMF does not
-look forms up off the main thread: the pinned CommonLib's `LookupByID` takes no lock), the actor
-and cell checks, and the facet check again (a claim may publish in between). So a live handle
-does not mean the cast will happen; read the log.
-**Same-basis note:** APMF has no client identity, so your OWN driving cast claim at the same
-basis (or higher) blocks your own position cast. Release it, or ask at a higher basis.
-- the whole feature when `[PositionCast] bPositionCast=0` (the default), on VR, or on a runtime other
-  than 1.6.1170 / 1.5.97.
-
-**It is a one-shot, not a claim.** It never enters the control map, so no engine seat
-can read it as an actor target and it holds no facet. The handle labels its log lines
-and nothing else: `IsClaimLive(h)` is false, `Repoint`/`Release` on it do nothing. You
-learn the outcome from `APMF.log` (`queued`, then `DELIVERED` or `REFUSED`).
-
-**Picking the point** is your job (declare, then APMF enforces). `FindEmptySpace` below
-answers "where is a clear, standable spot over there" if you want the help.
-
-### Save behaviour of APMF markers (ABI v11)
-
-Every XMarker APMF places (position casts and position travel legs) is recorded until APMF
-deletes it, and that record is co-saved (record `'XMRK'` v1 under APMF's `'APMF'` co-save).
-Loading a save deletes, on the first main-thread pump after the load, every recorded marker the loaded world still holds,
-and only one that passes all three proofs: the recorded runtime (0xFF) FormID resolves, its
-base is Skyrim.esm's XMarker, and it stands within 1u of the recorded spot. Anything that
-fails a proof is forgotten and never touched. A recorded marker whose cell is not loaded at
-that moment is kept in the record and deleted by a later load that finds it (at most 64 are
-carried). A save from Harbinger 0.9.7 or older has no such record and sweeps nothing. The log
-line is `[marker] kPostLoadGame sweep -- N APMF XMarker(s) deleted, F forgotten, K not loaded`.
-Nothing of APMF's names a marker when it is deleted: no leg or cast survives a load, and every
-package record that last aimed at one was pointed back at its placeholder before the load.
-
-## Asking about space (ABI v11 queries)
-
-Requires `abiVersion >= 11` and `APMF_API_v11`. Two questions. They answer and change
-nothing: no claim, no facet, no handle, no world write.
-
-**Threading: synchronous, main thread only.** The main thread is the one that runs the
-player's `Actor::Update` (APMF drains its own queue there). Anywhere else a query does
-nothing and returns `kQuery_NotMainThread`. SKSE's `AddTask` is NOT that thread. A client
-with its own player-Update pump (MFO's `MainThread::Post`) calls straight in from it.
-
-**Sizes.** Every v11 struct starts with `size`. Set it to `sizeof(struct)`. APMF refuses
-an input below the v11 layout and never writes an output past the size you declared.
-
-```cpp
-// Where can a summon-sized thing stand, 180u in front of this follower?
-APMF_API::APMF_SpaceQuery q{};
-q.size      = sizeof(q);
-q.origin    = followerID;     // REQUIRED: a loaded reference; its cell gives the world
-q.distance  = 180.0f;
-q.clearance = 80.0f;          // free radius wanted around the point
-APMF_API::APMF_SpaceResult r{};
-r.size = sizeof(r);
-if (g_apmf11->FindEmptySpace(&q, &r) == APMF_API::kQuery_Ok) { /* r.x, r.y, r.z */ }
-
-// Which hostiles to this follower stand inside 300u of that point?
-APMF_API::APMF_HostileQuery hq{};
-hq.size = sizeof(hq); hq.side = followerID; hq.x = r.x; hq.y = r.y; hq.z = r.z; hq.radius = 300.0f;
-RE::FormID foes[16]; std::uint32_t n = 0, total = 0;
-g_apmf11->FindHostilesInSpace(&hq, foes, 16, &n, &total);   // nearest first; total = before the cap
-```
-
-| Query | Answers | Cost |
-|---|---|---|
-| `FindEmptySpace` | A ground point `distance` along the heading (the origin's facing, or `heading` with `kSpaceFlag_UseHeading`) from the origin (its position, or `originX/Y/Z` with `kSpaceFlag_OriginIsPoint`) with `clearance` free around it. Fails by name: `Blocked` (a wall or an actor on the walk; `kSpaceFlag_ClampToWall` shortens the walk instead), `NoGround` (nothing within `maxDrop`, default 128u, below the origin's feet), `NotGround` (the ground ray hit something other than static/terrain/ground/stairs; `detail` = the layer), `Occupied` (a live actor inside the clearance, including one whose capsule the ground ray hit; `detail` = its FormID), `NoClearance` (geometry within the clearance), `Ledge` (the clearance ring is not within 48u of level) | At most 14 ray casts (walk, ground, 8 clearance, 4 ring) under the havok world's read lock, plus one pass over the high actors |
-| `FindHostilesInSpace` | Live actors within `radius` of the point, in the side actor's worldspace (or cell indoors), for which `candidate->IsHostileToActor(side)` is true. That is the engine's own test, the one Papyrus `Actor.IsHostileToActor` calls. Nearest first, at most `min(capacity, 64)` written | One pass over the high actors (a distance each), one engine hostility test per actor inside the sphere, one sort |
-
-Statuses (`QueryStatus`): `Ok`, `NotMainThread`, `BadArgs`, `Unsupported` (VR, an
-unverified runtime, before kDataLoaded), `NoOrigin`, `NoWorld`, `Blocked`, `NoGround`,
-`NotGround`, `Occupied`, `NoClearance`, `Ledge`, `Failed` (an exception was caught).
-Every non-`Ok` answer is one `[space] ...` WARN line naming the reason.
-
-## Declaring what an NPC wears (ABI v7, `kIntent_EquipAuthority`)
-
-Requires `abiVersion >= 7` and `APMF_API_v7`. This facet is the engine-equip
-facet taken whole: you declare the worn set, APMF equips it and refuses every
-other engine equip on that actor until you re-declare or release. Outfit
-re-apply, the AI's own weapon and armor choice, combat re-arm and RemoveItem's
-re-equip all stop reaching the actor. The player is never subject to it.
-
-```cpp
-APMF_API::APMF_Param p{};
-p.ival = 0;   // or APMF_API::kEquipAuth_DenyScript to refuse Papyrus/console equips too
-APMF_API::Handle h = g_apmf->RequestEx(actorFormID, APMF_API::kIntent_EquipAuthority, basis, &p);
-// The claim alone changes nothing. Now declare the set (base FormIDs: weapons,
-// armor, jewelry). Everything not in it is refused from here on; everything in
-// it that the actor owns and is not wearing is equipped once, on the main thread.
-RE::FormID worn[] = { swordID, shieldID, cuirassID, bootsID, gauntletsID, helmetID, ringID };
-g_apmf->SetEquipSet(h, worn, 7);
-// ...later, a different loadout: declare again. Items dropped from the set are
-// not unequipped by APMF; the engine's own worker displaces them when a declared
-// item takes their slot, and the seat refuses any attempt to put them back.
-g_apmf->SetEquipSet(h, worn2, n2);
-// Done: the engine owns the worn set again. Nothing is unequipped.
-g_apmf->Release(h);
-```
-
-Rules of the road:
-
-- **Standing, not bounded.** There is no TTL on this claim. It ends only with
-  `Release` (or by losing arbitration to a higher basis). Release before a
-  save if you do not want the declaration to be the thing the player loads
-  back into, though what they load into is exactly what you declared.
-- **Declare, do not tick.** Call `SetEquipSet` when your loadout changes, not
-  every frame. Each call on the owning claim runs one equip pass. Re-issuing
-  the same set is a legitimate way to ask for an item back after a script
-  unequipped it, and it is honoured at once: every declaration walks the
-  inventory and equips what is missing. What is bounded is the re-issue: an
-  item APMF queued is held for 3 s before it is queued again. A
-  per-tick client therefore pays one inventory walk per tick and at most one
-  re-issue per item per 3 s, all logged. That is bounded and cannot pile up
-  the engine's equip queue, but it is a client-driven re-issue every 3 s for
-  any item the engine keeps taking back off, which is exactly the kind of
-  churn the log will show you. Declare on change.
-- **The set must be simultaneously wearable.** A two-hander and a shield, or
-  two items for one slot, make the engine displace one with the other on
-  every pass. APMF never picks which one wins. Declare one loadout.
-- **The engine's replacement equip is refused.** If you `RemoveItem` or
-  unequip a declared weapon, the engine's own re-equip of whatever it would
-  pick next is an off-set equip and is refused: the follower stays unarmed
-  until you re-declare. Re-declare in the same breath as the removal.
-- **An unloaded actor is stored, not equipped.** A declaration for an actor
-  whose 3D is not loaded is kept and the seat denies for it, but the equip
-  pass is skipped (logged). Re-declare once the actor is loaded.
-- **`SetOutfit` is an engine path.** A Papyrus `SetOutfit` ends in the engine's
-  own outfit apply (`OutfitApply`), not in the script equip path, so it is
-  refused even when scripts are exempt.
-- **Bound weapons are equips too.** A conjured bound weapon equips itself
-  through the seat (`path=BoundItem`). Under enforcement that is an off-set
-  equip and is refused unless the bound weapon form is in your declared set.
-  A follower that casts Bound Sword needs `BoundSword` (WEAP) declared, or
-  will cast and hold nothing.
-- **Do not mix `kIntent_Equipment` (ch.15) with a ch.17 claim on one actor.**
-  Ch.15's no-param probe path re-equips the weapon it removed on release,
-  from inside APMF.dll. On a ch.17 actor that re-equip is an equip from
-  outside the engine (`External(APMF.dll)`) and is refused unless the weapon
-  is in the declared set. Ch.15's param form (gate only) makes no equip and
-  is unaffected.
-- **A refused equip is never re-issued (APMF-B64).** `channels/EquipAuthority.cpp` has no
-  tick: it equips only when you declare. If the hand-claim block refused a declared weapon
-  because a cast claim held that hand, APMF does not equip it again when the hand frees.
-  Re-declare the set (`SetEquipSet` / `SetEquipSetEx`) after the cast claim releases.
-- **APMF never adds items.** A declared item the actor does not own is skipped
-  and logged. Give it to them first.
-- **Unequips are not refused.** `kEquipAuth_DenyUnequip` is reserved and a
-  claim carrying it is accepted with the bit ignored. If something unequips a
-  declared item, re-declare.
-- **An empty declaration clears.** `SetEquipSet(h, nullptr, 0)` returns the
-  actor to pass-through without releasing the claim.
-- **Observe-only first.** The first field build ships with
-  `[EquipAuthority] bEquipObserveOnly=1`: every verdict is logged as
-  `would-deny` and nothing is refused. It is switched to enforcing once the
-  probe criteria below pass. A client can also set `kEquipAuth_ObserveOnly`
-  on its own claim.
-- **Only ARMO, WEAP, AMMO and LIGH are governed (ABI v8).** See the v8
-  section below. A potion, food, a scroll, an ingredient or a book passes the
-  seat untouched, so `DrinkPotion` and the AI's own potion use are never
-  refused. Do not declare one: the equip pass skips it and logs why.
-- **The player's own equips pass (ABI v8).** The player dressing the follower
-  through the trade or gift menu (`path=PlayerMenu`) is allowed by default.
-  Set `kEquipAuth_DenyPlayerMenu` for the strict form.
-- **The authority can be scoped (ABI v9).** By default the claim holds the
-  whole facet, as above. `SetEquipScope` narrows it to the categories you own
-  (hands, armor, shield, ammo, light) and can refuse a category outright. See
-  the v9 section below.
-
-## Declaring hands (ABI v8, `SetEquipSetEx`)
-
-Requires `abiVersion >= 8` and `APMF_API_v8`. The v7 `SetEquipSet` carries bare
-FormIDs and APMF equips them without a slot, so the engine picks the hand. A
-slot-less one-hander always lands in the RIGHT hand and evicts whatever was
-there (MFO measured it, 2026-09-15). Two hand-held items therefore cannot be
-declared through v7: a dagger meant for the off-hand evicts the sword.
-
-`SetEquipSetEx` takes one `APMF_EquipEntry` per item, with the hand:
-
-```cpp
-// Layout, byte-shared and static_assert-pinned in APMF_API.h:
-//   +0 form (u32)  +4 slot (u8: kEquipSlot_Default 0 / kEquipSlot_Right 1 / kEquipSlot_Left 2)
-//   +5 reserved[3] (must be 0)   size 8, align 4
-APMF_API::APMF_EquipEntry worn[] = {
-    { swordID,    APMF_API::kEquipSlot_Right,   {} },
-    { daggerID,   APMF_API::kEquipSlot_Left,    {} },   // dual wield: the off-hand
-    { cuirassID,  APMF_API::kEquipSlot_Default, {} },   // body armor: the engine picks
-    { arrowsID,   APMF_API::kEquipSlot_Default, {} },
+    void Close() {
+        if (h != APMF_API::kInvalidHandle) MyMod::g_apmf->Release(h);   // safe on an ended claim
+        h = APMF_API::kInvalidHandle;
+    }
 };
-g_apmf->SetEquipSetEx(h, worn, 4);
 ```
 
-Rules of the road for hands:
-
-- **`kEquipSlot_Default` is v7 verbatim.** No slot is passed, the engine picks,
-  and "worn" means any worn instance. Use it for a two-hander, a bow, ammo and
-  every armor piece that is not a shield. `SetEquipSet` (v7) is implemented as
-  `SetEquipSetEx` with every slot Default.
-- **`kEquipSlot_Right` / `kEquipSlot_Left` name the hand.** APMF hands the
-  engine's own RightHand / LeftHand equip slot (Skyrim.esm EQUP `0x13F42` /
-  `0x13F43`, resolved by FormID) to `EquipObject`. Use them ONLY for hand-held
-  items: a one-hand weapon, a shield, a torch.
-- **"Not worn" for a handed entry means "not in THAT hand".** APMF reads what
-  the actor holds in each hand and compares. A sword the actor holds in the
-  right hand, declared Left, is re-equipped into the left hand.
-- **The same form may appear once per hand.** Two identical daggers, one per
-  hand, is a legal declaration. APMF counts the instances it needs per form
-  against the inventory count and skips (logged) any instance the actor does
-  not own enough copies of. It never adds items.
-- **The deny half does not know hands.** The seat compares FormIDs only. A
-  declared item is in-set whichever hand the engine tries to put it in. The
-  hand is what APMF's own equip pass enforces.
-- **A slot value outside 0..2 is treated as Default** and logged once per
-  handle. The reserved bytes are ignored by this APMF and must be 0.
-- **Log lines.** Each APMF equip prints `hand=right|left|default`. The
-  `SET-EQUIP-SET` line prints how many entries carry a hand. The pass summary
-  gained `not-governed=N` for declared items of a type the seat does not
-  govern.
-
-### The governed form types (ABI v8)
-
-`EquipObject` is also how a potion is drunk, food eaten, a scroll read, an
-ingredient tasted and a book read. Those are not the worn set. The seat
-governs only these form types, on both runtimes:
-
-| Governed | Passes untouched |
-|---|---|
-| ARMO (armor, shields, jewelry) | ALCH (potions, food) |
-| WEAP (weapons) | SCRL (scrolls) |
-| AMMO (arrows, bolts) | INGR (ingredients) |
-| LIGH (torches) | BOOK, and every other type |
-
-A non-governed equip on a claimed actor is allowed and logged ONCE per actor
-and form type at debug level (`verdict=allow (not a governed type...)`), never
-per event. APMF's equip pass applies the same set: a declared item of any
-other type is skipped and logged, because equipping it would consume it.
-
-### A refused claim means keep your own equips (ABI v8)
-
-A `Request`/`RequestEx` for `kIntent_EquipAuthority` returns `kInvalidHandle`
-while the equip seat is NOT installed: `[EquipAuthority] bEquipAuthority=0`, VR,
-a runtime other than 1.6.1170 / 1.5.97, a site-verify refusal (another patcher
-at one of the worker's call sites), or a request made before kDataLoaded. The
-v7 build accepted the claim and enforced nothing, which left a client that had
-turned its own equips off on a successful claim equipping nothing all session.
-APMF logs once: `[apmf][equip-auth] claim refused: seat not installed (<reason>)`.
-Treat a refused claim exactly like an absent APMF: run your own equip path.
-
-For an ACCEPTED claim, `IsEquipAuthorityEnforced()` (v8) tells observe from
-enforce: true only when the seat is installed AND `bEquipObserveOnly=0`. In
-observe mode APMF equips your declared set but refuses nothing, so the engine
-can still take it back off. Your claim's own `kEquipAuth_ObserveOnly` bit is
-not consulted by that call.
+And a heartbeat for a bounded claim, sent from the same tick.
 
 ```cpp
-if (h == APMF_API::kInvalidHandle) { /* seat not installed: keep your own equips */ }
-else if (!g_apmf->IsEquipAuthorityEnforced()) { /* observe mode: APMF equips, engine may undo */ }
-```
+#include <chrono>
 
-### The player menu policy (ABI v8)
+struct Heartbeat {
+    std::chrono::steady_clock::time_point last = std::chrono::steady_clock::now();
 
-The player dressing a follower by hand through the trade or gift menu
-(`path=PlayerMenu`) is a deliberate act and is ALLOWED by default, even for an
-off-set item. The log line reads `path=PlayerMenu verdict=allow (player
-agency)`. A client that wants the strict form sets `kEquipAuth_DenyPlayerMenu`
-on its claim and the path is then refused like any other engine equip. There
-is no INI twin for this bit. The allow is at the seat only. The next enforce pass re-equips any declared item the player's equip displaced. A client honouring player agency must observe the change (the `path=PlayerMenu verdict=allow (player agency)` line, or its own inventory read) and fold the player's choice into its next declaration. A v7 APMF ignores the bit, so a v8 client running
-against a v7 APMF gets the v7 behaviour (PlayerMenu refused).
-
-## Scoping the authority (ABI v9, `SetEquipScope`)
-
-Requires `abiVersion >= 9` and `APMF_API_v9`. v7 and v8 take the facet whole: a
-declaration refuses every off-set engine equip of a governed type on the actor.
-A client that only wants to own the hands must then also declare the body
-armor, the shield, the arrows and the torch, or watch the engine's own outfit
-refresh and combat re-arm get refused for them. The first v8 field run showed
-exactly that: 117 `CombatNode` and `OutfitApply` would-denies, every one
-against a hand-only intent.
-
-v9 scopes the claim. Each governed item COMPETES for one or more categories,
-and the claim says which categories it OWNS and which it DENIES:
-
-```cpp
-// Layout, byte-shared and static_assert-pinned in APMF_API.h:
-//   +0 owned (u32)  +4 denied (u32)  +8 reserved[2] (u32, must be 0)   size 16, align 4
-APMF_API::APMF_EquipScope scope{};
-scope.owned  = APMF_API::kEquipCat_Armor | APMF_API::kEquipCat_Right | APMF_API::kEquipCat_Left;
-scope.denied = APMF_API::kEquipCat_Shield;   // this follower never raises a shield
-g_apmf->SetEquipScope(h, &scope);
-g_apmf->SetEquipScope(h, nullptr);           // reset to the default {kEquipCat_All, 0}
-```
-
-The category map is ONE function in APMF (`apmf::equipsink::Categorize`), run
-by the seat with the engine's resolved slot and by the equip pass with the
-hand you declared, so the two halves can never disagree:
-
-| Item | Competes for |
-|---|---|
-| ARMO without the shield biped bit (or with no bits) | `Armor` |
-| ARMO with `BipedObjectSlot::kShield` only | `Shield` + `Left` |
-| ARMO with `kShield` AND any other biped bit (a modded shield-on-back piece) | `Shield` + `Left` + `Armor` (both kinds of bits, both categories) |
-| WEAP two-handed sword, two-handed axe, bow, crossbow | `Right` + `Left` |
-| WEAP one-handed (incl. staff), equip slot LeftHand `0x13F43` | `Left` |
-| WEAP one-handed (incl. staff), equip slot RightHand `0x13F42` | `Right` |
-| WEAP one-handed, any other slot or none (EitherHand) | `Right` + `Left` |
-| AMMO | `Ammo` |
-| LIGH (torch) | `Light` + `Left` |
-
-The either-hand row is conservative on purpose: when the engine has not picked
-a hand yet the item competes for both, so a claim that owns only one hand
-still holds it. The same rule applies to your own declaration: a one-hander
-declared with `kEquipSlot_Default` competes for BOTH hands and is equipped
-only when both are owned. Declare the hand with `SetEquipSetEx` when you own
-one.
-
-The seat's verdict for a governed equip on a claimed actor, in order:
-
-| Step | Condition | Verdict |
-|---|---|---|
-| 0 | Script or console path, claim without `kEquipAuth_DenyScript` | allow (exempt, above both masks) |
-| 1 | `PlayerMenu` path, claim without `kEquipAuth_DenyPlayerMenu` | allow (player agency, above both masks) |
-| 2 | item competes for a DENIED category | deny, even if the item is in the set |
-| 3 | item competes for an OWNED category, no declaration yet | allow (declare then enforce) |
-| 4 | item competes for an OWNED category, item is in the set | allow |
-| 5 | item competes for an OWNED category, item is off-set | deny |
-| 6 | item competes for nothing the claim owns or denies | allow (`owned=0`) |
-
-Observe-only turns each deny into `would-deny`. The default scope
-`{kEquipCat_All, 0}` makes steps 2 and 6 unreachable, so a v7 or v8 client
-sees the v8 verdict table unchanged. One label differs from v8: a `PlayerMenu`
-equip of an IN-SET item now logs `verdict=allow (player agency)` (step 1 runs
-before the in-set test), where v8 logged plain `verdict=allow`. The verdict is
-the same, only the label moved.
-
-Rules of the road for the scope:
-
-- **`nullptr` resets** the claim to `{kEquipCat_All, 0}`. Bits outside
-  `kEquipCat_All` are masked off and logged once per handle, never refused: a
-  client built against a later APMF degrades to what this one knows.
-- **A stale handle is a silent no-op**, like `SetEquipSet`.
-- **The scope is stored whether or not the claim owns the channel** and rides
-  the same snapshot read as the set. The seat never sees a set from one
-  generation and a scope from another.
-- **A changed scope on the owning claim is a declaration event.** One enforce
-  hop runs after Publish, exactly as after `SetEquipSetEx`. An unchanged
-  re-send fires nothing. The log line reads
-  `[ctl] ... SET-EQUIP-SCOPE (h=N, owned=0x.., denied=0x.., changed|unchanged, owner|not owner)`.
-- **The equip pass equips a declared item only when every category it
-  competes for is owned and none is denied.** The rest are skipped and counted
-  on the pass line as `skipped-unowned=N skipped-denied=N`, and named once per
-  actor and set signature at warn level. APMF never equips or evicts into an
-  unowned category and still never unequips anything.
-- **Log lines.** Each `[apmf][equip-obs]` line now carries, after `tls=`:
-  `cat=<Armor|Shield|Right|Left|Ammo|Light, +-joined>` (what the item competes
-  for), `owned=<0|1>` (any competed category owned), `black=<0|1>` (any
-  competed category denied) and `eslot=<none|R|L|E|hex>` (the engine's
-  resolved slot: none, RightHand, LeftHand, EitherHand, or the slot's FormID).
-
-### The probe criteria (what a field log must show before enforcement is switched on)
-
-Read `[apmf][equip-obs]` lines. Each carries `actor= item= op=equip path=
-site= ret= q= f= s= a= tls= cat= owned= black= eslot= verdict= name=`. `tls` is
-attribution only (an equip APMF issued itself runs with `tls>0`); it never
-changes a verdict. `cat= owned= black= eslot=` are the v9 scope fields (see
-the v9 section). The `name='...'` field is the item's display name, for
-reading, not for parsing.
-
-1. Every engine re-equip of an off-set item in an owned or denied category on
-   a claimed actor logs `verdict=would-deny` with a NAMED path (`OutfitApply`, `AddWornOutfit`,
-   `AiCommand`, `RemoveItemReequip`, `CombatNode`, `Script`, `Console`,
-   `WorkerReentry`, `QueuedApply`, `DropObject`, `PickUpObject`, `BoundItem`,
-   `ProcedureEat`, `InventoryReequip`, `StartCombat`, or `External(<dll>)`).
-   Two engine callers stay `Unknown` on purpose: 16104/15864 (a re-equip
-   helper whose second route could not be pinned) and 52410/51535 (an
-   orphan with no reference in the image). Either on a deny line is a real
-   finding; see `Docs/DENY-COMPLETENESS-AUDIT.md` row 17. A `PlayerMenu`
-   off-set equip logs `verdict=allow (player agency)` unless the claim carries
-   `kEquipAuth_DenyPlayerMenu`, and a non-governed form type (a potion) logs
-   no per-event line at all.
-2. ZERO `would-deny` lines with `tls>0`. APMF's own equip pass only ever issues
-   declared items, so a would-deny inside the bracket means the set the seat
-   reads is not the set the pass enforced.
-3. ZERO `path=Unknown(<id>)` on a `deny` or `would-deny` line. An unknown id
-   there is an engine caller the path table does not name yet; add it before
-   enforcing. (An `Unknown` on an `allow` line is a caller that only ever
-   equips declared items; name it when convenient.) Note that APMF's own
-   queued equips come back one actor update later as `path=QueuedApply tls=0
-   verdict=allow`; that is the engine applying what APMF queued, not a leak.
-4. Every item APMF equips shows up as an `[apmf][equip-auth] ... -> equip` line
-   followed by its `[apmf][equip-obs] ... tls=1 verdict=allow` line. For an
-   actor in high or middle-high AI process (a follower near the player) a
-   `path=QueuedApply ... verdict=allow` apply line follows one actor update
-   later: the engine queues the equip and applies it from its AI process. A
-   loaded actor in low process applies directly beneath the seat, so no
-   `QueuedApply` line appears for it. Its absence on a low-process actor is
-   not a failure.
-5. At least one engine id attributes: the log must contain at least one
-   `[apmf][equip-obs]` line whose `path` is a named engine path (not
-   `External(...)`). If every line reads `External(<dll>)`, another plugin
-   has inline-detoured the engine's `EquipObject` entry and every caller now
-   returns through it; the seat logs `entry <id> detoured by <dll>` at install
-   when it can see that. Attribution is degraded and the script exemption is
-   unavailable until that detour is accounted for.
-
-6. `path=PlayerMenu` attributes correctly: ZERO `path=PlayerMenu` lines in a
-   session where the player never opens a follower's inventory, and every
-   `path=PlayerMenu` line coincides with a trade or gift menu interaction. The
-   six PlayerMenu ids come from prior enumeration, not from a field proof; the
-   log is the proof.
-7. The hand reaches the engine: at least one `[apmf][equip-auth] ... hand=left`
-   equip line followed by the follower visibly dual-wielding (or holding the
-   declared shield or torch in the left hand). The queued equip carries the
-   slot through the engine's deferred apply on paper only until a session shows
-   it.
-
-8. A follower with NO hold switches to a bow in combat: `path=CombatNode ...
-   verdict=allow cat=Right+Left owned=0 black=0 name='... Bow'` followed by
-   the follower visibly shooting. (The unowned hands are the engine's.)
-9. ZERO `verdict=deny` or `verdict=would-deny` lines with `owned=0 black=0`.
-10. A dual-wielder (offHand==2) with no hold logs `cat=Shield+Left owned=0
-    black=1 verdict=deny` (or `would-deny` in observe mode) on the shield AND
-    stays shield-less.
-11. Every WEAP line's `eslot` is `R`, `L` or `E` (histogram over the session).
-    An `E` on a `WorkerReentry` line is the case the conservative either-hand
-    rule guards; it is expected, not a failure.
-12. The scope reaches the seat: after a `SET-EQUIP-SCOPE` line with a narrowed
-    `owned`, every `[apmf][equip-obs]` line for that actor whose `cat=` has no
-    bit in `owned` and none in `denied` reads `owned=0 black=0 verdict=allow`.
-13. The deny mask fires: for a scope with a non-zero `denied`, every
-    `[apmf][equip-obs]` line whose `cat=` overlaps `denied` reads `black=1` and
-    `verdict=would-deny` (or `deny`), including an item that is in the declared
-    set. ZERO `black=1 verdict=allow` lines except on a `Script`, `Console` or
-    `PlayerMenu` path without the matching deny bit.
-14. The category map agrees with the engine: every `cat=Shield+Left` line
-    names a shield, every `cat=Ammo` line names arrows or bolts, every
-    `cat=Light+Left` line names a torch, and a one-handed weapon with
-    `eslot=R` or `eslot=L` reads `cat=Right` or `cat=Left` respectively. A
-    `cat=Right+Left` line for a one-hander carries `eslot=E`, `eslot=none` or a
-    non-hand `eslot`, never `R` or `L`. A `cat=Armor+Shield+Left` line (the log
-    prints categories in bit order) names a piece that carries both the shield
-    bit and another biped bit.
-15. The equip pass honours the scope: every `enforce pass` line prints
-    `owned=0x.. denied=0x..` matching the last `SET-EQUIP-SCOPE` for that
-    actor, and every declared item skipped as unowned or denied appears in ONE
-    `NOT equipped by this pass` warn per (actor, set) with `skipped-unowned` /
-    `skipped-denied` counted on the pass line. ZERO `-> equip` lines for an
-    item whose categories are not all owned, or any denied.
-
-Only after all fifteen hold on a real session (8-11 are the behavioural scope criteria from the v9 design, 12-15 are log-invariant checks) is `bEquipObserveOnly` flipped to 0.
-
-## Walking an NPC somewhere (ABI v10, `kIntent_Travel`)
-
-Move-to-a-place is a staple. Before v10 the public API could not express it: `ch.6
-kIntent_CombatTarget` records who owns the combat-target facet but makes no engine
-call, and `ch.9 kIntent_OfferPackage` delivers a package the CLIENT has to ship in
-its own plugin. A real third-party client that wanted to send followers at an enemy
-tried to fill the gap with `StartCombat` on a timer and got alert-and-search pacing
-instead of a charge, because `StartCombat` does not path an actor to a foe it has
-never detected.
-
-`kIntent_Travel` is the missing verb. You pass an actor and a destination; APMF
-walks the actor there. Move-to-a-place is a staple — sending followers at an enemy
-is just one caller of it.
-
-### The contract, in one sentence
-
-**ch.19 `kIntent_Travel` walks the claimed actor to a reference or a cell and
-cancels the moment that actor is in combat.** It does not claim the target, does not
-enter combat, does not pin a target, and does not fake perception.
-
-The leg ends on exactly three things: **ARRIVAL**, the **ACTOR ENTERING COMBAT**
-(`Actor::IsInCombat`), or the **destination going away** (disabled, deleted, or
-dying DURING travel). ABI v12 adds one engine-reported end, **BLOCKED**: the engine
-held the actor in its own Movement Blocked package for 3 s (see "When the walk is
-blocked" below). The two-minute stuck end stays the safety net. Every end is readable
-with `GetTravelLegState` (ABI v12), because your claim outlives the leg. A destination that was already dead when you targeted it is a
-corpse to walk to, and its deadness never ends the leg. A live one that dies on the
-way does. There is no line-of-sight test and no detection test anywhere in it.
-
-**The destination does not have to be loaded, or nearby.** An actor will path across
-cells to somewhere it cannot see, which is what a vanilla travel package does. What
-bounds a hopeless leg is the combat cancel, your own `Release`, and a two-minute
-safety net that reports a leg that got nowhere as a failure instead of holding a
-package slot for ever.
-
-### One intent, one facet
-
-ch.19 claims **nothing** on your behalf. No combat target, no attack selection, no
-casting, no equipment, no hands, no aggression, no movement block. If you want the
-combat-target facet arbitrated, claim `kIntent_CombatTarget` yourself — the two
-claims are independent and arbitrate separately.
-
-That is deliberate (marth: *"We should avoid combining intents anyway"*), and it is
-not the final word: convenience **combo intents** — one call that bundles, say,
-travel plus combat target plus combat entry — are a recognised and reasonable idea,
-**deferred until after the full MFO port to APMF is complete**. They are not being
-refused on principle. Until then: one facet, one intent, and a client that wants two
-behaviours makes two claims.
-
-### The recipe
-
-```cpp
-using namespace APMF_API;
-
-// One claim per actor you are moving. Keep the handle -- Repoint moves the
-// destination without any release/re-claim churn.
-std::unordered_map<RE::FormID, Handle> g_travel;
-
-void SendTo(RE::FormID actor, RE::FormID destination) {
-    if (!g_apmf || g_apmf->abiVersion < 10) return;   // APMF absent or pre-v10: your own path
-
-    APMF_Param p{};
-    p.form = destination;                  // REQUIRED. Any loaded reference. 0 is refused.
-    p.fval = 0.0f;                         // arrival radius in units; 0 => 75u default
-    p.ival = kTravel_ReleaseOnTargetDead;  // names the default; see below
-
-    if (auto it = g_travel.find(actor); it != g_travel.end()) {
-        g_apmf->Repoint(it->second, &p);   // move the destination in place
-        return;
+    // windowMs is the window you asked for. Renew well before it lapses.
+    void Tick(TrackedClaim& c, const APMF_API::APMF_Param& p, std::uint32_t windowMs) {
+        const auto now = std::chrono::steady_clock::now();
+        if (now - last < std::chrono::milliseconds(windowMs / 3)) return;
+        last = now;
+        c.Repoint(p);                           // renews the window. A cast claim cannot change its spell this way
     }
-
-    const Handle h = g_apmf->RequestEx(actor, kIntent_Travel, /*basis=*/50.0f, &p);
-    if (h == kInvalidHandle) return;       // refused -- see "When a claim is refused"
-    g_travel[actor] = h;
-}
-
-void StopTravel(RE::FormID actor) {
-    auto it = g_travel.find(actor);
-    if (it == g_travel.end()) return;
-    g_apmf->Release(it->second);           // ends the claim and the leg
-    g_travel.erase(it);
-}
-```
-
-That is the whole client side. No tick, no re-assert, no package to ship, no
-`StartCombat`, no detection poke, no `currentCombatTarget` write. If your client is
-doing any of those to get an NPC to walk somewhere, delete them — every one of them
-fights the engine instead of using it.
-
-For the "hotkey, send my followers at that enemy" case, that is one `RequestEx` per
-follower with the enemy as the destination. The follower runs at the enemy and
-Harbinger lets go the instant the fight starts. If you also want APMF to arbitrate
-who owns that follower's combat target, add your own `kIntent_CombatTarget` claim
-beside it.
-
-### The parameter fields
-
-| field | meaning |
-|---|---|
-| `param.form` | **REQUIRED.** The DESTINATION's FormID — an object **REFERENCE** (REFR/ACHR: an actor, an XMarker, a container, anything loaded) or a **CELL**. The record type decides which; there is no flag to set. A zero form, or any other record type, is refused synchronously (`kInvalidHandle`) so you find out at the call. |
-| `param.fval` | Arrival radius in game units. `0` means the 75u default. Anything outside **[50, 512]** is CLAMPED and the clamp is logged — never silently reinterpreted. Whatever value ends up in force is also written into the package's own stop radius for that leg, so the engine's idea of "arrived" and APMF's cannot drift apart. **Not consulted when the destination is a cell.** |
-| `param.ival` | A `TravelFlags` bitmask. ABI v12 adds the gait bits (`kTravel_SpeedSet` + a 2-bit speed); see "Gait". |
-| `param.posX/Y/Z` | **ABI v11:** the destination POINT when `param.ival` has `kTravel_ToPosition` (then `param.form` must be 0). Without that flag it **must be zero**: a non-zero position REFUSES the claim, with the reason in the log. See below. |
-
-`kTravel_ReleaseOnTargetDead` **names the v1 default, it does not switch it on.**
-APMF always ends the leg when a destination that was alive when targeted dies during
-travel, or the destination is disabled or deleted, set or not. A destination already
-dead when targeted (a corpse) is walked to, and does not end the leg by being dead. An
-unloaded-but-alive destination is NOT "gone" and does not end the leg. The bit exists so
-a later ABI can add its inverse without you having to guess which way the default
-ran.
-
-### What "arrived" means, per destination kind
-
-* **A reference:** the actor is within the radius of it. Straight-line distance,
-  tested on the same number the package's own stop radius was set to, so the
-  engine parking the actor and APMF ending the leg happen at the same place.
-* **A cell:** the actor's parent cell IS that cell. Distance is not used and the
-  radius is ignored, because a cell has no single position to measure against — an
-  interior is a volume and an exterior cell is a 4096-unit tile. "In it or not" is
-  also exactly what the engine's own in-cell package path steers towards, so the
-  two agree by construction.
-
-### Walking to a world position (ABI v11, `kTravel_ToPosition`)
-
-Requires `abiVersion >= 11`. Set `kTravel_ToPosition`, leave `param.form = 0`, and put
-the point in `param.pos` (in the actor's worldspace; indoors, in its cell). An older APMF refuses a
-zero form, so the request fails loudly on it instead of walking somewhere else.
-
-```cpp
-APMF_API::APMF_Param p{};
-p.ival = APMF_API::kTravel_ToPosition;
-p.posX = pt.x; p.posY = pt.y; p.posZ = pt.z;   // e.g. a FindEmptySpace result
-p.fval = 0.0f;                                  // arrival radius, 0 => 75u
-APMF_API::Handle h = g_apmf->RequestEx(followerID, APMF_API::kIntent_Travel, basis, &p);
-```
-
-APMF does what vanilla does with a spot: it places its OWN non-persistent XMarker
-(Skyrim.esm `0x3B`) at the point, one hop after the claim publishes, and the leg is an
-ordinary reference leg to that marker. Arrival radius, the combat cancel and the
-2-minute stuck end are unchanged. The death rule never applies (a marker cannot die).
-APMF does not pick the point and never adjusts it: call `FindEmptySpace` first if you
-want a clear, standable one.
-
-**The marker lives exactly as long as the leg.** It is deleted, by its tracked handle
-with the FormID and base re-checked, when the leg ends for any reason: arrival, combat,
-`Release`, a `Repoint` to a different point or to a form, the stuck end, or the actor
-unloading, dying or losing its 3D. A `Repoint` to a new point places the new marker,
-re-points the package, then deletes the old one. If the claim is still held after the
-leg ended, a later `Repoint` places a fresh marker. At most one marker exists per
-package slot (8).
-
-**Across a load.** Legs are never restored across a load (that was already true for
-every destination kind). At the load boundary APMF forgets its markers without touching
-them and points every package record that last aimed at one back at its authored
-placeholder, so no record carries a marker handle into the next world. A save taken
-mid-leg records its markers in APMF's co-save, and loading it DELETES them (see "Save
-behaviour of APMF markers" below).
-
-**Far destinations: walk in hops.** The marker can only be placed in a LOADED cell: outdoors
-the point must fall in the loaded grid (an attached cell of the actor's worldspace, found with
-`TES::GetCell`), indoors it is the actor's cell. A point outside the loaded grid is refused at
-Compose (`[travel] ... REFUSED -- no destination marker ... no loaded exterior cell contains the
-point`), and the claim then stands doing nothing until you Release or Repoint it. To send a
-follower somewhere far, walk it in hops inside the loaded area, or pass an existing REFERENCE
-(or a cell) as `param.form`, which needs no marker and can be anywhere.
-
-**Refused, by name:** a non-zero `param.form` with the flag (a form OR a point, never
-both), a non-finite point, VR or a runtime other than 1.6.1170 / 1.5.97 (all
-synchronous, `kInvalidHandle`), and a marker that cannot be placed because the actor's
-cell is not attached (at Compose, logged, the claim stands doing nothing: Release it).
-
-### Why the walk stopped (ABI v12, `GetTravelLegState`)
-
-Requires `abiVersion >= 12` and `APMF_API_v12`.
-
-**APMF ends a leg but never releases your claim.** When the actor arrives, enters
-combat, loses its destination, is blocked or times out, APMF drops only its own
-internal package offer. Your `kIntent_Travel` claim stays live: `IsClaimLive` stays
-true and the claim does nothing until you `Repoint` or `Release` it. Before v12 a
-client could not tell an ended leg from a package another mod took away. Now it asks.
-
-```cpp
-APMF_API::APMF_TravelLegInfo info{};
-info.size = sizeof(info);
-const auto state = g_apmf12->GetTravelLegState(followerID, &info);
-if (info.ownerHandle != myHandle) { /* another client's leg, or an older claim of yours */ }
-switch (state) {
-case APMF_API::kLeg_Walking:  /* still going */ break;
-case APMF_API::kLeg_Arrived:  /* next item */ break;
-case APMF_API::kLeg_Blocked:  /* see "When the walk is blocked": actor block => reorder,
-                                  static block => park the item until the world changes */ break;
-case APMF_API::kLeg_DestGone: /* next item */ break;
-default: break;
-}
-```
-
-| state | meaning |
-|---|---|
-| `kLeg_None` | APMF holds nothing for this actor (never claimed since the last load, or ch.19 is off). |
-| `kLeg_Pending` | The claim was accepted or re-pointed. The leg starts on the next frame. |
-| `kLeg_Walking` | The package is offered and the actor is travelling. |
-| `kLeg_Arrived` | Inside the arrival radius (a cell: inside the cell). |
-| `kLeg_Blocked` | The engine held the actor in Movement Blocked for 3 s of running game time. `stallX/Y/Z` and `blockedMs` say where and how long; `blocker` / `blockerKind` say whether an actor stood in front. |
-| `kLeg_CombatCancelled` | The actor entered combat. |
-| `kLeg_DestGone` | The destination was deleted, disabled, died during travel, or (a cell) no longer resolves. |
-| `kLeg_StuckTimeout` | The two-minute safety net elapsed. |
-| `kLeg_ActorGone` | The actor unloaded, died or lost its 3D. |
-| `kLeg_Failed` | The leg could not start, or a `Repoint` was refused (a zero form, a record that is not a reference or a cell, a reference that no longer resolves, a bad point). `destForm` / `destX/Y/Z` name the REFUSED destination and the log says why. **A refused Repoint ends the previous leg**: the actor does not keep walking to a destination your claim no longer declares. Repoint to a valid destination to start again. |
-| `kLeg_Released` | The claim was released. |
-
-How to read it:
-
-* **Any thread.** It copies a small per-actor record under a mutex, like `IsClaimLive`.
-  It holds nothing and changes nothing.
-* **Match the claim.** The state is the actor's leg, which is the leg of the WINNING
-  travel claim. `ownerHandle` is that claim's handle: compare it with yours. It is 0
-  while a fresh claim is still Pending. During a Pending re-point, and on a `kLeg_Failed`
-  for a refused re-point that came with an owner change, it still names the previous
-  owner. `destForm` (or `destX/Y/Z` for a point leg) says which
-  destination the state is about. After a `Repoint` the old leg's end can still show for
-  up to a frame. Wait for your destination to read `kLeg_Pending` or later.
-* **`seq`** is a stamp from one counter APMF never resets while the game runs. It changes
-  on every state change and never repeats, across save loads too, so a cached `seq` can
-  never match a new end by accident. Compare for inequality, not for +1.
-  `msInState` is how long the current state has held.
-* **After a save load** every actor reads `kLeg_None` until its claim is made again. The
-  state is not saved, and neither are travel claims.
-* **`size`.** Set `info.size = sizeof(info)` (72 bytes in v12). APMF fills the v12 fields
-  when `size` is at least `kTravelLegInfoV12Size` (72, frozen) and writes nothing into a
-  shorter struct. A field a later ABI appends is written only if it fits inside your
-  `size`, so a v12 build keeps working against every later APMF. APMF never writes past
-  `size`. `out` may be null for a state-only read.
-
-| field | offset | meaning |
-|---|---|---|
-| `size` | 0 | you set it |
-| `state` | 4 | a `TravelLegState` |
-| `actor` | 8 | the actor asked about |
-| `destForm` | 12 | the destination FormID (0 for a point leg) |
-| `destX/Y/Z` | 16/20/24 | a point leg's declared point |
-| `msInState` | 28 | ms since the state began |
-| `seq` | 32 | the change stamp |
-| `stallX/Y/Z` | 36/40/44 | `kLeg_Blocked`: where the actor stood |
-| `blockedMs` | 48 | `kLeg_Blocked`: how long it was blocked |
-| `speed` | 52 | the gait written (0..3), `0xFFFFFFFF` = none |
-| `reserved` | 56 | 0 |
-| `ownerHandle` | 60 | the travel claim this leg belongs to |
-| `blocker` | 64 | `kLeg_Blocked`: the actor in front, 0 for a static block |
-| `blockerKind` | 68 | a `TravelBlocker`: None / Player / Teammate / Actor |
-
-### When the walk is blocked (ABI v12)
-
-The engine answers "this actor cannot move along its path" by running a runtime
-package of type 36, **Movement Blocked**. It is the engine's own collision answer
-(`[obs]` prints it as `(Movement Blocked)`). A closed lever portcullis produced it
-for 39-45 s in the field, while healthy legs showed it for about one second and
-then arrived. So ch.19 ends the leg as **BLOCKED** once it has held for **3 s of
-running game time** (checked every 250 ms). Time spent in a menu does not count:
-each poll adds at most 500 ms, so a pause cannot turn a short bump into a BLOCKED
-end. One poll without Movement Blocked inside a run is tolerated, so a brief flicker
-does not restart the clock. Two in a row end the run.
-
-APMF does not fight or deny Movement Blocked. It records the end and lets you
-decide. At the verdict it looks for a live actor right in front of the stalled one:
-within 192u on the ground plane, less than 128u above or below, inside a 120-degree
-cone around the actor's facing or around the straight line to the destination. The
-nearest one is reported in `blocker`, with `blockerKind` = the player, a teammate
-(a follower) or another actor.
-
-What to do with it (marth's loot rules, and good advice for any client):
-
-* **An actor block** (`blockerKind != kBlocker_None`): someone is standing in the way
-  and will probably move. **Reorder, do not drop.** Take another item now and come back
-  to this one later.
-* **A static block** (`kBlocker_None`): a closed gate, a wall or clutter. The route is
-  closed. Park the item until the world actually changes: a door or gate opens
-  (`TESOpenCloseEvent`), a lever is used (`TESActivateEvent`), or a cell attaches.
-  Do not use a timer to retry it, and do not send the actor home while other reachable
-  items remain.
-
-A BLOCKED end also runs a **passive gate probe** (log only). It lists the DOOR and
-ACTIVATOR references within 1024u of where the actor stalled, with their base form,
-record flags (Obstacle, NavMesh filter) and `GetOpenState`, then logs OPEN-CLOSE and
-ACTIVATE events near the stall for ten minutes, with the gates' open state read again
-right after the event and 4 s later. Lines are tagged `[travel-gate]`.
-
-A second passive probe (`[travel-gate2]`, `[Travel] bGateProbe2`, log only) runs at the same
-BLOCKED end. It reads the navmesh under the stall and under the destination (triangle, vertical
-gap, the mesh's door and obstacle data) and lists the doors, activators and Obstacle-flagged
-objects whose bounds lie near the straight line from the stall to the destination, with their
-animation-graph state and collision. It exists to find the signal a pre-dispatch reachability
-query can use; nothing reads it back, and a client must not parse it.
-
-### Gait (ABI v12)
-
-Requires `abiVersion >= 12`. An older APMF stores the bits and walks at its authored
-speed (Run) without a word, so check the version first.
-
-```cpp
-p.ival = APMF_API::kTravel_SpeedSet | APMF_API::kTravel_SpeedWalk;   // or Jog / Run / FastWalk
-```
-
-The four values are the engine's own `PreferredSpeed` enum. APMF writes the speed
-into the leg's package record, with the record's "Preferred Speed" flag (0x2000)
-that the engine requires before it honours the speed at all. Without
-`kTravel_SpeedSet` the leg runs at the record's authored speed, even if the previous
-leg on the same record declared a different one.
-
-**It takes effect when the package starts.** The engine copies the record's speed
-into the actor's running-package state when the package starts on the actor, and
-movement reads that copy (read on both 1.6.1170 and 1.5.97). APMF writes the record
-before it offers the package, so a fresh leg walks at the declared gait. A `Repoint`
-that changes the gait of a leg already walking rewrites the record, but the running
-package keeps its old speed until it next starts. APMF logs a warning for that case.
-Release and re-request to change gait mid-walk. `GetTravelLegState`'s `speed` field
-reports what was written (`0xFFFFFFFF` = nothing written). A `[travel-gait]` line
-per gait leg shows the engine's running copy once the package runs.
-
-### Why a package cannot carry a world position
-
-Because the engine cannot carry one. An AI package's location holds a form pointer
-or a reference handle and nothing else — there is no coordinate storage in it at
-runtime, the on-disk record is twelve bytes of type/payload/radius, and none of the
-engine's own location kinds reads coordinates out of it. That was read off both
-game binaries rather than assumed.
-
-Vanilla's answer is to **place an XMarker and point at the marker's reference.** You
-can do that yourself (case one above), or set `kTravel_ToPosition` and APMF does it
-for you (the section above). A claim with a non-zero `param.pos` and no
-`kTravel_ToPosition` is refused and says so, rather than quietly walking the actor
-somewhere you did not ask for.
-
-### When a claim is refused — and the two timings, which are not the same
-
-**Synchronously.** `RequestEx` returns `kInvalidHandle` before anything is queued
-when:
-
-* the runtime is VR (the 0x49 package seat travel rides is SE/AE only),
-* `[Travel] bTravel=0` in `Data/SKSE/Plugins/APMF.ini`,
-* `Data/APMF.esl` is missing or disabled, so no travel package resolved,
-* `param.form` is 0,
-* `param.posX/posY/posZ` is non-zero.
-
-There is nothing to clean up after one of these. A synchronous refusal means **run
-your own path**: APMF is telling you it will do nothing, rather than accepting a
-claim that silently does nothing.
-
-**At engage, one frame later.** One refusal cannot be synchronous: `param.form`
-naming a record that is **neither an object reference nor a cell**. `RequestEx` has
-already handed you a LIVE HANDLE by then; the log says why the claim will do
-nothing, and **the handle stays live until you `Release` it.** So release it.
-
-Why it works that way, since the asymmetry is otherwise just annoying: `RequestEx`
-is callable from any thread, and its contract is that it copies POD and enqueues —
-nothing more. Deciding whether a FormID is a reference or a cell needs a form
-lookup, and APMF will not reach into the engine's form table off the game thread to
-satisfy an API call. `kIntent_Cast` defers its own package extraction for exactly
-the same reason. Pass a reference or a cell and the question never arises.
-
-### Installing `Data/APMF.esl`
-
-Harbinger ships one plugin, `Data/APMF.esl`, in the same archive as `APMF.dll`,
-beside `Data/SKSE/Plugins/APMF.ini`. It holds eight travel package records and
-nothing else. It is **ESL-flagged**, so it takes no regular load-order slot (it uses
-one of the 4096 light-plugin slots), it has **one master (Skyrim.esm)**, it
-**overrides nothing**, and it is about 2.5 KB. Install the archive and enable the
-plugin as usual; there is no further step.
-
-If it is missing or disabled, ch.19 refuses every `kIntent_Travel` claim and names
-the reason once in the log. Nothing else in Harbinger depends on it, so an absent
-ESL costs exactly this one facet.
-
-Why a plugin at all: a package's destination lives on the package RECORD, not on the
-actor, so borrowing a vanilla travel package would re-point it for every actor in the
-game that runs it — hijacking whatever quest owns it — and would cap Harbinger at one
-travel leg globally. Building one at runtime instead needs `IPackageData` wrapper
-objects the pinned CommonLib does not expose, and a dynamic form does not survive a
-save. One tiny generated record set is the honest answer.
-
-### Observe-only, and what a good log looks like
-
-Harbinger receives commands. There is no observe mode and there never will be: the
-off switch is a mod not sending a claim. If you want to watch without moving anyone,
-do not claim. A claim that was accepted always moves the actor, so a live handle
-means the follower is walking.
-
-A good active session reads like this:
-
-The line that proves the mechanism is `curPkg now 0x<pkg>` matching the package
-travel pointed: that is the engine having actually adopted the package. A
-`[travel-leg] ... ABANDONED` line is a FAILURE report, not noise — it means the actor
-never arrived, never entered combat and never lost its destination inside the safety
-net. It is logged loudly and nothing is retried.
-
-### Limits worth knowing
-
-* **Eight concurrent legs.** A package's destination lives on the package RECORD, so
-  two actors walking to two different places need two records; APMF ships eight. A
-  ninth simultaneous leg is REFUSED and logged. This is a real cap, not a soft one —
-  it is never worked around by sharing a record, which would send both actors to one
-  destination.
-* **Combat cancels the movement, and the package does not ignore combat.** If a fight
-  starts en route the engine takes the actor and the leg ends. "Walk past whoever is
-  hitting you" is not on offer.
-* **Arbitration is honest.** Travel's internal package offer is filed at YOUR basis,
-  and it is re-filed if the winning travel claim's basis changes. If another client
-  outbids you on the package-offer facet, your leg loses the package — exactly as if
-  you had claimed `ch.9` yourself.
-
-
-## Pinning a combat target (ABI v13, `kIntent_TargetPin`)
-
-`kIntent_CombatTarget` (ch.6) only records who owns the combat-target facet. It makes no
-engine call, so until v13 a client that wanted an NPC to fight ONE particular foe had to
-hook the engine itself. `kIntent_TargetPin` (ch.20) does it inside Harbinger, at the engine's
-own target selector.
-
-### The contract
-
-**While the NPC is fighting, the engine's own target choice is replaced with yours.** Every
-combat update the engine asks its target selectors which foe the actor should fight. Harbinger
-answers that question with your target, so the engine's own pick never reaches the actor. The
-NPC's own AI then does the fighting: its own attacks, movement, spells and equips.
-
-**Only among the engine's own combat targets.** The answer is replaced only when the engine
-picked a target (the actor is fighting) and your target is one of the actor's combat group's
-targets. If your target is not a combat target of that group, nothing is written, the engine's
-pick stands, and the log says "not a combat target". Harbinger never makes anyone a target. An
-actor becomes pinnable once the engine holds it as a combat target, for example after your own
-combat entry (a separate concern) puts the actor in a fight with it.
-
-**It never starts a fight.** If the engine holds no target at all (the actor is not in combat,
-or the fight ended), nothing is written and the pin waits. That is the only state that leaves it
-waiting: a pinned target the engine has LOST ends the pin (see below). Getting the actor into
-combat is a separate concern and this intent does not do it.
-
-**It claims nothing else.** No attack selection, no casting, no equip, no movement, no
-aggression, no perception. One intent, one facet.
-
-**It pauses while it cannot apply.** While the engine has no target, or your target is not (yet)
-one of the group's combat targets, Harbinger writes nothing and the engine picks. The claim stays,
-and the pin applies again as soon as both hold.
-
-**It ends by itself when Harbinger can no longer track the target.** When the target is **lost**
-(the engine can no longer locate it: its entry in the group's target list is flagged lost),
-**dead**, **disabled**, **not loaded**, or no longer resolves, or when the pinned actor itself
-dies, Harbinger releases your claim for you. The log says `pin ended: <reason>` and the Release
-line repeats the reason. `IsClaimLive(handle)` (ABI v6) turns false and the handle is dead. This
-is the only case in which Harbinger releases a pin claim on its own.
-
-### How the pin ends, and what to do about it
-
-* **Poll `IsClaimLive(handle)`** (ABI v6) if you need to know. A false answer on a pin you did not
-  release means Harbinger ended it: the target was lost, died, was disabled or unloaded, or your
-  actor died. The log has the reason.
-* **Want to keep chasing?** Pin again. A lost target is one the engine cannot locate, so a new pin
-  only takes effect once the engine holds and can locate it again (until then it pauses).
-* **MFO**, once it is a ch.20 client (its port is a separate task), re-evaluates its gambits on its
-  own cadence: its next pass picks a new target and pins
-  it, or releases. It never re-pins a target Harbinger dropped without choosing it again.
-* **Another mod** should treat an ended pin like any lost target: pick again, pin again if it still
-  wants that actor, or let the engine choose.
-
-### The recipe
-
-```cpp
-using namespace APMF_API;
-
-std::unordered_map<RE::FormID, Handle> g_pin;   // one claim per actor
-
-void FightThis(RE::FormID actor, RE::FormID target) {
-    if (!g_apmf || g_apmf->abiVersion < 13) return;   // absent or older than v13: your own targeting
-
-    APMF_Param p{};
-    p.form = target;                       // REQUIRED: the target ACTOR. 0 or the actor itself is refused.
-
-    if (auto it = g_pin.find(actor); it != g_pin.end()) {
-        g_apmf->Repoint(it->second, &p);   // move the pin in place
-        return;
-    }
-    const Handle h = g_apmf->RequestEx(actor, kIntent_TargetPin, /*basis=*/50.0f, &p);
-    if (h == kInvalidHandle) return;       // refused: keep your own targeting (the log says why)
-    g_pin[actor] = h;
-}
-
-void StopPin(RE::FormID actor) {
-    if (auto it = g_pin.find(actor); it != g_pin.end()) {
-        g_apmf->Release(it->second);       // the engine picks its own targets again
-        g_pin.erase(it);
-    }
-}
-```
-
-No tick, no hook, no `currentCombatTarget` write of your own. If your client already has
-its own target hook, make it stand down for any actor you have pinned through Harbinger: a hook
-that writes the target after the engine's update overrides the pin.
-
-### Parameter fields
-
-| field | meaning |
-|---|---|
-| `param.form` | **REQUIRED.** The target ACTOR's FormID. 0 and the claimed actor itself are refused at the call. A form that is not an Actor is refused at Engage (see below). |
-| everything else | Not read. |
-
-### When a claim is refused
-
-* **At the call (`kInvalidHandle`, logged):** Harbinger older than v13 ("no channel serves
-  intent 20"), VR, a runtime other than exactly 1.6.1170 or 1.5.97, `[TargetPin]
-  bTargetPin=0` in `APMF.ini`, the address self-check refused a seat, before kDataLoaded,
-  `param.form` 0, `param.form` equal to the actor, or the actor is the player.
-* **At Engage (one frame later):** `param.form` is not an Actor. `RequestEx` already
-  returned a LIVE handle; it pins nothing and the log says why. Release it or Repoint it.
-
-### Older and newer builds
-
-* **A client built against v12 or older** never sees intent 20 and is unaffected.
-* **A v13 client on an older Harbinger:** check `abiVersion >= 13` first. If you ask anyway,
-  the older Harbinger has no channel for intent 20 and refuses the request. Either way the
-  answer is the same: keep your own targeting.
-
-### What is yours
-
-The world's reaction to the fight. Crime, bounty, faction and aggression consequences happen the
-way the engine does them. Harbinger does not stop them and Release does not undo them.
-
-### Limits worth knowing
-
-* **The deny is at the source, and it is checked.** Harbinger answers the engine's target
-  selector itself, so there is no update where the engine's own pick is used first. Harbinger also
-  watches the result of each update for a pinned actor. If the actor ends an update aimed at
-  someone else and the selector was never asked, the log says `SOURCE SEAT MISSED`. If the
-  selector was answered with your target and something still changed it afterwards, the log says
-  `OVERWRITTEN`. The Release line reports how many times the selector was asked, how often the
-  engine's pick was replaced, and each reason it was left alone.
-* **Another mod writing the same target is not denied.** A mod that writes the target after the
-  engine's update (its own `UpdateCombat` hook) writes last and wins. That shows up as
-  `OVERWRITTEN` when Harbinger can see it.
-* **Not saved.** A save load, a new game or the actor unloading drops the claim. Claim again.
-* **Pin a loaded target.** A target that is not loaded ends the pin at the next check (about a
-  quarter second), so pin an actor that is in the loaded area.
-* **Built, CI-verified, not yet field-run.** Nobody has watched the selector seat run in a game
-  yet. The first field log must show the `FIRST SOURCE DENY` line and no `SOURCE SEAT MISSED`
-  before anything relies on it.
-
-## Starting a fight (ABI v14, `kIntent_CombatEntry`)
-
-`kIntent_CombatEntry` (ch.21) asks the engine, once, to put an NPC into combat against a target you
-name. Harbinger calls the engine's own entry function, `Actor::StartCombat(target)`, on the main
-thread one frame after your claim is applied. That is all it does. What the NPC does next is the
-engine's AI.
-
-### The contract
-
-* **One call per declaration.** One call when the claim engages, one more each time you Repoint a
-  live claim (or a different claim becomes the winner). No tick, no watch, no retry. Harbinger never
-  starts the fight again on its own.
-* **Not in combat:** the engine builds the NPC's combat controller and group with your target as the
-  group's first combat target. If the engine will not take your target, it builds nothing and the
-  call is a refusal. **Already in combat:** the engine is asked to add your target to the group's
-  combat targets and keeps fighting whoever it was fighting.
-* **Release stops nothing.** Releasing ends Harbinger's part. It calls no `StopCombat` and undoes
-  nothing: the fight is the engine's now. If you want it over, call `Actor::StopCombat` yourself.
-* **Entry does not choose whom the NPC fights first.** The engine's own target selector does, among
-  the group's targets. To make it fight YOUR target, also claim `kIntent_TargetPin` with the same
-  target (the recipe below).
-
-### How combat entry ends
-
-A combat-entry claim is never left live and doing nothing. Harbinger releases it itself, the log
-says `entry ended: <reason>`, and `IsClaimLive(handle)` turns false, when:
-
-| reason in the log | what happened |
-|---|---|
-| `engine refused entry: <cause>` | `StartCombat` returned false. The cause is named when Harbinger can see it (restrained, unconscious, dead actor, dead target); otherwise "cause not reported by the engine": its distance test, its identity test against one engine-global actor (AE id 401069 / SE id 514905), or one of its actor / process flags. |
-| `entry not attempted: <why>` | The target is not an Actor, or at call time the NPC was not loaded, had no AI process or was dead, or the target was not loaded, disabled or dead. No engine call was made. |
-| `combat ended` | The entry succeeded and the NPC is no longer in combat (it has no combat controller). The engine ended the fight: the foe got away, was calmed, someone called `StopCombat`. |
-| `owner dead`, `target dead`, `target disabled`, `target unloaded`, `target unresolvable` | Checked about four times a second while the claim stands. |
-
-Your own Release, an outranking claim, a save load, a new game or the NPC unloading also end it.
-**To try again, send a NEW `RequestEx`.** An ended handle is dead; Repointing it does nothing.
-
-**The engine giving up is final for that target.** If a claim ended with `combat ended` or `engine
-refused entry`, and another claim on the same NPC (yours or another mod's) was waiting under it and
-names the SAME target, that claim does not start the fight again: it ends with the same reason. A
-waiting claim naming a different target gets its one call. The record lasts until the NPC has no
-combat-entry claim left, so once every claim on it is released, a new request starts fresh.
-
-### The recipe: enter combat + pin
-
-Two intents, two handles. Entry puts your target into the NPC's combat group; the pin answers the
-engine's target selector with it on every combat update. Claim both together: the pin WAITS (it does
-not end) while your target is not yet one of the group's combat targets, and takes hold on the first
-combat update after the entry put it there. Your code never needs to look at the NPC's combat state
-itself; watch the two handles with `IsClaimLive`.
-
-**"Not live yet" is not "ended".** A request is applied at Harbinger's next drain, and `IsClaimLive`
-reads the PUBLISHED state, so a handle you were just given reads false until that drain. Treat a
-handle that has never read live as PENDING. Only a handle that WAS live and now is not has ended.
-Releasing on the first false read throws away the request before it is applied (the queued entry
-then finds no claim and is dropped as stale).
-
-```cpp
-using namespace APMF_API;
-
-struct Fight {
-    Handle entry = kInvalidHandle, pin = kInvalidHandle;
-    bool   entrySeen = false, pinSeen = false;   // has IsClaimLive ever read true for it?
-    int    pendingTicks = 0;                     // ticks spent waiting for the first live read
 };
-std::unordered_map<RE::FormID, Fight> g_fight;   // one per actor
-
-// true = this handle has ENDED (it was live and is not any more). A handle that has never read live
-// is still pending and is NOT ended.
-bool Ended(Handle h, bool& seen) {
-    if (h == kInvalidHandle) return false;
-    const bool live = g_apmf->IsClaimLive(h);
-    if (live) seen = true;
-    return seen && !live;
-}
-
-void StopFight(RE::FormID actor) {
-    if (auto it = g_fight.find(actor); it != g_fight.end()) {
-        g_apmf->Release(it->second.pin);    // the engine picks its own targets again
-        g_apmf->Release(it->second.entry);  // stops nothing: the engine ends the fight its own way
-        g_fight.erase(it);
-    }
-}
-
-void FightThis(RE::FormID actor, RE::FormID target) {
-    if (!g_apmf || g_apmf->abiVersion < 14) return;   // absent or older than v14: start it your own way
-    StopFight(actor);                                  // one fight per actor; a new target = new requests
-    APMF_Param p{};
-    p.form = target;                                   // REQUIRED for both: the target ACTOR
-    Fight f;
-    f.entry = g_apmf->RequestEx(actor, kIntent_CombatEntry, /*basis=*/50.0f, &p);
-    if (f.entry == kInvalidHandle) return;             // refused at the call (the log says why)
-    f.pin = g_apmf->RequestEx(actor, kIntent_TargetPin, /*basis=*/50.0f, &p);
-    g_fight[actor] = f;                                // a refused pin (kInvalidHandle) just means no pin
-}
-
-// Your own per-frame (or per-tick) update.
-void TickFights() {
-    for (auto it = g_fight.begin(); it != g_fight.end();) {
-        auto& f = it->second;
-        const bool entryEnded = Ended(f.entry, f.entrySeen);
-        const bool pinEnded   = Ended(f.pin, f.pinSeen);
-        // A request Harbinger dropped before applying it never turns live: give up after a while.
-        const bool stuck = !f.entrySeen && ++f.pendingTicks > 120;
-        // Harbinger ended one of them (the log says why): drop both. To try again, call
-        // FightThis() again -- that is a NEW request.
-        if (entryEnded || pinEnded || stuck) {
-            g_apmf->Release(f.pin);
-            g_apmf->Release(f.entry);
-            it = g_fight.erase(it);
-            continue;
-        }
-        ++it;
-    }
-}
 ```
 
-`IsClaimLive` is ABI v6. The pin ends by itself on the same kinds of reason, plus a target the
-engine has LOST.
-
-**Watch the pin's "NOT a combat target" line when the NPC was already fighting.** On the
-already-in-combat path the engine's `StartCombat` ignores whether it managed to add your target and
-reports success either way, so the entry line says `ENTERED` and cannot tell you. If the target was
-not added, the pin waits and logs `[ch.20] ... pin 0x... is NOT a combat target of this actor's
-group` about every five seconds while the NPC keeps fighting its own foes. That line is how you find
-out; your mod can release both handles and try again later with new requests.
-
-### Parameter fields
-
-| field | meaning |
-|---|---|
-| `param.form` | **REQUIRED.** The target ACTOR's FormID. 0 and the claimed actor itself are refused at the call. The player may be the target. A form that is not an Actor ends the claim one frame later. |
-| everything else | Not read. |
-
-### When a claim is refused
-
-* **At the call (`kInvalidHandle`, logged):** Harbinger older than v14 ("no channel serves
-  intent 21"), VR, a runtime other than exactly 1.6.1170 or 1.5.97, `[CombatEntry]
-  bCombatEntry=0` in `APMF.ini`, the address self-check refused `StartCombat`, before
-  kDataLoaded, `param.form` 0, `param.form` equal to the actor, or the actor is the player.
-* **Everything later ENDS the claim** with a reason (the table above).
-
-### What is yours
-
-Everything the world does about the fight. Crime, bounty, faction and aggression changes, allies
-and guards joining, combat music. marth: "if a user uses it to cause chaos, chaos ensues."
-Harbinger does not stop any of it and Release does not undo it.
-
-### What a good log looks like
-
-```
-[ch.21] 0x... combat-entry ENGAGED -> target 0x...: ONE Actor::StartCombat call is queued ...
-[ch.20] 0x... target-pin ENGAGED -> target 0x... (same frame: the pin waits for the entry)
-[ch.21] 0x... entry ENGAGED against 0x...: REQUESTED -> the engine ENTERED (was not in combat: new
-        controller and group). Target is a combat-group target: yes (...). Pin: a ch.20 claim names
-        this target.
-[ch.20] 0x... FIRST SOURCE DENY: ...
-...
-[ch.21] 0x... entry ended: combat ended (target 0x..., claim h=...). ...
-```
-
-On the already-in-combat path the entry line says `not read` for group membership: the engine does
-not report whether it added the target, and Harbinger does not read the group itself. The ch.20
-pin's own log (`FIRST SOURCE DENY`, or `NOT a combat target of this actor's group`) answers it.
-Entry lines are rate-limited to one per NPC every two seconds; the next line counts the ones held
-back. Endings are never rate-limited.
-
-### Limits worth knowing
-
-* **Not saved.** A save load, a new game or the NPC unloading drops the claim. The fight itself is
-  the engine's and is saved like any fight.
-* **Loaded actors only.** Both the NPC and the target must be in the loaded area.
-* **Built, CI-verified, not yet field-run.** The first field log must show `ENTERED` with `Target is
-  a combat-group target: yes` before anything relies on it.
-
-## Keeping an NPC out of combat (ABI v15, `kIntent_CombatReentryDeny`)
-
-`kIntent_CombatReentryDeny` (ch.22) keeps the engine from putting an NPC back into combat for a
-number of seconds you choose. It is the other half of a retreat: you end the fight once with
-`Actor::StopCombat`, and while the claim holds the engine cannot pull the NPC straight back in.
-
-### The contract
-
-* **It denies the engine's combat start, and nothing else.** Every way the engine starts a fight for
-  an NPC (it sees an enemy, it is attacked, an ally is fighting, a script or another mod calls
-  `StartCombat`) goes through one engine function, `Actor::StartCombat`. While your claim holds and
-  the window runs, that function refuses for this NPC every time, before it does anything: no weapon
-  draw, no re-arm equip, no alarm. The NPC keeps running its own package.
-* **It stops nothing.** An NPC that is in combat when you claim stays in combat. It gains no new foes
-  through `StartCombat` while the window runs, but the fight it is in goes on. Harbinger never calls
-  `StopCombat`. You call it, once (the recipe).
-* **Your own `kIntent_CombatEntry` is not denied.** A ch.21 entry for the NPC (yours or another
-  mod's) is a declared decision and goes through. It does not end this claim: when that fight ends,
-  the window (if it is still running) refuses the engine's re-entries again.
-* **Other actors are not stopped.** Enemies can keep chasing and hitting the NPC; their fight is
-  their facet. The NPC will not fight back while the window holds. That is your declared
-  consequence.
-
-### How the deny ends
-
-Harbinger releases the claim itself, the log says `deny ended: <reason>` and `IsClaimLive(handle)`
-turns false, when:
-
-| reason in the log | what happened |
-|---|---|
-| `window elapsed` | Your window ran out. The engine's combat entries pass again from now on. |
-| `owner dead` | The NPC died. |
-
-Your own Release, an outranking claim, a save load, a new game or the NPC unloading also end it.
-`Repoint(handle, &param)` restarts the window from that moment with the new `fval`.
-
-**A window runs from its own request.** If two mods claim the same NPC and the higher one is
-released, the other claim takes over with what is LEFT of its own window, counted from when it
-was requested (or last Repointed). If nothing is left, it ends at once with `window elapsed`.
-
-### The recipe: retreat = StopCombat once + deny re-entry
-
-Claim first, and call `StopCombat` on the first tick the claim reads LIVE. A request is applied at
-Harbinger's next drain, and `IsClaimLive` reads the PUBLISHED state, so a handle you were just given
-reads false until then. "Not live yet" means PENDING, never ended. Calling `StopCombat` before the
-claim is live leaves a gap in which the engine can pull the NPC straight back in; the deny is not
-applied yet.
+A cast guard claim built with them is the smallest complete example.
 
 ```cpp
-using namespace APMF_API;
+void KeepFriendlyFireHold(RE::FormID follower, TrackedClaim& guard, Heartbeat& beat) {
+    if (!MyMod::Has(21)) return;                // kIntent_CastGuard is ABI 21
 
-struct Retreat {
-    Handle h = kInvalidHandle;
-    bool   live = false;        // has IsClaimLive ever read true? (then StopCombat was called)
-    int    pendingTicks = 0;
-};
-std::unordered_map<RE::FormID, Retreat> g_retreat;   // one per actor
-
-void StartRetreat(RE::FormID id, float seconds) {
-    if (!g_apmf || g_apmf->abiVersion < 15) return;     // absent or older than v15: your own way
-    APMF_Param p{};
-    p.fval = seconds;                                    // the window; 0 = 10 s, at most 120 s
-    const Handle h = g_apmf->RequestEx(id, kIntent_CombatReentryDeny, /*basis=*/50.0f, &p);
-    if (h == kInvalidHandle) return;                     // refused at the call (the log says why)
-    if (auto old = g_retreat.find(id); old != g_retreat.end()) g_apmf->Release(old->second.h);
-    g_retreat[id] = Retreat{ h };                        // PENDING until the next drain applies it
-}
-
-void EndRetreat(RE::FormID id) {                         // e.g. the NPC reached safety, or healed
-    if (auto it = g_retreat.find(id); it != g_retreat.end()) {
-        g_apmf->Release(it->second.h);                   // engine combat entries pass again
-        g_retreat.erase(it);
-    }
-}
-
-// Your own per-tick update, on the MAIN thread (StopCombat is an engine call on the actor).
-void TickRetreats() {
-    for (auto it = g_retreat.begin(); it != g_retreat.end();) {
-        auto& r = it->second;
-        const bool liveNow = g_apmf->IsClaimLive(r.h);
-        if (liveNow && !r.live) {                        // first live tick: the deny is applied
-            r.live = true;
-            if (auto* npc = RE::TESForm::LookupByID<RE::Actor>(it->first)) npc->StopCombat();   // ONCE
-        }
-        if (!liveNow && r.live) { it = g_retreat.erase(it); continue; }   // ended: window over / dead
-        if (!r.live && ++r.pendingTicks > 120) {         // a request that never applied: give up
-            g_apmf->Release(r.h);
-            it = g_retreat.erase(it);
-            continue;
-        }
-        ++it;
-    }
-}
-```
-
-**Where the NPC goes once it is out of combat (2026-10-12).** `StopCombat` ends the fight; it does
-not say what the NPC does next. If foes are still fighting nearby, the engine gives an NPC that is
-out of combat its own Spectator package: it stands and watches the fight, and keeps taking hits.
-To send it somewhere, offer your own package with `ch.9 kIntent_OfferPackage` (claim it before
-`StopCombat`). While that claim wins and its priority on the Package facet is above the Engine's
-(`APMF_Sources.ini`, Engine 20 and clients 50 by default), Harbinger does not let the engine create
-the Spectator package for that NPC (`core/SpectatorGate.cpp`, Character slot 0xDC), so the offered
-package keeps the NPC. Look for `[spectator] ... DENIED` in `APMF.log`. A Spectator package the NPC
-was already running before your claim is not removed. `[PackageGate] iSpectatorSeat=1` logs only.
-NOT field-proven yet.
-
-### Parameter fields
-
-| field | meaning |
-|---|---|
-| `param.fval` | The window in seconds. 0 means 10 s. Above 120 s it is clamped to 120 (logged). Negative or NaN is refused at the call. |
-| everything else | Not read. |
-
-### When a claim is refused
-
-* **At the call (`kInvalidHandle`, logged):** Harbinger older than v15 ("no channel serves
-  intent 22"), VR, a runtime other than exactly 1.6.1170 or 1.5.97, `[CombatReentryDeny]
-  bCombatReentryDeny=0` in `APMF.ini`, the address self-check refused the Character vtable or
-  `StartCombat`'s self-check call site, before kDataLoaded, a negative or NaN `fval`, or the actor
-  is the player.
-
-### What a good log looks like
-
-```
-[ch.22] seat OBSERVED: Actor::StartCombat's own self-check reached the Character::IsDead seat ...
-[ch.22] 0x... combat re-entry deny ENGAGED, window 10.0 s: every engine Actor::StartCombat for this
-        actor is refused while the window runs (only a ch.21 entry passes). The actor IS in combat
-        now: Harbinger stops nothing (call Actor::StopCombat yourself); ... Seat slot 0x99: Harbinger's.
-[ch.22] 0x... FIRST DENY: the engine called Actor::StartCombat for the actor; refused at its own
-        self-check, before it did anything. 9.6 s of the window left.
-[ch.22] 0x... deny ended: window elapsed (claim h=...). ...
-[ch.22] 0x... combat re-entry deny released (ENDED BY HARBINGER: window elapsed): StartCombat
-        self-checks seen 41 -- refused 41, passed as a ch.21 entry 0, ...
-```
-
-`seat OBSERVED` appears once per session, the first time any NPC's combat entry reaches the seat,
-claim or no claim. **`DENY MISSED` is a bug report:** the NPC entered combat while the window held and
-no ch.21 entry passed. The line says whether the seat saw the entry at all; "never saw" usually means
-another DLL wrapped the same engine function after Harbinger.
-
-### Limits worth knowing
-
-* **It does not end a fight.** An NPC already in combat stays in it (it only gains no new foes through
-  `StartCombat`); end the fight yourself.
-* **Not saved.** A save load, a new game or the NPC unloading drops the claim.
-* **Built, CI-verified, not yet field-run, and the seat is not yet OBSERVED on a deck.** The first
-  field log must show `seat OBSERVED`, then `FIRST DENY` for a claimed retreat and no `DENY MISSED`,
-  before a client relies on it (CLAUDE.md principle 5).
-
-## Leashing an NPC in combat (ABI v16, `kIntent_PursuitLeash`)
-
-Without a leash the engine chases a foe at any distance: a follower that locks onto a fleeing
-bandit runs after it across the map while you fight something else. `kIntent_PursuitLeash`
-(ch.23) ties the NPC's combat moves to an ANCHOR actor you name (usually the player) and a
-radius you choose.
-
-### The contract
-
-* **It denies the engine's moves toward the NPC's goal, and only when they would take the NPC
-  farther away.** Ten combat behaviour-tree leaves move an NPC toward its combat TARGET: Advance
-  (the melee close-in), Reposition, Chase, Stalk, Flank, FlankDistant, Surround, PursueTarget,
-  MaintainOptimalRange (a ranged NPC closing to its range) and FindAttackLocation (a ranged NPC
-  moving for a shot). Four more move it around its combat group's SEARCH area when the target is
-  lost: Search, SearchCenter, SearchLocation, SearchWander (their goal is the group's search
-  centre). While the NPC is farther than the radius from the anchor AND that goal is farther from
-  the anchor than the NPC is, such a leaf is refused before it starts, and one that is already
-  running (it began inside the radius) is ended. A goal nearer the anchor is always allowed: a
-  straight run toward it never ends farther from the anchor than the NPC already is.
-* **It stops nothing else.** Attacks, spells, shouts, blocks, dodges, circling, backing off,
-  fleeing and the NPC's package all run as the engine decides. An NPC past the radius keeps
-  fighting whatever comes to it and shoots or casts at whatever it can reach. It does not walk
-  back to the anchor: that is yours to do (or to leave to its follow package once the fight ends).
-* **It needs the anchor in the same place.** If the anchor is dead, unloaded, or in another cell
-  or worldspace, nothing is denied until it is back.
-* **Its own facet.** The leash is arbitrated on its own, separately from `kIntent_CombatAction`
-  (ch.7). Another mod's ch.7 offense or cast deny on the same NPC neither replaces your leash nor
-  is replaced by it. Between two leashes on one NPC, the higher basis wins.
-
-### How the leash ends
-
-It holds while your claim holds. Your own Release, an outranking ch.23 claim, a save load, a new
-game or the NPC unloading end it. A dead NPC runs no combat tree, so nothing is denied for it.
-Repoint with a new `target` / `fval` to move the anchor or change the radius.
-
-### The recipe: in-combat leash to the player
-
-```cpp
-using namespace APMF_API;
-
-// One leash claim per follower. Keep the handle; Repoint it when the radius changes.
-Handle LeashToPlayer(RE::FormID follower, float radius /* game units, e.g. 2048 */) {
-    if (!g_apmf || g_apmf->abiVersion < 16) return kInvalidHandle;   // older: keep your own leash
-    APMF_Param p{};
-    p.target = 0x14;                            // the anchor: the player
-    p.fval   = radius;                          // > 0; the leash radius
-    return g_apmf->RequestEx(follower, kIntent_PursuitLeash, /*basis=*/50.0f, &p);
-    // kInvalidHandle: refused at the call; the log says why (see below).
-}
-
-void SetLeashRadius(Handle h, float radius) {   // e.g. from an MCM slider
-    APMF_Param p{};
-    p.target = 0x14;
-    p.fval   = radius;
-    g_apmf->Repoint(h, &p);
-}
-
-void Unleash(Handle h) { g_apmf->Release(h); }
-```
-
-Pick the radius from how far your followers normally stand plus a fight's width: the leash only
-stops moves while the NPC is already past it, so a radius smaller than your follow distance leashes
-every fight.
-
-### Parameter fields
-
-| field | meaning |
-|---|---|
-| `param.target` | The anchor actor's FormID. REQUIRED; 0 or the NPC itself is refused. |
-| `param.fval` | The radius in game units. REQUIRED; 0, negative or NaN is refused. |
-| everything else | Not read. |
-
-### When a claim is refused
-
-* **At the call (`kInvalidHandle`):** a Harbinger older than v16 ("no channel serves intent 23").
-  Logged `[apmf][pursuit-leash] claim refused`: the leash is not armed (VR, a runtime other than
-  exactly 1.6.1170 or 1.5.97, `[PursuitLeash] bPursuitLeash=0` in `APMF.ini`, the address
-  self-check refused a leaf or the engine's SetFailed / Ascend, or before kDataLoaded), no anchor,
-  the NPC as its own anchor, a radius that is not a positive number, or the NPC is the player.
-* **At Engage (the claim stands, the leash is not set, logged `pursuit leash NOT set`):** the anchor
-  FormID is not a loaded Actor. Repoint once the anchor loads.
-
-### What a good log looks like
-
-```
-[ch.23] PURSUIT LEASH armed on 14 leaves (act+pop deny pair, update() ended through SetFailed+Ascend). ...
-[ch.23] 0x... pursuit-leash facet CLAIMED (anchor 0x00000014, radius 2048).
-[ch.23] 0x... pursuit LEASH set: anchor 0x00000014, radius 2048. ...
-[ch.23] 0x... LEASH ENDED at update() CombatBehaviorAdvance: the actor is 2051 from its anchor
-        (radius 2048) and its target 3310 -- the move would take it farther. ...
-[ch.23] 0x... LEASH DENIED at act() CombatBehaviorSearchWander: the actor is 2300 from its anchor
-        (radius 2048) and its search centre 2900 -- ...
-[ch.23] pursuit H leashes=1 leaf=seen/denied-at-act/ended-at-update: Advance=412/37/9 Chase=0/0/0 ...
-[ch.23] pursuit H pass inside=3120 closer=85 no-anchor=0 other-space=0 no-goal=2 stale=0 update-anomaly=0
-```
-
-The two `pursuit H` lines print every 30 s while any leash is set, zeros included. `seen` counts every
-time any NPC starts that leaf; a leaf you expect but never see is a leaf that NPC does not use.
-**`update-anomaly` above 0 is a bug report**, and so is any `[ch.7] paired-pop protocol ANOMALY`.
-
-### Limits worth knowing
-
-* **It leashes the 14 moves toward the goal, not every step.** Local moves (circling, strafing,
-  backing off, dodging), flight, flee and cover moves, a stagger or a knockback are not denied, so
-  an NPC can end up a little past the radius. It does not pull the NPC back.
-* **Two moves are not leashed on purpose.** ReturnToCombatArea (the engine pulling the NPC back
-  into the fight's area; its goal is that area, not a target) and SearchInvestigateDoor (its goal
-  is a door, which can lead through a load door). See `Docs/DENY-COMPLETENESS-AUDIT.md` gap 14.
-* **Search is judged by the search centre.** A search move can end up to the group's search radius
-  past the centre the rule measured.
-* **Accepted over-deny: a step back can be refused too.** MaintainOptimalRange and Surround sometimes
-  move AWAY from the target and toward the anchor. Past the radius, with the target farther out
-  still, those are denied as well: the NPC stands where it is (still fighting what it can reach)
-  instead of stepping back.
-* **Not saved.** A save load, a new game or the NPC unloading drops the claim.
-* **Built, CI-verified, not yet field-run, and the leaves are not yet OBSERVED on a deck.** The first
-  field log must show non-zero `seen` counts, then `DENIED at act()` / `ENDED at update()` for a
-  leashed follower that stops at the radius without freezing, with `update-anomaly=0`, before a client
-  relies on it (CLAUDE.md principle 5).
-
-## Playing an idle at a target (ABI v17, `kIntent_Idle` with a form)
-
-Before v17, `kIntent_Idle` (ch.12) could play one thing: `IdleForceDefaultState`, the reset to
-the default pose. From v17 it plays the IDLE record YOU name, at a reference you name: a follower
-picks a lock with `IdleLockPick`, hands something over with `IdleGive`, reaches into a box.
-Harbinger never picks the idle. It plays yours once and gets out of the way.
-
-### The contract
-
-* **One engine call per declaration.** When the claim engages, Harbinger calls the engine's own
-  `AIProcess::PlayIdle(actor, idle, target)` once, on the main thread, right after the claim is
-  published (the same call the game's Papyrus `Actor.PlayIdle` makes). A Repoint with a new idle,
-  or another claim taking over, is a new declaration and gets one more call. Nothing is re-played
-  on a timer or when the idle ends.
-* **The engine checks the idle's own conditions** against the NPC and the target. A failing
-  condition refuses the idle. Vanilla `IdleActivatePickUpLow` (0x08B5D3) requires a CARRYABLE
-  target, so it is refused against a container; `IdleLockPick` (0x0BB051) and `IdleGive`
-  (0x0B5E20) have no conditions.
-* **`PlayIdle` returning true means accepted, not played.** The engine may queue the idle. So
-  Harbinger watches the NPC's animation graph and logs whether the animation actually ran (below).
-* **Release resets only a held idle.** A one-shot idle ends by itself: its clip raises the graph
-  event `IdleStop` and the NPC returns to its default state. At Release, Harbinger sends
-  `IdleForceDefaultState` ONLY when that has NOT happened since the call (a looping idle that is
-  still playing). An idle that already ended gets nothing, so Release never pops the NPC out of
-  whatever it is doing by then. It is also never sent while the NPC is in furniture (sitting,
-  sleeping, getting in or out). "Held" is INFERRED from the graph event `IdleStop` and is not yet
-  observed on a deck: the first field log must show `IdleStop` in a one-shot idle's Release line.
-  A form-free Repoint (or a form-free claim taking over) drops the v2 idle with the same guarded
-  reset.
-* **It does not hold the NPC still.** The NPC's package keeps running. A follower whose follow
-  package walks it toward you walks off the lock mid-animation. Claim `kIntent_MovementBlock` (ch.1)
-  for the length of the idle if you need it to stay put, and walk it there first with
-  `kIntent_Travel` (ch.19).
-* **Crouching does not give a kneeling version.** In the vanilla behaviour graph an idle played
-  while sneaking leaves the sneak pose, plays its normal STANDING clip, and returns to sneaking
-  when it ends (the sneak locomotion lives inside the default state the idle leaves; `IdleLockPick`
-  has one clip and no sneak variant). There is no kneeling lockpick in vanilla. For a kneel, name a
-  kneeling IDLE of your own (or a mod's) in `param.form`.
-* **The form-free v1 idle is unchanged.** `param.form` 0 still plays `IdleForceDefaultState` at
-  engage, on every ABI, and reads nothing else.
-
-### How the claim ends
-
-Your own Release, a save load, a new game or the NPC unloading end it. Harbinger also RELEASES the
-claim itself, and logs `idle claim ended: <reason>`, when the idle could not be played (the form
-is not an IDLE record; the target is not a loaded, enabled reference; the NPC is not loaded, is
-dead, or has no AI process), when the engine refused it, or when the NPC died. `IsClaimLive`
-(ABI v6) turns false. A one-shot idle that finished does NOT end the claim: release it when your
-own logic is done (e.g. when your lockpick simulation ends).
-
-### The recipe: play an idle at a target
-
-```cpp
-using namespace APMF_API;
-
-constexpr RE::FormID kIdleLockPick = 0x000BB051;   // Skyrim.esm; about 5.6 s, one-shot
-
-// The NPC is already standing at the lock (a ch.19 travel leg arrived) and holding still (ch.1).
-Handle PlayIdleAt(RE::FormID npc, RE::FormID idle, RE::FormID targetRef) {
-    if (!g_apmf || g_apmf->abiVersion < 17) return kInvalidHandle;
-    // REQUIRED: an APMF older than v17 does NOT refuse this; it ignores the form and plays the
-    // v1 IdleForceDefaultState instead. Check the version first.
-    APMF_Param p{};
-    p.form   = idle;        // the IDLE record to play
-    p.target = targetRef;   // the lock / crate / NPC to play it at; 0 = no target
-    return g_apmf->RequestEx(npc, kIntent_Idle, /*basis=*/50.0f, &p);
-    // kInvalidHandle: refused at the call; the log says why (see below).
-}
-
-// One pick-break later, play it again: a Repoint with the same idle is a new declaration.
-void ReplayIdle(Handle h, RE::FormID idle, RE::FormID targetRef) {
-    APMF_Param p{};
-    p.form   = idle;
-    p.target = targetRef;
-    g_apmf->Repoint(h, &p);
-}
-
-void DoneWithIdle(Handle h) { g_apmf->Release(h); }   // resets the pose only if the idle is still held
-```
-
-Poll `IsClaimLive(h)`: false means Harbinger ended it (refused, unplayable, NPC died) and the log
-line names why.
-
-### Parameter fields
-
-| field | meaning |
-|---|---|
-| `param.form` | The IDLE record's FormID. 0 = the v1 form-free idle. Any other record type ends the claim. |
-| `param.target` | Optional. A loaded, enabled reference to play the idle at. 0 = none (the engine then uses the NPC's own AI target). Not read when `form` is 0. |
-| everything else | Not read. |
-
-### When a claim is refused
-
-* **At the call (`kInvalidHandle`), `form` set only,** logged `[apmf][idle] idle v2 claim
-  refused`: v2 is not available (VR, a runtime other than exactly 1.6.1170 or 1.5.97,
-  `[Idle] bIdleV2=0` in `APMF.ini`, the address
-  self-check refused `SetupSpecialIdle`, or before kDataLoaded), or `target` is the NPC itself.
-* **On the main thread (the claim is ended, logged `NOT PLAYED` / `the engine REFUSED`):** see
-  "How the claim ends".
-
-### What a good log looks like
-
-```
-[ch.12] idle v2 available: one AIProcess::PlayIdle(actor, idle, target) per engage / re-point, ...
-[ch.12] 0x... idle claim ENGAGED -> idle 0x000BB051 at target 0x...: ONE AIProcess::PlayIdle call is queued ...
-[ch.12] 0x... idle ENGAGED IdleLockPick (event IdleLockPick) (0x000BB051) at target 0x...: REQUESTED ->
-        PlayIdle returned TRUE (accepted; sink added; ...).
-[ch.12] 0x... idle IdleLockPick (event IdleLockPick): ANIMATION CONFIRMED by the graph (N event(s) in
-        M ms: <the first graph events>); no IdleStop yet (still playing, or held).
-[ch.12] 0x... idle released (by the client, an unload or a load) (...): PlayIdle called 1 time(s) --
-        accepted 1, refused 0. Release: no reset (not held: the graph raised IdleStop 5633 ms after the call). ...
-```
-
-The confirmation line is written once per play: at `IdleStop`, at the eighth event, or 3 s after the
-call. **`NO ANIMATION EVENT from the actor's graph` is a bug report** (PlayIdle accepted the idle but
-nothing was observed playing). The exact event names in the confirmation line depend on the behaviour graph and
-are what the first field run records.
-
-### Limits worth knowing
-
-* **The idle is yours; so are its consequences.** Harbinger does not stop the NPC's own idle
-  manager, package or combat from playing over it.
-* **Held is read from the graph event `IdleStop`**, which the vanilla one-shot interaction idles
-  raise when they end. An idle that ends WITHOUT raising `IdleStop` counts as held, and gets
-  `IdleForceDefaultState` at Release: harmless on an NPC already in its default state, and never sent
-  to an NPC in furniture.
-* **Humanoid idles need a humanoid.** An IDLE from the character behaviour has no clip in a
-  creature's graph. Check the confirmation line before relying on a creature.
-* **Not saved.** A save load, a new game or the NPC unloading drops the claim.
-* **Built, CI-verified, not yet field-run.** The first field log must show `ANIMATION CONFIRMED`
-  for `IdleLockPick` before a client relies on it (CLAUDE.md principle 5).
-
-## Line of sight and awareness (ABI v18)
-
-The contract is `APMF_API.h`, "ABI v18: LINE OF SIGHT AND AWARENESS". Check `abiVersion >= 18`
-first: an older Harbinger ignores both flag bits without a word.
-
-### Recipes
-
-* **Cast only at what the caster can see.** Add `kCastFlag_OwnLineOfSight` to `req.flags` of a
-  `RequestCast` that names `req.target` (the degenerate `RequestEx(kIntent_Cast)` form has no target,
-  so the bit is refused there). Seat 0x06 then starts the cast only on a fresh VISIBLE; a held stream stops after two
-  OCCLUDED readings. Your claim stands while the target is hidden, so keep heart-beating it with
-  `Repoint` as usual. The first cast after a claim waits a frame or two for the first verdict.
-* **Pin only what the actor can see.** Put `kTargetPin_OwnLineOfSight` in the pin's `param.ival`.
-  The pin pauses while the target is hidden; the engine's own pick fights meanwhile.
-* **Choose a target you can see.** Call `GetLineOfSight(follower, candidate, &info)` from any
-  thread, every time you need the answer. The first call for a pair returns `kLos_Unknown`
-  and queues it; a frame or two later the verdict is there. `kLos_Unknown`,
-  `kLos_Unavailable` and `kLos_Unsupported` are NOT "seen".
-* **Engage on sense, not on sight alone.** From the main thread (MFO's `MainThread::Post`), for
-  each hostile candidate your own rules accept, call `SenseActor` with `viewer` = the follower,
-  `anchor` = the player, ranges 0 for the defaults, and engage when `senses != 0` (or the subset
-  you want; `kSense_Hearing | kSense_Engaged` alone gives "they heard it"). Hostility, crime,
-  factions and "unaggressive" stay your call: Harbinger senses, it does not judge.
-
-### What a good log looks like
-
-```
-[los] own line of sight armed on 1.6.1170.0: 256 pair slots, ...
-[aware] SenseActor armed (main thread only): ...
-[los] 0x0001A6A4 -> 0x000D3C8F: VISIBLE (own ray, torso clear)
-[aware] noise: 0x000D3C8F made a NEW engine noise -- level <the engine's value> at ... (ref 0x000D3C8F)
-[aware] senses: 0x0001A6A4 -> 0x000D3C8F: HEARING(noise, near anchor)+ENGAGED(anchor) (d=1830; sight OCCLUDED; ...)
-[ch.8b seat 0x06] 0x0001A6A4 CheckStartCast -> NO (own line of sight to 0x00000014 is OCCLUDED, all 3 rays blocked) ...
-[los] heartbeat 30 s: tracked 3 pair(s); asks ..., measured ... (... rays): visible ..., occluded ..., ...
-```
-
-### Limits worth knowing
-
-* **Another actor's body on the line blocks a ray** (the ray is a "could a body walk here" test on the
-  character-controller layer). Three rays at feet, chest and head make a full block rare.
-* **A noise made before Harbinger first looked at an actor is not heard.** The first `SenseActor` naming
-  a target records a baseline. Query candidates every probe, not only when you are about to engage.
-* **Built, CI-verified, not yet field-run.** Each sense must be seen firing in a field log before a client
-  relies on it (CLAUDE.md principle 5).
-
-## Moving an NPC toward someone in a fight (ABI v19, `kIntent_CombatApproach`)
-
-In combat the engine owns where an NPC walks. A travel claim (ch.19) ends the moment the fight
-starts, and no other facet moved an NPC toward a point while it fights. `kIntent_CombatApproach`
-(ch.24) does: "stay within R of X, and keep fighting". The typical use is a healer whose
-recipient is out of sight: move toward the recipient until the line clears, then let go.
-
-### The contract
-
-* **It bounds the NPC's combat movement, nothing else.** The engine keeps every fighter inside a
-  combat AREA. Its movement half walks the NPC back when it is outside (the engine's own Return To
-  Combat Area move, in the combat gait) and clamps its tactical moves (circling, backing off,
-  strafing, finding a shot) to it. While your claim stands, the NPC's area is centred on X with
-  radius R. Attacks, spells in both hands, blocks, the combat target, equipment, shouts and
-  potions run exactly as the engine decides. The engine also reads the area outside movement:
-  its attack and bash pick rejects an attack whose end point is outside the area, its target
-  score penalises a foe outside it, and its invisibility / bound-weapon cast test looks at it.
-  Each of those is shown the engine's OWN area, so the claim drops no attack and changes no
-  other decision. Two engine checks belong to the MOVEMENT half and do follow the bound: the
-  unreachable-target check only tests targets inside the area (outside it the engine does not
-  try to path, which is what a bound means), and the weapon pickup below.
-* **A disarmed NPC's weapon search is exempt from the bound (APMF-B57, 2026-10-11).** The engine's
-  Acquire Weapon link (CombatBehaviorFindWeapon act, the search for a dropped weapon) runs inside a
-  deny bracket and sees the engine's own area, so it considers weapons wherever the engine would.
-  The engine's later PATH to the chosen weapon is still confined by the claim's bound (the
-  path-request test), so a weapon beyond R may be found but not reached until the claim ends.
-* **They force, they win.** A package that holds the NPC in place (a HoldPosition package) owns
-  the area in the engine's own pick: your claim reads `kApproachState_Yielded` and moves nothing
-  until that package ends. A fleeing NPC, or one in low process, has no standard area:
-  `kApproachState_Disabled`.
-* **It respects a pursuit leash.** If the same NPC holds a ch.23 leash and no point within R of X
-  lies inside the leash, the claim reads `kApproachState_Leashed` and moves nothing. If X itself is outside the leash but the R-disc still touches it, the goal point is clamped to just inside the leash (APMF-B55, 2026-10-11).
-* **It does not start a fight and does not leave one.** A claim made out of combat waits
-  (`kApproachState_Waiting`) and applies when combat starts.
-
-### How the claim ends
-
-Harbinger ends it and RELEASES your claim (so a lower claim can take over), and
-`GetCombatApproachState` keeps the reason: `kApproachState_Arrived` (the engine reports the NPC
-inside the area; not with `kApproach_Hold`), `kApproachState_TargetLost` (X gone, dead, disabled,
-unloaded or in another cell), `kApproachState_CombatEnded` (the fight ended after the area was
-applied), `kApproachState_EngineDropped` (the engine stopped carrying the area for 3 s: its own
-path to X failed, or its combat update stopped; logged as a warning), `kApproachState_ActorGone`,
-`kApproachState_Refused` (a Repoint named an invalid target or radius). Your own Release, an
-outranking ch.24 claim, a save load and a new game end it too (`kApproachState_Released`).
-
-### The recipe: move a held healer toward an occluded recipient
-
-```cpp
-if (api->abiVersion >= 19) {
     APMF_API::APMF_Param p{};
-    p.target = recipient->GetFormID();       // X
-    p.fval   = 256.0f;                        // R, game units
-    p.ival   = APMF_API::kApproach_Hold;      // stay close until you release
-    h = api->RequestEx(healer->GetFormID(), APMF_API::kIntent_CombatApproach, basis, &p);
+    p.ival = APMF_API::kCastGuard_LineOfFire;
+    p.fval = 6.0f;                              // the window in seconds
+
+    if (guard.h == APMF_API::kInvalidHandle) guard.Open(follower, APMF_API::kIntent_CastGuard, 50.0f, p);
+    else                                     beat.Tick(guard, p, 6000);
 }
-// each tick: v18 GetLineOfSight(healer, recipient); when VISIBLE, Release(h).
-// read v19 GetCombatApproachState(healer, &info) to learn why it ended, if it did.
 ```
 
-### Parameter fields
+## 4. Threading
 
-| field | meaning |
+`Request`, `RequestEx`, `RequestCast`, `Repoint`, `Release` and the declaration calls copy what you pass and queue the work, so any thread may call them. The read-only state reads are any-thread too. Three queries are synchronous and run on the true main thread only (the player-update thread): `FindEmptySpace`, `FindHostilesInSpace` and `SenseActor`. SKSE's `AddTask` is not that thread. No exception ever crosses the boundary. [FACETS.md "Threading"](FACETS.md#threading) has the full list.
+
+## 5. Coexistence
+
+This is what makes Harbinger safe to install beside mods that know nothing about it.
+
+- **Chainable hooks only.** Harbinger never overwrites another mod's hook. Every deny gate calls through to whatever answered before it and only turns a yes into a no for the one thing it denies. The single exception is the equip authority seat (ch.17), which has no virtual function on its path. It patches two internal call sites, byte-verifies both first, and refuses to install if anyone else touched them, so a collision is a missing feature and never a crash.
+- **Engine answer first.** A deny gate lets the engine, or the next hook in the chain, answer first. Harbinger never invents a yes. (The cast facet has one bounded, documented exception: one equip seat that has to be answered from the claim.)
+- **One input, not a whole system.** A claim covers exactly one facet. An actor whose cast choice is claimed keeps moving, keeps fighting and keeps reacting under its own AI.
+- **Reversible on release.** When the last claim on a facet releases, the suppression stops. There is no re-assert loop and no lingering override to clean up.
+- **Never deny what it cannot name.** Harbinger enforces only against a positively identified source that has been outranked. A write it cannot attribute is allowed, logged as `[sources] UNATTRIBUTED <facet>` and shown as an alert.
+
+If you want Harbinger to hold something for you, say so with a claim, and stop doing that thing yourself while the claim is live. A client that turns its own equips off on a successful equip claim can tell "Harbinger holds the set" from "Harbinger is only watching" with `IsEquipAuthorityEnforced`.
+
+## 6. Debugging
+
+- **`APMF.log`.** Every refusal, every end and every attribution is logged with its reason. Search for `REFUSED`, `ended`, `UNATTRIBUTED` and `ATTRIBUTION DEFECT`. If a claim did not do what you expected, read the log line before assuming a bug. Facet tags are `[ch.N]`.
+- **The menu page.** The Harbinger page in the SKSE Menu Framework shows, per facet, the sources, the winner, their priorities and hit counts, alerts and the seat census. See [HARBINGER-MENU.md](HARBINGER-MENU.md). Your DLL appears there under its file name once it files a claim.
+- **Settings.** `APMF.ini` switches facets and probes, and `APMF_Sources.ini` holds priorities. See [INI-REFERENCE.md](INI-REFERENCE.md).
+- **Observe-only seats.** Some seats only name who changes a value and never deny. They are in [FACETS.md "Observe-only facets"](FACETS.md#observe-only-facets-no-claim-api).
+
+## 7. The worked example
+
+[MFO (marth's Follower Overhaul)](https://github.com/marthofdoom/MFO) is Harbinger's first client. If you want to see a real mod claim facets, drive them and release them cleanly, read `native/apmf/` in that repo.
+
+| File | What it shows |
 |---|---|
-| `target` | X, the reference to close on. REQUIRED. Any loaded reference; the player is allowed. |
-| `fval` | R in game units. REQUIRED, finite, > 0. The engine counts the NPC inside when its distance to X is below R plus its own bound radius. |
-| `ival` | `CombatApproachFlags`: `kApproach_Hold` keeps the area after arrival. 0 ends the claim on arrival. |
+| `Bridge.cpp` | binding (`APMF_GetInterface` at the lowest ABI MFO needs), the cast claim create-or-refresh, `Repoint` heartbeats |
+| `CastClaims.cpp` | offense and heal cast claims, per hand |
+| `SpellAllowList.cpp` | ch.8 select-spell and `SetSpellAllowList` |
+| `Equip.cpp` | ch.17: claim, `SetEquipScope`, `SetEquipSetEx` |
+| `Excursion.cpp`, `Deposit.cpp` | ch.19 travel, ch.20 pins, ch.1 hold and ch.12 idle |
+| `CombatEntry.cpp`, `ReentryDeny.cpp` | ch.21 and ch.22 with pending-versus-ended tracking |
+| `PursuitLeash.cpp`, `CombatApproach.cpp` | ch.23 and ch.24 |
+| `Los.cpp` | `GetLineOfSight` and `SenseActor` |
 
-### When a claim is refused
+MFO files every claim with a basis of 200.
 
-Synchronously (kInvalidHandle, logged): an APMF older than v19, VR, a runtime other than
-1.6.1170 / 1.5.97 / 1.7.104, `[CombatApproach] bCombatApproach=0`, a self-check refusal, target
-0 or the NPC itself, a radius that is not positive and finite, or the NPC is the player.
+## Sections that moved
 
-### What a good log looks like
+Older comments in `APMF_API.h` and the source tree cite sections of this page by name. Those sections now live in [FACETS.md](FACETS.md).
 
-```
-[ch.24] combat-approach seats installed: ...
-[ch.24] seat OBSERVED: CombatAreaStandard::Update (vfunc 0x0B) ran on a combat thread ...
-[ch.24] 0x000A2C94 combat-approach claim ENGAGED: close to within 256 of 0x00000014 (HOLD after arrival) ...
-[ch.24] 0x000A2C94 approach APPROACHING -> X 0x00000014: distance 1450 / R 256; area carried the bound 6 time(s); engine: OUTSIDE (return-to-area selectable), standard area CURRENT; outside answers 9.
-[ch.24] 0x000A2C94 approach HOLDING -> X 0x00000014: distance 231 / R 256; ... engine: INSIDE ...
-```
+| Old name | Now |
+|---|---|
+| "Spells-only floor" | [A hand floor](FACETS.md#a-hand-floor-kcastflag_denyhandonly) |
+| "Cast guards" | [ch.25 Cast guard](FACETS.md#ch25-cast-guard-kintent_castguard) |
+| "enter combat + pin" | the example under [ch.21 Combat entry](FACETS.md#ch21-combat-entry-kintent_combatentry) |
+| "retreat: StopCombat once + deny re-entry" | the example under [ch.22 Combat re-entry deny](FACETS.md#ch22-combat-re-entry-deny-kintent_combatreentrydeny) |
+| "Making an NPC cast", "Casting at a point" | [ch.8b Cast](FACETS.md#ch8b-cast-kintent_cast), [Position cast](FACETS.md#position-cast-kcastflag_atposition) |
+| "Declaring what an NPC wears", "Scoping the authority", the probe criteria | [ch.17 Equip authority](FACETS.md#ch17-equip-authority-kintent_equipauthority), [Appendix E](FACETS.md#appendix-e-equip-authority-probe-criteria) |
+| "Walking an NPC somewhere" | [ch.19 Travel](FACETS.md#ch19-travel-kintent_travel) |
+| "The Harbinger controller" | [Basis and priority](FACETS.md#basis-and-priority), [Appendix A](FACETS.md#appendix-a-sources-and-priorities-per-facet) |
+| "The facet table" | [Facet index](FACETS.md#facet-index) |
 
-### Limits worth knowing
+## Where next
 
-* The NPC walks in its COMBAT gait and keeps fighting on the way, so it may stop to swing or cast
-  as the engine decides. That is the point: the claim moves one facet.
-* The area follows X four times a second while it is carried; a fast-moving X is chased, not led.
-* An unreachable X: the engine's own path back fails and it switches the NPC's area off for the
-  rest of that fight; the claim ends `kApproachState_EngineDropped`.
-
-## The Harbinger controller: sources, priorities and attribution (v0.12.0)
-
-Harbinger owns the hook point of each facet it controls. Anything else that writes the same facet is an **input from a source**. The controller names those sources, ranks them with priorities and shows the result on the SKSE Menu Framework page (`Docs/HARBINGER-MENU.md`).
-
-**What a client author needs to know**
-
-- **Your DLL is a source.** Harbinger finds your module from the caller of the API (the return address of `Request`, `RequestEx` and `RequestCast`), so you register nothing. The source name is your DLL's file name. Its priority on each facet is the **client default, 50**, unless `APMF_Sources.ini` names it.
-- **A priority decides contests.** A deny stands only while your client outranks the source it overrules. For ch.25 the overruled source is `Engine` on the Cast facet, default priority 20. Another mod's hook defaults to 20, Papyrus and console calls to 75, and a player can raise or lower any of them per facet (`Docs/INI-REFERENCE.md`).
-- **Never deny what you cannot name.** Harbinger enforces only against a positively identified source that has been outranked. A write it cannot attribute is allowed, logged as `[sources] UNATTRIBUTED <facet>` and shown as an alert. If your client sees a hit it expected to be denied, read the log line before assuming a bug.
-- **Target facet (ch.6 / ch.20).** Harbinger's layer sits above every foreign hook on the combat target seat. When a positively identified writer is outranked, Harbinger puts the target back through the engine's own `SetTarget`. A segment of the hook chain it cannot prove is logged as `ATTRIBUTION DEFECT` and never enforced.
-- **Equip facet.** The caller of an engine equip is recovered by a stack scan. An unattributed equip is never denied. Armor verdicts are enforced by default (`bEquipEnforceArmor=1`).
-- **Package and scene sources** are observe only in this release. A package source is counted and shown, nothing is denied on it.
-- **Seat census.** Every seat Harbinger installs is re checked at each load stage and every 60 seconds. A seat another mod hooked over later becomes a hook source on that facet, logged once, and Harbinger re hooks on top where a re hook exists.
-- **Not in the header.** The controller adds no struct and no ABI slot. The only ABI change in 0.12.0 is v21, `kIntent_CastGuard`.
-
-The slip layer (a mod that writes under Harbinger's seat) is Phase 1b and is not in this release.
-
-## The facet table
-
-Every facet is one `Intent` value in `native/APMF_API.h`. The proof tier says
-how much to trust a facet before you build a release around it.
-
-- **Field-proven**: a live deck run exercised the mechanism (engage, deny,
-  release) and it held up, or the facet is in active production use by a real
-  client.
-- **Built, not yet battle-tested**: the code compiles and the mechanism is
-  sound (often reusing a mechanism already proven elsewhere in APMF), but
-  this specific facet hasn't had its own field run yet.
-
-Tested and "reads its param" are different questions. A crouch toggle can be
-field-proven and working while it still applies a fixed built-in value and
-ignores whatever you pass in `APMF_Param`, a plain toggle has nothing to
-parametrize. The Param column is a separate note on which facets actually
-consume a per-request value today versus accept-and-ignore it. Check both
-columns, one doesn't imply the other.
-
-| Intent | Facet | Param field | Proof tier |
-|---|---|---|---|
-| `kIntent_MovementBlock` (ch.1) | Full stand-still | none | Built, not yet battle-tested |
-| `kIntent_Gait` (ch.1a) | Movement speed scale | `fval` (reserved, not yet read) | **Field-proven.** An actor-value source-block, deck-tested to hold even on a package-locked actor. |
-| `kIntent_Stance` (ch.3) | Sneak/crouch toggle | `ival` (reserved, not yet read) | **Field-proven.** Deck-tested as a crouch toggle, confirmed working. |
-| `kIntent_WeaponDrawn` (ch.4) | Draw/sheathe | none | Built, not yet battle-tested |
-| `kIntent_Headtrack` (ch.5) | Look-at target | `form` (reserved, not yet read) | **Field-proven** for the look-up behavior itself (deck-tested). Known-incomplete as a deny gate: the AI writes several headtrack slots and APMF owns only one, so an aggressive competing source can still win the head back. |
-| `kIntent_CombatTarget` (ch.6) | Claim the combat-target facet | `form` (the target actor) | **Field-proven, in active production use.** MFO drives its combat targeting through this facet every fight. Arbitration only: APMF records the owner and the client writes the target itself. Denying a competing framework's own target write is still a future gap. |
-| `kIntent_CombatAction` (ch.7) | Deny named combat behavior-tree leaf categories (attack, bash, ranged attack, cast leaves, and more, grouped by category) | `ival` (a `CombatActionCategory` bitmask) | **Field-proven.** Graduated from a live deck probe: the deny fired, the tree fell back cleanly, no crash. |
-| `kIntent_SelectSpell` (ch.8) | Claim the casting facet | `form` (the spell FormID) | **Field-proven, for the owned/exact cast.** A follower AI-fired an animated spell allowed only through APMF's cast-check gate, live in combat, no whack-a-mole, no crash. This covers the single claimed spell as the actor's only castable choice. The graduated multi-spell allow list (`SetSpellAllowList`, v4) is a separate capability and is not yet proven. Denying a competing framework's own spell selection is also still a future gap. |
-| `kIntent_Cast` (ch.8b) | **Make the NPC's own AI cast a chosen spell at a chosen target.** ABI v5, use `RequestCast` | `APMF_CastRequest` (spell, proxy, target, flags, ttlMs) | **Field-proven** for heal-other on a follower AND for offense (17 animated offense fires in the 2026-09-06 deck session; the Offensive caster seat shipped in v0.9.2 — the "still being ported" note here was stale, corrected 2026-09-07). APMF makes no equip, anim or cast call. **Know what a claim does NOT cover, and what you must do about it:** it governs ONE hand, so the other hand keeps casting whatever the NPC's own AI picks — claim that hand too, with `kCastFlag_DenyHandOnly`, if you want the actor closed (a deny-only claim drives nothing and admits nothing, including your own spells). A deny-only floor also refuses weapons, shields, torches and unarmed into its hand; on ABI v20 and newer add `kCastFlag_FloorSpellsOnly` so it refuses spells, scrolls and staffs only (a one-hander, shield or torch in that hand passes; a two-hander, bow or unarmed still competes for the driving hand and is refused while that claim stands). See "Spells-only floor" above. It expires at `ttlMs`: `Repoint` the live claim to RENEW the deadline rather than releasing and re-requesting, or foreign spells equip and charge in the gap between the two. And a spell already charging when your claim arrives is not interrupted. Both mechanisms landed on `main` 2026-09-07 and are not in a tagged release yet. See `Docs/DENY-COMPLETENESS-AUDIT.md` open gaps 9-13. |
-| `kIntent_CastGuard` (ch.25) | **Guard an NPC's own casts: hold offensive casts while a friendly is in the line of fire; bound the AI's own concentration channel per hand.** ABI v21, use `RequestEx` | `ival` = `CastGuardFlags`, `fval` = window in seconds (Repoint renews) | **Built, CI-verified, not yet field-run.** Enforced at CastGate 0x0A (hand casters) and CastSeats 0x06; no hook of its own, no engine write. See "Cast guards" above. |
-| `kIntent_OfferPackage` (ch.9) | Claim the package-offer facet | `form` (the TESPackage FormID) | **Proven WHEN NUDGED (corrected 2026-09-07).** The 0x49 redirect answers whenever the engine asks while a published claim stands — 16/16 deck wins, every one of them following an explicit `EvaluatePackage` nudge, with ZERO hits from the engine's own evaluation cadence over ~75 s. It is not self-sustaining: if nothing nudges, nothing re-asks. The earlier "field-proven for engage/release" credit belonged to the retired PROBE; the graduated channel's own first field run engaged **0 of 6** dispatches because its nudge fired before the claim published. Fixed on `main` as of 2026-09-07 (the nudge is posted one hop past the claim's publish); untagged, and not yet re-run on a deck. Save/load persistence of an engaged claim is still unexercised. **Spectator (2026-10-12):** the engine's runtime-created Spectator package (an out-of-combat NPC watching a fight) is not created while the claim wins and outranks the Engine on the Package facet (`core/SpectatorGate.cpp`); not field-proven yet. |
-| `kIntent_Dialogue` (ch.10) | Pause the actor's own in-progress dialogue | none | Built, not yet battle-tested |
-| `kIntent_Disposition` (ch.11) | Aggression / confidence / assistance / morality bias | `fval` (reserved, not yet read) | **Field-proven.** An actor-value source-block, deck-tested to hold even on a package-locked actor. |
-| `kIntent_Idle` (ch.12) | One-shot idle/animation; v17: the client's IDLE at a target | none (v1); `form` = IDLE, `target` = ref (v2, ABI v17) | v1 built, not yet battle-tested; v2 built, CI-verified, not field-run |
-| `kIntent_ShoutPower` (ch.14) | Claim the shout/power selection facet | `form` (the shout/power FormID) | Built, not yet battle-tested. Arbitration only today, the same shape as ch.6. |
-| `kIntent_Equipment` (ch.15) | Unequip/equip a worn item, and (with a param) gate re-equip of a spell/staff while the claim stands | `form` (optional) | Built, not yet battle-tested. The most recently landed facet in the catalog. |
-| `kIntent_Detection` (ch.16) | Silent movement + reduced detection range | `fval` (reserved, not yet read) | **Field-proven.** An actor-value source-block, deck-tested to hold even on a package-locked actor. |
-| `kIntent_EquipAuthority` (ch.17) | **Declare what the NPC wears; APMF equips it and refuses every other engine equip of a governed type (ARMO/WEAP/AMMO/LIGH) in the categories the claim owns.** ABI v7, declare with `SetEquipSet`; ABI v8 `SetEquipSetEx` adds a hand per item; ABI v9 `SetEquipScope` scopes the claim to owned/denied categories (default: all owned) | `ival` (an `EquipAuthFlags` bitmask); the set itself via `SetEquipSet` / `SetEquipSetEx`; the scope via `SetEquipScope` | Built, not yet battle-tested. Ships OBSERVE-ONLY (`[EquipAuthority] bEquipObserveOnly=1`) until the probe criteria above pass. The only call-site seat in APMF, under `Docs/INVARIANTS.md` #17a. Player-menu equips pass by default (v8). |
-| `kIntent_Cast` + `kCastFlag_AtPosition` (ABI v11) | **Cast a Target Location spell at a world point.** A one-shot remote cast from an APMF XMarker, blamed on the actor. Not a claim: no facet held, never seen by the cast seats | `form` (the spell), `ival` (the flag alone), `pos` (the point) | Built, not yet battle-tested. CI verified only. Summons refused by name (the engine only lets the caster summon). |
-| `kIntent_Travel` (ch.19) | **Walk this actor to a destination** (ABI v11: or to a world point, `kTravel_ToPosition`, via an APMF-owned XMarker). APMF points its own travel package at it and offers that package through an internal ch.9 claim at YOUR basis. The leg ends on arrival, on the actor entering combat, on the destination being gone, or (ABI v12) BLOCKED. ABI v12: `GetTravelLegState` says which, and `kTravel_SpeedSet` sets the gait | `form` (the DESTINATION, REQUIRED -- an object REFERENCE or a CELL, and it need not be loaded or nearby), `fval` (arrival radius, 0 => 75u, clamped 50-512, not used for a cell), `ival` (a `TravelFlags` bitmask) |a refused claim means the channel is off in APMF.ini, VR, the esl is missing, or eight legs are already running|
-| `kIntent_TargetPin` (ch.20, ABI v13) | **Pin the actor's combat target.** Harbinger answers the engine's own target selector with your target while the actor is fighting and your target is one of its group's combat targets. Never starts combat | `form` (the target ACTOR, REQUIRED) | Built, not yet battle-tested. CI verified only. The selector seat has not been observed running in a game yet. |
-| `kIntent_CombatEntry` (ch.21, ABI v14) | **Start a fight.** Harbinger calls the engine's own `StartCombat` once against your target (once more per Repoint). Never re-enters, never stops the fight; the claim ENDS on a refusal or when the fight ends. Pin the same target after it entered to make it fight THAT one | `form` (the target ACTOR, REQUIRED) | Built, not yet battle-tested. CI verified only. |
-| `kIntent_CombatReentryDeny` (ch.22, ABI v15) | **Stay out of the fight.** For a window you choose, every engine `StartCombat` for the NPC is refused at its own self-check. Stops nothing; your own ch.21 entry passes. Ends by itself when the window (counted from your request) elapses or the NPC dies. Recipe: claim, then `StopCombat` once on the first tick the claim is live | `fval` (window seconds; 0 = 10, max 120) | Built, not yet battle-tested. CI verified only; the seat is not yet observed on a deck. |
-| `kIntent_PursuitLeash` (ch.23, ABI v16) | **Leash the NPC's in-combat pursuit and search to an anchor actor.** Moves toward a goal farther from the anchor are refused while the NPC is past the radius | `target` (the anchor), `fval` (the radius) | Built, not yet battle-tested. CI verified only; the leaves are not yet observed on a deck. |
-| `kIntent_CombatApproach` (ch.24, ABI v19) | **Close to within R of an actor while fighting.** The NPC's own combat area is centred on X with radius R; the engine walks it back toward X and keeps its moves inside, while it keeps attacking and casting. Ends by itself (arrival unless `kApproach_Hold`, X lost, combat over, the engine dropping the bound) and Harbinger releases the claim; `GetCombatApproachState` says why | `target` (X), `fval` (R), `ival` (`CombatApproachFlags`) | Built, CI-verified, not field-run |
-
-Where a field is marked "reserved, not yet read", the channel currently
-applies a fixed built-in behavior and ignores whatever you pass in that field.
-The ABI accepts the value today so a later APMF release can start reading it
-without an ABI break. Don't design a release around a reserved field doing
-anything yet.
-
-Read `Docs/CHANNEL-MAP.md` for the full research behind every row (the exact
-hook, the exact vfunc, the version-robustness notes) and `Docs/archive/ROADMAP.md` (archived) /
-`Docs/STATUS.md` for what's next.
-
-## Threading
-
-- `Request`, `RequestEx`, `Repoint`, `Release`, and `SetSpellAllowList` are
-  safe to call from any thread. They enqueue the work, APMF applies it on the
-  game thread. That includes a `kCastFlag_AtPosition` RequestEx (ABI v11).
-- **The exception (ABI v11): `FindEmptySpace` and `FindHostilesInSpace` are
-  synchronous and run ONLY on the main (player-Update) thread.** Elsewhere they
-  return `kQuery_NotMainThread` and do nothing. See "Asking about space".
-- `GetTravelLegState` (ABI v12) is a read-only snapshot and is safe from any thread.
-- The `APMF_Param` (or the `forms` array for `SetSpellAllowList`) you pass is
-  read and copied synchronously inside the call. APMF never retains your
-  pointer, so a stack temporary or a local array is fine.
-- No exception ever crosses the DLL boundary in either direction. A throw
-  inside APMF degrades to a safe no-op or `kInvalidHandle`, never an unwind
-  into your code.
-
-## The arbitration model
-
-Every claim carries a `basis`, a float that is entirely yours to define (your
-own priority scale, your own policy). On a channel with more than one
-outstanding claim, the highest basis owns it. On a tie, the earlier claim
-owns it. The channel stays engaged as long as any claim exists on it. When the
-current owner releases, the next-highest claim (if any) takes over
-automatically. When the last claim releases, APMF stops suppressing and the
-actor's own AI resumes.
-
-## Coexistence guarantees
-
-This is the part that makes APMF safe to install alongside mods that know
-nothing about it:
-
-- **Chainable hooks only.** APMF never overwrites another mod's hook. Every
-  deny gate calls through to whatever answered before it and only turns a YES
-  into a NO for the one thing it's denying. The one exception is the equip
-  authority seat (ch.17): the engine-equip facet has no virtual function on
-  its path, so APMF patches the two internal call sites of the engine's own
-  equip worker. It byte-verifies both before writing either; if any other
-  mod has touched those bytes the whole seat refuses to install and says so
-  in the log, so a collision is a missing feature, never a crash.
-- **Engine-answer-first.** A deny gate always lets the engine (or the next
-  hook in the chain) answer first. APMF never invents a YES on its own, it
-  only ever suppresses one.
-- **Withholds one input, not a whole system.** A claim covers exactly one
-  facet. An actor whose cast selection is claimed keeps moving, keeps
-  fighting, keeps reacting to everything else under its own AI. Nothing about
-  the rest of the actor is touched.
-- **Reversible on release.** When the last claim on a facet releases, the
-  suppression stops immediately. There's no re-assert loop left running and
-  no lingering override to clean up.
-
-## MFO: the worked example
-
-[MFO (marth's Follower Overhaul)](https://github.com/marthofdoom/MFO) is
-APMF's first client and its worked reference integration. If you want to see
-a real mod claim facets, drive them with its own mechanisms, and release them
-cleanly, that's the codebase to read. MFO's `feat/apmf-cast` branch is where
-that integration lives while it's being field-proven.
+- **[FACETS.md](FACETS.md)** is the reference: every facet, its arguments, what Harbinger enforces, its lifetime, its priority rules and examples.
+- **[CHANNEL-MAP.md](CHANNEL-MAP.md)** maps each channel to its hook site, with the research behind it.
+- **[INI-REFERENCE.md](INI-REFERENCE.md)** documents every key in `APMF.ini` and the format of `APMF_Sources.ini`.
+- **[native/APMF_API.h](../native/APMF_API.h)** is the contract, and it wins over any page here.

@@ -14,7 +14,8 @@ fighting other mods over who owns the actor.
 
 **Start here:**
 
-- **[Docs/INTEGRATION.md](Docs/INTEGRATION.md)**: the integration guide. Read this first.
+- **[Docs/INTEGRATION.md](Docs/INTEGRATION.md)**: the getting-started guide for mod authors. Read this first.
+- **[Docs/FACETS.md](Docs/FACETS.md)**: the facet reference. Every facet, its arguments, what it enforces, its lifetime, and examples.
 - **[Docs/CHANNEL-MAP.md](Docs/CHANNEL-MAP.md)**: the full facet map, with an honest proof tier per facet.
 - **[native/APMF_API.h](native/APMF_API.h)**: the header you build against. The whole public surface, one file.
 - **[Docs/INI-REFERENCE.md](Docs/INI-REFERENCE.md)**: every key in `APMF.ini` and the format of `APMF_Sources.ini`.
@@ -55,27 +56,68 @@ aggression, dialogue availability, and more. See
 [Docs/CHANNEL-MAP.md](Docs/CHANNEL-MAP.md) for the full list and how proven
 each one is.
 
+## Facets
+
+A facet is one part of an NPC's AI that a mod can claim. Each has its own intent in the API, its own rules, and a section in **[Docs/FACETS.md](Docs/FACETS.md)** that covers what it is for, the exact arguments, what Harbinger enforces, how long a claim lives, who wins a conflict, and short C++ examples.
+
+| Facet | What it is for | Reference |
+|---|---|---|
+| Movement block (ch.1) | Stand the actor still | [ch.1](Docs/FACETS.md#ch1-movement-block-kintent_movementblock) |
+| Gait (ch.1a) | Halve the actor's speed | [ch.1a](Docs/FACETS.md#ch1a-gait-kintent_gait) |
+| Stance (ch.3) | Make the actor sneak | [ch.3](Docs/FACETS.md#ch3-stance-kintent_stance) |
+| Weapon drawn (ch.4) | Draw the weapon, sheathe on release | [ch.4](Docs/FACETS.md#ch4-weapon-drawn-kintent_weapondrawn) |
+| Headtrack (ch.5) | Make the actor look straight up (a test facet) | [ch.5](Docs/FACETS.md#ch5-headtrack-kintent_headtrack) |
+| Combat target (ch.6) | Record who owns the combat target | [ch.6](Docs/FACETS.md#ch6-combat-target-kintent_combattarget) |
+| Combat action (ch.7) | Deny attack or cast behaviour | [ch.7](Docs/FACETS.md#ch7-combat-action-kintent_combataction) |
+| Select spell (ch.8) | Limit the spells the AI may cast | [ch.8](Docs/FACETS.md#ch8-select-spell-kintent_selectspell) |
+| Cast (ch.8b) | Make the NPC's own AI cast a spell at a target, animated | [ch.8b](Docs/FACETS.md#ch8b-cast-kintent_cast) |
+| Position cast | Cast a Target Location spell at a point (off by default) | [position cast](Docs/FACETS.md#position-cast-kcastflag_atposition) |
+| Offer package (ch.9) | Hand the actor one AI package | [ch.9](Docs/FACETS.md#ch9-offer-package-kintent_offerpackage) |
+| Dialogue (ch.10) | Pause the actor's own dialogue once | [ch.10](Docs/FACETS.md#ch10-dialogue-kintent_dialogue) |
+| Disposition (ch.11) | Make the actor aggressive and loyal | [ch.11](Docs/FACETS.md#ch11-disposition-kintent_disposition) |
+| Idle (ch.12) | Play an animation, optionally at a target | [ch.12](Docs/FACETS.md#ch12-idle-kintent_idle) |
+| Shout and power (ch.14) | Record who owns the shout facet | [ch.14](Docs/FACETS.md#ch14-shout-and-power-kintent_shoutpower) |
+| Equipment (ch.15) | Gate spell and staff re-arm | [ch.15](Docs/FACETS.md#ch15-equipment-kintent_equipment) |
+| Detection (ch.16) | Silent movement, longer detect range | [ch.16](Docs/FACETS.md#ch16-detection-kintent_detection) |
+| Equip authority (ch.17) | Declare what the NPC wears and refuse the rest | [ch.17](Docs/FACETS.md#ch17-equip-authority-kintent_equipauthority) |
+| Travel (ch.19) | Walk the NPC to an object, cell or point | [ch.19](Docs/FACETS.md#ch19-travel-kintent_travel) |
+| Target pin (ch.20) | Hold the combat target on yours | [ch.20](Docs/FACETS.md#ch20-target-pin-kintent_targetpin) |
+| Combat entry (ch.21) | Start a fight | [ch.21](Docs/FACETS.md#ch21-combat-entry-kintent_combatentry) |
+| Combat re-entry deny (ch.22) | Keep the NPC out of combat for a while | [ch.22](Docs/FACETS.md#ch22-combat-re-entry-deny-kintent_combatreentrydeny) |
+| Pursuit leash (ch.23) | Stop the NPC chasing too far from an anchor | [ch.23](Docs/FACETS.md#ch23-pursuit-leash-kintent_pursuitleash) |
+| Combat approach (ch.24) | Close on an actor while fighting | [ch.24](Docs/FACETS.md#ch24-combat-approach-kintent_combatapproach) |
+| Cast guard (ch.25) | Hold attack spells through friends, bound channels | [ch.25](Docs/FACETS.md#ch25-cast-guard-kintent_castguard) |
+| Space queries | Ask for a clear spot or the hostiles in a sphere | [queries](Docs/FACETS.md#space-queries-findemptyspace-and-findhostilesinspace) |
+| Line of sight | Harbinger's own ray between two actors | [queries](Docs/FACETS.md#line-of-sight-getlineofsight) |
+| Awareness | Does this actor sense that one | [queries](Docs/FACETS.md#awareness-senseactor) |
+| Observe-only seats | Who changes an actor value, the seat census, package sources | [observe only](Docs/FACETS.md#observe-only-facets-no-claim-api) |
+
+Some facets are field-proven and some are built but not yet seen working in game. FACETS.md says which for each one.
+
+## For mod authors
+
+You build against one header, [`native/APMF_API.h`](native/APMF_API.h). Start with [Docs/INTEGRATION.md](Docs/INTEGRATION.md) for how to find the interface, check the version, register as a source and run the claim, heartbeat and release pattern. Then use [Docs/FACETS.md](Docs/FACETS.md) as the reference for each facet. [MFO](https://github.com/marthofdoom/MFO) is the worked example, and its `native/apmf/` folder is the one to read.
+
 ## Quickstart
 
 ```cpp
 #include "APMF_API.h"
 
-// Pick the NEWEST struct you actually call -- APMF_API_v9 is the current one
-// (APMF_API.h is canonical, never hardcode the number in your own docs).
-const APMF_API::APMF_API_v9* g_apmf = nullptr;
+// The newest struct is APMF_API_v19 (ABI 21). APMF_API.h is canonical, never hardcode
+// the number in your own docs.
+const APMF_API::APMF_API_v19* g_apmf = nullptr;
 
 // Once, from kPostLoad/kDataLoaded:
 if (HMODULE h = GetModuleHandleA("APMF.dll")) {
     auto fn = reinterpret_cast<APMF_API::GetInterface_t>(
         GetProcAddress(h, APMF_API::kGetInterfaceExport));
     if (fn) {
-        // fn() returns nullptr if the installed APMF is OLDER than the header you
-        // compiled against, so this single call is all-or-nothing: if you want a
-        // graceful degrade to an older APMF, ask for the lowest version you can
-        // live with and feature-test with base->abiVersion from there.
-        if (auto* base = fn(APMF_API::kABIVersion)) {
-            if (base->abiVersion >= 9)
-                g_apmf = reinterpret_cast<const APMF_API::APMF_API_v9*>(base);
+        // fn() returns nullptr if the installed APMF is OLDER than the version you ask for,
+        // and the newest interface for any version at or below its own. Ask for the LOWEST
+        // ABI you can live with, then gate every newer slot on base->abiVersion.
+        if (auto* base = fn(/*lowest ABI you need*/ 5)) {
+            if (base->abiVersion >= 5)
+                g_apmf = reinterpret_cast<const APMF_API::APMF_API_v19*>(base);
         }
     }
 }
@@ -88,8 +130,9 @@ if (g_apmf) {
 }
 ```
 
-The full walkthrough, with `RequestEx`, `Repoint`, threading rules, and the
-arbitration model, is in [Docs/INTEGRATION.md](Docs/INTEGRATION.md).
+The full walkthrough, with `RequestEx`, `Repoint`, the pending-claim rule, threading and the
+claim, heartbeat and release pattern, is in [Docs/INTEGRATION.md](Docs/INTEGRATION.md). Every facet is in
+[Docs/FACETS.md](Docs/FACETS.md).
 
 ## How it works (short version)
 
@@ -152,8 +195,8 @@ other facet behaves exactly the same without it.
 
 ### v0.12.0
 
-- **Cast guard (ch.25, ABI v21).** A mod can ask Harbinger to hold an NPC's attack spell while a friend stands in the line of fire or the blast, and to keep the NPC's own concentration spells off one hand or both. Harbinger measures the line every frame. `Docs/INTEGRATION.md`, "Cast guards".
-- **The controller (Phase 1a).** Harbinger keeps a registry of every source that writes an AI facet: client mods, other mods' hook DLLs, plugins, the engine, Papyrus and console calls. Each has a priority from 0 to 100 per facet, set in `APMF_Sources.ini`. Defaults are 20 for other mods, 50 for clients and 75 for direct calls. A change Harbinger cannot trace is allowed and alerted, never denied. `Docs/INTEGRATION.md`, "The Harbinger controller".
+- **Cast guard (ch.25, ABI v21).** A mod can ask Harbinger to hold an NPC's attack spell while a friend stands in the line of fire or the blast, and to keep the NPC's own concentration spells off one hand or both. Harbinger measures the line every frame. `Docs/FACETS.md`, "ch.25 Cast guard".
+- **The controller (Phase 1a).** Harbinger keeps a registry of every source that writes an AI facet: client mods, other mods' hook DLLs, plugins, the engine, Papyrus and console calls. Each has a priority from 0 to 100 per facet, set in `APMF_Sources.ini`. Defaults are 20 for other mods, 50 for clients and 75 for direct calls. A change Harbinger cannot trace is allowed and alerted, never denied. `Docs/FACETS.md`, "Basis and priority".
 - **Target restore.** When a named source is outranked on the combat target, Harbinger puts the target back through the engine's own call.
 - **Seat census.** Every engine seat Harbinger hooks is re checked at each load stage and every 60 seconds, so a mod that hooks over it later is named in the log and on the menu.
 - **Equip caller recovery.** The mod behind an engine equip is found by a stack scan. An equip Harbinger cannot attribute is never denied.
