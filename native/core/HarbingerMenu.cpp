@@ -89,6 +89,7 @@ namespace apmf::harbingermenu {
             { Facet::kCast,         "Casting" },
             { Facet::kCombatAction, "Combat actions" },
             { Facet::kCombat,       "Combat entry and approach" },
+            { Facet::kActorValue,   "Actor values (speed, disposition)" },
             { Facet::kCore,         "Core" },
         };
 
@@ -253,6 +254,21 @@ namespace apmf::harbingermenu {
             }
         }
 
+        // 1b: the SKSE plugins loaded in the process that have not been seen writing any facet yet
+        // (Sources::RegisterLoadedPlugins). A plugin leaves this list on its first write.
+        void LoadedPlugins() {
+            std::vector<SourceId> quiet;
+            const auto            n = Count();
+            for (std::uint32_t i = 0; i < n; ++i)
+                if (KindOf(static_cast<SourceId>(i)) == Kind::kLoaded) quiet.push_back(static_cast<SourceId>(i));
+            const std::string label =
+                fmt::format("Loaded SKSE plugins not seen writing yet: {}###loaded", quiet.size());
+            if (!g.CollapsingHeader(label.c_str(), 0) || quiet.empty()) return;
+            Colored(kGrey, "Read from the process at startup. A plugin moves to a facet above when Harbinger first "
+                           "sees it write that facet.");
+            for (const auto id : quiet) Text(std::string(Name(id)));
+        }
+
         void __stdcall Render() {
             try {
                 Colored(kHead, "Harbinger -- who drives each AI facet, and who wins.");
@@ -267,6 +283,7 @@ namespace apmf::harbingermenu {
                 for (const auto& fr : kFacets) FacetGroup(fr, alerts, *seats);
                 g.Separator();
                 CensusDetails(*seats);
+                LoadedPlugins();
             } catch (...) {
             }
         }

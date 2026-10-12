@@ -55,6 +55,8 @@ namespace apmf::sources {
         kCast,           // ch.8 / 8a / 8b: cast choice and execution (census only in 1a)
         kCombat,         // ch.21 / 22 / 24: entry, re-entry, approach (1b: StartCombat caller + area source)
         kCore,           // the 0xAD Update seat and other spine seats (census only)
+        kActorValue,     // ch.1a gait (SpeedMult) / ch.11 disposition AVs (1b: observe-only AV seat,
+                         //   core/ActorValueObserve; ch.16's detection AVs count on kDetection)
         kCount
     };
     inline constexpr int kFacetCount = static_cast<int>(Facet::kCount);
@@ -67,7 +69,10 @@ namespace apmf::sources {
         kScript,        // skse64 (Papyrus natives)
         kEngine,        // SkyrimSE.exe's own path
         kDirect,        // "direct calls": Papyrus / console reached through the engine (Q11)
-        kUnknown        // the Unattributed source
+        kUnknown,       // the Unattributed source
+        kLoaded         // 1b: an SKSE plugin DLL loaded in the process, pre-registered at kDataLoaded
+                        //   (RegisterLoadedPlugins) and not yet seen writing; becomes the kind it is
+                        //   first seen as (hook / interposer / plugin / client)
     };
 
     const char* FacetName(Facet f);   // the INI section and menu label ("Target", ...)
@@ -211,6 +216,13 @@ namespace apmf::sources {
     void OnPostLoad(const char* why);
     // The render thread's slider. Clamped 0..100; applied and saved by the next Pump().
     void EnqueueSetPriority(SourceId id, Facet f, int prio);
+
+    // 1b: list the SKSE plugin DLLs loaded in the process (module base names of every module whose
+    // path is under ...\SKSE\Plugins\, APMF itself excluded) and pre-register each as a kLoaded
+    // source, so the menu can show a mod before its first write. Read-only: module enumeration and
+    // file names only, nothing in those modules is read or touched. Keeps at least kLoadedReserve
+    // registry slots free for sources seen later (logged when it stops). MAIN thread, kDataLoaded.
+    void RegisterLoadedPlugins();
 
     // Menu reads. Any thread, lock-free.
     std::uint32_t Count();

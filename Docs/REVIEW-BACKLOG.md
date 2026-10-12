@@ -655,3 +655,19 @@ coverage and two log-text SEV-5s were fixed on the branch in 83db3cf. Deferred:
   on Cast.
 - (SEV-5) InsideSource could be resolved once at install to take first-sight loader-lock calls off the combat
   thread entirely.
+
+### APMF-B73 (SEV-5 x6) -- 1b observe slice (ActorValueObserve seat) review, deferred items
+Raised against df6716e / 1a93682 (`feat/apmf-1b-observe-facets`, Opus tier-3 review, three rounds,
+`scratchpad/agentlogs/review-1b-observe.md`), 2026-10-12. Final verdict MERGE OK at fcd002c. The SEV-3 layered-hook
+misattribution, the SEV-4 install-time null original, the SEV-4 hot-path RMW, the SEV-4 no-module CallerBelow
+fault and the SEV-4 pre-installed 0x07 hook were fixed on the branch. Deferred:
+- (SEV-5) A DLL that both layers over the seat AND writes actor values itself gets its own direct writes credited
+  to its caller (one frame lower).
+- (SEV-5) Engine-internal non-virtual AV paths (e.g. the inner restore 0x6B27A0) bypass the seat. Noted in MAP.
+- (SEV-5) Docs/VERIFIED-ADDRESSES.md "1.7.104 proof" still says 241 slot functions; the 4 new pairs were compared
+  identical by the reviewer. Extend the proof text.
+- (SEV-5) The `Character.ActorValueOwner.SE` row has no `twin` key, so the generator does not class its 1.7.104 skip
+  BY DESIGN. Add the twin.
+- (SEV-5) The "Unknown sources can be overridden" checkbox has no effect on observe-only facets (ActorValue, and
+  Detection for these AVs). Hide it or label it in the UI.
+- (SEV-5) Papyrus SetAV/ModAV are named Engine (same limit as B71).

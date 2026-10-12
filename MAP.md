@@ -319,6 +319,11 @@ a main-thread-safe seat for equip/3D work).
   Post()'d during `Pump()` runs on the NEXT `Pump()`, never re-entrantly.
 
 ### `native/core/Sources.{h,cpp}` — HARBINGER 1a: source registry, priorities, degrade rule, seat census
+**1b observe slice (2026-10-12):** facet `kActorValue` ("ActorValue": ch.1a gait / ch.11 disposition, fed by
+`core/ActorValueObserve`); `Kind::kLoaded` + `RegisterLoadedPlugins()` (kDataLoaded: `K32EnumProcessModules`, every
+module under `...\SKSE\Plugins\` but APMF pre-registered by base name, keeping 160 of the now 512 registry slots free;
+`kind` is atomic and a kLoaded entry takes the kind it is first SEEN as, in `Register` / `AddOneLocked`); the menu
+lists still-kLoaded sources under "Loaded SKSE plugins not seen writing yet".
 Plan `_research/harbinger-controller-plan-2026-10-11.md` + marth's Q1-Q15 (2026-10-11). An outside
 write on a facet is an INPUT from a SOURCE `{name, kind}` (client / hook / interposer / plugin /
 script / engine / direct calls / unknown). `Init()` (at SKSEPluginLoad, before ch.20's layer 0) reads
@@ -1390,6 +1395,30 @@ ch.23), `channels/CombatApproach.cpp` (S1 decision, `AttributeYield`, the drift 
   Engine; hit-count noise) and APMF-B71 (no negative ModuleOf cache under the loader lock; `found=false`
   counted as unattributed; Papyrus/console StartCombat named Engine; ActionGate ClaimOutranksTree lacks try/catch).
 
+### `native/core/ActorValueObserve.{h,cpp}` — HARBINGER 1b: the OBSERVE-ONLY actor-value seat (2026-10-12)
+`Install()` <- `plugin.cpp` kDataLoaded: `write_vfunc` 0x04 SetBaseActorValue / 0x05 ModActorValue / 0x06
+RestoreActorValue on Character's ActorValueOwner sub-object vtable `VTABLE_Character[5]` (1.6.1170 id 207896
+0x18A5FE8, COL 0xB8; 1.5.97 id 261402 0x165E4D0, COL 0xB0; 1.7.104 0x1923CE8, COL 0xB8), spec rows
+`Character.ActorValueOwner` (AE, carries 1.7.104) / `Character.ActorValueOwner.SE`, `SeatVerified` on the running
+build's row, exact-runtime gated, VR-refused, `[ActorValueObserve] iActorValueSeat` (1 observe default / 0 off).
+Slot shapes read off all three images (this = the sub-object; edx av + xmm2 value for 0x04 / 0x05; edx modifier,
+r8d av, xmm3 value for 0x06); 0x07 SetActorValue is the base `jmp [rax+0x20]` tail jump into 0x04, so it is seen there.
+Each thunk runs the ORIGINAL FIRST and always, then `Note`: for an AV a claim channel holds (ch.16
+MovementNoiseMult / DetectLifeRange -> facet Detection; ch.1a SpeedMult, ch.11 Aggression / Confidence / Assistance /
+Morality -> facet ActorValue) on an actor holding that intent's WINNING claim, the caller (`_ReturnAddress()`) goes
+through `Sources::ForAddress` (exe -> Engine, skse64 -> DirectCalls, a DLL -> that DLL; APMF's own AvLedger writes
+skipped) and `FacetAttribution::Observe` (hit + stood). `[avobs]` first-call OBSERVED line, 5 s per (actor, av) line,
+30 s heartbeat (`Arbiter::OncePerFrame`).
+- **What breaks:** OBSERVE ONLY at any priority: never return early before the original, never change an argument.
+  The thunk runs on any thread for EVERY Character AV write (health regen included): keep the AV switch first and
+  read nothing but the ControlMap snapshot, the registry and the FormID. The `this` rebase (0xB8 AE / 1.7.104, 0xB0 SE)
+  is the COL offset of the row, not a guess. A Papyrus SetAV / ModAV resolves to Engine (APMF-B71 limit).
+  COVERAGE LIMIT: engine-internal actor-value paths that do not go through these virtual slots (non-virtual helpers
+  called directly inside the exe) bypass the seat and are not seen. A hook layered over the seat is handled by
+  `LayerOver` + `CallerBelow` (unrecoverable -> "through hook X", not attributed); the 0x04-0x06 originals are read
+  and stored in `func` BEFORE each thunk is written (safe_write), so no thunk can run with a null original.
+  Open review findings: Docs/REVIEW-BACKLOG.md APMF-B73.
+
 ### `native/core/PackageData.{h,cpp}` — read a templated package's inputs, point its Location (ch.19 travel)
 `SetTravelTarget(pkg, ref, radius)` and `SetTravelCell(pkg, cell, radius)`: resolve the vanilla
 Travel template's `"Place to Travel"` input BY NAME, guard the recovered pointer by the
@@ -1842,6 +1871,14 @@ no-op at Release off exactly 1.6.1170 / 1.5.97 / 1.7.104, VR included (G1 2026-1
   `Docs/DENY-COMPLETENESS-AUDIT.md` row 19 — read them before editing.
 
 ### NOT built (probe-gated GAPs — do not add without a live probe)
+**Harbinger 1b observe slice (2026-10-12), facets with NO virtual seat -- "no seat; poll-only later":**
+(a) MOVEMENT (ch.1): `Actor::SetDontMove` (AE 37489 / SE 36490) and `KeepOffsetFromActor` (37894 / 36870) are
+non-virtual engine functions (the fork's Actor.h declares no virtual setter for either; `MovementControllerNPC`
+exposes only unnamed vfuncs, INVARIANTS #8). Attributing their callers needs a call-site patch (INVARIANTS #17,
+the 1a DetectionProbe precedent), so there is no seat. (b) the DETECTION VALUE producer (SmartNPC H2 shape, the E8 at
+AE 0x7B0D8B / SE 0x719EB6) is a direct call, no vfunc: no seat (its removal is the 1a review's). The detection
+ACTOR VALUES ch.16 writes ARE seen, by `core/ActorValueObserve`. (c) The other poll-only rows of the plan (stance,
+draw, headtrack, dialogue, idle, shout) were out of this slice's scope.
 Movement PROMOTE feed (ch.1, `IMovementDirectControl` unnamed),
 the DENY of a COMPETING framework's combat-target selection at the hook (ch.6 —
 still arbitration-only; the CLIENT commands the target, no T-hook yet), body

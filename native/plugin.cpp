@@ -34,6 +34,7 @@
 #include "core/Sources.h"          // Harbinger 1a: source registry, priorities, seat census
 #include "core/PackageSources.h"   // Harbinger 1a: package capture + the 0x4A scene probe
 #include "core/SpectatorGate.h"    // the Package facet's seat for the engine's Spectator package (0xDC)
+#include "core/ActorValueObserve.h"   // Harbinger 1b: the OBSERVE-ONLY actor-value seat (ActorValueOwner 0x04-0x06)
 #include "core/HarbingerMenu.h"    // Harbinger 1a: the SKSE Menu Framework page
 
 // ============================================================================
@@ -263,6 +264,12 @@ namespace {
                                                   // and logs the answer the whole chain gives.
                                                   // Exact-version gate + VR refusal inside.
             apmf::nativebitprobe::Install();     // native-bit probe (throwaway; no VR gate needed).
+            apmf::avobserve::Install();          // Harbinger 1b: OBSERVE-ONLY actor-value seat (Character's
+                                                  // ActorValueOwner vtable 0x04 / 0x05 / 0x06). Names outside
+                                                  // writes to the AVs a winning claim holds; never denies.
+                                                  // [ActorValueObserve] iActorValueSeat, SeatVerified per build.
+            apmf::sources::RegisterLoadedPlugins();   // Harbinger 1b: pre-register every SKSE plugin DLL in the
+                                                  // process (names only, read-only) for the menu.
             apmf::harbingermenu::Register();     // Harbinger 1a: the SMF page (or INI-only, loudly)
             apmf::sources::Census("kDataLoaded"); // baseline: every seat just installed
                                                   // CONFIG-GATED, default OFF -- it is the only probe that
