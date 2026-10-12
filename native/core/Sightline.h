@@ -54,6 +54,19 @@
 // player / teammate / other actor, hit distance of the eye-to-point distance), at most once
 // per pair per 2 s and 5 per second overall.
 //
+// FRIENDS PASS (fix/apmf-heal-los-friends, marth 2026-10-12: "Heals see past friends").
+// Every measurement also yields a second reading from the SAME rays: the FRIENDS-PASS one, in
+// which the capsule of a FRIEND of the viewer does not block. Friends are the teammate half of
+// core/CastGuard.cpp's Friendly(): for a viewer that is the player or a player teammate, the
+// player and every high-process player teammate (never the viewer or the target themselves);
+// any other viewer has none, and its two readings agree. Walls, terrain, statics and every
+// other actor's capsule still block. ONLY ch.8b seats 0x06 / 0x07 read it, and only for a
+// BENEFICIAL cast (no effect hostile, CastSeats OwnLosFriendsPass). Offensive casts, the ch.25 line of
+// fire, GetLineOfSight, the pin seat and the awareness sight sense keep the strict reading
+// (marth 2026-10-06: "spells cant go through npcs"; 2026-10-12: no "sight sees past allies").
+// The friend set is built at most once per Pump frame on the main thread and read only by
+// the collector, inside PickObject, on that same thread.
+//
 // LOCK SCOPE (the 2026-09-30 freeze hypothesis). Harbinger takes NO lock around a
 // ray. bhkWorld::PickObject (vtable slot 0x33) takes the world's worldLock for READ
 // itself, around the cast, on all three builds (AE 0xE86560 +0x115 -> LockForRead
@@ -101,13 +114,18 @@ namespace apmf::sightline {
         std::uint32_t occRun  = 0;             // consecutive OCCLUDED measurements
         std::uint32_t sample  = 0;             // the clear ray: 1 feet, 2 torso, 3 head
         std::uint32_t why     = 0;             // a LosWhy
+        // Friends-pass reads only: the friend whose capsule the clear ray stepped past (0 = none,
+        // or not a friends-pass read, or not VISIBLE).
+        RE::FormID    friendBody = 0;
     };
 
     // ANY THREAD, lock-free, never blocks, never casts. Reads the pair's newest stored
     // measurement; with `a_ask` it also marks the pair asked-for (or queues it when it is
     // not tracked yet), which is what keeps it measured. Not armed: verdict kLos_Unsupported
     // (a seat whose claim got an own-line-of-sight bit by Repoint then holds, and logs it).
-    Reading Read(RE::FormID a_viewer, RE::FormID a_target, bool a_ask = true);
+    // `a_friendsPass` reads the FRIENDS-PASS reading of the same measurement (see the header):
+    // ch.8b seats 0x06 / 0x07 for a beneficial cast only.
+    Reading Read(RE::FormID a_viewer, RE::FormID a_target, bool a_ask = true, bool a_friendsPass = false);
 
     // Unknown when never measured or older than kLosFreshMs; otherwise the stored verdict.
     std::uint32_t FreshVerdict(const Reading& a_r);

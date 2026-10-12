@@ -68,6 +68,12 @@ namespace apmf::sightline {
             std::atomic<std::uint64_t> word{ 0 };         // Pack(verdict, sample, why, occRun)
             std::atomic<std::uint64_t> measuredMs{ 0 };   // 0 = never measured
             std::atomic<std::uint64_t> askedMs{ 0 };
+            // fix/apmf-heal-los-friends: the FRIENDS-PASS reading of the same measurement (the
+            // player's and the teammates' capsules let through; header "FRIENDS PASS"), inside
+            // the seqlock payload. passFriend = the friend whose capsule the clear ray stepped
+            // past (0 = none: the pass reading needed no friend let through).
+            std::atomic<std::uint64_t> passWord{ 0 };
+            std::atomic<std::uint32_t> passFriend{ 0 };
         };
         Slot g_slots[kSlots];
 
@@ -81,6 +87,10 @@ namespace apmf::sightline {
         // fix/apmf-los-false-occlusion: what the own ray's hits were (relaxed; heartbeat).
         std::atomic<std::uint64_t> g_targetBody{ 0 }, g_volumePass{ 0 }, g_viewerPass{ 0 }, g_claimWarm{ 0 },
             g_occDetailSuppressed{ 0 }, g_occDetailGlobalCut{ 0 }, g_claimWarmPin{ 0 };
+        // fix/apmf-heal-los-friends: measurements whose friends-pass reading is VISIBLE while the
+        // strict one is not (a friend's capsule was the only thing in the way); friend capsules
+        // stepped past by the friends-pass reading (relaxed; heartbeat).
+        std::atomic<std::uint64_t> g_friendOnly{ 0 }, g_friendHits{ 0 };
 
         // OCCLUDED detail lines, all pairs together: at most this many per second (main thread).
         constexpr std::uint32_t kOccDetailPerSec = 5;
@@ -154,29 +164,37 @@ namespace apmf::sightline {
         }
 
         // ---- seqlock (writer: main thread only) ----
-        void Publish(Slot& s, std::uint64_t a_key, std::uint64_t a_word, std::uint64_t a_measuredMs) {
+        void Publish(Slot& s, std::uint64_t a_key, std::uint64_t a_word, std::uint64_t a_measuredMs,
+                     std::uint64_t a_passWord = 0, RE::FormID a_passFriend = 0) {
             const std::uint32_t q = s.seq.load(std::memory_order_relaxed);
             s.seq.store(q + 1, std::memory_order_relaxed);
             std::atomic_thread_fence(std::memory_order_release);
             s.key.store(a_key, std::memory_order_relaxed);
             s.word.store(a_word, std::memory_order_relaxed);
             s.measuredMs.store(a_measuredMs, std::memory_order_relaxed);
+            s.passWord.store(a_passWord, std::memory_order_relaxed);
+            s.passFriend.store(a_passFriend, std::memory_order_relaxed);
             s.seq.store(q + 2, std::memory_order_release);
         }
 
         // Reader: true and the payload when the slot holds a_key in a consistent read.
-        bool TryReadSlot(const Slot& s, std::uint64_t a_key, std::uint64_t& a_word, std::uint64_t& a_measuredMs) {
+        bool TryReadSlot(const Slot& s, std::uint64_t a_key, std::uint64_t& a_word, std::uint64_t& a_measuredMs,
+                         std::uint64_t& a_passWord, RE::FormID& a_passFriend) {
             for (int attempt = 0; attempt < 3; ++attempt) {
                 const std::uint32_t s1 = s.seq.load(std::memory_order_acquire);
                 if (s1 & 1u) continue;
-                const std::uint64_t k = s.key.load(std::memory_order_relaxed);
-                const std::uint64_t w = s.word.load(std::memory_order_relaxed);
-                const std::uint64_t m = s.measuredMs.load(std::memory_order_relaxed);
+                const std::uint64_t k  = s.key.load(std::memory_order_relaxed);
+                const std::uint64_t w  = s.word.load(std::memory_order_relaxed);
+                const std::uint64_t m  = s.measuredMs.load(std::memory_order_relaxed);
+                const std::uint64_t pw = s.passWord.load(std::memory_order_relaxed);
+                const std::uint32_t pf = s.passFriend.load(std::memory_order_relaxed);
                 std::atomic_thread_fence(std::memory_order_acquire);
                 if (s.seq.load(std::memory_order_relaxed) != s1) continue;
                 if (k != a_key) return false;
                 a_word       = w;
                 a_measuredMs = m;
+                a_passWord   = pw;
+                a_passFriend = pf;
                 return true;
             }
             return false;   // persistently torn: report not-found this time
@@ -227,7 +245,7 @@ namespace apmf::sightline {
                 }
                 return nullptr;
             }
-            Publish(*victim, a_key, Pack(APMF_API::kLos_Unknown, 0, 0, 0), 0);
+            Publish(*victim, a_key, Pack(APMF_API::kLos_Unknown, 0, 0, 0), 0, Pack(APMF_API::kLos_Unknown, 0, 0, 0), 0);
             victim->askedMs.store(a_nowMs, std::memory_order_relaxed);
             return victim;
         }
@@ -277,6 +295,54 @@ namespace apmf::sightline {
             return a_layer < 64 && (kSpellBlocks & (1ull << a_layer)) == 0;
         }
 
+        // FRIENDS PASS (fix/apmf-heal-los-friends, marth 2026-10-12: "Heals see past friends").
+        // The collision groups of the viewer's FRIENDS: for a viewer that is the player or a
+        // player teammate, the player and every high-process player teammate (the teammate half of
+        // core/CastGuard.cpp's Friendly(), the existing test). Any other viewer has none, and its
+        // friends-pass reading equals its strict one. Built at most once per Pump frame, on the
+        // main thread only (it walks the high actors), and read only by the collector inside
+        // PickObject on that same thread. A friend without a character controller has no capsule
+        // to let through and is not listed.
+        constexpr std::uint32_t kMaxFriends = 32;
+        struct FriendSet {
+            std::uint32_t group[kMaxFriends]{};
+            RE::FormID    fid[kMaxFriends]{};
+            std::uint32_t count = 0;
+        };
+        FriendSet     g_friends;                 // main thread only
+        std::uint64_t g_friendsFrame = ~0ull;    // the g_frame it was built in
+
+        void AddFriend(RE::Actor* a) {
+            if (g_friends.count >= kMaxFriends || !a || a->IsDead() || a->IsDisabled() || !a->Is3DLoaded() ||
+                !a->GetCharController())
+                return;
+            std::uint32_t info = 0;
+            a->GetCollisionFilterInfo(info);   // verified row Sightline.Actor.GetCollisionFilterInfo
+            const std::uint32_t group = info >> 16;
+            if (group == 0) return;
+            g_friends.group[g_friends.count] = group;
+            g_friends.fid[g_friends.count]   = a->GetFormID();
+            ++g_friends.count;
+        }
+
+        // MAIN THREAD: the friend set for this viewer, or nullptr (strict reading only).
+        const FriendSet* FriendsFor(RE::Actor* a_viewer) {
+            if (!a_viewer || !(a_viewer->IsPlayerRef() || a_viewer->IsPlayerTeammate())) return nullptr;
+            if (g_friendsFrame != g_frame) {
+                g_friendsFrame  = g_frame;
+                g_friends.count = 0;
+                auto* player    = RE::PlayerCharacter::GetSingleton();
+                AddFriend(player);
+                if (auto* pl = RE::ProcessLists::GetSingleton()) {
+                    pl->ForEachHighActor([&](RE::Actor* a) {
+                        if (a != player && a->IsPlayerTeammate()) AddFriend(a);
+                        return RE::BSContainer::ForEachResult::kContinue;
+                    });
+                }
+            }
+            return g_friends.count ? &g_friends : nullptr;
+        }
+
         // THE HIT FILTER (fix/apmf-los-false-occlusion). A ray-hit collector the engine's own
         // bhkWorld::PickObject casts with when bhkPickData +0xA8 holds one (disassembly, all three
         // builds: AE 0xE866F6 / SE 0xDA7716 / 1.7.104 0x104C016 load +0xA8; PickObject resets it
@@ -304,10 +370,16 @@ namespace apmf::sightline {
         // The ray never meets a ragdoll: BIPED and DEADBIP are not in the CHARCONTROLLER layer's
         // set, so a dead body never occludes; BIPED_NO_CC is, and blocks.
         // The TARGET's own body is kept as a hit: the caller reads it as "the ray reached it".
+        // FRIENDS PASS (fix/apmf-heal-los-friends): with a friend set, the collector ALSO keeps a
+        // second nearest blocking hit, `pass*`, that steps past a CHARCONTROLLER hit in a friend's
+        // group (never the target's or the viewer's). That hit is always at or beyond the strict
+        // one, so the prune (earlyOut) moves to it; without a friend set every blocking hit is a
+        // pass hit, the two agree, and the strict reading is exactly the old one.
         class LosCollector : public RE::hkpRayHitCollector {
         public:
             void AddRayHit(const RE::hkpCdBody& a_body, const RE::hkpShapeRayCastCollectorOutput& a_hit) override {
-                if (!(a_hit.hitFraction < rayHit.hitFraction)) return;   // not nearer than the kept hit
+                // Not nearer than the kept hit. With friends, the farther kept hit is the pass hit.
+                if (!(a_hit.hitFraction < (friends ? passFraction : rayHit.hitFraction))) return;
                 const RE::hkpCdBody* root = &a_body;
                 while (root->parent) root = root->parent;
                 const auto*         coll  = static_cast<const RE::hkpCollidable*>(root);
@@ -326,12 +398,39 @@ namespace apmf::sightline {
                     }
                     return;
                 }
-                rayHit.normal         = a_hit.normal;
-                rayHit.hitFraction    = a_hit.hitFraction;
-                rayHit.extraInfo      = a_hit.extraInfo;
-                rayHit.shapeKey       = a_hit.shapeKey;
-                rayHit.rootCollidable = coll;
-                earlyOutHitFraction   = a_hit.hitFraction;   // prune what lies beyond it
+                if (!friends) {
+                    rayHit.normal         = a_hit.normal;
+                    rayHit.hitFraction    = a_hit.hitFraction;
+                    rayHit.extraInfo      = a_hit.extraInfo;
+                    rayHit.shapeKey       = a_hit.shapeKey;
+                    rayHit.rootCollidable = coll;
+                    earlyOutHitFraction   = a_hit.hitFraction;   // prune what lies beyond it
+                    return;
+                }
+                if (a_hit.hitFraction < rayHit.hitFraction) {   // the strict reading's nearest blocking hit
+                    rayHit.normal         = a_hit.normal;
+                    rayHit.hitFraction    = a_hit.hitFraction;
+                    rayHit.extraInfo      = a_hit.extraInfo;
+                    rayHit.shapeKey       = a_hit.shapeKey;
+                    rayHit.rootCollidable = coll;
+                }
+                const std::uint32_t group = info >> 16;
+                if (layer == kCharControllerLayer && group != targetGroup) {
+                    for (std::uint32_t i = 0; i < friends->count; ++i) {
+                        if (friends->group[i] != group) continue;
+                        ++friendHits;   // a friend's capsule: the friends-pass reading steps past it
+                        if (a_hit.hitFraction < friendFraction) {
+                            friendFraction = a_hit.hitFraction;
+                            friendFid      = friends->fid[i];
+                        }
+                        return;
+                    }
+                }
+                if (a_hit.hitFraction < passFraction) {
+                    passFraction        = a_hit.hitFraction;
+                    passColl            = coll;
+                    earlyOutHitFraction = a_hit.hitFraction;   // prune what lies beyond the farther kept hit
+                }
             }
             ~LosCollector() override = default;
 
@@ -341,6 +440,14 @@ namespace apmf::sightline {
             std::uint32_t              volumes     = 0;
             float                      volumeFraction = 1.0f;
             const RE::hkpCollidable*   volume      = nullptr;
+            // FRIENDS PASS (nullptr friends = strict only; the pass fields are then unused).
+            const FriendSet*           friends        = nullptr;
+            std::uint32_t              targetGroup    = 0;
+            float                      passFraction   = 1.0f;
+            const RE::hkpCollidable*   passColl       = nullptr;
+            std::uint32_t              friendHits     = 0;
+            float                      friendFraction = 1.0f;
+            RE::FormID                 friendFid      = 0;
         };
         static_assert(offsetof(LosCollector, rayHit) == 0x10, "PickObject reads the collector's rayHit at +0x10");
         static_assert(offsetof(RE::bhkPickData, rayHitCollectorA8) == 0xA8, "PickObject's closest-hit collector slot");
@@ -370,7 +477,14 @@ namespace apmf::sightline {
             float         margin  = 0.0f;   // the end margin used (0 = no ray reached that point); for the log
             std::uint32_t viewerGroup = 0, targetGroup = 0;
             RayNote       rays[3];
+            // FRIENDS PASS: the first ray the friends-pass reading found clear (0 = none). Its
+            // verdict is VISIBLE when one did, else the strict verdict (PassVerdict below).
+            std::uint32_t passSample = 0;
+            RE::FormID    passFriend = 0;   // the friend stepped past on that ray, when strict was blocked there
         };
+        std::uint32_t PassVerdict(const RayOut& a_ray) { return a_ray.passSample ? APMF_API::kLos_Visible : a_ray.verdict; }
+        std::uint32_t PassSample(const RayOut& a_ray) { return a_ray.passSample ? a_ray.passSample : a_ray.sample; }
+        std::uint32_t PassWhy(const RayOut& a_ray) { return a_ray.passSample ? APMF_API::kLosWhy_None : a_ray.why; }
 
         bool LoadedRef(const RE::Actor* a) {
             return a && !a->IsDeleted() && !a->IsDisabled() && a->Is3DLoaded();
@@ -478,6 +592,8 @@ namespace apmf::sightline {
 
             const float scale = RE::bhkWorld::GetWorldScale();   // verified row Sightline.bhkWorld.WorldScale
             bool        skipped = false;
+            // FRIENDS PASS: the same rays also give the friends-pass reading (nullptr = strict only).
+            const FriendSet* friends = FriendsFor(a_viewer);
             for (std::uint32_t i = 0; i < 3; ++i) {
                 RayNote&           note = out.rays[i];
                 const RE::NiPoint3 seg  = samples[i] - eye;
@@ -488,6 +604,7 @@ namespace apmf::sightline {
                     note.state  = RayNote::kClear;
                     out.verdict = APMF_API::kLos_Visible;
                     out.sample  = i + 1;
+                    if (!out.passSample) out.passSample = i + 1;
                     return out;
                 }
                 const float        f  = (len - margin) / len;
@@ -495,6 +612,8 @@ namespace apmf::sightline {
 
                 LosCollector collector;
                 collector.viewerGroup = out.viewerGroup;
+                collector.friends     = friends;
+                collector.targetGroup = out.targetGroup;
                 RE::bhkPickData pick;
                 pick.rayInput.from                        = eye * scale;
                 pick.rayInput.to                          = to * scale;
@@ -515,6 +634,19 @@ namespace apmf::sightline {
                 note.viewerHits    = collector.viewerHits;
                 if (collector.volumes) g_volumePass.fetch_add(collector.volumes, std::memory_order_relaxed);
                 if (collector.viewerHits) g_viewerPass.fetch_add(collector.viewerHits, std::memory_order_relaxed);
+                if (friends && !out.passSample) {
+                    // The friends-pass reading of this ray: clear when its nearest non-friend blocking
+                    // hit is absent or is the target's own body (the strict rule, friends let through).
+                    const RE::hkpCollidable* ph = collector.passColl;
+                    if (!ph || (out.targetGroup != 0 &&
+                                (ph->broadPhaseHandle.collisionFilterInfo >> 16) == out.targetGroup)) {
+                        out.passSample = i + 1;
+                        // The friend let through: only one standing NEARER than the pass hit (the
+                        // target's body) was in the way; one beyond it was never in the line.
+                        if (collector.friendFraction < collector.passFraction) out.passFriend = collector.friendFid;
+                    }
+                }
+                if (collector.friendHits) g_friendHits.fetch_add(collector.friendHits, std::memory_order_relaxed);
                 const RE::hkpCollidable* hit = collector.rayHit.rootCollidable;
                 if (!hit) {
                     note.state  = RayNote::kClear;
@@ -643,8 +775,23 @@ namespace apmf::sightline {
                 const bool agrees = prev.verdict == APMF_API::kLos_Occluded && prev.ageMs <= kOccRunTrustMs;
                 occRun = agrees ? prev.occRun + 1 : 1;
             }
-            Publish(s, a_key, Pack(a_ray.verdict, a_ray.sample, a_ray.why, occRun), a_nowMs);
+            // FRIENDS PASS: the same run rule over the friends-pass readings.
+            const std::uint32_t passVerdict = PassVerdict(a_ray);
+            const Reading       prevPass    = Unpack(s.passWord.load(std::memory_order_relaxed),
+                                                     s.measuredMs.load(std::memory_order_relaxed), a_nowMs);
+            std::uint32_t passOccRun = 0;
+            if (passVerdict == APMF_API::kLos_Occluded) {
+                const bool agrees = prevPass.verdict == APMF_API::kLos_Occluded && prevPass.ageMs <= kOccRunTrustMs;
+                passOccRun = agrees ? prevPass.occRun + 1 : 1;
+            }
+            Publish(s, a_key, Pack(a_ray.verdict, a_ray.sample, a_ray.why, occRun), a_nowMs,
+                    Pack(passVerdict, PassSample(a_ray), PassWhy(a_ray), passOccRun),
+                    // Only when the friend CHANGED the verdict (review SEV-5): strict not visible.
+                    passVerdict == APMF_API::kLos_Visible && a_ray.verdict != APMF_API::kLos_Visible ? a_ray.passFriend
+                                                                                                     : 0);
             g_measures.fetch_add(1, std::memory_order_relaxed);
+            if (passVerdict == APMF_API::kLos_Visible && a_ray.verdict != APMF_API::kLos_Visible)
+                g_friendOnly.fetch_add(1, std::memory_order_relaxed);
 
             const RE::FormID v = KeyViewer(a_key), t = KeyTarget(a_key);
             switch (a_ray.verdict) {
@@ -719,7 +866,7 @@ namespace apmf::sightline {
                        stop = x(g_seatStop), quiet = x(g_transSuppressed), deferred = x(g_syncDeferred),
                        tbody = x(g_targetBody), vol = x(g_volumePass), vself = x(g_viewerPass), warm = x(g_claimWarm),
                        occQuiet = x(g_occDetailSuppressed), occGlobal = x(g_occDetailGlobalCut),
-                       warmPin = x(g_claimWarmPin);
+                       warmPin = x(g_claimWarmPin), friendOnly = x(g_friendOnly), friendHits = x(g_friendHits);
             if (tracked == 0 && asks == 0 && meas == 0 && deferred == 0) return;   // nothing asked for: stay quiet
             spdlog::info("[los] heartbeat {} s: tracked {} pair(s); asks {} (new {}), measured {} ({} rays): visible {}, "
                          "occluded {}, unavailable {} (pick skipped {}); dropped idle {}, table full {}; seats: "
@@ -727,10 +874,11 @@ namespace apmf::sightline {
                          "transition lines rate-limited away {}. Rays: nearest hit the target's own body (read as "
                          "reached) {}, spell-passable hits (volumes, stair helpers ...) passed through {}, viewer's own body passed {}; OCCLUDED detail "
                          "lines rate-limited away {} (per pair) + {} (global {}/s cap); standing own-line-of-sight claims kept "
-                         "warm: cast {} pair-ask(s), pin {}.",
+                         "warm: cast {} pair-ask(s), pin {}. Friends pass (beneficial casts): visible only past a friend's "
+                         "capsule {}, friend capsules stepped past {}.",
                          kHeartbeatMs / 1000, tracked, asks, queued, meas, rays, vis, occ, un, skip, drop, full, pass,
                          hold, stop, deferred, quiet, tbody, vol, vself, occQuiet, occGlobal, kOccDetailPerSec, warm,
-                         warmPin);
+                         warmPin, friendOnly, friendHits);
         }
 
     }
@@ -823,7 +971,7 @@ namespace apmf::sightline {
         return r ? r : "unknown";
     }
 
-    Reading Read(RE::FormID a_viewer, RE::FormID a_target, bool a_ask) {
+    Reading Read(RE::FormID a_viewer, RE::FormID a_target, bool a_ask, bool a_friendsPass) {
         Reading r;
         if (!Armed()) {   // a bit that reached a seat without the service (a Repoint added it): say so
             r.verdict = APMF_API::kLos_Unsupported;
@@ -836,10 +984,14 @@ namespace apmf::sightline {
         const std::size_t h = Home(key);
         for (std::size_t i = 0; i < kProbe; ++i) {
             Slot&         s = g_slots[(h + i) & (kSlots - 1)];
-            std::uint64_t w = 0, m = 0;
-            if (TryReadSlot(s, key, w, m)) {
+            std::uint64_t w = 0, m = 0, pw = 0;
+            RE::FormID    pf = 0;
+            if (TryReadSlot(s, key, w, m, pw, pf)) {
                 if (a_ask) s.askedMs.store(now, std::memory_order_relaxed);
-                return Unpack(w, m, now);
+                if (!a_friendsPass) return Unpack(w, m, now);
+                Reading pr    = Unpack(pw, m, now);
+                pr.friendBody = pr.verdict == APMF_API::kLos_Visible ? pf : 0;
+                return pr;
             }
         }
         if (a_ask) {   // not tracked: hand the key to the main thread (lossy under a burst; re-asked next read)

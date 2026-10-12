@@ -9,6 +9,7 @@
 #include "core/Sightline.h"   // ABI v18 kCastFlag_OwnLineOfSight
 #include "core/CastGuard.h"   // ch.25 kIntent_CastGuard (ABI v21): the line-of-fire hold at 0x06
 #include "core/CastClassify.h"  // IsPlacementSpell (NativePlacement gate)
+#include "core/MainThread.h"   // Post: the friends-pass log line names its body on the main thread
 #include "core/FacetAttribution.h"   // Harbinger 1b: the claim's answers ranked on the Cast facet
 
 #include <cstring>
@@ -419,6 +420,55 @@ namespace apmf::castseats {
                    m.claim.target != m.actor;
         }
 
+        // FRIENDS PASS (fix/apmf-heal-los-friends, marth 2026-10-12: "Heals see past friends"): a
+        // BENEFICIAL cast -- NO effect of the item this caster casts has a hostile base effect,
+        // whatever its delivery (review SEV-5: a Self-delivered hostile item reads strict; this is
+        // deliberately NOT ch.25's Offensive(), which exempts Self delivery for its own purpose) --
+        // reads the friends-pass own line of sight, in which the player's and the teammates'
+        // capsules do not block (core/Sightline.h FRIENDS PASS). Anything else keeps the strict
+        // reading (marth 2026-10-06: "spells cant go through npcs"). Immutable form data (the same
+        // effect walk ch.25 does on this thread); no lookup, no lock.
+        bool OwnLosFriendsPass(RE::CombatMagicCaster* a_this) {
+            if (!a_this || !a_this->magicItem) return false;
+            for (auto* eff : a_this->magicItem->effects)
+                if (eff && eff->baseEffect && eff->baseEffect->IsHostile()) return false;
+            return true;
+        }
+
+        // ONE log line per claim that a friend's capsule was let through, naming the body. "Per
+        // claim" = per (actor, driven form, target, friend): NOT the claim deadline, which every
+        // client Repoint heartbeat moves (review SEV-4: MFO renews each cast claim). Taken
+        // only when a friends-pass read stepped past a friend (rare); the leaf mutex is never held
+        // across a call. The NAME needs a form lookup, which the seat (combat thread) never does:
+        // the line is posted to the main thread (mainthread::Post), FormIDs captured by value.
+        std::mutex                                     g_friendLogMx;
+        std::unordered_map<RE::FormID, std::uint64_t> g_friendLogged;   // actor -> claim key logged
+        void NoteFriendPassed(const SeatMatch& m, RE::FormID a_friend, std::size_t a_seat) {
+            if (!a_friend) return;
+            const std::uint64_t claimKey = ((static_cast<std::uint64_t>(m.driven) << 32) | m.claim.target) ^
+                                           (static_cast<std::uint64_t>(a_friend) * 0x9E3779B97F4A7C15ull);
+            {
+                std::scoped_lock lk(g_friendLogMx);
+                if (g_friendLogged.size() > 512) g_friendLogged.clear();
+                auto [it, fresh] = g_friendLogged.try_emplace(m.actor, claimKey);
+                if (!fresh) {
+                    if (it->second == claimKey) return;
+                    it->second = claimKey;
+                }
+            }
+            const RE::FormID actor = m.actor, driven = m.driven, target = m.claim.target;
+            apmf::mainthread::Post([a_seat, actor, driven, target, a_friend] {
+                const auto* body = RE::TESForm::LookupByID<RE::Actor>(a_friend);
+                const char* nm   = body ? body->GetName() : nullptr;
+                spdlog::info("[ch.8b seat 0x{:02X}] 0x{} beneficial cast 0x{} at 0x{}: own line of sight sees PAST a "
+                             "friendly body -- 0x{} '{}' ({}) stood in the line and was ignored (marth 2026-10-12: "
+                             "heals see past friends). Once per claim.",
+                             a_seat, apmf::log::Hex(actor), apmf::log::Hex(driven), apmf::log::Hex(target),
+                             apmf::log::Hex(a_friend), nm ? nm : "",
+                             !body ? "no longer resolves" : body->IsPlayerRef() ? "the PLAYER" : "a player teammate");
+            });
+        }
+
         // ====================================================================
         // SEAT 0x06 -- WHETHER. CombatMagicCasterRestore::CheckStartCast.
         // ====================================================================
@@ -458,24 +508,28 @@ namespace apmf::castseats {
             // for this poll -- the claim stands and the next poll asks again. Never visible by
             // fallback (principle 7).
             if (OwnLosApplies(m)) {
-                const auto r = apmf::sightline::Read(m.actor, m.claim.target, true);
+                const bool friendsPass = OwnLosFriendsPass(a_this);
+                const auto r = apmf::sightline::Read(m.actor, m.claim.target, true, friendsPass);
                 const auto v = apmf::sightline::FreshVerdict(r);
                 if (v != APMF_API::kLos_Visible) {
                     CensusNote(vt, a_this, a_cc, kCheckStartCast, true, false);
                     NoteClaimAnswer(vt, kCheckStartCast, m, "NO (own line of sight)");
                     apmf::sightline::NoteSeatHold();
                     if (LogDue(m.actor, m.claim.target, kCheckStartCast))
-                        spdlog::info("[ch.8b seat 0x06] 0x{} CheckStartCast -> NO (own line of sight to 0x{} is {}, {}) "
-                                     "-- the claim stands; the next poll asks again.",
+                        spdlog::info("[ch.8b seat 0x06] 0x{} CheckStartCast -> NO (own line of sight to 0x{} is {}, {}; "
+                                     "{}) -- the claim stands; the next poll asks again.",
                                      apmf::log::Hex(m.actor), apmf::log::Hex(m.claim.target),
                                      apmf::sightline::VerdictName(v),
                                      v == APMF_API::kLos_Unknown     ? "not measured yet, or older than 1 s"
                                      : v == APMF_API::kLos_Unsupported ? "the line-of-sight service is not armed"
                                      : r.why != 0                    ? apmf::sightline::WhyName(r.why)
-                                                                     : "all 3 rays blocked");
+                                                                     : "all 3 rays blocked",
+                                     friendsPass ? "beneficial cast: the player's and teammates' bodies let through"
+                                                 : "offensive cast: every actor's body blocks");
                     return false;
                 }
                 apmf::sightline::NoteSeatPass();
+                if (r.friendBody) NoteFriendPassed(m, r.friendBody, kCheckStartCast);
             }
             // COMPOSED WHETHER (review SEV-2 / SEV-3 of 3903988): on the bounded types the claim's YES
             // also needs the engine's own "not already applied" answer, the Light caster only serves a
@@ -676,12 +730,15 @@ namespace apmf::castseats {
                     why = "target no longer resolves";
                 } else if (target->IsDead()) {
                     why = "target is dead";
-                } else if (OwnLosApplies(m) && [&m] {
+                } else if (OwnLosApplies(m) && [&m, a_this] {
                                // ABI v18: two CONSECUTIVE OCCLUDED measurements (the table's occRun:
                                // readings at most 3 s apart) and the newest one fresh. A single
                                // borderline reading does not cut a beam; UNKNOWN / UNAVAILABLE never
-                               // stop a running channel.
-                               const auto r = apmf::sightline::Read(m.actor, m.claim.target, true);
+                               // stop a running channel. A beneficial channel reads the friends-pass
+                               // reading, as 0x06 did (fix/apmf-heal-los-friends).
+                               const auto r = apmf::sightline::Read(m.actor, m.claim.target, true,
+                                                                    OwnLosFriendsPass(a_this));
+                               if (r.friendBody) NoteFriendPassed(m, r.friendBody, kCheckStopCast);
                                return r.verdict == APMF_API::kLos_Occluded && r.occRun >= 2 &&
                                       r.ageMs <= APMF_API::kLosFreshMs;
                            }()) {

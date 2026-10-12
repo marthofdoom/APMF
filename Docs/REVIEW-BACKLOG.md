@@ -671,3 +671,14 @@ fault and the SEV-4 pre-installed 0x07 hook were fixed on the branch. Deferred:
 - (SEV-5) The "Unknown sources can be overridden" checkbox has no effect on observe-only facets (ActorValue, and
   Detection for these AVs). Hide it or label it in the UI.
 - (SEV-5) Papyrus SetAV/ModAV are named Engine (same limit as B71).
+
+### APMF-B74 (SEV-5) -- heal LoS friends-pass review, deferred item
+Raised against e517d44 (`fix/apmf-heal-los-friends`, Opus tier-3 review,
+`scratchpad/agentlogs/review-apmf-heal-los.md`), 2026-10-12. Verdict MERGE OK. The SEV-4 once-per-claim log key
+(expiresMs, moved by every client Repoint heartbeat), the SEV-5 Self-delivered-hostile classification and the
+SEV-5 passFriend-when-strict-visible log were fixed on the branch. Deferred:
+- (SEV-5) "strict identity: proven (strict = min over all blocking hits; pass >= strict so earlyOut only grows;
+  verdict reads rayHit only). Volume/viewer diag counters drift (SEV-5)." -- with a friend set (a player /
+  teammate viewer) the collector prunes at the farther friends-pass hit, so `volumes` / `viewerHits` and the
+  nearest-volume note in the OCCLUDED detail line and the heartbeat count hits beyond the strict hit. Diagnostic
+  only; no verdict reads them. Reviewer: inflated counters, no behaviour change.

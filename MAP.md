@@ -571,7 +571,16 @@ fix/apmf-los-false-occlusion). THE HIT FILTER (same fix): each pick carries `Los
 it skips the viewer's own group, every layer NOT in L_SPELL's COLL collides-with set
 (`kSpellBlocks`: STAIRHELPER, TRANSPARENT, COLLISIONBOX, CAMERA, ACOUSTIC_SPACE, ACTORZONE,
 TRAP_TRIGGER, CLOUDTRAP, PROJECTILE, SPELL, SPELLEXPLOSION, LIVING_AND_DEAD_ACTORS pass) and any
-phantom (TRIGGER / GASTRAP volumes) -- never a CHARCONTROLLER hit (marth: actors block). A
+phantom (TRIGGER / GASTRAP volumes) -- never a CHARCONTROLLER hit (marth: actors block). **FRIENDS PASS
+(fix/apmf-heal-los-friends, marth 2026-10-12 "Heals see past friends"):** the same rays also yield a second
+reading, stored beside the strict one in the slot's seqlock payload (`passWord`, `passFriend`): a
+CHARCONTROLLER hit in a FRIEND's group (`FriendsFor`: for a player / player-teammate viewer, the player and every
+high-process teammate with a controller -- the teammate half of CastGuard's `Friendly()`; built once per Pump
+frame, main thread; never the viewer's or target's group) is stepped past. The collector keeps both nearest hits
+(the pass hit is at or beyond the strict one, so earlyOut moves to it); with no friend set the code path and the
+strict result are exactly the old ones. `Read(..., a_friendsPass=true)` returns it (+ `Reading::friendBody`, the
+friend let through on the clear ray); ONLY CastSeats 0x06/0x07 ask, for a beneficial item. Everything else
+(GetLineOfSight, pins, Awareness, ch.25) reads strict. A
 nearest hit in the TARGET's own collision group reads as "reached" (that ray is clear). Each
 OCCLUDED measurement logs `[los] ... OCCLUDED by -- feet: L_<layer>(n) body|phantom group g [=
 the VIEWER's/TARGET's own] ref 0x.. <TYPE> '<name>' [actor: ...] at Xu of Yu; torso ...; head ...`
@@ -594,6 +603,10 @@ bOwnLineOfSight` (default 1). Rows: bhkWorld (0x33), Character (0xC2/0x73/0x74),
   a waiting writer -- and is redundant. **Never add an outer world lock here, and never hold
   any lock across a ray.**
 - **What breaks:** a ray off the main thread (only `Pump`/`MeasureNow` cast, both main);
+  any consumer but the 0x06/0x07 BENEFICIAL path reading `a_friendsPass` (offensive casts, ch.25, pins and
+  awareness must stay strict -- marth 2026-10-06 / 2026-10-12); building `FriendsFor` off the main thread or
+  calling anything from inside the collector (it only compares groups against the prebuilt array). Open review
+  item REVIEW-BACKLOG APMF-B74 (diagnostic volume / viewer counters inflated in friends mode);
   a mutex on the `Read` path (the cast and pin seats call it on combat threads and must stay
   lock-free); the collector's layout (`rayHit` at +0x10 is what PickObject resets and copies; slot 0 =
   addRayHit, slot 1 = dtor -- never reorder its virtuals or members before `rayHit`); calling
@@ -779,7 +792,13 @@ plus native-placement 0x0A calls) in the `[ctcensus] HEARTBEAT`.
   `sightline::Read(actor, claim.target)` (lock-free, FormIDs, marks the pair asked-for) and NO
   otherwise (OCCLUDED / UNKNOWN / UNAVAILABLE / UNSUPPORTED; the census sees `false`); 0x07
   STOPS a channel on two consecutive OCCLUDED readings (occRun >= 2, newest <= 1 s), after
-  the TTL / target checks; UNKNOWN / UNAVAILABLE never stop. **What breaks:** reading the
+  the TTL / target checks; UNKNOWN / UNAVAILABLE never stop. **BENEFICIAL casts (fix/apmf-heal-los-friends):**
+  when `OwnLosFriendsPass(a_this)` (no effect of `a_this->magicItem` is hostile, any delivery -- NOT ch.25's
+  `Offensive()`, which exempts Self delivery) both seats read the FRIENDS-PASS verdict (player / teammate capsules
+  do not block; core/Sightline); `passFriend` is stored only when the strict reading was not visible (the friend
+  changed the verdict). `NoteFriendPassed` logs once per (actor, driven, target, friend) -- not expiresMs, which
+  client Repoint heartbeats move -- the friend looked past, the name
+  resolved in a `mainthread::Post` (never a form lookup on the combat thread). Offensive casts read strict. **What breaks:** reading the
   verdict any other way than `Read` (a lock or a form lookup on the combat thread); letting
   a non-VISIBLE verdict answer YES. The bit only means anything on RequestCast (a target): the
   degenerate `RequestEx(kIntent_Cast)` form has no target, so `ControlMap::EnqueueRequest`

@@ -112,7 +112,7 @@ ABI v19. "Get within this distance of that actor, and keep fighting." A mod name
 
 ### [Sightline]
 
-Harbinger's own line of sight (ABI v18). Rays from an actor's eyes to another actor's feet, chest and head, in every direction. Mods ask for it with a flag on a cast claim or a target pin, or ask directly.
+Harbinger's own line of sight (ABI v18). Rays from an actor's eyes to another actor's feet, chest and head, in every direction. Mods ask for it with a flag on a cast claim or a target pin, or ask directly. Another NPC's body blocks the rays, except on a healing or other friendly cast: there the player's and the teammates' bodies do not block.
 
 - **`bOwnLineOfSight`** (default `1`). 0 = off: the line-of-sight flags are REFUSED at the request and mods keep their own test; the awareness query answers Unsupported too.
 
