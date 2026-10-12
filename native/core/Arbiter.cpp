@@ -16,6 +16,7 @@
 #include "core/Sources.h"          // Harbinger 1a
 #include "core/PackageSources.h"   // Harbinger 1a
 #include "core/SpectatorGate.h"
+#include "core/ActorValueObserve.h"   // Harbinger 1b: the observe-only actor-value seat's heartbeat
 #include "channels/Travel.h"
 #include "channels/TargetPin.h"
 #include "channels/CombatEntry.h"
@@ -119,6 +120,7 @@ namespace apmf {
         apmf::packagegate::Heartbeat();
         // The Spectator seat (core/SpectatorGate.cpp): RULE C totals ~30 s, zeros included.
         apmf::spectatorgate::Heartbeat();
+        apmf::avobserve::Heartbeat();
 
         // ch.19 (kIntent_Travel) LEG MONITOR. Reuses this EXISTING once-per-frame
         // game-thread seat -- no new thread, no new hook. It is NOT a re-assert

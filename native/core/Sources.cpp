@@ -22,6 +22,11 @@ extern "C" __declspec(dllimport) int __stdcall GetModuleHandleExA(
 
 // See core/Sources.h for the model, the degrade rule, the census and the threading.
 
+// 1b loaded-plugin list: the process's module list (kernel32 export; the PCH does not pull in
+// <Windows.h> or psapi, so declared by hand like GetModuleHandleExA above).
+extern "C" __declspec(dllimport) int __stdcall K32EnumProcessModules(void* a_process, void** a_modules,
+                                                                      unsigned long a_cb, unsigned long* a_needed);
+
 namespace apmf::sources {
 
     namespace {
@@ -29,7 +34,9 @@ namespace apmf::sources {
         using apmf::log::Hex;
 
         constexpr const char* kIni = "Data/SKSE/Plugins/APMF_Sources.ini";
-        constexpr std::size_t kMaxSources = 256;
+        constexpr std::size_t kMaxSources = 512;   // 1b: was 256; the loaded-plugin list pre-registers up to
+                                                   //   kMaxSources - kLoadedReserve of them
+        constexpr std::size_t kLoadedReserve = 160;
         constexpr std::size_t kNameMax    = 64;
         constexpr std::uint64_t kCensusPeriodMs = 60000;   // plan: "every 60 s on the main-thread pump"
         constexpr std::uint64_t kUnattribLogMs  = 5000;
@@ -41,7 +48,7 @@ namespace apmf::sources {
 
         struct Source {
             char          name[kNameMax]{};
-            Kind          kind = Kind::kUnknown;
+            std::atomic<Kind> kind{ Kind::kUnknown };   // 1b: atomic -- a kLoaded entry is upgraded once
             std::atomic<int>           prio[kFacetCount]{};
             std::atomic<std::uint32_t> hits[kFacetCount]{};
             std::atomic<std::uint32_t> overruled[kFacetCount]{};
@@ -212,7 +219,12 @@ namespace apmf::sources {
             name = Trunc(name);
             const auto n = g_count.load(std::memory_order_relaxed);
             for (std::uint32_t i = 0; i < n; ++i)
-                if (IEquals(name, g_src[i].name)) return static_cast<SourceId>(i);
+                if (IEquals(name, g_src[i].name)) {
+                    // 1b: a pre-registered loaded plugin takes the kind it is first SEEN as.
+                    if (kind != Kind::kLoaded && g_src[i].kind.load(std::memory_order_relaxed) == Kind::kLoaded)
+                        g_src[i].kind.store(kind, std::memory_order_relaxed);
+                    return static_cast<SourceId>(i);
+                }
             if (n >= kMaxSources) {
                 if (!g_fullLogged.exchange(true))
                     spdlog::error("[sources] the source table is FULL ({} entries) -- '{}' and every later source "
@@ -224,7 +236,7 @@ namespace apmf::sources {
             const auto len = std::min(name.size(), kNameMax - 1);
             std::memcpy(s.name, name.data(), len);
             s.name[len] = '\0';
-            s.kind = kind;
+            s.kind.store(kind, std::memory_order_relaxed);
             for (int f = 0; f < kFacetCount; ++f)
                 s.prio[f].store(InitialPriority(s.name, kind, static_cast<Facet>(f)), std::memory_order_relaxed);
             g_count.store(n + 1, std::memory_order_release);   // publish: name/kind/prio written above
@@ -335,6 +347,7 @@ namespace apmf::sources {
         case Facet::kCast:         return "Cast";
         case Facet::kCombat:       return "Combat";
         case Facet::kCore:         return "Core";
+        case Facet::kActorValue:   return "ActorValue";
         default:                   return "?";
         }
     }
@@ -358,6 +371,7 @@ namespace apmf::sources {
         case Kind::kEngine:     return "engine";
         case Kind::kDirect:     return "direct calls";
         case Kind::kUnknown:    return "unknown";
+        case Kind::kLoaded:     return "loaded";
         default:                return "?";
         }
     }
@@ -373,7 +387,7 @@ namespace apmf::sources {
             for (std::uint32_t i = 0; i < n; ++i)
                 for (int f = 0; f < kFacetCount; ++f)
                     g_src[i].prio[f].store(InitialPriority(g_src[i].name,
-                                                           g_src[i].client.load() ? Kind::kClient : g_src[i].kind,
+                                                           g_src[i].client.load() ? Kind::kClient : g_src[i].kind.load(),
                                                            static_cast<Facet>(f)),
                                            std::memory_order_relaxed);
             AddLocked("Engine", Kind::kEngine);              // kEngineSource
@@ -399,7 +413,12 @@ namespace apmf::sources {
 
     SourceId Register(std::string_view name, Kind kind) {
         if (name.empty()) return kNoSource;
-        if (const auto id = Find(name); id != kNoSource) return id;
+        if (const auto id = Find(name); id != kNoSource) {
+            // 1b: a pre-registered loaded plugin takes the kind it is first SEEN as (once).
+            auto expected = Kind::kLoaded;
+            if (kind != Kind::kLoaded) g_src[id].kind.compare_exchange_strong(expected, kind, std::memory_order_relaxed);
+            return id;
+        }
         std::scoped_lock lk(g_addMx);
         return AddLocked(name, kind);
     }
@@ -474,7 +493,7 @@ namespace apmf::sources {
     }
 
     std::string_view Name(SourceId id) { return Valid(id) ? std::string_view(g_src[id].name) : std::string_view(); }
-    Kind KindOf(SourceId id) { return Valid(id) ? g_src[id].kind : Kind::kUnknown; }
+    Kind KindOf(SourceId id) { return Valid(id) ? g_src[id].kind.load(std::memory_order_relaxed) : Kind::kUnknown; }
 
     int Priority(SourceId id, Facet f) {
         if (!Valid(id) || f >= Facet::kCount) return kDefaultUnregistered;
@@ -526,6 +545,8 @@ namespace apmf::sources {
         case kIntent_CombatReentryDeny:
         case kIntent_CombatApproach:    return Facet::kCombat;
         case kIntent_Detection:         return Facet::kDetection;
+        case kIntent_Gait:
+        case kIntent_Disposition:       return Facet::kActorValue;
         default:                        return Facet::kCore;
         }
     }
@@ -543,10 +564,10 @@ namespace apmf::sources {
                 for (int f = 0; f < kFacetCount; ++f)
                     g_src[id].prio[f].store(InitialPriority(g_src[id].name, Kind::kClient, static_cast<Facet>(f)),
                                             std::memory_order_relaxed);
-                if (g_src[id].kind != Kind::kClient)
+                if (g_src[id].kind.load() != Kind::kClient)
                     spdlog::info("[sources] '{}' (first seen as a {}) also files claims: it is a client too; its "
                                  "priorities follow the client default unless APMF_Sources.ini names it.",
-                                 g_src[id].name, KindName(g_src[id].kind));
+                                 g_src[id].name, KindName(g_src[id].kind.load()));
             }
         }
         NoteInvolved(id, FacetForIntent(intent));
@@ -691,6 +712,47 @@ namespace apmf::sources {
         for (const auto& s : *snap)
             if (s.seat == seat) return s.prev;
         return kNoSource;
+    }
+
+    void RegisterLoadedPlugins() {
+        try {
+            void*         mods[1024]{};
+            unsigned long needed = 0;
+            if (!K32EnumProcessModules(REX::W32::GetCurrentProcess(), mods, sizeof(mods), &needed)) {
+                spdlog::warn("[sources] loaded-plugin list: K32EnumProcessModules failed -- the menu shows SKSE "
+                             "plugins only once they are seen writing.");
+                return;
+            }
+            const std::size_t total = std::min<std::size_t>(needed / sizeof(void*), std::size(mods));
+            std::size_t       added = 0, skipped = 0, seen = 0;
+            void* const       self  = SelfModule();
+            for (std::size_t i = 0; i < total; ++i) {
+                if (!mods[i] || mods[i] == self) continue;
+                char path[260]{};
+                const auto n = REX::W32::GetModuleFileNameA(reinterpret_cast<REX::W32::HMODULE>(mods[i]), path,
+                                                            sizeof(path));
+                if (n == 0 || n >= sizeof(path)) continue;
+                std::string lower(path, n);
+                for (auto& c : lower) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+                std::replace(lower.begin(), lower.end(), '/', '\\');
+                if (lower.find("\\skse\\plugins\\") == std::string::npos) continue;
+                ++seen;
+                if (g_count.load(std::memory_order_relaxed) + kLoadedReserve >= kMaxSources) {
+                    ++skipped;
+                    continue;
+                }
+                if (Register(BaseName(path), Kind::kLoaded) != kNoSource) ++added;
+            }
+            spdlog::info("[sources] loaded-plugin list: {} SKSE plugin DLL(s) under SKSE\\Plugins, {} pre-registered "
+                         "as sources (shown on the Harbinger page before their first write){}.",
+                         seen, added,
+                         skipped ? fmt::format("; {} NOT pre-registered to keep {} registry slots free for sources "
+                                               "seen later (they still register on their first write)",
+                                               skipped, kLoadedReserve)
+                                 : std::string());
+        } catch (...) {
+            spdlog::warn("[sources] loaded-plugin list: failed (exception) -- nothing pre-registered.");
+        }
     }
 
     void Census(const char* why) {
