@@ -2626,28 +2626,19 @@
    }
   },
   {
-   "seat": "DetectionProbe.Site",
-   "kind": "callsite",
-   "construct": "core/DetectionProbe.cpp kFnAE 42742 + kOffAE 0x67B / kFnSE 41659 + kOffSE 0x526",
+   "seat": "TargetPin.CombatController.SetTarget",
+   "kind": "function",
+   "construct": "channels/TargetPin.cpp RELOCATION_ID(32488, 33235) (1.5.97 / 1.6.1170); 1.7.104 raw RVA",
    "ids": {
-    "1.6.1170": 42742,
-    "1.5.97": 41659
+    "1.6.1170": 33235,
+    "1.5.97": 32488
    },
    "sig": {
-    "1.6.1170": "48 8B C4 55 53 56 57 41 54 41 55 41 56 41 57 48 8D 6C 24 88 48 81 EC 78 01 00 00 48 C7 45 D8 FE FF FF FF",
-    "1.5.97": "48 8B C4 55 53 56 57 41 54 41 55 41 56 41 57 48 8D 6C 24 88 48 81 EC 78 01 00 00 48 C7 45 C8 FE FF FF FF"
+    "1.6.1170": "40 55 53 56 57 41 55 41 56 41 57 48 8B EC 48 81 EC 80 00 00 00",
+    "1.5.97": "40 55 53 56 57 41 54 41 56 41 57 48 8D 6C 24 D9 48 81 EC D0 00 00 00"
    },
-   "source": "native/core/DetectionProbe.cpp (Install: SeatVerified, then a PASSIVE write_call<5> chain)",
-   "offset": {
-    "1.6.1170": "0x67B",
-    "1.5.97": "0x526"
-   },
-   "bytes": "E8",
-   "target": {
-    "1.6.1170": 37774,
-    "1.5.97": 36758
-   },
-   "doc": "Harbinger 1a detection probe; _research/smartnpc-targetselector-interop-2026-10-05.md H2 (the SmartNPCTargetSelector write_call site); the callee's only caller on each runtime"
+   "source": "native/channels/TargetPin.cpp Judge (Harbinger 1a restore through the engine's own setter)",
+   "doc": "CombatController::SetTarget(this, Actor*): rcx = controller, rdx = the new target (raw Actor*, the caller holds the reference), return unused; writes +0x2C targetHandle and the attacker's currentCombatTarget, the cached target, and the group bookkeeping for the old target (AE 0x804A10). Two callers per runtime: UpdateTarget (AE 33236+0x119 / SE 32489+0x151) and the clear (rdx = 0)."
   },
   {
    "seat": "PositionCast.CreateReferenceAtLocation",
@@ -4151,9 +4142,9 @@
    "source": "NonAliasProbe/CastSeats GetMagicTarget (CombatMagicCaster slot 0x0A)"
   },
   {
-   "seat": "DetectionProbe.Function",
-   "rva": "0x7B0710",
-   "source": "core/DetectionProbe.cpp kFn17 (1.7.104 only: AE id 42742 has no MIT-table row); the call site is this + 0x67B"
+   "seat": "TargetPin.CombatController.SetTarget.1_7_104",
+   "rva": "0x559630",
+   "source": "channels/TargetPin.cpp kSetTarget17 (1.7.104 only: AE id 33235 has no MIT-table row)"
   }
  ]
 }

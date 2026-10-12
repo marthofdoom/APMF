@@ -517,6 +517,8 @@ namespace apmf::equipsink {
                     apmf::sources::NoteHit(interposers[k], apmf::sources::Facet::kEquip);
                 if (caller.external && caller.kind == PathKind::kScript) {
                     apmf::sources::NoteHit(apmf::sources::kDirectSource, apmf::sources::Facet::kEquip);
+                } else if (caller.external && apmf::sources::IsSelf(reinterpret_cast<std::uintptr_t>(frames[at + 1]))) {
+                    // APMF's own enforce equip (channels/EquipAuthority.cpp): not an outside source.
                 } else if (caller.external && attributed) {
                     if (const auto src = apmf::sources::Register(caller.ext, apmf::sources::Kind::kPlugin); src >= 0)
                         apmf::sources::NoteHit(src, apmf::sources::Facet::kEquip);

@@ -49,6 +49,10 @@ namespace apmf::sources {
             std::atomic<std::uint64_t> lastSeenMs[kFacetCount]{};
             std::atomic<std::uint32_t> involved{ 0 };          // facet bitmask
             std::atomic<std::uint32_t> lastLoadSeq{ 0 };       // the load sequence it was last seen in
+            // Review round 1 (SEV-2): a module can be a hook source AND a client (MFO.dll is both).
+            // `kind` keeps how it was first seen; this records that it also files claims, and its
+            // priorities then follow the CLIENT default unless APMF_Sources.ini names it.
+            std::atomic<bool>          client{ false };
         };
 
         Source                     g_src[kMaxSources];
@@ -227,9 +231,30 @@ namespace apmf::sources {
             return b;
         }
 
+        // Module image ranges seen so far (review round 1, SEV-4): a hit never calls
+        // GetModuleHandleEx (loader lock; RtlPcToFileHeader under Proton) on a hot path again.
+        struct ModRange { std::uintptr_t lo, hi; void* mod; };
+        std::shared_mutex     g_rangeMx;
+        std::vector<ModRange> g_ranges;
+
+        std::uintptr_t ImageEnd(void* mod) {
+            const auto* dos = static_cast<const std::uint8_t*>(mod);
+            const auto  pe  = *reinterpret_cast<const std::uint32_t*>(dos + 0x3C);
+            // IMAGE_NT_HEADERS64: Signature(4) + FileHeader(20) + OptionalHeader.SizeOfImage at +56
+            return reinterpret_cast<std::uintptr_t>(mod) + *reinterpret_cast<const std::uint32_t*>(dos + pe + 4 + 20 + 56);
+        }
+
         void* ModuleOf(std::uintptr_t addr) {
+            if (!addr) return nullptr;
+            {
+                std::shared_lock lk(g_rangeMx);
+                for (const auto& r : g_ranges)
+                    if (addr >= r.lo && addr < r.hi) return r.mod;
+            }
             void* mod = nullptr;
-            if (!addr || !GetModuleHandleExA(kFromAddress, reinterpret_cast<const char*>(addr), &mod)) return nullptr;
+            if (!GetModuleHandleExA(kFromAddress, reinterpret_cast<const char*>(addr), &mod) || !mod) return nullptr;
+            std::unique_lock lk(g_rangeMx);
+            if (g_ranges.size() < 512) g_ranges.push_back({ reinterpret_cast<std::uintptr_t>(mod), ImageEnd(mod), mod });
             return mod;
         }
 
@@ -315,7 +340,9 @@ namespace apmf::sources {
             const auto n = g_count.load(std::memory_order_relaxed);
             for (std::uint32_t i = 0; i < n; ++i)
                 for (int f = 0; f < kFacetCount; ++f)
-                    g_src[i].prio[f].store(InitialPriority(g_src[i].name, g_src[i].kind, static_cast<Facet>(f)),
+                    g_src[i].prio[f].store(InitialPriority(g_src[i].name,
+                                                           g_src[i].client.load() ? Kind::kClient : g_src[i].kind,
+                                                           static_cast<Facet>(f)),
                                            std::memory_order_relaxed);
             AddLocked("Engine", Kind::kEngine);              // kEngineSource
             AddLocked("DirectCalls", Kind::kDirect);         // kDirectSource
@@ -402,6 +429,18 @@ namespace apmf::sources {
         return id;
     }
 
+    bool IsClient(SourceId id) { return Valid(id) && g_src[id].client.load(std::memory_order_relaxed); }
+
+    bool IsSelf(std::uintptr_t addr) { return addr && ModuleOf(addr) == SelfModule(); }
+
+    bool ModuleRange(std::uintptr_t addr, std::uintptr_t& lo, std::uintptr_t& hi) {
+        void* mod = ModuleOf(FollowStubs(addr));
+        if (!mod) return false;
+        lo = reinterpret_cast<std::uintptr_t>(mod);
+        hi = ImageEnd(mod);
+        return true;
+    }
+
     std::string_view Name(SourceId id) { return Valid(id) ? std::string_view(g_src[id].name) : std::string_view(); }
     Kind KindOf(SourceId id) { return Valid(id) ? g_src[id].kind : Kind::kUnknown; }
 
@@ -465,6 +504,18 @@ namespace apmf::sources {
         // happens through ClientAPI, which only clients call). Keep the handle unmapped.
         if (id == kEngineSource || id == kDirectSource) id = kNoSource;
         if (id == kNoSource) return;
+        if (!g_src[id].client.load(std::memory_order_acquire)) {
+            std::scoped_lock lk(g_addMx);
+            if (!g_src[id].client.exchange(true, std::memory_order_acq_rel)) {
+                for (int f = 0; f < kFacetCount; ++f)
+                    g_src[id].prio[f].store(InitialPriority(g_src[id].name, Kind::kClient, static_cast<Facet>(f)),
+                                            std::memory_order_relaxed);
+                if (g_src[id].kind != Kind::kClient)
+                    spdlog::info("[sources] '{}' (first seen as a {}) also files claims: it is a client too; its "
+                                 "priorities follow the client default unless APMF_Sources.ini names it.",
+                                 g_src[id].name, KindName(g_src[id].kind));
+            }
+        }
         NoteInvolved(id, FacetForIntent(intent));
         std::unique_lock lk(g_handleMx);
         if (g_handles.size() >= kHandleCap) {

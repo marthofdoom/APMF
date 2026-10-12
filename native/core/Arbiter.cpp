@@ -14,7 +14,6 @@
 #include "core/Sightline.h"
 #include "core/Sources.h"          // Harbinger 1a
 #include "core/PackageSources.h"   // Harbinger 1a
-#include "core/DetectionProbe.h"   // Harbinger 1a
 #include "channels/Travel.h"
 #include "channels/TargetPin.h"
 #include "channels/CombatEntry.h"
@@ -142,11 +141,10 @@ namespace apmf {
         apmf::idle::Poll();
 
         // HARBINGER 1a (core/Sources.h): apply menu slider changes (atomic + APMF_Sources.ini),
-        // the 60 s seat census (Q13 re-hook on top), the package capture poll and the two
-        // probes' heartbeats. Same once-per-frame MAIN seat, after Drain() published.
+        // the 60 s seat census (Q13 re-hook on top), the package capture poll and the scene
+        // probe's heartbeat. Same once-per-frame MAIN seat, after Drain() published.
         apmf::sources::Pump();
         apmf::packagesources::Poll();
-        apmf::detectionprobe::Heartbeat();
 
         // ch.22 (kIntent_CombatReentryDeny) END-OF-WINDOW MONITOR, same seat and shape: it ends a
         // deny claim when its window elapses or the owner dies, and logs a DENY MISS (the actor

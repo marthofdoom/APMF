@@ -111,6 +111,11 @@ namespace apmf::sources {
     std::uintptr_t FollowStubs(std::uintptr_t addr);
 
     std::string_view Name(SourceId id);   // "" for an invalid id
+    bool             IsClient(SourceId id);   // it has filed a claim (it may also be a hook source)
+    // Is `addr` inside APMF's own image? Any thread (cached module ranges).
+    bool IsSelf(std::uintptr_t addr);
+    // The image range of the module owning `addr` (jmp stubs followed). Any thread.
+    bool ModuleRange(std::uintptr_t addr, std::uintptr_t& lo, std::uintptr_t& hi);
     Kind             KindOf(SourceId id);
 
     // Priority of a source on a facet (0..100). Any thread, lock-free.

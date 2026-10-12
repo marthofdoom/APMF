@@ -63,6 +63,13 @@ namespace apmf::harbingermenu {
         constexpr Facet kMasterFacets[] = { Facet::kTarget, Facet::kDetection, Facet::kPackage, Facet::kEquip };
 
         void Text(const std::string& s) { g.TextUnformatted(s.c_str(), nullptr); }
+
+        // "hook + client" for a module that is both (MFO.dll).
+        std::string KindLabel(SourceId id) {
+            const Kind k = KindOf(id);
+            if (IsClient(id) && k != Kind::kClient) return fmt::format("{} + client", KindName(k));
+            return KindName(k);
+        }
         void Colored(const ImVec4& c, const char* fmt, ...) {
             va_list a;
             va_start(a, fmt);
@@ -130,7 +137,7 @@ namespace apmf::harbingermenu {
                     Colored(idle ? kGrey : (id == kUnattributedSource ? kWarn : (id == win ? kGood : ImVec4{ 1, 1, 1, 1 })),
                             fmt::format("{}{}", Name(id), idle ? " (idle)" : ""));
                     g.TableNextColumn();
-                    Text(KindName(KindOf(id)));
+                    Text(KindLabel(id));
                     g.TableNextColumn();
                     Text(std::to_string(Hits(id, f)));
                     g.TableNextColumn();
@@ -147,7 +154,7 @@ namespace apmf::harbingermenu {
         }
 
         void SourceTab(SourceId id) {
-            Text(fmt::format("{} -- {}", Name(id), KindName(KindOf(id))));
+            Text(fmt::format("{} -- {}", Name(id), KindLabel(id)));
             if (Idle(id)) Colored(kGrey, "Idle: not seen during the last 3 game loads. Its priorities are kept.");
             if (!g.BeginTable("src", 5, kTableRowBg | kTableBorders | kTableSizingStretch, ImVec2{ 0.0f, 0.0f }, 0.0f))
                 return;

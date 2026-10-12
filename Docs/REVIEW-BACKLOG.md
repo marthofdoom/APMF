@@ -568,3 +568,25 @@ and 45056 (OneHandedBlock 0x0F, 0x819300; SE 43837) into the CommonLibSSE-NG for
 next fork revision, then retire the APMF-local CSV rows.
 
 - CLOSED 2026-10-06 (triage): SUPERSEDED by ClickUp 86e3jwgvy -- the open residual (move AE ids 45069 Torch 0x0F and 45056 OneHandedBlock 0x0F into the CommonLibSSE-NG fork's 1.7.104 id table / idmap and retire the APMF-local CSV rows) is exactly the "move Harbinger/MFO verified engine bindings into our CommonLib fork" task (Fork F3).
+
+### APMF-B69 (SEV-4 x3, SEV-5 x2) -- Harbinger controller 1a review, deferred items
+Raised against 80b56a6 (`feat/apmf-controller-1a`, Opus tier-3 review `scratchpad/agentlogs/review-controller-1a.md`),
+2026-10-11. Findings as relayed by the coordinator (the review log carries the reviewer's wording):
+- (SEV-4) "GetPrivateProfileInt non-numeric -> 0=off": `core/Sources.cpp` ReadIni reads each key with
+  `GetPrivateProfileIntA`, which answers 0 for a non-numeric value, so a typo becomes priority 0 = off instead of
+  the default; a negative value is skipped (default applies). Fix when drained: read the string, accept only
+  0..100 digits, otherwise log and keep the default.
+- (SEV-4) "slider drag INI write per frame": `EnqueueSetPriority` is called on every frame the slider value changes
+  and `Pump` writes the INI for each applied value. Fix: apply the atomic at once, write the INI only after the
+  value has been stable for ~1 s.
+- (SEV-4) "census-only sources Idle at once": a source only seen by the census (never a hit) has
+  `lastLoadSeq == 0` and greys out as idle immediately. Fix: stamp the load sequence on NoteInvolved too, or
+  show "never wrote" instead of idle.
+- (SEV-5) "plugin.cpp comment placement": the Harbinger lines in `native/plugin.cpp` OnMessage sit inside the
+  kDataLoaded install list's comment run; regroup when that file is next touched.
+- (SEV-5) "thread-local frame on unwind": `channels/TargetPin.cpp` LayerBody leaves `t_frame.depth` raised if the
+  chained call below it unwinds (an engine/plugin exception through UpdateCombat); the next update on that thread
+  would take the nested path. Fix: an RAII guard that resets the frame.
+Done in the same round instead of deferred (each under 20 lines): APMF's own enforce equips no longer register
+`APMF.dll` as an outside equip source (`core/EquipSink.cpp`, `sources::IsSelf`), and module ranges are cached
+(`core/Sources.cpp` ModuleOf) so a hot path stops calling GetModuleHandleEx / RtlPcToFileHeader per frame.

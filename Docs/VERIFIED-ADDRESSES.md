@@ -180,7 +180,7 @@ CommonLib layout APMF reads is the same there, is proven separately in the "1.7.
 | EquipSink.Worker | function | 38929 | 0x6CBE30 | 37974 | 0x639E20 | 38929 | 0x6DE920 | signature (177 bytes, unique in .text) |  | native/core/EquipSink.cpp:92 |  |
 | EquipSink.Site.EquipObject | callsite | 38894 | 0x6C9820 +0x170 E8 | 37938 | 0x637A80 +0xE5 E8 | 38894 | 0x6DC310 +0x170 E8 | signature (25 bytes, unique in .text) |  | native/core/EquipSink.cpp:85 | ADDRESS-TABLE-2026-09-15.md:14 |
 | EquipSink.Site.EquipObjectList | callsite | 38893 | 0x6C9730 +0xBC E8 | 37937 | 0x637990 +0xBC E8 | 38893 | 0x6DC220 +0xBC E8 | signature (16 bytes, unique in .text) |  | native/core/EquipSink.cpp:86 |  |
-| DetectionProbe.Site | callsite | 42742 | 0x7B0710 +0x67B E8 | 41659 | 0x719990 +0x526 E8 | - | - | signature (35 bytes, unique in .text) |  | native/core/DetectionProbe.cpp (Install: SeatVerified, then a PASSIVE write_call<5> chain) | Harbinger 1a detection probe; _research/smartnpc-targetselector-interop-2026-10-05.md H2 (the SmartNPCTargetSelector write_call site); the callee's only caller on each runtime |
+| TargetPin.CombatController.SetTarget | function | 33235 | 0x559630 | 32488 | 0x4FDFE0 | - | - | signature (21 bytes, unique in .text) |  | native/channels/TargetPin.cpp Judge (Harbinger 1a restore through the engine's own setter) | CombatController::SetTarget(this, Actor*): rcx = controller, rdx = the new target (raw Actor*, the caller holds the reference), return unused; writes +0x2C targetHandle and the attacker's currentCombatTarget, the cached target, and the group bookkeeping for the old target (AE 0x804A10). Two callers per runtime: UpdateTarget (AE 33236+0x119 / SE 32489+0x151) and the clear (rdx = 0). |
 | PositionCast.CreateReferenceAtLocation | function | 13723 | 0x1B6C10 | 13625 | 0x16C210 | 13723 | 0x1BC1C0 | signature (26 bytes, unique in .text) |  | native/core/PositionCast.cpp:290 | ADDRESS-TABLE-2026-09-15.md:470 |
 | PositionCast.TES.GetCell | function | 13322 | 0x19E850 | 13177 | 0x155090 | 13322 | 0x1A3C60 | signature (16 bytes, unique in .text) |  | native/core/PositionCast.cpp:267 |  |
 | PositionCast.InterruptCast | function | 34408 | 0x5BBFA0 | 33630 | 0x54CB70 | 34408 | 0x5CAAE0 | signature (16 bytes, unique in .text) |  | native/core/PositionCast.cpp | ADDRESS-TABLE-2026-09-15.md:469 |
@@ -273,7 +273,7 @@ CommonLib layout APMF reads is the same there, is proven separately in the "1.7.
 | EquipGate.CallSiteName.return-814270 | raw rva | - | - | - | - | - | 0x829150 | raw RVA: 1.6.1170 0x814270 signature (18 bytes) unique at the idmap RVA |  | EquipGate CallSiteName selector return address |  |
 | EquipGate.CallSiteName.return-8144B2 | raw rva | - | - | - | - | - | 0x829392 | raw RVA: 1.6.1170 0x8144B2 signature (18 bytes) unique at the idmap RVA |  | EquipGate CallSiteName selector return address |  |
 | NonAliasProbe.CombatMagicCaster.GetMagicTarget | raw rva | - | - | - | - | - | 0x833510 | raw RVA: 1.6.1170 0x81E020 signature (23 bytes) unique at the idmap RVA |  | NonAliasProbe/CastSeats GetMagicTarget (CombatMagicCaster slot 0x0A) |  |
-| DetectionProbe.Function | raw rva | - | - | - | - | - | 0x7C5220 | raw RVA: 1.6.1170 0x7B0710 signature (35 bytes) unique at the idmap RVA |  | core/DetectionProbe.cpp kFn17 (1.7.104 only: AE id 42742 has no MIT-table row); the call site is this + 0x67B |  |
+| TargetPin.CombatController.SetTarget.1_7_104 | raw rva | - | - | - | - | - | 0x5614A0 | raw RVA: 1.6.1170 0x559630 signature (21 bytes) unique at the idmap RVA |  | channels/TargetPin.cpp kSetTarget17 (1.7.104 only: AE id 33235 has no MIT-table row) |  |
 
 ## Not verified on 1.7.104
 
@@ -282,7 +282,7 @@ for them and the seat is refused. Nothing here is a failure on 1.6.1170 or 1.5.9
 
 | seat | 1.6.1170 id | reason |
 |---|---|---|
-| DetectionProbe.Site | 42742 | id 42742 is not in the idmap |
+| TargetPin.CombatController.SetTarget | 33235 | id 33235 is not in the idmap |
 | EquipSink.Path.OutfitApply.24234 | - | BY DESIGN: 1.5.97-only label. On 1.6.1170 and 1.7.104 the code reads its AE twin EquipSink.Path.OutfitApply.418622 (AE id 418622, 1.7.104 0x3C4440), whose own row carries the 1.7.104 fact (MAPPED-AE) |
 | EquipSink.Path.AddWornOutfit.19266 | - | BY DESIGN: 1.5.97-only label. On 1.6.1170 and 1.7.104 the code reads its AE twin EquipSink.Path.AddWornOutfit.19692 (AE id 19692, 1.7.104 0x2E8070), whose own row carries the 1.7.104 fact (MAPPED-AE) |
 | EquipSink.Path.AiCommand.38618 | - | BY DESIGN: 1.5.97-only label. On 1.6.1170 and 1.7.104 the code reads its AE twin EquipSink.Path.AiCommand.39649 (AE id 39649, 1.7.104 0x70F670), whose own row carries the 1.7.104 fact (MAPPED-AE) |

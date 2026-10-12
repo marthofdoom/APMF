@@ -32,7 +32,6 @@
 #include "core/Awareness.h"
 #include "core/Sources.h"          // Harbinger 1a: source registry, priorities, seat census
 #include "core/PackageSources.h"   // Harbinger 1a: package capture + the 0x4A scene probe
-#include "core/DetectionProbe.h"   // Harbinger 1a: the detection call-site probe
 #include "core/HarbingerMenu.h"    // Harbinger 1a: the SKSE Menu Framework page
 
 // ============================================================================
@@ -139,8 +138,16 @@ namespace {
 
     void OnMessage(SKSE::MessagingInterface::Message* a_msg) {
         switch (a_msg->type) {
+        case SKSE::MessagingInterface::kPostLoad:
+        case SKSE::MessagingInterface::kPostPostLoad:
+        case SKSE::MessagingInterface::kInputLoaded:
+            // Harbinger 1a: every load window the census can run in, so a hook another plugin
+            // installed since the last one gets a Harbinger layer directly above it.
+            apmf::sources::Census(a_msg->type == SKSE::MessagingInterface::kPostLoad       ? "kPostLoad"
+                                  : a_msg->type == SKSE::MessagingInterface::kPostPostLoad ? "kPostPostLoad"
+                                                                                           : "kInputLoaded");
+            break;
         case SKSE::MessagingInterface::kDataLoaded:
-            apmf::sources::Init();               // Harbinger 1a: FIRST, so every Install below can census its seat
             apmf::hook::Install();
             apmf::castgate::Install();           // T2c CheckCast allowance (Docs/ALLOWANCE-TEMPLATE.md)
             apmf::castclassify::Install();       // ch.8b SEAT 0: classify a heal/buff-OTHER spell into
@@ -244,7 +251,6 @@ namespace {
                                                   // and logs the answer the whole chain gives.
                                                   // Exact-version gate + VR refusal inside.
             apmf::nativebitprobe::Install();     // native-bit probe (throwaway; no VR gate needed).
-            apmf::detectionprobe::Install();     // Harbinger 1a: PASSIVE detection call-site probe + census
             apmf::harbingermenu::Register();     // Harbinger 1a: the SMF page (or INI-only, loudly)
             apmf::sources::Census("kDataLoaded"); // baseline: every seat just installed
                                                   // CONFIG-GATED, default OFF -- it is the only probe that
@@ -403,6 +409,12 @@ SKSEPluginLoad(const SKSE::LoadInterface* a_skse) {
     // hooked / called address (VerifiedAddresses.h). Every install asks
     // apmf::allowance::SeatVerified() and refuses a seat whose row failed.
     apmf::allowance::LogSelfCheck();
+
+    // HARBINGER 1a. The source registry first, then UpdateCombat layer 0 at APMF's OWN plugin
+    // load, as early as APMF can: 0xE4 hooks other plugins install later land above it, and the
+    // census gives each one a Harbinger layer of its own (channels/TargetPin.cpp "THE 0xE4 LAYERS").
+    apmf::sources::Init();
+    apmf::targetpin::InstallLayer0();
 
     SKSE::GetMessagingInterface()->RegisterListener(OnMessage);
 
