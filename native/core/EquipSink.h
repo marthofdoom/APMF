@@ -69,7 +69,13 @@
 // else -> allow (`owned=0`: nothing the claim holds is at stake). The obs line
 // carries `cat=<categories> owned=<0|1> black=<0|1> eslot=<none|R|L|E|hex>`.
 //
-// HOW IT KNOWS WHO ASKED. The thunk is entered with EquipObject's own frame still
+// HOW IT KNOWS WHO ASKED (HARBINGER 1a, 2026-10-11 -- supersedes the depth read below for
+// attribution): a STACK SCAN. The frame whose return address equals one of the two sites + 5
+// is EquipObject's (an interposer that re-patched the E8 -- UAPNG, EDS-NG -- leaves its own E8
+// at that same address); the next frame is EquipObject's caller, classified as below; foreign
+// frames in between are interposer sources. No site frame / Unknown(0) / an unnamed module =
+// UNATTRIBUTED: allowed, never denied (the degrade rule). The depth read is a cross-check only.
+// THE ORIGINAL DESIGN (kept for the cross-check): The thunk is entered with EquipObject's own frame still
 // on the stack, so it reads EquipObject's CALLER's return slot at a per-site,
 // per-runtime depth measured from the bytes (Docs/HOOK-SITE-COVERAGE.md, "equip
 // sink"): AE EquipObject = 5 pushes + sub rsp,0x50 -> [rsp+0x80]; AE sibling

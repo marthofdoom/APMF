@@ -1,4 +1,5 @@
 #include "PCH.h"
+#include "core/Sources.h"   // Harbinger 1a: seat census
 #include "core/Allowance.h"   // SeatVerified(): the mit-3.7 F1 self-check gate
 #include "core/Log.h"
 #include "core/Hook.h"
@@ -121,9 +122,15 @@ namespace apmf::hook {
             return;
         }
         CharacterUpdateHook::func = charVtbl.write_vfunc(CharacterUpdateHook::idx, CharacterUpdateHook::thunk);
+        apmf::sources::NoteVfunc(apmf::sources::Facet::kCore, "Hook.Character.Update", charVtbl.address(),
+                                 CharacterUpdateHook::idx, SKSE::stl::unrestricted_cast<std::uintptr_t>(&CharacterUpdateHook::thunk),
+                                 CharacterUpdateHook::func.address());
 
         REL::Relocation<std::uintptr_t> pcVtbl{ RE::VTABLE_PlayerCharacter[0] };
         PlayerUpdateHook::func = pcVtbl.write_vfunc(PlayerUpdateHook::idx, PlayerUpdateHook::thunk);
+        apmf::sources::NoteVfunc(apmf::sources::Facet::kCore, "Hook.PlayerCharacter.Update", pcVtbl.address(),
+                                 PlayerUpdateHook::idx, SKSE::stl::unrestricted_cast<std::uintptr_t>(&PlayerUpdateHook::thunk),
+                                 PlayerUpdateHook::func.address());
 
         spdlog::info("[hook] installed: Character + PlayerCharacter Update(0x{}). Central 0xAD arbiter "
                      "seat live for every NPC.", apmf::log::Hex(CharacterUpdateHook::idx, 0));

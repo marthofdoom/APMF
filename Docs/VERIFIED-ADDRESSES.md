@@ -10,13 +10,13 @@ nothing when one does not. At startup `REL::SelfCheck::Run` repeats the comparis
 game actually loaded. A row that fails refuses THAT seat by name in the log; the expected RVA is never
 used in place of the library's answer.
 
-Offline result of this generation: 1.6.1170.0 205/205 verified, 0 refused, 1.5.97.0 205/205 verified, 0 refused.
+Offline result of this generation: 1.6.1170.0 206/206 verified, 0 refused, 1.5.97.0 206/206 verified, 0 refused.
 
 1.7.104.0 has NO Address Library. Its column is OUR OWN id map: the MIT id table of the CommonLibSSE-NG fork
 (`data/mit-idtable-v1-1-7-104-0.bin`, revision 3, 17751 records, SkyrimSE.exe TimeDateStamp 0x6A8C7046; built into every plugin, it is
 what SelfCheck queries at runtime; authoritative) with the evidence CSVs beside it, keyed by
 the 1.6.1170 id, re-verified against the plaintext 1.7.104 executable by the same row-kind checks (see the script
-docstring). Offline result: 1.7.104.0 218/246 verified, 28 NOT verified (28 of them BY DESIGN: 1.5.97-only labels whose AE twin row carries the 1.7.104 fact). A not-verified seat has no row in the 1.7.104 table,
+docstring). Offline result: 1.7.104.0 219/248 verified, 29 NOT verified (28 of them BY DESIGN: 1.5.97-only labels whose AE twin row carries the 1.7.104 fact). A not-verified seat has no row in the 1.7.104 table,
 so `IsVerifiedAddress` is false and the seat is refused by name. The table of `Not verified on 1.7.104` is below.
 
 These rows prove the ADDRESSES. That each hooked slot holds the same function body on 1.7.104, and that every
@@ -26,7 +26,7 @@ CommonLib layout APMF reads is the same there, is proven separately in the "1.7.
 
 | seat | kind | id 1.6.1170 | RVA 1.6.1170 | id 1.5.97 | RVA 1.5.97 | id 1.7.104 | RVA 1.7.104 | derived by | hooked slots -> engine function (1.6.1170 / 1.5.97 / 1.7.104) | code | doc |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| Character | vtable | 207886 | 0x18A5558 | 261397 | 0x165DA40 | 207886 | 0x1923258 | RTTI .?AVCharacter@@ (COL offset 0) | 0xAD: 0x667D40 / 0x5D6FB0 / 0x67A7E0<br>0x49: 0x66CB60 / 0x5DB180 / 0x67F620<br>0xDF: 0x67EAD0 / 0x5EC760 / 0x691590<br>0xE4: 0x6B6E70 / 0x625700 / 0x6C98F0<br>0x99: 0x674ED0 / 0x5E3160 / 0x6879A0<br>0x73: 0x65EF30 / 0x5CE8A0 / 0x671930<br>0x74: 0x65F010 / 0x5CE980 / 0x671A10<br>0xC2: 0x6749F0 / 0x5E2C30 / 0x6874C0<br>0xE3: 0x6B6DD0 / 0x625660 / 0x6C9850 | native/core/Hook.cpp:94; PackageGate.cpp:296; NonAliasProbe.cpp:216; channels/TargetPin.cpp:460 (observer); channels/CombatReentryDeny.cpp (0x99, the ch.22 seat); core/Sightline.cpp (0xC2 GetEyeVector, 0x73/0x74 GetBoundMin/Max via TESObjectREFR::GetHeight; virtual calls) and core/Awareness.cpp (0xE3 IsInCombat; virtual call) | ADDRESS-TABLE-2026-09-15.md:64 |
+| Character | vtable | 207886 | 0x18A5558 | 261397 | 0x165DA40 | 207886 | 0x1923258 | RTTI .?AVCharacter@@ (COL offset 0) | 0xAD: 0x667D40 / 0x5D6FB0 / 0x67A7E0<br>0x49: 0x66CB60 / 0x5DB180 / 0x67F620<br>0xDF: 0x67EAD0 / 0x5EC760 / 0x691590<br>0xE4: 0x6B6E70 / 0x625700 / 0x6C98F0<br>0x99: 0x674ED0 / 0x5E3160 / 0x6879A0<br>0x73: 0x65EF30 / 0x5CE8A0 / 0x671930<br>0x74: 0x65F010 / 0x5CE980 / 0x671A10<br>0xC2: 0x6749F0 / 0x5E2C30 / 0x6874C0<br>0xE3: 0x6B6DD0 / 0x625660 / 0x6C9850<br>0x4A: 0x662150 / 0x5D19E0 / 0x674B70 | native/core/Hook.cpp:94; PackageGate.cpp:296; NonAliasProbe.cpp:216; channels/TargetPin.cpp:460 (observer); channels/CombatReentryDeny.cpp (0x99, the ch.22 seat); core/Sightline.cpp (0xC2 GetEyeVector, 0x73/0x74 GetBoundMin/Max via TESObjectREFR::GetHeight; virtual calls) and core/Awareness.cpp (0xE3 IsInCombat; virtual call); core/PackageSources.cpp (0x4A GetCurrentScene: the Harbinger 1a scene probe, OBSERVE-ONLY) | ADDRESS-TABLE-2026-09-15.md:64 |
 | CombatTargetSelectorStandard | vtable | 212096 | 0x18D7388 | 265605 | 0x1690A98 | 212096 | 0x1955950 | RTTI .?AVCombatTargetSelectorStandard@@ (COL offset 0) | 0x06: 0x84CFE0 / 0x7B5E50 / 0x862040 | native/channels/TargetPin.cpp:458; channels/CombatApproach.cpp (ch.24 deny bracket on 0x06, chaining with ch.20) | ch.20 source deny; UpdateTarget AE 0x559930 / SE 0x4FE300 calls slot 6 |
 | CombatTargetSelectorFixed | vtable | 212098 | 0x18D73C8 | 265607 | 0x1690AF8 | 212098 | 0x1955990 | RTTI .?AVCombatTargetSelectorFixed@@ (COL offset 0) | 0x06: 0x84DAF0 / 0x7B6920 / 0x862B50 | native/channels/TargetPin.cpp:459 | ch.20 source deny; UpdateTarget AE 0x559930 / SE 0x4FE300 calls slot 6 |
 | PlayerCharacter | vtable | 208040 | 0x18AB9C0 | 261916 | 0x16635E0 | 208040 | 0x19296C0 | RTTI .?AVPlayerCharacter@@ (COL offset 0) | 0xAD: 0x732660 / 0x69E580 / 0x745200 | native/core/Hook.cpp:97 | ADDRESS-TABLE-2026-09-15.md:69 |
@@ -180,6 +180,7 @@ CommonLib layout APMF reads is the same there, is proven separately in the "1.7.
 | EquipSink.Worker | function | 38929 | 0x6CBE30 | 37974 | 0x639E20 | 38929 | 0x6DE920 | signature (177 bytes, unique in .text) |  | native/core/EquipSink.cpp:92 |  |
 | EquipSink.Site.EquipObject | callsite | 38894 | 0x6C9820 +0x170 E8 | 37938 | 0x637A80 +0xE5 E8 | 38894 | 0x6DC310 +0x170 E8 | signature (25 bytes, unique in .text) |  | native/core/EquipSink.cpp:85 | ADDRESS-TABLE-2026-09-15.md:14 |
 | EquipSink.Site.EquipObjectList | callsite | 38893 | 0x6C9730 +0xBC E8 | 37937 | 0x637990 +0xBC E8 | 38893 | 0x6DC220 +0xBC E8 | signature (16 bytes, unique in .text) |  | native/core/EquipSink.cpp:86 |  |
+| TargetPin.CombatController.SetTarget | function | 33235 | 0x559630 | 32488 | 0x4FDFE0 | - | - | signature (21 bytes, unique in .text) |  | native/channels/TargetPin.cpp Judge (Harbinger 1a restore through the engine's own setter) | CombatController::SetTarget(this, Actor*): rcx = controller, rdx = the new target (raw Actor*, the caller holds the reference), return unused; writes +0x2C targetHandle and the attacker's currentCombatTarget, the cached target, and the group bookkeeping for the old target (AE 0x804A10). Two callers per runtime: UpdateTarget (AE 33236+0x119 / SE 32489+0x151) and the clear (rdx = 0). |
 | PositionCast.CreateReferenceAtLocation | function | 13723 | 0x1B6C10 | 13625 | 0x16C210 | 13723 | 0x1BC1C0 | signature (26 bytes, unique in .text) |  | native/core/PositionCast.cpp:290 | ADDRESS-TABLE-2026-09-15.md:470 |
 | PositionCast.TES.GetCell | function | 13322 | 0x19E850 | 13177 | 0x155090 | 13322 | 0x1A3C60 | signature (16 bytes, unique in .text) |  | native/core/PositionCast.cpp:267 |  |
 | PositionCast.InterruptCast | function | 34408 | 0x5BBFA0 | 33630 | 0x54CB70 | 34408 | 0x5CAAE0 | signature (16 bytes, unique in .text) |  | native/core/PositionCast.cpp | ADDRESS-TABLE-2026-09-15.md:469 |
@@ -272,6 +273,7 @@ CommonLib layout APMF reads is the same there, is proven separately in the "1.7.
 | EquipGate.CallSiteName.return-814270 | raw rva | - | - | - | - | - | 0x829150 | raw RVA: 1.6.1170 0x814270 signature (18 bytes) unique at the idmap RVA |  | EquipGate CallSiteName selector return address |  |
 | EquipGate.CallSiteName.return-8144B2 | raw rva | - | - | - | - | - | 0x829392 | raw RVA: 1.6.1170 0x8144B2 signature (18 bytes) unique at the idmap RVA |  | EquipGate CallSiteName selector return address |  |
 | NonAliasProbe.CombatMagicCaster.GetMagicTarget | raw rva | - | - | - | - | - | 0x833510 | raw RVA: 1.6.1170 0x81E020 signature (23 bytes) unique at the idmap RVA |  | NonAliasProbe/CastSeats GetMagicTarget (CombatMagicCaster slot 0x0A) |  |
+| TargetPin.CombatController.SetTarget.1_7_104 | raw rva | - | - | - | - | - | 0x5614A0 | raw RVA: 1.6.1170 0x559630 signature (21 bytes) unique at the idmap RVA |  | channels/TargetPin.cpp kSetTarget17 (1.7.104 only: AE id 33235 has no MIT-table row) |  |
 
 ## Not verified on 1.7.104
 
@@ -280,6 +282,7 @@ for them and the seat is refused. Nothing here is a failure on 1.6.1170 or 1.5.9
 
 | seat | 1.6.1170 id | reason |
 |---|---|---|
+| TargetPin.CombatController.SetTarget | 33235 | id 33235 is not in the idmap |
 | EquipSink.Path.OutfitApply.24234 | - | BY DESIGN: 1.5.97-only label. On 1.6.1170 and 1.7.104 the code reads its AE twin EquipSink.Path.OutfitApply.418622 (AE id 418622, 1.7.104 0x3C4440), whose own row carries the 1.7.104 fact (MAPPED-AE) |
 | EquipSink.Path.AddWornOutfit.19266 | - | BY DESIGN: 1.5.97-only label. On 1.6.1170 and 1.7.104 the code reads its AE twin EquipSink.Path.AddWornOutfit.19692 (AE id 19692, 1.7.104 0x2E8070), whose own row carries the 1.7.104 fact (MAPPED-AE) |
 | EquipSink.Path.AiCommand.38618 | - | BY DESIGN: 1.5.97-only label. On 1.6.1170 and 1.7.104 the code reads its AE twin EquipSink.Path.AiCommand.39649 (AE id 39649, 1.7.104 0x70F670), whose own row carries the 1.7.104 fact (MAPPED-AE) |

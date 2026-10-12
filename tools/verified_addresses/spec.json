@@ -21,9 +21,10 @@
     "0x73",
     "0x74",
     "0xC2",
-    "0xE3"
+    "0xE3",
+    "0x4A"
    ],
-   "source": "native/core/Hook.cpp:94; PackageGate.cpp:296; NonAliasProbe.cpp:216; channels/TargetPin.cpp:460 (observer); channels/CombatReentryDeny.cpp (0x99, the ch.22 seat); core/Sightline.cpp (0xC2 GetEyeVector, 0x73/0x74 GetBoundMin/Max via TESObjectREFR::GetHeight; virtual calls) and core/Awareness.cpp (0xE3 IsInCombat; virtual call)",
+   "source": "native/core/Hook.cpp:94; PackageGate.cpp:296; NonAliasProbe.cpp:216; channels/TargetPin.cpp:460 (observer); channels/CombatReentryDeny.cpp (0x99, the ch.22 seat); core/Sightline.cpp (0xC2 GetEyeVector, 0x73/0x74 GetBoundMin/Max via TESObjectREFR::GetHeight; virtual calls) and core/Awareness.cpp (0xE3 IsInCombat; virtual call); core/PackageSources.cpp (0x4A GetCurrentScene: the Harbinger 1a scene probe, OBSERVE-ONLY)",
    "doc": "ADDRESS-TABLE-2026-09-15.md:64"
   },
   {
@@ -2625,6 +2626,21 @@
    }
   },
   {
+   "seat": "TargetPin.CombatController.SetTarget",
+   "kind": "function",
+   "construct": "channels/TargetPin.cpp RELOCATION_ID(32488, 33235) (1.5.97 / 1.6.1170); 1.7.104 raw RVA",
+   "ids": {
+    "1.6.1170": 33235,
+    "1.5.97": 32488
+   },
+   "sig": {
+    "1.6.1170": "40 55 53 56 57 41 55 41 56 41 57 48 8B EC 48 81 EC 80 00 00 00",
+    "1.5.97": "40 55 53 56 57 41 54 41 56 41 57 48 8D 6C 24 D9 48 81 EC D0 00 00 00"
+   },
+   "source": "native/channels/TargetPin.cpp Judge (Harbinger 1a restore through the engine's own setter)",
+   "doc": "CombatController::SetTarget(this, Actor*): rcx = controller, rdx = the new target (raw Actor*, the caller holds the reference), return unused; writes +0x2C targetHandle and the attacker's currentCombatTarget, the cached target, and the group bookkeeping for the old target (AE 0x804A10). Two callers per runtime: UpdateTarget (AE 33236+0x119 / SE 32489+0x151) and the clear (rdx = 0)."
+  },
+  {
    "seat": "PositionCast.CreateReferenceAtLocation",
    "kind": "function",
    "construct": "TESDataHandler::CreateReferenceAtLocation RELOCATION_ID(13625, 13723)",
@@ -4124,6 +4140,11 @@
    "seat": "NonAliasProbe.CombatMagicCaster.GetMagicTarget",
    "rva": "0x81E020",
    "source": "NonAliasProbe/CastSeats GetMagicTarget (CombatMagicCaster slot 0x0A)"
+  },
+  {
+   "seat": "TargetPin.CombatController.SetTarget.1_7_104",
+   "rva": "0x559630",
+   "source": "channels/TargetPin.cpp kSetTarget17 (1.7.104 only: AE id 33235 has no MIT-table row)"
   }
  ]
 }

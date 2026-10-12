@@ -9,6 +9,12 @@
 
 namespace apmf::targetpin {
 
+    // Harbinger 1a: install UpdateCombat layer 0 (Character vtable slot 0xE4) at APMF's own
+    // SKSEPluginLoad, as early as APMF can, so the 0xE4 hooks other plugins install later land above
+    // it and each gets a Harbinger layer of its own (the census re-hooks). Same gates as Install().
+    // MAIN thread, before kDataLoaded. Install() refuses the whole pin if this did not install.
+    void InstallLayer0();
+
     // Install the seat: Character vtable slot 0xE4 (Actor::UpdateCombat), write_vfunc,
     // chaining. Call at kDataLoaded. Idempotent. Refuses (loudly, with the reason kept for
     // NotInstalledReason) on VR, on any runtime other than exactly 1.6.1170 / 1.5.97, on

@@ -4,6 +4,19 @@ Updated 2026-10-07. Current version **v0.11.4** (DRAFT release, marth publishes 
 shipped, what's probe-gated, what's next. Keep this current in the SAME change as any
 build/finding/workflow change.
 
+## HEAD OF WORK 2026-10-11 -- HARBINGER CONTROLLER PHASE 1a, branch `feat/apmf-controller-1a`, NOT merged
+
+Plan `_research/harbinger-controller-plan-2026-10-11.md` (marth's Q1-Q15). New `core/Sources` (source registry,
+APMF_Sources.ini priorities 0-100, client identity from the calling DLL, the degrade rule, the seat census at
+kDataLoaded / kPostLoadGame / kNewGame / 60 s), `core/HarbingerMenu` (SMF page), `core/PackageSources` (package
+capture + OBSERVE-ONLY 0x4A scene probe). ch.20's 0xE4
+observer is layer 0 of the target capture: attributes OVERWRITTEN, restores the pin at the outermost layer when
+the claim outranks the named writer, re-hooks on top of a late installer. EquipSink attributes by stack scan
+(UAPNG / EDS-NG interposers) and never denies an unattributed equip. No ABI change, no co-save change. One new
+probe ([Harbinger] bSceneProbe, default 1) belongs on the pre-release checklist. Review round 1 (2026-10-11): detection probe removed (INVARIANTS #17), MFO-as-client priority, a
+proven Harbinger layer between every pair of foreign 0xE4 hooks, restore through SetTarget, #0 (f) 4 amended. Tier A, Opus
+review pending; FIELD-TEST PENDING (LoreRim, Aggro Management on in Ultra for one session).
+
 ## CUT 2026-10-07 -- v0.11.4 "Armor comes back after an outfit reset" (DRAFT release)
 
 Stamp commit `6528859`, CI run 37570965799, tag `v0.11.4`. Zip `releases/v0.11.4/APMF-v0.11.4.zip`. DRAFT, marth publishes.
@@ -61,6 +74,8 @@ list and was left as it is. `[Idle] bIdleConfirm` is a feature, not a probe.
 - `[Travel] bGateProbe2` -> 0 in `APMF.ini` (see its HEAD OF WORK entry below).
 - `[Probe] bRestoreCensus` -> 0 in `APMF.ini` AND the code default in `core/RestoreCensus.cpp` `Poll`
   (reads the key with default 1 during the field cycle). See the ANIMATED HEALS head of work below.
+- `[Harbinger] bSceneProbe` -> 0 in `APMF.ini` AND the code default in `core/PackageSources.cpp` `Install`
+  (default 1 for the Harbinger 1a field cycle), unless the probe has graduated into a seat by then. See the HARBINGER 1a head of work above.
 
 ## HEAD OF WORK 2026-10-06 -- SPELLS-ONLY FLOOR (ABI v20), branch `fix/apmf-floor-spells-only`, NOT merged
 

@@ -1,4 +1,5 @@
 #include "PCH.h"
+#include "core/Sources.h"   // Harbinger 1a: seat census
 #include "core/Allowance.h"   // SeatVerified(), RuntimeSupported(), IsRuntime1_7_104()
 #include "core/Log.h"
 #include "core/Clock.h"
@@ -373,6 +374,9 @@ namespace apmf::handblock {
             g_slots[i].vt   = vt.address();
             g_slots[i].tag  = spec.tag;
             g_slots[i].orig = vt.write_vfunc(kCheckShouldEquip, &CheckShouldEquipThunk);
+            apmf::sources::NoteVfunc(apmf::sources::Facet::kEquip, fmt::format("HandBlock.{}.CheckShouldEquip", spec.tag),
+                                     vt.address(), kCheckShouldEquip, SKSE::stl::unrestricted_cast<std::uintptr_t>(&CheckShouldEquipThunk),
+                                     g_slots[i].orig);
             ++n;
         }
         g_seatArmed.store(n > 0, std::memory_order_release);

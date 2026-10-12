@@ -19,7 +19,7 @@
 
 namespace apmf::VerifiedAddresses
 {
-	// 1.6.1170.0: 205 rows
+	// 1.6.1170.0: 206 rows
 	inline constexpr REL::SelfCheck::Row kRows_1_6_1170[] = {
 		{ 207886, 0x18A5558, 0x0, 0, {  }, "Character" },
 		{ 212096, 0x18D7388, 0x0, 0, {  }, "CombatTargetSelectorStandard" },
@@ -175,6 +175,7 @@ namespace apmf::VerifiedAddresses
 		{ 38929, 0x6CBE30, 0x0, 0, {  }, "EquipSink.Worker" },
 		{ 38894, 0x6C9820, 0x170, 1, { 0xE8 }, "EquipSink.Site.EquipObject" },
 		{ 38893, 0x6C9730, 0xBC, 1, { 0xE8 }, "EquipSink.Site.EquipObjectList" },
+		{ 33235, 0x559630, 0x0, 0, {  }, "TargetPin.CombatController.SetTarget" },
 		{ 13723, 0x1B6C10, 0x0, 0, {  }, "PositionCast.CreateReferenceAtLocation" },
 		{ 13322, 0x19E850, 0x0, 0, {  }, "PositionCast.TES.GetCell" },
 		{ 34408, 0x5BBFA0, 0x0, 0, {  }, "PositionCast.InterruptCast" },
@@ -228,7 +229,7 @@ namespace apmf::VerifiedAddresses
 		{ 12332, 0x179710, 0x0, 0, {  }, "CommonLib.LookupReferenceByHandle" },
 	};
 
-	// 1.5.97.0: 205 rows
+	// 1.5.97.0: 206 rows
 	inline constexpr REL::SelfCheck::Row kRows_1_5_97[] = {
 		{ 261397, 0x165DA40, 0x0, 0, {  }, "Character" },
 		{ 265605, 0x1690A98, 0x0, 0, {  }, "CombatTargetSelectorStandard" },
@@ -384,6 +385,7 @@ namespace apmf::VerifiedAddresses
 		{ 37974, 0x639E20, 0x0, 0, {  }, "EquipSink.Worker" },
 		{ 37938, 0x637A80, 0xE5, 1, { 0xE8 }, "EquipSink.Site.EquipObject" },
 		{ 37937, 0x637990, 0xBC, 1, { 0xE8 }, "EquipSink.Site.EquipObjectList" },
+		{ 32488, 0x4FDFE0, 0x0, 0, {  }, "TargetPin.CombatController.SetTarget" },
 		{ 13625, 0x16C210, 0x0, 0, {  }, "PositionCast.CreateReferenceAtLocation" },
 		{ 13177, 0x155090, 0x0, 0, {  }, "PositionCast.TES.GetCell" },
 		{ 33630, 0x54CB70, 0x0, 0, {  }, "PositionCast.InterruptCast" },
@@ -437,8 +439,9 @@ namespace apmf::VerifiedAddresses
 		{ 12204, 0x1329D0, 0x0, 0, {  }, "CommonLib.LookupReferenceByHandle" },
 	};
 
-	// 1.7.104.0: 218 rows
-	// 28 NOT VERIFIED on 1.7.104.0, deliberately absent from this table (the seat is refused):
+	// 1.7.104.0: 219 rows
+	// 29 NOT VERIFIED on 1.7.104.0, deliberately absent from this table (the seat is refused):
+	//   TargetPin.CombatController.SetTarget (1.6.1170 id 33235): id 33235 is not in the idmap
 	//   EquipSink.Path.OutfitApply.24234 (1.6.1170 id -): BY DESIGN: 1.5.97-only label. On 1.6.1170 and 1.7.104 the code reads its AE twin EquipSink.Path.OutfitApply.418622 (AE id 418622, 1.7.104 0x3C4440), whose own row carries the 1.7.104 fact (MAPPED-AE)
 	//   EquipSink.Path.AddWornOutfit.19266 (1.6.1170 id -): BY DESIGN: 1.5.97-only label. On 1.6.1170 and 1.7.104 the code reads its AE twin EquipSink.Path.AddWornOutfit.19692 (AE id 19692, 1.7.104 0x2E8070), whose own row carries the 1.7.104 fact (MAPPED-AE)
 	//   EquipSink.Path.AiCommand.38618 (1.6.1170 id -): BY DESIGN: 1.5.97-only label. On 1.6.1170 and 1.7.104 the code reads its AE twin EquipSink.Path.AiCommand.39649 (AE id 39649, 1.7.104 0x70F670), whose own row carries the 1.7.104 fact (MAPPED-AE)
@@ -686,6 +689,7 @@ namespace apmf::VerifiedAddresses
 		{ 0, 0x829150, 0x0, 0, {  }, "EquipGate.CallSiteName.return-814270" },
 		{ 0, 0x829392, 0x0, 0, {  }, "EquipGate.CallSiteName.return-8144B2" },
 		{ 0, 0x833510, 0x0, 0, {  }, "NonAliasProbe.CombatMagicCaster.GetMagicTarget" },
+		{ 0, 0x5614A0, 0x0, 0, {  }, "TargetPin.CombatController.SetTarget.1_7_104" },
 	};
 
 	inline constexpr REL::SelfCheck::Table kTables[] = {

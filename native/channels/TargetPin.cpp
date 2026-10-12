@@ -6,7 +6,9 @@
 #include "core/Log.h"
 #include "core/Registry.h"
 #include "core/Sightline.h"   // ABI v18 kTargetPin_OwnLineOfSight
+#include "core/Sources.h"     // Harbinger 1a: target capture, census, priorities
 
+#include <intrin.h>   // _ReturnAddress: the 0xE4 layers' segment proof
 #include <shared_mutex>
 
 // Win32 INI reader, declared by hand (the PCH does not pull in <Windows.h>) -- the same
@@ -64,8 +66,16 @@ extern "C" __declspec(dllimport) unsigned long __stdcall GetPrivateProfileIntA(
 // read of +0x2C at AE 0x6B6F34 / SE 0x6257C4 included). That is the "block engine
 // pinning" marth asked for.
 //
-// THE OBSERVER (not a belt). Character vtable slot 0xE4 (UpdateCombat) is also hooked,
-// OBSERVE-ONLY: it writes nothing. For a pinned actor it snapshots the selector seat's
+// HARBINGER 1a (2026-10-11, plan harbinger-controller-plan-2026-10-11.md, marth Q1/Q4/Q13):
+// the 0xE4 observer below is now LAYER 0 of Harbinger's target capture. It still judges the
+// two failures described next, and in addition attributes an OVERWRITTEN to the hook that
+// wrote it (census of the 0xE4 chain, core/Sources) and, when the pin claim's priority is
+// strictly higher than that writer's, RESTORES the pin at the outermost layer after every
+// chained hook ran, through the engine's own CombatController::SetTarget. Each segment of the
+// 0xE4 chain is proven to hold one module; a write in an unproven segment is a DEFECT, allowed
+// and alerted. INVARIANTS #0 (f) condition 4 as amended 2026-10-11. See "THE 0xE4 LAYERS" below.
+// THE OBSERVER (not a belt) -- the original design, kept as layer 0's judgement. Character
+// vtable slot 0xE4 (UpdateCombat) is also hooked; before Harbinger 1a it wrote nothing. For a pinned actor it snapshots the selector seat's
 // counters before the engine's update and, after it, checks the outcome. If the actor
 // ends the update aimed at someone else while the seat was NEVER CALLED, that is a
 // SOURCE-SEAT MISS and it is logged loudly (principle 7: a miss must show, not be
@@ -94,8 +104,9 @@ extern "C" __declspec(dllimport) unsigned long __stdcall GetPrivateProfileIntA(
 //     denied, by design (#0 (f) condition 2).
 //   * another framework's OWN currentCombatTarget / targetHandle write (e.g. a later
 //     UpdateCombat hook, SmartNPCTargetSelector, MFO's own Targeting hook until MFO
-//     defers) -- NOT denied (ch.6 row 6 gap, unchanged). The observer reports it as
-//     OVERWRITTEN; Docs/REVIEW-BACKLOG.md carries the MFO closure.
+//     defers) -- since Harbinger 1a ARBITRATED BY PRIORITY at the outermost 0xE4 layer:
+//     restored when the claim outranks the named writer, kept otherwise, and allowed +
+//     alerted when the writer cannot be named.
 //   * NOTHING ELSE is claimed: no attack selection, casting, equip, movement, aggression
 //     or combat entry.
 //
@@ -207,6 +218,7 @@ namespace {
     static_assert(offsetof(RE::CombatController, combatGroup) < 0x68);
     static_assert(offsetof(RE::CombatController, attackerHandle) < 0x68);
     static_assert(offsetof(RE::CombatController, targetHandle) < 0x68);
+    static_assert(offsetof(RE::CombatController, previousTargetHandle) == 0x30);   // Harbinger 1a restore
     // CombatGroup: targets at +0x08 (BSTArray: data +0x08, size +0x18), CombatTarget
     // stride 0xA8 with the handle at +0x00, lock at +0x160 -- verified on both runtimes
     // (group ctor AE 0x803240 / SE 0x769DF0; target walk AE 0x804A10 / SE 0x76B0F0).
@@ -370,86 +382,380 @@ namespace {
     };
 
     constexpr std::size_t kSelectTargetSlot = 0x06;   // CombatTargetSelector::SelectTarget (both runtimes)
+    // 1.7.104 raw RVA of CombatController::SetTarget (tools/verified_addresses idmap-1.7.104-apmf.csv
+    // rva:0x559630 -> 0x5614A0, VerifiedAddresses row TargetPin.CombatController.SetTarget.1_7_104).
+    constexpr std::uintptr_t kSetTarget17 = 0x5614A0;
 
-    // OBSERVE-ONLY. Writes nothing. See "THE OBSERVER" in the header.
-    struct UpdateCombatObserver {
-        static void thunk(RE::Actor* a_this) {
+    // ------------------------------------------------------------------------------------
+    // THE 0xE4 LAYERS (Harbinger controller 1a, plan "Target claim / pin", marth Q1 / Q13, and the
+    // design rule of 2026-10-11: "harbinger should ALWAYS be able to tell").
+    //
+    // A HARBINGER LAYER BETWEEN EVERY PAIR OF FOREIGN HOOKS. Layer 0 is installed at APMF's own
+    // SKSEPluginLoad (InstallLayer0), as early as APMF can, so it normally wraps the engine's
+    // UpdateCombat alone and every other plugin's 0xE4 hook lands ON TOP of it. Each time the census
+    // (core/Sources: kPostLoad, kPostPostLoad, kInputLoaded, kDataLoaded, kPostLoadGame, kNewGame,
+    // every 60 s) finds a new foreign hook on the slot, Harbinger installs a new layer directly above
+    // it (RehookOnTop, up to kMaxLayers - 1 re-hooks). So segment i -- the code between layer i and
+    // layer i-1 -- is normally EXACTLY ONE foreign module (segment 0: the engine alone).
+    //
+    // PROOF, NOT ASSUMPTION. Each layer records the return address of whoever called it. Segment i
+    // (i >= 1) is single-module only if layer i-1 was called from inside the image of the module layer
+    // i wraps (the module that hooked over layer i-1 calls it directly). Segment 0 is engine-only only
+    // if layer 0 displaced the engine's own function. Two plugins hooking the slot inside one SKSE
+    // dispatch window (no census can run between them) share a segment: the caller check FAILS, that is
+    // logged loudly as an ATTRIBUTION DEFECT, and nothing is enforced in that segment. Harbinger cannot
+    // put a layer between them afterwards without patching the plugins' own saved pointers.
+    //
+    // Per combat update of a PINNED actor the layers run nested on one thread; each records the actor's
+    // target when the chain below it returns. The FIRST layer entered (the outermost) judges:
+    //   * SOURCE SEAT MISSED (unchanged): aimed elsewhere, the selector seat never called.
+    //   * OVERWRITTEN: the seat answered with the pin this update and the actor still ends aimed
+    //     elsewhere. Every segment whose exit value differs from the one below it WROTE the target; its
+    //     writer is that segment's proven module (segment 0: the Engine). A write in a segment that is
+    //     not proven single-module is a DEFECT: allowed + alerted (the degrade rule, Q4), never undone.
+    //   * Otherwise the claim's priority (its client's, APMF_Sources.ini [Target]) is compared with every
+    //     writer's. Strictly higher -> Harbinger RESTORES the pin at the outermost layer, after every
+    //     chained hook ran (Q1), through the engine's own CombatController::SetTarget (AE 33235 / SE 32488
+    //     / 1.7.104 raw 0x5614A0, rcx = controller, rdx = Actor*): targetHandle, currentCombatTarget, the
+    //     cached target and the group bookkeeping of the target it replaces, exactly as UpdateTarget does.
+    //     previousTargetHandle is put back to its value before the update with a plain store (SetTarget and
+    //     UpdateTarget never write +0x30; the writers did) -- the one field written directly. Logged
+    //     `captured <src> overruled`. Equal or lower -> `captured <src> stands`.
+    // The seat answering with the pin already proved the pin alive, loaded and one of the group's targets
+    // this update, so the restore never starts or revives a fight (#0 (f), amended condition 4).
+    // THREADING: the BSJobs worker running this actor's UpdateCombat (the same thread UpdateTarget calls
+    // SetTarget on); the frame is thread_local; per-layer data are atomics written on the main thread
+    // before the layer is published by the vtable write.
+    // ------------------------------------------------------------------------------------
+    constexpr int kMaxLayers = 8;   // layer 0 + seven re-hooks
+    std::atomic<int>            g_layerCount{ 0 };   // layers installed (main thread writes)
+    std::atomic<int>            g_segSrc[kMaxLayers]{ -1, -1, -1, -1, -1, -1, -1, -1 };
+    std::atomic<std::uintptr_t> g_layerFunc[kMaxLayers]{};   // what each layer chains to
+    std::atomic<std::uintptr_t> g_segLo[kMaxLayers]{}, g_segHi[kMaxLayers]{};   // image of that module
+    std::atomic<bool>           g_seg0EngineOnly{ false };
+    std::atomic<bool>           g_defectLogged[kMaxLayers]{};
+    std::uintptr_t              g_vtCharAddr = 0;
+
+    using SetTarget_t = void (*)(RE::CombatController*, RE::Actor*);
+    std::atomic<std::uintptr_t> g_setTarget{ 0 };   // 0 = the setter is not verified: no restore
+
+    struct Frame {
+        int             depth = 0;
+        RE::FormID      actor = 0;
+        RE::FormID      tf    = 0;
+        std::uint32_t   hits0 = 0, denied0 = 0, held0 = 0;
+        RE::CombatController* ccBefore = nullptr;
+        RE::ActorHandle curBefore{};
+        RE::ActorHandle prevBefore{};
+        RE::ActorHandle exitAt[kMaxLayers]{};
+        bool            exitValid[kMaxLayers]{};
+        std::uintptr_t  callerRet[kMaxLayers]{};
+    };
+    thread_local Frame t_frame;
+
+    struct TargetCapture {   // per pinned actor, the Harbinger-level counters (logged on release)
+        std::atomic<std::uint32_t> restored{ 0 }, stood{ 0 }, unattributed{ 0 };
+        std::atomic<std::uint64_t> lastLogMs{ 0 };
+    };
+    std::mutex                                                   g_capMx;
+    std::unordered_map<RE::FormID, std::unique_ptr<TargetCapture>> g_cap;
+
+    TargetCapture& CaptureFor(RE::FormID id) {
+        std::scoped_lock lk(g_capMx);
+        auto& p = g_cap[id];
+        if (!p) p = std::make_unique<TargetCapture>();
+        return *p;
+    }
+
+    // Is segment `i` proven to hold exactly one module (segment 0: the engine alone)? Logs a failed
+    // proof once per segment, loudly.
+    bool SegmentProven(const Frame& fr, int i, RE::FormID self) {
+        bool        ok   = false;
+        const char* why  = "";
+        if (i == 0) {
+            ok  = g_seg0EngineOnly.load(std::memory_order_relaxed);
+            why = "layer 0 did not displace the engine's own UpdateCombat (a plugin hooked the slot before "
+                  "APMF loaded), so what runs below it cannot be told apart";
+        } else {
+            const auto lo = g_segLo[i].load(std::memory_order_relaxed), hi = g_segHi[i].load(std::memory_order_relaxed);
+            ok = g_segSrc[i].load(std::memory_order_relaxed) >= 0 && fr.exitValid[i - 1] && lo < hi &&
+                 fr.callerRet[i - 1] >= lo && fr.callerRet[i - 1] < hi;
+            why = "the layer below was not called from the module this layer wraps: another module sits between "
+                  "them (two plugins hooked the slot inside one load window)";
+        }
+        if (!ok && !g_defectLogged[i].exchange(true, std::memory_order_relaxed)) {
+            spdlog::error("[ch.20] ATTRIBUTION DEFECT on Character::UpdateCombat segment {} (actor 0x{}): {}. Writes in "
+                          "this segment are allowed and alerted, never enforced. (logged once per segment)",
+                          i, Hex(self), why);
+        }
+        return ok;
+    }
+
+    void Judge(RE::Actor* a_this) {
+        const Frame& fr = t_frame;
+        const RE::FormID self = fr.actor;
+        const RE::FormID tf   = fr.tf;
+        if (tf == 0 || !fr.ccBefore) return;
+        auto* cc = a_this->GetActorRuntimeData().combatController;
+        if (a_this->IsDead() || !cc) return;
+        APMF_API::APMF_Param claim{};
+        float                basis = 0.0f;
+        APMF_API::Handle     claimH = APMF_API::kInvalidHandle;
+        if (!apmf::ControlMap::Get().TryGetOwningClaimBasis(self, APMF_API::kIntent_TargetPin, claim, basis, &claimH) ||
+            claim.form != tf)
+            return;
+
+        std::shared_lock lk(g_pinMx);
+        const auto it = g_pins.find(self);
+        if (it == g_pins.end() || it->second.target != tf) return;
+        const Pin& pin = it->second;
+
+        auto currentPtr = a_this->GetActorRuntimeData().currentCombatTarget.get();
+        if (!currentPtr) return;                    // no target: nothing to judge
+        auto targetPtr = pin.handle.get();
+        if (!targetPtr || currentPtr.get() == targetPtr.get()) return;   // on the pin, or pin gone
+
+        const auto hits1   = pin.seatHits.load(std::memory_order_relaxed);
+        const auto denied1 = pin.denied.load(std::memory_order_relaxed);
+        const auto held1   = pin.held.load(std::memory_order_relaxed);
+        // A MISS: the seat was not called this update AND either the target CHANGED during
+        // the update (whatever the seat decided last time -- a sticky decline must not hide
+        // a real miss for good), or it is unchanged and the seat's last decision was not a
+        // decline (a declined pin legitimately leaves the engine's standing pick in place).
+        const bool changed = a_this->GetActorRuntimeData().currentCombatTarget != fr.curBefore;
+        if (hits1 == fr.hits0 && (changed || pin.lastDecision.load(std::memory_order_relaxed) != 2)) {
+            const auto n = pin.seatMissed.fetch_add(1, std::memory_order_relaxed) + 1;
+            if (RateOk(pin.lastMissLogMs)) {
+                spdlog::warn("[ch.20] 0x{} SOURCE SEAT MISSED: the actor ended its combat update aimed at 0x{}, "
+                             "not the pin 0x{}, and the target-selector seat was never called for it. The pin "
+                             "is NOT holding. ({} so far)",
+                             Hex(self), Hex(currentPtr->GetFormID()), Hex(tf), n);
+            }
+            return;
+        }
+        const bool answered = hits1 != fr.hits0 && (denied1 != fr.denied0 || held1 != fr.held0) &&
+                              pin.lastDecision.load(std::memory_order_relaxed) == 1;
+        if (!answered) return;   // the seat ran and declined for a logged, counted reason
+
+        // OVERWRITTEN. Who wrote it: walk the segments from the innermost out.
+        const auto n = pin.overwritten.fetch_add(1, std::memory_order_relaxed) + 1;
+        const RE::ActorHandle pinH = pin.handle;
+        RE::ActorHandle below = pinH;   // the seat's answer, applied inside the engine's update
+        apmf::sources::SourceId writers[kMaxLayers]{ -1, -1, -1, -1, -1, -1, -1, -1 };
+        int  nWriters = 0;
+        bool unproven = false;
+        for (int i = 0; i < kMaxLayers; ++i) {
+            if (!fr.exitValid[i]) continue;
+            if (fr.exitAt[i] != below) {
+                if (!SegmentProven(fr, i, self)) unproven = true;
+                else writers[nWriters++] = i == 0 ? apmf::sources::kEngineSource : g_segSrc[i].load(std::memory_order_relaxed);
+            }
+            below = fr.exitAt[i];
+        }
+        auto& cap = CaptureFor(self);
+        const bool logNow = RateOk(cap.lastLogMs);
+        for (int w = 0; w < nWriters; ++w) apmf::sources::NoteHit(writers[w], apmf::sources::Facet::kTarget);
+        if (unproven || nWriters == 0) {
+            cap.unattributed.fetch_add(1, std::memory_order_relaxed);
+            if (logNow) {
+                spdlog::warn("[ch.20] 0x{} OVERWRITTEN: the selector seat answered with the pin 0x{}, but the actor "
+                             "ended its combat update aimed at 0x{}, written in a segment Harbinger cannot prove (see "
+                             "the ATTRIBUTION DEFECT line). ALLOWED. ({} so far)",
+                             Hex(self), Hex(tf), Hex(currentPtr->GetFormID()), n);
+            }
+            apmf::sources::Unattributed(apmf::sources::Facet::kTarget, self,
+                                        "DEFECT: the combat target was rewritten in an unproven 0xE4 segment");
+            return;
+        }
+        apmf::sources::SourceId client = apmf::sources::kNoSource;
+        const int claimPrio = apmf::sources::ClaimPriority(claimH, apmf::sources::Facet::kTarget, &client);
+        int  topPrio = -1;
+        apmf::sources::SourceId top = writers[0];
+        for (int w = 0; w < nWriters; ++w) {
+            const int p = apmf::sources::Priority(writers[w], apmf::sources::Facet::kTarget);
+            if (p > topPrio) { topPrio = p; top = writers[w]; }
+        }
+        const std::string clientName = client != apmf::sources::kNoSource
+                                           ? std::string(apmf::sources::Name(client)) : std::string("an internal claim");
+        const auto setTarget = reinterpret_cast<SetTarget_t>(g_setTarget.load(std::memory_order_relaxed));
+        // SetTarget writes the attacker's currentCombatTarget through the controller's attacker handle
+        // without a null check (AE 0x55972E): call it only when that handle resolves to this actor.
+        bool attackerOk = false;
+        if (claimPrio > topPrio && setTarget) {
+            auto att   = cc->attackerHandle.get();
+            attackerOk = att && att.get() == a_this;
+            if (!attackerOk && logNow) {
+                spdlog::warn("[ch.20] 0x{} restore SKIPPED: the combat controller's attacker handle does not resolve "
+                             "to this actor, and SetTarget writes through it unchecked. {} stands this update.",
+                             Hex(self), apmf::sources::Name(top));
+            }
+        }
+        if (claimPrio > topPrio && setTarget && attackerOk) {
+            setTarget(cc, targetPtr.get());               // the engine's own setter, as UpdateTarget calls it
+            cc->previousTargetHandle = fr.prevBefore;      // never written by SetTarget / UpdateTarget
+            const bool held = a_this->GetActorRuntimeData().currentCombatTarget == pinH;
+            cap.restored.fetch_add(1, std::memory_order_relaxed);
+            for (int w = 0; w < nWriters; ++w) apmf::sources::NoteOverruled(writers[w], apmf::sources::Facet::kTarget);
+            if (logNow) {   // rate-limited, including the "still not the pin" case (review round 2)
+                spdlog::info("[ch.20] 0x{} captured {} overruled: it rewrote the target to 0x{} after the seat answered "
+                             "with the pin; the pin claim ({} priority {}) outranks it (priority {}), so Harbinger "
+                             "restored the pin 0x{} through CombatController::SetTarget at the outermost UpdateCombat "
+                             "layer{}. ({} restore(s))",
+                             Hex(self), apmf::sources::Name(top), Hex(currentPtr->GetFormID()), clientName, claimPrio,
+                             topPrio, Hex(tf), held ? "" : " -- BUT the actor's target is still not the pin after it",
+                             cap.restored.load(std::memory_order_relaxed));
+            }
+        } else {
+            cap.stood.fetch_add(1, std::memory_order_relaxed);
+            for (int w = 0; w < nWriters; ++w) apmf::sources::NoteStood(writers[w], apmf::sources::Facet::kTarget);
+            if (logNow) {
+                spdlog::info("[ch.20] 0x{} captured {} stands: it rewrote the target to 0x{} after the seat answered "
+                             "with the pin 0x{}; {}. ({} so far)",
+                             Hex(self), apmf::sources::Name(top), Hex(currentPtr->GetFormID()), Hex(tf),
+                             !setTarget ? std::string("the engine's SetTarget was not verified on this build, so "
+                                                      "Harbinger does not restore")
+                             : claimPrio > topPrio
+                                 ? std::string("the restore was skipped: the controller's attacker handle does not "
+                                               "resolve to this actor")
+                                 : fmt::format("its priority {} is not below the pin claim's ({} priority {})",
+                                               topPrio, clientName, claimPrio),
+                             cap.stood.load(std::memory_order_relaxed));
+            }
+        }
+    }
+
+    // The shared layer body. `a_layer` = this layer's index; `a_next` = what it chains to; `a_ret` =
+    // the return address of whoever called this layer (the proof that a segment is one module).
+    void LayerBody(int a_layer, RE::Actor* a_this, void (*a_next)(RE::Actor*), std::uintptr_t a_ret) {
+        Frame& fr = t_frame;
+        if (fr.depth == 0) {
             if (g_pinCount.load(std::memory_order_relaxed) == 0 || !a_this) {
-                func(a_this);
+                a_next(a_this);
                 return;
             }
             const RE::FormID self = a_this->GetFormID();
             RE::FormID       tf   = 0;
-            std::uint32_t    hits0 = 0, denied0 = 0;
+            std::uint32_t    hits0 = 0, denied0 = 0, held0 = 0;
             {
                 std::shared_lock lk(g_pinMx);
                 if (const auto it = g_pins.find(self); it != g_pins.end()) {
                     tf      = it->second.target;
                     hits0   = it->second.seatHits.load(std::memory_order_relaxed);
                     denied0 = it->second.denied.load(std::memory_order_relaxed);
+                    held0   = it->second.held.load(std::memory_order_relaxed);
                 }
             }
+            if (tf == 0) {   // not pinned: nothing to observe, no frame
+                a_next(a_this);
+                return;
+            }
+            fr = Frame{};
+            fr.actor   = self;
+            fr.tf      = tf;
+            fr.hits0   = hits0;
+            fr.denied0 = denied0;
+            fr.held0   = held0;
             // F-A: UpdateCombat skips UpdateTarget on purpose on its early-outs (form flag
             // bit 21; IsDead(true); no current process; the 0xA9 extra-data test -- AE
             // 0x6B6E8F / 0x6B6EA9 / 0x6B6EB7 / 0x6B6EC7-0x6B6ED3, SE 0x62571F / 0x625739 /
-            // 0x625747 / 0x625757-0x625763; and no controller). Those paths still sync the
-            // controller's target into currentCombatTarget (AE 0x662BE0 / SE 0x5D2470). A
-            // MISS is judged only when the actor is alive and had a controller both before
-            // and after the update.
-            auto* const ccBefore = tf ? a_this->GetActorRuntimeData().combatController : nullptr;
-            // Closing round F2: the target BEFORE the update, so a change made during it with no
-            // seat call is a MISS whatever the seat decided last time.
-            const RE::ActorHandle curBefore = a_this->GetActorRuntimeData().currentCombatTarget;
-
-            func(a_this);   // the engine's update, with the selector seat inside it
-
-            if (tf == 0 || !ccBefore) return;
-            if (a_this->IsDead() || !a_this->GetActorRuntimeData().combatController) return;
-            APMF_API::APMF_Param claim{};
-            if (!apmf::ControlMap::Get().TryGetOwningClaim(self, APMF_API::kIntent_TargetPin, claim) ||
-                claim.form != tf)
-                return;
-
-            std::shared_lock lk(g_pinMx);
-            const auto it = g_pins.find(self);
-            if (it == g_pins.end() || it->second.target != tf) return;
-            const Pin& pin = it->second;
-
-            auto currentPtr = a_this->GetActorRuntimeData().currentCombatTarget.get();
-            if (!currentPtr) return;                    // no target: nothing to judge
-            auto targetPtr = pin.handle.get();
-            if (!targetPtr || currentPtr.get() == targetPtr.get()) return;   // on the pin, or pin gone
-
-            const auto hits1   = pin.seatHits.load(std::memory_order_relaxed);
-            const auto denied1 = pin.denied.load(std::memory_order_relaxed);
-            // A MISS: the seat was not called this update AND either the target CHANGED during
-            // the update (whatever the seat decided last time -- a sticky decline must not hide
-            // a real miss for good), or it is unchanged and the seat's last decision was not a
-            // decline (a declined pin legitimately leaves the engine's standing pick in place).
-            const bool changed = a_this->GetActorRuntimeData().currentCombatTarget != curBefore;
-            if (hits1 == hits0 && (changed || pin.lastDecision.load(std::memory_order_relaxed) != 2)) {
-                const auto n = pin.seatMissed.fetch_add(1, std::memory_order_relaxed) + 1;
-                if (RateOk(pin.lastMissLogMs)) {
-                    spdlog::warn("[ch.20] 0x{} SOURCE SEAT MISSED: the actor ended its combat update aimed at 0x{}, "
-                                 "not the pin 0x{}, and the target-selector seat was never called for it. The pin "
-                                 "is NOT holding. ({} so far)",
-                                 Hex(self), Hex(currentPtr->GetFormID()), Hex(tf), n);
-                }
-            } else if (denied1 != denied0) {
-                const auto n = pin.overwritten.fetch_add(1, std::memory_order_relaxed) + 1;
-                if (RateOk(pin.lastOverwriteLogMs)) {
-                    spdlog::warn("[ch.20] 0x{} OVERWRITTEN: the selector seat answered with the pin 0x{}, but the "
-                                 "actor ended its combat update aimed at 0x{} -- something wrote the target after "
-                                 "the seat (another mod's hook, or another engine path). ({} so far)",
-                                 Hex(self), Hex(tf), Hex(currentPtr->GetFormID()), n);
-                }
+            // 0x625747 / 0x625757-0x625763; and no controller). A MISS is judged only when the
+            // actor is alive and had a controller both before and after the update.
+            fr.ccBefore  = a_this->GetActorRuntimeData().combatController;
+            fr.curBefore = a_this->GetActorRuntimeData().currentCombatTarget;
+            if (fr.ccBefore) fr.prevBefore = fr.ccBefore->previousTargetHandle;
+            fr.callerRet[a_layer] = a_ret;
+            fr.depth = 1;
+            a_next(a_this);   // the whole chain below, the selector seat inside the engine's update
+            fr.exitAt[a_layer]    = a_this->GetActorRuntimeData().currentCombatTarget;
+            fr.exitValid[a_layer] = true;
+            fr.depth = 0;
+            try {
+                Judge(a_this);
+            } catch (...) {
             }
-            // else: the seat ran and declined for a logged, counted reason.
+            fr = Frame{};
+            return;
         }
+        // Nested inside the outermost layer: the same actor's update (any other actor here
+        // would be a re-entrant UpdateCombat, which the engine does not do -- pass it through).
+        if (!a_this || a_this->GetFormID() != fr.actor) {
+            a_next(a_this);
+            return;
+        }
+        fr.callerRet[a_layer] = a_ret;
+        ++fr.depth;
+        a_next(a_this);
+        --fr.depth;
+        fr.exitAt[a_layer]    = a_this->GetActorRuntimeData().currentCombatTarget;
+        fr.exitValid[a_layer] = true;
+    }
 
+    // Layer 0, installed at SKSEPluginLoad (InstallLayer0).
+    struct UpdateCombatObserver {
+        static void thunk(RE::Actor* a_this) {
+            LayerBody(0, a_this, Next, reinterpret_cast<std::uintptr_t>(_ReturnAddress()));
+        }
+        static void Next(RE::Actor* a) { func(a); }
         static inline REL::Relocation<decltype(thunk)> func;
         static constexpr std::size_t idx = 0xE4;   // Actor::UpdateCombat (SE == AE index)
     };
+
+    // Layers 1..7, installed by the census directly above each new foreign hook (Q13).
+    template <int N>
+    struct OuterLayer {
+        static void Next(RE::Actor* a) {
+            reinterpret_cast<void (*)(RE::Actor*)>(g_layerFunc[N].load(std::memory_order_acquire))(a);
+        }
+        static void thunk(RE::Actor* a_this) {
+            LayerBody(N, a_this, Next, reinterpret_cast<std::uintptr_t>(_ReturnAddress()));
+        }
+    };
+
+    std::uintptr_t LayerThunk(int n) {
+        switch (n) {
+        case 1: return reinterpret_cast<std::uintptr_t>(&OuterLayer<1>::thunk);
+        case 2: return reinterpret_cast<std::uintptr_t>(&OuterLayer<2>::thunk);
+        case 3: return reinterpret_cast<std::uintptr_t>(&OuterLayer<3>::thunk);
+        case 4: return reinterpret_cast<std::uintptr_t>(&OuterLayer<4>::thunk);
+        case 5: return reinterpret_cast<std::uintptr_t>(&OuterLayer<5>::thunk);
+        case 6: return reinterpret_cast<std::uintptr_t>(&OuterLayer<6>::thunk);
+        case 7: return reinterpret_cast<std::uintptr_t>(&OuterLayer<7>::thunk);
+        default: return 0;
+        }
+    }
+
+    void SetSegment(int n, std::uintptr_t a_wrapped) {
+        const auto src = apmf::sources::ForAddress(a_wrapped, apmf::sources::Kind::kHook);
+        std::uintptr_t lo = 0, hi = 0;
+        if (!apmf::sources::ModuleRange(a_wrapped, lo, hi)) lo = hi = 0;
+        g_segSrc[n].store(src == apmf::sources::kEngineSource ? -1 : src, std::memory_order_relaxed);
+        g_segLo[n].store(lo, std::memory_order_relaxed);
+        g_segHi[n].store(hi, std::memory_order_relaxed);
+        g_layerFunc[n].store(a_wrapped, std::memory_order_release);
+    }
+
+    // The census found slot 0xE4 holding `a_current` (a foreign hook installed over Harbinger's
+    // outermost layer). Put a new layer directly above it. MAIN thread.
+    std::uintptr_t RehookOnTop(std::uintptr_t a_current) {
+        const int n = g_layerCount.load(std::memory_order_relaxed);
+        if (n >= kMaxLayers || !g_vtCharAddr) {
+            spdlog::error("[ch.20] slot 0xE4 was hooked over again and all {} Harbinger layers are in use -- NOT "
+                          "re-hooking; writes above the last layer are not attributed (a DEFECT, logged per update).",
+                          kMaxLayers);
+            return 0;
+        }
+        SetSegment(n, a_current);   // before the slot points at the layer
+        REL::Relocation<std::uintptr_t> vtChar{ RE::VTABLE_Character[0] };
+        const std::uintptr_t was = vtChar.write_vfunc(UpdateCombatObserver::idx, LayerThunk(n));
+        if (was != a_current) SetSegment(n, was);   // it moved between the census read and our write
+        g_layerCount.store(n + 1, std::memory_order_relaxed);
+        const int seg = g_segSrc[n].load();
+        spdlog::warn("[ch.20] Harbinger layer {} installed directly above {} on Character::UpdateCombat (0xE4): that "
+                     "module's target writes are attributed to it alone and arbitrated by priority ([Target] in "
+                     "APMF_Sources.ini).",
+                     n, seg >= 0 ? std::string(apmf::sources::Name(seg)) : std::string("an unnamed hook"));
+        return LayerThunk(n);
+    }
 
     // Resolve `param.form` on the game thread and (re)write this actor's entry. A refused
     // target (not an actor, 0, self) ERASES the entry, so the claim stays live but inert and
@@ -531,6 +837,21 @@ namespace {
                 }
                 g_pinCount.store(g_pins.size(), std::memory_order_relaxed);
             }
+            std::uint32_t restored = 0, stood = 0, unattrib = 0;
+            {
+                std::scoped_lock lk(g_capMx);
+                if (const auto ci = g_cap.find(id); ci != g_cap.end()) {
+                    restored = ci->second->restored.load();
+                    stood    = ci->second->stood.load();
+                    unattrib = ci->second->unattributed.load();
+                    g_cap.erase(ci);
+                }
+            }
+            if (had && (restored || stood || unattrib)) {
+                spdlog::info("[ch.20] 0x{} Harbinger target capture over this pin: {} outside write(s) overruled "
+                             "(pin restored), {} outranked the claim and stood, {} unattributed and allowed.",
+                             Hex(id), restored, stood, unattrib);
+            }
             if (had) {
                 spdlog::info("[ch.20] 0x{} target-pin released ({}) (target 0x{}): selector seat called {} time(s) -- "
                              "denied the engine's pick {}, engine already on the pin {}, engine had no target {}, "
@@ -550,30 +871,75 @@ namespace {
 
 namespace apmf::targetpin {
 
+    // The gates shared by both install steps; nullptr = open.
+    const char* RefusedWhy() {
+        if (REL::Module::IsVR()) return "VR runtime (the seats are verified on 1.6.1170, 1.5.97 and 1.7.104 only)";
+        if (!apmf::allowance::RuntimeSupported())   // F2b: 1.7.104 proven (selectors, 0xE4, CombatGroup)
+            return "runtime is not exactly 1.6.1170, 1.5.97 or 1.7.104 (the seats are verified on those three only)";
+        if (GetPrivateProfileIntA("TargetPin", "bTargetPin", 1, kIni) == 0)
+            return "[TargetPin] bTargetPin=0 in Data/SKSE/Plugins/APMF.ini";
+        return nullptr;
+    }
+
+    std::atomic<bool> g_layer0Installed{ false };
+
+    void InstallLayer0() {
+        static std::atomic<bool> s_tried{ false };
+        if (s_tried.exchange(true)) return;
+        if (const char* why = RefusedWhy()) {
+            spdlog::warn("[ch.20] UpdateCombat layer 0 NOT installed at plugin load -- {}.", why);
+            return;
+        }
+        REL::Relocation<std::uintptr_t> vtChar{ RE::VTABLE_Character[0] };
+        if (!apmf::allowance::SeatVerified(vtChar.address(), "TargetPin.Character.UpdateCombat(layer 0)")) {
+            spdlog::error("[ch.20] UpdateCombat layer 0 NOT installed (self-check refused the Character vtable).");
+            return;
+        }
+        const std::uintptr_t prevE4 = *reinterpret_cast<const std::uintptr_t*>(
+            vtChar.address() + sizeof(void*) * UpdateCombatObserver::idx);
+        // Segment 0 is the engine alone only if layer 0 displaced the engine's own function.
+        g_seg0EngineOnly.store(apmf::sources::ForAddress(prevE4, apmf::sources::Kind::kHook) ==
+                                   apmf::sources::kEngineSource,
+                               std::memory_order_relaxed);
+        SetSegment(0, prevE4);
+        g_vtCharAddr = vtChar.address();
+        UpdateCombatObserver::func = vtChar.write_vfunc(UpdateCombatObserver::idx, UpdateCombatObserver::thunk);
+        g_layerCount.store(1, std::memory_order_relaxed);
+        g_layer0Installed.store(true, std::memory_order_release);
+        apmf::sources::RegisterVtableSeat(apmf::sources::Facet::kTarget, "TargetPin.Character.UpdateCombat",
+                                          vtChar.address() + sizeof(void*) * UpdateCombatObserver::idx,
+                                          reinterpret_cast<std::uintptr_t>(&UpdateCombatObserver::thunk), prevE4,
+                                          &RehookOnTop);
+        if (g_seg0EngineOnly.load()) {
+            spdlog::info("[ch.20] Harbinger layer 0 installed on Character::UpdateCombat (0xE4) at plugin load, directly "
+                         "on the engine's function: every 0xE4 hook installed later is attributed by the layers above it.");
+        } else {
+            char mod[64]{};
+            apmf::sources::ModuleNameOf(prevE4, mod, sizeof(mod));
+            spdlog::error("[ch.20] Harbinger layer 0 installed on Character::UpdateCombat (0xE4) at plugin load, but {} "
+                          "hooked the slot BEFORE APMF loaded: what runs below layer 0 cannot be told apart, and a target "
+                          "write there is an ATTRIBUTION DEFECT (allowed, never enforced).",
+                          mod[0] ? mod : "an unnamed hook");
+        }
+    }
+
     void Install() {
         if (g_installTried.exchange(true)) return;
 
-        const char* why = nullptr;
-        if (REL::Module::IsVR()) {
-            why = "VR runtime (the seats are verified on 1.6.1170, 1.5.97 and 1.7.104 only)";
-        } else if (!apmf::allowance::RuntimeSupported()) {   // F2b: 1.7.104 proven (selectors, 0xE4, CombatGroup)
-            why = "runtime is not exactly 1.6.1170, 1.5.97 or 1.7.104 (the seats are verified on those three only)";
-        } else if (GetPrivateProfileIntA("TargetPin", "bTargetPin", 1, kIni) == 0) {
-            why = "[TargetPin] bTargetPin=0 in Data/SKSE/Plugins/APMF.ini";
-        }
+        const char* why = RefusedWhy();
+        if (!why && !g_layer0Installed.load(std::memory_order_acquire))
+            why = "the UpdateCombat layer 0 was not installed at plugin load (logged there)";
         if (why) {
             g_notInstalledReason.store(why, std::memory_order_release);
             spdlog::warn("[ch.20] target-pin seats NOT installed -- {}. kIntent_TargetPin claims are REFUSED.", why);
             return;
         }
 
-        // Verify ALL THREE before writing ANY: a pin with half a mechanism is refused whole.
-        REL::Relocation<std::uintptr_t> vtChar{ RE::VTABLE_Character[0] };
+        // Verify BOTH before writing EITHER: a pin with half a mechanism is refused whole.
         REL::Relocation<std::uintptr_t> vtStd{ RE::VTABLE_CombatTargetSelectorStandard[0] };
         REL::Relocation<std::uintptr_t> vtFix{ RE::VTABLE_CombatTargetSelectorFixed[0] };
         bool ok = apmf::allowance::SeatVerified(vtStd.address(), "TargetPin.CombatTargetSelectorStandard.SelectTarget");
         ok = apmf::allowance::SeatVerified(vtFix.address(), "TargetPin.CombatTargetSelectorFixed.SelectTarget") && ok;
-        ok = apmf::allowance::SeatVerified(vtChar.address(), "TargetPin.Character.UpdateCombat(observer)") && ok;
         if (!ok) {
             g_notInstalledReason.store("the address self-check refused a seat vtable", std::memory_order_release);
             spdlog::error("[ch.20] target-pin seats NOT installed (self-check refused a vtable, listed above). "
@@ -581,15 +947,39 @@ namespace apmf::targetpin {
             return;
         }
 
+        // The restore setter (Harbinger 1a). 1.7.104: a raw-RVA row (AE id 33235 has no MIT-table
+        // row; an id miss is fatal there). Unverified -> capture still runs, restore does not.
+        {
+            const bool           on17 = apmf::allowance::IsRuntime1_7_104();
+            const std::uintptr_t st   = on17 ? REL::Offset(kSetTarget17).address()
+                                             : REL::Relocation<std::uintptr_t>{ RELOCATION_ID(32488, 33235) }.address();
+            if (apmf::allowance::SeatVerified(st, on17 ? "TargetPin.CombatController.SetTarget.1_7_104"
+                                                       : "TargetPin.CombatController.SetTarget"))
+                g_setTarget.store(st, std::memory_order_release);
+            else
+                spdlog::error("[ch.20] CombatController::SetTarget NOT verified -- Harbinger captures and attributes "
+                              "target writes but does NOT restore the pin on this build.");
+        }
+
         g_vtStandard = vtStd.address();
         g_vtFixed    = vtFix.address();
         SelectStandardHook::func   = vtStd.write_vfunc(kSelectTargetSlot, SelectStandardHook::thunk);
         SelectFixedHook::func      = vtFix.write_vfunc(kSelectTargetSlot, SelectFixedHook::thunk);
-        UpdateCombatObserver::func = vtChar.write_vfunc(UpdateCombatObserver::idx, UpdateCombatObserver::thunk);
+        const std::uintptr_t prevStd = SelectStandardHook::func.address();
+        const std::uintptr_t prevFix = SelectFixedHook::func.address();
         g_installed.store(true, std::memory_order_release);
+
+        using apmf::sources::Facet;
+        apmf::sources::RegisterVtableSeat(Facet::kTarget, "TargetPin.CombatTargetSelectorStandard.SelectTarget",
+                                          vtStd.address() + sizeof(void*) * kSelectTargetSlot,
+                                          reinterpret_cast<std::uintptr_t>(&SelectStandardHook::thunk), prevStd);
+        apmf::sources::RegisterVtableSeat(Facet::kTarget, "TargetPin.CombatTargetSelectorFixed.SelectTarget",
+                                          vtFix.address() + sizeof(void*) * kSelectTargetSlot,
+                                          reinterpret_cast<std::uintptr_t>(&SelectFixedHook::thunk), prevFix);
         spdlog::info("[ch.20] target-pin seats installed: SOURCE DENY on CombatTargetSelectorStandard / Fixed "
-                     "SelectTarget (slot 0x{:X}, chaining), OBSERVE-ONLY on Character::UpdateCombat (slot 0x{:X}).",
-                     kSelectTargetSlot, UpdateCombatObserver::idx);
+                     "SelectTarget (slot 0x{:X}, chaining); the UpdateCombat layers capture target writes after the "
+                     "seat and restore the pin through SetTarget when the claim outranks the proven writer.",
+                     kSelectTargetSlot);
     }
 
     bool Installed() { return g_installed.load(std::memory_order_relaxed); }
@@ -669,6 +1059,10 @@ namespace apmf::targetpin {
             n = g_pins.size();
             g_pins.clear();
             g_pinCount.store(0, std::memory_order_relaxed);
+        }
+        {
+            std::scoped_lock lk(g_capMx);
+            g_cap.clear();
         }
         if (n != 0) spdlog::info("[ch.20] {} -- dropped {} target-pin entr{}.", why, n, n == 1 ? "y" : "ies");
     }

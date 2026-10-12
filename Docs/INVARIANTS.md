@@ -159,9 +159,25 @@ and replaces its answer with the declared target. It is legal only while ALL of 
    `targetHandle`, `currentCombatTarget`, or anything the rest of that update reads. (A new
    controller's very first target is set before any update asks the selectors; the pin applies
    from that first update.) The engine CLEARING the target
-   (`SetTarget(0)`) is not denied (condition 2). There is NO after-the-fact rewrite: the
-   `UpdateCombat` hook ch.20 also installs is observe-only and exists to log a source-seat MISS or an
-   OVERWRITE loudly (principle 7), never to paper over one.
+   (`SetTarget(0)`) is not denied (condition 2). **AMENDED 2026-10-11 (Harbinger controller 1a, marth
+   Q1: "restore at the outermost 0xE4").** The `UpdateCombat` layers ch.20 installs (layer 0 at APMF's
+   plugin load, one more directly above every foreign 0xE4 hook the census finds) still log a
+   source-seat MISS and an OVERWRITE loudly. ONE after-the-update write is now legal, the RESTORE, and
+   only when ALL of these hold: the selector seat ANSWERED with the pin in this same update (so the pin
+   was alive, loaded, a located group target: conditions 2 and 5 already held); the write that moved
+   the target away happened in a segment PROVEN to hold exactly one module (the engine alone, or the
+   one foreign hook that layer wraps, proven by the lower layer's caller address) and that module is
+   named; the pin claim's priority (APMF_Sources.ini [Target], the client default 50) is STRICTLY
+   higher than that writer's. The restore runs at the outermost layer after every chained hook, goes
+   through the engine's own `CombatController::SetTarget` (the call `UpdateTarget` makes, so the
+   cached target and the group bookkeeping stay the engine's), puts `previousTargetHandle` back to its
+   pre-update value (the only plain store: SetTarget never writes it), and logs `captured <src>
+   overruled`. It is NEVER done on a source-seat MISS, never against a write Harbinger cannot attribute
+   (an unproven segment is an ATTRIBUTION DEFECT: allowed, alerted, never enforced -- principle 7), and
+   never when the writer ties or outranks the claim (`captured <src> stands`). Why: the facet is "which
+   actor this NPC fights", and a framework that rewrites the target after the engine's update
+   (SmartNPCTargetSelector) is a competing SOURCE for that facet; marth ruled it is arbitrated by
+   priority like every other source, at the outermost position so every chained hook still runs.
 5. **It ends by itself.** marth, 2026-09-25: *"If APMF can no longer track the target, it's lost,
    and dropped."* Target LOST, dead, disabled, not loaded or unresolvable, or the owner dead: APMF
    RELEASES the claim itself (`targetpin::Poll`, the ch.19 monitor seat), logs `pin ended:
