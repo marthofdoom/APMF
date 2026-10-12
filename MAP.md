@@ -1413,6 +1413,10 @@ skipped) and `FacetAttribution::Observe` (hit + stood). `[avobs]` first-call OBS
   The thunk runs on any thread for EVERY Character AV write (health regen included): keep the AV switch first and
   read nothing but the ControlMap snapshot, the registry and the FormID. The `this` rebase (0xB8 AE / 1.7.104, 0xB0 SE)
   is the COL offset of the row, not a guess. A Papyrus SetAV / ModAV resolves to Engine (APMF-B71 limit).
+  COVERAGE LIMIT: engine-internal actor-value paths that do not go through these virtual slots (non-virtual helpers
+  called directly inside the exe) bypass the seat and are not seen. A hook layered over the seat is handled by
+  `LayerOver` + `CallerBelow` (unrecoverable -> "through hook X", not attributed); the 0x04-0x06 originals are read
+  and stored in `func` BEFORE each thunk is written (safe_write), so no thunk can run with a null original.
 
 ### `native/core/PackageData.{h,cpp}` — read a templated package's inputs, point its Location (ch.19 travel)
 `SetTravelTarget(pkg, ref, radius)` and `SetTravelCell(pkg, cell, radius)`: resolve the vanilla

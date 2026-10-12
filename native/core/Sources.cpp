@@ -724,14 +724,18 @@ namespace apmf::sources {
                 return;
             }
             const std::size_t total = std::min<std::size_t>(needed / sizeof(void*), std::size(mods));
-            std::size_t       added = 0, skipped = 0, seen = 0;
+            std::size_t       added = 0, skipped = 0, seen = 0, unreadable = 0;
+            std::string       names;
             void* const       self  = SelfModule();
             for (std::size_t i = 0; i < total; ++i) {
                 if (!mods[i] || mods[i] == self) continue;
                 char path[260]{};
                 const auto n = REX::W32::GetModuleFileNameA(reinterpret_cast<REX::W32::HMODULE>(mods[i]), path,
                                                             sizeof(path));
-                if (n == 0 || n >= sizeof(path)) continue;
+                if (n == 0 || n >= sizeof(path)) {   // review SEV-5: counted, not silently dropped
+                    ++unreadable;
+                    continue;
+                }
                 std::string lower(path, n);
                 for (auto& c : lower) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
                 std::replace(lower.begin(), lower.end(), '/', '\\');
@@ -741,15 +745,21 @@ namespace apmf::sources {
                     ++skipped;
                     continue;
                 }
-                if (Register(BaseName(path), Kind::kLoaded) != kNoSource) ++added;
+                if (Register(BaseName(path), Kind::kLoaded) != kNoSource) {
+                    ++added;
+                    if (!names.empty()) names += ", ";
+                    names += BaseName(path);
+                }
             }
-            spdlog::info("[sources] loaded-plugin list: {} SKSE plugin DLL(s) under SKSE\\Plugins, {} pre-registered "
-                         "as sources (shown on the Harbinger page before their first write){}.",
-                         seen, added,
+            spdlog::info("[sources] loaded-plugin list: {} module(s) in the process ({} whose path could not be read), "
+                         "{} SKSE plugin DLL(s) under SKSE\\Plugins, {} pre-registered as sources (shown on the "
+                         "Harbinger page before their first write){}: {}.",
+                         total, unreadable, seen, added,
                          skipped ? fmt::format("; {} NOT pre-registered to keep {} registry slots free for sources "
                                                "seen later (they still register on their first write)",
                                                skipped, kLoadedReserve)
-                                 : std::string());
+                                 : std::string(),
+                         names.empty() ? std::string("none") : names);
         } catch (...) {
             spdlog::warn("[sources] loaded-plugin list: failed (exception) -- nothing pre-registered.");
         }

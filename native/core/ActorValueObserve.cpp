@@ -41,7 +41,10 @@ extern "C" __declspec(dllimport) unsigned long __stdcall GetPrivateProfileIntA(
 // WINNING claim of that channel's intent, the CALLER (the thunk's own return address) is resolved by
 // Sources::ForAddress: SkyrimSE.exe -> Engine (a Papyrus SetAV / ModAV native runs inside the exe, so it
 // is Engine too, the APMF-B71 limit), skse64 -> DirectCalls, another DLL -> that DLL. APMF's own writes
-// (core/AvLedger) are skipped. The write is counted (FacetAttribution::Observe: a hit and "stood") and
+// (core/AvLedger) are skipped. LAYERED HOOKS (review SEV-3): when another DLL has hooked this slot over
+// Harbinger (or 0x07, which reaches 0x04) and the return address is in that DLL, the real caller is the
+// frame after the layer's (FacetAttribution::CallerBelow), APMF-checked again; if it cannot be recovered
+// the write is NOT attributed and counts as "through hook X". The write is counted (FacetAttribution::Observe: a hit and "stood") and
 // logged once per 5 s per (actor, av). The original runs FIRST and always, with the original arguments.
 //
 // THREADING. Actor-value writes happen on any thread (the main thread, the script VM, BSJobs). The
@@ -63,10 +66,35 @@ namespace {
     constexpr std::uint64_t kHeartbeatMs  = 30000;
 
     std::atomic<bool>           g_installed{ false };
-    std::uintptr_t              g_avoOffset = 0;   // written once at Install, before the vtable writes
+    // Written once at Install, BEFORE the first thunk write (release), read by the thunks (acquire is
+    // not needed: the vtable write that makes a thunk reachable comes after these stores).
+    std::atomic<std::uintptr_t> g_avoOffset{ 0 };
+    std::atomic<std::uintptr_t> g_vt{ 0 };           // the ActorValueOwner vtable the thunks sit on
+    std::atomic<std::uintptr_t> g_orig07{ 0 };       // slot 0x07 SetActorValue as found at install
+    std::uintptr_t              g_ours[8]{};         // our thunk per hooked slot (0x04..0x06), set before the writes
     std::atomic<bool>           g_observed{ false };
-    std::atomic<std::uint64_t>  g_calls{ 0 }, g_claimed{ 0 }, g_attributed{ 0 }, g_self{ 0 };
+    // Review SEV-4: the tracked-AV counter sits on its own cache line (every Character AV write reaches
+    // the thunk; only tracked AVs touch it).
+    alignas(64) std::atomic<std::uint64_t> g_calls{ 0 };
+    alignas(64) std::atomic<std::uint64_t> g_claimed{ 0 };
+    std::atomic<std::uint64_t>  g_attributed{ 0 }, g_self{ 0 }, g_throughHook{ 0 };
     std::atomic<std::uint64_t>  g_lastBeatMs{ 0 };
+
+    // Review SEV-3: is the call that reached slot `a_slot` coming THROUGH another DLL's hook layered
+    // over Harbinger -- the slot's vtable entry no longer ours, or (slot 0x04) the 0x07 SetActorValue
+    // entry no longer the one found at install (0x07 tail-jumps into 0x04)? Returns that layer's
+    // entry (0 = not layered). Pointer reads only.
+    std::uintptr_t LayerOver(std::size_t a_slot) {
+        const auto vt = g_vt.load(std::memory_order_relaxed);
+        if (!vt) return 0;
+        const auto cur = *reinterpret_cast<const std::uintptr_t*>(vt + sizeof(void*) * a_slot);
+        if (cur != g_ours[a_slot]) return cur;
+        if (a_slot == kSlotSetBase) {
+            const auto c7 = *reinterpret_cast<const std::uintptr_t*>(vt + sizeof(void*) * 0x07);
+            if (c7 != g_orig07.load(std::memory_order_relaxed)) return c7;
+        }
+        return 0;
+    }
 
     // The claim channel that holds an actor value, and the facet its outside writes count on.
     bool Track(RE::ActorValue a_av, APMF_API::Intent& a_intent, Facet& a_facet) {
@@ -93,16 +121,18 @@ namespace {
     }
 
     void Note(RE::ActorValueOwner* a_this, RE::ActorValue a_av, float a_value, const char* a_how,
-              std::uintptr_t a_ret) {
-        g_calls.fetch_add(1, std::memory_order_relaxed);
-        if (!g_observed.exchange(true, std::memory_order_relaxed))
+              std::uintptr_t a_ret, std::size_t a_slot) {
+        if (!g_observed.load(std::memory_order_relaxed) && !g_observed.exchange(true, std::memory_order_relaxed))
             spdlog::info("[avobs] seat OBSERVED: Character's ActorValueOwner {} ran (first actor-value write of the "
                          "session through the seat; principle 5).",
                          a_how);
         APMF_API::Intent intent{};
         Facet            facet{};
-        if (!a_this || !Track(a_av, intent, facet) || apmf::ControlMap::Get().ControlledCount() == 0) return;
-        const auto*      actor = reinterpret_cast<const RE::Actor*>(reinterpret_cast<std::uintptr_t>(a_this) - g_avoOffset);
+        if (!a_this || !Track(a_av, intent, facet)) return;
+        g_calls.fetch_add(1, std::memory_order_relaxed);
+        if (apmf::ControlMap::Get().ControlledCount() == 0) return;
+        const auto*      actor = reinterpret_cast<const RE::Actor*>(reinterpret_cast<std::uintptr_t>(a_this) -
+                                                                   g_avoOffset.load(std::memory_order_relaxed));
         const RE::FormID fid   = actor->GetFormID();
         APMF_API::APMF_Param claim{};
         if (!apmf::ControlMap::Get().TryGetOwningClaim(fid, intent, claim)) return;
@@ -111,7 +141,36 @@ namespace {
             g_self.fetch_add(1, std::memory_order_relaxed);
             return;
         }
-        const auto src = apmf::sources::ForAddress(a_ret, apmf::sources::Kind::kPlugin);
+        auto src = apmf::sources::ForAddress(a_ret, apmf::sources::Kind::kPlugin);
+        // Review SEV-3: a return address in another module is that module's own call UNLESS a hook
+        // layered over Harbinger (on this slot, or on 0x07 for 0x04) is what called the thunk. Then the
+        // real caller is the frame after the layer's own (FacetAttribution::CallerBelow), checked
+        // against APMF itself too (AvLedger's write through someone else's layer); a recovery that
+        // fails or lands in the layer's module again is NOT attributed: counted "through hook X".
+        if (src != apmf::sources::kEngineSource) {
+            if (const auto layer = LayerOver(a_slot); layer != 0) {
+                const auto layerSrc = apmf::sources::ForAddress(layer, apmf::sources::Kind::kHook);
+                if (src == layerSrc) {
+                    const auto c = apmf::facetattr::CallerBelow(a_ret);
+                    if (c.found && c.self) {   // APMF's own write, through the layer
+                        g_self.fetch_add(1, std::memory_order_relaxed);
+                        return;
+                    }
+                    if (!c.found || c.src == apmf::sources::kNoSource || c.src == layerSrc) {
+                        g_throughHook.fetch_add(1, std::memory_order_relaxed);
+                        if (apmf::facetattr::LineDue(facet, fid, 0xB000u | (static_cast<std::uint32_t>(a_av) & 0xFFFu)))
+                            spdlog::info("[avobs] 0x{} {} av {} reached the seat THROUGH hook {} layered over "
+                                         "Harbinger; the real caller could not be recovered, so it is NOT "
+                                         "attributed (counted as through-hook).",
+                                         Hex(fid), a_how, static_cast<std::uint32_t>(a_av),
+                                         apmf::facetattr::NameOr(layerSrc, "an unnamed trampoline"));
+                        return;
+                    }
+                    src   = c.src;
+                    a_ret = c.addr;
+                }
+            }
+        }
         apmf::facetattr::Observe(facet, src, fid, "an actor-value write from an address in no module");
         g_attributed.fetch_add(1, std::memory_order_relaxed);
         if (apmf::facetattr::LineDue(facet, fid, 0xA000u | (static_cast<std::uint32_t>(a_av) & 0xFFFu))) {
@@ -130,7 +189,7 @@ namespace {
             func(a_this, a_av, a_value);   // the engine's own write, first and always
             try {
                 Note(a_this, a_av, a_value, "SetBaseActorValue (0x04, also SetActorValue)",
-                     reinterpret_cast<std::uintptr_t>(_ReturnAddress()));
+                     reinterpret_cast<std::uintptr_t>(_ReturnAddress()), kSlotSetBase);
             } catch (...) {
             }
         }
@@ -141,7 +200,8 @@ namespace {
         static void thunk(RE::ActorValueOwner* a_this, RE::ActorValue a_av, float a_value) {
             func(a_this, a_av, a_value);
             try {
-                Note(a_this, a_av, a_value, "ModActorValue (0x05)", reinterpret_cast<std::uintptr_t>(_ReturnAddress()));
+                Note(a_this, a_av, a_value, "ModActorValue (0x05)", reinterpret_cast<std::uintptr_t>(_ReturnAddress()),
+                     kSlotMod);
             } catch (...) {
             }
         }
@@ -154,7 +214,7 @@ namespace {
             func(a_this, a_mod, a_av, a_value);
             try {
                 Note(a_this, a_av, a_value, "RestoreActorValue (0x06)",
-                     reinterpret_cast<std::uintptr_t>(_ReturnAddress()));
+                     reinterpret_cast<std::uintptr_t>(_ReturnAddress()), kSlotRestore);
             } catch (...) {
             }
         }
@@ -191,10 +251,25 @@ namespace apmf::avobserve {
                           "vtable). Outside actor-value writes are not attributed.");
             return;
         }
-        g_avoOffset = ae ? kAvoOffsetAE : kAvoOffsetSE;
-        SetBaseHook::func = vt.write_vfunc(kSlotSetBase, SetBaseHook::thunk);
-        ModHook::func     = vt.write_vfunc(kSlotMod, ModHook::thunk);
-        RestoreHook::func = vt.write_vfunc(kSlotRestore, RestoreHook::thunk);
+        // Review SEV-4: everything a thunk reads is in place BEFORE the write that makes it reachable --
+        // the offset, the vtable, our own entries, the 0x07 entry, and each slot's ORIGINAL (read from the
+        // vtable and assigned to `func` first, then the thunk written with safe_write).
+        const auto base = vt.address();
+        auto entry      = [base](std::size_t a_slot) {
+            return *reinterpret_cast<const std::uintptr_t*>(base + sizeof(void*) * a_slot);
+        };
+        g_avoOffset.store(ae ? kAvoOffsetAE : kAvoOffsetSE, std::memory_order_relaxed);
+        g_orig07.store(entry(0x07), std::memory_order_relaxed);
+        g_ours[kSlotSetBase] = SKSE::stl::unrestricted_cast<std::uintptr_t>(&SetBaseHook::thunk);
+        g_ours[kSlotMod]     = SKSE::stl::unrestricted_cast<std::uintptr_t>(&ModHook::thunk);
+        g_ours[kSlotRestore] = SKSE::stl::unrestricted_cast<std::uintptr_t>(&RestoreHook::thunk);
+        SetBaseHook::func = REL::Relocation<decltype(SetBaseHook::thunk)>{ entry(kSlotSetBase) };
+        ModHook::func     = REL::Relocation<decltype(ModHook::thunk)>{ entry(kSlotMod) };
+        RestoreHook::func = REL::Relocation<decltype(RestoreHook::thunk)>{ entry(kSlotRestore) };
+        g_vt.store(base, std::memory_order_release);
+        REL::safe_write(base + sizeof(void*) * kSlotSetBase, g_ours[kSlotSetBase]);
+        REL::safe_write(base + sizeof(void*) * kSlotMod, g_ours[kSlotMod]);
+        REL::safe_write(base + sizeof(void*) * kSlotRestore, g_ours[kSlotRestore]);
         using apmf::sources::NoteVfunc;
         NoteVfunc(Facet::kActorValue, "ActorValueObserve.Character.AVO.SetBaseActorValue", vt.address(), kSlotSetBase,
                   SKSE::stl::unrestricted_cast<std::uintptr_t>(&SetBaseHook::thunk), SetBaseHook::func.address());
@@ -206,7 +281,7 @@ namespace apmf::avobserve {
         spdlog::info("[avobs] actor-value seat installed (OBSERVE ONLY): Character ActorValueOwner vtable slots 0x04 / "
                      "0x05 / 0x06 (sub-object offset 0x{}). Outside writes to the actor values a winning claim holds "
                      "are named and counted; nothing is denied.",
-                     Hex(g_avoOffset, 2));
+                     Hex(g_avoOffset.load(), 2));
     }
 
     void Heartbeat() {
@@ -214,8 +289,8 @@ namespace apmf::avobserve {
         const auto now = apmf::clock::MonotonicMs();
         if (now - g_lastBeatMs.load(std::memory_order_relaxed) < kHeartbeatMs) return;
         g_lastBeatMs.store(now, std::memory_order_relaxed);   // main-thread-only writer
-        spdlog::info("[avobs] H calls={} onClaimedAv={} attributed={} apmfOwn={}", g_calls.load(), g_claimed.load(),
-                     g_attributed.load(), g_self.load());
+        spdlog::info("[avobs] H trackedAvCalls={} onClaimedAv={} attributed={} apmfOwn={} throughHookNotAttributed={}",
+                     g_calls.load(), g_claimed.load(), g_attributed.load(), g_self.load(), g_throughHook.load());
     }
 
 }
