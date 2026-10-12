@@ -8,6 +8,7 @@
 #include "core/AiCastSeats.h"   // RangedGateProbeCounts (the [Probe] bRangedSelect heartbeat)
 #include "core/EquipSink.h"     // Categorize / CategoryNames (the probe mirrors the sink verdict)
 #include "core/CastObserve.h"   // NoteLeafAct (castobs interrupt attribution)
+#include "core/FacetAttribution.h"   // Harbinger 1b: the tree's choice named + ranked on CombatAction
 
 #include <algorithm>
 #include <array>
@@ -22,6 +23,10 @@
 extern "C" __declspec(dllimport) unsigned long __stdcall GetPrivateProfileIntA(
     const char* a_appName, const char* a_keyName, long a_default, const char* a_fileName);
 
+// ============================================================================
+// HARBINGER 1b (2026-10-12): every ch.7 deny and ch.23 leash deny / end below is decided against
+// the Engine source on the CombatAction facet (ClaimOutranksTree, core/FacetAttribution): named,
+// and enforced only when the claim's priority is strictly above Engine's (APMF_Sources.ini).
 // ============================================================================
 // T1 -- COMBAT-ACTION allowance (ch.7, Docs/CHANNEL-MAP.md). Graduated
 // (2026-09-03) from the field-proven T1Probe (Docs/PROBE-ALLOWANCE.md
@@ -580,6 +585,26 @@ namespace apmf::actiongate {
                          search ? "search centre" : "target", a_dG, kPursuitLogGapMs);
         }
 
+        // HARBINGER 1b (2026-10-12): a claim's deny (ch.7) or leash end (ch.23) overrides a leaf the
+        // ENGINE's combat behaviour tree chose. That choice is the Engine source on the CombatAction
+        // facet: named (a registry hit) and RANKED -- the deny stands only when the claim's priority
+        // is strictly above Engine's (APMF_Sources.ini; defaults client 50 > unregistered 20, so
+        // nothing changes unless the player raises Engine). When it does not, the leaf RUNS
+        // (orig), counted as Engine "stood" and logged (rate-limited per actor). Called only after
+        // every mechanism check passed, so "overruled" counts real denies. Combat thread.
+        bool ClaimOutranksTree(APMF_API::Handle a_h, RE::FormID a_fid, const char* a_tag, std::uint32_t a_key) {
+            const auto v = apmf::facetattr::Decide(apmf::sources::Facet::kCombatAction, a_h,
+                                                   apmf::sources::kEngineSource, a_fid, "");
+            if (!v.enforce && apmf::facetattr::LineDue(apmf::sources::Facet::kCombatAction, a_fid, a_key)) {
+                spdlog::info("[{}] 0x{} the engine's combat tree chose a leaf claim h={} would deny; {} priority {} "
+                             "does not outrank Engine (priority {}) on the CombatAction facet, so the leaf RUNS "
+                             "(APMF_Sources.ini). Logged at most once per 5 s per actor.",
+                             a_tag, apmf::log::Hex(a_fid), a_h, apmf::facetattr::NameOr(v.client, "an internal claim"),
+                             v.claimPrio, v.srcPrio);
+            }
+            return v.enforce;
+        }
+
         // ch.23 act() half: a leash leaf's act(). NOT a ch.7 path -- these leaves carry no ch.7
         // category -- so ch.7's own logic never sees them. Deny = the same ForceFail PAIR.
         void* LeashAct(void* a_this, void* a_control, apmf::cbt::Act_t a_orig, std::size_t a_idx);
@@ -931,7 +956,10 @@ namespace apmf::actiongate {
             // lock-free RCU snapshot read.
             std::uint32_t denyMask = 0;
             APMF_API::APMF_Param caClaim{};
-            if (apmf::ControlMap::Get().TryGetOwningClaim(actorFid, APMF_API::kIntent_CombatAction, caClaim))
+            float                caBasis = 0.0f;
+            APMF_API::Handle     caH     = APMF_API::kInvalidHandle;
+            if (apmf::ControlMap::Get().TryGetOwningClaimBasis(actorFid, APMF_API::kIntent_CombatAction, caClaim,
+                                                                caBasis, &caH))
                 denyMask |= static_cast<std::uint32_t>(caClaim.ival);
 
             if (denyMask == 0)
@@ -941,6 +969,9 @@ namespace apmf::actiongate {
 
             const auto denyAct = g_forceFailAct.load(std::memory_order_relaxed);
             if (!denyAct) return orig(a_this, a_control);   // deny mechanism unresolved -- degrade, never crash
+
+            // Harbinger 1b: the deny stands only when the claim outranks the Engine's tree.
+            if (!ClaimOutranksTree(caH, actorFid, "ch.7", 7u << 8)) return orig(a_this, a_control);
 
             // Arm the paired pop FIRST (the runner will call this node's pop() for
             // this control right after we return -- PopThunk must already know), then
@@ -999,13 +1030,18 @@ namespace apmf::actiongate {
             const RE::FormID actorFid = ResolveDeliberatingActor(a_control);
             if (actorFid == 0) return a_orig(a_this, a_control);   // unresolvable -- passthrough (#17)
             APMF_API::APMF_Param claim{};
-            if (!apmf::ControlMap::Get().TryGetOwningClaim(actorFid, APMF_API::kIntent_PursuitLeash, claim))
+            float                basis = 0.0f;
+            APMF_API::Handle     h     = APMF_API::kInvalidHandle;
+            if (!apmf::ControlMap::Get().TryGetOwningClaimBasis(actorFid, APMF_API::kIntent_PursuitLeash, claim, basis,
+                                                                 &h))
                 return a_orig(a_this, a_control);                  // not leashed -- the leaf runs natively
             float dS = 0.0f, dG = 0.0f, r = 0.0f;
             if (!PursuitDenies(a_control, actorFid, claim, g_leashLeaves[a_idx].goal, dS, dG, r))
                 return a_orig(a_this, a_control);
             const auto denyAct = g_forceFailAct.load(std::memory_order_relaxed);
             if (!denyAct) return a_orig(a_this, a_control);        // unreachable: the leash never arms without it
+            // Harbinger 1b: the leash stands only when the claim outranks the Engine's tree.
+            if (!ClaimOutranksTree(h, actorFid, "ch.23", 23u << 8)) return a_orig(a_this, a_control);
             g_pDenyAct[a_idx].fetch_add(1, std::memory_order_relaxed);
             LogPursuitDeny(actorFid, false, a_idx, dS, dG, r);
             // The ForceFail PAIR, exactly as ch.7's ActThunk does it (see there).
@@ -1041,7 +1077,9 @@ namespace apmf::actiongate {
             if (!ResolveController(a_control, self) || !self) return orig(a_this, a_control);
             const RE::FormID     fid = self->GetFormID();
             APMF_API::APMF_Param claim{};
-            if (!apmf::ControlMap::Get().TryGetOwningClaim(fid, APMF_API::kIntent_PursuitLeash, claim))
+            float                basis = 0.0f;
+            APMF_API::Handle     h     = APMF_API::kInvalidHandle;
+            if (!apmf::ControlMap::Get().TryGetOwningClaimBasis(fid, APMF_API::kIntent_PursuitLeash, claim, basis, &h))
                 return orig(a_this, a_control);   // this actor is not leashed -- the leaf runs natively
 
             float dS = 0.0f, dG = 0.0f, r = 0.0f;
@@ -1058,6 +1096,8 @@ namespace apmf::actiongate {
                                  "recurs the runner protocol in core/CombatBehaviorRE.h needs re-measuring.");
                 return orig(a_this, a_control);
             }
+            // Harbinger 1b: the leash end stands only when the claim outranks the Engine's tree.
+            if (!ClaimOutranksTree(h, fid, "ch.23", 23u << 8)) return orig(a_this, a_control);
 
             reinterpret_cast<apmf::cbt::SetFailed_t>(g_setFailed.load(std::memory_order_relaxed))(a_control, true);
             reinterpret_cast<apmf::cbt::Ascend_t>(g_ascend.load(std::memory_order_relaxed))(a_control);
