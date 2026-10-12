@@ -8,9 +8,9 @@ This page covers the part every client needs: finding the interface, checking th
 
 Harbinger (the project is APMF, the AI Package Management Framework) is a per-facet arbitration layer for NPC control. You claim one facet of an actor at a priority you choose. Harbinger routes that facet to you and denies whoever else was driving it. Everything else about the actor keeps running exactly as it was: its movement, its other packages, the rest of its AI. When you release the claim, Harbinger stops suppressing and the actor's own AI, or the next best claim, takes the facet back.
 
-Harbinger is a moderator. It does not generate behaviour. For most facets you bring the behaviour with your own proven mechanism and Harbinger makes sure it reaches the actor. For the cast facet you declare what to cast and at whom, and the NPC's own combat AI does the rest, fully animated. Harbinger makes no cast, equip or animation call of its own.
+Harbinger is a moderator. It does not generate decisions. For most facets you bring the behaviour with your own proven mechanism and Harbinger makes sure it reaches the actor. For the cast facet you declare what to cast and at whom, and the NPC's own combat AI does the rest, fully animated. For the cast facet Harbinger makes no equip, cast or animation call of its own.
 
-There are three small exceptions where Harbinger calls the engine once on your behalf, because you declared it: a combat entry (`StartCombat`, ABI 14), a cast at a point (ABI 11) and the travel package it offers (ABI 10). They are named in [FACETS.md](FACETS.md). A combat re-entry deny (ABI 15) calls nothing. It makes the engine's own `StartCombat` refuse.
+Some other facets do make a small, bounded engine call because you declared it: `EquipObject` for the equip authority's declared set, `PlayIdle` for an idle, `DrawWeaponMagicHands` for a weapon draw, the `SneakStart` and `SneakStop` events for a stance, `SetDontMove` and a parked goal for a movement block, `StartCombat` for a combat entry, an `EvaluatePackage` nudge for a package offer or a travel leg, and `CastSpellImmediate` from a marker for a position cast. A combat re-entry deny calls nothing. It makes the engine's own `StartCombat` refuse. Each facet section in [FACETS.md](FACETS.md) names the calls it makes.
 
 ## Before you start
 
@@ -92,7 +92,7 @@ Every facet follows the same steps. Claim, wait for it to apply, keep it alive i
 
 **Keep it alive, if it is bounded.** Three facets are bounded and release themselves: the cast claim (ch.8b), the combat re-entry deny (ch.22) and the cast guard (ch.25). To hold a cast or a guard longer than one window, send a `Repoint` before it lapses. A renewal moves the deadline to now plus the window the claim was granted. Do not release and re-request, because the gap leaves the actor unclaimed. Every other claim is standing and needs no heartbeat. A claim that is not bounded can still be ended by Harbinger itself when its goal is over, for example a target pin whose target died. Poll `IsClaimLive` for those.
 
-**Release it.** `Release(handle)` when you are done with the facet. Release a handle even if you think it ended. It is a no-op on a claim Harbinger already released, and it cancels one that is still pending. Reserve `Release` for being done. Use `Repoint` for a mere change of target.
+**Release it.** `Release(handle)` when you are done with the facet. Release a handle even if you think it ended. It is a no-op on a claim Harbinger already released. A release queued behind a pending request is applied after it in the same drain, so the claim engages and is then released. Nothing is cancelled. Reserve `Release` for being done. Use `Repoint` for a mere change of target.
 
 **After a load.** Every claim is released at `kPreLoadGame`. Claims are never saved. Forget your handles on a load and claim again once the game is running.
 
@@ -157,7 +157,7 @@ struct Heartbeat {
 };
 ```
 
-A cast guard claim built with them is the smallest complete example.
+A cast guard claim built with them is the smallest complete example. It renews while the claim is live and asks again once it has ended, which is what happens after the window lapses or a load drops it.
 
 ```cpp
 void KeepFriendlyFireHold(RE::FormID follower, TrackedClaim& guard, Heartbeat& beat) {
@@ -167,8 +167,19 @@ void KeepFriendlyFireHold(RE::FormID follower, TrackedClaim& guard, Heartbeat& b
     p.ival = APMF_API::kCastGuard_LineOfFire;
     p.fval = 6.0f;                              // the window in seconds
 
-    if (guard.h == APMF_API::kInvalidHandle) guard.Open(follower, APMF_API::kIntent_CastGuard, 50.0f, p);
-    else                                     beat.Tick(guard, p, 6000);
+    switch (guard.Poll()) {
+        case ClaimState::None:
+            guard.Open(follower, APMF_API::kIntent_CastGuard, 50.0f, p);
+            break;
+        case ClaimState::Pending:
+            break;                              // wait for the first live read
+        case ClaimState::Live:
+            beat.Tick(guard, p, 6000);          // renew before the window lapses
+            break;
+        case ClaimState::Ended:
+            guard.Open(follower, APMF_API::kIntent_CastGuard, 50.0f, p);   // lapsed or dropped: ask again
+            break;
+    }
 }
 ```
 
@@ -186,7 +197,7 @@ This is what makes Harbinger safe to install beside mods that know nothing about
 - **Reversible on release.** When the last claim on a facet releases, the suppression stops. There is no re-assert loop and no lingering override to clean up.
 - **Never deny what it cannot name.** Harbinger enforces only against a positively identified source that has been outranked. A write it cannot attribute is allowed, logged as `[sources] UNATTRIBUTED <facet>` and shown as an alert.
 
-If you want Harbinger to hold something for you, say so with a claim, and stop doing that thing yourself while the claim is live. A client that turns its own equips off on a successful equip claim can tell "Harbinger holds the set" from "Harbinger is only watching" with `IsEquipAuthorityEnforced`.
+If you want Harbinger to hold something for you, say so with a claim, and stop doing that thing yourself while the claim is live. `IsEquipAuthorityEnforced` is true when the equip seat is installed and either `bEquipObserveOnly` is 0 or `bEquipEnforceArmor` is 1, so with the defaults it is true while weapons are still only observed. A client that turns its own equips off on a successful equip claim should read FACETS.md ch.17 first.
 
 ## 6. Debugging
 
@@ -206,6 +217,7 @@ If you want Harbinger to hold something for you, say so with a claim, and stop d
 | `SpellAllowList.cpp` | ch.8 select-spell and `SetSpellAllowList` |
 | `Equip.cpp` | ch.17: claim, `SetEquipScope`, `SetEquipSetEx` |
 | `Excursion.cpp`, `Deposit.cpp` | ch.19 travel, ch.20 pins, ch.1 hold and ch.12 idle |
+| `CastGuard.cpp` | ch.25: a 6 second window, a `Repoint` heartbeat, and a fresh request when the claim has gone stale |
 | `CombatEntry.cpp`, `ReentryDeny.cpp` | ch.21 and ch.22 with pending-versus-ended tracking |
 | `PursuitLeash.cpp`, `CombatApproach.cpp` | ch.23 and ch.24 |
 | `Los.cpp` | `GetLineOfSight` and `SenseActor` |
@@ -227,6 +239,8 @@ Older comments in `APMF_API.h` and the source tree cite sections of this page by
 | "Walking an NPC somewhere" | [ch.19 Travel](FACETS.md#ch19-travel-kintent_travel) |
 | "The Harbinger controller" | [Basis and priority](FACETS.md#basis-and-priority), [Appendix A](FACETS.md#appendix-a-sources-and-priorities-per-facet) |
 | "The facet table" | [Facet index](FACETS.md#facet-index) |
+| a section named for an ABI ("ABI v8", "ABI v9", "ABI v11 queries", and so on) | the facet that ABI introduced, listed in [Appendix B](FACETS.md#appendix-b-abi-history) |
+| "The probe criteria" | [Appendix E](FACETS.md#appendix-e-equip-authority-probe-criteria) |
 
 ## Where next
 

@@ -6,7 +6,7 @@ The source of truth is [`native/APMF_API.h`](../native/APMF_API.h) and the code 
 
 Everything here is for mod authors. A player never needs it. The player-facing pieces are [INI-REFERENCE.md](INI-REFERENCE.md) and [HARBINGER-MENU.md](HARBINGER-MENU.md).
 
-Where the code is ambiguous or this page could not confirm something, the text says `TODO(verify)`. Where a facet is built but has not been seen working in game, the text says so.
+Where the code is ambiguous or this page could not confirm something, the text says `TODO(verify)`. Nothing is open at the moment. Where a facet is built but has not been seen working in game, the text says so.
 
 ## Contents
 
@@ -110,9 +110,11 @@ Which Intent belongs to which sources facet is listed in [Appendix A](#appendix-
 
 A request returns a handle at once, from any thread. Harbinger applies it on the game thread at its next drain. `IsClaimLive` reads the applied state, so it answers false for a claim that is still pending. A false answer in the first moments after the call does not mean the claim ended.
 
-MFO's practice is to treat a handle as "never seen live" until `IsClaimLive` has answered true once, and to judge it ended only after about two seconds of running (not paused) game time with no true answer. That wait is MFO's choice and it is not a Harbinger constant. It comes from the fact that the drain runs on the player update, which does not tick under a game-pausing menu. `TODO(verify)`: the exact drain cadence under a paused menu is MFO's observation, not stated in the header.
+The drain runs once per frame in the `PlayerCharacter::Update` hook, so claims stay pending for as long as a menu pauses the game. MFO's practice is to treat a handle as "never seen live" until `IsClaimLive` has answered true once, and to judge it ended only after about two seconds of running (not paused) game time with no true answer. That wait is MFO's choice and it is not a Harbinger constant.
 
-Always `Release` a handle before you forget it. `Release` on a claim Harbinger already ended is a no-op, and `Release` on a claim that is still pending cancels it, so a wrong "never live" judgement cannot leave an orphan claim.
+Always `Release` a handle before you forget it. `Release` on a claim Harbinger already ended is a no-op. A `Release` queued behind a request that is still pending is applied after it, in the same drain, so the claim engages and is then released. Nothing is cancelled. A wrong "never live" judgement therefore cannot leave an orphan claim, but it can cost one engage and release.
+
+Bounded windows (the cast claim, the cast guard, the re-entry deny) are wall-clock time. They keep running while a menu pauses the game, so a claim you are not renewing can lapse during a pause.
 
 ### Ways a claim ends
 
@@ -122,8 +124,9 @@ Always `Release` a handle before you forget it. `Release` on a claim Harbinger a
 | A higher-basis claim on the same facet | You stay stored and non-owning. You take over again if the owner releases. (Cast claims have two exceptions, see [ch.8b](#ch8b-cast-kintent_cast)) |
 | A time limit | ch.8b, ch.22 and ch.25 are bounded and release themselves |
 | Harbinger ends it itself | ch.20, ch.21, ch.22, ch.24 release their own claim when their goal is over or lost. `IsClaimLive` turns false and the log names the reason |
+| Dropped at the drain | A claim that loses a refusing test when Harbinger applies it (a dual-cast against a single-hand claim, a package with no spell input) is never registered. `IsClaimLive` is false for it from the start |
 | The actor unloads | Every claim on the actor is released and the actor is dropped from control |
-| A save load or a new game | Every claim is released at `kPreLoadGame`. Claims are never saved. After a load you have to claim again |
+| A load or a new game | Every claim is released at `kPreLoadGame`. Claims are never saved. After a load you have to claim again |
 | The actor dies | Facet specific, said in each section |
 
 A leg or a window that ends is not always a claim that ends. ch.19 Travel never releases your claim. It drops only its own package offer and leaves the claim live. Its `GetTravelLegState` tells you why the walk stopped.
@@ -172,7 +175,7 @@ A new intent or flag has the same rule. An older Harbinger either refuses an unk
 
 | Intent | ch. | Facet | One line | ABI | Tier |
 |---|---|---|---|---|---|
-| [`kIntent_MovementBlock`](#ch1-movement-block-kintent_movementblock) | 1 | Movement block | Stand the actor still | 1 | Built |
+| [`kIntent_MovementBlock`](#ch1-movement-block-kintent_movementblock) | 1 | Movement block | Stand the actor still | 1 | Field-proven (in use by MFO) |
 | [`kIntent_Gait`](#ch1a-gait-kintent_gait) | 1a | Gait | Halve the actor's speed | 1 | Field-proven |
 | [`kIntent_Stance`](#ch3-stance-kintent_stance) | 3 | Stance | Make the actor sneak | 1 | Field-proven |
 | [`kIntent_WeaponDrawn`](#ch4-weapon-drawn-kintent_weapondrawn) | 4 | Weapon drawn | Draw the weapon, sheathe on release | 1 | Built |
@@ -185,18 +188,18 @@ A new intent or flag has the same rule. An older Harbinger either refuses an unk
 | [`kIntent_OfferPackage`](#ch9-offer-package-kintent_offerpackage) | 9 | Offer package | Hand the actor one package | 1 | Proven when nudged |
 | [`kIntent_Dialogue`](#ch10-dialogue-kintent_dialogue) | 10 | Dialogue | Pause the actor's own dialogue once | 1 | Built |
 | [`kIntent_Disposition`](#ch11-disposition-kintent_disposition) | 11 | Disposition | Make the actor aggressive and loyal | 1 | Field-proven |
-| [`kIntent_Idle`](#ch12-idle-kintent_idle) | 12 | Idle | Play an idle, optionally at a target | 1 (form: 17) | Built |
+| [`kIntent_Idle`](#ch12-idle-kintent_idle) | 12 | Idle | Play an idle, optionally at a target | 1 (form: 17) | Field-proven (in use by MFO) |
 | [`kIntent_ShoutPower`](#ch14-shout-and-power-kintent_shoutpower) | 14 | Shout and power | Record who owns the shout facet | 1 | Built (arbitration only) |
-| [`kIntent_Equipment`](#ch15-equipment-kintent_equipment) | 15 | Equipment | Gate spell and staff re-arm | 1 | Built |
+| [`kIntent_Equipment`](#ch15-equipment-kintent_equipment) | 15 | Equipment | Gate spell and staff re-arm | 1 | Field-proven (in use by MFO) |
 | [`kIntent_Detection`](#ch16-detection-kintent_detection) | 16 | Detection | Silent movement, longer detect range | 1 | Field-proven |
-| [`kIntent_EquipAuthority`](#ch17-equip-authority-kintent_equipauthority) | 17 | Equip authority | Declare what the actor wears and refuse the rest | 7 | Built, ships observe-only for weapons |
+| [`kIntent_EquipAuthority`](#ch17-equip-authority-kintent_equipauthority) | 17 | Equip authority | Declare what the actor wears and refuse the rest | 7 | Field-proven (in use by MFO), weapons ship observe-only |
 | [`kIntent_Travel`](#ch19-travel-kintent_travel) | 19 | Travel | Walk the actor to a place | 10 | In use by MFO |
-| [`kIntent_TargetPin`](#ch20-target-pin-kintent_targetpin) | 20 | Target pin | Hold the engine's combat target on yours | 13 | Built, CI verified |
-| [`kIntent_CombatEntry`](#ch21-combat-entry-kintent_combatentry) | 21 | Combat entry | Start a fight with one `StartCombat` | 14 | Built, CI verified |
-| [`kIntent_CombatReentryDeny`](#ch22-combat-re-entry-deny-kintent_combatreentrydeny) | 22 | Combat re-entry deny | Keep the actor out of combat for a while | 15 | Built, seat not yet observed |
-| [`kIntent_PursuitLeash`](#ch23-pursuit-leash-kintent_pursuitleash) | 23 | Pursuit leash | Stop the actor chasing too far from an anchor | 16 | Built, not observed |
-| [`kIntent_CombatApproach`](#ch24-combat-approach-kintent_combatapproach) | 24 | Combat approach | Walk toward an actor while fighting | 19 | Built, not field-run |
-| [`kIntent_CastGuard`](#ch25-cast-guard-kintent_castguard) | 25 | Cast guard | Hold attack spells through friends, bound channels | 21 | Built, not field-run |
+| [`kIntent_TargetPin`](#ch20-target-pin-kintent_targetpin) | 20 | Target pin | Hold the engine's combat target on yours | 13 | Field-proven (in use by MFO) |
+| [`kIntent_CombatEntry`](#ch21-combat-entry-kintent_combatentry) | 21 | Combat entry | Start a fight with one `StartCombat` | 14 | Field-proven (in use by MFO) |
+| [`kIntent_CombatReentryDeny`](#ch22-combat-re-entry-deny-kintent_combatreentrydeny) | 22 | Combat re-entry deny | Keep the actor out of combat for a while | 15 | Field-proven (in use by MFO, run 2026-09-28) |
+| [`kIntent_PursuitLeash`](#ch23-pursuit-leash-kintent_pursuitleash) | 23 | Pursuit leash | Stop the actor chasing too far from an anchor | 16 | Field-proven (in use by MFO) |
+| [`kIntent_CombatApproach`](#ch24-combat-approach-kintent_combatapproach) | 24 | Combat approach | Walk toward an actor while fighting | 19 | Field-proven (in use by MFO) |
+| [`kIntent_CastGuard`](#ch25-cast-guard-kintent_castguard) | 25 | Cast guard | Hold attack spells through friends, bound channels | 21 | Field-proven (in use by MFO) |
 | [Space queries](#space-queries-findemptyspace-and-findhostilesinspace) | | `FindEmptySpace`, `FindHostilesInSpace` | Ask for a spot or the hostiles in a sphere | 11 | Built |
 | [Line of sight](#line-of-sight-getlineofsight) | | `GetLineOfSight` | Harbinger's own ray | 18 | Used by MFO |
 | [Awareness](#awareness-senseactor) | | `SenseActor` | Does this actor sense that one | 18 | Used by MFO |
@@ -226,7 +229,7 @@ Handle h = g_apmf->Request(actor, kIntent_MovementBlock, kBasis);
 
 **What Harbinger enforces.** Once, when your claim becomes the owner, Harbinger parks the actor's movement goal at its own position (`KeepOffsetFromActor` on itself with offset 0) and locks the mover (`SetDontMove(true)`). The planner sees "already there" and issues no locomotion command, so there is nothing to run in place and nothing to snap back. The actor's package stays current and keeps evaluating. Harbinger never swaps it. So a travel package simply waits, and finishes by itself when you release. Casting, combat, equipment, animations and dialogue are untouched.
 
-**Lifetime.** A standing claim with no time limit. It ends on `Release`. On release Harbinger clears the parked goal and unlocks the mover. A save load releases it. If the actor unloads, the claim is dropped and there is nothing left to undo. No heartbeat is needed. Harbinger does not re-assert.
+**Lifetime.** A standing claim with no time limit. It ends on `Release`. On release Harbinger clears the parked goal and unlocks the mover. A load releases it. If the actor unloads, the claim is dropped and there is nothing left to undo. No heartbeat is needed. Harbinger does not re-assert.
 
 **Priority and conflicts.** Basis decides between clients. The facet belongs to the `Core` sources facet, which Harbinger counts and shows but does not deny on.
 
@@ -250,7 +253,7 @@ void LetGo(HoldState& s) {
 }
 ```
 
-**Version and INI.** ABI 1. No `APMF.ini` key. It refuses itself on any runtime other than 1.6.1170, 1.5.97 and 1.7.104.
+**Version and INI.** ABI 1. In use by MFO. No `APMF.ini` key. It refuses itself on any runtime other than 1.6.1170, 1.5.97 and 1.7.104.
 
 ### ch.1a Gait (`kIntent_Gait`)
 
@@ -266,7 +269,7 @@ Handle h = g_apmf->Request(actor, kIntent_Gait, kBasis);
 
 **What Harbinger enforces.** It sets the actor's `SpeedMult` actor value to half of its current value, once. It is an input the movement code reads, so it holds even on an actor locked by a package. The write goes through the co-saved actor-value ledger. The value before your claim is recorded, and `Release` puts it back, but only if the value still equals the one Harbinger set. If a quest or another mod changed it in the meantime, theirs stands and Harbinger drops its stale record.
 
-**Lifetime.** Standing, ended by `Release`. The ledger is saved with the game, so a save made while the claim was live does not strand the slow speed. After a load Harbinger restores every outstanding override whether or not a claim still exists. A save load also releases the claim itself.
+**Lifetime.** Standing, ended by `Release`. The ledger is saved with the game, so a save made while the claim was live does not strand the slow speed. After a load Harbinger restores every outstanding override whether or not a claim still exists. A load also releases the claim itself.
 
 **Priority and conflicts.** `ActorValue` sources facet. It is watched only: another mod, a script or the game changing `SpeedMult` while you hold it is named in the log and on the menu page, and never refused. Between clients, basis decides. Do not claim `kIntent_Gait` for the same actor from two mods and expect different values, because the ledger keeps one record per actor value.
 
@@ -436,7 +439,7 @@ Gate on `abiVersion >= 17` before you set `form`. An older Harbinger does not re
 - v2 (form set): one `PlayIdle(actor, idle, target)` call at engage, and one more on each `Repoint` or owner change. The idle's own conditions are evaluated by the engine against the actor and the target, and a failing one refuses it. The client picks the idle. Harbinger never does. At release it sends `IdleForceDefaultState` once, and only if the idle is still held (the actor's graph has not raised `IdleStop` since the call). A one-shot idle that already ended gets nothing.
 - With `bIdleConfirm=1` an idle counts as played only when the actor's behaviour graph raises one of that idle's own entry events. If none arrives within 3 seconds of world time, Harbinger ends the claim and logs `ANIMATION NOT CONFIRMED`.
 
-**Lifetime.** Standing, ended by `Release`. Harbinger also ends the claim, logs why and sets `IsClaimLive` false when: the form is not an IDLE, the target is not a loaded reference, the actor is not loaded or is dead or has no AI process, the engine refused the idle, or the owner died. A load or a new game ends it. `Repoint` with a new `form` or `target` plays again.
+**Lifetime.** Standing, ended by `Release`. When an idle ends, `IsClaimLive` reads false. Harbinger ends the claim itself, logs why and does this when: the form is not an IDLE, the target is not a loaded reference, the actor is not loaded or is dead or has no AI process, the engine refused the idle, or the owner died. A load or a new game ends it. `Repoint` with a new `form` or `target` plays again.
 
 **Refusals.** At the call, only when `form` is non-zero: VR, an unsupported runtime, a self-check refusal, `bIdleV2=0`, before `kDataLoaded`, or `target` equal to the actor. At engage (the handle is live and inert, release it): the form is not an IDLE record or the target is not loaded.
 
@@ -455,7 +458,12 @@ bool PlayGive(RE::FormID actor, RE::FormID idleForm, RE::FormID crate, GiveAnim&
     p.form   = idleForm;
     p.target = crate;                                       // the engine tests the idle's conditions against it
     g.idle = g_apmf->RequestEx(actor, kIntent_Idle, kBasis, &p);
-    return g.idle != kInvalidHandle;
+    if (g.idle == kInvalidHandle) {                         // refused: do not leave the follower held
+        if (g.hold != kInvalidHandle) g_apmf->Release(g.hold);
+        g = {};
+        return false;
+    }
+    return true;
 }
 
 void EndGive(GiveAnim& g) {
@@ -465,7 +473,7 @@ void EndGive(GiveAnim& g) {
 }
 ```
 
-**Version and INI.** ABI 1, form and target from ABI 17 (first shipped in 0.9.10). `bIdleV2` and `bIdleConfirm` in `[Idle]`. The v2 path is built and CI verified. `TODO(verify)`: no field run of the v2 path is recorded in the project docs.
+**Version and INI.** ABI 1, form and target from ABI 17 (first shipped in 0.9.10). `bIdleV2` and `bIdleConfirm` in `[Idle]`. In use by MFO. IdleGive was field-confirmed on 2026-09-28. The entry-event confirmation (`bIdleConfirm`) has only been CI verified.
 
 ## AI disposition and senses
 
@@ -563,7 +571,7 @@ Handle h = g_apmf->RequestEx(actor, kIntent_SelectSpell, kBasis, &p);
 
 | Field | Meaning |
 |---|---|
-| `form` | the spell FormID. 0 falls back to a built-in default. `TODO(verify)`: the header says the default is Firebolt, but no shipped path uses a zero form |
+| `form` | the spell FormID. 0 names no spell, so with no allow list nothing is denied. There is no built-in default spell |
 | `ival`, `target`, `pos` | retired. They were the old APMF-driven cast mode. Setting them does nothing |
 
 `SetSpellAllowList` (ABI 4) adds a bounded extra set:
@@ -609,7 +617,7 @@ Handle RequestCast(RE::FormID actor, float basis, const APMF_CastRequest* req);
 struct APMF_CastRequest {
     RE::FormID    spell;   // the spell to cast (or the package, with kCastFlag_FromPackage)
     RE::FormID    proxy;   // a delivery proxy you made. 0 = none, Harbinger mints one if needed
-    RE::FormID    target;  // the target actor. 0 = the caster itself. Load-bearing
+    RE::FormID    target;  // the target actor. 0 = self for Self delivery and summon placement, else the AI's own combat target
     std::uint32_t flags;   // CastFlags, see below
     std::uint32_t ttlMs;   // the window in milliseconds. 0 = 4000. Clamped to 15000
 };
@@ -621,7 +629,7 @@ struct APMF_CastRequest {
 | `basis` | ranks you against other cast claims on this actor |
 | `req->spell` | required, except on a deny-only hand claim |
 | `req->proxy` | leave 0. A Self-delivery spell aimed at someone else needs a delivery flip, because the engine's Self branch always lands on the caster. Harbinger mints the flipped copy itself and pools it. You can read its FormID back with `GetCastProxy(handle)` |
-| `req->target` | where the cast lands. The engine's magic-target seat hands it to the AI as its target and the aim seat uses it as the aim point. 0 is self |
+| `req->target` | where the cast lands. The engine's magic-target seat hands it to the AI as its target and the aim seat uses it as the aim point. 0 means self only for a Self-delivery spell and for the placement of a summon or reanimate. For any other spell the AI aims at its own combat target |
 | `req->flags` | the `CastFlags` bits below |
 | `req->ttlMs` | how long the claim lives without a renewal |
 
@@ -635,7 +643,7 @@ The degenerate form `RequestEx(actor, kIntent_Cast, basis, &p)` with `p.form = s
 |---|---|---|---|
 | 0 | `kCastFlag_FromPackage` | `spell` is a TESPackage. Harbinger extracts only its spell input and target and never runs, offers or evaluates the package. A package with no readable spell input is refused one drain later | 5 |
 | 1 | `kCastFlag_LeftHand` | hand hint. Default is the right hand. Scopes the per-hand deny and the equip seat | 5 |
-| 2 | `kCastFlag_Concentration` | the cast is a held stream. The time floor applies | 5 |
+| 2 | `kCastFlag_Concentration` | a hint that the cast is a held stream. It sets no time floor and changes no behaviour. It feeds logs and the caster census only. Use `MakeStopPct` to shape a channel | 5 |
 | 3 | `kCastFlag_DualCast` | a hint to cast with both hands. The engine still decides whether the second hand arms. Never set `kCastFlag_LeftHand` with it. If both are set, dual wins | 5 |
 | 4 | `kCastFlag_DenyHandOnly` | [claim a hand purely to deny it](#a-hand-floor-kcastflag_denyhandonly) | 5 (bit added in place) |
 | 5 | `kCastFlag_AtPosition` | the [position cast](#position-cast-kcastflag_atposition). `RequestEx` only | 11 |
@@ -645,7 +653,7 @@ The degenerate form `RequestEx(actor, kIntent_Cast, basis, &p)` with `p.form = s
 
 An older Harbinger ignores a flag bit it does not know and applies the rest. The ones that matter are `kCastFlag_DenyHandOnly` (an older build makes a no-form claim that denies nothing), `kCastFlag_AtPosition` (an older build makes an ordinary actor-target claim), `kCastFlag_OwnLineOfSight` (an older build casts with no line test) and `kCastFlag_FloorSpellsOnly` (an older build blocks weapons too). Check `abiVersion` before you set them.
 
-**Stop percent.** For a concentration cast, `MakeStopPct(80)` sets bits 8 to 15 to 80. The channel then stops the moment the target reaches 80 percent of its permanent actor value. 0 means no threshold. The channel then runs to full restoration, to the target's death, to your release, or to the window's end. Without it the engine stops where its own combat style says, which for a heal is about a quarter-second pulse. `ReadStopPct(flags)` reads it back.
+**Stop percent.** For a heal or restore channel, `MakeStopPct(80)` sets bits 8 to 15 to 80. The percent applies only to heal and restore channels. It is ignored on any other cast. The channel then stops the moment the target reaches 80 percent of its permanent actor value. 0 means no threshold. The channel then runs to full restoration, to the target's death, to your release, or to the window's end. Without it the engine stops where its own combat style says, which for a heal is about a quarter-second pulse. `ReadStopPct(flags)` reads it back.
 
 **What Harbinger enforces.** While your claim owns the cast facet on the actor, Harbinger answers these engine decisions for it.
 
@@ -669,7 +677,7 @@ If you want "no casting at all", ch.8b is the wrong tool. Claim [ch.7](#ch7-comb
 - `Repoint` cannot change what the claim casts. A `param.form` that differs from the claim's spell is refused and logged, and the claim keeps its spell. To cast something else, `Release` and `RequestCast` again. A same-form heartbeat is the shape to send.
 - `IsClaimLive(handle)` turns false at expiry, release or eviction. Treat false like `kInvalidHandle` and re-request. It reads false while a fresh claim is still [pending](#pending-claims-and-isclaimlive).
 - Claims on different hands coexist. A dual-cast claim and a single-hand claim cannot. The loser is refused outright, or evicted if it was already live, and `IsClaimLive` turns false. A deny-only claim is outside that collision in both directions.
-- A save load or a new game releases every cast claim. An actor that unloads drops its claims.
+- A load or a new game releases every cast claim. An actor that unloads drops its claims.
 
 **Priority and conflicts.** Among your own cast claims, the highest basis owns the hand. A tie keeps the earliest claim, with one exception: **at an equal basis a deny-only claim loses to a driving claim.** That is enforced for you, so a client that uses one basis for every claim can lay a floor first and still have its next cast take the hand. A floor placed at a basis strictly above a driving claim wins, and Harbinger logs that loudly because a follower holding a hand and casting nothing is hard to read from a log.
 
@@ -677,22 +685,26 @@ Against foreign sources, ch.8b sits on the `Cast` sources facet. Each answer Har
 
 **Examples.**
 
-Keep a heal going on a wounded friend, with a heartbeat. This is the shape MFO uses: a change of spell or target is a new claim, an unchanged claim is renewed.
+Keep a heal going on a wounded friend, with a heartbeat. This is the shape MFO uses: a change of spell or target is a new claim, an unchanged claim is renewed. A claim that has not yet read live is left alone, because a pending claim released by the next tick would never engage. A pending claim that never applies lapses by itself inside `ttlMs`, so keep your tick slower than the drain (one per frame) and the claim inside its window.
 
 ```cpp
-struct HealClaim { Handle h = kInvalidHandle; RE::FormID spell = 0; RE::FormID target = 0; };
+struct HealClaim { Handle h = kInvalidHandle; bool seen = false; RE::FormID spell = 0; RE::FormID target = 0; };
 
 void KeepHeal(RE::FormID healer, RE::FormID healSpell, RE::FormID friendId, HealClaim& c) {
     if (g_apmf->abiVersion < 5) return;                       // no RequestCast on an older Harbinger
 
     const bool same = c.h != kInvalidHandle && c.spell == healSpell && c.target == friendId;
-    if (same && g_apmf->IsClaimLive(c.h)) {
-        APMF_Param p{};
-        p.form = healSpell;                                   // same form: a pure heartbeat
-        g_apmf->Repoint(c.h, &p);                             // renews the window
-        return;
+    if (same) {
+        if (g_apmf->IsClaimLive(c.h)) {
+            c.seen = true;
+            APMF_Param p{};
+            p.form = healSpell;                               // same form: a pure heartbeat
+            g_apmf->Repoint(c.h, &p);                         // renews the window
+            return;
+        }
+        if (!c.seen) return;                                  // still pending: the next tick must not release it
     }
-    if (c.h != kInvalidHandle) g_apmf->Release(c.h);
+    if (c.h != kInvalidHandle) g_apmf->Release(c.h);          // changed, or it lapsed after being live
 
     APMF_CastRequest req{};
     req.spell  = healSpell;
@@ -702,6 +714,7 @@ void KeepHeal(RE::FormID healer, RE::FormID healSpell, RE::FormID friendId, Heal
                | MakeStopPct(80);                             // stop the stream at 80 percent
     req.ttlMs  = 4000;
     c.h = g_apmf->RequestCast(healer, kBasis, &req);
+    c.seen = false;
     c.spell = healSpell;
     c.target = friendId;
 }
@@ -711,6 +724,7 @@ Fire an offensive spell at a chosen foe, aimed by the follower's own AI.
 
 ```cpp
 Handle CastAt(RE::FormID caster, RE::FormID spell, RE::FormID foe) {
+    if (g_apmf->abiVersion < 5) return kInvalidHandle;       // no RequestCast on an older Harbinger
     APMF_CastRequest req{};
     req.spell  = spell;
     req.target = foe;
@@ -822,7 +836,7 @@ bool DropSpellAhead(RE::FormID caster, RE::FormID spell) {
 }
 ```
 
-**Version and INI.** ABI 11 (0.9.8). `bPositionCast` in `[PositionCast]`, default 0. Built, CI verified, not battle-tested. `TODO(verify)`: no field run of the position cast is recorded in the project docs.
+**Version and INI.** ABI 11 (0.9.8). `bPositionCast` in `[PositionCast]`, default 0. Built, CI verified, not battle-tested. No field run of the position cast is recorded.
 
 ### ch.14 Shout and power (`kIntent_ShoutPower`)
 
@@ -905,10 +919,12 @@ It chooses no spell, aims nothing, equips nothing and fires nothing. A self-deli
 
 **Priority and conflicts.** `Cast` sources facet. The source a guard overrules is the engine's own AI. A refusal stands only while the guard claim's client outranks `Engine` there. Defaults are client 50 against engine 20. A would-be refusal that does not stand is logged "would refuse, ALLOWED". Among guard claims on one actor, the highest basis wins, a tie keeps the earliest, and **the winner's bits apply alone**. Bits are not merged across claims.
 
-**Examples.** Hold one guard per follower and heartbeat it from your service tick. This is the pattern in MFO's design for its friendly-fire hold.
+**Examples.** Hold one guard per follower and heartbeat it from your service tick. This is the pattern in MFO's `CastGuard.cpp`: renew while the claim is live, and ask again once it has gone.
 
 ```cpp
-void KeepGuard(RE::FormID follower, bool boundConcentration, Handle& h) {
+struct GuardClaim { Handle h = kInvalidHandle; bool seen = false; };
+
+void KeepGuard(RE::FormID follower, bool boundConcentration, GuardClaim& g) {
     if (g_apmf->abiVersion < 21) return;
 
     APMF_Param p{};
@@ -916,16 +932,27 @@ void KeepGuard(RE::FormID follower, bool boundConcentration, Handle& h) {
     if (boundConcentration) p.ival |= kCastGuard_ChannelRight | kCastGuard_ChannelLeft;
     p.fval = 6.0f;                                              // seconds. Repoint renews it
 
-    if (h == kInvalidHandle) h = g_apmf->RequestEx(follower, kIntent_CastGuard, kBasis, &p);
-    else                     g_apmf->Repoint(h, &p);
+    if (g.h != kInvalidHandle) {
+        if (g_apmf->IsClaimLive(g.h)) {                         // ABI 6
+            g.seen = true;
+            g_apmf->Repoint(g.h, &p);                           // heartbeat
+            return;
+        }
+        if (!g.seen) return;                                    // still pending: wait for the first live read
+        g_apmf->Release(g.h);                                   // it lapsed or a load dropped it: ask again
+        g.h = kInvalidHandle;
+    }
+    g.h = g_apmf->RequestEx(follower, kIntent_CastGuard, kBasis, &p);
+    g.seen = false;
 }
 
-void DropGuard(Handle& h) {
-    if (h != kInvalidHandle) { g_apmf->Release(h); h = kInvalidHandle; }
+void DropGuard(GuardClaim& g) {
+    if (g.h != kInvalidHandle) { g_apmf->Release(g.h); g.h = kInvalidHandle; }
+    g.seen = false;
 }
 ```
 
-**Version and INI.** ABI 21 (0.12.0). No key of its own. It rides the cast gate and, for the ray, `bOwnLineOfSight` in `[Sightline]`. Built and CI verified, not yet field-run. `TODO(verify)`: the project docs describe this recipe as MFO's, but the current MFO source checkout has no `kIntent_CastGuard` caller.
+**Version and INI.** ABI 21 (0.12.0). No key of its own. It rides the cast gate and, for the ray, `bOwnLineOfSight` in `[Sightline]`. In use by MFO since 2.3.0 (`native/apmf/CastGuard.cpp`: a 6 second window, a `Repoint` heartbeat, and a fresh request when the claim has gone stale).
 
 ## Equipment
 
@@ -952,7 +979,7 @@ Handle h = g_apmf->RequestEx(actor, kIntent_Equipment, kBasis, &p);
 
 **Lifetime.** Standing, ended by `Release`. Never hold it on the same actor as a ch.17 claim. On a ch.17 actor the probe path's re-equip is an equip from outside the engine and is refused unless the weapon is in the declared set. The gate-only form is not affected.
 
-**Priority and conflicts.** `Equip` sources facet. Equip writers are traced by a stack scan and a deny stands only against a positively identified source that is outranked. An equip Harbinger cannot attribute is never denied.
+**Priority and conflicts.** `Equip` sources facet. Equip denies are not ranked by priority. The caller of an engine equip is recovered by a stack scan. A positively identified off-set equip is denied, and an equip Harbinger cannot attribute is allowed.
 
 **Examples.**
 
@@ -964,7 +991,7 @@ Handle KeepWeaponOut(RE::FormID actor, RE::FormID weapon) {
 }
 ```
 
-**Version and INI.** ABI 1. No key of its own. `EnableEquipDenyComplete` in `[EquipGate]` affects the gate it rides. Built, not yet battle-tested.
+**Version and INI.** ABI 1. No key of its own. `EnableEquipDenyComplete` in `[EquipGate]` affects the gate it rides. In use by MFO.
 
 ### ch.17 Equip authority (`kIntent_EquipAuthority`)
 
@@ -1036,6 +1063,8 @@ The seat's verdict for an equip on a claimed actor, in order:
 | competes for an owned category and there is no declaration or the item is in the set | allow |
 | competes for an owned category and the item is off-set | deny |
 | competes for no owned and no denied category | allow |
+| the form is not ARMO, WEAP, AMMO or LIGH | allow (not governed) |
+| observe-only mode (`bEquipObserveOnly`, or the claim's own bit) | every deny above is logged as `would-deny` and nothing is refused. Armor is still refused while `bEquipEnforceArmor=1` |
 
 Only ARMO, WEAP, AMMO and LIGH equips are governed. A potion, food, a scroll, an ingredient or a book passes untouched, so the AI's own potion use is never refused. Do not declare one. The equip pass skips it and logs why. The deny half compares FormIDs only, so a declared item is in the set whichever hand the engine tries. The hand is what Harbinger's own equip pass enforces.
 
@@ -1050,11 +1079,11 @@ Rules of the road:
 - **A refused equip is not re-issued.** If the hand block refused a declared weapon because a cast claim held that hand, Harbinger does not equip it again when the hand frees. Declare again after the cast claim releases (backlog item APMF-B64).
 - **Harbinger never adds items.** A declared item the actor does not own is skipped and logged.
 
-**Refusal and the degrade.** The claim is refused at the call (`kInvalidHandle`) while the equip seat is not installed: `bEquipAuthority=0`, VR, an unsupported runtime, a site-verify refusal, or before `kDataLoaded`. A refused claim means keep your own equips. `IsEquipAuthorityEnforced()` separates "Harbinger holds the set" from "Harbinger is only watching". It is true only when the seat is installed and `bEquipObserveOnly` is 0. A claim's own `kEquipAuth_ObserveOnly` bit is not consulted by it.
+**Refusal and the degrade.** The claim is refused at the call (`kInvalidHandle`) while the equip seat is not installed: `bEquipAuthority=0`, VR, an unsupported runtime, a site-verify refusal, or before `kDataLoaded`. A refused claim means keep your own equips. `IsEquipAuthorityEnforced()` is true when the seat is installed and either `bEquipObserveOnly` is 0 or `bEquipEnforceArmor` is 1. With the shipped defaults (`bEquipObserveOnly=1`, `bEquipEnforceArmor=1`) it is therefore true even though weapons, shields, torches and ammo are only observed. It tells you that Harbinger enforces at least armor, not that it enforces everything. A claim's own `kEquipAuth_ObserveOnly` bit is not consulted by it.
 
 **Lifetime.** Standing, no time limit. It ends on `Release`, a higher basis, a load or an unload. Release clears the declaration and nothing is unequipped. A declaration on a claim that does not own the facet is stored and takes effect the moment that claim wins. A win is a declaration event and runs the equip pass.
 
-**Priority and conflicts.** `Equip` sources facet. The caller of an engine equip is recovered by a stack scan. A deny stands only against a positively identified source that your priority outranks. An equip Harbinger cannot attribute is never denied. Armor verdicts are enforced by default (`bEquipEnforceArmor=1`) even while `bEquipObserveOnly=1`. Weapons, shields, torches and ammo stay observe-only until you set `bEquipObserveOnly=0`. This is the only facet with a call-site seat. It patches the two internal call sites of the engine's equip worker, byte-verifies both before writing either, and refuses to install if any other mod touched those bytes, so a collision is a missing feature and never a crash.
+**Priority and conflicts.** `Equip` sources facet. Equip denies are not ranked by priority. The caller of an engine equip is recovered by a stack scan. A positively identified off-set equip is denied, and an equip Harbinger cannot attribute is allowed. Armor verdicts are enforced by default (`bEquipEnforceArmor=1`) even while `bEquipObserveOnly=1`. Weapons, shields, torches and ammo stay observe-only until you set `bEquipObserveOnly=0`. This is the only facet with a call-site seat. It patches the two internal call sites of the engine's equip worker, byte-verifies both before writing either, and refuses to install if any other mod touched those bytes, so a collision is a missing feature and never a crash.
 
 While a cast claim holds a hand, `[HandBlock]` also closes that hand to weapons, shields and torches. This is on by default and independent of `bEquipObserveOnly`.
 
@@ -1068,14 +1097,12 @@ Handle ClaimEquip(RE::FormID actor) {
 
     APMF_Param p{};
     p.ival = kEquipAuth_None;                         // scripts pass, unequips pass, the player menu passes
-    Handle h = g_apmf->RequestEx(actor, kIntent_EquipAuthority, kBasis, &p);
-    if (h == kInvalidHandle) return h;                // seat not installed: keep your own equips
-    return h;
+    return g_apmf->RequestEx(actor, kIntent_EquipAuthority, kBasis, &p);   // kInvalidHandle: seat not installed, keep your own equips
 }
 
 void DeclareLoadout(Handle h, RE::FormID sword, RE::FormID dagger, RE::FormID cuirass) {
     APMF_EquipScope scope{};
-    scope.owned  = kEquipCat_Right | kEquipCat_Left | kEquipCat_Armor;   // leave ammo and torches to the engine
+    scope.owned  = kEquipCat_Right | kEquipCat_Left | kEquipCat_Armor;   // a torch or a shield competes for Left, so it is denied unless declared. Ammo is left to the engine
     scope.denied = 0;
     g_apmf->SetEquipScope(h, &scope);                 // send the scope before the set
 
@@ -1095,7 +1122,7 @@ void DropAuthority(Handle& h) {
 }
 ```
 
-Find out whether the engine is actually refusing, or only watching.
+Find out whether Harbinger enforces at least armor (true with the defaults, even while weapons are only observed).
 
 ```cpp
 bool HarbingerEnforces() {
@@ -1103,7 +1130,7 @@ bool HarbingerEnforces() {
 }
 ```
 
-**Version and INI.** ABI 7 (first shipped in 0.9.5), 8 adds a hand per item, `kEquipAuth_DenyPlayerMenu` and `IsEquipAuthorityEnforced`, 9 adds the scope. Keys in `[EquipAuthority]`: `bEquipAuthority` (1), `bEquipObserveOnly` (1), `bEquipEnforceArmor` (1), `bEquipDenyScript` (0). `bHandClaimBlocksEquip` in `[HandBlock]`. The seat ships observe-only for weapons until the probe criteria in [Appendix E](#appendix-e-equip-authority-probe-criteria) pass. Built, not yet battle-tested.
+**Version and INI.** ABI 7 (first shipped in 0.9.5), 8 adds a hand per item, `kEquipAuth_DenyPlayerMenu` and `IsEquipAuthorityEnforced`, 9 adds the scope. Keys in `[EquipAuthority]`: `bEquipAuthority` (1), `bEquipObserveOnly` (1), `bEquipEnforceArmor` (1), `bEquipDenyScript` (0). `bHandClaimBlocksEquip` in `[HandBlock]`. In use by MFO. The seat ships observe-only for weapons until the probe criteria in [Appendix E](#appendix-e-equip-authority-probe-criteria) pass. Built, not yet battle-tested.
 
 ## Packages and travel
 
@@ -1125,7 +1152,7 @@ A nudge makes the redirect take within one evaluation. Harbinger calls `Evaluate
 
 **Spectator hold-off.** While the claim wins and outranks `Engine` on the `Package` facet, the engine's runtime-created Spectator package (an out-of-combat NPC watching a fight) is not created, so a retreating follower keeps its package. The seat is `iSpectatorSeat` in `[PackageGate]` (2 on, 1 log only, 0 off). Built, not yet tested in game.
 
-**Lifetime.** Standing, ended by `Release`. A load drops it. `TODO(verify)`: the project's own notes say save and load persistence of an engaged claim is unexercised.
+**Lifetime.** Standing, ended by `Release`. A ch.9 claim never survives a load, since every claim is released at `kPreLoadGame`. What is untested is the engine-side package persistence: how the engine's own package state behaves across a save and load.
 
 **Priority and conflicts.** `Package` sources facet. Package and scene sources are **observe only**. Harbinger captures the package that runs instead of yours, names its source (the scene's plugin, else the package's plugin, else `Engine` for a runtime package), compares priorities in the log and denies nothing. The only enforcement on this facet is the Spectator hold-off. Between your own package-offer claims, basis decides. ch.19 Travel files an internal ch.9 claim at your basis, so an outbidding ch.9 claim on the same actor takes the package from your travel leg.
 
@@ -1338,11 +1365,11 @@ p.form = targetActorFormID;                      // recorded for observability
 Handle h = g_apmf->RequestEx(actor, kIntent_CombatTarget, kBasis, &p);
 ```
 
-**What Harbinger enforces.** It records the owner. The engine's target-selector seat sits above every foreign hook on the combat target. When a positively identified foreign writer that your priority outranks changes the target, Harbinger puts the target back through the engine's own `SetTarget`. A segment of the hook chain it cannot prove is logged as `ATTRIBUTION DEFECT` and never enforced. `TODO(verify)`: the project docs describe this restore for "the target facet (ch.6 and ch.20)". It is not written down which target a ch.6 claim restores, since the claim's `form` is described as recorded for observability.
+**What Harbinger enforces.** Nothing. It records the owner and writes no target. A ch.6 claim restores nothing. The target restore belongs to [ch.20](#ch20-target-pin-kintent_targetpin) only.
 
 **Lifetime.** Standing. Ended by `Release`. Nothing to undo, because Harbinger wrote nothing.
 
-**Priority and conflicts.** `Target` sources facet. `[UnknownSources] Target=override` makes an unnamed write rank at the Unattributed row. When the unnamed write came from the claiming mod's own plugin, it stands for that mod's claim.
+**Priority and conflicts.** `Target` sources facet, as a record only. Basis decides between ch.6 claims. Nothing is enforced against a foreign writer for a ch.6 claim.
 
 **Examples.**
 
@@ -1435,7 +1462,7 @@ With `kTargetPin_OwnLineOfSight` the pin also pauses while Harbinger's own ray f
 
 Refused at the call (`kInvalidHandle`): an APMF older than 13, VR, an unsupported runtime, `[TargetPin] bTargetPin=0`, a failed address self-check, before `kDataLoaded`, `form` 0 or equal to the actor, the player as the actor, and `kTargetPin_OwnLineOfSight` while the line-of-sight service is not armed. Refused at engage (the handle is live and inert, release it): `form` is not an Actor. A `Repoint` naming a non-actor, 0 or the actor itself leaves the claim live and inert, logged.
 
-**Priority and conflicts.** `Target` sources facet. Another mod that writes the target after the engine's update (its own `UpdateCombat` hook) writes last and wins, which shows as `OVERWRITTEN` in the log. If your client has its own target hook, make it stand down for any actor you have pinned. Harbinger also logs `SOURCE SEAT MISSED` if the actor ends an update aimed elsewhere with the selector never asked.
+**Priority and conflicts.** `Target` sources facet. When the selector seat answered with your target and a later write changed it (logged `OVERWRITTEN`), Harbinger names the writer. If the writer is positively identified and your priority is above it, Harbinger puts your pin target back through the engine's own `SetTarget`. A writer that outranks you, or one Harbinger cannot name, stands. `[UnknownSources] Target=override` makes an unnamed write rank at the Unattributed row, and an unnamed write from the claiming mod's own plugin stands for that mod's claim. A segment of the hook chain Harbinger cannot prove is logged `ATTRIBUTION DEFECT` and never enforced. If your client has its own target hook, make it stand down for any actor you have pinned. Harbinger also logs `SOURCE SEAT MISSED` if the actor ends an update aimed elsewhere with the selector never asked.
 
 **Examples.** See the combined entry and pin recipe under ch.21.
 
@@ -1456,7 +1483,7 @@ void RePin(Handle h, RE::FormID newFoe) {
 }
 ```
 
-**Version and INI.** ABI 13 (0.9.9), line-of-sight flag 18. `bTargetPin` in `[TargetPin]`. Built and CI verified. Nobody has watched the selector seat run in game yet. The first field log must show `FIRST SOURCE DENY` and no `SOURCE SEAT MISSED` before anything relies on it.
+**Version and INI.** ABI 13 (0.9.9), line-of-sight flag 18. `bTargetPin` in `[TargetPin]`. In use by MFO. A field log should show `FIRST SOURCE DENY` and no `SOURCE SEAT MISSED` before anything relies on it.
 
 ### ch.21 Combat entry (`kIntent_CombatEntry`)
 
@@ -1521,7 +1548,7 @@ void StopFight(Fight& f) {
 }
 ```
 
-**Version and INI.** ABI 14 (0.9.9). `bCombatEntry` in `[CombatEntry]`. Built and CI verified.
+**Version and INI.** ABI 14 (0.9.9). `bCombatEntry` in `[CombatEntry]`. In use by MFO.
 
 ### ch.22 Combat re-entry deny (`kIntent_CombatReentryDeny`)
 
@@ -1579,7 +1606,7 @@ bool TickRetreat(Retreat& r, StopCombatFn stopCombatOnce) {
 
 Where the NPC goes after `StopCombat` is not decided here. If foes keep fighting nearby, the engine hands an out-of-combat NPC its own Spectator package and it stands and watches. To send it somewhere, claim [ch.9](#ch9-offer-package-kintent_offerpackage) with your own package before `StopCombat`.
 
-**Version and INI.** ABI 15 (0.9.10). `bCombatReentryDeny` in `[CombatReentryDeny]`. Built and CI verified. The seat must be observed in the field (`[ch.22] seat OBSERVED` in the log) before a client relies on it. `[ch.22] ... DENY MISSED` means the actor entered combat anyway and should be reported.
+**Version and INI.** ABI 15 (0.9.10). `bCombatReentryDeny` in `[CombatReentryDeny]`. In use by MFO, and run in the 2026-09-28 field session (the seat was seen, every deny was logged and none was missed). `[ch.22] seat OBSERVED` in the log shows the seat ran. `[ch.22] ... DENY MISSED` means the actor entered combat anyway and should be reported.
 
 ### ch.23 Pursuit leash (`kIntent_PursuitLeash`)
 
@@ -1628,7 +1655,7 @@ void ChangeRadius(Handle h, RE::FormID anchor, float radius) {
 }
 ```
 
-**Version and INI.** ABI 16 (0.9.10). `bPursuitLeash` in `[PursuitLeash]`. Built and CI verified. Not yet observed in game. The `[ch.23] pursuit H` heartbeat counts the leaves.
+**Version and INI.** ABI 16 (0.9.10). `bPursuitLeash` in `[PursuitLeash]`. In use by MFO. The `[ch.23] pursuit H` heartbeat counts the leaves.
 
 ### ch.24 Combat approach (`kIntent_CombatApproach`)
 
@@ -1721,7 +1748,7 @@ const char* WhyApproachEnded(RE::FormID healer) {
 }
 ```
 
-**Version and INI.** ABI 19 (0.11.0). `bCombatApproach` in `[CombatApproach]`. Built and CI verified, not field-run. The `[ch.24]` heartbeat in the log counts the seats.
+**Version and INI.** ABI 19 (0.11.0). `bCombatApproach` in `[CombatApproach]`. In use by MFO. The `[ch.24]` heartbeat in the log counts the seats.
 
 ## Read-only queries (no claim)
 
@@ -1984,9 +2011,9 @@ Every Intent maps to one sources facet. This table says which, and what Harbinge
 
 | Sources facet (`APMF_Sources.ini` section) | Intents | Enforced against a foreign source |
 |---|---|---|
-| `Target` | ch.6, ch.20 | Restored through the engine's own `SetTarget` when a positively identified source is outranked |
+| `Target` | ch.6, ch.20 | ch.20 only. Restored through the engine's own `SetTarget` when a positively identified writer is outranked. ch.6 restores nothing |
 | `Package` | ch.9, ch.19 | Observe. The Spectator hold-off is the one exception, and it needs your priority above `Engine` |
-| `Equip` | ch.15, ch.17, hand block | Denied only for a positively identified, outranked source. An unattributed equip is never denied |
+| `Equip` | ch.15, ch.17, hand block | Not ranked by priority. A positively identified off-set equip is denied. An unattributed equip is allowed |
 | `CombatAction` | ch.7, ch.23 | A leaf the engine's tree chose is stopped only while your priority is above `Engine` |
 | `Cast` | ch.8, ch.8b, ch.25 | A refusal or substitution stands only while your priority is above the source of the answer it replaces (the engine, or a mod hooked there first) |
 | `Combat` | ch.21, ch.22, ch.24 | ch.22 refuses a `StartCombat` only while above the calling source. ch.24 writes its bound only while above the engine's combat area. ch.21 makes one call |
@@ -2053,7 +2080,7 @@ A refusal at the call returns `kInvalidHandle` and logs the reason in `APMF.log`
 | any | no channel for the intent (a Harbinger older than the intent's ABI) | |
 | `kIntent_Cast` | `kCastFlag_OwnLineOfSight` with the service not armed or on the degenerate `RequestEx` form. `kCastFlag_AtPosition` on `RequestCast`. A position cast with a non-finite basis or an owned cast facet | a package with no spell input (`kCastFlag_FromPackage`). A dual claim against a single-hand claim loses by basis |
 | `kIntent_EquipAuthority` | the equip seat is not installed | |
-| `kIntent_Idle` with a form | v2 path not available, `target` equal to the actor | the form is not an IDLE record, the target is not loaded |
+| `kIntent_Idle` with a form | v2 path not available, `target` equal to the actor | the form is not an IDLE record, the target is not loaded. When an idle ends, `IsClaimLive` reads false |
 | `kIntent_Travel` | channel not installed (`bTravel=0`, VR, `APMF.esl` missing), no destination, a point without `kTravel_ToPosition`, with it a non-zero form or a non-finite point | the form is neither a reference nor a cell. A ninth simultaneous leg (reads `kLeg_Failed`) |
 | `kIntent_TargetPin` | seat not installed, `form` 0 or the actor itself, the player as the actor, line of sight flag with the service down | `form` is not an Actor |
 | `kIntent_CombatEntry` | seat not installed, `form` 0 or the actor itself, the player as the actor | `form` is not an Actor (ends the claim) |
