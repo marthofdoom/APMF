@@ -6,7 +6,7 @@ build/finding/workflow change.
 
 ## RELEASED 2026-10-12 -- v0.13.0 "Harbinger names who changes the AI"
 
-Cut from main `f75182f` plus the stamp commit. Contents: 1b attribution (combat entry, approach, actions, cast facet priorities), unknown-source checkbox, Spectator seat, observe-only ActorValue seat, loaded plugin list. No ABI change (still v21, `native/APMF_API.h` unchanged since v0.12.0). Docs refreshed: CHANGELOG, README, HARBINGER-MENU (INI-REFERENCE already carried the new keys). Pair with MFO v2.4.0. CI run, tag and hashes: see releases/v0.13.0/MANIFEST.txt.
+Cut from main `f75182f` plus the stamp commit. Contents: 1b attribution (combat entry, approach, actions, cast facet priorities), unknown-source checkbox, Spectator seat, observe-only ActorValue seat, loaded plugin list. No ABI change (still v21, `native/APMF_API.h` unchanged since v0.12.0). Docs refreshed: CHANGELOG, README, HARBINGER-MENU (INI-REFERENCE already carried the new keys). Pair with MFO v2.4.0. Stamp commit `83bde85`, CI run 38265129678, tag `v0.13.0`, DLL sha256 `c97fa68f...`, zip sha256 `0b0184dc...`.
 
 ## RELEASED 2026-10-12 -- v0.12.0 "The controller, the menu and the cast guard"
 
