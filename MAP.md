@@ -1362,9 +1362,12 @@ kNoSource, the degrade rule; cached per address), `CastClaimHandle(actor)` (high
 follow-on seats). Users: `core/CastGate.cpp` (the final 0x0A refusal; both narrowings refusing -> the higher-priority
 claim decides), `core/EquipGate.cpp` (`claimWins` lambda: Restore seat YES, N4, deny-complete, engine-first ch.8 and
 ch.8b refusals; one counted decision per claim kind per call; NOT the completeness fix or ch.15), `core/CastSeats.cpp`
-(`ClaimNamesThisCast(..., prevFn, count)`: 0x06 counts, 0x0A / 0x07 / 0x0D silent, so a cast is wholly claim-driven or
+(`ClaimNamesThisCast(..., prevFn, count)`: EVERY seat decides against the 0x06 slot's displaced function on that
+vtable (`StartSlotPrev`, review SEV-3), 0x06 counts, 0x0A / 0x07 / 0x0D silent, so a cast is wholly claim-driven or
 wholly the engine's), `core/CastClassify.cpp` (`ClaimOutranksClassify`: the force site counts, the two serves are silent).
-Every one keeps the claim's answer on a throw. APMF-B71 folds: `Sources` `ModuleOf` negative cache (4 KiB page, 60 s,
+Every one keeps the claim's answer on a throw: the handle reads, `InsideSource`, `ClaimPriority` and the registry all
+run inside the try; a throw in the "STANDS" line itself is caught separately and keeps the stand. Every "STANDS" line
+uses `WhyStands` (an unknown source with the override off says unknown sources are ALLOWED by `[UnknownSources]`). APMF-B71 folds: `Sources` `ModuleOf` negative cache (4 KiB page, 60 s,
 256 cap) and `ActionGate` `ClaimOutranksTree` try/catch. ch.25 CastGuard untouched.
 Shared by the Combat and CombatAction facets' existing seats (no new seat, no new address, no ABI change).
 `Decide(facet, claimHandle, src, actor, unknownDetail)` = NoteHit + the priority test (`ClaimPriority(handle)` >

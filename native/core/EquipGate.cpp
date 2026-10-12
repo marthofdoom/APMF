@@ -408,34 +408,35 @@ namespace apmf::equipgate {
             // non-self Restore item) and the ch.15 kIntent_Equipment refusal (the Equip facet).
             const std::uintptr_t prevFn = oit->second;
             int        castVerdict = -1, selectVerdict = -1;   // -1 not asked, 0 the source stands, 1 the claim wins
-            auto       claimWins   = [&](int& a_verdict, APMF_API::Handle a_h, const char* a_what) {
+            // Everything a decision does (the claim handle, the source, the registry, the line) runs inside
+            // the try; a throw keeps the claim's answer (the default-priority answer).
+            auto       claimWins   = [&](int& a_verdict, bool a_select, const char* a_what) {
                 if (a_verdict < 0) {
-                    apmf::facetattr::Verdict v;
+                    a_verdict = 1;
                     try {
-                        v = apmf::facetattr::Decide(apmf::sources::Facet::kCast, a_h,
-                                                    apmf::facetattr::InsideSource(prevFn), fid,
-                                                    "CheckShouldEquip (0x0F): the answer came through a hook inside "
-                                                    "the seat that is in no module");
+                        const APMF_API::Handle h = a_select ? apmf::facetattr::SelectClaimHandle(fid)
+                                                            : apmf::facetattr::CastClaimHandle(fid);
+                        const auto v = apmf::facetattr::Decide(apmf::sources::Facet::kCast, h,
+                                                               apmf::facetattr::InsideSource(prevFn), fid,
+                                                               "CheckShouldEquip (0x0F): the answer came through a "
+                                                               "hook inside the seat that is in no module");
+                        a_verdict = v.enforce ? 1 : 0;
+                        if (!v.enforce) try {
+                            if (apmf::facetattr::LineDue(apmf::sources::Facet::kCast, fid, 0x0F00u))
+                                spdlog::info("[t2a] 0x{} CheckShouldEquip item=0x{}: {} -- {}, so the engine's own "
+                                             "answer STANDS.",
+                                             apmf::log::Hex(fid), apmf::log::Hex(subjectForm), a_what,
+                                             apmf::facetattr::WhyStands(apmf::sources::Facet::kCast, v, h));
+                        } catch (...) {
+                        }
                     } catch (...) {
-                        v.enforce = true;   // the decision could not be recorded: the default-priority answer
+                        a_verdict = 1;
                     }
-                    a_verdict = v.enforce ? 1 : 0;
-                    if (!v.enforce && apmf::facetattr::LineDue(apmf::sources::Facet::kCast, fid, 0x0F00u))
-                        spdlog::info("[t2a] 0x{} CheckShouldEquip item=0x{}: {} -- claim h={} ({} priority {}) does not "
-                                     "outrank {} (priority {}) on the Cast facet, so the engine's own answer STANDS "
-                                     "(APMF_Sources.ini).",
-                                     apmf::log::Hex(fid), apmf::log::Hex(subjectForm), a_what, a_h,
-                                     apmf::facetattr::NameOr(v.client, "an internal claim"), v.claimPrio,
-                                     apmf::sources::Name(v.src), v.srcPrio);
                 }
                 return a_verdict == 1;
             };
-            auto castWins   = [&](const char* a_what) {
-                return claimWins(castVerdict, apmf::facetattr::CastClaimHandle(fid), a_what);
-            };
-            auto selectWins = [&](const char* a_what) {
-                return claimWins(selectVerdict, apmf::facetattr::SelectClaimHandle(fid), a_what);
-            };
+            auto castWins   = [&](const char* a_what) { return claimWins(castVerdict, false, a_what); };
+            auto selectWins = [&](const char* a_what) { return claimWins(selectVerdict, true, a_what); };
 
             if (fid != 0 && subjectForm != 0 && g_restoreVtables.contains(vt)) {
                 // Hand-scoping (kCastFlag_DualCast included) is already baked into
@@ -497,8 +498,12 @@ namespace apmf::equipgate {
                 if (mi && mi->GetDelivery() != RE::MagicSystem::Delivery::kSelf) {
                     if (LogDue(fid, subjectForm))
                         spdlog::info("[t2a seat 0x0F] 0x{} CheckShouldEquip item=0x{} -> NO (completeness fix: "
-                                     "non-self-delivery Restore item, not the live claim's driven form).",
-                                     apmf::log::Hex(fid), apmf::log::Hex(subjectForm));
+                                     "non-self-delivery Restore item, {}).",
+                                     apmf::log::Hex(fid), apmf::log::Hex(subjectForm),
+                                     hasHandSeat && driven != 0 && subjectForm == driven && castVerdict == 0
+                                         ? "the live claim's driven form, but its claim LOST priority on the Cast "
+                                           "facet (Harbinger 1b), so it is not seated"
+                                         : "not the live claim's driven form");
                     return false;
                 }
             }

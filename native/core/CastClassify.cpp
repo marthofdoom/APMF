@@ -193,13 +193,13 @@ namespace apmf::castclassify {
                 const auto v = apmf::facetattr::Decide(apmf::sources::Facet::kCast, h, inside, a_fid,
                                                        "ch.8b seat 0 (classify): the answer came through a hook "
                                                        "inside the seat that is in no module");
-                if (!v.enforce && apmf::facetattr::LineDue(apmf::sources::Facet::kCast, a_fid, 0x8B01u))
-                    spdlog::info("[ch.8b seat 0] 0x{} spell 0x{}: claim h={} ({} priority {}) does not outrank {} "
-                                 "(priority {}) on the Cast facet -- NOT forced, the engine classifies alone "
-                                 "(APMF_Sources.ini).",
-                                 apmf::log::Hex(a_fid), apmf::log::Hex(a_spell), h,
-                                 apmf::facetattr::NameOr(v.client, "an internal claim"), v.claimPrio,
-                                 apmf::sources::Name(v.src), v.srcPrio);
+                if (!v.enforce) try {
+                    if (apmf::facetattr::LineDue(apmf::sources::Facet::kCast, a_fid, 0x8B01u))
+                        spdlog::info("[ch.8b seat 0] 0x{} spell 0x{}: {} -- NOT forced, the engine classifies alone.",
+                                     apmf::log::Hex(a_fid), apmf::log::Hex(a_spell),
+                                     apmf::facetattr::WhyStands(apmf::sources::Facet::kCast, v, h));
+                } catch (...) {
+                }
                 return v.enforce;
             } catch (...) {
                 return true;

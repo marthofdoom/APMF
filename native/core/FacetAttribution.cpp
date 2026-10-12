@@ -161,4 +161,17 @@ namespace apmf::facetattr {
         return claimPrio > srcPrio;
     }
 
+    std::string WhyStands(Facet a_facet, const Verdict& a_v, APMF_API::Handle a_claim) {
+        namespace src = apmf::sources;
+        if (a_v.unknown && !src::OverrideUnknown(a_facet))
+            return fmt::format("the answer came through a source Harbinger cannot name, and unknown sources are "
+                               "ALLOWED on the {} facet ([UnknownSources] {}=allow; =override lets claim h={} "
+                               "outrank it)",
+                               src::FacetName(a_facet), src::FacetName(a_facet), a_claim);
+        return fmt::format("claim h={} ({} priority {}) does not outrank {} (priority {}) on the {} facet "
+                           "(APMF_Sources.ini)",
+                           a_claim, NameOr(a_v.client, "an internal claim"), a_v.claimPrio, src::Name(a_v.src),
+                           a_v.srcPrio, src::FacetName(a_facet));
+    }
+
 }

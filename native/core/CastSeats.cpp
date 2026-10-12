@@ -274,9 +274,9 @@ namespace apmf::castseats {
         };
 
         // HARBINGER 1b (cast slice): a matched claim answers ONLY when it outranks, on the Cast facet,
-        // the source of the answer it replaces -- the chain below the seat on this vtable
-        // (`a_prevFn`, the seat's displaced function: the engine, or a module hooked inside it;
-        // core/FacetAttribution InsideSource). Otherwise every seat chains to the engine, so a cast is
+        // the source of the answer it replaces -- the chain below 0x06 on this vtable (`a_prevFn`,
+        // the function 0x06 displaced, for EVERY seat: StartSlotPrev; the engine, or a module hooked
+        // inside it; core/FacetAttribution InsideSource). Otherwise every seat chains to the engine, so a cast is
         // wholly claim-driven or wholly the engine's. `a_count`: 0x06 (WHETHER, the start of every
         // claim-driven cast) records the decision (hit, overruled / stood, the "STANDS" line); 0x0A /
         // 0x07 / 0x0D ask the same question silently (facetattr::Outranks) so each cast counts once.
@@ -319,12 +319,14 @@ namespace apmf::castseats {
                                                            "ch.8b caster seat: the answer came through a hook inside "
                                                            "the seat that is in no module");
                     wins = v.enforce;
-                    if (!wins && apmf::facetattr::LineDue(apmf::sources::Facet::kCast, fid, 0x8B00u))
-                        spdlog::info("[ch.8b seats] 0x{} claim h={} ({} priority {}) does not outrank {} (priority {}) "
-                                     "on the Cast facet: the engine's own cast answers STAND for spell 0x{} "
-                                     "(APMF_Sources.ini).",
-                                     apmf::log::Hex(fid), h, apmf::facetattr::NameOr(v.client, "an internal claim"),
-                                     v.claimPrio, apmf::sources::Name(v.src), v.srcPrio, apmf::log::Hex(driven));
+                    if (!wins) try {
+                        if (apmf::facetattr::LineDue(apmf::sources::Facet::kCast, fid, 0x8B00u))
+                            spdlog::info("[ch.8b seats] 0x{} {}: the engine's own cast answers STAND for spell 0x{}.",
+                                         apmf::log::Hex(fid),
+                                         apmf::facetattr::WhyStands(apmf::sources::Facet::kCast, v, h),
+                                         apmf::log::Hex(driven));
+                    } catch (...) {
+                    }
                 } else {
                     wins = apmf::facetattr::Outranks(apmf::sources::Facet::kCast, h, inside);
                 }
@@ -422,6 +424,16 @@ namespace apmf::castseats {
         // ====================================================================
         using CheckStartCast_t = bool (*)(RE::CombatMagicCaster*, RE::CombatController*);
         std::unordered_map<std::uintptr_t, std::uintptr_t> g_startOrig;
+
+        // Harbinger 1b (review SEV-3): the ONE source every seat of a cast decides against -- the
+        // function 0x06 displaced on this vtable. 0x0A / 0x07 / 0x0D pass this, not their own slot's
+        // displaced function, so a hook that sits inside one slot only cannot split a cast (0x06
+        // claim-driven while 0x0A hands back the engine's target, the foe for a heal flip proxy).
+        // 0 (0x06 not installed on this vtable) = Engine. Read-only after Install.
+        std::uintptr_t StartSlotPrev(std::uintptr_t a_vt) {
+            const auto it = g_startOrig.find(a_vt);
+            return it != g_startOrig.end() ? it->second : 0;
+        }
 
         bool CheckStartCastThunk(RE::CombatMagicCaster* a_this, RE::CombatController* a_cc) {
             const auto vt  = *reinterpret_cast<std::uintptr_t*>(a_this);
@@ -584,7 +596,7 @@ namespace apmf::castseats {
             // and never read before `orig` has filled it. On the chain path it is
             // forwarded through completely unchanged.
             SeatMatch m{};
-            if (!a_out || !ClaimNamesThisCast(a_this, a_cc, m, oit->second, false)) {
+            if (!a_out || !ClaimNamesThisCast(a_this, a_cc, m, StartSlotPrev(vt), false)) {
                 CensusNote(vt, a_this, a_cc, kGetMagicTarget, false, false);
                 return orig(a_this, a_out, a_cc);
             }
@@ -626,7 +638,7 @@ namespace apmf::castseats {
             const auto orig = reinterpret_cast<CheckStopCast_t>(oit->second);
 
             SeatMatch m{};
-            if (!ClaimNamesThisCast(a_this, a_cc, m, oit->second, false)) return orig(a_this, a_cc);
+            if (!ClaimNamesThisCast(a_this, a_cc, m, StartSlotPrev(vt), false)) return orig(a_this, a_cc);
             NoteClaimAnswer(vt, kCheckStopCast, m, "answered from the claim");
 
             // ANSWER FROM THE CLAIM. Left native, this seat stops the channel when the
@@ -769,7 +781,7 @@ namespace apmf::castseats {
             auto* cc = *reinterpret_cast<RE::CombatController**>(
                 reinterpret_cast<std::uintptr_t>(a_aim) + 0x28);
 
-            const bool claimed = ClaimNamesThisCast(a_this, cc, m, oit->second, false);
+            const bool claimed = ClaimNamesThisCast(a_this, cc, m, StartSlotPrev(vt), false);
             if (claimed) NoteClaimAnswer(vt, kSetupAimController, m, NativePlacement(a_this, m) ? "engine default (native placement)" : "aim override");
             if (claimed && !NativePlacement(a_this, m)) {
                 const std::uint32_t h = m.claim.targetHandle.native_handle();

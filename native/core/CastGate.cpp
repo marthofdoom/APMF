@@ -250,7 +250,10 @@ namespace apmf::castgate {
             // refusal stands only when the refusing claim outranks that source on the Cast facet; with
             // both narrowings refusing, the higher-priority claim decides. A source that cannot be
             // named is the degrade rule (allowed + alerted; [UnknownSources] Cast=override restores it).
-            {
+            // Everything below is inside the try: a throw keeps the claim's answer (the refusal), which is
+            // also the default-priority answer.
+            bool stands = false;
+            try {
                 const auto       inside = apmf::facetattr::InsideSource(oit->second);
                 APMF_API::Handle h      = APMF_API::kInvalidHandle;
                 if (!castAllows) h = apmf::facetattr::CastClaimHandle(fid);
@@ -260,26 +263,23 @@ namespace apmf::castgate {
                                           apmf::sources::ClaimPriority(h, apmf::sources::Facet::kCast))
                         h = sh;
                 }
-                apmf::facetattr::Verdict v;
-                try {
-                    v = apmf::facetattr::Decide(apmf::sources::Facet::kCast, h, inside, fid,
-                                                "CheckCast (0x0A): the answer came through a hook inside the seat "
-                                                "that is in no module");
-                } catch (...) {
-                    v.enforce = true;   // the decision could not be recorded: the default-priority answer
-                }
-                if (!v.enforce) {
+                const auto v = apmf::facetattr::Decide(apmf::sources::Facet::kCast, h, inside, fid,
+                                                       "CheckCast (0x0A): the answer came through a hook inside the "
+                                                       "seat that is in no module");
+                stands = !v.enforce;
+                if (stands) try {
                     if (apmf::facetattr::LineDue(apmf::sources::Facet::kCast, fid, 0x0A00u | (subjectForm & 0xFFu)))
                         spdlog::info("[t2c] 0x{} CheckCast would deny spell=0x{} (ch.8 select {}, ch.8b cast {}) but "
-                                     "claim h={} ({} priority {}) does not outrank {} (priority {}) on the Cast facet: "
-                                     "the engine's YES STANDS (APMF_Sources.ini).",
+                                     "{} -- the engine's YES STANDS.",
                                      apmf::log::Hex(fid), apmf::log::Hex(subjectForm), selectAllows ? "ALLOW" : "DENY",
-                                     castAllows ? "ALLOW" : "DENY", h,
-                                     apmf::facetattr::NameOr(v.client, "an internal claim"), v.claimPrio,
-                                     apmf::sources::Name(v.src), v.srcPrio);
-                    return engineSays;
+                                     castAllows ? "ALLOW" : "DENY",
+                                     apmf::facetattr::WhyStands(apmf::sources::Facet::kCast, v, h));
+                } catch (...) {
                 }
+            } catch (...) {
+                stands = false;
             }
+            if (stands) return engineSays;
 
             if (a_reason) *a_reason = RE::MagicSystem::CannotCastReason::kMultipleCast;
 

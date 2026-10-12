@@ -102,4 +102,10 @@ namespace apmf::facetattr {
     // counts each decision once, at the counted seat). Same rule as Decide. Any thread.
     bool Outranks(Facet a_facet, APMF_API::Handle a_claim, SourceId a_src);
 
+    // The reason clause for a "STANDS" line after Decide did not enforce: either "claim h=.. (client
+    // priority N) does not outrank <source> (priority M) on the <Facet> facet (APMF_Sources.ini)", or,
+    // for an unknown source with the facet's override off, that unknown sources are ALLOWED on it by
+    // [UnknownSources] <Facet>=allow. Any thread (allocates: call inside a try on a seat).
+    std::string WhyStands(Facet a_facet, const Verdict& a_v, APMF_API::Handle a_claim);
+
 }
