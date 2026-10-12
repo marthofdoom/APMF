@@ -10,13 +10,13 @@ nothing when one does not. At startup `REL::SelfCheck::Run` repeats the comparis
 game actually loaded. A row that fails refuses THAT seat by name in the log; the expected RVA is never
 used in place of the library's answer.
 
-Offline result of this generation: 1.6.1170.0 206/206 verified, 0 refused, 1.5.97.0 206/206 verified, 0 refused.
+Offline result of this generation: 1.6.1170.0 207/207 verified, 0 refused, 1.5.97.0 207/207 verified, 0 refused.
 
 1.7.104.0 has NO Address Library. Its column is OUR OWN id map: the MIT id table of the CommonLibSSE-NG fork
 (`data/mit-idtable-v1-1-7-104-0.bin`, revision 3, 17751 records, SkyrimSE.exe TimeDateStamp 0x6A8C7046; built into every plugin, it is
 what SelfCheck queries at runtime; authoritative) with the evidence CSVs beside it, keyed by
 the 1.6.1170 id, re-verified against the plaintext 1.7.104 executable by the same row-kind checks (see the script
-docstring). Offline result: 1.7.104.0 219/248 verified, 29 NOT verified (28 of them BY DESIGN: 1.5.97-only labels whose AE twin row carries the 1.7.104 fact). A not-verified seat has no row in the 1.7.104 table,
+docstring). Offline result: 1.7.104.0 220/250 verified, 30 NOT verified (28 of them BY DESIGN: 1.5.97-only labels whose AE twin row carries the 1.7.104 fact). A not-verified seat has no row in the 1.7.104 table,
 so `IsVerifiedAddress` is false and the seat is refused by name. The table of `Not verified on 1.7.104` is below.
 
 These rows prove the ADDRESSES. That each hooked slot holds the same function body on 1.7.104, and that every
@@ -27,6 +27,7 @@ CommonLib layout APMF reads is the same there, is proven separately in the "1.7.
 | seat | kind | id 1.6.1170 | RVA 1.6.1170 | id 1.5.97 | RVA 1.5.97 | id 1.7.104 | RVA 1.7.104 | derived by | hooked slots -> engine function (1.6.1170 / 1.5.97 / 1.7.104) | code | doc |
 |---|---|---|---|---|---|---|---|---|---|---|---|
 | Character | vtable | 207886 | 0x18A5558 | 261397 | 0x165DA40 | 207886 | 0x1923258 | RTTI .?AVCharacter@@ (COL offset 0) | 0xAD: 0x667D40 / 0x5D6FB0 / 0x67A7E0<br>0x49: 0x66CB60 / 0x5DB180 / 0x67F620<br>0xDF: 0x67EAD0 / 0x5EC760 / 0x691590<br>0xE4: 0x6B6E70 / 0x625700 / 0x6C98F0<br>0x99: 0x674ED0 / 0x5E3160 / 0x6879A0<br>0x73: 0x65EF30 / 0x5CE8A0 / 0x671930<br>0x74: 0x65F010 / 0x5CE980 / 0x671A10<br>0xC2: 0x6749F0 / 0x5E2C30 / 0x6874C0<br>0xE3: 0x6B6DD0 / 0x625660 / 0x6C9850<br>0x4A: 0x662150 / 0x5D19E0 / 0x674B70<br>0xDC: 0x7270E0 / 0x6932D0 / 0x739C10 | native/core/Hook.cpp:94; PackageGate.cpp:296; NonAliasProbe.cpp:216; channels/TargetPin.cpp:460 (observer); channels/CombatReentryDeny.cpp (0x99, the ch.22 seat); core/Sightline.cpp (0xC2 GetEyeVector, 0x73/0x74 GetBoundMin/Max via TESObjectREFR::GetHeight; virtual calls) and core/Awareness.cpp (0xE3 IsInCombat; virtual call); core/PackageSources.cpp (0x4A GetCurrentScene: the Harbinger 1a scene probe, OBSERVE-ONLY); core/SpectatorGate.cpp (0xDC InitiateSpectator: the Package facet's Spectator seat, ClickUp 86e3m5feu) | ADDRESS-TABLE-2026-09-15.md:64 |
+| Character.ActorValueOwner | vtable | 207896 | 0x18A5FE8 | - | - | 207896 | 0x1923CE8 | RTTI .?AVCharacter@@ (COL offset 184) | 0x04: 0x6B25B0 / - / 0x6C5030<br>0x05: 0x6B2680 / - / 0x6C5100<br>0x06: 0x6B2770 / - / 0x6C51F0<br>0x07: 0x3C6790 / - / 0x3CD850 | native/core/ActorValueObserve.cpp (Harbinger 1b OBSERVE-ONLY actor-value seat: 0x04 SetBaseActorValue, 0x05 ModActorValue, 0x06 RestoreActorValue hooked; 0x07 SetActorValue listed, it tail-jumps into 0x04) | agentlogs/apmf-1b-observe.md (2026-10-12); 1.5.97 twin row Character.ActorValueOwner.SE (COL offset 0xB0) |
 | CombatTargetSelectorStandard | vtable | 212096 | 0x18D7388 | 265605 | 0x1690A98 | 212096 | 0x1955950 | RTTI .?AVCombatTargetSelectorStandard@@ (COL offset 0) | 0x06: 0x84CFE0 / 0x7B5E50 / 0x862040 | native/channels/TargetPin.cpp:458; channels/CombatApproach.cpp (ch.24 deny bracket on 0x06, chaining with ch.20) | ch.20 source deny; UpdateTarget AE 0x559930 / SE 0x4FE300 calls slot 6 |
 | CombatTargetSelectorFixed | vtable | 212098 | 0x18D73C8 | 265607 | 0x1690AF8 | 212098 | 0x1955990 | RTTI .?AVCombatTargetSelectorFixed@@ (COL offset 0) | 0x06: 0x84DAF0 / 0x7B6920 / 0x862B50 | native/channels/TargetPin.cpp:459 | ch.20 source deny; UpdateTarget AE 0x559930 / SE 0x4FE300 calls slot 6 |
 | PlayerCharacter | vtable | 208040 | 0x18AB9C0 | 261916 | 0x16635E0 | 208040 | 0x19296C0 | RTTI .?AVPlayerCharacter@@ (COL offset 0) | 0xAD: 0x732660 / 0x69E580 / 0x745200 | native/core/Hook.cpp:97 | ADDRESS-TABLE-2026-09-15.md:69 |
@@ -232,6 +233,7 @@ CommonLib layout APMF reads is the same there, is proven separately in the "1.7.
 | Sightline.AIProcess.KnockExplosion | ripref | 39895 | 0x710C80 +0x2CA F3 0F 10 15 8A 3A 07 01 48 8D 55 D0 F3 0F 10 | 38858 | 0x67D4A0 +0x387 F3 0F 10 15 1D 2E EC 00 F3 0F 59 C2 F3 0F 11 | 39895 | 0x7237C0 +0x2CA F3 0F 10 15 CA A3 0D 01 48 8D 55 D0 F3 0F 10 | signature (23 bytes, unique in .text) |  | native/core/Sightline.cpp (RE::bhkWorld::GetWorldScale: game units -> havok units for the ray ends; never called) | ABI v18 own-ray LoS; the only CommonLib-named function that reads the global (AE +0x2CA, SE +0x387, 1.7.104 +0x2CA); .rdata 0.0142875 on all three |
 | Sightline.bhkWorld.WorldScale | ripref global | 188105 | 0x17849DC | 231896 | 0x154064C | 188105 | 0x17FDE5C | RIP-relative reference at Sightline.AIProcess.KnockExplosion +0x2CA (id 39895) |  | native/core/Sightline.cpp (RE::bhkWorld::GetWorldScale: game units -> havok units for the ray ends; never called) | ABI v18 own-ray LoS; the only CommonLib-named function that reads the global (AE +0x2CA, SE +0x387, 1.7.104 +0x2CA); .rdata 0.0142875 on all three |
 | CommonLib.LookupReferenceByHandle | function | 12332 | 0x179710 | 12204 | 0x1329D0 | 12332 | 0x17ED00 | signature (274 bytes, unique in .text) |  | native/core/Awareness.cpp (a foe's currentCombatTarget -> the actor it is fighting; the noise event's ref for the log) | ABI v18 awareness (AE 0x179710 / SE 0x1329D0 / 1.7.104 0x17ED00) |
+| Character.ActorValueOwner.SE | vtable | - | - | 261402 | 0x165E4D0 | - | - | RTTI .?AVCharacter@@ (COL offset 176) | 0x04: - / 0x621070 / -<br>0x05: - / 0x6210B0 / -<br>0x06: - / 0x6210F0 / -<br>0x07: - / 0x36D280 / - | native/core/ActorValueObserve.cpp (1.5.97: the ActorValueOwner sub-object sits at 0xB0, so its COL offset differs from the AE row's 0xB8) | agentlogs/apmf-1b-observe.md (2026-10-12); AE twin row Character.ActorValueOwner carries the 1.7.104 fact |
 | EquipSink.Path.OutfitApply.24234 | function | - | - | 24234 | 0x364710 | - | - | signature (21 bytes, unique in .text) |  | native/core/EquipSink.cpp:158 |  |
 | EquipSink.Path.AddWornOutfit.19266 | function | - | - | 19266 | 0x28DDA0 | - | - | signature (17 bytes, unique in .text) |  | native/core/EquipSink.cpp:159 |  |
 | EquipSink.Path.AiCommand.38618 | function | - | - | 38618 | 0x669210 | - | - | signature (33 bytes, unique in .text) |  | native/core/EquipSink.cpp:160 |  |
@@ -282,6 +284,7 @@ for them and the seat is refused. Nothing here is a failure on 1.6.1170 or 1.5.9
 
 | seat | 1.6.1170 id | reason |
 |---|---|---|
+| Character.ActorValueOwner.SE | - | no 1.6.1170 (AE) id: the 1.7.104 map is keyed by AE id (1.5.97-only seat) |
 | TargetPin.CombatController.SetTarget | 33235 | id 33235 is not in the idmap |
 | EquipSink.Path.OutfitApply.24234 | - | BY DESIGN: 1.5.97-only label. On 1.6.1170 and 1.7.104 the code reads its AE twin EquipSink.Path.OutfitApply.418622 (AE id 418622, 1.7.104 0x3C4440), whose own row carries the 1.7.104 fact (MAPPED-AE) |
 | EquipSink.Path.AddWornOutfit.19266 | - | BY DESIGN: 1.5.97-only label. On 1.6.1170 and 1.7.104 the code reads its AE twin EquipSink.Path.AddWornOutfit.19692 (AE id 19692, 1.7.104 0x2E8070), whose own row carries the 1.7.104 fact (MAPPED-AE) |

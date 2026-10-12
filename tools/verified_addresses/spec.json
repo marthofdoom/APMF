@@ -29,6 +29,42 @@
    "doc": "ADDRESS-TABLE-2026-09-15.md:64"
   },
   {
+   "seat": "Character.ActorValueOwner",
+   "kind": "vtable",
+   "construct": "RE::VTABLE_Character[5]",
+   "rtti": ".?AVCharacter@@",
+   "col_offset": 184,
+   "ids": {
+    "1.6.1170": 207896
+   },
+   "slots": [
+    "0x04",
+    "0x05",
+    "0x06",
+    "0x07"
+   ],
+   "source": "native/core/ActorValueObserve.cpp (Harbinger 1b OBSERVE-ONLY actor-value seat: 0x04 SetBaseActorValue, 0x05 ModActorValue, 0x06 RestoreActorValue hooked; 0x07 SetActorValue listed, it tail-jumps into 0x04)",
+   "doc": "agentlogs/apmf-1b-observe.md (2026-10-12); 1.5.97 twin row Character.ActorValueOwner.SE (COL offset 0xB0)"
+  },
+  {
+   "seat": "Character.ActorValueOwner.SE",
+   "kind": "vtable",
+   "construct": "RE::VTABLE_Character[5]",
+   "rtti": ".?AVCharacter@@",
+   "col_offset": 176,
+   "ids": {
+    "1.5.97": 261402
+   },
+   "slots": [
+    "0x04",
+    "0x05",
+    "0x06",
+    "0x07"
+   ],
+   "source": "native/core/ActorValueObserve.cpp (1.5.97: the ActorValueOwner sub-object sits at 0xB0, so its COL offset differs from the AE row's 0xB8)",
+   "doc": "agentlogs/apmf-1b-observe.md (2026-10-12); AE twin row Character.ActorValueOwner carries the 1.7.104 fact"
+  },
+  {
    "seat": "CombatTargetSelectorStandard",
    "kind": "vtable",
    "construct": "RE::VTABLE_CombatTargetSelectorStandard[0]",

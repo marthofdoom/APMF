@@ -19,9 +19,10 @@
 
 namespace apmf::VerifiedAddresses
 {
-	// 1.6.1170.0: 206 rows
+	// 1.6.1170.0: 207 rows
 	inline constexpr REL::SelfCheck::Row kRows_1_6_1170[] = {
 		{ 207886, 0x18A5558, 0x0, 0, {  }, "Character" },
+		{ 207896, 0x18A5FE8, 0x0, 0, {  }, "Character.ActorValueOwner" },
 		{ 212096, 0x18D7388, 0x0, 0, {  }, "CombatTargetSelectorStandard" },
 		{ 212098, 0x18D73C8, 0x0, 0, {  }, "CombatTargetSelectorFixed" },
 		{ 208040, 0x18AB9C0, 0x0, 0, {  }, "PlayerCharacter" },
@@ -229,9 +230,10 @@ namespace apmf::VerifiedAddresses
 		{ 12332, 0x179710, 0x0, 0, {  }, "CommonLib.LookupReferenceByHandle" },
 	};
 
-	// 1.5.97.0: 206 rows
+	// 1.5.97.0: 207 rows
 	inline constexpr REL::SelfCheck::Row kRows_1_5_97[] = {
 		{ 261397, 0x165DA40, 0x0, 0, {  }, "Character" },
+		{ 261402, 0x165E4D0, 0x0, 0, {  }, "Character.ActorValueOwner.SE" },
 		{ 265605, 0x1690A98, 0x0, 0, {  }, "CombatTargetSelectorStandard" },
 		{ 265607, 0x1690AF8, 0x0, 0, {  }, "CombatTargetSelectorFixed" },
 		{ 261916, 0x16635E0, 0x0, 0, {  }, "PlayerCharacter" },
@@ -439,8 +441,9 @@ namespace apmf::VerifiedAddresses
 		{ 12204, 0x1329D0, 0x0, 0, {  }, "CommonLib.LookupReferenceByHandle" },
 	};
 
-	// 1.7.104.0: 219 rows
-	// 29 NOT VERIFIED on 1.7.104.0, deliberately absent from this table (the seat is refused):
+	// 1.7.104.0: 220 rows
+	// 30 NOT VERIFIED on 1.7.104.0, deliberately absent from this table (the seat is refused):
+	//   Character.ActorValueOwner.SE (1.6.1170 id -): no 1.6.1170 (AE) id: the 1.7.104 map is keyed by AE id (1.5.97-only seat)
 	//   TargetPin.CombatController.SetTarget (1.6.1170 id 33235): id 33235 is not in the idmap
 	//   EquipSink.Path.OutfitApply.24234 (1.6.1170 id -): BY DESIGN: 1.5.97-only label. On 1.6.1170 and 1.7.104 the code reads its AE twin EquipSink.Path.OutfitApply.418622 (AE id 418622, 1.7.104 0x3C4440), whose own row carries the 1.7.104 fact (MAPPED-AE)
 	//   EquipSink.Path.AddWornOutfit.19266 (1.6.1170 id -): BY DESIGN: 1.5.97-only label. On 1.6.1170 and 1.7.104 the code reads its AE twin EquipSink.Path.AddWornOutfit.19692 (AE id 19692, 1.7.104 0x2E8070), whose own row carries the 1.7.104 fact (MAPPED-AE)
@@ -472,6 +475,7 @@ namespace apmf::VerifiedAddresses
 	//   EquipSink.Path.StartCombat.37608 (1.6.1170 id -): BY DESIGN: 1.5.97-only label. On 1.6.1170 and 1.7.104 the code reads its AE twin EquipSink.Path.StartCombat.38561 (AE id 38561, 1.7.104 0x6C93B0), whose own row carries the 1.7.104 fact (MAPPED-AE)
 	inline constexpr REL::SelfCheck::Row kRows_1_7_104[] = {
 		{ 207886, 0x1923258, 0x0, 0, {  }, "Character" },
+		{ 207896, 0x1923CE8, 0x0, 0, {  }, "Character.ActorValueOwner" },
 		{ 212096, 0x1955950, 0x0, 0, {  }, "CombatTargetSelectorStandard" },
 		{ 212098, 0x1955990, 0x0, 0, {  }, "CombatTargetSelectorFixed" },
 		{ 208040, 0x19296C0, 0x0, 0, {  }, "PlayerCharacter" },
