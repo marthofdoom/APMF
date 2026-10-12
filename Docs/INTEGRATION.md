@@ -1876,15 +1876,17 @@ recipient is out of sight: move toward the recipient until the line clears, then
   other decision. Two engine checks belong to the MOVEMENT half and do follow the bound: the
   unreachable-target check only tests targets inside the area (outside it the engine does not
   try to path, which is what a bound means), and the weapon pickup below.
-* **One movement-side effect to know (review F7).** The engine's Acquire Weapon move (picking up
-  a dropped weapon) belongs to its movement half and looks only inside the area: while the claim
-  stands, a disarmed NPC picks up only weapons within R of X.
+* **A disarmed NPC's weapon search is exempt from the bound (APMF-B57, 2026-10-11).** The engine's
+  Acquire Weapon link (CombatBehaviorFindWeapon act, the search for a dropped weapon) runs inside a
+  deny bracket and sees the engine's own area, so it considers weapons wherever the engine would.
+  The engine's later PATH to the chosen weapon is still confined by the claim's bound (the
+  path-request test), so a weapon beyond R may be found but not reached until the claim ends.
 * **They force, they win.** A package that holds the NPC in place (a HoldPosition package) owns
   the area in the engine's own pick: your claim reads `kApproachState_Yielded` and moves nothing
   until that package ends. A fleeing NPC, or one in low process, has no standard area:
   `kApproachState_Disabled`.
 * **It respects a pursuit leash.** If the same NPC holds a ch.23 leash and no point within R of X
-  lies inside the leash, the claim reads `kApproachState_Leashed` and moves nothing.
+  lies inside the leash, the claim reads `kApproachState_Leashed` and moves nothing. If X itself is outside the leash but the R-disc still touches it, the goal point is clamped to just inside the leash (APMF-B55, 2026-10-11).
 * **It does not start a fight and does not leave one.** A claim made out of combat waits
   (`kApproachState_Waiting`) and applies when combat starts.
 

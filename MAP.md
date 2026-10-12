@@ -1524,13 +1524,13 @@ parentheses.
   `Poll`. (5) The stall end (3 s, a floor over the 0.25 s period) is the principle-7 report of an engine that stopped
   carrying the bound; do not turn it into a retry. Addresses and the 1.7.104 compare: `Docs/VERIFIED-ADDRESSES.md` "ch.24";
   RE log: scratchpad `agentlogs/apmf-combat-moveto.md`. Shared slots: ch.20 also hooks selector 0x06, EquipGate also
-  hooks four of the 0x0F slots, ActionGate the Attack / Bash act() 0x02; all chain, any order. (6) Every NON-movement
-  reader of the area must stay inside a deny bracket (S3 target score, S4 inv/bound casts, S5 attack/bash pick;
+  hooks four of the 0x0F slots, ActionGate the Attack / Bash / FindWeapon act() 0x02 (it hooks all 70 leaves); all chain, any order. (6) Every NON-movement
+  reader of the area must stay inside a deny bracket (S3 target score, S4 inv/bound casts, S5 attack/bash pick and (APMF-B57) the FindWeapon act() search;
   CheckUnreachableTarget is movement, review R2-1); the full reader list by tree half is `Docs/DENY-COMPLETENESS-AUDIT.md` row 24 --
   a new reader found later is a deny hole until bracketed. (7) Stall / verdict / purge run on the WORLD-TICK clock (a
   menu pause must not end a claim). (8) An area of a FINISHED claim is put back (and re-activated, if the engine's failed
   path deactivated it) only by S3 on the actor's own combat thread, or by RestoreBeforeSave. Open review items:
-  `Docs/REVIEW-BACKLOG.md` APMF-B55 (leash coarse), APMF-B56 (save thread), APMF-B57 (FindWeapon inside the bound),
+  `Docs/REVIEW-BACKLOG.md` APMF-B55 (leash graze: DECIDED 2026-10-11, Poll clamps the goal point to `kLeashClampMargin` inside the leash when X is outside it but the R-disc touches it), APMF-B56 (save thread), APMF-B57 (FindWeapon: DECIDED 2026-10-11, exempt via an S5 bracket on its act(); the path to the weapon is still confined),
   APMF-B60 (slow-time stall floor), APMF-B61 (put-back waits on the selector; its exclusive-lock scan).
 - **What breaks (all channels):** each must (1) keep the package coherent — none
   substitutes the package (§5); (2) capture-and-restore engine state in `Release`,

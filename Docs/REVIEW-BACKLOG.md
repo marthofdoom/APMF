@@ -384,6 +384,7 @@ Raised against 3903988, 2026-10-05. Verbatim:
 
 - FIELD VERDICT 2026-10-06 (Opus, Tuxborn deck logs): CLOSED (part f only: works as intended) -- Cicero 'Arcane Pull' FE204ACE predicted Script, 'engineScore=0.000 STEERED->1000' at nAPMF 14:25:27.488, FIRED via Script 14:25:40 (5 FIRED total across sessions); the other parts were not exercised.
 ### APMF-B55 (SEV-4) -- ch.24: the pursuit-leash test is coarse
+- **DECIDED + FIXED 2026-10-11 (marth: clamp a goal point that grazes the leash edge to just inside the leash):** `channels/CombatApproach.cpp` Poll moves the goal point onto the anchor -> X line, `kLeashClampMargin` (16u) inside the leash, when X itself is outside the ch.23 leash but the R-disc still touches it; `dist` and the written bound use the clamped point; the [ch.24] line says CLAMPED. ClickUp 86e3m3pzz.
 Raised against 274d7e4 (`feat/apmf-combat-moveto`, Opus tier-3 review), 2026-10-06. Finding (verbatim as relayed): "F5 SEV-4
 leash coarse". Reasoning: `channels/CombatApproach.cpp` Poll holds a claim as kApproachState_Leashed only when NO point within R
 of X lies inside the ch.23 leash disc (dist(X, anchor) - R > leash radius). A goal disc that only grazes the leash still applies
@@ -402,6 +403,7 @@ itself; read the field log for the warning.
 - FIELD VERDICT 2026-10-06 (Opus, Tuxborn deck logs): STILL NEEDS DATA -- 0 [ch.24] save lines in all sessions; RestoreBeforeSave returns early when g_touchedCount==0 so the thread check only runs with a live bound at save; needed: save while a ch.24 bound is live.
 
 ### APMF-B57 (SEV-4) -- ch.24: FindWeapon looks only inside the bound
+- **DECIDED + FIXED 2026-10-11 (marth: a disarmed follower's weapon search is exempt from the heal-approach bound):** an S5 deny bracket on CombatBehaviorFindWeapon act() (slot 0x02; AE 0x864040 tail-jumps 0x8610C0 which holds the two IsInCombatArea calls; SE 0x7CCFB0 -> 0x7C9A40). Caveat: the engine's PATH to the weapon stays confined by the bound, so a weapon beyond R may be found but not reached until the claim ends; field-unproven. ClickUp 86e3m3q07.
 Raised against 274d7e4, 2026-10-06. Finding (verbatim as relayed): "F7 SEV-4 FindWeapon effect undocumented". Reasoning:
 CombatBehaviorFindWeapon (AE 0x8610C0, IsInCombatArea x2) is the Acquire Weapon link of the engine's MOVEMENT half, so it carries
 the bound: while a ch.24 claim stands a disarmed actor only considers dropped weapons within R of X. Documented in
