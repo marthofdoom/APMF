@@ -52,6 +52,7 @@ a hand taken for a cast is closed to every other action. While a cast claim hold
 package redirection (what makes a follower walk to a body).
 
 - **`EnableRedirectLog`** (default `1`). Logs each redirect answer, including a heartbeat when none fire, so "never fired" is visibly different from "nothing was logged".
+- **`iSpectatorSeat`** (default `2`). The engine's Spectator package (a follower out of combat stops to watch a fight) is held off while a mod's package claim on that follower outranks the engine. 2 = on, 1 = log only (the package is still given), 0 = off.
 
 ### [Travel]
 

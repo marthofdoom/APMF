@@ -161,11 +161,11 @@ namespace apmf::spectatorgate {
                 "WOULD DENY (observe only, [PackageGate] iSpectatorSeat=1): forwarded, the engine installs its Spectator package",
                 "STANDS: forwarded, the engine installs its Spectator package (APMF_Sources.ini)",
             };
-            spdlog::info("[spectator] 0x{} '{}' Engine InitiateSpectator (watch 0x{} '{}', engine call site RVA 0x{:X}) "
+            spdlog::info("[spectator] 0x{} '{}' Engine InitiateSpectator (watch 0x{} '{}', engine call site RVA 0x{}) "
                          "while ch.9 h={} offers 0x{}. Claim {} priority {} {} Engine priority {} on the Package "
                          "facet -- {}.",
                          Hex(id), name ? name : "?", Hex(a_target ? a_target->GetFormID() : 0), tname ? tname : "?",
-                         a_ret >= base ? a_ret - base : a_ret, a_h, Hex(a_claimForm), a_client, a_claimPrio,
+                         Hex(a_ret >= base ? a_ret - base : a_ret, 1), a_h, Hex(a_claimForm), a_client, a_claimPrio,
                          a_decision == 2 ? "does not outrank" : "outranks", a_enginePrio, kWhat[a_decision]);
         }
 
@@ -250,10 +250,10 @@ namespace apmf::spectatorgate {
                                  SKSE::stl::unrestricted_cast<std::uintptr_t>(&InitiateSpectatorHook::thunk),
                                  InitiateSpectatorHook::func.address());
         g_installed.store(true, std::memory_order_release);
-        spdlog::info("[spectator] Spectator seat installed: Character::InitiateSpectator (slot 0x{:X}), mode {}. An "
+        spdlog::info("[spectator] Spectator seat installed: Character::InitiateSpectator (slot 0x{}), mode {}. An "
                      "actor with a winning ch.9 package claim that outranks the Engine on the Package facet {} the "
                      "engine's Spectator package.",
-                     kSlot, mode == kEnforce ? "ENFORCE" : "OBSERVE ONLY",
+                     Hex(kSlot, 2), mode == kEnforce ? "ENFORCE" : "OBSERVE ONLY",
                      mode == kEnforce ? "does not get" : "is only logged for (nothing denied)");
     }
 

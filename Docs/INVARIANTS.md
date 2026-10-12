@@ -429,6 +429,18 @@ It is STRUCTURALLY BENEATH script-driven (PapyrusUtil) overrides — it cannot r
 obey the no-substitute rule above; the offer channel is the one facet where a promote is
 the correct, bounded mechanism.)
 
+**The offer also holds against the engine's SPECTATOR package (2026-10-12, ClickUp 86e3m5feu,
+`core/SpectatorGate.cpp`).** The engine PUTS a runtime-created Spectator package on an
+out-of-combat actor that perceives a fight (`Character::InitiateSpectator`, slot 0xDC); 0x49 is
+never asked, so without a seat that package takes the facet from a standing offer (MFO's retreat,
+field 1006d). Rules for that seat: (1) deny at slot 0xDC BEFORE the original runs, never at 0xDF
+`PutCreatedPackage` (there the package is already allocated and owned by the call); (2) deny only
+for an actor whose WINNING ch.9 claim names a package that resolves (exactly when 0x49 would
+deliver it) AND whose client outranks the Engine on the Package facet (`core/Sources.h`); every
+other call is forwarded untouched, and an Engine priority >= the claim's STANDS; (3) it is a deny
+of one competing source, not an eviction: a Spectator package already running is not removed,
+and nothing is undone on release (#5a).
+
 **#3a — APMF is BENEATH script-driven package overrides; it uses ZERO Papyrus.** APMF
 arbitrates the engine's NATIVE / alias tier (packages the engine itself selects, and the
 alias-tier package offer at 0x49). A PapyrusUtil `AddPackageOverride` sits ABOVE that

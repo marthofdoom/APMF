@@ -1,3 +1,7 @@
+## Unreleased
+
+- **A retreating follower no longer stops to watch the fight.** After a retreat ends combat, the game used to give the follower its own Spectator package. The follower stood still, kept taking hits and drifted away instead of running the retreat package. While a mod's package claim on that follower outranks the engine, Harbinger now stops the game from giving it that package. New setting: `iSpectatorSeat` in `[PackageGate]` (2 on by default, 1 log only, 0 off). Not yet tested in game.
+
 ## v0.12.0 -- The controller, the menu and the cast guard
 
 - **Harbinger now knows who is driving each part of an NPC's AI.** It keeps a list of every source that writes a facet: mods that ask it for control, other mods' hooks, plugins, the engine and Papyrus or console calls. Each source has a priority from 0 to 100 per facet. The priorities live in the new `APMF_Sources.ini`. Other mods start at 20, mods that ask Harbinger at 50, direct calls at 75.
