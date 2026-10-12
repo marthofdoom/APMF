@@ -205,7 +205,10 @@ namespace apmf::harbingermenu {
                 Colored(isIdle ? kGrey : kWhite, std::to_string(Hits(id, f)));
                 g.TableNextColumn();
                 if (id == kUnattributedSource) Colored(kWarn, "always allowed");
-                else Slider(id, f);
+                else {
+                    Slider(id, f);
+                    Tooltip(id, f, seats);   // gamepad: the focused slider shows the details (review SEV-3)
+                }
             };
             for (const auto id : active) row(id, false);
             if (!g_hideIdle)
