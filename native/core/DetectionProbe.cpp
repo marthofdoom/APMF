@@ -42,11 +42,20 @@ namespace apmf::detectionprobe {
         std::uint64_t              g_lastHeartbeatMs = 0;   // main thread
         apmf::sources::SourceId    g_siteOwner = apmf::sources::kNoSource;
 
+        void Observe(RE::Actor* a_src, RE::Actor* a_tgt, const std::int32_t* a_value);
+
         void Thunk(RE::Actor* a_src, RE::Actor* a_tgt, std::int32_t* a_value, void* a4, void* a5, void* a6, void* a7,
                    void* a8, void* a9, void* a10) {
             reinterpret_cast<Detect_t>(g_next.load(std::memory_order_relaxed))(a_src, a_tgt, a_value, a4, a5, a6, a7,
                                                                                a8, a9, a10);
             g_calls.fetch_add(1, std::memory_order_relaxed);
+            try {
+                Observe(a_src, a_tgt, a_value);
+            } catch (...) {   // nothing may unwind into the engine's detection frame
+            }
+        }
+
+        void Observe(RE::Actor* a_src, RE::Actor* a_tgt, const std::int32_t* a_value) {
             if (!a_src || !a_tgt || !a_value || apmf::ControlMap::Get().ControlledCount() == 0) return;
             APMF_API::APMF_Param pin{};
             if (!apmf::ControlMap::Get().TryGetOwningClaim(a_src->GetFormID(), APMF_API::kIntent_TargetPin, pin) ||
@@ -117,12 +126,13 @@ namespace apmf::detectionprobe {
             std::int32_t rel = 0;
             std::memcpy(&rel, reinterpret_cast<const void*>(site + 1), 4);
             g_next.store(site + 5 + static_cast<std::intptr_t>(rel), std::memory_order_release);
+            // The module the site already reaches (set before any thunk can read it).
+            g_siteOwner = apmf::sources::ForAddress(g_next.load(), apmf::sources::Kind::kInterposer);
+            if (g_siteOwner == apmf::sources::kEngineSource) g_siteOwner = apmf::sources::kNoSource;
         }
         const std::uintptr_t prev = tramp->write_call<5>(site, &Thunk);
         g_next.store(prev, std::memory_order_release);
         apmf::sources::RegisterCallSeat(apmf::sources::Facet::kDetection, "DetectionProbe.Site", site, prev);
-        g_siteOwner = apmf::sources::ForAddress(prev, apmf::sources::Kind::kInterposer);
-        if (g_siteOwner == apmf::sources::kEngineSource) g_siteOwner = apmf::sources::kNoSource;
         g_installed.store(true, std::memory_order_release);
         spdlog::info("[detect-probe] installed PASSIVE on the detection-value call site ({} {}+0x{:X}): every call goes "
                      "through unchanged to {}. Counts calls; logs the value a pinned actor's detection of its pin comes "

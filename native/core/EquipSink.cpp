@@ -475,7 +475,7 @@ namespace apmf::equipsink {
             bool   attributed = false;
             apmf::sources::SourceId interposers[4]{ -1, -1, -1, -1 };
             int    nInterposers = 0;
-            {
+            try {   // nothing may unwind into the engine's equip frame (a failure = unattributed = allowed)
                 void* frames[kScanFrames]{};
                 const unsigned short n = RtlCaptureStackBackTrace(0, kScanFrames, frames, nullptr);
                 int at = -1;
@@ -513,18 +513,22 @@ namespace apmf::equipsink {
                         }
                     }
                 }
-            }
-            for (int k = 0; k < nInterposers; ++k)
-                apmf::sources::NoteHit(interposers[k], apmf::sources::Facet::kEquip);
-            if (caller.external && caller.kind == PathKind::kScript) {
-                apmf::sources::NoteHit(apmf::sources::kDirectSource, apmf::sources::Facet::kEquip);
-            } else if (caller.external && attributed) {
-                if (const auto src = apmf::sources::Register(caller.ext, apmf::sources::Kind::kPlugin); src >= 0)
-                    apmf::sources::NoteHit(src, apmf::sources::Facet::kEquip);
-            } else if (attributed) {
-                apmf::sources::NoteHit((caller.kind == PathKind::kScript || caller.kind == PathKind::kConsole)
-                                           ? apmf::sources::kDirectSource : apmf::sources::kEngineSource,
-                                       apmf::sources::Facet::kEquip);
+                for (int k = 0; k < nInterposers; ++k)
+                    apmf::sources::NoteHit(interposers[k], apmf::sources::Facet::kEquip);
+                if (caller.external && caller.kind == PathKind::kScript) {
+                    apmf::sources::NoteHit(apmf::sources::kDirectSource, apmf::sources::Facet::kEquip);
+                } else if (caller.external && attributed) {
+                    if (const auto src = apmf::sources::Register(caller.ext, apmf::sources::Kind::kPlugin); src >= 0)
+                        apmf::sources::NoteHit(src, apmf::sources::Facet::kEquip);
+                } else if (attributed) {
+                    apmf::sources::NoteHit((caller.kind == PathKind::kScript || caller.kind == PathKind::kConsole)
+                                               ? apmf::sources::kDirectSource : apmf::sources::kEngineSource,
+                                           apmf::sources::Facet::kEquip);
+                }
+            } catch (...) {
+                attributed = false;
+                siteSpec   = nullptr;
+                caller     = Caller{};
             }
 
             bool inSet = false;

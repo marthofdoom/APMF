@@ -176,7 +176,26 @@ namespace apmf::sources {
             }
         }
 
+        // Names are stored truncated to kNameMax - 1; every compare uses the same truncation, so
+        // a long module name maps to ONE entry instead of a new one per call.
+        std::string_view Trunc(std::string_view name) { return name.substr(0, kNameMax - 1); }
+
+        SourceId AddOneLocked(std::string_view name, Kind kind);
+
+        // The three built-ins live at fixed ids 0..2 (kEngineSource / kDirectSource /
+        // kUnattributedSource) whatever registers first -- a client may call the API before
+        // kDataLoaded's Init().
         SourceId AddLocked(std::string_view name, Kind kind) {
+            if (g_count.load(std::memory_order_relaxed) == 0) {
+                AddOneLocked("Engine", Kind::kEngine);
+                AddOneLocked("DirectCalls", Kind::kDirect);
+                AddOneLocked("Unattributed", Kind::kUnknown);
+            }
+            return AddOneLocked(name, kind);
+        }
+
+        SourceId AddOneLocked(std::string_view name, Kind kind) {
+            name = Trunc(name);
             const auto n = g_count.load(std::memory_order_relaxed);
             for (std::uint32_t i = 0; i < n; ++i)
                 if (IEquals(name, g_src[i].name)) return static_cast<SourceId>(i);
@@ -312,6 +331,7 @@ namespace apmf::sources {
     }
 
     SourceId Find(std::string_view name) {
+        name = Trunc(name);
         const auto n = g_count.load(std::memory_order_acquire);
         for (std::uint32_t i = 0; i < n; ++i)
             if (IEquals(name, g_src[i].name)) return static_cast<SourceId>(i);
