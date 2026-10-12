@@ -1,5 +1,6 @@
 #include "PCH.h"
 #include "core/Sources.h"   // Harbinger 1a: seat census
+#include "core/FacetAttribution.h"   // Harbinger 1b: the engine's area ranked; yield + drift named
 #include "channels/CombatApproach.h"
 #include "core/Allowance.h"   // SeatVerified / DerivesFrom / RuntimeSupported (mit-3.7 F1, G1)
 #include "core/Clock.h"
@@ -102,6 +103,16 @@ extern "C" __declspec(dllimport) unsigned long __stdcall GetPrivateProfileIntA(
 //   Every raw offset below was read off the engine's own code on 1.6.1170, 1.5.97 and 1.7.104
 //   (identical); each seat checks the object's vtable is the Standard one before touching a
 //   field (INVARIANTS #20 guards: kill-switch, self-check, per-call vtable identity).
+//
+// HARBINGER 1b (2026-10-12): ATTRIBUTION ON THE COMBAT FACET. (a) S1's substitution is decided
+// against the source of the area it replaces -- the module hooked inside S1's seat if any (the
+// census's displaced value), else Engine -- and the bound is written ONLY when the claim's priority
+// is strictly above that source's (APMF_Sources.ini; defaults client 50 > unregistered 20, so no
+// change unless the player raises it). Otherwise the engine's area stands that update (kSeatStood,
+// reported as YIELDED). (b) A yield to a higher-priority area is named after the actor's running
+// package's plugin (attribution only; the package still wins). (c) The DRIFT DETECTOR: an area
+// whose geometry no longer matches what S1 wrote (same controller) was rewritten outside every
+// Harbinger seat -- Unattributed (alert + line), not undone.
 //
 // DENY-COMPLETENESS (principle 2). The facet is "the in-combat movement bound". Competing
 // sources: the engine's own standard area -- SUBSTITUTED while the claim stands; a package's
@@ -268,6 +279,8 @@ namespace {
     constexpr std::uint32_t kSeatYielded  = 1u << 0;   // a higher-priority area was current
     constexpr std::uint32_t kSeatDisabled = 1u << 1;   // the engine disabled the standard area
     constexpr std::uint32_t kSeatCurrent  = 1u << 2;   // the standard area was the current one
+    constexpr std::uint32_t kSeatStood    = 1u << 3;   // Harbinger 1b: the claim does not outrank the source
+                                                       //   of the engine's own area (APMF_Sources.ini): not written
 
     std::shared_mutex                                       g_entryMx;
     std::unordered_map<RE::FormID, std::unique_ptr<Entry>> g_entries;
@@ -321,8 +334,12 @@ namespace {
     // ---- RULE C counters (printed even at zero) ----
     std::atomic<std::uint64_t> g_s1Seen{ 0 }, g_s1Applied{ 0 }, g_s1Restored{ 0 }, g_s1Yielded{ 0 },
         g_s1Disabled{ 0 }, g_s2Vanilla{ 0 }, g_s3Brackets{ 0 }, g_s4Brackets{ 0 }, g_s6Verdicts{ 0 },
-        g_s6Outside{ 0 }, g_ended{ 0 }, g_s5Brackets{ 0 }, g_s3PutBack{ 0 };
+        g_s6Outside{ 0 }, g_ended{ 0 }, g_s5Brackets{ 0 }, g_s3PutBack{ 0 }, g_s1Stood{ 0 }, g_s1Drift{ 0 };
     std::atomic<bool>          g_s1Observed{ false };
+    // Harbinger 1b: the source whose answer S1 substitutes -- the module hooked INSIDE S1's seat (it
+    // wraps the engine's Update, so its result is the last word below Harbinger), else Engine. Set
+    // once at Install, after the seat is registered, before g_installed.
+    std::atomic<int>           g_s1Src{ apmf::sources::kEngineSource };
 
     // WORLD-TICK CLOCK (channels/Idle.cpp / channels/Travel.cpp precedent). Advanced by Poll on
     // the game thread, every call, by the wall gap CLAMPED to kTickClampMs: a pause, a load
@@ -384,6 +401,7 @@ namespace {
         void* const ctl = At<void*>(a_area, kAreaCtl);
 
         // 1) The engine computes from ITS OWN state: undo what S1 wrote last time, if it is still there.
+        RE::FormID driftActor = 0;   // Harbinger 1b: the bound was rewritten by something outside this seat
         if (g_touchedCount.load(std::memory_order_relaxed) != 0) {
             std::unique_lock lk(g_areaMx);
             if (const auto it = g_touched.find(a_area); it != g_touched.end()) {
@@ -391,10 +409,26 @@ namespace {
                     WriteGeo(a_area, it->second.vanilla);
                     At<float>(a_area, kAreaPeriod) = it->second.vanillaPeriod;
                     g_s1Restored.fetch_add(1, std::memory_order_relaxed);
+                } else if (it->second.ctl == ctl) {
+                    driftActor = it->second.actor;   // same controller, not what S1 wrote: an outside write
                 }
                 if (it->second.reactivate) g_reactivateCount.fetch_sub(1, std::memory_order_relaxed);
                 g_touched.erase(it);
                 g_touchedCount.store(g_touched.size(), std::memory_order_relaxed);
+            }
+        }
+        if (driftActor != 0) {
+            // THE DRIFT DETECTOR (plan row "Combat approach (24)"). Every engine write to the standard
+            // area's geometry goes through Update (this seat) and every APMF write is recorded, so a
+            // record whose area no longer carries what S1 wrote was written by code no Harbinger seat
+            // sees. It is NOT undone (the engine's Update below computes from what is there now); it
+            // is named Unattributed (alert + rate-limited line), the degrade rule.
+            g_s1Drift.fetch_add(1, std::memory_order_relaxed);
+            try {
+                apmf::sources::Unattributed(apmf::sources::Facet::kCombat, driftActor,
+                                            "ch.24: the standard combat area carrying the bound was rewritten "
+                                            "outside its Update seat (not undone)");
+            } catch (...) {
             }
         }
 
@@ -425,6 +459,31 @@ namespace {
         if (!enabled) {   // not selectable at all: carrying the bound would change nothing
             g_s1Disabled.fetch_add(1, std::memory_order_relaxed);
             return;
+        }
+
+        // Harbinger 1b: the engine's own area (or a hook inside this seat) is the source the bound
+        // substitutes. The substitution stands only when the claim outranks it on the Combat facet;
+        // otherwise the engine's area stands untouched this update (state YIELDED, logged).
+        {
+            apmf::facetattr::Verdict v;
+            try {
+                v = apmf::facetattr::Decide(apmf::sources::Facet::kCombat, e.owner,
+                                            g_s1Src.load(std::memory_order_relaxed), fid, "");
+            } catch (...) {
+                v.enforce = true;   // the decision could not be recorded: keep the pre-1b behaviour
+            }
+            if (!v.enforce) {
+                e.seatFlags.store(sf | kSeatStood, std::memory_order_relaxed);
+                g_s1Stood.fetch_add(1, std::memory_order_relaxed);
+                if (apmf::facetattr::LineDue(apmf::sources::Facet::kCombat, fid, 24u << 8 | 1u)) {
+                    spdlog::info("[ch.24] 0x{} the bound is NOT written: claim h={} ({} priority {}) does not "
+                                 "outrank {} (priority {}) on the Combat facet, so the engine's own combat area "
+                                 "stands (APMF_Sources.ini). Logged at most once per 5 s per actor.",
+                                 Hex(fid), e.owner, apmf::facetattr::NameOr(v.client, "an internal claim"),
+                                 v.claimPrio, apmf::sources::Name(v.src), v.srcPrio);
+                }
+                return;
+            }
         }
 
         // Write + record under the area lock (lock order: entries, then areas -- nothing takes them
@@ -711,6 +770,26 @@ namespace {
         }
     };
 
+    // Harbinger 1b: a HIGHER-PRIORITY combat area is current (UpdateAreas' own priority pick; the only
+    // one above the standard area's 1 is a package's HoldPosition area, 3), so the bound yields. No
+    // enforcement exists here (a package's force wins, the file header's DENY-COMPLETENESS), so this is
+    // attribution only: named after the actor's RUNNING package -- the package whose HoldPosition
+    // procedure adds that area -- through its plugin, by core/PackageSources.cpp's rule (GetFile(0); a
+    // package created at runtime = Engine). Once per transition into YIELDED. GAME THREAD (Poll).
+    void AttributeYield(RE::FormID a_id, RE::Actor* a_actor, APMF_API::Handle a_h) {
+        const RE::TESPackage*   pkg = a_actor ? a_actor->GetCurrentPackage() : nullptr;
+        apmf::sources::SourceId src = apmf::sources::kNoSource;
+        if (pkg) {
+            if (const auto* f = pkg->GetFile(0)) src = apmf::sources::Register(f->GetFilename(), apmf::sources::Kind::kPlugin);
+            else src = apmf::sources::kEngineSource;
+        }
+        apmf::facetattr::Observe(apmf::sources::Facet::kCombat, src, a_id,
+                                 "ch.24: a higher-priority combat area is current and the actor runs no package");
+        spdlog::info("[ch.24] 0x{} the bound YIELDS to a higher-priority combat area (a package hold-position area): "
+                     "named {} (running package 0x{}); it stands -- a package's force wins (claim h={}).",
+                     Hex(a_id), apmf::facetattr::NameOr(src, "Unattributed"), Hex(pkg ? pkg->GetFormID() : 0), a_h);
+    }
+
 }
 
 namespace apmf::combatapproach {
@@ -833,6 +912,11 @@ namespace apmf::combatapproach {
                       SKSE::stl::unrestricted_cast<std::uintptr_t>(&IsInsideLocThunk), g_origIsInsideLoc.load());
             NoteVfunc(Facet::kCombat, "CombatApproach.AreaStandard.Update", vtStd.address(), kSlotUpdate,
                       SKSE::stl::unrestricted_cast<std::uintptr_t>(&UpdateThunk), g_origUpdate.load());
+            // Harbinger 1b: a module hooked inside S1 (installed before Harbinger) produces the area S1
+            // substitutes; with none, the engine does.
+            if (const auto prev = apmf::sources::PrevSourceOf("CombatApproach.AreaStandard.Update");
+                prev != apmf::sources::kNoSource)
+                g_s1Src.store(prev, std::memory_order_relaxed);
         }
         g_installed.store(true, std::memory_order_release);
         spdlog::info("[ch.24] combat-approach seats installed: CombatAreaStandard Update (0x0B, carries the bound), "
@@ -977,6 +1061,7 @@ namespace apmf::combatapproach {
             std::uint32_t endState = 0;
             bool          logLine  = false;
             std::uint32_t applied = 0, sf = 0, inside = 0, outside = 0;
+            std::uint32_t prevState = 0;
             {
                 std::unique_lock lk(g_entryMx);
                 const auto it = g_entries.find(id);
@@ -1001,7 +1086,7 @@ namespace apmf::combatapproach {
                         e.lastSeenMs.store(0, std::memory_order_relaxed);
                     }
                     live = true;
-                    if (sf & kSeatYielded) next = APMF_API::kApproachState_Yielded;
+                    if (sf & (kSeatYielded | kSeatStood)) next = APMF_API::kApproachState_Yielded;
                     else if (sf & kSeatDisabled) next = APMF_API::kApproachState_Disabled;
                     else if (inside == 2 || (inside == 0 && dist <= radius)) {
                         if ((flags & APMF_API::kApproach_Hold) == 0 && applied != 0) {
@@ -1027,6 +1112,7 @@ namespace apmf::combatapproach {
                 if (!endWhy) {
                     e.want = Geo{ posX.x, posX.y, posX.z, spaceX, radius };
                     SetLive(e, live);
+                    prevState = e.state;
                     SetState(e, next, now);
                     if (now - e.lastLineMs >= kLineMs) {
                         e.lastLineMs = now;
@@ -1038,12 +1124,16 @@ namespace apmf::combatapproach {
                 End(id, endState, endWhy);
                 continue;
             }
+            if (next == APMF_API::kApproachState_Yielded && prevState != next && (sf & kSeatYielded) != 0)
+                AttributeYield(id, actor, h);
             if (logLine)
                 spdlog::info("[ch.24] 0x{} approach {} -> X 0x{}: distance {:.0f} / R {:.0f}; area carried the bound {} "
                              "time(s); engine: {}, standard area {}; outside answers {}{}.",
                              Hex(id), StateName(next), Hex(target), dist, radius, applied,
                              inside == 2 ? "INSIDE" : inside == 1 ? "OUTSIDE (return-to-area selectable)" : "no fresh verdict",
-                             (sf & kSeatCurrent) ? "CURRENT" : (sf & kSeatYielded) ? "outranked" : "not current",
+                             (sf & kSeatCurrent) ? "CURRENT" : (sf & kSeatYielded) ? "outranked"
+                                                     : (sf & kSeatStood) ? "kept (the claim does not outrank its source)"
+                                                                         : "not current",
                              outside, clamped ? "; goal point CLAMPED just inside the ch.23 leash (X grazes it)" : "");
         }
     }
@@ -1061,12 +1151,13 @@ namespace apmf::combatapproach {
         if (now - g_lastHeartbeatMs < kHeartbeatMs) return;
         g_lastHeartbeatMs = now;
         spdlog::info("[ch.24] heartbeat: {} claim(s); standard-area updates seen {} (any actor), bound applied {}, "
-                     "engine geometry restored first {}, outranked {}, disabled {}; vanilla answers inside deny "
+                     "engine geometry restored first {}, outranked {}, disabled {}, not written by priority {}, "
+                     "rewritten outside the seat (drift) {}; vanilla answers inside deny "
                      "brackets {} (target-selector brackets {}, inv/bound brackets {}, attack/bash brackets {}, find-weapon brackets {}); "
                      "engine inside/outside verdicts on the bound {} ({} outside); ended by Harbinger {}; engine areas "
                      "put back after an end {}; areas carrying a bound now {}.",
                      n, g_s1Seen.load(), g_s1Applied.load(), g_s1Restored.load(), g_s1Yielded.load(),
-                     g_s1Disabled.load(), g_s2Vanilla.load(), g_s3Brackets.load(), g_s4Brackets.load(),
+                     g_s1Disabled.load(), g_s1Stood.load(), g_s1Drift.load(), g_s2Vanilla.load(), g_s3Brackets.load(), g_s4Brackets.load(),
                      g_s5Brackets.load(), g_s5FindBrackets.load(), g_s6Verdicts.load(), g_s6Outside.load(), g_ended.load(), g_s3PutBack.load(),
                      g_touchedCount.load());
     }
