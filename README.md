@@ -14,8 +14,11 @@ fighting other mods over who owns the actor.
 
 **Start here:**
 
-- **[Docs/INTEGRATION.md](Docs/INTEGRATION.md)**: the getting-started guide for mod authors. Read this first.
+- **[Docs/INTEGRATION.md](Docs/INTEGRATION.md)**: the getting-started quickstart for mod authors. Read this first.
+- **[Docs/GUIDE.md](Docs/GUIDE.md)**: the guide. What a facet is, how claims are ranked, how a claim lives and dies, threading, binding.
 - **[Docs/FACETS.md](Docs/FACETS.md)**: the facet reference. Every facet, its arguments, what it enforces, its lifetime, and examples.
+- **[Docs/RECIPES.md](Docs/RECIPES.md)**: worked scenarios that combine facets, with complete code.
+- **[Docs/GLOSSARY.md](Docs/GLOSSARY.md)**: every term, defined once.
 - **[Docs/CHANNEL-MAP.md](Docs/CHANNEL-MAP.md)**: the full facet map, with an honest proof tier per facet.
 - **[native/APMF_API.h](native/APMF_API.h)**: the header you build against. The whole public surface, one file.
 - **[Docs/INI-REFERENCE.md](Docs/INI-REFERENCE.md)**: every key in `APMF.ini` and the format of `APMF_Sources.ini`.
@@ -96,7 +99,7 @@ Some facets are field-proven and some are built but not yet seen working in game
 
 ## For mod authors
 
-You build against one header, [`native/APMF_API.h`](native/APMF_API.h). Start with [Docs/INTEGRATION.md](Docs/INTEGRATION.md) for how to find the interface, check the version, register as a source and run the claim, heartbeat and release pattern. Then use [Docs/FACETS.md](Docs/FACETS.md) as the reference for each facet. [MFO](https://github.com/marthofdoom/MFO) is the worked example, and its `native/apmf/` folder is the one to read.
+You build against one header, [`native/APMF_API.h`](native/APMF_API.h). Start with [Docs/INTEGRATION.md](Docs/INTEGRATION.md) for how to find the interface, check the version, register as a source and run the claim, heartbeat and release pattern. [Docs/GUIDE.md](Docs/GUIDE.md) is the model behind it. Then use [Docs/FACETS.md](Docs/FACETS.md) as the reference for each facet and [Docs/RECIPES.md](Docs/RECIPES.md) for scenarios that combine them. [MFO](https://github.com/marthofdoom/MFO) is the worked example, and its `native/apmf/` folder is the one to read.
 
 ## Quickstart
 

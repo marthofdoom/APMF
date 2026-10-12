@@ -2,7 +2,7 @@
 
 A getting-started guide for SKSE plugin authors who want their mod to share NPC control with other mods instead of fighting them for it.
 
-This page covers the part every client needs: finding the interface, checking the version, becoming a source, and the claim, heartbeat and release pattern. It does not describe individual facets. Every facet, with its arguments, rules and examples, is in **[FACETS.md](FACETS.md)**.
+This page covers the part every client needs: finding the interface, checking the version, becoming a source, and the claim, heartbeat and release pattern. It does not describe individual facets. The model behind all of it (facets, basis and priority, the claim lifecycle, threading) is in **[GUIDE.md](GUIDE.md)**. Every facet, with its arguments, rules and examples, is in **[FACETS.md](FACETS.md)**. Scenarios that combine facets, with complete code, are in **[RECIPES.md](RECIPES.md)**, and every term is defined in **[GLOSSARY.md](GLOSSARY.md)**.
 
 ## What Harbinger is
 
@@ -16,7 +16,7 @@ Some other facets do make a small, bounded engine call because you declared it: 
 
 - You build against one file, [`native/APMF_API.h`](../native/APMF_API.h). It is a plain C-ABI header with no CommonLib dependency. Copy it byte for byte. It is append-only, so a client built against any older copy keeps working against every later Harbinger.
 - Harbinger runs on Skyrim AE 1.6.1170, SE 1.5.97 and 1.7.104, and refuses every other build and VR by name. See the [README](../README.md) for requirements.
-- Read [FACETS.md "Shared concepts"](FACETS.md#shared-concepts) once. It explains basis, priority, pending claims, refusal timings and threading, and this page assumes it.
+- Read [GUIDE.md](GUIDE.md) once. It explains facets, basis and priority, the claim lifecycle (pending, live, the drain, refusal timings) and threading, and this page assumes it.
 
 ## 1. Find the interface and check the version
 
@@ -63,7 +63,7 @@ Then every call site reads like this.
 if (MyMod::Has(6) && MyMod::g_apmf->IsClaimLive(handle)) { /* ... */ }   // IsClaimLive is ABI 6
 ```
 
-Which ABI introduced which slot, intent and flag is in [FACETS.md "Version gating"](FACETS.md#version-gating) and [Appendix B](FACETS.md#appendix-b-abi-history). Two things catch people out. An unknown intent is refused (`kInvalidHandle`), which is a loud failure. An unknown flag bit is ignored without a word, which is a quiet one. Check `abiVersion` before you set any flag a facet section marks as newer than ABI 5.
+Which ABI introduced which slot, intent and flag is in [GUIDE.md "Gating on the ABI"](GUIDE.md#gating-on-the-abi) and [FACETS.md Appendix B](FACETS.md#appendix-b-abi-history). Two things catch people out. An unknown intent is refused (`kInvalidHandle`), which is a loud failure. An unknown flag bit is ignored without a word, which is a quiet one. Check `abiVersion` before you set any flag a facet section marks as newer than ABI 5.
 
 Harbinger logs `APMF_GetInterface` either way. If a client asks for an ABI the installed Harbinger does not have, the log names the release that does.
 
@@ -78,7 +78,7 @@ Each source has a priority from 0 to 100 on each facet. Your default is 50. A pl
 MyMod.dll=60
 ```
 
-Priority is how your claim ranks against a foreign source (another mod's hook, the engine, a script). The `basis` you pass with each request is how your claim ranks against other clients' claims. They are different numbers. [FACETS.md "Basis and priority"](FACETS.md#basis-and-priority) has the rules, the defaults, and what happens to a change Harbinger cannot trace.
+Priority is how your claim ranks against a foreign source (another mod's hook, the engine, a script). The `basis` you pass with each request is how your claim ranks against other clients' claims. They are different numbers. [GUIDE.md "Sources, Priority and Arbitration"](GUIDE.md#sources-priority-and-arbitration) has the rules, the defaults, and what happens to a change Harbinger cannot trace.
 
 ## 3. The claim pattern
 
@@ -185,7 +185,7 @@ void KeepFriendlyFireHold(RE::FormID follower, TrackedClaim& guard, Heartbeat& b
 
 ## 4. Threading
 
-`Request`, `RequestEx`, `RequestCast`, `Repoint`, `Release` and the declaration calls copy what you pass and queue the work, so any thread may call them. The read-only state reads are any-thread too. Three queries are synchronous and run on the true main thread only (the player-update thread): `FindEmptySpace`, `FindHostilesInSpace` and `SenseActor`. SKSE's `AddTask` is not that thread. No exception ever crosses the boundary. [FACETS.md "Threading"](FACETS.md#threading) has the full list.
+`Request`, `RequestEx`, `RequestCast`, `Repoint`, `Release` and the declaration calls copy what you pass and queue the work, so any thread may call them. The read-only state reads are any-thread too. Three queries are synchronous and run on the true main thread only (the player-update thread): `FindEmptySpace`, `FindHostilesInSpace` and `SenseActor`. SKSE's `AddTask` is not that thread. No exception ever crosses the boundary. [GUIDE.md "Threading"](GUIDE.md#threading) has the full list.
 
 ## 5. Coexistence
 
@@ -219,14 +219,14 @@ If you want Harbinger to hold something for you, say so with a claim, and stop d
 | `Excursion.cpp`, `Deposit.cpp` | ch.19 travel, ch.20 pins, ch.1 hold and ch.12 idle |
 | `CastGuard.cpp` | ch.25: a 6 second window, a `Repoint` heartbeat, and a fresh request when the claim has gone stale |
 | `CombatEntry.cpp`, `ReentryDeny.cpp` | ch.21 and ch.22 with pending-versus-ended tracking |
-| `PursuitLeash.cpp`, `CombatApproach.cpp` | ch.23 and ch.24 |
+| `PursuitLeash.cpp`, `CombatApproach.cpp`, `OffenseApproach.cpp` | ch.23 and ch.24 |
 | `Los.cpp` | `GetLineOfSight` and `SenseActor` |
 
 MFO files every claim with a basis of 200.
 
 ## Sections that moved
 
-Older comments in `APMF_API.h` and the source tree cite sections of this page by name. Those sections now live in [FACETS.md](FACETS.md).
+Older comments in `APMF_API.h` and the source tree cite sections of this page by name. Those sections now live in [FACETS.md](FACETS.md) and [GUIDE.md](GUIDE.md).
 
 | Old name | Now |
 |---|---|
@@ -237,14 +237,17 @@ Older comments in `APMF_API.h` and the source tree cite sections of this page by
 | "Making an NPC cast", "Casting at a point" | [ch.8b Cast](FACETS.md#ch8b-cast-kintent_cast), [Position cast](FACETS.md#position-cast-kcastflag_atposition) |
 | "Declaring what an NPC wears", "Scoping the authority", the probe criteria | [ch.17 Equip authority](FACETS.md#ch17-equip-authority-kintent_equipauthority), [Appendix E](FACETS.md#appendix-e-equip-authority-probe-criteria) |
 | "Walking an NPC somewhere" | [ch.19 Travel](FACETS.md#ch19-travel-kintent_travel) |
-| "The Harbinger controller" | [Basis and priority](FACETS.md#basis-and-priority), [Appendix A](FACETS.md#appendix-a-sources-and-priorities-per-facet) |
+| "The Harbinger controller" | [GUIDE.md "Sources, Priority and Arbitration"](GUIDE.md#sources-priority-and-arbitration), [FACETS.md Appendix A](FACETS.md#appendix-a-sources-and-priorities-per-facet) |
 | "The facet table" | [Facet index](FACETS.md#facet-index) |
 | a section named for an ABI ("ABI v8", "ABI v9", "ABI v11 queries", and so on) | the facet that ABI introduced, listed in [Appendix B](FACETS.md#appendix-b-abi-history) |
 | "The probe criteria" | [Appendix E](FACETS.md#appendix-e-equip-authority-probe-criteria) |
 
 ## Where next
 
+- **[GUIDE.md](GUIDE.md)** is the model: facets, basis and priority, the claim lifecycle, threading, binding and how to read the log.
 - **[FACETS.md](FACETS.md)** is the reference: every facet, its arguments, what Harbinger enforces, its lifetime, its priority rules and examples.
+- **[RECIPES.md](RECIPES.md)** is the scenarios: a healer in standoff, a loot trip, a retreat, a loadout, engage on sight, a service tick, with complete code.
+- **[GLOSSARY.md](GLOSSARY.md)** defines every term once.
 - **[CHANNEL-MAP.md](CHANNEL-MAP.md)** maps each channel to its hook site, with the research behind it.
 - **[INI-REFERENCE.md](INI-REFERENCE.md)** documents every key in `APMF.ini` and the format of `APMF_Sources.ini`.
 - **[native/APMF_API.h](../native/APMF_API.h)** is the contract, and it wins over any page here.

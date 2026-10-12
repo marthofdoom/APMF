@@ -4,14 +4,14 @@ Harbinger (the project is APMF, the AI Package Management Framework) is an SKSE 
 
 | Page | What it is for |
 |---|---|
-| **This page, `GUIDE.md`** | the foundations. Read it once, in order |
+| **This page, `GUIDE.md`** | the foundations: facets, claims, basis and priority, threading, binding |
 | [FACETS.md](FACETS.md) | the reference: one section per facet, with its arguments, rules, examples and field status |
 | [RECIPES.md](RECIPES.md) | worked scenarios that combine facets, with complete code |
 | [GLOSSARY.md](GLOSSARY.md) | every term, defined once, with where it is introduced |
 
 [INTEGRATION.md](INTEGRATION.md) is the ten-minute quickstart. [`native/APMF_API.h`](../native/APMF_API.h) is the contract, and if any page here and the header ever disagree, the header wins. Every C++ example on these pages compiles against that header as it stands today (ABI 21, release 0.13.0 plus what is merged for the next one). The player-facing pages are [INI-REFERENCE.md](INI-REFERENCE.md) and [HARBINGER-MENU.md](HARBINGER-MENU.md).
 
-**How the pages are written.** Each major section opens with a **Big Idea**, its **Learning Objectives** and its **Key Vocabulary**. A topic starts with why it matters, states the concept, then gives the mechanism behind it, and ends with **Check Your Understanding**, two or three short questions whose odd-numbered answers are at the end of the page. Five kinds of callout appear: **Key Concept** (a rule stated precisely, numbered within the page), **Tip**, **Caution** (a misuse that breaks something), **Real-World Connection** (how MFO, the reference client, uses it) and **Did You Know?** (an engine fact behind a rule). Worked examples give a goal, **Think it through**, a **Solution** that compiles, and a **Check** for the game or the log. Where something has not been seen working in game, or is not known, the text says so.
+**How the pages are written.** Each major section opens with a short summary in italics. A topic says why it matters, states the rule, then gives the mechanism behind it, and ends with **Check Your Understanding**, two or three questions to try, with the odd-numbered answers at the end of the page. Five kinds of callout appear: **Key Concept** (a rule stated precisely, numbered within the page), **Tip**, **Caution** (a misuse that breaks something), **Real-World Connection** (how MFO, the reference client, uses it) and **Did You Know?** (an engine fact behind a rule). Worked examples give a goal, **Think it through**, a **Solution** that compiles, and a **Check** for the game or the log. Where something has not been seen working in game, or is not known, the text says so.
 
 **Conventions.** Distances are in game units unless a section says otherwise (one foot is 64 over 3 units, so about 71 units is one metre). Angles are radians. A window is milliseconds in the cast request and seconds in `APMF_Param.fval`, and each facet section says which. FormIDs are plain `RE::FormID` values (`std::uint32_t`). `0x14` is the player. A FormID names an object reference (a loaded actor, a marker, a container) except where a section says it is a base form (a spell, an idle, a package, an item). "ch.N" is Harbinger's channel number, the log tag. One header detail: `APMF_Param` carries a world point as three floats, `posX`, `posY` and `posZ`. Older header comments call it `param.pos`. There is no `pos` member.
 
@@ -29,21 +29,11 @@ constexpr float kBasis = 50.0f;      // your choice of basis. MFO uses 200
 
 ## What Harbinger Is
 
-> **Big Idea** Skyrim gives one actor to one mod at a time. Harbinger splits an actor's AI into small facets, lets each mod claim only the facet it needs, and makes that claim reach the engine while it stands.
-
-**Learning Objectives.** After this section you will be able to:
-
-- explain why two mods that direct one NPC break each other without a moderator,
-- state what Harbinger does and does not do to an actor,
-- name the three modes a channel works in, and the fourth the cast channel adds,
-- list the five rules that make Harbinger safe beside mods that know nothing about it,
-- say which runtimes it runs on and what a refused claim means for your mod.
-
-**Key Vocabulary.** facet, moderator, arbitrate, deny, promote, compose, client, seat, degrade path.
+*Skyrim gives one actor to one mod at a time. Harbinger splits an actor's AI into small facets, lets each mod claim only the facet it needs, and makes that claim reach the engine while it stands.*
 
 ### The problem
 
-**Why it matters.** If you have shipped a mod that moves or directs NPCs, you have met this problem, perhaps without naming it. Naming it is the first step to seeing what Harbinger changes.
+**Why it matters.** If you have shipped a mod that moves or directs NPCs, you have probably met this problem already. It is worth stating plainly, because it is the thing Harbinger changes.
 
 Skyrim gives one actor to one AI package at a time. The package with the highest priority that passes its conditions wins, and every other package waits. A follower framework that holds a follower in its own package has, by that rule, locked every other mod out of that follower. A second mod that wants the follower to walk somewhere, cast a spell at someone, or stay out of a fight has to take the whole actor, and then the framework loses. Both mods are right and one of them breaks.
 
@@ -58,7 +48,7 @@ The same lock exists one level down. The combat AI chooses the target, the spell
 
 ### A moderator, not a driver
 
-**Why it matters.** Every design choice in the API follows from one fact: Harbinger decides nothing on its own. If you expect it to choose a target or plan a route, you will design the wrong client.
+**Why it matters.** Every design choice in the API follows from one fact: Harbinger decides nothing on its own. A client that expects it to choose a target or plan a route ends up fighting the API, so it is worth settling first.
 
 Harbinger sits between the mods and the engine. A mod does not take the actor. It **claims one facet** of the actor, a single input the AI reads, at a rank of its choosing, and Harbinger makes that claim reach the engine while it stands. Everything else about the actor keeps running under its own AI. Its package stays current, its combat keeps going, its other decisions are untouched. When the claim ends, the facet goes straight back to the actor's own AI, or to the next best claim.
 
@@ -153,24 +143,15 @@ A combat re-entry deny (ch.22) calls nothing. It makes the engine's own `StartCo
 - Five rules hold everywhere: chainable hooks, engine answer first, one input, reversible on release, never deny the unnamed.
 - Three runtimes are served. Everywhere else every claim is refused at the call, and a refusal means run your own degrade path.
 
-**Review.** Write one paragraph, for a modder who has never heard of Harbinger, explaining why a follower framework and a loot mod cannot both direct one follower without it. Then, for a stance claim, a combat target claim, a combat re-entry deny and an idle claim with a form, say which mode each is and which engine call, if any, Harbinger makes.
+**Try this.** Explain to a fellow modder, in a paragraph, why a follower framework and a loot mod cannot both direct one follower without a moderator. Then take a stance claim, a combat target claim, a combat re-entry deny and an idle claim with a form, and say which mode each is and which engine call, if any, Harbinger makes.
 
 ## The AI Facet
 
-> **Big Idea** A facet is the smallest thing a mod can take from an actor's AI without taking something it did not ask for. Every claim names exactly one.
-
-**Learning Objectives.** After this section you will be able to:
-
-- define a facet and tell one from a package, a goal or a behaviour,
-- map an intent to its channel and to its sources facet,
-- find any facet in the catalogue and read its mode, ABI and field tier,
-- tell which `APMF_Param` fields a facet reads today and which are reserved.
-
-**Key Vocabulary.** facet, intent, channel, sources facet, reserved field, one-shot.
+*A facet is the smallest thing a mod can take from an actor's AI without taking something it did not ask for. Every claim names exactly one.*
 
 ### What a facet is
 
-**Why it matters.** Clients that treat a facet as a behaviour ("walk to the crate and loot it") claim too little and then wonder why the follower stood still with its hands full. Clients that treat it as a package claim too much. The definition decides the design.
+**Why it matters.** It is easy to treat a facet as a behaviour ("walk to the crate and loot it") and claim too little, then wonder why the follower stood still with its hands full. It is as easy to treat it as a package and claim too much. The definition decides the design.
 
 > **Key Concept 8 (the facet)** A facet is one input the engine's AI reads when it decides one thing about an actor.
 
@@ -281,20 +262,11 @@ A field a facet does not read is accepted and ignored, with one exception: a non
 - The catalogue lists every facet with its mode, ABI, sources facet and field tier.
 - Several channels read no parameter today. A reserved field is accepted and ignored.
 
-**Review.** Pick a follower behaviour from a mod you know and decompose it into facets using the catalogue. Mark any decision no facet covers. Then, from the field table, list every intent that reads `target` and say what each reads it as.
+**Try this.** Pick a follower behaviour from a mod you know and decompose it into facets using the catalogue. Mark any decision no facet covers. Then, from the field table, list every intent that reads `target` and say what each reads it as.
 
 ## Sources, Priority and Arbitration
 
-> **Big Idea** Two different contests decide whether your claim reaches the actor, and they use two different numbers. The basis ranks claims against claims. The priority ranks your mod against the rest of the world.
-
-**Learning Objectives.** After this section you will be able to:
-
-- choose a basis and predict which of several claims owns a facet,
-- explain what a source is and how Harbinger names yours,
-- read `APMF_Sources.ini` and state when a deny stands,
-- tell a claim that lost at level one from one that lost at level two by reading the log.
-
-**Key Vocabulary.** basis, owner, stored claim, source, priority, unattributed, outrank.
+*Two different contests decide whether your claim reaches the actor, and they use two different numbers. The basis ranks claims against claims. The priority ranks your mod against the rest of the world.*
 
 ### Claims against claims: the basis
 
@@ -318,7 +290,7 @@ The mechanism is one comparator, `BetterClaim` in `core/ControlMap.h`, used at e
 
 ### Claims against the world: the priority
 
-**Why it matters.** Your claim, once it owns the facet, still has to beat whatever else writes that facet in the engine: the engine's own AI, another mod's hook, a Papyrus script, a console command. Without this topic you will read "would refuse, ALLOWED" in the log and not know why.
+**Why it matters.** Your claim, once it owns the facet, still has to beat whatever else writes that facet in the engine: the engine's own AI, another mod's hook, a Papyrus script, a console command. This is the topic to have read before you meet "would refuse, ALLOWED" in the log.
 
 > **Key Concept 10 (a source)** A source is anything Harbinger can name as the origin of a write to a facet. Every source has a priority from 0 to 100 on every sources facet.
 
@@ -402,23 +374,11 @@ Priorities are kept per **sources facet**, not per intent. A mod's priority on `
 - An unattributed write is allowed and alerted. `[UnknownSources]` can make it rank at the Unattributed row on three facets.
 - Equip denies are not priority ranked. The `Core` facet is never enforced against a foreign source.
 
-**Review.** Three mods claim the cast facet on one follower: A at 100 (a driving cast), B at 100 (a deny-only floor filed earlier), C at 60. Rank them and say which rule placed each. Then write the `APMF_Sources.ini` lines that let the engine win every combat-action deny against your mod without touching any other facet.
+**Try this.** Three mods claim the cast facet on one follower: A at 100 (a driving cast), B at 100 (a deny-only floor filed earlier), C at 60. Rank them and say which rule placed each. Then write the `APMF_Sources.ini` lines that let the engine win every combat-action deny against your mod without touching any other facet.
 
 ## The Claim and Its Lifecycle
 
-> **Big Idea** A claim is a request with a handle. It is applied on the game thread one frame later, it may be renewed, and it ends in one of a small number of ways that your code must tell apart. Every bug a client can have with Harbinger is a confusion about where in this lifecycle a claim is.
-
-**Learning Objectives.** After this section you will be able to:
-
-- fill a request and read the handle it returns,
-- say where and when the drain runs, and in what order it applies your calls,
-- tell a pending claim from an ended one with `IsClaimLive`,
-- renew a bounded claim with `Repoint` and say what a renewal cannot do,
-- list every way a claim ends, including what a load, a new game and an unload do,
-- tell a refusal at the call from a refusal at the drain, and clean up after each,
-- write a tracked claim that never orphans a handle.
-
-**Key Vocabulary.** claim, handle, request, drain, pending, live, inert, owner change, eviction, heartbeat, renewal, window, expiry, release, snapshot, publish.
+*A claim is a request with a handle. It is applied on the game thread one frame later, it may be renewed, and it ends in one of a small number of ways that your code must tell apart. Every bug a client can have with Harbinger is a confusion about where in this lifecycle a claim is.*
 
 ### Anatomy of a claim
 
@@ -772,19 +732,11 @@ void KeepReentryDeny(RE::FormID actor, float windowSecs, TrackedClaim& c, Heartb
 - Nothing crosses a load except the actor-value ledger and the markers. Forget your handles.
 - A refusal at the call needs no cleanup. A refusal at the drain leaves an inert handle you must release.
 
-**Review.** Write a client function that opens a pursuit leash, polls it for ten ticks, and releases it, logging each state change, with `TrackedClaim`. Then describe what the log shows when a client sends `Repoint` on a cast claim every 5 seconds with `ttlMs = 4000`, and why the follower's hand opens for a moment each cycle.
+**Try this.** Write a client function that opens a pursuit leash, polls it for ten ticks, and releases it, logging each state change, with `TrackedClaim`. Then describe what the log shows when a client sends `Repoint` on a cast claim every 5 seconds with `ttlMs = 4000`, and why the follower's hand opens for a moment each cycle.
 
 ## Threading
 
-> **Big Idea** Almost everything in the API is safe from any thread because it copies and queues. The three synchronous queries are the exception, and SKSE's task thread is not the main thread.
-
-**Learning Objectives.** After this section you will be able to:
-
-- call the claim API from a worker thread with confidence,
-- name the three calls that must run on the true main thread, and say which thread that is,
-- explain why no exception ever crosses the boundary.
-
-**Key Vocabulary.** game thread, main thread, player-update thread, job worker, snapshot read, synchronous query.
+*Almost everything in the API is safe from any thread because it copies and queues. The three synchronous queries are the exception, and SKSE's task thread is not the main thread.*
 
 ### Which thread may call what
 
@@ -823,7 +775,7 @@ SKSE's `TaskInterface::AddTask` is **not** that thread. It runs on a job worker.
 
 > **Did You Know?** On the 1.6.1170 runtime the `Character::Update` seat Harbinger hooks on every NPC runs on a different thread from `PlayerCharacter::Update`. Harbinger logs `[threadcheck] 0xAD confirmed multi-thread` the first time it sees that. The per-NPC reads are safe across it because they read a published snapshot, never the working copy.
 
-> **Caution** `GetLineOfSight` is any-thread and never casts a ray. `SenseActor` is main-thread only because it does. Do not confuse the two.
+> **Caution** `GetLineOfSight` is any-thread and never casts a ray. `SenseActor` is main-thread only because it does. Keep the two apart.
 
 **Check Your Understanding: The main thread and the queries**
 
@@ -833,19 +785,11 @@ SKSE's `TaskInterface::AddTask` is **not** that thread. It runs on a job worker.
 
 ## Binding and Version Gating
 
-> **Big Idea** You build against one header that only ever grows. You fetch one pointer once, read its `abiVersion`, and gate every newer slot, intent and flag on that number.
-
-**Learning Objectives.** After this section you will be able to:
-
-- fetch the interface and keep it,
-- ask for the lowest ABI you can live with and explain why,
-- tell a loud version failure (an unknown intent) from a quiet one (an unknown flag) and gate for both.
-
-**Key Vocabulary.** ABI, interface struct, append-only, prefix extension, gate, slot.
+*You build against one header that only ever grows. You fetch one pointer once, read its `abiVersion`, and gate every newer slot, intent and flag on that number.*
 
 ### Finding the interface
 
-**Why it matters.** There is one export and one static struct. Getting this wrong is the first thing a reviewer looks for, and it takes ten lines to get right.
+**Why it matters.** There is one export and one static struct. It takes ten lines to get right, and they are the same ten lines in every client.
 
 Harbinger exports one undecorated C function, `APMF_GetInterface`. It returns a pointer to a static POD struct of function pointers. You never free it. Fetch it once, after SKSE has loaded (`kPostLoad` or `kDataLoaded`), and keep it.
 
@@ -933,15 +877,7 @@ The struct for ABI 21 is `APMF_API_v19`, because ABI 20 and 21 added only a flag
 
 ## Reading Harbinger
 
-> **Big Idea** Harbinger explains itself in three places: the log, the menu page and the INI files. Read the log line before you assume a bug, and know how far each facet has been proven before you build on it.
-
-**Learning Objectives.** After this section you will be able to:
-
-- find the log line for a refusal, an end and an attribution,
-- read the menu page's winner and alerts for your mod,
-- state what each field tier means and where the tier of a facet comes from.
-
-**Key Vocabulary.** field tier, field-proven, built, alert, seat census, probe.
+*Harbinger explains itself in three places: the log, the menu page and the INI files. Read the log line before you assume a bug, and know how far each facet has been proven before you build on it.*
 
 ### The log
 
@@ -973,7 +909,7 @@ The struct for ABI 21 is `APMF_API_v19`, because ABI 20 and 21 added only a flag
 
 ### The menu page and the INI files
 
-**Why it matters.** The player can see what your mod is doing to their followers and change your priority. You should know what they see.
+**Why it matters.** The player can see what your mod is doing to their followers and change your priority. It helps to know what they see.
 
 The Harbinger page in the SKSE Menu Framework shows, per sources facet, the sources, the winner, their priorities and hit counters, alerts and the seat census. Your DLL appears there under its file name once it files a claim, and a loaded SKSE plugin appears before it has written anything. [HARBINGER-MENU.md](HARBINGER-MENU.md) walks the page. `APMF.ini` switches facets and probes, and `APMF_Sources.ini` holds priorities. [INI-REFERENCE.md](INI-REFERENCE.md) has every key, and [FACETS.md Appendix D](FACETS.md#appendix-d-ini-keys-by-facet) lists them by facet.
 
@@ -1005,7 +941,7 @@ The tiers follow the project's own record (the changelog and the field logs). Wh
 - One export, one static struct, fetched once and kept. `abiVersion` is the version. Ask for the lowest ABI you can live with. Gate every slot, intent and flag. Intents fail loud, flags fail quiet.
 - The log carries every refusal, end and attribution. The menu page shows your mod by its DLL name. A facet is field-proven or built, and each section says which.
 
-**Review.** List the API calls your mod makes and mark each as queued, snapshot read or synchronous query. Write the bind for a mod whose oldest requirement is `IsClaimLive`, and list the gates it needs for a cast guard, a travel leg with gait and a target pin with its own line of sight.
+**Try this.** List the API calls your mod makes and mark each as queued, snapshot read or synchronous query. Write the bind for a mod whose oldest requirement is `IsClaimLive`, and list the gates it needs for a cast guard, a travel leg with gait and a target pin with its own line of sight.
 
 ## Selected Answers
 
