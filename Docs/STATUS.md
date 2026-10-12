@@ -6,7 +6,7 @@ build/finding/workflow change.
 
 ## RELEASED 2026-10-12 -- v0.12.0 "The controller, the menu and the cast guard"
 
-Cut from main `d7d1bf3` plus the release commit (CHANGELOG, README, `MinReleaseForAbi` 21 = 0.12.0). Contents: Harbinger controller Phase 1a
+Stamp commit `e638355`, CI run 38215918916, tag `v0.12.0`, DLL sha256 `d2ab78f1...`, zip sha256 `edbb0853...`. Cut from main `d7d1bf3` plus the release commit (CHANGELOG, README, `MinReleaseForAbi` 21 = 0.12.0). Contents: Harbinger controller Phase 1a
 (source registry, `APMF_Sources.ini`, attribution, seat census, target restore, equip caller recovery), the SKSE Menu Framework page and its
 layout pass, ch.25 CastGuard (ABI v21), APMF-B55/B57 rulings. Docs refreshed at this cut: `README.md`, `Docs/INTEGRATION.md` (controller
 section; Cast guards already in), new `Docs/INI-REFERENCE.md` (APMF.ini keys, APMF_Sources.ini format) and `Docs/HARBINGER-MENU.md`.
