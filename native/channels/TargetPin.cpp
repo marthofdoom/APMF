@@ -578,13 +578,25 @@ namespace {
         const std::string clientName = client != apmf::sources::kNoSource
                                            ? std::string(apmf::sources::Name(client)) : std::string("an internal claim");
         const auto setTarget = reinterpret_cast<SetTarget_t>(g_setTarget.load(std::memory_order_relaxed));
+        // SetTarget writes the attacker's currentCombatTarget through the controller's attacker handle
+        // without a null check (AE 0x55972E): call it only when that handle resolves to this actor.
+        bool attackerOk = false;
         if (claimPrio > topPrio && setTarget) {
+            auto att   = cc->attackerHandle.get();
+            attackerOk = att && att.get() == a_this;
+            if (!attackerOk && logNow) {
+                spdlog::warn("[ch.20] 0x{} restore SKIPPED: the combat controller's attacker handle does not resolve "
+                             "to this actor, and SetTarget writes through it unchecked. {} stands this update.",
+                             Hex(self), apmf::sources::Name(top));
+            }
+        }
+        if (claimPrio > topPrio && setTarget && attackerOk) {
             setTarget(cc, targetPtr.get());               // the engine's own setter, as UpdateTarget calls it
             cc->previousTargetHandle = fr.prevBefore;      // never written by SetTarget / UpdateTarget
             const bool held = a_this->GetActorRuntimeData().currentCombatTarget == pinH;
             cap.restored.fetch_add(1, std::memory_order_relaxed);
             for (int w = 0; w < nWriters; ++w) apmf::sources::NoteOverruled(writers[w], apmf::sources::Facet::kTarget);
-            if (logNow || !held) {
+            if (logNow) {   // rate-limited, including the "still not the pin" case (review round 2)
                 spdlog::info("[ch.20] 0x{} captured {} overruled: it rewrote the target to 0x{} after the seat answered "
                              "with the pin; the pin claim ({} priority {}) outranks it (priority {}), so Harbinger "
                              "restored the pin 0x{} through CombatController::SetTarget at the outermost UpdateCombat "
@@ -600,10 +612,13 @@ namespace {
                 spdlog::info("[ch.20] 0x{} captured {} stands: it rewrote the target to 0x{} after the seat answered "
                              "with the pin 0x{}; {}. ({} so far)",
                              Hex(self), apmf::sources::Name(top), Hex(currentPtr->GetFormID()), Hex(tf),
-                             setTarget ? fmt::format("its priority {} is not below the pin claim's ({} priority {})",
-                                                     topPrio, clientName, claimPrio)
-                                       : std::string("the engine's SetTarget was not verified on this build, so "
-                                                     "Harbinger does not restore"),
+                             !setTarget ? std::string("the engine's SetTarget was not verified on this build, so "
+                                                      "Harbinger does not restore")
+                             : claimPrio > topPrio
+                                 ? std::string("the restore was skipped: the controller's attacker handle does not "
+                                               "resolve to this actor")
+                                 : fmt::format("its priority {} is not below the pin claim's ({} priority {})",
+                                               topPrio, clientName, claimPrio),
                              cap.stood.load(std::memory_order_relaxed));
             }
         }

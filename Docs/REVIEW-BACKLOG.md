@@ -587,6 +587,15 @@ Raised against 80b56a6 (`feat/apmf-controller-1a`, Opus tier-3 review `scratchpa
 - (SEV-5) "thread-local frame on unwind": `channels/TargetPin.cpp` LayerBody leaves `t_frame.depth` raised if the
   chained call below it unwinds (an engine/plugin exception through UpdateCombat); the next update on that thread
   would take the nested path. Fix: an RAII guard that resets the frame.
+Re-review of e63afa6 (MERGE OK), further notes deferred here:
+- A writer that rewrites the target on every update (SmartNPC's post-write) makes the restore call
+  `CombatController::SetTarget` on every update of a pinned actor (group bookkeeping each time). Consider a
+  per-actor restore budget or a quieter path once the field log shows the cost.
+- `sources::NoteClientRequest`'s first-claim reset reads the CACHED INI values (`g_iniPrio`), which a menu slider
+  change does not update: a slider moved in-session on a module before that module files its first claim is
+  discarded by the reset. Fix: update `g_iniPrio` in `Pump` when a slider value is applied.
+- The module-range cache (`core/Sources.cpp` ModuleOf `g_ranges`) is never invalidated on DLL unload; an unloaded
+  and re-mapped range would answer the old module. Fix with the 1b DLL-notification census (unload event).
 Done in the same round instead of deferred (each under 20 lines): APMF's own enforce equips no longer register
 `APMF.dll` as an outside equip source (`core/EquipSink.cpp`, `sources::IsSelf`), and module ranges are cached
 (`core/Sources.cpp` ModuleOf) so a hot path stops calling GetModuleHandleEx / RtlPcToFileHeader per frame.
