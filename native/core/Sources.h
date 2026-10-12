@@ -148,6 +148,15 @@ namespace apmf::sources {
     // alert row for the menu. Any thread.
     void Unattributed(Facet f, RE::FormID actor, const char* detail);
 
+    // Per-facet "Unknown sources can be overridden" (marth 2026-10-12). false = allow (default,
+    // the degrade rule above). true = an unattributed write on `f` counts as the LOWEST-priority
+    // source (priority 0), so a claim outranks it; the alert and the log stay. Only a facet that
+    // already enforces (Target, via ch.20's restore) acts on it; on the others it is stored and
+    // shown only. APMF_Sources.ini `[UnknownSources] <Facet>=allow|override`. Any thread, lock-free.
+    bool OverrideUnknown(Facet f);
+    // The render thread's checkbox. Applied and saved by the next Pump() (main thread).
+    void EnqueueSetOverrideUnknown(Facet f, bool on);
+
     struct Alert {
         std::uint64_t ms     = 0;
         Facet         facet  = Facet::kTarget;

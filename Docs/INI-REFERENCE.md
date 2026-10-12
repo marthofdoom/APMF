@@ -178,6 +178,8 @@ SomeOutfitMod.dll=0
 
 **Facet sections:** `Target`, `Detection`, `Package`, `Equip`, `CombatAction`, `Cast`, `Combat`, `Core`. In this release `Target` is restored when a named source is outranked, and `Cast` refusals by a guard claim stand only while the client outranks the engine. `Equip` writers are traced by a stack scan and denied only when positively identified. `Package` and scene sources are observe only. `Detection`, `CombatAction`, `Combat` and `Core` are counted and shown on the menu but nothing is denied on them yet.
 
+**`[UnknownSources]`.** One key per facet, `allow` (default) or `override`: `Target=override`. The Harbinger page shows it as a checkbox, "Unknown sources can be overridden", under each facet header, and writes it when you tick it. With `allow`, a change Harbinger cannot trace is allowed, as described above. With `override`, such a change ranks at the priority of the "Unattributed" row (0 unless you move its slider), but never below the module that owns the unproven part of the chain (a raised Engine priority still wins), and it stands if that module is the claiming mod itself. Otherwise a mod that asks Harbinger for the facet outranks it and Harbinger enforces exactly as it does for a named source that is outranked. The alert and the `[sources] UNATTRIBUTED` log line stay either way, and an override is logged. Only `Target` acts on this today. On the other facets the setting is stored and shown but has no effect yet.
+
 **`[Defaults]` keys:** `iUnregistered<Facet>` and `iClient<Facet>` (for example `iClientCast=50`) change the default for a whole facet. A name listed in a facet section beats the default.
 
 The generated reference for `APMF.ini` above lists every other key. See also `Docs/HARBINGER-MENU.md`.
