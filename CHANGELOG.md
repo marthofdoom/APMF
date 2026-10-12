@@ -1,3 +1,7 @@
+## Unreleased
+
+- **Heals see past friends.** When a mod asks Harbinger to check a follower's own line of sight before a cast, a healing or other friendly spell now looks past the player and the player's teammates. Walls, the ground and every other NPC still block it. Attack spells still stop at any NPC in the way, and the cast guard is unchanged. The log names the friend that was looked past, once per cast. Not yet tested in game.
+
 ## v0.13.0 -- Harbinger names who changes the AI
 
 - **Unknown sources can be overridden, per facet.** Each facet on the Harbinger page has a checkbox, "Unknown sources can be overridden". It is off by default, so a change Harbinger cannot trace is allowed and alerted as before. Tick it and such a change ranks at the priority of the Unattributed row, and a mod that outranks it wins. On the combat target, an unnamed change now stands for the mod that claimed the target when that mod's plugin is the one that wrote it. The setting is saved in the `[UnknownSources]` section of `APMF_Sources.ini`. Not yet tested in game.
