@@ -1,4 +1,5 @@
 #include "PCH.h"
+#include "core/Sources.h"   // Harbinger 1a: seat census
 #include "channels/CombatReentryDeny.h"
 #include "core/Allowance.h"   // SeatVerified(): the mit-3.7 F1 self-check gate
 #include "core/Clock.h"
@@ -494,6 +495,8 @@ namespace apmf::reentrydeny {
         g_siteRet = site + kSelfCheckLen;
         g_vtChar  = vtChar.address();
         IsDeadHook::func = vtChar.write_vfunc(kIsDeadSlot, IsDeadHook::thunk);
+        apmf::sources::NoteVfunc(apmf::sources::Facet::kCombat, "ReentryDeny.Character.IsDead", vtChar.address(),
+                                 kIsDeadSlot, SKSE::stl::unrestricted_cast<std::uintptr_t>(&IsDeadHook::thunk), IsDeadHook::func.address());
         g_installed.store(true, std::memory_order_release);
         spdlog::info("[ch.22] combat re-entry deny seat installed: Character::IsDead (slot 0x{:X}, chaining), "
                      "answering only at Actor::StartCombat's self-check (return RVA 0x{:X}).",

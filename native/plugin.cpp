@@ -30,6 +30,10 @@
 #include "core/SpaceQuery.h"
 #include "core/Sightline.h"
 #include "core/Awareness.h"
+#include "core/Sources.h"          // Harbinger 1a: source registry, priorities, seat census
+#include "core/PackageSources.h"   // Harbinger 1a: package capture + the 0x4A scene probe
+#include "core/DetectionProbe.h"   // Harbinger 1a: the detection call-site probe
+#include "core/HarbingerMenu.h"    // Harbinger 1a: the SKSE Menu Framework page
 
 // ============================================================================
 // APMF -- AI Package Management Framework. Entry point (thin).
@@ -112,6 +116,7 @@ namespace {
         // ABI v18: same, for the line-of-sight pairs and the awareness noise baselines.
         apmf::sightline::ResetAll("revert/new game");
         apmf::awareness::ResetAll("revert/new game");
+        apmf::packagesources::ResetAll();
         // ...and forget the outgoing world's marker LEDGER. This must precede the load
         // callback (which reads the incoming save's record); SKSE runs revert first.
         apmf::poscast::RevertMarkers();
@@ -135,6 +140,7 @@ namespace {
     void OnMessage(SKSE::MessagingInterface::Message* a_msg) {
         switch (a_msg->type) {
         case SKSE::MessagingInterface::kDataLoaded:
+            apmf::sources::Init();               // Harbinger 1a: FIRST, so every Install below can census its seat
             apmf::hook::Install();
             apmf::castgate::Install();           // T2c CheckCast allowance (Docs/ALLOWANCE-TEMPLATE.md)
             apmf::castclassify::Install();       // ch.8b SEAT 0: classify a heal/buff-OTHER spell into
@@ -146,6 +152,7 @@ namespace {
                                                   // each slot still holds the engine function it compares.
             apmf::actiongate::Install();         // T1 combat-action allowance (ch.7; VR-refused inside)
             apmf::packagegate::Install();        // T3 package-offer allowance (ch.9; VR-refused inside)
+            apmf::packagesources::Install();     // Harbinger 1a: 0x4A scene probe (OBSERVE-ONLY; the seat is unproven)
             apmf::travel::Install();             // ch.19 TRAVEL (ABI v10): resolve Data/APMF.esl's
                                                   // travel packages + read [Travel]. Installs NO seat of
                                                   // its own -- its ONE internal claim is a ch.9 package
@@ -237,6 +244,9 @@ namespace {
                                                   // and logs the answer the whole chain gives.
                                                   // Exact-version gate + VR refusal inside.
             apmf::nativebitprobe::Install();     // native-bit probe (throwaway; no VR gate needed).
+            apmf::detectionprobe::Install();     // Harbinger 1a: PASSIVE detection call-site probe + census
+            apmf::harbingermenu::Register();     // Harbinger 1a: the SMF page (or INI-only, loudly)
+            apmf::sources::Census("kDataLoaded"); // baseline: every seat just installed
                                                   // CONFIG-GATED, default OFF -- it is the only probe that
                                                   // MUTATES a live actor, so it no-ops unless
                                                   // [Probe.NativeBit] Enable=1 in APMF.ini.
@@ -303,6 +313,7 @@ namespace {
             // outgoing world; a persistent NPC's id survives, its geometry does not).
             apmf::sightline::ResetAll("kPreLoadGame");
             apmf::awareness::ResetAll("kPreLoadGame");
+            apmf::packagesources::ResetAll();
             // Flush the confirmed-main task queue. NOTHING Pump()s between here and
             // the first player Update AFTER the load, so anything ReleaseAll just
             // posted (ch.9's release nudge; ch.8b's proxy teardown) would otherwise
@@ -335,9 +346,11 @@ namespace {
             // kPreLoadGame and the revert callback clears the record it would have swept.
             apmf::mainthread::Post([] { apmf::poscast::SweepCarriedMarkers("first pump after load"); });
             apmf::equipsink::ReinspectEntries("kPostLoadGame");   // a later plugin may have detoured EquipObject's entry
+            apmf::sources::OnPostLoad("kPostLoadGame");   // Harbinger 1a census: late installers on every seat (Q13 re-hook)
             break;
         case SKSE::MessagingInterface::kNewGame:
             apmf::equipsink::ReinspectEntries("kNewGame");
+            apmf::sources::OnPostLoad("kNewGame");
             break;
         default:
             break;

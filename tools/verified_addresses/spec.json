@@ -21,9 +21,10 @@
     "0x73",
     "0x74",
     "0xC2",
-    "0xE3"
+    "0xE3",
+    "0x4A"
    ],
-   "source": "native/core/Hook.cpp:94; PackageGate.cpp:296; NonAliasProbe.cpp:216; channels/TargetPin.cpp:460 (observer); channels/CombatReentryDeny.cpp (0x99, the ch.22 seat); core/Sightline.cpp (0xC2 GetEyeVector, 0x73/0x74 GetBoundMin/Max via TESObjectREFR::GetHeight; virtual calls) and core/Awareness.cpp (0xE3 IsInCombat; virtual call)",
+   "source": "native/core/Hook.cpp:94; PackageGate.cpp:296; NonAliasProbe.cpp:216; channels/TargetPin.cpp:460 (observer); channels/CombatReentryDeny.cpp (0x99, the ch.22 seat); core/Sightline.cpp (0xC2 GetEyeVector, 0x73/0x74 GetBoundMin/Max via TESObjectREFR::GetHeight; virtual calls) and core/Awareness.cpp (0xE3 IsInCombat; virtual call); core/PackageSources.cpp (0x4A GetCurrentScene: the Harbinger 1a scene probe, OBSERVE-ONLY)",
    "doc": "ADDRESS-TABLE-2026-09-15.md:64"
   },
   {
@@ -2625,6 +2626,30 @@
    }
   },
   {
+   "seat": "DetectionProbe.Site",
+   "kind": "callsite",
+   "construct": "core/DetectionProbe.cpp kFnAE 42742 + kOffAE 0x67B / kFnSE 41659 + kOffSE 0x526",
+   "ids": {
+    "1.6.1170": 42742,
+    "1.5.97": 41659
+   },
+   "sig": {
+    "1.6.1170": "48 8B C4 55 53 56 57 41 54 41 55 41 56 41 57 48 8D 6C 24 88 48 81 EC 78 01 00 00 48 C7 45 D8 FE FF FF FF",
+    "1.5.97": "48 8B C4 55 53 56 57 41 54 41 55 41 56 41 57 48 8D 6C 24 88 48 81 EC 78 01 00 00 48 C7 45 C8 FE FF FF FF"
+   },
+   "source": "native/core/DetectionProbe.cpp (Install: SeatVerified, then a PASSIVE write_call<5> chain)",
+   "offset": {
+    "1.6.1170": "0x67B",
+    "1.5.97": "0x526"
+   },
+   "bytes": "E8",
+   "target": {
+    "1.6.1170": 37774,
+    "1.5.97": 36758
+   },
+   "doc": "Harbinger 1a detection probe; _research/smartnpc-targetselector-interop-2026-10-05.md H2 (the SmartNPCTargetSelector write_call site); the callee's only caller on each runtime"
+  },
+  {
    "seat": "PositionCast.CreateReferenceAtLocation",
    "kind": "function",
    "construct": "TESDataHandler::CreateReferenceAtLocation RELOCATION_ID(13625, 13723)",
@@ -4124,6 +4149,11 @@
    "seat": "NonAliasProbe.CombatMagicCaster.GetMagicTarget",
    "rva": "0x81E020",
    "source": "NonAliasProbe/CastSeats GetMagicTarget (CombatMagicCaster slot 0x0A)"
+  },
+  {
+   "seat": "DetectionProbe.Function",
+   "rva": "0x7B0710",
+   "source": "core/DetectionProbe.cpp kFn17 (1.7.104 only: AE id 42742 has no MIT-table row); the call site is this + 0x67B"
   }
  ]
 }

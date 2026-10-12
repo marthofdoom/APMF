@@ -1,4 +1,5 @@
 #include "PCH.h"
+#include "core/Sources.h"   // Harbinger 1a: seat census
 #include "core/Allowance.h"   // SeatVerified(): the mit-3.7 F1 self-check gate
 #include "core/Log.h"
 #include "core/Clock.h"
@@ -746,6 +747,8 @@ namespace apmf::castclassify {
         }
 
         g_orig[vt.address()] = vt.write_vfunc(kClassifySlot, &ClassifyThunk);
+        apmf::sources::NoteVfunc(apmf::sources::Facet::kCast, "CastClassify.CombatMagicItemData.Classify", vt.address(),
+                                 kClassifySlot, SKSE::stl::unrestricted_cast<std::uintptr_t>(&ClassifyThunk), g_orig[vt.address()]);
 
         spdlog::info("[ch.8b seat 0] CLASSIFY installed on CombatMagicItemData (RTTI-name-verified, vtable "
                      "0x{}), slot {} -- while a kIntent_Cast claim stands, its driven spell's effects "

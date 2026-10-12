@@ -1,6 +1,7 @@
 #pragma once
 #include "APMF_API.h"
 #include "REL/SelfCheck.h"
+#include "core/Sources.h"   // Harbinger 1a: InstallOnVtables registers each seat with the census
 
 // ============================================================================
 // APMF core -- the reusable ALLOWANCE TEMPLATE (Docs/ALLOWANCE-TEMPLATE.md §3).
@@ -127,7 +128,13 @@ namespace apmf::allowance {
                              "SKIPPED (not installed; see ENGINE_NOTES §0.28).", tag, vt.address());
                 continue;
             }
-            origMap[vt.address()] = vt.write_vfunc(slot, thunk);
+            const std::uintptr_t prev = vt.write_vfunc(slot, thunk);
+            origMap[vt.address()] = prev;
+            // Harbinger 1a seat census (core/Sources.h): a census row per vtable, no re-hook.
+            apmf::sources::RegisterVtableSeat(apmf::sources::FacetForTag(tag),
+                                              fmt::format("{}@vt0x{:X}+0x{:X}", tag, vt.address() - REL::Module::get().base(), slot),
+                                              vt.address() + sizeof(void*) * slot,
+                                              SKSE::stl::unrestricted_cast<std::uintptr_t>(thunk), prev);
             ++n;
         }
         return n;

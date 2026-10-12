@@ -23,7 +23,7 @@ namespace {
     APMF_API::Handle APMF_Request(RE::FormID actor, APMF_API::Intent intent, float basis) {
         try {
             const auto h = apmf::ControlMap::Get().EnqueueRequest(actor, intent, basis, nullptr);
-            apmf::sources::NoteClientRequest(h, _ReturnAddress());
+            apmf::sources::NoteClientRequest(h, _ReturnAddress(), intent);
             return h;
         } catch (...) {
             return APMF_API::kInvalidHandle;
@@ -36,7 +36,7 @@ namespace {
                                     const APMF_API::APMF_Param* param) {
         try {
             const auto h = apmf::ControlMap::Get().EnqueueRequest(actor, intent, basis, param);
-            apmf::sources::NoteClientRequest(h, _ReturnAddress());
+            apmf::sources::NoteClientRequest(h, _ReturnAddress(), intent);
             return h;
         } catch (...) {
             return APMF_API::kInvalidHandle;
@@ -82,7 +82,7 @@ namespace {
                                       const APMF_API::APMF_CastRequest* req) {
         try {
             const auto h = apmf::ControlMap::Get().EnqueueCast(actor, basis, req);
-            apmf::sources::NoteClientRequest(h, _ReturnAddress());
+            apmf::sources::NoteClientRequest(h, _ReturnAddress(), APMF_API::kIntent_Cast);
             return h;
         } catch (...) {
             return APMF_API::kInvalidHandle;

@@ -263,6 +263,15 @@ namespace apmf::sources {
         }
     }
 
+    Facet FacetForTag(std::string_view t) {
+        const auto starts = [&](std::string_view p) { return t.substr(0, p.size()) == p; };
+        if (starts("ch.7") || starts("ch.23")) return Facet::kCombatAction;
+        if (starts("t2a")) return Facet::kEquip;
+        if (starts("nonaliasprobe")) return Facet::kPackage;
+        if (starts("t2c") || starts("ch.8") || starts("aicastseats") || starts("ctcensus")) return Facet::kCast;
+        return Facet::kCore;
+    }
+
     const char* KindName(Kind k) {
         switch (k) {
         case Kind::kClient:     return "client";
@@ -408,14 +417,35 @@ namespace apmf::sources {
 
     // ---- clients ----------------------------------------------------------------------
 
-    void NoteClientRequest(APMF_API::Handle h, const void* returnAddress) {
+    Facet FacetForIntent(APMF_API::Intent i) {
+        using namespace APMF_API;
+        switch (i) {
+        case kIntent_CombatTarget:
+        case kIntent_TargetPin:         return Facet::kTarget;
+        case kIntent_OfferPackage:
+        case kIntent_Travel:            return Facet::kPackage;
+        case kIntent_Equipment:
+        case kIntent_EquipAuthority:    return Facet::kEquip;
+        case kIntent_SelectSpell:
+        case kIntent_Cast:              return Facet::kCast;
+        case kIntent_CombatAction:
+        case kIntent_PursuitLeash:      return Facet::kCombatAction;
+        case kIntent_CombatEntry:
+        case kIntent_CombatReentryDeny:
+        case kIntent_CombatApproach:    return Facet::kCombat;
+        case kIntent_Detection:         return Facet::kDetection;
+        default:                        return Facet::kCore;
+        }
+    }
+
+    void NoteClientRequest(APMF_API::Handle h, const void* returnAddress, APMF_API::Intent intent) {
         if (h == APMF_API::kInvalidHandle) return;
         SourceId id = ForAddress(reinterpret_cast<std::uintptr_t>(returnAddress), Kind::kClient);
         // A client request from inside APMF itself or the engine is not a client (never
         // happens through ClientAPI, which only clients call). Keep the handle unmapped.
         if (id == kEngineSource || id == kDirectSource) id = kNoSource;
         if (id == kNoSource) return;
-        NoteInvolved(id, Facet::kCore);
+        NoteInvolved(id, FacetForIntent(intent));
         std::unique_lock lk(g_handleMx);
         if (g_handles.size() >= kHandleCap) {
             // Never unbounded: drop the oldest half by issue time (Pump also purges dead ones).
@@ -559,6 +589,13 @@ namespace apmf::sources {
                 changed    = true;
                 if (cur == s.ours) {
                     spdlog::info("[sources] census ({}): seat {} holds Harbinger's own pointer again.", why, s.seat);
+                    s.lostOutermost = false;
+                    continue;
+                }
+                if (ModuleOf(FollowStubs(cur)) == SelfModule()) {
+                    // Another Harbinger seat installed later on the same entry (e.g. ch.24's selector
+                    // seat over ch.20's): still ours, still outermost.
+                    s.ours = cur;
                     s.lostOutermost = false;
                     continue;
                 }

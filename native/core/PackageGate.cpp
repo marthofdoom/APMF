@@ -1,4 +1,5 @@
 #include "PCH.h"
+#include "core/Sources.h"   // Harbinger 1a: seat census
 #include "core/Allowance.h"   // SeatVerified(): the mit-3.7 F1 self-check gate
 #include "core/Log.h"
 #include "core/Clock.h"
@@ -307,6 +308,9 @@ namespace apmf::packagegate {
             return;
         }
         PkgHook::func = charVtbl.write_vfunc(PkgHook::idx, PkgHook::thunk);
+        apmf::sources::NoteVfunc(apmf::sources::Facet::kPackage, "PackageGate.Character.CheckForCurrentAliasPackage",
+                                 charVtbl.address(), PkgHook::idx, SKSE::stl::unrestricted_cast<std::uintptr_t>(&PkgHook::thunk),
+                                 PkgHook::func.address());
 
         // "Does 0x49 actually redirect?" probe -- default ON (read-only, low
         // volume: RULE D dedup-on-transition + a 600-line/session defensive cap;

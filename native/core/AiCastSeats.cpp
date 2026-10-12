@@ -1,4 +1,5 @@
 #include "PCH.h"
+#include "core/Sources.h"   // Harbinger 1a: seat census
 #include "core/Log.h"
 #include "core/Allowance.h"
 #include "core/Clock.h"
@@ -1487,6 +1488,10 @@ namespace apmf::aicastseats {
                     const char* rtti = ResolveTypeName(vt.address());
                     g_weaponClassInfo[vt.address()] = { spec.tag, spec.category };
                     g_weaponScoreOrig[vt.address()] = vt.write_vfunc(kCalculateScore, &WeaponScoreThunk);
+                    apmf::sources::NoteVfunc(apmf::sources::Facet::kEquip,
+                                             fmt::format("AiCastSeats.GroupC.{}.CalculateScore", spec.tag), vt.address(),
+                                             kCalculateScore, SKSE::stl::unrestricted_cast<std::uintptr_t>(&WeaponScoreThunk),
+                                             g_weaponScoreOrig[vt.address()]);
                     spdlog::info("[aicastseats] GROUP C: {} CalculateScore hooked (vtable 0x{}, category {}, "
                                  "RTTI name '{}' -- informational only, not verified against a known base).",
                                  spec.tag, apmf::log::Hex(vt.address(), 16), spec.category,
@@ -1521,6 +1526,9 @@ namespace apmf::aicastseats {
                             g_shieldEquipOrig = curEquipFn;
                             g_shieldVtableAddr.store(vt.address(), std::memory_order_release);
                             vt.write_vfunc(kCheckShouldEquip, &ShieldEquipGateThunk);
+                            apmf::sources::NoteVfunc(apmf::sources::Facet::kEquip, "AiCastSeats.Shield.CheckShouldEquip",
+                                                     vt.address(), kCheckShouldEquip,
+                                                     SKSE::stl::unrestricted_cast<std::uintptr_t>(&ShieldEquipGateThunk), curEquipFn);
                             spdlog::info("[aicastseats] TASK2: dual-wield preference ARMED -- Shield "
                                          "CheckShouldEquip (slot 0x0F) hooked on the same identity-verified "
                                          "vtable 0x{} GROUP C's own CalculateScore check just confirmed is "
@@ -1550,6 +1558,9 @@ namespace apmf::aicastseats {
                             g_rangedEquipOrig = curEquipFn;
                             g_rangedVtableAddr.store(vt.address(), std::memory_order_release);
                             vt.write_vfunc(kCheckShouldEquip, &RangedEquipProbeThunk);
+                            apmf::sources::NoteVfunc(apmf::sources::Facet::kEquip, "AiCastSeats.Ranged.CheckShouldEquip",
+                                                     vt.address(), kCheckShouldEquip,
+                                                     SKSE::stl::unrestricted_cast<std::uintptr_t>(&RangedEquipProbeThunk), curEquipFn);
                             g_rangedGateArmed.store(true, std::memory_order_release);
                             spdlog::info("[ranged-probe] Ranged CheckShouldEquip (slot 0x0F) OBSERVED on vtable 0x{} "
                                          "(the vtable GROUP C just identity-checked); the slot held {} 0x{}. "

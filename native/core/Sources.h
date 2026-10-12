@@ -63,7 +63,7 @@ namespace apmf::sources {
         kClient = 0,    // a DLL that called the APMF client API
         kHook,          // a DLL found on one of Harbinger's vtable seats
         kInterposer,    // a DLL found on one of Harbinger's call sites
-        kPlugin,        // a data plugin owning a package / scene / quest
+        kPlugin,        // a data plugin owning a package / scene, or an SKSE DLL calling the engine directly
         kScript,        // skse64 (Papyrus natives)
         kEngine,        // SkyrimSE.exe's own path
         kDirect,        // "direct calls": Papyrus / console reached through the engine (Q11)
@@ -71,6 +71,9 @@ namespace apmf::sources {
     };
 
     const char* FacetName(Facet f);   // the INI section and menu label ("Target", ...)
+    // The facet of an existing seat from its allowance::InstallOnVtables tag ("ch.7",
+    // "t2a", "ch.8b-seat06", ...): census rows only.
+    Facet FacetForTag(std::string_view tag);
     const char* KindName(Kind k);
 
     inline constexpr int kPrioMin             = 0;    // 0 = off: never wins against anything
@@ -123,7 +126,9 @@ namespace apmf::sources {
     // ---- clients (Q7: automatic from the calling DLL) --------------------------------
     // ClientAPI calls this on every Request / RequestEx / RequestCast that returned a
     // handle, with its own `_ReturnAddress()` (an address inside the client DLL). Any thread.
-    void NoteClientRequest(APMF_API::Handle h, const void* returnAddress);
+    void NoteClientRequest(APMF_API::Handle h, const void* returnAddress, APMF_API::Intent intent);
+    // The facet a client intent claims (for the menu's per-facet tables).
+    Facet FacetForIntent(APMF_API::Intent intent);
     void ForgetHandle(APMF_API::Handle h);   // ClientAPI Release. Any thread.
     // The client source that filed `h`, or kNoSource (an internal claim, e.g. ch.19's own
     // ch.9 offer, or a handle older than this session). Any thread (shared lock).
@@ -156,6 +161,11 @@ namespace apmf::sources {
     // MAIN thread (kDataLoaded installs).
     void RegisterVtableSeat(Facet f, std::string seat, std::uintptr_t entry, std::uintptr_t ours,
                             std::uintptr_t prev, std::function<std::uintptr_t(std::uintptr_t)> rehook = {});
+    // The same, from a vtable address and a slot index.
+    inline void NoteVfunc(Facet f, std::string seat, std::uintptr_t vtable, std::size_t idx, std::uintptr_t ours,
+                          std::uintptr_t prev) {
+        RegisterVtableSeat(f, std::move(seat), vtable + sizeof(void*) * idx, ours, prev);
+    }
     // Register a CALL-SITE seat right after write_call<5>: `site` = the E8's address,
     // `prevTarget` = what write_call returned. Ours is read back from the E8 now.
     void RegisterCallSeat(Facet f, std::string seat, std::uintptr_t site, std::uintptr_t prevTarget);

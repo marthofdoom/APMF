@@ -6,6 +6,7 @@
 #include "core/EquipSink.h"
 #include "core/HandBlock.h"     // the hand-claim block step (marth 2026-10-06)
 #include "core/CastObserve.h"   // NoteEquip: castobs interrupt attribution (passive)
+#include "core/Sources.h"       // Harbinger 1a: equip sources, the degrade rule, the census
 
 #include <intrin.h>      // _ReturnAddress / _AddressOfReturnAddress (core/EquipGate.cpp precedent)
 #include <algorithm>
@@ -22,6 +23,9 @@ extern "C" __declspec(dllimport) unsigned long __stdcall GetPrivateProfileIntA(
     const char* a_appName, const char* a_keyName, long a_default, const char* a_fileName);
 extern "C" __declspec(dllimport) int __stdcall GetModuleHandleExA(
     unsigned long a_flags, const char* a_moduleName, void** a_outModule);
+// Harbinger 1a: the stack-scan caller recovery (kernel32 export, forwarded to ntdll).
+extern "C" __declspec(dllimport) unsigned short __stdcall RtlCaptureStackBackTrace(
+    unsigned long a_framesToSkip, unsigned long a_framesToCapture, void** a_backTrace, unsigned long* a_backTraceHash);
 extern "C" __declspec(dllimport) unsigned long __stdcall GetModuleFileNameA(
     void* a_module, char* a_buf, unsigned long a_size);
 
@@ -224,6 +228,11 @@ namespace apmf::equipsink {
         std::unique_ptr<REL::IDDatabase::Offset2ID> g_offset2id;
 
         thread_local int t_apmfDepth = 0;
+
+        // Harbinger 1a stack scan: enough frames for the thunk, up to three interposer
+        // thunks/stubs, EquipObject and its caller.
+        constexpr unsigned long kScanFrames = 16;
+        std::atomic<bool> g_scanMismatchLogged{ false };
 
         // ---- logging discipline: dedupe per (actor,item,path) for 2 s, global
         // cap 100 lines/s with a per-minute drop count (CLAUDE.md principle 8:
@@ -452,17 +461,71 @@ namespace apmf::equipsink {
             const RE::FormID itemId = obj->GetFormID();
             const int        tls    = t_apmfDepth;
 
-            std::uint32_t depth = 0;
+            // HARBINGER 1a: WHO ASKED, recovered by a STACK SCAN (plan "RECOGNITION", LoreRim
+            // diag 2026-10-10: UAPNG.dll and EquipmentDurabilitySystem-NG.dll re-patch both E8s
+            // AFTER our kDataLoaded verify, so this thunk is reached from THEIR stub: the old
+            // `_ReturnAddress()-5` site test missed, the fixed-depth caller read was skipped, and
+            // 81 equips were refused as path=Unknown(0)). The frame whose return address is
+            // exactly one of our two sites + 5 is EquipObject's (the interposer's own E8 sits at
+            // the same address); the frame after it is EquipObject's caller. Frames in between
+            // that belong to another module are the INTERPOSERS (a Harbinger source each).
+            // The fixed per-site depth survives only as a cross-check on the direct path.
             const InstalledSite* siteSpec = nullptr;
-            for (const auto& s : g_sites) if (s.addr == site) { siteSpec = &s; depth = s.depth; break; }
             Caller caller;
-            if (depth) {
-                std::uintptr_t ret = 0;
-                std::memcpy(&ret, myRetSlot + depth, sizeof(ret));
-                caller = Classify(ret);
+            bool   attributed = false;
+            apmf::sources::SourceId interposers[4]{ -1, -1, -1, -1 };
+            int    nInterposers = 0;
+            {
+                void* frames[kScanFrames]{};
+                const unsigned short n = RtlCaptureStackBackTrace(0, kScanFrames, frames, nullptr);
+                int at = -1;
+                for (int i = 0; i < n && at < 0; ++i) {
+                    const auto f = reinterpret_cast<std::uintptr_t>(frames[i]);
+                    for (const auto& s : g_sites) {
+                        if (s.addr && f == s.addr + 5) { siteSpec = &s; at = i; break; }
+                    }
+                }
+                if (at >= 0 && at + 1 < n) {
+                    caller     = Classify(reinterpret_cast<std::uintptr_t>(frames[at + 1]));
+                    // Positively identified: a named path, an engine id, or a NAMED external module.
+                    attributed = caller.known || caller.id != 0 ||
+                                 (caller.external && caller.ext[0] != '\0' && std::strcmp(caller.ext, "?") != 0);
+                    // interposers: frames between this thunk's own frame and EquipObject's
+                    for (int i = 1; i < at && nInterposers < 4; ++i) {
+                        const auto src = apmf::sources::ForAddress(reinterpret_cast<std::uintptr_t>(frames[i]),
+                                                                   apmf::sources::Kind::kInterposer);
+                        if (src >= 0 && src != apmf::sources::kEngineSource) {
+                            bool dup = false;
+                            for (int k = 0; k < nInterposers; ++k) dup = dup || interposers[k] == src;
+                            if (!dup) interposers[nInterposers++] = src;
+                        }
+                    }
+                    // Cross-check (direct path only): the old fixed-depth read must name the same caller.
+                    if (siteSpec && site == siteSpec->addr && siteSpec->depth) {
+                        std::uintptr_t ret = 0;
+                        std::memcpy(&ret, myRetSlot + siteSpec->depth, sizeof(ret));
+                        if (ret != reinterpret_cast<std::uintptr_t>(frames[at + 1]) &&
+                            !g_scanMismatchLogged.exchange(true, std::memory_order_relaxed)) {
+                            spdlog::warn("[apmf][equip-sink] stack-scan caller 0x{} differs from the fixed-depth read "
+                                         "0x{} at {}+0x{} (logged once). The stack scan is used.",
+                                         apmf::log::Hex(reinterpret_cast<std::uintptr_t>(frames[at + 1]) - g_base, 0),
+                                         apmf::log::Hex(ret - g_base, 0), siteSpec->id, apmf::log::Hex(siteSpec->off, 0));
+                        }
+                    }
+                }
             }
-            // (depth == 0 cannot happen -- only our two E8s reach this thunk -- but a
-            // classification that cannot be made is logged as Unknown, never guessed.)
+            for (int k = 0; k < nInterposers; ++k)
+                apmf::sources::NoteHit(interposers[k], apmf::sources::Facet::kEquip);
+            if (caller.external && caller.kind == PathKind::kScript) {
+                apmf::sources::NoteHit(apmf::sources::kDirectSource, apmf::sources::Facet::kEquip);
+            } else if (caller.external && attributed) {
+                if (const auto src = apmf::sources::Register(caller.ext, apmf::sources::Kind::kPlugin); src >= 0)
+                    apmf::sources::NoteHit(src, apmf::sources::Facet::kEquip);
+            } else if (attributed) {
+                apmf::sources::NoteHit((caller.kind == PathKind::kScript || caller.kind == PathKind::kConsole)
+                                           ? apmf::sources::kDirectSource : apmf::sources::kEngineSource,
+                                       apmf::sources::Facet::kEquip);
+            }
 
             bool inSet = false;
             for (std::uint32_t i = 0; i < set.count; ++i) if (set.forms[i] == itemId) { inSet = true; break; }
@@ -531,7 +594,11 @@ namespace apmf::equipsink {
             bool        callWorker = true;
             bool        refuse     = false;
             bool        handBlock  = false;
-            if (scriptPath && !denyScript) {
+            if (!attributed) {
+                // THE DEGRADE RULE (Harbinger 1a, Q4): the caller could not be recovered, so this
+                // equip is NEVER denied -- it may be a script, console or player-menu equip.
+                verdict = "allow (unattributed: caller not recovered)";
+            } else if (scriptPath && !denyScript) {
                 verdict = handHeld ? "allow (script exempt; hand held by a cast claim)" : "allow";
             } else if (playerMenuPath && !denyPlayerMenu) {
                 verdict = handHeld ? "allow (player agency; hand held by a cast claim)" : "allow (player agency)";
@@ -580,8 +647,11 @@ namespace apmf::equipsink {
                 // castobs interrupt attribution (passive): "any equip in the last 100 ms". Inside
                 // the try (review F7): its map insert may allocate, and nothing may unwind into
                 // the engine's equip frame.
+                if (!attributed)
+                    apmf::sources::Unattributed(apmf::sources::Facet::kEquip, actorId,
+                                                "an engine equip reached the equip sink with no recoverable caller");
                 apmf::castobserve::NoteEquip(actorId, itemId,
-                                             caller.external ? "External" : (caller.known ? caller.name : "Unknown"),
+                                             !attributed ? "Unattributed" : caller.external ? "External" : (caller.known ? caller.name : "Unknown"),
                                              verdict);
                 const auto     nowMs = apmf::clock::MonotonicMs();
                 const std::uint64_t pathKey = caller.external
@@ -594,7 +664,8 @@ namespace apmf::equipsink {
                     spdlog::warn("[apmf][equip-obs] dropped {} line(s) in the last minute (cap {}/s).", drops, kCapPerSec);
                 if (admit) {
                     std::string path;
-                    if (caller.external)     path = std::string("External(") + caller.ext + ")";
+                    if (!attributed)         path = "Unattributed";
+                    else if (caller.external) path = std::string("External(") + caller.ext + ")";
                     else if (!caller.known)  path = "Unknown(" + std::to_string(caller.id) + ")";
                     else                     path = caller.name;
                     const char* itemName = obj->GetName();
@@ -864,7 +935,13 @@ namespace apmf::equipsink {
         // destination). 64 leaves headroom; nothing else in APMF uses the trampoline.
         SKSE::AllocTrampoline(64);
         auto& tr = SKSE::GetTrampoline();
-        for (const auto& s : g_sites) tr.write_call<5>(s.addr, &SinkThunk);
+        for (const auto& s : g_sites) {
+            const std::uintptr_t prev = tr.write_call<5>(s.addr, &SinkThunk);
+            // Harbinger 1a census: the two E8s are call-site seats (re-read at kPostLoadGame /
+            // kNewGame / every 60 s; an interposer patched on top is named there).
+            apmf::sources::RegisterCallSeat(apmf::sources::Facet::kEquip, fmt::format("EquipSink.Site.{}", s.name),
+                                            s.addr, prev);
+        }
 
         g_notInstalledReason.store("", std::memory_order_release);
         g_installed.store(true, std::memory_order_release);

@@ -1,4 +1,5 @@
 #include "PCH.h"
+#include "core/Sources.h"   // Harbinger 1a: seat census
 #include "channels/CombatApproach.h"
 #include "core/Allowance.h"   // SeatVerified / DerivesFrom / RuntimeSupported (mit-3.7 F1, G1)
 #include "core/Clock.h"
@@ -786,6 +787,10 @@ namespace apmf::combatapproach {
         for (const auto& id : kItemVtables) {
             REL::Relocation<std::uintptr_t> vt{ id };
             g_origShouldEquip[vt.address()] = vt.write_vfunc(kSlotShouldEquip, &ShouldEquipThunk);
+            apmf::sources::NoteVfunc(apmf::sources::Facet::kCombat,
+                                     fmt::format("CombatApproach.Item@vt0x{:X}.ShouldEquip", vt.address() - REL::Module::get().base()),
+                                     vt.address(), kSlotShouldEquip, SKSE::stl::unrestricted_cast<std::uintptr_t>(&ShouldEquipThunk),
+                                     g_origShouldEquip[vt.address()]);
         }
         g_origSelect.store(vtSel.write_vfunc(kSlotSelect, &SelectThunk), std::memory_order_relaxed);
         {   // S5 (all deny brackets go in before S1 can carry a bound)
@@ -798,6 +803,22 @@ namespace apmf::combatapproach {
         g_origIsInsidePos.store(vtStd.write_vfunc(kSlotIsInsidePos, &IsInsidePosThunk), std::memory_order_relaxed);
         g_origIsInsideLoc.store(vtStd.write_vfunc(kSlotIsInsideLoc, &IsInsideLocThunk), std::memory_order_relaxed);
         g_origUpdate.store(vtStd.write_vfunc(kSlotUpdate, &UpdateThunk), std::memory_order_relaxed);
+        {   // Harbinger 1a seat census: the six single seats above (census rows only)
+            using apmf::sources::Facet;
+            using apmf::sources::NoteVfunc;
+            NoteVfunc(Facet::kCombat, "CombatApproach.Selector.Select", vtSel.address(), kSlotSelect,
+                      SKSE::stl::unrestricted_cast<std::uintptr_t>(&SelectThunk), g_origSelect.load());
+            NoteVfunc(Facet::kCombat, "CombatApproach.AttackLeaf.Act", g_vtAttack.load(), 0x02,
+                      SKSE::stl::unrestricted_cast<std::uintptr_t>(&LeafActThunk), g_origAttackAct.load());
+            NoteVfunc(Facet::kCombat, "CombatApproach.BashLeaf.Act", g_vtBash.load(), 0x02,
+                      SKSE::stl::unrestricted_cast<std::uintptr_t>(&LeafActThunk), g_origBashAct.load());
+            NoteVfunc(Facet::kCombat, "CombatApproach.AreaStandard.IsInsidePos", vtStd.address(), kSlotIsInsidePos,
+                      SKSE::stl::unrestricted_cast<std::uintptr_t>(&IsInsidePosThunk), g_origIsInsidePos.load());
+            NoteVfunc(Facet::kCombat, "CombatApproach.AreaStandard.IsInsideLoc", vtStd.address(), kSlotIsInsideLoc,
+                      SKSE::stl::unrestricted_cast<std::uintptr_t>(&IsInsideLocThunk), g_origIsInsideLoc.load());
+            NoteVfunc(Facet::kCombat, "CombatApproach.AreaStandard.Update", vtStd.address(), kSlotUpdate,
+                      SKSE::stl::unrestricted_cast<std::uintptr_t>(&UpdateThunk), g_origUpdate.load());
+        }
         g_installed.store(true, std::memory_order_release);
         spdlog::info("[ch.24] combat-approach seats installed: CombatAreaStandard Update (0x0B, carries the bound), "
                      "IsInside(WorldLocation) (0x05, the engine's own area inside a deny bracket), IsInside(point) "
