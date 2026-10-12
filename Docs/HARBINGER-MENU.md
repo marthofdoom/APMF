@@ -8,7 +8,7 @@ Harbinger adds one page to the **SKSE Menu Framework** (3.x). It shows who is dr
 
 1. **Alerts line.** Green "No alerts" when every write was traced to a named source. Otherwise a collapsible line "N alert(s)". Each alert is a change to an AI facet that Harbinger could not trace to a mod. Those changes are always allowed and never denied.
 2. **Hide idle sources.** A checkbox. It only changes the view and is never saved. Idle sources are ones not seen in the last 3 game loads.
-3. **One collapsible header per facet:** Targets, Packages, Equip, Detection, Casting, Combat actions, Combat entry and approach, Core. A header is closed unless that facet has an alert. Its title shows the current winner and its priority, the number of sources and any alerts.
+3. **One collapsible header per facet:** Targets, Packages, Equip, Detection, Casting, Combat actions, Combat entry and approach, Core, Actor values (speed, disposition). Below the census, "Loaded SKSE plugins not seen writing yet" lists every SKSE plugin in the process that has not yet written a facet. A header is closed unless that facet has an alert. Its title shows the current winner and its priority, the number of sources and any alerts.
 4. **A table inside each header**, one row per source, in fixed columns:
    - **Source:** the mod, plugin or built in name. The winner is green, idle sources are grey and listed last, "Unattributed" is amber.
    - **Kind:** `client` (a mod that asks Harbinger), `hook` (another mod's hook DLL found on one of Harbinger's seats), `plugin`, `engine`, `direct` (Papyrus and console), or a combination such as `hook+client`.
