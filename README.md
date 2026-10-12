@@ -141,7 +141,16 @@ If it's missing or disabled, APMF refuses every `kIntent_Travel` claim and names
 reason once in the log, so a client's own degrade path runs. Nothing else breaks. Every
 other facet behaves exactly the same without it.
 
-## What is in v0.12.0
+## What is in v0.13.0
+
+- **Harbinger names who changes the AI, in more places.** Combat entry, combat actions, combat approach, spell choice and cast claims now say whose answer they replaced, and a claim stands only while it outranks that source in `APMF_Sources.ini`. With the default priorities nothing changes.
+- **Unknown sources checkbox.** Each facet has "Unknown sources can be overridden" on the Harbinger page. Off by default. `[UnknownSources]` in `APMF_Sources.ini`.
+- **Spectator seat.** A retreating follower no longer stops to watch the fight while a mod's package claim outranks the engine. `iSpectatorSeat` in `[PackageGate]` of `APMF.ini`.
+- **Actor value watch.** Harbinger names who changes a follower's speed, disposition, sneak noise and detection range values. Watch only. `iActorValueSeat` in `[ActorValueObserve]`.
+- **Loaded plugin list.** The Harbinger page lists every loaded SKSE plugin, including ones that have not written anything yet.
+- No ABI change. Still ABI v21.
+
+### v0.12.0
 
 - **Cast guard (ch.25, ABI v21).** A mod can ask Harbinger to hold an NPC's attack spell while a friend stands in the line of fire or the blast, and to keep the NPC's own concentration spells off one hand or both. Harbinger measures the line every frame. `Docs/INTEGRATION.md`, "Cast guards".
 - **The controller (Phase 1a).** Harbinger keeps a registry of every source that writes an AI facet: client mods, other mods' hook DLLs, plugins, the engine, Papyrus and console calls. Each has a priority from 0 to 100 per facet, set in `APMF_Sources.ini`. Defaults are 20 for other mods, 50 for clients and 75 for direct calls. A change Harbinger cannot trace is allowed and alerted, never denied. `Docs/INTEGRATION.md`, "The Harbinger controller".
@@ -154,7 +163,7 @@ other facet behaves exactly the same without it.
 
 ## Status
 
-Phase 1 built, now at v0.12.0, ABI v21 (see [Docs/STATUS.md](Docs/STATUS.md)). The central
+Phase 1 built, now at v0.13.0, ABI v21 (see [Docs/STATUS.md](Docs/STATUS.md)). The central
 `Actor::Update` (0xAD) hook drives a multi-NPC control map (keyed by FormID,
 scales to hundreds, an uncontrolled NPC pays one hash-miss), a real
 inter-plugin C-ABI client API (`native/APMF_API.h`), and the full documented
