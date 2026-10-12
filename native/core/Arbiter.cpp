@@ -12,6 +12,7 @@
 #include "core/MainThread.h"
 #include "core/Registry.h"
 #include "core/Sightline.h"
+#include "core/CastGuard.h"        // ch.25 cast guard (ABI v21)
 #include "core/Sources.h"          // Harbinger 1a
 #include "core/PackageSources.h"   // Harbinger 1a
 #include "channels/Travel.h"
@@ -60,6 +61,13 @@ namespace apmf {
         // table: asked-for pairs are (re)measured here, at most kLosMaxPairsPerFrame per frame
         // (3 rays each), no lock held across a ray. One relaxed load when not armed.
         apmf::sightline::Pump();
+
+        // ch.25 CAST GUARD (kIntent_CastGuard, ABI v21; core/CastGuard.h): refreshes the seats'
+        // any-guard pre-gate from the snapshot Drain just published, and measures the line of fire
+        // of every guarded caster (at most kMaxMeasuresPerFrame per frame). Main thread, no lock
+        // held across an engine call; the friendlies' own-ray pairs it asks for are measured by
+        // sightline::Pump on the next frames.
+        apmf::castguard::Pump();
 
         // Docs/SPEC-PACKAGE-HOLD.md §4.1 item 1 -- OBSERVE-ONLY package-drift
         // correlation probe. Reuses this EXISTING once-per-frame game-thread seat

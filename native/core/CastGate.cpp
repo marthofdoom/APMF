@@ -4,6 +4,7 @@
 #include "core/Allowance.h"
 #include "core/CastGate.h"
 #include "core/CastObserve.h"   // NoteCheckCast (castobs channel end / interrupt attribution)
+#include "core/CastGuard.h"     // ch.25 kIntent_CastGuard (ABI v21): line of fire + channel bound
 
 // ============================================================================
 // T2c -- CheckCast, the HARD pre-charge cast gate. Docs/ALLOWANCE-TEMPLATE.md
@@ -51,6 +52,7 @@ namespace apmf::castgate {
         // symmetric with EquipGate.cpp / the template's general shape.
         std::unordered_map<std::uintptr_t, std::uintptr_t> g_orig;
         std::atomic<bool> g_installed{ false };
+        std::atomic<bool> g_hooked{ false };   // the thunk is written on >= 1 vtable (Installed())
 
         // ---- F6 (2026-09-06): MAKE THE CAST DENY OBSERVABLE -------------------
         // This gate had NO per-decision log at all -- only the install line -- so
@@ -155,6 +157,18 @@ namespace apmf::castgate {
                                                                        allowance::Hand::kUnknown;
             const bool handCaster    = (callerHand != allowance::Hand::kUnknown);
             const bool instantCaster = (src == RE::MagicSystem::CastingSource::kInstant);
+
+            // ---- ch.25 CAST GUARD (ABI v21, core/CastGuard.h) -- HAND casters only, and AHEAD of
+            // the H1 positive override below, so a claim-driven offensive cast is held by the line of
+            // fire too (the channel bound admits a claim-named spell itself). Consulted here at the
+            // start (RequestCastImpl), the release (StartCastImpl) and every channel tick (UpdateImpl).
+            if (handCaster && apmf::castguard::DenyCheckCast(actor, fid, a_spell, callerHand)) {
+                if (a_reason) *a_reason = RE::MagicSystem::CannotCastReason::kMultipleCast;
+                apmf::castobserve::NoteCheckCast(fid, static_cast<int>(src), subjectForm,
+                                                 static_cast<std::uint32_t>(RE::MagicSystem::CannotCastReason::kMultipleCast),
+                                                 true);
+                return false;
+            }
 
             // ---- H1 (2026-09-05 drive-chain review): APMF's OWN driven form
             // OVERRIDES the ch.8 narrow, it is not co-required with it. ----
@@ -285,11 +299,14 @@ namespace apmf::castgate {
 
         const int n = allowance::InstallOnVtables(kVtables, kCheckCast, &CheckCastThunk,
                                                    expectedTD.get(), "t2c", g_orig);
+        g_hooked.store(n > 0, std::memory_order_release);
         spdlog::info("[t2c] CheckCast allowance hooked on {} vtable(s) (ActorMagicCaster[0], "
                      "hard pre-charge gate) -- ch.8 casting-select claims now enforced here. ch.8b cast "
                      "claims are read per hand on the LEFT/RIGHT casters and actor-wide on the voice caster; "
                      "the instant caster answers to the ch.8 allow-list alone (INVARIANTS #18 amendment "
                      "2026-09-29).", n);
     }
+
+    bool Installed() { return g_hooked.load(std::memory_order_acquire); }
 
 }

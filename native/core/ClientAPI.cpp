@@ -247,6 +247,7 @@ namespace {
         case 18:
         case 19:
         case 20: return "0.11.0";
+        case 21: return "the first release after 0.11.4";
         default: return "a release newer than this one";
         }
     }

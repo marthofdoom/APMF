@@ -30,6 +30,7 @@
 #include "core/SpaceQuery.h"
 #include "core/Sightline.h"
 #include "core/Awareness.h"
+#include "core/CastGuard.h"        // ch.25 cast guard (ABI v21)
 #include "core/Sources.h"          // Harbinger 1a: source registry, priorities, seat census
 #include "core/PackageSources.h"   // Harbinger 1a: package capture + the 0x4A scene probe
 #include "core/HarbingerMenu.h"    // Harbinger 1a: the SKSE Menu Framework page
@@ -115,6 +116,7 @@ namespace {
         // ABI v18: same, for the line-of-sight pairs and the awareness noise baselines.
         apmf::sightline::ResetAll("revert/new game");
         apmf::awareness::ResetAll("revert/new game");
+        apmf::castguard::ResetAll("revert/new game");   // ch.25: the line-of-fire measurements of the outgoing world
         apmf::packagesources::ResetAll();
         // ...and forget the outgoing world's marker LEDGER. This must precede the load
         // callback (which reads the incoming save's record); SKSE runs revert first.
@@ -217,6 +219,12 @@ namespace {
                                                   // are refused at the request.
             apmf::awareness::Install();          // ABI v18 AWARENESS (SenseActor): needs the line-of-sight
                                                   // service armed (so AFTER it) + its own two rows. No hook.
+            apmf::castguard::Install();          // ch.25 CAST GUARD (ABI v21): installs NO hook (it rides
+                                                  // CastGate 0x0A and CastSeats 0x06, so AFTER castgate::Install
+                                                  // and sightline::Install). Arms the line-of-fire measurement:
+                                                  // exact 1.6.1170 / 1.5.97 / 1.7.104, VR-refused, SeatVerified on
+                                                  // IsHostileToActor. Unarmed -> kCastGuard_LineOfFire claims are
+                                                  // refused; no CheckCast gate -> every guard claim is refused.
             apmf::equipsink::Install();          // ch.17 ENGINE-EQUIP SINK: the ONE #17a call-site seat
                                                   // (ActorEquipManager worker, two internal E8 sites per
                                                   // runtime, byte-verified before any write; a mismatch
@@ -319,6 +327,7 @@ namespace {
             // outgoing world; a persistent NPC's id survives, its geometry does not).
             apmf::sightline::ResetAll("kPreLoadGame");
             apmf::awareness::ResetAll("kPreLoadGame");
+            apmf::castguard::ResetAll("kPreLoadGame");   // ch.25: no line-of-fire measurement crosses the load
             apmf::packagesources::ResetAll();
             // Flush the confirmed-main task queue. NOTHING Pump()s between here and
             // the first player Update AFTER the load, so anything ReleaseAll just

@@ -19,6 +19,7 @@
 #include "channels/CombatApproach.h"  // ch.24 combat approach (ABI v19) Installed()/NotInstalledReason() for the synchronous refusal
 #include "core/PositionCast.h"  // ABI v11 position cast: poscast::Enqueue (one-shot, never a claim); MarkersSupported (ch.19)
 #include "core/Sightline.h"  // ABI v18 own line of sight: Armed()/NotArmedReason() for the synchronous refusal
+#include "core/CastGuard.h"  // ch.25 cast guard (ABI v21): RefuseReason()/TtlMs() for the refusal and the TTL grant
 
 #include <cmath>
 
@@ -371,6 +372,15 @@ namespace apmf {
                 why = "the actor is the player (ch.22 keeps NPCs out of combat only)";
             if (why) {
                 spdlog::warn("[apmf][reentry-deny] claim refused -- actor 0x{}: {}.", apmf::log::Hex(actor), why);
+                return APMF_API::kInvalidHandle;
+            }
+        }
+
+        // ch.25 (ABI v21): a kIntent_CastGuard claim is REFUSED synchronously by the rules in
+        // core/CastGuard.cpp RefuseReason (gate not installed, bad ival / fval, the player, ...).
+        if (intent == APMF_API::kIntent_CastGuard) {
+            if (const char* why = apmf::castguard::RefuseReason(actor, param)) {
+                spdlog::warn("[apmf][cast-guard] claim refused -- actor 0x{}: {}.", apmf::log::Hex(actor), why);
                 return APMF_API::kInvalidHandle;
             }
         }
@@ -1165,6 +1175,11 @@ namespace apmf {
                     }
                 }
             }
+        } else if (op.intent == APMF_API::kIntent_CastGuard) {
+            // ch.25 (ABI v21): bounded like a cast claim (param.fval = seconds, 0 = the cast default,
+            // clamped to the cast max); ApplyRepoint's generic ttlMs renewal keeps it alive.
+            castTtlMs = apmf::castguard::TtlMs(op.param.fval);
+            expiresMs = apmf::clock::MonotonicMs() + castTtlMs;
         }
 
         auto&      npc     = map[op.actor];
