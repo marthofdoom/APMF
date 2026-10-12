@@ -33,6 +33,7 @@
 #include "core/CastGuard.h"        // ch.25 cast guard (ABI v21)
 #include "core/Sources.h"          // Harbinger 1a: source registry, priorities, seat census
 #include "core/PackageSources.h"   // Harbinger 1a: package capture + the 0x4A scene probe
+#include "core/SpectatorGate.h"    // the Package facet's seat for the engine's Spectator package (0xDC)
 #include "core/HarbingerMenu.h"    // Harbinger 1a: the SKSE Menu Framework page
 
 // ============================================================================
@@ -118,6 +119,7 @@ namespace {
         apmf::awareness::ResetAll("revert/new game");
         apmf::castguard::ResetAll("revert/new game");   // ch.25: the line-of-fire measurements of the outgoing world
         apmf::packagesources::ResetAll();
+        apmf::spectatorgate::ResetAll();
         // ...and forget the outgoing world's marker LEDGER. This must precede the load
         // callback (which reads the incoming save's record); SKSE runs revert first.
         apmf::poscast::RevertMarkers();
@@ -162,6 +164,8 @@ namespace {
             apmf::actiongate::Install();         // T1 combat-action allowance (ch.7; VR-refused inside)
             apmf::packagegate::Install();        // T3 package-offer allowance (ch.9; VR-refused inside)
             apmf::packagesources::Install();     // Harbinger 1a: 0x4A scene probe (OBSERVE-ONLY; the seat is unproven)
+            apmf::spectatorgate::Install();      // Package facet: Character 0xDC InitiateSpectator. A winning ch.9
+                                                  // offer that outranks the Engine keeps the facet (ClickUp 86e3m5feu)
             apmf::travel::Install();             // ch.19 TRAVEL (ABI v10): resolve Data/APMF.esl's
                                                   // travel packages + read [Travel]. Installs NO seat of
                                                   // its own -- its ONE internal claim is a ch.9 package
@@ -329,6 +333,7 @@ namespace {
             apmf::awareness::ResetAll("kPreLoadGame");
             apmf::castguard::ResetAll("kPreLoadGame");   // ch.25: no line-of-fire measurement crosses the load
             apmf::packagesources::ResetAll();
+            apmf::spectatorgate::ResetAll();
             // Flush the confirmed-main task queue. NOTHING Pump()s between here and
             // the first player Update AFTER the load, so anything ReleaseAll just
             // posted (ch.9's release nudge; ch.8b's proxy teardown) would otherwise

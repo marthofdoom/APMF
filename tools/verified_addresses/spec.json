@@ -22,9 +22,10 @@
     "0x74",
     "0xC2",
     "0xE3",
-    "0x4A"
+    "0x4A",
+    "0xDC"
    ],
-   "source": "native/core/Hook.cpp:94; PackageGate.cpp:296; NonAliasProbe.cpp:216; channels/TargetPin.cpp:460 (observer); channels/CombatReentryDeny.cpp (0x99, the ch.22 seat); core/Sightline.cpp (0xC2 GetEyeVector, 0x73/0x74 GetBoundMin/Max via TESObjectREFR::GetHeight; virtual calls) and core/Awareness.cpp (0xE3 IsInCombat; virtual call); core/PackageSources.cpp (0x4A GetCurrentScene: the Harbinger 1a scene probe, OBSERVE-ONLY)",
+   "source": "native/core/Hook.cpp:94; PackageGate.cpp:296; NonAliasProbe.cpp:216; channels/TargetPin.cpp:460 (observer); channels/CombatReentryDeny.cpp (0x99, the ch.22 seat); core/Sightline.cpp (0xC2 GetEyeVector, 0x73/0x74 GetBoundMin/Max via TESObjectREFR::GetHeight; virtual calls) and core/Awareness.cpp (0xE3 IsInCombat; virtual call); core/PackageSources.cpp (0x4A GetCurrentScene: the Harbinger 1a scene probe, OBSERVE-ONLY); core/SpectatorGate.cpp (0xDC InitiateSpectator: the Package facet's Spectator seat, ClickUp 86e3m5feu)",
    "doc": "ADDRESS-TABLE-2026-09-15.md:64"
   },
   {
