@@ -1,5 +1,6 @@
 #include "PCH.h"
 #include "core/Sources.h"   // Harbinger 1a: seat census
+#include "core/FacetAttribution.h"   // Harbinger 1b: the StartCombat caller + the priority decision
 #include "channels/CombatReentryDeny.h"
 #include "core/Allowance.h"   // SeatVerified(): the mit-3.7 F1 self-check gate
 #include "core/Clock.h"
@@ -31,6 +32,20 @@ extern "C" __declspec(dllimport) unsigned long __stdcall GetPrivateProfileIntA(
 // entry, and (review F2, ruled option (a)) a target-add while the actor is still fighting.
 // Only ch.21's own entry passes. Nothing else changes: no StopCombat, no engine state written,
 // no other facet touched.
+//
+// HARBINGER 1b (2026-10-12): THE CALLER IS NAMED AND RANKED. At the seat, the frame after
+// StartCombat's own self-check return site is StartCombat's CALLER (core/FacetAttribution
+// CallerBelow, a stack scan; no new address). It resolves to Engine (SkyrimSE.exe), DirectCalls
+// (skse64) or the calling DLL as a plugin source, and the refusal stands ONLY when the claim's
+// priority on the Combat facet is strictly above that source's (APMF_Sources.ini; with the
+// defaults, client 50 > unregistered 20, every engine / other-DLL entry is refused exactly as
+// before). A caller that does not rank below the claim -- including the claiming client's own DLL
+// calling StartCombat itself -- PASSES, counted as sourcePass and logged; a caller the seat cannot
+// name is the degrade rule (allowed + alerted, or ranked at the Unattributed row with
+// [UnknownSources] Combat=override). KNOWN LIMIT: a Papyrus Actor.StartCombat runs inside
+// SkyrimSE.exe, so it is named Engine, not DirectCalls (telling them apart needs per-runtime rows
+// for the ten StartCombat callers -- a later slice). The same seat also names any StartCombat on
+// an actor holding a ch.21 entry claim (ObserveEntryClaim): attribution only, it stands.
 //
 // HOW AN ACTOR ENTERS COMBAT (disassembly of both unpacked images, 2026-09-25; scratchpad
 // log apmf-reentry.md has the listings).
@@ -87,8 +102,8 @@ extern "C" __declspec(dllimport) unsigned long __stdcall GetPrivateProfileIntA(
 // PRINCIPLE 5 (a seat must be OBSERVED running before anything relies on it). The seat counts
 // every StartCombat self-check it sees, claim or no claim, and logs the FIRST one of the
 // session ("seat OBSERVED"). Poll() carries a DENY-MISS detector: a denied actor that GAINS a
-// combat controller while its window runs without a ch.21 entry passing the seat is logged
-// loudly (principle 7). A known way to miss: another DLL wraps Character slot 0x99 AFTER
+// combat controller while its window runs without a ch.21 entry (or, 1b, a source the claim does
+// not outrank) passing the seat is logged loudly (principle 7). A known way to miss: another DLL wraps Character slot 0x99 AFTER
 // Harbinger with a thunk that CALLS (not tail-jumps to) the previous entry; StartCombat's return
 // address is then theirs, never ours. Every Engage / Repoint line warns when the slot no longer
 // holds this thunk. The detector samples every 250 ms, so a StopCombat and a new entry inside
@@ -177,10 +192,13 @@ namespace {
         mutable std::atomic<std::uint32_t> denied{ 0 };        // entries refused
         mutable std::atomic<std::uint32_t> clientPass{ 0 };    // passed: ch.21's own entry
         mutable std::atomic<std::uint32_t> expiredPass{ 0 };   // passed: window over, Poll not yet run
+        mutable std::atomic<std::uint32_t> sourcePass{ 0 };    // passed: the caller's source does not rank
+                                                               //   below the claim (Harbinger 1b), or unnamed
         mutable std::atomic<bool>          firstDenyLogged{ false };
         // Poll (game thread)
         mutable std::atomic<bool>          hadController{ false };
         mutable std::atomic<std::uint32_t> clientPassSeen{ 0 };
+        mutable std::atomic<std::uint32_t> sourcePassSeen{ 0 };
         mutable std::atomic<std::uint32_t> seatHitsSeen{ 0 };
         mutable std::atomic<std::uint32_t> missed{ 0 };
         mutable std::atomic<std::uint64_t> lastMissLogMs{ 0 };
@@ -213,6 +231,34 @@ namespace {
         return now - prev >= kLogEveryMs && last.compare_exchange_strong(prev, now, std::memory_order_relaxed);
     }
 
+    // Harbinger 1b, ch.21 (attribution only: ch.21 enforces nothing after its one call). An
+    // Actor::StartCombat for an actor holding a winning kIntent_CombatEntry claim that is NOT
+    // ch.21's own entry is another source deciding the actor's combat entry: named and counted
+    // (it stands). An actor that also holds a ch.22 claim is attributed by ch.22's decision
+    // instead (one hit per call). Any thread; reads the published claim snapshot only.
+    void ObserveEntryClaim(RE::FormID a_self) {
+        if (t_passActor == a_self || apmf::ControlMap::Get().ControlledCount() == 0) return;
+        APMF_API::APMF_Param entry{};
+        if (!apmf::ControlMap::Get().TryGetOwningClaim(a_self, APMF_API::kIntent_CombatEntry, entry)) return;
+        APMF_API::APMF_Param deny{};
+        if (apmf::ControlMap::Get().TryGetOwningClaim(a_self, APMF_API::kIntent_CombatReentryDeny, deny)) return;
+        const auto caller = apmf::facetattr::CallerBelow(g_siteRet);
+        if (caller.self) return;   // APMF's own call outside the scope: not an outside source (none exists today)
+        apmf::facetattr::Observe(apmf::sources::Facet::kCombat, caller.src, a_self,
+                                 caller.found ? "Actor::StartCombat called from an address in no module"
+                                              : "Actor::StartCombat's caller frame was not found on the stack");
+        if (apmf::facetattr::LineDue(apmf::sources::Facet::kCombat, a_self, 21u << 8 | 1u)) {
+            const auto base = REL::Module::get().base();
+            spdlog::info("[ch.21] 0x{} StartCombat by {} (caller RVA 0x{}) while a ch.21 entry claim names 0x{}: "
+                         "another source decides this actor's combat entry; it stands (ch.21 makes one call per "
+                         "declaration and enforces nothing after it).",
+                         Hex(a_self),
+                         caller.src != apmf::sources::kNoSource ? std::string(apmf::sources::Name(caller.src))
+                                                                : std::string("an unattributed caller"),
+                         Hex(caller.addr >= base ? caller.addr - base : caller.addr, 1), Hex(entry.form));
+        }
+    }
+
     // The seat decision, only for StartCombat's own self-check. Returns the answer IsDead
     // gives StartCombat: `engineDead` unless this call is denied (then true).
     bool AnswerSelfCheck(RE::Actor* a_this, bool engineDead) {
@@ -223,11 +269,18 @@ namespace {
                          Hex(a_this ? a_this->GetFormID() : 0));
         }
         if (engineDead || !a_this) return engineDead;              // the engine refuses anyway
+        try {
+            ObserveEntryClaim(a_this->GetFormID());
+        } catch (...) {
+        }
         if (g_count.load(std::memory_order_relaxed) == 0) return engineDead;
 
         const RE::FormID     self = a_this->GetFormID();
         APMF_API::APMF_Param claim{};
-        if (!apmf::ControlMap::Get().TryGetOwningClaim(self, APMF_API::kIntent_CombatReentryDeny, claim))
+        float                basis = 0.0f;
+        APMF_API::Handle     h     = APMF_API::kInvalidHandle;
+        if (!apmf::ControlMap::Get().TryGetOwningClaimBasis(self, APMF_API::kIntent_CombatReentryDeny, claim, basis,
+                                                             &h))
             return engineDead;
 
         std::shared_lock lk(g_mx);
@@ -245,12 +298,48 @@ namespace {
             d.expiredPass.fetch_add(1, std::memory_order_relaxed);
             return engineDead;
         }
+        // Harbinger 1b: WHO CALLED StartCombat (the frame after StartCombat's own self-check return
+        // site), and whether the claim outranks it on the Combat facet.
+        // Nothing may unwind into StartCombat: a failure here is an unattributed caller, allowed.
+        apmf::facetattr::Caller   caller;
+        apmf::facetattr::Verdict v;
+        try {
+            caller = apmf::facetattr::CallerBelow(g_siteRet);
+            v      = apmf::facetattr::Decide(
+                apmf::sources::Facet::kCombat, h, caller.src, self,
+                caller.found ? (caller.self ? "Actor::StartCombat called from inside APMF outside ch.21's entry"
+                                            : "Actor::StartCombat called from an address in no module")
+                             : "Actor::StartCombat's caller frame was not found on the stack");
+        } catch (...) {
+            d.sourcePass.fetch_add(1, std::memory_order_relaxed);
+            return engineDead;
+        }
+        if (!v.enforce) {
+            d.sourcePass.fetch_add(1, std::memory_order_relaxed);
+            if (apmf::facetattr::LineDue(apmf::sources::Facet::kCombat, self, 22u << 8 | 1u)) {
+                const auto base = REL::Module::get().base();
+                spdlog::info("[ch.22] 0x{} StartCombat by {} (caller RVA 0x{}) PASSES the re-entry deny: {}. "
+                             "Claim h={} ({} priority {}) does not outrank it (priority {}) on the Combat facet "
+                             "(APMF_Sources.ini).",
+                             Hex(self), apmf::sources::Name(v.src),
+                             Hex(caller.addr >= base ? caller.addr - base : caller.addr, 1),
+                             v.unknown ? "the caller could not be named (allowed, alerted)" : "its source stands",
+                             h, apmf::facetattr::NameOr(v.client, "an internal claim"), v.claimPrio, v.srcPrio);
+            }
+            return engineDead;
+        }
         d.denied.fetch_add(1, std::memory_order_relaxed);   // DENY: StartCombat refuses, nothing done
         if (!d.firstDenyLogged.exchange(true, std::memory_order_relaxed)) {
-            spdlog::info("[ch.22] 0x{} FIRST DENY: the engine called Actor::StartCombat for the actor; refused "
-                         "at its own self-check, before it did anything. "
+            spdlog::info("[ch.22] 0x{} FIRST DENY: {} called Actor::StartCombat for the actor; refused at its own "
+                         "self-check, before it did anything (claim {} priority {} outranks it, priority {}). "
                          "{:.1f} s of the window left.",
-                         Hex(self), static_cast<double>(d.deadlineMs - now) / 1000.0);
+                         Hex(self), apmf::sources::Name(v.src), apmf::facetattr::NameOr(v.client, "an internal claim"),
+                         v.claimPrio, v.srcPrio, static_cast<double>(d.deadlineMs - now) / 1000.0);
+        } else if (apmf::facetattr::LineDue(apmf::sources::Facet::kCombat, self, 22u << 8 | 2u)) {
+            spdlog::info("[ch.22] 0x{} captured {} overruled: its StartCombat was refused (claim {} priority {} > {}). "
+                         "({} refused so far)",
+                         Hex(self), apmf::sources::Name(v.src), apmf::facetattr::NameOr(v.client, "an internal claim"),
+                         v.claimPrio, v.srcPrio, d.denied.load(std::memory_order_relaxed));
         }
         return true;
     }
@@ -364,6 +453,7 @@ namespace {
             d.endedReason.store(nullptr, std::memory_order_relaxed);
             d.hadController.store(inCombat, std::memory_order_relaxed);
             d.clientPassSeen.store(d.clientPass.load(std::memory_order_relaxed), std::memory_order_relaxed);
+            d.sourcePassSeen.store(d.sourcePass.load(std::memory_order_relaxed), std::memory_order_relaxed);
             d.seatHitsSeen.store(d.seatHits.load(std::memory_order_relaxed), std::memory_order_relaxed);
             g_count.store(g_denies.size(), std::memory_order_relaxed);
         }
@@ -405,7 +495,7 @@ namespace {
         // Relinquish (INVARIANTS #5a): nothing to restore -- nothing was written. The engine's
         // combat entries pass again from the next call.
         void Release(RE::FormID id, RE::Actor* /*actor*/) override {
-            struct { std::uint32_t hits, denied, client, expired, missed; } c{};
+            struct { std::uint32_t hits, denied, client, expired, source, missed; } c{};
             bool        had = false;
             const char* why = nullptr;
             {
@@ -414,7 +504,7 @@ namespace {
                     had = true;
                     const Deny& d = it->second;
                     c = { d.seatHits.load(), d.denied.load(), d.clientPass.load(), d.expiredPass.load(),
-                          d.missed.load() };
+                          d.sourcePass.load(), d.missed.load() };
                     why = d.endedReason.load();
                     g_denies.erase(it);
                 }
@@ -430,11 +520,11 @@ namespace {
                 return;
             }
             spdlog::info("[ch.22] 0x{} combat re-entry deny released ({}): StartCombat self-checks seen {} -- "
-                         "refused {}, passed as a ch.21 entry {}, passed after the window {}; DENY MISSED {}. "
-                         "Engine combat entries pass again.",
+                         "refused {}, passed as a ch.21 entry {}, passed after the window {}, passed by source "
+                         "priority or unattributed {}; DENY MISSED {}. Engine combat entries pass again.",
                          Hex(id), why ? fmt::format("ENDED BY HARBINGER: {}", why)
                                       : std::string("by the client, an unload or a load"),
-                         c.hits, c.denied, c.client, c.expired, c.missed);
+                         c.hits, c.denied, c.client, c.expired, c.source, c.missed);
         }
     };
 
@@ -543,13 +633,17 @@ namespace apmf::reentrydeny {
                 const bool  prev     = d.hadController.exchange(hasCc, std::memory_order_relaxed);
                 const auto  cp       = d.clientPass.load(std::memory_order_relaxed);
                 const auto  cpSeen   = d.clientPassSeen.exchange(cp, std::memory_order_relaxed);
+                const auto  sp       = d.sourcePass.load(std::memory_order_relaxed);
+                const auto  spSeen   = d.sourcePassSeen.exchange(sp, std::memory_order_relaxed);
                 const auto  hits     = d.seatHits.load(std::memory_order_relaxed);
                 const auto  hitsSeen = d.seatHitsSeen.exchange(hits, std::memory_order_relaxed);
-                if (!prev && hasCc && cp == cpSeen) {
+                // Harbinger 1b: an entry a source that is not outranked made (it passed the seat by
+                // priority, or unattributed) is not a miss either.
+                if (!prev && hasCc && cp == cpSeen && sp == spSeen) {
                     const auto n = d.missed.fetch_add(1, std::memory_order_relaxed) + 1;
                     if (RateOk(d.lastMissLogMs)) {
                         spdlog::warn("[ch.22] 0x{} DENY MISSED: the actor ENTERED COMBAT while its re-entry deny held, "
-                                     "and no ch.21 entry passed the seat. StartCombat self-checks seen for it since "
+                                     "and no ch.21 entry (nor a source the claim does not outrank) passed the seat. StartCombat self-checks seen for it since "
                                      "the last look: {}{}. ({} so far)",
                                      Hex(sn.id), hits - hitsSeen,
                                      hits == hitsSeen ? " -- the seat never saw this entry (another DLL wrapping "

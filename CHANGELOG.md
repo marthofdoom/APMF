@@ -1,5 +1,6 @@
 ## Unreleased
 
+- **Harbinger now names who decides a follower's combat entry, combat actions and combat approach.** When a mod's combat re-entry deny refuses a `StartCombat`, the log and the menu show which mod or engine path made it. A Papyrus or console `StartCombat` runs inside the game, so it is named as the engine for now. The same goes for a combat action deny, a pursuit leash and a combat approach bound overriding the engine. These now follow the priorities in `APMF_Sources.ini`: the deny stands only while the claiming mod outranks that source. With the default priorities nothing changes. A combat approach bound that yields to a package's hold position names that package's plugin. Not yet tested in game.
 - **A retreating follower no longer stops to watch the fight.** After a retreat ends combat, the game used to give the follower its own Spectator package. The follower stood still, kept taking hits and drifted away instead of running the retreat package. While a mod's package claim on that follower outranks the engine, Harbinger now stops the game from giving it that package. New setting: `iSpectatorSeat` in `[PackageGate]` (2 on by default, 1 log only, 0 off). Not yet tested in game.
 
 ## v0.12.0 -- The controller, the menu and the cast guard

@@ -51,9 +51,9 @@ namespace apmf::sources {
         kDetection,      // the detection-value producer (SmartNPC H2 shape)
         kPackage,        // ch.9 / ch.19: the running AI package (alias, quest, scene, created)
         kEquip,          // ch.15 / ch.17 / the hand block: engine equips
-        kCombatAction,   // ch.7 / ch.23: the combat behaviour tree leaves (census only in 1a)
+        kCombatAction,   // ch.7 / ch.23: the combat behaviour tree leaves (1b: denies ranked vs Engine)
         kCast,           // ch.8 / 8a / 8b: cast choice and execution (census only in 1a)
-        kCombat,         // ch.21 / 22 / 24: entry, re-entry, approach (census only in 1a)
+        kCombat,         // ch.21 / 22 / 24: entry, re-entry, approach (1b: StartCombat caller + area source)
         kCore,           // the 0xAD Update seat and other spine seats (census only)
         kCount
     };
@@ -152,7 +152,8 @@ namespace apmf::sources {
     // the degrade rule above). true = an unattributed write on `f` counts as the LOWEST-priority
     // source (priority 0), so a claim outranks it; the alert and the log stay. Only a facet that
     // already enforces (Target, via ch.20's restore) acts on it; on the others it is stored and
-    // shown only. APMF_Sources.ini `[UnknownSources] <Facet>=allow|override`. Any thread, lock-free.
+    // shown only. 1b (core/FacetAttribution): Combat acts on it too (ch.22's unnamed StartCombat
+    // caller). APMF_Sources.ini `[UnknownSources] <Facet>=allow|override`. Any thread, lock-free.
     bool OverrideUnknown(Facet f);
     // The render thread's checkbox. Applied and saved by the next Pump() (main thread).
     void EnqueueSetOverrideUnknown(Facet f, bool on);

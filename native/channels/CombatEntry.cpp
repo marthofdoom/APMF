@@ -1,6 +1,7 @@
 #include "PCH.h"
 #include "channels/CombatEntry.h"
 #include "channels/TargetPin.h"   // Installed(): whether the ch.20 pin could engage, for the entry log
+#include "core/FacetAttribution.h"   // Harbinger 1b: the engine's refusal is named on the Combat facet
 #include "channels/CombatReentryDeny.h"   // ClientEntryScope: this entry passes a ch.22 re-entry deny
 #include "core/Allowance.h"       // SeatVerified(): the mit-3.7 F1 self-check gate
 #include "core/Clock.h"
@@ -269,6 +270,9 @@ namespace {
         e.inFight        = ok && hasCc;
 
         if (!ok) {
+            // Harbinger 1b: the engine decided this actor's combat entry against the claim (attribution
+            // only: ch.21 enforces nothing; the engine's refusal stands).
+            apmf::facetattr::Observe(apmf::sources::Facet::kCombat, apmf::sources::kEngineSource, id, "");
             // The engine's refusal preconditions (disassembly, header). Name the ones we can see.
             const char* cause =
                 lifeState == RE::ACTOR_LIFE_STATE::kRestrained ? "the actor is restrained" :
