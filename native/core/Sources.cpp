@@ -171,7 +171,7 @@ namespace apmf::sources {
                     "Defaults", fmt::format("iClient{}", sect).c_str(), kDefaultClient, kIni)));
                 {
                     char b[16]{};
-                    GetPrivateProfileStringA("UnknownSources", sect, "allow", b, sizeof(b), kIni);
+                    REX::W32::GetPrivateProfileStringA("UnknownSources", sect, "allow", b, sizeof(b), kIni);
                     g_unkOverride[i].store(Lower(b) == "override", std::memory_order_relaxed);
                 }
                 g_iniPrio[i].clear();
