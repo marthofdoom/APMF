@@ -1,7 +1,10 @@
 #include "PCH.h"
+
+#include <intrin.h>   // _ReturnAddress: the client DLL that called us (Harbinger 1a, Q7)
 #include "core/ClientAPI.h"
 #include "core/ControlMap.h"
 #include "core/EquipSink.h"
+#include "core/Sources.h"     // Harbinger 1a: the calling DLL is the claim's client source (Q7)
 #include "core/SpaceQuery.h"
 #include "core/Awareness.h"
 #include "core/Sightline.h"
@@ -19,7 +22,9 @@ namespace {
     // degrades to "no control taken", never a crash in the client.
     APMF_API::Handle APMF_Request(RE::FormID actor, APMF_API::Intent intent, float basis) {
         try {
-            return apmf::ControlMap::Get().EnqueueRequest(actor, intent, basis, nullptr);
+            const auto h = apmf::ControlMap::Get().EnqueueRequest(actor, intent, basis, nullptr);
+            apmf::sources::NoteClientRequest(h, _ReturnAddress());
+            return h;
         } catch (...) {
             return APMF_API::kInvalidHandle;
         }
@@ -30,7 +35,9 @@ namespace {
     APMF_API::Handle APMF_RequestEx(RE::FormID actor, APMF_API::Intent intent, float basis,
                                     const APMF_API::APMF_Param* param) {
         try {
-            return apmf::ControlMap::Get().EnqueueRequest(actor, intent, basis, param);
+            const auto h = apmf::ControlMap::Get().EnqueueRequest(actor, intent, basis, param);
+            apmf::sources::NoteClientRequest(h, _ReturnAddress());
+            return h;
         } catch (...) {
             return APMF_API::kInvalidHandle;
         }
@@ -39,6 +46,7 @@ namespace {
     void APMF_Release(APMF_API::Handle handle) {
         try {
             apmf::ControlMap::Get().EnqueueRelease(handle);
+            apmf::sources::ForgetHandle(handle);
         } catch (...) {
         }
     }
@@ -73,7 +81,9 @@ namespace {
     APMF_API::Handle APMF_RequestCast(RE::FormID actor, float basis,
                                       const APMF_API::APMF_CastRequest* req) {
         try {
-            return apmf::ControlMap::Get().EnqueueCast(actor, basis, req);
+            const auto h = apmf::ControlMap::Get().EnqueueCast(actor, basis, req);
+            apmf::sources::NoteClientRequest(h, _ReturnAddress());
+            return h;
         } catch (...) {
             return APMF_API::kInvalidHandle;
         }
