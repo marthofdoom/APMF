@@ -1366,6 +1366,8 @@ ch.23), `channels/CombatApproach.cpp` (S1 decision, `AttributeYield`, the drift 
   (`g_siteRet`); a seat reached through a foreign wrapper that CALLS (not tail-jumps) never sees that return
   address at all. Papyrus natives inside SkyrimSE.exe resolve to Engine, not DirectCalls (KNOWN LIMIT; needs
   per-runtime caller rows).
+  Open review findings: Docs/REVIEW-BACKLOG.md APMF-B71 (no negative ModuleOf cache under the loader lock; `found=false`
+  counted as unattributed; Papyrus/console StartCombat named Engine; ActionGate ClaimOutranksTree lacks try/catch).
 
 ### `native/core/PackageData.{h,cpp}` — read a templated package's inputs, point its Location (ch.19 travel)
 `SetTravelTarget(pkg, ref, radius)` and `SetTravelCell(pkg, cell, radius)`: resolve the vanilla
