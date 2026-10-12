@@ -1324,6 +1324,26 @@ re-dispatch still prints.
   goes back to answering with the pre-claim package. Never touch alias/run-once state
   (INVARIANTS #3a); never return null.
 
+### `native/core/SpectatorGate.{h,cpp}` — the Package facet's SPECTATOR seat (2026-10-12, ClickUp 86e3m5feu)
+`Install()` <- `plugin.cpp` kDataLoaded (after `packagesources::Install`): `write_vfunc` **0xDC**
+`InitiateSpectator(Actor* target)` on `VTABLE_Character[0]` (AE 0x7270E0 / SE 0x6932D0 / 1.7.104 0x739C10;
+1.7.104 instruction-identical to AE), VR-refused, exact-runtime gated, `SeatVerified` on the Character row,
+census-registered on the Package facet. The engine's only live creator of a Spectator package (procedure 24):
+detection reaction (AE 0x70B6F0) -> spectate predicate (AE 0x70AF90: self out of combat, the other in combat)
+-> spectator dispatcher (AE 0x83D5F0 / SE 0x7A62E0 / 1.7.104 0x8524D0, one vcall to 0xDC) -> SpectatorPackage
+built and PUT with 0xDF. 0x49 is never asked, which is why it beat MFO's retreat offer (field 1006d). Thunk: an
+actor with a winning ch.9 claim whose package resolves and whose client (ch.19's internal offer: the travel
+claim's client, as `PackageSources`) outranks `Priority(Engine, Package)` is NOT forwarded (enforce) or
+forwarded with a "WOULD DENY" line (observe); Engine hit / overruled / stood counted on the Package facet.
+`[PackageGate] iSpectatorSeat` 0 off / 1 observe / 2 enforce (default). Logs: `[spectator]` one line per
+(actor, claimed package, decision) transition with the engine call-site RVA (expected AE 0x83D637), `[spectator] H`
+totals every 30 s (zeros included), `ResetAll()` at revert and kPreLoadGame.
+- **What breaks:** never move the deny to 0xDF (the package is allocated by then: leak / double free); never
+  deny without the claim+priority test (a Spectator package is legitimate engine behaviour for every other
+  actor); the thunk may run off the main thread, so it reads only the RCU snapshot, the lock-free registry and
+  atomics (the transition map takes its own mutex). A Spectator package already running when the claim
+  engages is not evicted (`Docs/DENY-COMPLETENESS-AUDIT.md` gap 15). NOT field-proven yet.
+
 ### `native/core/PackageData.{h,cpp}` — read a templated package's inputs, point its Location (ch.19 travel)
 `SetTravelTarget(pkg, ref, radius)` and `SetTravelCell(pkg, cell, radius)`: resolve the vanilla
 Travel template's `"Place to Travel"` input BY NAME, guard the recovered pointer by the

@@ -15,6 +15,7 @@
 #include "core/CastGuard.h"        // ch.25 cast guard (ABI v21)
 #include "core/Sources.h"          // Harbinger 1a
 #include "core/PackageSources.h"   // Harbinger 1a
+#include "core/SpectatorGate.h"
 #include "channels/Travel.h"
 #include "channels/TargetPin.h"
 #include "channels/CombatEntry.h"
@@ -116,6 +117,8 @@ namespace apmf {
         // (~30s), INI-gated ([PackageGate] EnableRedirectLog, default ON), one
         // relaxed atomic-bool load the rest of the time.
         apmf::packagegate::Heartbeat();
+        // The Spectator seat (core/SpectatorGate.cpp): RULE C totals ~30 s, zeros included.
+        apmf::spectatorgate::Heartbeat();
 
         // ch.19 (kIntent_Travel) LEG MONITOR. Reuses this EXISTING once-per-frame
         // game-thread seat -- no new thread, no new hook. It is NOT a re-assert
