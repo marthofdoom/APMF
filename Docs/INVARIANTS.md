@@ -1106,3 +1106,24 @@ The rule is the explicit form of #0/#1: #1 says "block the foreign input"; #18 a
   APMF holds a claim on (#17 engine-answer-first). Completeness is about covering
   every SUPPRESSION path, never about adding a drive/re-assert to out-muscle a
   competitor.
+- **ch.25 CAST GUARDS (`kIntent_CastGuard`, ABI v21, 2026-10-12): a guard is a DENY on the
+  actor's OWN casts, enforced ONLY at the cast seats Harbinger already owns, and it is
+  measured, never assumed.** Enumeration (`core/CastGuard.h`, `Docs/INTEGRATION.md` "Cast
+  guards"): the AI's own cast reaches a hand through `ActorMagicCaster::CheckCast` (0x0A) at
+  its START (`RequestCastImpl`, slot 3), its RELEASE (`StartCastImpl`, slot 6) and every
+  channel TICK (`UpdateImpl`) -- the slot-3 and slot-6 calls disassembled on 1.6.1170, 1.5.97
+  and 1.7.104 -- and the combat AI decides to start through `CheckStartCast` (0x06). The line
+  of fire is refused at all four on the HAND casters; the channel bound at the three 0x0A
+  points (0x06 carries no hand). OUT of scope by declaration, and said so to the client: the
+  instant caster (the client's direct stream), the voice caster, a projectile already in
+  flight, a cast not made by the AI (script / console). Rules that keep it honest:
+  (a) the line-of-fire verdict is Harbinger's own measurement, re-taken every frame on the
+  main thread from live positions (+ its own ray for exposure), never the engine's cached
+  line of sight; (b) 0x06 answers NO on an unknown or stale (> 250 ms) measurement -- never
+  clear by fallback (principle 7) -- while 0x0A refuses only on a fresh BLOCKED one, because
+  a NO at a release or a tick interrupts a cast and an unknown must not cut one; (c) the
+  channel bound always admits the client's own claimed stream (a live `kIntent_Cast` claim on
+  that hand naming the spell) -- it bounds the AI, never the client; (d) every refusal is
+  attributed (Engine on the Cast facet, `core/Sources.h`) and stands only while the guard's
+  client outranks it; (e) Harbinger adds no decay, retry or let-one-through of its own: the
+  client owns that policy (it may drop the bit).

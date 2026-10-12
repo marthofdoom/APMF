@@ -601,3 +601,17 @@ Re-review of e63afa6 (MERGE OK), further notes deferred here:
 Done in the same round instead of deferred (each under 20 lines): APMF's own enforce equips no longer register
 `APMF.dll` as an outside equip source (`core/EquipSink.cpp`, `sources::IsSelf`), and module ranges are cached
 (`core/Sources.cpp` ModuleOf) so a hot path stops calling GetModuleHandleEx / RtlPcToFileHeader per frame.
+
+### APMF-B70 (SEV-3, SEV-4 x2, SEV-5) -- ch.25 cast guard review, deferred items
+Raised against d2d591d (`feat/apmf-cast-lof-channel-bound`, Opus tier-3 review
+`scratchpad/agentlogs/review-castguard.md`), 2026-10-12. The SEV-2 (EFIT area is feet) and the SEV-4 Repoint
+refusal were fixed on the branch. Deferred, as relayed by the coordinator:
+- (SEV-3) `IsHostileToActor` treats an aggroed but non-faction-hostile combatant as friendly -> over-holds the
+  line of fire (`core/CastGuard.cpp` Friendly). FIELD-WATCH: count `[ch.25]` refusals naming a friendly that is
+  itself in combat with the caster.
+- (SEV-4) Self-delivered area spells (Fire Storm) are never guarded (`Offensive` excludes kSelf). Documented in
+  Docs/INTEGRATION.md "Cast guards".
+- (SEV-4) At 0x0A, an AI cast on the OTHER hand is judged against the claim's aim (Measure picks one aim per
+  caster: the driving offensive claim's target, else the combat target).
+- (SEV-5) The `g_lastLog` decision-log throttle map (`core/CastGuard.cpp` LogDue) is never cleared; clear it in
+  ResetAll.

@@ -344,6 +344,14 @@ namespace apmf {
         // the actor -- the pairs channels/TargetPin.cpp's selector seat reads.
         void OwnLosPinPairs(std::vector<std::pair<RE::FormID, RE::FormID>>& out) const;
 
+        // ch.25 (kIntent_CastGuard, ABI v21). DEFINED IN core/CastGuard.cpp (ControlMap.cpp is at its
+        // size cap). Same RCU reader discipline as TryGetOwningClaim (any thread, relaxed pre-gate, one
+        // acquire-load, copy out); a TTL-elapsed claim is skipped as a CANDIDATE (the cast readers' F5-3
+        // rule). TryGetCastGuard: the winning live guard claim's CastGuardFlags (masked to kCastGuard_All)
+        // and handle. CastGuardActors: appends (actor, flags) of every actor's winning live guard claim.
+        bool TryGetCastGuard(RE::FormID actor, std::uint32_t& outFlags, Handle& outHandle) const;
+        void CastGuardActors(std::vector<std::pair<RE::FormID, std::uint32_t>>& out) const;
+
         // ---- ch.17 EquipAuthority seat read: ANY thread (RCU reader). The
         // engine-equip sink (core/EquipSink.cpp) calls this from whatever thread
         // the engine performs an equip on. Same discipline as TryGetOwningClaim:

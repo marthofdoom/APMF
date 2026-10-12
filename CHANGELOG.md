@@ -1,3 +1,9 @@
+## Unreleased
+
+- **A mod can now stop an NPC from casting an attack spell through a friend (ABI v21).** Claim `kIntent_CastGuard` with `kCastGuard_LineOfFire`. While the player, a teammate or anyone not hostile to the caster stands in the line of fire, or inside the spell's blast at the target, the NPC does not start the spell, and a spell it already charged is not released. Harbinger measures the line every frame. Healing and other friendly spells are never held.
+- **A mod can now keep an NPC's own concentration spells off one hand or both (ABI v21).** Add `kCastGuard_ChannelRight` or `kCastGuard_ChannelLeft` to the same claim. The NPC's own AI cannot start or keep a concentration spell in that hand. A stream the mod itself claims on that hand still runs, and so does one the mod casts directly.
+- **Every refusal names who was overruled.** The NPC's own AI shows on the Cast facet of the Harbinger page, and a refusal stands only while the mod outranks it in `APMF_Sources.ini`.
+
 ## v0.11.4 -- Armor comes back after an outfit reset
 
 - **A follower whose outfit gets re-applied by the game now gets the armor MFO chose back within a few seconds, instead of standing bare.** Harbinger reports itself as enforcing while armor is enforced.

@@ -7,6 +7,7 @@
 #include "core/CastSeats.h"
 #include "core/RestoreCensus.h"
 #include "core/Sightline.h"   // ABI v18 kCastFlag_OwnLineOfSight
+#include "core/CastGuard.h"   // ch.25 kIntent_CastGuard (ABI v21): the line-of-fire hold at 0x06
 #include "core/CastClassify.h"  // IsPlacementSpell (NativePlacement gate)
 
 #include <cstring>
@@ -394,6 +395,11 @@ namespace apmf::castseats {
             const auto oit = g_startOrig.find(vt);
             if (oit == g_startOrig.end()) return false;   // foreign vtable -- benign "don't start", touch nothing
             const auto orig = reinterpret_cast<CheckStartCast_t>(oit->second);
+
+            // ch.25 CAST GUARD (ABI v21, core/CastGuard.h): kCastGuard_LineOfFire holds an OFFENSIVE
+            // cast while a friendly is in its line of fire -- NO unless a fresh measurement says the
+            // line is clear, claim-driven or not. Advisory here (the hard half is CheckCast 0x0A).
+            if (a_this && apmf::castguard::HoldStartCast(a_cc, a_this->magicItem)) return false;
 
             SeatMatch m{};
             if (!ClaimNamesThisCast(a_this, a_cc, m)) {
