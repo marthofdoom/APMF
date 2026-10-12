@@ -637,3 +637,21 @@ doc wording (Papyrus/console StartCombat resolves to Engine) was fixed on the br
 - (SEV-5) Deny-miss detector (`CombatReentryDeny.cpp`): a source pass and a real miss in the same 250 ms sample
   hide the miss.
 - NEXT SLICE (not a finding): Cast-facet denies (CastGate, EquipGate, the 8b seats) consulting priorities.
+
+### APMF-B72 (SEV-4, SEV-5 x6) -- 1b cast attribution review, deferred items
+Raised against 9c00037 (`feat/apmf-1b-cast-attribution`, Opus tier-3 review
+`scratchpad/agentlogs/review-1b-cast.md`), 2026-10-12. Verdict MERGE OK. The SEV-3 per-slot split, the SEV-4 try
+coverage and two log-text SEV-5s were fixed on the branch in 83db3cf. Deferred:
+- (SEV-4) `CastClaimHandle` is actor-wide (highest-basis cast claim), but EquipGate / CastSeats / classify decide per
+  hand or per form. With two cast clients at different INI priorities, the wrong client's priority decides. Fix =
+  a handle field on `CastSeatClaim` (ControlMap.cpp). Inert today: MFO is the only cast client and defaults are 50.
+- (SEV-5) A client DLL hooked inside a seat ranks as Engine, so an INI cannot rank client B's hook above client
+  A's claim and B's hits are booked to Engine. Refinement: map to Engine only when it is the claim's OWN client.
+- (SEV-5) skse64 seen inside a cast seat gets its own `skse64_*.dll` hook row (20); a `[Cast] DirectCalls=` entry
+  does not apply to it. Harmless (skse64 does not hook these vtables). Documented in INI-REFERENCE.
+- (SEV-5) Engine Cast hit counts grow at roughly items x ticks (0x0F deny-complete per non-driven item); one cast is
+  counted at up to three seats (classify, 0x06, 0x0F). Menu noise only.
+- (SEV-5) The 0x0F census row is filed under the Equip facet (`FacetForTag("t2a")`) while its decisions are booked
+  on Cast.
+- (SEV-5) InsideSource could be resolved once at install to take first-sight loader-lock calls off the combat
+  thread entirely.
