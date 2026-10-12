@@ -11,10 +11,12 @@
 // missing. SMF absent or refused -> Harbinger runs from APMF_Sources.ini with one loud
 // log line (Q10).
 //
-// THE PAGE. Alerts (unattributed writes, Q4), a "Facets" tab with the master table per
-// facet (winner, source, kind, hits, overruled/stood, seen-age, priority slider), one tab
-// per source (its facets, counters and sliders), and a "Seats" tab (the census rows with
-// a foreign module). Idle sources (Q14) are greyed and keep their priority.
+// THE PAGE (layout polish 2026-10-11, "It looks very crowded"). An alerts summary line at the
+// top (unattributed writes and attribution defects, expandable), a "hide idle" checkbox (UI state,
+// never saved), then one collapsible header per facet (collapsed unless that facet has an alert):
+// a fixed-column table, one row per source -- name, kind badge, hits, priority slider -- idle
+// sources greyed and last, details (counters, last seen, census seats) in the hover tooltip. The
+// census list sits in a collapsed header at the bottom. Exports used: AddSectionItem + 20 ig*.
 //
 // THREADING. The render callback runs on SMF's render thread: it reads only the source
 // registry's lock-free counters and the census snapshot, and a slider only ENQUEUES its
