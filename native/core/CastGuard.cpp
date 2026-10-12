@@ -531,8 +531,6 @@ namespace apmf::castguard {
         return false;
     }
 
-    bool OffensiveItem(RE::MagicItem* a_item) { return Offensive(a_item); }
-
     bool HoldStartCast(RE::CombatController* a_cc, RE::MagicItem* a_item) {
         if (!g_anyGuard.load(std::memory_order_relaxed) || !a_cc || !a_item || !Offensive(a_item)) return false;
         auto  attPtr = a_cc->attackerHandle.get();   // NiPointer<Actor>, refcounted for this scope (CastSeats' read)

@@ -786,7 +786,9 @@ namespace apmf::sightline {
             }
             Publish(s, a_key, Pack(a_ray.verdict, a_ray.sample, a_ray.why, occRun), a_nowMs,
                     Pack(passVerdict, PassSample(a_ray), PassWhy(a_ray), passOccRun),
-                    passVerdict == APMF_API::kLos_Visible ? a_ray.passFriend : 0);
+                    // Only when the friend CHANGED the verdict (review SEV-5): strict not visible.
+                    passVerdict == APMF_API::kLos_Visible && a_ray.verdict != APMF_API::kLos_Visible ? a_ray.passFriend
+                                                                                                     : 0);
             g_measures.fetch_add(1, std::memory_order_relaxed);
             if (passVerdict == APMF_API::kLos_Visible && a_ray.verdict != APMF_API::kLos_Visible)
                 g_friendOnly.fetch_add(1, std::memory_order_relaxed);

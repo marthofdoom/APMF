@@ -1,6 +1,6 @@
 ## Unreleased
 
-- **Heals see past friends.** When a mod asks Harbinger to check a follower's own line of sight before a cast, a healing or other friendly spell now looks past the player and the player's teammates. Walls, the ground and every other NPC still block it. Attack spells still stop at any NPC in the way, and the cast guard is unchanged. The log names the friend that was looked past, once per cast. Not yet tested in game.
+- **Heals see past friends.** When a mod asks Harbinger to check a follower's own line of sight before a cast, a healing or other friendly spell now looks past the player and the player's teammates. Walls, the ground and every other NPC still block it. Attack spells still stop at any NPC in the way, and the cast guard is unchanged. The log names the friend that was looked past, once for each spell, target and friend. Not yet tested in game.
 
 ## v0.13.0 -- Harbinger names who changes the AI
 

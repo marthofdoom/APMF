@@ -89,9 +89,5 @@ namespace apmf::castguard {
     // core/CastSeats.cpp 0x06 (combat thread): true = answer NO for this poll. The deliberating
     // actor is the controller's attacker, resolved only for an offensive item.
     bool HoldStartCast(RE::CombatController* a_cc, RE::MagicItem* a_item);
-    // The ch.25 OFFENSIVE classifier (any thread; immutable form data): any effect whose base
-    // effect is hostile, and not Self delivered; false for nullptr. Its complement is what ch.8b
-    // seats 0x06 / 0x07 call a BENEFICIAL cast (the friends-pass own line of sight, core/Sightline.h).
-    bool OffensiveItem(RE::MagicItem* a_item);
 
 }

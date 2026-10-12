@@ -61,7 +61,7 @@
 // player and every high-process player teammate (never the viewer or the target themselves);
 // any other viewer has none, and its two readings agree. Walls, terrain, statics and every
 // other actor's capsule still block. ONLY ch.8b seats 0x06 / 0x07 read it, and only for a
-// BENEFICIAL cast (not core/CastGuard's OffensiveItem). Offensive casts, the ch.25 line of
+// BENEFICIAL cast (no effect hostile, CastSeats OwnLosFriendsPass). Offensive casts, the ch.25 line of
 // fire, GetLineOfSight, the pin seat and the awareness sight sense keep the strict reading
 // (marth 2026-10-06: "spells cant go through npcs"; 2026-10-12: no "sight sees past allies").
 // The friend set is built at most once per Pump frame on the main thread and read only by

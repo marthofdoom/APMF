@@ -605,7 +605,8 @@ bOwnLineOfSight` (default 1). Rows: bhkWorld (0x33), Character (0xC2/0x73/0x74),
 - **What breaks:** a ray off the main thread (only `Pump`/`MeasureNow` cast, both main);
   any consumer but the 0x06/0x07 BENEFICIAL path reading `a_friendsPass` (offensive casts, ch.25, pins and
   awareness must stay strict -- marth 2026-10-06 / 2026-10-12); building `FriendsFor` off the main thread or
-  calling anything from inside the collector (it only compares groups against the prebuilt array);
+  calling anything from inside the collector (it only compares groups against the prebuilt array). Open review
+  item REVIEW-BACKLOG APMF-B74 (diagnostic volume / viewer counters inflated in friends mode);
   a mutex on the `Read` path (the cast and pin seats call it on combat threads and must stay
   lock-free); the collector's layout (`rayHit` at +0x10 is what PickObject resets and copies; slot 0 =
   addRayHit, slot 1 = dtor -- never reorder its virtuals or members before `rayHit`); calling
@@ -792,9 +793,11 @@ plus native-placement 0x0A calls) in the `[ctcensus] HEARTBEAT`.
   otherwise (OCCLUDED / UNKNOWN / UNAVAILABLE / UNSUPPORTED; the census sees `false`); 0x07
   STOPS a channel on two consecutive OCCLUDED readings (occRun >= 2, newest <= 1 s), after
   the TTL / target checks; UNKNOWN / UNAVAILABLE never stop. **BENEFICIAL casts (fix/apmf-heal-los-friends):**
-  when `OwnLosFriendsPass(a_this)` (`a_this->magicItem` is not `castguard::OffensiveItem`, ch.25's own classifier)
-  both seats read the FRIENDS-PASS verdict (player / teammate capsules do not block; core/Sightline);
-  `NoteFriendPassed` logs once per claim (actor, driven, target, expiresMs) the friend looked past, the name
+  when `OwnLosFriendsPass(a_this)` (no effect of `a_this->magicItem` is hostile, any delivery -- NOT ch.25's
+  `Offensive()`, which exempts Self delivery) both seats read the FRIENDS-PASS verdict (player / teammate capsules
+  do not block; core/Sightline); `passFriend` is stored only when the strict reading was not visible (the friend
+  changed the verdict). `NoteFriendPassed` logs once per (actor, driven, target, friend) -- not expiresMs, which
+  client Repoint heartbeats move -- the friend looked past, the name
   resolved in a `mainthread::Post` (never a form lookup on the combat thread). Offensive casts read strict. **What breaks:** reading the
   verdict any other way than `Read` (a lock or a form lookup on the combat thread); letting
   a non-VISIBLE verdict answer YES. The bit only means anything on RequestCast (a target): the

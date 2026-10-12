@@ -421,17 +421,23 @@ namespace apmf::castseats {
         }
 
         // FRIENDS PASS (fix/apmf-heal-los-friends, marth 2026-10-12: "Heals see past friends"): a
-        // BENEFICIAL cast -- the item this caster casts is not OFFENSIVE by ch.25's own classifier
-        // (core/CastGuard.h OffensiveItem: a hostile effect, not Self delivered) -- reads the
-        // friends-pass own line of sight, in which the player's and the teammates' capsules do not
-        // block (core/Sightline.h FRIENDS PASS). An offensive cast keeps the strict reading (marth
-        // 2026-10-06: "spells cant go through npcs"). Immutable form data; no lookup, no lock.
+        // BENEFICIAL cast -- NO effect of the item this caster casts has a hostile base effect,
+        // whatever its delivery (review SEV-5: a Self-delivered hostile item reads strict; this is
+        // deliberately NOT ch.25's Offensive(), which exempts Self delivery for its own purpose) --
+        // reads the friends-pass own line of sight, in which the player's and the teammates'
+        // capsules do not block (core/Sightline.h FRIENDS PASS). Anything else keeps the strict
+        // reading (marth 2026-10-06: "spells cant go through npcs"). Immutable form data (the same
+        // effect walk ch.25 does on this thread); no lookup, no lock.
         bool OwnLosFriendsPass(RE::CombatMagicCaster* a_this) {
-            return a_this && a_this->magicItem && !apmf::castguard::OffensiveItem(a_this->magicItem);
+            if (!a_this || !a_this->magicItem) return false;
+            for (auto* eff : a_this->magicItem->effects)
+                if (eff && eff->baseEffect && eff->baseEffect->IsHostile()) return false;
+            return true;
         }
 
         // ONE log line per claim that a friend's capsule was let through, naming the body. "Per
-        // claim" = per (actor, driven form, target, claim deadline): a new grant logs again. Taken
+        // claim" = per (actor, driven form, target, friend): NOT the claim deadline, which every
+        // client Repoint heartbeat moves (review SEV-4: MFO renews each cast claim). Taken
         // only when a friends-pass read stepped past a friend (rare); the leaf mutex is never held
         // across a call. The NAME needs a form lookup, which the seat (combat thread) never does:
         // the line is posted to the main thread (mainthread::Post), FormIDs captured by value.
@@ -440,7 +446,7 @@ namespace apmf::castseats {
         void NoteFriendPassed(const SeatMatch& m, RE::FormID a_friend, std::size_t a_seat) {
             if (!a_friend) return;
             const std::uint64_t claimKey = ((static_cast<std::uint64_t>(m.driven) << 32) | m.claim.target) ^
-                                           (m.claim.expiresMs * 0x9E3779B97F4A7C15ull);
+                                           (static_cast<std::uint64_t>(a_friend) * 0x9E3779B97F4A7C15ull);
             {
                 std::scoped_lock lk(g_friendLogMx);
                 if (g_friendLogged.size() > 512) g_friendLogged.clear();
