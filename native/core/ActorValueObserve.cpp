@@ -70,7 +70,6 @@ namespace {
     // not needed: the vtable write that makes a thunk reachable comes after these stores).
     std::atomic<std::uintptr_t> g_avoOffset{ 0 };
     std::atomic<std::uintptr_t> g_vt{ 0 };           // the ActorValueOwner vtable the thunks sit on
-    std::atomic<std::uintptr_t> g_orig07{ 0 };       // slot 0x07 SetActorValue as found at install
     std::uintptr_t              g_ours[8]{};         // our thunk per hooked slot (0x04..0x06), set before the writes
     std::atomic<bool>           g_observed{ false };
     // Review SEV-4: the tracked-AV counter sits on its own cache line (every Character AV write reaches
@@ -82,8 +81,10 @@ namespace {
 
     // Review SEV-3: is the call that reached slot `a_slot` coming THROUGH another DLL's hook layered
     // over Harbinger -- the slot's vtable entry no longer ours, or (slot 0x04) the 0x07 SetActorValue
-    // entry no longer the one found at install (0x07 tail-jumps into 0x04)? Returns that layer's
-    // entry (0 = not layered). Pointer reads only.
+    // entry anywhere but SkyrimSE.exe (0x07 tail-jumps into 0x04; round 2: a 0x07 hook installed BEFORE
+    // Harbinger counts too, so the test is "not the engine's", not "changed since install")? Returns
+    // that layer's entry (0 = not layered). Only reached off the hot path (a tracked AV on a claimed
+    // actor whose return address is not the engine's).
     std::uintptr_t LayerOver(std::size_t a_slot) {
         const auto vt = g_vt.load(std::memory_order_relaxed);
         if (!vt) return 0;
@@ -91,7 +92,7 @@ namespace {
         if (cur != g_ours[a_slot]) return cur;
         if (a_slot == kSlotSetBase) {
             const auto c7 = *reinterpret_cast<const std::uintptr_t*>(vt + sizeof(void*) * 0x07);
-            if (c7 != g_orig07.load(std::memory_order_relaxed)) return c7;
+            if (apmf::sources::ForAddress(c7, apmf::sources::Kind::kHook) != apmf::sources::kEngineSource) return c7;
         }
         return 0;
     }
@@ -151,7 +152,10 @@ namespace {
             if (const auto layer = LayerOver(a_slot); layer != 0) {
                 const auto layerSrc = apmf::sources::ForAddress(layer, apmf::sources::Kind::kHook);
                 if (src == layerSrc) {
-                    const auto c = apmf::facetattr::CallerBelow(a_ret);
+                    // Round 2 (SEV-4): a layer in NO module (heap / trampoline code) has no unwind data,
+                    // so the frame after it may be garbage that FollowStubs would read: never scan then.
+                    const auto c = layerSrc != apmf::sources::kNoSource ? apmf::facetattr::CallerBelow(a_ret)
+                                                                        : apmf::facetattr::Caller{};
                     if (c.found && c.self) {   // APMF's own write, through the layer
                         g_self.fetch_add(1, std::memory_order_relaxed);
                         return;
@@ -259,7 +263,6 @@ namespace apmf::avobserve {
             return *reinterpret_cast<const std::uintptr_t*>(base + sizeof(void*) * a_slot);
         };
         g_avoOffset.store(ae ? kAvoOffsetAE : kAvoOffsetSE, std::memory_order_relaxed);
-        g_orig07.store(entry(0x07), std::memory_order_relaxed);
         g_ours[kSlotSetBase] = SKSE::stl::unrestricted_cast<std::uintptr_t>(&SetBaseHook::thunk);
         g_ours[kSlotMod]     = SKSE::stl::unrestricted_cast<std::uintptr_t>(&ModHook::thunk);
         g_ours[kSlotRestore] = SKSE::stl::unrestricted_cast<std::uintptr_t>(&RestoreHook::thunk);
