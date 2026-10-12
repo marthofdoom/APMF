@@ -1468,6 +1468,16 @@ namespace apmf {
                              apmf::log::Hex(formID), handle, apmf::sightline::NotArmedReason());
                 return false;   // nothing changed -> no publish
             }
+            // ch.25 (review SEV-4 of d2d591d): a Repoint is held to RequestEx's rules (e.g. a
+            // kCastGuard_LineOfFire bit added while the measurement is unarmed would hold every
+            // offensive start forever). Refused by name, the whole Repoint dropped.
+            if (channel == Registry::Get().ChannelForIntent(APMF_API::kIntent_CastGuard)) {
+                if (const char* why = apmf::castguard::RefuseReason(formID, &param)) {
+                    spdlog::warn("[ch.25] 0x{} Repoint on cast-guard claim h={} REFUSED, nothing changed: {}.",
+                                 apmf::log::Hex(formID), handle, why);
+                    return false;   // nothing changed -> no publish
+                }
+            }
 
             APMF_API::APMF_Param effParam = param;
             if (denyOnly) {

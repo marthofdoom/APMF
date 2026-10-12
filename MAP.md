@@ -1078,7 +1078,8 @@ THE MEASUREMENT: `castguard::Pump` (Arbiter::OncePerFrame, after `sightline::Pum
 the aim (the live driving cast claim's target when that claim's spell is offensive, else `currentCombatTarget`),
 then every high actor + the player in the caster's worldspace / cell: within `kLinePad` (80u) of the
 caster-to-aim segment (projecting between) and not read OCCLUDED from the caster by `sightline::Read` (asked, so the
-pair stays measured; unknown counts), or nearest to the aim (within 1024u, for the seat's `area + kBlastPad` test).
+pair stays measured; unknown counts), or nearest to the aim (within 4096u, for the seat's `area x kUnitsPerFoot + kBlastPad`
+test: EFIT area is in FEET, 64/3 u per foot, review SEV-2 of d2d591d). A Repoint is refused by the same `RefuseReason`.
 Friendly = `!other->IsHostileToActor(caster)`, plus the player and teammates for a teammate caster. Published per
 caster in a 128-slot SEQLOCK table (main writes; readers lock-free); slots of casters no longer guarded are emptied.
 Seats trust a measurement for `kFreshMs` (250 ms): 0x06 answers NO unless fresh and clear; 0x0A refuses only on a
@@ -1097,7 +1098,9 @@ Evidence that 0x0A covers the RELEASE: `ActorMagicCaster` slot 3 `RequestCastImp
   ray or an actor walk off the main thread (Measure is main only; `sightline::Read` is the lock-free ask); dropping
   the `Decide` priority test (the controller's degrade rule: enforce only against an outranked source); a measurement
   slot outliving its caster's guard (Pump empties it); adding a decay or let-one-through in Harbinger (client
-  policy, INVARIANTS #18 ch.25 (e)). Open review items: none yet.
+  policy, INVARIANTS #18 ch.25 (e)); reading EFIT area as units (it is feet). Open review items: REVIEW-BACKLOG
+  APMF-B70 (hostility over-holds aggroed non-faction-hostile combatants; self area spells unguarded; other-hand aim
+  at 0x0A; log-throttle map never cleared).
 
 ### `native/core/RestoreCensus.{h,cpp}` — phase 0b Restore-caster census (PASSIVE probe)
 Read-only. `[Probe] bRestoreCensus` (code default 1 for the field; STATUS pre-release

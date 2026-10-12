@@ -208,8 +208,10 @@ exist; one claim may carry either or both (`param.ival`, `CastGuardFlags`).
   within 80 units of the line from the caster to its aim (projecting between the two) and NOT
   read OCCLUDED from the caster by Harbinger's own ray (a wall between them means the bolt
   cannot reach it; an unknown or unavailable reading still counts it), or within the spell's
-  largest effect area + 64 units of the aim (MFO's `WouldHitTeammate` rule, area read in the
-  same units MFO used). The aim is the target of the actor's live driving `kIntent_Cast` claim
+  largest effect area + 64 units of the aim. The effect area is stored in FEET and converted at
+  64/3 units per foot (Skyrim.esm Fireball: area 15 = 320 units, its explosion radius; Fire
+  Storm: 100 = 2133). MFO's `WouldHitTeammate` read the raw number as units, a blast about 21x
+  too small. Friendlies up to 4096 units from the aim are considered. The aim is the target of the actor's live driving `kIntent_Cast` claim
   when that claim's spell is itself offensive, else the actor's combat target; no aim means
   no line, so nothing is held.
   - **Measured every time.** `castguard::Pump` measures every guarded caster on the main
@@ -250,7 +252,10 @@ exist; one claim may carry either or both (`param.ival`, `CastGuardFlags`).
 (0 = `kCastDefaultTtlMs`, 4 s; clamped to `kCastMaxTtlMs`, 15 s). `form`, `target`, `pos` are
 not read. The claim is bounded exactly like a cast claim: it dies at the window unless a
 `Repoint` renews it (each Repoint renews the window granted at request; a Repoint's `fval` is
-not re-read, its `ival` is, so a heartbeat can change the guards). Highest basis wins; ties keep
+not re-read, its `ival` is, so a heartbeat can change the guards). A Repoint is held to the same
+refusal rules as the request: one that would be refused (an unknown bit, no bit,
+`kCastGuard_LineOfFire` while the measurement is not armed) is REFUSED by name and the claim
+keeps its previous bits. Highest basis wins; ties keep
 the earliest claim; the winner's bits apply alone.
 
 **Refused synchronously (`kInvalidHandle`, logged `[apmf][cast-guard] claim refused`):** an
@@ -278,7 +283,8 @@ if (api->abiVersion >= 21) {
 ```
 
 **What it does not do.** It does not choose a spell, aim, equip or fire anything; it only says
-no. It does not touch the instant or voice caster. It does not reach a cast already past its
+no. A SELF-delivered area spell (Fire Storm, a cloak) is never guarded: only a spell fired at an
+aim has a line of fire (REVIEW-BACKLOG APMF-B70). It does not touch the instant or voice caster. It does not reach a cast already past its
 release (a projectile in flight). A fire-and-forget cast held at 0x06 is simply not started; one
 refused at its release is interrupted by the engine after its charge animation.
 

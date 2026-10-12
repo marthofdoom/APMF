@@ -225,13 +225,15 @@ namespace apmf::castguard {
                 if (eff && eff->baseEffect && eff->baseEffect->IsHostile()) return true;
             return false;
         }
-        // The largest effect area (MagicItem::GetLargestArea is an id call with no verified row,
-        // so the effect list is read directly).
+        // The largest effect area IN GAME UNITS (MagicItem::GetLargestArea is an id call with no
+        // verified row, so the effect list is read directly). EffectItem::area is in FEET: Skyrim.esm
+        // Fireball has area 15 and a 320u explosion radius, Fire Storm area 100 and 2100u -- 64/3 u per
+        // foot (review SEV-2 of d2d591d; MFO's raw-number rule under-sized every blast ~21x).
         float LargestArea(RE::MagicItem* a_mi) {
             std::uint32_t a = 0;
             for (auto* eff : a_mi->effects)
                 if (eff) a = std::max(a, eff->effectItem.area);
-            return static_cast<float>(a);
+            return static_cast<float>(a) * kUnitsPerFoot;
         }
         // The channel bound applies to SPELLS (MFO's bound: a SpellItem), concentration cast.
         bool ConcentrationSpell(RE::MagicItem* a_mi) {
@@ -260,9 +262,10 @@ namespace apmf::castguard {
             return !a_other->IsHostileToActor(a_caster);
         }
 
-        // Friendlies farther than this from the aim are not recorded for the blast test (a spell
-        // whose area + kBlastPad exceeds it is compared against the nearest one inside it).
-        constexpr float kBlastConsider = 1024.0f;
+        // Friendlies farther than this from the aim are not recorded for the blast test: 4096u covers
+        // an area up to ~188 ft (Fire Storm's 100 ft = 2133u fits; a larger area is compared against
+        // the nearest friendly inside 4096u). The hostility test runs only for actors this close.
+        constexpr float kBlastConsider = 4096.0f;
 
         // MAIN thread: measure one caster and publish.
         void Measure(RE::FormID a_fid, std::uint64_t a_now) {

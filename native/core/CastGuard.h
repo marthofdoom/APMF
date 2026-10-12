@@ -39,7 +39,7 @@
 // counts only while Harbinger's own ray (core/Sightline.h Read) does not read it OCCLUDED
 // from the caster -- a wall between them means the bolt cannot reach it; an unknown or
 // unavailable reading counts it (never clear by fallback, principle 7). A friendly near the
-// AIM counts against a spell whose largest effect area + kBlastPad reaches it; that radius
+// AIM counts against a spell whose largest effect area (feet x 64/3 = units) + kBlastPad reaches it; that radius
 // is spell-specific, so the seat compares it. The result is published per caster in a
 // seqlock slot table: readers on any thread are lock-free.
 //
@@ -62,7 +62,8 @@ namespace RE {
 namespace apmf::castguard {
 
     inline constexpr float         kLinePad             = 80.0f;   // a friendly this close to the line is in it
-    inline constexpr float         kBlastPad            = 64.0f;   // added to the spell's largest area
+    inline constexpr float         kBlastPad            = 64.0f;   // added to the spell's largest area (in units)
+    inline constexpr float         kUnitsPerFoot        = 64.0f / 3.0f;   // EffectItem::area is in FEET
     inline constexpr std::uint64_t kFreshMs             = 250;     // a measurement older than this is unknown
     inline constexpr std::uint32_t kMaxMeasuresPerFrame = 8;
 

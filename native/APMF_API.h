@@ -781,10 +781,10 @@ namespace APMF_API {
         kCastGuard_LineOfFire   = 1u << 0,  // HOLD an OFFENSIVE cast (a hostile effect, not Self delivery) while a
                                             //   FRIENDLY (not hostile to the caster; for a teammate caster also the
                                             //   player and teammates) is in the open within 80u of the line to the aim,
-                                            //   or within the spell's area + 64u of the aim (aim = its live driving
-                                            //   cast claim's target, else its combat target). Measured each frame by
-                                            //   Harbinger. 0x06: NO unless a <= 250 ms measurement says clear; 0x0A
-                                            //   (start, release, channel ticks): refused when one says blocked.
+                                            //   or within the spell's area (EFIT feet x 64/3) + 64u of the aim (aim =
+                                            //   its driving cast claim's target, else its combat target). Measured each
+                                            //   frame. 0x06: NO unless a <= 250 ms measurement says clear; 0x0A (start,
+                                            //   release, channel ticks): refused when one says blocked.
         kCastGuard_ChannelRight = 1u << 1,  // REFUSE the AI's own CONCENTRATION cast on the right / left HAND caster
         kCastGuard_ChannelLeft  = 1u << 2,  //   (0x0A: start and every channel tick) unless a live kIntent_Cast claim
                                             //   on that hand names that spell. The instant caster is never touched.
