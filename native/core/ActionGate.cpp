@@ -593,16 +593,27 @@ namespace apmf::actiongate {
         // (orig), counted as Engine "stood" and logged (rate-limited per actor). Called only after
         // every mechanism check passed, so "overruled" counts real denies. Combat thread.
         bool ClaimOutranksTree(APMF_API::Handle a_h, RE::FormID a_fid, const char* a_tag, std::uint32_t a_key) {
-            const auto v = apmf::facetattr::Decide(apmf::sources::Facet::kCombatAction, a_h,
-                                                   apmf::sources::kEngineSource, a_fid, "");
-            if (!v.enforce && apmf::facetattr::LineDue(apmf::sources::Facet::kCombatAction, a_fid, a_key)) {
+            // APMF-B71 (SEV-5): nothing may unwind into the engine's tree runner. A throw here (an
+            // allocation in the registry, the line limiter or the log) keeps the pre-1b answer: the
+            // claim's deny stands, which is also the default-priority answer.
+            apmf::facetattr::Verdict v;
+            try {
+                v = apmf::facetattr::Decide(apmf::sources::Facet::kCombatAction, a_h, apmf::sources::kEngineSource,
+                                            a_fid, "");
+            } catch (...) {
+                return true;
+            }
+            if (v.enforce) return true;
+            try {
+                if (!apmf::facetattr::LineDue(apmf::sources::Facet::kCombatAction, a_fid, a_key)) return false;
                 spdlog::info("[{}] 0x{} the engine's combat tree chose a leaf claim h={} would deny; {} priority {} "
                              "does not outrank Engine (priority {}) on the CombatAction facet, so the leaf RUNS "
                              "(APMF_Sources.ini). Logged at most once per 5 s per actor.",
                              a_tag, apmf::log::Hex(a_fid), a_h, apmf::facetattr::NameOr(v.client, "an internal claim"),
                              v.claimPrio, v.srcPrio);
+            } catch (...) {
             }
-            return v.enforce;
+            return false;
         }
 
         // ch.23 act() half: a leash leaf's act(). NOT a ch.7 path -- these leaves carry no ch.7

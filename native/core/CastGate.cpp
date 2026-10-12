@@ -5,6 +5,7 @@
 #include "core/CastGate.h"
 #include "core/CastObserve.h"   // NoteCheckCast (castobs channel end / interrupt attribution)
 #include "core/CastGuard.h"     // ch.25 kIntent_CastGuard (ABI v21): line of fire + channel bound
+#include "core/FacetAttribution.h"   // Harbinger 1b: the refusal ranked against the answer's source
 
 // ============================================================================
 // T2c -- CheckCast, the HARD pre-charge cast gate. Docs/ALLOWANCE-TEMPLATE.md
@@ -243,6 +244,42 @@ namespace apmf::castgate {
                 }
                 return engineSays;
             }
+
+            // HARBINGER 1b (cast slice): the YES this would refuse is the answer of the chain below the
+            // seat -- the engine, or a module hooked inside 0x0A on this vtable (InsideSource). The
+            // refusal stands only when the refusing claim outranks that source on the Cast facet; with
+            // both narrowings refusing, the higher-priority claim decides. A source that cannot be
+            // named is the degrade rule (allowed + alerted; [UnknownSources] Cast=override restores it).
+            // Everything below is inside the try: a throw keeps the claim's answer (the refusal), which is
+            // also the default-priority answer.
+            bool stands = false;
+            try {
+                const auto       inside = apmf::facetattr::InsideSource(oit->second);
+                APMF_API::Handle h      = APMF_API::kInvalidHandle;
+                if (!castAllows) h = apmf::facetattr::CastClaimHandle(fid);
+                if (!selectAllows) {
+                    const auto sh = apmf::facetattr::SelectClaimHandle(fid);
+                    if (castAllows || apmf::sources::ClaimPriority(sh, apmf::sources::Facet::kCast) >
+                                          apmf::sources::ClaimPriority(h, apmf::sources::Facet::kCast))
+                        h = sh;
+                }
+                const auto v = apmf::facetattr::Decide(apmf::sources::Facet::kCast, h, inside, fid,
+                                                       "CheckCast (0x0A): the answer came through a hook inside the "
+                                                       "seat that is in no module");
+                stands = !v.enforce;
+                if (stands) try {
+                    if (apmf::facetattr::LineDue(apmf::sources::Facet::kCast, fid, 0x0A00u | (subjectForm & 0xFFu)))
+                        spdlog::info("[t2c] 0x{} CheckCast would deny spell=0x{} (ch.8 select {}, ch.8b cast {}) but "
+                                     "{} -- the engine's YES STANDS.",
+                                     apmf::log::Hex(fid), apmf::log::Hex(subjectForm), selectAllows ? "ALLOW" : "DENY",
+                                     castAllows ? "ALLOW" : "DENY",
+                                     apmf::facetattr::WhyStands(apmf::sources::Facet::kCast, v, h));
+                } catch (...) {
+                }
+            } catch (...) {
+                stands = false;
+            }
+            if (stands) return engineSays;
 
             if (a_reason) *a_reason = RE::MagicSystem::CannotCastReason::kMultipleCast;
 

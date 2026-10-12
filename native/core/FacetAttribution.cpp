@@ -1,6 +1,10 @@
 #include "PCH.h"
 #include "core/FacetAttribution.h"
 #include "core/Clock.h"
+#include "core/ControlMap.h"
+
+#include <limits>
+#include <shared_mutex>
 
 #include <mutex>
 #include <unordered_map>
@@ -20,6 +24,12 @@ namespace apmf::facetattr {
 
         std::mutex                                       g_lineMx;
         std::unordered_map<std::uint64_t, std::uint64_t> g_lineLast;   // key -> last line (monotonic ms)
+
+        // InsideSource's cache: displaced function -> its raw source (before the client rule).
+        // Bounded: a seat's displaced functions are a fixed handful per vtable.
+        constexpr std::size_t                             kInsideCap = 1024;
+        std::shared_mutex                                 g_insideMx;
+        std::unordered_map<std::uintptr_t, SourceId>      g_inside;
     }
 
     Verdict Decide(Facet a_facet, APMF_API::Handle a_claim, SourceId a_src, RE::FormID a_actor,
@@ -89,6 +99,79 @@ namespace apmf::facetattr {
         if (now - it->second < a_everyMs) return false;
         it->second = now;
         return true;
+    }
+
+    SourceId InsideSource(std::uintptr_t a_prevFn) {
+        namespace src = apmf::sources;
+        if (!a_prevFn) return src::kEngineSource;
+        SourceId raw   = src::kNoSource;
+        bool     found = false;
+        {
+            std::shared_lock lk(g_insideMx);
+            if (const auto it = g_inside.find(a_prevFn); it != g_inside.end()) {
+                raw   = it->second;
+                found = true;
+            }
+        }
+        if (!found) {
+            // ForAddress: SkyrimSE.exe -> Engine; APMF itself or no module -> kNoSource (told
+            // apart by IsSelf); skse64 -> DirectCalls; any other module -> a hook source.
+            if (src::IsSelf(a_prevFn)) raw = src::kEngineSource;   // another APMF layer: the engine's answer below it
+            else raw = src::ForAddress(a_prevFn, src::Kind::kHook);
+            if (raw == src::kDirectSource) {
+                // skse64 hooked INSIDE the seat is a hook DLL, not "direct calls" (75): name it by module.
+                char name[64]{};
+                src::ModuleNameOf(a_prevFn, name, sizeof(name));
+                raw = name[0] ? src::Register(name, src::Kind::kHook) : src::kNoSource;
+            }
+            std::unique_lock lk(g_insideMx);
+            if (g_inside.size() < kInsideCap) g_inside.emplace(a_prevFn, raw);
+        }
+        if (raw != src::kNoSource && raw != src::kEngineSource && src::IsClient(raw)) return src::kEngineSource;
+        return raw;
+    }
+
+    APMF_API::Handle CastClaimHandle(RE::FormID a_actor) {
+        APMF_API::Handle h     = APMF_API::kInvalidHandle;
+        float            basis = 0.0f;
+        std::uint32_t    flags = 0;
+        apmf::ControlMap::Get().CastFacetOutranks(a_actor, -std::numeric_limits<float>::infinity(), h, basis, flags);
+        return h;
+    }
+
+    APMF_API::Handle SelectClaimHandle(RE::FormID a_actor) {
+        APMF_API::APMF_Param p{};
+        float                basis = 0.0f;
+        APMF_API::Handle     h     = APMF_API::kInvalidHandle;
+        apmf::ControlMap::Get().TryGetOwningClaimBasis(a_actor, APMF_API::kIntent_SelectSpell, p, basis, &h);
+        return h;
+    }
+
+    bool Outranks(Facet a_facet, APMF_API::Handle a_claim, SourceId a_src) {
+        namespace src = apmf::sources;
+        SourceId  client    = src::kNoSource;
+        const int claimPrio = src::ClaimPriority(a_claim, a_facet, &client);
+        int       srcPrio   = 0;
+        if (a_src == src::kNoSource) {
+            if (!src::OverrideUnknown(a_facet)) return false;
+            srcPrio = src::Priority(src::kUnattributedSource, a_facet);
+        } else {
+            srcPrio = a_src == client ? claimPrio : src::Priority(a_src, a_facet);
+        }
+        return claimPrio > srcPrio;
+    }
+
+    std::string WhyStands(Facet a_facet, const Verdict& a_v, APMF_API::Handle a_claim) {
+        namespace src = apmf::sources;
+        if (a_v.unknown && !src::OverrideUnknown(a_facet))
+            return fmt::format("the answer came through a source Harbinger cannot name, and unknown sources are "
+                               "ALLOWED on the {} facet ([UnknownSources] {}=allow; =override lets claim h={} "
+                               "outrank it)",
+                               src::FacetName(a_facet), src::FacetName(a_facet), a_claim);
+        return fmt::format("claim h={} ({} priority {}) does not outrank {} (priority {}) on the {} facet "
+                           "(APMF_Sources.ini)",
+                           a_claim, NameOr(a_v.client, "an internal claim"), a_v.claimPrio, src::Name(a_v.src),
+                           a_v.srcPrio, src::FacetName(a_facet));
     }
 
 }
