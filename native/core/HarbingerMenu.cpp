@@ -185,6 +185,12 @@ namespace apmf::harbingermenu {
                             facetAlerts ? fmt::format("  -  {} alert(s)", facetAlerts) : std::string(),
                             static_cast<int>(f));
             if (!g.CollapsingHeader(label.c_str(), facetAlerts ? kTreeDefaultOpen : 0)) return;
+            {
+                bool ovr = OverrideUnknown(f);
+                g.PushID(fmt::format("unk{}", static_cast<int>(f)).c_str());
+                if (g.Checkbox("Unknown sources can be overridden", &ovr)) EnqueueSetOverrideUnknown(f, ovr);
+                g.PopID();
+            }
             if (!g.BeginTable(fmt::format("tbl{}", static_cast<int>(f)).c_str(), 4, kTableRowBg | kTableBordersInnerH,
                               ImVec2{ 0.0f, 0.0f }, 0.0f))
                 return;

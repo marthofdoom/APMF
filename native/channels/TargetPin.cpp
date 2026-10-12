@@ -555,17 +555,21 @@ namespace {
         auto& cap = CaptureFor(self);
         const bool logNow = RateOk(cap.lastLogMs);
         for (int w = 0; w < nWriters; ++w) apmf::sources::NoteHit(writers[w], apmf::sources::Facet::kTarget);
-        if (unproven || nWriters == 0) {
+        const bool unknownWrite = unproven || nWriters == 0;
+        const bool unknownOver  = unknownWrite && apmf::sources::OverrideUnknown(apmf::sources::Facet::kTarget);
+        if (unknownWrite) {
             cap.unattributed.fetch_add(1, std::memory_order_relaxed);
             if (logNow) {
                 spdlog::warn("[ch.20] 0x{} OVERWRITTEN: the selector seat answered with the pin 0x{}, but the actor "
                              "ended its combat update aimed at 0x{}, written in a segment Harbinger cannot prove (see "
-                             "the ATTRIBUTION DEFECT line). ALLOWED. ({} so far)",
-                             Hex(self), Hex(tf), Hex(currentPtr->GetFormID()), n);
+                             "the ATTRIBUTION DEFECT line). {} ({} so far)",
+                             Hex(self), Hex(tf), Hex(currentPtr->GetFormID()),
+                             unknownOver ? "Unknown sources can be overridden is ON for Target: treated as priority 0."
+                                         : "ALLOWED.", n);
             }
             apmf::sources::Unattributed(apmf::sources::Facet::kTarget, self,
                                         "DEFECT: the combat target was rewritten in an unproven 0xE4 segment");
-            return;
+            if (!unknownOver) return;
         }
         apmf::sources::SourceId client = apmf::sources::kNoSource;
         const int claimPrio = apmf::sources::ClaimPriority(claimH, apmf::sources::Facet::kTarget, &client);
@@ -574,6 +578,10 @@ namespace {
         for (int w = 0; w < nWriters; ++w) {
             const int p = apmf::sources::Priority(writers[w], apmf::sources::Facet::kTarget);
             if (p > topPrio) { topPrio = p; top = writers[w]; }
+        }
+        if (unknownOver && topPrio < 0) {   // no named writer: the unattributed one is the lowest-priority source
+            topPrio = 0;
+            top     = apmf::sources::kUnattributedSource;
         }
         const std::string clientName = client != apmf::sources::kNoSource
                                            ? std::string(apmf::sources::Name(client)) : std::string("an internal claim");
@@ -596,6 +604,14 @@ namespace {
             const bool held = a_this->GetActorRuntimeData().currentCombatTarget == pinH;
             cap.restored.fetch_add(1, std::memory_order_relaxed);
             for (int w = 0; w < nWriters; ++w) apmf::sources::NoteOverruled(writers[w], apmf::sources::Facet::kTarget);
+            if (unknownOver) {
+                apmf::sources::NoteOverruled(apmf::sources::kUnattributedSource, apmf::sources::Facet::kTarget);
+                if (logNow)
+                    spdlog::warn("[sources] 0x{} UNATTRIBUTED Target write OVERRIDDEN: \"Unknown sources can be "
+                                 "overridden\" is on for Target, so the unattributed writer counts as priority 0 and "
+                                 "the pin claim ({} priority {}) outranks it.",
+                                 Hex(self), clientName, claimPrio);
+            }
             if (logNow) {   // rate-limited, including the "still not the pin" case (review round 2)
                 spdlog::info("[ch.20] 0x{} captured {} overruled: it rewrote the target to 0x{} after the seat answered "
                              "with the pin; the pin claim ({} priority {}) outranks it (priority {}), so Harbinger "

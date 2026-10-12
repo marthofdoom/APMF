@@ -332,7 +332,7 @@ it lock-free; counters/priorities are atomics; one mutex on the add. CLIENT IDEN
 `NoteClientRequest` (handle -> module via `GetModuleHandleEx(FROM_ADDRESS)`); Release forgets;
 `Pump()` purges dead handles every 60 s. `ClaimPriority(handle, facet)` = the client's priority,
 the client default for an internal handle. THE DEGRADE RULE (Q4): `Unattributed(facet, actor,
-detail)` = allowed + rate-limited `[sources] UNATTRIBUTED <facet>` + an alert row (menu); NEVER a
+detail)` = allowed (unless that facet's `[UnknownSources] <Facet>=override`, `OverrideUnknown(f)`: then an unattributed writer counts as priority 0 and only ch.20's restore in `channels/TargetPin.cpp` acts on it; stored/shown only on other facets; menu checkbox -> `EnqueueSetOverrideUnknown` -> Pump saves) + rate-limited `[sources] UNATTRIBUTED <facet>` + an alert row (menu); NEVER a
 deny. THE SEAT CENSUS: every seat registers at install (`RegisterVtableSeat` / `NoteVfunc` /
 `RegisterCallSeat`; `allowance::InstallOnVtables` registers its rows itself, facet from its tag via
 `FacetForTag`); the module of the DISPLACED value is a hook that runs inside Harbinger's seat.
@@ -368,7 +368,7 @@ header `resources/SKSEMenuFramework.h`, QTR-Modding/SKSE-Menu-Framework-3 @ dc91
 vendored). Any export missing -> the page is refused whole, loudly; SMF absent -> one loud line,
 Harbinger runs from the INI (Q10). Page `Harbinger/Sources` (layout 2026-10-11): an alerts summary line
 (expandable), a "hide idle" checkbox (UI state only), one collapsible header per facet (collapsed unless it has
-an alert) holding a fixed-column table (source, kind badge, hits, priority slider; idle sources greyed and last;
+an alert) holding an "Unknown sources can be overridden" checkbox (saved to `[UnknownSources]`), then a fixed-column table (source, kind badge, hits, priority slider; idle sources greyed and last;
 details in the hover tooltip), and a collapsed census list at the bottom. Exports: `AddSectionItem` + 20 `ig*`
 (adds igSpacing, igCheckbox, igCollapsingHeader_TreeNodeFlags, igBeginTooltip, igEndTooltip, igIsItemHovered;
 the tab-bar exports are no longer used).

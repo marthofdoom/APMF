@@ -75,6 +75,11 @@ namespace apmf::sources {
         }
         std::array<int, kFacetCount> g_defUnreg  = Filled<kDefaultUnregistered>();
         std::array<int, kFacetCount> g_defClient = Filled<kDefaultClient>();
+        // [UnknownSources] <Facet>=allow|override. Written at Init and by Pump (main thread), read anywhere.
+        std::atomic<bool>        g_unkOverride[kFacetCount]{};
+        std::atomic<std::int8_t> g_unkPending[kFacetCount]{ -1, -1, -1, -1, -1, -1, -1, -1 };   // -1 none, 0/1 queued
+        std::atomic<bool>        g_unkPendingAny{ false };
+        static_assert(kFacetCount == 8, "g_unkPending initialiser lists one -1 per facet");
 
         // clients: handle -> {source, issued}
         struct HandleRec { SourceId src; std::uint64_t issuedMs; };
@@ -164,6 +169,11 @@ namespace apmf::sources {
                     "Defaults", fmt::format("iUnregistered{}", sect).c_str(), kDefaultUnregistered, kIni)));
                 g_defClient[i] = Clamp(static_cast<int>(GetPrivateProfileIntA(
                     "Defaults", fmt::format("iClient{}", sect).c_str(), kDefaultClient, kIni)));
+                {
+                    char b[16]{};
+                    GetPrivateProfileStringA("UnknownSources", sect, "allow", b, sizeof(b), kIni);
+                    g_unkOverride[i].store(Lower(b) == "override", std::memory_order_relaxed);
+                }
                 g_iniPrio[i].clear();
                 // A null key enumerates the section's key names, NUL-separated, double-NUL-terminated
                 // (REX::W32::GetPrivateProfileStringA, the fork's KERNEL32.h).
@@ -569,12 +579,26 @@ namespace apmf::sources {
         auto      prev = g_unattribLastLog[i].load(std::memory_order_relaxed);
         if (now - prev >= kUnattribLogMs && g_unattribLastLog[i].compare_exchange_strong(prev, now)) {
             const auto suppressed = g_unattribSuppressed[i].exchange(0, std::memory_order_relaxed);
-            spdlog::warn("[sources] UNATTRIBUTED {} write on actor 0x{}: {} -- ALLOWED (Harbinger never denies a writer "
-                         "it cannot name; see the Harbinger page alerts). {} more in the last {} s not logged.",
-                         FacetName(f), Hex(actor), detail ? detail : "", suppressed, kUnattribLogMs / 1000);
+            spdlog::warn("[sources] UNATTRIBUTED {} write on actor 0x{}: {} -- {} {} more in the last {} s not logged.",
+                         FacetName(f), Hex(actor), detail ? detail : "",
+                         OverrideUnknown(f)
+                             ? "OVERRIDABLE (the \"Unknown sources can be overridden\" setting is on for this facet: "
+                               "a claim outranks it where the facet enforces)."
+                             : "ALLOWED (Harbinger never denies a writer it cannot name; see the Harbinger page alerts).",
+                         suppressed, kUnattribLogMs / 1000);
         } else {
             g_unattribSuppressed[i].fetch_add(1, std::memory_order_relaxed);
         }
+    }
+
+    bool OverrideUnknown(Facet f) {
+        return f < Facet::kCount && g_unkOverride[static_cast<int>(f)].load(std::memory_order_relaxed);
+    }
+
+    void EnqueueSetOverrideUnknown(Facet f, bool on) {
+        if (f >= Facet::kCount) return;
+        g_unkPending[static_cast<int>(f)].store(on ? 1 : 0, std::memory_order_relaxed);
+        g_unkPendingAny.store(true, std::memory_order_release);
     }
 
     std::vector<Alert> RecentAlerts() {
@@ -733,6 +757,17 @@ namespace apmf::sources {
                 const auto val = std::to_string(v);
                 const bool ok  = WritePrivateProfileStringA(FacetName(op.f), s.name, val.c_str(), kIni) != 0;
                 spdlog::info("[sources] priority {} / {} = {} (menu){}.", FacetName(op.f), s.name, v,
+                             ok ? ", saved to APMF_Sources.ini" : " -- the INI write FAILED, it lasts this session only");
+            }
+        }
+        if (g_unkPendingAny.exchange(false, std::memory_order_acq_rel)) {
+            for (int i = 0; i < kFacetCount; ++i) {
+                const int v = g_unkPending[i].exchange(-1, std::memory_order_relaxed);
+                if (v < 0) continue;
+                if (g_unkOverride[i].exchange(v == 1, std::memory_order_relaxed) == (v == 1)) continue;
+                const auto* name = FacetName(static_cast<Facet>(i));
+                const bool ok = WritePrivateProfileStringA("UnknownSources", name, v ? "override" : "allow", kIni) != 0;
+                spdlog::info("[sources] unknown sources on {} = {} (menu){}.", name, v ? "override" : "allow",
                              ok ? ", saved to APMF_Sources.ini" : " -- the INI write FAILED, it lasts this session only");
             }
         }
