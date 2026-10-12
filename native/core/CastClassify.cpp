@@ -5,6 +5,7 @@
 #include "core/Clock.h"
 #include "core/ControlMap.h"
 #include "core/CastClassify.h"
+#include "core/FacetAttribution.h"   // Harbinger 1b: seat 0's claim-driven answers ranked on the Cast facet
 
 #include <cstring>
 #include <set>
@@ -177,8 +178,36 @@ namespace apmf::castclassify {
                 spdlog::info("[restore-serve] {} ({:08X}) NOT served: {} ({})", name, spellForm, a_reason, a_detail());
         }
 
+        // HARBINGER 1b (cast slice): seat 0's claim-driven answers (the self-flag force, the unclassed-heal
+        // serve and the rowless serve) replace the classification of the chain below the seat on this
+        // vtable (`a_prevFn`: the engine, or a module hooked inside it; facetattr::InsideSource). They are
+        // given only when the matched claim outranks that source on the Cast facet; otherwise the engine
+        // classifies alone. `a_count`: the force site records the decision (it is where a claim-driven
+        // cast starts to exist); the two serves ask silently. A throw keeps the claim's answer (the
+        // default-priority one). Combat thread; FormIDs and the registry only.
+        bool ClaimOutranksClassify(RE::FormID a_fid, RE::FormID a_spell, std::uintptr_t a_prevFn, bool a_count) {
+            try {
+                const auto inside = apmf::facetattr::InsideSource(a_prevFn);
+                const auto h      = apmf::facetattr::CastClaimHandle(a_fid);
+                if (!a_count) return apmf::facetattr::Outranks(apmf::sources::Facet::kCast, h, inside);
+                const auto v = apmf::facetattr::Decide(apmf::sources::Facet::kCast, h, inside, a_fid,
+                                                       "ch.8b seat 0 (classify): the answer came through a hook "
+                                                       "inside the seat that is in no module");
+                if (!v.enforce && apmf::facetattr::LineDue(apmf::sources::Facet::kCast, a_fid, 0x8B01u))
+                    spdlog::info("[ch.8b seat 0] 0x{} spell 0x{}: claim h={} ({} priority {}) does not outrank {} "
+                                 "(priority {}) on the Cast facet -- NOT forced, the engine classifies alone "
+                                 "(APMF_Sources.ini).",
+                                 apmf::log::Hex(a_fid), apmf::log::Hex(a_spell), h,
+                                 apmf::facetattr::NameOr(v.client, "an internal claim"), v.claimPrio,
+                                 apmf::sources::Name(v.src), v.srcPrio);
+                return v.enforce;
+            } catch (...) {
+                return true;
+            }
+        }
+
         void ServeUnclassedHeal(void* a_this, void* a_effect, RE::MagicItem* a_spell, RE::CombatController* a_cc,
-                                std::uint8_t a_selfFlag) {
+                                std::uint8_t a_selfFlag, std::uintptr_t a_prevFn) {
             if (!g_keepBest || !g_restoreRow || !a_spell || !a_cc) {
                 if (a_spell && a_cc)
                     NotServed(a_spell, a_cc, NoServe::NoKeepBest, "KeepBest/Restore row not enabled at install", true,
@@ -247,6 +276,7 @@ namespace apmf::castclassify {
                 }
                 return;
             }
+            if (!ClaimOutranksClassify(fid, spellForm, a_prevFn, false)) return;   // Harbinger 1b: the engine's stands
 
             g_keepBest(a_this, eff, g_restoreRow, 1.0f);
 
@@ -361,7 +391,7 @@ namespace apmf::castclassify {
         // COMBAT thread, after the chained visitor. Cheap path first: an effect that keys a caster row
         // (almost every effect the engine classifies) returns before any claim read.
         void ServeRowless(void* a_this, void* a_effect, RE::MagicItem* a_spell, RE::CombatController* a_cc,
-                          std::uint8_t a_selfFlag) {
+                          std::uint8_t a_selfFlag, std::uintptr_t a_prevFn) {
             if (!g_rowlessOk || !g_keepBestRowless || !a_spell || !a_cc || !a_effect) return;
             const auto* eff = reinterpret_cast<const RE::Effect*>(a_effect);
             if (!eff->baseEffect || EffectKeysCasterRow(eff, a_selfFlag)) return;
@@ -373,6 +403,7 @@ namespace apmf::castclassify {
             const RE::FormID    spellForm = a_spell->GetFormID();
             apmf::CastSeatClaim seat{};
             if (!apmf::ControlMap::Get().TryGetCastSeatClaimForForm(fid, spellForm, seat) || !seat.targetHandle) return;
+            if (!ClaimOutranksClassify(fid, spellForm, a_prevFn, false)) return;   // Harbinger 1b: the engine's stands
 
             RE::FormID keyed = 0;
             const auto why   = SpellRowless(a_spell, a_selfFlag, keyed);
@@ -497,7 +528,8 @@ namespace apmf::castclassify {
                         // claim whenever the other hand happens to have the higher
                         // basis. See ControlMap::TryGetCastSeatClaimForForm.
                         apmf::CastSeatClaim seat{};
-                        if (apmf::ControlMap::Get().TryGetCastSeatClaimForForm(fid, spellForm, seat) && seat.targetHandle) {
+                        if (apmf::ControlMap::Get().TryGetCastSeatClaimForForm(fid, spellForm, seat) && seat.targetHandle &&
+                            ClaimOutranksClassify(fid, spellForm, oit->second, true)) {
                             // HOSTILE GUARD (2026-09-06, offense-seat-scope). The rescue
                             // exists SOLELY because the 23-row table has no row for
                             // (Health, self=0, hostile=0) -- a HOSTILE claim (e.g.
@@ -586,8 +618,8 @@ namespace apmf::castclassify {
             }
 
             const auto r = orig(a_this, a_effect);   // THE ENGINE'S OWN CLASSIFICATION LOGIC, SEEING WHATEVER WE SET ABOVE
-            ServeUnclassedHeal(a_this, a_effect, spellPtr, ccPtr, *selfFlag);
-            ServeRowless(a_this, a_effect, spellPtr, ccPtr, *selfFlag);
+            ServeUnclassedHeal(a_this, a_effect, spellPtr, ccPtr, *selfFlag, oit->second);
+            ServeRowless(a_this, a_effect, spellPtr, ccPtr, *selfFlag, oit->second);
             return r;
         }
 

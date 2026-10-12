@@ -4,6 +4,7 @@
 #include "core/Allowance.h"
 #include "core/ControlMap.h"
 #include "core/EquipGate.h"
+#include "core/FacetAttribution.h"   // Harbinger 1b: the cast-hand paths ranked on the Cast facet
 
 #include <intrin.h>
 #include <unordered_set>
@@ -397,12 +398,52 @@ namespace apmf::equipgate {
             const bool handDenyOnly =
                 haveHandClaim && (handSeat.flags & APMF_API::kCastFlag_DenyHandOnly) != 0;
 
+            // HARBINGER 1b (cast slice): every CLAIM-driven answer below -- the Restore seat's YES, the
+            // N4 and deny-complete refusals, and the engine-first ch.8 / ch.8b refusals -- replaces the
+            // answer of the chain below this seat (the engine, or a module hooked inside 0x0F on this
+            // vtable: InsideSource). It stands only when the claim outranks that source on the Cast
+            // facet; otherwise this call falls through to the engine's own answer. One counted decision
+            // per claim kind per call, asked only where a claim-driven answer is about to be given.
+            // NOT ranked (no claim gives them): the completeness fix (an APMF safety rule for a
+            // non-self Restore item) and the ch.15 kIntent_Equipment refusal (the Equip facet).
+            const std::uintptr_t prevFn = oit->second;
+            int        castVerdict = -1, selectVerdict = -1;   // -1 not asked, 0 the source stands, 1 the claim wins
+            auto       claimWins   = [&](int& a_verdict, APMF_API::Handle a_h, const char* a_what) {
+                if (a_verdict < 0) {
+                    apmf::facetattr::Verdict v;
+                    try {
+                        v = apmf::facetattr::Decide(apmf::sources::Facet::kCast, a_h,
+                                                    apmf::facetattr::InsideSource(prevFn), fid,
+                                                    "CheckShouldEquip (0x0F): the answer came through a hook inside "
+                                                    "the seat that is in no module");
+                    } catch (...) {
+                        v.enforce = true;   // the decision could not be recorded: the default-priority answer
+                    }
+                    a_verdict = v.enforce ? 1 : 0;
+                    if (!v.enforce && apmf::facetattr::LineDue(apmf::sources::Facet::kCast, fid, 0x0F00u))
+                        spdlog::info("[t2a] 0x{} CheckShouldEquip item=0x{}: {} -- claim h={} ({} priority {}) does not "
+                                     "outrank {} (priority {}) on the Cast facet, so the engine's own answer STANDS "
+                                     "(APMF_Sources.ini).",
+                                     apmf::log::Hex(fid), apmf::log::Hex(subjectForm), a_what, a_h,
+                                     apmf::facetattr::NameOr(v.client, "an internal claim"), v.claimPrio,
+                                     apmf::sources::Name(v.src), v.srcPrio);
+                }
+                return a_verdict == 1;
+            };
+            auto castWins   = [&](const char* a_what) {
+                return claimWins(castVerdict, apmf::facetattr::CastClaimHandle(fid), a_what);
+            };
+            auto selectWins = [&](const char* a_what) {
+                return claimWins(selectVerdict, apmf::facetattr::SelectClaimHandle(fid), a_what);
+            };
+
             if (fid != 0 && subjectForm != 0 && g_restoreVtables.contains(vt)) {
                 // Hand-scoping (kCastFlag_DualCast included) is already baked into
                 // `hasHandSeat`/`handSeat` above -- no separate handOk re-check needed.
                 const RE::FormID driven = hasHandSeat ? (handSeat.proxy ? handSeat.proxy : handSeat.spell) : 0;
 
-                if (hasHandSeat && driven != 0 && subjectForm == driven) {
+                if (hasHandSeat && driven != 0 && subjectForm == driven &&
+                    castWins("the Restore seat's non-chaining YES for the claim's driven form")) {
                     if (LogDue(fid, subjectForm)) {
                         // feat/0x0f-callsite-log: slot 0x0B GetCategory via the vtable
                         // directly (no new hook) -- confirms category 1 == Restore.
@@ -423,7 +464,8 @@ namespace apmf::equipgate {
                     }
                     return true;   // THE non-chaining answer
                 }
-                if (hasHandSeat && handSeat.proxy != 0 && subjectForm == handSeat.spell) {
+                if (hasHandSeat && handSeat.proxy != 0 && subjectForm == handSeat.spell &&
+                    castWins("the N4 refusal of the original kSelf spell")) {
                     // N4 exactness: while a delivery-flip proxy is being driven, the
                     // ORIGINAL kSelf spell's own Restore item must NOT be allowed to
                     // take the hand instead -- the AI would cast it and silently heal
@@ -555,7 +597,7 @@ namespace apmf::equipgate {
             if (g_denyCompleteEnabled.load(std::memory_order_relaxed) &&
                 (hasHandSeat || handDenyOnly) && fid != 0 && subjectForm != 0) {
                 const RE::FormID driven = handSeat.proxy ? handSeat.proxy : handSeat.spell;
-                if (driven == 0 || subjectForm != driven) {
+                if ((driven == 0 || subjectForm != driven) && castWins("the deny-complete refusal")) {
                     if (LogDue(fid, subjectForm))
                         spdlog::info("[t2a seat 0x0F] 0x{} CheckShouldEquip item=0x{} -> NO (deny-complete: "
                                      "a {} stands on this actor's hand [claim spell 0x{}{}] -- every other "
@@ -614,7 +656,8 @@ namespace apmf::equipgate {
 
             // ch.8 -- cast-select exclusivity (unchanged: deny any OTHER spell
             // while a SelectSpell claim names one).
-            if (!allowance::Allowed(fid, APMF_API::kIntent_SelectSpell, subjectForm))
+            if (!allowance::Allowed(fid, APMF_API::kIntent_SelectSpell, subjectForm) &&
+                selectWins("the ch.8 select refusal"))
                 return false;
 
             // ch.15 -- weapon-order claim: deny any spell/staff re-arm while a
@@ -634,7 +677,7 @@ namespace apmf::equipgate {
             // hand's re-arm decision untouched (callerHand resolved above); an actor
             // with no cast claim, or a call this hook cannot resolve to a hand, is
             // unaffected / degrades to the actor-wide floor.
-            if (!allowance::AllowedCastForHand(fid, subjectForm, callerHand))
+            if (!allowance::AllowedCastForHand(fid, subjectForm, callerHand) && castWins("the ch.8b cast refusal"))
                 return false;
 
             return engineSays;
