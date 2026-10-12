@@ -6,6 +6,7 @@
 #include "core/Log.h"
 #include "core/Sources.h"
 
+#include <algorithm>
 #include <intrin.h>   // _ReturnAddress
 
 extern "C" __declspec(dllimport) unsigned long __stdcall GetPrivateProfileIntA(
