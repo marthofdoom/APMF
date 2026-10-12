@@ -73,4 +73,32 @@ namespace apmf::facetattr {
     // key). Bounded (cleared when it grows past a few thousand keys). Any thread.
     bool LineDue(Facet a_facet, RE::FormID a_actor, std::uint32_t a_key, std::uint64_t a_everyMs = 5000);
 
+    // ---- THE CAST FACET (1b cast slice, 2026-10-12) ---------------------------------------
+    // The seats that refuse or replace a cast / hand answer (core/CastGate.cpp 0x0A, the ch.8 /
+    // ch.8b paths of core/EquipGate.cpp 0x0F, core/CastSeats.cpp 0x06 / 0x07 / 0x0A / 0x0D and
+    // core/CastClassify.cpp seat 0) decide against the source of the answer they replace:
+    // InsideSource(the seat's displaced function for THIS vtable).
+
+    // The source whose answer a seat replaces, from the function the seat displaced on that
+    // vtable (its `orig`). The engine's own function, or another APMF layer -> Engine. A foreign
+    // module hooked INSIDE the seat (installed before Harbinger) -> that module, as a hook
+    // source -- EXCEPT a module that is also a CLIENT (it files claims): its own hook on the seat
+    // is a wrapper of the engine's answer, not an outside writer, so Engine. A displaced function
+    // in no module (an unnamed trampoline) -> kNoSource (the degrade rule). Cached per address.
+    // Any thread.
+    SourceId InsideSource(std::uintptr_t a_prevFn);
+
+    // The handle of the actor's highest-basis LIVE kIntent_Cast claim (any hand, a deny-only
+    // floor included), for its CLIENT's priority. Approximate when two live cast claims from
+    // DIFFERENT clients stand on one actor (the higher basis names the client). kInvalidHandle
+    // when none (ClaimPriority then uses the client default). Any thread (one RCU read).
+    APMF_API::Handle CastClaimHandle(RE::FormID a_actor);
+    // The handle of the actor's winning kIntent_SelectSpell (ch.8) claim. Any thread.
+    APMF_API::Handle SelectClaimHandle(RE::FormID a_actor);
+
+    // Decide's outcome with NO counter, NO alert and NO log: for the follow-on seats of one
+    // decision (so a cast is either wholly claim-driven or wholly the engine's, and the menu
+    // counts each decision once, at the counted seat). Same rule as Decide. Any thread.
+    bool Outranks(Facet a_facet, APMF_API::Handle a_claim, SourceId a_src);
+
 }

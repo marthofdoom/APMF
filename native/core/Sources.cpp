@@ -254,6 +254,16 @@ namespace apmf::sources {
             return reinterpret_cast<std::uintptr_t>(mod) + *reinterpret_cast<const std::uint32_t*>(dos + pe + 4 + 20 + 56);
         }
 
+        // APMF-B71 (SEV-4): a NEGATIVE cache for ModuleOf. An address in no module (a trampoline page)
+        // used to cost a GetModuleHandleExA (the loader lock under Wine) on every call, up to three per
+        // ForAddress through FollowStubs' hops, from seats that may run inside a BSJobs job. Keyed by the
+        // 4 KiB page, remembered for kNegTtlMs (a module mapped there later is seen after at most that
+        // long; only a re-query is lost when an entry ages out), bounded (cleared when full).
+        constexpr std::uint64_t kNegTtlMs = 60000;
+        constexpr std::size_t   kNegCap   = 256;
+        std::shared_mutex                                g_negMx;
+        std::unordered_map<std::uintptr_t, std::uint64_t> g_negPages;   // page -> monotonic ms of the miss
+
         void* ModuleOf(std::uintptr_t addr) {
             if (!addr) return nullptr;
             {
@@ -261,8 +271,20 @@ namespace apmf::sources {
                 for (const auto& r : g_ranges)
                     if (addr >= r.lo && addr < r.hi) return r.mod;
             }
+            const std::uintptr_t page = addr & ~static_cast<std::uintptr_t>(0xFFF);
+            const std::uint64_t  now  = apmf::clock::MonotonicMs();
+            {
+                std::shared_lock lk(g_negMx);
+                if (const auto it = g_negPages.find(page); it != g_negPages.end() && now - it->second < kNegTtlMs)
+                    return nullptr;
+            }
             void* mod = nullptr;
-            if (!GetModuleHandleExA(kFromAddress, reinterpret_cast<const char*>(addr), &mod) || !mod) return nullptr;
+            if (!GetModuleHandleExA(kFromAddress, reinterpret_cast<const char*>(addr), &mod) || !mod) {
+                std::unique_lock lk(g_negMx);
+                if (g_negPages.size() >= kNegCap) g_negPages.clear();
+                g_negPages[page] = now;
+                return nullptr;
+            }
             std::unique_lock lk(g_rangeMx);
             if (g_ranges.size() < 512) g_ranges.push_back({ reinterpret_cast<std::uintptr_t>(mod), ImageEnd(mod), mod });
             return mod;
