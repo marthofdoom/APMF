@@ -224,7 +224,7 @@ namespace {
     // v0.3.0-rc.3 v4, v0.9.1 v5, v0.9.3 v6; v7, v8, v9 and v10 ship together in the
     // first release after 0.9.4 -- REVIEW-BACKLOG APMF-B10: name it at the cut; v11 and
     // v12 ship together in 0.9.8; v13 and v14 ship in 0.9.9; v15, v16 and v17 ship in 0.9.10;
-    // v18, v19 and v20 are Unreleased in CHANGELOG.md -- name their release here at the cut).
+    // v18, v19 and v20 ship in 0.11.0; v21 ships in 0.12.0).
     const char* MinReleaseForAbi(std::uint32_t abi) {
         switch (abi) {
         case 1:  return "0.2.0";
@@ -247,7 +247,7 @@ namespace {
         case 18:
         case 19:
         case 20: return "0.11.0";
-        case 21: return "the first release after 0.11.4";
+        case 21: return "0.12.0";
         default: return "a release newer than this one";
         }
     }

@@ -2047,6 +2047,23 @@ Synchronously (kInvalidHandle, logged): an APMF older than v19, VR, a runtime ot
 * An unreachable X: the engine's own path back fails and it switches the NPC's area off for the
   rest of that fight; the claim ends `kApproachState_EngineDropped`.
 
+## The Harbinger controller: sources, priorities and attribution (v0.12.0)
+
+Harbinger owns the hook point of each facet it controls. Anything else that writes the same facet is an **input from a source**. The controller names those sources, ranks them with priorities and shows the result on the SKSE Menu Framework page (`Docs/HARBINGER-MENU.md`).
+
+**What a client author needs to know**
+
+- **Your DLL is a source.** Harbinger finds your module from the caller of the API (the return address of `Request`, `RequestEx` and `RequestCast`), so you register nothing. The source name is your DLL's file name. Its priority on each facet is the **client default, 50**, unless `APMF_Sources.ini` names it.
+- **A priority decides contests.** A deny stands only while your client outranks the source it overrules. For ch.25 the overruled source is `Engine` on the Cast facet, default priority 20. Another mod's hook defaults to 20, Papyrus and console calls to 75, and a player can raise or lower any of them per facet (`Docs/INI-REFERENCE.md`).
+- **Never deny what you cannot name.** Harbinger enforces only against a positively identified source that has been outranked. A write it cannot attribute is allowed, logged as `[sources] UNATTRIBUTED <facet>` and shown as an alert. If your client sees a hit it expected to be denied, read the log line before assuming a bug.
+- **Target facet (ch.6 / ch.20).** Harbinger's layer sits above every foreign hook on the combat target seat. When a positively identified writer is outranked, Harbinger puts the target back through the engine's own `SetTarget`. A segment of the hook chain it cannot prove is logged as `ATTRIBUTION DEFECT` and never enforced.
+- **Equip facet.** The caller of an engine equip is recovered by a stack scan. An unattributed equip is never denied. Armor verdicts are enforced by default (`bEquipEnforceArmor=1`).
+- **Package and scene sources** are observe only in this release. A package source is counted and shown, nothing is denied on it.
+- **Seat census.** Every seat Harbinger installs is re checked at each load stage and every 60 seconds. A seat another mod hooked over later becomes a hook source on that facet, logged once, and Harbinger re hooks on top where a re hook exists.
+- **Not in the header.** The controller adds no struct and no ABI slot. The only ABI change in 0.12.0 is v21, `kIntent_CastGuard`.
+
+The slip layer (a mod that writes under Harbinger's seat) is Phase 1b and is not in this release.
+
 ## The facet table
 
 Every facet is one `Intent` value in `native/APMF_API.h`. The proof tier says

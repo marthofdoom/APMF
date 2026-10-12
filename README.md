@@ -17,6 +17,9 @@ fighting other mods over who owns the actor.
 - **[Docs/INTEGRATION.md](Docs/INTEGRATION.md)**: the integration guide. Read this first.
 - **[Docs/CHANNEL-MAP.md](Docs/CHANNEL-MAP.md)**: the full facet map, with an honest proof tier per facet.
 - **[native/APMF_API.h](native/APMF_API.h)**: the header you build against. The whole public surface, one file.
+- **[Docs/INI-REFERENCE.md](Docs/INI-REFERENCE.md)**: every key in `APMF.ini` and the format of `APMF_Sources.ini`.
+- **[Docs/HARBINGER-MENU.md](Docs/HARBINGER-MENU.md)**: a short guide to the Harbinger page in the SKSE Menu Framework.
+- **[CHANGELOG.md](CHANGELOG.md)**: what changed in each release.
 
 ## The problem it solves
 
@@ -108,6 +111,7 @@ Full design is in [design.md](design.md).
 - On **1.7.104** there is no Address Library, and none is needed. The id table for
   1.7.104 is built into Harbinger's DLL by the CommonLibSSE-NG fork it is built on,
   so there is nothing extra to download or install.
+- Optional: SKSE Menu Framework 3.x for the Harbinger menu page. Without it Harbinger runs from `APMF_Sources.ini` and logs one line.
 - Build: CMake 3.21+, a C++23 compiler, [vcpkg](https://vcpkg.io) with the
   `commonlibsse-ng` port (see `native/vcpkg.json` / `native/vcpkg-configuration.json`).
 - A client mod links only against `native/APMF_API.h`, a plain C-ABI header
@@ -116,11 +120,15 @@ Full design is in [design.md](design.md).
 ## Install
 
 The archive's root is your `Data` folder, so a mod manager installs it with nothing to
-place by hand. Three files come out of it, and all three have to be there:
+place by hand. Three files come out of it, and all three have to be there. A fourth file,
+`SKSE/Plugins/APMF_Sources.ini`, is optional and is written by the menu page when you
+change a priority (format in `Docs/INI-REFERENCE.md`):
 
 - `SKSE/Plugins/APMF.dll`, the plugin itself.
 - `SKSE/Plugins/APMF.ini`, the settings file. Every key is documented in it and set to
   the configuration that was tested. Deleting the file, or any line in it, is safe.
+  Every key is also listed in [Docs/INI-REFERENCE.md](Docs/INI-REFERENCE.md), including
+  `bEquipEnforceArmor` and the `[Harbinger]` section's `bSceneProbe`.
 - `APMF.esl`, at the root, beside `SKSE`.
 
 `APMF.esl` is new in v0.9.5 and it has to be **enabled** in your load order like any
@@ -133,9 +141,20 @@ If it's missing or disabled, APMF refuses every `kIntent_Travel` claim and names
 reason once in the log, so a client's own degrade path runs. Nothing else breaks. Every
 other facet behaves exactly the same without it.
 
+## What is in v0.12.0
+
+- **Cast guard (ch.25, ABI v21).** A mod can ask Harbinger to hold an NPC's attack spell while a friend stands in the line of fire or the blast, and to keep the NPC's own concentration spells off one hand or both. Harbinger measures the line every frame. `Docs/INTEGRATION.md`, "Cast guards".
+- **The controller (Phase 1a).** Harbinger keeps a registry of every source that writes an AI facet: client mods, other mods' hook DLLs, plugins, the engine, Papyrus and console calls. Each has a priority from 0 to 100 per facet, set in `APMF_Sources.ini`. Defaults are 20 for other mods, 50 for clients and 75 for direct calls. A change Harbinger cannot trace is allowed and alerted, never denied. `Docs/INTEGRATION.md`, "The Harbinger controller".
+- **Target restore.** When a named source is outranked on the combat target, Harbinger puts the target back through the engine's own call.
+- **Seat census.** Every engine seat Harbinger hooks is re checked at each load stage and every 60 seconds, so a mod that hooks over it later is named in the log and on the menu.
+- **Equip caller recovery.** The mod behind an engine equip is found by a stack scan. An equip Harbinger cannot attribute is never denied.
+- **The Harbinger menu page.** A page in the SKSE Menu Framework shows the sources per facet, the winner, alerts and the census, and edits priorities live. `Docs/HARBINGER-MENU.md`.
+- **Armor enforced for clients.** `bEquipEnforceArmor=1` by default: an outfit or the game can no longer replace the armor a client chose, and a stripped follower gets it back within seconds.
+- **Own line of sight from the eyes,** a heal approach goal kept inside the pursuit leash, and a disarmed actor's weapon search left alone by the approach bound.
+
 ## Status
 
-Phase 1 built (see [Docs/STATUS.md](Docs/STATUS.md)). The central
+Phase 1 built, now at v0.12.0, ABI v21 (see [Docs/STATUS.md](Docs/STATUS.md)). The central
 `Actor::Update` (0xAD) hook drives a multi-NPC control map (keyed by FormID,
 scales to hundreds, an uncontrolled NPC pays one hash-miss), a real
 inter-plugin C-ABI client API (`native/APMF_API.h`), and the full documented

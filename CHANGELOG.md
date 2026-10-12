@@ -1,8 +1,19 @@
-## Unreleased
+## v0.12.0 -- The controller, the menu and the cast guard
 
+- **Harbinger now knows who is driving each part of an NPC's AI.** It keeps a list of every source that writes a facet: mods that ask it for control, other mods' hooks, plugins, the engine and Papyrus or console calls. Each source has a priority from 0 to 100 per facet. The priorities live in the new `APMF_Sources.ini`. Other mods start at 20, mods that ask Harbinger at 50, direct calls at 75.
+- **A change Harbinger cannot trace is never blocked.** It is allowed, logged and shown as an alert.
+- **A new Harbinger page in the SKSE Menu Framework.** It lists the sources for each facet, who wins, any alerts and the engine seats other mods hooked. You can change a priority there and it is saved. Without the framework Harbinger reads the file and logs one line.
+- **The menu is tidier.** Facets are collapsed unless something is wrong, each source is one row in fixed columns, and the details show on hover or on a focused slider for gamepads.
+- **A named source that loses the combat target is put back.** Harbinger restores the target through the game's own call when a source it can identify is outranked.
+- **Harbinger checks its engine seats at every load stage and every minute.** A mod that hooks over one later is named in the log and on the menu.
+- **Harbinger finds which mod made an engine equip.** An equip it cannot attribute is never refused.
 - **A mod can now stop an NPC from casting an attack spell through a friend (ABI v21).** Claim `kIntent_CastGuard` with `kCastGuard_LineOfFire`. While the player, a teammate or anyone not hostile to the caster stands in the line of fire, or inside the spell's blast at the target, the NPC does not start the spell, and a spell it already charged is not released. Harbinger measures the line every frame. Healing and other friendly spells are never held.
 - **A mod can now keep an NPC's own concentration spells off one hand or both (ABI v21).** Add `kCastGuard_ChannelRight` or `kCastGuard_ChannelLeft` to the same claim. The NPC's own AI cannot start or keep a concentration spell in that hand. A stream the mod itself claims on that hand still runs, and so does one the mod casts directly.
-- **Every refusal names who was overruled.** The NPC's own AI shows on the Cast facet of the Harbinger page, and a refusal stands only while the mod outranks it in `APMF_Sources.ini`.
+- **Every cast guard refusal names who was overruled.** The NPC's own AI shows on the Cast facet of the Harbinger page, and a refusal stands only while the mod outranks it in `APMF_Sources.ini`.
+- **A healer's approach goal no longer pokes out of the leash.** A goal that only grazes the pursuit leash is pulled just inside it.
+- **A disarmed actor can still search for a weapon during a heal approach.**
+- **The readme and docs are updated.** New: the `APMF.ini` and `APMF_Sources.ini` reference and a guide to the menu page.
+- **Backlog drain.** Review notes from the controller and the cast guard are recorded.
 
 ## v0.11.4 -- Armor comes back after an outfit reset
 

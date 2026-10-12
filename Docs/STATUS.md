@@ -1,8 +1,16 @@
 # APMF STATUS — living handoff (start here)
 
-Updated 2026-10-07. Current version **v0.11.4** (DRAFT release, marth publishes after the Deck test). The current state of the build: what's
+Updated 2026-10-12. Current version **v0.12.0** (PUBLISHED release, ABI v21). The current state of the build: what's
 shipped, what's probe-gated, what's next. Keep this current in the SAME change as any
 build/finding/workflow change.
+
+## RELEASED 2026-10-12 -- v0.12.0 "The controller, the menu and the cast guard"
+
+Cut from main `d7d1bf3` plus the release commit (CHANGELOG, README, `MinReleaseForAbi` 21 = 0.12.0). Contents: Harbinger controller Phase 1a
+(source registry, `APMF_Sources.ini`, attribution, seat census, target restore, equip caller recovery), the SKSE Menu Framework page and its
+layout pass, ch.25 CastGuard (ABI v21), APMF-B55/B57 rulings. Docs refreshed at this cut: `README.md`, `Docs/INTEGRATION.md` (controller
+section; Cast guards already in), new `Docs/INI-REFERENCE.md` (APMF.ini keys, APMF_Sources.ini format) and `Docs/HARBINGER-MENU.md`.
+Standing rule (marth 2026-10-12): every GitHub release updates the README and all relevant docs. Deploy as a pair with MFO v2.3.0.
 
 ## HEAD OF WORK 2026-10-12 -- ch.25 CAST GUARD (ABI v21), branch `feat/apmf-cast-lof-channel-bound`, NOT merged
 
