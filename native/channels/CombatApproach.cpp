@@ -109,9 +109,10 @@ extern "C" __declspec(dllimport) unsigned long __stdcall GetPrivateProfileIntA(
 // tree step only, and Flee outranks Return To Combat Area anyway. Facets the area switches on
 // that are NOT movement are DENIED -- every engine reader of the area classified by tree half in
 // Docs/DENY-COMPLETENESS-AUDIT.md row 24: the attack / bash pick (S5),
-// the target score penalty (S3), the invisibility / bound-item cast test (S4). The Acquire Weapon
-// link (it looks for dropped weapons inside the area) sits INSIDE the engine's Movement half and
-// is part of the facet. On release the engine's next update (<= 0.25 s) recomputes the area from
+// the target score penalty (S3), the invisibility / bound-item cast test (S4), and (APMF-B57, marth
+// 2026-10-11) the Acquire Weapon search (CombatBehaviorFindWeapon act, S5): a disarmed actor's search
+// for a dropped weapon is EXEMPT from the bound. The path to the chosen weapon stays part of the
+// Movement half and is still confined. On release the engine's next update (<= 0.25 s) recomputes the area from
 // its own state; an area the engine DEACTIVATED (its own path back to X failed) is put back and
 // re-activated by S3 on the actor's own combat thread (review F3).
 //
@@ -572,16 +573,23 @@ namespace {
     //   deliberately NOT bracketed: review R2-1, see the header.)
     // ======================================================================
     using NodeAct_t    = void* (*)(void*, void*);   // apmf::cbt::Act_t (slot 0x02)
-    std::atomic<std::uintptr_t> g_vtAttack{ 0 }, g_vtBash{ 0 };
-    std::atomic<std::uintptr_t> g_origAttackAct{ 0 }, g_origBashAct{ 0 };
+    std::atomic<std::uintptr_t> g_vtAttack{ 0 }, g_vtBash{ 0 }, g_vtFind{ 0 };
+    std::atomic<std::uintptr_t> g_origAttackAct{ 0 }, g_origBashAct{ 0 }, g_origFindAct{ 0 };
+    std::atomic<std::uint64_t>  g_s5FindBrackets{ 0 };   // APMF-B57: CombatBehaviorFindWeapon act() brackets
 
+    // CombatBehaviorFindWeapon act() (slot 0x02; AE 0x864040 -> tail-jumps 0x8610C0, which calls IsInCombatArea
+    // 0x55B310 twice; SE 0x7CCFB0 -> 0x7C9A40, same shape) is the Acquire Weapon link (APMF-B57, marth 2026-10-11:
+    // "a disarmed follower's weapon search is exempt from the heal-approach bound"). Inside the bracket the
+    // search sees the engine's own area, so a disarmed actor considers dropped weapons wherever the engine would.
     void* LeafActThunk(void* a_this, void* a_control) {
         const auto vt   = a_this ? *reinterpret_cast<const std::uintptr_t*>(a_this) : 0;
+        const bool isFind = vt != 0 && vt == g_vtFind.load(std::memory_order_relaxed);
         const auto orig = reinterpret_cast<NodeAct_t>(
-            (vt == g_vtBash.load(std::memory_order_relaxed) ? g_origBashAct : g_origAttackAct)
+            (isFind ? g_origFindAct
+                    : vt == g_vtBash.load(std::memory_order_relaxed) ? g_origBashAct : g_origAttackAct)
                 .load(std::memory_order_relaxed));
         if (g_touchedCount.load(std::memory_order_relaxed) == 0) return orig(a_this, a_control);
-        g_s5Brackets.fetch_add(1, std::memory_order_relaxed);
+        (isFind ? g_s5FindBrackets : g_s5Brackets).fetch_add(1, std::memory_order_relaxed);
         ViewBracket b;
         return orig(a_this, a_control);
     }
@@ -751,13 +759,16 @@ namespace apmf::combatapproach {
         };
         const REL::VariantID* idAttack = leafId("CombatBehaviorAttack");
         const REL::VariantID* idBash   = leafId("CombatBehaviorBash");
-        if (!idAttack || !idBash) {
-            spdlog::error("[ch.24] a leaf is missing from apmf::cbt::kLeaves (Attack / Bash).");
+        const REL::VariantID* idFind   = leafId("CombatBehaviorFindWeapon");
+        if (!idAttack || !idBash || !idFind) {
+            spdlog::error("[ch.24] a leaf is missing from apmf::cbt::kLeaves (Attack / Bash / FindWeapon).");
             ok = false;
         } else {
             REL::Relocation<std::uintptr_t> a{ *idAttack }, b{ *idBash };
             ok = apmf::allowance::SeatVerified(a.address(), "CombatApproach.Leaf.CombatBehaviorAttack (0x02 bracket)") && ok;
             ok = apmf::allowance::SeatVerified(b.address(), "CombatApproach.Leaf.CombatBehaviorBash (0x02 bracket)") && ok;
+            REL::Relocation<std::uintptr_t> fw{ *idFind };
+            ok = apmf::allowance::SeatVerified(fw.address(), "CombatApproach.Leaf.CombatBehaviorFindWeapon (0x02 bracket)") && ok;
         }
         REL::Relocation<void*> expectedTD{ RE::RTTI_CombatInventoryItem };
         ok = apmf::allowance::SeatVerified(reinterpret_cast<std::uintptr_t>(expectedTD.get()),
@@ -795,6 +806,9 @@ namespace apmf::combatapproach {
             g_vtBash.store(b.address(), std::memory_order_relaxed);
             g_origAttackAct.store(a.write_vfunc(0x02, &LeafActThunk), std::memory_order_relaxed);
             g_origBashAct.store(b.write_vfunc(0x02, &LeafActThunk), std::memory_order_relaxed);
+            REL::Relocation<std::uintptr_t> fw{ *idFind };   // APMF-B57: the Acquire Weapon link is exempt from the bound
+            g_vtFind.store(fw.address(), std::memory_order_relaxed);
+            g_origFindAct.store(fw.write_vfunc(0x02, &LeafActThunk), std::memory_order_relaxed);
         }
         g_origIsInsidePos.store(vtStd.write_vfunc(kSlotIsInsidePos, &IsInsidePosThunk), std::memory_order_relaxed);
         g_origIsInsideLoc.store(vtStd.write_vfunc(kSlotIsInsideLoc, &IsInsideLocThunk), std::memory_order_relaxed);
@@ -803,7 +817,7 @@ namespace apmf::combatapproach {
         spdlog::info("[ch.24] combat-approach seats installed: CombatAreaStandard Update (0x0B, carries the bound), "
                      "IsInside(WorldLocation) (0x05, the engine's own area inside a deny bracket), IsInside(point) "
                      "(0x06, observe-only); deny brackets on CombatTargetSelectorStandard SelectTarget (0x06) and "
-                     "{} invisibility / bound-item CheckShouldEquip (0x0F) and Attack / Bash act (0x02). All "
+                     "{} invisibility / bound-item CheckShouldEquip (0x0F) and Attack / Bash / FindWeapon act (0x02). All "
                      "chaining.",
                      g_origShouldEquip.size());
     }
@@ -1027,12 +1041,12 @@ namespace apmf::combatapproach {
         g_lastHeartbeatMs = now;
         spdlog::info("[ch.24] heartbeat: {} claim(s); standard-area updates seen {} (any actor), bound applied {}, "
                      "engine geometry restored first {}, outranked {}, disabled {}; vanilla answers inside deny "
-                     "brackets {} (target-selector brackets {}, inv/bound brackets {}, attack/bash brackets {}); "
+                     "brackets {} (target-selector brackets {}, inv/bound brackets {}, attack/bash brackets {}, find-weapon brackets {}); "
                      "engine inside/outside verdicts on the bound {} ({} outside); ended by Harbinger {}; engine areas "
                      "put back after an end {}; areas carrying a bound now {}.",
                      n, g_s1Seen.load(), g_s1Applied.load(), g_s1Restored.load(), g_s1Yielded.load(),
                      g_s1Disabled.load(), g_s2Vanilla.load(), g_s3Brackets.load(), g_s4Brackets.load(),
-                     g_s5Brackets.load(), g_s6Verdicts.load(), g_s6Outside.load(), g_ended.load(), g_s3PutBack.load(),
+                     g_s5Brackets.load(), g_s5FindBrackets.load(), g_s6Verdicts.load(), g_s6Outside.load(), g_ended.load(), g_s3PutBack.load(),
                      g_touchedCount.load());
     }
 
