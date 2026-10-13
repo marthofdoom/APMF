@@ -375,6 +375,19 @@ which `Arbiter::OncePerFrame` pumps immediately AFTER `Drain()` returns, i.e.
 strictly after `Publish()`. Any future release-time engine write inherits this:
 publish first, mutate second.
 
+**THE SCORE LIFT (ABI v22, 2026-10-12, weighting phase 1, marth D1/D5) is a composed answer that
+CHAINS.** Where the engine decides by a SCORE (the combat inventory's `CalculateScore`, vfunc 0x0C), a
+client's wish is enforced only by biasing that score. Both 0x0C seats (`core/AiCastSeats.cpp`) call the
+original first and hand its number to `equippref::OnScore`, which returns it unchanged or LIFTED to
+`best * (1 + kEquipPrefStepRel) + kEquipPrefStepAbs` (never lower than the engine's), where `best` is the
+highest score the engine holds for another item in the same engine category list, items the actor's claims
+lift at an equal or better rank excluded. It is #20's mechanism exactly: the engine still applies its own
+range gate, order table and hand occupancy and is still free to choose otherwise. Four rules are part of it:
+never lift an item the engine scored 0 or less; never lift a weapon into a hand a live cast claim holds (D3);
+never lift while the source answering beneath the seat outranks the claim (D5: the same priority sliders);
+never a fixed additive constant (scores span 0.08 to 1320 across lists). The category list is read in place
+on the rescore thread, guarded by static_asserts and a parentController identity check.
+
 **A raw struct offset is permitted in a composed seat ONLY with a runtime identity
 check.** #7 says never hand-write an offset. The aim-target override
 (`CombatAimController+0x30`) is the one place ch.8b must, because the pinned
@@ -950,6 +963,21 @@ thing that derails one. Concretely:
   claim holds it. marth chose this "spells-only reservation"
   after the field showed a melee follower's floored hand refusing 119 weapon equips in 40 s.
   A driving cast claim, and a floor without the bit, keep the full block above.
+  **AMENDED 2026-10-12 (marth D2 and D4, weighting phase 1, ABI v22).** (a) "Equip denies rank by
+  PRIORITY like every other facet." Every deny this seat applies -- the hand block, the ch.17 set and the
+  ch.26 force below -- stands only while the claim behind it outranks the equip's source on the Equip
+  facet (`RankEquipDeny`: a named engine path or the player's menu ranks as Engine, Papyrus / console as
+  DirectCalls, a named module as itself, the claim's own client at the claim's priority). A source that
+  outranks the claim keeps its equip. APMF's own enforce equip is not an outside source and is not
+  ranked. The degrade rule is unchanged: an unattributed equip is allowed unless `[UnknownSources]
+  Equip=override`. The 0x0F halves (`core/HandBlock.cpp`, `core/EquipGate.cpp`'s ch.15 refusal) rank the
+  same way against `InsideSource`. (b) The seat ALSO governs an actor whose WINNING `kIntent_EquipPreference`
+  claim carries `kEquipPref_Force`, and for it refuses exactly one more thing: a governed equip into a hand
+  that claim prefers something for, of an item that is not one of that hand's preferred items. It is the
+  client's explicit, logged escalation after an observed miss (D4); it ignores the ch.17 observe-only
+  switch, exempts the player's menu and APMF's own equips, and is ranked by (a). A forced refusal the
+  sliders do not allow is NOT applied: it is a FORCE ANOMALY, logged at warn and counted. Still a DENY
+  only (condition 4): Harbinger equips nothing for a preference. No new site.
   Under #17a the facet is taken WHOLE (declare the worn set → APMF equips it and refuses
   everything else until the client re-declares or releases), which is full control of the
   facet exactly as a per-path deny would be. Any further call-site seat needs its own

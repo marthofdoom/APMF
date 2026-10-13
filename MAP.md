@@ -113,7 +113,12 @@ param.ival bit 0)** (core/Sightline.h, core/Awareness.h); **ABI v19 adds `kInten
 **ABI v20 adds `kCastFlag_FloorSpellsOnly` (CastFlags bit 7) only; ABI v21 adds `kIntent_CastGuard = 25` (ch.25)
 and the `CastGuardFlags` (`kCastGuard_LineOfFire` 1<<0, `kCastGuard_ChannelRight` 1<<1, `kCastGuard_ChannelLeft`
 1<<2, `kCastGuard_All` 0x7) and NOTHING else: no struct, no slot (core/CastGuard.h). To stay under 2500 lines the
-v21 change also folded the v13..v16 history paragraphs into one (comments only)**, the
+v21 change also folded the v13..v16 history paragraphs into one (comments only)**; **ABI v22 (2026-10-12, weighting
+phase 1) adds `kIntent_EquipPreference = 26` (ch.26), `EquipPrefFlags` (`kEquipPref_Force` 1<<0), the step constants
+`kEquipPrefStepRel` (0.05) / `kEquipPrefStepAbs` (0.01), `kMaxEquipPreference` (8), the 8-byte POD
+`APMF_EquipPrefEntry{form@0, slot@4, rank@5, reserved[2]@6}`, `EquipPrefState` (0-8), the 64-byte POD
+`APMF_EquipPrefInfo` (size rule at `kEquipPrefInfoV22Size`) and `APMF_API_v22 : APMF_API_v19` with TWO slots,
+`SetEquipPreference(handle, entries, count)` and `GetEquipPreferenceState(actor, APMF_EquipPrefInfo*)`** (core/EquipPreference.h), the
 `Intent` enum, `Handle`, and the exported query-fn name. No C++ class / STL / vtable
 crosses the boundary. **The current `kABIVersion` is stated ONLY in the header**
 (INVARIANTS #14b — this line said 3 while the header was at 6).
@@ -149,6 +154,10 @@ ABI v19 adds `GetCombatApproachState` → `combatapproach::GetState` (a `try/cat
 end), and `MinReleaseForAbi(19)` shares v18's placeholder until the cut.
 ABI v21 (ch.25 `kIntent_CastGuard`) adds no slot: `MinReleaseForAbi(21)` = "the first release after 0.11.4"
 until the cut.
+ABI v22 (ch.26 equip preference) adds `SetEquipPreference` -> `equippref::Set` and `GetEquipPreferenceState` ->
+`equippref::GetState` (each `try/catch(...)`); the object is an `APMF_API_v22` (a static_assert pair pins the v19
+prefix end); `APMF_Release` also calls `equippref::Forget(handle)`; `MinReleaseForAbi(22)` = "the release after
+0.13.0" until the cut.
 The "client too new" null (`abiVersion > kABIVersion`) logs the running APMF version
 (`SKSE::PluginDeclaration::GetSingleton()`) and `MinReleaseForAbi(abi)` — a table that must
 be extended on every `kABIVersion` bump.
@@ -214,6 +223,10 @@ another; false for an unclaimed/unloaded actor.
 `ApplyRequest` grants it a TTL (`castguard::TtlMs(param.fval)`, the cast bounds) so the generic Drain TTL pass and
 Repoint renewal apply. Its readers `TryGetCastGuard` / `CastGuardActors` are declared here but DEFINED in
 `core/CastGuard.cpp` (this file is near the 2500-line cap; a split is its own brief).
+**ch.26 (ABI v22):** `EnqueueRequest` refuses a `kIntent_EquipPreference` claim by `equippref::RefuseReason`. The
+declaration lives OUTSIDE the map (`core/EquipPreference.cpp`'s own snapshot, keyed by handle); the seats read the
+winning claim with `TryGetOwningClaimBasis`. **D2:** `TryGetEquipSet` also copies the winning ch.17 claim's
+`handle` into `EquipSetView` (same snapshot read) so the sink ranks its deny with that claim's client.
 - **What breaks:** the RCU contract (#12) — the working map/`m_index` are mutated
   ONLY on the writer thread (Drain/ReleaseAll/Clear, all the same MAIN thread; API
   calls only enqueue) and published via `Publish()`
@@ -871,8 +884,15 @@ that runtime's confirmed `CalculateScore` entry (AE `0x8183e0/0x8188b0/0x818df0/
 0xF-byte arg-swap thunks, so the expected value is per runtime, never shared; stands in
 for an RTTI-name match). Ships **ENABLED**
 by default (`EnableWeaponScoreProbe`, default 1 — `CalculateScore` is scalar-return,
-immune to the `GetMagicTarget` sret-ABI bug class this file's banner documents). A
-second, independent flag (`EnableScoreSteer`, default 0) biases a claimed form's own
+immune to the `GetMagicTarget` sret-ABI bug class this file's banner documents).
+**ABI v22 (2026-10-12, weighting phase 1): both 0x0C thunks hand the engine's answer to
+`equippref::OnScore` (core/EquipPreference.cpp)**, the ONE score lift: a ch.26 preferred item
+(GROUP C weapons / shields / torches, GROUP A staves) or the form a ch.8b claim drives on its hand
+(GROUP A) returns one step above the best competitor in its engine category. `kScoreSteerBias`
+(+1000) and `SteerScoreForCastClaim` are DELETED; `EnableScoreSteer` defaults to 1 (marth D5) and
+`Install()` ends with `equippref::Arm(...)`. GROUP C is no longer observe-only for a ch.26 item;
+the WEAPON-SCORE line names a lift after `engineScore=`. The history below is kept as written.
+A second, independent flag (`EnableScoreSteer`, default 0 until ABI v22) biases a claimed form's own
 returned score upward by a fixed constant. **Where that bias lives MOVED on 2026-09-06
 (F5 / DIAG RC5):** it used to sit in `WeaponScoreThunk`, whose `driven == itemForm`
 test compared a WEAPON's FormID against a cast claim's driven spell form and so could
@@ -1131,6 +1151,48 @@ Evidence that 0x0A covers the RELEASE: `ActorMagicCaster` slot 3 `RequestCastImp
   APMF-B70 (hostility over-holds aggroed non-faction-hostile combatants; self area spells unguarded; other-hand aim
   at 0x0A; log-throttle map never cleared).
 
+### `native/core/EquipPreference.{h,cpp}` + `native/channels/EquipPreference.cpp` — ch.26 EQUIP PREFERENCE (ABI v22, 2026-10-12)
+The weighting rework, phase 1 (MFO `Docs/WEIGHTING-INVENTORY.md` "PHASE 1 PLAN", marth D1-D5). `kIntent_EquipPreference`:
+a client DECLARES preferred items per hand (`SetEquipPreference`, `APMF_EquipPrefEntry{form, slot, rank}`); in
+combat the engine's own `CalculateScore` (0x0C) answer for a declared item is LIFTED, never replaced. NO new seat and
+no new address: `OnScore` is called by both `core/AiCastSeats.cpp` 0x0C thunks (GROUP C weapon classes, GROUP A the
+30 spell/staff items), which chain to the engine first. The same function is the ch.8b spell steer (W2): the form a
+live cast claim drives on the item's hand is lifted the same way (rank 0, ranked on the Cast facet).
+**THE LIFT (D1):** `max(engine, best * (1 + kEquipPrefStepRel) + kEquipPrefStepAbs)` (5 % + 0.01). `best` = the
+highest `itemScore` (+0x18) the engine holds for another item of `inventoryItems[GetCategory()]`, read IN PLACE
+(the caller is that list's rescore loop, AE 0x80F380 / SE 0x777A50 / 1.7.104 0x824260, and the dirty-refresh twin
+AE 0x811A5E); items this actor's preferences or cast claims lift at an equal or better rank are left out (no
+chase). Layout read: `CombatController+0x10` inventory, `CombatInventory+0` parentController (checked == the
+call's controller), `+8 + cat*0x18` the lists (size at +0x10), item `+0x18` score, vfunc 0x0B `GetCategory`
+= `int(this)`, a leaf on every concrete item class of all three builds; all static_asserted where CommonLib
+declares them and disassembled 2026-10-12 (file header). 5 % comes from the LoreRim 10-12 log: 3599 same-item
+rescores two passes apart rose at most 3.94 % (scores >= 1), and a rival not yet rescored this pass may still
+rise by that much. **NEVER LIFTED:** engine score <= 0 (a bow with no arrows); a declared item for a hand a live
+cast claim holds (`handblock::HeldFor`, D3); any item while the source beneath the seat
+(`facetattr::InsideSource(orig)`) is not outranked (`facetattr::Outranks`, Equip facet; Cast facet for the
+steer: D5); a list that fails validation (`Unreadable`). **FORCE (D4):** `kEquipPref_Force` in the claim's
+`param.ival` (Repoint) makes `core/EquipSink.cpp` refuse a governed engine equip into a hand the claim prefers
+something for, unless it is one of that hand's items (`ForcedFor` / `ForceRefusal`), ranked by `RankEquipDeny`;
+a refusal the sliders do not allow is a FORCE ANOMALY (warn line, `NoteForceAnomaly`, menu + heartbeat +
+`APMF_EquipPrefInfo::forceAnomalies`). Harbinger equips nothing for a preference. Refusal (`ControlMap::
+EnqueueRequest` -> `RefuseReason`): actor 0, the player, before `Arm`, `EnableScoreSteer=0`, no score seat.
+Declarations: a copy-on-write `unordered_map<Handle, Decl>` published through `atomic<shared_ptr>` (writers
+any thread under `g_writeMx`; seats read lock-free); `ClientAPI` Release calls `Forget`; `plugin.cpp` OnRevert
+calls `ResetAll`. Per-actor state (`GetState`) + the `[ch.26]` line dedup sit under one LEAF mutex taken after
+every engine read. The channel (ch.26) only logs Engage / OnOwnerChanged / Release (a force escalation at warn).
+Logs: `[ch.26] <actor> LIFTED / leading / OUTRANKED ... item= hand= cat= rank= engineScore= best-competitor=
+-> result (claim h=)` (on change, 15 s floor), `[ch.26] HEARTBEAT` (30 s, warn on a new anomaly), the
+WEAPON-SCORE / SCORE-STEER lines name a lift; the Equip facet header on the Harbinger page shows the counters.
+- **What breaks:** an additive constant (D1: the wrong shape on LoreRim, 0.22 to 1320); lifting a 0 score;
+  counting a lifted item as a rival (two preferences chase each other upward every pass); reading the
+  category list off the rescore thread or without the parentController check; a lock held across
+  `GetCategory` / the list walk; dropping the `Outranks` test (D2/D5: the lift is a deny of the answer beneath
+  the seat and ranks like one); the force step refusing APMF's own enforce equip or the player's menu equip;
+  a force refusal applied when the source outranks the claim (that is the anomaly, never a deny); keying the
+  rival on the item FORM only (per-hand clones of a one-hander are distinct items); widening `kMaxEquipPreference`
+  without an ABI bump. Scroll / potion / shout items are visible as RIVALS (read from the engine list) but
+  are never lifted (their 0x0C is not seated).
+
 ### `native/core/RestoreCensus.{h,cpp}` — phase 0b Restore-caster census (PASSIVE probe)
 Read-only. `[Probe] bRestoreCensus` (code default 1 for the field; STATUS pre-release
 checklist). Two feeds: `NoteRestoreSeat` from `core/CastSeats.cpp` `CensusNote` at seats
@@ -1385,7 +1447,10 @@ kNoSource, the degrade rule; cached per address), `CastClaimHandle(actor)` (high
 `SelectClaimHandle(actor)` (ch.8), `Outranks(...)` (Decide's rule with no counter / alert / log, for the silent
 follow-on seats). Users: `core/CastGate.cpp` (the final 0x0A refusal; both narrowings refusing -> the higher-priority
 claim decides), `core/EquipGate.cpp` (`claimWins` lambda: Restore seat YES, N4, deny-complete, engine-first ch.8 and
-ch.8b refusals; one counted decision per claim kind per call; NOT the completeness fix or ch.15), `core/CastSeats.cpp`
+ch.8b refusals; one counted decision per claim kind per call; NOT the completeness fix; the ch.15 refusal is ranked
+on the EQUIP facet since D2, 2026-10-12, `Decide` with the ch.15 claim's handle), `core/HandBlock.cpp` (D2: the 0x0F
+hand block, Equip facet), `core/EquipSink.cpp` (D2: `RankEquipDeny`, Decide's rule without the second hit),
+`core/EquipPreference.cpp` (ch.26: `Outranks` for the score lift), `core/CastSeats.cpp`
 (`ClaimNamesThisCast(..., prevFn, count)`: EVERY seat decides against the 0x06 slot's displaced function on that
 vtable (`StartSlotPrev`, review SEV-3), 0x06 counts, 0x0A / 0x07 / 0x0D silent, so a cast is wholly claim-driven or
 wholly the engine's), `core/CastClassify.cpp` (`ClaimOutranksClassify`: the force site counts, the two serves are silent).
@@ -1467,6 +1532,18 @@ that file), carried over with its guards AND its reasoning rather than re-derive
   1.6.1170 and 1.5.97.
 
 ### `native/core/EquipSink.{h,cpp}` — THE #17a CALL-SITE SEAT: the engine-equip sink (ch.17)
+**D2 (marth 2026-10-12): every deny here is RANKED.** The caller's source (`eqSrc`: a named engine path or the
+player's menu -> Engine, Papyrus / console -> DirectCalls, a named external module -> that plugin, APMF itself ->
+`selfPath`, unranked) is ranked by `RankEquipDeny` (Decide's rule without a second hit) against the claim behind
+each deny: the hand block against `facetattr::CastClaimHandle`, the ch.17 set against `EquipSetView::handle`
+(new, same snapshot read), the ch.26 FORCE step (ABI v22) against the forced preference. A source that outranks
+the claim keeps its equip (`allow (the source outranks the claim: its equip stands)`, a rate-limited STANDS
+line, `NoteStood`); an applied deny counts `NoteOverruled`. Unattributed stays allowed unless `[UnknownSources]
+Equip=override`. Behaviour at the default priorities: Engine/other mods (20) still lose to a client (50);
+a client's OWN equip now stands against its own claim; a script equip under DenyScript ranks as DirectCalls
+(75) and stands unless the client is raised above it. The force step sits after ch.17, ignores the observe-only
+switch (it is the client's explicit escalation), exempts the player's menu and APMF's own equips, and a
+refusal the sliders forbid is a FORCE ANOMALY (core/EquipPreference.h).
 **HARBINGER 1a (2026-10-11): WHO ASKED is a STACK SCAN now.** UAPNG.dll and
 EquipmentDurabilitySystem-NG.dll re-patch both E8s after our kDataLoaded verify (LoreRim diag
 2026-10-10), so the thunk is reached from THEIR stub and the old `_ReturnAddress()-5` site test +
@@ -1653,6 +1730,9 @@ cause 2 (a dagger equipped into the deny-only right hand 32 ms before the left h
   actor with no ch.17 claim): `verdict=deny (hand R held by a cast claim)`, worker not called, enforced
   whatever `bEquipObserveOnly` says. INVARIANTS #17a(5) as amended.
 - `[HandBlock] bHandClaimBlocksEquip` (default 1) switches both halves.
+- **D2 (2026-10-12): ranked on the Equip facet.** The 0x0F NO stands only while the holding cast claim
+  (`facetattr::CastClaimHandle`) outranks `InsideSource(orig)` (`facetattr::Decide`, Equip facet); else the
+  engine's YES stands (`[handblock 0x0F] ... STANDS`, 5 s per actor). The sink step ranks the same way.
 - **Spells-only floors (ABI v20, 2026-10-06, `fix/apmf-floor-spells-only`).** A floor carrying
   `kCastFlag_DenyHandOnly | kCastFlag_FloorSpellsOnly` holds its hand in `HeldFor` ONLY when the
   competing item is `SpellLike` (a spell, a scroll, or a staff via `TESObjectWEAP::IsStaff`), so a
@@ -1740,7 +1820,7 @@ tool) still exist but are **unreachable unless the keyboard test surface is arme
 ### `native/channels/*.cpp` — one module per facet (FULL documented catalog)
 Each: a `Channel` subclass + `APMF_REGISTER_CHANNEL`, per-NPC `Engage`/`Release`.
 The first release shipped the documented catalog of 13 channels as a baseline
-benchmark; the table below is the CURRENT set — 24 files, 24 rows (ch.25 `CastGuard` added 2026-10-12 (ABI v21); ch.24 `CombatApproach` added 2026-10-05 (ABI v19); ch.23 `PursuitLeash` added 2026-09-25 (ABI v16); ch.22 `CombatReentryDeny`, ch.21 `CombatEntry` and ch.20 `TargetPin` added 2026-09-25; ch.7
+benchmark; the table below is the CURRENT set — 25 files, 25 rows (ch.26 `EquipPreference` added 2026-10-12 (ABI v22); ch.25 `CastGuard` added 2026-10-12 (ABI v21); ch.24 `CombatApproach` added 2026-10-05 (ABI v19); ch.23 `PursuitLeash` added 2026-09-25 (ABI v16); ch.22 `CombatReentryDeny`, ch.21 `CombatEntry` and ch.20 `TargetPin` added 2026-09-25; ch.7
 `CombatAction` and ch.9 `OfferPackage` were missing from it until 2026-09-07; ch.17
 `EquipAuthority` added 2026-09-15; ch.19 `Travel` added 2026-09-22 — ch.18 is RESERVED
 for an attack-selection design that is NOT YET ON MAIN, so the intent numbers skip it). Each `ServesIntent()` maps to an `APMF_API::Intent`. Test keys in
@@ -1771,6 +1851,7 @@ parentheses.
 | `CombatReentryDeny.cpp` (+ `CombatReentryDeny.h`) | 22 | DENY every engine `StartCombat` for an actor during a bounded window (`kIntent_CombatReentryDeny`, ABI v15; no test key) | **SOURCE DENY at `Actor::StartCombat`'s own self-check:** `IsDeadHook` = write_vfunc on Character slot 0x99 (`IsDead`), chaining; `AnswerSelfCheck` runs only when `_ReturnAddress()` == `g_siteRet` (the verified call-site row `ReentryDeny.StartCombat.SelfIsDeadCall` + 11: AE `0x6B69CA` / SE `0x625248`) and answers "dead" (StartCombat refuses before its spinlock / equip / anything) for the WINNING claim inside its window, EVERY call (new entry and in-combat target-add, closing-round option (a)) except ch.21's own entry (`ClientEntryScope`, thread-local, held by `CombatEntry.cpp::Enter` around its StartCombat). The seat reads no actor state. **HARBINGER 1b:** before refusing, `facetattr::CallerBelow(g_siteRet)` names StartCombat's CALLER (stack scan: Engine / DirectCalls / the calling DLL) and `facetattr::Decide(Combat, winning handle, caller)` refuses only when the claim outranks it; otherwise it passes (`sourcePass`, a `[ch.22] ... PASSES` line); an unnamed caller is the degrade rule (allowed unless `[UnknownSources] Combat=override`). `ObserveEntryClaim` names any non-ch.21 StartCombat on an actor holding a winning ch.21 claim and no ch.22 claim (attribution only). WINDOW: `param.fval` s (0 = 10, clamped 120) from the claim's OWN request / last Repoint -- `NoteRequest` / `NoteRepoint` (called from `ControlMap::EnqueueRequest` / `EnqueueRepoint`, any thread, `g_reqs` under its own mutex); `Apply` (inside Drain) sets a provisional deadline and posts `Settle`, which after Publish reads the winning handle and sets the real deadline (ending a takeover with no time left). Map under `shared_mutex` (unique on the game thread, shared in the seat, which may run on ANY thread). `Poll` (Arbiter seat, 250 ms) ends the claim on "window elapsed" / "owner dead" via `EndClaim` (EnqueueRelease, never inside Drain) and runs the DENY-MISS detector (controller appeared under a live window with no ch.21 pass and no 1b `sourcePass`). `g_siteSeen` + the one-time `seat OBSERVED` log (principle 5); every Engage / Repoint line names the slot-0x99 owner. `ResetAll` at revert + kPreLoadGame (also clears `g_reqs`). **What breaks:** never answer at any return address but StartCombat's SELF check (the target's `IsDead(false)` at AE `0x6B6A0A` is another actor's facet; any other site would lie to the whole engine); never read the controller in the seat (the cross-thread StopCombat race the closing round removed); never let the seat call an engine function or take an engine lock (it can run inside a BSJobs detection job); never drop the `ClientEntryScope` in ch.21 (a client's declared entry would be refused by its own deny); never drop `NoteRequest` / `NoteRepoint` from ControlMap (every window would run from apply time again, F3); never add a StopCombat here (the client's call, #0 (h) condition 1); never EnqueueRelease from inside Drain; keep the call-site row's 11-byte check (it is what pins the exact instruction). `INVARIANTS #0 (h)` | source deny (#0 (h)) |
 | `PursuitLeash.cpp` | 23 | LEASH an actor's in-combat pursuit + search to an anchor actor (`kIntent_PursuitLeash`, ABI v16; no test key) | Arbitration + claim lifecycle only: `Engage` / `OnOwnerChanged` hand `param.target` (anchor) + `param.fval` (radius) to `actiongate::SetLeash`; `Release` calls `ClearLeash`. The enforcement is `core/ActionGate.cpp` (the ch.23 block: act/pop ForceFail pair + the slot-0x04 update seat on 14 leaves). Synchronous refusals in `ControlMap::EnqueueRequest`. **What breaks:** see ActionGate's ch.23 note | claim + T1 enforcement |
 | `CombatApproach.cpp` (+ `CombatApproach.h`) | 24 | CLOSE to within R of X WHILE IN COMBAT, the in-combat movement goal (`kIntent_CombatApproach`, ABI v19; no test key) | **SUBSTITUTE one unweighted engine input, the actor's standard COMBAT AREA,** through its own vtable (write_vfunc, chaining): S1 vfunc 0x0B Update (restore the engine geometry, run the original, write X/space/R, period 0.25 s), S2 0x05 IsInside(WorldLocation) (engine geometry inside a deny bracket), S6 0x06 observe-only (the engine's own inside/outside verdict for the actor); deny brackets S3 CombatTargetSelectorStandard 0x06, S4 ten invisibility/bound-item CheckShouldEquip 0x0F and S5 CombatBehaviorAttack / Bash act 0x02 (CheckUnreachableTarget deliberately NOT bracketed: part of the movement facet, review R2-1); S3 also puts back (and re-activates) the area of a finished claim on the actor's own thread. `Poll` (Arbiter, game thread) resolves X, decides the state, ends + releases a finished claim; `RestoreBeforeSave` (kSaveGame) | the engine's Movement half walks the actor back into the area (Return To Combat Area) and clamps its moves to it; nothing else is touched |
+| `EquipPreference.cpp` | 26 | PREFER items for an actor's hands in combat by LIFTING the engine's own score (`kIntent_EquipPreference`, ABI v22; no test key) | Arbitration + claim lifecycle only (log lines; a force escalation at warn). The LIFT lives in `core/EquipPreference.cpp` `OnScore`, called by both `core/AiCastSeats.cpp` 0x0C thunks; the force deny in `core/EquipSink.cpp` | nothing: the engine scores its items as it does |
 | `CastGuard.cpp` | 25 | GUARD an actor's own casts: hold OFFENSIVE casts while a friendly is in the line of fire, bound the AI's own concentration channel per hand (`kIntent_CastGuard`, ABI v21; no test key) | Arbitration + claim lifecycle only (log lines). The DENY lives in `core/CastGate.cpp` 0x0A (hand casters) and `core/CastSeats.cpp` 0x06 through `core/CastGuard` (see that section) | nothing: the engine's own cast simply does not start, or its release / channel tick is refused |
 
 - **What breaks (ch.24 `CombatApproach.cpp`, ABI v19):** (1) S1 MUST put the engine geometry back BEFORE calling the

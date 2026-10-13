@@ -102,7 +102,8 @@ namespace apmf::equippref {
     // The winning ch.26 claim on `a_actor` when it carries kEquipPref_Force and a declaration.
     bool ForcedFor(RE::FormID a_actor, ForceView& a_out);
     // The hand bits (kEquipCat_Right / kEquipCat_Left) of `a_competes` for which the forced
-    // declaration prefers something and `a_item` is NOT one of that hand's preferred items.
+    // declaration prefers something and `a_item` is NOT one of that hand's preferred items; 0 when
+    // `a_item` is preferred for any hand it competes for (a one-hander with an EitherHand slot).
     std::uint32_t ForceRefusal(const ForceView& a_view, RE::FormID a_item, std::uint32_t a_competes);
     void NoteForceDeny(RE::FormID a_actor);
     void NoteForceAnomaly(RE::FormID a_actor);

@@ -528,7 +528,11 @@ namespace apmf::equippref {
                 covered = true;
                 if (e.form == a_item) preferred = true;
             }
-            if (covered && !preferred) refused |= s.bit;
+            // An item preferred for ANY hand it competes for passes: a one-hander equipped with an
+            // EitherHand / null slot competes for both hands (Categorize's conservative rule), and the
+            // preferred sword must not be refused because the OTHER hand prefers a dagger.
+            if (preferred) return 0;
+            if (covered) refused |= s.bit;
         }
         return refused;
     }
