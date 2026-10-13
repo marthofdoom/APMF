@@ -604,6 +604,7 @@ namespace {
         else if (HasController(actor))                               why = "the actor entered combat before the substrate did";
         else if (!anchor)                                            why = "the anchor does not resolve";
         else if (g_slots[a_sub.slot].state.load() & kStReal)         why = "real combat started before the entry";
+        else if (PlayerInCombat())                                   why = "the player entered combat before the entry";
         if (why) {
             spdlog::warn("[substrate] 0x{} OPEN anchor=0x{} entry=false -- {}; no entry was made.", Hex(a_sub.id),
                          Hex(g_anchorId.load()), why);
@@ -1180,7 +1181,10 @@ namespace apmf::combatsubstrate {
         const RE::FormID caller = a_caller ? a_caller->GetFormID() : 0;
         std::uint32_t    st     = 0;
         const int        si     = FindSlot(caller, st);
-        if (si >= 0 && (st & (kStLive | kStReal)) == kStLive) return false;   // a holder entering (or re-adding) the anchor
+        // A holder entering (or re-adding) the anchor passes. So does a holder whose real-combat trigger fired
+        // (design 3.6a: the refusal stands down for it on the combat thread at once); after the game-thread pass
+        // drops it from the table it is refused like any other actor.
+        if (si >= 0 && (st & kStLive)) return false;
         // Ranked at open: a substrate opens only while its client outranks Engine on Combat.
         const auto n = g_anchorRefusals.fetch_add(1, std::memory_order_relaxed) + 1;
         for (auto& s : g_slots)
@@ -1189,8 +1193,8 @@ namespace apmf::combatsubstrate {
             const auto now  = apmf::clock::MonotonicMs();
             auto       prev = g_anchorRefusalLastLogMs.load(std::memory_order_relaxed);
             if (now - prev >= 2000 && g_anchorRefusalLastLogMs.compare_exchange_strong(prev, now)) {
-                spdlog::info("[substrate] 0x{} STARTCOMBAT-AT-ANCHOR REFUSED caller=0x{}{} ({} so far)", Hex(g_served),
-                             Hex(caller), si >= 0 ? " (a holder after its real-combat drop)" : "", n);
+                spdlog::info("[substrate] 0x{} STARTCOMBAT-AT-ANCHOR REFUSED caller=0x{} ({} so far)", Hex(g_served),
+                             Hex(caller), n);
             }
         } catch (...) {
         }
