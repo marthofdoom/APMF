@@ -1971,51 +1971,8 @@ namespace APMF_API {
 
     // ── ABI v18: LINE OF SIGHT AND AWARENESS (2026-10-05, ClickUp 86e3h6qj9) ────
     // History: Docs/APMF_API-HISTORY.md#abi-v18-los-origin
-    //
-    // THE OWN RAY. Harbinger's line of sight from a VIEWER actor to a TARGET actor is a
-    // physics ray test, never the engine's cached Actor::HasLineOfSight answer:
-    //   * FROM the viewer's eye point (the engine's own Actor::GetEyeVector origin). There
-    //     is NO view cone and NO facing test: a target behind the viewer is as visible as
-    //     one in front. Line of sight is geometry, not attention.
-    //   * TO three points on the target: its feet + 16 units, 55% and 90% of its height
-    //     (its bound height times its scale; 120 units when that reads as nothing). Each
-    //     ray ends short of its point by the TARGET's own size -- the horizontal half-diagonal
-    //     of its bound box times its scale, plus 16 units, never less than 48 (a humanoid's
-    //     value) and never more than 1024 -- so the target's own body (a giant's, a mammoth's
-    //     or a dragon's included) is never the thing that blocks it. A target closer than
-    //     that margin is VISIBLE.
-    //   * ON the character-controller collision layer, in the viewer's own collision group
-    //     (its own capsule is skipped): "could a walking body travel this line". Walls,
-    //     closed doors and tent walls block; an open doorway, a railing under the line or
-    //     a gate's gaps do not. ANOTHER ACTOR'S BODY on the line blocks that ray.
-    //   * VISIBLE when ANY of the three rays is clear (a target one stair up, or behind a
-    //     low sill, is seen); OCCLUDED only when all three are blocked.
-    //   * A target in a different havok world (an interior seen from outside) is
-    //     OCCLUDED with kLosWhy_OtherWorld.
-    //   * The ray cannot be cast (no attached cell or havok world, a viewer without a
-    //     character controller, an unloaded, disabled or deleted actor, a dead viewer, or
-    //     the engine's pick returning without casting): the verdict is UNAVAILABLE with its
-    //     reason. It is never reported as VISIBLE.
+    // THE OWN RAY, THREADING AND COST, WHO KEEPS A PAIR MEASURED: Docs/APMF_API-REFERENCE.md#abi-v18-own-ray
     // History: Docs/APMF_API-HISTORY.md#abi-v18-los-recipe
-    //
-    // THREADING AND COST. Every ray runs on the game's MAIN thread (the player-Update
-    // thread APMF drains its own queue on). Each ray is one bhkWorld::PickObject call,
-    // which takes the havok world's READ lock itself around the cast (disassembly of all
-    // three builds: AE 0xE86560, SE 0xDA7580, 1.7.104 0x104BE80); Harbinger holds no lock
-    // of its own across a ray and takes no outer world lock. At most 3 rays per pair
-    // measurement. Cached pairs are re-measured at most once every kLosRefreshMs and at
-    // most kLosMaxPairsPerFrame pairs per frame (oldest first). SenseActor's synchronous
-    // sight test has its OWN per-frame cap, kLosMaxSyncPairsPerFrame: past it, the query
-    // answers from the pair's stored verdict (fresh only) or not at all
-    // (kAwareDetail_SightDeferred), and the pair is queued for the pump. So the main-thread
-    // cost is bounded at 3 x (kLosMaxPairsPerFrame + kLosMaxSyncPairsPerFrame) rays per frame
-    // whatever the clients ask.
-    //
-    // WHO KEEPS A PAIR MEASURED. A pair is measured while something ASKS for it: a
-    // GetLineOfSight call, a cast seat or target-pin seat reading it for a claim with an
-    // own-line-of-sight bit, or a SenseActor sight test. A pair nobody has asked for in
-    // kLosInterestMs is dropped. GetLineOfSight is a cheap lock-free read, so a client
-    // asks every time it needs the answer, and the asking is what keeps it warm.
 
     enum LosVerdict : std::uint32_t {
         kLos_Unknown     = 0,   // never measured yet, or the newest measurement is older than
@@ -2083,38 +2040,7 @@ namespace APMF_API {
     };
 
     // ── AWARENESS (SenseActor) ─────────────────────────────────────────────────
-    // "Does this actor SENSE that one?" -- for an engage-on-sight gambit. OMNIDIRECTIONAL
-    // (no view cone, no facing anywhere) and MULTI-SENSE: each sense below is evaluated on
-    // its own and reported as a bit, so a client decides which ones count for it.
-    //
-    //   kSense_Sight      The OWN RAY (above) from the viewer to the target is VISIBLE and the
-    //                     target is within sightRange. Measured now, unless this pair was
-    //                     measured less than kLosRefreshMs ago (that verdict is reused), or this
-    //                     frame's kLosMaxSyncPairsPerFrame is spent (kAwareDetail_SightDeferred:
-    //                     a fresh stored verdict answers, else sight is not sensed this call). It
-    //                     also refreshes the pair for GetLineOfSight.
-    //   kSense_Hearing    Either route (AwareDetail says which):
-    //                     NOISE: the target made a NEW engine noise in the last
-    //                     kAwareNoiseWindowMs, of a level above 0, at a point within
-    //                     hearRadius of the viewer or of the anchor. The noise is the engine's
-    //                     own "detection event", the one record the engine keeps per actor of
-    //                     the last noise it made (written by AIProcess::SetActorsDetectionEvent:
-    //                     a spell's release, a projectile fired or landing, a hit, and the
-    //                     other engine noise sources; its level is the engine's own value).
-    //                     "New" means Harbinger saw that record change: the FIRST time a query
-    //                     names a target, Harbinger records its current noise as a baseline and
-    //                     hears nothing from it (a noise made before Harbinger ever looked is
-    //                     not heard; kAwareDetail_NoiseBaseline marks that call).
-    //                     COMBAT: the target is in combat (Actor::IsInCombat) within hearRadius
-    //                     of the viewer or of the anchor -- a fight is loud.
-    //   kSense_Proximity  The target is within proximityRadius of the viewer (3D distance),
-    //                     whatever is between them.
-    //   kSense_Engaged    The target is in combat and its current combat target IS the viewer
-    //                     or the anchor: it is fighting you.
-    // Nothing here decides hostility, faction or crime: that is the client's call. A target in
-    // a different cell space (interior vs exterior, another interior) senses nothing and sets
-    // kAwareDetail_OtherSpace. The engine's own detection (Actor::RequestDetectionLevel) is
-    // deliberately NOT a sense: its sight half is the facing, cone-limited test this replaces.
+    // See Docs/APMF_API-REFERENCE.md#senseactor-senses ("does this actor sense that one": what each sense means)
     //
     // THREADING: SYNCHRONOUS, TRUE MAIN THREAD ONLY (the sight ray), exactly like the v11 space
     // queries. Any other thread returns kQuery_NotMainThread and does nothing. Cost: at most 3
@@ -2315,39 +2241,7 @@ namespace APMF_API {
     // ═════════════════════════════════════════════════════════════════════════════
     // ABI v22: EQUIP PREFERENCE (kIntent_EquipPreference, ch.26) -- weighting, phase 1
     // ═════════════════════════════════════════════════════════════════════════════
-    // Where the engine decides by a SCORE, Harbinger enforces a wish only by BIASING that score.
-    // In combat the engine rescores every item about once a second with CombatInventoryItem::
-    // CalculateScore (vfunc 0x0C), sorts each engine CATEGORY and equips the top of each while a
-    // hand is free. Melee and ranged weapons and OFFENSIVE spells and staves share category 0;
-    // shields and torches 3; Restore 1; Ward 2 or 3; buff and utility spells 4 or 5.
-    //
-    // WHAT A DECLARATION DOES. While the claim OWNS ch.26 on the actor and the actor is in combat,
-    // each time the engine scores a declared item Harbinger returns the engine's OWN score lifted to
-    // max(own, best * (1 + kEquipPrefStepRel) + kEquipPrefStepAbs), where "best" is the highest score
-    // the engine holds for any other item of the same category list. Items this actor's preferences
-    // or live cast claims lift at an equal or better rank are left out of "best". A lower `rank` is
-    // lifted above a higher one; an item that already leads is returned unchanged. Weapons, shields
-    // and torches are lifted at the weapon-class seats, a staff at the spell/staff seat. A SPELL is
-    // not declarable here (it is ignored): a kIntent_Cast claim's driven spell is lifted the same
-    // way at the spell/staff seat. The ENGINE STILL DECIDES: its range gate, its order table (a
-    // Restore, Ward or buff spell takes its hand before any weapon) and its hand occupancy apply.
-    // Out of combat the scorer does not run and a preference does nothing.
-    //   * NEVER LIFTED: an item the engine scored 0 or less (a bow with no arrows); an item for a
-    //     hand a live kIntent_Cast claim holds (that hand carries only the spell); any item while a
-    //     source INSIDE the score seat outranks this claim on the Equip facet (APMF_Sources.ini; the
-    //     engine itself ranks at "Engine", default 20, a client at 50).
-    //
-    // ESCALATION (kEquipPref_Force). DISCOURAGED. Set it (Repoint with param.ival |= kEquipPref_Force)
-    // only after an OBSERVED miss: the preferred item not in its hand after about two rescore passes
-    // (about 2 s) in combat. Harbinger does not time this; the bit is honoured when set. With it
-    // Harbinger ALSO refuses, at the engine's equip choke point, every engine equip of a weapon,
-    // shield or torch into a hand this claim prefers something for, unless the item is preferred for
-    // a hand it competes for -- RANKED like every other deny: a source that outranks the claim keeps
-    // its equip, and that is a FORCE ANOMALY (warn line, counted, APMF_EquipPrefInfo::forceAnomalies).
-    // The claim's OWN client's equip ties with the claim and stands; that is counted apart, not an
-    // anomaly. The player's own trade/gift menu equips always pass. An unattributed equip passes
-    // unless APMF_Sources.ini says [UnknownSources] Equip=override. Harbinger EQUIPS NOTHING for a
-    // preference: place the item yourself (or declare it with kIntent_EquipAuthority).
+    // See Docs/APMF_API-REFERENCE.md#abi-v22-equip-preference (what a declaration does, never lifted, the escalation)
     //
     // THREADING. SetEquipPreference: any thread; copies `entries` synchronously and never retains
     // the pointer; the declaration reaches the score seats on the next game frame. GetEquipPreferenceState:
