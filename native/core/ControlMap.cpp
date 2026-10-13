@@ -2404,6 +2404,7 @@ namespace apmf {
             // ABI v9: the scope rides the SAME read as the set -- one generation.
             out.owned  = best->equipOwned;
             out.denied = best->equipDenied;
+            out.handle = best->handle;   // ABI v22 / D2: the claim the sink ranks its denies with
             return true;
         }
         return false;   // this NPC is controlled, but not on this channel
