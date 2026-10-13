@@ -2383,7 +2383,7 @@ namespace APMF_API {
                                        //   Harbinger ENDS the claim
         kIdleState_Carried       = 10, // NOT EVIDENCE: this handle re-played the same idle while no IdleStop had
                                        //   been seen since its previous play's entry, and this play has no fresh
-                                       //   entry event (one upgrades it to Confirmed). The claim stays. An
+                                       //   entry event (one inside the window upgrades it to Confirmed). The claim stays. An
                                        //   IdleStop since sets kIdleInfo_CarryEnded: the inherited idle ended
     };
 

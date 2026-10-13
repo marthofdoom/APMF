@@ -1426,21 +1426,20 @@ namespace apmf::idle {
             const Obs o = Peek(sn.id);
             if (!o.armed || o.gen != sn.gen) continue;
             Entry&              e       = it->second;
-            // ABI v24 (review idle-state F1): a CARRIED play is watched past its verdict line until a
-            // fresh entry (Confirmed, below) or an IdleStop. The IdleStop REFUTES the carry's premise
-            // ("no IdleStop seen since"): flagged, the state stays Carried (no evidence either way for
-            // this play), and the claim's liveness is unchanged (it never ended a carried play).
-            if (e.carriedOpen && !o.entered && o.idleStop) {
+            // ABI v24 (review idle-state F1, R2-1): a CARRIED play is judged for a fresh entry only
+            // inside the same window a fresh play gets (before its verdict line, below). After the
+            // verdict it is watched for an IdleStop only: an entry event that late is not this play's
+            // evidence (the engine's own AI may pick the same idle). The IdleStop REFUTES the carry's
+            // premise ("no IdleStop seen since"): flagged, the state stays Carried, and the claim's
+            // liveness is unchanged (it never ended a carried play).
+            if (e.carriedOpen && o.idleStop && (!o.entered || e.confirmLogged)) {
                 e.carriedOpen = false;
                 StateUpdate(e.handle, sn.gen, [](StateRec& r) { r.flags |= APMF_API::kIdleInfo_CarryEnded; });
                 spdlog::info("[ch.12] 0x{} idle {}: the CARRIED idle ended (IdleStop at +{} ms) with no fresh entry from "
                              "this play.",
                              Hex(sn.id), e.idleName, o.idleStopMs - o.playMs);
             }
-            if (e.carriedOpen && o.entered) {   // a fresh entry, even after the carried verdict line: judge it below
-                e.carriedOpen   = false;
-                e.confirmLogged = false;
-            }
+            if (e.carriedOpen && o.entered && !e.confirmLogged) e.carriedOpen = false;   // in the window: judged below
             if (e.confirmLogged) continue;
             const std::uint64_t worldMs = g_worldMs - e.playWorldMs;
             const bool          over    = worldMs >= kConfirmWaitMs && g_worldFrames - e.playFrame >= kConfirmMinFrames;

@@ -568,7 +568,7 @@ Handle h = g_apmf->RequestEx(actor, kIntent_Idle, kBasis, &p);
 | `Refused` (7) | at the call: `PlayIdle` returned false | Harbinger releases it |
 | `Unconfirmable` (8) | at the call: `PlayIdle` returned true but no entry event can be resolved. `unconfirmableWhy` says why: confirmation off (`bIdleConfirm=0`), not armed (a self-check refusal), no entry events, an incomplete walk, an unreadable graph, or a broken event id space | live. Whether it played is unknown |
 | `NotPlayed` (9) | before the call: idle v2 is not available (a `Repoint` with a form is not refused at the call), the form is not an IDLE, the target is not a loaded reference, or the actor is not loaded, dead or out of high process. No engine call was made | Harbinger releases it |
-| `Carried` (10) | at the call: the same handle re-played the same idle and no `IdleStop` has been seen since its previous play's entry. This is an inference, not evidence. A fresh entry event, even a late one, upgrades it to `Confirmed` or `ConfirmedWeak`. An `IdleStop` with no fresh entry sets `kIdleInfo_CarryEnded`: the inherited idle ended | live, as a carry always was |
+| `Carried` (10) | at the call: the same handle re-played the same idle and no `IdleStop` has been seen since its previous play's entry. This is an inference, not evidence. A fresh entry event within the same 3 second window a fresh play gets upgrades it to `Confirmed` or `ConfirmedWeak`. A later one does not count. An `IdleStop` with no fresh entry sets `kIdleInfo_CarryEnded`: the inherited idle ended | live, as a carry always was |
 
 `endCause` says how the claim ended:
 
