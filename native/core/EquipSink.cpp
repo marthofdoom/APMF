@@ -332,13 +332,14 @@ namespace apmf::equipsink {
         // it says so, loudly, and only when the verdict CHANGES (first sight of a
         // detour, a different detour, or a detour gone). Main thread only, outside
         // any engine frame (kDataLoaded / kPostLoadGame / kNewGame). ----
-        std::uintptr_t g_entrySites[2]{};
-        std::uint64_t  g_entrySiteIds[2]{};
-        const char*    g_entrySiteNames[2]{ "", "" };
-        std::string    g_entryVerdict[2];   // "" == not yet inspected; "none" == clean; else "<dll>|<shape>"
+        // [2] is UnequipObject's entry (the unequip observer, set only when it installs).
+        std::uintptr_t g_entrySites[3]{};
+        std::uint64_t  g_entrySiteIds[3]{};
+        const char*    g_entrySiteNames[3]{ "", "", "" };
+        std::string    g_entryVerdict[3];   // "" == not yet inspected; "none" == clean; else "<dll>|<shape>"
 
         void InspectEntryDetours(const char* why) {
-            for (int i = 0; i < 2; ++i) {
+            for (int i = 0; i < 3; ++i) {
                 const std::uintptr_t entry = g_entrySites[i];
                 if (!entry) continue;
                 std::uint8_t e[16]{};
@@ -380,6 +381,14 @@ namespace apmf::equipsink {
                     if (!first)
                         spdlog::info("[apmf][equip-sink] entry {} ({}) no longer detoured (at {}): attribution restored.",
                                      g_entrySiteIds[i], g_entrySiteNames[i], why);
+                    continue;
+                }
+                if (i == 2) {   // UnequipObject: observe-only, no exemption and no deny depend on it
+                    spdlog::warn("[apmf][equip-sink] entry {} ({}) detoured by {} ({} -> 0x{}, seen at {}): unequip "
+                                 "attribution degraded, a caller may log as External({}) instead of its engine path. "
+                                 "The unequip observer still runs (it sits below the detour) and refuses nothing.",
+                                 g_entrySiteIds[i], g_entrySiteNames[i], module, shape, apmf::log::Hex(target, 0), why,
+                                 module);
                     continue;
                 }
                 spdlog::warn("[apmf][equip-sink] entry {} ({}) detoured by {} ({} -> 0x{}, seen at {}): attribution degraded, "
@@ -833,6 +842,337 @@ namespace apmf::equipsink {
             // caller's own lock/epilogue runs exactly as if the worker had returned.
         }
 
+        // ====================================================================
+        // THE UNEQUIP OBSERVER (2026-10-12, feat/apmf-unequip-observe). OBSERVE ONLY.
+        // Field origin: LoreRim, Harbinger's ch.17 pass equips Sven's torch and within
+        // 0.5 s it is out of his left hand; nothing named the remover, because only
+        // equips were watched (agentlog diag-no-mfo-hits Q3).
+        //
+        // THE SEAT. ActorEquipManager::UnequipObject (AE 38901 / SE 37945) builds an
+        // UnequipData on its stack and calls the unequip worker (AE 38934 / SE 37979)
+        // from ONE E8: AE 38901+0x1B9, SE 37945+0x138. A full .text E8/E9 scan of both
+        // unpacked executables finds no other call or jump to the worker, and no
+        // 64-bit pointer to it anywhere in the image (2026-10-12). So every
+        // UnequipObject call reaches this E8, whoever made it: Papyrus UnequipItem /
+        // UnequipAll / UnequipItemSlot, the console, the player's menus, the AI command
+        // executors, DropObject, UseAmmo, RemoveItem, a bound weapon's Finish, AND the
+        // displacement an EQUIP does (the equip workers 38928/38929/38930 call 38905,
+        // which calls UnequipObject for what the slot held). Different workers, NOT seen
+        // here and not governed: UnequipShout (38904 -> 38935) and UnequipSpell
+        // (38903 -> 38902). See Docs/DENY-COMPLETENESS-AUDIT.md row 17 for the list.
+        //
+        // WHAT IT DOES. Calls the worker with the same four arguments, ALWAYS, and hands
+        // its return value back (UnequipObject itself discards rax and returns the
+        // UnequipData +0x24 byte the worker wrote). For a governed item on an actor under
+        // a live ch.17 or ch.26 claim it then logs one rate-limited line. No lock of ours
+        // is held across the worker call or any engine call.
+        //
+        // WHO ASKED. A stack scan (32 frames). The frame equal to the site + 5 is
+        // UnequipObject's; the next frame is its CALLER (`path=`, classified exactly as
+        // op=equip classifies). Many callers are plumbing (a visitor, a functor, a
+        // helper that unequips both hands), so the walk goes on UP the stack, skipping
+        // engine functions that no table names, to the first frame that IS named (a
+        // Papyrus native, the console, the player menu, an AI command, ...) or that lies
+        // in another module (`via=`). If an equip-sink site frame (EquipObject /
+        // EquipObjectList + 5) lies above, the unequip is the DISPLACEMENT done by that
+        // equip: the walk stops there and `via=equip:<that equip's caller>`. Every frame
+        // above UnequipObject (up to 6) is printed raw in `chain=` (an engine function id,
+        // or a module name), so an unnamed path is still readable from the log.
+        //
+        // HITS (the menu). An unequip of a claimed actor's governed item is a write to the
+        // worn state the claim holds, so it counts as a Hit on the Equip facet for its
+        // source, exactly like an outside equip: Hits stays "outside writes seen" and the
+        // menu then shows who takes things off as well as who puts them on. Two cases do
+        // not count: APMF's own unequips (ch.15, `src=self`) and a DISPLACEMENT (the
+        // equip that displaced it already counted its source once at the equip seat;
+        // counting the consequence again would double the source and could name the
+        // engine for a mod's equip). Nothing is Overruled or Stood: there is no deny.
+        // ====================================================================
+
+        // The worker's 4th argument as UnequipObject builds it at rsp+0x28 (AE +0x12E..
+        // +0x188, SE +0x12A..+0x187): the same shape as EquipData, but +0x24 is the
+        // RESULT byte the worker writes (UnequipObject returns it). Read-only here.
+        struct UnequipData {
+            RE::ExtraDataList*      extra;      // +0x00  a_extraData
+            std::uint32_t           count;      // +0x08  a_count
+            const RE::BGSEquipSlot* slot;       // +0x10  a_slot, else from ExtraWorn/WornLeft, else the default slot
+            std::uint64_t           zero;       // +0x18  always 0
+            bool                    queue;      // +0x20  a_queueEquip
+            bool                    force;      // +0x21  a_forceEquip
+            bool                    sounds;     // +0x22  a_playSounds
+            bool                    applyNow;   // +0x23  a_applyNow
+            bool                    result;     // +0x24  0 on entry; the worker's answer
+        };
+        static_assert(offsetof(UnequipData, extra)    == 0x00);
+        static_assert(offsetof(UnequipData, count)    == 0x08);
+        static_assert(offsetof(UnequipData, slot)     == 0x10);
+        static_assert(offsetof(UnequipData, zero)     == 0x18);
+        static_assert(offsetof(UnequipData, queue)    == 0x20);
+        static_assert(offsetof(UnequipData, force)    == 0x21);
+        static_assert(offsetof(UnequipData, sounds)   == 0x22);
+        static_assert(offsetof(UnequipData, applyNow) == 0x23);
+        static_assert(offsetof(UnequipData, result)   == 0x24);
+
+        // Four register args (prologue: rcx/rdx/r8/r9 saved, nothing read from the
+        // caller's stack args). Declared with a 64-bit return so whatever the worker
+        // leaves in rax is handed back unchanged (the worker ends in a tail jump to 38557
+        // / 37602; UnequipObject does not read rax after the call).
+        using UnequipWorker_t = std::uint64_t (*)(RE::ActorEquipManager*, RE::Actor*, RE::TESBoundObject*, UnequipData*);
+
+        // depth = from this thunk's return slot to UnequipObject's CALLER's return slot, the
+        // cross-check only: AE 38901 = mov r11,rsp; push rdi,r12,r13,r14,r15; sub rsp,0x50 ->
+        // 8 + 0x50 + 5*8 = 0x80. SE 37945 = mov rax,rsp; push rdi,r14,r15; sub rsp,0x50 -> 0x70.
+        struct UnequipSiteSpec {
+            std::uint64_t id;
+            std::uint32_t off;
+            std::uint32_t depth;
+            std::uint64_t workerId;
+        };
+        constexpr UnequipSiteSpec kUnequipSiteAE{ 38901, 0x1B9, 0x80, 38934 };   // 1.6.1170 0x6CA010 -> worker 0x6CC810
+        constexpr UnequipSiteSpec kUnequipSiteSE{ 37945, 0x138, 0x70, 37979 };   // 1.5.97   0x638190 -> worker 0x63A6B0
+
+        // Unequip-only path names, checked AFTER the equip table (whose rows name the
+        // same functions where they also unequip: PlayerMenu 29383/38907, AiCommand
+        // 39637/39650/39948, DropObject 37520, RemoveItemReequip 16059, InventoryReequip
+        // 41244, QueuedApply 39814, and their SE twins). Each row is an ORIGINATOR, proven
+        // in the image (2026-10-12): plumbing (a visitor, a functor, a hand helper, the
+        // equip displacement 38905) is left unnamed ON PURPOSE so the walk passes through
+        // it to the frame that names who asked.
+        constexpr PathSpec kUnequipPathsAE[] = {
+            { 54774, "Script",       PathKind::kScript  },   // Papyrus Actor.UnequipItem: its name "UnequipItem" lea'd by 54784 +0x5103; +0xD9/+0x1E0 -> UnequipObject
+            { 54775, "Script",       PathKind::kScript  },   // Papyrus Actor.UnequipItemSlot (its name lea'd by 54784 +0x514F); -> 16114 (worn-item visitor)
+            { 38899, "Script",       PathKind::kScript  },   // UnequipAll: its only callers are Papyrus UnequipAll 54773 (jmp) and the console 22352 (+0x3B)
+            { 22353, "Console",      PathKind::kConsole },   // the UnequipItem / UnEquipObject command (opcode 0x10EF, script-function table) execute
+            { 38546, "UseAmmo",      PathKind::kEngine  },   // Actor vtable slot 0xD2 (UseAmmo): out of ammo -> UnequipObject +0x1F2
+            { 34227, "BoundItemEnd", PathKind::kEngine  },   // BoundItemEffect vtable slot 0x15 (ActiveEffect::Finish): the bound weapon goes, +0xFF
+            { 39683, "AiCommand",    PathKind::kEngine  },   // +0xDB -> UnequipObject; called ONLY from the AiCommand executor 39650
+        };
+        constexpr PathSpec kUnequipPathsSE[] = {
+            { 53950, "Script",       PathKind::kScript  },   // Papyrus UnequipItem: its name lea'd by 53960 +0x448F
+            { 53951, "Script",       PathKind::kScript  },   // Papyrus UnequipItemSlot: its name lea'd by 53960 +0x44D8
+            { 37943, "Script",       PathKind::kScript  },   // callers: Papyrus UnequipAll 53949 (jmp) + console 21870 (+0x3B)
+            { 21871, "Console",      PathKind::kConsole },   // opcode 0x10EF execute
+            { 37596, "UseAmmo",      PathKind::kEngine  },   // Actor vtable slot 0xD2
+            { 33449, "BoundItemEnd", PathKind::kEngine  },   // BoundItemEffect vtable slot 0x15
+            { 38652, "AiCommand",    PathKind::kEngine  },   // called ONLY from the AiCommand executor 38619
+        };
+
+        std::atomic<bool>        g_unequipInstalled{ false };
+        std::atomic<const char*> g_unequipReason{ "not yet installed (InstallUnequipObserve runs at kDataLoaded)" };
+        UnequipWorker_t          g_unequipWorker = nullptr;
+        InstalledSite            g_unequipSite{};
+        const PathSpec*          g_uqPaths     = nullptr;
+        std::size_t              g_uqPathCount = 0;
+        std::atomic<bool>        g_uqScanMismatchLogged{ false };
+
+        constexpr unsigned long kUnequipScanFrames = 32;   // deep enough to reach an equip site above a displacement
+        constexpr int           kUnequipWalk       = 8;    // frames above UnequipObject searched when no equip site lies above
+        constexpr int           kUnequipChain      = 6;    // frames above UnequipObject printed raw in chain=
+
+        // The equip table first (same function, same name), then the unequip-only rows.
+        Caller ClassifyUnequip(std::uintptr_t ret) {
+            Caller c = Classify(ret);
+            if (!c.known && !c.external && c.id != 0) {
+                for (std::size_t i = 0; i < g_uqPathCount; ++i) {
+                    if (g_uqPaths[i].id == c.id) {
+                        c.name  = g_uqPaths[i].name;
+                        c.kind  = g_uqPaths[i].kind;
+                        c.known = true;
+                        break;
+                    }
+                }
+            }
+            return c;
+        }
+
+        std::string CallerLabel(const Caller& c) {
+            if (c.external) return std::string("External(") + c.ext + ")";
+            if (c.known) return c.name;
+            if (c.id != 0) return "Unknown(" + std::to_string(c.id) + ")";
+            return "Unattributed";
+        }
+
+        // The Harbinger source an attributed caller maps to, the same rules as op=equip:
+        // skse64 -> DirectCalls, APMF -> self (none), a named module -> that plugin, Papyrus
+        // / console -> DirectCalls, any other engine function -> Engine. kNoSource for an
+        // unnamed module or an exe address with no id.
+        apmf::sources::SourceId SourceOfCaller(const Caller& c, std::uintptr_t a_addr, bool& a_self) {
+            namespace src = apmf::sources;
+            a_self = false;
+            if (c.external) {
+                if (c.kind == PathKind::kScript) return src::kDirectSource;
+                if (src::IsSelf(a_addr)) { a_self = true; return src::kNoSource; }
+                if (c.ext[0] != '\0' && std::strcmp(c.ext, "?") != 0) return src::Register(c.ext, src::Kind::kPlugin);
+                return src::kNoSource;
+            }
+            if (c.kind == PathKind::kScript || c.kind == PathKind::kConsole) return src::kDirectSource;
+            if (c.known || c.id != 0) return src::kEngineSource;
+            return src::kNoSource;
+        }
+
+        std::string SlotLabel(const RE::BGSEquipSlot* a_slot) {
+            if (!a_slot) return "none";
+            constexpr RE::FormID kEitherHandEquipSlotLogOnly = 0x00013F44;
+            const RE::FormID id = a_slot->GetFormID();
+            if (id == kRightHandEquipSlot) return "R";
+            if (id == kLeftHandEquipSlot) return "L";
+            if (id == kEitherHandEquipSlotLogOnly) return "E";
+            return apmf::log::Hex(id);
+        }
+
+        // Everything after the worker returned: attribution, counters, the line. Never
+        // throws into the engine frame (the caller wraps it), takes only our own leaf
+        // locks (AdmitLog, the source registry's add), none of them across an engine call.
+        void ObserveUnequip(RE::Actor* actor, RE::TESBoundObject* obj, const UnequipData* data, std::uintptr_t a_site,
+                            const std::uint8_t* a_myRetSlot, bool a_c17, bool a_c26) {
+            namespace src = apmf::sources;
+            const RE::FormID actorId = actor->GetFormID();
+            const RE::FormID itemId  = obj->GetFormID();
+
+            void* frames[kUnequipScanFrames]{};
+            const unsigned short n = RtlCaptureStackBackTrace(0, kUnequipScanFrames, frames, nullptr);
+            int at = -1;
+            for (int i = 0; i < n; ++i) {
+                if (reinterpret_cast<std::uintptr_t>(frames[i]) == g_unequipSite.addr + 5) { at = i; break; }
+            }
+
+            Caller   path;                       // UnequipObject's immediate caller
+            Caller   origin;                     // who asked (path, or a frame further up)
+            int      originAt  = -1;
+            bool     displaced = false;          // an equip above did this
+            bool     attributed = false;
+            if (at >= 0 && at + 1 < n) {
+                // Interposers on the unequip E8 (frames between this thunk and UnequipObject).
+                for (int i = 1; i < at; ++i) {
+                    const auto s = src::ForAddress(reinterpret_cast<std::uintptr_t>(frames[i]), src::Kind::kInterposer);
+                    if (s >= 0 && s != src::kEngineSource) src::NoteHit(s, src::Facet::kEquip);
+                }
+                path     = ClassifyUnequip(reinterpret_cast<std::uintptr_t>(frames[at + 1]));
+                origin   = path;
+                originAt = at + 1;
+                // An equip-sink site frame above = this unequip runs inside that equip.
+                int eqAt = -1;
+                for (int i = at + 2; i < n && eqAt < 0; ++i) {
+                    const auto f = reinterpret_cast<std::uintptr_t>(frames[i]);
+                    for (const auto& s : g_sites) {
+                        if (s.addr && f == s.addr + 5) { eqAt = i; break; }
+                    }
+                }
+                if (!path.known && !path.external) {
+                    const int limit = eqAt >= 0 ? eqAt : std::min<int>(n, at + 2 + kUnequipWalk);
+                    bool found = false;
+                    for (int i = at + 2; i < limit && !found; ++i) {
+                        const Caller c = ClassifyUnequip(reinterpret_cast<std::uintptr_t>(frames[i]));
+                        if (c.external) {
+                            // Below an equip site, a module frame is the equip sink's own thunk or an
+                            // interposer on the equip E8 -- not who asked. Otherwise it called into the
+                            // engine that did this unequip: it is the originator.
+                            if (eqAt >= 0) continue;
+                            origin = c; originAt = i; found = true;
+                        } else if (c.known) {
+                            origin = c; originAt = i; found = true;
+                        }
+                    }
+                    if (!found && eqAt >= 0 && eqAt + 1 < n) {
+                        origin    = Classify(reinterpret_cast<std::uintptr_t>(frames[eqAt + 1]));   // the equip's caller, op=equip's table
+                        originAt  = eqAt + 1;
+                        displaced = true;
+                    }
+                }
+                attributed = origin.known || origin.id != 0 ||
+                             (origin.external && origin.ext[0] != '\0' && std::strcmp(origin.ext, "?") != 0);
+                // Cross-check on the direct path only (no interposer on the E8): the fixed depth
+                // must read the same caller.
+                if (a_site == g_unequipSite.addr && g_unequipSite.depth) {
+                    std::uintptr_t ret = 0;
+                    std::memcpy(&ret, a_myRetSlot + g_unequipSite.depth, sizeof(ret));
+                    if (ret != reinterpret_cast<std::uintptr_t>(frames[at + 1]) &&
+                        !g_uqScanMismatchLogged.exchange(true, std::memory_order_relaxed)) {
+                        spdlog::warn("[apmf][equip-sink] unequip stack-scan caller 0x{} differs from the fixed-depth "
+                                     "read 0x{} at {}+0x{} (logged once). The stack scan is used.",
+                                     apmf::log::Hex(reinterpret_cast<std::uintptr_t>(frames[at + 1]) - g_base, 0),
+                                     apmf::log::Hex(ret - g_base, 0), g_unequipSite.id,
+                                     apmf::log::Hex(g_unequipSite.off, 0));
+                    }
+                }
+            }
+
+            // Counters (Hits). See the header block: no hit for APMF itself or a displacement.
+            bool              self = false;
+            src::SourceId     sid  = src::kNoSource;
+            if (attributed && originAt >= 0) {
+                sid = SourceOfCaller(origin, reinterpret_cast<std::uintptr_t>(frames[originAt]), self);
+                if (!displaced && !self && sid != src::kNoSource) src::NoteHit(sid, src::Facet::kEquip);
+            }
+            if (!attributed)
+                src::Unattributed(src::Facet::kEquip, actorId,
+                                  "an engine unequip reached the unequip observer with no recoverable caller");
+
+            // The line, deduped 2 s per (actor, item, caller) and under op=equip's shared 100/s cap.
+            const auto          nowMs   = apmf::clock::MonotonicMs();
+            const std::uint64_t pathKey = path.external ? (0x8000000000000000ull ^ std::hash<std::string_view>{}(path.ext))
+                                                        : path.id;
+            const std::uint64_t key = (((static_cast<std::uint64_t>(actorId) << 32) | itemId) ^
+                                       (pathKey * 0x9E3779B97F4A7C15ull)) ^ 0x5545515549504D46ull;   // op=unequip salt
+            std::uint32_t drops = 0;
+            const bool admit = AdmitLog(key, nowMs, drops);
+            if (drops)
+                spdlog::warn("[apmf][equip-obs] dropped {} line(s) in the last minute (cap {}/s).", drops, kCapPerSec);
+            if (!admit) return;
+
+            std::string chain;
+            if (at >= 0) {
+                for (int i = at + 1, k = 0; i < n && k < kUnequipChain; ++i, ++k) {
+                    const Caller c = Classify(reinterpret_cast<std::uintptr_t>(frames[i]));
+                    if (!chain.empty()) chain += '>';
+                    chain += c.external ? std::string(c.ext) : std::to_string(c.id);
+                }
+            }
+            if (chain.empty()) chain = "-";
+            std::string via = "-";
+            if (displaced)              via = "equip:" + CallerLabel(origin);
+            else if (originAt > at + 1) via = CallerLabel(origin);
+            // src= the source the line is about (counted as a Hit unless disp=1 or self).
+            const char* srcName = !attributed ? "Unattributed" : self ? "self"
+                                : sid != src::kNoSource ? nullptr : "-";
+            char catBuf[48];
+            const char* itemName = obj->GetName();
+            spdlog::info("[apmf][equip-obs] op=unequip actor={} item={} path={} site={}+0x{} slot={} via={} src={} "
+                         "disp={} chain={} ret={} q={} f={} s={} a={} ok={} tls={} cat={} claim={} name='{}'",
+                         apmf::log::Hex(actorId), apmf::log::Hex(itemId),
+                         at < 0 ? std::string("Unattributed") : CallerLabel(path),
+                         g_unequipSite.id, apmf::log::Hex(g_unequipSite.off, 0), SlotLabel(data->slot), via,
+                         srcName ? std::string(srcName) : std::string(src::Name(sid)), displaced ? 1 : 0, chain,
+                         (at < 0 || path.external) ? std::string("ext") : apmf::log::Hex(path.rva, 0),
+                         data->queue ? 1 : 0, data->force ? 1 : 0, data->sounds ? 1 : 0, data->applyNow ? 1 : 0,
+                         data->result ? 1 : 0, t_apmfDepth, CategoryNames(Categorize(obj, data->slot), catBuf, sizeof(catBuf)),
+                         a_c17 && a_c26 ? "17+26" : a_c17 ? "17" : "26", itemName ? itemName : "");
+        }
+
+        // THE THUNK. Same signature as the worker; the patched E8 lands here through the
+        // shared trampoline. The worker is called FIRST and ALWAYS, with the arguments it
+        // was given; only then is anything read or logged.
+        std::uint64_t UnequipThunk(RE::ActorEquipManager* mgr, RE::Actor* actor, RE::TESBoundObject* obj,
+                                   UnequipData* data) {
+            const std::uintptr_t site      = reinterpret_cast<std::uintptr_t>(_ReturnAddress()) - 5;
+            const auto           myRetSlot = reinterpret_cast<const std::uint8_t*>(_AddressOfReturnAddress());
+            const std::uint64_t  rv        = g_unequipWorker(mgr, actor, obj, data);
+            if (!actor || !obj || !data || actor->IsPlayerRef()) return rv;
+            try {   // nothing may unwind into the engine's unequip frame
+                const RE::FormID actorId = actor->GetFormID();
+                EquipSetView set;
+                const bool c17 = ControlMap::Get().TryGetEquipSet(actorId, set);
+                APMF_API::APMF_Param p{};
+                float                basis = 0.0f;
+                const bool c26 = ControlMap::Get().TryGetOwningClaimBasis(actorId, APMF_API::kIntent_EquipPreference,
+                                                                          p, basis);
+                if ((c17 || c26) && IsGovernedType(obj->GetFormType()))
+                    ObserveUnequip(actor, obj, data, site, myRetSlot, c17, c26);
+            } catch (...) {
+            }
+            return rv;
+        }
+
     }   // namespace
 
     // ABI v9: THE category map (declared in EquipSink.h with its table). Called by
@@ -1083,6 +1423,108 @@ namespace apmf::equipsink {
                      g_observeOnly.load(std::memory_order_relaxed) ? 1 : 0,
                      g_denyScript.load(std::memory_order_relaxed) ? 1 : 0,
                      entriesClean ? "clean" : "DETOURED");
+    }
+
+    bool UnequipObserved() { return g_unequipInstalled.load(std::memory_order_acquire); }
+    const char* UnequipNotObservedReason() { return g_unequipReason.load(std::memory_order_acquire); }
+
+    // THE UNEQUIP OBSERVER's install (see the block above UnequipThunk). Main thread,
+    // kDataLoaded, after Install(). Refuses by name; a refusal leaves the equip sink as it is.
+    void InstallUnequipObserve() {
+        static std::atomic<bool> s_once{ false };
+        if (s_once.exchange(true)) return;
+        auto refuse = [](const char* why) {
+            g_unequipReason.store(why, std::memory_order_release);
+            spdlog::warn("[apmf][equip-sink] unequip observer NOT installed: {}.", why);
+        };
+        if (GetPrivateProfileIntA("EquipAuthority", "bObserveUnequip", 1, kIni) == 0)
+            return refuse("[EquipAuthority] bObserveUnequip=0");
+        // The equip sink's Install() already applied VR, the exact-version gate (1.6.1170 /
+        // 1.5.97 / 1.7.104) and the INI switch; the attribution walk needs its caller table
+        // and its two equip sites, so without it this observer has nothing to stand on.
+        if (!g_installed.load(std::memory_order_acquire) || !g_offset2id)
+            return refuse("the equip sink is not installed (the unequip attribution reads its caller table and "
+                          "equip sites)");
+        const bool ae = (g_paths == kPathsAE);   // 1.6.1170 and 1.7.104 read the AE tables, as Install() chose
+        const UnequipSiteSpec& spec = ae ? kUnequipSiteAE : kUnequipSiteSE;
+
+        // mit-3.7 F1. On 1.7.104 an id the MIT table lacks is a FATAL miss inside REL::ID, so
+        // nothing is resolved unless both rows passed the startup self-check by NAME first
+        // (on 1.6.1170 / 1.5.97 the same test simply passes). Then the address gate as usual.
+        const auto& sc = allowance::SelfCheckResult();
+        if (!sc.IsVerifiedLabel("EquipSink.Unequip.Worker") || !sc.IsVerifiedLabel("EquipSink.Site.UnequipObject")) {
+            spdlog::error("[selfcheck] seat EquipSink.Site.UnequipObject / EquipSink.Unequip.Worker REFUSED: no verified "
+                          "row for game {} (on 1.7.104: the ids are not in the MIT id table).",
+                          REL::Module::get().version().string("."));
+            return refuse("self-check: the UnequipObject site or the unequip worker has no verified row on this runtime");
+        }
+        const std::uintptr_t worker = REL::ID(spec.workerId).address();
+        const std::uintptr_t addr   = REL::ID(spec.id).address() + spec.off;
+        bool verified = allowance::SeatVerified(worker, "EquipSink.Unequip.Worker");
+        verified      = allowance::SeatVerified(addr, "EquipSink.Site.UnequipObject") && verified;
+        if (!verified) return refuse("self-check refused the unequip worker or the UnequipObject call site");
+
+        // Byte-verify the E8 BEFORE writing it: E8 rel32 landing on the library-resolved worker.
+        // Anything else (another plugin got there first) refuses, and names the module it found.
+        std::uint8_t b[5]{};
+        std::memcpy(b, reinterpret_cast<const void*>(addr), sizeof(b));
+        std::int32_t rel = 0;
+        std::memcpy(&rel, b + 1, sizeof(rel));
+        const std::uintptr_t target = addr + 5 + static_cast<std::intptr_t>(rel);
+        if (b[0] != 0xE8 || target != worker) {
+            char module[64] = "?";
+            void* mod       = nullptr;
+            if (b[0] == 0xE8 && GetModuleHandleExA(0x6, reinterpret_cast<const char*>(target), &mod) && mod) {
+                char path[260]{};
+                const auto len = GetModuleFileNameA(mod, path, sizeof(path));
+                if (len > 0 && len < sizeof(path)) {
+                    const char* baseName = path;
+                    for (const char* p = path; *p; ++p) if (*p == '\\' || *p == '/') baseName = p + 1;
+                    std::strncpy(module, baseName, sizeof(module) - 1);
+                }
+            }
+            spdlog::error("[apmf][equip-sink] unequip site-verify FAILED {}+0x{} (UnequipObject) got {} {} {} {} {} "
+                          "(target 0x{} in {}, expected E8->0x{}) -- unequip observer NOT installed",
+                          spec.id, apmf::log::Hex(spec.off, 0), apmf::log::Hex(b[0], 2), apmf::log::Hex(b[1], 2),
+                          apmf::log::Hex(b[2], 2), apmf::log::Hex(b[3], 2), apmf::log::Hex(b[4], 2),
+                          apmf::log::Hex(target - g_base, 0), module, apmf::log::Hex(worker - g_base, 0));
+            return refuse("site-verify refused (another patcher at the UnequipObject call site)");
+        }
+
+        g_unequipWorker = reinterpret_cast<UnequipWorker_t>(worker);
+        g_unequipSite   = InstalledSite{ addr, spec.depth, spec.id, spec.off, "UnequipObject" };
+        g_uqPaths       = ae ? kUnequipPathsAE : kUnequipPathsSE;
+        g_uqPathCount   = ae ? std::size(kUnequipPathsAE) : std::size(kUnequipPathsSE);
+
+        // UnequipObject's public entry joins the entry-detour inspection (re-run at
+        // kPostLoadGame / kNewGame by ReinspectEntries).
+        g_entrySites[2]      = REL::ID(spec.id).address();
+        g_entrySiteIds[2]    = spec.id;
+        g_entrySiteNames[2]  = "UnequipObject";
+        InspectEntryDetours("kDataLoaded");
+
+        // The trampoline Install() allocated (64 bytes) holds one 14-byte stub per
+        // destination: the equip thunk's and this one.
+        auto& tr = SKSE::GetTrampoline();
+        const std::uintptr_t prev = tr.write_call<5>(addr, &UnequipThunk);
+        // Harbinger 1a census: a call-site seat like the two equip E8s. The E8 was verified to
+        // hold the engine's own call a moment ago, so nothing was inside it at install; a
+        // plugin that patches it LATER (UAPNG.dll and EquipmentDurabilitySystem-NG.dll
+        // re-patch the two equip E8s that way) is named by the census at kPostLoadGame,
+        // kNewGame and every 60 s: "[sources] census (...): seat EquipSink.Site.UnequipObject
+        // (Equip) was hooked over AFTER Harbinger by <dll>".
+        apmf::sources::RegisterCallSeat(apmf::sources::Facet::kEquip, "EquipSink.Site.UnequipObject", addr, prev);
+
+        g_unequipReason.store("", std::memory_order_release);
+        g_unequipInstalled.store(true, std::memory_order_release);
+        spdlog::info("[apmf][equip-sink] unequip observer INSTALLED on {} (site {}+0x{} verified E8->0x{}, caller-ret "
+                     "depth 0x{}); OBSERVE ONLY: the worker is always called with the same arguments. Logs op=unequip "
+                     "for actors under a live ch.17 or ch.26 claim. Census: the site held the engine's own call at "
+                     "install (no plugin inside it); whether UAPNG.dll or another plugin hooks it later is reported by "
+                     "the census lines for seat EquipSink.Site.UnequipObject (kPostLoadGame / kNewGame / 60 s). "
+                     "entry={}.",
+                     ae ? "AE" : "SE", spec.id, apmf::log::Hex(spec.off, 0), apmf::log::Hex(worker - g_base, 0),
+                     apmf::log::Hex(spec.depth, 0), g_entryVerdict[2] == "none" ? "clean" : "DETOURED");
     }
 
 }

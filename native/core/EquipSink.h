@@ -133,6 +133,22 @@ namespace apmf::equipsink {
     // this logs ONLY when the verdict changes. No-op when the seat is not installed.
     void ReinspectEntries(const char* why);
 
+    // ---- THE UNEQUIP OBSERVER (2026-10-12, feat/apmf-unequip-observe) ----------------
+    // OBSERVE ONLY. A call-site seat on the ONE E8 that reaches the ActorEquipManager
+    // unequip worker (AE 38934 / SE 37979), inside UnequipObject (AE 38901+0x1B9 / SE
+    // 37945+0x138; full E8/E9/pointer scan of both unpacked binaries 2026-10-12: no other
+    // reference). For an actor under a live ch.17 or ch.26 claim, a governed item (ARMO /
+    // WEAP / AMMO / LIGH) is logged as `[apmf][equip-obs] op=unequip ...` with the caller
+    // recovered by a stack scan; the worker is ALWAYS called, with the same four
+    // arguments, and its return value is handed back unchanged. Nothing is refused:
+    // there is no unequip deny (kEquipAuth_DenyUnequip stays RESERVED). Installed after
+    // Install() (it reads the equip sink's caller table and equip sites, so it needs the
+    // equip sink); INI [EquipAuthority] bObserveUnequip (default 1). Main thread,
+    // kDataLoaded. See core/EquipSink.cpp "THE UNEQUIP OBSERVER" for the attribution walk.
+    void InstallUnequipObserve();
+    bool UnequipObserved();                    // installed and live. Any thread.
+    const char* UnequipNotObservedReason();    // a string literal; "" once installed. Any thread.
+
     // RAII bracket for equips APMF ISSUES ITSELF (channels/EquipAuthority.cpp).
     // While one is alive on the current thread, every engine equip the sink sees
     // on that thread logs `tls=<depth>` -- the attribution that proves an equip

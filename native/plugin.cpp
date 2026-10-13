@@ -247,6 +247,10 @@ namespace {
                                                   // bEquipAuthority (default 1) / bEquipObserveOnly
                                                   // (default 1: the first field build observes only).
                                                   // VR-refused inside. Docs/INVARIANTS.md #17a.
+            apmf::equipsink::InstallUnequipObserve();   // OBSERVE-ONLY seat on UnequipObject's one worker E8
+                                                  // (logs op=unequip for ch.17 / ch.26 actors, never refuses;
+                                                  // INI [EquipAuthority] bObserveUnequip, default 1). AFTER
+                                                  // Install(): it reads the sink's caller table and sites.
             apmf::nonaliasprobe::Install();      // OBSERVE-ONLY 0xDF hook + 0x49 assist + RTTI dumper
                                                   // (Docs/PROBE-NONALIAS-PACKAGE.md; VR-refused inside)
             apmf::aicastseats::Install();        // OBSERVE-ONLY: the 4 AI cast-decision seats

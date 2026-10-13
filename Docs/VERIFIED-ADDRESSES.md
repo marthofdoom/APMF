@@ -10,13 +10,13 @@ nothing when one does not. At startup `REL::SelfCheck::Run` repeats the comparis
 game actually loaded. A row that fails refuses THAT seat by name in the log; the expected RVA is never
 used in place of the library's answer.
 
-Offline result of this generation: 1.6.1170.0 210/210 verified, 0 refused, 1.5.97.0 210/210 verified, 0 refused.
+Offline result of this generation: 1.6.1170.0 219/219 verified, 0 refused, 1.5.97.0 219/219 verified, 0 refused.
 
 1.7.104.0 has NO Address Library. Its column is OUR OWN id map: the MIT id table of the CommonLibSSE-NG fork
 (`data/mit-idtable-v1-1-7-104-0.bin`, revision 3, 17751 records, SkyrimSE.exe TimeDateStamp 0x6A8C7046; built into every plugin, it is
 what SelfCheck queries at runtime; authoritative) with the evidence CSVs beside it, keyed by
 the 1.6.1170 id, re-verified against the plaintext 1.7.104 executable by the same row-kind checks (see the script
-docstring). Offline result: 1.7.104.0 220/253 verified, 33 NOT verified (28 of them BY DESIGN: 1.5.97-only labels whose AE twin row carries the 1.7.104 fact). A not-verified seat has no row in the 1.7.104 table,
+docstring). Offline result: 1.7.104.0 220/262 verified, 42 NOT verified (28 of them BY DESIGN: 1.5.97-only labels whose AE twin row carries the 1.7.104 fact). A not-verified seat has no row in the 1.7.104 table,
 so `IsVerifiedAddress` is false and the seat is refused by name. The table of `Not verified on 1.7.104` is below.
 
 These rows prove the ADDRESSES. That each hooked slot holds the same function body on 1.7.104, and that every
@@ -181,6 +181,15 @@ CommonLib layout APMF reads is the same there, is proven separately in the "1.7.
 | EquipSink.Worker | function | 38929 | 0x6CBE30 | 37974 | 0x639E20 | 38929 | 0x6DE920 | signature (177 bytes, unique in .text) |  | native/core/EquipSink.cpp:92 |  |
 | EquipSink.Site.EquipObject | callsite | 38894 | 0x6C9820 +0x170 E8 | 37938 | 0x637A80 +0xE5 E8 | 38894 | 0x6DC310 +0x170 E8 | signature (25 bytes, unique in .text) |  | native/core/EquipSink.cpp:85 | ADDRESS-TABLE-2026-09-15.md:14 |
 | EquipSink.Site.EquipObjectList | callsite | 38893 | 0x6C9730 +0xBC E8 | 37937 | 0x637990 +0xBC E8 | 38893 | 0x6DC220 +0xBC E8 | signature (16 bytes, unique in .text) |  | native/core/EquipSink.cpp:86 |  |
+| EquipSink.Unequip.Worker | function | 38934 | 0x6CC810 | 37979 | 0x63A6B0 | - | - | signature (37 bytes, unique in .text) |  | native/core/EquipSink.cpp:931 | agentlogs/apmf-unequip-seat.md (2026-10-12): the ActorEquipManager unequip worker; ONE E8 reference in .text (38901+0x1B9 / 37945+0x138), no E9, no 64-bit pointer |
+| EquipSink.Site.UnequipObject | callsite | 38901 | 0x6CA010 +0x1B9 E8 | 37945 | 0x638190 +0x138 E8 | - | - | signature (39 bytes, unique in .text) |  | native/core/EquipSink.cpp:931 | ActorEquipManager::UnequipObject (CommonLib Offset::ActorEquipManager::UnequipObject, RELOCATION_ID(37945, 38901)); OBSERVE-ONLY seat |
+| EquipSink.UnequipPath.Script.UnequipItem | function | 54774 | 0x9EB330 | 53950 | 0x94D890 | - | - | signature (27 bytes, unique in .text) |  | native/core/EquipSink.cpp:942 | Papyrus Actor.UnequipItem native (name lea'd by 54784 / 53960) |
+| EquipSink.UnequipPath.Script.UnequipItemSlot | function | 54775 | 0x9EB640 | 53951 | 0x94DBA0 | - | - | signature (23 bytes, unique in .text) |  | native/core/EquipSink.cpp:943 | Papyrus Actor.UnequipItemSlot native (name lea'd by 54784 / 53960) |
+| EquipSink.UnequipPath.Script.UnequipAll | function | 38899 | 0x6C9DB0 | 37943 | 0x637F20 | - | - | signature (34 bytes, unique in .text) |  | native/core/EquipSink.cpp:944 | UnequipAll implementation; callers Papyrus UnequipAll 54773/53949 (jmp) + console 22352/21870 |
+| EquipSink.UnequipPath.Console.UnEquipObject | function | 22353 | 0x355FA0 | 21871 | 0x2FF5E0 | - | - | signature (20 bytes, unique in .text) |  | native/core/EquipSink.cpp:945 | console/obscript UnequipItem (UnEquipObject, opcode 0x10EF) execute function |
+| EquipSink.UnequipPath.UseAmmo | function | 38546 | 0x6B6000 | 37596 | 0x624860 | - | - | signature (19 bytes, unique in .text) |  | native/core/EquipSink.cpp:946 | Actor vtable slot 0xD2 UseAmmo (RTTI .?AVActor@@) |
+| EquipSink.UnequipPath.BoundItemEnd | function | 34227 | 0x5B4D10 | 33449 | 0x545B80 | - | - | signature (19 bytes, unique in .text) |  | native/core/EquipSink.cpp:947 | BoundItemEffect vtable slot 0x15 ActiveEffect::Finish (RTTI .?AVBoundItemEffect@@) |
+| EquipSink.UnequipPath.AiCommand | function | 39683 | 0x707640 | 38652 | 0x673850 | - | - | signature (24 bytes, unique in .text) |  | native/core/EquipSink.cpp:948 | called only from the AiCommand executor 39650 / 38619 |
 | TargetPin.CombatController.SetTarget | function | 33235 | 0x559630 | 32488 | 0x4FDFE0 | - | - | signature (21 bytes, unique in .text) |  | native/channels/TargetPin.cpp Judge (Harbinger 1a restore through the engine's own setter) | CombatController::SetTarget(this, Actor*): rcx = controller, rdx = the new target (raw Actor*, the caller holds the reference), return unused; writes +0x2C targetHandle and the attacker's currentCombatTarget, the cached target, and the group bookkeeping for the old target (AE 0x804A10). Two callers per runtime: UpdateTarget (AE 33236+0x119 / SE 32489+0x151) and the clear (rdx = 0). |
 | PositionCast.CreateReferenceAtLocation | function | 13723 | 0x1B6C10 | 13625 | 0x16C210 | 13723 | 0x1BC1C0 | signature (26 bytes, unique in .text) |  | native/core/PositionCast.cpp:290 | ADDRESS-TABLE-2026-09-15.md:470 |
 | PositionCast.TES.GetCell | function | 13322 | 0x19E850 | 13177 | 0x155090 | 13322 | 0x1A3C60 | signature (16 bytes, unique in .text) |  | native/core/PositionCast.cpp:267 |  |
@@ -288,6 +297,15 @@ for them and the seat is refused. Nothing here is a failure on 1.6.1170 or 1.5.9
 | seat | 1.6.1170 id | reason |
 |---|---|---|
 | Character.ActorValueOwner.SE | - | no 1.6.1170 (AE) id: the 1.7.104 map is keyed by AE id (1.5.97-only seat) |
+| EquipSink.Unequip.Worker | 38934 | id 38934 is not in the idmap |
+| EquipSink.Site.UnequipObject | 38901 | call target id 38934 has no idmap RVA |
+| EquipSink.UnequipPath.Script.UnequipItem | 54774 | id 54774 is not in the idmap |
+| EquipSink.UnequipPath.Script.UnequipItemSlot | 54775 | id 54775 is not in the idmap |
+| EquipSink.UnequipPath.Script.UnequipAll | 38899 | id 38899 is not in the idmap |
+| EquipSink.UnequipPath.Console.UnEquipObject | 22353 | id 22353 is not in the idmap |
+| EquipSink.UnequipPath.UseAmmo | 38546 | id 38546 is not in the idmap |
+| EquipSink.UnequipPath.BoundItemEnd | 34227 | id 34227 is not in the idmap |
+| EquipSink.UnequipPath.AiCommand | 39683 | id 39683 is not in the idmap |
 | TargetPin.CombatController.SetTarget | 33235 | id 33235 is not in the idmap |
 | EquipSink.Path.OutfitApply.24234 | - | BY DESIGN: 1.5.97-only label. On 1.6.1170 and 1.7.104 the code reads its AE twin EquipSink.Path.OutfitApply.418622 (AE id 418622, 1.7.104 0x3C4440), whose own row carries the 1.7.104 fact (MAPPED-AE) |
 | EquipSink.Path.AddWornOutfit.19266 | - | BY DESIGN: 1.5.97-only label. On 1.6.1170 and 1.7.104 the code reads its AE twin EquipSink.Path.AddWornOutfit.19692 (AE id 19692, 1.7.104 0x2E8070), whose own row carries the 1.7.104 fact (MAPPED-AE) |

@@ -2664,6 +2664,150 @@
    }
   },
   {
+   "seat": "EquipSink.Unequip.Worker",
+   "kind": "function",
+   "construct": "kUnequipSiteAE.workerId 38934 / kUnequipSiteSE.workerId 37979 (REL::ID)",
+   "ids": {
+    "1.6.1170": 38934,
+    "1.5.97": 37979
+   },
+   "sig": {
+    "1.6.1170": "48 89 5C 24 08 48 89 6C 24 10 48 89 74 24 18 48 89 7C 24 20 41 54 41 56 41 57 48 83 EC 20 48 3B 15 ?? ?? ?? ??",
+    "1.5.97": "48 89 5C 24 08 48 89 6C 24 10 48 89 74 24 18 48 89 7C 24 20 41 54 41 56 41 57 48 83 EC 20 48 3B 15 ?? ?? ?? ?? 4D 8B F1 49 8B E8 48 8B F2 4C 8B F9 75 21 F7 82 C0 00 00 00 00 00 00 F0 74 15 41 0F B6 40 1A 83 C0 D7 83 F8 01 77 08 48 8B CA E8 ?? ?? ?? ?? 48 8B CD E8 ?? ?? ?? ?? 48 85 C0 74 0E 48 8B 10 48 8B C8 FF 52 20 48 8B D8 EB 02 33 DB 40 32 FF 41 BC 01 00 00 00 48 85 DB 0F 84 ?? ?? ?? ?? 48 8B 86 F0 01 00 00 8B 88 08 01 00 00 C1 E9 1E 41 84 CC 74 28"
+   },
+   "source": "native/core/EquipSink.cpp:931",
+   "doc": "agentlogs/apmf-unequip-seat.md (2026-10-12): the ActorEquipManager unequip worker; ONE E8 reference in .text (38901+0x1B9 / 37945+0x138), no E9, no 64-bit pointer"
+  },
+  {
+   "seat": "EquipSink.Site.UnequipObject",
+   "kind": "callsite",
+   "construct": "kUnequipSiteAE {38901, 0x1B9} / kUnequipSiteSE {37945, 0x138}",
+   "ids": {
+    "1.6.1170": 38901,
+    "1.5.97": 37945
+   },
+   "sig": {
+    "1.6.1170": "4C 8B DC 57 41 54 41 55 41 56 41 57 48 83 EC 50 49 C7 43 A8 FE FF FF FF 49 89 5B 08 49 89 6B 18 49 89 73 20 49 8B F9",
+    "1.5.97": "48 8B C4 57 41 56 41 57 48 83 EC 50 48 C7 40 B8 FE FF FF FF 48 89 58 08 48 89 68 18"
+   },
+   "source": "native/core/EquipSink.cpp:931",
+   "offset": {
+    "1.6.1170": "0x1B9",
+    "1.5.97": "0x138"
+   },
+   "bytes": "E8",
+   "target": {
+    "1.6.1170": 38934,
+    "1.5.97": 37979
+   },
+   "doc": "ActorEquipManager::UnequipObject (CommonLib Offset::ActorEquipManager::UnequipObject, RELOCATION_ID(37945, 38901)); OBSERVE-ONLY seat"
+  },
+  {
+   "seat": "EquipSink.UnequipPath.Script.UnequipItem",
+   "kind": "function",
+   "construct": "kUnequipPathsAE { 54774 } / kUnequipPathsSE { 53950 }",
+   "ids": {
+    "1.6.1170": 54774,
+    "1.5.97": 53950
+   },
+   "sig": {
+    "1.6.1170": "48 8B C4 57 41 54 41 55 41 56 41 57 48 81 EC 80 00 00 00 48 C7 40 B8 FE FF FF FF",
+    "1.5.97": "48 8B C4 57 41 54 41 55 41 56 41 57 48 81 EC 80 00 00 00 48 C7 40 B8 FE FF FF FF"
+   },
+   "source": "native/core/EquipSink.cpp:942",
+   "doc": "Papyrus Actor.UnequipItem native (name lea'd by 54784 / 53960)"
+  },
+  {
+   "seat": "EquipSink.UnequipPath.Script.UnequipItemSlot",
+   "kind": "function",
+   "construct": "kUnequipPathsAE { 54775 } / kUnequipPathsSE { 53951 }",
+   "ids": {
+    "1.6.1170": 54775,
+    "1.5.97": 53951
+   },
+   "sig": {
+    "1.6.1170": "48 89 5C 24 08 48 89 6C 24 10 48 89 74 24 18 57 48 83 EC 30 41 8B F1",
+    "1.5.97": "48 89 5C 24 08 48 89 6C 24 10 48 89 74 24 18 57 48 83 EC 30 41 8B F1 49 8B D8"
+   },
+   "source": "native/core/EquipSink.cpp:943",
+   "doc": "Papyrus Actor.UnequipItemSlot native (name lea'd by 54784 / 53960)"
+  },
+  {
+   "seat": "EquipSink.UnequipPath.Script.UnequipAll",
+   "kind": "function",
+   "construct": "kUnequipPathsAE { 38899 } / kUnequipPathsSE { 37943 }",
+   "ids": {
+    "1.6.1170": 38899,
+    "1.5.97": 37943
+   },
+   "sig": {
+    "1.6.1170": "40 57 48 83 EC 40 48 C7 44 24 20 FE FF FF FF 48 89 5C 24 50 48 89 74 24 58 48 8B DA 48 8B F1 48 85 D2",
+    "1.5.97": "40 57 48 83 EC 40 48 C7 44 24 20 FE FF FF FF 48 89 5C 24 50 48 89 74 24 58 48 8B DA 48 8B F1 48 85 D2"
+   },
+   "source": "native/core/EquipSink.cpp:944",
+   "doc": "UnequipAll implementation; callers Papyrus UnequipAll 54773/53949 (jmp) + console 22352/21870"
+  },
+  {
+   "seat": "EquipSink.UnequipPath.Console.UnEquipObject",
+   "kind": "function",
+   "construct": "kUnequipPathsAE { 22353 } / kUnequipPathsSE { 21871 }",
+   "ids": {
+    "1.6.1170": 22353,
+    "1.5.97": 21871
+   },
+   "sig": {
+    "1.6.1170": "4C 8B DC 41 56 48 81 EC 90 00 00 00 49 C7 43 E0 FE FF FF FF",
+    "1.5.97": "4C 8B DC 41 56 48 81 EC 90 00 00 00 49 C7 43 E0 FE FF FF FF"
+   },
+   "source": "native/core/EquipSink.cpp:945",
+   "doc": "console/obscript UnequipItem (UnEquipObject, opcode 0x10EF) execute function"
+  },
+  {
+   "seat": "EquipSink.UnequipPath.UseAmmo",
+   "kind": "function",
+   "construct": "kUnequipPathsAE { 38546 } / kUnequipPathsSE { 37596 }",
+   "ids": {
+    "1.6.1170": 38546,
+    "1.5.97": 37596
+   },
+   "sig": {
+    "1.6.1170": "40 53 56 48 83 EC 68 48 8B D9 8B F2 48 8B 89 F8 00 00 00",
+    "1.5.97": "40 53 56 48 83 EC 68 48 8B D9 8B F2 48 8B 89 F0 00 00 00"
+   },
+   "source": "native/core/EquipSink.cpp:946",
+   "doc": "Actor vtable slot 0xD2 UseAmmo (RTTI .?AVActor@@)"
+  },
+  {
+   "seat": "EquipSink.UnequipPath.BoundItemEnd",
+   "kind": "function",
+   "construct": "kUnequipPathsAE { 34227 } / kUnequipPathsSE { 33449 }",
+   "ids": {
+    "1.6.1170": 34227,
+    "1.5.97": 33449
+   },
+   "sig": {
+    "1.6.1170": "4C 8B DC 56 57 41 56 48 83 EC 70 49 C7 43 D8 FE FF FF FF",
+    "1.5.97": "4C 8B DC 56 57 41 56 48 83 EC 70 49 C7 43 D8 FE FF FF FF"
+   },
+   "source": "native/core/EquipSink.cpp:947",
+   "doc": "BoundItemEffect vtable slot 0x15 ActiveEffect::Finish (RTTI .?AVBoundItemEffect@@)"
+  },
+  {
+   "seat": "EquipSink.UnequipPath.AiCommand",
+   "kind": "function",
+   "construct": "kUnequipPathsAE { 39683 } / kUnequipPathsSE { 38652 }",
+   "ids": {
+    "1.6.1170": 39683,
+    "1.5.97": 38652
+   },
+   "sig": {
+    "1.6.1170": "48 89 5C 24 10 57 48 83 EC 60 48 8B FA 48 8B D9 E8 ?? ?? ?? ?? 48 8B C8",
+    "1.5.97": "48 89 5C 24 10 57 48 83 EC 60 48 8B FA 48 8B D9 E8 ?? ?? ?? ?? 48 8B C8"
+   },
+   "source": "native/core/EquipSink.cpp:948",
+   "doc": "called only from the AiCommand executor 39650 / 38619"
+  },
+  {
    "seat": "TargetPin.CombatController.SetTarget",
    "kind": "function",
    "construct": "channels/TargetPin.cpp RELOCATION_ID(32488, 33235) (1.5.97 / 1.6.1170); 1.7.104 raw RVA",

@@ -196,14 +196,24 @@ namespace {
             }
             const auto* now = actor->GetEquippedObject(/*left*/ slot == APMF_API::kEquipSlot_Left);
             const bool  yes = now && now->GetFormID() == form;
+            // Who removed it: the unequip observer (core/EquipSink.cpp) logs every unequip of a governed
+            // item on a ch.17 / ch.26 actor as `[apmf][equip-obs] op=unequip actor=<id> item=<form>`.
+            const bool watched = apmf::equipsink::UnequipObserved();
             spdlog::info("[apmf][equip-auth] readback actor=0x{} {} hand, {} ms after the queued equip of 0x{}: "
-                         "still in hand: {} (now: {}). Who removed it, if anyone, is not observed yet "
-                         "(unequips are not watched in this build).",
+                         "still in hand: {} (now: {}). {}",
                          apmf::log::Hex(id), SlotName(slot), apmf::clock::MonotonicMs() - issuedMs,
                          apmf::log::Hex(form), yes ? "yes" : "no",
                          now ? fmt::format("0x{} '{}'", apmf::log::Hex(now->GetFormID()),
                                            now->GetName() ? now->GetName() : "")
-                             : std::string("empty"));
+                             : std::string("empty"),
+                         yes ? std::string("")
+                         : watched
+                             ? fmt::format("Who removed it: see the '[apmf][equip-obs] op=unequip actor={} item={}' "
+                                           "line(s) since the equip (path= the caller, via= who asked, chain= the raw "
+                                           "frames); none means it never landed or left without an unequip.",
+                                           apmf::log::Hex(id), apmf::log::Hex(form))
+                             : fmt::format("Who removed it is not observed: the unequip observer is off ({}).",
+                                           apmf::equipsink::UnequipNotObservedReason()));
         });
     }
 

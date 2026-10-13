@@ -19,7 +19,7 @@
 
 namespace apmf::VerifiedAddresses
 {
-	// 1.6.1170.0: 210 rows
+	// 1.6.1170.0: 219 rows
 	inline constexpr REL::SelfCheck::Row kRows_1_6_1170[] = {
 		{ 207886, 0x18A5558, 0x0, 0, {  }, "Character" },
 		{ 207896, 0x18A5FE8, 0x0, 0, {  }, "Character.ActorValueOwner" },
@@ -176,6 +176,15 @@ namespace apmf::VerifiedAddresses
 		{ 38929, 0x6CBE30, 0x0, 0, {  }, "EquipSink.Worker" },
 		{ 38894, 0x6C9820, 0x170, 1, { 0xE8 }, "EquipSink.Site.EquipObject" },
 		{ 38893, 0x6C9730, 0xBC, 1, { 0xE8 }, "EquipSink.Site.EquipObjectList" },
+		{ 38934, 0x6CC810, 0x0, 0, {  }, "EquipSink.Unequip.Worker" },
+		{ 38901, 0x6CA010, 0x1B9, 1, { 0xE8 }, "EquipSink.Site.UnequipObject" },
+		{ 54774, 0x9EB330, 0x0, 0, {  }, "EquipSink.UnequipPath.Script.UnequipItem" },
+		{ 54775, 0x9EB640, 0x0, 0, {  }, "EquipSink.UnequipPath.Script.UnequipItemSlot" },
+		{ 38899, 0x6C9DB0, 0x0, 0, {  }, "EquipSink.UnequipPath.Script.UnequipAll" },
+		{ 22353, 0x355FA0, 0x0, 0, {  }, "EquipSink.UnequipPath.Console.UnEquipObject" },
+		{ 38546, 0x6B6000, 0x0, 0, {  }, "EquipSink.UnequipPath.UseAmmo" },
+		{ 34227, 0x5B4D10, 0x0, 0, {  }, "EquipSink.UnequipPath.BoundItemEnd" },
+		{ 39683, 0x707640, 0x0, 0, {  }, "EquipSink.UnequipPath.AiCommand" },
 		{ 33235, 0x559630, 0x0, 0, {  }, "TargetPin.CombatController.SetTarget" },
 		{ 13723, 0x1B6C10, 0x0, 0, {  }, "PositionCast.CreateReferenceAtLocation" },
 		{ 13322, 0x19E850, 0x0, 0, {  }, "PositionCast.TES.GetCell" },
@@ -233,7 +242,7 @@ namespace apmf::VerifiedAddresses
 		{ 12332, 0x179710, 0x0, 0, {  }, "CommonLib.LookupReferenceByHandle" },
 	};
 
-	// 1.5.97.0: 210 rows
+	// 1.5.97.0: 219 rows
 	inline constexpr REL::SelfCheck::Row kRows_1_5_97[] = {
 		{ 261397, 0x165DA40, 0x0, 0, {  }, "Character" },
 		{ 261402, 0x165E4D0, 0x0, 0, {  }, "Character.ActorValueOwner.SE" },
@@ -390,6 +399,15 @@ namespace apmf::VerifiedAddresses
 		{ 37974, 0x639E20, 0x0, 0, {  }, "EquipSink.Worker" },
 		{ 37938, 0x637A80, 0xE5, 1, { 0xE8 }, "EquipSink.Site.EquipObject" },
 		{ 37937, 0x637990, 0xBC, 1, { 0xE8 }, "EquipSink.Site.EquipObjectList" },
+		{ 37979, 0x63A6B0, 0x0, 0, {  }, "EquipSink.Unequip.Worker" },
+		{ 37945, 0x638190, 0x138, 1, { 0xE8 }, "EquipSink.Site.UnequipObject" },
+		{ 53950, 0x94D890, 0x0, 0, {  }, "EquipSink.UnequipPath.Script.UnequipItem" },
+		{ 53951, 0x94DBA0, 0x0, 0, {  }, "EquipSink.UnequipPath.Script.UnequipItemSlot" },
+		{ 37943, 0x637F20, 0x0, 0, {  }, "EquipSink.UnequipPath.Script.UnequipAll" },
+		{ 21871, 0x2FF5E0, 0x0, 0, {  }, "EquipSink.UnequipPath.Console.UnEquipObject" },
+		{ 37596, 0x624860, 0x0, 0, {  }, "EquipSink.UnequipPath.UseAmmo" },
+		{ 33449, 0x545B80, 0x0, 0, {  }, "EquipSink.UnequipPath.BoundItemEnd" },
+		{ 38652, 0x673850, 0x0, 0, {  }, "EquipSink.UnequipPath.AiCommand" },
 		{ 32488, 0x4FDFE0, 0x0, 0, {  }, "TargetPin.CombatController.SetTarget" },
 		{ 13625, 0x16C210, 0x0, 0, {  }, "PositionCast.CreateReferenceAtLocation" },
 		{ 13177, 0x155090, 0x0, 0, {  }, "PositionCast.TES.GetCell" },
@@ -448,8 +466,17 @@ namespace apmf::VerifiedAddresses
 	};
 
 	// 1.7.104.0: 220 rows
-	// 33 NOT VERIFIED on 1.7.104.0, deliberately absent from this table (the seat is refused):
+	// 42 NOT VERIFIED on 1.7.104.0, deliberately absent from this table (the seat is refused):
 	//   Character.ActorValueOwner.SE (1.6.1170 id -): no 1.6.1170 (AE) id: the 1.7.104 map is keyed by AE id (1.5.97-only seat)
+	//   EquipSink.Unequip.Worker (1.6.1170 id 38934): id 38934 is not in the idmap
+	//   EquipSink.Site.UnequipObject (1.6.1170 id 38901): call target id 38934 has no idmap RVA
+	//   EquipSink.UnequipPath.Script.UnequipItem (1.6.1170 id 54774): id 54774 is not in the idmap
+	//   EquipSink.UnequipPath.Script.UnequipItemSlot (1.6.1170 id 54775): id 54775 is not in the idmap
+	//   EquipSink.UnequipPath.Script.UnequipAll (1.6.1170 id 38899): id 38899 is not in the idmap
+	//   EquipSink.UnequipPath.Console.UnEquipObject (1.6.1170 id 22353): id 22353 is not in the idmap
+	//   EquipSink.UnequipPath.UseAmmo (1.6.1170 id 38546): id 38546 is not in the idmap
+	//   EquipSink.UnequipPath.BoundItemEnd (1.6.1170 id 34227): id 34227 is not in the idmap
+	//   EquipSink.UnequipPath.AiCommand (1.6.1170 id 39683): id 39683 is not in the idmap
 	//   TargetPin.CombatController.SetTarget (1.6.1170 id 33235): id 33235 is not in the idmap
 	//   EquipSink.Path.OutfitApply.24234 (1.6.1170 id -): BY DESIGN: 1.5.97-only label. On 1.6.1170 and 1.7.104 the code reads its AE twin EquipSink.Path.OutfitApply.418622 (AE id 418622, 1.7.104 0x3C4440), whose own row carries the 1.7.104 fact (MAPPED-AE)
 	//   EquipSink.Path.AddWornOutfit.19266 (1.6.1170 id -): BY DESIGN: 1.5.97-only label. On 1.6.1170 and 1.7.104 the code reads its AE twin EquipSink.Path.AddWornOutfit.19692 (AE id 19692, 1.7.104 0x2E8070), whose own row carries the 1.7.104 fact (MAPPED-AE)
