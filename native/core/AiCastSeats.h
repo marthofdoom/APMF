@@ -89,13 +89,14 @@
 // default (`[AiCastSeats] EnableWeaponScoreProbe`, default 1) -- CalculateScore
 // is scalar-return, categorically immune to the GetMagicTarget-class sret bug
 // documented above. A SEPARATE flag (`[AiCastSeats] EnableScoreSteer`, default
-// 0) adds a fixed upward bias to a claimed form's own returned score (reading
-// the same ch.15 `kIntent_Equipment` claim `core/EquipGate.cpp`'s T2a gate
-// already reads) -- stays OFF until this probe's own field data confirms 0x0C
-// actually runs for a follower. Melee+Ranged share arbitration category 0,
-// Shield+Torch share category 3 -- a weapon score can bias which OF THOSE
-// wins, never beat a spell that already claimed the hand (weapons are walked
-// after the spell/staff categories in the engine's fixed order table). See
+// 1 since ABI v22, marth D5) arms the ONE score lift both 0x0C thunks call
+// (core/EquipPreference.cpp OnScore): a ch.26 kIntent_EquipPreference item, or
+// the form a ch.8b cast claim drives, returns the engine's own score one step
+// above the best competitor in its engine category, bound by the priority
+// sliders. Melee+Ranged AND OFFENSIVE spells/staves share engine category 0
+// (RE 2026-10-12), Shield+Torch category 3 -- a lift decides WITHIN a category
+// only; a Restore / Ward / buff spell is walked before category 0 in the
+// engine's fixed order table and takes its hand whatever the scores. See
 // AiCastSeats.cpp's GROUP C block comment (above `WeaponScoreThunk`) for the
 // full design.
 // ============================================================================
