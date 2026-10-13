@@ -366,8 +366,10 @@ only while ALL of these hold:
    own, each a warning that releases the ch.21 and ch.20 claims naming the target:
    (a) NO PATH PROGRESS outside reach (300 u): over the last 20 s of world time the actor got no 64 u
    closer than at the window's start, did not keep pace with a moving target (target moved >= 128 u, actor
-   >= 64 u, gap grew < 64 u) and started no attack or cast ON THE HELD TARGET (an attack on anyone else is
-   not progress on this engagement);
+   >= 64 u, gap grew < 64 u) and started no attack or cast ON THE HELD TARGET -- or, while the hold is
+   PAUSED BY DESIGN (the actor's own combat target is another actor: a pin paused by own line of sight, a
+   ch.21-only hold whose engine target is another foe), on that other target (review R-3: an intended
+   pause is never an anomaly);
    (b) ARRIVED BUT NOT FIGHTING: within reach for 20 s without an attack or cast on the held target (a
    close but unreachable target, a downed foe the engine will not strike);
    (c) OUT OF ENGAGE RANGE (condition 6).
@@ -393,15 +395,23 @@ only while ALL of these hold:
 6. **The client's engage range ends it -- and the actor's combat -- unless the target is hostile.** A
    ch.21 claim may carry its engage range in `param.fval` (game units; 0 = none; the field was unread
    before, so a zero-init client is unchanged). When the target stays farther than that from the actor
-   (or in another cell / worldspace) for 1 s and is NOT actively hostile (in combat, with the actor, the
-   player or a player teammate as its own combat target), the ch.21 and ch.20 claims naming it are
-   released (re-entry ended at once for 60 s) and the actor's combat is ended through the engine's own
+   (or in another cell / worldspace) for 1 s and is NOT actively hostile (in combat, with one of the PARTY
+   as its own combat target: the actor, the player, a player teammate, an actor commanded by any of those
+   -- a summon, a thrall -- or a member of the actor's own combat group), the ch.21 and ch.20 claims naming
+   it are released (re-entry ended at once for 60 s) and the actor's combat is ended -- but ONLY when that
+   target WAS the fight (review R-1): if any OTHER live target of the actor's group is actively hostile by
+   the same test (the group's targets and members copied under the group's READ lock, nothing nested), the
+   claims are released and the fight stays the engine's, logged with the foe that kept it. Otherwise the
+   combat is ended through the engine's own
    `Actor::StopCombat` (Character vtable slot 0xE5: 1.6.1170 `0x6B70A0`, 1.5.97 `0x625920`, `void(this)`,
    reads rcx only; the Character vtable is a self-checked row and the actor's vtable is compared with it
    per call), on the game thread, logged -- and RANKED: not when a winning ch.20 pin names a different
    target, not when another client's ch.24 claim outranks the entry on the Combat facet, not when Engine
-   outranks the entry on the Combat facet. The cross-thread exposure of a StopCombat (APMF-B26) is the
-   same as a script's `Actor.StopCombat`.
+   outranks the entry on the Combat facet. THREADING (APMF-B26): StopCombat frees the actor's
+   CombatController (actor+0x160) INLINE with no lock (AE `0x6B7214` -> `0x558500`, `0x6B7235`). It is
+   called from the player's update seat, i.e. Main::Update's own context, right after the engine resets
+   its AI job lists (AE `0x5FC260` / `0x5FC180`), so the combat jobs are believed quiescent there --
+   INFERRED from that reset, not proven; the same exposure as a script's `Actor.StopCombat`.
 7. **Scope is closed by name.** Exactly 1.6.1170 or 1.5.97 for the knowledge seats and StopCombat
    (1.7.104: the seat ids are not in the MIT id table, the seats are refused and logged), not VR,
    `[EngagementHold] bEngagementHold` / `bTargetKnowledge` / `bBleedoutDrive`, the self-check on all rows
