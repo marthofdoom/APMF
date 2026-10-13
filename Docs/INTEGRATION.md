@@ -226,11 +226,11 @@ MFO files every claim with a basis of 200.
 
 ## Equip preference (ch.26, ABI v22)
 
-New in the release after 0.13.0, not yet tested in game. The full reference is [ch.26 Equip preference](FACETS.md#ch26-equip-preference-kintent_equippreference). Since the same ABI every equip refusal (the ch.17 set, the hand block, the ch.15 refusal) follows the `Equip` priorities in `APMF_Sources.ini`.
+New in 0.13.1, not yet tested in game. The full reference is [ch.26 Equip preference](FACETS.md#ch26-equip-preference-kintent_equippreference). Since the same ABI every equip refusal (the ch.17 set, the hand block, the ch.15 refusal) follows the `Equip` priorities in `APMF_Sources.ini`.
 
 ## Idle state (ch.12, ABI v24)
 
-New in the release after 0.13.0, not yet tested in game. `APMF_API_v24::GetIdleState(handle, &info)` says what became of a ch.12 idle claim's `PlayIdle` call: `Pending`, `Accepted`, `Confirmed`, `ConfirmedWeak`, `NotConfirmed`, `NoTransition`, `Refused`, `NotPlayed`, `Unconfirmable` (with the reason) or `Carried` (no evidence, only no `IdleStop` since the same claim's previous play), and `endCause` says how the claim ended. Gate on `abiVersion >= 24`. If your mod must act only after the animation really played, wait for `Confirmed` instead of timing Harbinger's 3 second window yourself. Any thread. An ended claim's state stays readable for 10 seconds of world time. The full table is in [ch.12 Idle](FACETS.md#reading-what-happened-abi-24).
+New in 0.13.1, not yet tested in game. `APMF_API_v24::GetIdleState(handle, &info)` says what became of a ch.12 idle claim's `PlayIdle` call: `Pending`, `Accepted`, `Confirmed`, `ConfirmedWeak`, `NotConfirmed`, `NoTransition`, `Refused`, `NotPlayed`, `Unconfirmable` (with the reason) or `Carried` (no evidence, only no `IdleStop` since the same claim's previous play), and `endCause` says how the claim ended. Gate on `abiVersion >= 24`. If your mod must act only after the animation really played, wait for `Confirmed` instead of timing Harbinger's 3 second window yourself. Any thread. An ended claim's state stays readable for 10 seconds of world time. The full table is in [ch.12 Idle](FACETS.md#reading-what-happened-abi-24).
 
 ## Sections that moved
 

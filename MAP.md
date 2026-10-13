@@ -173,7 +173,7 @@ ABI v24 (ch.12 idle state) adds `GetIdleState` -> `idle::GetState` (`try/catch(.
 object is an `APMF_API_v24` (a static_assert pair pins the v22 prefix end); `RequestEx(kIntent_Idle)` calls
 `idle::NoteFiled` after the enqueue (insert-only: Pending), `Repoint` calls `idle::NoteRepoint` BEFORE
 `EnqueueRepoint` (so the game thread's play of the new param always lands after it), `Release` calls
-`idle::NoteReleased`; `MinReleaseForAbi(23/24)` = "the release after 0.13.0" until the cut.
+`idle::NoteReleased`; `MinReleaseForAbi(23/24)` = "0.13.1" until the cut.
 The "client too new" null (`abiVersion > kABIVersion`) logs the running APMF version
 (`SKSE::PluginDeclaration::GetSingleton()`) and `MinReleaseForAbi(abi)` — a table that must
 be extended on every `kABIVersion` bump.

@@ -656,7 +656,7 @@ void EndGive(GiveAnim& g) {
 
 #### Version, INI and field status
 
-ABI 1, form and target from ABI 17 (first shipped in 0.9.10), `GetIdleState` from ABI 24 (struct `APMF_API_v24`, the release after 0.13.0, CI verified only). `bIdleV2` and `bIdleConfirm` in `[Idle]`. In use by MFO. IdleGive was field-confirmed on 2026-09-28. The entry-event confirmation (`bIdleConfirm`) has only been CI verified.
+ABI 1, form and target from ABI 17 (first shipped in 0.9.10), `GetIdleState` from ABI 24 (struct `APMF_API_v24`, 0.13.1, CI verified only). `bIdleV2` and `bIdleConfirm` in `[Idle]`. In use by MFO. IdleGive was field-confirmed on 2026-09-28. The entry-event confirmation (`bIdleConfirm`) has only been CI verified.
 
 **Check Your Understanding: ch.12**
 
@@ -2853,7 +2853,7 @@ bool HealOnTheWalk(RE::FormID healer, RE::FormID friendId, RE::FormID heal) {
 
 #### Version, INI and field status
 
-ABI 23 (the release after 0.13.0). `[CombatSubstrate]`: `bCombatSubstrate` (0), `bSubstrateDryRun` (0), `fSubstrateDryRunPeriodSec` (20), `fSubstrateTtlSec` (6), `bSubstrateMoveTrace` (0). Slice S2a: built, NOT yet tested in game, off by default. The field order is fixed: the P3 dry run (the deny table with numbers), P6 (the package moves the body while the substrate is open), then the client (MFO slice S3) and P4 / P5. Slice S2b (re-asserting the bit every frame) is built only if P6 passes.
+ABI 23 (0.13.1). `[CombatSubstrate]`: `bCombatSubstrate` (0), `bSubstrateDryRun` (0), `fSubstrateDryRunPeriodSec` (20), `fSubstrateTtlSec` (6), `bSubstrateMoveTrace` (0). Slice S2a: built, NOT yet tested in game, off by default. The field order is fixed: the P3 dry run (the deny table with numbers), P6 (the package moves the body while the substrate is open), then the client (MFO slice S3) and P4 / P5. Slice S2b (re-asserting the bit every frame) is built only if P6 passes.
 
 **Known holes, approved by marth 2026-10-12** (each logged once per substrate): the combat-start topic (StartCombat's own block runs because the bit is off at entry) and the combat state event (`OnCombatStateChanged` still fires for other mods' scripts). Also not caught, recorded but NOT approved: a group JOIN against the anchor (StartCombat's third argument). **Not instrumented:** the design's P3 field `ignoring-readers=` (who else reads the ignoring-combat bit: eight engine call sites per runtime). Counting them needs eight raw call-site patches per runtime, which `INVARIANTS.md` #17 forbids; the OBSERVED line says so. It needs an amendment or the RS2 research pass.
 
@@ -3287,9 +3287,9 @@ The ABI is append-only. A client built against an older ABI keeps working agains
 | 19 | 0.11.0 | `kIntent_CombatApproach`, `GetCombatApproachState` |
 | 20 | 0.11.0 | `kCastFlag_FloorSpellsOnly` |
 | 21 | 0.12.0 | `kIntent_CastGuard` |
-| 22 | the release after 0.13.0 | `kIntent_EquipPreference`, `EquipPrefFlags`, `APMF_EquipPrefEntry`, `APMF_EquipPrefInfo`, `SetEquipPreference`, `GetEquipPreferenceState` (struct `APMF_API_v22`) |
-| 23 | the release after 0.13.0 | `kIntent_CombatSubstrate` (no struct, no slot: rides `RequestEx` / `Release`), `APMF.esl` anchor records |
-| 24 | the release after 0.13.0 | `GetIdleState`, `IdleState`, `IdleUnconfirmable`, `IdleEnd`, `APMF_IdleStateInfo` (struct `APMF_API_v24`) |
+| 22 | 0.13.1 | `kIntent_EquipPreference`, `EquipPrefFlags`, `APMF_EquipPrefEntry`, `APMF_EquipPrefInfo`, `SetEquipPreference`, `GetEquipPreferenceState` (struct `APMF_API_v22`) |
+| 23 | 0.13.1 | `kIntent_CombatSubstrate` (no struct, no slot: rides `RequestEx` / `Release`), `APMF.esl` anchor records |
+| 24 | 0.13.1 | `GetIdleState`, `IdleState`, `IdleUnconfirmable`, `IdleEnd`, `APMF_IdleStateInfo` (struct `APMF_API_v24`) |
 
 The last release is 0.13.0, ABI 21. The interface struct for ABI 21 is `APMF_API_v19`, since ABI 20 and 21 added no slot. ABI 22 is on main for the next release, with the struct `APMF_API_v22`.
 

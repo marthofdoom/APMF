@@ -289,7 +289,7 @@ namespace {
         case 21: return "0.12.0";
         case 22:
         case 23:
-        case 24: return "the release after 0.13.0";
+        case 24: return "0.13.1";
         default: return "a release newer than this one";
         }
     }

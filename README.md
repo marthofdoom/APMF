@@ -187,7 +187,16 @@ If it's missing or disabled, APMF refuses every `kIntent_Travel` claim and names
 reason once in the log, so a client's own degrade path runs. Nothing else breaks. Every
 other facet behaves exactly the same without it.
 
-## What is in v0.13.0
+## What is in v0.13.1
+
+- **Held engagements.** A fight a mod starts or pins is held until the target is dead, disabled or unloaded, or the mod lets go. The follower chases the target the game's way, walks to a downed one, walks back from the edge of its leash, and gives up with a logged anomaly if it makes no progress. `[EngagementHold]` and `[PursuitLeash]` in `APMF.ini`.
+- **The combat substrate (ABI v23, on by default).** A mod claims `kIntent_CombatSubstrate` beside its cast claim and the follower casts its spell animated, out of a real fight, against an invisible stand-in. `[CombatSubstrate]` in `APMF.ini`.
+- **Idle state (ABI v24).** `GetIdleState` says what became of an idle claim's play.
+- **Equip preference (ABI v22).** A mod names the weapons, shields, torches or staves it prefers in combat and Harbinger lifts them in the game's own scoring.
+- **Equip refusals follow the priorities,** and heals look past friends.
+- Needs ABI v24 for the new calls. Older clients keep working.
+
+### v0.13.0
 
 - **Harbinger names who changes the AI, in more places.** Combat entry, combat actions, combat approach, spell choice and cast claims now say whose answer they replaced, and a claim stands only while it outranks that source in `APMF_Sources.ini`. With the default priorities nothing changes.
 - **Unknown sources checkbox.** Each facet has "Unknown sources can be overridden" on the Harbinger page. Off by default. `[UnknownSources]` in `APMF_Sources.ini`.
@@ -209,7 +218,7 @@ other facet behaves exactly the same without it.
 
 ## Status
 
-Phase 1 built, now at v0.13.0, ABI v21 (see [Docs/STATUS.md](Docs/STATUS.md)). The central
+Phase 1 built, now at v0.13.1, ABI v24 (see [Docs/STATUS.md](Docs/STATUS.md)). The central
 `Actor::Update` (0xAD) hook drives a multi-NPC control map (keyed by FormID,
 scales to hundreds, an uncontrolled NPC pays one hash-miss), a real
 inter-plugin C-ABI client API (`native/APMF_API.h`), and the full documented
