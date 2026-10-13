@@ -120,7 +120,12 @@ phase 1) adds `kIntent_EquipPreference = 26` (ch.26), `EquipPrefFlags` (`kEquipP
 `APMF_EquipPrefInfo` (size rule at `kEquipPrefInfoV22Size`) and `APMF_API_v22 : APMF_API_v19` with TWO slots,
 `SetEquipPreference(handle, entries, count)` and `GetEquipPreferenceState(actor, APMF_EquipPrefInfo*)`** (core/EquipPreference.h), the
 `Intent` enum, `Handle`, and the exported query-fn name. No C++ class / STL / vtable
-crosses the boundary. **The current `kABIVersion` is stated ONLY in the header**
+crosses the boundary. **Companion docs (2026-10-12, marth: historical notes go to a note file):** the header
+keeps a concise contract comment on every declaration and a `// History: Docs/APMF_API-HISTORY.md#<anchor>` or
+`// See Docs/APMF_API-REFERENCE.md#<anchor>` pointer where text moved; `Docs/APMF_API-HISTORY.md` holds the
+historical notes and `Docs/APMF_API-REFERENCE.md` the long-form explanations, verbatim and anchored per symbol.
+A header comment change is still a byte-shared change (MFO mirrors the file); keep both docs in step with any
+moved text. **The current `kABIVersion` is stated ONLY in the header**
 (INVARIANTS #14b — this line said 3 while the header was at 6).
 - **What breaks:** APPEND-ONLY forever (#14/#14a). Never reorder/change a shipped
   `Intent` value, struct, or fn-pointer slot — a v1 client must keep working. New ABI

@@ -14,7 +14,7 @@ Some other facets do make a small, bounded engine call because you declared it: 
 
 ## Before you start
 
-- You build against one file, [`native/APMF_API.h`](../native/APMF_API.h). It is a plain C-ABI header with no CommonLib dependency. Copy it byte for byte. It is append-only, so a client built against any older copy keeps working against every later Harbinger.
+- You build against one file, [`native/APMF_API.h`](../native/APMF_API.h). It is a plain C-ABI header with no CommonLib dependency. Copy it byte for byte. It is append-only, so a client built against any older copy keeps working against every later Harbinger. The header keeps a short contract comment on every declaration. Its long explanations are in [APMF_API-REFERENCE.md](APMF_API-REFERENCE.md) and its historical notes in [APMF_API-HISTORY.md](APMF_API-HISTORY.md); the header points to each one.
 - Harbinger runs on Skyrim AE 1.6.1170, SE 1.5.97 and 1.7.104, and refuses every other build and VR by name. See the [README](../README.md) for requirements.
 - Read [GUIDE.md](GUIDE.md) once. It explains facets, basis and priority, the claim lifecycle (pending, live, the drain, refusal timings) and threading, and this page assumes it.
 
