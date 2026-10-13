@@ -443,6 +443,118 @@ only while ALL of these hold:
    group), so a client must leave `fval` 0 on a non-party holder. The knowledge seat finds a holder of the
    event's group among ALL holds naming the target, uncapped (a target can be held from two enemy groups).
 
+**ADOPTED 2026-10-12 by marth (MFO `Docs/COMBAT-SUBSTRATE-DESIGN.md`, ClickUp 86e3f1nf5; rulings, verbatim:
+*"Getting animations for everything is non negotiable."*, *"If it can't be the player, 1 is fine. Use a clone of
+nazeem."*, *"block combat from affecting movement and have them continue using the non combat package for
+movement"*, *"If real combat starts, remove the anchor and drop suppression of combat behavior"*). The tenth legal
+action (ABI v23, `channels/CombatSubstrate.cpp`, slice S2a): (j) FORCE COMBAT AS A SUBSTRATE -- put an
+out-of-combat actor into combat against a Harbinger-owned ANCHOR so the engine's own animated cast road exists,
+and deny every other facet that combat switches on.** CLAUDE.md principle 1 ("think with portals") meets the rule
+above here, and this is the explicit amendment the CLAUDE.md "standing tension" section asks for. Every ch.8b cast
+seat is a vfunc of a `CombatMagicCaster`, which the engine builds only inside `CombatController::Update`; out of
+combat there is no controller, so an out-of-combat cast has no animated road. The client declares {actor, TTL}
+with `kIntent_CombatSubstrate` beside its `kIntent_Cast` claim. It is legal only while ALL of these hold:
+1. **One entry, the engine's own, against Harbinger's own anchor.** One `Actor::StartCombat(anchor, nullptr)` per
+   substrate (the call (g) makes, verified row `CombatEntry.Actor.StartCombat`), on the game thread, inside ch.22's
+   `ClientEntryScope`. The anchor is ONE persistent actor in `APMF.esl` (NPC_ 0x808, a field-by-field clone of
+   Nazeem `00013BBF` with no factions, packages, outfit, inventory or script, not Unique, essential and a ghost on
+   the base; ACHR 0x80A in the holding cell 0x809; home XMarker 0x80B). It must be an Actor: StartCombat reads
+   Actor-only fields of its target before it builds anything (AE `0x6B6AED`, `0x6B6B4F`). Harbinger turns its AI
+   off, makes it invisible, keeps it 72 units behind the holder it serves (its collision is NOT switched off: the
+   only setter writes a form flag CommonLib marks unverified) and moves it with the engine's own `MoveTo`; it is reference-counted
+   across holders and goes home when the last one closes. Never placed with PlaceAtMe: nothing enters the `.ess`
+   but its position. This amends (g) condition 7 ("entering against a list, re-entry on a timer, or ending combat
+   are each a new amendment") for the substrate only, and (g) condition 1 (Harbinger names the target: its own
+   anchor, never an actor of the world).
+2. **Harbinger owns the deny set, and it is complete or the substrate does not open (principle 2).** While a
+   holder is under its substrate: (a) every combat behaviour-tree LEAF is force-failed with ch.7's ForceFail
+   act()/pop() PAIR except `CastImmediateSpell`, `CastConcentrationSpell`, `PrepareDualCast` and the two dual-cast
+   variants `CastImmediateSpell<bool>` / `CastConcentrationSpell<bool>`, and those run only while a DRIVING cast
+   claim stands -- an ALLOW-list, so a leaf nobody listed is denied by construction. The index covers EVERY
+   concrete `CombatBehaviorTreeNodeObject*` class: 95 on both runtimes (the RTTI names in both unpacked
+   executables), i.e. the 70 parameterless leaves, the four search leaves and the 21 parameterised nodes of
+   `core/CombatBehaviorRE.h` `kParamLeaves` (review F1 of a512763: AcquireResource, Flee, FaceAngle, WatchTarget,
+   DisableAim, FollowPath / AcquireItem, Land, the blackboard nodes -- denied); the structural nodes (the
+   selectors, `DynamicConditionalNode`, `DynamicSelector<Conditional,float>`, `Parallel`, `SpawnParallel`,
+   `Sequence`, the four `Repeat` forms, `ForceFail`, `ForceSuccess`, and the two `Idle` waits -- round-2 review: a
+   pure wait decides nothing, and denying it could leave a Repeat'd subtree with no node that yields) pass, because the cast
+   leaves sit beneath them (AE builder `0x8A0720`); the substrate refuses to install unless all 95 carry the pair.
+   Node classes that are not `NodeObject*` (the value, create-context, conditional, link, wrapper and root nodes,
+   and the two function-node classes `NodeEvaluateFunction` / `NodeUpdateFunction`) are not hooked: INFERRED to
+   route and decide nothing, the two function nodes not yet traced (REVIEW-BACKLOG); (b) every `StartCombat` against the ANCHOR by an actor that is not a live holder is
+   answered "dead" at StartCombat's TARGET check, on the slot-0x99 seat ch.22 owns (verified row
+   `Substrate.StartCombat.TargetIsDeadCall`; a 17-byte stub in the vtable slot hands the thunk StartCombat's own
+   `this`, held in rdi) -- this amends (h) condition 2 ("the TARGET's own IsDead(false) check ... is never
+   answered") for the anchor only; (c) both hands are floored by two INTERNAL deny-only `kIntent_Cast` claims at
+   the lowest basis, so the client's cast claim wins its hand and nothing else -- no weapon, shield, torch or
+   unclaimed spell -- enters either hand, StartCombat's own re-arm equip included (the entry waits until both
+   floors are published); (d) the anchor's group entry is kept KNOWN with (i) condition 1's write, for the anchor
+   only, so the group never searches for it. Every one of these ranks as the substrate's client
+   (`sources::InheritClient` for the floors): the substrate opens only while that client outranks Engine on
+   CombatAction, Combat, Equip and Detection in `APMF_Sources.ini`; otherwise it refuses by name rather than switch
+   a facet on undenied. KNOWN HOLES, approved by marth 2026-10-12 and logged once per substrate: the combat-start
+   topic (StartCombat's block at AE `0x6B6CFB`, which runs because the bit below is off at entry) and the combat
+   state event (`TESCombatEvent` / `OnCombatStateChanged`, never hidden from other mods' scripts). A RECORDED hole,
+   NOT approved (review F9 of a512763): a group JOIN (StartCombat's third argument) is not caught at the target
+   check.
+3. **The body stays the package's: the ignoring-combat split.** After the entry `EvaluatePackage(false, false)` runs
+   once (`resetAI` false) and THEN the process ignoring-combat bit (`AIProcess+0x139`, read by AE `0x6D6780` / SE
+   `0x643F00`) is set once; the controller is NOT paused (its `+0x42` was copied from the bit, still 0, at its birth:
+   AE `0x5582F8`). The order is review F2 of a512763 (the design's 3.4 said set, then evaluate): the call only
+   buffers (boolBits bit 16, AE `0x66D13C` / SE `0x5DB732`); the actor's own AI update runs it (AE 37347 `0x6677E6`
+   / SE 36356 `0x5D6B39`, the immediate path clears bits 16-17 at AE `0x66D117` / SE `0x5DB713`) and, in the same
+   update, starts the package, whose `UpdateIgnoringCombat` (AE `0x6D7E80` from 39434) copies the package's flag
+   (0 for a follow package) into the bit. So the bit is written after bit 16 reads clear and one more frame has
+   passed (2 s at most, logged), and P6 attributes every later reset to a package restart (the package or its start
+   time changed) or to something else. The package gate lets the actor's own package run, so it keeps walking while its hands cast;
+   the Movement half of the tree is denied by condition 2(a). **marth's flag-hold approval of record, 2026-10-12,
+   P6 FIRST:** the engine re-syncs the bit from the package flag on a package start (AE `0x6D7E80`); a per-frame
+   re-assert of the bit, scoped to the substrate only, capped at 15 s, and logging every reset it undoes, is
+   APPROVED as the one sustained write this action makes -- built only after probe P6 shows the package moving the
+   body with a controller present and the cast animated while walking (slice S2b). Slice S2a writes the bit ONCE
+   and counts the engine's resets. If P6 fails, the re-assert is never built and a combat-area bound replaces it.
+   Close and drop restore the bit to its value before the entry.
+4. **Bounded, and it ends by itself.** The substrate closes on its cast claim's first observed fire (fire-and-forget;
+   the caster census's 0x0B `NotifyStartCast` seat), the cast claim's end, the client's Release, the TTL
+   (`param.fval` seconds, 0 = `[CombatSubstrate] fSubstrateTtlSec`, clamped to 15 s), or the holder's death or
+   unload. Close is one game-thread pass: the bit restored, ONE `Actor::StopCombat` (Character slot 0xE5, vtable
+   identity checked; the controller is the substrate's, so stopping it undoes only what the entry did -- this
+   amends (g) condition 4 for the substrate), the floors released, the holder out of the holder set, the anchor
+   home on the last close, one `EvaluatePackage(false, false)`. Harbinger releases the client's claim and logs the
+   reason. Nothing is saved (no co-save); a load or revert forgets every substrate, and the first pump after a load
+   sends the anchor home and removes the anchor from any group a SAVE carried it in (ending that combat when nothing
+   else is left to fight) -- that load sweep APPROVED by marth 2026-10-13 (review F8).
+5. **Real combat ends the substrate at once and never suppresses a real fight.** marth's wording, approved
+   2026-10-12: *The substrate is legal only while no real combat exists for its holder. Real combat is a target
+   other than the anchor in the holder's group, a hit on the holder by a non-party actor, or the party in combat.
+   When it starts, every substrate suppression for that holder stands down on the combat thread at once, and the
+   game-thread pass removes the anchor from the group (`CombatGroup::RemoveTarget`) and releases the rest.
+   Harbinger never calls `StopCombat` on that path, and never suppresses any combat behaviour of a holder that has
+   a real target.* **Amended by marth 2026-10-13 (review F6, "End an empty fight"):** when the holder's group has NO
+   target left once the anchor is removed (a hit or the party's fight whose foe was never in the group), the fight
+   is ended ONCE through the held engagement's ranked `StopCombat` ((i) condition 6's `StopCombatRanked`); while the
+   real foe is in the group `StopCombat` is never called. The drop line says which case happened. The trigger sets
+   the holder's REAL bit in the lock-free holder table before anything else; every
+   deny in condition 2 reads it first (a deny that fires after it is logged `DENIED <leaf> AFTER REAL COMBAT`, a
+   defect). The drop keeps the client's cast claim and the fight; `RemoveTarget` is verified row
+   `Substrate.CombatGroup.RemoveTarget` (AE 44705 / SE 43483) and is refused on 1.7.104 (the substrate with it).
+6. **Threading.** Open, serve, close, drop and every engine call run on the game thread (`Arbiter::OncePerFrame`).
+   The combat-thread seats (the leaf allow-list, the slot-0x99 thunk, the detection seat, the 0x0B observer) read
+   only a fixed table of atomics and the atomic "served holder" (review F4 of a512763), never a controller; a slot's id is re-read after its state (a reused slot reads
+   as another actor). `StopCombat` and `RemoveTarget` are called from the player's update seat with the same
+   exposure as (i) condition 6 (APMF-B26).
+7. **Scope is closed by name.** Exactly 1.6.1170 or 1.5.97 (1.7.104 refuses: `RemoveTarget` has no 1.7.104 id),
+   not VR, `[CombatSubstrate] bCombatSubstrate` (default 0), ch.22's seat installed with its target site and stub,
+   ch.7's pair on all 95 node classes, the held engagement's ranked StopCombat available (condition 5's empty-fight end), the anchor records resolving, and the self-check on every row the path calls. An
+   out-of-combat, loaded, high-process, non-player holder in no scene and no dialogue, with the party out of combat.
+   Another target than the anchor, a re-entry on a timer, holding the bit outside a substrate, or any facet
+   switched on without its deny is a new amendment, not a code change. The dry run (`bSubstrateDryRun`, default 0)
+   is a TEST SURFACE that opens a claim-free, cast-free substrate on idle player teammates for P3 / P6; it is not a
+   decision about any client's facet.
+8. **The world's reaction to the substrate is Harbinger's, because Harbinger switched it on** (principle 2 scope:
+   the substrate is Harbinger's own state-forcing, not a client's declared fight). That is why every row of the
+   design's deny table has a deny or a hole marth accepted by name, and why a real fight ends it.
+
 **#20 — COMPOSED ANSWERS: APMF may answer the ENGINE'S OWN DECISION SEATS so the
 AI decides what a claim asks for — and exactly ONE of those answers may skip the
 chain.** (feat/ai-cast-seats-impl, 2026-09-05. This is the rule that lets ch.8b

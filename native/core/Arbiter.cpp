@@ -1,4 +1,5 @@
 #include "PCH.h"
+#include "channels/CombatSubstrate.h"
 #include "core/Log.h"
 #include "core/Arbiter.h"
 #include "core/CastProxy.h"       // castproxy::OnOwnerUpdate (self-flip landing watch, owner seat)
@@ -75,6 +76,11 @@ namespace apmf {
         // ch.26 EQUIP PREFERENCE (ABI v22; core/EquipPreference.h): the 30 s heartbeat of the score
         // lift and the force counters. One relaxed load and a clock read between beats.
         apmf::equippref::Pump();
+
+        // COMBAT SUBSTRATE (S2a, channels/CombatSubstrate.h): opens, serves, closes and drops substrates,
+        // after Drain published (the floors it files are seen here one frame later) and after the pump.
+        // One relaxed load while nothing is open or scheduled.
+        apmf::combatsubstrate::Poll();
 
         // Docs/SPEC-PACKAGE-HOLD.md §4.1 item 1 -- OBSERVE-ONLY package-drift
         // correlation probe. Reuses this EXISTING once-per-frame game-thread seat

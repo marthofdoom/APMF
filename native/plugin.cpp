@@ -31,6 +31,7 @@
 #include "core/Sightline.h"
 #include "core/Awareness.h"
 #include "core/CastGuard.h"        // ch.25 cast guard (ABI v21)
+#include "channels/CombatSubstrate.h"   // S2a: Install, ResetAll, AfterLoad
 #include "core/EquipPreference.h"   // ch.26 (ABI v22): ResetAll on revert
 #include "core/Sources.h"          // Harbinger 1a: source registry, priorities, seat census
 #include "core/PackageSources.h"   // Harbinger 1a: package capture + the 0x4A scene probe
@@ -110,6 +111,7 @@ namespace {
         apmf::idle::ResetAll("revert/new game");
         // ch.22: same, for the re-entry deny entries of the outgoing world.
         apmf::reentrydeny::ResetAll("revert/new game");
+        apmf::combatsubstrate::ResetAll("revert/new game");   // S2a: the outgoing world's substrates (no engine call)
         // ch.23 pursuit leash (ABI v16): same, for the leash entries (anchor handles of the outgoing world).
         apmf::actiongate::ResetLeash("revert/new game");
         // ch.24 combat approach (ABI v19): same, for its claim entries and the area records of the
@@ -273,6 +275,12 @@ namespace {
                                                   // AFTER castseats so it sits OUTSIDE the claim seats
                                                   // and logs the answer the whole chain gives.
                                                   // Exact-version gate + VR refusal inside.
+            apmf::combatsubstrate::Install();    // COMBAT SUBSTRATE (S2a, ABI v23, INVARIANTS #0 (j)): rides
+                                                  // ch.22's slot-0x99 seat (its anchor-target site), ch.7's
+                                                  // leaf act()/pop() pair (incl. ch.23's search leaves), the
+                                                  // census 0x0B seat (the fire close) and the held
+                                                  // engagement's detection seat, so it installs AFTER all of
+                                                  // them. [CombatSubstrate] bCombatSubstrate (default 0).
             apmf::nativebitprobe::Install();     // native-bit probe (throwaway; no VR gate needed).
             apmf::avobserve::Install();          // Harbinger 1b: OBSERVE-ONLY actor-value seat (Character's
                                                   // ActorValueOwner vtable 0x04 / 0x05 / 0x06). Names outside
@@ -339,6 +347,7 @@ namespace {
             apmf::idle::ResetAll("kPreLoadGame");
             // ch.22: same -- no re-entry deny crosses the load.
             apmf::reentrydeny::ResetAll("kPreLoadGame");
+            apmf::combatsubstrate::ResetAll("kPreLoadGame");   // S2a: forget every substrate (no co-save)
             // ch.23 pursuit leash (ABI v16): same -- no leash entry crosses the load.
             apmf::actiongate::ResetLeash("kPreLoadGame");
             // ch.24 combat approach (ABI v19): same -- no approach entry or area record crosses the load.
@@ -383,10 +392,13 @@ namespace {
             // finds live). A second load before that pump Discard()s the post at
             // kPreLoadGame and the revert callback clears the record it would have swept.
             apmf::mainthread::Post([] { apmf::poscast::SweepCarriedMarkers("first pump after load"); });
+            // S2a: the anchor home, and a controller the save carries against the anchor cleaned (first pump).
+            apmf::mainthread::Post([] { apmf::combatsubstrate::AfterLoad("first pump after load"); });
             apmf::equipsink::ReinspectEntries("kPostLoadGame");   // a later plugin may have detoured EquipObject's entry
             apmf::sources::OnPostLoad("kPostLoadGame");   // Harbinger 1a census: late installers on every seat (Q13 re-hook)
             break;
         case SKSE::MessagingInterface::kNewGame:
+            apmf::mainthread::Post([] { apmf::combatsubstrate::AfterLoad("first pump of a new game"); });
             apmf::equipsink::ReinspectEntries("kNewGame");
             apmf::sources::OnPostLoad("kNewGame");
             break;

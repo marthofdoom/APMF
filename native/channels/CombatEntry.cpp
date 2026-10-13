@@ -1,5 +1,6 @@
 #include "PCH.h"
 #include "channels/CombatEntry.h"
+#include "channels/CombatSubstrate.h"   // S2a: the anchor's knowledge + real-combat trigger (a) ride the detection seat
 #include "channels/TargetPin.h"   // Installed(): whether the ch.20 pin could engage, for the entry log
 #include "core/FacetAttribution.h"   // Harbinger 1b: the engine's refusal is named on the Combat facet
 #include "channels/CombatReentryDeny.h"   // ClientEntryScope: this entry passes a ch.22 re-entry deny
@@ -721,6 +722,17 @@ namespace {
                 spdlog::info("[hold] seat OBSERVED: {} ran (CombatGroup::UpdateTargetDetection; first of the session, "
                              "principle 5).",
                              kSiteName[I]);
+            // THE COMBAT SUBSTRATE (S2a, channels/CombatSubstrate.cpp): the anchor's entry in a holder's group is
+            // kept known after the engine's update (the same un-lose write, for the anchor only); any OTHER target
+            // in a holder's group is the real-combat trigger (a) -- seen here synchronously from AddTarget.
+            if (apmf::combatsubstrate::AnyLive() && a_group && a_member && a_target) {
+                if (apmf::combatsubstrate::IsAnchorRef(a_target)) {
+                    const std::uint64_t r = orig(a_group, a_member, a_target, a_event);
+                    apmf::combatsubstrate::AnchorKnowledge(a_group, a_target);
+                    return r;
+                }
+                apmf::combatsubstrate::NoteGroupTarget(a_group, a_target);
+            }
             if (g_holdCount.load(std::memory_order_relaxed) == 0 || !a_group || !a_member || !a_target)
                 return orig(a_group, a_member, a_target, a_event);
 
@@ -1104,10 +1116,20 @@ namespace {
 
 namespace apmf::combatentry::hold {
 
+    // marth 2026-10-13, F6 ("End an empty fight"): the combat substrate's real-combat drop ends a fight left
+    // with no target through this SAME ranked path (channels/CombatSubstrate.cpp DropSub).
+    std::string StopCombatRanked(RE::Actor* a_actor, APMF_API::Handle a_claim, RE::FormID a_dropped,
+                                 RE::ActorHandle a_droppedH) {
+        return hold_detail::StopCombatRanked(a_actor, a_claim, a_dropped, a_droppedH);
+    }
+
     using namespace hold_detail;
 
     bool Enabled() { return g_enabled.load(std::memory_order_relaxed); }
     bool KnowledgeInstalled() { return g_seatsInstalled.load(std::memory_order_acquire); }
+    bool StopCombatAvailable() {
+        return g_stopCombatOk.load(std::memory_order_acquire) && g_vtChar != 0;
+    }
 
     void Install() {
         if (g_holdInstallTried.exchange(true)) return;

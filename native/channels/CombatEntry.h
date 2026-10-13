@@ -1,6 +1,8 @@
 #pragma once
 #include "APMF_API.h"
 
+#include <string>
+
 // ============================================================================
 // Channel 21 -- COMBAT ENTRY (kIntent_CombatEntry, ABI v14). See channels/CombatEntry.cpp
 // for the design; Docs/CHANNEL-MAP.md row 21, Docs/DENY-COMPLETENESS-AUDIT.md row 21,
@@ -86,6 +88,17 @@ namespace apmf::combatentry::hold {
 
     // ~30 s RULE C line (zeros included) while any hold exists. Game thread.
     void Heartbeat();
+
+    // The held engagement's RANKED StopCombat (Character slot 0xE5, the vtable identity checked), for a
+    // caller other than the range rule: not while another live group target attacks the party, not when a
+    // winning ch.20 pin names another target, not when another client's ch.24 claim or Engine outranks
+    // `claim` on the Combat facet. Returns what it did ("combat ENDED (Actor::StopCombat)" or "NOT ended:
+    // <why>"). GAME THREAD (APMF-B26). The combat substrate's empty-fight end (marth 2026-10-13, F6).
+    std::string StopCombatRanked(RE::Actor* actor, APMF_API::Handle claim, RE::FormID dropped,
+                                 RE::ActorHandle droppedH);
+    // Is that StopCombat usable (the hold enabled on an exact runtime and its Character vtable row
+    // verified)? The combat substrate refuses to install without it (round-2 closing item 3b). Any thread.
+    bool StopCombatAvailable();
 
     // kPreLoadGame / revert: drop the per-actor telemetry + drive state (the hold map itself is
     // cleared by ch.20 / ch.21 ResetAll). GAME THREAD.

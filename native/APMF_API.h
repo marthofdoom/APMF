@@ -89,10 +89,10 @@ namespace RE {
 
 namespace APMF_API {
 
-    // ABI history (v10..v22, what each added and how an older APMF degrades). Gate every use on abiVersion >=
+    // ABI history (v10..v23, what each added and how an older APMF degrades). Gate every use on abiVersion >=
     // N.
     // History: Docs/APMF_API-HISTORY.md#abi-history
-    inline constexpr std::uint32_t kABIVersion = 22;
+    inline constexpr std::uint32_t kABIVersion = 23;
 
     // The exported query function's undecorated name and pointer type.
     // const APMF_API_v1* APMF_GetInterface(std::uint32_t abiVersion);
@@ -619,6 +619,23 @@ namespace APMF_API {
                                      //       at the end of this header for the whole contract. REFUSED
                                      //       (kInvalidHandle, logged): APMF < v22, the player, actor 0,
                                      //       [AiCastSeats] EnableScoreSteer=0, or no score seat installed.
+        kIntent_CombatSubstrate = 27, // COMBAT SUBSTRATE (ABI v23, INVARIANTS #0 (j)). Mode: a bounded combat
+                                     //       SUBSTRATE + Harbinger's own deny set. Param: fval = TTL in SECONDS (0 =>
+                                     //       the INI default 6 s, clamped to 15 s). form/ival/target/pos not read.
+                                     //       Harbinger puts the OUT-OF-COMBAT actor into combat against its own
+                                     //       anchor actor so the engine's animated cast road exists, lets only the
+                                     //       three cast leaves run (and only while a DRIVING kIntent_Cast claim
+                                     //       stands), floors both hands at the lowest basis, keeps the actor's own
+                                     //       package moving it, and ends it on the cast claim's first fire (fire-
+                                     //       and-forget), the claim's end, Release, the TTL or death / unload.
+                                     //       REAL COMBAT (a foe in its group, a hit from a non-party actor, the
+                                     //       party in combat) DROPS it with no StopCombat: the fight and the cast
+                                     //       claim go on, and Harbinger releases this claim (IsClaimLive false).
+                                     //       File it beside your kIntent_Cast claim. REFUSED (kInvalidHandle,
+                                     //       logged): APMF < v23, [CombatSubstrate] bCombatSubstrate=0 (the default),
+                                     //       an unsupported runtime, the player, a negative / NaN fval. A
+                                     //       substrate that cannot open (in combat, unloaded, ...) ends its claim.
+                                     //       See Docs/FACETS.md "Combat substrate".
     };
 
     // ── Cast guard flags (kIntent_CastGuard's param.ival, ABI v21). APPEND-ONLY. ──────
@@ -1425,10 +1442,12 @@ namespace APMF_API {
     //   ival   kIntent_CombatApproach  ABI v19: a CombatApproachFlags bitmask (0 = end on arrival).
     //   ival   kIntent_CastGuard       ABI v21: a CastGuardFlags bitmask. fval: the TTL in seconds.
     //                                  form / pos are not read.
+    //   fval   kIntent_CombatSubstrate ABI v23: the TTL in seconds (0 => INI default; clamped to 15 s).
     //   none   every other Intent      accepted, not yet read by the channel
     //
     // fval is read ONLY by kIntent_Travel (ABI v10), kIntent_CombatReentryDeny (ABI v15),
-    // kIntent_PursuitLeash (ABI v16), kIntent_CombatApproach (ABI v19) and kIntent_CastGuard (ABI v21);
+    // kIntent_PursuitLeash (ABI v16), kIntent_CombatApproach (ABI v19), kIntent_CastGuard (ABI v21) and
+    // kIntent_CombatSubstrate (ABI v23);
     // it stays reserved for a future per-request bias on ch.11, scale on ch.1a, factor on ch.16. target
     // is read by kIntent_PursuitLeash (ABI v16, the anchor), kIntent_CombatApproach (ABI v19, X) and
     // was by kIntent_SelectSpell (retired). pos is read by

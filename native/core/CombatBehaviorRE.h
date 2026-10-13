@@ -260,6 +260,53 @@ namespace apmf::cbt {
         { "CombatBehaviorSearchLocation", REL::VariantID(267081, 214176, 0x17250e0) },
         { "CombatBehaviorSearchWander", REL::VariantID(267083, 214202, 0x1725240) },
     } };
+    // ---- The PARAMETERISED nodes (combat substrate, review F1 of a512763, 2026-10-13). NOT in kLeaves:
+    // `CombatBehaviorTreeNodeObject1/2/3<T, ...>` (a node with stored parameters), same base class and the
+    // same 10-slot layout as kLeaves / kSearchLeaves. These are every NodeObject1/2/3 vtable the MIT fork
+    // ships (Offsets_VTABLE.h) except the four search leaves above; each was resolved on BOTH unpacked
+    // executables (Address Library id -> vtable -> CompleteObjectLocator -> TypeDescriptor, the same RTTI
+    // name on 1.6.1170 and 1.5.97) and is a VerifiedAddresses row `Leaf.<Name>`. The engine builds them
+    // (AE builders, RIP references to the vtables): the <bool> cast variants in the magic tree 0x8A0720
+    // ("Dual Cast Immediate Spell" / "... Concentration ..."), AcquireResource in 47595 / 47687 / 47807 /
+    // 49436, Flee<float> + FaceAngle in 48563, WatchTarget in 48379, DisableAim in 47595, SetBlackboardData
+    // in 48143 (Find Attack Location), EnableBlackboardFlag in 48567 (Hide) and 49816 (Use Cover).
+    // `kind` is how the combat substrate's allow-list treats each (channels/CombatSubstrate.cpp):
+    //   kParamDeny       -- a behaviour: force-failed while a substrate holds the actor;
+    //   kParamCast       -- the dual-cast variant of a cast leaf: runs only while a DRIVING cast claim stands;
+    //   kParamStructural -- control flow only (Repeat, SpawnParallel, DynamicSelector) or a pure WAIT that
+    //                       decides nothing (the two Idle forms, round-2 review: denying every node of a subtree
+    //                       under a Repeat could leave the runner, which loops until a step yields (AE 0x858B60),
+    //                       nothing that yields within one update): always passes.
+    enum ParamKind : std::uint8_t { kParamDeny = 0, kParamCast = 1, kParamStructural = 2 };
+    struct ParamLeafEntry {
+        const char*    name;
+        REL::VariantID vtbl;
+        ParamKind      kind;
+    };
+    inline constexpr std::array<ParamLeafEntry, 21> kParamLeaves{ {
+        { "CombatBehaviorIdle<float>", REL::VariantID(256701, 205318, 0x16a6300), kParamStructural }, // :1792 (a pure wait: passes, round 2)
+        { "CombatBehaviorRepeat<float>", REL::VariantID(265835, 212223, 0x1715e50), kParamStructural },              // :3428
+        { "CombatBehaviorAcquireResource<3>", REL::VariantID(265839, 212275, 0x1716110), kParamDeny },               // :3436
+        { "CombatBehaviorDisableAim", REL::VariantID(265840, 212288, 0x17161c0), kParamDeny },                       // :3438
+        { "CombatBehaviorFollowPath<AcquireWeapon>", REL::VariantID(265841, 212301, 0x1716270), kParamDeny },       // :3440
+        { "CombatBehaviorAcquireItem<AcquireWeapon>", REL::VariantID(265842, 212314, 0x1716320), kParamDeny },      // :3442
+        { "CombatBehaviorAcquireResource<2>", REL::VariantID(265915, 212372, 0x1716bf0), kParamDeny },               // :3447
+        { "CombatBehaviorSpawnParallel", REL::VariantID(265916, 212385, 0x1716ca0), kParamStructural },              // :3449
+        { "CombatBehaviorSetBlackboardData", REL::VariantID(266197, 212938, 0x171aa70), kParamDeny },                // :3549
+        { "CombatBehaviorWatchTarget<float>", REL::VariantID(266338, 213135, 0x171c450), kParamDeny },               // :3595
+        { "CombatBehaviorFlee<float>", REL::VariantID(266498, 213323, 0x171e010), kParamDeny },                      // :3639
+        { "CombatBehaviorFaceAngle<float,bool>", REL::VariantID(266501, 213351, 0x171e1c8), kParamDeny },            // :3644
+        { "CombatBehaviorEnableBlackboardFlag", REL::VariantID(266505, 213392, 0x171e430), kParamDeny },             // :3651
+        { "CombatBehaviorDynamicSelector<Conditional,float>", REL::VariantID(266618, 213473, 0x171f610), kParamStructural },   // :3664
+        { "CombatBehaviorRepeat<FLAGS>", REL::VariantID(266627, 213579, 0x171fbe8), kParamStructural },              // :3681
+        { "CombatBehaviorLand<float>", REL::VariantID(266629, 213594, 0x171fcf0), kParamDeny },                      // :3684
+        { "CombatBehaviorLandNearby<float>", REL::VariantID(266630, 213607, 0x171fda0), kParamDeny },                // :3686
+        { "CombatBehaviorCastImmediateSpell<bool>", REL::VariantID(266704, 213718, 0x1720d38), kParamCast },         // :3709
+        { "CombatBehaviorCastConcentrationSpell<bool>", REL::VariantID(266706, 213733, 0x1720e40), kParamCast },     // :3712
+        { "CombatBehaviorIdle<GameSetting>", REL::VariantID(267079, 214161, 0x1724fd8), kParamStructural }, // :3817 (a pure wait: passes, round 2)
+        { "CombatBehaviorRepeat<float,FLAGS>", REL::VariantID(267191, 214367, 0x17266f0), kParamStructural },        // :3857
+    } };
+
     // The search centre the four read: SearchCenter::Enter (AE 49520 0x8B29C0 / SE 48536
     // 0x81BCA0) loads CombatController+0x00 (the CombatGroup), then group+0x100/+0x104/+0x108
     // (the position) and group+0x110 (non-null = a valid location) -- RE::CombatGroup::

@@ -82,7 +82,7 @@ struct Heartbeat {
 - [Casting](#casting): [ch.8 Select spell](#ch8-select-spell-kintent_selectspell), [ch.8b Cast](#ch8b-cast-kintent_cast), [a hand floor](#a-hand-floor-kcastflag_denyhandonly), [own line of sight](#own-line-of-sight-kcastflag_ownlineofsight), [position cast](#position-cast-kcastflag_atposition), [ch.14 Shout and power](#ch14-shout-and-power-kintent_shoutpower), [ch.25 Cast guard](#ch25-cast-guard-kintent_castguard)
 - [Equipment](#equipment): [ch.15 Equipment](#ch15-equipment-kintent_equipment), [ch.17 Equip authority](#ch17-equip-authority-kintent_equipauthority), [ch.26 Equip preference](#ch26-equip-preference-kintent_equippreference)
 - [Packages and travel](#packages-and-travel): [ch.9 Offer package](#ch9-offer-package-kintent_offerpackage), [ch.19 Travel](#ch19-travel-kintent_travel)
-- [Combat](#combat): [ch.6 Combat target](#ch6-combat-target-kintent_combattarget), [ch.7 Combat action](#ch7-combat-action-kintent_combataction), [ch.20 Target pin](#ch20-target-pin-kintent_targetpin), [ch.21 Combat entry](#ch21-combat-entry-kintent_combatentry), [ch.22 Combat re-entry deny](#ch22-combat-re-entry-deny-kintent_combatreentrydeny), [ch.23 Pursuit leash](#ch23-pursuit-leash-kintent_pursuitleash), [ch.24 Combat approach](#ch24-combat-approach-kintent_combatapproach)
+- [Combat](#combat): [ch.6 Combat target](#ch6-combat-target-kintent_combattarget), [ch.7 Combat action](#ch7-combat-action-kintent_combataction), [ch.20 Target pin](#ch20-target-pin-kintent_targetpin), [ch.21 Combat entry](#ch21-combat-entry-kintent_combatentry), [ch.22 Combat re-entry deny](#ch22-combat-re-entry-deny-kintent_combatreentrydeny), [ch.23 Pursuit leash](#ch23-pursuit-leash-kintent_pursuitleash), [ch.24 Combat approach](#ch24-combat-approach-kintent_combatapproach), [Combat substrate](#combat-substrate-kintent_combatsubstrate)
 - [Read-only queries (no claim)](#read-only-queries-no-claim): [space queries](#space-queries-findemptyspace-and-findhostilesinspace), [line of sight](#line-of-sight-getlineofsight), [awareness](#awareness-senseactor)
 - [Observe-only facets (no claim API)](#observe-only-facets-no-claim-api)
 - [Appendix A: sources and priorities per facet](#appendix-a-sources-and-priorities-per-facet), [Appendix B: ABI history](#appendix-b-abi-history), [Appendix C: refusal cheat sheet](#appendix-c-refusal-cheat-sheet), [Appendix D: INI keys by facet](#appendix-d-ini-keys-by-facet), [Appendix E: equip authority probe criteria](#appendix-e-equip-authority-probe-criteria)
@@ -122,6 +122,7 @@ struct Heartbeat {
 | [`kIntent_CombatApproach`](#ch24-combat-approach-kintent_combatapproach) | 24 | Combat approach | Walk toward an actor while fighting | 19 | Field-proven (in use by MFO) |
 | [`kIntent_CastGuard`](#ch25-cast-guard-kintent_castguard) | 25 | Cast guard | Hold attack spells through friends, bound channels | 21 | Field-proven (in use by MFO) |
 | [`kIntent_EquipPreference`](#ch26-equip-preference-kintent_equippreference) | 26 | Equip preference | Lift a preferred weapon's combat score so the AI picks it | 22 | Built, not yet tested in game |
+| [`kIntent_CombatSubstrate`](#combat-substrate-kintent_combatsubstrate) | 27 | Combat substrate | Combat as a substrate so an out-of-combat cast is animated | 23 | Built (S2a), off by default, not yet tested in game |
 | [Space queries](#space-queries-findemptyspace-and-findhostilesinspace) | | `FindEmptySpace`, `FindHostilesInSpace` | Ask for a spot or the hostiles in a sphere | 11 | Built |
 | [Line of sight](#line-of-sight-getlineofsight) | | `GetLineOfSight` | Harbinger's own ray | 18 | Used by MFO |
 | [Awareness](#awareness-senseactor) | | `SenseActor` | Does this actor sense that one | 18 | Used by MFO |
@@ -2713,6 +2714,101 @@ ABI 19 (0.11.0). `bCombatApproach` in `[CombatApproach]`. In use by MFO.
 2. Which reads of the combat area still see the engine's own area while the bound is in force?
 3. The actor arrives inside R without `kApproach_Hold`. Who releases the claim?
 
+### Combat substrate (`kIntent_CombatSubstrate`)
+
+*An animated cast is the follower's own combat AI casting, and that AI only exists in combat. For an out-of-combat cast Harbinger forces combat as a SUBSTRATE: a controller whose only target is Harbinger's own anchor actor, with every facet that combat switches on denied except the cast leaves. The follower keeps walking under its own package. A real fight drops it at once.*
+
+#### What it is for
+
+marth, 2026-10-12: "Getting animations for everything is non negotiable." Every ch.8b claim seat is a vfunc of a `CombatMagicCaster`, which the engine builds only inside `CombatController::Update`. Out of combat there is no controller, so there is no animated road for a heal on the walk, a buff before a door or a summon. This facet gives the client's [ch.8b](#ch8b-cast-kintent_cast) claim a controller to ride. It is the CLAUDE.md principle "think with portals": combat as a substrate, one facet let through, every other one denied. The design is MFO's `Docs/COMBAT-SUBSTRATE-DESIGN.md`; the legality is `INVARIANTS.md` #0 (j).
+
+#### Arguments
+
+ABI 23. File it beside the cast claim, at any basis (the cast claim's basis decides the cast as always).
+
+```cpp
+APMF_Param p{};
+p.fval = 6.0f;                                       // TTL in SECONDS (0 = the INI default)
+Handle sub = g_apmf->RequestEx(actor, kIntent_CombatSubstrate, kBasis, &p);
+Handle cast = g_apmf->RequestCast(actor, kBasis, &req);   // the spell, target, hand: ch.8b as usual
+```
+
+**Table 27a. Combat substrate arguments**
+
+| Field | Type | Range | Default | 0 means |
+|---|---|---|---|---|
+| `fval` | `float`, seconds | above 0. Above 15 is clamped to 15. Negative or NaN is refused | 0 | `[CombatSubstrate] fSubstrateTtlSec` (6) |
+| `form`, `ival`, `target`, `posX/Y/Z` | | not read | | |
+
+#### What Harbinger enforces
+
+The OPEN, in order, on the game thread:
+
+1. The actor must be loaded, alive, enabled, high process, OUT of combat, in no scene, with no dialogue menu open and the player out of combat. The client must outrank `Engine` on CombatAction, Combat, Equip and Detection in `APMF_Sources.ini` (every deny below ranks as the client; a deny that would not stand means a facet switched on undenied, so the substrate does not open).
+2. The actor enters Harbinger's holder set. The ANCHOR comes out of its holding cell to the actor on the first holder. The anchor is one persistent actor in `APMF.esl`: a field-by-field copy of Nazeem (`Skyrim.esm` `00013BBF`) with no factions, packages, outfit, inventory or script, not Unique, essential and a ghost. Harbinger turns its AI off and makes it invisible, and keeps it a step behind the follower (its collision is left on: the only way to switch it off is an engine flag that has not been verified).
+3. Two hand FLOORS: internal deny-only `kIntent_Cast` claims on both hands at the lowest basis, so your cast claim wins its hand and the other hand takes nothing, no weapon, shield, torch or unclaimed spell. They are full floors, not `kCastFlag_FloorSpellsOnly`.
+4. Once both floors are published (the next drain), ONE `Actor::StartCombat(anchor)`, the call ch.21 makes. A refusal ends the substrate.
+5. The package is re-picked once, and once the game has run that re-pick (a frame or two), the process ignoring-combat bit (`AIProcess+0x139`) is set once. The controller is left unpaused. The actor's own package keeps moving it; the cast is cast from the hands. The order matters: the re-pick restarts the package, and a package start copies the package's own ignore-combat flag (off for a follow package) into the bit.
+
+While it is open:
+
+- **Only the cast leaves run.** Every combat behaviour-tree leaf is force-failed (ch.7's act()/pop() pair) except Cast Immediate, Cast Concentration, Prepare Dual Cast and the two dual-cast variants, and those only while a DRIVING cast claim stands. The tree's structural nodes (selectors, sequences, repeats, spawn-parallel) pass, because the cast leaves sit beneath them. All 95 node classes the game has are covered, including the parameterised ones (acquire resource, flee, face angle, watch target, follow path, acquire item, land). The two idle waits pass: they decide nothing. Attacks, blocks, potions, equips, every movement leaf (close, flank, strafe, flee, search, return to area) are denied.
+- **Nobody else can fight the anchor.** A `StartCombat` against the anchor by anyone but a holder is refused at StartCombat's own target check (the ch.22 seat).
+- **The anchor is never lost.** Its entry in the holder's group stays known (the held engagement's write), so the group never searches.
+- **The anchor stands at the holder** whose claimed spell has the shortest delivery (self, then touch, then aimed). A holder farther than its own spell's reach logs a "waits" line; its claim is not cancelled.
+
+> **Key Concept 20 (a real fight wins at once)** A target other than the anchor in the holder's group, a hit on the holder by an actor outside the party, or the party in combat is REAL combat. The moment any of them is seen, on whatever thread, every deny above stands down for that holder. The next game-thread pass restores the bit, removes the anchor from the group with the engine's own `CombatGroup::RemoveTarget`, releases the floors and the anchor. While the real foe is in the follower's group it calls NO `StopCombat`: the fight goes on and your cast claim is kept. If the group has no target left (the hit or the party's fight came from outside it), that empty fight is ended once through the same ranked `StopCombat` the held engagement uses (marth, 2026-10-13). Harbinger then releases the substrate claim.
+
+#### Lifetime
+
+Harbinger ends the substrate and releases the claim on: the cast claim's first FIRE (fire-and-forget; concentration ends with the claim), the cast claim's end (released, expired, its stop percent), your `Release`, the TTL, the actor's death or unload, and real combat (above). A close calls `StopCombat` once (the controller is the substrate's), restores the bit, releases the floors, sends the anchor home on the last holder and re-picks the package. Nothing is saved. A load or a new game forgets every substrate; the first frame after a load sends the anchor home and cleans the anchor out of any combat group the save carried.
+
+#### Priority and conflicts
+
+The substrate is an ordinary ranked claim (marth: "Nothing escapes Harbinger"). Its denies rank as its client on CombatAction (the leaves), Combat (the anchor refusal), Equip (the floors) and Detection (the anchor's knowledge), and it opens only while the client outranks `Engine` on all four. A [ch.24](#ch24-combat-approach-kintent_combatapproach) claim waits through a substrate (it is not a fight). A [ch.22](#ch22-combat-re-entry-deny-kintent_combatreentrydeny) deny on the actor does not block the substrate's own entry.
+
+#### Refusals
+
+At the call: an APMF older than 23, `[CombatSubstrate] bCombatSubstrate=0` (the default), an unsupported runtime (1.7.104 is refused: `RemoveTarget` has no 1.7.104 id), the ch.22 seat or its target site not installed, fewer than all 95 behaviour-tree node classes with the deny pair (`[PursuitLeash] bPursuitLeash=0` refuses it too, its search leaves are among them), the held engagement's StopCombat not available (`[EngagementHold] bEngagementHold=0`), the anchor records missing, a failed self-check row, the player as the actor, a negative or NaN `fval`. At the open (the claim is released, `[substrate] ... NOT OPENED: <why>`): every condition of step 1, or all 16 holder slots in use.
+
+#### Worked example
+
+**Example 29: An animated heal out of combat**
+
+**Think it through.** The substrate gives the cast claim a controller. The cast claim is the same one you would file in combat: the spell, the recipient, the hand. File both; the substrate opens on the next frame, enters one frame later, and closes itself on the fire. Watch `IsClaimLive(sub)`: false means it closed (or dropped for a real fight, in which case your cast claim runs as an in-combat claim).
+
+**Solution.**
+
+```cpp
+bool HealOnTheWalk(RE::FormID healer, RE::FormID friendId, RE::FormID heal) {
+    if (g_apmf->abiVersion < 23) return false;                     // no substrate: the direct road
+    APMF_Param p{};
+    p.fval = 0.0f;                                                 // the INI TTL
+    const Handle sub = g_apmf->RequestEx(healer, kIntent_CombatSubstrate, kBasis, &p);
+    if (sub == kInvalidHandle) return false;                       // off, or refused: logged
+    APMF_CastRequest req{};
+    req.spell  = heal;
+    req.target = friendId;
+    req.flags  = kCastFlag_LeftHand;
+    const Handle cast = g_apmf->RequestCast(healer, kBasis, &req);
+    return cast != kInvalidHandle;
+}
+```
+
+**Check.** `[substrate] 0x<f> OPEN anchor=0x<ref> entry=true`, the census `[ctcensus] ... VERDICT: FIRED via Restore (the hand charged: ANIMATED`, then `[substrate] 0x<f> CLOSE reason=fired controller-null=y anchor-home=y`.
+
+#### Version, INI and field status
+
+ABI 23 (the release after 0.13.0). `[CombatSubstrate]`: `bCombatSubstrate` (0), `bSubstrateDryRun` (0), `fSubstrateDryRunPeriodSec` (20), `fSubstrateTtlSec` (6), `bSubstrateMoveTrace` (0). Slice S2a: built, NOT yet tested in game, off by default. The field order is fixed: the P3 dry run (the deny table with numbers), P6 (the package moves the body while the substrate is open), then the client (MFO slice S3) and P4 / P5. Slice S2b (re-asserting the bit every frame) is built only if P6 passes.
+
+**Known holes, approved by marth 2026-10-12** (each logged once per substrate): the combat-start topic (StartCombat's own block runs because the bit is off at entry) and the combat state event (`OnCombatStateChanged` still fires for other mods' scripts). Also not caught, recorded but NOT approved: a group JOIN against the anchor (StartCombat's third argument). **Not instrumented:** the design's P3 field `ignoring-readers=` (who else reads the ignoring-combat bit: eight engine call sites per runtime). Counting them needs eight raw call-site patches per runtime, which `INVARIANTS.md` #17 forbids; the OBSERVED line says so. It needs an amendment or the RS2 research pass.
+
+**Check Your Understanding: Combat substrate**
+
+1. You file the substrate but no cast claim. What does the follower cast?
+2. A wolf attacks the follower while its substrate is open. Which deny stands down first, and is `StopCombat` called?
+3. Why does the substrate refuse to open when `Engine` outranks your mod on the Equip facet?
+
 ## Read-only queries (no claim)
 
 *A query is a question, not a claim. Harbinger answers and the client decides. Nothing is held, nothing is written, and there is no handle.*
@@ -3138,6 +3234,7 @@ The ABI is append-only. A client built against an older ABI keeps working agains
 | 20 | 0.11.0 | `kCastFlag_FloorSpellsOnly` |
 | 21 | 0.12.0 | `kIntent_CastGuard` |
 | 22 | the release after 0.13.0 | `kIntent_EquipPreference`, `EquipPrefFlags`, `APMF_EquipPrefEntry`, `APMF_EquipPrefInfo`, `SetEquipPreference`, `GetEquipPreferenceState` (struct `APMF_API_v22`) |
+| 23 | the release after 0.13.0 | `kIntent_CombatSubstrate` (no struct, no slot: rides `RequestEx` / `Release`), `APMF.esl` anchor records |
 
 The last release is 0.13.0, ABI 21. The interface struct for ABI 21 is `APMF_API_v19`, since ABI 20 and 21 added no slot. ABI 22 is on main for the next release, with the struct `APMF_API_v22`.
 
@@ -3160,6 +3257,7 @@ A refusal at the call returns `kInvalidHandle` and logs the reason in `APMF.log`
 | `kIntent_PursuitLeash` | leash not armed, `target` 0 or the actor itself, `fval` not positive, the player as the actor | the anchor is not a loaded Actor |
 | `kIntent_CombatApproach` | seats not installed, `target` 0 or the actor itself, `fval` not positive and finite, the player as the actor | the target is not a loaded reference (ends as `TargetLost`) |
 | `kIntent_CastGuard` | gate not installed, no param, no bit or an unknown bit, bad `fval`, the player as the actor, line of fire with the measurement not armed | |
+| `kIntent_CombatSubstrate` | not installed (`bCombatSubstrate=0`, the ch.22 target site, the 95-node pair, the anchor records, a self-check row, 1.7.104), the player as the actor, `fval` negative or NaN | not out of combat, unloaded, low process, in a scene or dialogue, the party in combat, Engine outranking the client on CombatAction / Combat / Equip / Detection, no free slot, the floors not published, the engine refusing the entry (the claim is released) |
 
 ## Appendix D: INI keys by facet
 
@@ -3184,6 +3282,7 @@ Defaults are the shipped values. The full text of every key is in [INI-REFERENCE
 | ch.22 re-entry deny | `[CombatReentryDeny]` | `bCombatReentryDeny` (1) |
 | ch.23 pursuit leash | `[PursuitLeash]` | `bPursuitLeash` (1) |
 | ch.24 combat approach | `[CombatApproach]` | `bCombatApproach` (1) |
+| combat substrate | `[CombatSubstrate]` | `bCombatSubstrate` (0), `bSubstrateDryRun` (0), `fSubstrateDryRunPeriodSec` (20), `fSubstrateTtlSec` (6), `bSubstrateMoveTrace` (0) |
 | line of sight, own ray | `[Sightline]` | `bOwnLineOfSight` (1) |
 | awareness | `[Awareness]` | `bHearNoise` (1) |
 | sources registry | `[Harbinger]` | `bSceneProbe` (1) |
