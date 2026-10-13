@@ -712,3 +712,12 @@ Raised against 9d01cdf, 2026-10-12. Reviewer (verbatim): "APMF-B75..B78 match my
 
 ### APMF-B81 (SEV-5) -- ApplyPending logs "declared" before the supersede check; Prune scales with handles x map
 Raised against 9d01cdf, 2026-10-12. Reviewer (verbatim): "`ApplyPending` logs \"declared …\" before it checks whether a newer declaration replaced this one." And: "It costs (tracked handles × the whole published map) once a second on the main thread. That is fine at MFO's scale, but would be heavy near the 4096-handle cap."
+
+### APMF-B85 (SEV-4) -- stale ch.24 area geometry if a freed controller's address is reused
+Raised against 732c859 (`fix/apmf-engagement-held`, Opus tier-3 round 3), 2026-10-12. Reviewer (verbatim): "StopCombat frees the controller. An immediate re-engage can allocate the new controller and area at the same addresses. A reactivation record for the old controller then matches the new controller and area, and writes the old area's saved geometry into the fresh area. No freed memory is touched, and the engine's next area update recomputes it. A generation or serial check would remove it."
+
+### APMF-B86 (SEV-5) -- one-poll drive blip when the dropped entry and the pin name different targets
+Raised against 732c859, 2026-10-12. Reviewer (verbatim): "If the dropped entry target differs from the pin target, `DropNotEngaged` still stops the pin hold's drive and calls `ClearInternalBound` unconditionally. The pin's own track restarts its drive on the next poll."
+
+### APMF-B87 (SEV-5) -- `GetCommandingActor` (MiddleHighProcessData +0x218) has no verified-address row
+Raised against 732c859, 2026-10-12. Reviewer (verbatim): "In the fork this is `currentProcess->middleHigh` (AIProcess +0x008) → `commandingActor` (MiddleHighProcessData +0x218, `static_assert(sizeof == 0x338)`). The header has no runtime split for it. MFO's shipped main already relies on the same accessor on both runtimes (`EngageOnSight.cpp:352`). I did not confirm +0x218 in disassembly; my quick byte-pattern scan found no reader. Add a verified row, or accept the precedent."
