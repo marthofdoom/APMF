@@ -656,6 +656,8 @@ namespace apmf::equipsink {
             bool               handBlock  = false;
             bool               forceDeny  = false;
             bool               anomaly    = false;
+            bool               ownClient  = false;   // F1: the forced preference's own client made this equip
+            apmf::facetattr::Verdict lastV{};          // the verdict of the most recent ranking
             const char*        standsWhat = nullptr;   // the deny the sliders did not allow (log + counters)
             apmf::facetattr::Verdict standsV{};
             APMF_API::Handle   standsH    = APMF_API::kInvalidHandle;
@@ -669,6 +671,7 @@ namespace apmf::equipsink {
                 } catch (...) {
                     v = apmf::facetattr::Verdict{};   // a registry throw never denies (the degrade direction)
                 }
+                lastV = v;
                 if (v.enforce) { denyV = v; return true; }
                 if (!standsWhat) { standsWhat = a_what; standsV = v; standsH = a_h; }
                 return false;
@@ -687,10 +690,15 @@ namespace apmf::equipsink {
                     refuse = ranked(set.handle, "the ch.17 declared set");
                 if (!handBlock && !refuse && forceMask && !selfPath) {
                     forceDeny = ranked(force.handle, "the FORCED equip preference");
-                    anomaly   = !forceDeny;
+                    // F1 (review of 7cda290): the claim's OWN client equipping into its own forced hand ties
+                    // with its claim and stands by the facet rule. That is not a slider violation: a separate
+                    // verdict, counted apart and logged at info, never a FORCE ANOMALY.
+                    ownClient = !forceDeny && lastV.src != apmf::sources::kNoSource && lastV.src == lastV.client;
+                    anomaly   = !forceDeny && !ownClient;
                 }
                 if (!handBlock && !refuse && !forceDeny)
                     verdict = anomaly    ? "allow (FORCE ANOMALY: the source outranks the forced preference)"
+                            : ownClient  ? "allow (own client: the forced preference's own client equipped it)"
                             : standsWhat ? "allow (the source outranks the claim: its equip stands)"
                             : scriptExempt ? (handHeld ? "allow (script exempt; hand held by a cast claim)" : "allow")
                                            : "allow";   // owned=0 / in-set: nothing the claims hold is at stake
@@ -734,7 +742,16 @@ namespace apmf::equipsink {
                 if (!callWorker && !selfPath && denyV.src != src_::kNoSource)
                     src_::NoteOverruled(denyV.src, src_::Facet::kEquip);
                 if (forceDeny) apmf::equippref::NoteForceDeny(actorId);
-                if (standsWhat) {
+                if (ownClient) {
+                    apmf::equippref::NoteForceOwnClient(actorId);
+                    if (apmf::facetattr::LineDue(src_::Facet::kEquip, actorId, itemId ^ 0x2600u))
+                        spdlog::info("[apmf][equip-obs] actor={} item={} own client: the forced equip preference's "
+                                     "own client ({}) equipped an item it does not prefer for that hand; its own "
+                                     "equip stands (a tie with its own claim), not counted as a force anomaly.",
+                                     apmf::log::Hex(actorId), apmf::log::Hex(itemId),
+                                     apmf::facetattr::NameOr(lastV.client, "?"));
+                }
+                if (standsWhat && !(ownClient && standsH == force.handle)) {
                     if (standsV.src != src_::kNoSource) src_::NoteStood(standsV.src, src_::Facet::kEquip);
                     if (anomaly) apmf::equippref::NoteForceAnomaly(actorId);
                     if (apmf::facetattr::LineDue(src_::Facet::kEquip, actorId, itemId ^ (anomaly ? 0x26u : 0x17u))) {

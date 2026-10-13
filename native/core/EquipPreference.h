@@ -46,11 +46,13 @@
 //                           (call site AE 0x811BA1 `call [rax+0x58]; movsxd rcx,eax`).
 //
 // THREADING. OnScore: the combat thread that runs the actor's CombatInventory rescore (the
-// caller), lock-free reads (the ControlMap RCU snapshot, this file's own published declaration
-// snapshot, the engine list in place); the per-actor state table and the log dedup take one
-// small LEAF mutex AFTER every engine read, never across an engine call. Set/Forget/ResetAll:
-// any thread (one writer mutex, copy-on-write publish). ForcedFor/ForceRefusal: any thread
-// (the equip worker's thread), lock-free. GetState: any thread (the state mutex). Pump: main.
+// caller). No lock is held across an engine call: the reads are the ControlMap RCU snapshot, this
+// file's own published declaration snapshot and the engine list in place; facetattr::InsideSource
+// and sources::ClaimPriority take leaf SHARED locks; the per-actor state table and the log dedup
+// take one small LEAF mutex AFTER every engine read. NoteClaim/Set/Forget/ResetAll: any thread
+// (one writer mutex; Set only queues). ForcedFor/ForceRefusal: any thread (the equip worker's
+// thread), snapshot reads only. GetState: any thread (the state mutex). Pump (the form lookup of
+// the type check, the IsClaimLive prune): MAIN thread only.
 // ============================================================================
 
 namespace RE {
@@ -72,8 +74,12 @@ namespace apmf::equippref {
     // ---- the client API (core/ClientAPI.cpp, core/ControlMap.cpp) -------------------------
     // Why a kIntent_EquipPreference request must be refused (nullptr = accept). Any thread.
     const char* RefuseReason(RE::FormID actor, const APMF_API::APMF_Param* param);
+    // ClientAPI: a kIntent_EquipPreference Request/RequestEx returned `h`. Only such a handle may declare.
+    void        NoteClaim(APMF_API::Handle h);
+    // Any thread. Stores the declaration as PENDING (a silent no-op for a handle NoteClaim never saw or
+    // that already ended); the main thread type-checks and publishes it next frame (Pump).
     void        Set(APMF_API::Handle h, const APMF_API::APMF_EquipPrefEntry* entries, std::uint32_t count);
-    void        Forget(APMF_API::Handle h);   // a Release (any handle; a no-op for a non-ch.26 one)
+    void        Forget(APMF_API::Handle h);   // a client Release (a no-op for a non-ch.26 handle)
     void        ResetAll(const char* why);    // revert / new game
     std::uint32_t GetState(RE::FormID actor, APMF_API::APMF_EquipPrefInfo* out);
 
@@ -107,12 +113,18 @@ namespace apmf::equippref {
     std::uint32_t ForceRefusal(const ForceView& a_view, RE::FormID a_item, std::uint32_t a_competes);
     void NoteForceDeny(RE::FormID a_actor);
     void NoteForceAnomaly(RE::FormID a_actor);
+    // F1 (review of 7cda290): the forced preference's OWN client equipped the item (it ties with its own
+    // claim and stands). Not an anomaly: counted separately, logged at info by the sink.
+    void NoteForceOwnClient(RE::FormID a_actor);
 
     // ---- observability ---------------------------------------------------------------------
     struct Totals {
         std::uint64_t lifts = 0, castSteers = 0, leading = 0, zero = 0, held = 0, withheld = 0, unreadable = 0,
-                      forcedDenies = 0, forceAnomalies = 0;
+                      forcedDenies = 0, forceAnomalies = 0, forceOwnClient = 0, lostPasses = 0, ignoredForms = 0,
+                      droppedDecls = 0;
     };
     Totals GetTotals();   // any thread (relaxed counters)
-    void   Pump();        // MAIN thread, once per frame: the 30 s heartbeat line
+    // MAIN thread, once per frame: type-checks and publishes pending declarations, prunes the
+    // declarations of ended claims (1 s), and writes the 30 s heartbeat line.
+    void   Pump();
 }

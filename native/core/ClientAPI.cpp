@@ -25,6 +25,7 @@ namespace {
         try {
             const auto h = apmf::ControlMap::Get().EnqueueRequest(actor, intent, basis, nullptr);
             apmf::sources::NoteClientRequest(h, _ReturnAddress(), intent);
+            if (intent == APMF_API::kIntent_EquipPreference) apmf::equippref::NoteClaim(h);   // ABI v22 (F4)
             return h;
         } catch (...) {
             return APMF_API::kInvalidHandle;
@@ -38,6 +39,7 @@ namespace {
         try {
             const auto h = apmf::ControlMap::Get().EnqueueRequest(actor, intent, basis, param);
             apmf::sources::NoteClientRequest(h, _ReturnAddress(), intent);
+            if (intent == APMF_API::kIntent_EquipPreference) apmf::equippref::NoteClaim(h);   // ABI v22 (F4)
             return h;
         } catch (...) {
             return APMF_API::kInvalidHandle;

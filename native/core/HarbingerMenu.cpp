@@ -197,9 +197,11 @@ namespace apmf::harbingermenu {
                 // ch.26 (ABI v22, weighting phase 1): the score lift and its escalation. A FORCE ANOMALY is
                 // a client's forced refusal the sliders did not allow (marth D4: investigate every one).
                 const auto t = apmf::equippref::GetTotals();
-                Colored(kGrey, fmt::format("Score preference: lifted {} (+{} spell steers), already leading {}, "
-                                           "outranked {}, hand held by a cast {}. Force: denied {}.",
-                                           t.lifts, t.castSteers, t.leading, t.withheld, t.held, t.forcedDenies));
+                Colored(kGrey, fmt::format("Score preference: lifted {} (+{} spell steers), lost the next pass {}, "
+                                           "already leading {}, outranked {}, hand held by a cast {}. Force: denied "
+                                           "{}, the client's own equip {}.",
+                                           t.lifts, t.castSteers, t.lostPasses, t.leading, t.withheld, t.held,
+                                           t.forcedDenies, t.forceOwnClient));
                 if (t.forceAnomalies)
                     Colored(kWarn, fmt::format("FORCE ANOMALIES: {} forced refusal(s) not applied because the other "
                                                "source outranks the claim. See [ch.26] in APMF.log.",
