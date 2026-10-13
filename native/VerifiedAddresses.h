@@ -19,7 +19,7 @@
 
 namespace apmf::VerifiedAddresses
 {
-	// 1.6.1170.0: 215 rows
+	// 1.6.1170.0: 236 rows
 	inline constexpr REL::SelfCheck::Row kRows_1_6_1170[] = {
 		{ 207886, 0x18A5558, 0x0, 0, {  }, "Character" },
 		{ 207896, 0x18A5FE8, 0x0, 0, {  }, "Character.ActorValueOwner" },
@@ -236,9 +236,30 @@ namespace apmf::VerifiedAddresses
 		{ 56626, 0xA447F0, 0x0, 0, {  }, "Substrate.TESObjectREFR.MoveTo" },
 		{ 36550, 0x641AD0, 0xCF, 15, { 0x48, 0x8B, 0x0D, 0x7A, 0xBF, 0xAB, 0x02, 0x48, 0x8D, 0x54, 0x24, 0x30, 0x48, 0x89, 0x74 }, "Substrate.BSMusicManager.Reader" },
 		{ 400896, 0x30FDB20, 0x0, 0, {  }, "Substrate.BSMusicManager.Singleton" },
+		{ 205318, 0x18733B0, 0x0, 0, {  }, "Leaf.CombatBehaviorIdle<float>" },
+		{ 212223, 0x18D97C0, 0x0, 0, {  }, "Leaf.CombatBehaviorRepeat<float>" },
+		{ 212275, 0x18D9A80, 0x0, 0, {  }, "Leaf.CombatBehaviorAcquireResource<3>" },
+		{ 212288, 0x18D9B30, 0x0, 0, {  }, "Leaf.CombatBehaviorDisableAim" },
+		{ 212301, 0x18D9BE0, 0x0, 0, {  }, "Leaf.CombatBehaviorFollowPath<AcquireWeapon>" },
+		{ 212314, 0x18D9C90, 0x0, 0, {  }, "Leaf.CombatBehaviorAcquireItem<AcquireWeapon>" },
+		{ 212372, 0x18DA380, 0x0, 0, {  }, "Leaf.CombatBehaviorAcquireResource<2>" },
+		{ 212385, 0x18DA430, 0x0, 0, {  }, "Leaf.CombatBehaviorSpawnParallel" },
+		{ 212938, 0x18DDE60, 0x0, 0, {  }, "Leaf.CombatBehaviorSetBlackboardData" },
+		{ 213135, 0x18DF568, 0x0, 0, {  }, "Leaf.CombatBehaviorWatchTarget<float>" },
+		{ 213323, 0x18E0EF8, 0x0, 0, {  }, "Leaf.CombatBehaviorFlee<float>" },
+		{ 213351, 0x18E10B0, 0x0, 0, {  }, "Leaf.CombatBehaviorFaceAngle<float,bool>" },
+		{ 213392, 0x18E1318, 0x0, 0, {  }, "Leaf.CombatBehaviorEnableBlackboardFlag" },
+		{ 213473, 0x18E2198, 0x0, 0, {  }, "Leaf.CombatBehaviorDynamicSelector<Conditional,float>" },
+		{ 213579, 0x18E2770, 0x0, 0, {  }, "Leaf.CombatBehaviorRepeat<FLAGS>" },
+		{ 213594, 0x18E2878, 0x0, 0, {  }, "Leaf.CombatBehaviorLand<float>" },
+		{ 213607, 0x18E2928, 0x0, 0, {  }, "Leaf.CombatBehaviorLandNearby<float>" },
+		{ 213718, 0x18E3708, 0x0, 0, {  }, "Leaf.CombatBehaviorCastImmediateSpell<bool>" },
+		{ 213733, 0x18E3810, 0x0, 0, {  }, "Leaf.CombatBehaviorCastConcentrationSpell<bool>" },
+		{ 214161, 0x18E7560, 0x0, 0, {  }, "Leaf.CombatBehaviorIdle<GameSetting>" },
+		{ 214367, 0x18E8AC8, 0x0, 0, {  }, "Leaf.CombatBehaviorRepeat<float,FLAGS>" },
 	};
 
-	// 1.5.97.0: 215 rows
+	// 1.5.97.0: 236 rows
 	inline constexpr REL::SelfCheck::Row kRows_1_5_97[] = {
 		{ 261397, 0x165DA40, 0x0, 0, {  }, "Character" },
 		{ 261402, 0x165E4D0, 0x0, 0, {  }, "Character.ActorValueOwner.SE" },
@@ -455,9 +476,30 @@ namespace apmf::VerifiedAddresses
 		{ 56227, 0x9AE5C0, 0x0, 0, {  }, "Substrate.TESObjectREFR.MoveTo" },
 		{ 35551, 0x5AF3D0, 0xCF, 15, { 0x48, 0x8B, 0x0D, 0x3A, 0x68, 0x91, 0x02, 0x48, 0x8D, 0x54, 0x24, 0x30, 0x48, 0x89, 0x74 }, "Substrate.BSMusicManager.Reader" },
 		{ 514738, 0x2EC5CE0, 0x0, 0, {  }, "Substrate.BSMusicManager.Singleton" },
+		{ 256701, 0x162FD40, 0x0, 0, {  }, "Leaf.CombatBehaviorIdle<float>" },
+		{ 265835, 0x1692D50, 0x0, 0, {  }, "Leaf.CombatBehaviorRepeat<float>" },
+		{ 265839, 0x1693010, 0x0, 0, {  }, "Leaf.CombatBehaviorAcquireResource<3>" },
+		{ 265840, 0x16930C0, 0x0, 0, {  }, "Leaf.CombatBehaviorDisableAim" },
+		{ 265841, 0x1693170, 0x0, 0, {  }, "Leaf.CombatBehaviorFollowPath<AcquireWeapon>" },
+		{ 265842, 0x1693220, 0x0, 0, {  }, "Leaf.CombatBehaviorAcquireItem<AcquireWeapon>" },
+		{ 265915, 0x1693AF0, 0x0, 0, {  }, "Leaf.CombatBehaviorAcquireResource<2>" },
+		{ 265916, 0x1693BA0, 0x0, 0, {  }, "Leaf.CombatBehaviorSpawnParallel" },
+		{ 266197, 0x1697970, 0x0, 0, {  }, "Leaf.CombatBehaviorSetBlackboardData" },
+		{ 266338, 0x1699350, 0x0, 0, {  }, "Leaf.CombatBehaviorWatchTarget<float>" },
+		{ 266498, 0x169AF10, 0x0, 0, {  }, "Leaf.CombatBehaviorFlee<float>" },
+		{ 266501, 0x169B0C8, 0x0, 0, {  }, "Leaf.CombatBehaviorFaceAngle<float,bool>" },
+		{ 266505, 0x169B330, 0x0, 0, {  }, "Leaf.CombatBehaviorEnableBlackboardFlag" },
+		{ 266618, 0x169C510, 0x0, 0, {  }, "Leaf.CombatBehaviorDynamicSelector<Conditional,float>" },
+		{ 266627, 0x169CAE8, 0x0, 0, {  }, "Leaf.CombatBehaviorRepeat<FLAGS>" },
+		{ 266629, 0x169CBF0, 0x0, 0, {  }, "Leaf.CombatBehaviorLand<float>" },
+		{ 266630, 0x169CCA0, 0x0, 0, {  }, "Leaf.CombatBehaviorLandNearby<float>" },
+		{ 266704, 0x169DC38, 0x0, 0, {  }, "Leaf.CombatBehaviorCastImmediateSpell<bool>" },
+		{ 266706, 0x169DD40, 0x0, 0, {  }, "Leaf.CombatBehaviorCastConcentrationSpell<bool>" },
+		{ 267079, 0x16A1ED8, 0x0, 0, {  }, "Leaf.CombatBehaviorIdle<GameSetting>" },
+		{ 267191, 0x16A35F0, 0x0, 0, {  }, "Leaf.CombatBehaviorRepeat<float,FLAGS>" },
 	};
 
-	// 1.7.104.0: 222 rows
+	// 1.7.104.0: 243 rows
 	// 36 NOT VERIFIED on 1.7.104.0, deliberately absent from this table (the seat is refused):
 	//   Character.ActorValueOwner.SE (1.6.1170 id -): no 1.6.1170 (AE) id: the 1.7.104 map is keyed by AE id (1.5.97-only seat)
 	//   TargetPin.CombatController.SetTarget (1.6.1170 id 33235): id 33235 is not in the idmap
@@ -704,6 +746,27 @@ namespace apmf::VerifiedAddresses
 		{ 12332, 0x17ED00, 0x0, 0, {  }, "CommonLib.LookupReferenceByHandle" },
 		{ 38561, 0x6C93B0, 0xCC, 14, { 0x48, 0x8B, 0x06, 0x33, 0xD2, 0x48, 0x8B, 0xCE, 0xFF, 0x90, 0xC8, 0x04, 0x00, 0x00 }, "Substrate.StartCombat.TargetIsDeadCall" },
 		{ 56626, 0xA5D370, 0x0, 0, {  }, "Substrate.TESObjectREFR.MoveTo" },
+		{ 205318, 0x18ED490, 0x0, 0, {  }, "Leaf.CombatBehaviorIdle<float>" },
+		{ 212223, 0x1957D88, 0x0, 0, {  }, "Leaf.CombatBehaviorRepeat<float>" },
+		{ 212275, 0x1958048, 0x0, 0, {  }, "Leaf.CombatBehaviorAcquireResource<3>" },
+		{ 212288, 0x19580F8, 0x0, 0, {  }, "Leaf.CombatBehaviorDisableAim" },
+		{ 212301, 0x19581A8, 0x0, 0, {  }, "Leaf.CombatBehaviorFollowPath<AcquireWeapon>" },
+		{ 212314, 0x1958258, 0x0, 0, {  }, "Leaf.CombatBehaviorAcquireItem<AcquireWeapon>" },
+		{ 212372, 0x1958948, 0x0, 0, {  }, "Leaf.CombatBehaviorAcquireResource<2>" },
+		{ 212385, 0x19589F8, 0x0, 0, {  }, "Leaf.CombatBehaviorSpawnParallel" },
+		{ 212938, 0x195C428, 0x0, 0, {  }, "Leaf.CombatBehaviorSetBlackboardData" },
+		{ 213135, 0x195DB30, 0x0, 0, {  }, "Leaf.CombatBehaviorWatchTarget<float>" },
+		{ 213323, 0x195F4C0, 0x0, 0, {  }, "Leaf.CombatBehaviorFlee<float>" },
+		{ 213351, 0x195F678, 0x0, 0, {  }, "Leaf.CombatBehaviorFaceAngle<float,bool>" },
+		{ 213392, 0x195F8E0, 0x0, 0, {  }, "Leaf.CombatBehaviorEnableBlackboardFlag" },
+		{ 213473, 0x1960760, 0x0, 0, {  }, "Leaf.CombatBehaviorDynamicSelector<Conditional,float>" },
+		{ 213579, 0x1960D38, 0x0, 0, {  }, "Leaf.CombatBehaviorRepeat<FLAGS>" },
+		{ 213594, 0x1960E40, 0x0, 0, {  }, "Leaf.CombatBehaviorLand<float>" },
+		{ 213607, 0x1960EF0, 0x0, 0, {  }, "Leaf.CombatBehaviorLandNearby<float>" },
+		{ 213718, 0x1961CD0, 0x0, 0, {  }, "Leaf.CombatBehaviorCastImmediateSpell<bool>" },
+		{ 213733, 0x1961DD8, 0x0, 0, {  }, "Leaf.CombatBehaviorCastConcentrationSpell<bool>" },
+		{ 214161, 0x1965B50, 0x0, 0, {  }, "Leaf.CombatBehaviorIdle<GameSetting>" },
+		{ 214367, 0x19670B8, 0x0, 0, {  }, "Leaf.CombatBehaviorRepeat<float,FLAGS>" },
 		{ 0, 0x82D2C0, 0x0, 0, {  }, "AiCastSeats.Melee.CalculateScore" },
 		{ 0, 0x82D790, 0x0, 0, {  }, "AiCastSeats.Ranged.CalculateScore" },
 		{ 0, 0x82DCD0, 0x0, 0, {  }, "AiCastSeats.Shield.CalculateScore" },

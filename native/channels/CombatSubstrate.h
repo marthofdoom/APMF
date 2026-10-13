@@ -61,16 +61,17 @@ namespace apmf::combatsubstrate {
     // real-combat stand-down has not fired. ch.24 treats such an actor as NOT in combat.
     bool Suppressing(RE::FormID a_actor);
 
-    // core/ActionGate.cpp: the leaf ALLOW-LIST. `a_leafIdx` indexes apmf::cbt::kLeaves (0..69)
-    // or, from 70, apmf::cbt::kSearchLeaves. `a_movement` = ActionGate's movement-leaf
+    // core/ActionGate.cpp: the leaf ALLOW-LIST. `a_leafIdx` indexes apmf::cbt::kLeaves (0..69),
+    // then apmf::cbt::kSearchLeaves (70..73), then apmf::cbt::kParamLeaves (74..94). `a_movement` = ActionGate's movement-leaf
     // classification (the P6 "movement-leaves-denied" count). kNotHolder = no substrate on
     // the actor (the caller goes on as before); kAllow = the leaf runs; kDeny = force-fail it
     // with the ForceFail act()/pop() PAIR, then call LeafDenied.
     enum class Leaf : std::uint8_t { kNotHolder, kAllow, kDeny };
     Leaf ForLeaf(RE::FormID a_actor, std::uint32_t a_leafIdx, bool a_movement);
     void LeafDenied(RE::FormID a_actor, std::uint32_t a_leafIdx, bool a_movement);
-    // The leaf catalog index count the allow-list knows (kLeaves + kSearchLeaves).
-    inline constexpr std::uint32_t kLeafCount = 74;
+    // The node index count the allow-list knows (kLeaves + kSearchLeaves + kParamLeaves): EVERY
+    // CombatBehaviorTreeNodeObject* vtable the MIT fork ships (review F1 of a512763).
+    inline constexpr std::uint32_t kLeafCount = 95;
 
     // channels/CombatReentryDeny.cpp's slot-0x99 thunk, at StartCombat's TARGET IsDead(false)
     // return site: true = answer "dead" (StartCombat refuses). `a_target` is the IsDead `this`
