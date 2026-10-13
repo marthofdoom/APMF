@@ -43,8 +43,8 @@
 //   a 0x98-byte TESObjectREFR. The follower itself is refused at AE 0x6B69B3 / SE 0x625231; no
 //   target builds no controller (AE 0x6B6CBE). At runtime Harbinger turns its AI off
 //   (Actor::boolBits kProcessMe, bit 1 -- the same bit word StartCombat tests for kDead, bit 11,
-//   at AE +0xE8 / SE +0xE0), drops its collision (TESObjectREFR record flag 0x10, read by the
-//   engine when it builds the 3D), makes it invisible (Character slot 0xE1 SetAlpha(0): AE
+//   at AE +0xE8 / SE +0xE0), keeps it 72 units BEHIND the holder (its collision is NOT switched off:
+//   the only setter writes a form flag CommonLib marks unverified), makes it invisible (Character slot 0xE1 SetAlpha(0): AE
 //   0x6C1A50 / SE 0x62FAD0; it applies only to a high-process actor, so it is re-applied on every
 //   move) and moves it with the engine's own MoveTo (TESObjectREFR::MoveTo_Impl AE 56626 /
 //   SE 56227, verified row Substrate.TESObjectREFR.MoveTo; home = MoveTo(the XMarker)). It is
@@ -406,18 +406,25 @@ namespace {
     }
 
     // ---- the anchor (game thread) ---------------------------------------------------------------
-    // AI off (boolBits kProcessMe), collision off (record flag), invisible (SetAlpha 0), at `a_at`.
+    // AI off (boolBits kProcessMe), invisible (SetAlpha 0), kAnchorBehindU BEHIND the holder (its heading).
+    // COLLISION: not switched off. The only setter (CommonLib TESObjectREFR::SetCollision) writes form flag
+    // 1 << 4, which CommonLib itself marks unverified ("?"), and this file writes no unverified engine state
+    // (CLAUDE.md rule 2). Standing behind the holder, outside its capsule, keeps the anchor's body out of the
+    // follower's way instead; it is a ghost (ACBS) so nothing hits it.
+    constexpr float kAnchorBehindU = 72.0f;
+    RE::NiPoint3 BehindOf(RE::Actor* a_at) {
+        const RE::NiPoint3 p = a_at->GetPosition();
+        const float        z = a_at->data.angle.z;   // heading: forward = (sin z, cos z)
+        return RE::NiPoint3{ p.x - std::sin(z) * kAnchorBehindU, p.y - std::cos(z) * kAnchorBehindU, p.z };
+    }
+
     void AnchorToHolder(RE::Actor* a_anchor, RE::Actor* a_at, bool a_first) {
         if (!a_anchor || !a_at) return;
-        if (a_first) {
-            a_anchor->GetActorRuntimeData().boolBits.reset(RE::Actor::BOOL_BITS::kProcessMe);   // AI off
-            a_anchor->SetCollision(false);                                                          // record flag 0x10
-        }
+        if (a_first) a_anchor->GetActorRuntimeData().boolBits.reset(RE::Actor::BOOL_BITS::kProcessMe);   // AI off
         if (a_anchor->GetParentCell() != a_at->GetParentCell() || a_first)
-            a_anchor->MoveTo(a_at);
-        else
-            // TESObjectREFR::SetPosition (MoveTo_Impl, the verified row), NOT Actor's slot 0xA9 overload.
-            static_cast<RE::TESObjectREFR*>(a_anchor)->SetPosition(a_at->GetPosition());
+            a_anchor->MoveTo(a_at);   // into the holder's cell (MoveTo_Impl, the verified row) ...
+        // ... then behind it: TESObjectREFR::SetPosition (MoveTo_Impl), NOT Actor's slot 0xA9 overload.
+        static_cast<RE::TESObjectREFR*>(a_anchor)->SetPosition(BehindOf(a_at));
         a_anchor->SetAlpha(0.0f);   // Character 0xE1: a no-op until the anchor is high process -- re-applied per move
     }
 
@@ -894,7 +901,7 @@ namespace {
         auto* at     = RE::TESForm::LookupByID<RE::Actor>(best->id);
         if (!anchor || !at) return;
         const bool moved = anchor->GetParentCell() != at->GetParentCell() ||
-                           anchor->GetPosition().GetDistance(at->GetPosition()) > kAnchorFollowU;
+                           anchor->GetPosition().GetDistance(BehindOf(at)) > kAnchorFollowU;
         if (best->id != g_served || moved) {
             AnchorToHolder(anchor, at, false);
             g_served = best->id;

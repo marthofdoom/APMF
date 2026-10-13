@@ -460,7 +460,8 @@ with `kIntent_CombatSubstrate` beside its `kIntent_Cast` claim. It is legal only
    Nazeem `00013BBF` with no factions, packages, outfit, inventory or script, not Unique, essential and a ghost on
    the base; ACHR 0x80A in the holding cell 0x809; home XMarker 0x80B). It must be an Actor: StartCombat reads
    Actor-only fields of its target before it builds anything (AE `0x6B6AED`, `0x6B6B4F`). Harbinger turns its AI
-   off, drops its collision, makes it invisible and moves it with the engine's own `MoveTo`; it is reference-counted
+   off, makes it invisible, keeps it 72 units behind the holder it serves (its collision is NOT switched off: the
+   only setter writes a form flag CommonLib marks unverified) and moves it with the engine's own `MoveTo`; it is reference-counted
    across holders and goes home when the last one closes. Never placed with PlaceAtMe: nothing enters the `.ess`
    but its position. This amends (g) condition 7 ("entering against a list, re-entry on a timer, or ending combat
    are each a new amendment") for the substrate only, and (g) condition 1 (Harbinger names the target: its own
