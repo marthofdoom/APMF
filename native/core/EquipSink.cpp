@@ -459,17 +459,25 @@ namespace apmf::equipsink {
         // item in a DENIED category through because its source OUTRANKS the claim (the user's sliders),
         // the source is recorded per (actor, item), so the enforce pass's unequip (WornDeniedRefused)
         // does not strip what the sink just allowed. Any equip thread writes, the main thread reads;
-        // a leaf mutex, bounded (a full map is cleared: a lost record falls back to the Engine rule). ----
+        // a leaf mutex, bounded (a full map is cleared: a lost record falls back to the Engine rule).
+        // LIFETIME (re-review R1): each record carries the ch.17 claim HANDLE it was made under and is
+        // used only while that same claim is the winning one. Handles come from ControlMap::m_nextHandle,
+        // monotonic for the process and never reset, and every claim drops at kPreLoadGame / revert
+        // (ReleaseAll), so a record from an earlier claim or an earlier save can never match again. ----
         constexpr std::size_t kStoodMax = 1024;
-        std::mutex                                                g_stoodMx;
-        std::unordered_map<std::uint64_t, apmf::sources::SourceId> g_stoodSrc;
+        struct Stood {
+            apmf::sources::SourceId src    = apmf::sources::kNoSource;
+            APMF_API::Handle        handle = APMF_API::kInvalidHandle;
+        };
+        std::mutex                              g_stoodMx;
+        std::unordered_map<std::uint64_t, Stood> g_stoodSrc;
         std::uint64_t StoodKey(RE::FormID a_actor, RE::FormID a_item) {
             return (static_cast<std::uint64_t>(a_actor) << 32) | a_item;
         }
-        void RecordStood(RE::FormID a_actor, RE::FormID a_item, apmf::sources::SourceId a_src) {
+        void RecordStood(RE::FormID a_actor, RE::FormID a_item, apmf::sources::SourceId a_src, APMF_API::Handle a_claim) {
             std::scoped_lock lk(g_stoodMx);
             if (g_stoodSrc.size() >= kStoodMax) g_stoodSrc.clear();
-            g_stoodSrc[StoodKey(a_actor, a_item)] = a_src;
+            g_stoodSrc[StoodKey(a_actor, a_item)] = Stood{ a_src, a_claim };
         }
         void ForgetStood(RE::FormID a_actor, RE::FormID a_item) {
             std::scoped_lock lk(g_stoodMx);
@@ -802,7 +810,8 @@ namespace apmf::equipsink {
             try {
                 if (equipClaimed && dv.blacked && !selfPath) {
                     if (callWorker && !refuse)
-                        RecordStood(actorId, itemId, eqSrc != apmf::sources::kNoSource ? eqSrc : apmf::sources::kUnattributedSource);
+                        RecordStood(actorId, itemId, eqSrc != apmf::sources::kNoSource ? eqSrc : apmf::sources::kUnattributedSource,
+                                    set.handle);
                     else if (!callWorker)
                         ForgetStood(actorId, itemId);
                 }
@@ -1024,8 +1033,12 @@ namespace apmf::equipsink {
         {
             std::scoped_lock lk(g_stoodMx);
             if (const auto it = g_stoodSrc.find(StoodKey(a_actor, a_item)); it != g_stoodSrc.end()) {
-                a_src   = it->second;
-                a_known = true;
+                if (it->second.handle == a_set.handle && a_set.handle != APMF_API::kInvalidHandle) {
+                    a_src   = it->second.src;
+                    a_known = true;
+                } else {
+                    g_stoodSrc.erase(it);   // made under an earlier claim (or an earlier save): stale
+                }
             }
         }
         bool bound = false;

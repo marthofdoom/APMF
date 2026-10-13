@@ -1584,7 +1584,7 @@ When the declaring claim owns the facet:
 
 | Case | Verdict |
 |---|---|
-| competes for a denied category, from ANY route (the player's trade or gift menu, Papyrus or console, an unattributed caller included) | deny, even if in the set. Since 2026-10-13: the player may still trade the item, the follower never equips it. Still ranked: a source you raised above the claim keeps its equip |
+| competes for a denied category, from ANY route (the player's trade or gift menu, Papyrus or console, an unattributed caller included) | deny, even if in the set. Since 2026-10-13: the player may still trade the item, the follower never equips it. Still ranked: a source you raised above the claim keeps its equip, but only for an equip applied at once. A QUEUED equip (the usual `EquipObject` default) comes back to the seat one actor update later as `path=QueuedApply` and ranks as Engine there, so it is refused even for a raised source. Stricter than the rule, known, not yet fixed |
 | script or console equip, without `DenyScript`, not in a denied category | allow (exempt) |
 | the player's own menu equip, without `DenyPlayerMenu`, not in a denied category | allow (player agency) |
 | competes for an owned category and there is no declaration or the item is in the set | allow |
