@@ -8,6 +8,7 @@
 #include "core/Sightline.h"   // ABI v18 kTargetPin_OwnLineOfSight
 #include "core/Sources.h"     // Harbinger 1a: target capture, census, priorities
 #include "channels/CombatEntry.h"   // THE HELD ENGAGEMENT (2026-10-12): a pin is held; kLost no longer ends it
+#include "core/MainThread.h"       // the re-pin cooldown's release goes out after the Drain publishes
 
 #include <intrin.h>   // _ReturnAddress: the 0xE4 layers' segment proof
 #include <shared_mutex>
@@ -167,6 +168,10 @@ namespace {
     // can see a null Get3D2 during a 3D rebuild -- a transform, a skeleton swap, Reset3D, a
     // script Disable+Enable -- so one worker observation must not end the pin).
     constexpr const char* kReasonLost = "target lost";
+    // Review F-4 ((g) condition 5, "never live and inert"): the target was one of the group's targets and
+    // is not any more (the engine dropped it, or the fight it was in ended). Trusted like kReasonLost.
+    constexpr const char* kReasonAbsent   = "target no longer a combat target (it was one)";
+    constexpr const char* kReasonCooldown = "re-pin cooldown (Harbinger ended this engagement moments ago)";
 
     std::atomic<bool>        g_installed{ false };
     std::atomic<bool>        g_installTried{ false };
@@ -204,6 +209,7 @@ namespace {
         mutable std::atomic<const char*>   endedReason{ nullptr };   // for the Release line
         mutable std::atomic<std::uint64_t> lastNotTargetLogMs{ 0 };
         mutable std::atomic<std::uint64_t> lastLostLogMs{ 0 };      // the held "flagged LOST" line
+        mutable std::atomic<bool>          everPresent{ false };    // the target has been in the group's targets
         mutable std::atomic<std::uint64_t> lastMissLogMs{ 0 };
         mutable std::atomic<std::uint64_t> lastOverwriteLogMs{ 0 };
     };
@@ -280,7 +286,7 @@ namespace {
         pin.seatHits.fetch_add(1, std::memory_order_relaxed);
         const auto decline = [&pin] { pin.lastDecision.store(2, std::memory_order_relaxed); };
         const auto endWith = [&pin](const char* why) {
-            if (why == kReasonLost) {   // the trusted reason always wins over a transient one
+            if (why == kReasonLost || why == kReasonAbsent) {   // trusted reasons win over a transient one
                 pin.seatEndReason.store(why, std::memory_order_relaxed);
                 return;
             }
@@ -314,9 +320,12 @@ namespace {
 
         auto* group = cc->combatGroup;
         const Membership m = group ? GroupMembership(group, pin.handle) : Membership::kAbsent;
+        if (m != Membership::kAbsent) pin.everPresent.store(true, std::memory_order_relaxed);
         if (m == Membership::kLost) {
             const auto n = pin.targetLost.fetch_add(1, std::memory_order_relaxed) + 1;
-            if (apmf::combatentry::hold::Enabled()) {
+            // Held only while the knowledge seats keep the engine's knowledge alive (review F-4): without them
+            // a lost target stays lost and the pin would outlive it inert -- the old end applies.
+            if (apmf::combatentry::hold::Enabled() && apmf::combatentry::hold::KnowledgeInstalled()) {
                 // THE HELD ENGAGEMENT (marth 2026-10-12: "once an engagement is called in harbinger its
                 // move-to, it cannot be lost"): the engine's detection losing the target does NOT end the
                 // pin. The knowledge seats (channels/CombatEntry.cpp) un-lose a held target right after
@@ -331,13 +340,18 @@ namespace {
                 }
                 return;
             }
-            endWith(kReasonLost);   // [EngagementHold] off: the pre-2026-10-12 contract -- the pin ends
+            endWith(kReasonLost);   // hold off / seats not installed: the pre-2026-10-12 contract -- the pin ends
             decline();
             return;
         }
         if (engineAnswer == pin.handle.native_handle()) {
             pin.held.fetch_add(1, std::memory_order_relaxed);
             pin.lastDecision.store(1, std::memory_order_relaxed);
+            return;
+        }
+        if (m == Membership::kAbsent && pin.everPresent.load(std::memory_order_relaxed)) {
+            endWith(kReasonAbsent);   // review F-4: it WAS a group target and is not: the pin ends
+            decline();
             return;
         }
         if (m == Membership::kAbsent) {
@@ -830,18 +844,39 @@ namespace {
             if (!h) why = "the actor has no reference handle";
         }
 
+        // THE HELD ENGAGEMENT's re-engage cooldown: Harbinger itself ended this actor -> target engagement
+        // moments ago (a watchdog anomaly); a Repoint / takeover naming it again is ENDED, not pinned.
+        const bool cooled = !why && apmf::combatentry::hold::RefuseReengage(id, tf, true);
+
         std::unique_lock lk(g_pinMx);
         g_pins.erase(id);
         if (!why) {
             auto [it, ok] = g_pins.try_emplace(id);
             it->second.target = tf;
             it->second.handle = h;
+            if (cooled) {   // the seat declines an ending pin; the release goes out after this Drain publishes
+                it->second.ending.store(true);
+                it->second.endedReason.store(kReasonCooldown);
+            }
         }
         g_pinCount.store(g_pins.size(), std::memory_order_relaxed);
         lk.unlock();
-        // THE HELD ENGAGEMENT: the pin is what this actor holds (nothing, for an inert claim).
-        if (why) apmf::combatentry::hold::ClearPin(id);
+        // THE HELD ENGAGEMENT: the pin is what this actor holds (nothing, for an inert or cooled claim).
+        if (why || cooled) apmf::combatentry::hold::ClearPin(id);
         else apmf::combatentry::hold::SetPin(id, tf, h);
+
+        if (cooled) {
+            apmf::mainthread::Post([id, tf] {
+                APMF_API::APMF_Param p{};
+                float                basis = 0.0f;
+                APMF_API::Handle     hh    = APMF_API::kInvalidHandle;
+                if (!apmf::ControlMap::Get().TryGetOwningClaimBasis(id, APMF_API::kIntent_TargetPin, p, basis, &hh) ||
+                    p.form != tf || hh == APMF_API::kInvalidHandle)
+                    return;
+                apmf::ControlMap::Get().EnqueueRelease(hh);   // logged once per cooldown by RefuseReengage
+            });
+            return;
+        }
 
         if (why) {
             spdlog::warn("[ch.20] 0x{} target-pin claim {} but INERT -- target 0x{}: {}. The handle stays "
@@ -1065,7 +1100,7 @@ namespace apmf::targetpin {
         for (const auto& sn : snaps) {
             // "target lost" is trusted as the seat saw it; everything else is checked LIVE here,
             // on the game thread, whatever the seat recorded.
-            const char* why = sn.seatWhy == kReasonLost ? kReasonLost : nullptr;
+            const char* why = (sn.seatWhy == kReasonLost || sn.seatWhy == kReasonAbsent) ? sn.seatWhy : nullptr;
             if (!why) {
                 auto* owner = RE::TESForm::LookupByID<RE::Actor>(sn.id);
                 auto  tptr  = sn.handle.get();

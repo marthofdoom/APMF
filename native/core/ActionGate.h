@@ -45,6 +45,10 @@ namespace apmf::actiongate {
     // Return To Combat Area walks it back instead of it standing still; ended when it stops searching,
     // holds an engagement, leaves combat or loses the leash. [PursuitLeash] bLeashReturn (default 1).
     void LeashReturnPoll();
+    // ch.23 search stamps for a LEASHED actor: ms since a search leaf last ran / was last leash-denied
+    // (~0 = never). Any thread (a mutex). The held engagement's "search-elsewhere" drive reads them.
+    std::uint64_t SearchSeenAgeMs(RE::FormID actor);
+    std::uint64_t SearchDeniedAgeMs(RE::FormID actor);
 
     // ---- [Probe] bRangedSelect (2026-09-29, PHASE 1 of the Ranged-selection deny): a PASSIVE
     // probe. It never denies, never writes engine state and never changes a return value. For

@@ -57,19 +57,32 @@ namespace apmf::combatentry::hold {
     // ch.23 does not leash the held target's approach, the hold Poll runs. Any thread.
     bool Enabled();
 
+    // Are the knowledge seats installed? False = the hold DEGRADES (review F-4): ch.20 ends a pin on
+    // "target lost" as before. Any thread.
+    bool KnowledgeInstalled();
+
     // ch.20 / ch.21 register what they hold (GAME THREAD; Apply on Engage / OnOwnerChanged, Clear
     // on Release / ResetAll). `handle` = the target's ActorHandle, resolved on the game thread.
+    // `range` = ch.21's param.fval, the client's engage range in game units (0 = no range rule).
     void SetPin(RE::FormID actor, RE::FormID target, RE::ActorHandle handle);
     void ClearPin(RE::FormID actor);
-    void SetEntry(RE::FormID actor, RE::FormID target, RE::ActorHandle handle);
+    void SetEntry(RE::FormID actor, RE::FormID target, RE::ActorHandle handle, float range);
     void ClearEntry(RE::FormID actor);
 
     // Does `actor` hold an engagement on the target whose ActorHandle native value is `handle`?
-    // ANY THREAD (shared lock on the hold map, the ch.20 / ch.23 precedent). Counts a leash exemption
-    // when `countLeash` is set.
-    bool IsHeld(RE::FormID actor, std::uint32_t handle, bool countLeash = false);
+    // 0 = no, 1 = via its ch.20 pin, 2 = via its ch.21 entry. ANY THREAD (shared lock on the hold
+    // map, the ch.20 / ch.23 precedent). Counts a leash exemption when `countLeash` is set.
+    int HeldVia(RE::FormID actor, std::uint32_t handle, bool countLeash = false);
     // Does `actor` hold any engagement at all? ANY THREAD (shared lock).
     bool HoldsAny(RE::FormID actor);
+
+    // The re-engage COOLDOWN: after Harbinger ENDED an engagement itself (a watchdog anomaly, or the
+    // range rule), a new request of the same actor -> target is refused for 60 s (the range rule
+    // refuses a ch.21 re-entry only; a watchdog end refuses a ch.20 pin too). Logged once per
+    // cooldown. ANY THREAD. Asked by ch.20 / ch.21 Apply: the claim is ACCEPTED and ended one frame
+    // later ("re-engage cooldown"), never refused synchronously -- a synchronous refusal means "seat not
+    // installed" to clients (MFO drops its pin / entry route for the session on it).
+    bool RefuseReengage(RE::FormID actor, RE::FormID target, bool isPin);
 
     // Game thread, Arbiter::OncePerFrame (after the ch.20 / ch.21 Polls): per-hold telemetry
     // (distance moved per 5 s window, distance to the target, attack / cast starts, engine-lost

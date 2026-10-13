@@ -300,6 +300,7 @@ namespace apmf::actiongate {
         std::atomic<std::uint64_t> g_pPassNoTarget{ 0 };    // no goal to measure (no target / no search centre)
         std::atomic<std::uint64_t> g_pPassStale{ 0 };       // no leash entry, or it names another anchor
         std::atomic<std::uint64_t> g_pPassHeld{ 0 };        // the goal is a HELD engagement's target (2026-10-12)
+        std::atomic<std::uint64_t> g_pHeldOutranked{ 0 };   // ...but the leash claim outranks the engagement (F-3)
 
         // ch.23 LEASH RETURN (2026-10-12). The seats stamp, per LEASHED actor, when a search leaf last
         // ran (act) and when one was last leash-denied; LeashReturnPoll (game thread) reads them. Only
@@ -518,8 +519,35 @@ namespace apmf::actiongate {
         // from the combat group's search centre read exactly as SearchCenter::Enter reads it
         // (unlocked, CombatBehaviorRE.h). Never a form lookup. Every pass-through reason is
         // counted (RULE C), so a leash that never bites says why.
-        bool PursuitDenies(void* a_control, RE::FormID a_actorFid, const APMF_API::APMF_Param& a_claim, Goal a_goal,
-                           float& a_dActor, float& a_dGoal, float& a_radius) {
+        // THE HELD ENGAGEMENT vs the leash (review F-3, RANKED): the held approach is exempt only when the
+        // engagement claim's priority on the leash's own facet (CombatAction) is at least the leash claim's.
+        // A tie is the engagement's (marth 2026-10-12: "once an engagement is called in harbinger its
+        // move-to, it cannot be lost"); a strictly higher leash still bounds it (counted, not exempted).
+        bool HeldOutranksLeash(RE::FormID a_actor, std::uint32_t a_goalHandle, APMF_API::Handle a_leashH) {
+            const int via = apmf::combatentry::hold::HeldVia(a_actor, a_goalHandle, false);
+            if (via == 0) return false;
+            APMF_API::APMF_Param p{};
+            float                basis = 0.0f;
+            APMF_API::Handle     eh    = APMF_API::kInvalidHandle;
+            apmf::ControlMap::Get().TryGetOwningClaimBasis(
+                a_actor, via == 1 ? APMF_API::kIntent_TargetPin : APMF_API::kIntent_CombatEntry, p, basis, &eh);
+            int pe = 0, pl = 0;
+            try {
+                pe = apmf::sources::ClaimPriority(eh, apmf::sources::Facet::kCombatAction);
+                pl = apmf::sources::ClaimPriority(a_leashH, apmf::sources::Facet::kCombatAction);
+            } catch (...) {
+                return true;   // the engagement wins the tie it would get at default priorities
+            }
+            if (pe < pl) {
+                g_pHeldOutranked.fetch_add(1, std::memory_order_relaxed);
+                return false;
+            }
+            apmf::combatentry::hold::HeldVia(a_actor, a_goalHandle, true);   // count the exemption
+            return true;
+        }
+
+        bool PursuitDenies(void* a_control, RE::FormID a_actorFid, const APMF_API::APMF_Param& a_claim,
+                           APMF_API::Handle a_leashH, Goal a_goal, float& a_dActor, float& a_dGoal, float& a_radius) {
             Leash l{};
             {
                 std::shared_lock lk(g_leashMx);
@@ -563,7 +591,7 @@ namespace apmf::actiongate {
                 // THE HELD ENGAGEMENT (marth 2026-10-12): a client-called engagement is a move-to that
                 // cannot be lost, so the leash never bounds the approach to the HELD target; it still
                 // bounds every other pursuit and every wandering search.
-                if (apmf::combatentry::hold::IsHeld(a_actorFid, ctrl->targetHandle.native_handle(), true)) {
+                if (HeldOutranksLeash(a_actorFid, ctrl->targetHandle.native_handle(), a_leashH)) {
                     g_pPassHeld.fetch_add(1, std::memory_order_relaxed);
                     return false;
                 }
@@ -579,9 +607,9 @@ namespace apmf::actiongate {
                 // written by CombatGroup's own setter, AE 0x809B20 / SE 0x76FEB0, and loaded beside the search
                 // centre, AE 0x80B683) is that same move-to: the leash lets it run too.
                 if (group &&
-                    apmf::combatentry::hold::IsHeld(
-                        a_actorFid, *reinterpret_cast<const std::uint32_t*>(group + apmf::cbt::kGroupTargetToSearchFor),
-                        true)) {
+                    HeldOutranksLeash(a_actorFid,
+                                      *reinterpret_cast<const std::uint32_t*>(group + apmf::cbt::kGroupTargetToSearchFor),
+                                      a_leashH)) {
                     g_pPassHeld.fetch_add(1, std::memory_order_relaxed);
                     return false;
                 }
@@ -1082,7 +1110,7 @@ namespace apmf::actiongate {
                 return a_orig(a_this, a_control);                  // not leashed -- the leaf runs natively
             float dS = 0.0f, dG = 0.0f, r = 0.0f;
             const bool search = g_leashLeaves[a_idx].goal == Goal::kSearchCentre;
-            if (!PursuitDenies(a_control, actorFid, claim, g_leashLeaves[a_idx].goal, dS, dG, r)) {
+            if (!PursuitDenies(a_control, actorFid, claim, h, g_leashLeaves[a_idx].goal, dS, dG, r)) {
                 if (search) StampSearch(actorFid, false);   // ch.23 leash return: the actor is searching
                 return a_orig(a_this, a_control);
             }
@@ -1132,7 +1160,7 @@ namespace apmf::actiongate {
                 return orig(a_this, a_control);   // this actor is not leashed -- the leaf runs natively
 
             float dS = 0.0f, dG = 0.0f, r = 0.0f;
-            if (!PursuitDenies(a_control, fid, claim, g_leashLeaves[idx].goal, dS, dG, r))
+            if (!PursuitDenies(a_control, fid, claim, h, g_leashLeaves[idx].goal, dS, dG, r))
                 return orig(a_this, a_control);
 
             const auto thread = reinterpret_cast<std::uintptr_t>(a_control);
@@ -1470,10 +1498,12 @@ namespace apmf::actiongate {
         constexpr std::uint64_t kReturnStartMs = 1500;   // a search leash-denied this recently starts it
         constexpr std::uint64_t kReturnIdleMs  = 3000;   // no search leaf for this long ends it (12 selector periods)
         constexpr std::uint64_t kReturnStallMs = 3000;   // ch.24's stall floor: the area stopped carrying it
+        constexpr std::uint64_t kReturnRetryMs = 10000;  // a released (not carried) return is not retried before this
         struct ReturnState {
             bool          active = false;
             bool          stallLogged = false;
             std::uint64_t sinceMs = 0;
+            std::uint64_t retryAfterMs = 0;
         };
         std::unordered_map<RE::FormID, ReturnState> g_return;   // game thread only
         std::atomic<std::uint64_t> g_returnsStarted{ 0 }, g_returnsEnded{ 0 };
@@ -1595,11 +1625,13 @@ namespace apmf::actiongate {
         spdlog::info("[ch.23] pursuit H leashes={} leaf=seen/denied-at-act/ended-at-update:{}",
                      g_leashCount.load(std::memory_order_relaxed), perLeaf);
         spdlog::info("[ch.23] pursuit H pass inside={} closer={} no-anchor={} other-space={} no-goal={} stale={} "
-                     "held-engagement={} update-anomaly={}; leash returns started={} ended={}",
+                     "held-engagement={} (leash outranked the engagement {}) update-anomaly={}; leash returns "
+                     "started={} ended={}",
                      g_pPassInside.load(std::memory_order_relaxed), g_pPassCloser.load(std::memory_order_relaxed),
                      g_pPassNoAnchor.load(std::memory_order_relaxed), g_pPassOtherSpace.load(std::memory_order_relaxed),
                      g_pPassNoTarget.load(std::memory_order_relaxed), g_pPassStale.load(std::memory_order_relaxed),
-                     g_pPassHeld.load(std::memory_order_relaxed), g_pUpdAnomaly.load(std::memory_order_relaxed),
+                     g_pPassHeld.load(std::memory_order_relaxed), g_pHeldOutranked.load(std::memory_order_relaxed),
+                     g_pUpdAnomaly.load(std::memory_order_relaxed),
                      g_returnsStarted.load(std::memory_order_relaxed), g_returnsEnded.load(std::memory_order_relaxed));
     }
 
@@ -1614,6 +1646,18 @@ namespace apmf::actiongate {
     // anchor, and its search moves are clamped inside the leash while the search lasts. It ends when the
     // actor stops searching (no search leaf for kReturnIdleMs), holds an engagement, leaves combat, or
     // loses its leash. A held engagement never gets one: its approach is exempt (PursuitDenies).
+    namespace {
+        std::uint64_t SearchAge(const std::unordered_map<RE::FormID, std::uint64_t>& a_map, RE::FormID a_id) {
+            std::scoped_lock lk(g_searchMx);
+            const auto it = a_map.find(a_id);
+            if (it == a_map.end()) return ~0ull;
+            const auto now = apmf::clock::MonotonicMs();
+            return now >= it->second ? now - it->second : 0;
+        }
+    }
+    std::uint64_t SearchDeniedAgeMs(RE::FormID a_id) { return SearchAge(g_searchDeniedMs, a_id); }
+    std::uint64_t SearchSeenAgeMs(RE::FormID a_id) { return SearchAge(g_searchSeenMs, a_id); }
+
     void LeashReturnPoll() {
         if (g_returnIni < 0)
             g_returnIni = GetPrivateProfileIntA("PursuitLeash", "bLeashReturn", 1, "Data/SKSE/Plugins/APMF.ini") != 0;
@@ -1655,16 +1699,17 @@ namespace apmf::actiongate {
             auto  aptr   = l.anchor.get();
             auto* anchor = aptr.get();
             const bool inCombat = actor && actor->GetActorRuntimeData().combatController != nullptr;
-            // Held: the actor holds an engagement. Its fight is that move-to (its approach is exempt from
-            // the leash), so it never gets a return. Asked by actor only: the controller is never
-            // dereferenced off its own combat thread (APMF-B26: a StopCombat elsewhere frees it).
+            // Held: the actor holds an engagement. Its fight is that move-to, so it never gets a return to
+            // the ANCHOR: a refused search for some other target makes the HOLD drive it to its held target
+            // instead (channels/CombatEntry.cpp "search-elsewhere" drive, review F-6). Asked by actor only:
+            // the controller is never dereferenced off its own combat thread (APMF-B26).
             const bool held = apmf::combatentry::hold::HoldsAny(id);
             const void* space  = anchor ? apmf::combatapproach::SpaceOfRef(anchor) : nullptr;
             const bool  usable = winner && actor && !actor->IsDead() && anchor && !anchor->IsDead() && space &&
                                 space == apmf::combatapproach::SpaceOfRef(actor) && inCombat && !held;
 
             if (!st.active) {
-                if (!usable || denied == 0 || now - denied > kReturnStartMs) continue;
+                if (!usable || denied == 0 || now - denied > kReturnStartMs || now < st.retryAfterMs) continue;
                 if (!apmf::combatapproach::SetInternalBound(id, anchor->GetPosition(), space, l.radius, h,
                                                             "leash return"))
                     continue;   // the ch.24 seats are not installed: nothing to carry it (the heartbeat says so)
@@ -1693,13 +1738,17 @@ namespace apmf::actiongate {
             // Keep X on the anchor (it moves).
             apmf::combatapproach::SetInternalBound(id, anchor->GetPosition(), space, l.radius, h, "leash return");
             apmf::combatapproach::InternalInfo info{};
-            if (apmf::combatapproach::GetInternalInfo(id, info) && !info.clientWins && !st.stallLogged &&
-                now - st.sinceMs > kReturnStallMs && (info.msSinceApply == ~0ull || info.msSinceApply > kReturnStallMs)) {
-                st.stallLogged = true;
+            if (apmf::combatapproach::GetInternalInfo(id, info) && !info.clientWins &&
+                actor->GetPosition().GetDistance(anchor->GetPosition()) > l.radius && now - st.sinceMs > kReturnStallMs &&
+                (info.msSinceApply == ~0ull || info.msSinceApply > kReturnStallMs)) {
+                // Review F-6: never left on silently -- released, loud, not retried for a while.
                 spdlog::warn("[ch.23] 0x{} leash return NOT CARRIED: the actor's standard combat area has not taken "
                              "the bound for {} ms (another area is current, it is disabled, or the engine's own path "
-                             "back failed). Left on; logged once per return.",
-                             apmf::log::Hex(id), info.msSinceApply == ~0ull ? now - st.sinceMs : info.msSinceApply);
+                             "back failed). RELEASED; not retried for {} s.",
+                             apmf::log::Hex(id), info.msSinceApply == ~0ull ? now - st.sinceMs : info.msSinceApply,
+                             kReturnRetryMs / 1000);
+                EndReturn(id, st, "not carried");
+                st.retryAfterMs = now + kReturnRetryMs;
             }
         }
     }

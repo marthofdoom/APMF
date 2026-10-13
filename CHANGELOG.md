@@ -4,6 +4,9 @@
 - **A downed target is walked to.** A pinned target that is bleeding out stays pinned, and the follower now walks to it. Setting: `bBleedoutDrive` in `[EngagementHold]`. Not yet tested in game.
 - **The pursuit leash no longer holds back a fight a mod started.** The leash still stops wandering searches and chases of other targets.
 - **A leashed follower no longer freezes at the edge of its leash.** When the leash refuses a search, the follower now walks back toward its anchor and searches inside the leash. Setting: `bLeashReturn` in `[PursuitLeash]`. Not yet tested in game.
+- **A mod can give a fight it starts a range.** When the target gets farther than that and is not attacking the party, the fight is dropped and the follower stops fighting. The range rides in the combat-entry request's `fval`. Not yet tested in game.
+- **A fight Harbinger drops stays dropped for a minute.** After a no-progress or out-of-range end, asking again for the same follower and target ends at once for 60 seconds. The log says so once.
+- **A follower standing next to a target it never hits is let go.** After 20 seconds within reach with no attack or spell on that target, the fight is released as an anomaly.
 - **Each held fight is logged every 5 seconds.** The line shows how far the follower moved, how close it got, how many attacks and casts it started and how often the game lost the target.
 - **Heals see past friends.** When a mod asks Harbinger to check a follower's own line of sight before a cast, a healing or other friendly spell now looks past the player and the player's teammates. Walls, the ground and every other NPC still block it. Attack spells still stop at any NPC in the way, and the cast guard is unchanged. The log names the friend that was looked past, once for each spell, target and friend. Not yet tested in game.
 

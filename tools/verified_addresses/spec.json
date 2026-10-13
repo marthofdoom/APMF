@@ -23,9 +23,10 @@
     "0xC2",
     "0xE3",
     "0x4A",
-    "0xDC"
+    "0xDC",
+    "0xE5"
    ],
-   "source": "native/core/Hook.cpp:94; PackageGate.cpp:296; NonAliasProbe.cpp:216; channels/TargetPin.cpp:460 (observer); channels/CombatReentryDeny.cpp (0x99, the ch.22 seat); core/Sightline.cpp (0xC2 GetEyeVector, 0x73/0x74 GetBoundMin/Max via TESObjectREFR::GetHeight; virtual calls) and core/Awareness.cpp (0xE3 IsInCombat; virtual call); core/PackageSources.cpp (0x4A GetCurrentScene: the Harbinger 1a scene probe, OBSERVE-ONLY); core/SpectatorGate.cpp (0xDC InitiateSpectator: the Package facet's Spectator seat, ClickUp 86e3m5feu)",
+   "source": "native/core/Hook.cpp:94; PackageGate.cpp:296; NonAliasProbe.cpp:216; channels/TargetPin.cpp:460 (observer); channels/CombatReentryDeny.cpp (0x99, the ch.22 seat); core/Sightline.cpp (0xC2 GetEyeVector, 0x73/0x74 GetBoundMin/Max via TESObjectREFR::GetHeight; virtual calls) and core/Awareness.cpp (0xE3 IsInCombat; virtual call); core/PackageSources.cpp (0x4A GetCurrentScene: the Harbinger 1a scene probe, OBSERVE-ONLY); core/SpectatorGate.cpp (0xDC InitiateSpectator: the Package facet's Spectator seat, ClickUp 86e3m5feu); channels/CombatEntry.cpp (0xE5 StopCombat: the held engagement's range rule, a virtual call, void(this), reads rcx only -- AE 0x6B70A0 / SE 0x625920)",
    "doc": "ADDRESS-TABLE-2026-09-15.md:64"
   },
   {
