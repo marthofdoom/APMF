@@ -2,6 +2,7 @@
 #include "core/Sources.h"   // Harbinger 1a: seat census
 #include "core/FacetAttribution.h"   // Harbinger 1b: the StartCombat caller + the priority decision
 #include "channels/CombatReentryDeny.h"
+#include "channels/CombatSubstrate.h"   // the anchor-target refusal (S2a) rides this seat
 #include "core/Allowance.h"   // SeatVerified(): the mit-3.7 F1 self-check gate
 #include "core/Clock.h"
 #include "core/ControlMap.h"
@@ -141,6 +142,25 @@ extern "C" __declspec(dllimport) unsigned long __stdcall GetPrivateProfileIntA(
 // The request-time map (g_reqs) is written from any client thread and read on the game thread,
 // under its own mutex.
 //
+// THE ANCHOR-TARGET REFUSAL (combat substrate S2a, INVARIANTS #0 (j); MFO
+// Docs/COMBAT-SUBSTRATE-DESIGN.md 3.5). The same slot-0x99 thunk answers a SECOND return site:
+// StartCombat's check of its TARGET, `target->IsDead(false)`:
+//     AE +0xCC: 48 8B 06 / 33 D2 / 48 8B CE / FF 90 C8 04 00 00   (mov rax,[rsi]; xor edx,edx;
+//               mov rcx,rsi; call [rax+0x4C8]) -> return 0x6B6A0A; SE +0xCA, return 0x625288
+//   (verified row Substrate.StartCombat.TargetIsDeadCall). There the IsDead `this` is the TARGET,
+//   so the actor that called StartCombat is not an argument: it is StartCombat's own `this`, held
+//   in rdi (set at AE +0x29 / SE +0x2A, `mov rdi, rcx`, unwritten until after this call; the row
+//   at +0x8F proves `mov rcx, rdi` for the self-check). A 17-byte stub sits in the vtable slot in
+//   front of the thunk: `mov r8, rdi; jmp [rip+0]; <thunk>` (49 89 F8 FF 25 00 00 00 00 + 8 bytes),
+//   so the thunk receives rdi as a third argument. r8 is a volatile argument register that IsDead
+//   does not take, so no caller depends on it surviving the call, and the jump (not a call) keeps
+//   the return address the compares below read. The third argument is READ only when the return
+//   address is the target site; everywhere else it is ignored (it is whatever rdi held). The
+//   answer: "dead" (StartCombat refuses before its spinlock, before anything) when the target is
+//   the substrate's anchor and the caller is not a live holder still under its substrate
+//   (combatsubstrate::RefuseAnchorTarget). Without the target row or the stub this seat is
+//   exactly the ch.22 seat it was, and the substrate refuses to install.
+//
 // VERSION ROBUSTNESS. Two self-checked rows derived from our own executables: the Character
 // vtable (spec.json "Character", slot 0x99 listed) and the StartCombat self-check call site
 // (spec.json "ReentryDeny.StartCombat.SelfIsDeadCall": StartCombat's signature, then the eleven
@@ -166,6 +186,11 @@ namespace {
     constexpr std::uintptr_t kSelfCheckOffsetAE = 0x8F;   // 0x6B69BF - 0x6B6930
     constexpr std::uintptr_t kSelfCheckOffsetSE = 0x8D;   // 0x62523D - 0x6251B0
     constexpr std::uintptr_t kSelfCheckLen      = 11;
+    // StartCombat's TARGET check: `mov rax,[rsi]; xor edx,edx; mov rcx,rsi; call [rax+0x4C8]` -- 14
+    // bytes (verified row Substrate.StartCombat.TargetIsDeadCall); the return site is after them.
+    constexpr std::uintptr_t kTargetCheckOffsetAE = 0xCC;   // 0x6B69FC - 0x6B6930
+    constexpr std::uintptr_t kTargetCheckOffsetSE = 0xCA;   // 0x62527A - 0x6251B0
+    constexpr std::uintptr_t kTargetCheckLen      = 14;
 
     std::atomic<bool>        g_installed{ false };
     std::atomic<bool>        g_installTried{ false };
@@ -174,6 +199,8 @@ namespace {
     // Written once at Install, before the vtable write that makes the thunk reachable.
     std::uintptr_t g_siteRet = 0;   // StartCombat's self-check return address
     std::uintptr_t g_vtChar  = 0;   // the Character vtable the thunk sits on
+    std::uintptr_t g_targetRet = 0; // StartCombat's TARGET-check return address (0 = not installed)
+    std::uintptr_t g_slotFn    = 0; // what the slot holds: the rdi stub, or the thunk itself
 
     // Principle 5: every StartCombat self-check the seat saw, claim or no claim.
     std::atomic<std::uint64_t> g_siteSeen{ 0 };
@@ -344,19 +371,53 @@ namespace {
         return true;
     }
 
-    struct IsDeadHook {
-        static bool thunk(RE::Actor* a_this, bool a_notEssential) {
-            const bool dead = func(a_this, a_notEssential);   // the engine's own answer, always
-            if (reinterpret_cast<std::uintptr_t>(_ReturnAddress()) != g_siteRet) return dead;
-            return AnswerSelfCheck(a_this, dead);
+    // The combat substrate's anchor refusal at StartCombat's TARGET check (see the header block).
+    // `a_this` is the target; `a_caller` is StartCombat's `this` (rdi), valid at this site only.
+    bool AnswerTargetCheck(RE::Actor* a_this, RE::Actor* a_caller, bool engineDead) {
+        if (engineDead || !a_this) return engineDead;
+        try {
+            return apmf::combatsubstrate::RefuseAnchorTarget(a_this, a_caller);
+        } catch (...) {
+            return engineDead;   // nothing may unwind into StartCombat
         }
-        static inline REL::Relocation<decltype(thunk)> func;
+    }
+
+    struct IsDeadHook {
+        // `a_rdi` = the caller's rdi, handed in by the stub (garbage unless the return address is the
+        // target-check site; never read elsewhere).
+        static bool thunk(RE::Actor* a_this, bool a_notEssential, RE::Actor* a_rdi) {
+            const bool dead = func(a_this, a_notEssential);   // the engine's own answer, always
+            const auto ret  = reinterpret_cast<std::uintptr_t>(_ReturnAddress());
+            if (ret == g_siteRet) return AnswerSelfCheck(a_this, dead);
+            if (ret == g_targetRet && g_targetRet != 0) return AnswerTargetCheck(a_this, a_rdi, dead);
+            return dead;
+        }
+        using Orig_t = bool(RE::Actor*, bool);   // the engine's IsDead (a function type, as decltype(thunk) was)
+        static inline REL::Relocation<Orig_t> func;
     };
 
     bool SlotStillOurs() {
-        if (!g_vtChar) return false;
+        if (!g_vtChar || !g_slotFn) return false;
         const auto cur = *reinterpret_cast<const std::uintptr_t*>(g_vtChar + sizeof(void*) * kIsDeadSlot);
-        return cur == reinterpret_cast<std::uintptr_t>(&IsDeadHook::thunk);
+        return cur == g_slotFn;
+    }
+
+    // The 17-byte stub: mov r8, rdi; jmp qword ptr [rip+0]; <&IsDeadHook::thunk>. Own trampoline,
+    // never freed (the engine calls IsDead until the process exits). nullptr on failure.
+    std::uintptr_t BuildRdiStub() {
+        static auto* s_tr = new SKSE::Trampoline("APMF.ReentryDeny.RdiStub");
+        void*        mem  = nullptr;
+        if (const auto* intfc = SKSE::GetTrampolineInterface()) mem = intfc->AllocateFromBranchPool(64);
+        if (mem) s_tr->set_trampoline(mem, 64);
+        else s_tr->create(64);
+        auto* code = static_cast<std::uint8_t*>(s_tr->allocate(17));
+        if (!code) return 0;
+        const std::uint8_t head[9] = { 0x49, 0x89, 0xF8, 0xFF, 0x25, 0x00, 0x00, 0x00, 0x00 };
+        std::memcpy(code, head, sizeof(head));
+        const auto target = SKSE::stl::unrestricted_cast<std::uintptr_t>(&IsDeadHook::thunk);
+        std::memcpy(code + sizeof(head), &target, sizeof(target));
+        REX::W32::FlushInstructionCache(REX::W32::GetCurrentProcess(), code, 17);
+        return reinterpret_cast<std::uintptr_t>(code);
     }
 
     std::uint64_t WindowMs(const APMF_API::APMF_Param& param, bool* clamped = nullptr) {
@@ -584,16 +645,31 @@ namespace apmf::reentrydeny {
 
         g_siteRet = site + kSelfCheckLen;
         g_vtChar  = vtChar.address();
-        IsDeadHook::func = vtChar.write_vfunc(kIsDeadSlot, IsDeadHook::thunk);
+        // The combat substrate's second return site (S2a): its own verified row and the rdi stub. A refusal
+        // here leaves the seat exactly the ch.22 seat (the thunk itself in the slot; the substrate refuses).
+        const std::uintptr_t tsite =
+            startCombat + (apmf::allowance::RuntimeAEColumn() ? kTargetCheckOffsetAE : kTargetCheckOffsetSE);
+        std::uintptr_t stub = 0;
+        if (apmf::allowance::SeatVerified(tsite, "Substrate.StartCombat.TargetIsDeadCall")) stub = BuildRdiStub();
+        g_slotFn = stub ? stub : SKSE::stl::unrestricted_cast<std::uintptr_t>(&IsDeadHook::thunk);
+        IsDeadHook::func = vtChar.write_vfunc(kIsDeadSlot, g_slotFn);
+        if (stub) g_targetRet = tsite + kTargetCheckLen;   // only after the slot holds the stub
         apmf::sources::NoteVfunc(apmf::sources::Facet::kCombat, "ReentryDeny.Character.IsDead", vtChar.address(),
-                                 kIsDeadSlot, SKSE::stl::unrestricted_cast<std::uintptr_t>(&IsDeadHook::thunk), IsDeadHook::func.address());
+                                 kIsDeadSlot, g_slotFn, IsDeadHook::func.address());
         g_installed.store(true, std::memory_order_release);
         spdlog::info("[ch.22] combat re-entry deny seat installed: Character::IsDead (slot 0x{:X}, chaining), "
-                     "answering only at Actor::StartCombat's self-check (return RVA 0x{:X}).",
-                     kIsDeadSlot, g_siteRet - REL::Module::get().base());
+                     "answering only at Actor::StartCombat's self-check (return RVA 0x{:X}){}.",
+                     kIsDeadSlot, g_siteRet - REL::Module::get().base(),
+                     g_targetRet ? fmt::format(" and, for the combat substrate's anchor, at its TARGET check (return RVA "
+                                               "0x{:X}, through the rdi stub)",
+                                               g_targetRet - REL::Module::get().base())
+                                 : std::string(" (the substrate's anchor refusal is NOT installed: its row or the stub "
+                                               "failed)"));
     }
 
     bool Installed() { return g_installed.load(std::memory_order_relaxed); }
+
+    bool TargetSiteInstalled() { return g_installed.load(std::memory_order_acquire) && g_targetRet != 0; }
 
     const char* NotInstalledReason() {
         const char* r = g_notInstalledReason.load(std::memory_order_acquire);

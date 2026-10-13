@@ -2,6 +2,7 @@
 #include "core/Sources.h"   // Harbinger 1a: seat census
 #include "core/FacetAttribution.h"   // Harbinger 1b: the engine's area ranked; yield + drift named
 #include "channels/CombatApproach.h"
+#include "channels/CombatSubstrate.h"   // S2a: a substrate is not a fight (Suppressing)
 #include "core/Allowance.h"   // SeatVerified / DerivesFrom / RuntimeSupported (mit-3.7 F1, G1)
 #include "core/Clock.h"
 #include "core/CombatBehaviorRE.h"   // kLeaves: the Attack / Bash leaf vtables (S5)
@@ -1096,7 +1097,8 @@ namespace apmf::combatapproach {
             const RE::NiPoint3 posXReal = x->GetPosition();
             RE::NiPoint3       posX     = posXReal;   // the goal point; clamped just inside a grazing leash below
             float              dist     = actor->GetPosition().GetDistance(posX);
-            const bool         inCombat = actor->IsInCombat();
+            // A combat SUBSTRATE (S2a) is not a fight: a waiting ch.24 claim does not apply under it.
+            const bool         inCombat = actor->IsInCombat() && !apmf::combatsubstrate::Suppressing(id);
 
             // A ch.23 leash on the same actor: some point within R of X must lie inside it.
             bool leashed = false;

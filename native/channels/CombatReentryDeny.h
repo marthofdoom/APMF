@@ -23,6 +23,11 @@ namespace apmf::reentrydeny {
     // synchronously (kInvalidHandle). ANY THREAD (one relaxed atomic load).
     bool Installed();
 
+    // Combat substrate (S2a): the same seat also answers StartCombat's TARGET check (verified row
+    // Substrate.StartCombat.TargetIsDeadCall, through a 17-byte stub that hands the thunk
+    // StartCombat's `this`). True once that second site and the stub are installed. Any thread.
+    bool TargetSiteInstalled();
+
     // Why Installed() is false, for the one-time refusal log. Never null. Any thread.
     const char* NotInstalledReason();
 

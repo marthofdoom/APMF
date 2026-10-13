@@ -55,6 +55,10 @@ namespace apmf::castertypecensus {
     // least one window open. Two relaxed atomic loads.
     bool Active();
 
+    // Is the 0x0B NotifyStartCast observer installed on at least one caster vtable? The combat
+    // substrate's FIRE close rides it (channels/CombatSubstrate.h NoteCastFired). Any thread.
+    bool NotifyInstalled();
+
     // GAME THREAD (Arbiter::OncePerFrame, after Drain). Self-throttled (~200 ms).
     void Poll();
 

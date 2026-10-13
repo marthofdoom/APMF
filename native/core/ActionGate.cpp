@@ -11,6 +11,7 @@
 #include "core/FacetAttribution.h"   // Harbinger 1b: the tree's choice named + ranked on CombatAction
 #include "channels/CombatEntry.h"      // THE HELD ENGAGEMENT (2026-10-12): the leash exempts its approach
 #include "channels/CombatApproach.h"   // ch.23 LEASH RETURN: a Harbinger-internal combat-area bound
+#include "channels/CombatSubstrate.h"  // the combat substrate's leaf ALLOW-LIST (S2a, INVARIANTS #0 (j))
 #include <unordered_map>
 
 #include <algorithm>
@@ -443,6 +444,9 @@ namespace apmf::actiongate {
         // vtable runtime address -> classified category bitmask (0 = never denied,
         // and therefore never even looked up against a claim -- see header).
         std::unordered_map<std::uintptr_t, std::uint32_t>  g_category;
+        // The combat substrate's leaf index (0..69 = apmf::cbt::kLeaves, 70..73 = kSearchLeaves), for
+        // every leaf whose act() AND pop() are installed. Written at Install only (like g_category).
+        std::unordered_map<std::uintptr_t, std::uint32_t>  g_leafIdx;
 
         // ForceFail's ORIGINAL act() + pop() -- the proven deny mechanism, as a PAIR
         // (see header). Both must resolve or the deny is refused at install.
@@ -1002,6 +1006,27 @@ namespace apmf::actiongate {
             // above ActThunk for the full design.
             if (g_mvcbtEnabled.load(std::memory_order_relaxed)) PfpObserveMovementLeaf(vt, a_control);
 
+            // THE COMBAT SUBSTRATE (S2a, channels/CombatSubstrate.cpp): while a substrate holds this actor,
+            // every leaf but the three cast leaves (and the structural nodes) is force-failed with the SAME
+            // ForceFail act()/pop() PAIR ch.7 uses. Before ch.23 and ch.7: the allow-list is whole. It reads
+            // the substrate's lock-free slot table only; a holder whose real-combat stand-down fired reads as
+            // "not a holder" and the tree runs as the engine built it.
+            if (apmf::combatsubstrate::AnyLive()) {
+                if (const auto lit = g_leafIdx.find(vt); lit != g_leafIdx.end()) {
+                    const RE::FormID sf = ResolveDeliberatingActor(a_control);
+                    const bool       mv = g_movementLeaf.contains(vt);
+                    if (sf != 0 && apmf::combatsubstrate::ForLeaf(sf, lit->second, mv) ==
+                                       apmf::combatsubstrate::Leaf::kDeny) {
+                        if (const auto ff = g_forceFailAct.load(std::memory_order_relaxed)) {
+                            t_pending = PendingPop{ a_this, a_control };
+                            reinterpret_cast<apmf::cbt::Act_t>(ff)(a_this, a_control);
+                            apmf::combatsubstrate::LeafDenied(sf, lit->second, mv);
+                            return a_control;   // do NOT call orig -- this IS the deny
+                        }
+                    }
+                }
+            }
+
             // ch.23 PURSUIT LEASH (ABI v16): its own seat logic on its own intent. g_pursuitIdx
             // is filled only when the leash armed, and none of its leaves has a ch.7 category.
             if (const auto pit = g_pursuitIdx.find(vt); pit != g_pursuitIdx.end())
@@ -1411,6 +1436,23 @@ namespace apmf::actiongate {
                      mvConfirmed + mvHypothesis, mvConfirmed, mvHypothesis, apmf::cbt::kLeaves.size());
 
         RangedProbeInstall();
+
+        // THE COMBAT SUBSTRATE's leaf index: every catalog leaf (and search leaf) with act() AND pop()
+        // installed. channels/CombatSubstrate.cpp refuses to install unless all 74 are here.
+        for (std::size_t i = 0; i < apmf::cbt::kLeaves.size(); ++i) {
+            REL::Relocation<std::uintptr_t> vt{ apmf::cbt::kLeaves[i].vtbl };
+            if (Paired(vt.address())) g_leafIdx[vt.address()] = static_cast<std::uint32_t>(i);
+        }
+        for (std::size_t k = 0; k < apmf::cbt::kSearchLeaves.size(); ++k) {
+            REL::Relocation<std::uintptr_t> vt{ apmf::cbt::kSearchLeaves[k].vtbl };
+            if (Paired(vt.address()))
+                g_leafIdx[vt.address()] = static_cast<std::uint32_t>(apmf::cbt::kLeaves.size() + k);
+        }
+    }
+
+    std::uint32_t SubstrateLeavesPaired() {
+        if (!g_forceFailAct.load(std::memory_order_relaxed) || !g_forceFailPop.load(std::memory_order_relaxed)) return 0;
+        return static_cast<std::uint32_t>(g_leafIdx.size());
     }
 
     namespace {

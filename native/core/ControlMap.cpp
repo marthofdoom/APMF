@@ -17,6 +17,7 @@
 #include "channels/CombatReentryDeny.h"  // ch.22 Installed()/NotInstalledReason() for the synchronous refusal
 #include "core/ActionGate.h"  // ch.23 pursuit leash (ABI v16) PursuitArmed()/PursuitNotArmedReason() for the synchronous refusal
 #include "channels/CombatApproach.h"  // ch.24 combat approach (ABI v19) Installed()/NotInstalledReason() for the synchronous refusal
+#include "channels/CombatSubstrate.h"  // combat substrate (ABI v23) RefuseReason for the synchronous refusal
 #include "core/PositionCast.h"  // ABI v11 position cast: poscast::Enqueue (one-shot, never a claim); MarkersSupported (ch.19)
 #include "core/Sightline.h"  // ABI v18 own line of sight: Armed()/NotArmedReason() for the synchronous refusal
 #include "core/CastGuard.h"  // ch.25 cast guard (ABI v21): RefuseReason()/TtlMs() for the refusal and the TTL grant
@@ -385,6 +386,13 @@ namespace apmf {
                 return APMF_API::kInvalidHandle;
             }
         }
+
+        // Combat substrate (ABI v23): refused synchronously by channels/CombatSubstrate.cpp RefuseReason.
+        if (intent == APMF_API::kIntent_CombatSubstrate)
+            if (const char* why = apmf::combatsubstrate::RefuseReason(actor, param)) {
+                spdlog::warn("[substrate] claim refused -- actor 0x{}: {}.", apmf::log::Hex(actor), why);
+                return APMF_API::kInvalidHandle;
+            }
 
         // ch.26 (ABI v22): refused synchronously by core/EquipPreference.cpp RefuseReason.
         if (intent == APMF_API::kIntent_EquipPreference) {

@@ -24,9 +24,10 @@
     "0xE3",
     "0x4A",
     "0xDC",
-    "0xE5"
+    "0xE5",
+    "0xE1"
    ],
-   "source": "native/core/Hook.cpp:94; PackageGate.cpp:296; NonAliasProbe.cpp:216; channels/TargetPin.cpp:460 (observer); channels/CombatReentryDeny.cpp (0x99, the ch.22 seat); core/Sightline.cpp (0xC2 GetEyeVector, 0x73/0x74 GetBoundMin/Max via TESObjectREFR::GetHeight; virtual calls) and core/Awareness.cpp (0xE3 IsInCombat; virtual call); core/PackageSources.cpp (0x4A GetCurrentScene: the Harbinger 1a scene probe, OBSERVE-ONLY); core/SpectatorGate.cpp (0xDC InitiateSpectator: the Package facet's Spectator seat, ClickUp 86e3m5feu); channels/CombatEntry.cpp (0xE5 StopCombat: the held engagement's range rule, a virtual call, void(this), reads rcx only -- AE 0x6B70A0 / SE 0x625920)",
+   "source": "native/core/Hook.cpp:94; PackageGate.cpp:296; NonAliasProbe.cpp:216; channels/TargetPin.cpp:460 (observer); channels/CombatReentryDeny.cpp (0x99, the ch.22 seat); core/Sightline.cpp (0xC2 GetEyeVector, 0x73/0x74 GetBoundMin/Max via TESObjectREFR::GetHeight; virtual calls) and core/Awareness.cpp (0xE3 IsInCombat; virtual call); core/PackageSources.cpp (0x4A GetCurrentScene: the Harbinger 1a scene probe, OBSERVE-ONLY); core/SpectatorGate.cpp (0xDC InitiateSpectator: the Package facet's Spectator seat, ClickUp 86e3m5feu); channels/CombatEntry.cpp (0xE5 StopCombat: the held engagement's range rule, a virtual call, void(this), reads rcx only -- AE 0x6B70A0 / SE 0x625920); channels/CombatSubstrate.cpp (0xE1 SetAlpha on the substrate anchor -- AE 0x6C1A50 / SE 0x62FAD0, applies only to a high-process actor -- and 0xE5 StopCombat at a substrate close, virtual calls; 0x99 also answers StartCombat's TARGET check for the anchor, row Substrate.StartCombat.TargetIsDeadCall)",
    "doc": "ADDRESS-TABLE-2026-09-15.md:64"
   },
   {
@@ -108,9 +109,10 @@
     "1.5.97": 261916
    },
    "slots": [
-    "0xAD"
+    "0xAD",
+    "0xE3"
    ],
-   "source": "native/core/Hook.cpp:97",
+   "source": "native/core/Hook.cpp:97; channels/CombatSubstrate.cpp (0xE3 IsInCombat on the player: the real-combat poll, a virtual call -- AE 0x758430 reads +0xBE3 bit 5)",
    "doc": "ADDRESS-TABLE-2026-09-15.md:69"
   },
   {
@@ -3843,6 +3845,84 @@
    },
    "source": "native/core/Awareness.cpp (a foe's currentCombatTarget -> the actor it is fighting; the noise event's ref for the log)",
    "doc": "ABI v18 awareness (AE 0x179710 / SE 0x1329D0 / 1.7.104 0x17ED00)"
+  },
+  {
+   "seat": "Substrate.StartCombat.TargetIsDeadCall",
+   "kind": "callsite",
+   "construct": "Actor::StartCombat's TARGET check `mov rax,[rsi]; xor edx,edx; mov rcx,rsi; call [rax+0x4C8]` (the target's Character slot 0x99, IsDead(false)); rdi = StartCombat's `this` here (set at +0x29 AE / +0x2A SE, unwritten until after this call). The combat substrate answers 'dead' only when its return address is this row + 14 and the target is the anchor",
+   "ids": {
+    "1.6.1170": 38561,
+    "1.5.97": 37608
+   },
+   "sig": {
+    "1.6.1170": "4C 8B DC 55 56 57 41 54 41 55 41 56 41 57 48 83 EC 50 49 C7 43 A8 FE FF FF FF 49 89 5B 10 0F 29 74 24 40 49 8B E8",
+    "1.5.97": "4C 8B DC 56 57 41 54 41 56 41 57 48 83 EC 50 49 C7 43 B8 FE FF FF FF 49 89 5B 10 49 89 6B 18 0F 29 74 24 40 49 8B E8"
+   },
+   "source": "native/channels/CombatReentryDeny.cpp (Install: SeatVerified; g_targetRet = row + 14) -> native/channels/CombatSubstrate.cpp RefuseAnchorTarget",
+   "offset": {
+    "1.6.1170": "0xCC",
+    "1.5.97": "0xCA"
+   },
+   "bytes": "48 8B 06 33 D2 48 8B CE FF 90 C8 04 00 00",
+   "doc": "combat substrate S2a (MFO Docs/COMBAT-SUBSTRATE-DESIGN.md 3.5, the anchor-target refusal): AE 0x6B69FC ret 0x6B6A0A; SE 0x62527A ret 0x625288"
+  },
+  {
+   "seat": "Substrate.CombatGroup.RemoveTarget",
+   "kind": "function",
+   "construct": "CombatGroup::RemoveTarget(group, TESObjectREFR* target): handle of target, find in targets[] (stride 0xA8), erase via AE 0x80C5A0 / SE 0x772520 (notifies CombatManager AE 0x83DBA0). Takes no lock itself (the engine calls it unlocked from CombatManager AE 46875)",
+   "ids": {
+    "1.6.1170": 44705,
+    "1.5.97": 43483
+   },
+   "sig": {
+    "1.6.1170": "40 53 48 83 EC 20 48 8B D9 48 85 D2 74 11 F7 42 28 FF 03 00 00 75 08 8B 05 ?? ?? ?? ?? EB 0E 48 8D 4C 24 30 E8 ?? ?? ?? ?? 8B 44 24 30 44 8B 4B 18",
+    "1.5.97": "40 53 48 83 EC 20 48 8B D9 48 85 D2 74 11 F7 42 28 FF 03 00 00 75 08 8B 05 ?? ?? ?? ?? EB 0E 48 8D 4C 24 30 E8 ?? ?? ?? ?? 8B 44 24 30 44 8B 4B 18"
+   },
+   "source": "native/channels/CombatSubstrate.cpp (the real-combat drop, design 3.6a: the anchor leaves the holder's group targets, NO StopCombat)",
+   "doc": "combat substrate S2a; design-substrate agentlog 03:00 (AE disassembly) + S2a log (SE twin 43483, same body)"
+  },
+  {
+   "seat": "Substrate.TESObjectREFR.MoveTo",
+   "kind": "function",
+   "construct": "TESObjectREFR::MoveTo_Impl (fork Offset::TESObjectREFR::MoveTo RELOCATION_ID(56227, 56626)), reached through the public TESObjectREFR::MoveTo(ref) / SetPosition(pos) wrappers",
+   "ids": {
+    "1.6.1170": 56626,
+    "1.5.97": 56227
+   },
+   "sig": {
+    "1.6.1170": "48 89 54 24 10 55 56 57 41 54 41 55 41 56 41 57 48 8D 6C 24 E9",
+    "1.5.97": "48 89 54 24 10 55 56 57 41 54 41 55 41 56 41 57 48 8D 6C 24 E9"
+   },
+   "source": "native/channels/CombatSubstrate.cpp (the anchor: to the holder, following it, and home to its XMarker)",
+   "doc": "combat substrate S2a"
+  },
+  {
+   "seat": "Substrate.BSMusicManager.Reader",
+   "kind": "ripref",
+   "construct": "the engine function AE 36550 / SE 35551 whose `mov rcx,[rip+d]` (+0xCF on both) reads the BSMusicManager singleton (fork RELOCATION_ID(514738, 400896)) -- proves the global for the P3 music= field",
+   "ids": {
+    "1.6.1170": 36550,
+    "1.5.97": 35551
+   },
+   "sig": {
+    "1.6.1170": "4C 8B DC 49 89 5B 08 49 89 73 10 57 48 81 EC 80 00 00 00",
+    "1.5.97": "4C 8B DC 49 89 5B 08 49 89 73 10 57 48 81 EC 80 00 00 00"
+   },
+   "offset": {
+    "1.6.1170": "0xCF",
+    "1.5.97": "0xCF"
+   },
+   "bytes": {
+    "1.6.1170": "48 8B 0D 7A BF AB 02 48 8D 54 24 30 48 89 74",
+    "1.5.97": "48 8B 0D 3A 68 91 02 48 8D 54 24 30 48 89 74"
+   },
+   "global": {
+    "1.6.1170": 400896,
+    "1.5.97": 514738
+   },
+   "global_seat": "Substrate.BSMusicManager.Singleton",
+   "source": "native/channels/CombatSubstrate.cpp (P3 OBSERVED music=, read-only: BSMusicManager::current)",
+   "doc": "combat substrate S2a P3"
   }
  ],
  "layout_facts": [

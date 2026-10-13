@@ -564,7 +564,8 @@ namespace apmf::sources {
         case kIntent_PursuitLeash:      return Facet::kCombatAction;
         case kIntent_CombatEntry:
         case kIntent_CombatReentryDeny:
-        case kIntent_CombatApproach:    return Facet::kCombat;
+        case kIntent_CombatApproach:
+        case kIntent_CombatSubstrate:   return Facet::kCombat;
         case kIntent_Detection:         return Facet::kDetection;
         case kIntent_Gait:
         case kIntent_Disposition:       return Facet::kActorValue;
@@ -606,6 +607,15 @@ namespace apmf::sources {
             for (std::size_t i = 0; i < v.size() / 2; ++i) g_handles.erase(v[i].second);
         }
         g_handles[h] = HandleRec{ id, apmf::clock::MonotonicMs() };
+    }
+
+    void InheritClient(APMF_API::Handle a_internal, APMF_API::Handle a_owner) {
+        if (a_internal == APMF_API::kInvalidHandle || a_owner == APMF_API::kInvalidHandle) return;
+        std::unique_lock lk(g_handleMx);
+        const auto it = g_handles.find(a_owner);
+        if (it == g_handles.end()) return;   // an internal / unknown owner: the internal handle stays unmapped too
+        const SourceId src = it->second.src;
+        g_handles[a_internal] = HandleRec{ src, apmf::clock::MonotonicMs() };
     }
 
     void ForgetHandle(APMF_API::Handle h) {

@@ -19,7 +19,7 @@
 
 namespace apmf::VerifiedAddresses
 {
-	// 1.6.1170.0: 210 rows
+	// 1.6.1170.0: 215 rows
 	inline constexpr REL::SelfCheck::Row kRows_1_6_1170[] = {
 		{ 207886, 0x18A5558, 0x0, 0, {  }, "Character" },
 		{ 207896, 0x18A5FE8, 0x0, 0, {  }, "Character.ActorValueOwner" },
@@ -231,9 +231,14 @@ namespace apmf::VerifiedAddresses
 		{ 39895, 0x710C80, 0x2CA, 15, { 0xF3, 0x0F, 0x10, 0x15, 0x8A, 0x3A, 0x07, 0x01, 0x48, 0x8D, 0x55, 0xD0, 0xF3, 0x0F, 0x10 }, "Sightline.AIProcess.KnockExplosion" },
 		{ 188105, 0x17849DC, 0x0, 0, {  }, "Sightline.bhkWorld.WorldScale" },
 		{ 12332, 0x179710, 0x0, 0, {  }, "CommonLib.LookupReferenceByHandle" },
+		{ 38561, 0x6B6930, 0xCC, 14, { 0x48, 0x8B, 0x06, 0x33, 0xD2, 0x48, 0x8B, 0xCE, 0xFF, 0x90, 0xC8, 0x04, 0x00, 0x00 }, "Substrate.StartCombat.TargetIsDeadCall" },
+		{ 44705, 0x803D70, 0x0, 0, {  }, "Substrate.CombatGroup.RemoveTarget" },
+		{ 56626, 0xA447F0, 0x0, 0, {  }, "Substrate.TESObjectREFR.MoveTo" },
+		{ 36550, 0x641AD0, 0xCF, 15, { 0x48, 0x8B, 0x0D, 0x7A, 0xBF, 0xAB, 0x02, 0x48, 0x8D, 0x54, 0x24, 0x30, 0x48, 0x89, 0x74 }, "Substrate.BSMusicManager.Reader" },
+		{ 400896, 0x30FDB20, 0x0, 0, {  }, "Substrate.BSMusicManager.Singleton" },
 	};
 
-	// 1.5.97.0: 210 rows
+	// 1.5.97.0: 215 rows
 	inline constexpr REL::SelfCheck::Row kRows_1_5_97[] = {
 		{ 261397, 0x165DA40, 0x0, 0, {  }, "Character" },
 		{ 261402, 0x165E4D0, 0x0, 0, {  }, "Character.ActorValueOwner.SE" },
@@ -445,10 +450,15 @@ namespace apmf::VerifiedAddresses
 		{ 38858, 0x67D4A0, 0x387, 15, { 0xF3, 0x0F, 0x10, 0x15, 0x1D, 0x2E, 0xEC, 0x00, 0xF3, 0x0F, 0x59, 0xC2, 0xF3, 0x0F, 0x11 }, "Sightline.AIProcess.KnockExplosion" },
 		{ 231896, 0x154064C, 0x0, 0, {  }, "Sightline.bhkWorld.WorldScale" },
 		{ 12204, 0x1329D0, 0x0, 0, {  }, "CommonLib.LookupReferenceByHandle" },
+		{ 37608, 0x6251B0, 0xCA, 14, { 0x48, 0x8B, 0x06, 0x33, 0xD2, 0x48, 0x8B, 0xCE, 0xFF, 0x90, 0xC8, 0x04, 0x00, 0x00 }, "Substrate.StartCombat.TargetIsDeadCall" },
+		{ 43483, 0x76A560, 0x0, 0, {  }, "Substrate.CombatGroup.RemoveTarget" },
+		{ 56227, 0x9AE5C0, 0x0, 0, {  }, "Substrate.TESObjectREFR.MoveTo" },
+		{ 35551, 0x5AF3D0, 0xCF, 15, { 0x48, 0x8B, 0x0D, 0x3A, 0x68, 0x91, 0x02, 0x48, 0x8D, 0x54, 0x24, 0x30, 0x48, 0x89, 0x74 }, "Substrate.BSMusicManager.Reader" },
+		{ 514738, 0x2EC5CE0, 0x0, 0, {  }, "Substrate.BSMusicManager.Singleton" },
 	};
 
-	// 1.7.104.0: 220 rows
-	// 33 NOT VERIFIED on 1.7.104.0, deliberately absent from this table (the seat is refused):
+	// 1.7.104.0: 222 rows
+	// 36 NOT VERIFIED on 1.7.104.0, deliberately absent from this table (the seat is refused):
 	//   Character.ActorValueOwner.SE (1.6.1170 id -): no 1.6.1170 (AE) id: the 1.7.104 map is keyed by AE id (1.5.97-only seat)
 	//   TargetPin.CombatController.SetTarget (1.6.1170 id 33235): id 33235 is not in the idmap
 	//   EquipSink.Path.OutfitApply.24234 (1.6.1170 id -): BY DESIGN: 1.5.97-only label. On 1.6.1170 and 1.7.104 the code reads its AE twin EquipSink.Path.OutfitApply.418622 (AE id 418622, 1.7.104 0x3C4440), whose own row carries the 1.7.104 fact (MAPPED-AE)
@@ -482,6 +492,9 @@ namespace apmf::VerifiedAddresses
 	//   EngagementHold.CombatGroup.UpdateTargetDetection (1.6.1170 id 44725): id 44725 is not in the idmap
 	//   EngagementHold.Site.ListenerDetection (1.6.1170 id 44699): id 44699 is not in the idmap
 	//   EngagementHold.Site.GroupDetectionPass (1.6.1170 id 44804): id 44804 is not in the idmap
+	//   Substrate.CombatGroup.RemoveTarget (1.6.1170 id 44705): id 44705 is not in the idmap
+	//   Substrate.BSMusicManager.Reader (1.6.1170 id 36550): id 36550 is not in the idmap
+	//   Substrate.BSMusicManager.Singleton (1.6.1170 id 400896): proven through Substrate.BSMusicManager.Reader, which did not verify: id 36550 is not in the idmap
 	inline constexpr REL::SelfCheck::Row kRows_1_7_104[] = {
 		{ 207886, 0x1923258, 0x0, 0, {  }, "Character" },
 		{ 207896, 0x1923CE8, 0x0, 0, {  }, "Character.ActorValueOwner" },
@@ -689,6 +702,8 @@ namespace apmf::VerifiedAddresses
 		{ 39895, 0x7237C0, 0x2CA, 15, { 0xF3, 0x0F, 0x10, 0x15, 0xCA, 0xA3, 0x0D, 0x01, 0x48, 0x8D, 0x55, 0xD0, 0xF3, 0x0F, 0x10 }, "Sightline.AIProcess.KnockExplosion" },
 		{ 188105, 0x17FDE5C, 0x0, 0, {  }, "Sightline.bhkWorld.WorldScale" },
 		{ 12332, 0x17ED00, 0x0, 0, {  }, "CommonLib.LookupReferenceByHandle" },
+		{ 38561, 0x6C93B0, 0xCC, 14, { 0x48, 0x8B, 0x06, 0x33, 0xD2, 0x48, 0x8B, 0xCE, 0xFF, 0x90, 0xC8, 0x04, 0x00, 0x00 }, "Substrate.StartCombat.TargetIsDeadCall" },
+		{ 56626, 0xA5D370, 0x0, 0, {  }, "Substrate.TESObjectREFR.MoveTo" },
 		{ 0, 0x82D2C0, 0x0, 0, {  }, "AiCastSeats.Melee.CalculateScore" },
 		{ 0, 0x82D790, 0x0, 0, {  }, "AiCastSeats.Ranged.CalculateScore" },
 		{ 0, 0x82DCD0, 0x0, 0, {  }, "AiCastSeats.Shield.CalculateScore" },

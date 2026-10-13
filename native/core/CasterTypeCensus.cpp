@@ -4,6 +4,7 @@
 #include "core/Allowance.h"
 #include "core/ControlMap.h"
 #include "core/CasterTypeCensus.h"
+#include "channels/CombatSubstrate.h"   // S2a: the substrate's fire signal rides the 0x0B seat
 #include "core/CastObserve.h"   // NoteCaster (castobs interrupt attribution)
 #include "core/CastClassify.h"   // IsPlacementSpell (label only)
 #include "core/CastSeats.h"      // SeatCountsLine (heartbeat only)
@@ -419,6 +420,8 @@ namespace apmf::castertypecensus {
                 // Observe BEFORE chaining: every field read here is the caster's own and
                 // the controller's attacker handle; nothing the original could tear down.
                 if (Active()) Observe(type, a_this, a_cc, true, true);
+                // The combat substrate (S2a) closes a fire-and-forget substrate on its claim's first fire.
+                if (apmf::combatsubstrate::AnyLive()) apmf::combatsubstrate::NoteCastFired(a_cc, a_this);
             }
             orig(a_this, a_cc);
         }
@@ -495,6 +498,8 @@ namespace apmf::castertypecensus {
         }
 
     }
+
+    bool NotifyInstalled() { return g_nNotify.load(std::memory_order_relaxed) != 0; }
 
     bool Active() {
         return g_armed.load(std::memory_order_relaxed) && g_openWindows.load(std::memory_order_relaxed) > 0;

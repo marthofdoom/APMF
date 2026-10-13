@@ -146,6 +146,10 @@ namespace apmf::sources {
     // The facet a client intent claims (for the menu's per-facet tables).
     Facet FacetForIntent(APMF_API::Intent intent);
     void ForgetHandle(APMF_API::Handle h);   // ClientAPI Release. Any thread.
+    // An INTERNAL claim Harbinger files on a client's behalf (the combat substrate's hand floors) ranks
+    // as that client's own claim: `a_internal` is mapped to `a_owner`'s client. No-op when the owner is
+    // unmapped. Any thread.
+    void InheritClient(APMF_API::Handle a_internal, APMF_API::Handle a_owner);
     // The client source that filed `h`, or kNoSource (an internal claim, e.g. ch.19's own
     // ch.9 offer, or a handle older than this session). Any thread (shared lock).
     SourceId ClientForHandle(APMF_API::Handle h);

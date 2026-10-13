@@ -20,6 +20,12 @@ namespace apmf::actiongate {
     // disabled (the default). Prints even when every counter is zero.
     void PfpHeartbeat();
 
+    // THE COMBAT SUBSTRATE (S2a): how many of the 74 leaves (the 70-leaf catalog + the four search
+    // leaves) carry an act()/pop() pair the substrate's allow-list can force-fail (0 when the ForceFail
+    // pair did not resolve). channels/CombatSubstrate.cpp refuses to install below 74. Game thread,
+    // after Install.
+    std::uint32_t SubstrateLeavesPaired();
+
     // ch.23 PURSUIT LEASH (ABI v16, kIntent_PursuitLeash) -- the in-combat leash, its own
     // intent on ch.7's leaf seats. See ActionGate.cpp's PURSUIT LEASH section for the leaves,
     // the rule and the two seats.
