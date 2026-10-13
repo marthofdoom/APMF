@@ -280,7 +280,7 @@ namespace {
                                                   // leaf act()/pop() pair (incl. ch.23's search leaves), the
                                                   // census 0x0B seat (the fire close) and the held
                                                   // engagement's detection seat, so it installs AFTER all of
-                                                  // them. [CombatSubstrate] bCombatSubstrate (default 0).
+                                                  // them. [CombatSubstrate] bCombatSubstrate (default 1, marth 2026-10-13: ships on).
             apmf::nativebitprobe::Install();     // native-bit probe (throwaway; no VR gate needed).
             apmf::avobserve::Install();          // Harbinger 1b: OBSERVE-ONLY actor-value seat (Character's
                                                   // ActorValueOwner vtable 0x04 / 0x05 / 0x06). Names outside

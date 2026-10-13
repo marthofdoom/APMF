@@ -1440,7 +1440,7 @@ namespace apmf::actiongate {
         // THE COMBAT SUBSTRATE's leaf index: every catalog leaf, search leaf and PARAMETERISED node (review F1:
         // core/CombatBehaviorRE.h kParamLeaves, act + pop installed here only when [CombatSubstrate]
         // bCombatSubstrate=1) with act() AND pop() installed. channels/CombatSubstrate.cpp refuses below all 95.
-        if (GetPrivateProfileIntA("CombatSubstrate", "bCombatSubstrate", 0, "Data/SKSE/Plugins/APMF.ini") != 0) {
+        if (GetPrivateProfileIntA("CombatSubstrate", "bCombatSubstrate", 1, "Data/SKSE/Plugins/APMF.ini") != 0) {
             std::array<REL::VariantID, apmf::cbt::kParamLeaves.size()> pvt{};
             for (std::size_t k = 0; k < pvt.size(); ++k) pvt[k] = apmf::cbt::kParamLeaves[k].vtbl;
             allowance::InstallOnVtables(pvt, 0x02, &ActThunk, expectedTD.get(), "substrate-param", g_orig);

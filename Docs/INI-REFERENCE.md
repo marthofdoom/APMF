@@ -160,7 +160,7 @@ Facet reference: [Combat substrate](FACETS.md#combat-substrate-kintent_combatsub
 
 ABI v23. "Cast out of combat, animated." A follower's spell only plays its casting animation when the game's combat AI casts it, and that AI only exists in combat. For an out-of-combat cast Harbinger puts the follower into combat against its own invisible stand-in actor (a ghost copy of Nazeem kept in a holding cell in `APMF.esl`), lets only the claimed spell be cast, keeps the follower walking under its own package and ends it right after the cast. Any real fight drops it at once. Slice S2a: built, not yet field-proven, off by default.
 
-- **`bCombatSubstrate`** (default `0`). 1 = install the substrate. 0 = kIntent_CombatSubstrate claims are REFUSED and the dry run does not run (logged once with the reason).
+- **`bCombatSubstrate`** (default `1`, ships on per marth 2026-10-13). 1 = install the substrate. 0 = kIntent_CombatSubstrate claims are REFUSED and the dry run does not run (logged once with the reason).
 - **`bSubstrateDryRun`** (default `0`). Test surface for the P3 / P6 field runs. 1 = Harbinger opens a substrate itself on every idle, loaded player teammate every `fSubstrateDryRunPeriodSec` seconds, with no claim and no cast, for `fSubstrateTtlSec` seconds. Needs `bCombatSubstrate=1`.
 - **`fSubstrateDryRunPeriodSec`** (default `20`, at least 5). Seconds between dry-run rounds.
 - **`fSubstrateTtlSec`** (default `6`, clamped 1 to 15). How long a substrate stays open when the request's `param.fval` is 0.

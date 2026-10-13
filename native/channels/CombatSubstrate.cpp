@@ -1418,8 +1418,8 @@ namespace apmf::combatsubstrate {
     void Install() {
         if (g_installTried.exchange(true)) return;
         const char* why = nullptr;
-        if (IniInt("CombatSubstrate", "bCombatSubstrate", 0) == 0) {
-            why = "[CombatSubstrate] bCombatSubstrate=0 (the default: the substrate is off until P3 / P6 pass)";
+        if (IniInt("CombatSubstrate", "bCombatSubstrate", 1) == 0) {
+            why = "[CombatSubstrate] bCombatSubstrate=0 (set in APMF.ini: the substrate is switched off)";
         } else if (REL::Module::IsVR() || !apmf::allowance::RuntimeSupported()) {
             why = "the runtime is not exactly 1.6.1170, 1.5.97 or 1.7.104";
         } else if (!apmf::reentrydeny::Installed()) {
