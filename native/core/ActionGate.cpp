@@ -1658,6 +1658,18 @@ namespace apmf::actiongate {
     std::uint64_t SearchDeniedAgeMs(RE::FormID a_id) { return SearchAge(g_searchDeniedMs, a_id); }
     std::uint64_t SearchSeenAgeMs(RE::FormID a_id) { return SearchAge(g_searchSeenMs, a_id); }
 
+    void ForgetEngagement(RE::FormID a_id, const char* a_why) {
+        {
+            std::scoped_lock lk(g_searchMx);
+            g_searchSeenMs.erase(a_id);
+            g_searchDeniedMs.erase(a_id);
+        }
+        if (const auto it = g_return.find(a_id); it != g_return.end()) {
+            EndReturn(a_id, it->second, a_why);
+            g_return.erase(it);
+        }
+    }
+
     void LeashReturnPoll() {
         if (g_returnIni < 0)
             g_returnIni = GetPrivateProfileIntA("PursuitLeash", "bLeashReturn", 1, "Data/SKSE/Plugins/APMF.ini") != 0;

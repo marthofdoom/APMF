@@ -49,6 +49,9 @@ namespace apmf::actiongate {
     // (~0 = never). Any thread (a mutex). The held engagement's "search-elsewhere" drive reads them.
     std::uint64_t SearchSeenAgeMs(RE::FormID actor);
     std::uint64_t SearchDeniedAgeMs(RE::FormID actor);
+    // The held engagement was DROPPED ("not engaged", marth 2026-10-12): forget the actor's search stamps
+    // and end any leash return now, so nothing of it is re-armed on the next poll. GAME THREAD.
+    void ForgetEngagement(RE::FormID actor, const char* why);
 
     // ---- [Probe] bRangedSelect (2026-09-29, PHASE 1 of the Ranged-selection deny): a PASSIVE
     // probe. It never denies, never writes engine state and never changes a return value. For

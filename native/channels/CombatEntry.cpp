@@ -370,9 +370,7 @@ namespace {
         g_entries.insert_or_assign(id, std::move(e));
         g_count.store(g_entries.size(), std::memory_order_relaxed);
         // THE HELD ENGAGEMENT: this actor now holds an engagement on `tf` (or nothing, for an unusable target).
-        // (Not for a target Harbinger itself ended moments ago: the re-engage cooldown, below.)
-        const bool cooled = !why && apmf::combatentry::hold::RefuseReengage(id, tf, false);
-        if (why || cooled) apmf::combatentry::hold::ClearEntry(id);
+        if (why) apmf::combatentry::hold::ClearEntry(id);
         else apmf::combatentry::hold::SetEntry(id, tf, h, param.fval);
 
         if (why) {
@@ -394,13 +392,6 @@ namespace {
             spdlog::warn("[ch.21] 0x{} combat-entry {} -> target 0x{}: NOT CALLED, the engine already gave up on "
                          "this target for this actor ({}). Harbinger ends the claim.",
                          Hex(id), what, Hex(tf), gave.at(tf));
-            apmf::mainthread::Post([id, tf, gen, reason] { EndUnusable(id, tf, gen, reason); });
-            return;
-        }
-        // THE HELD ENGAGEMENT: Harbinger itself ended this actor -> target engagement moments ago (a watchdog
-        // anomaly or the range rule); a Repoint / takeover naming it again is ended, not re-entered.
-        if (cooled) {
-            std::string reason = "entry not attempted: re-engage cooldown (Harbinger ended this engagement)";
             apmf::mainthread::Post([id, tf, gen, reason] { EndUnusable(id, tf, gen, reason); });
             return;
         }
@@ -572,23 +563,26 @@ namespace apmf::combatentry {
 // WHAT ENDS A HOLD. The ch.21 / ch.20 claim ending as before (target dead, disabled, unloaded or
 // unresolvable; owner dead; the client's release; an outranking claim; for ch.21 the engine ending
 // the fight; for ch.20 the target leaving the group's targets after it was in them) -- but NEVER
-// "target lost" while the knowledge seats are installed. And three ends of its own, each loud and
-// each followed by a re-engage COOLDOWN (a re-request of the same actor -> target is ended at once, logged
-// once; the claim is accepted and ended one frame later, never refused synchronously, which clients
-// read as "seat not installed" -- so a client that re-pins at once cannot turn the end into a loop):
+// "target lost" while the knowledge seats are installed. And three ends of its own, each logged EVERY
+// time with its count for that actor -> target ("End #N", the heartbeat's "repeat ends"), and NO
+// cooldown (marth 2026-10-12: "THe engage on sight is meant to be an aggressive setting. No waiting ever,
+// engaged, or not engaged."): the client may engage the same target again at once.
 //   * NO PATH PROGRESS (outside reach): over the last kNoProgressMs of world time the actor got no
 //     64u closer than it was at the window's start, did not keep pace with a moving target (the
 //     target moved >= 128u, the actor >= 64u, the gap grew by < 64u), and started no attack or cast
 //     on the held target;
 //   * ARRIVED BUT NOT FIGHTING (within kReachU): kArrivedIdleMs without an attack or cast on the
 //     held target -- a close but unreachable target, or a downed foe the engine will not strike;
-//   * OUT OF ENGAGE RANGE (ch.21 with param.fval > 0, the client's engage-on-sight range): the target
-//     is farther than that from the actor (or in another cell) for 1 s and is NOT actively hostile
-//     (its own combat target is the actor, the player or a player teammate). The ch.21 and ch.20
-//     claims naming it are released AND the actor's combat is ended through the engine's own
-//     Actor::StopCombat (Character vtable slot 0xE5, verified on both images), ranked: not when a
-//     winning ch.20 pin names a different target, not when another client's ch.24 claim outranks the
-//     entry on the Combat facet, not when Engine outranks it.
+//   * NOT ENGAGED (ch.21 with param.fval > 0, the client's engage-on-sight range; marth 2026-10-12: "And
+//     if the target is deemed \"not engaged\" combat is dropped immediately and previous behaviour
+//     reinstated."): the first poll that finds the target farther than that from the actor (or in
+//     another cell) and NOT actively hostile (its own combat target is in the party: the actor, the
+//     player, a player teammate, an actor any of those commands, a member of the actor's combat group)
+//     drops it IN THAT PASS -- no debounce: the actor's combat is ended through the engine's own
+//     Actor::StopCombat (Character vtable slot 0xE5, verified on both images), ranked (not while ANOTHER
+//     group target is attacking the party, review R-1; not when a winning ch.20 pin names a different
+//     target; not when another client's ch.24 claim or Engine outranks the entry on Combat), and every
+//     Harbinger-internal effect of the engagement is removed at once (DropNotEngaged).
 //
 // THE DRIVE. Two cases where the held move-to walks the actor through its own combat area (a
 // Harbinger-internal ch.24 bound, channels/CombatApproach.cpp; a live ch.24 claim on the actor wins):
@@ -647,21 +641,13 @@ namespace {
         std::unordered_map<RE::FormID, std::unique_ptr<Hold>> g_holds;
         std::atomic<std::size_t>                             g_holdCount{ 0 };
 
-        // ---- the re-engage cooldown (asked at ch.20 / ch.21 Apply on the game thread; mutex-guarded anyway) ----
-        struct Cool {
-            std::uint64_t untilMs   = 0;       // monotonic
-            bool          pinToo    = false;   // false: only a ch.21 re-entry is refused (range drop)
-            bool          logged    = false;
-            const char*   why       = "";
-        };
-        std::mutex                               g_coolMx;
-        std::unordered_map<std::uint64_t, Cool>  g_cool;
-        constexpr std::uint64_t kCooldownMs = 60000;   // 3 x the watchdog window
-        std::uint64_t CoolKey(RE::FormID a, RE::FormID t) { return (static_cast<std::uint64_t>(a) << 32) | t; }
-        void StartCooldown(RE::FormID a, RE::FormID t, bool pinToo, const char* why) {
-            std::scoped_lock lk(g_coolMx);
-            g_cool[CoolKey(a, t)] = Cool{ apmf::clock::MonotonicMs() + kCooldownMs, pinToo, false, why };
-        }
+        // NO RE-ENGAGE COOLDOWN (marth 2026-10-12: "THe engage on sight is meant to be an aggressive setting. No
+        // waiting ever, engaged, or not engaged."): an engagement Harbinger ends is re-engaged the moment the
+        // client asks again. Each end is logged every time and counted per actor -> target (g_ends) so a
+        // release -> re-engage cycle shows plainly in the field log.
+        std::unordered_map<std::uint64_t, std::uint32_t> g_ends;   // game thread only
+        std::uint32_t CountEnd(RE::FormID a, RE::FormID t) { return ++g_ends[(static_cast<std::uint64_t>(a) << 32) | t]; }
+        std::uint64_t g_cycles = 0;   // ends of an engagement that had already been ended before (a repeat)
 
         // ---- the knowledge seats ----
         using Detect_t = std::uint64_t (*)(void* a_group, RE::TESObjectREFR* a_member, RE::TESObjectREFR* a_target,
@@ -854,7 +840,6 @@ namespace {
         constexpr std::uint64_t kDriveRetryMs  = 10000;   // a released (stalled) drive is not retried before this
         constexpr std::uint64_t kSearchStartMs = 1500;    // a search leash-denied this recently starts the search drive
         constexpr std::uint64_t kSearchIdleMs  = 3000;    // no search leaf for this long ends it
-        constexpr std::uint64_t kRangeDebounceMs = 1000;  // out of engage range this long = out
 
         std::uint64_t g_worldMs = 1, g_lastTickMs = 0, g_lastPollMs = 0, g_lastHeartbeatMs = 0;
         std::uint64_t g_anomalies = 0, g_arrivedIdle = 0, g_rangeDrops = 0, g_stopCombats = 0, g_drivesStarted = 0,
@@ -880,7 +865,7 @@ namespace {
             bool            inCombat = false;
             std::deque<Sample> samples;
             float           path = 0.0f;
-            std::uint64_t   windowStartMs = 0, lastHeldActMs = 0, arrivedSinceMs = 0, outOfRangeSinceMs = 0;
+            std::uint64_t   windowStartMs = 0, lastHeldActMs = 0, arrivedSinceMs = 0;
             RE::NiPoint3    lastPos{};
             const void*     lastSpace = nullptr;
             float           moved = 0.0f, windowStartDist = -1.0f;
@@ -1035,15 +1020,67 @@ namespace {
             return "combat ENDED (Actor::StopCombat)";
         }
 
-        // End this hold (watchdog / range): both claims naming the target, the cooldown, the drive.
-        void EndHold(RE::FormID a_id, Track& a_t, const char* a_reason, bool a_pinToo) {
-            a_t.ended = true;
-            StopDrive(a_id, a_t, a_reason);
-            StartCooldown(a_id, a_t.target, a_pinToo, a_reason);
-            EndClaim(a_id, a_t.target, a_reason);
-            apmf::targetpin::EndHeld(a_id, a_t.target, a_reason);
+        // marth 2026-10-12: "And if the target is deemed \"not engaged\" combat is dropped immediately and previous
+        // behaviour reinstated." Everything the engagement put on the actor goes in THIS pass: combat (StopCombat,
+        // ranked, review R-1), the ch.21 claim and a ch.20 pin naming the target (released), the hold slots (so the
+        // knowledge seats and ch.23's pursuit exemption stop at once, not at the next Drain), any Harbinger-internal
+        // ch.24 bound (a drive, a leash return) and ch.23's search stamps for the actor. Nothing is re-armed: the
+        // track is `ended` until the claims are gone, and nothing here waits on a timer. The engine's own group
+        // entry is not undone (it is the engine's; the group goes with the controller StopCombat frees). Game thread.
+        void DropNotEngaged(RE::Actor* a_actor, RE::FormID a_id, Track& a_t, RE::FormID a_target,
+                            RE::ActorHandle a_targetH, const std::string& a_where, float a_range) {
+            const APMF_API::Handle entryH = ClaimHandle(a_id, APMF_API::kIntent_CombatEntry);
+            RE::FormID             pinT   = 0;
+            const APMF_API::Handle pinH   = ClaimHandle(a_id, APMF_API::kIntent_TargetPin, &pinT);
+            const char*            drive  = DriveName(a_t.drive);
+            const std::string      stop   = StopCombatRanked(a_actor, entryH, a_target, a_targetH);
+            const bool             ended  = stop.starts_with("combat ENDED");
+            constexpr const char*  kWhy   = "held engagement: not engaged (out of engage range, not hostile)";
+            if (a_t.target == a_target) a_t.ended = true;
+            if (a_t.drive != Drive::kNone) StopDrive(a_id, a_t, "not engaged");
+            apmf::combatapproach::ClearInternalBound(a_id);   // a leash return or any other internal bound
+            apmf::actiongate::ForgetEngagement(a_id, "the engagement was dropped (not engaged)");
+            EndClaim(a_id, a_target, kWhy);
+            const bool pinNamed = pinH != APMF_API::kInvalidHandle && pinT == a_target;
+            if (pinNamed) apmf::targetpin::EndHeld(a_id, a_target, kWhy);
+            {
+                std::unique_lock lk(g_holdMx);
+                if (const auto it = g_holds.find(a_id); it != g_holds.end()) {
+                    Hold& h = *it->second;
+                    if (h.entryTarget == a_target) { h.entryTarget = 0; h.entryHandle = 0; h.entryH = {}; h.entryRange = 0.0f; }
+                    if (h.pinTarget == a_target) { h.pinTarget = 0; h.pinHandle = 0; h.pinH = {}; }
+                    if (h.Empty()) g_holds.erase(it);
+                }
+                g_holdCount.store(g_holds.size(), std::memory_order_relaxed);
+            }
+            ++g_rangeDrops;
+            const std::uint32_t nth = CountEnd(a_id, a_target);
+            if (nth > 1) ++g_cycles;
+            const std::string released = fmt::format(
+                "ch.21 claim h={}{}, the hold (knowledge seats + leash exemption), drive {}, internal combat-area "
+                "bound, ch.23 search stamps / leash return",
+                entryH, pinNamed ? fmt::format(", ch.20 pin h={}", pinH) : std::string(), drive);
+            if (ended)
+                spdlog::info("[hold] 0x{} -> 0x{} DROPPED (not engaged) -- combat ended, prior behaviour restored "
+                             "(released: {}). {} (range {:.0f}), not hostile. End #{} of this engagement this session.",
+                             Hex(a_id), Hex(a_target), released, a_where, a_range, nth);
+            else
+                spdlog::info("[hold] 0x{} -> 0x{} DROPPED (not engaged) -- {} (released: {}). {} (range {:.0f}), not "
+                             "hostile. End #{} of this engagement this session.",
+                             Hex(a_id), Hex(a_target), stop, released, a_where, a_range, nth);
         }
 
+        // End this hold (a watchdog anomaly): both claims naming the target and the drive. No cooldown (marth
+        // 2026-10-12). Returns how many times this actor -> target has been ended this session.
+        std::uint32_t EndHold(RE::FormID a_id, Track& a_t, const char* a_reason) {
+            a_t.ended = true;
+            StopDrive(a_id, a_t, a_reason);
+            EndClaim(a_id, a_t.target, a_reason);
+            apmf::targetpin::EndHeld(a_id, a_t.target, a_reason);
+            const std::uint32_t n = CountEnd(a_id, a_t.target);
+            if (n > 1) ++g_cycles;
+            return n;
+        }
     }
 
 }
@@ -1184,27 +1221,6 @@ namespace apmf::combatentry::hold {
         return g_holds.contains(a_actor);
     }
 
-    bool RefuseReengage(RE::FormID a_actor, RE::FormID a_target, bool a_isPin) {
-        if (a_target == 0) return false;
-        const auto now = apmf::clock::MonotonicMs();
-        std::scoped_lock lk(g_coolMx);
-        const auto it = g_cool.find(CoolKey(a_actor, a_target));
-        if (it == g_cool.end()) return false;
-        if (now >= it->second.untilMs) {
-            g_cool.erase(it);
-            return false;
-        }
-        if (a_isPin && !it->second.pinToo) return false;
-        if (!it->second.logged) {
-            it->second.logged = true;
-            spdlog::warn("[hold] 0x{} -> 0x{}: a re-{} is ENDED at once for {} s more -- this engagement was ended by "
-                         "Harbinger ({}). (Logged once per cooldown.)",
-                         Hex(a_actor), Hex(a_target), a_isPin ? "pin" : "entry", (it->second.untilMs - now + 999) / 1000,
-                         it->second.why);
-        }
-        return true;
-    }
-
     void Poll() {
         const std::uint64_t now = apmf::clock::MonotonicMs();
         if (g_lastTickMs != 0) g_worldMs += (std::min)(now - g_lastTickMs, kTickClampMs);
@@ -1282,7 +1298,7 @@ namespace apmf::combatentry::hold {
                 if (t.inCombat) StopDrive(sn.id, t, "out of combat");
                 t.inCombat = false;
                 t.samples.clear();
-                t.arrivedSinceMs = t.outOfRangeSinceMs = 0;
+                t.arrivedSinceMs = 0;
                 continue;
             }
             t.inCombat = true;
@@ -1330,38 +1346,22 @@ namespace apmf::combatentry::hold {
             const APMF_API::Handle engH =
                 ClaimHandle(sn.id, sn.viaPin ? APMF_API::kIntent_TargetPin : APMF_API::kIntent_CombatEntry);
 
-            // ---- marth's RANGE RULE (ch.21 with a client range) ----
+            // ---- marth's RANGE RULE (ch.21 with a client range). marth 2026-10-12: "And if the target is deemed
+            // \"not engaged\" combat is dropped immediately and previous behaviour reinstated." No debounce: the
+            // first poll that finds the target out of range and not hostile drops it, in this same pass. ----
             if (sn.range > 0.0f && sn.entryTarget != 0) {
                 auto  ep  = sn.entryH.get();
                 auto* et  = ep.get();
                 const bool  esame = et && space && space == apmf::combatapproach::SpaceOfRef(et);
                 const float ed    = esame ? pos.GetDistance(et->GetPosition()) : -1.0f;
                 const bool  out   = et && !et->IsDead() && (!esame || ed > sn.range);
-                if (!out) {
-                    t.outOfRangeSinceMs = 0;
-                } else if (t.outOfRangeSinceMs == 0) {
-                    t.outOfRangeSinceMs = wnow;
-                } else if (wnow - t.outOfRangeSinceMs >= kRangeDebounceMs) {
+                if (out) {
                     std::vector<std::uint32_t> members;
                     ReadGroup(actor, nullptr, members, 0);
-                    if (ActivelyHostile(et, actor, &members)) {
-                        t.outOfRangeSinceMs = wnow;   // hostile: kept; checked again from now
-                    } else {
-                        const APMF_API::Handle entryH = ClaimHandle(sn.id, APMF_API::kIntent_CombatEntry);
-                        const std::string      stop   = StopCombatRanked(actor, entryH, sn.entryTarget, sn.entryH);
-                        ++g_rangeDrops;
-                        spdlog::warn("[hold] 0x{} -> 0x{} OUT OF ENGAGE RANGE: {} (range {:.0f}) and not hostile -- "
-                                     "DROPPED (the ch.21 and ch.20 claims naming it are released; a re-entry is "
-                                     "refused for {} s); {}.",
-                                     Hex(sn.id), Hex(sn.entryTarget),
-                                     esame ? fmt::format("{:.0f}u away", ed) : std::string("in another cell"), sn.range,
-                                     kCooldownMs / 1000, stop);
-                        if (t.target == sn.entryTarget) {
-                            EndHold(sn.id, t, "held engagement: out of engage range (not hostile)", false);
-                        } else {   // the pin names another target: only the entry is dropped
-                            StartCooldown(sn.id, sn.entryTarget, false, "held engagement: out of engage range");
-                            EndClaim(sn.id, sn.entryTarget, "held engagement: out of engage range (not hostile)");
-                        }
+                    if (!ActivelyHostile(et, actor, &members)) {
+                        DropNotEngaged(actor, sn.id, t, sn.entryTarget, sn.entryH,
+                                       esame ? fmt::format("{:.0f}u away", ed) : std::string("in another cell"),
+                                       sn.range);
                         continue;
                     }
                 }
@@ -1437,19 +1437,19 @@ namespace apmf::combatentry::hold {
                 t.lostBase = sn.lost; t.locBase = sn.loc; t.leashBase = sn.leash;
             }
 
-            // ---- THE WATCHDOGS (principle 7: loud, then released, then a cooldown) ----
+            // ---- THE WATCHDOGS (principle 7: loud and released, every time; no cooldown -- marth 2026-10-12) ----
             const bool inReach = dist >= 0.0f && dist <= kReachU;
             if (inReach) {
                 if (t.arrivedSinceMs == 0) t.arrivedSinceMs = wnow;
                 if (t.lastHeldActMs > t.arrivedSinceMs) t.arrivedSinceMs = t.lastHeldActMs;   // a strike restarts it
                 if (wnow - t.arrivedSinceMs >= kArrivedIdleMs) {
                     ++g_arrivedIdle;
+                    const std::uint32_t nth = EndHold(sn.id, t, "held engagement: arrived but not fighting it (anomaly)");
                     spdlog::warn("[hold] ANOMALY 0x{} -> 0x{}: ARRIVED (within {:.0f}u, distance {:.0f}) but no attack or "
                                  "cast on it for {} s (target {}). The held engagement is RELEASED (the ch.21 and ch.20 "
-                                 "claims naming it); a re-engage is refused for {} s.",
-                                 Hex(sn.id), Hex(sn.target), kReachU, dist, kArrivedIdleMs / 1000, LifeName(life),
-                                 kCooldownMs / 1000);
-                    EndHold(sn.id, t, "held engagement: arrived but not fighting it (anomaly)", true);
+                                 "claims naming it); the client may engage again at once. End #{} of this engagement "
+                                 "this session.",
+                                 Hex(sn.id), Hex(sn.target), kReachU, dist, kArrivedIdleMs / 1000, LifeName(life), nth);
                 }
                 continue;
             }
@@ -1462,14 +1462,15 @@ namespace apmf::combatentry::hold {
                               t.path - s0.path >= kPaceActorU && dist <= s0.dist + kProgressStepU;
             if (acted || closer || kept) continue;
             ++g_anomalies;
+            const float         s0d = s0.dist, aMoved = t.path - s0.path, tMoved = tpos.GetDistance(s0.tpos);
+            const std::uint32_t nth = EndHold(sn.id, t, "held engagement: no path progress (anomaly)");
             spdlog::warn("[hold] ANOMALY 0x{} -> 0x{}: NO PATH PROGRESS for {} s while in combat (distance {:.0f} -> "
                          "{:.0f}, actor moved {:.0f}u, target moved {:.0f}u, {}; no attack or cast on it; target {}). The "
-                         "held engagement is RELEASED (the ch.21 and ch.20 claims naming it); a re-engage is refused for "
-                         "{} s.",
-                         Hex(sn.id), Hex(sn.target), kNoProgressMs / 1000, s0.dist, dist, t.path - s0.path,
-                         tpos.GetDistance(s0.tpos), same ? "same cell / worldspace" : "the target is in another cell or worldspace",
-                         LifeName(life), kCooldownMs / 1000);
-            EndHold(sn.id, t, "held engagement: no path progress (anomaly)", true);
+                         "held engagement is RELEASED (the ch.21 and ch.20 claims naming it); the client may engage again "
+                         "at once. End #{} of this engagement this session.",
+                         Hex(sn.id), Hex(sn.target), kNoProgressMs / 1000, s0d, dist, aMoved, tMoved,
+                         same ? "same cell / worldspace" : "the target is in another cell or worldspace", LifeName(life),
+                         nth);
         }
     }
 
@@ -1483,11 +1484,11 @@ namespace apmf::combatentry::hold {
                      "detection updates {} ({} by a non-holder member): engine-lost un-lost {}, last-known location "
                      "written {}, entry not found {}, no space {}, not written by priority {}; telemetry windows {}; "
                      "drives started {} (released not carried {}); anomalies: no progress {}, arrived not fighting {}; "
-                     "range drops {} (combat ended {}).",
+                     "range drops {} (combat ended {}); repeat ends of an already-ended engagement {}.",
                      g_holdCount.load(), g_seatsInstalled.load() ? "installed" : g_seatsWhy.load(), g_siteSeen[0].load(),
                      g_siteSeen[1].load(), g_heldEvents.load(), g_byOther.load(), g_lostCleared.load(), g_locWritten.load(),
                      g_notFound.load(), g_noSpace.load(), g_stood.load(), g_windowsLogged, g_drivesStarted,
-                     g_drivesStalled, g_anomalies, g_arrivedIdle, g_rangeDrops, g_stopCombats);
+                     g_drivesStalled, g_anomalies, g_arrivedIdle, g_rangeDrops, g_stopCombats, g_cycles);
     }
 
     void ResetAll(const char* why) {
@@ -1499,10 +1500,7 @@ namespace apmf::combatentry::hold {
             std::scoped_lock tl(g_traceMx);
             g_traceLast.clear();
         }
-        {
-            std::scoped_lock lk(g_coolMx);
-            g_cool.clear();
-        }
+        g_ends.clear();
         if (n != 0) spdlog::info("[hold] {} -- dropped {} held-engagement track(s).", why, n);
     }
 

@@ -372,10 +372,12 @@ only while ALL of these hold:
    pause is never an anomaly);
    (b) ARRIVED BUT NOT FIGHTING: within reach for 20 s without an attack or cast on the held target (a
    close but unreachable target, a downed foe the engine will not strike);
-   (c) OUT OF ENGAGE RANGE (condition 6).
-   After each, a re-request of the same actor -> target is ENDED at once for 60 s (logged once): the claim
-   is accepted and ended one frame later, never refused synchronously (clients read a synchronous refusal
-   as "seat not installed"). On release Harbinger stops writing and undoes nothing else.
+   (c) NOT ENGAGED (condition 6).
+   Each end is logged EVERY time with its count for that actor -> target ("End #N"; the heartbeat counts
+   repeats), and there is NO cooldown -- marth 2026-10-12, verbatim: *"THe engage on sight is meant to be an
+   aggressive setting. No waiting ever, engaged, or not engaged."* The client may engage the same target
+   again at once; a release -> re-engage cycle is visible in the log, never suppressed. On release
+   Harbinger stops writing and undoes nothing else.
    **Degraded** (`bTargetKnowledge=0`, a refused self-check row, a site another DLL patched, 1.7.104):
    no seat keeps the knowledge, so a ch.20 pin ends on "lost" exactly as before (review F-4).
 4. **The leash yields to the held approach by priority (review F-3).** ch.23 (`core/ActionGate.cpp`) lets
@@ -392,13 +394,15 @@ only while ALL of these hold:
    another target just leash-denied (R 300, until no search for 3 s). Neither starts when the actor's
    winning leash outranks the engagement. A drive the engine does not carry for 3 s is RELEASED with a
    warning and not retried for 10 s. Off: `bBleedoutDrive=0` (the bleed-out case).
-6. **The client's engage range ends it -- and the actor's combat -- unless the target is hostile.** A
-   ch.21 claim may carry its engage range in `param.fval` (game units; 0 = none; the field was unread
-   before, so a zero-init client is unchanged). When the target stays farther than that from the actor
-   (or in another cell / worldspace) for 1 s and is NOT actively hostile (in combat, with one of the PARTY
+6. **The client's engage range ends it -- and the actor's combat -- unless the target is hostile.** marth
+   2026-10-12, verbatim: *"And if the target is deemed \"not engaged\" combat is dropped immediately and
+   previous behaviour reinstated."* A ch.21 claim may carry its engage range in `param.fval` (game units;
+   0 = none; the field was unread before, so a zero-init client is unchanged). The FIRST poll (250 ms)
+   that finds the target farther than that from the actor (or in another cell / worldspace) and NOT
+   actively hostile -- no debounce -- (in combat, with one of the PARTY
    as its own combat target: the actor, the player, a player teammate, an actor commanded by any of those
    -- a summon, a thrall -- or a member of the actor's own combat group), the ch.21 and ch.20 claims naming
-   it are released (re-entry ended at once for 60 s) and the actor's combat is ended -- but ONLY when that
+   it are released and the actor's combat is ended -- but ONLY when that
    target WAS the fight (review R-1): if any OTHER live target of the actor's group is actively hostile by
    the same test (the group's targets and members copied under the group's READ lock, nothing nested), the
    claims are released and the fight stays the engine's, logged with the foe that kept it. Otherwise the
@@ -407,7 +411,13 @@ only while ALL of these hold:
    reads rcx only; the Character vtable is a self-checked row and the actor's vtable is compared with it
    per call), on the game thread, logged -- and RANKED: not when a winning ch.20 pin names a different
    target, not when another client's ch.24 claim outranks the entry on the Combat facet, not when Engine
-   outranks the entry on the Combat facet. THREADING (APMF-B26): StopCombat frees the actor's
+   outranks the entry on the Combat facet. PREVIOUS BEHAVIOUR REINSTATED, in that same pass: the hold
+   slots are cleared at once (the knowledge seats and ch.23's pursuit exemption stop now, not at the next
+   Drain), every Harbinger-internal ch.24 bound on the actor (a drive, a leash return) is cleared, and
+   ch.23's search stamps and leash-return state for the actor are forgotten (`actiongate::ForgetEngagement`),
+   so nothing is re-armed on the next poll; one line `[hold] ... DROPPED (not engaged) -- combat ended,
+   prior behaviour restored (released: ...)`. The engine's own group entry is not undone: it goes with the
+   controller StopCombat frees. THREADING (APMF-B26): StopCombat frees the actor's
    CombatController (actor+0x160) INLINE with no lock (AE `0x6B7214` -> `0x558500`, `0x6B7235`). It is
    called from the player's update seat, i.e. Main::Update's own context, right after the engine resets
    its AI job lists (AE `0x5FC260` / `0x5FC180`), so the combat jobs are believed quiescent there --

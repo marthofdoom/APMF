@@ -76,13 +76,8 @@ namespace apmf::combatentry::hold {
     // Does `actor` hold any engagement at all? ANY THREAD (shared lock).
     bool HoldsAny(RE::FormID actor);
 
-    // The re-engage COOLDOWN: after Harbinger ENDED an engagement itself (a watchdog anomaly, or the
-    // range rule), a new request of the same actor -> target is refused for 60 s (the range rule
-    // refuses a ch.21 re-entry only; a watchdog end refuses a ch.20 pin too). Logged once per
-    // cooldown. ANY THREAD. Asked by ch.20 / ch.21 Apply: the claim is ACCEPTED and ended one frame
-    // later ("re-engage cooldown"), never refused synchronously -- a synchronous refusal means "seat not
-    // installed" to clients (MFO drops its pin / entry route for the session on it).
-    bool RefuseReengage(RE::FormID actor, RE::FormID target, bool isPin);
+    // NO re-engage cooldown (marth 2026-10-12: "THe engage on sight is meant to be an aggressive setting. No
+    // waiting ever, engaged, or not engaged."): an engagement Harbinger ended is accepted again at once.
 
     // Game thread, Arbiter::OncePerFrame (after the ch.20 / ch.21 Polls): per-hold telemetry
     // (distance moved per 5 s window, distance to the target, attack / cast starts, engine-lost

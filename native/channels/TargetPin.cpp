@@ -8,7 +8,6 @@
 #include "core/Sightline.h"   // ABI v18 kTargetPin_OwnLineOfSight
 #include "core/Sources.h"     // Harbinger 1a: target capture, census, priorities
 #include "channels/CombatEntry.h"   // THE HELD ENGAGEMENT (2026-10-12): a pin is held; kLost no longer ends it
-#include "core/MainThread.h"       // the re-pin cooldown's release goes out after the Drain publishes
 
 #include <intrin.h>   // _ReturnAddress: the 0xE4 layers' segment proof
 #include <shared_mutex>
@@ -171,7 +170,6 @@ namespace {
     // Review F-4 ((g) condition 5, "never live and inert"): the target was one of the group's targets and
     // is not any more (the engine dropped it, or the fight it was in ended). Trusted like kReasonLost.
     constexpr const char* kReasonAbsent   = "target no longer a combat target (it was one)";
-    constexpr const char* kReasonCooldown = "re-pin cooldown (Harbinger ended this engagement moments ago)";
 
     std::atomic<bool>        g_installed{ false };
     std::atomic<bool>        g_installTried{ false };
@@ -844,39 +842,18 @@ namespace {
             if (!h) why = "the actor has no reference handle";
         }
 
-        // THE HELD ENGAGEMENT's re-engage cooldown: Harbinger itself ended this actor -> target engagement
-        // moments ago (a watchdog anomaly); a Repoint / takeover naming it again is ENDED, not pinned.
-        const bool cooled = !why && apmf::combatentry::hold::RefuseReengage(id, tf, true);
-
         std::unique_lock lk(g_pinMx);
         g_pins.erase(id);
         if (!why) {
             auto [it, ok] = g_pins.try_emplace(id);
             it->second.target = tf;
             it->second.handle = h;
-            if (cooled) {   // the seat declines an ending pin; the release goes out after this Drain publishes
-                it->second.ending.store(true);
-                it->second.endedReason.store(kReasonCooldown);
-            }
         }
         g_pinCount.store(g_pins.size(), std::memory_order_relaxed);
         lk.unlock();
-        // THE HELD ENGAGEMENT: the pin is what this actor holds (nothing, for an inert or cooled claim).
-        if (why || cooled) apmf::combatentry::hold::ClearPin(id);
+        // THE HELD ENGAGEMENT: the pin is what this actor holds (nothing, for an inert claim).
+        if (why) apmf::combatentry::hold::ClearPin(id);
         else apmf::combatentry::hold::SetPin(id, tf, h);
-
-        if (cooled) {
-            apmf::mainthread::Post([id, tf] {
-                APMF_API::APMF_Param p{};
-                float                basis = 0.0f;
-                APMF_API::Handle     hh    = APMF_API::kInvalidHandle;
-                if (!apmf::ControlMap::Get().TryGetOwningClaimBasis(id, APMF_API::kIntent_TargetPin, p, basis, &hh) ||
-                    p.form != tf || hh == APMF_API::kInvalidHandle)
-                    return;
-                apmf::ControlMap::Get().EnqueueRelease(hh);   // logged once per cooldown by RefuseReengage
-            });
-            return;
-        }
 
         if (why) {
             spdlog::warn("[ch.20] 0x{} target-pin claim {} but INERT -- target 0x{}: {}. The handle stays "
