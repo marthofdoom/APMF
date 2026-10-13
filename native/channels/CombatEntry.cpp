@@ -16,6 +16,7 @@
 #include <algorithm>
 #include <cmath>
 #include <deque>
+#include <vector>
 #include <limits>
 #include <memory>
 #include <shared_mutex>
@@ -646,7 +647,7 @@ namespace {
         std::unordered_map<RE::FormID, std::unique_ptr<Hold>> g_holds;
         std::atomic<std::size_t>                             g_holdCount{ 0 };
 
-        // ---- the re-engage cooldown (any thread: ControlMap::EnqueueRequest asks) ----
+        // ---- the re-engage cooldown (asked at ch.20 / ch.21 Apply on the game thread; mutex-guarded anyway) ----
         struct Cool {
             std::uint64_t untilMs   = 0;       // monotonic
             bool          pinToo    = false;   // false: only a ch.21 re-entry is refused (range drop)
@@ -884,6 +885,7 @@ namespace {
             const void*     lastSpace = nullptr;
             float           moved = 0.0f, windowStartDist = -1.0f;
             std::uint32_t   attacks = 0, casts = 0;   // on the HELD target, this window
+            std::uint32_t   elsewhereActs = 0;        // attacks / casts on another target while paused (R-3)
             bool            wasAttacking = false, wasCasting = false;
             std::uint32_t   lostBase = 0, locBase = 0, leashBase = 0;
             Drive           drive = Drive::kNone;
@@ -907,13 +909,24 @@ namespace {
             }
         }
 
-        // Is the target ACTIVELY HOSTILE (marth's range rule): in combat (controller POINTER, APMF-B26)
-        // and its own combat target is the actor, the player or a player teammate. Game thread.
-        bool ActivelyHostile(RE::Actor* a_target, RE::Actor* a_actor) {
+        // Is the target ACTIVELY HOSTILE (marth's range rule): in combat (controller POINTER, APMF-B26) and its
+        // own combat target is one of the PARTY: the actor, the player, a player teammate, an actor commanded by
+        // any of those (a summon, a reanimated thrall: AIProcess middleHigh commandingActor, a field read), or a
+        // member of the actor's own combat group (`a_members`, its allies in this fight; may be null). Game thread.
+        bool ActivelyHostile(RE::Actor* a_target, RE::Actor* a_actor, const std::vector<std::uint32_t>* a_members,
+                             RE::FormID* a_victim = nullptr) {
             if (!a_target->GetActorRuntimeData().combatController) return false;
-            const auto ctp = a_target->GetActorRuntimeData().currentCombatTarget.get();
-            const auto* ct = ctp.get();
-            return ct && (ct == a_actor || ct->IsPlayerRef() || ct->IsPlayerTeammate());
+            const RE::ActorHandle cth = a_target->GetActorRuntimeData().currentCombatTarget;
+            const auto            ctp = cth.get();
+            const auto*           ct  = ctp.get();
+            if (!ct) return false;
+            if (a_victim) *a_victim = ct->GetFormID();
+            if (ct == a_actor || ct->IsPlayerRef() || ct->IsPlayerTeammate()) return true;
+            if (a_members && std::find(a_members->begin(), a_members->end(), cth.native_handle()) != a_members->end())
+                return true;
+            const auto  cmdp = ct->GetCommandingActor();
+            const auto* cmd  = cmdp.get();
+            return cmd && (cmd == a_actor || cmd->IsPlayerRef() || cmd->IsPlayerTeammate());
         }
 
         void StopDrive(RE::FormID a_id, Track& a_t, const char* a_why) {
@@ -950,11 +963,33 @@ namespace {
         std::uintptr_t g_vtChar = 0;
         std::atomic<bool> g_stopCombatOk{ false };
 
+        // The actor's combat group, copied under the group's own READ lock (BSReadLockGuard, recursive for a
+        // writer; nothing nested inside it): its targets other than `a_skip` and its members' handles. Game
+        // thread; the controller is read here exactly as StopCombat below is called (APMF-B26).
+        void ReadGroup(RE::Actor* a_actor, std::vector<RE::ActorHandle>* a_targets, std::vector<std::uint32_t>& a_members,
+                       std::uint32_t a_skip) {
+            auto* cc = a_actor->GetActorRuntimeData().combatController;
+            auto* g  = cc ? cc->combatGroup : nullptr;
+            if (!g) return;
+            RE::BSReadLockGuard guard(g->lock);
+            if (a_targets)
+                for (const auto& t : g->targets)
+                    if (t.targetHandle.native_handle() != a_skip) a_targets->push_back(t.targetHandle);
+            for (const auto& m : g->members) a_members.push_back(m.memberHandle.native_handle());
+        }
+
         // marth's range rule: end the actor's combat through the engine's own Actor::StopCombat (Character
         // vtable slot 0xE5: AE 0x6B70A0 / SE 0x625920, `void(this)`, it reads rcx only), RANKED. Game thread.
-        // Returns what it did, for the log.
-        const char* StopCombatRanked(RE::Actor* a_actor, APMF_API::Handle a_entry, RE::FormID a_dropped) {
-            if (!a_actor->GetActorRuntimeData().combatController) return "not in combat";
+        // THREADING (APMF-B26 cross-reference): StopCombat frees the actor's CombatController (actor+0x160)
+        // INLINE with no lock (AE 0x6B7214 -> 0x558500, 0x6B7235). It is called here from the player's update
+        // seat (Arbiter::OncePerFrame), i.e. Main::Update's own context, which runs right after the engine
+        // resets its AI job lists (AE 0x5FC260 / 0x5FC180) -- so the combat jobs that read the controller are
+        // believed quiescent there (INFERRED from that reset, not proven), the same exposure as a script's
+        // Actor.StopCombat. Returns what it did, for the log.
+        std::string StopCombatRanked(RE::Actor* a_actor, APMF_API::Handle a_entry, RE::FormID a_dropped,
+                                     RE::ActorHandle a_droppedH) {
+            auto* cc = a_actor->GetActorRuntimeData().combatController;
+            if (!cc) return "not in combat";
             if (!g_stopCombatOk.load(std::memory_order_relaxed))
                 return "NOT ended: the StopCombat seat failed its self-check at install";
             if (*reinterpret_cast<const std::uintptr_t*>(a_actor) != g_vtChar)
@@ -964,6 +999,22 @@ namespace {
             if (ClaimHandle(id, APMF_API::kIntent_TargetPin, &pinT) != APMF_API::kInvalidHandle && pinT != 0 &&
                 pinT != a_dropped)
                 return "NOT ended: a winning ch.20 pin names another target (that fight is wanted)";
+            // Review R-1: the dropped target was the fight only if NO OTHER live target of the actor's group is
+            // attacking the party. The group's targets and members are copied under the group's own READ lock
+            // (BSReadLockGuard, recursive for a writer; nothing nested inside it), then judged outside it.
+            std::vector<RE::ActorHandle> others;
+            std::vector<std::uint32_t>   members;
+            ReadGroup(a_actor, &others, members, a_droppedH.native_handle());
+            for (const auto& oh : others) {
+                const auto op = oh.get();
+                auto*      o  = op.get();
+                if (!o || o->IsDead() || o->IsDisabled()) continue;
+                RE::FormID victim = 0;
+                if (ActivelyHostile(o, a_actor, &members, &victim))
+                    return fmt::format("NOT ended: 0x{} is still attacking the party (its target 0x{}) -- that fight "
+                                       "stays the engine's",
+                                       Hex(o->GetFormID()), Hex(victim));
+            }
             const APMF_API::Handle ah = ClaimHandle(id, APMF_API::kIntent_CombatApproach);
             if (ah != APMF_API::kInvalidHandle &&
                 apmf::sources::ClientForHandle(ah) != apmf::sources::ClientForHandle(a_entry) &&
@@ -1250,14 +1301,25 @@ namespace apmf::combatentry::hold {
             const float        dist   = same ? pos.GetDistance(tpos) : -1.0f;
             if (t.windowStartDist < 0.0f) t.windowStartDist = dist;
 
-            // Attack / cast STARTS on THE HELD target (review F-2 / F-4: an attack on anyone else is not
-            // progress on this engagement). Sampled every 250 ms: a swing or a cast lasts longer than that.
-            const bool onHeld    = actor->GetActorRuntimeData().currentCombatTarget.native_handle() ==
-                                t.th.native_handle();
+            // Attack / cast STARTS. On THE HELD target they are progress (review F-2 / F-4). While the actor's
+            // own combat target is ANOTHER actor -- a pin PAUSED by kTargetPin_OwnLineOfSight (the engine's pick
+            // stands by design), or a ch.21-only hold whose engine target is another foe -- the hold is paused
+            // by design, and fighting is progress too (review R-3: an intended pause is never an anomaly).
+            // Sampled every 250 ms: a swing or a cast lasts longer than that.
+            const std::uint32_t curT = actor->GetActorRuntimeData().currentCombatTarget.native_handle();
+            const bool onHeld    = curT == t.th.native_handle();
+            const bool elsewhere = curT != 0 && !onHeld;
             const bool attacking = actor->AsActorState()->GetAttackState() != RE::ATTACK_STATE_ENUM::kNone;
             const bool casting   = IsCasting(actor);
-            if (onHeld && attacking && !t.wasAttacking) { ++t.attacks; t.lastHeldActMs = wnow; }
-            if (onHeld && casting && !t.wasCasting) { ++t.casts; t.lastHeldActMs = wnow; }
+            const bool started   = (attacking && !t.wasAttacking) || (casting && !t.wasCasting);
+            if (started && onHeld) {
+                if (attacking && !t.wasAttacking) ++t.attacks;
+                if (casting && !t.wasCasting) ++t.casts;
+                t.lastHeldActMs = wnow;
+            } else if (started && elsewhere) {
+                ++t.elsewhereActs;
+                t.lastHeldActMs = wnow;   // paused by design and fighting: not stuck
+            }
             t.wasAttacking = attacking; t.wasCasting = casting;
 
             t.samples.push_back({ wnow, dist, tpos, t.path });
@@ -1280,11 +1342,13 @@ namespace apmf::combatentry::hold {
                 } else if (t.outOfRangeSinceMs == 0) {
                     t.outOfRangeSinceMs = wnow;
                 } else if (wnow - t.outOfRangeSinceMs >= kRangeDebounceMs) {
-                    if (ActivelyHostile(et, actor)) {
+                    std::vector<std::uint32_t> members;
+                    ReadGroup(actor, nullptr, members, 0);
+                    if (ActivelyHostile(et, actor, &members)) {
                         t.outOfRangeSinceMs = wnow;   // hostile: kept; checked again from now
                     } else {
                         const APMF_API::Handle entryH = ClaimHandle(sn.id, APMF_API::kIntent_CombatEntry);
-                        const char*            stop   = StopCombatRanked(actor, entryH, sn.entryTarget);
+                        const std::string      stop   = StopCombatRanked(actor, entryH, sn.entryTarget, sn.entryH);
                         ++g_rangeDrops;
                         spdlog::warn("[hold] 0x{} -> 0x{} OUT OF ENGAGE RANGE: {} (range {:.0f}) and not hostile -- "
                                      "DROPPED (the ch.21 and ch.20 claims naming it are released; a re-entry is "
@@ -1361,15 +1425,15 @@ namespace apmf::combatentry::hold {
             if (wnow - t.windowStartMs >= kWindowMs) {
                 ++g_windowsLogged;
                 spdlog::info("[hold] 0x{} -> 0x{}: moved {:.0f}u in {:.1f} s, distance {:.0f} -> {:.0f}, attacks {}, casts "
-                             "{} (on it); the engine lost it {} time(s) (knowledge kept, location written {}), leash let "
-                             "the approach run {}; target {}; drive {}.",
+                             "{} (on it), {} on another target while paused; the engine lost it {} time(s) (knowledge "
+                             "kept, location written {}), leash let the approach run {}; target {}; drive {}.",
                              Hex(sn.id), Hex(sn.target), t.moved, (wnow - t.windowStartMs) / 1000.0, t.windowStartDist,
-                             dist, t.attacks, t.casts, sn.lost - t.lostBase, sn.loc - t.locBase, sn.leash - t.leashBase,
-                             LifeName(life), DriveName(t.drive));
+                             dist, t.attacks, t.casts, t.elsewhereActs, sn.lost - t.lostBase, sn.loc - t.locBase,
+                             sn.leash - t.leashBase, LifeName(life), DriveName(t.drive));
                 t.windowStartMs   = wnow;
                 t.moved           = 0.0f;
                 t.windowStartDist = dist;
-                t.attacks = t.casts = 0;
+                t.attacks = t.casts = t.elsewhereActs = 0;
                 t.lostBase = sn.lost; t.locBase = sn.loc; t.leashBase = sn.leash;
             }
 
