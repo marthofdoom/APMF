@@ -157,7 +157,12 @@ namespace APMF_API {
     // Gate on abiVersion >= 20 (Docs/INTEGRATION.md "Spells-only floor" has the why).
     // ABI v21 (2026-10-12): kIntent_CastGuard (ch.25) + CastGuardFlags only, no struct/slot. An older
     // APMF REFUSES intent 25 ("no channel serves intent 25"). Docs/INTEGRATION.md "Cast guards".
-    inline constexpr std::uint32_t kABIVersion = 21;
+    // ABI v22 (2026-10-12, weighting phase 1): kIntent_EquipPreference (ch.26) + EquipPrefFlags, the
+    // POD structs APMF_EquipPrefEntry / APMF_EquipPrefInfo, and APMF_API_v22 with TWO appended slots
+    // (SetEquipPreference, GetEquipPreferenceState). A client must see abiVersion >= 22 before it asks
+    // for the intent or calls a slot: an older APMF REFUSES intent 26 ("no channel serves intent 26").
+    // See "ABI v22: EQUIP PREFERENCE" at the end of this header.
+    inline constexpr std::uint32_t kABIVersion = 22;
 
     // The exported query function's undecorated name and pointer type.
     // const APMF_API_v1* APMF_GetInterface(std::uint32_t abiVersion);
@@ -774,6 +779,16 @@ namespace APMF_API {
                                      //       outranks "Engine" on the Cast facet (APMF_Sources.ini). REFUSED
                                      //       (kInvalidHandle, logged): APMF < v21, the player, CheckCast gate not
                                      //       installed, a bad ival / fval, kCastGuard_LineOfFire while unarmed.
+        kIntent_EquipPreference = 26, // ch.26 PREFER items for this actor's hands IN COMBAT (ABI v22, weighting
+                                     //       phase 1). Mode: COMPOSE (the engine's own CalculateScore 0x0C answer
+                                     //       is LIFTED, never replaced) + an opt-in DENY (kEquipPref_Force).
+                                     //       Param: ival = EquipPrefFlags. form/target/fval/pos are not read. A
+                                     //       STANDING claim (no TTL), ended by Release. The claim alone changes
+                                     //       nothing: the client then DECLARES the preferred items with
+                                     //       SetEquipPreference (APMF_API_v22). See "ABI v22: EQUIP PREFERENCE"
+                                     //       at the end of this header for the whole contract. REFUSED
+                                     //       (kInvalidHandle, logged): APMF < v22, the player, actor 0,
+                                     //       [AiCastSeats] EnableScoreSteer=0, or no score seat installed.
     };
 
     // ── Cast guard flags (kIntent_CastGuard's param.ival, ABI v21). APPEND-ONLY. ──────
@@ -2487,6 +2502,163 @@ namespace APMF_API {
         // layout, fills `*out`. Read-only; ANY THREAD (a copy under APMF's own lock, no game
         // call). A throw inside returns kApproachState_None and writes nothing.
         std::uint32_t (*GetCombatApproachState)(RE::FormID actor, APMF_CombatApproachInfo* out);
+    };
+
+    // ═════════════════════════════════════════════════════════════════════════════
+    // ABI v22: EQUIP PREFERENCE (kIntent_EquipPreference, ch.26) -- weighting, phase 1
+    // ═════════════════════════════════════════════════════════════════════════════
+    // THE RULE IT SERVES (marth 2026-10-01 / 10-05): where the ENGINE decides a choice by a
+    // score, Harbinger enforces a client's wish only by BIASING that score. In combat the
+    // engine picks the weapon, shield, torch and spell for each hand with one scorer,
+    // CombatInventoryItem::CalculateScore (vfunc 0x0C): about once a second it rescores every
+    // item, sorts each engine CATEGORY, and equips the top of each category while a hand is
+    // free. Melee and ranged weapons and OFFENSIVE spells and staves share category 0; shields
+    // and torches category 3; Restore 1; Ward 2 or 3; buff and utility spells 4 or 5.
+    //
+    // WHAT A DECLARATION DOES. While the claim OWNS ch.26 on the actor and the actor is in
+    // combat, each time the engine scores a declared item Harbinger takes the engine's OWN
+    // score and returns it lifted ONE STEP above the best competitor in that item's engine
+    // category: max(own, best * (1 + kEquipPrefStepRel) + kEquipPrefStepAbs). "Best" is the
+    // highest score the engine holds for any other item in the same category list, read from
+    // the engine's own list at that moment; items this actor's preferences or its live cast
+    // claims lift are left out, so two lifted items never chase each other. A lower `rank`
+    // is lifted above a higher one. An item that already leads is returned unchanged. The
+    // ENGINE STILL DECIDES: its range gate (a bow is skipped at melee range), its order table
+    // (a Restore, Ward or buff spell is walked BEFORE weapons and takes the hand whatever the
+    // scores) and its hand occupancy all still apply. Out of combat the scorer does not run,
+    // so a preference does nothing there.
+    //   * NEVER LIFTED: an item the engine scored 0 or less (unusable now: a bow with no
+    //     arrows); an item for a hand a live kIntent_Cast claim holds (that hand carries only
+    //     the spell, marth D3); any item while a source INSIDE the score seat (another mod's
+    //     hook beneath Harbinger's) outranks this claim on the Equip facet (APMF_Sources.ini,
+    //     the menu's sliders). The engine itself ranks at "Engine" (default 20), a client at 50.
+    //   * The lift is the engine's number plus one step, never a fixed constant: LoreRim scores
+    //     run 0.22 to 1320 (2026-10-12), Tuxborn 0.08 to 29 (2026-09-06).
+    //
+    // ESCALATION (kEquipPref_Force, marth D4). DISCOURAGED. Set it (Repoint the claim with
+    // param.ival |= kEquipPref_Force) only after you OBSERVED a miss: the preferred item not in
+    // its hand after about two rescore passes (about 2 s) in combat. With the bit set Harbinger
+    // ALSO refuses, at the engine's equip choke point (the #17a sink), every engine equip of a
+    // weapon, shield or torch into a hand this claim prefers something for, unless that item is
+    // one of the hand's preferred items -- RANKED like every other deny: a source that outranks
+    // the claim on the Equip facet keeps its equip, and that is a FORCE ANOMALY (logged at warn,
+    // counted on the menu and in APMF_EquipPrefInfo::forceAnomalies). The player's own trade/gift
+    // menu equips always pass (player agency). An unattributed equip passes (the degrade rule)
+    // unless APMF_Sources.ini says [UnknownSources] Equip=override. Harbinger EQUIPS NOTHING for
+    // a preference: place the item yourself (or declare it with kIntent_EquipAuthority); the
+    // force keeps the engine from undoing it. Clear the bit when the item holds.
+    //
+    // THREADING. SetEquipPreference: any thread, copies `entries` synchronously, never retains
+    // the pointer; the score seats see the new declaration at once (their own lock-free
+    // snapshot, published under a writer lock). GetEquipPreferenceState: any thread.
+    enum EquipPrefFlags : std::uint32_t {
+        kEquipPref_None  = 0,
+        kEquipPref_Force = 1u << 0,   // escalation: also refuse non-preferred engine equips into the
+                                      //   preferred hands (ranked, see ESCALATION above)
+    };
+
+    // The step (D1, "a step above the best competitor"), sized from the LoreRim 2026-10-12 field
+    // log, not guessed: 3599 consecutive rescores of one item two passes apart moved it UP by at
+    // most 3.94% (median 2.0%; scores 1 and above), and the best competitor is read from the
+    // engine's list, where a rival not yet rescored this pass may still rise by that much. 5%
+    // clears it; the absolute part only makes a tie at a tiny score strict. Informational for a
+    // client: the value Harbinger uses is its own copy.
+    inline constexpr float kEquipPrefStepRel = 0.05f;
+    inline constexpr float kEquipPrefStepAbs = 0.01f;
+
+    // The bound on one declaration. A follower holds at most two hands' worth of preferences
+    // plus a few ranked fallbacks; an overflow keeps the first kMaxEquipPreference entries
+    // (logged), never a crash or an unbounded write.
+    inline constexpr std::uint32_t kMaxEquipPreference = 8;
+
+    // One preferred item. EXACT LAYOUT (byte-shared with the client, pinned below):
+    //   +0  form      RE::FormID  the item's BASE FormID: a WEAP (a staff included), a shield
+    //                             (ARMO) or a torch (LIGH). Anything else is never scored by the
+    //                             combat scorer and is ignored (logged once per declaration).
+    //   +4  slot      u8          an EquipSlot: kEquipSlot_Right / kEquipSlot_Left = that hand's
+    //                             engine item only; kEquipSlot_Default = either hand (a two-
+    //                             hander, a bow, or "whichever hand the engine picks")
+    //   +5  rank      u8          0 = most preferred. Of two declared items in one category, the
+    //                             lower rank is lifted above the higher one. Equal ranks are
+    //                             each lifted above every undeclared item (two hands: rank both 0).
+    //   +6  reserved  u8[2]       MUST be 0 (a later ABI may define them; a v22 APMF ignores them)
+    //   size 8, alignment 4.
+    struct APMF_EquipPrefEntry {
+        RE::FormID   form;
+        std::uint8_t slot;
+        std::uint8_t rank;
+        std::uint8_t reserved[2];
+    };
+    static_assert(sizeof(APMF_EquipPrefEntry) == 8,  "APMF_EquipPrefEntry is 8 bytes, byte-shared with clients");
+    static_assert(alignof(APMF_EquipPrefEntry) == 4, "APMF_EquipPrefEntry aligns to 4");
+    static_assert(offsetof(APMF_EquipPrefEntry, slot)     == 4, "slot at +4");
+    static_assert(offsetof(APMF_EquipPrefEntry, rank)     == 5, "rank at +5");
+    static_assert(offsetof(APMF_EquipPrefEntry, reserved) == 6, "reserved at +6");
+
+    // What ch.26 last did for an actor. APPEND-ONLY: never renumber.
+    enum EquipPrefState : std::uint32_t {
+        kEquipPrefState_None       = 0,   // no ch.26 state for this actor since the last load
+        kEquipPrefState_Declared   = 1,   // a winning claim; none of its items scored since the declaration
+                                          //   (not in combat, or the item is not in the engine's combat list)
+        kEquipPrefState_Lifted     = 2,   // the last scored preferred item was LIFTED above its best competitor
+        kEquipPrefState_Leading    = 3,   // the engine already scored it above every competitor: unchanged
+        kEquipPrefState_ZeroScore  = 4,   // the engine scored it 0 or less (unusable now): never lifted
+        kEquipPrefState_HandHeld   = 5,   // its hand is held by a live kIntent_Cast claim: not lifted (D3)
+        kEquipPrefState_Outranked  = 6,   // a source inside the score seat outranks the claim: not lifted
+        kEquipPrefState_Unreadable = 7,   // the engine's category list could not be read (logged): not lifted
+        kEquipPrefState_Released   = 8,   // no winning ch.26 claim on the actor any more
+    };
+
+    // GetEquipPreferenceState output. EXACT LAYOUT (byte-shared): 64 bytes, every field 4 bytes.
+    // The CALLER sets `size` = sizeof(APMF_EquipPrefInfo) as compiled against its header. THE SIZE
+    // RULE (the APMF_TravelLegInfo rule): APMF fills the v22 fields when `size` >=
+    // kEquipPrefInfoV22Size (64, never changes) and writes nothing into a smaller struct. The
+    // counters are per actor since the last load, saturating.
+    struct APMF_EquipPrefInfo {
+        std::uint32_t size;             // +0   the CALLER sets = sizeof(APMF_EquipPrefInfo)
+        std::uint32_t state;            // +4   an EquipPrefState (the same value the call returns)
+        RE::FormID    actor;            // +8   the actor asked about
+        std::uint32_t ownerHandle;      // +12  the winning kIntent_EquipPreference claim (0 = none)
+        std::uint32_t flags;            // +16  that claim's EquipPrefFlags
+        std::uint32_t entryCount;       // +20  that claim's declared entries
+        RE::FormID    lastForm;         // +24  the preferred item `state` came from (0 = none yet)
+        std::uint32_t lastSlot;         // +28  the hand of that scoring, an EquipSlot (Default = not a hand item)
+        float         lastEngineScore;  // +32  the engine's own score for it
+        float         lastRivalScore;   // +36  the best competitor's score in its category (0 = none)
+        float         lastResultScore;  // +40  the score Harbinger returned to the engine
+        std::uint32_t msSinceScored;    // +44  milliseconds since that scoring (saturates; 0xFFFFFFFF = never)
+        std::uint32_t lifts;            // +48  scorings this actor's preferences were lifted
+        std::uint32_t withheld;         // +52  scorings not lifted because the claim was outranked
+        std::uint32_t forcedDenies;     // +56  engine equips refused under kEquipPref_Force
+        std::uint32_t forceAnomalies;   // +60  forced refusals NOT applied: the source outranked the claim
+    };
+    inline constexpr std::uint32_t kEquipPrefInfoV22Size = 64;
+    static_assert(sizeof(APMF_EquipPrefInfo) == 64, "APMF_EquipPrefInfo is 64 bytes, byte-shared with clients");
+    static_assert(offsetof(APMF_EquipPrefInfo, lastEngineScore) == 32, "lastEngineScore at +32");
+    static_assert(offsetof(APMF_EquipPrefInfo, lifts)           == 48, "lifts at +48");
+    static_assert(offsetof(APMF_EquipPrefInfo, forceAnomalies)  == 60, "forceAnomalies at +60");
+
+    // The v22 interface: APMF_API_v19's members verbatim (prefix EXTENSION; v20 and v21 added no
+    // slot), then TWO appended slots. This header is BYTE-SHARED with MFO: mirror it
+    // byte-identically.
+    //
+    // WHY A BUMP (INVARIANTS #14b): a new intent a client must not send to an older APMF, and new
+    // function-pointer slots, need an `abiVersion >= 22` test.
+    struct APMF_API_v22 : APMF_API_v19 {
+        // DECLARE the preferred items for the actor behind an EXISTING kIntent_EquipPreference
+        // claim (`handle`). `entries` is READ AND COPIED synchronously (a stack array is fine);
+        // `count` is clamped to kMaxEquipPreference (logged). `count == 0` or `entries == nullptr`
+        // CLEARS the declaration (nothing is lifted; a Release does the same). DECLARE, DO NOT
+        // TICK: call it when the preference CHANGES. A declaration on a claim that does not own
+        // ch.26 is stored and applies the moment that claim wins (the ch.17 rule). A handle that
+        // is not a live kIntent_EquipPreference claim is a silent no-op. Any thread.
+        void (*SetEquipPreference)(Handle handle, const APMF_EquipPrefEntry* entries, std::uint32_t count);
+
+        // What ch.26 last did for `actor` (see EquipPrefState). Returns the state and, when `out`
+        // is non-null and `out->size` covers the v22 layout, fills `*out`. Read-only; ANY THREAD
+        // (a copy under APMF's own lock, no game call). A throw inside returns kEquipPrefState_None
+        // and writes nothing.
+        std::uint32_t (*GetEquipPreferenceState)(RE::FormID actor, APMF_EquipPrefInfo* out);
     };
 
     // Function-pointer type for GetProcAddress(kGetInterfaceExport). Returns the
