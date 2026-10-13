@@ -170,6 +170,79 @@ namespace apmf::handblock {
         // DLL inside 0x0F; a CLIENT's hook ranks as the engine, so the ch.17 own-client binding of
         // the sink never arises here). Observe-only (INI opt-in or the claim's bit): logged, the
         // engine's YES stands. Lock-free RCU read only (TryGetEquipSet), combat thread.
+        // REVIEW F2 (2026-10-13, field criterion): a HAND whose every candidate the ch.17 declaration refuses
+        // at selection (an owned hand whose declared item is not carried, or a client with the default
+        // {All, 0} scope declaring armor only) leaves that hand with nothing to pick, silently. No new seat:
+        // the closest observable is this seat's own answers per (actor, hand). For a claimed actor every
+        // YES this seat returns for a candidate competing for a hand stamps that hand; every ch.17 NO
+        // counts. When a hand has had ch.17 NOs and NO YES at all for kEmptyHandMs (several CombatInventory
+        // evaluations), one line names the actor, the hand and the declared item(s) -- once per (actor,
+        // hand, claim handle). Log only: no answer changes. Leaf lock; the line is logged outside it.
+        constexpr std::uint64_t kEmptyHandMs = 5000;
+        struct HandWatch {
+            std::uint64_t firstNoMs = 0;   // first ch.17 NO since the last YES (0 = none)
+            std::uint32_t nos       = 0;
+            bool          logged    = false;
+            APMF_API::Handle handle = APMF_API::kInvalidHandle;
+        };
+        std::mutex                                  g_hwMx;
+        std::unordered_map<std::uint64_t, HandWatch> g_handWatch;   // (actor << 1 | left) -> watch
+        void NoteHandAnswerImpl(RE::FormID a_fid, std::uint32_t a_hands, bool a_yes, const apmf::EquipSetView& a_set);
+        // Never throws: it runs inside the engine's CheckShouldEquip frame (a map insert may allocate).
+        void NoteHandAnswer(RE::FormID a_fid, std::uint32_t a_hands, bool a_yes, const apmf::EquipSetView& a_set) {
+            try {
+                NoteHandAnswerImpl(a_fid, a_hands, a_yes, a_set);
+            } catch (...) {
+            }
+        }
+        void NoteHandAnswerImpl(RE::FormID a_fid, std::uint32_t a_hands, bool a_yes, const apmf::EquipSetView& a_set) {
+            const auto now = apmf::clock::MonotonicMs();
+            struct Due { bool left; std::uint32_t nos; std::uint64_t ms; };
+            Due due[2]{};
+            int nDue = 0;
+            {
+                std::scoped_lock lk(g_hwMx);
+                if (g_handWatch.size() > 4096) g_handWatch.clear();   // bounded; a re-log beats growth
+                for (const bool left : { false, true }) {
+                    const std::uint32_t bit = left ? APMF_API::kEquipCat_Left : APMF_API::kEquipCat_Right;
+                    if (!(a_hands & bit)) continue;
+                    auto& w = g_handWatch[(static_cast<std::uint64_t>(a_fid) << 1) | (left ? 1u : 0u)];
+                    if (w.handle != a_set.handle) w = HandWatch{ 0, 0, false, a_set.handle };   // a new claim: a fresh watch
+                    if (a_yes) { w.firstNoMs = 0; w.nos = 0; continue; }
+                    if (w.firstNoMs == 0) w.firstNoMs = now;
+                    ++w.nos;
+                    if (!w.logged && w.nos >= 2 && now - w.firstNoMs >= kEmptyHandMs) {
+                        w.logged = true;
+                        due[nDue++] = Due{ left, w.nos, now - w.firstNoMs };
+                    }
+                }
+            }
+            for (int i = 0; i < nDue; ++i) {
+                try {
+                    // The declared items that could fill this hand (FormIDs only: no lookup on the combat thread).
+                    std::string decl;
+                    for (std::uint32_t k = 0; k < a_set.count && k < APMF_API::kMaxEquipSet; ++k) {
+                        const auto sl = a_set.slots[k];
+                        const bool fits = sl == APMF_API::kEquipSlot_Default ||
+                                          (due[i].left ? sl == APMF_API::kEquipSlot_Left : sl == APMF_API::kEquipSlot_Right);
+                        if (!fits) continue;
+                        decl += (decl.empty() ? "" : ", ");
+                        decl += "0x" + apmf::log::Hex(a_set.forms[k]) +
+                                (sl == APMF_API::kEquipSlot_Default ? " (default)" : due[i].left ? " (left)" : " (right)");
+                    }
+                    spdlog::warn("[equipauth 0x0F] 0x{} {} hand: EVERY candidate the combat AI offered for this hand was "
+                                 "refused by the ch.17 declaration ({} refusals, no candidate admitted, for {} ms). The hand "
+                                 "has nothing it may pick. Declared items for this hand: {}. Scope owned=0x{} denied=0x{}, "
+                                 "set={} item(s). A declared item the actor does not carry, or a hand owned but left "
+                                 "undeclared, reads this way. Logged once per actor, hand and claim.",
+                                 apmf::log::Hex(a_fid), due[i].left ? "LEFT" : "RIGHT", due[i].nos, due[i].ms,
+                                 decl.empty() ? std::string("none") : decl, apmf::log::Hex(a_set.owned, 2),
+                                 apmf::log::Hex(a_set.denied, 2), a_set.count);
+                } catch (...) {
+                }
+            }
+        }
+
         bool DeclaredSetAnswer(RE::FormID a_fid, RE::Actor* a_actor, RE::TESForm* a_item,
                                RE::FormID a_itemId, std::uint32_t a_cats, CheckShouldEquip_t a_orig, const char* a_tag,
                                std::uintptr_t a_retRva, bool a_engine) {
@@ -177,7 +250,11 @@ namespace apmf::handblock {
             apmf::EquipSetView set{};
             if (!apmf::ControlMap::Get().TryGetEquipSet(a_fid, set)) return a_engine;   // no ch.17 claim
             const auto dv = apmf::equipsink::DeclaredSetVerdict(set, a_itemId, a_cats);
-            if (!dv.refuse) return a_engine;
+            const std::uint32_t hands = a_cats & (APMF_API::kEquipCat_Right | APMF_API::kEquipCat_Left);
+            if (!dv.refuse) {
+                if (hands) NoteHandAnswer(a_fid, hands, /*yes*/ true, set);   // review F2: this hand has a candidate
+                return a_engine;
+            }
             char cats[48];
             if (dv.observe) {
                 try {
@@ -192,6 +269,7 @@ namespace apmf::handblock {
                                      dv.blacked ? 1 : 0, SiteName(a_retRva));
                 } catch (...) {
                 }
+                if (hands) NoteHandAnswer(a_fid, hands, /*yes*/ true, set);   // observe-only: the YES stands
                 return a_engine;
             }
             try {
@@ -208,12 +286,14 @@ namespace apmf::handblock {
                                          apmf::facetattr::WhyStands(apmf::sources::Facet::kEquip, v, set.handle));
                     } catch (...) {
                     }
+                    if (hands) NoteHandAnswer(a_fid, hands, /*yes*/ true, set);   // the source outranks: YES stands
                     return a_engine;
                 }
             } catch (...) {
                 // A registry throw keeps the claim's answer (the hand block's rule above).
             }
             g_declDenies.fetch_add(1, std::memory_order_relaxed);
+            if (hands) NoteHandAnswer(a_fid, hands, /*yes*/ false, set);   // review F2 (never throws)
             t_last.refused = true;
             try {
                 std::uint32_t dropped = 0;

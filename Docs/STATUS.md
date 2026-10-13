@@ -29,6 +29,14 @@ incorrect options"; a worn item in a denied category: "Yes, unequip it"; "Yes, a
 - **A claim binds its owner (ch.17 only).** The sink ranks a ch.17 refusal with `bindsOwner`: the claim's own
   client no longer ties with its claim, so its direct off-set or denied equip is refused
   (`deny (the claim binds its own client)`). The hand block, the force step and every other facet keep the tie.
+- **Review round (Opus tier 3 on 93a7461, nothing above SEV-3) F1 + F2.** F1, marth: "The trade menu should allow
+  the item to be traded, but the NPC should never equip it": an item in a DENIED category is refused from every
+  route (player menu, Papyrus / console whatever `bEquipDenyScript` says, an unattributed caller ranked as
+  Unattributed), still ranked by the sliders. The sink records the source of a denied-category equip it let
+  stand, and the unequip (`equipsink::WornDeniedRefused`) strips only what the sink would refuse from that source
+  (Engine when there is no record). Note: Papyrus / console rank as DirectCalls (75) above a client at 50, so by
+  default a script equip of a denied item still stands. F2: `[equipauth 0x0F] ... hand: EVERY candidate ... was
+  refused` warns once per actor, hand and claim when a hand has had only ch.17 refusals for 5 s at selection.
 - **Out of combat.** No ch.17, sink, enforce-pass or hand-block code reads combat state. The 0x0F seat is combat-
   only by nature; out of combat the equip sink covers every equip path (OutfitApply, AddWornOutfit, AiCommand,
   RemoveItemReequip, InventoryReequip, QueuedApply, External such as MEO). The one path below the sink (38001 <-

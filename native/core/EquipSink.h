@@ -3,6 +3,8 @@
 #include <cstddef>
 #include <cstdint>
 
+#include "core/Sources.h"   // SourceId (WornDeniedRefused)
+
 // ============================================================================
 // core/EquipSink -- THE ENGINE-EQUIP SINK SEAT (ch.17 EquipAuthority's deny half).
 //
@@ -43,7 +45,10 @@
 // kEquipAuth_DenyScript. The PLAYER's own equips on the actor through the
 // trade/gift menu (`path=PlayerMenu`) pass unless the claim says
 // kEquipAuth_DenyPlayerMenu (ABI v8: player agency; logged `verdict=allow
-// (player agency)`). Observe-only (the claim's kEquipAuth_ObserveOnly, or the INI
+// (player agency)`) -- EXCEPT an item in a category the claim DENIES, which is
+// refused from every route, the player's menu, Papyrus/console and an
+// unattributed caller included, still ranked (2026-10-13, marth: "The trade menu
+// should allow the item to be traded, but the NPC should never equip it"). Observe-only (the claim's kEquipAuth_ObserveOnly, or the INI
 // bEquipObserveOnly=1 as an explicit opt-in; the default is 0 since 2026-10-13,
 // marth: "The default equip state should block all the incorrect options") logs
 // `would-deny` and refuses nothing. EVERY category is enforced alike (weapons,
@@ -157,6 +162,17 @@ namespace apmf::equipsink {
         bool observe  = false;
     };
     DeclaredVerdict DeclaredSetVerdict(const apmf::EquipSetView& a_set, RE::FormID a_item, std::uint32_t a_competes);
+
+    // THE UNEQUIP'S VERDICT (2026-10-13 review F1). MAIN THREAD (the enforce pass), any thread safe.
+    // Would the sink refuse, NOW, the equip that put this WORN item on? Only for an item in a DENIED
+    // category (DeclaredSetVerdict().blacked; false otherwise). The source is the one the sink recorded
+    // when it let a denied-category equip of this item STAND (its source outranked the claim); with no
+    // record (worn before the claim, or put on by any route the sink refuses) it is the Engine. Ranked
+    // exactly as the sink ranks a denied-category refusal (the claim binds its owner, an unknown source
+    // is ranked, not exempt). `a_src` / `a_known` report what was ranked against, for the log. True ==
+    // strip it. Observe-only is the caller's business (DeclaredSetVerdict().observe).
+    bool WornDeniedRefused(const apmf::EquipSetView& a_set, RE::FormID a_actor, RE::FormID a_item,
+                           std::uint32_t a_competes, apmf::sources::SourceId& a_src, bool& a_known);
 
     // Re-run the public-entry detour inspection (main thread, outside any engine
     // frame: plugin.cpp calls it at kPostLoadGame and kNewGame). A plugin later

@@ -1584,16 +1584,16 @@ When the declaring claim owns the facet:
 
 | Case | Verdict |
 |---|---|
-| script or console equip, without `DenyScript` | allow (exempt) |
-| the player's own menu equip, without `DenyPlayerMenu` | allow (player agency) |
-| competes for a denied category | deny, even if in the set |
+| competes for a denied category, from ANY route (the player's trade or gift menu, Papyrus or console, an unattributed caller included) | deny, even if in the set. Since 2026-10-13: the player may still trade the item, the follower never equips it. Still ranked: a source you raised above the claim keeps its equip |
+| script or console equip, without `DenyScript`, not in a denied category | allow (exempt) |
+| the player's own menu equip, without `DenyPlayerMenu`, not in a denied category | allow (player agency) |
 | competes for an owned category and there is no declaration or the item is in the set | allow |
 | competes for an owned category and the item is off-set | deny |
 | competes for no owned and no denied category | allow |
 | the form is not ARMO, WEAP, AMMO or LIGH | allow (not governed) |
 | observe-only mode (`bEquipObserveOnly=1`, an opt-in, or the claim's own bit) | every deny above is logged as `would-deny` and nothing is refused |
 
-Since 2026-10-13 every declared category is enforced by default: weapons, shields, torches, ammo and armor alike, in and out of combat. The same verdict runs in three places. The equip seat refuses an engine equip. The combat AI's `CheckShouldEquip` seat (on the Melee, Ranged, Shield, Torch and OneHandedBlock items) answers NO for a candidate the declaration refuses, so the AI never plans around an item it cannot equip. Out of combat there is no selection seat, and the equip seat alone refuses (outfit re-apply, the AI's own equip commands, `RemoveItem` re-equip, other mods). The equip pass takes off a worn item in a DENIED category (below). All three call one function, so they cannot disagree.
+Since 2026-10-13 every declared category is enforced by default: weapons, shields, torches, ammo and armor alike, in and out of combat. The same verdict runs in three places. The equip seat refuses an engine equip. The combat AI's `CheckShouldEquip` seat (on the Melee, Ranged, Shield, Torch and OneHandedBlock items) answers NO for a candidate the declaration refuses, so the AI never plans around an item it cannot equip. Out of combat there is no selection seat, and the equip seat alone refuses (outfit re-apply, the AI's own equip commands, `RemoveItem` re-equip, other mods). The equip pass takes off a worn item in a DENIED category (below), unless the source that put it on outranks the claim (the equip seat let that equip stand and remembers its source; an item with no record is ranked as an Engine equip). All three call one function, so they cannot disagree.
 
 Only ARMO, WEAP, AMMO and LIGH equips are governed. A potion, food, a scroll, an ingredient or a book passes untouched, so the AI's own potion use is never refused. Do not declare one. The equip pass skips it and logs why. The deny half compares FormIDs only, so a declared item is in the set whichever hand the engine tries. The hand is what Harbinger's own equip pass enforces.
 

@@ -273,6 +273,20 @@ namespace {
             const auto                dv       = apmf::equipsink::DeclaredSetVerdict(set, form, competes);
             if (!dv.blacked) continue;
             char catBuf[48];
+            // Review F1: strip only what the sink would refuse NOW from the source that put it on (the
+            // sink's record of a denied-category equip it let STAND), or, with no record, from the
+            // Engine. A source the user's sliders rank above the claim keeps its item on.
+            apmf::sources::SourceId putOnBy = apmf::sources::kEngineSource;
+            bool                    known   = false;
+            if (!apmf::equipsink::WornDeniedRefused(set, id, form, competes, putOnBy, known)) {
+                spdlog::info("[apmf][equip-auth] actor=0x{} worn 0x{} '{}' ({}) cat={} is in a DENIED category but STAYS: "
+                             "the source that put it on ({}{}) outranks the claim on the Equip facet, so the sink let "
+                             "that equip stand and the pass does not strip it.",
+                             apmf::log::Hex(id), apmf::log::Hex(form), c.obj->GetName() ? c.obj->GetName() : "",
+                             SlotName(c.hand), apmf::equipsink::CategoryNames(competes, catBuf, sizeof(catBuf)),
+                             apmf::sources::Name(putOnBy), known ? "" : ", assumed: no record");
+                continue;
+            }
             if (dv.observe) {
                 ++wouldUnequip;
                 spdlog::info("[apmf][equip-auth] actor=0x{} worn 0x{} '{}' ({}) cat={} is in a DENIED category (denied=0x{}) "

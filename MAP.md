@@ -1678,7 +1678,11 @@ ONE function, `equipsink::DeclaredSetVerdict` (EquipSink.h), shared with the 0x0
 (core/HandBlock.cpp `DeclaredSetAnswer`) and the enforce pass's denied-category unequip
 (channels/EquipAuthority.cpp `UnequipDenied`); change it there, never in one caller. The ch.17
 ranking passes `bindsOwner` to `RankEquipDeny`: the claim's own client does NOT tie with its claim
-(ch.17 only; the hand block and the force step keep the tie); else `deny` = RETURN WITHOUT CALLING the worker (nothing queued, no
+(ch.17 only; the hand block and the force step keep the tie). A DENIED-category item is refused from EVERY route (player menu, script /
+console, unattributed ranked as Unattributed; review F1 2026-10-13), still ranked; a denied-category equip the sink
+lets STAND records its source (`RecordStood`), and the enforce pass strips only via `WornDeniedRefused` (that
+source, else Engine). HandBlock `NoteHandAnswer` warns once per (actor, hand, claim) when a hand saw only ch.17
+NOs for 5 s at selection (review F2); else `deny` = RETURN WITHOUT CALLING the worker (nothing queued, no
 re-entry; the caller's own spin-lock/epilogue run as if the worker returned — both callers
 discard its return value, verified). The default scope `{All, 0}` makes the v9 table collapse
 to v8's. `tls` (the `ApmfEquipScope` depth) is a LOG FIELD, never

@@ -427,8 +427,12 @@ namespace apmf::equipsink {
         // own client does NOT tie with its claim -- its own direct equip of an item its declaration
         // refuses is refused too (`a_ownerBound` says that is why). Every other caller passes false
         // and keeps the facet rule (the own client ranks at the claim's priority, its equip stands).
+        // `a_rankUnknown` (2026-10-13 review F1, marth: "The trade menu should allow the item to be
+        // traded, but the NPC should never equip it"): for an item in a DENIED category the degrade rule
+        // does not apply -- an unattributed caller is RANKED as the Unattributed source (its priority on
+        // the Equip facet, 20 by default), so the user's sliders still decide, but the default refuses.
         apmf::facetattr::Verdict RankEquipDeny(APMF_API::Handle a_claim, apmf::sources::SourceId a_src,
-                                               bool a_bindsOwner, bool& a_ownerBound) {
+                                               bool a_bindsOwner, bool& a_ownerBound, bool a_rankUnknown = false) {
             a_ownerBound = false;
             namespace src = apmf::sources;
             apmf::facetattr::Verdict v;
@@ -436,7 +440,7 @@ namespace apmf::equipsink {
             if (a_src == src::kNoSource) {
                 v.unknown = true;
                 v.src     = src::kUnattributedSource;
-                if (!src::OverrideUnknown(src::Facet::kEquip)) return v;   // Q4: allowed, never denied
+                if (!a_rankUnknown && !src::OverrideUnknown(src::Facet::kEquip)) return v;   // Q4: allowed, never denied
                 v.srcPrio = src::Priority(src::kUnattributedSource, src::Facet::kEquip);
             } else {
                 v.src     = a_src;
@@ -449,6 +453,27 @@ namespace apmf::equipsink {
             }
             v.enforce = v.claimPrio > v.srcPrio;
             return v;
+        }
+
+        // ---- WHO PUT A DENIED-CATEGORY ITEM ON (2026-10-13 review F1). When the sink lets an equip of an
+        // item in a DENIED category through because its source OUTRANKS the claim (the user's sliders),
+        // the source is recorded per (actor, item), so the enforce pass's unequip (WornDeniedRefused)
+        // does not strip what the sink just allowed. Any equip thread writes, the main thread reads;
+        // a leaf mutex, bounded (a full map is cleared: a lost record falls back to the Engine rule). ----
+        constexpr std::size_t kStoodMax = 1024;
+        std::mutex                                                g_stoodMx;
+        std::unordered_map<std::uint64_t, apmf::sources::SourceId> g_stoodSrc;
+        std::uint64_t StoodKey(RE::FormID a_actor, RE::FormID a_item) {
+            return (static_cast<std::uint64_t>(a_actor) << 32) | a_item;
+        }
+        void RecordStood(RE::FormID a_actor, RE::FormID a_item, apmf::sources::SourceId a_src) {
+            std::scoped_lock lk(g_stoodMx);
+            if (g_stoodSrc.size() >= kStoodMax) g_stoodSrc.clear();
+            g_stoodSrc[StoodKey(a_actor, a_item)] = a_src;
+        }
+        void ForgetStood(RE::FormID a_actor, RE::FormID a_item) {
+            std::scoped_lock lk(g_stoodMx);
+            g_stoodSrc.erase(StoodKey(a_actor, a_item));
         }
 
         // ---- THE THUNK. Same signature as the worker; the two patched E8s land
@@ -667,18 +692,19 @@ namespace apmf::equipsink {
             bool               anomaly    = false;
             bool               ownClient  = false;   // F1: the forced preference's own client made this equip
             bool               ownerBound = false;   // ch.17: the claim's own client's equip, refused (binds its owner)
+            bool               deniedRoute = false;  // review F1: a denied-category refusal on a route that is otherwise exempt
             apmf::facetattr::Verdict lastV{};          // the verdict of the most recent ranking
             const char*        standsWhat = nullptr;   // the deny the sliders did not allow (log + counters)
             apmf::facetattr::Verdict standsV{};
             APMF_API::Handle   standsH    = APMF_API::kInvalidHandle;
             apmf::facetattr::Verdict denyV{};          // the verdict of the deny that is applied (counters)
             const bool unknownRanked = !attributed && apmf::sources::OverrideUnknown(apmf::sources::Facet::kEquip);
-            auto ranked = [&](APMF_API::Handle a_h, const char* a_what, bool a_bindsOwner = false) {
+            auto ranked = [&](APMF_API::Handle a_h, const char* a_what, bool a_bindsOwner = false, bool a_rankUnknown = false) {
                 if (selfPath) return true;   // APMF's own equip: unranked, exactly as before
                 apmf::facetattr::Verdict v{};
                 bool                     bound = false;
                 try {
-                    v = RankEquipDeny(a_h, eqSrc, a_bindsOwner, bound);
+                    v = RankEquipDeny(a_h, eqSrc, a_bindsOwner, bound, a_rankUnknown);
                 } catch (...) {
                     v     = apmf::facetattr::Verdict{};   // a registry throw never denies (the degrade direction)
                     bound = false;
@@ -689,19 +715,33 @@ namespace apmf::equipsink {
                 if (!standsWhat) { standsWhat = a_what; standsV = v; standsH = a_h; }
                 return false;
             };
-            if (!attributed && !unknownRanked) {
+            // DENIED CATEGORY, EVERY ROUTE (2026-10-13 review F1, marth: "The trade menu should allow the
+            // item to be traded, but the NPC should never equip it"). An item competing for a category the
+            // ch.17 claim DENIES is refused from the player's menu (as if kEquipAuth_DenyPlayerMenu), from
+            // Papyrus / console (whatever bEquipDenyScript says) and from an unattributed caller (ranked as
+            // the Unattributed source instead of the degrade rule). It is still RANKED: a source the user
+            // raised above the claim keeps its equip. Inventory moves are not equips and are never touched.
+            // An off-set item in an OWNED, not denied, category keeps every exemption exactly as before.
+            const bool degradeAllow = !attributed && !unknownRanked;
+            const bool playerAgency = playerMenuPath && !denyPlayerMenu;
+            if (degradeAllow && !dv.blacked) {
                 // THE DEGRADE RULE (Harbinger 1a, Q4): the caller could not be recovered, so this
                 // equip is NEVER denied -- it may be a script, console or player-menu equip.
                 verdict = "allow (unattributed: caller not recovered)";
-            } else if (playerMenuPath && !denyPlayerMenu) {
+            } else if (playerAgency && !dv.blacked) {
                 verdict = handHeld ? "allow (player agency; hand held by a cast claim)" : "allow (player agency)";
             } else {
-                const bool scriptExempt = scriptPath && !denyScript;   // exempt from the hand block and ch.17
-                if (handHeld && !scriptExempt)
+                // Reached only because the item is in a denied category: the hand block and the force step
+                // keep the exemption that would have applied, only the ch.17 denied-category step runs.
+                const bool onlyForDenied = degradeAllow || playerAgency;
+                const bool scriptExempt  = scriptPath && !denyScript;   // exempt from the hand block, the force and an owned-category ch.17 refusal
+                if (handHeld && !scriptExempt && !onlyForDenied)
                     handBlock = ranked(apmf::facetattr::CastClaimHandle(actorId), "the hand-claim block");
-                if (!handBlock && !scriptExempt && dv.refuse)
-                    refuse = ranked(set.handle, "the ch.17 declared set", /*bindsOwner*/ true);
-                if (!handBlock && !refuse && forceMask && !selfPath) {
+                if (!handBlock && dv.refuse && (dv.blacked || !scriptExempt)) {
+                    refuse = ranked(set.handle, "the ch.17 declared set", /*bindsOwner*/ true, /*rankUnknown*/ dv.blacked);
+                    deniedRoute = refuse && dv.blacked && (onlyForDenied || scriptExempt);
+                }
+                if (!handBlock && !refuse && forceMask && !selfPath && !onlyForDenied) {
                     forceDeny = ranked(force.handle, "the FORCED equip preference");
                     // F1 (review of 7cda290): the claim's OWN client equipping into its own forced hand ties
                     // with its claim and stands by the facet rule. That is not a slider violation: a separate
@@ -745,11 +785,28 @@ namespace apmf::equipsink {
                                          : "deny (hand L held by a cast claim)";
                 callWorker = false;
             } else if (refuse) {
-                if (observe) verdict = ownerBound ? "would-deny (the claim binds its own client)" : "would-deny";
+                if (observe) verdict = ownerBound  ? "would-deny (the claim binds its own client)"
+                                     : deniedRoute ? "would-deny (denied category: no route is exempt)"
+                                                   : "would-deny";
                 else {
-                    verdict    = ownerBound ? "deny (the claim binds its own client)" : "deny";
+                    verdict    = ownerBound  ? "deny (the claim binds its own client)"
+                               : deniedRoute ? (playerMenuPath ? "deny (denied category: the player's menu may trade it, the NPC never equips it)"
+                                                               : "deny (denied category: no route is exempt)")
+                                             : "deny";
                     callWorker = false;
                 }
+            }
+            // Review F1: a denied-category item the sink lets ON (its source outranks the claim) is recorded
+            // with that source, so the enforce pass does not strip it (WornDeniedRefused). Wrapped: nothing
+            // may unwind into the engine's equip frame.
+            try {
+                if (equipClaimed && dv.blacked && !selfPath) {
+                    if (callWorker && !refuse)
+                        RecordStood(actorId, itemId, eqSrc != apmf::sources::kNoSource ? eqSrc : apmf::sources::kUnattributedSource);
+                    else if (!callWorker)
+                        ForgetStood(actorId, itemId);
+                }
+            } catch (...) {
             }
             // D2 counters + the STANDS / FORCE ANOMALY lines. Wrapped: nothing may unwind into the
             // engine's equip frame. The source's hit was counted when the caller was named.
@@ -957,6 +1014,27 @@ namespace apmf::equipsink {
         v.observe  = g_observeOnly.load(std::memory_order_relaxed) ||
                      (a_set.flags & APMF_API::kEquipAuth_ObserveOnly) != 0;
         return v;
+    }
+
+    bool WornDeniedRefused(const apmf::EquipSetView& a_set, RE::FormID a_actor, RE::FormID a_item,
+                           std::uint32_t a_competes, apmf::sources::SourceId& a_src, bool& a_known) {
+        a_src   = apmf::sources::kEngineSource;
+        a_known = false;
+        if (!DeclaredSetVerdict(a_set, a_item, a_competes).blacked) return false;
+        {
+            std::scoped_lock lk(g_stoodMx);
+            if (const auto it = g_stoodSrc.find(StoodKey(a_actor, a_item)); it != g_stoodSrc.end()) {
+                a_src   = it->second;
+                a_known = true;
+            }
+        }
+        bool bound = false;
+        try {
+            // The sink's own ch.17 ranking for a denied category: binds the owner, ranks an unknown source.
+            return RankEquipDeny(a_set.handle, a_src, /*bindsOwner*/ true, bound, /*rankUnknown*/ true).enforce;
+        } catch (...) {
+            return false;   // a registry throw never strips (the degrade direction)
+        }
     }
     bool ObserveOnly() { return g_observeOnly.load(std::memory_order_relaxed); }
     bool DenyScript()  { return g_denyScript.load(std::memory_order_relaxed); }
