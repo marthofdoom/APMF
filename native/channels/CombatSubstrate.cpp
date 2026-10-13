@@ -72,10 +72,12 @@
 //   4. ONE Actor::StartCombat(anchor, nullptr) -- the call ch.21 makes, verified row
 //      CombatEntry.Actor.StartCombat, inside reentrydeny::ClientEntryScope (a declared entry
 //      passes a ch.22 deny, INVARIANTS #0 (h) condition 4). A false return ends the substrate;
-//   5. S2a: the process ignoring-combat bit (AIProcess+0x139, read by AE 0x6D6780 / SE 0x643F00)
-//      is set ONCE, the controller is NOT paused (its +0x42 was copied from the bit, still 0,
-//      at birth: AE 0x5582F8 / SE 0x4FCC6F), then Actor::EvaluatePackage(false, false) once
-//      (resetAI stays false). The package gate (AE 0x6D8950 via 0x6B6DF0) lets the follower's
+//   5. S2a (order corrected by review F2 of a512763; the design's 3.4 said set-then-evaluate):
+//      Actor::EvaluatePackage(false, false) once (resetAI stays false) FIRST; once the engine has
+//      run that re-pick (WriteBitAfterRepick: kEvpBuffered cleared, then one more Poll), the
+//      process ignoring-combat bit (AIProcess+0x139, read by AE 0x6D6780 / SE 0x643F00) is set
+//      ONCE. The controller is NOT paused (its +0x42 was copied from the bit, still 0, at birth:
+//      AE 0x5582F8 / SE 0x4FCC6F). The package gate (AE 0x6D8950 via 0x6B6DF0) lets the follower's
 //      own package run, so it keeps walking under it (marth: "block combat from affecting
 //      movement and have them continue using the non combat package for movement"). The engine
 //      re-syncs the bit from the package flag on a re-evaluation (UpdateIgnoringCombat AE
@@ -108,8 +110,9 @@
 //     owns answers "dead" at StartCombat's TARGET check (verified row
 //     Substrate.StartCombat.TargetIsDeadCall: AE +0xCC, return 0x6B6A0A; SE +0xCA, return
 //     0x625288). StartCombat's own `this` is in rdi there; a 17-byte stub in front of the
-//     thunk hands it in as a third argument (channels/CombatReentryDeny.cpp). KNOWN HOLE (design
-//     3.5): a group JOIN (StartCombat's third argument) is not caught at that check;
+//     thunk hands it in as a third argument (channels/CombatReentryDeny.cpp). A RECORDED HOLE
+//     (design 3.5; recorded, NOT approved by marth): a group JOIN (StartCombat's third argument)
+//     is not caught at that check;
 //   * the anchor's group entry is kept KNOWN (the held engagement's own un-lose write,
 //     INVARIANTS #0 (i) condition 1, for the anchor only) so the group never searches for it;
 //   * other spells: the floors + ch.8 / 0x0F / 0x0A as before; only the claimed spell runs.
@@ -126,7 +129,11 @@
 // deny above reads it and stands down on the combat thread at once. The game-thread pass then:
 // restores the bit, removes the anchor from the group (CombatGroup::RemoveTarget, verified row:
 // AE 44705 0x803D70 / SE 43483 0x76A560), releases the floors, drops the holder (the anchor goes
-// home on 1 -> 0), and calls NO StopCombat: the fight goes on, the client's cast claim is kept.
+// home on 1 -> 0). NO StopCombat while the real foe is in the holder's group: the fight goes on,
+// the client's cast claim is kept. marth 2026-10-13 (review F6, "End an empty fight"): when the
+// group has NO target left once the anchor is removed (triggers (b) / (c): the foe was never in
+// it), the fight is ended ONCE through the held engagement's ranked StopCombat
+// (combatentry::hold::StopCombatRanked); the DROPPED line says which case it was.
 //
 // CLOSE (design 3.6): the claim's first observed FIRE (fire-and-forget; the census 0x0B
 // NotifyStartCast seat), the claim's end (released, expired, the stop percent), the client's
@@ -136,7 +143,7 @@
 // the slot table (the anchor home on 1 -> 0), EvaluatePackage(false, false). Prior behaviour
 // returns because nothing else was written: the package was never replaced.
 //
-// LOAD (no co-save). The holder set is game state only. A save written while a substrate was open
+// LOAD (no co-save; the sweep below APPROVED by marth 2026-10-13, review F8). The holder set is game state only. A save written while a substrate was open
 // carries the holder's controller and the anchor's position: AfterLoad sends the anchor home and,
 // for a loaded actor whose group still lists the anchor, removes the anchor from that group
 // (RemoveTarget) and, when nothing else is left for it to fight, ends that combat (StopCombat).

@@ -119,7 +119,7 @@ and installed, but observe-only.
 ```
 
 <a id="abi-history"></a>
-## ABI v10 to v22: what each version added
+## ABI v10 to v23: what each version added
 
 Moved verbatim from `native/APMF_API.h` (line 96 at 9d01cdf). The header keeps a pointer to this anchor.
 
@@ -193,6 +193,11 @@ POD structs APMF_EquipPrefEntry / APMF_EquipPrefInfo, and APMF_API_v22 with TWO 
 (SetEquipPreference, GetEquipPreferenceState). A client must see abiVersion >= 22 before it asks
 for the intent or calls a slot: an older APMF REFUSES intent 26 ("no channel serves intent 26").
 See "ABI v22: EQUIP PREFERENCE" at the end of this header.
+ABI v23 (2026-10-13, combat substrate slice S2a): kIntent_CombatSubstrate (intent 27) only, no struct
+and no slot (it rides RequestEx / Repoint / Release; param.fval = TTL seconds). An older APMF REFUSES
+intent 27 ("no channel serves intent 27"); a v23 APMF with [CombatSubstrate] bCombatSubstrate=0 (the
+default) refuses it by name. GetSubstrateState is NOT in v23: its consumer is MFO's slice S3. Docs/FACETS.md
+"Combat substrate", INVARIANTS #0 (j).
 ```
 
 <a id="intent-18"></a>

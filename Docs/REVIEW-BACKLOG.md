@@ -730,3 +730,60 @@ Raised against a2d914c, 2026-10-12. Reviewer (verbatim): "On Windows a queued wr
 
 ### APMF-B90 (SEV-5) -- menu Winner() keeps naming a client that released every claim until it idles
 Raised against a2d914c, 2026-10-12. Reviewer (verbatim): "A client that released everything stays \"winner\" until it goes idle after 3 loads. That is the same rule every other source already follows."
+
+## Combat substrate S2a, tier-3 review round 1 (raised against a512763, 2026-10-13)
+
+Source: the Opus tier-3 review of `feat/apmf-combat-substrate` @ a512763 (its log, quoted verbatim below, is
+`scratchpad/agentlogs/review-substrate-s2a.md`; the full finding text went to the coordinator in the review's
+handback). Fixed in the same round: F1-F6, F9, F10. F8 (the AfterLoad sweep) was APPROVED by marth 2026-10-13
+and is recorded in INVARIANTS #0 (j) condition 4. MAP.md's `channels/CombatSubstrate.cpp` row cross-references
+these entries.
+
+### APMF-B91 (CLEARED, F7) -- RemoveTarget called unlocked from the game thread
+Raised against a512763, 2026-10-13. Reviewer (verbatim, review log): "RemoveTarget: no lock inside (erase unlocked;
+0x83DBA0 takes CombatManager+0x18 lock); engine 46875 + 40590 call it unlocked; CombatGroup::Update takes group
+lock." CLEARED by that evidence: the substrate calls it the way the engine's own main-thread paths do. Kept here as
+the record (the same exposure class as APMF-B26).
+
+### APMF-B92 (SEV-4, F11) -- the allow-list denies EquipSpell / EquipObject (interplay with S4)
+Raised against a512763, 2026-10-13. Reviewer finding F11 (title per the coordinator: "EquipSpell denied vs S4").
+While a substrate holds the actor, the tree's own equip leaves are force-failed, so the spell must already be in
+the hand (MFO's `Loadout::Prepare` today). Slice S4 (the engine equips the claimed spell itself, probe P2) cannot
+work under a substrate until this is decided. Revisit with S4.
+
+### APMF-B93 (SEV-4, F12) -- the FIRE close may cut the charge
+Raised against a512763, 2026-10-13. Reviewer (verbatim, review log): "NotifyStartCast start-vs-release
+unresolved." Finding F12 (per the coordinator: "the fire close may cut the charge; P4 must prove it"): the
+census's 0x0B NotifyStartCast is the close signal; if it fires at the START of the cast rather than the release,
+the close (StopCombat) would interrupt the animation. P4 (MFO slice S3) must show `[ctcensus] ... VERDICT: FIRED
+... ANIMATED` BEFORE `[substrate] ... CLOSE reason=fired`.
+
+### APMF-B94 (SEV-4, one of F13-F16) -- the ranking is checked once, at open
+Raised against a512763, 2026-10-13. Reviewer (verbatim, review log): "rank checked once at open (slider
+mid-substrate)". A priority slider moved while a substrate is open (at most 15 s) takes effect at the next open.
+
+### APMF-B95 (SEV-5, one of F13-F16) -- APMF.esl group order NPC_, PACK, CELL
+Raised against a512763, 2026-10-13. Reviewer (verbatim, review log): "ESL: PACK group byte-identical; header diff
+only NEXT_OBJECT_ID; CELL/ACHR/REFR nesting valid; group order NPC_,PACK,CELL (non-canonical, SEV-5)". Reconcile
+with marth's xEdit check of the ESL.
+
+### APMF-B96 (SEV-5, one of F13-F16) -- the anchor NPC has no head parts / FaceGen
+Raised against a512763, 2026-10-13. Reviewer (verbatim, review log): "NPC lacks head parts/facegen (only matters
+if visible)". Moot while the anchor is invisible; a visible anchor (round-1 finding F3) would show it.
+
+### APMF-B97 (SEV-4, one of F13-F16) -- a drop that leaves a targetless group
+Raised against a512763, 2026-10-13. Reviewer (verbatim, review log): "DropSub after (b)/(c): group may have 0
+targets, no StopCombat -> check engine behaviour on empty group". RESOLVED in round 1 by marth's F6 ruling ("End
+an empty fight": the empty group is ended once through the ranked StopCombat). Kept for the field check that the
+ranked path does end it.
+
+### APMF-B98 (SEV-5) -- the DROP line's holder count can miscount
+Raised against a512763, 2026-10-13 (the coordinator's "DROP log miscount"). `DropSub` logs `holders {}->{}` as
+`LiveHolders() + 1`, and `LiveHolders()` excludes every slot whose REAL bit is set, so two holders dropping in the
+same frame under-count the "before" figure. Log text only.
+
+### APMF-B99 (SEV-4) -- the two function-node classes are not traced
+Raised in round 1's fix, 2026-10-13 (author, from F1's census of the node classes). `CombatBehaviorTreeNodeEvaluateFunction`
+and `CombatBehaviorTreeNodeUpdateFunction` are behaviour-tree nodes that are not `NodeObject*`, so the allow-list
+does not see them (INVARIANTS #0 (j) 2(a)). INFERRED to evaluate conditions / run an update callback only; trace
+what their functions do before S3 relies on the allow-list.
