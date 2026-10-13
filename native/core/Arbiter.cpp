@@ -13,6 +13,7 @@
 #include "core/Registry.h"
 #include "core/Sightline.h"
 #include "core/CastGuard.h"        // ch.25 cast guard (ABI v21)
+#include "core/EquipPreference.h"   // ch.26 heartbeat (Pump)
 #include "core/Sources.h"          // Harbinger 1a
 #include "core/PackageSources.h"   // Harbinger 1a
 #include "core/SpectatorGate.h"
@@ -70,6 +71,10 @@ namespace apmf {
         // held across an engine call; the friendlies' own-ray pairs it asks for are measured by
         // sightline::Pump on the next frames.
         apmf::castguard::Pump();
+
+        // ch.26 EQUIP PREFERENCE (ABI v22; core/EquipPreference.h): the 30 s heartbeat of the score
+        // lift and the force counters. One relaxed load and a clock read between beats.
+        apmf::equippref::Pump();
 
         // Docs/SPEC-PACKAGE-HOLD.md §4.1 item 1 -- OBSERVE-ONLY package-drift
         // correlation probe. Reuses this EXISTING once-per-frame game-thread seat

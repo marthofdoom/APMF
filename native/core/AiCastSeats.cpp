@@ -8,6 +8,7 @@
 #include "core/HandBlock.h"   // review F3: the Ranged probe attributes the hand-claim block's NO
 #include "core/ActionGate.h"   // RangedProbeClassify / RangedProbeLineBudget ([Probe] bRangedSelect)
 #include "core/EquipSink.h"    // CategoryNames
+#include "core/EquipPreference.h"   // ch.26 (ABI v22): the score lift both 0x0C thunks hand their answer to
 
 #include <array>
 #include <cmath>
@@ -216,18 +217,12 @@ namespace apmf::aicastseats {
         // on must not turn a 30-vtable probe log on with it.
         std::atomic<bool> g_itemScoreProbeEnabled{ false };
 
-        // F5: the SPELL score steer. Declared here because this thunk -- the seat the
-        // engine calls when it scores a SPELL/STAFF item -- is the only place the
-        // steer can ever match a claimed spell form; WeaponScoreThunk's copy tested a
-        // WEAPON's FormID against a cast claim's driven form, which can never be
-        // equal, and has been deleted. DEFINED further down beside kScoreSteerBias
-        // and the hand-slot globals it reads, so nothing moves in this file.
-        // Returns the score to hand back to the engine (the engine's own answer
-        // unchanged unless the bias applies), sets `a_steered` when the bias was
-        // actually applied, and reports the hand it resolved for logging.
-        float SteerScoreForCastClaim(RE::CombatInventoryItem* a_this, RE::FormID a_actor,
-                                     RE::FormID a_itemForm, float a_engineScore,
-                                     bool& a_steered, allowance::Hand& a_hand);
+        // F5: the SPELL score steer rides this thunk -- the seat the engine calls when it
+        // scores a SPELL/STAFF item, the only place a cast claim's driven form can match.
+        // ABI v22 (weighting phase 1, D1/D5): the steer and the ch.26 equip preference are
+        // ONE lift, core/EquipPreference.cpp OnScore: the engine's own score one step above
+        // the best competitor in its engine category, bound by the priority sliders. The
+        // additive +1000 (kScoreSteerBias) is gone: LoreRim scores reach 1320.
 
         float CalculateScoreThunk(RE::CombatInventoryItem* a_this, RE::CombatController* a_cc) {
             const auto vt  = *reinterpret_cast<std::uintptr_t*>(a_this);
@@ -257,30 +252,28 @@ namespace apmf::aicastseats {
             // ---- F5 (2026-09-06, DIAG RC5): THE SPELL SCORE STEER LIVES HERE ----
             // This is the seat the engine calls when it scores a SPELL or STAFF item,
             // so it is the only seat where a cast claim's driven form can ever equal
-            // the form being scored. The steer used to live in WeaponScoreThunk,
-            // where its cast-claim branch compared a WEAPON's FormID against that
-            // driven form and therefore could never match: EnableScoreSteer steered
-            // weapons and nothing else -- the exact inverse of the requirement, and
-            // a code gap no INI setting could close. The bias is additive over the
-            // ENGINE'S OWN answer (never fabricated), scoped to the item's own hand,
-            // and applies only to the form a live claim actually drives.
-            bool            steered = false;
-            allowance::Hand hand    = allowance::Hand::kUnknown;
-            const float     finalScore = SteerScoreForCastClaim(a_this, fid, itemForm, score, steered, hand);
+            // the form being scored. ABI v22: the lift is core/EquipPreference.cpp
+            // OnScore (the ch.8b driven form on its hand, or a ch.26 preferred staff),
+            // over the ENGINE'S OWN answer (never fabricated), one step above the best
+            // competitor in the engine's category, and only while the claim outranks
+            // the source answering beneath this seat.
+            apmf::equippref::ScoreOutcome lift{};
+            const float finalScore = apmf::equippref::OnScore(a_this, a_cc, actor, score,
+                                                              reinterpret_cast<std::uintptr_t>(orig), true, lift);
+            const bool  steered    = lift.lifted && lift.castSteer;
 
             // The steer's OWN line, independent of GROUP A's probe flag: a steer that
             // fires unobserved is exactly the "path proven to exist but never seen to
             // run" trap (principle 5). Only an actual bias application logs, so this
             // is rare traffic even with the probe off.
             if (steered && ThrottleOK(g_lastSteerMs, fid, itemForm)) {
-                spdlog::info("[aicastseats] t={} 0x{} '{}' SCORE-STEER item=0x{} '{}' hand={} "
-                             "engineScore={:.3f} STEERED->{:.3f} (ch.8b cast claim drives this form on "
-                             "this hand)",
+                spdlog::info("[aicastseats] t={} 0x{} '{}' SCORE-STEER item=0x{} '{}' hand={} cat={} "
+                             "engineScore={:.3f} best-competitor={:.3f} STEERED->{:.3f} (ch.8b cast claim drives "
+                             "this form on this hand; one step above the best competitor)",
                              apmf::clock::MonotonicMs(), apmf::log::Hex(fid),
                              actor->GetName() ? actor->GetName() : "?", apmf::log::Hex(itemForm),
-                             item && item->GetName() ? item->GetName() : "?",
-                             hand == allowance::Hand::kLeft ? "L" : hand == allowance::Hand::kRight ? "R" : "?",
-                             score, finalScore);
+                             item && item->GetName() ? item->GetName() : "?", lift.hand, lift.category,
+                             score, lift.rival, finalScore);
             }
 
             if (g_itemScoreProbeEnabled.load(std::memory_order_relaxed) &&
@@ -290,7 +283,8 @@ namespace apmf::aicastseats {
                              apmf::clock::MonotonicMs(), apmf::log::Hex(fid),
                              actor->GetName() ? actor->GetName() : "?", apmf::log::Hex(itemForm),
                              item && item->GetName() ? item->GetName() : "?", cls ? cls : "<unresolved>",
-                             score, steered ? " (STEERED, see the SCORE-STEER line)" : "");
+                             score, steered        ? " (STEERED, see the SCORE-STEER line)"
+                                    : lift.lifted  ? " (LIFTED by a ch.26 preference, see the [ch.26] line)" : "");
             }
             return finalScore;
         }
@@ -356,16 +350,15 @@ namespace apmf::aicastseats {
         // per class at install, informational only (not gating), so a future
         // pass can confirm/replace this whole check with a real name match.
         //
-        // TASK 2 (score bias, [AiCastSeats] EnableScoreSteer, default 0) NO LONGER
-        // LIVES HERE -- F5, 2026-09-06. This group is OBSERVE-ONLY again: it
-        // measures weapon scores and never alters one. The steer moved to the seat
-        // that scores SPELL/STAFF items (SteerScoreForCastClaim, called from
-        // CalculateScoreThunk), because that is the only seat where a cast claim's
-        // driven form can equal the form being scored; the branches that used to
-        // sit here could only ever bias a WEAPON. EnableScoreSteer therefore now
-        // depends on GROUP A's item vtables being installed, not on this group's
-        // -- Install() installs the item thunk for `groupA || scoreSteer` and logs
-        // that dependency explicitly.
+        // F5 (2026-09-06) deleted the old weapon steer here (it biased by a ch.15 or
+        // ch.8b claim, the wrong claims). ABI v22 (weighting phase 1, 2026-10-12) puts a
+        // CLIENT-DECLARED bias back on this group: a ch.26 kIntent_EquipPreference item
+        // is lifted one step above the best competitor in its engine category
+        // (core/EquipPreference.cpp OnScore; [AiCastSeats] EnableScoreSteer, default 1
+        // since v22). Every other weapon score is returned verbatim and the WEAPON-SCORE
+        // measurement is unchanged. The ch.8b spell steer stays on GROUP A (the seat that
+        // scores spell/staff items) -- Install() installs the item thunk for
+        // `groupA || scoreSteer`.
         // ======================================================================
 
         using WeaponScore_t = float (*)(RE::CombatInventoryItem*, RE::CombatController*);
@@ -548,65 +541,12 @@ namespace apmf::aicastseats {
                    (sv && a_actor->HasPerk(sv));
         }
 
-        // RIGHT-SIZED from real field data (marth 2026-09-06 field session):
-        // measured weapon-score magnitudes were Falmer War Axe 194, bow 81, and
-        // magic scores ~0.08-29 -- so an additive bias only needs to clear ~200
-        // to dominate any same-category rival actually observed. 1000.0f is an
-        // additive offset over the engine's OWN answer (finalScore = engineScore
-        // + kScoreSteerBias, unchanged shape), right-sized to that ~200 ceiling
-        // with headroom, replacing the old 100000.0f placeholder that predated
-        // any measurement. Still ships with EnableScoreSteer default OFF in code
-        // (see Install()) -- this constant only matters once that INI flag is
-        // deliberately turned on.
-        constexpr float kScoreSteerBias = 1000.0f;
-
-        // F5 (2026-09-06, DIAG RC5) -- the SPELL score steer, forward-declared above
-        // CalculateScoreThunk (the seat that scores spell/staff items) and defined
-        // HERE, beside the two things it reads: kScoreSteerBias just above and the
-        // hand-slot globals GROUP C resolves at install. Nothing was moved for it.
-        //
-        // The hand is resolved from THIS item instance's own `itemSlot.equipSlot`
-        // (a real CombatInventoryItem member at a static_assert'd offset), compared
-        // against the vanilla Left/Right Hand BGSEquipSlot default objects -- the
-        // SAME read core/EquipGate.cpp's T2a gate does for `callerHand` and the same
-        // one WeaponScoreThunk already does, not a second mechanism. An item the
-        // engine built for neither vanilla hand slot resolves to kUnknown, which
-        // TryGetCastSeatClaimForHand forwards to the actor-wide floor exactly like
-        // every other caller of that shape.
-        //
-        // The bias is ADDITIVE over the engine's own answer and applies ONLY when a
-        // live ch.8b claim occupying this hand DRIVES this exact form (proxy if one
-        // was minted, else the spell -- the same driven-form resolution every other
-        // seat uses). A deny-only claim (kCastFlag_DenyHandOnly) drives no form, so
-        // it can never bias anything. Never fabricates a score, never a NO: the
-        // engine always answers first and the base is always its real number.
-        float SteerScoreForCastClaim(RE::CombatInventoryItem* a_this, RE::FormID a_actor,
-                                     RE::FormID a_itemForm, float a_engineScore,
-                                     bool& a_steered, allowance::Hand& a_hand) {
-            a_steered = false;
-            a_hand    = allowance::Hand::kUnknown;
-            if (!a_this || a_actor == 0 || a_itemForm == 0) return a_engineScore;
-            if (!g_scoreSteerEnabled.load(std::memory_order_relaxed)) return a_engineScore;
-
-            auto*      slot = a_this->itemSlot.equipSlot;
-            const auto lh   = g_leftHandSlot.load(std::memory_order_acquire);
-            const auto rh   = g_rightHandSlot.load(std::memory_order_acquire);
-            a_hand = (slot && slot == lh) ? allowance::Hand::kLeft  :
-                     (slot && slot == rh) ? allowance::Hand::kRight :
-                                             allowance::Hand::kUnknown;
-            const auto castHand = (a_hand == allowance::Hand::kLeft)  ? apmf::CastHand::kLeft  :
-                                  (a_hand == allowance::Hand::kRight) ? apmf::CastHand::kRight :
-                                                                        apmf::CastHand::kUnknown;
-
-            apmf::CastSeatClaim seat{};
-            if (!apmf::ControlMap::Get().TryGetCastSeatClaimForHand(a_actor, castHand, seat))
-                return a_engineScore;
-            const RE::FormID driven = seat.proxy ? seat.proxy : seat.spell;
-            if (driven == 0 || driven != a_itemForm) return a_engineScore;
-
-            a_steered = true;
-            return a_engineScore + kScoreSteerBias;
-        }
+        // ABI v22 (weighting phase 1): kScoreSteerBias (an additive +1000) and
+        // SteerScoreForCastClaim were here. Both are replaced by core/EquipPreference.cpp
+        // OnScore, which both 0x0C thunks call: the engine's own score one step above the
+        // best competitor in its engine category (D1), bound by the priority sliders (D5).
+        // An additive constant was the wrong shape: the 10-12 LoreRim logs scored items up
+        // to 1320, so +1000 on a 10.08 proxy lost to an unclaimed 1008.
 
         // Dedup-on-transition, not a bare time throttle (marth 2026-09-06: "a
         // recent probe printed 37 identical lines of a stable condition through
@@ -724,34 +664,32 @@ namespace apmf::aicastseats {
                 }
             }
 
-            // F5 (2026-09-06, DIAG RC5): THE WEAPON STEER IS DELETED, THE PROBE
-            // STAYS. Both former bias branches lived here and both were wrong for
-            // the requirement "we dont need weapon steer, only spell" (marth):
-            // the ch.15 branch pushed a claimed WEAPON into the hand, and the ch.8b
-            // branch compared a WEAPON's FormID against a cast claim's driven form,
-            // which can never be equal -- so the only thing EnableScoreSteer ever
-            // did was steer weapons. The steer now lives at the seat that scores
-            // SPELL/STAFF items (SteerScoreForCastClaim, called from
-            // CalculateScoreThunk above), where the comparison can actually match.
-            //
-            // What REMAINS here is the observe-only WEAPON-SCORE report: the
-            // per-hand + slotMask measurement that produced the real score
-            // magnitudes (Falmer War Axe 194, bow 81, magic 0.08-29) this whole
-            // diagnosis and kScoreSteerBias's own sizing rest on. Removing the
-            // steer must not remove the measurement. This thunk now returns the
-            // engine's own answer verbatim, always.
-            if (WeaponScoreLogDue(fid, itemForm, hand, engineScore, false)) {
+            // F5 (2026-09-06, DIAG RC5) deleted the old weapon steer (it biased by the
+            // wrong claims, ch.15 / ch.8b). ABI v22 (weighting phase 1): a ch.26
+            // kIntent_EquipPreference item is LIFTED one step above the best competitor
+            // in its engine category (core/EquipPreference.cpp OnScore), only while the
+            // claim outranks the source answering beneath this seat; every other weapon
+            // score is returned verbatim. The WEAPON-SCORE report below is unchanged
+            // (the field measurement the step size rests on); it names a lift on the
+            // same line, after engineScore.
+            apmf::equippref::ScoreOutcome lift{};
+            const float finalScore = apmf::equippref::OnScore(a_this, a_cc, actor, engineScore,
+                                                              reinterpret_cast<std::uintptr_t>(orig), false, lift);
+            if (WeaponScoreLogDue(fid, itemForm, hand, engineScore, lift.lifted)) {
                 const char* cls  = ResolveTypeName(vt);
                 const char* hs   = hand == allowance::Hand::kLeft  ? "L" :
                                    hand == allowance::Hand::kRight ? "R" : "?";
                 spdlog::info("[aicastseats] t={} 0x{} '{}' WEAPON-SCORE class={} rtti={} cat={} hand={} "
-                             "slotMask=0x{} item=0x{} '{}' engineScore={:.3f}",
+                             "slotMask=0x{} item=0x{} '{}' engineScore={:.3f}{}",
                              apmf::clock::MonotonicMs(), apmf::log::Hex(fid),
                              actor->GetName() ? actor->GetName() : "?", tag, cls ? cls : "<unresolved>",
                              cat, hs, apmf::log::Hex(slotMask), apmf::log::Hex(itemForm),
-                             item && item->GetName() ? item->GetName() : "?", engineScore);
+                             item && item->GetName() ? item->GetName() : "?", engineScore,
+                             lift.lifted ? fmt::format(" LIFTED->{:.3f} (ch.26 preference; best competitor {:.3f})",
+                                                       finalScore, lift.rival)
+                                         : std::string());
             }
-            return engineScore;
+            return finalScore;
         }
 
         // ======================================================================
@@ -1265,7 +1203,7 @@ namespace apmf::aicastseats {
         // steer) is its own flag and stays OFF until this probe's own field data
         // confirms 0x0C actually runs.
         const bool groupC     = ReadIniFlag("EnableWeaponScoreProbe", 1);   // GROUP C, default ON (TASK 1)
-        const bool scoreSteer = ReadIniFlag("EnableScoreSteer", 0);         // TASK 2 (score bias), default OFF
+        const bool scoreSteer = ReadIniFlag("EnableScoreSteer", 1);         // the score lift (ch.8b steer + ch.26), default ON since ABI v22 (D5)
         // TASK 2 (dual-wield preference), marth 2026-09-06 PASS S brief -- its OWN
         // section/key per the brief ([EquipGate] EnableDualWieldPreference, not
         // [AiCastSeats]): the FACET this flag governs (Shield admission, T2a's
@@ -1583,6 +1521,11 @@ namespace apmf::aicastseats {
         // rather than pretending to be on.
         g_itemScoreProbeEnabled.store(groupA, std::memory_order_relaxed);
         g_scoreSteerEnabled.store(scoreSteer && nScore > 0, std::memory_order_relaxed);
+        // ABI v22: arm the one score lift both thunks call (core/EquipPreference.cpp). It needs a
+        // seat to sit in: the ch.8b spell steer rides GROUP A (nScore), a ch.26 weapon / shield /
+        // torch preference GROUP C (nWeaponScore), a ch.26 staff GROUP A.
+        apmf::equippref::Arm(scoreSteer, nWeaponScore, nScore, g_leftHandSlot.load(std::memory_order_acquire),
+                             g_rightHandSlot.load(std::memory_order_acquire));
         g_dualWieldPrefEnabled.store(dualWieldPref && nShieldEquip > 0, std::memory_order_relaxed);
         if (rangedProbe && !g_rangedGateArmed.load(std::memory_order_relaxed))
             spdlog::warn("[ranged-probe] Ranged CheckShouldEquip (0x0F) NOT observed -- it rides GROUP C, which "
@@ -1594,11 +1537,11 @@ namespace apmf::aicastseats {
                      "GetMagicTarget on {}/{}/{} caster vtable(s). GROUP C (weapon-class item score) {} -- "
                      "CalculateScore on {}/{} weapon vtable(s) ({} refused the install-time function-"
                      "pointer check). Score-steer (TASK 2a, biases a claimed form's own score) is {} "
-                     "([AiCastSeats] EnableScoreSteer, default 0) -- {}. Dual-wield preference (TASK 2b, "
+                     "([AiCastSeats] EnableScoreSteer, default 1 since ABI v22) -- {}. Dual-wield preference (TASK 2b, "
                      "denies Shield admission for a perked, confirmed-second-weapon one-handed follower) is "
                      "{} ([EquipGate] EnableDualWieldPreference, default 0) -- {}. All flags read ONCE from "
                      "Data/SKSE/Plugins/APMF.ini: [AiCastSeats] EnableItemScoreProbe / EnableCasterSeatProbe "
-                     "(default 0=OFF), EnableWeaponScoreProbe (default 1=ON), EnableScoreSteer (default 0); "
+                     "(default 0=OFF), EnableWeaponScoreProbe (default 1=ON), EnableScoreSteer (default 1); "
                      "[EquipGate] EnableDualWieldPreference (default 0). Every probe chains to the original "
                      "unconditionally when its own steer/deny flag is OFF; never alters an argument.",
                      groupA    ? "ARMED" :
@@ -1609,8 +1552,9 @@ namespace apmf::aicastseats {
                      g_scoreSteerEnabled.load(std::memory_order_relaxed) ? "ARMED" : "OFF",
                      !scoreSteer                ? "flag is off" :
                      nScore == 0                ? "flag is on but 0 spell/staff item vtables installed, so it cannot fire" :
-                                                   "the spell/staff item seat is live -- steer biases a claimed "
-                                                   "form's own SPELL score (the weapon steer was deleted, F5)",
+                                                   "the spell/staff item seat is live -- the steer lifts a claimed "
+                                                   "form's own SPELL score one step above its best competitor (ch.26 "
+                                                   "weapon preferences ride GROUP C, see the [ch.26] line)",
                      g_dualWieldPrefEnabled.load(std::memory_order_relaxed) ? "ARMED" : "OFF",
                      !dualWieldPref ? "flag is off" :
                      nShieldEquip == 0 ? "flag is on but the Shield CheckShouldEquip install was refused, so it cannot fire" :

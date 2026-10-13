@@ -35,8 +35,8 @@ Facet reference: [ch.8b Cast](FACETS.md#ch8b-cast-kintent_cast).
 
 score observation, and the one score lever.
 
-- **`EnableScoreSteer`** (default `1`). Nudges the AI's own score for a spell a client has claimed, so the AI picks the claimed spell instead of its own preference. COMPILED DEFAULT IS 0. Shipped as 1: it was gated off until field data proved the underlying scoring hook actually runs, and the 2026-09-09 deck session confirmed it fires. This is the configuration that was field tested.
-- **`EnableWeaponScoreProbe`** (default `1`). Observe-only probes. All three only add log lines, none change behaviour.
+- **`EnableScoreSteer`** (default `1`). Lifts the AI's own combat score for an item a client prefers, so the AI picks it by its own rules: a spell a client's cast claim drives, or a weapon, shield, torch or staff a client declared with the equip preference (ABI v22). The lift is one step above the best other item in the same group, never from a score of 0, and only while the client outranks the source beneath the score in `APMF_Sources.ini`. `0` turns every lift off and refuses equip preference claims. Compiled default is 1 since ABI v22 (it was 0 in code and 1 in the shipped file).
+- **`EnableWeaponScoreProbe`** (default `1`). Observe-only probes. All three only add log lines, none change behaviour. `EnableWeaponScoreProbe` also installs the weapon score seat the equip preference lifts weapons, shields and torches through: `0` leaves only spells and staves.
 - **`EnableItemScoreProbe`** (default `0`). 
 - **`EnableCasterSeatProbe`** (default `0`). 
 
@@ -49,7 +49,7 @@ the engine-equip facet, taken whole (ABI v7/v8, ch.17). A client declares what a
 - **`bEquipAuthority`** (default `1`). Installs the seat. 0 = the seat is not installed and kIntent_EquipAuthority claims are REFUSED (the client keeps its own equips; logged once).
 - **`bEquipObserveOnly`** (default `1`). 1 = log every verdict as would-deny and refuse nothing. THE FIRST FIELD BUILD SHIPS WITH THIS ON: it stays on until the probe criteria in Docs/FACETS.md Appendix E pass (every engine re-equip of an off-set item logs would-deny with a named path, zero would-deny with tls>0, zero Unknown paths). Set to 0 to enforce.
 - **`bEquipEnforceArmor`** (default `1`). 1 = enforce ARMOR verdicts even while bEquipObserveOnly=1 (weapons, shields, torches and ammo stay observe-only). marth 2026-10-06: MFO is the armor equip authority until the weighting rework. Set to 0 to make armor observe-only again.
-- **`bEquipDenyScript`** (default `0`). 1 = also refuse Papyrus (EquipItem/EquipItemEx) and console equips of items outside the declared set. Off: scripts are a quest author's deliberate act. Scope (APMF-B65): this also applies on an actor with NO ch.17 claim whose hand a live cast claim holds (the hand-claim block reads it there too): with it set, a Papyrus / console equip into that held hand is refused as well.
+- **`bEquipDenyScript`** (default `0`). 1 = also refuse Papyrus (EquipItem/EquipItemEx) and console equips of items outside the declared set. Off: scripts are a quest author's deliberate act. Scope (APMF-B65): this also applies on an actor with NO ch.17 claim whose hand a live cast claim holds (the hand-claim block reads it there too): with it set, a Papyrus / console equip into that held hand is refused as well. Since equip refusals follow the priorities (2026-10-12), a script or console equip ranks as `DirectCalls` (75 by default) on the Equip facet. A client at the default 50 does not outrank it, so with the default priorities this setting refuses nothing. It only takes effect for a client raised above DirectCalls in `APMF_Sources.ini` `[Equip]`.
 
 ### [HandBlock]
 

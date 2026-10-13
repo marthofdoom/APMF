@@ -7,6 +7,8 @@
 #include "core/HandBlock.h"     // the hand-claim block step (marth 2026-10-06)
 #include "core/CastObserve.h"   // NoteEquip: castobs interrupt attribution (passive)
 #include "core/Sources.h"       // Harbinger 1a: equip sources, the degrade rule, the census
+#include "core/FacetAttribution.h"   // D2 (2026-10-12): every deny here is ranked by the Equip facet priority
+#include "core/EquipPreference.h"    // ch.26 (ABI v22): kEquipPref_Force, the forced preference refusal
 
 #include <intrin.h>      // _ReturnAddress / _AddressOfReturnAddress (core/EquipGate.cpp precedent)
 #include <algorithm>
@@ -412,6 +414,31 @@ namespace apmf::equipsink {
             return g_ungovernedSeen.insert(key).second;
         }
 
+        // ---- D2 (marth 2026-10-12): "equip denies rank by PRIORITY like every other facet." ----
+        // The would-be deny of claim `a_claim` against the equip's source `a_src` (kNoSource = the
+        // caller could not be named): Decide's rule (core/FacetAttribution.h) WITHOUT its hit, because
+        // this seat already counted the hit when it named the caller. Enforce only when the claim's
+        // client priority on the Equip facet is STRICTLY above the source's; a source that IS the
+        // claim's own client ranks at the claim's priority (its own equip stands); an unnamed source is
+        // the degrade rule (never denied) unless APMF_Sources.ini [UnknownSources] Equip=override.
+        // Any thread, lock-free but ClaimPriority's shared lock.
+        apmf::facetattr::Verdict RankEquipDeny(APMF_API::Handle a_claim, apmf::sources::SourceId a_src) {
+            namespace src = apmf::sources;
+            apmf::facetattr::Verdict v;
+            v.claimPrio = src::ClaimPriority(a_claim, src::Facet::kEquip, &v.client);
+            if (a_src == src::kNoSource) {
+                v.unknown = true;
+                v.src     = src::kUnattributedSource;
+                if (!src::OverrideUnknown(src::Facet::kEquip)) return v;   // Q4: allowed, never denied
+                v.srcPrio = src::Priority(src::kUnattributedSource, src::Facet::kEquip);
+            } else {
+                v.src     = a_src;
+                v.srcPrio = a_src == v.client ? v.claimPrio : src::Priority(a_src, src::Facet::kEquip);
+            }
+            v.enforce = v.claimPrio > v.srcPrio;
+            return v;
+        }
+
         // ---- THE THUNK. Same signature as the worker; the two patched E8s land
         // here through one shared trampoline stub. ----
         void SinkThunk(RE::ActorEquipManager* mgr, RE::Actor* actor, RE::TESBoundObject* obj, EquipData* data) {
@@ -433,8 +460,12 @@ namespace apmf::equipsink {
             // hand (below). No ch.17 claim: the ch.17 masks must say nothing, so the view is
             // emptied (owned=0) and every non-hand verdict is "allow".
             const bool equipClaimed = ControlMap::Get().TryGetEquipSet(actorId, set);
+            // ABI v22 (ch.26, marth D4): a FORCED equip preference governs the actor's preferred hands
+            // too (core/EquipPreference.h). One relaxed load when no preference is declared anywhere.
+            apmf::equippref::ForceView force{};
+            const bool forced = apmf::equippref::AnyDeclared() && apmf::equippref::ForcedFor(actorId, force);
             if (!equipClaimed) {
-                if (!apmf::handblock::AnyHandHeld(actorId)) { g_worker(mgr, actor, obj, data); return; }
+                if (!forced && !apmf::handblock::AnyHandHeld(actorId)) { g_worker(mgr, actor, obj, data); return; }
                 set       = EquipSetView{};
                 set.owned = 0;
             }
@@ -475,6 +506,10 @@ namespace apmf::equipsink {
             bool   attributed = false;
             apmf::sources::SourceId interposers[4]{ -1, -1, -1, -1 };
             int    nInterposers = 0;
+            // D2: the source a deny here is ranked against (kNoSource = not named), and whether the
+            // caller is APMF itself (its own enforce equip: never ranked, it is no outside source).
+            apmf::sources::SourceId eqSrc      = apmf::sources::kNoSource;
+            bool                    selfPath = false;
             try {   // nothing may unwind into the engine's equip frame (a failure = unattributed = allowed)
                 void* frames[kScanFrames]{};
                 const unsigned short n = RtlCaptureStackBackTrace(0, kScanFrames, frames, nullptr);
@@ -516,21 +551,29 @@ namespace apmf::equipsink {
                 for (int k = 0; k < nInterposers; ++k)
                     apmf::sources::NoteHit(interposers[k], apmf::sources::Facet::kEquip);
                 if (caller.external && caller.kind == PathKind::kScript) {
-                    apmf::sources::NoteHit(apmf::sources::kDirectSource, apmf::sources::Facet::kEquip);
+                    eqSrc = apmf::sources::kDirectSource;
+                    apmf::sources::NoteHit(eqSrc, apmf::sources::Facet::kEquip);
                 } else if (caller.external && apmf::sources::IsSelf(reinterpret_cast<std::uintptr_t>(frames[at + 1]))) {
                     // APMF's own enforce equip (channels/EquipAuthority.cpp): not an outside source.
+                    selfPath = true;
                 } else if (caller.external && attributed) {
-                    if (const auto src = apmf::sources::Register(caller.ext, apmf::sources::Kind::kPlugin); src >= 0)
-                        apmf::sources::NoteHit(src, apmf::sources::Facet::kEquip);
+                    if (const auto ext = apmf::sources::Register(caller.ext, apmf::sources::Kind::kPlugin); ext >= 0) {
+                        eqSrc = ext;
+                        apmf::sources::NoteHit(eqSrc, apmf::sources::Facet::kEquip);
+                    }
                 } else if (attributed) {
-                    apmf::sources::NoteHit((caller.kind == PathKind::kScript || caller.kind == PathKind::kConsole)
-                                               ? apmf::sources::kDirectSource : apmf::sources::kEngineSource,
-                                           apmf::sources::Facet::kEquip);
+                    // A named engine path (the player's own menu included, which stays exempt below)
+                    // ranks as "Engine"; Papyrus / console reached through the engine as DirectCalls.
+                    eqSrc = (caller.kind == PathKind::kScript || caller.kind == PathKind::kConsole)
+                              ? apmf::sources::kDirectSource : apmf::sources::kEngineSource;
+                    apmf::sources::NoteHit(eqSrc, apmf::sources::Facet::kEquip);
                 }
             } catch (...) {
                 attributed = false;
                 siteSpec   = nullptr;
                 caller     = Caller{};
+                eqSrc        = apmf::sources::kNoSource;
+                selfPath   = false;
             }
 
             bool inSet = false;
@@ -557,7 +600,9 @@ namespace apmf::equipsink {
             apmf::handblock::HandHold hold{};
             const bool handHeld = apmf::handblock::HeldFor(actorId, competes, itemId,
                                                            apmf::handblock::SpellLike(obj), hold);
-            if (!equipClaimed && !handHeld) { g_worker(mgr, actor, obj, data); return; }
+            // ch.26 force: the preferred hands this item competes for without being preferred there.
+            const std::uint32_t forceMask = forced ? apmf::equippref::ForceRefusal(force, itemId, competes) : 0u;
+            if (!equipClaimed && !handHeld && !forceMask) { g_worker(mgr, actor, obj, data); return; }
 
             // Armor-only enforce: an item competing ONLY as plain armor (not a shield, a hand, ammo
             // or a torch) is enforced even under the global observe-only switch.
@@ -596,26 +641,71 @@ namespace apmf::equipsink {
             // also in-set. Letting tls>0 bypass the set would have let a second
             // copy of a DISPLACED off-set item ride back in on that re-entry, and
             // made probe criterion 2 ("zero would-deny with tls>0") vacuous.
-            const char* verdict = "allow";
-            bool        callWorker = true;
-            bool        refuse     = false;
-            bool        handBlock  = false;
-            if (!attributed) {
+            // D2 (marth 2026-10-12): EVERY deny below is RANKED: it stands only while the claim
+            // behind it outranks the equip's source on the Equip facet (RankEquipDeny). A source that
+            // outranks the claim keeps its equip (logged `STANDS`, counted stood). APMF's own enforce
+            // equip is not an outside source and is not ranked. The exemptions keep their places: an
+            // unattributed equip is the degrade rule (allowed) unless [UnknownSources] Equip=override,
+            // the player's own menu equip is player agency (allowed, force included), a script/console
+            // equip is exempt from the hand block and ch.17 unless DenyScript (then ranked as
+            // DirectCalls). The ch.26 FORCE step (ABI v22) is ranked too; a forced refusal the sliders
+            // do not allow is a FORCE ANOMALY (marth D4): not applied, logged at warn, counted.
+            const char*        verdict    = "allow";
+            bool               callWorker = true;
+            bool               refuse     = false;
+            bool               handBlock  = false;
+            bool               forceDeny  = false;
+            bool               anomaly    = false;
+            bool               ownClient  = false;   // F1: the forced preference's own client made this equip
+            apmf::facetattr::Verdict lastV{};          // the verdict of the most recent ranking
+            const char*        standsWhat = nullptr;   // the deny the sliders did not allow (log + counters)
+            apmf::facetattr::Verdict standsV{};
+            APMF_API::Handle   standsH    = APMF_API::kInvalidHandle;
+            apmf::facetattr::Verdict denyV{};          // the verdict of the deny that is applied (counters)
+            const bool unknownRanked = !attributed && apmf::sources::OverrideUnknown(apmf::sources::Facet::kEquip);
+            auto ranked = [&](APMF_API::Handle a_h, const char* a_what) {
+                if (selfPath) return true;   // APMF's own equip: unranked, exactly as before
+                apmf::facetattr::Verdict v{};
+                try {
+                    v = RankEquipDeny(a_h, eqSrc);
+                } catch (...) {
+                    v = apmf::facetattr::Verdict{};   // a registry throw never denies (the degrade direction)
+                }
+                lastV = v;
+                if (v.enforce) { denyV = v; return true; }
+                if (!standsWhat) { standsWhat = a_what; standsV = v; standsH = a_h; }
+                return false;
+            };
+            if (!attributed && !unknownRanked) {
                 // THE DEGRADE RULE (Harbinger 1a, Q4): the caller could not be recovered, so this
                 // equip is NEVER denied -- it may be a script, console or player-menu equip.
                 verdict = "allow (unattributed: caller not recovered)";
-            } else if (scriptPath && !denyScript) {
-                verdict = handHeld ? "allow (script exempt; hand held by a cast claim)" : "allow";
             } else if (playerMenuPath && !denyPlayerMenu) {
                 verdict = handHeld ? "allow (player agency; hand held by a cast claim)" : "allow (player agency)";
-            } else if (handHeld) {
-                handBlock = true;
-            } else if (blacked) {
-                refuse  = true;
-            } else if (ownedCat) {
-                refuse  = !(set.count == 0 || inSet);
             } else {
-                verdict = "allow";   // owned=0: nothing the claim holds is at stake
+                const bool scriptExempt = scriptPath && !denyScript;   // exempt from the hand block and ch.17
+                if (handHeld && !scriptExempt)
+                    handBlock = ranked(apmf::facetattr::CastClaimHandle(actorId), "the hand-claim block");
+                if (!handBlock && !scriptExempt && (blacked || (ownedCat && !(set.count == 0 || inSet))))
+                    refuse = ranked(set.handle, "the ch.17 declared set");
+                if (!handBlock && !refuse && forceMask && !selfPath) {
+                    forceDeny = ranked(force.handle, "the FORCED equip preference");
+                    // F1 (review of 7cda290): the claim's OWN client equipping into its own forced hand ties
+                    // with its claim and stands by the facet rule. That is not a slider violation: a separate
+                    // verdict, counted apart and logged at info, never a FORCE ANOMALY.
+                    ownClient = !forceDeny && lastV.src != apmf::sources::kNoSource && lastV.src == lastV.client;
+                    anomaly   = !forceDeny && !ownClient;
+                }
+                if (!handBlock && !refuse && !forceDeny)
+                    verdict = anomaly    ? "allow (FORCE ANOMALY: the source outranks the forced preference)"
+                            : ownClient  ? "allow (own client: the forced preference's own client equipped it)"
+                            : standsWhat ? "allow (the source outranks the claim: its equip stands)"
+                            : scriptExempt ? (handHeld ? "allow (script exempt; hand held by a cast claim)" : "allow")
+                                           : "allow";   // owned=0 / in-set: nothing the claims hold is at stake
+            }
+            if (forceDeny) {
+                verdict    = "deny (forced equip preference: not preferred for this hand)";
+                callWorker = false;
             }
             if (handBlock) {
                 // Says WHAT holds the hand (a driving claim, a deny-only floor, or a
@@ -644,6 +734,38 @@ namespace apmf::equipsink {
             } else if (refuse) {
                 if (observe) verdict = "would-deny";
                 else { verdict = "deny"; callWorker = false; }
+            }
+            // D2 counters + the STANDS / FORCE ANOMALY lines. Wrapped: nothing may unwind into the
+            // engine's equip frame. The source's hit was counted when the caller was named.
+            try {
+                namespace src_ = apmf::sources;
+                if (!callWorker && !selfPath && denyV.src != src_::kNoSource)
+                    src_::NoteOverruled(denyV.src, src_::Facet::kEquip);
+                if (forceDeny) apmf::equippref::NoteForceDeny(actorId);
+                if (ownClient) {
+                    apmf::equippref::NoteForceOwnClient(actorId);
+                    if (apmf::facetattr::LineDue(src_::Facet::kEquip, actorId, itemId ^ 0x2600u))
+                        spdlog::info("[apmf][equip-obs] actor={} item={} own client: the forced equip preference's "
+                                     "own client ({}) equipped an item it does not prefer for that hand; its own "
+                                     "equip stands (a tie with its own claim), not counted as a force anomaly.",
+                                     apmf::log::Hex(actorId), apmf::log::Hex(itemId),
+                                     apmf::facetattr::NameOr(lastV.client, "?"));
+                }
+                if (standsWhat && !(ownClient && standsH == force.handle)) {
+                    if (standsV.src != src_::kNoSource) src_::NoteStood(standsV.src, src_::Facet::kEquip);
+                    if (anomaly) apmf::equippref::NoteForceAnomaly(actorId);
+                    if (apmf::facetattr::LineDue(src_::Facet::kEquip, actorId, itemId ^ (anomaly ? 0x26u : 0x17u))) {
+                        const auto line = fmt::format(
+                            "[apmf][equip-obs] actor={} item={} {}: {} would refuse this equip -- {}, so it STANDS{}.",
+                            apmf::log::Hex(actorId), apmf::log::Hex(itemId), anomaly ? "FORCE ANOMALY" : "ranked",
+                            standsWhat, apmf::facetattr::WhyStands(src_::Facet::kEquip, standsV, standsH),
+                            anomaly ? " (marth D4: a forced escalation must not override a source that outranks "
+                                      "it; investigate)" : "");
+                        if (anomaly) spdlog::warn("{}", line);
+                        else spdlog::info("{}", line);
+                    }
+                }
+            } catch (...) {
             }
 
             // Log line (Docs/INTEGRATION.md's probe criteria parse these fields).

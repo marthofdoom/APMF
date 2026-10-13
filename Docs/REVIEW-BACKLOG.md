@@ -18,6 +18,18 @@ This file tracks REVIEW findings only.
 ---
 
 ## OPEN
+### APMF-B75 (SEV-4) -- ch.26 RankOf excludes items that will not actually be lifted
+Raised against `7cda290` (`feat/apmf-equip-preference`, weighting phase 1), tier-3 Opus review 2026-10-12, finding F5. Verbatim: "`RankOf` excludes declared or cast-driven items that will not actually be lifted (outranked, or D3 held hand with 0x0F off or ranked out), so they keep real scores and can beat the lift. Fix: apply D3 + Outranks inside RankOf." Reasoning: the rival set leaves out every item that MATCHES a preference or a cast claim, whether or not that item is lifted this pass; an unlifted match keeps its engine score in the list and can outscore a lift sized without it. Closure: run the same D3 (`HeldFor`) and `Outranks` tests inside `RankOf` (cache per call).
+
+### APMF-B76 (SEV-4) -- CastClaimHandle ranks with the highest-basis cast claim on ANY hand
+Raised against `7cda290`, same review, finding F6. Verbatim: "`CastClaimHandle` = the highest-basis cast claim on any hand. With two clients on different hands, the wrong client's priority ranks the decision. Fix: carry the claim handle through CastSeatClaim/HandHold." Reasoning: the hand block (sink and 0x0F) and the ch.8b score steer rank with `facetattr::CastClaimHandle(actor)`; with two clients holding different hands the other hand's client may be the one ranked. Closure: carry the per-hand claim handle in `CastSeatClaim` / `HandHold` (a ControlMap read change, mind the 2500-line cap).
+
+### APMF-B77 (SEV-4) -- BestRival does not verify a_this is in its own category list
+Raised against `7cda290`, same review, finding F8. Verbatim: "BestRival does not verify that `a_this` is a member of `inventoryItems[GetCategory()]`. Fix: a short scan." Reasoning: the reviewer enumerated the callers of 0x0C on all three images (only the rescore loop), so today the item is always in its list; the check would turn a future caller into an `Unreadable` instead of a lift sized against the wrong list. Closure: one membership pass in the existing loop (`seenSelf`), `Unreadable` when absent.
+
+### APMF-B78 (SEV-4) -- force and a slot-less left-hand preference; the ~2 s force delay is not enforced
+Raised against `7cda290`, same review, finding F9. Verbatim: "a slot-less one-hander preferred for the LEFT hand passes ForceRefusal, but the engine puts it in the RIGHT hand. Also, Harbinger doesn't enforce D4's ~2 s (a client can request Force at claim creation, logged at warn)." Reasoning: `ForceRefusal` passes an item preferred for any hand it competes for (a one-hander with an EitherHand / null slot competes for both), so a dagger preferred Left equipped slot-less lands in the right hand unrefused; and the bit is honoured from claim creation (documented, logged at warn). Closure: for a slot-less one-hander, refuse unless preferred for the RIGHT hand (the engine's slot-less landing); decide with marth whether Harbinger should hold the bit until ~2 s of combat after the declaration.
+
 ### APMF-B37 (SEV-5, FIXED in docs) -- census MAP rule on CensusNote order at 0x0A
 Raised against `58a4438` (`fix/apmf-cast-instant-caster`), tier-A Opus 5.5 review 2026-09-29 (reviewer log `scratchpad/agentlogs/review-apmf-instant-caster.md`), finding F3. Verbatim: "F3 SEV-5: MAP says CensusNote "must stay after the seat's own answer is decided"; on 0x0A it is called before orig (harmless, but the rule as written is not what the code does)." Reasoning: the 0x0A note reads only `this`/`cc` and touches no argument, so the order is harmless; the rule was worded wrong. MAP now states the real rule (never change an answer or an argument; after the answer at 0x06, before `orig` at 0x0A). Kept here for the drain record.
 
@@ -682,3 +694,12 @@ SEV-5 passFriend-when-strict-visible log were fixed on the branch. Deferred:
   teammate viewer) the collector prunes at the farther friends-pass hit, so `volumes` / `viewerHits` and the
   nearest-volume note in the OCCLUDED detail line and the heartbeat count hits beyond the strict hit. Diagnostic
   only; no verdict reads them. Reviewer: inflated counters, no behaviour change.
+
+### APMF-B79 (SEV-4) -- ch.26 "lift lost a pass" detector over-counts and misses the spell steer
+Raised against 9d01cdf (`feat/apmf-equip-preference`, Opus tier-3 re-review), 2026-10-12. Reviewer (verbatim): "It only counts upward: a list rebuild (the dirty refresh) or a new fight reorders the list, and that gets counted as a lost pass. The heartbeat and menu should say \"at most\". It does not cover the ch.8b spell steer, because a cast-steered item returns before `Record`. The spell steer is the lift MFO relies on today, and it uses the same 5% step. Suggest adding this to the backlog."
+
+### APMF-B80 (SEV-5) -- APMF-B75..B78 are labelled "Verbatim" but are paraphrases
+Raised against 9d01cdf, 2026-10-12. Reviewer (verbatim): "APMF-B75..B78 match my findings in substance, but they are labelled \"Verbatim\" while being paraphrases. Rule 9 asks for the finding's exact text." The exact text is in the review log `review-apmf-equip-pref.md` (7cda290 round, F5/F6/F8/F9); paste it at the drain.
+
+### APMF-B81 (SEV-5) -- ApplyPending logs "declared" before the supersede check; Prune scales with handles x map
+Raised against 9d01cdf, 2026-10-12. Reviewer (verbatim): "`ApplyPending` logs \"declared …\" before it checks whether a newer declaration replaced this one." And: "It costs (tracked handles × the whole published map) once a second on the main thread. That is fine at MFO's scale, but would be heavy near the 4096-handle cap."

@@ -112,6 +112,9 @@ namespace apmf {
         // the END.
         std::uint32_t owned  = APMF_API::kEquipCat_All;
         std::uint32_t denied = 0;
+        // D2 (2026-10-12): the winning claim's handle, from the SAME snapshot read, so the sink
+        // ranks a deny with that claim's client priority (facetattr::Decide). Appended at the END.
+        Handle        handle = APMF_API::kInvalidHandle;
     };
 
     class ControlMap {

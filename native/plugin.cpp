@@ -31,6 +31,7 @@
 #include "core/Sightline.h"
 #include "core/Awareness.h"
 #include "core/CastGuard.h"        // ch.25 cast guard (ABI v21)
+#include "core/EquipPreference.h"   // ch.26 (ABI v22): ResetAll on revert
 #include "core/Sources.h"          // Harbinger 1a: source registry, priorities, seat census
 #include "core/PackageSources.h"   // Harbinger 1a: package capture + the 0x4A scene probe
 #include "core/SpectatorGate.h"    // the Package facet's seat for the engine's Spectator package (0xDC)
@@ -122,6 +123,7 @@ namespace {
         apmf::sightline::ResetAll("revert/new game");
         apmf::awareness::ResetAll("revert/new game");
         apmf::castguard::ResetAll("revert/new game");   // ch.25: the line-of-fire measurements of the outgoing world
+        apmf::equippref::ResetAll("revert/new game");   // ch.26: the outgoing world's declarations and per-actor state
         apmf::packagesources::ResetAll();
         apmf::spectatorgate::ResetAll();
         // ...and forget the outgoing world's marker LEDGER. This must precede the load
