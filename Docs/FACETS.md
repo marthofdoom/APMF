@@ -80,7 +80,7 @@ struct Heartbeat {
 - [Movement and body](#movement-and-body): [ch.1 Movement block](#ch1-movement-block-kintent_movementblock), [ch.1a Gait](#ch1a-gait-kintent_gait), [ch.3 Stance](#ch3-stance-kintent_stance), [ch.4 Weapon drawn](#ch4-weapon-drawn-kintent_weapondrawn), [ch.5 Headtrack](#ch5-headtrack-kintent_headtrack), [ch.10 Dialogue](#ch10-dialogue-kintent_dialogue), [ch.12 Idle](#ch12-idle-kintent_idle)
 - [AI disposition and senses](#ai-disposition-and-senses): [ch.11 Disposition](#ch11-disposition-kintent_disposition), [ch.16 Detection](#ch16-detection-kintent_detection)
 - [Casting](#casting): [ch.8 Select spell](#ch8-select-spell-kintent_selectspell), [ch.8b Cast](#ch8b-cast-kintent_cast), [a hand floor](#a-hand-floor-kcastflag_denyhandonly), [own line of sight](#own-line-of-sight-kcastflag_ownlineofsight), [position cast](#position-cast-kcastflag_atposition), [ch.14 Shout and power](#ch14-shout-and-power-kintent_shoutpower), [ch.25 Cast guard](#ch25-cast-guard-kintent_castguard)
-- [Equipment](#equipment): [ch.15 Equipment](#ch15-equipment-kintent_equipment), [ch.17 Equip authority](#ch17-equip-authority-kintent_equipauthority)
+- [Equipment](#equipment): [ch.15 Equipment](#ch15-equipment-kintent_equipment), [ch.17 Equip authority](#ch17-equip-authority-kintent_equipauthority), [ch.26 Equip preference](#ch26-equip-preference-kintent_equippreference)
 - [Packages and travel](#packages-and-travel): [ch.9 Offer package](#ch9-offer-package-kintent_offerpackage), [ch.19 Travel](#ch19-travel-kintent_travel)
 - [Combat](#combat): [ch.6 Combat target](#ch6-combat-target-kintent_combattarget), [ch.7 Combat action](#ch7-combat-action-kintent_combataction), [ch.20 Target pin](#ch20-target-pin-kintent_targetpin), [ch.21 Combat entry](#ch21-combat-entry-kintent_combatentry), [ch.22 Combat re-entry deny](#ch22-combat-re-entry-deny-kintent_combatreentrydeny), [ch.23 Pursuit leash](#ch23-pursuit-leash-kintent_pursuitleash), [ch.24 Combat approach](#ch24-combat-approach-kintent_combatapproach)
 - [Read-only queries (no claim)](#read-only-queries-no-claim): [space queries](#space-queries-findemptyspace-and-findhostilesinspace), [line of sight](#line-of-sight-getlineofsight), [awareness](#awareness-senseactor)
@@ -121,6 +121,7 @@ struct Heartbeat {
 | [`kIntent_PursuitLeash`](#ch23-pursuit-leash-kintent_pursuitleash) | 23 | Pursuit leash | Stop the actor chasing too far from an anchor | 16 | Field-proven (in use by MFO) |
 | [`kIntent_CombatApproach`](#ch24-combat-approach-kintent_combatapproach) | 24 | Combat approach | Walk toward an actor while fighting | 19 | Field-proven (in use by MFO) |
 | [`kIntent_CastGuard`](#ch25-cast-guard-kintent_castguard) | 25 | Cast guard | Hold attack spells through friends, bound channels | 21 | Field-proven (in use by MFO) |
+| [`kIntent_EquipPreference`](#ch26-equip-preference-kintent_equippreference) | 26 | Equip preference | Lift a preferred weapon's combat score so the AI picks it | 22 | Built, not yet tested in game |
 | [Space queries](#space-queries-findemptyspace-and-findhostilesinspace) | | `FindEmptySpace`, `FindHostilesInSpace` | Ask for a spot or the hostiles in a sphere | 11 | Built |
 | [Line of sight](#line-of-sight-getlineofsight) | | `GetLineOfSight` | Harbinger's own ray | 18 | Used by MFO |
 | [Awareness](#awareness-senseactor) | | `SenseActor` | Does this actor sense that one | 18 | Used by MFO |
@@ -988,7 +989,7 @@ Handle CastAt(RE::FormID caster, RE::FormID spell, RE::FormID foe) {
 
 #### Version, INI and field status
 
-`kIntent_Cast` and `RequestCast` are ABI 5 (0.9.1). `GetCastProxy` and `IsClaimLive` are ABI 6 (0.9.3). Keys: `EnableSeat0Classify` and `EnableAimSeat` in `[CastSeats]`, `EnableEquipDenyComplete` in `[EquipGate]`, `EnableScoreSteer` in `[AiCastSeats]`, `bHandClaimBlocksEquip` in `[HandBlock]`, `bOwnLineOfSight` in `[Sightline]`, and the census keys `bCasterTypeCensus` and `bRestoreCensus` in `[Probe]` (log only). Field-proven for heal-other and for offense. The non-Restore, non-Offensive caster seats and the general-purpose caster fallback are not yet field-run.
+`kIntent_Cast` and `RequestCast` are ABI 5 (0.9.1). `GetCastProxy` and `IsClaimLive` are ABI 6 (0.9.3). Keys: `EnableSeat0Classify` and `EnableAimSeat` in `[CastSeats]`, `EnableEquipDenyComplete` in `[EquipGate]`, `EnableScoreSteer` in `[AiCastSeats]` (default 1 since ABI 22: the claimed spell's combat score is lifted one step above its best rival, see [ch.26](#ch26-equip-preference-kintent_equippreference)), `bHandClaimBlocksEquip` in `[HandBlock]`, `bOwnLineOfSight` in `[Sightline]`, and the census keys `bCasterTypeCensus` and `bRestoreCensus` in `[Probe]` (log only). Field-proven for heal-other and for offense. The non-Restore, non-Offensive caster seats and the general-purpose caster fallback are not yet field-run.
 
 **Check Your Understanding: ch.8b**
 
@@ -1417,7 +1418,7 @@ Standing, ended by `Release`. Never hold it on the same actor as a ch.17 claim. 
 
 #### Priority and conflicts
 
-`Equip` sources facet. Equip denies are not ranked by priority. The caller of an engine equip is recovered by a stack scan. A positively identified off-set equip is denied, and an equip Harbinger cannot attribute is allowed.
+`Equip` sources facet. Since ABI 22 the gate's refusal is ranked like every other equip deny: it stands only while your priority on `Equip` is above the source beneath the gate (the engine at 20 by default, or a mod hooked there first). With the default priorities nothing changes.
 
 #### Refusals
 
@@ -1559,11 +1560,11 @@ Standing, no time limit. It ends on `Release`, a higher basis, a load or an unlo
 
 #### Priority and conflicts
 
-`Equip` sources facet. Equip denies are not ranked by priority. The caller of an engine equip is recovered by a stack scan. A positively identified off-set equip is denied, and an equip Harbinger cannot attribute is allowed. Armor verdicts are enforced by default (`bEquipEnforceArmor=1`) even while `bEquipObserveOnly=1`. Weapons, shields, torches and ammo stay observe-only until you set `bEquipObserveOnly=0`.
+`Equip` sources facet. The caller of an engine equip is recovered by a stack scan. Since ABI 22 every equip deny is ranked by priority: an off-set equip is refused only while your priority on `Equip` is above its source. The engine's own paths (outfit re-apply, the combat AI, `RemoveItem` re-equip) and other mods start at 20 and lose to a client at 50. Another client ties at 50 and its equip stands. Your own direct equip ties with your own claim and stands. A Papyrus or console equip under `kEquipAuth_DenyScript` ranks as DirectCalls (75) and stands unless you raise your mod above it. An equip Harbinger cannot attribute is allowed unless `[UnknownSources] Equip=override`. A source that wins logs a `STANDS` line and counts as stood on the menu. Armor verdicts are enforced by default (`bEquipEnforceArmor=1`) even while `bEquipObserveOnly=1`. Weapons, shields, torches and ammo stay observe-only until you set `bEquipObserveOnly=0`.
 
 > **Did You Know?** This is the only facet with a call-site seat. Every engine equip funnels through one non-virtual worker, so there is no vtable slot to chain on. Harbinger patches the worker's two internal call sites, byte-verifies both before writing either, and refuses to install if any other mod touched those bytes. A collision is a missing feature and never a crash.
 
-While a cast claim holds a hand, `[HandBlock]` also closes that hand to weapons, shields and torches. This is on by default and independent of `bEquipObserveOnly`.
+While a cast claim holds a hand, `[HandBlock]` also closes that hand to weapons, shields and torches. This is on by default and independent of `bEquipObserveOnly`. Since ABI 22 the hand block is ranked the same way: it stands only while the cast claim's client outranks the equip's source on `Equip`.
 
 #### Refusals
 
@@ -1633,6 +1634,82 @@ ABI 7 (first shipped in 0.9.5), 8 adds a hand per item, `kEquipAuth_DenyPlayerMe
 1. With the shipped defaults, what does `IsEquipAuthorityEnforced` return, and what does that mean for a declared sword?
 2. You declare a two-hander and a shield in one set. What happens?
 3. A declared dagger was refused by the hand block while a cast claim held the left hand. The cast claim ends. Does the dagger equip?
+
+### ch.26 Equip preference (`kIntent_EquipPreference`)
+
+*A client names the weapons, shields, torches or staves it wants in an actor's hands in combat. Harbinger lifts their score in the game's own combat scoring, so the AI picks them by its own rules.*
+
+#### What it is for
+
+Prefer the items in an actor's hands during combat without fighting the AI. In combat the game scores every weapon, shield, torch and spell about once a second, sorts each group and equips the best of each group while a hand is free. Melee and ranged weapons and attack spells and staves share one group. Shields and torches share another. Harbinger lifts a preferred item's score one step above the best other item of its group, so the AI equips it. The player sees a follower that fights with the weapon the client chose, and that still switches to its bow at range when the bow is what the client prefers.
+
+#### Arguments
+
+ABI 22. `RequestEx`, then `SetEquipPreference` on the handle.
+
+```cpp
+APMF_Param p{};
+p.ival = 0;                                                    // kEquipPref_Force only after a miss
+Handle h = g_apmf->RequestEx(actor, kIntent_EquipPreference, kBasis, &p);
+
+APMF_EquipPrefEntry e[2]{};
+e[0] = { swordForm,  kEquipSlot_Right, 0, {} };
+e[1] = { daggerForm, kEquipSlot_Left,  0, {} };
+g_apmf22->SetEquipPreference(h, e, 2);
+```
+
+**Table 14a. ch.26 arguments**
+
+| Field | Type | Range | Default | 0 means |
+|---|---|---|---|---|
+| `ival` | `EquipPrefFlags` | `kEquipPref_Force` or 0. Unknown bits are logged and ignored | 0 | score lift only |
+| `entries[i].form` | base FormID | a weapon (a staff included), a shield or a torch. Anything else is ignored and named in the log | required | skipped |
+| `entries[i].slot` | `EquipSlot` | Right, Left, or Default for either hand (a two-hander, a bow) | Default | either hand |
+| `entries[i].rank` | `u8` | 0 is the most preferred | 0 | top rank |
+| `count` | | up to 8 | | clears the declaration |
+
+A spell is not declared here. A `kIntent_Cast` claim's spell is lifted the same way.
+
+#### What Harbinger enforces
+
+Nothing is denied and nothing is equipped. Each time the game scores a declared item in combat, Harbinger returns the game's own score lifted to 5 percent plus 0.01 above the best other item of its group. An item that already leads keeps its own score. The game still applies its own range check, its own order (a Restore, Ward or buff spell takes its hand before any weapon) and its own hand rules. An item scored 0, such as a bow with no arrows, is never lifted. A hand a cast claim holds keeps only the spell. Out of combat the scoring does not run, so the preference does nothing there.
+
+**Escalation.** Set `kEquipPref_Force` with `Repoint` only after you saw a miss for about 2 seconds in combat. Harbinger does not time it for you. With the bit set, Harbinger also refuses the game's other equips of a weapon, shield or torch into a preferred hand. That refusal is ranked like every equip deny. A source that outranks you keeps its equip, and that is logged at warn and counted as a FORCE ANOMALY. Your own equip into your own forced hand stands too, counted apart and logged at info. Harbinger still equips nothing, so place the item yourself or with ch.17. Clear the bit once the item holds.
+
+#### Lifetime
+
+Standing, ended by `Release`. The declaration goes with the claim however it ends: your `Release`, Harbinger releasing or sweeping the claim, an unload or a load. A declaration on a claim that does not own the facet is stored and applies when that claim wins. A declaration reaches the score seats on the next game frame.
+
+#### Priority and conflicts
+
+`Equip` sources facet. The lift replaces the answer of whatever sits beneath the score seat, the engine at 20 by default or a mod hooked there first, so it applies only while your priority is above that source. The force refusal is ranked against the equip's source. See [Appendix A](#appendix-a-sources-and-priorities-per-facet).
+
+#### Refusals
+
+`kInvalidHandle` with a logged reason: an APMF older than ABI 22, actor 0, the player, a request before the game data loaded, `EnableScoreSteer=0`, or no score seat installed on this runtime.
+
+#### Worked example
+
+```cpp
+void OnLoadoutChanged(Handle h, RE::FormID mainHand, RE::FormID offHand) {
+    APMF_EquipPrefEntry e[2]{};
+    std::uint32_t n = 0;
+    if (mainHand) e[n++] = { mainHand, kEquipSlot_Right, 0, {} };
+    if (offHand)  e[n++] = { offHand,  kEquipSlot_Left,  0, {} };
+    g_apmf22->SetEquipPreference(h, e, n);                     // declare on change, never per tick
+}
+```
+
+**Check.** In combat the log shows `[ch.26] ... LIFTED item=... best-competitor=... -> ...`, and the `WEAPON-SCORE` line names the lift. `GetEquipPreferenceState` reads `kEquipPrefState_Lifted`. The 30 second `[ch.26] HEARTBEAT` counts lifts, lifts that lost the next pass, and force results.
+
+#### Version, INI and field status
+
+ABI 22. `EnableScoreSteer` (1) and `EnableWeaponScoreProbe` (1) in `[AiCastSeats]`. Built, not yet tested in game.
+
+**Check Your Understanding: ch.26**
+
+1. Your preferred bow is not equipped while the follower stands next to its foe. Is that a miss to escalate?
+2. Why does a preferred item with an engine score of 0 never get lifted?
 
 ## Packages and travel
 
@@ -2903,9 +2980,9 @@ Every Intent maps to one sources facet. This table says which, and what Harbinge
 |---|---|---|
 | `Target` | ch.6, ch.20 | ch.20 only. Restored through the engine's own `SetTarget` when a positively identified writer is outranked. ch.6 restores nothing |
 | `Package` | ch.9, ch.19 | Observe. The Spectator hold-off is the one exception, and it needs your priority above `Engine` |
-| `Equip` | ch.15, ch.17, hand block | Not ranked by priority. A positively identified off-set equip is denied. An unattributed equip is allowed |
+| `Equip` | ch.15, ch.17, ch.26, hand block | Ranked since ABI 22. Every equip deny (ch.15, the ch.17 set, the hand block, the ch.26 force) stands only while your priority is above the equip's source. The ch.26 score lift applies only while your priority is above the source beneath the score seat. An unattributed equip is allowed unless `Equip=override` |
 | `CombatAction` | ch.7, ch.23 | A leaf the engine's tree chose is stopped only while your priority is above `Engine` |
-| `Cast` | ch.8, ch.8b, ch.25 | A refusal or substitution stands only while your priority is above the source of the answer it replaces (the engine, or a mod hooked there first) |
+| `Cast` | ch.8, ch.8b, ch.25 | A refusal or substitution stands only while your priority is above the source of the answer it replaces (the engine, or a mod hooked there first). The ch.8b score lift follows the same rule |
 | `Combat` | ch.21, ch.22, ch.24 | ch.22 refuses a `StartCombat` only while above the calling source. ch.24 writes its bound only while above the engine's combat area. ch.21 makes one call |
 | `Detection` | ch.16 | Watch only. Detection values are named, never refused |
 | `ActorValue` | ch.1a, ch.11 | Watch only. Speed and disposition values are named, never refused |
@@ -2929,7 +3006,7 @@ Engine=20
 Target=override
 ```
 
-`iUnregistered<Facet>` and `iClient<Facet>` change the default for a whole facet. A name in a facet section beats the default. Names are DLL or plugin names and are not case sensitive. Raise `Engine=` in `[Combat]`, `[CombatAction]` or `[Cast]` above the client to let the engine win. `[UnknownSources]` takes `allow` (default) or `override` per facet and acts today on `Target`, `Combat` and `Cast`. See [INI-REFERENCE.md](INI-REFERENCE.md) for the full format.
+`iUnregistered<Facet>` and `iClient<Facet>` change the default for a whole facet. A name in a facet section beats the default. Names are DLL or plugin names and are not case sensitive. Raise `Engine=` in `[Combat]`, `[CombatAction]` or `[Cast]` above the client to let the engine win. `[UnknownSources]` takes `allow` (default) or `override` per facet and acts today on `Target`, `Combat`, `Cast` and `Equip`. See [INI-REFERENCE.md](INI-REFERENCE.md) for the full format.
 
 ## Appendix B: ABI history
 
@@ -2960,8 +3037,9 @@ The ABI is append-only. A client built against an older ABI keeps working agains
 | 19 | 0.11.0 | `kIntent_CombatApproach`, `GetCombatApproachState` |
 | 20 | 0.11.0 | `kCastFlag_FloorSpellsOnly` |
 | 21 | 0.12.0 | `kIntent_CastGuard` |
+| 22 | the release after 0.13.0 | `kIntent_EquipPreference`, `EquipPrefFlags`, `APMF_EquipPrefEntry`, `APMF_EquipPrefInfo`, `SetEquipPreference`, `GetEquipPreferenceState` (struct `APMF_API_v22`) |
 
-The last release is 0.13.0, ABI 21. The interface struct for ABI 21 is `APMF_API_v19`, since ABI 20 and 21 added no slot.
+The last release is 0.13.0, ABI 21. The interface struct for ABI 21 is `APMF_API_v19`, since ABI 20 and 21 added no slot. ABI 22 is on main for the next release, with the struct `APMF_API_v22`.
 
 ## Appendix C: refusal cheat sheet
 
@@ -2993,7 +3071,7 @@ Defaults are the shipped values. The full text of every key is in [INI-REFERENCE
 |---|---|---|
 | ch.8, ch.8b cast seats | `[CastSeats]` | `EnableSeat0Classify` (1), `EnableAimSeat` (1) |
 | ch.8, ch.8b, ch.15 hand gates | `[EquipGate]` | `EnableEquipDenyComplete` (1), `EnableEquipGateLog` (0), `EnableDualWieldPreference` (0) |
-| ch.8b score steer | `[AiCastSeats]` | `EnableScoreSteer` (1), `EnableWeaponScoreProbe` (1), `EnableItemScoreProbe` (0), `EnableCasterSeatProbe` (0) |
+| ch.8b score steer, ch.26 equip preference | `[AiCastSeats]` | `EnableScoreSteer` (1, the compiled default since ABI 22), `EnableWeaponScoreProbe` (1, also the weapon score seat ch.26 lifts through), `EnableItemScoreProbe` (0), `EnableCasterSeatProbe` (0) |
 | ch.17 equip authority | `[EquipAuthority]` | `bEquipAuthority` (1), `bEquipObserveOnly` (1), `bEquipEnforceArmor` (1), `bEquipDenyScript` (0) |
 | ch.8b hand block | `[HandBlock]` | `bHandClaimBlocksEquip` (1) |
 | ch.9 package, Spectator | `[PackageGate]` | `EnableRedirectLog` (1), `iSpectatorSeat` (2) |

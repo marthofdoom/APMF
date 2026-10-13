@@ -224,18 +224,9 @@ If you want Harbinger to hold something for you, say so with a claim, and stop d
 
 MFO files every claim with a basis of 200.
 
-## Equip preference (ch.26, ABI v22), until FACETS.md has its section
+## Equip preference (ch.26, ABI v22)
 
-New in the release after 0.13.0, not yet tested in game. The full contract is the "ABI v22: EQUIP PREFERENCE" block at the end of `APMF_API.h`; MAP.md "core/EquipPreference" has the internals.
-
-- Check `abiVersion >= 22`. An older Harbinger refuses intent 26.
-- `RequestEx(actor, kIntent_EquipPreference, basis, &param)` with `param.ival = 0`. Then `SetEquipPreference(handle, entries, n)` with one `APMF_EquipPrefEntry{form, slot, rank}` per preferred item: `kEquipSlot_Right` / `kEquipSlot_Left` for a one-hander, a shield or a torch, `kEquipSlot_Default` for a two-hander or a bow. Rank 0 is the most preferred. Declare when the preference changes, not every tick.
-- In combat the game scores every weapon, shield, torch and spell about once a second and equips the best of each group while a hand is free. Harbinger lifts a declared item's score one step above the best other item of its group. The game still decides: a bow is skipped at melee range, a Restore, Ward or buff spell takes its hand before any weapon, and an item scored 0 (a bow with no arrows) is never lifted. A hand your own cast claim holds keeps only the spell.
-- The lift follows the Equip priorities in `APMF_Sources.ini`, like every other deny. Equip refusals (the ch.17 set, the hand block, the ch.15 refusal) follow them too since this release.
-- Read `GetEquipPreferenceState(actor, &info)` to tell a lift that did not win (`kEquipPrefState_Lifted`) from no lift at all (`HandHeld`, `Outranked`, `ZeroScore`, `Declared` = not scored yet).
-- Escalate only after you saw a miss for about 2 seconds in combat: `Repoint` with `param.ival = kEquipPref_Force`. Harbinger then refuses the game's other equips into the preferred hands, ranked. It equips nothing itself: place the item yourself or through ch.17. A refusal the priorities forbid is logged as a FORCE ANOMALY and counted on the Harbinger page. Clear the bit once the item holds.
-
-FACETS.md still needs: a "ch.26 Equip preference" section in the facet template, a row in the facet index and in Appendix A (Equip: ranked lift, ranked force), the D2 change in the ch.17 and hand-floor sections ("not ranked by priority" no longer holds), `EnableScoreSteer` default 1, and Appendix B rows for ABI v22.
+New in the release after 0.13.0, not yet tested in game. The full reference is [ch.26 Equip preference](FACETS.md#ch26-equip-preference-kintent_equippreference). Since the same ABI every equip refusal (the ch.17 set, the hand block, the ch.15 refusal) follows the `Equip` priorities in `APMF_Sources.ini`.
 
 ## Sections that moved
 

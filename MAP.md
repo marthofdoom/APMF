@@ -1160,8 +1160,8 @@ no new address: `OnScore` is called by both `core/AiCastSeats.cpp` 0x0C thunks (
 live cast claim drives on the item's hand is lifted the same way (rank 0, ranked on the Cast facet).
 **THE LIFT (D1):** `max(engine, best * (1 + kEquipPrefStepRel) + kEquipPrefStepAbs)` (5 % + 0.01). `best` = the
 highest `itemScore` (+0x18) the engine holds for another item of `inventoryItems[GetCategory()]`, read IN PLACE
-(the caller is that list's rescore loop, AE 0x80F380 / SE 0x777A50 / 1.7.104 0x824260, and the dirty-refresh twin
-AE 0x811A5E); items this actor's preferences or cast claims lift at an equal or better rank are left out (no
+(the caller is that list's rescore loop, AE 0x80F380 / SE 0x777A50 / 1.7.104 0x824260; the look-alike loop at AE
+0x811A5E is a DEAD twin with zero callers, MFO ENGINE_NOTES §0.43); items this actor's preferences or cast claims lift at an equal or better rank are left out (no
 chase). Layout read: `CombatController+0x10` inventory, `CombatInventory+0` parentController (checked == the
 call's controller), `+8 + cat*0x18` the lists (size at +0x10), item `+0x18` score, vfunc 0x0B `GetCategory`
 = `int(this)`, a leaf on every concrete item class of all three builds; all static_asserted where CommonLib
@@ -1176,9 +1176,19 @@ something for, unless it is one of that hand's items (`ForcedFor` / `ForceRefusa
 a refusal the sliders do not allow is a FORCE ANOMALY (warn line, `NoteForceAnomaly`, menu + heartbeat +
 `APMF_EquipPrefInfo::forceAnomalies`). Harbinger equips nothing for a preference. Refusal (`ControlMap::
 EnqueueRequest` -> `RefuseReason`): actor 0, the player, before `Arm`, `EnableScoreSteer=0`, no score seat.
-Declarations: a copy-on-write `unordered_map<Handle, Decl>` published through `atomic<shared_ptr>` (writers
-any thread under `g_writeMx`; seats read lock-free); `ClientAPI` Release calls `Forget`; `plugin.cpp` OnRevert
-calls `ResetAll`. Per-actor state (`GetState`) + the `[ch.26]` line dedup sit under one LEAF mutex taken after
+Declarations (review of 7cda290, F4: the header's contract): `ClientAPI` Request/RequestEx of intent 26 calls
+`NoteClaim(h)`; `Set` is a silent no-op for any other handle and only QUEUES (`g_pending`); `Pump` (main thread)
+`ApplyPending` type-checks every entry (`LookupByID` + `Categorize` hand bits: a weapon, staff, shield or torch;
+a spell, body armor, ammo or unknown form is IGNORED and named once in that declaration's line) and publishes a
+copy-on-write `unordered_map<Handle, Decl>` through `atomic<shared_ptr>` (writers under `g_writeMx`; the seats
+take no lock on it). A declaration is dropped when its claim ends by ANY road: `ClientAPI` Release -> `Forget`;
+anything else (Harbinger releasing it, the Drain sweep of an unloaded actor) -> `Prune`, once a second on the
+main thread, asks `ControlMap::IsClaimLive` per tracked handle and drops one that was live and is not, or was
+never live 10 s after its request; `plugin.cpp` OnRevert calls `ResetAll`. F7: `BestRival` notes whether the
+list's FIRST item (the previous pass's winner, the list is re-sorted descending only after the loop) is a
+competitor; a scoring of an item that was LIFTED last time with a competitor on top counts a lost pass
+(heartbeat, menu; no ABI field). F1: the sink's force step gives the claim's own client a separate `own client`
+verdict (info line, `NoteForceOwnClient`), never a FORCE ANOMALY. Per-actor state (`GetState`) + the `[ch.26]` line dedup sit under one LEAF mutex taken after
 every engine read. The channel (ch.26) only logs Engage / OnOwnerChanged / Release (a force escalation at warn).
 Logs: `[ch.26] <actor> LIFTED / leading / OUTRANKED ... item= hand= cat= rank= engineScore= best-competitor=
 -> result (claim h=)` (on change, 15 s floor), `[ch.26] HEARTBEAT` (30 s, warn on a new anomaly), the
@@ -1191,7 +1201,11 @@ WEAPON-SCORE / SCORE-STEER lines name a lift; the Equip facet header on the Harb
   a force refusal applied when the source outranks the claim (that is the anomaly, never a deny); keying the
   rival on the item FORM only (per-hand clones of a one-hander are distinct items); widening `kMaxEquipPreference`
   without an ABI bump. Scroll / potion / shout items are visible as RIVALS (read from the engine list) but
-  are never lifted (their 0x0C is not seated).
+  are never lifted (their 0x0C is not seated). Publishing a declaration off the main thread (the type check
+  does a form lookup). **Open review items: REVIEW-BACKLOG APMF-B75 (RankOf excludes items that will not
+  actually be lifted), APMF-B76 (CastClaimHandle ranks with the wrong client when two clients hold different
+  hands), APMF-B77 (BestRival does not verify `a_this` is in its own list), APMF-B78 (a slot-less left-hand
+  preference passes ForceRefusal; the ~2 s force delay is not enforced) -- read them before editing.**
 
 ### `native/core/RestoreCensus.{h,cpp}` — phase 0b Restore-caster census (PASSIVE probe)
 Read-only. `[Probe] bRestoreCensus` (code default 1 for the field; STATUS pre-release
@@ -1543,7 +1557,9 @@ Equip=override`. Behaviour at the default priorities: Engine/other mods (20) sti
 a client's OWN equip now stands against its own claim; a script equip under DenyScript ranks as DirectCalls
 (75) and stands unless the client is raised above it. The force step sits after ch.17, ignores the observe-only
 switch (it is the client's explicit escalation), exempts the player's menu and APMF's own equips, and a
-refusal the sliders forbid is a FORCE ANOMALY (core/EquipPreference.h).
+refusal the sliders forbid is a FORCE ANOMALY (core/EquipPreference.h); the claim's own client's equip is a
+separate `own client` verdict (review F1). Open: REVIEW-BACKLOG APMF-B76 (the hand block ranks with
+`CastClaimHandle`, the highest-basis cast claim on ANY hand), APMF-B78 (force and slot-less left-hand items).
 **HARBINGER 1a (2026-10-11): WHO ASKED is a STACK SCAN now.** UAPNG.dll and
 EquipmentDurabilitySystem-NG.dll re-patch both E8s after our kDataLoaded verify (LoreRim diag
 2026-10-10), so the thunk is reached from THEIR stub and the old `_ReturnAddress()-5` site test +
