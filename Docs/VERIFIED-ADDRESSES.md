@@ -10,13 +10,13 @@ nothing when one does not. At startup `REL::SelfCheck::Run` repeats the comparis
 game actually loaded. A row that fails refuses THAT seat by name in the log; the expected RVA is never
 used in place of the library's answer.
 
-Offline result of this generation: 1.6.1170.0 207/207 verified, 0 refused, 1.5.97.0 207/207 verified, 0 refused.
+Offline result of this generation: 1.6.1170.0 210/210 verified, 0 refused, 1.5.97.0 210/210 verified, 0 refused.
 
 1.7.104.0 has NO Address Library. Its column is OUR OWN id map: the MIT id table of the CommonLibSSE-NG fork
 (`data/mit-idtable-v1-1-7-104-0.bin`, revision 3, 17751 records, SkyrimSE.exe TimeDateStamp 0x6A8C7046; built into every plugin, it is
 what SelfCheck queries at runtime; authoritative) with the evidence CSVs beside it, keyed by
 the 1.6.1170 id, re-verified against the plaintext 1.7.104 executable by the same row-kind checks (see the script
-docstring). Offline result: 1.7.104.0 220/250 verified, 30 NOT verified (28 of them BY DESIGN: 1.5.97-only labels whose AE twin row carries the 1.7.104 fact). A not-verified seat has no row in the 1.7.104 table,
+docstring). Offline result: 1.7.104.0 220/253 verified, 33 NOT verified (28 of them BY DESIGN: 1.5.97-only labels whose AE twin row carries the 1.7.104 fact). A not-verified seat has no row in the 1.7.104 table,
 so `IsVerifiedAddress` is false and the seat is refused by name. The table of `Not verified on 1.7.104` is below.
 
 These rows prove the ADDRESSES. That each hooked slot holds the same function body on 1.7.104, and that every
@@ -224,6 +224,9 @@ CommonLib layout APMF reads is the same there, is proven separately in the "1.7.
 | CombatEntry.Actor.StartCombat | function | 38561 | 0x6B6930 | 37608 | 0x6251B0 | 38561 | 0x6C93B0 | signature (38 bytes, unique in .text) |  | native/channels/CombatEntry.cpp:243 (call), :399 (SeatVerified) | ch.21 combat entry, INVARIANTS #0 (g); ADDRESS-TABLE-2026-09-15.md:396 |
 | Idle.AIProcess.SetupSpecialIdle | function | 39256 | 0x6DDE70 | 38290 | 0x64B140 | 39256 | 0x6F0A20 | signature (28 bytes, unique in .text) |  | native/channels/Idle.cpp (PlayIdle call + SeatVerified in apmf::idle::Install) | ch.12 Idle v2 (ABI v17), INVARIANTS #0 (c) |
 | ReentryDeny.StartCombat.SelfIsDeadCall | callsite | 38561 | 0x6B6930 +0x8F B2 01 48 8B CF FF 90 C8 04 00 00 | 37608 | 0x6251B0 +0x8D B2 01 48 8B CF FF 90 C8 04 00 00 | 38561 | 0x6C93B0 +0x8F B2 01 48 8B CF FF 90 C8 04 00 00 | signature (38 bytes, unique in .text) |  | native/channels/CombatReentryDeny.cpp (Install: SeatVerified; g_siteRet = row + 11) | ch.22 combat re-entry deny, INVARIANTS #0 (h); scratchpad apmf-reentry.md (AE 0x6B69BF, ret 0x6B69CA; SE 0x62523D, ret 0x625248) |
+| EngagementHold.CombatGroup.UpdateTargetDetection | function | 44725 | 0x805090 | 43501 | 0x76B5D0 | - | - | signature (33 bytes, unique in .text) |  | native/channels/CombatEntry.cpp (held engagement: the call target both knowledge seats verify) | scratchpad agentlogs/apmf-engagement-movto.md (2026-10-12): sets kTargetLost at AE 0x8053EA / 0x805462 / 0x8054F2 (SE 0x76B886 ...); engine un-lose AE 0x805483 |
+| EngagementHold.Site.ListenerDetection | callsite | 44699 | 0x803140 +0x85 E8 | 43477 | 0x769CF0 +0x85 E8 | - | - | signature (23 bytes, unique in .text) |  | native/channels/CombatEntry.cpp (held engagement knowledge seat, write_call<5> post-call) | AE 0x8031C5 / SE 0x769D75; scratchpad agentlogs/apmf-engagement-movto.md |
+| EngagementHold.Site.GroupDetectionPass | callsite | 44804 | 0x80CE00 +0x143 E8 | 43572 | 0x772CD0 +0x143 E8 | - | - | signature (30 bytes, unique in .text) |  | native/channels/CombatEntry.cpp (held engagement knowledge seat, write_call<5> post-call) | AE 0x80CF43 / SE 0x772E13; scratchpad agentlogs/apmf-engagement-movto.md |
 | BShkbAnimationGraph | vtable | 232870 | 0x19881F8 | 282351 | 0x1741A20 | 232870 | 0x1A07D78 | RTTI .?AVBShkbAnimationGraph@@ (COL offset 0) |  | native/channels/Travel.cpp (GateProbe2 anim-graph read: vtable identity before any member read; SeatVerified in Install) | ABI v12 passive gate probe 2 (feat/apmf-gate-probe2); scratchpad agentlogs/apmf-reachability.md |
 | hkbBehaviorGraph | vtable | 220287 | 0x1941450 | 275301 | 0x16FADB0 | 220287 | 0x19C09F0 | RTTI .?AVhkbBehaviorGraph@@ (COL offset 0) |  | native/channels/Travel.cpp (GateProbe2 anim-graph read: vtable identity before any member read; SeatVerified in Install) | ABI v12 passive gate probe 2 (feat/apmf-gate-probe2); scratchpad agentlogs/apmf-reachability.md |
 | hkbStateMachine | vtable | 226812 | 0x1964250 | 278793 | 0x171DB80 | 226812 | 0x19E37F0 | RTTI .?AVhkbStateMachine@@ (COL offset 0) |  | native/channels/Travel.cpp (GateProbe2 anim-graph read: vtable identity before any member read; SeatVerified in Install) | ABI v12 passive gate probe 2 (feat/apmf-gate-probe2); scratchpad agentlogs/apmf-reachability.md |
@@ -314,6 +317,9 @@ for them and the seat is refused. Nothing here is a failure on 1.6.1170 or 1.5.9
 | EquipSink.Path.ProcedureEat.27700 | - | BY DESIGN: 1.5.97-only label. On 1.6.1170 and 1.7.104 the code reads its AE twin EquipSink.Path.ProcedureEat.28422 (AE id 28422, 1.7.104 0x464CF0), whose own row carries the 1.7.104 fact (MAPPED-AE) |
 | EquipSink.Path.InventoryReequip.40241 | - | BY DESIGN: 1.5.97-only label. On 1.6.1170 and 1.7.104 the code reads its AE twin EquipSink.Path.InventoryReequip.41244 (AE id 41244, 1.7.104 0x776D10), whose own row carries the 1.7.104 fact (MAPPED-AE) |
 | EquipSink.Path.StartCombat.37608 | - | BY DESIGN: 1.5.97-only label. On 1.6.1170 and 1.7.104 the code reads its AE twin EquipSink.Path.StartCombat.38561 (AE id 38561, 1.7.104 0x6C93B0), whose own row carries the 1.7.104 fact (MAPPED-AE) |
+| EngagementHold.CombatGroup.UpdateTargetDetection | 44725 | id 44725 is not in the idmap |
+| EngagementHold.Site.ListenerDetection | 44699 | id 44699 is not in the idmap |
+| EngagementHold.Site.GroupDetectionPass | 44804 | id 44804 is not in the idmap |
 
 ## Slots and offsets that are not Address Library ids
 

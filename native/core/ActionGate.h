@@ -39,6 +39,12 @@ namespace apmf::actiongate {
     // RULE C heartbeat, once per frame from Arbiter::OncePerFrame (game thread); prints
     // every ~30 s while any leash is set, zeros included. Cheap otherwise.
     void PursuitHeartbeat();
+    // ch.23 LEASH RETURN (2026-10-12), once per frame from Arbiter::OncePerFrame (game thread,
+    // self-throttled 250 ms): a leashed, un-held actor whose search was just leash-denied gets a
+    // Harbinger-internal combat-area bound on its anchor (channels/CombatApproach.h), so the engine's
+    // Return To Combat Area walks it back instead of it standing still; ended when it stops searching,
+    // holds an engagement, leaves combat or loses the leash. [PursuitLeash] bLeashReturn (default 1).
+    void LeashReturnPoll();
 
     // ---- [Probe] bRangedSelect (2026-09-29, PHASE 1 of the Ranged-selection deny): a PASSIVE
     // probe. It never denies, never writes engine state and never changes a return value. For

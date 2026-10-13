@@ -9,6 +9,9 @@
 #include "core/EquipSink.h"     // Categorize / CategoryNames (the probe mirrors the sink verdict)
 #include "core/CastObserve.h"   // NoteLeafAct (castobs interrupt attribution)
 #include "core/FacetAttribution.h"   // Harbinger 1b: the tree's choice named + ranked on CombatAction
+#include "channels/CombatEntry.h"      // THE HELD ENGAGEMENT (2026-10-12): the leash exempts its approach
+#include "channels/CombatApproach.h"   // ch.23 LEASH RETURN: a Harbinger-internal combat-area bound
+#include <unordered_map>
 
 #include <algorithm>
 #include <array>
@@ -296,6 +299,20 @@ namespace apmf::actiongate {
         std::atomic<std::uint64_t> g_pPassOtherSpace{ 0 };  // anchor in another cell / worldspace
         std::atomic<std::uint64_t> g_pPassNoTarget{ 0 };    // no goal to measure (no target / no search centre)
         std::atomic<std::uint64_t> g_pPassStale{ 0 };       // no leash entry, or it names another anchor
+        std::atomic<std::uint64_t> g_pPassHeld{ 0 };        // the goal is a HELD engagement's target (2026-10-12)
+
+        // ch.23 LEASH RETURN (2026-10-12). The seats stamp, per LEASHED actor, when a search leaf last
+        // ran (act) and when one was last leash-denied; LeashReturnPoll (game thread) reads them. Only
+        // leashed actors ever reach the stamp (LeashAct returns earlier for everyone else).
+        std::mutex                                     g_searchMx;
+        std::unordered_map<RE::FormID, std::uint64_t>  g_searchSeenMs;     // monotonic ms
+        std::unordered_map<RE::FormID, std::uint64_t>  g_searchDeniedMs;
+        void StampSearch(RE::FormID a_id, bool a_denied) {
+            const auto now = apmf::clock::MonotonicMs();
+            std::scoped_lock lk(g_searchMx);
+            g_searchSeenMs[a_id] = now;
+            if (a_denied) g_searchDeniedMs[a_id] = now;
+        }
         std::atomic<std::uint64_t> g_pUpdAnomaly{ 0 };      // update() for a node that is not cur_node / phase != 1
         std::atomic<bool>          g_pUpdAnomalyLogged{ false };
         constexpr std::uint64_t    kPursuitHeartbeatMs = 30000;
@@ -543,6 +560,13 @@ namespace apmf::actiongate {
             }
             RE::NiPoint3 goal{};
             if (a_goal == Goal::kTarget) {
+                // THE HELD ENGAGEMENT (marth 2026-10-12): a client-called engagement is a move-to that
+                // cannot be lost, so the leash never bounds the approach to the HELD target; it still
+                // bounds every other pursuit and every wandering search.
+                if (apmf::combatentry::hold::IsHeld(a_actorFid, ctrl->targetHandle.native_handle(), true)) {
+                    g_pPassHeld.fetch_add(1, std::memory_order_relaxed);
+                    return false;
+                }
                 const auto target = ctrl->targetHandle.get();
                 if (!target) {
                     g_pPassNoTarget.fetch_add(1, std::memory_order_relaxed);
@@ -551,6 +575,16 @@ namespace apmf::actiongate {
                 goal = target->GetPosition();
             } else {
                 const auto group = reinterpret_cast<std::uintptr_t>(ctrl->combatGroup);
+                // ...and a search FOR the held target (the group's targetToSearchFor, +0xFC: an ActorHandle
+                // written by CombatGroup's own setter, AE 0x809B20 / SE 0x76FEB0, and loaded beside the search
+                // centre, AE 0x80B683) is that same move-to: the leash lets it run too.
+                if (group &&
+                    apmf::combatentry::hold::IsHeld(
+                        a_actorFid, *reinterpret_cast<const std::uint32_t*>(group + apmf::cbt::kGroupTargetToSearchFor),
+                        true)) {
+                    g_pPassHeld.fetch_add(1, std::memory_order_relaxed);
+                    return false;
+                }
                 if (!group || !*reinterpret_cast<void* const*>(group + apmf::cbt::kGroupSearchLocSpace)) {
                     g_pPassNoTarget.fetch_add(1, std::memory_order_relaxed);
                     return false;
@@ -1047,12 +1081,16 @@ namespace apmf::actiongate {
                                                                  &h))
                 return a_orig(a_this, a_control);                  // not leashed -- the leaf runs natively
             float dS = 0.0f, dG = 0.0f, r = 0.0f;
-            if (!PursuitDenies(a_control, actorFid, claim, g_leashLeaves[a_idx].goal, dS, dG, r))
+            const bool search = g_leashLeaves[a_idx].goal == Goal::kSearchCentre;
+            if (!PursuitDenies(a_control, actorFid, claim, g_leashLeaves[a_idx].goal, dS, dG, r)) {
+                if (search) StampSearch(actorFid, false);   // ch.23 leash return: the actor is searching
                 return a_orig(a_this, a_control);
+            }
             const auto denyAct = g_forceFailAct.load(std::memory_order_relaxed);
             if (!denyAct) return a_orig(a_this, a_control);        // unreachable: the leash never arms without it
             // Harbinger 1b: the leash stands only when the claim outranks the Engine's tree.
             if (!ClaimOutranksTree(h, actorFid, "ch.23", 23u << 8)) return a_orig(a_this, a_control);
+            if (search) StampSearch(actorFid, true);        // ch.23 leash return: a search was leash-denied
             g_pDenyAct[a_idx].fetch_add(1, std::memory_order_relaxed);
             LogPursuitDeny(actorFid, false, a_idx, dS, dG, r);
             // The ForceFail PAIR, exactly as ch.7's ActThunk does it (see there).
@@ -1113,6 +1151,7 @@ namespace apmf::actiongate {
             reinterpret_cast<apmf::cbt::SetFailed_t>(g_setFailed.load(std::memory_order_relaxed))(a_control, true);
             reinterpret_cast<apmf::cbt::Ascend_t>(g_ascend.load(std::memory_order_relaxed))(a_control);
             g_pEndUpd[idx].fetch_add(1, std::memory_order_relaxed);
+            if (g_leashLeaves[idx].goal == Goal::kSearchCentre) StampSearch(fid, true);   // ch.23 leash return
             LogPursuitDeny(fid, true, idx, dS, dG, r);
         }
 
@@ -1425,6 +1464,34 @@ namespace apmf::actiongate {
         return r ? r : "armed";
     }
 
+    // ch.23 LEASH RETURN state (see LeashReturnPoll below).
+    namespace {
+        constexpr std::uint64_t kReturnPollMs  = 250;
+        constexpr std::uint64_t kReturnStartMs = 1500;   // a search leash-denied this recently starts it
+        constexpr std::uint64_t kReturnIdleMs  = 3000;   // no search leaf for this long ends it (12 selector periods)
+        constexpr std::uint64_t kReturnStallMs = 3000;   // ch.24's stall floor: the area stopped carrying it
+        struct ReturnState {
+            bool          active = false;
+            bool          stallLogged = false;
+            std::uint64_t sinceMs = 0;
+        };
+        std::unordered_map<RE::FormID, ReturnState> g_return;   // game thread only
+        std::atomic<std::uint64_t> g_returnsStarted{ 0 }, g_returnsEnded{ 0 };
+        int  g_returnIni = -1;   // [PursuitLeash] bLeashReturn, read once (game thread)
+
+        void EndReturn(RE::FormID a_id, ReturnState& a_st, const char* a_why) {
+            if (!a_st.active) return;
+            apmf::combatapproach::InternalInfo info{};
+            apmf::combatapproach::GetInternalInfo(a_id, info);
+            apmf::combatapproach::ClearInternalBound(a_id);
+            a_st.active = false;
+            g_returnsEnded.fetch_add(1, std::memory_order_relaxed);
+            spdlog::info("[ch.23] 0x{} leash return ended ({}): the actor's combat area carried it {} time(s); the "
+                         "engine's own area answers again.",
+                         apmf::log::Hex(a_id), a_why, info.applied);
+        }
+    }
+
     void SetLeash(RE::FormID a_id, const APMF_API::APMF_Param& a_param) {
         const char*     why = nullptr;
         RE::ActorHandle h{};
@@ -1473,6 +1540,11 @@ namespace apmf::actiongate {
             std::scoped_lock lk(g_pLogMx);
             g_pLastLogMs.erase(a_id);
         }
+        {
+            std::scoped_lock lk(g_searchMx);
+            g_searchSeenMs.erase(a_id);
+            g_searchDeniedMs.erase(a_id);
+        }
         if (erased) spdlog::info("[ch.23] 0x{} pursuit leash cleared.", apmf::log::Hex(a_id));
     }
 
@@ -1488,7 +1560,18 @@ namespace apmf::actiongate {
             std::scoped_lock lk(g_pLogMx);
             g_pLastLogMs.clear();
         }
-        if (n != 0) spdlog::info("[ch.23] {} -- dropped {} pursuit leash entr{}.", a_why, n, n == 1 ? "y" : "ies");
+        {
+            std::scoped_lock lk(g_searchMx);
+            g_searchSeenMs.clear();
+            g_searchDeniedMs.clear();
+        }
+        // The world is replaced: no engine write (ch.24's own ResetAll drops the internal bounds).
+        const auto r = static_cast<std::size_t>(
+            std::count_if(g_return.begin(), g_return.end(), [](const auto& e) { return e.second.active; }));
+        g_return.clear();
+        if (n != 0 || r != 0)
+            spdlog::info("[ch.23] {} -- dropped {} pursuit leash entr{} ({} leash return(s)).", a_why, n,
+                         n == 1 ? "y" : "ies", r);
     }
 
     void PursuitHeartbeat() {
@@ -1512,11 +1595,119 @@ namespace apmf::actiongate {
         spdlog::info("[ch.23] pursuit H leashes={} leaf=seen/denied-at-act/ended-at-update:{}",
                      g_leashCount.load(std::memory_order_relaxed), perLeaf);
         spdlog::info("[ch.23] pursuit H pass inside={} closer={} no-anchor={} other-space={} no-goal={} stale={} "
-                     "update-anomaly={}",
+                     "held-engagement={} update-anomaly={}; leash returns started={} ended={}",
                      g_pPassInside.load(std::memory_order_relaxed), g_pPassCloser.load(std::memory_order_relaxed),
                      g_pPassNoAnchor.load(std::memory_order_relaxed), g_pPassOtherSpace.load(std::memory_order_relaxed),
                      g_pPassNoTarget.load(std::memory_order_relaxed), g_pPassStale.load(std::memory_order_relaxed),
-                     g_pUpdAnomaly.load(std::memory_order_relaxed));
+                     g_pPassHeld.load(std::memory_order_relaxed), g_pUpdAnomaly.load(std::memory_order_relaxed),
+                     g_returnsStarted.load(std::memory_order_relaxed), g_returnsEnded.load(std::memory_order_relaxed));
+    }
+
+    // ---- ch.23 LEASH RETURN (2026-10-12) ----------------------------------------------------------
+    // The field (LoreRim 2026-10-12, APMF.log.1 15:33:31-15:34:15): a leashed follower OUTSIDE its
+    // radius whose fight had only a LOST target searched; every search leaf that would take it farther
+    // was denied, nothing brought it back, and it stood still for 45 s. The engine's own way back is its
+    // movement selector's RETURN TO COMBAT AREA, which outranks SEARCH (channels/CombatApproach.cpp
+    // header), so the leash expresses itself as the actor's combat area: while a leashed, UN-HELD actor
+    // is searching and a search leaf was just leash-denied, its standard combat area carries "within
+    // the radius of the anchor" (a Harbinger-internal ch.24 bound). The engine walks it back toward the
+    // anchor, and its search moves are clamped inside the leash while the search lasts. It ends when the
+    // actor stops searching (no search leaf for kReturnIdleMs), holds an engagement, leaves combat, or
+    // loses its leash. A held engagement never gets one: its approach is exempt (PursuitDenies).
+    void LeashReturnPoll() {
+        if (g_returnIni < 0)
+            g_returnIni = GetPrivateProfileIntA("PursuitLeash", "bLeashReturn", 1, "Data/SKSE/Plugins/APMF.ini") != 0;
+        if (g_returnIni == 0) return;
+        if (g_leashCount.load(std::memory_order_relaxed) == 0 && g_return.empty()) return;
+        static std::uint64_t s_last = 0;
+        const std::uint64_t  now    = apmf::clock::MonotonicMs();
+        if (now - s_last < kReturnPollMs) return;
+        s_last = now;
+
+        std::vector<std::pair<RE::FormID, Leash>> leashes;
+        {
+            std::shared_lock lk(g_leashMx);
+            leashes.assign(g_leash.begin(), g_leash.end());
+        }
+        // Return states whose leash is gone.
+        for (auto it = g_return.begin(); it != g_return.end();) {
+            const bool live = std::any_of(leashes.begin(), leashes.end(), [&](const auto& l) { return l.first == it->first; });
+            if (live) { ++it; continue; }
+            EndReturn(it->first, it->second, "the leash was cleared");
+            it = g_return.erase(it);
+        }
+
+        for (const auto& [id, l] : leashes) {
+            auto&       st = g_return[id];
+            std::uint64_t seen = 0, denied = 0;
+            {
+                std::scoped_lock lk(g_searchMx);
+                if (const auto it = g_searchSeenMs.find(id); it != g_searchSeenMs.end()) seen = it->second;
+                if (const auto it = g_searchDeniedMs.find(id); it != g_searchDeniedMs.end()) denied = it->second;
+            }
+            APMF_API::APMF_Param claim{};
+            float                basis = 0.0f;
+            APMF_API::Handle     h     = APMF_API::kInvalidHandle;
+            const bool winner = apmf::ControlMap::Get().TryGetOwningClaimBasis(id, APMF_API::kIntent_PursuitLeash,
+                                                                               claim, basis, &h) &&
+                                claim.target == l.anchorFid;
+            auto* actor  = RE::TESForm::LookupByID<RE::Actor>(id);
+            auto  aptr   = l.anchor.get();
+            auto* anchor = aptr.get();
+            const bool inCombat = actor && actor->GetActorRuntimeData().combatController != nullptr;
+            // Held: the actor's combat target, or the group's search target, is its held engagement.
+            bool held = false;
+            if (inCombat) {
+                auto* cc = actor->GetActorRuntimeData().combatController;
+                held = apmf::combatentry::hold::IsHeld(id, cc->targetHandle.native_handle());
+                if (!held && cc->combatGroup)
+                    held = apmf::combatentry::hold::IsHeld(
+                        id, *reinterpret_cast<const std::uint32_t*>(reinterpret_cast<std::uintptr_t>(cc->combatGroup) +
+                                                                     apmf::cbt::kGroupTargetToSearchFor));
+            }
+            const void* space  = anchor ? apmf::combatapproach::SpaceOfRef(anchor) : nullptr;
+            const bool  usable = winner && actor && !actor->IsDead() && anchor && !anchor->IsDead() && space &&
+                                space == apmf::combatapproach::SpaceOfRef(actor) && inCombat && !held;
+
+            if (!st.active) {
+                if (!usable || denied == 0 || now - denied > kReturnStartMs) continue;
+                if (!apmf::combatapproach::SetInternalBound(id, anchor->GetPosition(), space, l.radius, h,
+                                                            "leash return"))
+                    continue;   // the ch.24 seats are not installed: nothing to carry it (the heartbeat says so)
+                st.active      = true;
+                st.stallLogged = false;
+                st.sinceMs     = now;
+                g_returnsStarted.fetch_add(1, std::memory_order_relaxed);
+                spdlog::info("[ch.23] 0x{} LEASH RETURN: a search was leash-denied {:.0f}u from the anchor 0x{} (radius "
+                             "{:.0f}) -- the actor's combat area is centred on the anchor, so the engine's own Return To "
+                             "Combat Area walks it back and its search stays inside the leash.",
+                             apmf::log::Hex(id), actor->GetPosition().GetDistance(anchor->GetPosition()),
+                             apmf::log::Hex(l.anchorFid), l.radius);
+                continue;
+            }
+            const char* why = !winner              ? "the leash claim is gone or re-pointed" :
+                              !actor || actor->IsDead() ? "the actor is gone" :
+                              !inCombat            ? "combat ended" :
+                              held                 ? "the actor holds an engagement (its approach is exempt)" :
+                              !anchor || anchor->IsDead() || !space ? "the anchor is gone" :
+                              space != apmf::combatapproach::SpaceOfRef(actor) ? "the anchor is in another cell" :
+                              now - (std::max)(seen, denied) > kReturnIdleMs ? "the actor stopped searching" : nullptr;
+            if (why) {
+                EndReturn(id, st, why);
+                continue;
+            }
+            // Keep X on the anchor (it moves).
+            apmf::combatapproach::SetInternalBound(id, anchor->GetPosition(), space, l.radius, h, "leash return");
+            apmf::combatapproach::InternalInfo info{};
+            if (apmf::combatapproach::GetInternalInfo(id, info) && !info.clientWins && !st.stallLogged &&
+                now - st.sinceMs > kReturnStallMs && (info.msSinceApply == ~0ull || info.msSinceApply > kReturnStallMs)) {
+                st.stallLogged = true;
+                spdlog::warn("[ch.23] 0x{} leash return NOT CARRIED: the actor's standard combat area has not taken "
+                             "the bound for {} ms (another area is current, it is disabled, or the engine's own path "
+                             "back failed). Left on; logged once per return.",
+                             apmf::log::Hex(id), info.msSinceApply == ~0ull ? now - st.sinceMs : info.msSinceApply);
+            }
+        }
     }
 
     // ---- [Probe] bRangedSelect: the public half (see ActionGate.h and the RANGED-SELECT PROBE section) ----

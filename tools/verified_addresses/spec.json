@@ -3651,6 +3651,69 @@
    "doc": "ch.22 combat re-entry deny, INVARIANTS #0 (h); scratchpad apmf-reentry.md (AE 0x6B69BF, ret 0x6B69CA; SE 0x62523D, ret 0x625248)"
   },
   {
+   "seat": "EngagementHold.CombatGroup.UpdateTargetDetection",
+   "kind": "function",
+   "construct": "CombatGroup::UpdateTargetDetection(group, member, target, detectionEvent) -- the ONLY writer of CombatTarget kTargetLost",
+   "ids": {
+    "1.6.1170": 44725,
+    "1.5.97": 43501
+   },
+   "sig": {
+    "1.6.1170": "48 8B C4 4C 89 48 20 48 89 50 10 55 56 57 41 54 41 55 41 56 41 57 48 8D 68 A1 48 81 EC D0 00 00 00",
+    "1.5.97": "48 8B C4 4C 89 48 20 55 56 57 41 54 41 55 41 56 41 57 48 8D 68 A1 48 81 EC D0 00 00 00"
+   },
+   "source": "native/channels/CombatEntry.cpp (held engagement: the call target both knowledge seats verify)",
+   "doc": "scratchpad agentlogs/apmf-engagement-movto.md (2026-10-12): sets kTargetLost at AE 0x8053EA / 0x805462 / 0x8054F2 (SE 0x76B886 ...); engine un-lose AE 0x805483"
+  },
+  {
+   "seat": "EngagementHold.Site.ListenerDetection",
+   "kind": "callsite",
+   "construct": "CombatGroupDetectionListener::ProcessEvent (vtable slot 2) -> call CombatGroup::UpdateTargetDetection",
+   "ids": {
+    "1.6.1170": 44699,
+    "1.5.97": 43477
+   },
+   "sig": {
+    "1.6.1170": "40 53 55 56 57 41 56 48 83 EC 30 48 C7 44 24 28 FE FF FF FF 48 8B F2",
+    "1.5.97": "40 53 55 56 57 41 56 48 83 EC 30 48 C7 44 24 28 FE FF FF FF 48 8B F2 4C 8B F1"
+   },
+   "offset": {
+    "1.6.1170": "0x85",
+    "1.5.97": "0x85"
+   },
+   "bytes": "E8",
+   "target": {
+    "1.6.1170": 44725,
+    "1.5.97": 43501
+   },
+   "source": "native/channels/CombatEntry.cpp (held engagement knowledge seat, write_call<5> post-call)",
+   "doc": "AE 0x8031C5 / SE 0x769D75; scratchpad agentlogs/apmf-engagement-movto.md"
+  },
+  {
+   "seat": "EngagementHold.Site.GroupDetectionPass",
+   "kind": "callsite",
+   "construct": "CombatGroup periodic detection pass (members x targets) -> call CombatGroup::UpdateTargetDetection",
+   "ids": {
+    "1.6.1170": 44804,
+    "1.5.97": 43572
+   },
+   "sig": {
+    "1.6.1170": "48 8B C4 55 56 57 41 56 41 57 48 81 EC B0 00 00 00 48 C7 44 24 40 FE FF FF FF 48 89 58 20",
+    "1.5.97": "48 8B C4 55 56 57 41 56 41 57 48 81 EC B0 00 00 00 48 C7 44 24 40 FE FF FF FF"
+   },
+   "offset": {
+    "1.6.1170": "0x143",
+    "1.5.97": "0x143"
+   },
+   "bytes": "E8",
+   "target": {
+    "1.6.1170": 44725,
+    "1.5.97": 43501
+   },
+   "source": "native/channels/CombatEntry.cpp (held engagement knowledge seat, write_call<5> post-call)",
+   "doc": "AE 0x80CF43 / SE 0x772E13; scratchpad agentlogs/apmf-engagement-movto.md"
+  },
+  {
    "seat": "BShkbAnimationGraph",
    "kind": "vtable",
    "construct": "RE::VTABLE_BShkbAnimationGraph[0]",
