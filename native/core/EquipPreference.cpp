@@ -419,9 +419,10 @@ namespace apmf::equippref {
 
         const APMF_API::Handle owner = castSteer ? apmf::facetattr::CastClaimHandle(fid) : v.prefHandle;
         auto finish = [&](std::uint32_t a_state, float a_rival, float a_result) {
-            const bool line = Record(fid, castSteer ? APMF_API::kInvalidHandle : owner, a_state, formId, hand, a_engine,
-                                     a_rival, a_result);
-            if (line && !castSteer) {   // the cast steer keeps its own SCORE-STEER line (core/AiCastSeats.cpp)
+            // The ch.8b spell steer keeps its own SCORE-STEER line (core/AiCastSeats.cpp) and counters, and
+            // stays out of the per-actor ch.26 state (GetEquipPreferenceState reports ch.26 only).
+            if (castSteer) return a_result;
+            if (Record(fid, owner, a_state, formId, hand, a_engine, a_rival, a_result)) {
                 try {
                     spdlog::info("[ch.26] 0x{} '{}' {} item=0x{} '{}' hand={} cat={} rank={} engineScore={:.3f} "
                                  "best-competitor={:.3f} -> {:.3f} (claim h={})",
