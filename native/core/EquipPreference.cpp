@@ -636,6 +636,7 @@ namespace apmf::equippref {
         }
         a_out.lifted = true;
         (castSteer ? g_castSteers : g_lifts).fetch_add(1, std::memory_order_relaxed);
+        apmf::sources::NoteServedClaim(owner, castSteer ? apmf::sources::Facet::kCast : apmf::sources::Facet::kEquip);   // ch.26 lift / ch.8b steer (menu "Served")
         return finish(APMF_API::kEquipPrefState_Lifted, best, target);
     }
 

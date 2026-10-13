@@ -53,6 +53,7 @@ namespace apmf::sources {
             std::atomic<std::uint32_t> hits[kFacetCount]{};
             std::atomic<std::uint32_t> overruled[kFacetCount]{};
             std::atomic<std::uint32_t> stood[kFacetCount]{};
+            std::atomic<std::uint32_t> served[kFacetCount]{};   // times Harbinger enforced THIS source's claim
             std::atomic<std::uint64_t> lastSeenMs[kFacetCount]{};
             std::atomic<std::uint32_t> involved{ 0 };          // facet bitmask
             std::atomic<std::uint32_t> lastLoadSeq{ 0 };       // the load sequence it was last seen in
@@ -515,6 +516,25 @@ namespace apmf::sources {
         s.lastLoadSeq.store(g_loadSeq.load(std::memory_order_relaxed), std::memory_order_relaxed);
     }
 
+    // A client's claim was SERVED: Harbinger enforced it (a pin engaged, an engine pick denied, a
+    // foreign write restored, an equip or package held ...). Not a hit: Hits stays "outside writes
+    // seen". Stamps last-seen and the load sequence so a client with live claims is never Idle.
+    void NoteServed(SourceId id, Facet f) {
+        if (!Valid(id) || f >= Facet::kCount) return;
+        auto& s = g_src[id];
+        const int i = static_cast<int>(f);
+        s.involved.fetch_or(1u << i, std::memory_order_relaxed);
+        s.served[i].fetch_add(1, std::memory_order_relaxed);
+        s.lastSeenMs[i].store(apmf::clock::MonotonicMs(), std::memory_order_relaxed);
+        s.lastLoadSeq.store(g_loadSeq.load(std::memory_order_relaxed), std::memory_order_relaxed);
+    }
+
+    void NoteServedClaim(APMF_API::Handle h, Facet f) {
+        if (h == APMF_API::kInvalidHandle) return;
+        const SourceId c = ClientForHandle(h);   // shared leaf lock, released before the atomics
+        if (c != kNoSource) NoteServed(c, f);
+    }
+
     void NoteOverruled(SourceId id, Facet f) {
         if (!Valid(id) || f >= Facet::kCount) return;
         g_src[id].overruled[static_cast<int>(f)].fetch_add(1, std::memory_order_relaxed);
@@ -572,6 +592,10 @@ namespace apmf::sources {
             }
         }
         NoteInvolved(id, FacetForIntent(intent));
+        // A client with a live claim is never "idle": stamp the load sequence (NoteHit's other effect).
+        g_src[id].lastLoadSeq.store(g_loadSeq.load(std::memory_order_relaxed), std::memory_order_relaxed);
+        g_src[id].lastSeenMs[static_cast<int>(FacetForIntent(intent))].store(apmf::clock::MonotonicMs(),
+                                                                              std::memory_order_relaxed);
         std::unique_lock lk(g_handleMx);
         if (g_handles.size() >= kHandleCap) {
             // Never unbounded: drop the oldest half by issue time (Pump also purges dead ones).
@@ -908,6 +932,9 @@ namespace apmf::sources {
     }
     std::uint32_t Hits(SourceId id, Facet f) {
         return Valid(id) && f < Facet::kCount ? g_src[id].hits[static_cast<int>(f)].load(std::memory_order_relaxed) : 0;
+    }
+    std::uint32_t Served(SourceId id, Facet f) {
+        return Valid(id) && f < Facet::kCount ? g_src[id].served[static_cast<int>(f)].load(std::memory_order_relaxed) : 0;
     }
     std::uint32_t Overruled(SourceId id, Facet f) {
         return Valid(id) && f < Facet::kCount ? g_src[id].overruled[static_cast<int>(f)].load(std::memory_order_relaxed) : 0;

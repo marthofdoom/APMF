@@ -274,7 +274,11 @@ namespace {
 
         const RE::FormID     self = attacker->GetFormID();
         APMF_API::APMF_Param claim{};
-        if (!apmf::ControlMap::Get().TryGetOwningClaim(self, APMF_API::kIntent_TargetPin, claim)) return;
+        float                claimBasis = 0.0f;
+        APMF_API::Handle     claimHandle = APMF_API::kInvalidHandle;
+        if (!apmf::ControlMap::Get().TryGetOwningClaimBasis(self, APMF_API::kIntent_TargetPin, claim, claimBasis,
+                                                            &claimHandle))
+            return;
         if (claim.form == 0) return;
 
         std::shared_lock lk(g_pinMx);
@@ -345,6 +349,7 @@ namespace {
         if (engineAnswer == pin.handle.native_handle()) {
             pin.held.fetch_add(1, std::memory_order_relaxed);
             pin.lastDecision.store(1, std::memory_order_relaxed);
+            apmf::sources::NoteServedClaim(claimHandle, apmf::sources::Facet::kTarget);   // pin engaged
             return;
         }
         if (m == Membership::kAbsent && pin.everPresent.load(std::memory_order_relaxed)) {
@@ -389,6 +394,7 @@ namespace {
         *a_out = pin.handle.native_handle();   // DENY the engine's pick at its source
         pin.denied.fetch_add(1, std::memory_order_relaxed);
         pin.lastDecision.store(1, std::memory_order_relaxed);
+        apmf::sources::NoteServedClaim(claimHandle, apmf::sources::Facet::kTarget);   // the engine's pick denied
         if (!pin.firstDenyLogged.exchange(true, std::memory_order_relaxed)) {
             spdlog::info("[ch.20] 0x{} FIRST SOURCE DENY: the engine's target selector picked handle 0x{}, "
                          "answered with the pin 0x{} instead.",
@@ -651,6 +657,7 @@ namespace {
             cc->previousTargetHandle = fr.prevBefore;      // never written by SetTarget / UpdateTarget
             const bool held = a_this->GetActorRuntimeData().currentCombatTarget == pinH;
             cap.restored.fetch_add(1, std::memory_order_relaxed);
+            apmf::sources::NoteServed(client, apmf::sources::Facet::kTarget);   // a foreign write restored
             for (int w = 0; w < nWriters; ++w) apmf::sources::NoteOverruled(writers[w], apmf::sources::Facet::kTarget);
             if (unknownOver) {
                 apmf::sources::NoteOverruled(apmf::sources::kUnattributedSource, apmf::sources::Facet::kTarget);

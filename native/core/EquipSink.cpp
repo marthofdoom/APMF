@@ -739,8 +739,10 @@ namespace apmf::equipsink {
             // engine's equip frame. The source's hit was counted when the caller was named.
             try {
                 namespace src_ = apmf::sources;
-                if (!callWorker && !selfPath && denyV.src != src_::kNoSource)
+                if (!callWorker && !selfPath && denyV.src != src_::kNoSource) {
                     src_::NoteOverruled(denyV.src, src_::Facet::kEquip);
+                    src_::NoteServed(denyV.client, src_::Facet::kEquip);   // ch.17: a foreign equip refused for the claim
+                }
                 if (forceDeny) apmf::equippref::NoteForceDeny(actorId);
                 if (ownClient) {
                     apmf::equippref::NoteForceOwnClient(actorId);

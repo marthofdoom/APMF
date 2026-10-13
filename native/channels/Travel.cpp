@@ -7,6 +7,7 @@
 #include "core/PackageData.h"
 #include "core/PositionCast.h"   // ABI v11: PlaceMarker / DeleteMarker for kTravel_ToPosition legs
 #include "core/Registry.h"
+#include "core/Sources.h"
 #include "channels/Travel.h"
 
 #include <algorithm>
@@ -885,6 +886,7 @@ namespace {
                      "internal ch.9 handle {} at basis {}. ch.9 posts its own EvaluatePackage nudge.",
                      Hex(a_id), slot, Hex(p9.form), Hex(a_leg.destId),
                      static_cast<std::uint32_t>(a_leg.radius), h, a_leg.basis);
+        apmf::sources::NoteServedClaim(a_leg.ownerHandle, apmf::sources::Facet::kPackage);   // ch.19: a leg started (menu "Served")
         return true;
     }
 

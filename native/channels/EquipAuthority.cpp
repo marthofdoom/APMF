@@ -5,6 +5,7 @@
 #include "core/MainThread.h"
 #include "core/EquipSink.h"
 #include "core/Clock.h"
+#include "core/Sources.h"
 
 #include <algorithm>
 
@@ -173,6 +174,37 @@ namespace {
         case APMF_API::kEquipSlot_Left:  return "left";
         default:                         return "default";
         }
+    }
+
+    // PASSIVE READBACK (marth 2026-10-12, LoreRim torch: equipped=1, gone within 0.5 s, nobody could say
+    // who removed it). ~kReadbackMs after a handed equip was queued, log whether that hand still holds the
+    // item and what it holds now. Observe only: it reads GetEquippedObject and changes nothing. It re-posts
+    // itself one frame at a time until due (mainthread::Post is the only road; bounded, one lambda per
+    // handed equip for ~1 s), and looks the actor up by id so a freed actor is just "unresolved".
+    constexpr std::uint64_t kReadbackMs = 1000;
+    void PostReadback(RE::FormID id, RE::FormID form, std::uint8_t slot, std::uint64_t issuedMs) {
+        apmf::mainthread::Post([id, form, slot, issuedMs] {
+            if (apmf::clock::MonotonicMs() - issuedMs < kReadbackMs) {
+                PostReadback(id, form, slot, issuedMs);
+                return;
+            }
+            auto* actor = RE::TESForm::LookupByID<RE::Actor>(id);
+            if (!actor || !actor->Is3DLoaded()) {
+                spdlog::info("[apmf][equip-auth] readback actor=0x{} {} hand 0x{}: actor not loaded any more, not "
+                             "read.", apmf::log::Hex(id), SlotName(slot), apmf::log::Hex(form));
+                return;
+            }
+            const auto* now = actor->GetEquippedObject(/*left*/ slot == APMF_API::kEquipSlot_Left);
+            const bool  yes = now && now->GetFormID() == form;
+            spdlog::info("[apmf][equip-auth] readback actor=0x{} {} hand, {} ms after the queued equip of 0x{}: "
+                         "still in hand: {} (now: {}). Who removed it, if anyone, is in the [equip-obs] op=unequip "
+                         "lines.",
+                         apmf::log::Hex(id), SlotName(slot), apmf::clock::MonotonicMs() - issuedMs,
+                         apmf::log::Hex(form), yes ? "yes" : "no",
+                         now ? fmt::format("0x{} '{}'", apmf::log::Hex(now->GetFormID()),
+                                           now->GetName() ? now->GetName() : "")
+                             : std::string("empty"));
+        });
     }
 
     // MAIN THREAD, strictly after the publishing Drain (see the banner). Reads the
@@ -354,6 +386,7 @@ namespace {
             }
             ++equipped;
             issuedNow.push_back(Issued{ form, slot, nowMs });
+            if (slot != APMF_API::kEquipSlot_Default) PostReadback(id, form, slot, nowMs);
             spdlog::info("[apmf][equip-auth] actor=0x{} set={} items -> equip 0x{} '{}' hand={}",
                          apmf::log::Hex(id), set.count, apmf::log::Hex(form), obj->GetName() ? obj->GetName() : "",
                          SlotName(slot));
@@ -380,6 +413,8 @@ namespace {
                      apmf::log::Hex(id), mem.passes, identical ? " (identical re-declaration)" : "",
                      set.count, apmf::log::Hex(set.owned, 2), apmf::log::Hex(set.denied, 2),
                      equipped, worn, pending, missing, unresolved, notGoverned, skippedUnowned, skippedDenied);
+        // Menu "Served": the claim's client had >0 items equipped for it by this pass.
+        if (equipped > 0) apmf::sources::NoteServedClaim(set.handle, apmf::sources::Facet::kEquip);
     }
 
     void PostEnforce(RE::FormID id) {
