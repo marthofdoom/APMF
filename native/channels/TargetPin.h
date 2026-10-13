@@ -34,11 +34,19 @@ namespace apmf::targetpin {
     // End-of-pin monitor (marth 2026-09-25: "If APMF can no longer track the target, it's
     // lost, and dropped"), from Arbiter::OncePerFrame -- the ch.19 Poll seat. Self-throttled
     // (250 ms); one relaxed atomic load while nothing is pinned. When the owner is dead or
-    // the target is dead, disabled, unloaded, unresolvable, or LOST (the seat saw kTargetLost
-    // in the group entry), it ENDS the winning claim itself (EnqueueRelease) and logs the
+    // the target is dead, disabled, unloaded, unresolvable, or -- ONLY with [EngagementHold]
+    // bEngagementHold=0 -- LOST (the seat saw kTargetLost in the group entry; since marth's
+    // 2026-10-12 ruling a held pin is never ended for that), it ENDS the winning claim itself (EnqueueRelease) and logs the
     // reason; the Release line repeats it. A target that is merely not a combat target yet
     // does NOT end the pin. Not a re-assert: it writes no engine state. GAME THREAD.
     void Poll();
+
+    // THE HELD ENGAGEMENT (2026-10-12): since marth's ruling a pin no longer ends on "target lost"
+    // (unless [EngagementHold] bEngagementHold=0). The held engagement's no-progress watchdog
+    // (channels/CombatEntry.cpp hold::Poll) ends this actor's WINNING pin claim through here when it
+    // still names `target`: logged "pin ended: <why>", repeated on the Release line. `why` must be a
+    // string literal. GAME THREAD, never inside Drain.
+    void EndHeld(RE::FormID actor, RE::FormID target, const char* why);
 
     // Drop every per-actor pin entry (the world is being replaced). For the kPreLoadGame /
     // revert boundary, beside travel::ResetAll(): ControlMap::Clear() makes no

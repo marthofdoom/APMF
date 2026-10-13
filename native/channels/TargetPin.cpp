@@ -7,6 +7,7 @@
 #include "core/Registry.h"
 #include "core/Sightline.h"   // ABI v18 kTargetPin_OwnLineOfSight
 #include "core/Sources.h"     // Harbinger 1a: target capture, census, priorities
+#include "channels/CombatEntry.h"   // THE HELD ENGAGEMENT (2026-10-12): a pin is held; kLost no longer ends it
 
 #include <intrin.h>   // _ReturnAddress: the 0xE4 layers' segment proof
 #include <shared_mutex>
@@ -86,9 +87,13 @@ extern "C" __declspec(dllimport) unsigned long __stdcall GetPrivateProfileIntA(
 // failures.
 //
 // THE PIN ENDS BY ITSELF (marth 2026-09-25: "If APMF can no longer track the target, it's
-// lost, and dropped"). The seat declines and records a reason when the pinned target is
-// LOST (its group entry carries kTargetLost: CombatTarget::flags, u16 +0xA6, bit 1, verified
-// on both runtimes), dead, disabled, not loaded or unresolvable. targetpin::Poll() -- the
+// lost, and dropped" -- SUPERSEDED for "lost" by marth 2026-10-12: "once an engagement is called
+// in harbinger its move-to, it cannot be lost". A pin is a HELD engagement (channels/CombatEntry.cpp
+// "THE HELD ENGAGEMENT", INVARIANTS #0 (i)): kTargetLost makes the seat DECLINE that update and
+// nothing more, unless [EngagementHold] bEngagementHold=0 restores the old end). The seat declines
+// and records a reason when the pinned target is dead, disabled, not loaded or unresolvable (and,
+// hold off only, LOST: its group entry carries kTargetLost: CombatTarget::flags, u16 +0xA6, bit 1,
+// verified on both runtimes). targetpin::Poll() -- the
 // Arbiter's once-per-frame game-thread seat, the ch.19 leg-monitor precedent -- checks the
 // same target conditions LIVE plus the OWNER being dead -- trusting only the seat's "target
 // lost" (the group list it must not read itself), and clearing any other seat reason the live
@@ -162,6 +167,9 @@ namespace {
     // can see a null Get3D2 during a 3D rebuild -- a transform, a skeleton swap, Reset3D, a
     // script Disable+Enable -- so one worker observation must not end the pin).
     constexpr const char* kReasonLost = "target lost";
+    // Review F-4 ((g) condition 5, "never live and inert"): the target was one of the group's targets and
+    // is not any more (the engine dropped it, or the fight it was in ended). Trusted like kReasonLost.
+    constexpr const char* kReasonAbsent   = "target no longer a combat target (it was one)";
 
     std::atomic<bool>        g_installed{ false };
     std::atomic<bool>        g_installTried{ false };
@@ -198,6 +206,8 @@ namespace {
         mutable std::atomic<bool>          ending{ false };
         mutable std::atomic<const char*>   endedReason{ nullptr };   // for the Release line
         mutable std::atomic<std::uint64_t> lastNotTargetLogMs{ 0 };
+        mutable std::atomic<std::uint64_t> lastLostLogMs{ 0 };      // the held "flagged LOST" line
+        mutable std::atomic<bool>          everPresent{ false };    // the target has been in the group's targets
         mutable std::atomic<std::uint64_t> lastMissLogMs{ 0 };
         mutable std::atomic<std::uint64_t> lastOverwriteLogMs{ 0 };
     };
@@ -274,7 +284,7 @@ namespace {
         pin.seatHits.fetch_add(1, std::memory_order_relaxed);
         const auto decline = [&pin] { pin.lastDecision.store(2, std::memory_order_relaxed); };
         const auto endWith = [&pin](const char* why) {
-            if (why == kReasonLost) {   // the trusted reason always wins over a transient one
+            if (why == kReasonLost || why == kReasonAbsent) {   // trusted reasons win over a transient one
                 pin.seatEndReason.store(why, std::memory_order_relaxed);
                 return;
             }
@@ -308,15 +318,38 @@ namespace {
 
         auto* group = cc->combatGroup;
         const Membership m = group ? GroupMembership(group, pin.handle) : Membership::kAbsent;
+        if (m != Membership::kAbsent) pin.everPresent.store(true, std::memory_order_relaxed);
         if (m == Membership::kLost) {
-            pin.targetLost.fetch_add(1, std::memory_order_relaxed);
-            endWith(kReasonLost);   // the engine can no longer locate it: the pin ends
+            const auto n = pin.targetLost.fetch_add(1, std::memory_order_relaxed) + 1;
+            // Held only while the knowledge seats keep the engine's knowledge alive (review F-4): without them
+            // a lost target stays lost and the pin would outlive it inert -- the old end applies.
+            if (apmf::combatentry::hold::Enabled() && apmf::combatentry::hold::KnowledgeInstalled()) {
+                // THE HELD ENGAGEMENT (marth 2026-10-12: "once an engagement is called in harbinger its
+                // move-to, it cannot be lost"): the engine's detection losing the target does NOT end the
+                // pin. The knowledge seats (channels/CombatEntry.cpp) un-lose a held target right after
+                // the engine flags it; a reader here can still see the flag for that instant, or for
+                // longer when those seats are not installed. This update declines (the engine's pick
+                // stands, usually the same target); the pin stays.
+                decline();
+                if (RateOk(pin.lastLostLogMs)) {
+                    spdlog::info("[ch.20] 0x{} pin 0x{} is flagged LOST in the group entry -- HELD (not ended): "
+                                 "the engine's pick stands this update. ({} so far)",
+                                 Hex(self), Hex(claim.form), n);
+                }
+                return;
+            }
+            endWith(kReasonLost);   // hold off / seats not installed: the pre-2026-10-12 contract -- the pin ends
             decline();
             return;
         }
         if (engineAnswer == pin.handle.native_handle()) {
             pin.held.fetch_add(1, std::memory_order_relaxed);
             pin.lastDecision.store(1, std::memory_order_relaxed);
+            return;
+        }
+        if (m == Membership::kAbsent && pin.everPresent.load(std::memory_order_relaxed)) {
+            endWith(kReasonAbsent);   // review F-4: it WAS a group target and is not: the pin ends
+            decline();
             return;
         }
         if (m == Membership::kAbsent) {
@@ -818,6 +851,9 @@ namespace {
         }
         g_pinCount.store(g_pins.size(), std::memory_order_relaxed);
         lk.unlock();
+        // THE HELD ENGAGEMENT: the pin is what this actor holds (nothing, for an inert claim).
+        if (why) apmf::combatentry::hold::ClearPin(id);
+        else apmf::combatentry::hold::SetPin(id, tf, h);
 
         if (why) {
             spdlog::warn("[ch.20] 0x{} target-pin claim {} but INERT -- target 0x{}: {}. The handle stays "
@@ -868,6 +904,7 @@ namespace {
                 }
                 g_pinCount.store(g_pins.size(), std::memory_order_relaxed);
             }
+            apmf::combatentry::hold::ClearPin(id);
             std::uint32_t restored = 0, stood = 0, unattrib = 0;
             {
                 std::scoped_lock lk(g_capMx);
@@ -1040,7 +1077,7 @@ namespace apmf::targetpin {
         for (const auto& sn : snaps) {
             // "target lost" is trusted as the seat saw it; everything else is checked LIVE here,
             // on the game thread, whatever the seat recorded.
-            const char* why = sn.seatWhy == kReasonLost ? kReasonLost : nullptr;
+            const char* why = (sn.seatWhy == kReasonLost || sn.seatWhy == kReasonAbsent) ? sn.seatWhy : nullptr;
             if (!why) {
                 auto* owner = RE::TESForm::LookupByID<RE::Actor>(sn.id);
                 auto  tptr  = sn.handle.get();
@@ -1083,11 +1120,32 @@ namespace apmf::targetpin {
         }
     }
 
+    void EndHeld(RE::FormID a_actor, RE::FormID a_target, const char* a_why) {
+        APMF_API::APMF_Param param{};
+        float                basis = 0.0f;
+        APMF_API::Handle     h     = APMF_API::kInvalidHandle;
+        if (!apmf::ControlMap::Get().TryGetOwningClaimBasis(a_actor, APMF_API::kIntent_TargetPin, param, basis, &h) ||
+            param.form != a_target || h == APMF_API::kInvalidHandle)
+            return;   // no winning pin names this target
+        {
+            std::unique_lock lk(g_pinMx);
+            const auto it = g_pins.find(a_actor);
+            if (it == g_pins.end() || it->second.target != a_target || it->second.ending.load()) return;
+            it->second.ending.store(true);
+            it->second.endedReason.store(a_why);
+        }
+        apmf::ControlMap::Get().EnqueueRelease(h);
+        spdlog::info("[ch.20] 0x{} pin ended: {} (target 0x{}, claim h={}). Harbinger released the claim; a mod that "
+                     "wants to keep chasing must pin again.",
+                     Hex(a_actor), a_why, Hex(a_target), h);
+    }
+
     void ResetAll(const char* why) {
         std::size_t n = 0;
         {
             std::unique_lock lk(g_pinMx);
             n = g_pins.size();
+            for (const auto& [id, p] : g_pins) apmf::combatentry::hold::ClearPin(id);
             g_pins.clear();
             g_pinCount.store(0, std::memory_order_relaxed);
         }

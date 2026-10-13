@@ -113,6 +113,10 @@ namespace apmf {
         // ch.23 PURSUIT LEASH heartbeat (ABI v16), same RULE C shape: every ~30 s while any
         // leash is set, zeros included; one relaxed load when none is.
         apmf::actiongate::PursuitHeartbeat();
+        // ch.23 LEASH RETURN (2026-10-12): a leashed, un-held actor whose search was just leash-denied is
+        // walked back by its own combat area (a Harbinger-internal ch.24 bound). Self-throttled 250 ms;
+        // one relaxed load while no leash is set.
+        apmf::actiongate::LeashReturnPoll();
 
         // [Probe] bRangedSelect (PASSIVE, phase 1 of the Ranged-selection deny): per-actor leaf
         // summaries ~15 s and a RULE C totals line ~30 s, zeros included. One relaxed load when OFF.
@@ -151,6 +155,13 @@ namespace apmf {
         // combat and writes no engine state. Self-throttled; one relaxed atomic load while
         // nothing is claimed.
         apmf::combatentry::Poll();
+
+        // THE HELD ENGAGEMENT (2026-10-12, channels/CombatEntry.cpp): per-hold telemetry (distance moved
+        // per 5 s window, attacks / casts, engine-lost overrides), the no-progress watchdog (a loud
+        // anomaly, then the ch.21 / ch.20 claims are released) and the bleed-out drive. After the ch.20 /
+        // ch.21 monitors so an ordinary end is theirs. Self-throttled 250 ms; cheap while nothing is held.
+        apmf::combatentry::hold::Poll();
+        apmf::combatentry::hold::Heartbeat();
 
         // ch.12 idle v2 (kIntent_Idle with a form, ABI v17) END-OF-CLAIM MONITOR + OBSERVATION
         // LOG, same seat and shape: it ends a v2 idle claim whose owner died and writes the one

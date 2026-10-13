@@ -267,6 +267,14 @@ namespace apmf::cbt {
     // same offsets on both runtimes, read by the engine WITHOUT the group lock.
     inline constexpr std::size_t kGroupSearchLoc      = 0x100;   // NiPoint3
     inline constexpr std::size_t kGroupSearchLocSpace = 0x110;   // TESForm* (cell or worldspace)
+    // The actor the group is searching FOR (RE::CombatGroup::targetToSearchFor, an ActorHandle's u32):
+    // written only by CombatGroup's own setter (AE 0x809B20 / SE 0x76FEB0: the ref's handle, or the
+    // invalid handle) and the save loader (AE 0x80B683, read right before the search timers and the
+    // search centre). Same offset on both runtimes. Read unlocked, like the centre. ch.23 uses it to
+    // let a search for a HELD engagement's target run (2026-10-12).
+    inline constexpr std::size_t kGroupTargetToSearchFor = 0xFC;
+    static_assert(offsetof(RE::CombatGroup, targetToSearchFor) == kGroupTargetToSearchFor);
+    static_assert(offsetof(RE::CombatGroup, searchTargetLoc) == kGroupSearchLoc);
 
     // ---- Cast/equip CONTEXT-CREATION nodes (deny-completeness, 2026-09-04) ----
     // These are NOT leaves. They are `CombatBehaviorTreeCreateContextNode*`

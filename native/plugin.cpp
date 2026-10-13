@@ -103,6 +103,9 @@ namespace {
         // An entry task still queued is dropped by the Discard below; one that somehow ran
         // would find no entry and drop itself.
         apmf::combatentry::ResetAll("revert/new game");
+        // The held engagement (2026-10-12): its per-actor tracks (the hold map itself is emptied by the
+        // two ResetAll calls above).
+        apmf::combatentry::hold::ResetAll("revert/new game");
         // ch.12 idle v2 (ABI v17): same, for the idle entries of the outgoing world.
         apmf::idle::ResetAll("revert/new game");
         // ch.22: same, for the re-entry deny entries of the outgoing world.
@@ -198,6 +201,11 @@ namespace {
                                                   // exact 1.6.1170 / 1.5.97, VR-refused, [Idle] bIdleV2,
                                                   // SeatVerified on SetupSpecialIdle. A refusal REFUSES kIntent_Idle claims
                                                   // that carry a form; the form-free v1 idle is not gated.
+            apmf::combatentry::hold::Install();  // THE HELD ENGAGEMENT (2026-10-12, INVARIANTS #0 (i)):
+                                                  // [EngagementHold]; the two knowledge seats (write_call<5>
+                                                  // post-call on CombatGroup::UpdateTargetDetection, exact
+                                                  // 1.6.1170 / 1.5.97, SeatVerified on all three rows). A
+                                                  // refusal leaves the hold contract on, without the seats.
             apmf::combatapproach::Install();     // ch.24 COMBAT APPROACH (ABI v19): CombatAreaStandard vtable
                                                   // slots 0x0B (Update: carries the bound), 0x05 (IsInside
                                                   // (WorldLocation): the engine's own area inside a deny bracket)
@@ -326,6 +334,7 @@ namespace {
             // ch.21: same -- no entry crosses the load (the queued entry task, if any, is
             // flushed with the main-thread queue below).
             apmf::combatentry::ResetAll("kPreLoadGame");
+            apmf::combatentry::hold::ResetAll("kPreLoadGame");   // the held engagement's tracks
             // ch.12 idle v2 (ABI v17): same -- no idle entry crosses the load.
             apmf::idle::ResetAll("kPreLoadGame");
             // ch.22: same -- no re-entry deny crosses the load.

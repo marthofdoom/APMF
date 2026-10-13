@@ -287,6 +287,26 @@ namespace {
     std::atomic<std::size_t>                                g_liveCount{ 0 };   // entries with live == true
     std::atomic<std::uint32_t>                              g_seq{ 0 };
 
+    // ---- HARBINGER-INTERNAL BOUNDS (2026-10-12, held engagement + leash return) ----
+    // Not client claims. channels/CombatEntry.cpp (a held engagement on a bleeding-out target) and
+    // core/ActionGate.cpp (ch.23's leash return) ask S1 to carry "within R of X" for an actor, through
+    // exactly the same write + record + deny brackets as a ch.24 claim. A LIVE ch.24 claim on the same
+    // actor always wins: S1 consults this map only when the actor has none (the client's declared
+    // area is the client's choice). Written on the GAME thread under g_intMx (unique); S1 copies under
+    // shared. Lock order: g_entryMx is released before g_intMx is taken; g_intMx before g_areaMx.
+    struct Internal {
+        Geo              want{};
+        APMF_API::Handle owner = APMF_API::kInvalidHandle;   // the claim this bound implements (1b ranking)
+        const char*      who   = "";                         // a string literal: "held engagement" / "leash return"
+        std::atomic<std::uint32_t> applied{ 0 };
+        std::atomic<std::uint64_t> lastApplyMs{ 0 };          // WORLD time S1 last wrote it
+        std::atomic<std::uint32_t> stood{ 0 };                // 1b: not written (the source outranks the owner)
+    };
+    std::shared_mutex                                        g_intMx;
+    std::unordered_map<RE::FormID, std::unique_ptr<Internal>> g_internal;
+    std::atomic<std::size_t>                                 g_intCount{ 0 };
+    std::atomic<std::uint64_t>                               g_s1Internal{ 0 };   // RULE C: internal bounds written
+
     // ---- the touched-area table: areas S1 has written a bound into ----
     struct Touched {
         RE::FormID  actor   = 0;
@@ -384,6 +404,49 @@ namespace {
         }
     }
 
+    // S1's internal-bound half (see Internal above): the actor has NO live ch.24 claim. Runs after the
+    // engine's own Update, on the same combat thread, with the same checks a claim gets: the area must be
+    // enabled, and Harbinger 1b ranks the bound's owner claim against the area's source.
+    void ApplyInternal(void* a_area, void* a_ctl, RE::Actor* a_actor, RE::FormID a_fid) {
+        if (g_intCount.load(std::memory_order_relaxed) == 0) return;
+        std::shared_lock ilk(g_intMx);
+        const auto it = g_internal.find(a_fid);
+        if (it == g_internal.end()) return;
+        Internal& in = *it->second;
+        if (At<std::uint8_t>(a_area, kAreaEnabled) == 0) return;   // not selectable: carrying it changes nothing
+        apmf::facetattr::Verdict v;
+        try {
+            v = apmf::facetattr::Decide(apmf::sources::Facet::kCombat, in.owner,
+                                        g_s1Src.load(std::memory_order_relaxed), a_fid, "");
+        } catch (...) {
+            v.enforce = true;   // the decision could not be recorded: the pre-1b behaviour
+        }
+        if (!v.enforce) {
+            in.stood.fetch_add(1, std::memory_order_relaxed);
+            g_s1Stood.fetch_add(1, std::memory_order_relaxed);
+            return;
+        }
+        const std::uint64_t now = WorldNow();
+        {
+            std::unique_lock lk(g_areaMx);
+            Touched t;
+            t.actor         = a_fid;
+            t.ctl           = a_ctl;
+            t.actorLoc      = &a_actor->data.location;
+            t.vanilla       = ReadGeo(a_area);
+            t.vanillaPeriod = At<float>(a_area, kAreaPeriod);
+            t.ours          = in.want;
+            t.ms            = now;
+            WriteGeo(a_area, t.ours);
+            At<float>(a_area, kAreaPeriod) = kBoundPeriod;
+            g_touched[a_area] = t;   // S1's step 1 erased any previous record of this area
+            g_touchedCount.store(g_touched.size(), std::memory_order_relaxed);
+        }
+        in.applied.fetch_add(1, std::memory_order_relaxed);
+        in.lastApplyMs.store(now, std::memory_order_relaxed);
+        g_s1Internal.fetch_add(1, std::memory_order_relaxed);
+    }
+
     // ======================================================================
     // S1 -- CombatAreaStandard::Update (vfunc 0x0B). Combat thread, inside UpdateAreas.
     // ======================================================================
@@ -394,7 +457,8 @@ namespace {
             spdlog::info("[ch.24] seat OBSERVED: CombatAreaStandard::Update (vfunc 0x0B) ran on a combat thread "
                          "(first of the session; principle 5).");
         }
-        if (g_liveCount.load(std::memory_order_relaxed) == 0 && g_touchedCount.load(std::memory_order_relaxed) == 0)
+        if (g_liveCount.load(std::memory_order_relaxed) == 0 && g_touchedCount.load(std::memory_order_relaxed) == 0 &&
+            g_intCount.load(std::memory_order_relaxed) == 0)
             return orig(a_area);
         if (!a_area || *reinterpret_cast<const std::uintptr_t*>(a_area) != g_vtStd) return orig(a_area);
 
@@ -434,7 +498,8 @@ namespace {
 
         orig(a_area);   // the engine's own update: enabled flag, centre, radius, period
 
-        if (!ctl || g_liveCount.load(std::memory_order_relaxed) == 0) return;
+        if (!ctl || (g_liveCount.load(std::memory_order_relaxed) == 0 && g_intCount.load(std::memory_order_relaxed) == 0))
+            return;
         auto* const cc    = static_cast<RE::CombatController*>(ctl);
         const auto  actor = cc->attackerHandle.get();
         if (!actor) return;
@@ -442,7 +507,11 @@ namespace {
 
         std::shared_lock elk(g_entryMx);
         const auto eit = g_entries.find(fid);
-        if (eit == g_entries.end() || !eit->second->live) return;
+        if (eit == g_entries.end() || !eit->second->live) {
+            elk.unlock();   // lock order: never g_entryMx and g_intMx together
+            ApplyInternal(a_area, ctl, actor.get(), fid);
+            return;
+        }
         Entry& e = *eit->second;
         const std::uint64_t now = WorldNow();
         e.lastSeenMs.store(now, std::memory_order_relaxed);
@@ -1146,17 +1215,19 @@ namespace apmf::combatapproach {
             for (const auto& [id, e] : g_entries)
                 if (!e->released) ++n;
         }
-        if (n == 0) return;
+        const std::size_t ni = g_intCount.load(std::memory_order_relaxed);
+        if (n == 0 && ni == 0) return;
         const std::uint64_t now = apmf::clock::MonotonicMs();
         if (now - g_lastHeartbeatMs < kHeartbeatMs) return;
         g_lastHeartbeatMs = now;
-        spdlog::info("[ch.24] heartbeat: {} claim(s); standard-area updates seen {} (any actor), bound applied {}, "
+        spdlog::info("[ch.24] heartbeat: {} claim(s), {} Harbinger-internal bound(s) (held engagement / leash return; "
+                     "written {}); standard-area updates seen {} (any actor), bound applied {}, "
                      "engine geometry restored first {}, outranked {}, disabled {}, not written by priority {}, "
                      "rewritten outside the seat (drift) {}; vanilla answers inside deny "
                      "brackets {} (target-selector brackets {}, inv/bound brackets {}, attack/bash brackets {}, find-weapon brackets {}); "
                      "engine inside/outside verdicts on the bound {} ({} outside); ended by Harbinger {}; engine areas "
                      "put back after an end {}; areas carrying a bound now {}.",
-                     n, g_s1Seen.load(), g_s1Applied.load(), g_s1Restored.load(), g_s1Yielded.load(),
+                     n, ni, g_s1Internal.load(), g_s1Seen.load(), g_s1Applied.load(), g_s1Restored.load(), g_s1Yielded.load(),
                      g_s1Disabled.load(), g_s1Stood.load(), g_s1Drift.load(), g_s2Vanilla.load(), g_s3Brackets.load(), g_s4Brackets.load(),
                      g_s5Brackets.load(), g_s5FindBrackets.load(), g_s6Verdicts.load(), g_s6Outside.load(), g_ended.load(), g_s3PutBack.load(),
                      g_touchedCount.load());
@@ -1212,6 +1283,12 @@ namespace apmf::combatapproach {
             g_liveCount.store(0, std::memory_order_relaxed);
         }
         {
+            std::unique_lock lk(g_intMx);
+            n += g_internal.size();
+            g_internal.clear();
+            g_intCount.store(0, std::memory_order_relaxed);
+        }
+        {
             std::unique_lock lk(g_areaMx);
             a = g_touched.size();
             g_touched.clear();
@@ -1253,6 +1330,66 @@ namespace apmf::combatapproach {
             out->size = callerSize;
         }
         return state;
+    }
+
+    const void* SpaceOfRef(const RE::TESObjectREFR* a_ref) { return SpaceOf(a_ref); }
+
+    bool SetInternalBound(RE::FormID a_actor, const RE::NiPoint3& a_x, const void* a_space, float a_radius,
+                          APMF_API::Handle a_owner, const char* a_who) {
+        if (!g_installed.load(std::memory_order_relaxed) || !a_space || !(a_radius > 0.0f)) return false;
+        std::unique_lock lk(g_intMx);
+        auto& slot = g_internal[a_actor];
+        if (!slot) slot = std::make_unique<Internal>();
+        slot->want.x      = a_x.x;
+        slot->want.y      = a_x.y;
+        slot->want.z      = a_x.z;
+        slot->want.space  = a_space;
+        slot->want.radius = a_radius;
+        slot->owner       = a_owner;
+        slot->who         = a_who ? a_who : "";
+        g_intCount.store(g_internal.size(), std::memory_order_relaxed);
+        return true;
+    }
+
+    void ClearInternalBound(RE::FormID a_actor) {
+        bool had = false;
+        {
+            std::unique_lock lk(g_intMx);
+            if (const auto it = g_internal.find(a_actor); it != g_internal.end()) {
+                g_internal.erase(it);
+                had = true;
+            }
+            g_intCount.store(g_internal.size(), std::memory_order_relaxed);
+        }
+        if (!had) return;
+        // F3, as for a finished claim: S3 puts the engine's own area back (and re-activates it if the
+        // engine's failed Return To Combat Area path cleared it). Not while a ch.24 claim is live on the
+        // actor: S1 is carrying that claim's bound in the same area now.
+        bool clientLive = false;
+        {
+            std::shared_lock lk(g_entryMx);
+            const auto it = g_entries.find(a_actor);
+            clientLive    = it != g_entries.end() && it->second->live;
+        }
+        if (!clientLive) MarkReactivate(a_actor);
+    }
+
+    bool GetInternalInfo(RE::FormID a_actor, InternalInfo& a_out) {
+        a_out = InternalInfo{};
+        {
+            std::shared_lock lk(g_intMx);
+            const auto it = g_internal.find(a_actor);
+            if (it == g_internal.end()) return false;
+            a_out.applied = it->second->applied.load(std::memory_order_relaxed);
+            a_out.stood   = it->second->stood.load(std::memory_order_relaxed);
+            const auto last  = it->second->lastApplyMs.load(std::memory_order_relaxed);
+            const auto wnow  = WorldNow();
+            a_out.msSinceApply = last == 0 ? ~0ull : wnow - (std::min)(last, wnow);
+        }
+        std::shared_lock elk(g_entryMx);
+        const auto eit = g_entries.find(a_actor);
+        a_out.clientWins = eit != g_entries.end() && eit->second->live;
+        return true;
     }
 
 }

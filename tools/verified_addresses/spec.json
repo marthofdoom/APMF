@@ -23,9 +23,10 @@
     "0xC2",
     "0xE3",
     "0x4A",
-    "0xDC"
+    "0xDC",
+    "0xE5"
    ],
-   "source": "native/core/Hook.cpp:94; PackageGate.cpp:296; NonAliasProbe.cpp:216; channels/TargetPin.cpp:460 (observer); channels/CombatReentryDeny.cpp (0x99, the ch.22 seat); core/Sightline.cpp (0xC2 GetEyeVector, 0x73/0x74 GetBoundMin/Max via TESObjectREFR::GetHeight; virtual calls) and core/Awareness.cpp (0xE3 IsInCombat; virtual call); core/PackageSources.cpp (0x4A GetCurrentScene: the Harbinger 1a scene probe, OBSERVE-ONLY); core/SpectatorGate.cpp (0xDC InitiateSpectator: the Package facet's Spectator seat, ClickUp 86e3m5feu)",
+   "source": "native/core/Hook.cpp:94; PackageGate.cpp:296; NonAliasProbe.cpp:216; channels/TargetPin.cpp:460 (observer); channels/CombatReentryDeny.cpp (0x99, the ch.22 seat); core/Sightline.cpp (0xC2 GetEyeVector, 0x73/0x74 GetBoundMin/Max via TESObjectREFR::GetHeight; virtual calls) and core/Awareness.cpp (0xE3 IsInCombat; virtual call); core/PackageSources.cpp (0x4A GetCurrentScene: the Harbinger 1a scene probe, OBSERVE-ONLY); core/SpectatorGate.cpp (0xDC InitiateSpectator: the Package facet's Spectator seat, ClickUp 86e3m5feu); channels/CombatEntry.cpp (0xE5 StopCombat: the held engagement's range rule, a virtual call, void(this), reads rcx only -- AE 0x6B70A0 / SE 0x625920)",
    "doc": "ADDRESS-TABLE-2026-09-15.md:64"
   },
   {
@@ -3649,6 +3650,69 @@
    },
    "bytes": "B2 01 48 8B CF FF 90 C8 04 00 00",
    "doc": "ch.22 combat re-entry deny, INVARIANTS #0 (h); scratchpad apmf-reentry.md (AE 0x6B69BF, ret 0x6B69CA; SE 0x62523D, ret 0x625248)"
+  },
+  {
+   "seat": "EngagementHold.CombatGroup.UpdateTargetDetection",
+   "kind": "function",
+   "construct": "CombatGroup::UpdateTargetDetection(group, member, target, detectionEvent) -- the ONLY writer of CombatTarget kTargetLost",
+   "ids": {
+    "1.6.1170": 44725,
+    "1.5.97": 43501
+   },
+   "sig": {
+    "1.6.1170": "48 8B C4 4C 89 48 20 48 89 50 10 55 56 57 41 54 41 55 41 56 41 57 48 8D 68 A1 48 81 EC D0 00 00 00",
+    "1.5.97": "48 8B C4 4C 89 48 20 55 56 57 41 54 41 55 41 56 41 57 48 8D 68 A1 48 81 EC D0 00 00 00"
+   },
+   "source": "native/channels/CombatEntry.cpp (held engagement: the call target both knowledge seats verify)",
+   "doc": "scratchpad agentlogs/apmf-engagement-movto.md (2026-10-12): sets kTargetLost at AE 0x8053EA / 0x805462 / 0x8054F2 (SE 0x76B886 ...); engine un-lose AE 0x805483"
+  },
+  {
+   "seat": "EngagementHold.Site.ListenerDetection",
+   "kind": "callsite",
+   "construct": "CombatGroupDetectionListener::ProcessEvent (vtable slot 2) -> call CombatGroup::UpdateTargetDetection",
+   "ids": {
+    "1.6.1170": 44699,
+    "1.5.97": 43477
+   },
+   "sig": {
+    "1.6.1170": "40 53 55 56 57 41 56 48 83 EC 30 48 C7 44 24 28 FE FF FF FF 48 8B F2",
+    "1.5.97": "40 53 55 56 57 41 56 48 83 EC 30 48 C7 44 24 28 FE FF FF FF 48 8B F2 4C 8B F1"
+   },
+   "offset": {
+    "1.6.1170": "0x85",
+    "1.5.97": "0x85"
+   },
+   "bytes": "E8",
+   "target": {
+    "1.6.1170": 44725,
+    "1.5.97": 43501
+   },
+   "source": "native/channels/CombatEntry.cpp (held engagement knowledge seat, write_call<5> post-call)",
+   "doc": "AE 0x8031C5 / SE 0x769D75; scratchpad agentlogs/apmf-engagement-movto.md"
+  },
+  {
+   "seat": "EngagementHold.Site.GroupDetectionPass",
+   "kind": "callsite",
+   "construct": "CombatGroup periodic detection pass (members x targets) -> call CombatGroup::UpdateTargetDetection",
+   "ids": {
+    "1.6.1170": 44804,
+    "1.5.97": 43572
+   },
+   "sig": {
+    "1.6.1170": "48 8B C4 55 56 57 41 56 41 57 48 81 EC B0 00 00 00 48 C7 44 24 40 FE FF FF FF 48 89 58 20",
+    "1.5.97": "48 8B C4 55 56 57 41 56 41 57 48 81 EC B0 00 00 00 48 C7 44 24 40 FE FF FF FF"
+   },
+   "offset": {
+    "1.6.1170": "0x143",
+    "1.5.97": "0x143"
+   },
+   "bytes": "E8",
+   "target": {
+    "1.6.1170": 44725,
+    "1.5.97": 43501
+   },
+   "source": "native/channels/CombatEntry.cpp (held engagement knowledge seat, write_call<5> post-call)",
+   "doc": "AE 0x80CF43 / SE 0x772E13; scratchpad agentlogs/apmf-engagement-movto.md"
   },
   {
    "seat": "BShkbAnimationGraph",

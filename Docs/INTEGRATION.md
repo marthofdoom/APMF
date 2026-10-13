@@ -237,6 +237,7 @@ Older comments in `APMF_API.h` and the source tree cite sections of this page by
 | "Spells-only floor" | [A hand floor](FACETS.md#a-hand-floor-kcastflag_denyhandonly) |
 | "Cast guards" | [ch.25 Cast guard](FACETS.md#ch25-cast-guard-kintent_castguard) |
 | "enter combat + pin" | the example under [ch.21 Combat entry](FACETS.md#ch21-combat-entry-kintent_combatentry) |
+| "the fight cannot be lost; give it a range" | ch.21 and ch.20 claims are HELD engagements (2026-10-12, `Docs/INVARIANTS.md` #0 (i)). A ch.21 claim may set `param.fval` to its engage range in game units (0 = none): the moment the target is beyond it and not attacking the party, it is dropped, the actor's combat is ended (unless another foe is attacking the party) and its prior behaviour restored. There is no cooldown after any end: the same target may be engaged again at once. `APMF_API.h`'s "No other field is read" for kIntent_CombatEntry is out of date until the next mirrored header edit. |
 | "retreat: StopCombat once + deny re-entry" | the example under [ch.22 Combat re-entry deny](FACETS.md#ch22-combat-re-entry-deny-kintent_combatreentrydeny) |
 | "Making an NPC cast", "Casting at a point" | [ch.8b Cast](FACETS.md#ch8b-cast-kintent_cast), [Position cast](FACETS.md#position-cast-kcastflag_atposition) |
 | "Declaring what an NPC wears", "Scoping the authority", the probe criteria | [ch.17 Equip authority](FACETS.md#ch17-equip-authority-kintent_equipauthority), [Appendix E](FACETS.md#appendix-e-equip-authority-probe-criteria) |

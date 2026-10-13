@@ -109,6 +109,17 @@ ABI v14. "Start a fight with THIS one." A mod names an actor and a target. Harbi
 
 - **`bCombatEntry`** (default `1`). 0 = kIntent_CombatEntry claims are REFUSED (the mod starts fights its own way; logged once with the reason).
 
+### [EngagementHold]
+
+Facet reference: [ch.20 Target pin](FACETS.md#ch20-target-pin-kintent_targetpin) and [ch.21 Combat entry](FACETS.md#ch21-combat-entry-kintent_combatentry). Rule: `Docs/INVARIANTS.md` #0 (i).
+
+"Once a fight is called, it is a move-to: it cannot be lost" (marth, 2026-10-12). When a mod starts a fight ([CombatEntry]) or pins a target ([TargetPin]), the game no longer drops that target because its own eyes lost track of it. Harbinger keeps the game's knowledge of where the target is, so the follower chases it the game's own way. The hold ends when the target dies, is disabled or unloads, when the mod lets go, when a higher-priority claim takes over, or when the follower makes no progress toward the target for 20 seconds (logged as an anomaly, then released). A [PursuitLeash] never holds back the approach to a held target.
+
+- **`bEngagementHold`** (default `1`). 0 = the old behaviour: a pin ends when the game loses the target, the leash bounds the approach to it too, and the keys below do nothing.
+- **`bTargetKnowledge`** (default `1`). 1 = installs the two knowledge seats (after the game's own detection update, a held target the game marked lost is un-lost the game's own way and its last-seen place is its real one). 0 = no seat: the hold still never ends on "lost", but the game may search for the target instead of chasing it. Exactly 1.6.1170 and 1.5.97 (refused on 1.7.104, logged).
+- **`bBleedoutDrive`** (default `1`). 1 = a held target that is bleeding out (or essential-down) is walked to: the follower's combat area is centred on it (radius 160) until it is up again. A mod's own [CombatApproach] claim on the follower wins. 0 = the game decides.
+- **`bKnowledgeTrace`** (default `0`). DIAGNOSTIC, passive. 1 = one `[hold] trace` line per follower per second showing what the game did to a held target's knowledge and what Harbinger wrote.
+
 ### [Idle]
 
 Facet reference: [ch.12 Idle](FACETS.md#ch12-idle-kintent_idle).
@@ -133,6 +144,7 @@ Facet reference: [ch.23 Pursuit leash](FACETS.md#ch23-pursuit-leash-kintent_purs
 ABI v16. "Do not chase a fight away from me." A mod names an actor, an anchor actor (often the player) and a radius. While the actor is farther than the radius from the anchor, the game's own combat moves toward its target or its search area (close in, chase, flank, reposition, search) are refused when that goal is farther from the anchor still. The actor keeps fighting what comes to it: attacks, spells, blocks and every other move are untouched.
 
 - **`bPursuitLeash`** (default `1`). 0 = kIntent_PursuitLeash claims are REFUSED (the mod leashes the actor its own way; logged at startup with the reason).
+- **`bLeashReturn`** (default `1`). 1 = a leashed actor whose search the leash refuses is walked back toward its anchor: while it searches, its combat area is centred on the anchor with the leash radius, so the game's own "return to combat area" brings it back and its search stays inside the leash. Not for a held engagement (its approach is exempt). 0 = it stands where the leash stopped it.
 
 ### [CombatApproach]
 

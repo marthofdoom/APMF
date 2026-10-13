@@ -39,6 +39,19 @@ namespace apmf::actiongate {
     // RULE C heartbeat, once per frame from Arbiter::OncePerFrame (game thread); prints
     // every ~30 s while any leash is set, zeros included. Cheap otherwise.
     void PursuitHeartbeat();
+    // ch.23 LEASH RETURN (2026-10-12), once per frame from Arbiter::OncePerFrame (game thread,
+    // self-throttled 250 ms): a leashed, un-held actor whose search was just leash-denied gets a
+    // Harbinger-internal combat-area bound on its anchor (channels/CombatApproach.h), so the engine's
+    // Return To Combat Area walks it back instead of it standing still; ended when it stops searching,
+    // holds an engagement, leaves combat or loses the leash. [PursuitLeash] bLeashReturn (default 1).
+    void LeashReturnPoll();
+    // ch.23 search stamps for a LEASHED actor: ms since a search leaf last ran / was last leash-denied
+    // (~0 = never). Any thread (a mutex). The held engagement's "search-elsewhere" drive reads them.
+    std::uint64_t SearchSeenAgeMs(RE::FormID actor);
+    std::uint64_t SearchDeniedAgeMs(RE::FormID actor);
+    // The held engagement was DROPPED ("not engaged", marth 2026-10-12): forget the actor's search stamps
+    // and end any leash return now, so nothing of it is re-armed on the next poll. GAME THREAD.
+    void ForgetEngagement(RE::FormID actor, const char* why);
 
     // ---- [Probe] bRangedSelect (2026-09-29, PHASE 1 of the Ranged-selection deny): a PASSIVE
     // probe. It never denies, never writes engine state and never changes a return value. For

@@ -179,7 +179,11 @@ and replaces its answer with the declared target. It is legal only while ALL of 
    (SmartNPCTargetSelector) is a competing SOURCE for that facet; marth ruled it is arbitrated by
    priority like every other source, at the outermost position so every chained hook still runs.
 5. **It ends by itself.** marth, 2026-09-25: *"If APMF can no longer track the target, it's lost,
-   and dropped."* Target LOST, dead, disabled, not loaded or unresolvable, or the owner dead: APMF
+   and dropped."* **SUPERSEDED FOR "LOST" 2026-10-12 by marth: *"The correct call is once an engagement
+   is called in harbinger its move-to, it cannot be lost."*** A pin is a HELD engagement (action (i)
+   below): the target being LOST to the engine's detection no longer ends it; the seat only declines
+   that update. With `[EngagementHold] bEngagementHold=0` the 2026-09-25 rule below applies unchanged.
+   Target LOST (hold off only), dead, disabled, not loaded or unresolvable, or the owner dead: APMF
    RELEASES the claim itself (`targetpin::Poll`, the ch.19 monitor seat), logs `pin ended:
    <reason>`, and repeats the reason on the Release line. This is the only case where APMF releases
    a client's pin claim. The pin merely PAUSES (the engine's selection stands, the claim stays) while
@@ -233,7 +237,9 @@ target. It is legal only while ALL of these hold:
    and stopping it would be an undo that also tears down combat the actor may have for its own reasons.
    The engine ends it as it ends any fight; a client that wants it over calls `StopCombat` itself.
 5. **It ends by itself, and is never left live and inert** (marth's ch.20 ruling: "if APMF can no
-   longer track the target, it's lost and dropped"). APMF releases the claim and logs `entry ended:
+   longer track the target, it's lost and dropped"; for a target merely LOST to the engine's
+   detection that ruling is superseded by marth 2026-10-12 -- an entry is a HELD engagement, action (i);
+   ch.21 never ended on "lost" in any case). APMF releases the claim and logs `entry ended:
    <reason>` (repeated on the Release line) when: the ENGINE REFUSED the entry (`engine refused entry:
    <cause if known>`); the entry could not be attempted (the target is not an Actor; the actor is not
    loaded, has no AI process or is dead; the target is not loaded, disabled or dead); the FIGHT ENDED
@@ -314,6 +320,117 @@ answer only at that one return address. It is legal only while ALL of these hold
    other than ch.21's `ClientEntryScope` are each a new amendment, not a code change.
 7. **The world's reaction belongs to the client** (principle 2 scope). Enemies may keep attacking an actor
    that cannot fight back; that is their facet and the client's declared consequence.
+
+**ADOPTED 2026-10-12 by marth, after the LoreRim field run of APMF 7f2d638 + MFO 03b25ff (ch.21 entries
+against foes Harbinger's own senses found: the engine, which had not detected them, flagged the group
+target `kTargetLost` ~260 ms after entry in 27 of 29 entries, the ch.20 pin ended "target lost", the
+follower searched for 75-90 s and, outside a ch.23 leash, stood still). Rulings, verbatim: *"The correct
+call is once an engagement is called in harbinger its move-to, it cannot be lost."*; on a pinned foe in
+bleed-out: *"Theres no problem targeting a downed enemy, but if it wont path to it then theres the
+issue."*; and, the same day: *"If the target is actually outside the engage on sight leash it should just
+be dropped unless it's hostile, canceling combat status on the follower."* The ninth legal action
+(`channels/CombatEntry.cpp` "THE HELD ENGAGEMENT"; no ABI layout change): (i) HOLD A CLIENT-CALLED
+ENGAGEMENT -- keep the GROUP's own KNOWLEDGE of a declared target, and END it by the client's range.** It
+amends (f) condition 3 ("no perception write") and (g) condition 2 ("APMF writes no ... detection state")
+for the held target only, (g) condition 4 / 7 ("no StopCombat") for the range rule only, and supersedes
+(f) condition 5 and (g) condition 5 for "lost"; it is written here rather than done quietly. An actor
+HOLDS an engagement on the target of its winning ch.21 claim and of its winning ch.20 claim. It is legal
+only while ALL of these hold:
+1. **One fact, the engine's own way, for the GROUP.** `CombatTarget::kTargetLost` (u16 +0xA6 bit 1) is
+   written by ONE engine function, `CombatGroup::UpdateTargetDetection` (1.6.1170 id 44725 `0x805090`,
+   1.5.97 id 43501 `0x76B5D0`), per (member, target) detection event, into an entry that belongs to the
+   GROUP. Four paths set it: detected under the threshold (AE `0x8053EA` / SE `0x76B886`), the group's
+   last-known time +0x90 more than 10 s old (AE `0x805462` / SE `0x76B8FF`), a negative level (AE
+   `0x8054F2` / SE `0x76B997`), the member at the last-known spot without the target (AE `0x805584` / SE
+   `0x76BA25`); each stamps +0x94 with the AI clock. Harbinger sits AFTER it at its two call sites (the
+   detection listener's ProcessEvent +0x85, the group's member x target pass +0x143; verified call-site
+   rows `EngagementHold.Site.*`), never instead of it. After ANY member's update of a target that a
+   MEMBER OF THAT GROUP holds (review F-1: a non-holder's event -- the player's, another follower's --
+   re-flags the group entry just as well): a lost flag is cleared exactly as the engine's own un-lose does
+   it (AE `0x805483`: bit cleared, +0x94 = -FLT_MAX), the last-known time (+0x90) takes max(+0x90, +0x94)
+   (the engine's own "now" when a lost path just stamped it), and the last-known location (+0x10 / +0x20)
+   is the target's real position and cell / worldspace, read as the engine's GetWorldLocation reads it.
+   Nothing else: not the detection level, the stealth points, the group's search state or the selector's
+   answer. The engine's own pursuit, detection, attacks and target selection then run on that knowledge.
+   Threads (measured): the listener site runs in the "Non render-safe AI" job with NO group lock (the
+   engine's own writes there are equally lockless) and synchronously from `CombatGroup::AddTarget` under
+   the group's WRITE lock; the group pass runs in the "Combat manager" job under the WRITE lock and only
+   for members that are NOT high process, so a follower near the player is updated only through the
+   listener. The seat takes no lock of its own on the group.
+2. **Ranked (Harbinger 1b).** The engine's detection is the Engine source on the Detection facet; the
+   override stands only while the owning claim outranks it in `APMF_Sources.ini` (client default 50).
+3. **It ends, loudly, and is never held forever.** On the claim ending as (f) / (g) define it (target
+   dead, disabled, unloaded or unresolvable; owner dead; the client's release; an outranking claim; for
+   ch.21 the engine ending the fight; for ch.20 the target leaving the group's targets after it was in
+   them) -- never on "lost" while the knowledge seats are installed -- and on three ends of Harbinger's
+   own, each a warning that releases the ch.21 and ch.20 claims naming the target:
+   (a) NO PATH PROGRESS outside reach (300 u): over the last 20 s of world time the actor got no 64 u
+   closer than at the window's start, did not keep pace with a moving target (target moved >= 128 u, actor
+   >= 64 u, gap grew < 64 u) and started no attack or cast ON THE HELD TARGET -- or, while the hold is
+   PAUSED BY DESIGN (the actor's own combat target is another actor: a pin paused by own line of sight, a
+   ch.21-only hold whose engine target is another foe), on that other target (review R-3: an intended
+   pause is never an anomaly);
+   (b) ARRIVED BUT NOT FIGHTING: within reach for 20 s without an attack or cast on the held target (a
+   close but unreachable target, a downed foe the engine will not strike);
+   (c) NOT ENGAGED (condition 6).
+   Each end is logged EVERY time with its count for that actor -> target ("End #N"; the heartbeat counts
+   repeats), and there is NO cooldown -- marth 2026-10-12, verbatim: *"THe engage on sight is meant to be an
+   aggressive setting. No waiting ever, engaged, or not engaged."* The client may engage the same target
+   again at once; a release -> re-engage cycle is visible in the log, never suppressed. On release
+   Harbinger stops writing and undoes nothing else.
+   **Degraded** (`bTargetKnowledge=0`, a refused self-check row, a site another DLL patched, 1.7.104):
+   no seat keeps the knowledge, so a ch.20 pin ends on "lost" exactly as before (review F-4).
+4. **The leash yields to the held approach by priority (review F-3).** ch.23 (`core/ActionGate.cpp`) lets
+   a pursuit leaf whose goal is the held target, and a search leaf whose group searches for it
+   (CombatGroup +0xFC), run when the engagement claim's priority on the CombatAction facet is AT LEAST the
+   leash claim's (`sources::ClaimPriority`); a tie is the engagement's (marth's ruling), a strictly higher
+   leash still bounds it (counted). It still bounds every other pursuit and every wandering search; a
+   leashed, UN-held actor whose search it refuses is walked back to the anchor, never left standing; a
+   HELD actor whose search for some OTHER target it refuses is driven to its held target (condition 5).
+5. **The drive is a combat area, nothing more.** Two cases put "within R of the held target" into the
+   actor's standard combat area through ch.24's own seats (a Harbinger-internal bound: same write,
+   record, deny brackets and put-back as a ch.24 claim; a live ch.24 claim on the actor always wins): the
+   target bleeding out or essential-down with the actor farther than 256 u (R 160), and a search for
+   another target just leash-denied (R 300, until no search for 3 s). Neither starts when the actor's
+   winning leash outranks the engagement. A drive the engine does not carry for 3 s is RELEASED with a
+   warning and not retried for 10 s. Off: `bBleedoutDrive=0` (the bleed-out case).
+6. **The client's engage range ends it -- and the actor's combat -- unless the target is hostile.** marth
+   2026-10-12, verbatim: *"And if the target is deemed \"not engaged\" combat is dropped immediately and
+   previous behaviour reinstated."* A ch.21 claim may carry its engage range in `param.fval` (game units;
+   0 = none; the field was unread before, so a zero-init client is unchanged). The FIRST poll (250 ms)
+   that finds the target farther than that from the actor (or in another cell / worldspace) and NOT
+   actively hostile -- no debounce -- (in combat, with one of the PARTY
+   as its own combat target: the actor, the player, a player teammate, an actor commanded by any of those
+   -- a summon, a thrall -- or a member of the actor's own combat group), the ch.21 and ch.20 claims naming
+   it are released and the actor's combat is ended -- but ONLY when that
+   target WAS the fight (review R-1): if any OTHER live target of the actor's group is actively hostile by
+   the same test (the group's targets and members copied under the group's READ lock, nothing nested), the
+   claims are released and the fight stays the engine's, logged with the foe that kept it. Otherwise the
+   combat is ended through the engine's own
+   `Actor::StopCombat` (Character vtable slot 0xE5: 1.6.1170 `0x6B70A0`, 1.5.97 `0x625920`, `void(this)`,
+   reads rcx only; the Character vtable is a self-checked row and the actor's vtable is compared with it
+   per call), on the game thread, logged -- and RANKED: not when a winning ch.20 pin names a different
+   target, not when another client's ch.24 claim outranks the entry on the Combat facet, not when Engine
+   outranks the entry on the Combat facet. PREVIOUS BEHAVIOUR REINSTATED, in that same pass: the hold
+   slots are cleared at once (the knowledge seats and ch.23's pursuit exemption stop now, not at the next
+   Drain), every Harbinger-internal ch.24 bound on the actor (a drive, a leash return) is cleared, and
+   ch.23's search stamps and leash-return state for the actor are forgotten (`actiongate::ForgetEngagement`),
+   so nothing is re-armed on the next poll; one line `[hold] ... DROPPED (not engaged) -- combat ended,
+   prior behaviour restored (released: ...)`. The engine's own group entry is not undone: it goes with the
+   controller StopCombat frees. THREADING (APMF-B26): StopCombat frees the actor's
+   CombatController (actor+0x160) INLINE with no lock (AE `0x6B7214` -> `0x558500`, `0x6B7235`). It is
+   called from the player's update seat, i.e. Main::Update's own context, right after the engine resets
+   its AI job lists (AE `0x5FC260` / `0x5FC180`), so the combat jobs are believed quiescent there --
+   INFERRED from that reset, not proven; the same exposure as a script's `Actor.StopCombat`.
+7. **Scope is closed by name.** Exactly 1.6.1170 or 1.5.97 for the knowledge seats and StopCombat
+   (1.7.104: the seat ids are not in the MIT id table, the seats are refused and logged), not VR,
+   `[EngagementHold] bEngagementHold` / `bTargetKnowledge` / `bBleedoutDrive`, the self-check on all rows
+   and the E8 bytes re-read before the patch (the verified function is stored as the original before the
+   site is patched). Holding a target the client did not name, holding after the claim ends, writing any
+   other detection field, or ending combat for any other reason is a new amendment, not a code change.
+8. **The world's reaction belongs to the client** (principle 2 scope). Knowledge is the GROUP's, as the
+   engine keeps it (review F-7): every member of the holder's combat group knows where the held target is,
+   because the engine itself keeps one entry per group; no group the holder is not in is ever written.
 
 **#20 — COMPOSED ANSWERS: APMF may answer the ENGINE'S OWN DECISION SEATS so the
 AI decides what a claim asks for — and exactly ONE of those answers may skip the

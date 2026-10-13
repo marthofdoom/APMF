@@ -19,7 +19,7 @@
 
 namespace apmf::VerifiedAddresses
 {
-	// 1.6.1170.0: 207 rows
+	// 1.6.1170.0: 210 rows
 	inline constexpr REL::SelfCheck::Row kRows_1_6_1170[] = {
 		{ 207886, 0x18A5558, 0x0, 0, {  }, "Character" },
 		{ 207896, 0x18A5FE8, 0x0, 0, {  }, "Character.ActorValueOwner" },
@@ -219,6 +219,9 @@ namespace apmf::VerifiedAddresses
 		{ 38561, 0x6B6930, 0x0, 0, {  }, "CombatEntry.Actor.StartCombat" },
 		{ 39256, 0x6DDE70, 0x0, 0, {  }, "Idle.AIProcess.SetupSpecialIdle" },
 		{ 38561, 0x6B6930, 0x8F, 11, { 0xB2, 0x01, 0x48, 0x8B, 0xCF, 0xFF, 0x90, 0xC8, 0x04, 0x00, 0x00 }, "ReentryDeny.StartCombat.SelfIsDeadCall" },
+		{ 44725, 0x805090, 0x0, 0, {  }, "EngagementHold.CombatGroup.UpdateTargetDetection" },
+		{ 44699, 0x803140, 0x85, 1, { 0xE8 }, "EngagementHold.Site.ListenerDetection" },
+		{ 44804, 0x80CE00, 0x143, 1, { 0xE8 }, "EngagementHold.Site.GroupDetectionPass" },
 		{ 232870, 0x19881F8, 0x0, 0, {  }, "BShkbAnimationGraph" },
 		{ 220287, 0x1941450, 0x0, 0, {  }, "hkbBehaviorGraph" },
 		{ 226812, 0x1964250, 0x0, 0, {  }, "hkbStateMachine" },
@@ -230,7 +233,7 @@ namespace apmf::VerifiedAddresses
 		{ 12332, 0x179710, 0x0, 0, {  }, "CommonLib.LookupReferenceByHandle" },
 	};
 
-	// 1.5.97.0: 207 rows
+	// 1.5.97.0: 210 rows
 	inline constexpr REL::SelfCheck::Row kRows_1_5_97[] = {
 		{ 261397, 0x165DA40, 0x0, 0, {  }, "Character" },
 		{ 261402, 0x165E4D0, 0x0, 0, {  }, "Character.ActorValueOwner.SE" },
@@ -430,6 +433,9 @@ namespace apmf::VerifiedAddresses
 		{ 37608, 0x6251B0, 0x0, 0, {  }, "CombatEntry.Actor.StartCombat" },
 		{ 38290, 0x64B140, 0x0, 0, {  }, "Idle.AIProcess.SetupSpecialIdle" },
 		{ 37608, 0x6251B0, 0x8D, 11, { 0xB2, 0x01, 0x48, 0x8B, 0xCF, 0xFF, 0x90, 0xC8, 0x04, 0x00, 0x00 }, "ReentryDeny.StartCombat.SelfIsDeadCall" },
+		{ 43501, 0x76B5D0, 0x0, 0, {  }, "EngagementHold.CombatGroup.UpdateTargetDetection" },
+		{ 43477, 0x769CF0, 0x85, 1, { 0xE8 }, "EngagementHold.Site.ListenerDetection" },
+		{ 43572, 0x772CD0, 0x143, 1, { 0xE8 }, "EngagementHold.Site.GroupDetectionPass" },
 		{ 282351, 0x1741A20, 0x0, 0, {  }, "BShkbAnimationGraph" },
 		{ 275301, 0x16FADB0, 0x0, 0, {  }, "hkbBehaviorGraph" },
 		{ 278793, 0x171DB80, 0x0, 0, {  }, "hkbStateMachine" },
@@ -442,7 +448,7 @@ namespace apmf::VerifiedAddresses
 	};
 
 	// 1.7.104.0: 220 rows
-	// 30 NOT VERIFIED on 1.7.104.0, deliberately absent from this table (the seat is refused):
+	// 33 NOT VERIFIED on 1.7.104.0, deliberately absent from this table (the seat is refused):
 	//   Character.ActorValueOwner.SE (1.6.1170 id -): no 1.6.1170 (AE) id: the 1.7.104 map is keyed by AE id (1.5.97-only seat)
 	//   TargetPin.CombatController.SetTarget (1.6.1170 id 33235): id 33235 is not in the idmap
 	//   EquipSink.Path.OutfitApply.24234 (1.6.1170 id -): BY DESIGN: 1.5.97-only label. On 1.6.1170 and 1.7.104 the code reads its AE twin EquipSink.Path.OutfitApply.418622 (AE id 418622, 1.7.104 0x3C4440), whose own row carries the 1.7.104 fact (MAPPED-AE)
@@ -473,6 +479,9 @@ namespace apmf::VerifiedAddresses
 	//   EquipSink.Path.ProcedureEat.27700 (1.6.1170 id -): BY DESIGN: 1.5.97-only label. On 1.6.1170 and 1.7.104 the code reads its AE twin EquipSink.Path.ProcedureEat.28422 (AE id 28422, 1.7.104 0x464CF0), whose own row carries the 1.7.104 fact (MAPPED-AE)
 	//   EquipSink.Path.InventoryReequip.40241 (1.6.1170 id -): BY DESIGN: 1.5.97-only label. On 1.6.1170 and 1.7.104 the code reads its AE twin EquipSink.Path.InventoryReequip.41244 (AE id 41244, 1.7.104 0x776D10), whose own row carries the 1.7.104 fact (MAPPED-AE)
 	//   EquipSink.Path.StartCombat.37608 (1.6.1170 id -): BY DESIGN: 1.5.97-only label. On 1.6.1170 and 1.7.104 the code reads its AE twin EquipSink.Path.StartCombat.38561 (AE id 38561, 1.7.104 0x6C93B0), whose own row carries the 1.7.104 fact (MAPPED-AE)
+	//   EngagementHold.CombatGroup.UpdateTargetDetection (1.6.1170 id 44725): id 44725 is not in the idmap
+	//   EngagementHold.Site.ListenerDetection (1.6.1170 id 44699): id 44699 is not in the idmap
+	//   EngagementHold.Site.GroupDetectionPass (1.6.1170 id 44804): id 44804 is not in the idmap
 	inline constexpr REL::SelfCheck::Row kRows_1_7_104[] = {
 		{ 207886, 0x1923258, 0x0, 0, {  }, "Character" },
 		{ 207896, 0x1923CE8, 0x0, 0, {  }, "Character.ActorValueOwner" },
