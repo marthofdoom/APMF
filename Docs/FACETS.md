@@ -550,9 +550,44 @@ Handle h = g_apmf->RequestEx(actor, kIntent_Idle, kBasis, &p);
 - v2 (form set): one `PlayIdle(actor, idle, target)` call at engage, and one more on each `Repoint` or owner change. The idle's own conditions are evaluated by the engine against the actor and the target, and a failing one refuses it. The client picks the idle. Harbinger never does. At release it sends `IdleForceDefaultState` once, and only if the idle is still held (the actor's graph has not raised `IdleStop` since the call). A one-shot idle that already ended gets nothing.
 - With `bIdleConfirm=1` an idle counts as played only when the actor's behaviour graph raises one of that idle's own entry events. If none arrives within 3 seconds of world time, Harbinger ends the claim and logs `ANIMATION NOT CONFIRMED`.
 
+#### Reading what happened (ABI 24)
+
+`IsClaimLive` alone cannot tell an idle that played from one nobody can confirm, because both stay live. From ABI 24, `GetIdleState(handle, &info)` says what became of the `PlayIdle` call, per claim handle. Do not time the 3 second window yourself. Harbinger judges it on world time at its Poll, about every 250 ms, and the state says the verdict.
+
+**Table 4a. ch.12 idle states (`IdleState`)**
+
+| State | Set when | The claim |
+|---|---|---|
+| `Unknown` (0) | no record: not a ch.12 claim with a form, a form-free claim, or the grace ran out | |
+| `Pending` (1) | at `RequestEx` and at each `Repoint` to a form, until `PlayIdle` is called (not drained yet, not the claim that owns ch.12, or the play task has not run) | live |
+| `Accepted` (2) | `PlayIdle` returned true and no entry event has arrived yet | live, the window runs |
+| `Confirmed` (3) | Poll saw an entry event no other transition raises. The idle played | live |
+| `ConfirmedWeak` (4) | Poll saw an entry event other transitions raise too. Weak evidence (REVIEW-BACKLOG APMF-B35) | live |
+| `NotConfirmed` (5) | no entry event in 3000 ms of world time (and 30 frames) | Harbinger releases it |
+| `NoTransition` (6) | at the call: a complete graph walk found no transition on the idle's event | Harbinger releases it at the next Poll |
+| `Refused` (7) | at the call: `PlayIdle` returned false | Harbinger releases it |
+| `Unconfirmable` (8) | at the call: `PlayIdle` returned true but no entry event can be resolved. `unconfirmableWhy` says why: confirmation off (`bIdleConfirm=0`), not armed (a self-check refusal), no entry events, an incomplete walk, an unreadable graph, or a broken event id space | live. Whether it played is unknown |
+| `NotPlayed` (9) | before the call: the form is not an IDLE, the target is not a loaded reference, or the actor is not loaded, dead or out of high process. No engine call was made | Harbinger releases it |
+
+`endCause` says how the claim ended: `Harbinger` (the state says why), `ActorDied`, `Released` (by you, an unload, or the facet going idle), or `Superseded` (another claim owns ch.12 now, or you re-pointed to form 0, so this idle is no longer played. It plays again if it wins back). `msSincePlay` and `msSinceEnd` are world milliseconds, which a menu pause does not advance. `msToEntry` is the wall time from the call to the entry event. `seq` changes on every change of the record. `kIdleInfo_Carried` in `flags` marks a re-play of the same idle that inherited the previous play's entry (the graph was still in the idle). The call reads a copy under Harbinger's own lock, so any thread may call it.
+
+```cpp
+if (g_apmf->abiVersion >= 24) {
+    auto* v24 = reinterpret_cast<const APMF_API_v24*>(g_apmf);
+    APMF_IdleStateInfo info{};
+    info.size = sizeof(info);
+    switch (v24->GetIdleState(h, &info)) {
+    case kIdleState_Confirmed:     /* it played: act on it */ break;
+    case kIdleState_Pending:
+    case kIdleState_Accepted:      /* wait */ break;
+    default:                       /* weak, unknown, ended: your call */ break;
+    }
+}
+```
+
 #### Lifetime
 
-Standing, ended by `Release`. When an idle ends, `IsClaimLive` reads false. Harbinger ends the claim itself, logs why and does this when: the form is not an IDLE, the target is not a loaded reference, the actor is not loaded or is dead or has no AI process, the engine refused the idle, or the owner died. A load or a new game ends it. `Repoint` with a new `form` or `target` plays again.
+Standing, ended by `Release`. When an idle ends, `IsClaimLive` reads false. From ABI 24 the idle state of an ended claim stays readable for 10 seconds of world time (`kIdleStateGraceMs`), so you see `NotConfirmed` or `Refused` and not `Unknown`. That is 40 of Harbinger's Polls and 25 of MFO's slowest ticks. A record stays as long as its claim is live. Harbinger ends the claim itself, logs why and does this when: the form is not an IDLE, the target is not a loaded reference, the actor is not loaded or is dead or has no AI process, the engine refused the idle, or the owner died. A load or a new game ends it. `Repoint` with a new `form` or `target` plays again.
 
 #### Priority and conflicts
 
@@ -602,7 +637,7 @@ void EndGive(GiveAnim& g) {
 
 #### Version, INI and field status
 
-ABI 1, form and target from ABI 17 (first shipped in 0.9.10). `bIdleV2` and `bIdleConfirm` in `[Idle]`. In use by MFO. IdleGive was field-confirmed on 2026-09-28. The entry-event confirmation (`bIdleConfirm`) has only been CI verified.
+ABI 1, form and target from ABI 17 (first shipped in 0.9.10), `GetIdleState` from ABI 24 (struct `APMF_API_v24`, the release after 0.13.0, CI verified only). `bIdleV2` and `bIdleConfirm` in `[Idle]`. In use by MFO. IdleGive was field-confirmed on 2026-09-28. The entry-event confirmation (`bIdleConfirm`) has only been CI verified.
 
 **Check Your Understanding: ch.12**
 
@@ -3235,6 +3270,7 @@ The ABI is append-only. A client built against an older ABI keeps working agains
 | 21 | 0.12.0 | `kIntent_CastGuard` |
 | 22 | the release after 0.13.0 | `kIntent_EquipPreference`, `EquipPrefFlags`, `APMF_EquipPrefEntry`, `APMF_EquipPrefInfo`, `SetEquipPreference`, `GetEquipPreferenceState` (struct `APMF_API_v22`) |
 | 23 | the release after 0.13.0 | `kIntent_CombatSubstrate` (no struct, no slot: rides `RequestEx` / `Release`), `APMF.esl` anchor records |
+| 24 | the release after 0.13.0 | `GetIdleState`, `IdleState`, `IdleUnconfirmable`, `IdleEnd`, `APMF_IdleStateInfo` (struct `APMF_API_v24`) |
 
 The last release is 0.13.0, ABI 21. The interface struct for ABI 21 is `APMF_API_v19`, since ABI 20 and 21 added no slot. ABI 22 is on main for the next release, with the struct `APMF_API_v22`.
 

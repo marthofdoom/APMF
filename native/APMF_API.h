@@ -89,10 +89,10 @@ namespace RE {
 
 namespace APMF_API {
 
-    // ABI history (v10..v23, what each added and how an older APMF degrades). Gate every use on abiVersion >=
+    // ABI history (v10..v24, what each added and how an older APMF degrades). Gate every use on abiVersion >=
     // N.
     // History: Docs/APMF_API-HISTORY.md#abi-history
-    inline constexpr std::uint32_t kABIVersion = 23;
+    inline constexpr std::uint32_t kABIVersion = 24;
 
     // The exported query function's undecorated name and pointer type.
     // const APMF_API_v1* APMF_GetInterface(std::uint32_t abiVersion);
@@ -2348,6 +2348,108 @@ namespace APMF_API {
         // under APMF's own lock, no game call). A throw inside returns kEquipPrefState_None and writes
         // nothing.
         std::uint32_t (*GetEquipPreferenceState)(RE::FormID actor, APMF_EquipPrefInfo* out);
+    };
+
+    // ═════════════════════════════════════════════════════════════════════════════
+    // ABI v24: IDLE STATE (kIntent_Idle with a form, ch.12)
+    // ═════════════════════════════════════════════════════════════════════════════
+    // What became of a ch.12 claim's PlayIdle call, per claim HANDLE, so a client can tell an idle
+    // that PLAYED from one nobody can confirm, without a timer of its own. Harbinger judges NOT
+    // CONFIRMED after kIdleConfirmWindowMs of WORLD time (a menu pause does not count) at its
+    // ~250 ms Poll; read the state instead of racing that window. Only a claim filed with
+    // param.form != 0 (or re-pointed to one) has a state. The record stays while the claim is
+    // live, and for kIdleStateGraceMs of world time after its last change once it is not, so a
+    // client sees the terminal state (NotConfirmed, Refused) and not Unknown. A save load or a
+    // new game drops every record. Not saved. APPEND-ONLY: never renumber.
+    enum IdleState : std::uint32_t {
+        kIdleState_Unknown       = 0,  // no record: not a ch.12 claim with a form, a form-free (v1) claim, or
+                                       //   the grace ran out
+        kIdleState_Pending       = 1,  // filed or re-pointed; PlayIdle not called yet (not drained, not the
+                                       //   claim that owns ch.12 on the actor, or the play task has not run)
+        kIdleState_Accepted      = 2,  // PlayIdle returned true; no entry event yet, the window runs
+        kIdleState_Confirmed     = 3,  // PLAYED: the graph raised an entry event no other transition raises
+        kIdleState_ConfirmedWeak = 4,  // the graph raised an entry event OTHER transitions raise too (WEAK
+                                       //   evidence: it may be another state's event, REVIEW-BACKLOG APMF-B35)
+        kIdleState_NotConfirmed  = 5,  // no entry event within the window: Harbinger ENDS the claim
+        kIdleState_NoTransition  = 6,  // a complete graph walk found no transition on the idle's event: it
+                                       //   cannot play on this actor, Harbinger ENDS the claim
+        kIdleState_Refused       = 7,  // PlayIdle returned false (the idle's own conditions failed against the
+                                       //   actor / target, or the actor plays no idle now): Harbinger ENDS it
+        kIdleState_Unconfirmable = 8,  // PlayIdle returned true but no entry event can be resolved
+                                       //   (unconfirmableWhy): whether it played is UNKNOWN; the claim stays
+        kIdleState_NotPlayed     = 9,  // NO engine call: the form is not an IDLE, the target is not a loaded
+                                       //   reference, the actor is not loaded / dead / has no high process.
+                                       //   Harbinger ENDS the claim
+    };
+
+    // Why a play is kIdleState_Unconfirmable (APMF_IdleStateInfo::unconfirmableWhy). APPEND-ONLY.
+    enum IdleUnconfirmable : std::uint32_t {
+        kIdleUnconf_None            = 0,
+        kIdleUnconf_ConfirmOff      = 1,  // [Idle] bIdleConfirm=0 in APMF.ini
+        kIdleUnconf_NotArmed        = 2,  // the self-check refused a vtable the graph read needs
+        kIdleUnconf_NoEntryEvents   = 3,  // the transition(s) on the idle's event raise no notify event, or the
+                                          //   idle names no animation event
+        kIdleUnconf_WalkIncomplete  = 4,  // no transition found, but the graph walk had a blind spot
+        kIdleUnconf_GraphUnreadable = 5,  // the actor has no readable behaviour graph
+        kIdleUnconf_IdSpaceBroken   = 6,  // event ids outside their graph's name table: nothing is judged
+    };
+
+    // How the claim behind a record ended (APMF_IdleStateInfo::endCause). APPEND-ONLY.
+    enum IdleEnd : std::uint32_t {
+        kIdleEnd_None       = 0,  // not ended
+        kIdleEnd_Harbinger  = 1,  // Harbinger released it; `state` says why
+        kIdleEnd_ActorDied  = 2,  // Harbinger released it: the actor died
+        kIdleEnd_Released   = 3,  // released by the client, the unload sweep, or the channel disengaging
+        kIdleEnd_Superseded = 4,  // still live, but another claim owns ch.12 on the actor (or it was
+                                  //   re-pointed to form 0): its idle is no longer played. Winning back
+                                  //   plays again (a new play: the record restarts)
+    };
+
+    inline constexpr std::uint32_t kIdleInfo_Carried = 1u << 0;   // flags: the entry was carried from the previous
+                                                                   //   play of the SAME idle (the graph was still in it)
+    inline constexpr std::uint32_t kIdleConfirmWindowMs = 3000;    // informational: the NOT CONFIRMED window
+    inline constexpr std::uint32_t kIdleStateGraceMs    = 10000;   // informational: world ms a non-live record stays
+    inline constexpr std::uint32_t kIdleMsNone          = 0xFFFFFFFFu;
+
+    // GetIdleState output. EXACT LAYOUT (byte-shared): 60 bytes, every field 4 bytes. The CALLER
+    // sets `size` = sizeof(APMF_IdleStateInfo); APMF fills the v24 fields when `size` >=
+    // kIdleStateInfoV24Size (60, never changes) and writes nothing into a smaller struct (the
+    // APMF_TravelLegInfo rule). World ms = game time a menu pause does not advance.
+    struct APMF_IdleStateInfo {
+        std::uint32_t size;               // +0   the CALLER sets = sizeof(APMF_IdleStateInfo)
+        std::uint32_t state;              // +4   an IdleState (the same value the call returns)
+        std::uint32_t handle;             // +8   the handle asked about
+        RE::FormID    actor;              // +12  the claim's actor (0 on kIdleState_Unknown)
+        RE::FormID    idle;               // +16  the idle form of this play (param.form)
+        RE::FormID    target;             // +20  the target of this play (param.target, 0 = none)
+        std::uint32_t unconfirmableWhy;   // +24  an IdleUnconfirmable (kIdleUnconf_None unless Unconfirmable)
+        std::uint32_t endCause;           // +28  an IdleEnd
+        std::uint32_t flags;              // +32  kIdleInfo_* bits
+        std::uint32_t msSincePlay;        // +36  world ms since this play's PlayIdle call (kIdleMsNone = no call)
+        std::uint32_t msToEntry;          // +40  wall ms from the call to the entry event (kIdleMsNone = none;
+                                          //        0 when carried)
+        std::uint32_t msSinceEnd;         // +44  world ms since the end (kIdleMsNone = not ended)
+        std::uint32_t confirmWindowMs;    // +48  the window NOT CONFIRMED is judged on (kIdleConfirmWindowMs)
+        std::uint32_t plays;              // +52  PlayIdle calls made for this handle
+        std::uint32_t seq;                // +56  changes on every change of this record (compare for inequality)
+    };
+    inline constexpr std::uint32_t kIdleStateInfoV24Size = 60;
+    static_assert(sizeof(APMF_IdleStateInfo) == 60, "APMF_IdleStateInfo is 60 bytes, byte-shared with clients");
+    static_assert(offsetof(APMF_IdleStateInfo, unconfirmableWhy) == 24, "unconfirmableWhy at +24");
+    static_assert(offsetof(APMF_IdleStateInfo, msSincePlay)      == 36, "msSincePlay at +36");
+    static_assert(offsetof(APMF_IdleStateInfo, seq)              == 56, "seq at +56");
+
+    // The v24 interface: APMF_API_v22's members verbatim (prefix EXTENSION; v23 added no slot), then
+    // ONE appended slot. BYTE-SHARED with MFO: mirror it byte-identically. A new slot: gate on
+    // `abiVersion >= 24` (INVARIANTS #14b). An older APMF has no query: the claim's liveness
+    // (IsClaimLive) is all it offers, and a live claim there may be CONFIRMED or UNCONFIRMABLE.
+    struct APMF_API_v24 : APMF_API_v22 {
+        // What became of `handle`'s idle (see IdleState). Returns the state and, when `out` is
+        // non-null and `out->size` covers the v24 layout, fills `*out`. Read-only; ANY THREAD (a
+        // copy under APMF's own leaf lock, no game call). A state set on the game thread is seen
+        // at once; Harbinger judges it at its ~250 ms Poll. A throw inside returns
+        // kIdleState_Unknown and writes nothing.
+        std::uint32_t (*GetIdleState)(Handle handle, APMF_IdleStateInfo* out);
     };
 
     // Function-pointer type for GetProcAddress(kGetInterfaceExport). Returns the

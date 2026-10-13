@@ -105,6 +105,9 @@ extern "C" __declspec(dllimport) unsigned long __stdcall GetPrivateProfileIntA(
 //                  was incomplete, the graph could not be read, an event id fell outside its
 //                  graph's name table = "id space broken", or [Idle] bIdleConfirm=0) -> WARN,
 //                  the claim stays, and HELD falls back to "no IdleStop since the call".
+// ABI v24: each outcome (and Pending / Accepted / Refused / NOT PLAYED before it) is also a per-HANDLE
+// state a client reads with APMF_API_v24::GetIdleState, kept for a grace after the claim ends
+// ("THE PER-HANDLE IDLE STATE", below the Entry table).
 // An IdleStop that arrives BEFORE any entry event is not this idle's (the lockpick's came
 // at +2961 ms from the combat graph) and is reported as such, never as the idle's end.
 // The clip's length is NOT readable here (the template clip carries only an end-relative
@@ -196,6 +199,7 @@ namespace {
     // The three self-checked vtables, written once in Install before g_entryReady.
     std::atomic<bool>        g_entryReady{ false };
     std::atomic<const char*> g_entryNotArmed{ "before kDataLoaded" };
+    std::atomic<std::uint32_t> g_entryNotArmedWhy{ APMF_API::kIdleUnconf_NotArmed };   // ABI v24: the same, as a code
     std::uintptr_t           g_vtAnimGraph     = 0;
     std::uintptr_t           g_vtBehaviorGraph = 0;
     std::uintptr_t           g_vtStateMachine  = 0;
@@ -317,6 +321,7 @@ namespace {
         std::uint32_t            badGraphs = 0;   // graphs failing the vtable / layout guard, or without names
         bool                     truncated = false;
         std::string              unreadable;    // set when no walk happened, with the reason
+        std::uint32_t            unreadableWhy = APMF_API::kIdleUnconf_None;   // ABI v24: `unreadable` as a code
         std::uint32_t Blind() const { return unknown + unlinked + badIds + unresolved + skipped + badGraphs; }
         bool Complete() const { return unreadable.empty() && Blind() == 0 && !truncated && graphs != 0; }
     };
@@ -571,16 +576,19 @@ namespace {
     EntryInfo ResolveEntry(RE::Actor* a_actor, const char* a_event) {
         EntryInfo out;
         if (!g_entryReady.load(std::memory_order_acquire)) {
-            out.unreadable = fmt::format("entry confirmation not armed ({})", g_entryNotArmed.load(std::memory_order_acquire));
+            out.unreadable    = fmt::format("entry confirmation not armed ({})", g_entryNotArmed.load(std::memory_order_acquire));
+            out.unreadableWhy = g_entryNotArmedWhy.load(std::memory_order_acquire);
             return out;
         }
         if (!a_event || !*a_event) {
-            out.unreadable = "the idle names no animation event";
+            out.unreadable    = "the idle names no animation event";
+            out.unreadableWhy = APMF_API::kIdleUnconf_NoEntryEvents;
             return out;
         }
         RE::BSTSmartPointer<RE::BSAnimationGraphManager> mgr;   // held for the whole walk
         if (!a_actor->GetAnimationGraphManager(mgr) || !mgr) {
-            out.unreadable = "the actor has no animation graph";
+            out.unreadable    = "the actor has no animation graph";
+            out.unreadableWhy = APMF_API::kIdleUnconf_GraphUnreadable;
             return out;
         }
         EntryWalk walk(a_event, out);
@@ -604,7 +612,10 @@ namespace {
             walk.Drain();
         }
         walk.Finish();
-        if (out.graphs == 0) out.unreadable = "no behaviour graph passed the layout / vtable checks";
+        if (out.graphs == 0) {
+            out.unreadable    = "no behaviour graph passed the layout / vtable checks";
+            out.unreadableWhy = APMF_API::kIdleUnconf_GraphUnreadable;
+        }
         return out;
     }
 
@@ -789,6 +800,9 @@ namespace {
         std::vector<std::pair<std::string, std::uint32_t>> waitShared;   // entry event -> other transitions raising it
         std::uint64_t playWorldMs = 0;        // g_worldMs / g_worldFrames at the call
         std::uint64_t playFrame   = 0;
+        // ABI v24 (the per-handle state, below).
+        APMF_API::Handle handle = APMF_API::kInvalidHandle;   // the claim this entry last played for (Play)
+        std::uint32_t unconfWhy     = APMF_API::kIdleUnconf_None;   // `unconfirmable` as a code
     };
 
     std::unordered_map<RE::FormID, Entry> g_entries;
@@ -804,9 +818,152 @@ namespace {
     std::atomic<std::size_t>              g_count{ 0 };   // Poll's pre-gate
     std::uint32_t                         g_nextGen = 0;
 
+    // ---- ABI v24: THE PER-HANDLE IDLE STATE (APMF_API_v24::GetIdleState). ----
+    // One record per ch.12 claim HANDLE that carries a form. Writers: the client's thread
+    // (NoteFiled / NoteRepoint / NoteReleased, from core/ClientAPI.cpp) and the game thread
+    // (Play, Poll, EndClaim, Release, OnOwnerChanged, ResetAll). Reader: GetState, any thread.
+    // g_stateMx is a LEAF lock: nothing else is acquired while it is held (not g_obsMx, not the
+    // ControlMap), and no engine call is made under it. Records hold plain values only.
+    //
+    // LIFETIME, sized from the real cadence (principle 9: the grace is a floor on how long a
+    // terminal state stays readable, never an expiry of live state). A record stays while its
+    // claim is live (IsClaimLive), and for kStateGraceMs of WORLD time after its last change
+    // once it is not. Terminal states are written at Poll's 250 ms cadence (or at the play, for
+    // Refused / NotPlayed / NoTransition); MFO reads its taunt every 133 ms pump tick, with
+    // ticks up to 400 ms apart. 10000 ms of world time is 40 Polls and 25 of those slowest
+    // client ticks; a menu pause does not advance it, so a paused client misses nothing. Pruned
+    // by Poll every 250 ms; the IsClaimLive scan runs OUTSIDE the lock. Bounded by kMaxStates
+    // (a pathological client): the oldest ended record, else the oldest, is evicted (logged).
+    constexpr std::uint64_t kStateGraceMs  = APMF_API::kIdleStateGraceMs;
+    constexpr std::size_t   kMaxStates     = 1024;
+    constexpr std::uint64_t kStatePruneMs  = 250;
+    static_assert(kConfirmWaitMs == APMF_API::kIdleConfirmWindowMs, "the header's informational window must match");
+
+    struct StateRec {
+        RE::FormID    actor = 0;
+        RE::FormID    idle = 0;
+        RE::FormID    target = 0;
+        std::uint32_t state = APMF_API::kIdleState_Pending;
+        std::uint32_t unconfWhy = APMF_API::kIdleUnconf_None;
+        std::uint32_t endCause = APMF_API::kIdleEnd_None;
+        std::uint32_t flags = 0;
+        std::uint32_t gen = 0;            // the Entry gen of the play this state belongs to (0 = none yet)
+        std::uint32_t plays = 0;
+        std::uint32_t seq = 0;
+        std::uint32_t msToEntry = APMF_API::kIdleMsNone;
+        bool          played = false;     // PlayIdle was called for the current play
+        std::uint64_t playWorldMs = 0;
+        std::uint64_t endWorldMs = 0;     // valid when endCause != kIdleEnd_None
+        std::uint64_t changeWorldMs = 0;  // the last change (the grace counts from it)
+    };
+
+    std::mutex                                     g_stateMx;
+    std::unordered_map<APMF_API::Handle, StateRec> g_states;
+    std::atomic<std::size_t>                       g_stateCount{ 0 };
+    std::uint32_t                                  g_stateSeq = 0;           // under g_stateMx
+    std::atomic<std::uint64_t>                     g_worldMsPub{ 0 };       // g_worldMs for other threads
+    std::atomic<bool>                              g_stateCapLogged{ false };
+
+    // Under g_stateMx. Stamp a change.
+    void Touch(StateRec& r) {
+        r.seq           = ++g_stateSeq;
+        r.changeWorldMs = g_worldMsPub.load(std::memory_order_relaxed);
+    }
+
+    // Under g_stateMx. Make room for one insert at the cap.
+    void EvictForInsert() {
+        if (g_states.size() < kMaxStates) return;
+        auto victim = g_states.end();
+        for (auto it = g_states.begin(); it != g_states.end(); ++it) {
+            if (victim == g_states.end()) { victim = it; continue; }
+            const bool endedV = victim->second.endCause != APMF_API::kIdleEnd_None;
+            const bool endedI = it->second.endCause != APMF_API::kIdleEnd_None;
+            if (endedI != endedV ? endedI : it->second.changeWorldMs < victim->second.changeWorldMs) victim = it;
+        }
+        if (victim == g_states.end()) return;
+        if (!g_stateCapLogged.exchange(true))
+            spdlog::warn("[ch.12] idle state table at its cap ({} handles): the oldest record (h={}) is evicted and "
+                         "reads kIdleState_Unknown. Said once per session.",
+                         kMaxStates, victim->first);
+        g_states.erase(victim);
+    }
+
+    // GAME THREAD (Play): a new play of `h` begins. Upserts; restarts the record.
+    void StateBegin(APMF_API::Handle h, RE::FormID actor, RE::FormID idle, RE::FormID target, std::uint32_t gen) {
+        if (h == APMF_API::kInvalidHandle) return;
+        std::scoped_lock lock(g_stateMx);
+        auto it = g_states.find(h);
+        if (it == g_states.end()) {
+            EvictForInsert();
+            it = g_states.emplace(h, StateRec{}).first;
+        }
+        StateRec& r  = it->second;
+        r.actor      = actor;
+        r.idle       = idle;
+        r.target     = target;
+        r.state      = APMF_API::kIdleState_Pending;
+        r.unconfWhy  = APMF_API::kIdleUnconf_None;
+        r.endCause   = APMF_API::kIdleEnd_None;
+        r.flags      = 0;
+        r.gen        = gen;
+        r.msToEntry  = APMF_API::kIdleMsNone;
+        r.played     = false;
+        r.endWorldMs = 0;
+        Touch(r);
+        g_stateCount.store(g_states.size(), std::memory_order_relaxed);
+    }
+
+    // GAME THREAD: apply `fn` to `h`'s record if it still belongs to play `gen`.
+    template <class F>
+    void StateUpdate(APMF_API::Handle h, std::uint32_t gen, F&& fn) {
+        if (h == APMF_API::kInvalidHandle) return;
+        std::scoped_lock lock(g_stateMx);
+        const auto it = g_states.find(h);
+        if (it == g_states.end() || it->second.gen != gen) return;
+        fn(it->second);
+        Touch(it->second);
+    }
+
+    // ANY THREAD: `h`'s claim ended (or stopped being the one that plays). The first FINAL cause
+    // wins; kIdleEnd_Superseded is not final (a later release or Harbinger end replaces it, and a
+    // new play restarts the record).
+    void StateEnd(APMF_API::Handle h, std::uint32_t cause) {
+        if (h == APMF_API::kInvalidHandle) return;
+        std::scoped_lock lock(g_stateMx);
+        const auto it = g_states.find(h);
+        if (it == g_states.end()) return;
+        StateRec& r = it->second;
+        if (r.endCause != APMF_API::kIdleEnd_None && r.endCause != APMF_API::kIdleEnd_Superseded) return;
+        if (r.endCause == cause) return;
+        r.endCause   = cause;
+        r.endWorldMs = g_worldMsPub.load(std::memory_order_relaxed);
+        Touch(r);
+    }
+
+    // GAME THREAD (Poll), throttled: drop the records whose claim is gone and whose grace ran out.
+    void PruneStates() {
+        const std::uint64_t now = g_worldMsPub.load(std::memory_order_relaxed);
+        std::vector<std::pair<APMF_API::Handle, std::uint32_t>> old;   // handle, seq at the check
+        {
+            std::scoped_lock lock(g_stateMx);
+            for (const auto& [h, r] : g_states)
+                if (now - r.changeWorldMs >= kStateGraceMs) old.emplace_back(h, r.seq);
+        }
+        if (old.empty()) return;
+        std::vector<std::pair<APMF_API::Handle, std::uint32_t>> gone;
+        for (const auto& hs : old)   // OUTSIDE the lock: IsClaimLive reads the ControlMap snapshot
+            if (!apmf::ControlMap::Get().IsClaimLive(hs.first)) gone.push_back(hs);
+        if (gone.empty()) return;
+        std::scoped_lock lock(g_stateMx);
+        for (const auto& [h, seq] : gone)
+            if (const auto it = g_states.find(h); it != g_states.end() && it->second.seq == seq) g_states.erase(it);
+        g_stateCount.store(g_states.size(), std::memory_order_relaxed);
+    }
+
     // End the WINNING claim this entry was resolved for. MAIN SEAT, OUTSIDE Drain only. A
     // claim that has moved on (a newer ApplyV2) is left alone; that one owns the entry now.
-    void EndClaim(RE::FormID id, std::uint32_t gen, const std::string& why) {
+    void EndClaim(RE::FormID id, std::uint32_t gen, const std::string& why,
+                  std::uint32_t cause = APMF_API::kIdleEnd_Harbinger) {
         const auto it = g_entries.find(id);
         if (it == g_entries.end() || it->second.gen != gen || it->second.ending) return;
         APMF_API::APMF_Param param{};
@@ -818,6 +975,7 @@ namespace {
         it->second.ending      = true;
         it->second.endedReason = why;
         apmf::ControlMap::Get().EnqueueRelease(h);
+        StateEnd(h, cause);   // ABI v24: the terminal state stays readable for the grace
         spdlog::info("[ch.12] 0x{} idle claim ended: {} (idle 0x{}, target 0x{}, claim h={}). Harbinger released "
                      "the claim; a mod that wants another idle sends a new request.",
                      Hex(id), why, Hex(it->second.idle), Hex(it->second.target), h);
@@ -838,13 +996,21 @@ namespace {
         const RE::FormID tf     = it->second.target;
 
         APMF_API::APMF_Param now{};
-        if (!apmf::ControlMap::Get().TryGetOwningClaim(id, APMF_API::kIntent_Idle, now) || now.form != idleId ||
-            now.target != tf) {
+        float                nowBasis = 0.0f;
+        APMF_API::Handle     h        = APMF_API::kInvalidHandle;   // ABI v24: the claim this play is for
+        if (!apmf::ControlMap::Get().TryGetOwningClaimBasis(id, APMF_API::kIntent_Idle, now, nowBasis, &h) ||
+            now.form != idleId || now.target != tf) {
             spdlog::info("[ch.12] 0x{} idle play 0x{} DROPPED (stale): the published winning claim now names idle "
                          "0x{} target 0x{}.",
                          Hex(id), Hex(idleId), Hex(now.form), Hex(now.target));
             return;
         }
+        // ABI v24: the claim that played here before (another handle) no longer plays; this one starts.
+        if (it->second.handle != h) {
+            StateEnd(it->second.handle, APMF_API::kIdleEnd_Superseded);
+            it->second.handle = h;
+        }
+        StateBegin(h, id, idleId, tf, gen);
 
         // VALIDATION, on the game thread.
         auto*              actor  = RE::TESForm::LookupByID<RE::Actor>(id);
@@ -879,6 +1045,7 @@ namespace {
         if (!why.empty()) {
             spdlog::warn("[ch.12] 0x{} idle {} 0x{} at target 0x{} NOT PLAYED: {}. No engine call was made.",
                          Hex(id), what, Hex(idleId), Hex(tf), why);
+            StateUpdate(h, gen, [](StateRec& r) { r.state = APMF_API::kIdleState_NotPlayed; });
             EndClaim(id, gen, fmt::format("idle not played: {}", why));
             return;
         }
@@ -894,6 +1061,7 @@ namespace {
             en.entryText           = ei.unreadable.empty() ? EntryText(ei) : ei.unreadable;
             en.noTransition        = ei.Complete() && ei.transitions == 0;
             en.unconfirmable.clear();
+            en.unconfWhy = APMF_API::kIdleUnconf_None;
             en.weak                = !ei.events.empty() && std::all_of(ei.shared.begin(), ei.shared.end(),
                                                                        [](std::uint32_t n) { return n != 0; });
             std::vector<std::string> waitFor = ei.events;
@@ -906,16 +1074,21 @@ namespace {
                 // is suspect, so nothing is judged (review 18be6ec SEV-2).
                 en.unconfirmable = fmt::format("EVENT ID SPACE BROKEN: {} event id(s) outside the graph's name table",
                                                ei.badIds);
+                en.unconfWhy     = APMF_API::kIdleUnconf_IdSpaceBroken;
                 waitFor.clear();
                 spdlog::error("[ch.12] 0x{} idle {}: the behaviour-graph read found {} event id(s) outside their "
                               "graph's name table -- the id space is not what the walk assumes. This play is "
                               "UNCONFIRMABLE ({}).",
                               Hex(id), it->second.idleName, ei.badIds, en.entryText);
-            } else if (!en.noTransition && ei.events.empty())
+            } else if (!en.noTransition && ei.events.empty()) {
                 en.unconfirmable = !ei.unreadable.empty() ? ei.unreadable
                                    : ei.transitions == 0
                                        ? std::string("no transition on the idle's event was found and the walk was incomplete")
                                        : std::string("the transition(s) on the idle's event raise no notify event");
+                en.unconfWhy     = !ei.unreadable.empty() ? ei.unreadableWhy
+                                   : ei.transitions == 0  ? APMF_API::kIdleUnconf_WalkIncomplete
+                                                          : APMF_API::kIdleUnconf_NoEntryEvents;
+            }
             // Observe from BEFORE the call: the graph may answer inside it. AddAnimationGraphEventSink
             // returns false when this sink is already on the graph (a re-point) or there is no graph.
             Arm(id, gen, idleId, waitFor);
@@ -930,6 +1103,17 @@ namespace {
         ok ? ++e.accepted : ++e.refused;
         e.live          = ok;
         e.confirmLogged = false;
+        // ABI v24: what the call says now (Poll moves Accepted on to Confirmed / NotConfirmed).
+        StateUpdate(h, gen, [&](StateRec& r) {
+            ++r.plays;
+            r.played      = true;
+            r.playWorldMs = e.playWorldMs;
+            r.unconfWhy   = ok && !e.noTransition && !e.unconfirmable.empty() ? e.unconfWhy : APMF_API::kIdleUnconf_None;
+            r.state       = !ok                        ? APMF_API::kIdleState_Refused
+                            : e.noTransition           ? APMF_API::kIdleState_NoTransition
+                            : !e.unconfirmable.empty() ? APMF_API::kIdleState_Unconfirmable
+                                                       : APMF_API::kIdleState_Accepted;
+        });
 
         if (!ok) {
             Disarm(id);
@@ -958,6 +1142,7 @@ namespace {
             e.plays    = it->second.plays;
             e.accepted = it->second.accepted;
             e.refused  = it->second.refused;
+            e.handle   = it->second.handle;   // ABI v24: Play compares it with the claim it plays for
         }
         e.idle   = param.form;
         e.target = param.target;
@@ -1050,6 +1235,7 @@ namespace {
             g_count.store(g_entries.size(), std::memory_order_relaxed);
             const Obs o = Disarm(id);
             if (actor) actor->RemoveAnimationGraphEventSink(SinkFor(id));
+            StateEnd(e.handle, APMF_API::kIdleEnd_Superseded);   // ABI v24: its idle is no longer played
             spdlog::info("[ch.12] 0x{} idle owner changed to a form-free (v1) claim: the v2 idle {} (0x{}) is dropped. "
                          "Reset: {}.",
                          Hex(id), e.idleName.empty() ? std::string("?") : e.idleName, Hex(e.idle),
@@ -1066,6 +1252,8 @@ namespace {
 
             const Obs o = Disarm(id);
             if (actor) actor->RemoveAnimationGraphEventSink(SinkFor(id));
+            // ABI v24: a Harbinger end was already recorded by EndClaim (the first final cause wins).
+            StateEnd(e.handle, APMF_API::kIdleEnd_Released);
 
             const std::string reset = ResetIfHeld(e, o, actor);
             spdlog::info("[ch.12] 0x{} idle released ({}) (idle {} 0x{}, target 0x{}): PlayIdle called {} time(s) -- "
@@ -1111,6 +1299,7 @@ namespace apmf::idle {
         // Entry confirmation. Kill switch first (review 18be6ec SEV-3.3): off = no graph read at
         // all and every play UNCONFIRMABLE, said once here.
         if (GetPrivateProfileIntA("Idle", "bIdleConfirm", 1, kIni) == 0) {
+            g_entryNotArmedWhy.store(APMF_API::kIdleUnconf_ConfirmOff, std::memory_order_release);
             g_entryNotArmed.store("[Idle] bIdleConfirm=0 in Data/SKSE/Plugins/APMF.ini", std::memory_order_release);
             spdlog::warn("[ch.12] idle entry confirmation OFF -- [Idle] bIdleConfirm=0. No behaviour-graph read; every "
                          "idle play is logged UNCONFIRMABLE and its claim is never ended for not playing.");
@@ -1154,6 +1343,13 @@ namespace apmf::idle {
             if (g_lastTickMs != 0) g_worldMs += (std::min)(t - g_lastTickMs, kTickClampMs);
             g_lastTickMs = t;
             ++g_worldFrames;
+            g_worldMsPub.store(g_worldMs, std::memory_order_relaxed);
+            // ABI v24: the state records outlive their entries by the grace, so they are pruned here.
+            static std::uint64_t s_pruneMs = 0;
+            if (g_stateCount.load(std::memory_order_relaxed) != 0 && t - s_pruneMs >= kStatePruneMs) {
+                s_pruneMs = t;
+                PruneStates();
+            }
         }
         if (g_count.load(std::memory_order_relaxed) == 0) return;
         static std::uint64_t s_lastMs = 0;
@@ -1170,7 +1366,7 @@ namespace apmf::idle {
         for (const auto& sn : snaps) {
             auto* owner = RE::TESForm::LookupByID<RE::Actor>(sn.id);
             if (owner && owner->IsDead()) {
-                EndClaim(sn.id, sn.gen, "owner dead");
+                EndClaim(sn.id, sn.gen, "owner dead", APMF_API::kIdleEnd_ActorDied);
                 continue;
             }
             // The observation line, once per accepted play (principle 5).
@@ -1191,6 +1387,23 @@ namespace apmf::idle {
                     if (IEquals(name, o.enterTag) && n != 0)
                         strength = fmt::format("WEAK evidence: '{}' is also raised by {} other transition(s)", name, n);
                 if (o.enterTag.starts_with("(still")) strength = "carried from the previous call";
+                // ABI v24: the same strength as a state. A carried entry (Arm) is judged by the event
+                // that proved the ORIGINAL entry, unwrapped from Arm's "(still ...: <tag>)" text.
+                const bool                 carried = o.enterTag.starts_with("(still");
+                constexpr std::string_view kCarry  = "(still in the idle from the previous call: ";
+                std::string_view           evTag   = o.enterTag;
+                if (carried && evTag.starts_with(kCarry) && evTag.ends_with(")"))
+                    evTag = evTag.substr(kCarry.size(), evTag.size() - kCarry.size() - 1);
+                bool weak = false;
+                for (const auto& [name, n] : e.waitShared)
+                    if (IEquals(name, evTag) && n != 0) weak = true;
+                const std::uint32_t kind    = weak ? APMF_API::kIdleState_ConfirmedWeak : APMF_API::kIdleState_Confirmed;
+                const std::uint64_t toEntry = o.enteredMs - o.playMs;
+                StateUpdate(e.handle, sn.gen, [&](StateRec& r) {
+                    r.state     = kind;
+                    r.flags     = carried ? (r.flags | APMF_API::kIdleInfo_Carried) : r.flags;
+                    r.msToEntry = toEntry > 0xFFFFFFFEull ? 0xFFFFFFFEu : static_cast<std::uint32_t>(toEntry);
+                });
                 spdlog::info("[ch.12] 0x{} idle {}: ANIMATION CONFIRMED ({}) -- the graph raised the entry event '{}' at "
                              "+{} ms ({}). Events so far: {} [{}]{}.",
                              Hex(sn.id), e.idleName, strength, o.enterTag, o.enteredMs - o.playMs, e.entryText, o.events,
@@ -1220,6 +1433,7 @@ namespace apmf::idle {
                 // NOT CONFIRMED: none of the idle's entry events arrived. What did arrive is someone
                 // else's (the 2026-09-28 lockpick: IdleStop, tailCombatState, attackStop, Pie...).
                 e.confirmLogged = true;
+                StateUpdate(e.handle, sn.gen, [](StateRec& r) { r.state = APMF_API::kIdleState_NotConfirmed; });
                 spdlog::warn("[ch.12] 0x{} idle {}: ANIMATION NOT CONFIRMED -- none of its entry events arrived in {} "
                              "ms of world time ({} frames, {} ms wall) ({}); PlayIdle returned true but the graph never "
                              "entered the idle. Unrelated graph events: {} [{}]{}. Harbinger ends the claim.",
@@ -1231,6 +1445,84 @@ namespace apmf::idle {
         }
     }
 
+    std::uint32_t GetState(APMF_API::Handle handle, APMF_API::APMF_IdleStateInfo* out) {
+        APMF_API::APMF_IdleStateInfo info{};
+        info.size             = sizeof(info);
+        info.state            = APMF_API::kIdleState_Unknown;
+        info.handle           = handle;
+        info.msSincePlay      = APMF_API::kIdleMsNone;
+        info.msToEntry        = APMF_API::kIdleMsNone;
+        info.msSinceEnd       = APMF_API::kIdleMsNone;
+        info.confirmWindowMs  = static_cast<std::uint32_t>(kConfirmWaitMs);
+        if (handle != APMF_API::kInvalidHandle) {
+            StateRec r{};
+            bool     found = false;
+            {
+                std::scoped_lock lock(g_stateMx);
+                if (const auto it = g_states.find(handle); it != g_states.end()) {
+                    r     = it->second;
+                    found = true;
+                }
+            }
+            if (found) {
+                const std::uint64_t now = g_worldMsPub.load(std::memory_order_relaxed);
+                auto sat = [](std::uint64_t ms) { return ms > 0xFFFFFFFEull ? 0xFFFFFFFEu : static_cast<std::uint32_t>(ms); };
+                info.state            = r.state;
+                info.actor            = r.actor;
+                info.idle             = r.idle;
+                info.target           = r.target;
+                info.unconfirmableWhy = r.unconfWhy;
+                info.endCause         = r.endCause;
+                info.flags            = r.flags;
+                info.msSincePlay      = r.played ? sat(now - r.playWorldMs) : APMF_API::kIdleMsNone;
+                info.msToEntry        = r.msToEntry;
+                info.msSinceEnd       = r.endCause != APMF_API::kIdleEnd_None ? sat(now - r.endWorldMs) : APMF_API::kIdleMsNone;
+                info.plays            = r.plays;
+                info.seq              = r.seq;
+            }
+        }
+        if (out && out->size >= APMF_API::kIdleStateInfoV24Size) {
+            const std::uint32_t callerSize = out->size;
+            std::memcpy(out, &info, APMF_API::kIdleStateInfoV24Size);
+            out->size = callerSize;
+        }
+        return info.state;
+    }
+
+    void NoteFiled(APMF_API::Handle handle, RE::FormID actor, const APMF_API::APMF_Param* param) {
+        if (handle == APMF_API::kInvalidHandle || !param || param->form == 0) return;
+        std::scoped_lock lock(g_stateMx);
+        if (g_states.contains(handle)) return;   // the game thread got there first
+        EvictForInsert();
+        StateRec r{};
+        r.actor  = actor;
+        r.idle   = param->form;
+        r.target = param->target;
+        Touch(r);
+        g_states.emplace(handle, r);
+        g_stateCount.store(g_states.size(), std::memory_order_relaxed);
+    }
+
+    void NoteRepoint(APMF_API::Handle handle, const APMF_API::APMF_Param* param) {
+        if (handle == APMF_API::kInvalidHandle || !param || param->form == 0) return;
+        std::scoped_lock lock(g_stateMx);
+        const auto it = g_states.find(handle);
+        if (it == g_states.end()) return;
+        StateRec& r = it->second;
+        if (r.endCause != APMF_API::kIdleEnd_None && r.endCause != APMF_API::kIdleEnd_Superseded) return;   // ended
+        r.idle      = param->form;
+        r.target    = param->target;
+        r.state     = APMF_API::kIdleState_Pending;
+        r.unconfWhy = APMF_API::kIdleUnconf_None;
+        r.flags     = 0;
+        r.gen       = 0;   // no Poll verdict for an older play applies any more
+        r.msToEntry = APMF_API::kIdleMsNone;
+        r.played    = false;
+        Touch(r);
+    }
+
+    void NoteReleased(APMF_API::Handle handle) { StateEnd(handle, APMF_API::kIdleEnd_Released); }
+
     void ResetAll(const char* why) {
         const std::size_t n = g_entries.size();
         g_entries.clear();
@@ -1239,7 +1531,16 @@ namespace apmf::idle {
             std::scoped_lock lock(g_obsMx);
             g_obs.clear();
         }
-        if (n != 0) spdlog::info("[ch.12] {} -- dropped {} idle entr{}.", why, n, n == 1 ? "y" : "ies");
+        std::size_t ns = 0;
+        {   // ABI v24: every handle of the replaced world is gone
+            std::scoped_lock lock(g_stateMx);
+            ns = g_states.size();
+            g_states.clear();
+            g_stateCount.store(0, std::memory_order_relaxed);
+        }
+        if (n != 0 || ns != 0)
+            spdlog::info("[ch.12] {} -- dropped {} idle entr{} and {} idle state record(s).", why, n, n == 1 ? "y" : "ies",
+                         ns);
     }
 
 }

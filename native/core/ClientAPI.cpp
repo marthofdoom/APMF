@@ -11,6 +11,7 @@
 #include "channels/Travel.h"
 #include "channels/CombatApproach.h"   // ABI v19 GetCombatApproachState
 #include "core/EquipPreference.h"      // ABI v22 SetEquipPreference / GetEquipPreferenceState (ch.26)
+#include "channels/Idle.h"             // ABI v24 GetIdleState (ch.12) and its three client-call notes
 
 // The C-ABI implementation behind APMF_API.h. These free functions forward to the
 // in-process multi-NPC engine (core/ControlMap) over its thread-safe enqueue path,
@@ -40,6 +41,7 @@ namespace {
             const auto h = apmf::ControlMap::Get().EnqueueRequest(actor, intent, basis, param);
             apmf::sources::NoteClientRequest(h, _ReturnAddress(), intent);
             if (intent == APMF_API::kIntent_EquipPreference) apmf::equippref::NoteClaim(h);   // ABI v22 (F4)
+            if (intent == APMF_API::kIntent_Idle) apmf::idle::NoteFiled(h, actor, param);      // ABI v24: Pending
             return h;
         } catch (...) {
             return APMF_API::kInvalidHandle;
@@ -51,6 +53,7 @@ namespace {
             apmf::ControlMap::Get().EnqueueRelease(handle);
             apmf::sources::ForgetHandle(handle);
             apmf::equippref::Forget(handle);   // ABI v22: a released ch.26 claim's declaration goes with it
+            apmf::idle::NoteReleased(handle);  // ABI v24: its idle state turns terminal (kept for the grace)
         } catch (...) {
         }
     }
@@ -60,6 +63,8 @@ namespace {
     // synchronously; APMF never retains the pointer.
     void APMF_Repoint(APMF_API::Handle handle, const APMF_API::APMF_Param* param) {
         try {
+            // ABI v24: BEFORE the enqueue, so the game thread's play of the new param always lands after it.
+            apmf::idle::NoteRepoint(handle, param);
             apmf::ControlMap::Get().EnqueueRepoint(handle, param);
         } catch (...) {
         }
@@ -240,6 +245,16 @@ namespace {
         }
     }
 
+    // ABI v24 (ch.12): what became of an idle claim's PlayIdle call. Any thread: a copy under the
+    // channel's leaf lock, no game call. A throw becomes kIdleState_Unknown, nothing written.
+    std::uint32_t APMF_GetIdleState(APMF_API::Handle handle, APMF_API::APMF_IdleStateInfo* out) {
+        try {
+            return apmf::idle::GetState(handle, out);
+        } catch (...) {
+            return APMF_API::kIdleState_Unknown;
+        }
+    }
+
     // ABI -> the first APMF release that implements it, for the "client too new"
     // refusal log below (MFO wiring review SEV-3 F4): a user running an older
     // APMF under a newer client must be able to read WHICH APMF they need. Keep in
@@ -248,7 +263,7 @@ namespace {
     // first release after 0.9.4 -- REVIEW-BACKLOG APMF-B10: name it at the cut; v11 and
     // v12 ship together in 0.9.8; v13 and v14 ship in 0.9.9; v15, v16 and v17 ship in 0.9.10;
     // v18, v19 and v20 ship in 0.11.0; v21 ships in 0.12.0; v22 ships in the release after
-    // 0.13.0 -- name it at the cut).
+    // 0.13.0 -- name it at the cut; so do v23 and v24).
     const char* MinReleaseForAbi(std::uint32_t abi) {
         switch (abi) {
         case 1:  return "0.2.0";
@@ -273,7 +288,8 @@ namespace {
         case 20: return "0.11.0";
         case 21: return "0.12.0";
         case 22:
-        case 23: return "the release after 0.13.0";
+        case 23:
+        case 24: return "the release after 0.13.0";
         default: return "a release newer than this one";
         }
     }
@@ -336,7 +352,15 @@ namespace {
     static_assert(sizeof(APMF_API::APMF_API_v22) == sizeof(APMF_API::APMF_API_v19) + 2 * sizeof(void*),
                   "APMF_API_v22 = the v19 prefix plus exactly two function pointers");
 
-    constexpr APMF_API::APMF_API_v22 g_api{
+    // ABI v24 (ch.12 idle state) appends ONE slot to the v22 prefix (v23 added none), so the object is
+    // now an APMF_API_v24 and `abiVersion` reports 24. Same two-form proof.
+    static_assert(offsetof(APMF_API::APMF_API_v24, GetIdleState) == sizeof(APMF_API::APMF_API_v22),
+                  "APMF_API_v24's slot must start right after the v22 prefix");
+    static_assert(sizeof(APMF_API::APMF_API_v24) == sizeof(APMF_API::APMF_API_v22) + sizeof(void*),
+                  "APMF_API_v24 = the v22 prefix plus exactly one function pointer");
+
+    constexpr APMF_API::APMF_API_v24 g_api{
+        {
         {
         {
         {
@@ -378,6 +402,8 @@ namespace {
         },
         &APMF_SetEquipPreference,
         &APMF_GetEquipPreferenceState,
+        },
+        &APMF_GetIdleState,
     };
 
 }

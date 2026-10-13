@@ -38,4 +38,25 @@ namespace apmf::idle {
     // posted and not yet run finds no entry and drops itself. GAME THREAD.
     void ResetAll(const char* why);
 
+    // ---- ABI v24: the per-HANDLE idle state (APMF_API_v24::GetIdleState). ----
+    // A small table keyed by claim handle, behind its own LEAF mutex (nothing is acquired
+    // while it is held, and no engine call is made under it). Written on the game thread at
+    // every ch.12 transition and by the three client-call notes below; pruned by Poll.
+
+    // APMF_API_v24::GetIdleState. ANY THREAD: one copy under the leaf mutex, no game call.
+    std::uint32_t GetState(APMF_API::Handle handle, APMF_API::APMF_IdleStateInfo* out);
+
+    // ClientAPI, the CLIENT's thread, AFTER RequestEx(kIntent_Idle) returned `handle`: a claim
+    // with param->form != 0 starts PENDING. Insert-only (the game thread may already have
+    // played it). A null param, form 0 or an invalid handle is ignored.
+    void NoteFiled(APMF_API::Handle handle, RE::FormID actor, const APMF_API::APMF_Param* param);
+
+    // ClientAPI, the CLIENT's thread, BEFORE EnqueueRepoint: a known, not-ended handle re-pointed
+    // to a form goes back to PENDING (the new declaration has not played). Form 0 or a null
+    // param leaves the record to the game thread. Unknown handles are ignored.
+    void NoteRepoint(APMF_API::Handle handle, const APMF_API::APMF_Param* param);
+
+    // ClientAPI, the CLIENT's thread, on Release: a known handle is marked ENDED (released).
+    void NoteReleased(APMF_API::Handle handle);
+
 }
