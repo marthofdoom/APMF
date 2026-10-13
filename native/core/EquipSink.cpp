@@ -212,11 +212,12 @@ namespace apmf::equipsink {
         // ControlMap::EnqueueRequest from any thread to REFUSE a ch.17 claim while the
         // seat is down. Always a string literal (never freed); cleared to "" on success.
         std::atomic<const char*> g_notInstalledReason{ "not yet installed (Install runs at kDataLoaded)" };
-        std::atomic<bool>  g_observeOnly{ true };
-        // [EquipAuthority] bEquipEnforceArmor (marth 2026-10-06): enforce ARMOR verdicts even while
-        // bEquipObserveOnly=1 keeps weapons, shields, torches and ammo observe-only. "MFO is the armor
-        // equip authority until the weighting rework; we are leaving weapon authority as is."
-        std::atomic<bool>  g_enforceArmor{ true };
+        // [EquipAuthority] bEquipObserveOnly. Default 0 since 2026-10-13 (marth: "The default equip
+        // state should block all the incorrect options this must be leftover from the weighting"):
+        // every declared category is ENFORCED. 1 is an explicit opt-in to observe-only, logged once
+        // at Install. The armor-only switch (bEquipEnforceArmor, 2026-10-06) is retired: with
+        // enforcement the default there is nothing left for it to carve out.
+        std::atomic<bool>  g_observeOnly{ false };
         std::atomic<bool>  g_denyScript{ false };
         Worker_t           g_worker = nullptr;
         InstalledSite      g_sites[2]{};
@@ -422,7 +423,13 @@ namespace apmf::equipsink {
         // claim's own client ranks at the claim's priority (its own equip stands); an unnamed source is
         // the degrade rule (never denied) unless APMF_Sources.ini [UnknownSources] Equip=override.
         // Any thread, lock-free but ClaimPriority's shared lock.
-        apmf::facetattr::Verdict RankEquipDeny(APMF_API::Handle a_claim, apmf::sources::SourceId a_src) {
+        // `a_bindsOwner` (ch.17 ONLY, marth 2026-10-13: "Yes, a claim binds its owner"): the claim's
+        // own client does NOT tie with its claim -- its own direct equip of an item its declaration
+        // refuses is refused too (`a_ownerBound` says that is why). Every other caller passes false
+        // and keeps the facet rule (the own client ranks at the claim's priority, its equip stands).
+        apmf::facetattr::Verdict RankEquipDeny(APMF_API::Handle a_claim, apmf::sources::SourceId a_src,
+                                               bool a_bindsOwner, bool& a_ownerBound) {
+            a_ownerBound = false;
             namespace src = apmf::sources;
             apmf::facetattr::Verdict v;
             v.claimPrio = src::ClaimPriority(a_claim, src::Facet::kEquip, &v.client);
@@ -434,6 +441,11 @@ namespace apmf::equipsink {
             } else {
                 v.src     = a_src;
                 v.srcPrio = a_src == v.client ? v.claimPrio : src::Priority(a_src, src::Facet::kEquip);
+                if (a_bindsOwner && v.client != src::kNoSource && a_src == v.client) {
+                    v.enforce    = true;   // the claim binds its owner: no tie with its own client
+                    a_ownerBound = true;
+                    return v;
+                }
             }
             v.enforce = v.claimPrio > v.srcPrio;
             return v;
@@ -576,17 +588,19 @@ namespace apmf::equipsink {
                 selfPath   = false;
             }
 
-            bool inSet = false;
-            for (std::uint32_t i = 0; i < set.count; ++i) if (set.forms[i] == itemId) { inSet = true; break; }
-
             // ABI v9: what this item competes for, with the slot the engine resolved
             // for it (data->slot: the caller's a_slot or the default slot 38911/37955
             // picked). ONE map, shared with the enforce pass (Categorize). The
             // claim's owned/denied masks came out of the SAME snapshot read as the
             // set, so the two can never be from different generations.
             const std::uint32_t competes = Categorize(obj, data->slot);
-            const bool          blacked  = (competes & set.denied) != 0;
-            const bool          ownedCat = (competes & set.owned)  != 0;
+            // THE shared ch.17 verdict (DeclaredSetVerdict): the same function the 0x0F selection
+            // seat (core/HandBlock.cpp) and the enforce pass's unequip call, so they cannot disagree.
+            // An actor here only through the hand block / force has an emptied view (owned=0,
+            // denied=0): refuse is false.
+            const DeclaredVerdict dv       = DeclaredSetVerdict(set, itemId, competes);
+            const bool            blacked  = dv.blacked;
+            const bool            ownedCat = dv.ownedCat;
 
             // The hand-claim block: which hand(s) this equip competes for are held by a
             // live cast claim (a deny-only floor included), the claim's own spell/proxy
@@ -604,12 +618,7 @@ namespace apmf::equipsink {
             const std::uint32_t forceMask = forced ? apmf::equippref::ForceRefusal(force, itemId, competes) : 0u;
             if (!equipClaimed && !handHeld && !forceMask) { g_worker(mgr, actor, obj, data); return; }
 
-            // Armor-only enforce: an item competing ONLY as plain armor (not a shield, a hand, ammo
-            // or a torch) is enforced even under the global observe-only switch.
-            const bool armorEnforced = g_enforceArmor.load(std::memory_order_relaxed) &&
-                                       competes == APMF_API::kEquipCat_Armor;
-            const bool observe    = (g_observeOnly.load(std::memory_order_relaxed) && !armorEnforced) ||
-                                    (set.flags & APMF_API::kEquipAuth_ObserveOnly) != 0;
+            const bool observe    = dv.observe;   // every category alike (no armor-only carve-out since 2026-10-13)
             const bool denyScript = g_denyScript.load(std::memory_order_relaxed) ||
                                     (set.flags & APMF_API::kEquipAuth_DenyScript) != 0;
             const bool scriptPath = (caller.kind == PathKind::kScript || caller.kind == PathKind::kConsole);
@@ -657,20 +666,24 @@ namespace apmf::equipsink {
             bool               forceDeny  = false;
             bool               anomaly    = false;
             bool               ownClient  = false;   // F1: the forced preference's own client made this equip
+            bool               ownerBound = false;   // ch.17: the claim's own client's equip, refused (binds its owner)
             apmf::facetattr::Verdict lastV{};          // the verdict of the most recent ranking
             const char*        standsWhat = nullptr;   // the deny the sliders did not allow (log + counters)
             apmf::facetattr::Verdict standsV{};
             APMF_API::Handle   standsH    = APMF_API::kInvalidHandle;
             apmf::facetattr::Verdict denyV{};          // the verdict of the deny that is applied (counters)
             const bool unknownRanked = !attributed && apmf::sources::OverrideUnknown(apmf::sources::Facet::kEquip);
-            auto ranked = [&](APMF_API::Handle a_h, const char* a_what) {
+            auto ranked = [&](APMF_API::Handle a_h, const char* a_what, bool a_bindsOwner = false) {
                 if (selfPath) return true;   // APMF's own equip: unranked, exactly as before
                 apmf::facetattr::Verdict v{};
+                bool                     bound = false;
                 try {
-                    v = RankEquipDeny(a_h, eqSrc);
+                    v = RankEquipDeny(a_h, eqSrc, a_bindsOwner, bound);
                 } catch (...) {
-                    v = apmf::facetattr::Verdict{};   // a registry throw never denies (the degrade direction)
+                    v     = apmf::facetattr::Verdict{};   // a registry throw never denies (the degrade direction)
+                    bound = false;
                 }
+                if (a_bindsOwner) ownerBound = bound;
                 lastV = v;
                 if (v.enforce) { denyV = v; return true; }
                 if (!standsWhat) { standsWhat = a_what; standsV = v; standsH = a_h; }
@@ -686,8 +699,8 @@ namespace apmf::equipsink {
                 const bool scriptExempt = scriptPath && !denyScript;   // exempt from the hand block and ch.17
                 if (handHeld && !scriptExempt)
                     handBlock = ranked(apmf::facetattr::CastClaimHandle(actorId), "the hand-claim block");
-                if (!handBlock && !scriptExempt && (blacked || (ownedCat && !(set.count == 0 || inSet))))
-                    refuse = ranked(set.handle, "the ch.17 declared set");
+                if (!handBlock && !scriptExempt && dv.refuse)
+                    refuse = ranked(set.handle, "the ch.17 declared set", /*bindsOwner*/ true);
                 if (!handBlock && !refuse && forceMask && !selfPath) {
                     forceDeny = ranked(force.handle, "the FORCED equip preference");
                     // F1 (review of 7cda290): the claim's OWN client equipping into its own forced hand ties
@@ -732,8 +745,11 @@ namespace apmf::equipsink {
                                          : "deny (hand L held by a cast claim)";
                 callWorker = false;
             } else if (refuse) {
-                if (observe) verdict = "would-deny";
-                else { verdict = "deny"; callWorker = false; }
+                if (observe) verdict = ownerBound ? "would-deny (the claim binds its own client)" : "would-deny";
+                else {
+                    verdict    = ownerBound ? "deny (the claim binds its own client)" : "deny";
+                    callWorker = false;
+                }
             }
             // D2 counters + the STANDS / FORCE ANOMALY lines. Wrapped: nothing may unwind into the
             // engine's equip frame. The source's hit was counted when the caller was named.
@@ -921,13 +937,27 @@ namespace apmf::equipsink {
     }
     bool Installed()   { return g_installed.load(std::memory_order_acquire); }
     const char* NotInstalledReason() { return g_notInstalledReason.load(std::memory_order_acquire); }
-    // Enforcing (ABI v8 IsEquipAuthorityEnforced): true when the seat refuses ANYTHING -- the global
-    // switch off, OR armor enforced on its own (bEquipEnforceArmor). Clients gate their "a declared
-    // piece is not worn: re-send it" on this (MFO-B63): an OutfitApply strips the worn body piece
-    // BEFORE equipping the (now refused) outfit, so without the re-send the follower stands bare
-    // (field 1006f, Jesper's Master Robes, marth 2026-10-06).
-    bool Enforcing()   { return Installed() && (!g_observeOnly.load(std::memory_order_relaxed) ||
-                                               g_enforceArmor.load(std::memory_order_relaxed)); }
+    // Enforcing (ABI v8 IsEquipAuthorityEnforced): the seat is installed and the INI is not the
+    // observe-only opt-in. Every category is enforced alike (the armor-only switch is retired,
+    // 2026-10-13). Clients gate their "a declared piece is not worn: re-send it" on this (MFO-B63):
+    // an OutfitApply strips the worn body piece BEFORE equipping the (now refused) outfit, so
+    // without the re-send the follower stands bare (field 1006f, Jesper's Master Robes, 2026-10-06).
+    bool Enforcing()   { return Installed() && !g_observeOnly.load(std::memory_order_relaxed); }
+
+    DeclaredVerdict DeclaredSetVerdict(const apmf::EquipSetView& a_set, RE::FormID a_item, std::uint32_t a_competes) {
+        DeclaredVerdict v;
+        for (std::uint32_t i = 0; i < a_set.count && i < APMF_API::kMaxEquipSet; ++i)
+            if (a_item != 0 && a_set.forms[i] == a_item) { v.inSet = true; break; }
+        v.blacked  = (a_competes & a_set.denied) != 0;
+        v.ownedCat = (a_competes & a_set.owned) != 0;
+        // The ABI v9 verdict rules 2-6 (the sink's banner): denied -> refuse even if in-set; owned
+        // with a declaration and off-set -> refuse; owned with no declaration yet (count 0) ->
+        // allow (declare -> enforce); nothing owned at stake -> allow.
+        v.refuse   = v.blacked || (v.ownedCat && a_set.count != 0 && !v.inSet);
+        v.observe  = g_observeOnly.load(std::memory_order_relaxed) ||
+                     (a_set.flags & APMF_API::kEquipAuth_ObserveOnly) != 0;
+        return v;
+    }
     bool ObserveOnly() { return g_observeOnly.load(std::memory_order_relaxed); }
     bool DenyScript()  { return g_denyScript.load(std::memory_order_relaxed); }
 
@@ -941,12 +971,20 @@ namespace apmf::equipsink {
         if (s_once.exchange(true)) return;
 
         const bool enabled = GetPrivateProfileIntA("EquipAuthority", "bEquipAuthority", 1, kIni) != 0;
-        g_observeOnly.store(GetPrivateProfileIntA("EquipAuthority", "bEquipObserveOnly", 1, kIni) != 0,
+        g_observeOnly.store(GetPrivateProfileIntA("EquipAuthority", "bEquipObserveOnly", 0, kIni) != 0,
                             std::memory_order_relaxed);
         g_denyScript.store(GetPrivateProfileIntA("EquipAuthority", "bEquipDenyScript", 0, kIni) != 0,
                            std::memory_order_relaxed);
-        g_enforceArmor.store(GetPrivateProfileIntA("EquipAuthority", "bEquipEnforceArmor", 1, kIni) != 0,
-                             std::memory_order_relaxed);
+        // Logged ONCE here (Install is once): an installed INI from an older build may still say
+        // bEquipObserveOnly=1 -- honoured as an explicit opt-in -- and may still carry the retired
+        // bEquipEnforceArmor key, which is read by nothing now (-1 = the key is absent).
+        if (g_observeOnly.load(std::memory_order_relaxed))
+            spdlog::warn("[apmf][equip-sink] [EquipAuthority] bEquipObserveOnly=1 in APMF.ini -- OBSERVE-ONLY by "
+                         "explicit opt-in: every ch.17 refusal (sink, CheckShouldEquip selection, worn-item unequip) "
+                         "is logged `would-deny` and NOT applied. The default is 0 (enforce every declared category).");
+        if (static_cast<long>(GetPrivateProfileIntA("EquipAuthority", "bEquipEnforceArmor", -1, kIni)) != -1)
+            spdlog::info("[apmf][equip-sink] [EquipAuthority] bEquipEnforceArmor is RETIRED (2026-10-13) and ignored: "
+                         "every declared category is enforced unless bEquipObserveOnly=1.");
         if (!enabled) {
             g_notInstalledReason.store("[EquipAuthority] bEquipAuthority=0", std::memory_order_release);
             spdlog::warn("[apmf][equip-sink] [EquipAuthority] bEquipAuthority=0 -- seat NOT installed; "

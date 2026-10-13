@@ -86,6 +86,7 @@ namespace apmf::handblock {
         std::atomic<bool> g_installOnce{ false };
 
         std::atomic<std::uint64_t> g_denies{ 0 };
+        std::atomic<std::uint64_t> g_declDenies{ 0 };   // ch.17 selection-time refusals (2026-10-13)
         std::atomic<std::uint64_t> g_foreign{ 0 };
 
         std::mutex                                       g_rlMx;   // leaf lock: no engine call, no log under it
@@ -158,6 +159,81 @@ namespace apmf::handblock {
             return nullptr;
         }
 
+        // ch.17 AT SELECTION TIME (2026-10-13, ClickUp 86e3pyhxv; the Sept enforced-run defect,
+        // Docs/STATUS.md: 114 bow + 18 shield refusals at the SINK because CombatInventory had
+        // already admitted the item here -- the AI kept a plan it could never carry out). For an
+        // actor with a ch.17 claim, answer NO for a candidate its declaration refuses, using THE
+        // shared verdict (equipsink::DeclaredSetVerdict) with the candidate's own slot (the slot
+        // AE 48124 / SE 46955 hands to EquipObject, so the sink would compute the same mask).
+        // Engine answered first (the caller passes its YES); a NO only narrows. Ranked on the Equip
+        // facet against the answer's source beneath this seat (InsideSource: the engine, or a hook
+        // DLL inside 0x0F; a CLIENT's hook ranks as the engine, so the ch.17 own-client binding of
+        // the sink never arises here). Observe-only (INI opt-in or the claim's bit): logged, the
+        // engine's YES stands. Lock-free RCU read only (TryGetEquipSet), combat thread.
+        bool DeclaredSetAnswer(RE::FormID a_fid, RE::Actor* a_actor, RE::TESForm* a_item,
+                               RE::FormID a_itemId, std::uint32_t a_cats, CheckShouldEquip_t a_orig, const char* a_tag,
+                               std::uintptr_t a_retRva, bool a_engine) {
+            if (!a_engine || a_cats == 0) return a_engine;
+            apmf::EquipSetView set{};
+            if (!apmf::ControlMap::Get().TryGetEquipSet(a_fid, set)) return a_engine;   // no ch.17 claim
+            const auto dv = apmf::equipsink::DeclaredSetVerdict(set, a_itemId, a_cats);
+            if (!dv.refuse) return a_engine;
+            char cats[48];
+            if (dv.observe) {
+                try {
+                    std::uint32_t dropped = 0;
+                    if (LineDue(a_fid, a_itemId ^ 0x17000000u, dropped))
+                        spdlog::info("[equipauth 0x0F] 0x{} CheckShouldEquip {} item=0x{} '{}' cat={} owned={} black={}: "
+                                     "the ch.17 declaration would refuse it -- OBSERVE-ONLY (INI bEquipObserveOnly=1 or "
+                                     "the claim's kEquipAuth_ObserveOnly), so the engine's YES stands. site={}",
+                                     apmf::log::Hex(a_fid), a_tag, apmf::log::Hex(a_itemId),
+                                     a_item->GetName() ? a_item->GetName() : "?",
+                                     apmf::equipsink::CategoryNames(a_cats, cats, sizeof(cats)), dv.ownedCat ? 1 : 0,
+                                     dv.blacked ? 1 : 0, SiteName(a_retRva));
+                } catch (...) {
+                }
+                return a_engine;
+            }
+            try {
+                const auto v = apmf::facetattr::Decide(apmf::sources::Facet::kEquip, set.handle,
+                                                       apmf::facetattr::InsideSource(reinterpret_cast<std::uintptr_t>(a_orig)),
+                                                       a_fid, "CheckShouldEquip (0x0F) ch.17 declared set: the answer came "
+                                                              "through a hook inside the seat that is in no module");
+                if (!v.enforce) {
+                    try {
+                        if (apmf::facetattr::LineDue(apmf::sources::Facet::kEquip, a_fid, 0x0F17u))
+                            spdlog::info("[equipauth 0x0F] 0x{} CheckShouldEquip item=0x{}: the ch.17 declaration would "
+                                         "refuse it -- {}, so the engine's own YES STANDS.",
+                                         apmf::log::Hex(a_fid), apmf::log::Hex(a_itemId),
+                                         apmf::facetattr::WhyStands(apmf::sources::Facet::kEquip, v, set.handle));
+                    } catch (...) {
+                    }
+                    return a_engine;
+                }
+            } catch (...) {
+                // A registry throw keeps the claim's answer (the hand block's rule above).
+            }
+            g_declDenies.fetch_add(1, std::memory_order_relaxed);
+            t_last.refused = true;
+            try {
+                std::uint32_t dropped = 0;
+                if (LineDue(a_fid, a_itemId ^ 0x17000000u, dropped))
+                    spdlog::info("[equipauth 0x0F] 0x{} '{}' CheckShouldEquip {} item=0x{} '{}' cat={} owned={} black={} "
+                                 "-> NO (the ch.17 declaration refuses it: {}) -- engine had said YES; the item is not "
+                                 "selected, so the AI never plans around an equip the sink would refuse. site={} (ret 0x{}){}",
+                                 apmf::log::Hex(a_fid), a_actor->GetName() ? a_actor->GetName() : "?", a_tag,
+                                 apmf::log::Hex(a_itemId), a_item->GetName() ? a_item->GetName() : "?",
+                                 apmf::equipsink::CategoryNames(a_cats, cats, sizeof(cats)), dv.ownedCat ? 1 : 0,
+                                 dv.blacked ? 1 : 0, dv.blacked ? "a denied category" : "off the declared set",
+                                 SiteName(a_retRva), apmf::log::Hex(a_retRva),
+                                 dropped ? fmt::format(" ({} 0x0F line(s) dropped by the {}/s cap before this one)",
+                                                       dropped, kCapPerSec)
+                                         : std::string());
+            } catch (...) {
+            }
+            return false;
+        }
+
         bool CheckShouldEquipThunk(RE::CombatInventoryItem* a_this, RE::CombatController* a_cc) {
             // Captured FIRST: the genuine caller, not a frame this thunk pushed.
             const auto retRva = reinterpret_cast<std::uintptr_t>(_ReturnAddress()) - REL::Module::get().base();
@@ -183,8 +259,11 @@ namespace apmf::handblock {
             const bool engine = orig(a_this, a_cc);   // ENGINE ANSWERS FIRST, always called
             t_last = LastPass{ a_this, engine, false };
             if (!engine) return false;                 // nothing to narrow
-            if (!g_enabled.load(std::memory_order_relaxed) || !a_cc) return engine;
+            if (!a_cc) return engine;
             if (apmf::ControlMap::Get().ControlledCount() == 0) return engine;   // nothing claimed anywhere
+            // Two narrowing steps share this seat: the hand-claim block (HeldFor already answers
+            // "nothing held" while [HandBlock] bHandClaimBlocksEquip=0) and, since 2026-10-13, the
+            // ch.17 declared-set refusal at SELECTION time (below). Either may turn YES to NO.
 
             auto  actorPtr = a_cc->attackerHandle.get();   // NiPointer<Actor>, held for the reads below
             auto* actor    = actorPtr.get();
@@ -203,17 +282,16 @@ namespace apmf::handblock {
             // THIS seat that branch is unreachable: CombatInventory AddItem (AE 0x811AC0) splits a
             // multi-parent slot into per-parent items, so a one-hander arrives as a RightHand
             // item plus a LeftHand clone -- APMF-B66 F10); a shield or a torch, the left.
-            const std::uint32_t competes =
-                apmf::equipsink::Categorize(bound, a_this->itemSlot.equipSlot) &
-                (APMF_API::kEquipCat_Right | APMF_API::kEquipCat_Left);
-            if (!competes) return engine;
+            const std::uint32_t allCats  = apmf::equipsink::Categorize(bound, a_this->itemSlot.equipSlot);
+            const std::uint32_t competes = allCats & (APMF_API::kEquipCat_Right | APMF_API::kEquipCat_Left);
 
             // A spells-only floor (ABI v20) holds its hand only against a spell-like item;
             // the weapon-class leaves carry weapons / shields / torches / unarmed, so for
             // them it normally holds nothing on ITS hand (SpellLike is still asked, never
             // assumed); a claim on the other hand still holds a 2H / bow / unarmed candidate.
             HandHold hold{};
-            if (!HeldFor(fid, competes, itemId, SpellLike(item), hold)) return engine;
+            if (!competes || !HeldFor(fid, competes, itemId, SpellLike(item), hold))
+                return DeclaredSetAnswer(fid, actor, item, itemId, allCats, orig, tag, retRva, engine);
 
             // D2 (marth 2026-10-12, "equip denies rank by priority like every other facet"): the NO
             // replaces the answer of the chain beneath this seat (the engine, or a module hooked inside
@@ -235,7 +313,8 @@ namespace apmf::handblock {
                                          apmf::facetattr::WhyStands(apmf::sources::Facet::kEquip, v, h));
                     } catch (...) {
                     }
-                    return engine;
+                    // The hand block stood down; the ch.17 declaration may still refuse the candidate.
+                    return DeclaredSetAnswer(fid, actor, item, itemId, allCats, orig, tag, retRva, engine);
                 }
             } catch (...) {
             }
@@ -342,10 +421,16 @@ namespace apmf::handblock {
     void Install() {
         if (g_installOnce.exchange(true)) return;
         g_enabled.store(ReadIniEnabled(), std::memory_order_relaxed);
+        // The seat also carries ch.17's SELECTION-time refusal (2026-10-13), so it installs when
+        // EITHER half wants it. equipsink::Install runs later (plugin.cpp), so its INI switch is read
+        // here directly, with the sink's own default (1). A ch.17 claim is refused while the sink
+        // seat is down, so this half reads no claim then even if the seat is installed.
+        const bool ch17 = GetPrivateProfileIntA("EquipAuthority", "bEquipAuthority", 1, "Data/SKSE/Plugins/APMF.ini") != 0;
         if (!g_enabled.load(std::memory_order_relaxed)) {
             spdlog::warn("[handblock] [HandBlock] bHandClaimBlocksEquip=0 -- a hand held by a cast claim does NOT "
-                         "refuse weapon / shield / torch equips (neither the 0x0F seat nor the equip-sink step).");
-            return;
+                         "refuse weapon / shield / torch equips (neither the 0x0F seat nor the equip-sink step).{}",
+                         ch17 ? " The 0x0F seat still installs for ch.17's selection-time refusal." : "");
+            if (!ch17) return;
         }
         if (REL::Module::IsVR()) {
             spdlog::warn("[handblock] VR runtime -- the weapon-class 0x0F seat is verified on 1.6.1170, 1.5.97 and "
@@ -408,11 +493,15 @@ namespace apmf::handblock {
         g_seatArmed.store(n > 0, std::memory_order_release);
         if (n == static_cast<int>(kNumClasses)) {
             spdlog::info("[handblock] INSTALLED: CheckShouldEquip (0x0F) on the Melee, Ranged, Shield, Torch and "
-                         "OneHandedBlock item vtables (each slot held this build's engine function). A hand held by a live cast claim (a "
+                         "OneHandedBlock item vtables (each slot held this build's engine function). Hand-claim block "
+                         "{}: a hand held by a live cast claim (a "
                          "deny-only floor included; a spells-only floor, ABI v20, refuses spell-like items only) refuses "
-                         "every weapon / shield / torch candidate competing for it; "
-                         "the engine answers first, only its YES turns to NO. The equip-sink step rides the ch.17 "
-                         "seat (its own [apmf][equip-sink] INSTALLED line says whether that seat is live).");
+                         "every weapon / shield / torch candidate competing for it. ch.17 selection-time refusal {}: "
+                         "a candidate the actor's declared equip set refuses is not selected. "
+                         "The engine answers first, only its YES turns to NO. The equip-sink step rides the ch.17 "
+                         "seat (its own [apmf][equip-sink] INSTALLED line says whether that seat is live).",
+                         g_enabled.load(std::memory_order_relaxed) ? "ON" : "OFF (bHandClaimBlocksEquip=0)",
+                         ch17 ? "ON" : "OFF (bEquipAuthority=0)");
         } else {
             spdlog::error("[handblock] PARTIAL: {}/{} weapon-class 0x0F seats installed; refused: {}. The equip-sink "
                           "step still refuses an equip into a held hand on every path.",

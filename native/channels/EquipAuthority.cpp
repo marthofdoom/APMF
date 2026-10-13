@@ -30,9 +30,22 @@
 //             already wearing, through ActorEquipManager::EquipObject (queued,
 //             not forced, sounds on) inside the seat's TLS bracket so the seat
 //             lets it through and logs it as APMF's own (`tls=1`).
-// Nothing is ever UNEQUIPPED by APMF: the engine's own worker displaces whatever
-// occupies a declared item's slot, the ordinary way. No re-assert loop follows
-// (INVARIANTS #0): the seat is what keeps the engine from undoing the set.
+// The engine's own worker displaces whatever occupies a declared item's slot, the
+// ordinary way. No re-assert loop follows (INVARIANTS #0): the seat is what keeps
+// the engine from undoing the set.
+//
+// THE ONE UNEQUIP (2026-10-13, ClickUp 86e3pyhxv; marth on a worn item in a denied
+// category: "Yes, unequip it"; this REPLACES the old "APMF never unequips" contract).
+// An item the actor is WEARING that competes for a category the claim DENIES
+// (equipsink::DeclaredSetVerdict's `blacked`, the same verdict the seat applies) is
+// removed by this same pass, through ActorEquipManager::UnequipObject (queued, not
+// forced, main thread, never a 3D reset). Field 2026-10-13: Jesper loaded already
+// wearing a shield his client had denied, and the seat only refuses NEW equips, so it
+// stayed on his arm. Only DENIED categories: an off-set item in an OWNED category is
+// displaced by the declared item's own equip, as before. Observe-only (INI opt-in or
+// the claim's bit) logs `would-unequip` and removes nothing. Each removal is logged.
+// It runs on every declaration event (a scope change included), in or out of combat,
+// and with or without a declared set (a deny-only scope with count 0 still unequips).
 //
 // THE HAND (ABI v8, 2026-09-15). A slot-less EquipObject of a one-hander lands
 // in the RIGHT hand and evicts the main-hand weapon (MFO measured it), so the
@@ -68,7 +81,8 @@
 // hand's EQUP (nullptr for Default), so a Default-declared one-hander competes
 // for both hands and needs both owned. A scope CHANGE on the owner is a
 // declaration event (ControlMap fires OnOwnerChanged); an unchanged re-send is
-// not. Nothing else changes: still queued, still bracketed, still no unequip.
+// not. Nothing else changes: still queued, still bracketed (the one unequip, for a
+// DENIED category, is described above).
 //
 // NOT A LOOP, EVEN FROM A TICKING CLIENT (Fable tier-3 on d1aa66b, SEV-3 #3).
 // ControlMap fires OnOwnerChanged on EVERY applied declaration (a re-issued
@@ -142,6 +156,7 @@ namespace {
         std::uint64_t lastSkipSig = 0;      // ABI v9: the signature the unowned/denied skip list was last warned for
         std::uint32_t passes      = 0;
         std::vector<Issued> issued;         // forms this channel EquipObject'd and has not yet seen worn
+        std::vector<Issued> unequipIssued;  // 2026-10-13: denied-category items this channel UnequipObject'd, not yet seen off
         bool          reservedWarned = false;   // kEquipAuth_DenyUnequip warned once per actor
     };
     std::unordered_map<RE::FormID, ActorMemory> g_memory;
@@ -207,6 +222,88 @@ namespace {
         });
     }
 
+    // THE ONE UNEQUIP (see the banner). MAIN THREAD, inside Enforce, after the seat and the
+    // actor checks. Removes every worn item in a category the claim DENIES; returns how many
+    // were issued. The candidates: what each HAND holds (a weapon, a shield, a torch; the
+    // category read with that hand's EQUP, exactly as the seat reads an equip into it) and
+    // every other worn ARMO / AMMO / LIGH in the inventory (no slot, as Categorize reads it).
+    // A removal this channel already issued is held kPendingMaxMs (the equip side's guard b).
+    std::uint32_t UnequipDenied(RE::FormID id, RE::Actor* actor, RE::ActorEquipManager* mgr,
+                                const apmf::EquipSetView& set, ActorMemory& mem, std::uint64_t nowMs,
+                                std::uint32_t& wouldUnequip, std::uint32_t& unequipHeld) {
+        wouldUnequip = 0;
+        unequipHeld  = 0;
+        std::erase_if(mem.unequipIssued, [&](const Issued& e) { return nowMs - e.issuedMs >= kPendingMaxMs; });
+        if (set.denied == 0 || actor->IsPlayerRef()) return 0;   // nothing denied; the player is never touched
+
+        struct Cand {
+            RE::TESBoundObject*     obj;
+            const RE::BGSEquipSlot* slot;    // the hand's EQUP for a hand item, nullptr otherwise
+            std::uint8_t            hand;    // APMF_API::EquipSlot (Default for a non-hand item)
+            std::uint32_t           count;   // how many to unequip (ammo: the worn stack)
+        };
+        std::vector<Cand> cands;
+        const RE::BGSEquipSlot* right = RE::TESForm::LookupByID<RE::BGSEquipSlot>(kRightHandEquipSlot);
+        const RE::BGSEquipSlot* left  = RE::TESForm::LookupByID<RE::BGSEquipSlot>(kLeftHandEquipSlot);
+        for (const bool isLeft : { false, true }) {
+            auto* f = actor->GetEquippedObject(isLeft);
+            if (!f || !IsGovernedType(f->GetFormType())) continue;   // a spell in a hand is not this facet
+            auto* obj = f->As<RE::TESBoundObject>();
+            const RE::BGSEquipSlot* hs = isLeft ? left : right;
+            if (!obj || !hs) continue;   // an unresolved hand EQUP: never categorized slot-less
+            cands.push_back(Cand{ obj, hs, isLeft ? APMF_API::kEquipSlot_Left : APMF_API::kEquipSlot_Right, 1 });
+        }
+        auto inv = actor->GetInventory();
+        for (auto& [invObj, data] : inv) {
+            RE::TESBoundObject* const obj = invObj;   // a plain local: the lambda below captures it
+            if (!obj || !data.second || !data.second->IsWorn()) continue;
+            const auto t = obj->GetFormType();
+            if (t != RE::FormType::Armor && t != RE::FormType::Ammo && t != RE::FormType::Light) continue;   // WEAP: by hand above
+            const bool inHandAlready = std::any_of(cands.begin(), cands.end(), [&](const Cand& c) { return c.obj == obj; });
+            if (inHandAlready) continue;   // a shield / torch already read with its hand
+            const std::uint32_t n = (t == RE::FormType::Ammo && data.first > 0) ? static_cast<std::uint32_t>(data.first) : 1u;
+            cands.push_back(Cand{ obj, nullptr, APMF_API::kEquipSlot_Default, n });
+        }
+
+        std::uint32_t unequipped = 0;
+        std::vector<Issued> held;
+        for (const auto& c : cands) {
+            const RE::FormID          form     = c.obj->GetFormID();
+            const std::uint32_t       competes = apmf::equipsink::Categorize(c.obj, c.slot);
+            const auto                dv       = apmf::equipsink::DeclaredSetVerdict(set, form, competes);
+            if (!dv.blacked) continue;
+            char catBuf[48];
+            if (dv.observe) {
+                ++wouldUnequip;
+                spdlog::info("[apmf][equip-auth] actor=0x{} worn 0x{} '{}' ({}) cat={} is in a DENIED category (denied=0x{}) "
+                             "-- would-unequip (observe-only: INI bEquipObserveOnly=1 or the claim's kEquipAuth_ObserveOnly).",
+                             apmf::log::Hex(id), apmf::log::Hex(form), c.obj->GetName() ? c.obj->GetName() : "",
+                             SlotName(c.hand), apmf::equipsink::CategoryNames(competes, catBuf, sizeof(catBuf)),
+                             apmf::log::Hex(set.denied, 2));
+                continue;
+            }
+            if (auto h = std::find_if(mem.unequipIssued.begin(), mem.unequipIssued.end(),
+                                      [&](const Issued& e) { return e.form == form && e.slot == c.hand; });
+                h != mem.unequipIssued.end()) {
+                ++unequipHeld;      // queued inside its hold window and still worn: not issued twice
+                held.push_back(*h);
+                continue;
+            }
+            mgr->UnequipObject(actor, c.obj, nullptr, c.count, c.slot, /*queue*/ true, /*force*/ false,
+                               /*sounds*/ true, /*applyNow*/ false);
+            ++unequipped;
+            held.push_back(Issued{ form, c.hand, nowMs });
+            spdlog::info("[apmf][equip-auth] actor=0x{} UNEQUIP worn 0x{} '{}' ({}, count {}) cat={}: a category the claim "
+                         "DENIES (denied=0x{}). Queued through ActorEquipManager::UnequipObject; the item stays in the "
+                         "inventory and the seat refuses it coming back.",
+                         apmf::log::Hex(id), apmf::log::Hex(form), c.obj->GetName() ? c.obj->GetName() : "",
+                         SlotName(c.hand), c.count, apmf::equipsink::CategoryNames(competes, catBuf, sizeof(catBuf)),
+                         apmf::log::Hex(set.denied, 2));
+        }
+        mem.unequipIssued = std::move(held);
+        return unequipped;
+    }
+
     // MAIN THREAD, strictly after the publishing Drain (see the banner). Reads the
     // PUBLISHED winning declaration for `id` and equips each declared item the
     // actor is not already wearing. A claim released between the post and the
@@ -214,7 +311,9 @@ namespace {
     void Enforce(RE::FormID id) {
         apmf::EquipSetView set;
         if (!apmf::ControlMap::Get().TryGetEquipSet(id, set)) return;   // claim gone, or lost arbitration
-        if (set.count == 0) return;                                     // no declaration (or cleared): nothing to equip
+        // No declaration (or cleared) AND nothing denied: nothing to equip, nothing to unequip.
+        // A deny-only scope with no declared set still runs the denied-category unequip below.
+        if (set.count == 0 && set.denied == 0) return;
 
         if (!apmf::equipsink::Installed()) {
             // Without the seat the engine would undo the equip on its next pass;
@@ -255,6 +354,16 @@ namespace {
         if (!mgr) {
             spdlog::error("[apmf][equip-auth] actor=0x{} ActorEquipManager singleton is null -- equip pass skipped.",
                           apmf::log::Hex(id));
+            return;
+        }
+
+        // 2026-10-13: the worn items in a DENIED category come off first (the one unequip).
+        std::uint32_t wouldUnequip = 0, unequipHeld = 0;
+        const std::uint32_t unequipped = UnequipDenied(id, actor, mgr, set, mem, nowMs, wouldUnequip, unequipHeld);
+        if (set.count == 0) {
+            spdlog::info("[apmf][equip-auth] actor=0x{} deny-only pass (no declared set): denied=0x{} unequipped={} "
+                         "held-in-flight={} would-unequip={}",
+                         apmf::log::Hex(id), apmf::log::Hex(set.denied, 2), unequipped, unequipHeld, wouldUnequip);
             return;
         }
 
@@ -409,10 +518,12 @@ namespace {
                          skippedUnowned + skippedDenied, skippedUnowned, skippedDenied, skipNames);
         }
         spdlog::info("[apmf][equip-auth] actor=0x{} enforce pass #{}{}: set={} owned=0x{} denied=0x{} equipped={} already-worn={} "
-                     "held-in-flight={} not-in-inventory={} unresolved={} not-governed={} skipped-unowned={} skipped-denied={}",
+                     "held-in-flight={} not-in-inventory={} unresolved={} not-governed={} skipped-unowned={} skipped-denied={} "
+                     "unequipped-denied={} unequip-held={} would-unequip={}",
                      apmf::log::Hex(id), mem.passes, identical ? " (identical re-declaration)" : "",
                      set.count, apmf::log::Hex(set.owned, 2), apmf::log::Hex(set.denied, 2),
-                     equipped, worn, pending, missing, unresolved, notGoverned, skippedUnowned, skippedDenied);
+                     equipped, worn, pending, missing, unresolved, notGoverned, skippedUnowned, skippedDenied,
+                     unequipped, unequipHeld, wouldUnequip);
         // Menu "Served": the claim's client had >0 items equipped for it by this pass.
         if (equipped > 0) apmf::sources::NoteServedClaim(set.handle, apmf::sources::Facet::kEquip);
     }
@@ -467,9 +578,11 @@ namespace {
 
         void Release(RE::FormID id, RE::Actor* /*actor*/) override {
             // Relinquish (INVARIANTS #5a): the seat stops refusing the instant the
-            // cleared claim publishes; nothing was unequipped, so nothing is undone.
+            // cleared claim publishes. Nothing is unequipped here and nothing is undone:
+            // an item taken off for a DENIED category stays in the inventory, and the
+            // engine re-arms the actor its own way once no claim refuses it.
             spdlog::info("[ch.17] 0x{} equip authority released -- the engine owns the worn set again; "
-                         "nothing is unequipped.", apmf::log::Hex(id));
+                         "nothing is unequipped or re-equipped by the release.", apmf::log::Hex(id));
             g_memory.erase(id);   // main thread (Release runs inside Drain/ReleaseAll)
         }
         // No Tick: the deny lives entirely in the seat (INVARIANTS #1), the equip

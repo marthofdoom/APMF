@@ -43,8 +43,13 @@
 // kEquipAuth_DenyScript. The PLAYER's own equips on the actor through the
 // trade/gift menu (`path=PlayerMenu`) pass unless the claim says
 // kEquipAuth_DenyPlayerMenu (ABI v8: player agency; logged `verdict=allow
-// (player agency)`). Observe-only (INI, default ON for the first field build,
-// or the claim's kEquipAuth_ObserveOnly) logs `would-deny` and refuses nothing.
+// (player agency)`). Observe-only (the claim's kEquipAuth_ObserveOnly, or the INI
+// bEquipObserveOnly=1 as an explicit opt-in; the default is 0 since 2026-10-13,
+// marth: "The default equip state should block all the incorrect options") logs
+// `would-deny` and refuses nothing. EVERY category is enforced alike (weapons,
+// shields, torches, ammo, armor): the 2026-10-06 armor-only enforce switch is gone.
+// The same verdict holds in and out of combat: this seat sits on the worker every
+// engine equip funnels through, whatever the actor is doing.
 //
 // THE GOVERNED TYPES (ABI v8). EquipObject is also how a potion is drunk, food
 // eaten, a scroll read, an ingredient tasted, a book read -- Actor::DrinkPotion
@@ -105,6 +110,10 @@
 // name, then its sites, offsets AND frame depths are re-measured from its bytes.
 // ============================================================================
 
+namespace apmf {
+    struct EquipSetView;   // core/ControlMap.h
+}
+
 namespace apmf::equipsink {
 
     // kDataLoaded. VR-refused, install-once, INI-gated ([EquipAuthority]
@@ -126,6 +135,28 @@ namespace apmf::equipsink {
     // IsEquipAuthorityEnforced reports. A claim's OWN kEquipAuth_ObserveOnly bit is
     // not consulted (the client that set it knows). Any thread.
     bool Enforcing();
+
+    // THE ch.17 DECLARED-SET VERDICT (2026-10-13, ClickUp 86e3pyhxv): ONE function, called by
+    // every place that asks "does the claim's declaration refuse this item?" -- the equip sink
+    // (the engine's resolved slot), the CombatInventory CheckShouldEquip (0x0F) seat in
+    // core/HandBlock.cpp (the candidate's own slot, at SELECTION time) and the enforce pass in
+    // channels/EquipAuthority.cpp (a worn item's hand, for the unequip of a DENIED category).
+    // `a_competes` is Categorize()'s mask for the item. Pure: reads `a_set` (a copy-out view)
+    // and one relaxed atomic, any thread, no lookup. Ranking (whose equip outranks the claim)
+    // is NOT in here: each seat ranks the refusal against the source it can see.
+    //   blacked  = competes & denied                              (rule 2: refused even if in-set)
+    //   ownedCat = competes & owned
+    //   refuse   = blacked || (ownedCat && count != 0 && !inSet)   (rule 5)
+    //   observe  = the INI bEquipObserveOnly=1, or the claim's kEquipAuth_ObserveOnly bit:
+    //              a refusal is logged `would-deny` and not applied
+    struct DeclaredVerdict {
+        bool inSet    = false;
+        bool blacked  = false;
+        bool ownedCat = false;
+        bool refuse   = false;
+        bool observe  = false;
+    };
+    DeclaredVerdict DeclaredSetVerdict(const apmf::EquipSetView& a_set, RE::FormID a_item, std::uint32_t a_competes);
 
     // Re-run the public-entry detour inspection (main thread, outside any engine
     // frame: plugin.cpp calls it at kPostLoadGame and kNewGame). A plugin later
@@ -150,8 +181,9 @@ namespace apmf::equipsink {
     // Current thread's bracket depth (0 == not inside an APMF-issued equip).
     int ApmfDepth();
 
-    // The INI switches, read once at Install (default 1 / 1 / 0). Either the
-    // INI or the claim's own flag bits can set observe-only / deny-script.
+    // The INI switches, read once at Install (bEquipObserveOnly default 0 since 2026-10-13,
+    // bEquipDenyScript default 0). Either the INI or the claim's own flag bits can set
+    // observe-only / deny-script.
     bool ObserveOnly();
     bool DenyScript();
 

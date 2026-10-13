@@ -55,7 +55,11 @@ namespace apmf::handblock {
     // compares against -- REVIEW-BACKLOG APMF-B36 F2: a deny at this seat refuses a
     // slot it cannot identify). VR and any build but exactly 1.6.1170 / 1.5.97 /
     // 1.7.104 refused by name. INI [HandBlock] bHandClaimBlocksEquip (default 1)
-    // turns BOTH halves (this seat and the sink step) off.
+    // turns BOTH hand-block halves (this seat's hand step and the sink step) off.
+    // The seat ALSO carries ch.17's selection-time refusal (2026-10-13: a candidate
+    // the actor's declared equip set refuses -- equipsink::DeclaredSetVerdict -- is
+    // answered NO), so it still installs with bHandClaimBlocksEquip=0 while
+    // [EquipAuthority] bEquipAuthority=1.
     void Install();
 
     // The INI switch as read at Install (true until Install says otherwise).
