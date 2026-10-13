@@ -798,3 +798,21 @@ Raised against `d95b403`, same review. Verbatim: "F6 SEV-5 IsClaimLive scan per 
 threshold, every 250 ms. Since the round-2 fix (F3) a live record without a final end cause is checked once it is
 1 s old, so every live ch.12 claim with a form costs one full scan per 250 ms. Small today (a few idle claims).
 Fix if it grows: one snapshot pass collecting the live handles, or a handle -> live lookup in ControlMap.
+
+### APMF-B104 (SEV-4) -- ch.17 unequip passes the LeftHand EQUP for a shield/torch with no unequip readback
+Raised against `93a7461` (Opus tier-3 review of `fix/apmf-equip-enforce-all`, F3). Verbatim: "the unequip passes the LeftHand EQUP for a shield or torch (`:80-82`), and there is no readback for unequips. Confirm on the deck that the item actually comes off; repeated `UNEQUIP` lines for the same item every 3 seconds would be the symptom." Field criterion for the next Deck run.
+
+### APMF-B105 (SEV-4) -- ch.17 in-set test is a hand-blind FormID compare
+Raised against `93a7461`, same review (F4, pre-existing, now on by default). Verbatim: "the in-set test is a FormID compare that ignores hands, at selection and at the sink, so a dual-wield hold can come out with its two weapons swapped."
+
+### APMF-B106 (SEV-4) -- ammo at 48126 has no selection seat
+Raised against `93a7461`, same review (F5, pre-existing). Verbatim: "ammo at 48126 has no selection seat. Under an Ammo-owned bow hold, if the engine's best ammo differs from the declared stack, the refusal lines repeat."
+
+### APMF-B107 (SEV-5) -- stale texts and a hand-copied verdict after enforce-all
+Raised against `93a7461`, same review (F6). Verbatim: "`plugin.cpp:245-249` still says `bEquipObserveOnly (default 1)`. The `APMF_API.h` comment 'never unequips' is stale; it is byte-shared, so it waits for the paired MFO change. `AiCastSeats.cpp:908`'s `hbRefused` labels a ch.17 selection refusal as a hand-block refusal. `ActionGate.cpp:1825 RangedProbeClassify` duplicates the verdict instead of calling `DeclaredSetVerdict`. The deny-only 'seat missing' log says '0 item(s)'." Also README.md:177/:216 and the CHANGELOG still name `bEquipEnforceArmor` (author's note; release cut).
+
+### APMF-B108 (SEV-5) -- the stood-source map's 1024-entry clear
+Raised against `a358017` (re-review R3). Verbatim: "the map only grows when a higher-ranked source equips a denied-category item and that equip stands, so it is practically unreachable. A clear makes the unequip fall back to ranking against Engine, which could strip one item a slider-raised source put on. It would only ping-pong while the map stays full."
+
+### APMF-B109 (SEV-5) -- F2 "every candidate refused" warn can false-positive on AE's range branch
+Raised against `a358017` (re-review R4). Verbatim: "AE evaluate sends some candidates down the range branch (`0x813a8a`) without calling 0x0F, so a declared item may not stamp YES in every evaluation. That can give a one-off false-positive warn. Log only."
