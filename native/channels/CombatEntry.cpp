@@ -724,28 +724,41 @@ namespace {
             if (g_holdCount.load(std::memory_order_relaxed) == 0 || !a_group || !a_member || !a_target)
                 return orig(a_group, a_member, a_target, a_event);
 
-            // Every hold that names this target (review F-1: the entry is the GROUP's, so the event of
+            // Does any hold name this target? (review F-1: the entry is the GROUP's, so the event of
             // ANY member counts, as long as a holder is a member of this group).
-            const RE::FormID tid = a_target->GetFormID();
-            Cand             cands[4];
-            int              n = 0;
+            const RE::FormID tid   = a_target->GetFormID();
+            const auto       names = [tid](const Hold& h) {
+                return (h.pinTarget == tid && h.pinHandle != 0) || (h.entryTarget == tid && h.entryHandle != 0);
+            };
+            bool named = false;
             {
                 std::shared_lock lk(g_holdMx);
-                for (const auto& [id, h] : g_holds) {
-                    if (n == 4) break;
-                    if (h->pinTarget == tid && h->pinHandle != 0) cands[n++] = { id, h->holderHandle, h->pinHandle, true };
-                    else if (h->entryTarget == tid && h->entryHandle != 0)
-                        cands[n++] = { id, h->holderHandle, h->entryHandle, false };
-                }
+                for (const auto& kv : g_holds)
+                    if (names(*kv.second)) { named = true; break; }
             }
-            if (n == 0) return orig(a_group, a_member, a_target, a_event);
+            if (!named) return orig(a_group, a_member, a_target, a_event);
 
             const std::uint64_t r = orig(a_group, a_member, a_target, a_event);   // the engine's update, whole
 
-            const Cand* c = nullptr;
-            for (int i = 0; i < n && !c; ++i)
-                if (GroupHasMember(a_group, cands[i].holderH)) c = &cands[i];
-            if (!c) return r;   // no holder in this group (e.g. the target's own group)
+            // The first hold naming this target whose HOLDER is a member of this group. Every hold is walked,
+            // with no cap (taunt audit 2026-10-12: a taunter pinned by foes of two enemy groups is held by more
+            // than four actors across two groups; the old first-four sample could hold no member of this group
+            // and leave it to lose the target). The member array is read unlocked as before, after the engine's
+            // call; g_holdMx is shared and held across no engine call.
+            Cand cand{};
+            bool inGroup = false;
+            {
+                std::shared_lock lk(g_holdMx);
+                for (const auto& [id, h] : g_holds) {
+                    if (!names(*h) || !GroupHasMember(a_group, h->holderHandle)) continue;
+                    const bool viaPin = h->pinTarget == tid && h->pinHandle != 0;
+                    cand    = { id, h->holderHandle, viaPin ? h->pinHandle : h->entryHandle, viaPin };
+                    inGroup = true;
+                    break;
+                }
+            }
+            if (!inGroup) return r;   // no holder in this group (e.g. the target's own group)
+            const Cand* c = &cand;
             g_heldEvents.fetch_add(1, std::memory_order_relaxed);
             const RE::FormID mid = a_member->GetFormID();
             if (mid != c->holder) g_byOther.fetch_add(1, std::memory_order_relaxed);

@@ -2166,7 +2166,9 @@ With `kTargetPin_OwnLineOfSight` the pin also pauses while Harbinger's own ray f
 
 #### Lifetime
 
-Standing, no time limit. Harbinger **releases the claim itself** when the target is lost (the engine can no longer locate it), dead, disabled, not loaded or no longer resolves, or the actor dies. The log names the reason (`pin ended: target lost`), `IsClaimLive` turns false and the handle is dead. Pin again if you want to keep chasing. This is the only case where Harbinger releases a ch.20 claim. Your own `Release`, an outranking claim, a load, a new game or an unload also end it.
+Standing, no time limit. Harbinger **releases the claim itself** when the target is dead, disabled, not loaded or no longer resolves, when it was one of the actor's group's targets and is not any more, or when the actor dies. The log names the reason (`pin ended: target dead`), `IsClaimLive` turns false and the handle is dead. Pin again if you want to keep chasing. Your own `Release`, an outranking claim, a load, a new game or an unload also end it.
+
+A pin is a **held engagement** (2026-10-12, INVARIANTS #0 (i)). The game losing track of the target no longer ends it: Harbinger keeps the group's own knowledge of where the target is, so the actor chases it the game's way. A held engagement also ends, logged as an `[hold] ANOMALY`, after 20 s with no path progress toward the target, or after 20 s within reach without an attack or a cast on it. With `[EngagementHold] bEngagementHold=0` (or the knowledge seats not installed) the older contract applies and a pin ends on `target lost`.
 
 #### Priority and conflicts
 
@@ -2206,6 +2208,100 @@ void RePin(Handle h, RE::FormID newFoe) {
 
 The combined entry and pin recipe is under [ch.21](#ch21-combat-entry-kintent_combatentry).
 
+#### Pinning a hostile NPC (e.g. a taunt)
+
+The actor that holds a ch.20 or ch.21 claim does not have to be a follower. To make a foe fight your follower, claim on the **foe** and name the **follower** as the target. Harbinger serves that claim exactly as it serves a follower's: nothing in the pin seat, the held engagement, the watchdogs, the release paths or the menu asks whether the holder is a teammate (audited 2026-10-12 for MFO's taunt). The foe then fights your follower with its own AI: its own attacks, movement and spells.
+
+**Table 23a. ch.20 and ch.21 when the holder is a hostile NPC**
+
+| Mechanism | What happens for a hostile holder |
+|---|---|
+| The pin seat | The same. It answers for the foe while the foe is fighting and your follower is one of the foe's group's targets. |
+| Follower not a target of the foe's group | The pin pauses. A ch.21 claim on the foe naming the follower, `fval` 0, adds it. On a foe that is already fighting, the entry adds the follower and keeps the foe's current target, so it needs the pin too. |
+| The held knowledge | While the pin stands, the foe's whole combat group keeps knowing where your follower is, not only the pinned foe. That is the game's own per-group entry. |
+| No progress, arrived but not fighting | The same 20 s windows. A pin released before 20 s never reaches them. A foe that cannot reach the follower for 20 s ends the pin early, logged as `[hold] ANOMALY`, and `IsClaimLive` turns false. |
+| Bleed-out drive | If your follower goes down while it is the pinned target, Harbinger walks the foe to it. Release the pin when your follower is downed. |
+| Search drive and leash return | Only for an actor with a ch.23 leash. A foe you have not leashed gets neither. |
+| The range rule (ch.21 `fval`) | Its "attacking the party" test means the holder, its own group, the player, the player's teammates and actors any of those command, whoever the holder is. For a hostile holder the player half points the wrong way. Leave `fval` at 0 on a hostile holder. |
+| `StopCombat` | Only the range rule calls it. With `fval` 0 Harbinger never ends the foe's fight. |
+| Release, unload, load, new game | The same as for a follower. Nothing is undone. |
+| Ranking | A normal claim on the `Target` facet (ch.20) and the `Combat` facet (ch.21). Who wins against another target mod is the user's `APMF_Sources.ini` setting. |
+| The Harbinger page | A served pin credits your mod, like any claim. |
+| A mid-fight group merge | It can end the pin (`target no longer a combat target`): see `Docs/REVIEW-BACKLOG.md` APMF-B84. Taunt again if you still want it. |
+| Many foes on one follower | Each foe is its own claim. There is no per-client claim limit. The knowledge is kept in every group a holder belongs to, however many foes hold the same follower. |
+
+**Example 20a: A taunt that pins a foe to the taunter for a set time**
+
+**Think it through.** The claims go on the foe, so the handles are keyed by foe. One handle per foe: a second taunter repoints it instead of stacking a new claim. The entry is needed only when the taunter is not yet a target of the foe's group, and its `fval` stays 0. Harbinger ends the pin itself when the foe or the taunter dies or unloads, or on an anomaly. Your tick ends it at the time limit and when the taunter is downed, because a downed pinned target draws the foe to it.
+
+**Solution.**
+
+```cpp
+struct Taunt {
+    Handle     pin = kInvalidHandle, entry = kInvalidHandle;
+    bool       pinSeen = false, entrySeen = false;   // has IsClaimLive ever read true for it?
+    RE::FormID taunter = 0;                          // whom the foe is pinned to now
+    std::uint64_t untilMs = 0;
+};
+std::unordered_map<RE::FormID, Taunt> g_taunts;    // keyed by FOE
+
+// A handle that WAS live and is not any more has ended (Harbinger ended it, or a load did).
+// One that has never read live is pending, not ended: it may still be repointed.
+bool Ended(Handle h, bool& seen) {
+    if (h == kInvalidHandle) return false;
+    const bool live = g_apmf->IsClaimLive(h);
+    if (live) seen = true;
+    return seen && !live;
+}
+
+bool TauntFoe(RE::FormID foe, RE::FormID taunter, bool taunterInFoeGroup, std::uint64_t nowMs, float seconds) {
+    if (g_apmf->abiVersion < 14) return false;
+    APMF_Param p{};
+    p.form = taunter;                              // the foe's new target
+    p.fval = 0.0f;                                 // no engage range on a hostile holder
+    auto& t = g_taunts[foe];
+    // An ended handle is never repointed: release it and request a fresh claim below.
+    if (Ended(t.entry, t.entrySeen)) { g_apmf->Release(t.entry); t.entry = kInvalidHandle; t.entrySeen = false; }
+    if (Ended(t.pin, t.pinSeen))     { g_apmf->Release(t.pin);   t.pin   = kInvalidHandle; t.pinSeen   = false; }
+
+    if (t.entry != kInvalidHandle) g_apmf->Repoint(t.entry, &p);    // one more StartCombat, for this taunter
+    else if (!taunterInFoeGroup) t.entry = g_apmf->RequestEx(foe, kIntent_CombatEntry, kBasis, &p);
+
+    if (t.pin != kInvalidHandle) {
+        g_apmf->Repoint(t.pin, &p);                // already taunted: move it to this taunter
+    } else {
+        t.pin = g_apmf->RequestEx(foe, kIntent_TargetPin, kBasis, &p);
+        if (t.pin == kInvalidHandle) {             // refused at the call: the log says why
+            if (t.entry != kInvalidHandle) g_apmf->Release(t.entry);
+            g_taunts.erase(foe);
+            return false;
+        }
+    }
+    t.taunter = taunter;
+    t.untilMs = nowMs + static_cast<std::uint64_t>(seconds * 1000.0f);
+    return true;
+}
+
+// isDown(taunter): bleeding out, essential-down or dead -- the client's own test.
+void TauntTick(std::uint64_t nowMs, bool (*isDown)(RE::FormID taunter)) {
+    for (auto it = g_taunts.begin(); it != g_taunts.end();) {
+        Taunt& t = it->second;
+        if (Ended(t.pin, t.pinSeen) || nowMs >= t.untilMs || isDown(t.taunter)) {
+            g_apmf->Release(t.pin);                         // the foe's own selector answers again
+            if (t.entry != kInvalidHandle) g_apmf->Release(t.entry);   // stops nothing
+            it = g_taunts.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
+```
+
+**Check.** `[ch.20] 0x<foe> FIRST SOURCE DENY` names the FOE's form id, with no `SOURCE SEAT MISSED`. `[hold] 0x<foe> HELD engagement on 0x<taunter> (via ch.20 pin)` shows the hold. On your release, `[ch.20] 0x<foe> target-pin released (by the client ...)`. A `pin is NOT a combat target of this actor's group` line means the entry is needed.
+
+> **Real-World Connection** MFO's taunt (design `Docs/TAUNT-DESIGN.md` in MFO) is this recipe: one pin per foe for 15 s, the entry only when its probe finds the taunter absent from the foe's group, and a release in the same tick the taunter is downed.
+
+
 #### Version, INI and field status
 
 ABI 13 (0.9.9), line-of-sight flag 18. `bTargetPin` in `[TargetPin]`. In use by MFO. A field log should show `FIRST SOURCE DENY` and no `SOURCE SEAT MISSED` before anything relies on it.
@@ -2239,6 +2335,7 @@ Handle h = g_apmf->RequestEx(actor, kIntent_CombatEntry, kBasis, &p);
 | Field | Type | Range | Default | 0 means |
 |---|---|---|---|---|
 | `form` | `RE::FormID`, a loaded actor | any actor other than the claimant. The player may be the target | required | refused at the call |
+| `fval` | `float`, game units | >= 0 | 0 | no engage range |
 | every other field | | not read | | |
 
 #### What Harbinger enforces
@@ -2254,7 +2351,8 @@ Harbinger releases the claim itself, and `IsClaimLive` turns false with the reas
 - the engine refused the entry (`StartCombat` returned false: a restrained, unconscious or dead actor, a dead target, the engine's distance test, its identity test against one engine-global actor, an engine flag),
 - the entry could not be attempted (the target is not an Actor, or the actor is not loaded, has no AI process or is dead),
 - the fight ended (the entry succeeded and the actor now has no combat controller, "combat ended"), or
-- the target is dead, disabled, not loaded or unresolvable, or the actor dies.
+- the target is dead, disabled, not loaded or unresolvable, or the actor dies, or
+- the held engagement ended it (2026-10-12, INVARIANTS #0 (i)): 20 s with no path progress, 20 s within reach without fighting the target, or, with `fval` above 0, the target farther than `fval` while it is not attacking the party. That last end also ends the actor's fight through the game's own `StopCombat`, unless another enemy of the group is still attacking the party, a winning ch.20 pin on the actor names a different target, another client's ch.24 claim outranks the entry on the `Combat` facet, or Engine outranks the entry on the `Combat` facet. Then only the claims are released and the fight stays the engine's.
 
 After "combat ended" or a refusal, another claim on the actor naming the same target ends with the same reason. To try again, send a new `RequestEx`. Your own `Release`, an outranking claim, a load, a new game or an unload also end it.
 
