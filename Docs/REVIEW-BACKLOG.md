@@ -745,45 +745,42 @@ Raised against a512763, 2026-10-13. Reviewer (verbatim, review log): "RemoveTarg
 lock." CLEARED by that evidence: the substrate calls it the way the engine's own main-thread paths do. Kept here as
 the record (the same exposure class as APMF-B26).
 
-### APMF-B92 (SEV-4, F11) -- the allow-list denies EquipSpell / EquipObject (interplay with S4)
-Raised against a512763, 2026-10-13. Reviewer finding F11 (title per the coordinator: "EquipSpell denied vs S4").
-While a substrate holds the actor, the tree's own equip leaves are force-failed, so the spell must already be in
-the hand (MFO's `Loadout::Prepare` today). Slice S4 (the engine equips the claimed spell itself, probe P2) cannot
-work under a substrate until this is decided. Revisit with S4.
+### APMF-B92 (SEV-4, F11) -- EquipSpell is denied by the allow-list (S4)
+Raised against a512763, 2026-10-13. Reviewer (verbatim): "EquipSpell is denied by the allow-list. That conflicts with
+design §4 / S4, where the engine equips the claimed spell under the claim. Record it for S4."
 
-### APMF-B93 (SEV-4, F12) -- the FIRE close may cut the charge
-Raised against a512763, 2026-10-13. Reviewer (verbatim, review log): "NotifyStartCast start-vs-release
-unresolved." Finding F12 (per the coordinator: "the fire close may cut the charge; P4 must prove it"): the
-census's 0x0B NotifyStartCast is the close signal; if it fires at the START of the cast rather than the release,
-the close (StopCombat) would interrupt the animation. P4 (MFO slice S3) must show `[ctcensus] ... VERDICT: FIRED
-... ANIMATED` BEFORE `[substrate] ... CLOSE reason=fired`.
+### APMF-B93 (SEV-4, F12) -- the fire close may cut the charge
+Raised against a512763, 2026-10-13. Reviewer (verbatim): "The "fire" close. It rides 0x0B `NotifyStartCast`, whose name
+and callers (49083/49086/49101/49159) suggest the start of the cast. If so, `CloseSub`'s StopCombat would cut the
+charging animation. The S2a dry run does not exercise this, but P4 (S3) must prove it."
 
-### APMF-B94 (SEV-4, one of F13-F16) -- the ranking is checked once, at open
-Raised against a512763, 2026-10-13. Reviewer (verbatim, review log): "rank checked once at open (slider
-mid-substrate)". A priority slider moved while a substrate is open (at most 15 s) takes effect at the next open.
+### APMF-B94 (SEV-5, F13) -- the rank check runs once at open; the kStRank* bits are dead flags
+Raised against a512763, 2026-10-13. Reviewer (verbatim): "The rank check runs once at open. That is acceptable within the
+≤15 s bound, but the kStRank* bits are dead flags (always set): either re-evaluate them in `Serve` or remove them."
 
-### APMF-B95 (SEV-5, one of F13-F16) -- APMF.esl group order NPC_, PACK, CELL
-Raised against a512763, 2026-10-13. Reviewer (verbatim, review log): "ESL: PACK group byte-identical; header diff
-only NEXT_OBJECT_ID; CELL/ACHR/REFR nesting valid; group order NPC_,PACK,CELL (non-canonical, SEV-5)". Reconcile
-with marth's xEdit check of the ESL.
+### APMF-B95 (SEV-5, F14) -- APMF.esl top-group order
+Raised against a512763, 2026-10-13. Reviewer (verbatim): "The ESL top-group order is NPC_, PACK, CELL, which is not
+canonical; Skyrim puts CELL before PACK. The HEDR record count of 100 predates this branch."
 
-### APMF-B96 (SEV-5, one of F13-F16) -- the anchor NPC has no head parts / FaceGen
-Raised against a512763, 2026-10-13. Reviewer (verbatim, review log): "NPC lacks head parts/facegen (only matters
-if visible)". Moot while the anchor is invisible; a visible anchor (round-1 finding F3) would show it.
+### APMF-B96 (SEV-4, F16) -- the anchor's collision is on, 72u behind the holder
+Raised against a512763, 2026-10-13. Reviewer (verbatim): "Collision is on, 72u behind the holder. That is an invisible
+obstacle in the player's path. P3 should log it."
 
-### APMF-B97 (SEV-4, one of F13-F16) -- a drop that leaves a targetless group
-Raised against a512763, 2026-10-13. Reviewer (verbatim, review log): "DropSub after (b)/(c): group may have 0
-targets, no StopCombat -> check engine behaviour on empty group". RESOLVED in round 1 by marth's F6 ruling ("End
-an empty fight": the empty group is ended once through the ranked StopCombat). Kept for the field check that the
-ranked path does end it.
+### APMF-B97 (SEV-5, F15) -- a hit-sink MarkReal can land on a just-reused slot
+Raised against a512763, 2026-10-13. Reviewer (verbatim): "A `MarkReal` from the hit sink can land on a slot that was just
+reused. The result is benign: that holder's substrate drops."
 
-### APMF-B98 (SEV-5) -- the DROP line's holder count can miscount
-Raised against a512763, 2026-10-13 (the coordinator's "DROP log miscount"). `DropSub` logs `holders {}->{}` as
-`LiveHolders() + 1`, and `LiveHolders()` excludes every slot whose REAL bit is set, so two holders dropping in the
-same frame under-count the "before" figure. Log text only.
+### APMF-B98 (SEV-5) -- the DROP line's holder count
+Raised against a512763, 2026-10-13. Reviewer (verbatim): "`LiveHolders()+1` in the DROP log miscounts when several holders
+are flagged REAL at once."
 
-### APMF-B99 (SEV-4) -- the two function-node classes are not traced
-Raised in round 1's fix, 2026-10-13 (author, from F1's census of the node classes). `CombatBehaviorTreeNodeEvaluateFunction`
-and `CombatBehaviorTreeNodeUpdateFunction` are behaviour-tree nodes that are not `NodeObject*`, so the allow-list
-does not see them (INVARIANTS #0 (j) 2(a)). INFERRED to evaluate conditions / run an update callback only; trace
-what their functions do before S3 relies on the allow-list.
+### APMF-B100 (SEV-5) -- the SE side of the re-pick chain is not re-traced
+Raised against 266769c, 2026-10-13. Reviewer (verbatim): "the SE downstream of the re-pick chain (the twins of
+39108/39213/39434) is not independently re-traced; P6's attribution covers it in the field."
+
+### APMF-B99 (SEV-4, MUST be traced before S3 relies on the allow-list) -- the function-node classes
+Raised in round 1's fix, 2026-10-13 (author, from F1's census of the node classes); raised by the round-2 reviewer
+(266769c) to "must be traced before S3 relies on the allow-list" (the non-const EquipContext NodeEvaluateFunction).
+`CombatBehaviorTreeNodeEvaluateFunction` and `CombatBehaviorTreeNodeUpdateFunction` are behaviour-tree nodes that
+are not `NodeObject*`, so the allow-list does not see them (INVARIANTS #0 (j) 2(a)). Trace what their functions do,
+the EquipContext evaluate function first, before S3 relies on the allow-list.

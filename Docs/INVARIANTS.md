@@ -474,9 +474,10 @@ with `kIntent_CombatSubstrate` beside its `kIntent_Cast` claim. It is legal only
    concrete `CombatBehaviorTreeNodeObject*` class: 95 on both runtimes (the RTTI names in both unpacked
    executables), i.e. the 70 parameterless leaves, the four search leaves and the 21 parameterised nodes of
    `core/CombatBehaviorRE.h` `kParamLeaves` (review F1 of a512763: AcquireResource, Flee, FaceAngle, WatchTarget,
-   DisableAim, FollowPath / AcquireItem, Idle, Land, the blackboard nodes -- denied); the structural nodes (the
+   DisableAim, FollowPath / AcquireItem, Land, the blackboard nodes -- denied); the structural nodes (the
    selectors, `DynamicConditionalNode`, `DynamicSelector<Conditional,float>`, `Parallel`, `SpawnParallel`,
-   `Sequence`, the four `Repeat` forms, `ForceFail`, `ForceSuccess`) decide nothing and pass, because the cast
+   `Sequence`, the four `Repeat` forms, `ForceFail`, `ForceSuccess`, and the two `Idle` waits -- round-2 review: a
+   pure wait decides nothing, and denying it could leave a Repeat'd subtree with no node that yields) pass, because the cast
    leaves sit beneath them (AE builder `0x8A0720`); the substrate refuses to install unless all 95 carry the pair.
    Node classes that are not `NodeObject*` (the value, create-context, conditional, link, wrapper and root nodes,
    and the two function-node classes `NodeEvaluateFunction` / `NodeUpdateFunction`) are not hooked: INFERRED to
@@ -544,7 +545,7 @@ with `kIntent_CombatSubstrate` beside its `kIntent_Cast` claim. It is legal only
    exposure as (i) condition 6 (APMF-B26).
 7. **Scope is closed by name.** Exactly 1.6.1170 or 1.5.97 (1.7.104 refuses: `RemoveTarget` has no 1.7.104 id),
    not VR, `[CombatSubstrate] bCombatSubstrate` (default 0), ch.22's seat installed with its target site and stub,
-   ch.7's pair on all 95 node classes, the anchor records resolving, and the self-check on every row the path calls. An
+   ch.7's pair on all 95 node classes, the held engagement's ranked StopCombat available (condition 5's empty-fight end), the anchor records resolving, and the self-check on every row the path calls. An
    out-of-combat, loaded, high-process, non-player holder in no scene and no dialogue, with the party out of combat.
    Another target than the anchor, a re-entry on a timer, holding the bit outside a substrate, or any facet
    switched on without its deny is a new amendment, not a code change. The dry run (`bSubstrateDryRun`, default 0)

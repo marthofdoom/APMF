@@ -25,3 +25,6 @@ Thumbs.db
 
 # Agent worktrees and local Claude state, never part of a release
 .claude/
+
+# Python bytecode (the verified-addresses generator)
+__pycache__/

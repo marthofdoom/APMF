@@ -96,6 +96,9 @@ namespace apmf::combatentry::hold {
     // <why>"). GAME THREAD (APMF-B26). The combat substrate's empty-fight end (marth 2026-10-13, F6).
     std::string StopCombatRanked(RE::Actor* actor, APMF_API::Handle claim, RE::FormID dropped,
                                  RE::ActorHandle droppedH);
+    // Is that StopCombat usable (the hold enabled on an exact runtime and its Character vtable row
+    // verified)? The combat substrate refuses to install without it (round-2 closing item 3b). Any thread.
+    bool StopCombatAvailable();
 
     // kPreLoadGame / revert: drop the per-actor telemetry + drive state (the hold map itself is
     // cleared by ch.20 / ch.21 ResetAll). GAME THREAD.

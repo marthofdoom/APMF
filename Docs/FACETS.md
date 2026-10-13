@@ -2752,7 +2752,7 @@ The OPEN, in order, on the game thread:
 
 While it is open:
 
-- **Only the cast leaves run.** Every combat behaviour-tree leaf is force-failed (ch.7's act()/pop() pair) except Cast Immediate, Cast Concentration, Prepare Dual Cast and the two dual-cast variants, and those only while a DRIVING cast claim stands. The tree's structural nodes (selectors, sequences, repeats, spawn-parallel) pass, because the cast leaves sit beneath them. All 95 node classes the game has are covered, including the parameterised ones (acquire resource, flee, face angle, watch target, follow path, acquire item, land). Attacks, blocks, potions, equips, every movement leaf (close, flank, strafe, flee, search, return to area) are denied.
+- **Only the cast leaves run.** Every combat behaviour-tree leaf is force-failed (ch.7's act()/pop() pair) except Cast Immediate, Cast Concentration, Prepare Dual Cast and the two dual-cast variants, and those only while a DRIVING cast claim stands. The tree's structural nodes (selectors, sequences, repeats, spawn-parallel) pass, because the cast leaves sit beneath them. All 95 node classes the game has are covered, including the parameterised ones (acquire resource, flee, face angle, watch target, follow path, acquire item, land). The two idle waits pass: they decide nothing. Attacks, blocks, potions, equips, every movement leaf (close, flank, strafe, flee, search, return to area) are denied.
 - **Nobody else can fight the anchor.** A `StartCombat` against the anchor by anyone but a holder is refused at StartCombat's own target check (the ch.22 seat).
 - **The anchor is never lost.** Its entry in the holder's group stays known (the held engagement's write), so the group never searches.
 - **The anchor stands at the holder** whose claimed spell has the shortest delivery (self, then touch, then aimed). A holder farther than its own spell's reach logs a "waits" line; its claim is not cancelled.
@@ -2769,7 +2769,7 @@ The substrate is an ordinary ranked claim (marth: "Nothing escapes Harbinger"). 
 
 #### Refusals
 
-At the call: an APMF older than 23, `[CombatSubstrate] bCombatSubstrate=0` (the default), an unsupported runtime (1.7.104 is refused: `RemoveTarget` has no 1.7.104 id), the ch.22 seat or its target site not installed, fewer than all 95 behaviour-tree node classes with the deny pair (`[PursuitLeash] bPursuitLeash=0` refuses it too, its search leaves are among them), the anchor records missing, a failed self-check row, the player as the actor, a negative or NaN `fval`. At the open (the claim is released, `[substrate] ... NOT OPENED: <why>`): every condition of step 1, or all 16 holder slots in use.
+At the call: an APMF older than 23, `[CombatSubstrate] bCombatSubstrate=0` (the default), an unsupported runtime (1.7.104 is refused: `RemoveTarget` has no 1.7.104 id), the ch.22 seat or its target site not installed, fewer than all 95 behaviour-tree node classes with the deny pair (`[PursuitLeash] bPursuitLeash=0` refuses it too, its search leaves are among them), the held engagement's StopCombat not available (`[EngagementHold] bEngagementHold=0`), the anchor records missing, a failed self-check row, the player as the actor, a negative or NaN `fval`. At the open (the claim is released, `[substrate] ... NOT OPENED: <why>`): every condition of step 1, or all 16 holder slots in use.
 
 #### Worked example
 

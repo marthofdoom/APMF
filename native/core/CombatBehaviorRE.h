@@ -273,7 +273,10 @@ namespace apmf::cbt {
     // `kind` is how the combat substrate's allow-list treats each (channels/CombatSubstrate.cpp):
     //   kParamDeny       -- a behaviour: force-failed while a substrate holds the actor;
     //   kParamCast       -- the dual-cast variant of a cast leaf: runs only while a DRIVING cast claim stands;
-    //   kParamStructural -- control flow only (Repeat, SpawnParallel, DynamicSelector): always passes.
+    //   kParamStructural -- control flow only (Repeat, SpawnParallel, DynamicSelector) or a pure WAIT that
+    //                       decides nothing (the two Idle forms, round-2 review: denying every node of a subtree
+    //                       under a Repeat could leave the runner, which loops until a step yields (AE 0x858B60),
+    //                       nothing that yields within one update): always passes.
     enum ParamKind : std::uint8_t { kParamDeny = 0, kParamCast = 1, kParamStructural = 2 };
     struct ParamLeafEntry {
         const char*    name;
@@ -281,7 +284,7 @@ namespace apmf::cbt {
         ParamKind      kind;
     };
     inline constexpr std::array<ParamLeafEntry, 21> kParamLeaves{ {
-        { "CombatBehaviorIdle<float>", REL::VariantID(256701, 205318, 0x16a6300), kParamDeny },                       // :1792
+        { "CombatBehaviorIdle<float>", REL::VariantID(256701, 205318, 0x16a6300), kParamStructural }, // :1792 (a pure wait: passes, round 2)
         { "CombatBehaviorRepeat<float>", REL::VariantID(265835, 212223, 0x1715e50), kParamStructural },              // :3428
         { "CombatBehaviorAcquireResource<3>", REL::VariantID(265839, 212275, 0x1716110), kParamDeny },               // :3436
         { "CombatBehaviorDisableAim", REL::VariantID(265840, 212288, 0x17161c0), kParamDeny },                       // :3438
@@ -300,7 +303,7 @@ namespace apmf::cbt {
         { "CombatBehaviorLandNearby<float>", REL::VariantID(266630, 213607, 0x171fda0), kParamDeny },                // :3686
         { "CombatBehaviorCastImmediateSpell<bool>", REL::VariantID(266704, 213718, 0x1720d38), kParamCast },         // :3709
         { "CombatBehaviorCastConcentrationSpell<bool>", REL::VariantID(266706, 213733, 0x1720e40), kParamCast },     // :3712
-        { "CombatBehaviorIdle<GameSetting>", REL::VariantID(267079, 214161, 0x1724fd8), kParamDeny },                // :3817
+        { "CombatBehaviorIdle<GameSetting>", REL::VariantID(267079, 214161, 0x1724fd8), kParamStructural }, // :3817 (a pure wait: passes, round 2)
         { "CombatBehaviorRepeat<float,FLAGS>", REL::VariantID(267191, 214367, 0x17266f0), kParamStructural },        // :3857
     } };
 

@@ -100,9 +100,11 @@
 //     CombatBehaviorTreeNodeObject* vtable the MIT fork ships -- the 70 parameterless leaves,
 //     the four search leaves (ch.23's act()/pop()) and the 21 PARAMETERISED nodes
 //     (core/CombatBehaviorRE.h kParamLeaves: AcquireResource, Flee<float>, FaceAngle, WatchTarget,
-//     DisableAim, FollowPath / AcquireItem<AcquireWeapon>, Idle, Land, the blackboard nodes, all
-//     denied; the dual-cast CastImmediate / CastConcentration<bool>, gated like the cast leaves;
-//     Repeat<...>, SpawnParallel, DynamicSelector<Conditional,float>, structural, passing). The
+//     DisableAim, FollowPath / AcquireItem<AcquireWeapon>, Land, the blackboard nodes, all denied
+//     (12); the dual-cast CastImmediate / CastConcentration<bool>, gated like the cast leaves (2);
+//     Repeat<...>, SpawnParallel, DynamicSelector<Conditional,float> and the two Idle waits,
+//     structural, passing (7): a pure wait decides nothing, and denying it could leave a Repeat'd
+//     subtree with no node that yields, round-2 review). The
 //     substrate refuses to install unless all 95 carry the pair. Composite node classes that are
 //     not NodeObject* (the CreateContext / ValueNode / conditional wrappers) decide nothing and
 //     are not hooked;
@@ -814,11 +816,15 @@ namespace {
                 // ((b) a hit, (c) the party) leaves a fight with NO target once the anchor is gone. That one is ended
                 // through the held engagement's RANKED StopCombat; a fight with the real foe in it never is.
                 if (left == 0) {
-                    auto* anc = Anchor();
-                    removed += fmt::format("; EMPTY FIGHT: {}",
-                                           apmf::combatentry::hold::StopCombatRanked(
-                                               actor, a_sub.handle, anc ? anc->GetFormID() : 0,
-                                               anc ? anc->GetHandle() : RE::ActorHandle{}));
+                    auto*             anc  = Anchor();
+                    const std::string stop = apmf::combatentry::hold::StopCombatRanked(
+                        actor, a_sub.handle, anc ? anc->GetFormID() : 0, anc ? anc->GetHandle() : RE::ActorHandle{});
+                    removed += fmt::format("; EMPTY FIGHT: {}", stop);
+                    // round-2 closing item 3a: the same package re-pick CloseSub makes after its StopCombat.
+                    if (stop.starts_with("combat ENDED")) {
+                        g_evaluatePackage(actor, false, false);
+                        removed += " + package re-pick";
+                    }
                 } else {
                     removed += "; the real foe is in the group: NO StopCombat (the fight continues)";
                 }
@@ -1421,6 +1427,10 @@ namespace apmf::combatsubstrate {
                   "bCombatReentryDeny=0 refuses the substrate too)";
         } else if (!apmf::reentrydeny::TargetSiteInstalled()) {
             why = "the anchor-target refusal is not installed on ch.22's seat (its call-site row or the rdi stub)";
+        } else if (!apmf::combatentry::hold::StopCombatAvailable()) {
+            why = "the held engagement's ranked StopCombat is not available ([EngagementHold] bEngagementHold=0, a "
+                  "runtime other than exactly 1.6.1170 / 1.5.97, or its Character vtable row refused): the real-combat "
+                  "drop ends an EMPTY fight through it (marth 2026-10-13), so the substrate needs it";
         } else if (apmf::actiongate::SubstrateLeavesPaired() != kLeafCount) {
             why = "the leaf allow-list does not cover all 95 behaviour-tree node classes with an act()/pop() pair and the "
                   "ForceFail pair (the 70-leaf catalog, the four search leaves ch.23 installs -- [PursuitLeash] "

@@ -1127,6 +1127,9 @@ namespace apmf::combatentry::hold {
 
     bool Enabled() { return g_enabled.load(std::memory_order_relaxed); }
     bool KnowledgeInstalled() { return g_seatsInstalled.load(std::memory_order_acquire); }
+    bool StopCombatAvailable() {
+        return g_stopCombatOk.load(std::memory_order_acquire) && g_vtChar != 0;
+    }
 
     void Install() {
         if (g_holdInstallTried.exchange(true)) return;
