@@ -15,6 +15,7 @@
 #include <string_view>
 #include <unordered_map>
 #include <unordered_set>
+#include <tuple>
 #include <vector>
 
 // Win32 INI reader, declared by hand (the PCH does not pull in <Windows.h>) -- the same
@@ -651,7 +652,14 @@ namespace {
         std::vector<std::string> entry;          // the idle's entry events (empty = unconfirmable)
         bool                     entered = false;
         std::uint64_t            enteredMs = 0;
-        std::string              enterTag;
+        std::string              enterTag;       // the RAW entry event that arrived for THIS play (no decoration)
+        // CARRY (review idle-state F1/F2): a re-play of the SAME idle by the SAME claim handle while the
+        // previous play had an entry (fresh or carried) and no IdleStop since. NOT evidence that this play
+        // entered anything: `entered` stays false so a fresh entry is still recorded. Judged and reported
+        // apart (kIdleState_Carried), never as CONFIRMED.
+        APMF_API::Handle         handle = APMF_API::kInvalidHandle;   // the claim this play is for
+        bool                     carried = false;
+        std::string              carriedEvent;   // the RAW entry event of the play the carry came from
         bool                     idleStop = false;   // IdleStop after the entry (or, unconfirmable: any IdleStop)
         std::uint64_t            idleStopMs = 0;
         bool                     strayStop = false;  // an IdleStop BEFORE any entry event: not this idle's
@@ -692,12 +700,12 @@ namespace {
                     }
                 }
             }
-            // An IdleStop is the idle's end only AFTER its entry (and not the very event that
+            // An IdleStop is the idle's end only AFTER its entry (or a carried one; and not the very event that
             // proved the entry, e.g. an IdleStop that is a source state's exit notify). Before
             // any entry it belongs to something else. With no entry events to wait for
             // (unconfirmable) any IdleStop counts, the pre-fix rule.
             if (!entryNow && IEquals(tag, "IdleStop")) {
-                if (o.entry.empty() || o.entered) {
+                if (o.entry.empty() || o.entered || o.carried) {
                     if (!o.idleStop) {
                         o.idleStop   = true;
                         o.idleStopMs = apmf::clock::MonotonicMs();
@@ -724,29 +732,34 @@ namespace {
         return s.get();
     }
 
-    // A re-play (Repoint / owner change) of the SAME idle while the previous play is still
-    // in it (entered, no IdleStop since) carries that entry: the graph is already in the
-    // idle's state, where a transition to the same state may raise nothing (MFO re-plays
-    // the lockpick once per clip length). Anything else starts a fresh observation.
-    void Arm(RE::FormID id, std::uint32_t gen, RE::FormID idle, const std::vector<std::string>& entry) {
+    // A re-play (a Repoint) of the SAME idle by the SAME claim handle while the previous play
+    // had an entry (fresh or itself carried) and no IdleStop has been seen since CARRIES it: the
+    // graph may still be in the idle's state, where a transition to the same state may raise
+    // nothing (MFO re-plays the lockpick once per clip length). That is an INFERENCE from "no
+    // IdleStop seen since", not evidence, so the carry is recorded apart (`carried`) and this
+    // play still records a FRESH entry if one arrives. Another handle (an owner change) never
+    // inherits: its play starts a fresh observation (review idle-state F1).
+    bool Arm(RE::FormID id, std::uint32_t gen, RE::FormID idle, APMF_API::Handle handle,
+             const std::vector<std::string>& entry) {
         std::scoped_lock lock(g_obsMx);
         Obs o{};
         o.armed  = true;
         o.gen    = gen;
         o.playMs = apmf::clock::MonotonicMs();
         o.idle   = idle;
+        o.handle = handle;
         o.entry  = entry;
         if (const auto it = g_obs.find(id); it != g_obs.end()) {
             const Obs& prev = it->second;
-            if (prev.armed && prev.idle == idle && prev.entered && !prev.idleStop && !entry.empty()) {
-                o.entered   = true;
-                o.enteredMs = o.playMs;   // times on this play's clock (the entry itself was earlier)
-                o.enterTag  = prev.enterTag.starts_with("(still")
-                                  ? prev.enterTag
-                                  : "(still in the idle from the previous call: " + prev.enterTag + ")";
+            if (prev.armed && prev.idle == idle && prev.handle == handle && handle != APMF_API::kInvalidHandle &&
+                (prev.entered || prev.carried) && !prev.idleStop && !entry.empty()) {
+                o.carried      = true;
+                o.carriedEvent = prev.entered ? prev.enterTag : prev.carriedEvent;
             }
         }
+        const bool carried = o.carried;
         g_obs.insert_or_assign(id, std::move(o));
+        return carried;
     }
 
     Obs Disarm(RE::FormID id) {
@@ -803,6 +816,7 @@ namespace {
         // ABI v24 (the per-handle state, below).
         APMF_API::Handle handle = APMF_API::kInvalidHandle;   // the claim this entry last played for (Play)
         std::uint32_t unconfWhy     = APMF_API::kIdleUnconf_None;   // `unconfirmable` as a code
+        bool          carriedOpen   = false;   // a carried play still watched for a fresh entry / an IdleStop
     };
 
     std::unordered_map<RE::FormID, Entry> g_entries;
@@ -832,11 +846,13 @@ namespace {
     // Refused / NotPlayed / NoTransition); MFO reads its taunt every 133 ms pump tick, with
     // ticks up to 400 ms apart. 10000 ms of world time is 40 Polls and 25 of those slowest
     // client ticks; a menu pause does not advance it, so a paused client misses nothing. Pruned
-    // by Poll every 250 ms; the IsClaimLive scan runs OUTSIDE the lock. Bounded by kMaxStates
+    // by Poll every 250 ms (a not-live record with no final cause is first stamped kIdleEnd_Gone,
+    // restarting its grace: PruneStates); the IsClaimLive scan runs OUTSIDE the lock. Bounded by kMaxStates
     // (a pathological client): the oldest ended record, else the oldest, is evicted (logged).
     constexpr std::uint64_t kStateGraceMs  = APMF_API::kIdleStateGraceMs;
     constexpr std::size_t   kMaxStates     = 1024;
     constexpr std::uint64_t kStatePruneMs  = 250;
+    constexpr std::uint64_t kStateGoneFloorMs = 1000;   // world ms before a not-live, un-ended record is stamped Gone
     static_assert(kConfirmWaitMs == APMF_API::kIdleConfirmWindowMs, "the header's informational window must match");
 
     struct StateRec {
@@ -920,8 +936,11 @@ namespace {
         std::scoped_lock lock(g_stateMx);
         const auto it = g_states.find(h);
         if (it == g_states.end() || it->second.gen != gen) return;
-        fn(it->second);
-        Touch(it->second);
+        StateRec& r      = it->second;
+        const auto before = std::tie(r.state, r.unconfWhy, r.flags, r.msToEntry, r.plays, r.played, r.playWorldMs);
+        const auto copy   = std::make_tuple(r.state, r.unconfWhy, r.flags, r.msToEntry, r.plays, r.played, r.playWorldMs);
+        fn(r);
+        if (before != copy) Touch(r);   // a change only (seq means "changed")
     }
 
     // ANY THREAD: `h`'s claim ended (or stopped being the one that plays). The first FINAL cause
@@ -940,23 +959,42 @@ namespace {
         Touch(r);
     }
 
-    // GAME THREAD (Poll), throttled: drop the records whose claim is gone and whose grace ran out.
+    // GAME THREAD (Poll), throttled. Two jobs (review idle-state F3):
+    //  * a record whose claim is no longer live but carries no FINAL end cause (None, or Superseded)
+    //    -- a claim released before its play ran, or a superseded one dropped by the unload sweep --
+    //    is stamped kIdleEnd_Gone, which restarts its grace, so a client reads why and not Unknown.
+    //    It waits kStateGoneFloorMs of world time after its last change first: a claim filed from a
+    //    client thread is not live until the next Drain publishes it (one frame).
+    //  * a record whose claim is gone and whose grace (from its last change) ran out is dropped.
+    // IsClaimLive runs OUTSIDE the lock; a record changed in between (seq) is left for the next pass.
     void PruneStates() {
         const std::uint64_t now = g_worldMsPub.load(std::memory_order_relaxed);
-        std::vector<std::pair<APMF_API::Handle, std::uint32_t>> old;   // handle, seq at the check
+        struct Cand { APMF_API::Handle h; std::uint32_t seq; bool stamp; };
+        std::vector<Cand> cands;
         {
             std::scoped_lock lock(g_stateMx);
-            for (const auto& [h, r] : g_states)
-                if (now - r.changeWorldMs >= kStateGraceMs) old.emplace_back(h, r.seq);
+            for (const auto& [h, r] : g_states) {
+                const bool open = r.endCause == APMF_API::kIdleEnd_None || r.endCause == APMF_API::kIdleEnd_Superseded;
+                if (now - r.changeWorldMs >= (open ? kStateGoneFloorMs : kStateGraceMs)) cands.push_back({ h, r.seq, open });
+            }
         }
-        if (old.empty()) return;
-        std::vector<std::pair<APMF_API::Handle, std::uint32_t>> gone;
-        for (const auto& hs : old)   // OUTSIDE the lock: IsClaimLive reads the ControlMap snapshot
-            if (!apmf::ControlMap::Get().IsClaimLive(hs.first)) gone.push_back(hs);
+        if (cands.empty()) return;
+        std::vector<Cand> gone;
+        for (const auto& c : cands)   // OUTSIDE the lock: IsClaimLive reads the ControlMap snapshot
+            if (!apmf::ControlMap::Get().IsClaimLive(c.h)) gone.push_back(c);
         if (gone.empty()) return;
         std::scoped_lock lock(g_stateMx);
-        for (const auto& [h, seq] : gone)
-            if (const auto it = g_states.find(h); it != g_states.end() && it->second.seq == seq) g_states.erase(it);
+        for (const auto& c : gone) {
+            const auto it = g_states.find(c.h);
+            if (it == g_states.end() || it->second.seq != c.seq) continue;
+            if (c.stamp) {
+                it->second.endCause   = APMF_API::kIdleEnd_Gone;
+                it->second.endWorldMs = now;
+                Touch(it->second);   // the grace restarts from the stamp
+            } else {
+                g_states.erase(it);
+            }
+        }
         g_stateCount.store(g_states.size(), std::memory_order_relaxed);
     }
 
@@ -1019,13 +1057,17 @@ namespace {
         RE::TESObjectREFR* target = nullptr;
         RE::AIProcess*     proc   = actor ? actor->GetActorRuntimeData().currentProcess : nullptr;
         std::string        why;
+        bool               dead = false;
         // A Repoint is not validated synchronously (ControlMap::EnqueueRepoint), so a
         // form-carrying Repoint of a v1 claim can reach here with the v2 path down.
         if (!g_installed.load(std::memory_order_acquire))
             why = fmt::format("idle v2 is not available ({})", g_notInstalledReason.load(std::memory_order_acquire));
         else if (!actor)               why = "the actor does not resolve";
         else if (!actor->Is3DLoaded()) why = "the actor is not loaded";
-        else if (actor->IsDead())      why = "the actor is dead";
+        else if (actor->IsDead()) {
+            why  = "the actor is dead";
+            dead = true;   // ABI v24 (review idle-state F7): the end cause is ActorDied
+        }
         else if (!proc)                why = "the actor has no AI process";
         else if (!proc->high)          why = "the actor is not in high process (the engine plays no idle there)";
         else if (!iform)               why = "param.form does not resolve to a form";
@@ -1046,7 +1088,8 @@ namespace {
             spdlog::warn("[ch.12] 0x{} idle {} 0x{} at target 0x{} NOT PLAYED: {}. No engine call was made.",
                          Hex(id), what, Hex(idleId), Hex(tf), why);
             StateUpdate(h, gen, [](StateRec& r) { r.state = APMF_API::kIdleState_NotPlayed; });
-            EndClaim(id, gen, fmt::format("idle not played: {}", why));
+            EndClaim(id, gen, fmt::format("idle not played: {}", why),
+                     dead ? APMF_API::kIdleEnd_ActorDied : APMF_API::kIdleEnd_Harbinger);
             return;
         }
 
@@ -1055,6 +1098,7 @@ namespace {
         it->second.idleName = fmt::format("{} (event {})", (edid && *edid) ? edid : "?", (evn && *evn) ? evn : "?");
 
         // The idle's entry events in THIS actor's graph (ENTRY CONFIRMATION, header). Read-only.
+        bool carriedPlay = false;   // ABI v24: Arm carried the previous play's entry (same handle, same idle)
         {
             const EntryInfo ei     = ResolveEntry(actor, evn);
             Entry&          en     = it->second;
@@ -1091,7 +1135,7 @@ namespace {
             }
             // Observe from BEFORE the call: the graph may answer inside it. AddAnimationGraphEventSink
             // returns false when this sink is already on the graph (a re-point) or there is no graph.
-            Arm(id, gen, idleId, waitFor);
+            carriedPlay = Arm(id, gen, idleId, h, waitFor);
         }
         const bool sinkAdded = actor->AddAnimationGraphEventSink(SinkFor(id));
 
@@ -1103,15 +1147,18 @@ namespace {
         ok ? ++e.accepted : ++e.refused;
         e.live          = ok;
         e.confirmLogged = false;
+        e.carriedOpen = ok && carriedPlay;
         // ABI v24: what the call says now (Poll moves Accepted on to Confirmed / NotConfirmed).
         StateUpdate(h, gen, [&](StateRec& r) {
             ++r.plays;
             r.played      = true;
             r.playWorldMs = e.playWorldMs;
             r.unconfWhy   = ok && !e.noTransition && !e.unconfirmable.empty() ? e.unconfWhy : APMF_API::kIdleUnconf_None;
+            r.flags       = ok && carriedPlay ? (r.flags | APMF_API::kIdleInfo_Carried) : r.flags;
             r.state       = !ok                        ? APMF_API::kIdleState_Refused
                             : e.noTransition           ? APMF_API::kIdleState_NoTransition
                             : !e.unconfirmable.empty() ? APMF_API::kIdleState_Unconfirmable
+                            : carriedPlay              ? APMF_API::kIdleState_Carried
                                                        : APMF_API::kIdleState_Accepted;
         });
 
@@ -1161,6 +1208,9 @@ namespace {
     std::string EntryState(const Entry& e, const Obs& o) {
         if (!e.live) return "n/a";
         if (o.entered) return fmt::format("CONFIRMED by '{}' at +{} ms", o.enterTag, o.enteredMs - o.playMs);
+        if (o.carried)
+            return fmt::format("CARRIED (no fresh entry; no IdleStop seen since '{}' of this claim's previous play)",
+                               o.carriedEvent);
         if (e.noTransition) return "NO TRANSITION on the idle's event in this actor's graph";
         if (!e.unconfirmable.empty()) return fmt::format("unconfirmable ({})", e.unconfirmable);
         return "NOT observed";
@@ -1172,7 +1222,7 @@ namespace {
     std::string ResetIfHeld(const Entry& e, const Obs& o, RE::Actor* actor) {
         if (!e.live) return "no reset (no idle was accepted)";
         if (e.noTransition) return "no reset (the actor's graph has no transition on the idle's event: nothing played)";
-        if (!o.entry.empty() && !o.entered)
+        if (!o.entry.empty() && !o.entered && !o.carried)
             return "no reset (the graph was never seen entering the idle: nothing of this claim's to stop)";
         if (o.idleStop)
             return o.entered ? fmt::format("no reset (not held: the graph raised IdleStop {} ms after the call, {} ms "
@@ -1371,10 +1421,27 @@ namespace apmf::idle {
             }
             // The observation line, once per accepted play (principle 5).
             const auto it = g_entries.find(sn.id);
-            if (it == g_entries.end() || it->second.gen != sn.gen || it->second.confirmLogged) continue;
+            if (it == g_entries.end() || it->second.gen != sn.gen) continue;
+            if (it->second.confirmLogged && !it->second.carriedOpen) continue;
             const Obs o = Peek(sn.id);
             if (!o.armed || o.gen != sn.gen) continue;
             Entry&              e       = it->second;
+            // ABI v24 (review idle-state F1): a CARRIED play is watched past its verdict line until a
+            // fresh entry (Confirmed, below) or an IdleStop. The IdleStop REFUTES the carry's premise
+            // ("no IdleStop seen since"): flagged, the state stays Carried (no evidence either way for
+            // this play), and the claim's liveness is unchanged (it never ended a carried play).
+            if (e.carriedOpen && !o.entered && o.idleStop) {
+                e.carriedOpen = false;
+                StateUpdate(e.handle, sn.gen, [](StateRec& r) { r.flags |= APMF_API::kIdleInfo_CarryEnded; });
+                spdlog::info("[ch.12] 0x{} idle {}: the CARRIED idle ended (IdleStop at +{} ms) with no fresh entry from "
+                             "this play.",
+                             Hex(sn.id), e.idleName, o.idleStopMs - o.playMs);
+            }
+            if (e.carriedOpen && o.entered) {   // a fresh entry, even after the carried verdict line: judge it below
+                e.carriedOpen   = false;
+                e.confirmLogged = false;
+            }
+            if (e.confirmLogged) continue;
             const std::uint64_t worldMs = g_worldMs - e.playWorldMs;
             const bool          over    = worldMs >= kConfirmWaitMs && g_worldFrames - e.playFrame >= kConfirmMinFrames;
             if (o.entered) {
@@ -1382,26 +1449,20 @@ namespace apmf::idle {
                 e.confirmLogged = true;
                 // Evidence strength (review 18be6ec SEV-3.2): an entry event other transitions
                 // raise too is WEAK evidence. Liveness is the same either way.
+                // `enterTag` is the RAW event of a FRESH entry of this play (a carry never sets it).
                 std::string strength = "specific evidence";
+                bool        weak     = false;
                 for (const auto& [name, n] : e.waitShared)
-                    if (IEquals(name, o.enterTag) && n != 0)
+                    if (IEquals(name, o.enterTag) && n != 0) {
                         strength = fmt::format("WEAK evidence: '{}' is also raised by {} other transition(s)", name, n);
-                if (o.enterTag.starts_with("(still")) strength = "carried from the previous call";
-                // ABI v24: the same strength as a state. A carried entry (Arm) is judged by the event
-                // that proved the ORIGINAL entry, unwrapped from Arm's "(still ...: <tag>)" text.
-                const bool                 carried = o.enterTag.starts_with("(still");
-                constexpr std::string_view kCarry  = "(still in the idle from the previous call: ";
-                std::string_view           evTag   = o.enterTag;
-                if (carried && evTag.starts_with(kCarry) && evTag.ends_with(")"))
-                    evTag = evTag.substr(kCarry.size(), evTag.size() - kCarry.size() - 1);
-                bool weak = false;
-                for (const auto& [name, n] : e.waitShared)
-                    if (IEquals(name, evTag) && n != 0) weak = true;
+                        weak     = true;
+                    }
+                if (o.carried) strength += "; this play was armed with a carry, and the fresh entry supersedes it";
+                // ABI v24: the same strength as a state.
                 const std::uint32_t kind    = weak ? APMF_API::kIdleState_ConfirmedWeak : APMF_API::kIdleState_Confirmed;
                 const std::uint64_t toEntry = o.enteredMs - o.playMs;
                 StateUpdate(e.handle, sn.gen, [&](StateRec& r) {
                     r.state     = kind;
-                    r.flags     = carried ? (r.flags | APMF_API::kIdleInfo_Carried) : r.flags;
                     r.msToEntry = toEntry > 0xFFFFFFFEull ? 0xFFFFFFFEu : static_cast<std::uint32_t>(toEntry);
                 });
                 spdlog::info("[ch.12] 0x{} idle {}: ANIMATION CONFIRMED ({}) -- the graph raised the entry event '{}' at "
@@ -1412,6 +1473,23 @@ namespace apmf::idle {
                                                       "itself: compare with the clip's length)",
                                                       o.idleStopMs - o.playMs, o.idleStopMs - o.enteredMs)
                                         : std::string("; no IdleStop yet (still playing, or held)"));
+            } else if (o.carried) {
+                // CARRIED (review idle-state F1): the same handle re-played the same idle while its previous
+                // play had an entry and no IdleStop has been seen since. An INFERENCE, not evidence: the state
+                // reads kIdleState_Carried (set at the play), never CONFIRMED; a fresh entry above upgrades it,
+                // an IdleStop flags kIdleInfo_CarryEnded (above). The claim stays, as it always did for a carry
+                // (a transition to the state the graph is already in may raise nothing).
+                if (over) {
+                    e.confirmLogged = true;
+                    spdlog::info("[ch.12] 0x{} idle {}: CARRIED, NOT CONFIRMED BY THIS PLAY -- no fresh entry event in {} "
+                                 "ms of world time; carried from '{}' of this claim's previous play ({}). The claim "
+                                 "stays. Events: {} [{}].",
+                                 Hex(sn.id), e.idleName, worldMs, o.carriedEvent,
+                                 o.idleStop ? fmt::format("its IdleStop came at +{} ms: the inherited idle ended",
+                                                          o.idleStopMs - o.playMs)
+                                            : std::string("no IdleStop seen since: the graph may still be in it"),
+                                 o.events, TagList(o));
+                }
             } else if (e.noTransition) {
                 // The idle cannot enter this graph at all: end the claim at once.
                 e.confirmLogged = true;

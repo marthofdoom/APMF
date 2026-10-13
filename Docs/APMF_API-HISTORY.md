@@ -119,7 +119,7 @@ and installed, but observe-only.
 ```
 
 <a id="abi-history"></a>
-## ABI v10 to v23: what each version added
+## ABI v10 to v24: what each version added
 
 Moved verbatim from `native/APMF_API.h` (line 96 at 9d01cdf). The header keeps a pointer to this anchor.
 
@@ -198,6 +198,11 @@ and no slot (it rides RequestEx / Repoint / Release; param.fval = TTL seconds). 
 intent 27 ("no channel serves intent 27"); a v23 APMF with [CombatSubstrate] bCombatSubstrate=0 (the
 default) refuses it by name. GetSubstrateState is NOT in v23: its consumer is MFO's slice S3. Docs/FACETS.md
 "Combat substrate", INVARIANTS #0 (j).
+ABI v24 (2026-10-13, ch.12 idle state): APMF_API_v24 appends ONE read-only slot, GetIdleState(handle,
+APMF_IdleStateInfo*), with IdleState / IdleUnconfirmable / IdleEnd and the 60-byte size-rule struct. A
+client can tell an idle that PLAYED from one Harbinger cannot confirm (both keep the claim live). A client
+must see abiVersion >= 24 before it calls the slot: an older APMF has no query, only IsClaimLive.
+See "ABI v24: IDLE STATE" at the end of this header and Docs/FACETS.md ch.12.
 ```
 
 <a id="intent-18"></a>

@@ -2377,9 +2377,14 @@ namespace APMF_API {
                                        //   actor / target, or the actor plays no idle now): Harbinger ENDS it
         kIdleState_Unconfirmable = 8,  // PlayIdle returned true but no entry event can be resolved
                                        //   (unconfirmableWhy): whether it played is UNKNOWN; the claim stays
-        kIdleState_NotPlayed     = 9,  // NO engine call: the form is not an IDLE, the target is not a loaded
+        kIdleState_NotPlayed     = 9,  // NO engine call: idle v2 is not available (a Repoint is not refused
+                                       //   synchronously), the form is not an IDLE, the target is not a loaded
                                        //   reference, the actor is not loaded / dead / has no high process.
                                        //   Harbinger ENDS the claim
+        kIdleState_Carried       = 10, // NOT EVIDENCE: this handle re-played the same idle while no IdleStop had
+                                       //   been seen since its previous play's entry, and this play has no fresh
+                                       //   entry event (one upgrades it to Confirmed). The claim stays. An
+                                       //   IdleStop since sets kIdleInfo_CarryEnded: the inherited idle ended
     };
 
     // Why a play is kIdleState_Unconfirmable (APMF_IdleStateInfo::unconfirmableWhy). APPEND-ONLY.
@@ -2399,14 +2404,19 @@ namespace APMF_API {
         kIdleEnd_None       = 0,  // not ended
         kIdleEnd_Harbinger  = 1,  // Harbinger released it; `state` says why
         kIdleEnd_ActorDied  = 2,  // Harbinger released it: the actor died
-        kIdleEnd_Released   = 3,  // released by the client, the unload sweep, or the channel disengaging
+        kIdleEnd_Released   = 3,  // released by the client, or (owning ch.12) by the unload sweep or the
+                                  //   facet's last claim going
         kIdleEnd_Superseded = 4,  // still live, but another claim owns ch.12 on the actor (or it was
                                   //   re-pointed to form 0): its idle is no longer played. Winning back
                                   //   plays again (a new play: the record restarts)
+        kIdleEnd_Gone       = 5,  // the claim stopped being live with no end Harbinger saw: released before
+                                  //   its play ran, or dropped (unload sweep) while not owning ch.12.
+                                  //   Stamped up to ~1.25 s after; the grace runs from the stamp
     };
 
-    inline constexpr std::uint32_t kIdleInfo_Carried = 1u << 0;   // flags: the entry was carried from the previous
-                                                                   //   play of the SAME idle (the graph was still in it)
+    inline constexpr std::uint32_t kIdleInfo_Carried = 1u << 0;   // flags: this play was armed with a carry (same
+                                                                   //   handle, same idle, no IdleStop seen since)
+    inline constexpr std::uint32_t kIdleInfo_CarryEnded = 1u << 1; // flags: a carried play saw an IdleStop and no fresh entry
     inline constexpr std::uint32_t kIdleConfirmWindowMs = 3000;    // informational: the NOT CONFIRMED window
     inline constexpr std::uint32_t kIdleStateGraceMs    = 10000;   // informational: world ms a non-live record stays
     inline constexpr std::uint32_t kIdleMsNone          = 0xFFFFFFFFu;

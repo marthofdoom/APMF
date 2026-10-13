@@ -230,7 +230,7 @@ New in the release after 0.13.0, not yet tested in game. The full reference is [
 
 ## Idle state (ch.12, ABI v24)
 
-New in the release after 0.13.0, not yet tested in game. `APMF_API_v24::GetIdleState(handle, &info)` says what became of a ch.12 idle claim's `PlayIdle` call: `Pending`, `Accepted`, `Confirmed`, `ConfirmedWeak`, `NotConfirmed`, `NoTransition`, `Refused`, `NotPlayed` or `Unconfirmable` (with the reason). Gate on `abiVersion >= 24`. If your mod must act only after the animation really played, wait for `Confirmed` instead of timing Harbinger's 3 second window yourself. Any thread. An ended claim's state stays readable for 10 seconds of world time. The full table is in [ch.12 Idle](FACETS.md#reading-what-happened-abi-24).
+New in the release after 0.13.0, not yet tested in game. `APMF_API_v24::GetIdleState(handle, &info)` says what became of a ch.12 idle claim's `PlayIdle` call: `Pending`, `Accepted`, `Confirmed`, `ConfirmedWeak`, `NotConfirmed`, `NoTransition`, `Refused`, `NotPlayed`, `Unconfirmable` (with the reason) or `Carried` (no evidence, only no `IdleStop` since the same claim's previous play), and `endCause` says how the claim ended. Gate on `abiVersion >= 24`. If your mod must act only after the animation really played, wait for `Confirmed` instead of timing Harbinger's 3 second window yourself. Any thread. An ended claim's state stays readable for 10 seconds of world time. The full table is in [ch.12 Idle](FACETS.md#reading-what-happened-abi-24).
 
 ## Sections that moved
 

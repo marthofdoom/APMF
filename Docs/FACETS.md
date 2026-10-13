@@ -567,20 +567,39 @@ Handle h = g_apmf->RequestEx(actor, kIntent_Idle, kBasis, &p);
 | `NoTransition` (6) | at the call: a complete graph walk found no transition on the idle's event | Harbinger releases it at the next Poll |
 | `Refused` (7) | at the call: `PlayIdle` returned false | Harbinger releases it |
 | `Unconfirmable` (8) | at the call: `PlayIdle` returned true but no entry event can be resolved. `unconfirmableWhy` says why: confirmation off (`bIdleConfirm=0`), not armed (a self-check refusal), no entry events, an incomplete walk, an unreadable graph, or a broken event id space | live. Whether it played is unknown |
-| `NotPlayed` (9) | before the call: the form is not an IDLE, the target is not a loaded reference, or the actor is not loaded, dead or out of high process. No engine call was made | Harbinger releases it |
+| `NotPlayed` (9) | before the call: idle v2 is not available (a `Repoint` with a form is not refused at the call), the form is not an IDLE, the target is not a loaded reference, or the actor is not loaded, dead or out of high process. No engine call was made | Harbinger releases it |
+| `Carried` (10) | at the call: the same handle re-played the same idle and no `IdleStop` has been seen since its previous play's entry. This is an inference, not evidence. A fresh entry event, even a late one, upgrades it to `Confirmed` or `ConfirmedWeak`. An `IdleStop` with no fresh entry sets `kIdleInfo_CarryEnded`: the inherited idle ended | live, as a carry always was |
 
-`endCause` says how the claim ended: `Harbinger` (the state says why), `ActorDied`, `Released` (by you, an unload, or the facet going idle), or `Superseded` (another claim owns ch.12 now, or you re-pointed to form 0, so this idle is no longer played. It plays again if it wins back). `msSincePlay` and `msSinceEnd` are world milliseconds, which a menu pause does not advance. `msToEntry` is the wall time from the call to the entry event. `seq` changes on every change of the record. `kIdleInfo_Carried` in `flags` marks a re-play of the same idle that inherited the previous play's entry (the graph was still in the idle). The call reads a copy under Harbinger's own lock, so any thread may call it.
+`endCause` says how the claim ended:
+
+- `None`: it has not ended.
+- `Harbinger`: Harbinger released it, and the state says why.
+- `ActorDied`: Harbinger released it because the actor died (before or after the play).
+- `Released`: you released it, or, while it owned ch.12, the unload sweep released the facet.
+- `Superseded`: the claim is still live but another claim owns ch.12 now, or you re-pointed it to form 0. Its idle is no longer played. If it wins back it plays again and the record restarts at `Pending`.
+- `Gone`: the claim stopped being live with no end Harbinger saw, for example it was released before its play ran, or the unload sweep dropped it while it did not own ch.12. Harbinger stamps it within about 1.25 seconds, and the grace runs from the stamp. `msSincePlay` and `msSinceEnd` are world milliseconds, which a menu pause does not advance. `msToEntry` is the wall time from the call to the entry event. `seq` changes on every change of the record. `kIdleInfo_Carried` in `flags` marks a play that was armed with a carry: the same handle re-played the same idle and no `IdleStop` had been seen since the previous play's entry. A carry never crosses handles. `kIdleInfo_CarryEnded` marks a carried play whose inherited idle raised `IdleStop` with no fresh entry from this play. The call reads a copy under Harbinger's own lock, so any thread may call it.
 
 ```cpp
 if (g_apmf->abiVersion >= 24) {
     auto* v24 = reinterpret_cast<const APMF_API_v24*>(g_apmf);
     APMF_IdleStateInfo info{};
     info.size = sizeof(info);
-    switch (v24->GetIdleState(h, &info)) {
-    case kIdleState_Confirmed:     /* it played: act on it */ break;
-    case kIdleState_Pending:
-    case kIdleState_Accepted:      /* wait */ break;
-    default:                       /* weak, unknown, ended: your call */ break;
+    const std::uint32_t st = v24->GetIdleState(h, &info);
+    if (info.endCause == kIdleEnd_Superseded) {
+        // Another claim plays its idle on this actor now. Ours is live but not played.
+        // Wait for it to win back (the record restarts at Pending), or Release it and stop.
+    } else if (st == kIdleState_Confirmed || st == kIdleState_ConfirmedWeak) {
+        // It played (Weak: the entry event is shared with other transitions; your policy).
+        // Act on it. If endCause is not None the claim has already ended since.
+    } else if (info.endCause != kIdleEnd_None) {
+        // Ended without playing: NotConfirmed, NoTransition, Refused, NotPlayed, or the
+        // claim went (Released, Gone, ActorDied). Do not act. Release is a no-op now.
+    } else if (st == kIdleState_Unknown) {
+        // No record: not an idle claim with a form, or its grace ran out. Treat as not played.
+    } else if (st == kIdleState_Unconfirmable || st == kIdleState_Carried) {
+        // Live, but no evidence for this play. Your call: never act on it as played.
+    } else {
+        // Pending or Accepted: wait. Harbinger judges the window, do not time it.
     }
 }
 ```
