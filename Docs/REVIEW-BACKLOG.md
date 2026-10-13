@@ -721,3 +721,12 @@ Raised against 732c859, 2026-10-12. Reviewer (verbatim): "If the dropped entry t
 
 ### APMF-B87 (SEV-5) -- `GetCommandingActor` (MiddleHighProcessData +0x218) has no verified-address row
 Raised against 732c859, 2026-10-12. Reviewer (verbatim): "In the fork this is `currentProcess->middleHigh` (AIProcess +0x008) → `commandingActor` (MiddleHighProcessData +0x218, `static_assert(sizeof == 0x338)`). The header has no runtime split for it. MFO's shipped main already relies on the same accessor on both runtimes (`EngageOnSight.cpp:352`). I did not confirm +0x218 in disassembly; my quick byte-pattern scan found no reader. Add a verified row, or accept the precedent."
+
+### APMF-B88 (SEV-5) -- stale PackageGate banner comment after the TryGetOwningClaimBasis switch
+Raised against a2d914c (`fix/apmf-menu-client-hits`, Opus review), 2026-10-12. Reviewer (verbatim): "The banner comment at PackageGate.cpp:~140 still says \"same single TryGetOwningClaim call ... byte-identical\". It is stale wording only."
+
+### APMF-B89 (SEV-5) -- g_handleMx purge holds the shared lock across an O(handles x claims) scan
+Raised against a2d914c, 2026-10-12. Reviewer (verbatim): "On Windows a queued writer (`NoteClientRequest`) blocks new shared readers while the 60 s Pump purge holds the shared lock across an O(handles × claims) scan. That would briefly stall 0x49 and selector callers. It is sub-millisecond at realistic handle counts. Optional later fix: store the `SourceId` in the internal `Claim` at ApplyRequest so hot-path credits need no lock." Pre-existing, widened by the served credits.
+
+### APMF-B90 (SEV-5) -- menu Winner() keeps naming a client that released every claim until it idles
+Raised against a2d914c, 2026-10-12. Reviewer (verbatim): "A client that released everything stays \"winner\" until it goes idle after 3 loads. That is the same rule every other source already follows."

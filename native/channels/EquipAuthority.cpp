@@ -197,8 +197,8 @@ namespace {
             const auto* now = actor->GetEquippedObject(/*left*/ slot == APMF_API::kEquipSlot_Left);
             const bool  yes = now && now->GetFormID() == form;
             spdlog::info("[apmf][equip-auth] readback actor=0x{} {} hand, {} ms after the queued equip of 0x{}: "
-                         "still in hand: {} (now: {}). Who removed it, if anyone, is in the [equip-obs] op=unequip "
-                         "lines.",
+                         "still in hand: {} (now: {}). Who removed it, if anyone, is not observed yet "
+                         "(unequips are not watched in this build).",
                          apmf::log::Hex(id), SlotName(slot), apmf::clock::MonotonicMs() - issuedMs,
                          apmf::log::Hex(form), yes ? "yes" : "no",
                          now ? fmt::format("0x{} '{}'", apmf::log::Hex(now->GetFormID()),
