@@ -1,5 +1,10 @@
 ## Unreleased
 
+- **A fight a mod starts can no longer be lost.** When a mod starts a fight or pins a target, the follower now goes after that target until it is dead, disabled or unloaded, or the mod lets go. Before, the game marked a target it had not seen itself as lost a quarter second after the fight began. The pin ended and the follower searched the area for over a minute. Now Harbinger keeps the game's own knowledge of where the target is, so the follower chases it the game's way. If the follower makes no progress toward the target for 20 seconds, the log says so as an anomaly and the fight is released. New section: `[EngagementHold]` in `APMF.ini`. Not yet tested in game.
+- **A downed target is walked to.** A pinned target that is bleeding out stays pinned, and the follower now walks to it. Setting: `bBleedoutDrive` in `[EngagementHold]`. Not yet tested in game.
+- **The pursuit leash no longer holds back a fight a mod started.** The leash still stops wandering searches and chases of other targets.
+- **A leashed follower no longer freezes at the edge of its leash.** When the leash refuses a search, the follower now walks back toward its anchor and searches inside the leash. Setting: `bLeashReturn` in `[PursuitLeash]`. Not yet tested in game.
+- **Each held fight is logged every 5 seconds.** The line shows how far the follower moved, how close it got, how many attacks and casts it started and how often the game lost the target.
 - **Heals see past friends.** When a mod asks Harbinger to check a follower's own line of sight before a cast, a healing or other friendly spell now looks past the player and the player's teammates. Walls, the ground and every other NPC still block it. Attack spells still stop at any NPC in the way, and the cast guard is unchanged. The log names the friend that was looked past, once for each spell, target and friend. Not yet tested in game.
 
 ## v0.13.0 -- Harbinger names who changes the AI

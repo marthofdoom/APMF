@@ -931,6 +931,12 @@ namespace apmf::combatentry::hold {
         return true;
     }
 
+    bool HoldsAny(RE::FormID a_actor) {
+        if (!g_enabled.load(std::memory_order_relaxed) || g_holdCount.load(std::memory_order_relaxed) == 0) return false;
+        std::shared_lock lk(g_holdMx);
+        return g_holds.contains(a_actor);
+    }
+
     void Poll() {
         const std::uint64_t now = apmf::clock::MonotonicMs();
         if (g_lastTickMs != 0) g_worldMs += (std::min)(now - g_lastTickMs, kTickClampMs);

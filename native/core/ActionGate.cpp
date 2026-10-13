@@ -1655,16 +1655,10 @@ namespace apmf::actiongate {
             auto  aptr   = l.anchor.get();
             auto* anchor = aptr.get();
             const bool inCombat = actor && actor->GetActorRuntimeData().combatController != nullptr;
-            // Held: the actor's combat target, or the group's search target, is its held engagement.
-            bool held = false;
-            if (inCombat) {
-                auto* cc = actor->GetActorRuntimeData().combatController;
-                held = apmf::combatentry::hold::IsHeld(id, cc->targetHandle.native_handle());
-                if (!held && cc->combatGroup)
-                    held = apmf::combatentry::hold::IsHeld(
-                        id, *reinterpret_cast<const std::uint32_t*>(reinterpret_cast<std::uintptr_t>(cc->combatGroup) +
-                                                                     apmf::cbt::kGroupTargetToSearchFor));
-            }
+            // Held: the actor holds an engagement. Its fight is that move-to (its approach is exempt from
+            // the leash), so it never gets a return. Asked by actor only: the controller is never
+            // dereferenced off its own combat thread (APMF-B26: a StopCombat elsewhere frees it).
+            const bool held = apmf::combatentry::hold::HoldsAny(id);
             const void* space  = anchor ? apmf::combatapproach::SpaceOfRef(anchor) : nullptr;
             const bool  usable = winner && actor && !actor->IsDead() && anchor && !anchor->IsDead() && space &&
                                 space == apmf::combatapproach::SpaceOfRef(actor) && inCombat && !held;

@@ -68,6 +68,8 @@ namespace apmf::combatentry::hold {
     // ANY THREAD (shared lock on the hold map, the ch.20 / ch.23 precedent). Counts a leash exemption
     // when `countLeash` is set.
     bool IsHeld(RE::FormID actor, std::uint32_t handle, bool countLeash = false);
+    // Does `actor` hold any engagement at all? ANY THREAD (shared lock).
+    bool HoldsAny(RE::FormID actor);
 
     // Game thread, Arbiter::OncePerFrame (after the ch.20 / ch.21 Polls): per-hold telemetry
     // (distance moved per 5 s window, distance to the target, attack / cast starts, engine-lost
