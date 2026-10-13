@@ -69,11 +69,24 @@ OWN = 0x01000000
 FID_TRAVEL_BASE = OWN | 0x800   # 0x800 .. 0x807 (kTravelSlots == 8)
 TRAVEL_SLOTS = 8
 
-NEXT_OBJECT_ID = 0x808   # first never-used local id
+# Combat substrate (S2a, 2026-10-13; MFO Docs/COMBAT-SUBSTRATE-DESIGN.md section 3.3). marth
+# 2026-10-12: "If it can't be the player, 1 is fine. Use a clone of nazeem." ONE anchor actor,
+# the target of every substrate's combat controller, parked in its own interior holding cell.
+# native/channels/CombatSubstrate.cpp resolves these by LOCAL id through
+# TESDataHandler::LookupForm(id, "APMF.esl") -- the FormID band is the contract, the EDIDs are
+# documentation.
+FID_ANCHOR_NPC   = OWN | 0x808   # NPC_  APMF_SubstrateAnchor      (the Nazeem clone)
+FID_ANCHOR_CELL  = OWN | 0x809   # CELL  APMF_SubstrateHoldingCell (interior, never visited)
+FID_ANCHOR_REF   = OWN | 0x80A   # ACHR  APMF_SubstrateAnchorREF   (persistent, the anchor)
+FID_ANCHOR_HOME  = OWN | 0x80B   # REFR  APMF_SubstrateAnchorHome  (persistent XMarker, where it goes home)
+
+NEXT_OBJECT_ID = 0x80C   # first never-used local id
 
 # ── Vanilla refs ──
 FREF_PLAYER      = 0x00000014   # PlayerRef -- the PLACEHOLDER location target
 FREF_TMPL_TRAVEL = 0x00016FAA   # vanilla PACK template 19 "Travel"
+FSTAT_XMARKER    = 0x0000003B   # XMarker (STAT) -- the anchor's home marker base
+FNPC_NAZEEM      = 0x00013BBF   # Nazeem (NPC_) -- the anchor is cloned from it (documentation)
 
 # ── binary helpers (forked from MFO_GenerateESP.py -- byte-for-byte valid) ──
 FORM_VERSION = 44
@@ -92,6 +105,16 @@ def record(t, fid, fl, d):
 def group(label, data):
     return (b'GRUP' + struct.pack('<I', 24 + len(data)) + label.encode('ascii')
             + struct.pack('<iII', 0, 0, 0) + data)
+
+
+def subgroup(label_bytes, gtype, data):
+    """A nested GRUP (cell block / sub-block / cell children). `label_bytes` is the raw
+    4-byte label: a block number (int32) for types 2/3, the parent CELL's FormID for
+    types 6/8/9. Header layout mirrored from Skyrim.esm's WIDeadBodyCleanupCell
+    (001037E7): 'GRUP', size, label, type, stamp, unknown -- stamp/unknown 0 here, as
+    this generator writes every other group."""
+    return (b'GRUP' + struct.pack('<I', 24 + len(data)) + label_bytes
+            + struct.pack('<iII', gtype, 0, 0) + data)
 
 
 def zstr(s):
@@ -199,12 +222,154 @@ def make_pack():
     return group('PACK', out)
 
 
+# ── Combat substrate anchor (S2a) ─────────────────────────────────────────────
+#
+# THE NPC_ (0x808): Nazeem (Skyrim.esm 00013BBF, a 453-byte zlib record, read from
+# Tuxborn's Skyrim.esm on 2026-10-13) authored FIELD BY FIELD. Every kept subrecord is
+# Nazeem's bytes, in Nazeem's order; the changes are listed per field.
+#   STRIPPED (design 3.3): VMAD (his WIDeadBodyCleanupScript), the six SNAM factions
+#   (his crime faction included), COCT/CNTO (inventory), the five PKID (AI packages),
+#   DOFT (outfit), CRIF (crime faction). He carries no SPLO, INAM or PNAM, so there
+#   is nothing more to strip.
+#   FULL: Nazeem's is a localized string id (Skyrim.esm is localized; this plugin is
+#   not), so it is replaced by a plain name.
+#   ACBS: Unique (0x20) CLEARED -- the engine must never confuse it with Nazeem;
+#   Essential (0x02) and IsGhost (1 << 29) SET (the anchor can never die or be hit:
+#   authored on the base, so no frame exists where it is hittable); level 1. Every other
+#   ACBS byte is Nazeem's.
+#   AIDT: aggression 0 (his: 0, unaggressive) and assistance 0 (his: 1, "helps
+#   allies" -> helps nobody, so it never joins anyone's fight). Every other AIDT byte
+#   is Nazeem's.
+# Harbinger additionally makes it invisible (alpha 0), turns its AI off and drops its
+# collision at runtime, and never places it with PlaceAtMe (it is persistent: nothing
+# is created or deleted, the .ess only carries its position).
+ANCHOR_NAZEEM_KEEP = [
+    # (subrecord, Nazeem's bytes as hex) -- in Nazeem's order.
+    ('OBND', '000000000000000000000000'),
+    ('ACBS', None),   # built below from Nazeem's 300020100000000004000000000064002300000000000000
+    ('VTCK', 'd93a0100'),   # MaleCondescending (his)
+    ('RNAM', '48370100'),   # NordRace
+    ('AIDT', None),   # built below from Nazeem's 0002320300010000000000000000000000000000
+    ('CNAM', '6b320100'),   # his class
+    ('FULL', None),   # plain string (see above)
+    ('DATA', ''),
+    ('DNAM', '1b0f1614180f110f0f121312140f140f0f130000000000000000000000000000000000004b003c003c0000000000000000001e00'),
+    ('NAM5', 'ff00'),
+    ('NAM6', '0000803f'),
+    ('NAM7', '00004842'),
+    ('NAM8', '01000000'),
+    ('QNAM', 'd6d4543e9d9c1c3e8988083e'),
+    ('NAM9', '000080bf14ae473f0ad723bfb81e05bf00000000000000000000000000000000000000000000000000000000000000005c8f423fe851383e3e0a57bfcdcc4cbf3e0ad7be0000000000000000'),
+    ('NAMA', '0c000000000000000c00000003000000'),
+    ('TINI', '0100'),
+    ('TINC', '35272200'),
+    ('TINV', '64000000'),
+    ('TIAS', '4f00'),
+]
+
+ACBS_UNIQUE    = 0x00000020
+ACBS_ESSENTIAL = 0x00000002
+ACBS_GHOST     = 0x20000000
+
+
+def anchor_acbs():
+    b = bytearray.fromhex('300020100000000004000000000064002300000000000000')   # Nazeem's
+    flags = struct.unpack_from('<I', b, 0)[0]
+    flags = (flags & ~ACBS_UNIQUE) | ACBS_ESSENTIAL | ACBS_GHOST
+    struct.pack_into('<I', b, 0, flags)
+    struct.pack_into('<H', b, 8, 1)   # level 1 (Nazeem: 4)
+    return bytes(b)
+
+
+def anchor_aidt():
+    b = bytearray.fromhex('0002320300010000000000000000000000000000')   # Nazeem's
+    b[0] = 0   # aggression: unaggressive (Nazeem's own value)
+    b[5] = 0   # assistance: helps nobody (Nazeem: 1, helps allies)
+    return bytes(b)
+
+
+def build_anchor_npc():
+    body = subrec('EDID', zstr("APMF_SubstrateAnchor"))
+    for sig, hx in ANCHOR_NAZEEM_KEEP:
+        if sig == 'ACBS':
+            body += subrec('ACBS', anchor_acbs())
+        elif sig == 'AIDT':
+            body += subrec('AIDT', anchor_aidt())
+        elif sig == 'FULL':
+            body += subrec('FULL', zstr("Harbinger Anchor"))
+        else:
+            body += subrec(sig, bytes.fromhex(hx))
+    return record('NPC_', FID_ANCHOR_NPC, 0, body)
+
+
+# THE CELL (0x809): an interior holding cell, mirrored from Skyrim.esm's own holding cell
+# WIDeadBodyCleanupCell (001037E7): DATA 0x0001 (interior), its XCLL lighting verbatim,
+# LTMP none, XCLW 0. Its XLCN (a vanilla location) and XCIM (an image space) are not
+# copied: a cell nobody visits needs neither.
+CELL_XCLL_WIDEADBODY = ('ffffff0000000000000000000000000000000000000000000000000000000000000000000000803f18ff'
+                        '0a00e5fff300ff0aff00fff3ff007979730084848a00000000000000803f000000000000803f0000000000'
+                        '0000009f000000')
+
+
+def build_anchor_cell():
+    body = subrec('EDID', zstr("APMF_SubstrateHoldingCell"))
+    body += subrec('DATA', struct.pack('<H', 0x0001))   # interior
+    body += subrec('XCLL', bytes.fromhex(CELL_XCLL_WIDEADBODY))
+    body += subrec('LTMP', struct.pack('<I', 0))
+    body += subrec('XCLW', struct.pack('<f', 0.0))
+    return record('CELL', FID_ANCHOR_CELL, 0, body)
+
+
+REC_PERSISTENT = 0x00000400   # the vanilla holding cell's ACHR / REFR both carry it
+
+
+def build_anchor_ref():
+    """ACHR (0x80A), persistent, mirrored from MQ201HiddenHoldingContainerREF (00039F1E, the
+    vanilla holding cell's own persistent ACHR): EDID, NAME (the base), DATA (position +
+    rotation, 6 floats). At the cell origin; Harbinger moves it, never this record."""
+    body = subrec('EDID', zstr("APMF_SubstrateAnchorREF"))
+    body += subrec('NAME', struct.pack('<I', FID_ANCHOR_NPC))
+    body += subrec('DATA', struct.pack('<6f', 0.0, 0.0, 0.0, 0.0, 0.0, 0.0))
+    return record('ACHR', FID_ANCHOR_REF, REC_PERSISTENT, body)
+
+
+def build_anchor_home():
+    """REFR (0x80B), persistent XMarker, mirrored from WIDeadBodyCleanupCellMarker (001037F2):
+    EDID, NAME 0x3B, DATA. The anchor's home: Harbinger sends the anchor back with
+    MoveTo(this marker), so it never needs the engine's private MoveTo_Impl."""
+    body = subrec('EDID', zstr("APMF_SubstrateAnchorHome"))
+    body += subrec('NAME', struct.pack('<I', FSTAT_XMARKER))
+    body += subrec('DATA', struct.pack('<6f', 0.0, 0.0, 0.0, 0.0, 0.0, 0.0))
+    return record('REFR', FID_ANCHOR_HOME, REC_PERSISTENT, body)
+
+
+def make_npc():
+    return group('NPC_', build_anchor_npc())
+
+
+def make_cell():
+    """Top CELL group -> interior block -> sub-block -> CELL + its children group ->
+    the persistent-children group (ACHR, REFR). Block / sub-block are the last and the
+    second-to-last decimal digit of the cell's object id (0x809 = 2057 -> block 7,
+    sub-block 5), the numbering Skyrim.esm uses (001037E7 = 1062887 -> 7 / 8)."""
+    obj = FID_ANCHOR_CELL & 0xFFF
+    block, sub = obj % 10, (obj // 10) % 10
+    fid_label = struct.pack('<I', FID_ANCHOR_CELL)
+    persistent = subgroup(fid_label, 8, build_anchor_ref() + build_anchor_home())
+    children = subgroup(fid_label, 6, persistent)
+    sub_block = subgroup(struct.pack('<i', sub), 3, build_anchor_cell() + children)
+    block_grp = subgroup(struct.pack('<i', block), 2, sub_block)
+    return group('CELL', block_grp)
+
+
 def main():
     out_dir = sys.argv[1] if len(sys.argv) > 1 else "Data"
     os.makedirs(out_dir, exist_ok=True)
 
     data = make_tes4(NEXT_OBJECT_ID)
+    data += make_npc()    # canonical group order: NPC_ before PACK, CELL after both
     data += make_pack()
+    data += make_cell()
 
     out_path = os.path.join(out_dir, "APMF.esl")
     with open(out_path, 'wb') as f:
@@ -215,6 +380,11 @@ def main():
           f"0x{(FID_TRAVEL_BASE + TRAVEL_SLOTS - 1) & 0xFFF:03X}    "
           f"APMF_TravelPackage0..{TRAVEL_SLOTS - 1} (ch.19 travel, Travel 00016FAA, "
           f"PLDT type 0, radius 75)")
+    print(f"  NPC_  0x{FID_ANCHOR_NPC & 0xFFF:03X}        APMF_SubstrateAnchor (Nazeem 00013BBF clone: no factions, "
+          f"packages, outfit, inventory, script; not Unique; essential + ghost; level 1)")
+    print(f"  CELL  0x{FID_ANCHOR_CELL & 0xFFF:03X}        APMF_SubstrateHoldingCell (interior)")
+    print(f"  ACHR  0x{FID_ANCHOR_REF & 0xFFF:03X}        APMF_SubstrateAnchorREF (persistent, in the holding cell)")
+    print(f"  REFR  0x{FID_ANCHOR_HOME & 0xFFF:03X}        APMF_SubstrateAnchorHome (persistent XMarker, the anchor's home)")
 
 
 if __name__ == '__main__':
