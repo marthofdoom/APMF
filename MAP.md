@@ -337,6 +337,8 @@ a main-thread-safe seat for equip/3D work).
   Post()'d during `Pump()` runs on the NEXT `Pump()`, never re-entrantly.
 
 ### `native/core/Sources.{h,cpp}` — HARBINGER 1a: source registry, priorities, degrade rule, seat census
+**Served counter (2026-10-12, fix/apmf-menu-client-hits):** `served[facet]` atomic + `NoteServed(id,f)` / `NoteServedClaim(handle,f)` (resolves the client via `ClientForHandle`'s shared leaf lock, released before the atomics) + `Served()`. It is NOT a Hit: Hits stays "outside writes seen". Both stamp `lastSeenMs` / `lastLoadSeq`, and so does `NoteClientRequest` (a client with live claims is never `Idle`, never dropped from the menu's `Winner()`). Credit sites: `facetattr::Decide` on `enforce` (every ranked deny: cast, combat, action, approach, entry, re-entry), `EquipSink` applied deny, `TargetPin` seat deny/held + `UpdateCombat` restore, `EquipAuthority::Enforce` equipped>0, `PackageGate` 0x49 `won`, `Travel::StartLeg`, `EquipPreference` lift/steer, `CombatEntry::Enter` entered. What breaks: moving a credit into a hot path that holds another lock (the handle map's lock is a leaf).
+
 **1b observe slice (2026-10-12):** facet `kActorValue` ("ActorValue": ch.1a gait / ch.11 disposition, fed by
 `core/ActorValueObserve`); `Kind::kLoaded` + `RegisterLoadedPlugins()` (kDataLoaded: `K32EnumProcessModules`, every
 module under `...\SKSE\Plugins\` but APMF pre-registered by base name, keeping 160 of the now 512 registry slots free;
@@ -391,7 +393,7 @@ header `resources/SKSEMenuFramework.h`, QTR-Modding/SKSE-Menu-Framework-3 @ dc91
 vendored). Any export missing -> the page is refused whole, loudly; SMF absent -> one loud line,
 Harbinger runs from the INI (Q10). Page `Harbinger/Sources` (layout 2026-10-11): an alerts summary line
 (expandable), a "hide idle" checkbox (UI state only), one collapsible header per facet (collapsed unless it has
-an alert) holding an "Unknown sources can be overridden" checkbox (saved to `[UnknownSources]`), then a fixed-column table (source, kind badge, hits, priority slider; idle sources greyed and last;
+an alert) holding an "Unknown sources can be overridden" checkbox (saved to `[UnknownSources]`), then a fixed-column table (source, kind badge, served, hits, priority slider; idle sources greyed and last;
 details in the hover tooltip), and a collapsed census list at the bottom. Exports: `AddSectionItem` + 20 `ig*`
 (adds igSpacing, igCheckbox, igCollapsingHeader_TreeNodeFlags, igBeginTooltip, igEndTooltip, igIsItemHovered;
 the tab-bar exports are no longer used).

@@ -129,6 +129,12 @@ namespace apmf::sources {
     // Counters. Any thread, lock-free. NoteHit also marks the source as involved in the
     // facet (it appears on the menu's facet table) and stamps "last seen".
     void NoteHit(SourceId id, Facet f);
+    // Harbinger SERVED a client's claim on `f` (enforced it). Separate from Hits, which stays
+    // "outside writes seen". NoteServedClaim resolves the client from the claim's handle (a handle
+    // with no client, e.g. an internal claim, credits nobody). Any thread, lock-free but the
+    // handle map's shared leaf lock (taken and released before the atomics; no engine call).
+    void NoteServed(SourceId id, Facet f);
+    void NoteServedClaim(APMF_API::Handle h, Facet f);
     void NoteOverruled(SourceId id, Facet f);   // Harbinger enforced against it
     void NoteStood(SourceId id, Facet f);       // it outranked the claim (or tied): its write stood
     void NoteInvolved(SourceId id, Facet f);    // seen on the facet, no hit (census)
@@ -228,6 +234,7 @@ namespace apmf::sources {
     std::uint32_t Count();
     bool          Involved(SourceId id, Facet f);
     std::uint32_t Hits(SourceId id, Facet f);
+    std::uint32_t Served(SourceId id, Facet f);
     std::uint32_t Overruled(SourceId id, Facet f);
     std::uint32_t Stood(SourceId id, Facet f);
     std::uint64_t LastSeenMs(SourceId id, Facet f);   // 0 = never

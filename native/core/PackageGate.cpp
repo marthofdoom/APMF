@@ -145,19 +145,27 @@ namespace apmf::packagegate {
                 // lookup, no behavior change (the do-while's branches are
                 // byte-identical to before this widening).
                 APMF_API::APMF_Param claim{};
+                APMF_API::Handle claimH = APMF_API::kInvalidHandle;   // Harbinger menu "Served" credit
                 bool claimPresent = false;
                 bool won = false;   // redirect-probe only: did OUR named package win this call?
 
                 do {
                     if (apmf::ControlMap::Get().ControlledCount() == 0) break;   // near-zero cost
 
-                    if (!apmf::ControlMap::Get().TryGetOwningClaim(a_this->GetFormID(),
-                                                                   APMF_API::kIntent_OfferPackage, claim))
+                    float            claimBasis = 0.0f;
+                    if (!apmf::ControlMap::Get().TryGetOwningClaimBasis(a_this->GetFormID(),
+                                                                        APMF_API::kIntent_OfferPackage, claim,
+                                                                        claimBasis, &claimH))
                         break;   // uncontrolled on this intent
                     claimPresent = true;
                     if (claim.form == 0) break;   // claimed but no package named -- channel default, no redirect
 
-                    if (auto* pkg = RE::TESForm::LookupByID<RE::TESPackage>(claim.form)) { result = pkg; won = true; break; }
+                    if (auto* pkg = RE::TESForm::LookupByID<RE::TESPackage>(claim.form)) {
+                        result = pkg;
+                        won    = true;
+                        apmf::sources::NoteServedClaim(claimH, apmf::sources::Facet::kPackage);   // menu "Served"
+                        break;
+                    }
                     // named FormID doesn't resolve -- degrade to the engine's own answer, never null
                 } while (false);
 

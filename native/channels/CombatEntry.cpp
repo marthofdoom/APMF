@@ -234,7 +234,10 @@ namespace {
         }
 
         APMF_API::APMF_Param now{};
-        if (!apmf::ControlMap::Get().TryGetOwningClaim(id, APMF_API::kIntent_CombatEntry, now) || now.form != tf) {
+        float                nowBasis = 0.0f;
+        APMF_API::Handle     entryH   = APMF_API::kInvalidHandle;   // menu "Served" credit
+        if (!apmf::ControlMap::Get().TryGetOwningClaimBasis(id, APMF_API::kIntent_CombatEntry, now, nowBasis, &entryH) ||
+            now.form != tf) {
             spdlog::info("[ch.21] 0x{} entry for target 0x{} DROPPED (stale): the published winning claim now "
                          "names 0x{}.",
                          Hex(id), Hex(tf), Hex(now.form));
@@ -309,6 +312,7 @@ namespace {
             return;
         }
 
+        apmf::sources::NoteServedClaim(entryH, apmf::sources::Facet::kCombat);   // ch.21: the declared entry happened
         const auto nowMs = apmf::clock::MonotonicMs();
         if (e.lastLogMs != 0 && nowMs - e.lastLogMs < kLogEveryMs) {
             ++e.suppressed;

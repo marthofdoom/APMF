@@ -52,8 +52,12 @@ namespace apmf::facetattr {
             v.srcPrio = a_src == v.client ? v.claimPrio : src::Priority(a_src, a_facet);
         }
         v.enforce = v.claimPrio > v.srcPrio;
-        if (v.enforce) src::NoteOverruled(v.src, a_facet);
-        else           src::NoteStood(v.src, a_facet);
+        if (v.enforce) {
+            src::NoteOverruled(v.src, a_facet);
+            src::NoteServed(v.client, a_facet);   // the claim's client was served (menu "Served"; kNoSource ignored)
+        } else {
+            src::NoteStood(v.src, a_facet);
+        }
         return v;
     }
 

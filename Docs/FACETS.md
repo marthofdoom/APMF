@@ -3006,6 +3006,8 @@ Engine=20
 Target=override
 ```
 
+**Served and Hits on the menu page.** Each facet table has two counters. **Served** counts the times Harbinger enforced that source's own claim: a pin engaged, the engine's pick denied, a foreign write restored, an equip refused or made for the claim, a package held, a travel leg started, a cast or action decision, a score lift, a combat entry. **Hits** counts outside writes Harbinger saw that source make to the facet. A mod that only files claims has Served and few or no Hits, and it is not greyed as idle while it holds a claim. The facet header names as winner the highest-priority source that is active on that facet, so a client with live claims can be named.
+
 `iUnregistered<Facet>` and `iClient<Facet>` change the default for a whole facet. A name in a facet section beats the default. Names are DLL or plugin names and are not case sensitive. Raise `Engine=` in `[Combat]`, `[CombatAction]` or `[Cast]` above the client to let the engine win. `[UnknownSources]` takes `allow` (default) or `override` per facet and acts today on `Target`, `Combat`, `Cast` and `Equip`. See [INI-REFERENCE.md](INI-REFERENCE.md) for the full format.
 
 ## Appendix B: ABI history

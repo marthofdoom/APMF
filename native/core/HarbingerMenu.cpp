@@ -147,7 +147,8 @@ namespace apmf::harbingermenu {
             if (!g.IsItemHovered(0) || !g.BeginTooltip()) return;
             Colored(kHead, std::string(Name(id)));
             Text(fmt::format("Kind: {}", Badge(id)));
-            Text(fmt::format("{}: {} hit(s), overruled {}, stood {}", FacetName(f), Hits(id, f), Overruled(id, f),
+            Text(fmt::format("{}: served {} (Harbinger enforced this source's claim), {} hit(s) (its writes seen), "
+                             "overruled {}, stood {}", FacetName(f), Served(id, f), Hits(id, f), Overruled(id, f),
                              Stood(id, f)));
             Text(fmt::format("Last seen: {}", Age(LastSeenMs(id, f))));
             if (Idle(id)) Colored(kGrey, "Idle: not seen during the last 3 game loads. Its priority is kept.");
@@ -207,11 +208,12 @@ namespace apmf::harbingermenu {
                                                "source outranks the claim. See [ch.26] in APMF.log.",
                                                t.forceAnomalies));
             }
-            if (!g.BeginTable(fmt::format("tbl{}", static_cast<int>(f)).c_str(), 4, kTableRowBg | kTableBordersInnerH,
+            if (!g.BeginTable(fmt::format("tbl{}", static_cast<int>(f)).c_str(), 5, kTableRowBg | kTableBordersInnerH,
                               ImVec2{ 0.0f, 0.0f }, 0.0f))
                 return;
             g.TableSetupColumn("Source", kColWidthStretch, 0.0f, 0);
             g.TableSetupColumn("Kind", kColWidthFixed, kKindWidth, 0);
+            g.TableSetupColumn("Served", kColWidthFixed, kHitsWidth, 0);
             g.TableSetupColumn("Hits", kColWidthFixed, kHitsWidth, 0);
             g.TableSetupColumn("Priority (0 = off)", kColWidthFixed, kSliderWidth, 0);
             g.TableHeadersRow();
@@ -223,6 +225,8 @@ namespace apmf::harbingermenu {
                 Tooltip(id, f, seats);
                 g.TableNextColumn();
                 Colored(isIdle ? kGrey : kWhite, Badge(id));
+                g.TableNextColumn();
+                Colored(isIdle ? kGrey : kWhite, std::to_string(Served(id, f)));
                 g.TableNextColumn();
                 Colored(isIdle ? kGrey : kWhite, std::to_string(Hits(id, f)));
                 g.TableNextColumn();
@@ -289,6 +293,9 @@ namespace apmf::harbingermenu {
                 Colored(kHead, "Harbinger -- who drives each AI facet, and who wins.");
                 Colored(kGrey, "A claim beats another mod's change only with a higher priority. 0 = off. Saved to "
                                "APMF_Sources.ini. Hover a source for details.");
+                Colored(kGrey, "Served = times Harbinger enforced that source's own claim (a pin engaged, an engine "
+                               "pick denied, a write restored, an equip or package held, a cast seated, an entry). "
+                               "Hits = outside writes Harbinger saw it make. A pure client has Served and few Hits.");
                 g.Spacing();
                 const auto alerts = RecentAlerts();
                 const auto seats  = SeatSnapshot();
