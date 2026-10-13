@@ -2227,6 +2227,7 @@ The actor that holds a ch.20 or ch.21 claim does not have to be a follower. To m
 | Release, unload, load, new game | The same as for a follower. Nothing is undone. |
 | Ranking | A normal claim on the `Target` facet (ch.20) and the `Combat` facet (ch.21). Who wins against another target mod is the user's `APMF_Sources.ini` setting. |
 | The Harbinger page | A served pin credits your mod, like any claim. |
+| A mid-fight group merge | It can end the pin (`target no longer a combat target`): see `Docs/REVIEW-BACKLOG.md` APMF-B84. Taunt again if you still want it. |
 | Many foes on one follower | Each foe is its own claim. There is no per-client claim limit. The knowledge is kept in every group a holder belongs to, however many foes hold the same follower. |
 
 **Example 20a: A taunt that pins a foe to the taunter for a set time**
@@ -2237,11 +2238,21 @@ The actor that holds a ch.20 or ch.21 claim does not have to be a follower. To m
 
 ```cpp
 struct Taunt {
-    Handle pin = kInvalidHandle, entry = kInvalidHandle;
-    bool   pinSeen = false;                        // has IsClaimLive ever read true for the pin?
+    Handle     pin = kInvalidHandle, entry = kInvalidHandle;
+    bool       pinSeen = false, entrySeen = false;   // has IsClaimLive ever read true for it?
+    RE::FormID taunter = 0;                          // whom the foe is pinned to now
     std::uint64_t untilMs = 0;
 };
 std::unordered_map<RE::FormID, Taunt> g_taunts;    // keyed by FOE
+
+// A handle that WAS live and is not any more has ended (Harbinger ended it, or a load did).
+// One that has never read live is pending, not ended: it may still be repointed.
+bool Ended(Handle h, bool& seen) {
+    if (h == kInvalidHandle) return false;
+    const bool live = g_apmf->IsClaimLive(h);
+    if (live) seen = true;
+    return seen && !live;
+}
 
 bool TauntFoe(RE::FormID foe, RE::FormID taunter, bool taunterInFoeGroup, std::uint64_t nowMs, float seconds) {
     if (g_apmf->abiVersion < 14) return false;
@@ -2249,12 +2260,16 @@ bool TauntFoe(RE::FormID foe, RE::FormID taunter, bool taunterInFoeGroup, std::u
     p.form = taunter;                              // the foe's new target
     p.fval = 0.0f;                                 // no engage range on a hostile holder
     auto& t = g_taunts[foe];
-    if (t.pin != kInvalidHandle) {                 // already taunted: move it to this taunter
-        g_apmf->Repoint(t.pin, &p);
-        if (t.entry != kInvalidHandle) g_apmf->Repoint(t.entry, &p);
-        else if (!taunterInFoeGroup) t.entry = g_apmf->RequestEx(foe, kIntent_CombatEntry, kBasis, &p);
+    // An ended handle is never repointed: release it and request a fresh claim below.
+    if (Ended(t.entry, t.entrySeen)) { g_apmf->Release(t.entry); t.entry = kInvalidHandle; t.entrySeen = false; }
+    if (Ended(t.pin, t.pinSeen))     { g_apmf->Release(t.pin);   t.pin   = kInvalidHandle; t.pinSeen   = false; }
+
+    if (t.entry != kInvalidHandle) g_apmf->Repoint(t.entry, &p);    // one more StartCombat, for this taunter
+    else if (!taunterInFoeGroup) t.entry = g_apmf->RequestEx(foe, kIntent_CombatEntry, kBasis, &p);
+
+    if (t.pin != kInvalidHandle) {
+        g_apmf->Repoint(t.pin, &p);                // already taunted: move it to this taunter
     } else {
-        if (!taunterInFoeGroup) t.entry = g_apmf->RequestEx(foe, kIntent_CombatEntry, kBasis, &p);
         t.pin = g_apmf->RequestEx(foe, kIntent_TargetPin, kBasis, &p);
         if (t.pin == kInvalidHandle) {             // refused at the call: the log says why
             if (t.entry != kInvalidHandle) g_apmf->Release(t.entry);
@@ -2262,16 +2277,16 @@ bool TauntFoe(RE::FormID foe, RE::FormID taunter, bool taunterInFoeGroup, std::u
             return false;
         }
     }
+    t.taunter = taunter;
     t.untilMs = nowMs + static_cast<std::uint64_t>(seconds * 1000.0f);
     return true;
 }
 
-void TauntTick(std::uint64_t nowMs, bool (*taunterDown)(RE::FormID foe)) {
+// isDown(taunter): bleeding out, essential-down or dead -- the client's own test.
+void TauntTick(std::uint64_t nowMs, bool (*isDown)(RE::FormID taunter)) {
     for (auto it = g_taunts.begin(); it != g_taunts.end();) {
         Taunt& t = it->second;
-        const bool live = g_apmf->IsClaimLive(t.pin);
-        if (live) t.pinSeen = true;
-        if ((t.pinSeen && !live) || nowMs >= t.untilMs || taunterDown(it->first)) {
+        if (Ended(t.pin, t.pinSeen) || nowMs >= t.untilMs || isDown(t.taunter)) {
             g_apmf->Release(t.pin);                         // the foe's own selector answers again
             if (t.entry != kInvalidHandle) g_apmf->Release(t.entry);   // stops nothing
             it = g_taunts.erase(it);
@@ -2337,7 +2352,7 @@ Harbinger releases the claim itself, and `IsClaimLive` turns false with the reas
 - the entry could not be attempted (the target is not an Actor, or the actor is not loaded, has no AI process or is dead),
 - the fight ended (the entry succeeded and the actor now has no combat controller, "combat ended"), or
 - the target is dead, disabled, not loaded or unresolvable, or the actor dies, or
-- the held engagement ended it (2026-10-12, INVARIANTS #0 (i)): 20 s with no path progress, 20 s within reach without fighting the target, or, with `fval` above 0, the target farther than `fval` while it is not attacking the party. That last end also ends the actor's fight through the game's own `StopCombat`, unless another enemy of the group is still attacking the party.
+- the held engagement ended it (2026-10-12, INVARIANTS #0 (i)): 20 s with no path progress, 20 s within reach without fighting the target, or, with `fval` above 0, the target farther than `fval` while it is not attacking the party. That last end also ends the actor's fight through the game's own `StopCombat`, unless another enemy of the group is still attacking the party, a winning ch.20 pin on the actor names a different target, another client's ch.24 claim outranks the entry on the `Combat` facet, or Engine outranks the entry on the `Combat` facet. Then only the claims are released and the fight stays the engine's.
 
 After "combat ended" or a refusal, another claim on the actor naming the same target ends with the same reason. To try again, send a new `RequestEx`. Your own `Release`, an outranking claim, a load, a new game or an unload also end it.
 
