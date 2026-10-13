@@ -154,6 +154,18 @@ ABI v19. "Get within this distance of that actor, and keep fighting." A mod name
 
 - **`bCombatApproach`** (default `1`). 0 = kIntent_CombatApproach claims are REFUSED (logged at startup with the reason).
 
+### [CombatSubstrate]
+
+Facet reference: [Combat substrate](FACETS.md#combat-substrate-kintent_combatsubstrate).
+
+ABI v23. "Cast out of combat, animated." A follower's spell only plays its casting animation when the game's combat AI casts it, and that AI only exists in combat. For an out-of-combat cast Harbinger puts the follower into combat against its own invisible stand-in actor (a ghost copy of Nazeem kept in a holding cell in `APMF.esl`), lets only the claimed spell be cast, keeps the follower walking under its own package and ends it right after the cast. Any real fight drops it at once. Slice S2a: built, not yet field-proven, off by default.
+
+- **`bCombatSubstrate`** (default `0`). 1 = install the substrate. 0 = kIntent_CombatSubstrate claims are REFUSED and the dry run does not run (logged once with the reason).
+- **`bSubstrateDryRun`** (default `0`). Test surface for the P3 / P6 field runs. 1 = Harbinger opens a substrate itself on every idle, loaded player teammate every `fSubstrateDryRunPeriodSec` seconds, with no claim and no cast, for `fSubstrateTtlSec` seconds. Needs `bCombatSubstrate=1`.
+- **`fSubstrateDryRunPeriodSec`** (default `20`, at least 5). Seconds between dry-run rounds.
+- **`fSubstrateTtlSec`** (default `6`, clamped 1 to 15). How long a substrate stays open when the request's `param.fval` is 0.
+- **`bSubstrateMoveTrace`** (default `0`). Probe P6. 1 = one `[substrate] 0x<f> MOVE ...` line every 250 ms per open substrate: the running package, the controller's paused byte (+0x42), the process ignoring-combat bit (+0x139), speed, distance to the player, movement leaves denied and the bit resets the engine made.
+
 ### [Sightline]
 
 Facet reference: [line of sight](FACETS.md#line-of-sight-getlineofsight), [own line of sight on a cast](FACETS.md#own-line-of-sight-kcastflag_ownlineofsight).

@@ -416,7 +416,8 @@ namespace {
         if (a_anchor->GetParentCell() != a_at->GetParentCell() || a_first)
             a_anchor->MoveTo(a_at);
         else
-            a_anchor->SetPosition(a_at->GetPosition());
+            // TESObjectREFR::SetPosition (MoveTo_Impl, the verified row), NOT Actor's slot 0xA9 overload.
+            static_cast<RE::TESObjectREFR*>(a_anchor)->SetPosition(a_at->GetPosition());
         a_anchor->SetAlpha(0.0f);   // Character 0xE1: a no-op until the anchor is high process -- re-applied per move
     }
 
