@@ -784,3 +784,17 @@ Raised in round 1's fix, 2026-10-13 (author, from F1's census of the node classe
 `CombatBehaviorTreeNodeEvaluateFunction` and `CombatBehaviorTreeNodeUpdateFunction` are behaviour-tree nodes that
 are not `NodeObject*`, so the allow-list does not see them (INVARIANTS #0 (j) 2(a)). Trace what their functions do,
 the EquipContext evaluate function first, before S3 relies on the allow-list.
+
+### APMF-B102 (SEV-5) -- ch.12 idle state: spdlog under g_stateMx
+Raised against `d95b403` (`feat/apmf-idle-state`, ABI v24 GetIdleState), tier-3 Opus 5.5 review 2026-10-13
+(verdict MERGE OK). Verbatim from the reviewer's log (`scratchpad/agentlogs/review-idle-state.md`): "F5 SEV-5
+spdlog under g_stateMx". Where: `EvictForInsert` (channels/Idle.cpp) logs its once-per-session cap warning while
+`g_stateMx`, documented as a LEAF lock, is held. spdlog takes its own sink lock, so the leaf claim is not strictly
+true on that path. Fix: collect the victim handle under the lock and log after it is released.
+
+### APMF-B103 (SEV-5) -- ch.12 idle state: the prune's IsClaimLive scan cost
+Raised against `d95b403`, same review. Verbatim: "F6 SEV-5 IsClaimLive scan per live old record per 250ms".
+`PruneStates` calls `ControlMap::IsClaimLive` (a full scan of the published map) for every record past its age
+threshold, every 250 ms. Since the round-2 fix (F3) a live record without a final end cause is checked once it is
+1 s old, so every live ch.12 claim with a form costs one full scan per 250 ms. Small today (a few idle claims).
+Fix if it grows: one snapshot pass collecting the live handles, or a handle -> live lookup in ControlMap.

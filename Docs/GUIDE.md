@@ -453,7 +453,7 @@ So a wrong "never live" judgement in your code cannot leave an orphan claim. It 
 
 The mechanism: `Repoint` tests the claim's deadline against the clock before it moves it, and a lapsed claim is left for the expiry pass to release.
 
-> **Key Concept 17 (a snapshot read)** `IsClaimLive`, `GetTravelLegState`, `GetCombatApproachState` and the engine seats read the last published snapshot. A request that has not been drained is not in it.
+> **Key Concept 17 (a snapshot read)** `IsClaimLive`, `GetTravelLegState`, `GetCombatApproachState` and the engine seats read the last published snapshot. A request that has not been drained is not in it. `GetIdleState` (ABI 24) is not a snapshot read: it shows an idle claim as `Pending` from the moment `RequestEx` returns, while `IsClaimLive` still reads false for that claim until the drain.
 
 **Check Your Understanding: The drain**
 
