@@ -431,6 +431,17 @@ only while ALL of these hold:
 8. **The world's reaction belongs to the client** (principle 2 scope). Knowledge is the GROUP's, as the
    engine keeps it (review F-7): every member of the holder's combat group knows where the held target is,
    because the engine itself keeps one entry per group; no group the holder is not in is ever written.
+9. **The holder may be ANY non-player actor (clarified 2026-10-12, taunt audit, no rule change).** A client may
+   hold an engagement from a HOSTILE NPC onto its own follower (MFO's taunt: ch.20 on the foe, target = the
+   taunter, plus a ch.21 entry with `fval` 0 when the taunter is not yet a target of the foe's group). Nothing in
+   (f), (g) or this action tests whether the holder is a party member: the seat, the knowledge write (into the
+   HOLDER's group, condition 8), the watchdogs (condition 3), the drives (condition 5) and every release path
+   apply unchanged, and a holder of either side gets the same deny. Two consequences are the client's, not
+   Harbinger's (principle 2 scope): the bleed-out drive walks a hostile holder to a DOWNED held follower (the
+   client releases the pin when its follower goes down), and condition 6's "actively hostile" test is
+   party-ABSOLUTE in its player / teammate clauses (holder-relative only for the holder itself and its own
+   group), so a client must leave `fval` 0 on a non-party holder. The knowledge seat finds a holder of the
+   event's group among ALL holds naming the target, uncapped (a target can be held from two enemy groups).
 
 **#20 — COMPOSED ANSWERS: APMF may answer the ENGINE'S OWN DECISION SEATS so the
 AI decides what a claim asks for — and exactly ONE of those answers may skip the
