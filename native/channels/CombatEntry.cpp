@@ -1116,6 +1116,13 @@ namespace {
 
 namespace apmf::combatentry::hold {
 
+    // marth 2026-10-13, F6 ("End an empty fight"): the combat substrate's real-combat drop ends a fight left
+    // with no target through this SAME ranked path (channels/CombatSubstrate.cpp DropSub).
+    std::string StopCombatRanked(RE::Actor* a_actor, APMF_API::Handle a_claim, RE::FormID a_dropped,
+                                 RE::ActorHandle a_droppedH) {
+        return hold_detail::StopCombatRanked(a_actor, a_claim, a_dropped, a_droppedH);
+    }
+
     using namespace hold_detail;
 
     bool Enabled() { return g_enabled.load(std::memory_order_relaxed); }

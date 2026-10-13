@@ -468,12 +468,19 @@ with `kIntent_CombatSubstrate` beside its `kIntent_Cast` claim. It is legal only
    anchor, never an actor of the world).
 2. **Harbinger owns the deny set, and it is complete or the substrate does not open (principle 2).** While a
    holder is under its substrate: (a) every combat behaviour-tree LEAF is force-failed with ch.7's ForceFail
-   act()/pop() PAIR except `CastImmediateSpell`, `CastConcentrationSpell` and `PrepareDualCast`, and those three run
-   only while a DRIVING cast claim stands -- an ALLOW-list, so a leaf nobody listed is denied by construction; the
-   catalog's structural nodes (the selectors, `DynamicConditionalNode`, `Parallel`, `Sequence`, `Repeat`,
-   `ForceFail`, `ForceSuccess`) decide nothing and pass, because the cast leaves sit beneath them (AE builder
-   `0x8A0720`); the substrate refuses to install unless all 74 leaves (the 70-leaf catalog and the four search
-   leaves) carry the pair; (b) every `StartCombat` against the ANCHOR by an actor that is not a live holder is
+   act()/pop() PAIR except `CastImmediateSpell`, `CastConcentrationSpell`, `PrepareDualCast` and the two dual-cast
+   variants `CastImmediateSpell<bool>` / `CastConcentrationSpell<bool>`, and those run only while a DRIVING cast
+   claim stands -- an ALLOW-list, so a leaf nobody listed is denied by construction. The index covers EVERY
+   concrete `CombatBehaviorTreeNodeObject*` class: 95 on both runtimes (the RTTI names in both unpacked
+   executables), i.e. the 70 parameterless leaves, the four search leaves and the 21 parameterised nodes of
+   `core/CombatBehaviorRE.h` `kParamLeaves` (review F1 of a512763: AcquireResource, Flee, FaceAngle, WatchTarget,
+   DisableAim, FollowPath / AcquireItem, Idle, Land, the blackboard nodes -- denied); the structural nodes (the
+   selectors, `DynamicConditionalNode`, `DynamicSelector<Conditional,float>`, `Parallel`, `SpawnParallel`,
+   `Sequence`, the four `Repeat` forms, `ForceFail`, `ForceSuccess`) decide nothing and pass, because the cast
+   leaves sit beneath them (AE builder `0x8A0720`); the substrate refuses to install unless all 95 carry the pair.
+   Node classes that are not `NodeObject*` (the value, create-context, conditional, link, wrapper and root nodes,
+   and the two function-node classes `NodeEvaluateFunction` / `NodeUpdateFunction`) are not hooked: INFERRED to
+   route and decide nothing, the two function nodes not yet traced (REVIEW-BACKLOG); (b) every `StartCombat` against the ANCHOR by an actor that is not a live holder is
    answered "dead" at StartCombat's TARGET check, on the slot-0x99 seat ch.22 owns (verified row
    `Substrate.StartCombat.TargetIsDeadCall`; a 17-byte stub in the vtable slot hands the thunk StartCombat's own
    `this`, held in rdi) -- this amends (h) condition 2 ("the TARGET's own IsDead(false) check ... is never
@@ -486,14 +493,21 @@ with `kIntent_CombatSubstrate` beside its `kIntent_Cast` claim. It is legal only
    CombatAction, Combat, Equip and Detection in `APMF_Sources.ini`; otherwise it refuses by name rather than switch
    a facet on undenied. KNOWN HOLES, approved by marth 2026-10-12 and logged once per substrate: the combat-start
    topic (StartCombat's block at AE `0x6B6CFB`, which runs because the bit below is off at entry) and the combat
-   state event (`TESCombatEvent` / `OnCombatStateChanged`, never hidden from other mods' scripts); and a group JOIN
-   (StartCombat's third argument) is not caught at the target check.
-3. **The body stays the package's: the ignoring-combat split.** After the entry the process ignoring-combat bit
-   (`AIProcess+0x139`, read by AE `0x6D6780` / SE `0x643F00`) is set, the controller is NOT paused (its `+0x42` was
-   copied from the bit, still 0, at its birth: AE `0x5582F8`), and `EvaluatePackage(false, false)` runs once
-   (`resetAI` false). The package gate lets the actor's own package run, so it keeps walking while its hands cast;
+   state event (`TESCombatEvent` / `OnCombatStateChanged`, never hidden from other mods' scripts). A RECORDED hole,
+   NOT approved (review F9 of a512763): a group JOIN (StartCombat's third argument) is not caught at the target
+   check.
+3. **The body stays the package's: the ignoring-combat split.** After the entry `EvaluatePackage(false, false)` runs
+   once (`resetAI` false) and THEN the process ignoring-combat bit (`AIProcess+0x139`, read by AE `0x6D6780` / SE
+   `0x643F00`) is set once; the controller is NOT paused (its `+0x42` was copied from the bit, still 0, at its birth:
+   AE `0x5582F8`). The order is review F2 of a512763 (the design's 3.4 said set, then evaluate): the call only
+   buffers (boolBits bit 16, AE `0x66D13C` / SE `0x5DB732`); the actor's own AI update runs it (AE 37347 `0x6677E6`
+   / SE 36356 `0x5D6B39`, the immediate path clears bits 16-17 at AE `0x66D117` / SE `0x5DB713`) and, in the same
+   update, starts the package, whose `UpdateIgnoringCombat` (AE `0x6D7E80` from 39434) copies the package's flag
+   (0 for a follow package) into the bit. So the bit is written after bit 16 reads clear and one more frame has
+   passed (2 s at most, logged), and P6 attributes every later reset to a package restart (the package or its start
+   time changed) or to something else. The package gate lets the actor's own package run, so it keeps walking while its hands cast;
    the Movement half of the tree is denied by condition 2(a). **marth's flag-hold approval of record, 2026-10-12,
-   P6 FIRST:** the engine re-syncs the bit from the package flag on a re-evaluation (AE `0x6D7E80`); a per-frame
+   P6 FIRST:** the engine re-syncs the bit from the package flag on a package start (AE `0x6D7E80`); a per-frame
    re-assert of the bit, scoped to the substrate only, capped at 15 s, and logging every reset it undoes, is
    APPROVED as the one sustained write this action makes -- built only after probe P6 shows the package moving the
    body with a controller present and the cast animated while walking (slice S2b). Slice S2a writes the bit ONCE
@@ -508,25 +522,29 @@ with `kIntent_CombatSubstrate` beside its `kIntent_Cast` claim. It is legal only
    home on the last close, one `EvaluatePackage(false, false)`. Harbinger releases the client's claim and logs the
    reason. Nothing is saved (no co-save); a load or revert forgets every substrate, and the first pump after a load
    sends the anchor home and removes the anchor from any group a SAVE carried it in (ending that combat when nothing
-   else is left to fight).
+   else is left to fight) -- that load sweep APPROVED by marth 2026-10-13 (review F8).
 5. **Real combat ends the substrate at once and never suppresses a real fight.** marth's wording, approved
    2026-10-12: *The substrate is legal only while no real combat exists for its holder. Real combat is a target
    other than the anchor in the holder's group, a hit on the holder by a non-party actor, or the party in combat.
    When it starts, every substrate suppression for that holder stands down on the combat thread at once, and the
    game-thread pass removes the anchor from the group (`CombatGroup::RemoveTarget`) and releases the rest.
    Harbinger never calls `StopCombat` on that path, and never suppresses any combat behaviour of a holder that has
-   a real target.* The trigger sets the holder's REAL bit in the lock-free holder table before anything else; every
+   a real target.* **Amended by marth 2026-10-13 (review F6, "End an empty fight"):** when the holder's group has NO
+   target left once the anchor is removed (a hit or the party's fight whose foe was never in the group), the fight
+   is ended ONCE through the held engagement's ranked `StopCombat` ((i) condition 6's `StopCombatRanked`); while the
+   real foe is in the group `StopCombat` is never called. The drop line says which case happened. The trigger sets
+   the holder's REAL bit in the lock-free holder table before anything else; every
    deny in condition 2 reads it first (a deny that fires after it is logged `DENIED <leaf> AFTER REAL COMBAT`, a
    defect). The drop keeps the client's cast claim and the fight; `RemoveTarget` is verified row
    `Substrate.CombatGroup.RemoveTarget` (AE 44705 / SE 43483) and is refused on 1.7.104 (the substrate with it).
 6. **Threading.** Open, serve, close, drop and every engine call run on the game thread (`Arbiter::OncePerFrame`).
    The combat-thread seats (the leaf allow-list, the slot-0x99 thunk, the detection seat, the 0x0B observer) read
-   only a fixed table of atomics, never a controller; a slot's id is re-read after its state (a reused slot reads
+   only a fixed table of atomics and the atomic "served holder" (review F4 of a512763), never a controller; a slot's id is re-read after its state (a reused slot reads
    as another actor). `StopCombat` and `RemoveTarget` are called from the player's update seat with the same
    exposure as (i) condition 6 (APMF-B26).
 7. **Scope is closed by name.** Exactly 1.6.1170 or 1.5.97 (1.7.104 refuses: `RemoveTarget` has no 1.7.104 id),
    not VR, `[CombatSubstrate] bCombatSubstrate` (default 0), ch.22's seat installed with its target site and stub,
-   ch.7's pair on all 74 leaves, the anchor records resolving, and the self-check on every row the path calls. An
+   ch.7's pair on all 95 node classes, the anchor records resolving, and the self-check on every row the path calls. An
    out-of-combat, loaded, high-process, non-player holder in no scene and no dialogue, with the party out of combat.
    Another target than the anchor, a re-entry on a timer, holding the bit outside a substrate, or any facet
    switched on without its deny is a new amendment, not a code change. The dry run (`bSubstrateDryRun`, default 0)

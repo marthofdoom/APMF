@@ -1437,8 +1437,21 @@ namespace apmf::actiongate {
 
         RangedProbeInstall();
 
-        // THE COMBAT SUBSTRATE's leaf index: every catalog leaf (and search leaf) with act() AND pop()
-        // installed. channels/CombatSubstrate.cpp refuses to install unless all 74 are here.
+        // THE COMBAT SUBSTRATE's leaf index: every catalog leaf, search leaf and PARAMETERISED node (review F1:
+        // core/CombatBehaviorRE.h kParamLeaves, act + pop installed here only when [CombatSubstrate]
+        // bCombatSubstrate=1) with act() AND pop() installed. channels/CombatSubstrate.cpp refuses below all 95.
+        if (GetPrivateProfileIntA("CombatSubstrate", "bCombatSubstrate", 0, "Data/SKSE/Plugins/APMF.ini") != 0) {
+            std::array<REL::VariantID, apmf::cbt::kParamLeaves.size()> pvt{};
+            for (std::size_t k = 0; k < pvt.size(); ++k) pvt[k] = apmf::cbt::kParamLeaves[k].vtbl;
+            allowance::InstallOnVtables(pvt, 0x02, &ActThunk, expectedTD.get(), "substrate-param", g_orig);
+            allowance::InstallOnVtables(pvt, 0x03, &PopThunk, expectedTD.get(), "substrate-param-pop", g_origPop);
+            for (std::size_t k = 0; k < pvt.size(); ++k) {
+                REL::Relocation<std::uintptr_t> vt{ pvt[k] };
+                if (Paired(vt.address()))
+                    g_leafIdx[vt.address()] = static_cast<std::uint32_t>(apmf::cbt::kLeaves.size() +
+                                                                         apmf::cbt::kSearchLeaves.size() + k);
+            }
+        }
         for (std::size_t i = 0; i < apmf::cbt::kLeaves.size(); ++i) {
             REL::Relocation<std::uintptr_t> vt{ apmf::cbt::kLeaves[i].vtbl };
             if (Paired(vt.address())) g_leafIdx[vt.address()] = static_cast<std::uint32_t>(i);

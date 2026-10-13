@@ -2,6 +2,7 @@
 #include "channels/CombatSubstrate.h"
 
 #include "channels/CombatApproach.h"       // SpaceOfRef: the anchor's last-known location space
+#include "channels/CombatEntry.h"          // hold::StopCombatRanked: the empty-fight end (F6)
 #include "channels/CombatReentryDeny.h"    // the slot-0x99 seat this file's anchor refusal rides; ClientEntryScope
 #include "core/ActionGate.h"               // SubstrateLeavesPaired: the allow-list's coverage
 #include "core/Allowance.h"                // SeatVerified, RuntimeSupported
@@ -71,10 +72,12 @@
 //   4. ONE Actor::StartCombat(anchor, nullptr) -- the call ch.21 makes, verified row
 //      CombatEntry.Actor.StartCombat, inside reentrydeny::ClientEntryScope (a declared entry
 //      passes a ch.22 deny, INVARIANTS #0 (h) condition 4). A false return ends the substrate;
-//   5. S2a: the process ignoring-combat bit (AIProcess+0x139, read by AE 0x6D6780 / SE 0x643F00)
-//      is set ONCE, the controller is NOT paused (its +0x42 was copied from the bit, still 0,
-//      at birth: AE 0x5582F8 / SE 0x4FCC6F), then Actor::EvaluatePackage(false, false) once
-//      (resetAI stays false). The package gate (AE 0x6D8950 via 0x6B6DF0) lets the follower's
+//   5. S2a (order corrected by review F2 of a512763; the design's 3.4 said set-then-evaluate):
+//      Actor::EvaluatePackage(false, false) once (resetAI stays false) FIRST; once the engine has
+//      run that re-pick (WriteBitAfterRepick: kEvpBuffered cleared, then one more Poll), the
+//      process ignoring-combat bit (AIProcess+0x139, read by AE 0x6D6780 / SE 0x643F00) is set
+//      ONCE. The controller is NOT paused (its +0x42 was copied from the bit, still 0, at birth:
+//      AE 0x5582F8 / SE 0x4FCC6F). The package gate (AE 0x6D8950 via 0x6B6DF0) lets the follower's
 //      own package run, so it keeps walking under it (marth: "block combat from affecting
 //      movement and have them continue using the non combat package for movement"). The engine
 //      re-syncs the bit from the package flag on a re-evaluation (UpdateIgnoringCombat AE
@@ -93,14 +96,23 @@
 //     Selector [FallbackSelector<NextChild>] > {PrepareDualCast, CastImmediateSpell, ...}), so
 //     they pass, or the cast leaf could never be reached. Allow, not block: a leaf nobody
 //     listed is denied by construction. The Movement half's leaves are leaves: denied, so the
-//     package is the only driver of the body. The four search leaves are covered too (they
-//     carry ch.23's act()/pop(); the substrate refuses to install without all 74);
+//     package is the only driver of the body. COVERAGE (review F1 of a512763): EVERY
+//     CombatBehaviorTreeNodeObject* vtable the MIT fork ships -- the 70 parameterless leaves,
+//     the four search leaves (ch.23's act()/pop()) and the 21 PARAMETERISED nodes
+//     (core/CombatBehaviorRE.h kParamLeaves: AcquireResource, Flee<float>, FaceAngle, WatchTarget,
+//     DisableAim, FollowPath / AcquireItem<AcquireWeapon>, Idle, Land, the blackboard nodes, all
+//     denied; the dual-cast CastImmediate / CastConcentration<bool>, gated like the cast leaves;
+//     Repeat<...>, SpawnParallel, DynamicSelector<Conditional,float>, structural, passing). The
+//     substrate refuses to install unless all 95 carry the pair. Composite node classes that are
+//     not NodeObject* (the CreateContext / ValueNode / conditional wrappers) decide nothing and
+//     are not hooked;
 //   * StartCombat against the ANCHOR by anyone but a live holder: the slot-0x99 seat ch.22
 //     owns answers "dead" at StartCombat's TARGET check (verified row
 //     Substrate.StartCombat.TargetIsDeadCall: AE +0xCC, return 0x6B6A0A; SE +0xCA, return
 //     0x625288). StartCombat's own `this` is in rdi there; a 17-byte stub in front of the
-//     thunk hands it in as a third argument (channels/CombatReentryDeny.cpp). KNOWN HOLE (design
-//     3.5): a group JOIN (StartCombat's third argument) is not caught at that check;
+//     thunk hands it in as a third argument (channels/CombatReentryDeny.cpp). A RECORDED HOLE
+//     (design 3.5; recorded, NOT approved by marth): a group JOIN (StartCombat's third argument)
+//     is not caught at that check;
 //   * the anchor's group entry is kept KNOWN (the held engagement's own un-lose write,
 //     INVARIANTS #0 (i) condition 1, for the anchor only) so the group never searches for it;
 //   * other spells: the floors + ch.8 / 0x0F / 0x0A as before; only the claimed spell runs.
@@ -117,7 +129,11 @@
 // deny above reads it and stands down on the combat thread at once. The game-thread pass then:
 // restores the bit, removes the anchor from the group (CombatGroup::RemoveTarget, verified row:
 // AE 44705 0x803D70 / SE 43483 0x76A560), releases the floors, drops the holder (the anchor goes
-// home on 1 -> 0), and calls NO StopCombat: the fight goes on, the client's cast claim is kept.
+// home on 1 -> 0). NO StopCombat while the real foe is in the holder's group: the fight goes on,
+// the client's cast claim is kept. marth 2026-10-13 (review F6, "End an empty fight"): when the
+// group has NO target left once the anchor is removed (triggers (b) / (c): the foe was never in
+// it), the fight is ended ONCE through the held engagement's ranked StopCombat
+// (combatentry::hold::StopCombatRanked); the DROPPED line says which case it was.
 //
 // CLOSE (design 3.6): the claim's first observed FIRE (fire-and-forget; the census 0x0B
 // NotifyStartCast seat), the claim's end (released, expired, the stop percent), the client's
@@ -127,7 +143,7 @@
 // the slot table (the anchor home on 1 -> 0), EvaluatePackage(false, false). Prior behaviour
 // returns because nothing else was written: the package was never replaced.
 //
-// LOAD (no co-save). The holder set is game state only. A save written while a substrate was open
+// LOAD (no co-save; the sweep below APPROVED by marth 2026-10-13, review F8). The holder set is game state only. A save written while a substrate was open
 // carries the holder's controller and the anchor's position: AfterLoad sends the anchor home and,
 // for a loaded actor whose group still lists the anchor, removes the anchor from that group
 // (RemoveTarget) and, when nothing else is left for it to fight, ends that combat (StopCombat).
@@ -165,6 +181,9 @@ namespace {
     constexpr std::uint64_t kHeartbeatMs    = 30000;
     constexpr float         kAnchorFollowU  = 32.0f;   // move the anchor when its holder moved this far
     constexpr std::uint16_t kTargetLost     = 1u << 1; // CombatTarget::flags kTargetLost (the hold's constant)
+    constexpr std::uint64_t kRepickWaitMs   = 2000;    // review F2: the longest wait for the buffered re-pick
+    constexpr std::uint64_t kFloorRenewMs   = 10000;   // review F5: renew the floors' 15 s windows this often
+    std::uint64_t           g_pollFrame     = 0;       // Poll calls (game thread)
 
     // Range tiers (design 3.3: the anchor stands at the holder whose claimed spell has the
     // SHORTEST range). Units are the reach a holder must be within for the "waits" line;
@@ -310,7 +329,19 @@ namespace {
         int              slot = -1;
         std::uint64_t    requestedMs = 0, queuedMs = 0, openedMs = 0, deadlineMs = 0, ttlMs = 0;
         APMF_API::Handle floorR = APMF_API::kInvalidHandle, floorL = APMF_API::kInvalidHandle;
-        bool             bitSet = false, priorBit = false;
+        bool             bitSet = false, priorBit = false;   // priorBit: the bit just before Harbinger's write
+        bool             entryBit = false;                    // the bit at the entry (a pre-set bit = a paused controller)
+        // review F2 of a512763: the single write waits for the re-pick it requested (see WriteBitAfterRepick)
+        bool             bitPending = false;
+        std::uint64_t    repickAskedMs = 0, repickClearMs = 0;
+        std::uint64_t    repickClearFrame = 0;
+        RE::TESPackage*  bitPkg = nullptr;          // the running package when the bit was written
+        float            bitPkgStart = 0.0f;        // its ActorPackage::packageStartTime then
+        std::uint32_t    resetsByRestart = 0, resetsOther = 0;
+        // review F5: the floors are renewed while the substrate lives
+        std::uint64_t    floorRenewMs = 0;
+        // review F3: the anchor's process level, seen while this substrate was open
+        bool             anchorHighSeen = false;
         bool             closeAsked = false;       // the client released (Release runs inside Drain)
         const char*      closeWhy = nullptr;
         // the claim the substrate serves
@@ -335,7 +366,9 @@ namespace {
     std::unordered_map<RE::FormID, Sub> g_subs;          // GAME THREAD ONLY
     std::atomic<std::size_t>            g_subCount{ 0 }; // Poll pre-gate (relaxed)
 
-    RE::FormID    g_served = 0;               // the holder the anchor stands at
+    // The holder the anchor stands at. Written on the game thread; READ by RefuseAnchorTarget on the combat /
+    // detection threads for its log attribution (review F4 of a512763): an atomic, seq_cst by default.
+    std::atomic<RE::FormID> g_served{ 0 };
     std::uint32_t g_anchorOut = 0;            // holders the anchor is out for (game thread)
     std::uint64_t g_lastDryMs = 0, g_lastPartyMs = 0, g_lastHeartbeatMs = 0;
     // heartbeat totals (game thread)
@@ -487,13 +520,16 @@ namespace {
         spdlog::info("[substrate] 0x{} OBSERVED music={}{} player-in-combat={} aggressor-bit={} ignoring-readers=not "
                      "instrumented (8 engine call sites per runtime; a raw call-site probe is forbidden by INVARIANTS "
                      "#17, see Docs/FACETS.md 'Combat substrate') | anchor StartCombat refused {} | anchor un-lost {} | "
-                     "hits on the holder {} | casts released {}",
+                     "hits on the holder {} | casts released {} | anchor reached high process {} | ignoring-bit resets "
+                     "{} (package restart {}, other {})",
                      Hex(a_sub.id), g_musicOk ? (a_sub.musicSeen ? Hex(a_sub.musicSeen) : std::string("none"))
                                                : std::string("n/a (the BSMusicManager row did not verify)"),
                      fmt::format(" (group music state max {})", a_sub.groupMusicMax),
                      a_sub.playerCombatSeen ? "y" : "n", a_sub.aggressorSeen ? 1 : 0,
                      s.anchorRefused.load(std::memory_order_relaxed), s.unlost.load(std::memory_order_relaxed),
-                     s.hits.load(std::memory_order_relaxed), s.fires.load(std::memory_order_relaxed));
+                     s.hits.load(std::memory_order_relaxed), s.fires.load(std::memory_order_relaxed),
+                     a_sub.anchorHighSeen ? "y" : "NO (SetAlpha never applied: the anchor stayed visible)",
+                     a_sub.bitResets, a_sub.resetsByRestart, a_sub.resetsOther);
         (void)a_actor;
     }
 
@@ -509,10 +545,9 @@ namespace {
     }
 
     void FileFloors(Sub& a_sub) {
-        const auto left = a_sub.deadlineMs > apmf::clock::MonotonicMs() ? a_sub.deadlineMs - apmf::clock::MonotonicMs() : 1;
         APMF_API::APMF_CastRequest r{};
         r.flags = APMF_API::kCastFlag_DenyHandOnly;   // a FULL floor (no kCastFlag_FloorSpellsOnly)
-        r.ttlMs = static_cast<std::uint32_t>(std::min<std::uint64_t>(left + 1000, APMF_API::kCastMaxTtlMs));
+        r.ttlMs = APMF_API::kCastMaxTtlMs;            // review F5: the longest window; Serve renews it by Repoint
         a_sub.floorR = apmf::ControlMap::Get().EnqueueCast(a_sub.id, kFloorBasis, &r);
         r.flags |= APMF_API::kCastFlag_LeftHand;
         a_sub.floorL = apmf::ControlMap::Get().EnqueueCast(a_sub.id, kFloorBasis, &r);
@@ -624,7 +659,7 @@ namespace {
             AnchorToHolder(anchor, actor, false);
             g_served = a_sub.id;
         }
-        a_sub.priorBit = proc->ignoringCombat;
+        a_sub.entryBit = proc->ignoringCombat;
         bool ok = false;
         g_slots[a_sub.slot].state.fetch_or(kStEntering, std::memory_order_acq_rel);
         {
@@ -645,7 +680,7 @@ namespace {
         }
         // KNOWN HOLE (approved): the bit is off at entry, so StartCombat's block at AE 0x6B6CFB-0x6B6D32
         // (the vfunc 0x4A result into 0x3A0D20 / id 24131, INFERRED to be the combat-start topic) ran.
-        if (!a_sub.priorBit)
+        if (!a_sub.entryBit)
             spdlog::info("[substrate] 0x{} known hole: combat-start topic path ran (the ignoring-combat bit was off at "
                          "entry, so StartCombat's AE 0x6B6CFB block executed; approved by marth 2026-10-12, RS2 researches "
                          "a deny).",
@@ -656,28 +691,34 @@ namespace {
                          "at birth (AE 0x5582F8) and is born PAUSED -- its tree, the cast leaves included, does not run. "
                          "P6's ctrl+0x42 shows it.",
                          Hex(a_sub.id));
-        // S2a: the process bit ONCE, the controller left unpaused, one package re-pick. No re-assert (S2b).
-        proc->ignoringCombat = true;   // AIProcess+0x139 (static_assert below; AE 0x6D6780 / SE 0x643F00 read it)
-        a_sub.bitSet   = true;
-        a_sub.bitWasOn = true;
-        spdlog::info("[substrate] 0x{} wrote AIProcess+0x139 (ignoringCombat) {} -> 1 ONCE (S2a: no re-assert); "
-                     "controller +0x42 = {} (not paused).",
-                     Hex(a_sub.id), a_sub.priorBit ? 1 : 0,
+        // S2a, review F2 of a512763: the package RE-PICK FIRST, then the process bit ONCE after it ran (see
+        // WriteBitAfterRepick). The controller is left unpaused. No re-assert (S2b).
+        g_evaluatePackage(actor, false, false);   // resetAI false: a reset clears the combat group (and StopCombats)
+        a_sub.bitPending    = true;
+        a_sub.repickAskedMs = now;
+        a_sub.floorRenewMs  = now;
+        spdlog::info("[substrate] 0x{} package re-pick requested (EvaluatePackage(false, false): buffered, kEvpBuffered "
+                     "{}); the ignoring-combat bit is written once the engine ran it. Controller +0x42 = {} (not paused).",
+                     Hex(a_sub.id),
+                     actor->GetActorRuntimeData().boolBits.all(RE::Actor::BOOL_BITS::kEvpBuffered) ? "set" : "NOT set",
                      actor->GetActorRuntimeData().combatController->ignoringCombat ? 1 : 0);
-        g_evaluatePackage(actor, false, false);   // resetAI false: a reset clears the combat group
         a_sub.phase      = Phase::kOpen;
         a_sub.openedMs   = now;
         a_sub.deadlineMs = now + a_sub.ttlMs;
         a_sub.lastPos    = actor->GetPosition();
         a_sub.lastPosMs  = now;
         ++g_opened;
+        auto*       aproc = anchor->GetActorRuntimeData().currentProcess;
+        const char* alvl  = !aproc ? "none (no AI process)" : aproc->InHighProcess() ? "HIGH (SetAlpha applies)"
+                                                                               : "not high (SetAlpha is a no-op until it is)";
         spdlog::info("[substrate] 0x{} OPEN anchor=0x{} entry=true ({}; holders {}; TTL {:.1f} s; floors h={}/h={}; "
-                     "fire signal {}){}",
+                     "fire signal {}; anchor process {}, 3D {}){}",
                      Hex(a_sub.id), Hex(g_anchorId.load()), a_sub.dryRun ? "DRY RUN: no claim, no cast" :
                                                              fmt::format("claim h={}", a_sub.handle),
                      LiveHolders(), static_cast<double>(a_sub.ttlMs) / 1000.0, a_sub.floorR, a_sub.floorL,
                      g_fireSignal ? "the census 0x0B seat" : "NONE (the census 0x0B seat is not installed: a fire cannot close the substrate)",
-                     a_sub.priorBit ? " -- NOTE: the bit was already ON (the controller was born paused)" : "");
+                     alvl, anchor->Is3DLoaded() ? "loaded" : "not loaded",
+                     a_sub.entryBit ? " -- NOTE: the bit was already ON (the controller was born paused)" : "");
         return true;
     }
 
@@ -746,7 +787,8 @@ namespace {
         ReleaseClientClaim(a_sub, a_reason);
     }
 
-    // design 3.6a: the game-thread pass after the stand-down. NO StopCombat.
+    // design 3.6a: the game-thread pass after the stand-down. NO StopCombat while a real foe is in the group;
+    // a fight left with no target is ended, ranked (marth 2026-10-13, F6).
     void DropSub(Sub& a_sub) {
         Slot&         s     = g_slots[a_sub.slot];
         const auto    why   = s.realWhy.load(std::memory_order_acquire);
@@ -768,6 +810,18 @@ namespace {
                 }
                 removed = fmt::format("anchor removed from the group targets (RemoveTarget){}; {} target(s) left",
                                       still ? " -- STILL LISTED" : "", left);
+                // marth 2026-10-13 (review F6, "End an empty fight"): a trigger that is not in the holder's group
+                // ((b) a hit, (c) the party) leaves a fight with NO target once the anchor is gone. That one is ended
+                // through the held engagement's RANKED StopCombat; a fight with the real foe in it never is.
+                if (left == 0) {
+                    auto* anc = Anchor();
+                    removed += fmt::format("; EMPTY FIGHT: {}",
+                                           apmf::combatentry::hold::StopCombatRanked(
+                                               actor, a_sub.handle, anc ? anc->GetFormID() : 0,
+                                               anc ? anc->GetHandle() : RE::ActorHandle{}));
+                } else {
+                    removed += "; the real foe is in the group: NO StopCombat (the fight continues)";
+                }
             } else {
                 removed = "no combat group";
             }
@@ -787,7 +841,7 @@ namespace {
         ++g_drops;
         spdlog::info("[substrate] 0x{} REAL COMBAT ({} 0x{}) -- substrate DROPPED, combat behaviour restored in the same "
                      "frame: {}, holders {}->{}, anchor {}; released: leaf allow-list, movement denies, ignore-combat hold, "
-                     "anchor refusal, substrate floors; NO StopCombat (the fight continues); claim {}",
+                     "anchor refusal, substrate floors; claim {}",
                      Hex(a_sub.id), kWhyName[why < 4 ? why : 0], Hex(foe), removed, before, before - 1,
                      home ? std::string("home") : fmt::format("stays for 0x{}", Hex(stays)),
                      driving ? fmt::format("h={} kept", ch) : std::string("none (no driving cast claim)"));
@@ -796,6 +850,44 @@ namespace {
                          "REAL COMBAT lines): a defect, not a fallback.",
                          Hex(a_sub.id), afterReal);
         ReleaseClientClaim(a_sub, "real combat (the substrate dropped; the fight goes on)");
+    }
+
+    // ---- the single bit write (review F2 of a512763) ---------------------------------------------
+    // EvaluatePackage(false, false) (AE 0x66CCF0 / SE 0x5DB310) does not evaluate: its deferred branch sets
+    // boolBits kEvpBuffered (bit 16; AE 0x66D13C `bts eax,0x10` / SE 0x5DB732 `or [rdi+0xE0],0x10000`) and a
+    // process timer (+0x48). The actor's own AI update (37347, AE 0x6672B0) consumes it: at AE 0x6677E6 it
+    // tests bit 16 and calls EvaluatePackage(immediate) (0x667804; SE 36356 0x5D6840 at 0x5D6B39), whose
+    // immediate path clears bits 16-17 (AE 0x66D117 `and [rdi+0xE8],0xFFFCFFFF` / SE 0x5DB713 on +0xE0); later in the SAME update (AE 0x667ACC -> 39108 -> 39213 ->
+    // 39434 0x6EA820) the package start runs UpdateIgnoringCombat (AE 0x6D7E80, called at 0x6EA9A3), which
+    // copies the running package's IgnoreCombat flag into +0x139 -- 0 for a follow package. Writing the bit
+    // before that update (as S2a first did) let Harbinger's own re-pick undo it. So: request the re-pick,
+    // wait until kEvpBuffered reads CLEAR (the update ran its evaluation), then wait ONE MORE Poll (the
+    // same update's package start has finished by then, whichever thread ran it), then write the bit once.
+    // If the re-pick never runs in kRepickWaitMs the bit is written anyway and that is logged.
+    void WriteBitAfterRepick(Sub& a_sub, RE::Actor* a_actor, RE::AIProcess* a_proc, std::uint64_t a_now) {
+        const bool buffered = a_actor->GetActorRuntimeData().boolBits.all(RE::Actor::BOOL_BITS::kEvpBuffered);
+        const bool timedOut = a_now - a_sub.repickAskedMs >= kRepickWaitMs;
+        if (buffered && !timedOut) return;
+        if (!buffered && !a_sub.repickClearFrame) {
+            a_sub.repickClearFrame = g_pollFrame;
+            a_sub.repickClearMs    = a_now;
+            return;   // one more Poll: the package start in that same update has run
+        }
+        if (!timedOut && g_pollFrame <= a_sub.repickClearFrame) return;
+        a_sub.bitPending  = false;
+        a_sub.priorBit    = a_proc->ignoringCombat;
+        a_proc->ignoringCombat = true;   // AIProcess+0x139 (static_assert below; AE 0x6D6780 / SE 0x643F00 read it)
+        a_sub.bitSet      = true;
+        a_sub.bitWasOn    = true;
+        a_sub.bitPkg      = a_proc->currentPackage.package;
+        a_sub.bitPkgStart = a_proc->currentPackage.packageStartTime;
+        spdlog::info("[substrate] 0x{} wrote AIProcess+0x139 (ignoringCombat) {} -> 1 ONCE (S2a: no re-assert), {} "
+                     "(package 0x{}, start time {:.2f}).",
+                     Hex(a_sub.id), a_sub.priorBit ? 1 : 0,
+                     buffered ? fmt::format("the re-pick did NOT run within {} ms (kEvpBuffered still set)", kRepickWaitMs)
+                              : fmt::format("after the re-pick ran (kEvpBuffered cleared at +{} ms)",
+                                            a_sub.repickClearMs - a_sub.repickAskedMs),
+                     Hex(a_sub.bitPkg ? a_sub.bitPkg->GetFormID() : 0), static_cast<double>(a_sub.bitPkgStart));
     }
 
     // ---- serve (kOpen) --------------------------------------------------------------------
@@ -837,18 +929,45 @@ namespace {
             return false;
         }
 
+        // review F5: the floors live as long as the substrate. A floor that is no longer live leaves a hand
+        // undenied: the substrate closes (principle 7, never a silent gap); a live one is renewed by Repoint (a
+        // cast claim's Repoint renews its window) well before its 15 s window ends.
+        {
+            auto& cm = apmf::ControlMap::Get();
+            if (!cm.IsClaimLive(a_sub.floorR) || !cm.IsClaimLive(a_sub.floorL)) {
+                CloseSub(a_sub, "a hand floor is no longer live (the hands would be undenied)");
+                return false;
+            }
+            if (a_now - a_sub.floorRenewMs >= kFloorRenewMs) {
+                a_sub.floorRenewMs = a_now;
+                APMF_API::APMF_Param fp{};
+                fp.ival = static_cast<std::int32_t>(APMF_API::kCastFlag_DenyHandOnly);
+                cm.EnqueueRepoint(a_sub.floorR, &fp);
+                fp.ival = static_cast<std::int32_t>(APMF_API::kCastFlag_DenyHandOnly | APMF_API::kCastFlag_LeftHand);
+                cm.EnqueueRepoint(a_sub.floorL, &fp);
+            }
+        }
+
         // P3: what the world did, sampled every frame while open
         auto* proc = actor->GetActorRuntimeData().currentProcess;
+        if (proc && a_sub.bitPending) WriteBitAfterRepick(a_sub, actor, proc, a_now);
         if (proc) {
             if (proc->lowProcessFlags.underlying() & 0x04) a_sub.aggressorSeen = true;   // AIProcess+0x136 bit 2
             const bool on = proc->ignoringCombat;
-            if (a_sub.bitWasOn && !on) {   // the engine re-synced the bit from the package flag
+            if (a_sub.bitSet && a_sub.bitWasOn && !on) {   // the engine re-synced the bit from the package flag
                 ++a_sub.bitResets;
+                // review F2: attribute it. A package (re)start runs UpdateIgnoringCombat (AE 0x6D7E80 from 39434,
+                // the start path under 39213); a changed package or start time since the write says that was it.
+                const bool restart = proc->currentPackage.package != a_sub.bitPkg ||
+                                     proc->currentPackage.packageStartTime != a_sub.bitPkgStart;
+                restart ? ++a_sub.resetsByRestart : ++a_sub.resetsOther;
                 if (!a_sub.firstResetMs) {
                     a_sub.firstResetMs = a_now;
-                    spdlog::info("[substrate] 0x{} ignoring-bit reset by the engine at +{} ms ({}) -- S2a does not "
-                                 "re-assert it (S2b, after P6).",
-                                 Hex(a_sub.id), a_now - a_sub.openedMs, a_sub.bitResets);
+                    spdlog::info("[substrate] 0x{} ignoring-bit reset by the engine at +{} ms ({}, cause: {}) -- S2a does "
+                                 "not re-assert it (S2b, after P6).",
+                                 Hex(a_sub.id), a_now - a_sub.openedMs, a_sub.bitResets,
+                                 restart ? "a package (re)start: the package or its start time changed since the write"
+                                         : "OTHER: the same package, the same start time");
                 }
             }
             a_sub.bitWasOn = on;
@@ -878,11 +997,13 @@ namespace {
             auto* pc   = RE::PlayerCharacter::GetSingleton();
             auto* cc   = actor->GetActorRuntimeData().combatController;
             spdlog::info("[substrate] 0x{} MOVE pkg=0x{} proc={} ctrl+0x42={} proc+0x139={} speed={:.0f} "
-                         "dist-to-pkg-goal={:.0f} (the player) movement-leaves-denied={} ignoring-bit reset by the engine ({})",
+                         "dist-to-pkg-goal={:.0f} (the player) movement-leaves-denied={} ignoring-bit reset by the engine ({}: "
+                         "package restart {}, other {}){}",
                          Hex(a_sub.id), Hex(pkg), type, cc && cc->ignoringCombat ? 1 : 0,
                          proc && proc->ignoringCombat ? 1 : 0, static_cast<double>(speed),
                          pc ? static_cast<double>(pos.GetDistance(pc->GetPosition())) : -1.0,
-                         s.moveDenied.load(std::memory_order_relaxed), a_sub.bitResets);
+                         s.moveDenied.load(std::memory_order_relaxed), a_sub.bitResets, a_sub.resetsByRestart,
+                         a_sub.resetsOther, a_sub.bitPending ? " [bit not yet written: waiting for the re-pick]" : "");
         }
         return true;
     }
@@ -905,7 +1026,15 @@ namespace {
         if (best->id != g_served || moved) {
             AnchorToHolder(anchor, at, false);
             g_served = best->id;
+        } else {
+            // review F3 of a512763: SetAlpha (slot 0xE1, AE 0x6C1A50 / SE 0x62FAD0) returns at once unless the
+            // anchor is HIGH process (AE 0x69C6D0 / SE 0x608DE0), which it is not in the frame it leaves its unloaded
+            // holding cell. So it is applied on EVERY Poll while the anchor is out, not only on a move.
+            anchor->SetAlpha(0.0f);
         }
+        if (auto* ap = anchor->GetActorRuntimeData().currentProcess; ap && ap->InHighProcess())
+            for (auto& [id, sub] : g_subs)
+                if (sub.phase == Phase::kOpen) sub.anchorHighSeen = true;
         for (auto& [id, sub] : g_subs) {
             if (sub.phase != Phase::kOpen || sub.slot < 0 || id == g_served) continue;
             auto* a = RE::TESForm::LookupByID<RE::Actor>(id);
@@ -1104,6 +1233,12 @@ namespace {
     static_assert(offsetof(RE::AIProcess, ignoringCombat) == 0x139, "AIProcess+0x139 is the process ignoring-combat bit "
                                                                      "(AE 0x6D6780 / SE 0x643F00 read it): re-verify");
     static_assert(offsetof(RE::AIProcess, lowProcessFlags) == 0x136, "AIProcess+0x136 (the aggressor bit 2): re-verify");
+    static_assert(offsetof(RE::AIProcess, currentPackage) == 0x18 && offsetof(RE::ActorPackage, package) == 0x08 &&
+                      offsetof(RE::ActorPackage, packageStartTime) == 0x20,
+                  "UpdateIgnoringCombat (AE 0x6D7E80) reads process+0x18 (the ActorPackage) +0x08 / +0x24: re-verify; "
+                  "+0x20 packageStartTime is CommonLib's name, read for the P6 reset attribution only");
+    static_assert(static_cast<std::uint32_t>(RE::Actor::BOOL_BITS::kEvpBuffered) == (1u << 16),
+                  "EvaluatePackage's deferred branch sets boolBits bit 16 (AE 0x66D13C / SE 0x5DB732): re-verify");
     static_assert(offsetof(RE::CombatController, ignoringCombat) == 0x42, "CombatController+0x42 (paused; AE 0x55A870 "
                                                                           "writes it): re-verify");
     static_assert(offsetof(RE::CombatController, combatGroup) == 0x00 &&
@@ -1113,8 +1248,10 @@ namespace {
                   "CombatGroup layout (the hold's, re-measured): re-verify");
     static_assert(offsetof(RE::CombatTarget, flags) == 0xA6 && sizeof(RE::CombatTarget) == 0xA8,
                   "CombatTarget layout (the hold's): re-verify");
-    static_assert(apmf::cbt::kLeaves.size() + apmf::cbt::kSearchLeaves.size() == subs::kLeafCount,
-                  "the allow-list's leaf index must cover the 70-leaf catalog and the four search leaves");
+    static_assert(apmf::cbt::kLeaves.size() + apmf::cbt::kSearchLeaves.size() + apmf::cbt::kParamLeaves.size() ==
+                      subs::kLeafCount,
+                  "the allow-list's index must cover the 70-leaf catalog, the four search leaves and the 21 "
+                  "parameterised nodes (every NodeObject* vtable the fork ships)");
 
 }
 
@@ -1193,14 +1330,15 @@ namespace apmf::combatsubstrate {
         // drops it from the table it is refused like any other actor.
         if (si >= 0 && (st & kStLive)) return false;
         // Ranked at open: a substrate opens only while its client outranks Engine on Combat.
-        const auto n = g_anchorRefusals.fetch_add(1, std::memory_order_relaxed) + 1;
+        const auto       n      = g_anchorRefusals.fetch_add(1, std::memory_order_relaxed) + 1;
+        const RE::FormID served = g_served.load(std::memory_order_relaxed);
         for (auto& s : g_slots)
-            if (s.id.load(std::memory_order_relaxed) == g_served) s.anchorRefused.fetch_add(1, std::memory_order_relaxed);
+            if (s.id.load(std::memory_order_relaxed) == served) s.anchorRefused.fetch_add(1, std::memory_order_relaxed);
         try {
             const auto now  = apmf::clock::MonotonicMs();
             auto       prev = g_anchorRefusalLastLogMs.load(std::memory_order_relaxed);
             if (now - prev >= 2000 && g_anchorRefusalLastLogMs.compare_exchange_strong(prev, now)) {
-                spdlog::info("[substrate] 0x{} STARTCOMBAT-AT-ANCHOR REFUSED caller=0x{} ({} so far)", Hex(g_served),
+                spdlog::info("[substrate] 0x{} STARTCOMBAT-AT-ANCHOR REFUSED caller=0x{} ({} so far)", Hex(served),
                              Hex(caller), n);
             }
         } catch (...) {
@@ -1284,9 +1422,10 @@ namespace apmf::combatsubstrate {
         } else if (!apmf::reentrydeny::TargetSiteInstalled()) {
             why = "the anchor-target refusal is not installed on ch.22's seat (its call-site row or the rdi stub)";
         } else if (apmf::actiongate::SubstrateLeavesPaired() != kLeafCount) {
-            why = "the leaf allow-list does not cover all 74 leaves with an act()/pop() pair and the ForceFail pair (the "
-                  "70-leaf catalog plus the four search leaves ch.23 installs: [PursuitLeash] bPursuitLeash=0 refuses "
-                  "the substrate too)";
+            why = "the leaf allow-list does not cover all 95 behaviour-tree node classes with an act()/pop() pair and the "
+                  "ForceFail pair (the 70-leaf catalog, the four search leaves ch.23 installs -- [PursuitLeash] "
+                  "bPursuitLeash=0 refuses the substrate too -- and the 21 parameterised nodes ActionGate installs when "
+                  "bCombatSubstrate=1)";
         }
         if (!why) {
             bool ok = apmf::allowance::SeatVerified(
@@ -1338,9 +1477,17 @@ namespace apmf::combatsubstrate {
         g_fireSignal = apmf::castertypecensus::NotifyInstalled();
 
         // the leaf classes (design 3.5's allow-list)
+        constexpr std::size_t kL = apmf::cbt::kLeaves.size(), kS = apmf::cbt::kSearchLeaves.size();
         for (std::uint32_t i = 0; i < kLeafCount; ++i) {
-            const char* nm = i < apmf::cbt::kLeaves.size() ? apmf::cbt::kLeaves[i].name
-                                                           : apmf::cbt::kSearchLeaves[i - apmf::cbt::kLeaves.size()].name;
+            if (i >= kL + kS) {   // a parameterised node: its class is in the catalog (review F1)
+                const auto& e = apmf::cbt::kParamLeaves[i - kL - kS];
+                g_leafName[i]  = e.name;
+                g_leafClass[i] = e.kind == apmf::cbt::kParamCast       ? LeafClass::kCast
+                               : e.kind == apmf::cbt::kParamStructural ? LeafClass::kStructural
+                                                                       : LeafClass::kDeny;
+                continue;
+            }
+            const char* nm = i < kL ? apmf::cbt::kLeaves[i].name : apmf::cbt::kSearchLeaves[i - kL].name;
             g_leafName[i] = nm;
             const std::string_view n = nm;
             if (n == "CombatBehaviorCastImmediateSpell" || n == "CombatBehaviorCastConcentrationSpell" ||
@@ -1380,6 +1527,7 @@ namespace apmf::combatsubstrate {
 
     void Poll() {
         if (!Installed()) return;
+        ++g_pollFrame;
         const auto now = apmf::clock::MonotonicMs();
         DryRunSchedule(now);
         if (g_subCount.load(std::memory_order_relaxed) == 0 && g_subs.empty()) {
