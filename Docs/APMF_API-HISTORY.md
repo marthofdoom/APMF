@@ -118,6 +118,13 @@ degrade path runs), this call distinguishes the remaining case: claimed
 and installed, but observe-only.
 ```
 
+**2026-10-13, no ABI change (ClickUp 86e3pyhxv).** What `IsEquipAuthorityEnforced` returns changed in practice:
+`bEquipObserveOnly` now defaults to 0 and `bEquipEnforceArmor` is retired, so with the shipped defaults it is true and
+every declared category is enforced. Two ch.17 behaviours a client sees: a claim binds its owner (the client's own
+direct equip of an item its declaration refuses is refused; it no longer ties with its own claim), and a worn item in
+a DENIED category is unequipped by the enforce pass. The header comments that still say "APMF never unequips" are
+stale until the paired MFO header change.
+
 <a id="abi-history"></a>
 ## ABI v10 to v24: what each version added
 

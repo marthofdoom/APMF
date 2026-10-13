@@ -197,7 +197,7 @@ This is what makes Harbinger safe to install beside mods that know nothing about
 - **Reversible on release.** When the last claim on a facet releases, the suppression stops. There is no re-assert loop and no lingering override to clean up.
 - **Never deny what it cannot name.** Harbinger enforces only against a positively identified source that has been outranked. A write it cannot attribute is allowed, logged as `[sources] UNATTRIBUTED <facet>` and shown as an alert.
 
-If you want Harbinger to hold something for you, say so with a claim, and stop doing that thing yourself while the claim is live. `IsEquipAuthorityEnforced` is true when the equip seat is installed and either `bEquipObserveOnly` is 0 or `bEquipEnforceArmor` is 1, so with the defaults it is true while weapons are still only observed. A client that turns its own equips off on a successful equip claim should read FACETS.md ch.17 first.
+If you want Harbinger to hold something for you, say so with a claim, and stop doing that thing yourself while the claim is live. `IsEquipAuthorityEnforced` is true when the equip seat is installed and `bEquipObserveOnly` is 0, the default since 2026-10-13: every category you declare (weapons, shields, torches, ammo, armor) is enforced, in and out of combat. Two consequences for an equip claim. Your claim binds you: your own direct equip of an item your declaration refuses is refused too, so equip what you declared. And a worn item in a category you DENY is taken off by Harbinger when the declaration lands. A client that turns its own equips off on a successful equip claim should read FACETS.md ch.17 first.
 
 ## 6. Debugging
 

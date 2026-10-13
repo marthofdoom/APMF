@@ -1218,6 +1218,20 @@ thing that derails one. Concretely:
   switch, exempts the player's menu and APMF's own equips, and is ranked by (a). A forced refusal the
   sliders do not allow is NOT applied: it is a FORCE ANOMALY, logged at warn and counted. Still a DENY
   only (condition 4): Harbinger equips nothing for a preference. No new site.
+  **AMENDED 2026-10-13 (ClickUp 86e3pyhxv, marth).** (a) "The default equip state should block all the
+  incorrect options": `bEquipObserveOnly` defaults to 0 and every declared category is enforced (the
+  armor-only `bEquipEnforceArmor` is retired). (b) "Yes, a claim binds its owner": for the ch.17 set ONLY,
+  the claim's own client does NOT rank at the claim's priority -- its own direct equip of an item the
+  declaration refuses is refused (`RankEquipDeny` `bindsOwner`). The hand block and the force step keep
+  the tie, and so does every other facet. (c) A worn item in a DENIED category: "Yes, unequip it". The
+  ch.17 enforce pass (main thread, after Publish, queued `UnequipObject`, never a 3D reset) removes it.
+  This is the client's declared input enforced, not a selection: it removes only what the claim DENIES
+  and never equips anything in its place (condition 4 still holds for the seat). (d) The ch.17 verdict is
+  ONE function (`equipsink::DeclaredSetVerdict`), applied also one level up at the 0x0F vtable seat
+  (`core/HandBlock.cpp`, the combat AI's selection, engine answer first, ranked against `InsideSource`) so
+  the AI never plans around an item the sink would refuse. (e) "Harbingers denies and allows should now be
+  engaged out of combat as well": nothing in ch.17 reads combat state; out of combat the sink alone
+  covers every equip path.
   Under #17a the facet is taken WHOLE (declare the worn set → APMF equips it and refuses
   everything else until the client re-declares or releases), which is full control of the
   facet exactly as a per-path deny would be. Any further call-site seat needs its own

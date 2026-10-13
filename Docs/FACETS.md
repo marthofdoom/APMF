@@ -1591,7 +1591,9 @@ When the declaring claim owns the facet:
 | competes for an owned category and the item is off-set | deny |
 | competes for no owned and no denied category | allow |
 | the form is not ARMO, WEAP, AMMO or LIGH | allow (not governed) |
-| observe-only mode (`bEquipObserveOnly`, or the claim's own bit) | every deny above is logged as `would-deny` and nothing is refused. Armor is still refused while `bEquipEnforceArmor=1` |
+| observe-only mode (`bEquipObserveOnly=1`, an opt-in, or the claim's own bit) | every deny above is logged as `would-deny` and nothing is refused |
+
+Since 2026-10-13 every declared category is enforced by default: weapons, shields, torches, ammo and armor alike, in and out of combat. The same verdict runs in three places. The equip seat refuses an engine equip. The combat AI's `CheckShouldEquip` seat (on the Melee, Ranged, Shield, Torch and OneHandedBlock items) answers NO for a candidate the declaration refuses, so the AI never plans around an item it cannot equip. Out of combat there is no selection seat, and the equip seat alone refuses (outfit re-apply, the AI's own equip commands, `RemoveItem` re-equip, other mods). The equip pass takes off a worn item in a DENIED category (below). All three call one function, so they cannot disagree.
 
 Only ARMO, WEAP, AMMO and LIGH equips are governed. A potion, food, a scroll, an ingredient or a book passes untouched, so the AI's own potion use is never refused. Do not declare one. The equip pass skips it and logs why. The deny half compares FormIDs only, so a declared item is in the set whichever hand the engine tries. The hand is what Harbinger's own equip pass enforces.
 
@@ -1606,16 +1608,18 @@ Rules of the road:
 - **Do not mix ch.15's probe path with a ch.17 claim.**
 - **A refused equip is not re-issued.** If the hand block refused a declared weapon because a cast claim held that hand, Harbinger does not equip it again when the hand frees. Declare again after the cast claim releases (backlog item APMF-B64).
 - **Harbinger never adds items.** A declared item the actor does not own is skipped and logged.
+- **A worn item in a denied category comes off.** Each declaration event (a scope change too) runs the equip pass, and the pass unequips every worn item that competes for a category you deny, in or out of combat. It stays in the inventory. Each removal logs an `UNEQUIP` line. An off-set item in an OWNED category is not unequipped: your declared item displaces it. Observe-only logs `would-unequip` instead.
+- **Your claim binds you too.** Your own direct equip of an item your declaration refuses is refused, logged `deny (the claim binds its own client)`. Equip what you declared, or declare first.
 
-> **Key Concept 9 (what `IsEquipAuthorityEnforced` says)** It is true when the seat is installed and either `bEquipObserveOnly` is 0 or `bEquipEnforceArmor` is 1. With the shipped defaults (`bEquipObserveOnly=1`, `bEquipEnforceArmor=1`) it is therefore true even though weapons, shields, torches and ammo are only observed. It tells you that Harbinger enforces at least armor, not that it enforces everything. A claim's own `kEquipAuth_ObserveOnly` bit is not consulted by it.
+> **Key Concept 9 (what `IsEquipAuthorityEnforced` says)** It is true when the seat is installed and `bEquipObserveOnly` is 0, the default. Then every category you declare is enforced. A user who opts in with `bEquipObserveOnly=1` makes it false. A claim's own `kEquipAuth_ObserveOnly` bit is not consulted by it. (`bEquipEnforceArmor`, the 2026-10-06 armor-only switch, is retired and ignored.)
 
 #### Lifetime
 
-Standing, no time limit. It ends on `Release`, a higher basis, a load or an unload. Release clears the declaration and nothing is unequipped. A declaration on a claim that does not own the facet is stored and takes effect the moment that claim wins. A win is a declaration event and runs the equip pass.
+Standing, no time limit. It ends on `Release`, a higher basis, a load or an unload. Release clears the declaration. The release unequips nothing and re-equips nothing. A declaration on a claim that does not own the facet is stored and takes effect the moment that claim wins. A win is a declaration event and runs the equip pass.
 
 #### Priority and conflicts
 
-`Equip` sources facet. The caller of an engine equip is recovered by a stack scan. Since ABI 22 every equip deny is ranked by priority: an off-set equip is refused only while your priority on `Equip` is above its source. The engine's own paths (outfit re-apply, the combat AI, `RemoveItem` re-equip) and other mods start at 20 and lose to a client at 50. Another client ties at 50 and its equip stands. Your own direct equip ties with your own claim and stands. A Papyrus or console equip under `kEquipAuth_DenyScript` ranks as DirectCalls (75) and stands unless you raise your mod above it. An equip Harbinger cannot attribute is allowed unless `[UnknownSources] Equip=override`. A source that wins logs a `STANDS` line and counts as stood on the menu. Armor verdicts are enforced by default (`bEquipEnforceArmor=1`) even while `bEquipObserveOnly=1`. Weapons, shields, torches and ammo stay observe-only until you set `bEquipObserveOnly=0`.
+`Equip` sources facet. The caller of an engine equip is recovered by a stack scan. Since ABI 22 every equip deny is ranked by priority: an off-set equip is refused only while your priority on `Equip` is above its source. The engine's own paths (outfit re-apply, the combat AI, `RemoveItem` re-equip) and other mods start at 20 and lose to a client at 50. Another client ties at 50 and its equip stands. Your own direct equip does NOT tie with your own claim: since 2026-10-13 a claim binds its owner on this facet, so your own off-set or denied equip is refused like any other. (Only ch.17. Other facets keep the tie.) A Papyrus or console equip under `kEquipAuth_DenyScript` ranks as DirectCalls (75) and stands unless you raise your mod above it. An equip Harbinger cannot attribute is allowed unless `[UnknownSources] Equip=override`. A source that wins logs a `STANDS` line and counts as stood on the menu. Every category is enforced by default (`bEquipObserveOnly=0`).
 
 > **Did You Know?** This is the only facet with a call-site seat. Every engine equip funnels through one non-virtual worker, so there is no vtable slot to chain on. Harbinger patches the worker's two internal call sites, byte-verifies both before writing either, and refuses to install if any other mod touched those bytes. A collision is a missing feature and never a crash.
 
@@ -1682,7 +1686,7 @@ bool HarbingerEnforces() {
 
 #### Version, INI and field status
 
-ABI 7 (first shipped in 0.9.5), 8 adds a hand per item, `kEquipAuth_DenyPlayerMenu` and `IsEquipAuthorityEnforced`, 9 adds the scope. Keys in `[EquipAuthority]`: `bEquipAuthority` (1), `bEquipObserveOnly` (1), `bEquipEnforceArmor` (1), `bEquipDenyScript` (0). `bHandClaimBlocksEquip` in `[HandBlock]`. In use by MFO. The seat ships observe-only for weapons until the probe criteria in [Appendix E](#appendix-e-equip-authority-probe-criteria) pass. Built, not yet battle-tested.
+ABI 7 (first shipped in 0.9.5), 8 adds a hand per item, `kEquipAuth_DenyPlayerMenu` and `IsEquipAuthorityEnforced`, 9 adds the scope. Keys in `[EquipAuthority]`: `bEquipAuthority` (1), `bEquipObserveOnly` (0 since 2026-10-13), `bEquipDenyScript` (0). `bEquipEnforceArmor` is retired. `bHandClaimBlocksEquip` in `[HandBlock]`. In use by MFO. Every declared category is enforced by default. [Appendix E](#appendix-e-equip-authority-probe-criteria) is now a field check, read with `bEquipObserveOnly=1` if you want it without refusals. Built, not yet battle-tested.
 
 **Check Your Understanding: ch.17**
 
@@ -3198,7 +3202,7 @@ You do not call anything. Each one changes, denies and delays nothing. A write a
 
 **What the client sees.** `path=...` and source names in the `[apmf][equip-obs]` log lines, and the `Equip` table on the menu page. See [ch.17](#ch17-equip-authority-kintent_equipauthority).
 
-**Version and INI.** 0.12.0. `bEquipEnforceArmor` and `bEquipObserveOnly` in `[EquipAuthority]`.
+**Version and INI.** 0.12.0. `bEquipObserveOnly` in `[EquipAuthority]` (`bEquipEnforceArmor` retired 2026-10-13).
 
 ### Caster-type and restore census
 
@@ -3325,7 +3329,7 @@ Defaults are the shipped values. The full text of every key is in [INI-REFERENCE
 | ch.8, ch.8b cast seats | `[CastSeats]` | `EnableSeat0Classify` (1), `EnableAimSeat` (1) |
 | ch.8, ch.8b, ch.15 hand gates | `[EquipGate]` | `EnableEquipDenyComplete` (1), `EnableEquipGateLog` (0), `EnableDualWieldPreference` (0) |
 | ch.8b score steer, ch.26 equip preference | `[AiCastSeats]` | `EnableScoreSteer` (1, the compiled default since ABI 22), `EnableWeaponScoreProbe` (1, also the weapon score seat ch.26 lifts through), `EnableItemScoreProbe` (0), `EnableCasterSeatProbe` (0) |
-| ch.17 equip authority | `[EquipAuthority]` | `bEquipAuthority` (1), `bEquipObserveOnly` (1), `bEquipEnforceArmor` (1), `bEquipDenyScript` (0) |
+| ch.17 equip authority | `[EquipAuthority]` | `bEquipAuthority` (1), `bEquipObserveOnly` (0), `bEquipDenyScript` (0) |
 | ch.8b hand block | `[HandBlock]` | `bHandClaimBlocksEquip` (1) |
 | ch.9 package, Spectator | `[PackageGate]` | `EnableRedirectLog` (1), `iSpectatorSeat` (2) |
 | actor-value watch | `[ActorValueObserve]` | `iActorValueSeat` (1) |
@@ -3347,7 +3351,7 @@ Facets with no key of their own: ch.1, 1a, 3, 4, 5, 6, 7, 10, 11, 14, 15, 16 and
 
 ## Appendix E: equip authority probe criteria
 
-Equip authority ships with weapons in observe-only (`bEquipObserveOnly=1`). Read the `[apmf][equip-obs]` lines before you switch enforcement on. Each line carries `actor= item= op=equip path= site= ret= q= f= s= a= tls= cat= owned= black= eslot= verdict= name=`. `tls` is attribution only, since an equip Harbinger issued itself runs with `tls>0`, and it never changes a verdict. `cat= owned= black= eslot=` are the scope fields. `name` is the item's display name for reading, not parsing. A field log should show all of these before enforcement is switched on.
+Equip authority enforces every declared category by default (2026-10-13). To read what it would refuse without refusing, set `bEquipObserveOnly=1` and read the `[apmf][equip-obs]` lines. The criteria below are what a clean log shows (in enforce mode `would-deny` reads `deny`). Each line carries `actor= item= op=equip path= site= ret= q= f= s= a= tls= cat= owned= black= eslot= verdict= name=`. `tls` is attribution only, since an equip Harbinger issued itself runs with `tls>0`, and it never changes a verdict. `cat= owned= black= eslot=` are the scope fields. `name` is the item's display name for reading, not parsing. A field log should show all of these before enforcement is switched on.
 
 1. Every engine re-equip of an off-set item in an owned or denied category on a claimed actor logs `verdict=would-deny` with a named path: `OutfitApply`, `AddWornOutfit`, `AiCommand`, `RemoveItemReequip`, `CombatNode`, `Script`, `Console`, `WorkerReentry`, `QueuedApply`, `DropObject`, `PickUpObject`, `BoundItem`, `ProcedureEat`, `InventoryReequip`, `StartCombat`, or `External(<dll>)`. Two engine callers stay `Unknown` on purpose: 16104 and 15864 (a re-equip helper whose second route could not be pinned) and 52410 and 51535 (an orphan with no reference in the image). Either one on a deny line is a real finding (see `DENY-COMPLETENESS-AUDIT.md`, row 17). A `PlayerMenu` off-set equip logs `verdict=allow (player agency)` unless the claim carries `kEquipAuth_DenyPlayerMenu`. A non-governed form type, such as a potion, logs no per-event line.
 2. Zero `would-deny` lines with `tls>0`. Harbinger's own equip pass only issues declared items, so a would-deny inside that bracket means the set the seat reads is not the set the pass enforced.
@@ -3403,7 +3407,7 @@ Answers to the odd-numbered questions on this page.
 
 **ch.15.** 1. Nothing. The channel is gate-only with a form. The `CheckShouldEquip` gate carries the deny.
 
-**ch.17.** 1. True, because `bEquipEnforceArmor=1`. A declared sword is equipped by the pass, but an engine equip of an off-set weapon is only logged `would-deny` until `bEquipObserveOnly=0`. 3. No. A refused equip is not re-issued (backlog APMF-B64). Declare again after the cast claim releases.
+**ch.17.** 1. True, because `bEquipObserveOnly=0` by default. A declared sword is equipped by the pass, the combat AI does not select an off-set weapon, and an engine equip of one is refused. 3. No. A refused equip is not re-issued (backlog APMF-B64). Declare again after the cast claim releases.
 
 **ch.9.** 1. The engine's own answer, never null. 3. A nudge issued earlier re-evaluates against the old snapshot, before the claim is published, and the engine keeps its previous package.
 

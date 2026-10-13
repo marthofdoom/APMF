@@ -1,8 +1,42 @@
 # APMF STATUS — living handoff (start here)
 
-Updated 2026-10-12. Current version **v0.13.1** (cut 2026-10-13, ABI v24, see CHANGELOG)/ previously **v0.13.0** (release cut 2026-10-12; see RELEASED v0.13.0 below; prior v0.12.0 PUBLISHED release, ABI v21). The current state of the build: what's
+Updated 2026-10-13. Current version **v0.13.1** (cut 2026-10-13, ABI v24, see CHANGELOG)/ previously **v0.13.0** (release cut 2026-10-12; see RELEASED v0.13.0 below; prior v0.12.0 PUBLISHED release, ABI v21). The current state of the build: what's
 shipped, what's probe-gated, what's next. Keep this current in the SAME change as any
 build/finding/workflow change.
+
+## HEAD OF WORK 2026-10-13 -- ch.17 ENFORCES EVERY DECLARED CATEGORY, branch `fix/apmf-equip-enforce-all`, NOT merged
+
+ClickUp 86e3pyhxv. Deck 2026-10-13: Cicero and Jesper equipped shields MFO had DENIED, because `bEquipObserveOnly=1`
+left every non-armor verdict `would-deny` (only plain armor was enforced by `bEquipEnforceArmor`), the combat AI
+re-selected the denied shield after every left-hand cast, a worn denied item was never removed, and MFO's own direct
+equip tied with its own claim and stood. marth's rulings (2026-10-13): "The default equip state should block all the
+incorrect options"; a worn item in a denied category: "Yes, unequip it"; "Yes, a claim binds its owner"; and
+"Harbingers denies and allows should now be engaged out of combat as well". No ABI change.
+- **Enforce by default.** `bEquipObserveOnly` defaults to 0 (code and shipped INI). An INI that still says 1 is an
+  explicit observe-only opt-in, logged once at load. `bEquipEnforceArmor` / `g_enforceArmor` retired (a stale key is
+  logged once and ignored). `IsEquipAuthorityEnforced` = installed and not observe-only. The per-claim
+  `kEquipAuth_ObserveOnly` bit is unchanged.
+- **Selection-time refusal** (fixes the Sept enforced-run defect below: 114 bow / 18 shield refusals at
+  `ret=877F1B`). The HandBlock `CheckShouldEquip` (0x0F) seat on Melee / Ranged / Shield / Torch / OneHandedBlock
+  now also answers NO for a candidate the ch.17 declaration refuses. The verdict is ONE function,
+  `equipsink::DeclaredSetVerdict`, used by the sink, this seat and the unequip. The seat's existing guards stand
+  (exact build 1.6.1170 / 1.5.97 / 1.7.104, SeatVerified vtables, APMF-B36 F2 slot-value compare); re-disassembled
+  this round: 1.6.1170 `0x817FC0` / evaluate `call [rax+0x78]` ret `0x813AF5` `test al,al; je skip`, 1.5.97
+  `0x77DC90` / ret `0x779780` the same. It installs when `bHandClaimBlocksEquip=1` OR `bEquipAuthority=1`.
+- **Unequip worn denied items.** The enforce pass (`channels/EquipAuthority.cpp UnequipDenied`, main thread,
+  queued `UnequipObject`, no 3D reset) takes off every worn item whose category the claim DENIES, also when no set
+  is declared. Logged per removal (`UNEQUIP`). This replaces the old "APMF never unequips" contract.
+- **A claim binds its owner (ch.17 only).** The sink ranks a ch.17 refusal with `bindsOwner`: the claim's own
+  client no longer ties with its claim, so its direct off-set or denied equip is refused
+  (`deny (the claim binds its own client)`). The hand block, the force step and every other facet keep the tie.
+- **Out of combat.** No ch.17, sink, enforce-pass or hand-block code reads combat state. The 0x0F seat is combat-
+  only by nature; out of combat the equip sink covers every equip path (OutfitApply, AddWornOutfit, AiCommand,
+  RemoveItemReequip, InventoryReequip, QueuedApply, External such as MEO). The one path below the sink (38001 <-
+  16073, re-applying persisted worn state at 3D load) restores, never chooses; the unequip on declaration clears it.
+- `native/APMF_API.h` comments at ~:1670 and ~:1794 still say "APMF never unequips". The header is byte-shared with
+  MFO (md5 parity), so the comment fix needs a paired MFO change. Not done in this APMF-only round.
+- NOT field-run. Next: Opus review, then a deck cycle with MFO (watch `[equipauth 0x0F]`, `UNEQUIP`, and
+  `deny (the claim binds its own client)` lines; MFO's Loadout restore of a displaced shield will now be refused).
 
 ## RELEASED 2026-10-12 -- v0.13.0 "Harbinger names who changes the AI"
 
