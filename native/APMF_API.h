@@ -632,7 +632,7 @@ namespace APMF_API {
                                      //       party in combat) DROPS it with no StopCombat: the fight and the cast
                                      //       claim go on, and Harbinger releases this claim (IsClaimLive false).
                                      //       File it beside your kIntent_Cast claim. REFUSED (kInvalidHandle,
-                                     //       logged): APMF < v23, [CombatSubstrate] bCombatSubstrate=0 (the default),
+                                     //       logged): APMF < v23, [CombatSubstrate] bCombatSubstrate=0 (set off in APMF.ini),
                                      //       an unsupported runtime, the player, a negative / NaN fval. A
                                      //       substrate that cannot open (in combat, unloaded, ...) ends its claim.
                                      //       See Docs/FACETS.md "Combat substrate".
