@@ -859,7 +859,7 @@ namespace apmf::equipsink {
         // displacement an EQUIP does (the equip workers 38928/38929/38930 call 38905,
         // which calls UnequipObject for what the slot held). Different workers, NOT seen
         // here and not governed: UnequipShout (38904 -> 38935) and UnequipSpell
-        // (38903 -> 38902). See Docs/DENY-COMPLETENESS-AUDIT.md row 17 for the list.
+        // (38903 -> 38902). MAP.md "The unequip observer" (EquipSink section) has the list.
         //
         // WHAT IT DOES. Calls the worker with the same four arguments, ALWAYS, and hands
         // its return value back (UnequipObject itself discards rax and returns the
@@ -1156,8 +1156,14 @@ namespace apmf::equipsink {
                                    UnequipData* data) {
             const std::uintptr_t site      = reinterpret_cast<std::uintptr_t>(_ReturnAddress()) - 5;
             const auto           myRetSlot = reinterpret_cast<const std::uint8_t*>(_AddressOfReturnAddress());
+            // What UnequipObject handed the worker (the slot it resolved, the flags), copied before
+            // the call so the line shows the request, not whatever the worker left; the result byte
+            // is read after. A plain copy of the caller's stack struct: nothing is written.
+            UnequipData in{};
+            if (data) std::memcpy(&in, data, sizeof(in));
             const std::uint64_t  rv        = g_unequipWorker(mgr, actor, obj, data);
             if (!actor || !obj || !data || actor->IsPlayerRef()) return rv;
+            in.result = data->result;
             try {   // nothing may unwind into the engine's unequip frame
                 const RE::FormID actorId = actor->GetFormID();
                 EquipSetView set;
@@ -1167,7 +1173,7 @@ namespace apmf::equipsink {
                 const bool c26 = ControlMap::Get().TryGetOwningClaimBasis(actorId, APMF_API::kIntent_EquipPreference,
                                                                           p, basis);
                 if ((c17 || c26) && IsGovernedType(obj->GetFormType()))
-                    ObserveUnequip(actor, obj, data, site, myRetSlot, c17, c26);
+                    ObserveUnequip(actor, obj, &in, site, myRetSlot, c17, c26);
             } catch (...) {
             }
             return rv;

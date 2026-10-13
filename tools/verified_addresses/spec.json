@@ -4229,6 +4229,13 @@
    "gate": "exact 1.6.1170/1.5.97 + self-check"
   },
   {
+   "what": "EquipSink unequip observer: caller frame depth; worker 4th-arg struct (UnequipData)",
+   "value": "0x80 (1.6.1170), 0x70 (1.5.97); extra +0, count +8, slot +0x10, result +0x24",
+   "where": "EquipSink.cpp:895, :931",
+   "verified_by": "derived from UnequipObject's prologue and stack build (38901 / 37945); site E8 + target check in code",
+   "gate": "exact 1.6.1170/1.5.97 + self-check (1.7.104: refused, the ids are not in the MIT table)"
+  },
+  {
    "what": "CommonLib-bound calls APMF relies on: GetHandle, LookupForm, DOBJ GetSingleton, ActorValueOwner",
    "value": "CommonLib 3.7.0 ids",
    "where": "channels/*, core/*",

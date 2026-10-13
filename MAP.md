@@ -1033,7 +1033,8 @@ unlocked 3.7.0 lookup is history now. Keep the rule it states: no lookup on the 
 runtime, incl. the F1b `BSReadWriteLock::LockForRead`/`UnlockForRead` rows, logged only, and the
 ABI v12 gate-probe rows `Travel.GetOpenState` / `Travel.ScriptEventSourceHolder.GetSingleton`; `Docs/VERIFIED-ADDRESSES.md`). `InstallOnVtables` refuses a list whose expected RTTI
 TypeDescriptor is unverified and skips each unverified vtable; direct guards in Hook, PackageGate
-(+ EvaluatePackage), CastClassify, EquipSink (worker + both sites), MovementDeny (3 natives), CastSeats
+(+ EvaluatePackage), CastClassify, EquipSink (worker + both sites; the unequip observer's worker + site, gated by
+`IsVerifiedLabel` first so a 1.7.104 id miss is never resolved), MovementDeny (3 natives), CastSeats
 aim seat, AiCastSeats Group C, PositionCast::Install, SpaceQuery::Install. `plugin.cpp` logs
 `[selfcheck] ... N/N verified` after the `[runtime]` line. **What breaks:** a new id-based hook or call
 without a spec row (tools/verified_addresses/spec.json) + regenerated header refuses itself at startup.
@@ -1681,9 +1682,11 @@ eslot=<none|R|L|E|hex> verdict=` line per decision (`E` = EitherHand 0x13F44, a 
   RCU snapshot (FormID compares; never `LookupByID`, never client state) — it runs on
   whatever thread equips; a form lookup there takes the engine's forms-map lock on the
   combat thread. (5) `Offset2ID` is built BEFORE the patch (the thunk must never see a
-  half-built table) and is immutable after. (6) UNEQUIPS are not seated (the twin
+  half-built table) and is immutable after. (6) UNEQUIPS are not DENIED (the twin
   `UnequipObject` 38901/37945 → worker 38934/37979, single caller 38901+0x1B9 / 37945+0x138)
-  — `kEquipAuth_DenyUnequip` is RESERVED and refused; seating it is its own #17a argument.
+  — `kEquipAuth_DenyUnequip` is RESERVED and refused; a deny there is its own #17a argument.
+  Since 2026-10-12 that E8 carries an OBSERVE-ONLY seat (below, "The unequip observer"): it always
+  calls the worker with the same arguments, so it is no licence to refuse anything there.
   (7) ONE path runs BELOW the seat and is not a decision: the worker's apply function 38001
   (worker +0x289) is also reached from 16073+0xf0 (InventoryChanges family ← 40746 ← 40655),
   the persisted-ExtraWorn RESTORE when an actor's 3D loads; it re-applies a state the seat
@@ -1733,6 +1736,52 @@ eslot=<none|R|L|E|hex> verdict=` line per decision (`E` = EitherHand 0x13F44, a 
   7; B10 `MinReleaseForAbi`'s v7/v8 placeholder must be named at the cut) (ch.15's probe re-equip is
   `External(APMF.dll)` on a ch.17 actor; a detour target inside a trampoline page prints
   `detoured by ?`; the truncation log fires at Apply) — read them before editing this seat.
+
+**The unequip observer (2026-10-12, feat/apmf-unequip-observe; OBSERVE ONLY).** `InstallUnequipObserve()`
+← `plugin.cpp` kDataLoaded right after `Install()` (it needs the sink: the caller table `g_offset2id`, the
+path tables and `g_sites`; refused by name when the sink is down). INI `[EquipAuthority] bObserveUnequip`
+(default 1). Seat: the ONE E8 to the unequip worker inside `ActorEquipManager::UnequipObject` (AE 38901
+0x6CA010 +0x1B9 → 38934 0x6CC810; SE 37945 0x638190 +0x138 → 37979 0x63A6B0). RE 2026-10-12 on both unpacked
+images: a .text E8/E9 scan finds exactly that one reference to the worker, and no 64-bit pointer to it. Rows
+`EquipSink.Unequip.Worker` / `EquipSink.Site.UnequipObject` (+ seven `EquipSink.UnequipPath.*` label rows).
+`IsVerifiedLabel` is asked BEFORE `REL::ID`, because on 1.7.104 the ids are not in the MIT id table and an id
+miss there is FATAL: the observer is refused by name on 1.7.104. Byte-verify (E8 → worker) before the write; a
+mismatch refuses and names the module. Shares the sink's 64-byte trampoline (one 14-byte stub per destination).
+Census row `EquipSink.Site.UnequipObject` (Equip facet): a plugin that patches the E8 after us (UAPNG does this to
+the two equip E8s) is named by the census at kPostLoadGame / kNewGame / 60 s. UnequipObject's PUBLIC ENTRY is entry
+slot [2] of `InspectEntryDetours` (re-run by `ReinspectEntries`). `UnequipData` = the `EquipData` layout except
++0x24 is the worker's RESULT byte (UnequipObject returns it); static_assert-pinned.
+**Thunk** `UnequipThunk`: calls the worker FIRST and ALWAYS (same four args, rax handed back), then, for a non-player
+actor under a live ch.17 (`TryGetEquipSet`) or ch.26 (`TryGetOwningClaimBasis(kIntent_EquipPreference)`) claim and a
+governed item, `ObserveUnequip`: `RtlCaptureStackBackTrace` 32 frames; `at` = the frame == site + 5; `path=` =
+`Classify(frames[at+1])`, then the unequip-only table (`kUnequipPathsAE/SE`). Plumbing callers stay unnamed ON
+PURPOSE and the walk continues UP (8 frames, or up to an equip-sink site frame) to the first NAMED frame or
+foreign module (`via=`). An equip-sink site frame above = DISPLACEMENT by that equip (`disp=1`, `via=equip:<the
+equip's caller>`; module frames between it and the unequip are skipped: the sink's own thunk and equip-E8
+interposers). Line: `[apmf][equip-obs] op=unequip actor= item= path= site=<id>+0x<off> slot=<none|R|L|E|hex> via=
+src=<source|self|Unattributed|-> disp=<0|1> chain=<up to 6 frames above UnequipObject: id or module> ret= q= f= s= a=
+ok=<worker result> tls= cat= claim=<17|26|17+26> name=`, deduped 2 s per (actor,item,caller) under op=equip's
+shared 100/s cap (`AdmitLog`, salted key). Hits: `NoteHit(src, kEquip)` for the attributed source, NOT for
+`self` (ch.15's own unequip) and NOT for a displacement (the equip seat already counted that equip's source);
+interposer frames on the unequip E8 count as op=equip's do; unattributed → `sources::Unattributed`.
+Unequip-only rows (proven 2026-10-12, AE/SE): Script 54774/53950 (Papyrus UnequipItem), 54775/53951
+(UnequipItemSlot), 38899/37943 (UnequipAll; callers only Papyrus 54773/53949 jmp + console 22352/21870);
+Console 22353/21871 (UnEquipObject, opcode 0x10EF); UseAmmo 38546/37596 (Actor slot 0xD2); BoundItemEnd 34227/33449
+(BoundItemEffect slot 0x15 = ActiveEffect::Finish); AiCommand 39683/38652 (sole caller 39650/38619). Equip-table
+rows that also unequip keep their names (PlayerMenu 29383/38907, AiCommand 39637/39650/39948, DropObject 37520,
+RemoveItemReequip 16059, InventoryReequip 41244, QueuedApply 39814 + SE twins). Unnamed callers, decoded for the
+reader of `chain=` (AE / SE): 37975/36950 Actor::UnequipItem (slot 0xA1); 38004/36979 Actor::AddWornItem (slot 0x57,
+called from the equip apply 38001); 38905/37949 the slot displacement, called by the equip workers 38928 (spell) /
+38929 (object) / 38930 (shout), CombatNode 48124 and 56858; 38900/37944 the both-hands helper (from 29198, 39644,
+40078; SE also the UnequipAllVisitor 37990); 16154/15914 UnequipArmorFunctor; 38942 UnequipAllVisitor (AE inlines
+the helper); 52470/51599 ApparelUnequipper; 37524/36524 (from 36991/36016), 38747/37798, 40486/39411, 44282/43087,
+51825/50948 not identified. **Not seen (other workers, not governed types):** UnequipShout 38904 → 38935 (Papyrus
+54664), UnequipSpell 38903 → 38902 (Papyrus 54669). **What breaks:** (1) it must never skip or change the worker
+call: there is no unequip deny. (2) The walk relies on `g_sites` being the EQUIP sites; if those change, the
+displacement test changes. (3) Naming a plumbing id stops the walk there and hides who asked. (4) Enabling it on
+1.7.104 needs the ids in the MIT table first; never resolve before `IsVerifiedLabel`. (5) Nothing in the thunk
+may take a lock across the worker or an engine call (it runs inside ActorEquipManager's recursive spin lock, on
+whatever thread unequips: main, Papyrus VM, AI / combat, any plugin's thread).
 
 ### `native/core/HandBlock.{h,cpp}` — the HAND-CLAIM BLOCK (2026-10-06, `fix/apmf-hand-claim-blocks-equip`)
 marth: "harbinger taking a hand for an action means other actions on that hand are blocked for the
