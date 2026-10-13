@@ -404,8 +404,9 @@ namespace apmf::equipgate {
             // vtable: InsideSource). It stands only when the claim outranks that source on the Cast
             // facet; otherwise this call falls through to the engine's own answer. One counted decision
             // per claim kind per call, asked only where a claim-driven answer is about to be given.
-            // NOT ranked (no claim gives them): the completeness fix (an APMF safety rule for a
-            // non-self Restore item) and the ch.15 kIntent_Equipment refusal (the Equip facet).
+            // NOT ranked (no claim gives it): the completeness fix (an APMF safety rule for a non-self
+            // Restore item). The ch.15 kIntent_Equipment refusal is ranked on the EQUIP facet since D2
+            // (2026-10-12), below.
             const std::uintptr_t prevFn = oit->second;
             int        castVerdict = -1, selectVerdict = -1;   // -1 not asked, 0 the source stands, 1 the claim wins
             // Everything a decision does (the claim handle, the source, the registry, the line) runs inside
@@ -670,8 +671,34 @@ namespace apmf::equipgate {
             // a weapon FormID, never matches a spell/staff subjectForm, so a
             // held claim denies every item this hook sees -- the exemption
             // above already let the claimed cast spell through).
-            if (!allowance::Allowed(fid, APMF_API::kIntent_Equipment, subjectForm))
-                return false;
+            // D2 (marth 2026-10-12): ranked like every other equip deny -- it stands only while the
+            // ch.15 claim outranks the source beneath this seat (InsideSource) on the EQUIP facet. A
+            // registry throw keeps the claim's answer (the default-priority answer, claimWins' rule).
+            if (!allowance::Allowed(fid, APMF_API::kIntent_Equipment, subjectForm)) {
+                bool enforce = true;
+                try {
+                    APMF_API::APMF_Param p15{};
+                    float                b15 = 0.0f;
+                    APMF_API::Handle     h15 = APMF_API::kInvalidHandle;
+                    apmf::ControlMap::Get().TryGetOwningClaimBasis(fid, APMF_API::kIntent_Equipment, p15, b15, &h15);
+                    const auto v = apmf::facetattr::Decide(apmf::sources::Facet::kEquip, h15,
+                                                           apmf::facetattr::InsideSource(prevFn), fid,
+                                                           "CheckShouldEquip (0x0F): the answer came through a "
+                                                           "hook inside the seat that is in no module");
+                    enforce = v.enforce;
+                    if (!enforce) try {
+                        if (apmf::facetattr::LineDue(apmf::sources::Facet::kEquip, fid, 0x0F15u))
+                            spdlog::info("[t2a] 0x{} CheckShouldEquip item=0x{}: the ch.15 refusal -- {}, so the "
+                                         "engine's own answer STANDS.",
+                                         apmf::log::Hex(fid), apmf::log::Hex(subjectForm),
+                                         apmf::facetattr::WhyStands(apmf::sources::Facet::kEquip, v, h15));
+                    } catch (...) {
+                    }
+                } catch (...) {
+                    enforce = true;
+                }
+                if (enforce) return false;
+            }
 
             // ch.8b -- cast-execution claim: while a kIntent_Cast claim stands the AI
             // may not re-arm THE CLAIMED HAND with any spell/staff OTHER than the

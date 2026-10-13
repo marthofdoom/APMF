@@ -3,6 +3,7 @@
 #include "core/Clock.h"
 #include "core/Log.h"
 #include "core/Sources.h"
+#include "core/EquipPreference.h"   // ch.26 counters on the Equip facet header
 
 #include <cstdarg>
 
@@ -191,6 +192,20 @@ namespace apmf::harbingermenu {
                 g.PushID(fmt::format("unk{}", static_cast<int>(f)).c_str());
                 if (g.Checkbox("Unknown sources can be overridden", &ovr)) EnqueueSetOverrideUnknown(f, ovr);
                 g.PopID();
+            }
+            if (f == Facet::kEquip) {
+                // ch.26 (ABI v22, weighting phase 1): the score lift and its escalation. A FORCE ANOMALY is
+                // a client's forced refusal the sliders did not allow (marth D4: investigate every one).
+                const auto t = apmf::equippref::GetTotals();
+                Colored(kGrey, fmt::format("Score preference: lifted {} (+{} spell steers), lost the next pass {}, "
+                                           "already leading {}, outranked {}, hand held by a cast {}. Force: denied "
+                                           "{}, the client's own equip {}.",
+                                           t.lifts, t.castSteers, t.lostPasses, t.leading, t.withheld, t.held,
+                                           t.forcedDenies, t.forceOwnClient));
+                if (t.forceAnomalies)
+                    Colored(kWarn, fmt::format("FORCE ANOMALIES: {} forced refusal(s) not applied because the other "
+                                               "source outranks the claim. See [ch.26] in APMF.log.",
+                                               t.forceAnomalies));
             }
             if (!g.BeginTable(fmt::format("tbl{}", static_cast<int>(f)).c_str(), 4, kTableRowBg | kTableBordersInnerH,
                               ImVec2{ 0.0f, 0.0f }, 0.0f))

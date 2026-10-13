@@ -20,6 +20,7 @@
 #include "core/PositionCast.h"  // ABI v11 position cast: poscast::Enqueue (one-shot, never a claim); MarkersSupported (ch.19)
 #include "core/Sightline.h"  // ABI v18 own line of sight: Armed()/NotArmedReason() for the synchronous refusal
 #include "core/CastGuard.h"  // ch.25 cast guard (ABI v21): RefuseReason()/TtlMs() for the refusal and the TTL grant
+#include "core/EquipPreference.h"  // ch.26 equip preference (ABI v22): RefuseReason() for the synchronous refusal
 
 #include <cmath>
 
@@ -381,6 +382,14 @@ namespace apmf {
         if (intent == APMF_API::kIntent_CastGuard) {
             if (const char* why = apmf::castguard::RefuseReason(actor, param)) {
                 spdlog::warn("[apmf][cast-guard] claim refused -- actor 0x{}: {}.", apmf::log::Hex(actor), why);
+                return APMF_API::kInvalidHandle;
+            }
+        }
+
+        // ch.26 (ABI v22): refused synchronously by core/EquipPreference.cpp RefuseReason.
+        if (intent == APMF_API::kIntent_EquipPreference) {
+            if (const char* why = apmf::equippref::RefuseReason(actor, param)) {
+                spdlog::warn("[ch.26] claim refused -- actor 0x{}: {}.", apmf::log::Hex(actor), why);
                 return APMF_API::kInvalidHandle;
             }
         }
@@ -2395,6 +2404,7 @@ namespace apmf {
             // ABI v9: the scope rides the SAME read as the set -- one generation.
             out.owned  = best->equipOwned;
             out.denied = best->equipDenied;
+            out.handle = best->handle;   // ABI v22 / D2: the claim the sink ranks its denies with
             return true;
         }
         return false;   // this NPC is controlled, but not on this channel

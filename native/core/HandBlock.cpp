@@ -6,6 +6,7 @@
 #include "core/ControlMap.h"
 #include "core/EquipSink.h"   // Categorize(): THE one category map (MAP.md EquipSink 8b)
 #include "core/HandBlock.h"
+#include "core/FacetAttribution.h"   // D2 (2026-10-12): the refusal is ranked on the Equip facet
 
 #include <intrin.h>   // _ReturnAddress (core/EquipGate.cpp precedent)
 #include <array>
@@ -213,6 +214,31 @@ namespace apmf::handblock {
             // assumed); a claim on the other hand still holds a 2H / bow / unarmed candidate.
             HandHold hold{};
             if (!HeldFor(fid, competes, itemId, SpellLike(item), hold)) return engine;
+
+            // D2 (marth 2026-10-12, "equip denies rank by priority like every other facet"): the NO
+            // replaces the answer of the chain beneath this seat (the engine, or a module hooked inside
+            // 0x0F on this vtable: InsideSource). It stands only while the cast claim holding the hand
+            // outranks that source on the EQUIP facet; otherwise the engine's YES stands. A registry
+            // throw keeps the claim's answer (the default-priority answer, core/EquipGate.cpp's rule).
+            try {
+                const APMF_API::Handle h = apmf::facetattr::CastClaimHandle(fid);
+                const auto v = apmf::facetattr::Decide(apmf::sources::Facet::kEquip, h,
+                                                       apmf::facetattr::InsideSource(reinterpret_cast<std::uintptr_t>(orig)),
+                                                       fid, "CheckShouldEquip (0x0F) hand block: the answer came through "
+                                                            "a hook inside the seat that is in no module");
+                if (!v.enforce) {
+                    try {
+                        if (apmf::facetattr::LineDue(apmf::sources::Facet::kEquip, fid, 0x0F0Bu))
+                            spdlog::info("[handblock 0x0F] 0x{} CheckShouldEquip item=0x{}: the hand-claim block would "
+                                         "refuse it -- {}, so the engine's own YES STANDS.",
+                                         apmf::log::Hex(fid), apmf::log::Hex(itemId),
+                                         apmf::facetattr::WhyStands(apmf::sources::Facet::kEquip, v, h));
+                    } catch (...) {
+                    }
+                    return engine;
+                }
+            } catch (...) {
+            }
 
             g_denies.fetch_add(1, std::memory_order_relaxed);
             t_last.refused = true;

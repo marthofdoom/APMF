@@ -535,7 +535,8 @@ namespace apmf::sources {
         case kIntent_OfferPackage:
         case kIntent_Travel:            return Facet::kPackage;
         case kIntent_Equipment:
-        case kIntent_EquipAuthority:    return Facet::kEquip;
+        case kIntent_EquipAuthority:
+        case kIntent_EquipPreference:   return Facet::kEquip;
         case kIntent_SelectSpell:
         case kIntent_Cast:
         case kIntent_CastGuard:         return Facet::kCast;

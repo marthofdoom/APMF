@@ -14,7 +14,7 @@ Some other facets do make a small, bounded engine call because you declared it: 
 
 ## Before you start
 
-- You build against one file, [`native/APMF_API.h`](../native/APMF_API.h). It is a plain C-ABI header with no CommonLib dependency. Copy it byte for byte. It is append-only, so a client built against any older copy keeps working against every later Harbinger.
+- You build against one file, [`native/APMF_API.h`](../native/APMF_API.h). It is a plain C-ABI header with no CommonLib dependency. Copy it byte for byte. It is append-only, so a client built against any older copy keeps working against every later Harbinger. The header keeps a short contract comment on every declaration. Its long explanations are in [APMF_API-REFERENCE.md](APMF_API-REFERENCE.md) and its historical notes in [APMF_API-HISTORY.md](APMF_API-HISTORY.md); the header points to each one.
 - Harbinger runs on Skyrim AE 1.6.1170, SE 1.5.97 and 1.7.104, and refuses every other build and VR by name. See the [README](../README.md) for requirements.
 - Read [GUIDE.md](GUIDE.md) once. It explains facets, basis and priority, the claim lifecycle (pending, live, the drain, refusal timings) and threading, and this page assumes it.
 
@@ -223,6 +223,10 @@ If you want Harbinger to hold something for you, say so with a claim, and stop d
 | `Los.cpp` | `GetLineOfSight` and `SenseActor` |
 
 MFO files every claim with a basis of 200.
+
+## Equip preference (ch.26, ABI v22)
+
+New in the release after 0.13.0, not yet tested in game. The full reference is [ch.26 Equip preference](FACETS.md#ch26-equip-preference-kintent_equippreference). Since the same ABI every equip refusal (the ch.17 set, the hand block, the ch.15 refusal) follows the `Equip` priorities in `APMF_Sources.ini`.
 
 ## Sections that moved
 
