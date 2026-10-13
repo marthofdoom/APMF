@@ -694,3 +694,12 @@ SEV-5 passFriend-when-strict-visible log were fixed on the branch. Deferred:
   teammate viewer) the collector prunes at the farther friends-pass hit, so `volumes` / `viewerHits` and the
   nearest-volume note in the OCCLUDED detail line and the heartbeat count hits beyond the strict hit. Diagnostic
   only; no verdict reads them. Reviewer: inflated counters, no behaviour change.
+
+### APMF-B79 (SEV-4) -- ch.26 "lift lost a pass" detector over-counts and misses the spell steer
+Raised against 9d01cdf (`feat/apmf-equip-preference`, Opus tier-3 re-review), 2026-10-12. Reviewer (verbatim): "It only counts upward: a list rebuild (the dirty refresh) or a new fight reorders the list, and that gets counted as a lost pass. The heartbeat and menu should say \"at most\". It does not cover the ch.8b spell steer, because a cast-steered item returns before `Record`. The spell steer is the lift MFO relies on today, and it uses the same 5% step. Suggest adding this to the backlog."
+
+### APMF-B80 (SEV-5) -- APMF-B75..B78 are labelled "Verbatim" but are paraphrases
+Raised against 9d01cdf, 2026-10-12. Reviewer (verbatim): "APMF-B75..B78 match my findings in substance, but they are labelled \"Verbatim\" while being paraphrases. Rule 9 asks for the finding's exact text." The exact text is in the review log `review-apmf-equip-pref.md` (7cda290 round, F5/F6/F8/F9); paste it at the drain.
+
+### APMF-B81 (SEV-5) -- ApplyPending logs "declared" before the supersede check; Prune scales with handles x map
+Raised against 9d01cdf, 2026-10-12. Reviewer (verbatim): "`ApplyPending` logs \"declared …\" before it checks whether a newer declaration replaced this one." And: "It costs (tracked handles × the whole published map) once a second on the main thread. That is fine at MFO's scale, but would be heavy near the 4096-handle cap."
