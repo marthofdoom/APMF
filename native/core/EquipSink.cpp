@@ -690,9 +690,11 @@ namespace apmf::equipsink {
             // v7/v8 client sees exactly the v8 verdict table.
             // `tls` is a LOG FIELD ONLY, never a bypass (Fable tier-3 on d1aa66b,
             // SEV-4 #4): APMF's own Enforce equips are in-set by construction, so
-            // they pass on the in-set test; the worker family's 38913 re-entry
-            // beneath one of them equips the SAME object it was handed, which is
-            // also in-set. Letting tls>0 bypass the set would have let a second
+            // they pass on the in-set test. The worker family's 38913/37957 re-entry
+            // beneath one of them re-equips the DISPLACED item into the other hand
+            // with a NULL extra list: in-set by base form as before, but since ABI
+            // v25 refused for a form declared only by uid (it names no copy), which
+            // is correct (only the named copy may go on). Letting tls>0 bypass the set would have let a second
             // copy of a DISPLACED off-set item ride back in on that re-entry, and
             // made probe criterion 2 ("zero would-deny with tls>0") vacuous.
             // D2 (marth 2026-10-12): EVERY deny below is RANKED: it stands only while the claim

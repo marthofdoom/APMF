@@ -935,6 +935,9 @@ namespace APMF_API {
     // v8 (base-form match). A client must see abiVersion >= 25 before it sets the flag: an older
     // APMF ignores the bytes WITHOUT a word (any copy satisfies the entry). Malformed bytes are
     // logged once per handle and read as no uid. Reference: Docs/APMF_API-REFERENCE.md#abi-v25-equip-instance
+    // A uid on a HAND entry (weapon, shield, torch) takes that item out of the combat AI's weapon
+    // switching: CheckShouldEquip refuses it unless the hand already holds it, so only Harbinger's
+    // equip pass (per declaration) or a re-declaration puts it on. Set one there only if intended.
     inline constexpr std::uint8_t kEquipEntry_HasUid = 1u << 0;   // reserved[0] bit 0 (ABI v25)
     inline void SetEquipEntryUid(APMF_EquipEntry& entry, std::uint16_t uid) noexcept {   // uid 0 clears it
         entry.reserved[0] = uid != 0 ? kEquipEntry_HasUid : std::uint8_t{ 0 };

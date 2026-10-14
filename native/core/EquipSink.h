@@ -70,7 +70,9 @@
 // ExtraUniqueID uniqueID (APMF_API::kEquipEntry_HasUid). For a form declared ONLY
 // with uids, the in-set test needs the instance the equip names: EquipObject's
 // a_extraData, which both call sites store at EquipData+0x00 (AE 38894 +0x113 /
-// SE 37938 +0x87 / 1.7.104 0x6DC310 +0x113: `mov [rsp+0x28], <r9 copy>`), read
+// SE 37938 +0x87 / 1.7.104 0x6DC310 +0x113: `mov [rsp+0x28], <r9 copy>`; the
+// list sibling 38893 / 37937 / 0x6DC220 +0x94 stores the first UNWORN extra list
+// of the entry there, `mov [rsp+0x20], rdi`), read
 // here with ExtraDataList::GetByType<ExtraUniqueID> (type 0x9F, uniqueID u16 at
 // +0x14 -- the class's own IsNotEqual reads exactly that on all three binaries).
 // That read takes the list's read lock, the SAME lock EquipObject itself takes on
