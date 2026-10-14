@@ -631,7 +631,19 @@ namespace apmf::equipsink {
             // seat (core/HandBlock.cpp) and the enforce pass's unequip call, so they cannot disagree.
             // An actor here only through the hand block / force has an emptied view (owned=0,
             // denied=0): refuse is false.
-            const DeclaredVerdict dv       = DeclaredSetVerdict(set, itemId, competes);
+            // ABI v25: for a form the set declares ONLY by instance (uid), the in-set test needs the
+            // instance this equip names: EquipObject's a_extraData (EquipData+0x00; null = names none).
+            // Read only then (the list's read lock, which EquipObject took on this thread just before).
+            EquipInstance inst{};
+            if (equipClaimed && InstanceOnly(set, itemId)) {
+                try {
+                    inst.named = data->extra != nullptr;
+                    inst.uid   = inst.named ? ExtraUid(data->extra) : 0;
+                } catch (...) {
+                    inst = EquipInstance{};   // never unwind into the engine's frame; names nothing -> off-set
+                }
+            }
+            const DeclaredVerdict dv       = DeclaredSetVerdict(set, itemId, competes, inst);
             const bool            blacked  = dv.blacked;
             const bool            ownedCat = dv.ownedCat;
 
@@ -899,13 +911,20 @@ namespace apmf::equipsink {
                         else if (slotId == kEitherHandEquipSlotLogOnly) eslot = "E";
                         else                                            eslot = apmf::log::Hex(slotId);
                     }
-                    spdlog::info("[apmf][equip-obs] actor={} item={} op=equip path={} site={}+0x{} ret={} q={} f={} s={} a={} tls={} cat={} owned={} black={} eslot={} verdict={} name='{}'",
+                    // ABI v25: `inst=` only when the form is declared by instance: none (no extra list),
+                    // nouid (a list without an ExtraUniqueID), or the uid it names.
+                    std::string instField;
+                    if (dv.byInstance)
+                        instField = !inst.named ? std::string(" inst=none")
+                                  : inst.uid == 0 ? std::string(" inst=nouid")
+                                                  : " inst=uid:0x" + apmf::log::Hex(inst.uid, 4);
+                    spdlog::info("[apmf][equip-obs] actor={} item={} op=equip path={} site={}+0x{} ret={} q={} f={} s={} a={} tls={} cat={} owned={} black={} eslot={}{} verdict={} name='{}'",
                                  apmf::log::Hex(actorId), apmf::log::Hex(itemId), path,
                                  siteSpec ? siteSpec->id : 0, apmf::log::Hex(siteSpec ? siteSpec->off : 0, 0),
                                  caller.external ? std::string("ext") : apmf::log::Hex(caller.rva, 0),
                                  data->queue ? 1 : 0, data->force ? 1 : 0, data->sounds ? 1 : 0, data->applyNow ? 1 : 0,
                                  tls, CategoryNames(competes, catBuf, sizeof(catBuf)), ownedCat ? 1 : 0, blacked ? 1 : 0, eslot,
-                                 verdict, itemName ? itemName : "");
+                                 instField, verdict, itemName ? itemName : "");
                 }
             } catch (...) {
             }
@@ -1023,6 +1042,46 @@ namespace apmf::equipsink {
         v.observe  = g_observeOnly.load(std::memory_order_relaxed) ||
                      (a_set.flags & APMF_API::kEquipAuth_ObserveOnly) != 0;
         return v;
+    }
+
+    DeclaredVerdict DeclaredSetVerdict(const apmf::EquipSetView& a_set, RE::FormID a_item, std::uint32_t a_competes,
+                                       const EquipInstance& a_inst) {
+        DeclaredVerdict v = DeclaredSetVerdict(a_set, a_item, a_competes);   // the scope rules and observe
+        if (!v.inSet) return v;   // the form is not declared at all: no instance can change that
+        // ABI v25: the in-set test per entry. A plain entry admits the form (v8); an entry with a
+        // uid admits only the instance it names, and with no instance named only a candidate whose
+        // hand already holds the form (the 0x0F seat's `held`; the sink never sets it).
+        bool in = false, anyPlain = false;
+        for (std::uint32_t i = 0; i < a_set.count && i < APMF_API::kMaxEquipSet; ++i) {
+            if (a_set.forms[i] != a_item) continue;
+            const std::uint16_t want = a_set.uids[i];
+            if (want == 0) { anyPlain = true; in = true; break; }
+            if (a_inst.named ? (a_inst.uid != 0 && a_inst.uid == want) : a_inst.held) { in = true; break; }
+        }
+        v.byInstance = !anyPlain;
+        v.inSet      = in;
+        v.refuse     = v.blacked || (v.ownedCat && a_set.count != 0 && !v.inSet);
+        return v;
+    }
+
+    bool InstanceOnly(const apmf::EquipSetView& a_set, RE::FormID a_item) {
+        if (a_item == 0) return false;
+        bool any = false;
+        for (std::uint32_t i = 0; i < a_set.count && i < APMF_API::kMaxEquipSet; ++i) {
+            if (a_set.forms[i] != a_item) continue;
+            if (a_set.uids[i] == 0) return false;   // a plain entry admits the form whatever the instance
+            any = true;
+        }
+        return any;
+    }
+
+    std::uint16_t ExtraUid(const RE::ExtraDataList* a_extra) {
+        if (!a_extra) return 0;
+        // ExtraUniqueID (type 0x9F): uniqueID u16 at +0x14 (the class's own IsNotEqual, AE 0x185B90 /
+        // SE 0x13DF00 / 1.7.104 0x18B1C0). GetByType takes the list's read lock at the per-runtime
+        // offset CommonLib's GetLock computes (+0x18 on 1.6.629+ and 1.7.104, +0x10 on 1.5.97).
+        const auto* uid = a_extra->GetByType<RE::ExtraUniqueID>();
+        return uid ? uid->uniqueID : std::uint16_t{ 0 };
     }
 
     bool WornDeniedRefused(const apmf::EquipSetView& a_set, RE::FormID a_actor, RE::FormID a_item,

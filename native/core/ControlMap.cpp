@@ -542,9 +542,10 @@ namespace apmf {
     // `entries` is READ AND COPIED synchronously here (APMF never retains the
     // client's pointer), clamped to kMaxEquipSet at enqueue time so the queued op
     // is already bounded. The slot byte is copied RAW (validated at Apply, on the
-    // writer thread, where the once-per-handle log lives); the reserved bytes are
-    // ignored. entries == nullptr or count == 0 -> equipCount stays 0 -> CLEARS
-    // the declaration on Apply.
+    // writer thread, where the once-per-handle log lives); so are the three reserved
+    // bytes, which carry an INSTANCE since ABI v25 (kEquipEntry_HasUid + a uid).
+    // entries == nullptr or count == 0 -> equipCount stays 0 -> CLEARS the
+    // declaration on Apply.
     void ControlMap::EnqueueSetEquipSetEx(Handle handle, const APMF_API::APMF_EquipEntry* entries, std::uint32_t count) {
         if (handle == APMF_API::kInvalidHandle) return;
         PendingOp op{};
@@ -556,6 +557,9 @@ namespace apmf {
             for (std::uint32_t i = 0; i < op.equipCount; ++i) {
                 op.equipForms[i] = entries[i].form;
                 op.equipSlots[i] = entries[i].slot;
+                op.equipInst[3 * i]     = entries[i].reserved[0];   // ABI v25: the instance, raw
+                op.equipInst[3 * i + 1] = entries[i].reserved[1];
+                op.equipInst[3 * i + 2] = entries[i].reserved[2];
             }
         }
         {
@@ -685,7 +689,7 @@ namespace apmf {
             case PendingOp::Kind::kRepoint:      changed |= ApplyRepoint(op.handle, op.param, next); break;
             case PendingOp::Kind::kSetAllowList: changed |= ApplySetSpellAllowList(op.handle, op.altForms, op.altCount, next); break;
             case PendingOp::Kind::kCast:         changed |= ApplyRequest(op, next);                  break;   // ch.8b -- ApplyRequest handles the cast branch
-            case PendingOp::Kind::kSetEquipSet:  changed |= ApplySetEquipSet(op.handle, op.equipForms, op.equipSlots, op.equipCount, op.equipRequested, next); break;   // ch.17
+            case PendingOp::Kind::kSetEquipSet:  changed |= ApplySetEquipSet(op.handle, op.equipForms, op.equipSlots, op.equipInst, op.equipCount, op.equipRequested, next); break;   // ch.17
             case PendingOp::Kind::kSetEquipScope: changed |= ApplySetEquipScope(op.handle, op.equipOwned, op.equipDenied, next); break;   // ch.17, ABI v9
             }
         }
@@ -1646,8 +1650,8 @@ namespace apmf {
     // seat reads the NEW set by the time the equip calls run (INVARIANTS #20's
     // "publish first, mutate second", channels/EquipAuthority.cpp). Returns
     // whether the STORED set changed (Publish gate), never whether it enforced.
-    bool ControlMap::ApplySetEquipSet(Handle handle, const RE::FormID* forms, const std::uint8_t* slots, std::uint32_t count,
-                                      std::uint32_t requested, MapType& map) {
+    bool ControlMap::ApplySetEquipSet(Handle handle, const RE::FormID* forms, const std::uint8_t* slots, const std::uint8_t* inst,
+                                      std::uint32_t count, std::uint32_t requested, MapType& map) {
         auto idxIt = m_index.find(handle);
         if (idxIt == m_index.end()) return false;   // unknown/stale
 
@@ -1686,14 +1690,47 @@ namespace apmf {
                 if (raw <= APMF_API::kEquipSlot_Left) slotNow[i] = raw;
                 else { slotNow[i] = APMF_API::kEquipSlot_Default; ++badSlots; }
             }
+            // ABI v25: the INSTANCE (the entry's reserved bytes). reserved[0] bit 0 =
+            // kEquipEntry_HasUid, reserved[1..2] = the uid (little-endian). Only a flag with a
+            // NONZERO uid and no other bit set names an instance; anything else malformed (a
+            // flag with uid 0, an unknown flag bit, uid bytes without the flag) is stored as
+            // "no uid" -- the v8 base-form match -- and counted for the once-per-handle log.
+            // All-zero bytes (every pre-v25 client) are the plain v8 entry, never counted.
+            std::uint16_t uidNow[APMF_API::kMaxEquipSet]{};
+            std::uint32_t badInst = 0, withUid = 0;
+            for (std::uint32_t i = 0; i < n; ++i) {
+                if (!forms || !inst) break;
+                const std::uint8_t  fl  = inst[3 * i];
+                const std::uint16_t uid = static_cast<std::uint16_t>(inst[3 * i + 1] |
+                                                                     (static_cast<std::uint16_t>(inst[3 * i + 2]) << 8));
+                if (fl == 0 && uid == 0) continue;                         // a plain entry
+                if (fl == APMF_API::kEquipEntry_HasUid && uid != 0) { uidNow[i] = uid; ++withUid; continue; }
+                ++badInst;                                                 // malformed: base-form match
+            }
             bool changed = (mine->equipCount != n);
             for (std::uint32_t i = 0; i < n && !changed; ++i)
-                changed = (mine->equipForms[i] != (forms ? forms[i] : 0)) || (mine->equipSlots[i] != slotNow[i]);
+                changed = (mine->equipForms[i] != (forms ? forms[i] : 0)) || (mine->equipSlots[i] != slotNow[i]) ||
+                          (mine->equipUids[i] != uidNow[i]);
             if (changed) {
                 mine->equipCount = n;
-                for (std::uint32_t i = 0; i < n; ++i) { mine->equipForms[i] = forms ? forms[i] : 0; mine->equipSlots[i] = slotNow[i]; }
-                for (std::uint32_t i = n; i < APMF_API::kMaxEquipSet; ++i) { mine->equipForms[i] = 0; mine->equipSlots[i] = 0; }
+                for (std::uint32_t i = 0; i < n; ++i) {
+                    mine->equipForms[i] = forms ? forms[i] : 0;
+                    mine->equipSlots[i] = slotNow[i];
+                    mine->equipUids[i]  = uidNow[i];
+                }
+                for (std::uint32_t i = n; i < APMF_API::kMaxEquipSet; ++i) {
+                    mine->equipForms[i] = 0;
+                    mine->equipSlots[i] = 0;
+                    mine->equipUids[i]  = 0;
+                }
             }
+            if (badInst != 0 && badInst != mine->equipBadInst) {
+                spdlog::warn("[apmf][equip-auth] actor=0x{} h={} {} entry instance field(s) malformed (reserved[0] must be "
+                             "0 or kEquipEntry_HasUid with a NONZERO uid in reserved[1..2]; uid bytes need the flag) -- "
+                             "treated as naming no instance (base-form match).",
+                             apmf::log::Hex(formID), handle, badInst);
+            }
+            mine->equipBadInst = badInst;
             const bool owner = (best == mine);
             if (badSlots != 0 && badSlots != mine->equipBadSlots) {
                 spdlog::warn("[apmf][equip-auth] actor=0x{} h={} {} entry slot value(s) outside APMF_API::EquipSlot "
@@ -1712,9 +1749,9 @@ namespace apmf {
             mine->equipRequested = (requested > APMF_API::kMaxEquipSet) ? requested : 0;
             std::uint32_t handed = 0;
             for (std::uint32_t i = 0; i < n; ++i) if (slotNow[i] != APMF_API::kEquipSlot_Default) ++handed;
-            spdlog::info("[ctl] 0x{} ~ ch.{} {} SET-EQUIP-SET (h={}, {} form(s), {} with a hand, {}{}).",
+            spdlog::info("[ctl] 0x{} ~ ch.{} {} SET-EQUIP-SET (h={}, {} form(s), {} with a hand, {} naming an instance, {}{}).",
                          apmf::log::Hex(formID), channel->ChannelNo(), channel->Name(),
-                         handle, n, handed, changed ? "changed" : "unchanged", owner ? ", owner" : ", not owner");
+                         handle, n, handed, withUid, changed ? "changed" : "unchanged", owner ? ", owner" : ", not owner");
             if (owner) {
                 // Writer thread: form lookups are legal here (ApplyRequest does the
                 // same). The channel only POSTS from this; the equip calls themselves
@@ -2406,8 +2443,12 @@ namespace apmf {
                 if (c.basis > best->basis) best = &c;
             }
             out.count = (best->equipCount < APMF_API::kMaxEquipSet) ? best->equipCount : APMF_API::kMaxEquipSet;
-            for (std::uint32_t i = 0; i < out.count; ++i) { out.forms[i] = best->equipForms[i]; out.slots[i] = best->equipSlots[i]; }
-            for (std::uint32_t i = out.count; i < APMF_API::kMaxEquipSet; ++i) { out.forms[i] = 0; out.slots[i] = 0; }
+            for (std::uint32_t i = 0; i < out.count; ++i) {
+                out.forms[i] = best->equipForms[i];
+                out.slots[i] = best->equipSlots[i];
+                out.uids[i]  = best->equipUids[i];   // ABI v25: the instance, same generation
+            }
+            for (std::uint32_t i = out.count; i < APMF_API::kMaxEquipSet; ++i) { out.forms[i] = 0; out.slots[i] = 0; out.uids[i] = 0; }
             out.flags = static_cast<std::uint32_t>(best->param.ival);   // APMF_Param::ival is int32
             // ABI v9: the scope rides the SAME read as the set -- one generation.
             out.owned  = best->equipOwned;
@@ -2433,7 +2474,7 @@ namespace apmf {
                 case PendingOp::Kind::kRepoint:      ApplyRepoint(op.handle, op.param, next); break;
                 case PendingOp::Kind::kSetAllowList: ApplySetSpellAllowList(op.handle, op.altForms, op.altCount, next); break;
                 case PendingOp::Kind::kCast:         ApplyRequest(op, next);                  break;
-                case PendingOp::Kind::kSetEquipSet:  ApplySetEquipSet(op.handle, op.equipForms, op.equipSlots, op.equipCount, op.equipRequested, next); break;
+                case PendingOp::Kind::kSetEquipSet:  ApplySetEquipSet(op.handle, op.equipForms, op.equipSlots, op.equipInst, op.equipCount, op.equipRequested, next); break;
                 case PendingOp::Kind::kSetEquipScope: ApplySetEquipScope(op.handle, op.equipOwned, op.equipDenied, next); break;
                 }
             }

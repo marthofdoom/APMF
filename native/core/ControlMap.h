@@ -115,6 +115,11 @@ namespace apmf {
         // D2 (2026-10-12): the winning claim's handle, from the SAME snapshot read, so the sink
         // ranks a deny with that claim's client priority (facetattr::Decide). Appended at the END.
         Handle        handle = APMF_API::kInvalidHandle;
+        // ABI v25: the instance per entry (an ExtraUniqueID uniqueID; 0 = none, base-form match),
+        // parallel to `forms`, from the SAME snapshot read. Read by the seat's in-set test
+        // (equipsink::DeclaredSetVerdict with an instance), the 0x0F seat and the enforce pass.
+        // Appended at the END.
+        std::uint16_t uids[APMF_API::kMaxEquipSet]{};
     };
 
     class ControlMap {
@@ -496,6 +501,12 @@ namespace apmf {
             // including one carrying a client-supplied req.proxy, which APMF never
             // taught and must never un-teach. POD, appended at the END.
             bool           castProxyRef = false;
+            // ABI v25 (ch.17): the INSTANCE per declared item -- the ExtraUniqueID uniqueID the
+            // entry names (0 = none: base-form match, the v8 meaning), parallel to equipForms.
+            // Validated at Apply. POD, appended at the END, same RCU deep-copy discipline.
+            std::uint16_t  equipUids[APMF_API::kMaxEquipSet]{};
+            // Once-per-handle guard for the malformed-instance log (equipBadSlots' shape).
+            std::uint32_t  equipBadInst = 0;
         };
 
         // ---- THE ONE CLAIM COMPARATOR (2026-09-06) ------------------------------
@@ -643,6 +654,9 @@ namespace apmf {
             std::uint32_t        equipCount = 0;
             std::uint32_t        equipRequested = 0;   // the client's UNCLAMPED count (for the once-per-handle truncation log)
             std::uint8_t         equipSlots[APMF_API::kMaxEquipSet]{};   // ABI v8: the hand per item, parallel to equipForms (raw client value; validated at Apply)
+            // ABI v25: each entry's three RAW reserved bytes (entry i at [3*i .. 3*i+2]: the instance
+            // flags and the uid, APMF_API::kEquipEntry_HasUid), parallel to equipForms. Validated at Apply.
+            std::uint8_t         equipInst[APMF_API::kMaxEquipSet * 3]{};
             // kSetEquipScope only (ABI v9): the client's RAW masks, copied at
             // enqueue (nullptr -> the defaults); unknown bits masked at Apply.
             std::uint32_t        equipOwned  = APMF_API::kEquipCat_All;
@@ -680,8 +694,11 @@ namespace apmf {
         // `slots` (ABI v8) is parallel to `forms` (never null when count > 0 --
         // the enqueue side always fills it); a value outside APMF_API::EquipSlot
         // is stored as kEquipSlot_Default and logged once per handle.
-        bool ApplySetEquipSet(Handle handle, const RE::FormID* forms, const std::uint8_t* slots, std::uint32_t count,
-                              std::uint32_t requested, MapType& map);
+        // `inst` (ABI v25) is the entries' raw reserved bytes, 3 per entry (PendingOp::equipInst);
+        // a malformed instance (a flag with uid 0, an unknown flag bit, uid bytes without the flag)
+        // is stored as "no uid" (base-form match) and logged once per handle.
+        bool ApplySetEquipSet(Handle handle, const RE::FormID* forms, const std::uint8_t* slots, const std::uint8_t* inst,
+                              std::uint32_t count, std::uint32_t requested, MapType& map);
         // ABI v9: writer-thread-only, ApplySetEquipSet's shape -- look the claim up
         // via m_index, mask `owned`/`denied` to kEquipCat_All (unknown bits logged
         // once per handle), store both on the matching Claim whether or not it

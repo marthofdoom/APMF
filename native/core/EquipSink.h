@@ -66,6 +66,24 @@
 // The v8 per-item HAND (SetEquipSetEx) is an equip-side matter too: the seat's
 // in-set test stays a FormID compare, whichever hand the engine aims at.
 //
+// THE INSTANCE (ABI v25). An entry may name ONE inventory instance by its
+// ExtraUniqueID uniqueID (APMF_API::kEquipEntry_HasUid). For a form declared ONLY
+// with uids, the in-set test needs the instance the equip names: EquipObject's
+// a_extraData, which both call sites store at EquipData+0x00 (AE 38894 +0x113 /
+// SE 37938 +0x87 / 1.7.104 0x6DC310 +0x113: `mov [rsp+0x28], <r9 copy>`), read
+// here with ExtraDataList::GetByType<ExtraUniqueID> (type 0x9F, uniqueID u16 at
+// +0x14 -- the class's own IsNotEqual reads exactly that on all three binaries).
+// That read takes the list's read lock, the SAME lock EquipObject itself takes on
+// this thread a few instructions earlier (AE/1.7 lock at extra+0x18, SE at +0x10:
+// EquipObject +0x4f / +0x48 -> 0x15F0A0 / 0x1133A0 / 0x164630), so it adds no new
+// lock order. It is only read when the set names a uid for this form. The verdict:
+// a NAMED instance is in-set only if its uid is the declared one (no ExtraUniqueID
+// = not it); NO instance (a null extra list: the combat AI 48124/48126 and SE
+// 46955/46957, WorkerReentry 38913/37957, a plain script EquipItem) cannot be the
+// declared one and is off-set, unless another entry declares the form with no uid.
+// QueuedApply (38906/37950) re-calls EquipObject with the extra it stored, so a
+// queued APMF equip of the declared instance comes back NAMED and passes.
+//
 // THE SCOPE (ABI v9, SetEquipScope). v7/v8 held the WHOLE facet: every off-set
 // governed equip was refused. v9 holds only the categories the claim OWNS and
 // refuses outright the ones it DENIES (APMF_API::EquipCategory: Armor, Shield,
@@ -160,8 +178,36 @@ namespace apmf::equipsink {
         bool ownedCat = false;
         bool refuse   = false;
         bool observe  = false;
+        // ABI v25: the item's form is declared, and ONLY by entries that name an instance, so
+        // `inSet` came from the instance test (the 4-argument form below). Log field only.
+        bool byInstance = false;
     };
+    // The BASE-FORM verdict (v8 in-set test: any entry for the form). For callers that read only
+    // `blacked` (the unequip of a denied category: blacked never depends on the instance) and for
+    // pure observation.
     DeclaredVerdict DeclaredSetVerdict(const apmf::EquipSetView& a_set, RE::FormID a_item, std::uint32_t a_competes);
+
+    // ABI v25: the instance an equip names, as far as the asking seat can see it.
+    struct EquipInstance {
+        bool          named = false;   // the equip names an inventory instance (a non-null extra data list)
+        std::uint16_t uid   = 0;       // that instance's ExtraUniqueID uniqueID (0 = it has none)
+        bool          held  = false;   // 0x0F only (never named there): the hand this candidate competes
+                                       //   for already holds this form, so selecting it equips nothing new
+    };
+    // The INSTANCE verdict: the same rules, with the in-set test per entry: an entry with no uid
+    // matches the form (v8); an entry with a uid matches a NAMED instance with that uid, or, when
+    // nothing is named, only `held`. The sink and the 0x0F seat call this one.
+    DeclaredVerdict DeclaredSetVerdict(const apmf::EquipSetView& a_set, RE::FormID a_item, std::uint32_t a_competes,
+                                       const EquipInstance& a_inst);
+
+    // True when `a_item` is declared in `a_set` and EVERY entry for it names a uid (so the in-set
+    // test depends on the instance). Pure, any thread.
+    bool InstanceOnly(const apmf::EquipSetView& a_set, RE::FormID a_item);
+
+    // The ExtraUniqueID uniqueID on `a_extra` (0 for null or none). Takes the list's read lock
+    // (CommonLib GetByType: the engine's own lock at the per-runtime offset). Any thread that may
+    // read the list; the sink calls it inside EquipObject's frame (see THE INSTANCE above).
+    std::uint16_t ExtraUid(const RE::ExtraDataList* a_extra);
 
     // THE UNEQUIP'S VERDICT (2026-10-13 review F1). MAIN THREAD (the enforce pass), any thread safe.
     // Would the sink refuse, NOW, the equip that put this WORN item on? Only for an item in a DENIED

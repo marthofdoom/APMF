@@ -249,8 +249,21 @@ namespace apmf::handblock {
             if (!a_engine || a_cats == 0) return a_engine;
             apmf::EquipSetView set{};
             if (!apmf::ControlMap::Get().TryGetEquipSet(a_fid, set)) return a_engine;   // no ch.17 claim
-            const auto dv = apmf::equipsink::DeclaredSetVerdict(set, a_itemId, a_cats);
             const std::uint32_t hands = a_cats & (APMF_API::kEquipCat_Right | APMF_API::kEquipCat_Left);
+            // ABI v25: a form the set declares ONLY by instance (uid). A CombatInventoryItem carries
+            // the form alone (item at +0x10; no extra data list, fork CombatInventoryItem.h) and the
+            // equip it drives names NO instance (AE 48124/48126, SE 46955/46957, 1.7.104
+            // 0x88CFF0/0x88D360 all pass a null a_extraData), which the sink refuses for such a
+            // form. So the candidate is in-set only while a hand it competes for ALREADY holds the
+            // form (`held`: keeping it equips nothing new; the declared instance is put on, and a
+            // wrong copy replaced, by the enforce pass, which names it). GetEquippedObject is the
+            // plain actor-local read AiCastSeats' shield gate makes from this same slot.
+            apmf::equipsink::EquipInstance inst{};
+            if (apmf::equipsink::InstanceOnly(set, a_itemId) && a_actor) {
+                if ((hands & APMF_API::kEquipCat_Right) && a_actor->GetEquippedObject(/*left*/ false) == a_item) inst.held = true;
+                if ((hands & APMF_API::kEquipCat_Left) && a_actor->GetEquippedObject(/*left*/ true) == a_item) inst.held = true;
+            }
+            const auto dv = apmf::equipsink::DeclaredSetVerdict(set, a_itemId, a_cats, inst);
             if (!dv.refuse) {
                 if (hands) NoteHandAnswer(a_fid, hands, /*yes*/ true, set);   // review F2: this hand has a candidate
                 return a_engine;
@@ -304,7 +317,12 @@ namespace apmf::handblock {
                                  apmf::log::Hex(a_fid), a_actor->GetName() ? a_actor->GetName() : "?", a_tag,
                                  apmf::log::Hex(a_itemId), a_item->GetName() ? a_item->GetName() : "?",
                                  apmf::equipsink::CategoryNames(a_cats, cats, sizeof(cats)), dv.ownedCat ? 1 : 0,
-                                 dv.blacked ? 1 : 0, dv.blacked ? "a denied category" : "off the declared set",
+                                 dv.blacked ? 1 : 0,
+                                 dv.blacked      ? "a denied category"
+                                 : dv.byInstance ? "declared by instance (uid) and not held in this hand: the combat "
+                                                   "AI's equip names no instance, Harbinger's equip pass puts the "
+                                                   "declared one on"
+                                                 : "off the declared set",
                                  SiteName(a_retRva), apmf::log::Hex(a_retRva),
                                  dropped ? fmt::format(" ({} 0x0F line(s) dropped by the {}/s cap before this one)",
                                                        dropped, kCapPerSec)

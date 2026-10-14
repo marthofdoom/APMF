@@ -89,10 +89,10 @@ namespace RE {
 
 namespace APMF_API {
 
-    // ABI history (v10..v24, what each added and how an older APMF degrades). Gate every use on abiVersion >=
+    // ABI history (v10..v25, what each added and how an older APMF degrades). Gate every use on abiVersion >=
     // N.
     // History: Docs/APMF_API-HISTORY.md#abi-history
-    inline constexpr std::uint32_t kABIVersion = 24;
+    inline constexpr std::uint32_t kABIVersion = 25;
 
     // The exported query function's undecorated name and pointer type.
     // const APMF_API_v1* APMF_GetInterface(std::uint32_t abiVersion);
@@ -908,8 +908,9 @@ namespace APMF_API {
     //   +0  form      RE::FormID (u32)  the item's BASE FormID
     //   +4  slot      u8                an EquipSlot value; anything else is treated
     //                                   as kEquipSlot_Default and logged once
-    //   +5  reserved  u8[3]             MUST be 0 (a later ABI may define them; an
-    //                                   APMF built against this one ignores them)
+    //   +5  reserved  u8[3]             MUST be 0, except as ABI v25 defines them below
+    //                                   (an INSTANCE: kEquipEntry_HasUid + a uid). An
+    //                                   APMF older than v25 ignores them.
     //   size 8, alignment 4. Trivially copyable; APMF copies the array synchronously
     //   inside SetEquipSetEx and never retains the client's pointer.
     struct APMF_EquipEntry {
@@ -922,6 +923,52 @@ namespace APMF_API {
     static_assert(offsetof(APMF_EquipEntry, form)     == 0, "form at +0");
     static_assert(offsetof(APMF_EquipEntry, slot)     == 4, "slot at +4");
     static_assert(offsetof(APMF_EquipEntry, reserved) == 5, "reserved at +5");
+
+    // ── ABI v25: an INSTANCE per entry (SetEquipSetEx) ──
+    // A base FormID cannot say WHICH copy of an item to wear: a gem-socketed ring and a plain
+    // ring of the same base form, a player-enchanted sword and a plain one, read the same. From
+    // v25 an entry may name ONE inventory instance by its ExtraUniqueID (the u16 `uniqueID` the
+    // engine keeps on an item's extra data list; the same identity MEO uses). The layout of
+    // APMF_EquipEntry is UNCHANGED (still 8 bytes); the instance rides the three reserved bytes:
+    //   reserved[0]  flags        kEquipEntry_HasUid (bit 0); bits 1..7 RESERVED, must be 0
+    //   reserved[1]  uid low byte  } meaningful only with kEquipEntry_HasUid; must be 0 without it
+    //   reserved[2]  uid high byte }
+    // Use SetEquipEntryUid / EquipEntryUid below rather than packing the bytes by hand.
+    //
+    // WHAT A UID CHANGES (Harbinger v25; Docs/FACETS.md ch.17 "Instances"):
+    //   * IN-SET. An entry with a uid admits ONLY that instance. An engine equip of the same
+    //     base form that names a DIFFERENT instance (or an instance with no ExtraUniqueID) is
+    //     off-set, refused like any off-set item in an owned category. An engine equip that names
+    //     NO instance (EquipObject with a null extra list: the combat AI, an outfit refresh, a
+    //     plain script EquipItem) cannot be the declared instance and is off-set too, unless
+    //     another entry for the same form carries no uid. At the CheckShouldEquip selection
+    //     seat, which never sees an instance, a candidate of a uid-only form is admitted only
+    //     while the hand it competes for already holds that form.
+    //   * EQUIP. Harbinger's equip pass equips exactly that instance (its extra data list is
+    //     handed to ActorEquipManager::EquipObject). "Not worn" means that instance is not worn
+    //     (a handed entry: not worn in THAT hand). An instance the actor does not carry is
+    //     skipped and logged, never substituted by another copy.
+    //   * Entries WITHOUT the flag behave exactly as in v8..v24 (base-form match).
+    //   * The unequip of a DENIED category is unaffected (it never looked at the set).
+    // VERSION: a client must see abiVersion >= 25 before it sets kEquipEntry_HasUid. An older
+    // APMF ignores the reserved bytes WITHOUT a word: the entry reads as its base form, so any
+    // copy satisfies it and its equip pass equips whichever copy the engine picks.
+    // A flag with uid 0, an unknown flag bit, or uid bytes without the flag is logged once per
+    // handle and the entry is treated as having no uid (base-form match).
+    inline constexpr std::uint8_t kEquipEntry_HasUid = 1u << 0;   // reserved[0] bit 0 (ABI v25)
+
+    // Writes `uid` into `entry` (sets kEquipEntry_HasUid; uid 0 clears the instance instead,
+    // since 0 is never a minted uniqueID).
+    inline void SetEquipEntryUid(APMF_EquipEntry& entry, std::uint16_t uid) noexcept {
+        entry.reserved[0] = uid != 0 ? kEquipEntry_HasUid : std::uint8_t{ 0 };
+        entry.reserved[1] = static_cast<std::uint8_t>(uid & 0xFFu);
+        entry.reserved[2] = static_cast<std::uint8_t>((uid >> 8) & 0xFFu);
+    }
+    // The uid `entry` names, or 0 when it names no instance.
+    inline std::uint16_t EquipEntryUid(const APMF_EquipEntry& entry) noexcept {
+        if ((entry.reserved[0] & kEquipEntry_HasUid) == 0) return 0;
+        return static_cast<std::uint16_t>(entry.reserved[1] | (static_cast<std::uint16_t>(entry.reserved[2]) << 8));
+    }
 
     // ── ABI v9: the equip CATEGORIES a claim OWNS or DENIES (SetEquipScope) ──
     // v7/v8 took the facet WHOLE: a declaration refused every off-set engine equip
