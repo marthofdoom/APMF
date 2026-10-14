@@ -924,48 +924,24 @@ namespace APMF_API {
     static_assert(offsetof(APMF_EquipEntry, slot)     == 4, "slot at +4");
     static_assert(offsetof(APMF_EquipEntry, reserved) == 5, "reserved at +5");
 
-    // ── ABI v25: an INSTANCE per entry (SetEquipSetEx) ──
-    // A base FormID cannot say WHICH copy of an item to wear: a gem-socketed ring and a plain
-    // ring of the same base form, a player-enchanted sword and a plain one, read the same. From
-    // v25 an entry may name ONE inventory instance by its ExtraUniqueID (the u16 `uniqueID` the
-    // engine keeps on an item's extra data list; the same identity MEO uses). The layout of
-    // APMF_EquipEntry is UNCHANGED (still 8 bytes); the instance rides the three reserved bytes:
-    //   reserved[0]  flags        kEquipEntry_HasUid (bit 0); bits 1..7 RESERVED, must be 0
-    //   reserved[1]  uid low byte  } meaningful only with kEquipEntry_HasUid; must be 0 without it
-    //   reserved[2]  uid high byte }
-    // Use SetEquipEntryUid / EquipEntryUid below rather than packing the bytes by hand.
-    //
-    // WHAT A UID CHANGES (Harbinger v25; Docs/FACETS.md ch.17 "Instances"):
-    //   * IN-SET. An entry with a uid admits ONLY that instance. An engine equip of the same
-    //     base form that names a DIFFERENT instance (or an instance with no ExtraUniqueID) is
-    //     off-set, refused like any off-set item in an owned category. An engine equip that names
-    //     NO instance (EquipObject with a null extra list: the combat AI, an outfit refresh, a
-    //     plain script EquipItem) cannot be the declared instance and is off-set too, unless
-    //     another entry for the same form carries no uid. At the CheckShouldEquip selection
-    //     seat, which never sees an instance, a candidate of a uid-only form is admitted only
-    //     while the hand it competes for already holds that form.
-    //   * EQUIP. Harbinger's equip pass equips exactly that instance (its extra data list is
-    //     handed to ActorEquipManager::EquipObject). "Not worn" means that instance is not worn
-    //     (a handed entry: not worn in THAT hand). An instance the actor does not carry is
-    //     skipped and logged, never substituted by another copy.
-    //   * Entries WITHOUT the flag behave exactly as in v8..v24 (base-form match).
-    //   * The unequip of a DENIED category is unaffected (it never looked at the set).
-    // VERSION: a client must see abiVersion >= 25 before it sets kEquipEntry_HasUid. An older
-    // APMF ignores the reserved bytes WITHOUT a word: the entry reads as its base form, so any
-    // copy satisfies it and its equip pass equips whichever copy the engine picks.
-    // A flag with uid 0, an unknown flag bit, or uid bytes without the flag is logged once per
-    // handle and the entry is treated as having no uid (base-form match).
+    // ── ABI v25: an INSTANCE per entry (SetEquipSetEx) ── layout UNCHANGED (8 bytes); the
+    // instance rides the reserved bytes: reserved[0] = flags (kEquipEntry_HasUid, bits 1..7
+    // RESERVED, 0), reserved[1..2] = the uid, little-endian (0 without the flag). The uid is the
+    // item instance's ExtraUniqueID uniqueID (the identity MEO uses). Use the helpers below.
+    // With a uid the entry admits ONLY that instance: an engine equip naming another copy, a copy
+    // with no uid, or no instance at all (a null extra list: the combat AI, an outfit refresh) is
+    // off-set, unless another entry declares the same form with no uid. Harbinger's equip pass
+    // equips exactly that copy; one the actor does not carry is skipped and logged. No flag ==
+    // v8 (base-form match). A client must see abiVersion >= 25 before it sets the flag: an older
+    // APMF ignores the bytes WITHOUT a word (any copy satisfies the entry). Malformed bytes are
+    // logged once per handle and read as no uid. Reference: Docs/APMF_API-REFERENCE.md#abi-v25-equip-instance
     inline constexpr std::uint8_t kEquipEntry_HasUid = 1u << 0;   // reserved[0] bit 0 (ABI v25)
-
-    // Writes `uid` into `entry` (sets kEquipEntry_HasUid; uid 0 clears the instance instead,
-    // since 0 is never a minted uniqueID).
-    inline void SetEquipEntryUid(APMF_EquipEntry& entry, std::uint16_t uid) noexcept {
+    inline void SetEquipEntryUid(APMF_EquipEntry& entry, std::uint16_t uid) noexcept {   // uid 0 clears it
         entry.reserved[0] = uid != 0 ? kEquipEntry_HasUid : std::uint8_t{ 0 };
         entry.reserved[1] = static_cast<std::uint8_t>(uid & 0xFFu);
         entry.reserved[2] = static_cast<std::uint8_t>((uid >> 8) & 0xFFu);
     }
-    // The uid `entry` names, or 0 when it names no instance.
-    inline std::uint16_t EquipEntryUid(const APMF_EquipEntry& entry) noexcept {
+    inline std::uint16_t EquipEntryUid(const APMF_EquipEntry& entry) noexcept {   // 0 = names no instance
         if ((entry.reserved[0] & kEquipEntry_HasUid) == 0) return 0;
         return static_cast<std::uint16_t>(entry.reserved[1] | (static_cast<std::uint16_t>(entry.reserved[2]) << 8));
     }

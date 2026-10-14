@@ -8,6 +8,7 @@
 #include "core/CastClassify.h"       // IsPlacementSpell (summon / reanimate self-claim match)
 #include "core/CastProxy.h"         // castproxy::Acquire/Unref (ch.8b kSelf delivery-flip, writer thread)
 #include "core/MainThread.h"        // mainthread::Post (defer proxy teardown past this Drain's Publish)
+#include <cstring>                  // std::memcpy (ABI v25 instance bytes)
 #include "channels/Travel.h"  // ch.19 Installed()/NotInstalledReason() for the synchronous refusal
 #include "core/Allowance.h"    // RuntimeSupported(): APMF-B45 refusal on an unsupported runtime
 #include "core/Hook.h"         // hook::RefusedReason(): APMF-B45 refusal when nothing will drain
@@ -557,9 +558,7 @@ namespace apmf {
             for (std::uint32_t i = 0; i < op.equipCount; ++i) {
                 op.equipForms[i] = entries[i].form;
                 op.equipSlots[i] = entries[i].slot;
-                op.equipInst[3 * i]     = entries[i].reserved[0];   // ABI v25: the instance, raw
-                op.equipInst[3 * i + 1] = entries[i].reserved[1];
-                op.equipInst[3 * i + 2] = entries[i].reserved[2];
+                std::memcpy(&op.equipInst[3 * i], entries[i].reserved, 3);   // ABI v25: the instance, raw
             }
         }
         {
@@ -1690,22 +1689,16 @@ namespace apmf {
                 if (raw <= APMF_API::kEquipSlot_Left) slotNow[i] = raw;
                 else { slotNow[i] = APMF_API::kEquipSlot_Default; ++badSlots; }
             }
-            // ABI v25: the INSTANCE (the entry's reserved bytes). reserved[0] bit 0 =
-            // kEquipEntry_HasUid, reserved[1..2] = the uid (little-endian). Only a flag with a
-            // NONZERO uid and no other bit set names an instance; anything else malformed (a
-            // flag with uid 0, an unknown flag bit, uid bytes without the flag) is stored as
-            // "no uid" -- the v8 base-form match -- and counted for the once-per-handle log.
-            // All-zero bytes (every pre-v25 client) are the plain v8 entry, never counted.
+            // ABI v25: the INSTANCE (reserved bytes). Only kEquipEntry_HasUid alone with a NONZERO
+            // uid names one; all-zero is the plain v8 entry; anything else is malformed, stored as
+            // "no uid" (base-form match) and counted for the once-per-handle log.
             std::uint16_t uidNow[APMF_API::kMaxEquipSet]{};
             std::uint32_t badInst = 0, withUid = 0;
-            for (std::uint32_t i = 0; i < n; ++i) {
-                if (!forms || !inst) break;
+            for (std::uint32_t i = 0; forms && inst && i < n; ++i) {
                 const std::uint8_t  fl  = inst[3 * i];
-                const std::uint16_t uid = static_cast<std::uint16_t>(inst[3 * i + 1] |
-                                                                     (static_cast<std::uint16_t>(inst[3 * i + 2]) << 8));
-                if (fl == 0 && uid == 0) continue;                         // a plain entry
-                if (fl == APMF_API::kEquipEntry_HasUid && uid != 0) { uidNow[i] = uid; ++withUid; continue; }
-                ++badInst;                                                 // malformed: base-form match
+                const std::uint16_t uid = static_cast<std::uint16_t>(inst[3 * i + 1] | (inst[3 * i + 2] << 8));
+                if (fl == APMF_API::kEquipEntry_HasUid && uid != 0) { uidNow[i] = uid; ++withUid; }
+                else if (fl != 0 || uid != 0) ++badInst;
             }
             bool changed = (mine->equipCount != n);
             for (std::uint32_t i = 0; i < n && !changed; ++i)
@@ -1713,23 +1706,14 @@ namespace apmf {
                           (mine->equipUids[i] != uidNow[i]);
             if (changed) {
                 mine->equipCount = n;
-                for (std::uint32_t i = 0; i < n; ++i) {
-                    mine->equipForms[i] = forms ? forms[i] : 0;
-                    mine->equipSlots[i] = slotNow[i];
-                    mine->equipUids[i]  = uidNow[i];
-                }
-                for (std::uint32_t i = n; i < APMF_API::kMaxEquipSet; ++i) {
-                    mine->equipForms[i] = 0;
-                    mine->equipSlots[i] = 0;
-                    mine->equipUids[i]  = 0;
-                }
+                for (std::uint32_t i = 0; i < n; ++i) { mine->equipForms[i] = forms ? forms[i] : 0; mine->equipSlots[i] = slotNow[i]; }
+                for (std::uint32_t i = n; i < APMF_API::kMaxEquipSet; ++i) { mine->equipForms[i] = 0; mine->equipSlots[i] = 0; }
+                std::memcpy(mine->equipUids, uidNow, sizeof(uidNow));   // ABI v25 (zero past n: uidNow is value-initialized)
             }
-            if (badInst != 0 && badInst != mine->equipBadInst) {
-                spdlog::warn("[apmf][equip-auth] actor=0x{} h={} {} entry instance field(s) malformed (reserved[0] must be "
-                             "0 or kEquipEntry_HasUid with a NONZERO uid in reserved[1..2]; uid bytes need the flag) -- "
-                             "treated as naming no instance (base-form match).",
+            if (badInst != 0 && badInst != mine->equipBadInst)
+                spdlog::warn("[apmf][equip-auth] actor=0x{} h={} {} entry instance field(s) malformed (reserved[0] must be 0, or "
+                             "kEquipEntry_HasUid with a NONZERO uid) -- read as naming no instance (base-form match).",
                              apmf::log::Hex(formID), handle, badInst);
-            }
             mine->equipBadInst = badInst;
             const bool owner = (best == mine);
             if (badSlots != 0 && badSlots != mine->equipBadSlots) {
@@ -2443,12 +2427,9 @@ namespace apmf {
                 if (c.basis > best->basis) best = &c;
             }
             out.count = (best->equipCount < APMF_API::kMaxEquipSet) ? best->equipCount : APMF_API::kMaxEquipSet;
-            for (std::uint32_t i = 0; i < out.count; ++i) {
-                out.forms[i] = best->equipForms[i];
-                out.slots[i] = best->equipSlots[i];
-                out.uids[i]  = best->equipUids[i];   // ABI v25: the instance, same generation
-            }
-            for (std::uint32_t i = out.count; i < APMF_API::kMaxEquipSet; ++i) { out.forms[i] = 0; out.slots[i] = 0; out.uids[i] = 0; }
+            for (std::uint32_t i = 0; i < out.count; ++i) { out.forms[i] = best->equipForms[i]; out.slots[i] = best->equipSlots[i]; }
+            for (std::uint32_t i = out.count; i < APMF_API::kMaxEquipSet; ++i) { out.forms[i] = 0; out.slots[i] = 0; }
+            std::memcpy(out.uids, best->equipUids, sizeof(out.uids));   // ABI v25: the instance, same generation
             out.flags = static_cast<std::uint32_t>(best->param.ival);   // APMF_Param::ival is int32
             // ABI v9: the scope rides the SAME read as the set -- one generation.
             out.owned  = best->equipOwned;

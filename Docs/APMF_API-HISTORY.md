@@ -126,7 +126,7 @@ a DENIED category is unequipped by the enforce pass. The header comments that st
 stale until the paired MFO header change.
 
 <a id="abi-history"></a>
-## ABI v10 to v24: what each version added
+## ABI v10 to v25: what each version added
 
 Moved verbatim from `native/APMF_API.h` (line 96 at 9d01cdf). The header keeps a pointer to this anchor.
 
@@ -210,6 +210,15 @@ APMF_IdleStateInfo*), with IdleState / IdleUnconfirmable / IdleEnd and the 60-by
 client can tell an idle that PLAYED from one Harbinger cannot confirm (both keep the claim live). A client
 must see abiVersion >= 24 before it calls the slot: an older APMF has no query, only IsClaimLive.
 See "ABI v24: IDLE STATE" at the end of this header and Docs/FACETS.md ch.12.
+ABI v25 (2026-10-14, ch.17 entry instance): an APMF_EquipEntry may name ONE inventory instance by its
+ExtraUniqueID uniqueID. No struct change, no slot, no intent: the instance rides the entry's three
+reserved bytes (reserved[0] = kEquipEntry_HasUid, reserved[1..2] = the uid, little-endian), with the
+helpers SetEquipEntryUid / EquipEntryUid. With a uid the seat admits only that copy (a copy named
+otherwise, or no copy named at all, is off-set unless a plain entry declares the same form) and the
+equip pass equips exactly that copy. A client must see abiVersion >= 25 before it sets the flag: an
+OLDER APMF ignores the reserved bytes WITHOUT a word (it never read them since v8), so the entry reads
+as its base form and any copy satisfies it. A v24 client sends zeros and is byte-unaffected.
+Docs/APMF_API-REFERENCE.md#abi-v25-equip-instance, Docs/FACETS.md ch.17 "Instances".
 ```
 
 <a id="intent-18"></a>

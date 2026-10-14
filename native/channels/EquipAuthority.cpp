@@ -63,6 +63,22 @@
 // what the actor does not own enough copies of. kEquipSlot_Default is v7's
 // behaviour verbatim: no slot, IsWorn() as the worn test.
 //
+// THE INSTANCE (ABI v25, 2026-10-14). An entry may name ONE inventory instance by
+// its ExtraUniqueID uniqueID (APMF_API::kEquipEntry_HasUid): a gem-socketed ring
+// rather than a plain copy of the same base form. For such an entry this pass
+// finds the actor's extra data list carrying that uid (in the inventory snapshot;
+// the list pointers are the engine's own, CommonLib's GetInventory copies only the
+// list of pointers) and hands THAT list to EquipObject as a_extraData, so the
+// engine equips exactly that copy and the seat sees it named (in-set). "Not worn"
+// is that list not worn: no ExtraWorn / ExtraWornLeft for a Default entry, no
+// ExtraWorn (right) / ExtraWornLeft (left) for a handed one. An instance the actor
+// does not carry is skipped and logged (`instance-missing`), never substituted by
+// another copy. An instance worn in the OTHER hand is skipped and logged
+// (`instance-other-hand`): EquipObject returns before its worker for a list that
+// is already worn (AE 38894 / 1.7.104 +0x42..+0x56, SE 37938 +0x3b..+0x4f), so
+// re-issuing it would do nothing. Entries without a uid are exactly v8 (and count
+// copies only among themselves). The DENIED-category unequip does not read the set.
+//
 // THE GOVERNED TYPES (ABI v8). The seat governs ARMO / WEAP / AMMO / LIGH only;
 // every other form type passes it (a potion, food, a scroll, an ingredient, a
 // book -- DrinkPotion and the AI's own potion use are never refused). This pass
@@ -147,8 +163,9 @@ namespace {
     constexpr std::uint64_t kPendingMaxMs = 3000;   // an issued-not-applied item is held this long from its issue
     struct Issued {
         RE::FormID    form     = 0;
-        std::uint8_t  slot     = 0;   // ABI v8: the hand it was issued for (APMF_API::EquipSlot); a hold is per (form, slot)
+        std::uint8_t  slot     = 0;   // ABI v8: the hand it was issued for (APMF_API::EquipSlot); a hold is per (form, slot, uid)
         std::uint64_t issuedMs = 0;   // the ORIGINAL issue time; carried, never refreshed by a hold
+        std::uint16_t uid      = 0;   // ABI v25: the instance it was issued for (0 = none named)
     };
     struct ActorMemory {
         std::uint64_t lastPassMs  = 0;
@@ -165,7 +182,7 @@ namespace {
         std::uint64_t h = 1469598103934665603ull;
         auto mix = [&](std::uint32_t v) { h ^= v; h *= 1099511628211ull; };
         mix(set.count);
-        for (std::uint32_t i = 0; i < set.count; ++i) { mix(set.forms[i]); mix(set.slots[i]); }
+        for (std::uint32_t i = 0; i < set.count; ++i) { mix(set.forms[i]); mix(set.slots[i]); mix(set.uids[i]); }
         mix(set.owned); mix(set.denied);   // ABI v9: a scope change is a new signature
         return h;
     }
@@ -411,6 +428,7 @@ namespace {
         // kPendingMaxMs window, not one pass.
         std::vector<Issued> issuedNow;
         std::uint32_t equipped = 0, worn = 0, missing = 0, unresolved = 0, pending = 0, notGoverned = 0;
+        std::uint32_t instMissing = 0, instOtherHand = 0;   // ABI v25: a named instance not carried / worn in the other hand
         // ABI v9: declared items this pass will not touch because a category they
         // compete for is not owned, or is denied. Named once per (actor, set
         // signature) below; counted on every pass line.
@@ -419,11 +437,13 @@ namespace {
         for (std::uint32_t i = 0; i < set.count; ++i) {
             const RE::FormID   form = set.forms[i];
             const std::uint8_t slot = (set.slots[i] <= APMF_API::kEquipSlot_Left) ? set.slots[i] : APMF_API::kEquipSlot_Default;
+            const std::uint16_t uid = set.uids[i];   // ABI v25: the named instance (0 = none)
             if (form == 0) continue;
             // ABI v8: the same form may be declared once per hand. This entry is
             // instance #k of its form (0-based) -- it needs k+1 copies in inventory.
+            // ABI v25: only entries naming NO instance count (a named one is its own copy).
             std::uint32_t instance = 0;
-            for (std::uint32_t j = 0; j < i; ++j) if (set.forms[j] == form) ++instance;
+            for (std::uint32_t j = 0; j < i; ++j) if (set.forms[j] == form && set.uids[j] == 0) ++instance;
             auto* obj = RE::TESForm::LookupByID<RE::TESBoundObject>(form);
             if (!obj) {
                 ++unresolved;
@@ -471,7 +491,7 @@ namespace {
                              apmf::log::Hex(id), apmf::log::Hex(form), obj->GetName() ? obj->GetName() : "");
                 continue;
             }
-            if (static_cast<std::int32_t>(instance) >= invCount) {
+            if (uid == 0 && static_cast<std::int32_t>(instance) >= invCount) {
                 ++missing;
                 spdlog::warn("[apmf][equip-auth] actor=0x{} declared 0x{} '{}' ({} hand) is instance #{} of that form but "
                              "the actor owns {} -- skipped (APMF never adds items).",
@@ -480,14 +500,55 @@ namespace {
                 continue;
             }
             const auto& entry = it->second.second;
+            // ABI v25: the named instance's extra data list (the engine's own pointer).
+            RE::ExtraDataList* xList = nullptr;
+            if (uid != 0) {
+                if (entry && entry->extraLists) {
+                    for (auto* xl : *entry->extraLists) {
+                        if (!xl) continue;
+                        const auto* u = xl->GetByType<RE::ExtraUniqueID>();
+                        if (u && u->uniqueID == uid) { xList = xl; break; }
+                    }
+                }
+                if (!xList) {
+                    ++instMissing;
+                    spdlog::warn("[apmf][equip-auth] actor=0x{} declared 0x{} '{}' ({} hand) instance uid 0x{} is not in the "
+                                 "actor's inventory ({} cop{} of the form carried, none with that ExtraUniqueID) -- skipped, "
+                                 "no other copy substituted (APMF never adds items; the seat still holds the declaration).",
+                                 apmf::log::Hex(id), apmf::log::Hex(form), obj->GetName() ? obj->GetName() : "",
+                                 SlotName(slot), apmf::log::Hex(uid, 4), invCount, invCount == 1 ? "y" : "ies");
+                    continue;
+                }
+            }
             // Worn test. Default: any worn instance (v7 verbatim). A handed entry:
             // THAT hand holds this form -- the engine's own per-hand read, so a
             // right-hand sword declared Left reads not-worn and is moved.
-            const bool isWorn = (slot == APMF_API::kEquipSlot_Default) ? (entry && entry->IsWorn())
-                                                                       : (inHand[slot] == obj);
+            // ABI v25, a named instance: THAT list is worn (Default: ExtraWorn or
+            // ExtraWornLeft; Right: ExtraWorn; Left: ExtraWornLeft).
+            bool isWorn = false;
+            if (xList) {
+                const bool wornR = xList->HasType(RE::ExtraDataType::kWorn);
+                const bool wornL = xList->HasType(RE::ExtraDataType::kWornLeft);
+                isWorn = slot == APMF_API::kEquipSlot_Default ? (wornR || wornL)
+                       : slot == APMF_API::kEquipSlot_Right   ? wornR
+                                                              : wornL;
+                if (!isWorn && (wornR || wornL)) {
+                    // Worn, in the other hand: EquipObject would return before its worker for a
+                    // worn list (see the banner), so issuing it changes nothing. Logged, not issued.
+                    ++instOtherHand;
+                    spdlog::warn("[apmf][equip-auth] actor=0x{} declared 0x{} '{}' instance uid 0x{} for the {} hand is worn "
+                                 "in the {} hand -- not issued (the engine ignores an equip of an already-worn copy). "
+                                 "Declare it for the hand it is in, or have it unequipped first.",
+                                 apmf::log::Hex(id), apmf::log::Hex(form), obj->GetName() ? obj->GetName() : "",
+                                 apmf::log::Hex(uid, 4), SlotName(slot), wornR ? "right" : "left");
+                    continue;
+                }
+            } else {
+                isWorn = (slot == APMF_API::kEquipSlot_Default) ? (entry && entry->IsWorn()) : (inHand[slot] == obj);
+            }
             if (isWorn) { ++worn; continue; }
             if (auto held = std::find_if(mem.issued.begin(), mem.issued.end(),
-                                         [&](const Issued& e) { return e.form == form && e.slot == slot; });
+                                         [&](const Issued& e) { return e.form == form && e.slot == slot && e.uid == uid; });
                 held != mem.issued.end()) {
                 // Issued inside the hold window and not yet worn: do not queue a
                 // second copy. Carried with its original time; retried once the
@@ -504,15 +565,17 @@ namespace {
                 // The bracket is what the seat recognises as "APMF-issued": this
                 // equip, and every engine re-entry beneath it, passes with tls>0.
                 apmf::equipsink::ApmfEquipScope scope;
-                mgr->EquipObject(actor, obj, nullptr, 1, equipSlot, /*queue*/ true, /*force*/ false,
+                // ABI v25: xList names the declared instance (nullptr for an entry naming none,
+                // the v8 call). The seat sees it as EquipData's extra and admits that copy only.
+                mgr->EquipObject(actor, obj, xList, 1, equipSlot, /*queue*/ true, /*force*/ false,
                                  /*sounds*/ true, /*applyNow*/ false);
             }
             ++equipped;
-            issuedNow.push_back(Issued{ form, slot, nowMs });
+            issuedNow.push_back(Issued{ form, slot, nowMs, uid });
             if (slot != APMF_API::kEquipSlot_Default) PostReadback(id, form, slot, nowMs);
-            spdlog::info("[apmf][equip-auth] actor=0x{} set={} items -> equip 0x{} '{}' hand={}",
+            spdlog::info("[apmf][equip-auth] actor=0x{} set={} items -> equip 0x{} '{}' hand={}{}",
                          apmf::log::Hex(id), set.count, apmf::log::Hex(form), obj->GetName() ? obj->GetName() : "",
-                         SlotName(slot));
+                         SlotName(slot), uid ? " instance uid 0x" + apmf::log::Hex(uid, 4) : std::string());
         }
         mem.lastPassMs = nowMs;
         mem.lastSig    = sig;
@@ -532,12 +595,12 @@ namespace {
                          skippedUnowned + skippedDenied, skippedUnowned, skippedDenied, skipNames);
         }
         spdlog::info("[apmf][equip-auth] actor=0x{} enforce pass #{}{}: set={} owned=0x{} denied=0x{} equipped={} already-worn={} "
-                     "held-in-flight={} not-in-inventory={} unresolved={} not-governed={} skipped-unowned={} skipped-denied={} "
-                     "unequipped-denied={} unequip-held={} would-unequip={}",
+                     "held-in-flight={} not-in-inventory={} instance-missing={} instance-other-hand={} unresolved={} "
+                     "not-governed={} skipped-unowned={} skipped-denied={} unequipped-denied={} unequip-held={} would-unequip={}",
                      apmf::log::Hex(id), mem.passes, identical ? " (identical re-declaration)" : "",
                      set.count, apmf::log::Hex(set.owned, 2), apmf::log::Hex(set.denied, 2),
-                     equipped, worn, pending, missing, unresolved, notGoverned, skippedUnowned, skippedDenied,
-                     unequipped, unequipHeld, wouldUnequip);
+                     equipped, worn, pending, missing, instMissing, instOtherHand, unresolved, notGoverned, skippedUnowned,
+                     skippedDenied, unequipped, unequipHeld, wouldUnequip);
         // Menu "Served": the claim's client had >0 items equipped for it by this pass.
         if (equipped > 0) apmf::sources::NoteServedClaim(set.handle, apmf::sources::Facet::kEquip);
     }

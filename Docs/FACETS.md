@@ -1543,11 +1543,18 @@ The claim alone changes nothing. Harbinger invents no set, so an actor with a cl
 struct APMF_EquipEntry {
     RE::FormID   form;        // the item's BASE FormID
     std::uint8_t slot;        // EquipSlot: 0 default, 1 right hand, 2 left hand
-    std::uint8_t reserved[3]; // must be 0
+    std::uint8_t reserved[3]; // 0, or (ABI 25) an instance: see "Instances" below
 };
 ```
 
 `kEquipSlot_Default` lets the engine pick. A slot-less one-hander always lands in the right hand and displaces what is there, so a dagger meant for the off hand would evict the sword. Use `kEquipSlot_Right` and `kEquipSlot_Left` for hand-held items only (a one-hand weapon, a shield, a torch). Declare a two-hander, a bow, ammo and body armor with `kEquipSlot_Default`. The same form may appear twice, once per hand, for two identical daggers. Harbinger counts the instances it needs against the inventory and skips, with a log line, any it does not own enough of. An unknown slot value is treated as default and logged once.
+
+**Instances (ABI 25).** An entry can name ONE copy of its item, so a gem-socketed ring is worn rather than a plain ring of the same base form. Write the copy's `ExtraUniqueID` uniqueID into the entry with `SetEquipEntryUid(entry, uid)`. With a uid, the seat admits only that copy. An equip of another copy, a copy with no uid, or no named copy at all (the combat AI and an outfit refresh name none) is off the set, unless another entry declares the same form with no uid. The combat AI's `CheckShouldEquip` admits such a form only while the hand already holds it. Harbinger's equip pass equips exactly that copy, and skips and logs one the actor does not carry (`instance-missing`) or wears in the other hand (`instance-other-hand`). It never puts on another copy instead. Check `abiVersion >= 25` first: an older Harbinger ignores the bytes without a word and any copy satisfies the entry. [APMF_API-REFERENCE.md](APMF_API-REFERENCE.md#abi-v25-equip-instance) has the byte layout and the disassembly evidence.
+
+```cpp
+APMF_EquipEntry ring{ ringForm, kEquipSlot_Default, { 0, 0, 0 } };
+if (g_apmf->abiVersion >= 25) SetEquipEntryUid(ring, socketedUid);   // the copy MEO socketed
+```
 
 `SetEquipScope` narrows the authority to categories.
 
@@ -1595,7 +1602,7 @@ When the declaring claim owns the facet:
 
 Since 2026-10-13 every declared category is enforced by default: weapons, shields, torches, ammo and armor alike, in and out of combat. The same verdict runs in three places. The equip seat refuses an engine equip. The combat AI's `CheckShouldEquip` seat (on the Melee, Ranged, Shield, Torch and OneHandedBlock items) answers NO for a candidate the declaration refuses, so the AI never plans around an item it cannot equip. Out of combat there is no selection seat, and the equip seat alone refuses (outfit re-apply, the AI's own equip commands, `RemoveItem` re-equip, other mods). The equip pass takes off a worn item in a DENIED category (below), unless the source that put it on outranks the claim (the equip seat let that equip stand and remembers its source; an item with no record is ranked as an Engine equip). All three call one function, so they cannot disagree.
 
-Only ARMO, WEAP, AMMO and LIGH equips are governed. A potion, food, a scroll, an ingredient or a book passes untouched, so the AI's own potion use is never refused. Do not declare one. The equip pass skips it and logs why. The deny half compares FormIDs only, so a declared item is in the set whichever hand the engine tries. The hand is what Harbinger's own equip pass enforces.
+Only ARMO, WEAP, AMMO and LIGH equips are governed. A potion, food, a scroll, an ingredient or a book passes untouched, so the AI's own potion use is never refused. Do not declare one. The equip pass skips it and logs why. The deny half compares FormIDs (and, for an entry with a uid, the copy), so a declared item is in the set whichever hand the engine tries. The hand is what Harbinger's own equip pass enforces.
 
 > **Key Concept 8 (declare, do not tick)** Call the declaration when the loadout changes. Each declaration walks the inventory. An item Harbinger queued is held for 3 seconds before it is queued again.
 
@@ -1686,7 +1693,7 @@ bool HarbingerEnforces() {
 
 #### Version, INI and field status
 
-ABI 7 (first shipped in 0.9.5), 8 adds a hand per item, `kEquipAuth_DenyPlayerMenu` and `IsEquipAuthorityEnforced`, 9 adds the scope. Keys in `[EquipAuthority]`: `bEquipAuthority` (1), `bEquipObserveOnly` (0 since 2026-10-13), `bEquipDenyScript` (0). `bEquipEnforceArmor` is retired. `bHandClaimBlocksEquip` in `[HandBlock]`. In use by MFO. Every declared category is enforced by default. [Appendix E](#appendix-e-equip-authority-probe-criteria) is now a field check, read with `bEquipObserveOnly=1` if you want it without refusals. Built, not yet battle-tested.
+ABI 7 (first shipped in 0.9.5), 8 adds a hand per item, `kEquipAuth_DenyPlayerMenu` and `IsEquipAuthorityEnforced`, 9 adds the scope, 25 adds an instance per item. Keys in `[EquipAuthority]`: `bEquipAuthority` (1), `bEquipObserveOnly` (0 since 2026-10-13), `bEquipDenyScript` (0). `bEquipEnforceArmor` is retired. `bHandClaimBlocksEquip` in `[HandBlock]`. In use by MFO. Every declared category is enforced by default. [Appendix E](#appendix-e-equip-authority-probe-criteria) is now a field check, read with `bEquipObserveOnly=1` if you want it without refusals. Built, not yet battle-tested.
 
 **Check Your Understanding: ch.17**
 
@@ -3294,6 +3301,7 @@ The ABI is append-only. A client built against an older ABI keeps working agains
 | 22 | 0.13.1 | `kIntent_EquipPreference`, `EquipPrefFlags`, `APMF_EquipPrefEntry`, `APMF_EquipPrefInfo`, `SetEquipPreference`, `GetEquipPreferenceState` (struct `APMF_API_v22`) |
 | 23 | 0.13.1 | `kIntent_CombatSubstrate` (no struct, no slot: rides `RequestEx` / `Release`), `APMF.esl` anchor records |
 | 24 | 0.13.1 | `GetIdleState`, `IdleState`, `IdleUnconfirmable`, `IdleEnd`, `APMF_IdleStateInfo` (struct `APMF_API_v24`) |
+| 25 | the release after 0.13.1 | `kEquipEntry_HasUid`, `SetEquipEntryUid`, `EquipEntryUid`: a ch.17 entry names one item instance in its reserved bytes (no struct, no slot) |
 
 The last release is 0.13.0, ABI 21. The interface struct for ABI 21 is `APMF_API_v19`, since ABI 20 and 21 added no slot. ABI 22 is on main for the next release, with the struct `APMF_API_v22`.
 

@@ -263,7 +263,8 @@ namespace {
     // first release after 0.9.4 -- REVIEW-BACKLOG APMF-B10: name it at the cut; v11 and
     // v12 ship together in 0.9.8; v13 and v14 ship in 0.9.9; v15, v16 and v17 ship in 0.9.10;
     // v18, v19 and v20 ship in 0.11.0; v21 ships in 0.12.0; v22 ships in the release after
-    // 0.13.0 -- name it at the cut; so do v23 and v24).
+    // 0.13.0 -- name it at the cut; so do v23 and v24; v25, the ch.17 entry instance, ships in
+    // the release after 0.13.1 -- name it at the cut).
     const char* MinReleaseForAbi(std::uint32_t abi) {
         switch (abi) {
         case 1:  return "0.2.0";

@@ -275,3 +275,40 @@ anomaly. The player's own trade/gift menu equips always pass. An unattributed eq
 unless APMF_Sources.ini says [UnknownSources] Equip=override. Harbinger EQUIPS NOTHING for a
 preference: place the item yourself (or declare it with kIntent_EquipAuthority).
 ```
+
+<a id="abi-v25-equip-instance"></a>
+## ABI v25 equip instance (ch.17): naming one copy of an item
+
+A base FormID cannot say which copy of an item the actor should wear. A gem-socketed ring and a plain ring of the same base form read the same, and so do a player-enchanted sword and a plain one. From ABI v25 a `SetEquipSetEx` entry can name ONE inventory instance by its `ExtraUniqueID` uniqueID, the u16 the engine keeps on an item's extra data list. MEO identifies item instances the same way.
+
+**Layout.** `APMF_EquipEntry` does not change. It is still 8 bytes, and the instance rides its three reserved bytes.
+
+| Byte | Meaning |
+|---|---|
+| `reserved[0]` | flags. Bit 0 is `kEquipEntry_HasUid`. Bits 1 to 7 are reserved and must be 0 |
+| `reserved[1]` | the uid, low byte. 0 without the flag |
+| `reserved[2]` | the uid, high byte. 0 without the flag |
+
+`SetEquipEntryUid(entry, uid)` writes the three bytes (uid 0 clears them) and `EquipEntryUid(entry)` reads the uid back (0 when the entry names no instance). Harbinger reads an entry as naming an instance only when `reserved[0]` is exactly `kEquipEntry_HasUid` and the uid is not 0. All-zero bytes are a plain entry. Anything else (the flag with uid 0, another flag bit, uid bytes without the flag) is logged once per handle and read as a plain entry.
+
+**What the seat does.** For a form the set declares ONLY by instance, the in-set test needs the instance an equip names. That is the `a_extraData` argument of `ActorEquipManager::EquipObject`, which both worker call sites store as the first field of the worker's argument block. Harbinger reads its `ExtraUniqueID` there.
+
+| The equip names | Verdict for a form declared only by uid |
+|---|---|
+| the declared copy (same uid) | in the set |
+| another copy, or a copy with no `ExtraUniqueID` | off the set |
+| no copy at all (a null extra list) | off the set |
+
+A null extra list is what the combat AI's own equip passes (AE 48124 and 48126, SE 46955 and 46957, 1.7.104 `0x88CFF0` and `0x88D360` all clear `r9`), and so do the worker's second-hand re-entry (AE 38913, SE 37957) and a plain script `EquipItem`. The engine has not named a copy, so the seat cannot prove it is the declared one, and refuses it in an owned category. An outfit refresh or the AI cannot swap the declared copy for another. A queued equip comes back to the seat through QueuedApply (AE 38906, SE 37950) with the extra list it was queued with, so Harbinger's own queued equip of the declared copy passes.
+
+If another entry declares the same form with no uid, the form is admitted by base form as in v8, whatever copy the equip names.
+
+**The selection seat.** The combat AI's `CheckShouldEquip` (0x0F) candidate carries the form only (`CombatInventoryItem::item` at +0x10, no extra list). For a form declared only by uid the candidate is admitted while a hand it competes for already holds that form (keeping it equips nothing new) and refused otherwise, because the equip it would drive names no copy and the sink would refuse it. That keeps the AI from planning around an equip the sink refuses.
+
+**The equip pass.** For an entry with a uid, Harbinger finds the extra data list with that uid in the actor's inventory and hands it to `EquipObject`, so the engine equips exactly that copy. "Not worn" means that list is not worn: no `ExtraWorn` or `ExtraWornLeft` for a default entry, no `ExtraWorn` for a right-hand entry, no `ExtraWornLeft` for a left-hand entry. A copy the actor does not carry is skipped and logged (`instance-missing` on the pass line). Another copy is never put on instead. A copy worn in the OTHER hand is skipped and logged (`instance-other-hand`), because the engine ignores an equip of a list that is already worn (`EquipObject` returns before its worker). Entries without a uid count copies among themselves, exactly as in v8.
+
+**What does not change.** The unequip of a worn item in a DENIED category reads only the category, never the set. The ranking of every deny, the exemptions and observe-only work as before.
+
+**Version.** A client must see `abiVersion >= 25` before it sets the flag. An older Harbinger ignores the reserved bytes without a word: the entry reads as its base form, any copy satisfies it, and its equip pass equips whichever copy the engine picks.
+
+**Verified on** 1.6.1170, 1.5.97 and 1.7.104 (the three runtimes the equip seat installs on), from the disassembly: `EquipObject` stores `r9` at the argument block's first field (AE and 1.7.104 `+0x113`, SE `+0x87`), the list sibling stores the first unworn extra list there, the engine read-locks the extra list on the same thread just before (`+0x18` on 1.6.1170 and 1.7.104, `+0x10` on 1.5.97, the offsets CommonLib's `ExtraDataList::GetLock` uses), and `ExtraUniqueID` is type `0x9F` with the uid at `+0x14` (its own `IsNotEqual` on all three binaries).
