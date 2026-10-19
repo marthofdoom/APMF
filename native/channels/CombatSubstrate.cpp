@@ -15,6 +15,7 @@
 #include "core/Registry.h"
 #include "core/Sources.h"
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <limits>
@@ -257,6 +258,7 @@ namespace {
     float         g_ttlSec        = 6.0f;
     float         g_dryPeriodSec  = 20.0f;
     bool          g_moveTrace     = false;
+    bool          g_census        = true;   // [CombatSubstrate] bSubstrateBystanderCensus (passive; no deny)
 
     using RemoveTarget_t = void (*)(RE::CombatGroup*, RE::TESObjectREFR*);
     using EvaluatePkg_t  = void (*)(RE::Actor*, bool, bool);
@@ -1436,18 +1438,44 @@ namespace {
         }
     }
 
+    // Why a player teammate is NOT idle enough for the dry run to open a substrate on (nullptr = idle).
+    // A substrate gives the actor a CombatController, and a walking / sitting / talking follower must
+    // not be dragged into one (field 2026-10-19: the dry run cancelled every ch.19 town walk).
+    // Claims are read through the RCU snapshot (any thread); the engine reads are plain member reads.
+    const char* NotIdleReason(RE::Actor* a) {
+        auto& cm = apmf::ControlMap::Get();
+        APMF_API::APMF_Param p{};
+        if (cm.TryGetOwningClaim(a->GetFormID(), APMF_API::kIntent_Travel, p)) return "owned ch.19 travel claim";
+        if (cm.TryGetOwningClaim(a->GetFormID(), APMF_API::kIntent_OfferPackage, p)) return "owned ch.9 offer-package claim";
+        if (cm.TryGetOwningClaim(a->GetFormID(), APMF_API::kIntent_MovementBlock, p)) return "owned ch.1 hold claim";
+        if (cm.TryGetOwningClaim(a->GetFormID(), APMF_API::kIntent_Idle, p)) return "owned ch.12 idle claim";
+        if (const auto* as = a->AsActorState()) {
+            if (as->GetSitSleepState() != RE::SIT_SLEEP_STATE::kNormal) return "sitting / sleeping / in furniture";
+            if (as->actorState2.talkingToPlayer) return "in dialogue";
+        }
+        if (a->GetOccupiedFurniture()) return "occupying furniture";
+        return nullptr;
+    }
+
     void DryRunSchedule(std::uint64_t a_now) {
         if (!g_dryRun || a_now - g_lastDryMs < static_cast<std::uint64_t>(g_dryPeriodSec * 1000.0f)) return;
         g_lastDryMs = a_now;
         std::vector<RE::FormID> picks;
+        std::string             skipped;   // "0x<id> (<reason>), ..." -- one line per pick round, never per frame
         if (auto* pl = RE::ProcessLists::GetSingleton()) {
             pl->ForEachHighActor([&](RE::Actor* a) {
                 if (a && a->IsPlayerTeammate() && !a->IsDead() && a->Is3DLoaded() && !HasController(a) &&
-                    !g_subs.contains(a->GetFormID()))
-                    picks.push_back(a->GetFormID());
+                    !g_subs.contains(a->GetFormID())) {
+                    if (const char* why = NotIdleReason(a))
+                        skipped += fmt::format("{}0x{} ({})", skipped.empty() ? "" : ", ", Hex(a->GetFormID()), why);
+                    else
+                        picks.push_back(a->GetFormID());
+                }
                 return RE::BSContainer::ForEachResult::kContinue;
             });
         }
+        if (!skipped.empty())
+            spdlog::info("[substrate] dry run: skipped as not idle: {}.", skipped);
         if (picks.empty()) {
             spdlog::info("[substrate] dry run: no idle loaded player teammate to open a substrate on (next try in {:.0f} s).",
                          static_cast<double>(g_dryPeriodSec));
@@ -1503,6 +1531,119 @@ namespace {
             spdlog::info("[substrate] MUSIC tracking ends ({} s after the last substrate closed): current 0x{}.",
                          kMusicTailMs / 1000, Hex(m));
         }
+    }
+
+    // ---- the BYSTANDER CENSUS (2026-10-19; PASSIVE: no write, no hook, no address id) -------------------
+    // Field: townsfolk panicked while a substrate was open and no crime was committed; which channel does it is
+    // not attributed. While any substrate is open, and kCensusTailMs after the last one closes, walk the high-process
+    // actors that are not the player, a teammate or the anchor and stand within kCensusRadius of a holder, and log
+    // ON CHANGE ONLY what each one's engine state does. Every read is a plain member read of a CommonLib member
+    // (CombatController, CombatState, AIProcess+0x136, the running package's type); NOT instrumented: the combat-start
+    // topic and the alarm / detection level (no verified accessor). Game thread, Poll.
+    constexpr std::uint64_t kCensusTailMs   = 10000;
+    constexpr float         kCensusRadius   = 2048.0f;
+    constexpr std::uint32_t kCensusMaxLines = 60;   // per window; then ONE summary line and silence
+    struct CensusRow {
+        bool          ctrl = false, inGroup = false, fleeing = false, detected = false, aggr = false, alarm = false;
+        std::uint32_t tgt = 0;
+        bool operator==(const CensusRow&) const = default;
+    };
+    std::unordered_map<RE::FormID, CensusRow> g_censusRows;
+    bool          g_censusLive = false;        // a window is running
+    std::uint64_t g_censusUntil = 0, g_censusLastOpenMs = 0;
+    std::uint32_t g_censusLines = 0, g_censusSuppressed = 0;
+
+    void CensusEnd(const char* a_why) {
+        if (!g_censusLive) return;
+        spdlog::info("[substrate] CENSUS window ends ({}): {} line(s) logged, {} suppressed by the cap ({}).", a_why,
+                     g_censusLines, g_censusSuppressed, kCensusMaxLines);
+        g_censusLive = false;
+        g_censusRows.clear();
+    }
+
+    void BystanderCensus(std::uint64_t a_now) {
+        if (!g_census) return;
+        std::vector<RE::NiPoint3>   holders;
+        std::vector<RE::CombatGroup*> groups;
+        for (const auto& [id, sub] : g_subs) {
+            if (sub.phase != Phase::kOpen) continue;
+            g_censusLastOpenMs = std::max(g_censusLastOpenMs, sub.openedMs);
+            if (auto* h = RE::TESForm::LookupByID<RE::Actor>(id)) {
+                holders.push_back(h->GetPosition());
+                if (auto* cc = h->GetActorRuntimeData().combatController; cc && cc->combatGroup)
+                    groups.push_back(cc->combatGroup);   // compared by address only, never dereferenced
+            }
+        }
+        if (!holders.empty()) {
+            g_censusUntil = a_now + kCensusTailMs;
+            if (!g_censusLive) {
+                g_censusLive = true;
+                g_censusLines = g_censusSuppressed = 0;
+                g_censusRows.clear();
+                spdlog::info("[substrate] CENSUS window opens ({} holder(s)): bystanders within {:.0f} u, change-only.",
+                             holders.size(), static_cast<double>(kCensusRadius));
+            }
+        } else if (!g_censusLive) {
+            return;
+        } else if (a_now >= g_censusUntil) {
+            CensusEnd("tail over");
+            return;
+        }
+        // After the last close the holders are gone: the radius test uses the last positions seen.
+        static std::vector<RE::NiPoint3> s_lastHolders;
+        if (!holders.empty()) s_lastHolders = holders;
+        const auto& around = holders.empty() ? s_lastHolders : holders;
+        const auto  aid    = g_anchorId.load(std::memory_order_relaxed);
+        auto* pl = RE::ProcessLists::GetSingleton();
+        if (!pl) return;
+        const std::uint64_t sinceOpen = a_now - g_censusLastOpenMs;
+        pl->ForEachHighActor([&](RE::Actor* a) {
+            if (!a || a->IsPlayerRef() || a->IsPlayerTeammate() || a->GetFormID() == aid || a->IsDead())
+                return RE::BSContainer::ForEachResult::kContinue;
+            const auto pos = a->GetPosition();
+            bool       near = false;
+            for (const auto& hp : around)
+                if (pos.GetDistance(hp) <= kCensusRadius) { near = true; break; }
+            const auto id = a->GetFormID();
+            if (!near) {
+                g_censusRows.erase(id);
+                return RE::BSContainer::ForEachResult::kContinue;
+            }
+            CensusRow r{};
+            auto&     rt = a->GetActorRuntimeData();
+            if (auto* cc = rt.combatController) {
+                r.ctrl = true;
+                if (const auto t = cc->targetHandle.get()) r.tgt = t->GetFormID();
+                r.inGroup = cc->combatGroup && std::find(groups.begin(), groups.end(), cc->combatGroup) != groups.end();
+                if (cc->state) {
+                    r.fleeing  = cc->state->isFleeing;
+                    r.detected = cc->state->isDetected;
+                }
+            }
+            if (auto* proc = rt.currentProcess) {
+                r.aggr = (proc->lowProcessFlags.underlying() & 0x04) != 0;   // AIProcess+0x136 bit 2
+                if (const auto* pk = proc->GetRunningPackage())
+                    r.alarm = pk->packData.packType.get() == RE::PACKAGE_PROCEDURE_TYPE::kAlarm;
+            }
+            auto& old = g_censusRows[id];
+            if (r == old) return RE::BSContainer::ForEachResult::kContinue;
+            if (g_censusLines >= kCensusMaxLines) {
+                if (g_censusSuppressed++ == 0)
+                    spdlog::info("[substrate] CENSUS cap of {} line(s) reached for this window; further changes are "
+                                 "counted, not logged.", kCensusMaxLines);
+                old = r;
+                return RE::BSContainer::ForEachResult::kContinue;
+            }
+            ++g_censusLines;
+            spdlog::info("[substrate] CENSUS 0x{} ({}): controller {}->{}, target 0x{} (was 0x{}), in-holder-group {}->{}, "
+                         "fleeing {}->{}, combat-detected {}->{}, aggressor-bit {}->{}, alarm-package {}->{}; +{} ms since the "
+                         "latest OPEN.",
+                         Hex(id), a->GetName(), old.ctrl, r.ctrl, Hex(r.tgt), Hex(old.tgt), old.inGroup, r.inGroup,
+                         old.fleeing, r.fleeing, old.detected, r.detected, old.aggr, r.aggr, old.alarm, r.alarm,
+                         sinceOpen);
+            old = r;
+            return RE::BSContainer::ForEachResult::kContinue;
+        });
     }
 
     // Debts a drop timed out with no real target seen in a group holding the holder (game thread, Poll).
@@ -1961,6 +2102,7 @@ namespace apmf::combatsubstrate {
         g_ttlSec       = std::clamp(IniFloat("CombatSubstrate", "fSubstrateTtlSec", 6.0f), 1.0f, kMaxTtlSec);
         g_dryPeriodSec = std::max(5.0f, IniFloat("CombatSubstrate", "fSubstrateDryRunPeriodSec", 20.0f));
         g_moveTrace    = IniInt("CombatSubstrate", "bSubstrateMoveTrace", 0) != 0;
+        g_census       = IniInt("CombatSubstrate", "bSubstrateBystanderCensus", 1) != 0;
 
         if (auto* holder = RE::ScriptEventSourceHolder::GetSingleton()) {
             holder->AddEventSink<RE::TESHitEvent>(HitSink::Get());
@@ -1989,6 +2131,7 @@ namespace apmf::combatsubstrate {
         DebtExpire(now);
         if (g_subCount.load(std::memory_order_relaxed) == 0 && g_subs.empty()) {
             MusicProbe(now);   // the tail after the last close
+            BystanderCensus(now);
             if (g_dryRun) Heartbeat(now);
             return;
         }
@@ -2019,6 +2162,7 @@ namespace apmf::combatsubstrate {
         g_subCount.store(g_subs.size(), std::memory_order_relaxed);
         PlaceAnchor();
         MusicProbe(now);
+        BystanderCensus(now);
         Heartbeat(now);
     }
 
@@ -2034,6 +2178,8 @@ namespace apmf::combatsubstrate {
         g_anchorOut = 0;
         g_served    = 0;
         g_musicTracking = false;
+        g_censusLive    = false;
+        g_censusRows.clear();
         {
             std::scoped_lock lk(g_debtMx);
             g_debts.fill(MusicDebt{});

@@ -496,7 +496,11 @@ with `kIntent_CombatSubstrate` beside its `kIntent_Cast` claim. It is legal only
    topic (StartCombat's block at AE `0x6B6CFB`, which runs because the bit below is off at entry) and the combat
    state event (`TESCombatEvent` / `OnCombatStateChanged`, never hidden from other mods' scripts). A RECORDED hole,
    NOT approved (review F9 of a512763): a group JOIN (StartCombat's third argument) is not caught at the target
-   check.
+   check. (e) Harbinger's own consumers of "in combat" treat a HELD holder as not in combat: ch.24 (`CombatApproach.cpp`)
+   and ch.19's per-frame monitor (`Travel.cpp` `Poll`, 2026-10-19) read `IsInCombat() && !combatsubstrate::Suppressing(id)`,
+   so a substrate hold never cancels a travel leg (`kLeg_CombatCancelled`); once the REAL bit fires `Suppressing` is
+   false and real combat cancels as before. A PASSIVE bystander census (`bSubstrateBystanderCensus`, logs only) watches
+   the non-teammate actors near a holder while a substrate is open, to attribute the townsfolk panic seen in the field.
 3. **The body stays the package's: the ignoring-combat split.** After the entry `EvaluatePackage(false, false)` runs
    once (`resetAI` false) and THEN the process ignoring-combat bit (`AIProcess+0x139`, read by AE `0x6D6780` / SE
    `0x643F00`) is set once; the controller is NOT paused (its `+0x42` was copied from the bit, still 0, at its birth:
