@@ -846,3 +846,9 @@ Same review (spot 3). A vanilla follower alias package is owned by Skyrim.esm (d
 
 ### APMF-B119 (SEV-5) -- procedure classifier: Acquire as auxiliary; unchecked tree pointer reads
 Re-review of `ae10bf6`. Verbatim: "the vanilla `Acquire` template (Acquire, Find, Travel, Wander) classifies as STANDING because of its Wander fallback. A follower mod's own 'go pick up or steal X' package built on that template would not count as active, so at a priority tie the claim wins. This is marth's design call, not a defect." Also: "The first read of the object pointer itself, and the reads of `p->data`, `procedureTree`, `templateParent` and the branch child array in `ClassifyUncached`, are not validated. They are safe for plugin packages ... For a runtime-created package, lifetime belongs to the engine."
+
+### APMF-B120 (SEV-4) -- hold: the 300 u "arrived but not fighting" end is not suspended while the target flies
+Raised against `910c12f` (Opus review of `fix/apmf-flyer-progress`). Verbatim: "a ranged or caster follower whose cast is denied, or a melee follower under a dragon hovering at dz 250-300, could still lose the hold after 20 s while the dragon is airborne. That cuts against 'an engagement cannot be lost'. If marth wants it airtight, the fix is to also gate `arrivedSinceMs` on `!tflying`. The evidence does not show this end firing on the dragon." Also recorded: the suspension is unbounded by design, so a mod flyer that sits permanently in Cruising/Hovering never gets the no-progress end (accepted by the ruling).
+
+### APMF-B121 (SEV-5) -- hold: flying transition cosmetics
+Same review. The out-of-combat branch clears `samples` but not `targetFlying` (the "no longer flying" line can print late); after landing the window starts at the last flying sample (one poll short of 20 s). Harmless.
