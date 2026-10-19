@@ -337,3 +337,25 @@ std::uint32_t (*GetSubstrateState)(RE::FormID actor);   // APMF_API_v26, gate on
 
 **Not in the query.** Whether battle music plays is not a client concern. The same build denies it inside Harbinger: a group whose members are all live holders and whose only target is the anchor has its music decision written from "undecided" to "none" before the engine decides it (FACETS ch.27 "Battle music").
 
+<a id="abi-v27-substrate-available"></a>
+## ABI v27 substrate availability (ch.27): can this install open a substrate at all?
+
+```cpp
+bool (*IsSubstrateAvailable)(void);   // APMF_API_v27, gate on abiVersion >= 27
+```
+
+TRUE only when the [combat substrate](FACETS.md#combat-substrate-kintent_combatsubstrate) INSTALLED and is usable on this runtime:
+
+- `APMF.ini` `[CombatSubstrate] bCombatSubstrate` is not 0,
+- the runtime is exactly 1.6.1170 or 1.5.97 (not VR; 1.7.104 is refused because the held engagement's `StopCombat` is not placed there),
+- every seat it rides is installed (ch.22's slot-0x99 seat and its anchor-target site, the held engagement's `StopCombat`, the 95-node leaf allow-list, the music deny's seat unless `bSubstrateMusicDeny=0`),
+- every address row it calls verified (`[allowance] SeatVerified`), and its `APMF.esl` records (0x808 to 0x80B) resolved.
+
+It is the same flag that makes a `kIntent_CombatSubstrate` request refused as unavailable: TRUE here means such a request is not refused for that reason (it can still be refused for the player, actor 0 or a bad TTL, and an accepted claim can still fail to OPEN, which ends the claim and is logged).
+
+**Why a client needs it.** "The capability is absent on this install" and "this one open was refused" are different answers. The first is a declared degrade a client may plan around (MFO: its legacy direct cast road out of combat, logged once per session). The second is a failure: log it, never fall back from it (principle 7).
+
+**Threading and cost.** Any thread, one atomic load, no game call, no lock. FALSE before `kDataLoaded`; it may change once at `kDataLoaded` and never afterwards. A throw inside returns FALSE. The reason for a FALSE is logged once in `APMF.log`: `[substrate] combat substrate NOT installed -- <why>`.
+
+**Older APMF.** An APMF before v27 has no slot. A v23 to v26 APMF may still accept a substrate claim; a client that needs the answer treats a missing slot as "unknown", not as "available".
+
