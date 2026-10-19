@@ -8,6 +8,7 @@
 #include "core/FacetAttribution.h"       // CallerBelow: StartCombat's caller (the seat's stack scan, as ch.22's)
 #include "core/Log.h"
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <cstdlib>
@@ -65,8 +66,10 @@
 //       live holder is a member of that group. In a group a held holder shares, removing the anchor would end
 //       that holder's declared substrate; there the non-holder leaves the group instead, through (c);
 //   (c) the held engagement's RANKED StopCombat (combatentry::hold::StopCombatRanked) when nothing but the anchor
-//       is left for it to fight. A group with a real target is a real fight: nothing is ended (a holder in it
-//       drops on trigger (a)).
+//       is left for it to fight, then (when it ended the fight) EvaluatePackage(false, false) as CloseSub / DropSub
+//       do. A real target is a real fight: no StopCombat while one is in the group. With no live holder in it the
+//       anchor entry is still removed (it ends no fight); with a held holder in it, that holder drops on trigger
+//       (a) and its drop removes the anchor. A leak seen extends the sweep's tail.
 // CLOSE (CloseSub) reads the closing holder's group members before its StopCombat and runs (a)-(c) on every
 // member that is not a live holder after it. The player is logged, never acted on.
 //
@@ -183,6 +186,23 @@ namespace {
         return false;
     }
 
+    // The ranked StopCombat and, when it ended the fight, the same package re-pick CloseSub / DropSub make after
+    // theirs (round-2 closing item 3a; review F3 of ace1d8b): EvaluatePackage(false, false), resetAI false, so the
+    // cleaned actor's own package (and its sheathe) comes back instead of a stale combat state. The relocation is the
+    // substrate's verified row PackageGate.EvaluatePackage (RELOCATION_ID(36407, 37401)); this runs only while the
+    // substrate is installed, which requires that row (exact 1.6.1170 / 1.5.97: never resolved on 1.7.104).
+    std::string StopAndRepick(RE::Actor* a_actor, RE::Actor* a_anchor) {
+        std::string stop = apmf::combatentry::hold::StopCombatRanked(a_actor, APMF_API::kInvalidHandle,
+                                                                     a_anchor->GetFormID(), a_anchor->GetHandle());
+        if (stop.starts_with("combat ENDED")) {
+            using EvaluatePkg_t = void (*)(RE::Actor*, bool, bool);
+            static REL::Relocation<EvaluatePkg_t> s_evaluate{ RELOCATION_ID(36407, 37401) };
+            s_evaluate(a_actor, false, false);
+            stop += " + package re-pick";
+        }
+        return stop;
+    }
+
     // (a)-(c) on one actor that is not a live holder. Fresh reads (no pointer from an earlier frame).
     void Treat(RE::Actor* a_actor, RE::Actor* a_anchor, const std::string& a_ctx, std::uint64_t a_now, bool a_force) {
         if (!a_actor || !a_anchor || a_actor == a_anchor) return;
@@ -218,17 +238,18 @@ namespace {
             ++ls.unlogged;
         }
         std::string did;
-        const RE::FormID anchorId = a_anchor->GetFormID();
         if (a_actor->IsPlayerRef()) {
             did = "the player: logged only";
-        } else if (gr.other != 0) {
-            did = "the group also has a real target: that fight is the engine's (a holder in it drops on real combat); "
-                  "nothing ended";
+        } else if (held && gr.other != 0) {
+            did = "a held holder shares a group with a real target: that holder drops on real combat and its drop "
+                  "removes the anchor; nothing ended";
         } else if (held) {
             did = "a held holder shares the group: the anchor stays in it (the holder's substrate stands); " +
-                  apmf::combatentry::hold::StopCombatRanked(a_actor, APMF_API::kInvalidHandle, anchorId,
-                                                             a_anchor->GetHandle());
+                  StopAndRepick(a_actor, a_anchor);
         } else {
+            // No live holder in the group: the anchor entry goes whatever else the group fights (it touches only the
+            // anchor's entry and ends no real fight; review F1 of ace1d8b: a TTL close could leave it listed in a
+            // holderless real fight forever).
             std::uint32_t left = gr.targets;
             if (gr.listed && g) {
                 subs::RemoveAnchorFromGroup(g);
@@ -239,10 +260,10 @@ namespace {
             } else {
                 did = "the group does not list the anchor (its controller still names it)";
             }
-            if (left == 0 || (!gr.listed && gr.other == 0)) {
-                did += "; " + apmf::combatentry::hold::StopCombatRanked(a_actor, APMF_API::kInvalidHandle, anchorId,
-                                                                      a_anchor->GetHandle());
-            }
+            if (left == 0 || (!gr.listed && gr.other == 0))
+                did += "; " + StopAndRepick(a_actor, a_anchor);
+            else if (gr.other != 0)
+                did += "; a real target remains: that fight is the engine's, nothing ended";
         }
         if (logNow) {
             ls.lastLogMs = a_now;
@@ -440,6 +461,7 @@ namespace apmf::anchorguard {
             g_kinds[i].store(i < npub ? kinds[i] : 0, std::memory_order_relaxed);
             g_groups[i].store(i < npub ? pub[i] : 0, std::memory_order_release);
         }
+        if (!leaks.empty()) g_tailUntil = (std::max)(g_tailUntil, a_now + kTailMs);   // a leak keeps the sweep running (F1)
         for (const auto id : leaks)
             if (auto* a = RE::TESForm::LookupByID<RE::Actor>(id)) Treat(a, anchor, "sweep", a_now, false);
     }

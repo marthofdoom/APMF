@@ -507,8 +507,10 @@ with `kIntent_CombatSubstrate` beside its `kIntent_Cast` claim. It is legal only
    live and 10 s after: a high-process non-holder whose controller targets the anchor or whose group lists it is
    logged as an ERROR (a leak is never masked, principle 7) and cleaned -- the anchor removed from its group with
    `CombatGroup::RemoveTarget` only when no held holder shares that group (in a shared group the leaked actor
-   leaves instead), then the held engagement's ranked StopCombat when nothing but the anchor is left; a group with
-   a real target is never touched. A CLOSE runs (b3) on the closing holder's group members after its StopCombat.
+   leaves instead), then the held engagement's ranked StopCombat when nothing but the anchor is left, then the
+   package re-pick CloseSub makes; a real target is never fought for: no StopCombat while one is in the group (a
+   holderless group still loses the anchor entry, which ends no fight; a holder-shared one waits for that holder's
+   real-combat drop), and a leak seen keeps the sweep running. A CLOSE runs (b3) on the closing holder's group members after its StopCombat.
    Groups are read only under their read lock, on the game thread, and no group pointer is kept past the frame.
    (e) Harbinger's own consumers of "in combat" treat a HELD holder as not in combat: ch.24 (`CombatApproach.cpp`)
    and ch.19's per-frame monitor (`Travel.cpp` `Poll`, 2026-10-19) read `IsInCombat() && !combatsubstrate::Suppressing(id)`,

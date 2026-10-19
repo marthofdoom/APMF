@@ -450,22 +450,25 @@ namespace {
     // generic:
     //   49 89 F8                  mov r8, rdi
     //   FF 25 00 00 00 00 <8>     jmp [rip+0] <thunk>
-    // Own trampoline, never freed (the engine calls IsDead until the process exits). 0 on failure.
+    // Own trampoline, never freed (the engine calls IsDead until the process exits). 0 only on a layout
+    // slip (the byte count below). SKSE::Trampoline::allocate never returns null: a request past the pool's
+    // free size is report_and_fail (fork src/SKSE/Trampoline.cpp do_allocate), so the pool is sized for BOTH
+    // stubs (53 + 17 = 70 <= 128) and the 17-byte fallback in Install can never exhaust it (review F2 of ace1d8b).
+    constexpr std::size_t kStubPool = 128;
     std::uintptr_t BuildRdiStub(bool a_join) {
-        static auto* s_tr = [] {   // once: a second call (the 17-byte fallback) allocates from the same 64 bytes
+        static auto* s_tr = [] {   // once: a second call (the 17-byte fallback) allocates from the same pool
             auto* tr  = new SKSE::Trampoline("APMF.ReentryDeny.RdiStub");
             void* mem = nullptr;
-            if (const auto* intfc = SKSE::GetTrampolineInterface()) mem = intfc->AllocateFromBranchPool(64);
-            if (mem) tr->set_trampoline(mem, 64);
-            else tr->create(64);
+            if (const auto* intfc = SKSE::GetTrampolineInterface()) mem = intfc->AllocateFromBranchPool(kStubPool);
+            if (mem) tr->set_trampoline(mem, kStubPool);
+            else tr->create(kStubPool);
             return tr;
         }();
         const auto          target = SKSE::stl::unrestricted_cast<std::uintptr_t>(&IsDeadHook::thunk);
         const std::uint8_t  jmp[6] = { 0xFF, 0x25, 0x00, 0x00, 0x00, 0x00 };
         const std::uint8_t  movR8Rdi[3] = { 0x49, 0x89, 0xF8 };
         const std::size_t   len    = a_join ? 53 : 17;
-        auto*               code   = static_cast<std::uint8_t*>(s_tr->allocate(len));
-        if (!code) return 0;
+        auto*               code   = static_cast<std::uint8_t*>(s_tr->allocate(len));   // never null (see above)
         std::size_t o = 0;
         auto put = [&](const void* p, std::size_t n) {
             std::memcpy(code + o, p, n);
