@@ -167,6 +167,7 @@ ABI v23. "Cast out of combat, animated." A follower's spell only plays its casti
 - **`fSubstrateDryRunPeriodSec`** (default `20`, at least 5). Seconds between dry-run rounds.
 - **`fSubstrateTtlSec`** (default `6`, clamped 1 to 15). How long a substrate stays open when the request's `param.fval` is 0.
 - **`bSubstrateMoveTrace`** (default `0`). Probe P6. 1 = one `[substrate] 0x<f> MOVE ...` line every 250 ms per open substrate: the running package, the controller's paused byte (+0x42), the process ignoring-combat bit (+0x139), speed, distance to the player, movement leaves denied and the bit resets the engine made.
+- **`bSubstrateMusicDeny`** (default `1`). 1 = a combat group whose members are all substrate holders and whose only target is the anchor gets its battle-music decision (`CombatGroup+0x15C`) set from "undecided" to "none" once, under the group's lock, before the game decides it, so a substrate plays no battle music; a real fight puts it back. 0 = off: the substrate still runs and every OPEN logs `known hole: the music deny is OFF`. With 1, a failed self-check row of the deny (`Substrate.CombatGroup.MusicWriteLock`, `MusicUndecided`, `Substrate.CombatManager.MusicPlayTest`, the two lock rows) refuses the whole substrate. Facet reference: [Combat substrate](FACETS.md#combat-substrate-kintent_combatsubstrate).
 
 ### [Sightline]
 

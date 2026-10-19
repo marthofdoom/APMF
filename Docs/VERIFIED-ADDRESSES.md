@@ -10,13 +10,13 @@ nothing when one does not. At startup `REL::SelfCheck::Run` repeats the comparis
 game actually loaded. A row that fails refuses THAT seat by name in the log; the expected RVA is never
 used in place of the library's answer.
 
-Offline result of this generation: 1.6.1170.0 236/236 verified, 0 refused, 1.5.97.0 236/236 verified, 0 refused.
+Offline result of this generation: 1.6.1170.0 241/241 verified, 0 refused, 1.5.97.0 241/241 verified, 0 refused.
 
 1.7.104.0 has NO Address Library. Its column is OUR OWN id map: the MIT id table of the CommonLibSSE-NG fork
 (`data/mit-idtable-v1-1-7-104-0.bin`, revision 3, 17751 records, SkyrimSE.exe TimeDateStamp 0x6A8C7046; built into every plugin, it is
 what SelfCheck queries at runtime; authoritative) with the evidence CSVs beside it, keyed by
 the 1.6.1170 id, re-verified against the plaintext 1.7.104 executable by the same row-kind checks (see the script
-docstring). Offline result: 1.7.104.0 243/279 verified, 36 NOT verified (28 of them BY DESIGN: 1.5.97-only labels whose AE twin row carries the 1.7.104 fact). A not-verified seat has no row in the 1.7.104 table,
+docstring). Offline result: 1.7.104.0 245/284 verified, 39 NOT verified (28 of them BY DESIGN: 1.5.97-only labels whose AE twin row carries the 1.7.104 fact). A not-verified seat has no row in the 1.7.104 table,
 so `IsVerifiedAddress` is false and the seat is refused by name. The table of `Not verified on 1.7.104` is below.
 
 These rows prove the ADDRESSES. That each hooked slot holds the same function body on 1.7.104, and that every
@@ -241,6 +241,11 @@ CommonLib layout APMF reads is the same there, is proven separately in the "1.7.
 | Substrate.TESObjectREFR.MoveTo | function | 56626 | 0xA447F0 | 56227 | 0x9AE5C0 | 56626 | 0xA5D370 | signature (21 bytes, unique in .text) |  | native/channels/CombatSubstrate.cpp (the anchor: to the holder, following it, and home to its XMarker) | combat substrate S2a |
 | Substrate.BSMusicManager.Reader | ripref | 36550 | 0x641AD0 +0xCF 48 8B 0D 7A BF AB 02 48 8D 54 24 30 48 89 74 | 35551 | 0x5AF3D0 +0xCF 48 8B 0D 3A 68 91 02 48 8D 54 24 30 48 89 74 | - | - | signature (19 bytes, unique in .text) |  | native/channels/CombatSubstrate.cpp (P3 OBSERVED music=, read-only: BSMusicManager::current) | combat substrate S2a P3 |
 | Substrate.BSMusicManager.Singleton | ripref global | 400896 | 0x30FDB20 | 514738 | 0x2EC5CE0 | - | - | RIP-relative reference at Substrate.BSMusicManager.Reader +0xCF (id 36550) |  | native/channels/CombatSubstrate.cpp (P3 OBSERVED music=, read-only: BSMusicManager::current) | combat substrate S2a P3 |
+| CommonLib.BSReadWriteLock.LockForWrite | function | 68234 | 0xCC9140 | 66977 | 0xC07350 | 68234 | 0xCE32D0 | signature (25 bytes, unique in .text) |  | native/channels/CombatSubstrate.cpp (the music deny: a PURE-substrate group's music decision CombatGroup+0x15C written 0xFF -> 0 once under the group's write lock, restored 0 -> 0xFF on a real drop) (BSWriteLockGuard) | combat substrate music deny (ClickUp 86e3pu939) |
+| CommonLib.BSReadWriteLock.UnlockForWrite | function | 68240 | 0xCC9390 | 66983 | 0xC075A0 | 68240 | 0xCE3520 | signature (17 bytes, unique in .text) |  | native/channels/CombatSubstrate.cpp (the music deny: a PURE-substrate group's music decision CombatGroup+0x15C written 0xFF -> 0 once under the group's write lock, restored 0 -> 0xFF on a real drop) (BSWriteLockGuard) | combat substrate music deny (ClickUp 86e3pu939) |
+| Substrate.CombatGroup.MusicWriteLock | callsite | 44703 | 0x803710 +0x30 E8 | 43481 | 0x76A2F0 +0x2B E8 | - | - | signature (53 bytes, unique in .text) |  | native/channels/CombatSubstrate.cpp (the music deny: a PURE-substrate group's music decision CombatGroup+0x15C written 0xFF -> 0 once under the group's write lock, restored 0 -> 0xFF on a real drop) | combat substrate music deny: AE 0x803740 / SE 0x76A31B call LockForWrite (1.7.104 0x8185A0 -> 0xCE32D0, same shape; not in the 1.7.104 id table) |
+| Substrate.CombatGroup.MusicUndecided | callsite | 44703 | 0x803710 +0x23C 80 BF 5C 01 00 00 FF | 43481 | 0x76A2F0 +0x94 80 BF 5C 01 00 00 FF | - | - | signature (53 bytes, unique in .text) |  | native/channels/CombatSubstrate.cpp (the music deny: a PURE-substrate group's music decision CombatGroup+0x15C written 0xFF -> 0 once under the group's write lock, restored 0 -> 0xFF on a real drop) | combat substrate music deny: AE 0x80394C / SE 0x76A384 (1.7.104 0x8187AC, same shape; not in the 1.7.104 id table) |
+| Substrate.CombatManager.MusicPlayTest | callsite | 46888 | 0x83DF10 +0x1E9 80 BD 5C 01 00 00 01 | 45588 | 0x7A6A30 +0x1E7 80 BD 5C 01 00 00 01 | - | - | signature (49 bytes, unique in .text) |  | native/channels/CombatSubstrate.cpp (the music deny: a PURE-substrate group's music decision CombatGroup+0x15C written 0xFF -> 0 once under the group's write lock, restored 0 -> 0xFF on a real drop) | combat substrate music deny: AE 0x83E0F9 / SE 0x7A6C17 (1.7.104 0x852FD9, same shape; not in the 1.7.104 id table) |
 | Leaf.CombatBehaviorIdle<float> | vtable | 205318 | 0x18733B0 | 256701 | 0x162FD40 | 205318 | 0x18ED490 | RTTI .?AV?$CombatBehaviorTreeNodeObject1@VCombatBehaviorIdle@@M@@ (COL offset 0) | 0x02: 0x557570 / 0x4FBEE0 / 0x55F3E0<br>0x03: 0x557710 / 0x4FC010 / 0x55F580 | native/core/CombatBehaviorRE.h (kParamLeaves); ActionGate.cpp act/pop for the combat substrate's allow-list (review F1 of a512763) | MIT fork Offsets_VTABLE.h:1792 (VTABLE_CombatBehaviorTreeNodeObject1_CombatBehaviorIdle_float_); RTTI name identical on 1.6.1170 and 1.5.97 |
 | Leaf.CombatBehaviorRepeat<float> | vtable | 212223 | 0x18D97C0 | 265835 | 0x1692D50 | 212223 | 0x1957D88 | RTTI .?AV?$CombatBehaviorTreeNodeObject1@VCombatBehaviorRepeat@@M@@ (COL offset 0) | 0x02: 0x863F70 / 0x7CCF30 / 0x8791B0<br>0x03: 0x557790 / 0x4FC090 / 0x55F600 | native/core/CombatBehaviorRE.h (kParamLeaves); ActionGate.cpp act/pop for the combat substrate's allow-list (review F1 of a512763) | MIT fork Offsets_VTABLE.h:3428 (VTABLE_CombatBehaviorTreeNodeObject1_CombatBehaviorRepeat_float_); RTTI name identical on 1.6.1170 and 1.5.97 |
 | Leaf.CombatBehaviorAcquireResource<3> | vtable | 212275 | 0x18D9A80 | 265839 | 0x1693010 | 212275 | 0x1958048 | RTTI .?AV?$CombatBehaviorTreeNodeObject3@VCombatBehaviorAcquireResource@@VBSFixedString@@HW4FLAG@1@@@ (COL offset 0) | 0x02: 0x863FE0 / 0x7CCF70 / 0x879220<br>0x03: 0x8642F0 / 0x7CD0F0 / 0x879530 | native/core/CombatBehaviorRE.h (kParamLeaves); ActionGate.cpp act/pop for the combat substrate's allow-list (review F1 of a512763) | MIT fork Offsets_VTABLE.h:3436 (VTABLE_CombatBehaviorTreeNodeObject3_CombatBehaviorAcquireResource_BSFixedString_int_CombatBehaviorAcquireResource__FLAG_); RTTI name identical on 1.6.1170 and 1.5.97 |
@@ -349,6 +354,9 @@ for them and the seat is refused. Nothing here is a failure on 1.6.1170 or 1.5.9
 | Substrate.CombatGroup.RemoveTarget | 44705 | id 44705 is not in the idmap |
 | Substrate.BSMusicManager.Reader | 36550 | id 36550 is not in the idmap |
 | Substrate.BSMusicManager.Singleton | 400896 | proven through Substrate.BSMusicManager.Reader, which did not verify: id 36550 is not in the idmap |
+| Substrate.CombatGroup.MusicWriteLock | 44703 | id 44703 is not in the idmap |
+| Substrate.CombatGroup.MusicUndecided | 44703 | id 44703 is not in the idmap |
+| Substrate.CombatManager.MusicPlayTest | 46888 | id 46888 is not in the idmap |
 
 ## Slots and offsets that are not Address Library ids
 

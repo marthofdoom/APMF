@@ -60,6 +60,11 @@ namespace apmf::combatsubstrate {
     // A substrate is suppressing combat behaviour on `a_actor` right now: a live holder whose
     // real-combat stand-down has not fired. ch.24 treats such an actor as NOT in combat.
     bool Suppressing(RE::FormID a_actor);
+    // ABI v26 GetSubstrateState (APMF_API::SubstrateState): kSubstrateState_Held for a live holder whose
+    // real-combat trigger has not fired (its combat is SUBSTRATE-ONLY), kSubstrateState_Real once it fired
+    // (the combat counts; the substrate is dropping), kSubstrateState_Anchor for the anchor actor itself,
+    // kSubstrateState_None otherwise (also before Install / when not installed). Lock-free.
+    std::uint32_t StateOf(RE::FormID a_actor);
 
     // core/ActionGate.cpp: the leaf ALLOW-LIST. `a_leafIdx` indexes apmf::cbt::kLeaves (0..69),
     // then apmf::cbt::kSearchLeaves (70..73), then apmf::cbt::kParamLeaves (74..94). `a_movement` = ActionGate's movement-leaf
