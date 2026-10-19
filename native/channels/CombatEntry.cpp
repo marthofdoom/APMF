@@ -901,6 +901,7 @@ namespace {
             std::uint32_t   attacks = 0, casts = 0;   // on the HELD target, this window
             std::uint32_t   elsewhereActs = 0;        // attacks / casts on another target while paused (R-3)
             bool            wasAttacking = false, wasCasting = false;
+            bool            targetFlying = false;   // the no-path-progress end is suspended while the target flies
             std::uint32_t   lostBase = 0, locBase = 0, leashBase = 0;
             Drive           drive = Drive::kNone;
             std::uint64_t   driveSinceMs = 0, driveRetryAfterMs = 0;
@@ -1377,6 +1378,23 @@ namespace apmf::combatentry::hold {
             }
             t.wasAttacking = attacking; t.wasCasting = casting;
 
+            // FLYING TARGET (marth 2026-10-18: "once an engagement is called it cannot be lost"): a dragon in
+            // the air outruns any ground follower, so "no path progress" means nothing against it. While the
+            // target's fly state is anything but none / perching (ActorState::IsFlying) the no-progress window
+            // is held at zero: the samples restart every poll, so the end needs a FULL window after it lands.
+            // A follower stuck against a GROUNDED target is still released. Logged once per transition.
+            const bool tflying = target->AsActorState()->IsFlying();
+            if (tflying != t.targetFlying) {
+                t.targetFlying = tflying;
+                if (tflying)
+                    spdlog::info("[hold] 0x{} -> 0x{}: target flying: no-progress end suspended.", Hex(sn.id),
+                                 Hex(sn.target));
+                else
+                    spdlog::info("[hold] 0x{} -> 0x{}: target no longer flying: no-progress end resumes (a full {} s "
+                                 "window).",
+                                 Hex(sn.id), Hex(sn.target), kNoProgressMs / 1000);
+            }
+            if (tflying) t.samples.clear();
             t.samples.push_back({ wnow, dist, tpos, t.path });
             while (t.samples.size() > 1 && t.samples[1].ms + kNoProgressMs <= wnow) t.samples.pop_front();
 
