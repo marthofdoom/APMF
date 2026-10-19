@@ -4,6 +4,23 @@ Updated 2026-10-13. Current version **v0.13.1** (cut 2026-10-13, ABI v24, see CH
 shipped, what's probe-gated, what's next. Keep this current in the SAME change as any
 build/finding/workflow change.
 
+## HEAD OF WORK 2026-10-19 -- SUBSTRATE FIXES (music deny, music probe, ABI v26 GetSubstrateState), branch `fix/apmf-substrate-fixes`, NOT merged
+
+ClickUp 86e3pu939. From the 2026-10-13 dry-run diagnosis and marth's field report ("The combat music predictably
+started each time the follower icon showed combat on the GUI, cycling back to exploration as it ended") and ruling
+(substrate combat is not combat, "It only exists to facilitate actions"):
+- **Music probe:** every BSMusicManager track change logged while a substrate is open + 15 s tail; each group's
+  FIRST decided music state (+0x15C) and who decided it (the old probe logged a max that was always 255 and only the
+  last track sample).
+- **Music deny:** a PURE-substrate group (all members live holders, all targets the anchor) gets +0x15C 0xFF -> 0
+  once under its write lock; a real drop puts Harbinger's 0 back to 0xFF. Five new self-check rows (1.6.1170 and
+  1.5.97; a failed row refuses the substrate); `[CombatSubstrate] bSubstrateMusicDeny` (default 1).
+- **anchor-home log bug** (`stays for 0x00000000`) fixed: the line names the holder the placement pass picks.
+- **ABI v26:** `APMF_API_v26::GetSubstrateState(actor)` (None / Held / Real / Anchor), any thread, lock-free.
+  MFO's paired branch uses it so substrate-only combat is not party combat, HUD combat, combat style or claims.
+- Tier-3 review of b1c78b2 (fix first): F1/F2/F4/F6 fixed by moving the deny and the put-back into the held engagement's detection seat (inside the engine's own locked group update; CombatGroup has no refcount) with a per-holder debt table; F3 (+0x15C is saved) handled at load; F5/F7 to REVIEW-BACKLOG APMF-B122/B123.
+- Field retest: the dry run (`bSubstrateDryRun=1`) with the MFO pair deployed.
+
 ## HEAD OF WORK 2026-10-13 -- ch.17 ENFORCES EVERY DECLARED CATEGORY, branch `fix/apmf-equip-enforce-all`, NOT merged
 
 ClickUp 86e3pyhxv. Deck 2026-10-13: Cicero and Jesper equipped shields MFO had DENIED, because `bEquipObserveOnly=1`

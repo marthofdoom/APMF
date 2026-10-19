@@ -126,7 +126,7 @@ a DENIED category is unequipped by the enforce pass. The header comments that st
 stale until the paired MFO header change.
 
 <a id="abi-history"></a>
-## ABI v10 to v25: what each version added
+## ABI v10 to v26: what each version added
 
 Moved verbatim from `native/APMF_API.h` (line 96 at 9d01cdf). The header keeps a pointer to this anchor.
 
@@ -219,6 +219,13 @@ equip pass equips exactly that copy. A client must see abiVersion >= 25 before i
 OLDER APMF ignores the reserved bytes WITHOUT a word (it never read them since v8), so the entry reads
 as its base form and any copy satisfies it. A v24 client sends zeros and is byte-unaffected.
 Docs/APMF_API-REFERENCE.md#abi-v25-equip-instance, Docs/FACETS.md ch.17 "Instances".
+ABI v26 (2026-10-19, ch.27 substrate state, ClickUp 86e3pu939): APMF_API_v26 appends ONE read-only slot,
+GetSubstrateState(actor) -> SubstrateState (None 0 / Held 1 / Real 2 / Anchor 3), ANY thread, lock-free.
+marth 2026-10-13: substrate combat "only exists to facilitate actions", so no client may treat a Held
+actor's combat as a fight. A client must see abiVersion >= 26 before it calls the slot: an older APMF has
+no query, and a v23..v25 APMF with the substrate on reads as ordinary combat (today's behaviour). No struct,
+no intent, no change to any existing slot. The same build adds the substrate's music deny (no ABI surface).
+Docs/APMF_API-REFERENCE.md#abi-v26-substrate-state, Docs/FACETS.md "Combat substrate".
 ```
 
 <a id="intent-18"></a>

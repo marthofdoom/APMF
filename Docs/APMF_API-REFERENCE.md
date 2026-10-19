@@ -312,3 +312,28 @@ If another entry declares the same form with no uid, the form is admitted by bas
 **Version.** A client must see `abiVersion >= 25` before it sets the flag. An older Harbinger ignores the reserved bytes without a word: the entry reads as its base form, any copy satisfies it, and its equip pass equips whichever copy the engine picks.
 
 **Verified on** 1.6.1170, 1.5.97 and 1.7.104 (the three runtimes the equip seat installs on), from the disassembly: `EquipObject` stores `r9` at the argument block's first field (AE and 1.7.104 `+0x113`, SE `+0x87`), the list sibling stores the first unworn extra list there, the engine read-locks the extra list on the same thread just before (`+0x18` on 1.6.1170 and 1.7.104, `+0x10` on 1.5.97, the offsets CommonLib's `ExtraDataList::GetLock` uses), and `ExtraUniqueID` is type `0x9F` with the uid at `+0x14` (its own `IsNotEqual` on all three binaries).
+
+<a id="abi-v26-substrate-state"></a>
+## ABI v26 substrate state (ch.27): is this combat a fight?
+
+The [combat substrate](FACETS.md#combat-substrate-kintent_combatsubstrate) puts an out-of-combat actor into combat against Harbinger's own anchor so the engine's animated cast road exists. To the engine, and to any mod reading `IsInCombat` or the combat controller, that actor is in combat. It is not in a fight. marth, 2026-10-13: "Certainly not. It only exists to facilitate actions." From ABI v26 a client can ask.
+
+```cpp
+std::uint32_t (*GetSubstrateState)(RE::FormID actor);   // APMF_API_v26, gate on abiVersion >= 26
+```
+
+| Value | Name | Meaning | What a client does |
+|---|---|---|---|
+| 0 | `kSubstrateState_None` | No substrate on this actor. Also every actor before Harbinger installed, and every answer of an APMF older than v26 (no slot) | Its combat, if any, is real |
+| 1 | `kSubstrateState_Held` | A live substrate holder whose real-combat trigger has not fired. Set from the substrate's open (before its entry `StartCombat`) to its close (after its `StopCombat`) | Its combat is SUBSTRATE-ONLY: not party combat, no combat HUD, no combat style, no combat decisions, nothing interrupted |
+| 2 | `kSubstrateState_Real` | A holder whose real-combat trigger fired (a foe in its group, a hit from outside the party, the party in combat). The substrate stands down for it at once and is dropped on the next game-thread pass, after which the actor reads `None` | Its combat COUNTS |
+| 3 | `kSubstrateState_Anchor` | The actor IS the anchor (`APMF.esl` 0x80A, a ghost Nazeem copy) | Never a foe, a follower or a target |
+
+**Threading and cost.** Any thread. The call reads Harbinger's fixed 16-slot holder table (atomics, an id re-check around the state read) and the anchor's FormID: no lock, no game call, no allocation. It is cheap enough to ask for every actor on every tick. A throw inside returns `None`.
+
+**Why `Real` flips before the drop.** The real-combat triggers run on whatever thread sees them (the combat thread for a new group target, the event thread for a hit). Each sets the slot's REAL bit first, the same bit every substrate deny reads, so the actor's combat counts from that instant. The anchor stays in the group until the next game-thread pass removes it, so for at most one frame a `Real` actor may still list the anchor as a target.
+
+**Older APMF.** An APMF before v26 has no slot. A client treats every actor as `None`, which is today's behaviour: a v23 to v25 APMF with the substrate on shows a substrate as ordinary combat.
+
+**Not in the query.** Whether battle music plays is not a client concern. The same build denies it inside Harbinger: a group whose members are all live holders and whose only target is the anchor has its music decision written from "undecided" to "none" before the engine decides it (FACETS ch.27 "Battle music").
+

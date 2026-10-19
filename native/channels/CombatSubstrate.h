@@ -60,6 +60,11 @@ namespace apmf::combatsubstrate {
     // A substrate is suppressing combat behaviour on `a_actor` right now: a live holder whose
     // real-combat stand-down has not fired. ch.24 treats such an actor as NOT in combat.
     bool Suppressing(RE::FormID a_actor);
+    // ABI v26 GetSubstrateState (APMF_API::SubstrateState): kSubstrateState_Held for a live holder whose
+    // real-combat trigger has not fired (its combat is SUBSTRATE-ONLY), kSubstrateState_Real once it fired
+    // (the combat counts; the substrate is dropping), kSubstrateState_Anchor for the anchor actor itself,
+    // kSubstrateState_None otherwise (also before Install / when not installed). Lock-free.
+    std::uint32_t StateOf(RE::FormID a_actor);
 
     // core/ActionGate.cpp: the leaf ALLOW-LIST. `a_leafIdx` indexes apmf::cbt::kLeaves (0..69),
     // then apmf::cbt::kSearchLeaves (70..73), then apmf::cbt::kParamLeaves (74..94). `a_movement` = ActionGate's movement-leaf
@@ -86,6 +91,10 @@ namespace apmf::combatsubstrate {
     // trigger (a): a target other than the anchor in a holder's group.
     bool IsAnchorRef(const RE::TESObjectREFR* a_target);
     void NoteGroupTarget(void* a_group, RE::TESObjectREFR* a_target);
+    bool MusicDebtPending();
+    // ^ ANY THREAD, one load: a holder still owes a put-back of Harbinger's music 0 (review F1 of b1c78b2), so the
+    // detection seat must keep calling NoteGroupTarget even with no substrate open. NoteGroupTarget acts on music
+    // only inside the engine's own locked update of the group (the seat checks the lock's writer thread).
     // After the engine's update of the ANCHOR in `a_group`: when a live holder that is still
     // under its substrate is a member of the group, the anchor's group entry is kept KNOWN
     // (the held engagement's own un-lose write, INVARIANTS #0 (i) condition 1, for the anchor
