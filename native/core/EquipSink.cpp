@@ -487,6 +487,74 @@ namespace apmf::equipsink {
             g_stoodSrc.erase(StoodKey(a_actor, a_item));
         }
 
+        // ---- RANK ONCE AS REQUESTER (marth 2026-10-18, ClickUp 86e3t1gfh). A QUEUED equip (q=1) passes
+        // this seat TWICE: leg 1 from its requester, then -- when the worker queued it (worker +0x272 ->
+        // 37684/36702 -> the AIProcess enqueue) -- leg 2 from QueuedApply (AE 38906/39814, SE 37950/38789),
+        // EquipObject(queue=0) with the queued node's object, extra list, count and slot (AE 39814+0x93..
+        // +0xCB / SE 38789+0x92..+0xD1 read node+0x08 obj, +0x10 extra, +0x18 count, +0x20 slot). Leg 2
+        // used to be ranked as Engine (20), so a client's own queued equip that STOOD on leg 1 was DENIED
+        // by the same claim on leg 2 (field 2026-10-18: MFO's Orcish Heavy Bow, counted passed AND
+        // blocked, never worn). Leg 1, when the engine went on to the worker with queue=1, records
+        // WHO asked; leg 2 consumes that record and is ranked as that requester (same source, same
+        // self/unattributed state, same path kind for the script/console/player-menu exemptions). Its
+        // hit and its "stood" were counted on leg 1, so leg 2 adds neither (an applied deny still counts).
+        // TTL: a FLOOR sized from the measured leg-1 -> leg-2 gap (field 2026-10-18, 1994 QueuedApply
+        // lines: p99 305 ms, max 1.7 s) -- 5 s is ~3x the worst seen. A record past it is no longer
+        // matched and leg 2 falls back to today's Engine ranking, logged (principle 7: never masked).
+        // Pairing: the NEWEST live record for (actor, item), preferring one with the same extra list
+        // (the node carries leg 1's post-worker `data->extra`). Newest, because a leg 1 the engine
+        // applied at once (37684's immediate branch -> 38001) leaves a record no leg 2 will ever
+        // consume, and the newest request is the one the queue still holds. Leaf mutex, bounded,
+        // consumed on match; every caller wraps it in try/catch (nothing unwinds into the engine).
+        constexpr std::uint64_t kQueuedTtlMs = 5000;
+        constexpr std::size_t   kQueuedMax   = 128;
+        struct QueuedReq {
+            RE::FormID              actor      = 0;
+            RE::FormID              item       = 0;
+            const void*             extra      = nullptr;   // identity only, never dereferenced
+            apmf::sources::SourceId src        = apmf::sources::kNoSource;
+            APMF_API::Handle        claim      = APMF_API::kInvalidHandle;   // the ch.17 claim at leg 1 (log)
+            std::uint64_t           atMs       = 0;
+            PathKind                kind       = PathKind::kEngine;
+            bool                    self       = false;
+            bool                    attributed = false;
+        };
+        // Age that never underflows: a record stamped by another thread after this caller read the clock is age 0.
+        constexpr std::uint64_t QueuedAge(std::uint64_t a_now, std::uint64_t a_at) { return a_now > a_at ? a_now - a_at : 0; }
+        std::mutex             g_queuedMx;
+        std::vector<QueuedReq> g_queued;   // small; linear scans (equips are rare events)
+        std::unordered_set<std::uint64_t> g_queuedMissSeen;   // (actor,item) of an unmatched leg 2, logged once
+
+        void RecordQueued(const QueuedReq& a_req) {
+            std::scoped_lock lk(g_queuedMx);
+            const std::uint64_t now = a_req.atMs;
+            std::erase_if(g_queued, [now](const QueuedReq& r) { return QueuedAge(now, r.atMs) > kQueuedTtlMs; });
+            if (g_queued.size() >= kQueuedMax) g_queued.erase(g_queued.begin());   // oldest first (append order)
+            g_queued.push_back(a_req);
+        }
+        bool ConsumeQueued(RE::FormID a_actor, RE::FormID a_item, const void* a_extra, std::uint64_t a_now,
+                           QueuedReq& a_out) {
+            std::scoped_lock lk(g_queuedMx);
+            std::ptrdiff_t best = -1;
+            bool           bestExtra = false;
+            for (std::ptrdiff_t i = static_cast<std::ptrdiff_t>(g_queued.size()) - 1; i >= 0; --i) {   // newest first
+                const auto& r = g_queued[static_cast<std::size_t>(i)];
+                if (r.actor != a_actor || r.item != a_item || QueuedAge(a_now, r.atMs) > kQueuedTtlMs) continue;
+                const bool sameExtra = r.extra == a_extra;
+                if (best < 0 || (sameExtra && !bestExtra)) { best = i; bestExtra = sameExtra; }
+                if (bestExtra) break;
+            }
+            if (best < 0) return false;
+            a_out = g_queued[static_cast<std::size_t>(best)];
+            g_queued.erase(g_queued.begin() + best);
+            return true;
+        }
+        bool FirstQueuedMiss(RE::FormID a_actor, RE::FormID a_item) {
+            std::scoped_lock lk(g_queuedMx);
+            if (g_queuedMissSeen.size() >= 512) g_queuedMissSeen.clear();
+            return g_queuedMissSeen.insert(StoodKey(a_actor, a_item)).second;
+        }
+
         // ---- THE THUNK. Same signature as the worker; the two patched E8s land
         // here through one shared trampoline stub. ----
         void SinkThunk(RE::ActorEquipManager* mgr, RE::Actor* actor, RE::TESBoundObject* obj, EquipData* data) {
@@ -569,6 +637,12 @@ namespace apmf::equipsink {
             // not an outside write: its hit is deferred (counted below only if a ranking then decides against it
             // for a DIFFERENT client's claim) and its own-claim outcomes go to the separate "own" counter.
             bool                    hitDeferred = false;
+            // Rank once as requester (marth 2026-10-18): this call is the QueuedApply leg of a queued equip whose
+            // leg 1 was recorded here (`queuedLeg`, `queuedReq`), or a QueuedApply leg with no live record
+            // (`queuedMiss`: ranked as Engine, as before).
+            bool                    queuedLeg  = false;
+            bool                    queuedMiss = false;
+            QueuedReq               queuedReq{};
             const auto isOwnClient = [&](apmf::sources::SourceId a_s) -> bool {
                 if (a_s == apmf::sources::kNoSource) return false;
                 try {
@@ -638,9 +712,21 @@ namespace apmf::equipsink {
                         eqSrc = ext;
                         noteSrcHit(eqSrc);
                     }
+                } else if (attributed && caller.known && std::strcmp(caller.name, "QueuedApply") == 0 &&
+                           ConsumeQueued(actorId, itemId, data->extra, apmf::clock::MonotonicMs(), queuedReq)) {
+                    // The deferred apply of a queued equip whose leg 1 this seat saw: ranked as THAT requester
+                    // (its source, its self / unattributed state, its path kind), never as Engine. Its hit was
+                    // counted on leg 1.
+                    queuedLeg   = true;
+                    eqSrc       = queuedReq.src;
+                    selfPath    = queuedReq.self;
+                    attributed  = queuedReq.attributed;
+                    caller.kind = queuedReq.kind;
                 } else if (attributed) {
                     // A named engine path (the player's own menu included, which stays exempt below)
                     // ranks as "Engine"; Papyrus / console reached through the engine as DirectCalls.
+                    // A QueuedApply leg with no live leg-1 record lands here too (ranked as Engine, logged).
+                    queuedMiss = caller.known && std::strcmp(caller.name, "QueuedApply") == 0;
                     eqSrc = (caller.kind == PathKind::kScript || caller.kind == PathKind::kConsole)
                               ? apmf::sources::kDirectSource : apmf::sources::kEngineSource;
                     noteSrcHit(eqSrc);
@@ -651,7 +737,30 @@ namespace apmf::equipsink {
                 caller     = Caller{};
                 eqSrc        = apmf::sources::kNoSource;
                 selfPath   = false;
+                queuedLeg  = false;
+                queuedMiss = false;
             }
+            // Leg 1 of a QUEUED equip (q=1) that reaches the worker: remember who asked, so the QueuedApply leg
+            // is ranked as this requester (above). Called AFTER the worker, because the worker may null
+            // `data->extra` (an empty list, AE 38929+0x25C) before it queues, and the node carries what it
+            // queued. Only when the worker ran (a refused equip queues nothing). Never throws into the frame.
+            const auto recordIfQueued = [&]() {
+                if (!data->queue || queuedLeg) return;
+                try {
+                    QueuedReq r;
+                    r.actor      = actorId;
+                    r.item       = itemId;
+                    r.extra      = data->extra;
+                    r.src        = eqSrc;
+                    r.claim      = set.handle;
+                    r.atMs       = apmf::clock::MonotonicMs();
+                    r.kind       = caller.kind;
+                    r.self       = selfPath;
+                    r.attributed = attributed;
+                    RecordQueued(r);
+                } catch (...) {
+                }
+            };
 
             // The claim's owned/denied masks came out of the SAME snapshot read as the
             // set, so the two can never be from different generations.
@@ -689,7 +798,7 @@ namespace apmf::equipsink {
                                                            apmf::handblock::SpellLike(obj), hold);
             // ch.26 force: the preferred hands this item competes for without being preferred there.
             const std::uint32_t forceMask = forced ? apmf::equippref::ForceRefusal(force, itemId, competes) : 0u;
-            if (!equipClaimed && !handHeld && !forceMask) { g_worker(mgr, actor, obj, data); return; }
+            if (!equipClaimed && !handHeld && !forceMask) { g_worker(mgr, actor, obj, data); recordIfQueued(); return; }
 
             const bool observe    = dv.observe;   // every category alike (no armor-only carve-out since 2026-10-13)
             const bool denyScript = g_denyScript.load(std::memory_order_relaxed) ||
@@ -879,7 +988,10 @@ namespace apmf::equipsink {
                     }
                 }
                 if (forceDeny) apmf::equippref::NoteForceDeny(actorId);
-                if (ownClient) {
+                // A QueuedApply leg ranked as its requester (queuedLeg) repeats leg 1's outcome: a STANDS / own-client
+                // / anomaly verdict was counted on leg 1, so it is not counted twice (rank once). An applied deny
+                // above still counts: the claim changed between the legs.
+                if (ownClient && !queuedLeg) {
                     apmf::equippref::NoteForceOwnClient(actorId);
                     src_::NoteOwn(lastV.src, eqFacet);
                     if (apmf::facetattr::LineDue(eqFacet, actorId, itemId ^ 0x2600u))
@@ -889,7 +1001,7 @@ namespace apmf::equipsink {
                                      apmf::log::Hex(actorId), apmf::log::Hex(itemId),
                                      apmf::facetattr::NameOr(lastV.client, "?"));
                 }
-                if (standsWhat && !(ownClient && standsH == force.handle)) {
+                if (standsWhat && !(ownClient && standsH == force.handle) && !queuedLeg) {
                     if (standsV.src != src_::kNoSource) {
                         if (standsV.src == standsV.client) {
                             src_::NoteOwn(standsV.src, eqFacet);   // the source IS the claim's client: a tie with its own claim
@@ -920,11 +1032,11 @@ namespace apmf::equipsink {
                 // castobs interrupt attribution (passive): "any equip in the last 100 ms". Inside
                 // the try (review F7): its map insert may allocate, and nothing may unwind into
                 // the engine's equip frame.
-                if (!attributed)
+                if (!attributed && !queuedLeg)   // a queued leg of an unattributed leg 1 was counted there
                     apmf::sources::Unattributed(eqFacet, actorId,
                                                 "an engine equip reached the equip sink with no recoverable caller");
                 apmf::castobserve::NoteEquip(actorId, itemId,
-                                             !attributed ? "Unattributed" : caller.external ? "External" : (caller.known ? caller.name : "Unknown"),
+                                             queuedLeg ? "QueuedApply" : !attributed ? "Unattributed" : caller.external ? "External" : (caller.known ? caller.name : "Unknown"),
                                              verdict);
                 const auto     nowMs = apmf::clock::MonotonicMs();
                 const std::uint64_t pathKey = caller.external
@@ -933,11 +1045,16 @@ namespace apmf::equipsink {
                 const std::uint64_t key = ((static_cast<std::uint64_t>(actorId) << 32) | itemId) ^ (pathKey * 0x9E3779B97F4A7C15ull);
                 std::uint32_t drops = 0;
                 const bool admit = AdmitLog(key, nowMs, drops);
+                if (queuedMiss && FirstQueuedMiss(actorId, itemId))
+                    spdlog::info("[apmf][equip-obs] actor={} item={} QueuedApply leg with no live leg-1 record (none within "
+                                 "{} ms, or leg 1 was not seen here): ranked as Engine, as before rank-once. Logged once "
+                                 "per actor and item.", apmf::log::Hex(actorId), apmf::log::Hex(itemId), kQueuedTtlMs);
                 if (drops)
                     spdlog::warn("[apmf][equip-obs] dropped {} line(s) in the last minute (cap {}/s).", drops, kCapPerSec);
                 if (admit) {
                     std::string path;
-                    if (!attributed)         path = "Unattributed";
+                    if (queuedLeg)           path = "QueuedApply";   // ranked as its leg-1 requester: see req=
+                    else if (!attributed)    path = "Unattributed";
                     else if (caller.external) path = std::string("External(") + caller.ext + ")";
                     else if (!caller.known)  path = "Unknown(" + std::to_string(caller.id) + ")";
                     else                     path = caller.name;
@@ -967,18 +1084,28 @@ namespace apmf::equipsink {
                         instField = !inst.named ? std::string(" inst=none")
                                   : inst.uid == 0 ? std::string(" inst=nouid")
                                                   : " inst=uid:0x" + apmf::log::Hex(inst.uid, 4);
-                    spdlog::info("[apmf][equip-obs] actor={} item={} op=equip path={} site={}+0x{} ret={} q={} f={} s={} a={} tls={} cat={} owned={} black={} eslot={}{} verdict={} name='{}'",
+                    // Rank once as requester: `req=` names the leg-1 requester a QueuedApply leg was ranked as
+                    // (`self` = APMF's own equip, `unattributed` = leg 1 had no recoverable caller), or `none`
+                    // when no live leg-1 record matched (ranked as Engine, as before).
+                    std::string reqField;
+                    if (queuedLeg)
+                        reqField = " req=" + (queuedReq.self ? std::string("self")
+                                             : !queuedReq.attributed ? std::string("unattributed")
+                                             : apmf::facetattr::NameOr(queuedReq.src, "?"));
+                    else if (queuedMiss)
+                        reqField = " req=none";
+                    spdlog::info("[apmf][equip-obs] actor={} item={} op=equip path={} site={}+0x{} ret={} q={} f={} s={} a={} tls={} cat={} owned={} black={} eslot={}{}{} verdict={} name='{}'",
                                  apmf::log::Hex(actorId), apmf::log::Hex(itemId), path,
                                  siteSpec ? siteSpec->id : 0, apmf::log::Hex(siteSpec ? siteSpec->off : 0, 0),
                                  caller.external ? std::string("ext") : apmf::log::Hex(caller.rva, 0),
                                  data->queue ? 1 : 0, data->force ? 1 : 0, data->sounds ? 1 : 0, data->applyNow ? 1 : 0,
                                  tls, CategoryNames(competes, catBuf, sizeof(catBuf)), ownedCat ? 1 : 0, blacked ? 1 : 0, eslot,
-                                 instField, verdict, itemName ? itemName : "");
+                                 instField, reqField, verdict, itemName ? itemName : "");
                 }
             } catch (...) {
             }
 
-            if (callWorker) g_worker(mgr, actor, obj, data);
+            if (callWorker) { g_worker(mgr, actor, obj, data); recordIfQueued(); }
             // deny: return without calling -- nothing queued, no re-entry, and the
             // caller's own lock/epilogue runs exactly as if the worker had returned.
         }
