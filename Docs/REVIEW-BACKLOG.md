@@ -816,3 +816,15 @@ Raised against `a358017` (re-review R3). Verbatim: "the map only grows when a hi
 
 ### APMF-B109 (SEV-5) -- F2 "every candidate refused" warn can false-positive on AE's range branch
 Raised against `a358017` (re-review R4). Verbatim: "AE evaluate sends some candidates down the range branch (`0x813a8a`) without calling 0x0F, so a declared item may not stamp YES in every evaluation. That can give a one-off false-positive warn. Log only."
+
+### APMF-B110 (SEV-4) -- ch.17 uid: an instance worn in the other hand is skipped every pass; either-hand null-extra retries
+Raised against `e6829829` (Opus tier-3 review of `feat/apmf-equip-instance`, F2). Verbatim: "An instance declared for one hand but worn in the other is skipped every pass with no way out until the client acts (`EquipAuthority.cpp` ~527-541). Unequipping it first would fix it, but that is new unequip scope, so documenting it is enough for now." and "when the right hand holds the form, `held` is set for an either-hand candidate. The AI can then try to put a second copy in the left hand with a null extra, and the sink refuses that each time." Hand entries only; MFO sets uids on rings/amulets only.
+
+### APMF-B111 (SEV-5) -- ch.17 uid: RangedProbeClassify still tests membership by form
+Same review (F4). Verbatim: "`ActionGate.cpp:1835` (`RangedProbeClassify`) still tests membership by form only, so for a uid-declared weapon it logs 'pass (declared item)' where the seat would refuse." Probe only.
+
+### APMF-B112 (SEV-5) -- ch.17 uid: plain + uid entries for one form across hands
+Same review (F5). Verbatim: "Suppose one form has a plain entry for one hand and a uid entry for the other, and the actor carries only the uid copy. The plain entry's null-extra equip can pick up the uid copy for the wrong hand, after which F2 applies."
+
+### APMF-B113 (design follow-up) -- ch.17 uid: re-point EquipData.extra to the declared list on a null-extra equip
+Same review (F1 optional). Verbatim: "when the engine names no copy and exactly one carried copy is declared, re-point `EquipData.extra` to the declared list. That is closer to 'enforce what was declared', but it mutates the engine's arguments, so it would be tier A." Would let the combat AI switch to uid-declared weapons again.
