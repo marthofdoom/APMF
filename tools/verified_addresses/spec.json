@@ -3867,6 +3867,26 @@
    "doc": "combat substrate S2a (MFO Docs/COMBAT-SUBSTRATE-DESIGN.md 3.5, the anchor-target refusal): AE 0x6B69FC ret 0x6B6A0A; SE 0x62527A ret 0x625288"
   },
   {
+   "seat": "AnchorGuard.StartCombat.TargetGroupRegs",
+   "kind": "callsite",
+   "construct": "Actor::StartCombat's argument copies `mov rbp,r8; mov rsi,rdx; mov rdi,rcx` (group, target, this). Nothing writes rbp / rsi / rdi again before the self check (+0x8F AE / +0x8D SE, row ReentryDeny.StartCombat.SelfIsDeadCall): the instructions between write only r9, rax, rcx, r15, ebx, eax and the TLS context word. So at the self-check return site the widened slot-0x99 stub hands the thunk r8 = rsi (the target) and r9 = rbp (the group). A NULL target skips the target check (AE 0x6B69F7 / SE 0x625275) and a group takes the join path (AE 0x6B6CA5)",
+   "ids": {
+    "1.6.1170": 38561,
+    "1.5.97": 37608
+   },
+   "sig": {
+    "1.6.1170": "4C 8B DC 55 56 57 41 54 41 55 41 56 41 57 48 83 EC 50 49 C7 43 A8 FE FF FF FF 49 89 5B 10 0F 29 74 24 40 49 8B E8",
+    "1.5.97": "4C 8B DC 56 57 41 54 41 56 41 57 48 83 EC 50 49 C7 43 B8 FE FF FF FF 49 89 5B 10 49 89 6B 18 0F 29 74 24 40 49 8B E8"
+   },
+   "source": "native/channels/AnchorGuard.cpp (InstallSeat: SeatVerified, exact 1.6.1170 / 1.5.97, refused by name on 1.7.104) -> native/channels/CombatReentryDeny.cpp BuildRdiStub (the widened stub) -> AnchorGuard.cpp AnswerJoin",
+   "offset": {
+    "1.6.1170": "0x23",
+    "1.5.97": "0x24"
+   },
+   "bytes": "49 8B E8 48 8B F2 48 8B F9",
+   "doc": "SEV-1 anchor leak 2026-10-19 (the null-target group join): AE 0x6B6953 / SE 0x6251D4; caller AE 0x71C2DD (fn 0x71C020) / SE 0x68848E (fn 0x688270) passes target 0 with a group; agentlog apmf-anchor-leak.md"
+  },
+  {
    "seat": "Substrate.CombatGroup.RemoveTarget",
    "kind": "function",
    "construct": "CombatGroup::RemoveTarget(group, TESObjectREFR* target): handle of target, find in targets[] (stride 0xA8), erase via AE 0x80C5A0 / SE 0x772520 (notifies CombatManager AE 0x83DBA0). Takes no lock itself (the engine calls it unlocked from CombatManager AE 46875)",

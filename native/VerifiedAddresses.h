@@ -19,7 +19,7 @@
 
 namespace apmf::VerifiedAddresses
 {
-	// 1.6.1170.0: 244 rows
+	// 1.6.1170.0: 245 rows
 	inline constexpr REL::SelfCheck::Row kRows_1_6_1170[] = {
 		{ 207886, 0x18A5558, 0x0, 0, {  }, "Character" },
 		{ 207896, 0x18A5FE8, 0x0, 0, {  }, "Character.ActorValueOwner" },
@@ -232,6 +232,7 @@ namespace apmf::VerifiedAddresses
 		{ 188105, 0x17849DC, 0x0, 0, {  }, "Sightline.bhkWorld.WorldScale" },
 		{ 12332, 0x179710, 0x0, 0, {  }, "CommonLib.LookupReferenceByHandle" },
 		{ 38561, 0x6B6930, 0xCC, 14, { 0x48, 0x8B, 0x06, 0x33, 0xD2, 0x48, 0x8B, 0xCE, 0xFF, 0x90, 0xC8, 0x04, 0x00, 0x00 }, "Substrate.StartCombat.TargetIsDeadCall" },
+		{ 38561, 0x6B6930, 0x23, 9, { 0x49, 0x8B, 0xE8, 0x48, 0x8B, 0xF2, 0x48, 0x8B, 0xF9 }, "AnchorGuard.StartCombat.TargetGroupRegs" },
 		{ 44705, 0x803D70, 0x0, 0, {  }, "Substrate.CombatGroup.RemoveTarget" },
 		{ 56626, 0xA447F0, 0x0, 0, {  }, "Substrate.TESObjectREFR.MoveTo" },
 		{ 36550, 0x641AD0, 0xCF, 15, { 0x48, 0x8B, 0x0D, 0x7A, 0xBF, 0xAB, 0x02, 0x48, 0x8D, 0x54, 0x24, 0x30, 0x48, 0x89, 0x74 }, "Substrate.BSMusicManager.Reader" },
@@ -267,7 +268,7 @@ namespace apmf::VerifiedAddresses
 		{ 214367, 0x18E8AC8, 0x0, 0, {  }, "Leaf.CombatBehaviorRepeat<float,FLAGS>" },
 	};
 
-	// 1.5.97.0: 244 rows
+	// 1.5.97.0: 245 rows
 	inline constexpr REL::SelfCheck::Row kRows_1_5_97[] = {
 		{ 261397, 0x165DA40, 0x0, 0, {  }, "Character" },
 		{ 261402, 0x165E4D0, 0x0, 0, {  }, "Character.ActorValueOwner.SE" },
@@ -480,6 +481,7 @@ namespace apmf::VerifiedAddresses
 		{ 231896, 0x154064C, 0x0, 0, {  }, "Sightline.bhkWorld.WorldScale" },
 		{ 12204, 0x1329D0, 0x0, 0, {  }, "CommonLib.LookupReferenceByHandle" },
 		{ 37608, 0x6251B0, 0xCA, 14, { 0x48, 0x8B, 0x06, 0x33, 0xD2, 0x48, 0x8B, 0xCE, 0xFF, 0x90, 0xC8, 0x04, 0x00, 0x00 }, "Substrate.StartCombat.TargetIsDeadCall" },
+		{ 37608, 0x6251B0, 0x24, 9, { 0x49, 0x8B, 0xE8, 0x48, 0x8B, 0xF2, 0x48, 0x8B, 0xF9 }, "AnchorGuard.StartCombat.TargetGroupRegs" },
 		{ 43483, 0x76A560, 0x0, 0, {  }, "Substrate.CombatGroup.RemoveTarget" },
 		{ 56227, 0x9AE5C0, 0x0, 0, {  }, "Substrate.TESObjectREFR.MoveTo" },
 		{ 35551, 0x5AF3D0, 0xCF, 15, { 0x48, 0x8B, 0x0D, 0x3A, 0x68, 0x91, 0x02, 0x48, 0x8D, 0x54, 0x24, 0x30, 0x48, 0x89, 0x74 }, "Substrate.BSMusicManager.Reader" },
@@ -515,7 +517,7 @@ namespace apmf::VerifiedAddresses
 		{ 267191, 0x16A35F0, 0x0, 0, {  }, "Leaf.CombatBehaviorRepeat<float,FLAGS>" },
 	};
 
-	// 1.7.104.0: 245 rows
+	// 1.7.104.0: 246 rows
 	// 42 NOT VERIFIED on 1.7.104.0, deliberately absent from this table (the seat is refused):
 	//   Character.ActorValueOwner.SE (1.6.1170 id -): no 1.6.1170 (AE) id: the 1.7.104 map is keyed by AE id (1.5.97-only seat)
 	//   TargetPin.CombatController.SetTarget (1.6.1170 id 33235): id 33235 is not in the idmap
@@ -767,6 +769,7 @@ namespace apmf::VerifiedAddresses
 		{ 188105, 0x17FDE5C, 0x0, 0, {  }, "Sightline.bhkWorld.WorldScale" },
 		{ 12332, 0x17ED00, 0x0, 0, {  }, "CommonLib.LookupReferenceByHandle" },
 		{ 38561, 0x6C93B0, 0xCC, 14, { 0x48, 0x8B, 0x06, 0x33, 0xD2, 0x48, 0x8B, 0xCE, 0xFF, 0x90, 0xC8, 0x04, 0x00, 0x00 }, "Substrate.StartCombat.TargetIsDeadCall" },
+		{ 38561, 0x6C93B0, 0x23, 9, { 0x49, 0x8B, 0xE8, 0x48, 0x8B, 0xF2, 0x48, 0x8B, 0xF9 }, "AnchorGuard.StartCombat.TargetGroupRegs" },
 		{ 56626, 0xA5D370, 0x0, 0, {  }, "Substrate.TESObjectREFR.MoveTo" },
 		{ 68234, 0xCE32D0, 0x0, 0, {  }, "CommonLib.BSReadWriteLock.LockForWrite" },
 		{ 68240, 0xCE3520, 0x0, 0, {  }, "CommonLib.BSReadWriteLock.UnlockForWrite" },

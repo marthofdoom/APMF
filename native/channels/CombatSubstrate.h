@@ -8,6 +8,7 @@ namespace RE {
     class CombatController;
     class CombatMagicCaster;
     class TESObjectREFR;
+    class CombatGroup;
 }
 
 // ============================================================================
@@ -84,6 +85,11 @@ namespace apmf::combatsubstrate {
     // in by the 17-byte stub). Refuses when the target is the anchor and the caller is not a
     // live holder that is still under its substrate.
     bool RefuseAnchorTarget(RE::Actor* a_target, RE::Actor* a_caller);
+
+    // The anchor out of `a_g`'s targets through the engine's own CombatGroup::RemoveTarget (the verified row
+    // Substrate.CombatGroup.RemoveTarget; DropSub / AfterLoad use the same call). channels/AnchorGuard.cpp's
+    // leak sweep. GAME THREAD, a group read from a live controller this frame.
+    void RemoveAnchorFromGroup(RE::CombatGroup* a_g);
 
     // channels/CombatEntry.cpp's detection seat (CombatGroup::UpdateTargetDetection's two call
     // sites), BEFORE the engine's update: is `a_target` the anchor? If so the caller runs the

@@ -10,13 +10,13 @@ nothing when one does not. At startup `REL::SelfCheck::Run` repeats the comparis
 game actually loaded. A row that fails refuses THAT seat by name in the log; the expected RVA is never
 used in place of the library's answer.
 
-Offline result of this generation: 1.6.1170.0 244/244 verified, 0 refused, 1.5.97.0 244/244 verified, 0 refused.
+Offline result of this generation: 1.6.1170.0 245/245 verified, 0 refused, 1.5.97.0 245/245 verified, 0 refused.
 
 1.7.104.0 has NO Address Library. Its column is OUR OWN id map: the MIT id table of the CommonLibSSE-NG fork
 (`data/mit-idtable-v1-1-7-104-0.bin`, revision 3, 17751 records, SkyrimSE.exe TimeDateStamp 0x6A8C7046; built into every plugin, it is
 what SelfCheck queries at runtime; authoritative) with the evidence CSVs beside it, keyed by
 the 1.6.1170 id, re-verified against the plaintext 1.7.104 executable by the same row-kind checks (see the script
-docstring). Offline result: 1.7.104.0 245/287 verified, 42 NOT verified (28 of them BY DESIGN: 1.5.97-only labels whose AE twin row carries the 1.7.104 fact). A not-verified seat has no row in the 1.7.104 table,
+docstring). Offline result: 1.7.104.0 246/288 verified, 42 NOT verified (28 of them BY DESIGN: 1.5.97-only labels whose AE twin row carries the 1.7.104 fact). A not-verified seat has no row in the 1.7.104 table,
 so `IsVerifiedAddress` is false and the seat is refused by name. The table of `Not verified on 1.7.104` is below.
 
 These rows prove the ADDRESSES. That each hooked slot holds the same function body on 1.7.104, and that every
@@ -237,6 +237,7 @@ CommonLib layout APMF reads is the same there, is proven separately in the "1.7.
 | Sightline.bhkWorld.WorldScale | ripref global | 188105 | 0x17849DC | 231896 | 0x154064C | 188105 | 0x17FDE5C | RIP-relative reference at Sightline.AIProcess.KnockExplosion +0x2CA (id 39895) |  | native/core/Sightline.cpp (RE::bhkWorld::GetWorldScale: game units -> havok units for the ray ends; never called) | ABI v18 own-ray LoS; the only CommonLib-named function that reads the global (AE +0x2CA, SE +0x387, 1.7.104 +0x2CA); .rdata 0.0142875 on all three |
 | CommonLib.LookupReferenceByHandle | function | 12332 | 0x179710 | 12204 | 0x1329D0 | 12332 | 0x17ED00 | signature (274 bytes, unique in .text) |  | native/core/Awareness.cpp (a foe's currentCombatTarget -> the actor it is fighting; the noise event's ref for the log) | ABI v18 awareness (AE 0x179710 / SE 0x1329D0 / 1.7.104 0x17ED00) |
 | Substrate.StartCombat.TargetIsDeadCall | callsite | 38561 | 0x6B6930 +0xCC 48 8B 06 33 D2 48 8B CE FF 90 C8 04 00 00 | 37608 | 0x6251B0 +0xCA 48 8B 06 33 D2 48 8B CE FF 90 C8 04 00 00 | 38561 | 0x6C93B0 +0xCC 48 8B 06 33 D2 48 8B CE FF 90 C8 04 00 00 | signature (38 bytes, unique in .text) |  | native/channels/CombatReentryDeny.cpp (Install: SeatVerified; g_targetRet = row + 14) -> native/channels/CombatSubstrate.cpp RefuseAnchorTarget | combat substrate S2a (MFO Docs/COMBAT-SUBSTRATE-DESIGN.md 3.5, the anchor-target refusal): AE 0x6B69FC ret 0x6B6A0A; SE 0x62527A ret 0x625288 |
+| AnchorGuard.StartCombat.TargetGroupRegs | callsite | 38561 | 0x6B6930 +0x23 49 8B E8 48 8B F2 48 8B F9 | 37608 | 0x6251B0 +0x24 49 8B E8 48 8B F2 48 8B F9 | 38561 | 0x6C93B0 +0x23 49 8B E8 48 8B F2 48 8B F9 | signature (38 bytes, unique in .text) |  | native/channels/AnchorGuard.cpp (InstallSeat: SeatVerified, exact 1.6.1170 / 1.5.97, refused by name on 1.7.104) -> native/channels/CombatReentryDeny.cpp BuildRdiStub (the widened stub) -> AnchorGuard.cpp AnswerJoin | SEV-1 anchor leak 2026-10-19 (the null-target group join): AE 0x6B6953 / SE 0x6251D4; caller AE 0x71C2DD (fn 0x71C020) / SE 0x68848E (fn 0x688270) passes target 0 with a group; agentlog apmf-anchor-leak.md |
 | Substrate.CombatGroup.RemoveTarget | function | 44705 | 0x803D70 | 43483 | 0x76A560 | - | - | signature (49 bytes, unique in .text) |  | native/channels/CombatSubstrate.cpp (the real-combat drop, design 3.6a: the anchor leaves the holder's group targets, NO StopCombat) | combat substrate S2a; design-substrate agentlog 03:00 (AE disassembly) + S2a log (SE twin 43483, same body) |
 | Substrate.TESObjectREFR.MoveTo | function | 56626 | 0xA447F0 | 56227 | 0x9AE5C0 | 56626 | 0xA5D370 | signature (21 bytes, unique in .text) |  | native/channels/CombatSubstrate.cpp (the anchor: to the holder, following it, and home to its XMarker) | combat substrate S2a |
 | Substrate.BSMusicManager.Reader | ripref | 36550 | 0x641AD0 +0xCF 48 8B 0D 7A BF AB 02 48 8D 54 24 30 48 89 74 | 35551 | 0x5AF3D0 +0xCF 48 8B 0D 3A 68 91 02 48 8D 54 24 30 48 89 74 | - | - | signature (19 bytes, unique in .text) |  | native/channels/CombatSubstrate.cpp (P3 OBSERVED music=, read-only: BSMusicManager::current) | combat substrate S2a P3 |
