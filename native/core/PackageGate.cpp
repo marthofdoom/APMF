@@ -7,6 +7,7 @@
 #include "core/NonAliasProbe.h"
 #include "core/PackageGate.h"
 
+#include <cstring>
 #include <mutex>
 #include <unordered_map>
 
@@ -137,9 +138,14 @@ namespace apmf::packagegate {
         // 12721 0x182390; SE 0x126A00), which, under the array's read lock, walks every alias instance's
         // instanced packages and returns the FIRST one whose conditions + schedule pass (AE 29619
         // 0x4962E0), or null. So:
+        //   STANDING (marth 2026-10-18, round 2: "Plain following isn't active") = the engine's answer is a
+        //     package whose every procedure is standing companion behaviour (follow, wait, sandbox, sit,
+        //     sleep, eat, idle marker, wander, keep an eye on, done; ClassifyPackage below, the table in
+        //     Docs/FACETS.md ch.9). Treated as IDLE: the claim's package is served, nothing is counted
+        //     against the mod, and the [ch.9-rank] line names the owner and the kind.
         //   ACTIVE (marth 2026-10-18: "theyll stop winning if Auri.esp is actively doing anything") = the
-        //     engine's answer is non-null and is not the claimed package: some quest alias has a package of
-        //     its own valid for this actor at this evaluation. Its owner is the package's plugin
+        //     engine's answer is non-null, is not the claimed package, and is not standing: some quest alias
+        //     has a package of its own doing something more, valid for this actor now. Its owner is the package's plugin
         //     (`orig->GetFile(0)`, registered as a plugin source if new; a runtime-created package with no
         //     file is the Engine). The claim's client priority on the Package facet (the offer's client, or
         //     ch.19's internal offer's travel claim's client) must STRICTLY outrank the owner's: a tie keeps
@@ -151,12 +157,13 @@ namespace apmf::packagegate {
         // Counted per consult (as core/SpectatorGate.cpp), logged once per transition per actor
         // ([ch.9-rank]). Runs on engine AI threads: the RCU snapshot, the lock-free registry, atomics, and
         // this leaf mutex (never held across an engine call or a form lookup).
-        enum class RankDecision : std::uint8_t { kIdle, kOutranks, kOwn, kYields, kError };
+        enum class RankDecision : std::uint8_t { kIdle, kStanding, kOutranks, kOwn, kYields, kError };
         struct RankLast {
             RE::FormID              claimForm;
             RE::FormID              orig;
             apmf::sources::SourceId owner;
             RankDecision            decision;
+            const char*             kind;   // a string literal from the classification table (pointer compare)
             bool operator==(const RankLast&) const = default;
         };
         std::mutex                                 g_rankMx;
@@ -166,6 +173,167 @@ namespace apmf::packagegate {
         std::atomic<std::uint64_t>                 g_rankLineCount{ 0 };
         std::atomic<std::uint64_t>                 g_rankYields{ 0 };     // heartbeat: consults the claim yielded
         std::atomic<std::uint64_t>                 g_rankOutranks{ 0 };   // heartbeat: consults it outranked an active package
+
+        // ---- STANDING vs ACTIVE: what the engine's 0x49 answer DOES (round 2, marth 2026-10-18: "Plain following
+        // isn't active"). Read from the package's own immutable form data, verified on 1.6.1170 / 1.5.97 / 1.7.104:
+        //   * PKDT type = TESPackage::packData.packType, the byte at +0x24 (GetObjectTypeName AE 0x496D50 indexes the
+        //     type-name table by [rcx+0x24]; IsPackageValid AE 29619 switches on it). The DERIVED +0xD8
+        //     `procedureType` is NOT used: AE 29582 0x495010 sets it to 0x2E for every procedure-tree package.
+        //   * GetCustomData (AE 29555 0x4926F0 / SE 0x4375C0 / 1.7.104 0x499C10, byte-identical): packType 18
+        //     (Package) or 19 (PackageTemplate) -> TESPackage::data (+0x30) is a TESCustomPackageData, else null.
+        //   * TESCustomPackageData::InitItem (AE 29658 0x497BB0 / SE 0x43C6B0 / 1.7.104 0x49F0D0): `templateParent`
+        //     (+0x30) is the template package (form type 0x4F, packType 0x13); its `procedureTree` (+0x20) is copied
+        //     into the instance's when the instance's version (+0x38) is not older, else the instance keeps null.
+        //   * Tree nodes: BGSProcedureTreeProcedure::procedure at +0x10 (Copy: AE 0x482F70 / SE 0x4287F0 / 1.7.104
+        //     0x48A490); Sequence / Stacked / Simultaneous / Random all share BGSProcedureTreeBranch::Copy (AE
+        //     0x483470 / SE 0x428CD0 / 1.7.104 0x48A990): children BSTArray at +0x10, size at +0x20.
+        // Node and procedure classes are named by their own RTTI (vtable[-1] -> CompleteObjectLocator ->
+        // TypeDescriptor), never by an id, after checking the vtable lies in the exe's .rdata. A package is
+        // STANDING only when every procedure in its tree is in the standing set; anything else, an unknown node
+        // or an unreadable tree is ACTIVE (the follower mod is not overridden on a guess; logged as kind=unknown).
+        // Cached per package (the data never changes after load): a leaf mutex, bounded, never held across a read.
+        struct ProcKind { const char* rtti; const char* label; bool standing; };
+        constexpr ProcKind kProcKinds[] = {
+            { ".?AVBGSProcedureFollow@@",           "follow",         true },
+            { ".?AVBGSProcedureFollowTo@@",         "follow",         true },
+            { ".?AVBGSProcedureWait@@",             "wait",           true },
+            { ".?AVBGSProcedureHoldPosition@@",     "wait",           true },
+            { ".?AVBGSProcedureSandbox@@",          "sandbox",        true },
+            { ".?AVBGSProcedureSit@@",              "sit",            true },
+            { ".?AVBGSProcedureSleep@@",            "sleep",          true },
+            { ".?AVBGSProcedureEat@@",              "eat",            true },
+            { ".?AVBGSProcedureUseIdleMarker@@",    "idle marker",    true },
+            { ".?AVBGSProcedureWander@@",           "wander",         true },
+            { ".?AVBGSProcedureKeepAnEyeOn@@",      "keep an eye on", true },
+            { ".?AVBGSProcedureDone@@",             "done",           true },
+            { ".?AVBGSProcedureTravel@@",           "travel",         false },
+            { ".?AVBGSProcedureEscort@@",           "escort",         false },
+            { ".?AVBGSProcedureDialogue@@",         "dialogue",       false },
+            { ".?AVBGSProcedureDialogueActivate@@", "dialogue",       false },
+            { ".?AVBGSProcedureForceGreet@@",       "force greet",    false },
+            { ".?AVBGSProcedureSay@@",              "say",            false },
+            { ".?AVBGSProcedureShout@@",            "shout",          false },
+            { ".?AVBGSProcedureActivate@@",         "activate",       false },
+            { ".?AVBGSProcedureAcquire@@",          "acquire",        false },
+            { ".?AVBGSProcedureFind@@",             "find",           false },
+            { ".?AVBGSProcedureUseMagic@@",         "use magic",      false },
+            { ".?AVBGSProcedureUseWeapon@@",        "use weapon",     false },
+            { ".?AVBGSProcedurePatrol@@",           "patrol",         false },
+            { ".?AVBGSProcedureGuard@@",            "guard",          false },
+            { ".?AVBGSProcedureFlee@@",             "flee",           false },
+            { ".?AVBGSProcedurePursue@@",           "pursue",         false },
+            { ".?AVBGSProcedureLock@@",             "lock",           false },
+            { ".?AVBGSProcedureUnlock@@",           "unlock",         false },
+        };
+        constexpr const char* kKindUnknown = "unknown";
+        // A package without a procedure tree (an old PKDT-typed package): its type decides.
+        struct TypeKind { std::uint8_t type; const char* label; };
+        constexpr TypeKind kStandingTypes[] = {
+            { 1, "follow" }, { 3, "eat" }, { 4, "sleep" }, { 5, "wander" }, { 7, "follow" }, { 12, "sandbox" }, { 27, "wait" },
+        };
+        constexpr const char* kKindOtherType = "other type";
+
+        struct Classified { bool standing = false; const char* label = kKindUnknown; };
+
+        const char* RttiName(const void* a_obj) {
+            if (!a_obj) return nullptr;
+            const auto vt = *reinterpret_cast<const std::uintptr_t*>(a_obj);
+            static const auto rdata = REL::Module::get().segment(REL::Segment::rdata);
+            if (vt < rdata.address() + sizeof(void*) || vt >= rdata.address() + rdata.size()) return nullptr;
+            const auto* col = *reinterpret_cast<RE::RTTI::CompleteObjectLocator* const*>(vt - sizeof(void*));
+            if (!col) return nullptr;
+            const auto* td = col->typeDescriptor.get();
+            return td ? td->mangled_name() : nullptr;
+        }
+
+        // Walks one tree. `a_out` collects: any active procedure (first label kept) or unknown node -> active;
+        // a standing procedure's label is kept when nothing active was seen. Bounded (depth 8, 256 nodes).
+        void WalkTree(const RE::IProcedureTreeItem* a_node, int a_depth, int& a_budget, bool& a_active,
+                      const char*& a_activeLabel, const char*& a_standingLabel) {
+            if (!a_node || a_active) return;
+            if (a_depth > 8 || --a_budget < 0) { a_active = true; a_activeLabel = kKindUnknown; return; }
+            const char* name = RttiName(a_node);
+            if (!name) { a_active = true; a_activeLabel = kKindUnknown; return; }
+            if (std::strcmp(name, ".?AVBGSProcedureTreeProcedure@@") == 0) {
+                const auto* proc  = static_cast<const RE::BGSProcedureTreeProcedure*>(a_node)->procedure;
+                const char* pname = RttiName(proc);
+                if (!pname) { a_active = true; a_activeLabel = kKindUnknown; return; }
+                for (const auto& k : kProcKinds) {
+                    if (std::strcmp(pname, k.rtti) != 0) continue;
+                    if (k.standing) { if (!a_standingLabel) a_standingLabel = k.label; }
+                    else { a_active = true; a_activeLabel = k.label; }
+                    return;
+                }
+                a_active = true; a_activeLabel = kKindUnknown;
+                return;
+            }
+            if (std::strcmp(name, ".?AVBGSProcedureTreeSequence@@") == 0 ||
+                std::strcmp(name, ".?AVBGSProcedureTreeStacked@@") == 0 ||
+                std::strcmp(name, ".?AVBGSProcedureTreeSimultaneous@@") == 0 ||
+                std::strcmp(name, ".?AVBGSProcedureTreeRandom@@") == 0) {
+                const auto& kids = static_cast<const RE::BGSProcedureTreeBranch*>(a_node)->conditions;
+                for (std::uint32_t i = 0; i < kids.size() && !a_active; ++i)
+                    WalkTree(kids[i], a_depth + 1, a_budget, a_active, a_activeLabel, a_standingLabel);
+                return;
+            }
+            a_active = true; a_activeLabel = kKindUnknown;   // a node class this table does not know
+        }
+
+        Classified ClassifyUncached(const RE::TESPackage* a_pkg) {
+            Classified c;
+            const auto type = static_cast<std::uint8_t>(a_pkg->packData.packType.underlying());
+            if (type != 18 && type != 19) {   // no procedure tree: the PKDT type is the procedure
+                for (const auto& t : kStandingTypes)
+                    if (t.type == type) { c.standing = true; c.label = t.label; return c; }
+                c.label = kKindOtherType;
+                return c;
+            }
+            // The tree: the package's own, else its template chain's (an instance older than its template keeps none).
+            const RE::IProcedureTreeItem* tree = nullptr;
+            const RE::TESPackage*         p    = a_pkg;
+            for (int hop = 0; hop < 4 && p && !tree; ++hop) {
+                const auto t = static_cast<std::uint8_t>(p->packData.packType.underlying());
+                if (t != 18 && t != 19) break;
+                const auto* cd = static_cast<const RE::TESCustomPackageData*>(p->data);
+                if (!cd) break;
+                tree = cd->procedureTree;
+                p    = cd->templateParent;
+            }
+            if (!tree) return c;   // unknown -> active
+            bool        active = false;
+            const char* activeLabel = nullptr;
+            const char* standingLabel = nullptr;
+            int         budget = 256;
+            WalkTree(tree, 0, budget, active, activeLabel, standingLabel);
+            if (active) { c.label = activeLabel ? activeLabel : kKindUnknown; return c; }
+            if (!standingLabel) return c;   // a tree with no procedure at all: unknown -> active
+            c.standing = true;
+            c.label    = standingLabel;
+            return c;
+        }
+
+        std::mutex                                                   g_kindMx;
+        std::unordered_map<const RE::TESPackage*, Classified>        g_kindCache;
+        // Only a package loaded from a plugin is cached: a runtime-created package (no file) can be freed and its
+        // address reused, so it is classified on every consult.
+        Classified ClassifyPackage(const RE::TESPackage* a_pkg) {
+            const bool cacheable = a_pkg->GetFile(0) != nullptr;
+            if (cacheable) {
+                std::scoped_lock lock(g_kindMx);
+                if (const auto it = g_kindCache.find(a_pkg); it != g_kindCache.end()) return it->second;
+            }
+            Classified c;
+            try {
+                c = ClassifyUncached(a_pkg);
+            } catch (...) {
+                c = Classified{};   // unknown -> active
+            }
+            if (!cacheable) return c;
+            std::scoped_lock lock(g_kindMx);
+            if (g_kindCache.size() >= 2048) g_kindCache.clear();
+            g_kindCache.emplace(a_pkg, c);
+            return c;
+        }
 
         // The claim the Package facet is enforced FOR (core/PackageSources.cpp / core/SpectatorGate.cpp
         // ClaimPrio, same rule): the offer's own client, or, for ch.19's internal offer, the winning travel
@@ -189,13 +357,21 @@ namespace apmf::packagegate {
             namespace src = apmf::sources;
             const RE::FormID actorId = a_actor->GetFormID();
             RankLast         now{ a_claimed->GetFormID(), a_orig ? a_orig->GetFormID() : 0, src::kNoSource,
-                                  RankDecision::kIdle };
+                                  RankDecision::kIdle, nullptr };
+            std::string      ownerFile;   // the standing package's plugin, for the log only (not registered)
             int              ownerPrio = 0, claimPrio = 0;
             src::SourceId    client = src::kNoSource;
             bool             wins   = true;
             try {
-                if (a_orig && a_orig != a_claimed) {
-                    // ACTIVE: a quest alias's own package is valid for the actor now. Name its owner.
+                const Classified kind = (a_orig && a_orig != a_claimed) ? ClassifyPackage(a_orig) : Classified{};
+                if (a_orig && a_orig != a_claimed) now.kind = kind.label;
+                if (a_orig && a_orig != a_claimed && kind.standing) {
+                    // STANDING companion behaviour: plain following is not active. Served, nothing counted.
+                    now.decision = RankDecision::kStanding;
+                    if (const auto* f = a_orig->GetFile(0)) ownerFile = std::string(f->GetFilename());
+                    else ownerFile = "a runtime package";
+                } else if (a_orig && a_orig != a_claimed) {
+                    // ACTIVE: a quest alias's own package doing more than standing behaviour is valid now. Name its owner.
                     if (const auto* f = a_orig->GetFile(0))
                         now.owner = src::Register(f->GetFilename(), src::Kind::kPlugin);
                     else
@@ -251,24 +427,31 @@ namespace apmf::packagegate {
                                          "valid for the actor (the follower mod is idle) -> the claim's package is served.",
                                          apmf::log::Hex(actorId), apmf::log::Hex(now.claimForm), apmf::log::Hex(now.orig));
                             break;
+                        case RankDecision::kStanding:
+                            spdlog::info("[ch.9-rank] actor=0x{} claimForm=0x{} engineOrig=0x{} owner={} kind={} -> idle: "
+                                         "standing companion behaviour is not active (marth: plain following isn't active), "
+                                         "the claim's package is served.",
+                                         apmf::log::Hex(actorId), apmf::log::Hex(now.claimForm), apmf::log::Hex(now.orig),
+                                         ownerFile, now.kind ? now.kind : kKindUnknown);
+                            break;
                         case RankDecision::kOwn:
                             spdlog::info("[ch.9-rank] actor=0x{} claimForm=0x{} engineOrig=0x{}: the active package is {}'s, "
                                          "the claim's own client -> the claim's package is served.",
                                          apmf::log::Hex(actorId), apmf::log::Hex(now.claimForm), apmf::log::Hex(now.orig), owner);
                             break;
                         case RankDecision::kOutranks:
-                            spdlog::info("[ch.9-rank] actor=0x{} claimForm=0x{} engineOrig=0x{}: {} is ACTIVE (its package is "
-                                         "valid now), Package priority {} vs the claim's {} ({}): the claim outranks it -> "
-                                         "the claim's package is served (enforced).",
+                            spdlog::info("[ch.9-rank] actor=0x{} claimForm=0x{} engineOrig=0x{} owner={} kind={}: ACTIVE (its "
+                                         "package is valid now), Package priority {} vs the claim's {} ({}): the claim outranks "
+                                         "it -> the claim's package is served (enforced).",
                                          apmf::log::Hex(actorId), apmf::log::Hex(now.claimForm), apmf::log::Hex(now.orig), owner,
-                                         ownerPrio, claimPrio, cname);
+                                         now.kind ? now.kind : kKindUnknown, ownerPrio, claimPrio, cname);
                             break;
                         case RankDecision::kYields:
-                            spdlog::info("[ch.9-rank] actor=0x{} claimForm=0x{} engineOrig=0x{}: {} is ACTIVE (its package is "
-                                         "valid now), Package priority {} vs the claim's {} ({}): the claim does not strictly "
-                                         "outrank it{} -> the claim YIELDS, {}'s package stands.",
+                            spdlog::info("[ch.9-rank] actor=0x{} claimForm=0x{} engineOrig=0x{} owner={} kind={}: ACTIVE (its "
+                                         "package is valid now), Package priority {} vs the claim's {} ({}): the claim does not "
+                                         "strictly outrank it{} -> the claim YIELDS, {}'s package stands.",
                                          apmf::log::Hex(actorId), apmf::log::Hex(now.claimForm), apmf::log::Hex(now.orig), owner,
-                                         ownerPrio, claimPrio, cname,
+                                         now.kind ? now.kind : kKindUnknown, ownerPrio, claimPrio, cname,
                                          now.owner == src::kUnattributedSource ? " (unattributed: the degrade rule)"
                                          : ownerPrio == claimPrio              ? " (a tie keeps the follower mod's package)"
                                                                                : "",

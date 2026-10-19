@@ -1486,7 +1486,19 @@ alias package whose conditions + schedule pass, AE 12057 -> 12721 0x182390 -> 29
 kPlugin), no file = Engine, failed register = Unattributed (degrade rule: never displaced unless `[UnknownSources]
 Package=override`); owner == the claim's client (offer client, or ch.19 travel claim's client: `RankClaimPrio`, same
 rule as PackageSources/SpectatorGate) = served + `NoteOwn`; else `NoteHit`, then claim prio STRICTLY > owner prio =
-served + `NoteOverruled`, else the original stands + `NoteStood` (tie keeps the follower mod's package). Counted per
+served + `NoteOverruled`, else the original stands + `NoteStood` (tie keeps the follower mod's package).
+**Round 2 (marth "Plain following isn't active"):** before ranking, `ClassifyPackage(orig)` (cached per plugin
+package pointer, leaf `g_kindMx`) reads what the package DOES: PKDT `packData.packType` (+0x24; NOT the derived
++0xD8, which 29582 sets to 0x2E for every tree package); types 18/19 -> `TESCustomPackageData` (+0x30) tree
+(+0x20, else the `templateParent` (+0x30) chain, 4 hops); nodes and procedures named by their own RTTI (vtable in
+.rdata checked first): Procedure node `procedure` +0x10, Sequence/Stacked/Simultaneous/Random children BSTArray
++0x10/size +0x20 (all verified AE/SE/1.7.104, addresses in the code comment). Every procedure in `kProcKinds`'
+standing set (follow, wait, sandbox, sit, sleep, eat, idle marker, wander, keep an eye on, done) = `kStanding`:
+served, nothing counted, logged `owner=<plugin> kind=<label> -> idle`. Any active or unknown procedure/node =
+ranked as above with `kind=`. What breaks: classifying by +0xD8; treating an unknown node as standing (it would
+override the mod on a guess); caching a runtime-created package (address reuse). Spot left: a vanilla package
+reused in a follower mod's alias is still owned by Skyrim.esm (the owning alias is not visible after the
+original returns; attributing it means a second ExtraAliasInstanceArray walk under its lock). Counted per
 consult, `[ch.9-rank]` logged per (claimForm, orig, owner, decision) transition per actor (leaf `g_rankMx`, cap
 4000, always on), cleared by `ForgetRedirect` / `ForgetAllRedirects`; heartbeat gains `rankOutranks` /
 `rankYields`. A registry throw serves the claim unranked and logs an error. What breaks: ranking against

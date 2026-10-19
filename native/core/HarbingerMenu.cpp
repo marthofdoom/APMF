@@ -207,11 +207,12 @@ namespace apmf::harbingermenu {
             }
             if (f == Facet::kPackage) {
                 // The 0x49 seat ranks (2026-10-18, core/PackageGate.cpp RankAndDecide): a claim must STRICTLY
-                // outrank the plugin whose alias package is active, and only while that package is active.
+                // outrank the plugin whose alias package is active, and only while that package does more than
+                // standing companion behaviour (follow / wait / sandbox ... are not active: ClassifyPackage).
                 Colored(kGrey, "A claim must outrank a mod to replace its package: a follower mod at the same "
-                               "priority keeps the follower only while its own package is running. When the mod's "
-                               "package is not active (no alias package of its own is valid), the claim's package "
-                               "runs.");
+                               "priority keeps the follower only while it is running something beyond plain "
+                               "following. Its follow, wait, sandbox and home packages do not count, and then the "
+                               "claim's package runs.");
             }
             if (f == Facet::kEquipWeapon) {
                 // ch.26 (ABI v22, weighting phase 1): the score lift and its escalation. A FORCE ANOMALY is

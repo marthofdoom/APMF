@@ -1806,7 +1806,27 @@ Handle h = g_apmf->RequestEx(actor, kIntent_OfferPackage, kBasis, &p);
 It hooks the engine's package question (`Character` slot 0x49, `CheckForCurrentAliasPackage`). The engine's own answer to that question is the first package from the actor's quest aliases whose conditions and schedule pass right now, or nothing. While your claim owns the facet, Harbinger ranks your claim against that answer:
 
 - **The mod is idle.** The engine's answer is nothing (no alias package of any mod is valid for the actor now), or it already is your package. There is nothing to rank against, and the answer is your package.
-- **The mod is active.** The engine's answer is another package. Harbinger names its owner: the plugin the package comes from, registered as a `Package` source if it is new, or `Engine` for a package created at runtime. Your package replaces it only when your mod's `Package` priority is strictly higher than that plugin's. Otherwise the plugin's package stands and your claim yields for that evaluation. A tie keeps the follower mod's package. So a follower mod at the same priority keeps the follower only while its own package is running. When its packages stop being valid, the next evaluation gives the actor your package.
+- **The mod is only following.** The engine's answer is another package, but everything it does is standing companion behaviour (Table 17a). Plain following is not active. Your package is served and nothing is counted against the mod. The `[ch.9-rank]` line names the mod and the kind, for example `owner=018Auri.esp kind=follow -> idle`.
+- **The mod is active.** The engine's answer is another package that does something more. Harbinger names its owner: the plugin the package comes from, registered as a `Package` source if it is new, or `Engine` for a package created at runtime. Your package replaces it only when your mod's `Package` priority is strictly higher than that plugin's. Otherwise the plugin's package stands and your claim yields for that evaluation. A tie keeps the follower mod's package. So a follower mod at the same priority keeps the follower only while it is running something beyond plain following. When it goes back to following, waiting or sandboxing, or its packages stop being valid, the next evaluation gives the actor your package.
+
+**Table 17a. What counts as active at the 0x49 seat.** Harbinger reads what the package does from its own record: the procedures in its procedure tree (its template's tree when it has none of its own), or its package type when it has no tree.
+
+| The package's procedures | Kind in the log | Counts as |
+|---|---|---|
+| Follow, Follow To | `follow` | standing (not active) |
+| Wait, Hold Position | `wait` | standing |
+| Sandbox | `sandbox` | standing |
+| Sit, Sleep, Eat, Use Idle Marker | `sit`, `sleep`, `eat`, `idle marker` | standing |
+| Wander, Keep An Eye On, Done | `wander`, `keep an eye on`, `done` | standing |
+| Travel, Escort | `travel`, `escort` | active |
+| Dialogue, Force Greet, Say, Shout | `dialogue`, `force greet`, `say`, `shout` | active |
+| Activate, Acquire, Find, Use Magic, Use Weapon | as named | active |
+| Patrol, Guard, Flee, Pursue, Lock, Unlock | as named | active |
+| A package with no tree: type Follow, Accompany, Eat, Sleep, Wander, Sandbox or Do Nothing | as named | standing |
+| A package with no tree of any other type | `other type` | active |
+| A procedure or tree node Harbinger does not know, or a tree it cannot read | `unknown` | active |
+
+A package is standing only when every procedure in its tree is standing. One active procedure anywhere in the tree makes it active, so a package that walks home and then sandboxes there counts as active (it travels). A scene is not seen here: scenes run through their own seat and are only observed (see the source capture below).
 - **Your own package.** When the active package's plugin is your own mod's source, your package is served.
 
 The engine adopts the answer and runs it with real pathing, one `OnPackageChange` each way. If your FormID cannot be resolved, Harbinger falls back to the engine's own answer, never null. It does not pick, validate or interpret the package's content. Each change of the outcome for an actor is logged once as a `[ch.9-rank]` line (idle and served, active and outranked, active and the claim yields). The 30 second `[ch.9-redirect] H` heartbeat carries `rankOutranks` and `rankYields` totals.
@@ -1847,7 +1867,7 @@ ABI 1. `EnableRedirectLog` and `iSpectatorSeat` in `[PackageGate]`. Proven when 
 
 1. What does Harbinger answer at 0x49 when your package FormID does not resolve?
 2. Another mod's scene gives the actor a different package while your claim stands. Is it denied?
-4. A follower mod's alias package is valid for the actor and both mods sit at `Package` priority 50. Whose package runs, and what changes when the follower mod's package stops being valid?
+4. A follower mod's alias package is valid for the actor and both mods sit at `Package` priority 50. Whose package runs when that package is a plain follow, and whose when it is an escort?
 3. Why is the nudge posted one hop after publish?
 
 ### ch.19 Travel (`kIntent_Travel`)
@@ -3245,7 +3265,7 @@ Every Intent maps to one sources facet. This table says which, and what Harbinge
 | Sources facet (`APMF_Sources.ini` section) | Intents | Enforced against a foreign source |
 |---|---|---|
 | `Target` | ch.6, ch.20 | ch.20 only. Restored through the engine's own `SetTarget` when a positively identified writer is outranked. ch.6 restores nothing |
-| `Package` | ch.9, ch.19 | The 0x49 answer: an active alias package is replaced only when your priority is strictly above its plugin's (a tie keeps the other mod's package, an idle mod has nothing to rank). The Spectator hold-off needs your priority above `Engine`. Scenes: observe |
+| `Package` | ch.9, ch.19 | The 0x49 answer: an active alias package is replaced only when your priority is strictly above its plugin's (a tie keeps the other mod's package). An idle mod, or one only following, waiting or sandboxing, has nothing to rank. The Spectator hold-off needs your priority above `Engine`. Scenes: observe |
 | `EquipWeapon` | ch.15, ch.17, ch.26, hand block | Weapons, shields, torches and ammo (any item with a Right, Left, Ammo or Light category bit). Ranked since ABI 22. Every equip deny (ch.15, the ch.17 set, the hand block, the ch.26 force) stands only while your priority is above the equip's source. The ch.26 score lift applies only while your priority is above the source beneath the score seat. An unattributed equip is allowed unless `EquipWeapon=override` |
 | `EquipArmor` | ch.17 | Armor-only items. The ch.17 set and denied-category refusals stand only while your priority is above the equip's source. The facet was one `Equip` facet before 2026-10-18, and an old `[Equip]` section is still read as the fallback for both |
 | `CombatAction` | ch.7, ch.23 | A leaf the engine's tree chose is stopped only while your priority is above `Engine` |
