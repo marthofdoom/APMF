@@ -50,13 +50,16 @@ namespace apmf::sources {
         kTarget = 0,     // ch.6 / ch.20: which actor an NPC fights
         kDetection,      // the detection-value producer (SmartNPC H2 shape)
         kPackage,        // ch.9 / ch.19: the running AI package (alias, quest, scene, created)
-        kEquip,          // ch.15 / ch.17 / the hand block: engine equips
+        kEquipWeapon,    // ch.15 / ch.17 / the hand block / ch.26: engine equips of anything that competes for a
+                         //   hand or a quiver/torch slot (weapons, shields, torches, ammo). INI section [EquipWeapon]
         kCombatAction,   // ch.7 / ch.23: the combat behaviour tree leaves (1b: denies ranked vs Engine)
         kCast,           // ch.8 / 8a / 8b: cast choice and execution (census only in 1a)
         kCombat,         // ch.21 / 22 / 24: entry, re-entry, approach (1b: StartCombat caller + area source)
         kCore,           // the 0xAD Update seat and other spine seats (census only)
         kActorValue,     // ch.1a gait (SpeedMult) / ch.11 disposition AVs (1b: observe-only AV seat,
                          //   core/ActorValueObserve; ch.16's detection AVs count on kDetection)
+        kEquipArmor,     // appended (menu/Equip split, 2026-10-18): engine equips of armor-only items (body, head,
+                         //   hands, feet, jewelry, cloaks). INI section [EquipArmor]
         kCount
     };
     inline constexpr int kFacetCount = static_cast<int>(Facet::kCount);
@@ -75,11 +78,21 @@ namespace apmf::sources {
                         //   first seen as (hook / interposer / plugin / client)
     };
 
-    const char* FacetName(Facet f);   // the INI section and menu label ("Target", ...)
+    const char* FacetName(Facet f);   // the INI section and menu label ("Target", "EquipWeapon", ...)
     // The facet of an existing seat from its allowance::InstallOnVtables tag ("ch.7",
     // "t2a", "ch.8b-seat06", ...): census rows only.
     Facet FacetForTag(std::string_view tag);
     const char* KindName(Kind k);
+
+    // The Equip facet an item's Categorize() mask (EquipSink.h) ranks on: any Right / Left / Ammo / Light
+    // bit (a weapon, a shield -- it carries Left --, a torch, ammo) is the WEAPON facet; an Armor-only mask is
+    // the ARMOR facet. A mask with neither (0 = not a governed type) takes the Weapon facet. Pure.
+    inline Facet FacetForEquipCats(std::uint32_t cats) {
+        constexpr std::uint32_t kWeaponBits = APMF_API::kEquipCat_Right | APMF_API::kEquipCat_Left |
+                                              APMF_API::kEquipCat_Ammo | APMF_API::kEquipCat_Light;
+        if ((cats & kWeaponBits) != 0 || (cats & APMF_API::kEquipCat_Armor) == 0) return Facet::kEquipWeapon;
+        return Facet::kEquipArmor;
+    }
 
     inline constexpr int kPrioMin             = 0;    // 0 = off: never wins against anything
     inline constexpr int kPrioMax             = 100;
@@ -135,16 +148,23 @@ namespace apmf::sources {
     // handle map's shared leaf lock (taken and released before the atomics; no engine call).
     void NoteServed(SourceId id, Facet f);
     void NoteServedClaim(APMF_API::Handle h, Facet f);
-    void NoteOverruled(SourceId id, Facet f);   // Harbinger enforced against it
-    void NoteStood(SourceId id, Facet f);       // it outranked the claim (or tied): its write stood
+    void NoteOverruled(SourceId id, Facet f);   // Harbinger enforced against it (menu "Blocked")
+    void NoteStood(SourceId id, Facet f);       // it outranked the claim (or tied): its write stood (menu "Passed")
+    // A seat that only OBSERVES the facet saw this source write (no ranking happens there: nothing was
+    // enforced or let through by a decision). Menu "Observed". Marks the source involved.
+    void NoteObserved(SourceId id, Facet f);
+    // The claim's OWN client acted on its own claim (a claim binding its own client, an equip of its own
+    // hand claim): not an outside write, so not a Hit, Blocked or Passed. Menu tooltip only ("own").
+    void NoteOwn(SourceId id, Facet f);
     void NoteInvolved(SourceId id, Facet f);    // seen on the facet, no hit (census)
 
     // ---- clients (Q7: automatic from the calling DLL) --------------------------------
     // ClientAPI calls this on every Request / RequestEx / RequestCast that returned a
     // handle, with its own `_ReturnAddress()` (an address inside the client DLL). Any thread.
     void NoteClientRequest(APMF_API::Handle h, const void* returnAddress, APMF_API::Intent intent);
-    // The facet a client intent claims (for the menu's per-facet tables).
-    Facet FacetForIntent(APMF_API::Intent intent);
+    // The facets a client intent claims, as a bitmask of (1u << Facet) (for the menu's per-facet tables).
+    // The three equip intents claim BOTH Equip facets.
+    std::uint32_t FacetMaskForIntent(APMF_API::Intent intent);
     void ForgetHandle(APMF_API::Handle h);   // ClientAPI Release. Any thread.
     // An INTERNAL claim Harbinger files on a client's behalf (the combat substrate's hand floors) ranks
     // as that client's own claim: `a_internal` is mapped to `a_owner`'s client. No-op when the owner is
@@ -241,6 +261,8 @@ namespace apmf::sources {
     std::uint32_t Served(SourceId id, Facet f);
     std::uint32_t Overruled(SourceId id, Facet f);
     std::uint32_t Stood(SourceId id, Facet f);
+    std::uint32_t Observed(SourceId id, Facet f);
+    std::uint32_t Own(SourceId id, Facet f);
     std::uint64_t LastSeenMs(SourceId id, Facet f);   // 0 = never
     // Q14: a source not seen during the current or the two previous game loads.
     bool          Idle(SourceId id);

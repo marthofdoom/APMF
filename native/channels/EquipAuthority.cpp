@@ -323,6 +323,8 @@ namespace {
             mgr->UnequipObject(actor, c.obj, nullptr, c.count, c.slot, /*queue*/ true, /*force*/ false,
                                /*sounds*/ true, /*applyNow*/ false);
             ++unequipped;
+            // Menu "Served": the unequip is the claim's client being served on that item's Equip facet.
+            apmf::sources::NoteServedClaim(set.handle, apmf::sources::FacetForEquipCats(competes));
             held.push_back(Issued{ form, c.hand, nowMs });
             spdlog::info("[apmf][equip-auth] actor=0x{} UNEQUIP worn 0x{} '{}' ({}, count {}) cat={}: a category the claim "
                          "DENIES (denied=0x{}). Queued through ActorEquipManager::UnequipObject; the item stays in the "
@@ -427,6 +429,7 @@ namespace {
         // item is CARRIED into `issuedNow` with that time, so the hold is a real
         // kPendingMaxMs window, not one pass.
         std::vector<Issued> issuedNow;
+        std::uint32_t equippedWeapon = 0, equippedArmor = 0;   // per Equip facet, for the menu's Served
         std::uint32_t equipped = 0, worn = 0, missing = 0, unresolved = 0, pending = 0, notGoverned = 0;
         std::uint32_t instMissing = 0, instOtherHand = 0;   // ABI v25: a named instance not carried / worn in the other hand
         // ABI v9: declared items this pass will not touch because a category they
@@ -571,6 +574,7 @@ namespace {
                                  /*sounds*/ true, /*applyNow*/ false);
             }
             ++equipped;
+            ++(apmf::sources::FacetForEquipCats(competes) == apmf::sources::Facet::kEquipArmor ? equippedArmor : equippedWeapon);
             issuedNow.push_back(Issued{ form, slot, nowMs, uid });
             if (slot != APMF_API::kEquipSlot_Default) PostReadback(id, form, slot, nowMs);
             spdlog::info("[apmf][equip-auth] actor=0x{} set={} items -> equip 0x{} '{}' hand={}{}",
@@ -601,8 +605,10 @@ namespace {
                      set.count, apmf::log::Hex(set.owned, 2), apmf::log::Hex(set.denied, 2),
                      equipped, worn, pending, missing, instMissing, instOtherHand, unresolved, notGoverned, skippedUnowned,
                      skippedDenied, unequipped, unequipHeld, wouldUnequip);
-        // Menu "Served": the claim's client had >0 items equipped for it by this pass.
-        if (equipped > 0) apmf::sources::NoteServedClaim(set.handle, apmf::sources::Facet::kEquip);
+        // Menu "Served": the claim's client had >0 items equipped for it by this pass, credited to the Equip
+        // facet each item belongs to (weapons / shields / torches / ammo: EquipWeapon; armor: EquipArmor).
+        if (equippedWeapon > 0) apmf::sources::NoteServedClaim(set.handle, apmf::sources::Facet::kEquipWeapon);
+        if (equippedArmor > 0) apmf::sources::NoteServedClaim(set.handle, apmf::sources::Facet::kEquipArmor);
     }
 
     void PostEnforce(RE::FormID id) {

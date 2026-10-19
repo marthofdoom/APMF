@@ -75,6 +75,8 @@ namespace apmf::harbingermenu {
         // Column widths (pixels), the same in every facet table so the sliders line up.
         constexpr float kKindWidth   = 95.0f;
         constexpr float kHitsWidth   = 70.0f;
+        constexpr float kOutcomeWidth = 62.0f;   // Blocked / Passed / Observed
+        constexpr std::uint64_t kActiveWindowMs = 60000;   // the facet winner must have been active this recently
         constexpr float kSliderWidth = 190.0f;
 
         // UI state only: never written to APMF_Sources.ini (SMF has no per-plugin UI-state store).
@@ -85,7 +87,8 @@ namespace apmf::harbingermenu {
         constexpr FacetRow kFacets[] = {
             { Facet::kTarget,       "Targets" },
             { Facet::kPackage,      "Packages" },
-            { Facet::kEquip,        "Equip" },
+            { Facet::kEquipWeapon,  "Equip: weapons, shields, torches, ammo" },
+            { Facet::kEquipArmor,   "Equip: armor" },
             { Facet::kDetection,    "Detection" },
             { Facet::kCast,         "Casting" },
             { Facet::kCombatAction, "Combat actions" },
@@ -119,15 +122,19 @@ namespace apmf::harbingermenu {
             return KindName(k);
         }
 
-        // The facet's current winner: the highest-priority involved, non-idle source with a
+        // The facet's current winner: the highest-priority source ACTIVE on this facet in the last 60 s
+        // (a hit, a served claim, an own action or a claim filed, marth 2026-10-18), non-idle, with a
         // non-zero priority (ties keep the first registered). kNoSource when none.
         SourceId Winner(Facet f) {
             SourceId best = kNoSource;
             int      bp   = 0;
             const auto n  = Count();
+            const auto now = apmf::clock::MonotonicMs();
             for (std::uint32_t i = 0; i < n; ++i) {
                 const SourceId id = static_cast<SourceId>(i);
                 if (id == kUnattributedSource || !Involved(id, f) || Idle(id)) continue;
+                const auto seen = LastSeenMs(id, f);
+                if (seen == 0 || now - seen > kActiveWindowMs) continue;
                 const int p = Priority(id, f);
                 if (p > bp) { bp = p; best = id; }
             }
@@ -148,8 +155,12 @@ namespace apmf::harbingermenu {
             Colored(kHead, std::string(Name(id)));
             Text(fmt::format("Kind: {}", Badge(id)));
             Text(fmt::format("{}: served {} (Harbinger enforced this source's claim), {} hit(s) (its writes seen), "
-                             "overruled {}, stood {}", FacetName(f), Served(id, f), Hits(id, f), Overruled(id, f),
-                             Stood(id, f)));
+                             "blocked {} (Harbinger denied it), passed {} (it outranked the claim or tied: its write "
+                             "stood), observed {} (seen at a seat that only observes)", FacetName(f), Served(id, f),
+                             Hits(id, f), Overruled(id, f), Stood(id, f), Observed(id, f)));
+            if (Own(id, f))
+                Text(fmt::format("Own: {} (this client acting on its own claim: not an outside write, not counted "
+                                 "as a hit, blocked or passed)", Own(id, f)));
             Text(fmt::format("Last seen: {}", Age(LastSeenMs(id, f))));
             if (Idle(id)) Colored(kGrey, "Idle: not seen during the last 3 game loads. Its priority is kept.");
             for (const auto& s : seats) {
@@ -194,7 +205,7 @@ namespace apmf::harbingermenu {
                 if (g.Checkbox("Unknown sources can be overridden", &ovr)) EnqueueSetOverrideUnknown(f, ovr);
                 g.PopID();
             }
-            if (f == Facet::kEquip) {
+            if (f == Facet::kEquipWeapon) {
                 // ch.26 (ABI v22, weighting phase 1): the score lift and its escalation. A FORCE ANOMALY is
                 // a client's forced refusal the sliders did not allow (marth D4: investigate every one).
                 const auto t = apmf::equippref::GetTotals();
@@ -208,13 +219,16 @@ namespace apmf::harbingermenu {
                                                "source outranks the claim. See [ch.26] in APMF.log.",
                                                t.forceAnomalies));
             }
-            if (!g.BeginTable(fmt::format("tbl{}", static_cast<int>(f)).c_str(), 5, kTableRowBg | kTableBordersInnerH,
+            if (!g.BeginTable(fmt::format("tbl{}", static_cast<int>(f)).c_str(), 8, kTableRowBg | kTableBordersInnerH,
                               ImVec2{ 0.0f, 0.0f }, 0.0f))
                 return;
             g.TableSetupColumn("Source", kColWidthStretch, 0.0f, 0);
             g.TableSetupColumn("Kind", kColWidthFixed, kKindWidth, 0);
             g.TableSetupColumn("Served", kColWidthFixed, kHitsWidth, 0);
             g.TableSetupColumn("Hits", kColWidthFixed, kHitsWidth, 0);
+            g.TableSetupColumn("Blocked", kColWidthFixed, kOutcomeWidth, 0);
+            g.TableSetupColumn("Passed", kColWidthFixed, kOutcomeWidth, 0);
+            g.TableSetupColumn("Observed", kColWidthFixed, kOutcomeWidth, 0);
             g.TableSetupColumn("Priority (0 = off)", kColWidthFixed, kSliderWidth, 0);
             g.TableHeadersRow();
             const auto row = [&](SourceId id, bool isIdle) {
@@ -229,6 +243,12 @@ namespace apmf::harbingermenu {
                 Colored(isIdle ? kGrey : kWhite, std::to_string(Served(id, f)));
                 g.TableNextColumn();
                 Colored(isIdle ? kGrey : kWhite, std::to_string(Hits(id, f)));
+                g.TableNextColumn();
+                Colored(isIdle ? kGrey : kWhite, std::to_string(Overruled(id, f)));
+                g.TableNextColumn();
+                Colored(isIdle ? kGrey : kWhite, std::to_string(Stood(id, f)));
+                g.TableNextColumn();
+                Colored(isIdle ? kGrey : kWhite, std::to_string(Observed(id, f)));
                 g.TableNextColumn();
                 if (id == kUnattributedSource) Colored(kWarn, "always allowed");
                 else {
@@ -295,7 +315,10 @@ namespace apmf::harbingermenu {
                                "APMF_Sources.ini. Hover a source for details.");
                 Colored(kGrey, "Served = times Harbinger enforced that source's own claim (a pin engaged, an engine "
                                "pick denied, a write restored, an equip or package held, a cast seated, an entry). "
-                               "Hits = outside writes Harbinger saw it make. A pure client has Served and few Hits.");
+                               "Hits = outside writes Harbinger saw it make. Blocked = Harbinger denied that write. "
+                               "Passed = it outranked the claim or tied, so its write stood. Observed = seen at a seat "
+                               "that only watches (nothing decided). A pure client has Served and few Hits.");
+                Colored(kGrey, "The winner of a facet is the highest-priority source active on it in the last 60 s.");
                 g.Spacing();
                 const auto alerts = RecentAlerts();
                 const auto seats  = SeatSnapshot();

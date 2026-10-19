@@ -355,8 +355,10 @@ namespace apmf::castguard {
             const int  enginePrio = apmf::sources::Priority(apmf::sources::kEngineSource, Facet::kCast);
             const bool stands     = claimPrio > enginePrio;
             apmf::sources::NoteHit(apmf::sources::kEngineSource, Facet::kCast);
-            if (stands) apmf::sources::NoteOverruled(apmf::sources::kEngineSource, Facet::kCast);
-            else {
+            if (stands) {
+                apmf::sources::NoteOverruled(apmf::sources::kEngineSource, Facet::kCast);
+                apmf::sources::NoteServed(client, Facet::kCast);   // the guard's client was served (kNoSource ignored)
+            } else {
                 apmf::sources::NoteStood(apmf::sources::kEngineSource, Facet::kCast);
                 g_stood.fetch_add(1, std::memory_order_relaxed);
             }

@@ -681,17 +681,17 @@ namespace apmf::equipgate {
                     float                b15 = 0.0f;
                     APMF_API::Handle     h15 = APMF_API::kInvalidHandle;
                     apmf::ControlMap::Get().TryGetOwningClaimBasis(fid, APMF_API::kIntent_Equipment, p15, b15, &h15);
-                    const auto v = apmf::facetattr::Decide(apmf::sources::Facet::kEquip, h15,
+                    const auto v = apmf::facetattr::Decide(apmf::sources::Facet::kEquipWeapon, h15,
                                                            apmf::facetattr::InsideSource(prevFn), fid,
                                                            "CheckShouldEquip (0x0F): the answer came through a "
                                                            "hook inside the seat that is in no module");
                     enforce = v.enforce;
                     if (!enforce) try {
-                        if (apmf::facetattr::LineDue(apmf::sources::Facet::kEquip, fid, 0x0F15u))
+                        if (apmf::facetattr::LineDue(apmf::sources::Facet::kEquipWeapon, fid, 0x0F15u))
                             spdlog::info("[t2a] 0x{} CheckShouldEquip item=0x{}: the ch.15 refusal -- {}, so the "
                                          "engine's own answer STANDS.",
                                          apmf::log::Hex(fid), apmf::log::Hex(subjectForm),
-                                         apmf::facetattr::WhyStands(apmf::sources::Facet::kEquip, v, h15));
+                                         apmf::facetattr::WhyStands(apmf::sources::Facet::kEquipWeapon, v, h15));
                     } catch (...) {
                     }
                 } catch (...) {

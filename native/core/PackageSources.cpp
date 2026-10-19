@@ -221,14 +221,16 @@ namespace apmf::packagesources {
                     }
                     continue;
                 }
-                apmf::sources::NoteHit(rec.src, Facet::kPackage);
-                if (g_lastReported[id] == curId) continue;   // logged on the transition only
+                if (g_lastReported[id] == curId) continue;   // counted and logged on the transition only
                 g_lastReported[id] = curId;
+                apmf::sources::NoteHit(rec.src, Facet::kPackage);   // one hit per capture, not per 500 ms poll
                 std::string client;
                 const int   claimPrio = ClaimPrio(id, h, client);
                 const int   srcPrio   = apmf::sources::Priority(rec.src, Facet::kPackage);
                 const bool  outranked = claimPrio > srcPrio;
-                if (outranked) apmf::sources::NoteOverruled(rec.src, Facet::kPackage);
+                // Outranked but NOT enforced (the scene seat is probe-only): "Observed", never "Blocked" -- nothing
+                // was denied. A source that stands is "Passed".
+                if (outranked) apmf::sources::NoteObserved(rec.src, Facet::kPackage);
                 else           apmf::sources::NoteStood(rec.src, Facet::kPackage);
                 spdlog::info("[sources] Package 0x{} captured {}: its {} runs 0x{}{}{} instead of the claimed 0x{}. "
                              "Priority {} vs the claim's {} ({}): {}",

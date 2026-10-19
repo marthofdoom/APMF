@@ -8,15 +8,23 @@ Harbinger adds one page to the **SKSE Menu Framework** (3.x). It shows who is dr
 
 1. **Alerts line.** Green "No alerts" when every write was traced to a named source. Otherwise a collapsible line "N alert(s)". Each alert is a change to an AI facet that Harbinger could not trace to a mod. Those changes are always allowed and never denied.
 2. **Hide idle sources.** A checkbox. It only changes the view and is never saved. Idle sources are ones not seen in the last 3 game loads.
-3. **One collapsible header per facet:** Targets, Packages, Equip, Detection, Casting, Combat actions, Combat entry and approach, Actor values (speed, disposition), Core (the order the page renders them). Below the census, "Loaded SKSE plugins not seen writing yet" lists every SKSE plugin in the process that has not yet written a facet. Under each header sits a checkbox, "Unknown sources can be overridden" (off by default, saved to `[UnknownSources]` in `APMF_Sources.ini`): when ticked, a change Harbinger cannot trace ranks at the Unattributed priority instead of simply being allowed. A header is closed unless that facet has an alert. Its title shows the current winner and its priority, the number of sources and any alerts.
+3. **One collapsible header per facet:** Targets, Packages, Equip: weapons, shields, torches, ammo, Equip: armor, Detection, Casting, Combat actions, Combat entry and approach, Actor values (speed, disposition), Core (the order the page renders them). Below the census, "Loaded SKSE plugins not seen writing yet" lists every SKSE plugin in the process that has not yet written a facet. Under each header sits a checkbox, "Unknown sources can be overridden" (off by default, saved to `[UnknownSources]` in `APMF_Sources.ini`): when ticked, a change Harbinger cannot trace ranks at the Unattributed priority instead of simply being allowed. A header is closed unless that facet has an alert. Its title shows the current winner and its priority, the number of sources and any alerts.
 4. **A table inside each header**, one row per source, in fixed columns:
    - **Source:** the mod, plugin or built in name. The winner is green, idle sources are grey and listed last, "Unattributed" is amber.
    - **Kind:** `client` (a mod that asks Harbinger), `hook` (another mod's hook DLL found on one of Harbinger's seats), `plugin`, `engine`, `direct` (Papyrus and console), `loaded` (an SKSE plugin found in the process at startup that has not been seen writing yet; it takes its real kind on its first write), or a combination such as `hook+client`.
-   - **Hits:** how many times the source wrote the facet.
+   - **Served:** how many times Harbinger enforced this source's own claim (a pin engaged, the engine's pick denied, a foreign write restored, an equip refused, made or removed for the claim, a package held, a cast refused, an entry made). A pin the engine already agreed with is not counted.
+   - **Hits:** how many times Harbinger saw the source write the facet from outside. A mod acting on its own claim is not an outside write and is not counted here. A package a source takes over counts once per takeover, not once per check.
+   - **Blocked:** how many of those writes Harbinger denied because a claim outranked the source.
+   - **Passed:** how many of those writes stood because the source outranked the claim or tied with it.
+   - **Observed:** how many writes were seen at a seat that only watches (an actor value change, a combat entry Harbinger does not rank, a package a claim would outrank but that is not enforced yet). Nothing was decided, so they are neither Blocked nor Passed.
    - **Priority (0 = off):** a slider from 0 to 100. Moving it applies at once and is saved to `APMF_Sources.ini`. "Unattributed" has no slider: it is always allowed.
 5. **Seat census.** A collapsed header at the bottom. It lists the engine seats where another mod's hook sits inside Harbinger's or on top of it, and whether Harbinger is still outermost.
 
-**Details on hover.** Hover a source name, or focus its slider with a gamepad, to see its counters (hits, overruled, stood), when it last wrote the facet and which seats it hooks.
+**Details on hover.** Hover a source name, or focus its slider with a gamepad, to see its counters (served, hits, blocked, passed, observed, and "own" when the mod acted on its own claim), when it last wrote the facet and which seats it hooks.
+
+**The winner.** The facet header names a winner: the highest priority source that was active on that facet in the last 60 seconds. A source that has been quiet for longer is not the winner, whatever its priority.
+
+**Equip is two headers.** Weapons, shields, torches and ammo rank on `EquipWeapon`. Armor ranks on `EquipArmor`. Each has its own priorities in `APMF_Sources.ini`. An old `[Equip]` section is still read where the new sections have no value.
 
 **How priorities work.** A claim from one source beats another source's change on the same facet only with a higher priority. Defaults: other mods 20, mods that ask Harbinger 50, Papyrus and console 75. Setting a priority to 0 turns that source off for that facet. See `Docs/INI-REFERENCE.md` for the file format.
 
@@ -30,7 +38,8 @@ Harbinger adds one page to the **SKSE Menu Framework** (3.x). It shows who is dr
 |---|---|---|
 | Targets | ch.6 combat target, ch.20 target pin | [ch.6](FACETS.md#ch6-combat-target-kintent_combattarget), [ch.20](FACETS.md#ch20-target-pin-kintent_targetpin) |
 | Packages | ch.9 offer package, ch.19 travel, the Spectator hold-off | [ch.9](FACETS.md#ch9-offer-package-kintent_offerpackage), [ch.19](FACETS.md#ch19-travel-kintent_travel) |
-| Equip | ch.15 equipment, ch.17 equip authority, the hand block | [ch.15](FACETS.md#ch15-equipment-kintent_equipment), [ch.17](FACETS.md#ch17-equip-authority-kintent_equipauthority) |
+| Equip: weapons, shields, torches, ammo | ch.15 equipment, ch.17 equip authority, ch.26 preference, the hand block (weapon items) | [ch.15](FACETS.md#ch15-equipment-kintent_equipment), [ch.17](FACETS.md#ch17-equip-authority-kintent_equipauthority) |
+| Equip: armor | ch.17 equip authority (armor items) | [ch.17](FACETS.md#ch17-equip-authority-kintent_equipauthority) |
 | Detection | ch.16 detection, the actor-value watch | [ch.16](FACETS.md#ch16-detection-kintent_detection) |
 | Casting | ch.8 select spell, ch.8b cast, ch.25 cast guard | [ch.8](FACETS.md#ch8-select-spell-kintent_selectspell), [ch.8b](FACETS.md#ch8b-cast-kintent_cast), [ch.25](FACETS.md#ch25-cast-guard-kintent_castguard) |
 | Combat actions | ch.7 combat action, ch.23 pursuit leash | [ch.7](FACETS.md#ch7-combat-action-kintent_combataction), [ch.23](FACETS.md#ch23-pursuit-leash-kintent_pursuitleash) |

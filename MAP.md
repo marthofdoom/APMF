@@ -359,6 +359,8 @@ a main-thread-safe seat for equip/3D work).
 ### `native/core/Sources.{h,cpp}` — HARBINGER 1a: source registry, priorities, degrade rule, seat census
 **Served counter (2026-10-12, fix/apmf-menu-client-hits):** `served[facet]` atomic + `NoteServed(id,f)` / `NoteServedClaim(handle,f)` (resolves the client via `ClientForHandle`'s shared leaf lock, released before the atomics) + `Served()`. It is NOT a Hit: Hits stays "outside writes seen". Both stamp `lastSeenMs` / `lastLoadSeq`, and so does `NoteClientRequest` (a client with live claims is never `Idle`, never dropped from the menu's `Winner()`). Credit sites: `facetattr::Decide` on `enforce` (every ranked deny: cast, combat, action, approach, entry, re-entry), `EquipSink` applied deny, `TargetPin` seat deny/held + `UpdateCombat` restore, `EquipAuthority::Enforce` equipped>0, `PackageGate` 0x49 `won`, `Travel::StartLeg`, `EquipPreference` lift/steer, `CombatEntry::Enter` entered. What breaks: moving a credit into a hot path that holds another lock (the handle map's lock is a leaf).
 
+**Menu counters + Equip split (2026-10-18, feat/apmf-menu-split):** `Facet::kEquip` became `kEquipWeapon` (same index 3, INI section `EquipWeapon`) plus an APPENDED `kEquipArmor` (index 9, `kFacetCount` 10; `g_unkPending` initialiser and its `static_assert` track it). `FacetForEquipCats(Categorize mask)` (inline, Sources.h) picks the facet: any Right / Left / Ammo / Light bit (a shield or torch carries Left) = Weapon, Armor-only = Armor. `FacetMaskForIntent` replaces `FacetForIntent` (the three equip intents claim both). `ReadIni` reads a legacy `[Equip]` section (keys, `iUnregisteredEquip` / `iClientEquip`, `[UnknownSources] Equip`) as a PER-KEY fallback and never rewrites it; the slider writes the new sections. New counters `observed[]` (`NoteObserved`: `facetattr::Observe` users, the package poll's outranked-not-enforced) and `own[]` (`NoteOwn`: a claim's own client on its own claim, from `facetattr::Decide` and the EquipSink own paths). `EquipSink` computes `Categorize` BEFORE the caller recovery (the facet keys every counter) and DEFERS the hit of a source that is the client of a claim on the actor (`hitDeferred` / `isOwnClient`, flushed only against another client's claim). `RankEquipDeny` takes the facet. Menu columns Served / Hits / Blocked (= overruled) / Passed (= stood) / Observed; `Winner()` requires `LastSeenMs` within 60 s. What breaks: a new equip-facet counter site that hard-codes a facet instead of using the item's `FacetForEquipCats`; reordering the Facet enum (the INI section names and `involved` bitmask are by name / bit, but `g_unkPending` is positional).
+
 **1b observe slice (2026-10-12):** facet `kActorValue` ("ActorValue": ch.1a gait / ch.11 disposition, fed by
 `core/ActorValueObserve`); `Kind::kLoaded` + `RegisterLoadedPlugins()` (kDataLoaded: `K32EnumProcessModules`, every
 module under `...\SKSE\Plugins\` but APMF pre-registered by base name, keeping 160 of the now 512 registry slots free;
@@ -368,8 +370,8 @@ Plan `_research/harbinger-controller-plan-2026-10-11.md` + marth's Q1-Q15 (2026-
 write on a facet is an INPUT from a SOURCE `{name, kind}` (client / hook / interposer / plugin /
 script / engine / direct calls / unknown). `Init()` (at SKSEPluginLoad, before ch.20's layer 0) reads
 `Data/SKSE/Plugins/APMF_Sources.ini` (`[Defaults] iUnregistered<Facet>=20`, `iClient<Facet>=50`;
-`[<Facet>] <Module.dll|Plugin.esp>=0..100`, 0 = off; facets Target / Detection / Package / Equip /
-CombatAction / Cast / Combat / Core) and pins the built-ins at ids 0..2 (Engine, DirectCalls = 75,
+`[<Facet>] <Module.dll|Plugin.esp>=0..100`, 0 = off; facets Target / Detection / Package / EquipWeapon /
+EquipArmor / CombatAction / Cast / Combat / Core / ActorValue; legacy `[Equip]` read as a per-key fallback) and pins the built-ins at ids 0..2 (Engine, DirectCalls = 75,
 Unattributed). The registry is a fixed append-only array (256): name/kind written before the
 count is published (release), so readers on any thread (combat jobs, SMF's render thread) scan
 it lock-free; counters/priorities are atomics; one mutex on the add. CLIENT IDENTITY (Q7):
@@ -413,7 +415,7 @@ header `resources/SKSEMenuFramework.h`, QTR-Modding/SKSE-Menu-Framework-3 @ dc91
 vendored). Any export missing -> the page is refused whole, loudly; SMF absent -> one loud line,
 Harbinger runs from the INI (Q10). Page `Harbinger/Sources` (layout 2026-10-11): an alerts summary line
 (expandable), a "hide idle" checkbox (UI state only), one collapsible header per facet (collapsed unless it has
-an alert) holding an "Unknown sources can be overridden" checkbox (saved to `[UnknownSources]`), then a fixed-column table (source, kind badge, served, hits, priority slider; idle sources greyed and last;
+an alert) holding an "Unknown sources can be overridden" checkbox (saved to `[UnknownSources]`), then a fixed-column table (source, kind badge, served, hits, blocked, passed, observed, priority slider; Equip is two headers, weapon and armor; idle sources greyed and last;
 details in the hover tooltip), and a collapsed census list at the bottom. Exports: `AddSectionItem` + 20 `ig*`
 (adds igSpacing, igCheckbox, igCollapsingHeader_TreeNodeFlags, igBeginTooltip, igEndTooltip, igIsItemHovered;
 the tab-bar exports are no longer used).

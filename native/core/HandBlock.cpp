@@ -286,17 +286,17 @@ namespace apmf::handblock {
                 return a_engine;
             }
             try {
-                const auto v = apmf::facetattr::Decide(apmf::sources::Facet::kEquip, set.handle,
+                const auto v = apmf::facetattr::Decide(apmf::sources::Facet::kEquipWeapon, set.handle,
                                                        apmf::facetattr::InsideSource(reinterpret_cast<std::uintptr_t>(a_orig)),
                                                        a_fid, "CheckShouldEquip (0x0F) ch.17 declared set: the answer came "
                                                               "through a hook inside the seat that is in no module");
                 if (!v.enforce) {
                     try {
-                        if (apmf::facetattr::LineDue(apmf::sources::Facet::kEquip, a_fid, 0x0F17u))
+                        if (apmf::facetattr::LineDue(apmf::sources::Facet::kEquipWeapon, a_fid, 0x0F17u))
                             spdlog::info("[equipauth 0x0F] 0x{} CheckShouldEquip item=0x{}: the ch.17 declaration would "
                                          "refuse it -- {}, so the engine's own YES STANDS.",
                                          apmf::log::Hex(a_fid), apmf::log::Hex(a_itemId),
-                                         apmf::facetattr::WhyStands(apmf::sources::Facet::kEquip, v, set.handle));
+                                         apmf::facetattr::WhyStands(apmf::sources::Facet::kEquipWeapon, v, set.handle));
                     } catch (...) {
                     }
                     if (hands) NoteHandAnswer(a_fid, hands, /*yes*/ true, set);   // the source outranks: YES stands
@@ -398,17 +398,17 @@ namespace apmf::handblock {
             // throw keeps the claim's answer (the default-priority answer, core/EquipGate.cpp's rule).
             try {
                 const APMF_API::Handle h = apmf::facetattr::CastClaimHandle(fid);
-                const auto v = apmf::facetattr::Decide(apmf::sources::Facet::kEquip, h,
+                const auto v = apmf::facetattr::Decide(apmf::sources::Facet::kEquipWeapon, h,
                                                        apmf::facetattr::InsideSource(reinterpret_cast<std::uintptr_t>(orig)),
                                                        fid, "CheckShouldEquip (0x0F) hand block: the answer came through "
                                                             "a hook inside the seat that is in no module");
                 if (!v.enforce) {
                     try {
-                        if (apmf::facetattr::LineDue(apmf::sources::Facet::kEquip, fid, 0x0F0Bu))
+                        if (apmf::facetattr::LineDue(apmf::sources::Facet::kEquipWeapon, fid, 0x0F0Bu))
                             spdlog::info("[handblock 0x0F] 0x{} CheckShouldEquip item=0x{}: the hand-claim block would "
                                          "refuse it -- {}, so the engine's own YES STANDS.",
                                          apmf::log::Hex(fid), apmf::log::Hex(itemId),
-                                         apmf::facetattr::WhyStands(apmf::sources::Facet::kEquip, v, h));
+                                         apmf::facetattr::WhyStands(apmf::sources::Facet::kEquipWeapon, v, h));
                     } catch (...) {
                     }
                     // The hand block stood down; the ch.17 declaration may still refuse the candidate.
@@ -583,7 +583,7 @@ namespace apmf::handblock {
             g_slots[i].vt   = vt.address();
             g_slots[i].tag  = spec.tag;
             g_slots[i].orig = vt.write_vfunc(kCheckShouldEquip, &CheckShouldEquipThunk);
-            apmf::sources::NoteVfunc(apmf::sources::Facet::kEquip, fmt::format("HandBlock.{}.CheckShouldEquip", spec.tag),
+            apmf::sources::NoteVfunc(apmf::sources::Facet::kEquipWeapon, fmt::format("HandBlock.{}.CheckShouldEquip", spec.tag),
                                      vt.address(), kCheckShouldEquip, SKSE::stl::unrestricted_cast<std::uintptr_t>(&CheckShouldEquipThunk),
                                      g_slots[i].orig);
             ++n;

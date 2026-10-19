@@ -54,6 +54,8 @@ namespace apmf::sources {
             std::atomic<std::uint32_t> overruled[kFacetCount]{};
             std::atomic<std::uint32_t> stood[kFacetCount]{};
             std::atomic<std::uint32_t> served[kFacetCount]{};   // times Harbinger enforced THIS source's claim
+            std::atomic<std::uint32_t> observed[kFacetCount]{}; // writes seen at observe-only seats (no ranking)
+            std::atomic<std::uint32_t> own[kFacetCount]{};      // the claim's own client acting on its own claim
             std::atomic<std::uint64_t> lastSeenMs[kFacetCount]{};
             std::atomic<std::uint32_t> involved{ 0 };          // facet bitmask
             std::atomic<std::uint32_t> lastLoadSeq{ 0 };       // the load sequence it was last seen in
@@ -85,9 +87,9 @@ namespace apmf::sources {
         std::array<int, kFacetCount> g_defClient = Filled<kDefaultClient>();
         // [UnknownSources] <Facet>=allow|override. Written at Init and by Pump (main thread), read anywhere.
         std::atomic<bool>        g_unkOverride[kFacetCount]{};
-        std::atomic<std::int8_t> g_unkPending[kFacetCount]{ -1, -1, -1, -1, -1, -1, -1, -1, -1 };   // -1 none, 0/1 queued
+        std::atomic<std::int8_t> g_unkPending[kFacetCount]{ -1, -1, -1, -1, -1, -1, -1, -1, -1, -1 };   // -1 none, 0/1 queued
         std::atomic<bool>        g_unkPendingAny{ false };
-        static_assert(kFacetCount == 9, "g_unkPending initialiser lists one -1 per facet");
+        static_assert(kFacetCount == 10, "g_unkPending initialiser lists one -1 per facet");
 
         // clients: handle -> {source, issued}
         struct HandleRec { SourceId src; std::uint64_t issuedMs; };
@@ -169,32 +171,63 @@ namespace apmf::sources {
             return it != m.end() ? Clamp(it->second) : DefaultFor(k, f);
         }
 
+        // The legacy INI section the two Equip facets replaced (marth 2026-10-18: Equip splits into Weapon and
+        // Armor). Read as a PER-KEY fallback, never rewritten: a key in [EquipWeapon] / [EquipArmor] wins, else
+        // the same key in the user's old [Equip] applies. The menu's slider writes only the new sections.
+        constexpr const char* kLegacyEquip = "Equip";
+        const char* LegacySection(Facet f) {
+            return (f == Facet::kEquipWeapon || f == Facet::kEquipArmor) ? kLegacyEquip : nullptr;
+        }
+
+        // The key names of one INI section (a null key enumerates them: NUL-separated, double-NUL-terminated;
+        // REX::W32::GetPrivateProfileStringA, the fork's KERNEL32.h), each with its integer value; a value that
+        // is not a number, or is negative, is skipped (the default applies). Existing keys are kept when
+        // `a_keepExisting` (the legacy pass must not overwrite the new section's keys).
+        void ReadSectionPrios(const char* a_sect, std::unordered_map<std::string, int>& a_out, bool a_keepExisting) {
+            std::vector<char> buf(16384, '\0');
+            const auto n = REX::W32::GetPrivateProfileStringA(a_sect, nullptr, "", buf.data(),
+                                                               static_cast<std::uint32_t>(buf.size()), kIni);
+            for (std::size_t p = 0; p < n && buf[p];) {
+                const std::string key(buf.data() + p);
+                p += key.size() + 1;
+                const long v = static_cast<long>(GetPrivateProfileIntA(a_sect, key.c_str(), -1, kIni));
+                if (v < 0) continue;   // not a number, or negative: ignored (the default applies)
+                const auto lk = Lower(key);
+                if (a_keepExisting && a_out.find(lk) != a_out.end()) continue;
+                a_out[lk] = static_cast<int>(v);
+            }
+        }
+
         void ReadIni() {
             for (int i = 0; i < kFacetCount; ++i) {
-                const Facet f    = static_cast<Facet>(i);
-                const auto  sect = FacetName(f);
+                const Facet f      = static_cast<Facet>(i);
+                const auto  sect   = FacetName(f);
+                const auto* legacy = LegacySection(f);
+                // [Defaults] iUnregistered<Facet> / iClient<Facet>; the legacy iUnregisteredEquip / iClientEquip
+                // is the default of the new key (per-key fallback).
+                int defUnreg  = kDefaultUnregistered;
+                int defClient = kDefaultClient;
+                if (legacy) {
+                    defUnreg  = static_cast<int>(GetPrivateProfileIntA(
+                        "Defaults", fmt::format("iUnregistered{}", legacy).c_str(), defUnreg, kIni));
+                    defClient = static_cast<int>(GetPrivateProfileIntA(
+                        "Defaults", fmt::format("iClient{}", legacy).c_str(), defClient, kIni));
+                }
                 g_defUnreg[i]  = Clamp(static_cast<int>(GetPrivateProfileIntA(
-                    "Defaults", fmt::format("iUnregistered{}", sect).c_str(), kDefaultUnregistered, kIni)));
+                    "Defaults", fmt::format("iUnregistered{}", sect).c_str(), defUnreg, kIni)));
                 g_defClient[i] = Clamp(static_cast<int>(GetPrivateProfileIntA(
-                    "Defaults", fmt::format("iClient{}", sect).c_str(), kDefaultClient, kIni)));
+                    "Defaults", fmt::format("iClient{}", sect).c_str(), defClient, kIni)));
                 {
+                    char legacyVal[16]{};
+                    if (legacy) REX::W32::GetPrivateProfileStringA("UnknownSources", legacy, "allow", legacyVal, sizeof(legacyVal), kIni);
+                    else std::strcpy(legacyVal, "allow");
                     char b[16]{};
-                    REX::W32::GetPrivateProfileStringA("UnknownSources", sect, "allow", b, sizeof(b), kIni);
+                    REX::W32::GetPrivateProfileStringA("UnknownSources", sect, legacyVal, b, sizeof(b), kIni);
                     g_unkOverride[i].store(Lower(b) == "override", std::memory_order_relaxed);
                 }
                 g_iniPrio[i].clear();
-                // A null key enumerates the section's key names, NUL-separated, double-NUL-terminated
-                // (REX::W32::GetPrivateProfileStringA, the fork's KERNEL32.h).
-                std::vector<char> buf(16384, '\0');
-                const auto n = REX::W32::GetPrivateProfileStringA(sect, nullptr, "", buf.data(),
-                                                                   static_cast<std::uint32_t>(buf.size()), kIni);
-                for (std::size_t p = 0; p < n && buf[p];) {
-                    const std::string key(buf.data() + p);
-                    p += key.size() + 1;
-                    const long v = static_cast<long>(GetPrivateProfileIntA(sect, key.c_str(), -1, kIni));
-                    if (v < 0) continue;   // not a number, or negative: ignored (the default applies)
-                    g_iniPrio[i][Lower(key)] = static_cast<int>(v);
-                }
+                ReadSectionPrios(sect, g_iniPrio[i], /*keepExisting*/ false);
+                if (legacy) ReadSectionPrios(legacy, g_iniPrio[i], /*keepExisting*/ true);
             }
         }
 
@@ -241,7 +274,7 @@ namespace apmf::sources {
             for (int f = 0; f < kFacetCount; ++f)
                 s.prio[f].store(InitialPriority(s.name, kind, static_cast<Facet>(f)), std::memory_order_relaxed);
             g_count.store(n + 1, std::memory_order_release);   // publish: name/kind/prio written above
-            spdlog::info("[sources] new source '{}' ({}). Priorities: Target {}, Detection {}, Package {}, Equip {} "
+            spdlog::info("[sources] new source '{}' ({}). Priorities: Target {}, Detection {}, Package {}, EquipWeapon {} "
                          "(0-100, APMF_Sources.ini).",
                          s.name, KindName(kind), s.prio[0].load(), s.prio[1].load(), s.prio[2].load(), s.prio[3].load());
             return static_cast<SourceId>(n);
@@ -343,7 +376,8 @@ namespace apmf::sources {
         case Facet::kTarget:       return "Target";
         case Facet::kDetection:    return "Detection";
         case Facet::kPackage:      return "Package";
-        case Facet::kEquip:        return "Equip";
+        case Facet::kEquipWeapon:  return "EquipWeapon";
+        case Facet::kEquipArmor:   return "EquipArmor";
         case Facet::kCombatAction: return "CombatAction";
         case Facet::kCast:         return "Cast";
         case Facet::kCombat:       return "Combat";
@@ -356,7 +390,7 @@ namespace apmf::sources {
     Facet FacetForTag(std::string_view t) {
         const auto starts = [&](std::string_view p) { return t.substr(0, p.size()) == p; };
         if (starts("ch.7") || starts("ch.23")) return Facet::kCombatAction;
-        if (starts("t2a")) return Facet::kEquip;
+        if (starts("t2a")) return Facet::kEquipWeapon;   // the equip-sink seats serve both Equip facets; census row = Weapon
         if (starts("nonaliasprobe")) return Facet::kPackage;
         if (starts("t2c") || starts("ch.8") || starts("aicastseats") || starts("ctcensus")) return Facet::kCast;
         return Facet::kCore;
@@ -545,31 +579,50 @@ namespace apmf::sources {
         g_src[id].stood[static_cast<int>(f)].fetch_add(1, std::memory_order_relaxed);
     }
 
+    void NoteObserved(SourceId id, Facet f) {
+        if (!Valid(id) || f >= Facet::kCount) return;
+        auto& s = g_src[id];
+        const int i = static_cast<int>(f);
+        s.involved.fetch_or(1u << i, std::memory_order_relaxed);
+        s.observed[i].fetch_add(1, std::memory_order_relaxed);
+    }
+
+    void NoteOwn(SourceId id, Facet f) {
+        if (!Valid(id) || f >= Facet::kCount) return;
+        auto& s = g_src[id];
+        const int i = static_cast<int>(f);
+        s.involved.fetch_or(1u << i, std::memory_order_relaxed);
+        s.own[i].fetch_add(1, std::memory_order_relaxed);
+        s.lastSeenMs[i].store(apmf::clock::MonotonicMs(), std::memory_order_relaxed);
+        s.lastLoadSeq.store(g_loadSeq.load(std::memory_order_relaxed), std::memory_order_relaxed);
+    }
+
     // ---- clients ----------------------------------------------------------------------
 
-    Facet FacetForIntent(APMF_API::Intent i) {
+    std::uint32_t FacetMaskForIntent(APMF_API::Intent i) {
         using namespace APMF_API;
+        const auto bit = [](Facet f) { return 1u << static_cast<int>(f); };
         switch (i) {
         case kIntent_CombatTarget:
-        case kIntent_TargetPin:         return Facet::kTarget;
+        case kIntent_TargetPin:         return bit(Facet::kTarget);
         case kIntent_OfferPackage:
-        case kIntent_Travel:            return Facet::kPackage;
+        case kIntent_Travel:            return bit(Facet::kPackage);
         case kIntent_Equipment:
         case kIntent_EquipAuthority:
-        case kIntent_EquipPreference:   return Facet::kEquip;
+        case kIntent_EquipPreference:   return bit(Facet::kEquipWeapon) | bit(Facet::kEquipArmor);
         case kIntent_SelectSpell:
         case kIntent_Cast:
-        case kIntent_CastGuard:         return Facet::kCast;
+        case kIntent_CastGuard:         return bit(Facet::kCast);
         case kIntent_CombatAction:
-        case kIntent_PursuitLeash:      return Facet::kCombatAction;
+        case kIntent_PursuitLeash:      return bit(Facet::kCombatAction);
         case kIntent_CombatEntry:
         case kIntent_CombatReentryDeny:
         case kIntent_CombatApproach:
-        case kIntent_CombatSubstrate:   return Facet::kCombat;
-        case kIntent_Detection:         return Facet::kDetection;
+        case kIntent_CombatSubstrate:   return bit(Facet::kCombat);
+        case kIntent_Detection:         return bit(Facet::kDetection);
         case kIntent_Gait:
-        case kIntent_Disposition:       return Facet::kActorValue;
-        default:                        return Facet::kCore;
+        case kIntent_Disposition:       return bit(Facet::kActorValue);
+        default:                        return bit(Facet::kCore);
         }
     }
 
@@ -592,11 +645,14 @@ namespace apmf::sources {
                                  g_src[id].name, KindName(g_src[id].kind.load()));
             }
         }
-        NoteInvolved(id, FacetForIntent(intent));
         // A client with a live claim is never "idle": stamp the load sequence (NoteHit's other effect).
         g_src[id].lastLoadSeq.store(g_loadSeq.load(std::memory_order_relaxed), std::memory_order_relaxed);
-        g_src[id].lastSeenMs[static_cast<int>(FacetForIntent(intent))].store(apmf::clock::MonotonicMs(),
-                                                                              std::memory_order_relaxed);
+        const std::uint32_t mask = FacetMaskForIntent(intent);
+        for (int f = 0; f < kFacetCount; ++f) {
+            if (!(mask & (1u << f))) continue;
+            NoteInvolved(id, static_cast<Facet>(f));
+            g_src[id].lastSeenMs[f].store(apmf::clock::MonotonicMs(), std::memory_order_relaxed);
+        }
         std::unique_lock lk(g_handleMx);
         if (g_handles.size() >= kHandleCap) {
             // Never unbounded: drop the oldest half by issue time (Pump also purges dead ones).
@@ -951,6 +1007,12 @@ namespace apmf::sources {
     }
     std::uint32_t Stood(SourceId id, Facet f) {
         return Valid(id) && f < Facet::kCount ? g_src[id].stood[static_cast<int>(f)].load(std::memory_order_relaxed) : 0;
+    }
+    std::uint32_t Observed(SourceId id, Facet f) {
+        return Valid(id) && f < Facet::kCount ? g_src[id].observed[static_cast<int>(f)].load(std::memory_order_relaxed) : 0;
+    }
+    std::uint32_t Own(SourceId id, Facet f) {
+        return Valid(id) && f < Facet::kCount ? g_src[id].own[static_cast<int>(f)].load(std::memory_order_relaxed) : 0;
     }
     std::uint64_t LastSeenMs(SourceId id, Facet f) {
         return Valid(id) && f < Facet::kCount ? g_src[id].lastSeenMs[static_cast<int>(f)].load(std::memory_order_relaxed) : 0;

@@ -349,7 +349,8 @@ namespace {
         if (engineAnswer == pin.handle.native_handle()) {
             pin.held.fetch_add(1, std::memory_order_relaxed);
             pin.lastDecision.store(1, std::memory_order_relaxed);
-            apmf::sources::NoteServedClaim(claimHandle, apmf::sources::Facet::kTarget);   // pin engaged
+            // The engine already picked the pin: nothing was denied or changed, so this is NOT "Served" (menu
+            // 2026-10-18: the counter was ~90% no-ops). Served is credited where the pick is actually denied below.
             return;
         }
         if (m == Membership::kAbsent && pin.everPresent.load(std::memory_order_relaxed)) {
@@ -395,6 +396,8 @@ namespace {
         pin.denied.fetch_add(1, std::memory_order_relaxed);
         pin.lastDecision.store(1, std::memory_order_relaxed);
         apmf::sources::NoteServedClaim(claimHandle, apmf::sources::Facet::kTarget);   // the engine's pick denied
+        apmf::sources::NoteHit(apmf::sources::kEngineSource, apmf::sources::Facet::kTarget);        // the engine's pick was
+        apmf::sources::NoteOverruled(apmf::sources::kEngineSource, apmf::sources::Facet::kTarget);  //   the source denied (menu Hits/Blocked)
         if (!pin.firstDenyLogged.exchange(true, std::memory_order_relaxed)) {
             spdlog::info("[ch.20] 0x{} FIRST SOURCE DENY: the engine's target selector picked handle 0x{}, "
                          "answered with the pin 0x{} instead.",

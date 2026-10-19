@@ -563,7 +563,10 @@ namespace {
         for (const auto h : { a_sub.floorR, a_sub.floorL }) {
             if (!h) continue;
             apmf::ControlMap::Get().EnqueueRelease(h);
-            apmf::sources::ForgetHandle(h);   // the InheritClient mapping
+            // The InheritClient mapping is NOT forgotten here: the floor stays published until the release's
+            // Drain, and a hand-block decision in that window would read an unmapped floor as "an internal claim"
+            // (priority 50, a tie: the 12 "internal claim" STANDS lines). Sources::Pump purges the mapping once
+            // the claim is no longer live (60 s after issue).
         }
         a_sub.floorR = a_sub.floorL = APMF_API::kInvalidHandle;
     }
@@ -592,11 +595,11 @@ namespace {
             // The user's priority sliders decide (marth: "Nothing escapes Harbinger"). A deny that would
             // not stand leaves a facet the substrate switched on undenied: then it does not open.
             using F = apmf::sources::Facet;
-            for (const auto f : { F::kCombatAction, F::kCombat, F::kEquip, F::kDetection })
+            for (const auto f : { F::kCombatAction, F::kCombat, F::kEquipWeapon, F::kDetection })
                 if (!Outranks(a_sub.handle, f)) {
                     why = f == F::kCombatAction ? "Engine outranks the substrate's client on the CombatAction facet (APMF_Sources.ini): the leaf allow-list would not stand"
                         : f == F::kCombat       ? "Engine outranks the substrate's client on the Combat facet (APMF_Sources.ini): the anchor refusal would not stand"
-                        : f == F::kEquip        ? "Engine outranks the substrate's client on the Equip facet (APMF_Sources.ini): the hand floors would not stand"
+                        : f == F::kEquipWeapon  ? "Engine outranks the substrate's client on the EquipWeapon facet (APMF_Sources.ini): the hand floors would not stand"
                                                 : "Engine outranks the substrate's client on the Detection facet (APMF_Sources.ini): the anchor's knowledge would not stand";
                     break;
                 }

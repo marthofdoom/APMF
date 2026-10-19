@@ -48,8 +48,16 @@ namespace apmf::facetattr {
             v.srcPrio = src::Priority(src::kUnattributedSource, a_facet);
         } else {
             v.src = a_src;
+            if (a_src == v.client) {
+                // The claim's OWN client acting on its own claim (menu 2026-10-18): not an outside write, so no
+                // Hit, no Blocked, no Passed -- the separate "own" counter. It ranks at the claim's priority
+                // (a tie), so its write stands exactly as before.
+                src::NoteOwn(a_src, a_facet);
+                v.srcPrio = v.claimPrio;
+                return v;
+            }
             src::NoteHit(a_src, a_facet);
-            v.srcPrio = a_src == v.client ? v.claimPrio : src::Priority(a_src, a_facet);
+            v.srcPrio = src::Priority(a_src, a_facet);
         }
         v.enforce = v.claimPrio > v.srcPrio;
         if (v.enforce) {
@@ -65,11 +73,11 @@ namespace apmf::facetattr {
         namespace src = apmf::sources;
         if (a_src == src::kNoSource) {
             src::Unattributed(a_facet, a_actor, a_unknownDetail);
-            src::NoteStood(src::kUnattributedSource, a_facet);
+            src::NoteObserved(src::kUnattributedSource, a_facet);
             return;
         }
         src::NoteHit(a_src, a_facet);
-        src::NoteStood(a_src, a_facet);
+        src::NoteObserved(a_src, a_facet);
     }
 
     Caller CallerBelow(std::uintptr_t a_siteRet) {

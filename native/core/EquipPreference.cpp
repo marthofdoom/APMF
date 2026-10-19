@@ -604,7 +604,7 @@ namespace apmf::equippref {
 
         // D2 / D5: bound by the priority sliders. The competing source is whatever answered beneath
         // this seat (the engine, or a module hooked inside it): the lift replaces ITS answer.
-        const auto facet = castSteer ? apmf::sources::Facet::kCast : apmf::sources::Facet::kEquip;
+        const auto facet = castSteer ? apmf::sources::Facet::kCast : apmf::sources::Facet::kEquipWeapon;
         bool       wins  = true;
         try {
             wins = apmf::facetattr::Outranks(facet, owner, apmf::facetattr::InsideSource(a_origFn));
@@ -636,7 +636,7 @@ namespace apmf::equippref {
         }
         a_out.lifted = true;
         (castSteer ? g_castSteers : g_lifts).fetch_add(1, std::memory_order_relaxed);
-        apmf::sources::NoteServedClaim(owner, castSteer ? apmf::sources::Facet::kCast : apmf::sources::Facet::kEquip);   // ch.26 lift / ch.8b steer (menu "Served")
+        apmf::sources::NoteServedClaim(owner, castSteer ? apmf::sources::Facet::kCast : apmf::sources::Facet::kEquipWeapon);   // ch.26 lift / ch.8b steer (menu "Served")
         return finish(APMF_API::kEquipPrefState_Lifted, best, target);
     }
 

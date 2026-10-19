@@ -423,6 +423,8 @@ namespace apmf::equipsink {
         // claim's own client ranks at the claim's priority (its own equip stands); an unnamed source is
         // the degrade rule (never denied) unless APMF_Sources.ini [UnknownSources] Equip=override.
         // Any thread, lock-free but ClaimPriority's shared lock.
+        // `a_facet` (menu/Equip split 2026-10-18): the item's Equip facet (FacetForEquipCats of its
+        // Categorize mask): weapons, shields, torches and ammo rank on EquipWeapon, armor on EquipArmor.
         // `a_bindsOwner` (ch.17 ONLY, marth 2026-10-13: "Yes, a claim binds its owner"): the claim's
         // own client does NOT tie with its claim -- its own direct equip of an item its declaration
         // refuses is refused too (`a_ownerBound` says that is why). Every other caller passes false
@@ -431,20 +433,21 @@ namespace apmf::equipsink {
         // traded, but the NPC should never equip it"): for an item in a DENIED category the degrade rule
         // does not apply -- an unattributed caller is RANKED as the Unattributed source (its priority on
         // the Equip facet, 20 by default), so the user's sliders still decide, but the default refuses.
-        apmf::facetattr::Verdict RankEquipDeny(APMF_API::Handle a_claim, apmf::sources::SourceId a_src,
-                                               bool a_bindsOwner, bool& a_ownerBound, bool a_rankUnknown = false) {
+        apmf::facetattr::Verdict RankEquipDeny(apmf::sources::Facet a_facet, APMF_API::Handle a_claim,
+                                               apmf::sources::SourceId a_src, bool a_bindsOwner, bool& a_ownerBound,
+                                               bool a_rankUnknown = false) {
             a_ownerBound = false;
             namespace src = apmf::sources;
             apmf::facetattr::Verdict v;
-            v.claimPrio = src::ClaimPriority(a_claim, src::Facet::kEquip, &v.client);
+            v.claimPrio = src::ClaimPriority(a_claim, a_facet, &v.client);
             if (a_src == src::kNoSource) {
                 v.unknown = true;
                 v.src     = src::kUnattributedSource;
-                if (!a_rankUnknown && !src::OverrideUnknown(src::Facet::kEquip)) return v;   // Q4: allowed, never denied
-                v.srcPrio = src::Priority(src::kUnattributedSource, src::Facet::kEquip);
+                if (!a_rankUnknown && !src::OverrideUnknown(a_facet)) return v;   // Q4: allowed, never denied
+                v.srcPrio = src::Priority(src::kUnattributedSource, a_facet);
             } else {
                 v.src     = a_src;
-                v.srcPrio = a_src == v.client ? v.claimPrio : src::Priority(a_src, src::Facet::kEquip);
+                v.srcPrio = a_src == v.client ? v.claimPrio : src::Priority(a_src, a_facet);
                 if (a_bindsOwner && v.client != src::kNoSource && a_src == v.client) {
                     v.enforce    = true;   // the claim binds its owner: no tie with its own client
                     a_ownerBound = true;
@@ -536,6 +539,13 @@ namespace apmf::equipsink {
             // Everything from here is logged (deduped/capped).
             const RE::FormID itemId = obj->GetFormID();
             const int        tls    = t_apmfDepth;
+            // ABI v9: what this item competes for, with the slot the engine resolved for it (data->slot: the
+            // caller's a_slot or the default slot 38911/37955 picked). ONE map, shared with the enforce pass
+            // (Categorize). Computed BEFORE the caller recovery (menu/Equip split 2026-10-18) because the item's
+            // Equip FACET (weapon / shield / torch / ammo = EquipWeapon, armor = EquipArmor) keys every counter
+            // and ranking below. Pure member reads, so the order changes nothing else.
+            const std::uint32_t competes = Categorize(obj, data->slot);
+            const apmf::sources::Facet eqFacet = apmf::sources::FacetForEquipCats(competes);
 
             // HARBINGER 1a: WHO ASKED, recovered by a STACK SCAN (plan "RECOGNITION", LoreRim
             // diag 2026-10-10: UAPNG.dll and EquipmentDurabilitySystem-NG.dll re-patch both E8s
@@ -555,6 +565,28 @@ namespace apmf::equipsink {
             // caller is APMF itself (its own enforce equip: never ranked, it is no outside source).
             apmf::sources::SourceId eqSrc      = apmf::sources::kNoSource;
             bool                    selfPath = false;
+            // Menu 2026-10-18: the CLIENT of a claim on this actor writing the equip is that claim's OWN client,
+            // not an outside write: its hit is deferred (counted below only if a ranking then decides against it
+            // for a DIFFERENT client's claim) and its own-claim outcomes go to the separate "own" counter.
+            bool                    hitDeferred = false;
+            const auto isOwnClient = [&](apmf::sources::SourceId a_s) -> bool {
+                if (a_s == apmf::sources::kNoSource) return false;
+                try {
+                    if (equipClaimed && set.handle != APMF_API::kInvalidHandle &&
+                        apmf::sources::ClientForHandle(set.handle) == a_s) return true;
+                    if (forced && apmf::sources::ClientForHandle(force.handle) == a_s) return true;
+                    if (apmf::handblock::AnyHandHeld(actorId)) {
+                        const auto ch = apmf::facetattr::CastClaimHandle(actorId);
+                        if (ch != APMF_API::kInvalidHandle && apmf::sources::ClientForHandle(ch) == a_s) return true;
+                    }
+                } catch (...) {
+                }
+                return false;
+            };
+            const auto noteSrcHit = [&](apmf::sources::SourceId a_s) {
+                if (isOwnClient(a_s)) hitDeferred = true;
+                else apmf::sources::NoteHit(a_s, eqFacet);
+            };
             try {   // nothing may unwind into the engine's equip frame (a failure = unattributed = allowed)
                 void* frames[kScanFrames]{};
                 const unsigned short n = RtlCaptureStackBackTrace(0, kScanFrames, frames, nullptr);
@@ -594,24 +626,24 @@ namespace apmf::equipsink {
                     }
                 }
                 for (int k = 0; k < nInterposers; ++k)
-                    apmf::sources::NoteHit(interposers[k], apmf::sources::Facet::kEquip);
+                    apmf::sources::NoteHit(interposers[k], eqFacet);
                 if (caller.external && caller.kind == PathKind::kScript) {
                     eqSrc = apmf::sources::kDirectSource;
-                    apmf::sources::NoteHit(eqSrc, apmf::sources::Facet::kEquip);
+                    noteSrcHit(eqSrc);
                 } else if (caller.external && apmf::sources::IsSelf(reinterpret_cast<std::uintptr_t>(frames[at + 1]))) {
                     // APMF's own enforce equip (channels/EquipAuthority.cpp): not an outside source.
                     selfPath = true;
                 } else if (caller.external && attributed) {
                     if (const auto ext = apmf::sources::Register(caller.ext, apmf::sources::Kind::kPlugin); ext >= 0) {
                         eqSrc = ext;
-                        apmf::sources::NoteHit(eqSrc, apmf::sources::Facet::kEquip);
+                        noteSrcHit(eqSrc);
                     }
                 } else if (attributed) {
                     // A named engine path (the player's own menu included, which stays exempt below)
                     // ranks as "Engine"; Papyrus / console reached through the engine as DirectCalls.
                     eqSrc = (caller.kind == PathKind::kScript || caller.kind == PathKind::kConsole)
                               ? apmf::sources::kDirectSource : apmf::sources::kEngineSource;
-                    apmf::sources::NoteHit(eqSrc, apmf::sources::Facet::kEquip);
+                    noteSrcHit(eqSrc);
                 }
             } catch (...) {
                 attributed = false;
@@ -621,12 +653,8 @@ namespace apmf::equipsink {
                 selfPath   = false;
             }
 
-            // ABI v9: what this item competes for, with the slot the engine resolved
-            // for it (data->slot: the caller's a_slot or the default slot 38911/37955
-            // picked). ONE map, shared with the enforce pass (Categorize). The
-            // claim's owned/denied masks came out of the SAME snapshot read as the
+            // The claim's owned/denied masks came out of the SAME snapshot read as the
             // set, so the two can never be from different generations.
-            const std::uint32_t competes = Categorize(obj, data->slot);
             // THE shared ch.17 verdict (DeclaredSetVerdict): the same function the 0x0F selection
             // seat (core/HandBlock.cpp) and the enforce pass's unequip call, so they cannot disagree.
             // An actor here only through the hand block / force has an emptied view (owned=0,
@@ -720,13 +748,13 @@ namespace apmf::equipsink {
             apmf::facetattr::Verdict standsV{};
             APMF_API::Handle   standsH    = APMF_API::kInvalidHandle;
             apmf::facetattr::Verdict denyV{};          // the verdict of the deny that is applied (counters)
-            const bool unknownRanked = !attributed && apmf::sources::OverrideUnknown(apmf::sources::Facet::kEquip);
+            const bool unknownRanked = !attributed && apmf::sources::OverrideUnknown(eqFacet);
             auto ranked = [&](APMF_API::Handle a_h, const char* a_what, bool a_bindsOwner = false, bool a_rankUnknown = false) {
                 if (selfPath) return true;   // APMF's own equip: unranked, exactly as before
                 apmf::facetattr::Verdict v{};
                 bool                     bound = false;
                 try {
-                    v = RankEquipDeny(a_h, eqSrc, a_bindsOwner, bound, a_rankUnknown);
+                    v = RankEquipDeny(eqFacet, a_h, eqSrc, a_bindsOwner, bound, a_rankUnknown);
                 } catch (...) {
                     v     = apmf::facetattr::Verdict{};   // a registry throw never denies (the degrade direction)
                     bound = false;
@@ -835,14 +863,26 @@ namespace apmf::equipsink {
             // engine's equip frame. The source's hit was counted when the caller was named.
             try {
                 namespace src_ = apmf::sources;
+                // The source's deferred hit (isOwnClient above), counted once and only against a claim that is not
+                // the source's own.
+                const auto flushHit = [&]() {
+                    if (hitDeferred && eqSrc != src_::kNoSource) src_::NoteHit(eqSrc, eqFacet);
+                    hitDeferred = false;
+                };
                 if (!callWorker && !selfPath && denyV.src != src_::kNoSource) {
-                    src_::NoteOverruled(denyV.src, src_::Facet::kEquip);
-                    src_::NoteServed(denyV.client, src_::Facet::kEquip);   // ch.17: a foreign equip refused for the claim
+                    if (denyV.src == denyV.client) {
+                        src_::NoteOwn(denyV.src, eqFacet);   // the claim binds its OWN client: not Blocked, not Served
+                    } else {
+                        flushHit();
+                        src_::NoteOverruled(denyV.src, eqFacet);
+                        src_::NoteServed(denyV.client, eqFacet);   // ch.17: a foreign equip refused for the claim
+                    }
                 }
                 if (forceDeny) apmf::equippref::NoteForceDeny(actorId);
                 if (ownClient) {
                     apmf::equippref::NoteForceOwnClient(actorId);
-                    if (apmf::facetattr::LineDue(src_::Facet::kEquip, actorId, itemId ^ 0x2600u))
+                    src_::NoteOwn(lastV.src, eqFacet);
+                    if (apmf::facetattr::LineDue(eqFacet, actorId, itemId ^ 0x2600u))
                         spdlog::info("[apmf][equip-obs] actor={} item={} own client: the forced equip preference's "
                                      "own client ({}) equipped an item it does not prefer for that hand; its own "
                                      "equip stands (a tie with its own claim), not counted as a force anomaly.",
@@ -850,13 +890,20 @@ namespace apmf::equipsink {
                                      apmf::facetattr::NameOr(lastV.client, "?"));
                 }
                 if (standsWhat && !(ownClient && standsH == force.handle)) {
-                    if (standsV.src != src_::kNoSource) src_::NoteStood(standsV.src, src_::Facet::kEquip);
+                    if (standsV.src != src_::kNoSource) {
+                        if (standsV.src == standsV.client) {
+                            src_::NoteOwn(standsV.src, eqFacet);   // the source IS the claim's client: a tie with its own claim
+                        } else {
+                            flushHit();
+                            src_::NoteStood(standsV.src, eqFacet);
+                        }
+                    }
                     if (anomaly) apmf::equippref::NoteForceAnomaly(actorId);
-                    if (apmf::facetattr::LineDue(src_::Facet::kEquip, actorId, itemId ^ (anomaly ? 0x26u : 0x17u))) {
+                    if (apmf::facetattr::LineDue(eqFacet, actorId, itemId ^ (anomaly ? 0x26u : 0x17u))) {
                         const auto line = fmt::format(
                             "[apmf][equip-obs] actor={} item={} {}: {} would refuse this equip -- {}, so it STANDS{}.",
                             apmf::log::Hex(actorId), apmf::log::Hex(itemId), anomaly ? "FORCE ANOMALY" : "ranked",
-                            standsWhat, apmf::facetattr::WhyStands(src_::Facet::kEquip, standsV, standsH),
+                            standsWhat, apmf::facetattr::WhyStands(eqFacet, standsV, standsH),
                             anomaly ? " (marth D4: a forced escalation must not override a source that outranks "
                                       "it; investigate)" : "");
                         if (anomaly) spdlog::warn("{}", line);
@@ -874,7 +921,7 @@ namespace apmf::equipsink {
                 // the try (review F7): its map insert may allocate, and nothing may unwind into
                 // the engine's equip frame.
                 if (!attributed)
-                    apmf::sources::Unattributed(apmf::sources::Facet::kEquip, actorId,
+                    apmf::sources::Unattributed(eqFacet, actorId,
                                                 "an engine equip reached the equip sink with no recoverable caller");
                 apmf::castobserve::NoteEquip(actorId, itemId,
                                              !attributed ? "Unattributed" : caller.external ? "External" : (caller.known ? caller.name : "Unknown"),
@@ -1105,7 +1152,8 @@ namespace apmf::equipsink {
         bool bound = false;
         try {
             // The sink's own ch.17 ranking for a denied category: binds the owner, ranks an unknown source.
-            return RankEquipDeny(a_set.handle, a_src, /*bindsOwner*/ true, bound, /*rankUnknown*/ true).enforce;
+            return RankEquipDeny(apmf::sources::FacetForEquipCats(a_competes), a_set.handle, a_src, /*bindsOwner*/ true, bound,
+                                 /*rankUnknown*/ true).enforce;
         } catch (...) {
             return false;   // a registry throw never strips (the degrade direction)
         }
@@ -1259,7 +1307,7 @@ namespace apmf::equipsink {
             const std::uintptr_t prev = tr.write_call<5>(s.addr, &SinkThunk);
             // Harbinger 1a census: the two E8s are call-site seats (re-read at kPostLoadGame /
             // kNewGame / every 60 s; an interposer patched on top is named there).
-            apmf::sources::RegisterCallSeat(apmf::sources::Facet::kEquip, fmt::format("EquipSink.Site.{}", s.name),
+            apmf::sources::RegisterCallSeat(apmf::sources::Facet::kEquipWeapon, fmt::format("EquipSink.Site.{}", s.name),
                                             s.addr, prev);
         }
 

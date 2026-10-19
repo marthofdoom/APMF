@@ -43,12 +43,13 @@ namespace apmf::facetattr {
     // could not name it; `a_unknownDetail` then goes to Sources::Unattributed). Records the hit
     // and, per the outcome, NoteOverruled or NoteStood. The caller enforces iff `enforce`.
     // A source that IS the claim's own client ranks at the claim's priority (its write stands:
-    // its own call must not be fought by its own claim).
+    // its own call must not be fought by its own claim); that is counted as the client's "own" outcome
+    // (Sources::NoteOwn), not as a hit, Blocked or Passed.
     Verdict Decide(Facet a_facet, APMF_API::Handle a_claim, SourceId a_src, RE::FormID a_actor,
                    const char* a_unknownDetail);
 
     // At a seat that only OBSERVES the facet (no enforcement exists there): the hit and a
-    // NoteStood (its write stood). kNoSource -> Sources::Unattributed(a_unknownDetail).
+    // NoteObserved (menu "Observed": nothing was decided, so neither Blocked nor Passed). kNoSource -> Sources::Unattributed(a_unknownDetail).
     void Observe(Facet a_facet, SourceId a_src, RE::FormID a_actor, const char* a_unknownDetail);
 
     // STACK-SCAN CALLER RECOVERY (the plan's RECOGNITION; core/EquipSink.cpp precedent). For a
