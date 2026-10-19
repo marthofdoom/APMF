@@ -10,13 +10,13 @@ nothing when one does not. At startup `REL::SelfCheck::Run` repeats the comparis
 game actually loaded. A row that fails refuses THAT seat by name in the log; the expected RVA is never
 used in place of the library's answer.
 
-Offline result of this generation: 1.6.1170.0 242/242 verified, 0 refused, 1.5.97.0 242/242 verified, 0 refused.
+Offline result of this generation: 1.6.1170.0 244/244 verified, 0 refused, 1.5.97.0 244/244 verified, 0 refused.
 
 1.7.104.0 has NO Address Library. Its column is OUR OWN id map: the MIT id table of the CommonLibSSE-NG fork
 (`data/mit-idtable-v1-1-7-104-0.bin`, revision 3, 17751 records, SkyrimSE.exe TimeDateStamp 0x6A8C7046; built into every plugin, it is
 what SelfCheck queries at runtime; authoritative) with the evidence CSVs beside it, keyed by
 the 1.6.1170 id, re-verified against the plaintext 1.7.104 executable by the same row-kind checks (see the script
-docstring). Offline result: 1.7.104.0 245/285 verified, 40 NOT verified (28 of them BY DESIGN: 1.5.97-only labels whose AE twin row carries the 1.7.104 fact). A not-verified seat has no row in the 1.7.104 table,
+docstring). Offline result: 1.7.104.0 245/287 verified, 42 NOT verified (28 of them BY DESIGN: 1.5.97-only labels whose AE twin row carries the 1.7.104 fact). A not-verified seat has no row in the 1.7.104 table,
 so `IsVerifiedAddress` is false and the seat is refused by name. The table of `Not verified on 1.7.104` is below.
 
 These rows prove the ADDRESSES. That each hooked slot holds the same function body on 1.7.104, and that every
@@ -241,6 +241,8 @@ CommonLib layout APMF reads is the same there, is proven separately in the "1.7.
 | Substrate.TESObjectREFR.MoveTo | function | 56626 | 0xA447F0 | 56227 | 0x9AE5C0 | 56626 | 0xA5D370 | signature (21 bytes, unique in .text) |  | native/channels/CombatSubstrate.cpp (the anchor: to the holder, following it, and home to its XMarker) | combat substrate S2a |
 | Substrate.BSMusicManager.Reader | ripref | 36550 | 0x641AD0 +0xCF 48 8B 0D 7A BF AB 02 48 8D 54 24 30 48 89 74 | 35551 | 0x5AF3D0 +0xCF 48 8B 0D 3A 68 91 02 48 8D 54 24 30 48 89 74 | - | - | signature (19 bytes, unique in .text) |  | native/channels/CombatSubstrate.cpp (P3 OBSERVED music=, read-only: BSMusicManager::current) | combat substrate S2a P3 |
 | Substrate.BSMusicManager.Singleton | ripref global | 400896 | 0x30FDB20 | 514738 | 0x2EC5CE0 | - | - | RIP-relative reference at Substrate.BSMusicManager.Reader +0xCF (id 36550) |  | native/channels/CombatSubstrate.cpp (P3 OBSERVED music=, read-only: BSMusicManager::current) | combat substrate S2a P3 |
+| Substrate.MenuTopicManager.Reader | ripref | 56194 | 0xA2D7A0 +0x27 48 8B 05 AA 9F 70 02 48 8D 54 24 40 48 89 5C | 55663 | 0x994660 +0x27 48 8B 05 FA B2 56 02 48 8D 54 24 40 48 89 5C | - | - | signature (20 bytes, unique in .text) |  | native/channels/CombatSubstrate.cpp (dry run NotIdleReason, read-only: MenuTopicManager::speaker) | combat substrate dry run idle test |
+| Substrate.MenuTopicManager.Singleton | ripref global | 401099 | 0x3137778 | 514959 | 0x2EFF988 | - | - | RIP-relative reference at Substrate.MenuTopicManager.Reader +0x27 (id 56194) |  | native/channels/CombatSubstrate.cpp (dry run NotIdleReason, read-only: MenuTopicManager::speaker) | combat substrate dry run idle test |
 | CommonLib.BSReadWriteLock.LockForWrite | function | 68234 | 0xCC9140 | 66977 | 0xC07350 | 68234 | 0xCE32D0 | signature (25 bytes, unique in .text) |  | native/channels/CombatSubstrate.cpp WriteLockedHere: pins the lock layout the music seat reads (+0 the writer's thread id compared with GetCurrentThreadId, +4 the count with the writer bit); Harbinger does not call it for music | combat substrate music deny (ClickUp 86e3pu939) |
 | CommonLib.BSReadWriteLock.UnlockForWrite | function | 68240 | 0xCC9390 | 66983 | 0xC075A0 | 68240 | 0xCE3520 | signature (17 bytes, unique in .text) |  | native/channels/CombatSubstrate.cpp WriteLockedHere: pins the lock layout the music seat reads (+0 the writer's thread id compared with GetCurrentThreadId, +4 the count with the writer bit); Harbinger does not call it for music | combat substrate music deny (ClickUp 86e3pu939) |
 | Substrate.CombatGroup.MusicWriteLock | callsite | 44703 | 0x803710 +0x30 E8 | 43481 | 0x76A2F0 +0x2B E8 | - | - | signature (53 bytes, unique in .text) |  | native/channels/CombatSubstrate.cpp (the music deny: a PURE-substrate group's music decision CombatGroup+0x15C written 0xFF -> 0 once under the group's write lock, restored 0 -> 0xFF on a real drop) | combat substrate music deny: AE 0x803740 / SE 0x76A31B call LockForWrite (1.7.104 0x8185A0 -> 0xCE32D0, same shape; not in the 1.7.104 id table) |
@@ -355,6 +357,8 @@ for them and the seat is refused. Nothing here is a failure on 1.6.1170 or 1.5.9
 | Substrate.CombatGroup.RemoveTarget | 44705 | id 44705 is not in the idmap |
 | Substrate.BSMusicManager.Reader | 36550 | id 36550 is not in the idmap |
 | Substrate.BSMusicManager.Singleton | 400896 | proven through Substrate.BSMusicManager.Reader, which did not verify: id 36550 is not in the idmap |
+| Substrate.MenuTopicManager.Reader | 56194 | id 56194 is not in the idmap |
+| Substrate.MenuTopicManager.Singleton | 401099 | proven through Substrate.MenuTopicManager.Reader, which did not verify: id 56194 is not in the idmap |
 | Substrate.CombatGroup.MusicWriteLock | 44703 | id 44703 is not in the idmap |
 | Substrate.CombatGroup.DetectionPassInUpdate | 44703 | id 44703 is not in the idmap |
 | Substrate.CombatGroup.MusicUndecided | 44703 | id 44703 is not in the idmap |

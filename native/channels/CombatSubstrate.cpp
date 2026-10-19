@@ -1442,6 +1442,7 @@ namespace {
     // A substrate gives the actor a CombatController, and a walking / sitting / talking follower must
     // not be dragged into one (field 2026-10-19: the dry run cancelled every ch.19 town walk).
     // Claims are read through the RCU snapshot (any thread); the engine reads are plain member reads.
+    bool        g_dialogueOk = false;   // the MenuTopicManager singleton row verified (Install)
     const char* NotIdleReason(RE::Actor* a) {
         auto& cm = apmf::ControlMap::Get();
         APMF_API::APMF_Param p{};
@@ -1451,8 +1452,14 @@ namespace {
         if (cm.TryGetOwningClaim(a->GetFormID(), APMF_API::kIntent_Idle, p)) return "owned ch.12 idle claim";
         if (const auto* as = a->AsActorState()) {
             if (as->GetSitSleepState() != RE::SIT_SLEEP_STATE::kNormal) return "sitting / sleeping / in furniture";
-            if (as->actorState2.talkingToPlayer) return "in dialogue";
         }
+        // IN DIALOGUE WITH THE PLAYER: the engine's own test (Papyrus IsInDialogueWithPlayer, AE 56194 / SE 55663, verified
+        // row Substrate.MenuTopicManager.Reader): MenuTopicManager::speaker (+0x68 on both runtimes) == the ref's handle.
+        // (Not NPC-to-NPC. ActorState2::talkingToPlayer is NOT read: nothing in the executable tests that bit.)
+        if (!g_dialogueOk) return "dialogue state unknown (MenuTopicManager row unverified)";
+        if (const auto* mtm = RE::MenuTopicManager::GetSingleton();
+            mtm && mtm->speaker.native_handle() != 0 && mtm->speaker.native_handle() == a->GetHandle().native_handle())
+            return "in dialogue with the player";
         if (a->GetOccupiedFurniture()) return "occupying furniture";
         return nullptr;
     }
@@ -2070,6 +2077,15 @@ namespace apmf::combatsubstrate {
         g_evaluatePackage = REL::Relocation<EvaluatePkg_t>{ RELOCATION_ID(36407, 37401) };
         g_musicOk = apmf::allowance::SeatVerified(
             REL::Relocation<std::uintptr_t>{ RELOCATION_ID(514738, 400896) }.address(), "Substrate.BSMusicManager.Singleton");
+        // The dry run's dialogue test (MenuTopicManager::speaker). Rows exist on 1.6.1170 and 1.5.97 only: elsewhere (or on a
+        // failed row) every teammate counts as "dialogue unknown -> not idle" and the dry run opens nothing.
+        g_dialogueOk = !apmf::allowance::IsRuntime1_7_104() &&
+                       (REL::Module::IsExactly(SKSE::RUNTIME_SSE_1_6_1170) || REL::Module::IsExactly(SKSE::RUNTIME_SSE_1_5_97)) &&
+                       apmf::allowance::SeatVerified(REL::Relocation<std::uintptr_t>{ RELOCATION_ID(514959, 401099) }.address(),
+                                                     "Substrate.MenuTopicManager.Singleton");
+        if (!g_dialogueOk)
+            spdlog::warn("[substrate] the MenuTopicManager row did not verify on this runtime: the dry run cannot tell whether a "
+                         "follower is in dialogue with the player, so it treats EVERY teammate as not idle and opens nothing.");
         g_fireSignal = apmf::castertypecensus::NotifyInstalled();
 
         // the leaf classes (design 3.5's allow-list)
