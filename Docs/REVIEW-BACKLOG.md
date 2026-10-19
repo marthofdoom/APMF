@@ -882,3 +882,18 @@ Raised against `3b4272aa`, same review. Verbatim: "The census walks ForEachHighA
 
 ### APMF-B131 (SEV-5) -- substrate bystander census goes silent after 60 lines with a long-lived client substrate
 Raised against `3b4272aa`, same review. Verbatim: "With a long-lived client substrate the census window never closes; after 60 lines it goes silent for the rest of the session apart from its one cap line. Telemetry loss only, no unbounded logging." Cross-referenced from MAP.md's ch.27 What-breaks entry.
+
+### APMF-B132 (SEV-4) -- substrate probe: a client substrate never gets a pre-open movement baseline
+Raised against `bbc2d29` by the tier-3 review (verbatim): "SubstrateProbe.cpp:343-348. A client substrate's window is created in BeforeEntry, and Opened runs in the same frame. So the 'before' stage of a client window is always 'speed n/a, dist n/a', and the brief's 'from 1 s before the open' holds only for the dry run. The header (.h:42-51) and the file header (:19-21) state this, so it is documented rather than hidden. It matters once MFO's S3 client opens substrates." Fix before the S3 field run.
+
+### APMF-B133 (SEV-5) -- bSubstrateProbes defaults ON
+Raised against `bbc2d29` (verbatim): "SubstrateProbe.cpp:289 and APMF.ini bSubstrateProbes=1. A default of ON contradicts the CLAUDE.md:28-29 rule ('config-gated logging only ... default OFF'). The brief explicitly asked for 1, and the bystander census set the precedent, so no change is needed now. Flip it to 0 when the substrate leaves test." Flip together with bSubstrateBystanderCensus at ship (plan L8).
+
+### APMF-B134 (SEV-5) -- the first dry round after start has no pre-request samples
+Raised against `bbc2d29` (verbatim): "SubstrateProbe.cpp:306-307 with CombatSubstrate.cpp:1475-1476. The first dry round after start (g_lastDryMs=0, so the due time is already past) never gets pre-request samples. It is logged as 'no pre-request samples', which is honest."
+
+### APMF-B135 (SEV-5) -- OtherReset's "package change in this frame" almost always reads no
+Raised against `bbc2d29` (verbatim): "SubstrateProbe.cpp:406-410. OtherReset is called only when !restart, meaning the package and start time equal the bit-write values. So 'package change in this frame' can read YES only when the previous frame's package differed from bitPkg. In practice it will almost always read 'no'. It is correct but adds little information."
+
+### APMF-B136 (SEV-5) -- the probe's "close=" aggressor value is pre-StopCombat
+Raised against `bbc2d29` (verbatim): "SubstrateProbe.cpp:236. The 'close=' aggressor value is read before StopCombat and before the ignoring bit is restored. Label it 'close (pre-StopCombat)' in the line or the INI-REFERENCE wording so a field reader does not misread it."
