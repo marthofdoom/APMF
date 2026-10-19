@@ -211,8 +211,8 @@ namespace apmf::harbingermenu {
                 // standing companion behaviour (follow / wait / sandbox ... are not active: ClassifyPackage).
                 Colored(kGrey, "A claim must outrank a mod to replace its package: a follower mod at the same "
                                "priority keeps the follower only while it is running something beyond plain "
-                               "following. Its follow, wait, sandbox and home packages do not count, and then the "
-                               "claim's package runs.");
+                               "following. Its follow, wait, sandbox, guard and home packages do not count, even "
+                               "when they walk somewhere first, and then the claim's package runs.");
             }
             if (f == Facet::kEquipWeapon) {
                 // ch.26 (ABI v22, weighting phase 1): the score lift and its escalation. A FORCE ANOMALY is

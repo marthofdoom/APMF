@@ -91,4 +91,10 @@ namespace apmf::packagegate {
     // line, never as silence indistinguishable from "nothing to report."
     void Heartbeat();
 
+    // Review 34f2779 SEV-4 #3: true when the 0x49 seat's last ranked answer for this actor named `a_pkg` as the
+    // engine's own answer (the alias package it ranked: standing, outranked, yielded or own). The package poll
+    // (core/PackageSources.cpp) uses it to leave those captures to the seat's counters and log. Leaf lock;
+    // main thread caller; no engine call.
+    bool RankedAtSeat(RE::FormID a_actor, RE::FormID a_pkg);
+
 }

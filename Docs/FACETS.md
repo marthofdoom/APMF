@@ -1807,29 +1807,36 @@ It hooks the engine's package question (`Character` slot 0x49, `CheckForCurrentA
 
 - **The mod is idle.** The engine's answer is nothing (no alias package of any mod is valid for the actor now), or it already is your package. There is nothing to rank against, and the answer is your package.
 - **The mod is only following.** The engine's answer is another package, but everything it does is standing companion behaviour (Table 17a). Plain following is not active. Your package is served and nothing is counted against the mod. The `[ch.9-rank]` line names the mod and the kind, for example `owner=018Auri.esp kind=follow -> idle`.
-- **The mod is active.** The engine's answer is another package that does something more. Harbinger names its owner: the plugin the package comes from, registered as a `Package` source if it is new, or `Engine` for a package created at runtime. Your package replaces it only when your mod's `Package` priority is strictly higher than that plugin's. Otherwise the plugin's package stands and your claim yields for that evaluation. A tie keeps the follower mod's package. So a follower mod at the same priority keeps the follower only while it is running something beyond plain following. When it goes back to following, waiting or sandboxing, or its packages stop being valid, the next evaluation gives the actor your package.
+- **The mod is active.** The engine's answer is another package that does something more. Harbinger names its owner: the plugin the package comes from, registered as a `Package` source if it is new, or `Engine` for a package created at runtime. Your package replaces it only when your mod's `Package` priority is strictly higher than that plugin's. Otherwise the plugin's package stands and your claim yields for that evaluation. A tie keeps the follower mod's package. So a follower mod at the same priority keeps the follower only while it is running something beyond plain following. When it goes back to following, waiting, sandboxing or standing guard, or its packages stop being valid, the next evaluation gives the actor your package.
+- **Your own package.** When the active package's plugin is your own mod's source, your package is served.
 
-**Table 17a. What counts as active at the 0x49 seat.** Harbinger reads what the package does from its own record: the procedures in its procedure tree (its template's tree when it has none of its own), or its package type when it has no tree.
+**Table 17a. What counts as active at the 0x49 seat.** Harbinger reads what the package does from its own record: the procedures in its procedure tree (its template's tree when it has none of its own), or its package type when it has no tree. Each procedure is standing, auxiliary or active.
 
-| The package's procedures | Kind in the log | Counts as |
+| The package's procedures | Kind in the log | Role |
 |---|---|---|
-| Follow, Follow To | `follow` | standing (not active) |
+| Follow, Follow To | `follow` | standing |
 | Wait, Hold Position | `wait` | standing |
 | Sandbox | `sandbox` | standing |
 | Sit, Sleep, Eat, Use Idle Marker | `sit`, `sleep`, `eat`, `idle marker` | standing |
 | Wander, Keep An Eye On, Done | `wander`, `keep an eye on`, `done` | standing |
-| Travel, Escort | `travel`, `escort` | active |
+| Guard, Patrol | `guard`, `patrol` | standing (a routine post, like wait and sandbox) |
+| Travel, Lock Doors, Unlock Doors, Find, Acquire | `travel`, `lock doors`, `unlock doors`, `find`, `acquire` | auxiliary (getting there and opening the way) |
+| Escort, Flee, Pursue | as named | active |
 | Dialogue, Force Greet, Say, Shout | `dialogue`, `force greet`, `say`, `shout` | active |
-| Activate, Acquire, Find, Use Magic, Use Weapon | as named | active |
-| Patrol, Guard, Flee, Pursue, Lock, Unlock | as named | active |
-| A package with no tree: type Follow, Accompany, Eat, Sleep, Wander, Sandbox or Do Nothing | as named | standing |
-| A package with no tree of any other type | `other type` | active |
+| Activate, Use Magic, Use Weapon | as named | active |
+| Hover, Orbit, Flight Grab | as named | active |
 | A procedure or tree node Harbinger does not know, or a tree it cannot read | `unknown` | active |
 
-A package is standing only when every procedure in its tree is standing. One active procedure anywhere in the tree makes it active, so a package that walks home and then sandboxes there counts as active (it travels). A scene is not seen here: scenes run through their own seat and are only observed (see the source capture below).
-- **Your own package.** When the active package's plugin is your own mod's source, your package is served.
+How the roles decide the package:
 
-The engine adopts the answer and runs it with real pathing, one `OnPackageChange` each way. If your FormID cannot be resolved, Harbinger falls back to the engine's own answer, never null. It does not pick, validate or interpret the package's content. Each change of the outcome for an actor is logged once as a `[ch.9-rank]` line (idle and served, active and outranked, active and the claim yields). The 30 second `[ch.9-redirect] H` heartbeat carries `rankOutranks` and `rankYields` totals.
+- Any active procedure anywhere in the tree makes the package **active**.
+- Otherwise, any standing procedure makes it **standing**. Its auxiliary procedures only carry it there, so the vanilla follower template (Follow, Travel, Wait), FollowPlayer (Follow, Sandbox, Travel), Sandbox (Sandbox, Travel, Unlock Doors) and a package that walks home and then sandboxes all count as standing.
+- A tree of auxiliary procedures only, such as a plain Travel package, is **active**: the mod is taking the follower somewhere.
+- A package with no tree decides by its type: Follow, Accompany, Eat, Sleep, Wander, Sandbox, Patrol, Guard and Do Nothing are standing. Any other type is active (`other type`).
+
+A scene is not seen here: scenes run through their own seat and are only observed (see the source capture below).
+
+The engine adopts the answer and runs it with real pathing, one `OnPackageChange` each way. If your FormID cannot be resolved, Harbinger falls back to the engine's own answer, never null. It does not pick, validate or interpret the package's content. Each change of the outcome for an actor is logged once as a `[ch.9-rank]` line (idle, standing, active and outranked, active and the claim yields). The source counters on the Packages table (Hits, Blocked, Passed) move once per such change, not on every evaluation, and the package capture below leaves these packages to this seat. The 30 second `[ch.9-redirect] H` heartbeat carries `rankOutranks` and `rankYields` totals.
 
 > **Key Concept 10 (the nudge)** A nudge makes the redirect take within one evaluation. Harbinger calls `EvaluatePackage` once at engage and owner change, and once at release so the framework package resumes at once. The nudge is posted one hop past the point the claim publishes, because a nudge issued earlier re-evaluates against the old snapshot. It is not self-sustaining. If nothing nudges and the engine does not ask, nothing re-asks.
 

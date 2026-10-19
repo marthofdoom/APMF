@@ -1487,24 +1487,32 @@ kPlugin), no file = Engine, failed register = Unattributed (degrade rule: never 
 Package=override`); owner == the claim's client (offer client, or ch.19 travel claim's client: `RankClaimPrio`, same
 rule as PackageSources/SpectatorGate) = served + `NoteOwn`; else `NoteHit`, then claim prio STRICTLY > owner prio =
 served + `NoteOverruled`, else the original stands + `NoteStood` (tie keeps the follower mod's package).
-**Round 2 (marth "Plain following isn't active"):** before ranking, `ClassifyPackage(orig)` (cached per plugin
-package pointer, leaf `g_kindMx`) reads what the package DOES: PKDT `packData.packType` (+0x24; NOT the derived
-+0xD8, which 29582 sets to 0x2E for every tree package); types 18/19 -> `TESCustomPackageData` (+0x30) tree
-(+0x20, else the `templateParent` (+0x30) chain, 4 hops); nodes and procedures named by their own RTTI (vtable in
-.rdata checked first): Procedure node `procedure` +0x10, Sequence/Stacked/Simultaneous/Random children BSTArray
-+0x10/size +0x20 (all verified AE/SE/1.7.104, addresses in the code comment). Every procedure in `kProcKinds`'
-standing set (follow, wait, sandbox, sit, sleep, eat, idle marker, wander, keep an eye on, done) = `kStanding`:
-served, nothing counted, logged `owner=<plugin> kind=<label> -> idle`. Any active or unknown procedure/node =
-ranked as above with `kind=`. What breaks: classifying by +0xD8; treating an unknown node as standing (it would
-override the mod on a guess); caching a runtime-created package (address reuse). Spot left: a vanilla package
+**Round 2/3 (marth "Plain following isn't active"; review 34f2779 fixes):** before ranking, `ClassifyPackage(orig)`
+(cached per plugin package pointer, leaf `g_kindMx`) reads what the package DOES: PKDT `packData.packType` (+0x24;
+NOT the derived +0xD8, which 29582 sets to 0x2E for every tree package); types 18/19 -> `TESCustomPackageData`
+(+0x30) tree (+0x20, else the `templateParent` (+0x30) chain, 4 hops); nodes and procedures named by their own RTTI
+through `RttiName`, which VALIDATES each hop (vtable and locator in .rdata, locator signature 1 + self-RVA,
+TypeDescriptor in .data, name ".?A" and NUL-terminated in bounds) because the DLL has no /EHa and catch(...) cannot
+catch an AV. Procedure node `procedure` +0x10, Sequence/Stacked/Simultaneous/Random children BSTArray +0x10/size
++0x20 (verified AE/SE/1.7.104, addresses in the code comment). Roles (`kProcKinds`): STANDING follow, wait, sandbox,
+sit, sleep, eat, idle marker, wander, keep an eye on, done, guard, patrol (marth: routine posture); AUXILIARY
+travel, lock/unlock doors, find, acquire; everything else ACTIVE. Any active -> active; else any standing ->
+`kStanding` (served, nothing counted, logged `owner=<plugin> kind=<label> -> idle`); else auxiliary-only (a pure
+Travel) -> active. Unknown node/procedure/unreadable -> active. Source counters (Hit, Overruled, Stood, Own) move
+ONCE PER TRANSITION per actor; Served stays per consult (keeps the client seen for `Winner()`). `SourceForFile`
+caches plugin -> SourceId per `TESFile*` (leaf `g_fileSrcMx`). `RankedAtSeat(actor, pkg)` lets
+`core/PackageSources.cpp`'s poll leave a 0x49-ranked capture (not a scene) to this seat (no Hit/Stood/Observed
+there, an info line pointing at `[ch.9-rank]`). What breaks: classifying by +0xD8; making an auxiliary procedure
+active again (every vanilla follower template has Travel: 107 of Skyrim.esm's templates); dereferencing an RTTI
+hop without the bounds checks; treating an unknown node as standing; caching a runtime-created package (address
+reuse); counting per consult again (the poll and the menu count per transition). Spot left: a vanilla package
 reused in a follower mod's alias is still owned by Skyrim.esm (the owning alias is not visible after the
-original returns; attributing it means a second ExtraAliasInstanceArray walk under its lock). Counted per
-consult, `[ch.9-rank]` logged per (claimForm, orig, owner, decision) transition per actor (leaf `g_rankMx`, cap
-4000, always on), cleared by `ForgetRedirect` / `ForgetAllRedirects`; heartbeat gains `rankOutranks` /
-`rankYields`. A registry throw serves the claim unranked and logs an error. What breaks: ranking against
-`GetCurrentPackage()` instead of `orig` (that is tenure: the incumbent would always win); counting Served on a yield;
-taking `g_rankMx` across `Register` / a lookup. Known overlap: PackageSources' poll still counts a capture once per
-transition (Hit + Stood/Observed) on top of this seat's per-consult counts.
+original returns; attributing it means a second ExtraAliasInstanceArray walk under its lock).
+`[ch.9-rank]` is logged per (claimForm, orig, owner, decision, kind) transition per actor (leaf `g_rankMx`, cap
+4000, always on), cleared by `ForgetRedirect` / `ForgetAllRedirects`; the heartbeat gains `rankOutranks` /
+`rankYields` (per consult). A registry throw serves the claim unranked and logs an error. Also: ranking against
+`GetCurrentPackage()` instead of `orig` is tenure (the incumbent would always win); never count Served on a yield;
+never take `g_rankMx` / `g_kindMx` / `g_fileSrcMx` across `Register` or a lookup.
 - **What breaks:** the redirect only takes effect **when the engine ASKS**, and the field
   evidence is that it does not ask on a useful cadence of its own — every win so far
   reconciles to an explicit `EvaluatePackage` nudge (MFO `DIAG-2026-09-06-loot-travel.md`;

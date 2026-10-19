@@ -4,6 +4,7 @@
 #include "core/Clock.h"
 #include "core/ControlMap.h"
 #include "core/Log.h"
+#include "core/PackageGate.h"   // RankedAtSeat: leave 0x49-ranked captures to that seat
 #include "core/Sources.h"
 
 #include <algorithm>
@@ -226,6 +227,15 @@ namespace apmf::packagesources {
                     continue;
                 }
                 g_lastReported[id] = curId;
+                // Review 34f2779 SEV-4 #3: an alias package the 0x49 seat ranked (core/PackageGate.cpp
+                // RankAndDecide) is counted and logged THERE ([ch.9-rank]: once per transition). Counting it here
+                // too would double its Hit and Passed. A scene is never the seat's, so it is always reported here.
+                if (!rec.scene && apmf::packagegate::RankedAtSeat(id, curId)) {
+                    spdlog::info("[sources] Package 0x{} runs 0x{} ({}) instead of the claimed 0x{}: ranked at the 0x49 seat, "
+                                 "see its [ch.9-rank] line (counted there).",
+                                 Hex(id), Hex(curId), apmf::sources::Name(rec.src), Hex(claim.form));
+                    continue;
+                }
                 apmf::sources::NoteHit(rec.src, Facet::kPackage);   // one hit per capture, not per 500 ms poll
                 std::string client;
                 const int   claimPrio = ClaimPrio(id, h, client);
@@ -243,8 +253,9 @@ namespace apmf::packagesources {
                              srcPrio, claimPrio, client,
                              outranked ? (rec.scene ? "the claim OUTRANKS it -- would hold the scene off; the scene seat is "
                                                       "PROBE-ONLY in this build, nothing is enforced"
-                                                    : "the claim OUTRANKS it -- not enforced (only scenes are held off, "
-                                                      "and that seat is probe-only in this build)")
+                                                    : "the claim OUTRANKS it -- not enforced here: this package did not "
+                                                      "come through the 0x49 seat's ranking (only the alias package the "
+                                                      "engine offers there is ranked and enforced)")
                                        : "it stands");
             }
             if (g_lastReported.size() > 4096) g_lastReported.clear();   // never unbounded

@@ -7,6 +7,7 @@
 #include "core/NonAliasProbe.h"
 #include "core/PackageGate.h"
 
+#include <algorithm>
 #include <cstring>
 #include <mutex>
 #include <unordered_map>
@@ -154,7 +155,7 @@ namespace apmf::packagegate {
         //   IDLE = the engine's answer is null (no alias package of any mod is valid now) or already the
         //     claimed package: nothing to rank against, the claim's package is served, nothing is counted
         //     against a source.
-        // Counted per consult (as core/SpectatorGate.cpp), logged once per transition per actor
+        // Source counters move once per transition per actor (RankAndDecide), logged once per transition per actor
         // ([ch.9-rank]). Runs on engine AI threads: the RCU snapshot, the lock-free registry, atomics, and
         // this leaf mutex (never held across an engine call or a form lookup).
         enum class RankDecision : std::uint8_t { kIdle, kStanding, kOutranks, kOwn, kYields, kError };
@@ -188,83 +189,118 @@ namespace apmf::packagegate {
         //     0x48A490); Sequence / Stacked / Simultaneous / Random all share BGSProcedureTreeBranch::Copy (AE
         //     0x483470 / SE 0x428CD0 / 1.7.104 0x48A990): children BSTArray at +0x10, size at +0x20.
         // Node and procedure classes are named by their own RTTI (vtable[-1] -> CompleteObjectLocator ->
-        // TypeDescriptor), never by an id, after checking the vtable lies in the exe's .rdata. A package is
-        // STANDING only when every procedure in its tree is in the standing set; anything else, an unknown node
-        // or an unreadable tree is ACTIVE (the follower mod is not overridden on a guess; logged as kind=unknown).
-        // Cached per package (the data never changes after load): a leaf mutex, bounded, never held across a read.
-        struct ProcKind { const char* rtti; const char* label; bool standing; };
+        // TypeDescriptor), never by an id. RttiName VALIDATES every hop before it reads it (review 34f2779 SEV-4:
+        // this DLL is not built with /EHa, so a catch(...) does NOT catch an access violation and is no safety net
+        // for a bad pointer): the vtable must lie in .rdata, the locator must lie in .rdata with signature 1 and a
+        // self-RVA equal to its own RVA, the TypeDescriptor must lie in .data and its name must start ".?A" and end
+        // within the segment. Anything that fails is "unreadable", which classifies ACTIVE (logged kind=unknown).
+        //
+        // THE RULE (review 34f2779 SEV-2: Travel is in about half of Skyrim.esm's templates, inside the vanilla
+        // follower and sandbox templates too -- FollowerPackageTemplate 000D530D = Follow+Travel+Wait, FollowPlayer
+        // 000750BE = Follow+Sandbox+Travel, Sandbox 0001C254 = Sandbox+Travel+UnlockDoors). Each procedure is
+        // STANDING (Guard and Patrol included, marth 2026-10-19: routine posture like wait / sandbox), AUXILIARY (getting there and opening the way: Travel, Lock/Unlock doors, Find, Acquire) or
+        // ACTIVE. A package is ACTIVE when any procedure in its tree is active; else STANDING when any is
+        // standing (its auxiliaries only carry it there); else (auxiliaries only, a pure Travel package) ACTIVE.
+        // Cached per plugin package (the data never changes after load): a leaf mutex, never held across a read.
+        enum class ProcRole : std::uint8_t { kStanding, kAux, kActive };
+        struct ProcKind { const char* rtti; const char* label; ProcRole role; };
         constexpr ProcKind kProcKinds[] = {
-            { ".?AVBGSProcedureFollow@@",           "follow",         true },
-            { ".?AVBGSProcedureFollowTo@@",         "follow",         true },
-            { ".?AVBGSProcedureWait@@",             "wait",           true },
-            { ".?AVBGSProcedureHoldPosition@@",     "wait",           true },
-            { ".?AVBGSProcedureSandbox@@",          "sandbox",        true },
-            { ".?AVBGSProcedureSit@@",              "sit",            true },
-            { ".?AVBGSProcedureSleep@@",            "sleep",          true },
-            { ".?AVBGSProcedureEat@@",              "eat",            true },
-            { ".?AVBGSProcedureUseIdleMarker@@",    "idle marker",    true },
-            { ".?AVBGSProcedureWander@@",           "wander",         true },
-            { ".?AVBGSProcedureKeepAnEyeOn@@",      "keep an eye on", true },
-            { ".?AVBGSProcedureDone@@",             "done",           true },
-            { ".?AVBGSProcedureTravel@@",           "travel",         false },
-            { ".?AVBGSProcedureEscort@@",           "escort",         false },
-            { ".?AVBGSProcedureDialogue@@",         "dialogue",       false },
-            { ".?AVBGSProcedureDialogueActivate@@", "dialogue",       false },
-            { ".?AVBGSProcedureForceGreet@@",       "force greet",    false },
-            { ".?AVBGSProcedureSay@@",              "say",            false },
-            { ".?AVBGSProcedureShout@@",            "shout",          false },
-            { ".?AVBGSProcedureActivate@@",         "activate",       false },
-            { ".?AVBGSProcedureAcquire@@",          "acquire",        false },
-            { ".?AVBGSProcedureFind@@",             "find",           false },
-            { ".?AVBGSProcedureUseMagic@@",         "use magic",      false },
-            { ".?AVBGSProcedureUseWeapon@@",        "use weapon",     false },
-            { ".?AVBGSProcedurePatrol@@",           "patrol",         false },
-            { ".?AVBGSProcedureGuard@@",            "guard",          false },
-            { ".?AVBGSProcedureFlee@@",             "flee",           false },
-            { ".?AVBGSProcedurePursue@@",           "pursue",         false },
-            { ".?AVBGSProcedureLock@@",             "lock",           false },
-            { ".?AVBGSProcedureUnlock@@",           "unlock",         false },
+            { ".?AVBGSProcedureFollow@@",           "follow",         ProcRole::kStanding },
+            { ".?AVBGSProcedureFollowTo@@",         "follow",         ProcRole::kStanding },
+            { ".?AVBGSProcedureWait@@",             "wait",           ProcRole::kStanding },
+            { ".?AVBGSProcedureHoldPosition@@",     "wait",           ProcRole::kStanding },
+            { ".?AVBGSProcedureSandbox@@",          "sandbox",        ProcRole::kStanding },
+            { ".?AVBGSProcedureSit@@",              "sit",            ProcRole::kStanding },
+            { ".?AVBGSProcedureSleep@@",            "sleep",          ProcRole::kStanding },
+            { ".?AVBGSProcedureEat@@",              "eat",            ProcRole::kStanding },
+            { ".?AVBGSProcedureUseIdleMarker@@",    "idle marker",    ProcRole::kStanding },
+            { ".?AVBGSProcedureWander@@",           "wander",         ProcRole::kStanding },
+            { ".?AVBGSProcedureKeepAnEyeOn@@",      "keep an eye on", ProcRole::kStanding },
+            { ".?AVBGSProcedureDone@@",             "done",           ProcRole::kStanding },
+            { ".?AVBGSProcedureTravel@@",           "travel",         ProcRole::kAux },
+            { ".?AVBGSProcedureLock@@",             "lock doors",     ProcRole::kAux },
+            { ".?AVBGSProcedureUnlock@@",           "unlock doors",   ProcRole::kAux },
+            { ".?AVBGSProcedureFind@@",             "find",           ProcRole::kAux },
+            { ".?AVBGSProcedureAcquire@@",          "acquire",        ProcRole::kAux },
+            { ".?AVBGSProcedureEscort@@",           "escort",         ProcRole::kActive },
+            { ".?AVBGSProcedureDialogue@@",         "dialogue",       ProcRole::kActive },
+            { ".?AVBGSProcedureDialogueActivate@@", "dialogue",       ProcRole::kActive },
+            { ".?AVBGSProcedureForceGreet@@",       "force greet",    ProcRole::kActive },
+            { ".?AVBGSProcedureSay@@",              "say",            ProcRole::kActive },
+            { ".?AVBGSProcedureShout@@",            "shout",          ProcRole::kActive },
+            { ".?AVBGSProcedureActivate@@",         "activate",       ProcRole::kActive },
+            { ".?AVBGSProcedureUseMagic@@",         "use magic",      ProcRole::kActive },
+            { ".?AVBGSProcedureUseWeapon@@",        "use weapon",     ProcRole::kActive },
+            { ".?AVBGSProcedurePatrol@@",           "patrol",         ProcRole::kStanding },   // marth: routine posture
+            { ".?AVBGSProcedureGuard@@",            "guard",          ProcRole::kStanding },   // marth: routine posture
+            { ".?AVBGSProcedureFlee@@",             "flee",           ProcRole::kActive },
+            { ".?AVBGSProcedurePursue@@",           "pursue",         ProcRole::kActive },
+            { ".?AVBGSProcedureHover@@",            "hover",          ProcRole::kActive },
+            { ".?AVBGSProcedureOrbit@@",            "orbit",          ProcRole::kActive },
+            { ".?AVBGSProcedureFlightGrab@@",       "flight grab",    ProcRole::kActive },
         };
         constexpr const char* kKindUnknown = "unknown";
         // A package without a procedure tree (an old PKDT-typed package): its type decides.
         struct TypeKind { std::uint8_t type; const char* label; };
         constexpr TypeKind kStandingTypes[] = {
-            { 1, "follow" }, { 3, "eat" }, { 4, "sleep" }, { 5, "wander" }, { 7, "follow" }, { 12, "sandbox" }, { 27, "wait" },
+            { 1, "follow" }, { 3, "eat" }, { 4, "sleep" }, { 5, "wander" }, { 7, "follow" }, { 12, "sandbox" }, { 13, "patrol" }, { 14, "guard" }, { 27, "wait" },
         };
         constexpr const char* kKindOtherType = "other type";
 
         struct Classified { bool standing = false; const char* label = kKindUnknown; };
 
+        // The RTTI name of a polymorphic engine object, or null when ANY hop fails validation (see above).
         const char* RttiName(const void* a_obj) {
             if (!a_obj) return nullptr;
+            static const auto  base  = REL::Module::get().base();
+            static const auto  rdata = REL::Module::get().segment(REL::Segment::rdata);
+            static const auto  data  = REL::Module::get().segment(REL::Segment::data);
+            const auto inRdata = [](std::uintptr_t a, std::size_t n) {
+                return a >= rdata.address() && a + n <= rdata.address() + rdata.size() && a + n >= a;
+            };
             const auto vt = *reinterpret_cast<const std::uintptr_t*>(a_obj);
-            static const auto rdata = REL::Module::get().segment(REL::Segment::rdata);
-            if (vt < rdata.address() + sizeof(void*) || vt >= rdata.address() + rdata.size()) return nullptr;
-            const auto* col = *reinterpret_cast<RE::RTTI::CompleteObjectLocator* const*>(vt - sizeof(void*));
-            if (!col) return nullptr;
-            const auto* td = col->typeDescriptor.get();
-            return td ? td->mangled_name() : nullptr;
+            if (vt < sizeof(void*) || !inRdata(vt - sizeof(void*), sizeof(void*))) return nullptr;
+            const auto colAddr = *reinterpret_cast<const std::uintptr_t*>(vt - sizeof(void*));
+            // x64 CompleteObjectLocator: signature@0 (1), offset@4, cdOffset@8, typeDescriptor RVA@0xC,
+            // classDescriptor RVA@0x10, self RVA@0x14.
+            if (colAddr < base || !inRdata(colAddr, 0x18)) return nullptr;
+            const auto* col = reinterpret_cast<const std::uint32_t*>(colAddr);
+            if (col[0] != 1 || col[5] != static_cast<std::uint32_t>(colAddr - base)) return nullptr;
+            const std::uintptr_t td = base + col[3];
+            // TypeDescriptor: vftable@0, spare@8, name@0x10 (NUL-terminated, ".?AV...@@" / ".?AU...@@").
+            constexpr std::size_t kMaxName = 128;
+            if (td < data.address() || td + 0x10 + 4 > data.address() + data.size()) return nullptr;
+            const char*       name  = reinterpret_cast<const char*>(td + 0x10);
+            const std::size_t avail = std::min<std::size_t>(kMaxName, data.address() + data.size() - (td + 0x10));
+            if (name[0] != '.' || name[1] != '?' || name[2] != 'A') return nullptr;
+            if (!std::memchr(name, '\0', avail)) return nullptr;
+            return name;
         }
 
-        // Walks one tree. `a_out` collects: any active procedure (first label kept) or unknown node -> active;
-        // a standing procedure's label is kept when nothing active was seen. Bounded (depth 8, 256 nodes).
-        void WalkTree(const RE::IProcedureTreeItem* a_node, int a_depth, int& a_budget, bool& a_active,
-                      const char*& a_activeLabel, const char*& a_standingLabel) {
-            if (!a_node || a_active) return;
-            if (a_depth > 8 || --a_budget < 0) { a_active = true; a_activeLabel = kKindUnknown; return; }
+        struct WalkState {
+            int         budget        = 256;
+            const char* activeLabel   = nullptr;   // the first active procedure (or "unknown")
+            const char* standingLabel = nullptr;   // the first standing procedure
+            const char* auxLabel      = nullptr;   // the first auxiliary procedure
+        };
+        // Walks one tree; stops at the first active procedure or unknown node. Bounded (depth 8, 256 nodes).
+        void WalkTree(const RE::IProcedureTreeItem* a_node, int a_depth, WalkState& a_st) {
+            if (!a_node || a_st.activeLabel) return;
+            if (a_depth > 8 || --a_st.budget < 0) { a_st.activeLabel = kKindUnknown; return; }
             const char* name = RttiName(a_node);
-            if (!name) { a_active = true; a_activeLabel = kKindUnknown; return; }
+            if (!name) { a_st.activeLabel = kKindUnknown; return; }
             if (std::strcmp(name, ".?AVBGSProcedureTreeProcedure@@") == 0) {
                 const auto* proc  = static_cast<const RE::BGSProcedureTreeProcedure*>(a_node)->procedure;
                 const char* pname = RttiName(proc);
-                if (!pname) { a_active = true; a_activeLabel = kKindUnknown; return; }
+                if (!pname) { a_st.activeLabel = kKindUnknown; return; }
                 for (const auto& k : kProcKinds) {
                     if (std::strcmp(pname, k.rtti) != 0) continue;
-                    if (k.standing) { if (!a_standingLabel) a_standingLabel = k.label; }
-                    else { a_active = true; a_activeLabel = k.label; }
+                    if (k.role == ProcRole::kActive) a_st.activeLabel = k.label;
+                    else if (k.role == ProcRole::kStanding) { if (!a_st.standingLabel) a_st.standingLabel = k.label; }
+                    else if (!a_st.auxLabel) a_st.auxLabel = k.label;
                     return;
                 }
-                a_active = true; a_activeLabel = kKindUnknown;
+                a_st.activeLabel = kKindUnknown;   // a procedure class this table does not know
                 return;
             }
             if (std::strcmp(name, ".?AVBGSProcedureTreeSequence@@") == 0 ||
@@ -272,11 +308,11 @@ namespace apmf::packagegate {
                 std::strcmp(name, ".?AVBGSProcedureTreeSimultaneous@@") == 0 ||
                 std::strcmp(name, ".?AVBGSProcedureTreeRandom@@") == 0) {
                 const auto& kids = static_cast<const RE::BGSProcedureTreeBranch*>(a_node)->conditions;
-                for (std::uint32_t i = 0; i < kids.size() && !a_active; ++i)
-                    WalkTree(kids[i], a_depth + 1, a_budget, a_active, a_activeLabel, a_standingLabel);
+                for (std::uint32_t i = 0; i < kids.size() && !a_st.activeLabel; ++i)
+                    WalkTree(kids[i], a_depth + 1, a_st);
                 return;
             }
-            a_active = true; a_activeLabel = kKindUnknown;   // a node class this table does not know
+            a_st.activeLabel = kKindUnknown;   // a node class this table does not know
         }
 
         Classified ClassifyUncached(const RE::TESPackage* a_pkg) {
@@ -300,39 +336,48 @@ namespace apmf::packagegate {
                 p    = cd->templateParent;
             }
             if (!tree) return c;   // unknown -> active
-            bool        active = false;
-            const char* activeLabel = nullptr;
-            const char* standingLabel = nullptr;
-            int         budget = 256;
-            WalkTree(tree, 0, budget, active, activeLabel, standingLabel);
-            if (active) { c.label = activeLabel ? activeLabel : kKindUnknown; return c; }
-            if (!standingLabel) return c;   // a tree with no procedure at all: unknown -> active
-            c.standing = true;
-            c.label    = standingLabel;
+            WalkState st;
+            WalkTree(tree, 0, st);
+            if (st.activeLabel) { c.label = st.activeLabel; return c; }
+            if (st.standingLabel) { c.standing = true; c.label = st.standingLabel; return c; }
+            c.label = st.auxLabel ? st.auxLabel : kKindUnknown;   // auxiliaries only (a pure Travel package), or empty: active
             return c;
         }
 
         std::mutex                                                   g_kindMx;
         std::unordered_map<const RE::TESPackage*, Classified>        g_kindCache;
         // Only a package loaded from a plugin is cached: a runtime-created package (no file) can be freed and its
-        // address reused, so it is classified on every consult.
+        // address reused, so it is classified on every consult. (No try/catch: nothing here throws, and an access
+        // violation is not catchable without /EHa; RttiName's validation is the protection.)
         Classified ClassifyPackage(const RE::TESPackage* a_pkg) {
             const bool cacheable = a_pkg->GetFile(0) != nullptr;
             if (cacheable) {
                 std::scoped_lock lock(g_kindMx);
                 if (const auto it = g_kindCache.find(a_pkg); it != g_kindCache.end()) return it->second;
             }
-            Classified c;
-            try {
-                c = ClassifyUncached(a_pkg);
-            } catch (...) {
-                c = Classified{};   // unknown -> active
-            }
+            const Classified c = ClassifyUncached(a_pkg);
             if (!cacheable) return c;
             std::scoped_lock lock(g_kindMx);
             if (g_kindCache.size() >= 2048) g_kindCache.clear();
             g_kindCache.emplace(a_pkg, c);
             return c;
+        }
+
+        // Review 34f2779 SEV-5: the package's plugin -> its source id, cached per TESFile so an ACTIVE consult on
+        // the AI thread does not scan the source table by name every time. Leaf mutex, bounded.
+        std::mutex                                                    g_fileSrcMx;
+        std::unordered_map<const RE::TESFile*, apmf::sources::SourceId> g_fileSrc;
+        apmf::sources::SourceId SourceForFile(const RE::TESFile* a_file) {
+            {
+                std::scoped_lock lock(g_fileSrcMx);
+                if (const auto it = g_fileSrc.find(a_file); it != g_fileSrc.end()) return it->second;
+            }
+            const auto id = apmf::sources::Register(a_file->GetFilename(), apmf::sources::Kind::kPlugin);
+            if (id == apmf::sources::kNoSource) return id;   // not cached: retried next time
+            std::scoped_lock lock(g_fileSrcMx);
+            if (g_fileSrc.size() >= 1024) g_fileSrc.clear();
+            g_fileSrc.emplace(a_file, id);
+            return id;
         }
 
         // The claim the Package facet is enforced FOR (core/PackageSources.cpp / core/SpectatorGate.cpp
@@ -350,8 +395,12 @@ namespace apmf::packagegate {
             return apmf::sources::ClaimPriority(h, apmf::sources::Facet::kPackage, &a_client);
         }
 
-        // Decide whether the claim's package replaces the engine's answer. Counts and logs; never throws
-        // (a registry failure keeps the claim winning, as before ranking existed, and says so).
+        // Decide whether the claim's package replaces the engine's answer. Logs; never throws (a registry
+        // failure keeps the claim winning, as before ranking existed, and says so).
+        // COUNTING (review 34f2779 SEV-4 #3): the source counters (Hit, Blocked = overruled, Passed = stood, own)
+        // move ONCE PER TRANSITION per actor, like the package poll and the menu's "a package takeover is counted
+        // once", not once per 0x49 consult. Served (NoteServedClaim in the thunk) stays per consult: it is what keeps
+        // the claim's client "seen" for the menu winner. The heartbeat's rankOutranks / rankYields stay per consult.
         bool RankAndDecide(RE::Actor* a_actor, const RE::TESPackage* a_orig, const RE::TESPackage* a_claimed,
                            APMF_API::Handle a_claimH) {
             namespace src = apmf::sources;
@@ -373,29 +422,21 @@ namespace apmf::packagegate {
                 } else if (a_orig && a_orig != a_claimed) {
                     // ACTIVE: a quest alias's own package doing more than standing behaviour is valid now. Name its owner.
                     if (const auto* f = a_orig->GetFile(0))
-                        now.owner = src::Register(f->GetFilename(), src::Kind::kPlugin);
+                        now.owner = SourceForFile(f);
                     else
                         now.owner = src::kEngineSource;   // created at runtime: no plugin
                     if (now.owner == src::kNoSource) now.owner = src::kUnattributedSource;
                     claimPrio = RankClaimPrio(actorId, a_claimH, client);
                     if (now.owner == client) {
                         now.decision = RankDecision::kOwn;   // the claim's own client's package: no outside write
-                        src::NoteOwn(now.owner, src::Facet::kPackage);
                     } else {
-                        src::NoteHit(now.owner, src::Facet::kPackage);
                         ownerPrio = src::Priority(now.owner, src::Facet::kPackage);
                         // the degrade rule: an unattributed package is never displaced unless overridden
                         const bool rankable = now.owner != src::kUnattributedSource ||
                                               src::OverrideUnknown(src::Facet::kPackage);
                         wins         = rankable && claimPrio > ownerPrio;   // strictly: a tie keeps the mod's package
                         now.decision = wins ? RankDecision::kOutranks : RankDecision::kYields;
-                        if (wins) {
-                            src::NoteOverruled(now.owner, src::Facet::kPackage);
-                            g_rankOutranks.fetch_add(1, std::memory_order_relaxed);
-                        } else {
-                            src::NoteStood(now.owner, src::Facet::kPackage);
-                            g_rankYields.fetch_add(1, std::memory_order_relaxed);
-                        }
+                        (wins ? g_rankOutranks : g_rankYields).fetch_add(1, std::memory_order_relaxed);
                     }
                 }
             } catch (...) {
@@ -416,6 +457,22 @@ namespace apmf::packagegate {
                     }
                 }
                 if (changed) {
+                    // The source counters, once per transition (see above).
+                    switch (now.decision) {
+                    case RankDecision::kOwn:
+                        src::NoteOwn(now.owner, src::Facet::kPackage);
+                        break;
+                    case RankDecision::kOutranks:
+                        src::NoteHit(now.owner, src::Facet::kPackage);
+                        src::NoteOverruled(now.owner, src::Facet::kPackage);
+                        break;
+                    case RankDecision::kYields:
+                        src::NoteHit(now.owner, src::Facet::kPackage);
+                        src::NoteStood(now.owner, src::Facet::kPackage);
+                        break;
+                    default:
+                        break;
+                    }
                     const auto prior = g_rankLineCount.fetch_add(1, std::memory_order_relaxed);
                     if (prior < kRankLineCap) {
                         const std::string owner = now.owner != src::kNoSource ? std::string(src::Name(now.owner)) : std::string();
@@ -702,6 +759,13 @@ namespace apmf::packagegate {
         std::scoped_lock lock(g_redirectMx);
         if (g_redirectLast.erase(a_actor) != 0)
             g_redirectRemembered.fetch_sub(1, std::memory_order_relaxed);
+    }
+
+    bool RankedAtSeat(RE::FormID a_actor, RE::FormID a_pkg) {
+        if (g_rankRemembered.load(std::memory_order_relaxed) == 0 || a_pkg == 0) return false;
+        std::scoped_lock lock(g_rankMx);
+        const auto it = g_rankLast.find(a_actor);
+        return it != g_rankLast.end() && it->second.orig == a_pkg;
     }
 
     void ForgetAllRedirects() {
