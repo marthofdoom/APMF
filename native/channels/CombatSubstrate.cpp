@@ -5,6 +5,7 @@
 #include "channels/CombatApproach.h"       // SpaceOfRef: the anchor's last-known location space
 #include "channels/CombatEntry.h"          // hold::StopCombatRanked: the empty-fight end (F6)
 #include "channels/CombatReentryDeny.h"    // the slot-0x99 seat this file's anchor refusal rides; ClientEntryScope
+#include "channels/SubstrateProbe.h"       // R1 passive probes (one-line call-outs only)
 #include "core/ActionGate.h"               // SubstrateLeavesPaired: the allow-list's coverage
 #include "core/Allowance.h"                // SeatVerified, RuntimeSupported
 #include "core/CasterTypeCensus.h"         // NotifyInstalled: the fire signal
@@ -963,6 +964,7 @@ namespace {
             g_served = a_sub.id;
         }
         a_sub.entryBit = proc->ignoringCombat;
+        apmf::substrateprobe::BeforeEntry(a_sub.id, proc, now);   // R1: the aggressor bit before the entry
         bool ok = false;
         g_slots[a_sub.slot].state.fetch_or(kStEntering, std::memory_order_acq_rel);
         {
@@ -1012,6 +1014,7 @@ namespace {
         a_sub.lastPosMs  = now;
         a_sub.musicAtOpen = g_musicOk ? MusicNow() : 0;
         ++g_opened;
+        apmf::substrateprobe::Opened(a_sub.id, now);
         if (!g_musicDeny)
             spdlog::warn("[substrate] 0x{} known hole: the music deny is OFF ({}): the engine may decide this group's "
                          "music and battle music can play while the substrate is open.",
@@ -1069,6 +1072,7 @@ namespace {
     void CloseSub(Sub& a_sub, const char* a_reason) {
         auto* actor = RE::TESForm::LookupByID<RE::Actor>(a_sub.id);
         auto* proc  = actor ? actor->GetActorRuntimeData().currentProcess : nullptr;
+        apmf::substrateprobe::Closing(a_sub.id, actor, a_sub.phase == Phase::kOpen, false, apmf::clock::MonotonicMs());   // R1
         if (a_sub.slot >= 0 && a_sub.phase == Phase::kOpen) LogObserved(a_sub, actor);
         DebtForget(a_sub.id);   // a normal close: his StopCombat ends his part in the group (a co-holder keeps its own debt)
         // 1. the bit back to what it was
@@ -1121,6 +1125,7 @@ namespace {
         const RE::FormID foe = s.realFoe.load(std::memory_order_relaxed);
         auto* actor = RE::TESForm::LookupByID<RE::Actor>(a_sub.id);
         auto* proc  = actor ? actor->GetActorRuntimeData().currentProcess : nullptr;
+        apmf::substrateprobe::Closing(a_sub.id, actor, true, true, apmf::clock::MonotonicMs());   // R1
         if (a_sub.bitSet && proc) proc->ignoringCombat = a_sub.priorBit;   // the package no longer runs in combat
         // The music debt (review F1): an (a)-trigger restore already ran in the seat that saw the real target. Any 0 still
         // owed (a hit / party trigger, or a merge into an ally's fight) is put back by the seat on the next detection pass
@@ -1214,6 +1219,7 @@ namespace {
             return;   // one more Poll: the package start in that same update has run
         }
         if (!timedOut && g_pollFrame <= a_sub.repickClearFrame) return;
+        if (buffered) apmf::substrateprobe::RepickNotRun(a_actor, a_proc, a_now - a_sub.repickAskedMs);   // R1
         a_sub.bitPending  = false;
         a_sub.priorBit    = a_proc->ignoringCombat;
         a_proc->ignoringCombat = true;   // AIProcess+0x139 (static_assert below; AE 0x6D6780 / SE 0x643F00 read it)
@@ -1301,6 +1307,7 @@ namespace {
                 const bool restart = proc->currentPackage.package != a_sub.bitPkg ||
                                      proc->currentPackage.packageStartTime != a_sub.bitPkgStart;
                 restart ? ++a_sub.resetsByRestart : ++a_sub.resetsOther;
+                if (!restart) apmf::substrateprobe::OtherReset(a_sub.id, proc, a_now);   // R1
                 if (!a_sub.firstResetMs) {
                     a_sub.firstResetMs = a_now;
                     spdlog::info("[substrate] 0x{} ignoring-bit reset by the engine at +{} ms ({}, cause: {}) -- S2a does "
@@ -1474,6 +1481,8 @@ namespace {
     }
 
     void DryRunSchedule(std::uint64_t a_now) {
+        if (g_dryRun)   // R1: the baseline of the next pick round, from 1 s before it
+            apmf::substrateprobe::BeforeDryRound(a_now, g_lastDryMs + static_cast<std::uint64_t>(g_dryPeriodSec * 1000.0f));
         if (!g_dryRun || a_now - g_lastDryMs < static_cast<std::uint64_t>(g_dryPeriodSec * 1000.0f)) return;
         g_lastDryMs = a_now;
         std::vector<RE::FormID> picks;
@@ -1505,6 +1514,7 @@ namespace {
             s.ttlMs       = TtlMsFor(0.0f);
             s.deadlineMs  = a_now + s.ttlMs + kFloorWaitMs;
             g_subs.emplace(id, s);
+            apmf::substrateprobe::Requested(id, a_now);   // R1
             spdlog::info("[substrate] 0x{} DRY RUN requested (no claim, no cast; TTL {:.1f} s).", Hex(id),
                          static_cast<double>(s.ttlMs) / 1000.0);
         }
@@ -2146,6 +2156,7 @@ namespace apmf::combatsubstrate {
         g_dryPeriodSec = std::max(5.0f, IniFloat("CombatSubstrate", "fSubstrateDryRunPeriodSec", 20.0f));
         g_moveTrace    = IniInt("CombatSubstrate", "bSubstrateMoveTrace", 0) != 0;
         g_census       = IniInt("CombatSubstrate", "bSubstrateBystanderCensus", 1) != 0;
+        apmf::substrateprobe::Install(g_dialogueOk);   // R1 probes ([CombatSubstrate] bSubstrateProbes)
 
         if (auto* holder = RE::ScriptEventSourceHolder::GetSingleton()) {
             holder->AddEventSink<RE::TESHitEvent>(HitSink::Get());
@@ -2171,6 +2182,7 @@ namespace apmf::combatsubstrate {
         ++g_pollFrame;
         const auto now = apmf::clock::MonotonicMs();
         DryRunSchedule(now);
+        apmf::substrateprobe::Poll(now);   // R1: before the early return (the post-close timers run with nothing open)
         DebtExpire(now);
         if (g_subCount.load(std::memory_order_relaxed) == 0 && g_subs.empty()) {
             MusicProbe(now);   // the tail after the last close
@@ -2226,6 +2238,7 @@ namespace apmf::combatsubstrate {
         g_censusLive    = false;
         g_censusRows.clear();
         apmf::anchorguard::ResetAll();
+        apmf::substrateprobe::Reset();
         {
             std::scoped_lock lk(g_debtMx);
             g_debts.fill(MusicDebt{});
