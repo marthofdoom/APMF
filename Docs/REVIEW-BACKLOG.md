@@ -828,3 +828,12 @@ Same review (F5). Verbatim: "Suppose one form has a plain entry for one hand and
 
 ### APMF-B113 (design follow-up) -- ch.17 uid: re-point EquipData.extra to the declared list on a null-extra equip
 Same review (F1 optional). Verbatim: "when the engine names no copy and exactly one carried copy is declared, re-point `EquipData.extra` to the declared list. That is closer to 'enforce what was declared', but it mutates the engine's arguments, so it would be tier A." Would let the combat AI switch to uid-declared weapons again.
+
+### APMF-B114 (SEV-5) -- menu: an own-client equip that no ranking decides lands in no counter
+Raised against `5acb322` (Opus review of `feat/apmf-menu-split`, F3). Verbatim: "the deferred hit of an own-client equip is lost when no ranking decides that equip (for example an in-set item, or `dv.refuse` false). That equip then lands in no counter at all, not even Own." Also: a release race between `isOwnClient` and the ranking could count both Hit and Own for one equip (negligible).
+
+### APMF-B115 (SEV-5) -- menu: EquipAuthority Served units differ for equips vs unequips
+Same review (F5). Verbatim: "`EquipAuthority.cpp` Served uses different units: equips are credited once per pass per facet (~608-611), unequips once per item (~326)."
+
+### APMF-B116 (SEV-5) -- menu: init log double-counts legacy [Equip] overrides; EquipArmor census shows no seats
+Same review (F6). Verbatim: "The Init log 'N priority override(s) read' counts legacy `[Equip]` keys twice, because they are copied into both maps." and "The EquipSink and HandBlock seats register for the census only on EquipWeapon, so hovering an EquipArmor source shows no seats."
