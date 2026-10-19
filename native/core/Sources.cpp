@@ -579,6 +579,15 @@ namespace apmf::sources {
         g_src[id].stood[static_cast<int>(f)].fetch_add(1, std::memory_order_relaxed);
     }
 
+    void NoteActive(SourceId id, Facet f) {
+        if (!Valid(id) || f >= Facet::kCount) return;
+        auto& s = g_src[id];
+        const int i = static_cast<int>(f);
+        s.involved.fetch_or(1u << i, std::memory_order_relaxed);
+        s.lastSeenMs[i].store(apmf::clock::MonotonicMs(), std::memory_order_relaxed);
+        s.lastLoadSeq.store(g_loadSeq.load(std::memory_order_relaxed), std::memory_order_relaxed);
+    }
+
     void NoteObserved(SourceId id, Facet f) {
         if (!Valid(id) || f >= Facet::kCount) return;
         auto& s = g_src[id];

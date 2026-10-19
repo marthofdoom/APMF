@@ -221,7 +221,10 @@ namespace apmf::packagesources {
                     }
                     continue;
                 }
-                if (g_lastReported[id] == curId) continue;   // counted and logged on the transition only
+                if (g_lastReported[id] == curId) {   // counted and logged on the transition only; the capture is still active
+                    apmf::sources::NoteActive(rec.src, Facet::kPackage);
+                    continue;
+                }
                 g_lastReported[id] = curId;
                 apmf::sources::NoteHit(rec.src, Facet::kPackage);   // one hit per capture, not per 500 ms poll
                 std::string client;

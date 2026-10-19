@@ -157,6 +157,10 @@ namespace apmf::sources {
     // hand claim): not an outside write, so not a Hit, Blocked or Passed. Menu tooltip only ("own").
     void NoteOwn(SourceId id, Facet f);
     void NoteInvolved(SourceId id, Facet f);    // seen on the facet, no hit (census)
+    // The source is still ACTIVE on the facet (stamps last-seen and the load sequence, counts nothing): for
+    // a steady state that is neither a hit nor a served enforcement (a pin the engine agrees with, a running
+    // package capture), so the menu's 60 s "active" winner window does not lapse. Any thread, lock-free.
+    void NoteActive(SourceId id, Facet f);
 
     // ---- clients (Q7: automatic from the calling DLL) --------------------------------
     // ClientAPI calls this on every Request / RequestEx / RequestCast that returned a

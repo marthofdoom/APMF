@@ -351,6 +351,8 @@ namespace {
             pin.lastDecision.store(1, std::memory_order_relaxed);
             // The engine already picked the pin: nothing was denied or changed, so this is NOT "Served" (menu
             // 2026-10-18: the counter was ~90% no-ops). Served is credited where the pick is actually denied below.
+            // The client is still ACTIVE on the facet though: stamp last-seen only (menu winner window).
+            apmf::sources::NoteActive(apmf::sources::ClientForHandle(claimHandle), apmf::sources::Facet::kTarget);
             return;
         }
         if (m == Membership::kAbsent && pin.everPresent.load(std::memory_order_relaxed)) {

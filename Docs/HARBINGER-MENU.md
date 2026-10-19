@@ -12,7 +12,7 @@ Harbinger adds one page to the **SKSE Menu Framework** (3.x). It shows who is dr
 4. **A table inside each header**, one row per source, in fixed columns:
    - **Source:** the mod, plugin or built in name. The winner is green, idle sources are grey and listed last, "Unattributed" is amber.
    - **Kind:** `client` (a mod that asks Harbinger), `hook` (another mod's hook DLL found on one of Harbinger's seats), `plugin`, `engine`, `direct` (Papyrus and console), `loaded` (an SKSE plugin found in the process at startup that has not been seen writing yet; it takes its real kind on its first write), or a combination such as `hook+client`.
-   - **Served:** how many times Harbinger enforced this source's own claim (a pin engaged, the engine's pick denied, a foreign write restored, an equip refused, made or removed for the claim, a package held, a cast refused, an entry made). A pin the engine already agreed with is not counted.
+   - **Served:** how many times Harbinger enforced this source's own claim (the engine's pick overridden by a pin, the engine's pick denied, a foreign write restored, an equip refused, made or removed for the claim, a package held, a cast refused, an entry made). A pin the engine already agreed with is not counted.
    - **Hits:** how many times Harbinger saw the source write the facet from outside. A mod acting on its own claim is not an outside write and is not counted here. A package a source takes over counts once per takeover, not once per check.
    - **Blocked:** how many of those writes Harbinger denied because a claim outranked the source.
    - **Passed:** how many of those writes stood because the source outranked the claim or tied with it.

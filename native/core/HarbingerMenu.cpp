@@ -313,8 +313,8 @@ namespace apmf::harbingermenu {
                 Colored(kHead, "Harbinger -- who drives each AI facet, and who wins.");
                 Colored(kGrey, "A claim beats another mod's change only with a higher priority. 0 = off. Saved to "
                                "APMF_Sources.ini. Hover a source for details.");
-                Colored(kGrey, "Served = times Harbinger enforced that source's own claim (a pin engaged, an engine "
-                               "pick denied, a write restored, an equip or package held, a cast seated, an entry). "
+                Colored(kGrey, "Served = times Harbinger enforced that source's own claim (a pin the engine "
+                               "disagreed with enforced, an engine pick denied, a write restored, an equip or package held, a cast seated, an entry). "
                                "Hits = outside writes Harbinger saw it make. Blocked = Harbinger denied that write. "
                                "Passed = it outranked the claim or tied, so its write stood. Observed = seen at a seat "
                                "that only watches (nothing decided). A pure client has Served and few Hits.");

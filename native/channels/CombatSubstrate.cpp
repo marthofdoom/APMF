@@ -566,7 +566,10 @@ namespace {
             // The InheritClient mapping is NOT forgotten here: the floor stays published until the release's
             // Drain, and a hand-block decision in that window would read an unmapped floor as "an internal claim"
             // (priority 50, a tie: the 12 "internal claim" STANDS lines). Sources::Pump purges the mapping once
-            // the claim is no longer live (60 s after issue).
+            // the claim is no longer live (60 s after issue). DELIBERATE CHANGE (2026-10-18 review): the floor
+            // now ranks as its owner client for its whole life, the release-to-Drain window included. That is an
+            // arbitration change only when the owner's Equip priority differs from the default 50 (it used to
+            // rank at the client default in that window).
         }
         a_sub.floorR = a_sub.floorL = APMF_API::kInvalidHandle;
     }
