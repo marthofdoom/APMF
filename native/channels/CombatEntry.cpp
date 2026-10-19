@@ -725,7 +725,9 @@ namespace {
             // THE COMBAT SUBSTRATE (S2a, channels/CombatSubstrate.cpp): the anchor's entry in a holder's group is
             // kept known after the engine's update (the same un-lose write, for the anchor only); any OTHER target
             // in a holder's group is the real-combat trigger (a) -- seen here synchronously from AddTarget.
-            if (apmf::combatsubstrate::AnyLive() && a_group && a_member && a_target) {
+            // MusicDebtPending (review F1 of b1c78b2): a dropped holder may still owe Harbinger's music 0 back to a group.
+            if ((apmf::combatsubstrate::AnyLive() || apmf::combatsubstrate::MusicDebtPending()) && a_group && a_member &&
+                a_target) {
                 if (apmf::combatsubstrate::IsAnchorRef(a_target)) {
                     const std::uint64_t r = orig(a_group, a_member, a_target, a_event);
                     apmf::combatsubstrate::AnchorKnowledge(a_group, a_target);

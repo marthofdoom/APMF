@@ -91,6 +91,10 @@ namespace apmf::combatsubstrate {
     // trigger (a): a target other than the anchor in a holder's group.
     bool IsAnchorRef(const RE::TESObjectREFR* a_target);
     void NoteGroupTarget(void* a_group, RE::TESObjectREFR* a_target);
+    bool MusicDebtPending();
+    // ^ ANY THREAD, one load: a holder still owes a put-back of Harbinger's music 0 (review F1 of b1c78b2), so the
+    // detection seat must keep calling NoteGroupTarget even with no substrate open. NoteGroupTarget acts on music
+    // only inside the engine's own locked update of the group (the seat checks the lock's writer thread).
     // After the engine's update of the ANCHOR in `a_group`: when a live holder that is still
     // under its substrate is a member of the group, the anchor's group entry is kept KNOWN
     // (the held engagement's own un-lose write, INVARIANTS #0 (i) condition 1, for the anchor

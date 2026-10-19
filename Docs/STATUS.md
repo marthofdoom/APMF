@@ -18,7 +18,8 @@ started each time the follower icon showed combat on the GUI, cycling back to ex
 - **anchor-home log bug** (`stays for 0x00000000`) fixed: the line names the holder the placement pass picks.
 - **ABI v26:** `APMF_API_v26::GetSubstrateState(actor)` (None / Held / Real / Anchor), any thread, lock-free.
   MFO's paired branch uses it so substrate-only combat is not party combat, HUD combat, combat style or claims.
-- Field retest: the dry run (`bSubstrateDryRun=1`) with the MFO pair deployed. Tier-3 review pending.
+- Tier-3 review of b1c78b2 (fix first): F1/F2/F4/F6 fixed by moving the deny and the put-back into the held engagement's detection seat (inside the engine's own locked group update; CombatGroup has no refcount) with a per-holder debt table; F3 (+0x15C is saved) handled at load; F5/F7 to REVIEW-BACKLOG APMF-B122/B123.
+- Field retest: the dry run (`bSubstrateDryRun=1`) with the MFO pair deployed.
 
 ## HEAD OF WORK 2026-10-13 -- ch.17 ENFORCES EVERY DECLARED CATEGORY, branch `fix/apmf-equip-enforce-all`, NOT merged
 

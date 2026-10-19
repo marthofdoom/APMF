@@ -852,3 +852,9 @@ Raised against `910c12f` (Opus review of `fix/apmf-flyer-progress`). Verbatim: "
 
 ### APMF-B121 (SEV-5) -- hold: flying transition cosmetics
 Same review. The out-of-combat branch clears `samples` but not `targetFlying` (the "no longer flying" line can print late); after landing the window starts at the last flying sample (one poll short of 20 s). Harmless.
+
+### APMF-B122 (SEV-4) -- substrate music deny: a non-holder member makes the group impure
+Raised against `b1c78b2` by the tier-3 review of `fix/apmf-substrate-fixes`. Verbatim: "A teammate in the group makes it impure, so the deny is not written. It is logged (WAITS, then MISSED), so nothing is masked; design hole in deny-completeness. Allowing a non-holder member whose only target is the anchor would be a reasonable widening later." Reasoning: deferred by the coordinator; the WAITS / MISSED lines make every occurrence visible in the field.
+
+### APMF-B123 (SEV-5) -- channels/CombatSubstrate.cpp size: propose a split as its own brief
+Raised against `b1c78b2` by the same review: the file was 1940 lines (2103 after the review-round fixes). A split is its own brief with its own tier-3 review and split proof, never inside a feature round.

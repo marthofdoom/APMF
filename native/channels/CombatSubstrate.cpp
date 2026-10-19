@@ -18,6 +18,7 @@
 #include <array>
 #include <cmath>
 #include <limits>
+#include <mutex>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -219,6 +220,9 @@ namespace {
         std::atomic<std::uint32_t> leafDenied{ 0 }, moveDenied{ 0 }, castAllowed{ 0 }, afterReal{ 0 },
             anchorRefused{ 0 }, unlost{ 0 }, combatEvents{ 0 }, hits{ 0 };
         std::array<std::atomic<std::uint32_t>, subs::kLeafCount> perLeaf{};
+        // the music deny seat (kMus* bits, low byte = the first decided value) and when that value was first seen
+        std::atomic<std::uint32_t> music{ 0 };
+        std::atomic<std::uint64_t> musicAtMs{ 0 };
     };
     std::array<Slot, kSlots>   g_slots{};
     std::atomic<std::uint32_t> g_slotCount{ 0 };   // slots with an id (the AnyLive pre-gate)
@@ -360,20 +364,11 @@ namespace {
         // P3 observed
         bool             playerCombatSeen = false;
         bool             aggressorSeen = false;
-        // the music probe (ClickUp 86e3pu939): the group's FIRST decided music state (0xFF = the engine has
-        // not decided yet, so it is never "the max"), and the BSMusicManager track at open / every change
-        bool             musicDecidedSeen = false;
-        std::uint8_t     musicDecided = 0xFF;
-        std::uint64_t    musicDecidedMs = 0;       // ms after the entry
-        bool             musicDecidedByUs = false; // the decided value is the music deny's own write
+        // the music probe (ClickUp 86e3pu939): the group's first decided state comes from the slot (the seat reads
+        // it inside the engine's own update of the group); the BSMusicManager track at open / every change
+        bool             musicDecidedLogged = false;
         RE::FormID       musicAtOpen = 0;
         std::uint32_t    musicChanges = 0;         // BSMusicManager changes while this substrate was open
-        // the music deny: a PURE-substrate group's music decision 0xFF -> 0, once, under its write lock
-        RE::CombatGroup* musicGroup = nullptr;     // the group Harbinger wrote (compared, never dereferenced alone)
-        bool             musicDenied = false;      // Harbinger's 0 stands in musicGroup
-        bool             musicWrote = false;       // this substrate wrote the 0 (it may have been restored since)
-        bool             musicDenyDone = false;    // written, or the engine decided first: no further attempt
-        bool             musicImpureLogged = false;
         bool             combatEventLogged = false;
         RE::FormID       waitLoggedFor = 0;
     };
@@ -444,6 +439,8 @@ namespace {
                              &s.unlost, &s.combatEvents, &s.hits })
                 c->store(0, std::memory_order_relaxed);
             for (auto& c : s.perLeaf) c.store(0, std::memory_order_relaxed);
+            s.music.store(0, std::memory_order_relaxed);
+            s.musicAtMs.store(0, std::memory_order_relaxed);
             s.id.store(a_id, std::memory_order_release);
             s.state.store(a_state, std::memory_order_release);
             g_slotCount.fetch_add(1, std::memory_order_relaxed);
@@ -528,15 +525,34 @@ namespace {
 
     // ---- the music deny (ClickUp 86e3pu939; marth 2026-10-13: substrate combat is not combat) ---------
     // CombatGroup+0x15C is the group's music decision. The ctor writes 0xFF (AE 0x8033D5 / SE 0x769F5D). The
-    // group update (AE 44703 / SE 43481, run under the group's WRITE lock at +0x160, row
-    // Substrate.CombatGroup.MusicWriteLock) decides it ONLY while it reads 0xFF (row
-    // Substrate.CombatGroup.MusicUndecided): 1.0 s after its first update it writes 0, then 1 when the
-    // group's strength ratio is in band (0.5 .. 2.0). CombatManager's should-play test (AE 46888 / SE 45588)
-    // lets a group that does not target the player drive battle music only while +0x15C == 1 (row
-    // Substrate.CombatManager.MusicPlayTest; "Path B"). A PURE-substrate group (every member a live holder,
-    // every target the anchor) does not target the player, so writing its undecided 0xFF to 0 before the
-    // engine decides leaves it no road to battle music. The group merge (AE 44722) copies only a DECIDED state
-    // from another group, and only a real foe's group can merge in (a real-combat trigger, which restores).
+    // group update (AE 44703 / SE 43481) takes the group's WRITE lock at +0x160 first and holds it to its end (row
+    // Substrate.CombatGroup.MusicWriteLock); it decides +0x15C ONLY while it reads 0xFF (row
+    // Substrate.CombatGroup.MusicUndecided): 1.0 s after its first update it writes 0, then 1 when the group's
+    // strength ratio is in band (0.5 .. 2.0). CombatManager's should-play test (AE 46888 / SE 45588) lets a group
+    // that does not target the player drive battle music only while +0x15C == 1 (row
+    // Substrate.CombatManager.MusicPlayTest; "Path B"). A PURE-substrate group (every member a live holder, every
+    // target the anchor) does not target the player, so writing its undecided 0xFF to 0 before the engine decides
+    // leaves it no road to battle music.
+    // THE MERGE (tier-3 review F1 of b1c78b2): CombatGroup::Merge (AE 44722 0x804A80, dest rcx, src rdx) copies the
+    // SOURCE's decided +0x15C over the destination's (AE 0x804F18), even over an engine-decided 1. Its only caller is
+    // StartCombat's join path (AE 0x83D325: Merge(join group, the actor's existing group), then the old group is
+    // retired, AE 0x8048D0). So a holder on a denied group that is pulled into an ally's real fight carries the 0
+    // INTO that fight's group. That is why the 0 is owed per HOLDER (the debt table below), never per group pointer:
+    // whatever group a debtor is a member of when a real (non-anchor) target is seen in it, Harbinger's 0 there is
+    // put back to 0xFF.
+    // WHERE (review F6 of b1c78b2): CombatGroup has no reference count (dtor AE 44702 0x8034B0; freed by AE 46870
+    // 0x83CB20 from the main update AE 36564 and the "Non render-safe AI" job AE 39089 -> 36592), and the group
+    // update runs on the "Combat manager" job (AE 39044 -> 46869 0x83CA30, no manager lock). A group pointer read
+    // from a controller on the game thread has no lifetime guarantee. So every read and write of +0x15C happens
+    // INSIDE the engine's own update of that group: the held engagement's detection seat (channels/CombatEntry.cpp
+    // DetectThunk) is called from the group detection pass (AE 44804, called at 44703+0x6D; SE 43572 at 43481+0x65,
+    // row Substrate.CombatGroup.DetectionPassInUpdate), after the update's LockForWrite (+0x30 / +0x2B) and before its
+    // music decision (+0x23C / +0x94). The seat acts only when THIS thread holds the group's write lock
+    // (WriteLockedHere: the lock's +0 writer thread id is GetCurrentThreadId and +4 has the writer bit, the layout the
+    // CommonLib.BSReadWriteLock.LockForWrite / UnlockForWrite rows pin), i.e. only inside the engine's own locked use
+    // of a live group. Timing: the detection pass first runs 0.5 s after the group's ctor (AE ctor 0x8033F0/0x8033F8:
+    // +0xB0 = now, +0xB4 = 0.5), the music decision 1.0 s after the first update (+0xB8 / +0xBC start at 0), and in
+    // one update the pass runs before the decision.
     constexpr std::uint8_t kMusicUndecided = 0xFF;
     constexpr std::uint8_t kMusicNone      = 0;
     bool        g_musicDeny    = false;
@@ -571,6 +587,189 @@ namespace {
                                           : fmt::format("{} (UNKNOWN value)", a_state);
     }
 
+    // ---- the music deny SEAT (review F1 / F2 / F4 / F6 of b1c78b2; see "the music deny" above) -----------
+    // Slot::music bits: the low byte = the FIRST decided value this holder's group showed, kMusSeen = it was
+    // seen; kMusWrote = Harbinger's 0 was written for (or shared by) this holder's group; kMusRestored = a group
+    // holding this holder and a real target had Harbinger's 0 put back to 0xFF; the two log-once bits.
+    constexpr std::uint32_t kMusSeen = 1u << 8, kMusWrote = 1u << 9, kMusRestored = 1u << 10,
+                            kMusWaitLogged = 1u << 11, kMusMissed = 1u << 12;
+
+    // True only while THIS thread holds `a_g`'s write lock (BSReadWriteLock: +0 the writer's thread id, +4 the
+    // count with the writer bit 0x80000000; AE LockForWrite 0xCC914D calls GetCurrentThreadId and compares [rcx]).
+    bool WriteLockedHere(const RE::CombatGroup* a_g) {
+        const auto* w = reinterpret_cast<const volatile std::uint32_t*>(&a_g->lock);
+        return w[0] != 0 && w[0] == REX::W32::GetCurrentThreadId() && (w[1] & 0x80000000u) != 0;
+    }
+
+    // THE DEBT TABLE: a holder whose group carries Harbinger's 0 owes a put-back to whatever group it is a member of
+    // when that group shows a real target (the merge, review F1). One entry per HOLDER (every member at the write,
+    // and a co-holder that joins a denied group, review F2), matched by membership in the group the engine is
+    // updating, never by a stored group pointer (review F4). expiresMs 0 = the substrate is open; a drop gives the
+    // entry kDebtAfterDropMs; a normal close forgets it (StopCombat ends the holder's part in the group).
+    struct MusicDebt {
+        std::uint32_t holderH = 0;
+        RE::FormID    holder = 0;
+        std::uint64_t expiresMs = 0;
+    };
+    constexpr std::size_t   kDebts           = 32;
+    constexpr std::uint64_t kDebtAfterDropMs = 30000;
+    std::mutex                    g_debtMx;   // LEAF: no engine call, no log, no other lock under it
+    std::array<MusicDebt, kDebts> g_debts{};
+    std::atomic<std::uint32_t>    g_debtCount{ 0 };   // entries in use (the seat's pre-gate)
+
+    void DebtCountLocked() {
+        std::uint32_t n = 0;
+        for (const auto& d : g_debts) n += d.holderH != 0;
+        g_debtCount.store(n, std::memory_order_release);
+    }
+    bool DebtSet(std::uint32_t a_holderH, RE::FormID a_holder, std::uint64_t a_expires) {
+        std::scoped_lock lk(g_debtMx);
+        MusicDebt* free = nullptr;
+        for (auto& d : g_debts) {
+            if (d.holderH == a_holderH) { d.holder = a_holder; d.expiresMs = a_expires; return true; }
+            if (!free && d.holderH == 0) free = &d;
+        }
+        if (!free) return false;
+        *free = MusicDebt{ a_holderH, a_holder, a_expires };
+        DebtCountLocked();
+        return true;
+    }
+    void DebtTimeout(RE::FormID a_holder, std::uint64_t a_expires) {
+        std::scoped_lock lk(g_debtMx);
+        for (auto& d : g_debts)
+            if (d.holderH != 0 && d.holder == a_holder) d.expiresMs = a_expires;
+    }
+    void DebtForget(RE::FormID a_holder) {
+        std::scoped_lock lk(g_debtMx);
+        for (auto& d : g_debts)
+            if (d.holderH != 0 && d.holder == a_holder) d = MusicDebt{};
+        DebtCountLocked();
+    }
+
+    std::string SlotIds(const std::array<int, kSlots>& a_idx, int a_n) {
+        std::string out;
+        for (int k = 0; k < a_n; ++k)
+            out += fmt::format("{}0x{}", out.empty() ? "" : ",", Hex(g_slots[a_idx[k]].id.load(std::memory_order_relaxed)));
+        return out;
+    }
+
+    // From AnchorKnowledge (the seat saw the anchor in `a_g`). Inside the engine's locked update only.
+    void SeatMusicAnchor(RE::CombatGroup* a_g) {
+        if (!WriteLockedHere(a_g)) return;
+        std::array<int, kSlots> mine{};
+        int                     n = 0;
+        bool                    anyWrote = false;
+        for (const auto& m : a_g->members) {
+            const auto h = m.memberHandle.native_handle();
+            for (int i = 0; i < kSlots && n < kSlots; ++i) {
+                if (g_slots[i].id.load(std::memory_order_acquire) == 0 ||
+                    g_slots[i].holderH.load(std::memory_order_relaxed) != h)
+                    continue;
+                if (g_slots[i].state.load(std::memory_order_acquire) & kStLive) {
+                    mine[n++] = i;
+                    if (g_slots[i].music.load(std::memory_order_acquire) & kMusWrote) anyWrote = true;
+                }
+                break;
+            }
+        }
+        if (n == 0) return;
+        const std::uint8_t ms = a_g->musicState;
+        std::uint32_t      members = 0, targets = 0;
+        const bool         pure = PureSubstrateGroup(a_g, g_anchorH.load(std::memory_order_acquire), members, targets);
+        bool               wrote = false, coOwned = false;
+        if (g_musicDeny && pure) {
+            if (ms == kMusicUndecided) {
+                a_g->musicState = kMusicNone;
+                wrote           = true;
+            } else if (ms == kMusicNone && anyWrote) {
+                coOwned = true;   // review F2: a holder that joined a group Harbinger already denied owes it too
+            }
+        }
+        const std::uint8_t seen = wrote ? kMusicNone : ms;
+        const auto         now  = apmf::clock::MonotonicMs();
+        bool               logWait = false, logMiss = false, logCo = false;
+        for (int k = 0; k < n; ++k) {
+            Slot&               s    = g_slots[mine[k]];
+            const std::uint32_t prev = s.music.load(std::memory_order_acquire);
+            std::uint32_t       add  = 0;
+            if ((wrote || coOwned) && !(prev & kMusWrote)) {
+                add |= kMusWrote;
+                DebtSet(s.holderH.load(std::memory_order_relaxed), s.id.load(std::memory_order_relaxed), 0);
+                if (coOwned) logCo = true;
+            }
+            if (seen != kMusicUndecided && !(prev & kMusSeen)) {
+                s.musicAtMs.store(now, std::memory_order_relaxed);
+                add |= kMusSeen | seen;
+            }
+            if (g_musicDeny && !wrote && !coOwned && !((prev | add) & kMusWrote)) {
+                if (ms == kMusicUndecided && !pure && !(prev & kMusWaitLogged)) { add |= kMusWaitLogged; logWait = true; }
+                if (ms != kMusicUndecided && !(prev & kMusMissed)) { add |= kMusMissed; logMiss = true; }
+            }
+            if (add) s.music.fetch_or(add, std::memory_order_acq_rel);
+        }
+        try {
+            if (wrote)
+                spdlog::info("[substrate] MUSIC DENIED: group of {} -- its music decision (CombatGroup+0x15C) 0xFF -> 0 inside "
+                             "the engine's own locked update (pure substrate: {} member(s), all live holders; {} target(s), "
+                             "all the anchor). Owed back to 0xFF by each holder to any group of theirs that shows a real target.",
+                             SlotIds(mine, n), members, targets);
+            if (logCo)
+                spdlog::info("[substrate] music deny: {} joined a group Harbinger already denied; co-owner of its 0 (review F2).",
+                             SlotIds(mine, n));
+            if (logWait)
+                spdlog::warn("[substrate] music deny WAITS: the group of {} is not pure-substrate ({} member(s), {} target(s): "
+                             "a member that is not a live holder or a target that is not the anchor), so Harbinger does "
+                             "not touch it. Retried on every detection pass while its music is undecided.",
+                             SlotIds(mine, n), members, targets);
+            if (logMiss)
+                spdlog::warn("[substrate] music deny MISSED: the group of {} already reads {} (not Harbinger's write); "
+                             "Harbinger writes only an UNDECIDED (0xFF) group and did not touch it.",
+                             SlotIds(mine, n), MusicName(ms));
+        } catch (...) {
+        }
+    }
+
+    // From NoteGroupTarget (the seat saw a target that is NOT the anchor in `a_g`: a real target). Inside the
+    // engine's locked update only. Any debtor that is a member of this group gets Harbinger's 0 put back to 0xFF
+    // (only a 0: an engine 1 or an undecided group is left alone), so the engine decides this real fight's music.
+    void SeatMusicRealTarget(RE::CombatGroup* a_g, RE::TESObjectREFR* a_target) {
+        if (g_debtCount.load(std::memory_order_acquire) == 0 || !WriteLockedHere(a_g)) return;
+        if (a_g->musicState != kMusicNone) return;
+        std::array<RE::FormID, kDebts>    who{};
+        std::array<std::uint32_t, kDebts> whoH{};
+        int                               n = 0;
+        {
+            std::scoped_lock lk(g_debtMx);
+            for (auto& d : g_debts) {
+                if (d.holderH == 0) continue;
+                for (const auto& m : a_g->members)
+                    if (m.memberHandle.native_handle() == d.holderH) {
+                        who[n]  = d.holder;
+                        whoH[n] = d.holderH;
+                        ++n;
+                        d = MusicDebt{};
+                        break;
+                    }
+            }
+            if (n) DebtCountLocked();
+        }
+        if (n == 0) return;
+        a_g->musicState = kMusicUndecided;
+        for (int k = 0; k < n; ++k)
+            for (auto& s : g_slots)
+                if (s.id.load(std::memory_order_acquire) != 0 && s.holderH.load(std::memory_order_relaxed) == whoH[k])
+                    s.music.fetch_or(kMusRestored, std::memory_order_acq_rel);
+        try {
+            std::string ids;
+            for (int k = 0; k < n; ++k) ids += fmt::format("{}0x{}", ids.empty() ? "" : ",", Hex(who[k]));
+            spdlog::info("[substrate] MUSIC RESTORED: a group holding {} shows a real target 0x{} and carried Harbinger's 0 "
+                         "(its own denied group, or merged into an ally's fight, review F1): 0 -> 0xFF inside the engine's "
+                         "locked update; the engine decides this fight's music now.",
+                         ids, Hex(a_target ? a_target->GetFormID() : 0));
+        } catch (...) {
+        }
+    }
+
     // ---- logs ----------------------------------------------------------------------------------
     std::string LeafCounts(const Slot& a_s) {
         std::string out;
@@ -590,10 +789,13 @@ namespace {
             g_musicOk ? fmt::format("at open 0x{}, now 0x{}, {} change(s) while open (each one is a MUSIC line)",
                                     Hex(a_sub.musicAtOpen), Hex(MusicNow()), a_sub.musicChanges)
                       : std::string("n/a (the BSMusicManager row did not verify)");
+        const std::uint32_t mu  = s.music.load(std::memory_order_acquire);
+        const std::uint64_t at  = s.musicAtMs.load(std::memory_order_relaxed);
         const std::string decided =
-            a_sub.musicDecidedSeen
-                ? fmt::format("{} at +{} ms by {}", MusicName(a_sub.musicDecided), a_sub.musicDecidedMs,
-                              a_sub.musicDecidedByUs ? "Harbinger's music deny" : "the ENGINE")
+            (mu & kMusSeen)
+                ? fmt::format("{} at +{} ms by {}", MusicName(static_cast<std::uint8_t>(mu & 0xFF)),
+                              at > a_sub.openedMs ? at - a_sub.openedMs : 0,
+                              (mu & kMusWrote) && (mu & 0xFF) == kMusicNone ? "Harbinger's music deny" : "the ENGINE")
                 : std::string("never decided while open (0xFF)");
         spdlog::info("[substrate] 0x{} OBSERVED music={} | group music state {} | music deny {} | player-in-combat={} "
                      "aggressor-bit={} ignoring-readers=not "
@@ -602,11 +804,12 @@ namespace {
                      "hits on the holder {} | casts released {} | anchor reached high process {} | ignoring-bit resets "
                      "{} (package restart {}, other {})",
                      Hex(a_sub.id), music, decided,
-                     !g_musicDeny        ? fmt::format("OFF ({})", g_musicDenyOff)
-                     : a_sub.musicDenied ? std::string("WROTE 0 (stands)")
-                     : a_sub.musicWrote  ? std::string("WROTE 0, restored to 0xFF (a real drop in the same group)")
-                     : a_sub.musicDenyDone ? std::string("did not write (see its line)")
-                                           : std::string("did not write (the group was never pure-substrate and undecided)"),
+                     !g_musicDeny            ? fmt::format("OFF ({})", g_musicDenyOff)
+                     : (mu & kMusRestored)   ? std::string("WROTE 0, then PUT BACK to 0xFF (a real target in a group holding him)")
+                     : (mu & kMusWrote)      ? std::string("WROTE 0 for his group (no real target seen in a group holding him since)")
+                     : (mu & kMusMissed)     ? std::string("did not write: MISSED (the group was decided first, see its line)")
+                     : (mu & kMusWaitLogged) ? std::string("did not write: the group was never pure-substrate (WAITS line)")
+                                             : std::string("did not write (no detection pass of his group while open)"),
                      a_sub.playerCombatSeen ? "y" : "n", a_sub.aggressorSeen ? 1 : 0,
                      s.anchorRefused.load(std::memory_order_relaxed), s.unlost.load(std::memory_order_relaxed),
                      s.hits.load(std::memory_order_relaxed), s.fires.load(std::memory_order_relaxed),
@@ -820,91 +1023,6 @@ namespace {
         return true;
     }
 
-    // ---- the music deny (game thread; see "the music deny" above) -----------------------------------
-    // Called every Serve until it wrote or the engine decided first. The unlocked byte peek only skips the
-    // lock once the group is decided; the purity test, the re-read and the write all run under the group's
-    // WRITE lock, the lock the engine's own decision runs under (row Substrate.CombatGroup.MusicWriteLock).
-    // It never touches a group with a member that is not a live holder or a target that is not the anchor.
-    void MusicDeny(Sub& a_sub, RE::CombatGroup* a_g, std::uint64_t a_now) {
-        if (!g_musicDeny || a_sub.musicDenyDone || !a_g) return;
-        const auto sinceOpen = a_now - a_sub.openedMs;
-        if (a_g->musicState != kMusicUndecided) {   // decided before Harbinger got there (or by another holder)
-            a_sub.musicDenyDone = true;
-            for (const auto& [id, o] : g_subs)
-                if (o.musicDenied && o.musicGroup == a_g) {
-                    spdlog::info("[substrate] 0x{} music deny: the shared group is already denied by 0x{}.", Hex(a_sub.id),
-                                 Hex(id));
-                    return;
-                }
-            spdlog::warn("[substrate] 0x{} music deny MISSED: the group's music was already decided = {} at +{} ms "
-                         "after the entry; Harbinger writes only an UNDECIDED (0xFF) group and did not touch it.",
-                         Hex(a_sub.id), MusicName(a_g->musicState), sinceOpen);
-            return;
-        }
-        const std::uint32_t anchorH = g_anchorH.load(std::memory_order_acquire);
-        std::uint32_t       members = 0, targets = 0;
-        bool                pure = false, wrote = false;
-        std::uint8_t        before = kMusicUndecided;
-        {
-            RE::BSWriteLockGuard guard(a_g->lock);
-            pure   = PureSubstrateGroup(a_g, anchorH, members, targets);
-            before = a_g->musicState;
-            if (pure && before == kMusicUndecided) {
-                a_g->musicState = kMusicNone;
-                wrote           = true;
-            }
-        }
-        if (wrote) {
-            a_sub.musicDenyDone = a_sub.musicDenied = a_sub.musicWrote = true;
-            a_sub.musicGroup                       = a_g;
-            spdlog::info("[substrate] 0x{} MUSIC DENIED: the group's music decision (CombatGroup+0x15C) 0xFF -> 0 under "
-                         "its write lock at +{} ms after the entry (pure substrate: {} member(s), all live holders; {} "
-                         "target(s), all the anchor). Put back to 0xFF only on a real-combat drop.",
-                         Hex(a_sub.id), sinceOpen, members, targets);
-            return;
-        }
-        if (before != kMusicUndecided) {   // the engine decided between the peek and the lock
-            a_sub.musicDenyDone = true;
-            spdlog::warn("[substrate] 0x{} music deny MISSED: the engine decided the group's music = {} at +{} ms, "
-                         "between Harbinger's peek and its lock; not touched.",
-                         Hex(a_sub.id), MusicName(before), sinceOpen);
-            return;
-        }
-        if (!a_sub.musicImpureLogged) {   // retried every Serve while the group stays undecided
-            a_sub.musicImpureLogged = true;
-            spdlog::warn("[substrate] 0x{} music deny WAITS at +{} ms: the group is not pure-substrate ({} member(s), {} "
-                         "target(s): a member that is not a live holder, a target that is not the anchor, or none), so "
-                         "Harbinger does not touch it. Retried every frame while the group's music is undecided.",
-                         Hex(a_sub.id), sinceOpen, members, targets);
-        }
-    }
-
-    // A real-combat drop: the group carries a real fight now (or is about to be ended empty), so the engine
-    // decides its music as it would have. Only Harbinger's own 0 goes back to 0xFF (an engine 1 or a merged value
-    // is left alone), under the write lock; every substrate that wrote this group forgets it. Runs BEFORE the
-    // anchor's RemoveTarget and any StopCombat (the group may not outlive them).
-    std::string RestoreMusic(RE::CombatGroup* a_g) {
-        if (!a_g) return {};
-        bool ours = false;
-        for (const auto& [id, o] : g_subs)
-            if (o.musicDenied && o.musicGroup == a_g) ours = true;
-        if (!ours) return {};
-        std::uint8_t before = kMusicUndecided;
-        {
-            RE::BSWriteLockGuard guard(a_g->lock);
-            before = a_g->musicState;
-            if (before == kMusicNone) a_g->musicState = kMusicUndecided;
-        }
-        for (auto& [id, o] : g_subs)
-            if (o.musicGroup == a_g) {
-                o.musicDenied = false;
-                o.musicGroup  = nullptr;
-            }
-        return before == kMusicNone
-                   ? std::string("; music decision put back 0 -> 0xFF (the engine decides it for the real fight)")
-                   : fmt::format("; music decision NOT put back: it reads {} (not Harbinger's 0)", MusicName(before));
-    }
-
     // ---- close / drop ------------------------------------------------------------------------
     void ReleaseClientClaim(Sub& a_sub, const char* a_why) {
         if (!a_sub.handle) return;
@@ -945,6 +1063,7 @@ namespace {
         auto* actor = RE::TESForm::LookupByID<RE::Actor>(a_sub.id);
         auto* proc  = actor ? actor->GetActorRuntimeData().currentProcess : nullptr;
         if (a_sub.slot >= 0 && a_sub.phase == Phase::kOpen) LogObserved(a_sub, actor);
+        DebtForget(a_sub.id);   // a normal close: his StopCombat ends his part in the group (a co-holder keeps its own debt)
         // 1. the bit back to what it was
         if (a_sub.bitSet && proc) proc->ignoringCombat = a_sub.priorBit;
         // 2. StopCombat once (the substrate entered, so the controller is the substrate's)
@@ -992,11 +1111,20 @@ namespace {
         auto* actor = RE::TESForm::LookupByID<RE::Actor>(a_sub.id);
         auto* proc  = actor ? actor->GetActorRuntimeData().currentProcess : nullptr;
         if (a_sub.bitSet && proc) proc->ignoringCombat = a_sub.priorBit;   // the package no longer runs in combat
+        // The music debt (review F1): an (a)-trigger restore already ran in the seat that saw the real target. Any 0 still
+        // owed (a hit / party trigger, or a merge into an ally's fight) is put back by the seat on the next detection pass
+        // that sees a real target in a group holding this holder, for kDebtAfterDropMs.
+        const std::uint32_t mu = s.music.load(std::memory_order_acquire);
+        DebtTimeout(a_sub.id, apmf::clock::MonotonicMs() + kDebtAfterDropMs);
+        const std::string musicNote =
+            !(mu & kMusWrote) ? std::string()
+            : (mu & kMusRestored) ? std::string("; music: Harbinger's 0 already put back to 0xFF")
+                                  : fmt::format("; music: Harbinger's 0 is owed back for {} s (the seat puts it back on a "
+                                                "real target in any group holding him)", kDebtAfterDropMs / 1000);
         // the anchor out of the holder's group targets (the engine's own RemoveTarget)
         std::string removed = "no controller";
         if (auto* cc = actor ? actor->GetActorRuntimeData().combatController : nullptr) {
             if (auto* g = cc->combatGroup; g && Anchor()) {
-                const std::string music = RestoreMusic(g);   // before RemoveTarget / any StopCombat (the group may end)
                 g_removeTarget(g, Anchor());
                 std::uint32_t left = 0;
                 bool          still = false;
@@ -1005,8 +1133,8 @@ namespace {
                     left = g->targets.size();
                     still = FindTargetEntry(g, g_anchorH.load()) != nullptr;
                 }
-                removed = fmt::format("anchor removed from the group targets (RemoveTarget){}; {} target(s) left{}",
-                                      still ? " -- STILL LISTED" : "", left, music);
+                removed = fmt::format("anchor removed from the group targets (RemoveTarget){}; {} target(s) left",
+                                      still ? " -- STILL LISTED" : "", left);
                 // marth 2026-10-13 (review F6, "End an empty fight"): a trigger that is not in the holder's group
                 // ((b) a hit, (c) the party) leaves a fight with NO target once the anchor is gone. That one is ended
                 // through the held engagement's RANKED StopCombat; a fight with the real foe in it never is.
@@ -1043,7 +1171,7 @@ namespace {
         spdlog::info("[substrate] 0x{} REAL COMBAT ({} 0x{}) -- substrate DROPPED, combat behaviour restored in the same "
                      "frame: {}, holders {}->{}, anchor {}; released: leaf allow-list, movement denies, ignore-combat hold, "
                      "anchor refusal, substrate floors; claim {}",
-                     Hex(a_sub.id), kWhyName[why < 4 ? why : 0], Hex(foe), removed, before, before - 1,
+                     Hex(a_sub.id), kWhyName[why < 4 ? why : 0], Hex(foe), removed + musicNote, before, before - 1,
                      home ? std::string("home") : StaysText(stays),
                      driving ? fmt::format("h={} kept", ch) : std::string("none (no driving cast claim)"));
         if (afterReal)
@@ -1173,22 +1301,14 @@ namespace {
             }
             a_sub.bitWasOn = on;
         }
-        if (auto* cc = actor->GetActorRuntimeData().combatController; cc && cc->combatGroup) {
-            auto* g = cc->combatGroup;
-            MusicDeny(a_sub, g, a_now);
-            // the probe: the FIRST decided state (an unlocked byte read, the probe's only use of it)
-            if (const std::uint8_t ms = g->musicState; !a_sub.musicDecidedSeen && ms != kMusicUndecided) {
-                a_sub.musicDecidedSeen = true;
-                a_sub.musicDecided     = ms;
-                a_sub.musicDecidedMs   = a_now - a_sub.openedMs;
-                a_sub.musicDecidedByUs = false;
-                if (ms == kMusicNone)
-                    for (const auto& [oid, o] : g_subs)
-                        if (o.musicDenied && o.musicGroup == g) a_sub.musicDecidedByUs = true;
-                spdlog::info("[substrate] 0x{} group music state DECIDED = {} at +{} ms after the entry, by {}.",
-                             Hex(a_sub.id), MusicName(ms), a_sub.musicDecidedMs,
-                             a_sub.musicDecidedByUs ? "Harbinger's music deny" : "the ENGINE");
-            }
+        // the probe: the FIRST decided state of his group, recorded by the seat inside the engine's own update of it
+        // (review F6: the game thread never dereferences the group for music)
+        if (const std::uint32_t mu = s.music.load(std::memory_order_acquire); !a_sub.musicDecidedLogged && (mu & kMusSeen)) {
+            a_sub.musicDecidedLogged = true;
+            const std::uint64_t at   = s.musicAtMs.load(std::memory_order_relaxed);
+            spdlog::info("[substrate] 0x{} group music state DECIDED = {} at +{} ms after the entry, by {}.", Hex(a_sub.id),
+                         MusicName(static_cast<std::uint8_t>(mu & 0xFF)), at > a_sub.openedMs ? at - a_sub.openedMs : 0,
+                         (mu & kMusWrote) && (mu & 0xFF) == kMusicNone ? "Harbinger's music deny" : "the ENGINE");
         }
         if (!a_sub.combatEventLogged && s.combatEvents.load(std::memory_order_relaxed) != 0) {
             a_sub.combatEventLogged = true;
@@ -1383,6 +1503,25 @@ namespace {
             spdlog::info("[substrate] MUSIC tracking ends ({} s after the last substrate closed): current 0x{}.",
                          kMusicTailMs / 1000, Hex(m));
         }
+    }
+
+    // Debts a drop timed out with no real target seen in a group holding the holder (game thread, Poll).
+    void DebtExpire(std::uint64_t a_now) {
+        if (g_debtCount.load(std::memory_order_acquire) == 0) return;
+        std::vector<RE::FormID> gone;
+        {
+            std::scoped_lock lk(g_debtMx);
+            for (auto& d : g_debts)
+                if (d.holderH != 0 && d.expiresMs != 0 && a_now >= d.expiresMs) {
+                    gone.push_back(d.holder);
+                    d = MusicDebt{};
+                }
+            if (!gone.empty()) DebtCountLocked();
+        }
+        for (const auto id : gone)
+            spdlog::info("[substrate] 0x{} music debt ended: no group holding him showed a real target within {} s of the "
+                         "drop (his denied group ended with its fight; nothing to put back).",
+                         Hex(id), kDebtAfterDropMs / 1000);
     }
 
     void Heartbeat(std::uint64_t a_now) {
@@ -1612,8 +1751,12 @@ namespace apmf::combatsubstrate {
         return a_target && a != 0 && a_target->GetFormID() == a;
     }
 
+    bool MusicDebtPending() { return g_debtCount.load(std::memory_order_acquire) != 0; }
+
     void NoteGroupTarget(void* a_group, RE::TESObjectREFR* a_target) {
-        if (!AnyLive() || !a_group || !a_target) return;
+        if (!a_group || !a_target) return;
+        SeatMusicRealTarget(static_cast<RE::CombatGroup*>(a_group), a_target);   // before the drop can clear any slot
+        if (!AnyLive()) return;
         auto*               g       = static_cast<RE::CombatGroup*>(a_group);
         const std::uint32_t anchorH = g_anchorH.load(std::memory_order_acquire);
         bool                other   = false;
@@ -1636,6 +1779,7 @@ namespace apmf::combatsubstrate {
     void AnchorKnowledge(void* a_group, RE::TESObjectREFR* a_anchor) {
         if (!AnyLive() || !a_group || !a_anchor) return;
         auto* g = static_cast<RE::CombatGroup*>(a_group);
+        SeatMusicAnchor(g);   // the music deny / probe: inside the engine's own locked update only
         for (int i = 0; i < kSlots; ++i) {
             if (g_slots[i].id.load(std::memory_order_acquire) == 0) continue;
             const auto st = g_slots[i].state.load(std::memory_order_acquire);
@@ -1710,10 +1854,13 @@ namespace apmf::combatsubstrate {
             if (!ok) why = "the address self-check refused a row this path calls (listed above)";
             g_vtChar = vtChar.address();
         }
-        // The music deny (ClickUp 86e3pu939). Every engine fact it rests on is a verified row: the group update
-        // takes the WRITE lock at +0x160 (MusicWriteLock), decides +0x15C only while it is 0xFF (MusicUndecided), and
-        // the should-play test reads +0x15C == 1 (MusicPlayTest); the lock calls are CommonLib's (LockForWrite /
-        // UnlockForWrite). A failed row REFUSES THE SUBSTRATE (principle 2: it would switch battle music on undenied);
+        // The music deny (ClickUp 86e3pu939; seat form after review F6 of b1c78b2). Every engine fact it rests on is a
+        // verified row: the group update takes the WRITE lock at +0x160 first (MusicWriteLock), calls the group detection
+        // pass the seat rides (DetectionPassInUpdate), decides +0x15C only while it is 0xFF (MusicUndecided), and the
+        // should-play test reads +0x15C == 1 (MusicPlayTest); the lock rows (LockForWrite / UnlockForWrite) pin the
+        // +0 writer-thread / +4 count layout WriteLockedHere reads (Harbinger never calls them for music). The seat is
+        // the held engagement's knowledge seat (combatentry::hold::KnowledgeInstalled). A failed row or a missing seat
+        // REFUSES THE SUBSTRATE (principle 2: it would switch battle music on undenied);
         // [CombatSubstrate] bSubstrateMusicDeny=0 is the explicit off switch (the substrate runs, every OPEN logs the
         // hole). 1.7.104: the three engine functions are not in the 1.7.104 id table (the shape is the same there:
         // 0x8185A0 / 0x8187AC / 0x852FD9), and a RELOCATION_ID miss is fatal on 1.7.104, so the ids are never built
@@ -1738,9 +1885,13 @@ namespace apmf::combatsubstrate {
                          REL::Relocation<std::uintptr_t>{ RE::Offset::BSReadWriteLock::UnlockForWrite }.address(),
                          "CommonLib.BSReadWriteLock.UnlockForWrite") && ok;
                 ok = apmf::allowance::SeatVerified(upd + (ae ? 0x30 : 0x2B), "Substrate.CombatGroup.MusicWriteLock") && ok;
+                ok = apmf::allowance::SeatVerified(upd + (ae ? 0x6D : 0x65), "Substrate.CombatGroup.DetectionPassInUpdate") && ok;
                 ok = apmf::allowance::SeatVerified(upd + (ae ? 0x23C : 0x94), "Substrate.CombatGroup.MusicUndecided") && ok;
                 ok = apmf::allowance::SeatVerified(spt + (ae ? 0x1E9 : 0x1E7), "Substrate.CombatManager.MusicPlayTest") && ok;
-                if (ok) {
+                if (ok && !apmf::combatentry::hold::KnowledgeInstalled()) {
+                    why = "the music deny rides the held engagement's knowledge seat (the group detection pass inside the "
+                          "engine's locked group update), which is not installed (see the [hold] knowledge seats line)";
+                } else if (ok) {
                     g_musicDeny    = true;
                     g_musicDenyOff = "";
                 } else {
@@ -1835,6 +1986,7 @@ namespace apmf::combatsubstrate {
         ++g_pollFrame;
         const auto now = apmf::clock::MonotonicMs();
         DryRunSchedule(now);
+        DebtExpire(now);
         if (g_subCount.load(std::memory_order_relaxed) == 0 && g_subs.empty()) {
             MusicProbe(now);   // the tail after the last close
             if (g_dryRun) Heartbeat(now);
@@ -1882,6 +2034,11 @@ namespace apmf::combatsubstrate {
         g_anchorOut = 0;
         g_served    = 0;
         g_musicTracking = false;
+        {
+            std::scoped_lock lk(g_debtMx);
+            g_debts.fill(MusicDebt{});
+            DebtCountLocked();
+        }
         if (n) spdlog::info("[substrate] {} -- forgot {} substrate(s); no engine call (the outgoing world's controllers "
                             "go with it).", a_why, n);
     }
@@ -1922,6 +2079,12 @@ namespace apmf::combatsubstrate {
                 if (left == 0 && *reinterpret_cast<const std::uintptr_t*>(a) == g_vtChar) {
                     a->StopCombat();
                     ++stopped;
+                } else if (left != 0 && g_musicDeny) {
+                    // review F3: +0x15C is SAVED (AE save 0x80ABE0 -> WriteData 0x80B28B; load 0x80B2D0 -> ReadData
+                    // 0x80BB96). A group saved mid-substrate that also holds a real target may carry Harbinger's 0: this
+                    // actor owes it back, and the seat puts it back inside the group's next locked update (it reads 0
+                    // and shows a real target). A pure-substrate group (left == 0 above) is ended instead.
+                    DebtSet(a->GetHandle().native_handle(), a->GetFormID(), apmf::clock::MonotonicMs() + kDebtAfterDropMs);
                 }
                 spdlog::warn("[substrate] {}: 0x{} came out of the save in combat with the anchor (a save written while a "
                              "substrate was open) -- anchor removed from its group{}.",

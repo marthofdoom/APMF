@@ -3936,7 +3936,7 @@
     "1.6.1170": "48 89 74 24 18 57 48 83 EC 20 48 8B F9 FF 15 ?? ?? ?? ?? 8B F0 39 07 75 0F",
     "1.5.97": "48 89 74 24 18 57 48 83 EC 20 48 8B F9 FF 15 ?? ?? ?? ?? 8B F0 39 07 75 0F"
    },
-   "source": "native/channels/CombatSubstrate.cpp (the music deny: a PURE-substrate group's music decision CombatGroup+0x15C written 0xFF -> 0 once under the group's write lock, restored 0 -> 0xFF on a real drop) (BSWriteLockGuard)",
+   "source": "native/channels/CombatSubstrate.cpp WriteLockedHere: pins the lock layout the music seat reads (+0 the writer's thread id compared with GetCurrentThreadId, +4 the count with the writer bit); Harbinger does not call it for music",
    "doc": "combat substrate music deny (ClickUp 86e3pu939)"
   },
   {
@@ -3951,7 +3951,7 @@
     "1.6.1170": "8B 41 04 3D 01 00 00 80 75 0B 33 C0 89 01 0F AE F0",
     "1.5.97": "8B 41 04 FF C8 3D 00 00 00 80 75 0B 33 C0 89 01"
    },
-   "source": "native/channels/CombatSubstrate.cpp (the music deny: a PURE-substrate group's music decision CombatGroup+0x15C written 0xFF -> 0 once under the group's write lock, restored 0 -> 0xFF on a real drop) (BSWriteLockGuard)",
+   "source": "native/channels/CombatSubstrate.cpp WriteLockedHere: pins the lock layout the music seat reads (+0 the writer's thread id compared with GetCurrentThreadId, +4 the count with the writer bit); Harbinger does not call it for music",
    "doc": "combat substrate music deny (ClickUp 86e3pu939)"
   },
   {
@@ -3979,9 +3979,33 @@
    "doc": "combat substrate music deny: AE 0x803740 / SE 0x76A31B call LockForWrite (1.7.104 0x8185A0 -> 0xCE32D0, same shape; not in the 1.7.104 id table)"
   },
   {
+   "seat": "Substrate.CombatGroup.DetectionPassInUpdate",
+   "kind": "callsite",
+   "construct": "the CombatGroup update calls the group detection pass (AE 44804 0x80CE00 / SE 43572 0x772CD0) AFTER its LockForWrite (+0x30 / +0x2B) and BEFORE its music decision (+0x23C / +0x94): the held engagement's knowledge seat (row EngagementHold.Site.GroupDetectionPass, inside that pass) therefore runs inside the engine's own write-locked update of a live group, where the music seat reads and writes +0x15C (review F6 of b1c78b2: CombatGroup has no reference count; the game thread has no lifetime guarantee for it)",
+   "ids": {
+    "1.6.1170": 44703,
+    "1.5.97": 43481
+   },
+   "sig": {
+    "1.6.1170": "40 57 48 83 EC 50 48 C7 44 24 20 FE FF FF FF 48 89 5C 24 68 0F 29 74 24 40 0F 29 7C 24 30 48 8B F9 48 8D 99 60 01 00 00 48 89 5C 24 60 48 8B CB E8 ?? ?? ?? ??",
+    "1.5.97": "40 57 48 83 EC 40 48 C7 44 24 20 FE FF FF FF 48 89 5C 24 58 0F 29 74 24 30 48 8B F9 48 8D 99 60 01 00 00 48 89 5C 24 50 48 8B CB E8 ?? ?? ?? ??"
+   },
+   "source": "native/channels/CombatSubstrate.cpp (the music seat: SeatMusicAnchor / SeatMusicRealTarget, called from channels/CombatEntry.cpp DetectThunk)",
+   "offset": {
+    "1.6.1170": "0x6D",
+    "1.5.97": "0x65"
+   },
+   "bytes": "E8",
+   "target": {
+    "1.6.1170": 44804,
+    "1.5.97": 43572
+   },
+   "doc": "combat substrate music deny, review F6 of b1c78b2: AE 0x80377D / SE 0x76A355 (1.7.104: not in its id table)"
+  },
+  {
    "seat": "Substrate.CombatGroup.MusicUndecided",
    "kind": "callsite",
-   "construct": "the same CombatGroup update: `cmp byte [rdi+0x15C],0xFF` -- the music decision is made ONLY while +0x15C is 0xFF (the ctor's value, AE 0x8033D5 / SE 0x769F5D): after a timer (+0xB8 / +0xBC) it writes 0, then 1 when the strength ratio (+0xC8 / +0xD0) is in band (AE 0x8039A6 / 0x8039E0, SE 0x76A3E1 / 0x76A41B). Nothing but the ctor and the group merge (AE 44722 0x804F24, copies a DECIDED state only) writes it again",
+   "construct": "the same CombatGroup update: `cmp byte [rdi+0x15C],0xFF` -- the music decision is made ONLY while +0x15C is 0xFF (the ctor's value, AE 0x8033D5 / SE 0x769F5D): after a timer (+0xB8 / +0xBC) it writes 0, then 1 when the strength ratio (+0xC8 / +0xD0) is in band (AE 0x8039A6 / 0x8039E0, SE 0x76A3E1 / 0x76A41B). The only other writer is CombatGroup::Merge (AE 44722 0x804A80, dest rcx / src rdx), which at AE 0x804F18 copies the SOURCE's decided value over the destination's, an engine 1 included; its only caller is StartCombat's join path (AE 0x83D325), so a holder pulled into an ally's real fight carries a denied 0 into that fight's group (review F1 of b1c78b2: the 0 is owed back per holder)",
    "ids": {
     "1.6.1170": 44703,
     "1.5.97": 43481

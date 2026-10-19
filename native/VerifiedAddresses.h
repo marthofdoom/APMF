@@ -19,7 +19,7 @@
 
 namespace apmf::VerifiedAddresses
 {
-	// 1.6.1170.0: 241 rows
+	// 1.6.1170.0: 242 rows
 	inline constexpr REL::SelfCheck::Row kRows_1_6_1170[] = {
 		{ 207886, 0x18A5558, 0x0, 0, {  }, "Character" },
 		{ 207896, 0x18A5FE8, 0x0, 0, {  }, "Character.ActorValueOwner" },
@@ -239,6 +239,7 @@ namespace apmf::VerifiedAddresses
 		{ 68234, 0xCC9140, 0x0, 0, {  }, "CommonLib.BSReadWriteLock.LockForWrite" },
 		{ 68240, 0xCC9390, 0x0, 0, {  }, "CommonLib.BSReadWriteLock.UnlockForWrite" },
 		{ 44703, 0x803710, 0x30, 1, { 0xE8 }, "Substrate.CombatGroup.MusicWriteLock" },
+		{ 44703, 0x803710, 0x6D, 1, { 0xE8 }, "Substrate.CombatGroup.DetectionPassInUpdate" },
 		{ 44703, 0x803710, 0x23C, 7, { 0x80, 0xBF, 0x5C, 0x01, 0x00, 0x00, 0xFF }, "Substrate.CombatGroup.MusicUndecided" },
 		{ 46888, 0x83DF10, 0x1E9, 7, { 0x80, 0xBD, 0x5C, 0x01, 0x00, 0x00, 0x01 }, "Substrate.CombatManager.MusicPlayTest" },
 		{ 205318, 0x18733B0, 0x0, 0, {  }, "Leaf.CombatBehaviorIdle<float>" },
@@ -264,7 +265,7 @@ namespace apmf::VerifiedAddresses
 		{ 214367, 0x18E8AC8, 0x0, 0, {  }, "Leaf.CombatBehaviorRepeat<float,FLAGS>" },
 	};
 
-	// 1.5.97.0: 241 rows
+	// 1.5.97.0: 242 rows
 	inline constexpr REL::SelfCheck::Row kRows_1_5_97[] = {
 		{ 261397, 0x165DA40, 0x0, 0, {  }, "Character" },
 		{ 261402, 0x165E4D0, 0x0, 0, {  }, "Character.ActorValueOwner.SE" },
@@ -484,6 +485,7 @@ namespace apmf::VerifiedAddresses
 		{ 66977, 0xC07350, 0x0, 0, {  }, "CommonLib.BSReadWriteLock.LockForWrite" },
 		{ 66983, 0xC075A0, 0x0, 0, {  }, "CommonLib.BSReadWriteLock.UnlockForWrite" },
 		{ 43481, 0x76A2F0, 0x2B, 1, { 0xE8 }, "Substrate.CombatGroup.MusicWriteLock" },
+		{ 43481, 0x76A2F0, 0x65, 1, { 0xE8 }, "Substrate.CombatGroup.DetectionPassInUpdate" },
 		{ 43481, 0x76A2F0, 0x94, 7, { 0x80, 0xBF, 0x5C, 0x01, 0x00, 0x00, 0xFF }, "Substrate.CombatGroup.MusicUndecided" },
 		{ 45588, 0x7A6A30, 0x1E7, 7, { 0x80, 0xBD, 0x5C, 0x01, 0x00, 0x00, 0x01 }, "Substrate.CombatManager.MusicPlayTest" },
 		{ 256701, 0x162FD40, 0x0, 0, {  }, "Leaf.CombatBehaviorIdle<float>" },
@@ -510,7 +512,7 @@ namespace apmf::VerifiedAddresses
 	};
 
 	// 1.7.104.0: 245 rows
-	// 39 NOT VERIFIED on 1.7.104.0, deliberately absent from this table (the seat is refused):
+	// 40 NOT VERIFIED on 1.7.104.0, deliberately absent from this table (the seat is refused):
 	//   Character.ActorValueOwner.SE (1.6.1170 id -): no 1.6.1170 (AE) id: the 1.7.104 map is keyed by AE id (1.5.97-only seat)
 	//   TargetPin.CombatController.SetTarget (1.6.1170 id 33235): id 33235 is not in the idmap
 	//   EquipSink.Path.OutfitApply.24234 (1.6.1170 id -): BY DESIGN: 1.5.97-only label. On 1.6.1170 and 1.7.104 the code reads its AE twin EquipSink.Path.OutfitApply.418622 (AE id 418622, 1.7.104 0x3C4440), whose own row carries the 1.7.104 fact (MAPPED-AE)
@@ -548,6 +550,7 @@ namespace apmf::VerifiedAddresses
 	//   Substrate.BSMusicManager.Reader (1.6.1170 id 36550): id 36550 is not in the idmap
 	//   Substrate.BSMusicManager.Singleton (1.6.1170 id 400896): proven through Substrate.BSMusicManager.Reader, which did not verify: id 36550 is not in the idmap
 	//   Substrate.CombatGroup.MusicWriteLock (1.6.1170 id 44703): id 44703 is not in the idmap
+	//   Substrate.CombatGroup.DetectionPassInUpdate (1.6.1170 id 44703): id 44703 is not in the idmap
 	//   Substrate.CombatGroup.MusicUndecided (1.6.1170 id 44703): id 44703 is not in the idmap
 	//   Substrate.CombatManager.MusicPlayTest (1.6.1170 id 46888): id 46888 is not in the idmap
 	inline constexpr REL::SelfCheck::Row kRows_1_7_104[] = {
