@@ -126,7 +126,7 @@ a DENIED category is unequipped by the enforce pass. The header comments that st
 stale until the paired MFO header change.
 
 <a id="abi-history"></a>
-## ABI v10 to v26: what each version added
+## ABI v10 to v27: what each version added
 
 Moved verbatim from `native/APMF_API.h` (line 96 at 9d01cdf). The header keeps a pointer to this anchor.
 
@@ -226,6 +226,18 @@ actor's combat as a fight. A client must see abiVersion >= 26 before it calls th
 no query, and a v23..v25 APMF with the substrate on reads as ordinary combat (today's behaviour). No struct,
 no intent, no change to any existing slot. The same build adds the substrate's music deny (no ABI surface).
 Docs/APMF_API-REFERENCE.md#abi-v26-substrate-state, Docs/FACETS.md "Combat substrate".
+ABI v27 (2026-10-19, ch.27 substrate availability, substrate round R1): APMF_API_v27 appends ONE read-only
+slot, IsSubstrateAvailable() -> bool, ANY thread (one atomic load, no game call). TRUE only when the
+substrate INSTALLED on this runtime: [CombatSubstrate] bCombatSubstrate not 0, exactly 1.6.1170 or 1.5.97
+(not VR), every seat it rides installed, every address row it calls verified, its APMF.esl records
+resolved; FALSE before kDataLoaded and after any refusal. It lets a client tell "the capability is absent
+here" (a declared degrade it may plan for) from "this one open was refused" (a logged failure, never a
+fallback). A client must see abiVersion >= 27 before it calls the slot: an older APMF has no query. No
+struct, no intent, no change to any existing slot.
+NUMBERING NOTE: v27 had been left free for the ch.17 per-item equip deny (ClickUp 86e3t8w23). The substrate
+availability query took v27 (MFO's OOC substrate client needs it first), so the per-item equip deny moves to
+v28.
+Docs/APMF_API-REFERENCE.md#abi-v27-substrate-available, Docs/FACETS.md "Combat substrate".
 ```
 
 <a id="intent-18"></a>

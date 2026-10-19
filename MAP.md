@@ -128,7 +128,11 @@ and `APMF_API_v24 : APMF_API_v22` with ONE slot, `GetIdleState(handle, APMF_Idle
 helpers `SetEquipEntryUid` / `EquipEntryUid`** (Docs/APMF_API-REFERENCE.md#abi-v25-equip-instance).
 **ABI v26 (2026-10-19, ch.27 substrate state, ClickUp 86e3pu939) adds `SubstrateState` (None 0 / Held 1 / Real 2 /
 Anchor 3) and `APMF_API_v26 : APMF_API_v24` with ONE slot, `GetSubstrateState(actor)` (any thread, lock-free)**
-(channels/CombatSubstrate.h `StateOf`; Docs/APMF_API-REFERENCE.md#abi-v26-substrate-state). The header
+(channels/CombatSubstrate.h `StateOf`; Docs/APMF_API-REFERENCE.md#abi-v26-substrate-state).
+**ABI v27 (2026-10-19, ch.27 substrate availability, round R1) adds `APMF_API_v27 : APMF_API_v26` with ONE slot,
+`IsSubstrateAvailable()` (any thread, one load of `combatsubstrate::Installed()`)** (Docs/APMF_API-REFERENCE.md#abi-v27-substrate-available);
+v27 had been left free for the per-item equip deny (86e3t8w23), which moves to v28. The header is 2542 lines after
+v27 (still over the 2500 backstop; reported again, not split inside the task). The header
 is at 2520 lines after v26 (OVER the 2500 backstop; reported, not split inside the task) and `core/ControlMap.cpp`
 at 2499: the next change to either plans a split first.
 To stay under 2500 lines the v24 change first moved three long-form blocks (v18 own ray,
@@ -185,6 +189,9 @@ object is an `APMF_API_v24` (a static_assert pair pins the v22 prefix end); `Req
 ABI v26 (ch.27 substrate state) adds `GetSubstrateState` -> `combatsubstrate::StateOf` (`try/catch(...)` returning
 `kSubstrateState_None`); the object is an `APMF_API_v26` (a static_assert pair pins the v24 prefix end);
 `MinReleaseForAbi(25/26)` stays the default ("a release newer than this one") until the cut names it.
+ABI v27 (ch.27 substrate availability) adds `IsSubstrateAvailable` -> `combatsubstrate::Installed()` (`try/catch(...)`
+returning false); the object is an `APMF_API_v27` (a static_assert pair pins the v26 prefix end); `MinReleaseForAbi(27)`
+is the default too.
 The "client too new" null (`abiVersion > kABIVersion`) logs the running APMF version
 (`SKSE::PluginDeclaration::GetSingleton()`) and `MinReleaseForAbi(abi)` — a table that must
 be extended on every `kABIVersion` bump.
