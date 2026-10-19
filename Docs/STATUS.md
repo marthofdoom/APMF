@@ -4,6 +4,18 @@ Updated 2026-10-13. Current version **v0.13.1** (cut 2026-10-13, ABI v24, see CH
 shipped, what's probe-gated, what's next. Keep this current in the SAME change as any
 build/finding/workflow change.
 
+## HEAD OF WORK 2026-10-19 -- SUBSTRATE ROUND R1 (ABI v27 IsSubstrateAvailable + passive P6 / panic probes), branch `feat/apmf-substrate-r1-probes`, NOT merged
+
+Plan: `_evidence/2026-10-18-designs/SUBSTRATE-TO-OOC-PLAN.md` round R1.
+- **ABI v27:** `APMF_API_v27::IsSubstrateAvailable()` = `combatsubstrate::Installed()` (INI on, exactly 1.6.1170 /
+  1.5.97, every seat and row, the APMF.esl records), any thread. MFO's OOC client (S3) needs it to tell "absent" (a
+  declared degrade) from "this open refused". v27 had been left free for the per-item equip deny (86e3t8w23): that
+  moves to v28. MFO must mirror the header byte-identically.
+- **Probes** (`channels/SubstrateProbe.cpp`, `[CombatSubstrate] bSubstrateProbes`, default 1): MOVE-BASELINE per window
+  (1 s before a dry-run pick, open, 3 s after), the re-pick-not-run context, each OTHER ignoring-bit reset with its
+  frame and package, the aggressor bit before / close / +1 s / +5 s, the hands-drawn time after the close. Passive.
+- Next: the F2 field run carries these (with `bSubstrateDryRun=1`); no freeze fix and no deny in this round.
+
 ## HEAD OF WORK 2026-10-19 -- SUBSTRATE FIXES (music deny, music probe, ABI v26 GetSubstrateState), branch `fix/apmf-substrate-fixes`, NOT merged
 
 ClickUp 86e3pu939. From the 2026-10-13 dry-run diagnosis and marth's field report ("The combat music predictably
