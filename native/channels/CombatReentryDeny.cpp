@@ -2,6 +2,7 @@
 #include "core/Sources.h"   // Harbinger 1a: seat census
 #include "core/FacetAttribution.h"   // Harbinger 1b: the StartCombat caller + the priority decision
 #include "channels/CombatReentryDeny.h"
+#include "channels/AnchorGuard.h"       // the null-target group-join refusal (SEV-1 2026-10-19) rides this seat
 #include "channels/CombatSubstrate.h"   // the anchor-target refusal (S2a) rides this seat
 #include "core/Allowance.h"   // SeatVerified(): the mit-3.7 F1 self-check gate
 #include "core/Clock.h"
@@ -160,6 +161,22 @@ extern "C" __declspec(dllimport) unsigned long __stdcall GetPrivateProfileIntA(
 //   the substrate's anchor and the caller is not a live holder still under its substrate
 //   (combatsubstrate::RefuseAnchorTarget). Without the target row or the stub this seat is
 //   exactly the ch.22 seat it was, and the substrate refuses to install.
+//
+// THE GROUP-JOIN REFUSAL (SEV-1 2026-10-19, channels/AnchorGuard.cpp). A NULL-target StartCombat
+// with a group skips the TARGET check (AE 0x6B69F7 / SE 0x625275 `test rsi,rsi; je`) and joins
+// the group, taking its targets: in a substrate group, the anchor. When anchorguard::InstallSeat
+// verifies StartCombat's register copies (row AnchorGuard.StartCombat.TargetGroupRegs: AE +0x23 /
+// SE +0x24 `mov rbp,r8; mov rsi,rdx; mov rdi,rcx`, nothing writes rsi / rbp / rdi again before the
+// self check) the stub is WIDENED to 53 bytes (BuildRdiStub):
+//     mov rax, <self-check return address>; cmp [rsp], rax; jne generic
+//     mov r8, rsi; mov r9, rbp; jmp [rip+0] <thunk>          (the self site: target, group)
+//   generic:
+//     mov r8, rdi; jmp [rip+0] <thunk>                       (every other caller, as before)
+// rax is volatile and carries no argument at a call (IsDead takes rcx / dl), r9 is a volatile argument
+// register IsDead does not take, and every branch is a JUMP, so the return address the compares
+// read is still the engine's. At the self site, after ch.22's own answer did not refuse, the thunk
+// asks anchorguard::AnswerJoin. 1.7.104 and a refused row keep the 17-byte stub (r8 = rdi only)
+// and AnswerJoin is never called.
 //
 // VERSION ROBUSTNESS. Two self-checked rows derived from our own executables: the Character
 // vtable (spec.json "Character", slot 0x99 listed) and the StartCombat self-check call site
@@ -382,14 +399,34 @@ namespace {
         }
     }
 
+    // The widened stub is in the slot (the self site hands rsi / rbp in r8 / r9). Written once at Install,
+    // before the vtable write.
+    bool g_joinStub = false;
+
+    // SEV-1 2026-10-19: the null-target group join (channels/AnchorGuard.cpp). Only at the self site, only
+    // with the widened stub, only when ch.22's own answer did not refuse.
+    bool AnswerJoinCheck(RE::Actor* a_this, std::uintptr_t a_target, std::uintptr_t a_group) {
+        try {
+            return apmf::anchorguard::AnswerJoin(a_this, reinterpret_cast<RE::Actor*>(a_target),
+                                                 reinterpret_cast<RE::CombatGroup*>(a_group), g_siteRet);
+        } catch (...) {
+            return false;   // nothing may unwind into StartCombat
+        }
+    }
+
     struct IsDeadHook {
-        // `a_rdi` = the caller's rdi, handed in by the stub (garbage unless the return address is the
-        // target-check site; never read elsewhere).
-        static bool thunk(RE::Actor* a_this, bool a_notEssential, RE::Actor* a_rdi) {
+        // `a_r8` / `a_r9`, handed in by the stub. At the TARGET-check site a_r8 = StartCombat's rdi (its
+        // `this`). At the SELF-check site, with the widened stub only, a_r8 = rsi (the target) and a_r9 = rbp
+        // (the group). Garbage everywhere else; never read there.
+        static bool thunk(RE::Actor* a_this, bool a_notEssential, std::uintptr_t a_r8, std::uintptr_t a_r9) {
             const bool dead = func(a_this, a_notEssential);   // the engine's own answer, always
             const auto ret  = reinterpret_cast<std::uintptr_t>(_ReturnAddress());
-            if (ret == g_siteRet) return AnswerSelfCheck(a_this, dead);
-            if (ret == g_targetRet && g_targetRet != 0) return AnswerTargetCheck(a_this, a_rdi, dead);
+            if (ret == g_siteRet) {
+                if (AnswerSelfCheck(a_this, dead)) return true;
+                return g_joinStub && !dead && a_this ? AnswerJoinCheck(a_this, a_r8, a_r9) : dead;
+            }
+            if (ret == g_targetRet && g_targetRet != 0)
+                return AnswerTargetCheck(a_this, reinterpret_cast<RE::Actor*>(a_r8), dead);
             return dead;
         }
         using Orig_t = bool(RE::Actor*, bool);   // the engine's IsDead (a function type, as decltype(thunk) was)
@@ -402,21 +439,57 @@ namespace {
         return cur == g_slotFn;
     }
 
-    // The 17-byte stub: mov r8, rdi; jmp qword ptr [rip+0]; <&IsDeadHook::thunk>. Own trampoline,
-    // never freed (the engine calls IsDead until the process exits). nullptr on failure.
-    std::uintptr_t BuildRdiStub() {
-        static auto* s_tr = new SKSE::Trampoline("APMF.ReentryDeny.RdiStub");
-        void*        mem  = nullptr;
-        if (const auto* intfc = SKSE::GetTrampolineInterface()) mem = intfc->AllocateFromBranchPool(64);
-        if (mem) s_tr->set_trampoline(mem, 64);
-        else s_tr->create(64);
-        auto* code = static_cast<std::uint8_t*>(s_tr->allocate(17));
-        if (!code) return 0;
-        const std::uint8_t head[9] = { 0x49, 0x89, 0xF8, 0xFF, 0x25, 0x00, 0x00, 0x00, 0x00 };
-        std::memcpy(code, head, sizeof(head));
-        const auto target = SKSE::stl::unrestricted_cast<std::uintptr_t>(&IsDeadHook::thunk);
-        std::memcpy(code + sizeof(head), &target, sizeof(target));
-        REX::W32::FlushInstructionCache(REX::W32::GetCurrentProcess(), code, 17);
+    // The 17-byte stub: mov r8, rdi; jmp qword ptr [rip+0]; <&IsDeadHook::thunk>. With `a_join`
+    // (SEV-1 2026-10-19) the 53-byte WIDENED stub instead (see the header block):
+    //   48 B8 <imm64 g_siteRet>   mov rax, imm64
+    //   48 39 04 24               cmp [rsp], rax
+    //   75 14                     jne generic (+20)
+    //   49 89 F0                  mov r8, rsi
+    //   49 89 E9                  mov r9, rbp
+    //   FF 25 00 00 00 00 <8>     jmp [rip+0] <thunk>
+    // generic:
+    //   49 89 F8                  mov r8, rdi
+    //   FF 25 00 00 00 00 <8>     jmp [rip+0] <thunk>
+    // Own trampoline, never freed (the engine calls IsDead until the process exits). 0 only on a layout
+    // slip (the byte count below). SKSE::Trampoline::allocate never returns null: a request past the pool's
+    // free size is report_and_fail (fork src/SKSE/Trampoline.cpp do_allocate), so the pool is sized for BOTH
+    // stubs (53 + 17 = 70 <= 128) and the 17-byte fallback in Install can never exhaust it (review F2 of ace1d8b).
+    constexpr std::size_t kStubPool = 128;
+    std::uintptr_t BuildRdiStub(bool a_join) {
+        static auto* s_tr = [] {   // once: a second call (the 17-byte fallback) allocates from the same pool
+            auto* tr  = new SKSE::Trampoline("APMF.ReentryDeny.RdiStub");
+            void* mem = nullptr;
+            if (const auto* intfc = SKSE::GetTrampolineInterface()) mem = intfc->AllocateFromBranchPool(kStubPool);
+            if (mem) tr->set_trampoline(mem, kStubPool);
+            else tr->create(kStubPool);
+            return tr;
+        }();
+        const auto          target = SKSE::stl::unrestricted_cast<std::uintptr_t>(&IsDeadHook::thunk);
+        const std::uint8_t  jmp[6] = { 0xFF, 0x25, 0x00, 0x00, 0x00, 0x00 };
+        const std::uint8_t  movR8Rdi[3] = { 0x49, 0x89, 0xF8 };
+        const std::size_t   len    = a_join ? 53 : 17;
+        auto*               code   = static_cast<std::uint8_t*>(s_tr->allocate(len));   // never null (see above)
+        std::size_t o = 0;
+        auto put = [&](const void* p, std::size_t n) {
+            std::memcpy(code + o, p, n);
+            o += n;
+        };
+        if (a_join) {
+            const std::uint8_t movRax[2] = { 0x48, 0xB8 };
+            const std::uint8_t cmpJne[6] = { 0x48, 0x39, 0x04, 0x24, 0x75, 0x14 };
+            const std::uint8_t selfRegs[6] = { 0x49, 0x89, 0xF0, 0x49, 0x89, 0xE9 };
+            put(movRax, sizeof(movRax));
+            put(&g_siteRet, sizeof(g_siteRet));
+            put(cmpJne, sizeof(cmpJne));
+            put(selfRegs, sizeof(selfRegs));
+            put(jmp, sizeof(jmp));
+            put(&target, sizeof(target));
+        }
+        put(movR8Rdi, sizeof(movR8Rdi));
+        put(jmp, sizeof(jmp));
+        put(&target, sizeof(target));
+        if (o != len) return 0;   // a layout slip: refuse rather than install a wrong stub
+        REX::W32::FlushInstructionCache(REX::W32::GetCurrentProcess(), code, len);
         return reinterpret_cast<std::uintptr_t>(code);
     }
 
@@ -650,10 +723,23 @@ namespace apmf::reentrydeny {
         const std::uintptr_t tsite =
             startCombat + (apmf::allowance::RuntimeAEColumn() ? kTargetCheckOffsetAE : kTargetCheckOffsetSE);
         std::uintptr_t stub = 0;
-        if (apmf::allowance::SeatVerified(tsite, "Substrate.StartCombat.TargetIsDeadCall")) stub = BuildRdiStub();
+        bool           join = false;
+        if (apmf::allowance::SeatVerified(tsite, "Substrate.StartCombat.TargetIsDeadCall")) {
+            // SEV-1 2026-10-19: the widened stub only when StartCombat's register copies verify (row
+            // AnchorGuard.StartCombat.TargetGroupRegs; 1.7.104 refused by name inside InstallSeat).
+            join = apmf::anchorguard::InstallSeat(startCombat);
+            stub = BuildRdiStub(join);
+            if (!stub && join) {
+                spdlog::error("[ch.22] the widened rdi/rsi/rbp stub could not be built: the anchor join guard is OFF.");
+                join = false;
+                stub = BuildRdiStub(false);
+            }
+        }
+        g_joinStub = stub && join;   // before the slot write: the thunk reads it
         g_slotFn = stub ? stub : SKSE::stl::unrestricted_cast<std::uintptr_t>(&IsDeadHook::thunk);
         IsDeadHook::func = vtChar.write_vfunc(kIsDeadSlot, g_slotFn);
         if (stub) g_targetRet = tsite + kTargetCheckLen;   // only after the slot holds the stub
+        if (g_joinStub) apmf::anchorguard::SeatArmed();
         apmf::sources::NoteVfunc(apmf::sources::Facet::kCombat, "ReentryDeny.Character.IsDead", vtChar.address(),
                                  kIsDeadSlot, g_slotFn, IsDeadHook::func.address());
         g_installed.store(true, std::memory_order_release);
@@ -661,8 +747,9 @@ namespace apmf::reentrydeny {
                      "answering only at Actor::StartCombat's self-check (return RVA 0x{:X}){}.",
                      kIsDeadSlot, g_siteRet - REL::Module::get().base(),
                      g_targetRet ? fmt::format(" and, for the combat substrate's anchor, at its TARGET check (return RVA "
-                                               "0x{:X}, through the rdi stub)",
-                                               g_targetRet - REL::Module::get().base())
+                                               "0x{:X}, through the rdi stub); anchor join guard at the self check: {}",
+                                               g_targetRet - REL::Module::get().base(),
+                                               apmf::anchorguard::SeatState())
                                  : std::string(" (the substrate's anchor refusal is NOT installed: its row or the stub "
                                                "failed)"));
     }

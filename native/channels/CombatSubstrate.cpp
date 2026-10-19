@@ -1,6 +1,7 @@
 #include "PCH.h"
 #include "channels/CombatSubstrate.h"
 
+#include "channels/AnchorGuard.h"          // the null-target join refusal's group set + the anchor-leak sweep
 #include "channels/CombatApproach.h"       // SpaceOfRef: the anchor's last-known location space
 #include "channels/CombatEntry.h"          // hold::StopCombatRanked: the empty-fight end (F6)
 #include "channels/CombatReentryDeny.h"    // the slot-0x99 seat this file's anchor refusal rides; ClientEntryScope
@@ -115,9 +116,13 @@
 //     owns answers "dead" at StartCombat's TARGET check (verified row
 //     Substrate.StartCombat.TargetIsDeadCall: AE +0xCC, return 0x6B6A0A; SE +0xCA, return
 //     0x625288). StartCombat's own `this` is in rdi there; a 17-byte stub in front of the
-//     thunk hands it in as a third argument (channels/CombatReentryDeny.cpp). A RECORDED HOLE
-//     (design 3.5; recorded, NOT approved by marth): a group JOIN (StartCombat's third argument)
-//     is not caught at that check;
+//     thunk hands it in as a third argument (channels/CombatReentryDeny.cpp). The GROUP JOIN
+//     (StartCombat's third argument) the design recorded as a hole is CLOSED since 2026-10-19
+//     (SEV-1, a non-holder fought the anchor): at StartCombat's SELF check a NULL-target entry
+//     into a substrate group by a non-holder is refused (channels/AnchorGuard.cpp), and a
+//     route-independent sweep ERROR-logs and cleans any non-holder that targets the anchor or
+//     whose group lists it, every Poll while a substrate is live and 10 s after (CLOSE runs it on
+//     the closing holder's group members);
 //   * the anchor's group entry is kept KNOWN (the held engagement's own un-lose write,
 //     INVARIANTS #0 (i) condition 1, for the anchor only) so the group never searches for it;
 //   * other spells: the floors + ch.8 / 0x0F / 0x0A as before; only the claimed spell runs.
@@ -1072,7 +1077,10 @@ namespace {
         DebtForget(a_sub.id);   // a normal close: his StopCombat ends his part in the group (a co-holder keeps its own debt)
         // 1. the bit back to what it was
         if (a_sub.bitSet && proc) proc->ignoringCombat = a_sub.priorBit;
-        // 2. StopCombat once (the substrate entered, so the controller is the substrate's)
+        // 2. StopCombat once (the substrate entered, so the controller is the substrate's). Its group's other
+        //    members are read first: a non-holder among them is cleaned after the StopCombat (anchor guard).
+        const auto members = a_sub.phase == Phase::kOpen ? apmf::anchorguard::GroupMembers(actor)
+                                                         : std::vector<RE::ActorHandle>{};
         bool stopped = false;
         if (a_sub.phase == Phase::kOpen && actor && HasController(actor)) {
             if (*reinterpret_cast<const std::uintptr_t*>(actor) == g_vtChar) {
@@ -1083,6 +1091,7 @@ namespace {
             }
         }
         const bool ccNull = !HasController(actor);
+        apmf::anchorguard::AfterClose(a_sub.id, members);   // every non-holder still in that group (SEV-1 2026-10-19)
         // 3. the substrate's internal effects
         ReleaseFloors(a_sub);
         Slot* s = a_sub.slot >= 0 ? &g_slots[a_sub.slot] : nullptr;
@@ -1553,7 +1562,9 @@ namespace {
     // ---- the BYSTANDER CENSUS (2026-10-19; PASSIVE: no write, no hook, no address id) -------------------
     // Field: townsfolk panicked while a substrate was open and no crime was committed; which channel does it is
     // not attributed. While any substrate is open, and kCensusTailMs after the last one closes, walk the high-process
-    // actors that are not the player, a teammate or the anchor and stand within kCensusRadius of a holder, and log
+    // actors that are not the player, a live holder or the anchor and stand within kCensusRadius of a holder (since
+    // 2026-10-19 NON-HOLDER teammates included: the SEV-1 leak was a teammate; an actor whose controller targets the
+    // anchor is logged at any distance and keeps the window open), and log
     // ON CHANGE ONLY what each one's engine state does. Every read is a plain member read of a CommonLib member
     // (CombatController, CombatState, AIProcess+0x136, the running package's type); NOT instrumented: the combat-start
     // topic and the alarm / detection level (no verified accessor). Game thread, Poll.
@@ -1561,7 +1572,8 @@ namespace {
     constexpr float         kCensusRadius   = 2048.0f;
     constexpr std::uint32_t kCensusMaxLines = 60;   // per window; then ONE summary line and silence
     struct CensusRow {
-        bool          ctrl = false, inGroup = false, fleeing = false, detected = false, aggr = false, alarm = false;
+        bool          ctrl = false, inGroup = false, fleeing = false, detected = false, aggr = false, alarm = false,
+                      tgtAnchor = false;
         std::uint32_t tgt = 0;
         bool operator==(const CensusRow&) const = default;
     };
@@ -1611,16 +1623,24 @@ namespace {
         if (!holders.empty()) s_lastHolders = holders;
         const auto& around = holders.empty() ? s_lastHolders : holders;
         const auto  aid    = g_anchorId.load(std::memory_order_relaxed);
+        const auto  aH     = g_anchorH.load(std::memory_order_acquire);
         auto* pl = RE::ProcessLists::GetSingleton();
         if (!pl) return;
         const std::uint64_t sinceOpen = a_now - g_censusLastOpenMs;
+        bool                anyAnchor = false;   // some actor's controller targets the anchor: the window stays open
         pl->ForEachHighActor([&](RE::Actor* a) {
-            if (!a || a->IsPlayerRef() || a->IsPlayerTeammate() || a->GetFormID() == aid || a->IsDead())
+            if (!a || a->IsPlayerRef() || a->GetFormID() == aid || a->IsDead())
                 return RE::BSContainer::ForEachResult::kContinue;
+            std::uint32_t hst = 0;
+            if (FindSlot(a->GetFormID(), hst) >= 0 && (hst & kStLive))   // a live holder: not a bystander
+                return RE::BSContainer::ForEachResult::kContinue;
+            auto*      acc = a->GetActorRuntimeData().combatController;
+            const bool tA  = acc && aH != 0 && acc->targetHandle.native_handle() == aH;
+            if (tA) anyAnchor = true;
             const auto pos = a->GetPosition();
-            bool       near = false;
+            bool       near = tA;
             for (const auto& hp : around)
-                if (pos.GetDistance(hp) <= kCensusRadius) { near = true; break; }
+                if (near || pos.GetDistance(hp) <= kCensusRadius) { near = true; break; }
             const auto id = a->GetFormID();
             if (!near) {
                 g_censusRows.erase(id);
@@ -1628,6 +1648,7 @@ namespace {
             }
             CensusRow r{};
             auto&     rt = a->GetActorRuntimeData();
+            r.tgtAnchor = tA;
             if (auto* cc = rt.combatController) {
                 r.ctrl = true;
                 if (const auto t = cc->targetHandle.get()) r.tgt = t->GetFormID();
@@ -1652,15 +1673,16 @@ namespace {
                 return RE::BSContainer::ForEachResult::kContinue;
             }
             ++g_censusLines;
-            spdlog::info("[substrate] CENSUS 0x{} ({}): controller {}->{}, target 0x{} (was 0x{}), in-holder-group {}->{}, "
-                         "fleeing {}->{}, combat-detected {}->{}, aggressor-bit {}->{}, alarm-package {}->{}; +{} ms since the "
-                         "latest OPEN.",
-                         Hex(id), a->GetName(), old.ctrl, r.ctrl, Hex(r.tgt), Hex(old.tgt), old.inGroup, r.inGroup,
-                         old.fleeing, r.fleeing, old.detected, r.detected, old.aggr, r.aggr, old.alarm, r.alarm,
-                         sinceOpen);
+            spdlog::info("[substrate] CENSUS 0x{} ({}{}): controller {}->{}, target 0x{} (was 0x{}), target-is-anchor {}->{}, "
+                         "in-holder-group {}->{}, fleeing {}->{}, combat-detected {}->{}, aggressor-bit {}->{}, alarm-package "
+                         "{}->{}; +{} ms since the latest OPEN.",
+                         Hex(id), a->GetName(), a->IsPlayerTeammate() ? ", teammate, not a holder" : "", old.ctrl, r.ctrl,
+                         Hex(r.tgt), Hex(old.tgt), old.tgtAnchor, r.tgtAnchor, old.inGroup, r.inGroup, old.fleeing,
+                         r.fleeing, old.detected, r.detected, old.aggr, r.aggr, old.alarm, r.alarm, sinceOpen);
             old = r;
             return RE::BSContainer::ForEachResult::kContinue;
         });
+        if (anyAnchor) g_censusUntil = std::max(g_censusUntil, a_now + kCensusTailMs);
     }
 
     // Debts a drop timed out with no real target seen in a group holding the holder (game thread, Poll).
@@ -1902,6 +1924,11 @@ namespace apmf::combatsubstrate {
         } catch (...) {
         }
         return true;
+    }
+
+    void RemoveAnchorFromGroup(RE::CombatGroup* a_g) {
+        auto* anchor = Anchor();
+        if (a_g && anchor) g_removeTarget(a_g, anchor);
     }
 
     bool IsAnchorRef(const RE::TESObjectREFR* a_target) {
@@ -2159,6 +2186,7 @@ namespace apmf::combatsubstrate {
         DebtExpire(now);
         if (g_subCount.load(std::memory_order_relaxed) == 0 && g_subs.empty()) {
             MusicProbe(now);   // the tail after the last close
+            apmf::anchorguard::Sweep(now);   // the anchor-leak sweep's tail (SEV-1 2026-10-19)
             BystanderCensus(now);
             if (g_dryRun) Heartbeat(now);
             return;
@@ -2190,6 +2218,7 @@ namespace apmf::combatsubstrate {
         g_subCount.store(g_subs.size(), std::memory_order_relaxed);
         PlaceAnchor();
         MusicProbe(now);
+        apmf::anchorguard::Sweep(now);   // the anchor-leak sweep + the join guard's group set (SEV-1 2026-10-19)
         BystanderCensus(now);
         Heartbeat(now);
     }
@@ -2208,6 +2237,7 @@ namespace apmf::combatsubstrate {
         g_musicTracking = false;
         g_censusLive    = false;
         g_censusRows.clear();
+        apmf::anchorguard::ResetAll();
         apmf::substrateprobe::Reset();
         {
             std::scoped_lock lk(g_debtMx);
