@@ -858,3 +858,18 @@ Raised against `b1c78b2` by the tier-3 review of `fix/apmf-substrate-fixes`. Ver
 
 ### APMF-B123 (SEV-5) -- channels/CombatSubstrate.cpp size: propose a split as its own brief
 Raised against `b1c78b2` by the same review: the file was 1940 lines (2103 after the review-round fixes). A split is its own brief with its own tier-3 review and split proof, never inside a feature round.
+
+### APMF-B124 (SEV-4) -- substrate music deny: a full debt table is ignored silently
+Raised against `102526c` by the tier-3 re-review (verbatim): "`DebtSet` returns false when all 32 entries are in use, and both callers ignore that. The owed 0 is then never put back and nothing is logged, which breaks principle 7. It is unlikely (16 slots, 30 s debts), but a log line is cheap. It has to be emitted after `g_debtMx` is released, because that mutex is a leaf." Where: `DebtSet` in `channels/CombatSubstrate.cpp` (~:609), callers `SeatMusicAnchor` (~:657) and `AfterLoad` (~:2087).
+
+### APMF-B125 (SEV-4) -- substrate music deny: debt lost when a non-holder joins a denied group and the writer closes normally
+Raised against `102526c` (verbatim): "Holder A denies pure group G. A non-holder later joins G (a StartCombat join or merge into G). A closes normally, and `DebtForget(A)` runs at the start of `CloseSub`. G survives with that member, still reads 0, and no debtor remains. When a real target later appears in G, nothing puts the 0 back. It is rare. A co-holder is covered, because it carries its own debt."
+
+### APMF-B126 (SEV-5) -- substrate music deny: an engine-decided 0 can be reset to 0xFF
+Raised against `102526c` (verbatim): "When a debtor's group reads 0 and shows a real target, the 0 is reset even if the engine decided it. The engine just re-decides from the current strengths, which suits a fight that is now real. This is acceptable." Recorded for completeness; reviewer judged it benign.
+
+### APMF-B127 (SEV-5) -- substrate music deny: the 30 s debt can expire before a real target arrives
+Raised against `102526c` (verbatim): "After a hit or party drop where `StopCombatRanked` refuses to end the targetless fight, the group can outlive the 30 s debt. A real target added later then leaks the 0. It is an edge case."
+
+### APMF-B128 (SEV-5) -- substrate seat logging runs inside the engine's group write lock
+Raised against `102526c` (verbatim): "The sink is a plain file sink with `flush_on(info)`, so each seat line does a synchronous fflush while the combat job holds the group's write lock. Every line is once per event, so this is a stall, not a deadlock. The existing DetectThunk lines already do the same."
