@@ -494,9 +494,23 @@ with `kIntent_CombatSubstrate` beside its `kIntent_Cast` claim. It is legal only
    CombatAction, Combat, Equip and Detection in `APMF_Sources.ini`; otherwise it refuses by name rather than switch
    a facet on undenied. KNOWN HOLES, approved by marth 2026-10-12 and logged once per substrate: the combat-start
    topic (StartCombat's block at AE `0x6B6CFB`, which runs because the bit below is off at entry) and the combat
-   state event (`TESCombatEvent` / `OnCombatStateChanged`, never hidden from other mods' scripts). A RECORDED hole,
-   NOT approved (review F9 of a512763): a group JOIN (StartCombat's third argument) is not caught at the target
-   check. (e) Harbinger's own consumers of "in combat" treat a HELD holder as not in combat: ch.24 (`CombatApproach.cpp`)
+   state event (`TESCombatEvent` / `OnCombatStateChanged`, never hidden from other mods' scripts). The group JOIN
+   (StartCombat's third argument) recorded here as a hole by review F9 of a512763 is CLOSED since 2026-10-19 (SEV-1:
+   a non-holder teammate fought the anchor in the field with 0 anchor-target refusals), by two more denies,
+   `channels/AnchorGuard.cpp`: (b2) at StartCombat's SELF check (the same slot-0x99 seat; a widened 53-byte stub
+   hands the thunk StartCombat's target rsi and group rbp at that return address only, verified row
+   `AnchorGuard.StartCombat.TargetGroupRegs`, exact 1.6.1170 / 1.5.97, refused by name on 1.7.104) a NULL-target
+   entry into a SUBSTRATE group -- no target but the anchor, and a held holder in it or the anchor listed, matched
+   by the group's ADDRESS against the set the game thread published that frame, never dereferenced in the seat --
+   by an actor that is not a live holder is answered "dead"; a join naming a real target passes (a real target makes
+   the fight real, condition 5); (b3) a route-independent SWEEP on the game thread every frame while a substrate is
+   live and 10 s after: a high-process non-holder whose controller targets the anchor or whose group lists it is
+   logged as an ERROR (a leak is never masked, principle 7) and cleaned -- the anchor removed from its group with
+   `CombatGroup::RemoveTarget` only when no held holder shares that group (in a shared group the leaked actor
+   leaves instead), then the held engagement's ranked StopCombat when nothing but the anchor is left; a group with
+   a real target is never touched. A CLOSE runs (b3) on the closing holder's group members after its StopCombat.
+   Groups are read only under their read lock, on the game thread, and no group pointer is kept past the frame.
+   (e) Harbinger's own consumers of "in combat" treat a HELD holder as not in combat: ch.24 (`CombatApproach.cpp`)
    and ch.19's per-frame monitor (`Travel.cpp` `Poll`, 2026-10-19) read `IsInCombat() && !combatsubstrate::Suppressing(id)`,
    so a substrate hold never cancels a travel leg (`kLeg_CombatCancelled`); once the REAL bit fires `Suppressing` is
    false and real combat cancels as before. A PASSIVE bystander census (`bSubstrateBystanderCensus`, logs only) watches

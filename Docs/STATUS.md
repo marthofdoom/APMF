@@ -4,6 +4,27 @@ Updated 2026-10-13. Current version **v0.13.1** (cut 2026-10-13, ABI v24, see CH
 shipped, what's probe-gated, what's next. Keep this current in the SAME change as any
 build/finding/workflow change.
 
+## HEAD OF WORK 2026-10-19 -- SEV-1 ANCHOR LEAK (a non-holder fought the substrate anchor), branch `fix/apmf-anchor-leak`, NOT merged
+
+Field, LoreRim 2026-10-19 14:28 (evidence `_evidence/2026-10-19b-lorerim-town-census/`): a teleport put Sven, NOT a
+holder, beside Auri, a dry-run holder; 2.8 s later he was in real combat with the anchor as his only target (music,
+battleaxe drawn, swings, townsfolk reacting) with 0 anchor-target refusals. Auri's CLOSE stopped only Auri.
+- **The route closed at its source:** a NULL-target `StartCombat` with a group skips the target check and joins the
+  group, taking its targets (AE caller `0x71C2DD` / SE `0x68848E`; best-supported, not proven to have run). ch.22's
+  slot-0x99 stub is widened to hand the thunk rsi / rbp at StartCombat's self check; `channels/AnchorGuard.cpp`
+  refuses that join into a substrate group by a non-holder. New row `AnchorGuard.StartCombat.TargetGroupRegs`
+  (1.6.1170 / 1.5.97; 1.7.104 refused by name). `[CombatSubstrate] bSubstrateJoinGuard` (1).
+- **Route-independent sweep:** every frame while a substrate is live + 10 s, a non-holder that targets the anchor or
+  whose group lists it gets an `ANCHOR LEAK` ERROR line, the anchor out of its group (only when no holder shares it)
+  and the ranked StopCombat when nothing else is left. CLOSE runs it on the holder's group members.
+- **Passive:** `[substrate] ENTRY StartCombat` trace (`bSubstrateEntryTrace`, 1 while testing: caller, target,
+  group per StartCombat while a substrate is live); the census now includes non-holder teammates, a
+  target-is-anchor field and stays open while anyone targets the anchor. Future work: a dialogue-topic sink.
+- Field retest: the dry run with a teleport beside a holder; expect `ENTRY` lines naming the road, then either
+  `NULL-TARGET GROUP JOIN REFUSED` or `ANCHOR LEAK` (a road the seat does not know: report it).
+- Pre-release: `bSubstrateEntryTrace` -> 0 in `APMF.ini` AND the code default in `channels/AnchorGuard.cpp`
+  `InstallSeat` before a release cut.
+
 ## HEAD OF WORK 2026-10-19 -- SUBSTRATE FIXES (music deny, music probe, ABI v26 GetSubstrateState), branch `fix/apmf-substrate-fixes`, NOT merged
 
 ClickUp 86e3pu939. From the 2026-10-13 dry-run diagnosis and marth's field report ("The combat music predictably
@@ -159,6 +180,8 @@ list and was left as it is. `[Idle] bIdleConfirm` is a feature, not a probe.
 - `[Probe] bRangedSelect` -> 0 in `APMF.ini` AND the code default in `core/ActionGate.cpp` `RangedProbeInstall`
   and `core/AiCastSeats.cpp` `Install` (both read the key with default 1 during the field cycle).
 - `[Travel] bGateProbe2` -> 0 in `APMF.ini` (see its HEAD OF WORK entry below).
+- `[CombatSubstrate] bSubstrateEntryTrace` -> 0 in `APMF.ini` AND the code default in `channels/AnchorGuard.cpp`
+  `InstallSeat` (default 1 for the anchor-leak field cycle, 2026-10-19).
 - `[Probe] bRestoreCensus` -> 0 in `APMF.ini` AND the code default in `core/RestoreCensus.cpp` `Poll`
   (reads the key with default 1 during the field cycle). See the ANIMATED HEALS head of work below.
 - `[Harbinger] bSceneProbe` -> 0 in `APMF.ini` AND the code default in `core/PackageSources.cpp` `Install`
