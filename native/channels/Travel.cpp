@@ -8,6 +8,7 @@
 #include "core/PositionCast.h"   // ABI v11: PlaceMarker / DeleteMarker for kTravel_ToPosition legs
 #include "core/Registry.h"
 #include "core/Sources.h"
+#include "channels/CombatSubstrate.h"   // Suppressing(): a substrate hold is not a fight
 #include "channels/Travel.h"
 
 #include <algorithm>
@@ -368,6 +369,7 @@ namespace {
         bool                  mbRun        = false;   // a Movement Blocked run is being timed
         bool                  mbMissed     = false;
         bool                  gaitLogged   = false;
+        bool                  substrateLogged = false;   // the one "substrate-held, not combat" line per leg
         APMF_API::Handle      ownerHandle  = APMF_API::kInvalidHandle;
     };
 
@@ -881,6 +883,7 @@ namespace {
         a_leg.legStartedMs = apmf::clock::MonotonicMs();
         ResetBlockedClock(a_leg);
         a_leg.gaitLogged   = false;
+        a_leg.substrateLogged = false;
         SetLegStateFor(a_id, a_leg, APMF_API::kLeg_Walking, speed);
         spdlog::info("[travel-leg] 0x{} STARTED -- slot {}, package 0x{} -> destination 0x{}, radius {}, "
                      "internal ch.9 handle {} at basis {}. ch.9 posts its own EvaluatePackage nudge.",
@@ -2302,7 +2305,23 @@ namespace apmf::travel {
             // ONLY THE MOVEMENT IS CANCELLED. The client's ch.19 claim is left standing
             // (APMF never revokes a claim the client holds), and nothing else is
             // touched -- ch.19 owns no other facet to give back.
-            if (a->IsInCombat()) {
+            //
+            // A COMBAT SUBSTRATE HOLD IS NOT A FIGHT (INVARIANTS #0 (j), the same pattern as
+            // ch.24's CombatApproach.cpp). While a Held substrate stands on this actor the
+            // engine gave it a CombatController against Harbinger's own anchor, so the raw
+            // IsInCombat() above is true by construction; cancelling the walk on that would
+            // end every leg the instant a dry run (or a cast client) opened a substrate
+            // (field 2026-10-19: kLeg_CombatCancelled within ms of every substrate open).
+            // Suppressing() is false once the REAL bit fires (a real fight, or the party's),
+            // so real combat still cancels.
+            const bool inCombat   = a->IsInCombat();
+            const bool subHeld    = inCombat && apmf::combatsubstrate::Suppressing(id);
+            if (subHeld && !leg.substrateLogged) {
+                leg.substrateLogged = true;
+                spdlog::info("[travel] 0x{} substrate-held, not combat -- leg continues (a Harbinger combat "
+                             "substrate is open on the actor; only a REAL fight cancels the walk).", Hex(id));
+            }
+            if (inCombat && !subHeld) {
                 EndLeg(id, leg, "the actor is IN COMBAT -- combat cancels the movement", false,
                        APMF_API::kLeg_CombatCancelled);
                 continue;

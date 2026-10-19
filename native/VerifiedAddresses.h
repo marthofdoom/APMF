@@ -19,7 +19,7 @@
 
 namespace apmf::VerifiedAddresses
 {
-	// 1.6.1170.0: 242 rows
+	// 1.6.1170.0: 244 rows
 	inline constexpr REL::SelfCheck::Row kRows_1_6_1170[] = {
 		{ 207886, 0x18A5558, 0x0, 0, {  }, "Character" },
 		{ 207896, 0x18A5FE8, 0x0, 0, {  }, "Character.ActorValueOwner" },
@@ -236,6 +236,8 @@ namespace apmf::VerifiedAddresses
 		{ 56626, 0xA447F0, 0x0, 0, {  }, "Substrate.TESObjectREFR.MoveTo" },
 		{ 36550, 0x641AD0, 0xCF, 15, { 0x48, 0x8B, 0x0D, 0x7A, 0xBF, 0xAB, 0x02, 0x48, 0x8D, 0x54, 0x24, 0x30, 0x48, 0x89, 0x74 }, "Substrate.BSMusicManager.Reader" },
 		{ 400896, 0x30FDB20, 0x0, 0, {  }, "Substrate.BSMusicManager.Singleton" },
+		{ 56194, 0xA2D7A0, 0x27, 15, { 0x48, 0x8B, 0x05, 0xAA, 0x9F, 0x70, 0x02, 0x48, 0x8D, 0x54, 0x24, 0x40, 0x48, 0x89, 0x5C }, "Substrate.MenuTopicManager.Reader" },
+		{ 401099, 0x3137778, 0x0, 0, {  }, "Substrate.MenuTopicManager.Singleton" },
 		{ 68234, 0xCC9140, 0x0, 0, {  }, "CommonLib.BSReadWriteLock.LockForWrite" },
 		{ 68240, 0xCC9390, 0x0, 0, {  }, "CommonLib.BSReadWriteLock.UnlockForWrite" },
 		{ 44703, 0x803710, 0x30, 1, { 0xE8 }, "Substrate.CombatGroup.MusicWriteLock" },
@@ -265,7 +267,7 @@ namespace apmf::VerifiedAddresses
 		{ 214367, 0x18E8AC8, 0x0, 0, {  }, "Leaf.CombatBehaviorRepeat<float,FLAGS>" },
 	};
 
-	// 1.5.97.0: 242 rows
+	// 1.5.97.0: 244 rows
 	inline constexpr REL::SelfCheck::Row kRows_1_5_97[] = {
 		{ 261397, 0x165DA40, 0x0, 0, {  }, "Character" },
 		{ 261402, 0x165E4D0, 0x0, 0, {  }, "Character.ActorValueOwner.SE" },
@@ -482,6 +484,8 @@ namespace apmf::VerifiedAddresses
 		{ 56227, 0x9AE5C0, 0x0, 0, {  }, "Substrate.TESObjectREFR.MoveTo" },
 		{ 35551, 0x5AF3D0, 0xCF, 15, { 0x48, 0x8B, 0x0D, 0x3A, 0x68, 0x91, 0x02, 0x48, 0x8D, 0x54, 0x24, 0x30, 0x48, 0x89, 0x74 }, "Substrate.BSMusicManager.Reader" },
 		{ 514738, 0x2EC5CE0, 0x0, 0, {  }, "Substrate.BSMusicManager.Singleton" },
+		{ 55663, 0x994660, 0x27, 15, { 0x48, 0x8B, 0x05, 0xFA, 0xB2, 0x56, 0x02, 0x48, 0x8D, 0x54, 0x24, 0x40, 0x48, 0x89, 0x5C }, "Substrate.MenuTopicManager.Reader" },
+		{ 514959, 0x2EFF988, 0x0, 0, {  }, "Substrate.MenuTopicManager.Singleton" },
 		{ 66977, 0xC07350, 0x0, 0, {  }, "CommonLib.BSReadWriteLock.LockForWrite" },
 		{ 66983, 0xC075A0, 0x0, 0, {  }, "CommonLib.BSReadWriteLock.UnlockForWrite" },
 		{ 43481, 0x76A2F0, 0x2B, 1, { 0xE8 }, "Substrate.CombatGroup.MusicWriteLock" },
@@ -512,7 +516,7 @@ namespace apmf::VerifiedAddresses
 	};
 
 	// 1.7.104.0: 245 rows
-	// 40 NOT VERIFIED on 1.7.104.0, deliberately absent from this table (the seat is refused):
+	// 42 NOT VERIFIED on 1.7.104.0, deliberately absent from this table (the seat is refused):
 	//   Character.ActorValueOwner.SE (1.6.1170 id -): no 1.6.1170 (AE) id: the 1.7.104 map is keyed by AE id (1.5.97-only seat)
 	//   TargetPin.CombatController.SetTarget (1.6.1170 id 33235): id 33235 is not in the idmap
 	//   EquipSink.Path.OutfitApply.24234 (1.6.1170 id -): BY DESIGN: 1.5.97-only label. On 1.6.1170 and 1.7.104 the code reads its AE twin EquipSink.Path.OutfitApply.418622 (AE id 418622, 1.7.104 0x3C4440), whose own row carries the 1.7.104 fact (MAPPED-AE)
@@ -549,6 +553,8 @@ namespace apmf::VerifiedAddresses
 	//   Substrate.CombatGroup.RemoveTarget (1.6.1170 id 44705): id 44705 is not in the idmap
 	//   Substrate.BSMusicManager.Reader (1.6.1170 id 36550): id 36550 is not in the idmap
 	//   Substrate.BSMusicManager.Singleton (1.6.1170 id 400896): proven through Substrate.BSMusicManager.Reader, which did not verify: id 36550 is not in the idmap
+	//   Substrate.MenuTopicManager.Reader (1.6.1170 id 56194): id 56194 is not in the idmap
+	//   Substrate.MenuTopicManager.Singleton (1.6.1170 id 401099): proven through Substrate.MenuTopicManager.Reader, which did not verify: id 56194 is not in the idmap
 	//   Substrate.CombatGroup.MusicWriteLock (1.6.1170 id 44703): id 44703 is not in the idmap
 	//   Substrate.CombatGroup.DetectionPassInUpdate (1.6.1170 id 44703): id 44703 is not in the idmap
 	//   Substrate.CombatGroup.MusicUndecided (1.6.1170 id 44703): id 44703 is not in the idmap

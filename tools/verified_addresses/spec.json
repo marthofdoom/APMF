@@ -3925,6 +3925,34 @@
    "doc": "combat substrate S2a P3"
   },
   {
+   "seat": "Substrate.MenuTopicManager.Reader",
+   "kind": "ripref",
+   "construct": "the Papyrus native IsInDialogueWithPlayer (AE 56194 @0xA2D7A0 / SE 55663 @0x994660): for a non-actor ref it does `mov rax,[rip+d]` (+0x27 on both) = the MenuTopicManager singleton (fork RELOCATION_ID(514959, 401099)), `mov ebx,[rax+0x68]` = MenuTopicManager::speaker, and compares it with the ref's handle -- proves the global AND the speaker offset +0x68 for the dry run's \"in dialogue with the player\" test (an actor is answered through a different path in the engine; this test deliberately uses the speaker compare)",
+   "ids": {
+    "1.6.1170": 56194,
+    "1.5.97": 55663
+   },
+   "sig": {
+    "1.6.1170": "48 83 EC 28 33 C9 41 80 78 1A 3E 49 0F 44 C8 48 85 C9 74 09",
+    "1.5.97": "48 83 EC 28 33 C9 41 80 78 1A 3E 49 0F 44 C8 48 85 C9"
+   },
+   "offset": {
+    "1.6.1170": "0x27",
+    "1.5.97": "0x27"
+   },
+   "bytes": {
+    "1.6.1170": "48 8B 05 AA 9F 70 02 48 8D 54 24 40 48 89 5C",
+    "1.5.97": "48 8B 05 FA B2 56 02 48 8D 54 24 40 48 89 5C"
+   },
+   "global": {
+    "1.6.1170": 401099,
+    "1.5.97": 514959
+   },
+   "global_seat": "Substrate.MenuTopicManager.Singleton",
+   "source": "native/channels/CombatSubstrate.cpp (dry run NotIdleReason, read-only: MenuTopicManager::speaker)",
+   "doc": "combat substrate dry run idle test"
+  },
+  {
    "seat": "CommonLib.BSReadWriteLock.LockForWrite",
    "kind": "function",
    "construct": "RE::Offset::BSReadWriteLock::LockForWrite = RELOCATION_ID(66977, 68234) (BSWriteLockGuard): the engine's recursive write lock -- the owner thread id at +0, the count at +4 (0x80000001 = one writer); a re-entry by the owner increments, others spin (Sleep 0, then Sleep 1 after 10000)",
