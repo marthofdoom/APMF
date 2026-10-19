@@ -837,3 +837,12 @@ Same review (F5). Verbatim: "`EquipAuthority.cpp` Served uses different units: e
 
 ### APMF-B116 (SEV-5) -- menu: init log double-counts legacy [Equip] overrides; EquipArmor census shows no seats
 Same review (F6). Verbatim: "The Init log 'N priority override(s) read' counts legacy `[Equip]` keys twice, because they are copied into both maps." and "The EquipSink and HandBlock seats register for the census only on EquipWeapon, so hovering an EquipArmor source shows no seats."
+
+### APMF-B117 (SEV-4) -- queued-leg pairing: a stale record can rank a leg 2 as a requester
+Raised against `34f2779` (Opus tier-3 review of `feat/apmf-queued-0x49`, round-1 spot 1). Verbatim: "Wrongful ALLOW needs all of these: a stale record (from a q=1 leg 1 the engine applied at once) and, within 5 s, a leg 2 of the same item whose leg 1 skipped the seat or happened while the actor was unclaimed, with a claim back in place by leg 2. That window is narrow, and the item is one the requester itself just equipped." Crosswise pairing of two live records only misattributes logs (SEV-5).
+
+### APMF-B118 (SEV-5) -- 0x49 owner = orig->GetFile(0): vanilla packages in a follower alias attribute to Skyrim.esm
+Same review (spot 3). A vanilla follower alias package is owned by Skyrim.esm (default 20); MFO's own .esp package would rank as a source separate from the MFO client (menu shows MFO.esp overruled). Naming the alias's quest plugin needs an ExtraAliasInstanceArray walk under its lock on the AI thread.
+
+### APMF-B119 (SEV-5) -- procedure classifier: Acquire as auxiliary; unchecked tree pointer reads
+Re-review of `ae10bf6`. Verbatim: "the vanilla `Acquire` template (Acquire, Find, Travel, Wander) classifies as STANDING because of its Wander fallback. A follower mod's own 'go pick up or steal X' package built on that template would not count as active, so at a priority tie the claim wins. This is marth's design call, not a defect." Also: "The first read of the object pointer itself, and the reads of `p->data`, `procedureTree`, `templateParent` and the branch child array in `ClassifyUncached`, are not validated. They are safe for plugin packages ... For a runtime-created package, lifetime belongs to the engine."
