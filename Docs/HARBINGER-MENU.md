@@ -16,13 +16,15 @@ Harbinger adds one page to the **SKSE Menu Framework** (3.x). It shows who is dr
    - **Hits:** how many times Harbinger saw the source write the facet from outside. A mod acting on its own claim is not an outside write and is not counted here. A package a source takes over counts once per takeover, not once per check.
    - **Blocked:** how many of those writes Harbinger denied because a claim outranked the source.
    - **Passed:** how many of those writes stood because the source outranked the claim or tied with it.
-   - **Observed:** how many writes were seen at a seat that only watches (an actor value change, a combat entry Harbinger does not rank, a package a claim would outrank but that is not enforced yet). Nothing was decided, so they are neither Blocked nor Passed.
+   - **Observed:** how many writes were seen at a seat that only watches (an actor value change, a combat entry Harbinger does not rank, a scene a claim would outrank but that is not held off yet). Nothing was decided, so they are neither Blocked nor Passed.
    - **Priority (0 = off):** a slider from 0 to 100. Moving it applies at once and is saved to `APMF_Sources.ini`. "Unattributed" has no slider: it is always allowed.
 5. **Seat census.** A collapsed header at the bottom. It lists the engine seats where another mod's hook sits inside Harbinger's or on top of it, and whether Harbinger is still outermost.
 
 **Details on hover.** Hover a source name, or focus its slider with a gamepad, to see its counters (served, hits, blocked, passed, observed, and "own" when the mod acted on its own claim), when it last wrote the facet and which seats it hooks.
 
 **The winner.** The facet header names a winner: the highest priority source that was active on that facet in the last 60 seconds. A source that has been quiet for longer is not the winner, whatever its priority.
+
+**Packages: a tie keeps the follower mod's package.** Under the Packages header the page says: "a follower mod at the same priority keeps the follower only while its own package is running." Harbinger replaces a mod's package only when the claiming mod's `Package` priority is strictly higher than that plugin's, and only while that plugin's package is actually valid for the actor. When the follower mod is idle, the claim's package runs and nothing is counted against the follower mod. A replaced package counts as Blocked on its plugin's row, one that stood as Passed, each time the game asks for the actor's package.
 
 **Equip is two headers.** Weapons, shields, torches and ammo rank on `EquipWeapon`. Armor ranks on `EquipArmor`. Each has its own priorities in `APMF_Sources.ini`. An old `[Equip]` section is still read where the new sections have no value.
 

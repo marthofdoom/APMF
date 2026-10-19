@@ -1803,7 +1803,13 @@ Handle h = g_apmf->RequestEx(actor, kIntent_OfferPackage, kBasis, &p);
 
 #### What Harbinger enforces
 
-It hooks the engine's package question (`Character` slot 0x49, `CheckForCurrentAliasPackage`). While your claim owns the facet, the answer is your package instead of the framework's own. The engine adopts it and runs it with real pathing, one `OnPackageChange` each way. If the FormID cannot be resolved, Harbinger falls back to the engine's own answer, never null. It does not pick, validate or interpret the package's content.
+It hooks the engine's package question (`Character` slot 0x49, `CheckForCurrentAliasPackage`). The engine's own answer to that question is the first package from the actor's quest aliases whose conditions and schedule pass right now, or nothing. While your claim owns the facet, Harbinger ranks your claim against that answer:
+
+- **The mod is idle.** The engine's answer is nothing (no alias package of any mod is valid for the actor now), or it already is your package. There is nothing to rank against, and the answer is your package.
+- **The mod is active.** The engine's answer is another package. Harbinger names its owner: the plugin the package comes from, registered as a `Package` source if it is new, or `Engine` for a package created at runtime. Your package replaces it only when your mod's `Package` priority is strictly higher than that plugin's. Otherwise the plugin's package stands and your claim yields for that evaluation. A tie keeps the follower mod's package. So a follower mod at the same priority keeps the follower only while its own package is running. When its packages stop being valid, the next evaluation gives the actor your package.
+- **Your own package.** When the active package's plugin is your own mod's source, your package is served.
+
+The engine adopts the answer and runs it with real pathing, one `OnPackageChange` each way. If your FormID cannot be resolved, Harbinger falls back to the engine's own answer, never null. It does not pick, validate or interpret the package's content. Each change of the outcome for an actor is logged once as a `[ch.9-rank]` line (idle and served, active and outranked, active and the claim yields). The 30 second `[ch.9-redirect] H` heartbeat carries `rankOutranks` and `rankYields` totals.
 
 > **Key Concept 10 (the nudge)** A nudge makes the redirect take within one evaluation. Harbinger calls `EvaluatePackage` once at engage and owner change, and once at release so the framework package resumes at once. The nudge is posted one hop past the point the claim publishes, because a nudge issued earlier re-evaluates against the old snapshot. It is not self-sustaining. If nothing nudges and the engine does not ask, nothing re-asks.
 
@@ -1815,7 +1821,7 @@ Standing, ended by `Release`. A ch.9 claim never survives a load, since every cl
 
 #### Priority and conflicts
 
-`Package` sources facet. Package and scene sources are **observe only**. Harbinger captures the package that runs instead of yours, names its source (the scene's plugin, else the package's plugin, else `Engine` for a runtime package), compares priorities in the log and denies nothing. The only enforcement on this facet is the Spectator hold-off. Between your own package-offer claims, basis decides. ch.19 Travel files an internal ch.9 claim at your basis, so an outbidding ch.9 claim on the same actor takes the package from your travel leg.
+`Package` sources facet. The 0x49 answer is **enforced by priority** (above): an active alias package is Blocked when your claim outranks its plugin and Passed when it does not. A tie keeps the other mod's package. Scenes stay **observe only**: Harbinger captures a package or scene that runs instead of yours, names its source (the scene's plugin, else the package's plugin, else `Engine` for a runtime package), compares priorities in the log and holds nothing off. The Spectator hold-off is the other enforcement on this facet. Between your own package-offer claims, basis decides. ch.19 Travel files an internal ch.9 claim at your basis, so an outbidding ch.9 claim on the same actor takes the package from your travel leg.
 
 #### Refusals
 
@@ -1841,6 +1847,7 @@ ABI 1. `EnableRedirectLog` and `iSpectatorSeat` in `[PackageGate]`. Proven when 
 
 1. What does Harbinger answer at 0x49 when your package FormID does not resolve?
 2. Another mod's scene gives the actor a different package while your claim stands. Is it denied?
+4. A follower mod's alias package is valid for the actor and both mods sit at `Package` priority 50. Whose package runs, and what changes when the follower mod's package stops being valid?
 3. Why is the nudge posted one hop after publish?
 
 ### ch.19 Travel (`kIntent_Travel`)
@@ -3195,11 +3202,11 @@ You do not call anything. Each one changes, denies and delays nothing. A write a
 
 ### Package and scene source capture
 
-**What it is for.** On the `Package` facet, Harbinger compares the package an actor is running against the one a winning ch.9 (or ch.19) claim offered. If a different package runs, an outside input exists. Harbinger names its source: the plugin of the actor's current scene, else the plugin that defines the package, else `Engine` for a runtime-created package such as Movement Blocked, combat Spectator or dialogue. A scene with no file is Unattributed. It compares that source's priority with the claim's and **logs it, but denies nothing**.
+**What it is for.** On the `Package` facet, Harbinger compares the package an actor is running against the one a winning ch.9 (or ch.19) claim offered. If a different package runs, an outside input exists. Harbinger names its source: the plugin of the actor's current scene, else the plugin that defines the package, else `Engine` for a runtime-created package such as Movement Blocked, combat Spectator or dialogue. A scene with no file is Unattributed. It compares that source's priority with the claim's and **logs it, but denies nothing** here. The 0x49 answer itself is ranked and enforced (see [ch.9](#ch9-offer-package-kintent_offerpackage)): this capture reports what still runs anyway, a scene included.
 
 **Scene probe.** `bSceneProbe` in `[Harbinger]` (default on, a passive probe) logs which engine code asks for an actor's scene while a mod has given that actor a package. The scene hold-off it is gathering evidence for is not built.
 
-**The one enforced exception** is the Spectator hold-off, described under [ch.9](#ch9-offer-package-kintent_offerpackage).
+**The enforced exceptions** are the ranked 0x49 answer and the Spectator hold-off, both described under [ch.9](#ch9-offer-package-kintent_offerpackage).
 
 **Version and INI.** 0.12.0 and 0.13.0. `bSceneProbe` in `[Harbinger]`, `iSpectatorSeat` in `[PackageGate]`.
 
@@ -3238,7 +3245,7 @@ Every Intent maps to one sources facet. This table says which, and what Harbinge
 | Sources facet (`APMF_Sources.ini` section) | Intents | Enforced against a foreign source |
 |---|---|---|
 | `Target` | ch.6, ch.20 | ch.20 only. Restored through the engine's own `SetTarget` when a positively identified writer is outranked. ch.6 restores nothing |
-| `Package` | ch.9, ch.19 | Observe. The Spectator hold-off is the one exception, and it needs your priority above `Engine` |
+| `Package` | ch.9, ch.19 | The 0x49 answer: an active alias package is replaced only when your priority is strictly above its plugin's (a tie keeps the other mod's package, an idle mod has nothing to rank). The Spectator hold-off needs your priority above `Engine`. Scenes: observe |
 | `EquipWeapon` | ch.15, ch.17, ch.26, hand block | Weapons, shields, torches and ammo (any item with a Right, Left, Ammo or Light category bit). Ranked since ABI 22. Every equip deny (ch.15, the ch.17 set, the hand block, the ch.26 force) stands only while your priority is above the equip's source. The ch.26 score lift applies only while your priority is above the source beneath the score seat. An unattributed equip is allowed unless `EquipWeapon=override` |
 | `EquipArmor` | ch.17 | Armor-only items. The ch.17 set and denied-category refusals stand only while your priority is above the equip's source. The facet was one `Equip` facet before 2026-10-18, and an old `[Equip]` section is still read as the fallback for both |
 | `CombatAction` | ch.7, ch.23 | A leaf the engine's tree chose is stopped only while your priority is above `Engine` |

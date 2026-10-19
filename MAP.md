@@ -1477,6 +1477,22 @@ POSTED through `mainthread::Post`, queued ahead of the release nudge, because an
 erase sits in the pre-`Publish()` window where a combat-thread 0x49 consult re-inserts
 the identical tuple) and `ForgetAllRedirects` (revert/new game) drop that memory so a
 re-dispatch still prints.
+**RANKED 0x49 (2026-10-18, feat/apmf-queued-0x49, ClickUp 86e3t1gfh / 86e3t1gfp; marth: "name AND ENFORCE",
+"theyll stop winning if Auri.esp is actively doing anything").** `RankAndDecide` (anon ns, before `PkgHook`) runs
+for a claimed actor whose named package resolves. `orig` (the engine's own answer: slot 0x49 AE 37398 0x66CB60 /
+SE 0x5DB180 / 1.7.104 0x67F620, instruction-identical: null when dead or life-state 0x800000, else the FIRST quest
+alias package whose conditions + schedule pass, AE 12057 -> 12721 0x182390 -> 29619) null or == the claimed package
+= IDLE: served, nothing counted against a source. Otherwise ACTIVE: owner = `orig->GetFile(0)` plugin (`Register`
+kPlugin), no file = Engine, failed register = Unattributed (degrade rule: never displaced unless `[UnknownSources]
+Package=override`); owner == the claim's client (offer client, or ch.19 travel claim's client: `RankClaimPrio`, same
+rule as PackageSources/SpectatorGate) = served + `NoteOwn`; else `NoteHit`, then claim prio STRICTLY > owner prio =
+served + `NoteOverruled`, else the original stands + `NoteStood` (tie keeps the follower mod's package). Counted per
+consult, `[ch.9-rank]` logged per (claimForm, orig, owner, decision) transition per actor (leaf `g_rankMx`, cap
+4000, always on), cleared by `ForgetRedirect` / `ForgetAllRedirects`; heartbeat gains `rankOutranks` /
+`rankYields`. A registry throw serves the claim unranked and logs an error. What breaks: ranking against
+`GetCurrentPackage()` instead of `orig` (that is tenure: the incumbent would always win); counting Served on a yield;
+taking `g_rankMx` across `Register` / a lookup. Known overlap: PackageSources' poll still counts a capture once per
+transition (Hit + Stood/Observed) on top of this seat's per-consult counts.
 - **What breaks:** the redirect only takes effect **when the engine ASKS**, and the field
   evidence is that it does not ask on a useful cadence of its own — every win so far
   reconciles to an explicit `EvaluatePackage` nudge (MFO `DIAG-2026-09-06-loot-travel.md`;
@@ -1599,6 +1615,20 @@ that file), carried over with its guards AND its reasoning rather than re-derive
   1.6.1170 and 1.5.97.
 
 ### `native/core/EquipSink.{h,cpp}` — THE #17a CALL-SITE SEAT: the engine-equip sink (ch.17)
+**RANK ONCE AS REQUESTER (2026-10-18, feat/apmf-queued-0x49, marth ruling (a)):** a queued equip (q=1) passes the
+sink twice: leg 1 from its requester, then (when worker +0x272 -> 37684 queued it rather than applying at once)
+leg 2 from QueuedApply (AE 38906/39814, SE 37950/38789; 39814/38789 read the 0x48 node: +8 obj, +0x10 extra, +0x18
+count, +0x20 slot, EquipObject(queue=0)). `recordIfQueued` (after the worker call, both worker call sites in the
+thunk; after because the worker nulls an empty `data->extra` at +0x25C before queuing) stores {actor, item, extra,
+eqSrc, ch.17 handle, time, caller kind, selfPath, attributed} in `g_queued` (leaf `g_queuedMx`, cap 128, append
+order). At a QueuedApply leg the recovery branch `ConsumeQueued`s the NEWEST live record for (actor, item),
+preferring the same extra (newest because an immediately applied leg 1 leaves a record no leg 2 consumes) and
+ranks as that requester (eqSrc, selfPath, attributed, caller.kind all restored: the script / console / player-menu
+exemptions carry). Leg 2 adds no hit, stood, own, force-own/anomaly or Unattributed count (an applied deny still
+counts). TTL `kQueuedTtlMs` 5000 = a FLOOR, ~3x the field max (1994 lines 2026-10-18: p99 305 ms, max 1.7 s); a
+miss ranks as Engine as before and logs once per (actor, item) (`req=none`). Log field `req=<source|self|
+unattributed|none>` before `verdict=`. What breaks: recording before the worker (extra mismatch), recording a
+refused leg 1 (nothing queued), counting leg 2's hit again (the double count this fixes).
 **ABI v25 INSTANCE (2026-10-14):** for a form the set declares ONLY by uid (`InstanceOnly`), the thunk reads
 the instance the equip names from `EquipData::extra` (`ExtraUid`: `GetByType<ExtraUniqueID>`, the list's read
 lock, which EquipObject took on this thread just before) and calls the 4-argument
