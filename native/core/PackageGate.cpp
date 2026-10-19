@@ -129,6 +129,174 @@ namespace apmf::packagegate {
         constexpr std::uint64_t    kRedirectHeartbeatMs = 30000;   // ~30s, matches ActionGate.cpp's mvcbt cadence
         std::atomic<std::uint64_t> g_redirectLastHeartbeatMs{ 0 };
         // ========================================================================
+        // RANKED 0x49 (marth 2026-10-18, ClickUp 86e3t1gfh / 86e3t1gfp): "name AND ENFORCE at the 0x49
+        // seat". The engine's own answer (`orig`) is the alias package the actor's quest aliases offer it
+        // RIGHT NOW: Character slot 0x49 (AE 37398 0x66CB60, SE 0x5DB180, 1.7.104 0x67F620; the three are
+        // instruction-identical) returns null for a dead actor or the 0x800000 life-state, else tail-jumps
+        // to the ExtraDataList alias-package lookup (AE 12057 -> GetByType(0x88 ExtraAliasInstanceArray) ->
+        // 12721 0x182390; SE 0x126A00), which, under the array's read lock, walks every alias instance's
+        // instanced packages and returns the FIRST one whose conditions + schedule pass (AE 29619
+        // 0x4962E0), or null. So:
+        //   ACTIVE (marth 2026-10-18: "theyll stop winning if Auri.esp is actively doing anything") = the
+        //     engine's answer is non-null and is not the claimed package: some quest alias has a package of
+        //     its own valid for this actor at this evaluation. Its owner is the package's plugin
+        //     (`orig->GetFile(0)`, registered as a plugin source if new; a runtime-created package with no
+        //     file is the Engine). The claim's client priority on the Package facet (the offer's client, or
+        //     ch.19's internal offer's travel claim's client) must STRICTLY outrank the owner's: a tie keeps
+        //     the follower mod's package (the facet rule; marth ruling (c)). Outranked -> the claim's package
+        //     is served (owner Blocked); otherwise the original stands (owner Passed).
+        //   IDLE = the engine's answer is null (no alias package of any mod is valid now) or already the
+        //     claimed package: nothing to rank against, the claim's package is served, nothing is counted
+        //     against a source.
+        // Counted per consult (as core/SpectatorGate.cpp), logged once per transition per actor
+        // ([ch.9-rank]). Runs on engine AI threads: the RCU snapshot, the lock-free registry, atomics, and
+        // this leaf mutex (never held across an engine call or a form lookup).
+        enum class RankDecision : std::uint8_t { kIdle, kOutranks, kOwn, kYields, kError };
+        struct RankLast {
+            RE::FormID              claimForm;
+            RE::FormID              orig;
+            apmf::sources::SourceId owner;
+            RankDecision            decision;
+            bool operator==(const RankLast&) const = default;
+        };
+        std::mutex                                 g_rankMx;
+        std::unordered_map<RE::FormID, RankLast>   g_rankLast;
+        std::atomic<std::uint32_t>                 g_rankRemembered{ 0 };
+        constexpr std::uint64_t                    kRankLineCap = 4000;   // same budget as [ch.9-redirect]
+        std::atomic<std::uint64_t>                 g_rankLineCount{ 0 };
+        std::atomic<std::uint64_t>                 g_rankYields{ 0 };     // heartbeat: consults the claim yielded
+        std::atomic<std::uint64_t>                 g_rankOutranks{ 0 };   // heartbeat: consults it outranked an active package
+
+        // The claim the Package facet is enforced FOR (core/PackageSources.cpp / core/SpectatorGate.cpp
+        // ClaimPrio, same rule): the offer's own client, or, for ch.19's internal offer, the winning travel
+        // claim's client.
+        int RankClaimPrio(RE::FormID a_actor, APMF_API::Handle a_offer, apmf::sources::SourceId& a_client) {
+            APMF_API::Handle h = a_offer;
+            if (apmf::sources::ClientForHandle(h) == apmf::sources::kNoSource) {
+                APMF_API::APMF_Param p{};
+                float                b  = 0.0f;
+                APMF_API::Handle     th = APMF_API::kInvalidHandle;
+                if (apmf::ControlMap::Get().TryGetOwningClaimBasis(a_actor, APMF_API::kIntent_Travel, p, b, &th)) h = th;
+            }
+            a_client = apmf::sources::kNoSource;
+            return apmf::sources::ClaimPriority(h, apmf::sources::Facet::kPackage, &a_client);
+        }
+
+        // Decide whether the claim's package replaces the engine's answer. Counts and logs; never throws
+        // (a registry failure keeps the claim winning, as before ranking existed, and says so).
+        bool RankAndDecide(RE::Actor* a_actor, const RE::TESPackage* a_orig, const RE::TESPackage* a_claimed,
+                           APMF_API::Handle a_claimH) {
+            namespace src = apmf::sources;
+            const RE::FormID actorId = a_actor->GetFormID();
+            RankLast         now{ a_claimed->GetFormID(), a_orig ? a_orig->GetFormID() : 0, src::kNoSource,
+                                  RankDecision::kIdle };
+            int              ownerPrio = 0, claimPrio = 0;
+            src::SourceId    client = src::kNoSource;
+            bool             wins   = true;
+            try {
+                if (a_orig && a_orig != a_claimed) {
+                    // ACTIVE: a quest alias's own package is valid for the actor now. Name its owner.
+                    if (const auto* f = a_orig->GetFile(0))
+                        now.owner = src::Register(f->GetFilename(), src::Kind::kPlugin);
+                    else
+                        now.owner = src::kEngineSource;   // created at runtime: no plugin
+                    if (now.owner == src::kNoSource) now.owner = src::kUnattributedSource;
+                    claimPrio = RankClaimPrio(actorId, a_claimH, client);
+                    if (now.owner == client) {
+                        now.decision = RankDecision::kOwn;   // the claim's own client's package: no outside write
+                        src::NoteOwn(now.owner, src::Facet::kPackage);
+                    } else {
+                        src::NoteHit(now.owner, src::Facet::kPackage);
+                        ownerPrio = src::Priority(now.owner, src::Facet::kPackage);
+                        // the degrade rule: an unattributed package is never displaced unless overridden
+                        const bool rankable = now.owner != src::kUnattributedSource ||
+                                              src::OverrideUnknown(src::Facet::kPackage);
+                        wins         = rankable && claimPrio > ownerPrio;   // strictly: a tie keeps the mod's package
+                        now.decision = wins ? RankDecision::kOutranks : RankDecision::kYields;
+                        if (wins) {
+                            src::NoteOverruled(now.owner, src::Facet::kPackage);
+                            g_rankOutranks.fetch_add(1, std::memory_order_relaxed);
+                        } else {
+                            src::NoteStood(now.owner, src::Facet::kPackage);
+                            g_rankYields.fetch_add(1, std::memory_order_relaxed);
+                        }
+                    }
+                }
+            } catch (...) {
+                wins         = true;   // pre-ranking behaviour; announced below, never silent
+                now.decision = RankDecision::kError;
+            }
+            try {
+                bool changed = false;
+                {
+                    std::scoped_lock lock(g_rankMx);
+                    auto [it, inserted] = g_rankLast.try_emplace(actorId, now);
+                    if (inserted) {
+                        g_rankRemembered.fetch_add(1, std::memory_order_relaxed);
+                        changed = true;
+                    } else if (!(it->second == now)) {
+                        it->second = now;
+                        changed    = true;
+                    }
+                }
+                if (changed) {
+                    const auto prior = g_rankLineCount.fetch_add(1, std::memory_order_relaxed);
+                    if (prior < kRankLineCap) {
+                        const std::string owner = now.owner != src::kNoSource ? std::string(src::Name(now.owner)) : std::string();
+                        const std::string cname = client != src::kNoSource ? std::string(src::Name(client))
+                                                                           : std::string("an internal claim");
+                        switch (now.decision) {
+                        case RankDecision::kIdle:
+                            spdlog::info("[ch.9-rank] actor=0x{} claimForm=0x{} engineOrig=0x{}: no other alias package is "
+                                         "valid for the actor (the follower mod is idle) -> the claim's package is served.",
+                                         apmf::log::Hex(actorId), apmf::log::Hex(now.claimForm), apmf::log::Hex(now.orig));
+                            break;
+                        case RankDecision::kOwn:
+                            spdlog::info("[ch.9-rank] actor=0x{} claimForm=0x{} engineOrig=0x{}: the active package is {}'s, "
+                                         "the claim's own client -> the claim's package is served.",
+                                         apmf::log::Hex(actorId), apmf::log::Hex(now.claimForm), apmf::log::Hex(now.orig), owner);
+                            break;
+                        case RankDecision::kOutranks:
+                            spdlog::info("[ch.9-rank] actor=0x{} claimForm=0x{} engineOrig=0x{}: {} is ACTIVE (its package is "
+                                         "valid now), Package priority {} vs the claim's {} ({}): the claim outranks it -> "
+                                         "the claim's package is served (enforced).",
+                                         apmf::log::Hex(actorId), apmf::log::Hex(now.claimForm), apmf::log::Hex(now.orig), owner,
+                                         ownerPrio, claimPrio, cname);
+                            break;
+                        case RankDecision::kYields:
+                            spdlog::info("[ch.9-rank] actor=0x{} claimForm=0x{} engineOrig=0x{}: {} is ACTIVE (its package is "
+                                         "valid now), Package priority {} vs the claim's {} ({}): the claim does not strictly "
+                                         "outrank it{} -> the claim YIELDS, {}'s package stands.",
+                                         apmf::log::Hex(actorId), apmf::log::Hex(now.claimForm), apmf::log::Hex(now.orig), owner,
+                                         ownerPrio, claimPrio, cname,
+                                         now.owner == src::kUnattributedSource ? " (unattributed: the degrade rule)"
+                                         : ownerPrio == claimPrio              ? " (a tie keeps the follower mod's package)"
+                                                                               : "",
+                                         owner);
+                            break;
+                        case RankDecision::kError:
+                            spdlog::error("[ch.9-rank] actor=0x{} claimForm=0x{} engineOrig=0x{}: ranking FAILED (a registry "
+                                          "exception) -> the claim's package is served UNRANKED for this consult.",
+                                          apmf::log::Hex(actorId), apmf::log::Hex(now.claimForm), apmf::log::Hex(now.orig));
+                            break;
+                        }
+                    }
+                    if (prior + 1 == kRankLineCap)
+                        spdlog::warn("[ch.9-rank] SESSION LINE CAP ({}) REACHED -- further [ch.9-rank] lines are SUPPRESSED; "
+                                     "the menu counters and the [ch.9-redirect] H totals stay authoritative.",
+                                     kRankLineCap);
+                }
+            } catch (...) {
+            }
+            return wins;
+        }
+
+        void ForgetRank(RE::FormID a_actor) {
+            if (g_rankRemembered.load(std::memory_order_relaxed) == 0) return;
+            std::scoped_lock lock(g_rankMx);
+            if (g_rankLast.erase(a_actor) != 0) g_rankRemembered.fetch_sub(1, std::memory_order_relaxed);
+        }
+        // ========================================================================
 
         struct PkgHook {
             static RE::TESPackage* thunk(RE::Actor* a_this) {
@@ -161,6 +329,9 @@ namespace apmf::packagegate {
                     if (claim.form == 0) break;   // claimed but no package named -- channel default, no redirect
 
                     if (auto* pkg = RE::TESForm::LookupByID<RE::TESPackage>(claim.form)) {
+                        // Ranked (2026-10-18): the claim's package replaces the engine's answer only when the
+                        // follower mod behind that answer is idle, or the claim strictly outranks it.
+                        if (!RankAndDecide(a_this, orig, pkg, claimH)) break;   // yields: the original stands
                         result = pkg;
                         won    = true;
                         apmf::sources::NoteServedClaim(claimH, apmf::sources::Facet::kPackage);   // menu "Served"
@@ -343,6 +514,7 @@ namespace apmf::packagegate {
         // See PackageGate.h for WHY the release edge -- not the hook -- has to drive
         // this. Same two lines as the thunk's backstop branch, same mutex, and the
         // same relaxed size counter so the backstop's cheap pre-gate stays accurate.
+        ForgetRank(a_actor);   // the [ch.9-rank] transition memory follows the same release edge
         if (g_redirectRemembered.load(std::memory_order_relaxed) == 0) return;
         std::scoped_lock lock(g_redirectMx);
         if (g_redirectLast.erase(a_actor) != 0)
@@ -353,6 +525,11 @@ namespace apmf::packagegate {
         // See PackageGate.h for WHY the world boundary needs its own wholesale
         // erase: Clear() releases nothing and consults nothing, so neither the
         // release edge nor the thunk's backstop can reach these entries.
+        if (g_rankRemembered.load(std::memory_order_relaxed) != 0) {
+            std::scoped_lock lock(g_rankMx);
+            g_rankLast.clear();
+            g_rankRemembered.store(0, std::memory_order_relaxed);
+        }
         if (g_redirectRemembered.load(std::memory_order_relaxed) == 0) return;
         std::scoped_lock lock(g_redirectMx);
         g_redirectLast.clear();
@@ -390,11 +567,13 @@ namespace apmf::packagegate {
         const auto dropped   = lineCount > kRedirectLineCap ? lineCount - kRedirectLineCap : 0;
 
         spdlog::info("[ch.9-redirect] H claimedActorsNow={} anchorHits={} claimedHits={} winHits={} "
-                     "transitionLinesDropped={}",
+                     "rankOutranks={} rankYields={} transitionLinesDropped={}",
                      claimedNow,
                      g_redirectAnchorHits.load(std::memory_order_relaxed),
                      g_redirectClaimedHits.load(std::memory_order_relaxed),
                      g_redirectWinHits.load(std::memory_order_relaxed),
+                     g_rankOutranks.load(std::memory_order_relaxed),
+                     g_rankYields.load(std::memory_order_relaxed),
                      dropped);
     }
 
