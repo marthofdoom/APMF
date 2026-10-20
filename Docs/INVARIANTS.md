@@ -608,6 +608,29 @@ with `kIntent_CombatSubstrate` beside its `kIntent_Cast` claim. It is legal only
    the substrate is Harbinger's own state-forcing, not a client's declared fight). That is why every row of the
    design's deny table has a deny or a hole marth accepted by name, and why a real fight ends it.
 
+**ADOPTED 2026-10-19 by marth (ruling, verbatim, on MFO never doing an engine action itself, MoveTo included:
+*"Remember we are porting everything to harbinger, so having MFO do something will just need redoing later."*,
+marth 2026-10-19). The eleventh legal action (ABI v28, `core/Place.cpp`): (k) PLACE AN ACTOR -- ONE engine move,
+`TESObjectREFR::MoveTo_Impl`, for the actor, destination, offset / point and heading the client declared.** It is
+not (c): (c) is an animation-graph-sized promote at a claim's Engage / Release, and a placement relocates an
+actor between cells, possibly one nobody has loaded, with no claim at all. So it is written here instead of being
+filed under (c) quietly. It is legal only while ALL of these hold:
+1. **One call, the engine's own, on the game thread.** `MoveTo_Impl` (AE id 56626 / SE 56227 / 1.7.104 0xA5D370,
+   verified row `Place.TESObjectREFR.MoveTo`), the body Papyrus `ObjectReference.MoveTo`'s queued task runs, called
+   once per request from `apmf::mainthread::Pump`. For a Character it releases furniture (`StopInteractingQuick`) and
+   relocates the actor; Harbinger adds nothing before or after it but reads.
+2. **Declared, never chosen.** The destination (a reference, or an interior cell), the offset or point and the yaw
+   are the client's. Harbinger picks no spot, adjusts no point and retries nothing.
+3. **One-shot, never a claim, never sustained.** No facet is held, nothing is switched on, nothing is re-asserted.
+   What the actor does at the new spot is his own package's (or the client's own ch.19 / ch.1 claim's) business.
+4. **It yields to another client's movement.** Refused when another client's (or an unnameable) winning ch.19 travel
+   or ch.1 movement block claim owns the actor.
+5. **Reported honestly.** The position is read back: `Placed` only within 1 unit of the point; otherwise `Failed`,
+   loudly. An INTERIOR destination whose read-back cell is not the destination cell is `Failed` too.
+6. **Scope is closed by name.** Exactly 1.6.1170, 1.5.97 or 1.7.104, not VR, the self-check row verified, the player
+   never placed. Any other engine move (a spot Harbinger chooses, a move on a timer, a sustained hold of position) is
+   a new amendment, not a code change.
+
 **#20 — COMPOSED ANSWERS: APMF may answer the ENGINE'S OWN DECISION SEATS so the
 AI decides what a claim asks for — and exactly ONE of those answers may skip the
 chain.** (feat/ai-cast-seats-impl, 2026-09-05. This is the rule that lets ch.8b

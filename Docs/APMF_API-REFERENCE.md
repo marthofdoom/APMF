@@ -374,7 +374,7 @@ A [placement](FACETS.md#place-kintent_place) is ONE engine move, `TESObjectREFR:
 
 **The destination.** `param.form` is a REFERENCE (the actor lands at its position plus `param.pos`, in its cell and worldspace: exactly Papyrus `MoveTo(akTarget, x, y, z)`), or an INTERIOR CELL (the actor lands at `param.pos` in it). An exterior cell is refused: name a reference in that worldspace and an offset.
 
-**The flags** (`param.ival`, `PlaceFlags`): `kPlace_OnlyIfUnloaded` (no visible pop: refused when the actor has 3D or stands in an attached interior cell, and outdoors only his 3D counts), `kPlace_RefuseIfPlayerPresent` (refused when the player's cell is the actor's cell or the destination cell), `kPlace_SetYaw` (face `param.fval` radians, else keep his heading). An unknown bit is refused at the call.
+**The flags** (`param.ival`, `PlaceFlags`): `kPlace_OnlyIfUnloaded` (no visible pop: refused when the actor has 3D or stands in an attached interior cell, and outdoors only his 3D counts), `kPlace_RefuseIfPlayerPresent` (refused when the player's cell is the actor's cell, when an INTERIOR destination cell is the player's cell, and when an EXTERIOR destination is loaded: its cell attached or the destination reference with 3D, so one grid cell over counts), `kPlace_SetYaw` (face `param.fval` radians, else keep his heading). An unknown bit is refused at the call.
 
 **Arbitration.** Refused (`kPlaceWhy_TravelOwned` / `kPlaceWhy_HoldOwned`, `blocker` = that claim's handle) when the winning ch.19 travel or ch.1 movement block claim on the actor belongs to another client, or to no client Harbinger can name. The client is taken from the calling DLL at the call, the same attribution every claim gets. Your own claim does not block a placement and Harbinger does not end it.
 
@@ -397,8 +397,8 @@ A [placement](FACETS.md#place-kintent_place) is ONE engine move, `TESObjectREFR:
 | +56 | `msSinceChange` | wall ms since the record last changed |
 | +60 | `seq` | changes on every change of the record |
 
-**Placed is read back, not assumed.** After the call Harbinger reads the actor's position. Within 1 unit of the point: `Placed`. Otherwise `Failed` with `kPlaceWhy_NotMoved` and an ERROR line naming where he reads back. `kPlaceInfo_CellDiffers` says the parent cell he reads back in is not the cell handed to the engine (it does not fail the placement, and it is logged).
+**Placed is read back, not assumed.** After the call Harbinger reads the actor's position. Within 1 unit of the point: `Placed`. Otherwise `Failed` with `kPlaceWhy_NotMoved` and an ERROR line naming where he reads back. An INTERIOR destination also needs the cell: a read-back in any other cell is `Failed` (`kPlaceWhy_NotMoved`, ERROR). Outdoors `kPlaceInfo_CellDiffers` says the parent cell he reads back in is not the cell handed to the engine (an unloaded actor may sit in the worldspace's persistent cell), which does not fail the placement and is logged.
 
-**Lifetime.** A finished record stays 30 s of wall time (`kPlaceStateGraceMs`), then reads `Unknown`. A load or a new game drops every record, and a placement still queued then never runs. Nothing is saved.
+**Lifetime.** A finished record stays until `GetPlaceState` has returned it once or 30 s of wall time (`kPlaceStateGraceMs`) have passed, whichever is LATER, then reads `Unknown`. The 128-record cap can still evict the oldest finished record. A load or a new game drops every record, and a placement still queued then never runs. Nothing is saved.
 
 **Older APMF.** An APMF before v28 has no channel for intent 28 and refuses the request ("no channel serves intent 28"), and has no `GetPlaceState` slot.

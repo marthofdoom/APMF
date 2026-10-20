@@ -607,8 +607,10 @@ POD checks only (no form lookup), a Queued record, ONE `mainthread::Post(Deliver
 refused), the two flags, ARBITRATION (the winning ch.19 / ch.1 claim via `ControlMap::TryGetOwningClaimBasis` must be
 the same `sources` client, else Refused TravelOwned / HoldOwned), the call, then a POSITION READ-BACK (within 1u =
 Placed, else Failed NotMoved, ERROR line). One log line per request: `queued`, then `PLACED` / `REFUSED` / `FAILED`.
-Records: `g_recs` under a leaf mutex, cap 128 (oldest finished evicted; full of queued = refused at the call), grace
-30 s wall after finishing. `ResetAll` (revert, kPreLoadGame, `plugin.cpp`) clears them and bumps `g_gen` under the
+Records: `g_recs` under a leaf mutex, cap 128 (oldest finished evicted; full of queued = refused at the call); a finished
+record expires only once it has been READ by `GetState` AND 30 s wall have passed (`Expired`). `kPlace_RefuseIfPlayerPresent`:
+actor's cell, an interior destination cell, or an EXTERIOR destination that is loaded (cell attached or the dest ref has 3D).
+An interior read-back in another cell is Failed; an exterior one is the `CellDiffers` bit. `ResetAll` (revert, kPreLoadGame, `plugin.cpp`) clears them and bumps `g_gen` under the
 same lock, so a posted move from the old world drops itself (Discard() drops it too).
 - **What breaks:** (a) making it a CLAIM: it would be swept as unloaded and engaged on a live actor only, which is the
   case it exists to avoid. (b) a form lookup in `Enqueue` (caller's thread). (c) moving the call off the game thread.
@@ -617,6 +619,10 @@ same lock, so a posted move from the old world drops itself (Discard() drops it 
   generic branch (the player is refused, `LookupByID<RE::Actor>` guarantees an actor). (f) dropping the client capture
   at the call: a client `Release` on the place handle forgets its attribution, and the arbitration would then refuse
   the client's own placement.
+  Open findings: `Docs/REVIEW-BACKLOG.md` APMF-B149 (a LOADED placement's Character branch from the pump seat is
+  unobserved: MFO passes OnlyIfUnloaded), APMF-B150 (a throwing Post leaves a Queued record), APMF-B151 (kCore facet
+  mask). (g) the exterior visibility test reads the destination cell's attach state: if an unloaded persistent
+  reference's parent cell is the worldspace persistent cell, its attach state decides (see the review log).
 
 ### `native/core/SpaceQuery.{h,cpp}` — ABI v11 SPACE QUERIES (read-only)
 `FindEmptySpace` (walk ray at feet+64u, down ray to feet-maxDrop, 8 knee-height

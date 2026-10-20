@@ -639,7 +639,7 @@ namespace APMF_API {
                                      //       ABI v27: APMF_API_v27::IsSubstrateAvailable (installed here?).
                                      //       See Docs/FACETS.md "Combat substrate".
         kIntent_Place = 28,          // PLACE this actor beside a reference or at a point in an interior cell (ABI v28).
-                                     //       Mode: PROMOTE, a ONE-SHOT, never a claim: ONE engine move
+                                     //       Mode: ONE ENGINE MOVE (INVARIANTS #0 (k)), never a claim: ONE move
                                      //       (TESObjectREFR::MoveTo_Impl, the body Papyrus ObjectReference.MoveTo
                                      //       runs) on the game thread. It holds no facet and switches nothing on.
                                      //       Param: form = the destination, a REFERENCE (the actor lands at its
@@ -2572,7 +2572,9 @@ namespace APMF_API {
         kPlace_OnlyIfUnloaded        = 1u << 0,  // REFUSE (kPlaceWhy_ActorLoaded) when the actor has 3D or stands in an
                                                  //   attached INTERIOR cell (outdoors: 3D only): no visible pop
         kPlace_RefuseIfPlayerPresent = 1u << 1,  // REFUSE (kPlaceWhy_PlayerPresent) when the player's cell is the actor's
-                                                 //   current cell or the destination cell (outdoors: that exact cell only)
+                                                 //   current cell, or: an INTERIOR destination cell is the player's cell;
+                                                 //   an EXTERIOR destination is LOADED (its cell attached, or the
+                                                 //   destination reference has 3D), i.e. inside the player's loaded grid
         kPlace_SetYaw                = 1u << 2,  // face param.fval (radians, world Z rotation); without it the actor
                                                  //   keeps its own heading
         kPlace_All                   = 0x7u,
@@ -2585,8 +2587,9 @@ namespace APMF_API {
         kPlaceState_Queued  = 1,  // accepted at the call; the game thread has not run it yet
         kPlaceState_Placed  = 2,  // the engine move ran and the actor's position reads back at the point
         kPlaceState_Refused = 3,  // a game-thread check refused it (APMF_PlaceStateInfo::why); nothing was moved
-        kPlaceState_Failed  = 4,  // the engine move ran but the position did NOT read back at the point
-                                  //   (why = kPlaceWhy_NotMoved), or the step threw (kPlaceWhy_Error)
+        kPlaceState_Failed  = 4,  // the engine move ran but the position did NOT read back at the point, or an
+                                  //   INTERIOR placement reads back in another cell (why = kPlaceWhy_NotMoved),
+                                  //   or the step threw (kPlaceWhy_Error)
     };
 
     // Why a placement was refused or failed (APMF_PlaceStateInfo::why). APPEND-ONLY.
@@ -2598,18 +2601,22 @@ namespace APMF_API {
                                        //   actor itself
         kPlaceWhy_DestExterior  = 4,   // an EXTERIOR cell: name a reference in that worldspace and an offset instead
         kPlaceWhy_ActorLoaded   = 5,   // kPlace_OnlyIfUnloaded and the actor is loaded
-        kPlaceWhy_PlayerPresent = 6,   // kPlace_RefuseIfPlayerPresent and the player is in either cell
+        kPlaceWhy_PlayerPresent = 6,   // kPlace_RefuseIfPlayerPresent and the player is there (see the flag)
         kPlaceWhy_TravelOwned   = 7,   // another client's kIntent_Travel claim owns the actor (blocker = its handle)
         kPlaceWhy_HoldOwned     = 8,   // another client's kIntent_MovementBlock claim owns the actor (blocker = its handle)
-        kPlaceWhy_NotMoved      = 9,   // kPlaceState_Failed: the call returned, the position did not change to the point
+        kPlaceWhy_NotMoved      = 9,   // kPlaceState_Failed: the call returned, the position (or, for an interior
+                                       //   destination, the cell) did not read back as sent
         kPlaceWhy_Error         = 10,  // kPlaceState_Failed: an exception inside Harbinger's game-thread step
     };
 
     inline constexpr std::uint32_t kPlaceInfo_WasLoaded   = 1u << 0;  // info: the actor was loaded when it was moved
     inline constexpr std::uint32_t kPlaceInfo_FromCell    = 1u << 1;  // info: the destination was a CELL (else a reference)
-    inline constexpr std::uint32_t kPlaceInfo_CellDiffers = 1u << 2;  // info: after the move the actor's parent cell is
-                                                                      //   not the cell handed to the engine (logged)
-    inline constexpr std::uint32_t kPlaceStateGraceMs     = 30000;    // informational: wall ms a finished record stays
+    inline constexpr std::uint32_t kPlaceInfo_CellDiffers = 1u << 2;  // info: after an EXTERIOR move the actor's parent cell
+                                                                      //   is not the cell handed to the engine (logged;
+                                                                      //   an interior mismatch is kPlaceState_Failed)
+    inline constexpr std::uint32_t kPlaceStateGraceMs     = 30000;    // informational: a finished record stays until it has
+                                                                      //   been read once OR this many wall ms, whichever
+                                                                      //   is LATER (the 128-record cap can still evict it)
 
     // GetPlaceState output. EXACT LAYOUT (byte-shared): 64 bytes, every field 4 bytes. The CALLER sets `size` =
     // sizeof(APMF_PlaceStateInfo); APMF fills the v28 fields when `size` >= kPlaceStateInfoV28Size (64, never

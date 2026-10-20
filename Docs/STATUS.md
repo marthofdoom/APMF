@@ -13,8 +13,9 @@ is ported to Harbinger, so MFO never calls MoveTo itself.
   0xA5D370). For a Character: `StopInteractingQuick(true)` then the actor relocation (AE 37313) with point, rot.z,
   cell, worldspace. Harbinger makes that one call on the game thread. New row `Place.TESObjectREFR.MoveTo`.
 - **Shape:** a one-shot, never a claim (the position-cast shape), diverted in `ClientAPI` before the control map.
-  Destination = a reference (+ offset) or an INTERIOR cell (+ point). Flags OnlyIfUnloaded / RefuseIfPlayerPresent /
-  SetYaw. Refused when another client's ch.19 travel or ch.1 hold owns the actor. Position read back: Placed, else
+  Destination = a reference (+ offset) or an INTERIOR cell (+ point). Flags OnlyIfUnloaded / RefuseIfPlayerPresent
+  (outdoors: refused when the destination is loaded, cell attached or reference with 3D) / SetYaw. INVARIANTS #0 (k)
+  adopted (marth 2026-10-19). An interior read-back in another cell is Failed. A result stays until read once or 30 s. Refused when another client's ch.19 travel or ch.1 hold owns the actor. Position read back: Placed, else
   Failed (never reported as placed). `GetPlaceState` (APMF_API_v28, any thread). No INI key. Switches nothing on.
 - **ABI v28** took the number the per-item equip deny (86e3t8w23) had: that moves to v29. MFO must mirror the header
   byte-identically (md5 in the branch report).

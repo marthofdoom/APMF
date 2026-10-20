@@ -28,6 +28,7 @@ namespace apmf::place {
         struct Rec {
             APMF_API::APMF_PlaceStateInfo info{};   // size/handle/msSinceChange are filled at the read
             std::uint64_t                 changedMs = 0;
+            bool                          read      = false;   // a finished state has been returned by GetState
         };
         constexpr std::size_t           kMaxRecords = 128;
         std::mutex                      g_mx;
@@ -39,11 +40,17 @@ namespace apmf::place {
                    s == APMF_API::kPlaceState_Failed;
         }
 
-        // Under g_mx: room for one more record. Drops finished records past the grace, then the oldest
-        // finished one. A table full of QUEUED placements refuses the new one (false).
+        // A finished record lives until it has been READ once or the grace has passed, whichever is LATER
+        // (review 89a72848 F5: a client polling slower than the grace must still see its result).
+        bool Expired(const Rec& a_rec, std::uint64_t a_now) {
+            return Terminal(a_rec.info.state) && a_rec.read && a_now - a_rec.changedMs > APMF_API::kPlaceStateGraceMs;
+        }
+
+        // Under g_mx: room for one more record. Drops expired records, then (at the cap) the oldest finished
+        // one, read or not. A table full of QUEUED placements refuses the new one (false).
         bool MakeRoomLocked(std::uint64_t a_now) {
             for (auto it = g_recs.begin(); it != g_recs.end();) {
-                if (Terminal(it->second.info.state) && a_now - it->second.changedMs > APMF_API::kPlaceStateGraceMs)
+                if (Expired(it->second, a_now))
                     it = g_recs.erase(it);
                 else
                     ++it;
@@ -91,8 +98,9 @@ namespace apmf::place {
             case APMF_API::kPlaceWhy_DestExterior:  return "the destination is an EXTERIOR cell (name a reference in "
                                                            "that worldspace and an offset instead)";
             case APMF_API::kPlaceWhy_ActorLoaded:   return "kPlace_OnlyIfUnloaded and the actor is loaded";
-            case APMF_API::kPlaceWhy_PlayerPresent: return "kPlace_RefuseIfPlayerPresent and the player is in the "
-                                                           "actor's cell or the destination cell";
+            case APMF_API::kPlaceWhy_PlayerPresent: return "kPlace_RefuseIfPlayerPresent and the player is there (the "
+                                                           "actor's cell, an interior destination cell, or a loaded "
+                                                           "exterior destination)";
             case APMF_API::kPlaceWhy_TravelOwned:   return "another client's kIntent_Travel (ch.19) claim owns the actor";
             case APMF_API::kPlaceWhy_HoldOwned:     return "another client's kIntent_MovementBlock (ch.1) claim owns "
                                                            "the actor";
@@ -130,7 +138,9 @@ namespace apmf::place {
             RE::TESWorldSpace*  ws    = nullptr;
             RE::NiPoint3        point = a_offset;
             std::uint32_t       info  = 0;
+            RE::TESObjectREFR*  destRef = nullptr;   // a reference destination (the exterior visibility test)
             if (auto* ref = RE::TESForm::LookupByID<RE::TESObjectREFR>(a_dest)) {
+                destRef = ref;
                 if (ref->GetFormID() == a_actor) return refuse(APMF_API::kPlaceWhy_DestInvalid, 0, " (the actor itself)");
                 if (ref->IsDeleted()) return refuse(APMF_API::kPlaceWhy_DestInvalid, 0, " (a deleted reference)");
                 cell = ref->GetParentCell();
@@ -158,9 +168,27 @@ namespace apmf::place {
             if (a_flags & APMF_API::kPlace_RefuseIfPlayerPresent) {
                 auto* pc    = RE::PlayerCharacter::GetSingleton();
                 auto* pcell = pc ? pc->GetParentCell() : nullptr;
-                if (pcell && (pcell == fromCell || pcell == cell))
+                if (pcell && pcell == fromCell)
                     return refuse(APMF_API::kPlaceWhy_PlayerPresent, 0,
-                                  std::format(" (player cell 0x{})", Hex(pcell->GetFormID())));
+                                  std::format(" (the player is in the actor's cell 0x{})", Hex(pcell->GetFormID())));
+                if (cell->IsInteriorCell()) {
+                    if (pcell == cell)
+                        return refuse(APMF_API::kPlaceWhy_PlayerPresent, 0,
+                                      std::format(" (the player is in the destination cell 0x{})",
+                                                  Hex(cell->GetFormID())));
+                } else {
+                    // EXTERIOR (review 89a72848 F1, SEV-2): one grid cell over is still in view. A destination
+                    // whose cell is ATTACHED (in the player's loaded grid) or whose reference has 3D would give
+                    // the actor 3D on arrival: a visible pop. TESObjectCELL::IsAttached = cellState == kAttached
+                    // (fork, no engine call); TESObjectREFR::Is3DLoaded = Get3D() != nullptr.
+                    const bool cellAttached = cell->IsAttached();
+                    const bool ref3D        = destRef && destRef->Is3DLoaded();
+                    if (cellAttached || ref3D)
+                        return refuse(APMF_API::kPlaceWhy_PlayerPresent, 0,
+                                      std::format(" (exterior destination loaded: cell 0x{} {}, reference {})",
+                                                  Hex(cell->GetFormID()), cellAttached ? "attached" : "not attached",
+                                                  ref3D ? "has 3D" : "no 3D"));
+                }
             }
 
             // ARBITRATION: the winning ch.19 travel / ch.1 hold claim on the actor must be this client's own.
@@ -205,8 +233,21 @@ namespace apmf::place {
             const RE::NiPoint3 after   = actor->GetPosition();
             auto*              nowCell = actor->GetParentCell();
             const float        dist    = after.GetDistance(point);
-            if (nowCell != cell) info |= APMF_API::kPlaceInfo_CellDiffers;
             const RE::FormID nowCellId = nowCell ? nowCell->GetFormID() : 0;
+            // An INTERIOR destination has exactly one right cell: reading back in any other is a failure
+            // (review 89a72848 F2). Outdoors the parent cell may legitimately be the worldspace's persistent cell
+            // for an unloaded actor, so a mismatch there is an info bit (logged), not a verdict.
+            if (nowCell != cell && cell->IsInteriorCell()) {
+                if (!Finish(a_handle, APMF_API::kPlaceState_Failed, APMF_API::kPlaceWhy_NotMoved, 0, nowCellId,
+                            &point, rot.z, info))
+                    return;
+                spdlog::error("[place] {} FAILED (actor 0x{}, dest 0x{}): the interior placement reads back in cell 0x{}, "
+                              "not the destination cell 0x{} (at {:.0f},{:.0f},{:.0f}, {:.0f}u from the point; was {}).",
+                              a_handle, Hex(a_actor), Hex(a_dest), Hex(nowCellId), Hex(cell->GetFormID()), after.x,
+                              after.y, after.z, dist, loaded ? "loaded" : "unloaded");
+                return;
+            }
+            if (nowCell != cell) info |= APMF_API::kPlaceInfo_CellDiffers;
             if (dist > 1.0f) {
                 if (!Finish(a_handle, APMF_API::kPlaceState_Failed, APMF_API::kPlaceWhy_NotMoved, 0, nowCellId,
                             &point, rot.z, info))
@@ -368,7 +409,8 @@ namespace apmf::place {
             std::scoped_lock    lock(g_mx);
             if (const auto it = g_recs.find(a_handle); it != g_recs.end()) {
                 const std::uint64_t age = now - it->second.changedMs;
-                if (!(Terminal(it->second.info.state) && age > APMF_API::kPlaceStateGraceMs)) {
+                if (!Expired(it->second, now)) {
+                    if (Terminal(it->second.info.state)) it->second.read = true;   // the grace now counts
                     info               = it->second.info;
                     info.size          = sizeof(info);
                     info.handle        = a_handle;

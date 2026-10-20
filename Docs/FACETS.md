@@ -2117,7 +2117,7 @@ Handle h = g_apmf->RequestEx(follower, kIntent_Place, 0.0f, &p);   // basis is n
 | Bit | Name | Effect |
 |---|---|---|
 | 0 | `kPlace_OnlyIfUnloaded` | Refused (`kPlaceWhy_ActorLoaded`) when the actor has 3D or stands in an attached interior cell (outdoors only his 3D counts). No visible pop |
-| 1 | `kPlace_RefuseIfPlayerPresent` | Refused (`kPlaceWhy_PlayerPresent`) when the player's cell is the actor's cell or the destination cell. Outdoors that is the exact cell only, not the loaded grid around it |
+| 1 | `kPlace_RefuseIfPlayerPresent` | Refused (`kPlaceWhy_PlayerPresent`) when the player's cell is the actor's cell. Indoors also when the destination cell is the player's cell. Outdoors also when the destination is LOADED: its cell attached (anywhere in the player's loaded grid, one cell over included) or the destination reference has 3D. No visible pop at the far end |
 | 2 | `kPlace_SetYaw` | Face `fval`. Without it the actor keeps his own heading |
 
 Gate on `abiVersion >= 28`. An older Harbinger refuses the intent ("no channel serves intent 28").
@@ -2126,9 +2126,9 @@ An exterior position is named by a reference in that worldspace plus an offset, 
 
 #### What Harbinger enforces
 
-Nothing is switched on, denied or held. On the game thread Harbinger resolves the destination, runs the checks below and calls `TESObjectREFR::MoveTo_Impl` once (verified row `Place.TESObjectREFR.MoveTo`, AE id 56626 / SE 56227, the same body Papyrus `MoveTo`'s queued task runs). For an actor the engine first releases any furniture he is using, then relocates him at the point and heading, in that cell. Then Harbinger reads the actor's position back. Within 1 unit of the point the placement is `Placed`. Anything else is `Failed` (`kPlaceWhy_NotMoved`), logged as an ERROR and never reported as placed.
+Nothing is switched on, denied or held. On the game thread Harbinger resolves the destination, runs the checks below and calls `TESObjectREFR::MoveTo_Impl` once (verified row `Place.TESObjectREFR.MoveTo`, AE id 56626 / SE 56227, the same body Papyrus `MoveTo`'s queued task runs). For an actor the engine first releases any furniture he is using, then relocates him at the point and heading, in that cell. Then Harbinger reads the actor's position back. Within 1 unit of the point, and for an interior destination in the destination cell, the placement is `Placed`. Anything else is `Failed` (`kPlaceWhy_NotMoved`), logged as an ERROR and never reported as placed. Outdoors a different parent cell is only the `kPlaceInfo_CellDiffers` bit (an unloaded actor may sit in the worldspace's persistent cell).
 
-Under INVARIANTS #0 this is action (c), a bounded, one-shot, client-requested promote: one deterministic call whose outcome is the client's declared spot, not an AI decision. It switches nothing on, so there is no deny-completeness exposure (`DENY-COMPLETENESS-AUDIT.md`). What the actor does at his new spot is his own package's business.
+Under INVARIANTS #0 this is action (k), PLACE AN ACTOR, adopted by marth on 2026-10-19 ("Remember we are porting everything to harbinger, so having MFO do something will just need redoing later."): one engine move for the spot the client declared, on the game thread, never a claim, reported by read-back. It switches nothing on, so there is no deny-completeness exposure (`DENY-COMPLETENESS-AUDIT.md`). What the actor does at his new spot is his own package's business.
 
 > **Did You Know?** Papyrus `MoveTo` does not move anything when it is called. It queues a task on the script VM, and the task's run calls `MoveTo_Impl` with the target's cell and worldspace. For a `Character` the handle argument is never read, which is why Harbinger can name a bare interior cell. Read off all three game binaries.
 
@@ -2147,15 +2147,15 @@ On the game thread (state `Refused`, `why` says which, one `[place] ... REFUSED`
 | 3 | `kPlaceWhy_DestInvalid` | neither a reference nor a cell, a deleted reference, a reference in no cell, or the actor himself |
 | 4 | `kPlaceWhy_DestExterior` | an exterior cell |
 | 5 | `kPlaceWhy_ActorLoaded` | `kPlace_OnlyIfUnloaded` and he is loaded |
-| 6 | `kPlaceWhy_PlayerPresent` | `kPlace_RefuseIfPlayerPresent` and the player is in either cell |
+| 6 | `kPlaceWhy_PlayerPresent` | `kPlace_RefuseIfPlayerPresent` and the player is in the actor's cell, in an interior destination cell, or an exterior destination is loaded |
 | 7 | `kPlaceWhy_TravelOwned` | another client's ch.19 travel claim owns him (`blocker` = its handle) |
 | 8 | `kPlaceWhy_HoldOwned` | another client's ch.1 movement block owns him (`blocker` = its handle) |
-| 9 | `kPlaceWhy_NotMoved` | state `Failed`: the move ran, the position did not read back at the point |
+| 9 | `kPlaceWhy_NotMoved` | state `Failed`: the move ran, the position did not read back at the point, or an interior placement reads back in another cell |
 | 10 | `kPlaceWhy_Error` | state `Failed`: an exception in Harbinger's step |
 
 #### Lifetime
 
-A one-shot. It never enters the control map and holds no facet. The handle labels the request: `IsClaimLive` is false for it, and `Release` and `Repoint` do nothing to it (a queued placement still runs). The outcome is `GetPlaceState(handle, &info)` (`APMF_API_v28`, any thread): `Queued` until the next game-thread pump, then `Placed`, `Refused` or `Failed`. A finished record stays 30 s of wall time (`kPlaceStateGraceMs`), then reads `Unknown`. A load or a new game drops every record, and a placement still queued at that moment never runs. Nothing is saved: the engine saves the actor where he now is.
+A one-shot. It never enters the control map and holds no facet. The handle labels the request: `IsClaimLive` is false for it, and `Release` and `Repoint` do nothing to it (a queued placement still runs). The outcome is `GetPlaceState(handle, &info)` (`APMF_API_v28`, any thread): `Queued` until the next game-thread pump, then `Placed`, `Refused` or `Failed`. A finished record stays until `GetPlaceState` has returned it once or 30 s of wall time (`kPlaceStateGraceMs`) have passed, whichever is later, then reads `Unknown` (the 128-record cap can still evict the oldest finished one). A load or a new game drops every record, and a placement still queued at that moment never runs. Nothing is saved: the engine saves the actor where he now is.
 
 #### Priority and conflicts
 
