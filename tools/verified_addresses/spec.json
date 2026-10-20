@@ -4463,6 +4463,132 @@
    "doc": "feat/apmf-place-facet agentlog apmf-place.md: Character branch = StopInteractingQuick(true) then AE 37313(actor, &pos, rot.z, 0, cell, worldspace, 1); the handle argument is read only on the player branch (all three builds)"
   },
   {
+   "seat": "Substrate.Bark.ControllerStartTopicCall",
+   "kind": "callsite",
+   "construct": "the controller's FIRST update (AE 33231 / SE 32484, called only from the two CombatController update variants AE 33217 / 33218, SE 32470 / 32471, when startedCombat +0x35 is 0, then +0x35 = 1; those are called only from Actor::UpdateCombat, Character slot 0xE4) requests the combat-start bark: `call` the combat-dialogue request (AE 44672 / SE 43466) with r8d = 5 (a DETECTION topic) and r9d = 59 NormalToCombat when the group detects the target, else 57 NormalToAlert. The same function sends the 'entered combat' TESCombatEvent (AE 33309 at 0x5593D7)",
+   "ids": {
+    "1.6.1170": 33231,
+    "1.5.97": 32484
+   },
+   "sig": {
+    "1.6.1170": "40 55 53 56 41 56 48 8D 6C 24 C1 48 81 EC 88 00 00 00",
+    "1.5.97": "40 55 53 56 57 41 56 48 8D 6C 24 C9 48 81 EC C0 00 00 00 48 C7 45 27 FE FF FF FF"
+   },
+   "offset": {
+    "1.6.1170": "0xA9",
+    "1.5.97": "0xBD"
+   },
+   "bytes": "E8",
+   "target": {
+    "1.6.1170": 44672,
+    "1.5.97": 43466
+   },
+   "source": "native/channels/SubstrateBark.cpp (the combat substrate's bark deny, INVARIANTS #0 (j) 2 (f): the holder group's detectionDialogueTimers[2] / [4] pre-armed in the holder's own UpdateCombat before the controller's first update)",
+   "doc": "SUBSTRATE-R2-RESEARCH.md section 3: AE 0x559329 / SE 0x4FDCAD (r14 / esi = -1: lea r8d,[reg+6]; lea r9d,[reg+0x3C] or [reg+0x3A])"
+  },
+  {
+   "seat": "Substrate.Bark.DialogueCoreCall",
+   "kind": "callsite",
+   "construct": "the combat-dialogue request (AE 44672 / SE 43466) calls the combat-dialogue core (AE 44673 / SE 43467) with the controller as its 7th argument ([rsp+0x110] inside the core); the core's group is [controller+0] (CombatController::combatGroup)",
+   "ids": {
+    "1.6.1170": 44672,
+    "1.5.97": 43466
+   },
+   "sig": {
+    "1.6.1170": "48 8B C4 41 54 41 56 41 57 48 81 EC 90 00 00 00 48 C7 40 98 FE FF FF FF",
+    "1.5.97": "48 8B C4 55 41 54 41 55 41 56 41 57 48 8D 68 A9 48 81 EC D0 00 00 00 48 C7 45 1F FE FF FF FF 48 89 58 08 48 89 70 10"
+   },
+   "offset": {
+    "1.6.1170": "0xFB",
+    "1.5.97": "0x114"
+   },
+   "bytes": "E8",
+   "target": {
+    "1.6.1170": 44673,
+    "1.5.97": 43467
+   },
+   "source": "native/channels/SubstrateBark.cpp (the combat substrate's bark deny, INVARIANTS #0 (j) 2 (f): the holder group's detectionDialogueTimers[2] / [4] pre-armed in the holder's own UpdateCombat before the controller's first update)",
+   "doc": "AE 0x80222B / SE 0x768D24"
+  },
+  {
+   "seat": "Substrate.Bark.DetectionTimerSlot",
+   "kind": "callsite",
+   "construct": "the combat-dialogue core (AE 44673 / SE 43467), DETECTION topics (esi == 5): `lea eax,[rdi-0x37]; mov ebx,eax; add rbx,0xB; lea rbx,[r8+rbx*8]` with r8 = [controller] = the CombatGroup: the topic's timer is group + 0x58 + (subtype - 55) * 8 (CommonLib CombatGroup::detectionDialogueTimers[11], AITimer {start +0, duration +4}); NormalToAlert 57 -> [2] at +0x68, NormalToCombat 59 -> [4] at +0x78",
+   "ids": {
+    "1.6.1170": 44673,
+    "1.5.97": 43467
+   },
+   "sig": {
+    "1.6.1170": "48 8B C4 57 41 54 41 55 41 56 41 57 48 81 EC B0 00 00 00 48 C7 40 98 FE FF FF FF 48 89 58 08 48 89 68 10 48 89 70 18 0F 29 70 C8",
+    "1.5.97": "40 56 41 56 41 57 48 81 EC B0 00 00 00 80 3D ?? ?? ?? ?? 00"
+   },
+   "offset": {
+    "1.6.1170": "0x106",
+    "1.5.97": "0x10E"
+   },
+   "bytes": "8D 47 C9 8B D8 48 83 C3 0B 49 8D 1C D8",
+   "source": "native/channels/SubstrateBark.cpp (the combat substrate's bark deny, INVARIANTS #0 (j) 2 (f): the holder group's detectionDialogueTimers[2] / [4] pre-armed in the holder's own UpdateCombat before the controller's first update)",
+   "doc": "AE 0x8023B6 / SE 0x768EAE"
+  },
+  {
+   "seat": "Substrate.Bark.TimerGate",
+   "kind": "ripref",
+   "construct": "the same core's gate: `movss xmm0,[AI clock]; subss xmm0,[rbx]; comiss xmm0,[rbx+4]` then AE `jbe` / SE `ja`-else-return: the line is SKIPPED while clock - start <= duration. When it speaks the core arms the same timer (AE 0x8025C3: start = the clock, duration = a random value between two game settings). The global is the AI clock the engine's group timers run on",
+   "ids": {
+    "1.6.1170": 44673,
+    "1.5.97": 43467
+   },
+   "sig": {
+    "1.6.1170": "48 8B C4 57 41 54 41 55 41 56 41 57 48 81 EC B0 00 00 00 48 C7 40 98 FE FF FF FF 48 89 58 08 48 89 68 10 48 89 70 18 0F 29 70 C8",
+    "1.5.97": "40 56 41 56 41 57 48 81 EC B0 00 00 00 80 3D ?? ?? ?? ?? 00"
+   },
+   "offset": {
+    "1.6.1170": "0x118",
+    "1.5.97": "0x120"
+   },
+   "bytes": {
+    "1.6.1170": "F3 0F 10 05 8C 8C 99 02 F3 0F 5C 03 0F 2F 43",
+    "1.5.97": "F3 0F 10 05 7C 17 7D 02 F3 0F 5C 03 0F 2F 43"
+   },
+   "global": {
+    "1.6.1170": 404125,
+    "1.5.97": 517597
+   },
+   "global_seat": "Substrate.Bark.AIClock",
+   "source": "native/channels/SubstrateBark.cpp (the combat substrate's bark deny, INVARIANTS #0 (j) 2 (f): the holder group's detectionDialogueTimers[2] / [4] pre-armed in the holder's own UpdateCombat before the controller's first update)",
+   "doc": "AE 0x8023C8 -> 0x319B05C / SE 0x768EC0 -> 0x2F3A644"
+  },
+  {
+   "seat": "Substrate.AIProcess.SetAggressor",
+   "kind": "function",
+   "construct": "the engine's own aggressor-bit setter AIProcess(rcx)+0x136 bit 2 = dl (AE 39145: movzx/or 4/and 0xFB/cmove; SE 38185: test dl; or / and byte [rcx+0x136]); the call Actor::StopCombat makes with false (AE 0x6B7403 / SE 0x625BFB) and StartCombat with true (AE 0x6B6B7F / SE 0x6253FC)",
+   "ids": {
+    "1.6.1170": 39145,
+    "1.5.97": 38185
+   },
+   "sig": {
+    "1.6.1170": "44 0F B6 81 36 01 00 00 41 0F B6 C0 41 80 C8 04",
+    "1.5.97": "84 D2 74 08 80 89 36 01 00 00 04 C3 80 A1 36 01 00 00 FB"
+   },
+   "source": "native/channels/SubstrateAggressor.cpp (the combat substrate's aggressor-bit clear, INVARIANTS #0 (j) 2 (g): set false right after the entry and again only if set while HELD)",
+   "doc": "SUBSTRATE-R2-RESEARCH.md section 1 (writers / readers)"
+  },
+  {
+   "seat": "Substrate.AIProcess.GetAggressor",
+   "kind": "function",
+   "construct": "the engine's own aggressor-bit getter: (AIProcess(rcx)+0x136 >> 2) & 1 (AE 39144 / SE 38184); read by GetShouldHelp, KillImpl, StartCombat and the attack reaction",
+   "ids": {
+    "1.6.1170": 39144,
+    "1.5.97": 38184
+   },
+   "sig": {
+    "1.6.1170": "0F B6 81 36 01 00 00 C0 E8 02 24 01 C3 CC CC CC",
+    "1.5.97": "0F B6 81 36 01 00 00 C1 E8 02 83 E0 01 C3 CC CC"
+   },
+   "source": "native/channels/SubstrateAggressor.cpp (the combat substrate's aggressor-bit clear, INVARIANTS #0 (j) 2 (g): set false right after the entry and again only if set while HELD)",
+   "doc": "SUBSTRATE-R2-RESEARCH.md section 1"
+  },
+  {
    "seat": "Substrate.PackageSelector.CombatOverrideCall",
    "kind": "callsite",
    "construct": "the package selector (AE 37172 0x65DE90 / SE 36193 0x5CD930; asks Character slot 0x49 CheckForCurrentAliasPackage FIRST, at +0x3E / +0x37) swaps its pick for the actor's ENTER-COMBAT OVERRIDE package when the actor has a process and a combat controller (Actor+0x160 AE / +0x158 SE), the pick lacks IgnoreCombat (PKDT bit 20) and the process is high or the 3D is loaded: `mov rdx,rdi; mov rcx,<npc>; call GetEnterCombatOverridePackage; test rax,rax; cmovne rbx,rax`. A null return keeps the selector's own pick",
@@ -4903,6 +5029,86 @@
    "seat": "TargetPin.CombatController.SetTarget.1_7_104",
    "rva": "0x559630",
    "source": "channels/TargetPin.cpp kSetTarget17 (1.7.104 only: AE id 33235 has no MIT-table row)"
+  },
+  {
+   "seat": "Substrate.CombatGroup.RemoveTarget.1_7_104",
+   "rva": "0x803D70",
+   "source": "channels/CombatSubstrate.cpp k17RemoveTarget (1.7.104 only: AE id 44705 has no MIT-table row)"
+  },
+  {
+   "seat": "EngagementHold.CombatGroup.UpdateTargetDetection.1_7_104",
+   "rva": "0x805090",
+   "source": "channels/CombatEntry.cpp k17UpdateTargetDetection (1.7.104 only: AE id 44725 has no MIT-table row)"
+  },
+  {
+   "seat": "EngagementHold.Site.ListenerDetection.1_7_104",
+   "rva": "0x8031C5",
+   "source": "channels/CombatEntry.cpp k17ListenerSite (1.7.104 only: AE id 44699 has no MIT-table row)"
+  },
+  {
+   "seat": "EngagementHold.Site.GroupDetectionPass.1_7_104",
+   "rva": "0x80CF43",
+   "source": "channels/CombatEntry.cpp k17PassSite (1.7.104 only: AE id 44804 has no MIT-table row)"
+  },
+  {
+   "seat": "Substrate.CombatGroup.MusicWriteLock.1_7_104",
+   "rva": "0x803740",
+   "source": "channels/CombatSubstrate.cpp k17MusicWriteLock (1.7.104 only: AE id 44703 has no MIT-table row)"
+  },
+  {
+   "seat": "Substrate.CombatGroup.DetectionPassInUpdate.1_7_104",
+   "rva": "0x80377D",
+   "source": "channels/CombatSubstrate.cpp k17DetectionPassInUpdate (1.7.104 only: AE id 44703 has no MIT-table row)"
+  },
+  {
+   "seat": "Substrate.CombatGroup.MusicUndecided.1_7_104",
+   "rva": "0x80394C",
+   "source": "channels/CombatSubstrate.cpp k17MusicUndecided (1.7.104 only: AE id 44703 has no MIT-table row)"
+  },
+  {
+   "seat": "Substrate.CombatManager.MusicPlayTest.1_7_104",
+   "rva": "0x83E0F9",
+   "source": "channels/CombatSubstrate.cpp k17MusicPlayTest (1.7.104 only: AE id 46888 has no MIT-table row)"
+  },
+  {
+   "seat": "Substrate.BSMusicManager.Reader.1_7_104",
+   "rva": "0x641B9F",
+   "source": "channels/CombatSubstrate.cpp k17MusicReader (1.7.104 only: AE id 36550 has no MIT-table row)"
+  },
+  {
+   "seat": "Substrate.MenuTopicManager.Reader.1_7_104",
+   "rva": "0xA2D7C7",
+   "source": "channels/CombatSubstrate.cpp k17MenuTopicReader (1.7.104 only: AE id 56194 has no MIT-table row)"
+  },
+  {
+   "seat": "Substrate.Bark.ControllerStartTopicCall.1_7_104",
+   "rva": "0x559329",
+   "source": "channels/SubstrateBark.cpp k17StartTopicCall (1.7.104 only: AE id 33231 has no MIT-table row)"
+  },
+  {
+   "seat": "Substrate.Bark.DialogueCoreCall.1_7_104",
+   "rva": "0x80222B",
+   "source": "channels/SubstrateBark.cpp k17DialogueCoreCall (1.7.104 only: AE id 44672 has no MIT-table row)"
+  },
+  {
+   "seat": "Substrate.Bark.DetectionTimerSlot.1_7_104",
+   "rva": "0x8023B6",
+   "source": "channels/SubstrateBark.cpp k17TimerSlot (1.7.104 only: AE id 44673 has no MIT-table row)"
+  },
+  {
+   "seat": "Substrate.Bark.TimerGate.1_7_104",
+   "rva": "0x8023C8",
+   "source": "channels/SubstrateBark.cpp k17TimerGate: the AI clock reader; the code decodes its displacement (1.7.104 only: AE id 44673 / global 404125 have no MIT-table row)"
+  },
+  {
+   "seat": "Substrate.AIProcess.GetAggressor.1_7_104",
+   "rva": "0x6D6C90",
+   "source": "channels/SubstrateAggressor.cpp k17GetAggressor (1.7.104 only: AE id 39144 has no MIT-table row)"
+  },
+  {
+   "seat": "Substrate.AIProcess.SetAggressor.1_7_104",
+   "rva": "0x6D6CB0",
+   "source": "channels/SubstrateAggressor.cpp k17SetAggressor (1.7.104 only: AE id 39145 has no MIT-table row)"
   },
   {
    "seat": "Substrate.PackageSelector.1_7_104",

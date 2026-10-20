@@ -56,7 +56,8 @@
 // package (re)start: seen once on Auri's own package in the 10-19 log) and from the procedure-tree node begin visitor
 // (AE 29290, every Sequence / Stacked / Simultaneous / Random node entering a child, for ANY package's tree). The
 // held package lacks IgnoreCombat, so each such event writes 0. Reassert writes 1 back, once per reset Serve sees,
-// logs each one, and stops 15 s after the open (the substrate's TTL cap is 15 s too).
+// logs each one, and stops 15 s after the open (the substrate's TTL cap is 15 s too). DEFAULT OFF
+// (bSubstrateBitReassert=0, F-6 review SEV-3): it switches on only after P6 and marth's go.
 // ============================================================================
 
 namespace apmf::substratepackage {
@@ -91,6 +92,8 @@ namespace apmf::substratepackage {
         std::atomic<const char*>    g_seatState{ "not installed" };
         std::atomic<bool>           g_reassertOn{ true };
         bool                        g_installedOnce = false;   // game thread (kDataLoaded)
+        const char*                 g_refusal       = nullptr; // Install's answer, repeated on a second call
+        bool                        g_iniOff        = false;   // bSubstrateOverrideDeny=0: the one by-name hole (logged per OPEN)
 
         struct Window {
             RE::FormID    prePkg       = 0;       // running at Opening (just before StartCombat)
@@ -123,8 +126,8 @@ namespace apmf::substratepackage {
                 known = w.opened;
             }
             if (log)
-                spdlog::info("[substrate] 0x{} combat-override package 0x{} DENIED -- 0x{} stays in charge (the package "
-                             "selector keeps its own pick; held holder, F-6){}",
+                spdlog::info("[substrate] 0x{} combat-override package 0x{} DENIED -- pre-substrate package was 0x{} (the "
+                             "package selector keeps its own pick; held holder, F-6){}",
                              Hex(a_actor), Hex(a_pkg), Hex(prev),
                              known ? "" : " [no pre-substrate record: the window opened before this seat saw it]");
         }
@@ -140,9 +143,9 @@ namespace apmf::substratepackage {
             return nullptr;   // the engine's own "no override": `test rax,rax; cmovne` keeps the selector's pick
         }
 
-        bool IniOn(const char* a_key) {
+        bool IniOn(const char* a_key, const char* a_default) {
             char b[16]{};
-            REX::W32::GetPrivateProfileStringA("CombatSubstrate", a_key, "1", b, sizeof(b), kIni);
+            REX::W32::GetPrivateProfileStringA("CombatSubstrate", a_key, a_default, b, sizeof(b), kIni);
             return std::atoi(b) != 0;
         }
 
@@ -153,10 +156,11 @@ namespace apmf::substratepackage {
 
     }
 
-    void Install() {
-        if (g_installedOnce) return;
+    const char* Install() {
+        if (g_installedOnce) return g_refusal;
         g_installedOnce = true;
-        g_reassertOn.store(IniOn("bSubstrateBitReassert"), std::memory_order_relaxed);
+        // S2b defaults OFF (F-6 review SEV-3): it waits for P6 and marth's go (INVARIANTS #0 (j) 3).
+        g_reassertOn.store(IniOn("bSubstrateBitReassert", "0"), std::memory_order_relaxed);
         spdlog::info("[substrate] S2b ignoring-bit re-assert {} (capped at {} s from the open; every undone reset "
                      "logged).",
                      g_reassertOn.load() ? "ON" : "OFF ([CombatSubstrate] bSubstrateBitReassert=0)", kReassertCapMs / 1000);
@@ -167,8 +171,9 @@ namespace apmf::substratepackage {
         std::uintptr_t site = 0, fn = 0;
         if (!apmf::allowance::RuntimeSupported()) {
             why = "the runtime is not exactly 1.6.1170, 1.5.97 or 1.7.104";
-        } else if (!IniOn("bSubstrateOverrideDeny")) {
-            why = "[CombatSubstrate] bSubstrateOverrideDeny=0";
+        } else if (!IniOn("bSubstrateOverrideDeny", "1")) {
+            g_iniOff = true;
+            why      = "[CombatSubstrate] bSubstrateOverrideDeny=0";
         } else if (on17) {
             const std::uintptr_t sel = REL::Offset(kSelector17).address();
             fn                       = REL::Offset(kOverride17).address();
@@ -193,13 +198,25 @@ namespace apmf::substratepackage {
             if (b[0] != 0xE8 || site + 5 + static_cast<std::intptr_t>(rel) != fn)
                 why = "the selector's call no longer calls GetEnterCombatOverridePackage (another patcher got there first)";
         }
-        if (why) {
+        if (why && g_iniOff) {
+            // The one by-name hole (F-6 review SEV-3): switched off in the INI, the substrate still opens and every OPEN
+            // logs the hole (Opening), as the music deny's switch does.
             g_seatState.store(why, std::memory_order_release);
-            spdlog::warn("[substrate] combat-override deny seat NOT installed -- {}. A held holder whose quest alias or "
-                         "NPC carries an enter-combat override package (every vanilla follower) runs THAT package while "
-                         "held, not the package it had before (F-6 open).",
+            spdlog::warn("[substrate] combat-override deny OFF -- {}. A held holder whose quest alias or NPC carries an "
+                         "enter-combat override package (every vanilla follower) runs THAT package while held; each OPEN "
+                         "logs the hole.",
                          why);
-            return;
+            return nullptr;
+        }
+        if (why) {
+            // A refused row refuses the SUBSTRATE (principle 2: a facet it switches on without its deny), as the music,
+            // bark and aggressor rows do: combatsubstrate::Install folds this reason into its own.
+            g_seatState.store(why, std::memory_order_release);
+            g_refusal = why;
+            spdlog::warn("[substrate] combat-override deny seat NOT installed -- {}. The combat substrate is refused with "
+                         "it.",
+                         why);
+            return why;
         }
         static auto* s_tr = new SKSE::Trampoline("APMF.SubstratePackage");   // never freed
         void* mem = nullptr;
@@ -220,6 +237,7 @@ namespace apmf::substratepackage {
                      "call (RVA 0x{:X}) answers \"none\" for a HELD substrate holder, so the package it ran before the "
                      "substrate stays in charge; real fights and non-holders are untouched.",
                      site - REL::Module::get().base());
+        return nullptr;
     }
 
     const char* SeatState() {
@@ -234,6 +252,10 @@ namespace apmf::substratepackage {
 
     void Opening(RE::FormID a_actor, const RE::AIProcess* a_proc) {
         const RE::FormID pre = Running(a_proc);
+        if (g_iniOff)
+            spdlog::warn("[substrate] 0x{} known hole: the combat-override deny is OFF ([CombatSubstrate] "
+                         "bSubstrateOverrideDeny=0): a combat-override package may replace 0x{} while the substrate is open.",
+                         Hex(a_actor), Hex(pre));
         std::scoped_lock lk(g_mx);
         Window& w = g_win[a_actor];
         w        = Window{};
@@ -272,7 +294,7 @@ namespace apmf::substratepackage {
         return !capped;
     }
 
-    void Closing(RE::FormID a_actor, RE::Actor* a_ref, bool a_dropped) {
+    std::uint32_t Closing(RE::FormID a_actor, RE::Actor* a_ref, bool a_dropped) {
         Window w{};
         bool   had = false;
         {
@@ -283,7 +305,8 @@ namespace apmf::substratepackage {
                 g_win.erase(it);
             }
         }
-        if (!had || !w.opened) return;   // closed before the entry: nothing ran
+        if (!had) return 0;
+        if (!w.opened) return w.denied;   // closed before the entry: no summary
         const RE::FormID now = Running(a_ref ? a_ref->GetActorRuntimeData().currentProcess : nullptr);
         spdlog::info("[substrate] 0x{} package hold ({}): pre-substrate package 0x{} {}; combat-override swaps denied {}{}; "
                      "S2b re-asserts {} (by a package restart {}){}; override seat {}.",
@@ -291,6 +314,7 @@ namespace apmf::substratepackage {
                      now == w.prePkg ? "STAYED IN CHARGE (still running)" : fmt::format("is NOT running now (0x{})", Hex(now)),
                      w.denied, w.denied ? fmt::format(" (last 0x{})", Hex(w.lastPkg)) : std::string(), w.reasserts,
                      w.byRestart, w.capLogged ? ", stopped at the 15 s cap" : "", SeatState());
+        return w.denied;
     }
 
 }

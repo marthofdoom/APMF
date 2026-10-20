@@ -14,13 +14,34 @@ in charge via harbingers allow deny."
   it. New seat: `channels/SubstratePackage.cpp`, `write_call<5>` at that call, "no override" for HELD holders only.
   Rows `Substrate.PackageSelector.CombatOverrideCall` / `Substrate.Npc.GetEnterCombatOverridePackage` (1.6.1170 /
   1.5.97) and two 1.7.104 raw rows (APMF idmap CSV) + a load-time E8 check.
-- **S2b built** (writers of `AIProcess+0x139` remain after the deny: package restart AE 39434, procedure-tree node
-  begin AE 29290): each held reset is written back and logged, to 15 s.
-- INI `[CombatSubstrate] bSubstrateOverrideDeny=1`, `bSubstrateBitReassert=1`. Docs: INVARIANTS #0 (j) condition 3
+- **S2b built, OFF by default** (writers of `AIProcess+0x139` remain after the deny: package restart AE 39434,
+  procedure-tree node begin AE 29290): with the switch on, each held reset is written back and logged, to 15 s. It
+  switches on after P6 and marth's go.
+- **Review round (tier-3 "fix first"):** a real-combat drop of a holder whose window denied a swap re-picks the package
+  (SEV-2); a refused override row refuses the substrate (INI 0 is the one by-name hole, logged per OPEN); the DENIED
+  line says "pre-substrate package was"; SEV-5s in REVIEW-BACKLOG APMF-B163..B165. Merged origin/main `55d2697` (R5).
+- INI `[CombatSubstrate] bSubstrateOverrideDeny=1`, `bSubstrateBitReassert=0` (Docs/INI-REFERENCE.md). Docs: INVARIANTS #0 (j) condition 3
   amendment, FACETS "Combat substrate", DENY-COMPLETENESS-AUDIT row 27 (package swap), MAP.
-- Field run (Sven, dry run on): expect `combat-override package 0x00109124 DENIED -- 0x0005C84B stays in charge` (or
-  MFO's package) once per window, `package hold (close): ... STAYED IN CHARGE`, `MOVE ... proc+0x139=1` for the whole
-  window, the body moving under the follow package; any `S2b re-asserted` line names its cause.
+- Field run (Sven, dry run on): expect `combat-override package 0x00109124 DENIED -- pre-substrate package was 0x0005C84B`
+  (or MFO's package) once per window, `package hold (close): ... STAYED IN CHARGE`, `MOVE ... proc+0x139=1` after the write for the
+  window (S2b off: resets are counted, not undone), the body moving under the follow package.
+## HEAD OF WORK 2026-10-20 -- COMBAT SUBSTRATE ON 1.7.104 (ch.27 no longer refused there), branch `feat/apmf-substrate-1-7-104`, NOT merged
+
+marth 2026-10-19 Q4: "substrate unavailable while Harbinger present shouldn't happen". The substrate refused 1.7.104
+because eight AE ids it rests on have no row in the fork's MIT id table (a RELOCATION_ID miss is FATAL there).
+- **Ten raw-RVA rows** (spec `raw_rvas` + `tools/verified_addresses/idmap-1.7.104-apmf.csv`, labels `....1_7_104`; the
+  1.6.1170 / 1.5.97 tables are unchanged, the baseline regeneration was byte-identical first): RemoveTarget 0x818BD0;
+  the hold's UpdateTargetDetection 0x819EF0 and its two call sites 0x818025 / 0x821E23; the music deny's four sites
+  0x8185A0 / 0x8185DD / 0x8187AC / 0x852FD9; the BSMusicManager and MenuTopicManager reader sites 0x65454F / 0xA46267.
+  Every function is instruction-identical to its 1.6.1170 twin at the same offsets (`Docs/VERIFIED-ADDRESSES.md`
+  "Combat substrate on 1.7.104" has the per-row proof).
+- **Code:** the hold (StopCombat 0xE5 + knowledge seats), the substrate Install (RemoveTarget, music deny, the two
+  singletons proven through their readers), the anchor join guard (AE offset +0x23; StartCombat identical) and the
+  spell-equip path now take the normal self-check path on 1.7.104. A raw row has no runtime byte check, so on 1.7.104
+  the code re-reads the E8 targets, the two `cmp [reg+0x15C]` encodings and the readers' RIP displacements.
+- **Stale, not touched (byte-shared):** `APMF_API.h`'s `IsSubstrateAvailable` comment still says "exactly 1.6.1170 or
+  1.5.97". It needs a mirrored MFO + APMF comment edit.
+- No ABI or co-save change. No 1.7.104 install exists: nothing here is field-proven on 1.7.104.
 
 ## HEAD OF WORK 2026-10-19 -- PLACE FACET (kIntent_Place, ABI v28 GetPlaceState), branch `feat/apmf-place-facet`, NOT merged
 
@@ -74,7 +95,7 @@ battleaxe drawn, swings, townsfolk reacting) with 0 anchor-target refusals. Auri
   group, taking its targets (AE caller `0x71C2DD` / SE `0x68848E`; best-supported, not proven to have run). ch.22's
   slot-0x99 stub is widened to hand the thunk rsi / rbp at StartCombat's self check; `channels/AnchorGuard.cpp`
   refuses that join into a substrate group by a non-holder. New row `AnchorGuard.StartCombat.TargetGroupRegs`
-  (1.6.1170 / 1.5.97; 1.7.104 refused by name). `[CombatSubstrate] bSubstrateJoinGuard` (1).
+  (1.6.1170 / 1.5.97; 1.7.104 since 2026-10-20, see the 1.7.104 entry above). `[CombatSubstrate] bSubstrateJoinGuard` (1).
 - **Route-independent sweep:** every frame while a substrate is live + 10 s, a non-holder that targets the anchor or
   whose group lists it gets an `ANCHOR LEAK` ERROR line, the anchor out of its group (only when no holder shares it)
   and the ranked StopCombat when nothing else is left. CLOSE runs it on the holder's group members.

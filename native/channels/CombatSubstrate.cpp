@@ -5,6 +5,8 @@
 #include "channels/CombatApproach.h"       // SpaceOfRef: the anchor's last-known location space
 #include "channels/CombatEntry.h"          // hold::StopCombatRanked: the empty-fight end (F6)
 #include "channels/CombatReentryDeny.h"    // the slot-0x99 seat this file's anchor refusal rides; ClientEntryScope
+#include "channels/SubstrateAggressor.h"   // R5 F-3: the aggressor-bit clear (one-line call-outs only)
+#include "channels/SubstrateBark.h"        // R5 F-2: the combat-start bark deny (one-line call-outs only)
 #include "channels/SubstrateEquip.h"       // the spell-equip path the allow-list opens (one-line call-outs only)
 #include "channels/SubstrateProbe.h"       // R1 passive probes (one-line call-outs only)
 #include "channels/SubstratePackage.h"     // F-6 override deny + S2b re-assert (one-line call-outs only)
@@ -22,6 +24,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstring>
 #include <limits>
 #include <mutex>
 #include <string>
@@ -131,10 +134,18 @@
 //     the closing holder's group members);
 //   * the anchor's group entry is kept KNOWN (the held engagement's own un-lose write,
 //     INVARIANTS #0 (i) condition 1, for the anchor only) so the group never searches for it;
-//   * other spells: the floors + ch.8 / 0x0F / 0x0A as before; only the claimed spell runs.
-//   KNOWN HOLES approved by marth 2026-10-12, logged once per substrate: the combat-start topic
-//   path (AE 0x6B6CFB-0x6B6D32 runs because the bit is off at entry) and the combat state event
-//   (TESCombatEvent / OnCombatStateChanged).
+//   * other spells: the floors + ch.8 / 0x0F / 0x0A as before; only the claimed spell runs;
+//   * the combat-start BARK (R5 F-2, channels/SubstrateBark.cpp): the controller's first update (AE 33231 /
+//     SE 32484) requests NormalToCombat / NormalToAlert; the holder group's two detection-dialogue timers are
+//     pre-armed in the holder's own UpdateCombat before it runs, so the engine's own gate skips the line;
+//   * the AGGRESSOR BIT (R5 F-3, channels/SubstrateAggressor.cpp): StartCombat marks the holder the aggressor
+//     (AIProcess+0x136 bit 2); it is set false through the engine's setter right after the entry and again only
+//     if something sets it while HELD.
+//   StartCombat's block at AE 0x6B6CFB-0x6B6D32 (SE 0x625572-0x6255A9), once recorded here as the "combat-start
+//   topic", says NO line (R2 research F-1): it tells the actor's SCENE that it entered combat (vfunc 0x4A into
+//   24131; the substrate never opens on an actor in a scene) and clears head-track slot 5 (39472). KNOWN HOLE
+//   approved by marth 2026-10-12, logged once per substrate: the combat state event (TESCombatEvent /
+//   OnCombatStateChanged; R5 adds only the passive sink-order probe, F-4 is not built).
 //
 // REAL COMBAT (design 3.6a; marth: "If real combat starts, remove the anchor and drop
 // suppression of combat behavior"). Three triggers, on whatever thread sees them: (a) a target
@@ -190,6 +201,7 @@ namespace {
 
     constexpr int           kSlots          = 16;
     static_assert(kSlots <= apmf::substrateequip::kMaxSlots, "channels/SubstrateEquip.cpp tracks one record per slot");
+    static_assert(kSlots <= apmf::substratebark::kMaxSlots, "channels/SubstrateBark.cpp tracks one record per slot");
     constexpr float         kMaxTtlSec      = 15.0f;   // design 3.6: the TTL is clamped to 15 s
     constexpr float         kFloorBasis     = -1.0e9f; // below any client basis: a client cast claim wins its hand
     constexpr std::uint64_t kFloorWaitMs    = 1000;    // the entry waits this long for the floors to publish
@@ -198,7 +210,8 @@ namespace {
     constexpr std::uint64_t kHeartbeatMs    = 30000;
     constexpr float         kAnchorFollowU  = 32.0f;   // move the anchor when its holder moved this far
     constexpr std::uint16_t kTargetLost     = 1u << 1; // CombatTarget::flags kTargetLost (the hold's constant)
-    constexpr std::uint64_t kRepickWaitMs   = 2000;    // review F2: the longest wait for the buffered re-pick
+    constexpr std::uint64_t kRepickWaitMs   = 2000;    // review F2: the longest wait for the buffered re-pick (UNPAUSED time, R5 F-5)
+    constexpr std::uint64_t kPollGapMs      = 500;     // R5 F-5: a longer gap between two Polls is a stall (not counted)
     constexpr std::uint64_t kFloorRenewMs   = 10000;   // review F5: renew the floors' 15 s windows this often
     std::uint64_t           g_pollFrame     = 0;       // Poll calls (game thread)
 
@@ -361,6 +374,8 @@ namespace {
         bool             bitPending = false;
         std::uint64_t    repickAskedMs = 0, repickClearMs = 0;
         std::uint64_t    repickClearFrame = 0;
+        // R5 F-5: the re-pick wait counts only time the game ran (no pausing menu, no stalled frame)
+        std::uint64_t    repickLastPollMs = 0, repickRunMs = 0, repickPausedMs = 0, repickGapMs = 0;
         RE::TESPackage*  bitPkg = nullptr;          // the running package when the bit was written
         float            bitPkgStart = 0.0f;        // its ActorPackage::packageStartTime then
         std::uint32_t    resetsByRestart = 0, resetsOther = 0;
@@ -1014,6 +1029,10 @@ namespace {
         apmf::substrateprobe::BeforeEntry(a_sub.id, proc, now);   // R1: the aggressor bit before the entry
         apmf::substratepackage::Opening(a_sub.id, proc);   // F-6: the pre-substrate package
         bool ok = false;
+        // R5 F-2: the bark deny's record is PENDING before the call (the holder's UpdateCombat job is not ordered
+        // against this thread): its next UpdateCombat pre-arms the group's two timers before the engine's update.
+        apmf::substratebark::Arm(a_sub.slot, a_sub.id, actor->GetHandle().native_handle(),
+                                 static_cast<float>(a_sub.ttlMs) / 1000.0f + 2.0f);
         g_slots[a_sub.slot].state.fetch_or(kStEntering, std::memory_order_acq_rel);
         {
             // The call ch.21 makes (verified row CombatEntry.Actor.StartCombat); a declared entry passes a
@@ -1028,19 +1047,25 @@ namespace {
             spdlog::warn("[substrate] 0x{} OPEN anchor=0x{} entry=false -- StartCombat returned {}{}.", Hex(a_sub.id),
                          Hex(g_anchorId.load()), ok ? "true" : "false",
                          ok ? " but left NO controller" : " (the engine refused: its life-state, dead, distance or flag tests)");
+            apmf::substratebark::Disarm(a_sub.slot);
             CloseSub(a_sub, "entry refused");
             return false;
         }
-        // KNOWN HOLE (approved): the bit is off at entry, so StartCombat's block at AE 0x6B6CFB-0x6B6D32
-        // (the vfunc 0x4A result into 0x3A0D20 / id 24131, INFERRED to be the combat-start topic) ran.
+        apmf::substrateaggressor::AfterEntry(a_sub.id, proc);   // R5 F-3: StartCombat marked him the aggressor
+        // R2 research F-1: the bit is off at entry, so StartCombat's block at AE 0x6B6CFB-0x6B6D32 ran. It is NOT a
+        // topic: the scene notification (vfunc 0x4A into 24131; the holder is in no scene) and a head-track clear
+        // (39472, slot 5). The combat-start BARK is the controller's first update (33231): channels/SubstrateBark.cpp.
         if (!a_sub.entryBit)
-            spdlog::info("[substrate] 0x{} known hole: combat-start topic path ran (the ignoring-combat bit was off at "
-                         "entry, so StartCombat's AE 0x6B6CFB block executed; approved by marth 2026-10-12, RS2 researches "
-                         "a deny).",
-                         Hex(a_sub.id));
+            spdlog::info("[substrate] 0x{} StartCombat's in-combat block ran (the ignoring-combat bit was off at entry; AE "
+                         "0x6B6CFB: a scene notification and a head-track clear, NOT a dialogue line). The combat-start "
+                         "bark comes from the controller's first update: {}.",
+                         Hex(a_sub.id),
+                         apmf::substratebark::On() ? std::string("the bark deny pre-arms it (the BARK DENY line at the close)")
+                                                   : fmt::format("NOT denied, the bark deny is OFF ({})",
+                                                                 apmf::substratebark::OffReason()));
         else
             spdlog::warn("[substrate] 0x{} the ignoring-combat bit was ALREADY ON at entry (the running package carries "
-                         "IgnoreCombat): the topic block was skipped, but the new controller copied the bit into its +0x42 "
+                         "IgnoreCombat): StartCombat's in-combat block was skipped, but the new controller copied the bit into its +0x42 "
                          "at birth (AE 0x5582F8) and is born PAUSED -- its tree, the cast leaves included, does not run. "
                          "P6's ctrl+0x42 shows it.",
                          Hex(a_sub.id));
@@ -1062,7 +1087,7 @@ namespace {
         a_sub.lastPosMs  = now;
         a_sub.musicAtOpen = g_musicOk ? MusicNow() : 0;
         ++g_opened;
-        apmf::substrateprobe::Opened(a_sub.id, now);
+        apmf::substrateprobe::Opened(a_sub.id, now, anchor);
         if (!g_musicDeny)
             spdlog::warn("[substrate] 0x{} known hole: the music deny is OFF ({}): the engine may decide this group's "
                          "music and battle music can play while the substrate is open.",
@@ -1125,6 +1150,9 @@ namespace {
         apmf::substrateequip::Closing(a_sub.slot, a_sub.id, actor, a_reason, apmf::clock::MonotonicMs());   // equip outcome
         apmf::substrateequip::RestoreWhenFree(a_sub.id, a_reason, apmf::clock::MonotonicMs());   // the stowed hands (F2)
         if (a_sub.slot >= 0 && a_sub.phase == Phase::kOpen) LogObserved(a_sub, actor);
+        if (a_sub.phase == Phase::kOpen) apmf::substratebark::Closing(a_sub.slot, a_sub.id, false, apmf::clock::MonotonicMs());
+        else apmf::substratebark::Disarm(a_sub.slot);   // R5 F-2 (a close before the entry: no line)
+        if (const auto t = apmf::substrateaggressor::Closing(a_sub.id); !t.empty()) spdlog::info("[substrate] 0x{} {}.", Hex(a_sub.id), t);
         DebtForget(a_sub.id);   // a normal close: his StopCombat ends his part in the group (a co-holder keeps its own debt)
         // 1. the bit back to what it was
         if (a_sub.bitSet && proc) proc->ignoringCombat = a_sub.priorBit;
@@ -1177,10 +1205,13 @@ namespace {
         auto* actor = RE::TESForm::LookupByID<RE::Actor>(a_sub.id);
         auto* proc  = actor ? actor->GetActorRuntimeData().currentProcess : nullptr;
         apmf::substrateprobe::Closing(a_sub.id, actor, true, true, apmf::clock::MonotonicMs());   // R1
-        apmf::substratepackage::Closing(a_sub.id, actor, true);   // F-6 summary
+        const std::uint32_t pkgDenied = apmf::substratepackage::Closing(a_sub.id, actor, true);   // F-6 summary
+        apmf::substratebark::Closing(a_sub.slot, a_sub.id, true, apmf::clock::MonotonicMs());   // R5 F-2: line; owed put-back
+        if (const auto t = apmf::substrateaggressor::Closing(a_sub.id); !t.empty()) spdlog::info("[substrate] 0x{} {}.", Hex(a_sub.id), t);
         apmf::substrateequip::Closing(a_sub.slot, a_sub.id, actor, "real combat (dropped)", apmf::clock::MonotonicMs());
         apmf::substrateequip::RestoreWhenFree(a_sub.id, "real combat (dropped)", apmf::clock::MonotonicMs());   // fights with his gear
         if (a_sub.bitSet && proc) proc->ignoringCombat = a_sub.priorBit;   // the package no longer runs in combat
+        if (pkgDenied && actor) g_evaluatePackage(actor, false, false);   // F-6 review: the real fight gets its combat-override pick (REAL: the seat answers the engine's)
         // The music debt (review F1): an (a)-trigger restore already ran in the seat that saw the real target. Any 0 still
         // owed (a hit / party trigger, or a merge into an ally's fight) is put back by the seat on the next detection pass
         // that sees a real target in a group holding this holder, for kDebtAfterDropMs.
@@ -1263,9 +1294,23 @@ namespace {
     // wait until kEvpBuffered reads CLEAR (the update ran its evaluation), then wait ONE MORE Poll (the
     // same update's package start has finished by then, whichever thread ran it), then write the bit once.
     // If the re-pick never runs in kRepickWaitMs the bit is written anyway and that is logged.
+    // R5 F-5 (R2 research Q7: both holders stalled in the same two windows -> a global cause; the actor's AI update, the
+    // only consumer of kEvpBuffered, does not run while a menu pauses the game): the wait counts only the time between two
+    // Polls in which the game was not paused (UI::GameIsPaused, numPausesGame > 0) and the gap was a frame (<= kPollGapMs).
+    // A longer gap is "stalled or paused (menu)": Poll rides the player's update, which does not run while a pausing menu
+    // is open, so such a pause shows up as one long gap, not as paused Polls (review F8 of e6f5607c: no precise split).
     void WriteBitAfterRepick(Sub& a_sub, RE::Actor* a_actor, RE::AIProcess* a_proc, std::uint64_t a_now) {
         const bool buffered = a_actor->GetActorRuntimeData().boolBits.all(RE::Actor::BOOL_BITS::kEvpBuffered);
-        const bool timedOut = a_now - a_sub.repickAskedMs >= kRepickWaitMs;
+        {
+            const std::uint64_t last = a_sub.repickLastPollMs ? a_sub.repickLastPollMs : a_sub.repickAskedMs;
+            const std::uint64_t dt   = a_now > last ? a_now - last : 0;
+            auto*               ui   = RE::UI::GetSingleton();
+            if (ui && ui->GameIsPaused()) a_sub.repickPausedMs += dt;
+            else if (dt > kPollGapMs)     a_sub.repickGapMs += dt;
+            else                          a_sub.repickRunMs += dt;
+            a_sub.repickLastPollMs = a_now;
+        }
+        const bool timedOut = a_sub.repickRunMs >= kRepickWaitMs;
         if (buffered && !timedOut) return;
         if (!buffered && !a_sub.repickClearFrame) {
             a_sub.repickClearFrame = g_pollFrame;
@@ -1273,7 +1318,9 @@ namespace {
             return;   // one more Poll: the package start in that same update has run
         }
         if (!timedOut && g_pollFrame <= a_sub.repickClearFrame) return;
-        if (buffered) apmf::substrateprobe::RepickNotRun(a_actor, a_proc, a_now - a_sub.repickAskedMs);   // R1
+        if (buffered)   // R1 + R5 F-5 / F-7: the pause / menu state at the stall
+            apmf::substrateprobe::RepickNotRun(a_actor, a_proc, a_now - a_sub.repickAskedMs, a_sub.repickRunMs,
+                                               a_sub.repickPausedMs, a_sub.repickGapMs);
         a_sub.bitPending  = false;
         a_sub.priorBit    = a_proc->ignoringCombat;
         a_proc->ignoringCombat = true;   // AIProcess+0x139 (static_assert below; AE 0x6D6780 / SE 0x643F00 read it)
@@ -1284,9 +1331,14 @@ namespace {
         spdlog::info("[substrate] 0x{} wrote AIProcess+0x139 (ignoringCombat) {} -> 1 ONCE (S2a: no re-assert), {} "
                      "(package 0x{}, start time {:.2f}).",
                      Hex(a_sub.id), a_sub.priorBit ? 1 : 0,
-                     buffered ? fmt::format("the re-pick did NOT run within {} ms (kEvpBuffered still set)", kRepickWaitMs)
-                              : fmt::format("after the re-pick ran (kEvpBuffered cleared at +{} ms)",
-                                            a_sub.repickClearMs - a_sub.repickAskedMs),
+                     buffered ? fmt::format("the re-pick did NOT run within {} ms of unpaused time (kEvpBuffered still "
+                                            "set; {} ms wall, {} ms seen paused, {} ms stalled or paused (menu))",
+                                            kRepickWaitMs, a_now - a_sub.repickAskedMs, a_sub.repickPausedMs,
+                                            a_sub.repickGapMs)
+                              : fmt::format("after the re-pick ran (kEvpBuffered cleared at +{} ms; {} ms seen paused, {} "
+                                            "ms stalled or paused (menu))",
+                                            a_sub.repickClearMs - a_sub.repickAskedMs, a_sub.repickPausedMs,
+                                            a_sub.repickGapMs),
                      Hex(a_sub.bitPkg ? a_sub.bitPkg->GetFormID() : 0), static_cast<double>(a_sub.bitPkgStart));
     }
 
@@ -1919,6 +1971,79 @@ namespace {
                   "the allow-list's index must cover the 70-leaf catalog, the four search leaves and the 21 "
                   "parameterised nodes (every NodeObject* vtable the fork ships)");
 
+    // ---- 1.7.104 (marth 2026-10-19 Q4: "substrate unavailable while Harbinger present shouldn't happen") ----
+    // The AE ids 44705 (RemoveTarget), 44703 (the group update), 46888 (the should-play test), 36550 (the
+    // BSMusicManager reader) and 56194 (IsInDialogueWithPlayer) have NO row in the fork's MIT id table, and a
+    // RELOCATION_ID miss is FATAL on 1.7.104. So on 1.7.104 these addresses are raw-RVA rows of the 1.7.104
+    // self-check table (tools/verified_addresses/idmap-1.7.104-apmf.csv, rows Substrate.*.1_7_104; each one the
+    // 1.6.1170 signature cut at the AE address, unique in the 1.7.104 .text at exactly this RVA). Every function
+    // here is instruction-identical to its 1.6.1170 twin (call / RIP targets normalised) at the SAME offsets, so the
+    // AE offsets hold; Docs/VERIFIED-ADDRESSES.md "Combat substrate on 1.7.104" has the per-row proof. A raw row
+    // carries no byte check, so the code re-reads the bytes each fact rests on (the 1.6.1170 / 1.5.97 rows have
+    // SelfCheck do that): the two E8 targets, the two `cmp byte [reg+0x15C], imm` encodings, and each reader's RIP
+    // displacement, which must land on the singleton the fork's MIT table resolves (ids 400896 / 401099 ARE in it).
+    constexpr std::uintptr_t k17RemoveTarget          = 0x818BD0;   // AE 0x803D70
+    constexpr std::uintptr_t k17GroupUpdate           = 0x818570;   // AE 0x803710 (id 44703)
+    constexpr std::uintptr_t k17MusicWriteLock        = 0x8185A0;   // update + 0x30: E8 -> BSReadWriteLock::LockForWrite
+    constexpr std::uintptr_t k17DetectionPassInUpdate = 0x8185DD;   // update + 0x6D: E8 -> the group detection pass
+    constexpr std::uintptr_t k17DetectionPass         = 0x821CE0;   // AE 0x80CE00 (id 44804)
+    constexpr std::uintptr_t k17MusicUndecided        = 0x8187AC;   // update + 0x23C: cmp byte [rdi+0x15C], 0xFF
+    constexpr std::uintptr_t k17MusicPlayTest         = 0x852FD9;   // 0x852DF0 (AE 0x83DF10, id 46888) + 0x1E9
+    constexpr std::uintptr_t k17MusicReader           = 0x65454F;   // 0x654480 (AE 0x641AD0, id 36550) + 0xCF
+    constexpr std::uintptr_t k17MenuTopicReader       = 0xA46267;   // 0xA46240 (AE 0xA2D7A0, id 56194) + 0x27
+    static_assert(k17MusicWriteLock == k17GroupUpdate + 0x30 && k17DetectionPassInUpdate == k17GroupUpdate + 0x6D &&
+                  k17MusicUndecided == k17GroupUpdate + 0x23C && k17MusicPlayTest == 0x852DF0 + 0x1E9 &&
+                  k17MusicReader == 0x654480 + 0xCF && k17MenuTopicReader == 0xA46240 + 0x27);
+
+    // The bytes at a_addr are a_want. Logs the first mismatch by name.
+    bool BytesAt17(std::uintptr_t a_addr, std::span<const std::uint8_t> a_want, const char* a_seat) {
+        const auto* b = reinterpret_cast<const std::uint8_t*>(a_addr);
+        for (std::size_t i = 0; i < a_want.size(); ++i) {
+            if (b[i] != a_want[i]) {
+                spdlog::error("[selfcheck] seat {} REFUSED on 1.7.104: byte +{} at RVA 0x{:X} is 0x{:02X}, expected 0x{:02X}",
+                              a_seat, i, a_addr - REL::Module::get().base(), b[i], a_want[i]);
+                return false;
+            }
+        }
+        return true;
+    }
+
+    // An E8 at a_site that lands on a_target.
+    bool CallsTo17(std::uintptr_t a_site, std::uintptr_t a_target, const char* a_seat) {
+        const auto*  b   = reinterpret_cast<const std::uint8_t*>(a_site);
+        std::int32_t rel = 0;
+        std::memcpy(&rel, b + 1, sizeof(rel));
+        const std::uintptr_t lands = a_site + 5 + static_cast<std::intptr_t>(rel);
+        if (b[0] == 0xE8 && lands == a_target) return true;
+        spdlog::error("[selfcheck] seat {} REFUSED on 1.7.104: RVA 0x{:X} is {:02X} -> RVA 0x{:X}, expected E8 -> RVA 0x{:X}",
+                      a_seat, a_site - REL::Module::get().base(), b[0], lands - REL::Module::get().base(),
+                      a_target - REL::Module::get().base());
+        return false;
+    }
+
+    // A verified raw reader row whose `mov reg, [rip+disp32]` (7 bytes; a_head = REX + opcode + ModRM, a_tail = the
+    // bytes after it) reads exactly a_global: the 1.7.104 form of the generator's ripref proof (reader -> global).
+    bool ReaderReads17(std::uintptr_t a_rva, std::array<std::uint8_t, 3> a_head, std::array<std::uint8_t, 8> a_tail,
+                       std::uintptr_t a_global, const char* a_seat) {
+        const std::uintptr_t site = REL::Offset(a_rva).address();
+        if (!apmf::allowance::SeatVerified(site, a_seat)) return false;
+        const auto* b = reinterpret_cast<const std::uint8_t*>(site);
+        if (std::memcmp(b, a_head.data(), a_head.size()) != 0 || std::memcmp(b + 7, a_tail.data(), a_tail.size()) != 0) {
+            spdlog::error("[selfcheck] seat {} REFUSED on 1.7.104: the reader at RVA 0x{:X} is not the verified "
+                          "`mov reg, [rip+disp32]` encoding",
+                          a_seat, a_rva);
+            return false;
+        }
+        std::int32_t disp = 0;
+        std::memcpy(&disp, b + 3, sizeof(disp));
+        const std::uintptr_t reads = site + 7 + static_cast<std::intptr_t>(disp);
+        if (reads == a_global) return true;
+        spdlog::error("[selfcheck] seat {} REFUSED on 1.7.104: the reader at RVA 0x{:X} reads RVA 0x{:X}, the singleton is "
+                      "RVA 0x{:X}",
+                      a_seat, a_rva, reads - REL::Module::get().base(), a_global - REL::Module::get().base());
+        return false;
+    }
+
 }
 
 namespace apmf::combatsubstrate {
@@ -2042,6 +2167,8 @@ namespace apmf::combatsubstrate {
     void NoteGroupTarget(void* a_group, RE::TESObjectREFR* a_target) {
         if (!a_group || !a_target) return;
         SeatMusicRealTarget(static_cast<RE::CombatGroup*>(a_group), a_target);   // before the drop can clear any slot
+        apmf::substratebark::SeatRealTarget(static_cast<RE::CombatGroup*>(a_group),
+                                            WriteLockedHere(static_cast<RE::CombatGroup*>(a_group)));   // R5 F-2 put-back
         if (!AnyLive()) return;
         auto*               g       = static_cast<RE::CombatGroup*>(a_group);
         const std::uint32_t anchorH = g_anchorH.load(std::memory_order_acquire);
@@ -2066,6 +2193,7 @@ namespace apmf::combatsubstrate {
         if (!AnyLive() || !a_group || !a_anchor) return;
         auto* g = static_cast<RE::CombatGroup*>(a_group);
         SeatMusicAnchor(g);   // the music deny / probe: inside the engine's own locked update only
+        apmf::substratebark::SeatAnchorPass(g, WriteLockedHere(g));   // R5 F-2 / F-7: the two dialogue timers read
         for (int i = 0; i < kSlots; ++i) {
             if (g_slots[i].id.load(std::memory_order_acquire) == 0) continue;
             const auto st = g_slots[i].state.load(std::memory_order_acquire);
@@ -2114,7 +2242,7 @@ namespace apmf::combatsubstrate {
             why = "the anchor-target refusal is not installed on ch.22's seat (its call-site row or the rdi stub)";
         } else if (!apmf::combatentry::hold::StopCombatAvailable()) {
             why = "the held engagement's ranked StopCombat is not available ([EngagementHold] bEngagementHold=0, a "
-                  "runtime other than exactly 1.6.1170 / 1.5.97, or its Character vtable row refused): the real-combat "
+                  "runtime other than exactly 1.6.1170 / 1.5.97 / 1.7.104, or its Character vtable row refused): the real-combat "
                   "drop ends an EMPTY fight through it (marth 2026-10-13), so the substrate needs it";
         } else if (apmf::actiongate::SubstrateLeavesPaired() != kLeafCount) {
             why = "the leaf allow-list does not cover all 95 behaviour-tree node classes with an act()/pop() pair and the "
@@ -2122,11 +2250,14 @@ namespace apmf::combatsubstrate {
                   "bPursuitLeash=0 refuses the substrate too -- and the 21 parameterised nodes ActionGate installs when "
                   "bCombatSubstrate=1)";
         }
+        const bool on17 = apmf::allowance::IsRuntime1_7_104();   // raw-RVA rows for the id-less addresses (above)
         if (!why) {
             bool ok = apmf::allowance::SeatVerified(
                 REL::Relocation<std::uintptr_t>{ RELOCATION_ID(37608, 38561) }.address(), "CombatEntry.Actor.StartCombat");
-            ok = apmf::allowance::SeatVerified(REL::Relocation<std::uintptr_t>{ RELOCATION_ID(43483, 44705) }.address(),
-                                               "Substrate.CombatGroup.RemoveTarget") && ok;
+            ok = (on17 ? apmf::allowance::SeatVerified(REL::Offset(k17RemoveTarget).address(),
+                                                       "Substrate.CombatGroup.RemoveTarget.1_7_104")
+                       : apmf::allowance::SeatVerified(REL::Relocation<std::uintptr_t>{ RELOCATION_ID(43483, 44705) }.address(),
+                                                       "Substrate.CombatGroup.RemoveTarget")) && ok;
             ok = apmf::allowance::SeatVerified(REL::Relocation<std::uintptr_t>{ RELOCATION_ID(56227, 56626) }.address(),
                                                "Substrate.TESObjectREFR.MoveTo") && ok;
             ok = apmf::allowance::SeatVerified(REL::Relocation<std::uintptr_t>{ RELOCATION_ID(36407, 37401) }.address(),
@@ -2148,32 +2279,45 @@ namespace apmf::combatsubstrate {
         // the held engagement's knowledge seat (combatentry::hold::KnowledgeInstalled). A failed row or a missing seat
         // REFUSES THE SUBSTRATE (principle 2: it would switch battle music on undenied);
         // [CombatSubstrate] bSubstrateMusicDeny=0 is the explicit off switch (the substrate runs, every OPEN logs the
-        // hole). 1.7.104: the three engine functions are not in the 1.7.104 id table (the shape is the same there:
-        // 0x8185A0 / 0x8187AC / 0x852FD9), and a RELOCATION_ID miss is fatal on 1.7.104, so the ids are never built
-        // there (the substrate is refused on 1.7.104 before this point anyway: the held engagement's StopCombat).
+        // hole). 1.7.104: the two engine functions have no MIT id-table row (a RELOCATION_ID miss is fatal there), so the
+        // four sites are raw-RVA rows plus the byte / call-target re-reads above (k17*; the AE offsets, bodies identical).
         if (!why) {
             if (IniInt("CombatSubstrate", "bSubstrateMusicDeny", 1) == 0) {
                 g_musicDeny    = false;
                 g_musicDenyOff = "[CombatSubstrate] bSubstrateMusicDeny=0 in APMF.ini";
-            } else if (apmf::allowance::IsRuntime1_7_104() ||
-                       !(REL::Module::IsExactly(SKSE::RUNTIME_SSE_1_6_1170) ||
-                         REL::Module::IsExactly(SKSE::RUNTIME_SSE_1_5_97))) {
-                why = "the music deny's engine functions are verified on exactly 1.6.1170 and 1.5.97 only (1.7.104: "
-                      "not in its id table)";
+            } else if (!apmf::allowance::RuntimeSupported()) {
+                why = "the music deny's engine functions are verified on exactly 1.6.1170, 1.5.97 and 1.7.104 only";
             } else {
-                const bool ae  = REL::Module::IsExactly(SKSE::RUNTIME_SSE_1_6_1170);
-                const auto upd = REL::Relocation<std::uintptr_t>{ RELOCATION_ID(43481, 44703) }.address();
-                const auto spt = REL::Relocation<std::uintptr_t>{ RELOCATION_ID(45588, 46888) }.address();
-                bool       ok  = apmf::allowance::SeatVerified(
-                    REL::Relocation<std::uintptr_t>{ RE::Offset::BSReadWriteLock::LockForWrite }.address(),
-                    "CommonLib.BSReadWriteLock.LockForWrite");
+                const auto lockW = REL::Relocation<std::uintptr_t>{ RE::Offset::BSReadWriteLock::LockForWrite }.address();
+                bool       ok    = apmf::allowance::SeatVerified(lockW, "CommonLib.BSReadWriteLock.LockForWrite");
                 ok = apmf::allowance::SeatVerified(
                          REL::Relocation<std::uintptr_t>{ RE::Offset::BSReadWriteLock::UnlockForWrite }.address(),
                          "CommonLib.BSReadWriteLock.UnlockForWrite") && ok;
-                ok = apmf::allowance::SeatVerified(upd + (ae ? 0x30 : 0x2B), "Substrate.CombatGroup.MusicWriteLock") && ok;
-                ok = apmf::allowance::SeatVerified(upd + (ae ? 0x6D : 0x65), "Substrate.CombatGroup.DetectionPassInUpdate") && ok;
-                ok = apmf::allowance::SeatVerified(upd + (ae ? 0x23C : 0x94), "Substrate.CombatGroup.MusicUndecided") && ok;
-                ok = apmf::allowance::SeatVerified(spt + (ae ? 0x1E9 : 0x1E7), "Substrate.CombatManager.MusicPlayTest") && ok;
+                if (on17) {
+                    static constexpr std::array<std::uint8_t, 7> kUndecided{ 0x80, 0xBF, 0x5C, 0x01, 0x00, 0x00, 0xFF };
+                    static constexpr std::array<std::uint8_t, 7> kPlayTest{ 0x80, 0xBD, 0x5C, 0x01, 0x00, 0x00, 0x01 };
+                    const auto wl = REL::Offset(k17MusicWriteLock).address();
+                    const auto dp = REL::Offset(k17DetectionPassInUpdate).address();
+                    const auto mu = REL::Offset(k17MusicUndecided).address();
+                    const auto pt = REL::Offset(k17MusicPlayTest).address();
+                    ok = apmf::allowance::SeatVerified(wl, "Substrate.CombatGroup.MusicWriteLock.1_7_104") &&
+                         CallsTo17(wl, lockW, "Substrate.CombatGroup.MusicWriteLock.1_7_104") && ok;
+                    ok = apmf::allowance::SeatVerified(dp, "Substrate.CombatGroup.DetectionPassInUpdate.1_7_104") &&
+                         CallsTo17(dp, REL::Offset(k17DetectionPass).address(),
+                                   "Substrate.CombatGroup.DetectionPassInUpdate.1_7_104") && ok;
+                    ok = apmf::allowance::SeatVerified(mu, "Substrate.CombatGroup.MusicUndecided.1_7_104") &&
+                         BytesAt17(mu, kUndecided, "Substrate.CombatGroup.MusicUndecided.1_7_104") && ok;
+                    ok = apmf::allowance::SeatVerified(pt, "Substrate.CombatManager.MusicPlayTest.1_7_104") &&
+                         BytesAt17(pt, kPlayTest, "Substrate.CombatManager.MusicPlayTest.1_7_104") && ok;
+                } else {
+                    const bool ae  = REL::Module::IsExactly(SKSE::RUNTIME_SSE_1_6_1170);
+                    const auto upd = REL::Relocation<std::uintptr_t>{ RELOCATION_ID(43481, 44703) }.address();
+                    const auto spt = REL::Relocation<std::uintptr_t>{ RELOCATION_ID(45588, 46888) }.address();
+                    ok = apmf::allowance::SeatVerified(upd + (ae ? 0x30 : 0x2B), "Substrate.CombatGroup.MusicWriteLock") && ok;
+                    ok = apmf::allowance::SeatVerified(upd + (ae ? 0x6D : 0x65), "Substrate.CombatGroup.DetectionPassInUpdate") && ok;
+                    ok = apmf::allowance::SeatVerified(upd + (ae ? 0x23C : 0x94), "Substrate.CombatGroup.MusicUndecided") && ok;
+                    ok = apmf::allowance::SeatVerified(spt + (ae ? 0x1E9 : 0x1E7), "Substrate.CombatManager.MusicPlayTest") && ok;
+                }
                 if (ok && !apmf::combatentry::hold::KnowledgeInstalled()) {
                     why = "the music deny rides the held engagement's knowledge seat (the group detection pass inside the "
                           "engine's locked group update), which is not installed (see the [hold] knowledge seats line)";
@@ -2186,6 +2330,12 @@ namespace apmf::combatsubstrate {
                 }
             }
         }
+        // R5 (marth 2026-10-19 rulings Q1 / Q2): the combat-start bark deny (F-2) and the aggressor-bit clear (F-3). Each
+        // is a deny of a facet the substrate switches on: a row that does not verify REFUSES THE SUBSTRATE (principle 2),
+        // as the music deny does; its INI switch turns it off with the hole logged per OPEN. 1.7.104: refused by name.
+        if (!why) why = apmf::substratebark::Install();
+        if (!why) why = apmf::substrateaggressor::Install();
+        if (!why) why = apmf::substratepackage::Install();   // F-6 review: a refused override seat refuses the substrate
         RE::TESNPC*    npc  = nullptr;
         RE::Actor*     ref  = nullptr;
         if (!why) {
@@ -2211,16 +2361,22 @@ namespace apmf::combatsubstrate {
             return;
         }
         g_anchorId.store(ref->GetFormID(), std::memory_order_release);
-        g_removeTarget    = REL::Relocation<RemoveTarget_t>{ RELOCATION_ID(43483, 44705) };
+        g_removeTarget    = on17 ? REL::Relocation<RemoveTarget_t>{ REL::Offset(k17RemoveTarget) }
+                                 : REL::Relocation<RemoveTarget_t>{ RELOCATION_ID(43483, 44705) };
         g_evaluatePackage = REL::Relocation<EvaluatePkg_t>{ RELOCATION_ID(36407, 37401) };
-        g_musicOk = apmf::allowance::SeatVerified(
-            REL::Relocation<std::uintptr_t>{ RELOCATION_ID(514738, 400896) }.address(), "Substrate.BSMusicManager.Singleton");
-        // The dry run's dialogue test (MenuTopicManager::speaker). Rows exist on 1.6.1170 and 1.5.97 only: elsewhere (or on a
-        // failed row) every teammate counts as "dialogue unknown -> not idle" and the dry run opens nothing.
-        g_dialogueOk = !apmf::allowance::IsRuntime1_7_104() &&
-                       (REL::Module::IsExactly(SKSE::RUNTIME_SSE_1_6_1170) || REL::Module::IsExactly(SKSE::RUNTIME_SSE_1_5_97)) &&
-                       apmf::allowance::SeatVerified(REL::Relocation<std::uintptr_t>{ RELOCATION_ID(514959, 401099) }.address(),
-                                                     "Substrate.MenuTopicManager.Singleton");
+        // The two singletons resolve through the MIT id table on 1.7.104 (ids 400896 / 401099 are rows of it); their
+        // 1.7.104 proof is the reader that reads them (the 1.6.1170 / 1.5.97 ripref rows, re-done here in code).
+        const auto musicSingleton = REL::Relocation<std::uintptr_t>{ RELOCATION_ID(514738, 400896) }.address();
+        g_musicOk = on17 ? ReaderReads17(k17MusicReader, { 0x48, 0x8B, 0x0D }, { 0x48, 0x8D, 0x54, 0x24, 0x30, 0x48, 0x89, 0x74 },
+                                         musicSingleton, "Substrate.BSMusicManager.Reader.1_7_104")
+                         : apmf::allowance::SeatVerified(musicSingleton, "Substrate.BSMusicManager.Singleton");
+        // The dry run's dialogue test (MenuTopicManager::speaker, +0x68 on all three: IsInDialogueWithPlayer is identical
+        // on 1.7.104). On a failed row every teammate counts as "dialogue unknown -> not idle" and the dry run opens nothing.
+        const auto topicSingleton = REL::Relocation<std::uintptr_t>{ RELOCATION_ID(514959, 401099) }.address();
+        g_dialogueOk = on17 ? ReaderReads17(k17MenuTopicReader, { 0x48, 0x8B, 0x05 },
+                                            { 0x48, 0x8D, 0x54, 0x24, 0x40, 0x48, 0x89, 0x5C }, topicSingleton,
+                                            "Substrate.MenuTopicManager.Reader.1_7_104")
+                            : apmf::allowance::SeatVerified(topicSingleton, "Substrate.MenuTopicManager.Singleton");
         if (!g_dialogueOk)
             spdlog::warn("[substrate] the MenuTopicManager row did not verify on this runtime: the dry run cannot tell whether a "
                          "follower is in dialogue with the player, so it treats EVERY teammate as not idle and opens nothing.");
@@ -2271,11 +2427,11 @@ namespace apmf::combatsubstrate {
         g_moveTrace    = IniInt("CombatSubstrate", "bSubstrateMoveTrace", 0) != 0;
         g_census       = IniInt("CombatSubstrate", "bSubstrateBystanderCensus", 1) != 0;
         apmf::substrateprobe::Install(g_dialogueOk);   // R1 probes ([CombatSubstrate] bSubstrateProbes)
-        apmf::substratepackage::Install();   // F-6 combat-override deny seat + S2b switch
 
         if (auto* holder = RE::ScriptEventSourceHolder::GetSingleton()) {
             holder->AddEventSink<RE::TESHitEvent>(HitSink::Get());
             holder->AddEventSink<RE::TESCombatEvent>(CombatEventSink::Get());
+            apmf::substrateprobe::CombatEventSinkOrder(holder, CombatEventSink::Get());   // R5 F-4: the passive probe only
         } else {
             spdlog::error("[substrate] ScriptEventSourceHolder unavailable: trigger (b) (a hit on the holder) and the "
                           "combat-state-event log are OFF; triggers (a) and (c) still drop a substrate on real combat.");
@@ -2283,13 +2439,17 @@ namespace apmf::combatsubstrate {
         g_notInstalledReason.store("", std::memory_order_release);
         g_installed.store(true, std::memory_order_release);
         spdlog::info("[substrate] combat substrate INSTALLED: anchor 0x{} (APMF.esl 0x80A, a {} clone), home 0x{}; dry run {} "
-                     "(period {:.0f} s), TTL {:.1f} s, P6 move trace {}, fire signal {}, music {}, music deny {}. Allow-list: "
+                     "(period {:.0f} s), TTL {:.1f} s, P6 move trace {}, fire signal {}, music {}, music deny {}, bark deny {}, "
+                     "aggressor clear {}. Allow-list: "
                      "3 cast leaves, the spell-equip path {} (EquipSpell + AcquireResource<2> \"Action\", while a "
                      "driving cast claim stands), {} structural nodes pass, the rest denied.",
                      Hex(ref->GetFormID()), npc->GetName(), Hex(g_homeId), g_dryRun ? "ON" : "off",
                      static_cast<double>(g_dryPeriodSec), static_cast<double>(g_ttlSec), g_moveTrace ? "ON" : "off",
                      g_fireSignal ? "census 0x0B" : "NONE", g_musicOk ? "verified" : "n/a",
                      g_musicDeny ? std::string("ON") : fmt::format("OFF ({})", g_musicDenyOff),
+                     apmf::substratebark::On() ? std::string("ON") : fmt::format("OFF ({})", apmf::substratebark::OffReason()),
+                     apmf::substrateaggressor::On() ? std::string("ON")
+                                                    : fmt::format("OFF ({})", apmf::substrateaggressor::OffReason()),
                      apmf::substrateequip::Enabled() ? "ON" : "OFF",
                      std::count(g_leafClass.begin(), g_leafClass.end(), LeafClass::kStructural));
     }
@@ -2302,6 +2462,7 @@ namespace apmf::combatsubstrate {
         apmf::substrateprobe::Poll(now);   // R1: before the early return (the post-close timers run with nothing open)
         apmf::substrateequip::PollHands(now);   // the stowed hands' restore runs after the close
         DebtExpire(now);
+        apmf::substratebark::Poll(now);   // R5 F-2: a dropped holder's bark put-back, paid or expired
         if (g_subCount.load(std::memory_order_relaxed) == 0 && g_subs.empty()) {
             MusicProbe(now);   // the tail after the last close
             apmf::anchorguard::Sweep(now);   // the anchor-leak sweep's tail (SEV-1 2026-10-19)
@@ -2358,6 +2519,8 @@ namespace apmf::combatsubstrate {
         apmf::anchorguard::ResetAll();
         apmf::substrateprobe::Reset();
         apmf::substratepackage::Reset();
+        apmf::substratebark::Reset();
+        apmf::substrateaggressor::Reset();
         apmf::substrateequip::Reset();
         apmf::substrateequip::ResetHands(a_why);
         {

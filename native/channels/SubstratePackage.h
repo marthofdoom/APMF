@@ -23,7 +23,7 @@ namespace RE {
 //
 //  2. S2b, THE IGNORING-BIT RE-ASSERT. combatsubstrate's Serve detects each engine reset of AIProcess+0x139
 //     while held; after it counted and attributed one, Reassert writes the bit back to 1 and logs it,
-//     capped at 15 s from the open. [CombatSubstrate] bSubstrateBitReassert.
+//     capped at 15 s from the open. [CombatSubstrate] bSubstrateBitReassert, DEFAULT 0 (waits for P6 + marth's go).
 //
 // THREADS. The seat's thunk runs wherever the engine evaluates packages (engine AI threads): it reads
 // combatsubstrate::StateOf (lock-free) and the two forms' FormIDs, and takes this file's leaf mutex only on
@@ -35,7 +35,9 @@ namespace apmf::substratepackage {
 
     // combatsubstrate::Install, after the substrate installed. Reads the two INI keys, verifies the seat's
     // rows and installs the call-site seat (refused by name on a failed row). Idempotent.
-    void Install();
+    // Returns nullptr when the seat is ON or switched off by bSubstrateOverrideDeny=0 (the one by-name hole, logged
+    // per OPEN), else the refusal reason, which REFUSES the substrate (combatsubstrate folds it into its own `why`).
+    const char* Install();
     // "ON" or the reason the seat is not installed (never null). ANY THREAD.
     const char* SeatState();
 
@@ -54,6 +56,7 @@ namespace apmf::substratepackage {
 
     // CloseSub / DropSub, at the top (before StopCombat): the window's summary line (the pre-substrate
     // package, whether it is still the running one, swaps denied, bits re-asserted); forgets the window.
-    void Closing(RE::FormID a_actor, RE::Actor* a_ref, bool a_dropped);
+    // Returns the window's denied-swap count: DropSub re-picks the package when it is non-zero (F-6 review SEV-2).
+    std::uint32_t Closing(RE::FormID a_actor, RE::Actor* a_ref, bool a_dropped);
 
 }
