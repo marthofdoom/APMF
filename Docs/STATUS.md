@@ -4,6 +4,30 @@ Updated 2026-10-13. Current version **v0.13.1** (cut 2026-10-13, ABI v24, see CH
 shipped, what's probe-gated, what's next. Keep this current in the SAME change as any
 build/finding/workflow change.
 
+## HEAD OF WORK 2026-10-20 -- ch.19 CELL HOLD (a client's travel claim holds through arrival and unload), branch `feat/apmf-ch19-cell-hold`, NOT merged
+
+Field 2026-10-20 (LoreRim, Markarth; agentlogs/diag-town-doors.md, MFO `_evidence/2026-10-20-lorerim-markarth-doors/`):
+MFO town errands sent followers to an inn; each walked through the load door and came straight back out. RC1: `Poll`
+ended the leg `kLeg_ActorGone` on `!Is3DLoaded()` before the cell-arrival test (entering an interior the player is not
+in unloads the actor at once). RC2: every `EndLeg`, Arrived included, dropped the ch.9 offer, and ch.9's release nudge
+re-selected the follow / SFF package ~70 ms later. marth 2026-10-20: "mfo claims need to hold for the duration of the
+mfo event."
+- **`channels/Travel.cpp` only.** A cell arrival goes to `HoldAtCell` (records `kLeg_Arrived`, KEEPS the offer and
+  slot until the client releases or re-points). An unloaded living actor whose handle resolves is no longer ActorGone
+  on any leg (BLOCKED / gait reads skipped while unloaded, the stuck net still runs). A held leg re-pointed starts on a
+  FRESH slot (new offer first, held offer released in the same Drain). Reference legs still end on arrival.
+- **Engine proof (disassembly, no new address):** a package whose procedure reaches DONE (0x36) stays current, fires
+  OnPackageEnd once (kPackageDoneOnce, AIProcess+0x136 bit 0x20), and an evaluation that selects the same package does
+  not restart it (1.6.1170 0x6D6FC0 / 0x6EAB50 / 0x6DA270; the DONE branch also read on 1.5.97 and 1.7.104). Notes at
+  `HoldAtCell`.
+- **Docs:** FACETS ch.19 Key Concepts 11a / 11b + Table 20 + Lifetime, INVARIANTS #3 ("A client's offer HOLDS"), MAP
+  ch.19 row + What breaks (6a). No ABI change (`kLeg_Arrived` keeps its value, its meaning for a CELL leg widens).
+- **Found, not changed (other files):** ch.24 `CombatApproach.cpp` `Poll` still RELEASES its claim when the actor's 3D
+  unloads. The ControlMap unload sweep releases claims only when the actor's handle stops resolving (never on a 3D
+  unload; the field log shows the handle still valid after the inn door).
+- Field check: a follower sent to an interior cell shows `[travel-leg] ... actor UNLOADED ... the leg continues`, then
+  `ARRIVED ... HOLDING`, no release nudge, and stays inside until MFO releases the claim.
+
 ## HEAD OF WORK 2026-10-20 -- TORCH SEAT (ch.17 owns the torch, ClickUp 86e3qmmed H1), branch `feat/apmf-torch-seat`, NOT merged
 
 Field 2026-10-18: a seated follower's declared torch was stowed every ~1 s with no Harbinger line (the engine's torch

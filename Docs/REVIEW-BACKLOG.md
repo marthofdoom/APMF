@@ -211,6 +211,9 @@ Raised against `6883032` (`feat/apmf-gate-probe2`), tier-A Opus 5.5 review 2026-
   (each bounded; the field `us` figure will size whether a global limit is needed).
 - **Assigned:** the Travel.cpp split brief (before further Travel work); the per-actor limit after the field
   cost numbers.
+- **Update 2026-10-20 (`feat/apmf-ch19-cell-hold`):** marth relaxed the 2500 cap until the next major release
+  (never split inside a task), so the cell-hold fix went into Travel.cpp unsplit. The file is now 2681 lines. The
+  split is still owed as its own tier-A brief.
 
 ### APMF-B34 (SEV-4 / SEV-5) -- ch.12 idle entry confirmation, review round 1 items (deferred)
 Raised against `18be6ec` (`fix/apmf-idle-confirm`), tier-A Opus 5.5 review 2026-09-29, round 1 (verdict FIX FIRST;
