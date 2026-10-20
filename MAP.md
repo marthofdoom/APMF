@@ -2172,7 +2172,10 @@ no-op at Release off exactly 1.6.1170 / 1.5.97 / 1.7.104, VR included (G1 2026-1
   held leg MUST go to a fresh slot (`ComposeLeg` held branch): the engine keeps a package that is
   current in DONE when an evaluation selects the same package (no restart; disassembly note at
   `HoldAtCell`), so an in-place re-point of the held record would leave the actor standing. A held
-  leg occupies one of the 8 slots until the client releases it.
+  leg occupies one of the 8 slots until the client releases it. The held offer OUTRANKS a later
+  same-basis ch.9 offer from the same client (tie keeps the earliest). Open review items:
+  REVIEW-BACKLOG APMF-B173 (slot pressure), APMF-B174 (holes: script package overrides, MoveTo),
+  APMF-B175 (optional package log), APMF-B176 (ch.24 still releases on a 3D unload).
   (7) **ABI v11 position legs (`kTravel_ToPosition`, 2026-09-23).** `Engage`/`OnOwnerChanged`
   record the POINT; `Compose` places APMF's XMarker through `poscast::PlaceMarker` and the
   leg is then an ordinary ref leg to it (`destAliveAtTarget = false`: a marker never dies).
@@ -2227,7 +2230,7 @@ no-op at Release off exactly 1.6.1170 / 1.5.97 / 1.7.104, VR included (G1 2026-1
   mesh is held by a `BSTSmartPointer` while read; ONE 262144 triangle+vertex budget per probe), then DOOR/ACTI/Obstacle refs near the stall->destination segment by bound box (collected under the
   cell lock, measured after), with graph state and Havok body. Raw offsets: spec.json layout_facts (the five
   probe-2 rows); every object is vtable-checked against a self-check row before a member read. Travel.cpp is
-  2681 lines after the cell hold (2026-10-20): marth relaxed the 2500 cap until the next major release
+  2689 lines after the cell hold (2026-10-20): marth relaxed the 2500 cap until the next major release
   (never split inside a task), so the split stays its own brief (REVIEW-BACKLOG APMF-B33). Deferred review items:
   REVIEW-BACKLOG APMF-B24 and APMF-B25 (read B25 R2-2 before touching `OnOwnerChanged`'s refusal
   teardown). `GetLegState` tests the caller's size against the FROZEN `kTravelLegInfoV12Size`

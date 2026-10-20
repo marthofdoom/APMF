@@ -845,13 +845,21 @@ namespace {
     //     +0x948. Neither function changes the actor's package: the package stays CURRENT in
     //     its DONE procedure and the actor stands.
     //   * Package evaluation (1.6.1170 0x6DA270), for a current package already in DONE,
-    //     re-selects (0x6D9290, which asks the 0x49 alias-package question APMF answers) and,
-    //     when the selection is the SAME package, jumps past the start (0x6DA55B -> 0x6DA933):
-    //     no restart, no second OnPackageStart. Only a DIFFERENT package is started
-    //     (0x6EA820: kBegin event, then the done bit cleared).
+    //     re-selects through 0x6D9290. The DECIDING branch is the re-select's own early-out:
+    //     0x6D9290 asks 0x65DE90 (Character vtable +0x248, slot 0x49, the alias-package
+    //     question APMF answers); when the answer is the SAME package (`cmp rax,[rsi+0x20]`)
+    //     it returns 0 at 0x6D934C and the caller exits via 0x6DA5BD: no restart, no second
+    //     OnPackageStart. (The 0x6DA55B compare runs only when the re-select returned 1.) Only
+    //     a DIFFERENT package is started (0x6EA820: kBegin event, then the done bit cleared).
+    //     Twins verified by the tier-3 review: 1.5.97 re-select 0x6467D0, early-out 0x64688C;
+    //     1.7.104 evaluation 0x6ECE20, re-select 0x6EBE40, early-out 0x6EBEFC.
+    //   * DEPENDENCY ON OUR PKDT FLAGS (APMF_GenerateESL.py writes 0x2000 only): a package
+    //     with general-flag bit 11 (0x48FE40 tests it) takes a clear-and-restart path, and
+    //     bit 14 (0x48FEB0) makes a forced evaluation exit early. Neither is set on our
+    //     travel records; setting either changes this hold.
     // So while the offer stands, every evaluation returns this package and the actor stays in
-    // the cell in DONE, with one OnPackageEnd per package start. The evaluation branch was read
-    // on 1.6.1170 only; the procedure-advance and end-event shape on all three builds.
+    // the cell in DONE, with one OnPackageEnd per package start. The procedure-advance and
+    // end-event shape were read on all three builds.
     void HoldAtCell(RE::FormID a_id, Leg& a_leg) {
         a_leg.held        = true;
         a_leg.heldOutside = false;

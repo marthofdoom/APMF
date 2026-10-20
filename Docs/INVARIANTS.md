@@ -858,7 +858,9 @@ DONE procedure and an evaluation that selects the same package does not restart 
 itself, standing at its destination: one offer, one facet, no second package (composition, not
 substitution). Reference legs still end and drop their offer on arrival. The ControlMap's own unload sweep
 (`ControlMap::Drain`) releases claims only when the actor's HANDLE stops resolving (the reference left
-memory or was deleted), never on a 3D unload.
+memory or was deleted), never on a 3D unload. (5) Because the held internal offer was filed first at the client's basis, it OUTRANKS a later ch.9
+offer from the same client at the same basis (ControlMap's tie keeps the earliest claim): a client that
+wants its own package at the destination must release or re-point its ch.19 claim first.
 
 **#3a — APMF is BENEATH script-driven package overrides; it uses ZERO Papyrus.** APMF
 arbitrates the engine's NATIVE / alias tier (packages the engine itself selects, and the
