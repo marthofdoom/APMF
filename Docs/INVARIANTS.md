@@ -525,9 +525,38 @@ with `kIntent_CombatSubstrate` beside its `kIntent_Cast` claim. It is legal only
    only, so the group never searches for it. Every one of these ranks as the substrate's client
    (`sources::InheritClient` for the floors): the substrate opens only while that client outranks Engine on
    CombatAction, Combat, Equip, Detection and Cast (the floored hand's 0x0F spell refusal and 0x0A, review F3 of a0112b24) in `APMF_Sources.ini`; otherwise it refuses by name rather than switch
-   a facet on undenied. KNOWN HOLES, approved by marth 2026-10-12 and logged once per substrate: the combat-start
-   topic (StartCombat's block at AE `0x6B6CFB`, which runs because the bit below is off at entry) and the combat
-   state event (`TESCombatEvent` / `OnCombatStateChanged`, never hidden from other mods' scripts). The group JOIN
+   a facet on undenied. **AMENDED 2026-10-20 (substrate round R5; marth 2026-10-19: "close the combat-start bark
+   hole", "clear the aggressor bit on held holders after research names its readers"; evidence
+   `_evidence/2026-10-18-designs/SUBSTRATE-R2-RESEARCH.md` sections 1 and 3), two more denies:**
+   (f) THE COMBAT-START BARK (`channels/SubstrateBark.cpp`). The bark is requested on the controller's FIRST
+   update (AE 33231 / SE 32484, reached only through Actor::UpdateCombat, Character slot 0xE4), as NormalToCombat
+   (59) or NormalToAlert (57); the combat-dialogue core (AE 44673 / SE 43467) skips a detection line while the
+   GROUP's timer for it (`CombatGroup+0x58 + (subtype - 55) * 8`, an AITimer {start, duration}) still runs on the
+   AI clock. Harbinger writes the holder group's two timers ([2] NormalToAlert, [4] NormalToCombat) to {the AI
+   clock, the TTL + 2 s}, and nothing else: in the holder's OWN UpdateCombat (TargetPin's 0xE4 layer 0) before the
+   engine's update runs, on that update's job thread -- a provably safe point, not the group's lock: the engine
+   reads [controller] and the same two timers unlocked a few instructions later in that same call, so the group's
+   lifetime there is the one the engine relies on, and that seat precedes the controller's first update by
+   construction (the record is made pending BEFORE the entry's StartCombat, because the UpdateCombat job is not
+   ordered against the game thread). A held group that shows a REAL target gets its two values from before the
+   write put back, inside the engine's own write-locked update (the music deny's `WriteLockedHere` rule), only
+   while they still read exactly Harbinger's values; two holders in one group share the first one's "before"
+   values. Verified rows `Substrate.Bark.ControllerStartTopicCall`, `.DialogueCoreCall`, `.DetectionTimerSlot`,
+   `.TimerGate` and the AI clock `.AIClock`; the 0xE4 layer 0 must be installed. (g) THE AGGRESSOR BIT
+   (`channels/SubstrateAggressor.cpp`). StartCombat marks the holder the aggressor (`AIProcess+0x136` bit 2: a
+   non-hostile target was attacked); GetShouldHelp, the kill decision, StartCombat and the attack reaction read it,
+   none of them raises an alarm, a flee or a fight by itself. Right after the entry, on the game thread, Harbinger
+   sets it false through the engine's own setter (AE 39145 / SE 38185, the call StopCombat makes), and while the
+   holder is HELD sets it false again only when something set it again (a script's `Actor.StartCombat`, a join);
+   never once the holder is REAL. Verified rows `Substrate.AIProcess.SetAggressor` / `GetAggressor`. A refused row
+   refuses the substrate (principle 2); `[CombatSubstrate] bSubstrateBarkDeny=0` / `bSubstrateAggressorClear=0`
+   turn either off with the hole logged per OPEN. RECORD CORRECTED (R2 research F-1): StartCombat's block at AE
+   `0x6B6CFB` (SE `0x625572`), which runs because the bit below is off at entry and which this rule used to name
+   the "combat-start topic", says NO line: it notifies the actor's SCENE that it entered combat (vfunc 0x4A into
+   24131; the substrate never opens on an actor in a scene) and clears head-track slot 5 (39472). KNOWN HOLE,
+   approved by marth 2026-10-12 and logged once per substrate: the combat state event (`TESCombatEvent` /
+   `OnCombatStateChanged`, never hidden from other mods' scripts; R5 adds only a passive sink-order probe, the
+   filter is not built). The group JOIN
    (StartCombat's third argument) recorded here as a hole by review F9 of a512763 is CLOSED since 2026-10-19 (SEV-1:
    a non-holder teammate fought the anchor in the field with 0 anchor-target refusals), by two more denies,
    `channels/AnchorGuard.cpp`: (b2) at StartCombat's SELF check (the same slot-0x99 seat; a widened 53-byte stub
@@ -591,12 +620,15 @@ with `kIntent_CombatSubstrate` beside its `kIntent_Cast` claim. It is legal only
    deny in condition 2 reads it first (a deny that fires after it is logged `DENIED <leaf> AFTER REAL COMBAT`, a
    defect). The drop keeps the client's cast claim and the fight; `RemoveTarget` is verified row
    `Substrate.CombatGroup.RemoveTarget` (AE 44705 / SE 43483) and is refused on 1.7.104 (the substrate with it).
-6. **Threading.** Open, serve, close, drop and every engine call run on the game thread (`Arbiter::OncePerFrame`).
+6. **Threading.** Open, serve, close, drop and every engine call run on the game thread (`Arbiter::OncePerFrame`),
+   except the two bark-timer writes of condition 2 (f): the arm runs in the holder's own UpdateCombat job, the
+   put-back in the engine's write-locked group update (both are writes of engine memory, not calls).
    The combat-thread seats (the leaf allow-list, the slot-0x99 thunk, the detection seat, the 0x0B observer) read
    only a fixed table of atomics and the atomic "served holder" (review F4 of a512763), never a controller; a slot's id is re-read after its state (a reused slot reads
    as another actor). `StopCombat` and `RemoveTarget` are called from the player's update seat with the same
    exposure as (i) condition 6 (APMF-B26).
-7. **Scope is closed by name.** Exactly 1.6.1170 or 1.5.97 (1.7.104 refuses: `RemoveTarget` has no 1.7.104 id),
+7. **Scope is closed by name.** Exactly 1.6.1170 or 1.5.97 (1.7.104 refuses: `RemoveTarget` has no 1.7.104 id, nor
+   do the bark and aggressor rows of condition 2 (f) / (g)),
    not VR, `[CombatSubstrate] bCombatSubstrate` (default 0), ch.22's seat installed with its target site and stub,
    ch.7's pair on all 95 node classes, the held engagement's ranked StopCombat available (condition 5's empty-fight end), the anchor records resolving, and the self-check on every row the path calls. An
    out-of-combat, loaded, high-process, non-player holder in no scene and no dialogue, with the party out of combat.

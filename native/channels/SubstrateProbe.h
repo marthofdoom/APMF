@@ -6,6 +6,8 @@ namespace RE {
     using FormID = std::uint32_t;   // identical to CommonLib's alias (APMF_API.h does the same)
     class Actor;
     class AIProcess;
+    class ScriptEventSourceHolder;
+    class TESObjectREFR;
 }
 
 // ============================================================================
@@ -14,6 +16,9 @@ namespace RE {
 // the panic channels: the speed / distance baseline around each window, the context of a re-pick
 // that did not run, the frame of each "other" ignoring-bit reset, the aggressor bit around the
 // window and how long the hands stay drawn after the close. See channels/SubstrateProbe.cpp.
+// Round R5 adds (still passive): the procedure fields at each OTHER reset, every package swap while
+// held, the pause / open menus at a stalled re-pick, the anchor's collision flag at the open, and the
+// TESCombatEvent sink order once at kDataLoaded.
 //
 // [CombatSubstrate] bSubstrateProbes (default 1 while the substrate is in test). Off: every entry
 // point below returns after one load.
@@ -49,12 +54,19 @@ namespace apmf::substrateprobe {
     // Enter, just BEFORE StartCombat(anchor): the aggressor bit before the open. Opens the window of a
     // client substrate (its baseline starts here).
     void BeforeEntry(RE::FormID a_actor, const RE::AIProcess* a_proc, std::uint64_t a_now);
-    // Enter, after a successful entry (the OPEN line).
-    void Opened(RE::FormID a_actor, std::uint64_t a_now);
+    // Enter, after a successful entry (the OPEN line). `a_anchor`: its form flag 0x10 is read once (R5 F-7).
+    void Opened(RE::FormID a_actor, std::uint64_t a_now, const RE::TESObjectREFR* a_anchor);
 
     // WriteBitAfterRepick, when the bit is written although kEvpBuffered is still set ("the re-pick
-    // did NOT run within 2000 ms"): one context line.
-    void RepickNotRun(RE::Actor* a_actor, const RE::AIProcess* a_proc, std::uint64_t a_waitedMs);
+    // did NOT run within 2000 ms" of UNPAUSED time, R5 F-5): one context line, with the wall time and its
+    // split into run / paused / stalled time, the pause state and the open menus (R5 F-7).
+    void RepickNotRun(RE::Actor* a_actor, const RE::AIProcess* a_proc, std::uint64_t a_waitedMs, std::uint64_t a_runMs,
+                      std::uint64_t a_pausedMs, std::uint64_t a_stalledMs);
+
+    // combatsubstrate::Install (kDataLoaded, main thread), right after Harbinger's TESCombatEvent sink was added
+    // (R5 F-4, the probe only; nothing is filtered): one line with the source's sink array in send order, each
+    // sink's module and RTTI class, and whether Harbinger's sink (`a_harbinger`) is ahead of the Papyrus VM's.
+    void CombatEventSinkOrder(RE::ScriptEventSourceHolder* a_holder, const void* a_harbinger);
 
     // Serve, at each ignoring-bit reset it attributes to OTHER (same package, same start time).
     void OtherReset(RE::FormID a_actor, const RE::AIProcess* a_proc, std::uint64_t a_now);

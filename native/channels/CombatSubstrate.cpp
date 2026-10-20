@@ -5,6 +5,8 @@
 #include "channels/CombatApproach.h"       // SpaceOfRef: the anchor's last-known location space
 #include "channels/CombatEntry.h"          // hold::StopCombatRanked: the empty-fight end (F6)
 #include "channels/CombatReentryDeny.h"    // the slot-0x99 seat this file's anchor refusal rides; ClientEntryScope
+#include "channels/SubstrateAggressor.h"   // R5 F-3: the aggressor-bit clear (one-line call-outs only)
+#include "channels/SubstrateBark.h"        // R5 F-2: the combat-start bark deny (one-line call-outs only)
 #include "channels/SubstrateEquip.h"       // the spell-equip path the allow-list opens (one-line call-outs only)
 #include "channels/SubstrateProbe.h"       // R1 passive probes (one-line call-outs only)
 #include "core/ActionGate.h"               // SubstrateLeavesPaired: the allow-list's coverage
@@ -130,10 +132,18 @@
 //     the closing holder's group members);
 //   * the anchor's group entry is kept KNOWN (the held engagement's own un-lose write,
 //     INVARIANTS #0 (i) condition 1, for the anchor only) so the group never searches for it;
-//   * other spells: the floors + ch.8 / 0x0F / 0x0A as before; only the claimed spell runs.
-//   KNOWN HOLES approved by marth 2026-10-12, logged once per substrate: the combat-start topic
-//   path (AE 0x6B6CFB-0x6B6D32 runs because the bit is off at entry) and the combat state event
-//   (TESCombatEvent / OnCombatStateChanged).
+//   * other spells: the floors + ch.8 / 0x0F / 0x0A as before; only the claimed spell runs;
+//   * the combat-start BARK (R5 F-2, channels/SubstrateBark.cpp): the controller's first update (AE 33231 /
+//     SE 32484) requests NormalToCombat / NormalToAlert; the holder group's two detection-dialogue timers are
+//     pre-armed in the holder's own UpdateCombat before it runs, so the engine's own gate skips the line;
+//   * the AGGRESSOR BIT (R5 F-3, channels/SubstrateAggressor.cpp): StartCombat marks the holder the aggressor
+//     (AIProcess+0x136 bit 2); it is set false through the engine's setter right after the entry and again only
+//     if something sets it while HELD.
+//   StartCombat's block at AE 0x6B6CFB-0x6B6D32 (SE 0x625572-0x6255A9), once recorded here as the "combat-start
+//   topic", says NO line (R2 research F-1): it tells the actor's SCENE that it entered combat (vfunc 0x4A into
+//   24131; the substrate never opens on an actor in a scene) and clears head-track slot 5 (39472). KNOWN HOLE
+//   approved by marth 2026-10-12, logged once per substrate: the combat state event (TESCombatEvent /
+//   OnCombatStateChanged; R5 adds only the passive sink-order probe, F-4 is not built).
 //
 // REAL COMBAT (design 3.6a; marth: "If real combat starts, remove the anchor and drop
 // suppression of combat behavior"). Three triggers, on whatever thread sees them: (a) a target
@@ -189,6 +199,7 @@ namespace {
 
     constexpr int           kSlots          = 16;
     static_assert(kSlots <= apmf::substrateequip::kMaxSlots, "channels/SubstrateEquip.cpp tracks one record per slot");
+    static_assert(kSlots <= apmf::substratebark::kMaxSlots, "channels/SubstrateBark.cpp tracks one record per slot");
     constexpr float         kMaxTtlSec      = 15.0f;   // design 3.6: the TTL is clamped to 15 s
     constexpr float         kFloorBasis     = -1.0e9f; // below any client basis: a client cast claim wins its hand
     constexpr std::uint64_t kFloorWaitMs    = 1000;    // the entry waits this long for the floors to publish
@@ -197,7 +208,8 @@ namespace {
     constexpr std::uint64_t kHeartbeatMs    = 30000;
     constexpr float         kAnchorFollowU  = 32.0f;   // move the anchor when its holder moved this far
     constexpr std::uint16_t kTargetLost     = 1u << 1; // CombatTarget::flags kTargetLost (the hold's constant)
-    constexpr std::uint64_t kRepickWaitMs   = 2000;    // review F2: the longest wait for the buffered re-pick
+    constexpr std::uint64_t kRepickWaitMs   = 2000;    // review F2: the longest wait for the buffered re-pick (UNPAUSED time, R5 F-5)
+    constexpr std::uint64_t kPollGapMs      = 500;     // R5 F-5: a longer gap between two Polls is a stall (not counted)
     constexpr std::uint64_t kFloorRenewMs   = 10000;   // review F5: renew the floors' 15 s windows this often
     std::uint64_t           g_pollFrame     = 0;       // Poll calls (game thread)
 
@@ -360,6 +372,8 @@ namespace {
         bool             bitPending = false;
         std::uint64_t    repickAskedMs = 0, repickClearMs = 0;
         std::uint64_t    repickClearFrame = 0;
+        // R5 F-5: the re-pick wait counts only time the game ran (no pausing menu, no stalled frame)
+        std::uint64_t    repickLastPollMs = 0, repickRunMs = 0, repickPausedMs = 0, repickGapMs = 0;
         RE::TESPackage*  bitPkg = nullptr;          // the running package when the bit was written
         float            bitPkgStart = 0.0f;        // its ActorPackage::packageStartTime then
         std::uint32_t    resetsByRestart = 0, resetsOther = 0;
@@ -1012,6 +1026,10 @@ namespace {
         a_sub.entryBit = proc->ignoringCombat;
         apmf::substrateprobe::BeforeEntry(a_sub.id, proc, now);   // R1: the aggressor bit before the entry
         bool ok = false;
+        // R5 F-2: the bark deny's record is PENDING before the call (the holder's UpdateCombat job is not ordered
+        // against this thread): its next UpdateCombat pre-arms the group's two timers before the engine's update.
+        apmf::substratebark::Arm(a_sub.slot, a_sub.id, actor->GetHandle().native_handle(),
+                                 static_cast<float>(a_sub.ttlMs) / 1000.0f + 2.0f);
         g_slots[a_sub.slot].state.fetch_or(kStEntering, std::memory_order_acq_rel);
         {
             // The call ch.21 makes (verified row CombatEntry.Actor.StartCombat); a declared entry passes a
@@ -1026,19 +1044,25 @@ namespace {
             spdlog::warn("[substrate] 0x{} OPEN anchor=0x{} entry=false -- StartCombat returned {}{}.", Hex(a_sub.id),
                          Hex(g_anchorId.load()), ok ? "true" : "false",
                          ok ? " but left NO controller" : " (the engine refused: its life-state, dead, distance or flag tests)");
+            apmf::substratebark::Disarm(a_sub.slot);
             CloseSub(a_sub, "entry refused");
             return false;
         }
-        // KNOWN HOLE (approved): the bit is off at entry, so StartCombat's block at AE 0x6B6CFB-0x6B6D32
-        // (the vfunc 0x4A result into 0x3A0D20 / id 24131, INFERRED to be the combat-start topic) ran.
+        apmf::substrateaggressor::AfterEntry(a_sub.id, proc);   // R5 F-3: StartCombat marked him the aggressor
+        // R2 research F-1: the bit is off at entry, so StartCombat's block at AE 0x6B6CFB-0x6B6D32 ran. It is NOT a
+        // topic: the scene notification (vfunc 0x4A into 24131; the holder is in no scene) and a head-track clear
+        // (39472, slot 5). The combat-start BARK is the controller's first update (33231): channels/SubstrateBark.cpp.
         if (!a_sub.entryBit)
-            spdlog::info("[substrate] 0x{} known hole: combat-start topic path ran (the ignoring-combat bit was off at "
-                         "entry, so StartCombat's AE 0x6B6CFB block executed; approved by marth 2026-10-12, RS2 researches "
-                         "a deny).",
-                         Hex(a_sub.id));
+            spdlog::info("[substrate] 0x{} StartCombat's in-combat block ran (the ignoring-combat bit was off at entry; AE "
+                         "0x6B6CFB: a scene notification and a head-track clear, NOT a dialogue line). The combat-start "
+                         "bark comes from the controller's first update: {}.",
+                         Hex(a_sub.id),
+                         apmf::substratebark::On() ? std::string("the bark deny pre-arms it (the BARK DENY line at the close)")
+                                                   : fmt::format("NOT denied, the bark deny is OFF ({})",
+                                                                 apmf::substratebark::OffReason()));
         else
             spdlog::warn("[substrate] 0x{} the ignoring-combat bit was ALREADY ON at entry (the running package carries "
-                         "IgnoreCombat): the topic block was skipped, but the new controller copied the bit into its +0x42 "
+                         "IgnoreCombat): StartCombat's in-combat block was skipped, but the new controller copied the bit into its +0x42 "
                          "at birth (AE 0x5582F8) and is born PAUSED -- its tree, the cast leaves included, does not run. "
                          "P6's ctrl+0x42 shows it.",
                          Hex(a_sub.id));
@@ -1060,7 +1084,7 @@ namespace {
         a_sub.lastPosMs  = now;
         a_sub.musicAtOpen = g_musicOk ? MusicNow() : 0;
         ++g_opened;
-        apmf::substrateprobe::Opened(a_sub.id, now);
+        apmf::substrateprobe::Opened(a_sub.id, now, anchor);
         if (!g_musicDeny)
             spdlog::warn("[substrate] 0x{} known hole: the music deny is OFF ({}): the engine may decide this group's "
                          "music and battle music can play while the substrate is open.",
@@ -1122,6 +1146,9 @@ namespace {
         apmf::substrateequip::Closing(a_sub.slot, a_sub.id, actor, a_reason, apmf::clock::MonotonicMs());   // equip outcome
         apmf::substrateequip::RestoreWhenFree(a_sub.id, a_reason, apmf::clock::MonotonicMs());   // the stowed hands (F2)
         if (a_sub.slot >= 0 && a_sub.phase == Phase::kOpen) LogObserved(a_sub, actor);
+        if (a_sub.phase == Phase::kOpen) apmf::substratebark::Closing(a_sub.slot, a_sub.id, false, apmf::clock::MonotonicMs());
+        else apmf::substratebark::Disarm(a_sub.slot);   // R5 F-2 (a close before the entry: no line)
+        if (const auto t = apmf::substrateaggressor::Closing(a_sub.id); !t.empty()) spdlog::info("[substrate] 0x{} {}.", Hex(a_sub.id), t);
         DebtForget(a_sub.id);   // a normal close: his StopCombat ends his part in the group (a co-holder keeps its own debt)
         // 1. the bit back to what it was
         if (a_sub.bitSet && proc) proc->ignoringCombat = a_sub.priorBit;
@@ -1174,6 +1201,8 @@ namespace {
         auto* actor = RE::TESForm::LookupByID<RE::Actor>(a_sub.id);
         auto* proc  = actor ? actor->GetActorRuntimeData().currentProcess : nullptr;
         apmf::substrateprobe::Closing(a_sub.id, actor, true, true, apmf::clock::MonotonicMs());   // R1
+        apmf::substratebark::Closing(a_sub.slot, a_sub.id, true, apmf::clock::MonotonicMs());     // R5 F-2 result line
+        if (const auto t = apmf::substrateaggressor::Closing(a_sub.id); !t.empty()) spdlog::info("[substrate] 0x{} {}.", Hex(a_sub.id), t);
         apmf::substrateequip::Closing(a_sub.slot, a_sub.id, actor, "real combat (dropped)", apmf::clock::MonotonicMs());
         apmf::substrateequip::RestoreWhenFree(a_sub.id, "real combat (dropped)", apmf::clock::MonotonicMs());   // fights with his gear
         if (a_sub.bitSet && proc) proc->ignoringCombat = a_sub.priorBit;   // the package no longer runs in combat
@@ -1259,9 +1288,22 @@ namespace {
     // wait until kEvpBuffered reads CLEAR (the update ran its evaluation), then wait ONE MORE Poll (the
     // same update's package start has finished by then, whichever thread ran it), then write the bit once.
     // If the re-pick never runs in kRepickWaitMs the bit is written anyway and that is logged.
+    // R5 F-5 (R2 research Q7: both holders stalled in the same two windows -> a global cause; the actor's AI update, the
+    // only consumer of kEvpBuffered, does not run while a menu pauses the game): the wait counts only the time between two
+    // Polls in which the game was not paused (UI::GameIsPaused, numPausesGame > 0) and the gap was a frame, not a stall
+    // (> kPollGapMs: a load, a hitch, or a pause the Poll itself did not see). Paused and stalled time is logged.
     void WriteBitAfterRepick(Sub& a_sub, RE::Actor* a_actor, RE::AIProcess* a_proc, std::uint64_t a_now) {
         const bool buffered = a_actor->GetActorRuntimeData().boolBits.all(RE::Actor::BOOL_BITS::kEvpBuffered);
-        const bool timedOut = a_now - a_sub.repickAskedMs >= kRepickWaitMs;
+        {
+            const std::uint64_t last = a_sub.repickLastPollMs ? a_sub.repickLastPollMs : a_sub.repickAskedMs;
+            const std::uint64_t dt   = a_now > last ? a_now - last : 0;
+            auto*               ui   = RE::UI::GetSingleton();
+            if (ui && ui->GameIsPaused()) a_sub.repickPausedMs += dt;
+            else if (dt > kPollGapMs)     a_sub.repickGapMs += dt;
+            else                          a_sub.repickRunMs += dt;
+            a_sub.repickLastPollMs = a_now;
+        }
+        const bool timedOut = a_sub.repickRunMs >= kRepickWaitMs;
         if (buffered && !timedOut) return;
         if (!buffered && !a_sub.repickClearFrame) {
             a_sub.repickClearFrame = g_pollFrame;
@@ -1269,7 +1311,9 @@ namespace {
             return;   // one more Poll: the package start in that same update has run
         }
         if (!timedOut && g_pollFrame <= a_sub.repickClearFrame) return;
-        if (buffered) apmf::substrateprobe::RepickNotRun(a_actor, a_proc, a_now - a_sub.repickAskedMs);   // R1
+        if (buffered)   // R1 + R5 F-5 / F-7: the pause / menu state at the stall
+            apmf::substrateprobe::RepickNotRun(a_actor, a_proc, a_now - a_sub.repickAskedMs, a_sub.repickRunMs,
+                                               a_sub.repickPausedMs, a_sub.repickGapMs);
         a_sub.bitPending  = false;
         a_sub.priorBit    = a_proc->ignoringCombat;
         a_proc->ignoringCombat = true;   // AIProcess+0x139 (static_assert below; AE 0x6D6780 / SE 0x643F00 read it)
@@ -1280,9 +1324,14 @@ namespace {
         spdlog::info("[substrate] 0x{} wrote AIProcess+0x139 (ignoringCombat) {} -> 1 ONCE (S2a: no re-assert), {} "
                      "(package 0x{}, start time {:.2f}).",
                      Hex(a_sub.id), a_sub.priorBit ? 1 : 0,
-                     buffered ? fmt::format("the re-pick did NOT run within {} ms (kEvpBuffered still set)", kRepickWaitMs)
-                              : fmt::format("after the re-pick ran (kEvpBuffered cleared at +{} ms)",
-                                            a_sub.repickClearMs - a_sub.repickAskedMs),
+                     buffered ? fmt::format("the re-pick did NOT run within {} ms of unpaused time (kEvpBuffered still "
+                                            "set; {} ms wall, {} ms paused, {} ms stalled)",
+                                            kRepickWaitMs, a_now - a_sub.repickAskedMs, a_sub.repickPausedMs,
+                                            a_sub.repickGapMs)
+                              : fmt::format("after the re-pick ran (kEvpBuffered cleared at +{} ms; {} ms paused, {} ms "
+                                            "stalled)",
+                                            a_sub.repickClearMs - a_sub.repickAskedMs, a_sub.repickPausedMs,
+                                            a_sub.repickGapMs),
                      Hex(a_sub.bitPkg ? a_sub.bitPkg->GetFormID() : 0), static_cast<double>(a_sub.bitPkgStart));
     }
 
@@ -1389,6 +1438,7 @@ namespace {
         if (proc && a_sub.bitPending) WriteBitAfterRepick(a_sub, actor, proc, a_now);
         if (proc) {
             if (proc->lowProcessFlags.underlying() & 0x04) a_sub.aggressorSeen = true;   // AIProcess+0x136 bit 2
+            apmf::substrateaggressor::WhileHeld(a_sub.id, proc, a_now, s.state, kStReal);   // R5 F-3: set again while HELD
             const bool on = proc->ignoringCombat;
             if (a_sub.bitSet && a_sub.bitWasOn && !on) {   // the engine re-synced the bit from the package flag
                 ++a_sub.bitResets;
@@ -2037,6 +2087,8 @@ namespace apmf::combatsubstrate {
     void NoteGroupTarget(void* a_group, RE::TESObjectREFR* a_target) {
         if (!a_group || !a_target) return;
         SeatMusicRealTarget(static_cast<RE::CombatGroup*>(a_group), a_target);   // before the drop can clear any slot
+        apmf::substratebark::SeatRealTarget(static_cast<RE::CombatGroup*>(a_group),
+                                            WriteLockedHere(static_cast<RE::CombatGroup*>(a_group)));   // R5 F-2 put-back
         if (!AnyLive()) return;
         auto*               g       = static_cast<RE::CombatGroup*>(a_group);
         const std::uint32_t anchorH = g_anchorH.load(std::memory_order_acquire);
@@ -2061,6 +2113,7 @@ namespace apmf::combatsubstrate {
         if (!AnyLive() || !a_group || !a_anchor) return;
         auto* g = static_cast<RE::CombatGroup*>(a_group);
         SeatMusicAnchor(g);   // the music deny / probe: inside the engine's own locked update only
+        apmf::substratebark::SeatAnchorPass(g, WriteLockedHere(g));   // R5 F-2 / F-7: the two dialogue timers read
         for (int i = 0; i < kSlots; ++i) {
             if (g_slots[i].id.load(std::memory_order_acquire) == 0) continue;
             const auto st = g_slots[i].state.load(std::memory_order_acquire);
@@ -2181,6 +2234,11 @@ namespace apmf::combatsubstrate {
                 }
             }
         }
+        // R5 (marth 2026-10-19 rulings Q1 / Q2): the combat-start bark deny (F-2) and the aggressor-bit clear (F-3). Each
+        // is a deny of a facet the substrate switches on: a row that does not verify REFUSES THE SUBSTRATE (principle 2),
+        // as the music deny does; its INI switch turns it off with the hole logged per OPEN. 1.7.104: refused by name.
+        if (!why) why = apmf::substratebark::Install();
+        if (!why) why = apmf::substrateaggressor::Install();
         RE::TESNPC*    npc  = nullptr;
         RE::Actor*     ref  = nullptr;
         if (!why) {
@@ -2270,6 +2328,7 @@ namespace apmf::combatsubstrate {
         if (auto* holder = RE::ScriptEventSourceHolder::GetSingleton()) {
             holder->AddEventSink<RE::TESHitEvent>(HitSink::Get());
             holder->AddEventSink<RE::TESCombatEvent>(CombatEventSink::Get());
+            apmf::substrateprobe::CombatEventSinkOrder(holder, CombatEventSink::Get());   // R5 F-4: the passive probe only
         } else {
             spdlog::error("[substrate] ScriptEventSourceHolder unavailable: trigger (b) (a hit on the holder) and the "
                           "combat-state-event log are OFF; triggers (a) and (c) still drop a substrate on real combat.");
@@ -2277,13 +2336,17 @@ namespace apmf::combatsubstrate {
         g_notInstalledReason.store("", std::memory_order_release);
         g_installed.store(true, std::memory_order_release);
         spdlog::info("[substrate] combat substrate INSTALLED: anchor 0x{} (APMF.esl 0x80A, a {} clone), home 0x{}; dry run {} "
-                     "(period {:.0f} s), TTL {:.1f} s, P6 move trace {}, fire signal {}, music {}, music deny {}. Allow-list: "
+                     "(period {:.0f} s), TTL {:.1f} s, P6 move trace {}, fire signal {}, music {}, music deny {}, bark deny {}, "
+                     "aggressor clear {}. Allow-list: "
                      "3 cast leaves, the spell-equip path {} (EquipSpell + AcquireResource<2> \"Action\", while a "
                      "driving cast claim stands), {} structural nodes pass, the rest denied.",
                      Hex(ref->GetFormID()), npc->GetName(), Hex(g_homeId), g_dryRun ? "ON" : "off",
                      static_cast<double>(g_dryPeriodSec), static_cast<double>(g_ttlSec), g_moveTrace ? "ON" : "off",
                      g_fireSignal ? "census 0x0B" : "NONE", g_musicOk ? "verified" : "n/a",
                      g_musicDeny ? std::string("ON") : fmt::format("OFF ({})", g_musicDenyOff),
+                     apmf::substratebark::On() ? std::string("ON") : fmt::format("OFF ({})", apmf::substratebark::OffReason()),
+                     apmf::substrateaggressor::On() ? std::string("ON")
+                                                    : fmt::format("OFF ({})", apmf::substrateaggressor::OffReason()),
                      apmf::substrateequip::Enabled() ? "ON" : "OFF",
                      std::count(g_leafClass.begin(), g_leafClass.end(), LeafClass::kStructural));
     }
@@ -2351,6 +2414,8 @@ namespace apmf::combatsubstrate {
         g_censusRows.clear();
         apmf::anchorguard::ResetAll();
         apmf::substrateprobe::Reset();
+        apmf::substratebark::Reset();
+        apmf::substrateaggressor::Reset();
         apmf::substrateequip::Reset();
         apmf::substrateequip::ResetHands(a_why);
         {
