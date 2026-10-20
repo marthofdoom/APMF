@@ -19,7 +19,7 @@
 
 namespace apmf::VerifiedAddresses
 {
-	// 1.6.1170.0: 246 rows
+	// 1.6.1170.0: 253 rows
 	inline constexpr REL::SelfCheck::Row kRows_1_6_1170[] = {
 		{ 207886, 0x18A5558, 0x0, 0, {  }, "Character" },
 		{ 207896, 0x18A5FE8, 0x0, 0, {  }, "Character.ActorValueOwner" },
@@ -267,9 +267,16 @@ namespace apmf::VerifiedAddresses
 		{ 214161, 0x18E7560, 0x0, 0, {  }, "Leaf.CombatBehaviorIdle<GameSetting>" },
 		{ 214367, 0x18E8AC8, 0x0, 0, {  }, "Leaf.CombatBehaviorRepeat<float,FLAGS>" },
 		{ 56626, 0xA447F0, 0x0, 0, {  }, "Place.TESObjectREFR.MoveTo" },
+		{ 33231, 0x559280, 0xA9, 1, { 0xE8 }, "Substrate.Bark.ControllerStartTopicCall" },
+		{ 44672, 0x802130, 0xFB, 1, { 0xE8 }, "Substrate.Bark.DialogueCoreCall" },
+		{ 44673, 0x8022B0, 0x106, 13, { 0x8D, 0x47, 0xC9, 0x8B, 0xD8, 0x48, 0x83, 0xC3, 0x0B, 0x49, 0x8D, 0x1C, 0xD8 }, "Substrate.Bark.DetectionTimerSlot" },
+		{ 44673, 0x8022B0, 0x118, 15, { 0xF3, 0x0F, 0x10, 0x05, 0x8C, 0x8C, 0x99, 0x02, 0xF3, 0x0F, 0x5C, 0x03, 0x0F, 0x2F, 0x43 }, "Substrate.Bark.TimerGate" },
+		{ 404125, 0x319B05C, 0x0, 0, {  }, "Substrate.Bark.AIClock" },
+		{ 39145, 0x6D6CB0, 0x0, 0, {  }, "Substrate.AIProcess.SetAggressor" },
+		{ 39144, 0x6D6C90, 0x0, 0, {  }, "Substrate.AIProcess.GetAggressor" },
 	};
 
-	// 1.5.97.0: 246 rows
+	// 1.5.97.0: 253 rows
 	inline constexpr REL::SelfCheck::Row kRows_1_5_97[] = {
 		{ 261397, 0x165DA40, 0x0, 0, {  }, "Character" },
 		{ 261402, 0x165E4D0, 0x0, 0, {  }, "Character.ActorValueOwner.SE" },
@@ -517,10 +524,17 @@ namespace apmf::VerifiedAddresses
 		{ 267079, 0x16A1ED8, 0x0, 0, {  }, "Leaf.CombatBehaviorIdle<GameSetting>" },
 		{ 267191, 0x16A35F0, 0x0, 0, {  }, "Leaf.CombatBehaviorRepeat<float,FLAGS>" },
 		{ 56227, 0x9AE5C0, 0x0, 0, {  }, "Place.TESObjectREFR.MoveTo" },
+		{ 32484, 0x4FDBF0, 0xBD, 1, { 0xE8 }, "Substrate.Bark.ControllerStartTopicCall" },
+		{ 43466, 0x768C10, 0x114, 1, { 0xE8 }, "Substrate.Bark.DialogueCoreCall" },
+		{ 43467, 0x768DA0, 0x10E, 13, { 0x8D, 0x47, 0xC9, 0x8B, 0xD8, 0x48, 0x83, 0xC3, 0x0B, 0x49, 0x8D, 0x1C, 0xD8 }, "Substrate.Bark.DetectionTimerSlot" },
+		{ 43467, 0x768DA0, 0x120, 15, { 0xF3, 0x0F, 0x10, 0x05, 0x7C, 0x17, 0x7D, 0x02, 0xF3, 0x0F, 0x5C, 0x03, 0x0F, 0x2F, 0x43 }, "Substrate.Bark.TimerGate" },
+		{ 517597, 0x2F3A644, 0x0, 0, {  }, "Substrate.Bark.AIClock" },
+		{ 38185, 0x644300, 0x0, 0, {  }, "Substrate.AIProcess.SetAggressor" },
+		{ 38184, 0x6442E0, 0x0, 0, {  }, "Substrate.AIProcess.GetAggressor" },
 	};
 
-	// 1.7.104.0: 257 rows
-	// 42 NOT VERIFIED on 1.7.104.0, deliberately absent from this table (the seat is refused):
+	// 1.7.104.0: 263 rows
+	// 49 NOT VERIFIED on 1.7.104.0, deliberately absent from this table (the seat is refused):
 	//   Character.ActorValueOwner.SE (1.6.1170 id -): no 1.6.1170 (AE) id: the 1.7.104 map is keyed by AE id (1.5.97-only seat)
 	//   TargetPin.CombatController.SetTarget (1.6.1170 id 33235): id 33235 is not in the idmap
 	//   EquipSink.Path.OutfitApply.24234 (1.6.1170 id -): BY DESIGN: 1.5.97-only label. On 1.6.1170 and 1.7.104 the code reads its AE twin EquipSink.Path.OutfitApply.418622 (AE id 418622, 1.7.104 0x3C4440), whose own row carries the 1.7.104 fact (MAPPED-AE)
@@ -563,6 +577,13 @@ namespace apmf::VerifiedAddresses
 	//   Substrate.CombatGroup.DetectionPassInUpdate (1.6.1170 id 44703): id 44703 is not in the idmap
 	//   Substrate.CombatGroup.MusicUndecided (1.6.1170 id 44703): id 44703 is not in the idmap
 	//   Substrate.CombatManager.MusicPlayTest (1.6.1170 id 46888): id 46888 is not in the idmap
+	//   Substrate.Bark.ControllerStartTopicCall (1.6.1170 id 33231): id 33231 is not in the idmap
+	//   Substrate.Bark.DialogueCoreCall (1.6.1170 id 44672): id 44672 is not in the idmap
+	//   Substrate.Bark.DetectionTimerSlot (1.6.1170 id 44673): id 44673 is not in the idmap
+	//   Substrate.Bark.TimerGate (1.6.1170 id 44673): id 44673 is not in the idmap
+	//   Substrate.Bark.AIClock (1.6.1170 id 404125): proven through Substrate.Bark.TimerGate, which did not verify: id 44673 is not in the idmap
+	//   Substrate.AIProcess.SetAggressor (1.6.1170 id 39145): id 39145 is not in the idmap
+	//   Substrate.AIProcess.GetAggressor (1.6.1170 id 39144): id 39144 is not in the idmap
 	inline constexpr REL::SelfCheck::Row kRows_1_7_104[] = {
 		{ 207886, 0x1923258, 0x0, 0, {  }, "Character" },
 		{ 207896, 0x1923CE8, 0x0, 0, {  }, "Character.ActorValueOwner" },
@@ -821,6 +842,12 @@ namespace apmf::VerifiedAddresses
 		{ 0, 0x852FD9, 0x0, 0, {  }, "Substrate.CombatManager.MusicPlayTest.1_7_104" },
 		{ 0, 0x65454F, 0x0, 0, {  }, "Substrate.BSMusicManager.Reader.1_7_104" },
 		{ 0, 0xA46267, 0x0, 0, {  }, "Substrate.MenuTopicManager.Reader.1_7_104" },
+		{ 0, 0x561199, 0x0, 0, {  }, "Substrate.Bark.ControllerStartTopicCall.1_7_104" },
+		{ 0, 0x81708B, 0x0, 0, {  }, "Substrate.Bark.DialogueCoreCall.1_7_104" },
+		{ 0, 0x817216, 0x0, 0, {  }, "Substrate.Bark.DetectionTimerSlot.1_7_104" },
+		{ 0, 0x817228, 0x0, 0, {  }, "Substrate.Bark.TimerGate.1_7_104" },
+		{ 0, 0x6E9840, 0x0, 0, {  }, "Substrate.AIProcess.GetAggressor.1_7_104" },
+		{ 0, 0x6E9860, 0x0, 0, {  }, "Substrate.AIProcess.SetAggressor.1_7_104" },
 	};
 
 	inline constexpr REL::SelfCheck::Table kTables[] = {

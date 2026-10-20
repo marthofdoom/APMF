@@ -8,6 +8,7 @@
 #include "core/Sightline.h"   // ABI v18 kTargetPin_OwnLineOfSight
 #include "core/Sources.h"     // Harbinger 1a: target capture, census, priorities
 #include "channels/CombatEntry.h"   // THE HELD ENGAGEMENT (2026-10-12): a pin is held; kLost no longer ends it
+#include "channels/SubstrateBark.h"   // the combat substrate bark deny rides layer 0 (BeforeUpdateCombat)
 
 #include <intrin.h>   // _ReturnAddress: the 0xE4 layers' segment proof
 #include <shared_mutex>
@@ -769,6 +770,7 @@ namespace {
     // Layer 0, installed at SKSEPluginLoad (InstallLayer0).
     struct UpdateCombatObserver {
         static void thunk(RE::Actor* a_this) {
+            apmf::substratebark::BeforeUpdateCombat(a_this);   // #0 (j) 2 (f): before the engine's update (one load when idle)
             LayerBody(0, a_this, Next, reinterpret_cast<std::uintptr_t>(_ReturnAddress()));
         }
         static void Next(RE::Actor* a) { func(a); }
@@ -962,6 +964,8 @@ namespace apmf::targetpin {
     }
 
     std::atomic<bool> g_layer0Installed{ false };
+
+    bool Layer0Installed() { return g_layer0Installed.load(std::memory_order_acquire); }
 
     void InstallLayer0() {
         static std::atomic<bool> s_tried{ false };
