@@ -841,6 +841,27 @@ other call is forwarded untouched, and an Engine priority >= the claim's STANDS;
 of one competing source, not an eviction: a Spectator package already running is not removed,
 and nothing is undone on release (#5a).
 
+**A client's offer HOLDS for as long as the client's claim stands; ch.19's cell legs included (marth
+2026-10-20: "it would be mfo via harbinger. But yes, mfo claims need to hold for the duration of the mfo
+event.").** Harbinger never drops a package offer that serves a standing client claim because a walk ended
+or because the actor unloaded. Concretely, in `channels/Travel.cpp`: (1) a ch.19 leg to a CELL that arrives
+(parent cell == destination) records `kLeg_Arrived` and KEEPS its internal ch.9 offer and package slot
+(`HoldAtCell`); only the client's `Release` / `Repoint`, the actor's death or loss, or the cell ceasing to
+resolve end it. Never move the cell arrival back into `EndLeg` (its offer release and ch.9's release nudge
+are what pulled the Markarth followers straight back out of the inn, field 2026-10-20). (2) An UNLOADED
+actor (no 3D) whose handle resolves and who is alive is NOT `kLeg_ActorGone`, on any leg: arrival is decided
+from the parent cell BEFORE any 3D test, so an actor unloaded by the load door he crossed still arrives.
+Never re-add an `Is3DLoaded()` end to `Poll`. (3) A held leg is re-pointed on a FRESH slot (new offer filed
+first, held offer released in the same Drain), never in place: the held package is current in the engine's
+DONE procedure and an evaluation that selects the same package does not restart it (disassembly note at
+`HoldAtCell`), so an in-place re-point would leave the actor standing. (4) The hold is the travel package
+itself, standing at its destination: one offer, one facet, no second package (composition, not
+substitution). Reference legs still end and drop their offer on arrival. The ControlMap's own unload sweep
+(`ControlMap::Drain`) releases claims only when the actor's HANDLE stops resolving (the reference left
+memory or was deleted), never on a 3D unload. (5) Because the held internal offer was filed first at the client's basis, it OUTRANKS a later ch.9
+offer from the same client at the same basis (ControlMap's tie keeps the earliest claim): a client that
+wants its own package at the destination must release or re-point its ch.19 claim first.
+
 **#3a — APMF is BENEATH script-driven package overrides; it uses ZERO Papyrus.** APMF
 arbitrates the engine's NATIVE / alias tier (packages the engine itself selects, and the
 alias-tier package offer at 0x49). A PapyrusUtil `AddPackageOverride` sits ABOVE that

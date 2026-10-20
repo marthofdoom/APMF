@@ -167,7 +167,7 @@ So there is nothing to run in place and nothing to snap back. The actor's packag
 
 #### Lifetime
 
-A standing claim with no time limit. It ends on `Release`. On release Harbinger clears the parked goal and unlocks the mover. A load releases it through the channel. If the actor unloads, the claim is dropped and there is nothing left to undo. No heartbeat is needed. Harbinger does not re-assert.
+A standing claim with no time limit. It ends on `Release`. On release Harbinger clears the parked goal and unlocks the mover. A load releases it through the channel. If the actor's reference leaves memory (it is deleted, or a non-persistent actor's cell unloads it), ControlMap's sweep drops the claim and there is nothing left to undo. A 3D unload alone does not drop it. No heartbeat is needed. Harbinger does not re-assert.
 
 #### Priority and conflicts
 
@@ -1906,11 +1906,11 @@ ABI 1. `EnableRedirectLog` and `iSpectatorSeat` in `[PackageGate]`. Proven when 
 
 ### ch.19 Travel (`kIntent_Travel`)
 
-*Harbinger ships its own travel packages, points one at your destination and offers it through an internal package claim. The engine walks the actor. A leg ends on arrival, combat, a lost destination, a block or a timeout, and the claim stays live so you can read why.*
+*Harbinger ships its own travel packages, points one at your destination and offers it through an internal package claim. The engine walks the actor. A leg ends on arrival, combat, a lost destination, a block or a timeout, and the claim stays live so you can read why. A cell leg that arrives keeps holding the actor in the cell until you release or re-point.*
 
 #### What it is for
 
-Walk an actor to a place. The player sees the follower walk to a crate, an enemy, a marker, a cell or a world point under its own travel package, and stop when it gets there, when it enters combat, or when the destination is gone. MFO uses it for loot excursions and deposit trips.
+Walk an actor to a place. The player sees the follower walk to a crate, an enemy, a marker, a cell or a world point under its own travel package, and stop when it gets there, when it enters combat, or when the destination is gone. Sent to a cell, the follower stays in that cell for as long as your claim stands. MFO uses it for loot excursions, deposit trips and town errands.
 
 The whole contract, in the project's words: it goes to the target 50 to 100 units from it, and combat interrupts and cancels the movement. That is all.
 
@@ -1948,13 +1948,17 @@ Handle h = g_apmf->RequestEx(actor, kIntent_Travel, kBasis, &p);
 
 Harbinger ships eight travel package records in `Data/APMF.esl`. It points one at your destination and offers it through an internal ch.9 claim at **your basis**. The engine runs the package natively, with real pathing.
 
-> **Key Concept 11 (how a leg ends)** A leg ends on exactly these: **arrival** (inside the radius of a reference, or the actor's parent cell is the destination cell), **combat** (the actor enters combat), **destination gone** (deleted, disabled, died during travel, or a cell that no longer resolves), **blocked** (ABI 12, the engine held the actor in its Movement Blocked package for 3 seconds of running game time), and **stuck** (a two-minute safety net).
+> **Key Concept 11 (how a leg ends)** A leg ends on exactly these: **arrival** (inside the radius of a reference, or the actor's parent cell is the destination cell), **combat** (the actor enters combat), **destination gone** (deleted, disabled, died during travel, or a cell that no longer resolves), **blocked** (ABI 12, the engine held the actor in its Movement Blocked package for 3 seconds of running game time), **stuck** (a two-minute safety net), and **actor gone** (the actor died, or its reference no longer resolves at all).
+
+> **Key Concept 11a (a cell leg holds after arrival, 2026-10-20)** Arrival in a destination CELL does not drop the package. Harbinger keeps offering the same travel package, which stands at its destination, and the actor stays in the cell until you `Release` or `Repoint`. The state reads `kLeg_Arrived` for the whole hold. Combat, Movement Blocked and the safety net do not end a hold. Only the actor's death or loss (`kLeg_ActorGone`), the cell no longer resolving (`kLeg_DestGone`), your `Release` or your `Repoint` do. A reference leg is unchanged: it ends on arrival and the actor goes back to his own package. If a held actor is moved out of the cell by something else, Harbinger logs it once and does nothing (the package has finished its walk and does not walk him back). `Repoint` to the same cell to walk him back. **A held leg outranks your own later package offer.** The hold's internal ch.9 offer is filed at your basis when the leg starts, and at an equal basis ControlMap keeps the EARLIEST claim. So a ch.9 offer your mod files later at the same basis for the same actor (for example a work package at the destination) loses to the held travel package and is never adopted. Release or `Repoint` the ch.19 claim first, then offer your own package.
+
+> **Key Concept 11b (an unloaded actor is not gone, 2026-10-20)** A living actor whose reference still resolves keeps his leg when his 3D unloads. That is what happens the moment he walks through a load door into an interior the player is not in, so a cell leg into an interior arrives (and holds) even though the actor is never seen inside. While he is unloaded, arrival, destination, combat and the safety net are still decided. Movement Blocked is not (an unloaded actor has no movement to block).
 
 It claims nothing else for you. No combat target, no casting, no equipment, no aggression, no movement block. It enters no combat, pins no target and fakes no perception. If you want one of those, claim that intent yourself. One facet per intent.
 
 A gait change in a `Repoint` rewrites the package record, but the running package keeps the speed it started with until the package next starts. Harbinger logs that case. Release and request again to change gait mid-walk.
 
-> **Key Concept 12 (a leg ends and the claim stands)** Harbinger never releases a ch.19 claim. When a leg ends it drops only its own package offer. The claim stays live (`IsClaimLive` stays true) and does nothing until you `Repoint` or `Release`. Read `GetTravelLegState` to learn why the actor stopped, so that an ended leg is never mistaken for a package theft.
+> **Key Concept 12 (a leg ends and the claim stands)** Harbinger never releases a ch.19 claim. When a leg ends it drops only its own package offer (a held cell leg keeps even that, see Key Concept 11a). The claim stays live (`IsClaimLive` stays true) and does nothing until you `Repoint` or `Release`. Read `GetTravelLegState` to learn why the actor stopped, so that an ended leg is never mistaken for a package theft.
 
 **Why the walk stopped.**
 
@@ -1971,12 +1975,12 @@ Set `out->size = sizeof(APMF_TravelLegInfo)` first. The call returns a `TravelLe
 | `kLeg_None` (0) | no state held for this actor |
 | `kLeg_Pending` (1) | accepted or re-pointed. The leg starts next frame |
 | `kLeg_Walking` (2) | the package is offered and the actor is travelling |
-| `kLeg_Arrived` (3) | inside the radius, or inside the cell |
+| `kLeg_Arrived` (3) | inside the radius (the leg is over and the offer dropped), or inside the cell (the offer is KEPT and the actor is held in the cell until you release or re-point, Key Concept 11a) |
 | `kLeg_Blocked` (4) | the engine's Movement Blocked package held the actor 3 seconds. `stallX/Y/Z` say where. `blocker` and `blockerKind` say whether an actor stood in front |
 | `kLeg_CombatCancelled` (5) | the actor entered combat |
 | `kLeg_DestGone` (6) | the destination is gone |
 | `kLeg_StuckTimeout` (7) | the two-minute net elapsed |
-| `kLeg_ActorGone` (8) | the actor unloaded, died or lost its 3D |
+| `kLeg_ActorGone` (8) | the actor died or its reference no longer resolves. Before 2026-10-20 an unloaded actor (no 3D) also ended here. It no longer does (Key Concept 11b) |
 | `kLeg_Failed` (9) | the leg could not start or be re-pointed. A refused `Repoint` ends the previous leg. `destForm` and `destX..Z` name the refused destination |
 | `kLeg_Released` (10) | the claim was released |
 
@@ -1995,6 +1999,8 @@ A BLOCKED end also runs a passive gate probe that only writes log lines (`[trave
 #### Lifetime
 
 Standing, no time limit. `Repoint(handle, &param)` moves the destination in place with no release and no re-claim. A point leg's marker lives exactly as long as the leg, and is deleted when the leg ends for any reason or on a `Repoint` to a new point. Markers are co-saved, so a save made mid-leg cannot leave one behind. A load releases every ch.19 claim. If a leg ended and you want the same place again, `Repoint` it, since the state read tells you it ended.
+
+A cell leg that arrived HOLDS (Key Concept 11a): its package offer and one of the eight package slots stay taken until you `Release` or `Repoint`. Release it when your event in that cell is over, and the actor goes back to his own package (a follower walks back to the player). A `Repoint` of a held leg starts the new leg on another package record and only then lets go of the held one, so the actor is never handed back to his own package in between. With all eight slots taken that `Repoint` fails (`kLeg_Failed`) and the hold is let go. The claim itself survives the actor unloading: only his death, his reference leaving memory, your `Release` or a load ends it.
 
 #### Priority and conflicts
 
@@ -2098,13 +2104,14 @@ void StopTrip(Handle& h) {
 
 #### Version, INI and field status
 
-ABI 10 (the intent, with `Data/APMF.esl`), 11 adds `kTravel_ToPosition`, 12 adds the gait bits, the BLOCKED end and `GetTravelLegState`. First shipped in 0.9.5, 0.9.8 and 0.9.8. Keys in `[Travel]`: `bTravel` (1) and `bGateProbe2` (0, a passive log probe). Needs `APMF.esl` enabled in the load order. In use by MFO.
+ABI 10 (the intent, with `Data/APMF.esl`), 11 adds `kTravel_ToPosition`, 12 adds the gait bits, the BLOCKED end and `GetTravelLegState`. First shipped in 0.9.5, 0.9.8 and 0.9.8. Keys in `[Travel]`: `bTravel` (1) and `bGateProbe2` (0, a passive log probe). Needs `APMF.esl` enabled in the load order. In use by MFO. The cell hold and the unloaded-actor rule (Key Concepts 11a and 11b) came after the 2026-10-20 field run in Markarth, where followers sent to an inn walked through the door and straight back out: the leg ended as soon as the door unloaded them, and the dropped offer handed them back to their follow package. Built, CI verified, not yet tested in game. The engine side of the hold (the travel package stays current in its DONE procedure, one `OnPackageEnd`, no restart while the same package is chosen) was read off the disassembly, see `channels/Travel.cpp` `HoldAtCell`.
 
 **Check Your Understanding: ch.19**
 
 1. The leg reads `kLeg_Arrived`. What does `IsClaimLive` say for the travel claim?
 2. A ninth leg is requested while eight are walking. What does the call return, and what does the leg state read?
 3. The follower is held by a closed portcullis. Which `blockerKind` is reported, and what should the client do?
+4. A cell leg reads `kLeg_Arrived` and the player is outside. What keeps the follower in the cell, and what lets him go?
 
 ### Place (`kIntent_Place`)
 

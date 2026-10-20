@@ -136,6 +136,16 @@ extern "C" __declspec(dllimport) unsigned long __stdcall GetPrivateProfileIntA(
 // TravelLegState a client reads with APMF_API_v12::GetTravelLegState, because the
 // client's claim outlives the leg.
 //
+// A CELL LEG HOLDS AFTER ARRIVAL (marth 2026-10-20: "mfo claims need to hold for the
+// duration of the mfo event"; field: Markarth inn doors). Arrival in a destination CELL
+// keeps the offer and its package slot: the travel package stands at its destination
+// (the engine's DONE procedure, read off the disassembly at HoldAtCell) and the actor
+// stays in the cell until the client Releases or Repoints. A REFERENCE leg still ends
+// and drops its offer on arrival. An UNLOADED actor is not "gone": a living actor whose
+// handle resolves keeps its leg (crossing a load door into an interior the player is not
+// in unloads him at once), so only death or an unresolvable actor ends a leg as
+// kLeg_ActorGone.
+//
 // DOES NOT: claim the target (no ch.6), enter combat (no `StartCombat`), pin a
 // combat target (no 0xE4 seat), or fake perception of any kind. There is NO
 // line-of-sight test and NO detection test -- an earlier cut had both, and ending
@@ -371,6 +381,15 @@ namespace {
         bool                  gaitLogged   = false;
         bool                  substrateLogged = false;   // the one "substrate-held, not combat" line per leg
         APMF_API::Handle      ownerHandle  = APMF_API::kInvalidHandle;
+
+        // THE CELL HOLD (2026-10-20, see HoldAtCell). `held` = a CELL leg ARRIVED and keeps
+        // its ch.9 offer and slot (legLive stays true) until the client releases or re-points;
+        // Poll then ends it only on the actor's death or loss. `heldOutside` = a held actor was
+        // last seen outside the destination cell (one line per departure, never an action).
+        // `unloadedLogged` = the one "actor unloaded, leg continues" line for this unload.
+        bool                  held           = false;
+        bool                  heldOutside    = false;
+        bool                  unloadedLogged = false;
     };
 
     void ResetBlockedClock(Leg& a_leg) {
@@ -776,10 +795,15 @@ namespace {
     // -- it only ends the work it started.
     // ABI v12: `a_state` is the TravelLegState the end is recorded as (GetTravelLegState);
     // `a_block` is for kLeg_Blocked only.
+    // A CELL leg's ARRIVAL does not come here: it goes to HoldAtCell, which keeps the offer.
+    // A held leg comes here only when it really ends (the actor died or no longer resolves,
+    // the cell no longer resolves, or a re-point was refused).
     void EndLeg(RE::FormID a_id, Leg& a_leg, const char* a_why, bool a_failure, std::uint32_t a_state,
                 const BlockInfo* a_block = nullptr) {
         if (!a_leg.legLive) return;
         a_leg.legLive = false;
+        a_leg.held    = false;
+        a_leg.heldOutside = false;
         ResetBlockedClock(a_leg);
         SetLegStateFor(a_id, a_leg, a_state, MirroredSpeed(a_id), a_block);
 
@@ -799,6 +823,53 @@ namespace {
         } else {
             spdlog::info("[travel-leg] 0x{} ENDED after {} ms -- {}.", Hex(a_id), elapsed, a_why);
         }
+    }
+
+    // A CELL leg ARRIVED: record kLeg_Arrived and HOLD. The ch.9 offer and the package slot
+    // are KEPT (legLive stays true), so the 0x49 seat keeps answering this travel package
+    // and the actor stays in the cell for as long as the client's ch.19 claim stands (marth
+    // 2026-10-20: "mfo claims need to hold for the duration of the mfo event"). The client
+    // ends the hold by Release (the offer is dropped and ch.9's release nudge hands the actor
+    // back to its own package) or by Repoint (a new leg from here). No release nudge here:
+    // that nudge is what pulled the Markarth followers straight back out of the inn.
+    //
+    // WHAT HOLDS HIM: the travel package itself, standing at its destination. No second
+    // package and no substitution (CLAUDE.md principle 3): the same offer keeps the same
+    // facet. Read off the disassembly, not assumed (2026-10-20):
+    //   * The procedure advance (1.6.1170 0x6D6FC0 / 1.5.97 0x644600 / 1.7.104 0x6E9B70)
+    //     indexes the package type's procedure list; when the entry is 0x36 (PROCEDURE_DONE,
+    //     the procedure-name table at 1.6.1170 0x20145D0 + 0x36*8) and AIProcess+0x136 bit 0x20
+    //     (kPackageDoneOnce) is clear, it calls the package-end handler (1.6.1170 0x6EAB50 /
+    //     1.5.97 0x657FC0 / 1.7.104 0x6FD710) and sets that bit. The handler sends ONE
+    //     TESPackageEvent with type 1 (kEnd, OnPackageEnd) through ScriptEventSourceHolder
+    //     +0x948. Neither function changes the actor's package: the package stays CURRENT in
+    //     its DONE procedure and the actor stands.
+    //   * Package evaluation (1.6.1170 0x6DA270), for a current package already in DONE,
+    //     re-selects through 0x6D9290. The DECIDING branch is the re-select's own early-out:
+    //     0x6D9290 asks 0x65DE90 (Character vtable +0x248, slot 0x49, the alias-package
+    //     question APMF answers); when the answer is the SAME package (`cmp rax,[rsi+0x20]`)
+    //     it returns 0 at 0x6D934C and the caller exits via 0x6DA5BD: no restart, no second
+    //     OnPackageStart. (The 0x6DA55B compare runs only when the re-select returned 1.) Only
+    //     a DIFFERENT package is started (0x6EA820: kBegin event, then the done bit cleared).
+    //     Twins verified by the tier-3 review: 1.5.97 re-select 0x6467D0, early-out 0x64688C;
+    //     1.7.104 evaluation 0x6ECE20, re-select 0x6EBE40, early-out 0x6EBEFC.
+    //   * DEPENDENCY ON OUR PKDT FLAGS (APMF_GenerateESL.py writes 0x2000 only): a package
+    //     with general-flag bit 11 (0x48FE40 tests it) takes a clear-and-restart path, and
+    //     bit 14 (0x48FEB0) makes a forced evaluation exit early. Neither is set on our
+    //     travel records; setting either changes this hold.
+    // So while the offer stands, every evaluation returns this package and the actor stays in
+    // the cell in DONE, with one OnPackageEnd per package start. The procedure-advance and
+    // end-event shape were read on all three builds.
+    void HoldAtCell(RE::FormID a_id, Leg& a_leg) {
+        a_leg.held        = true;
+        a_leg.heldOutside = false;
+        ResetBlockedClock(a_leg);
+        SetLegStateFor(a_id, a_leg, APMF_API::kLeg_Arrived, MirroredSpeed(a_id));
+        const auto elapsed = apmf::clock::MonotonicMs() - a_leg.legStartedMs;
+        spdlog::info("[travel-leg] 0x{} ARRIVED after {} ms in destination CELL 0x{} -- HOLDING: the package offer "
+                     "and slot {} stay until the client releases or re-points the ch.19 claim (the travel package "
+                     "stands at its destination).",
+                     Hex(a_id), elapsed, Hex(a_leg.destId), a_leg.slot);
     }
 
     // Write this leg's destination into `a_pkg`'s Location input, by KIND. The two
@@ -884,6 +955,9 @@ namespace {
         ResetBlockedClock(a_leg);
         a_leg.gaitLogged   = false;
         a_leg.substrateLogged = false;
+        a_leg.held           = false;
+        a_leg.heldOutside    = false;
+        a_leg.unloadedLogged = false;
         SetLegStateFor(a_id, a_leg, APMF_API::kLeg_Walking, speed);
         spdlog::info("[travel-leg] 0x{} STARTED -- slot {}, package 0x{} -> destination 0x{}, radius {}, "
                      "internal ch.9 handle {} at basis {}. ch.9 posts its own EvaluatePackage nudge.",
@@ -2000,6 +2074,37 @@ namespace {
                 leg.destAliveAtTarget = false;
             }
 
+            // A HELD cell leg is NOT re-pointed in place. Its package is current in the engine's
+            // DONE procedure, and an evaluation that selects the SAME package keeps it without a
+            // restart (HoldAtCell's disassembly note), so rewriting that record's Location would
+            // leave the actor standing. The new leg therefore runs on a FRESH slot: StartLeg files
+            // the new ch.9 offer FIRST, then the held offer is released in the same Drain (ch.9's
+            // claim count goes 1 -> 2 -> 1, the RefileOffer idiom, never 0), so the engine meets a
+            // DIFFERENT package and starts it. The held slot is freed one hop later
+            // (DropOfferAndFreeSlot). If no fresh slot or offer can be had, StartLeg records
+            // kLeg_Failed and the held offer is dropped all the same: the claim no longer names
+            // the cell, and Harbinger enforces only what is declared (principle 4).
+            if (leg.legLive && leg.held) {
+                const int              heldSlot = leg.slot;
+                const APMF_API::Handle heldH    = leg.hPackage;
+                leg.legLive     = false;   // StartLeg builds a new live leg; nothing else reads it in between
+                leg.held        = false;
+                leg.heldOutside = false;
+                leg.slot        = -1;
+                leg.hPackage    = APMF_API::kInvalidHandle;
+                const bool started = StartLeg(id, leg);
+                DropOfferAndFreeSlot(heldH, heldSlot);
+                if (started) {
+                    spdlog::info("[travel-leg] 0x{} {}: a HELD cell leg re-pointed -- the new leg runs on slot {} "
+                                 "(held slot {} released after the new offer was filed).",
+                                 Hex(id), step, leg.slot, heldSlot);
+                } else {
+                    spdlog::error("[travel-leg] 0x{} {}: a HELD cell leg could not be re-pointed (logged above); "
+                                  "the hold is released, the ch.19 claim stands and does nothing.",
+                                  Hex(id), step);
+                }
+                return;
+            }
 
             // A live leg is RE-POINTED in place (rewrite the record's Location, then
             // either re-file the offer at a moved basis or re-point it so its nudge
@@ -2029,6 +2134,7 @@ namespace {
                 }
                 leg.legStartedMs = apmf::clock::MonotonicMs();   // a new leg, a new deadline
                 ResetBlockedClock(leg);                          // ABI v12: a new route, a new blocked clock
+                leg.unloadedLogged = false;
                 SetLegStateFor(id, leg, APMF_API::kLeg_Walking, speed);
                 spdlog::info("[travel-leg] 0x{} RE-POINTED -- slot {}, package 0x{} -> destination 0x{}.",
                              Hex(id), leg.slot, Hex(p9.form), Hex(leg.destId));
@@ -2268,16 +2374,61 @@ namespace apmf::travel {
             auto  aptr = leg.actorHandle.get();
             auto* a    = aptr.get();
             if (!a) {
-                EndLeg(id, leg, "the actor no longer resolves (unloaded or deleted)", false, APMF_API::kLeg_ActorGone);
+                EndLeg(id, leg, "the actor no longer resolves (deleted, or its reference left memory)", false,
+                       APMF_API::kLeg_ActorGone);
                 continue;
             }
             if (a->IsDead()) {
                 EndLeg(id, leg, "the actor is dead", false, APMF_API::kLeg_ActorGone);
                 continue;
             }
-            if (!a->Is3DLoaded()) {
-                EndLeg(id, leg, "the actor's 3D is not loaded", false, APMF_API::kLeg_ActorGone);
+
+            // A HELD cell leg (HoldAtCell) has arrived; nothing below applies to it. It keeps the
+            // offer until the client releases or re-points. The only further end is the cell
+            // itself ceasing to resolve. Leaving the cell is LOGGED once per departure and never
+            // acted on: the package stands in DONE (HoldAtCell's note), so Harbinger does not walk
+            // him back, and re-offering would be a re-assert (Channel.h). Combat does not end a
+            // hold: the walk it cancels is over, and the engine's own combat runs over the package
+            // and hands it back.
+            if (leg.held) {
+                auto* cell = RE::TESForm::LookupByID<RE::TESObjectCELL>(leg.destId);
+                if (!cell) {
+                    EndLeg(id, leg, "the held destination cell no longer resolves", false, APMF_API::kLeg_DestGone);
+                    continue;
+                }
+                const auto* pc     = a->GetParentCell();
+                const bool  inCell = pc == cell;
+                if (!inCell && !leg.heldOutside) {
+                    leg.heldOutside = true;
+                    spdlog::warn("[travel-leg] 0x{} HELD in cell 0x{} but now in cell 0x{} -- not acted on (the "
+                                 "offer still stands; the travel package is DONE and does not walk him back). The "
+                                 "client decides: Repoint to walk him back, or Release.",
+                                 Hex(id), Hex(leg.destId), Hex(pc ? pc->GetFormID() : 0));
+                } else if (inCell && leg.heldOutside) {
+                    leg.heldOutside = false;
+                    spdlog::info("[travel-leg] 0x{} HELD actor is back in destination cell 0x{}.", Hex(id),
+                                 Hex(leg.destId));
+                }
                 continue;
+            }
+
+            // AN UNLOADED ACTOR IS NOT GONE (2026-10-20, field: Markarth inn doors). Crossing a load
+            // door into an interior the player is not in unloads the actor at once, and this test
+            // used to come FIRST and end the leg kLeg_ActorGone before the cell-arrival test below
+            // could ever see him inside. A living actor whose handle resolves keeps his leg and
+            // his package while unloaded: arrival, destination and combat are still decided below
+            // from plain data (parent cell, data.location, the combat controller pointer); the
+            // running-package reads (BLOCKED, gait) are skipped while there is no 3D.
+            const bool loaded = a->Is3DLoaded();
+            if (!loaded && !leg.unloadedLogged) {
+                leg.unloadedLogged = true;
+                const auto* pc = a->GetParentCell();
+                spdlog::info("[travel-leg] 0x{} actor UNLOADED (parent cell 0x{}) -- the leg continues and keeps its "
+                             "package (an unloaded, living actor is not gone).",
+                             Hex(id), Hex(pc ? pc->GetFormID() : 0));
+            } else if (loaded && leg.unloadedLogged) {
+                leg.unloadedLogged = false;
+                spdlog::info("[travel-leg] 0x{} actor loaded again -- the leg continues.", Hex(id));
             }
 
             // COMBAT CANCELS THE MOVEMENT. marth's contract: "combat interrupts and
@@ -2341,9 +2492,10 @@ namespace apmf::travel {
                 // what the engine's own in-cell package path is steering towards, so
                 // the two agree by construction. The leg's radius is not consulted here
                 // (it is still written into the record, for symmetry).
+                // ARRIVAL HOLDS (2026-10-20): the offer is kept, see HoldAtCell. Decided from the
+                // parent cell alone, so an actor unloaded by the very load door he crossed arrives.
                 if (a->GetParentCell() == cell) {
-                    EndLeg(id, leg, "ARRIVED (the actor's parent cell is the destination cell)", false,
-                           APMF_API::kLeg_Arrived);
+                    HoldAtCell(id, leg);
                     continue;
                 }
             } else {
@@ -2414,7 +2566,11 @@ namespace apmf::travel {
             // the destination), before the safety net. See kBlockedEndMs / kMbMaxStepMs for the
             // engine fact, the sizing and the running-time clock. The running package is read
             // under its own ActorPackage lock (review F7): see ReadRunningPackage.
-            {
+            // NOT while UNLOADED (2026-10-20): an actor with no 3D has no movement to block, so
+            // the clock is reset and the run starts afresh if he loads again.
+            if (!loaded) {
+                ResetBlockedClock(leg);
+            } else {
                 const RunningPackage cur  = ReadRunningPackage(a);
                 const std::uint64_t  step = leg.mbLastPollMs == 0 ? 0 : std::min(now - leg.mbLastPollMs, kMbMaxStepMs);
                 leg.mbLastPollMs = now;
@@ -2475,10 +2631,12 @@ namespace apmf::travel {
                 }
             }
 
-            ObserveGait(id, a, leg);   // ABI v12: one passive line per gait leg, never a write
+            if (loaded) ObserveGait(id, a, leg);   // ABI v12: one passive line per gait leg, never a write
 
             // The safety net, last: everything above is a legitimate end, this is a
-            // failure report.
+            // failure report. It runs for an unloaded actor too: it is a clock, not a movement
+            // read, and a leg that has not arrived in kLegMaxMs is reported whether or not the
+            // player can see the actor.
             if (now - leg.legStartedMs > kLegMaxMs) {
                 EndLeg(id, leg, "STUCK -- no arrival, no combat, and the destination is still there "
                                 "after the leg safety net elapsed (unreachable or cross-worldspace "

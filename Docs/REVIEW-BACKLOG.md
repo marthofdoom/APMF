@@ -211,6 +211,9 @@ Raised against `6883032` (`feat/apmf-gate-probe2`), tier-A Opus 5.5 review 2026-
   (each bounded; the field `us` figure will size whether a global limit is needed).
 - **Assigned:** the Travel.cpp split brief (before further Travel work); the per-actor limit after the field
   cost numbers.
+- **Update 2026-10-20 (`feat/apmf-ch19-cell-hold`):** marth relaxed the 2500 cap until the next major release
+  (never split inside a task), so the cell-hold fix went into Travel.cpp unsplit. The file is now 2689 lines. The
+  split is still owed as its own tier-A brief.
 
 ### APMF-B34 (SEV-4 / SEV-5) -- ch.12 idle entry confirmation, review round 1 items (deferred)
 Raised against `18be6ec` (`fix/apmf-idle-confirm`), tier-A Opus 5.5 review 2026-09-29, round 1 (verdict FIX FIRST;
@@ -1023,3 +1026,15 @@ Raised against `eb160e3`, author spot 2 (verbatim as relayed): "document per-str
 
 ### APMF-B172 (SEV-4) -- torch: Light-owned-but-not-Left displacement and generic unequips remain open
 Raised against `eb160e3`, author spot 5 / review F5 (verbatim as relayed): "Light-owned-but-not-Left displacement and generic unequips remain open (already in AUDIT row 17 -- cross-reference)". Reviewer's reasoning (review log): "holes (Left-only displacement, generic unequips)". A claim that owns Light but not Left lets an engine equip into the left hand push the held torch off, and a generic unequip of a torch (RemoveItem, outfit, script) is not seated. Both are recorded in `Docs/DENY-COMPLETENESS-AUDIT.md` row 17, open item (a). They close with the unequip twin's own #17a argument or with MFO owning Left together with Light while its torch rule holds.
+
+### APMF-B173 (SEV-4) -- ch.19 cell hold: slot pressure
+Raised against `be7d9ec` (`feat/apmf-ch19-cell-hold`), tier-3 Opus 5.5 review 2026-10-20 (reviewer log `scratchpad/agentlogs/review-apmf-ch19-cell-hold.md`), finding F4, verbatim as relayed: "slot pressure (held follower keeps 1 of 8 slots; a held re-point needs a second free slot, fails kLeg_Failed when 7-8 taken)". Reasoning: a held cell leg keeps its package record for the whole client event (`HoldAtCell`), and a Repoint of a held leg must start on a FRESH record before the held one is released (`ComposeLeg` held branch: the engine does not restart the same package in DONE). With 7 of 8 slots taken the re-point is refused loudly (`kLeg_Failed`) and the hold is let go. A party-scale client stays well under it today. More slots would need more PACK records in `Data/APMF.esl`. Cross-referenced from MAP.md ch.19 What breaks (6a).
+
+### APMF-B174 (SEV-5) -- ch.19 cell hold: holes the hold does not cover
+Same review, finding F5, verbatim as relayed: "holes the hold does not cover (PapyrusUtil/ActorUtil package overrides above the 0x49 tier; Papyrus MoveTo from SFF/AFT teleports -- logged once, MFO decides)". Reasoning: the hold is the ch.9 offer at the 0x49 alias tier, which is structurally BENEATH script-driven package overrides (INVARIANTS #3a), and a script `MoveTo` moves the actor out of the cell without asking any package. Poll logs the departure once (`HELD in cell ... but now in cell ...`) and does nothing, by design (no re-assert). The client decides whether to Repoint. Cross-referenced from MAP.md ch.19 What breaks (6a).
+
+### APMF-B175 (SEV-5, optional) -- ch.19 cell hold: log the running package at the hold and on reload
+Same review, verbatim as relayed: "optional: log the current package at HoldAtCell and on reload". Reasoning: the field proof that the held actor keeps the travel package in DONE is today read from the `[obs]` lines (ControlMap.cpp ~:1850 prints curPkg for claimed actors, unloaded included), which the reviewer judged adequate. One line naming the running package at `HoldAtCell` and when the actor loads again would make the hold self-evident in the log.
+
+### APMF-B176 (SEV-3 ruling item) -- ch.24 releases the client's claim when the actor's 3D unloads
+Same review (coordinator relay, 2026-10-20), verbatim: "ch.24 CombatApproach.cpp:1079 releases the client's claim on !Is3DLoaded(), contrary to marth's 2026-10-20 ruling that claims hold for the client's event". Reasoning: `channels/CombatApproach.cpp` `Poll` calls `End(id, kApproachState_ActorGone, "actor dead / unloaded:")`, and `End` does `EnqueueRelease` on the winning claim. marth's ruling ("mfo claims need to hold for the duration of the mfo event") means a claim ends on the actor's death or the loss of its reference, not on a 3D unload. Outside the ch.19 brief's file boundary, so not changed there. It needs its own brief and a ruling on what the combat-approach bound means for an unloaded actor. The related FACETS ch.1 line ("If the actor unloads, the claim is dropped") was corrected in the same closing round: it describes ControlMap's handle sweep only.
