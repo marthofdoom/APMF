@@ -13,11 +13,25 @@
 #include "core/EquipPreference.h"      // ABI v22 SetEquipPreference / GetEquipPreferenceState (ch.26)
 #include "channels/Idle.h"             // ABI v24 GetIdleState (ch.12) and its three client-call notes
 #include "channels/CombatSubstrate.h"  // ABI v26 GetSubstrateState, v27 IsSubstrateAvailable (ch.27)
+#include "core/Place.h"                // ABI v28 kIntent_Place (a one-shot, never a claim) + GetPlaceState
 
 // The C-ABI implementation behind APMF_API.h. These free functions forward to the
 // in-process multi-NPC engine (core/ControlMap) over its thread-safe enqueue path,
 // so a client's worker thread may call them directly. No client-specific code here.
 namespace {
+
+    // ABI v28 (kIntent_Place): a ONE-SHOT that never becomes a claim (core/Place.h, the kCastFlag_AtPosition
+    // shape). It is diverted HERE, before the control map (which has no channel for intent 28 and would refuse
+    // it). The handle comes from the claim counter, so it never collides with a claim; the calling client is
+    // attributed FIRST and captured, so the game-thread step can rank the actor's ch.19 / ch.1 owner against it.
+    // A synchronous refusal forgets the attribution and returns kInvalidHandle. `basis` is not read.
+    APMF_API::Handle RequestPlace(RE::FormID actor, const APMF_API::APMF_Param* param, const void* returnAddress) {
+        const auto h = apmf::ControlMap::Get().NextHandle();
+        apmf::sources::NoteClientRequest(h, returnAddress, APMF_API::kIntent_Place);
+        if (apmf::place::Enqueue(h, actor, param, apmf::sources::ClientForHandle(h))) return h;
+        apmf::sources::ForgetHandle(h);
+        return APMF_API::kInvalidHandle;
+    }
 
     // NO exception may cross the DLL boundary (APMF_API.h). A throw unwinding across
     // MFO's separately-compiled DLL is UB, so every exported body is a hard catch-all
@@ -25,6 +39,7 @@ namespace {
     // degrades to "no control taken", never a crash in the client.
     APMF_API::Handle APMF_Request(RE::FormID actor, APMF_API::Intent intent, float basis) {
         try {
+            if (intent == APMF_API::kIntent_Place) return RequestPlace(actor, nullptr, _ReturnAddress());   // refused: no param
             const auto h = apmf::ControlMap::Get().EnqueueRequest(actor, intent, basis, nullptr);
             apmf::sources::NoteClientRequest(h, _ReturnAddress(), intent);
             if (intent == APMF_API::kIntent_EquipPreference) apmf::equippref::NoteClaim(h);   // ABI v22 (F4)
@@ -39,6 +54,7 @@ namespace {
     APMF_API::Handle APMF_RequestEx(RE::FormID actor, APMF_API::Intent intent, float basis,
                                     const APMF_API::APMF_Param* param) {
         try {
+            if (intent == APMF_API::kIntent_Place) return RequestPlace(actor, param, _ReturnAddress());   // ABI v28
             const auto h = apmf::ControlMap::Get().EnqueueRequest(actor, intent, basis, param);
             apmf::sources::NoteClientRequest(h, _ReturnAddress(), intent);
             if (intent == APMF_API::kIntent_EquipPreference) apmf::equippref::NoteClaim(h);   // ABI v22 (F4)
@@ -277,6 +293,16 @@ namespace {
         }
     }
 
+    // ABI v28 (kIntent_Place): what became of a placement. Any thread: a copy under the placement records'
+    // leaf lock, no game call. A throw becomes kPlaceState_Unknown, nothing written.
+    std::uint32_t APMF_GetPlaceState(APMF_API::Handle handle, APMF_API::APMF_PlaceStateInfo* out) {
+        try {
+            return apmf::place::GetState(handle, out);
+        } catch (...) {
+            return APMF_API::kPlaceState_Unknown;
+        }
+    }
+
     // ABI -> the first APMF release that implements it, for the "client too new"
     // refusal log below (MFO wiring review SEV-3 F4): a user running an older
     // APMF under a newer client must be able to read WHICH APMF they need. Keep in
@@ -286,8 +312,8 @@ namespace {
     // v12 ship together in 0.9.8; v13 and v14 ship in 0.9.9; v15, v16 and v17 ship in 0.9.10;
     // v18, v19 and v20 ship in 0.11.0; v21 ships in 0.12.0; v22 ships in the release after
     // 0.13.0 -- name it at the cut; so do v23 and v24; v25, the ch.17 entry instance, ships in
-    // the release after 0.13.1 -- name it at the cut; so do v26, the substrate state query, and v27, the
-    // substrate availability query).
+    // the release after 0.13.1 -- name it at the cut; so do v26, the substrate state query, v27, the
+    // substrate availability query, and v28, kIntent_Place and its state query).
     const char* MinReleaseForAbi(std::uint32_t abi) {
         switch (abi) {
         case 1:  return "0.2.0";
@@ -397,7 +423,15 @@ namespace {
     static_assert(sizeof(APMF_API::APMF_API_v27) == sizeof(APMF_API::APMF_API_v26) + sizeof(void*),
                   "APMF_API_v27 = the v26 prefix plus exactly one function pointer");
 
-    constexpr APMF_API::APMF_API_v27 g_api{
+    // ABI v28 (kIntent_Place + its state query) appends ONE slot to the v27 prefix, so the object is now an
+    // APMF_API_v28 and `abiVersion` reports 28. Same two-form proof.
+    static_assert(offsetof(APMF_API::APMF_API_v28, GetPlaceState) == sizeof(APMF_API::APMF_API_v27),
+                  "APMF_API_v28's slot must start right after the v27 prefix");
+    static_assert(sizeof(APMF_API::APMF_API_v28) == sizeof(APMF_API::APMF_API_v27) + sizeof(void*),
+                  "APMF_API_v28 = the v27 prefix plus exactly one function pointer");
+
+    constexpr APMF_API::APMF_API_v28 g_api{
+        {
         {
         {
         {
@@ -448,6 +482,8 @@ namespace {
         &APMF_GetSubstrateState,
         },
         &APMF_IsSubstrateAvailable,
+        },
+        &APMF_GetPlaceState,
     };
 
 }
