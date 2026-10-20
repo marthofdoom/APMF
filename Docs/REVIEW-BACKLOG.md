@@ -947,3 +947,6 @@ Raised against `ace1d8b`, same review (verbatim): "AnchorGuard.cpp:439-442: kind
 
 ### APMF-B140 (SEV-5) -- anchor guard: trace default ON, no sweep kill switch, INI comment gap
 Raised against `ace1d8b`, same review (verbatim): "bSubstrateEntryTrace=1 defaults ON (the B133 precedent: flip at ship); the sweep has no kill switch apart from bCombatSubstrate=0; the APMF.ini comment does not say the trace needs bSubstrateJoinGuard=1 (INI-REFERENCE does)." Reasoning: the trace is on the STATUS pre-release checklist; deferred. MAP ch.27 row.
+
+### APMF-B148 (SEV-4) -- substrate hands: script/console equips pass the hand block unless DenyScript is on
+Raised against `ee8ca38` by the tier-3 closing re-check (verbatim): "Sink step 0 lets script and console equips through the hand block unless DenyScript is on (EquipSink.cpp verdict: scriptExempt = scriptPath && !denyScript). A third-party Papyrus EquipItem of a weapon during the window of at most 15 s can therefore put a weapon back in a floored hand, and EquipSpell's draw would then draw it. This was already true for client Opens. It is rare. The SubstrateEquip.cpp header comment says step 1a refuses 'a script', which is inaccurate. Correct the comment, or set DenyScript for substrate holders."
