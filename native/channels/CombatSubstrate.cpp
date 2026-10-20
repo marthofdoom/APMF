@@ -7,6 +7,7 @@
 #include "channels/CombatReentryDeny.h"    // the slot-0x99 seat this file's anchor refusal rides; ClientEntryScope
 #include "channels/SubstrateEquip.h"       // the spell-equip path the allow-list opens (one-line call-outs only)
 #include "channels/SubstrateProbe.h"       // R1 passive probes (one-line call-outs only)
+#include "channels/SubstratePackage.h"     // F-6 override deny + S2b re-assert (one-line call-outs only)
 #include "core/ActionGate.h"               // SubstrateLeavesPaired: the allow-list's coverage
 #include "core/Allowance.h"                // SeatVerified, RuntimeSupported
 #include "core/CasterTypeCensus.h"         // NotifyInstalled: the fire signal
@@ -1011,6 +1012,7 @@ namespace {
         }
         a_sub.entryBit = proc->ignoringCombat;
         apmf::substrateprobe::BeforeEntry(a_sub.id, proc, now);   // R1: the aggressor bit before the entry
+        apmf::substratepackage::Opening(a_sub.id, proc);   // F-6: the pre-substrate package
         bool ok = false;
         g_slots[a_sub.slot].state.fetch_or(kStEntering, std::memory_order_acq_rel);
         {
@@ -1119,6 +1121,7 @@ namespace {
         auto* actor = RE::TESForm::LookupByID<RE::Actor>(a_sub.id);
         auto* proc  = actor ? actor->GetActorRuntimeData().currentProcess : nullptr;
         apmf::substrateprobe::Closing(a_sub.id, actor, a_sub.phase == Phase::kOpen, false, apmf::clock::MonotonicMs());   // R1
+        apmf::substratepackage::Closing(a_sub.id, actor, false);   // F-6 summary
         apmf::substrateequip::Closing(a_sub.slot, a_sub.id, actor, a_reason, apmf::clock::MonotonicMs());   // equip outcome
         apmf::substrateequip::RestoreWhenFree(a_sub.id, a_reason, apmf::clock::MonotonicMs());   // the stowed hands (F2)
         if (a_sub.slot >= 0 && a_sub.phase == Phase::kOpen) LogObserved(a_sub, actor);
@@ -1174,6 +1177,7 @@ namespace {
         auto* actor = RE::TESForm::LookupByID<RE::Actor>(a_sub.id);
         auto* proc  = actor ? actor->GetActorRuntimeData().currentProcess : nullptr;
         apmf::substrateprobe::Closing(a_sub.id, actor, true, true, apmf::clock::MonotonicMs());   // R1
+        apmf::substratepackage::Closing(a_sub.id, actor, true);   // F-6 summary
         apmf::substrateequip::Closing(a_sub.slot, a_sub.id, actor, "real combat (dropped)", apmf::clock::MonotonicMs());
         apmf::substrateequip::RestoreWhenFree(a_sub.id, "real combat (dropped)", apmf::clock::MonotonicMs());   // fights with his gear
         if (a_sub.bitSet && proc) proc->ignoringCombat = a_sub.priorBit;   // the package no longer runs in combat
@@ -1398,16 +1402,17 @@ namespace {
                                      proc->currentPackage.packageStartTime != a_sub.bitPkgStart;
                 restart ? ++a_sub.resetsByRestart : ++a_sub.resetsOther;
                 if (!restart) apmf::substrateprobe::OtherReset(a_sub.id, proc, a_now);   // R1
+                apmf::substratepackage::Reassert(a_sub.id, proc, restart, a_now - a_sub.openedMs);   // S2b (F-6 round)
                 if (!a_sub.firstResetMs) {
                     a_sub.firstResetMs = a_now;
-                    spdlog::info("[substrate] 0x{} ignoring-bit reset by the engine at +{} ms ({}, cause: {}) -- S2a does "
-                                 "not re-assert it (S2b, after P6).",
+                    spdlog::info("[substrate] 0x{} ignoring-bit reset by the engine at +{} ms ({}, cause: {}) -- S2b "
+                                 "re-asserts each reset while [CombatSubstrate] bSubstrateBitReassert=1.",
                                  Hex(a_sub.id), a_now - a_sub.openedMs, a_sub.bitResets,
                                  restart ? "a package (re)start: the package or its start time changed since the write"
                                          : "OTHER: the same package, the same start time");
                 }
             }
-            a_sub.bitWasOn = on;
+            a_sub.bitWasOn = proc->ignoringCombat;   // S2b may have written it back above
         }
         // the probe: the FIRST decided state of his group, recorded by the seat inside the engine's own update of it
         // (review F6: the game thread never dereferences the group for music)
@@ -2266,6 +2271,7 @@ namespace apmf::combatsubstrate {
         g_moveTrace    = IniInt("CombatSubstrate", "bSubstrateMoveTrace", 0) != 0;
         g_census       = IniInt("CombatSubstrate", "bSubstrateBystanderCensus", 1) != 0;
         apmf::substrateprobe::Install(g_dialogueOk);   // R1 probes ([CombatSubstrate] bSubstrateProbes)
+        apmf::substratepackage::Install();   // F-6 combat-override deny seat + S2b switch
 
         if (auto* holder = RE::ScriptEventSourceHolder::GetSingleton()) {
             holder->AddEventSink<RE::TESHitEvent>(HitSink::Get());
@@ -2351,6 +2357,7 @@ namespace apmf::combatsubstrate {
         g_censusRows.clear();
         apmf::anchorguard::ResetAll();
         apmf::substrateprobe::Reset();
+        apmf::substratepackage::Reset();
         apmf::substrateequip::Reset();
         apmf::substrateequip::ResetHands(a_why);
         {
