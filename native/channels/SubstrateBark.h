@@ -56,12 +56,18 @@ namespace apmf::substratebark {
     void SeatAnchorPass(RE::CombatGroup* a_group, bool a_writeLockedHere);
     void SeatRealTarget(RE::CombatGroup* a_group, bool a_writeLockedHere);
 
-    // GAME THREAD. CloseSub / DropSub (only for an opened substrate): the one BARK result line, then the record
-    // is forgotten. `a_dropped` = the real-combat drop; `a_dropGroup` = the holder's group as DropSub reads it for its
-    // RemoveTarget: when the seat has not put Harbinger's values back yet and they still read Harbinger's, the drop
-    // puts them back under that group's WRITE lock (a hit or the party's fight never shows the seat a real target).
-    void Closing(int a_slot, RE::FormID a_holder, bool a_dropped, std::uint64_t a_nowMs,
-                 RE::CombatGroup* a_dropGroup = nullptr);
+    // GAME THREAD. CloseSub / DropSub (only for an opened substrate): the one BARK result line. A normal close forgets
+    // the record. A real-combat DROP (`a_dropped`) whose values the seat has not put back yet keeps it as a DEBT
+    // (review F1 of e6f5607c: no game-thread group write): SeatRealTarget pays it inside the engine's own locked update
+    // until the timers would have run out on their own (the arm + the duration written).
+    void Closing(int a_slot, RE::FormID a_holder, bool a_dropped, std::uint64_t a_nowMs);
+
+    // ANY THREAD, one load: a dropped holder still owes the put-back, so the detection seat must keep calling
+    // NoteGroupTarget (channels/CombatEntry.cpp DetectThunk's gate, beside MusicDebtPending).
+    bool DebtPending();
+    // GAME THREAD, combatsubstrate::Poll before its early return: logs a paid debt, or one that ran out unpaid (the
+    // residual: at most the duration written), and forgets it. One load while nothing is owed.
+    void Poll(std::uint64_t a_nowMs);
 
     // GAME THREAD. combatsubstrate::ResetAll (revert / kPreLoadGame): forget every record.
     void Reset();

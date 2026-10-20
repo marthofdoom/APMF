@@ -540,17 +540,24 @@ with `kIntent_CombatSubstrate` beside its `kIntent_Cast` claim. It is legal only
    construction (the record is made pending BEFORE the entry's StartCombat, because the UpdateCombat job is not
    ordered against the game thread). A held group that shows a REAL target gets its two values from before the
    write put back, inside the engine's own write-locked update (the music deny's `WriteLockedHere` rule), only
-   while they still read exactly Harbinger's values, and the real-combat DROP does the same on the game thread under
-   the group's write lock for the group it removes the anchor from (a hit or the party's fight never shows the seat a
-   real target); two holders in one group share the first one's "before"
-   values. Verified rows `Substrate.Bark.ControllerStartTopicCall`, `.DialogueCoreCall`, `.DetectionTimerSlot`,
-   `.TimerGate` and the AI clock `.AIClock`; the 0xE4 layer 0 must be installed. (g) THE AGGRESSOR BIT
+   while they still read exactly Harbinger's values. A real-combat DROP before that happened leaves the put-back
+   OWED (a debt, review F1 of e6f5607c: Harbinger never writes a group from the game thread, a CombatGroup has no
+   refcount): the same seat pays it inside the engine's locked update of any group holding the holder that shows a
+   real target, until the timers would have run out on their own (the arm + TTL + 2 s); an unpaid debt is logged at
+   its expiry (the residual: at most that long of a real fight's start bark suppressed). Two holders in one group
+   share the first one's "before" values. Verified rows `Substrate.Bark.ControllerStartTopicCall`,
+   `.DialogueCoreCall`, `.DetectionTimerSlot`, `.TimerGate` and the AI clock `.AIClock` (on 1.7.104 the raw rows
+   `Substrate.Bark.*.1_7_104` with the bytes / call targets re-read and the clock taken from the verified reader);
+   the 0xE4 layer 0 must be installed (`[TargetPin] bTargetPin=0` therefore refuses the substrate unless
+   `bSubstrateBarkDeny=0`). (g) THE AGGRESSOR BIT
    (`channels/SubstrateAggressor.cpp`). StartCombat marks the holder the aggressor (`AIProcess+0x136` bit 2: a
    non-hostile target was attacked); GetShouldHelp, the kill decision, StartCombat and the attack reaction read it,
    none of them raises an alarm, a flee or a fight by itself. Right after the entry, on the game thread, Harbinger
-   sets it false through the engine's own setter (AE 39145 / SE 38185, the call StopCombat makes), and while the
-   holder is HELD sets it false again only when something set it again (a script's `Actor.StartCombat`, a join);
-   never once the holder is REAL. Verified rows `Substrate.AIProcess.SetAggressor` / `GetAggressor`. A refused row
+   sets it false ONCE through the engine's own setter (AE 39145 / SE 38185 / 1.7.104 0x6E9860, the call StopCombat
+   makes), and never again (review F2 of e6f5607c): every later writer is a real event (a script's
+   `Actor.StartCombat`, AI message 0x2A, is a real start whose REAL bit lands later; a join copies a real group's
+   bit) that no reader can tell apart from a substrate-own write. Verified rows `Substrate.AIProcess.SetAggressor` /
+   `GetAggressor` (1.7.104: the `.1_7_104` raw rows, bodies re-read). A refused row
    refuses the substrate (principle 2); `[CombatSubstrate] bSubstrateBarkDeny=0` / `bSubstrateAggressorClear=0`
    turn either off with the hole logged per OPEN. RECORD CORRECTED (R2 research F-1): StartCombat's block at AE
    `0x6B6CFB` (SE `0x625572`), which runs because the bit below is off at entry and which this rule used to name
@@ -623,14 +630,15 @@ with `kIntent_CombatSubstrate` beside its `kIntent_Cast` claim. It is legal only
    defect). The drop keeps the client's cast claim and the fight; `RemoveTarget` is verified row
    `Substrate.CombatGroup.RemoveTarget` (AE 44705 / SE 43483) and is refused on 1.7.104 (the substrate with it).
 6. **Threading.** Open, serve, close, drop and every engine call run on the game thread (`Arbiter::OncePerFrame`),
-   except the two bark-timer writes of condition 2 (f): the arm runs in the holder's own UpdateCombat job, the
-   put-back in the engine's write-locked group update (both are writes of engine memory, not calls).
+   except the bark-timer writes of condition 2 (f): the arm runs in the holder's own UpdateCombat job, the put-back
+   (the debt's included) only in the engine's write-locked group update (both are writes of engine memory, not
+   calls; never a game-thread group write).
    The combat-thread seats (the leaf allow-list, the slot-0x99 thunk, the detection seat, the 0x0B observer) read
    only a fixed table of atomics and the atomic "served holder" (review F4 of a512763), never a controller; a slot's id is re-read after its state (a reused slot reads
    as another actor). `StopCombat` and `RemoveTarget` are called from the player's update seat with the same
    exposure as (i) condition 6 (APMF-B26).
-7. **Scope is closed by name.** Exactly 1.6.1170 or 1.5.97 (1.7.104 refuses: `RemoveTarget` has no 1.7.104 id, nor
-   do the bark and aggressor rows of condition 2 (f) / (g)),
+7. **Scope is closed by name.** Exactly 1.6.1170, 1.5.97 or 1.7.104 (on 1.7.104 the id-less addresses, the bark and
+   aggressor ones of condition 2 (f) / (g) included, are byte-verified raw-RVA rows re-read at install),
    not VR, `[CombatSubstrate] bCombatSubstrate` (default 0), ch.22's seat installed with its target site and stub,
    ch.7's pair on all 95 node classes, the held engagement's ranked StopCombat available (condition 5's empty-fight end), the anchor records resolving, and the self-check on every row the path calls. An
    out-of-combat, loaded, high-process, non-player holder in no scene and no dialogue, with the party out of combat.

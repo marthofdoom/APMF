@@ -16,7 +16,7 @@ Offline result of this generation: 1.6.1170.0 253/253 verified, 0 refused, 1.5.9
 (`data/mit-idtable-v1-1-7-104-0.bin`, revision 3, 17751 records, SkyrimSE.exe TimeDateStamp 0x6A8C7046; built into every plugin, it is
 what SelfCheck queries at runtime; authoritative) with the evidence CSVs beside it, keyed by
 the 1.6.1170 id, re-verified against the plaintext 1.7.104 executable by the same row-kind checks (see the script
-docstring). Offline result: 1.7.104.0 247/296 verified, 49 NOT verified (28 of them BY DESIGN: 1.5.97-only labels whose AE twin row carries the 1.7.104 fact). A not-verified seat has no row in the 1.7.104 table,
+docstring). Offline result: 1.7.104.0 263/312 verified, 49 NOT verified (28 of them BY DESIGN: 1.5.97-only labels whose AE twin row carries the 1.7.104 fact). A not-verified seat has no row in the 1.7.104 table,
 so `IsVerifiedAddress` is false and the seat is refused by name. The table of `Not verified on 1.7.104` is below.
 
 These rows prove the ADDRESSES. That each hooked slot holds the same function body on 1.7.104, and that every
@@ -322,6 +322,22 @@ CommonLib layout APMF reads is the same there, is proven separately in the "1.7.
 | EquipGate.CallSiteName.return-8144B2 | raw rva | - | - | - | - | - | 0x829392 | raw RVA: 1.6.1170 0x8144B2 signature (18 bytes) unique at the idmap RVA |  | EquipGate CallSiteName selector return address |  |
 | NonAliasProbe.CombatMagicCaster.GetMagicTarget | raw rva | - | - | - | - | - | 0x833510 | raw RVA: 1.6.1170 0x81E020 signature (23 bytes) unique at the idmap RVA |  | NonAliasProbe/CastSeats GetMagicTarget (CombatMagicCaster slot 0x0A) |  |
 | TargetPin.CombatController.SetTarget.1_7_104 | raw rva | - | - | - | - | - | 0x5614A0 | raw RVA: 1.6.1170 0x559630 signature (21 bytes) unique at the idmap RVA |  | channels/TargetPin.cpp kSetTarget17 (1.7.104 only: AE id 33235 has no MIT-table row) |  |
+| Substrate.CombatGroup.RemoveTarget.1_7_104 | raw rva | - | - | - | - | - | 0x818BD0 | raw RVA: 1.6.1170 0x803D70 signature (49 bytes) unique at the idmap RVA |  | channels/CombatSubstrate.cpp k17RemoveTarget (1.7.104 only: AE id 44705 has no MIT-table row) |  |
+| EngagementHold.CombatGroup.UpdateTargetDetection.1_7_104 | raw rva | - | - | - | - | - | 0x819EF0 | raw RVA: 1.6.1170 0x805090 signature (33 bytes) unique at the idmap RVA |  | channels/CombatEntry.cpp k17UpdateTargetDetection (1.7.104 only: AE id 44725 has no MIT-table row) |  |
+| EngagementHold.Site.ListenerDetection.1_7_104 | raw rva | - | - | - | - | - | 0x818025 | raw RVA: 1.6.1170 0x8031C5 signature (17 bytes) unique at the idmap RVA |  | channels/CombatEntry.cpp k17ListenerSite (1.7.104 only: AE id 44699 has no MIT-table row) |  |
+| EngagementHold.Site.GroupDetectionPass.1_7_104 | raw rva | - | - | - | - | - | 0x821E23 | raw RVA: 1.6.1170 0x80CF43 signature (20 bytes) unique at the idmap RVA |  | channels/CombatEntry.cpp k17PassSite (1.7.104 only: AE id 44804 has no MIT-table row) |  |
+| Substrate.CombatGroup.MusicWriteLock.1_7_104 | raw rva | - | - | - | - | - | 0x8185A0 | raw RVA: 1.6.1170 0x803740 signature (22 bytes) unique at the idmap RVA |  | channels/CombatSubstrate.cpp k17MusicWriteLock (1.7.104 only: AE id 44703 has no MIT-table row) |  |
+| Substrate.CombatGroup.DetectionPassInUpdate.1_7_104 | raw rva | - | - | - | - | - | 0x8185DD | raw RVA: 1.6.1170 0x80377D signature (31 bytes) unique at the idmap RVA |  | channels/CombatSubstrate.cpp k17DetectionPassInUpdate (1.7.104 only: AE id 44703 has no MIT-table row) |  |
+| Substrate.CombatGroup.MusicUndecided.1_7_104 | raw rva | - | - | - | - | - | 0x8187AC | raw RVA: 1.6.1170 0x80394C signature (20 bytes) unique at the idmap RVA |  | channels/CombatSubstrate.cpp k17MusicUndecided (1.7.104 only: AE id 44703 has no MIT-table row) |  |
+| Substrate.CombatManager.MusicPlayTest.1_7_104 | raw rva | - | - | - | - | - | 0x852FD9 | raw RVA: 1.6.1170 0x83E0F9 signature (20 bytes) unique at the idmap RVA |  | channels/CombatSubstrate.cpp k17MusicPlayTest (1.7.104 only: AE id 46888 has no MIT-table row) |  |
+| Substrate.BSMusicManager.Reader.1_7_104 | raw rva | - | - | - | - | - | 0x65454F | raw RVA: 1.6.1170 0x641B9F signature (166 bytes) unique at the idmap RVA |  | channels/CombatSubstrate.cpp k17MusicReader (1.7.104 only: AE id 36550 has no MIT-table row) |  |
+| Substrate.MenuTopicManager.Reader.1_7_104 | raw rva | - | - | - | - | - | 0xA46267 | raw RVA: 1.6.1170 0xA2D7C7 signature (17 bytes) unique at the idmap RVA |  | channels/CombatSubstrate.cpp k17MenuTopicReader (1.7.104 only: AE id 56194 has no MIT-table row) |  |
+| Substrate.Bark.ControllerStartTopicCall.1_7_104 | raw rva | - | - | - | - | - | 0x561199 | raw RVA: 1.6.1170 0x559329 signature (21 bytes) unique at the idmap RVA |  | channels/SubstrateBark.cpp k17StartTopicCall (1.7.104 only: AE id 33231 has no MIT-table row) |  |
+| Substrate.Bark.DialogueCoreCall.1_7_104 | raw rva | - | - | - | - | - | 0x81708B | raw RVA: 1.6.1170 0x80222B signature (16 bytes) unique at the idmap RVA |  | channels/SubstrateBark.cpp k17DialogueCoreCall (1.7.104 only: AE id 44672 has no MIT-table row) |  |
+| Substrate.Bark.DetectionTimerSlot.1_7_104 | raw rva | - | - | - | - | - | 0x817216 | raw RVA: 1.6.1170 0x8023B6 signature (16 bytes) unique at the idmap RVA |  | channels/SubstrateBark.cpp k17TimerSlot (1.7.104 only: AE id 44673 has no MIT-table row) |  |
+| Substrate.Bark.TimerGate.1_7_104 | raw rva | - | - | - | - | - | 0x817228 | raw RVA: 1.6.1170 0x8023C8 signature (16 bytes) unique at the idmap RVA |  | channels/SubstrateBark.cpp k17TimerGate: the AI clock reader; the code decodes its displacement (1.7.104 only: AE id 44673 / global 404125 have no MIT-table row) |  |
+| Substrate.AIProcess.GetAggressor.1_7_104 | raw rva | - | - | - | - | - | 0x6E9840 | raw RVA: 1.6.1170 0x6D6C90 signature (16 bytes) unique at the idmap RVA |  | channels/SubstrateAggressor.cpp k17GetAggressor (1.7.104 only: AE id 39144 has no MIT-table row) |  |
+| Substrate.AIProcess.SetAggressor.1_7_104 | raw rva | - | - | - | - | - | 0x6E9860 | raw RVA: 1.6.1170 0x6D6CB0 signature (16 bytes) unique at the idmap RVA |  | channels/SubstrateAggressor.cpp k17SetAggressor (1.7.104 only: AE id 39145 has no MIT-table row) |  |
 
 ## Not verified on 1.7.104
 
@@ -636,3 +652,55 @@ at 0x77EF60, claimed 1.7.104 0x82E1E0). The generator proves each claim itself: 
 AE RVA (33 bytes for Torch) matches the claimed 1.7.104 RVA and nowhere else. Without the file those two raw rows
 drop from the 1.7.104 table and `core/HandBlock.cpp` refuses Torch and OneHandedBlock on 1.7.104 (by name).
 Moving those ids into the fork's 1.7.104 table is backlog APMF-B63.
+
+### Combat substrate on 1.7.104 (2026-10-20, `feat/apmf-substrate-1-7-104`)
+
+marth 2026-10-19 Q4: "substrate unavailable while Harbinger present shouldn't happen". The ch.27 substrate, the held
+engagement's knowledge seats, the music deny and the dry run's dialogue test rest on eight AE ids that are NOT rows of
+the fork's MIT id table (44705, 44703, 46888, 36550, 56194, 44725, 44699, 44804). A RELOCATION_ID of any of them is
+FATAL on 1.7.104, so their AE-keyed rows stay in "Not verified on 1.7.104" above and the code never builds them there.
+Instead each address the code asks about on 1.7.104 is a raw-RVA row (`raw_rvas` in spec.json, keyed by the 1.6.1170
+RVA, claimed in `tools/verified_addresses/idmap-1.7.104-apmf.csv`). The generator re-proves each one: the 1.6.1170
+signature cut AT that address matches the 1.7.104 `.text` exactly once, at the claimed RVA. The 1.6.1170 and 1.5.97
+tables did not change; regenerating from the unmodified inputs reproduced both committed files byte for byte first.
+
+| raw row (`....1_7_104`) | 1.6.1170 | 1.5.97 | 1.7.104 | how it was verified |
+|---|---|---|---|---|
+| Substrate.CombatGroup.RemoveTarget | 0x803D70 (44705) | 0x76A560 (43483) | 0x818BD0 | sig 49 B unique; body identical (36 insns); the same six E8 callers at the same offsets (0x743050 x5, 0x83D3C0+0x30 / 0x755CB0 x5, 0x8522A0+0x30) |
+| EngagementHold.CombatGroup.UpdateTargetDetection | 0x805090 (44725) | 0x76B5D0 (43501) | 0x819EF0 | sig 33 B unique; body identical (425 insns, the un-lose at +0x3F3 included); exactly two E8 callers on both, below |
+| EngagementHold.Site.ListenerDetection | 0x8031C5 = 44699+0x85 | 0x769CF0+0x85 | 0x818025 = 0x817FA0+0x85 | site sig 17 B unique; listener body identical (70); E8 -> 0x819EF0; the code re-checks E8 -> fn before patching |
+| EngagementHold.Site.GroupDetectionPass | 0x80CF43 = 44804+0x143 | 0x772CD0+0x143 | 0x821E23 = 0x821CE0+0x143 | site sig 20 B unique; pass body identical (114); E8 -> 0x819EF0; its only caller is the group update +0x6D on both |
+| Substrate.CombatGroup.MusicWriteLock | 0x803740 = 44703+0x30 | 0x76A2F0+0x2B | 0x8185A0 = 0x818570+0x30 | group update sig 40 B unique, body identical (157), only caller 46869+0x7C on both; E8 -> 0xCE32D0 = MIT 68234 LockForWrite; code re-checks the call target |
+| Substrate.CombatGroup.DetectionPassInUpdate | 0x80377D = 44703+0x6D | 0x76A2F0+0x65 | 0x8185DD | E8 -> 0x821CE0 (the pass); code re-checks the call target |
+| Substrate.CombatGroup.MusicUndecided | 0x80394C = 44703+0x23C | 0x76A2F0+0x94 | 0x8187AC | `80 BF 5C 01 00 00 FF`; code re-checks the 7 bytes |
+| Substrate.CombatManager.MusicPlayTest | 0x83E0F9 = 46888+0x1E9 | 0x7A6A30+0x1E7 | 0x852FD9 = 0x852DF0+0x1E9 | function sig 49 B unique, body identical (221), callers 0x83CC55+0x65 / 0x83DDC0+0x6A -> 0x851B35+0x65 / 0x852CA0+0x6A; `80 BD 5C 01 00 00 01`; code re-checks the 7 bytes |
+| Substrate.BSMusicManager.Reader | 0x641B9F = 36550+0xCF | 0x5AF3D0+0xCF | 0x65454F = 0x654480+0xCF | function sig 19 B unique, body identical (92); `mov rcx,[rip+d]` -> 0x31A57A0 = MIT 400896 (the singleton); code decodes the displacement and requires RELOCATION_ID(514738, 400896) |
+| Substrate.MenuTopicManager.Reader | 0xA2D7C7 = 56194+0x27 | 0x994660+0x27 | 0xA46267 = 0xA46240+0x27 | function sig 20 B unique, body identical (13, reads speaker +0x68); `mov rax,[rip+d]` -> 0x31DF408 = MIT 401099; code decodes the displacement and requires RELOCATION_ID(514959, 401099) |
+
+"Identical" = a full-function compare over the exception-directory extent with call and RIP targets normalised; for
+every external call / RIP target whose 1.6.1170 address is an id of the MIT table, the 1.7.104 target equals the
+table's RVA (0 mismatches over all ten functions). Rows the substrate already had on 1.7.104, unchanged: StartCombat
+38561 (identical, 313 insns; the TargetIsDeadCall and TargetGroupRegs call-site rows), MoveTo 56626, EvaluatePackage
+37401 (identical; +0x427 `and [rdi+0xE8],0xFFFCFFFF`, +0x44C `bts eax,0x10`), ScriptEventSourceHolder 14298, the lock
+rows 68234 / 68240, the Character and PlayerCharacter vtables.
+
+The engine facts the substrate reads without a row, compared on 1.7.104 (all identical unless noted):
+
+| fact | 1.6.1170 | 1.7.104 | verdict |
+|---|---|---|---|
+| Character 0xE5 StopCombat (hold, close, empty-fight end) | 0x6B70A0 | 0x6C9B20 | identical (252), `[rdi+0x160]` at +0x174 |
+| Character 0xE1 SetAlpha (the anchor) | 0x6C1A50 | 0x6D4510 | identical (33) |
+| PlayerCharacter 0xE3 IsInCombat | 0x758430 | (vtable slot) | differs: reads PlayerCharacter +0xBE3 (+8 on 1.7.104). Reached only by a virtual call, so the engine reads its own layout |
+| BSMusicManager::current +0x28 | ProcessEvent 0x1198680 | 0x11B4A80 | identical (188), the +0x28 reads included |
+| CombatGroup +0x15C ctor 0xFF / Merge copy | 0x8033D5 / 0x804F18 | 0x818235 / 0x819D78 | identical (130 / 375) |
+| StartCombat join path Merge call / group retire | 0x83D325 / 0x8048D0 | 0x852205 / 0x819730 | identical |
+| CombatController +0x42 writers | 0x55A870, ctor +0x288 | 0x5626E0, 0x560168 | same instructions |
+| AIProcess +0x139 / +0x137 / ActorPackage +0x24 | 0x6D6780, 0x69C6D0, 0x6D7E80 | 0x6E9330, 0x6AF250, 0x6EAA30 | same instructions |
+| Actor update 37347 (EvaluatePackage consumer) | 0x6672B0 | 0x679D50 | 4 differences, all PlayerCharacter fields (+0xAE0 -> +0xAE8, +0xC2B -> +0xC5B); the cited +0x536 / +0x81C unchanged |
+| weaponState (ActorState +0xC0 + 0x0C) | 0x21431B | 0x219BFB | `mov eax,[rbx+0xCC]; and eax,0xE0; cmp eax,0x60`; the fork's AsActorState picks +0xC0 on 1.7.104 |
+| EquipSpell enter / act (spell-equip path) | 0x878260 / 0x867940 | 0x88D510 / 0x87CB80 | identical (93 / 12); DrawWeaponMagicHands `call [rax+0x530]` at +0x125 |
+| AcquireResource<2> "Action" / "Movement" constructions | 0x865385 / 0x8ADEF9 | 0x87A5C5 / 0x8C3469 | identical functions (196 / 922), `lea rcx,[rbx+0x28]` |
+| CombatBehaviorTreeAction / ActionEquipmentSelector / TreeMagic | 0x8651E0 / 0x865500 / 0x8A0720 | 0x87A420 / 0x87A740 / 0x8B5BC0 | identical (196 / 1299 / 595) |
+
+Not proven byte-for-byte: the aggressor bit (AIProcess +0x136 bit 2) has no `test/or byte [reg+0x136],4` encoding in
+either image; it is read for log lines only (R1 probes, `aggressorSeen`), never decided on.

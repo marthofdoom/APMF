@@ -514,8 +514,8 @@ namespace apmf::substrateprobe {
                 menus += fmt::format("{}{}{}", menus.empty() ? "" : ",", kv.first.c_str(), m->PausesGame() ? "*" : "");
             }
         }
-        spdlog::info("[substrate] 0x{} PROBE re-pick NOT run after {} ms ({} ms of it unpaused, {} ms paused, {} ms stalled "
-                     "between Polls); game-paused={} (numPausesGame {}), open menus [{}] (* pauses the game); {}; "
+        spdlog::info("[substrate] 0x{} PROBE re-pick NOT run after {} ms ({} ms of it unpaused, {} ms seen paused, {} ms "
+                     "stalled or paused (a gap > 500 ms between Polls: a pausing menu stops the Poll too)); game-paused={} (numPausesGame {}), open menus [{}] (* pauses the game); {}; "
                      "boolBits=0x{:08X} (kEvpBuffered {}, kResetAI {}, "
                      "kProcessMe/AI-on {}); process level {} ({}), lowProcessFlags=0x{:02X}; furniture={} sit-sleep-state={}; "
                      "dialogue-with-player={} dialogue-menu={} scene={}; combat-controller={}",

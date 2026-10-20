@@ -1,6 +1,7 @@
 #include "PCH.h"
 #include "channels/CombatEntry.h"
 #include "channels/CombatSubstrate.h"   // S2a: the anchor's knowledge + real-combat trigger (a) ride the detection seat
+#include "channels/SubstrateBark.h"   // DebtPending: the bark put-back owed after a drop (review F1 of e6f5607c)
 #include "channels/TargetPin.h"   // Installed(): whether the ch.20 pin could engage, for the entry log
 #include "core/FacetAttribution.h"   // Harbinger 1b: the engine's refusal is named on the Combat facet
 #include "channels/CombatReentryDeny.h"   // ClientEntryScope: this entry passes a ch.22 re-entry deny
@@ -662,6 +663,16 @@ namespace {
                                                     "EngagementHold.Site.GroupDetectionPass" };
         constexpr std::uint32_t kSiteOff = 0x85;    // listener ProcessEvent: AE 44699 / SE 43477 (both +0x85)
         constexpr std::uint32_t kPassOff = 0x143;   // group detection pass:  AE 44804 / SE 43572 (both +0x143)
+        // 1.7.104 (marth 2026-10-19 Q4: the substrate must not be unavailable there). AE ids 44725 / 44699 / 44804
+        // have no row in the fork's MIT id table (a RELOCATION_ID miss is FATAL on 1.7.104), so the three addresses
+        // are raw-RVA rows of the 1.7.104 self-check table (tools/verified_addresses idmap-1.7.104-apmf.csv; rows
+        // EngagementHold.*.1_7_104): UpdateTargetDetection 0x819EF0 (AE 0x805090; body identical, 425 insns), the
+        // listener 0x817FA0 + 0x85 and the group detection pass 0x821CE0 + 0x143 (the same offsets; both bodies
+        // identical). The runtime E8 -> function check in Install runs on every build.
+        constexpr std::uintptr_t k17UpdateTargetDetection = 0x819EF0;
+        constexpr std::uintptr_t k17ListenerSite          = 0x818025;   // 0x817FA0 + kSiteOff
+        constexpr std::uintptr_t k17PassSite              = 0x821E23;   // 0x821CE0 + kPassOff
+        static_assert(k17ListenerSite == 0x817FA0 + kSiteOff && k17PassSite == 0x821CE0 + kPassOff);
         std::atomic<std::uintptr_t> g_origDetect[kSites]{};
         std::atomic<std::uint64_t>  g_siteSeen[kSites]{};
         std::atomic<bool>           g_siteObserved[kSites]{};
@@ -726,7 +737,9 @@ namespace {
             // kept known after the engine's update (the same un-lose write, for the anchor only); any OTHER target
             // in a holder's group is the real-combat trigger (a) -- seen here synchronously from AddTarget.
             // MusicDebtPending (review F1 of b1c78b2): a dropped holder may still owe Harbinger's music 0 back to a group.
-            if ((apmf::combatsubstrate::AnyLive() || apmf::combatsubstrate::MusicDebtPending()) && a_group && a_member &&
+            // substratebark::DebtPending (review F1 of e6f5607c): a dropped holder may still owe the bark timers back.
+            if ((apmf::combatsubstrate::AnyLive() || apmf::combatsubstrate::MusicDebtPending() ||
+                 apmf::substratebark::DebtPending()) && a_group && a_member &&
                 a_target) {
                 if (apmf::combatsubstrate::IsAnchorRef(a_target)) {
                     const std::uint64_t r = orig(a_group, a_member, a_target, a_event);
@@ -1145,8 +1158,10 @@ namespace apmf::combatentry::hold {
                          "\"target lost\" again (the pre-2026-10-12 contract), no knowledge seat, no leash exemption.");
             return;
         }
-        const bool exact = !REL::Module::IsVR() && (REL::Module::IsExactly(SKSE::RUNTIME_SSE_1_6_1170) ||
-                                                    REL::Module::IsExactly(SKSE::RUNTIME_SSE_1_5_97));
+        // Exactly 1.6.1170, 1.5.97 or 1.7.104. 1.7.104: Character slot 0xE5 StopCombat 0x6C9B20 is identical to
+        // 1.6.1170's 0x6B70A0 (252 insns), and the knowledge seats use the raw rows (k17* above).
+        const bool on17  = apmf::allowance::IsRuntime1_7_104();
+        const bool exact = !REL::Module::IsVR() && apmf::allowance::RuntimeSupported();
         // marth's range rule's StopCombat: a virtual call through the verified Character vtable (slot 0xE5).
         if (exact) {
             REL::Relocation<std::uintptr_t> vtChar{ RE::VTABLE_Character[0] };
@@ -1159,20 +1174,28 @@ namespace apmf::combatentry::hold {
         if (REL::Module::IsVR()) {
             why = "VR runtime";
         } else if (!exact) {
-            // 1.7.104: the three ids are absent from the MIT id table (VerifiedAddresses: NOT verified);
-            // resolving them would be a fatal id miss, so nothing is computed there.
-            why = "the runtime is not exactly 1.6.1170 or 1.5.97 (1.7.104: the seat ids are not in the MIT id table)";
+            why = "the runtime is not exactly 1.6.1170, 1.5.97 or 1.7.104";
         } else if (GetPrivateProfileIntA("EngagementHold", "bTargetKnowledge", 1, kIni) == 0) {
             why = "[EngagementHold] bTargetKnowledge=0";
         }
         std::uintptr_t fn = 0, sites[kSites]{};
         if (!why) {
-            fn       = REL::Relocation<std::uintptr_t>{ RELOCATION_ID(43501, 44725) }.address();
-            sites[0] = REL::Relocation<std::uintptr_t>{ RELOCATION_ID(43477, 44699) }.address() + kSiteOff;
-            sites[1] = REL::Relocation<std::uintptr_t>{ RELOCATION_ID(43572, 44804) }.address() + kPassOff;
-            bool ok = apmf::allowance::SeatVerified(fn, "EngagementHold.CombatGroup.UpdateTargetDetection");
-            ok      = apmf::allowance::SeatVerified(sites[0], kSiteName[0]) && ok;
-            ok      = apmf::allowance::SeatVerified(sites[1], kSiteName[1]) && ok;
+            bool ok = false;
+            if (on17) {   // raw-RVA rows: never a RELOCATION_ID on 1.7.104 (the ids are not in its table)
+                fn       = REL::Offset(k17UpdateTargetDetection).address();
+                sites[0] = REL::Offset(k17ListenerSite).address();
+                sites[1] = REL::Offset(k17PassSite).address();
+                ok = apmf::allowance::SeatVerified(fn, "EngagementHold.CombatGroup.UpdateTargetDetection.1_7_104");
+                ok = apmf::allowance::SeatVerified(sites[0], "EngagementHold.Site.ListenerDetection.1_7_104") && ok;
+                ok = apmf::allowance::SeatVerified(sites[1], "EngagementHold.Site.GroupDetectionPass.1_7_104") && ok;
+            } else {
+                fn       = REL::Relocation<std::uintptr_t>{ RELOCATION_ID(43501, 44725) }.address();
+                sites[0] = REL::Relocation<std::uintptr_t>{ RELOCATION_ID(43477, 44699) }.address() + kSiteOff;
+                sites[1] = REL::Relocation<std::uintptr_t>{ RELOCATION_ID(43572, 44804) }.address() + kPassOff;
+                ok = apmf::allowance::SeatVerified(fn, "EngagementHold.CombatGroup.UpdateTargetDetection");
+                ok = apmf::allowance::SeatVerified(sites[0], kSiteName[0]) && ok;
+                ok = apmf::allowance::SeatVerified(sites[1], kSiteName[1]) && ok;
+            }
             if (!ok) why = "the address self-check refused a row (listed above)";
         }
         if (!why) {

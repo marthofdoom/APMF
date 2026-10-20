@@ -175,8 +175,8 @@ extern "C" __declspec(dllimport) unsigned long __stdcall GetPrivateProfileIntA(
 // rax is volatile and carries no argument at a call (IsDead takes rcx / dl), r9 is a volatile argument
 // register IsDead does not take, and every branch is a JUMP, so the return address the compares
 // read is still the engine's. At the self site, after ch.22's own answer did not refuse, the thunk
-// asks anchorguard::AnswerJoin. 1.7.104 and a refused row keep the 17-byte stub (r8 = rdi only)
-// and AnswerJoin is never called.
+// asks anchorguard::AnswerJoin. A refused row keeps the 17-byte stub (r8 = rdi only) and AnswerJoin
+// is never called. 1.7.104 (2026-10-20): StartCombat is identical to 1.6.1170, so the AE offsets hold.
 //
 // VERSION ROBUSTNESS. Two self-checked rows derived from our own executables: the Character
 // vtable (spec.json "Character", slot 0x99 listed) and the StartCombat self-check call site
@@ -726,7 +726,7 @@ namespace apmf::reentrydeny {
         bool           join = false;
         if (apmf::allowance::SeatVerified(tsite, "Substrate.StartCombat.TargetIsDeadCall")) {
             // SEV-1 2026-10-19: the widened stub only when StartCombat's register copies verify (row
-            // AnchorGuard.StartCombat.TargetGroupRegs; 1.7.104 refused by name inside InstallSeat).
+            // AnchorGuard.StartCombat.TargetGroupRegs on 1.6.1170 / 1.5.97 / 1.7.104).
             join = apmf::anchorguard::InstallSeat(startCombat);
             stub = BuildRdiStub(join);
             if (!stub && join) {

@@ -23,6 +23,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstring>
 #include <limits>
 #include <mutex>
 #include <string>
@@ -1201,8 +1202,7 @@ namespace {
         auto* actor = RE::TESForm::LookupByID<RE::Actor>(a_sub.id);
         auto* proc  = actor ? actor->GetActorRuntimeData().currentProcess : nullptr;
         apmf::substrateprobe::Closing(a_sub.id, actor, true, true, apmf::clock::MonotonicMs());   // R1
-        apmf::substratebark::Closing(a_sub.slot, a_sub.id, true, apmf::clock::MonotonicMs(),     // R5 F-2: put-back + line
-                                     actor && HasController(actor) ? actor->GetActorRuntimeData().combatController->combatGroup : nullptr);
+        apmf::substratebark::Closing(a_sub.slot, a_sub.id, true, apmf::clock::MonotonicMs());   // R5 F-2: line; owed put-back
         if (const auto t = apmf::substrateaggressor::Closing(a_sub.id); !t.empty()) spdlog::info("[substrate] 0x{} {}.", Hex(a_sub.id), t);
         apmf::substrateequip::Closing(a_sub.slot, a_sub.id, actor, "real combat (dropped)", apmf::clock::MonotonicMs());
         apmf::substrateequip::RestoreWhenFree(a_sub.id, "real combat (dropped)", apmf::clock::MonotonicMs());   // fights with his gear
@@ -1291,8 +1291,9 @@ namespace {
     // If the re-pick never runs in kRepickWaitMs the bit is written anyway and that is logged.
     // R5 F-5 (R2 research Q7: both holders stalled in the same two windows -> a global cause; the actor's AI update, the
     // only consumer of kEvpBuffered, does not run while a menu pauses the game): the wait counts only the time between two
-    // Polls in which the game was not paused (UI::GameIsPaused, numPausesGame > 0) and the gap was a frame, not a stall
-    // (> kPollGapMs: a load, a hitch, or a pause the Poll itself did not see). Paused and stalled time is logged.
+    // Polls in which the game was not paused (UI::GameIsPaused, numPausesGame > 0) and the gap was a frame (<= kPollGapMs).
+    // A longer gap is "stalled or paused (menu)": Poll rides the player's update, which does not run while a pausing menu
+    // is open, so such a pause shows up as one long gap, not as paused Polls (review F8 of e6f5607c: no precise split).
     void WriteBitAfterRepick(Sub& a_sub, RE::Actor* a_actor, RE::AIProcess* a_proc, std::uint64_t a_now) {
         const bool buffered = a_actor->GetActorRuntimeData().boolBits.all(RE::Actor::BOOL_BITS::kEvpBuffered);
         {
@@ -1326,11 +1327,11 @@ namespace {
                      "(package 0x{}, start time {:.2f}).",
                      Hex(a_sub.id), a_sub.priorBit ? 1 : 0,
                      buffered ? fmt::format("the re-pick did NOT run within {} ms of unpaused time (kEvpBuffered still "
-                                            "set; {} ms wall, {} ms paused, {} ms stalled)",
+                                            "set; {} ms wall, {} ms seen paused, {} ms stalled or paused (menu))",
                                             kRepickWaitMs, a_now - a_sub.repickAskedMs, a_sub.repickPausedMs,
                                             a_sub.repickGapMs)
-                              : fmt::format("after the re-pick ran (kEvpBuffered cleared at +{} ms; {} ms paused, {} ms "
-                                            "stalled)",
+                              : fmt::format("after the re-pick ran (kEvpBuffered cleared at +{} ms; {} ms seen paused, {} "
+                                            "ms stalled or paused (menu))",
                                             a_sub.repickClearMs - a_sub.repickAskedMs, a_sub.repickPausedMs,
                                             a_sub.repickGapMs),
                      Hex(a_sub.bitPkg ? a_sub.bitPkg->GetFormID() : 0), static_cast<double>(a_sub.bitPkgStart));
@@ -1439,7 +1440,6 @@ namespace {
         if (proc && a_sub.bitPending) WriteBitAfterRepick(a_sub, actor, proc, a_now);
         if (proc) {
             if (proc->lowProcessFlags.underlying() & 0x04) a_sub.aggressorSeen = true;   // AIProcess+0x136 bit 2
-            apmf::substrateaggressor::WhileHeld(a_sub.id, proc, a_now, s.state, kStReal);   // R5 F-3: set again while HELD
             const bool on = proc->ignoringCombat;
             if (a_sub.bitSet && a_sub.bitWasOn && !on) {   // the engine re-synced the bit from the package flag
                 ++a_sub.bitResets;
@@ -1965,6 +1965,79 @@ namespace {
                   "the allow-list's index must cover the 70-leaf catalog, the four search leaves and the 21 "
                   "parameterised nodes (every NodeObject* vtable the fork ships)");
 
+    // ---- 1.7.104 (marth 2026-10-19 Q4: "substrate unavailable while Harbinger present shouldn't happen") ----
+    // The AE ids 44705 (RemoveTarget), 44703 (the group update), 46888 (the should-play test), 36550 (the
+    // BSMusicManager reader) and 56194 (IsInDialogueWithPlayer) have NO row in the fork's MIT id table, and a
+    // RELOCATION_ID miss is FATAL on 1.7.104. So on 1.7.104 these addresses are raw-RVA rows of the 1.7.104
+    // self-check table (tools/verified_addresses/idmap-1.7.104-apmf.csv, rows Substrate.*.1_7_104; each one the
+    // 1.6.1170 signature cut at the AE address, unique in the 1.7.104 .text at exactly this RVA). Every function
+    // here is instruction-identical to its 1.6.1170 twin (call / RIP targets normalised) at the SAME offsets, so the
+    // AE offsets hold; Docs/VERIFIED-ADDRESSES.md "Combat substrate on 1.7.104" has the per-row proof. A raw row
+    // carries no byte check, so the code re-reads the bytes each fact rests on (the 1.6.1170 / 1.5.97 rows have
+    // SelfCheck do that): the two E8 targets, the two `cmp byte [reg+0x15C], imm` encodings, and each reader's RIP
+    // displacement, which must land on the singleton the fork's MIT table resolves (ids 400896 / 401099 ARE in it).
+    constexpr std::uintptr_t k17RemoveTarget          = 0x818BD0;   // AE 0x803D70
+    constexpr std::uintptr_t k17GroupUpdate           = 0x818570;   // AE 0x803710 (id 44703)
+    constexpr std::uintptr_t k17MusicWriteLock        = 0x8185A0;   // update + 0x30: E8 -> BSReadWriteLock::LockForWrite
+    constexpr std::uintptr_t k17DetectionPassInUpdate = 0x8185DD;   // update + 0x6D: E8 -> the group detection pass
+    constexpr std::uintptr_t k17DetectionPass         = 0x821CE0;   // AE 0x80CE00 (id 44804)
+    constexpr std::uintptr_t k17MusicUndecided        = 0x8187AC;   // update + 0x23C: cmp byte [rdi+0x15C], 0xFF
+    constexpr std::uintptr_t k17MusicPlayTest         = 0x852FD9;   // 0x852DF0 (AE 0x83DF10, id 46888) + 0x1E9
+    constexpr std::uintptr_t k17MusicReader           = 0x65454F;   // 0x654480 (AE 0x641AD0, id 36550) + 0xCF
+    constexpr std::uintptr_t k17MenuTopicReader       = 0xA46267;   // 0xA46240 (AE 0xA2D7A0, id 56194) + 0x27
+    static_assert(k17MusicWriteLock == k17GroupUpdate + 0x30 && k17DetectionPassInUpdate == k17GroupUpdate + 0x6D &&
+                  k17MusicUndecided == k17GroupUpdate + 0x23C && k17MusicPlayTest == 0x852DF0 + 0x1E9 &&
+                  k17MusicReader == 0x654480 + 0xCF && k17MenuTopicReader == 0xA46240 + 0x27);
+
+    // The bytes at a_addr are a_want. Logs the first mismatch by name.
+    bool BytesAt17(std::uintptr_t a_addr, std::span<const std::uint8_t> a_want, const char* a_seat) {
+        const auto* b = reinterpret_cast<const std::uint8_t*>(a_addr);
+        for (std::size_t i = 0; i < a_want.size(); ++i) {
+            if (b[i] != a_want[i]) {
+                spdlog::error("[selfcheck] seat {} REFUSED on 1.7.104: byte +{} at RVA 0x{:X} is 0x{:02X}, expected 0x{:02X}",
+                              a_seat, i, a_addr - REL::Module::get().base(), b[i], a_want[i]);
+                return false;
+            }
+        }
+        return true;
+    }
+
+    // An E8 at a_site that lands on a_target.
+    bool CallsTo17(std::uintptr_t a_site, std::uintptr_t a_target, const char* a_seat) {
+        const auto*  b   = reinterpret_cast<const std::uint8_t*>(a_site);
+        std::int32_t rel = 0;
+        std::memcpy(&rel, b + 1, sizeof(rel));
+        const std::uintptr_t lands = a_site + 5 + static_cast<std::intptr_t>(rel);
+        if (b[0] == 0xE8 && lands == a_target) return true;
+        spdlog::error("[selfcheck] seat {} REFUSED on 1.7.104: RVA 0x{:X} is {:02X} -> RVA 0x{:X}, expected E8 -> RVA 0x{:X}",
+                      a_seat, a_site - REL::Module::get().base(), b[0], lands - REL::Module::get().base(),
+                      a_target - REL::Module::get().base());
+        return false;
+    }
+
+    // A verified raw reader row whose `mov reg, [rip+disp32]` (7 bytes; a_head = REX + opcode + ModRM, a_tail = the
+    // bytes after it) reads exactly a_global: the 1.7.104 form of the generator's ripref proof (reader -> global).
+    bool ReaderReads17(std::uintptr_t a_rva, std::array<std::uint8_t, 3> a_head, std::array<std::uint8_t, 8> a_tail,
+                       std::uintptr_t a_global, const char* a_seat) {
+        const std::uintptr_t site = REL::Offset(a_rva).address();
+        if (!apmf::allowance::SeatVerified(site, a_seat)) return false;
+        const auto* b = reinterpret_cast<const std::uint8_t*>(site);
+        if (std::memcmp(b, a_head.data(), a_head.size()) != 0 || std::memcmp(b + 7, a_tail.data(), a_tail.size()) != 0) {
+            spdlog::error("[selfcheck] seat {} REFUSED on 1.7.104: the reader at RVA 0x{:X} is not the verified "
+                          "`mov reg, [rip+disp32]` encoding",
+                          a_seat, a_rva);
+            return false;
+        }
+        std::int32_t disp = 0;
+        std::memcpy(&disp, b + 3, sizeof(disp));
+        const std::uintptr_t reads = site + 7 + static_cast<std::intptr_t>(disp);
+        if (reads == a_global) return true;
+        spdlog::error("[selfcheck] seat {} REFUSED on 1.7.104: the reader at RVA 0x{:X} reads RVA 0x{:X}, the singleton is "
+                      "RVA 0x{:X}",
+                      a_seat, a_rva, reads - REL::Module::get().base(), a_global - REL::Module::get().base());
+        return false;
+    }
+
 }
 
 namespace apmf::combatsubstrate {
@@ -2163,7 +2236,7 @@ namespace apmf::combatsubstrate {
             why = "the anchor-target refusal is not installed on ch.22's seat (its call-site row or the rdi stub)";
         } else if (!apmf::combatentry::hold::StopCombatAvailable()) {
             why = "the held engagement's ranked StopCombat is not available ([EngagementHold] bEngagementHold=0, a "
-                  "runtime other than exactly 1.6.1170 / 1.5.97, or its Character vtable row refused): the real-combat "
+                  "runtime other than exactly 1.6.1170 / 1.5.97 / 1.7.104, or its Character vtable row refused): the real-combat "
                   "drop ends an EMPTY fight through it (marth 2026-10-13), so the substrate needs it";
         } else if (apmf::actiongate::SubstrateLeavesPaired() != kLeafCount) {
             why = "the leaf allow-list does not cover all 95 behaviour-tree node classes with an act()/pop() pair and the "
@@ -2171,11 +2244,14 @@ namespace apmf::combatsubstrate {
                   "bPursuitLeash=0 refuses the substrate too -- and the 21 parameterised nodes ActionGate installs when "
                   "bCombatSubstrate=1)";
         }
+        const bool on17 = apmf::allowance::IsRuntime1_7_104();   // raw-RVA rows for the id-less addresses (above)
         if (!why) {
             bool ok = apmf::allowance::SeatVerified(
                 REL::Relocation<std::uintptr_t>{ RELOCATION_ID(37608, 38561) }.address(), "CombatEntry.Actor.StartCombat");
-            ok = apmf::allowance::SeatVerified(REL::Relocation<std::uintptr_t>{ RELOCATION_ID(43483, 44705) }.address(),
-                                               "Substrate.CombatGroup.RemoveTarget") && ok;
+            ok = (on17 ? apmf::allowance::SeatVerified(REL::Offset(k17RemoveTarget).address(),
+                                                       "Substrate.CombatGroup.RemoveTarget.1_7_104")
+                       : apmf::allowance::SeatVerified(REL::Relocation<std::uintptr_t>{ RELOCATION_ID(43483, 44705) }.address(),
+                                                       "Substrate.CombatGroup.RemoveTarget")) && ok;
             ok = apmf::allowance::SeatVerified(REL::Relocation<std::uintptr_t>{ RELOCATION_ID(56227, 56626) }.address(),
                                                "Substrate.TESObjectREFR.MoveTo") && ok;
             ok = apmf::allowance::SeatVerified(REL::Relocation<std::uintptr_t>{ RELOCATION_ID(36407, 37401) }.address(),
@@ -2197,32 +2273,45 @@ namespace apmf::combatsubstrate {
         // the held engagement's knowledge seat (combatentry::hold::KnowledgeInstalled). A failed row or a missing seat
         // REFUSES THE SUBSTRATE (principle 2: it would switch battle music on undenied);
         // [CombatSubstrate] bSubstrateMusicDeny=0 is the explicit off switch (the substrate runs, every OPEN logs the
-        // hole). 1.7.104: the three engine functions are not in the 1.7.104 id table (the shape is the same there:
-        // 0x8185A0 / 0x8187AC / 0x852FD9), and a RELOCATION_ID miss is fatal on 1.7.104, so the ids are never built
-        // there (the substrate is refused on 1.7.104 before this point anyway: the held engagement's StopCombat).
+        // hole). 1.7.104: the two engine functions have no MIT id-table row (a RELOCATION_ID miss is fatal there), so the
+        // four sites are raw-RVA rows plus the byte / call-target re-reads above (k17*; the AE offsets, bodies identical).
         if (!why) {
             if (IniInt("CombatSubstrate", "bSubstrateMusicDeny", 1) == 0) {
                 g_musicDeny    = false;
                 g_musicDenyOff = "[CombatSubstrate] bSubstrateMusicDeny=0 in APMF.ini";
-            } else if (apmf::allowance::IsRuntime1_7_104() ||
-                       !(REL::Module::IsExactly(SKSE::RUNTIME_SSE_1_6_1170) ||
-                         REL::Module::IsExactly(SKSE::RUNTIME_SSE_1_5_97))) {
-                why = "the music deny's engine functions are verified on exactly 1.6.1170 and 1.5.97 only (1.7.104: "
-                      "not in its id table)";
+            } else if (!apmf::allowance::RuntimeSupported()) {
+                why = "the music deny's engine functions are verified on exactly 1.6.1170, 1.5.97 and 1.7.104 only";
             } else {
-                const bool ae  = REL::Module::IsExactly(SKSE::RUNTIME_SSE_1_6_1170);
-                const auto upd = REL::Relocation<std::uintptr_t>{ RELOCATION_ID(43481, 44703) }.address();
-                const auto spt = REL::Relocation<std::uintptr_t>{ RELOCATION_ID(45588, 46888) }.address();
-                bool       ok  = apmf::allowance::SeatVerified(
-                    REL::Relocation<std::uintptr_t>{ RE::Offset::BSReadWriteLock::LockForWrite }.address(),
-                    "CommonLib.BSReadWriteLock.LockForWrite");
+                const auto lockW = REL::Relocation<std::uintptr_t>{ RE::Offset::BSReadWriteLock::LockForWrite }.address();
+                bool       ok    = apmf::allowance::SeatVerified(lockW, "CommonLib.BSReadWriteLock.LockForWrite");
                 ok = apmf::allowance::SeatVerified(
                          REL::Relocation<std::uintptr_t>{ RE::Offset::BSReadWriteLock::UnlockForWrite }.address(),
                          "CommonLib.BSReadWriteLock.UnlockForWrite") && ok;
-                ok = apmf::allowance::SeatVerified(upd + (ae ? 0x30 : 0x2B), "Substrate.CombatGroup.MusicWriteLock") && ok;
-                ok = apmf::allowance::SeatVerified(upd + (ae ? 0x6D : 0x65), "Substrate.CombatGroup.DetectionPassInUpdate") && ok;
-                ok = apmf::allowance::SeatVerified(upd + (ae ? 0x23C : 0x94), "Substrate.CombatGroup.MusicUndecided") && ok;
-                ok = apmf::allowance::SeatVerified(spt + (ae ? 0x1E9 : 0x1E7), "Substrate.CombatManager.MusicPlayTest") && ok;
+                if (on17) {
+                    static constexpr std::array<std::uint8_t, 7> kUndecided{ 0x80, 0xBF, 0x5C, 0x01, 0x00, 0x00, 0xFF };
+                    static constexpr std::array<std::uint8_t, 7> kPlayTest{ 0x80, 0xBD, 0x5C, 0x01, 0x00, 0x00, 0x01 };
+                    const auto wl = REL::Offset(k17MusicWriteLock).address();
+                    const auto dp = REL::Offset(k17DetectionPassInUpdate).address();
+                    const auto mu = REL::Offset(k17MusicUndecided).address();
+                    const auto pt = REL::Offset(k17MusicPlayTest).address();
+                    ok = apmf::allowance::SeatVerified(wl, "Substrate.CombatGroup.MusicWriteLock.1_7_104") &&
+                         CallsTo17(wl, lockW, "Substrate.CombatGroup.MusicWriteLock.1_7_104") && ok;
+                    ok = apmf::allowance::SeatVerified(dp, "Substrate.CombatGroup.DetectionPassInUpdate.1_7_104") &&
+                         CallsTo17(dp, REL::Offset(k17DetectionPass).address(),
+                                   "Substrate.CombatGroup.DetectionPassInUpdate.1_7_104") && ok;
+                    ok = apmf::allowance::SeatVerified(mu, "Substrate.CombatGroup.MusicUndecided.1_7_104") &&
+                         BytesAt17(mu, kUndecided, "Substrate.CombatGroup.MusicUndecided.1_7_104") && ok;
+                    ok = apmf::allowance::SeatVerified(pt, "Substrate.CombatManager.MusicPlayTest.1_7_104") &&
+                         BytesAt17(pt, kPlayTest, "Substrate.CombatManager.MusicPlayTest.1_7_104") && ok;
+                } else {
+                    const bool ae  = REL::Module::IsExactly(SKSE::RUNTIME_SSE_1_6_1170);
+                    const auto upd = REL::Relocation<std::uintptr_t>{ RELOCATION_ID(43481, 44703) }.address();
+                    const auto spt = REL::Relocation<std::uintptr_t>{ RELOCATION_ID(45588, 46888) }.address();
+                    ok = apmf::allowance::SeatVerified(upd + (ae ? 0x30 : 0x2B), "Substrate.CombatGroup.MusicWriteLock") && ok;
+                    ok = apmf::allowance::SeatVerified(upd + (ae ? 0x6D : 0x65), "Substrate.CombatGroup.DetectionPassInUpdate") && ok;
+                    ok = apmf::allowance::SeatVerified(upd + (ae ? 0x23C : 0x94), "Substrate.CombatGroup.MusicUndecided") && ok;
+                    ok = apmf::allowance::SeatVerified(spt + (ae ? 0x1E9 : 0x1E7), "Substrate.CombatManager.MusicPlayTest") && ok;
+                }
                 if (ok && !apmf::combatentry::hold::KnowledgeInstalled()) {
                     why = "the music deny rides the held engagement's knowledge seat (the group detection pass inside the "
                           "engine's locked group update), which is not installed (see the [hold] knowledge seats line)";
@@ -2265,16 +2354,22 @@ namespace apmf::combatsubstrate {
             return;
         }
         g_anchorId.store(ref->GetFormID(), std::memory_order_release);
-        g_removeTarget    = REL::Relocation<RemoveTarget_t>{ RELOCATION_ID(43483, 44705) };
+        g_removeTarget    = on17 ? REL::Relocation<RemoveTarget_t>{ REL::Offset(k17RemoveTarget) }
+                                 : REL::Relocation<RemoveTarget_t>{ RELOCATION_ID(43483, 44705) };
         g_evaluatePackage = REL::Relocation<EvaluatePkg_t>{ RELOCATION_ID(36407, 37401) };
-        g_musicOk = apmf::allowance::SeatVerified(
-            REL::Relocation<std::uintptr_t>{ RELOCATION_ID(514738, 400896) }.address(), "Substrate.BSMusicManager.Singleton");
-        // The dry run's dialogue test (MenuTopicManager::speaker). Rows exist on 1.6.1170 and 1.5.97 only: elsewhere (or on a
-        // failed row) every teammate counts as "dialogue unknown -> not idle" and the dry run opens nothing.
-        g_dialogueOk = !apmf::allowance::IsRuntime1_7_104() &&
-                       (REL::Module::IsExactly(SKSE::RUNTIME_SSE_1_6_1170) || REL::Module::IsExactly(SKSE::RUNTIME_SSE_1_5_97)) &&
-                       apmf::allowance::SeatVerified(REL::Relocation<std::uintptr_t>{ RELOCATION_ID(514959, 401099) }.address(),
-                                                     "Substrate.MenuTopicManager.Singleton");
+        // The two singletons resolve through the MIT id table on 1.7.104 (ids 400896 / 401099 are rows of it); their
+        // 1.7.104 proof is the reader that reads them (the 1.6.1170 / 1.5.97 ripref rows, re-done here in code).
+        const auto musicSingleton = REL::Relocation<std::uintptr_t>{ RELOCATION_ID(514738, 400896) }.address();
+        g_musicOk = on17 ? ReaderReads17(k17MusicReader, { 0x48, 0x8B, 0x0D }, { 0x48, 0x8D, 0x54, 0x24, 0x30, 0x48, 0x89, 0x74 },
+                                         musicSingleton, "Substrate.BSMusicManager.Reader.1_7_104")
+                         : apmf::allowance::SeatVerified(musicSingleton, "Substrate.BSMusicManager.Singleton");
+        // The dry run's dialogue test (MenuTopicManager::speaker, +0x68 on all three: IsInDialogueWithPlayer is identical
+        // on 1.7.104). On a failed row every teammate counts as "dialogue unknown -> not idle" and the dry run opens nothing.
+        const auto topicSingleton = REL::Relocation<std::uintptr_t>{ RELOCATION_ID(514959, 401099) }.address();
+        g_dialogueOk = on17 ? ReaderReads17(k17MenuTopicReader, { 0x48, 0x8B, 0x05 },
+                                            { 0x48, 0x8D, 0x54, 0x24, 0x40, 0x48, 0x89, 0x5C }, topicSingleton,
+                                            "Substrate.MenuTopicManager.Reader.1_7_104")
+                            : apmf::allowance::SeatVerified(topicSingleton, "Substrate.MenuTopicManager.Singleton");
         if (!g_dialogueOk)
             spdlog::warn("[substrate] the MenuTopicManager row did not verify on this runtime: the dry run cannot tell whether a "
                          "follower is in dialogue with the player, so it treats EVERY teammate as not idle and opens nothing.");
@@ -2360,6 +2455,7 @@ namespace apmf::combatsubstrate {
         apmf::substrateprobe::Poll(now);   // R1: before the early return (the post-close timers run with nothing open)
         apmf::substrateequip::PollHands(now);   // the stowed hands' restore runs after the close
         DebtExpire(now);
+        apmf::substratebark::Poll(now);   // R5 F-2: a dropped holder's bark put-back, paid or expired
         if (g_subCount.load(std::memory_order_relaxed) == 0 && g_subs.empty()) {
             MusicProbe(now);   // the tail after the last close
             apmf::anchorguard::Sweep(now);   // the anchor-leak sweep's tail (SEV-1 2026-10-19)

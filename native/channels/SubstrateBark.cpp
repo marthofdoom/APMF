@@ -10,6 +10,7 @@
 #include <atomic>
 #include <bit>
 #include <cstdlib>
+#include <cstring>
 #include <string>
 
 // ============================================================================
@@ -95,7 +96,9 @@ namespace {
         kChanged   = 1u << 5,   // a later read no longer showed Harbinger's values (the engine armed one)
         kRestored  = 1u << 6,   // a real target: the values from before the write were put back
         kNoRestore = 1u << 7,   // a real target, but the timers no longer read Harbinger's values: left alone
+        kDebt      = 1u << 8,   // dropped for real combat before the seat put the values back: owed (review F1 of e6f5607c)
     };
+    constexpr int kRecs = apmf::substratebark::kMaxSlots * 2;   // the live slots + room for the debts of dropped ones
 
     struct Rec {
         std::atomic<std::uint32_t> gen{ 0 };        // bumped by Arm and by every forget (the seats re-read it)
@@ -108,8 +111,11 @@ namespace {
         std::array<std::atomic<std::uint32_t>, 4> seen{};   // the first detection pass's read
         std::array<std::atomic<std::uint32_t>, 4> changed{};   // the first read that was not Harbinger's
         std::atomic<std::uint64_t> armAskedMs{ 0 }, armedMs{ 0 }, seenMs{ 0 }, changedMs{ 0 }, restoredMs{ 0 };
+        std::atomic<int>           slot{ -1 };          // the substrate slot it serves (game thread reads)
+        std::atomic<std::uint64_t> debtUntilMs{ 0 };    // kDebt: owed until the timers run out on their own
     };
-    std::array<Rec, apmf::substratebark::kMaxSlots> g_recs{};
+    std::array<Rec, kRecs>     g_recs{};
+    std::atomic<std::uint32_t> g_debts{ 0 };     // records in kDebt (DebtPending: the detection seat stays armed)
     std::atomic<std::uint32_t> g_pending{ 0 };   // records in kPending (BeforeUpdateCombat's pre-gate)
     std::atomic<std::uint32_t> g_armed{ 0 };     // records in kArmed (the seats' pre-gate)
 
@@ -133,6 +139,8 @@ namespace {
         r.gen.fetch_add(1, std::memory_order_acq_rel);
         if (st & kPending) g_pending.fetch_sub(1, std::memory_order_relaxed);
         if (st & kArmed) g_armed.fetch_sub(1, std::memory_order_relaxed);
+        if (st & kDebt) g_debts.fetch_sub(1, std::memory_order_relaxed);
+        r.slot.store(-1, std::memory_order_relaxed);
         r.holder.store(0, std::memory_order_relaxed);
         r.holderH.store(0, std::memory_order_relaxed);
     }
@@ -159,6 +167,48 @@ namespace {
         return { Bits(ta.aiTimer), Bits(ta.timer), Bits(tc.aiTimer), Bits(tc.timer) };
     }
 
+    // ---- 1.7.104 (review F3 of e6f5607c; marth 2026-10-19 Q4: the substrate must exist wherever Harbinger is) ----------
+    // AE ids 33231 / 44672 / 44673 and the AI clock 404125 have NO row in the fork's MIT id table (a RELOCATION_ID miss
+    // is fatal there), so on 1.7.104 the four sites are raw-RVA rows of the 1.7.104 self-check table
+    // (tools/verified_addresses/idmap-1.7.104-apmf.csv, rows Substrate.Bark.*.1_7_104: the 1.6.1170 signature cut at
+    // the AE site, unique in the 1.7.104 .text at exactly this RVA; each function instruction-identical to its AE twin,
+    // call / RIP targets and jump-table bases normalised, at the SAME offsets). A raw row carries no byte check, so the
+    // code re-reads each fact (CombatSubstrate.cpp's BytesAt17 / CallsTo17 / ReaderReads17 style): the two E8 targets,
+    // the 13 timer-slot bytes and the clock reader's encoding; the AI clock is the global that verified reader reads
+    // (0x324430C; the core's own arm at +0x313 reads the same one; 370 movss readers of it on both builds).
+    constexpr std::uintptr_t k17StartTopicCall   = 0x561199;   // 0x5610F0 (AE 33231 0x559280) + 0xA9: E8 -> k17DialogueReq
+    constexpr std::uintptr_t k17DialogueReq      = 0x816F90;   // AE 44672 0x802130
+    constexpr std::uintptr_t k17DialogueCoreCall = 0x81708B;   // k17DialogueReq + 0xFB: E8 -> k17DialogueCore
+    constexpr std::uintptr_t k17DialogueCore     = 0x817110;   // AE 44673 0x8022B0
+    constexpr std::uintptr_t k17TimerSlot        = 0x817216;   // k17DialogueCore + 0x106
+    constexpr std::uintptr_t k17TimerGate        = 0x817228;   // k17DialogueCore + 0x118: movss xmm0,[rip+disp] (the clock)
+    static_assert(k17StartTopicCall == 0x5610F0 + 0xA9 && k17DialogueCoreCall == k17DialogueReq + 0xFB &&
+                  k17TimerSlot == k17DialogueCore + 0x106 && k17TimerGate == k17DialogueCore + 0x118);
+    constexpr std::array<std::uint8_t, 13> kTimerSlotBytes{ 0x8D, 0x47, 0xC9, 0x8B, 0xD8, 0x48, 0x83, 0xC3, 0x0B, 0x49, 0x8D, 0x1C, 0xD8 };
+
+    bool Bytes17(std::uintptr_t a_addr, const std::uint8_t* a_want, std::size_t a_n, const char* a_seat) {
+        const auto* b = reinterpret_cast<const std::uint8_t*>(a_addr);
+        for (std::size_t i = 0; i < a_n; ++i)
+            if (b[i] != a_want[i]) {
+                spdlog::error("[selfcheck] seat {} REFUSED on 1.7.104: byte +{} at RVA 0x{:X} is 0x{:02X}, expected 0x{:02X}",
+                              a_seat, i, a_addr - REL::Module::get().base(), b[i], a_want[i]);
+                return false;
+            }
+        return true;
+    }
+
+    bool Calls17(std::uintptr_t a_site, std::uintptr_t a_target, const char* a_seat) {
+        const auto*  b   = reinterpret_cast<const std::uint8_t*>(a_site);
+        std::int32_t rel = 0;
+        std::memcpy(&rel, b + 1, sizeof(rel));
+        const std::uintptr_t lands = a_site + 5 + static_cast<std::intptr_t>(rel);
+        if (b[0] == 0xE8 && lands == a_target) return true;
+        spdlog::error("[selfcheck] seat {} REFUSED on 1.7.104: RVA 0x{:X} is {:02X} -> RVA 0x{:X}, expected E8 -> RVA 0x{:X}",
+                      a_seat, a_site - REL::Module::get().base(), b[0], lands - REL::Module::get().base(),
+                      a_target - REL::Module::get().base());
+        return false;
+    }
+
     std::string TimerText(const std::array<std::atomic<std::uint32_t>, 4>& a_v) {
         return fmt::format("NormalToAlert {{{:.2f}, {:.2f}}} NormalToCombat {{{:.2f}, {:.2f}}}",
                            static_cast<double>(Flt(a_v[0].load(std::memory_order_relaxed))),
@@ -181,30 +231,51 @@ namespace apmf::substratebark {
             g_on.store(false, std::memory_order_release);
             return nullptr;
         }
-        const bool ae = REL::Module::IsExactly(SKSE::RUNTIME_SSE_1_6_1170);
-        if (apmf::allowance::IsRuntime1_7_104() || !(ae || REL::Module::IsExactly(SKSE::RUNTIME_SSE_1_5_97)))
-            return "the bark deny's rows are verified on exactly 1.6.1170 and 1.5.97 only (1.7.104: "
-                   "Substrate.Bark.ControllerStartTopicCall / DialogueCoreCall / DetectionTimerSlot / TimerGate / AIClock "
-                   "are not in its id table)";
+        const bool ae   = REL::Module::IsExactly(SKSE::RUNTIME_SSE_1_6_1170);
+        const bool on17 = apmf::allowance::IsRuntime1_7_104();
+        if (!apmf::allowance::RuntimeSupported())
+            return "the bark deny's rows are verified on exactly 1.6.1170, 1.5.97 and 1.7.104 only";
         if (!apmf::targetpin::Layer0Installed())
             return "the bark deny rides Character::UpdateCombat (0xE4) layer 0 (channels/TargetPin.cpp), which was not "
                    "installed at plugin load ([TargetPin] bTargetPin=0, or its row refused; see the [ch.20] lines). "
                    "[CombatSubstrate] bSubstrateBarkDeny=0 runs the substrate without it (the hole is logged per OPEN)";
-        const auto start = REL::Relocation<std::uintptr_t>{ RELOCATION_ID(32484, 33231) }.address();
-        const auto req   = REL::Relocation<std::uintptr_t>{ RELOCATION_ID(43466, 44672) }.address();
-        const auto core  = REL::Relocation<std::uintptr_t>{ RELOCATION_ID(43467, 44673) }.address();
-        const auto clock = REL::Relocation<std::uintptr_t>{ RELOCATION_ID(517597, 404125) }.address();
-        bool ok = apmf::allowance::SeatVerified(start + (ae ? 0xA9 : 0xBD), "Substrate.Bark.ControllerStartTopicCall");
-        ok = apmf::allowance::SeatVerified(req + (ae ? 0xFB : 0x114), "Substrate.Bark.DialogueCoreCall") && ok;
-        ok = apmf::allowance::SeatVerified(core + (ae ? 0x106 : 0x10E), "Substrate.Bark.DetectionTimerSlot") && ok;
-        ok = apmf::allowance::SeatVerified(core + (ae ? 0x118 : 0x120), "Substrate.Bark.TimerGate") && ok;
-        ok = apmf::allowance::SeatVerified(clock, "Substrate.Bark.AIClock") && ok;
-        // the drop's put-back takes the group's write lock (BSWriteLockGuard) on the game thread
-        ok = apmf::allowance::SeatVerified(REL::Relocation<std::uintptr_t>{ RE::Offset::BSReadWriteLock::LockForWrite }.address(),
-                                           "CommonLib.BSReadWriteLock.LockForWrite") && ok;
-        ok = apmf::allowance::SeatVerified(REL::Relocation<std::uintptr_t>{ RE::Offset::BSReadWriteLock::UnlockForWrite }.address(),
-                                           "CommonLib.BSReadWriteLock.UnlockForWrite") && ok;
-        if (!ok)
+        bool           ok    = true;
+        std::uintptr_t clock = 0;
+        if (on17) {
+            const auto st = REL::Offset(k17StartTopicCall).address();
+            const auto dc = REL::Offset(k17DialogueCoreCall).address();
+            const auto ts = REL::Offset(k17TimerSlot).address();
+            const auto tg = REL::Offset(k17TimerGate).address();
+            ok = apmf::allowance::SeatVerified(st, "Substrate.Bark.ControllerStartTopicCall.1_7_104") &&
+                 Calls17(st, REL::Offset(k17DialogueReq).address(), "Substrate.Bark.ControllerStartTopicCall.1_7_104");
+            ok = apmf::allowance::SeatVerified(dc, "Substrate.Bark.DialogueCoreCall.1_7_104") &&
+                 Calls17(dc, REL::Offset(k17DialogueCore).address(), "Substrate.Bark.DialogueCoreCall.1_7_104") && ok;
+            ok = apmf::allowance::SeatVerified(ts, "Substrate.Bark.DetectionTimerSlot.1_7_104") &&
+                 Bytes17(ts, kTimerSlotBytes.data(), kTimerSlotBytes.size(), "Substrate.Bark.DetectionTimerSlot.1_7_104") && ok;
+            // the clock reader: movss xmm0,[rip+disp32] (F3 0F 10 05 d32) then subss xmm0,[rbx]; comiss xmm0,[rbx+4]
+            static constexpr std::array<std::uint8_t, 4> kHead{ 0xF3, 0x0F, 0x10, 0x05 };
+            static constexpr std::array<std::uint8_t, 8> kTail{ 0xF3, 0x0F, 0x5C, 0x03, 0x0F, 0x2F, 0x43, 0x04 };
+            const bool gate = apmf::allowance::SeatVerified(tg, "Substrate.Bark.TimerGate.1_7_104") &&
+                              Bytes17(tg, kHead.data(), kHead.size(), "Substrate.Bark.TimerGate.1_7_104") &&
+                              Bytes17(tg + 8, kTail.data(), kTail.size(), "Substrate.Bark.TimerGate.1_7_104");
+            if (gate) {
+                std::int32_t disp = 0;
+                std::memcpy(&disp, reinterpret_cast<const std::uint8_t*>(tg) + 4, sizeof(disp));
+                clock = tg + 8 + static_cast<std::intptr_t>(disp);   // the global that verified reader reads
+            }
+            ok = gate && ok;
+        } else {
+            const auto start = REL::Relocation<std::uintptr_t>{ RELOCATION_ID(32484, 33231) }.address();
+            const auto req   = REL::Relocation<std::uintptr_t>{ RELOCATION_ID(43466, 44672) }.address();
+            const auto core  = REL::Relocation<std::uintptr_t>{ RELOCATION_ID(43467, 44673) }.address();
+            clock            = REL::Relocation<std::uintptr_t>{ RELOCATION_ID(517597, 404125) }.address();
+            ok = apmf::allowance::SeatVerified(start + (ae ? 0xA9 : 0xBD), "Substrate.Bark.ControllerStartTopicCall");
+            ok = apmf::allowance::SeatVerified(req + (ae ? 0xFB : 0x114), "Substrate.Bark.DialogueCoreCall") && ok;
+            ok = apmf::allowance::SeatVerified(core + (ae ? 0x106 : 0x10E), "Substrate.Bark.DetectionTimerSlot") && ok;
+            ok = apmf::allowance::SeatVerified(core + (ae ? 0x118 : 0x120), "Substrate.Bark.TimerGate") && ok;
+            ok = apmf::allowance::SeatVerified(clock, "Substrate.Bark.AIClock") && ok;
+        }
+        if (!ok || !clock)
             return "the address self-check refused a row the bark deny rests on (listed above): without it the substrate "
                    "would switch the combat-start bark on undenied";
         g_clock = reinterpret_cast<const volatile float*>(clock);
@@ -212,8 +283,9 @@ namespace apmf::substratebark {
         g_on.store(true, std::memory_order_release);
         spdlog::info("[substrate] bark deny ON: the holder group's NormalToAlert / NormalToCombat timers (CombatGroup+0x68 / "
                      "+0x78) pre-armed in the holder's own UpdateCombat (0xE4 layer 0) before its controller's first "
-                     "update; put back on a real target. Rows: ControllerStartTopicCall, DialogueCoreCall, "
-                     "DetectionTimerSlot, TimerGate, AIClock.");
+                     "update; put back on a real target (a dropped holder owes it until the timers run out). Rows: "
+                     "ControllerStartTopicCall, DialogueCoreCall, DetectionTimerSlot, TimerGate, AIClock{}.",
+                     on17 ? " (1.7.104 raw rows + re-reads; the clock from the verified reader)" : "");
         return nullptr;
     }
 
@@ -222,8 +294,25 @@ namespace apmf::substratebark {
 
     void Arm(int a_slot, RE::FormID a_holder, std::uint32_t a_holderH, float a_holdSec) {
         if (!On() || a_slot < 0 || a_slot >= kMaxSlots) return;
-        Rec& r = g_recs[a_slot];
-        if (r.state.load(std::memory_order_acquire) & kUsed) Forget(r);   // a stale record (no Closing): replaced
+        for (auto& o : g_recs)   // a stale record of this slot (no Closing): replaced
+            if ((o.state.load(std::memory_order_acquire) & (kUsed | kDebt)) == kUsed &&
+                o.slot.load(std::memory_order_relaxed) == a_slot)
+                Forget(o);
+        Rec* fr = nullptr;
+        for (auto& o : g_recs)
+            if (o.state.load(std::memory_order_acquire) == 0) { fr = &o; break; }
+        if (!fr) {   // every spare is an unpaid debt: the one that runs out first gives way (logged)
+            for (auto& o : g_recs)
+                if (!fr || o.debtUntilMs.load(std::memory_order_relaxed) < fr->debtUntilMs.load(std::memory_order_relaxed))
+                    fr = &o;
+            spdlog::warn("[substrate] 0x{} BARK DEBT dropped early (all {} records in use): its group keeps Harbinger's "
+                         "timer values until they run out.",
+                         Hex(fr->holder.load(std::memory_order_relaxed)), kRecs);
+            Forget(*fr);
+        }
+        Rec& r = *fr;
+        r.slot.store(a_slot, std::memory_order_relaxed);
+        r.debtUntilMs.store(0, std::memory_order_relaxed);
         r.holder.store(a_holder, std::memory_order_relaxed);
         r.holderH.store(a_holderH, std::memory_order_relaxed);
         r.holdBits.store(Bits(a_holdSec), std::memory_order_relaxed);
@@ -239,7 +328,9 @@ namespace apmf::substratebark {
 
     void Disarm(int a_slot) {
         if (a_slot < 0 || a_slot >= kMaxSlots) return;
-        if (g_recs[a_slot].state.load(std::memory_order_acquire) & kUsed) Forget(g_recs[a_slot]);
+        for (auto& r : g_recs)
+            if ((r.state.load(std::memory_order_acquire) & (kUsed | kDebt)) == kUsed && r.slot.load(std::memory_order_relaxed) == a_slot)
+                Forget(r);
     }
 
     void BeforeUpdateCombat(RE::Actor* a_actor) {
@@ -311,6 +402,7 @@ namespace apmf::substratebark {
             const std::uint32_t gen = r.gen.load(std::memory_order_acquire);
             const std::uint32_t st  = r.state.load(std::memory_order_acquire);
             if (!(st & kArmed) || (st & (kRestored | kNoRestore))) continue;
+            if ((st & kDebt) && apmf::clock::MonotonicMs() > r.debtUntilMs.load(std::memory_order_relaxed)) continue;   // ran out
             if (!IsMember(a_group, r.holderH.load(std::memory_order_relaxed))) continue;
             std::array<std::uint32_t, 4> o{};
             const bool ours = HarbingerValues(Read(a_group), &o);
@@ -328,41 +420,28 @@ namespace apmf::substratebark {
         }
     }
 
-    void Closing(int a_slot, RE::FormID a_holder, bool a_dropped, std::uint64_t a_nowMs, RE::CombatGroup* a_dropGroup) {
+    void Closing(int a_slot, RE::FormID a_holder, bool a_dropped, std::uint64_t a_nowMs) {
         if (a_slot < 0 || a_slot >= kMaxSlots) return;
-        Rec& r = g_recs[a_slot];
-        // The real-combat DROP: the seat's put-back needs a locked detection pass that sees the real target, which a
-        // hit or the party's fight (the foe not in this group), or a first sighting outside the locked update, never
-        // gives. So the drop puts the values back itself, on the game thread under the group's WRITE lock, on the group
-        // DropSub reads from the holder's controller for its RemoveTarget (the same game-thread exposure, APMF-B26).
-        if (a_dropped && a_dropGroup) {
-            const std::uint32_t s0 = r.state.load(std::memory_order_acquire);
-            if ((s0 & kUsed) && (s0 & kArmed) && !(s0 & (kRestored | kNoRestore)) &&
-                r.holder.load(std::memory_order_acquire) == a_holder) {
-                RE::BSWriteLockGuard         lk(a_dropGroup->lock);
-                std::array<std::uint32_t, 4> o{};
-                const bool                   ours = HarbingerValues(Read(a_dropGroup), &o);
-                if (ours) {
-                    auto& ta   = a_dropGroup->detectionDialogueTimers[kTimerAlert];
-                    auto& tc   = a_dropGroup->detectionDialogueTimers[kTimerCombat];
-                    ta.aiTimer = Flt(o[0]);
-                    ta.timer   = Flt(o[1]);
-                    tc.aiTimer = Flt(o[2]);
-                    tc.timer   = Flt(o[3]);
-                }
-                r.restoredMs.store(apmf::clock::MonotonicMs(), std::memory_order_relaxed);
-                r.state.fetch_or(ours ? kRestored : kNoRestore, std::memory_order_acq_rel);
-            }
-        }
-        const std::uint32_t st = r.state.load(std::memory_order_acquire);
-        if (!(st & kUsed) || r.holder.load(std::memory_order_acquire) != a_holder) {
+        Rec* rp = nullptr;
+        for (auto& o : g_recs)
+            if ((o.state.load(std::memory_order_acquire) & (kUsed | kDebt)) == kUsed &&
+                o.slot.load(std::memory_order_relaxed) == a_slot && o.holder.load(std::memory_order_acquire) == a_holder)
+                rp = &o;
+        const std::uint32_t st = rp ? rp->state.load(std::memory_order_acquire) : 0u;
+        if (!rp) {
             if (!On())
                 spdlog::warn("[substrate] 0x{} BARK not denied: the bark deny is OFF ({}); the controller's first update "
                              "could say NormalToCombat / NormalToAlert.",
                              Hex(a_holder), OffReason());
             return;
         }
+        Rec&                r  = *rp;
         const std::uint64_t t0 = r.armAskedMs.load(std::memory_order_relaxed);
+        // The real-combat DROP before the seat put the values back (review F1 of e6f5607c: no game-thread group write,
+        // a CombatGroup has no refcount): the record stays as a DEBT, so SeatRealTarget puts them back inside the
+        // engine's own locked update of whatever group holds him and shows a real target, until the timers would have
+        // run out on their own (the arm + the duration written). Poll logs the payment or the unpaid expiry.
+        const bool debt = a_dropped && (st & kArmed) && !(st & (kRestored | kNoRestore));
         try {
             std::string what;
             if (st & kPending) {
@@ -396,13 +475,52 @@ namespace apmf::substratebark {
                     what += fmt::format("; a real target at +{} ms: NOT put back (the timers no longer read Harbinger's "
                                         "values)",
                                         Since(r.restoredMs.load(std::memory_order_relaxed), t0));
-                else if (a_dropped)
-                    what += "; dropped for real combat with no group to put the values back in";
+                else if (debt)
+                    what += fmt::format("; dropped for real combat before a locked detection pass saw the real target: "
+                                        "OWED (put back on the next locked detection pass that sees a real target in a "
+                                        "group holding him, for {:.1f} s at most)",
+                                        static_cast<double>(Flt(r.holdBits.load(std::memory_order_relaxed))));
             }
             spdlog::info("[substrate] 0x{} BARK DENY result: {}.", Hex(a_holder), what);
         } catch (...) {
         }
-        Forget(r);
+        if (!debt) {
+            Forget(r);
+            return;
+        }
+        const std::uint64_t armed = r.armedMs.load(std::memory_order_relaxed);
+        r.debtUntilMs.store((armed ? armed : a_nowMs) +
+                                static_cast<std::uint64_t>(Flt(r.holdBits.load(std::memory_order_relaxed)) * 1000.0f),
+                            std::memory_order_relaxed);
+        g_debts.fetch_add(1, std::memory_order_relaxed);
+        r.state.fetch_or(kDebt, std::memory_order_acq_rel);
+    }
+
+    bool DebtPending() { return g_debts.load(std::memory_order_relaxed) != 0; }
+
+    void Poll(std::uint64_t a_nowMs) {
+        if (g_debts.load(std::memory_order_relaxed) == 0) return;
+        for (auto& r : g_recs) {
+            const std::uint32_t st = r.state.load(std::memory_order_acquire);
+            if (!(st & kDebt)) continue;
+            const RE::FormID    who = r.holder.load(std::memory_order_relaxed);
+            const std::uint64_t t0  = r.armAskedMs.load(std::memory_order_relaxed);
+            if (st & (kRestored | kNoRestore)) {
+                spdlog::info("[substrate] 0x{} BARK DEBT {} at +{} ms after the arm (a locked detection pass saw a real "
+                             "target in a group holding him).",
+                             Hex(who), (st & kRestored) ? "PAID: the values from before the write put back"
+                                                        : "SETTLED without a write (the timers no longer read Harbinger's values)",
+                             Since(r.restoredMs.load(std::memory_order_relaxed), t0));
+                Forget(r);
+            } else if (a_nowMs > r.debtUntilMs.load(std::memory_order_relaxed)) {
+                spdlog::warn("[substrate] 0x{} BARK DEBT expired UNPAID: no locked detection pass saw a real target in a "
+                             "group holding him; the NormalToAlert / NormalToCombat timers of the group he was dropped in "
+                             "ran Harbinger's values out on their own (residual: at most {:.1f} s of a real fight's "
+                             "start bark suppressed).",
+                             Hex(who), static_cast<double>(Flt(r.holdBits.load(std::memory_order_relaxed))));
+                Forget(r);
+            }
+        }
     }
 
     void Reset() {

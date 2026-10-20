@@ -59,7 +59,8 @@ namespace apmf::substrateprobe {
 
     // WriteBitAfterRepick, when the bit is written although kEvpBuffered is still set ("the re-pick
     // did NOT run within 2000 ms" of UNPAUSED time, R5 F-5): one context line, with the wall time and its
-    // split into run / paused / stalled time, the pause state and the open menus (R5 F-7).
+    // split into run / seen-paused / "stalled or paused (menu)" time (no precise split: the Poll itself stops in a
+    // pausing menu), the pause state and the open menus (R5 F-7).
     void RepickNotRun(RE::Actor* a_actor, const RE::AIProcess* a_proc, std::uint64_t a_waitedMs, std::uint64_t a_runMs,
                       std::uint64_t a_pausedMs, std::uint64_t a_stalledMs);
 

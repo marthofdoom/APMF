@@ -4990,6 +4990,86 @@
    "seat": "TargetPin.CombatController.SetTarget.1_7_104",
    "rva": "0x559630",
    "source": "channels/TargetPin.cpp kSetTarget17 (1.7.104 only: AE id 33235 has no MIT-table row)"
+  },
+  {
+   "seat": "Substrate.CombatGroup.RemoveTarget.1_7_104",
+   "rva": "0x803D70",
+   "source": "channels/CombatSubstrate.cpp k17RemoveTarget (1.7.104 only: AE id 44705 has no MIT-table row)"
+  },
+  {
+   "seat": "EngagementHold.CombatGroup.UpdateTargetDetection.1_7_104",
+   "rva": "0x805090",
+   "source": "channels/CombatEntry.cpp k17UpdateTargetDetection (1.7.104 only: AE id 44725 has no MIT-table row)"
+  },
+  {
+   "seat": "EngagementHold.Site.ListenerDetection.1_7_104",
+   "rva": "0x8031C5",
+   "source": "channels/CombatEntry.cpp k17ListenerSite (1.7.104 only: AE id 44699 has no MIT-table row)"
+  },
+  {
+   "seat": "EngagementHold.Site.GroupDetectionPass.1_7_104",
+   "rva": "0x80CF43",
+   "source": "channels/CombatEntry.cpp k17PassSite (1.7.104 only: AE id 44804 has no MIT-table row)"
+  },
+  {
+   "seat": "Substrate.CombatGroup.MusicWriteLock.1_7_104",
+   "rva": "0x803740",
+   "source": "channels/CombatSubstrate.cpp k17MusicWriteLock (1.7.104 only: AE id 44703 has no MIT-table row)"
+  },
+  {
+   "seat": "Substrate.CombatGroup.DetectionPassInUpdate.1_7_104",
+   "rva": "0x80377D",
+   "source": "channels/CombatSubstrate.cpp k17DetectionPassInUpdate (1.7.104 only: AE id 44703 has no MIT-table row)"
+  },
+  {
+   "seat": "Substrate.CombatGroup.MusicUndecided.1_7_104",
+   "rva": "0x80394C",
+   "source": "channels/CombatSubstrate.cpp k17MusicUndecided (1.7.104 only: AE id 44703 has no MIT-table row)"
+  },
+  {
+   "seat": "Substrate.CombatManager.MusicPlayTest.1_7_104",
+   "rva": "0x83E0F9",
+   "source": "channels/CombatSubstrate.cpp k17MusicPlayTest (1.7.104 only: AE id 46888 has no MIT-table row)"
+  },
+  {
+   "seat": "Substrate.BSMusicManager.Reader.1_7_104",
+   "rva": "0x641B9F",
+   "source": "channels/CombatSubstrate.cpp k17MusicReader (1.7.104 only: AE id 36550 has no MIT-table row)"
+  },
+  {
+   "seat": "Substrate.MenuTopicManager.Reader.1_7_104",
+   "rva": "0xA2D7C7",
+   "source": "channels/CombatSubstrate.cpp k17MenuTopicReader (1.7.104 only: AE id 56194 has no MIT-table row)"
+  },
+  {
+   "seat": "Substrate.Bark.ControllerStartTopicCall.1_7_104",
+   "rva": "0x559329",
+   "source": "channels/SubstrateBark.cpp k17StartTopicCall (1.7.104 only: AE id 33231 has no MIT-table row)"
+  },
+  {
+   "seat": "Substrate.Bark.DialogueCoreCall.1_7_104",
+   "rva": "0x80222B",
+   "source": "channels/SubstrateBark.cpp k17DialogueCoreCall (1.7.104 only: AE id 44672 has no MIT-table row)"
+  },
+  {
+   "seat": "Substrate.Bark.DetectionTimerSlot.1_7_104",
+   "rva": "0x8023B6",
+   "source": "channels/SubstrateBark.cpp k17TimerSlot (1.7.104 only: AE id 44673 has no MIT-table row)"
+  },
+  {
+   "seat": "Substrate.Bark.TimerGate.1_7_104",
+   "rva": "0x8023C8",
+   "source": "channels/SubstrateBark.cpp k17TimerGate: the AI clock reader; the code decodes its displacement (1.7.104 only: AE id 44673 / global 404125 have no MIT-table row)"
+  },
+  {
+   "seat": "Substrate.AIProcess.GetAggressor.1_7_104",
+   "rva": "0x6D6C90",
+   "source": "channels/SubstrateAggressor.cpp k17GetAggressor (1.7.104 only: AE id 39144 has no MIT-table row)"
+  },
+  {
+   "seat": "Substrate.AIProcess.SetAggressor.1_7_104",
+   "rva": "0x6D6CB0",
+   "source": "channels/SubstrateAggressor.cpp k17SetAggressor (1.7.104 only: AE id 39145 has no MIT-table row)"
   }
  ]
 }
