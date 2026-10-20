@@ -801,6 +801,18 @@ ContextSearch UPDATE function (Search tree, AE 49529): Movement-side trees, reac
 `Acquire Movement Resource`, which the substrate keeps denied. Their functions are not traced: they cannot run
 under a substrate. Open only if a future allow-list opens the Movement branch.
 
+### APMF-B141 (SEV-4) -- the substrate's LEAF DENIED line does not name the AcquireResource<2> instance
+Raised against a0112b24, 2026-10-19 (tier-3 review of `feat/apmf-substrate-equip`). Reviewer (verbatim): "LeafDenied logs the Movement instance as 'LEAF DENIED CombatBehaviorAcquireResource<2>', which looks like 'the Action branch is still cut'; name the instance."
+
+### APMF-B142 (SEV-4) -- "did NOT reach the hand" has three causes the log cannot tell apart
+Raised against a0112b24, same review. Reviewer (verbatim): "'did NOT reach the hand' has three causes the log cannot tell apart: the claimed form not in CombatInventory (e.g. a proxy AddSpell'd after the controller was built), the item's own engine CheckShouldEquip NO (Light/Armor/Cloak conditions), or a scroll winning the claimed hand's set (scrolls are hooked by neither EquipGate nor HandBlock). Run the field test with [EquipGate] EnableEquipGateLog=1."
+
+### APMF-B143 (SEV-5) -- a late combat-thread count can land in the next window
+Raised against a0112b24, same review. Reviewer (verbatim): "NoteAllowed/Begin: a combat-thread count passing the id check just before a close and a re-Begin can land in the next window's counter (log only)."
+
+### APMF-B144 (SEV-5) -- the "25/25" evidence wording
+Raised against a0112b24, same review. Reviewer (verbatim): "Docs cite '25/25 AcquireResource denied' as proof, but the log cannot tell the two instances apart; cite the disassembly instead." FIXED in the same round (the docs and `channels/SubstrateEquip.cpp` now cite the allow-list class plus the disassembly; the log line is called consistent, not proof).
+
 ### APMF-B102 (SEV-5) -- ch.12 idle state: spdlog under g_stateMx
 Raised against `d95b403` (`feat/apmf-idle-state`, ABI v24 GetIdleState), tier-3 Opus 5.5 review 2026-10-13
 (verdict MERGE OK). Verbatim from the reviewer's log (`scratchpad/agentlogs/review-idle-state.md`): "F5 SEV-5

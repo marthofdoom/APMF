@@ -898,14 +898,19 @@ namespace {
             // The user's priority sliders decide (marth: "Nothing escapes Harbinger"). A deny that would
             // not stand leaves a facet the substrate switched on undenied: then it does not open.
             using F = apmf::sources::Facet;
-            for (const auto f : { F::kCombatAction, F::kCombat, F::kEquipWeapon, F::kDetection })
+            // kCast (review F3 of a0112b24): the floored hand's spell refusal (core/EquipGate.cpp deny-complete) and
+            // the 0x0A CheckCast refusal rank on the Cast facet; with the spell equip open they are load-bearing.
+            for (const auto f : { F::kCombatAction, F::kCombat, F::kEquipWeapon, F::kDetection, F::kCast })
                 if (!Outranks(a_sub.handle, f)) {
                     why = f == F::kCombatAction ? "Engine outranks the substrate's client on the CombatAction facet (APMF_Sources.ini): the leaf allow-list would not stand"
                         : f == F::kCombat       ? "Engine outranks the substrate's client on the Combat facet (APMF_Sources.ini): the anchor refusal would not stand"
                         : f == F::kEquipWeapon  ? "Engine outranks the substrate's client on the EquipWeapon facet (APMF_Sources.ini): the hand floors would not stand"
+                        : f == F::kCast         ? "Engine outranks the substrate's client on the Cast facet (APMF_Sources.ini): the floored hand's spell refusal (0x0F deny-complete) and the 0x0A cast refusal would not stand"
                                                 : "Engine outranks the substrate's client on the Detection facet (APMF_Sources.ini): the anchor's knowledge would not stand";
                     break;
                 }
+            // A client substrate opens the spell equip: its per-hand gates and the hands' stow must stand (F1 / F3).
+            if (!why && !a_sub.dryRun) why = apmf::substrateequip::OpenRefusal();
         }
         if (why) {
             EndUnopened(a_sub, why);
@@ -922,6 +927,7 @@ namespace {
         }
         a_sub.slot = slot;
         apmf::substrateequip::Begin(slot, a_sub.id, apmf::clock::MonotonicMs());   // the equip window
+        if (!a_sub.dryRun) apmf::substrateequip::Stow(a_sub.id, actor);   // weapon / shield / torch off both hands (F1)
         if (g_anchorOut++ == 0) {   // 0 -> 1: the anchor comes out of its holding cell
             g_anchorH.store(anchor->GetHandle().native_handle(), std::memory_order_release);
             AnchorToHolder(anchor, actor, true);
@@ -966,6 +972,18 @@ namespace {
                          Hex(g_anchorId.load()), why);
             CloseSub(a_sub, why);
             return false;
+        }
+        // The hands' stow (review F1 of a0112b24) must have applied BEFORE StartCombat (its re-arm equip runs inside it).
+        {
+            const char* stowWhy = nullptr;
+            const auto  stow    = apmf::substrateequip::StowSettled(a_sub.id, actor, now, stowWhy);
+            if (stow == apmf::substrateequip::StowState::kWaiting) return true;
+            if (stow == apmf::substrateequip::StowState::kFailed) {
+                spdlog::warn("[substrate] 0x{} OPEN anchor=0x{} entry=false -- {}; no entry was made.", Hex(a_sub.id),
+                             Hex(g_anchorId.load()), stowWhy ? stowWhy : "the hands were not stowed");
+                CloseSub(a_sub, "hands not stowed");
+                return false;
+            }
         }
         // StartCombat's own distance test (AE 0x6B6A30-0x6B6A6B) measures the holder to its target: the
         // anchor stands at the entering holder for the call; PlaceAnchor re-places it after.
@@ -1084,6 +1102,7 @@ namespace {
         auto* proc  = actor ? actor->GetActorRuntimeData().currentProcess : nullptr;
         apmf::substrateprobe::Closing(a_sub.id, actor, a_sub.phase == Phase::kOpen, false, apmf::clock::MonotonicMs());   // R1
         apmf::substrateequip::Closing(a_sub.slot, a_sub.id, actor, a_reason, apmf::clock::MonotonicMs());   // equip outcome
+        apmf::substrateequip::RestoreWhenFree(a_sub.id, a_reason, apmf::clock::MonotonicMs());   // the stowed hands (F2)
         if (a_sub.slot >= 0 && a_sub.phase == Phase::kOpen) LogObserved(a_sub, actor);
         DebtForget(a_sub.id);   // a normal close: his StopCombat ends his part in the group (a co-holder keeps its own debt)
         // 1. the bit back to what it was
@@ -1138,6 +1157,7 @@ namespace {
         auto* proc  = actor ? actor->GetActorRuntimeData().currentProcess : nullptr;
         apmf::substrateprobe::Closing(a_sub.id, actor, true, true, apmf::clock::MonotonicMs());   // R1
         apmf::substrateequip::Closing(a_sub.slot, a_sub.id, actor, "real combat (dropped)", apmf::clock::MonotonicMs());
+        apmf::substrateequip::RestoreWhenFree(a_sub.id, "real combat (dropped)", apmf::clock::MonotonicMs());   // fights with his gear
         if (a_sub.bitSet && proc) proc->ignoringCombat = a_sub.priorBit;   // the package no longer runs in combat
         // The music debt (review F1): an (a)-trigger restore already ran in the seat that saw the real target. Any 0 still
         // owed (a hit / party trigger, or a merge into an ally's fight) is put back by the seat on the next detection pass
@@ -2217,6 +2237,7 @@ namespace apmf::combatsubstrate {
         const auto now = apmf::clock::MonotonicMs();
         DryRunSchedule(now);
         apmf::substrateprobe::Poll(now);   // R1: before the early return (the post-close timers run with nothing open)
+        apmf::substrateequip::PollHands(now);   // the stowed hands' restore runs after the close
         DebtExpire(now);
         if (g_subCount.load(std::memory_order_relaxed) == 0 && g_subs.empty()) {
             MusicProbe(now);   // the tail after the last close
@@ -2274,6 +2295,7 @@ namespace apmf::combatsubstrate {
         apmf::anchorguard::ResetAll();
         apmf::substrateprobe::Reset();
         apmf::substrateequip::Reset();
+        apmf::substrateequip::ResetHands(a_why);
         {
             std::scoped_lock lk(g_debtMx);
             g_debts.fill(MusicDebt{});

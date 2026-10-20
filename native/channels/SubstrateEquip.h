@@ -57,4 +57,27 @@ namespace apmf::substrateequip {
     void Closing(int a_slot, RE::FormID a_actor, RE::Actor* a_actorPtr, const char* a_how, std::uint64_t a_now);
     // ResetAll (revert / kPreLoadGame): forget every window.
     void Reset();
+
+    // ---- THE HANDS (review F1 / F2 of a0112b24, marth: "Harbinger sheathes/stows first", "Harbinger restores it").
+    // The EquipSpell leaf draws BOTH hands for magic, so whatever a hand holds would be drawn, and the spell's equip
+    // displaces a weapon in its hand. So a CLIENT substrate (not the dry run) takes every weapon, shield and torch
+    // off both hands before its entry and puts exactly those copies back when it ends. All GAME (main) THREAD.
+
+    // Begin (Open), before the floors publish: nullptr = may open; otherwise the refusal (a deny the spell equip relies
+    // on would not stand: the 0x0F deny-complete refusal, the hand-claim block, the equip sink).
+    const char* OpenRefusal();
+    // After TakeSlot, a client substrate: record what each hand holds (form + ExtraUniqueID uid of the worn copy)
+    // and issue the unequips (queued, the established ch.17 call). A record still waiting for its restore is kept.
+    void Stow(RE::FormID a_actor, RE::Actor* a_ptr);
+    // Enter, before StartCombat: kClear = no stowed item is in a hand any more; kWaiting = the queued unequips
+    // have not applied yet; kFailed = still in a hand after the wait (`a_why` says which).
+    enum class StowState : std::uint8_t { kClear, kWaiting, kFailed };
+    StowState StowSettled(RE::FormID a_actor, RE::Actor* a_ptr, std::uint64_t a_now, const char*& a_why);
+    // CloseSub / DropSub: the window ended; each stowed item goes back as soon as its hand is free (no live cast
+    // claim or floor holds it: the hand-claim block would refuse the equip).
+    void RestoreWhenFree(RE::FormID a_actor, const char* a_how, std::uint64_t a_now);
+    // combatsubstrate::Poll, every frame (before its early return): drives the restores. One test when empty.
+    void PollHands(std::uint64_t a_now);
+    // ResetAll (revert / kPreLoadGame): every record is DROPPED with a log line (see the .cpp).
+    void ResetHands(const char* a_why);
 }

@@ -3,12 +3,18 @@
 
 #include "APMF_API.h"
 #include "core/Clock.h"
+#include "core/EquipGate.h"
+#include "core/EquipSink.h"
+#include "core/HandBlock.h"
 #include "core/Log.h"
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <cstdlib>
 #include <string>
+#include <unordered_map>
+#include <vector>
 
 // ============================================================================
 // THE SUBSTRATE'S SPELL EQUIP -- how the combat AI puts a spell in hand, and the two nodes the
@@ -53,10 +59,12 @@
 // the floored hand (a full kCastFlag_DenyHandOnly floor) admits no spell / staff and no weapon / shield /
 // torch. That is the steering: the engine chooses, from a set that holds only the claimed spell.
 //
-// WHY BOTH NODES, AND NO OTHER: the 10-19 dry runs logged `LEAF DENIED CombatBehaviorAcquireResource<2>`
-// for every holder (_evidence/2026-10-19-lorerim-town-substrate/APMF.log, 25 of 25): the allow-list cut the
-// whole Action branch at node 1, before the equip context, the equip leaf AND the Magic link, so no
-// substrate cast could ever be reached, spell in hand or not. Node 1 has a second instance, "Acquire
+// WHY BOTH NODES, AND NO OTHER: the allow-list classed AcquireResource<2> kParamDeny (core/CombatBehaviorRE.h),
+// and the disassembly above puts its "Action" instance at the head of the Action branch, so the allow-list cut
+// that whole branch at node 1, before the equip context, the equip leaf AND the Magic link: no substrate cast
+// could ever be reached, spell in hand or not. (The 10-19 dry-run lines `LEAF DENIED
+// CombatBehaviorAcquireResource<2>` are consistent with it but are not the proof: that line does not name the
+// instance, and the "Movement" one is denied too -- REVIEW-BACKLOG APMF-B141.) Node 1 has a second instance, "Acquire
 // Movement Resource" ("Movement", AE 49436 / SE 48431): it stays denied (the body is the package's). The
 // two instances differ only in their resource name, a BSFixedString at node+0x28 -- written by the
 // node's only two constructions per runtime (AE 0x865385 "Action" / 0x8ADEF9 "Movement"; SE 0x7CDF65 /
@@ -286,5 +294,338 @@ namespace apmf::substrateequip {
 
     void Reset() {
         for (auto& r : g_recs) r.id.store(0, std::memory_order_release);
+    }
+
+    // =========================================================================================================
+    // THE HANDS (review F1 / F2 of a0112b24; marth: "Harbinger sheathes/stows first", "Harbinger restores it").
+    //
+    // WHY: EquipSpell's Enter always calls DrawWeaponMagicHands(true) (AE 0x878385 / SE 0x7E0CF3), which draws
+    // whatever BOTH hands hold, and its EquipSpell displaces a one-hander in the claimed hand (a two-hander or a
+    // bow from both). So a client substrate takes every weapon, shield and torch off both hands before its entry
+    // and puts exactly those copies back when it ends.
+    //
+    // THE PATH: Harbinger's established equip road, the one channels/EquipAuthority.cpp (ch.17, #17a condition 4)
+    // uses: ActorEquipManager::UnequipObject / EquipObject on the main thread, queued, not forced, sounds on, never
+    // a 3D reset; every equip inside equipsink::ApmfEquipScope (the sink logs it as APMF's own, `tls=1`; it is
+    // NOT a bypass: the sink's verdict still applies). The copy is named by its extra data list, the engine's own
+    // pointer from GetInventory, found by its ExtraUniqueID uid (equipsink::ExtraUid, the ABI v25 instance
+    // identity) -- the uid is what is recorded, never the pointer (a list does not outlive an unequip safely). A
+    // worn copy WITHOUT an ExtraUniqueID is recorded by form and restored by form (logged "no uid": any copy).
+    //
+    // THE WINDOW: Stow right after TakeSlot (game thread, Begin), BEFORE the floors publish; Enter waits (at most
+    // kStowWaitMs) until no stowed item is in a hand, then calls StartCombat (its re-arm equip runs inside it).
+    // While the substrate stands, the hand floors hold both hands, so the equip sink's hand-claim step (1a)
+    // refuses every equip into them -- an MFO ch.17 re-equip of its declared weapon, StartCombat's re-arm, a
+    // script -- and core/HandBlock.cpp's 0x0F seat keeps the AI from selecting one: the stow stands without a
+    // re-assert.
+    //
+    // THE RESTORE (CloseSub / DropSub -> RestoreWhenFree, driven by PollHands every frame): each item goes back as
+    // soon as NO live cast claim or floor holds a hand it competes for (handblock::HeldFor, the same test the
+    // sink's step 1a applies -- an equip issued earlier would be refused by it). The floors release through
+    // ControlMap's queue, so the floored hand frees on the next drain; the claimed hand frees when the client's
+    // cast claim ends (a real-fight DROP keeps that claim by design: the other hand comes back at once, the
+    // claimed hand when the claim ends). A restored item is verified worn within kRestoreVerifyMs, else
+    // "restore FAILED" names the cause class (the sink refused it: a ch.17 declared set that leaves it out, a
+    // ch.26 force, another hand claim). MFO's ch.17 declaration names the follower's own loadout, so the restore
+    // is in-set (step 4); its own enforce pass re-equipping the same copy after the floors drop is a no-op
+    // (EquipObject returns early for a worn list).
+    //
+    // RECORD LIFETIME: one record per actor (game-thread map). Dead -> DROPPED with a log line (the copies stay in
+    // the inventory; a corpse needs nothing in hand). Unloaded -> kept, restored on the first frame he is loaded
+    // again (one log line while waiting). Load / revert (ResetAll) -> DROPPED with a log line naming the copies:
+    // the record describes the world the load replaced, and the copies are in the saved inventory; carrying it
+    // across a load would need a co-save record (not built: a co-save format change needs its own ruling).
+    // =========================================================================================================
+    namespace {
+        constexpr std::uint64_t kStowWaitMs      = 1500;   // the queued unequips apply on the actor's next AI update
+        constexpr std::uint64_t kRestoreVerifyMs = 3000;   // the same hold ch.17 gives an issued equip (kPendingMaxMs)
+
+        enum class ItemSt : std::uint8_t { kStowed, kIssued, kDone, kFailed };
+        struct HandItem {
+            RE::FormID    form      = 0;
+            std::uint16_t uid       = 0;       // ExtraUniqueID of the worn copy (0 = none: restored by form)
+            bool          left      = false;   // the hand it was in
+            bool          bothHands = false;   // a two-hander / bow / crossbow: one item, both hands
+            ItemSt        st        = ItemSt::kStowed;
+            std::uint64_t issuedMs  = 0;
+            std::string   why;
+        };
+        struct Stowed {
+            std::vector<HandItem> items;
+            bool                  restoring = false;
+            std::uint64_t         stowMs = 0, closeMs = 0;
+            std::string           how;
+            bool                  loggedHeld = false, loggedUnloaded = false;
+        };
+        std::unordered_map<RE::FormID, Stowed> g_stowed;   // GAME THREAD ONLY
+        std::string                            g_stowWhy;  // StowSettled's kFailed text (game thread)
+
+        bool HandType(RE::FormType a_t) {
+            return a_t == RE::FormType::Weapon || a_t == RE::FormType::Armor || a_t == RE::FormType::Light;
+        }
+        bool BothHands(const RE::TESForm* a_f) {
+            const auto* w = a_f ? a_f->As<RE::TESObjectWEAP>() : nullptr;
+            return w && (w->IsTwoHandedSword() || w->IsTwoHandedAxe() || w->IsBow() || w->IsCrossbow());
+        }
+        const RE::BGSEquipSlot* HandSlot(bool a_left) {
+            return RE::TESForm::LookupByID<RE::BGSEquipSlot>(a_left ? apmf::equipsink::kLeftHandEquipSlot
+                                                                    : apmf::equipsink::kRightHandEquipSlot);
+        }
+        // Is this list the copy worn in that hand? Right (and a both-hands item): ExtraWorn. Left: a weapon is
+        // ExtraWornLeft; a shield / torch is worn (ExtraWorn, or ExtraWornLeft).
+        bool ListWornIn(const RE::ExtraDataList* a_xl, const RE::TESForm* a_obj, bool a_left, bool a_both) {
+            if (!a_xl) return false;
+            const bool r = a_xl->HasType(RE::ExtraDataType::kWorn), l = a_xl->HasType(RE::ExtraDataType::kWornLeft);
+            if (!a_left || a_both) return r;
+            return a_obj && a_obj->GetFormType() == RE::FormType::Weapon ? l : (l || r);
+        }
+        // The worn copy's list of `a_obj` in that hand, from a fresh snapshot (engine pointers; used at once).
+        RE::ExtraDataList* WornList(RE::Actor* a_actor, RE::TESBoundObject* a_obj, bool a_left, bool a_both) {
+            auto inv = a_actor->GetInventory([a_obj](RE::TESBoundObject& o) { return &o == a_obj; });
+            for (auto& [obj, data] : inv) {
+                if (obj != a_obj || !data.second || !data.second->extraLists) continue;
+                for (auto* xl : *data.second->extraLists)
+                    if (ListWornIn(xl, a_obj, a_left, a_both)) return xl;
+            }
+            return nullptr;
+        }
+        // The copy carrying `a_uid` (0: nullptr = any copy). `a_carried`: any copy of the form is carried.
+        RE::ExtraDataList* ListByUid(RE::Actor* a_actor, RE::TESBoundObject* a_obj, std::uint16_t a_uid, bool& a_carried) {
+            a_carried = false;
+            auto inv  = a_actor->GetInventory([a_obj](RE::TESBoundObject& o) { return &o == a_obj; });
+            for (auto& [obj, data] : inv) {
+                if (obj != a_obj || data.first <= 0) continue;
+                a_carried = true;
+                if (a_uid == 0 || !data.second || !data.second->extraLists) return nullptr;
+                for (auto* xl : *data.second->extraLists)
+                    if (apmf::equipsink::ExtraUid(xl) == a_uid) return xl;
+            }
+            return nullptr;
+        }
+        bool InHand(RE::Actor* a_actor, const HandItem& a_h) {
+            const auto* f = a_actor->GetEquippedObject(a_h.left && !a_h.bothHands);
+            return f && f->GetFormID() == a_h.form;
+        }
+        bool Worn(RE::Actor* a_actor, RE::TESBoundObject* a_obj, const HandItem& a_h) {
+            if (a_h.uid == 0) return InHand(a_actor, a_h);
+            bool carried = false;
+            const auto* xl = ListByUid(a_actor, a_obj, a_h.uid, carried);
+            return xl && ListWornIn(xl, a_obj, a_h.left, a_h.bothHands);
+        }
+        std::string ItemText(const HandItem& a_h) {
+            return a_h.uid ? fmt::format("0x{}/uid 0x{}", apmf::log::Hex(a_h.form), apmf::log::Hex(a_h.uid, 4))
+                           : fmt::format("0x{}/no uid", apmf::log::Hex(a_h.form));
+        }
+        std::string HandsText(const Stowed& a_r) {
+            std::string l = "none", r = "none";
+            for (const auto& h : a_r.items) {
+                if (h.bothHands) r = ItemText(h) + " (both hands)";
+                else (h.left ? l : r) = ItemText(h);
+            }
+            return fmt::format("L={} R={}", l, r);
+        }
+    }
+
+    const char* OpenRefusal() {
+        if (!Enabled()) return nullptr;   // the spell equip is off: nothing equips, nothing is drawn
+        if (!apmf::equipgate::DenyCompleteActive())
+            return "the spell equip needs the floored hand's spell refusal and it would not stand ([EquipGate] "
+                   "EnableEquipDenyComplete=0, or the 0x0F gate is not installed on all 30 spell/staff items or its hand "
+                   "slots did not resolve): the floored hand could take any spell (review F3 of a0112b24)";
+        if (!apmf::handblock::Enabled())
+            return "the spell equip stows the hands, and the hand-claim block that keeps them stowed is off ([HandBlock] "
+                   "bHandClaimBlocksEquip=0): a stowed weapon could be re-equipped and drawn mid-window";
+        if (!apmf::equipsink::Installed())
+            return "the spell equip stows the hands, and the equip sink that keeps them stowed is not installed";
+        return nullptr;
+    }
+
+    void Stow(RE::FormID a_actor, RE::Actor* a_ptr) {
+        if (!Enabled() || !a_ptr || a_actor == 0) return;
+        auto* mgr = RE::ActorEquipManager::GetSingleton();
+        if (!mgr) {
+            spdlog::error("[substrate] 0x{} HANDS stow FAILED: ActorEquipManager singleton is null.", apmf::log::Hex(a_actor));
+            return;
+        }
+        const auto now = apmf::clock::MonotonicMs();
+        Stowed&    r   = g_stowed[a_actor];   // a record still waiting for its restore is kept (its items are off)
+        r.restoring = false;
+        r.stowMs    = now;
+        r.how.clear();
+        r.loggedHeld = r.loggedUnloaded = false;
+        std::erase_if(r.items, [](const HandItem& h) { return h.st == ItemSt::kDone || h.st == ItemSt::kFailed; });
+        for (auto& h : r.items) h.st = ItemSt::kStowed;   // an issued-but-unverified restore is re-checked below
+        const RE::TESForm* rightObj = a_ptr->GetEquippedObject(false);
+        for (const bool left : { false, true }) {
+            RE::TESForm* f = a_ptr->GetEquippedObject(left);
+            if (!f || !HandType(f->GetFormType())) continue;          // empty, or a spell: not drawn as a weapon
+            const bool both = BothHands(f);
+            if (left && both && f == rightObj) continue;              // one two-hander, read with the right hand
+            auto* obj = f->As<RE::TESBoundObject>();
+            if (!obj) continue;
+            auto*         xl  = WornList(a_ptr, obj, left, both);
+            const auto    uid = apmf::equipsink::ExtraUid(xl);
+            const bool known = std::any_of(r.items.begin(), r.items.end(), [&](const HandItem& h) {
+                return h.form == obj->GetFormID() && h.uid == uid && h.left == left;
+            });
+            mgr->UnequipObject(a_ptr, obj, xl, 1, HandSlot(left), /*queue*/ true, /*force*/ false, /*sounds*/ true,
+                               /*applyNow*/ false);
+            if (!known) {
+                HandItem h{};
+                h.form      = obj->GetFormID();
+                h.uid       = uid;
+                h.left      = left;
+                h.bothHands = both;
+                r.items.push_back(std::move(h));
+            }
+        }
+        if (r.items.empty()) {
+            g_stowed.erase(a_actor);
+            spdlog::info("[substrate] 0x{} HANDS stowed: L=none R=none (no weapon, shield or torch in a hand)",
+                         apmf::log::Hex(a_actor));
+            return;
+        }
+        spdlog::info("[substrate] 0x{} HANDS stowed: {} (queued UnequipObject, main thread; the hand floors keep them off "
+                     "until the restore)",
+                     apmf::log::Hex(a_actor), HandsText(r));
+    }
+
+    StowState StowSettled(RE::FormID a_actor, RE::Actor* a_ptr, std::uint64_t a_now, const char*& a_why) {
+        a_why = nullptr;
+        const auto it = g_stowed.find(a_actor);
+        if (it == g_stowed.end() || !a_ptr) return StowState::kClear;
+        std::string still;
+        for (const auto& h : it->second.items)
+            if (h.st == ItemSt::kStowed && InHand(a_ptr, h)) still += (still.empty() ? "" : ", ") + ItemText(h);
+        if (still.empty()) return StowState::kClear;
+        if (a_now - it->second.stowMs < kStowWaitMs) return StowState::kWaiting;
+        g_stowWhy = fmt::format("the hands were not stowed within {} ms (still in a hand: {}): the entry would draw them",
+                                kStowWaitMs, still);
+        a_why = g_stowWhy.c_str();
+        return StowState::kFailed;
+    }
+
+    void RestoreWhenFree(RE::FormID a_actor, const char* a_how, std::uint64_t a_now) {
+        const auto it = g_stowed.find(a_actor);
+        if (it == g_stowed.end()) return;
+        it->second.restoring = true;
+        it->second.closeMs   = a_now;
+        it->second.how       = a_how ? a_how : "?";
+        it->second.loggedHeld = it->second.loggedUnloaded = false;
+    }
+
+    void PollHands(std::uint64_t a_now) {
+        if (g_stowed.empty()) return;
+        auto* mgr = RE::ActorEquipManager::GetSingleton();
+        for (auto it = g_stowed.begin(); it != g_stowed.end();) {
+            Stowed&          r  = it->second;
+            const RE::FormID id = it->first;
+            if (!r.restoring) { ++it; continue; }
+            auto* actor = RE::TESForm::LookupByID<RE::Actor>(id);
+            if (!actor || actor->IsDead()) {
+                spdlog::warn("[substrate] 0x{} HANDS restore DROPPED ({}): {}; the stowed copies stay in the inventory: {}",
+                             apmf::log::Hex(id), r.how, actor ? "the actor is dead" : "the actor no longer resolves",
+                             HandsText(r));
+                it = g_stowed.erase(it);
+                continue;
+            }
+            if (!actor->Is3DLoaded()) {
+                if (!r.loggedUnloaded) {
+                    r.loggedUnloaded = true;
+                    spdlog::info("[substrate] 0x{} HANDS restore waits ({}): the actor is not loaded; restored when he is: {}",
+                                 apmf::log::Hex(id), r.how, HandsText(r));
+                }
+                ++it;
+                continue;
+            }
+            bool pending = false;
+            for (auto& h : r.items) {
+                if (h.st == ItemSt::kDone || h.st == ItemSt::kFailed) continue;
+                auto* obj = RE::TESForm::LookupByID<RE::TESBoundObject>(h.form);
+                if (!obj) {
+                    h.st  = ItemSt::kFailed;
+                    h.why = "the form no longer resolves";
+                    continue;
+                }
+                if (h.st == ItemSt::kIssued) {
+                    if (Worn(actor, obj, h)) { h.st = ItemSt::kDone; continue; }
+                    if (a_now - h.issuedMs >= kRestoreVerifyMs) {
+                        h.st  = ItemSt::kFailed;
+                        h.why = fmt::format("not worn {} ms after the equip was issued: the equip sink refused it (a ch.17 "
+                                            "declared set that leaves it out, a ch.26 force or another hand claim; see the "
+                                            "[apmf][equip-obs] / [handblock] lines)", kRestoreVerifyMs);
+                        continue;
+                    }
+                    pending = true;
+                    continue;
+                }
+                const bool              weap   = obj->GetFormType() == RE::FormType::Weapon;
+                const RE::BGSEquipSlot* slot   = (weap && !h.bothHands) ? HandSlot(h.left) : nullptr;
+                const std::uint32_t     compet = apmf::equipsink::Categorize(obj, slot);
+                apmf::handblock::HandHold hold{};
+                if (apmf::handblock::HeldFor(id, compet, h.form, apmf::handblock::SpellLike(obj), hold)) {
+                    if (!r.loggedHeld) {   // the sink would refuse it now: wait for the claim / floor to end
+                        r.loggedHeld = true;
+                        spdlog::info("[substrate] 0x{} HANDS restore waits ({}): {} competes for a hand still held "
+                                     "(R: {}, L: {}); it goes back when that claim ends.",
+                                     apmf::log::Hex(id), r.how, ItemText(h),
+                                     apmf::handblock::HoldDesc(hold, APMF_API::kEquipCat_Right),
+                                     apmf::handblock::HoldDesc(hold, APMF_API::kEquipCat_Left));
+                    }
+                    pending = true;
+                    continue;
+                }
+                if (Worn(actor, obj, h)) {   // already back (a client or the engine put it on)
+                    h.st  = ItemSt::kDone;
+                    h.why = "already back in the hand";
+                    continue;
+                }
+                bool carried = false;
+                auto* xl = ListByUid(actor, obj, h.uid, carried);
+                if (!carried) {
+                    h.st  = ItemSt::kFailed;
+                    h.why = "no copy of the form is carried any more";
+                    continue;
+                }
+                if (h.uid != 0 && !xl) {
+                    h.st  = ItemSt::kFailed;
+                    h.why = "the stowed copy (its uid) is no longer carried; no other copy substituted";
+                    continue;
+                }
+                if (!mgr) {
+                    h.st  = ItemSt::kFailed;
+                    h.why = "ActorEquipManager singleton is null";
+                    continue;
+                }
+                {
+                    apmf::equipsink::ApmfEquipScope scope;   // the sink logs it as APMF's own (not a bypass)
+                    mgr->EquipObject(actor, obj, xl, 1, slot, /*queue*/ true, /*force*/ false, /*sounds*/ true,
+                                     /*applyNow*/ false);
+                }
+                h.st       = ItemSt::kIssued;
+                h.issuedMs = a_now;
+                pending    = true;
+            }
+            if (pending) { ++it; continue; }
+            std::string failed;
+            for (const auto& h : r.items)
+                if (h.st == ItemSt::kFailed) failed += fmt::format("{}{}: {}", failed.empty() ? "" : "; ", ItemText(h), h.why);
+            if (failed.empty())
+                spdlog::info("[substrate] 0x{} HANDS restored ({}, +{} ms after the close): {}", apmf::log::Hex(id), r.how,
+                             a_now - r.closeMs, HandsText(r));
+            else
+                spdlog::warn("[substrate] 0x{} HANDS restore FAILED ({}): {} (stowed: {})", apmf::log::Hex(id), r.how,
+                             failed, HandsText(r));
+            it = g_stowed.erase(it);
+        }
+    }
+
+    void ResetHands(const char* a_why) {
+        for (const auto& [id, r] : g_stowed)
+            if (!r.items.empty())
+                spdlog::warn("[substrate] 0x{} HANDS restore DROPPED ({}): the world was replaced, so the record no longer "
+                             "describes it; the stowed copies stay in the saved inventory: {}",
+                             apmf::log::Hex(id), a_why ? a_why : "reset", HandsText(r));
+        g_stowed.clear();
     }
 }

@@ -9,8 +9,8 @@ build/finding/workflow change.
 MFO S3 tier-3 review F1 (SEV-2): a substrate holder with a ch.8b cast claim had nothing that puts the spell in hand,
 and marth ruled MFO does not equip. Research (disassembly, both runtimes; `channels/SubstrateEquip.cpp` header):
 the tree reaches a cast ONLY through its Action branch (Repeat > `Acquire Action Resource` > per-slot EquipContext >
-ActionEquipmentSelector > Magic Sequence = [EquipSpell, Magic Link] > the cast leaves), and the 10-19 dry runs show
-the allow-list cut that branch at `AcquireResource<2>` for every holder, so no substrate cast was reachable at all.
+ActionEquipmentSelector > Magic Sequence = [EquipSpell, Magic Link] > the cast leaves), and the allow-list denied
+every `AcquireResource<2>`, the "Action" one at the head of that branch, so no substrate cast was reachable at all.
 - **Allowed while a DRIVING cast claim stands:** `CombatBehaviorEquipSpell` and the "Action" instance of
   `CombatBehaviorAcquireResource<2>` (node+0x28 resource name; its "Movement" twin stays denied). The leaf equips the
   equip context's item into its own hand; the 0x0F seats (EquipGate per hand, HandBlock) already admit only the
@@ -18,6 +18,11 @@ the allow-list cut that branch at `AcquireResource<2>` for every holder, so no s
 - **Logs:** `[substrate] 0x<f> EQUIP allowed: <node> for claimed spell 0x<s> hand <L/R>` once per node per window;
   `EQUIP window end (...): ... REACHED the hand at +<ms>` or a WARN `did NOT reach the hand`.
 - `[CombatSubstrate] bSubstrateEquip` (1). APMF-B99 traced (no function node gates or performs the equip).
+- **Round 2 (tier-3 review of a0112b24, fix-first):** F1/F2 (marth: "Harbinger sheathes/stows first" / "Harbinger
+  restores it"): a client substrate stows every weapon, shield and torch from both hands before the entry (queued
+  UnequipObject, ch.17's road) and restores the same ExtraUniqueID copies at close / drop once no claim holds the
+  hand (`HANDS stowed` / `HANDS restored` / `HANDS restore FAILED`). F3: Open also needs the Cast facet outranked
+  and the 0x0F deny-complete refusal, the hand-claim block and the equip sink standing. Backlog APMF-B141..B144.
 - Next: the MFO S3 field run (a client cast claim + substrate) must show `EQUIP allowed`, `REACHED the hand` and the
   census FIRED line. Tier-3 review pending.
 
