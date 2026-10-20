@@ -4,6 +4,23 @@ Updated 2026-10-13. Current version **v0.13.1** (cut 2026-10-13, ABI v24, see CH
 shipped, what's probe-gated, what's next. Keep this current in the SAME change as any
 build/finding/workflow change.
 
+## HEAD OF WORK 2026-10-19 -- SUBSTRATE SPELL EQUIP (the engine's own AI equips the claimed spell), branch `feat/apmf-substrate-equip`, NOT merged
+
+MFO S3 tier-3 review F1 (SEV-2): a substrate holder with a ch.8b cast claim had nothing that puts the spell in hand,
+and marth ruled MFO does not equip. Research (disassembly, both runtimes; `channels/SubstrateEquip.cpp` header):
+the tree reaches a cast ONLY through its Action branch (Repeat > `Acquire Action Resource` > per-slot EquipContext >
+ActionEquipmentSelector > Magic Sequence = [EquipSpell, Magic Link] > the cast leaves), and the 10-19 dry runs show
+the allow-list cut that branch at `AcquireResource<2>` for every holder, so no substrate cast was reachable at all.
+- **Allowed while a DRIVING cast claim stands:** `CombatBehaviorEquipSpell` and the "Action" instance of
+  `CombatBehaviorAcquireResource<2>` (node+0x28 resource name; its "Movement" twin stays denied). The leaf equips the
+  equip context's item into its own hand; the 0x0F seats (EquipGate per hand, HandBlock) already admit only the
+  claim's driven form on the claimed hand and nothing on the floored hand. No Harbinger equip call, no new id or seat.
+- **Logs:** `[substrate] 0x<f> EQUIP allowed: <node> for claimed spell 0x<s> hand <L/R>` once per node per window;
+  `EQUIP window end (...): ... REACHED the hand at +<ms>` or a WARN `did NOT reach the hand`.
+- `[CombatSubstrate] bSubstrateEquip` (1). APMF-B99 traced (no function node gates or performs the equip).
+- Next: the MFO S3 field run (a client cast claim + substrate) must show `EQUIP allowed`, `REACHED the hand` and the
+  census FIRED line. Tier-3 review pending.
+
 ## HEAD OF WORK 2026-10-19 -- SEV-1 ANCHOR LEAK (a non-holder fought the substrate anchor), branch `fix/apmf-anchor-leak`, NOT merged
 
 Field, LoreRim 2026-10-19 14:28 (evidence `_evidence/2026-10-19b-lorerim-town-census/`): a teleport put Sven, NOT a
