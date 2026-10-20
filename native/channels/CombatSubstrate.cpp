@@ -1201,7 +1201,8 @@ namespace {
         auto* actor = RE::TESForm::LookupByID<RE::Actor>(a_sub.id);
         auto* proc  = actor ? actor->GetActorRuntimeData().currentProcess : nullptr;
         apmf::substrateprobe::Closing(a_sub.id, actor, true, true, apmf::clock::MonotonicMs());   // R1
-        apmf::substratebark::Closing(a_sub.slot, a_sub.id, true, apmf::clock::MonotonicMs());     // R5 F-2 result line
+        apmf::substratebark::Closing(a_sub.slot, a_sub.id, true, apmf::clock::MonotonicMs(),     // R5 F-2: put-back + line
+                                     actor && HasController(actor) ? actor->GetActorRuntimeData().combatController->combatGroup : nullptr);
         if (const auto t = apmf::substrateaggressor::Closing(a_sub.id); !t.empty()) spdlog::info("[substrate] 0x{} {}.", Hex(a_sub.id), t);
         apmf::substrateequip::Closing(a_sub.slot, a_sub.id, actor, "real combat (dropped)", apmf::clock::MonotonicMs());
         apmf::substrateequip::RestoreWhenFree(a_sub.id, "real combat (dropped)", apmf::clock::MonotonicMs());   // fights with his gear

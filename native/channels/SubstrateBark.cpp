@@ -51,7 +51,9 @@
 // REAL COMBAT (#0 (j) condition 5: never suppress a real fight's behaviour). In the held engagement's detection
 // seat, inside the engine's own write-locked update of the group (WriteLockedHere, the music deny's rule), a group
 // that shows a real target and still reads EXACTLY Harbinger's two values gets the values it had before the write
-// back. The seat also READS the two timers at the first detection pass (about 0.5 s after the group is built): a
+// back. The real-combat DROP does the same on the game thread under the group's WRITE lock (BSWriteLockGuard, the
+// verified lock rows) for the group DropSub removes the anchor from: a hit or the party's fight never shows the seat
+// a real target in the holder's group. The seat also READS the two timers at the first detection pass (about 0.5 s after the group is built): a
 // value that is no longer Harbinger's means the engine passed every other gate and armed it, i.e. it SPOKE.
 //
 // THREADING. Arm / Disarm / Closing / Reset: game thread. BeforeUpdateCombat: any UpdateCombat job (one actor per
@@ -59,7 +61,7 @@
 // job, under the engine's group write lock. The records are atomics; a slot's generation is re-read after the
 // fields (a reused slot reads as another record) before anything is written to the engine.
 //
-// SCOPE. Exactly 1.6.1170 and 1.5.97 (1.7.104: the four rows have no 1.7.104 entry and a RELOCATION_ID miss is
+// SCOPE. Exactly 1.6.1170 and 1.5.97 (1.7.104: the bark rows have no 1.7.104 entry and a RELOCATION_ID miss is
 // fatal there, so the ids are never built: refused by name). [CombatSubstrate] bSubstrateBarkDeny=0 switches it
 // off (every OPEN logs the hole).
 // ============================================================================
@@ -197,6 +199,11 @@ namespace apmf::substratebark {
         ok = apmf::allowance::SeatVerified(core + (ae ? 0x106 : 0x10E), "Substrate.Bark.DetectionTimerSlot") && ok;
         ok = apmf::allowance::SeatVerified(core + (ae ? 0x118 : 0x120), "Substrate.Bark.TimerGate") && ok;
         ok = apmf::allowance::SeatVerified(clock, "Substrate.Bark.AIClock") && ok;
+        // the drop's put-back takes the group's write lock (BSWriteLockGuard) on the game thread
+        ok = apmf::allowance::SeatVerified(REL::Relocation<std::uintptr_t>{ RE::Offset::BSReadWriteLock::LockForWrite }.address(),
+                                           "CommonLib.BSReadWriteLock.LockForWrite") && ok;
+        ok = apmf::allowance::SeatVerified(REL::Relocation<std::uintptr_t>{ RE::Offset::BSReadWriteLock::UnlockForWrite }.address(),
+                                           "CommonLib.BSReadWriteLock.UnlockForWrite") && ok;
         if (!ok)
             return "the address self-check refused a row the bark deny rests on (listed above): without it the substrate "
                    "would switch the combat-start bark on undenied";
@@ -260,9 +267,14 @@ namespace apmf::substratebark {
             tc.timer   = hold;
             r.clockBits.store(Bits(now), std::memory_order_relaxed);
             r.armedMs.store(apmf::clock::MonotonicMs(), std::memory_order_relaxed);
+            // pending -> armed in ONE compare-exchange: a Forget (game thread) that won the race leaves the state 0 and
+            // the counters to its own exchange.
             const std::uint32_t add = kArmed | (cc->startedCombat ? kLate : 0u);
-            if (r.state.fetch_or(add, std::memory_order_acq_rel) & kPending) {
-                r.state.fetch_and(~kPending, std::memory_order_acq_rel);
+            std::uint32_t       cur = r.state.load(std::memory_order_acquire);
+            while ((cur & (kUsed | kPending)) == (kUsed | kPending) &&
+                   !r.state.compare_exchange_weak(cur, (cur & ~kPending) | add, std::memory_order_acq_rel)) {
+            }
+            if ((cur & (kUsed | kPending)) == (kUsed | kPending)) {
                 g_pending.fetch_sub(1, std::memory_order_relaxed);
                 g_armed.fetch_add(1, std::memory_order_relaxed);
             }
@@ -316,9 +328,32 @@ namespace apmf::substratebark {
         }
     }
 
-    void Closing(int a_slot, RE::FormID a_holder, bool a_dropped, std::uint64_t a_nowMs) {
+    void Closing(int a_slot, RE::FormID a_holder, bool a_dropped, std::uint64_t a_nowMs, RE::CombatGroup* a_dropGroup) {
         if (a_slot < 0 || a_slot >= kMaxSlots) return;
         Rec& r = g_recs[a_slot];
+        // The real-combat DROP: the seat's put-back needs a locked detection pass that sees the real target, which a
+        // hit or the party's fight (the foe not in this group), or a first sighting outside the locked update, never
+        // gives. So the drop puts the values back itself, on the game thread under the group's WRITE lock, on the group
+        // DropSub reads from the holder's controller for its RemoveTarget (the same game-thread exposure, APMF-B26).
+        if (a_dropped && a_dropGroup) {
+            const std::uint32_t s0 = r.state.load(std::memory_order_acquire);
+            if ((s0 & kUsed) && (s0 & kArmed) && !(s0 & (kRestored | kNoRestore)) &&
+                r.holder.load(std::memory_order_acquire) == a_holder) {
+                RE::BSWriteLockGuard         lk(a_dropGroup->lock);
+                std::array<std::uint32_t, 4> o{};
+                const bool                   ours = HarbingerValues(Read(a_dropGroup), &o);
+                if (ours) {
+                    auto& ta   = a_dropGroup->detectionDialogueTimers[kTimerAlert];
+                    auto& tc   = a_dropGroup->detectionDialogueTimers[kTimerCombat];
+                    ta.aiTimer = Flt(o[0]);
+                    ta.timer   = Flt(o[1]);
+                    tc.aiTimer = Flt(o[2]);
+                    tc.timer   = Flt(o[3]);
+                }
+                r.restoredMs.store(apmf::clock::MonotonicMs(), std::memory_order_relaxed);
+                r.state.fetch_or(ours ? kRestored : kNoRestore, std::memory_order_acq_rel);
+            }
+        }
         const std::uint32_t st = r.state.load(std::memory_order_acquire);
         if (!(st & kUsed) || r.holder.load(std::memory_order_acquire) != a_holder) {
             if (!On())
@@ -362,8 +397,7 @@ namespace apmf::substratebark {
                                         "values)",
                                         Since(r.restoredMs.load(std::memory_order_relaxed), t0));
                 else if (a_dropped)
-                    what += "; dropped for real combat with no real target seen in his group (the timers run out "
-                            "on their own)";
+                    what += "; dropped for real combat with no group to put the values back in";
             }
             spdlog::info("[substrate] 0x{} BARK DENY result: {}.", Hex(a_holder), what);
         } catch (...) {

@@ -540,7 +540,9 @@ with `kIntent_CombatSubstrate` beside its `kIntent_Cast` claim. It is legal only
    construction (the record is made pending BEFORE the entry's StartCombat, because the UpdateCombat job is not
    ordered against the game thread). A held group that shows a REAL target gets its two values from before the
    write put back, inside the engine's own write-locked update (the music deny's `WriteLockedHere` rule), only
-   while they still read exactly Harbinger's values; two holders in one group share the first one's "before"
+   while they still read exactly Harbinger's values, and the real-combat DROP does the same on the game thread under
+   the group's write lock for the group it removes the anchor from (a hit or the party's fight never shows the seat a
+   real target); two holders in one group share the first one's "before"
    values. Verified rows `Substrate.Bark.ControllerStartTopicCall`, `.DialogueCoreCall`, `.DetectionTimerSlot`,
    `.TimerGate` and the AI clock `.AIClock`; the 0xE4 layer 0 must be installed. (g) THE AGGRESSOR BIT
    (`channels/SubstrateAggressor.cpp`). StartCombat marks the holder the aggressor (`AIProcess+0x136` bit 2: a

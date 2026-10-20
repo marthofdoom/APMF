@@ -57,8 +57,11 @@ namespace apmf::substratebark {
     void SeatRealTarget(RE::CombatGroup* a_group, bool a_writeLockedHere);
 
     // GAME THREAD. CloseSub / DropSub (only for an opened substrate): the one BARK result line, then the record
-    // is forgotten. `a_dropped` = the real-combat drop.
-    void Closing(int a_slot, RE::FormID a_holder, bool a_dropped, std::uint64_t a_nowMs);
+    // is forgotten. `a_dropped` = the real-combat drop; `a_dropGroup` = the holder's group as DropSub reads it for its
+    // RemoveTarget: when the seat has not put Harbinger's values back yet and they still read Harbinger's, the drop
+    // puts them back under that group's WRITE lock (a hit or the party's fight never shows the seat a real target).
+    void Closing(int a_slot, RE::FormID a_holder, bool a_dropped, std::uint64_t a_nowMs,
+                 RE::CombatGroup* a_dropGroup = nullptr);
 
     // GAME THREAD. combatsubstrate::ResetAll (revert / kPreLoadGame): forget every record.
     void Reset();
