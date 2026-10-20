@@ -2116,7 +2116,7 @@ Handle h = g_apmf->RequestEx(follower, kIntent_Place, 0.0f, &p);   // basis is n
 
 | Bit | Name | Effect |
 |---|---|---|
-| 0 | `kPlace_OnlyIfUnloaded` | Refused (`kPlaceWhy_ActorLoaded`) when the actor has 3D or stands in an attached cell. No visible pop |
+| 0 | `kPlace_OnlyIfUnloaded` | Refused (`kPlaceWhy_ActorLoaded`) when the actor has 3D or stands in an attached interior cell (outdoors only his 3D counts). No visible pop |
 | 1 | `kPlace_RefuseIfPlayerPresent` | Refused (`kPlaceWhy_PlayerPresent`) when the player's cell is the actor's cell or the destination cell. Outdoors that is the exact cell only, not the loaded grid around it |
 | 2 | `kPlace_SetYaw` | Face `fval`. Without it the actor keeps his own heading |
 

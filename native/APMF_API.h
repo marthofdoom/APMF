@@ -2570,7 +2570,7 @@ namespace APMF_API {
     // kIntent_Place's param.ival. APPEND-ONLY: never renumber; an unknown bit is REFUSED at the call.
     enum PlaceFlags : std::uint32_t {
         kPlace_OnlyIfUnloaded        = 1u << 0,  // REFUSE (kPlaceWhy_ActorLoaded) when the actor has 3D or stands in an
-                                                 //   attached (loaded) cell: no visible pop
+                                                 //   attached INTERIOR cell (outdoors: 3D only): no visible pop
         kPlace_RefuseIfPlayerPresent = 1u << 1,  // REFUSE (kPlaceWhy_PlayerPresent) when the player's cell is the actor's
                                                  //   current cell or the destination cell (outdoors: that exact cell only)
         kPlace_SetYaw                = 1u << 2,  // face param.fval (radians, world Z rotation); without it the actor

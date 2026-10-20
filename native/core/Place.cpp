@@ -147,8 +147,12 @@ namespace apmf::place {
                                           static_cast<int>(destForm->GetFormType())));
             }
 
+            // LOADED = the actor has 3D, or stands in an attached INTERIOR cell. Outdoors only the 3D counts: an
+            // unloaded persistent actor's parent cell can be the worldspace's persistent cell, which is not a
+            // place the player can see, and its attach state is not one this file reads anything into.
             auto* fromCell = actor->GetParentCell();
-            const bool loaded = actor->Is3DLoaded() || (fromCell && fromCell->IsAttached());
+            const bool loaded =
+                actor->Is3DLoaded() || (fromCell && fromCell->IsInteriorCell() && fromCell->IsAttached());
             if ((a_flags & APMF_API::kPlace_OnlyIfUnloaded) && loaded)
                 return refuse(APMF_API::kPlaceWhy_ActorLoaded, 0, "");
             if (a_flags & APMF_API::kPlace_RefuseIfPlayerPresent) {

@@ -374,7 +374,7 @@ A [placement](FACETS.md#place-kintent_place) is ONE engine move, `TESObjectREFR:
 
 **The destination.** `param.form` is a REFERENCE (the actor lands at its position plus `param.pos`, in its cell and worldspace: exactly Papyrus `MoveTo(akTarget, x, y, z)`), or an INTERIOR CELL (the actor lands at `param.pos` in it). An exterior cell is refused: name a reference in that worldspace and an offset.
 
-**The flags** (`param.ival`, `PlaceFlags`): `kPlace_OnlyIfUnloaded` (no visible pop: refused when the actor has 3D or stands in an attached cell), `kPlace_RefuseIfPlayerPresent` (refused when the player's cell is the actor's cell or the destination cell), `kPlace_SetYaw` (face `param.fval` radians, else keep his heading). An unknown bit is refused at the call.
+**The flags** (`param.ival`, `PlaceFlags`): `kPlace_OnlyIfUnloaded` (no visible pop: refused when the actor has 3D or stands in an attached interior cell, and outdoors only his 3D counts), `kPlace_RefuseIfPlayerPresent` (refused when the player's cell is the actor's cell or the destination cell), `kPlace_SetYaw` (face `param.fval` radians, else keep his heading). An unknown bit is refused at the call.
 
 **Arbitration.** Refused (`kPlaceWhy_TravelOwned` / `kPlaceWhy_HoldOwned`, `blocker` = that claim's handle) when the winning ch.19 travel or ch.1 movement block claim on the actor belongs to another client, or to no client Harbinger can name. The client is taken from the calling DLL at the call, the same attribution every claim gets. Your own claim does not block a placement and Harbinger does not end it.
 
