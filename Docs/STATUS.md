@@ -4,6 +4,26 @@ Updated 2026-10-13. Current version **v0.13.1** (cut 2026-10-13, ABI v24, see CH
 shipped, what's probe-gated, what's next. Keep this current in the SAME change as any
 build/finding/workflow change.
 
+## HEAD OF WORK 2026-10-20 -- TORCH SEAT (ch.17 owns the torch, ClickUp 86e3qmmed H1), branch `feat/apmf-torch-seat`, NOT merged
+
+Field 2026-10-18: a seated follower's declared torch was stowed every ~1 s with no Harbinger line (the engine's torch
+updater, AE 39948, stows it while sitting, and unequips are not seated; agentlogs/diag-torch.md). marth 2026-10-20:
+"1 is fine, but it still violates harbinger blocking every other source when its claim is open."
+- **Seat:** `core/TorchSeat.cpp`, write_call<5> on the updater's only call (AE 39637+0x8B1 / SE 38606+0x798 / 1.7.104
+  0x704C70+0x8B1). For an actor whose winning ch.17 claim owns Light (owned, not denied, declared, outranking Engine on
+  EquipWeapon, not observe-only) the updater is SKIPPED: the stow and the light evaluator are both denied. Harbinger
+  equips nothing there. With no claim owning Light the engine's torch logic is untouched; on a ch.17-claimed actor its
+  stow is now logged (`engine torch updater UNEQUIPPED`, rate-capped). INVARIANTS #17a amended (a second call-site seat).
+- **Rows:** `TorchSeat.UpdateTorch`, `TorchSeat.Site.AiUpdate`, verified on 1.6.1170 / 1.5.97 / 1.7.104 (1.7.104 through
+  the MIT id table, which carries 39637 and 39948; no raw row). The baseline regeneration was byte-identical first.
+- **INI:** `[EquipAuthority] bTorchDeny=1`. **Log label:** the sink's `path=AiCommand` for 39948 / 38902 is now
+  `path=TorchUpdate`.
+- **MFO side (not here):** own `kEquipCat_Light` only while the torch rule holds, never declare a torch while seated,
+  sleeping or in furniture.
+- Field check: a follower whose torch rule holds keeps the torch while walking at night (`[apmf][torch] ... DENIED`
+  once); when he sits, MFO stops owning Light and the engine stows it (an `UNEQUIPPED` line only if a ch.17 claim
+  remains). No ABI or co-save change.
+
 ## HEAD OF WORK 2026-10-20 -- COMBAT SUBSTRATE ON 1.7.104 (ch.27 no longer refused there), branch `feat/apmf-substrate-1-7-104`, NOT merged
 
 marth 2026-10-19 Q4: "substrate unavailable while Harbinger present shouldn't happen". The substrate refused 1.7.104

@@ -686,3 +686,17 @@ The engine facts the substrate reads without a row, compared on 1.7.104 (all ide
 
 Not proven byte-for-byte: the aggressor bit (AIProcess +0x136 bit 2) has no `test/or byte [reg+0x136],4` encoding in
 either image; it is read for log lines only (R1 probes, `aggressorSeen`), never decided on.
+
+### Torch seat (2026-10-20, `feat/apmf-torch-seat`)
+
+Two normal rows (no raw row): the fork's MIT id table carries both AE ids (39637 -> 0x704C70, 39948 -> 0x7265C0), so the
+generator verifies them on 1.7.104 by the 1.6.1170 signatures at the table's RVAs, and the code resolves them with REL::ID.
+
+| row | 1.6.1170 | 1.5.97 | 1.7.104 | evidence |
+|---|---|---|---|---|
+| TorchSeat.UpdateTorch (function) | 39948 0x713A80 | 38902 0x6801D0 | 0x7265C0 | 1.7.104 body instruction-identical to 1.6.1170 (154 insns, rel32 / RIP normalised); 1.5.97 the same shape (register allocation, actor-state read +0xC4 for AE +0xCC, one extra null test) |
+| TorchSeat.Site.AiUpdate (callsite E8) | 39637+0x8B1 = 0x6F2951 | 38606+0x798 = 0x65F7D8 | 0x704C70+0x8B1 = 0x705521 | the updater's ONLY reference on each build: every rel32 in the image whose target is the updater (one E8; 1.5.97 also a `movups [rax+disp32]` coincidence, not RIP-relative) and no absolute 8-byte pointer to it. Args at the site: rcx = r13 (AIProcess), rdx = r12 (Actor) |
+
+Also checked: ShouldUseTorch (AE 0x67E590 / SE 0x5EC230 / 1.7.104 0x691050) has exactly three callers on each build (the
+updater, CombatInventoryItemTorch slot 0x0F, and a helper reached only from the CombatInventoryItemMagicT slot 0x0F
+functions); of the 37 UnequipObject (38901) callers on 1.6.1170 only the updater tests formType 0x1F.

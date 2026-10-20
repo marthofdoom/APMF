@@ -1621,6 +1621,32 @@ Rules of the road:
 
 > **Key Concept 9 (what `IsEquipAuthorityEnforced` says)** It is true when the seat is installed and `bEquipObserveOnly` is 0, the default. Then every category you declare is enforced. A user who opts in with `bEquipObserveOnly=1` makes it false. A claim's own `kEquipAuth_ObserveOnly` bit is not consulted by it. (`bEquipEnforceArmor`, the 2026-10-06 armor-only switch, is retired and ignored.)
 
+#### Torch ownership (2026-10-20)
+
+The engine decides torches outside combat in one function, the torch updater (AE id 39948, SE 38902, 1.7.104 the same body as AE). The per-actor AI update calls it on every update of every NPC, from one call site. It does two things:
+
+- **The stow.** On every update, while the actor sits, sleeps, uses furniture or has an interaction, it takes a held torch off.
+- **The evaluator.** Out of combat, every 5 seconds, it asks whether the light calls for a torch and equips one or takes it off.
+
+The equip seat sees the evaluator's equip (`path=TorchUpdate`) but neither take-off, because unequips are not seated (`kEquipAuth_DenyUnequip` is RESERVED).
+
+marth's ruling: while your claim owns Light, Harbinger blocks every other torch source, the stow included. So for an actor whose winning ch.17 claim owns `kEquipCat_Light`, the torch seat (`core/TorchSeat.cpp`) skips the torch updater entirely. Both the stow and the evaluator stop for that actor. Harbinger equips nothing there. You declared the torch, and the equip pass above equips it.
+
+"Owns Light" means all of these:
+
+- Light is in your OWNED mask and not in your DENIED mask.
+- The claim has a declaration (`count != 0`).
+- Your priority on `EquipWeapon` is above the Engine source's (20 by default). If the user raised the Engine above you, the updater runs and a `STANDS` line is logged once.
+- Observe-only (`bEquipObserveOnly=1` or the claim's own bit) logs `would-deny` once and lets the updater run.
+
+Rules of the road for a torch:
+
+- **Gate the declaration, not the seat.** Declare a torch and own Light only while your torch rule holds. Do not declare one while the actor sits, sleeps or uses furniture. Then no claim owns Light and the engine stows the torch the way it always does.
+- **Not owning Light leaves the engine alone.** The updater runs untouched. On an actor with a ch.17 claim, a torch it takes off is logged once per actor per 10 s (at most 30 lines a minute): `engine torch updater UNEQUIPPED`.
+- **The log is per streak.** A deny streak logs one line when it starts and one when it ends, with the number of updates it skipped.
+- **In combat** the updater only stows. The combat AI's torch choice goes through the `CheckShouldEquip` seat on the Torch item, as before.
+- `[EquipAuthority] bTorchDeny=0` removes the seat. The engine then stows and evaluates torches for every actor, and only its torch equips are refused by the equip seat.
+
 #### Lifetime
 
 Standing, no time limit. It ends on `Release`, a higher basis, a load or an unload. Release clears the declaration. The release unequips nothing and re-equips nothing. A declaration on a claim that does not own the facet is stored and takes effect the moment that claim wins. A win is a declaration event and runs the equip pass.
@@ -1694,7 +1720,7 @@ bool HarbingerEnforces() {
 
 #### Version, INI and field status
 
-ABI 7 (first shipped in 0.9.5), 8 adds a hand per item, `kEquipAuth_DenyPlayerMenu` and `IsEquipAuthorityEnforced`, 9 adds the scope, 25 adds an instance per item. Keys in `[EquipAuthority]`: `bEquipAuthority` (1), `bEquipObserveOnly` (0 since 2026-10-13), `bEquipDenyScript` (0). `bEquipEnforceArmor` is retired. `bHandClaimBlocksEquip` in `[HandBlock]`. In use by MFO. Every declared category is enforced by default. [Appendix E](#appendix-e-equip-authority-probe-criteria) is now a field check, read with `bEquipObserveOnly=1` if you want it without refusals. Built, not yet battle-tested.
+ABI 7 (first shipped in 0.9.5), 8 adds a hand per item, `kEquipAuth_DenyPlayerMenu` and `IsEquipAuthorityEnforced`, 9 adds the scope, 25 adds an instance per item. Keys in `[EquipAuthority]`: `bEquipAuthority` (1), `bEquipObserveOnly` (0 since 2026-10-13), `bEquipDenyScript` (0), `bTorchDeny` (1, the torch seat, 2026-10-20). `bEquipEnforceArmor` is retired. `bHandClaimBlocksEquip` in `[HandBlock]`. In use by MFO. Every declared category is enforced by default. [Appendix E](#appendix-e-equip-authority-probe-criteria) is now a field check, read with `bEquipObserveOnly=1` if you want it without refusals. Built, not yet battle-tested.
 
 **Check Your Understanding: ch.17**
 

@@ -1308,6 +1308,21 @@ thing that derails one. Concretely:
   the AI never plans around an item the sink would refuse. (e) "Harbingers denies and allows should now be
   engaged out of combat as well": nothing in ch.17 reads combat state; out of combat the sink alone
   covers every equip path.
+  **AMENDED 2026-10-20 (the torch seat, `feat/apmf-torch-seat`, ClickUp 86e3qmmed H1): a SECOND #17a
+  call-site seat, its own argument made here.** marth: "1 is fine, but it still violates harbinger blocking
+  every other source when its claim is open." The engine's torch updater (AE 39948 / SE 38902) stows a held
+  torch while the actor sits / sleeps / has an interaction / a furnitureIdle and, out of combat, equips or
+  unequips by light level. It is non-virtual and its stow is an UNEQUIP the sink cannot see, so no vtable seat
+  covers it. Conditions: (1) the site is the updater's ONLY reference on every build (the per-actor AI update's
+  E8, 39637+0x8B1 / 38606+0x798 / 1.7.104 0x704C70+0x8B1; rel32 and absolute-pointer scans), an internal call,
+  not a public entry; (2) install SeatVerifies the site row and the target row and re-reads the E8 (it must still
+  call the verified updater) before writing, any mismatch refuses the seat; (3) ids and offsets from each
+  runtime's disassembly (1.7.104 body instruction-identical to 1.6.1170); (4) deny = the updater is not called,
+  for an actor whose winning ch.17 claim owns `kEquipCat_Light` (owned, not denied, declared, ranked above the
+  Engine source on EquipWeapon, not observe-only); Harbinger equips nothing there, the declared torch is equipped
+  by the ch.17 enforce pass; (5) every other actor runs it untouched; on an actor holding a ch.17 claim that
+  does not own Light a stow is LOGGED (passive, rate-capped), the player and unclaimed actors unlogged.
+  `core/TorchSeat.cpp`, INI `[EquipAuthority] bTorchDeny` (default 1).
   Under #17a the facet is taken WHOLE (declare the worn set → APMF equips it and refuses
   everything else until the client re-declares or releases), which is full control of the
   facet exactly as a per-path deny would be. Any further call-site seat needs its own
@@ -1347,7 +1362,7 @@ The current codebase satisfies this: every hook in `native/core/` is `write_vfun
 version-pinned `VTABLE_*` symbol, with ONE exception, the #17a seat: `core/EquipSink.cpp`
 is the only `write_call`/`AllocTrampoline` in `native/` (2026-09-15), and it exists only
 under #17a's five conditions. No other call-site patch remains anywhere in the tree after
-T4's removal.
+T4's removal. (2026-10-20: `core/TorchSeat.cpp` is a second #17a seat under the amendment above.)
 
 ## Deny completeness
 
