@@ -4864,6 +4864,56 @@
    "seat": "TargetPin.CombatController.SetTarget.1_7_104",
    "rva": "0x559630",
    "source": "channels/TargetPin.cpp kSetTarget17 (1.7.104 only: AE id 33235 has no MIT-table row)"
+  },
+  {
+   "seat": "Substrate.CombatGroup.RemoveTarget.1_7_104",
+   "rva": "0x803D70",
+   "source": "channels/CombatSubstrate.cpp k17RemoveTarget (1.7.104 only: AE id 44705 has no MIT-table row)"
+  },
+  {
+   "seat": "EngagementHold.CombatGroup.UpdateTargetDetection.1_7_104",
+   "rva": "0x805090",
+   "source": "channels/CombatEntry.cpp k17UpdateTargetDetection (1.7.104 only: AE id 44725 has no MIT-table row)"
+  },
+  {
+   "seat": "EngagementHold.Site.ListenerDetection.1_7_104",
+   "rva": "0x8031C5",
+   "source": "channels/CombatEntry.cpp k17ListenerSite (1.7.104 only: AE id 44699 has no MIT-table row)"
+  },
+  {
+   "seat": "EngagementHold.Site.GroupDetectionPass.1_7_104",
+   "rva": "0x80CF43",
+   "source": "channels/CombatEntry.cpp k17PassSite (1.7.104 only: AE id 44804 has no MIT-table row)"
+  },
+  {
+   "seat": "Substrate.CombatGroup.MusicWriteLock.1_7_104",
+   "rva": "0x803740",
+   "source": "channels/CombatSubstrate.cpp k17MusicWriteLock (1.7.104 only: AE id 44703 has no MIT-table row)"
+  },
+  {
+   "seat": "Substrate.CombatGroup.DetectionPassInUpdate.1_7_104",
+   "rva": "0x80377D",
+   "source": "channels/CombatSubstrate.cpp k17DetectionPassInUpdate (1.7.104 only: AE id 44703 has no MIT-table row)"
+  },
+  {
+   "seat": "Substrate.CombatGroup.MusicUndecided.1_7_104",
+   "rva": "0x80394C",
+   "source": "channels/CombatSubstrate.cpp k17MusicUndecided (1.7.104 only: AE id 44703 has no MIT-table row)"
+  },
+  {
+   "seat": "Substrate.CombatManager.MusicPlayTest.1_7_104",
+   "rva": "0x83E0F9",
+   "source": "channels/CombatSubstrate.cpp k17MusicPlayTest (1.7.104 only: AE id 46888 has no MIT-table row)"
+  },
+  {
+   "seat": "Substrate.BSMusicManager.Reader.1_7_104",
+   "rva": "0x641B9F",
+   "source": "channels/CombatSubstrate.cpp k17MusicReader (1.7.104 only: AE id 36550 has no MIT-table row)"
+  },
+  {
+   "seat": "Substrate.MenuTopicManager.Reader.1_7_104",
+   "rva": "0xA2D7C7",
+   "source": "channels/CombatSubstrate.cpp k17MenuTopicReader (1.7.104 only: AE id 56194 has no MIT-table row)"
   }
  ]
 }

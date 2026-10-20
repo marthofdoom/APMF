@@ -16,7 +16,7 @@ Offline result of this generation: 1.6.1170.0 246/246 verified, 0 refused, 1.5.9
 (`data/mit-idtable-v1-1-7-104-0.bin`, revision 3, 17751 records, SkyrimSE.exe TimeDateStamp 0x6A8C7046; built into every plugin, it is
 what SelfCheck queries at runtime; authoritative) with the evidence CSVs beside it, keyed by
 the 1.6.1170 id, re-verified against the plaintext 1.7.104 executable by the same row-kind checks (see the script
-docstring). Offline result: 1.7.104.0 247/289 verified, 42 NOT verified (28 of them BY DESIGN: 1.5.97-only labels whose AE twin row carries the 1.7.104 fact). A not-verified seat has no row in the 1.7.104 table,
+docstring). Offline result: 1.7.104.0 257/299 verified, 42 NOT verified (28 of them BY DESIGN: 1.5.97-only labels whose AE twin row carries the 1.7.104 fact). A not-verified seat has no row in the 1.7.104 table,
 so `IsVerifiedAddress` is false and the seat is refused by name. The table of `Not verified on 1.7.104` is below.
 
 These rows prove the ADDRESSES. That each hooked slot holds the same function body on 1.7.104, and that every
@@ -315,6 +315,16 @@ CommonLib layout APMF reads is the same there, is proven separately in the "1.7.
 | EquipGate.CallSiteName.return-8144B2 | raw rva | - | - | - | - | - | 0x829392 | raw RVA: 1.6.1170 0x8144B2 signature (18 bytes) unique at the idmap RVA |  | EquipGate CallSiteName selector return address |  |
 | NonAliasProbe.CombatMagicCaster.GetMagicTarget | raw rva | - | - | - | - | - | 0x833510 | raw RVA: 1.6.1170 0x81E020 signature (23 bytes) unique at the idmap RVA |  | NonAliasProbe/CastSeats GetMagicTarget (CombatMagicCaster slot 0x0A) |  |
 | TargetPin.CombatController.SetTarget.1_7_104 | raw rva | - | - | - | - | - | 0x5614A0 | raw RVA: 1.6.1170 0x559630 signature (21 bytes) unique at the idmap RVA |  | channels/TargetPin.cpp kSetTarget17 (1.7.104 only: AE id 33235 has no MIT-table row) |  |
+| Substrate.CombatGroup.RemoveTarget.1_7_104 | raw rva | - | - | - | - | - | 0x818BD0 | raw RVA: 1.6.1170 0x803D70 signature (49 bytes) unique at the idmap RVA |  | channels/CombatSubstrate.cpp k17RemoveTarget (1.7.104 only: AE id 44705 has no MIT-table row) |  |
+| EngagementHold.CombatGroup.UpdateTargetDetection.1_7_104 | raw rva | - | - | - | - | - | 0x819EF0 | raw RVA: 1.6.1170 0x805090 signature (33 bytes) unique at the idmap RVA |  | channels/CombatEntry.cpp k17UpdateTargetDetection (1.7.104 only: AE id 44725 has no MIT-table row) |  |
+| EngagementHold.Site.ListenerDetection.1_7_104 | raw rva | - | - | - | - | - | 0x818025 | raw RVA: 1.6.1170 0x8031C5 signature (17 bytes) unique at the idmap RVA |  | channels/CombatEntry.cpp k17ListenerSite (1.7.104 only: AE id 44699 has no MIT-table row) |  |
+| EngagementHold.Site.GroupDetectionPass.1_7_104 | raw rva | - | - | - | - | - | 0x821E23 | raw RVA: 1.6.1170 0x80CF43 signature (20 bytes) unique at the idmap RVA |  | channels/CombatEntry.cpp k17PassSite (1.7.104 only: AE id 44804 has no MIT-table row) |  |
+| Substrate.CombatGroup.MusicWriteLock.1_7_104 | raw rva | - | - | - | - | - | 0x8185A0 | raw RVA: 1.6.1170 0x803740 signature (22 bytes) unique at the idmap RVA |  | channels/CombatSubstrate.cpp k17MusicWriteLock (1.7.104 only: AE id 44703 has no MIT-table row) |  |
+| Substrate.CombatGroup.DetectionPassInUpdate.1_7_104 | raw rva | - | - | - | - | - | 0x8185DD | raw RVA: 1.6.1170 0x80377D signature (31 bytes) unique at the idmap RVA |  | channels/CombatSubstrate.cpp k17DetectionPassInUpdate (1.7.104 only: AE id 44703 has no MIT-table row) |  |
+| Substrate.CombatGroup.MusicUndecided.1_7_104 | raw rva | - | - | - | - | - | 0x8187AC | raw RVA: 1.6.1170 0x80394C signature (20 bytes) unique at the idmap RVA |  | channels/CombatSubstrate.cpp k17MusicUndecided (1.7.104 only: AE id 44703 has no MIT-table row) |  |
+| Substrate.CombatManager.MusicPlayTest.1_7_104 | raw rva | - | - | - | - | - | 0x852FD9 | raw RVA: 1.6.1170 0x83E0F9 signature (20 bytes) unique at the idmap RVA |  | channels/CombatSubstrate.cpp k17MusicPlayTest (1.7.104 only: AE id 46888 has no MIT-table row) |  |
+| Substrate.BSMusicManager.Reader.1_7_104 | raw rva | - | - | - | - | - | 0x65454F | raw RVA: 1.6.1170 0x641B9F signature (166 bytes) unique at the idmap RVA |  | channels/CombatSubstrate.cpp k17MusicReader (1.7.104 only: AE id 36550 has no MIT-table row) |  |
+| Substrate.MenuTopicManager.Reader.1_7_104 | raw rva | - | - | - | - | - | 0xA46267 | raw RVA: 1.6.1170 0xA2D7C7 signature (17 bytes) unique at the idmap RVA |  | channels/CombatSubstrate.cpp k17MenuTopicReader (1.7.104 only: AE id 56194 has no MIT-table row) |  |
 
 ## Not verified on 1.7.104
 

@@ -519,7 +519,7 @@ namespace apmf::VerifiedAddresses
 		{ 56227, 0x9AE5C0, 0x0, 0, {  }, "Place.TESObjectREFR.MoveTo" },
 	};
 
-	// 1.7.104.0: 247 rows
+	// 1.7.104.0: 257 rows
 	// 42 NOT VERIFIED on 1.7.104.0, deliberately absent from this table (the seat is refused):
 	//   Character.ActorValueOwner.SE (1.6.1170 id -): no 1.6.1170 (AE) id: the 1.7.104 map is keyed by AE id (1.5.97-only seat)
 	//   TargetPin.CombatController.SetTarget (1.6.1170 id 33235): id 33235 is not in the idmap
@@ -811,6 +811,16 @@ namespace apmf::VerifiedAddresses
 		{ 0, 0x829392, 0x0, 0, {  }, "EquipGate.CallSiteName.return-8144B2" },
 		{ 0, 0x833510, 0x0, 0, {  }, "NonAliasProbe.CombatMagicCaster.GetMagicTarget" },
 		{ 0, 0x5614A0, 0x0, 0, {  }, "TargetPin.CombatController.SetTarget.1_7_104" },
+		{ 0, 0x818BD0, 0x0, 0, {  }, "Substrate.CombatGroup.RemoveTarget.1_7_104" },
+		{ 0, 0x819EF0, 0x0, 0, {  }, "EngagementHold.CombatGroup.UpdateTargetDetection.1_7_104" },
+		{ 0, 0x818025, 0x0, 0, {  }, "EngagementHold.Site.ListenerDetection.1_7_104" },
+		{ 0, 0x821E23, 0x0, 0, {  }, "EngagementHold.Site.GroupDetectionPass.1_7_104" },
+		{ 0, 0x8185A0, 0x0, 0, {  }, "Substrate.CombatGroup.MusicWriteLock.1_7_104" },
+		{ 0, 0x8185DD, 0x0, 0, {  }, "Substrate.CombatGroup.DetectionPassInUpdate.1_7_104" },
+		{ 0, 0x8187AC, 0x0, 0, {  }, "Substrate.CombatGroup.MusicUndecided.1_7_104" },
+		{ 0, 0x852FD9, 0x0, 0, {  }, "Substrate.CombatManager.MusicPlayTest.1_7_104" },
+		{ 0, 0x65454F, 0x0, 0, {  }, "Substrate.BSMusicManager.Reader.1_7_104" },
+		{ 0, 0xA46267, 0x0, 0, {  }, "Substrate.MenuTopicManager.Reader.1_7_104" },
 	};
 
 	inline constexpr REL::SelfCheck::Table kTables[] = {
