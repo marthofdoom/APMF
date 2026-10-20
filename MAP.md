@@ -1930,6 +1930,9 @@ field bug); denying when the claim does not own Light (the engine's torch logic 
 torch); reading the follower lists here (off-main thread); a 1.5.97 offset change without re-reading the SE
 body (the SE updater reads an actor-state field at +0xC4 where AE reads +0xCC, and has one extra null test). Open: a generic unequip of a torch and a Left
 equip displacing it are not this seat's (DENY-COMPLETENESS-AUDIT row 17 open item (a)).
+**Open review findings (read before editing):** `Docs/REVIEW-BACKLOG.md` APMF-B166 (seat not gated on the sink being
+installed), B167 (no ENDED line on a full release), B168 (stale spec label), B169 (stow log only on kRun), B170 (the
+default scope owns Light: document), B171 (per-streak counters: document), B172 (Left displacement, generic unequips).
 
 ### `native/core/HandBlock.{h,cpp}` — the HAND-CLAIM BLOCK (2026-10-06, `fix/apmf-hand-claim-blocks-equip`)
 marth: "harbinger taking a hand for an action means other actions on that hand are blocked for the
