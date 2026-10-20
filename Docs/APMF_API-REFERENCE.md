@@ -359,3 +359,46 @@ It is the same flag that makes a `kIntent_CombatSubstrate` request refused as un
 
 **Older APMF.** An APMF before v27 has no slot. A v23 to v26 APMF may still accept a substrate claim; a client that needs the answer treats a missing slot as "unknown", not as "available".
 
+
+<a id="abi-v28-place"></a>
+## ABI v28 place (kIntent_Place): put an actor somewhere, loaded or not
+
+```cpp
+// kIntent_Place = 28, through RequestEx. Gate on abiVersion >= 28.
+std::uint32_t (*GetPlaceState)(Handle handle, APMF_PlaceStateInfo* out);   // APMF_API_v28
+```
+
+A [placement](FACETS.md#place-kintent_place) is ONE engine move, `TESObjectREFR::MoveTo_Impl` (AE id 56626 at 0xA447F0, SE id 56227 at 0x9AE5C0, 1.7.104 at 0xA5D370, verified row `Place.TESObjectREFR.MoveTo`), on the game thread. That is the body Papyrus `ObjectReference.MoveTo` runs: the Papyrus native only queues a task on the script VM, and the task's run (AE 56101, SE 55572) calls `MoveTo_Impl` with the target's cell, its worldspace, the point and the rotation. For a `Character` the body calls `StopInteractingQuick(true)` and then the actor relocation (AE 37313) with the point, rotation Z, the cell and the worldspace. The handle argument is read only on the player branch, so Harbinger passes an empty one and can name a bare interior cell. It works on an unloaded persistent actor and into an unloaded cell.
+
+**Never a claim.** `ClientAPI` diverts the request before the control map, the same shape as a position cast. The handle comes from the claim counter and only labels the request: `IsClaimLive` is false for it, `Release` and `Repoint` do nothing to it.
+
+**The destination.** `param.form` is a REFERENCE (the actor lands at its position plus `param.pos`, in its cell and worldspace: exactly Papyrus `MoveTo(akTarget, x, y, z)`), or an INTERIOR CELL (the actor lands at `param.pos` in it). An exterior cell is refused: name a reference in that worldspace and an offset.
+
+**The flags** (`param.ival`, `PlaceFlags`): `kPlace_OnlyIfUnloaded` (no visible pop: refused when the actor has 3D or stands in an attached cell), `kPlace_RefuseIfPlayerPresent` (refused when the player's cell is the actor's cell or the destination cell), `kPlace_SetYaw` (face `param.fval` radians, else keep his heading). An unknown bit is refused at the call.
+
+**Arbitration.** Refused (`kPlaceWhy_TravelOwned` / `kPlaceWhy_HoldOwned`, `blocker` = that claim's handle) when the winning ch.19 travel or ch.1 movement block claim on the actor belongs to another client, or to no client Harbinger can name. The client is taken from the calling DLL at the call, the same attribution every claim gets. Your own claim does not block a placement and Harbinger does not end it.
+
+**`GetPlaceState`.** Any thread, a copy under a leaf lock, no game call. `APMF_PlaceStateInfo` is 64 bytes, every field 4 bytes, the size rule of `APMF_TravelLegInfo`: set `size = sizeof(APMF_PlaceStateInfo)`. It fills nothing into a smaller struct.
+
+| Offset | Field | Meaning |
+|---|---|---|
+| +0 | `size` | the caller sets it |
+| +4 | `state` | `PlaceState`: Unknown 0, Queued 1, Placed 2, Refused 3, Failed 4 |
+| +8 | `handle` | the handle asked about |
+| +12 | `actor` | the actor |
+| +16 | `dest` | `param.form` |
+| +20 | `why` | `PlaceWhy` (FACETS table 20c) |
+| +24 | `blocker` | the owning ch.19 / ch.1 claim on TravelOwned / HoldOwned |
+| +28 | `cell` | Placed / Failed: the actor's parent cell read back after the move |
+| +32 | `x`, `y`, `z` | the world point he was sent to |
+| +44 | `yaw` | the world Z rotation handed to the engine |
+| +48 | `flags` | the request's `PlaceFlags` |
+| +52 | `info` | `kPlaceInfo_WasLoaded`, `kPlaceInfo_FromCell`, `kPlaceInfo_CellDiffers` |
+| +56 | `msSinceChange` | wall ms since the record last changed |
+| +60 | `seq` | changes on every change of the record |
+
+**Placed is read back, not assumed.** After the call Harbinger reads the actor's position. Within 1 unit of the point: `Placed`. Otherwise `Failed` with `kPlaceWhy_NotMoved` and an ERROR line naming where he reads back. `kPlaceInfo_CellDiffers` says the parent cell he reads back in is not the cell handed to the engine (it does not fail the placement, and it is logged).
+
+**Lifetime.** A finished record stays 30 s of wall time (`kPlaceStateGraceMs`), then reads `Unknown`. A load or a new game drops every record, and a placement still queued then never runs. Nothing is saved.
+
+**Older APMF.** An APMF before v28 has no channel for intent 28 and refuses the request ("no channel serves intent 28"), and has no `GetPlaceState` slot.

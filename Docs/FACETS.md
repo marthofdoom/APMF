@@ -81,7 +81,7 @@ struct Heartbeat {
 - [AI disposition and senses](#ai-disposition-and-senses): [ch.11 Disposition](#ch11-disposition-kintent_disposition), [ch.16 Detection](#ch16-detection-kintent_detection)
 - [Casting](#casting): [ch.8 Select spell](#ch8-select-spell-kintent_selectspell), [ch.8b Cast](#ch8b-cast-kintent_cast), [a hand floor](#a-hand-floor-kcastflag_denyhandonly), [own line of sight](#own-line-of-sight-kcastflag_ownlineofsight), [position cast](#position-cast-kcastflag_atposition), [ch.14 Shout and power](#ch14-shout-and-power-kintent_shoutpower), [ch.25 Cast guard](#ch25-cast-guard-kintent_castguard)
 - [Equipment](#equipment): [ch.15 Equipment](#ch15-equipment-kintent_equipment), [ch.17 Equip authority](#ch17-equip-authority-kintent_equipauthority), [ch.26 Equip preference](#ch26-equip-preference-kintent_equippreference)
-- [Packages and travel](#packages-and-travel): [ch.9 Offer package](#ch9-offer-package-kintent_offerpackage), [ch.19 Travel](#ch19-travel-kintent_travel)
+- [Packages and travel](#packages-and-travel): [ch.9 Offer package](#ch9-offer-package-kintent_offerpackage), [ch.19 Travel](#ch19-travel-kintent_travel), [Place](#place-kintent_place)
 - [Combat](#combat): [ch.6 Combat target](#ch6-combat-target-kintent_combattarget), [ch.7 Combat action](#ch7-combat-action-kintent_combataction), [ch.20 Target pin](#ch20-target-pin-kintent_targetpin), [ch.21 Combat entry](#ch21-combat-entry-kintent_combatentry), [ch.22 Combat re-entry deny](#ch22-combat-re-entry-deny-kintent_combatreentrydeny), [ch.23 Pursuit leash](#ch23-pursuit-leash-kintent_pursuitleash), [ch.24 Combat approach](#ch24-combat-approach-kintent_combatapproach), [Combat substrate](#combat-substrate-kintent_combatsubstrate)
 - [Read-only queries (no claim)](#read-only-queries-no-claim): [space queries](#space-queries-findemptyspace-and-findhostilesinspace), [line of sight](#line-of-sight-getlineofsight), [awareness](#awareness-senseactor)
 - [Observe-only facets (no claim API)](#observe-only-facets-no-claim-api)
@@ -123,6 +123,7 @@ struct Heartbeat {
 | [`kIntent_CastGuard`](#ch25-cast-guard-kintent_castguard) | 25 | Cast guard | Hold attack spells through friends, bound channels | 21 | Field-proven (in use by MFO) |
 | [`kIntent_EquipPreference`](#ch26-equip-preference-kintent_equippreference) | 26 | Equip preference | Lift a preferred weapon's combat score so the AI picks it | 22 | Built, not yet tested in game |
 | [`kIntent_CombatSubstrate`](#combat-substrate-kintent_combatsubstrate) | 27 | Combat substrate | Combat as a substrate so an out-of-combat cast is animated | 23 | Built (S2a), off by default, not yet tested in game |
+| [`kIntent_Place`](#place-kintent_place) | 28 | Place | Put an actor, loaded or not, beside a reference or at a point in an interior cell, once | 28 | Built, not yet tested in game |
 | [Space queries](#space-queries-findemptyspace-and-findhostilesinspace) | | `FindEmptySpace`, `FindHostilesInSpace` | Ask for a spot or the hostiles in a sphere | 11 | Built |
 | [Line of sight](#line-of-sight-getlineofsight) | | `GetLineOfSight` | Harbinger's own ray | 18 | Used by MFO |
 | [Awareness](#awareness-senseactor) | | `SenseActor` | Does this actor sense that one | 18 | Used by MFO |
@@ -2079,6 +2080,133 @@ ABI 10 (the intent, with `Data/APMF.esl`), 11 adds `kTravel_ToPosition`, 12 adds
 2. A ninth leg is requested while eight are walking. What does the call return, and what does the leg state read?
 3. The follower is held by a closed portcullis. Which `blockerKind` is reported, and what should the client do?
 
+### Place (`kIntent_Place`)
+
+*Put an actor beside a reference, or at a point in an interior cell, with the engine's own move. Once. It works on an actor nobody can see. A one-shot rather than a claim.*
+
+#### What it is for
+
+An off-screen follower should be found where the client says he went: at the shop counter when the player walks in. Walking him there (ch.19) only works while he is loaded. A placement moves him with the move Papyrus `ObjectReference.MoveTo` makes, so it works when he is unloaded and the destination is unloaded too. The client never calls `MoveTo` itself (marth: everything is ported to Harbinger).
+
+#### Arguments
+
+`RequestEx` only (ABI 28). `Request` with this intent is refused (it carries no destination).
+
+```cpp
+APMF_Param p{};
+p.form = counterMarkerRef;                // a REFERENCE (the actor lands at its position + pos)
+                                          //   or an INTERIOR CELL (the actor lands at pos in it)
+p.posX = 40.0f; p.posY = 0.0f; p.posZ = 0.0f;   // an offset from the reference, or the point in the cell
+p.ival = kPlace_OnlyIfUnloaded | kPlace_RefuseIfPlayerPresent | kPlace_SetYaw;
+p.fval = 3.14159f;                        // the yaw in radians, read only with kPlace_SetYaw
+Handle h = g_apmf->RequestEx(follower, kIntent_Place, 0.0f, &p);   // basis is not read
+```
+
+**Table 20a. Place arguments**
+
+| Field | Type | Range | Default | 0 means |
+|---|---|---|---|---|
+| `form` | `RE::FormID` | a reference (any kind, an NPC included, not the actor), or an INTERIOR cell | required | refused at the call |
+| `posX/Y/Z` | `float`, game units | finite | `(0, 0, 0)` | at the reference itself, or the cell's origin |
+| `ival` | `PlaceFlags` | any of the three bits below | 0 | move whatever the player can see, keep the actor's heading |
+| `fval` | `float`, radians | finite, read only with `kPlace_SetYaw` | | yaw 0 (north) when the flag is set |
+| `basis`, `target` | | | | not read |
+
+**Table 20b. `PlaceFlags`**
+
+| Bit | Name | Effect |
+|---|---|---|
+| 0 | `kPlace_OnlyIfUnloaded` | Refused (`kPlaceWhy_ActorLoaded`) when the actor has 3D or stands in an attached cell. No visible pop |
+| 1 | `kPlace_RefuseIfPlayerPresent` | Refused (`kPlaceWhy_PlayerPresent`) when the player's cell is the actor's cell or the destination cell. Outdoors that is the exact cell only, not the loaded grid around it |
+| 2 | `kPlace_SetYaw` | Face `fval`. Without it the actor keeps his own heading |
+
+Gate on `abiVersion >= 28`. An older Harbinger refuses the intent ("no channel serves intent 28").
+
+An exterior position is named by a reference in that worldspace plus an offset, never by an exterior cell (refused, `kPlaceWhy_DestExterior`). A reference destination is exactly Papyrus `MoveTo(akTarget, x, y, z)`: the actor goes into the reference's cell and worldspace.
+
+#### What Harbinger enforces
+
+Nothing is switched on, denied or held. On the game thread Harbinger resolves the destination, runs the checks below and calls `TESObjectREFR::MoveTo_Impl` once (verified row `Place.TESObjectREFR.MoveTo`, AE id 56626 / SE 56227, the same body Papyrus `MoveTo`'s queued task runs). For an actor the engine first releases any furniture he is using, then relocates him at the point and heading, in that cell. Then Harbinger reads the actor's position back. Within 1 unit of the point the placement is `Placed`. Anything else is `Failed` (`kPlaceWhy_NotMoved`), logged as an ERROR and never reported as placed.
+
+Under INVARIANTS #0 this is action (c), a bounded, one-shot, client-requested promote: one deterministic call whose outcome is the client's declared spot, not an AI decision. It switches nothing on, so there is no deny-completeness exposure (`DENY-COMPLETENESS-AUDIT.md`). What the actor does at his new spot is his own package's business.
+
+> **Did You Know?** Papyrus `MoveTo` does not move anything when it is called. It queues a task on the script VM, and the task's run calls `MoveTo_Impl` with the target's cell and worldspace. For a `Character` the handle argument is never read, which is why Harbinger can name a bare interior cell. Read off all three game binaries.
+
+#### Refusals
+
+At the call (`kInvalidHandle`, one `[place] request REFUSED` line): not installed (VR, a runtime other than exactly 1.6.1170, 1.5.97 or 1.7.104, the self-check row refused), `Request` (no param), actor 0, the player, `form` 0, a non-finite `pos`, `kPlace_SetYaw` with a non-finite `fval`, an unknown flag bit, 128 placements already queued.
+
+On the game thread (state `Refused`, `why` says which, one `[place] ... REFUSED` line):
+
+**Table 20c. `PlaceWhy`**
+
+| Value | Name | Why |
+|---|---|---|
+| 1 | `kPlaceWhy_ActorGone` | the actor FormID is not an actor in memory |
+| 2 | `kPlaceWhy_DestGone` | the destination FormID resolves to nothing |
+| 3 | `kPlaceWhy_DestInvalid` | neither a reference nor a cell, a deleted reference, a reference in no cell, or the actor himself |
+| 4 | `kPlaceWhy_DestExterior` | an exterior cell |
+| 5 | `kPlaceWhy_ActorLoaded` | `kPlace_OnlyIfUnloaded` and he is loaded |
+| 6 | `kPlaceWhy_PlayerPresent` | `kPlace_RefuseIfPlayerPresent` and the player is in either cell |
+| 7 | `kPlaceWhy_TravelOwned` | another client's ch.19 travel claim owns him (`blocker` = its handle) |
+| 8 | `kPlaceWhy_HoldOwned` | another client's ch.1 movement block owns him (`blocker` = its handle) |
+| 9 | `kPlaceWhy_NotMoved` | state `Failed`: the move ran, the position did not read back at the point |
+| 10 | `kPlaceWhy_Error` | state `Failed`: an exception in Harbinger's step |
+
+#### Lifetime
+
+A one-shot. It never enters the control map and holds no facet. The handle labels the request: `IsClaimLive` is false for it, and `Release` and `Repoint` do nothing to it (a queued placement still runs). The outcome is `GetPlaceState(handle, &info)` (`APMF_API_v28`, any thread): `Queued` until the next game-thread pump, then `Placed`, `Refused` or `Failed`. A finished record stays 30 s of wall time (`kPlaceStateGraceMs`), then reads `Unknown`. A load or a new game drops every record, and a placement still queued at that moment never runs. Nothing is saved: the engine saves the actor where he now is.
+
+#### Priority and conflicts
+
+A placement competes with two facets that also decide where the actor is:
+
+- **ch.19 travel** and **ch.1 movement block.** When the winning claim of either on the actor belongs to ANOTHER client, or to no client Harbinger can name, the placement is refused and the log names both clients. Your OWN winning claim does not block it, and Harbinger does not end it: a travel leg of yours carries on from the new spot (release it first if he should stay), a hold of yours holds him there. Basis plays no part.
+- Everything else is untouched. A placement in the middle of a fight, a scene or a substrate is the client's decision and the client's consequence.
+
+#### Worked example
+
+**Example 18a: Have an errand follower found at the counter**
+
+**Think it through.** The follower left on foot (ch.19) and is now out of the loaded area. The client wants him at the counter before the player can see in, so it asks only while he is unloaded and the player is elsewhere, and it releases its own travel claim first so the leg does not walk him off again.
+
+**Solution.**
+
+```cpp
+Handle PlaceAtCounter(RE::FormID follower, RE::FormID counterMarker, Handle myTravel) {
+    if (g_apmf->abiVersion < 28) return kInvalidHandle;          // older Harbinger: no placement
+    if (myTravel) g_apmf->Release(myTravel);                      // he stays where he is put
+    APMF_Param p{};
+    p.form = counterMarker;
+    p.posY = -48.0f;                                              // a step behind the marker
+    p.ival = kPlace_OnlyIfUnloaded | kPlace_RefuseIfPlayerPresent | kPlace_SetYaw;
+    p.fval = 0.0f;                                                // face north, toward the counter
+    return g_apmf->RequestEx(follower, kIntent_Place, 0.0f, &p);
+}
+
+// Later, from any thread:
+APMF_PlaceStateInfo info{};
+info.size = sizeof(info);
+auto* v28 = reinterpret_cast<const APMF_API_v28*>(g_apmf);
+switch (v28->GetPlaceState(h, &info)) {
+case kPlaceState_Placed:  /* he is at info.x/y/z in info.cell */ break;
+case kPlaceState_Refused: /* info.why; a TravelOwned blocker is info.blocker */ break;
+case kPlaceState_Failed:  /* loud in APMF.log; do not pretend he arrived */ break;
+default: break;                                               // Queued, or Unknown after the grace
+}
+```
+
+**Check.** `[place] <h> queued: actor 0x... -> dest 0x...`, then `[place] <h> PLACED actor 0x... at x,y,z yaw ... in cell 0x... (dest 0x..., a reference; was unloaded in cell 0x...)`. A refusal prints `REFUSED` with the reason, a failure prints `FAILED` with where he reads back.
+
+#### Version, INI and field status
+
+ABI 28 (the release after 0.13.1). No INI key. Exactly 1.6.1170, 1.5.97 and 1.7.104, VR refused. Built, CI verified, not yet tested in game. The same engine call is the one that takes the substrate anchor out of its holding cell and home again. Moving an unloaded actor into an unloaded cell, and the read-back right after, are what the first field run must show.
+
+**Check Your Understanding: Place**
+
+1. A placement reads `Placed`, and the client's own travel claim is still live. Where does the actor go next?
+2. Why is an exterior destination named by a reference and not by a cell?
+
 ## Combat
 
 Seven facets cover combat, and each does one job. They are designed to be claimed together, each as its own handle, because a facet never claims another facet on your behalf.
@@ -3358,6 +3486,7 @@ The ABI is append-only. A client built against an older ABI keeps working agains
 | 23 | 0.13.1 | `kIntent_CombatSubstrate` (no struct, no slot: rides `RequestEx` / `Release`), `APMF.esl` anchor records |
 | 24 | 0.13.1 | `GetIdleState`, `IdleState`, `IdleUnconfirmable`, `IdleEnd`, `APMF_IdleStateInfo` (struct `APMF_API_v24`) |
 | 25 | the release after 0.13.1 | `kEquipEntry_HasUid`, `SetEquipEntryUid`, `EquipEntryUid`: a ch.17 entry names one item instance in its reserved bytes (no struct, no slot) |
+| 28 | the release after 0.13.1 | `kIntent_Place`, `PlaceFlags`, `PlaceState`, `PlaceWhy`, `APMF_PlaceStateInfo`, `GetPlaceState` (struct `APMF_API_v28`) |
 
 The last release is 0.13.0, ABI 21. The interface struct for ABI 21 is `APMF_API_v19`, since ABI 20 and 21 added no slot. ABI 22 is on main for the next release, with the struct `APMF_API_v22`.
 
@@ -3381,6 +3510,7 @@ A refusal at the call returns `kInvalidHandle` and logs the reason in `APMF.log`
 | `kIntent_CombatApproach` | seats not installed, `target` 0 or the actor itself, `fval` not positive and finite, the player as the actor | the target is not a loaded reference (ends as `TargetLost`) |
 | `kIntent_CastGuard` | gate not installed, no param, no bit or an unknown bit, bad `fval`, the player as the actor, line of fire with the measurement not armed | |
 | `kIntent_CombatSubstrate` | not installed (`bCombatSubstrate=0`, the ch.22 target site, the 95-node pair, the anchor records, a self-check row, 1.7.104), the player as the actor, `fval` negative or NaN | not out of combat, unloaded, low process, in a scene or dialogue, the party in combat, Engine outranking the client on CombatAction / Combat / Equip / Detection, no free slot, the floors not published, the engine refusing the entry (the claim is released) |
+| `kIntent_Place` | not installed (VR, an unsupported runtime, the row refused), `Request` (no param), actor 0, the player, `form` 0, a non-finite `pos` or yaw, an unknown flag bit, 128 queued | it is a one-shot, not a claim: `GetPlaceState` reads `Refused` with a `PlaceWhy` (destination gone or not a reference / interior cell, actor loaded or the player present under their flags, another client's ch.19 / ch.1 owner) or `Failed` |
 
 ## Appendix D: INI keys by facet
 
