@@ -666,7 +666,7 @@ BECAUSE of the combat controller is ever withheld (alias and NPC sources alike);
 bSubstrateOverrideDeny` (default 1) installed the seat. A REAL holder, the anchor and every other actor get the
 engine's answer; a client's 0x49 offer is the selector's own pick and stays in charge. Slot 0x49 (ch.9) cannot express
 this deny: it is consulted before the swap. Each denied package is logged once per window (`combat-override package
-<pkg> DENIED -- <prev> stays in charge`, `<prev>` = the package recorded just before the entry), and the close line
+<pkg> DENIED -- pre-substrate package was 0x<prev>`, `<prev>` = the package recorded just before the entry), and the close line
 says whether that package was still running. Not seated, by reasoning: AE 40079 (runs the override only while `+0x139`
 reads 0) and AE 39360 (the flee answer: the override package, else slot 0xDD InitiateFlee).
 **S2b is BUILT but OFF** (`[CombatSubstrate] bSubstrateBitReassert`, default 0): writers of `+0x139` remain after the
