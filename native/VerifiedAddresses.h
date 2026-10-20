@@ -19,7 +19,7 @@
 
 namespace apmf::VerifiedAddresses
 {
-	// 1.6.1170.0: 255 rows
+	// 1.6.1170.0: 257 rows
 	inline constexpr REL::SelfCheck::Row kRows_1_6_1170[] = {
 		{ 207886, 0x18A5558, 0x0, 0, {  }, "Character" },
 		{ 207896, 0x18A5FE8, 0x0, 0, {  }, "Character.ActorValueOwner" },
@@ -276,9 +276,11 @@ namespace apmf::VerifiedAddresses
 		{ 39144, 0x6D6C90, 0x0, 0, {  }, "Substrate.AIProcess.GetAggressor" },
 		{ 37172, 0x65DE90, 0xF3, 1, { 0xE8 }, "Substrate.PackageSelector.CombatOverrideCall" },
 		{ 24673, 0x3B79C0, 0x0, 0, {  }, "Substrate.Npc.GetEnterCombatOverridePackage" },
+		{ 39948, 0x713A80, 0x0, 0, {  }, "TorchSeat.UpdateTorch" },
+		{ 39637, 0x6F20A0, 0x8B1, 1, { 0xE8 }, "TorchSeat.Site.AiUpdate" },
 	};
 
-	// 1.5.97.0: 255 rows
+	// 1.5.97.0: 257 rows
 	inline constexpr REL::SelfCheck::Row kRows_1_5_97[] = {
 		{ 261397, 0x165DA40, 0x0, 0, {  }, "Character" },
 		{ 261402, 0x165E4D0, 0x0, 0, {  }, "Character.ActorValueOwner.SE" },
@@ -535,9 +537,11 @@ namespace apmf::VerifiedAddresses
 		{ 38184, 0x6442E0, 0x0, 0, {  }, "Substrate.AIProcess.GetAggressor" },
 		{ 36193, 0x5CD930, 0xEA, 1, { 0xE8 }, "Substrate.PackageSelector.CombatOverrideCall" },
 		{ 24169, 0x35EE70, 0x0, 0, {  }, "Substrate.Npc.GetEnterCombatOverridePackage" },
+		{ 38902, 0x6801D0, 0x0, 0, {  }, "TorchSeat.UpdateTorch" },
+		{ 38606, 0x65F040, 0x798, 1, { 0xE8 }, "TorchSeat.Site.AiUpdate" },
 	};
 
-	// 1.7.104.0: 265 rows
+	// 1.7.104.0: 267 rows
 	// 51 NOT VERIFIED on 1.7.104.0, deliberately absent from this table (the seat is refused):
 	//   Character.ActorValueOwner.SE (1.6.1170 id -): no 1.6.1170 (AE) id: the 1.7.104 map is keyed by AE id (1.5.97-only seat)
 	//   TargetPin.CombatController.SetTarget (1.6.1170 id 33235): id 33235 is not in the idmap
@@ -824,6 +828,8 @@ namespace apmf::VerifiedAddresses
 		{ 214161, 0x1965B50, 0x0, 0, {  }, "Leaf.CombatBehaviorIdle<GameSetting>" },
 		{ 214367, 0x19670B8, 0x0, 0, {  }, "Leaf.CombatBehaviorRepeat<float,FLAGS>" },
 		{ 56626, 0xA5D370, 0x0, 0, {  }, "Place.TESObjectREFR.MoveTo" },
+		{ 39948, 0x7265C0, 0x0, 0, {  }, "TorchSeat.UpdateTorch" },
+		{ 39637, 0x704C70, 0x8B1, 1, { 0xE8 }, "TorchSeat.Site.AiUpdate" },
 		{ 0, 0x82D2C0, 0x0, 0, {  }, "AiCastSeats.Melee.CalculateScore" },
 		{ 0, 0x82D790, 0x0, 0, {  }, "AiCastSeats.Ranged.CalculateScore" },
 		{ 0, 0x82DCD0, 0x0, 0, {  }, "AiCastSeats.Shield.CalculateScore" },

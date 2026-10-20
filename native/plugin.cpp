@@ -16,6 +16,7 @@
 #include "core/ActionGate.h"
 #include "core/PackageGate.h"
 #include "core/EquipSink.h"
+#include "core/TorchSeat.h"      // ch.17 torch seat (2026-10-20): Install at kDataLoaded, after the sink
 #include "core/NonAliasProbe.h"
 #include "core/AiCastSeats.h"
 #include "core/CastClassify.h"
@@ -254,6 +255,13 @@ namespace {
                                                   // bEquipAuthority (default 1) / bEquipObserveOnly
                                                   // (default 1: the first field build observes only).
                                                   // VR-refused inside. Docs/INVARIANTS.md #17a.
+            apmf::torchseat::Install();          // ch.17 TORCH SEAT (2026-10-20, #17a amended): write_call<5> on
+                                                  // the AI update's one call to the engine's torch updater
+                                                  // (AE 39637+0x8B1 / SE 38606+0x798 / 1.7.104 same as AE).
+                                                  // An actor whose ch.17 claim owns Light skips it. Exact
+                                                  // 1.6.1170 / 1.5.97 / 1.7.104, VR-refused, [EquipAuthority]
+                                                  // bTorchDeny (default 1), SeatVerified on both rows, E8
+                                                  // re-read before the write.
             apmf::nonaliasprobe::Install();      // OBSERVE-ONLY 0xDF hook + 0x49 assist + RTTI dumper
                                                   // (Docs/PROBE-NONALIAS-PACKAGE.md; VR-refused inside)
             apmf::aicastseats::Install();        // OBSERVE-ONLY: the 4 AI cast-decision seats

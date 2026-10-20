@@ -1775,7 +1775,7 @@ PlayerMenu / WorkerReentry / QueuedApply — the last is the deferred apply of a
 38906,39814 / 37950,38789, which is how APMF's OWN queued equips come back one actor-update
 later with tls=0 — plus, from the 2026-09-16 Tier-C sweep, AiCommand for the DISPATCHER
 39637/38606 itself (+0xF47/+0xCCD → EquipObject, the first v8 deck log's `Unknown(39637)`) and
-its family 39948,39655,39645,37510 / 38902,38624,38614,36510, DropObject 37520/36520 (Actor
+its family 39948,39655,39645,37510 / 38902,38624,38614,36510 (39948 / 38902 relabelled `TorchUpdate` 2026-10-20, the torch updater; see TorchSeat below), DropObject 37520/36520 (Actor
 vtable 0xCB), PickUpObject 37521/36521 (0xCC), BoundItem 38898/37942 (← BoundItemEffect slot 4),
 ProcedureEat 28422/27700 (← BGSProcedureEat slot 0xC), InventoryReequip 41244/40241, StartCombat
 38561/37608; 16104/15864 and the orphan 52410/51535 stay Unknown on purpose — AUDIT row 17 has the
@@ -1900,6 +1900,39 @@ eslot=<none|R|L|E|hex> verdict=` line per decision (`E` = EitherHand 0x13F44, a 
   7; B10 `MinReleaseForAbi`'s v7/v8 placeholder must be named at the cut) (ch.15's probe re-equip is
   `External(APMF.dll)` on a ch.17 actor; a detour target inside a trampoline page prints
   `detoured by ?`; the truncation log fires at Apply) — read them before editing this seat.
+
+### `native/core/TorchSeat.{h,cpp}` — the TORCH SEAT: a second #17a call-site seat (ch.17, 2026-10-20, `feat/apmf-torch-seat`)
+**What it does:** `write_call<5>` on the per-actor AI update's ONLY call to the engine's torch updater
+(`void(AIProcess*, Actor*)`, AE 39948 0x713A80 / SE 38902 0x6801D0 / 1.7.104 0x7265C0; site AE 39637+0x8B1
+0x6F2951 / SE 38606+0x798 0x65F7D8 / 1.7.104 0x704C70+0x8B1 0x705521; rows `TorchSeat.UpdateTorch` and
+`TorchSeat.Site.AiUpdate`, verified on all three, 1.7.104 through the MIT id table, no raw row). `Thunk`:
+player / no ch.17 claim (`ControlMap::TryGetEquipSet` false) -> the updater, unlogged (#17a(5)). Claimed ->
+`Decide`: Light owned AND not denied AND `count != 0` (the sink's rule 5) -> rank the Engine source against
+`set.handle` on `FacetForEquipCats(Light|Left)` = EquipWeapon (`ClaimPriority > Priority(kEngineSource)`, the
+`RankEquipDeny` rule) -> observe-only (`equipsink::ObserveOnly()` or the claim's `kEquipAuth_ObserveOnly`) gives
+`would-deny`, else DENY = return without calling the updater (both branches: the furniture/sit stow and the
+5 s light evaluator). `NoteVerdict` logs a streak's start / end once per (actor, handle) and counts the
+Engine source's hit + overruled / stood once per streak. Not owning Light -> the updater runs; when the left
+hand held a LIGH before and not after, `NoteStow` logs `engine torch updater UNEQUIPPED` (10 s per actor,
+30 a minute). `Install()` <- plugin.cpp kDataLoaded right after `equipsink::Install`: VR /
+non-exact runtime / `[EquipAuthority] bTorchDeny=0` refuse; SeatVerified on both rows; E8 re-read; the
+original stored BEFORE the patch; own `SKSE::Trampoline("APMF.TorchSeat")`; `RegisterCallSeat(kEquipWeapon)`.
+**Thread:** the engine's actor-update thread for that actor (Character 0xAD is multi-threaded, core/Hook.cpp
+threadcheck; logged once at the first claimed actor). Reads: the RCU snapshot, the source registry (its
+shared lock), the AIProcess middleHigh leftHand (`static_assert` 0x08 / 0x220, the updater's own read), and
+its leaf mutex `g_mx` (nothing called while held). Every throw degrades to "run the engine".
+**Depended-on-by:** MFO's torch rule (owns `kEquipCat_Light` only while its torch declaration holds, and does
+not declare a torch while seated / sleeping / in furniture). The sink still refuses the evaluator's equip
+(path label `TorchUpdate`, was `AiCommand`).
+**What breaks if you change this:** calling the updater for a denied actor (the stow returns, the 2026-10-18
+field bug); denying when the claim does not own Light (the engine's torch logic must be untouched then, marth
+2026-10-20); dropping the `count != 0` or the ranking step (diverges from the sink's verdict for the same
+torch); reading the follower lists here (off-main thread); a 1.5.97 offset change without re-reading the SE
+body (the SE updater reads an actor-state field at +0xC4 where AE reads +0xCC, and has one extra null test). Open: a generic unequip of a torch and a Left
+equip displacing it are not this seat's (DENY-COMPLETENESS-AUDIT row 17 open item (a)).
+**Open review findings (read before editing):** `Docs/REVIEW-BACKLOG.md` APMF-B166 (seat not gated on the sink being
+installed), B167 (no ENDED line on a full release), B168 (stale spec label), B169 (stow log only on kRun), B170 (the
+default scope owns Light: document), B171 (per-streak counters: document), B172 (Left displacement, generic unequips).
 
 ### `native/core/HandBlock.{h,cpp}` — the HAND-CLAIM BLOCK (2026-10-06, `fix/apmf-hand-claim-blocks-equip`)
 marth: "harbinger taking a hand for an action means other actions on that hand are blocked for the
