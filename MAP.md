@@ -132,7 +132,14 @@ Anchor 3) and `APMF_API_v26 : APMF_API_v24` with ONE slot, `GetSubstrateState(ac
 **ABI v27 (2026-10-19, ch.27 substrate availability, round R1) adds `APMF_API_v27 : APMF_API_v26` with ONE slot,
 `IsSubstrateAvailable()` (any thread, one load of `combatsubstrate::Installed()`)** (Docs/APMF_API-REFERENCE.md#abi-v27-substrate-available);
 v27 had been left free for the per-item equip deny (86e3t8w23), which moves to v28. The header is 2542 lines after
-v27 (still over the 2500 backstop; reported again, not split inside the task). The header
+v27 (still over the 2500 backstop; reported again, not split inside the task).
+**ABI v28 (2026-10-19, `kIntent_Place`, MFO town phase 2) adds intent 28 (rides `RequestEx`; a one-shot, never a
+claim), `PlaceFlags` (OnlyIfUnloaded / RefuseIfPlayerPresent / SetYaw), `PlaceState` (Unknown 0 / Queued 1 / Placed 2 /
+Refused 3 / Failed 4), `PlaceWhy` (0-10), `kPlaceInfo_*`, `kPlaceStateGraceMs` (30000), the 64-byte POD
+`APMF_PlaceStateInfo` (size rule at `kPlaceStateInfoV28Size`) and `APMF_API_v28 : APMF_API_v27` with ONE slot,
+`GetPlaceState(handle, APMF_PlaceStateInfo*)` (any thread)** (core/Place.h; Docs/APMF_API-REFERENCE.md#abi-v28-place).
+The per-item equip deny (86e3t8w23) moves to v29. The header is 2661 lines after v28 (over the 2500 backstop,
+reported again, not split inside the task). The header
 is at 2520 lines after v26 (OVER the 2500 backstop; reported, not split inside the task) and `core/ControlMap.cpp`
 at 2499: the next change to either plans a split first.
 To stay under 2500 lines the v24 change first moved three long-form blocks (v18 own ray,
@@ -192,6 +199,12 @@ ABI v26 (ch.27 substrate state) adds `GetSubstrateState` -> `combatsubstrate::St
 ABI v27 (ch.27 substrate availability) adds `IsSubstrateAvailable` -> `combatsubstrate::Installed()` (`try/catch(...)`
 returning false); the object is an `APMF_API_v27` (a static_assert pair pins the v26 prefix end); `MinReleaseForAbi(27)`
 is the default too.
+ABI v28 (`kIntent_Place`): `Request` / `RequestEx` DIVERT intent 28 to `RequestPlace` BEFORE the control map (which has
+no channel for it): a handle from `ControlMap::NextHandle()`, `sources::NoteClientRequest` first, then
+`place::Enqueue(h, actor, param, sources::ClientForHandle(h))` (the client captured at the call); a synchronous refusal
+calls `sources::ForgetHandle(h)` and returns `kInvalidHandle`. `GetPlaceState` -> `place::GetState` (`try/catch(...)`
+returning `kPlaceState_Unknown`); the object is an `APMF_API_v28` (a static_assert pair pins the v27 prefix end);
+`MinReleaseForAbi(28)` is the default.
 The "client too new" null (`abiVersion > kABIVersion`) logs the running APMF version
 (`SKSE::PluginDeclaration::GetSingleton()`) and `MinReleaseForAbi(abi)` — a table that must
 be extended on every `kABIVersion` bump.
@@ -262,6 +275,8 @@ another; false for an unclaimed/unloaded actor.
 `ApplyRequest` grants it a TTL (`castguard::TtlMs(param.fval)`, the cast bounds) so the generic Drain TTL pass and
 Repoint renewal apply. Its readers `TryGetCastGuard` / `CastGuardActors` are declared here but DEFINED in
 `core/CastGuard.cpp` (this file is near the 2500-line cap; a split is its own brief).
+**ABI v28:** `NextHandle()` (header-only, any thread) hands `core/Place` a handle from the claim counter for a one-shot
+that never becomes a claim; `ControlMap.cpp` is not touched (2499 lines, at the cap).
 **ch.26 (ABI v22):** `EnqueueRequest` refuses a `kIntent_EquipPreference` claim by `equippref::RefuseReason`. The
 declaration lives OUTSIDE the map (`core/EquipPreference.cpp`'s own snapshot, keyed by handle); the seats read the
 winning claim with `TryGetOwningClaimBasis`. **D2:** `TryGetEquipSet` also copies the winning ch.17 claim's
@@ -577,6 +592,37 @@ Runtime gate: exactly 1.6.1170 / 1.5.97 / 1.7.104 (F2b), VR refused. Evidence:
   facet (condition 7). The load sweep is POSTED from kPostLoadGame. `g_carry` is capped
   wherever it grows (`CapCarried`). Open deferred findings: `Docs/REVIEW-BACKLOG.md`
   APMF-B19 (sweep proofs vs a different XMarker) and APMF-B20 (player-blamed location).
+
+### `native/core/Place.{h,cpp}` — ABI v28 PLACE (`kIntent_Place`, a one-shot, never a claim)
+Puts an actor (loaded or NOT) beside a reference (its position + `param.pos`, in its cell and worldspace: Papyrus
+`MoveTo(akTarget, x, y, z)`) or at `param.pos` in an INTERIOR cell, with ONE `TESObjectREFR::MoveTo_Impl` (private in
+the fork, called through `REL::Relocation<MoveToImpl_t>{ RELOCATION_ID(56227, 56626) }`, verified row
+`Place.TESObjectREFR.MoveTo`) on the game thread. Research (all three builds): Papyrus `MoveTo` only queues a VM task;
+its Run (AE 56101 / SE 55572) calls `MoveTo_Impl`; a `Character` there gets `StopInteractingQuick(true)` + the actor
+relocation (AE 37313) with (point, rot.z, cell, worldspace); the handle argument is read on the player branch only, so
+an empty `ObjectRefHandle` is passed. `Install` (kDataLoaded): VR refused, `allowance::RuntimeSupported()` (exactly
+1.6.1170 / 1.5.97 / 1.7.104), `SeatVerified`; no hook, no INI. `Enqueue` (any thread, from `ClientAPI::RequestPlace`):
+POD checks only (no form lookup), a Queued record, ONE `mainthread::Post(Deliver)`. `Deliver`/`Run` (game thread,
+`mainthread::Pump` in `Arbiter::OncePerFrame`): world-generation check, actor / destination resolution (exterior cell
+refused), the two flags, ARBITRATION (the winning ch.19 / ch.1 claim via `ControlMap::TryGetOwningClaimBasis` must be
+the same `sources` client, else Refused TravelOwned / HoldOwned), the call, then a POSITION READ-BACK (within 1u =
+Placed, else Failed NotMoved, ERROR line). One log line per request: `queued`, then `PLACED` / `REFUSED` / `FAILED`.
+Records: `g_recs` under a leaf mutex, cap 128 (oldest finished evicted; full of queued = refused at the call); a finished
+record expires only once it has been READ by `GetState` AND 30 s wall have passed (`Expired`). `kPlace_RefuseIfPlayerPresent`:
+actor's cell, an interior destination cell, or an EXTERIOR destination that is loaded (cell attached or the dest ref has 3D).
+An interior read-back in another cell is Failed; an exterior one is the `CellDiffers` bit. `ResetAll` (revert, kPreLoadGame, `plugin.cpp`) clears them and bumps `g_gen` under the
+same lock, so a posted move from the old world drops itself (Discard() drops it too).
+- **What breaks:** (a) making it a CLAIM: it would be swept as unloaded and engaged on a live actor only, which is the
+  case it exists to avoid. (b) a form lookup in `Enqueue` (caller's thread). (c) moving the call off the game thread.
+  (d) reporting Placed without the read-back (principle 7). (e) passing a handle and assuming it is read: on the
+  Character branch it is not, which is the only reason a bare CELL destination works; a non-actor self would take the
+  generic branch (the player is refused, `LookupByID<RE::Actor>` guarantees an actor). (f) dropping the client capture
+  at the call: a client `Release` on the place handle forgets its attribution, and the arbitration would then refuse
+  the client's own placement.
+  Open findings: `Docs/REVIEW-BACKLOG.md` APMF-B149 (a LOADED placement's Character branch from the pump seat is
+  unobserved: MFO passes OnlyIfUnloaded), APMF-B150 (a throwing Post leaves a Queued record), APMF-B151 (kCore facet
+  mask). (g) the exterior visibility test reads the destination cell's attach state: if an unloaded persistent
+  reference's parent cell is the worldspace persistent cell, its attach state decides (see the review log).
 
 ### `native/core/SpaceQuery.{h,cpp}` — ABI v11 SPACE QUERIES (read-only)
 `FindEmptySpace` (walk ray at feet+64u, down ray to feet-maxDrop, 8 knee-height

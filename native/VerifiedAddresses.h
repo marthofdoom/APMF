@@ -19,7 +19,7 @@
 
 namespace apmf::VerifiedAddresses
 {
-	// 1.6.1170.0: 245 rows
+	// 1.6.1170.0: 246 rows
 	inline constexpr REL::SelfCheck::Row kRows_1_6_1170[] = {
 		{ 207886, 0x18A5558, 0x0, 0, {  }, "Character" },
 		{ 207896, 0x18A5FE8, 0x0, 0, {  }, "Character.ActorValueOwner" },
@@ -266,9 +266,10 @@ namespace apmf::VerifiedAddresses
 		{ 213733, 0x18E3810, 0x0, 0, {  }, "Leaf.CombatBehaviorCastConcentrationSpell<bool>" },
 		{ 214161, 0x18E7560, 0x0, 0, {  }, "Leaf.CombatBehaviorIdle<GameSetting>" },
 		{ 214367, 0x18E8AC8, 0x0, 0, {  }, "Leaf.CombatBehaviorRepeat<float,FLAGS>" },
+		{ 56626, 0xA447F0, 0x0, 0, {  }, "Place.TESObjectREFR.MoveTo" },
 	};
 
-	// 1.5.97.0: 245 rows
+	// 1.5.97.0: 246 rows
 	inline constexpr REL::SelfCheck::Row kRows_1_5_97[] = {
 		{ 261397, 0x165DA40, 0x0, 0, {  }, "Character" },
 		{ 261402, 0x165E4D0, 0x0, 0, {  }, "Character.ActorValueOwner.SE" },
@@ -515,9 +516,10 @@ namespace apmf::VerifiedAddresses
 		{ 266706, 0x169DD40, 0x0, 0, {  }, "Leaf.CombatBehaviorCastConcentrationSpell<bool>" },
 		{ 267079, 0x16A1ED8, 0x0, 0, {  }, "Leaf.CombatBehaviorIdle<GameSetting>" },
 		{ 267191, 0x16A35F0, 0x0, 0, {  }, "Leaf.CombatBehaviorRepeat<float,FLAGS>" },
+		{ 56227, 0x9AE5C0, 0x0, 0, {  }, "Place.TESObjectREFR.MoveTo" },
 	};
 
-	// 1.7.104.0: 246 rows
+	// 1.7.104.0: 247 rows
 	// 42 NOT VERIFIED on 1.7.104.0, deliberately absent from this table (the seat is refused):
 	//   Character.ActorValueOwner.SE (1.6.1170 id -): no 1.6.1170 (AE) id: the 1.7.104 map is keyed by AE id (1.5.97-only seat)
 	//   TargetPin.CombatController.SetTarget (1.6.1170 id 33235): id 33235 is not in the idmap
@@ -794,6 +796,7 @@ namespace apmf::VerifiedAddresses
 		{ 213733, 0x1961DD8, 0x0, 0, {  }, "Leaf.CombatBehaviorCastConcentrationSpell<bool>" },
 		{ 214161, 0x1965B50, 0x0, 0, {  }, "Leaf.CombatBehaviorIdle<GameSetting>" },
 		{ 214367, 0x19670B8, 0x0, 0, {  }, "Leaf.CombatBehaviorRepeat<float,FLAGS>" },
+		{ 56626, 0xA5D370, 0x0, 0, {  }, "Place.TESObjectREFR.MoveTo" },
 		{ 0, 0x82D2C0, 0x0, 0, {  }, "AiCastSeats.Melee.CalculateScore" },
 		{ 0, 0x82D790, 0x0, 0, {  }, "AiCastSeats.Ranged.CalculateScore" },
 		{ 0, 0x82DCD0, 0x0, 0, {  }, "AiCastSeats.Shield.CalculateScore" },

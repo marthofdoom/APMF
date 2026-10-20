@@ -328,6 +328,11 @@ namespace apmf {
         // unknown/stale/expired/released handle.
         bool IsClaimLive(Handle handle) const;
 
+        // ABI v28 (kIntent_Place, core/Place.cpp): a fresh handle from the SAME counter every claim uses, for a
+        // one-shot that never becomes a claim (the kCastFlag_AtPosition shape), so its handle can never collide
+        // with a claim's: IsClaimLive is false for it and Release / Repoint on it find nothing. Any thread.
+        Handle NextHandle() noexcept { return m_nextHandle.fetch_add(1, std::memory_order_relaxed); }
+
         // ---- Observability/probe use only (Docs/SPEC-PACKAGE-HOLD.md §4): live
         // Actor* for every actor CURRENTLY claimed on `intent`'s channel (unloaded
         // NPCs filtered via the same npc.handle.get() liveness check OnActorUpdate/

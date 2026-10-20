@@ -950,3 +950,12 @@ Raised against `ace1d8b`, same review (verbatim): "bSubstrateEntryTrace=1 defaul
 
 ### APMF-B148 (SEV-4) -- substrate hands: script/console equips pass the hand block unless DenyScript is on
 Raised against `ee8ca38` by the tier-3 closing re-check (verbatim): "Sink step 0 lets script and console equips through the hand block unless DenyScript is on (EquipSink.cpp verdict: scriptExempt = scriptPath && !denyScript). A third-party Papyrus EquipItem of a weapon during the window of at most 15 s can therefore put a weapon back in a floored hand, and EquipSpell's draw would then draw it. This was already true for client Opens. It is rare. The SubstrateEquip.cpp header comment says step 1a refuses 'a script', which is inaccurate. Correct the comment, or set DenyScript for substrate holders."
+
+### APMF-B149 (SEV-4) -- place: a LOADED placement runs the Character branch from the player-Update pump, unobserved
+Raised against `89a72848` by the tier-3 review of `feat/apmf-place-facet` (verbatim): "Place.cpp:201-202 runs the Character branch (StopInteractingQuick + process work) on a LOADED actor from the player-Update Pump seat; unobserved (the anchor precedent is a non-actor). MFO should always pass OnlyIfUnloaded; the first field run should show a loaded placement before anyone relies on one." Reasoning: MFO's errand use is the unloaded case; deferred until a field run shows a loaded placement. MAP `core/Place` entry.
+
+### APMF-B150 (SEV-5) -- place: a Post that throws leaves a permanent Queued record
+Raised against `89a72848`, same review (verbatim): "Place.cpp:327-352: if mainthread::Post throws after the record is inserted, a permanent Queued record counts toward the 128 cap until the next load." Reasoning: needs a bad_alloc in the post; the next load clears it; deferred. MAP `core/Place` entry.
+
+### APMF-B151 (SEV-5) -- place: kIntent_Place falls to Facet::kCore in FacetMaskForIntent
+Raised against `89a72848`, same review (verbatim): "Sources.cpp:634: kIntent_Place falls to Facet::kCore in FacetMaskForIntent (menu cosmetic)." Reasoning: menu attribution cosmetic only; deferred. MAP `core/Place` entry.

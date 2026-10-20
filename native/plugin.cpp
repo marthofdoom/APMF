@@ -27,6 +27,7 @@
 #include "channels/CombatReentryDeny.h"
 #include "channels/CombatApproach.h"
 #include "core/PositionCast.h"
+#include "core/Place.h"            // ABI v28 kIntent_Place: Install at kDataLoaded, ResetAll at revert / kPreLoadGame
 #include "core/SpaceQuery.h"
 #include "core/Sightline.h"
 #include "core/Awareness.h"
@@ -121,6 +122,7 @@ namespace {
         // delete (its Retire task is dropped by the Discard below). The references
         // belong to the world being replaced, so none is touched.
         apmf::poscast::ResetAll("revert/new game");
+        apmf::place::ResetAll("revert/new game");   // ABI v28: forget the placement records (a queued move drops itself)
         // ABI v18: same, for the line-of-sight pairs and the awareness noise baselines.
         apmf::sightline::ResetAll("revert/new game");
         apmf::awareness::ResetAll("revert/new game");
@@ -229,6 +231,9 @@ namespace {
                                                   // never VR) + [PositionCast] + the XMarker base. Installs NO
                                                   // hook. Refused -> kCastFlag_AtPosition requests are refused.
             apmf::spacequery::Install();         // ABI v11 SPACE QUERIES: runtime gate only (read-only calls).
+            apmf::place::Install();              // ABI v28 PLACE (kIntent_Place): exact 1.6.1170 / 1.5.97 / 1.7.104,
+                                                  // VR-refused, SeatVerified on MoveTo_Impl. Installs NO hook. Refused
+                                                  // -> kIntent_Place requests are refused at the call.
             apmf::sightline::Install();          // ABI v18 OWN LINE OF SIGHT: exact-version gate, [Sightline]
                                                   // bOwnLineOfSight, SeatVerified on every address the ray uses.
                                                   // Installs NO hook (its pump rides Arbiter::OncePerFrame). Not
@@ -354,6 +359,7 @@ namespace {
             apmf::combatapproach::ResetAll("kPreLoadGame");
             // ABI v11 position cast: same as the revert path -- forget, never touch.
             apmf::poscast::ResetAll("kPreLoadGame");
+            apmf::place::ResetAll("kPreLoadGame");   // ABI v28: no placement crosses the load (queued ones drop themselves)
             // ABI v18: no line-of-sight pair or noise baseline crosses the load (FormIDs of the
             // outgoing world; a persistent NPC's id survives, its geometry does not).
             apmf::sightline::ResetAll("kPreLoadGame");

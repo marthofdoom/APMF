@@ -126,7 +126,7 @@ a DENIED category is unequipped by the enforce pass. The header comments that st
 stale until the paired MFO header change.
 
 <a id="abi-history"></a>
-## ABI v10 to v27: what each version added
+## ABI v10 to v28: what each version added
 
 Moved verbatim from `native/APMF_API.h` (line 96 at 9d01cdf). The header keeps a pointer to this anchor.
 
@@ -238,6 +238,19 @@ NUMBERING NOTE: v27 had been left free for the ch.17 per-item equip deny (ClickU
 availability query took v27 (MFO's OOC substrate client needs it first), so the per-item equip deny moves to
 v28.
 Docs/APMF_API-REFERENCE.md#abi-v27-substrate-available, Docs/FACETS.md "Combat substrate".
+ABI v28 (2026-10-19, kIntent_Place, MFO town phase 2): kIntent_Place (intent 28) rides the EXISTING RequestEx
+slot (param.form = the destination, a reference or an interior cell; param.pos = the offset or the point;
+param.ival = PlaceFlags; param.fval = the yaw with kPlace_SetYaw). It is a ONE-SHOT, never a claim: ONE
+TESObjectREFR::MoveTo_Impl on the game thread (the body Papyrus ObjectReference.MoveTo runs), for an actor that
+may be unloaded. APMF_API_v28 appends ONE read-only slot, GetPlaceState(handle, APMF_PlaceStateInfo*) ->
+PlaceState (Unknown 0 / Queued 1 / Placed 2 / Refused 3 / Failed 4), ANY thread, with PlaceWhy and the 64-byte
+size-rule struct. No other slot, no APMF_Param field, no change to any existing slot. A client must see
+abiVersion >= 28 before it asks for the intent or calls the slot: an older APMF REFUSES intent 28 ("no channel
+serves intent 28").
+NUMBERING NOTE: v28 had been named for the ch.17 per-item equip deny (ClickUp 86e3t8w23) when v27 went to the
+substrate availability query. The placement facet took v28 (MFO town phase 2 needs it first), so the per-item
+equip deny moves to v29.
+Docs/APMF_API-REFERENCE.md#abi-v28-place, Docs/FACETS.md "Place".
 ```
 
 <a id="intent-18"></a>

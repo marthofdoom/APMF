@@ -4,6 +4,24 @@ Updated 2026-10-13. Current version **v0.13.1** (cut 2026-10-13, ABI v24, see CH
 shipped, what's probe-gated, what's next. Keep this current in the SAME change as any
 build/finding/workflow change.
 
+## HEAD OF WORK 2026-10-19 -- PLACE FACET (kIntent_Place, ABI v28 GetPlaceState), branch `feat/apmf-place-facet`, NOT merged
+
+MFO town phase 2: an off-screen errand follower is "found at the counter" when the player walks in. marth: everything
+is ported to Harbinger, so MFO never calls MoveTo itself.
+- **Engine road (disassembly, 1.6.1170 / 1.5.97 / 1.7.104):** Papyrus `ObjectReference.MoveTo` only queues a VM task;
+  its Run (AE 56101 / SE 55572) calls `TESObjectREFR::MoveTo_Impl` (AE 56626 0xA447F0 / SE 56227 0x9AE5C0 / 1.7.104
+  0xA5D370). For a Character: `StopInteractingQuick(true)` then the actor relocation (AE 37313) with point, rot.z,
+  cell, worldspace. Harbinger makes that one call on the game thread. New row `Place.TESObjectREFR.MoveTo`.
+- **Shape:** a one-shot, never a claim (the position-cast shape), diverted in `ClientAPI` before the control map.
+  Destination = a reference (+ offset) or an INTERIOR cell (+ point). Flags OnlyIfUnloaded / RefuseIfPlayerPresent
+  (outdoors: refused when the destination is loaded, cell attached or reference with 3D) / SetYaw. INVARIANTS #0 (k)
+  adopted (marth 2026-10-19). An interior read-back in another cell is Failed. A result stays until read once or 30 s. Refused when another client's ch.19 travel or ch.1 hold owns the actor. Position read back: Placed, else
+  Failed (never reported as placed). `GetPlaceState` (APMF_API_v28, any thread). No INI key. Switches nothing on.
+- **ABI v28** took the number the per-item equip deny (86e3t8w23) had: that moves to v29. MFO must mirror the header
+  byte-identically (md5 in the branch report).
+- Field run: a follower sent off-screen and placed at a reference in an unloaded interior; expect `[place] <h>
+  queued` then `PLACED ... (was unloaded ...)`. A `FAILED` (position did not take) or a `CellDiffers` note is the
+  finding to bring back.
 ## HEAD OF WORK 2026-10-19 -- SUBSTRATE SPELL EQUIP (the engine's own AI equips the claimed spell), branch `feat/apmf-substrate-equip`, NOT merged
 
 MFO S3 tier-3 review F1 (SEV-2): a substrate holder with a ch.8b cast claim had nothing that puts the spell in hand,

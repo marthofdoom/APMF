@@ -4446,6 +4446,21 @@
    ],
    "source": "native/core/CombatBehaviorRE.h (kParamLeaves); ActionGate.cpp act/pop for the combat substrate's allow-list (review F1 of a512763)",
    "doc": "MIT fork Offsets_VTABLE.h:3857 (VTABLE_CombatBehaviorTreeNodeObject2_CombatBehaviorRepeat_float_CombatBehaviorRepeat__FLAGS_); RTTI name identical on 1.6.1170 and 1.5.97"
+  },
+  {
+   "seat": "Place.TESObjectREFR.MoveTo",
+   "kind": "function",
+   "construct": "TESObjectREFR::MoveTo_Impl (fork Offset::TESObjectREFR::MoveTo RELOCATION_ID(56227, 56626); private in the fork, so called as void(*)(TESObjectREFR*, const ObjectRefHandle&, TESObjectCELL*, TESWorldSpace*, const NiPoint3&, const NiPoint3&)), the body Papyrus ObjectReference.MoveTo's queued task runs (task Run AE 56101 0xA292E0 / SE 55572 0x990430)",
+   "ids": {
+    "1.6.1170": 56626,
+    "1.5.97": 56227
+   },
+   "sig": {
+    "1.6.1170": "48 89 54 24 10 55 56 57 41 54 41 55 41 56 41 57 48 8D 6C 24 E9",
+    "1.5.97": "48 89 54 24 10 55 56 57 41 54 41 55 41 56 41 57 48 8D 6C 24 E9"
+   },
+   "source": "native/core/Place.cpp (kIntent_Place, ABI v28: the one engine call of a placement, main thread)",
+   "doc": "feat/apmf-place-facet agentlog apmf-place.md: Character branch = StopInteractingQuick(true) then AE 37313(actor, &pos, rot.z, 0, cell, worldspace, 1); the handle argument is read only on the player branch (all three builds)"
   }
  ],
  "layout_facts": [
