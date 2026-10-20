@@ -29,7 +29,7 @@ namespace apmf::anchorguard {
 
     // kDataLoaded, from reentrydeny::Install BEFORE it builds the slot-0x99 stub. `a_startCombat` is
     // Actor::StartCombat's verified address. True = verified (row AnchorGuard.StartCombat.TargetGroupRegs on
-    // exactly 1.6.1170 / 1.5.97; 1.7.104 refused by name) and enabled: ch.22 then builds the WIDENED stub
+    // exactly 1.6.1170 / 1.5.97 / 1.7.104; 1.7.104 at the AE offset +0x23) and enabled: ch.22 then builds the WIDENED stub
     // (self site: r8 = rsi, r9 = rbp) and calls AnswerJoin at the self site. Reads [CombatSubstrate]
     // bSubstrateJoinGuard / bSubstrateEntryTrace. GAME THREAD, once.
     bool InstallSeat(std::uintptr_t a_startCombat);
