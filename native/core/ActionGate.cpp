@@ -1007,7 +1007,8 @@ namespace apmf::actiongate {
             if (g_mvcbtEnabled.load(std::memory_order_relaxed)) PfpObserveMovementLeaf(vt, a_control);
 
             // THE COMBAT SUBSTRATE (S2a, channels/CombatSubstrate.cpp): while a substrate holds this actor,
-            // every leaf but the three cast leaves (and the structural nodes) is force-failed with the SAME
+            // every leaf but the three cast leaves, the spell-equip path (EquipSpell + the "Action"
+            // AcquireResource<2>, read from `a_this`) and the structural nodes is force-failed with the SAME
             // ForceFail act()/pop() PAIR ch.7 uses. Before ch.23 and ch.7: the allow-list is whole. It reads
             // the substrate's lock-free slot table only; a holder whose real-combat stand-down fired reads as
             // "not a holder" and the tree runs as the engine built it.
@@ -1015,7 +1016,7 @@ namespace apmf::actiongate {
                 if (const auto lit = g_leafIdx.find(vt); lit != g_leafIdx.end()) {
                     const RE::FormID sf = ResolveDeliberatingActor(a_control);
                     const bool       mv = g_movementLeaf.contains(vt);
-                    if (sf != 0 && apmf::combatsubstrate::ForLeaf(sf, lit->second, mv) ==
+                    if (sf != 0 && apmf::combatsubstrate::ForLeaf(sf, lit->second, mv, a_this) ==
                                        apmf::combatsubstrate::Leaf::kDeny) {
                         if (const auto ff = g_forceFailAct.load(std::memory_order_relaxed)) {
                             t_pending = PendingPop{ a_this, a_control };
