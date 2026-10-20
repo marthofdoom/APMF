@@ -2,6 +2,7 @@
 #include "channels/SubstrateEquip.h"
 
 #include "APMF_API.h"
+#include "core/Allowance.h"   // RuntimeSupported: the exact-build gate
 #include "core/Clock.h"
 #include "core/EquipGate.h"
 #include "core/EquipSink.h"
@@ -116,13 +117,16 @@ namespace apmf::substrateequip {
         void ReadOnce() {
             if (g_read) return;
             g_read = true;
-            const bool runtimeOk =
-                REL::Module::IsExactly(SKSE::RUNTIME_SSE_1_6_1170) || REL::Module::IsExactly(SKSE::RUNTIME_SSE_1_5_97);
+            // Exactly 1.6.1170, 1.5.97 or 1.7.104. 1.7.104 (2026-10-20): EquipSpell's Enter (0x88D510, AE 0x878260; the
+            // DrawWeaponMagicHands call at +0x125), its act() (0x87CB80, AE 0x867940) and both AcquireResource<2>
+            // constructions (0x87A5C5 "Action" in 0x87A420, AE 0x865385; 0x8C3469 "Movement" in 0x8C2900, AE 0x8ADEF9:
+            // `lea rcx,[rbx+0x28]`) are instruction-identical to 1.6.1170, so node+0x28 and the path above hold there.
+            const bool runtimeOk = apmf::allowance::RuntimeSupported();
             const bool ini = IniInt("CombatSubstrate", "bSubstrateEquip", 1) != 0;
             g_enabled.store(runtimeOk && ini, std::memory_order_release);
             if (!runtimeOk)
                 spdlog::warn("[substrate] the spell-equip path (AcquireResource<2> \"Action\" + EquipSpell) is verified on "
-                             "exactly 1.6.1170 and 1.5.97 only: it stays DENIED on this runtime.");
+                             "exactly 1.6.1170, 1.5.97 and 1.7.104 only: it stays DENIED on this runtime.");
             else if (!ini)
                 spdlog::warn("[substrate] [CombatSubstrate] bSubstrateEquip=0: the spell-equip path stays DENIED, so a "
                              "substrate cast is never reached (the Action branch is cut at \"Acquire Action Resource\").");

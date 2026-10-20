@@ -190,7 +190,7 @@ namespace {
     // theirs (round-2 closing item 3a; review F3 of ace1d8b): EvaluatePackage(false, false), resetAI false, so the
     // cleaned actor's own package (and its sheathe) comes back instead of a stale combat state. The relocation is the
     // substrate's verified row PackageGate.EvaluatePackage (RELOCATION_ID(36407, 37401)); this runs only while the
-    // substrate is installed, which requires that row (exact 1.6.1170 / 1.5.97: never resolved on 1.7.104).
+    // substrate is installed, which requires that row (exact 1.6.1170 / 1.5.97 / 1.7.104; 37401 is a row of the MIT id table).
     std::string StopAndRepick(RE::Actor* a_actor, RE::Actor* a_anchor) {
         std::string stop = apmf::combatentry::hold::StopCombatRanked(a_actor, APMF_API::kInvalidHandle,
                                                                      a_anchor->GetFormID(), a_anchor->GetHandle());
@@ -283,16 +283,17 @@ namespace apmf::anchorguard {
         std::memset(b, 0, sizeof(b));
         REX::W32::GetPrivateProfileStringA("CombatSubstrate", "bSubstrateJoinGuard", "1", b, sizeof(b), kIni);
         const bool on = std::atoi(b) != 0;
-        if (apmf::allowance::IsRuntime1_7_104()) {
-            why = "refused by name on 1.7.104 (its StartCombat register copies are not disassembled here)";
-        } else if (!REL::Module::IsExactly(SKSE::RUNTIME_SSE_1_6_1170) && !REL::Module::IsExactly(SKSE::RUNTIME_SSE_1_5_97)) {
-            why = "the runtime is not exactly 1.6.1170 or 1.5.97";
+        // 1.7.104: StartCombat (MIT id 38561, 0x6C93B0) is instruction-identical to 1.6.1170's 0x6B6930 (313 insns), so
+        // the register copies sit at the AE offset; the row AnchorGuard.StartCombat.TargetGroupRegs verifies their nine
+        // bytes at 0x6C93B0 + 0x23 in the 1.7.104 table (SelfCheck re-reads them at runtime).
+        if (!apmf::allowance::RuntimeSupported()) {
+            why = "the runtime is not exactly 1.6.1170, 1.5.97 or 1.7.104";
         } else if (!on) {
             why = "[CombatSubstrate] bSubstrateJoinGuard=0 (the null-target join into a substrate group is NOT refused; "
                   "the sweep still cleans it up)";
         } else {
             const std::uintptr_t site =
-                a_startCombat + (REL::Module::IsExactly(SKSE::RUNTIME_SSE_1_6_1170) ? kRegsOffsetAE : kRegsOffsetSE);
+                a_startCombat + (apmf::allowance::RuntimeAEColumn() ? kRegsOffsetAE : kRegsOffsetSE);   // 1.7.104 = +0x23
             if (!apmf::allowance::SeatVerified(site, "AnchorGuard.StartCombat.TargetGroupRegs"))
                 why = "the self-check refused StartCombat's register-copy row (AnchorGuard.StartCombat.TargetGroupRegs)";
         }

@@ -52,7 +52,8 @@ namespace apmf::combatentry::hold {
     // kDataLoaded, after targetpin::Install / combatentry::Install: reads [EngagementHold], and
     // installs the KNOWLEDGE seats (two write_call<5> post-call hooks on the engine's
     // CombatGroup::UpdateTargetDetection, the only writer of a combat target's kTargetLost) on
-    // exactly 1.6.1170 / 1.5.97 after the address self-check. GAME THREAD. Idempotent.
+    // exactly 1.6.1170 / 1.5.97 / 1.7.104 after the address self-check (1.7.104 through raw-RVA rows:
+    // its MIT id table has no row for the three ids). GAME THREAD. Idempotent.
     void Install();
 
     // [EngagementHold] bEngagementHold (default 1): ch.20 does not end a pin on "target lost",
