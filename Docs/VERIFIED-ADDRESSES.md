@@ -10,13 +10,13 @@ nothing when one does not. At startup `REL::SelfCheck::Run` repeats the comparis
 game actually loaded. A row that fails refuses THAT seat by name in the log; the expected RVA is never
 used in place of the library's answer.
 
-Offline result of this generation: 1.6.1170.0 246/246 verified, 0 refused, 1.5.97.0 246/246 verified, 0 refused.
+Offline result of this generation: 1.6.1170.0 253/253 verified, 0 refused, 1.5.97.0 253/253 verified, 0 refused.
 
 1.7.104.0 has NO Address Library. Its column is OUR OWN id map: the MIT id table of the CommonLibSSE-NG fork
 (`data/mit-idtable-v1-1-7-104-0.bin`, revision 3, 17751 records, SkyrimSE.exe TimeDateStamp 0x6A8C7046; built into every plugin, it is
 what SelfCheck queries at runtime; authoritative) with the evidence CSVs beside it, keyed by
 the 1.6.1170 id, re-verified against the plaintext 1.7.104 executable by the same row-kind checks (see the script
-docstring). Offline result: 1.7.104.0 247/289 verified, 42 NOT verified (28 of them BY DESIGN: 1.5.97-only labels whose AE twin row carries the 1.7.104 fact). A not-verified seat has no row in the 1.7.104 table,
+docstring). Offline result: 1.7.104.0 247/296 verified, 49 NOT verified (28 of them BY DESIGN: 1.5.97-only labels whose AE twin row carries the 1.7.104 fact). A not-verified seat has no row in the 1.7.104 table,
 so `IsVerifiedAddress` is false and the seat is refused by name. The table of `Not verified on 1.7.104` is below.
 
 These rows prove the ADDRESSES. That each hooked slot holds the same function body on 1.7.104, and that every
@@ -272,6 +272,13 @@ CommonLib layout APMF reads is the same there, is proven separately in the "1.7.
 | Leaf.CombatBehaviorIdle<GameSetting> | vtable | 214161 | 0x18E7560 | 267079 | 0x16A1ED8 | 214161 | 0x1965B50 | RTTI .?AV?$CombatBehaviorTreeNodeObject1@VCombatBehaviorIdle@@V?$CombatBehaviorExpression@V?$CombatBehaviorFunc1@P6AMPEAV?$SettingT@VGameSettingCollection@@@@@ZPEAV1@@@@@@@ (COL offset 0) | 0x02: 0x8B9B80 / 0x8217C0 / 0x8CF160<br>0x03: 0x557710 / 0x4FC010 / 0x55F580 | native/core/CombatBehaviorRE.h (kParamLeaves); ActionGate.cpp act/pop for the combat substrate's allow-list (review F1 of a512763) | MIT fork Offsets_VTABLE.h:3817 (VTABLE_CombatBehaviorTreeNodeObject1_CombatBehaviorIdle_CombatBehaviorExpression_CombatBehaviorFunc1_float_____SettingT_GameSettingCollection_____SettingT_GameSettingCollection______); RTTI name identical on 1.6.1170 and 1.5.97 |
 | Leaf.CombatBehaviorRepeat<float,FLAGS> | vtable | 214367 | 0x18E8AC8 | 267191 | 0x16A35F0 | 214367 | 0x19670B8 | RTTI .?AV?$CombatBehaviorTreeNodeObject2@VCombatBehaviorRepeat@@MW4FLAGS@1@@@ (COL offset 0) | 0x02: 0x8C1650 / 0x8298A0 / 0x8D6C50<br>0x03: 0x557790 / 0x4FC090 / 0x55F600 | native/core/CombatBehaviorRE.h (kParamLeaves); ActionGate.cpp act/pop for the combat substrate's allow-list (review F1 of a512763) | MIT fork Offsets_VTABLE.h:3857 (VTABLE_CombatBehaviorTreeNodeObject2_CombatBehaviorRepeat_float_CombatBehaviorRepeat__FLAGS_); RTTI name identical on 1.6.1170 and 1.5.97 |
 | Place.TESObjectREFR.MoveTo | function | 56626 | 0xA447F0 | 56227 | 0x9AE5C0 | 56626 | 0xA5D370 | signature (21 bytes, unique in .text) |  | native/core/Place.cpp (kIntent_Place, ABI v28: the one engine call of a placement, main thread) | feat/apmf-place-facet agentlog apmf-place.md: Character branch = StopInteractingQuick(true) then AE 37313(actor, &pos, rot.z, 0, cell, worldspace, 1); the handle argument is read only on the player branch (all three builds) |
+| Substrate.Bark.ControllerStartTopicCall | callsite | 33231 | 0x559280 +0xA9 E8 | 32484 | 0x4FDBF0 +0xBD E8 | - | - | signature (18 bytes, unique in .text) |  | native/channels/SubstrateBark.cpp (the combat substrate's bark deny, INVARIANTS #0 (j) 2 (f): the holder group's detectionDialogueTimers[2] / [4] pre-armed in the holder's own UpdateCombat before the controller's first update) | SUBSTRATE-R2-RESEARCH.md section 3: AE 0x559329 / SE 0x4FDCAD (r14 / esi = -1: lea r8d,[reg+6]; lea r9d,[reg+0x3C] or [reg+0x3A]) |
+| Substrate.Bark.DialogueCoreCall | callsite | 44672 | 0x802130 +0xFB E8 | 43466 | 0x768C10 +0x114 E8 | - | - | signature (24 bytes, unique in .text) |  | native/channels/SubstrateBark.cpp (the combat substrate's bark deny, INVARIANTS #0 (j) 2 (f): the holder group's detectionDialogueTimers[2] / [4] pre-armed in the holder's own UpdateCombat before the controller's first update) | AE 0x80222B / SE 0x768D24 |
+| Substrate.Bark.DetectionTimerSlot | callsite | 44673 | 0x8022B0 +0x106 8D 47 C9 8B D8 48 83 C3 0B 49 8D 1C D8 | 43467 | 0x768DA0 +0x10E 8D 47 C9 8B D8 48 83 C3 0B 49 8D 1C D8 | - | - | signature (43 bytes, unique in .text) |  | native/channels/SubstrateBark.cpp (the combat substrate's bark deny, INVARIANTS #0 (j) 2 (f): the holder group's detectionDialogueTimers[2] / [4] pre-armed in the holder's own UpdateCombat before the controller's first update) | AE 0x8023B6 / SE 0x768EAE |
+| Substrate.Bark.TimerGate | ripref | 44673 | 0x8022B0 +0x118 F3 0F 10 05 8C 8C 99 02 F3 0F 5C 03 0F 2F 43 | 43467 | 0x768DA0 +0x120 F3 0F 10 05 7C 17 7D 02 F3 0F 5C 03 0F 2F 43 | - | - | signature (43 bytes, unique in .text) |  | native/channels/SubstrateBark.cpp (the combat substrate's bark deny, INVARIANTS #0 (j) 2 (f): the holder group's detectionDialogueTimers[2] / [4] pre-armed in the holder's own UpdateCombat before the controller's first update) | AE 0x8023C8 -> 0x319B05C / SE 0x768EC0 -> 0x2F3A644 |
+| Substrate.Bark.AIClock | ripref global | 404125 | 0x319B05C | 517597 | 0x2F3A644 | - | - | RIP-relative reference at Substrate.Bark.TimerGate +0x118 (id 44673) |  | native/channels/SubstrateBark.cpp (the combat substrate's bark deny, INVARIANTS #0 (j) 2 (f): the holder group's detectionDialogueTimers[2] / [4] pre-armed in the holder's own UpdateCombat before the controller's first update) | AE 0x8023C8 -> 0x319B05C / SE 0x768EC0 -> 0x2F3A644 |
+| Substrate.AIProcess.SetAggressor | function | 39145 | 0x6D6CB0 | 38185 | 0x644300 | - | - | signature (16 bytes, unique in .text) |  | native/channels/SubstrateAggressor.cpp (the combat substrate's aggressor-bit clear, INVARIANTS #0 (j) 2 (g): set false right after the entry and again only if set while HELD) | SUBSTRATE-R2-RESEARCH.md section 1 (writers / readers) |
+| Substrate.AIProcess.GetAggressor | function | 39144 | 0x6D6C90 | 38184 | 0x6442E0 | - | - | signature (16 bytes, unique in .text) |  | native/channels/SubstrateAggressor.cpp (the combat substrate's aggressor-bit clear, INVARIANTS #0 (j) 2 (g): set false right after the entry and again only if set while HELD) | SUBSTRATE-R2-RESEARCH.md section 1 |
 | Character.ActorValueOwner.SE | vtable | - | - | 261402 | 0x165E4D0 | - | - | RTTI .?AVCharacter@@ (COL offset 176) | 0x04: - / 0x621070 / -<br>0x05: - / 0x6210B0 / -<br>0x06: - / 0x6210F0 / -<br>0x07: - / 0x36D280 / - | native/core/ActorValueObserve.cpp (1.5.97: the ActorValueOwner sub-object sits at 0xB0, so its COL offset differs from the AE row's 0xB8) | agentlogs/apmf-1b-observe.md (2026-10-12); AE twin row Character.ActorValueOwner carries the 1.7.104 fact |
 | EquipSink.Path.OutfitApply.24234 | function | - | - | 24234 | 0x364710 | - | - | signature (21 bytes, unique in .text) |  | native/core/EquipSink.cpp:158 |  |
 | EquipSink.Path.AddWornOutfit.19266 | function | - | - | 19266 | 0x28DDA0 | - | - | signature (17 bytes, unique in .text) |  | native/core/EquipSink.cpp:159 |  |
@@ -365,6 +372,13 @@ for them and the seat is refused. Nothing here is a failure on 1.6.1170 or 1.5.9
 | Substrate.CombatGroup.DetectionPassInUpdate | 44703 | id 44703 is not in the idmap |
 | Substrate.CombatGroup.MusicUndecided | 44703 | id 44703 is not in the idmap |
 | Substrate.CombatManager.MusicPlayTest | 46888 | id 46888 is not in the idmap |
+| Substrate.Bark.ControllerStartTopicCall | 33231 | id 33231 is not in the idmap |
+| Substrate.Bark.DialogueCoreCall | 44672 | id 44672 is not in the idmap |
+| Substrate.Bark.DetectionTimerSlot | 44673 | id 44673 is not in the idmap |
+| Substrate.Bark.TimerGate | 44673 | id 44673 is not in the idmap |
+| Substrate.Bark.AIClock | 404125 | proven through Substrate.Bark.TimerGate, which did not verify: id 44673 is not in the idmap |
+| Substrate.AIProcess.SetAggressor | 39145 | id 39145 is not in the idmap |
+| Substrate.AIProcess.GetAggressor | 39144 | id 39144 is not in the idmap |
 
 ## Slots and offsets that are not Address Library ids
 
