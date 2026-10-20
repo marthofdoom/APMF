@@ -52,9 +52,9 @@
 // REAL COMBAT (#0 (j) condition 5: never suppress a real fight's behaviour). In the held engagement's detection
 // seat, inside the engine's own write-locked update of the group (WriteLockedHere, the music deny's rule), a group
 // that shows a real target and still reads EXACTLY Harbinger's two values gets the values it had before the write
-// back. The real-combat DROP does the same on the game thread under the group's WRITE lock (BSWriteLockGuard, the
-// verified lock rows) for the group DropSub removes the anchor from: a hit or the party's fight never shows the seat
-// a real target in the holder's group. The seat also READS the two timers at the first detection pass (about 0.5 s after the group is built): a
+// back. A real-combat DROP never touches the group from the game thread: the record is kept as a DEBT (kDebt, until arm
+// time + the written duration) and SeatRealTarget pays it inside the same locked update; substratebark::Poll logs it
+// PAID / SETTLED / expired UNPAID. The seat also READS the two timers at the first detection pass (about 0.5 s after the group is built): a
 // value that is no longer Harbinger's means the engine passed every other gate and armed it, i.e. it SPOKE.
 //
 // THREADING. Arm / Disarm / Closing / Reset: game thread. BeforeUpdateCombat: any UpdateCombat job (one actor per
@@ -62,8 +62,8 @@
 // job, under the engine's group write lock. The records are atomics; a slot's generation is re-read after the
 // fields (a reused slot reads as another record) before anything is written to the engine.
 //
-// SCOPE. Exactly 1.6.1170 and 1.5.97 (1.7.104: the bark rows have no 1.7.104 entry and a RELOCATION_ID miss is
-// fatal there, so the ids are never built: refused by name). [CombatSubstrate] bSubstrateBarkDeny=0 switches it
+// SCOPE. 1.6.1170 and 1.5.97 through their rows; 1.7.104 through raw ....1_7_104 rows with install-time re-reads
+// (the ids are never built there: a RELOCATION_ID miss is fatal). [CombatSubstrate] bSubstrateBarkDeny=0 switches it
 // off (every OPEN logs the hole).
 // ============================================================================
 

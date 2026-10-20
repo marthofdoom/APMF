@@ -987,3 +987,9 @@ Raised against `e6f5607c`, finding F6 (verbatim as relayed): "arm TOCTOU, micros
 
 ### APMF-B160 (SEV-5) -- the substrate now depends on TargetPin's UpdateCombat layer 0
 Raised against `e6f5607c`, finding F9 (verbatim as relayed): "the substrate now depends on TargetPin layer 0 (bTargetPin=0 refuses it unless bSubstrateBarkDeny=0)." The bark deny rides `TargetPin.cpp` layer 0 (`substratebark::BeforeUpdateCombat`); with `[TargetPin] bTargetPin=0` layer 0 is not installed and the bark deny's Install refuses the substrate (principle 2) unless `[CombatSubstrate] bSubstrateBarkDeny=0`. Documented in INI-REFERENCE (`bTargetPin`, `bSubstrateBarkDeny`) and FACETS ch.27. A future cleanup could give the 0xE4 layer its own switch independent of the pin. MAP `SubstrateBark.cpp` / `TargetPin.cpp` entries.
+
+### APMF-B161 (SEV-5, CLOSED at merge) -- SubstrateBark.cpp stale header comment
+Raised against `898f90c3` (verbatim): "SubstrateBark.cpp has a stale header comment. Lines 55-57 still describe a drop put-back 'on the game thread under the group's WRITE lock'. Lines 64-66 still say 1.7.104 is 'refused by name'." Fixed (comment-only) in the merge commit.
+
+### APMF-B162 (SEV-5) -- bark debt expiry uses MonotonicMs while the timers run on the AI clock
+Raised against `898f90c3` (verbatim): "Debt expiry uses MonotonicMs, but the timers run on the AI clock. If a pausing menu is open, the UNPAID line can fire while Harbinger's values are still live for about the paused time. The only effect is a few more seconds of a joining member's bark being suppressed."
