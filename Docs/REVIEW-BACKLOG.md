@@ -959,3 +959,6 @@ Raised against `89a72848`, same review (verbatim): "Place.cpp:327-352: if mainth
 
 ### APMF-B151 (SEV-5) -- place: kIntent_Place falls to Facet::kCore in FacetMaskForIntent
 Raised against `89a72848`, same review (verbatim): "Sources.cpp:634: kIntent_Place falls to Facet::kCore in FacetMaskForIntent (menu cosmetic)." Reasoning: menu attribution cosmetic only; deferred. MAP `core/Place` entry.
+
+### APMF-B152 (SEV-3) -- place: RefuseIfPlayerPresent over-refuses exterior persistent-ref destinations
+Raised against `2914e534` by the tier-3 closing re-check (verbatim): "with RefuseIfPlayerPresent set, every exterior placement to a persistent ref in the player's current worldspace is refused, whether or not it could be seen" -- GetParentCell of a persistent ref outside the loaded grid is (inferred) the worldspace persistent cell (formFlags 0x2000, GetSkyCell AE 0x30B070), which TES keeps attached (cellState 7) while the player is in that worldspace. No false pass (a visible destination refuses either way). Proper fix: when cell->formFlags & 0x2000, test the real grid cell at the point instead (verify that symbol in the fork first). Carve-out (b) if MFO's next town field cycle places at exterior destinations; interior counters are unaffected.
