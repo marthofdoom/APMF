@@ -225,6 +225,9 @@ namespace apmf::equipgate {
         // gate -- see the SEAT 0x0F block in the thunk below.
         std::unordered_set<std::uintptr_t> g_restoreVtables;
         std::atomic<bool> g_installed{ false };
+        // The number of the 30 spell/staff vtables actually patched (channels/SubstrateEquip.cpp asks, F3 of a0112b24).
+        std::atomic<int>  g_hooked{ 0 };
+        constexpr int     kSpellStaffVtables = 30;
 
         // Per-hand deny (INVARIANTS #18): the vanilla Left/Right Hand BGSEquipSlot
         // forms, resolved ONCE at install through CommonLib's own version-robust
@@ -800,6 +803,8 @@ namespace apmf::equipgate {
 
         const int n = allowance::InstallOnVtables(kVtables, kCheckShouldEquip, &EquipGateThunk,
                                                    expectedTD.get(), "t2a", g_orig);
+        static_assert(sizeof(kVtables) / sizeof(kVtables[0]) == kSpellStaffVtables);
+        g_hooked.store(n, std::memory_order_release);
 
         // ch.8b SEAT 0x0F scope (feat/ai-cast-seats-impl): record WHICH of the vtables
         // just patched are the RESTORE templates, from the two NAMED symbols -- never
@@ -830,6 +835,13 @@ namespace apmf::equipgate {
                      static_cast<void*>(g_rightHandSlot.load(std::memory_order_relaxed)),
                      g_denyCompleteEnabled.load(std::memory_order_relaxed) ? "ON (default)" : "OFF",
                      g_logEnabled.load(std::memory_order_relaxed) ? "ON" : "OFF (default)");
+    }
+
+    bool DenyCompleteActive() {
+        return g_hooked.load(std::memory_order_acquire) == kSpellStaffVtables &&
+               g_denyCompleteEnabled.load(std::memory_order_relaxed) &&
+               g_leftHandSlot.load(std::memory_order_acquire) != nullptr &&
+               g_rightHandSlot.load(std::memory_order_acquire) != nullptr;
     }
 
 }

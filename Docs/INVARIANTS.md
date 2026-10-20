@@ -470,7 +470,32 @@ with `kIntent_CombatSubstrate` beside its `kIntent_Cast` claim. It is legal only
    holder is under its substrate: (a) every combat behaviour-tree LEAF is force-failed with ch.7's ForceFail
    act()/pop() PAIR except `CastImmediateSpell`, `CastConcentrationSpell`, `PrepareDualCast` and the two dual-cast
    variants `CastImmediateSpell<bool>` / `CastConcentrationSpell<bool>`, and those run only while a DRIVING cast
-   claim stands -- an ALLOW-list, so a leaf nobody listed is denied by construction. The index covers EVERY
+   claim stands -- an ALLOW-list, so a leaf nobody listed is denied by construction. **THE SPELL EQUIP
+   (2026-10-19, `channels/SubstrateEquip.cpp`):** under the same condition two more nodes run, the
+   `CombatBehaviorEquipSpell` leaf and the `CombatBehaviorAcquireResource<2>` node whose resource (its
+   BSFixedString at node+0x28) is "Action" -- its "Movement" instance stays denied. The tree reaches a cast only
+   through the Action branch (AE 47687 / SE 46460: Repeat > Acquire Action Resource > SpawnParallel > the
+   equipment-slot EquipContext > the ActionEquipmentSelector tree, AE 47688 / SE 46461, whose Magic Sequence is
+   [Equip magic = EquipSpell, Magic Link]); with both denied the branch was cut for every holder (the allow-list
+   denied every AcquireResource<2>; the dry-run `LEAF DENIED` line does not name the instance, APMF-B141). The EquipSpell leaf (Enter AE 48127 / SE 46958)
+   chooses nothing: it equips the equip context's item (the CombatInventory's SELECTED item for that slot) into
+   that item's own equipSlot through the engine's internal EquipSpell (AE 38896 / SE 37940) and draws the hands for
+   magic (Actor vfunc 0xA6). What reaches the selected set is gated per hand at 0x0F (`core/EquipGate.cpp` for
+   spells / staves, `core/HandBlock.cpp` for weapons / shields / torches): the claimed hand admits only the claim's
+   driven form, the floored hand admits nothing (condition (c)). So the ENGINE equips, and only the claimed spell
+   into the claimed hand: Harbinger fires no equip. Every other equip leaf stays denied (EquipObject,
+   EquipRangedWeapon, EquipShout; Pause; DrinkPotion). **THE STOW (review F1 / F2 of a0112b24; marth: "Harbinger
+   sheathes/stows first", "Harbinger restores it"):** the leaf draws BOTH hands (AE 0x878385 / SE 0x7E0CF3) and
+   displaces a weapon in its hand, so a CLIENT substrate takes every weapon, shield and torch off both hands
+   before its entry (queued `UnequipObject`, main thread, the ch.17 road), records each copy by its ExtraUniqueID
+   uid, enters only once they are off, and re-equips exactly those copies (queued `EquipObject` of the uid's list
+   inside the sink's APMF bracket) at its close or real-fight drop, each as soon as no cast claim or floor holds
+   its hand. This is the client's declared cast's own consequence undone, not a decision: it puts back what was
+   there. A copy with no uid comes back by form; a load or revert drops the record (logged). The open also
+   refuses unless the 0x0F deny-complete refusal, the hand-claim block and the equip sink all stand. The spell
+   equip runs only on the holder's `kStEquipOk` bit, set once the hands read clear (no weapon, shield or torch in
+   either hand) for a CLIENT substrate -- at its Open, or when a client takes over a dry run (the checks, the stow
+   and the wait run in place); a dry run never sets it. The index covers EVERY
    concrete `CombatBehaviorTreeNodeObject*` class: 95 on both runtimes (the RTTI names in both unpacked
    executables), i.e. the 70 parameterless leaves, the four search leaves and the 21 parameterised nodes of
    `core/CombatBehaviorRE.h` `kParamLeaves` (review F1 of a512763: AcquireResource, Flee, FaceAngle, WatchTarget,
@@ -481,7 +506,15 @@ with `kIntent_CombatSubstrate` beside its `kIntent_Cast` claim. It is legal only
    leaves sit beneath them (AE builder `0x8A0720`); the substrate refuses to install unless all 95 carry the pair.
    Node classes that are not `NodeObject*` (the value, create-context, conditional, link, wrapper and root nodes,
    and the two function-node classes `NodeEvaluateFunction` / `NodeUpdateFunction`) are not hooked: INFERRED to
-   route and decide nothing, the two function nodes not yet traced (REVIEW-BACKLOG); (b) every `StartCombat` against the ANCHOR by an actor that is not a live holder is
+   route and decide nothing. The function nodes, traced 2026-10-19 (REVIEW-BACKLOG APMF-B99): six classes on both
+   runtimes. The one on the Action / equip path is the EquipContext evaluate function ("Equip empty" and "Equip
+   potion", AE 48120 / SE 46952: act and pop are empty, its update calls the function and fails on false); it
+   commits the context's item to CombatInventory's equipped-item list (AE 44860 / SE 43629), whose item
+   Equip / Unequip slots (0x11 / 0x12) are empty on every CombatInventoryItem class except the five *Restore
+   Unequips (a blackboard timer): no actor equip, and it gates nothing on the spell's branch (it sits on the Empty
+   and Potion branches). The other five (ContextCover, ContextFlee, CombatState x2 evaluate; ContextSearch update)
+   live in the UseCover / Flee / Search trees, reached only through the Movement tree after its `Acquire Movement
+   Resource`, which stays denied; (b) every `StartCombat` against the ANCHOR by an actor that is not a live holder is
    answered "dead" at StartCombat's TARGET check, on the slot-0x99 seat ch.22 owns (verified row
    `Substrate.StartCombat.TargetIsDeadCall`; a 17-byte stub in the vtable slot hands the thunk StartCombat's own
    `this`, held in rdi) -- this amends (h) condition 2 ("the TARGET's own IsDead(false) check ... is never
@@ -491,7 +524,7 @@ with `kIntent_CombatSubstrate` beside its `kIntent_Cast` claim. It is legal only
    floors are published); (d) the anchor's group entry is kept KNOWN with (i) condition 1's write, for the anchor
    only, so the group never searches for it. Every one of these ranks as the substrate's client
    (`sources::InheritClient` for the floors): the substrate opens only while that client outranks Engine on
-   CombatAction, Combat, Equip and Detection in `APMF_Sources.ini`; otherwise it refuses by name rather than switch
+   CombatAction, Combat, Equip, Detection and Cast (the floored hand's 0x0F spell refusal and 0x0A, review F3 of a0112b24) in `APMF_Sources.ini`; otherwise it refuses by name rather than switch
    a facet on undenied. KNOWN HOLES, approved by marth 2026-10-12 and logged once per substrate: the combat-start
    topic (StartCombat's block at AE `0x6B6CFB`, which runs because the bit below is off at entry) and the combat
    state event (`TESCombatEvent` / `OnCombatStateChanged`, never hidden from other mods' scripts). The group JOIN
