@@ -365,12 +365,18 @@ namespace apmf::handblock {
         std::mutex                                     g_shapeMx;
         std::unordered_map<RE::FormID, std::uint8_t>   g_shapes;
 
-        bool CachedShape(RE::FormID a_form, std::uint8_t& a_out) {
-            std::scoped_lock lk(g_shapeMx);
-            const auto it = g_shapes.find(a_form);
-            if (it == g_shapes.end()) return false;
-            a_out = it->second;
-            return true;
+        // Never throws (APMF-B180): it runs inside the engine's 0x0F frame, and a std::mutex lock may throw
+        // std::system_error. A failed lock reads as "not cached" (the rule then does nothing, logged).
+        bool CachedShape(RE::FormID a_form, std::uint8_t& a_out) noexcept {
+            try {
+                std::scoped_lock lk(g_shapeMx);
+                const auto it = g_shapes.find(a_form);
+                if (it == g_shapes.end()) return false;
+                a_out = it->second;
+                return true;
+            } catch (...) {
+                return false;
+            }
         }
 
         // The hand(s) a ch.15 claim on `a_weapon` holds for `a_actor`, by the contract in HandBlock.h.
@@ -453,12 +459,98 @@ namespace apmf::handblock {
             }
         }
 
+        // ---- APMF-B177 (marth's ruling, 2026-10-20): W NOT CARRIED -> the ch.15 rule STANDS DOWN for that claim ----
+        // "Carried" = W is one of the actor's own CombatInventory candidates: a CombatInventoryItem whose form
+        // (+0x10) is W in any of CombatInventory::inventoryItems[0..6]. Read from the controller's OWN
+        // CombatInventory, on the thread that is running that inventory's evaluate (no game-thread map, no
+        // inventory-changes read). LAYOUT, measured per runtime on the unpacked executables (agentlog
+        // apmf-weapon-standdown.md), identical on all three:
+        //   CombatController::inventory +0x10: the controller update loads [cc+0x10] and calls
+        //     CombatInventory::Update right after UpdateAreas -- AE 0x558A80 -> 0x80F380, SE 0x4FD3EB -> 0x7754D0,
+        //     1.7.104 0x5608F0 -> 0x824260;
+        //   CombatInventory::parentController +0x00 (the pre-loop reads [inv] as the controller, AE 0x80FE5F);
+        //   inventoryItems +0x08, 7 BSTArrays of stride 0x18, data +0x00, size +0x10: the score/sort loop
+        //     `lea rsi,[inv+0x18]; mov r15d,7; ... mov rdi,[rsi-0x10] ... add rsi,0x18` (AE 0x80F3E2, 1.7.104
+        //     0x8242C2) and the release loop `lea rsi,[inv+8]; mov r13d,7` (AE 0x80F10C, 1.7.104 0x823FEC); SE
+        //     0x777A6E `lea rsi,[rcx+8]; mov r15d,7`, size at [rsi+0x10]; the pre-loop indexes
+        //     `[inv + idx*0x18 + 0x18]` for the size on AE 0x80FD14 and SE 0x775CB6.
+        // Scanned ONLY at the evaluate's own 0x0F sites (the CombatInventory evaluate, AE 44899 / SE 43666, runs
+        // inside CombatInventory::Update after the arrays are re-scored and sorted, on that update's thread). The
+        // pre-loop helper (AE 44868) is also reached through function pointers (44866 / 44867) from callers
+        // not traced, so a pre-loop or unlabelled site never scans: it reuses the last evaluate verdict for the
+        // same claim, and with none the rule applies as before. A runtime cross-check refuses the scan (the rule
+        // then applies, logged loudly once per claim) unless inventory->parentController is this controller.
+        static_assert(offsetof(RE::CombatController, inventory) == 0x10,
+                      "CombatController::inventory moved -- the update loads [cc+0x10] on all three runtimes");
+        static_assert(offsetof(RE::CombatInventory, parentController) == 0x00);
+        static_assert(offsetof(RE::CombatInventory, inventoryItems) == 0x08,
+                      "CombatInventory::inventoryItems moved -- the score/sort loop starts at inv+0x08");
+        static_assert(sizeof(RE::BSTArray<RE::NiPointer<RE::CombatInventoryItem>>) == 0x18,
+                      "BSTArray stride moved -- the engine walks the seven arrays 0x18 apart");
+
+        enum class Carried : std::uint8_t { kUnknown = 0, kYes = 1, kNo = 2 };
+
+        Carried ScanCarried(RE::CombatController* a_cc, RE::FormID a_weapon, const char*& a_why) {
+            a_why = "";
+            auto* inv = a_cc ? a_cc->inventory : nullptr;
+            if (!inv) { a_why = "the controller has no CombatInventory"; return Carried::kUnknown; }
+            if (inv->parentController != a_cc) {
+                a_why = "CombatInventory::parentController is not this controller (layout cross-check failed)";
+                return Carried::kUnknown;
+            }
+            for (const auto& arr : inv->inventoryItems) {
+                for (const auto& p : arr) {
+                    const auto* it = p.get();
+                    if (it && it->item && it->item->GetFormID() == a_weapon) return Carried::kYes;
+                }
+            }
+            return Carried::kNo;
+        }
+
+        struct CarryRecord {
+            APMF_API::Handle handle = APMF_API::kInvalidHandle;
+            RE::FormID       weapon = 0;
+            Carried          state  = Carried::kUnknown;
+        };
+        std::mutex                                    g_carryMx;   // leaf lock: no engine call, no log under it
+        std::unordered_map<RE::FormID, CarryRecord>   g_carry;     // actor -> the last evaluate-site verdict
+
+        // At an evaluate site: store this verdict, and return the previous one for the same claim (kUnknown when
+        // the claim or weapon changed). Never throws.
+        Carried RememberCarried(RE::FormID a_fid, APMF_API::Handle a_h, RE::FormID a_weapon, Carried a_now,
+                                bool& a_newClaim) noexcept {
+            a_newClaim = true;
+            try {
+                std::scoped_lock lk(g_carryMx);
+                if (g_carry.size() > 4096) g_carry.clear();   // bounded; the next evaluate re-fills
+                auto& r = g_carry[a_fid];
+                Carried prev = Carried::kUnknown;
+                if (r.handle == a_h && r.weapon == a_weapon) { prev = r.state; a_newClaim = false; }
+                r = CarryRecord{ a_h, a_weapon, a_now };
+                return prev;
+            } catch (...) {
+                return Carried::kUnknown;
+            }
+        }
+        // At any other site: the last evaluate verdict for the same claim and weapon, else kUnknown. Never throws.
+        Carried RecalledCarried(RE::FormID a_fid, APMF_API::Handle a_h, RE::FormID a_weapon) noexcept {
+            try {
+                std::scoped_lock lk(g_carryMx);
+                const auto it = g_carry.find(a_fid);
+                if (it == g_carry.end() || it->second.handle != a_h || it->second.weapon != a_weapon) return Carried::kUnknown;
+                return it->second.state;
+            } catch (...) {
+                return Carried::kUnknown;
+            }
+        }
+
         // ch.15's step. Runs only when the engine said YES and the hand-claim block did not refuse. Returns
         // true when the candidate is REFUSED (the caller answers NO); false keeps the engine's YES for the
         // next step (ch.17's declared set). Lock-free RCU claim read; the claimed form's shape from the worn
         // object or the game-thread cache. Ranked on the Equip facet like every other equip deny (D2).
-        bool Ch15Refuses(RE::FormID a_fid, RE::Actor* a_actor, RE::TESForm* a_item, RE::FormID a_itemId,
-                         std::uint32_t a_cats, CheckShouldEquip_t a_orig, const char* a_tag, std::uintptr_t a_retRva) {
+        bool Ch15Refuses(RE::FormID a_fid, RE::Actor* a_actor, RE::CombatController* a_cc, RE::TESForm* a_item,
+                         RE::FormID a_itemId, std::uint32_t a_cats, CheckShouldEquip_t a_orig, const char* a_tag,
+                         std::uintptr_t a_retRva) {
             if (!g_ch15On.load(std::memory_order_relaxed)) return false;
             const std::uint32_t competes = a_cats & (APMF_API::kEquipCat_Right | APMF_API::kEquipCat_Left);
             if (!competes) return false;
@@ -507,6 +599,42 @@ namespace apmf::handblock {
             }
 
             // A competitor for a claimed hand.
+            // APMF-B177: is W carried? Scanned at the evaluate's own sites only; every state CHANGE for a claim is
+            // logged once (stand-down loud), so the lines are once per claim per change, never per call.
+            {
+                const bool atEvaluate = std::string_view(SiteName(a_retRva)) == "evaluate";
+                Carried    carried    = Carried::kUnknown;
+                if (atEvaluate) {
+                    const char* why      = "";
+                    carried              = ScanCarried(a_cc, weapon, why);
+                    bool        newClaim = true;
+                    const auto  prev     = RememberCarried(a_fid, h15, weapon, carried, newClaim);
+                    if (newClaim || prev != carried) {
+                        try {
+                            if (carried == Carried::kNo)
+                                spdlog::warn("[ch.15 0x0F] 0x{} '{}' STAND-DOWN: the ch.15 claim's weapon 0x{} is NOT among "
+                                             "the actor's combat inventory candidates, so the weapon rule refuses nothing "
+                                             "for this claim (hands={} would otherwise be left with nothing to pick). The "
+                                             "engine chooses as if no ch.15 weapon rule stood. h={} (APMF-B177)",
+                                             apmf::log::Hex(a_fid), a_actor->GetName() ? a_actor->GetName() : "?",
+                                             apmf::log::Hex(weapon),
+                                             apmf::equipsink::CategoryNames(claimed, hands, sizeof(hands)), h15);
+                            else if (carried == Carried::kYes && prev == Carried::kNo)
+                                spdlog::info("[ch.15 0x0F] 0x{} the ch.15 claim's weapon 0x{} is carried again: the weapon "
+                                             "rule applies again. h={}",
+                                             apmf::log::Hex(a_fid), apmf::log::Hex(weapon), h15);
+                            else if (carried == Carried::kUnknown)
+                                spdlog::error("[ch.15 0x0F] 0x{} cannot tell whether the ch.15 claim's weapon 0x{} is "
+                                              "carried ({}): NO stand-down, the weapon rule applies. h={}",
+                                              apmf::log::Hex(a_fid), apmf::log::Hex(weapon), why, h15);
+                        } catch (...) {
+                        }
+                    }
+                } else {
+                    carried = RecalledCarried(a_fid, h15, weapon);
+                }
+                if (carried == Carried::kNo) return false;   // stood down: the engine's YES stands
+            }
             if (g_ch15Observe.load(std::memory_order_relaxed)) {
                 try {
                     if (LineDue(a_fid, key, dropped))
@@ -561,10 +689,11 @@ namespace apmf::handblock {
         }
 
         // The steps after the hand-claim block, in order: ch.15's weapon admission, then ch.17's declared set.
-        bool AfterHandBlock(RE::FormID a_fid, RE::Actor* a_actor, RE::TESForm* a_item, RE::FormID a_itemId,
+        bool AfterHandBlock(RE::FormID a_fid, RE::Actor* a_actor, RE::CombatController* a_cc, RE::TESForm* a_item,
+                            RE::FormID a_itemId,
                             std::uint32_t a_cats, CheckShouldEquip_t a_orig, const char* a_tag, std::uintptr_t a_retRva,
                             bool a_engine) {
-            if (a_engine && Ch15Refuses(a_fid, a_actor, a_item, a_itemId, a_cats, a_orig, a_tag, a_retRva)) {
+            if (a_engine && Ch15Refuses(a_fid, a_actor, a_cc, a_item, a_itemId, a_cats, a_orig, a_tag, a_retRva)) {
                 t_last.refused = true;
                 return false;
             }
@@ -628,7 +757,7 @@ namespace apmf::handblock {
             // assumed); a claim on the other hand still holds a 2H / bow / unarmed candidate.
             HandHold hold{};
             if (!competes || !HeldFor(fid, competes, itemId, SpellLike(item), hold))
-                return AfterHandBlock(fid, actor, item, itemId, allCats, orig, tag, retRva, engine);
+                return AfterHandBlock(fid, actor, a_cc, item, itemId, allCats, orig, tag, retRva, engine);
 
             // D2 (marth 2026-10-12, "equip denies rank by priority like every other facet"): the NO
             // replaces the answer of the chain beneath this seat (the engine, or a module hooked inside
@@ -651,7 +780,7 @@ namespace apmf::handblock {
                     } catch (...) {
                     }
                     // The hand block stood down; the ch.17 declaration may still refuse the candidate.
-                    return AfterHandBlock(fid, actor, item, itemId, allCats, orig, tag, retRva, engine);
+                    return AfterHandBlock(fid, actor, a_cc, item, itemId, allCats, orig, tag, retRva, engine);
                 }
             } catch (...) {
             }
