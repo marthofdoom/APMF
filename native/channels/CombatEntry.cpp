@@ -1,6 +1,7 @@
 #include "PCH.h"
 #include "channels/CombatEntry.h"
 #include "channels/CombatSubstrate.h"   // S2a: the anchor's knowledge + real-combat trigger (a) ride the detection seat
+#include "channels/SubstrateBark.h"   // DebtPending: the bark put-back owed after a drop (review F1 of e6f5607c)
 #include "channels/TargetPin.h"   // Installed(): whether the ch.20 pin could engage, for the entry log
 #include "core/FacetAttribution.h"   // Harbinger 1b: the engine's refusal is named on the Combat facet
 #include "channels/CombatReentryDeny.h"   // ClientEntryScope: this entry passes a ch.22 re-entry deny
@@ -736,7 +737,9 @@ namespace {
             // kept known after the engine's update (the same un-lose write, for the anchor only); any OTHER target
             // in a holder's group is the real-combat trigger (a) -- seen here synchronously from AddTarget.
             // MusicDebtPending (review F1 of b1c78b2): a dropped holder may still owe Harbinger's music 0 back to a group.
-            if ((apmf::combatsubstrate::AnyLive() || apmf::combatsubstrate::MusicDebtPending()) && a_group && a_member &&
+            // substratebark::DebtPending (review F1 of e6f5607c): a dropped holder may still owe the bark timers back.
+            if ((apmf::combatsubstrate::AnyLive() || apmf::combatsubstrate::MusicDebtPending() ||
+                 apmf::substratebark::DebtPending()) && a_group && a_member &&
                 a_target) {
                 if (apmf::combatsubstrate::IsAnchorRef(a_target)) {
                     const std::uint64_t r = orig(a_group, a_member, a_target, a_event);

@@ -14,6 +14,9 @@ namespace apmf::targetpin {
     // it and each gets a Harbinger layer of its own (the census re-hooks). Same gates as Install().
     // MAIN thread, before kDataLoaded. Install() refuses the whole pin if this did not install.
     void InstallLayer0();
+    // Layer 0 is in the slot (InstallLayer0 succeeded). The combat substrate's bark deny rides it
+    // (channels/SubstrateBark.cpp: BeforeUpdateCombat runs in layer 0 before the chain). ANY THREAD.
+    bool Layer0Installed();
 
     // Install the seat: Character vtable slot 0xE4 (Actor::UpdateCombat), write_vfunc,
     // chaining. Call at kDataLoaded. Idempotent. Refuses (loudly, with the reason kept for

@@ -24,6 +24,28 @@ updater, AE 39948, stows it while sitting, and unequips are not seated; agentlog
   once); when he sits, MFO stops owning Light and the engine stows it (an `UNEQUIPPED` line only if a ch.17 claim
   remains). No ABI or co-save change.
 
+## HEAD OF WORK 2026-10-20 -- SUBSTRATE F-6 (the held holder keeps its package) + S2b, branch `feat/apmf-substrate-f6-override-deny`, NOT merged
+
+marth 2026-10-20: "The combat packages movement is blocked and the regular ooc package that they had before remains
+in charge via harbingers allow deny."
+- **Finding (disassembly, 1.6.1170 / 1.5.97 / 1.7.104):** the package selector (AE 37172 / SE 36193 / 1.7.104
+  0x670880) asks Character slot 0x49 FIRST and only then swaps its pick for `GetEnterCombatOverridePackage` (AE 24673
+  / SE 24169: alias ECOR, then the NPC's ECOR list) when a combat controller exists. Harbinger's 0x49 seat cannot deny
+  it. New seat: `channels/SubstratePackage.cpp`, `write_call<5>` at that call, "no override" for HELD holders only.
+  Rows `Substrate.PackageSelector.CombatOverrideCall` / `Substrate.Npc.GetEnterCombatOverridePackage` (1.6.1170 /
+  1.5.97) and two 1.7.104 raw rows (APMF idmap CSV) + a load-time E8 check.
+- **S2b built, OFF by default** (writers of `AIProcess+0x139` remain after the deny: package restart AE 39434,
+  procedure-tree node begin AE 29290): with the switch on, each held reset is written back and logged, to 15 s. It
+  switches on after P6 and marth's go.
+- **Review round (tier-3 "fix first"):** a real-combat drop of a holder whose window denied a swap re-picks the package
+  (SEV-2); a refused override row refuses the substrate (INI 0 is the one by-name hole, logged per OPEN); the DENIED
+  line says "pre-substrate package was"; SEV-5s in REVIEW-BACKLOG APMF-B163..B165. Merged origin/main `55d2697` (R5).
+- INI `[CombatSubstrate] bSubstrateOverrideDeny=1`, `bSubstrateBitReassert=0` (Docs/INI-REFERENCE.md). Docs: INVARIANTS #0 (j) condition 3
+  amendment, FACETS "Combat substrate", DENY-COMPLETENESS-AUDIT row 27 (package swap), MAP.
+- Field run (Sven, dry run on): expect `combat-override package 0x00109124 DENIED -- pre-substrate package was 0x0005C84B`
+  (or MFO's package) once per window, `package hold (close): ... STAYED IN CHARGE`, `MOVE ... proc+0x139=1` after the write for the
+  window (S2b off: resets are counted, not undone), the body moving under the follow package.
+
 ## HEAD OF WORK 2026-10-20 -- COMBAT SUBSTRATE ON 1.7.104 (ch.27 no longer refused there), branch `feat/apmf-substrate-1-7-104`, NOT merged
 
 marth 2026-10-19 Q4: "substrate unavailable while Harbinger present shouldn't happen". The substrate refused 1.7.104
