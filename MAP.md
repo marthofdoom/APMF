@@ -1970,6 +1970,23 @@ cause 2 (a dagger equipped into the deny-only right hand 32 ms before the left h
   So the seat installs when `bHandClaimBlocksEquip=1` OR `[EquipAuthority] bEquipAuthority=1` (read
   directly: `handblock::Install` runs before `equipsink::Install`). Combat-only by nature; out of combat
   the equip sink alone refuses.
+- **ch.15 WEAPON ADMISSION (2026-10-20, `feat/apmf-weapon-admission`, ClickUp 86e394134).** After the hand
+  block and BEFORE the ch.17 step (`AfterHandBlock` -> `Ch15Refuses` -> `DeclaredSetAnswer`), a winning
+  `kIntent_Equipment` claim with `param.form = W` (`TryGetOwningClaimBasis`, lock-free) refuses a candidate
+  whose `Categorize` hand bits hit a hand W holds and whose form is not W; W and a candidate for an unclaimed
+  hand pass (logged ADMIT / UNTOUCHED). Hands (`ClaimedHands`): the worn object first (actor
+  `GetEquippedObject` R/L == W: a one-hander holds the hand(s) it is worn in, 2H/bow/xbow both, shield/torch
+  left), else the shape cached by `NoteEquipmentClaimForm` (called from `channels/Equipment.cpp` Engage +
+  OnOwnerChanged on the game thread, the only `LookupByID`; one-hander not worn -> right); uncached and not
+  worn -> no hand, nothing refused (logged). Ranked by `facetattr::Decide` with the ch.15 handle against
+  `InsideSource(orig)`. Lines `[ch.15 0x0F]` (same 1.5 s / 100/s cadence); `NoteCh15Answer` warns once per
+  (actor, hand, claim) when a claimed hand refused candidates and was never offered W for 5 s (the
+  over-suppression signal). INI `[HandBlock] bEquipmentWeaponAdmission` (1) and `bEquipmentWeaponObserveOnly`
+  (0); the seat also installs for this rule alone. No new seat, no new address row. Why not the weapon
+  context nodes: DENY-COMPLETENESS-AUDIT row 15 (the swap is the "Equip weapon" leaf, AE 48124/48126, before
+  the Melee/Ranged context, which wraps only the attacks). **What breaks:** reordering the steps changes which
+  claim's refusal is logged; the cache is keyed by FORM (shape is static data), so a stale entry is harmless,
+  but removing the Engage/OnOwnerChanged calls leaves an unworn W unresolved (rule silent, logged).
 - **D2 (2026-10-12): ranked on the Equip facet.** The 0x0F NO stands only while the holding cast claim
   (`facetattr::CastClaimHandle`) outranks `InsideSource(orig)` (`facetattr::Decide`, Equip facet); else the
   engine's YES stands (`[handblock 0x0F] ... STANDS`, 5 s per actor). The sink step ranks the same way.

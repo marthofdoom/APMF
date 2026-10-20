@@ -59,6 +59,8 @@ Facet reference: [ch.8b hand floor](FACETS.md#a-hand-floor-kcastflag_denyhandonl
 a hand taken for a cast is closed to every other action. While a cast claim holds a hand (a heal, an attack spell, or a client's "keep this hand empty" floor), the follower cannot put a weapon, a shield or a torch into that hand. The combat AI never picks one for it, and any other equip into it is refused. The other hand is untouched. When the claim ends, the follower arms itself again as usual. This is enforced whatever bEquipObserveOnly says.
 
 - **`bHandClaimBlocksEquip`** (default `1`). 0 = off: a weapon may be equipped into a hand a cast claim holds.
+- **`bEquipmentWeaponAdmission`** (default `1`; 2026-10-20, [ch.15](FACETS.md#ch15-equipment-kintent_equipment)). While a mod's ch.15 claim names a weapon, the combat AI does not pick another weapon, shield or torch for the hand(s) that weapon holds (two-handed / bow / crossbow: both hands; a one-hander: the hand it is worn in, else the right; a shield or torch: the left). The claimed weapon and the other hand are untouched. Logged `[ch.15 0x0F]`. 0 = off.
+- **`bEquipmentWeaponObserveOnly`** (default `0`). 1 = the weapon rule only logs what it WOULD refuse (`WOULD REFUSE`) and the engine's choice stands. For measuring over-suppression in a field run.
 
 ### [PackageGate]
 

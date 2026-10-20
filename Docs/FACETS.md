@@ -1468,6 +1468,23 @@ Handle h = g_apmf->RequestEx(actor, kIntent_Equipment, kBasis, &p);
 
 With a form set, the channel itself writes nothing to the engine. The enforcement lives in the `CheckShouldEquip` gate (the same one ch.8 and ch.8b ride). While the claim stands, the gate denies any spell or staff re-arm for the actor. Your own equip call is unaffected, and Harbinger never fights you over which weapon is in hand.
 
+**Weapon admission (2026-10-20, ClickUp 86e394134).** While the claim stands, the combat AI also cannot pick a DIFFERENT weapon, shield or torch for a hand your weapon holds. Harbinger answers NO at the same `CheckShouldEquip` seat on the weapon, shield, torch and unarmed-block items (`core/HandBlock.cpp`), so CombatInventory's evaluate never selects the competitor and the AI keeps your weapon itself. Nothing else is suppressed: your weapon is always admitted, a candidate that competes only for a hand your weapon does not hold is untouched, and attacks, blocks and movement are not decisions this seat makes.
+
+**The hand your claim holds** is derived from the weapon, because `ival` stays reserved for an explicit hand discriminator later (no ABI change):
+
+| Claimed form | Hand(s) held |
+|---|---|
+| two-handed sword or axe, bow, crossbow | both hands |
+| one-handed weapon (a staff included) | the hand(s) the actor wears it in now; not worn: the right hand |
+| shield, torch | the left hand |
+| anything else | none: the weapon rule does nothing |
+
+So a one-hander in the right hand leaves the left hand to the AI (a dual-wield off-hand swap, a shield or a torch still happen there), while a two-hander also keeps a shield or a torch out. Harbinger resolves the claimed form once, on the game thread, when the claim wins; the combat-thread seat reads the worn object first.
+
+Why this seat and not the weapon context nodes the old audit named: the combat tree equips a weapon in the "Equip weapon" leaf of the Melee/Ranged sequence, BEFORE the "Melee Context" node, which wraps only the attacks. A deny there would cost attacks and still let the swap through (Docs/DENY-COMPLETENESS-AUDIT.md row 15).
+
+Not covered: a pick made before the claim was published is still carried out until CombatInventory's next evaluate (ch.15 has no equip-sink step; a ch.17 declaration does); the AI picking a weapon up off the ground (the `AcquireWeapon` subtree, the disarmed path) and the engine's own pick-up auto-equip; any equip from outside the combat AI (a script, the player, another mod). If the actor does not carry your weapon, the claimed hand has nothing the AI may pick, and Harbinger logs that once (see the check below).
+
 #### Lifetime
 
 Standing, ended by `Release`. Never hold it on the same actor as a ch.17 claim. On a ch.17 actor the probe path's re-equip is an equip from outside the engine and is refused unless the weapon is in the declared set. The gate-only form is not affected.
@@ -1490,11 +1507,11 @@ Handle KeepWeaponOut(RE::FormID actor, RE::FormID weapon) {
 }
 ```
 
-**Check.** The follower keeps the weapon out through combat. With `EnableEquipGateLog=1` each refused spell or staff re-arm is logged at 0x0F.
+**Check.** The follower keeps the weapon out through combat. With `EnableEquipGateLog=1` each refused spell or staff re-arm is logged at 0x0F. Each weapon decision is logged as `[ch.15 0x0F] <actor> <class> item=<form> ... claimed=<weapon> hands=<R|L> (<how>) -> NO` / `ADMIT (the claimed weapon)` / `UNTOUCHED (competes only for a hand the claim does not hold)` (per actor and item every 1.5 s, 100 lines/s cap). A claimed hand that refused candidates and was never offered the claimed weapon for 5 s logs one `[ch.15 0x0F] ... hand: ... the claimed weapon itself was NOT offered` warning per actor, hand and claim: that is the over-suppression signal. With `bEquipmentWeaponObserveOnly=1` the refusals are logged `WOULD REFUSE` and the engine's answer stands.
 
 #### Version, INI and field status
 
-ABI 1. No key of its own. `EnableEquipDenyComplete` in `[EquipGate]` affects the gate it rides. In use by MFO.
+ABI 1. Keys in `[HandBlock]`: `bEquipmentWeaponAdmission` (1, the weapon rule) and `bEquipmentWeaponObserveOnly` (0). `EnableEquipDenyComplete` in `[EquipGate]` affects the spell/staff gate it rides. In use by MFO. The weapon rule is built, CI-verified, not yet field-run.
 
 **Check Your Understanding: ch.15**
 
@@ -3556,6 +3573,7 @@ Defaults are the shipped values. The full text of every key is in [INI-REFERENCE
 | ch.8b score steer, ch.26 equip preference | `[AiCastSeats]` | `EnableScoreSteer` (1, the compiled default since ABI 22), `EnableWeaponScoreProbe` (1, also the weapon score seat ch.26 lifts through), `EnableItemScoreProbe` (0), `EnableCasterSeatProbe` (0) |
 | ch.17 equip authority | `[EquipAuthority]` | `bEquipAuthority` (1), `bEquipObserveOnly` (0), `bEquipDenyScript` (0) |
 | ch.8b hand block | `[HandBlock]` | `bHandClaimBlocksEquip` (1) |
+| ch.15 weapon admission | `[HandBlock]` | `bEquipmentWeaponAdmission` (1), `bEquipmentWeaponObserveOnly` (0) |
 | ch.9 package, Spectator | `[PackageGate]` | `EnableRedirectLog` (1), `iSpectatorSeat` (2) |
 | actor-value watch | `[ActorValueObserve]` | `iActorValueSeat` (1) |
 | ch.19 travel | `[Travel]` | `bTravel` (1), `bGateProbe2` (0) |
