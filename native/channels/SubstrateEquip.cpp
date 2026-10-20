@@ -479,8 +479,7 @@ namespace apmf::substrateequip {
                 r.items.push_back(std::move(h));
             }
         }
-        if (r.items.empty()) {
-            g_stowed.erase(a_actor);
+        if (r.items.empty()) {   // the (empty) record stays: StowSettled's hands test keys on it
             spdlog::info("[substrate] 0x{} HANDS stowed: L=none R=none (no weapon, shield or torch in a hand)",
                          apmf::log::Hex(a_actor));
             return;
@@ -494,9 +493,14 @@ namespace apmf::substrateequip {
         a_why = nullptr;
         const auto it = g_stowed.find(a_actor);
         if (it == g_stowed.end() || !a_ptr) return StowState::kClear;
+        // GENERIC (review of 1f99de2b, SEV-4): no weapon, shield or torch in EITHER hand, whatever put it there --
+        // not only the copies this record stowed (a client could equip another one before the floors published).
         std::string still;
-        for (const auto& h : it->second.items)
-            if (h.st == ItemSt::kStowed && InHand(a_ptr, h)) still += (still.empty() ? "" : ", ") + ItemText(h);
+        for (const bool left : { false, true }) {
+            const auto* f = a_ptr->GetEquippedObject(left);
+            if (f && HandType(f->GetFormType()))
+                still += fmt::format("{}{}=0x{}", still.empty() ? "" : ", ", left ? "L" : "R", apmf::log::Hex(f->GetFormID()));
+        }
         if (still.empty()) return StowState::kClear;
         if (a_now - it->second.stowMs < kStowWaitMs) return StowState::kWaiting;
         g_stowWhy = fmt::format("the hands were not stowed within {} ms (still in a hand: {}): the entry would draw them",
@@ -508,6 +512,10 @@ namespace apmf::substrateequip {
     void RestoreWhenFree(RE::FormID a_actor, const char* a_how, std::uint64_t a_now) {
         const auto it = g_stowed.find(a_actor);
         if (it == g_stowed.end()) return;
+        if (it->second.items.empty()) {   // nothing was stowed: nothing to put back
+            g_stowed.erase(it);
+            return;
+        }
         it->second.restoring = true;
         it->second.closeMs   = a_now;
         it->second.how       = a_how ? a_how : "?";

@@ -492,7 +492,10 @@ with `kIntent_CombatSubstrate` beside its `kIntent_Cast` claim. It is legal only
    inside the sink's APMF bracket) at its close or real-fight drop, each as soon as no cast claim or floor holds
    its hand. This is the client's declared cast's own consequence undone, not a decision: it puts back what was
    there. A copy with no uid comes back by form; a load or revert drops the record (logged). The open also
-   refuses unless the 0x0F deny-complete refusal, the hand-claim block and the equip sink all stand. The index covers EVERY
+   refuses unless the 0x0F deny-complete refusal, the hand-claim block and the equip sink all stand. The spell
+   equip runs only on the holder's `kStEquipOk` bit, set once the hands read clear (no weapon, shield or torch in
+   either hand) for a CLIENT substrate -- at its Open, or when a client takes over a dry run (the checks, the stow
+   and the wait run in place); a dry run never sets it. The index covers EVERY
    concrete `CombatBehaviorTreeNodeObject*` class: 95 on both runtimes (the RTTI names in both unpacked
    executables), i.e. the 70 parameterless leaves, the four search leaves and the 21 parameterised nodes of
    `core/CombatBehaviorRE.h` `kParamLeaves` (review F1 of a512763: AcquireResource, Flee, FaceAngle, WatchTarget,

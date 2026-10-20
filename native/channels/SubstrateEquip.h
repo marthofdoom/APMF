@@ -69,8 +69,10 @@ namespace apmf::substrateequip {
     // After TakeSlot, a client substrate: record what each hand holds (form + ExtraUniqueID uid of the worn copy)
     // and issue the unequips (queued, the established ch.17 call). A record still waiting for its restore is kept.
     void Stow(RE::FormID a_actor, RE::Actor* a_ptr);
-    // Enter, before StartCombat: kClear = no stowed item is in a hand any more; kWaiting = the queued unequips
-    // have not applied yet; kFailed = still in a hand after the wait (`a_why` says which).
+    // Enter (before StartCombat) and a dry-run takeover (Serve): with no Stow record, kClear (nothing was asked).
+    // Otherwise kClear = NO weapon, shield or torch in either hand (whatever put it there); kWaiting = not yet, inside
+    // the wait; kFailed = still there after it (`a_why` says what). channels/CombatSubstrate.cpp sets kStEquipOk (the
+    // only bit that lets the spell equip run) on kClear for a CLIENT substrate only.
     enum class StowState : std::uint8_t { kClear, kWaiting, kFailed };
     StowState StowSettled(RE::FormID a_actor, RE::Actor* a_ptr, std::uint64_t a_now, const char*& a_why);
     // CloseSub / DropSub: the window ended; each stowed item goes back as soon as its hand is free (no live cast

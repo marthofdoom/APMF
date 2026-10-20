@@ -813,6 +813,15 @@ Raised against a0112b24, same review. Reviewer (verbatim): "NoteAllowed/Begin: a
 ### APMF-B144 (SEV-5) -- the "25/25" evidence wording
 Raised against a0112b24, same review. Reviewer (verbatim): "Docs cite '25/25 AcquireResource denied' as proof, but the log cannot tell the two instances apart; cite the disassembly instead." FIXED in the same round (the docs and `channels/SubstrateEquip.cpp` now cite the allow-list class plus the disassembly; the log line is called consistent, not proof).
 
+### APMF-B145 (SEV-4) -- a stowed copy without a uid comes back by form
+Raised against 1f99de2b, 2026-10-19 (re-check of `feat/apmf-substrate-equip`). Reviewer (verbatim): "Restore by form when the worn copy had no uid: EquipObject(obj, nullptr) lets the engine pick any copy, which can be the plain copy instead of the tempered/enchanted one. Logged 'no uid'."
+
+### APMF-B146 (SEV-4) -- a save inside the window keeps the stowed items unequipped (NEEDS marth)
+Raised against 1f99de2b, same re-check. Reviewer (verbatim): "A save made during the window leaves the stowed items unequipped in the .ess; ResetHands drops the record with a log line. For MFO followers ch.17 enforce likely re-equips the declared loadout after the load; other clients get nothing back. Needs marth's acknowledgement (co-save record vs accept)."
+
+### APMF-B147 (SEV-4) -- cross-repo noise during the stow window
+Raised against 1f99de2b, same re-check. Reviewer (verbatim): "Cross-repo noise: ch.17 enforce re-issues EquipObject for the stowed declared weapon every 3 s during the window (EquipAuthority.cpp:553-579), each refused at step 1a with one log line; MFO PlayerGiven's sink may label a restored relic kAiEquipped. Bounded; watch in the field."
+
 ### APMF-B102 (SEV-5) -- ch.12 idle state: spdlog under g_stateMx
 Raised against `d95b403` (`feat/apmf-idle-state`, ABI v24 GetIdleState), tier-3 Opus 5.5 review 2026-10-13
 (verdict MERGE OK). Verbatim from the reviewer's log (`scratchpad/agentlogs/review-idle-state.md`): "F5 SEV-5

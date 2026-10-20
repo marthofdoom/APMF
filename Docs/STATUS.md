@@ -23,6 +23,9 @@ every `AcquireResource<2>`, the "Action" one at the head of that branch, so no s
   UnequipObject, ch.17's road) and restores the same ExtraUniqueID copies at close / drop once no claim holds the
   hand (`HANDS stowed` / `HANDS restored` / `HANDS restore FAILED`). F3: Open also needs the Cast facet outranked
   and the 0x0F deny-complete refusal, the hand-claim block and the equip sink standing. Backlog APMF-B141..B144.
+- **Closing round (re-check of 1f99de2b):** the spell equip runs only on a per-slot `kStEquipOk` bit a CLIENT Open
+  sets after StowSettled (a dry-run takeover runs the checks + stow + wait in place first); StowSettled is generic (no
+  weapon / shield / torch in either hand). Backlog APMF-B145..B147.
 - Next: the MFO S3 field run (a client cast claim + substrate) must show `EQUIP allowed`, `REACHED the hand` and the
   census FIRED line. Tier-3 review pending.
 
