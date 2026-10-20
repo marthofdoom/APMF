@@ -27,6 +27,24 @@ mfo event."
   unload; the field log shows the handle still valid after the inn door).
 - Field check: a follower sent to an interior cell shows `[travel-leg] ... actor UNLOADED ... the leg continues`, then
   `ARRIVED ... HOLDING`, no release nudge, and stays inside until MFO releases the claim.
+## HEAD OF WORK 2026-10-20 -- ch.15 WEAPON ADMISSION (open gap 1 / row 15, ClickUp 86e394134), branch `feat/apmf-weapon-admission`, NOT merged
+
+- **Finding (disassembly, 1.6.1170 + 1.5.97):** the weapon CONTEXT-node seat the audit named cannot close the gap. The
+  combat tree's Melee/Ranged sequence runs "Equip weapon" (the EquipObject / EquipRangedWeapon leaf, AE 48124 / 48126,
+  SE 46955 / 46957 -> `EquipObject`) BEFORE the "Melee Context" node, which wraps only the attacks. A context deny would
+  have cost attacks and let the swap through. Audit row 15 / gap 1 corrected with the trace.
+- **Built:** a ch.15 rule at the EXISTING 0x0F seat (`core/HandBlock.cpp` `Ch15Refuses`, run after the hand block and
+  before ch.17's step): while a `kIntent_Equipment` claim names weapon W, another weapon / shield / torch competing for
+  a hand W holds is not selected; W and the other hand are untouched. Hands from W (no ABI change, `ival` stays
+  reserved): 2H / bow / crossbow both; one-hander the hand it is worn in, else right; shield / torch left. The claimed
+  form's shape is resolved on the game thread by `channels/Equipment.cpp` (Engage + OnOwnerChanged). No new seat, no new
+  address row, VerifiedAddresses unchanged.
+- **INI:** `[HandBlock] bEquipmentWeaponAdmission=1`, `bEquipmentWeaponObserveOnly=0`.
+- **Left out:** the AcquireWeapon pick-up subtree (vtables not rows; a new seat). Audit row 15 residuals (a)-(d).
+- **Field check:** a follower with an MFO weapon-order claim keeps that weapon in combat: `[ch.15 0x0F] ... -> NO`
+  for rivals, `ADMIT (the claimed weapon)`, `UNTOUCHED` for the free hand; attacks continue. Over-suppression signal:
+  `[ch.15 0x0F] ... the claimed weapon itself was NOT offered` (once per actor, hand, claim). Run with
+  `bEquipmentWeaponObserveOnly=1` first if in doubt.
 
 ## HEAD OF WORK 2026-10-20 -- TORCH SEAT (ch.17 owns the torch, ClickUp 86e3qmmed H1), branch `feat/apmf-torch-seat`, NOT merged
 

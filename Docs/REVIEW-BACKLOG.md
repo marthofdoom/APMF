@@ -1038,3 +1038,15 @@ Same review, verbatim as relayed: "optional: log the current package at HoldAtCe
 
 ### APMF-B176 (SEV-3 ruling item) -- ch.24 releases the client's claim when the actor's 3D unloads
 Same review (coordinator relay, 2026-10-20), verbatim: "ch.24 CombatApproach.cpp:1079 releases the client's claim on !Is3DLoaded(), contrary to marth's 2026-10-20 ruling that claims hold for the client's event". Reasoning: `channels/CombatApproach.cpp` `Poll` calls `End(id, kApproachState_ActorGone, "actor dead / unloaded:")`, and `End` does `EnqueueRelease` on the winning claim. marth's ruling ("mfo claims need to hold for the duration of the mfo event") means a claim ends on the actor's death or the loss of its reference, not on a 3D unload. Outside the ch.19 brief's file boundary, so not changed there. It needs its own brief and a ruling on what the combat-approach bound means for an unloaded actor. The related FACETS ch.1 line ("If the actor unloads, the claim is dropped") was corrected in the same closing round: it describes ControlMap's handle sweep only.
+
+### APMF-B177 (SEV-3, OPEN -- DESIGN CALL FOR MARTH, core/HandBlock.cpp Ch15Refuses) -- ch.15 weapon rule: W not carried empties the claimed hand (raised against 567850f)
+Tier-3 review of feat/apmf-weapon-admission: "Every candidate for the claimed hands is refused, including bows and unarmed for a two-hand claim. The evaluate releases the picks at its start, so the slot ends up empty and the AI loses its whole melee/ranged branch. That is more than the brief's 'NOTHING else suppressed'. It is logged once after 5 s, so it is not masked." Option: stand down in the thunk when W is absent from `a_cc->inventory->inventoryItems[0..6]` (+0x08, stride 0x18, x7; confirmed 1.6.1170 at 0x80F10C / 0x80F3E2; SE and 1.7 unchecked; only at the evaluate sites, the pre-loop 0x0F site 0x80FF35 is not proven to see stable arrays), with a loud once-per-claim line. Alternative: keep as "client owns consequences" (MFO only claims a W it has just equipped).
+
+### APMF-B178 (SEV-4, OPEN, Docs/DENY-COMPLETENESS-AUDIT.md row 15 residual (a)) -- state the measured pre-claim pick window (raised against 567850f)
+"Residual (a) should state the measured window: <=1.0 s of AI time, collapsed by `dirty`." (CombatInventory::Update 0x80F380 sets the duration to 1.0f at 0x80F573; every pick assignment follows a 0x0F YES in the same pass.)
+
+### APMF-B179 (SEV-4, OPEN, core/HandBlock.cpp ClaimedHands) -- ch.15 claimed hand follows where W is worn now (raised against 567850f)
+"A one-hander the client wants in the LEFT hand is claimed as RIGHT until it is worn, and if W is disarmed or moved, the claim moves with it. The fix is the reserved param.ival explicit hand."
+
+### APMF-B180 (SEV-5, OPEN, core/HandBlock.cpp) -- CachedShape lock outside try; ch.15 facet ranking inconsistent with EquipGate (raised against 567850f)
+"CachedShape's scoped_lock sits outside any try inside the engine's 0x0F frame (theoretical std::system_error); EquipGate's ch.15 deny ranks on Facet::kEquipWeapon, while HandBlock's uses FacetForEquipCats(a_cats), so shield and torch competitors rank on their own facet."
