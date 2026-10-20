@@ -962,3 +962,15 @@ Raised against `89a72848`, same review (verbatim): "Sources.cpp:634: kIntent_Pla
 
 ### APMF-B152 (SEV-3) -- place: RefuseIfPlayerPresent over-refuses exterior persistent-ref destinations
 Raised against `2914e534` by the tier-3 closing re-check (verbatim): "with RefuseIfPlayerPresent set, every exterior placement to a persistent ref in the player's current worldspace is refused, whether or not it could be seen" -- GetParentCell of a persistent ref outside the loaded grid is (inferred) the worldspace persistent cell (formFlags 0x2000, GetSkyCell AE 0x30B070), which TES keeps attached (cellState 7) while the player is in that worldspace. No false pass (a visible destination refuses either way). Proper fix: when cell->formFlags & 0x2000, test the real grid cell at the point instead (verify that symbol in the fork first). Carve-out (b) if MFO's next town field cycle places at exterior destinations; interior counters are unaffected.
+
+### APMF-B153 (SEV-4) -- APMF_API.h IsSubstrateAvailable comment still says "exactly 1.6.1170 or 1.5.97"
+Raised against `f0145287` (tier-3 review): the substrate now installs on 1.7.104, but the byte-shared header comment (APMF_API.h:2546) was left unedited. Comment-only; mirror the corrected comment into MFO's copy at the next ABI bump.
+
+### APMF-B154 (SEV-5) -- 1.7.104 RegisterCallSeat names the hold seats with the 1.6 kSiteName
+Raised against `f0145287` (verbatim): "CombatEntry.cpp:1232-1233: on 1.7.104, RegisterCallSeat still names the seats with the 1.6 kSiteName. This only affects the census label."
+
+### APMF-B155 (SEV-5) -- 1.7.104 install-time call-target checks are stricter than the 1.6 runtime rows
+Raised against `f0145287` (verbatim): "The CallsTo17 and BytesAt17 checks run at kDataLoaded and also check the call target, so they are stricter than the 1.6 runtime rows. On 1.7.104 only, a third-party patch at the group update's LockForWrite call would refuse the substrate. This is informational and fails safe."
+
+### APMF-B156 (SEV-5) -- BSMusicManager::current (+0x28) read by MusicNow is unproven by any row
+Raised against `f0145287` (verbatim): "BSMusicManager::current (+0x28, read in MusicNow) is not proven by any row on any runtime. It is only used for logging." Existed before this branch; now reachable on 1.7.104.
