@@ -10,13 +10,13 @@ nothing when one does not. At startup `REL::SelfCheck::Run` repeats the comparis
 game actually loaded. A row that fails refuses THAT seat by name in the log; the expected RVA is never
 used in place of the library's answer.
 
-Offline result of this generation: 1.6.1170.0 253/253 verified, 0 refused, 1.5.97.0 253/253 verified, 0 refused.
+Offline result of this generation: 1.6.1170.0 255/255 verified, 0 refused, 1.5.97.0 255/255 verified, 0 refused.
 
 1.7.104.0 has NO Address Library. Its column is OUR OWN id map: the MIT id table of the CommonLibSSE-NG fork
 (`data/mit-idtable-v1-1-7-104-0.bin`, revision 3, 17751 records, SkyrimSE.exe TimeDateStamp 0x6A8C7046; built into every plugin, it is
 what SelfCheck queries at runtime; authoritative) with the evidence CSVs beside it, keyed by
 the 1.6.1170 id, re-verified against the plaintext 1.7.104 executable by the same row-kind checks (see the script
-docstring). Offline result: 1.7.104.0 263/312 verified, 49 NOT verified (28 of them BY DESIGN: 1.5.97-only labels whose AE twin row carries the 1.7.104 fact). A not-verified seat has no row in the 1.7.104 table,
+docstring). Offline result: 1.7.104.0 265/316 verified, 51 NOT verified (28 of them BY DESIGN: 1.5.97-only labels whose AE twin row carries the 1.7.104 fact). A not-verified seat has no row in the 1.7.104 table,
 so `IsVerifiedAddress` is false and the seat is refused by name. The table of `Not verified on 1.7.104` is below.
 
 These rows prove the ADDRESSES. That each hooked slot holds the same function body on 1.7.104, and that every
@@ -279,6 +279,8 @@ CommonLib layout APMF reads is the same there, is proven separately in the "1.7.
 | Substrate.Bark.AIClock | ripref global | 404125 | 0x319B05C | 517597 | 0x2F3A644 | - | - | RIP-relative reference at Substrate.Bark.TimerGate +0x118 (id 44673) |  | native/channels/SubstrateBark.cpp (the combat substrate's bark deny, INVARIANTS #0 (j) 2 (f): the holder group's detectionDialogueTimers[2] / [4] pre-armed in the holder's own UpdateCombat before the controller's first update) | AE 0x8023C8 -> 0x319B05C / SE 0x768EC0 -> 0x2F3A644 |
 | Substrate.AIProcess.SetAggressor | function | 39145 | 0x6D6CB0 | 38185 | 0x644300 | - | - | signature (16 bytes, unique in .text) |  | native/channels/SubstrateAggressor.cpp (the combat substrate's aggressor-bit clear, INVARIANTS #0 (j) 2 (g): set false right after the entry and again only if set while HELD) | SUBSTRATE-R2-RESEARCH.md section 1 (writers / readers) |
 | Substrate.AIProcess.GetAggressor | function | 39144 | 0x6D6C90 | 38184 | 0x6442E0 | - | - | signature (16 bytes, unique in .text) |  | native/channels/SubstrateAggressor.cpp (the combat substrate's aggressor-bit clear, INVARIANTS #0 (j) 2 (g): set false right after the entry and again only if set while HELD) | SUBSTRATE-R2-RESEARCH.md section 1 |
+| Substrate.PackageSelector.CombatOverrideCall | callsite | 37172 | 0x65DE90 +0xF3 E8 | 36193 | 0x5CD930 +0xEA E8 | - | - | signature (25 bytes, unique in .text) |  | native/channels/SubstratePackage.cpp (the held holder's combat-override deny, write_call<5>; F-6, marth 2026-10-20) | AE site 0x65DF83 / SE 0x5CDA1A; 1.7.104 0x670880+0xF3 = 0x670973 -> 0x3BEA80 (raw rows below). SUBSTRATE-R2-RESEARCH.md item 6; agentlog apmf-substrate-f6.md |
+| Substrate.Npc.GetEnterCombatOverridePackage | function | 24673 | 0x3B79C0 | 24169 | 0x35EE70 | - | - | signature (53 bytes, unique in .text) |  | native/channels/SubstratePackage.cpp (the original the call-site thunk calls; the site's E8 must land here) | AE 0x3B79C0 / SE 0x35EE70 / 1.7.104 0x3BEA80 |
 | Character.ActorValueOwner.SE | vtable | - | - | 261402 | 0x165E4D0 | - | - | RTTI .?AVCharacter@@ (COL offset 176) | 0x04: - / 0x621070 / -<br>0x05: - / 0x6210B0 / -<br>0x06: - / 0x6210F0 / -<br>0x07: - / 0x36D280 / - | native/core/ActorValueObserve.cpp (1.5.97: the ActorValueOwner sub-object sits at 0xB0, so its COL offset differs from the AE row's 0xB8) | agentlogs/apmf-1b-observe.md (2026-10-12); AE twin row Character.ActorValueOwner carries the 1.7.104 fact |
 | EquipSink.Path.OutfitApply.24234 | function | - | - | 24234 | 0x364710 | - | - | signature (21 bytes, unique in .text) |  | native/core/EquipSink.cpp:158 |  |
 | EquipSink.Path.AddWornOutfit.19266 | function | - | - | 19266 | 0x28DDA0 | - | - | signature (17 bytes, unique in .text) |  | native/core/EquipSink.cpp:159 |  |
@@ -338,6 +340,8 @@ CommonLib layout APMF reads is the same there, is proven separately in the "1.7.
 | Substrate.Bark.TimerGate.1_7_104 | raw rva | - | - | - | - | - | 0x817228 | raw RVA: 1.6.1170 0x8023C8 signature (16 bytes) unique at the idmap RVA |  | channels/SubstrateBark.cpp k17TimerGate: the AI clock reader; the code decodes its displacement (1.7.104 only: AE id 44673 / global 404125 have no MIT-table row) |  |
 | Substrate.AIProcess.GetAggressor.1_7_104 | raw rva | - | - | - | - | - | 0x6E9840 | raw RVA: 1.6.1170 0x6D6C90 signature (16 bytes) unique at the idmap RVA |  | channels/SubstrateAggressor.cpp k17GetAggressor (1.7.104 only: AE id 39144 has no MIT-table row) |  |
 | Substrate.AIProcess.SetAggressor.1_7_104 | raw rva | - | - | - | - | - | 0x6E9860 | raw RVA: 1.6.1170 0x6D6CB0 signature (16 bytes) unique at the idmap RVA |  | channels/SubstrateAggressor.cpp k17SetAggressor (1.7.104 only: AE id 39145 has no MIT-table row) |  |
+| Substrate.PackageSelector.1_7_104 | raw rva | - | - | - | - | - | 0x670880 | raw RVA: 1.6.1170 0x65DE90 signature (25 bytes) unique at the idmap RVA |  | channels/SubstratePackage.cpp kSelector17 (1.7.104 only: AE id 37172 has no MIT-table row); the code byte-checks +0xF3 = E8 -> kOverride17 |  |
+| Substrate.Npc.GetEnterCombatOverridePackage.1_7_104 | raw rva | - | - | - | - | - | 0x3BEA80 | raw RVA: 1.6.1170 0x3B79C0 signature (53 bytes) unique at the idmap RVA |  | channels/SubstratePackage.cpp kOverride17 (1.7.104 only: AE id 24673 has no MIT-table row) |  |
 
 ## Not verified on 1.7.104
 
@@ -395,6 +399,8 @@ for them and the seat is refused. Nothing here is a failure on 1.6.1170 or 1.5.9
 | Substrate.Bark.AIClock | 404125 | proven through Substrate.Bark.TimerGate, which did not verify: id 44673 is not in the idmap |
 | Substrate.AIProcess.SetAggressor | 39145 | id 39145 is not in the idmap |
 | Substrate.AIProcess.GetAggressor | 39144 | id 39144 is not in the idmap |
+| Substrate.PackageSelector.CombatOverrideCall | 37172 | id 37172 is not in the idmap |
+| Substrate.Npc.GetEnterCombatOverridePackage | 24673 | id 24673 is not in the idmap |
 
 ## Slots and offsets that are not Address Library ids
 

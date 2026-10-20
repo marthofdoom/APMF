@@ -993,3 +993,12 @@ Raised against `898f90c3` (verbatim): "SubstrateBark.cpp has a stale header comm
 
 ### APMF-B162 (SEV-5) -- bark debt expiry uses MonotonicMs while the timers run on the AI clock
 Raised against `898f90c3` (verbatim): "Debt expiry uses MonotonicMs, but the timers run on the AI clock. If a pausing menu is open, the UNPAID line can fire while Harbinger's values are still live for about the paused time. The only effect is a few more seconds of a joining member's bark being suppressed."
+
+### APMF-B163 (SEV-5) -- F-6: NoteDenied / Closing race can recreate a stale window
+Raised against `118ea269` (tier-3 review of feat/apmf-substrate-f6-override-deny, review log `scratchpad/agentlogs/review-apmf-substrate-f6.md`), finding as relayed (verbatim): "NoteDenied/Closing race recreating a stale window." An AI-thread denial that lands after `Closing` erased the holder's window re-creates it through `g_win[a_actor]` (opened = false); it lingers until the next `Opening` resets it or `Reset` clears the map. Harmless for logic (the next Opening overwrites it), a bounded leak per holder. Reviewer's reasoning: the deny gate is `StateOf == Held`, read before the lock, so a close between the check and the lock can still count.
+
+### APMF-B164 (SEV-5) -- F-6: the call-site row does not pin the selector's `test rax,rax; cmovne rbx,rax`
+Raised against `118ea269` (verbatim as relayed): "add the `48 85 C0 48 0F 45 D8` bytes at +0xF8 to the call-site row." `Substrate.PackageSelector.CombatOverrideCall` checks only the E8 at +0xF3 (and its target); the null-keeps-the-pick contract rests on the next instruction pair (AE `0x65DF88` / SE `0x5CDA1F` / 1.7.104 `0x670978`), which the signature does not cover. Reviewer's reasoning: the deny's meaning depends on those bytes.
+
+### APMF-B165 (SEV-5) -- F-6: S2b Reassert logs at most 30 lines per window
+Raised against `118ea269` (verbatim as relayed): "Reassert 30 lines/window." marth's approval says every undone reset is logged; past 30 lines in one window the rest are only counted in the close summary (`S2b re-asserts N`). Reviewer's reasoning: a line cap is a partial log; S2b is OFF by default, so it matters only once it is switched on.

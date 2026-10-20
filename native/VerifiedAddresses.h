@@ -19,7 +19,7 @@
 
 namespace apmf::VerifiedAddresses
 {
-	// 1.6.1170.0: 253 rows
+	// 1.6.1170.0: 255 rows
 	inline constexpr REL::SelfCheck::Row kRows_1_6_1170[] = {
 		{ 207886, 0x18A5558, 0x0, 0, {  }, "Character" },
 		{ 207896, 0x18A5FE8, 0x0, 0, {  }, "Character.ActorValueOwner" },
@@ -274,9 +274,11 @@ namespace apmf::VerifiedAddresses
 		{ 404125, 0x319B05C, 0x0, 0, {  }, "Substrate.Bark.AIClock" },
 		{ 39145, 0x6D6CB0, 0x0, 0, {  }, "Substrate.AIProcess.SetAggressor" },
 		{ 39144, 0x6D6C90, 0x0, 0, {  }, "Substrate.AIProcess.GetAggressor" },
+		{ 37172, 0x65DE90, 0xF3, 1, { 0xE8 }, "Substrate.PackageSelector.CombatOverrideCall" },
+		{ 24673, 0x3B79C0, 0x0, 0, {  }, "Substrate.Npc.GetEnterCombatOverridePackage" },
 	};
 
-	// 1.5.97.0: 253 rows
+	// 1.5.97.0: 255 rows
 	inline constexpr REL::SelfCheck::Row kRows_1_5_97[] = {
 		{ 261397, 0x165DA40, 0x0, 0, {  }, "Character" },
 		{ 261402, 0x165E4D0, 0x0, 0, {  }, "Character.ActorValueOwner.SE" },
@@ -531,10 +533,12 @@ namespace apmf::VerifiedAddresses
 		{ 517597, 0x2F3A644, 0x0, 0, {  }, "Substrate.Bark.AIClock" },
 		{ 38185, 0x644300, 0x0, 0, {  }, "Substrate.AIProcess.SetAggressor" },
 		{ 38184, 0x6442E0, 0x0, 0, {  }, "Substrate.AIProcess.GetAggressor" },
+		{ 36193, 0x5CD930, 0xEA, 1, { 0xE8 }, "Substrate.PackageSelector.CombatOverrideCall" },
+		{ 24169, 0x35EE70, 0x0, 0, {  }, "Substrate.Npc.GetEnterCombatOverridePackage" },
 	};
 
-	// 1.7.104.0: 263 rows
-	// 49 NOT VERIFIED on 1.7.104.0, deliberately absent from this table (the seat is refused):
+	// 1.7.104.0: 265 rows
+	// 51 NOT VERIFIED on 1.7.104.0, deliberately absent from this table (the seat is refused):
 	//   Character.ActorValueOwner.SE (1.6.1170 id -): no 1.6.1170 (AE) id: the 1.7.104 map is keyed by AE id (1.5.97-only seat)
 	//   TargetPin.CombatController.SetTarget (1.6.1170 id 33235): id 33235 is not in the idmap
 	//   EquipSink.Path.OutfitApply.24234 (1.6.1170 id -): BY DESIGN: 1.5.97-only label. On 1.6.1170 and 1.7.104 the code reads its AE twin EquipSink.Path.OutfitApply.418622 (AE id 418622, 1.7.104 0x3C4440), whose own row carries the 1.7.104 fact (MAPPED-AE)
@@ -584,6 +588,8 @@ namespace apmf::VerifiedAddresses
 	//   Substrate.Bark.AIClock (1.6.1170 id 404125): proven through Substrate.Bark.TimerGate, which did not verify: id 44673 is not in the idmap
 	//   Substrate.AIProcess.SetAggressor (1.6.1170 id 39145): id 39145 is not in the idmap
 	//   Substrate.AIProcess.GetAggressor (1.6.1170 id 39144): id 39144 is not in the idmap
+	//   Substrate.PackageSelector.CombatOverrideCall (1.6.1170 id 37172): id 37172 is not in the idmap
+	//   Substrate.Npc.GetEnterCombatOverridePackage (1.6.1170 id 24673): id 24673 is not in the idmap
 	inline constexpr REL::SelfCheck::Row kRows_1_7_104[] = {
 		{ 207886, 0x1923258, 0x0, 0, {  }, "Character" },
 		{ 207896, 0x1923CE8, 0x0, 0, {  }, "Character.ActorValueOwner" },
@@ -848,6 +854,8 @@ namespace apmf::VerifiedAddresses
 		{ 0, 0x817228, 0x0, 0, {  }, "Substrate.Bark.TimerGate.1_7_104" },
 		{ 0, 0x6E9840, 0x0, 0, {  }, "Substrate.AIProcess.GetAggressor.1_7_104" },
 		{ 0, 0x6E9860, 0x0, 0, {  }, "Substrate.AIProcess.SetAggressor.1_7_104" },
+		{ 0, 0x670880, 0x0, 0, {  }, "Substrate.PackageSelector.1_7_104" },
+		{ 0, 0x3BEA80, 0x0, 0, {  }, "Substrate.Npc.GetEnterCombatOverridePackage.1_7_104" },
 	};
 
 	inline constexpr REL::SelfCheck::Table kTables[] = {

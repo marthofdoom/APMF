@@ -650,6 +650,35 @@ with `kIntent_CombatSubstrate` beside its `kIntent_Cast` claim. It is legal only
    the substrate is Harbinger's own state-forcing, not a client's declared fight). That is why every row of the
    design's deny table has a deny or a hole marth accepted by name, and why a real fight ends it.
 
+**Condition 3 AMENDED 2026-10-20 (F-6, marth, verbatim: *"The combat packages movement is blocked and the regular
+ooc package that they had before remains in charge via harbingers allow deny."*; `channels/SubstratePackage.cpp`).**
+"The body stays the package's" was FALSE for every actor with an enter-combat override package (every vanilla
+`DialogueFollower` follower): the package selector (AE 37172 `0x65DE90` / SE 36193 `0x5CD930` / 1.7.104 `0x670880`)
+asks Character slot 0x49 FIRST (+0x3E / +0x37), then swaps its pick for `GetEnterCombatOverridePackage(npc, actor)`
+(AE 24673 / SE 24169: the quest alias's ECOR package, then the NPC's `enterCombatOverRidePackList`) whenever the actor
+has a combat controller and the pick lacks IgnoreCombat (call at +0xF3 / +0xEA). The substrate's controller made Sven
+run `0x00109124` PlayerFollowerCombatOverridePackageExterior in 12 of 12 re-picked windows. THE DENY CONDITION: at
+that call (verified rows `Substrate.PackageSelector.CombatOverrideCall` + `Substrate.Npc.GetEnterCombatOverridePackage`;
+1.7.104 raw rows `*.1_7_104` plus a load-time E8 check), the engine's answer is replaced with "none" (the engine's own
+no-override case: the selector keeps its pick) ONLY while ALL hold: (a) the actor is a HELD holder (`StateOf ==
+kSubstrateState_Held`: live, no real-combat trigger); (b) the answer is non-null, so only a package the engine picks
+BECAUSE of the combat controller is ever withheld (alias and NPC sources alike); (c) `[CombatSubstrate]
+bSubstrateOverrideDeny` (default 1) installed the seat. A REAL holder, the anchor and every other actor get the
+engine's answer; a client's 0x49 offer is the selector's own pick and stays in charge. Slot 0x49 (ch.9) cannot express
+this deny: it is consulted before the swap. Each denied package is logged once per window (`combat-override package
+<pkg> DENIED -- <prev> stays in charge`, `<prev>` = the package recorded just before the entry), and the close line
+says whether that package was still running. Not seated, by reasoning: AE 40079 (runs the override only while `+0x139`
+reads 0) and AE 39360 (the flee answer: the override package, else slot 0xDD InitiateFlee).
+**S2b is BUILT but OFF** (`[CombatSubstrate] bSubstrateBitReassert`, default 0): writers of `+0x139` remain after the
+deny -- `UpdateIgnoringCombat` from a package (re)start (AE 39434; seen once on Auri's own package in the 10-19 log) and
+from the procedure-tree node begin visitor (AE 29290) of ANY package. With the switch on, each reset the serve pass
+sees while held is written back to 1 and logged, until 15 s after the open. It is NOT enabled by this amendment: it
+switches on only after P6 passes and marth gives the go, as the flag-hold approval above requires. A failed row of the
+override seat REFUSES the substrate (as the music, bark and aggressor rows do); `bSubstrateOverrideDeny=0` is the one
+by-name hole (logged per OPEN). On a real-combat DROP of a holder whose window denied a swap, the package is re-picked
+once (`EvaluatePackage(false, false)`, after the bit is restored) so the real fight gets the engine's own
+combat-override pick (condition 5).
+
 **ADOPTED 2026-10-19 by marth (ruling, verbatim, on MFO never doing an engine action itself, MoveTo included:
 *"Remember we are porting everything to harbinger, so having MFO do something will just need redoing later."*,
 marth 2026-10-19). The eleventh legal action (ABI v28, `core/Place.cpp`): (k) PLACE AN ACTOR -- ONE engine move,
