@@ -4,6 +4,24 @@ Updated 2026-10-13. Current version **v0.13.1** (cut 2026-10-13, ABI v24, see CH
 shipped, what's probe-gated, what's next. Keep this current in the SAME change as any
 build/finding/workflow change.
 
+## HEAD OF WORK 2026-10-20 -- SUBSTRATE F-6 (the held holder keeps its package) + S2b, branch `feat/apmf-substrate-f6-override-deny`, NOT merged
+
+marth 2026-10-20: "The combat packages movement is blocked and the regular ooc package that they had before remains
+in charge via harbingers allow deny."
+- **Finding (disassembly, 1.6.1170 / 1.5.97 / 1.7.104):** the package selector (AE 37172 / SE 36193 / 1.7.104
+  0x670880) asks Character slot 0x49 FIRST and only then swaps its pick for `GetEnterCombatOverridePackage` (AE 24673
+  / SE 24169: alias ECOR, then the NPC's ECOR list) when a combat controller exists. Harbinger's 0x49 seat cannot deny
+  it. New seat: `channels/SubstratePackage.cpp`, `write_call<5>` at that call, "no override" for HELD holders only.
+  Rows `Substrate.PackageSelector.CombatOverrideCall` / `Substrate.Npc.GetEnterCombatOverridePackage` (1.6.1170 /
+  1.5.97) and two 1.7.104 raw rows (APMF idmap CSV) + a load-time E8 check.
+- **S2b built** (writers of `AIProcess+0x139` remain after the deny: package restart AE 39434, procedure-tree node
+  begin AE 29290): each held reset is written back and logged, to 15 s.
+- INI `[CombatSubstrate] bSubstrateOverrideDeny=1`, `bSubstrateBitReassert=1`. Docs: INVARIANTS #0 (j) condition 3
+  amendment, FACETS "Combat substrate", DENY-COMPLETENESS-AUDIT row 27 (package swap), MAP.
+- Field run (Sven, dry run on): expect `combat-override package 0x00109124 DENIED -- 0x0005C84B stays in charge` (or
+  MFO's package) once per window, `package hold (close): ... STAYED IN CHARGE`, `MOVE ... proc+0x139=1` for the whole
+  window, the body moving under the follow package; any `S2b re-asserted` line names its cause.
+
 ## HEAD OF WORK 2026-10-19 -- PLACE FACET (kIntent_Place, ABI v28 GetPlaceState), branch `feat/apmf-place-facet`, NOT merged
 
 MFO town phase 2: an off-screen errand follower is "found at the counter" when the player walks in. marth: everything
