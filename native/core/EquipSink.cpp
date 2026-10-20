@@ -146,7 +146,7 @@ namespace apmf::equipsink {
             // swept every other engine caller of EquipObject / the sibling and
             // named what it could PROVE (caller chains + RTTI vtable membership):
             { 39637,  "AiCommand",         PathKind::kEngine },   // dispatcher: +0xF47 -> EquipObject; sole caller 39108
-            { 39948,  "AiCommand",         PathKind::kEngine },   // +0x199 -> EquipObject; called ONLY from 39637+0x8B1
+            { 39948,  "TorchUpdate",       PathKind::kEngine },   // the engine's torch updater (2026-10-20, was AiCommand): +0x199 -> EquipObject; called ONLY from 39637+0x8B1; core/TorchSeat.cpp seats that call
             { 39655,  "AiCommand",         PathKind::kEngine },   // +0x868 -> sibling;     called ONLY from 39637+0x195C
             { 39645,  "AiCommand",         PathKind::kEngine },   // +0x250 -> sibling; from 39108 (the dispatcher's caller) + 39209 (<- 39108)
             { 37510,  "AiCommand",         PathKind::kEngine },   // +0x226 -> sibling; every LIVE caller is the 39108 family (39223, 39653 <- 39637, 39654); 40087/40088 are orphans
@@ -185,7 +185,7 @@ namespace apmf::equipsink {
             // verified on the unpacked 1.5.97 image with the SAME caller shape as
             // the AE row (RTTI vtable slots identical; see the AE table for the chains).
             { 38606,  "AiCommand",         PathKind::kEngine },   // dispatcher: +0xCCD -> EquipObject (ret 0x65FD12); sole caller 38150
-            { 38902,  "AiCommand",         PathKind::kEngine },   // +0x1A0 -> EquipObject; called ONLY from 38606+0x798
+            { 38902,  "TorchUpdate",       PathKind::kEngine },   // the torch updater (2026-10-20, was AiCommand): +0x1A0 -> EquipObject; called ONLY from 38606+0x798
             { 38624,  "AiCommand",         PathKind::kEngine },   // +0x857 -> sibling;     called ONLY from 38606+0x152F
             { 38614,  "AiCommand",         PathKind::kEngine },   // +0x250 -> sibling; from 38150 (the dispatcher's caller), 38227, 38249
             { 36510,  "AiCommand",         PathKind::kEngine },   // +0x226 -> sibling; callers 38263, 38622, 38623, 39020, 39021 (the 38150 family)
