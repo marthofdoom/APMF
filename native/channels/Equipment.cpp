@@ -1,6 +1,7 @@
 #include "PCH.h"
 #include "core/Log.h"
 #include "core/Registry.h"
+#include "core/HandBlock.h"   // ch.15 weapon admission: the claimed form's hand shape (2026-10-20)
 
 // ============================================================================
 // Channel 15 -- EQUIPMENT (CHANNEL-MAP ch.15: the melee-vs-ranged lever). Own the
@@ -63,6 +64,7 @@ namespace {
                 spdlog::info("[ch.15] 0x{} equipment facet CLAIMED gate-only (held item 0x{}). "
                              "Arbitration only -- T2a's CheckShouldEquip hook does the enforcing.",
                              apmf::log::Hex(id), apmf::log::Hex(param.form));
+                NoteClaimedForm(param.form);
                 return;
             }
 
@@ -83,6 +85,13 @@ namespace {
             }
         }
 
+        // ch.15 WEAPON ADMISSION (feat/apmf-weapon-admission, 2026-10-20): a new winning claim names a
+        // (possibly different) weapon. Only the shape cache is refreshed; nothing is equipped and m_prev is
+        // untouched (the restore state stays the first Engage's, Channel.h's contract).
+        void OnOwnerChanged(RE::FormID /*id*/, RE::Actor* /*actor*/, const APMF_API::APMF_Param& param) override {
+            if (param.form != 0) NoteClaimedForm(param.form);
+        }
+
         void Release(RE::FormID id, RE::Actor* actor) override {
             if (auto it = m_prev.find(id); it != m_prev.end()) {
                 if (actor && it->second) {   // engine write only when the actor is live
@@ -96,6 +105,13 @@ namespace {
         }
 
     private:
+        // The weapon rule at core/HandBlock.cpp's 0x0F seat runs on the combat thread, which never calls
+        // LookupByID; the claimed form is resolved HERE (the game thread: ControlMap::Drain's apply loop,
+        // before the snapshot that carries the claim is published) and its hand shape cached there.
+        static void NoteClaimedForm(RE::FormID a_form) {
+            apmf::handblock::NoteEquipmentClaimForm(a_form, RE::TESForm::LookupByID(a_form));
+        }
+
         std::unordered_map<RE::FormID, RE::TESObjectWEAP*> m_prev;   // game-thread only
     };
 

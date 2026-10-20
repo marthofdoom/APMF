@@ -332,6 +332,245 @@ namespace apmf::handblock {
             return false;
         }
 
+        // ---- ch.15 WEAPON ADMISSION (feat/apmf-weapon-admission, 2026-10-20; HandBlock.h has the contract) ----
+        // WHY THIS SEAT AND NOT A CONTEXT NODE (traced on the unpacked 1.6.1170 and 1.5.97 images, agentlog
+        // apmf-weapon-admission.md): the combat tree's "Action Equipment Selector" (AE builder 47688 / SE 46461)
+        // runs, per equipment slot, "Melee Sequence" = { "Equip weapon" (the CombatBehaviorEquipObject leaf, whose
+        // Enter AE 48124 / SE 46955 calls ActorEquipManager::EquipObject when the slot's item is not worn),
+        // "Melee Link" } (Ranged the same with EquipRangedWeapon, 48126 / 46957). The "Melee Context" node
+        // (CreateContextNode2<ContextMelee>) is inside the Link and wraps ONLY the attacks, so the swap happens
+        // before it and a deny there would cost attacks, not the swap. The item that slot carries is the one
+        // CombatInventory's evaluate picked, and that pick asks THIS slot (0x0F) for every candidate.
+        std::atomic<bool> g_ch15On{ true };        // [HandBlock] bEquipmentWeaponAdmission
+        std::atomic<bool> g_ch15Observe{ false };  // [HandBlock] bEquipmentWeaponObserveOnly
+        std::atomic<std::uint64_t> g_ch15Denies{ 0 };
+
+        enum : std::uint8_t { kShapeNone = 0, kShapeOneHand = 1, kShapeBothHands = 2, kShapeLeft = 3 };
+
+        // The hand shape of a claimed form: no lookup, a form-type read and the WEAP type tests only.
+        std::uint8_t ShapeOf(RE::TESForm* a_form) {
+            if (!a_form) return kShapeNone;
+            if (auto* w = a_form->As<RE::TESObjectWEAP>()) {
+                if (w->IsTwoHandedSword() || w->IsTwoHandedAxe() || w->IsBow() || w->IsCrossbow()) return kShapeBothHands;
+                return kShapeOneHand;   // one-handed, a staff included (Categorize's own split)
+            }
+            if (auto* a = a_form->As<RE::TESObjectARMO>())
+                return (apmf::equipsink::Categorize(a, nullptr) & APMF_API::kEquipCat_Shield) ? kShapeLeft : kShapeNone;
+            if (a_form->As<RE::TESObjectLIGH>()) return kShapeLeft;
+            return kShapeNone;
+        }
+
+        // Claimed-form shapes resolved on the game thread (NoteEquipmentClaimForm). Leaf lock, find only on
+        // the combat thread (no allocation there).
+        std::mutex                                     g_shapeMx;
+        std::unordered_map<RE::FormID, std::uint8_t>   g_shapes;
+
+        bool CachedShape(RE::FormID a_form, std::uint8_t& a_out) {
+            std::scoped_lock lk(g_shapeMx);
+            const auto it = g_shapes.find(a_form);
+            if (it == g_shapes.end()) return false;
+            a_out = it->second;
+            return true;
+        }
+
+        // The hand(s) a ch.15 claim on `a_weapon` holds for `a_actor`, by the contract in HandBlock.h.
+        // `a_how` names where the answer came from (log text). 0 = no hand (the rule does nothing).
+        std::uint32_t ClaimedHands(RE::Actor* a_actor, RE::FormID a_weapon, const char*& a_how) {
+            a_how = "-";
+            RE::TESForm* const r = a_actor->GetEquippedObject(/*left*/ false);
+            RE::TESForm* const l = a_actor->GetEquippedObject(/*left*/ true);
+            std::uint32_t worn = 0;
+            if (r && r->GetFormID() == a_weapon) worn |= APMF_API::kEquipCat_Right;
+            if (l && l->GetFormID() == a_weapon) worn |= APMF_API::kEquipCat_Left;
+            std::uint8_t shape = kShapeNone;
+            if (worn) {
+                shape = ShapeOf((worn & APMF_API::kEquipCat_Right) ? r : l);
+            } else if (!CachedShape(a_weapon, shape)) {
+                a_how = "unresolved (not worn, shape not cached)";
+                return 0;
+            }
+            switch (shape) {
+            case kShapeBothHands:
+                a_how = worn ? "two-handed, worn" : "two-handed, not worn";
+                return APMF_API::kEquipCat_Right | APMF_API::kEquipCat_Left;
+            case kShapeLeft:
+                a_how = worn ? "shield/torch, worn" : "shield/torch, not worn";
+                return APMF_API::kEquipCat_Left;
+            case kShapeOneHand:
+                if (worn) { a_how = "one-handed, the hand it is worn in"; return worn; }
+                a_how = "one-handed, not worn: the right hand";
+                return APMF_API::kEquipCat_Right;
+            default:
+                a_how = "names no hand";
+                return 0;
+            }
+        }
+
+        // Over-suppression watch (the field criterion): a CLAIMED hand that has had ch.15 refusals and NO
+        // admitted candidate (the claimed weapon itself) for kEmptyHandMs. One line per (actor, hand, claim).
+        // Log only. Never throws.
+        struct Ch15Watch {
+            std::uint64_t    firstNoMs = 0;
+            std::uint32_t    nos       = 0;
+            bool             logged    = false;
+            APMF_API::Handle handle    = APMF_API::kInvalidHandle;
+        };
+        std::mutex                                     g_c15Mx;
+        std::unordered_map<std::uint64_t, Ch15Watch>   g_c15Watch;   // (actor << 1 | left) -> watch
+
+        void NoteCh15Answer(RE::FormID a_fid, std::uint32_t a_hands, bool a_yes, APMF_API::Handle a_handle,
+                            RE::FormID a_weapon) {
+            try {
+                const auto now = apmf::clock::MonotonicMs();
+                struct Due { bool left; std::uint32_t nos; std::uint64_t ms; };
+                Due due[2]{};
+                int nDue = 0;
+                {
+                    std::scoped_lock lk(g_c15Mx);
+                    if (g_c15Watch.size() > 4096) g_c15Watch.clear();   // bounded; a re-log beats growth
+                    for (const bool left : { false, true }) {
+                        const std::uint32_t bit = left ? APMF_API::kEquipCat_Left : APMF_API::kEquipCat_Right;
+                        if (!(a_hands & bit)) continue;
+                        auto& w = g_c15Watch[(static_cast<std::uint64_t>(a_fid) << 1) | (left ? 1u : 0u)];
+                        if (w.handle != a_handle) w = Ch15Watch{ 0, 0, false, a_handle };
+                        if (a_yes) { w.firstNoMs = 0; w.nos = 0; continue; }
+                        if (w.firstNoMs == 0) w.firstNoMs = now;
+                        ++w.nos;
+                        if (!w.logged && w.nos >= 2 && now - w.firstNoMs >= kEmptyHandMs) {
+                            w.logged = true;
+                            due[nDue++] = Due{ left, w.nos, now - w.firstNoMs };
+                        }
+                    }
+                }
+                for (int i = 0; i < nDue; ++i)
+                    spdlog::warn("[ch.15 0x0F] 0x{} {} hand: {} candidate(s) refused for the ch.15 claim on weapon 0x{} "
+                                 "and the claimed weapon itself was NOT offered for {} ms (h={}). The hand has nothing "
+                                 "the AI may pick: the actor does not carry the weapon, or the engine refused it. "
+                                 "Logged once per actor, hand and claim.",
+                                 apmf::log::Hex(a_fid), due[i].left ? "LEFT" : "RIGHT", due[i].nos,
+                                 apmf::log::Hex(a_weapon), due[i].ms, a_handle);
+            } catch (...) {
+            }
+        }
+
+        // ch.15's step. Runs only when the engine said YES and the hand-claim block did not refuse. Returns
+        // true when the candidate is REFUSED (the caller answers NO); false keeps the engine's YES for the
+        // next step (ch.17's declared set). Lock-free RCU claim read; the claimed form's shape from the worn
+        // object or the game-thread cache. Ranked on the Equip facet like every other equip deny (D2).
+        bool Ch15Refuses(RE::FormID a_fid, RE::Actor* a_actor, RE::TESForm* a_item, RE::FormID a_itemId,
+                         std::uint32_t a_cats, CheckShouldEquip_t a_orig, const char* a_tag, std::uintptr_t a_retRva) {
+            if (!g_ch15On.load(std::memory_order_relaxed)) return false;
+            const std::uint32_t competes = a_cats & (APMF_API::kEquipCat_Right | APMF_API::kEquipCat_Left);
+            if (!competes) return false;
+            APMF_API::APMF_Param p15{};
+            float                b15 = 0.0f;
+            APMF_API::Handle     h15 = APMF_API::kInvalidHandle;
+            if (!apmf::ControlMap::Get().TryGetOwningClaimBasis(a_fid, APMF_API::kIntent_Equipment, p15, b15, &h15))
+                return false;                                   // no ch.15 claim on this actor
+            if (p15.form == 0) return false;                    // the no-param probe facet: not this rule
+            const RE::FormID weapon = p15.form;
+
+            const char*         how     = "-";
+            const std::uint32_t claimed = ClaimedHands(a_actor, weapon, how);
+            char                comp[48];
+            std::uint32_t       dropped = 0;
+            const auto          key     = a_itemId ^ 0x15000000u;
+
+            if (claimed == 0) {
+                try {
+                    if (LineDue(a_fid, weapon ^ 0x15150000u, dropped))
+                        spdlog::info("[ch.15 0x0F] 0x{} ch.15 claim on 0x{} holds no hand ({}): the weapon rule does "
+                                     "nothing for this actor. h={}",
+                                     apmf::log::Hex(a_fid), apmf::log::Hex(weapon), how, h15);
+                } catch (...) {
+                }
+                return false;
+            }
+            char hands[48];
+            if (a_itemId == weapon || !(competes & claimed)) {
+                const bool isClaimed = a_itemId == weapon;
+                if (isClaimed) NoteCh15Answer(a_fid, competes & claimed, /*yes*/ true, h15, weapon);
+                try {
+                    if (LineDue(a_fid, key, dropped))
+                        spdlog::info("[ch.15 0x0F] 0x{} {} item=0x{} '{}' competes={} claimed=0x{} hands={} ({}) -> {}. "
+                                     "site={}",
+                                     apmf::log::Hex(a_fid), a_tag, apmf::log::Hex(a_itemId),
+                                     a_item->GetName() ? a_item->GetName() : "?",
+                                     apmf::equipsink::CategoryNames(competes, comp, sizeof(comp)), apmf::log::Hex(weapon),
+                                     apmf::equipsink::CategoryNames(claimed, hands, sizeof(hands)), how,
+                                     isClaimed ? "ADMIT (the claimed weapon)"
+                                               : "UNTOUCHED (competes only for a hand the claim does not hold)",
+                                     SiteName(a_retRva));
+                } catch (...) {
+                }
+                return false;
+            }
+
+            // A competitor for a claimed hand.
+            if (g_ch15Observe.load(std::memory_order_relaxed)) {
+                try {
+                    if (LineDue(a_fid, key, dropped))
+                        spdlog::info("[ch.15 0x0F] 0x{} {} item=0x{} '{}' competes={} claimed=0x{} hands={} ({}) -> "
+                                     "WOULD REFUSE -- OBSERVE-ONLY ([HandBlock] bEquipmentWeaponObserveOnly=1), the "
+                                     "engine's YES stands. site={}",
+                                     apmf::log::Hex(a_fid), a_tag, apmf::log::Hex(a_itemId),
+                                     a_item->GetName() ? a_item->GetName() : "?",
+                                     apmf::equipsink::CategoryNames(competes, comp, sizeof(comp)), apmf::log::Hex(weapon),
+                                     apmf::equipsink::CategoryNames(claimed, hands, sizeof(hands)), how, SiteName(a_retRva));
+                } catch (...) {
+                }
+                return false;
+            }
+            try {
+                const auto v = apmf::facetattr::Decide(apmf::sources::FacetForEquipCats(a_cats), h15,
+                                                       apmf::facetattr::InsideSource(reinterpret_cast<std::uintptr_t>(a_orig)),
+                                                       a_fid, "CheckShouldEquip (0x0F) ch.15 weapon admission: the answer "
+                                                              "came through a hook inside the seat that is in no module");
+                if (!v.enforce) {
+                    try {
+                        if (apmf::facetattr::LineDue(apmf::sources::FacetForEquipCats(a_cats), a_fid, 0x0F15u))
+                            spdlog::info("[ch.15 0x0F] 0x{} CheckShouldEquip item=0x{}: the ch.15 weapon rule would "
+                                         "refuse it -- {}, so the engine's own YES STANDS.",
+                                         apmf::log::Hex(a_fid), apmf::log::Hex(a_itemId),
+                                         apmf::facetattr::WhyStands(apmf::sources::FacetForEquipCats(a_cats), v, h15));
+                    } catch (...) {
+                    }
+                    return false;
+                }
+            } catch (...) {
+                // A registry throw keeps the claim's answer (the hand block's rule).
+            }
+            g_ch15Denies.fetch_add(1, std::memory_order_relaxed);
+            NoteCh15Answer(a_fid, competes & claimed, /*yes*/ false, h15, weapon);   // never throws
+            try {
+                if (LineDue(a_fid, key, dropped))
+                    spdlog::info("[ch.15 0x0F] 0x{} '{}' CheckShouldEquip {} item=0x{} '{}' competes={} claimed=0x{} "
+                                 "hands={} ({}) -> NO (another weapon for a hand the ch.15 claim holds) -- engine had "
+                                 "said YES; the AI keeps the claimed weapon. h={} site={} (ret 0x{}){}",
+                                 apmf::log::Hex(a_fid), a_actor->GetName() ? a_actor->GetName() : "?", a_tag,
+                                 apmf::log::Hex(a_itemId), a_item->GetName() ? a_item->GetName() : "?",
+                                 apmf::equipsink::CategoryNames(competes, comp, sizeof(comp)), apmf::log::Hex(weapon),
+                                 apmf::equipsink::CategoryNames(claimed, hands, sizeof(hands)), how, h15,
+                                 SiteName(a_retRva), apmf::log::Hex(a_retRva),
+                                 dropped ? fmt::format(" ({} 0x0F line(s) dropped by the {}/s cap before this one)",
+                                                       dropped, kCapPerSec)
+                                         : std::string());
+            } catch (...) {
+            }
+            return true;
+        }
+
+        // The steps after the hand-claim block, in order: ch.15's weapon admission, then ch.17's declared set.
+        bool AfterHandBlock(RE::FormID a_fid, RE::Actor* a_actor, RE::TESForm* a_item, RE::FormID a_itemId,
+                            std::uint32_t a_cats, CheckShouldEquip_t a_orig, const char* a_tag, std::uintptr_t a_retRva,
+                            bool a_engine) {
+            if (a_engine && Ch15Refuses(a_fid, a_actor, a_item, a_itemId, a_cats, a_orig, a_tag, a_retRva)) {
+                t_last.refused = true;
+                return false;
+            }
+            return DeclaredSetAnswer(a_fid, a_actor, a_item, a_itemId, a_cats, a_orig, a_tag, a_retRva, a_engine);
+        }
+
         bool CheckShouldEquipThunk(RE::CombatInventoryItem* a_this, RE::CombatController* a_cc) {
             // Captured FIRST: the genuine caller, not a frame this thunk pushed.
             const auto retRva = reinterpret_cast<std::uintptr_t>(_ReturnAddress()) - REL::Module::get().base();
@@ -389,7 +628,7 @@ namespace apmf::handblock {
             // assumed); a claim on the other hand still holds a 2H / bow / unarmed candidate.
             HandHold hold{};
             if (!competes || !HeldFor(fid, competes, itemId, SpellLike(item), hold))
-                return DeclaredSetAnswer(fid, actor, item, itemId, allCats, orig, tag, retRva, engine);
+                return AfterHandBlock(fid, actor, item, itemId, allCats, orig, tag, retRva, engine);
 
             // D2 (marth 2026-10-12, "equip denies rank by priority like every other facet"): the NO
             // replaces the answer of the chain beneath this seat (the engine, or a module hooked inside
@@ -412,7 +651,7 @@ namespace apmf::handblock {
                     } catch (...) {
                     }
                     // The hand block stood down; the ch.17 declaration may still refuse the candidate.
-                    return DeclaredSetAnswer(fid, actor, item, itemId, allCats, orig, tag, retRva, engine);
+                    return AfterHandBlock(fid, actor, item, itemId, allCats, orig, tag, retRva, engine);
                 }
             } catch (...) {
             }
@@ -508,6 +747,27 @@ namespace apmf::handblock {
         return a_out.held != 0;
     }
 
+    void NoteEquipmentClaimForm(RE::FormID a_form, RE::TESForm* a_resolved) {
+        if (a_form == 0) return;
+        try {
+            const std::uint8_t shape = ShapeOf(a_resolved);
+            {
+                std::scoped_lock lk(g_shapeMx);
+                if (g_shapes.size() > 1024) g_shapes.clear();   // bounded; the next Engage re-fills
+                g_shapes[a_form] = shape;
+            }
+            spdlog::info("[ch.15] weapon admission: claimed form 0x{} '{}' -> {} (the hand(s) the 0x0F rule holds when it "
+                         "is not worn; worn, the hand it is worn in decides a one-hander).",
+                         apmf::log::Hex(a_form), a_resolved && a_resolved->GetName() ? a_resolved->GetName() : "?",
+                         shape == kShapeBothHands ? "both hands (two-handed / bow / crossbow)"
+                         : shape == kShapeLeft    ? "the left hand (shield / torch)"
+                         : shape == kShapeOneHand ? "one-handed (the right hand when not worn)"
+                                                  : (a_resolved ? "names no hand: the weapon rule does nothing"
+                                                                : "does not resolve: the weapon rule does nothing"));
+        } catch (...) {
+        }
+    }
+
     bool AnyHandHeld(RE::FormID a_actor) {
         HandHold h{};
         // a_spellLike = true: a spells-only floor still counts as holding a hand for the
@@ -524,11 +784,22 @@ namespace apmf::handblock {
         // here directly, with the sink's own default (1). A ch.17 claim is refused while the sink
         // seat is down, so this half reads no claim then even if the seat is installed.
         const bool ch17 = GetPrivateProfileIntA("EquipAuthority", "bEquipAuthority", 1, "Data/SKSE/Plugins/APMF.ini") != 0;
+        // ch.15 weapon admission (2026-10-20): its own kill switch and observe-only switch, same section.
+        const bool ch15 =
+            GetPrivateProfileIntA("HandBlock", "bEquipmentWeaponAdmission", 1, "Data/SKSE/Plugins/APMF.ini") != 0;
+        g_ch15On.store(ch15, std::memory_order_relaxed);
+        g_ch15Observe.store(
+            GetPrivateProfileIntA("HandBlock", "bEquipmentWeaponObserveOnly", 0, "Data/SKSE/Plugins/APMF.ini") != 0,
+            std::memory_order_relaxed);
+        if (!ch15)
+            spdlog::warn("[handblock] [HandBlock] bEquipmentWeaponAdmission=0 -- a ch.15 kIntent_Equipment claim does "
+                         "NOT refuse another weapon for its hand at the 0x0F seat.");
         if (!g_enabled.load(std::memory_order_relaxed)) {
             spdlog::warn("[handblock] [HandBlock] bHandClaimBlocksEquip=0 -- a hand held by a cast claim does NOT "
                          "refuse weapon / shield / torch equips (neither the 0x0F seat nor the equip-sink step).{}",
-                         ch17 ? " The 0x0F seat still installs for ch.17's selection-time refusal." : "");
-            if (!ch17) return;
+                         (ch17 || ch15) ? " The 0x0F seat still installs for ch.17's selection-time refusal and/or "
+                                          "ch.15's weapon admission." : "");
+            if (!ch17 && !ch15) return;
         }
         if (REL::Module::IsVR()) {
             spdlog::warn("[handblock] VR runtime -- the weapon-class 0x0F seat is verified on 1.6.1170, 1.5.97 and "
@@ -595,11 +866,16 @@ namespace apmf::handblock {
                          "{}: a hand held by a live cast claim (a "
                          "deny-only floor included; a spells-only floor, ABI v20, refuses spell-like items only) refuses "
                          "every weapon / shield / torch candidate competing for it. ch.17 selection-time refusal {}: "
-                         "a candidate the actor's declared equip set refuses is not selected. "
+                         "a candidate the actor's declared equip set refuses is not selected. ch.15 weapon admission "
+                         "{}: another weapon / shield / torch for a hand a kIntent_Equipment claim's weapon holds is "
+                         "not selected. "
                          "The engine answers first, only its YES turns to NO. The equip-sink step rides the ch.17 "
                          "seat (its own [apmf][equip-sink] INSTALLED line says whether that seat is live).",
                          g_enabled.load(std::memory_order_relaxed) ? "ON" : "OFF (bHandClaimBlocksEquip=0)",
-                         ch17 ? "ON" : "OFF (bEquipAuthority=0)");
+                         ch17 ? "ON" : "OFF (bEquipAuthority=0)",
+                         !ch15 ? "OFF (bEquipmentWeaponAdmission=0)"
+                         : g_ch15Observe.load(std::memory_order_relaxed) ? "OBSERVE-ONLY (bEquipmentWeaponObserveOnly=1)"
+                                                                          : "ON");
         } else {
             spdlog::error("[handblock] PARTIAL: {}/{} weapon-class 0x0F seats installed; refused: {}. The equip-sink "
                           "step still refuses an equip into a held hand on every path.",

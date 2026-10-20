@@ -110,4 +110,25 @@ namespace apmf::handblock {
 
     // "R", "L", "R+L" or "-" for a held mask (log text).
     const char* HeldName(std::uint32_t a_held);
+
+    // ---- ch.15 WEAPON ADMISSION (feat/apmf-weapon-admission, 2026-10-20, ClickUp 86e394134) ----
+    // While a kIntent_Equipment claim names a weapon (param.form = W), this seat's 0x0F answer
+    // refuses every OTHER Melee / Ranged / Shield / Torch / OneHandedBlock candidate whose
+    // Categorize hand bits hit a hand W is claimed for, so CombatInventory's evaluate never selects
+    // a competitor and the AI keeps W itself. A candidate for an unclaimed hand is untouched; W is
+    // never refused; attacks are not a 0x0F decision and run as before.
+    // THE CLAIMED HAND (no ABI change; param.ival stays reserved for an explicit hand later):
+    // two-handed sword / axe, bow, crossbow = both hands; a one-handed weapon (a staff included) =
+    // the hand(s) the actor wears it in now, else the right hand; a shield or a torch = the left.
+    // Anything else names no hand and the rule does nothing for it.
+    // INI [HandBlock] bEquipmentWeaponAdmission (default 1) turns the rule off;
+    // bEquipmentWeaponObserveOnly (default 0) logs each refusal it WOULD make and keeps the
+    // engine's YES.
+    //
+    // MAIN / GAME THREAD (channels/Equipment.cpp, Engage + OnOwnerChanged): remember the shape of
+    // the claimed form, resolved there because the combat-thread seat never calls LookupByID
+    // (it takes the engine's forms-map lock). The seat reads the shape from the worn object
+    // first and from this cache only when W is not worn. A null form or one that names no hand
+    // is cached as "no hand". Bounded; never throws.
+    void NoteEquipmentClaimForm(RE::FormID a_form, RE::TESForm* a_resolved);
 }
