@@ -586,7 +586,7 @@ namespace apmf::substrateprobe {
             const std::string cls   = inMod ? RttiOf(vt) : std::string();
             if (sk == a_harbinger) mine = static_cast<int>(i);
             if (vm < 0 && cls == ".?AVSkyrimVM@@") vm = static_cast<int>(i);
-            list += fmt::format("{}#{} {}{}{}", list.empty() ? "" : "; ", i, inMod ? mod : std::string("no module"),
+            list += fmt::format("{}#{} {}{}{}{}", list.empty() ? "" : "; ", i, inMod ? mod : std::string("no module"),
                                 cls.empty() ? "" : " ", cls, sk == a_harbinger ? " (HARBINGER)" : "");
         }
         spdlog::info("[substrate] PROBE TESCombatEvent sink order at kDataLoaded ({} sink(s), {} pending registration(s); "
