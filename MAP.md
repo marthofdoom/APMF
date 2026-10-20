@@ -1987,6 +1987,14 @@ cause 2 (a dagger equipped into the deny-only right hand 32 ms before the left h
   the Melee/Ranged context, which wraps only the attacks). **What breaks:** reordering the steps changes which
   claim's refusal is logged; the cache is keyed by FORM (shape is static data), so a stale entry is harmless,
   but removing the Engage/OnOwnerChanged calls leaves an unworn W unresolved (rule silent, logged).
+  **Stand-down (APMF-B177, 2026-10-20, `feat/apmf-weapon-standdown`):** before refusing a competitor, `ScanCarried`
+  looks for W in `a_cc->inventory->inventoryItems[0..6]` (static_asserts: inventory +0x10, parentController +0x00,
+  inventoryItems +0x08, BSTArray 0x18; same layout measured on 1.6.1170 / 1.5.97 / 1.7.104, file comment has the
+  sites) -- ONLY at an `evaluate` site (`SiteName`), with a runtime `parentController == cc` cross-check; other sites
+  reuse the last evaluate verdict for the same (claim, W) (`g_carry`, combat-thread leaf lock), none -> rule
+  applies. Not carried -> return false (no refusal), one `STAND-DOWN` warn per claim; changes logged once.
+  **What breaks:** scanning at the pre-loop (reached through un-traced function pointers 44866/44867) is unproven;
+  keep it evaluate-only.
 - **D2 (2026-10-12): ranked on the Equip facet.** The 0x0F NO stands only while the holding cast claim
   (`facetattr::CastClaimHandle`) outranks `InsideSource(orig)` (`facetattr::Decide`, Equip facet); else the
   engine's YES stands (`[handblock 0x0F] ... STANDS`, 5 s per actor). The sink step ranks the same way.

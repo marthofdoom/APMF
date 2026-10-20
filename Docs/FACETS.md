@@ -1483,7 +1483,7 @@ So a one-hander in the right hand leaves the left hand to the AI (a dual-wield o
 
 Why this seat and not the weapon context nodes the old audit named: the combat tree equips a weapon in the "Equip weapon" leaf of the Melee/Ranged sequence, BEFORE the "Melee Context" node, which wraps only the attacks. A deny there would cost attacks and still let the swap through (Docs/DENY-COMPLETENESS-AUDIT.md row 15).
 
-Not covered: a pick made before the claim was published is still carried out until CombatInventory's next evaluate (ch.15 has no equip-sink step; a ch.17 declaration does); the AI picking a weapon up off the ground (the `AcquireWeapon` subtree, the disarmed path) and the engine's own pick-up auto-equip; any equip from outside the combat AI (a script, the player, another mod). If the actor does not carry your weapon, the claimed hand has nothing the AI may pick, and Harbinger logs that once (see the check below).
+Not covered: a pick made before the claim was published is still carried out until CombatInventory's next evaluate (ch.15 has no equip-sink step; a ch.17 declaration does); the AI picking a weapon up off the ground (the `AcquireWeapon` subtree, the disarmed path) and the engine's own pick-up auto-equip; any equip from outside the combat AI (a script, the player, another mod). If the actor does not carry your weapon (it is not among the actor's combat inventory candidates), the weapon rule STANDS DOWN for your claim and refuses nothing, so the AI is never left with an empty hand: one `[ch.15 0x0F] ... STAND-DOWN` warning per claim, and a `carried again` line when it comes back (marth's ruling, APMF-B177, 2026-10-20). The check runs at CombatInventory's evaluate.
 
 #### Lifetime
 

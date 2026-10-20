@@ -27,6 +27,16 @@ mfo event."
   unload; the field log shows the handle still valid after the inn door).
 - Field check: a follower sent to an interior cell shows `[travel-leg] ... actor UNLOADED ... the leg continues`, then
   `ARRIVED ... HOLDING`, no release nudge, and stays inside until MFO releases the claim.
+## HEAD OF WORK 2026-10-20 -- ch.15 WEAPON STAND-DOWN (APMF-B177/B178/B180), branch `feat/apmf-weapon-standdown`, NOT merged
+
+- marth's ruling on APMF-B177: while the claimed weapon W is NOT carried, the ch.15 weapon rule STANDS DOWN for that
+  claim, with one loud line per claim (`[ch.15 0x0F] ... STAND-DOWN`; `carried again` when it returns).
+- "Carried" = W in the controller's own `CombatInventory::inventoryItems[0..6]`, scanned at the evaluate's 0x0F sites
+  only; layout measured identical on 1.6.1170 / 1.5.97 / 1.7.104 (inventory +0x10, arrays +0x08, 7 x 0x18) plus a
+  runtime `parentController` cross-check. No new address row, no INI key.
+- B180: the shape-cache lock is inside a try. B178: audit row 15 residual (a) states the measured <= 1.0 s window.
+  B179 (explicit hand through `ival`) stays open.
+
 ## HEAD OF WORK 2026-10-20 -- ch.15 WEAPON ADMISSION (open gap 1 / row 15, ClickUp 86e394134), branch `feat/apmf-weapon-admission`, NOT merged
 
 - **Finding (disassembly, 1.6.1170 + 1.5.97):** the weapon CONTEXT-node seat the audit named cannot close the gap. The
