@@ -19,7 +19,7 @@
 
 namespace apmf::VerifiedAddresses
 {
-	// 1.6.1170.0: 246 rows
+	// 1.6.1170.0: 248 rows
 	inline constexpr REL::SelfCheck::Row kRows_1_6_1170[] = {
 		{ 207886, 0x18A5558, 0x0, 0, {  }, "Character" },
 		{ 207896, 0x18A5FE8, 0x0, 0, {  }, "Character.ActorValueOwner" },
@@ -267,9 +267,11 @@ namespace apmf::VerifiedAddresses
 		{ 214161, 0x18E7560, 0x0, 0, {  }, "Leaf.CombatBehaviorIdle<GameSetting>" },
 		{ 214367, 0x18E8AC8, 0x0, 0, {  }, "Leaf.CombatBehaviorRepeat<float,FLAGS>" },
 		{ 56626, 0xA447F0, 0x0, 0, {  }, "Place.TESObjectREFR.MoveTo" },
+		{ 37172, 0x65DE90, 0xF3, 1, { 0xE8 }, "Substrate.PackageSelector.CombatOverrideCall" },
+		{ 24673, 0x3B79C0, 0x0, 0, {  }, "Substrate.Npc.GetEnterCombatOverridePackage" },
 	};
 
-	// 1.5.97.0: 246 rows
+	// 1.5.97.0: 248 rows
 	inline constexpr REL::SelfCheck::Row kRows_1_5_97[] = {
 		{ 261397, 0x165DA40, 0x0, 0, {  }, "Character" },
 		{ 261402, 0x165E4D0, 0x0, 0, {  }, "Character.ActorValueOwner.SE" },
@@ -517,10 +519,12 @@ namespace apmf::VerifiedAddresses
 		{ 267079, 0x16A1ED8, 0x0, 0, {  }, "Leaf.CombatBehaviorIdle<GameSetting>" },
 		{ 267191, 0x16A35F0, 0x0, 0, {  }, "Leaf.CombatBehaviorRepeat<float,FLAGS>" },
 		{ 56227, 0x9AE5C0, 0x0, 0, {  }, "Place.TESObjectREFR.MoveTo" },
+		{ 36193, 0x5CD930, 0xEA, 1, { 0xE8 }, "Substrate.PackageSelector.CombatOverrideCall" },
+		{ 24169, 0x35EE70, 0x0, 0, {  }, "Substrate.Npc.GetEnterCombatOverridePackage" },
 	};
 
-	// 1.7.104.0: 247 rows
-	// 42 NOT VERIFIED on 1.7.104.0, deliberately absent from this table (the seat is refused):
+	// 1.7.104.0: 249 rows
+	// 44 NOT VERIFIED on 1.7.104.0, deliberately absent from this table (the seat is refused):
 	//   Character.ActorValueOwner.SE (1.6.1170 id -): no 1.6.1170 (AE) id: the 1.7.104 map is keyed by AE id (1.5.97-only seat)
 	//   TargetPin.CombatController.SetTarget (1.6.1170 id 33235): id 33235 is not in the idmap
 	//   EquipSink.Path.OutfitApply.24234 (1.6.1170 id -): BY DESIGN: 1.5.97-only label. On 1.6.1170 and 1.7.104 the code reads its AE twin EquipSink.Path.OutfitApply.418622 (AE id 418622, 1.7.104 0x3C4440), whose own row carries the 1.7.104 fact (MAPPED-AE)
@@ -563,6 +567,8 @@ namespace apmf::VerifiedAddresses
 	//   Substrate.CombatGroup.DetectionPassInUpdate (1.6.1170 id 44703): id 44703 is not in the idmap
 	//   Substrate.CombatGroup.MusicUndecided (1.6.1170 id 44703): id 44703 is not in the idmap
 	//   Substrate.CombatManager.MusicPlayTest (1.6.1170 id 46888): id 46888 is not in the idmap
+	//   Substrate.PackageSelector.CombatOverrideCall (1.6.1170 id 37172): id 37172 is not in the idmap
+	//   Substrate.Npc.GetEnterCombatOverridePackage (1.6.1170 id 24673): id 24673 is not in the idmap
 	inline constexpr REL::SelfCheck::Row kRows_1_7_104[] = {
 		{ 207886, 0x1923258, 0x0, 0, {  }, "Character" },
 		{ 207896, 0x1923CE8, 0x0, 0, {  }, "Character.ActorValueOwner" },
@@ -811,6 +817,8 @@ namespace apmf::VerifiedAddresses
 		{ 0, 0x829392, 0x0, 0, {  }, "EquipGate.CallSiteName.return-8144B2" },
 		{ 0, 0x833510, 0x0, 0, {  }, "NonAliasProbe.CombatMagicCaster.GetMagicTarget" },
 		{ 0, 0x5614A0, 0x0, 0, {  }, "TargetPin.CombatController.SetTarget.1_7_104" },
+		{ 0, 0x670880, 0x0, 0, {  }, "Substrate.PackageSelector.1_7_104" },
+		{ 0, 0x3BEA80, 0x0, 0, {  }, "Substrate.Npc.GetEnterCombatOverridePackage.1_7_104" },
 	};
 
 	inline constexpr REL::SelfCheck::Table kTables[] = {
