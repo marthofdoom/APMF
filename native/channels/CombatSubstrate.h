@@ -71,9 +71,11 @@ namespace apmf::combatsubstrate {
     // then apmf::cbt::kSearchLeaves (70..73), then apmf::cbt::kParamLeaves (74..94). `a_movement` = ActionGate's movement-leaf
     // classification (the P6 "movement-leaves-denied" count). kNotHolder = no substrate on
     // the actor (the caller goes on as before); kAllow = the leaf runs; kDeny = force-fail it
-    // with the ForceFail act()/pop() PAIR, then call LeafDenied.
+    // with the ForceFail act()/pop() PAIR, then call LeafDenied. `a_node` = the node object whose act()
+    // runs (the thunk's `this`): the spell-equip path reads AcquireResource<2>'s resource name from it
+    // (channels/SubstrateEquip.cpp); nothing else reads it.
     enum class Leaf : std::uint8_t { kNotHolder, kAllow, kDeny };
-    Leaf ForLeaf(RE::FormID a_actor, std::uint32_t a_leafIdx, bool a_movement);
+    Leaf ForLeaf(RE::FormID a_actor, std::uint32_t a_leafIdx, bool a_movement, const void* a_node);
     void LeafDenied(RE::FormID a_actor, std::uint32_t a_leafIdx, bool a_movement);
     // The node index count the allow-list knows (kLeaves + kSearchLeaves + kParamLeaves): EVERY
     // CombatBehaviorTreeNodeObject* vtable the MIT fork ships (review F1 of a512763).

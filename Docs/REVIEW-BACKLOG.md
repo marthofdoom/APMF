@@ -779,12 +779,48 @@ are flagged REAL at once."
 Raised against 266769c, 2026-10-13. Reviewer (verbatim): "the SE downstream of the re-pick chain (the twins of
 39108/39213/39434) is not independently re-traced; P6's attribution covers it in the field."
 
-### APMF-B99 (SEV-4, MUST be traced before S3 relies on the allow-list) -- the function-node classes
+### APMF-B99 (SEV-4, MUST be traced before S3 relies on the allow-list) -- the function-node classes -- TRACED 2026-10-19 (equip path closed)
 Raised in round 1's fix, 2026-10-13 (author, from F1's census of the node classes); raised by the round-2 reviewer
 (266769c) to "must be traced before S3 relies on the allow-list" (the non-const EquipContext NodeEvaluateFunction).
 `CombatBehaviorTreeNodeEvaluateFunction` and `CombatBehaviorTreeNodeUpdateFunction` are behaviour-tree nodes that
 are not `NodeObject*`, so the allow-list does not see them (INVARIANTS #0 (j) 2(a)). Trace what their functions do,
 the EquipContext evaluate function first, before S3 relies on the allow-list.
+**TRACED 2026-10-19 (`feat/apmf-substrate-equip`; the equip question CLOSED, the class census recorded).** Six
+function-node classes exist on both runtimes (RTTI). The base protocol (AE vtable 0x18DA8A8 / SE 0x1694018): act
+(AE 47552) and pop (47553) are EMPTY (`ret 0`, no data-stack push), update (AE 47781 0x8686B0) calls the function at
+node+0x28 on the current context (thread+0x128 window), sets the thread state to failed when it returns false, then
+Ascends. (1) **EquipContext evaluate** ("Equip empty" on the Empty Sequence and "Equip potion" on the Potion
+Sequence of `CombatBehaviorTreeActionEquipmentSelector`, AE 47688 / SE 46461): the function is AE 48120 0x877B70 /
+SE 46952 0x7E04A0, which calls CombatInventory AE 44860 / SE 43629 (`equippedItems` +0x178 bookkeeping: entries
+whose slot mask overlaps are dropped with the item's Unequip slot 0x12, the item added with its Equip slot 0x11) and
+returns true. Slots 0x11 / 0x12 are empty functions on every CombatInventoryItem class except the five *Restore
+Unequips (AE 0x8326B0 etc.: a blackboard timer). **No actor equip, and it does not gate the spell equip** (it is
+on the Empty and Potion branches; the spell's Magic Sequence is [EquipSpell, Magic Link]). (2) ContextCover
+evaluate (UseCover tree, AE 49816), ContextFlee evaluate and the two CombatState evaluates (Flee tree, AE 48563),
+ContextSearch UPDATE function (Search tree, AE 49529): Movement-side trees, reached only after the Movement tree's
+`Acquire Movement Resource`, which the substrate keeps denied. Their functions are not traced: they cannot run
+under a substrate. Open only if a future allow-list opens the Movement branch.
+
+### APMF-B141 (SEV-4) -- the substrate's LEAF DENIED line does not name the AcquireResource<2> instance
+Raised against a0112b24, 2026-10-19 (tier-3 review of `feat/apmf-substrate-equip`). Reviewer (verbatim): "LeafDenied logs the Movement instance as 'LEAF DENIED CombatBehaviorAcquireResource<2>', which looks like 'the Action branch is still cut'; name the instance."
+
+### APMF-B142 (SEV-4) -- "did NOT reach the hand" has three causes the log cannot tell apart
+Raised against a0112b24, same review. Reviewer (verbatim): "'did NOT reach the hand' has three causes the log cannot tell apart: the claimed form not in CombatInventory (e.g. a proxy AddSpell'd after the controller was built), the item's own engine CheckShouldEquip NO (Light/Armor/Cloak conditions), or a scroll winning the claimed hand's set (scrolls are hooked by neither EquipGate nor HandBlock). Run the field test with [EquipGate] EnableEquipGateLog=1."
+
+### APMF-B143 (SEV-5) -- a late combat-thread count can land in the next window
+Raised against a0112b24, same review. Reviewer (verbatim): "NoteAllowed/Begin: a combat-thread count passing the id check just before a close and a re-Begin can land in the next window's counter (log only)."
+
+### APMF-B144 (SEV-5) -- the "25/25" evidence wording
+Raised against a0112b24, same review. Reviewer (verbatim): "Docs cite '25/25 AcquireResource denied' as proof, but the log cannot tell the two instances apart; cite the disassembly instead." FIXED in the same round (the docs and `channels/SubstrateEquip.cpp` now cite the allow-list class plus the disassembly; the log line is called consistent, not proof).
+
+### APMF-B145 (SEV-4) -- a stowed copy without a uid comes back by form
+Raised against 1f99de2b, 2026-10-19 (re-check of `feat/apmf-substrate-equip`). Reviewer (verbatim): "Restore by form when the worn copy had no uid: EquipObject(obj, nullptr) lets the engine pick any copy, which can be the plain copy instead of the tempered/enchanted one. Logged 'no uid'."
+
+### APMF-B146 (SEV-4) -- a save inside the window keeps the stowed items unequipped (NEEDS marth)
+Raised against 1f99de2b, same re-check. Reviewer (verbatim): "A save made during the window leaves the stowed items unequipped in the .ess; ResetHands drops the record with a log line. For MFO followers ch.17 enforce likely re-equips the declared loadout after the load; other clients get nothing back. Needs marth's acknowledgement (co-save record vs accept)."
+
+### APMF-B147 (SEV-4) -- cross-repo noise during the stow window
+Raised against 1f99de2b, same re-check. Reviewer (verbatim): "Cross-repo noise: ch.17 enforce re-issues EquipObject for the stowed declared weapon every 3 s during the window (EquipAuthority.cpp:553-579), each refused at step 1a with one log line; MFO PlayerGiven's sink may label a restored relic kAiEquipped. Bounded; watch in the field."
 
 ### APMF-B102 (SEV-5) -- ch.12 idle state: spdlog under g_stateMx
 Raised against `d95b403` (`feat/apmf-idle-state`, ABI v24 GetIdleState), tier-3 Opus 5.5 review 2026-10-13
@@ -911,3 +947,6 @@ Raised against `ace1d8b`, same review (verbatim): "AnchorGuard.cpp:439-442: kind
 
 ### APMF-B140 (SEV-5) -- anchor guard: trace default ON, no sweep kill switch, INI comment gap
 Raised against `ace1d8b`, same review (verbatim): "bSubstrateEntryTrace=1 defaults ON (the B133 precedent: flip at ship); the sweep has no kill switch apart from bCombatSubstrate=0; the APMF.ini comment does not say the trace needs bSubstrateJoinGuard=1 (INI-REFERENCE does)." Reasoning: the trace is on the STATUS pre-release checklist; deferred. MAP ch.27 row.
+
+### APMF-B148 (SEV-4) -- substrate hands: script/console equips pass the hand block unless DenyScript is on
+Raised against `ee8ca38` by the tier-3 closing re-check (verbatim): "Sink step 0 lets script and console equips through the hand block unless DenyScript is on (EquipSink.cpp verdict: scriptExempt = scriptPath && !denyScript). A third-party Papyrus EquipItem of a weapon during the window of at most 15 s can therefore put a weapon back in a floored hand, and EquipSpell's draw would then draw it. This was already true for client Opens. It is rare. The SubstrateEquip.cpp header comment says step 1a refuses 'a script', which is inaccurate. Correct the comment, or set DenyScript for substrate holders."

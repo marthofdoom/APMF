@@ -21,6 +21,30 @@ is ported to Harbinger, so MFO never calls MoveTo itself.
 - Field run: a follower sent off-screen and placed at a reference in an unloaded interior; expect `[place] <h>
   queued` then `PLACED ... (was unloaded ...)`. A `FAILED` (position did not take) or a `CellDiffers` note is the
   finding to bring back.
+## HEAD OF WORK 2026-10-19 -- SUBSTRATE SPELL EQUIP (the engine's own AI equips the claimed spell), branch `feat/apmf-substrate-equip`, NOT merged
+
+MFO S3 tier-3 review F1 (SEV-2): a substrate holder with a ch.8b cast claim had nothing that puts the spell in hand,
+and marth ruled MFO does not equip. Research (disassembly, both runtimes; `channels/SubstrateEquip.cpp` header):
+the tree reaches a cast ONLY through its Action branch (Repeat > `Acquire Action Resource` > per-slot EquipContext >
+ActionEquipmentSelector > Magic Sequence = [EquipSpell, Magic Link] > the cast leaves), and the allow-list denied
+every `AcquireResource<2>`, the "Action" one at the head of that branch, so no substrate cast was reachable at all.
+- **Allowed while a DRIVING cast claim stands:** `CombatBehaviorEquipSpell` and the "Action" instance of
+  `CombatBehaviorAcquireResource<2>` (node+0x28 resource name; its "Movement" twin stays denied). The leaf equips the
+  equip context's item into its own hand; the 0x0F seats (EquipGate per hand, HandBlock) already admit only the
+  claim's driven form on the claimed hand and nothing on the floored hand. No Harbinger equip call, no new id or seat.
+- **Logs:** `[substrate] 0x<f> EQUIP allowed: <node> for claimed spell 0x<s> hand <L/R>` once per node per window;
+  `EQUIP window end (...): ... REACHED the hand at +<ms>` or a WARN `did NOT reach the hand`.
+- `[CombatSubstrate] bSubstrateEquip` (1). APMF-B99 traced (no function node gates or performs the equip).
+- **Round 2 (tier-3 review of a0112b24, fix-first):** F1/F2 (marth: "Harbinger sheathes/stows first" / "Harbinger
+  restores it"): a client substrate stows every weapon, shield and torch from both hands before the entry (queued
+  UnequipObject, ch.17's road) and restores the same ExtraUniqueID copies at close / drop once no claim holds the
+  hand (`HANDS stowed` / `HANDS restored` / `HANDS restore FAILED`). F3: Open also needs the Cast facet outranked
+  and the 0x0F deny-complete refusal, the hand-claim block and the equip sink standing. Backlog APMF-B141..B144.
+- **Closing round (re-check of 1f99de2b):** the spell equip runs only on a per-slot `kStEquipOk` bit a CLIENT Open
+  sets after StowSettled (a dry-run takeover runs the checks + stow + wait in place first); StowSettled is generic (no
+  weapon / shield / torch in either hand). Backlog APMF-B145..B147.
+- Next: the MFO S3 field run (a client cast claim + substrate) must show `EQUIP allowed`, `REACHED the hand` and the
+  census FIRED line. Tier-3 review pending.
 
 ## HEAD OF WORK 2026-10-19 -- SEV-1 ANCHOR LEAK (a non-holder fought the substrate anchor), branch `fix/apmf-anchor-leak`, NOT merged
 

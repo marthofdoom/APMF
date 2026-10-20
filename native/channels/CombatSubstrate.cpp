@@ -5,6 +5,7 @@
 #include "channels/CombatApproach.h"       // SpaceOfRef: the anchor's last-known location space
 #include "channels/CombatEntry.h"          // hold::StopCombatRanked: the empty-fight end (F6)
 #include "channels/CombatReentryDeny.h"    // the slot-0x99 seat this file's anchor refusal rides; ClientEntryScope
+#include "channels/SubstrateEquip.h"       // the spell-equip path the allow-list opens (one-line call-outs only)
 #include "channels/SubstrateProbe.h"       // R1 passive probes (one-line call-outs only)
 #include "core/ActionGate.h"               // SubstrateLeavesPaired: the allow-list's coverage
 #include "core/Allowance.h"                // SeatVerified, RuntimeSupported
@@ -92,7 +93,11 @@
 //   * every combat behaviour-tree LEAF is force-failed (ch.7's act()/pop() PAIR,
 //     core/ActionGate.cpp) except CastImmediateSpell, CastConcentrationSpell and
 //     PrepareDualCast -- and those three run only while the holder has a live DRIVING cast
-//     claim (a substrate with nothing claimed casts nothing: the dry run). The catalog's
+//     claim (a substrate with nothing claimed casts nothing: the dry run). The SPELL-EQUIP PATH
+//     runs under the same condition (feat/apmf-substrate-equip, channels/SubstrateEquip.cpp): the
+//     EquipSpell leaf and the "Acquire Action Resource" instance of AcquireResource<2> (its
+//     "Movement" instance stays denied); without them the Action branch, the only road to the
+//     equip context, the spell equip and the Magic link, was cut for every holder. The catalog's
 //     STRUCTURAL nodes (the Child / Fallback selectors, DynamicConditionalNode, Parallel,
 //     Sequence, Repeat, ForceFail, ForceSuccess) are not leaves: they route to children and
 //     decide nothing, and the magic subtree is built from them (AE builder 0x8A0720: Magic
@@ -183,6 +188,7 @@ namespace {
     constexpr RE::FormID  kLocalAnchorHome = 0x80B;
 
     constexpr int           kSlots          = 16;
+    static_assert(kSlots <= apmf::substrateequip::kMaxSlots, "channels/SubstrateEquip.cpp tracks one record per slot");
     constexpr float         kMaxTtlSec      = 15.0f;   // design 3.6: the TTL is clamped to 15 s
     constexpr float         kFloorBasis     = -1.0e9f; // below any client basis: a client cast claim wins its hand
     constexpr std::uint64_t kFloorWaitMs    = 1000;    // the entry waits this long for the floors to publish
@@ -212,6 +218,8 @@ namespace {
         kStRankCombat = 1u << 4,   // ... on Combat (the anchor refusal)
         kStRankDetect = 1u << 5,   // ... on Detection (the anchor's knowledge)
         kStEntering   = 1u << 6,   // StartCombat(anchor) is running for this holder (diagnostic)
+        kStEquipOk    = 1u << 7,   // a CLIENT substrate whose hands are stowed and whose spell-equip checks passed: the
+                                   // kEquip leaves may run (with kStCast). Never set for a dry run (review of 1f99de2b)
     };
     enum : std::uint32_t { kWhyNone = 0, kWhyAddedTarget = 1, kWhyHit = 2, kWhyParty = 3 };
     constexpr const char* kWhyName[4] = { "?", "added-target", "hit", "party-combat" };
@@ -272,8 +280,11 @@ namespace {
     REL::Relocation<EvaluatePkg_t>  g_evaluatePackage;
 
     // ---- leaf classification (built at Install from the catalog names) ----------------------
-    enum class LeafClass : std::uint8_t { kDeny, kCast, kStructural };
+    // kEquip: the spell-equip path (channels/SubstrateEquip.cpp): runs only while a DRIVING cast claim stands,
+    // and AcquireResource<2> only for its "Action" instance.
+    enum class LeafClass : std::uint8_t { kDeny, kCast, kStructural, kEquip };
     std::array<LeafClass, subs::kLeafCount>   g_leafClass{};
+    std::array<apmf::substrateequip::Node, subs::kLeafCount> g_equipNode{};
     std::array<const char*, subs::kLeafCount> g_leafName{};
 
     // ---- small helpers --------------------------------------------------------------------
@@ -357,6 +368,9 @@ namespace {
         // review F3: the anchor's process level, seen while this substrate was open
         bool             anchorHighSeen = false;
         bool             closeAsked = false;       // the client released (Release runs inside Drain)
+        // the spell equip (review of 1f99de2b): the client checks + Stow were made (at Begin, or at a dry-run takeover in
+        // Serve), and kStEquipOk was set once StowSettled read the hands clear
+        bool             stowAsked = false, equipOk = false;
         const char*      closeWhy = nullptr;
         // the claim the substrate serves
         bool             sawClaim = false;
@@ -404,6 +418,11 @@ namespace {
     bool Outranks(APMF_API::Handle a_h, apmf::sources::Facet a_f) {
         return apmf::sources::ClaimPriority(a_h, a_f) > apmf::sources::Priority(apmf::sources::kEngineSource, a_f);
     }
+
+    // The user's priority sliders decide (marth: "Nothing escapes Harbinger"). A deny that would not stand leaves a
+    // facet the substrate switched on undenied: then it does not open. Begin, and a dry-run TAKEOVER in Serve (review
+    // of 1f99de2b) before the spell equip is allowed. nullptr = it stands.
+    const char* RankRefusal(const Sub& a_sub);
 
     // The delivery tier of a driving claim's spell (design 3.3's "shortest range").
     int TierOf(RE::FormID a_spell) {
@@ -828,6 +847,22 @@ namespace {
 
     // ---- open ------------------------------------------------------------------------------------
     // Ends a substrate that never entered (or the client's claim when the substrate cannot exist).
+    const char* RankRefusal(const Sub& a_sub) {
+        using F = apmf::sources::Facet;
+        // kCast (review F3 of a0112b24): the floored hand's spell refusal (core/EquipGate.cpp deny-complete) and
+        // the 0x0A CheckCast refusal rank on the Cast facet; with the spell equip open they are load-bearing.
+        for (const auto f : { F::kCombatAction, F::kCombat, F::kEquipWeapon, F::kDetection, F::kCast })
+            if (!Outranks(a_sub.handle, f))
+                return f == F::kCombatAction ? "Engine outranks the substrate's client on the CombatAction facet (APMF_Sources.ini): the leaf allow-list would not stand"
+                     : f == F::kCombat       ? "Engine outranks the substrate's client on the Combat facet (APMF_Sources.ini): the anchor refusal would not stand"
+                     : f == F::kEquipWeapon  ? "Engine outranks the substrate's client on the EquipWeapon facet (APMF_Sources.ini): the hand floors would not stand"
+                     : f == F::kCast         ? "Engine outranks the substrate's client on the Cast facet (APMF_Sources.ini): the floored hand's spell refusal (0x0F deny-complete) and the 0x0A cast refusal would not stand"
+                                             : "Engine outranks the substrate's client on the Detection facet (APMF_Sources.ini): the anchor's knowledge would not stand";
+        // A client substrate opens the spell equip: its per-hand gates and the hands' stow must stand (F1 / F3).
+        if (!a_sub.dryRun) return apmf::substrateequip::OpenRefusal();
+        return nullptr;
+    }
+
     void EndUnopened(Sub& a_sub, const char* a_why) {
         ++g_refusedOpen;
         spdlog::warn("[substrate] 0x{} NOT OPENED: {}.{}", Hex(a_sub.id), a_why,
@@ -885,19 +920,7 @@ namespace {
                                                      why = "the dialogue menu is open";
         else if (!anchor)                            why = "the anchor actor (APMF.esl 0x80A) does not resolve";
         else if (anchor->IsDead())                   why = "the anchor is dead (it is essential and a ghost; something killed it)";
-        if (!why) {
-            // The user's priority sliders decide (marth: "Nothing escapes Harbinger"). A deny that would
-            // not stand leaves a facet the substrate switched on undenied: then it does not open.
-            using F = apmf::sources::Facet;
-            for (const auto f : { F::kCombatAction, F::kCombat, F::kEquipWeapon, F::kDetection })
-                if (!Outranks(a_sub.handle, f)) {
-                    why = f == F::kCombatAction ? "Engine outranks the substrate's client on the CombatAction facet (APMF_Sources.ini): the leaf allow-list would not stand"
-                        : f == F::kCombat       ? "Engine outranks the substrate's client on the Combat facet (APMF_Sources.ini): the anchor refusal would not stand"
-                        : f == F::kEquipWeapon  ? "Engine outranks the substrate's client on the EquipWeapon facet (APMF_Sources.ini): the hand floors would not stand"
-                                                : "Engine outranks the substrate's client on the Detection facet (APMF_Sources.ini): the anchor's knowledge would not stand";
-                    break;
-                }
-        }
+        if (!why) why = RankRefusal(a_sub);
         if (why) {
             EndUnopened(a_sub, why);
             return false;
@@ -912,6 +935,11 @@ namespace {
             return false;
         }
         a_sub.slot = slot;
+        apmf::substrateequip::Begin(slot, a_sub.id, apmf::clock::MonotonicMs());   // the equip window
+        if (!a_sub.dryRun) {   // weapon / shield / torch off both hands (F1); kStEquipOk waits for StowSettled (Enter)
+            apmf::substrateequip::Stow(a_sub.id, actor);
+            a_sub.stowAsked = true;
+        }
         if (g_anchorOut++ == 0) {   // 0 -> 1: the anchor comes out of its holding cell
             g_anchorH.store(anchor->GetHandle().native_handle(), std::memory_order_release);
             AnchorToHolder(anchor, actor, true);
@@ -956,6 +984,24 @@ namespace {
                          Hex(g_anchorId.load()), why);
             CloseSub(a_sub, why);
             return false;
+        }
+        // The hands' stow (review F1 of a0112b24) must have applied BEFORE StartCombat (its re-arm equip runs inside it).
+        {
+            const char* stowWhy = nullptr;
+            const auto  stow    = apmf::substrateequip::StowSettled(a_sub.id, actor, now, stowWhy);
+            if (stow == apmf::substrateequip::StowState::kWaiting) return true;
+            if (stow == apmf::substrateequip::StowState::kFailed) {
+                spdlog::warn("[substrate] 0x{} OPEN anchor=0x{} entry=false -- {}; no entry was made.", Hex(a_sub.id),
+                             Hex(g_anchorId.load()), stowWhy ? stowWhy : "the hands were not stowed");
+                CloseSub(a_sub, "hands not stowed");
+                return false;
+            }
+            // The spell equip opens ONLY here for a client Open (hands clear, checks passed at Begin) -- never for a dry
+            // run; a dry run taken over later gets it in Serve (EquipTakeover).
+            if (a_sub.stowAsked && !a_sub.dryRun) {
+                a_sub.equipOk = true;
+                g_slots[a_sub.slot].state.fetch_or(kStEquipOk, std::memory_order_acq_rel);
+            }
         }
         // StartCombat's own distance test (AE 0x6B6A30-0x6B6A6B) measures the holder to its target: the
         // anchor stands at the entering holder for the call; PlaceAnchor re-places it after.
@@ -1073,6 +1119,8 @@ namespace {
         auto* actor = RE::TESForm::LookupByID<RE::Actor>(a_sub.id);
         auto* proc  = actor ? actor->GetActorRuntimeData().currentProcess : nullptr;
         apmf::substrateprobe::Closing(a_sub.id, actor, a_sub.phase == Phase::kOpen, false, apmf::clock::MonotonicMs());   // R1
+        apmf::substrateequip::Closing(a_sub.slot, a_sub.id, actor, a_reason, apmf::clock::MonotonicMs());   // equip outcome
+        apmf::substrateequip::RestoreWhenFree(a_sub.id, a_reason, apmf::clock::MonotonicMs());   // the stowed hands (F2)
         if (a_sub.slot >= 0 && a_sub.phase == Phase::kOpen) LogObserved(a_sub, actor);
         DebtForget(a_sub.id);   // a normal close: his StopCombat ends his part in the group (a co-holder keeps its own debt)
         // 1. the bit back to what it was
@@ -1126,6 +1174,8 @@ namespace {
         auto* actor = RE::TESForm::LookupByID<RE::Actor>(a_sub.id);
         auto* proc  = actor ? actor->GetActorRuntimeData().currentProcess : nullptr;
         apmf::substrateprobe::Closing(a_sub.id, actor, true, true, apmf::clock::MonotonicMs());   // R1
+        apmf::substrateequip::Closing(a_sub.slot, a_sub.id, actor, "real combat (dropped)", apmf::clock::MonotonicMs());
+        apmf::substrateequip::RestoreWhenFree(a_sub.id, "real combat (dropped)", apmf::clock::MonotonicMs());   // fights with his gear
         if (a_sub.bitSet && proc) proc->ignoringCombat = a_sub.priorBit;   // the package no longer runs in combat
         // The music debt (review F1): an (a)-trigger restore already ran in the seat that saw the real target. Any 0 still
         // owed (a hit / party trigger, or a merge into an ally's fight) is put back by the seat on the next detection pass
@@ -1236,6 +1286,44 @@ namespace {
                      Hex(a_sub.bitPkg ? a_sub.bitPkg->GetFormID() : 0), static_cast<double>(a_sub.bitPkgStart));
     }
 
+    // ---- the dry-run TAKEOVER (review of 1f99de2b, SEV-2) ---------------------------------------
+    // A client claim declared onto an open DRY-RUN substrate only clears `dryRun` (Declare): its Begin made no client
+    // checks and no stow. The spell equip (kStEquipOk) must not open on those hands. Chosen: run the client Open's own
+    // steps IN PLACE -- RankRefusal (the five facets + OpenRefusal), Stow, then StowSettled -- and set kStEquipOk only
+    // when the hands read clear; a refusal or a failed stow CLOSES the substrate (logged). Not "close and re-open as a
+    // client": that would StopCombat and StartCombat again (a second combat-start topic, a second package re-pick and
+    // music decision) for the same holder within a frame, while the floors and the anchor are already in place; the
+    // only thing the dry run lacked is exactly these checks and the stow, and the floors already hold both hands (the
+    // sink's step 1a keeps the stow, as at a client Open). Until kStEquipOk is set the cast leaves may run (kStCast) but
+    // the spell equip may not, so nothing is drawn. Returns a close reason, or nullptr (keep serving).
+    const char* EquipTakeover(Sub& a_sub, RE::Actor* a_actor, std::uint64_t a_now) {
+        if (a_sub.dryRun || a_sub.equipOk || !apmf::substrateequip::Enabled()) return nullptr;
+        if (a_sub.handle == APMF_API::kInvalidHandle) return nullptr;   // the winning handle is read after the Drain (Poll)
+        if (!a_sub.stowAsked) {
+            if (const char* r = RankRefusal(a_sub)) {
+                spdlog::warn("[substrate] 0x{} TAKEOVER of a dry-run substrate refused: {}.", Hex(a_sub.id), r);
+                return "client takeover refused (a deny would not stand)";
+            }
+            apmf::substrateequip::Stow(a_sub.id, a_actor);
+            a_sub.stowAsked = true;
+            spdlog::info("[substrate] 0x{} TAKEOVER of a dry-run substrate: client checks passed, hands stowed; the spell "
+                         "equip opens once they read clear.", Hex(a_sub.id));
+        }
+        const char* stowWhy = nullptr;
+        switch (apmf::substrateequip::StowSettled(a_sub.id, a_actor, a_now, stowWhy)) {
+        case apmf::substrateequip::StowState::kWaiting:
+            return nullptr;
+        case apmf::substrateequip::StowState::kFailed:
+            spdlog::warn("[substrate] 0x{} TAKEOVER: {}.", Hex(a_sub.id), stowWhy ? stowWhy : "the hands were not stowed");
+            return "hands not stowed (takeover)";
+        default:
+            a_sub.equipOk = true;
+            g_slots[a_sub.slot].state.fetch_or(kStEquipOk, std::memory_order_acq_rel);
+            spdlog::info("[substrate] 0x{} TAKEOVER: hands clear, the spell equip is allowed.", Hex(a_sub.id));
+            return nullptr;
+        }
+    }
+
     // ---- serve (kOpen) --------------------------------------------------------------------
     // True = keep, false = closed (caller erases).
     bool Serve(Sub& a_sub, std::uint64_t a_now) {
@@ -1263,6 +1351,7 @@ namespace {
             a_sub.concentration = (c.flags & APMF_API::kCastFlag_Concentration) != 0;
             a_sub.tier          = TierOf(c.spell);
             if (!(st & kStCast)) s.state.fetch_or(kStCast, std::memory_order_acq_rel);
+            apmf::substrateequip::Serve(a_sub.slot, actor, c.spell, c.proxy, c.flags, a_now);   // equip lines
             const RE::FormID fired = s.firedForm.exchange(0, std::memory_order_acq_rel);
             if (fired && (fired == c.spell || fired == c.proxy) && !a_sub.concentration) why = "fired";
         } else if (!why) {
@@ -1270,6 +1359,7 @@ namespace {
             a_sub.tier = kTierNone;
             if (a_sub.sawClaim) why = "claim ended (released, expired or its stop percent)";
         }
+        if (!why) why = EquipTakeover(a_sub, actor, a_now);   // a dry run a client took over (review of 1f99de2b)
         if (why) {
             CloseSub(a_sub, why);
             return false;
@@ -1860,7 +1950,7 @@ namespace apmf::combatsubstrate {
         return nullptr;
     }
 
-    Leaf ForLeaf(RE::FormID a_actor, std::uint32_t a_leafIdx, bool /*a_movement*/) {
+    Leaf ForLeaf(RE::FormID a_actor, std::uint32_t a_leafIdx, bool /*a_movement*/, const void* a_node) {
         if (a_leafIdx >= kLeafCount) return Leaf::kNotHolder;
         std::uint32_t st = 0;
         const int     si = FindSlot(a_actor, st);
@@ -1873,6 +1963,12 @@ namespace apmf::combatsubstrate {
                 return Leaf::kAllow;
             }
             return Leaf::kDeny;   // nothing claimed: nothing is cast (the dry run)
+        case LeafClass::kEquip:   // the spell-equip path: only for a driving claim, AcquireResource only "Action"
+            if ((st & kStCast) && (st & kStEquipOk) && apmf::substrateequip::Allows(g_equipNode[a_leafIdx], a_node)) {
+                apmf::substrateequip::NoteAllowed(si, a_actor, g_equipNode[a_leafIdx]);
+                return Leaf::kAllow;
+            }
+            return Leaf::kDeny;
         default:
             return Leaf::kDeny;
         }
@@ -2150,6 +2246,19 @@ namespace apmf::combatsubstrate {
             else
                 g_leafClass[i] = LeafClass::kDeny;
         }
+        // the spell-equip path (channels/SubstrateEquip.cpp): EquipSpell + AcquireResource<2> ("Action" only)
+        int equipNodes = 0;
+        for (std::uint32_t i = 0; i < kLeafCount; ++i) {
+            const auto en = apmf::substrateequip::Classify(g_leafName[i] ? g_leafName[i] : "");
+            g_equipNode[i] = en;
+            if (en != apmf::substrateequip::Node::kNone) {
+                g_leafClass[i] = LeafClass::kEquip;
+                ++equipNodes;
+            }
+        }
+        if (apmf::substrateequip::Enabled() && equipNodes != 2)
+            spdlog::error("[substrate] the spell-equip path found {} of its 2 nodes in the catalog: a substrate cast "
+                          "cannot reach the spell equip.", equipNodes);
 
         g_dryRun       = IniInt("CombatSubstrate", "bSubstrateDryRun", 0) != 0;
         g_ttlSec       = std::clamp(IniFloat("CombatSubstrate", "fSubstrateTtlSec", 6.0f), 1.0f, kMaxTtlSec);
@@ -2169,11 +2278,13 @@ namespace apmf::combatsubstrate {
         g_installed.store(true, std::memory_order_release);
         spdlog::info("[substrate] combat substrate INSTALLED: anchor 0x{} (APMF.esl 0x80A, a {} clone), home 0x{}; dry run {} "
                      "(period {:.0f} s), TTL {:.1f} s, P6 move trace {}, fire signal {}, music {}, music deny {}. Allow-list: "
-                     "3 cast leaves, {} structural nodes pass, the rest denied.",
+                     "3 cast leaves, the spell-equip path {} (EquipSpell + AcquireResource<2> \"Action\", while a "
+                     "driving cast claim stands), {} structural nodes pass, the rest denied.",
                      Hex(ref->GetFormID()), npc->GetName(), Hex(g_homeId), g_dryRun ? "ON" : "off",
                      static_cast<double>(g_dryPeriodSec), static_cast<double>(g_ttlSec), g_moveTrace ? "ON" : "off",
                      g_fireSignal ? "census 0x0B" : "NONE", g_musicOk ? "verified" : "n/a",
                      g_musicDeny ? std::string("ON") : fmt::format("OFF ({})", g_musicDenyOff),
+                     apmf::substrateequip::Enabled() ? "ON" : "OFF",
                      std::count(g_leafClass.begin(), g_leafClass.end(), LeafClass::kStructural));
     }
 
@@ -2183,6 +2294,7 @@ namespace apmf::combatsubstrate {
         const auto now = apmf::clock::MonotonicMs();
         DryRunSchedule(now);
         apmf::substrateprobe::Poll(now);   // R1: before the early return (the post-close timers run with nothing open)
+        apmf::substrateequip::PollHands(now);   // the stowed hands' restore runs after the close
         DebtExpire(now);
         if (g_subCount.load(std::memory_order_relaxed) == 0 && g_subs.empty()) {
             MusicProbe(now);   // the tail after the last close
@@ -2239,6 +2351,8 @@ namespace apmf::combatsubstrate {
         g_censusRows.clear();
         apmf::anchorguard::ResetAll();
         apmf::substrateprobe::Reset();
+        apmf::substrateequip::Reset();
+        apmf::substrateequip::ResetHands(a_why);
         {
             std::scoped_lock lk(g_debtMx);
             g_debts.fill(MusicDebt{});
