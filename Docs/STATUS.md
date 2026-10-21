@@ -4,6 +4,30 @@ Updated 2026-10-13. Current version **v0.13.1** (cut 2026-10-13, ABI v24, see CH
 shipped, what's probe-gated, what's next. Keep this current in the SAME change as any
 build/finding/workflow change.
 
+## HEAD OF WORK 2026-10-21 -- ch.19 LIVE RE-POINT RUNS ON A FRESH SLOT (+ DONE-WHILE-WALKING, [obs] wording), branch `fix/apmf-repoint-fresh-slot`, NOT merged
+
+- **Field:** MFO re-pointed a LIVE, not-held ch.19 ref leg to a new destination. The in-place branch rewrote package
+  0xFE0B1800's Location and re-nudged ch.9, but the engine keeps a current package in its DONE procedure when evaluation
+  selects the same package (HoldAtCell's note, 1.6.1170 0x6D934C early-out), so the follower stood still until the 120 s
+  STUCK net.
+- **Fix (`channels/Travel.cpp` only, plus the two files below):** `Leg::destChanged` is set by `OnOwnerChanged` when a Repoint
+  names a different destination (form id, kind, or point). `ComposeLeg` then runs a live leg whose destination changed on a
+  FRESH slot, held or not (never the slot whose package the actor is running now, `AcquireSlot(actor, currentPackage)`; `StartLeg` files the new ch.9 offer first, then `DropOfferAndFreeSlot` of the old one: claim count
+  1 -> 2 -> 1, never 0). No free slot / offer refused -> `kLeg_Failed` loudly, old offer released, no fallback (exactly the held
+  path). A same-destination Repoint keeps the in-place path.
+- **Passive diagnostic:** an `OnPackageEnd` sink (`PackageEndSink`, `TESPackageEvent` defined locally from the disassembly:
+  actor ptr +0, package FormID +8, type +0xC, 0 = start / 1 = end / 2 = change; verified on all three builds) stamps the end of a
+  slot package; `Poll` logs `[travel-leg] DONE-WHILE-WALKING <dist>` once per leg when the leg's own package ended while the
+  actor is outside the radius, and the STUCK end then says "our package is current and DONE at the old destination". No new seat,
+  no raw AIProcess offset, behaviour unchanged. A package REPLACED by evaluation sends type 2 (Change), not End, so a stamp
+  means the slot package really ended; the STUCK text says "current and DONE" only if it is still the actor's current package,
+  else it states the facts (package ended, distance, current package). A type-0 Start clears the stamp.
+- **[obs] wording (`core/ControlMap.cpp`, `core/ControlMap.h`):** "PACKAGE CHANGED!!"/"PACKAGE STABLE" compared with the CAPTURE
+  package, not the previous sample. Now `differs-from-capture(0xID)` / `same-as-capture`, plus a real per-sample flag
+  `first-sample` / `unchanged` / `CHANGED-since-last-sample` (`NpcCtl::obsLastPkg`, a second reader-mutated logging atomic).
+- Field check: re-point a walking follower to a new ref: `[travel-leg] ... a LIVE leg re-pointed to a different destination --
+  the new leg runs on slot N (old slot M released ...)`, and the follower keeps walking.
+
 ## HEAD OF WORK 2026-10-20 -- ch.19 CELL HOLD (a client's travel claim holds through arrival and unload), branch `feat/apmf-ch19-cell-hold`, NOT merged
 
 Field 2026-10-20 (LoreRim, Markarth; agentlogs/diag-town-doors.md, MFO `_evidence/2026-10-20-lorerim-markarth-doors/`):

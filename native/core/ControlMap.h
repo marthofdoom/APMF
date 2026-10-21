@@ -37,10 +37,11 @@
 //     m_published (acquire) and read that frozen generation lock-free: no torn
 //     reads, no UAF even if the writer publishes a newer generation mid-call (the
 //     reader's local shared_ptr keeps its own generation alive via refcount).
-//   * Every NpcCtl field is read-only to readers once published, with ONE sanctioned
-//     exception -- NpcCtl::obsTick is a `mutable std::atomic<uint64_t>` (relaxed) so
+//   * Every NpcCtl field is read-only to readers once published, with TWO sanctioned
+//     exceptions -- NpcCtl::obsTick is a `mutable std::atomic<uint64_t>` (relaxed) so
 //     OnActorUpdate's per-tick counter can still fetch_add through the const
-//     snapshot. No other field may ever be reader-mutated; a future channel's Tick()
+//     snapshot, and NpcCtl::obsLastPkg (same discipline) holds the package id of the
+//     previous [obs] sample so the line can say whether it CHANGED. No other field may ever be reader-mutated; a future channel's Tick()
 //     must not write anything else in NpcCtl/ChannelCtl/Claim.
 //   * m_index and m_queue are UNCHANGED: m_index has no reader (Drain-thread-only,
 //     never consulted by OnActorUpdate) so it needs no snapshot wrapper; m_queue
@@ -613,6 +614,9 @@ namespace apmf {
             RE::FormID                         pkgAtCapture = 0;
             std::vector<ChannelCtl>            channels;     // only engaged channels
             mutable std::atomic<std::uint64_t> obsTick{ 0 };
+            // The package id the previous [obs] sample saw (0xFFFFFFFF = no sample yet). A logging
+            // aid only, written by OnActorUpdate through the const snapshot like obsTick.
+            mutable std::atomic<std::uint32_t> obsLastPkg{ 0xFFFFFFFFu };
 
             NpcCtl() = default;
             // std::atomic disables the implicit copy ctor -- the writer thread needs
@@ -622,7 +626,8 @@ namespace apmf {
             // dependency on anything else).
             NpcCtl(const NpcCtl& o)
                 : handle(o.handle), pkgAtCapture(o.pkgAtCapture), channels(o.channels),
-                  obsTick(o.obsTick.load(std::memory_order_relaxed)) {}
+                  obsTick(o.obsTick.load(std::memory_order_relaxed)),
+                  obsLastPkg(o.obsLastPkg.load(std::memory_order_relaxed)) {}
             // No move ctor/assignment and no copy-assignment declared: the atomic
             // member makes them ill-formed to default, and nothing in ControlMap
             // needs them -- unordered_map builds nodes in place (operator[]/emplace)

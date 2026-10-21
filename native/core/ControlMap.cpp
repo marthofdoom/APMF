@@ -1847,9 +1847,15 @@ namespace apmf {
             if (!engaged.empty()) engaged += ',';
             engaged += cs.channel->Name();
         }
-        spdlog::info("[obs] 0x{} pkg=0x{}({}) [{}] engaged=[{}]",
+        // `same` compares with the CAPTURE (the package the actor ran when we first claimed it), so it
+        // says nothing about movement between samples. `changed` is vs the previous sample for this actor.
+        const std::uint32_t prev = npc.obsLastPkg.exchange(id, std::memory_order_relaxed);
+        const char*         chg  = prev == 0xFFFFFFFFu ? "first-sample" : (prev != id ? "CHANGED-since-last-sample" : "unchanged");
+        std::string         vsCapture = same ? std::string("same-as-capture")
+                                             : std::format("differs-from-capture(0x{})", apmf::log::Hex(npc.pkgAtCapture));
+        spdlog::info("[obs] 0x{} pkg=0x{}({}) [{}] {} engaged=[{}]",
                      apmf::log::Hex(actor->GetFormID()), apmf::log::Hex(id), PkgTypeName(pkg),
-                     same ? "PACKAGE STABLE" : "PACKAGE CHANGED!!", engaged.c_str());
+                     vsCapture, chg, engaged.c_str());
     }
 
     bool ControlMap::TryGetOwningClaim(RE::FormID actor, Intent intent,
