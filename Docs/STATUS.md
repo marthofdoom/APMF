@@ -12,15 +12,16 @@ build/finding/workflow change.
   STUCK net.
 - **Fix (`channels/Travel.cpp` only, plus the two files below):** `Leg::destChanged` is set by `OnOwnerChanged` when a Repoint
   names a different destination (form id, kind, or point). `ComposeLeg` then runs a live leg whose destination changed on a
-  FRESH slot, held or not (`StartLeg` files the new ch.9 offer first, then `DropOfferAndFreeSlot` of the old one: claim count
+  FRESH slot, held or not (never the slot whose package the actor is running now, `AcquireSlot(actor, currentPackage)`; `StartLeg` files the new ch.9 offer first, then `DropOfferAndFreeSlot` of the old one: claim count
   1 -> 2 -> 1, never 0). No free slot / offer refused -> `kLeg_Failed` loudly, old offer released, no fallback (exactly the held
   path). A same-destination Repoint keeps the in-place path.
 - **Passive diagnostic:** an `OnPackageEnd` sink (`PackageEndSink`, `TESPackageEvent` defined locally from the disassembly:
-  actor ptr +0, package FormID +8, type +0xC, 1 = end; read on 1.6.1170 and 1.5.97, armed on those only) stamps the end of a
+  actor ptr +0, package FormID +8, type +0xC, 0 = start / 1 = end / 2 = change; verified on all three builds) stamps the end of a
   slot package; `Poll` logs `[travel-leg] DONE-WHILE-WALKING <dist>` once per leg when the leg's own package ended while the
   actor is outside the radius, and the STUCK end then says "our package is current and DONE at the old destination". No new seat,
-  no raw AIProcess offset, behaviour unchanged. Caveat: ANY end of the slot package (e.g. an outranking package replacing it)
-  also stamps; the line states the facts (package ended, distance), not a verdict.
+  no raw AIProcess offset, behaviour unchanged. A package REPLACED by evaluation sends type 2 (Change), not End, so a stamp
+  means the slot package really ended; the STUCK text says "current and DONE" only if it is still the actor's current package,
+  else it states the facts (package ended, distance, current package). A type-0 Start clears the stamp.
 - **[obs] wording (`core/ControlMap.cpp`, `core/ControlMap.h`):** "PACKAGE CHANGED!!"/"PACKAGE STABLE" compared with the CAPTURE
   package, not the previous sample. Now `differs-from-capture(0xID)` / `same-as-capture`, plus a real per-sample flag
   `first-sample` / `unchanged` / `CHANGED-since-last-sample` (`NpcCtl::obsLastPkg`, a second reader-mutated logging atomic).

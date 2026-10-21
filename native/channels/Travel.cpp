@@ -196,13 +196,15 @@ extern "C" __declspec(dllimport) unsigned long __stdcall GetPrivateProfileIntA(
 // ============================================================================
 
 // TESPackageEvent: CommonLibSSE-NG only FORWARD-declares it (ScriptEventSourceHolder.h), so the
-// payload is defined here, READ OFF THE DISASSEMBLY (2026-10-21), not assumed. The engine's
-// package-end handler (1.6.1170 0x6EAB50 / 1.5.97 0x657FC0) and package-begin handler (1.6.1170
-// 0x6EA820) build it on the stack and hand it to the ScriptEventSourceHolder+0x948 source:
-//     +0x00  TESObjectREFR*  (the actor's reference, resolved from its handle; not owned here)
-//     +0x08  FormID          = [package + 0x14], the package's form id
-//     +0x0C  uint32          type: 0 = begin (OnPackageStart), 1 = end (OnPackageEnd)
-// Identical on both builds. 1.7.104's executable is packed here, so the sink is NOT armed there.
+// payload is defined here, READ OFF THE DISASSEMBLY (2026-10-21), not assumed. THREE senders build it on
+// the stack and hand it to the ScriptEventSourceHolder+0x948 source (1.6.1170 0x6EABDD end, 0x6EA8AF begin;
+// 1.5.97 0x65804D end; 1.7.104 0x6FD79D end; Docs/VERIFIED-ADDRESSES.md has the table):
+//     +0x00  NiPointer<TESObjectREFR>  (the actor's reference; HELD across the send, so the raw
+//                                       pointer read here is alive for the whole callback)
+//     +0x08  FormID                    = [package + 0x14], the package's form id
+//     +0x0C  uint32                    type: 0 = Start, 1 = End (OnPackageEnd), 2 = Change
+// An evaluation that REPLACES the package sends type 2 (Change), not End. Verified on 1.6.1170, 1.5.97 and
+// 1.7.104 (VM sink type switches 0x9C6430 / 0x9280E0 / 0x9DDE22).
 namespace RE {
     struct TESPackageEvent {
         TESObjectREFR* actor;
@@ -599,8 +601,13 @@ namespace {
 
     // ---- Slots ----------------------------------------------------------------
 
-    int AcquireSlot(RE::FormID a_actor) {
+    // `a_current` = the package the actor is running RIGHT NOW (main thread). A slot whose package
+    // is that one is skipped even when free: a fresh offer on the package the engine already holds
+    // current keeps it without a restart (HoldAtCell's note), which is the stand-still the
+    // fresh-slot re-point exists to avoid (review F1).
+    int AcquireSlot(RE::FormID a_actor, const RE::TESPackage* a_current = nullptr) {
         for (std::size_t i = 0; i < kTravelSlots; ++i) {
+            if (a_current && g_pkg[i] == a_current) continue;
             if (g_slotOwner[i] == 0) {
                 g_slotOwner[i] = a_actor;
                 return static_cast<int>(i);
@@ -933,7 +940,13 @@ namespace {
     // Returns false (having offered nothing) if anything in the chain declines --
     // the failure is LOGGED, never masked with a retry or a fallback.
     bool StartLeg(RE::FormID a_id, Leg& a_leg) {
-        const int slot = AcquireSlot(a_id);
+        const RE::TESPackage* current = nullptr;
+        {
+            auto  aptr = a_leg.actorHandle.get();
+            auto* act  = aptr.get();
+            if (act) current = act->GetCurrentPackage();
+        }
+        const int slot = AcquireSlot(a_id, current);
         if (slot < 0) {
             spdlog::error("[travel-leg] 0x{} REFUSED -- all {} package slots are in use by other legs. A "
                           "package's destination lives on the RECORD, so two legs cannot share one.",
@@ -1334,13 +1347,16 @@ namespace {
         RE::BSEventNotifyControl ProcessEvent(const RE::TESPackageEvent* a_event,
                                               RE::BSTEventSource<RE::TESPackageEvent>*) override {
             try {
-                if (a_event && a_event->type == 1 && a_event->actor) {
+                if (a_event && (a_event->type == 0 || a_event->type == 1) && a_event->actor) {
                     bool ours = false;
                     for (std::size_t i = 0; i < kTravelSlots; ++i)
                         if (g_pkg[i] && g_pkg[i]->GetFormID() == a_event->package) { ours = true; break; }
                     if (ours) {
                         std::lock_guard lk(g_endMx);
-                        g_endRec[a_event->actor->GetFormID()] = EndRec{ a_event->package, apmf::clock::MonotonicMs() };
+                        if (a_event->type == 1)
+                            g_endRec[a_event->actor->GetFormID()] = EndRec{ a_event->package, apmf::clock::MonotonicMs() };
+                        else
+                            g_endRec.erase(a_event->actor->GetFormID());   // the package (re)started: no longer ended
                     }
                 }
             } catch (...) {
@@ -2328,10 +2344,11 @@ namespace apmf::travel {
                                             "refused by name per leg)",
                      g_pkg[0] ? SpeedName(g_authoredSpeed[0]) : "?", g_pkg[0] && g_authoredPrefSpeed[0] ? "set" : "clear");
 
-        // PASSIVE OnPackageEnd SINK (DONE-WHILE-WALKING): the payload layout was read off 1.6.1170 and
-        // 1.5.97 only (see TESPackageEvent above), so it arms on exactly those, with the holder's
+        // PASSIVE OnPackageEnd SINK (DONE-WHILE-WALKING): the payload layout was verified on 1.6.1170,
+        // 1.5.97 and 1.7.104 (see TESPackageEvent above), so it arms on exactly those, with the holder's
         // GetSingleton verified by the mit-3.7 self-check. Never changes behaviour.
-        if (game == REL::Version{ 1, 6, 1170, 0 } || game == REL::Version{ 1, 5, 97, 0 }) {
+        if (game == REL::Version{ 1, 6, 1170, 0 } || game == REL::Version{ 1, 5, 97, 0 } ||
+            apmf::allowance::IsRuntime1_7_104()) {
             const bool holderOk = apmf::allowance::SeatVerified(
                 REL::Relocation<std::uintptr_t>{ RELOCATION_ID(14108, 14298) }.address(),
                 "Travel.ScriptEventSourceHolder.GetSingleton");
@@ -2347,7 +2364,7 @@ namespace apmf::travel {
                                       : "the mit-3.7 self-check refused ScriptEventSourceHolder::GetSingleton");
             }
         } else {
-            spdlog::info("[travel-leg] OnPackageEnd sink NOT armed -- the event layout was read on 1.6.1170 and 1.5.97 only.");
+            spdlog::info("[travel-leg] OnPackageEnd sink NOT armed -- the event layout was verified on 1.6.1170, 1.5.97 and 1.7.104 only.");
         }
 
         // ABI v12 PASSIVE GATE PROBE: arms only when every engine address it calls verifies
@@ -2765,11 +2782,18 @@ namespace apmf::travel {
             // player can see the actor.
             if (now - leg.legStartedMs > kLegMaxMs) {
                 if (leg.doneWhileWalking) {
-                    const std::string why = std::format(
-                        "STUCK -- our package is current and DONE at the old destination: the engine sent "
-                        "OnPackageEnd {:.0f}u from the destination (radius {:.0f}u) and kept the same package without "
-                        "restarting it, so the actor stood still until the leg safety net elapsed", leg.doneDist,
-                        leg.radius);
+                    const RE::TESPackage* curPkg = a->GetCurrentPackage();
+                    const bool stillOurs = leg.slot >= 0 && g_pkg[leg.slot] && curPkg == g_pkg[leg.slot];
+                    const std::string why = stillOurs
+                        ? std::format(
+                              "STUCK -- our package is current and DONE at the old destination: the engine sent "
+                              "OnPackageEnd {:.0f}u from the destination (radius {:.0f}u) and kept the same package "
+                              "without restarting it, so the actor stood still until the leg safety net elapsed",
+                              leg.doneDist, leg.radius)
+                        : std::format(
+                              "STUCK -- OnPackageEnd for our package was seen {:.0f}u from the destination (radius "
+                              "{:.0f}u); the current package now is 0x{}", leg.doneDist, leg.radius,
+                              Hex(curPkg ? curPkg->GetFormID() : 0));
                     EndLeg(id, leg, why.c_str(), true, APMF_API::kLeg_StuckTimeout);
                 } else {
                     EndLeg(id, leg, "STUCK -- no arrival, no combat, and the destination is still there "

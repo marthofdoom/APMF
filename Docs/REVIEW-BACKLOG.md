@@ -1056,3 +1056,15 @@ Tier-3 review of feat/apmf-weapon-admission: "Every candidate for the claimed ha
 
 ### APMF-B181 (SEV-4, OPEN, core/HandBlock.cpp ScanCarried) -- ch.15 weapon rule: a staff W may stand down permanently (raised against 94093d3)
 Follow-up review of feat/apmf-weapon-standdown: "EquipGate's own comment (EquipGate.cpp ~:674) says a ch.15 weapon FormID 'never matches a spell/staff subjectForm'. That suggests a staff's CombatInventoryItem stores the enchantment as its item, not the staff's weapon form. If so, the scan never finds a staff W, the rule stands down for good, and the AI could swap a held staff for a sword. It would be logged loudly, not hidden. MFO never force-holds staves (cast/Equip.cpp filters them with IsStaff()), so MFO is not affected. A third-party client could be." Confirm a staff item's form, then match on it or document staff claims as out of scope. Also: the arrays' single-writer trace was done on 1.6.1170 only (layout checked on 1.5.97 / 1.7.104).
+
+### APMF-B182 (SEV-4, OPEN, channels/Travel.cpp ComposeLeg) -- a different-destination re-point needs two slots for one hop (raised against e9f9080)
+A live leg re-pointed to a different destination holds the old slot and the new one until `DropOfferAndFreeSlot` frees the old a hop later, so at 8 concurrent legs a re-point of one of them fails loudly (kLeg_Failed) where the in-place path used to succeed. Capacity regression: document it or give it a designed loud degrade.
+
+### APMF-B183 (SEV-5, OPEN, channels/Travel.cpp Leg::destChanged) -- sticky flag edge cases (raised against e9f9080)
+An A->B->A re-point before one Compose leaves destChanged set and restarts the walk for the same destination; the StillOurs early return in Compose leaves the flag stale; the field comment wording overstates "cleared when Compose has run".
+
+### APMF-B184 (SEV-5, OPEN, channels/Travel.cpp RE::TESPackageEvent) -- local definition may collide (raised against e9f9080)
+The local `RE::TESPackageEvent` can collide if the CommonLib fork ever defines it. Move it to a project header guarded by `__has_include`, or drop it when the fork adds the real one.
+
+### APMF-B185 (SEV-5, OPEN, core/ControlMap.cpp OnActorUpdate) -- stale "ONE reader-side mutation" comment (raised against e9f9080)
+The comment in OnActorUpdate still says the obsTick fetch_add is the ONE reader-side mutation; obsLastPkg is a second.
