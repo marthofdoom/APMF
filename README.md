@@ -187,7 +187,16 @@ If it's missing or disabled, APMF refuses every `kIntent_Travel` claim and names
 reason once in the log, so a client's own degrade path runs. Nothing else breaks. Every
 other facet behaves exactly the same without it.
 
-## What is in v0.13.1
+## What is in v0.14.0
+
+- **Place (ABI v28).** `kIntent_Place` moves an NPC beside a reference or to a point in an interior cell, once, through the game's own move call. `GetPlaceState` says what happened.
+- **Equip enforced for every declared category by default,** and an equip claim can name one copy of an item (ABI v25).
+- **Weapon rule (ch.15)** at the combat equip seat, with a stand down when the claimed weapon is not one the AI could pick. **Torch seat (ch.17)** switches off the game's own torch logic while a claim owns the torch. `bEquipmentWeaponAdmission`, `bTorchDeny` in `APMF.ini`.
+- **Travel (ch.19).** A leg to a cell arrives by parent cell and holds the actor until the mod releases or re-points it. A re-point takes a fresh package slot. A passive DONE-WHILE-WALKING line names a walk that ended early.
+- **The combat substrate (ch.27)** installs on 1.7.104, lets the game's AI equip the claimed spell, denies the enter-combat override package, battle music and barks, and reports its state with `GetSubstrateState` (ABI v26) and `IsSubstrateAvailable` (ABI v27). `[CombatSubstrate]` in `APMF.ini`.
+- Needs ABI v28 for the new calls. Older clients keep working.
+
+### v0.13.1
 
 - **Held engagements.** A fight a mod starts or pins is held until the target is dead, disabled or unloaded, or the mod lets go. The follower chases the target the game's way, walks to a downed one, walks back from the edge of its leash, and gives up with a logged anomaly if it makes no progress. `[EngagementHold]` and `[PursuitLeash]` in `APMF.ini`.
 - **The combat substrate (ABI v23, on by default).** A mod claims `kIntent_CombatSubstrate` beside its cast claim and the follower casts its spell animated, out of a real fight, against an invisible stand-in. `[CombatSubstrate]` in `APMF.ini`.
@@ -218,7 +227,7 @@ other facet behaves exactly the same without it.
 
 ## Status
 
-Phase 1 built, now at v0.13.1, ABI v24 (see [Docs/STATUS.md](Docs/STATUS.md)). The central
+Phase 1 built, now at v0.14.0, ABI v28 (see [Docs/STATUS.md](Docs/STATUS.md)). The central
 `Actor::Update` (0xAD) hook drives a multi-NPC control map (keyed by FormID,
 scales to hundreds, an uncontrolled NPC pays one hash-miss), a real
 inter-plugin C-ABI client API (`native/APMF_API.h`), and the full documented

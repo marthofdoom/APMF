@@ -1,6 +1,6 @@
 # APMF STATUS — living handoff (start here)
 
-Updated 2026-10-13. Current version **v0.13.1** (cut 2026-10-13, ABI v24, see CHANGELOG)/ previously **v0.13.0** (release cut 2026-10-12; see RELEASED v0.13.0 below; prior v0.12.0 PUBLISHED release, ABI v21). The current state of the build: what's
+Updated 2026-10-21. Current version **v0.14.0** (cut 2026-10-21, ABI v28, see CHANGELOG)/ previously **v0.13.1** (cut 2026-10-13, ABI v24) and **v0.13.0** (release cut 2026-10-12; see RELEASED v0.13.0 below; prior v0.12.0 PUBLISHED release, ABI v21). The current state of the build: what's
 shipped, what's probe-gated, what's next. Keep this current in the SAME change as any
 build/finding/workflow change.
 
