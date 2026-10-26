@@ -402,3 +402,29 @@ A [placement](FACETS.md#place-kintent_place) is ONE engine move, `TESObjectREFR:
 **Lifetime.** A finished record stays until `GetPlaceState` has returned it once or 30 s of wall time (`kPlaceStateGraceMs`) have passed, whichever is LATER, then reads `Unknown`. The 128-record cap can still evict the oldest finished record. A load or a new game drops every record, and a placement still queued then never runs. Nothing is saved.
 
 **Older APMF.** An APMF before v28 has no channel for intent 28 and refuses the request ("no channel serves intent 28"), and has no `GetPlaceState` slot.
+
+<a id="abi-v29-client-facet-priority"></a>
+## ABI v29 client facet priority: what the player let this client do
+
+```cpp
+std::int32_t (*GetClientFacetPriority)(std::uint32_t facet);   // APMF_API_v29, gate on abiVersion >= 29
+```
+
+The player ranks every source on every facet, 0 to 100, on the Harbinger page of the SKSE Menu or in `Data/SKSE/Plugins/APMF_Sources.ini` (`[EquipWeapon] MFO.dll=0`). **0 is off:** a claim of that client never wins on that facet, so Harbinger enforces none of it there. This slot tells a client its OWN number, so it can plan around what it cannot do. MFO's use (marth 2026-10-25): with EquipWeapon or EquipArmor at 0 its followers will not wear a looted upgrade, so the upgrade is sellable.
+
+**Who is asking.** The calling module, read from the slot's return address: the same attribution a claim gets from `Request` / `RequestEx`. A client cannot read another client's priorities.
+
+**The facets** (`ClientFacet`, the page's tables and the INI's sections): `kFacet_Target` 0, `kFacet_Detection` 1, `kFacet_Package` 2, `kFacet_EquipWeapon` 3 (weapons, shields, torches, ammo), `kFacet_CombatAction` 4, `kFacet_Cast` 5, `kFacet_Combat` 6, `kFacet_Core` 7, `kFacet_ActorValue` 8, `kFacet_EquipArmor` 9. Any other value returns `kFacetPriorityUnknown` (-1).
+
+**The value.**
+
+| The caller | Returns |
+|---|---|
+| a client that has filed a claim this session | its live priority (the slider, once Harbinger's main-thread pump applied a change) |
+| a DLL that has not filed a claim yet | the priority its first claim will take: its `APMF_Sources.ini` key on that facet, else `[Defaults] iClient<Facet>` (50 out of the box) |
+| no module Harbinger can name | the client default, the same value an unnamed claim ranks at |
+| before Harbinger read `APMF_Sources.ini` (before `kDataLoaded`) | 50 |
+
+**Threading and cost.** Any thread. Atomic loads, the module-range and module-cache leaf locks, no game call, nothing registered. The module name is read (`GetModuleFileName`) only for a module that has never filed a claim. A throw inside returns -1.
+
+**Older APMF.** An APMF before v29 has no slot. The client cannot tell, and should behave as it did before (MFO: as if it could equip).

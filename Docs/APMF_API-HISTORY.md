@@ -126,7 +126,7 @@ a DENIED category is unequipped by the enforce pass. The header comments that st
 stale until the paired MFO header change.
 
 <a id="abi-history"></a>
-## ABI v10 to v28: what each version added
+## ABI v10 to v29: what each version added
 
 Moved verbatim from `native/APMF_API.h` (line 96 at 9d01cdf). The header keeps a pointer to this anchor.
 
@@ -251,6 +251,14 @@ NUMBERING NOTE: v28 had been named for the ch.17 per-item equip deny (ClickUp 86
 substrate availability query. The placement facet took v28 (MFO town phase 2 needs it first), so the per-item
 equip deny moves to v29.
 Docs/APMF_API-REFERENCE.md#abi-v28-place, Docs/FACETS.md "Place".
+ABI v29 (2026-10-25, client facet priority, ClickUp 1dfcuabbh1e): ClientFacet (kFacet_Target 0 .. kFacet_EquipArmor
+9, the Harbinger page / APMF_Sources.ini facets) and kFacetPriorityUnknown (-1). APMF_API_v29 appends ONE read-only
+slot, GetClientFacetPriority(facet) -> std::int32_t, the CALLING client's priority 0..100 (0 = off) on that facet,
+attributed from the calling module like a claim. ANY thread, no game call. No intent, no APMF_Param field, no
+change to any existing slot. A client gates on abiVersion >= 29; an older APMF has no query.
+NUMBERING NOTE: v29 had been named for the ch.17 per-item equip deny (ClickUp 86e3t8w23). The priority query took
+v29 (MFO's sell classification needs it first), so the per-item equip deny moves to v30.
+Docs/APMF_API-REFERENCE.md#abi-v29-client-facet-priority.
 ```
 
 <a id="intent-18"></a>

@@ -4,6 +4,17 @@ Updated 2026-10-21. Current version **v0.14.0** (cut 2026-10-21, ABI v28, see CH
 shipped, what's probe-gated, what's next. Keep this current in the SAME change as any
 build/finding/workflow change.
 
+## HEAD OF WORK 2026-10-25 -- CLIENT FACET PRIORITY QUERY (ABI v29 GetClientFacetPriority), branch `feat/apmf-facet-state-query`, NOT merged
+
+- ClickUp 1dfcuabbh1e. marth: "Weapon, or outfit equipping being disabled(0) in harbinger, also informs MFO so that
+  better equipment that is looted is still green for selling."
+- **ABI v29:** `ClientFacet` (0..9, the `sources::Facet` numbering), `kFacetPriorityUnknown` (-1), `APMF_API_v29 :
+  APMF_API_v28` + `GetClientFacetPriority(facet)` -> the CALLING client's priority 0..100 (0 = off). Attributed from
+  the slot's `_ReturnAddress()` like a claim; read-only (`sources::CallerPriority`, no registration). Any thread.
+- v29 had been named for the per-item equip deny (86e3t8w23): that moves to v30. MFO must mirror the header
+  byte-identically (branch `feat/mfo-equip-off-sellable`).
+- No co-save, seat, INI or behaviour change. Not field-tested.
+
 ## HEAD OF WORK 2026-10-21 -- ch.19 LIVE RE-POINT RUNS ON A FRESH SLOT (+ DONE-WHILE-WALKING, [obs] wording), branch `fix/apmf-repoint-fresh-slot`, NOT merged
 
 - **Field:** MFO re-pointed a LIVE, not-held ch.19 ref leg to a new destination. The in-place branch rewrote package

@@ -180,6 +180,15 @@ namespace apmf::sources {
     // The priority Harbinger enforces a claim with on `f`: its client's priority, or the
     // client default (50) for an internal / unknown handle. Any thread.
     int ClaimPriority(APMF_API::Handle h, Facet f, SourceId* outClient = nullptr);
+    // ABI v29 GetClientFacetPriority: the priority on `f` of the client DLL that owns `returnAddress` (the
+    // caller of the exported slot, the same attribution as a claim). READ-ONLY: it registers nothing and adds
+    // no module to the cache. A source that already files claims: its live priority (the menu's slider). A
+    // module that has not filed a claim yet, known or not: the priority its first claim will take
+    // (InitialPriority as a client: APMF_Sources.ini's key for it, else the [Defaults] client value). An
+    // address in no module, in APMF itself or in the engine: the client default (what ClaimPriority gives an
+    // unnamed claim). Before Init has read APMF_Sources.ini: kDefaultClient. -1 for f >= kCount. Any thread
+    // (atomics, the module-range and module-cache leaf locks; GetModuleFileName only for a module never seen).
+    int CallerPriority(const void* returnAddress, Facet f);
 
     // ---- the degrade rule (Q4) ------------------------------------------------------
     // An outside write on `f` Harbinger could not attribute. ALLOWED by the caller; this

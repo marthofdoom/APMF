@@ -1068,3 +1068,6 @@ The local `RE::TESPackageEvent` can collide if the CommonLib fork ever defines i
 
 ### APMF-B185 (SEV-5, OPEN, core/ControlMap.cpp OnActorUpdate) -- stale "ONE reader-side mutation" comment (raised against e9f9080)
 The comment in OnActorUpdate still says the obsTick fetch_add is the ONE reader-side mutation; obsLastPkg is a second.
+
+### APMF-B186 (SEV-4, OPEN, core/Sources.cpp NoteClientRequest / CallerPriority, raised against 13231d6, Opus tier-3 review) -- a menu slider change before a source's first claim is lost
+A menu slider change made before a source has filed its first claim this session is stored in `prio[]` and APMF_Sources.ini but not in `g_iniPrio`, so `NoteClientRequest` overwrites it with the stale `InitialPriority` on that first claim, and `GetClientFacetPriority` (ABI v29, `CallerPriority`) reports the stale value until then. Fix: update `g_iniPrio` from Pump's priority write, or keep `prio[]` when flipping a source to client.

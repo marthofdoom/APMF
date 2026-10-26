@@ -139,7 +139,13 @@ Refused 3 / Failed 4), `PlaceWhy` (0-10), `kPlaceInfo_*`, `kPlaceStateGraceMs` (
 `APMF_PlaceStateInfo` (size rule at `kPlaceStateInfoV28Size`) and `APMF_API_v28 : APMF_API_v27` with ONE slot,
 `GetPlaceState(handle, APMF_PlaceStateInfo*)` (any thread)** (core/Place.h; Docs/APMF_API-REFERENCE.md#abi-v28-place).
 The per-item equip deny (86e3t8w23) moves to v29. The header is 2661 lines after v28 (over the 2500 backstop,
-reported again, not split inside the task). The header
+reported again, not split inside the task).
+**ABI v29 (2026-10-25, client facet priority, ClickUp 1dfcuabbh1e) adds `ClientFacet` (`kFacet_Target` 0 ..
+`kFacet_EquipArmor` 9, the `sources::Facet` numbering, pinned by a static_assert in core/Sources.cpp),
+`kFacetPriorityUnknown` (-1) and `APMF_API_v29 : APMF_API_v28` with ONE slot, `GetClientFacetPriority(facet)` -> the
+CALLING client's priority 0..100 (0 = off), any thread, read-only** (Docs/APMF_API-REFERENCE.md#abi-v29-client-facet-priority).
+It took v29, so the per-item equip deny (86e3t8w23) moves to v30. The header is 2708 lines after v29 (over the
+2500 backstop, reported again, not split inside the task). The header
 is at 2520 lines after v26 (OVER the 2500 backstop; reported, not split inside the task) and `core/ControlMap.cpp`
 at 2499: the next change to either plans a split first.
 To stay under 2500 lines the v24 change first moved three long-form blocks (v18 own ray,
@@ -205,6 +211,12 @@ no channel for it): a handle from `ControlMap::NextHandle()`, `sources::NoteClie
 calls `sources::ForgetHandle(h)` and returns `kInvalidHandle`. `GetPlaceState` -> `place::GetState` (`try/catch(...)`
 returning `kPlaceState_Unknown`); the object is an `APMF_API_v28` (a static_assert pair pins the v27 prefix end);
 `MinReleaseForAbi(28)` is the default.
+ABI v29 (client facet priority, 2026-10-25, ClickUp 1dfcuabbh1e) adds `GetClientFacetPriority(facet)` ->
+`sources::CallerPriority(_ReturnAddress(), facet)` (`try/catch(...)` and a facet >= `kFacetCount` return
+`kFacetPriorityUnknown` -1); the object is an `APMF_API_v29` (a static_assert pair pins the v28 prefix end);
+`MinReleaseForAbi(29)` is the default. What breaks: the slot must stay a direct exported body (its own
+`_ReturnAddress()` is what names the caller; a wrapper or a forwarding thunk would name APMF and hand back the
+client default).
 The "client too new" null (`abiVersion > kABIVersion`) logs the running APMF version
 (`SKSE::PluginDeclaration::GetSingleton()`) and `MinReleaseForAbi(abi)` — a table that must
 be extended on every `kABIVersion` bump.
@@ -389,6 +401,7 @@ a main-thread-safe seat for equip/3D work).
 **Served counter (2026-10-12, fix/apmf-menu-client-hits):** `served[facet]` atomic + `NoteServed(id,f)` / `NoteServedClaim(handle,f)` (resolves the client via `ClientForHandle`'s shared leaf lock, released before the atomics) + `Served()`. It is NOT a Hit: Hits stays "outside writes seen". Both stamp `lastSeenMs` / `lastLoadSeq`, and so does `NoteClientRequest` (a client with live claims is never `Idle`, never dropped from the menu's `Winner()`). Credit sites: `facetattr::Decide` on `enforce` (every ranked deny: cast, combat, action, approach, entry, re-entry), `EquipSink` applied deny, `TargetPin` seat deny/held + `UpdateCombat` restore, `EquipAuthority::Enforce` equipped>0, `PackageGate` 0x49 `won`, `Travel::StartLeg`, `EquipPreference` lift/steer, `CombatEntry::Enter` entered. What breaks: moving a credit into a hot path that holds another lock (the handle map's lock is a leaf).
 
 **Menu counters + Equip split (2026-10-18, feat/apmf-menu-split):** `Facet::kEquip` became `kEquipWeapon` (same index 3, INI section `EquipWeapon`) plus an APPENDED `kEquipArmor` (index 9, `kFacetCount` 10; `g_unkPending` initialiser and its `static_assert` track it). `FacetForEquipCats(Categorize mask)` (inline, Sources.h) picks the facet: any Right / Left / Ammo / Light bit (a shield or torch carries Left) = Weapon, Armor-only = Armor. `FacetMaskForIntent` replaces `FacetForIntent` (the three equip intents claim both). `ReadIni` reads a legacy `[Equip]` section (keys, `iUnregisteredEquip` / `iClientEquip`, `[UnknownSources] Equip`) as a PER-KEY fallback and never rewrites it; the slider writes the new sections. New counters `observed[]` (`NoteObserved`: `facetattr::Observe` users, the package poll's outranked-not-enforced) and `own[]` (`NoteOwn`: a claim's own client on its own claim, from `facetattr::Decide` and the EquipSink own paths). `EquipSink` computes `Categorize` BEFORE the caller recovery (the facet keys every counter) and DEFERS the hit of a source that is the client of a claim on the actor (`hitDeferred` / `isOwnClient`, flushed only against another client's claim). `RankEquipDeny` takes the facet. Menu columns Served / Hits / Blocked (= overruled) / Passed (= stood) / Observed; `Winner()` requires `LastSeenMs` within 60 s. What breaks: a new equip-facet counter site that hard-codes a facet instead of using the item's `FacetForEquipCats`; reordering the Facet enum (the INI section names and `involved` bitmask are by name / bit, but `g_unkPending` is positional).
+**ABI v29 `CallerPriority(returnAddress, facet)` (2026-10-25):** the read-only twin of the claim attribution, for `GetClientFacetPriority`. It follows stubs, finds the module (`ModuleOf`'s range cache), looks it up in `g_modCache` (filled by `ForAddress` on the client's first claim) and only on a miss reads the module name and `Find`s it. It never `Register`s and never inserts into the cache. A source with `client` set returns its live `prio[f]`; one not yet a client (a `kLoaded` entry, or no entry) returns `InitialPriority(name, kClient, f)`, the value `NoteClientRequest` will store on its first claim; no module / APMF / engine / a built-in returns `g_defClient[f]`. `g_iniRead` (release-stored right after `ReadIni` in `Init`) guards the reads of `g_iniPrio` / `g_defClient`, which are read-only from then on (before it: `kDefaultClient`). What breaks: writing `g_iniPrio` or `g_defClient` after `Init` (they are read lock-free here and in `Register`); renumbering `Facet` (the public `ClientFacet` mirrors it; the static_assert fails the build). Open: `APMF-B186` (SEV-4, a slider change before a source's first claim is lost) in Docs/REVIEW-BACKLOG.md.
 
 **1b observe slice (2026-10-12):** facet `kActorValue` ("ActorValue": ch.1a gait / ch.11 disposition, fed by
 `core/ActorValueObserve`); `Kind::kLoaded` + `RegisterLoadedPlugins()` (kDataLoaded: `K32EnumProcessModules`, every
