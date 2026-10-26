@@ -265,7 +265,13 @@ namespace {
     // expect to see, so it cannot cut a live leg short. When it fires the leg is
     // dropped and the reason is logged as a FAILURE, loudly and by name -- it is not
     // retried and it is not hidden (principle 7).
+    // ABI v30 (review F1 of c206088): a kTravel_CrossCells leg is NOT timed from its start. A walk through
+    // several load doors to a vendor can legitimately take longer than two minutes, so a flagged leg's net
+    // fires kLegMaxMs after its last PROGRESS (Leg::xProgressMs): the actor changed parent cell, closed the
+    // same-space distance by kXProgressUnits on its best so far, or is waiting for an unloaded destination.
+    // An unflagged leg is timed from its start exactly as before.
     constexpr std::uint64_t kLegMaxMs = 120000;
+    constexpr float         kXProgressUnits = 128.0f;
 
     // ABI v12: THE BLOCKED END. The engine answers "this actor cannot move along its
     // path" by running a runtime package of type 36, Movement Blocked
@@ -410,6 +416,7 @@ namespace {
         bool                  held           = false;
         bool                  heldOutside    = false;
         bool                  unloadedLogged = false;
+        bool                  heldRef        = false;   // ABI v30: `held` came from a CROSS-CELL ref arrival (HoldAtRef)
 
         // FRESH-SLOT RE-POINT (2026-10-21). OnOwnerChanged sets this when a Repoint names a
         // DIFFERENT destination than the one the leg was last composed for (form id, kind, or
@@ -425,7 +432,41 @@ namespace {
         // that saw it. Reset at every leg start and in-place re-point.
         bool                  doneWhileWalking = false;
         float                 doneDist         = 0.0f;
+
+        // CROSS-CELL legs (ABI v30, kTravel_CrossCells; see CrossCells / XArrival). Passive log state only:
+        // the parent cells last logged for the actor and the destination (0 = not logged yet), and the one
+        // "waiting for the destination to load" line per wait. Reset at every leg start and in-place re-point.
+        RE::FormID            xActorCell  = 0;
+        RE::FormID            xDestCell   = 0;
+        bool                  xWaitLogged = false;
+        // The PROGRESS clock of a cross-cell leg (review F1 of c206088): the stuck net of a flagged leg fires
+        // kLegMaxMs after the last progress, not after the start. Progress = the ACTOR's parent cell changed
+        // (which also re-bases `xBestDist`), the same-space distance beat `xBestDist` by kXProgressUnits, or
+        // arrival is waiting for an unloaded destination (XArrive::kWait). Reset with the log state above.
+        std::uint64_t         xProgressMs = 0;
+        float                 xBestDist   = std::numeric_limits<float>::max();
     };
+
+    // ABI v30: does this leg run the cross-cell rules? A FORM reference destination whose claim set
+    // kTravel_CrossCells. A cell leg already arrives by cell and holds; a kTravel_ToPosition leg's marker is
+    // placed in the actor's own space, so the bit means nothing there (Engage logs that it is ignored).
+    static_assert(APMF_API::kTravel_CrossCells == 0x20u &&
+                      (APMF_API::kTravel_CrossCells &
+                       (APMF_API::kTravel_ReleaseOnTargetDead | APMF_API::kTravel_ToPosition | APMF_API::kTravel_SpeedSet |
+                        APMF_API::kTravel_SpeedMask)) == 0,
+                  "kTravel_CrossCells is bit 5, clear of every earlier TravelFlags bit (append-only)");
+    bool CrossCells(const Leg& a_leg) {
+        return a_leg.destKind == DestKind::kRef && !a_leg.toPosition &&
+               (a_leg.flags & APMF_API::kTravel_CrossCells) != 0;
+    }
+
+    void ResetCrossCellLog(Leg& a_leg) {
+        a_leg.xActorCell  = 0;
+        a_leg.xDestCell   = 0;
+        a_leg.xWaitLogged = false;
+        a_leg.xProgressMs = apmf::clock::MonotonicMs();   // a start or re-point is the first progress
+        a_leg.xBestDist   = std::numeric_limits<float>::max();
+    }
 
     void ResetBlockedClock(Leg& a_leg) {
         a_leg.mbAccumMs    = 0;
@@ -844,6 +885,7 @@ namespace {
         a_leg.legLive = false;
         a_leg.held    = false;
         a_leg.heldOutside = false;
+        a_leg.heldRef = false;
         ResetBlockedClock(a_leg);
         SetLegStateFor(a_id, a_leg, a_state, MirroredSpeed(a_id), a_block);
 
@@ -910,6 +952,118 @@ namespace {
                      "and slot {} stay until the client releases or re-points the ch.19 claim (the travel package "
                      "stands at its destination).",
                      Hex(a_id), elapsed, Hex(a_leg.destId), a_leg.slot);
+    }
+
+    // ---- ABI v30: CROSS-CELL reference legs (kTravel_CrossCells) ------------------------------------------
+    // marth 2026-10-25: "So harbingers moveto's need to navigate doorways natively" / "Moveto using harbinger
+    // will have a flag for cell crossing." The package side is UNCHANGED: a ref leg already writes the
+    // kNearReference Location as the destination's HANDLE (PointPackage -> SetTravelTarget), so the engine
+    // resolves the ref itself, paths through load doors and follows a moving actor. What the flag changes is
+    // APMF's side: (1) ARRIVAL is decided in the destination's own space, never by distance alone (an
+    // interior's coordinates and an exterior's can be close while the two are worlds apart), and (2) an
+    // arrival HOLDS like a cell leg (HoldAtCell's disassembly note: the travel package stands current in DONE
+    // while its offer stands). The destination's position is re-read every poll (GetPosition() =
+    // data.location), so a moving actor is tracked.
+    //
+    // READS (plain members, GAME THREAD, the same reads SpaceOf / GateProbe / core/Place.cpp /
+    // core/Awareness.cpp already make on every build): TESObjectREFR::parentCell, TESObjectCELL::cellFlags
+    // (the interior bit) and cellState (IsAttached), the cell's runtime-data worldSpace (fork
+    // RelocateMemberIfNewer: +0x120 on 1.5.97, +0x128 on 1.6.1170 and 1.7.104; Docs/VERIFIED-ADDRESSES.md
+    // "TESObjectCELL runtime data": identical on 1.6.1170 / 1.7.104), data.location, and Is3DLoaded() (the
+    // Get3D vfunc this file already calls on the actor). No address id, no new seat, no write.
+    //
+    // "UNLOADED OUTDOORS": an exterior destination whose parent cell is NOT ATTACHED (outside the loaded grid:
+    // the worldspace's persistent cell, or an exterior cell that is not loaded) and that has no 3D. Arrival is
+    // then WAITED for (logged once per wait) until it loads. The test deliberately does not read
+    // TESWorldSpace::persistentCell: that member has no verified read in this DLL (an offline scan of all three
+    // images found no `[cell->worldSpace]+0x88` read to prove it by), and "not attached, no 3D" is the engine's
+    // own loaded state. UNPROVEN, to be read off the first field log: that a persistent cell never reads
+    // kAttached (if it did, such a destination would be judged by its data.location, which is still the
+    // engine's own position for it). The passive [travel-xcell] lines print "cell not loaded" per change.
+    enum class XArrive { kNo, kYes, kWait };
+
+    // The space a cell is: its own FormID for an interior, its worldspace's for an exterior (0 = unknown).
+    RE::FormID XSpaceId(const RE::TESObjectCELL* a_cell) {
+        if (!a_cell) return 0;
+        if (a_cell->IsInteriorCell()) return a_cell->GetFormID();
+        const auto* ws = a_cell->GetRuntimeData().worldSpace;
+        return ws ? ws->GetFormID() : 0;
+    }
+
+    XArrive XArrival(const RE::Actor* a_actor, const RE::TESObjectREFR* a_dest, float a_dist, float a_radius) {
+        const auto* dc = a_dest->GetParentCell();
+        const auto* ac = a_actor->GetParentCell();
+        if (!dc || !ac) return XArrive::kNo;
+        if (dc->IsInteriorCell()) {
+            // INTERIOR: the destination's CURRENT parent cell, and only that cell.
+            return (ac == dc && a_dist <= a_radius) ? XArrive::kYes : XArrive::kNo;
+        }
+        // EXTERIOR: the same worldspace (exterior cells are 4096u tiles; a vendor on a tile border is still
+        // beside the actor), never from an interior.
+        if (ac->IsInteriorCell()) return XArrive::kNo;
+        const auto* dws = dc->GetRuntimeData().worldSpace;
+        if (!dws || ac->GetRuntimeData().worldSpace != dws || a_dist > a_radius) return XArrive::kNo;
+        if (!dc->IsAttached() && !a_dest->Is3DLoaded()) return XArrive::kWait;
+        return XArrive::kYes;
+    }
+
+    // PASSIVE: a line when the leg starts (a_when set) and whenever the actor's or the destination's parent
+    // cell changes (a_when null). Returns true when the ACTOR's parent cell changed since the last line (the
+    // progress test of review F1; a destination wandering between cells is not the actor's progress).
+    bool XLogCells(RE::FormID a_id, Leg& a_leg, const RE::Actor* a_actor, const RE::TESObjectREFR* a_dest,
+                   float a_dist, const char* a_when) {
+        const auto*      ac  = a_actor->GetParentCell();
+        const auto*      dc  = a_dest->GetParentCell();
+        const RE::FormID aId = ac ? ac->GetFormID() : 0;
+        const RE::FormID dId = dc ? dc->GetFormID() : 0;
+        if (!a_when && aId == a_leg.xActorCell && dId == a_leg.xDestCell) return false;
+        const bool actorMoved = !a_when && aId != a_leg.xActorCell;
+        if (!a_when) a_when = (a_leg.xActorCell == 0 && a_leg.xDestCell == 0) ? "first poll" : "CELL CHANGE";
+        a_leg.xActorCell = aId;
+        a_leg.xDestCell  = dId;
+        const RE::FormID aSpace = XSpaceId(ac);
+        const RE::FormID dSpace = XSpaceId(dc);
+        spdlog::info("[travel-xcell] 0x{} {} -- actor in cell 0x{} ({} 0x{}), destination 0x{} in cell 0x{} ({} "
+                     "0x{}{}), {:.0f}u apart, {}.",
+                     Hex(a_id), a_when, Hex(aId),
+                     ac && ac->IsInteriorCell() ? "interior" : "worldspace", Hex(aSpace), Hex(a_leg.destId), Hex(dId),
+                     dc && dc->IsInteriorCell() ? "interior" : "worldspace", Hex(dSpace),
+                     dc && !dc->IsInteriorCell() && !dc->IsAttached() ? ", cell not loaded" : "", a_dist,
+                     aSpace != 0 && aSpace == dSpace ? "same space" : "DIFFERENT space");
+        return actorMoved;
+    }
+
+    // PASSIVE (Engage / OnOwnerChanged): say whether a claim's kTravel_CrossCells bit applies. It is honoured on
+    // a FORM reference destination only; on a cell (already arrives by cell and holds) or a kTravel_ToPosition
+    // point (APMF's marker sits in the actor's own space) it is stored and IGNORED, and the log says so.
+    void NoteCrossCellsFlag(RE::FormID a_id, const Leg& a_leg, const char* a_step) {
+        if ((a_leg.flags & APMF_API::kTravel_CrossCells) == 0) return;
+        if (CrossCells(a_leg))
+            spdlog::info("[travel-xcell] 0x{} {}: kTravel_CrossCells ON for destination ref 0x{} -- arrival = the "
+                         "destination's current cell (interior) or worldspace (exterior) plus the radius, then HOLD.",
+                         Hex(a_id), a_step, Hex(a_leg.destId));
+        else
+            spdlog::info("[travel-xcell] 0x{} {}: kTravel_CrossCells IGNORED -- the destination is a {}, not a form "
+                         "reference.", Hex(a_id), a_step, a_leg.toPosition ? "POINT (kTravel_ToPosition)" : "CELL");
+    }
+
+    // A CROSS-CELL ref leg ARRIVED: hold exactly like HoldAtCell (kLeg_Arrived; the ch.9 offer and slot are
+    // kept, legLive stays true). Ended only by Poll's held branch (the actor's death / loss, or the destination
+    // deleted, disabled or dead after being alive at target time), a refused re-point, or the client's Release;
+    // a Repoint runs on a fresh slot (ComposeLeg's held branch, HoldAtCell's note).
+    void HoldAtRef(RE::FormID a_id, Leg& a_leg, const RE::TESObjectREFR* a_dest, float a_dist) {
+        a_leg.held        = true;
+        a_leg.heldRef     = true;
+        a_leg.heldOutside = false;
+        ResetBlockedClock(a_leg);
+        SetLegStateFor(a_id, a_leg, APMF_API::kLeg_Arrived, MirroredSpeed(a_id));
+        const auto  elapsed = apmf::clock::MonotonicMs() - a_leg.legStartedMs;
+        const auto* dc      = a_dest->GetParentCell();
+        spdlog::info("[travel-leg] 0x{} ARRIVED after {} ms at destination ref 0x{} BY CELL -- both in {} 0x{} "
+                     "(destination cell 0x{}), {:.0f}u (radius {:.0f}u). HOLDING: the package offer and slot {} stay "
+                     "until the client releases or re-points the ch.19 claim (kTravel_CrossCells).",
+                     Hex(a_id), elapsed, Hex(a_leg.destId), dc && dc->IsInteriorCell() ? "interior" : "worldspace",
+                     Hex(XSpaceId(dc)), Hex(dc ? dc->GetFormID() : 0), a_dist, a_leg.radius, a_leg.slot);
     }
 
     // Write this leg's destination into `a_pkg`'s Location input, by KIND. The two
@@ -1004,12 +1158,24 @@ namespace {
         a_leg.held           = false;
         a_leg.heldOutside    = false;
         a_leg.unloadedLogged = false;
+        a_leg.heldRef        = false;
         a_leg.doneWhileWalking = false;
+        ResetCrossCellLog(a_leg);
         SetLegStateFor(a_id, a_leg, APMF_API::kLeg_Walking, speed);
         spdlog::info("[travel-leg] 0x{} STARTED -- slot {}, package 0x{} -> destination 0x{}, radius {}, "
                      "internal ch.9 handle {} at basis {}. ch.9 posts its own EvaluatePackage nudge.",
                      Hex(a_id), slot, Hex(p9.form), Hex(a_leg.destId),
                      static_cast<std::uint32_t>(a_leg.radius), h, a_leg.basis);
+        if (CrossCells(a_leg)) {   // ABI v30: passive start line (where both ends are)
+            auto  aptr = a_leg.actorHandle.get();
+            auto  dptr = a_leg.destHandle.get();
+            auto* act  = aptr.get();
+            auto* dst  = dptr.get();
+            if (act && dst)
+                XLogCells(a_id, a_leg, act, dst, act->GetPosition().GetDistance(dst->GetPosition()),
+                          "CROSS-CELL leg STARTED (kTravel_CrossCells: arrival = the destination's cell or worldspace "
+                          "plus the radius, then HOLD)");
+        }
         apmf::sources::NoteServedClaim(a_leg.ownerHandle, apmf::sources::Facet::kPackage);   // ch.19: a leg started (menu "Served")
         return true;
     }
@@ -1919,6 +2085,7 @@ namespace {
                              "places its own XMarker there), radius {}, flags 0x{}.",
                              Hex(id), leg.point.x, leg.point.y, leg.point.z, static_cast<std::uint32_t>(leg.radius),
                              Hex(leg.flags, 2));
+                NoteCrossCellsFlag(id, leg, "engage");   // ABI v30, passive
                 apmf::mainthread::Post([id] { Compose(id, "engage"); });
                 return;
             }
@@ -1950,6 +2117,7 @@ namespace {
                          destName, static_cast<std::uint32_t>(leg.radius), Hex(leg.flags, 2));
 
             // Compose one hop past this Drain's Publish (see the ordering note).
+            NoteCrossCellsFlag(id, leg, "engage");   // ABI v30, passive
             apmf::mainthread::Post([id] { Compose(id, "engage"); });
         }
 
@@ -1997,6 +2165,7 @@ namespace {
                 spdlog::info("[travel] 0x{} travel claim RE-POINTED -- destination 0x{} -> POINT {:.0f},{:.0f},{:.0f}.",
                              Hex(id), Hex(leg.destId), pt.x, pt.y, pt.z);
                 SetLegStateFor(id, leg, APMF_API::kLeg_Pending, MirroredSpeed(id));
+                NoteCrossCellsFlag(id, leg, "re-point");   // ABI v30, passive
                 apmf::mainthread::Post([id] { Compose(id, "re-point"); });
                 return;
             }
@@ -2036,6 +2205,7 @@ namespace {
                          Hex(id), Hex(was), kind == DestKind::kCell ? "CELL" : "ref", Hex(leg.destId));
             SetLegStateFor(id, leg, APMF_API::kLeg_Pending, MirroredSpeed(id));
 
+            NoteCrossCellsFlag(id, leg, "re-point");   // ABI v30, passive
             apmf::mainthread::Post([id] { Compose(id, "re-point"); });
         }
 
@@ -2199,11 +2369,13 @@ namespace {
             // the cell, and Harbinger enforces only what is declared (principle 4).
             if (leg.legLive && (leg.held || leg.destChanged)) {
                 const bool             wasHeld  = leg.held;
+                const char* const      heldKind = !wasHeld ? "LIVE" : (leg.heldRef ? "HELD cross-cell ref" : "HELD cell");
                 const int              heldSlot = leg.slot;
                 const APMF_API::Handle heldH    = leg.hPackage;
                 leg.legLive     = false;   // StartLeg builds a new live leg; nothing else reads it in between
                 leg.held        = false;
                 leg.heldOutside = false;
+                leg.heldRef     = false;
                 leg.slot        = -1;
                 leg.hPackage    = APMF_API::kInvalidHandle;
                 const bool started = StartLeg(id, leg);
@@ -2211,11 +2383,11 @@ namespace {
                 if (started) {
                     spdlog::info("[travel-leg] 0x{} {}: a {} leg re-pointed to a different destination -- the new "
                                  "leg runs on slot {} (old slot {} released after the new offer was filed).",
-                                 Hex(id), step, wasHeld ? "HELD cell" : "LIVE", leg.slot, heldSlot);
+                                 Hex(id), step, heldKind, leg.slot, heldSlot);
                 } else {
                     spdlog::error("[travel-leg] 0x{} {}: a {} leg could not be re-pointed (logged above); "
                                   "the old offer is released, the ch.19 claim stands and does nothing.",
-                                  Hex(id), step, wasHeld ? "HELD cell" : "LIVE");
+                                  Hex(id), step, heldKind);
                 }
                 return;
             }
@@ -2250,6 +2422,7 @@ namespace {
                 ResetBlockedClock(leg);                          // ABI v12: a new route, a new blocked clock
                 leg.unloadedLogged = false;
                 leg.doneWhileWalking = false;
+                ResetCrossCellLog(leg);   // ABI v30: the next poll logs where both ends are
                 SetLegStateFor(id, leg, APMF_API::kLeg_Walking, speed);
                 spdlog::info("[travel-leg] 0x{} RE-POINTED -- slot {}, package 0x{} -> destination 0x{}.",
                              Hex(id), leg.slot, Hex(p9.form), Hex(leg.destId));
@@ -2525,6 +2698,42 @@ namespace apmf::travel {
                 continue;
             }
 
+            // ABI v30: a HELD CROSS-CELL ref leg (HoldAtRef). The same hold as a cell leg below (no combat end,
+            // no BLOCKED, no stuck net, leaving is logged once per departure and never acted on); its further
+            // ends are the destination's own DestGone ends, unchanged from the walking leg: deleted, disabled, or
+            // dead after being alive at target time.
+            if (leg.held && leg.heldRef) {
+                auto  dptr = leg.destHandle.get();
+                auto* d    = dptr.get();
+                if (!d) {
+                    EndLeg(id, leg, "the held destination no longer resolves (deleted)", false, APMF_API::kLeg_DestGone);
+                    continue;
+                }
+                if (d->IsDisabled()) {
+                    EndLeg(id, leg, "the held destination was disabled", false, APMF_API::kLeg_DestGone);
+                    continue;
+                }
+                if (leg.destAliveAtTarget && d->IsDead()) {
+                    EndLeg(id, leg, "the held destination died", false, APMF_API::kLeg_DestGone);
+                    continue;
+                }
+                const float   dist = a->GetPosition().GetDistance(d->GetPosition());
+                const XArrive at   = XArrival(a, d, dist, leg.radius);
+                XLogCells(id, leg, a, d, dist, nullptr);
+                if (at == XArrive::kNo && !leg.heldOutside) {
+                    leg.heldOutside = true;
+                    spdlog::warn("[travel-leg] 0x{} HELD at destination ref 0x{} but now {:.0f}u from it (radius {:.0f}u) "
+                                 "or in another cell -- not acted on (the offer still stands; the travel package is DONE "
+                                 "and does not walk him back). The client decides: Repoint to walk him back, or Release.",
+                                 Hex(id), Hex(leg.destId), dist, leg.radius);
+                } else if (at == XArrive::kYes && leg.heldOutside) {
+                    leg.heldOutside = false;
+                    spdlog::info("[travel-leg] 0x{} HELD actor is back at destination ref 0x{} ({:.0f}u).", Hex(id),
+                                 Hex(leg.destId), dist);
+                }
+                continue;
+            }
+
             // A HELD cell leg (HoldAtCell) has arrived; nothing below applies to it. It keeps the
             // offer until the client releases or re-points. The only further end is the cell
             // itself ceasing to resolve. Leaving the cell is LOGGED once per departure and never
@@ -2532,7 +2741,7 @@ namespace apmf::travel {
             // him back, and re-offering would be a re-assert (Channel.h). Combat does not end a
             // hold: the walk it cancels is over, and the engine's own combat runs over the package
             // and hands it back.
-            if (leg.held) {
+            if (leg.held && leg.destKind == DestKind::kCell) {   // review F5 of c206088: a CELL hold only (a ref hold is the branch above)
                 auto* cell = RE::TESForm::LookupByID<RE::TESObjectCELL>(leg.destId);
                 if (!cell) {
                     EndLeg(id, leg, "the held destination cell no longer resolves", false, APMF_API::kLeg_DestGone);
@@ -2698,7 +2907,39 @@ namespace apmf::travel {
                 // the engine's own stop and this test fire at the same distance.
                 // `GetPosition()` is `data.location` -- no 3D required.
                 const float dist = a->GetPosition().GetDistance(d->GetPosition());
-                if (dist <= leg.radius) {
+                if (CrossCells(leg)) {
+                    // ABI v30 kTravel_CrossCells: arrival in the destination's own space, then HOLD (see
+                    // XArrival / HoldAtRef). Distance alone never arrives: an interior's coordinates can sit
+                    // within the radius of an exterior point.
+                    const bool    cellMoved = XLogCells(id, leg, a, d, dist, nullptr);
+                    const XArrive at        = XArrival(a, d, dist, leg.radius);
+                    // PROGRESS (review F1 of c206088): the stuck net below is timed from the last of these.
+                    {
+                        const RE::FormID aSp       = XSpaceId(a->GetParentCell());
+                        const bool       sameSpace = aSp != 0 && aSp == XSpaceId(d->GetParentCell());
+                        bool             progress  = cellMoved || at == XArrive::kWait;
+                        if (cellMoved) leg.xBestDist = sameSpace ? dist : std::numeric_limits<float>::max();
+                        else if (sameSpace && dist < leg.xBestDist - kXProgressUnits) {
+                            leg.xBestDist = dist;
+                            progress      = true;
+                        }
+                        if (progress) leg.xProgressMs = now;
+                    }
+                    if (at == XArrive::kYes) {
+                        HoldAtRef(id, leg, d, dist);
+                        continue;
+                    }
+                    if (at == XArrive::kWait && !leg.xWaitLogged) {
+                        leg.xWaitLogged = true;
+                        spdlog::info("[travel-xcell] 0x{} within {:.0f}u of destination 0x{} in the same worldspace, "
+                                     "but the destination is UNLOADED OUTDOORS (its cell 0x{} is not loaded and it has no "
+                                     "3D) -- arrival waits until it loads.",
+                                     Hex(id), dist, Hex(leg.destId),
+                                     Hex(d->GetParentCell() ? d->GetParentCell()->GetFormID() : 0));
+                    } else if (at != XArrive::kWait) {
+                        leg.xWaitLogged = false;
+                    }
+                } else if (dist <= leg.radius) {
                     EndLeg(id, leg, "ARRIVED (inside the arrival radius)", false, APMF_API::kLeg_Arrived);
                     continue;
                 }
@@ -2780,7 +3021,13 @@ namespace apmf::travel {
             // failure report. It runs for an unloaded actor too: it is a clock, not a movement
             // read, and a leg that has not arrived in kLegMaxMs is reported whether or not the
             // player can see the actor.
-            if (now - leg.legStartedMs > kLegMaxMs) {
+            // ABI v30 (review F1 of c206088): a CROSS-CELL leg is timed from its last PROGRESS (Leg::xProgressMs),
+            // not from its start, so a long walk through several doors is not cut at two minutes while it moves.
+            const bool xNet = CrossCells(leg);
+            if (xNet ? (now - leg.xProgressMs > kLegMaxMs) : (now - leg.legStartedMs > kLegMaxMs)) {
+                const std::string xs =
+                    xNet ? std::format(" (cross-cell leg: no progress for {} s)", (now - leg.xProgressMs) / 1000)
+                         : std::string();
                 if (leg.doneWhileWalking) {
                     const RE::TESPackage* curPkg = a->GetCurrentPackage();
                     const bool stillOurs = leg.slot >= 0 && g_pkg[leg.slot] && curPkg == g_pkg[leg.slot];
@@ -2794,12 +3041,12 @@ namespace apmf::travel {
                               "STUCK -- OnPackageEnd for our package was seen {:.0f}u from the destination (radius "
                               "{:.0f}u); the current package now is 0x{}", leg.doneDist, leg.radius,
                               Hex(curPkg ? curPkg->GetFormID() : 0));
-                    EndLeg(id, leg, why.c_str(), true, APMF_API::kLeg_StuckTimeout);
+                    EndLeg(id, leg, (why + xs).c_str(), true, APMF_API::kLeg_StuckTimeout);
                 } else {
-                    EndLeg(id, leg, "STUCK -- no arrival, no combat, and the destination is still there "
+                    const std::string why = std::string("STUCK -- no arrival, no combat, and the destination is still there "
                                     "after the leg safety net elapsed (unreachable or cross-worldspace "
-                                    "destination, blocked path, or an outranking package is winning)", true,
-                           APMF_API::kLeg_StuckTimeout);
+                                    "destination, blocked path, or an outranking package is winning)") + xs;
+                    EndLeg(id, leg, why.c_str(), true, APMF_API::kLeg_StuckTimeout);
                 }
             }
         }

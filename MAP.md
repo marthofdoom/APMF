@@ -145,7 +145,12 @@ reported again, not split inside the task).
 `kFacetPriorityUnknown` (-1) and `APMF_API_v29 : APMF_API_v28` with ONE slot, `GetClientFacetPriority(facet)` -> the
 CALLING client's priority 0..100 (0 = off), any thread, read-only** (Docs/APMF_API-REFERENCE.md#abi-v29-client-facet-priority).
 It took v29, so the per-item equip deny (86e3t8w23) moves to v30. The header is 2708 lines after v29 (over the
-2500 backstop, reported again, not split inside the task). The header
+2500 backstop, reported again, not split inside the task).
+**ABI v30 (2026-10-25, ch.19 cross cells) adds `kTravel_CrossCells` (TravelFlags bit 5, static_assert in
+channels/Travel.cpp next to `CrossCells`) and NO slot: the served object stays `APMF_API_v29`, `abiVersion` reports 30**
+(Docs/APMF_API-REFERENCE.md#abi-v30-travel-cross-cells; ch.19 What breaks (6b)). It took v30, so the per-item equip
+deny (86e3t8w23) moves to v31. The header is 2724 lines after v30 (over the 2500 backstop, reported again, not split
+inside the task). The header
 is at 2520 lines after v26 (OVER the 2500 backstop; reported, not split inside the task) and `core/ControlMap.cpp`
 at 2499: the next change to either plans a split first.
 To stay under 2500 lines the v24 change first moved three long-form blocks (v18 own ray,
@@ -2229,6 +2234,30 @@ no-op at Release off exactly 1.6.1170 / 1.5.97 / 1.7.104, VR included (G1 2026-1
   same-basis ch.9 offer from the same client (tie keeps the earliest). Open review items:
   REVIEW-BACKLOG APMF-B173 (slot pressure), APMF-B174 (holes: script package overrides, MoveTo),
   APMF-B175 (optional package log), APMF-B176 (ch.24 still releases on a 3D unload).
+  (6b) **CROSS-CELL REF LEGS (ABI v30 `kTravel_CrossCells`, 2026-10-25, `feat/apmf-ch19-cross-cells`).** `CrossCells(leg)`
+  = a FORM ref destination (not a cell, not `toPosition`) whose flags carry bit 5; every other leg runs the code
+  above byte-for-byte (the flag is stored and logged IGNORED on a cell or a point, `NoteCrossCellsFlag`). The PACKAGE
+  is unchanged (kNearReference by handle, `PointPackage`). In `Poll`'s ref branch the distance arrival is replaced by
+  `XArrival` (interior destination: actor's parent cell == the destination's CURRENT parent cell AND dist <= radius;
+  exterior: actor outdoors in the same worldspace AND dist <= radius; an exterior destination whose cell is not
+  `IsAttached()` and that has no 3D returns kWait, logged once per wait), and an arrival goes to `HoldAtRef`
+  (`held` + `heldRef`, `kLeg_Arrived`, offer and slot kept), never `EndLeg`. A held ref leg is handled by its own
+  branch at the top of `Poll`'s held section: it ends only on the actor's death / loss (above it) or the
+  destination's own DestGone ends (deleted, disabled, died after alive-at-target), logs a departure once
+  (`heldOutside`), and is skipped by combat, BLOCKED and the stuck net exactly like a held cell leg; a Repoint of
+  it takes `ComposeLeg`'s fresh-slot branch (keyed on `held`). Reads: parentCell, cellFlags, cellState, the cell's
+  runtime-data worldSpace, data.location, Is3DLoaded: no new address, no write. `TESWorldSpace::persistentCell` is
+  deliberately NOT read (no verified read in this DLL). Passive `[travel-xcell]` lines (`XLogCells`): leg start,
+  every parent-cell change of either end, the wait. **What breaks:** routing a cross-cell arrival into `EndLeg`
+  (the follower is handed back to his own package at the vendor, the Markarth failure shape); testing `leg.held`
+  alone in the cell-hold branch (a held REF leg would be looked up as a CELL and end DestGone at once: the ref
+  branch must stay first and test `heldRef`); letting distance alone arrive a cross-cell leg; applying the rules
+  to a leg without the flag (the no-flag path is the shipped contract). **Progress net (review F1 of c206088):** a
+  flagged leg's stuck net fires `kLegMaxMs` after `Leg::xProgressMs` (actor parent-cell change from `XLogCells`'s
+  return, same-space distance beating `xBestDist` by `kXProgressUnits` 128u, or `XArrive::kWait`), never after
+  `legStartedMs`; reset in `ResetCrossCellLog` (StartLeg, in-place re-point). The cell-hold branch tests
+  `destKind == kCell` (F5). Open: REVIEW-BACKLOG APMF-B193 (engine DONE before a moving vendor, watch), APMF-B194
+  (unloaded actor in the interior).
   (7) **ABI v11 position legs (`kTravel_ToPosition`, 2026-09-23).** `Engage`/`OnOwnerChanged`
   record the POINT; `Compose` places APMF's XMarker through `poscast::PlaceMarker` and the
   leg is then an ordinary ref leg to it (`destAliveAtTarget = false`: a marker never dies).

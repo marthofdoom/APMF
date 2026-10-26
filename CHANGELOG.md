@@ -1,5 +1,6 @@
 ## Unreleased
 
+- **A travel leg can walk to an NPC in another cell (ABI v30).** With the new `kTravel_CrossCells` flag on a travel claim to a reference, the follower walks through doors to that NPC and follows them if they move, the game's own way. The leg counts as arrived only when the follower is in the same interior cell as the NPC, or outdoors in the same worldspace, and inside the radius. A destination outdoors that is not loaded yet is waited for. On arrival the follower is held there until the mod releases the claim or sends it somewhere else, like a cell leg. Without the flag nothing changes. Not yet tested in game.
 - **A mod can ask what the player let it do (ABI v29).** `GetClientFacetPriority` returns the calling mod's own priority on a facet, the number set on the Harbinger page or in `APMF_Sources.ini`. 0 means off. MFO uses it so that a looted upgrade its follower will not wear, because EquipWeapon or EquipArmor is 0, is marked for selling. Read only, any thread. Older mods keep working.
 
 ## v0.14.0 -- Place, the torch and weapon seats, a fuller combat substrate

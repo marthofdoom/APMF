@@ -1088,3 +1088,15 @@ Reviewer: cross-reference APMF-B187 (stale hold records) explicitly from MAP's M
 
 ### APMF-B192 (SEV-5, OPEN, core/ActionGate.cpp HoldUpdateThunk) -- frameEmpty is tested before the cur_node/phase anomaly check (raised against 6e5b1c5)
 "In HoldUpdateThunk record path, frameEmpty() is tested before the cur_node/phase check, so the never-seen not-cur_node-in-phase-1 anomaly now drops the record instead of leaving the node untouched; the F2 guard would still release it on its next update." Fix: swap the two checks, or accept.
+
+### APMF-B193 (SEV-3 WATCH, OPEN, channels/Travel.cpp cross-cell legs) -- the engine's Travel package may end DONE at its own radius before a MOVING destination is reached (raised against c206088, tier-3 review F2)
+Reviewer (F2, observe only): with kTravel_CrossCells to a moving vendor, the engine can declare the travel package DONE at its own radius check while the vendor has walked on; the package then stands current in DONE and the actor stands until the stuck net. DONE-WHILE-WALKING already logs it. Candidate fix: a rate-limited fresh-slot restart of the leg when DONE-WHILE-WALKING fires on a flagged leg. marth decides after a field log; nothing is changed now.
+
+### APMF-B194 (SEV-4, OPEN, channels/Travel.cpp XArrival) -- an UNLOADED actor inside the destination interior does not close the distance (raised against c206088, tier-3 review F3)
+Reviewer (F3): an unloaded follower that has crossed into the destination interior may stay at the door while unloaded, so a flagged leg does not arrive until it loads (or the progress net ends it). Documented in Docs/APMF_API-REFERENCE.md#abi-v30-travel-cross-cells (use kIntent_Place). No code change.
+
+### APMF-B195 (SEV-5, CLOSED in the F1 round, Docs/APMF_API-REFERENCE.md) -- "an older header cannot set the bit" was false (raised against c206088, tier-3 review F4)
+Reviewer (F4): the claim that only v30 clients can set bit 5 is false (MFO already holds a local 1u << 5; any client can pass raw ival bits). Fixed: the reference now says the bit is honoured regardless of the client's ABI, like the v11 / v12 bits.
+
+### APMF-B196 (SEV-5, CLOSED in the F1 round, channels/Travel.cpp Poll) -- the held-cell branch tested `leg.held` alone (raised against c206088, tier-3 review F5)
+Reviewer (F5): the cell-hold branch must also test `leg.destKind == DestKind::kCell` so a held ref leg can never be looked up as a cell. Fixed in the F1 round.

@@ -126,7 +126,7 @@ a DENIED category is unequipped by the enforce pass. The header comments that st
 stale until the paired MFO header change.
 
 <a id="abi-history"></a>
-## ABI v10 to v29: what each version added
+## ABI v10 to v30: what each version added
 
 Moved verbatim from `native/APMF_API.h` (line 96 at 9d01cdf). The header keeps a pointer to this anchor.
 
@@ -259,6 +259,16 @@ change to any existing slot. A client gates on abiVersion >= 29; an older APMF h
 NUMBERING NOTE: v29 had been named for the ch.17 per-item equip deny (ClickUp 86e3t8w23). The priority query took
 v29 (MFO's sell classification needs it first), so the per-item equip deny moves to v30.
 Docs/APMF_API-REFERENCE.md#abi-v29-client-facet-priority.
+ABI v30 (2026-10-25, ch.19 cross cells, marth "Moveto using harbinger will have a flag for cell crossing"):
+kTravel_CrossCells (TravelFlags bit 5) on a kIntent_Travel claim whose destination is a FORM reference. The package is
+unchanged (a near-reference location by handle: the engine paths through load doors and follows a moving actor).
+Arrival becomes the destination's current parent cell (interior) or the same worldspace (exterior) AND the radius; a
+destination unloaded outdoors (cell not loaded, no 3D) is waited for; on arrival the leg HOLDS like a cell leg
+(kLeg_Arrived, the ch.9 offer and slot kept until Repoint / Release). No slot (the interface stays APMF_API_v29), no
+APMF_Param field, no new struct. A client gates on abiVersion >= 30; an older APMF ignores the bit.
+NUMBERING NOTE: v30 had been named for the ch.17 per-item equip deny (ClickUp 86e3t8w23). Cross cells took v30 (MFO's
+town errands walk to a vendor NPC with it now), so the per-item equip deny moves to v31.
+Docs/APMF_API-REFERENCE.md#abi-v30-travel-cross-cells.
 ```
 
 <a id="intent-18"></a>

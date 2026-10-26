@@ -428,3 +428,39 @@ The player ranks every source on every facet, 0 to 100, on the Harbinger page of
 **Threading and cost.** Any thread. Atomic loads, the module-range and module-cache leaf locks, no game call, nothing registered. The module name is read (`GetModuleFileName`) only for a module that has never filed a claim. A throw inside returns -1.
 
 **Older APMF.** An APMF before v29 has no slot. The client cannot tell, and should behave as it did before (MFO: as if it could equip).
+
+<a id="abi-v30-travel-cross-cells"></a>
+## ABI v30 travel cross cells: walking to an actor in another cell
+
+```cpp
+p.form = vendorRefId;                                   // a REFERENCE (an actor or any object ref)
+p.ival = APMF_API::kTravel_CrossCells | gaitBits;       // ABI v30, gate on abiVersion >= 30
+api->RequestEx(follower, APMF_API::kIntent_Travel, basis, &p);
+```
+
+marth 2026-10-25: "So harbingers moveto's need to navigate doorways natively" and "Moveto using harbinger will have a flag for cell crossing."
+
+**The walk is the engine's.** The leg's package names the destination by HANDLE (the vanilla Travel template's `Place to Travel` as a near-reference location, as every ref leg always has), so the engine resolves the ref itself, paths through load doors and follows an actor that moves. Harbinger re-reads the destination's position every poll (250 ms). Nothing about the package changes with the flag.
+
+**What the flag changes is arrival and what follows it.**
+
+| | without the flag (unchanged) | with `kTravel_CrossCells` |
+|---|---|---|
+| arrival | distance to the ref <= the radius, whatever cell either is in | destination INDOORS: the actor is in the destination's CURRENT parent cell AND within the radius. OUTDOORS: the actor is outdoors in the destination's worldspace AND within the radius |
+| an interior point within the radius of an exterior one | arrives | does not arrive |
+| destination unloaded outdoors (its cell is not loaded and it has no 3D, e.g. only its worldspace's persistent cell holds it) | arrives on distance | WAITS: arrival is declared once it loads (one `[travel-xcell]` line per wait) |
+| after arrival | the leg ENDS: offer released, slot freed, the actor's own package resumes | the leg HOLDS like a cell leg: `kLeg_Arrived`, the ch.9 offer and the package slot stay until you Repoint or Release |
+| a held leg ends on | (not held) | the actor dead or gone, the destination deleted, disabled or dead after being alive at target time (`kLeg_DestGone`), a refused Repoint, or your Release. Combat, BLOCKED and the stuck net do not end a hold |
+| leaving the destination while held | (not held) | logged once per departure, never acted on: Repoint to walk back |
+| combat, BLOCKED, DestGone while walking | as documented | unchanged |
+| the 120 s stuck net | 120 s from the leg's start | 120 s from the last PROGRESS: the actor changed parent cell, got 128u closer than its best so far in the destination's space, or is waiting for an unloaded destination. A long walk through several doors is not cut while it moves. The STUCK line adds "no progress for N s" |
+
+**Where it applies.** A FORM reference destination only. With a CELL (it already arrives by cell and holds) or `kTravel_ToPosition` (Harbinger's marker sits in the actor's own space) the bit is stored, ignored and logged as ignored.
+
+**Reads.** Plain members on the game thread, all already read by Harbinger on every build: the parent cell, the cell's interior bit and loaded state, the cell's worldspace, the position, and whether the ref has 3D. No address id, no seat, no write. The worldspace's persistent cell is NOT read (no verified read of that member in this DLL): "unloaded outdoors" is the cell's own loaded state plus the ref's 3D.
+
+**Log.** `[travel-xcell]` lines: the flag at claim / re-point, the cells both ends are in when the leg starts and whenever either changes, the wait for an unloaded destination. Arrival is `[travel-leg] ... ARRIVED ... BY CELL ... HOLDING`.
+
+**An unloaded actor in the destination interior.** Harbinger does not move an actor. A follower that is unloaded (the player is elsewhere) and has reached the destination's interior through its door may not close the distance to the destination while unloaded, so the leg does not arrive until it loads (or the stuck net reports no progress). To put an unloaded actor beside the destination, use `kIntent_Place` (ABI v28).
+
+**Older APMF.** An APMF before v30 ignores the bit: distance arrival, the leg ends on arrival, no hold. Gate on `abiVersion >= 30`. Harbinger does not record which ABI a client asked for: any client can pass raw `ival` bits, and a v30 Harbinger honours bit 5 whenever it is set, whatever header the client was built with (the same as the v11 / v12 bits). A client must not set bit 5 unless it means `kTravel_CrossCells`.

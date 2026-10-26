@@ -327,7 +327,8 @@ namespace {
     // 0.13.0 -- name it at the cut; so do v23 and v24; v25, the ch.17 entry instance, ships in
     // the release after 0.13.1 -- name it at the cut; so do v26, the substrate state query, v27, the
     // substrate availability query, and v28, kIntent_Place and its state query; v29, the client facet
-    // priority query, ships in the release after 0.14.0 -- name it at the cut).
+    // priority query, ships in the release after 0.14.0 -- name it at the cut; so does v30, ch.19's
+    // kTravel_CrossCells).
     const char* MinReleaseForAbi(std::uint32_t abi) {
         switch (abi) {
         case 1:  return "0.2.0";
@@ -454,6 +455,9 @@ namespace {
                   "APMF_API_v29's slot must start right after the v28 prefix");
     static_assert(sizeof(APMF_API::APMF_API_v29) == sizeof(APMF_API::APMF_API_v28) + sizeof(void*),
                   "APMF_API_v29 = the v28 prefix plus exactly one function pointer");
+
+    // ABI v30 (ch.19 kTravel_CrossCells, a TravelFlags bit read through the existing RequestEx / Repoint) adds NO
+    // slot, like v13: the object stays an APMF_API_v29 and `abiVersion` reports 30.
 
     constexpr APMF_API::APMF_API_v29 g_api{
         {
