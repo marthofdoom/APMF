@@ -164,8 +164,9 @@
 //
 // CLOSE (design 3.6): the claim's RELEASED fire (fire-and-forget). The census 0x0B NotifyStartCast
 // seat (hand Charged -> Casting, the release REQUEST) only marks the window RELEASING; it closes as
-// "fired" on the holder's TESSpellCastEvent for the driven form, or the hand back to None after
-// Casting, and as "fired-not-released" (a warning) when neither comes within 3 s
+// "fired" ONLY on the holder's TESSpellCastEvent for the driven form, as "released-unconfirmed"
+// (a warning) on the hand back to None after a release state (4-6), and as "fired-not-released"
+// (a warning) when neither comes within 3 s
 // (fix/apmf-substrate-release-close, APMF-B93: closing on 0x0B itself freed the controller before
 // the spell left the hand). Also: the claim's end (released, expired, the stop percent), the
 // client's release, the TTL (param.fval seconds, 0 = [CombatSubstrate] fSubstrateTtlSec, clamped
@@ -229,8 +230,9 @@ namespace {
     // fix/apmf-substrate-release-close (APMF-B93, field-proven 2026-10-26, LoreRim v273, 3 of 3 windows): the census
     // 0x0B NotifyStartCast fires when the hand goes Charged -> Casting, i.e. the release was REQUESTED, not done. The
     // old close on it ran StopCombat 16-33 ms later and freed the controller before the spell left the hand (anim
-    // SpellFire 0 every time). Now 0x0B only marks the window RELEASING; it closes as "fired" on real release evidence
-    // (the holder's TESSpellCastEvent for the driven form, or the hand back to None after it was seen at >= Casting).
+    // SpellFire 0 every time). Now 0x0B only marks the window RELEASING; it closes as "fired" ONLY on the holder's
+    // TESSpellCastEvent for the driven form. The hand back to None after a release state (4-6) closes as
+    // "released-unconfirmed" (a warning: an interrupt reads the same; review F1 of 608df67).
     // The wait is bounded: MFO measured NotifyStartCast -> TESSpellCastEvent at 0.33 to 2.02 s on the same deck
     // (2026-10-26). 3 s is 1.5x the longest measured lag (a floor over the real cadence, principle 9); past it the
     // window closes LOUDLY as "fired-not-released" (principle 7), never silently as fired.
@@ -461,7 +463,7 @@ namespace {
         std::uint64_t    treeStartAt = 0;
         // fix/apmf-substrate-release-close (APMF-B93): 0x0B NotifyStartCast on the driven form marks the window
         // RELEASING (the TTL defers to kReleaseWaitMs from here); the hand's highest state seen while releasing
-        // (>= 4 Casting arms the "back to None" evidence); how the release was proven (nullptr = not yet)
+        // (4-6, a release state, arms the "back to None" close, released-unconfirmed); how it closed (nullptr = not yet)
         bool             releasing = false, releasePeak = false;
         std::uint64_t    releaseAtMs = 0;
         RE::FormID       releaseForm = 0;
@@ -1281,7 +1283,7 @@ namespace {
         const std::string rel =
             a_sub.releasing
                 ? fmt::format("release: NotifyStartCast 0x{} at +{} ms after the open, waited {} ms (bound {} ms), hand max "
-                              "state {} while releasing, proven by {}; {}",
+                              "state {} while releasing, closed by {}; {}",
                               Hex(a_sub.releaseForm), a_sub.releaseAtMs > a_sub.openedMs ? a_sub.releaseAtMs - a_sub.openedMs : 0,
                               a_now > a_sub.releaseAtMs ? a_now - a_sub.releaseAtMs : 0, kReleaseWaitMs, a_sub.releaseHandMax,
                               a_sub.releaseHow ? a_sub.releaseHow : "NOTHING (not released)", ev)
@@ -1668,7 +1670,8 @@ namespace {
                     a_sub.releaseForm = fired;
                     spdlog::info("[substrate] 0x{} RELEASING 0x{} at +{} ms after the open: NotifyStartCast (Charged -> "
                                  "Casting) is the release REQUEST; the substrate stays open until the holder's "
-                                 "TESSpellCastEvent or the hand back to None (bound {} ms; the TTL defers to it).",
+                                 "TESSpellCastEvent (fired) or the hand back to None (released-unconfirmed) (bound {} ms; "
+                                 "the TTL defers to it).",
                                  Hex(a_sub.id), Hex(fired), a_now - a_sub.openedMs, kReleaseWaitMs);
                 }
                 const RE::FormID ev = s.castEventForm.load(std::memory_order_acquire);
@@ -1679,11 +1682,20 @@ namespace {
                     // the hand read keys on the form 0x0B released (the claim's spell or proxy at that moment)
                     const std::uint32_t hs = HandStateFor(actor, a_sub.releaseForm, 0);
                     a_sub.releaseHandMax = (std::max)(a_sub.releaseHandMax, hs);
-                    if (hs >= 4) a_sub.releasePeak = true;
+                    // review F1 of 608df67: only the release states (4 Casting, 5 Released, 6 Concluding) arm the peak;
+                    // 7 is unnamed, 8 / 9 are Interrupt / Interrupt-Deselect (CommonLib MagicCaster.h State at 57be9d67). The hand back
+                    // to None is NOT proof of a fire (an interrupt, an equip rescore or a currentSpell change reads the
+                    // same): it closes as "released-unconfirmed", a warning. Only the TESSpellCastEvent closes as "fired".
+                    if (hs >= 4 && hs <= 6) a_sub.releasePeak = true;
                     if (a_sub.releasePeak && hs == 0) {
-                        why              = "fired";
-                        a_sub.releaseHow = "the hand back to None after Casting (no TESSpellCastEvent yet: an interrupt "
-                                           "during Casting reads the same)";
+                        why              = "released-unconfirmed";
+                        a_sub.releaseHow = "the hand back to None after a release state (UNCONFIRMED: no TESSpellCastEvent; "
+                                           "an interrupt reads the same)";
+                        spdlog::warn("[substrate] 0x{} RELEASED-UNCONFIRMED: the hand went back to None {} ms after "
+                                     "NotifyStartCast on 0x{} (max state {} while releasing) with NO TESSpellCastEvent for "
+                                     "the driven form. Closing; not counted as a fire (an interrupt reads the same).",
+                                     Hex(a_sub.id), a_now - a_sub.releaseAtMs, Hex(a_sub.releaseForm),
+                                     a_sub.releaseHandMax);
                     } else if (a_now - a_sub.releaseAtMs >= kReleaseWaitMs) {
                         why = "fired-not-released";
                         spdlog::warn("[substrate] 0x{} FIRED-NOT-RELEASED: NotifyStartCast on 0x{} {} ms ago and no release "
@@ -1691,7 +1703,8 @@ namespace {
                                      "state {}, max {} while releasing). Closing; the cast did NOT complete under the "
                                      "substrate.",
                                      Hex(a_sub.id), Hex(a_sub.releaseForm), a_now - a_sub.releaseAtMs, kReleaseWaitMs,
-                                     a_sub.releasePeak ? "reached Casting and is" : "never read >= Casting; it is", hs,
+                                     a_sub.releasePeak ? "reached a release state (4-6) and is"
+                                                       : "never read a release state (4-6); it is", hs,
                                      a_sub.releaseHandMax);
                     }
                 }
@@ -2881,8 +2894,8 @@ namespace apmf::combatsubstrate {
             apmf::substrateprobe::CombatEventSinkOrder(holder, CombatEventSink::Get());   // R5 F-4: the passive probe only
         } else {
             spdlog::error("[substrate] ScriptEventSourceHolder unavailable: trigger (b) (a hit on the holder), the "
-                          "combat-state-event log and the TESSpellCastEvent release evidence are OFF (a fire closes on the "
-                          "hand back to None, else as fired-not-released); triggers (a) and (c) still drop a substrate on "
+                          "combat-state-event log and the TESSpellCastEvent release evidence are OFF (no window can close "
+                          "as fired: released-unconfirmed or fired-not-released only); triggers (a) and (c) still drop a substrate on "
                           "real combat.");
         }
         g_notInstalledReason.store("", std::memory_order_release);

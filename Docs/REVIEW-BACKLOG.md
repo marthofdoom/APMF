@@ -757,8 +757,9 @@ design §4 / S4, where the engine equips the claimed spell under the claim. Reco
 ### APMF-B93 (RESOLVED by fix/apmf-substrate-release-close, 2026-10-26; was SEV-4, F12) -- the fire close may cut the charge
 FIELD-PROVEN 2026-10-26 (LoreRim v273, 3 of 3 windows): 0x0B fired on the hand's Charged -> Casting, `CLOSE reason=fired`
 16-33 ms later, StopCombat freed the controller, `anim SpellFire 0` every time. RESOLVED: 0x0B only marks the window
-RELEASING; `fired` needs the holder's TESSpellCastEvent for the driven form or the hand back to None after Casting; 3 s
-without either closes as `fired-not-released` (a warning); the TTL defers while releasing. Original entry:
+RELEASING; `fired` needs the holder's TESSpellCastEvent for the driven form; the hand back to None after a release state
+(4-6) closes as `released-unconfirmed` (a warning, review F1 of 608df67); 3 s without either closes as
+`fired-not-released` (a warning); the TTL defers while releasing. Original entry:
 Raised against a512763, 2026-10-13. Reviewer (verbatim): "The "fire" close. It rides 0x0B `NotifyStartCast`, whose name
 and callers (49083/49086/49101/49159) suggest the start of the cast. If so, `CloseSub`'s StopCombat would cut the
 charging animation. The S2a dry run does not exercise this, but P4 (S3) must prove it."
@@ -1113,3 +1114,21 @@ Reviewer (F5, as relayed by the coordinator): "Failed then StuckTimeout publish 
 
 ### APMF-B199 (SEV-5, OPEN, channels/Travel.cpp failure hold) -- a held BLOCKED leg that later arrives keeps reading kLeg_Blocked (raised against 42b0e2b, tier-3 review F6)
 Reviewer (F6, as relayed by the coordinator): "a held BLOCKED leg that later arrives keeps reading kLeg_Blocked". The BLOCKED hold resumes the walk when the engine leaves Movement Blocked, but Poll skips a failure hold, so an arrival is never recorded until the client re-points or releases.
+
+### APMF-B200 (SEV-4, OPEN, channels/CombatSubstrate.cpp Serve) -- a TESSpellCastEvent alone closes as fired with no 0x0B seen (raised against 608df67, tier-3 review F2)
+Reviewer (F2, as relayed by the coordinator): "a TESSpellCastEvent alone closes as fired even when no 0x0B was seen (releasing false) while the census seat is installed (~1671); a non-animated cast (CastSpellImmediate) would read as an animated fire. Recommend a separate reason in that case." Deferred (SEV-4).
+
+### APMF-B201 (SEV-4, OPEN, channels/CombatSubstrate.cpp Serve) -- the claim ending mid-release closes as "claim ended" and StopCombat cuts the cast (raised against 608df67, tier-3 review F3)
+Reviewer (F3, as relayed by the coordinator): "claim ending mid-release closes as "claim ended" at info and StopCombat cuts the cast; reachable only with tree start > ~6 s or raised fSubstrateTtlSec. Recommend warn "claim ended mid-release"." Deferred (SEV-4).
+
+### APMF-B202 (SEV-4, OPEN, channels/CombatSubstrate.cpp Serve / SpellCastSink) -- a Repoint during the release (raised against 608df67, tier-3 review F4)
+Reviewer (F4, as relayed by the coordinator): "Repoint during release: flipping to concentration skips the release block and never clears releasing (TTL stays deferred); castEventForm keeps only the first event so an old-form event before a same-frame re-aim yields a false fired-not-released." Deferred (SEV-4).
+
+### APMF-B203 (SEV-4, OPEN, channels/CombatSubstrate.cpp NoteCastBuilt) -- tree-outside-gate fires only on a caster BUILD (raised against 608df67, tier-3 review F5)
+Reviewer (F5, as relayed by the coordinator): "tree-outside-gate fires only on a caster BUILD; a tree running outside the gate that never builds stays undenied until the 10 s start floor (window 2's movement started before the build at +983 ms). LEAF GATE probe diagnoses next cycle." Deferred (SEV-4); the next field cycle's LEAF GATE line is the input.
+
+### APMF-B204 (SEV-5, OPEN, channels/CombatSubstrate.cpp Install, Docs/VERIFIED-ADDRESSES.md) -- the TESSpellCastEvent source has no verified row (raised against 608df67, tier-3 review F6)
+Reviewer (F6, as relayed by the coordinator): "ScriptEventSourceHolder +0xE18 TESSpellCastEvent source has no VERIFIED-ADDRESSES row (reviewer checked 1.5.97/1.6.1170/1.7.104 destructor funclets, layout consistent; HitSink/CombatEventSink share the gap). Add a row later." Deferred (SEV-5).
+
+### APMF-B205 (SEV-5, OPEN, channels/CombatSubstrate.cpp) -- the file is 3051 lines (raised against 608df67, tier-3 review F7)
+Reviewer (F7, as relayed by the coordinator): "CombatSubstrate.cpp 3051 lines, split stays APMF-B123." Deferred (SEV-5); the split is APMF-B123's own brief.

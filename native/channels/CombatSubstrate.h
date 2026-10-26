@@ -126,9 +126,9 @@ namespace apmf::combatsubstrate {
 
     // core/CasterTypeCensus.cpp's 0x0B NotifyStartCast observer: the hand went Charged -> Casting
     // (the release REQUEST). Records it for a holder; the game thread marks the window RELEASING
-    // and closes it as "fired" only on real release evidence (the holder's TESSpellCastEvent for
-    // the driven form, or the hand back to None after Casting), else after 3 s as
-    // "fired-not-released" (fix/apmf-substrate-release-close, APMF-B93).
+    // and closes it as "fired" only on the holder's TESSpellCastEvent for the driven form, as
+    // "released-unconfirmed" on the hand back to None after a release state (4-6), else after 3 s
+    // as "fired-not-released" (fix/apmf-substrate-release-close, APMF-B93).
     void NoteCastFired(RE::CombatController* a_cc, RE::CombatMagicCaster* a_caster);
 
     // core/CasterTypeCensus.cpp's 0x06 CheckStartCast observer, on a YES: the engine BUILT a caster.

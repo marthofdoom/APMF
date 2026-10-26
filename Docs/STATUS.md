@@ -89,8 +89,8 @@ build/finding/workflow change.
 - Field check: `[substrate] MOVEMENT HOLD armed` at load; per window `MOVEMENT HELD`, `TREE STARTED +<ms>`, `EQUIP allowed`,
   `CLAIM SCORE`, `EQUIP window end ... REACHED the hand`, `RELEASING 0x<form>` (0x0B, the release request), the census `VERDICT: FIRED`
   with `anim SpellFire` >= 1, `CLOSE reason=fired`, the `WINDOW` line with `Combat Parallel entered 1 time(s)` and
-  `proven by the TESSpellCastEvent`, and the `LEAF GATE` line (fix/apmf-substrate-release-close, APMF-B93: a
-  `FIRED-NOT-RELEASED` or `TREE OUTSIDE THE GATE` warning is a failed window).
+  `closed by the TESSpellCastEvent`, and the `LEAF GATE` line (fix/apmf-substrate-release-close, APMF-B93: a
+  `RELEASED-UNCONFIRMED`, `FIRED-NOT-RELEASED` or `TREE OUTSIDE THE GATE` warning is a failed window).
 
 ## HEAD OF WORK 2026-10-21 -- ch.19 LIVE RE-POINT RUNS ON A FRESH SLOT (+ DONE-WHILE-WALKING, [obs] wording), branch `fix/apmf-repoint-fresh-slot`, NOT merged
 
