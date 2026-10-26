@@ -187,7 +187,14 @@ If it's missing or disabled, APMF refuses every `kIntent_Travel` claim and names
 reason once in the log, so a client's own degrade path runs. Nothing else breaks. Every
 other facet behaves exactly the same without it.
 
-## What is in v0.14.0
+## What is in v0.15.0
+
+- **Travel across cells (ABI v30).** The `kTravel_CrossCells` flag on a travel claim to a reference makes the follower walk through doors to that NPC, the game's own way, and follow them if they move. It arrives in the same interior cell or the same outdoor worldspace and inside the radius, then is held until the mod releases it. Without the flag nothing changes.
+- **Client facet priority (ABI v29).** `GetClientFacetPriority` returns the calling mod's own priority on a facet. 0 means off.
+- **The combat substrate holds the movement half** of the follower's combat tree instead of failing it, and its time limit runs from the tree's start. `bSubstrateMovementHold` and `fSubstrateTtlSec` in `[CombatSubstrate]`. A passive `CLAIM SCORE` line shows what the game scored the claimed spell.
+- Needs ABI v30 for the new calls. Older clients keep working.
+
+### v0.14.0
 
 - **Place (ABI v28).** `kIntent_Place` moves an NPC beside a reference or to a point in an interior cell, once, through the game's own move call. `GetPlaceState` says what happened.
 - **Equip enforced for every declared category by default,** and an equip claim can name one copy of an item (ABI v25).
@@ -227,7 +234,7 @@ other facet behaves exactly the same without it.
 
 ## Status
 
-Phase 1 built, now at v0.14.0, ABI v28 (see [Docs/STATUS.md](Docs/STATUS.md)). The central
+Phase 1 built, now at v0.15.0, ABI v30 (see [Docs/STATUS.md](Docs/STATUS.md)). The central
 `Actor::Update` (0xAD) hook drives a multi-NPC control map (keyed by FormID,
 scales to hundreds, an uncontrolled NPC pays one hash-miss), a real
 inter-plugin C-ABI client API (`native/APMF_API.h`), and the full documented
