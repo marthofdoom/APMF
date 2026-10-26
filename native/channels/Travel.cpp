@@ -265,7 +265,13 @@ namespace {
     // expect to see, so it cannot cut a live leg short. When it fires the leg is
     // dropped and the reason is logged as a FAILURE, loudly and by name -- it is not
     // retried and it is not hidden (principle 7).
+    // ABI v30 (review F1 of c206088): a kTravel_CrossCells leg is NOT timed from its start. A walk through
+    // several load doors to a vendor can legitimately take longer than two minutes, so a flagged leg's net
+    // fires kLegMaxMs after its last PROGRESS (Leg::xProgressMs): the actor changed parent cell, closed the
+    // same-space distance by kXProgressUnits on its best so far, or is waiting for an unloaded destination.
+    // An unflagged leg is timed from its start exactly as before.
     constexpr std::uint64_t kLegMaxMs = 120000;
+    constexpr float         kXProgressUnits = 128.0f;
 
     // ABI v12: THE BLOCKED END. The engine answers "this actor cannot move along its
     // path" by running a runtime package of type 36, Movement Blocked
@@ -433,6 +439,12 @@ namespace {
         RE::FormID            xActorCell  = 0;
         RE::FormID            xDestCell   = 0;
         bool                  xWaitLogged = false;
+        // The PROGRESS clock of a cross-cell leg (review F1 of c206088): the stuck net of a flagged leg fires
+        // kLegMaxMs after the last progress, not after the start. Progress = the ACTOR's parent cell changed
+        // (which also re-bases `xBestDist`), the same-space distance beat `xBestDist` by kXProgressUnits, or
+        // arrival is waiting for an unloaded destination (XArrive::kWait). Reset with the log state above.
+        std::uint64_t         xProgressMs = 0;
+        float                 xBestDist   = std::numeric_limits<float>::max();
     };
 
     // ABI v30: does this leg run the cross-cell rules? A FORM reference destination whose claim set
@@ -452,6 +464,8 @@ namespace {
         a_leg.xActorCell  = 0;
         a_leg.xDestCell   = 0;
         a_leg.xWaitLogged = false;
+        a_leg.xProgressMs = apmf::clock::MonotonicMs();   // a start or re-point is the first progress
+        a_leg.xBestDist   = std::numeric_limits<float>::max();
     }
 
     void ResetBlockedClock(Leg& a_leg) {
@@ -994,14 +1008,16 @@ namespace {
     }
 
     // PASSIVE: a line when the leg starts (a_when set) and whenever the actor's or the destination's parent
-    // cell changes (a_when null).
-    void XLogCells(RE::FormID a_id, Leg& a_leg, const RE::Actor* a_actor, const RE::TESObjectREFR* a_dest,
+    // cell changes (a_when null). Returns true when the ACTOR's parent cell changed since the last line (the
+    // progress test of review F1; a destination wandering between cells is not the actor's progress).
+    bool XLogCells(RE::FormID a_id, Leg& a_leg, const RE::Actor* a_actor, const RE::TESObjectREFR* a_dest,
                    float a_dist, const char* a_when) {
         const auto*      ac  = a_actor->GetParentCell();
         const auto*      dc  = a_dest->GetParentCell();
         const RE::FormID aId = ac ? ac->GetFormID() : 0;
         const RE::FormID dId = dc ? dc->GetFormID() : 0;
-        if (!a_when && aId == a_leg.xActorCell && dId == a_leg.xDestCell) return;
+        if (!a_when && aId == a_leg.xActorCell && dId == a_leg.xDestCell) return false;
+        const bool actorMoved = !a_when && aId != a_leg.xActorCell;
         if (!a_when) a_when = (a_leg.xActorCell == 0 && a_leg.xDestCell == 0) ? "first poll" : "CELL CHANGE";
         a_leg.xActorCell = aId;
         a_leg.xDestCell  = dId;
@@ -1014,6 +1030,7 @@ namespace {
                      dc && dc->IsInteriorCell() ? "interior" : "worldspace", Hex(dSpace),
                      dc && !dc->IsInteriorCell() && !dc->IsAttached() ? ", cell not loaded" : "", a_dist,
                      aSpace != 0 && aSpace == dSpace ? "same space" : "DIFFERENT space");
+        return actorMoved;
     }
 
     // PASSIVE (Engage / OnOwnerChanged): say whether a claim's kTravel_CrossCells bit applies. It is honoured on
@@ -2724,7 +2741,7 @@ namespace apmf::travel {
             // him back, and re-offering would be a re-assert (Channel.h). Combat does not end a
             // hold: the walk it cancels is over, and the engine's own combat runs over the package
             // and hands it back.
-            if (leg.held) {
+            if (leg.held && leg.destKind == DestKind::kCell) {   // review F5 of c206088: a CELL hold only (a ref hold is the branch above)
                 auto* cell = RE::TESForm::LookupByID<RE::TESObjectCELL>(leg.destId);
                 if (!cell) {
                     EndLeg(id, leg, "the held destination cell no longer resolves", false, APMF_API::kLeg_DestGone);
@@ -2894,8 +2911,20 @@ namespace apmf::travel {
                     // ABI v30 kTravel_CrossCells: arrival in the destination's own space, then HOLD (see
                     // XArrival / HoldAtRef). Distance alone never arrives: an interior's coordinates can sit
                     // within the radius of an exterior point.
-                    XLogCells(id, leg, a, d, dist, nullptr);
-                    const XArrive at = XArrival(a, d, dist, leg.radius);
+                    const bool    cellMoved = XLogCells(id, leg, a, d, dist, nullptr);
+                    const XArrive at        = XArrival(a, d, dist, leg.radius);
+                    // PROGRESS (review F1 of c206088): the stuck net below is timed from the last of these.
+                    {
+                        const RE::FormID aSp       = XSpaceId(a->GetParentCell());
+                        const bool       sameSpace = aSp != 0 && aSp == XSpaceId(d->GetParentCell());
+                        bool             progress  = cellMoved || at == XArrive::kWait;
+                        if (cellMoved) leg.xBestDist = sameSpace ? dist : std::numeric_limits<float>::max();
+                        else if (sameSpace && dist < leg.xBestDist - kXProgressUnits) {
+                            leg.xBestDist = dist;
+                            progress      = true;
+                        }
+                        if (progress) leg.xProgressMs = now;
+                    }
                     if (at == XArrive::kYes) {
                         HoldAtRef(id, leg, d, dist);
                         continue;
@@ -2992,7 +3021,13 @@ namespace apmf::travel {
             // failure report. It runs for an unloaded actor too: it is a clock, not a movement
             // read, and a leg that has not arrived in kLegMaxMs is reported whether or not the
             // player can see the actor.
-            if (now - leg.legStartedMs > kLegMaxMs) {
+            // ABI v30 (review F1 of c206088): a CROSS-CELL leg is timed from its last PROGRESS (Leg::xProgressMs),
+            // not from its start, so a long walk through several doors is not cut at two minutes while it moves.
+            const bool xNet = CrossCells(leg);
+            if (xNet ? (now - leg.xProgressMs > kLegMaxMs) : (now - leg.legStartedMs > kLegMaxMs)) {
+                const std::string xs =
+                    xNet ? std::format(" (cross-cell leg: no progress for {} s)", (now - leg.xProgressMs) / 1000)
+                         : std::string();
                 if (leg.doneWhileWalking) {
                     const RE::TESPackage* curPkg = a->GetCurrentPackage();
                     const bool stillOurs = leg.slot >= 0 && g_pkg[leg.slot] && curPkg == g_pkg[leg.slot];
@@ -3006,12 +3041,12 @@ namespace apmf::travel {
                               "STUCK -- OnPackageEnd for our package was seen {:.0f}u from the destination (radius "
                               "{:.0f}u); the current package now is 0x{}", leg.doneDist, leg.radius,
                               Hex(curPkg ? curPkg->GetFormID() : 0));
-                    EndLeg(id, leg, why.c_str(), true, APMF_API::kLeg_StuckTimeout);
+                    EndLeg(id, leg, (why + xs).c_str(), true, APMF_API::kLeg_StuckTimeout);
                 } else {
-                    EndLeg(id, leg, "STUCK -- no arrival, no combat, and the destination is still there "
+                    const std::string why = std::string("STUCK -- no arrival, no combat, and the destination is still there "
                                     "after the leg safety net elapsed (unreachable or cross-worldspace "
-                                    "destination, blocked path, or an outranking package is winning)", true,
-                           APMF_API::kLeg_StuckTimeout);
+                                    "destination, blocked path, or an outranking package is winning)") + xs;
+                    EndLeg(id, leg, why.c_str(), true, APMF_API::kLeg_StuckTimeout);
                 }
             }
         }

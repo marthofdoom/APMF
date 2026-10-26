@@ -2252,7 +2252,12 @@ no-op at Release off exactly 1.6.1170 / 1.5.97 / 1.7.104, VR included (G1 2026-1
   (the follower is handed back to his own package at the vendor, the Markarth failure shape); testing `leg.held`
   alone in the cell-hold branch (a held REF leg would be looked up as a CELL and end DestGone at once: the ref
   branch must stay first and test `heldRef`); letting distance alone arrive a cross-cell leg; applying the rules
-  to a leg without the flag (the no-flag path is the shipped contract).
+  to a leg without the flag (the no-flag path is the shipped contract). **Progress net (review F1 of c206088):** a
+  flagged leg's stuck net fires `kLegMaxMs` after `Leg::xProgressMs` (actor parent-cell change from `XLogCells`'s
+  return, same-space distance beating `xBestDist` by `kXProgressUnits` 128u, or `XArrive::kWait`), never after
+  `legStartedMs`; reset in `ResetCrossCellLog` (StartLeg, in-place re-point). The cell-hold branch tests
+  `destKind == kCell` (F5). Open: REVIEW-BACKLOG APMF-B193 (engine DONE before a moving vendor, watch), APMF-B194
+  (unloaded actor in the interior).
   (7) **ABI v11 position legs (`kTravel_ToPosition`, 2026-09-23).** `Engage`/`OnOwnerChanged`
   record the POINT; `Compose` places APMF's XMarker through `poscast::PlaceMarker` and the
   leg is then an ordinary ref leg to it (`destAliveAtTarget = false`: a marker never dies).

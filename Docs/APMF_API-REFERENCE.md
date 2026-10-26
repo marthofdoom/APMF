@@ -452,7 +452,8 @@ marth 2026-10-25: "So harbingers moveto's need to navigate doorways natively" an
 | after arrival | the leg ENDS: offer released, slot freed, the actor's own package resumes | the leg HOLDS like a cell leg: `kLeg_Arrived`, the ch.9 offer and the package slot stay until you Repoint or Release |
 | a held leg ends on | (not held) | the actor dead or gone, the destination deleted, disabled or dead after being alive at target time (`kLeg_DestGone`), a refused Repoint, or your Release. Combat, BLOCKED and the stuck net do not end a hold |
 | leaving the destination while held | (not held) | logged once per departure, never acted on: Repoint to walk back |
-| combat, BLOCKED, the 120 s stuck net, DestGone while walking | as documented | unchanged |
+| combat, BLOCKED, DestGone while walking | as documented | unchanged |
+| the 120 s stuck net | 120 s from the leg's start | 120 s from the last PROGRESS: the actor changed parent cell, got 128u closer than its best so far in the destination's space, or is waiting for an unloaded destination. A long walk through several doors is not cut while it moves. The STUCK line adds "no progress for N s" |
 
 **Where it applies.** A FORM reference destination only. With a CELL (it already arrives by cell and holds) or `kTravel_ToPosition` (Harbinger's marker sits in the actor's own space) the bit is stored, ignored and logged as ignored.
 
@@ -460,4 +461,6 @@ marth 2026-10-25: "So harbingers moveto's need to navigate doorways natively" an
 
 **Log.** `[travel-xcell]` lines: the flag at claim / re-point, the cells both ends are in when the leg starts and whenever either changes, the wait for an unloaded destination. Arrival is `[travel-leg] ... ARRIVED ... BY CELL ... HOLDING`.
 
-**Older APMF.** An APMF before v30 ignores the bit: distance arrival, the leg ends on arrival, no hold. Gate on `abiVersion >= 30`. A client built against an older header cannot set the bit (it did not exist there), which is how the flag is honoured only for v30 clients: Harbinger does not record which ABI a client asked for.
+**An unloaded actor in the destination interior.** Harbinger does not move an actor. A follower that is unloaded (the player is elsewhere) and has reached the destination's interior through its door may not close the distance to the destination while unloaded, so the leg does not arrive until it loads (or the stuck net reports no progress). To put an unloaded actor beside the destination, use `kIntent_Place` (ABI v28).
+
+**Older APMF.** An APMF before v30 ignores the bit: distance arrival, the leg ends on arrival, no hold. Gate on `abiVersion >= 30`. Harbinger does not record which ABI a client asked for: any client can pass raw `ival` bits, and a v30 Harbinger honours bit 5 whenever it is set, whatever header the client was built with (the same as the v11 / v12 bits). A client must not set bit 5 unless it means `kTravel_CrossCells`.
