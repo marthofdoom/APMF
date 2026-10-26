@@ -56,6 +56,34 @@ safety net. APMF_API_v12::GetTravelLegState says
 which end it was.)
 ```
 
+<a id="kintent-travel-failure-hold"></a>
+## kIntent_Travel: a BLOCKED or STUCK leg keeps the actor (2026-10-26, no ABI change)
+
+The ends above still happen and still read the same in `GetTravelLegState`. What changed is what Harbinger does
+with its own package offer after two of them. The header's `TravelLegState` comment ("APMF drops only its own
+internal package offer") predates this; the header is byte-shared and was not edited, so this page is the
+contract.
+
+| End | State you read | The package offer | The actor |
+|---|---|---|---|
+| ARRIVED at a reference (no `kTravel_CrossCells`) | `kLeg_Arrived` | released | his own package resumes (unchanged) |
+| ARRIVED in a cell, or at a `kTravel_CrossCells` reference | `kLeg_Arrived` | KEPT (the hold) | stands at the destination (unchanged) |
+| COMBAT, DESTINATION GONE, ACTOR GONE, a refused Repoint | `kLeg_CombatCancelled` / `kLeg_DestGone` / `kLeg_ActorGone` / `kLeg_Failed` | released | his own package resumes (unchanged) |
+| **BLOCKED** | `kLeg_Blocked` | **KEPT** while your claim stands | stays on the travel package, never his own: he stands in the engine's Movement Blocked package while the block lasts, and when the engine leaves it the travel package resumes the walk you declared. This is NOT a stand-still; claim `kIntent_MovementBlock` (ch.1) yourself if you want him still |
+| **STUCK** | `kLeg_StuckTimeout` | **KEPT** while your claim stands | after a DONE-WHILE-WALKING he stands where the engine ended the walk (the package is current in DONE); otherwise he keeps whatever the engine already runs, and nothing new is let in by Harbinger |
+
+A held failure ends only on your **Release** (the offer is released and the actor's own package resumes), your
+**Repoint** (a new leg on a fresh package slot, the same destination included, so a retry after BLOCKED starts
+the engine walking again), or the actor's death or loss (`kLeg_ActorGone`). Combat, the destination and the
+safety net do not end it. A held failure occupies one of the 8 package slots until then.
+
+**DONE-WHILE-WALKING restarts (reference legs).** When the engine ends a reference leg's own travel package
+while the actor is still outside the radius (a destination that moved, or a stop that fell short), and the next
+poll still fails the arrival test, Harbinger re-issues the leg on a fresh package slot, so the engine paths
+again to the destination's current position. Up to 3 restarts per leg (your Repoint gives a fresh budget). The
+next one ends the leg `kLeg_StuckTimeout` at once, held as above, instead of after the 2-minute safety net. The
+state goes back to `kLeg_Walking` (with a new `seq`) at each restart.
+
 <a id="kintent-travel-one-facet"></a>
 ## kIntent_Travel: one intent, one facet
 
@@ -452,7 +480,7 @@ marth 2026-10-25: "So harbingers moveto's need to navigate doorways natively" an
 | after arrival | the leg ENDS: offer released, slot freed, the actor's own package resumes | the leg HOLDS like a cell leg: `kLeg_Arrived`, the ch.9 offer and the package slot stay until you Repoint or Release |
 | a held leg ends on | (not held) | the actor dead or gone, the destination deleted, disabled or dead after being alive at target time (`kLeg_DestGone`), a refused Repoint, or your Release. Combat, BLOCKED and the stuck net do not end a hold |
 | leaving the destination while held | (not held) | logged once per departure, never acted on: Repoint to walk back |
-| combat, BLOCKED, DestGone while walking | as documented | unchanged |
+| combat, BLOCKED, DestGone while walking | as documented | unchanged (since 2026-10-26 BLOCKED and STUCK keep the offer on both: [failure hold](#kintent-travel-failure-hold)) |
 | the 120 s stuck net | 120 s from the leg's start | 120 s from the last PROGRESS: the actor changed parent cell, got 128u closer than its best so far in the destination's space, or is waiting for an unloaded destination. A long walk through several doors is not cut while it moves. The STUCK line adds "no progress for N s" |
 
 **Where it applies.** A FORM reference destination only. With a CELL (it already arrives by cell and holds) or `kTravel_ToPosition` (Harbinger's marker sits in the actor's own space) the bit is stored, ignored and logged as ignored.
