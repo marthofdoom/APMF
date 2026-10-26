@@ -1460,6 +1460,19 @@ namespace {
             DropSub(a_sub);
             return false;
         }
+        // fix/apmf-ooc-substrate: the TTL runs from the tree's first node under the substrate (principle 9).
+        if (!a_sub.treeStarted) {
+            if (const std::uint64_t t = s.treeStartMs.load(std::memory_order_relaxed); t != 0) {
+                a_sub.treeStarted = true;
+                a_sub.treeStartAt = t;
+                a_sub.deadlineMs  = t + a_sub.ttlMs;
+                spdlog::info("[substrate] 0x{} TREE STARTED +{} ms after the open (the measured start latency); the TTL "
+                             "({:.1f} s) runs from here, to +{} ms after the open.",
+                             Hex(a_sub.id), t > a_sub.openedMs ? t - a_sub.openedMs : 0,
+                             static_cast<double>(a_sub.ttlMs) / 1000.0,
+                             a_sub.deadlineMs > a_sub.openedMs ? a_sub.deadlineMs - a_sub.openedMs : 0);
+            }
+        }
         auto* actor = RE::TESForm::LookupByID<RE::Actor>(a_sub.id);
         const char* why = a_sub.closeAsked ? a_sub.closeWhy : nullptr;
         if (!why) {
@@ -1472,19 +1485,6 @@ namespace {
                 why = a_sub.treeStarted ? "ttl"
                                         : "the behaviour tree never ran within the start floor (10 s after the open; measured "
                                           "starts 2.7-5.1 s, 2026-10-20)";
-        }
-        // fix/apmf-ooc-substrate: the TTL runs from the tree's first node under the substrate (principle 9).
-        if (!why && !a_sub.treeStarted) {
-            if (const std::uint64_t t = s.treeStartMs.load(std::memory_order_relaxed); t != 0) {
-                a_sub.treeStarted = true;
-                a_sub.treeStartAt = t;
-                a_sub.deadlineMs  = t + a_sub.ttlMs;
-                spdlog::info("[substrate] 0x{} TREE STARTED +{} ms after the open (the measured start latency); the TTL "
-                             "({:.1f} s) runs from here, to +{} ms after the open.",
-                             Hex(a_sub.id), t > a_sub.openedMs ? t - a_sub.openedMs : 0,
-                             static_cast<double>(a_sub.ttlMs) / 1000.0,
-                             a_sub.deadlineMs > a_sub.openedMs ? a_sub.deadlineMs - a_sub.openedMs : 0);
-            }
         }
         if (!why && !a_sub.holdLogged && s.holds.load(std::memory_order_relaxed) != 0) {
             a_sub.holdLogged = true;

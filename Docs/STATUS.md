@@ -4,6 +4,46 @@ Updated 2026-10-21. Current version **v0.14.0** (cut 2026-10-21, ABI v28, see CH
 shipped, what's probe-gated, what's next. Keep this current in the SAME change as any
 build/finding/workflow change.
 
+## HEAD OF WORK 2026-10-25 -- OOC SUBSTRATE REACHES ITS CAST (the Movement half HELD, the TTL from the tree's start), branch `fix/apmf-ooc-substrate`, NOT merged
+
+- **Field (2026-10-20, LoreRim town run 2, MFO `_evidence/2026-10-20b-lorerim-town-run2/`):** five Auri windows (Oakflesh on
+  Self, AUTO BENEFICIAL): OPEN, CAST CLAIMED, HANDS stowed, entry on the anchor, then `EQUIP window end ... did NOT reach the
+  hand ... Action resource let through 0, EquipSpell let through 0; the Action branch never ran`. No cast ever fired.
+- **Cause 1 (VERIFIED, fixed): the failed Movement half killed the Action half.** The combat tree's root is the Parallel
+  "Combat Parallel" {Movement Link, Action Link} (AE 47531); the Movement tree's root is a second Parallel, "Movement Parallel"
+  (AE 49436). A Parallel's update (AE 47425, SE 46169, 1.7.104 0x870380) fails itself when a child thread finishes failed and
+  interrupts every other child. The allow-list force-failed CheckUnreachableTarget and AcquireResource<2> "Movement" (82 each,
+  window 1): the Movement Parallel failed, the Combat Parallel failed and interrupted Action every frame. **Fix:**
+  `core/ActionGate.cpp` THE MOVEMENT HOLD (see MAP.md): for a held holder "Movement Parallel" is entered as an EMPTY Parallel
+  (its own data push, AE 47532 / SE 46278 / 1.7.104 raw 0x874BC0, never its Enter) and kept RUNNING by a new slot-0x04 seat on
+  the Parallel vtable; released through SetFailed + Ascend when the hold no longer stands (one tree restart). pop / interrupt /
+  save / load stay the Parallel's own. `[CombatSubstrate] bSubstrateMovementHold` (1); a hold that did not arm refuses the
+  substrate.
+- **Cause 2 (CORRECTED, not a substrate input): every spell scored 0.000.** The spell score is
+  `CombatController+0x38` (the live combat style) `generalData.magicScoreMult` (+0x30) times the CombatMagicItemData effect sum
+  (AE CalculateScore 0x819AA0 -> 0x819C10; a lookup miss gives -1, not 0). All 33 of Auri's spells, heals and self buffs
+  included, were exactly 0, so the common factor is her controller's combat style giving magic no weight. The substrate
+  zeroes no score input. In a real fight MFO swaps that controller style to its cast style for a cast gambit; under a
+  substrate MFO applies none ("no combat style"). **Not fixed here** (no Harbinger score is invented: D1 stands, "never lift
+  what the engine scored 0"). Passive proof: `[substrate] 0x<f> CLAIM SCORE: the engine scored the claimed spell ... (combat
+  style 0x<cs> magicScoreMult <m>)` once per window (`core/AiCastSeats.cpp` -> `combatsubstrate::NoteClaimScore`). Needs MFO
+  (cast stance style while its substrate cast claim stands) or a marth ruling; see the MFO follow-up below.
+- **Cause 3 (VERIFIED, fixed): the tree started 2.7-5.1 s into a 6 s TTL.** Measured open -> first tree node: 2698 / 3283 /
+  3292 / 5043 / 3331 ms (each 0.2-2.5 s after the engine's first reset of the ignoring-combat bit). **Fix:** the TTL runs from
+  the tree's first node (`ForLeaf` stamps it; `[substrate] 0x<f> TREE STARTED +<ms> ms after the open`), with a 10 s start floor
+  before it (`kTreeStartWaitMs`, twice the longest start); the bark-deny timers cover floor + TTL + 2 s. **But** MFO's own cast
+  claim TTL (`kHealCastTtlMs` = 6000, from filing) still ends windows ("claim ended") at +6 s: MFO follow-up.
+- **Cause 4 (MFO, documented only):** MFO's 17 s backstop (`native/apmf/Substrate.cpp` `kBackstop`) is wall-clock and expires
+  during a menu pause, and it must now cover floor + TTL (up to 10 + 15 s) + MFO's close grace.
+- **MFO follow-up (not this repo):** (1) the backstop pause-aware (count only unpaused game time, as Harbinger's R5 F-5 re-pick
+  wait does) and at least 10 s + the substrate TTL clamp (15 s) + kCloseGrace (2.5 s) = 27.5 s; (2) the substrate road's cast
+  claim `ttlMs` = `kCastMaxTtlMs` (15 s, ch.8b's cap; the start floor + the substrate TTL can reach 16 s at the INI default);
+  (3) cause 2: while its substrate cast claim stands, give the holder's controller the cast stance style MFO uses for a cast
+  gambit in a real fight (or marth rules otherwise); (4) only then flip `bSubstrateCasts` ON by default.
+- Field check: `[substrate] MOVEMENT HOLD armed` at load; per window `MOVEMENT HELD`, `TREE STARTED +<ms>`, `EQUIP allowed`,
+  `CLAIM SCORE`, `EQUIP window end ... REACHED the hand`, the census `VERDICT: FIRED`, `CLOSE reason=fired`, and the `WINDOW`
+  line with `Combat Parallel entered 1 time(s)`.
+
 ## HEAD OF WORK 2026-10-21 -- ch.19 LIVE RE-POINT RUNS ON A FRESH SLOT (+ DONE-WHILE-WALKING, [obs] wording), branch `fix/apmf-repoint-fresh-slot`, NOT merged
 
 - **Field:** MFO re-pointed a LIVE, not-held ch.19 ref leg to a new destination. The in-place branch rewrote package

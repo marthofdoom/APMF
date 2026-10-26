@@ -1409,6 +1409,21 @@ paired nodes) is built at the end of `Install()`, which also installs act + pop 
 `SubstrateLeavesPaired()` must read 95 (every concrete NodeObject class on both runtimes; of the 21, 12 denied, 2 cast-gated, 7 pass incl. the two Idle waits, round 2) or the substrate refuses
 (so ch.23's search-leaf install, `[PursuitLeash] bPursuitLeash`, is a substrate dependency). **What breaks:** never move the substrate
 check after ch.7 / ch.23 (the allow-list must be whole); never deny without arming `t_pending` first.
+**THE MOVEMENT HOLD (2026-10-25, `fix/apmf-ooc-substrate`; the "MOVEMENT HOLD" block above `HoldAct`):** a FAILED child
+fails its Parallel and the Parallel interrupts every sibling (AE 47425 `0x85B150`), so force-failing the movement leaves
+failed the Combat Parallel and killed its Action half every frame (field 2026-10-20: no substrate cast was ever reached).
+For a held holder `ForLeaf` answers `kHold` for the node NAMED "Movement Parallel" (BSFixedString at node+0x08; the
+Movement tree's root, one construction per runtime); `ActThunk` then runs only the Parallel's own DATA PUSH
+(`ActionGate.Hold.ParallelDataPush`, AE 47532 / SE 46278 / 1.7.104 raw `0x874BC0`: an empty Parallel), never its Enter,
+records `{thread, node}` in `g_holds`, and the new slot-0x04 seat `HoldUpdateThunk` (Parallel vtable only) does nothing
+while `combatsubstrate::HoldsMovement` stands, else ends the node through SetFailed + Ascend (one tree restart, native).
+pop / interrupt / SaveGame / LoadGame stay the Parallel's OWN on its valid empty data; `PopThunk` drops the record.
+**What breaks:** running the Parallel's original act (its Enter spawns the movement threads) or pushing anything but its
+own 0x20 (its own pop / save / load read it); routing any slot but 0x04 (a save made while held must stay a valid empty
+Parallel); calling `ForgetMovementHolds` while that controller lives (the hold is then lost: its next update is the
+Parallel's own on an empty array, which completes it); the install check that the original act's +0x11 E8 targets the
+verified push (another mod's hook in slot 0x02 refuses the hold). `[CombatSubstrate] bSubstrateMovementHold=0` turns it
+off (the substrate opens with the hole logged); a hold that did not arm REFUSES the substrate. Backlog: APMF-B186..B188.
 **HARBINGER 1b (2026-10-12):** every ch.7 deny (`ActThunk`) and ch.23 leash deny / end (`LeashAct`, `UpdateThunk`) is
 decided by `ClaimOutranksTree` (`core/FacetAttribution` `Decide`, source Engine, facet CombatAction) after every
 mechanism check: it enforces only when the claim (now read with `TryGetOwningClaimBasis` for its handle) outranks

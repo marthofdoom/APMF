@@ -1068,3 +1068,12 @@ The local `RE::TESPackageEvent` can collide if the CommonLib fork ever defines i
 
 ### APMF-B185 (SEV-5, OPEN, core/ControlMap.cpp OnActorUpdate) -- stale "ONE reader-side mutation" comment (raised against e9f9080)
 The comment in OnActorUpdate still says the obsTick fetch_add is the ONE reader-side mutation; obsLastPkg is a second.
+
+### APMF-B186 (OPEN, author-raised, fix/apmf-ooc-substrate) -- a holder whose controller style gives magic no weight never selects the claimed spell
+Field 2026-10-20: all 33 of Auri's spells scored exactly 0.000 under the substrate. The spell score is the live controller's combat style `magicScoreMult` (CombatController+0x38 -> TESCombatStyle+0x30) times the effect sum (AE 0x819AA0 -> 0x819C10), so a style with magicScoreMult 0 scores every spell 0 and D1 (`core/EquipPreference.cpp`: never lift an engine 0) keeps the claimed one at 0. Not a substrate input: MFO swaps that style to its cast style for a cast gambit in a real fight and applies none under a substrate. Blocks MFO's `bSubstrateCasts` default ON for such followers. Needs the MFO change (cast stance style while its substrate cast claim stands) or a marth ruling on D1 for a substrate claim. Proof line: `[substrate] 0x<f> CLAIM SCORE`. Never deferrable past the next substrate field cycle (rule 9 (b)).
+
+### APMF-B187 (SEV-5, OPEN, author-raised, core/ActionGate.cpp MOVEMENT HOLD) -- hold records of destroyed threads linger until the close / load
+A behaviour thread freed without a pop (AE 0x85D9F0 pops nothing) leaves its `{thread, node}` record until `ForgetMovementHolds` (a close that leaves no controller, or a load). Harmless by construction (any later use of the pair begins with an act(), which rewrites the record), but a table of 64 that fills logs one ERROR and the hold then degrades to the old failing behaviour for new windows.
+
+### APMF-B188 (SEV-5, OPEN, author-raised, core/ActionGate.cpp MOVEMENT HOLD) -- the hold's release costs one tree restart
+When the hold stops standing while the controller lives (real combat), the held node ends through SetFailed + Ascend: the Combat Parallel fails once and the controller rebuilds the tree, so the real fight's first behaviour frame is a restart (one frame, the same restart the old fail loop paid every frame). A success exit would leave the fight without a Movement half until the next restart, so the failure exit is deliberate.

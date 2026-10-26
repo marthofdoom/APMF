@@ -730,3 +730,22 @@ generator verifies them on 1.7.104 by the 1.6.1170 signatures at the table's RVA
 Also checked: ShouldUseTorch (AE 0x67E590 / SE 0x5EC230 / 1.7.104 0x691050) has exactly three callers on each build (the
 updater, CombatInventoryItemTorch slot 0x0F, and a helper reached only from the CombatInventoryItemMagicT slot 0x0F
 functions); of the 37 UnequipObject (38901) callers on 1.6.1170 only the updater tests formType 0x1F.
+
+### Substrate movement hold (2026-10-25, `fix/apmf-ooc-substrate`)
+
+`core/ActionGate.cpp` "MOVEMENT HOLD". One new seat and one new call, proven on all three executables:
+
+| Fact | 1.6.1170 | 1.5.97 | 1.7.104 |
+|---|---|---|---|
+| CombatBehaviorParallel vtable (row `Leaf.CombatBehaviorParallel`) | 0x18D9068 | 0x1692468 | 0x1957630 |
+| slot 0x02 act: `40 53 48 83 EC 30 48 8B DA 48 8D 54 24 20 48 8B CB` then E8 at +0x11 to the data push, then jmp Enter | 0x85FCD0 -> 0x85F990, Enter 0x85B020 | 0x7C8650 -> 0x7C8260, Enter 0x7C41B0 | 0x874F00 -> 0x874BC0, Enter 0x870250 |
+| data push (row `ActionGate.Hold.ParallelDataPush`, 1.7.104 raw row `...1_7_104`): push 0x20, BSTArray ctor, +0x18 = 0 | 0x85F990 (id 47532) | 0x7C8260 (id 46278) | 0x874BC0 (no MIT row) |
+| slot 0x04 update (the NEW seat): `mov ecx,[rdx+120h]; add rcx,[rdx]; jmp Update` | 0x8600A0 -> 0x85B150 | 0x7C8B40 -> 0x7C42F0 | 0x8752D0 -> 0x870380 |
+| Update: a finished child with state 1 -> SetFailed(parent); none left -> Ascend; else interrupt the rest | yes | yes | yes |
+| slot 0x05 interrupt on an empty array -> Ascend (`0x85B300`) | yes | yes (`0x7C4470`) | yes (`0x870530`) |
+| runner: act in phase 2, then update (slot 0x04) when phase 1 and `(flags+0x150) & 3 == 0`, slot 0x05 when state 2 | 0x85DBA0 | 0x7C6800 (46228) | 0x872DD0 |
+| "Movement Parallel": one construction, a Parallel, named through `lea rcx,[node+8]` | 0x8ADFE0 in 0x8AD390 (49436) | 0x816C0F in 0x8166E0 (48431) | 0x8C3550 in 0x8C2900 |
+
+The DLL re-reads the original act's 17 head bytes and its +0x11 E8 target at install and refuses the hold unless that
+target is the verified push (a different body or another mod's hook in slot 0x02). SetFailed / Ascend are the ch.23 rows
+(`ActionGate.Pursuit.SetFailed` / `.Ascend`, verified on all three).
