@@ -1,8 +1,32 @@
 # APMF STATUS — living handoff (start here)
 
-Updated 2026-10-25. Current version **v0.15.0** (cut 2026-10-25, ABI v30, see CHANGELOG) / previously **v0.14.0** (cut 2026-10-21, ABI v28) and **v0.13.1** (cut 2026-10-13, ABI v24) and **v0.13.0** (release cut 2026-10-12; see RELEASED v0.13.0 below; prior v0.12.0 PUBLISHED release, ABI v21). The current state of the build: what's
+Updated 2026-10-26. Current version **v0.15.0** (cut 2026-10-25, ABI v30, see CHANGELOG) / previously **v0.14.0** (cut 2026-10-21, ABI v28) and **v0.13.1** (cut 2026-10-13, ABI v24) and **v0.13.0** (release cut 2026-10-12; see RELEASED v0.13.0 below; prior v0.12.0 PUBLISHED release, ABI v21). The current state of the build: what's
 shipped, what's probe-gated, what's next. Keep this current in the SAME change as any
 build/finding/workflow change.
+
+## HEAD OF WORK 2026-10-26 -- CH.19 KEEPS CONTROL (DONE restarts + the failure hold), branch `fix/apmf-ch19-keep-control`, NOT merged
+
+- marth: "Still some issues with maintaining control." Field: LoreRim v2.7.2 deck log 2026-10-26 (MFO
+  `_evidence/2026-10-26a-lorerim-v272/APMF.log`): Sven / Auri DONE-WHILE-WALKING at 222-269u of a moving vendor
+  stood until the 120 s net; Sven's BLOCKED and STUCK ends released the offer and his own follow package ran until
+  MFO re-pointed.
+- **Fix A, DONE-WHILE-WALKING restarts:** a ref leg (flagged cross-cell or not) whose own package the engine ended
+  outside the radius is re-issued on a FRESH slot on the next poll that still fails the arrival test
+  (`RestartAfterDone` -> `StartOnFreshSlot`, the fresh-slot re-point body, extracted from `ComposeLeg`), at most
+  `kDoneRestartMax` = 3 per client-composed leg (`Leg::doneRestarts`, reset by `ComposeLeg` only); then STUCK at
+  once with the DONE text. A client Repoint of a leg marked DONE-while-walking also takes the fresh slot.
+- **Fix B, the failure hold:** BLOCKED and STUCK go to `HoldAfterFailure` (state still `kLeg_Blocked` /
+  `kLeg_StuckTimeout`, `held` + `heldFailed`, offer and slot KEPT) instead of `EndLeg`; Poll skips it in every
+  detector; a Repoint (same destination included) takes the fresh slot; only Release drops the offer and sends
+  ch.9's release nudge. A DONE leg stands (HoldAtCell's disassembly note); a BLOCKED one stays on the travel
+  package but is not a stand-still (it resumes the walk when the engine leaves Movement Blocked): a client that
+  wants him still claims ch.1. API-REFERENCE `#kintent-travel-failure-hold`; MAP ch.19 What breaks (6c).
+- Review round 1 of 42b0e2b (tier 3): F1 a restart only OUTSIDE the radius (not on a cross-cell kWait); F2 a
+  restart only when the destination MOVED at least `dist - radius` since the leg started (`Leg::destPosAtStart`),
+  else STUCK at once ("destination static"); the DONE line adds XY distance, dz and how far the destination moved;
+  F3 `APMF_API.h` `TravelLegState` / `kLeg_StuckTimeout` comments updated (COMMENT ONLY: MFO must mirror the
+  bytes). Backlog APMF-B197 (slot pressure), B198, B199.
+- No ABI, co-save, seat, INI or address change. Not field-tested.
 
 ## HEAD OF WORK 2026-10-25 -- CH.19 CROSS CELLS (ABI v30 kTravel_CrossCells), branch `feat/apmf-ch19-cross-cells`, NOT merged
 

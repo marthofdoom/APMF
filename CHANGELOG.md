@@ -1,3 +1,8 @@
+## Unreleased
+
+- **A follower whose walk stops short is sent again.** When the game ends a travel walk while the follower is still outside the arrival radius (the NPC it walks to moved on, or the stop fell short), Harbinger now starts the walk again on a fresh travel package, so the game paths to where the destination is now. Up to 3 times per walk. After that the walk is reported stuck at once, instead of the follower standing there for two minutes first. Not yet tested in game.
+- **A blocked or stuck walk keeps the follower.** When a walk ends blocked or stuck while the mod still holds its travel claim, Harbinger keeps its travel package on the follower. The mod reads the same blocked or stuck state as before, but the follower no longer drifts back to his own follow or sandbox package until the mod sends him again or lets him go. A stuck follower stands where the walk ended. A blocked one stays on the walk and carries on once the way is clear. Only releasing the claim hands him back. Not yet tested in game.
+
 ## v0.15.0 -- Walking through doors, the facet priority query and a substrate that reaches its cast
 
 - **The combat substrate now reaches its cast.** Out of combat, the follower's combat tree used to fail its movement half every frame, which interrupted the action half, so the spell equip and the cast were never reached. Harbinger now holds the movement half running instead of failing it, and the action half survives. Setting: `bSubstrateMovementHold` in `[CombatSubstrate]` (1 by default). A hold that did not arm refuses the substrate. Not yet tested in game.
