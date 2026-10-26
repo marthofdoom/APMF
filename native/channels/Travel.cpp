@@ -438,6 +438,11 @@ namespace {
     // ABI v30: does this leg run the cross-cell rules? A FORM reference destination whose claim set
     // kTravel_CrossCells. A cell leg already arrives by cell and holds; a kTravel_ToPosition leg's marker is
     // placed in the actor's own space, so the bit means nothing there (Engage logs that it is ignored).
+    static_assert(APMF_API::kTravel_CrossCells == 0x20u &&
+                      (APMF_API::kTravel_CrossCells &
+                       (APMF_API::kTravel_ReleaseOnTargetDead | APMF_API::kTravel_ToPosition | APMF_API::kTravel_SpeedSet |
+                        APMF_API::kTravel_SpeedMask)) == 0,
+                  "kTravel_CrossCells is bit 5, clear of every earlier TravelFlags bit (append-only)");
     bool CrossCells(const Leg& a_leg) {
         return a_leg.destKind == DestKind::kRef && !a_leg.toPosition &&
                (a_leg.flags & APMF_API::kTravel_CrossCells) != 0;
@@ -956,8 +961,11 @@ namespace {
     // "UNLOADED OUTDOORS": an exterior destination whose parent cell is NOT ATTACHED (outside the loaded grid:
     // the worldspace's persistent cell, or an exterior cell that is not loaded) and that has no 3D. Arrival is
     // then WAITED for (logged once per wait) until it loads. The test deliberately does not read
-    // TESWorldSpace::persistentCell: that member has no verified read in this DLL, and "not attached, no 3D"
-    // is the engine's own loaded state, which covers the persistent-cell case.
+    // TESWorldSpace::persistentCell: that member has no verified read in this DLL (an offline scan of all three
+    // images found no `[cell->worldSpace]+0x88` read to prove it by), and "not attached, no 3D" is the engine's
+    // own loaded state. UNPROVEN, to be read off the first field log: that a persistent cell never reads
+    // kAttached (if it did, such a destination would be judged by its data.location, which is still the
+    // engine's own position for it). The passive [travel-xcell] lines print "cell not loaded" per change.
     enum class XArrive { kNo, kYes, kWait };
 
     // The space a cell is: its own FormID for an interior, its worldspace's for an exterior (0 = unknown).
