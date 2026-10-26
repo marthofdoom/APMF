@@ -395,6 +395,21 @@ namespace apmf::actiongate {
             return (prev == 0 || now - prev >= 10000) && a_last.compare_exchange_strong(prev, now, std::memory_order_relaxed);
         }
 
+        // The node the hold enters: the Parallel named "Movement Parallel" (BSFixedString at node+0x08, the tree
+        // builders' naming helper AE 0x85EE10 / SE 0x7C7820 / 1.7.104 0x874040; the same identification ForLeaf makes at
+        // act). ASCII case-insensitive (the string pool keeps the first spelling it interned).
+        bool NamedMovementParallel(const void* a_node) {
+            const char* n = reinterpret_cast<const RE::BSFixedString*>(static_cast<const std::uint8_t*>(a_node) + 0x08)->c_str();
+            if (!n) return false;
+            const char* lit = "Movement Parallel";
+            for (; *n && *lit; ++n, ++lit) {
+                const char x = (*n >= 'A' && *n <= 'Z') ? static_cast<char>(*n - 'A' + 'a') : *n;
+                const char y = (*lit >= 'A' && *lit <= 'Z') ? static_cast<char>(*lit - 'A' + 'a') : *lit;
+                if (x != y) return false;
+            }
+            return *n == 0 && *lit == 0;
+        }
+
         void HoldUpdateThunk(void* a_this, void* a_control) {
             const auto vt  = *reinterpret_cast<std::uintptr_t*>(a_this);
             const auto oit = g_holdOrigUpdate.find(vt);
@@ -422,8 +437,18 @@ namespace apmf::actiongate {
                 // happens natively (its Enter spawned one thread per child; the array empties only inside this update).
                 // It is an ex-held node with no record (a save made while held, then loaded): the failure exit, so the
                 // tree restarts once as the engine built it, never the original's silent success with no Movement half.
+                //
+                // Why the empty-at-ENTRY test cannot hit a native node (disassembly, the same on all three runtimes:
+                // AE 0x85B020 / 0x85B150 / 0x85DBA0, SE 0x7C41B0 / 0x7C42F0 / 0x7C6800, 1.7.104 0x870250 / 0x870380 /
+                // 0x872DD0): Enter adds one child thread per child (node+0x20) to the array, then sets the thread's
+                // wait bit (+0x150 |= 1), so the runner skips update in that step; the wait bit is cleared only by a
+                // child thread FINISHING (runner tail: parent +0x150 &= ~1, wake) or by an interrupt (state 2, which
+                // calls slot 0x05, never update). A finished child stays in the array until Update itself removes it,
+                // and Update Ascends in the SAME call the array reaches 0 (all children succeeded included), so no
+                // later update ever sees that node with an empty array. Restricted to the node the hold enters
+                // ("Movement Parallel") on top (review of 51d6c65): no other Parallel is ever touched here.
                 if (*reinterpret_cast<const std::uint32_t*>(static_cast<const std::uint8_t*>(a_this) + 0x20) > 0 &&
-                    isRunning() && frameEmpty()) {
+                    isRunning() && frameEmpty() && NamedMovementParallel(a_this)) {
                     reinterpret_cast<apmf::cbt::SetFailed_t>(g_holdSetFailed.load(std::memory_order_relaxed))(a_control, true);
                     reinterpret_cast<apmf::cbt::Ascend_t>(g_holdAscend.load(std::memory_order_relaxed))(a_control);
                     const auto n = g_holdExHeld.fetch_add(1, std::memory_order_relaxed) + 1;
