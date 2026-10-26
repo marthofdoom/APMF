@@ -2264,7 +2264,10 @@ no-op at Release off exactly 1.6.1170 / 1.5.97 / 1.7.104, VR included (G1 2026-1
   leg through `StartOnFreshSlot` (the fresh-slot body extracted from `ComposeLeg`: StartLeg on a record that is not
   the actor's current package, then `DropOfferAndFreeSlot` of the old one, ch.9 1 -> 2 -> 1), at most
   `kDoneRestartMax` (3) per client-composed leg (`Leg::doneRestarts`, reset by `ComposeLeg`, NOT by `StartLeg`);
-  with the budget spent the leg ends STUCK at once (`DoneStuckWhy` text). A restart that cannot start keeps the old
+  with the budget spent the leg ends STUCK at once (`DoneStuckWhy` text). Review round 1 of 42b0e2b: restart and
+  marking only OUTSIDE the radius (`outside`, never on a cross-cell kWait; F1), and a restart only when the
+  destination moved >= `dist - radius` since `StartLeg` recorded `Leg::destPosAtStart`, else STUCK "destination
+  static" (F2; no radius margin). Backlog APMF-B197 (held-failure slot pressure), B198, B199. A restart that cannot start keeps the old
   offer (`a_keepOldOnFail`) and ends STUCK, held. `ComposeLeg` also sends a live leg with `doneWhileWalking` to the
   fresh slot (an in-place re-point would keep the DONE package). (ii) THE FAILURE HOLD: BLOCKED and the stuck net
   call `HoldAfterFailure` (state `kLeg_Blocked` / `kLeg_StuckTimeout` as before, `held` + `heldFailed`, offer and
@@ -2277,8 +2280,7 @@ no-op at Release off exactly 1.6.1170 / 1.5.97 / 1.7.104, VR included (G1 2026-1
   claim: Sven, 2026-10-26); moving the failure-hold skip below the cell-hold branch; resetting `doneRestarts` in
   `StartLeg` (the restarts would never end); restarting in place on the same record (the engine keeps a current
   DONE package without a restart); a restart that drops the old offer when it cannot start. `APMF_API.h`'s
-  `TravelLegState` comment still says an ended leg drops the offer: API-REFERENCE `#kintent-travel-failure-hold` is
-  the contract until the next header bump.
+  `TravelLegState` / `kLeg_StuckTimeout` comments say this (comment-only, F3).
   (7) **ABI v11 position legs (`kTravel_ToPosition`, 2026-09-23).** `Engage`/`OnOwnerChanged`
   record the POINT; `Compose` places APMF's XMarker through `poscast::PlaceMarker` and the
   leg is then an ordinary ref leg to it (`destAliveAtTarget = false`: a marker never dies).

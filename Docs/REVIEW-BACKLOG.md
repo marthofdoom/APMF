@@ -1100,3 +1100,12 @@ Reviewer (F4): the claim that only v30 clients can set bit 5 is false (MFO alrea
 
 ### APMF-B196 (SEV-5, CLOSED in the F1 round, channels/Travel.cpp Poll) -- the held-cell branch tested `leg.held` alone (raised against c206088, tier-3 review F5)
 Reviewer (F5): the cell-hold branch must also test `leg.destKind == DestKind::kCell` so a held ref leg can never be looked up as a cell. Fixed in the F1 round.
+
+### APMF-B197 (SEV-4, OPEN, channels/Travel.cpp HoldAfterFailure) -- held failures keep a package slot until the client releases / repoints (raised against 42b0e2b, tier-3 review F4)
+Reviewer (F4, as relayed by the coordinator): "held failures keep a slot until the client releases/repoints (+ one extra slot for one hop on repoint; MFO loot STUCK path holds longest)". Deferred: slot pressure only (8 slots), same class as APMF-B173; no wrong behaviour while a slot is free.
+
+### APMF-B198 (SEV-5, OPEN, channels/Travel.cpp RestartAfterDone) -- a Failed then StuckTimeout publish window (raised against 42b0e2b, tier-3 review F5)
+Reviewer (F5, as relayed by the coordinator): "Failed then StuckTimeout publish window in RestartAfterDone". When a restart cannot start, StartLeg records kLeg_Failed and HoldAfterFailure records kLeg_StuckTimeout in the same poll; a client thread reading GetTravelLegState between the two sees a transient kLeg_Failed (with its own seq).
+
+### APMF-B199 (SEV-5, OPEN, channels/Travel.cpp failure hold) -- a held BLOCKED leg that later arrives keeps reading kLeg_Blocked (raised against 42b0e2b, tier-3 review F6)
+Reviewer (F6, as relayed by the coordinator): "a held BLOCKED leg that later arrives keeps reading kLeg_Blocked". The BLOCKED hold resumes the walk when the engine leaves Movement Blocked, but Poll skips a failure hold, so an arrival is never recorded until the client re-points or releases.

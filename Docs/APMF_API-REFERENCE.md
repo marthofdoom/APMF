@@ -60,9 +60,8 @@ which end it was.)
 ## kIntent_Travel: a BLOCKED or STUCK leg keeps the actor (2026-10-26, no ABI change)
 
 The ends above still happen and still read the same in `GetTravelLegState`. What changed is what Harbinger does
-with its own package offer after two of them. The header's `TravelLegState` comment ("APMF drops only its own
-internal package offer") predates this; the header is byte-shared and was not edited, so this page is the
-contract.
+with its own package offer after two of them. The header's `TravelLegState` comment says the same (comment-only
+update, 2026-10-26).
 
 | End | State you read | The package offer | The actor |
 |---|---|---|---|
@@ -80,7 +79,10 @@ safety net do not end it. A held failure occupies one of the 8 package slots unt
 **DONE-WHILE-WALKING restarts (reference legs).** When the engine ends a reference leg's own travel package
 while the actor is still outside the radius (a destination that moved, or a stop that fell short), and the next
 poll still fails the arrival test, Harbinger re-issues the leg on a fresh package slot, so the engine paths
-again to the destination's current position. Up to 3 restarts per leg (your Repoint gives a fresh budget). The
+again to the destination's current position. Only when the destination has MOVED since the leg started, at least
+as far as the actor stands outside the radius: a destination standing still would stop the new walk at the same
+place, so the leg ends `kLeg_StuckTimeout` at once ("destination static"). A cross-cell leg waiting for an
+unloaded destination is never restarted. Up to 3 restarts per leg (your Repoint gives a fresh budget). The
 next one ends the leg `kLeg_StuckTimeout` at once, held as above, instead of after the 2-minute safety net. The
 state goes back to `kLeg_Walking` (with a new `seq`) at each restart.
 

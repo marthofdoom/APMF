@@ -454,6 +454,11 @@ namespace {
         // How many times this client-composed leg was re-issued on a fresh slot after a DONE-WHILE-WALKING
         // (kDoneRestartMax). Reset by ComposeLeg (engage / re-point), NOT by StartLeg: a restart keeps counting.
         std::uint32_t         doneRestarts     = 0;
+        // Where the destination stood when THIS leg (or restart) started (review F2 of 42b0e2b): a DONE restart
+        // runs only if the destination has since moved at least as far as the actor is outside the radius.
+        // Set by StartLeg for a ref leg whose destination resolves; `destPosValid` false otherwise.
+        RE::NiPoint3          destPosAtStart{};
+        bool                  destPosValid     = false;
 
         // CROSS-CELL legs (ABI v30, kTravel_CrossCells; see CrossCells / XArrival). Passive log state only:
         // the parent cells last logged for the actor and the destination (0 = not logged yet), and the one
@@ -1224,6 +1229,14 @@ namespace {
         a_leg.heldRef        = false;
         a_leg.heldFailed     = false;
         a_leg.doneWhileWalking = false;   // (doneRestarts is NOT reset here: a DONE restart keeps counting)
+        a_leg.destPosValid     = false;   // review F2 of 42b0e2b: the destination's position at this start
+        if (a_leg.destKind == DestKind::kRef) {
+            auto  dptr = a_leg.destHandle.get();
+            if (auto* dst = dptr.get()) {
+                a_leg.destPosAtStart = dst->GetPosition();
+                a_leg.destPosValid   = true;
+            }
+        }
         ResetCrossCellLog(a_leg);
         SetLegStateFor(a_id, a_leg, APMF_API::kLeg_Walking, speed);
         spdlog::info("[travel-leg] 0x{} STARTED -- slot {}, package 0x{} -> destination 0x{}, radius {}, "
@@ -1631,7 +1644,8 @@ namespace {
     // GAME THREAD (Poll, after the arrival test failed). If the engine ended this leg's own package
     // since the leg started, the package is current and DONE at its destination while the actor is
     // still outside the radius: the same package kept without a restart (HoldAtCell's note).
-    void NoteDoneWhileWalking(RE::FormID a_id, Leg& a_leg, float a_dist) {
+    void NoteDoneWhileWalking(RE::FormID a_id, Leg& a_leg, const RE::Actor* a_actor, const RE::TESObjectREFR* a_dest,
+                              float a_dist) {
         if (!g_endSinkReady.load(std::memory_order_acquire) || a_leg.doneWhileWalking) return;
         if (a_leg.slot < 0 || !g_pkg[a_leg.slot]) return;
         EndRec rec{};
@@ -1645,12 +1659,21 @@ namespace {
         }
         a_leg.doneWhileWalking = true;
         a_leg.doneDist         = a_dist;
+        // PASSIVE geometry (review F2 of 42b0e2b): the ground-plane distance and the height difference, so a field
+        // log shows whether the engine's stop and the 3D arrival test disagree on height or on reach, and how far
+        // the destination has moved since this leg started (-1 = not recorded).
+        const RE::NiPoint3 ap    = a_actor->GetPosition();
+        const RE::NiPoint3 dp    = a_dest->GetPosition();
+        const float        xy    = std::sqrt((ap.x - dp.x) * (ap.x - dp.x) + (ap.y - dp.y) * (ap.y - dp.y));
+        const float        dz    = dp.z - ap.z;
+        const float        moved = a_leg.destPosValid ? dp.GetDistance(a_leg.destPosAtStart) : -1.0f;
         spdlog::warn("[travel-leg] DONE-WHILE-WALKING {:.0f} -- 0x{} package 0x{} (slot {}) sent OnPackageEnd {} ms "
-                     "ago while the actor is {:.0f}u from destination 0x{} (arrival radius {:.0f}u): the engine ended "
-                     "it outside the radius. If the next poll still fails the arrival test, the leg is re-issued on a "
-                     "fresh slot, or ends STUCK once the restarts are spent ({} of {} used).",
+                     "ago while the actor is {:.0f}u from destination 0x{} (XY {:.0f}u, dz {:.0f}u; arrival radius "
+                     "{:.0f}u; the destination moved {:.0f}u since the leg started): the engine ended it outside the "
+                     "radius. If the next poll still fails the arrival test, the leg is re-issued on a fresh slot when "
+                     "the destination has moved, or ends STUCK ({} of {} restarts used).",
                      a_dist, Hex(a_id), Hex(rec.package), a_leg.slot, apmf::clock::MonotonicMs() - rec.ms, a_dist,
-                     Hex(a_leg.destId), a_leg.radius, a_leg.doneRestarts, kDoneRestartMax);
+                     Hex(a_leg.destId), xy, dz, a_leg.radius, moved, a_leg.doneRestarts, kDoneRestartMax);
     }
 
     // The STUCK text for a leg whose own package was seen DONE outside the radius. `a_tail` says what ended it
@@ -1671,7 +1694,24 @@ namespace {
     // GAME THREAD (Poll, ref leg, after the arrival test failed AGAIN on a poll after the one that saw
     // DONE-WHILE-WALKING). See kDoneRestartMax. Restart in place on a fresh slot, or, with the budget spent,
     // end STUCK now with the DONE text (a failure hold: HoldAfterFailure keeps the offer while the claim stands).
-    void RestartAfterDone(RE::FormID a_id, Leg& a_leg, RE::Actor* a_actor, float a_dist) {
+    // ONLY A MOVED DESTINATION IS RESTARTED (review F2 of 42b0e2b; field: 173u / 170u on LoreRim v2.7.2, 92u / 50u
+    // on v2.7.0 half a second after the start, both at a destination standing still). A restart makes the engine
+    // path again to where the destination is NOW; if it has not moved at least as far as the actor stands outside
+    // the radius (dist - radius) since this leg started, the new package would stop at the same place, so the
+    // restart is futile: the leg ends STUCK at once instead, named for what it is. No radius margin is invented.
+    void RestartAfterDone(RE::FormID a_id, Leg& a_leg, RE::Actor* a_actor, const RE::TESObjectREFR* a_dest,
+                          float a_dist) {
+        const float shortBy = a_dist - a_leg.radius;
+        const float moved   = a_leg.destPosValid ? a_dest->GetPosition().GetDistance(a_leg.destPosAtStart) : 0.0f;
+        if (moved < shortBy) {
+            const std::string tail = std::format(
+                "-- destination static (moved {:.0f}u since the leg started, the actor is {:.0f}u outside the radius): "
+                "the engine's stop disagrees with the arrival test, so a restart would stop at the same place",
+                moved, shortBy);
+            HoldAfterFailure(a_id, a_leg, DoneStuckWhy(a_actor, a_leg, tail.c_str()).c_str(),
+                             APMF_API::kLeg_StuckTimeout);
+            return;
+        }
         if (a_leg.doneRestarts >= kDoneRestartMax) {
             const std::string tail = std::format("after {} fresh-slot restart(s), still {:.0f}u away", a_leg.doneRestarts,
                                                  a_dist);
@@ -2564,6 +2604,10 @@ namespace {
                 ResetBlockedClock(leg);                          // ABI v12: a new route, a new blocked clock
                 leg.unloadedLogged = false;
                 leg.doneWhileWalking = false;
+                // review F2 of 42b0e2b: an in-place re-point is a new start for the moved-destination test too
+                // (destPtr resolved above for a ref leg; a cell leg never restarts).
+                leg.destPosValid = destPtr.get() != nullptr;
+                if (leg.destPosValid) leg.destPosAtStart = destPtr->GetPosition();
                 ResetCrossCellLog(leg);   // ABI v30: the next poll logs where both ends are
                 SetLegStateFor(id, leg, APMF_API::kLeg_Walking, speed);
                 spdlog::info("[travel-leg] 0x{} RE-POINTED -- slot {}, package 0x{} -> destination 0x{}.",
@@ -3057,12 +3101,13 @@ namespace apmf::travel {
                 // the engine's own stop and this test fire at the same distance.
                 // `GetPosition()` is `data.location` -- no 3D required.
                 const float dist = a->GetPosition().GetDistance(d->GetPosition());
+                XArrive     at   = XArrive::kNo;   // hoisted (review F1 of 42b0e2b): the DONE gate below reads it
                 if (CrossCells(leg)) {
                     // ABI v30 kTravel_CrossCells: arrival in the destination's own space, then HOLD (see
                     // XArrival / HoldAtRef). Distance alone never arrives: an interior's coordinates can sit
                     // within the radius of an exterior point.
                     const bool    cellMoved = XLogCells(id, leg, a, d, dist, nullptr);
-                    const XArrive at        = XArrival(a, d, dist, leg.radius);
+                    at = XArrival(a, d, dist, leg.radius);
                     // PROGRESS (review F1 of c206088): the stuck net below is timed from the last of these.
                     {
                         const RE::FormID aSp       = XSpaceId(a->GetParentCell());
@@ -3095,12 +3140,16 @@ namespace apmf::travel {
                 }
                 // DONE-WHILE-WALKING (2026-10-26): seen on an EARLIER poll and the arrival test above failed
                 // again, so the engine really ended the walk short: restart on a fresh slot (kDoneRestartMax),
-                // or end STUCK at once with the budget spent. Either way this poll is done with the leg.
-                if (leg.doneWhileWalking) {
-                    RestartAfterDone(id, leg, a, dist);
+                // or end STUCK at once (budget spent, or a destination that has not moved). Either way this poll
+                // is done with the leg. ONLY OUTSIDE THE RADIUS (review F1 of 42b0e2b): a cross-cell leg waiting
+                // for an unloaded destination (kWait) is inside it, and so is one within the radius whose cell
+                // test failed; neither is a walk the engine ended short.
+                const bool outside = dist > leg.radius && !(CrossCells(leg) && at == XArrive::kWait);
+                if (outside && leg.doneWhileWalking) {
+                    RestartAfterDone(id, leg, a, d, dist);
                     continue;
                 }
-                NoteDoneWhileWalking(id, leg, dist);   // OnPackageEnd seen while outside the radius: marks the leg
+                if (outside) NoteDoneWhileWalking(id, leg, a, d, dist);   // OnPackageEnd seen outside the radius: marks the leg
             }
 
             // ABI v12: BLOCKED. After every legitimate end above (arrival wins over a blip at

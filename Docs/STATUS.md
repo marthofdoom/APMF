@@ -21,9 +21,12 @@ build/finding/workflow change.
   ch.9's release nudge. A DONE leg stands (HoldAtCell's disassembly note); a BLOCKED one stays on the travel
   package but is not a stand-still (it resumes the walk when the engine leaves Movement Blocked): a client that
   wants him still claims ch.1. API-REFERENCE `#kintent-travel-failure-hold`; MAP ch.19 What breaks (6c).
-- No ABI, header, co-save, seat, INI or address change. `APMF_API.h`'s `TravelLegState` comment ("APMF drops only
-  its own internal package offer") is now stale for BLOCKED / STUCK; left for the next header bump. Not
-  field-tested.
+- Review round 1 of 42b0e2b (tier 3): F1 a restart only OUTSIDE the radius (not on a cross-cell kWait); F2 a
+  restart only when the destination MOVED at least `dist - radius` since the leg started (`Leg::destPosAtStart`),
+  else STUCK at once ("destination static"); the DONE line adds XY distance, dz and how far the destination moved;
+  F3 `APMF_API.h` `TravelLegState` / `kLeg_StuckTimeout` comments updated (COMMENT ONLY: MFO must mirror the
+  bytes). Backlog APMF-B197 (slot pressure), B198, B199.
+- No ABI, co-save, seat, INI or address change. Not field-tested.
 
 ## HEAD OF WORK 2026-10-25 -- CH.19 CROSS CELLS (ABI v30 kTravel_CrossCells), branch `feat/apmf-ch19-cross-cells`, NOT merged
 
