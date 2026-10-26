@@ -1085,3 +1085,6 @@ Reviewer: STATUS/FACETS state cause 2 as fact. Reword to "inferred; the CLAIM SC
 
 ### APMF-B190 (SEV-5, OPEN, MAP.md ActionGate entry) -- cross-reference APMF-B187 from the What-breaks entry (raised against df5635a, tier-3 review F4)
 Reviewer: cross-reference APMF-B187 (stale hold records) explicitly from MAP's MOVEMENT HOLD "What breaks" entry (it currently reads "Backlog: APMF-B186..B188" only as a range).
+
+### APMF-B192 (SEV-5, OPEN, core/ActionGate.cpp HoldUpdateThunk) -- frameEmpty is tested before the cur_node/phase anomaly check (raised against 6e5b1c5)
+"In HoldUpdateThunk record path, frameEmpty() is tested before the cur_node/phase check, so the never-seen not-cur_node-in-phase-1 anomaly now drops the record instead of leaving the node untouched; the F2 guard would still release it on its next update." Fix: swap the two checks, or accept.
