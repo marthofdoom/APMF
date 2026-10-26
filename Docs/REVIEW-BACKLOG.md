@@ -1077,3 +1077,9 @@ A behaviour thread freed without a pop (AE 0x85D9F0 pops nothing) leaves its `{t
 
 ### APMF-B188 (SEV-5, OPEN, author-raised, core/ActionGate.cpp MOVEMENT HOLD) -- the hold's release costs one tree restart
 When the hold stops standing while the controller lives (real combat), the held node ends through SetFailed + Ascend: the Combat Parallel fails once and the controller rebuilds the tree, so the real fight's first behaviour frame is a restart (one frame, the same restart the old fail loop paid every frame). A success exit would leave the fight without a Movement half until the next restart, so the failure exit is deliberate.
+
+### APMF-B189 (SEV-4, OPEN, Docs/STATUS.md + Docs/FACETS.md) -- cause 2 stated as fact (raised against df5635a, tier-3 review F3)
+Reviewer: STATUS/FACETS state cause 2 as fact. Reword to "inferred; the CLAIM SCORE line decides": that magicScoreMult is 0 on Auri's controller style is an inference from 33 spells at exactly 0.000, not yet observed; the passive `[substrate] 0x<f> CLAIM SCORE` line decides it in the next field cycle.
+
+### APMF-B190 (SEV-5, OPEN, MAP.md ActionGate entry) -- cross-reference APMF-B187 from the What-breaks entry (raised against df5635a, tier-3 review F4)
+Reviewer: cross-reference APMF-B187 (stale hold records) explicitly from MAP's MOVEMENT HOLD "What breaks" entry (it currently reads "Backlog: APMF-B186..B188" only as a range).

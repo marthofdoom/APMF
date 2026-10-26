@@ -2696,6 +2696,10 @@ namespace apmf::combatsubstrate {
     }
 
     void ResetAll(const char* a_why) {
+        // review F1 of df5635a: no hold record crosses the load / revert / new-game boundary (kPreLoadGame and the
+        // revert, plugin.cpp): a record left for the next world could name a reused {thread, node} of a NATIVE
+        // Parallel. AfterLoad forgets them again after the load.
+        apmf::actiongate::ForgetMovementHolds(0);
         const std::size_t n = g_subs.size();
         g_subs.clear();
         for (int i = 0; i < kSlots; ++i) {
