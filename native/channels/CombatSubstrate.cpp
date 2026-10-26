@@ -213,6 +213,13 @@ namespace {
     constexpr std::uint64_t kRepickWaitMs   = 2000;    // review F2: the longest wait for the buffered re-pick (UNPAUSED time, R5 F-5)
     constexpr std::uint64_t kPollGapMs      = 500;     // R5 F-5: a longer gap between two Polls is a stall (not counted)
     constexpr std::uint64_t kFloorRenewMs   = 10000;   // review F5: renew the floors' 15 s windows this often
+    // fix/apmf-ooc-substrate (principle 9, a floor is safe, an expiry is not): the TTL runs from the moment the
+    // holder's behaviour tree first RUNS (its first node act() under the substrate), not from the open. Measured
+    // 2026-10-20 (LoreRim town run 2, Auri, 5 windows): the tree started 2698 / 3283 / 3292 / 5043 / 3331 ms after the
+    // open (each 0.2 to 2.5 s after the engine's first reset of the ignoring-combat bit). The old TTL ran from the open,
+    // so a 6 s window left 1 to 3.3 s for the equip and the cast. Until the tree starts the substrate waits this
+    // FLOOR (twice the longest start measured), then closes with its own reason (never a silent expiry).
+    constexpr std::uint64_t kTreeStartWaitMs = 10000;
     std::uint64_t           g_pollFrame     = 0;       // Poll calls (game thread)
 
     // Range tiers (design 3.3: the anchor stands at the holder whose claimed spell has the
@@ -252,6 +259,13 @@ namespace {
         // the music deny seat (kMus* bits, low byte = the first decided value) and when that value was first seen
         std::atomic<std::uint32_t> music{ 0 };
         std::atomic<std::uint64_t> musicAtMs{ 0 };
+        // fix/apmf-ooc-substrate: when the holder's tree first ran under the substrate (ForLeaf, combat thread), the
+        // movement hold's counters (core/ActionGate.cpp), the Combat Parallel's entries (1 = it kept running) and the
+        // one claim-score line per window (core/AiCastSeats.cpp).
+        std::atomic<std::uint64_t> treeStartMs{ 0 };
+        std::atomic<std::uint32_t> combatParallelActs{ 0 }, holds{ 0 }, holdUpdates{ 0 }, holdReleased{ 0 },
+            holdAnomalies{ 0 };
+        std::atomic<bool>          claimScoreLogged{ false };
     };
     std::array<Slot, kSlots>   g_slots{};
     std::atomic<std::uint32_t> g_slotCount{ 0 };   // slots with an id (the AnyLive pre-gate)
@@ -287,6 +301,12 @@ namespace {
     float         g_dryPeriodSec  = 20.0f;
     bool          g_moveTrace     = false;
     bool          g_census        = true;   // [CombatSubstrate] bSubstrateBystanderCensus (passive; no deny)
+    // fix/apmf-ooc-substrate: [CombatSubstrate] bSubstrateMovementHold (1): the Movement half of a held holder's
+    // tree runs HELD (core/ActionGate.cpp "MOVEMENT HOLD") instead of force-failed. Read at Install; read by ForLeaf
+    // and HoldsMovement on the combat thread (an atomic).
+    std::atomic<bool> g_moveHold{ false };
+    const char*       g_moveHoldOff = "";       // why it is off (Install only), for the per-OPEN hole line
+    std::uint32_t     g_parallelIdx = 0xFFFFFFFFu;   // kLeaves index of CombatBehaviorParallel (Install only)
 
     using RemoveTarget_t = void (*)(RE::CombatGroup*, RE::TESObjectREFR*);
     using EvaluatePkg_t  = void (*)(RE::Actor*, bool, bool);
@@ -409,6 +429,9 @@ namespace {
         std::uint32_t    musicChanges = 0;         // BSMusicManager changes while this substrate was open
         bool             combatEventLogged = false;
         RE::FormID       waitLoggedFor = 0;
+        // fix/apmf-ooc-substrate: the tree's first run (the TTL runs from it) and the movement hold's first line
+        bool             treeStarted = false, holdLogged = false;
+        std::uint64_t    treeStartAt = 0;
     };
     std::unordered_map<RE::FormID, Sub> g_subs;          // GAME THREAD ONLY
     std::atomic<std::size_t>            g_subCount{ 0 }; // Poll pre-gate (relaxed)
@@ -484,6 +507,10 @@ namespace {
             for (auto& c : s.perLeaf) c.store(0, std::memory_order_relaxed);
             s.music.store(0, std::memory_order_relaxed);
             s.musicAtMs.store(0, std::memory_order_relaxed);
+            s.treeStartMs.store(0, std::memory_order_relaxed);
+            for (auto* c : { &s.combatParallelActs, &s.holds, &s.holdUpdates, &s.holdReleased, &s.holdAnomalies })
+                c->store(0, std::memory_order_relaxed);
+            s.claimScoreLogged.store(false, std::memory_order_relaxed);
             s.id.store(a_id, std::memory_order_release);
             s.state.store(a_state, std::memory_order_release);
             g_slotCount.fetch_add(1, std::memory_order_relaxed);
@@ -1031,8 +1058,10 @@ namespace {
         bool ok = false;
         // R5 F-2: the bark deny's record is PENDING before the call (the holder's UpdateCombat job is not ordered
         // against this thread): its next UpdateCombat pre-arms the group's two timers before the engine's update.
+        // fix/apmf-ooc-substrate: the bark is requested on the controller's FIRST update, which can come as late as the
+        // tree start (up to kTreeStartWaitMs), and the TTL now runs from there: the timers cover both, plus 2 s.
         apmf::substratebark::Arm(a_sub.slot, a_sub.id, actor->GetHandle().native_handle(),
-                                 static_cast<float>(a_sub.ttlMs) / 1000.0f + 2.0f);
+                                 static_cast<float>(kTreeStartWaitMs + a_sub.ttlMs) / 1000.0f + 2.0f);
         g_slots[a_sub.slot].state.fetch_or(kStEntering, std::memory_order_acq_rel);
         {
             // The call ch.21 makes (verified row CombatEntry.Actor.StartCombat); a declared entry passes a
@@ -1082,7 +1111,9 @@ namespace {
                      actor->GetActorRuntimeData().combatController->ignoringCombat ? 1 : 0);
         a_sub.phase      = Phase::kOpen;
         a_sub.openedMs   = now;
-        a_sub.deadlineMs = now + a_sub.ttlMs;
+        // fix/apmf-ooc-substrate: until the tree first runs the substrate waits the start FLOOR; Serve moves the
+        // deadline to (tree start + TTL) the frame it sees the start.
+        a_sub.deadlineMs = now + kTreeStartWaitMs;
         a_sub.lastPos    = actor->GetPosition();
         a_sub.lastPosMs  = now;
         a_sub.musicAtOpen = g_musicOk ? MusicNow() : 0;
@@ -1092,6 +1123,10 @@ namespace {
             spdlog::warn("[substrate] 0x{} known hole: the music deny is OFF ({}): the engine may decide this group's "
                          "music and battle music can play while the substrate is open.",
                          Hex(a_sub.id), g_musicDenyOff);
+        if (!g_moveHold.load(std::memory_order_relaxed))
+            spdlog::warn("[substrate] 0x{} known hole: the movement hold is OFF ({}): the Movement half's leaves are "
+                         "force-failed, which fails the Combat Parallel and kills its Action half -- no cast is reachable.",
+                         Hex(a_sub.id), g_moveHoldOff);
         auto*       aproc = anchor->GetActorRuntimeData().currentProcess;
         const char* alvl  = !aproc ? "none (no AI process)" : aproc->InHighProcess() ? "HIGH (SetAlpha applies)"
                                                                                : "not high (SetAlpha is a no-op until it is)";
@@ -1142,6 +1177,30 @@ namespace {
         }
     }
 
+    // fix/apmf-ooc-substrate: the window's proof line (TTL used against the measured start; the movement hold; the
+    // Combat Parallel's entries). Read before the slot is cleared.
+    std::string WindowText(const Sub& a_sub, const Slot* a_s, std::uint64_t a_now) {
+        if (!a_s) return "no slot";
+        const std::uint32_t cp = a_s->combatParallelActs.load(std::memory_order_relaxed);
+        const std::uint32_t h = a_s->holds.load(std::memory_order_relaxed), hu = a_s->holdUpdates.load(std::memory_order_relaxed),
+                            hr = a_s->holdReleased.load(std::memory_order_relaxed),
+                            ha = a_s->holdAnomalies.load(std::memory_order_relaxed);
+        const std::string tree =
+            a_sub.treeStarted
+                ? fmt::format("tree started +{} ms after the open, TTL {} ms ran from there (used {} ms)",
+                              a_sub.treeStartAt > a_sub.openedMs ? a_sub.treeStartAt - a_sub.openedMs : 0, a_sub.ttlMs,
+                              a_now > a_sub.treeStartAt ? a_now - a_sub.treeStartAt : 0)
+                : fmt::format("the tree never ran ({} ms open; start floor {} ms)", a_now - a_sub.openedMs, kTreeStartWaitMs);
+        const std::string hold =
+            !g_moveHold.load(std::memory_order_relaxed)
+                ? fmt::format("movement hold OFF ({})", g_moveHoldOff)
+                : fmt::format("movement half held {} time(s), {} held update(s), released {}{}", h, hu, hr,
+                              ha ? fmt::format(", ANOMALIES {}", ha) : std::string());
+        return fmt::format("{} | {} | Combat Parallel entered {} time(s) (1 = it kept running; the fail loop re-entered "
+                           "it every frame)",
+                           tree, hold, cp);
+    }
+
     void CloseSub(Sub& a_sub, const char* a_reason) {
         auto* actor = RE::TESForm::LookupByID<RE::Actor>(a_sub.id);
         auto* proc  = actor ? actor->GetActorRuntimeData().currentProcess : nullptr;
@@ -1177,6 +1236,11 @@ namespace {
         const std::string leaves = s ? LeafCounts(*s) : std::string("none");
         const std::uint32_t denied = s ? s->leafDenied.load() : 0, moved = s ? s->moveDenied.load() : 0,
                             casts  = s ? s->castAllowed.load() : 0;
+        const std::string window = a_sub.phase == Phase::kOpen ? WindowText(a_sub, s, apmf::clock::MonotonicMs()) : std::string();
+        // fix/apmf-ooc-substrate: no controller left = its behaviour threads are freed (StopCombat frees them without a
+        // pop): the movement hold's records of this holder are forgotten. A live controller keeps them (each ends with
+        // its node's own pop, after the update seat's failure exit).
+        if (ccNull) apmf::actiongate::ForgetMovementHolds(a_sub.id);
         // 4. out of the holder set; the anchor home on 1 -> 0
         bool       home = false;
         RE::FormID stays = 0;
@@ -1190,7 +1254,9 @@ namespace {
                          Hex(a_sub.id), a_reason, ccNull ? "y" : "n", home ? "y" : fmt::format("n ({})", StaysText(stays)),
                          Hex(PackageOf(actor)), stopped ? "called" : "not needed", apmf::clock::MonotonicMs() - a_sub.openedMs,
                          denied, moved, leaves, casts, a_sub.bitResets);
-        else
+        if (a_sub.phase == Phase::kOpen)
+            spdlog::info("[substrate] 0x{} WINDOW ({}): {}", Hex(a_sub.id), a_reason, window);
+        if (a_sub.phase != Phase::kOpen)
             spdlog::info("[substrate] 0x{} CLOSE reason={} (before the entry) anchor-home={}", Hex(a_sub.id), a_reason,
                          home ? "y" : "n");
         ReleaseClientClaim(a_sub, a_reason);
@@ -1267,8 +1333,13 @@ namespace {
         bool       home  = false;
         RE::FormID stays = 0;
         const std::uint32_t afterReal = s.afterReal.load();
+        const std::string   window    = WindowText(a_sub, &s, apmf::clock::MonotonicMs());
         LeaveSlotAndAnchor(a_sub, home, stays);
         ++g_drops;
+        // fix/apmf-ooc-substrate: the fight goes on with this controller, so a held Movement node is NOT forgotten here:
+        // its next update is no longer held and ends it through its own failure exit (the tree restarts once, as the
+        // engine built it), and its own pop removes the record.
+        spdlog::info("[substrate] 0x{} WINDOW (real combat): {}", Hex(a_sub.id), window);
         spdlog::info("[substrate] 0x{} REAL COMBAT ({} 0x{}) -- substrate DROPPED, combat behaviour restored in the same "
                      "frame: {}, holders {}->{}, anchor {}; released: leaf allow-list, movement denies, ignore-combat hold, "
                      "anchor refusal, substrate floors; claim {}",
@@ -1397,7 +1468,30 @@ namespace {
             else if (!actor->Is3DLoaded())    why = "owner unloaded";
             else if (actor->IsDisabled())     why = "owner disabled";
             else if (!HasController(actor))   why = "combat ended by the engine (no controller)";
-            else if (a_now >= a_sub.deadlineMs) why = "ttl";
+            else if (a_now >= a_sub.deadlineMs)
+                why = a_sub.treeStarted ? "ttl"
+                                        : "the behaviour tree never ran within the start floor (10 s after the open; measured "
+                                          "starts 2.7-5.1 s, 2026-10-20)";
+        }
+        // fix/apmf-ooc-substrate: the TTL runs from the tree's first node under the substrate (principle 9).
+        if (!why && !a_sub.treeStarted) {
+            if (const std::uint64_t t = s.treeStartMs.load(std::memory_order_relaxed); t != 0) {
+                a_sub.treeStarted = true;
+                a_sub.treeStartAt = t;
+                a_sub.deadlineMs  = t + a_sub.ttlMs;
+                spdlog::info("[substrate] 0x{} TREE STARTED +{} ms after the open (the measured start latency); the TTL "
+                             "({:.1f} s) runs from here, to +{} ms after the open.",
+                             Hex(a_sub.id), t > a_sub.openedMs ? t - a_sub.openedMs : 0,
+                             static_cast<double>(a_sub.ttlMs) / 1000.0,
+                             a_sub.deadlineMs > a_sub.openedMs ? a_sub.deadlineMs - a_sub.openedMs : 0);
+            }
+        }
+        if (!why && !a_sub.holdLogged && s.holds.load(std::memory_order_relaxed) != 0) {
+            a_sub.holdLogged = true;
+            spdlog::info("[substrate] 0x{} MOVEMENT HELD (+{} ms after the open): the Movement half (\"Movement Parallel\") "
+                         "is RUNNING, held, not failed -- none of its leaves entered, so the Combat Parallel keeps its "
+                         "Action half (the spell equip and the cast leaves).",
+                         Hex(a_sub.id), a_now - a_sub.openedMs);
         }
         // the claim the substrate serves
         apmf::CastSeatClaim c{};
@@ -2080,13 +2174,44 @@ namespace apmf::combatsubstrate {
         return nullptr;
     }
 
+    // A behaviour-tree node's name: the BSFixedString at node+0x08, written by the tree builders' one naming
+    // helper (AE 0x85EE10 / SE 0x7C7820 / 1.7.104 0x874040: `lea rcx,[node+8]` + the BSFixedString copy). The
+    // node is the act()'s own `this`, a static tree node alive for the session. ASCII case-insensitive compare
+    // (the string pool keeps the first spelling it interned).
+    bool NodeNamed(const void* a_node, const char* a_lit) {
+        if (!a_node) return false;
+        const char* n = reinterpret_cast<const RE::BSFixedString*>(static_cast<const std::uint8_t*>(a_node) + 0x08)->c_str();
+        if (!n) return false;
+        for (; *n && *a_lit; ++n, ++a_lit) {
+            const char x = (*n >= 'A' && *n <= 'Z') ? static_cast<char>(*n - 'A' + 'a') : *n;
+            const char y = (*a_lit >= 'A' && *a_lit <= 'Z') ? static_cast<char>(*a_lit - 'A' + 'a') : *a_lit;
+            if (x != y) return false;
+        }
+        return *n == 0 && *a_lit == 0;
+    }
+
     Leaf ForLeaf(RE::FormID a_actor, std::uint32_t a_leafIdx, bool /*a_movement*/, const void* a_node) {
         if (a_leafIdx >= kLeafCount) return Leaf::kNotHolder;
         std::uint32_t st = 0;
         const int     si = FindSlot(a_actor, st);
         if (si < 0 || !(st & kStLive) || (st & kStReal) || !(st & kStRankAction)) return Leaf::kNotHolder;
+        // fix/apmf-ooc-substrate: the TTL runs from the tree's first node under the substrate (Serve reads it).
+        if (g_slots[si].treeStartMs.load(std::memory_order_relaxed) == 0) {
+            std::uint64_t zero = 0;
+            g_slots[si].treeStartMs.compare_exchange_strong(zero, apmf::clock::MonotonicMs(), std::memory_order_relaxed);
+        }
         switch (g_leafClass[a_leafIdx]) {
-        case LeafClass::kStructural: return Leaf::kAllow;
+        case LeafClass::kStructural:
+            // THE MOVEMENT HOLD: the root of the Movement half runs held (core/ActionGate.cpp); the Combat Parallel's
+            // entries are counted (one per window = it kept running; the old fail loop entered it every frame).
+            if (a_leafIdx == g_parallelIdx) {
+                if (NodeNamed(a_node, "Movement Parallel")) {
+                    if (g_moveHold.load(std::memory_order_relaxed)) return Leaf::kHold;
+                } else if (NodeNamed(a_node, "Combat Parallel")) {
+                    g_slots[si].combatParallelActs.fetch_add(1, std::memory_order_relaxed);
+                }
+            }
+            return Leaf::kAllow;
         case LeafClass::kCast:
             if (st & kStCast) {
                 g_slots[si].castAllowed.fetch_add(1, std::memory_order_relaxed);
@@ -2101,6 +2226,50 @@ namespace apmf::combatsubstrate {
             return Leaf::kDeny;
         default:
             return Leaf::kDeny;
+        }
+    }
+
+    bool HoldsMovement(RE::FormID a_actor) {
+        if (!g_moveHold.load(std::memory_order_relaxed) || !AnyLive()) return false;
+        std::uint32_t st = 0;
+        return FindSlot(a_actor, st) >= 0 && (st & kStLive) && !(st & kStReal) && (st & kStRankAction);
+    }
+
+    void NoteHold(RE::FormID a_actor, HoldEvent a_event) {
+        std::uint32_t st = 0;
+        const int     si = FindSlot(a_actor, st);
+        if (si < 0) return;
+        Slot& s = g_slots[si];
+        switch (a_event) {
+        case HoldEvent::kHeld:     s.holds.fetch_add(1, std::memory_order_relaxed); break;
+        case HoldEvent::kUpdate:   s.holdUpdates.fetch_add(1, std::memory_order_relaxed); break;
+        case HoldEvent::kReleased: s.holdReleased.fetch_add(1, std::memory_order_relaxed); break;
+        case HoldEvent::kAnomaly:  s.holdAnomalies.fetch_add(1, std::memory_order_relaxed); break;
+        }
+    }
+
+    void NoteClaimScore(RE::FormID a_actor, RE::FormID a_form, float a_score, const RE::CombatController* a_cc) {
+        if (!AnyLive() || a_form == 0) return;
+        std::uint32_t st = 0;
+        const int     si = FindSlot(a_actor, st);
+        if (si < 0 || !(st & kStLive) || (st & kStReal) || !(st & kStCast)) return;
+        if (g_slots[si].claimScoreLogged.exchange(true, std::memory_order_relaxed)) return;   // one line per window
+        // The spell score's inputs (AE CalculateScore 0x819AA0 -> 0x819C10, SE / 1.7.104 the same shape): the live
+        // controller's combat style (CombatController+0x38, below the 0x68 AE split) times its CSGD magicScoreMult
+        // (TESCombatStyle+0x30) times the CombatMagicItemData effect sum (x2 when the item's +0x34 is above 1024).
+        // A score of 0 with magicScoreMult 0 is the actor's own combat style, not a substrate input.
+        const RE::TESCombatStyle* cs = a_cc ? a_cc->combatStyle : nullptr;
+        try {
+            spdlog::info("[substrate] 0x{} CLAIM SCORE: the engine scored the claimed spell 0x{} at {:.3f} (combat style "
+                         "0x{} magicScoreMult {:.3f}){}",
+                         Hex(a_actor), Hex(a_form), static_cast<double>(a_score), Hex(cs ? cs->GetFormID() : 0),
+                         static_cast<double>(cs ? cs->generalData.magicScoreMult : 0.0f),
+                         a_score > 0.0f ? ""
+                         : (cs && !(cs->generalData.magicScoreMult > 0.0f))
+                             ? " -- 0 because this controller's combat style gives magic no weight (the actor's own style: "
+                               "the substrate changes no score input). The engine then never selects it; see Docs/STATUS.md."
+                             : " -- 0 or less from the spell's own effects against its target (true data).");
+        } catch (...) {
         }
     }
 
@@ -2336,6 +2505,27 @@ namespace apmf::combatsubstrate {
         if (!why) why = apmf::substratebark::Install();
         if (!why) why = apmf::substrateaggressor::Install();
         if (!why) why = apmf::substratepackage::Install();   // F-6 review: a refused override seat refuses the substrate
+        // fix/apmf-ooc-substrate: THE MOVEMENT HOLD (core/ActionGate.cpp). Without it the Movement half's force-failed
+        // leaves fail the Combat Parallel every frame and its Action half (the spell equip, the cast leaves) never runs:
+        // a substrate would open onto a cast it can never reach. A hold that did not arm REFUSES THE SUBSTRATE (never a
+        // silent dead window); [CombatSubstrate] bSubstrateMovementHold=0 is the explicit off switch (the substrate
+        // runs as before, and every OPEN logs the hole).
+        if (!why) {
+            for (std::uint32_t i = 0; i < apmf::cbt::kLeaves.size(); ++i)
+                if (std::string_view(apmf::cbt::kLeaves[i].name) == "CombatBehaviorParallel") g_parallelIdx = i;
+            if (IniInt("CombatSubstrate", "bSubstrateMovementHold", 1) == 0) {
+                g_moveHold.store(false, std::memory_order_relaxed);
+                g_moveHoldOff = "[CombatSubstrate] bSubstrateMovementHold=0 in APMF.ini";
+            } else if (g_parallelIdx == 0xFFFFFFFFu) {
+                why = "the leaf catalog has no CombatBehaviorParallel (the movement hold's node)";
+            } else if (!apmf::actiongate::MovementHoldArmed()) {
+                why = "the movement hold did not arm (see the [substrate] MOVEMENT HOLD NOT armed line): without it the "
+                      "Movement half fails the Combat Parallel and no substrate cast is reachable";
+            } else {
+                g_moveHold.store(true, std::memory_order_relaxed);
+                g_moveHoldOff = "";
+            }
+        }
         RE::TESNPC*    npc  = nullptr;
         RE::Actor*     ref  = nullptr;
         if (!why) {
@@ -2440,7 +2630,8 @@ namespace apmf::combatsubstrate {
         g_installed.store(true, std::memory_order_release);
         spdlog::info("[substrate] combat substrate INSTALLED: anchor 0x{} (APMF.esl 0x80A, a {} clone), home 0x{}; dry run {} "
                      "(period {:.0f} s), TTL {:.1f} s, P6 move trace {}, fire signal {}, music {}, music deny {}, bark deny {}, "
-                     "aggressor clear {}. Allow-list: "
+                     "aggressor clear {}, movement hold {}, tree-start floor {} ms (the TTL runs from the tree's start). "
+                     "Allow-list: "
                      "3 cast leaves, the spell-equip path {} (EquipSpell + AcquireResource<2> \"Action\", while a "
                      "driving cast claim stands), {} structural nodes pass, the rest denied.",
                      Hex(ref->GetFormID()), npc->GetName(), Hex(g_homeId), g_dryRun ? "ON" : "off",
@@ -2450,6 +2641,8 @@ namespace apmf::combatsubstrate {
                      apmf::substratebark::On() ? std::string("ON") : fmt::format("OFF ({})", apmf::substratebark::OffReason()),
                      apmf::substrateaggressor::On() ? std::string("ON")
                                                     : fmt::format("OFF ({})", apmf::substrateaggressor::OffReason()),
+                     g_moveHold.load(std::memory_order_relaxed) ? std::string("ON") : fmt::format("OFF ({})", g_moveHoldOff),
+                     kTreeStartWaitMs,
                      apmf::substrateequip::Enabled() ? "ON" : "OFF",
                      std::count(g_leafClass.begin(), g_leafClass.end(), LeafClass::kStructural));
     }
@@ -2534,6 +2727,9 @@ namespace apmf::combatsubstrate {
 
     void AfterLoad(const char* a_why) {
         if (!Installed()) return;
+        // fix/apmf-ooc-substrate: the outgoing world's behaviour threads are gone; a held node the save carried is an
+        // ordinary empty Parallel now (its own SaveGame/LoadGame), so no hold record survives a load.
+        apmf::actiongate::ForgetMovementHolds(0);
         auto* anchor = Anchor();
         if (!anchor) return;
         const auto anchorH = anchor->GetHandle().native_handle();

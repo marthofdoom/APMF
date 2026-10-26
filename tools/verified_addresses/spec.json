@@ -2078,9 +2078,10 @@
    },
    "slots": [
     "0x02",
-    "0x03"
+    "0x03",
+    "0x04"
    ],
-   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp (act/pop pair; slot 0x04 = the substrate MOVEMENT HOLD update seat, fix/apmf-ooc-substrate)",
    "doc": "ADDRESS-TABLE-2026-09-15.md:341"
   },
   {
@@ -2603,6 +2604,21 @@
    },
    "source": "native/core/ActionGate.cpp (Install, ch.23 pursuit-leash update() half)",
    "doc": "CombatBehaviorThread::Ascend(thread): cur_node +0x138 := parent, phase +0x14C := 0 (core/CombatBehaviorRE.h)"
+  },
+  {
+   "seat": "ActionGate.Hold.ParallelDataPush",
+   "kind": "function",
+   "construct": "RELOCATION_ID(46278, 47532)",
+   "ids": {
+    "1.6.1170": 47532,
+    "1.5.97": 46278
+   },
+   "sig": {
+    "1.6.1170": "40 56 57 41 56 48 83 EC 30 48 C7 44 24 20 FE FF FF FF 48 89 5C 24 58 48 89 6C 24 60 48 8B F2 48 8B F9 8B 59 0C",
+    "1.5.97": "40 53 56 57 48 83 EC 30 48 C7 44 24 20 FE FF FF FF 48 8B F2 48 8B F9 8B 59 0C 83 C3 20 8B D3 E8 ?? ?? ?? ?? 8B 47 0C 48 89 3E 89 46 08 89 5F 0C 8B D8 48 03 1F 48 89 5C 24 50 48 89 5C 24 58 74 1F"
+   },
+   "source": "native/core/ActionGate.cpp (Install, the substrate MOVEMENT HOLD act: the Parallel's own data push, never its Enter)",
+   "doc": "CombatBehaviorParallel data push (thread, out16): push 0x20, an empty BSTArray of child threads, flags +0x18 = 0. The first call of the Parallel act() (AE 0x85FCD0 +0x11 / SE 0x7C8650 +0x11 / 1.7.104 0x874F00 +0x11, re-read at install)"
   },
   {
    "seat": "EquipSink.Worker",
@@ -4886,6 +4902,13 @@
    "gate": "exact 1.6.1170 / 1.5.97 + self-check"
   },
   {
+   "what": "ScriptEventSourceHolder TESPackageEvent source; event payload (read passive, `PackageEndSink`)",
+   "value": "source +0x948; payload +0 NiPointer<TESObjectREFR> (held across the send), +8 FormID, +0xC type 0/1/2 = Start/End/Change",
+   "where": "channels/Travel.cpp Install, `RE::TESPackageEvent`",
+   "verified_by": "senders 1.6.1170 0x6EABDD (end) / 0x6EA8AF (begin), 1.5.97 0x65804D, 1.7.104 0x6FD79D; VM sink registration 1.6.1170 0x9CB49D / 1.7.104 0x9E310D; VM type switch 1.6.1170 0x9C6430 / 1.5.97 0x9280E0 / 1.7.104 0x9DDE22",
+   "gate": "GetSingleton verified by SeatVerified"
+  },
+  {
    "what": "Actor runtime data boolFlags (WRITTEN, probe)",
    "value": "CommonLib RelocateMember",
    "where": "core/NativeBitProbe.cpp:46",
@@ -5158,6 +5181,11 @@
    "seat": "Substrate.Npc.GetEnterCombatOverridePackage.1_7_104",
    "rva": "0x3B79C0",
    "source": "channels/SubstratePackage.cpp kOverride17 (1.7.104 only: AE id 24673 has no MIT-table row)"
+  },
+  {
+   "seat": "ActionGate.Hold.ParallelDataPush.1_7_104",
+   "rva": "0x85F990",
+   "source": "native/core/ActionGate.cpp (Install, 1.7.104 only: AE id 47532 has no MIT-table row); the code re-reads the Parallel act's E8 at +0x11 -> this address"
   }
  ]
 }

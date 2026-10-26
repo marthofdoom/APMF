@@ -74,9 +74,24 @@ namespace apmf::combatsubstrate {
     // with the ForceFail act()/pop() PAIR, then call LeafDenied. `a_node` = the node object whose act()
     // runs (the thunk's `this`): the spell-equip path reads AcquireResource<2>'s resource name from it
     // (channels/SubstrateEquip.cpp); nothing else reads it.
-    enum class Leaf : std::uint8_t { kNotHolder, kAllow, kDeny };
+    // kHold (fix/apmf-ooc-substrate) = the node is the root of the combat tree's Movement half ("Movement
+    // Parallel") of a held holder: ActionGate enters it as an empty Parallel and keeps it RUNNING (the
+    // MOVEMENT HOLD, core/ActionGate.cpp) instead of failing it. marth 2026-10-20: "Harbinger should feed it
+    // true data and not let it know it was blocked."
+    enum class Leaf : std::uint8_t { kNotHolder, kAllow, kDeny, kHold };
     Leaf ForLeaf(RE::FormID a_actor, std::uint32_t a_leafIdx, bool a_movement, const void* a_node);
     void LeafDenied(RE::FormID a_actor, std::uint32_t a_leafIdx, bool a_movement);
+    // ANY THREAD, lock-free: the movement hold still stands for `a_actor` (a live holder, its real-combat
+    // trigger not fired, ranked over Engine on CombatAction, the hold on). False = the held Movement node
+    // must end through its own failure exit (the tree restarts once, as the engine built it).
+    bool HoldsMovement(RE::FormID a_actor);
+    // ANY THREAD: the hold's events, counted per holder for the close line (and a first-hold info line).
+    enum class HoldEvent : std::uint8_t { kHeld, kUpdate, kReleased, kAnomaly };
+    void NoteHold(RE::FormID a_actor, HoldEvent a_event);
+    // core/AiCastSeats.cpp's score seat (ANY THREAD): the engine scored `a_form`, the form a holder's DRIVING
+    // cast claim names, at `a_score`. Logs ONE passive line per window with the score's inputs (the live
+    // controller's combat style and its magicScoreMult): the field proof of what a 0 is made of.
+    void NoteClaimScore(RE::FormID a_actor, RE::FormID a_form, float a_score, const RE::CombatController* a_cc);
     // The node index count the allow-list knows (kLeaves + kSearchLeaves + kParamLeaves): EVERY
     // CombatBehaviorTreeNodeObject* vtable the MIT fork ships (review F1 of a512763).
     inline constexpr std::uint32_t kLeafCount = 95;

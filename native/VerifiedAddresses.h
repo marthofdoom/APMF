@@ -19,7 +19,7 @@
 
 namespace apmf::VerifiedAddresses
 {
-	// 1.6.1170.0: 257 rows
+	// 1.6.1170.0: 258 rows
 	inline constexpr REL::SelfCheck::Row kRows_1_6_1170[] = {
 		{ 207886, 0x18A5558, 0x0, 0, {  }, "Character" },
 		{ 207896, 0x18A5FE8, 0x0, 0, {  }, "Character.ActorValueOwner" },
@@ -173,6 +173,7 @@ namespace apmf::VerifiedAddresses
 		{ 37895, 0x697250, 0x0, 0, {  }, "MovementDeny.ClearKeepOffsetFromActor" },
 		{ 47496, 0x85E0A0, 0x0, 0, {  }, "ActionGate.Pursuit.SetFailed" },
 		{ 47484, 0x85DD70, 0x0, 0, {  }, "ActionGate.Pursuit.Ascend" },
+		{ 47532, 0x85F990, 0x0, 0, {  }, "ActionGate.Hold.ParallelDataPush" },
 		{ 38929, 0x6CBE30, 0x0, 0, {  }, "EquipSink.Worker" },
 		{ 38894, 0x6C9820, 0x170, 1, { 0xE8 }, "EquipSink.Site.EquipObject" },
 		{ 38893, 0x6C9730, 0xBC, 1, { 0xE8 }, "EquipSink.Site.EquipObjectList" },
@@ -280,7 +281,7 @@ namespace apmf::VerifiedAddresses
 		{ 39637, 0x6F20A0, 0x8B1, 1, { 0xE8 }, "TorchSeat.Site.AiUpdate" },
 	};
 
-	// 1.5.97.0: 257 rows
+	// 1.5.97.0: 258 rows
 	inline constexpr REL::SelfCheck::Row kRows_1_5_97[] = {
 		{ 261397, 0x165DA40, 0x0, 0, {  }, "Character" },
 		{ 261402, 0x165E4D0, 0x0, 0, {  }, "Character.ActorValueOwner.SE" },
@@ -434,6 +435,7 @@ namespace apmf::VerifiedAddresses
 		{ 36871, 0x603AC0, 0x0, 0, {  }, "MovementDeny.ClearKeepOffsetFromActor" },
 		{ 46240, 0x7C6D30, 0x0, 0, {  }, "ActionGate.Pursuit.SetFailed" },
 		{ 46229, 0x7C69D0, 0x0, 0, {  }, "ActionGate.Pursuit.Ascend" },
+		{ 46278, 0x7C8260, 0x0, 0, {  }, "ActionGate.Hold.ParallelDataPush" },
 		{ 37974, 0x639E20, 0x0, 0, {  }, "EquipSink.Worker" },
 		{ 37938, 0x637A80, 0xE5, 1, { 0xE8 }, "EquipSink.Site.EquipObject" },
 		{ 37937, 0x637990, 0xBC, 1, { 0xE8 }, "EquipSink.Site.EquipObjectList" },
@@ -541,9 +543,10 @@ namespace apmf::VerifiedAddresses
 		{ 38606, 0x65F040, 0x798, 1, { 0xE8 }, "TorchSeat.Site.AiUpdate" },
 	};
 
-	// 1.7.104.0: 267 rows
-	// 51 NOT VERIFIED on 1.7.104.0, deliberately absent from this table (the seat is refused):
+	// 1.7.104.0: 268 rows
+	// 52 NOT VERIFIED on 1.7.104.0, deliberately absent from this table (the seat is refused):
 	//   Character.ActorValueOwner.SE (1.6.1170 id -): no 1.6.1170 (AE) id: the 1.7.104 map is keyed by AE id (1.5.97-only seat)
+	//   ActionGate.Hold.ParallelDataPush (1.6.1170 id 47532): id 47532 is not in the idmap
 	//   TargetPin.CombatController.SetTarget (1.6.1170 id 33235): id 33235 is not in the idmap
 	//   EquipSink.Path.OutfitApply.24234 (1.6.1170 id -): BY DESIGN: 1.5.97-only label. On 1.6.1170 and 1.7.104 the code reads its AE twin EquipSink.Path.OutfitApply.418622 (AE id 418622, 1.7.104 0x3C4440), whose own row carries the 1.7.104 fact (MAPPED-AE)
 	//   EquipSink.Path.AddWornOutfit.19266 (1.6.1170 id -): BY DESIGN: 1.5.97-only label. On 1.6.1170 and 1.7.104 the code reads its AE twin EquipSink.Path.AddWornOutfit.19692 (AE id 19692, 1.7.104 0x2E8070), whose own row carries the 1.7.104 fact (MAPPED-AE)
@@ -862,6 +865,7 @@ namespace apmf::VerifiedAddresses
 		{ 0, 0x6E9860, 0x0, 0, {  }, "Substrate.AIProcess.SetAggressor.1_7_104" },
 		{ 0, 0x670880, 0x0, 0, {  }, "Substrate.PackageSelector.1_7_104" },
 		{ 0, 0x3BEA80, 0x0, 0, {  }, "Substrate.Npc.GetEnterCombatOverridePackage.1_7_104" },
+		{ 0, 0x874BC0, 0x0, 0, {  }, "ActionGate.Hold.ParallelDataPush.1_7_104" },
 	};
 
 	inline constexpr REL::SelfCheck::Table kTables[] = {

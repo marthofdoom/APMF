@@ -10,13 +10,13 @@ nothing when one does not. At startup `REL::SelfCheck::Run` repeats the comparis
 game actually loaded. A row that fails refuses THAT seat by name in the log; the expected RVA is never
 used in place of the library's answer.
 
-Offline result of this generation: 1.6.1170.0 257/257 verified, 0 refused, 1.5.97.0 257/257 verified, 0 refused.
+Offline result of this generation: 1.6.1170.0 258/258 verified, 0 refused, 1.5.97.0 258/258 verified, 0 refused.
 
 1.7.104.0 has NO Address Library. Its column is OUR OWN id map: the MIT id table of the CommonLibSSE-NG fork
 (`data/mit-idtable-v1-1-7-104-0.bin`, revision 3, 17751 records, SkyrimSE.exe TimeDateStamp 0x6A8C7046; built into every plugin, it is
 what SelfCheck queries at runtime; authoritative) with the evidence CSVs beside it, keyed by
 the 1.6.1170 id, re-verified against the plaintext 1.7.104 executable by the same row-kind checks (see the script
-docstring). Offline result: 1.7.104.0 267/318 verified, 51 NOT verified (28 of them BY DESIGN: 1.5.97-only labels whose AE twin row carries the 1.7.104 fact). A not-verified seat has no row in the 1.7.104 table,
+docstring). Offline result: 1.7.104.0 268/320 verified, 52 NOT verified (28 of them BY DESIGN: 1.5.97-only labels whose AE twin row carries the 1.7.104 fact). A not-verified seat has no row in the 1.7.104 table,
 so `IsVerifiedAddress` is false and the seat is refused by name. The table of `Not verified on 1.7.104` is below.
 
 These rows prove the ADDRESSES. That each hooked slot holds the same function body on 1.7.104, and that every
@@ -144,7 +144,7 @@ CommonLib layout APMF reads is the same there, is proven separately in the "1.7.
 | Leaf.CombatBehaviorMaintainOptimalRange | vtable | 214013 | 0x18E5E58 | 266933 | 0x16A0630 | 214013 | 0x1964420 | RTTI .?AV?$CombatBehaviorTreeNodeObject@VCombatBehaviorMaintainOptimalRange@@@@ (COL offset 0) | 0x02: 0x8B0890 / 0x819D40 / 0x8C5E00<br>0x03: 0x8B0970 / 0x819E00 / 0x8C5EE0<br>0x04: 0x8B0EF0 / 0x81A350 / 0x8C6460 | native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp; 0x04 = ch.23 pursuit-leash update() seat (ActionGate.cpp UpdateThunk, ABI v16) | ADDRESS-TABLE-2026-09-15.md:338 |
 | Leaf.CombatBehaviorOrbit | vtable | 213499 | 0x18E22F8 | 266620 | 0x169C670 | 213499 | 0x19608C0 | RTTI .?AV?$CombatBehaviorTreeNodeObject@VCombatBehaviorOrbit@@@@ (COL offset 0) | 0x02: 0x89B1A0 / 0x804F70 / 0x8B0640<br>0x03: 0x89B6B0 / 0x805190 / 0x8B0B50 | native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp | ADDRESS-TABLE-2026-09-15.md:339 |
 | Leaf.CombatBehaviorOrbitDistant | vtable | 213486 | 0x18E2248 | 266619 | 0x169C5C0 | 213486 | 0x1960810 | RTTI .?AV?$CombatBehaviorTreeNodeObject@VCombatBehaviorOrbitDistant@@@@ (COL offset 0) | 0x02: 0x89B1E0 / 0x804FA0 / 0x8B0680<br>0x03: 0x89B700 / 0x8051E0 / 0x8B0BA0 | native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp | ADDRESS-TABLE-2026-09-15.md:340 |
-| Leaf.CombatBehaviorParallel | vtable | 212197 | 0x18D9068 | 265772 | 0x1692468 | 212197 | 0x1957630 | RTTI .?AV?$CombatBehaviorTreeNodeObject@VCombatBehaviorParallel@@@@ (COL offset 0) | 0x02: 0x85FCD0 / 0x7C8650 / 0x874F00<br>0x03: 0x85FD00 / 0x7C8680 / 0x874F30 | native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp | ADDRESS-TABLE-2026-09-15.md:341 |
+| Leaf.CombatBehaviorParallel | vtable | 212197 | 0x18D9068 | 265772 | 0x1692468 | 212197 | 0x1957630 | RTTI .?AV?$CombatBehaviorTreeNodeObject@VCombatBehaviorParallel@@@@ (COL offset 0) | 0x02: 0x85FCD0 / 0x7C8650 / 0x874F00<br>0x03: 0x85FD00 / 0x7C8680 / 0x874F30<br>0x04: 0x8600A0 / 0x7C8B40 / 0x8752D0 | native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp (act/pop pair; slot 0x04 = the substrate MOVEMENT HOLD update seat, fix/apmf-ooc-substrate) | ADDRESS-TABLE-2026-09-15.md:341 |
 | Leaf.CombatBehaviorPause | vtable | 212491 | 0x18DAA08 | 265925 | 0x1694178 | 212491 | 0x1958FD0 | RTTI .?AV?$CombatBehaviorTreeNodeObject@VCombatBehaviorPause@@@@ (COL offset 0) | 0x02: 0x867970 / 0x7D0630 / 0x87CBB0<br>0x03: 0x867A80 / 0x7D0750 / 0x87CCC0 | native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp | ADDRESS-TABLE-2026-09-15.md:342 |
 | Leaf.CombatBehaviorPerchAttack | vtable | 213564 | 0x18E2668 | 266625 | 0x169C9E0 | 213564 | 0x1960C30 | RTTI .?AV?$CombatBehaviorTreeNodeObject@VCombatBehaviorPerchAttack@@@@ (COL offset 0) | 0x02: 0x89B220 / 0x804FD0 / 0x8B06C0<br>0x03: 0x89B750 / 0x805230 / 0x8B0BF0 | native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp | ADDRESS-TABLE-2026-09-15.md:343 |
 | Leaf.CombatBehaviorPrepareDualCast | vtable | 213705 | 0x18E3658 | 266703 | 0x169DB88 | 213705 | 0x1961C20 | RTTI .?AV?$CombatBehaviorTreeNodeObject@VCombatBehaviorPrepareDualCast@@@@ (COL offset 0) | 0x02: 0x8A1980 / 0x80B320 / 0x8B6E20<br>0x03: 0x8A1B10 / 0x80B460 / 0x8B6FB0 | native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp | ADDRESS-TABLE-2026-09-15.md:344 |
@@ -178,6 +178,7 @@ CommonLib layout APMF reads is the same there, is proven separately in the "1.7.
 | MovementDeny.ClearKeepOffsetFromActor | function | 37895 | 0x697250 | 36871 | 0x603AC0 | 37895 | 0x6A9DD0 | signature (27 bytes, unique in .text) |  | native/channels/MovementDeny.cpp:58 | ADDRESS-TABLE-2026-09-15.md:143 |
 | ActionGate.Pursuit.SetFailed | function | 47496 | 0x85E0A0 | 46240 | 0x7C6D30 | 47496 | 0x8732D0 | signature (18 bytes, unique in .text) |  | native/core/ActionGate.cpp (Install, ch.23 pursuit-leash update() half) | CombatBehaviorThread::SetFailed(thread, bool): state +0x148 := failed if <= 1 (core/CombatBehaviorRE.h) |
 | ActionGate.Pursuit.Ascend | function | 47484 | 0x85DD70 | 46229 | 0x7C69D0 | 47484 | 0x872FA0 | signature (16 bytes, unique in .text) |  | native/core/ActionGate.cpp (Install, ch.23 pursuit-leash update() half) | CombatBehaviorThread::Ascend(thread): cur_node +0x138 := parent, phase +0x14C := 0 (core/CombatBehaviorRE.h) |
+| ActionGate.Hold.ParallelDataPush | function | 47532 | 0x85F990 | 46278 | 0x7C8260 | - | - | signature (37 bytes, unique in .text) |  | native/core/ActionGate.cpp (Install, the substrate MOVEMENT HOLD act: the Parallel's own data push, never its Enter) | CombatBehaviorParallel data push (thread, out16): push 0x20, an empty BSTArray of child threads, flags +0x18 = 0. The first call of the Parallel act() (AE 0x85FCD0 +0x11 / SE 0x7C8650 +0x11 / 1.7.104 0x874F00 +0x11, re-read at install) |
 | EquipSink.Worker | function | 38929 | 0x6CBE30 | 37974 | 0x639E20 | 38929 | 0x6DE920 | signature (177 bytes, unique in .text) |  | native/core/EquipSink.cpp:92 |  |
 | EquipSink.Site.EquipObject | callsite | 38894 | 0x6C9820 +0x170 E8 | 37938 | 0x637A80 +0xE5 E8 | 38894 | 0x6DC310 +0x170 E8 | signature (25 bytes, unique in .text) |  | native/core/EquipSink.cpp:85 | ADDRESS-TABLE-2026-09-15.md:14 |
 | EquipSink.Site.EquipObjectList | callsite | 38893 | 0x6C9730 +0xBC E8 | 37937 | 0x637990 +0xBC E8 | 38893 | 0x6DC220 +0xBC E8 | signature (16 bytes, unique in .text) |  | native/core/EquipSink.cpp:86 |  |
@@ -344,6 +345,7 @@ CommonLib layout APMF reads is the same there, is proven separately in the "1.7.
 | Substrate.AIProcess.SetAggressor.1_7_104 | raw rva | - | - | - | - | - | 0x6E9860 | raw RVA: 1.6.1170 0x6D6CB0 signature (16 bytes) unique at the idmap RVA |  | channels/SubstrateAggressor.cpp k17SetAggressor (1.7.104 only: AE id 39145 has no MIT-table row) |  |
 | Substrate.PackageSelector.1_7_104 | raw rva | - | - | - | - | - | 0x670880 | raw RVA: 1.6.1170 0x65DE90 signature (25 bytes) unique at the idmap RVA |  | channels/SubstratePackage.cpp kSelector17 (1.7.104 only: AE id 37172 has no MIT-table row); the code byte-checks +0xF3 = E8 -> kOverride17 |  |
 | Substrate.Npc.GetEnterCombatOverridePackage.1_7_104 | raw rva | - | - | - | - | - | 0x3BEA80 | raw RVA: 1.6.1170 0x3B79C0 signature (53 bytes) unique at the idmap RVA |  | channels/SubstratePackage.cpp kOverride17 (1.7.104 only: AE id 24673 has no MIT-table row) |  |
+| ActionGate.Hold.ParallelDataPush.1_7_104 | raw rva | - | - | - | - | - | 0x874BC0 | raw RVA: 1.6.1170 0x85F990 signature (37 bytes) unique at the idmap RVA |  | native/core/ActionGate.cpp (Install, 1.7.104 only: AE id 47532 has no MIT-table row); the code re-reads the Parallel act's E8 at +0x11 -> this address |  |
 
 ## Not verified on 1.7.104
 
@@ -353,6 +355,7 @@ for them and the seat is refused. Nothing here is a failure on 1.6.1170 or 1.5.9
 | seat | 1.6.1170 id | reason |
 |---|---|---|
 | Character.ActorValueOwner.SE | - | no 1.6.1170 (AE) id: the 1.7.104 map is keyed by AE id (1.5.97-only seat) |
+| ActionGate.Hold.ParallelDataPush | 47532 | id 47532 is not in the idmap |
 | TargetPin.CombatController.SetTarget | 33235 | id 33235 is not in the idmap |
 | EquipSink.Path.OutfitApply.24234 | - | BY DESIGN: 1.5.97-only label. On 1.6.1170 and 1.7.104 the code reads its AE twin EquipSink.Path.OutfitApply.418622 (AE id 418622, 1.7.104 0x3C4440), whose own row carries the 1.7.104 fact (MAPPED-AE) |
 | EquipSink.Path.AddWornOutfit.19266 | - | BY DESIGN: 1.5.97-only label. On 1.6.1170 and 1.7.104 the code reads its AE twin EquipSink.Path.AddWornOutfit.19692 (AE id 19692, 1.7.104 0x2E8070), whose own row carries the 1.7.104 fact (MAPPED-AE) |

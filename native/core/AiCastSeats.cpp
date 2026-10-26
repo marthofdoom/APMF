@@ -9,6 +9,7 @@
 #include "core/ActionGate.h"   // RangedProbeClassify / RangedProbeLineBudget ([Probe] bRangedSelect)
 #include "core/EquipSink.h"    // CategoryNames
 #include "core/EquipPreference.h"   // ch.26 (ABI v22): the score lift both 0x0C thunks hand their answer to
+#include "channels/CombatSubstrate.h"   // NoteClaimScore: the substrate's passive claim-score line
 
 #include <array>
 #include <cmath>
@@ -261,6 +262,10 @@ namespace apmf::aicastseats {
             const float finalScore = apmf::equippref::OnScore(a_this, a_cc, actor, score,
                                                               reinterpret_cast<std::uintptr_t>(orig), true, lift);
             const bool  steered    = lift.lifted && lift.castSteer;
+            // fix/apmf-ooc-substrate (passive): a substrate holder's claimed spell -- one line per window with the score's
+            // inputs (the controller's combat style and its magicScoreMult), the field proof of what a 0 is made of.
+            if (lift.castSteer && apmf::combatsubstrate::AnyLive())
+                apmf::combatsubstrate::NoteClaimScore(fid, itemForm, score, a_cc);
 
             // The steer's OWN line, independent of GROUP A's probe flag: a steer that
             // fires unobserved is exactly the "path proven to exist but never seen to
