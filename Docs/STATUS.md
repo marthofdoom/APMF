@@ -4,6 +4,18 @@ Updated 2026-10-21. Current version **v0.14.0** (cut 2026-10-21, ABI v28, see CH
 shipped, what's probe-gated, what's next. Keep this current in the SAME change as any
 build/finding/workflow change.
 
+## HEAD OF WORK 2026-10-25 -- CH.19 CROSS CELLS (ABI v30 kTravel_CrossCells), branch `feat/apmf-ch19-cross-cells`, NOT merged
+
+- marth: "So harbingers moveto's need to navigate doorways natively" / "Moveto using harbinger will have a flag for
+  cell crossing." MFO's town errands walk to a shop's vendor NPC (MFO `native/apmf/ErrandClaims.cpp` holds the bit
+  pending, `kCrossCellsAbi = 0`).
+- **ABI v30:** `kTravel_CrossCells = 1u << 5`, no slot (the interface stays `APMF_API_v29`). On a FORM ref leg:
+  arrival = the destination's current parent cell (interior) / same worldspace (exterior) AND the radius; an
+  unloaded outdoor destination (cell not attached, no 3D) is waited for; arrival HOLDS like a cell leg. Without the
+  flag nothing changes. MAP.md ch.19 What breaks (6b).
+- v30 had been named for the per-item equip deny (86e3t8w23): that moves to v31. MFO must mirror the header
+  byte-identically, set `kCrossCellsAbi = 30` and drop its local constant.
+- No co-save, seat, INI or address change. Not field-tested.
 ## HEAD OF WORK 2026-10-25 -- CLIENT FACET PRIORITY QUERY (ABI v29 GetClientFacetPriority), branch `feat/apmf-facet-state-query`, NOT merged
 
 - ClickUp 1dfcuabbh1e. marth: "Weapon, or outfit equipping being disabled(0) in harbinger, also informs MFO so that
