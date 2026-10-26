@@ -1,3 +1,7 @@
+## Unreleased
+
+- **A mod can ask what the player let it do (ABI v29).** `GetClientFacetPriority` returns the calling mod's own priority on a facet, the number set on the Harbinger page or in `APMF_Sources.ini`. 0 means off. MFO uses it so that a looted upgrade its follower will not wear, because EquipWeapon or EquipArmor is 0, is marked for selling. Read only, any thread. Older mods keep working.
+
 ## v0.14.0 -- Place, the torch and weapon seats, a fuller combat substrate
 
 - **A mod can place an NPC (ABI v28).** `kIntent_Place` moves an actor beside a reference or to a point in an interior cell, once, through the game's own move call. It can be told to move only if the destination is unloaded, to refuse while the player is present, and to set a facing. `GetPlaceState` says whether the actor was placed, refused or failed, and a failure is never reported as a success. Refused when another mod's travel or hold owns the actor. It has no INI key and switches nothing on. Not yet tested in game.

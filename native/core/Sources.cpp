@@ -70,6 +70,8 @@ namespace apmf::sources {
         std::mutex                 g_addMx;
         std::atomic<bool>          g_fullLogged{ false };
         std::atomic<bool>          g_inited{ false };
+        std::atomic<bool>          g_iniRead{ false };   // ABI v29: set (release) after Init's ReadIni; g_iniPrio /
+                                                         //   g_defClient are read-only from then on
         std::atomic<std::uint32_t> g_loadSeq{ 1 };
 
         // INI, read once at Init (main thread) and kept for Register(): per facet,
@@ -414,6 +416,7 @@ namespace apmf::sources {
     void Init() {
         if (g_inited.exchange(true)) return;
         ReadIni();
+        g_iniRead.store(true, std::memory_order_release);
         {
             std::scoped_lock lk(g_addMx);
             // A source registered before Init (an early client request) got the built-in
@@ -699,6 +702,51 @@ namespace apmf::sources {
         if (outClient) *outClient = c;
         if (c == kNoSource) return f < Facet::kCount ? g_defClient[static_cast<int>(f)] : kDefaultClient;
         return Priority(c, f);
+    }
+
+    // ABI v29. The public ClientFacet numbering is this enum's (byte-shared header, APPEND-ONLY on both sides).
+    static_assert(static_cast<int>(Facet::kTarget) == APMF_API::kFacet_Target &&
+                      static_cast<int>(Facet::kDetection) == APMF_API::kFacet_Detection &&
+                      static_cast<int>(Facet::kPackage) == APMF_API::kFacet_Package &&
+                      static_cast<int>(Facet::kEquipWeapon) == APMF_API::kFacet_EquipWeapon &&
+                      static_cast<int>(Facet::kCombatAction) == APMF_API::kFacet_CombatAction &&
+                      static_cast<int>(Facet::kCast) == APMF_API::kFacet_Cast &&
+                      static_cast<int>(Facet::kCombat) == APMF_API::kFacet_Combat &&
+                      static_cast<int>(Facet::kCore) == APMF_API::kFacet_Core &&
+                      static_cast<int>(Facet::kActorValue) == APMF_API::kFacet_ActorValue &&
+                      static_cast<int>(Facet::kEquipArmor) == APMF_API::kFacet_EquipArmor && kFacetCount == 10,
+                  "APMF_API::ClientFacet must number the facets exactly as sources::Facet");
+
+    int CallerPriority(const void* returnAddress, Facet f) {
+        if (f >= Facet::kCount) return -1;
+        const int fi = static_cast<int>(f);
+        if (!g_iniRead.load(std::memory_order_acquire)) return kDefaultClient;
+        const std::uintptr_t code = FollowStubs(reinterpret_cast<std::uintptr_t>(returnAddress));
+        void* mod = ModuleOf(code);
+        if (!mod || mod == SelfModule() || mod == reinterpret_cast<void*>(REL::Module::get().base()))
+            return g_defClient[fi];
+        // The module cache ForAddress fills on a client's first claim: the common case, no name lookup.
+        SourceId id     = kNoSource;
+        bool     cached = false;
+        {
+            std::scoped_lock lk(g_modCacheMx);
+            if (const auto it = g_modCache.find(reinterpret_cast<std::uintptr_t>(mod)); it != g_modCache.end()) {
+                id     = it->second;
+                cached = true;
+            }
+        }
+        char name[kNameMax]{};
+        if (!cached) {
+            ModuleNameOf(code, name, sizeof(name));
+            if (name[0] != '\0') id = Find(name);
+        }
+        if (id == kEngineSource || id == kDirectSource || id == kUnattributedSource) return g_defClient[fi];
+        if (Valid(id)) {
+            if (g_src[id].client.load(std::memory_order_acquire)) return g_src[id].prio[fi].load(std::memory_order_relaxed);
+            return InitialPriority(g_src[id].name, Kind::kClient, f);
+        }
+        if (name[0] != '\0') return InitialPriority(name, Kind::kClient, f);
+        return g_defClient[fi];
     }
 
     // ---- the degrade rule ------------------------------------------------------------

@@ -303,6 +303,19 @@ namespace {
         }
     }
 
+    // ABI v29: the CALLING client's priority on a facet (the Harbinger page / APMF_Sources.ini; 0 = off). The
+    // client is the module `_ReturnAddress()` lands in, the attribution every claim gets (Request / RequestEx
+    // above), so a client reads only its own priorities. Any thread, read-only (sources::CallerPriority: atomics
+    // and leaf locks, no game call, no registration). An unknown facet value or a throw is kFacetPriorityUnknown.
+    std::int32_t APMF_GetClientFacetPriority(std::uint32_t facet) {
+        try {
+            if (facet >= static_cast<std::uint32_t>(apmf::sources::kFacetCount)) return APMF_API::kFacetPriorityUnknown;
+            return apmf::sources::CallerPriority(_ReturnAddress(), static_cast<apmf::sources::Facet>(facet));
+        } catch (...) {
+            return APMF_API::kFacetPriorityUnknown;
+        }
+    }
+
     // ABI -> the first APMF release that implements it, for the "client too new"
     // refusal log below (MFO wiring review SEV-3 F4): a user running an older
     // APMF under a newer client must be able to read WHICH APMF they need. Keep in
@@ -313,7 +326,8 @@ namespace {
     // v18, v19 and v20 ship in 0.11.0; v21 ships in 0.12.0; v22 ships in the release after
     // 0.13.0 -- name it at the cut; so do v23 and v24; v25, the ch.17 entry instance, ships in
     // the release after 0.13.1 -- name it at the cut; so do v26, the substrate state query, v27, the
-    // substrate availability query, and v28, kIntent_Place and its state query).
+    // substrate availability query, and v28, kIntent_Place and its state query; v29, the client facet
+    // priority query, ships in the release after 0.14.0 -- name it at the cut).
     const char* MinReleaseForAbi(std::uint32_t abi) {
         switch (abi) {
         case 1:  return "0.2.0";
@@ -430,7 +444,15 @@ namespace {
     static_assert(sizeof(APMF_API::APMF_API_v28) == sizeof(APMF_API::APMF_API_v27) + sizeof(void*),
                   "APMF_API_v28 = the v27 prefix plus exactly one function pointer");
 
-    constexpr APMF_API::APMF_API_v28 g_api{
+    // ABI v29 (the client facet priority query) appends ONE slot to the v28 prefix, so the object is now an
+    // APMF_API_v29 and `abiVersion` reports 29. Same two-form proof.
+    static_assert(offsetof(APMF_API::APMF_API_v29, GetClientFacetPriority) == sizeof(APMF_API::APMF_API_v28),
+                  "APMF_API_v29's slot must start right after the v28 prefix");
+    static_assert(sizeof(APMF_API::APMF_API_v29) == sizeof(APMF_API::APMF_API_v28) + sizeof(void*),
+                  "APMF_API_v29 = the v28 prefix plus exactly one function pointer");
+
+    constexpr APMF_API::APMF_API_v29 g_api{
+        {
         {
         {
         {
@@ -484,6 +506,8 @@ namespace {
         &APMF_IsSubstrateAvailable,
         },
         &APMF_GetPlaceState,
+        },
+        &APMF_GetClientFacetPriority,
     };
 
 }
