@@ -3082,7 +3082,7 @@ bool HealOnTheWalk(RE::FormID healer, RE::FormID friendId, RE::FormID heal) {
 }
 ```
 
-**Check.** `[substrate] 0x<f> OPEN anchor=0x<ref> entry=true`, the census `[ctcensus] ... VERDICT: FIRED via Restore (the hand charged: ANIMATED`, then `[substrate] 0x<f> CLOSE reason=fired controller-null=y anchor-home=y`.
+**Check.** `[substrate] 0x<f> OPEN anchor=0x<ref> entry=true`, the census `[ctcensus] ... VERDICT: FIRED via Restore (the hand charged: ANIMATED`, `[substrate] 0x<f> RELEASING 0x<form>` (0x0B, the release request; since fix/apmf-substrate-release-close the close waits for real release evidence, APMF-B93), then `[substrate] 0x<f> CLOSE reason=fired controller-null=y anchor-home=y` and a `WINDOW` line `proven by the TESSpellCastEvent` (or `the hand back to None after Casting`).
 
 #### Is this actor's combat a substrate? (ABI v26)
 

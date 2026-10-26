@@ -124,9 +124,16 @@ namespace apmf::combatsubstrate {
     // only), so the group never searches for it. Counted per holder.
     void AnchorKnowledge(void* a_group, RE::TESObjectREFR* a_anchor);
 
-    // core/CasterTypeCensus.cpp's 0x0B NotifyStartCast observer: the engine released a spell
-    // from a hand (the "fired through the animated path" signal). Records it for a holder; the
-    // game thread closes a fire-and-forget substrate on it.
+    // core/CasterTypeCensus.cpp's 0x0B NotifyStartCast observer: the hand went Charged -> Casting
+    // (the release REQUEST). Records it for a holder; the game thread marks the window RELEASING
+    // and closes it as "fired" only on real release evidence (the holder's TESSpellCastEvent for
+    // the driven form, or the hand back to None after Casting), else after 3 s as
+    // "fired-not-released" (fix/apmf-substrate-release-close, APMF-B93).
     void NoteCastFired(RE::CombatController* a_cc, RE::CombatMagicCaster* a_caster);
+
+    // core/CasterTypeCensus.cpp's 0x06 CheckStartCast observer, on a YES: the engine BUILT a caster.
+    // COMBAT THREAD. Records it for a holder whose tree the leaf gate has not seen yet (treeStartMs
+    // 0); the game thread closes that substrate as "tree-outside-gate" (nothing was denied).
+    void NoteCastBuilt(RE::CombatController* a_cc, RE::CombatMagicCaster* a_caster);
 
 }

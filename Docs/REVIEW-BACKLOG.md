@@ -754,7 +754,11 @@ the record (the same exposure class as APMF-B26).
 Raised against a512763, 2026-10-13. Reviewer (verbatim): "EquipSpell is denied by the allow-list. That conflicts with
 design §4 / S4, where the engine equips the claimed spell under the claim. Record it for S4."
 
-### APMF-B93 (SEV-4, F12) -- the fire close may cut the charge
+### APMF-B93 (RESOLVED by fix/apmf-substrate-release-close, 2026-10-26; was SEV-4, F12) -- the fire close may cut the charge
+FIELD-PROVEN 2026-10-26 (LoreRim v273, 3 of 3 windows): 0x0B fired on the hand's Charged -> Casting, `CLOSE reason=fired`
+16-33 ms later, StopCombat freed the controller, `anim SpellFire 0` every time. RESOLVED: 0x0B only marks the window
+RELEASING; `fired` needs the holder's TESSpellCastEvent for the driven form or the hand back to None after Casting; 3 s
+without either closes as `fired-not-released` (a warning); the TTL defers while releasing. Original entry:
 Raised against a512763, 2026-10-13. Reviewer (verbatim): "The "fire" close. It rides 0x0B `NotifyStartCast`, whose name
 and callers (49083/49086/49101/49159) suggest the start of the cast. If so, `CloseSub`'s StopCombat would cut the
 charging animation. The S2a dry run does not exercise this, but P4 (S3) must prove it."
