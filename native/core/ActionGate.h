@@ -26,6 +26,19 @@ namespace apmf::actiongate {
     // after Install.
     std::uint32_t SubstrateLeavesPaired();
 
+    // THE SUBSTRATE MOVEMENT HOLD (fix/apmf-ooc-substrate, 2026-10-25; core/ActionGate.cpp "MOVEMENT HOLD").
+    // For a held holder the root of the combat tree's Movement half ("Movement Parallel") is entered as a
+    // valid EMPTY Parallel (the Parallel's own data push, never its Enter) and kept RUNNING: its update
+    // (slot 0x04) does nothing while the hold stands, so the Combat Parallel never sees a failed child and
+    // keeps its Action half. Armed = every row verified, the Parallel act's own call to the data push
+    // re-read, and slot 0x04 installed on the Parallel vtable. Game thread, after Install.
+    bool        MovementHoldArmed();
+    const char* MovementHoldNotArmedReason();   // never null
+    // Forget the hold records of `a_actor`'s behaviour threads (0 = every record). ONLY once those threads
+    // are gone (the controller was destroyed: a close whose StopCombat left no controller, or a load).
+    // A record of a live thread is removed by its own pop(), never here. Game thread.
+    void ForgetMovementHolds(RE::FormID a_actor);
+
     // ch.23 PURSUIT LEASH (ABI v16, kIntent_PursuitLeash) -- the in-combat leash, its own
     // intent on ch.7's leaf seats. See ActionGate.cpp's PURSUIT LEASH section for the leaves,
     // the rule and the two seats.

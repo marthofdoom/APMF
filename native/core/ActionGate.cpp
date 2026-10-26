@@ -17,6 +17,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstring>
 #include <mutex>
 #include <shared_mutex>
 #include <string_view>
@@ -273,6 +274,228 @@ namespace apmf::actiongate {
         std::atomic<std::uintptr_t> g_ascend{ 0 };
         std::atomic<bool>           g_pursuitArmed{ false };
         std::atomic<const char*>    g_pursuitNotArmedWhy{ "not installed yet (before kDataLoaded)" };
+
+        // ================================================================
+        // THE SUBSTRATE MOVEMENT HOLD (fix/apmf-ooc-substrate, 2026-10-25). Field 2026-10-20 (LoreRim town run 2,
+        // Auri, five windows): no substrate cast was ever reached. The combat tree's root is the Parallel "Combat
+        // Parallel" {Movement Link, Action Link} (AE builder 47531 0x85F7D0). Its Movement half is the tree "Movement"
+        // (AE builder 49436 0x8AD390), rooted at a second Parallel, "Movement Parallel" {Check Unreachable Target
+        // Link, Acquire Weapon Link, Acquire Movement Resource > Movement Repeat > Movement Selector, Dodge Threat
+        // Link} (composition 0x8ADFF3-0x8AE0C7). A Parallel's update (AE 47425 0x85B150, SE 46169 0x7C42F0,
+        // 1.7.104 0x870380) marks ITSELF failed when any child thread finishes failed (state +0x148 == 1 ->
+        // SetFailed) and then interrupts every other child (AE 0x85DF30). The substrate force-failed the movement
+        // leaves (CheckUnreachableTarget and AcquireResource<2> "Movement", 82 each in window 1), so the Movement
+        // Parallel failed, the Combat Parallel failed and interrupted its Action half every frame: "Action resource
+        // let through 0, EquipSpell let through 0; the Action branch never ran for this holder". No spell was ever
+        // equipped and no CombatMagicCaster built.
+        //
+        // marth 2026-10-20: "Harbinger should feed it true data and not let it know it was blocked. Thats part of
+        // the featureset." So the Movement half is not failed: it is HELD, running. For a held holder the node
+        // "Movement Parallel" is entered as a valid EMPTY Parallel and kept the thread's running node:
+        //   act  (slot 0x02): the Parallel's OWN data push (AE 47532 0x85F990 / SE 46278 0x7C8260 / 1.7.104 raw
+        //        0x874BC0: push 0x20, an empty BSTArray of child threads, flags 0) -- the first half of the
+        //        Parallel's own act(), which calls it at +0x11 on all three runtimes (re-read at install). Its
+        //        Enter (AE 47424) is NOT run: no child thread is spawned, so no movement leaf ever enters (the
+        //        deny is complete at the source) and nothing can fail.
+        //   update (slot 0x04, the one new seat): while the hold stands, NOTHING -- the node stays cur_node in
+        //        phase 1, the runner (AE 47483 0x85DBA0 / SE 46228 / 1.7.104 0x872DD0) yields the thread every
+        //        frame. When it no longer stands (real combat, the close, the hold switched off): the leaf's own
+        //        failure exit, SetFailed(thread, 1) + Ascend(thread) (the ch.23 rows): the Combat Parallel fails
+        //        ONCE and the controller restarts the tree as the engine built it (a real fight moves at once).
+        //   pop (0x03), interrupt (0x05), SaveGame (0x06), LoadGame (0x07): the Parallel's OWN, on its own
+        //        valid empty data (pop destroys the empty array, top -= 0x20; interrupt sees no child and
+        //        Ascends; a save writes flags 0 + count 0, a load rebuilds an empty Parallel). A save made while
+        //        held therefore loads as an ordinary empty Parallel, whose own update completes it.
+        // The record below only routes slot 0x04: {thread, node} -> actor, added at the hold's act, removed by the
+        // node's own pop. A record whose thread was destroyed without a pop (StopCombat frees the controller and its
+        // threads, AE 0x85D9F0 pops nothing) is harmless: any later use of that {thread, node} pair begins with an
+        // act(), which rewrites the record; ForgetMovementHolds clears them once the threads are known gone.
+        // ================================================================
+        constexpr std::size_t kHoldCap = 64;   // 16 holders x one Movement thread each, with room for stale records
+        struct HoldRecord {
+            void*       thread = nullptr;
+            const void* node   = nullptr;
+            RE::FormID  actor  = 0;
+        };
+        std::mutex                          g_holdMx;          // leaf lock: never held across an engine call
+        std::array<HoldRecord, kHoldCap>    g_holds{};         // guarded by g_holdMx
+        std::atomic<std::uint32_t>          g_holdCount{ 0 };  // records in use (the cheap pre-gate)
+        std::atomic<bool>                   g_holdArmed{ false };
+        std::atomic<const char*>            g_holdNotArmedWhy{ "not installed yet (before kDataLoaded)" };
+        std::atomic<bool>                   g_holdFullLogged{ false };
+        std::atomic<std::uint32_t>          g_holdAnomalies{ 0 };
+        std::atomic<bool>                   g_holdAnomalyLogged{ false };
+        std::uintptr_t                      g_parallelVt = 0;   // the CombatBehaviorParallel vtable (Install only)
+        std::unordered_map<std::uintptr_t, std::uintptr_t> g_holdOrigUpdate;   // Parallel vtable -> original slot 0x04
+        using DataPush_t = void* (*)(void* a_thread, void* a_out16);   // the Parallel's data push (thread, out)
+        std::atomic<std::uintptr_t>         g_holdPush{ 0 };
+        std::atomic<std::uintptr_t>         g_holdSetFailed{ 0 };
+        std::atomic<std::uintptr_t>         g_holdAscend{ 0 };
+
+        // The record of {thread, node}: its actor, or 0. Erase = also remove it.
+        RE::FormID HoldLookup(void* a_thread, const void* a_node, bool a_erase) {
+            std::scoped_lock lk(g_holdMx);
+            for (auto& r : g_holds) {
+                if (r.thread != a_thread || r.node != a_node) continue;
+                const RE::FormID a = r.actor;
+                if (a_erase) {
+                    r = HoldRecord{};
+                    g_holdCount.fetch_sub(1, std::memory_order_relaxed);
+                }
+                return a;
+            }
+            return 0;
+        }
+
+        // Add (or rewrite) the record. False = the table is full (the caller does not hold).
+        bool HoldAdd(void* a_thread, const void* a_node, RE::FormID a_actor) {
+            std::scoped_lock lk(g_holdMx);
+            HoldRecord* free = nullptr;
+            for (auto& r : g_holds) {
+                if (r.thread == a_thread && r.node == a_node) {
+                    r.actor = a_actor;
+                    return true;
+                }
+                if (!free && !r.thread) free = &r;
+            }
+            if (!free) return false;
+            *free = HoldRecord{ a_thread, a_node, a_actor };
+            g_holdCount.fetch_add(1, std::memory_order_relaxed);
+            return true;
+        }
+
+        // The hold's act(): the Parallel's own data push (a valid empty Parallel on the data stack), never its
+        // Enter. True = the node is held (the caller returns without running the original act). False = not held
+        // (the hold is not armed, or the record table is full: logged once as an ERROR) and the caller goes on.
+        bool HoldAct(void* a_this, void* a_control, RE::FormID a_actor) {
+            const auto push = g_holdPush.load(std::memory_order_relaxed);
+            if (!push || !g_holdArmed.load(std::memory_order_acquire)) return false;
+            if (!HoldAdd(a_control, a_this, a_actor)) {
+                if (!g_holdFullLogged.exchange(true))
+                    spdlog::error("[substrate] MOVEMENT HOLD table FULL ({} records): 0x{}'s Movement half runs as the "
+                                  "engine built it (its leaves are force-failed, so the Combat Parallel can kill the "
+                                  "Action half again). Logged once; the records free on each held node's pop.",
+                                  kHoldCap, apmf::log::Hex(a_actor));
+                return false;
+            }
+            // {thread*, offset}: the 16-byte out the act() itself passes (AE 0x85FCD9 `lea rdx,[rsp+0x20]`).
+            alignas(8) std::uint8_t out[16]{};
+            reinterpret_cast<DataPush_t>(push)(a_control, out);
+            return true;
+        }
+
+        // Slot 0x04 on the Parallel vtable. Every Parallel's update passes through untouched (one relaxed load)
+        // unless THIS {thread, node} is a held Movement Parallel.
+        std::atomic<std::uint32_t> g_holdExHeld{ 0 };
+        std::atomic<std::uint64_t> g_holdStaleLogMs{ 0 }, g_holdExHeldLogMs{ 0 };
+        // One line per 10 s per kind (combat thread; a CAS on the last-logged time).
+        bool RateOk(std::atomic<std::uint64_t>& a_last) {
+            const std::uint64_t now  = apmf::clock::MonotonicMs();
+            std::uint64_t       prev = a_last.load(std::memory_order_relaxed);
+            return (prev == 0 || now - prev >= 10000) && a_last.compare_exchange_strong(prev, now, std::memory_order_relaxed);
+        }
+
+        // The node the hold enters: the Parallel named "Movement Parallel" (BSFixedString at node+0x08, the tree
+        // builders' naming helper AE 0x85EE10 / SE 0x7C7820 / 1.7.104 0x874040; the same identification ForLeaf makes at
+        // act). ASCII case-insensitive (the string pool keeps the first spelling it interned).
+        bool NamedMovementParallel(const void* a_node) {
+            const char* n = reinterpret_cast<const RE::BSFixedString*>(static_cast<const std::uint8_t*>(a_node) + 0x08)->c_str();
+            if (!n) return false;
+            const char* lit = "Movement Parallel";
+            for (; *n && *lit; ++n, ++lit) {
+                const char x = (*n >= 'A' && *n <= 'Z') ? static_cast<char>(*n - 'A' + 'a') : *n;
+                const char y = (*lit >= 'A' && *lit <= 'Z') ? static_cast<char>(*lit - 'A' + 'a') : *lit;
+                if (x != y) return false;
+            }
+            return *n == 0 && *lit == 0;
+        }
+
+        void HoldUpdateThunk(void* a_this, void* a_control) {
+            const auto vt  = *reinterpret_cast<std::uintptr_t*>(a_this);
+            const auto oit = g_holdOrigUpdate.find(vt);
+            if (oit == g_holdOrigUpdate.end()) return;   // foreign vtable -- no original to recover; touch nothing
+            const auto orig = reinterpret_cast<apmf::cbt::Update_t>(oit->second);
+            const auto thread = reinterpret_cast<std::uintptr_t>(a_control);
+            // The node's own frame: data = thread data base (+0x00) + the frame offset recorded at its entry (+0x120),
+            // the same read the Parallel's own slot-0x04 wrapper makes on all three runtimes; +0x10 is the child
+            // BSTArray's size (Parallel::Update reads it there). A held node's frame is the EMPTY Parallel the hold
+            // pushed. (review F1 / F2 of df5635a)
+            const auto frameEmpty = [&]() {
+                const auto* base = *reinterpret_cast<std::uint8_t* const*>(thread);
+                if (!base) return false;
+                const std::uint32_t off = *reinterpret_cast<const std::uint32_t*>(thread + 0x120);
+                return *reinterpret_cast<const std::uint32_t*>(base + off + 0x10) == 0;
+            };
+            const auto isRunning = [&]() {
+                return *reinterpret_cast<void* const*>(thread + apmf::cbt::kThreadCurNode) == a_this &&
+                       *reinterpret_cast<const std::uint32_t*>(thread + apmf::cbt::kThreadPhase) == 1;
+            };
+            const RE::FormID actor =
+                g_holdCount.load(std::memory_order_relaxed) != 0 ? HoldLookup(a_control, a_this, false) : 0;
+            if (actor == 0) {
+                // review F2: a Parallel WITH children (node+0x20) entering its update with an EMPTY child array never
+                // happens natively (its Enter spawned one thread per child; the array empties only inside this update).
+                // It is an ex-held node with no record (a save made while held, then loaded): the failure exit, so the
+                // tree restarts once as the engine built it, never the original's silent success with no Movement half.
+                //
+                // Why the empty-at-ENTRY test cannot hit a native node (disassembly, the same on all three runtimes:
+                // AE 0x85B020 / 0x85B150 / 0x85DBA0, SE 0x7C41B0 / 0x7C42F0 / 0x7C6800, 1.7.104 0x870250 / 0x870380 /
+                // 0x872DD0): Enter adds one child thread per child (node+0x20) to the array, then sets the thread's
+                // wait bit (+0x150 |= 1), so the runner skips update in that step; the wait bit is cleared only by a
+                // child thread FINISHING (runner tail: parent +0x150 &= ~1, wake) or by an interrupt (state 2, which
+                // calls slot 0x05, never update). A finished child stays in the array until Update itself removes it,
+                // and Update Ascends in the SAME call the array reaches 0 (all children succeeded included), so no
+                // later update ever sees that node with an empty array. Restricted to the node the hold enters
+                // ("Movement Parallel") on top (review of 51d6c65): no other Parallel is ever touched here.
+                if (*reinterpret_cast<const std::uint32_t*>(static_cast<const std::uint8_t*>(a_this) + 0x20) > 0 &&
+                    isRunning() && frameEmpty() && NamedMovementParallel(a_this)) {
+                    reinterpret_cast<apmf::cbt::SetFailed_t>(g_holdSetFailed.load(std::memory_order_relaxed))(a_control, true);
+                    reinterpret_cast<apmf::cbt::Ascend_t>(g_holdAscend.load(std::memory_order_relaxed))(a_control);
+                    const auto n = g_holdExHeld.fetch_add(1, std::memory_order_relaxed) + 1;
+                    if (RateOk(g_holdExHeldLogMs))
+                        spdlog::info("[substrate] MOVEMENT HOLD: an ex-held Parallel (children on the node, an empty frame, no "
+                                     "record: a save made while held) ended through its failure exit; the tree restarts "
+                                     "once ({} so far).", n);
+                    return;
+                }
+                return orig(a_this, a_control);   // an ordinary Parallel (the Combat Parallel included)
+            }
+            // review F1: a record is trusted only on the empty frame the hold pushed. Anything else is a NATIVE Parallel
+            // on a reused {thread, node} (a stale record): drop the record and let the engine's own update run.
+            if (!frameEmpty()) {
+                HoldLookup(a_control, a_this, true);
+                const auto n = g_holdAnomalies.fetch_add(1, std::memory_order_relaxed) + 1;
+                apmf::combatsubstrate::NoteHold(actor, apmf::combatsubstrate::HoldEvent::kAnomaly);
+                if (RateOk(g_holdStaleLogMs))
+                    spdlog::warn("[substrate] MOVEMENT HOLD: a stale record (0x{}) named a Parallel whose frame is NOT empty "
+                                 "(a native node) -- record dropped, the engine's own update runs ({} anomaly(s) so far).",
+                                 apmf::log::Hex(actor), n);
+                return orig(a_this, a_control);
+            }
+
+            // The runner calls update on its cur_node in phase 1 (AE 0x85DC57). Anything else is not trusted: the
+            // node is left as it is (never the Parallel's own update on a thread whose running node is another).
+            if (*reinterpret_cast<void* const*>(thread + apmf::cbt::kThreadCurNode) != a_this ||
+                *reinterpret_cast<const std::uint32_t*>(thread + apmf::cbt::kThreadPhase) != 1) {
+                g_holdAnomalies.fetch_add(1, std::memory_order_relaxed);
+                apmf::combatsubstrate::NoteHold(actor, apmf::combatsubstrate::HoldEvent::kAnomaly);
+                if (!g_holdAnomalyLogged.exchange(true))
+                    spdlog::warn("[substrate] MOVEMENT HOLD update() ANOMALY for 0x{}: the held node is not the thread's "
+                                 "cur_node in phase 1 -- left untouched. Counted; the runner protocol in "
+                                 "core/CombatBehaviorRE.h needs re-measuring if this recurs.",
+                                 apmf::log::Hex(actor));
+                return;
+            }
+            if (apmf::combatsubstrate::HoldsMovement(actor)) {
+                apmf::combatsubstrate::NoteHold(actor, apmf::combatsubstrate::HoldEvent::kUpdate);
+                return;   // HELD: running, nothing to do this frame (the thread yields)
+            }
+            // The hold no longer stands: the leaf's own failure exit. The Combat Parallel fails once and the
+            // controller restarts the tree as the engine built it; the runner then calls this node's own pop().
+            reinterpret_cast<apmf::cbt::SetFailed_t>(g_holdSetFailed.load(std::memory_order_relaxed))(a_control, true);
+            reinterpret_cast<apmf::cbt::Ascend_t>(g_holdAscend.load(std::memory_order_relaxed))(a_control);
+            apmf::combatsubstrate::NoteHold(actor, apmf::combatsubstrate::HoldEvent::kReleased);
+        }
 
         // The per-actor leash, written ONLY on the game thread (ch.23 Engage / OnOwnerChanged /
         // Release, and the load reset), read by the seats under a shared_lock. The anchor is
@@ -988,6 +1211,11 @@ namespace apmf::actiongate {
             if (oit == g_orig.end()) return a_control;   // foreign vtable -- benign, touch nothing
             auto orig = reinterpret_cast<apmf::cbt::Act_t>(oit->second);
 
+            // THE MOVEMENT HOLD: a Parallel entered again on the same thread rewrites its record (an earlier
+            // record of this {thread, node} belongs to a thread that was destroyed without a pop). The hold
+            // below adds it back when it holds again.
+            if (vt == g_parallelVt && g_holdCount.load(std::memory_order_relaxed) != 0) HoldLookup(a_control, a_this, true);
+
             // castobs interrupt attribution (2026-10-06): the leaf a WATCHED actor's tree enters. Observe only.
             if (apmf::castobserve::AnyWatched()) apmf::castobserve::NoteLeafAct(ResolveDeliberatingActor(a_control), vt);
 
@@ -1016,8 +1244,15 @@ namespace apmf::actiongate {
                 if (const auto lit = g_leafIdx.find(vt); lit != g_leafIdx.end()) {
                     const RE::FormID sf = ResolveDeliberatingActor(a_control);
                     const bool       mv = g_movementLeaf.contains(vt);
-                    if (sf != 0 && apmf::combatsubstrate::ForLeaf(sf, lit->second, mv, a_this) ==
-                                       apmf::combatsubstrate::Leaf::kDeny) {
+                    const auto verdict  = sf != 0 ? apmf::combatsubstrate::ForLeaf(sf, lit->second, mv, a_this)
+                                                  : apmf::combatsubstrate::Leaf::kNotHolder;
+                    // THE MOVEMENT HOLD (see "MOVEMENT HOLD" above): the Movement half's root runs, held, as an
+                    // empty Parallel. ForLeaf answers kHold only for the "Movement Parallel" node of a held holder.
+                    if (verdict == apmf::combatsubstrate::Leaf::kHold && vt == g_parallelVt && HoldAct(a_this, a_control, sf)) {
+                        apmf::combatsubstrate::NoteHold(sf, apmf::combatsubstrate::HoldEvent::kHeld);
+                        return a_control;   // do NOT call orig: its Enter would spawn the movement threads
+                    }
+                    if (verdict == apmf::combatsubstrate::Leaf::kDeny) {
                         if (const auto ff = g_forceFailAct.load(std::memory_order_relaxed)) {
                             t_pending = PendingPop{ a_this, a_control };
                             reinterpret_cast<apmf::cbt::Act_t>(ff)(a_this, a_control);
@@ -1114,6 +1349,9 @@ namespace apmf::actiongate {
             const auto vt  = *reinterpret_cast<std::uintptr_t*>(a_this);
             const auto oit = g_origPop.find(vt);
             if (oit == g_origPop.end()) return;   // foreign vtable -- no original to recover; touch nothing
+            // THE MOVEMENT HOLD: a held node's record ends with its own pop. The pop itself is the Parallel's own
+            // (below): the hold's act pushed exactly the Parallel's data (an empty Parallel), so it pops exactly that.
+            if (vt == g_parallelVt && g_holdCount.load(std::memory_order_relaxed) != 0) HoldLookup(a_control, a_this, true);
             // [Probe] bRangedSelect -- OBSERVE ONLY: the CheckUnreachableTarget outcome, read from the
             // thread state before the node's own pop() (never on the denied-pair path above).
             if (g_rsEnabled.load(std::memory_order_acquire) && g_rsUnreachableVt != 0 && vt == g_rsUnreachableVt)
@@ -1462,6 +1700,119 @@ namespace apmf::actiongate {
             if (Paired(vt.address()))
                 g_leafIdx[vt.address()] = static_cast<std::uint32_t>(apmf::cbt::kLeaves.size() + k);
         }
+
+        // ================================================================
+        // THE SUBSTRATE MOVEMENT HOLD (see "MOVEMENT HOLD" above). Arms only when every half is there: the
+        // substrate switch and [CombatSubstrate] bSubstrateMovementHold, the Parallel vtable with act + pop
+        // installed (the 70-leaf pair above), the verified SetFailed + Ascend rows (the release), the verified
+        // data-push row, the Parallel act's own call to that push re-read (+0x11 on all three runtimes), and slot
+        // 0x04 installed. Anything less is refused whole and logged; channels/CombatSubstrate.cpp then refuses the
+        // substrate (no substrate cast is reachable without it) unless the hold is switched off by name.
+        // ================================================================
+        {
+            const char* why = nullptr;
+            constexpr const char* kIni = "Data/SKSE/Plugins/APMF.ini";
+            if (GetPrivateProfileIntA("CombatSubstrate", "bCombatSubstrate", 1, kIni) == 0) {
+                why = "[CombatSubstrate] bCombatSubstrate=0";
+            } else if (GetPrivateProfileIntA("CombatSubstrate", "bSubstrateMovementHold", 1, kIni) == 0) {
+                why = "[CombatSubstrate] bSubstrateMovementHold=0 in APMF.ini";
+            } else {
+                std::uintptr_t pvt = 0;
+                REL::VariantID pid{};
+                for (const auto& leaf : apmf::cbt::kLeaves) {
+                    if (std::string_view(leaf.name) != "CombatBehaviorParallel") continue;
+                    pid = leaf.vtbl;
+                    pvt = REL::Relocation<std::uintptr_t>{ leaf.vtbl }.address();
+                    break;
+                }
+                REL::Relocation<std::uintptr_t> setFailed{ RELOCATION_ID(46240, 47496) };
+                REL::Relocation<std::uintptr_t> ascend{ RELOCATION_ID(46229, 47484) };
+                const bool sfOk = allowance::SeatVerified(setFailed.address(), "ActionGate.Pursuit.SetFailed");
+                const bool asOk = allowance::SeatVerified(ascend.address(), "ActionGate.Pursuit.Ascend");
+                // 1.7.104: AE id 47532 has no row in the fork's MIT id table (a RELOCATION_ID miss is fatal there),
+                // so the push is a raw-RVA row (0x874BC0, the generator re-proves it from the 1.6.1170 signature).
+                const bool     on17 = allowance::IsRuntime1_7_104();
+                std::uintptr_t push = 0;
+                bool           puOk = false;
+                if (on17) {
+                    push = REL::Offset(0x874BC0).address();
+                    puOk = allowance::SeatVerified(push, "ActionGate.Hold.ParallelDataPush.1_7_104");
+                } else {
+                    push = REL::Relocation<std::uintptr_t>{ RELOCATION_ID(46278, 47532) }.address();
+                    puOk = allowance::SeatVerified(push, "ActionGate.Hold.ParallelDataPush");
+                }
+                if (!pvt || !Paired(pvt)) {
+                    why = "the CombatBehaviorParallel vtable has no act()/pop() pair installed";
+                } else if (!sfOk || !asOk || !puOk) {
+                    why = "the address self-check refused SetFailed / Ascend / the Parallel's data push";
+                } else {
+                    // The ORIGINAL act (the address this file's slot-0x02 write replaced) must be the engine's own
+                    // Parallel act: `push rbx; sub rsp,30h; mov rbx,rdx; lea rdx,[rsp+20h]; mov rcx,rbx; call push`,
+                    // identical on 1.6.1170 (0x85FCD0), 1.5.97 (0x7C8650) and 1.7.104 (0x874F00). Another mod's
+                    // hook in that slot, or a different body, refuses the hold (its first half is then unknown).
+                    static constexpr std::array<std::uint8_t, 17> kActHead{ 0x40, 0x53, 0x48, 0x83, 0xEC, 0x30, 0x48, 0x8B, 0xDA,
+                                                                            0x48, 0x8D, 0x54, 0x24, 0x20, 0x48, 0x8B, 0xCB };
+                    const auto act = g_orig.at(pvt);
+                    const auto* b  = reinterpret_cast<const std::uint8_t*>(act);
+                    bool       ok  = std::equal(kActHead.begin(), kActHead.end(), b) && b[0x11] == 0xE8;
+                    if (ok) {
+                        std::int32_t rel = 0;
+                        std::memcpy(&rel, b + 0x12, sizeof(rel));
+                        ok = static_cast<std::uintptr_t>(static_cast<std::intptr_t>(act) + 0x16 + rel) == push;
+                    }
+                    if (!ok) {
+                        why = "the CombatBehaviorParallel act() is not the engine's own (its call at +0x11 is not the "
+                              "verified data push)";
+                    } else {
+                        const std::array<REL::VariantID, 1> one{ pid };
+                        const int nUpd = allowance::InstallOnVtables(one, 0x04, &HoldUpdateThunk, expectedTD.get(),
+                                                                     "substrate-hold-update", g_holdOrigUpdate);
+                        if (nUpd != 1 || !g_holdOrigUpdate.contains(pvt)) {
+                            why = "slot 0x04 did not install on the CombatBehaviorParallel vtable";
+                        } else {
+                            g_parallelVt = pvt;
+                            g_holdPush.store(push, std::memory_order_relaxed);
+                            g_holdSetFailed.store(setFailed.address(), std::memory_order_relaxed);
+                            g_holdAscend.store(ascend.address(), std::memory_order_relaxed);
+                        }
+                    }
+                }
+            }
+            if (why) {
+                g_holdNotArmedWhy.store(why, std::memory_order_release);
+                spdlog::warn("[substrate] MOVEMENT HOLD NOT armed: {}.", why);
+            } else {
+                g_holdNotArmedWhy.store("", std::memory_order_release);
+                g_holdArmed.store(true, std::memory_order_release);
+                spdlog::info("[substrate] MOVEMENT HOLD armed: a held holder's \"Movement Parallel\" (the combat tree's "
+                             "Movement half) is entered as an EMPTY Parallel through its own data push (0x{:X}) and "
+                             "kept running by the Parallel slot-0x04 seat; released through SetFailed + Ascend.",
+                             g_holdPush.load(std::memory_order_relaxed) - REL::Module::get().base());
+            }
+        }
+    }
+
+    bool MovementHoldArmed() { return g_holdArmed.load(std::memory_order_acquire); }
+
+    const char* MovementHoldNotArmedReason() {
+        const char* w = g_holdNotArmedWhy.load(std::memory_order_acquire);
+        return w ? w : "";
+    }
+
+    void ForgetMovementHolds(RE::FormID a_actor) {
+        std::uint32_t n = 0;
+        {
+            std::scoped_lock lk(g_holdMx);
+            for (auto& r : g_holds) {
+                if (!r.thread || (a_actor != 0 && r.actor != a_actor)) continue;
+                r = HoldRecord{};
+                ++n;
+            }
+            if (n) g_holdCount.fetch_sub(n, std::memory_order_relaxed);
+        }
+        if (n)
+            spdlog::info("[substrate] MOVEMENT HOLD: {} record(s) of {} forgotten (their behaviour threads are gone).", n,
+                         a_actor ? fmt::format("0x{}", apmf::log::Hex(a_actor)) : std::string("every actor"));
     }
 
     std::uint32_t SubstrateLeavesPaired() {

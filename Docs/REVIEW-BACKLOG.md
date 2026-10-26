@@ -1071,3 +1071,17 @@ The comment in OnActorUpdate still says the obsTick fetch_add is the ONE reader-
 
 ### APMF-B191 (SEV-4, OPEN, core/Sources.cpp NoteClientRequest / CallerPriority, raised against 13231d6, Opus tier-3 review) -- a menu slider change before a source's first claim is lost
 A menu slider change made before a source has filed its first claim this session is stored in `prio[]` and APMF_Sources.ini but not in `g_iniPrio`, so `NoteClientRequest` overwrites it with the stale `InitialPriority` on that first claim, and `GetClientFacetPriority` (ABI v29, `CallerPriority`) reports the stale value until then. Fix: update `g_iniPrio` from Pump's priority write, or keep `prio[]` when flipping a source to client.
+### APMF-B186 (OPEN, author-raised, fix/apmf-ooc-substrate) -- a holder whose controller style gives magic no weight never selects the claimed spell
+Field 2026-10-20: all 33 of Auri's spells scored exactly 0.000 under the substrate. The spell score is the live controller's combat style `magicScoreMult` (CombatController+0x38 -> TESCombatStyle+0x30) times the effect sum (AE 0x819AA0 -> 0x819C10), so a style with magicScoreMult 0 scores every spell 0 and D1 (`core/EquipPreference.cpp`: never lift an engine 0) keeps the claimed one at 0. Not a substrate input: MFO swaps that style to its cast style for a cast gambit in a real fight and applies none under a substrate. Blocks MFO's `bSubstrateCasts` default ON for such followers. Needs the MFO change (cast stance style while its substrate cast claim stands) or a marth ruling on D1 for a substrate claim. Proof line: `[substrate] 0x<f> CLAIM SCORE`. Never deferrable past the next substrate field cycle (rule 9 (b)).
+
+### APMF-B187 (SEV-5, OPEN, author-raised, core/ActionGate.cpp MOVEMENT HOLD) -- hold records of destroyed threads linger until the close / load
+A behaviour thread freed without a pop (AE 0x85D9F0 pops nothing) leaves its `{thread, node}` record until `ForgetMovementHolds` (a close that leaves no controller, or a load). Harmless by construction (any later use of the pair begins with an act(), which rewrites the record), but a table of 64 that fills logs one ERROR and the hold then degrades to the old failing behaviour for new windows.
+
+### APMF-B188 (SEV-5, OPEN, author-raised, core/ActionGate.cpp MOVEMENT HOLD) -- the hold's release costs one tree restart
+When the hold stops standing while the controller lives (real combat), the held node ends through SetFailed + Ascend: the Combat Parallel fails once and the controller rebuilds the tree, so the real fight's first behaviour frame is a restart (one frame, the same restart the old fail loop paid every frame). A success exit would leave the fight without a Movement half until the next restart, so the failure exit is deliberate.
+
+### APMF-B189 (SEV-4, OPEN, Docs/STATUS.md + Docs/FACETS.md) -- cause 2 stated as fact (raised against df5635a, tier-3 review F3)
+Reviewer: STATUS/FACETS state cause 2 as fact. Reword to "inferred; the CLAIM SCORE line decides": that magicScoreMult is 0 on Auri's controller style is an inference from 33 spells at exactly 0.000, not yet observed; the passive `[substrate] 0x<f> CLAIM SCORE` line decides it in the next field cycle.
+
+### APMF-B190 (SEV-5, OPEN, MAP.md ActionGate entry) -- cross-reference APMF-B187 from the What-breaks entry (raised against df5635a, tier-3 review F4)
+Reviewer: cross-reference APMF-B187 (stale hold records) explicitly from MAP's MOVEMENT HOLD "What breaks" entry (it currently reads "Backlog: APMF-B186..B188" only as a range).
