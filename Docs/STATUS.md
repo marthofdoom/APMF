@@ -87,8 +87,10 @@ build/finding/workflow change.
   (3) cause 2: while its substrate cast claim stands, give the holder's controller the cast stance style MFO uses for a cast
   gambit in a real fight (or marth rules otherwise); (4) only then flip `bSubstrateCasts` ON by default.
 - Field check: `[substrate] MOVEMENT HOLD armed` at load; per window `MOVEMENT HELD`, `TREE STARTED +<ms>`, `EQUIP allowed`,
-  `CLAIM SCORE`, `EQUIP window end ... REACHED the hand`, the census `VERDICT: FIRED`, `CLOSE reason=fired`, and the `WINDOW`
-  line with `Combat Parallel entered 1 time(s)`.
+  `CLAIM SCORE`, `EQUIP window end ... REACHED the hand`, `RELEASING 0x<form>` (0x0B, the release request), the census `VERDICT: FIRED`
+  with `anim SpellFire` >= 1, `CLOSE reason=fired`, the `WINDOW` line with `Combat Parallel entered 1 time(s)` and
+  `closed by the TESSpellCastEvent`, and the `LEAF GATE` line (fix/apmf-substrate-release-close, APMF-B93: a
+  `RELEASED-UNCONFIRMED`, `FIRED-NOT-RELEASED` or `TREE OUTSIDE THE GATE` warning is a failed window).
 
 ## HEAD OF WORK 2026-10-21 -- ch.19 LIVE RE-POINT RUNS ON A FRESH SLOT (+ DONE-WHILE-WALKING, [obs] wording), branch `fix/apmf-repoint-fresh-slot`, NOT merged
 

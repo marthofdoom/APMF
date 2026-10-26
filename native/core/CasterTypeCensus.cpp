@@ -407,6 +407,8 @@ namespace apmf::castertypecensus {
             if (type >= 0) {
                 g_callsAll[static_cast<std::size_t>(type)].fetch_add(1, std::memory_order_relaxed);
                 if (Active()) Observe(type, a_this, a_cc, false, answer);
+                // The combat substrate: a caster built for a holder whose tree the leaf gate never saw (a deny hole).
+                if (answer && apmf::combatsubstrate::AnyLive()) apmf::combatsubstrate::NoteCastBuilt(a_cc, a_this);
             }
             return answer;
         }
@@ -420,7 +422,7 @@ namespace apmf::castertypecensus {
                 // Observe BEFORE chaining: every field read here is the caster's own and
                 // the controller's attacker handle; nothing the original could tear down.
                 if (Active()) Observe(type, a_this, a_cc, true, true);
-                // The combat substrate (S2a) closes a fire-and-forget substrate on its claim's first fire.
+                // The combat substrate: the release REQUEST on its claim's form marks the window releasing.
                 if (apmf::combatsubstrate::AnyLive()) apmf::combatsubstrate::NoteCastFired(a_cc, a_this);
             }
             orig(a_this, a_cc);

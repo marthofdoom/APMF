@@ -162,10 +162,17 @@
 // it), the fight is ended ONCE through the held engagement's ranked StopCombat
 // (combatentry::hold::StopCombatRanked); the DROPPED line says which case it was.
 //
-// CLOSE (design 3.6): the claim's first observed FIRE (fire-and-forget; the census 0x0B
-// NotifyStartCast seat), the claim's end (released, expired, the stop percent), the client's
-// release, the TTL (param.fval seconds, 0 = [CombatSubstrate] fSubstrateTtlSec, clamped to 15 s),
-// the holder's death / unload, a load or revert. One pass: the bit restored, Actor::StopCombat
+// CLOSE (design 3.6): the claim's RELEASED fire (fire-and-forget). The census 0x0B NotifyStartCast
+// seat (hand Charged -> Casting, the release REQUEST) only marks the window RELEASING; it closes as
+// "fired" ONLY on the holder's TESSpellCastEvent for the driven form, as "released-unconfirmed"
+// (a warning) on the hand back to None after a release state (4-6), and as "fired-not-released"
+// (a warning) when neither comes within 3 s
+// (fix/apmf-substrate-release-close, APMF-B93: closing on 0x0B itself freed the controller before
+// the spell left the hand). Also: the claim's end (released, expired, the stop percent), the
+// client's release, the TTL (param.fval seconds, 0 = [CombatSubstrate] fSubstrateTtlSec, clamped
+// to 15 s; deferred while releasing), a caster built while the leaf gate never saw the holder's
+// tree ("tree-outside-gate", a warning), the holder's death / unload, a load or revert.
+// One pass: the bit restored, Actor::StopCombat
 // once (Character slot 0xE5, the vtable identity checked), the floors released, the holder out of
 // the slot table (the anchor home on 1 -> 0), EvaluatePackage(false, false). Prior behaviour
 // returns because nothing else was written: the package was never replaced.
@@ -220,6 +227,16 @@ namespace {
     // so a 6 s window left 1 to 3.3 s for the equip and the cast. Until the tree starts the substrate waits this
     // FLOOR (twice the longest start measured), then closes with its own reason (never a silent expiry).
     constexpr std::uint64_t kTreeStartWaitMs = 10000;
+    // fix/apmf-substrate-release-close (APMF-B93, field-proven 2026-10-26, LoreRim v273, 3 of 3 windows): the census
+    // 0x0B NotifyStartCast fires when the hand goes Charged -> Casting, i.e. the release was REQUESTED, not done. The
+    // old close on it ran StopCombat 16-33 ms later and freed the controller before the spell left the hand (anim
+    // SpellFire 0 every time). Now 0x0B only marks the window RELEASING; it closes as "fired" ONLY on the holder's
+    // TESSpellCastEvent for the driven form. The hand back to None after a release state (4-6) closes as
+    // "released-unconfirmed" (a warning: an interrupt reads the same; review F1 of 608df67).
+    // The wait is bounded: MFO measured NotifyStartCast -> TESSpellCastEvent at 0.33 to 2.02 s on the same deck
+    // (2026-10-26). 3 s is 1.5x the longest measured lag (a floor over the real cadence, principle 9); past it the
+    // window closes LOUDLY as "fired-not-released" (principle 7), never silently as fired.
+    constexpr std::uint64_t kReleaseWaitMs  = 3000;
     std::uint64_t           g_pollFrame     = 0;       // Poll calls (game thread)
 
     // Range tiers (design 3.3: the anchor stands at the holder whose claimed spell has the
@@ -266,6 +283,18 @@ namespace {
         std::atomic<std::uint32_t> combatParallelActs{ 0 }, holds{ 0 }, holdUpdates{ 0 }, holdReleased{ 0 },
             holdAnomalies{ 0 };
         std::atomic<bool>          claimScoreLogged{ false };
+        // fix/apmf-substrate-release-close: the release evidence (SpellCastSink: the holder's TESSpellCastEvent for the
+        // form its driving claim names, and when) and the deny-hole probe: ForLeaf's early returns for this holder by
+        // the slot bit that failed (the first one's leaf and node), and a cast BUILT (census 0x06 YES) while the tree
+        // had not started under the gate (the "tree-outside-gate" close).
+        std::atomic<RE::FormID>    castEventForm{ 0 };
+        std::atomic<std::uint64_t> castEventMs{ 0 };
+        std::atomic<std::uint32_t> gateNotLive{ 0 }, gateReal{ 0 }, gateNoRank{ 0 }, gateBadIdx{ 0 };
+        std::atomic<std::uint32_t> gateFirstLeaf{ 0xFFFFFFFFu }, gateFirstWhy{ 0 };
+        std::atomic<const void*>   gateFirstNode{ nullptr };
+        std::atomic<std::uint64_t> gateFirstMs{ 0 };
+        std::atomic<RE::FormID>    builtOutside{ 0 };
+        std::atomic<std::uint64_t> builtOutsideMs{ 0 };
     };
     std::array<Slot, kSlots>   g_slots{};
     std::atomic<std::uint32_t> g_slotCount{ 0 };   // slots with an id (the AnyLive pre-gate)
@@ -432,6 +461,14 @@ namespace {
         // fix/apmf-ooc-substrate: the tree's first run (the TTL runs from it) and the movement hold's first line
         bool             treeStarted = false, holdLogged = false;
         std::uint64_t    treeStartAt = 0;
+        // fix/apmf-substrate-release-close (APMF-B93): 0x0B NotifyStartCast on the driven form marks the window
+        // RELEASING (the TTL defers to kReleaseWaitMs from here); the hand's highest state seen while releasing
+        // (4-6, a release state, arms the "back to None" close, released-unconfirmed); how it closed (nullptr = not yet)
+        bool             releasing = false, releasePeak = false;
+        std::uint64_t    releaseAtMs = 0;
+        RE::FormID       releaseForm = 0;
+        std::uint32_t    releaseHandMax = 0;
+        const char*      releaseHow = nullptr;
     };
     std::unordered_map<RE::FormID, Sub> g_subs;          // GAME THREAD ONLY
     std::atomic<std::size_t>            g_subCount{ 0 }; // Poll pre-gate (relaxed)
@@ -481,6 +518,38 @@ namespace {
         return a_out.spell != 0 || a_out.proxy != 0;
     }
 
+    // fix/apmf-substrate-release-close: the highest MagicCaster state of the two HANDS (L, R) whose current spell is
+    // the claim's spell or proxy; 0 when neither hand holds it (state None, or the hand moved on / cleared its spell).
+    // GAME THREAD. READ the slot, never Actor::GetMagicCaster (Character slot 0x5C ALLOCATES a caster on a null slot);
+    // the same read as core/CasterTypeCensus.cpp HandHolds and core/CastObserve.cpp, whose static_asserts pin
+    // ACTOR_RUNTIME_DATA::magicCasters at +0xC0 (the disassembled +0x1A8 AE / +0x1A0 SE of GetMagicCaster).
+    // magicCasters[] is indexed by MagicSystem::CastingSource (kLeftHand 0, kRightHand 1). State numbers are the
+    // field-observed ones (1 Unk1, 2 Charging, 3 Charged, 4 Casting, 5 Released, 6 Concluding).
+    std::uint32_t HandStateFor(RE::Actor* a_actor, RE::FormID a_spell, RE::FormID a_proxy) {
+        if (!a_actor) return 0;
+        std::uint32_t best = 0;
+        for (const auto src : { RE::MagicSystem::CastingSource::kLeftHand, RE::MagicSystem::CastingSource::kRightHand }) {
+            auto* mc = a_actor->GetActorRuntimeData().magicCasters[static_cast<std::size_t>(src)];
+            if (!mc || !mc->currentSpell) continue;
+            const RE::FormID f = mc->currentSpell->GetFormID();
+            if (f != a_spell && (a_proxy == 0 || f != a_proxy)) continue;
+            best = (std::max)(best, static_cast<std::uint32_t>(mc->state.get()));
+        }
+        return best;
+    }
+
+    // ForLeaf's early returns, by the slot bit that failed (the LEAF GATE line names them)
+    enum : std::uint32_t { kGateNotLive = 1, kGateReal = 2, kGateNoRank = 3, kGateBadIdx = 4 };
+    const char* GateWhyName(std::uint32_t a_why) {
+        switch (a_why) {
+        case kGateNotLive: return "kStLive clear";
+        case kGateReal:    return "kStReal set (the real-combat stand-down)";
+        case kGateNoRank:  return "kStRankAction clear";
+        case kGateBadIdx:  return "leaf index out of range";
+        default:           return "-";
+        }
+    }
+
     void ClearSlot(int a_slot) {
         if (a_slot < 0 || a_slot >= kSlots) return;
         Slot& s = g_slots[a_slot];
@@ -511,6 +580,15 @@ namespace {
             for (auto* c : { &s.combatParallelActs, &s.holds, &s.holdUpdates, &s.holdReleased, &s.holdAnomalies })
                 c->store(0, std::memory_order_relaxed);
             s.claimScoreLogged.store(false, std::memory_order_relaxed);
+            s.castEventForm.store(0, std::memory_order_relaxed);
+            s.castEventMs.store(0, std::memory_order_relaxed);
+            for (auto* c : { &s.gateNotLive, &s.gateReal, &s.gateNoRank, &s.gateBadIdx, &s.gateFirstWhy })
+                c->store(0, std::memory_order_relaxed);
+            s.gateFirstLeaf.store(0xFFFFFFFFu, std::memory_order_relaxed);
+            s.gateFirstNode.store(nullptr, std::memory_order_relaxed);
+            s.gateFirstMs.store(0, std::memory_order_relaxed);
+            s.builtOutside.store(0, std::memory_order_relaxed);
+            s.builtOutsideMs.store(0, std::memory_order_relaxed);
             s.id.store(a_id, std::memory_order_release);
             s.state.store(a_state, std::memory_order_release);
             g_slotCount.fetch_add(1, std::memory_order_relaxed);
@@ -1196,9 +1274,57 @@ namespace {
                 ? fmt::format("movement hold OFF ({})", g_moveHoldOff)
                 : fmt::format("movement half held {} time(s), {} held update(s), released {}{}", h, hu, hr,
                               ha ? fmt::format(", ANOMALIES {}", ha) : std::string());
+        // fix/apmf-substrate-release-close (APMF-B93): the release, as the window saw it
+        const std::uint64_t evMs = a_s->castEventMs.load(std::memory_order_relaxed);
+        const std::string   ev   = evMs ? fmt::format("TESSpellCastEvent 0x{} at +{} ms after the open",
+                                                      Hex(a_s->castEventForm.load(std::memory_order_relaxed)),
+                                                      evMs > a_sub.openedMs ? evMs - a_sub.openedMs : 0)
+                                        : std::string("no TESSpellCastEvent for the driven form");
+        const std::string rel =
+            a_sub.releasing
+                ? fmt::format("release: NotifyStartCast 0x{} at +{} ms after the open, waited {} ms (bound {} ms), hand max "
+                              "state {} while releasing, closed by {}; {}",
+                              Hex(a_sub.releaseForm), a_sub.releaseAtMs > a_sub.openedMs ? a_sub.releaseAtMs - a_sub.openedMs : 0,
+                              a_now > a_sub.releaseAtMs ? a_now - a_sub.releaseAtMs : 0, kReleaseWaitMs, a_sub.releaseHandMax,
+                              a_sub.releaseHow ? a_sub.releaseHow : "NOTHING (not released)", ev)
+                : fmt::format("release: no NotifyStartCast for the driven form{}; {}",
+                              a_sub.releaseHow ? fmt::format(" (closed by {})", a_sub.releaseHow) : std::string(), ev);
         return fmt::format("{} | {} | Combat Parallel entered {} time(s) (1 = it kept running; the fail loop re-entered "
-                           "it every frame)",
-                           tree, hold, cp);
+                           "it every frame) | {}",
+                           tree, hold, cp, rel);
+    }
+
+    // fix/apmf-substrate-release-close (deny-hole probe, window 2 of 2026-10-26): ForLeaf's early returns for this
+    // holder, by the slot bit that failed, and the first one's leaf and node. Read before the slot is cleared.
+    std::string GateText(const Sub& a_sub, const Slot* a_s) {
+        if (!a_s) return "no slot";
+        const std::uint32_t nl = a_s->gateNotLive.load(std::memory_order_relaxed), re = a_s->gateReal.load(std::memory_order_relaxed),
+                            nr = a_s->gateNoRank.load(std::memory_order_relaxed), bi = a_s->gateBadIdx.load(std::memory_order_relaxed);
+        const std::uint32_t total = nl + re + nr + bi;
+        const std::uint64_t ts    = a_s->treeStartMs.load(std::memory_order_relaxed);
+        const std::string   tree  = ts ? fmt::format("the gate saw the tree from +{} ms after the open",
+                                                    ts > a_sub.openedMs ? ts - a_sub.openedMs : 0)
+                                       : std::string("the gate NEVER saw this holder's tree (treeStartMs 0)");
+        const RE::FormID    bo    = a_s->builtOutside.load(std::memory_order_relaxed);
+        const std::uint64_t boMs  = a_s->builtOutsideMs.load(std::memory_order_relaxed);
+        const std::string   built = bo ? fmt::format("; a caster for 0x{} was BUILT outside the gate at +{} ms after the open",
+                                                     Hex(bo), boMs > a_sub.openedMs ? boMs - a_sub.openedMs : 0)
+                                       : std::string();
+        if (total == 0)
+            return fmt::format("ForLeaf early returns 0 ({}{}). 0 with a tree the gate never saw = the holder's leaves never "
+                               "reached ForLeaf (the act seat's deliberating-actor resolve or its leaf table), not a slot bit",
+                               tree, built);
+        const std::uint32_t li   = a_s->gateFirstLeaf.load(std::memory_order_relaxed);
+        const void*         node = a_s->gateFirstNode.load(std::memory_order_relaxed);
+        // the node's name: the BSFixedString at node+0x08 (see NodeNamed: a static tree node alive for the session)
+        const char* nn = node ? reinterpret_cast<const RE::BSFixedString*>(static_cast<const std::uint8_t*>(node) + 0x08)->c_str()
+                              : nullptr;
+        const std::uint64_t fm = a_s->gateFirstMs.load(std::memory_order_relaxed);
+        return fmt::format("ForLeaf early returns {} (kStLive clear {}, kStReal set {}, kStRankAction clear {}, leaf index out "
+                           "of range {}); the first at +{} ms after the open: {} on leaf '{}' node {} '{}' ({}{})",
+                           total, nl, re, nr, bi, fm > a_sub.openedMs ? fm - a_sub.openedMs : 0,
+                           GateWhyName(a_s->gateFirstWhy.load(std::memory_order_relaxed)),
+                           li < subs::kLeafCount && g_leafName[li] ? g_leafName[li] : "?", fmt::ptr(node), nn ? nn : "?", tree, built);
     }
 
     void CloseSub(Sub& a_sub, const char* a_reason) {
@@ -1237,6 +1363,7 @@ namespace {
         const std::uint32_t denied = s ? s->leafDenied.load() : 0, moved = s ? s->moveDenied.load() : 0,
                             casts  = s ? s->castAllowed.load() : 0;
         const std::string window = a_sub.phase == Phase::kOpen ? WindowText(a_sub, s, apmf::clock::MonotonicMs()) : std::string();
+        const std::string gate   = a_sub.phase == Phase::kOpen ? GateText(a_sub, s) : std::string();
         // fix/apmf-ooc-substrate: no controller left = its behaviour threads are freed (StopCombat frees them without a
         // pop): the movement hold's records of this holder are forgotten. A live controller keeps them (each ends with
         // its node's own pop, after the update seat's failure exit).
@@ -1256,6 +1383,9 @@ namespace {
                          denied, moved, leaves, casts, a_sub.bitResets);
         if (a_sub.phase == Phase::kOpen)
             spdlog::info("[substrate] 0x{} WINDOW ({}): {}", Hex(a_sub.id), a_reason, window);
+        // fix/apmf-substrate-release-close: one LEAF GATE line per window (bounded by the open rate), at the close
+        if (a_sub.phase == Phase::kOpen)
+            spdlog::info("[substrate] 0x{} LEAF GATE ({}): {}", Hex(a_sub.id), a_reason, gate);
         if (a_sub.phase != Phase::kOpen)
             spdlog::info("[substrate] 0x{} CLOSE reason={} (before the entry) anchor-home={}", Hex(a_sub.id), a_reason,
                          home ? "y" : "n");
@@ -1481,7 +1611,9 @@ namespace {
             else if (!actor->Is3DLoaded())    why = "owner unloaded";
             else if (actor->IsDisabled())     why = "owner disabled";
             else if (!HasController(actor))   why = "combat ended by the engine (no controller)";
-            else if (a_now >= a_sub.deadlineMs)
+            // fix/apmf-substrate-release-close: a release in progress is never cut by the TTL (or the start floor);
+            // it is bounded by kReleaseWaitMs below instead
+            else if (a_now >= a_sub.deadlineMs && !a_sub.releasing)
                 why = a_sub.treeStarted ? "ttl"
                                         : "the behaviour tree never ran within the start floor (10 s after the open; measured "
                                           "starts 2.7-5.1 s, 2026-10-20)";
@@ -1493,6 +1625,19 @@ namespace {
                          "Action half (the spell equip and the cast leaves).",
                          Hex(a_sub.id), a_now - a_sub.openedMs);
         }
+        // fix/apmf-substrate-release-close (deny hole, window 2 of 2026-10-26): the engine BUILT a caster for this holder
+        // (census 0x06 CheckStartCast YES) while the leaf gate had never seen its tree, so no facet was denied. Never let
+        // it run undenied: close loudly.
+        if (!why) {
+            if (const RE::FormID b = s.builtOutside.load(std::memory_order_acquire); b != 0) {
+                why = "tree-outside-gate";
+                const std::uint64_t bm = s.builtOutsideMs.load(std::memory_order_relaxed);
+                spdlog::warn("[substrate] 0x{} TREE OUTSIDE THE GATE: a caster for 0x{} was BUILT at +{} ms after the open "
+                             "while the leaf gate had never seen this holder's tree (treeStartMs 0): nothing was denied. "
+                             "Closing the substrate (see the LEAF GATE line).",
+                             Hex(a_sub.id), Hex(b), bm > a_sub.openedMs ? bm - a_sub.openedMs : 0);
+            }
+        }
         // the claim the substrate serves
         apmf::CastSeatClaim c{};
         if (!why && DrivingClaim(a_sub.id, c)) {
@@ -1503,7 +1648,67 @@ namespace {
             if (!(st & kStCast)) s.state.fetch_or(kStCast, std::memory_order_acq_rel);
             apmf::substrateequip::Serve(a_sub.slot, actor, c.spell, c.proxy, c.flags, a_now);   // equip lines
             const RE::FormID fired = s.firedForm.exchange(0, std::memory_order_acq_rel);
-            if (fired && (fired == c.spell || fired == c.proxy) && !a_sub.concentration) why = "fired";
+            // the census-less fallback of the "tree-outside-gate" close above (no 0x06 seat = no build signal): the hand
+            // charging the driven form while the gate never saw the tree
+            if (!g_fireSignal && s.treeStartMs.load(std::memory_order_relaxed) == 0) {
+                const std::uint32_t hs = HandStateFor(actor, c.spell, c.proxy);
+                if (hs == 2 || hs == 3) {
+                    why = "tree-outside-gate";
+                    spdlog::warn("[substrate] 0x{} TREE OUTSIDE THE GATE: the hand is {} the driven form 0x{} at +{} ms "
+                                 "after the open while the leaf gate had never seen this holder's tree (treeStartMs 0): "
+                                 "nothing was denied. Closing the substrate (see the LEAF GATE line).",
+                                 Hex(a_sub.id), hs == 2 ? "charging" : "holding charged", Hex(a_sub.driven),
+                                 a_now - a_sub.openedMs);
+                }
+            }
+            // fix/apmf-substrate-release-close (APMF-B93): 0x0B on the driven form is the release REQUEST (Charged ->
+            // Casting). It marks the window RELEASING; "fired" needs real release evidence; the wait is bounded.
+            if (!why && !a_sub.concentration) {
+                if (!a_sub.releasing && fired && (fired == c.spell || fired == c.proxy)) {
+                    a_sub.releasing   = true;
+                    a_sub.releaseAtMs = a_now;
+                    a_sub.releaseForm = fired;
+                    spdlog::info("[substrate] 0x{} RELEASING 0x{} at +{} ms after the open: NotifyStartCast (Charged -> "
+                                 "Casting) is the release REQUEST; the substrate stays open until the holder's "
+                                 "TESSpellCastEvent (fired) or the hand back to None (released-unconfirmed) (bound {} ms; "
+                                 "the TTL defers to it).",
+                                 Hex(a_sub.id), Hex(fired), a_now - a_sub.openedMs, kReleaseWaitMs);
+                }
+                const RE::FormID ev = s.castEventForm.load(std::memory_order_acquire);
+                if (ev && (ev == c.spell || ev == c.proxy)) {
+                    why             = "fired";
+                    a_sub.releaseHow = "the TESSpellCastEvent";
+                } else if (a_sub.releasing) {
+                    // the hand read keys on the form 0x0B released (the claim's spell or proxy at that moment)
+                    const std::uint32_t hs = HandStateFor(actor, a_sub.releaseForm, 0);
+                    a_sub.releaseHandMax = (std::max)(a_sub.releaseHandMax, hs);
+                    // review F1 of 608df67: only the release states (4 Casting, 5 Released, 6 Concluding) arm the peak;
+                    // 7 is unnamed, 8 / 9 are Interrupt / Interrupt-Deselect (CommonLib MagicCaster.h State at 57be9d67). The hand back
+                    // to None is NOT proof of a fire (an interrupt, an equip rescore or a currentSpell change reads the
+                    // same): it closes as "released-unconfirmed", a warning. Only the TESSpellCastEvent closes as "fired".
+                    if (hs >= 4 && hs <= 6) a_sub.releasePeak = true;
+                    if (a_sub.releasePeak && hs == 0) {
+                        why              = "released-unconfirmed";
+                        a_sub.releaseHow = "the hand back to None after a release state (UNCONFIRMED: no TESSpellCastEvent; "
+                                           "an interrupt reads the same)";
+                        spdlog::warn("[substrate] 0x{} RELEASED-UNCONFIRMED: the hand went back to None {} ms after "
+                                     "NotifyStartCast on 0x{} (max state {} while releasing) with NO TESSpellCastEvent for "
+                                     "the driven form. Closing; not counted as a fire (an interrupt reads the same).",
+                                     Hex(a_sub.id), a_now - a_sub.releaseAtMs, Hex(a_sub.releaseForm),
+                                     a_sub.releaseHandMax);
+                    } else if (a_now - a_sub.releaseAtMs >= kReleaseWaitMs) {
+                        why = "fired-not-released";
+                        spdlog::warn("[substrate] 0x{} FIRED-NOT-RELEASED: NotifyStartCast on 0x{} {} ms ago and no release "
+                                     "evidence within {} ms (no TESSpellCastEvent for the driven form; the hand {} at "
+                                     "state {}, max {} while releasing). Closing; the cast did NOT complete under the "
+                                     "substrate.",
+                                     Hex(a_sub.id), Hex(a_sub.releaseForm), a_now - a_sub.releaseAtMs, kReleaseWaitMs,
+                                     a_sub.releasePeak ? "reached a release state (4-6) and is"
+                                                       : "never read a release state (4-6); it is", hs,
+                                     a_sub.releaseHandMax);
+                    }
+                }
+            }
         } else if (!why) {
             if (st & kStCast) s.state.fetch_and(~kStCast, std::memory_order_acq_rel);
             a_sub.tier = kTierNone;
@@ -1994,6 +2199,32 @@ namespace {
         }
     };
 
+    // fix/apmf-substrate-release-close (APMF-B93): the release evidence. The holder's TESSpellCastEvent for the form its
+    // DRIVING claim names (the spell or its proxy) is recorded on its slot (the first one per window); Serve closes the
+    // window as "fired" on it. Any thread (the source's own dispatch); the slot table and the RCU claim read only.
+    class SpellCastSink final : public RE::BSTEventSink<RE::TESSpellCastEvent> {
+    public:
+        static SpellCastSink* Get() { static SpellCastSink s; return &s; }
+        RE::BSEventNotifyControl ProcessEvent(const RE::TESSpellCastEvent* a_e,
+                                              RE::BSTEventSource<RE::TESSpellCastEvent>*) override {
+            try {
+                if (!a_e || !subs::AnyLive() || !a_e->object || a_e->spell == 0) return RE::BSEventNotifyControl::kContinue;
+                const RE::FormID holder = a_e->object->GetFormID();
+                std::uint32_t    st     = 0;
+                const int        si     = FindSlot(holder, st);
+                if (si < 0 || (st & (kStLive | kStReal)) != kStLive) return RE::BSEventNotifyControl::kContinue;
+                apmf::CastSeatClaim c{};
+                if (!DrivingClaim(holder, c) || (a_e->spell != c.spell && a_e->spell != c.proxy))
+                    return RE::BSEventNotifyControl::kContinue;
+                RE::FormID zero = 0;
+                if (g_slots[si].castEventForm.compare_exchange_strong(zero, a_e->spell, std::memory_order_acq_rel))
+                    g_slots[si].castEventMs.store(apmf::clock::MonotonicMs(), std::memory_order_relaxed);
+            } catch (...) {
+            }
+            return RE::BSEventNotifyControl::kContinue;
+        }
+    };
+
     // ---- the channel ------------------------------------------------------------------------
     class CombatSubstrateChannel final : public apmf::Channel {
     public:
@@ -2191,10 +2422,31 @@ namespace apmf::combatsubstrate {
     }
 
     Leaf ForLeaf(RE::FormID a_actor, std::uint32_t a_leafIdx, bool /*a_movement*/, const void* a_node) {
-        if (a_leafIdx >= kLeafCount) return Leaf::kNotHolder;
         std::uint32_t st = 0;
         const int     si = FindSlot(a_actor, st);
-        if (si < 0 || !(st & kStLive) || (st & kStReal) || !(st & kStRankAction)) return Leaf::kNotHolder;
+        if (si < 0) return Leaf::kNotHolder;   // not a holder: nothing to count
+        // fix/apmf-substrate-release-close (deny-hole probe): a HOLDER's early return is counted by the bit that failed,
+        // the first one's leaf and node kept, for the per-window LEAF GATE line (emitted at the close)
+        const std::uint32_t gw = a_leafIdx >= kLeafCount  ? kGateBadIdx
+                               : !(st & kStLive)          ? kGateNotLive
+                               : (st & kStReal)           ? kGateReal
+                               : !(st & kStRankAction)    ? kGateNoRank
+                                                          : 0u;
+        if (gw != 0) {
+            Slot& gs = g_slots[si];
+            std::atomic<std::uint32_t>* ctr = gw == kGateBadIdx  ? &gs.gateBadIdx
+                                            : gw == kGateNotLive ? &gs.gateNotLive
+                                            : gw == kGateReal    ? &gs.gateReal
+                                                                 : &gs.gateNoRank;
+            ctr->fetch_add(1, std::memory_order_relaxed);
+            std::uint32_t none = 0;
+            if (gs.gateFirstWhy.compare_exchange_strong(none, gw, std::memory_order_relaxed)) {
+                gs.gateFirstLeaf.store(a_leafIdx, std::memory_order_relaxed);
+                gs.gateFirstNode.store(a_node, std::memory_order_relaxed);
+                gs.gateFirstMs.store(apmf::clock::MonotonicMs(), std::memory_order_relaxed);
+            }
+            return Leaf::kNotHolder;
+        }
         // fix/apmf-ooc-substrate: the TTL runs from the tree's first node under the substrate (Serve reads it).
         if (g_slots[si].treeStartMs.load(std::memory_order_relaxed) == 0) {
             std::uint64_t zero = 0;
@@ -2395,6 +2647,23 @@ namespace apmf::combatsubstrate {
         if (si < 0) return;
         g_slots[si].fires.fetch_add(1, std::memory_order_relaxed);
         g_slots[si].firedForm.store(a_caster->magicItem->GetFormID(), std::memory_order_release);
+    }
+
+    void NoteCastBuilt(RE::CombatController* a_cc, RE::CombatMagicCaster* a_caster) {
+        if (!AnyLive() || !a_cc || !a_caster || !a_caster->magicItem) return;
+        auto        att = a_cc->attackerHandle.get();
+        const auto* a   = att.get();
+        if (!a) return;
+        std::uint32_t st = 0;
+        const int     si = FindSlot(a->GetFormID(), st);
+        if (si < 0 || (st & (kStLive | kStReal)) != kStLive) return;
+        // The tree's leaves run ForLeaf (which sets treeStartMs) before a cast leaf's context builds a caster, on this
+        // same combat thread: a build with treeStartMs still 0 ran outside the gate. The first one is kept.
+        if (g_slots[si].treeStartMs.load(std::memory_order_relaxed) != 0) return;
+        RE::FormID zero = 0;
+        if (g_slots[si].builtOutside.compare_exchange_strong(zero, a_caster->magicItem->GetFormID(),
+                                                             std::memory_order_acq_rel))
+            g_slots[si].builtOutsideMs.store(apmf::clock::MonotonicMs(), std::memory_order_relaxed);
     }
 
     void Install() {
@@ -2621,10 +2890,13 @@ namespace apmf::combatsubstrate {
         if (auto* holder = RE::ScriptEventSourceHolder::GetSingleton()) {
             holder->AddEventSink<RE::TESHitEvent>(HitSink::Get());
             holder->AddEventSink<RE::TESCombatEvent>(CombatEventSink::Get());
+            holder->AddEventSink<RE::TESSpellCastEvent>(SpellCastSink::Get());   // the release evidence (APMF-B93)
             apmf::substrateprobe::CombatEventSinkOrder(holder, CombatEventSink::Get());   // R5 F-4: the passive probe only
         } else {
-            spdlog::error("[substrate] ScriptEventSourceHolder unavailable: trigger (b) (a hit on the holder) and the "
-                          "combat-state-event log are OFF; triggers (a) and (c) still drop a substrate on real combat.");
+            spdlog::error("[substrate] ScriptEventSourceHolder unavailable: trigger (b) (a hit on the holder), the "
+                          "combat-state-event log and the TESSpellCastEvent release evidence are OFF (no window can close "
+                          "as fired: released-unconfirmed or fired-not-released only); triggers (a) and (c) still drop a substrate on "
+                          "real combat.");
         }
         g_notInstalledReason.store("", std::memory_order_release);
         g_installed.store(true, std::memory_order_release);

@@ -605,8 +605,11 @@ with `kIntent_CombatSubstrate` beside its `kIntent_Cast` claim. It is legal only
    body with a controller present and the cast animated while walking (slice S2b). Slice S2a writes the bit ONCE
    and counts the engine's resets. If P6 fails, the re-assert is never built and a combat-area bound replaces it.
    Close and drop restore the bit to its value before the entry.
-4. **Bounded, and it ends by itself.** The substrate closes on its cast claim's first observed fire (fire-and-forget;
-   the caster census's 0x0B `NotifyStartCast` seat), the cast claim's end, the client's Release, the TTL
+4. **Bounded, and it ends by itself.** The substrate closes on its cast claim's RELEASED fire (fire-and-forget; the
+   caster census's 0x0B `NotifyStartCast` seat is the hand's Charged -> Casting, the release REQUEST, so it only marks
+   the window releasing; `fired` needs the holder's TESSpellCastEvent for the driven form; the hand back to None
+   after a release state closes as a loud `released-unconfirmed`, nothing within 3 s as a loud `fired-not-released`; the TTL defers while releasing; fix/apmf-substrate-release-close,
+   APMF-B93), a caster built while the leaf gate never saw the holder's tree (`tree-outside-gate`, loud), the cast claim's end, the client's Release, the TTL
    (`param.fval` seconds, 0 = `[CombatSubstrate] fSubstrateTtlSec`, clamped to 15 s), or the holder's death or
    unload. Close is one game-thread pass: the bit restored, ONE `Actor::StopCombat` (Character slot 0xE5, vtable
    identity checked; the controller is the substrate's, so stopping it undoes only what the entry did -- this
