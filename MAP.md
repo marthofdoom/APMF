@@ -1699,6 +1699,35 @@ ch.23), `channels/CombatApproach.cpp` (S1 decision, `AttributeYield`, the drift 
   Engine; hit-count noise) and APMF-B71 (no negative ModuleOf cache under the loader lock; `found=false`
   counted as unattributed; Papyrus/console StartCombat named Engine; ActionGate ClaimOutranksTree lacks try/catch).
 
+### `native/core/AttackSelectProbe.{h,cpp}` — `[Probe] bAttackSelect`: the attack-selection probe (PASSIVE, 2026-10-27)
+ClickUp 86e3bw775, the combat-behaviour facet's design pass (principle 5: watch the engine's attack-selection points run
+before any seat is built on them). Default OFF (`bAttackSelect=0` installs nothing); `iAttackSelectScope` 0 = player
+teammates, 1 = every combatant. Three feeds, all read-only:
+- **Leaves (no seat of its own):** `actiongate::ActThunk` is now a wrapper around `ActThunkBody` (ch.7's old body,
+  unchanged) that, while `atkprobe::Armed()`, calls `BeforeAct` / `AfterAct` around it for the 15 `kWatched` leaves
+  (Attack, AttackLow, AttackFromCover, SpecialAttack, Bash, BlockAttack, Block, RangedAttack, Ground/Flying/PerchAttack,
+  FallbackToRanged, the three cast leaves). Outcome per act(): running (`curNode` still the leaf),
+  done / failed / aborted (result word +0x148 = 0 / 1 / 2+), or denied (Harbinger's ForceFail ran: the wrapper passes
+  `t_pending` == {node, control} as `a_denied`). Every pick from a running / done leaf is counted (repeats too);
+  new / unchanged is a separate tally. `ResetForLoad` (kPreLoadGame) clears the per-actor stats. Backlog APMF-B220..B224.
+- **The pick:** after a started attack-type leaf, the actor's `currentProcess->high->attackData` (the read the engine's
+  own attempt makes right after StartAttack: AE 0x6B77F0 / SE 0x625FE0 / 1.7.104 0x6CA270), its ATKE event and flags,
+  and whether the pointer changed across the act(). For a started Attack, the current context through the window
+  (`thread+0x128/+0x130`, bounded by the header top `+0x0C`): `ctx+0x04` ATTACK_TYPE, `ctx+0x28` pool.
+- **Context seats (new, rows CtxNode.Melee / CtxNode.Block):** pass-through `CtxActThunk` at slot 0x02 of the two
+  `CombatBehaviorTreeCreateContextNode2<ContextMelee|ContextBlock, EquipContext::GetItem, ATTACK_TYPE>` vtables:
+  node+0x30 ATTACK_TYPE (0 Right, 1 Bash, 2 Left: the gather keeps bash-flag entries for 1 and left-flag entries for 2),
+  and for the melee node the pool it gathered (ctx+0x28, only when ctx+0x04 equals the node's type).
+Records go to a bounded queue under a leaf lock (no engine call, no log, no form lookup under it); `Heartbeat`
+(Arbiter, game thread) prints `[atk-sel]` detail lines (24 per actor per fight, 4000 per session), per-actor `SUMMARY`
+~20 s, and an `H` totals line ~30 s (zeros included). Install also prints a `frameworks` line (SCAR / BFCO / Valhalla /
+Precision / OAR / DAR / PayloadInterpreter loaded or not).
+- **What breaks:** the observer must never change ch.7's call: `ActThunkBody` runs exactly as before, and nothing runs
+  between it and the runner's pop() except reads (the ForceFail pending-pop stays intact). The context thunk must
+  ALWAYS call the original act() (a skipped act() unbalances the data stack, INVARIANTS #18): the originals are read
+  BEFORE the slot is written. The context offsets are measured on all three runtimes (spec.json layout_facts), not
+  CommonLib's; re-measure before reusing them. Set `bAttackSelect=0` before a release cut.
+
 ### `native/core/ActorValueObserve.{h,cpp}` — HARBINGER 1b: the OBSERVE-ONLY actor-value seat (2026-10-12)
 `Install()` <- `plugin.cpp` kDataLoaded: `write_vfunc` 0x04 SetBaseActorValue / 0x05 ModActorValue / 0x06
 RestoreActorValue on Character's ActorValueOwner sub-object vtable `VTABLE_Character[5]` (1.6.1170 id 207896

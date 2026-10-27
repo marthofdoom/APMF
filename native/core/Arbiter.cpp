@@ -9,6 +9,7 @@
 #include "core/CastObserve.h"
 #include "core/RestoreCensus.h"
 #include "core/ActionGate.h"
+#include "core/AttackSelectProbe.h"
 #include "core/PackageGate.h"
 #include "core/MainThread.h"
 #include "core/Registry.h"
@@ -127,6 +128,9 @@ namespace apmf {
         // [Probe] bRangedSelect (PASSIVE, phase 1 of the Ranged-selection deny): per-actor leaf
         // summaries ~15 s and a RULE C totals line ~30 s, zeros included. One relaxed load when OFF.
         apmf::actiongate::RangedProbeHeartbeat();
+        // [Probe] bAttackSelect (PASSIVE, ClickUp 86e3bw775): drains the attack-selection records into lines,
+        // per-actor summaries ~20 s, RULE C totals ~30 s (zeros included). One relaxed load when OFF.
+        apmf::atkprobe::Heartbeat();
 
         // "Does 0x49 actually redirect?" probe (marth 2026-09-06, core/PackageGate.cpp).
         // Same RULE C shape as the PfpHeartbeat above: self-throttled internally

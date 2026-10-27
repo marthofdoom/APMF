@@ -4464,6 +4464,38 @@
    "doc": "MIT fork Offsets_VTABLE.h:3857 (VTABLE_CombatBehaviorTreeNodeObject2_CombatBehaviorRepeat_float_CombatBehaviorRepeat__FLAGS_); RTTI name identical on 1.6.1170 and 1.5.97"
   },
   {
+   "seat": "CtxNode.Melee",
+   "kind": "vtable",
+   "construct": "apmf::atkprobe kCtxMeleeVt (VariantID 266745, 213763)",
+   "rtti": ".?AV?$CombatBehaviorTreeCreateContextNode2@VCombatBehaviorContextMelee@@V?$CombatBehaviorExpression@V?$CombatBehaviorMemberFunc@VCombatBehaviorEquipContext@@P81@EBAAEBV?$NiPointer@VCombatInventoryItem@@@@XZ@@@@W4ATTACK_TYPE@1@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 213763,
+    "1.5.97": 266745
+   },
+   "slots": [
+    "0x02"
+   ],
+   "source": "native/core/AttackSelectProbe.cpp ([Probe] bAttackSelect, default 0: PASSIVE pass-through act() thunk; reads node+0x30 ATTACK_TYPE before, and the new context's type +0x04 and gathered pool +0x28 after, bounded by the data-stack top)",
+   "doc": "ClickUp 86e3bw775; agentlog apmf-combat-behaviour-facet.md (2026-10-27): act AE 0x8A5100 reads [node+0x30] at 0x8A5183, ctor 0x8A25B0 writes ctx+4, gather 0x8A3960 fills ctx+0x18 / count ctx+0x28"
+  },
+  {
+   "seat": "CtxNode.Block",
+   "kind": "vtable",
+   "construct": "apmf::atkprobe kCtxBlockVt (VariantID 265984, 212569)",
+   "rtti": ".?AV?$CombatBehaviorTreeCreateContextNode2@VCombatBehaviorContextBlock@@V?$CombatBehaviorExpression@V?$CombatBehaviorMemberFunc@VCombatBehaviorEquipContext@@P81@EBAAEBV?$NiPointer@VCombatInventoryItem@@@@XZ@@@@W4ATTACK_TYPE@CombatBehaviorContextMelee@@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 212569,
+    "1.5.97": 265984
+   },
+   "slots": [
+    "0x02"
+   ],
+   "source": "native/core/AttackSelectProbe.cpp ([Probe] bAttackSelect, default 0: PASSIVE pass-through act() thunk; reads node+0x30 ATTACK_TYPE before the call)",
+   "doc": "ClickUp 86e3bw775; agentlog apmf-combat-behaviour-facet.md (2026-10-27): act AE 0x86C3B0 reads [node+0x30] at 0x86C433 and builds its context with the same ctor 0x8A25B0"
+  },
+  {
    "seat": "Place.TESObjectREFR.MoveTo",
    "kind": "function",
    "construct": "TESObjectREFR::MoveTo_Impl (fork Offset::TESObjectREFR::MoveTo RELOCATION_ID(56227, 56626); private in the fork, so called as void(*)(TESObjectREFR*, const ObjectRefHandle&, TESObjectCELL*, TESWorldSpace*, const NiPoint3&, const NiPoint3&)), the body Papyrus ObjectReference.MoveTo's queued task runs (task Run AE 56101 0xA292E0 / SE 55572 0x990430)",
@@ -5034,6 +5066,13 @@
    "where": "channels/Travel.cpp GateProbe2 (passive, [Travel] bGateProbe2)",
    "verified_by": "NOT disassembled: runtime cross-check -- both reads must name the same pointer AND its vtable must be the verified hkbBehaviorGraph row, else the state read is skipped and logged",
    "gate": "exact 1.6.1170 / 1.5.97 only (probe2 not armed elsewhere)"
+  },
+  {
+   "what": "[Probe] bAttackSelect reads: context node ATTACK_TYPE, the melee context's type and gathered pool, the thread's context window, the actor's current attack data",
+   "value": "node+0x30 u32; ctx+0x04 u32, ctx+0x28 u32 (array at +0x18, 0x30-byte entries); thread +0x128 header / +0x130 offset, header top +0x0C; actor process -> high (+0x10) -> attackData (+0x258), flags at BGSAttackData+0x28",
+   "where": "core/AttackSelectProbe.cpp (CtxActThunk, AfterAct)",
+   "verified_by": "agentlog apmf-combat-behaviour-facet.md 2026-10-27: node+0x30 AE 0x8A5183 / SE 0x80E90D / 1.7.104 0x8BA653 (block AE 0x86C433, SE 0x7D52BD, 1.7.104 0x881673); ctx+4 AE ctor 0x8A25D8, read by gather AE 0x8A3A0F / SE 0x80D296; pool AE 0x8A2A7B / SE 0x80C215 / 1.7.104 0x8B7F2B, array AE 0x8A2AFA / SE 0x80C28A / 1.7.104 0x8B7FAA; window AE 0x8A41A5 / SE 0x80DA06 / 1.7.104 0x8B9675; attack data AE 0x6B77F0 (+0xF8) -> 0x6EE0A0 (+0x10, +0x258), SE 0x625FE0 (+0xF0) -> 0x65B310, 1.7.104 0x6CA270 (+0xF8) -> 0x700C60; CommonLib GetActorRuntimeData()/AIProcess::high/HighProcessData::attackData resolve to those",
+   "gate": "INI [Probe] bAttackSelect (default 0); VR refused; exact runtime; data-stack top bound + context type match before the pool read"
   }
  ],
  "raw_rvas": [

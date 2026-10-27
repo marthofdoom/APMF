@@ -19,7 +19,7 @@
 
 namespace apmf::VerifiedAddresses
 {
-	// 1.6.1170.0: 259 rows
+	// 1.6.1170.0: 261 rows
 	inline constexpr REL::SelfCheck::Row kRows_1_6_1170[] = {
 		{ 207886, 0x18A5558, 0x0, 0, {  }, "Character" },
 		{ 207896, 0x18A5FE8, 0x0, 0, {  }, "Character.ActorValueOwner" },
@@ -267,6 +267,8 @@ namespace apmf::VerifiedAddresses
 		{ 213733, 0x18E3810, 0x0, 0, {  }, "Leaf.CombatBehaviorCastConcentrationSpell<bool>" },
 		{ 214161, 0x18E7560, 0x0, 0, {  }, "Leaf.CombatBehaviorIdle<GameSetting>" },
 		{ 214367, 0x18E8AC8, 0x0, 0, {  }, "Leaf.CombatBehaviorRepeat<float,FLAGS>" },
+		{ 213763, 0x18E3EE8, 0x0, 0, {  }, "CtxNode.Melee" },
+		{ 212569, 0x18DB4B8, 0x0, 0, {  }, "CtxNode.Block" },
 		{ 56626, 0xA447F0, 0x0, 0, {  }, "Place.TESObjectREFR.MoveTo" },
 		{ 33231, 0x559280, 0xA9, 1, { 0xE8 }, "Substrate.Bark.ControllerStartTopicCall" },
 		{ 44672, 0x802130, 0xFB, 1, { 0xE8 }, "Substrate.Bark.DialogueCoreCall" },
@@ -282,7 +284,7 @@ namespace apmf::VerifiedAddresses
 		{ 104651, 0x143DC00, 0x0, 0, {  }, "PapyrusCaller.NativeFunctionBase.Call" },
 	};
 
-	// 1.5.97.0: 259 rows
+	// 1.5.97.0: 261 rows
 	inline constexpr REL::SelfCheck::Row kRows_1_5_97[] = {
 		{ 261397, 0x165DA40, 0x0, 0, {  }, "Character" },
 		{ 261402, 0x165E4D0, 0x0, 0, {  }, "Character.ActorValueOwner.SE" },
@@ -530,6 +532,8 @@ namespace apmf::VerifiedAddresses
 		{ 266706, 0x169DD40, 0x0, 0, {  }, "Leaf.CombatBehaviorCastConcentrationSpell<bool>" },
 		{ 267079, 0x16A1ED8, 0x0, 0, {  }, "Leaf.CombatBehaviorIdle<GameSetting>" },
 		{ 267191, 0x16A35F0, 0x0, 0, {  }, "Leaf.CombatBehaviorRepeat<float,FLAGS>" },
+		{ 266745, 0x169E440, 0x0, 0, {  }, "CtxNode.Melee" },
+		{ 265984, 0x1694C78, 0x0, 0, {  }, "CtxNode.Block" },
 		{ 56227, 0x9AE5C0, 0x0, 0, {  }, "Place.TESObjectREFR.MoveTo" },
 		{ 32484, 0x4FDBF0, 0xBD, 1, { 0xE8 }, "Substrate.Bark.ControllerStartTopicCall" },
 		{ 43466, 0x768C10, 0x114, 1, { 0xE8 }, "Substrate.Bark.DialogueCoreCall" },
@@ -545,7 +549,7 @@ namespace apmf::VerifiedAddresses
 		{ 97923, 0x12507F0, 0x0, 0, {  }, "PapyrusCaller.NativeFunctionBase.Call" },
 	};
 
-	// 1.7.104.0: 269 rows
+	// 1.7.104.0: 271 rows
 	// 52 NOT VERIFIED on 1.7.104.0, deliberately absent from this table (the seat is refused):
 	//   Character.ActorValueOwner.SE (1.6.1170 id -): no 1.6.1170 (AE) id: the 1.7.104 map is keyed by AE id (1.5.97-only seat)
 	//   ActionGate.Hold.ParallelDataPush (1.6.1170 id 47532): id 47532 is not in the idmap
@@ -832,6 +836,8 @@ namespace apmf::VerifiedAddresses
 		{ 213733, 0x1961DD8, 0x0, 0, {  }, "Leaf.CombatBehaviorCastConcentrationSpell<bool>" },
 		{ 214161, 0x1965B50, 0x0, 0, {  }, "Leaf.CombatBehaviorIdle<GameSetting>" },
 		{ 214367, 0x19670B8, 0x0, 0, {  }, "Leaf.CombatBehaviorRepeat<float,FLAGS>" },
+		{ 213763, 0x19624B0, 0x0, 0, {  }, "CtxNode.Melee" },
+		{ 212569, 0x1959A80, 0x0, 0, {  }, "CtxNode.Block" },
 		{ 56626, 0xA5D370, 0x0, 0, {  }, "Place.TESObjectREFR.MoveTo" },
 		{ 39948, 0x7265C0, 0x0, 0, {  }, "TorchSeat.UpdateTorch" },
 		{ 39637, 0x704C70, 0x8B1, 1, { 0xE8 }, "TorchSeat.Site.AiUpdate" },
