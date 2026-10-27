@@ -187,6 +187,13 @@ If it's missing or disabled, APMF refuses every `kIntent_Travel` claim and names
 reason once in the log, so a client's own degrade path runs. Nothing else breaks. Every
 other facet behaves exactly the same without it.
 
+## What is in v0.15.1
+
+- **The substrate closes as fired only when the spell is cast.** A close on the start of the release cut casts short. It now waits for the game's spell cast event, and a release that never confirms closes loudly. New passive lines `LEAF GATE`, `GATE UNRESOLVED` and `CAST BUILT`.
+- **The cast proxy carries the spell's name and menu icon.**
+- **A travel walk that ends short is sent again, and a blocked or stuck walk keeps the follower** while the mod's claim stands.
+- No ABI change, still ABI v30.
+
 ## What is in v0.15.0
 
 - **Travel across cells (ABI v30).** The `kTravel_CrossCells` flag on a travel claim to a reference makes the follower walk through doors to that NPC, the game's own way, and follow them if they move. It arrives in the same interior cell or the same outdoor worldspace and inside the radius, then is held until the mod releases it. Without the flag nothing changes.
@@ -234,7 +241,7 @@ other facet behaves exactly the same without it.
 
 ## Status
 
-Phase 1 built, now at v0.15.0, ABI v30 (see [Docs/STATUS.md](Docs/STATUS.md)). The central
+Phase 1 built, now at v0.15.1, ABI v30 (see [Docs/STATUS.md](Docs/STATUS.md)). The central
 `Actor::Update` (0xAD) hook drives a multi-NPC control map (keyed by FormID,
 scales to hundreds, an uncontrolled NPC pays one hash-miss), a real
 inter-plugin C-ABI client API (`native/APMF_API.h`), and the full documented
