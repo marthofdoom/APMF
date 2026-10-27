@@ -313,9 +313,9 @@ namespace apmf::papyruscaller {
             };
             if (REL::Module::IsVR()) return refuse("VR runtime");
             if (!apmf::allowance::RuntimeSupported()) return refuse("runtime is not exactly 1.6.1170, 1.5.97 or 1.7.104");
-            if (GetPrivateProfileIntA("Probe", "bPapyrusCaller", 1, kIni) == 0) {
+            if (GetPrivateProfileIntA("Probe", "bPapyrusCaller", 0, kIni) == 0) {
                 g_refused.store(true);
-                spdlog::info("[apmf][papyrus-attr] [Probe] bPapyrusCaller=0: caller seat off (no vtable written).");
+                spdlog::info("[apmf][papyrus-attr] [Probe] bPapyrusCaller=0 (the default): caller seat off (no vtable written).");
                 return false;
             }
             const std::uintptr_t call = REL::Relocation<std::uintptr_t>{ RELOCATION_ID(97923, 104651) }.address();

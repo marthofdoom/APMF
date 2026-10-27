@@ -1138,3 +1138,24 @@ The proxy now copies the source spell's name and menu display object (the equip 
 
 ### APMF-B207 (SEV-4, OPEN, core/ActionGate.cpp ProbeUnresolvedAct / channels/CombatSubstrate.cpp NoteCastBuilt) -- the "resolved to another id" case is not probed (raised against 6ea134d, tier-3 review F3)
 Reviewer (F3, as relayed by the coordinator): "The 'resolved to another id' case is not probed: a tree whose control resolves to a non-holder id gets kNotHolder from FindSlot and logs nothing, and that is exactly the hypothesis the CAST BUILT comment raises." Also noted: the SpellItem Create default equip slot on 1.7.104 was not disassembly-checked (moot once F1 is applied: the slot is no longer touched). Deferred (SEV-4).
+
+### APMF-B208 (SEV-4, OPEN, core/PapyrusCaller.cpp CallThunk :145-161) -- the !orig fallback calls the engine Call (raised against 7f1faa4, tier-3 review of ClickUp 86e3q082a step 1)
+Reviewer, verbatim as relayed: "the !orig fallback (:145-161) calls the engine Call; wrong for a hand-written IFunction not deriving NativeFunctionBase; comment "every native's Call is it or forwards to it" too broad." Reasoning: the fallback is unreachable by construction, but if it ever runs for an IFunction whose own Call is not the engine's, the engine Call would mis-handle it. Closure: no generic fallback is valid; narrow the comment, and decide between refusing the call (it cannot be refused) or keeping the fallback only for vtables whose recorded module is SkyrimSE.exe.
+
+### APMF-B209 (SEV-4, OPEN, core/PapyrusCaller.cpp kCap :64, :91) -- the 2048-vtable cap (raised against 7f1faa4)
+Reviewer, verbatim as relayed: "2048-vtable cap (:64, :91) may be reached on large lists; kCap=16384 (256 KB) removes it; check 'distinct vtables' in the first field log." Closure: read the install line's distinct-vtable count from the first field run; raise kCap to 16384 if it is anywhere near 2048 (or unconditionally).
+
+### APMF-B210 (SEV-4, OPEN, STEP-2 PREREQUISITE, core/PapyrusCaller.cpp Describe / ProbeEquip :446) -- misattribution trap for step 2 (raised against 7f1faa4)
+Reviewer, verbatim as relayed: "misattribution trap for step 2: an equip made synchronously while an unrelated native runs on that thread is attributed to that native's script (e.g. AddItem -> container-changed sink in a C++ mod equips); step 2 must require an equip native (or a_scriptPath) before ranking, and should rank by the VMAD-owning file, not only definer (a script attached by an override on a vanilla ref shows definer=Skyrim.esm; :446)." marth's ruling 2026-10-27 is "Defining plugin"; step 2 reconciles that with the VMAD-owner point and presents it to marth before ranking.
+
+### APMF-B211 (SEV-5, OPEN, core/PapyrusCaller.cpp CallThunk :163-171) -- thunk restore is not exception-safe (raised against 7f1faa4)
+Reviewer, verbatim as relayed: "thunk restore not exception-safe (:163-171), RAII guard." Closure: restore t_cur from a scope guard's destructor.
+
+### APMF-B212 (SEV-5, OPEN, core/PapyrusCaller.cpp CallThunk) -- g_calls is a contended counter (raised against 7f1faa4)
+Reviewer, verbatim as relayed: "g_calls fetch_add contended cache line on every call." Closure: a thread_local count summed only for the install line, or drop the counter.
+
+### APMF-B213 (SEV-5, OPEN, core/PapyrusCaller.cpp Install :403-405) -- a silent safe_write failure still counts as seated (raised against 7f1faa4)
+Reviewer, verbatim as relayed: "silent safe_write failure still counted as seated (:403-405)." Closure: re-read the slot after write_vfunc; count and log a slot that does not hold the thunk.
+
+### APMF-B214 (SEV-5, OPEN, core/PapyrusCaller.cpp Install :391-398 and the full-table error) -- two log wordings (raised against 7f1faa4)
+Reviewer, verbatim as relayed: "engineForeign log wording (:391-398)." and "full-table message prints g_used of kCap while the limit is kCap/2." Closure: reword the engine-vtable line; print the real limit (kCap/2) in the full-table line.

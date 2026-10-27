@@ -33,7 +33,7 @@
 //
 // GATES. VR refused; exactly 1.6.1170 / 1.5.97 / 1.7.104 (allowance::RuntimeSupported); SeatVerified
 // on row "PapyrusCaller.NativeFunctionBase.Call" (its signature runs through the layout reads above);
-// APMF.ini [Probe] bPapyrusCaller (default 1 while field tested, 0 = no seat at all).
+// APMF.ini [Probe] bPapyrusCaller (default 0 = no seat at all; a field test turns it on in its INI).
 //
 // THREADING. Init: SKSEPluginLoad. Install: MAIN thread (kDataLoaded, kPostLoadGame, kNewGame).
 // The thunk runs on whatever thread the VM calls a native from (the main thread, or a VM thread for

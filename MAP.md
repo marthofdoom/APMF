@@ -1753,7 +1753,7 @@ kPostLoadGame, kNewGame seats only vtables not seated yet. The VM pointer comes 
 at SKSEPluginLoad), no id. Vtable -> previous slot-0x0F value lives in an append-only open-addressed table (cap 2048
 vtables, refused loudly past it); the thunk records `{fn, stack, vm}` thread_local, calls the previous value, restores.
 **Gates.** VR refused; exact 1.6.1170 / 1.5.97 / 1.7.104; `SeatVerified` on row `PapyrusCaller.NativeFunctionBase.Call`
-(signature runs through Stack+0x60 / frame+0x28 / Stack+0x80); `[Probe] bPapyrusCaller` (default 1 while field tested).
+(signature runs through Stack+0x60 / frame+0x28 / Stack+0x80); `[Probe] bPapyrusCaller` (default 0; a field test turns it on in its INI).
 **Resolution (`Describe`).** `stack->top` must be the native's own frame (logged `top-frame=MISMATCH` otherwise);
 `previousFrame` = the calling script; walks up to 8 frames to the first frame bound to an object; `Object+0x20` handle
 read raw; handle top-16-bits set -> ActiveEffect via the policy (MGEF's files), else low 32 = FormID (an alias's quest).
@@ -1761,7 +1761,8 @@ Files: `GetFile(0)` (definer) and `GetFile(-1)` (winning override); a created re
 **What breaks if you change this.** The thunk must stay record-call-restore (it runs for EVERY native call on every VM
 thread: no lock, no allocation, no log after the first call). Removing a table entry while its vtable still holds the
 thunk = the DEFECT path (engine Call fallback, logged at error). `Describe` reads only the calling thread's own stack:
-calling it from another thread than the native's reads a stack another thread is running.
+calling it from another thread than the native's reads a stack another thread is running. **Open review findings:
+`Docs/REVIEW-BACKLOG.md` APMF-B208 to APMF-B214** (raised against `7f1faa4`; B210 is a step-2 PREREQUISITE).
 
 ### `native/core/EquipSink.{h,cpp}` — THE #17a CALL-SITE SEAT: the engine-equip sink (ch.17)
 **RANK ONCE AS REQUESTER (2026-10-18, feat/apmf-queued-0x49, marth ruling (a)):** a queued equip (q=1) passes the
