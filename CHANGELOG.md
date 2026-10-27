@@ -1,3 +1,8 @@
+## Unreleased -- A Papyrus caller probe and a clean-room behaviour tree catalog
+
+- **A probe names the script behind a Papyrus equip.** When a Papyrus script equips something on an actor whose equipment a mod governs, Harbinger can log which script asked and which plugin that script belongs to, next to how it ranks the equip today. It changes nothing, and the ranking is not touched. It installs a small wrapper on every Papyrus native function that only notes which native is running. Setting: `bPapyrusCaller` in `[Probe]` of `APMF.ini`, 0 by default. Turn it on only for a field test.
+- **The combat behaviour tree catalog is now clean-room.** Harbinger's list of the game's combat behaviour tree node types is now written clean-room. It replaces an earlier header that was derived from GPL code, which did not fit the project's MIT license. Nothing a player or a mod author sees changes.
+
 ## v0.15.1 -- A substrate that waits for its cast to leave, a named cast proxy and walks that keep control
 
 - **The substrate closes as fired only when the spell is cast.** Before, the combat substrate closed the moment the hand began releasing the spell, and the combat controller was freed before the spell left the hand, so casts were cut short (APMF-B93). Now the release only marks the window as releasing. It closes as fired only on the game's own spell cast event for the driven spell. Field tested on LoreRim: out of combat casts now complete.

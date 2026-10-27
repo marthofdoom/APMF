@@ -377,7 +377,7 @@ bool (*IsSubstrateAvailable)(void);   // APMF_API_v27, gate on abiVersion >= 27
 TRUE only when the [combat substrate](FACETS.md#combat-substrate-kintent_combatsubstrate) INSTALLED and is usable on this runtime:
 
 - `APMF.ini` `[CombatSubstrate] bCombatSubstrate` is not 0,
-- the runtime is exactly 1.6.1170 or 1.5.97 (not VR; 1.7.104 is refused because the held engagement's `StopCombat` is not placed there),
+- the runtime is exactly 1.6.1170, 1.5.97 or 1.7.104 (not VR). 1.7.104 runs the substrate since 0.14.0 through raw-address rows, and the API header comment still names only the first two,
 - every seat it rides is installed (ch.22's slot-0x99 seat and its anchor-target site, the held engagement's `StopCombat`, the 95-node leaf allow-list, the music deny's seat unless `bSubstrateMusicDeny=0`),
 - every address row it calls verified (`[allowance] SeatVerified`), and its `APMF.esl` records (0x808 to 0x80B) resolved.
 

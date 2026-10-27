@@ -20,7 +20,7 @@ Each recipe gives the goal, **Think it through** (which facets, and why those), 
 #include <cstdint>
 using namespace APMF_API;
 
-extern const APMF_API_v19* g_apmf;   // bound once at startup, GUIDE.md "Binding and Version Gating"
+extern const APMF_API_v29* g_apmf;   // bound once at startup, GUIDE.md "Binding and Version Gating"
 constexpr float kBasis = 50.0f;      // your choice of basis. MFO uses 200
 
 // GUIDE.md "Tracking a claim in your own code". Poll needs ABI 6.
@@ -177,7 +177,7 @@ void EndStandoff(Standoff& s) {
 
 *Walk a follower to an item, hold it still and play the pickup animation when it arrives, then move on. When it is blocked, decide by what blocked it.*
 
-**Think it through.** Three facets in sequence: a [travel leg](FACETS.md#ch19-travel-kintent_travel) to the item, then on arrival a [movement block](FACETS.md#ch1-movement-block-kintent_movementblock) so the animation is not walked out of, and an [idle](FACETS.md#ch12-idle-kintent_idle) at the item. The leg ends but the travel claim stays live, so the tick reads `GetTravelLegState` to learn why the walk stopped, and compares `seq` and `destForm` so an older leg's end is not mistaken for this one's. A BLOCKED end is two different situations: an actor in the way (reorder, come back later) and a static block (park until the world changes). Combat cancels the leg, and the client decides whether to resume after the fight.
+**Think it through.** Three facets in sequence: a [travel leg](FACETS.md#ch19-travel-kintent_travel) to the item, then on arrival a [movement block](FACETS.md#ch1-movement-block-kintent_movementblock) so the animation is not walked out of, and an [idle](FACETS.md#ch12-idle-kintent_idle) at the item. The leg ends but the travel claim stays live, so the tick reads `GetTravelLegState` to learn why the walk stopped, and compares `seq` and `destForm` so an older leg's end is not mistaken for this one's. A BLOCKED end is two different situations: an actor in the way (reorder, come back later) and a static block (park until the world changes). Combat cancels the leg, and the client decides whether to resume after the fight. Since 0.15.1 a BLOCKED or STUCK end keeps the follower on the travel package for as long as the claim stands, so he does not wander back to his own package while the client decides. The client ends that hold by releasing the claim or re-pointing it.
 
 **Solution.**
 
@@ -232,7 +232,7 @@ void TickLootTrip(RE::FormID follower, RE::FormID giveIdle, LootTrip& t) {
             t.actorBlocked = info.blockerKind != kBlocker_None;
             t.step = LootStep::Blocked;                  // the claim is still live: Close it when you give up
         } else {
-            t.step = LootStep::Cancelled;                // combat, destination gone, stuck, actor gone, failed
+            t.step = LootStep::Cancelled;                // combat, destination gone, stuck, actor gone, failed. A STUCK end keeps the offer: Close() the claim to hand him back
         }
         return;
     }
@@ -268,7 +268,7 @@ void RetryOrPark(RE::FormID follower, LootTrip& t) {
 }
 ```
 
-**Check.** `[travel-leg]` shows the leg start and its end reason. On arrival `[ctl]` shows the ch.1 engage and `[ch.12]` the `PlayIdle` call. A BLOCKED end logs the stall point and the blocker, and `blockerKind` in the state read decides the branch. A combat cancel reads `kLeg_CombatCancelled`.
+**Check.** `[travel-leg]` shows the leg start and its end reason. On arrival `[ctl]` shows the ch.1 engage and `[ch.12]` the `PlayIdle` call. A BLOCKED end logs the stall point and the blocker, and `blockerKind` in the state read decides the branch. If the destination is an actor who moved and the game ends the walk short, the state goes back to walking with a new `seq` (up to 3 times) before it reads stuck. A fixed item never triggers that restart. A combat cancel reads `kLeg_CombatCancelled`.
 
 > **Real-World Connection** MFO's `Excursion.cpp` is this loop, and marth's loot rules are the BLOCKED branch: an actor block is reordered, a static block is parked until a `TESOpenCloseEvent` or `TESActivateEvent` says the world changed.
 
