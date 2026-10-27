@@ -739,6 +739,56 @@ namespace apmf::actiongate {
             return nullptr;
         }
 
+        // ---- SUBSTRATE UNRESOLVED-ACT PROBE (fix/apmf-gate-probe-proxy-name, 2026-10-26; principle 5, PASSIVE) ----
+        // Field 2026-10-26d: a substrate window closed `tree-outside-gate` with "Combat Parallel entered 0" and
+        // "ForLeaf early returns 0" -- the holder's tree ran, yet ForLeaf never saw the holder's id. One suspect is
+        // ResolveDeliberatingActor answering 0 for that tree's control. This logs the FIRST act() of a substrate-
+        // indexed node whose deliberating actor did NOT resolve, once per substrate window (the window serial
+        // combatsubstrate::WindowSerial bumps on every slot taken): the node, the control's master_controller,
+        // BOTH attackerHandle reads as RAW handle values (A = master_controller+0x28, B = [master_controller+0x20]
+        // +0x28; 0 = never written) and the OS thread. It re-reads exactly the words ResolveDeliberatingActor just
+        // read (no new dereference, no handle resolve), writes nothing the gate reads, and changes no verdict:
+        // the act still goes on as kNotHolder. Unattributed by construction -- it may be any combatant's tree.
+        std::atomic<std::uint32_t> g_unresLoggedSerial{ 0 };   // the window serial the last line was for
+        std::atomic<std::uint32_t> g_unresSince{ 0 };          // unresolved substrate-node acts since the last line
+
+        const char* SubstrateNodeName(std::uint32_t a_idx) {
+            if (a_idx < apmf::cbt::kLeaves.size()) return apmf::cbt::kLeaves[a_idx].name;
+            a_idx -= static_cast<std::uint32_t>(apmf::cbt::kLeaves.size());
+            if (a_idx < apmf::cbt::kSearchLeaves.size()) return apmf::cbt::kSearchLeaves[a_idx].name;
+            a_idx -= static_cast<std::uint32_t>(apmf::cbt::kSearchLeaves.size());
+            if (a_idx < apmf::cbt::kParamLeaves.size()) return apmf::cbt::kParamLeaves[a_idx].name;
+            return "?";
+        }
+
+        void ProbeUnresolvedAct(std::uintptr_t a_vt, std::uint32_t a_leafIdx, void* a_control) {
+            const std::uint32_t serial = apmf::combatsubstrate::WindowSerial();
+            std::uint32_t       seen   = g_unresLoggedSerial.load(std::memory_order_relaxed);
+            if (seen == serial || !g_unresLoggedSerial.compare_exchange_strong(seen, serial, std::memory_order_relaxed)) {
+                g_unresSince.fetch_add(1, std::memory_order_relaxed);   // counted for the next window's line
+                return;   // this window already has its line (or another thread is writing it)
+            }
+            const std::uint32_t since = g_unresSince.exchange(0, std::memory_order_relaxed) + 1;   // + this one
+            void*         mc  = a_control ? reinterpret_cast<apmf::cbt::TreeControl*>(a_control)->master_controller : nullptr;
+            void*         hop = nullptr;
+            std::uint32_t hA = 0, hB = 0;
+            if (mc) {
+                hA  = reinterpret_cast<apmf::cbt::ControllerMini*>(mc)->attackerHandle.native_handle();
+                hop = *reinterpret_cast<void**>(reinterpret_cast<std::uintptr_t>(mc) + 0x20);
+                if (hop) hB = reinterpret_cast<apmf::cbt::ControllerMini*>(hop)->attackerHandle.native_handle();
+            }
+            spdlog::info("[substrate] GATE UNRESOLVED act (window serial {}): node {} '{}' (vtable rva 0x{}), control "
+                         "0x{}, master_controller 0x{} (A: attackerHandle +0x28 raw 0x{}), its +0x20 0x{} (B: attackerHandle "
+                         "+0x28 raw 0x{}), thread {}; neither read resolves to an actor, so the gate treated it as no "
+                         "holder ({} unresolved substrate-node act(s) since the previous line; first per window only).",
+                         serial, a_leafIdx, SubstrateNodeName(a_leafIdx),
+                         apmf::log::Hex(a_vt - REL::Module::get().base()),
+                         apmf::log::Hex(reinterpret_cast<std::uintptr_t>(a_control), 16),
+                         apmf::log::Hex(reinterpret_cast<std::uintptr_t>(mc), 16), apmf::log::Hex(hA),
+                         apmf::log::Hex(reinterpret_cast<std::uintptr_t>(hop), 16), apmf::log::Hex(hB),
+                         REX::W32::GetCurrentThreadId(), since);
+        }
+
         // THE leash decision, shared by the act() and update() seats (see the PURSUIT LEASH
         // section). Runs on a combat behaviour thread: the leash entry is copied out under a
         // shared_lock (released before any engine call), the actors come from handle-table
@@ -1243,6 +1293,7 @@ namespace apmf::actiongate {
             if (apmf::combatsubstrate::AnyLive()) {
                 if (const auto lit = g_leafIdx.find(vt); lit != g_leafIdx.end()) {
                     const RE::FormID sf = ResolveDeliberatingActor(a_control);
+                    if (sf == 0) ProbeUnresolvedAct(vt, lit->second, a_control);   // passive, first per window
                     const bool       mv = g_movementLeaf.contains(vt);
                     const auto verdict  = sf != 0 ? apmf::combatsubstrate::ForLeaf(sf, lit->second, mv, a_this)
                                                   : apmf::combatsubstrate::Leaf::kNotHolder;
