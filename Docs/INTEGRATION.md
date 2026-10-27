@@ -30,9 +30,10 @@ There is no separate `Version()` call. The version is the `abiVersion` field, th
 
 namespace MyMod {
 
-    // The newest struct. Reading a slot past the end of an older Harbinger's interface
+    // The newest struct (APMF_API_v29, ABI 29. Harbinger reports ABI 30 because ABI 30 added a
+    // flag and no slot). Reading a slot past the end of an older Harbinger's interface
     // is undefined, so gate EVERY call on abiVersion (see Has below).
-    const APMF_API::APMF_API_v19* g_apmf = nullptr;
+    const APMF_API::APMF_API_v29* g_apmf = nullptr;
 
     // Ask for the LOWEST ABI you can live with. GetInterface returns null for anything
     // above the installed Harbinger's own, with no downward retry.
@@ -51,7 +52,7 @@ namespace MyMod {
         const APMF_API::APMF_API_v1* base = fn(kMinAbi);
         if (!base || base->abiVersion < kMinAbi) return;  // installed Harbinger is too old
 
-        g_apmf = reinterpret_cast<const APMF_API::APMF_API_v19*>(base);
+        g_apmf = reinterpret_cast<const APMF_API::APMF_API_v29*>(base);
     }
 
 }
@@ -63,7 +64,7 @@ Then every call site reads like this.
 if (MyMod::Has(6) && MyMod::g_apmf->IsClaimLive(handle)) { /* ... */ }   // IsClaimLive is ABI 6
 ```
 
-Which ABI introduced which slot, intent and flag is in [GUIDE.md "Gating on the ABI"](GUIDE.md#gating-on-the-abi) and [FACETS.md Appendix B](FACETS.md#appendix-b-abi-history). Two things catch people out. An unknown intent is refused (`kInvalidHandle`), which is a loud failure. An unknown flag bit is ignored without a word, which is a quiet one. Check `abiVersion` before you set any flag a facet section marks as newer than ABI 5.
+Which ABI introduced which slot, intent and flag is in [GUIDE.md "Gating on the ABI"](GUIDE.md#gating-on-the-abi) and [FACETS.md Appendix B](FACETS.md#appendix-b-abi-history). The newest ones are listed under [What is new from ABI 22 to 30](#what-is-new-from-abi-22-to-30) below. Two things catch people out. An unknown intent is refused (`kInvalidHandle`), which is a loud failure. An unknown flag bit is ignored without a word, which is a quiet one. Check `abiVersion` before you set any flag a facet section marks as newer than ABI 5.
 
 Harbinger logs `APMF_GetInterface` either way. If a client asks for an ABI the installed Harbinger does not have, the log names the release that does.
 
@@ -90,7 +91,7 @@ Every facet follows the same steps. Claim, wait for it to apply, keep it alive i
 
 **Wait for it.** The request is applied on the game thread at Harbinger's next drain. `IsClaimLive` (ABI 6) reads the applied state, so it is false for a claim that is still pending. A handle that has never read live is pending, not ended. Only a handle that was live and no longer is has ended. Set your own bound on how long you wait, and do not count paused-menu time, because the drain runs on the player update.
 
-**Keep it alive, if it is bounded.** Three facets are bounded and release themselves: the cast claim (ch.8b), the combat re-entry deny (ch.22) and the cast guard (ch.25). To hold a cast or a guard longer than one window, send a `Repoint` before it lapses. A renewal moves the deadline to now plus the window the claim was granted. Do not release and re-request, because the gap leaves the actor unclaimed. Every other claim is standing and needs no heartbeat. A claim that is not bounded can still be ended by Harbinger itself when its goal is over, for example a target pin whose target died. Poll `IsClaimLive` for those.
+**Keep it alive, if it is bounded.** Three facets are bounded and release themselves: the cast claim (ch.8b), the combat re-entry deny (ch.22) and the cast guard (ch.25). The combat substrate (ch.27) is bounded too, but it is not renewed. It closes on its cast, on its time limit or when the cast claim ends, and you file it again for the next cast. To hold a cast or a guard longer than one window, send a `Repoint` before it lapses. A renewal moves the deadline to now plus the window the claim was granted. Do not release and re-request, because the gap leaves the actor unclaimed. Every other claim is standing and needs no heartbeat. A claim that is not bounded can still be ended by Harbinger itself when its goal is over, for example a target pin whose target died. Poll `IsClaimLive` for those.
 
 **Release it.** `Release(handle)` when you are done with the facet. Release a handle even if you think it ended. It is a no-op on a claim Harbinger already released. A release queued behind a pending request is applied after it in the same drain, so the claim engages and is then released. Nothing is cancelled. Reserve `Release` for being done. Use `Repoint` for a mere change of target.
 
@@ -202,7 +203,8 @@ If you want Harbinger to hold something for you, say so with a claim, and stop d
 ## 6. Debugging
 
 - **`APMF.log`.** Every refusal, every end and every attribution is logged with its reason. Search for `REFUSED`, `ended`, `UNATTRIBUTED` and `ATTRIBUTION DEFECT`. If a claim did not do what you expected, read the log line before assuming a bug. Facet tags are `[ch.N]`.
-- **The menu page.** The Harbinger page in the SKSE Menu Framework shows, per facet, the sources, the winner, their priorities and hit counts, alerts and the seat census. See [HARBINGER-MENU.md](HARBINGER-MENU.md). Your DLL appears there under its file name once it files a claim.
+- **The menu page.** The Harbinger page in the SKSE Menu Framework shows, per facet, the sources, the winner, their priorities, five counters (Served, Hits, Blocked, Passed, Observed), alerts and the seat census. Served counts the times Harbinger enforced your own claim. Blocked and Passed count other sources' writes against your claim. See [HARBINGER-MENU.md](HARBINGER-MENU.md). Your DLL appears there under its file name once it files a claim.
+- **Substrate and travel lines.** `[substrate]` lines say how a substrate window opened and closed (`CLOSE reason=fired`, `fired-not-released`, `released-unconfirmed` or `tree-outside-gate`). `LEAF GATE`, `GATE UNRESOLVED` and `CAST BUILT` are passive. `[travel-leg]` and `[travel-xcell]` say how a leg started, restarted and ended.
 - **Settings.** `APMF.ini` switches facets and probes, and `APMF_Sources.ini` holds priorities. See [INI-REFERENCE.md](INI-REFERENCE.md).
 - **Observe-only seats.** Some seats only name who changes a value and never deny. They are in [FACETS.md "Observe-only facets"](FACETS.md#observe-only-facets-no-claim-api).
 
@@ -216,7 +218,10 @@ If you want Harbinger to hold something for you, say so with a claim, and stop d
 | `CastClaims.cpp` | offense and heal cast claims, per hand |
 | `SpellAllowList.cpp` | ch.8 select-spell and `SetSpellAllowList` |
 | `Equip.cpp` | ch.17: claim, `SetEquipScope`, `SetEquipSetEx` |
-| `Excursion.cpp`, `Deposit.cpp` | ch.19 travel, ch.20 pins, ch.1 hold and ch.12 idle |
+| `Excursion.cpp`, `Deposit.cpp`, `ErrandClaims.cpp` | ch.19 travel, ch.20 pins, ch.1 hold and ch.12 idle |
+| `Substrate.cpp` | ch.27: the substrate claim and the cast claim filed as a pair, `GetSubstrateState` and `IsSubstrateAvailable` |
+| `EquipPreference.cpp` | ch.26: a declaration sent only when it changes |
+| `Place.cpp` | `kIntent_Place` and `GetPlaceState` |
 | `CastGuard.cpp` | ch.25: a 6 second window, a `Repoint` heartbeat, and a fresh request when the claim has gone stale |
 | `CombatEntry.cpp`, `ReentryDeny.cpp` | ch.21 and ch.22 with pending-versus-ended tracking |
 | `PursuitLeash.cpp`, `CombatApproach.cpp`, `OffenseApproach.cpp` | ch.23 and ch.24 |
@@ -227,6 +232,63 @@ MFO files every claim with a basis of 200.
 ## Equip preference (ch.26, ABI v22)
 
 New in 0.13.1, not yet tested in game. The full reference is [ch.26 Equip preference](FACETS.md#ch26-equip-preference-kintent_equippreference). Since the same ABI every equip refusal (the ch.17 set, the hand block, the ch.15 refusal) follows the `Equip` priorities in `APMF_Sources.ini`.
+
+## What is new from ABI 22 to 30
+
+A client built against an older header keeps working. Each item below needs its ABI check before you use it. Everything here is also in [APMF_API-REFERENCE.md](APMF_API-REFERENCE.md) and [FACETS.md](FACETS.md), and the header wins over both.
+
+| ABI | Release | What a client gets | Gate |
+|---|---|---|---|
+| 22 | 0.13.1 | `kIntent_EquipPreference` with `SetEquipPreference` and `GetEquipPreferenceState` | `abiVersion >= 22` |
+| 23 | 0.13.1 | `kIntent_CombatSubstrate`, filed beside a cast claim through `RequestEx` | `abiVersion >= 23` |
+| 24 | 0.13.1 | `GetIdleState` | `abiVersion >= 24` |
+| 25 | 0.14.0 | an equip entry can name one item copy by its unique id | `abiVersion >= 25` |
+| 26 | 0.14.0 | `GetSubstrateState(actor)` says none, held, real or anchor | `abiVersion >= 26` |
+| 27 | 0.14.0 | `IsSubstrateAvailable()` says whether the substrate installed on this runtime | `abiVersion >= 27` |
+| 28 | 0.14.0 | `kIntent_Place` and `GetPlaceState(handle, &info)` | `abiVersion >= 28` |
+| 29 | 0.15.0 | `GetClientFacetPriority(facet)` | `abiVersion >= 29` |
+| 30 | 0.15.0 | the `kTravel_CrossCells` bit on a travel claim to a reference. No new slot | `abiVersion >= 30` |
+
+### Place (ABI 28)
+
+`kIntent_Place` moves an actor beside a reference or to a point in an interior cell, once, through the game's own move call. It is not a claim. `IsClaimLive` is false for it, and there is nothing to release or renew. Put the destination in `param.form` and the offset in `param.pos`. Read the outcome with `GetPlaceState(handle, &info)` after you set `info.size = sizeof(info)`. The state is `Placed`, `Refused` or `Failed`. A failure is never reported as a success. It is refused when another client's travel or hold owns the actor, and your own claim never blocks it. A finished state is kept until you have read it and 30 seconds have passed. Details: [FACETS.md "Place"](FACETS.md#place-kintent_place) and [APMF_API-REFERENCE.md](APMF_API-REFERENCE.md#abi-v28-place).
+
+### The combat substrate (ch.27, ABI 23, 26 and 27)
+
+An animated cast is the follower's own combat AI casting, and that AI only exists in combat. For a cast out of combat, file a `kIntent_CombatSubstrate` claim and your cast claim together. Harbinger puts the follower into combat against its own invisible stand-in, lets only the claimed spell through and gives the follower back when the cast leaves. It ships on (`bCombatSubstrate=1`).
+
+- Ask `IsSubstrateAvailable` first (ABI 27). False means the capability is absent on this install, which is a degrade you can plan for. A refusal on one request is a failure to log, not to fall back from.
+- Ask `GetSubstrateState(actor)` (ABI 26) before you treat an actor's combat as a fight. A held substrate is not a fight.
+- The window closes as fired only on the game's own spell cast event for the spell. A release that never confirms closes after 3 seconds as `fired-not-released`. A hand that goes empty after a release with no cast event closes as `released-unconfirmed`. A combat caster built before the follower's tree runs under the gate closes as `tree-outside-gate`. In each case the substrate claim reads not live and the reason is in `APMF.log`. The API does not return the reason.
+- The window runs from the tree's first run, not from your request, and waits a fixed 10 seconds for it to start. Size your own cast claim's window for that.
+- A cast proxy for a buff carries the spell's real name and menu icon.
+- A real fight starts: the substrate is dropped at once and your cast claim runs as an in-combat claim.
+
+The full contract is [FACETS.md "Combat substrate"](FACETS.md#combat-substrate-kintent_combatsubstrate).
+
+### Travel legs: restarts and keeping control (ch.19)
+
+Two behaviours changed for a travel claim, with no API change, and one flag was added.
+
+- **A walk the game ends short is started again.** If the game ends a reference leg's package while the follower is still outside the arrival radius and the destination has moved, Harbinger starts the leg again on a fresh package slot, up to 3 times. After that the leg reads `kLeg_StuckTimeout` at once, instead of after the 2 minute net. `GetTravelLegState` goes back to walking with a new `seq` at each restart, so compare `seq` and not just the state.
+- **BLOCKED and STUCK keep the follower.** While your claim stands, Harbinger keeps its travel package on the follower after either end. The state reads as before. The follower no longer drifts back to its own package. A blocked follower carries on when the way clears. A stuck one stands where the walk ended. Only your `Release` hands the follower back, and a `Repoint` starts a new leg on a fresh slot. The held failure occupies one of the 8 package slots until then, so release it when you give up.
+- **Across cells (ABI 30).** Set `kTravel_CrossCells` on a leg to a reference and the follower walks through doors, the game's own way, and follows the NPC if it moves. The leg counts as arrived only in the same interior cell as the destination, or outdoors in the same worldspace, and inside the radius. A destination outdoors that is not loaded yet is waited for. Arrival holds the follower until you release or re-point, like a cell leg. Do not set the bit unless you mean it, because an older Harbinger drops it silently.
+
+### Asking what the player allowed (ABI 29)
+
+The player ranks every mod on every facet, and 0 means off. A claim of yours on a facet at 0 never wins. `GetClientFacetPriority(facet)` returns your own number, so you can plan around it. Pass a `ClientFacet` value such as `kFacet_EquipWeapon` or `kFacet_EquipArmor`. It returns 0 to 100, or `kFacetPriorityUnknown` (-1) for a facet it does not know. A client that has not filed a claim yet gets the priority its first claim will rank at. Any thread, read only.
+
+```cpp
+// MFO's use: with EquipWeapon at 0 the follower will not wear a looted upgrade, so sell it.
+bool CanEquipWeapons() {
+    if (!MyMod::Has(29)) return true;                   // older Harbinger: behave as before
+    return MyMod::g_apmf->GetClientFacetPriority(APMF_API::kFacet_EquipWeapon) != 0;
+}
+```
+
+### Equip is two facets
+
+On the page and in `APMF_Sources.ini` equip ranks as `EquipWeapon` (weapons, shields, torches, ammo) and `EquipArmor`. Your priority is separate on each. An old `[Equip]` section is still read where the new ones have no value.
 
 ## Idle state (ch.12, ABI v24)
 

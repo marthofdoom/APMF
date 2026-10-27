@@ -83,17 +83,22 @@ A facet is one part of an NPC's AI that a mod can claim. Each has its own intent
 | Equipment (ch.15) | Gate spell and staff re-arm | [ch.15](Docs/FACETS.md#ch15-equipment-kintent_equipment) |
 | Detection (ch.16) | Silent movement, longer detect range | [ch.16](Docs/FACETS.md#ch16-detection-kintent_detection) |
 | Equip authority (ch.17) | Declare what the NPC wears and refuse the rest | [ch.17](Docs/FACETS.md#ch17-equip-authority-kintent_equipauthority) |
-| Travel (ch.19) | Walk the NPC to an object, cell or point | [ch.19](Docs/FACETS.md#ch19-travel-kintent_travel) |
+| Travel (ch.19) | Walk the NPC to an object, cell or point, through doors to an NPC in another cell (ABI v30) | [ch.19](Docs/FACETS.md#ch19-travel-kintent_travel) |
 | Target pin (ch.20) | Hold the combat target on yours | [ch.20](Docs/FACETS.md#ch20-target-pin-kintent_targetpin) |
 | Combat entry (ch.21) | Start a fight | [ch.21](Docs/FACETS.md#ch21-combat-entry-kintent_combatentry) |
 | Combat re-entry deny (ch.22) | Keep the NPC out of combat for a while | [ch.22](Docs/FACETS.md#ch22-combat-re-entry-deny-kintent_combatreentrydeny) |
 | Pursuit leash (ch.23) | Stop the NPC chasing too far from an anchor | [ch.23](Docs/FACETS.md#ch23-pursuit-leash-kintent_pursuitleash) |
 | Combat approach (ch.24) | Close on an actor while fighting | [ch.24](Docs/FACETS.md#ch24-combat-approach-kintent_combatapproach) |
 | Cast guard (ch.25) | Hold attack spells through friends, bound channels | [ch.25](Docs/FACETS.md#ch25-cast-guard-kintent_castguard) |
+| Equip preference (ch.26) | Name the weapons, shields, torches or staves the NPC should favour in combat | [ch.26](Docs/FACETS.md#ch26-equip-preference-kintent_equippreference) |
+| Combat substrate (ch.27) | Put the NPC into combat against Harbinger's own stand-in so an out of combat cast is animated | [ch.27](Docs/FACETS.md#combat-substrate-kintent_combatsubstrate) |
+| Place | Move an NPC beside a reference or to a point in an interior cell, once (ABI v28) | [place](Docs/FACETS.md#place-kintent_place) |
 | Space queries | Ask for a clear spot or the hostiles in a sphere | [queries](Docs/FACETS.md#space-queries-findemptyspace-and-findhostilesinspace) |
 | Line of sight | Harbinger's own ray between two actors | [queries](Docs/FACETS.md#line-of-sight-getlineofsight) |
 | Awareness | Does this actor sense that one | [queries](Docs/FACETS.md#awareness-senseactor) |
 | Observe-only seats | Who changes an actor value, the seat census, package sources | [observe only](Docs/FACETS.md#observe-only-facets-no-claim-api) |
+
+Four read-only queries need no claim. `GetIdleState` says what became of an idle claim (ABI v24), `GetSubstrateState` says whether an actor's combat is a substrate (ABI v26), `IsSubstrateAvailable` says whether the substrate installed (ABI v27), and `GetClientFacetPriority` returns the calling mod's own priority on a facet, 0 meaning off (ABI v29). Each is in [Docs/APMF_API-REFERENCE.md](Docs/APMF_API-REFERENCE.md).
 
 Some facets are field-proven and some are built but not yet seen working in game. FACETS.md says which for each one.
 
@@ -106,9 +111,9 @@ You build against one header, [`native/APMF_API.h`](native/APMF_API.h). Start wi
 ```cpp
 #include "APMF_API.h"
 
-// The newest struct is APMF_API_v19 (ABI 21). APMF_API.h is canonical, never hardcode
-// the number in your own docs.
-const APMF_API::APMF_API_v19* g_apmf = nullptr;
+// The newest struct is APMF_API_v29 (Harbinger reports ABI 30, since ABI 30 added a flag and no slot).
+// APMF_API.h is canonical, never hardcode the number in your own docs.
+const APMF_API::APMF_API_v29* g_apmf = nullptr;
 
 // Once, from kPostLoad/kDataLoaded:
 if (HMODULE h = GetModuleHandleA("APMF.dll")) {
@@ -120,7 +125,7 @@ if (HMODULE h = GetModuleHandleA("APMF.dll")) {
         // ABI you can live with, then gate every newer slot on base->abiVersion.
         if (auto* base = fn(/*lowest ABI you need*/ 5)) {
             if (base->abiVersion >= 5)
-                g_apmf = reinterpret_cast<const APMF_API::APMF_API_v19*>(base);
+                g_apmf = reinterpret_cast<const APMF_API::APMF_API_v29*>(base);   // call a newer slot only after checking abiVersion
         }
     }
 }
@@ -174,7 +179,7 @@ change a priority (format in `Docs/INI-REFERENCE.md`):
 - `SKSE/Plugins/APMF.ini`, the settings file. Every key is documented in it and set to
   the configuration that was tested. Deleting the file, or any line in it, is safe.
   Every key is also listed in [Docs/INI-REFERENCE.md](Docs/INI-REFERENCE.md), including
-  `bEquipEnforceArmor` and the `[Harbinger]` section's `bSceneProbe`.
+  the `[Harbinger]` section's `bSceneProbe`. The key list below is the short version.
 - `APMF.esl`, at the root, beside `SKSE`.
 
 `APMF.esl` is new in v0.9.5 and it has to be **enabled** in your load order like any
@@ -187,11 +192,34 @@ If it's missing or disabled, APMF refuses every `kIntent_Travel` claim and names
 reason once in the log, so a client's own degrade path runs. Nothing else breaks. Every
 other facet behaves exactly the same without it.
 
+## Settings
+
+Every key is in [Docs/INI-REFERENCE.md](Docs/INI-REFERENCE.md). These are the ones added or changed from v0.13.1 on, with the default each has in code and in the shipped `APMF.ini`. Set a key to 0 to switch that part off, and delete the file or any line to get the defaults.
+
+| Section | Key | Default | What it does |
+|---|---|---|---|
+| `[EquipAuthority]` | `bEquipObserveOnly` | 0 | 0 enforces every declared equip category (weapons, shields, torches, ammo, armor). 1 only logs what would be refused. `bEquipEnforceArmor` is retired and ignored |
+| `[EquipAuthority]` | `bTorchDeny` | 1 | While a mod's equip claim owns the torch, the game's own torch logic is off for that follower |
+| `[HandBlock]` | `bEquipmentWeaponAdmission` | 1 | The weapon rule at the combat equip seat (ch.15) |
+| `[HandBlock]` | `bEquipmentWeaponObserveOnly` | 0 | 1 makes the weapon rule log only |
+| `[CombatSubstrate]` | `bCombatSubstrate` | 1 | The combat substrate (ch.27). 0 refuses every substrate claim |
+| `[CombatSubstrate]` | `bSubstrateMovementHold` | 1 | Hold the movement half of the follower's combat tree instead of failing it. A hold that did not arm refuses the substrate |
+| `[CombatSubstrate]` | `fSubstrateTtlSec` | 6 | How long a substrate stays open, counted from the tree's first run (1 to 15) |
+| `[CombatSubstrate]` | `bSubstrateEquip` | 1 | The game's own AI equips the claimed spell. Weapon, shield and torch are stowed first and put back as the same copies |
+| `[CombatSubstrate]` | `bSubstrateOverrideDeny` | 1 | Deny the enter-combat override package while the follower is held. If its address check fails the substrate is refused |
+| `[CombatSubstrate]` | `bSubstrateMusicDeny`, `bSubstrateBarkDeny`, `bSubstrateAggressorClear`, `bSubstrateJoinGuard` | 1 | Battle music, the combat-start bark, the aggressor bit, and a no-target join into a substrate group |
+| `[CombatSubstrate]` | `bSubstrateBitReassert` | 0 | Built, off until it is field proven |
+| `[CombatSubstrate]` | `bSubstrateBystanderCensus`, `bSubstrateEntryTrace`, `bSubstrateProbes` | 1 | Passive log lines only |
+
+The facet priorities (`EquipWeapon`, `EquipArmor` and the rest) live in `APMF_Sources.ini`, written by the Harbinger page. A priority of 0 turns that mod off for that facet.
+
 ## What is in v0.15.1
 
 - **The substrate closes as fired only when the spell is cast.** A close on the start of the release cut casts short. It now waits for the game's spell cast event, and a release that never confirms closes loudly. New passive lines `LEAF GATE`, `GATE UNRESOLVED` and `CAST BUILT`.
-- **The cast proxy carries the spell's name and menu icon.**
-- **A travel walk that ends short is sent again, and a blocked or stuck walk keeps the follower** while the mod's claim stands.
+- **The cast proxy carries the spell's name and menu icon.** A buff cast through the substrate shows its real name instead of an unnamed effect. The proxy keeps the slot the game gives a new spell, either hand.
+- **A travel walk that ends short is sent again,** up to 3 times, on a fresh package slot when the destination has moved. After that the leg reads `kLeg_StuckTimeout` at once.
+- **A blocked or stuck walk keeps the follower** on the travel package while the mod's claim stands. The state reads the same as before. Only the mod's `Release` or `Repoint` ends the hold.
+- **What a client sees from the substrate:** the substrate claim reads not live once the window closes, `GetSubstrateState` goes back to none, and the close reason (`fired`, `fired-not-released`, `released-unconfirmed`, `tree-outside-gate`) is in `APMF.log`. The API did not change.
 - No ABI change, still ABI v30.
 
 ## What is in v0.15.0
@@ -204,7 +232,10 @@ other facet behaves exactly the same without it.
 ### v0.14.0
 
 - **Place (ABI v28).** `kIntent_Place` moves an NPC beside a reference or to a point in an interior cell, once, through the game's own move call. `GetPlaceState` says what happened.
-- **Equip enforced for every declared category by default,** and an equip claim can name one copy of an item (ABI v25).
+- **Equip enforced for every declared category by default,** and an equip claim can name one copy of an item (ABI v25). `bEquipObserveOnly` now defaults to 0 and `bEquipEnforceArmor` is retired.
+- **Equip is two facets** on the Harbinger page and in `APMF_Sources.ini`: `EquipWeapon` (weapons, shields, torches, ammo) and `EquipArmor`. An old `[Equip]` section is still read where the new ones have no value.
+- **The Harbinger page has honest counters.** New Blocked, Passed and Observed columns beside Served and Hits, and the winner is the highest priority source active in the last 60 seconds. See [Docs/HARBINGER-MENU.md](Docs/HARBINGER-MENU.md).
+- **Package priorities are enforced,** and a mod's queued equip is ranked once as the mod that asked.
 - **Weapon rule (ch.15)** at the combat equip seat, with a stand down when the claimed weapon is not one the AI could pick. **Torch seat (ch.17)** switches off the game's own torch logic while a claim owns the torch. `bEquipmentWeaponAdmission`, `bTorchDeny` in `APMF.ini`.
 - **Travel (ch.19).** A leg to a cell arrives by parent cell and holds the actor until the mod releases or re-points it. A re-point takes a fresh package slot. A passive DONE-WHILE-WALKING line names a walk that ended early.
 - **The combat substrate (ch.27)** installs on 1.7.104, lets the game's AI equip the claimed spell, denies the enter-combat override package, battle music and barks, and reports its state with `GetSubstrateState` (ABI v26) and `IsSubstrateAvailable` (ABI v27). `[CombatSubstrate]` in `APMF.ini`.
@@ -236,7 +267,7 @@ other facet behaves exactly the same without it.
 - **Seat census.** Every engine seat Harbinger hooks is re checked at each load stage and every 60 seconds, so a mod that hooks over it later is named in the log and on the menu.
 - **Equip caller recovery.** The mod behind an engine equip is found by a stack scan. An equip Harbinger cannot attribute is never denied.
 - **The Harbinger menu page.** A page in the SKSE Menu Framework shows the sources per facet, the winner, alerts and the census, and edits priorities live. `Docs/HARBINGER-MENU.md`.
-- **Armor enforced for clients.** `bEquipEnforceArmor=1` by default: an outfit or the game can no longer replace the armor a client chose, and a stripped follower gets it back within seconds.
+- **Armor enforced for clients.** `bEquipEnforceArmor=1` by default: an outfit or the game can no longer replace the armor a client chose, and a stripped follower gets it back within seconds. (From v0.14.0 every category is enforced and this key is retired.)
 - **Own line of sight from the eyes,** a heal approach goal kept inside the pursuit leash, and a disarmed actor's weapon search left alone by the approach bound.
 
 ## Status

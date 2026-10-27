@@ -9,7 +9,7 @@ Harbinger (the project is APMF, the AI Package Management Framework) is an SKSE 
 | [RECIPES.md](RECIPES.md) | worked scenarios that combine facets, with complete code |
 | [GLOSSARY.md](GLOSSARY.md) | every term, defined once, with where it is introduced |
 
-[INTEGRATION.md](INTEGRATION.md) is the ten-minute quickstart. [`native/APMF_API.h`](../native/APMF_API.h) is the contract, and if any page here and the header ever disagree, the header wins. Every C++ example on these pages compiles against that header as it stands today (ABI 21, release 0.13.0 plus what is merged for the next one). The player-facing pages are [INI-REFERENCE.md](INI-REFERENCE.md) and [HARBINGER-MENU.md](HARBINGER-MENU.md).
+[INTEGRATION.md](INTEGRATION.md) is the ten-minute quickstart. [`native/APMF_API.h`](../native/APMF_API.h) is the contract, and if any page here and the header ever disagree, the header wins. Every C++ example on these pages compiles against that header as it stands today (ABI 30, release 0.15.1). The player-facing pages are [INI-REFERENCE.md](INI-REFERENCE.md) and [HARBINGER-MENU.md](HARBINGER-MENU.md).
 
 **How the pages are written.** Each major section opens with a short summary in italics. A topic says why it matters, states the rule, then gives the mechanism behind it, and ends with **Check Your Understanding**, two or three questions to try, with the odd-numbered answers at the end of the page. Five kinds of callout appear: **Key Concept** (a rule stated precisely, numbered within the page), **Tip**, **Caution** (a misuse that breaks something), **Real-World Connection** (how MFO, the reference client, uses it) and **Did You Know?** (an engine fact behind a rule). Worked examples give a goal, **Think it through**, a **Solution** that compiles, and a **Check** for the game or the log. Where something has not been seen working in game, or is not known, the text says so.
 
@@ -23,7 +23,7 @@ Harbinger (the project is APMF, the AI Package Management Framework) is an SKSE 
 #include <cstdint>
 using namespace APMF_API;
 
-extern const APMF_API_v19* g_apmf;   // bound once at startup
+extern const APMF_API_v29* g_apmf;   // bound once at startup
 constexpr float kBasis = 50.0f;      // your choice of basis. MFO uses 200
 ```
 
@@ -127,8 +127,10 @@ For most facets the client brings the behaviour. It writes the combat target wit
 | Equip authority (ch.17) | `EquipObject` for each declared item not worn | once per declaration |
 | Combat entry (ch.21) | `StartCombat(target)` | once per declaration |
 | Position cast | `CastSpellImmediate` from a temporary marker | once |
+| Combat substrate (ch.27) | `StartCombat(anchor)` against Harbinger's own stand-in, then `StopCombat` | once at the open, once at the close |
+| Place | the game's own move call (`MoveTo_Impl`, the body Papyrus `MoveTo` runs) | once, on the game thread |
 
-A combat re-entry deny (ch.22) calls nothing. It makes the engine's own `StartCombat` refuse. The cast facet (ch.8b) makes no equip, cast or animation call of any kind.
+The combat substrate also stows the follower's weapon, shield and torch before its entry and puts the same copies back at the close, and the game's own AI equips the claimed spell. A combat re-entry deny (ch.22) calls nothing. It makes the engine's own `StartCombat` refuse. The cast facet (ch.8b) makes no equip, cast or animation call of any kind.
 
 **Check Your Understanding: Where it runs and what you bring**
 
@@ -176,7 +178,7 @@ A facet is **not** a package, a behaviour, or a goal. "Walk to the crate and loo
 |---|---|---|
 | **Intent** | the API (`kIntent_Cast`) | the facet's name in a claim. One intent is one facet |
 | **Channel** | the log (`[ch.8b]`), the code (`native/channels/`) | Harbinger's implementation of that facet. Channels are numbered, and the number is the log tag |
-| **Sources facet** | `APMF_Sources.ini`, the menu page | a coarser group of channels that share one priority table: `Target`, `Package`, `Equip`, `CombatAction`, `Cast`, `Combat`, `Detection`, `ActorValue`, `Core` |
+| **Sources facet** | `APMF_Sources.ini`, the menu page | a coarser group of channels that share one priority table: `Target`, `Package`, `EquipWeapon`, `EquipArmor`, `CombatAction`, `Cast`, `Combat`, `Detection`, `ActorValue`, `Core`. (Equip was one table until 0.14.0. An old `[Equip]` section is still read where the new ones have no value) |
 
 So the cast facet is `kIntent_Cast` to a client, `ch.8b` in the log, and part of the `Cast` sources facet when priorities are compared. These pages name a facet by its channel and its intent together, for example "ch.8b Cast (`kIntent_Cast`)".
 
@@ -207,10 +209,10 @@ So the cast facet is `kIntent_Cast` to a client, `ch.8b` in the log, and part of
 | `kCastFlag_AtPosition` | 8b | A Target Location spell at a point (one-shot) | one engine call | none | 11 | Built, off by default | [position cast](FACETS.md#position-cast-kcastflag_atposition) |
 | `kIntent_ShoutPower` | 14 | Record who owns the shout facet | arbitrate | Core | 1 | Built | [ch.14](FACETS.md#ch14-shout-and-power-kintent_shoutpower) |
 | `kIntent_CastGuard` | 25 | Hold attack spells through friends, bound channels | deny | Cast | 21 | Field-proven (MFO) | [ch.25](FACETS.md#ch25-cast-guard-kintent_castguard) |
-| `kIntent_Equipment` | 15 | Gate spell and staff re-arm | deny | Equip | 1 | Field-proven (MFO) | [ch.15](FACETS.md#ch15-equipment-kintent_equipment) |
-| `kIntent_EquipAuthority` | 17 | Declare what the actor wears, refuse the rest | arbitrate + deny + one equip | Equip | 7 | Field-proven (MFO), weapons observe-only | [ch.17](FACETS.md#ch17-equip-authority-kintent_equipauthority) |
+| `kIntent_Equipment` | 15 | Gate spell and staff re-arm | deny | EquipWeapon | 1 | Field-proven (MFO) | [ch.15](FACETS.md#ch15-equipment-kintent_equipment) |
+| `kIntent_EquipAuthority` | 17 | Declare what the actor wears, refuse the rest | arbitrate + deny + one equip | EquipWeapon, EquipArmor | 7 | Field-proven (MFO), every category enforced by default since 0.14.0 | [ch.17](FACETS.md#ch17-equip-authority-kintent_equipauthority) |
 | `kIntent_OfferPackage` | 9 | Hand the actor one package | deny | Package | 1 | Proven when nudged | [ch.9](FACETS.md#ch9-offer-package-kintent_offerpackage) |
-| `kIntent_Travel` | 19 | Walk the actor to a place | deny (an internal ch.9) | Package | 10 | In use by MFO | [ch.19](FACETS.md#ch19-travel-kintent_travel) |
+| `kIntent_Travel` | 19 | Walk the actor to a place, across cells with `kTravel_CrossCells` | deny (an internal ch.9) | Package | 10 (cross cells 30) | In use by MFO | [ch.19](FACETS.md#ch19-travel-kintent_travel) |
 | `kIntent_CombatTarget` | 6 | Record who owns the combat target | arbitrate | Target | 1 | Field-proven (arbitration only) | [ch.6](FACETS.md#ch6-combat-target-kintent_combattarget) |
 | `kIntent_CombatAction` | 7 | Deny categories of combat behaviour | deny | CombatAction | 1 | Field-proven | [ch.7](FACETS.md#ch7-combat-action-kintent_combataction) |
 | `kIntent_TargetPin` | 20 | Hold the engine's combat target on yours | deny | Target | 13 | Field-proven (MFO) | [ch.20](FACETS.md#ch20-target-pin-kintent_targetpin) |
@@ -218,10 +220,13 @@ So the cast facet is `kIntent_Cast` to a client, `ch.8b` in the log, and part of
 | `kIntent_CombatReentryDeny` | 22 | Keep the actor out of combat for a while | deny | Combat | 15 | Field-proven (MFO, 2026-09-28) | [ch.22](FACETS.md#ch22-combat-re-entry-deny-kintent_combatreentrydeny) |
 | `kIntent_PursuitLeash` | 23 | Stop the actor chasing far from an anchor | deny | CombatAction | 16 | Field-proven (MFO) | [ch.23](FACETS.md#ch23-pursuit-leash-kintent_pursuitleash) |
 | `kIntent_CombatApproach` | 24 | Close on an actor while fighting | deny + substitute | Combat | 19 | Field-proven (MFO) | [ch.24](FACETS.md#ch24-combat-approach-kintent_combatapproach) |
+| `kIntent_EquipPreference` | 26 | Name the items the actor should favour in combat | weight (lifts a score) | EquipWeapon | 22 | Built, not yet tested in game | [ch.26](FACETS.md#ch26-equip-preference-kintent_equippreference) |
+| `kIntent_CombatSubstrate` | 27 | Combat as a substrate so an out of combat cast is animated | deny + compose | CombatAction, Combat, EquipWeapon, Detection, Cast | 23 | Field tested on LoreRim in 0.15.1 for out of combat casts | [ch.27](FACETS.md#combat-substrate-kintent_combatsubstrate) |
+| `kIntent_Place` | 28 | Put an actor, loaded or not, beside a reference or at an interior point, once | one engine call | none | 28 | Built, not yet tested in game | [Place](FACETS.md#place-kintent_place) |
 
 Channel 18 is skipped on purpose. The number is reserved for an attack-selection design that is not on main. Channel 2 has no intent either, and nothing is reserved for it. The field tiers are defined under [The field tiers](#the-field-tiers).
 
-Three things are not facets, because they claim nothing: the [read-only queries](FACETS.md#read-only-queries-no-claim), the [observe-only seats](FACETS.md#observe-only-facets-no-claim-api), and the position cast, which is a **one-shot** engine call that returns a handle for log correlation only.
+Three things are not facets, because they claim nothing: the [read-only queries](FACETS.md#read-only-queries-no-claim), the [observe-only seats](FACETS.md#observe-only-facets-no-claim-api), and the position cast, which is a **one-shot** engine call that returns a handle for log correlation only. `kIntent_Place` is the same shape: a one-shot that returns a handle for `GetPlaceState`, never a live claim.
 
 **Reserved fields.** Several channels apply a fixed built-in effect and read no parameter. Gait halves the speed, Disposition sets four fixed values, Detection sets two, Headtrack looks straight up, Stance sneaks. The `fval` and `form` fields those intents might one day read are **reserved**: accepted, stored and ignored. Each facet section says so, so that nobody designs around a field that does nothing yet. Table 5 is the quick scan of which intent reads which field today.
 
@@ -237,7 +242,7 @@ Three things are not facets, because they claim nothing: the [read-only queries]
 | `kIntent_Equipment` | the weapon (gate-only) | | reserved | | |
 | `kIntent_CombatAction` | | | `CombatActionCategory` | | |
 | `kIntent_EquipAuthority` | | | `EquipAuthFlags` | | |
-| `kIntent_Travel` | the destination | arrival radius | `TravelFlags` | | the point, with `kTravel_ToPosition` |
+| `kIntent_Travel` | the destination | arrival radius | `TravelFlags` (`kTravel_CrossCells` is ABI 30) | | the point, with `kTravel_ToPosition` |
 | `kIntent_Idle` | the idle (ABI 17) | | | the reference to play at (ABI 17) | |
 | `kIntent_TargetPin` | the target actor | | `TargetPinFlags` (ABI 18) | | |
 | `kIntent_CombatEntry` | the target actor | | | | |
@@ -245,6 +250,9 @@ Three things are not facets, because they claim nothing: the [read-only queries]
 | `kIntent_PursuitLeash` | | the radius | | the anchor | |
 | `kIntent_CombatApproach` | | the radius | `CombatApproachFlags` | X, the reference | |
 | `kIntent_CastGuard` | | the window, seconds | `CastGuardFlags` | | |
+| `kIntent_EquipPreference` | | | `EquipPrefFlags` (the items go through `SetEquipPreference`) | | |
+| `kIntent_CombatSubstrate` | | the time limit, seconds (0 = the INI value) | | | |
+| `kIntent_Place` | a reference, or an interior cell | the yaw, with `kPlace_SetYaw` | `PlaceFlags` | | the offset, or the point in the cell |
 | every other intent | reserved | reserved | reserved | | |
 
 A field a facet does not read is accepted and ignored, with one exception: a non-zero point on a travel claim without `kTravel_ToPosition` is refused by name.
@@ -317,9 +325,9 @@ The mechanism is one function, `Outranks` in `core/FacetAttribution.cpp`. It rea
 
 > **Key Concept 12 (unattributed is allowed)** A write Harbinger cannot trace to a named source is allowed. It is logged `[sources] UNATTRIBUTED <facet>` and shown as an alert.
 
-Each facet has an `[UnknownSources]` switch that lets such a write rank at the priority of the Unattributed row instead (`override`). It is off by default and today it acts on the `Target`, `Combat` and `Cast` facets only. On the `Target` facet an unnamed write that came from the claiming mod's own plugin stands for that mod's claim.
+Each facet has an `[UnknownSources]` switch that lets such a write rank at the priority of the Unattributed row instead (`override`). It is off by default and today it acts on the `Target`, `Combat`, `Cast`, `EquipWeapon` and `EquipArmor` facets. On the `Target` facet an unnamed write that came from the claiming mod's own plugin stands for that mod's claim.
 
-Not every facet enforces by priority. [FACETS.md Appendix A](FACETS.md#appendix-a-sources-and-priorities-per-facet) says, per sources facet, what is enforced against a foreign source today. The equip facet is the one to know about: equip denies are **not** ranked by priority at all. A positively identified off-set equip is denied and an unattributed equip is allowed, whatever the numbers say.
+Not every facet enforces by priority. [FACETS.md Appendix A](FACETS.md#appendix-a-sources-and-priorities-per-facet) says, per sources facet, what is enforced against a foreign source today. Equip is ranked since 0.13.1, on its own two tables, `EquipWeapon` and `EquipArmor`. Every equip deny (the ch.17 set, the hand block, the ch.15 weapon rule, a ch.26 force) stands only while your priority is above the source that made the equip. A mod's queued equip is ranked once, as the mod that asked. An equip Harbinger cannot attribute is still allowed, whatever the numbers say.
 
 > **Did You Know?** A Papyrus `Actor.StartCombat` and a console `startcombat` run inside the game's own code, so on the `Combat` facet they are named `Engine` in this release, not `DirectCalls`. [Combat re-entry deny](FACETS.md#ch22-combat-re-entry-deny-kintent_combatreentrydeny) says what that means for a retreat.
 
@@ -522,7 +530,7 @@ Why a heartbeat and not a release and re-request: the release and re-request cyc
 | Cause | What happens |
 |---|---|
 | You call `Release` | Your part ends. The next best claim takes over, or the actor's own AI does |
-| A time limit | ch.8b, ch.22 and ch.25 are bounded and release themselves at the window |
+| A time limit | ch.8b, ch.22 and ch.25 are bounded and release themselves at the window. The substrate (ch.27) closes on its cast, its time limit or the cast claim's end |
 | Harbinger ends it itself | ch.12, ch.20, ch.21, ch.24 release their own claim when their goal is over or lost. `IsClaimLive` turns false and the log names the reason |
 | Dropped at the drain | A claim that fails a refusing test when applied (a dual-cast against a single-hand claim, a package with no spell input) is never registered. `IsClaimLive` is false for it from the start |
 | Evicted | A live single-hand cast claim is evicted by a higher-basis dual-cast claim, and the reverse. `IsClaimLive` turns false |
@@ -532,7 +540,7 @@ Why a heartbeat and not a release and re-request: the release and re-request cyc
 
 **A higher-basis claim on the same facet** is not an end. You stay stored and non-owning, and take over again if the owner releases. The cast channel has two exceptions (the eviction row above and the deny-only tie, [The hand floor](FACETS.md#a-hand-floor-kcastflag_denyhandonly)).
 
-**A leg or a window that ends is not always a claim that ends.** The travel facet never releases your claim. When a leg ends it drops only its own package offer and leaves the claim live. `GetTravelLegState` tells you why the walk stopped ([Travel](FACETS.md#ch19-travel-kintent_travel)).
+**A leg or a window that ends is not always a claim that ends.** The travel facet never releases your claim. When a leg ends it drops only its own package offer and leaves the claim live. `GetTravelLegState` tells you why the walk stopped ([Travel](FACETS.md#ch19-travel-kintent_travel)). After a BLOCKED or STUCK end, and after an arrival in a cell or at a `kTravel_CrossCells` target, the offer is kept as well: the follower stays on the travel package until you `Release` or `Repoint`, instead of drifting back to its own package.
 
 > **Key Concept 24 (always release)** Always `Release` a handle before you forget it. `Release` on a claim Harbinger already ended is a no-op. There is no cost to releasing twice and a real cost to releasing never.
 
@@ -795,7 +803,7 @@ Harbinger exports one undecorated C function, `APMF_GetInterface`. It returns a 
 
 > **Key Concept 32 (the interface)** `APMF_GetInterface(n)` returns null if the installed Harbinger is older than `n`, and the newest interface for any `n` at or below its own ABI. The struct it returns reports Harbinger's own ABI in `abiVersion`, whatever you asked for. There is no separate version call.
 
-Every interface struct `APMF_API_vN` begins with the members of `APMF_API_v(N-1)` in order, so one static object serves every client. A v1 client reads the v1 prefix. A v19 client reads the appended slots too. Reading a slot past the end of an older Harbinger's interface is undefined, which is why every call is gated on `abiVersion` ([Gating on the ABI](#gating-on-the-abi)).
+Every interface struct `APMF_API_vN` begins with the members of `APMF_API_v(N-1)` in order, so one static object serves every client. A v1 client reads the v1 prefix. A v29 client reads the appended slots too. Reading a slot past the end of an older Harbinger's interface is undefined, which is why every call is gated on `abiVersion` ([Gating on the ABI](#gating-on-the-abi)).
 
 **Example 3: Bind once at startup**
 
@@ -808,7 +816,7 @@ Every interface struct `APMF_API_vN` begins with the members of `APMF_API_v(N-1)
 
 // The newest struct. Reading a slot past the end of an older Harbinger's
 // interface is undefined, so gate EVERY call on abiVersion (see Has below).
-const APMF_API_v19* g_apmf = nullptr;
+const APMF_API_v29* g_apmf = nullptr;
 
 // Ask for the LOWEST ABI you can live with. GetInterface returns null for anything
 // above the installed Harbinger's own, with no downward retry.
@@ -826,13 +834,13 @@ void BindHarbinger() {
     const APMF_API_v1* base = fn(kMinAbi);
     if (!base || base->abiVersion < kMinAbi) return;  // installed Harbinger is too old
 
-    g_apmf = reinterpret_cast<const APMF_API_v19*>(base);
+    g_apmf = reinterpret_cast<const APMF_API_v29*>(base);
 }
 ```
 
 **Check.** `APMF.log` logs every `APMF_GetInterface` call with the ABI asked for. If your mod asked for an ABI the installed Harbinger does not have, the log names the release that does.
 
-> **Real-World Connection** MFO asks for ABI 2, the lowest it needs, and gates each feature on `abiVersion` at the call site: the target pin on 13, the cast guard on 21, the line-of-sight flags on 18. A player with an older Harbinger gets the parts that exist.
+> **Real-World Connection** MFO asks for ABI 2, the lowest it needs, and gates each feature on `abiVersion` at the call site: the target pin on 13, the cast guard on 21, the line-of-sight flags on 18, the substrate on 23, place on 28 and the facet priority query on 29. A player with an older Harbinger gets the parts that exist.
 
 **Check Your Understanding: Finding the interface**
 
@@ -862,10 +870,16 @@ void BindHarbinger() {
 | `GetTravelLegState` | 12 | `APMF_API_v12` |
 | `GetLineOfSight`, `SenseActor` | 18 | `APMF_API_v18` |
 | `GetCombatApproachState` | 19 | `APMF_API_v19` |
+| `SetEquipPreference`, `GetEquipPreferenceState` | 22 | `APMF_API_v22` |
+| `GetIdleState` | 24 | `APMF_API_v24` |
+| `GetSubstrateState` | 26 | `APMF_API_v26` |
+| `IsSubstrateAvailable` | 27 | `APMF_API_v27` |
+| `GetPlaceState` | 28 | `APMF_API_v28` |
+| `GetClientFacetPriority` | 29 | `APMF_API_v29` |
 
-The struct for ABI 21 is `APMF_API_v19`, because ABI 20 and 21 added only a flag and an intent. [FACETS.md Appendix B](FACETS.md#appendix-b-abi-history) lists every ABI with the intents and flags it added.
+The newest struct is `APMF_API_v29`. Harbinger reports ABI 30, but ABI 30 added only the `kTravel_CrossCells` flag, so there is no `APMF_API_v30`. The same holds for 20 (a flag), 21 (an intent), 23 (an intent) and 25 (a field of an existing entry), so those ABIs share the struct before them. [FACETS.md Appendix B](FACETS.md#appendix-b-abi-history) lists every ABI with the intents and flags it added.
 
-**The silent ones.** These flag bits are ignored by an older Harbinger, and each facet section that introduces one says what the claim then does instead: `kCastFlag_DenyHandOnly` (a no-form claim that denies nothing), `kCastFlag_AtPosition` (an ordinary actor-target claim), `kCastFlag_OwnLineOfSight` (a cast with no line test), `kCastFlag_FloorSpellsOnly` (a floor that blocks weapons too), the travel gait bits (a walk at the authored speed), `kTargetPin_OwnLineOfSight` (a pin with no test), and an idle `form` on a Harbinger older than 17 (the form-free idle plays).
+**The silent ones.** These flag bits are ignored by an older Harbinger, and each facet section that introduces one says what the claim then does instead: `kCastFlag_DenyHandOnly` (a no-form claim that denies nothing), `kCastFlag_AtPosition` (an ordinary actor-target claim), `kCastFlag_OwnLineOfSight` (a cast with no line test), `kCastFlag_FloorSpellsOnly` (a floor that blocks weapons too), the travel gait bits (a walk at the authored speed), `kTravel_CrossCells` (a walk that ends on distance and releases, as before), `kTargetPin_OwnLineOfSight` (a pin with no test), and an idle `form` on a Harbinger older than 17 (the form-free idle plays).
 
 > **Caution** Ship the header and the gate together. A claim built with a flag from a newer header against an older Harbinger is not refused. It runs with the flag dropped.
 
@@ -898,7 +912,9 @@ The struct for ABI 21 is `APMF_API_v19`, because ABI 20 and 21 added only a flag
 | `ATTRIBUTION DEFECT` | a segment of a hook chain Harbinger cannot prove. Never enforced |
 | `SOURCE SEAT MISSED`, `DENY MISSED` | the facet's seat did not see a write it should have. Report these |
 | `[sources]` | the registry: a new source, a priority change, the seat census |
-| `[poscast]`, `[space]`, `[travel-leg]`, `[travel-gate]` | the position cast, the space queries, the travel leg and its passive gate probe |
+| `[poscast]`, `[space]`, `[travel-leg]`, `[travel-gate]`, `[travel-xcell]` | the position cast, the space queries, the travel leg and its passive gate probe, and the cells a cross cell leg crosses |
+| `[substrate]`, `LEAF GATE`, `CAST BUILT` | the combat substrate: how a window opened and why it closed (`fired`, `fired-not-released`, `released-unconfirmed`, `tree-outside-gate`), and passive notes on the gate |
+| `[place]` | a placement refused or failed, with the reason |
 
 > **Tip** When a claim did nothing, search the log for its handle number (`h=123`). Every line about a claim carries it.
 
@@ -911,7 +927,7 @@ The struct for ABI 21 is `APMF_API_v19`, because ABI 20 and 21 added only a flag
 
 **Why it matters.** The player can see what your mod is doing to their followers and change your priority. It helps to know what they see.
 
-The Harbinger page in the SKSE Menu Framework shows, per sources facet, the sources, the winner, their priorities and hit counters, alerts and the seat census. Your DLL appears there under its file name once it files a claim, and a loaded SKSE plugin appears before it has written anything. [HARBINGER-MENU.md](HARBINGER-MENU.md) walks the page. `APMF.ini` switches facets and probes, and `APMF_Sources.ini` holds priorities. [INI-REFERENCE.md](INI-REFERENCE.md) has every key, and [FACETS.md Appendix D](FACETS.md#appendix-d-ini-keys-by-facet) lists them by facet.
+The Harbinger page in the SKSE Menu Framework shows, per sources facet, the sources, the winner, their priorities, five counters (Served, Hits, Blocked, Passed, Observed), alerts and the seat census. Your DLL appears there under its file name once it files a claim, and a loaded SKSE plugin appears before it has written anything. [HARBINGER-MENU.md](HARBINGER-MENU.md) walks the page. `APMF.ini` switches facets and probes, and `APMF_Sources.ini` holds priorities. [INI-REFERENCE.md](INI-REFERENCE.md) has every key, and [FACETS.md Appendix D](FACETS.md#appendix-d-ini-keys-by-facet) lists them by facet.
 
 > **Real-World Connection** A player who finds a follower casting the wrong spell can open the page, see `MFO.dll` as the winner on `Cast`, and read the hit counters to tell a Harbinger decision from a mod's own hook.
 
@@ -926,7 +942,7 @@ The Harbinger page in the SKSE Menu Framework shows, per sources facet, the sour
 
 > **Key Concept 34 (the tiers)** **Field-proven** means a live deck run exercised the facet, or a real client uses it in a shipped build. **Built** means it compiles, its mechanism is sound and CI verified, and it has not had its own field run. A facet section may narrow either: "field-proven for one spell", "built, off by default".
 
-The tiers follow the project's own record (the changelog and the field logs). Where a section says "not yet tested in game" it is quoting that record, not guessing. MFO's main branch uses ch.1, 12, 15, 17, 20, 21, 22, 23, 24 and 25 today, and the sections for those say "in use by MFO".
+The tiers follow the project's own record (the changelog and the field logs). Where a section says "not yet tested in game" it is quoting that record, not guessing. MFO's main branch uses ch.1, 12, 15, 17, 19, 20, 21, 22, 23, 24, 25, 26, 27 and Place today, and the sections for those say "in use by MFO".
 
 > **Caution** "Built" is not "broken". It is "nobody has watched it in the field". A client that ships on a built facet should log around it and expect to be the first field run.
 
@@ -989,7 +1005,7 @@ Answers to the odd-numbered questions on this page.
 
 **Finding the interface.** 1. Null. The log names the release that has ABI 21.
 
-**Gating on the ABI.** 1. An unknown intent is loud (`kInvalidHandle`). An unknown flag bit is quiet (ignored). 3. ABI 20 added one flag bit and ABI 21 one intent. Neither added a function-pointer slot, so the newest struct is still `APMF_API_v19`.
+**Gating on the ABI.** 1. An unknown intent is loud (`kInvalidHandle`). An unknown flag bit is quiet (ignored). 3. ABI 20 added one flag bit and ABI 21 one intent. Neither added a function-pointer slot, so the struct stayed `APMF_API_v19` until ABI 22 added `APMF_API_v22`.
 
 **The log.** 1. A deny was overruled at level two by a source with a priority at or above yours. [Claims against the world: the priority](#claims-against-the-world-the-priority) explains how to raise yours or accept it.
 

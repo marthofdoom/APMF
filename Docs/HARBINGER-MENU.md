@@ -28,7 +28,7 @@ Harbinger adds one page to the **SKSE Menu Framework** (3.x). It shows who is dr
 
 **Equip is two headers.** Weapons, shields, torches and ammo rank on `EquipWeapon`. Armor ranks on `EquipArmor`. Each has its own priorities in `APMF_Sources.ini`. An old `[Equip]` section is still read where the new sections have no value.
 
-**How priorities work.** A claim from one source beats another source's change on the same facet only with a higher priority. Defaults: other mods 20, mods that ask Harbinger 50, Papyrus and console 75. Setting a priority to 0 turns that source off for that facet. See `Docs/INI-REFERENCE.md` for the file format.
+**How priorities work.** A claim from one source beats another source's change on the same facet only with a higher priority. Defaults: other mods 20, mods that ask Harbinger 50, Papyrus and console 75. Setting a priority to 0 turns that source off for that facet. A mod can ask for its own number (ABI v29, `GetClientFacetPriority`). MFO reads its two equip priorities this way, and with `EquipWeapon` or `EquipArmor` at 0 it treats a looted upgrade its follower will not wear as something to sell. See `Docs/INI-REFERENCE.md` for the file format.
 
 **Gamepad.** The page works with the framework's controller navigation. The focused slider shows the same details tooltip.
 
@@ -39,7 +39,7 @@ Harbinger adds one page to the **SKSE Menu Framework** (3.x). It shows who is dr
 | Header | Intents and seats | Reference |
 |---|---|---|
 | Targets | ch.6 combat target, ch.20 target pin | [ch.6](FACETS.md#ch6-combat-target-kintent_combattarget), [ch.20](FACETS.md#ch20-target-pin-kintent_targetpin) |
-| Packages | ch.9 offer package, ch.19 travel, the Spectator hold-off | [ch.9](FACETS.md#ch9-offer-package-kintent_offerpackage), [ch.19](FACETS.md#ch19-travel-kintent_travel) |
+| Packages | ch.9 offer package, ch.19 travel (a held walk keeps its package offer until the mod releases it), the Spectator hold-off | [ch.9](FACETS.md#ch9-offer-package-kintent_offerpackage), [ch.19](FACETS.md#ch19-travel-kintent_travel) |
 | Equip: weapons, shields, torches, ammo | ch.15 equipment, ch.17 equip authority, ch.26 preference, the hand block (weapon items) | [ch.15](FACETS.md#ch15-equipment-kintent_equipment), [ch.17](FACETS.md#ch17-equip-authority-kintent_equipauthority) |
 | Equip: armor | ch.17 equip authority (armor items) | [ch.17](FACETS.md#ch17-equip-authority-kintent_equipauthority) |
 | Detection | ch.16 detection, the actor-value watch | [ch.16](FACETS.md#ch16-detection-kintent_detection) |
@@ -48,5 +48,7 @@ Harbinger adds one page to the **SKSE Menu Framework** (3.x). It shows who is dr
 | Combat entry and approach | ch.21 combat entry, ch.22 re-entry deny, ch.24 combat approach | [ch.21](FACETS.md#ch21-combat-entry-kintent_combatentry), [ch.22](FACETS.md#ch22-combat-re-entry-deny-kintent_combatreentrydeny), [ch.24](FACETS.md#ch24-combat-approach-kintent_combatapproach) |
 | Actor values (speed, disposition) | ch.1a gait, ch.11 disposition | [ch.1a](FACETS.md#ch1a-gait-kintent_gait), [ch.11](FACETS.md#ch11-disposition-kintent_disposition) |
 | Core | ch.1, 3, 4, 5, 10, 12, 14 and the engine update seat | [FACETS.md](FACETS.md#facet-index) |
+
+The combat substrate (ch.27) has no header of its own. Its denies rank as the mod that asked and are counted on Combat actions, Combat entry and approach, Equip: weapons, shields, torches, ammo, Detection and Casting. A mod's substrate opens only while that mod outranks `Engine` on all five. `kIntent_Place` is a one-shot and does not appear on the page.
 
 The seat census and the other seats that only name who changes a value are described under [Observe-only facets](FACETS.md#observe-only-facets-no-claim-api).
