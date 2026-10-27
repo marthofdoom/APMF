@@ -14,6 +14,7 @@
 #include "channels/Idle.h"             // ABI v24 GetIdleState (ch.12) and its three client-call notes
 #include "channels/CombatSubstrate.h"  // ABI v26 GetSubstrateState, v27 IsSubstrateAvailable (ch.27)
 #include "core/Place.h"                // ABI v28 kIntent_Place (a one-shot, never a claim) + GetPlaceState
+#include "channels/CombatEntry.h"     // ABI v31 GetClaimEndReason (ch.20 / ch.21 end records)
 
 // The C-ABI implementation behind APMF_API.h. These free functions forward to the
 // in-process multi-NPC engine (core/ControlMap) over its thread-safe enqueue path,
@@ -316,6 +317,16 @@ namespace {
         }
     }
 
+    // ABI v31 (ch.20 / ch.21): why Harbinger ended a claim. Any thread: a copy under the end records' leaf
+    // lock, no game call. A throw becomes kClaimEnd_None.
+    std::uint32_t APMF_GetClaimEndReason(APMF_API::Handle handle) {
+        try {
+            return apmf::combatentry::ClaimEndReason(handle);
+        } catch (...) {
+            return APMF_API::kClaimEnd_None;
+        }
+    }
+
     // ABI -> the first APMF release that implements it, for the "client too new"
     // refusal log below (MFO wiring review SEV-3 F4): a user running an older
     // APMF under a newer client must be able to read WHICH APMF they need. Keep in
@@ -327,7 +338,8 @@ namespace {
     // 0.13.0 -- name it at the cut; so do v23 and v24; v25, the ch.17 entry instance, ships in
     // the release after 0.13.1 -- name it at the cut; so do v26, the substrate state query, v27, the
     // substrate availability query, and v28, kIntent_Place and its state query; v29, the client facet
-    // priority query, and v30, ch.19's kTravel_CrossCells, ship in 0.15.0).
+    // priority query, and v30, ch.19's kTravel_CrossCells, ship in 0.15.0; v31, the claim end reason, ships
+    // in the release after 0.15.1 -- name it at the cut).
     const char* MinReleaseForAbi(std::uint32_t abi) {
         switch (abi) {
         case 1:  return "0.2.0";
@@ -360,6 +372,7 @@ namespace {
         case 28: return "0.14.0";
         case 29:
         case 30: return "0.15.0";
+        case 31: return "the release after 0.15.1";
         default: return "a release newer than this one";
         }
     }
@@ -460,7 +473,15 @@ namespace {
     // ABI v30 (ch.19 kTravel_CrossCells, a TravelFlags bit read through the existing RequestEx / Repoint) adds NO
     // slot, like v13: the object stays an APMF_API_v29 and `abiVersion` reports 30.
 
-    constexpr APMF_API::APMF_API_v29 g_api{
+    // ABI v31 (the claim end reason) appends ONE slot to the v29 prefix (v30 added none), so the object is now an
+    // APMF_API_v31 and `abiVersion` reports 31. Same two-form proof.
+    static_assert(offsetof(APMF_API::APMF_API_v31, GetClaimEndReason) == sizeof(APMF_API::APMF_API_v29),
+                  "APMF_API_v31's slot must start right after the v29 prefix");
+    static_assert(sizeof(APMF_API::APMF_API_v31) == sizeof(APMF_API::APMF_API_v29) + sizeof(void*),
+                  "APMF_API_v31 = the v29 prefix plus exactly one function pointer");
+
+    constexpr APMF_API::APMF_API_v31 g_api{
+        {
         {
         {
         {
@@ -517,6 +538,8 @@ namespace {
         &APMF_GetPlaceState,
         },
         &APMF_GetClientFacetPriority,
+        },
+        &APMF_GetClaimEndReason,
     };
 
 }
