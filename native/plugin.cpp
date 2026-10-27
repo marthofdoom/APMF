@@ -14,6 +14,7 @@
 #include "core/EquipGate.h"
 #include "core/HandBlock.h"
 #include "core/ActionGate.h"
+#include "core/AttackSelectProbe.h"
 #include "core/PackageGate.h"
 #include "core/EquipSink.h"
 #include "core/TorchSeat.h"      // ch.17 torch seat (2026-10-20): Install at kDataLoaded, after the sink
@@ -174,6 +175,8 @@ namespace {
                                                   // Shield/Torch/OneHandedBlock item vtables. BEFORE aicastseats::Install, so
                                                   // each slot still holds the engine function it compares.
             apmf::actiongate::Install();         // T1 combat-action allowance (ch.7; VR-refused inside)
+            apmf::atkprobe::Install();           // [Probe] bAttackSelect (default 0): PASSIVE attack-selection probe,
+                                                  // rides ch.7's act() thunk + 2 context-node seats (ClickUp 86e3bw775)
             apmf::packagegate::Install();        // T3 package-offer allowance (ch.9; VR-refused inside)
             apmf::packagesources::Install();     // Harbinger 1a: 0x4A scene probe (OBSERVE-ONLY; the seat is unproven)
             apmf::spectatorgate::Install();      // Package facet: Character 0xDC InitiateSpectator. A winning ch.9
@@ -369,6 +372,7 @@ namespace {
             // ch.22: same -- no re-entry deny crosses the load.
             apmf::reentrydeny::ResetAll("kPreLoadGame");
             apmf::combatsubstrate::ResetAll("kPreLoadGame");   // S2a: forget every substrate (no co-save)
+            apmf::atkprobe::ResetForLoad("kPreLoadGame");   // [Probe] bAttackSelect: per-actor counters (ids reused)
             // ch.23 pursuit leash (ABI v16): same -- no leash entry crosses the load.
             apmf::actiongate::ResetLeash("kPreLoadGame");
             // ch.24 combat approach (ABI v19): same -- no approach entry or area record crosses the load.

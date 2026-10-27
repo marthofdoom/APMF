@@ -8,6 +8,7 @@
 #include "core/AiCastSeats.h"   // RangedGateProbeCounts (the [Probe] bRangedSelect heartbeat)
 #include "core/EquipSink.h"     // Categorize / CategoryNames (the probe mirrors the sink verdict)
 #include "core/CastObserve.h"   // NoteLeafAct (castobs interrupt attribution)
+#include "core/AttackSelectProbe.h"   // [Probe] bAttackSelect: the passive observer around ActThunk
 #include "core/FacetAttribution.h"   // Harbinger 1b: the tree's choice named + ranked on CombatAction
 #include "channels/CombatEntry.h"      // THE HELD ENGAGEMENT (2026-10-12): the leash exempts its approach
 #include "channels/CombatApproach.h"   // ch.23 LEASH RETURN: a Harbinger-internal combat-area bound
@@ -1255,7 +1256,7 @@ namespace apmf::actiongate {
 
         void RangedProbeInstall();   // defined after Install(), same anonymous namespace
 
-        void* ActThunk(void* a_this, void* a_control) {
+        void* ActThunkBody(void* a_this, void* a_control) {
             const auto vt  = *reinterpret_cast<std::uintptr_t*>(a_this);
             const auto oit = g_orig.find(vt);
             if (oit == g_orig.end()) return a_control;   // foreign vtable -- benign, touch nothing
@@ -1367,6 +1368,27 @@ namespace apmf::actiongate {
             t_pending = PendingPop{ a_this, a_control };
             reinterpret_cast<apmf::cbt::Act_t>(denyAct)(a_this, a_control);
             return a_control;   // do NOT call orig -- this IS the deny
+        }
+
+        // The act() thunk installed on the 70 leaves (and the substrate's parameterised nodes): ch.7's
+        // body above, bracketed by the PASSIVE [Probe] bAttackSelect observer (core/AttackSelectProbe.h,
+        // ClickUp 86e3bw775) for its watched attack-selection leaves. The observer reads before and after
+        // and never touches the call; with the probe off this is one acquire load.
+        void* ActThunk(void* a_this, void* a_control) {
+            if (apmf::atkprobe::Armed()) [[unlikely]] {
+                const int leaf = apmf::atkprobe::LeafIndex(*reinterpret_cast<std::uintptr_t*>(a_this));
+                if (leaf >= 0) {
+                    apmf::atkprobe::ActPre pre{};
+                    apmf::atkprobe::BeforeAct(leaf, a_control, pre);
+                    void* const ret = ActThunkBody(a_this, a_control);
+                    // A ForceFail deny (ch.7 claim or substrate holder) leaves its paired pop pending for
+                    // exactly this {node, control}; nothing else sets it, and the runner has not popped yet.
+                    const bool denied = t_pending.node == a_this && t_pending.control == a_control;
+                    apmf::atkprobe::AfterAct(pre, a_this, a_control, denied);
+                    return ret;
+                }
+            }
+            return ActThunkBody(a_this, a_control);
         }
 
         void PopThunk(void* a_this, void* a_control) {
