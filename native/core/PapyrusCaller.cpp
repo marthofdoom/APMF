@@ -227,20 +227,26 @@ namespace apmf::papyruscaller {
                     return true;
                 }
                 a_out.caller = ScriptOf(f);
-                // The first frame bound to an object (a script's own global function is unbound).
-                const Frame* b = f;
-                int          hops = 0;
-                while (b && hops < 8 && !(b->self.IsObject() && b->self.value.obj.get())) {
+                // The first frame bound to an object (a script's own global function is unbound). The
+                // object is taken through Variable's public GetObject() (a counted reference; the frame
+                // holds its own, so this one only keeps it alive for the read below).
+                const Frame*                                b = f;
+                int                                         hops = 0;
+                RE::BSTSmartPointer<RE::BSScript::Object>   obj;
+                while (b && hops < 8) {
+                    if (b->self.IsObject()) {
+                        obj = b->self.GetObject();
+                        if (obj) break;
+                    }
                     b = b->previousFrame;
                     ++hops;
                 }
-                if (!b || hops >= 8) {
+                if (!b || hops >= 8 || !obj) {
                     a_out.kind = "static";
                     return true;
                 }
                 a_out.hops  = hops;
                 a_out.bound = ScriptOf(b);
-                const auto* obj    = b->self.value.obj.get();
                 const RE::VMHandle h = obj->handle;
                 auto* policy = cur.vm ? cur.vm->handlePolicy : nullptr;
                 if (!policy || h == policy->EmptyHandle()) {
