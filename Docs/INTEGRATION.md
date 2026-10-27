@@ -306,7 +306,7 @@ When `IsClaimLive` turns false on a ch.20 pin or a ch.21 entry, `GetClaimEndReas
 | `kClaimEnd_TargetLost` (10) | ch.20 only with the held engagement off: the game lost the target |
 | `kClaimEnd_NotATarget` (11) | ch.20: the target left the actor's group targets after it was one |
 
-The two not engaged reasons mean the follower cannot or should not fight that target now. marth's rule for MFO: give that target up instead of engaging it again at once. Harbinger itself has no cooldown, so a client that engages again gets a new engagement. The reason is recorded in the same step that queues the release, so it can be readable a frame before `IsClaimLive` turns false. Records are dropped on a load or a new game, and only the newest 256 are kept. Any thread, read only. An older Harbinger has no slot.
+The two not engaged reasons mean the follower cannot or should not fight that target now. marth's rule for MFO: give that target up instead of engaging it again at once. Harbinger itself has no cooldown, so a client that engages again gets a new engagement. The reason is recorded in the same step that queues the release, so it can be readable a frame before `IsClaimLive` turns false. A claim you release at the same moment Harbinger ends it can still carry a reason. Records are dropped on a load or a new game, and only the newest 256 are kept. Any thread, read only. An older Harbinger has no slot.
 
 ```cpp
 // After a held engagement ends: give the target up if Harbinger dropped it as not engaged.

@@ -504,7 +504,7 @@ std::uint32_t (*GetClaimEndReason)(Handle handle);   // APMF_API_v31, gate on ab
 
 marth 2026-10-27, after the LoreRim run where Auri stood in combat with a Sabre Cat she could not reach: a no path progress end counts as NOT ENGAGED, so the follower drops combat and the client gives that target up. Earlier: "if it wont path to it then theres the issue", "not engaged -> combat dropped immediately". The client needs to tell that end from the others, so this slot returns it.
 
-**What gets a reason.** Only a ch.20 (`kIntent_TargetPin`) or ch.21 (`kIntent_CombatEntry`) claim that Harbinger ends ITSELF. A claim the client released, one an outranking claim, an unload or a load dropped, and every other intent read `kClaimEnd_None`. The first reason recorded for a handle stands.
+**What gets a reason.** Only a ch.20 (`kIntent_TargetPin`) or ch.21 (`kIntent_CombatEntry`) claim that Harbinger ends ITSELF. A claim the client released, one an outranking claim, an unload or a load dropped, and every other intent read `kClaimEnd_None`. The first reason recorded for a handle stands. A claim the client releases at the same moment Harbinger ends it (both releases queued before the next drain) can still carry a reason.
 
 | `ClaimEndReason` | Where Harbinger ends it |
 |---|---|
@@ -523,7 +523,7 @@ marth 2026-10-27, after the LoreRim run where Auri stood in combat with a Sabre 
 
 A claim that takes over naming a target the engine already gave up on ends with the engine's reason (`CombatEnded` or `EntryRefused`).
 
-**The ranked StopCombat.** Both not engaged ends call the same `StopCombatRanked` (Character slot 0xE5). It does not end the fight while another live target of the actor's group is attacking the party (review R-1), while a winning ch.20 pin names a different target, or while another client's ch.24 claim or Engine outranks the engagement on the `Combat` facet. Then only the claims are released and the reason is still `NotEngaged` or `NoPathProgress`. The `[hold] ... DROPPED (not engaged)` line says which.
+**The ranked StopCombat.** Both not engaged ends call the same `StopCombatRanked` (Character slot 0xE5). It is ranked for the claim that names the dropped target. It does not end the fight while another live target of the actor's group is attacking the party (review R-1), while a winning ch.20 pin or ch.21 entry names a different target, or while another client's ch.24 claim or Engine outranks the engagement on the `Combat` facet. Then only the claims are released and the reason is still `NotEngaged` or `NoPathProgress`. The `[hold] ... DROPPED (not engaged)` line says which.
 
 **Timing.** The reason is written on the game thread in the same step that queues the claim's release, so it can be readable a frame before `IsClaimLive` turns false. Harbinger's hold watchdogs poll every 250 ms.
 

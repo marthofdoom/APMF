@@ -1096,6 +1096,12 @@ namespace {
             if (ClaimHandle(id, APMF_API::kIntent_TargetPin, &pinT) != APMF_API::kInvalidHandle && pinT != 0 &&
                 pinT != a_dropped)
                 return "NOT ended: a winning ch.20 pin names another target (that fight is wanted)";
+            // Review F1 of 94c35f6, the mirror: a winning ch.21 entry naming another target is a fight the client
+            // still wants (a pin on X with an entry on Y, X dropped).
+            RE::FormID entryT = 0;
+            if (ClaimHandle(id, APMF_API::kIntent_CombatEntry, &entryT) != APMF_API::kInvalidHandle && entryT != 0 &&
+                entryT != a_dropped)
+                return "NOT ended: a winning ch.21 entry names another target (that fight is wanted)";
             // Review R-1: the dropped target was the fight only if NO OTHER live target of the actor's group is
             // attacking the party. The group's targets and members are copied under the group's own READ lock
             // (BSReadLockGuard, recursive for a writer; nothing nested inside it), then judged outside it.
@@ -1147,13 +1153,15 @@ namespace {
         std::uint32_t DropNotEngaged(RE::Actor* a_actor, RE::FormID a_id, Track& a_t, RE::FormID a_target,
                                      RE::ActorHandle a_targetH, DropWhy a_why, const std::string& a_detail) {
             const bool             range  = a_why == DropWhy::kOutOfRange;
-            const APMF_API::Handle entryH = ClaimHandle(a_id, APMF_API::kIntent_CombatEntry);
+            RE::FormID             entryT = 0;
+            const APMF_API::Handle entryH = ClaimHandle(a_id, APMF_API::kIntent_CombatEntry, &entryT);
             RE::FormID             pinT   = 0;
             const APMF_API::Handle pinH   = ClaimHandle(a_id, APMF_API::kIntent_TargetPin, &pinT);
             const char*            drive  = DriveName(a_t.drive);
-            // The claim StopCombat is ranked for: the entry. A pin-only hold (no ch.21 claim) can end on no path
-            // progress too, and then its pin is the engagement being ranked.
-            const APMF_API::Handle rankH  = (range || entryH != APMF_API::kInvalidHandle) ? entryH : pinH;
+            // The claim StopCombat is ranked for (review F1 of 94c35f6): the one that names the dropped target. The
+            // entry when it does (always, for the range rule), else the pin (a pin-only hold, or a pin on X with an
+            // entry on Y: StopCombatRanked then refuses, the entry's fight is still wanted).
+            const APMF_API::Handle rankH  = (entryH != APMF_API::kInvalidHandle && entryT == a_target) ? entryH : pinH;
             const std::string      stop   = StopCombatRanked(a_actor, rankH, a_target, a_targetH);
             const bool             ended  = stop.starts_with("combat ENDED");
             const char*            kWhy   = range ? "held engagement: not engaged (out of engage range, not hostile)"
@@ -1428,9 +1436,11 @@ namespace apmf::combatentry::hold {
 
         for (const auto& sn : snaps) {
             auto& t = g_tracks[sn.id];
-            // A new hold, a re-point, or the same target engaged AGAIN (a new generation: the old track may be
-            // ended, and an ended track runs no watchdog): fresh track.
-            if (t.target != sn.target || t.gen != sn.gen) {
+            // A new hold, a re-point, or the same target engaged AGAIN after its track ended (a new generation:
+            // an ended track runs no watchdog): fresh track. A live track keeps its window across a generation
+            // change (review F2 of 94c35f6: a same-target pin added or dropped beside the entry flips the
+            // effective side, and restarting there would let pin churn hold off the no-progress end forever).
+            if (t.target != sn.target || (t.ended && t.gen != sn.gen)) {
                 StopDrive(sn.id, t, "re-pointed");
                 t = Track{};
                 t.target = sn.target;

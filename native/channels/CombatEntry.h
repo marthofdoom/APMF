@@ -100,7 +100,7 @@ namespace apmf::combatentry::hold {
 
     // The held engagement's RANKED StopCombat (Character slot 0xE5, the vtable identity checked), for a
     // caller other than the range rule: not while another live group target attacks the party, not when a
-    // winning ch.20 pin names another target, not when another client's ch.24 claim or Engine outranks
+    // winning ch.20 pin or ch.21 entry names another target, not when another client's ch.24 claim or Engine outranks
     // `claim` on the Combat facet. Returns what it did ("combat ENDED (Actor::StopCombat)" or "NOT ended:
     // <why>"). GAME THREAD (APMF-B26). The combat substrate's empty-fight end (marth 2026-10-13, F6).
     std::string StopCombatRanked(RE::Actor* actor, APMF_API::Handle claim, RE::FormID dropped,
