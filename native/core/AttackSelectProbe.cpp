@@ -449,9 +449,10 @@ namespace apmf::atkprobe {
         ++s->acts[li];
         ++s->outs[li][r.out];
         if (r.started) ++s->started[li];
-        // Every pick a started (or finished) leaf left on the actor counts, repeats included: repetition is
-        // exactly what this facet is about (review of 162a446, F2). new / unchanged are a separate tally.
-        if (r.out == kRunning || r.out == kDone) {
+        // Every pick a RUNNING leaf left on the actor counts, repeats included: repetition is exactly what
+        // this facet is about (review of 162a446, F2); new / unchanged are a separate tally. A leaf that
+        // finished inside act() counts only when the pointer changed (else it is the previous attack's).
+        if (r.out == kRunning || (r.out == kDone && r.changed)) {
             if (r.event[0] != '\0') {
                 ++s->picks;
                 if (r.changed) ++s->newPick; else ++s->unchanged;
