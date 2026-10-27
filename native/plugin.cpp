@@ -37,6 +37,7 @@
 #include "core/EquipPreference.h"   // ch.26 (ABI v22): ResetAll on revert
 #include "core/Sources.h"          // Harbinger 1a: source registry, priorities, seat census
 #include "core/PackageSources.h"   // Harbinger 1a: package capture + the 0x4A scene probe
+#include "core/PapyrusCaller.h"    // ClickUp 86e3q082a step 1: Papyrus caller seat + passive equip probe
 #include "core/SpectatorGate.h"    // the Package facet's seat for the engine's Spectator package (0xDC)
 #include "core/ActorValueObserve.h"   // Harbinger 1b: the OBSERVE-ONLY actor-value seat (ActorValueOwner 0x04-0x06)
 #include "core/HarbingerMenu.h"    // Harbinger 1a: the SKSE Menu Framework page
@@ -299,6 +300,13 @@ namespace {
                                                   // ActorValueOwner vtable 0x04 / 0x05 / 0x06). Names outside
                                                   // writes to the AVs a winning claim holds; never denies.
                                                   // [ActorValueObserve] iActorValueSeat, SeatVerified per build.
+            apmf::papyruscaller::Install("kDataLoaded");   // ClickUp 86e3q082a STEP 1: write_vfunc slot 0x0F (Call) on
+                                                  // every Papyrus native's own vtable (from the VM type table);
+                                                  // the thunk only records the running native per thread. The
+                                                  // PASSIVE probe at the ch.17 sink logs what a per-plugin
+                                                  // attribution would rank an equip as. Changes no decision.
+                                                  // Exact 1.6.1170 / 1.5.97 / 1.7.104, VR-refused, SeatVerified,
+                                                  // [Probe] bPapyrusCaller (default 1 while field tested).
             apmf::sources::RegisterLoadedPlugins();   // Harbinger 1b: pre-register every SKSE plugin DLL in the
                                                   // process (names only, read-only) for the menu.
             apmf::harbingermenu::Register();     // Harbinger 1a: the SMF page (or INI-only, loudly)
@@ -409,11 +417,13 @@ namespace {
             // S2a: the anchor home, and a controller the save carries against the anchor cleaned (first pump).
             apmf::mainthread::Post([] { apmf::combatsubstrate::AfterLoad("first pump after load"); });
             apmf::equipsink::ReinspectEntries("kPostLoadGame");   // a later plugin may have detoured EquipObject's entry
+            apmf::papyruscaller::Install("kPostLoadGame");   // seat natives of script types loaded since
             apmf::sources::OnPostLoad("kPostLoadGame");   // Harbinger 1a census: late installers on every seat (Q13 re-hook)
             break;
         case SKSE::MessagingInterface::kNewGame:
             apmf::mainthread::Post([] { apmf::combatsubstrate::AfterLoad("first pump of a new game"); });
             apmf::equipsink::ReinspectEntries("kNewGame");
+            apmf::papyruscaller::Install("kNewGame");
             apmf::sources::OnPostLoad("kNewGame");
             break;
         default:
@@ -473,6 +483,7 @@ SKSEPluginLoad(const SKSE::LoadInterface* a_skse) {
     // census gives each one a Harbinger layer of its own (channels/TargetPin.cpp "THE 0xE4 LAYERS").
     apmf::sources::Init();
     apmf::targetpin::InstallLayer0();
+    apmf::papyruscaller::Init();   // ClickUp 86e3q082a: SKSE Papyrus registration, only to learn the VM pointer
 
     SKSE::GetMessagingInterface()->RegisterListener(OnMessage);
 
