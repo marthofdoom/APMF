@@ -4,6 +4,16 @@ Updated 2026-10-26. Current version **v0.15.1** (cut 2026-10-26, ABI v30, see CH
 shipped, what's probe-gated, what's next. Keep this current in the SAME change as any
 build/finding/workflow change.
 
+## HEAD OF WORK 2026-10-27 -- ATTACK-SELECTION PROBE (combat-behaviour facet design pass), branch `feat/apmf-attack-select-probe`, NOT merged
+
+- ClickUp 86e3bw775 (design pass; the design itself is a ClickUp comment on the task). Principle 5 before any seat:
+  `[Probe] bAttackSelect` (default 0, `core/AttackSelectProbe`) logs per combatant (`iAttackSelectScope` 0 = followers,
+  1 = everyone) the hand / bash context the combat tree builds (ATTACK_TYPE + gathered pool), the attack / bash / block /
+  ranged / cast leaf it enters and whether it started, and the attack entry the engine's pick left on the actor.
+- Two new observe-only seats (slot 0x02 of the melee / block CreateContextNode2 vtables, rows CtxNode.Melee /
+  CtxNode.Block, verified 1.6.1170 / 1.5.97 / 1.7.104); the leaf half rides ch.7's act() thunk (`ActThunk` now wraps
+  `ActThunkBody`). No ABI, co-save, deny or verdict change. Not field-tested.
+
 ## HEAD OF WORK 2026-10-26 -- GATE PROBES + NAMED PROXY, branch `fix/apmf-gate-probe-proxy-name`, NOT merged
 
 - Field (MFO `_evidence/2026-10-26d-lorerim-c2254c0/APMF.log`, OOC substrate casts FIRE 5/6): the 17:53:50 window
