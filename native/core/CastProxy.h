@@ -55,9 +55,10 @@
 //     BY POINTER. `ResetAll` clears them BEFORE nulling a slot, or the load-time
 //     dynamic-form purge would free a live spell's effect array through a dead
 //     proxy (MFO's `native/Actuation_Direct.cpp` lesson). Since 2026-10-26 it also
-//     copies the source's equip slot and menu display object (borrowed form
-//     pointers, nulled by `ResetAll` too) and its name (an OWNED pool reference,
-//     left to the form's own destructor). Keywords are not copied (APMF-B206).
+//     copies the source's menu display object (a borrowed form pointer, nulled
+//     by `ResetAll` too) and its name (an OWNED pool reference, left to the form's
+//     own destructor). The equip slot stays the factory's EitherHand (every proxy
+//     has had it; review F1 of 6ea134d). Keywords are not copied (APMF-B206).
 //
 // CLIENT DEPENDENCY (documented, not enforceable from here). Teaching the proxy
 // only makes it selectable once the actor's `CombatInventory` REBUILDS -- the one

@@ -134,15 +134,18 @@ namespace apmf::castproxy {
         //
         // The source's IDENTITY travels too (fix/apmf-gate-probe-proxy-name, 2026-10-26: the field
         // proxy was nameless, so the active-effect UI showed generic text and MFO logged "CAST
-        // (unnamed)"): its name, its equip slot and its menu display object, ALL THREE written on
-        // EVERY Configure (a re-point of a free slot overwrites the previous spell's values, a
-        // source with none writes none -- never a stale one). Each is a plain member write, the
-        // exact body of the engine accessor, verified on all three unpacked binaries (SpellItem
-        // COL offsets: BGSEquipType at +0x90 with GetEquipSlot / SetEquipSlot = `mov rax,[rcx+8]` /
-        // `mov [rcx+8],rdx` at its vtable slots 4 / 5; BGSMenuDisplayObject at +0xA0 with
-        // GetMenuDisplayObject = `mov rax,[rcx+8]` at slot 4; SpellItem::IsTwoHanded, slot 0x67,
-        // reads the +0x90 sub-object's slot 4 and tests the equip slot's +0x38 bit 0), so no
-        // vfunc is called through CommonLib's declaration (principle 6). fullName is a pooled
+        // (unnamed)"): its name and its menu display object, BOTH written on EVERY Configure (a
+        // re-point of a free slot overwrites the previous spell's values, a source with none writes
+        // none -- never a stale one). The menu display object is a plain member write, the exact
+        // body of the engine accessor, verified on all three unpacked binaries (SpellItem COL
+        // offsets: BGSMenuDisplayObject at +0xA0, GetMenuDisplayObject = `mov rax,[rcx+8]` at its
+        // vtable slot 4), so no vfunc is called through CommonLib's declaration (principle 6).
+        // The EQUIP SLOT is deliberately NOT copied (tier-3 review F1 of 6ea134d): the SpellItem
+        // factory's constructor gives every proxy EitherHand (1.6.1170 0x14F903..0x14F91E:
+        // SetEquipSlot on the +0x90 sub-object with default object 0x15; 1.5.97 objects[21]), and
+        // that is what every field-proven proxy cast ran with. A source's BothHands / single-hand /
+        // Voice slot would change which hands the AI uses, and a null-slot source would keep the
+        // proxy out of the CombatInventory (a masked non-cast). fullName is a pooled
         // BSFixedString: the copy-assign takes its own reference (inline acquire) and drops the
         // old one (BSStringPool release, id 67847 / 69192, mapped on 1.7.104 in the fork's
         // idmap), so the proxy OWNS its name -- nothing borrowed, the form's own destructor drops
@@ -156,7 +159,6 @@ namespace apmf::castproxy {
             a_p->effects.clear();
             for (auto* e : a_src->effects) a_p->effects.push_back(e);        // shared source Effect*
             a_p->fullName       = a_src->fullName;         // TESFullName +0x30/+0x08: owned pool reference
-            a_p->equipSlot      = a_src->equipSlot;        // BGSEquipType +0x90/+0x08 (SetEquipSlot's body)
             a_p->menuDispObject = a_src->menuDispObject;   // BGSMenuDisplayObject +0xA0/+0x08
         }
 
@@ -251,8 +253,8 @@ namespace apmf::castproxy {
             const bool taught = actor->HasSpell(s.form);
             const char* pname = s.form->fullName.c_str();
             spdlog::info("[castproxy] 0x{} minted {} 0x{} for spell 0x{} (delivery {} -> {}) on the {} hand "
-                         "(shared effects, transiently taught: {}; refs 0 -> 1; name \"{}\", equip slot 0x{}, "
-                         "menu display object 0x{}).",
+                         "(shared effects, transiently taught: {}; refs 0 -> 1; name \"{}\", equip slot 0x{} (the "
+                         "factory's, not the source's), menu display object 0x{}).",
                          apmf::log::Hex(a_owner), FlipName(a_flip), apmf::log::Hex(s.form->GetFormID()),
                          apmf::log::Hex(sid), static_cast<int>(a_src->GetDelivery()),
                          static_cast<int>(s.form->GetDelivery()), HandName(a_hand), taught ? "yes" : "NO",
@@ -331,14 +333,13 @@ namespace apmf::castproxy {
         // MFO's `native/Actuation_Direct.cpp` ConcProxy::Reset, verbatim in shape --
         // then null the slot so the next claim re-mints. No engine calls: the actors
         // are being replaced.
-        // The equip slot and the menu display object are BORROWED form pointers too (the
-        // source's), so they are nulled here with the effects. The name is NOT touched: it is an
+        // The menu display object is a BORROWED form pointer too (the source's), so it is nulled
+        // here with the effects (the equip slot is the factory's own, never copied: left alone). The name is NOT touched: it is an
         // owned pool reference (Configure's copy-assign acquired it) that the form's own
         // destructor drops in the purge; dropping it here would be an engine call.
         for (auto& s : g_slot) {
             if (s.form) {
                 s.form->effects.clear();
-                s.form->equipSlot      = nullptr;
                 s.form->menuDispObject = nullptr;
             }
             s = {};

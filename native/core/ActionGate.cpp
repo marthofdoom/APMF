@@ -762,12 +762,13 @@ namespace apmf::actiongate {
         }
 
         void ProbeUnresolvedAct(std::uintptr_t a_vt, std::uint32_t a_leafIdx, void* a_control) {
-            g_unresSince.fetch_add(1, std::memory_order_relaxed);
             const std::uint32_t serial = apmf::combatsubstrate::WindowSerial();
             std::uint32_t       seen   = g_unresLoggedSerial.load(std::memory_order_relaxed);
-            if (seen == serial || !g_unresLoggedSerial.compare_exchange_strong(seen, serial, std::memory_order_relaxed))
+            if (seen == serial || !g_unresLoggedSerial.compare_exchange_strong(seen, serial, std::memory_order_relaxed)) {
+                g_unresSince.fetch_add(1, std::memory_order_relaxed);   // counted for the next window's line
                 return;   // this window already has its line (or another thread is writing it)
-            const std::uint32_t since = g_unresSince.exchange(0, std::memory_order_relaxed);
+            }
+            const std::uint32_t since = g_unresSince.exchange(0, std::memory_order_relaxed) + 1;   // + this one
             void*         mc  = a_control ? reinterpret_cast<apmf::cbt::TreeControl*>(a_control)->master_controller : nullptr;
             void*         hop = nullptr;
             std::uint32_t hA = 0, hB = 0;

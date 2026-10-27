@@ -13,8 +13,9 @@ build/finding/workflow change.
   unresolved substrate-node act() per window: node, master_controller, both raw attackerHandle reads, thread) and
   `[substrate] CAST BUILT` (CombatSubstrate `NoteCastBuilt`, first build per window: controller, attacker handle, the
   holder's live combatController SAME / DIFFERENT, inside / outside the gate, thread).
-- **Proxy identity:** `castproxy::Configure` copies `fullName`, `equipSlot`, `menuDispObject` on every Configure;
-  `ResetAll` nulls the two borrowed pointers. Keywords deferred (APMF-B206). The mint line prints name / slot / MDOB.
+- **Proxy identity:** `castproxy::Configure` copies `fullName` and `menuDispObject` on every Configure; `ResetAll`
+  nulls the borrowed `menuDispObject`. The equip slot stays the factory's EitherHand (review F1 of 6ea134d). Keywords
+  deferred (APMF-B206). The mint line prints name / factory slot / MDOB.
 - No ABI, co-save, seat, INI or address change. Not field-tested.
 
 ## HEAD OF WORK 2026-10-26 -- CH.19 KEEPS CONTROL (DONE restarts + the failure hold), branch `fix/apmf-ch19-keep-control`, NOT merged

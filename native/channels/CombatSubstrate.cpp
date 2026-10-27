@@ -2666,7 +2666,7 @@ namespace apmf::combatsubstrate {
         const std::uint64_t treeMs = g_slots[si].treeStartMs.load(std::memory_order_relaxed);
         // PASSIVE PROBE (fix/apmf-gate-probe-proxy-name, 2026-10-26; principle 5): the FIRST build per window, inside
         // or outside the gate, says WHICH controller built it -- the engine's `a_cc`, its attacker (the holder: that is
-        // how the slot was found) and whether `a_cc` is the holder's own live combatController (Actor+0x158, a pointer
+        // how the slot was found) and whether `a_cc` is the holder's own live combatController (via GetActorRuntimeData: SE +0x158 / AE and 1.7 +0x160; a pointer
         // COMPARE only: never dereferenced here). A build on a controller that is not the holder's would explain a tree
         // whose control resolved to another id. Writes nothing the gate or the close reads.
         if (!g_slots[si].builtProbeLogged.exchange(true, std::memory_order_relaxed)) {
