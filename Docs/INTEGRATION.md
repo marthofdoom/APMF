@@ -233,7 +233,7 @@ MFO files every claim with a basis of 200.
 
 New in 0.13.1, not yet tested in game. The full reference is [ch.26 Equip preference](FACETS.md#ch26-equip-preference-kintent_equippreference). Since the same ABI every equip refusal (the ch.17 set, the hand block, the ch.15 refusal) follows the `Equip` priorities in `APMF_Sources.ini`.
 
-## What is new from ABI 22 to 30
+## What is new from ABI 22 to 31
 
 A client built against an older header keeps working. Each item below needs its ABI check before you use it. Everything here is also in [APMF_API-REFERENCE.md](APMF_API-REFERENCE.md) and [FACETS.md](FACETS.md), and the header wins over both.
 
@@ -248,6 +248,7 @@ A client built against an older header keeps working. Each item below needs its 
 | 28 | 0.14.0 | `kIntent_Place` and `GetPlaceState(handle, &info)` | `abiVersion >= 28` |
 | 29 | 0.15.0 | `GetClientFacetPriority(facet)` | `abiVersion >= 29` |
 | 30 | 0.15.0 | the `kTravel_CrossCells` bit on a travel claim to a reference. No new slot | `abiVersion >= 30` |
+| 31 | the release after 0.15.1 | `GetClaimEndReason(handle)` says why Harbinger ended a ch.20 pin or ch.21 entry claim | `abiVersion >= 31` |
 
 ### Place (ABI 28)
 
@@ -286,6 +287,37 @@ bool CanEquipWeapons() {
 }
 ```
 
+### Why a claim ended (ABI 31)
+
+When `IsClaimLive` turns false on a ch.20 pin or a ch.21 entry, `GetClaimEndReason(handle)` says why Harbinger ended it. It returns a `ClaimEndReason`.
+
+| Value | Meaning |
+|---|---|
+| `kClaimEnd_None` (0) | no record: still live, released by you, dropped by an unload or a load, another intent, or an unknown handle |
+| `kClaimEnd_NotEngaged` (1) | held engagement: the target is beyond your engage range (`param.fval`) and not attacking the party. The actor's combat was ended |
+| `kClaimEnd_NoPathProgress` (2) | held engagement: 20 s with no path progress toward the target. This counts as not engaged, so the actor's combat was ended too |
+| `kClaimEnd_ArrivedIdle` (3) | held engagement: 20 s within reach with no attack or cast on the target |
+| `kClaimEnd_CombatEnded` (4) | ch.21: the game ended the actor's fight |
+| `kClaimEnd_EntryRefused` (5) | ch.21: `StartCombat` returned false |
+| `kClaimEnd_NotAttempted` (6) | ch.21: the actor or the target could not be used, so no call was made |
+| `kClaimEnd_OwnerDead` (7) | the actor died |
+| `kClaimEnd_TargetDead` (8) | the target died |
+| `kClaimEnd_TargetGone` (9) | the target is disabled, unloaded or no longer resolves |
+| `kClaimEnd_TargetLost` (10) | ch.20 only with the held engagement off: the game lost the target |
+| `kClaimEnd_NotATarget` (11) | ch.20: the target left the actor's group targets after it was one |
+
+The two not engaged reasons mean the follower cannot or should not fight that target now. marth's rule for MFO: give that target up instead of engaging it again at once. Harbinger itself has no cooldown, so a client that engages again gets a new engagement. The reason is recorded in the same step that queues the release, so it can be readable a frame before `IsClaimLive` turns false. Records are dropped on a load or a new game, and only the newest 256 are kept. Any thread, read only. An older Harbinger has no slot.
+
+```cpp
+// After a held engagement ends: give the target up if Harbinger dropped it as not engaged.
+bool GaveUp(APMF_API::Handle h) {
+    if (!MyMod::Has(31)) return false;                  // older Harbinger: no reason to read
+    const auto* api = reinterpret_cast<const APMF_API::APMF_API_v31*>(MyMod::g_apmf);
+    const auto  why = api->GetClaimEndReason(h);
+    return why == APMF_API::kClaimEnd_NotEngaged || why == APMF_API::kClaimEnd_NoPathProgress;
+}
+```
+
 ### Equip is two facets
 
 On the page and in `APMF_Sources.ini` equip ranks as `EquipWeapon` (weapons, shields, torches, ammo) and `EquipArmor`. Your priority is separate on each. An old `[Equip]` section is still read where the new ones have no value.
@@ -303,7 +335,7 @@ Older comments in `APMF_API.h` and the source tree cite sections of this page by
 | "Spells-only floor" | [A hand floor](FACETS.md#a-hand-floor-kcastflag_denyhandonly) |
 | "Cast guards" | [ch.25 Cast guard](FACETS.md#ch25-cast-guard-kintent_castguard) |
 | "enter combat + pin" | the example under [ch.21 Combat entry](FACETS.md#ch21-combat-entry-kintent_combatentry) |
-| "the fight cannot be lost; give it a range" | ch.21 and ch.20 claims are HELD engagements (2026-10-12, `Docs/INVARIANTS.md` #0 (i)). A ch.21 claim may set `param.fval` to its engage range in game units (0 = none): the moment the target is beyond it and not attacking the party, it is dropped, the actor's combat is ended (unless another foe is attacking the party) and its prior behaviour restored. There is no cooldown after any end: the same target may be engaged again at once. `APMF_API.h`'s "No other field is read" for kIntent_CombatEntry is out of date until the next mirrored header edit. |
+| "the fight cannot be lost; give it a range" | ch.21 and ch.20 claims are HELD engagements (2026-10-12, `Docs/INVARIANTS.md` #0 (i)). A ch.21 claim may set `param.fval` to its engage range in game units (0 = none): the moment the target is beyond it and not attacking the party, it is dropped, the actor's combat is ended (unless another foe is attacking the party) and its prior behaviour restored. Since 2026-10-27 a held engagement with no path progress for 20 s is dropped the same way, and `GetClaimEndReason` (ABI 31) says which end it was. There is no cooldown after any end: the same target may be engaged again at once. `APMF_API.h`'s "No other field is read" for kIntent_CombatEntry is out of date until the next mirrored header edit. |
 | "retreat: StopCombat once + deny re-entry" | the example under [ch.22 Combat re-entry deny](FACETS.md#ch22-combat-re-entry-deny-kintent_combatreentrydeny) |
 | "Making an NPC cast", "Casting at a point" | [ch.8b Cast](FACETS.md#ch8b-cast-kintent_cast), [Position cast](FACETS.md#position-cast-kcastflag_atposition) |
 | "Declaring what an NPC wears", "Scoping the authority", the probe criteria | [ch.17 Equip authority](FACETS.md#ch17-equip-authority-kintent_equipauthority), [Appendix E](FACETS.md#appendix-e-equip-authority-probe-criteria) |

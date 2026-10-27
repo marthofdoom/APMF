@@ -1651,7 +1651,7 @@ namespace apmf::combatentry::hold {
             // issue", "not engaged -> combat dropped immediately"): the range rule's own drop, combat ended (ranked,
             // review R-1) and prior behaviour restored. The client reads kClaimEnd_NoPathProgress (ABI v31).
             spdlog::warn("[hold] ANOMALY 0x{} -> 0x{}: NO PATH PROGRESS for {} s while in combat (distance {:.0f} -> "
-                         "{:.0f}, actor moved {:.0f}u, target moved {:.0f}u, {}; no attack or cast on it; target {}). The "
+                         "{:.0f}, actor moved {:.0f}u, target moved {:.0f}u, {}, no attack or cast on it, target {}). The "
                          "held engagement counts as NOT ENGAGED and is DROPPED (the DROPPED line says what was ended).",
                          Hex(sn.id), Hex(sn.target), kNoProgressMs / 1000, s0d, dist, aMoved, tMoved,
                          same ? "same cell / worldspace" : "the target is in another cell or worldspace", LifeName(life));
