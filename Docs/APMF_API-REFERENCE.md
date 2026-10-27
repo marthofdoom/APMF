@@ -494,3 +494,41 @@ marth 2026-10-25: "So harbingers moveto's need to navigate doorways natively" an
 **An unloaded actor in the destination interior.** Harbinger does not move an actor. A follower that is unloaded (the player is elsewhere) and has reached the destination's interior through its door may not close the distance to the destination while unloaded, so the leg does not arrive until it loads (or the stuck net reports no progress). To put an unloaded actor beside the destination, use `kIntent_Place` (ABI v28).
 
 **Older APMF.** An APMF before v30 ignores the bit: distance arrival, the leg ends on arrival, no hold. Gate on `abiVersion >= 30`. Harbinger does not record which ABI a client asked for: any client can pass raw `ival` bits, and a v30 Harbinger honours bit 5 whenever it is set, whatever header the client was built with (the same as the v11 / v12 bits). A client must not set bit 5 unless it means `kTravel_CrossCells`.
+
+<a id="abi-v31-claim-end-reason"></a>
+## ABI v31 claim end reason: why Harbinger ended a pin or an entry
+
+```cpp
+std::uint32_t (*GetClaimEndReason)(Handle handle);   // APMF_API_v31, gate on abiVersion >= 31
+```
+
+marth 2026-10-27, after the LoreRim run where Auri stood in combat with a Sabre Cat she could not reach: a no path progress end counts as NOT ENGAGED, so the follower drops combat and the client gives that target up. Earlier: "if it wont path to it then theres the issue", "not engaged -> combat dropped immediately". The client needs to tell that end from the others, so this slot returns it.
+
+**What gets a reason.** Only a ch.20 (`kIntent_TargetPin`) or ch.21 (`kIntent_CombatEntry`) claim that Harbinger ends ITSELF. A claim the client released, one an outranking claim, an unload or a load dropped, and every other intent read `kClaimEnd_None`. The first reason recorded for a handle stands. A claim the client releases at the same moment Harbinger ends it (both releases queued before the next drain) can still carry a reason.
+
+| `ClaimEndReason` | Where Harbinger ends it |
+|---|---|
+| `kClaimEnd_None` (0) | no record |
+| `kClaimEnd_NotEngaged` (1) | the held engagement's range rule: target beyond `param.fval`, not attacking the party. Ranked `StopCombat` |
+| `kClaimEnd_NoPathProgress` (2) | the held engagement's no path progress watchdog (20 s of world time outside reach, suspended while the target flies). The same drop as the range rule, ranked `StopCombat` included |
+| `kClaimEnd_ArrivedIdle` (3) | the held engagement's arrived but not fighting watchdog (20 s within reach). Claims released, combat left to the engine |
+| `kClaimEnd_CombatEnded` (4) | ch.21: the actor has no combat controller after a successful entry |
+| `kClaimEnd_EntryRefused` (5) | ch.21: `StartCombat` returned false |
+| `kClaimEnd_NotAttempted` (6) | ch.21: the actor or the target cannot be used, no engine call |
+| `kClaimEnd_OwnerDead` (7) | ch.20 / ch.21 Poll: the actor is dead |
+| `kClaimEnd_TargetDead` (8) | ch.20 / ch.21 Poll: the target is dead |
+| `kClaimEnd_TargetGone` (9) | ch.20 / ch.21 Poll: the target is disabled, unloaded or no longer resolves |
+| `kClaimEnd_TargetLost` (10) | ch.20 with `[EngagementHold] bEngagementHold=0` or no knowledge seats: the group flagged the target lost |
+| `kClaimEnd_NotATarget` (11) | ch.20: the target left the group's targets after it was one |
+
+A claim that takes over naming a target the engine already gave up on ends with the engine's reason (`CombatEnded` or `EntryRefused`).
+
+**The ranked StopCombat.** Both not engaged ends call the same `StopCombatRanked` (Character slot 0xE5). It is ranked for the claim that names the dropped target. It does not end the fight while another live target of the actor's group is attacking the party (review R-1), while a winning ch.20 pin or ch.21 entry names a different target, or while another client's ch.24 claim or Engine outranks the engagement on the `Combat` facet. Then only the claims are released and the reason is still `NotEngaged` or `NoPathProgress`. The `[hold] ... DROPPED (not engaged)` line says which.
+
+**Timing.** The reason is written on the game thread in the same step that queues the claim's release, so it can be readable a frame before `IsClaimLive` turns false. Harbinger's hold watchdogs poll every 250 ms.
+
+**Threading and cost.** Any thread. One hash lookup under a leaf mutex, no game call. A throw inside returns `kClaimEnd_None`.
+
+**Lifetime.** Records are not saved. A load or a new game drops them all, and only the newest 256 are kept. Handles never repeat inside one game session, so a record never names a newer claim.
+
+**Older APMF.** An APMF before v31 has no slot. `IsClaimLive` turning false is all it says.

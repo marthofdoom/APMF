@@ -2448,7 +2448,7 @@ With `kTargetPin_OwnLineOfSight` the pin also pauses while Harbinger's own ray f
 
 Standing, no time limit. Harbinger **releases the claim itself** when the target is dead, disabled, not loaded or no longer resolves, when it was one of the actor's group's targets and is not any more, or when the actor dies. The log names the reason (`pin ended: target dead`), `IsClaimLive` turns false and the handle is dead. Pin again if you want to keep chasing. Your own `Release`, an outranking claim, a load, a new game or an unload also end it.
 
-A pin is a **held engagement** (2026-10-12, INVARIANTS #0 (i)). The game losing track of the target no longer ends it: Harbinger keeps the group's own knowledge of where the target is, so the actor chases it the game's way. A held engagement also ends, logged as an `[hold] ANOMALY`, after 20 s with no path progress toward the target (suspended while the target is flying, for example a dragon in the air), or after 20 s within reach without an attack or a cast on it. With `[EngagementHold] bEngagementHold=0` (or the knowledge seats not installed) the older contract applies and a pin ends on `target lost`.
+A pin is a **held engagement** (2026-10-12, INVARIANTS #0 (i)). The game losing track of the target no longer ends it: Harbinger keeps the group's own knowledge of where the target is, so the actor chases it the game's way. A held engagement also ends, logged as an `[hold] ANOMALY`, after 20 s with no path progress toward the target (suspended while the target is flying, for example a dragon in the air), or after 20 s within reach without an attack or a cast on it. Since 2026-10-27 the no path progress end counts as not engaged: the actor's combat is ended through the same ranked `StopCombat` as ch.21's range rule and its usual behaviour comes back. `GetClaimEndReason` (ABI 31) says which end it was. With `[EngagementHold] bEngagementHold=0` (or the knowledge seats not installed) the older contract applies and a pin ends on `target lost`.
 
 #### Priority and conflicts
 
@@ -2632,7 +2632,7 @@ Harbinger releases the claim itself, and `IsClaimLive` turns false with the reas
 - the entry could not be attempted (the target is not an Actor, or the actor is not loaded, has no AI process or is dead),
 - the fight ended (the entry succeeded and the actor now has no combat controller, "combat ended"), or
 - the target is dead, disabled, not loaded or unresolvable, or the actor dies, or
-- the held engagement ended it (2026-10-12, INVARIANTS #0 (i)): 20 s with no path progress (suspended while the target is flying), 20 s within reach without fighting the target, or, with `fval` above 0, the target farther than `fval` while it is not attacking the party. That last end also ends the actor's fight through the game's own `StopCombat`, unless another enemy of the group is still attacking the party, a winning ch.20 pin on the actor names a different target, another client's ch.24 claim outranks the entry on the `Combat` facet, or Engine outranks the entry on the `Combat` facet. Then only the claims are released and the fight stays the engine's.
+- the held engagement ended it (2026-10-12, INVARIANTS #0 (i)): 20 s with no path progress (suspended while the target is flying), 20 s within reach without fighting the target, or, with `fval` above 0, the target farther than `fval` while it is not attacking the party. The range end and, since 2026-10-27, the no path progress end count as not engaged and also end the actor's fight through the game's own `StopCombat`, unless another enemy of the group is still attacking the party, a winning ch.20 pin or ch.21 entry on the actor names a different target, another client's ch.24 claim outranks the entry on the `Combat` facet, or Engine outranks the entry on the `Combat` facet. Then only the claims are released and the fight stays the engine's.
 
 After "combat ended" or a refusal, another claim on the actor naming the same target ends with the same reason. To try again, send a new `RequestEx`. Your own `Release`, an outranking claim, a load, a new game or an unload also end it.
 
@@ -3549,8 +3549,9 @@ The ABI is append-only. A client built against an older ABI keeps working agains
 | 28 | 0.14.0 | `kIntent_Place`, `PlaceFlags`, `PlaceState`, `PlaceWhy`, `APMF_PlaceStateInfo`, `GetPlaceState` (struct `APMF_API_v28`) |
 | 29 | 0.15.0 | `GetClientFacetPriority`, `ClientFacet`, `kFacetPriorityUnknown` (struct `APMF_API_v29`) |
 | 30 | 0.15.0 | `kTravel_CrossCells`, a `TravelFlags` bit read through the existing `RequestEx` and `Repoint` (no struct, no slot) |
+| 31 | the release after 0.15.1 | `GetClaimEndReason`, `ClaimEndReason` (struct `APMF_API_v31`) |
 
-The last release is 0.15.1, ABI 30. The interface struct is `APMF_API_v29`, since ABI 30 added a flag and no slot. Before that `APMF_API_v19` served ABI 19 to 21, and ABI 23 and 25 also added no slot.
+The last release is 0.15.1, ABI 30. Unreleased: ABI 31, interface struct `APMF_API_v31`. In 0.15.1 the interface struct is `APMF_API_v29`, since ABI 30 added a flag and no slot. Before that `APMF_API_v19` served ABI 19 to 21, and ABI 23 and 25 also added no slot.
 
 ## Appendix C: refusal cheat sheet
 

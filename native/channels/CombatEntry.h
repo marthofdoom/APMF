@@ -38,6 +38,14 @@ namespace apmf::combatentry {
     // posted and not yet run finds no entry and drops itself. GAME THREAD.
     void ResetAll(const char* why);
 
+    // ABI v31 (APMF_API_v31::GetClaimEndReason): why Harbinger ended a ch.20 / ch.21 claim. RecordClaimEnd
+    // is called where Harbinger queues the claim's release (ch.21 EndClaim, ch.20 Poll / EndHeld), with an
+    // APMF_API::ClaimEndReason; the first reason for a handle stands. GAME THREAD. ClaimEndReason: ANY
+    // THREAD (a copy under a leaf mutex, no game call); kClaimEnd_None when there is no record. The records
+    // are bounded (the oldest go first) and dropped by ResetAll (a load or a new game).
+    void          RecordClaimEnd(APMF_API::Handle handle, std::uint32_t reason);
+    std::uint32_t ClaimEndReason(APMF_API::Handle handle);
+
 }
 
 // ============================================================================
@@ -84,7 +92,7 @@ namespace apmf::combatentry::hold {
 
     // Game thread, Arbiter::OncePerFrame (after the ch.20 / ch.21 Polls): per-hold telemetry
     // (distance moved per 5 s window, distance to the target, attack / cast starts, engine-lost
-    // overrides), the no-progress watchdog (loud anomaly + release) and the bleed-out drive.
+    // overrides), the no-progress watchdog (loud anomaly + the not-engaged drop) and the bleed-out drive.
     void Poll();
 
     // ~30 s RULE C line (zeros included) while any hold exists. Game thread.
@@ -92,7 +100,7 @@ namespace apmf::combatentry::hold {
 
     // The held engagement's RANKED StopCombat (Character slot 0xE5, the vtable identity checked), for a
     // caller other than the range rule: not while another live group target attacks the party, not when a
-    // winning ch.20 pin names another target, not when another client's ch.24 claim or Engine outranks
+    // winning ch.20 pin or ch.21 entry names another target, not when another client's ch.24 claim or Engine outranks
     // `claim` on the Combat facet. Returns what it did ("combat ENDED (Actor::StopCombat)" or "NOT ended:
     // <why>"). GAME THREAD (APMF-B26). The combat substrate's empty-fight end (marth 2026-10-13, F6).
     std::string StopCombatRanked(RE::Actor* actor, APMF_API::Handle claim, RE::FormID dropped,

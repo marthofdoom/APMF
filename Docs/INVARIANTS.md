@@ -369,7 +369,10 @@ only while ALL of these hold:
    >= 64 u, gap grew < 64 u) and started no attack or cast ON THE HELD TARGET -- or, while the hold is
    PAUSED BY DESIGN (the actor's own combat target is another actor: a pin paused by own line of sight, a
    ch.21-only hold whose engine target is another foe), on that other target (review R-3: an intended
-   pause is never an anomaly);
+   pause is never an anomaly). Since marth 2026-10-27 this end counts as NOT ENGAGED: it is dropped
+   through condition 6's own path (`DropNotEngaged`), so the actor's combat is ended by the same ranked
+   `StopCombat` and its prior behaviour restored, and the client reads `kClaimEnd_NoPathProgress`
+   (ABI v31 `GetClaimEndReason`);
    (b) ARRIVED BUT NOT FIGHTING: within reach for 20 s without an attack or cast on the held target (a
    close but unreachable target, a downed foe the engine will not strike);
    (c) NOT ENGAGED (condition 6).

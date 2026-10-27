@@ -48,8 +48,9 @@ namespace apmf::targetpin {
     // (unless [EngagementHold] bEngagementHold=0). The held engagement's no-progress watchdog
     // (channels/CombatEntry.cpp hold::Poll) ends this actor's WINNING pin claim through here when it
     // still names `target`: logged "pin ended: <why>", repeated on the Release line. `why` must be a
-    // string literal. GAME THREAD, never inside Drain.
-    void EndHeld(RE::FormID actor, RE::FormID target, const char* why);
+    // string literal. `cause` (an APMF_API::ClaimEndReason) is recorded against the claim's handle for ABI v31
+    // GetClaimEndReason. GAME THREAD, never inside Drain.
+    void EndHeld(RE::FormID actor, RE::FormID target, const char* why, std::uint32_t cause);
 
     // Drop every per-actor pin entry (the world is being replaced). For the kPreLoadGame /
     // revert boundary, beside travel::ResetAll(): ControlMap::Clear() makes no

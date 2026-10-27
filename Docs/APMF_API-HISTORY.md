@@ -126,7 +126,7 @@ a DENIED category is unequipped by the enforce pass. The header comments that st
 stale until the paired MFO header change.
 
 <a id="abi-history"></a>
-## ABI v10 to v30: what each version added
+## ABI v10 to v31: what each version added
 
 Moved verbatim from `native/APMF_API.h` (line 96 at 9d01cdf). The header keeps a pointer to this anchor.
 
@@ -269,6 +269,14 @@ APMF_Param field, no new struct. A client gates on abiVersion >= 30; an older AP
 NUMBERING NOTE: v30 had been named for the ch.17 per-item equip deny (ClickUp 86e3t8w23). Cross cells took v30 (MFO's
 town errands walk to a vendor NPC with it now), so the per-item equip deny moves to v31.
 Docs/APMF_API-REFERENCE.md#abi-v30-travel-cross-cells.
+ABI v31 (2026-10-27, the claim end reason, marth: a no path progress end counts as NOT ENGAGED, the follower drops
+combat and the client gives that target up): ClaimEndReason (kClaimEnd_None .. kClaimEnd_NotATarget, 0..11).
+APMF_API_v31 appends ONE read-only slot, GetClaimEndReason(handle) -> std::uint32_t, why Harbinger ended a ch.20 /
+ch.21 claim (recorded where the release is queued). ANY thread, a copy under a leaf lock, no game call. No intent,
+no APMF_Param field, no change to any existing slot. A client gates on abiVersion >= 31. An older APMF has no query.
+NUMBERING NOTE: v31 had been named for the ch.17 per-item equip deny (ClickUp 86e3t8w23). The claim end reason took
+v31 (MFO needs it to give up a target its follower cannot reach), so the per-item equip deny moves to v32.
+Docs/APMF_API-REFERENCE.md#abi-v31-claim-end-reason.
 ```
 
 <a id="intent-18"></a>

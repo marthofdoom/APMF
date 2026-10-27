@@ -1093,15 +1093,24 @@ namespace apmf::targetpin {
         for (const auto& sn : snaps) {
             // "target lost" is trusted as the seat saw it; everything else is checked LIVE here,
             // on the game thread, whatever the seat recorded.
-            const char* why = (sn.seatWhy == kReasonLost || sn.seatWhy == kReasonAbsent) ? sn.seatWhy : nullptr;
+            const char*   why   = (sn.seatWhy == kReasonLost || sn.seatWhy == kReasonAbsent) ? sn.seatWhy : nullptr;
+            std::uint32_t cause = sn.seatWhy == kReasonLost   ? APMF_API::kClaimEnd_TargetLost :
+                                  sn.seatWhy == kReasonAbsent ? APMF_API::kClaimEnd_NotATarget :
+                                                                APMF_API::kClaimEnd_None;   // ABI v31
             if (!why) {
                 auto* owner = RE::TESForm::LookupByID<RE::Actor>(sn.id);
                 auto  tptr  = sn.handle.get();
-                if (owner && owner->IsDead())      why = "owner dead";
-                else if (!tptr)                    why = "target unresolvable";
-                else if (tptr->IsDead())           why = "target dead";
-                else if (tptr->IsDisabled())       why = "target disabled";
-                else if (!tptr->Is3DLoaded())      why = "target unloaded";
+                if (owner && owner->IsDead()) {
+                    why = "owner dead"; cause = APMF_API::kClaimEnd_OwnerDead;
+                } else if (!tptr) {
+                    why = "target unresolvable"; cause = APMF_API::kClaimEnd_TargetGone;
+                } else if (tptr->IsDead()) {
+                    why = "target dead"; cause = APMF_API::kClaimEnd_TargetDead;
+                } else if (tptr->IsDisabled()) {
+                    why = "target disabled"; cause = APMF_API::kClaimEnd_TargetGone;
+                } else if (!tptr->Is3DLoaded()) {
+                    why = "target unloaded"; cause = APMF_API::kClaimEnd_TargetGone;
+                }
             }
             if (!why) {
                 if (sn.seatWhy) {   // the seat saw a transient state that the live check does not confirm
@@ -1129,6 +1138,7 @@ namespace apmf::targetpin {
                 it->second.ending.store(true);
                 it->second.endedReason.store(why);
             }
+            apmf::combatentry::RecordClaimEnd(h, cause);   // ABI v31 GetClaimEndReason
             apmf::ControlMap::Get().EnqueueRelease(h);
             spdlog::info("[ch.20] 0x{} pin ended: {} (target 0x{}, claim h={}). Harbinger released the claim; a "
                          "mod that wants to keep chasing must pin again.",
@@ -1136,7 +1146,7 @@ namespace apmf::targetpin {
         }
     }
 
-    void EndHeld(RE::FormID a_actor, RE::FormID a_target, const char* a_why) {
+    void EndHeld(RE::FormID a_actor, RE::FormID a_target, const char* a_why, std::uint32_t a_cause) {
         APMF_API::APMF_Param param{};
         float                basis = 0.0f;
         APMF_API::Handle     h     = APMF_API::kInvalidHandle;
@@ -1150,6 +1160,7 @@ namespace apmf::targetpin {
             it->second.ending.store(true);
             it->second.endedReason.store(a_why);
         }
+        apmf::combatentry::RecordClaimEnd(h, a_cause);   // ABI v31 GetClaimEndReason
         apmf::ControlMap::Get().EnqueueRelease(h);
         spdlog::info("[ch.20] 0x{} pin ended: {} (target 0x{}, claim h={}). Harbinger released the claim; a mod that "
                      "wants to keep chasing must pin again.",

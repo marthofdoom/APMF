@@ -97,7 +97,9 @@ extern "C" __declspec(dllimport) unsigned long __stdcall GetPrivateProfileIntA(
 //     stopping it would be an UNDO, and it would also tear down any combat the actor is in
 //     for its own reasons (it was attacked meanwhile, or was already fighting when the claim
 //     arrived and StartCombat only added a target). The engine ends it the way it ends any
-//     fight; a client that wants it over calls Actor::StopCombat itself.
+//     fight; a client that wants it over calls Actor::StopCombat itself. The one exception is
+//     the HELD ENGAGEMENT's not-engaged drop below (out of the engage range, or no path
+//     progress): marth ruled that combat dropped, so it calls a RANKED StopCombat.
 //   * THE CLAIM ENDS -- Harbinger releases it and logs "entry ended: <reason>", repeated on
 //     the Release line -- when:
 //       - the engine REFUSED the entry ("engine refused entry: <cause if known>");
@@ -110,7 +112,8 @@ extern "C" __declspec(dllimport) unsigned long __stdcall GetPrivateProfileIntA(
 //       - the owner died, or the target died, was disabled, unloaded or stopped resolving
 //         -- Poll().
 //     A client that wants another entry sends a NEW request. (A Repoint of a still-live
-//     claim makes one more call too, but an ended claim is gone.)
+//     claim makes one more call too, but an ended claim is gone.) Every end Harbinger makes
+//     is recorded against the claim's handle for ABI v31 GetClaimEndReason (RecordClaimEnd).
 //   * THE ENGINE GAVE UP = DROPPED (review F1, option a). When a claim ends because the engine
 //     ended the fight ("combat ended") or refused the entry, and a RIVAL claim on the same actor
 //     takes over naming the SAME target, it does NOT re-enter: its owner-change Apply ends it
@@ -190,10 +193,25 @@ namespace {
         return a->GetActorRuntimeData().combatController != nullptr;   // the POINTER only (B26)
     }
 
-    // End the WINNING claim this entry was resolved for: record the reason, EnqueueRelease
-    // its handle, log it. MAIN SEAT, OUTSIDE Drain only (Pump / Poll). A claim that has moved
-    // on (a newer Apply) is left alone; that Apply owns the entry now.
-    void EndClaim(RE::FormID id, RE::FormID tf, std::string why) {
+    // ABI v31 (GetClaimEndReason): why Harbinger ended a ch.20 / ch.21 claim, by HANDLE. Written on the game
+    // thread where the release is queued, read from ANY thread: every access is under g_endMx, a LEAF lock
+    // (nothing is called while it is held). Bounded: past kEndRecordsMax the oldest record goes first.
+    // Handles come from one counter that never repeats in a process, so a record never names a newer claim.
+    constexpr std::size_t                                kEndRecordsMax = 256;
+    std::mutex                                           g_endMx;
+    std::unordered_map<APMF_API::Handle, std::uint32_t>  g_endReasons;   // guarded by g_endMx
+    std::deque<APMF_API::Handle>                         g_endOrder;     // guarded by g_endMx (oldest first)
+
+    // An engine end ("combat ended ...") or refusal ("engine refused entry ...") carried over by a claim that
+    // takes over with the same target (review F1): the same discriminator EndClaim keeps engineGaveUp with.
+    std::uint32_t EngineEndCause(const std::string& why) {
+        return why.starts_with("combat ended") ? APMF_API::kClaimEnd_CombatEnded : APMF_API::kClaimEnd_EntryRefused;
+    }
+
+    // End the WINNING claim this entry was resolved for: record the reason (the log string and, for ABI v31,
+    // `cause`, an APMF_API::ClaimEndReason), EnqueueRelease its handle, log it. MAIN SEAT, OUTSIDE Drain only
+    // (Pump / Poll). A claim that has moved on (a newer Apply) is left alone; that Apply owns the entry now.
+    void EndClaim(RE::FormID id, RE::FormID tf, std::string why, std::uint32_t cause) {
         const auto it = g_entries.find(id);
         if (it == g_entries.end() || it->second.target != tf || it->second.ending) return;
         APMF_API::APMF_Param param{};
@@ -206,6 +224,7 @@ namespace {
         if (why.starts_with("combat ended") || why.starts_with("engine refused entry"))
             it->second.engineGaveUp.try_emplace(tf, why);   // keep the FIRST (engine) reason
         it->second.endedReason = why;
+        apmf::combatentry::RecordClaimEnd(h, cause);
         apmf::ControlMap::Get().EnqueueRelease(h);
         spdlog::info("[ch.21] 0x{} entry ended: {} (target 0x{}, claim h={}). Harbinger released the claim and "
                      "stops nothing; a mod that wants another entry sends a new request.",
@@ -263,7 +282,7 @@ namespace {
         if (why) {
             spdlog::warn("[ch.21] 0x{} entry {} against 0x{} NOT CALLED: {}. No engine call was made.",
                          Hex(id), what, Hex(tf), why);
-            EndClaim(id, tf, fmt::format("entry not attempted: {}", why));
+            EndClaim(id, tf, fmt::format("entry not attempted: {}", why), APMF_API::kClaimEnd_NotAttempted);
             return;
         }
 
@@ -303,14 +322,15 @@ namespace {
             spdlog::warn("[ch.21] 0x{} entry {} against 0x{}: REQUESTED -> the engine REFUSED (StartCombat returned "
                          "false; {} before the call).",
                          Hex(id), what, Hex(tf), wasInCombat ? "in combat" : "not in combat");
-            EndClaim(id, tf, fmt::format("engine refused entry: {}", cause));
+            EndClaim(id, tf, fmt::format("engine refused entry: {}", cause), APMF_API::kClaimEnd_EntryRefused);
             return;
         }
         if (!hasCc) {   // a true return must leave a controller; say so loudly if it did not (principle 7)
             spdlog::warn("[ch.21] 0x{} entry {} against 0x{}: StartCombat returned TRUE but the actor has NO "
                          "combat controller after the call.",
                          Hex(id), what, Hex(tf));
-            EndClaim(id, tf, "combat ended (no controller right after a successful entry)");
+            EndClaim(id, tf, "combat ended (no controller right after a successful entry)",
+                     APMF_API::kClaimEnd_CombatEnded);
             return;
         }
 
@@ -336,10 +356,10 @@ namespace {
 
     // Posted by Apply() when the client's target cannot be used: the claim is ended, never
     // left live and inert. Runs from Pump (outside Drain).
-    void EndUnusable(RE::FormID id, RE::FormID tf, std::uint32_t gen, std::string why) {
+    void EndUnusable(RE::FormID id, RE::FormID tf, std::uint32_t gen, std::string why, std::uint32_t cause) {
         const auto it = g_entries.find(id);
         if (it == g_entries.end() || it->second.gen != gen || it->second.target != tf) return;   // moved on
-        EndClaim(id, tf, std::move(why));
+        EndClaim(id, tf, std::move(why), cause);
     }
 
     // Resolve `param.form` on the game thread, (re)write this actor's entry and post ONE
@@ -384,7 +404,8 @@ namespace {
                          "Harbinger ends the claim.",
                          Hex(id), what, Hex(tf), why);
             std::string reason = fmt::format("entry not attempted: {}", why);
-            apmf::mainthread::Post([id, tf, gen, reason] { EndUnusable(id, tf, gen, reason); });
+            apmf::mainthread::Post(
+                [id, tf, gen, reason] { EndUnusable(id, tf, gen, reason, APMF_API::kClaimEnd_NotAttempted); });
             return;
         }
         // Review F1: the engine already gave up on THIS target for this actor (it ended the fight
@@ -395,10 +416,11 @@ namespace {
             std::string reason = fmt::format("{} (earlier claim; a claim taking over with the same target does "
                                              "not re-enter)",
                                              gave.at(tf));
+            const std::uint32_t cause = EngineEndCause(gave.at(tf));
             spdlog::warn("[ch.21] 0x{} combat-entry {} -> target 0x{}: NOT CALLED, the engine already gave up on "
                          "this target for this actor ({}). Harbinger ends the claim.",
                          Hex(id), what, Hex(tf), gave.at(tf));
-            apmf::mainthread::Post([id, tf, gen, reason] { EndUnusable(id, tf, gen, reason); });
+            apmf::mainthread::Post([id, tf, gen, reason, cause] { EndUnusable(id, tf, gen, reason, cause); });
             return;
         }
         spdlog::info("[ch.21] 0x{} combat-entry {} -> target 0x{}: ONE Actor::StartCombat call is queued for the "
@@ -492,17 +514,24 @@ namespace apmf::combatentry {
             if (!e.ending && e.resolved) snaps.push_back({ id, e.target, e.handle, e.inFight });
 
         for (const auto& sn : snaps) {
-            const char* why   = nullptr;
-            auto*       owner = RE::TESForm::LookupByID<RE::Actor>(sn.id);
-            auto        tptr  = sn.handle.get();
-            if (owner && owner->IsDead())                   why = "owner dead";
-            else if (!tptr)                                 why = "target unresolvable";
-            else if (tptr->IsDead())                        why = "target dead";
-            else if (tptr->IsDisabled())                    why = "target disabled";
-            else if (!tptr->Is3DLoaded())                   why = "target unloaded";
-            else if (sn.inFight && owner && !HasController(owner))
-                                                            why = "combat ended";
-            if (why) EndClaim(sn.id, sn.target, why);
+            const char*   why   = nullptr;
+            std::uint32_t cause = APMF_API::kClaimEnd_None;
+            auto*         owner = RE::TESForm::LookupByID<RE::Actor>(sn.id);
+            auto          tptr  = sn.handle.get();
+            if (owner && owner->IsDead()) {
+                why = "owner dead"; cause = APMF_API::kClaimEnd_OwnerDead;
+            } else if (!tptr) {
+                why = "target unresolvable"; cause = APMF_API::kClaimEnd_TargetGone;
+            } else if (tptr->IsDead()) {
+                why = "target dead"; cause = APMF_API::kClaimEnd_TargetDead;
+            } else if (tptr->IsDisabled()) {
+                why = "target disabled"; cause = APMF_API::kClaimEnd_TargetGone;
+            } else if (!tptr->Is3DLoaded()) {
+                why = "target unloaded"; cause = APMF_API::kClaimEnd_TargetGone;
+            } else if (sn.inFight && owner && !HasController(owner)) {
+                why = "combat ended"; cause = APMF_API::kClaimEnd_CombatEnded;
+            }
+            if (why) EndClaim(sn.id, sn.target, why, cause);
         }
     }
 
@@ -512,6 +541,27 @@ namespace apmf::combatentry {
         g_entries.clear();
         g_count.store(0, std::memory_order_relaxed);
         if (n != 0) spdlog::info("[ch.21] {} -- dropped {} combat-entry entr{}.", why, n, n == 1 ? "y" : "ies");
+        std::scoped_lock lk(g_endMx);   // ABI v31: the claims of the outgoing world are gone with it
+        g_endReasons.clear();
+        g_endOrder.clear();
+    }
+
+    void RecordClaimEnd(APMF_API::Handle handle, std::uint32_t reason) {
+        if (handle == APMF_API::kInvalidHandle || reason == APMF_API::kClaimEnd_None) return;
+        std::scoped_lock lk(g_endMx);
+        if (!g_endReasons.try_emplace(handle, reason).second) return;   // the first reason stands
+        g_endOrder.push_back(handle);
+        while (g_endOrder.size() > kEndRecordsMax) {
+            g_endReasons.erase(g_endOrder.front());
+            g_endOrder.pop_front();
+        }
+    }
+
+    std::uint32_t ClaimEndReason(APMF_API::Handle handle) {
+        if (handle == APMF_API::kInvalidHandle) return APMF_API::kClaimEnd_None;
+        std::scoped_lock lk(g_endMx);
+        const auto it = g_endReasons.find(handle);
+        return it == g_endReasons.end() ? APMF_API::kClaimEnd_None : it->second;
     }
 
 }
@@ -576,7 +626,9 @@ namespace apmf::combatentry {
 //   * NO PATH PROGRESS (outside reach): over the last kNoProgressMs of world time the actor got no
 //     64u closer than it was at the window's start, did not keep pace with a moving target (the
 //     target moved >= 128u, the actor >= 64u, the gap grew by < 64u), and started no attack or cast
-//     on the held target;
+//     on the held target. Since marth 2026-10-27 this end counts as NOT ENGAGED: it takes the range
+//     rule's drop below (DropNotEngaged), so the actor's combat is ended (ranked, review R-1) and its
+//     prior behaviour restored, not only the claims released;
 //   * ARRIVED BUT NOT FIGHTING (within kReachU): kArrivedIdleMs without an attack or cast on the
 //     held target -- a close but unreachable target, or a downed foe the engine will not strike;
 //   * NOT ENGAGED (ch.21 with param.fval > 0, the client's engage-on-sight range; marth 2026-10-12: "And
@@ -636,6 +688,17 @@ namespace {
             RE::FormID      pinTarget    = 0;   // ch.20
             std::uint32_t   pinHandle    = 0;
             RE::ActorHandle pinH{};
+            // The hold's GENERATION, one per side (2026-10-27, the Auri field run): a fresh number from
+            // g_holdGen each time SetSlot sets a pin or entry target that side did not already hold (it was
+            // empty, cleared by a release, or named another target), or sets ANY target on a side whose
+            // engagement a watchdog already ended (pinEnded / entryEnded: the claim it was held for is being
+            // released, so whatever claim sets it now is a new engagement). Poll starts a fresh Track when
+            // the effective side's generation changes, so a client that engages the SAME target again within
+            // one Poll (a release and a new claim in one Drain) gets a new engagement with live watchdogs, not
+            // the old ended Track. A same-target Repoint of a live, un-ended claim keeps the generation: the
+            // engagement is the same one and its no-progress window runs on.
+            std::uint32_t   pinGen = 0, entryGen = 0;
+            bool            pinEnded = false, entryEnded = false;   // set by EndHold (game thread, unique lock)
             // written by the seats / ActionGate under the SHARED lock: atomics
             mutable std::atomic<std::uint32_t> lostCleared{ 0 };   // the engine flagged lost; un-lost
             mutable std::atomic<std::uint32_t> locRefreshed{ 0 };  // last-known location written
@@ -646,6 +709,9 @@ namespace {
         std::shared_mutex                                    g_holdMx;
         std::unordered_map<RE::FormID, std::unique_ptr<Hold>> g_holds;
         std::atomic<std::size_t>                             g_holdCount{ 0 };
+        // Hold::pinGen / entryGen's source. Written under the UNIQUE g_holdMx only (SetSlot); one counter for
+        // every hold, so a hold erased and created again never repeats a generation an old Track still carries.
+        std::uint32_t                                        g_holdGen = 0;
 
         // NO RE-ENGAGE COOLDOWN (marth 2026-10-12: "THe engage on sight is meant to be an aggressive setting. No
         // waiting ever, engaged, or not engaged."): an engagement Harbinger ends is re-engaged the moment the
@@ -903,6 +969,7 @@ namespace {
 
         struct Track {
             RE::FormID      target = 0;
+            std::uint32_t   gen    = 0;   // the Hold generation (pinGen / entryGen) this track was started for
             RE::ActorHandle th{};
             bool            viaPin = false;
             bool            ended  = false;   // a watchdog / range end released it; wait for the claims to go
@@ -1029,6 +1096,12 @@ namespace {
             if (ClaimHandle(id, APMF_API::kIntent_TargetPin, &pinT) != APMF_API::kInvalidHandle && pinT != 0 &&
                 pinT != a_dropped)
                 return "NOT ended: a winning ch.20 pin names another target (that fight is wanted)";
+            // Review F1 of 94c35f6, the mirror: a winning ch.21 entry naming another target is a fight the client
+            // still wants (a pin on X with an entry on Y, X dropped).
+            RE::FormID entryT = 0;
+            if (ClaimHandle(id, APMF_API::kIntent_CombatEntry, &entryT) != APMF_API::kInvalidHandle && entryT != 0 &&
+                entryT != a_dropped)
+                return "NOT ended: a winning ch.21 entry names another target (that fight is wanted)";
             // Review R-1: the dropped target was the fight only if NO OTHER live target of the actor's group is
             // attacking the party. The group's targets and members are copied under the group's own READ lock
             // (BSReadLockGuard, recursive for a writer; nothing nested inside it), then judged outside it.
@@ -1072,22 +1145,36 @@ namespace {
         // ch.24 bound (a drive, a leash return) and ch.23's search stamps for the actor. Nothing is re-armed: the
         // track is `ended` until the claims are gone, and nothing here waits on a timer. The engine's own group
         // entry is not undone (it is the engine's; the group goes with the controller StopCombat frees). Game thread.
-        void DropNotEngaged(RE::Actor* a_actor, RE::FormID a_id, Track& a_t, RE::FormID a_target,
-                            RE::ActorHandle a_targetH, const std::string& a_where, float a_range) {
-            const APMF_API::Handle entryH = ClaimHandle(a_id, APMF_API::kIntent_CombatEntry);
+        // TWO callers, ONE path (marth 2026-10-27: a no-path-progress end counts as NOT ENGAGED, "not engaged ->
+        // combat dropped immediately"): the range rule (kOutOfRange) and the no-path-progress watchdog
+        // (kNoPathProgress). `a_detail` ends the DROPPED line. Returns this actor -> target's end count.
+        enum class DropWhy : std::uint8_t { kOutOfRange, kNoPathProgress };
+
+        std::uint32_t DropNotEngaged(RE::Actor* a_actor, RE::FormID a_id, Track& a_t, RE::FormID a_target,
+                                     RE::ActorHandle a_targetH, DropWhy a_why, const std::string& a_detail) {
+            const bool             range  = a_why == DropWhy::kOutOfRange;
+            RE::FormID             entryT = 0;
+            const APMF_API::Handle entryH = ClaimHandle(a_id, APMF_API::kIntent_CombatEntry, &entryT);
             RE::FormID             pinT   = 0;
             const APMF_API::Handle pinH   = ClaimHandle(a_id, APMF_API::kIntent_TargetPin, &pinT);
             const char*            drive  = DriveName(a_t.drive);
-            const std::string      stop   = StopCombatRanked(a_actor, entryH, a_target, a_targetH);
+            // The claim StopCombat is ranked for (review F1 of 94c35f6): the one that names the dropped target. The
+            // entry when it does (always, for the range rule), else the pin (a pin-only hold, or a pin on X with an
+            // entry on Y: StopCombatRanked then refuses, the entry's fight is still wanted).
+            const APMF_API::Handle rankH  = (entryH != APMF_API::kInvalidHandle && entryT == a_target) ? entryH : pinH;
+            const std::string      stop   = StopCombatRanked(a_actor, rankH, a_target, a_targetH);
             const bool             ended  = stop.starts_with("combat ENDED");
-            constexpr const char*  kWhy   = "held engagement: not engaged (out of engage range, not hostile)";
+            const char*            kWhy   = range ? "held engagement: not engaged (out of engage range, not hostile)"
+                                                  : "held engagement: no path progress (anomaly)";
+            const std::uint32_t    cause  = range ? APMF_API::kClaimEnd_NotEngaged : APMF_API::kClaimEnd_NoPathProgress;
             if (a_t.target == a_target) a_t.ended = true;
-            if (a_t.drive != Drive::kNone) StopDrive(a_id, a_t, "not engaged");
+            if (a_t.drive != Drive::kNone) StopDrive(a_id, a_t, range ? "not engaged" : "no path progress");
             apmf::combatapproach::ClearInternalBound(a_id);   // a leash return or any other internal bound
-            apmf::actiongate::ForgetEngagement(a_id, "the engagement was dropped (not engaged)");
-            EndClaim(a_id, a_target, kWhy);
+            apmf::actiongate::ForgetEngagement(a_id, range ? "the engagement was dropped (not engaged)"
+                                                           : "the engagement was dropped (no path progress)");
+            EndClaim(a_id, a_target, kWhy, cause);
             const bool pinNamed = pinH != APMF_API::kInvalidHandle && pinT == a_target;
-            if (pinNamed) apmf::targetpin::EndHeld(a_id, a_target, kWhy);
+            if (pinNamed) apmf::targetpin::EndHeld(a_id, a_target, kWhy, cause);
             {
                 std::unique_lock lk(g_holdMx);
                 if (const auto it = g_holds.find(a_id); it != g_holds.end()) {
@@ -1098,7 +1185,7 @@ namespace {
                 }
                 g_holdCount.store(g_holds.size(), std::memory_order_relaxed);
             }
-            ++g_rangeDrops;
+            if (range) ++g_rangeDrops;   // the no-path end is counted in g_anomalies by its caller
             const std::uint32_t nth = CountEnd(a_id, a_target);
             if (nth > 1) ++g_cycles;
             const std::string released = fmt::format(
@@ -1107,21 +1194,31 @@ namespace {
                 entryH, pinNamed ? fmt::format(", ch.20 pin h={}", pinH) : std::string(), drive);
             if (ended)
                 spdlog::info("[hold] 0x{} -> 0x{} DROPPED (not engaged) -- combat ended, prior behaviour restored "
-                             "(released: {}). {} (range {:.0f}), not hostile. End #{} of this engagement this session.",
-                             Hex(a_id), Hex(a_target), released, a_where, a_range, nth);
+                             "(released: {}). {}. End #{} of this engagement this session.",
+                             Hex(a_id), Hex(a_target), released, a_detail, nth);
             else
-                spdlog::info("[hold] 0x{} -> 0x{} DROPPED (not engaged) -- {} (released: {}). {} (range {:.0f}), not "
-                             "hostile. End #{} of this engagement this session.",
-                             Hex(a_id), Hex(a_target), stop, released, a_where, a_range, nth);
+                spdlog::info("[hold] 0x{} -> 0x{} DROPPED (not engaged) -- {} (released: {}). {}. End #{} of this "
+                             "engagement this session.",
+                             Hex(a_id), Hex(a_target), stop, released, a_detail, nth);
+            return nth;
         }
 
         // End this hold (a watchdog anomaly): both claims naming the target and the drive. No cooldown (marth
         // 2026-10-12). Returns how many times this actor -> target has been ended this session.
-        std::uint32_t EndHold(RE::FormID a_id, Track& a_t, const char* a_reason) {
+        // `a_cause` is the APMF_API::ClaimEndReason recorded for the claims it ends (ABI v31).
+        std::uint32_t EndHold(RE::FormID a_id, Track& a_t, const char* a_reason, std::uint32_t a_cause) {
             a_t.ended = true;
+            {   // the side(s) holding this target: the next target set there is a new engagement (Hold::pinGen)
+                std::unique_lock lk(g_holdMx);
+                if (const auto it = g_holds.find(a_id); it != g_holds.end()) {
+                    Hold& h = *it->second;
+                    if (h.pinTarget == a_t.target) h.pinEnded = true;
+                    if (h.entryTarget == a_t.target) h.entryEnded = true;
+                }
+            }
             StopDrive(a_id, a_t, a_reason);
-            EndClaim(a_id, a_t.target, a_reason);
-            apmf::targetpin::EndHeld(a_id, a_t.target, a_reason);
+            EndClaim(a_id, a_t.target, a_reason, a_cause);
+            apmf::targetpin::EndHeld(a_id, a_t.target, a_reason, a_cause);
             const std::uint32_t n = CountEnd(a_id, a_t.target);
             if (n > 1) ++g_cycles;
             return n;
@@ -1255,6 +1352,12 @@ namespace apmf::combatentry::hold {
             if (!slot) slot = std::make_unique<Hold>();
             const std::uint32_t n = a_target != 0 ? a_handle.native_handle() : 0;
             if (holderH != 0) slot->holderHandle = holderH;
+            // A target this side did not already hold, or any target on a side a watchdog ended, starts a new
+            // engagement generation (see Hold::pinGen).
+            bool& sideEnded = a_pin ? slot->pinEnded : slot->entryEnded;
+            if (a_target != 0 && (sideEnded || (a_pin ? slot->pinTarget : slot->entryTarget) != a_target))
+                (a_pin ? slot->pinGen : slot->entryGen) = ++g_holdGen;
+            sideEnded = false;
             if (a_pin) { slot->pinTarget = a_target; slot->pinHandle = n; slot->pinH = a_handle; }
             else { slot->entryTarget = a_target; slot->entryHandle = n; slot->entryH = a_handle; slot->entryRange = a_range; }
             if (slot->Empty()) g_holds.erase(a_actor);
@@ -1300,6 +1403,7 @@ namespace apmf::combatentry::hold {
         // actor fights -- else the entry's).
         struct Snap {
             RE::FormID      id, target;
+            std::uint32_t   gen;
             RE::ActorHandle handle;
             bool            viaPin;
             RE::FormID      entryTarget;
@@ -1316,7 +1420,8 @@ namespace apmf::combatentry::hold {
                 const RE::FormID    tf = pin ? h->pinTarget : h->entryTarget;
                 const std::uint32_t th = pin ? h->pinHandle : h->entryHandle;
                 if (tf == 0 || th == 0) continue;
-                snaps.push_back({ id, tf, pin ? h->pinH : h->entryH, pin, h->entryTarget, h->entryH, h->entryRange,
+                snaps.push_back({ id, tf, pin ? h->pinGen : h->entryGen, pin ? h->pinH : h->entryH, pin,
+                                  h->entryTarget, h->entryH, h->entryRange,
                                   h->lostCleared.load(), h->locRefreshed.load(), h->leashExempt.load() });
             }
         }
@@ -1331,10 +1436,15 @@ namespace apmf::combatentry::hold {
 
         for (const auto& sn : snaps) {
             auto& t = g_tracks[sn.id];
-            if (t.target != sn.target) {   // a new hold (or a re-point): fresh track
+            // A new hold, a re-point, or the same target engaged AGAIN after its track ended (a new generation:
+            // an ended track runs no watchdog): fresh track. A live track keeps its window across a generation
+            // change (review F2 of 94c35f6: a same-target pin added or dropped beside the entry flips the
+            // effective side, and restarting there would let pin churn hold off the no-progress end forever).
+            if (t.target != sn.target || (t.ended && t.gen != sn.gen)) {
                 StopDrive(sn.id, t, "re-pointed");
                 t = Track{};
                 t.target = sn.target;
+                t.gen    = sn.gen;
                 t.th     = sn.handle;
                 t.viaPin = sn.viaPin;
                 t.windowStartMs = wnow;
@@ -1441,9 +1551,10 @@ namespace apmf::combatentry::hold {
                     std::vector<std::uint32_t> members;
                     ReadGroup(actor, nullptr, members, 0);
                     if (!ActivelyHostile(et, actor, &members)) {
-                        DropNotEngaged(actor, sn.id, t, sn.entryTarget, sn.entryH,
-                                       esame ? fmt::format("{:.0f}u away", ed) : std::string("in another cell"),
-                                       sn.range);
+                        DropNotEngaged(actor, sn.id, t, sn.entryTarget, sn.entryH, DropWhy::kOutOfRange,
+                                       fmt::format("{} (range {:.0f}), not hostile",
+                                                   esame ? fmt::format("{:.0f}u away", ed) : std::string("in another cell"),
+                                                   sn.range));
                         continue;
                     }
                 }
@@ -1526,7 +1637,8 @@ namespace apmf::combatentry::hold {
                 if (t.lastHeldActMs > t.arrivedSinceMs) t.arrivedSinceMs = t.lastHeldActMs;   // a strike restarts it
                 if (wnow - t.arrivedSinceMs >= kArrivedIdleMs) {
                     ++g_arrivedIdle;
-                    const std::uint32_t nth = EndHold(sn.id, t, "held engagement: arrived but not fighting it (anomaly)");
+                    const std::uint32_t nth = EndHold(sn.id, t, "held engagement: arrived but not fighting it (anomaly)",
+                                                      APMF_API::kClaimEnd_ArrivedIdle);
                     spdlog::warn("[hold] ANOMALY 0x{} -> 0x{}: ARRIVED (within {:.0f}u, distance {:.0f}) but no attack or "
                                  "cast on it for {} s (target {}). The held engagement is RELEASED (the ch.21 and ch.20 "
                                  "claims naming it); the client may engage again at once. End #{} of this engagement "
@@ -1545,14 +1657,16 @@ namespace apmf::combatentry::hold {
             if (acted || closer || kept) continue;
             ++g_anomalies;
             const float         s0d = s0.dist, aMoved = t.path - s0.path, tMoved = tpos.GetDistance(s0.tpos);
-            const std::uint32_t nth = EndHold(sn.id, t, "held engagement: no path progress (anomaly)");
+            // marth 2026-10-27: a no-path-progress end counts as NOT ENGAGED ("if it wont path to it then theres the
+            // issue", "not engaged -> combat dropped immediately"): the range rule's own drop, combat ended (ranked,
+            // review R-1) and prior behaviour restored. The client reads kClaimEnd_NoPathProgress (ABI v31).
             spdlog::warn("[hold] ANOMALY 0x{} -> 0x{}: NO PATH PROGRESS for {} s while in combat (distance {:.0f} -> "
-                         "{:.0f}, actor moved {:.0f}u, target moved {:.0f}u, {}; no attack or cast on it; target {}). The "
-                         "held engagement is RELEASED (the ch.21 and ch.20 claims naming it); the client may engage again "
-                         "at once. End #{} of this engagement this session.",
+                         "{:.0f}, actor moved {:.0f}u, target moved {:.0f}u, {}, no attack or cast on it, target {}). The "
+                         "held engagement counts as NOT ENGAGED and is DROPPED (the DROPPED line says what was ended).",
                          Hex(sn.id), Hex(sn.target), kNoProgressMs / 1000, s0d, dist, aMoved, tMoved,
-                         same ? "same cell / worldspace" : "the target is in another cell or worldspace", LifeName(life),
-                         nth);
+                         same ? "same cell / worldspace" : "the target is in another cell or worldspace", LifeName(life));
+            DropNotEngaged(actor, sn.id, t, sn.target, t.th, DropWhy::kNoPathProgress,
+                           fmt::format("No path progress for {} s", kNoProgressMs / 1000));
         }
     }
 

@@ -1189,3 +1189,6 @@ Reviewer, verbatim as relayed: "CommonLib names ATKD flag bit 3 kChargeAttack bu
 
 ### APMF-B224 (SEV-5, OPEN, process, core/ActionGate.cpp, against 162a446) -- ActionGate.cpp past the split threshold
 Reviewer, verbatim as relayed: "ActionGate.cpp 2342 lines, the next brief must propose the split (RangedProbe / PFP / leash seams) as its own round."
+
+### APMF-B225 (SEV-5, OPEN, pre-existing, channels/CombatEntry.cpp hold EndHold, against 94c35f6, Opus review of fix/apmf-hold-repin-nopath) -- an ended Track under a live claim
+Reviewer, verbatim as relayed: "An ended Track can stay ended under a live claim. When EndHold runs but EndClaim / EndHeld find no winning claim naming the target (the entry or pin is not the winner or is already ending), the Track is ended but the claim stays live and nothing is released. entryEnded / pinEnded only take effect on a later SetSlot, so with no Repoint the watchdogs never run again for that live claim. Rare, not introduced here."
