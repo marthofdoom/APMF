@@ -1191,7 +1191,7 @@
     "0x03",
     "0x04"
    ],
-   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp; 0x04 = ch.23 pursuit-leash update() seat (ActionGate.cpp UpdateThunk, ABI v16)",
+   "source": "native/core/BehaviorTreeCatalog.h (kLeaves); ActionGate.cpp; 0x04 = ch.23 pursuit-leash update() seat (ActionGate.cpp UpdateThunk, ABI v16)",
    "doc": "ADDRESS-TABLE-2026-09-15.md:289"
   },
   {
@@ -1208,7 +1208,7 @@
     "0x02",
     "0x03"
    ],
-   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp; channels/CombatApproach.cpp (ch.24 deny bracket on act 0x02)",
+   "source": "native/core/BehaviorTreeCatalog.h (kLeaves); ActionGate.cpp; channels/CombatApproach.cpp (ch.24 deny bracket on act 0x02)",
    "doc": "ADDRESS-TABLE-2026-09-15.md:290"
   },
   {
@@ -1225,7 +1225,7 @@
     "0x02",
     "0x03"
    ],
-   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "source": "native/core/BehaviorTreeCatalog.h (kLeaves); ActionGate.cpp",
    "doc": "ADDRESS-TABLE-2026-09-15.md:291"
   },
   {
@@ -1242,7 +1242,7 @@
     "0x02",
     "0x03"
    ],
-   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "source": "native/core/BehaviorTreeCatalog.h (kLeaves); ActionGate.cpp",
    "doc": "ADDRESS-TABLE-2026-09-15.md:292"
   },
   {
@@ -1259,7 +1259,7 @@
     "0x02",
     "0x03"
    ],
-   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "source": "native/core/BehaviorTreeCatalog.h (kLeaves); ActionGate.cpp",
    "doc": "ADDRESS-TABLE-2026-09-15.md:293"
   },
   {
@@ -1276,7 +1276,7 @@
     "0x02",
     "0x03"
    ],
-   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp; channels/CombatApproach.cpp (ch.24 deny bracket on act 0x02)",
+   "source": "native/core/BehaviorTreeCatalog.h (kLeaves); ActionGate.cpp; channels/CombatApproach.cpp (ch.24 deny bracket on act 0x02)",
    "doc": "ADDRESS-TABLE-2026-09-15.md:294"
   },
   {
@@ -1293,7 +1293,7 @@
     "0x02",
     "0x03"
    ],
-   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "source": "native/core/BehaviorTreeCatalog.h (kLeaves); ActionGate.cpp",
    "doc": "ADDRESS-TABLE-2026-09-15.md:295"
   },
   {
@@ -1310,7 +1310,7 @@
     "0x02",
     "0x03"
    ],
-   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "source": "native/core/BehaviorTreeCatalog.h (kLeaves); ActionGate.cpp",
    "doc": "ADDRESS-TABLE-2026-09-15.md:296"
   },
   {
@@ -1327,7 +1327,7 @@
     "0x02",
     "0x03"
    ],
-   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "source": "native/core/BehaviorTreeCatalog.h (kLeaves); ActionGate.cpp",
    "doc": "ADDRESS-TABLE-2026-09-15.md:297"
   },
   {
@@ -1344,7 +1344,7 @@
     "0x02",
     "0x03"
    ],
-   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "source": "native/core/BehaviorTreeCatalog.h (kLeaves); ActionGate.cpp",
    "doc": "ADDRESS-TABLE-2026-09-15.md:298"
   },
   {
@@ -1361,7 +1361,7 @@
     "0x02",
     "0x03"
    ],
-   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "source": "native/core/BehaviorTreeCatalog.h (kLeaves); ActionGate.cpp",
    "doc": "ADDRESS-TABLE-2026-09-15.md:299"
   },
   {
@@ -1379,7 +1379,7 @@
     "0x03",
     "0x04"
    ],
-   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp; 0x04 = ch.23 pursuit-leash update() seat (ActionGate.cpp UpdateThunk, ABI v16)",
+   "source": "native/core/BehaviorTreeCatalog.h (kLeaves); ActionGate.cpp; 0x04 = ch.23 pursuit-leash update() seat (ActionGate.cpp UpdateThunk, ABI v16)",
    "doc": "ADDRESS-TABLE-2026-09-15.md:300"
   },
   {
@@ -1396,7 +1396,7 @@
     "0x02",
     "0x03"
    ],
-   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "source": "native/core/BehaviorTreeCatalog.h (kLeaves); ActionGate.cpp",
    "doc": "ADDRESS-TABLE-2026-09-15.md:301"
   },
   {
@@ -1413,7 +1413,7 @@
     "0x02",
     "0x03"
    ],
-   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "source": "native/core/BehaviorTreeCatalog.h (kLeaves); ActionGate.cpp",
    "doc": "ADDRESS-TABLE-2026-09-15.md:302"
   },
   {
@@ -1430,7 +1430,7 @@
     "0x02",
     "0x03"
    ],
-   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "source": "native/core/BehaviorTreeCatalog.h (kLeaves); ActionGate.cpp",
    "doc": "ADDRESS-TABLE-2026-09-15.md:303"
   },
   {
@@ -1447,7 +1447,7 @@
     "0x02",
     "0x03"
    ],
-   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "source": "native/core/BehaviorTreeCatalog.h (kLeaves); ActionGate.cpp",
    "doc": "ADDRESS-TABLE-2026-09-15.md:304"
   },
   {
@@ -1464,7 +1464,7 @@
     "0x02",
     "0x03"
    ],
-   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "source": "native/core/BehaviorTreeCatalog.h (kLeaves); ActionGate.cpp",
    "doc": "ADDRESS-TABLE-2026-09-15.md:305"
   },
   {
@@ -1481,7 +1481,7 @@
     "0x02",
     "0x03"
    ],
-   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "source": "native/core/BehaviorTreeCatalog.h (kLeaves); ActionGate.cpp",
    "doc": "ADDRESS-TABLE-2026-09-15.md:306"
   },
   {
@@ -1498,7 +1498,7 @@
     "0x02",
     "0x03"
    ],
-   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "source": "native/core/BehaviorTreeCatalog.h (kLeaves); ActionGate.cpp",
    "doc": "ADDRESS-TABLE-2026-09-15.md:307"
   },
   {
@@ -1515,7 +1515,7 @@
     "0x02",
     "0x03"
    ],
-   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "source": "native/core/BehaviorTreeCatalog.h (kLeaves); ActionGate.cpp",
    "doc": "ADDRESS-TABLE-2026-09-15.md:308"
   },
   {
@@ -1532,7 +1532,7 @@
     "0x02",
     "0x03"
    ],
-   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "source": "native/core/BehaviorTreeCatalog.h (kLeaves); ActionGate.cpp",
    "doc": "ADDRESS-TABLE-2026-09-15.md:309"
   },
   {
@@ -1549,7 +1549,7 @@
     "0x02",
     "0x03"
    ],
-   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "source": "native/core/BehaviorTreeCatalog.h (kLeaves); ActionGate.cpp",
    "doc": "ADDRESS-TABLE-2026-09-15.md:310"
   },
   {
@@ -1566,7 +1566,7 @@
     "0x02",
     "0x03"
    ],
-   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "source": "native/core/BehaviorTreeCatalog.h (kLeaves); ActionGate.cpp",
    "doc": "ADDRESS-TABLE-2026-09-15.md:311"
   },
   {
@@ -1583,7 +1583,7 @@
     "0x02",
     "0x03"
    ],
-   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "source": "native/core/BehaviorTreeCatalog.h (kLeaves); ActionGate.cpp",
    "doc": "ADDRESS-TABLE-2026-09-15.md:312"
   },
   {
@@ -1600,7 +1600,7 @@
     "0x02",
     "0x03"
    ],
-   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "source": "native/core/BehaviorTreeCatalog.h (kLeaves); ActionGate.cpp",
    "doc": "ADDRESS-TABLE-2026-09-15.md:313"
   },
   {
@@ -1617,7 +1617,7 @@
     "0x02",
     "0x03"
    ],
-   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "source": "native/core/BehaviorTreeCatalog.h (kLeaves); ActionGate.cpp",
    "doc": "ADDRESS-TABLE-2026-09-15.md:314"
   },
   {
@@ -1634,7 +1634,7 @@
     "0x02",
     "0x03"
    ],
-   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "source": "native/core/BehaviorTreeCatalog.h (kLeaves); ActionGate.cpp",
    "doc": "ADDRESS-TABLE-2026-09-15.md:315"
   },
   {
@@ -1651,7 +1651,7 @@
     "0x02",
     "0x03"
    ],
-   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "source": "native/core/BehaviorTreeCatalog.h (kLeaves); ActionGate.cpp",
    "doc": "ADDRESS-TABLE-2026-09-15.md:316"
   },
   {
@@ -1668,7 +1668,7 @@
     "0x02",
     "0x03"
    ],
-   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "source": "native/core/BehaviorTreeCatalog.h (kLeaves); ActionGate.cpp",
    "doc": "ADDRESS-TABLE-2026-09-15.md:317"
   },
   {
@@ -1685,7 +1685,7 @@
     "0x02",
     "0x03"
    ],
-   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "source": "native/core/BehaviorTreeCatalog.h (kLeaves); ActionGate.cpp",
    "doc": "ADDRESS-TABLE-2026-09-15.md:318"
   },
   {
@@ -1702,7 +1702,7 @@
     "0x02",
     "0x03"
    ],
-   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "source": "native/core/BehaviorTreeCatalog.h (kLeaves); ActionGate.cpp",
    "doc": "ADDRESS-TABLE-2026-09-15.md:319"
   },
   {
@@ -1719,7 +1719,7 @@
     "0x02",
     "0x03"
    ],
-   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "source": "native/core/BehaviorTreeCatalog.h (kLeaves); ActionGate.cpp",
    "doc": "ADDRESS-TABLE-2026-09-15.md:320"
   },
   {
@@ -1737,7 +1737,7 @@
     "0x03",
     "0x04"
    ],
-   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp; 0x04 = ch.23 pursuit-leash update() seat (ActionGate.cpp UpdateThunk, ABI v16)",
+   "source": "native/core/BehaviorTreeCatalog.h (kLeaves); ActionGate.cpp; 0x04 = ch.23 pursuit-leash update() seat (ActionGate.cpp UpdateThunk, ABI v16)",
    "doc": "ADDRESS-TABLE-2026-09-15.md:321"
   },
   {
@@ -1754,7 +1754,7 @@
     "0x02",
     "0x03"
    ],
-   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "source": "native/core/BehaviorTreeCatalog.h (kLeaves); ActionGate.cpp",
    "doc": "ADDRESS-TABLE-2026-09-15.md:322"
   },
   {
@@ -1771,7 +1771,7 @@
     "0x02",
     "0x03"
    ],
-   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "source": "native/core/BehaviorTreeCatalog.h (kLeaves); ActionGate.cpp",
    "doc": "ADDRESS-TABLE-2026-09-15.md:323"
   },
   {
@@ -1788,7 +1788,7 @@
     "0x02",
     "0x03"
    ],
-   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "source": "native/core/BehaviorTreeCatalog.h (kLeaves); ActionGate.cpp",
    "doc": "ADDRESS-TABLE-2026-09-15.md:324"
   },
   {
@@ -1806,7 +1806,7 @@
     "0x03",
     "0x04"
    ],
-   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp; 0x04 = ch.23 pursuit-leash update() seat (ActionGate.cpp UpdateThunk, ABI v16)",
+   "source": "native/core/BehaviorTreeCatalog.h (kLeaves); ActionGate.cpp; 0x04 = ch.23 pursuit-leash update() seat (ActionGate.cpp UpdateThunk, ABI v16)",
    "doc": "ADDRESS-TABLE-2026-09-15.md:325"
   },
   {
@@ -1824,7 +1824,7 @@
     "0x03",
     "0x04"
    ],
-   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp; 0x04 = ch.23 pursuit-leash update() seat (ActionGate.cpp UpdateThunk, ABI v16)",
+   "source": "native/core/BehaviorTreeCatalog.h (kLeaves); ActionGate.cpp; 0x04 = ch.23 pursuit-leash update() seat (ActionGate.cpp UpdateThunk, ABI v16)",
    "doc": "ADDRESS-TABLE-2026-09-15.md:326"
   },
   {
@@ -1841,7 +1841,7 @@
     "0x02",
     "0x03"
    ],
-   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "source": "native/core/BehaviorTreeCatalog.h (kLeaves); ActionGate.cpp",
    "doc": "ADDRESS-TABLE-2026-09-15.md:327"
   },
   {
@@ -1858,7 +1858,7 @@
     "0x02",
     "0x03"
    ],
-   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "source": "native/core/BehaviorTreeCatalog.h (kLeaves); ActionGate.cpp",
    "doc": "ADDRESS-TABLE-2026-09-15.md:328"
   },
   {
@@ -1875,7 +1875,7 @@
     "0x02",
     "0x03"
    ],
-   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "source": "native/core/BehaviorTreeCatalog.h (kLeaves); ActionGate.cpp",
    "doc": "ADDRESS-TABLE-2026-09-15.md:329"
   },
   {
@@ -1892,7 +1892,7 @@
     "0x02",
     "0x03"
    ],
-   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "source": "native/core/BehaviorTreeCatalog.h (kLeaves); ActionGate.cpp",
    "doc": "ADDRESS-TABLE-2026-09-15.md:330"
   },
   {
@@ -1909,7 +1909,7 @@
     "0x02",
     "0x03"
    ],
-   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "source": "native/core/BehaviorTreeCatalog.h (kLeaves); ActionGate.cpp",
    "doc": "ADDRESS-TABLE-2026-09-15.md:331"
   },
   {
@@ -1926,7 +1926,7 @@
     "0x02",
     "0x03"
    ],
-   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "source": "native/core/BehaviorTreeCatalog.h (kLeaves); ActionGate.cpp",
    "doc": "ADDRESS-TABLE-2026-09-15.md:332"
   },
   {
@@ -1943,7 +1943,7 @@
     "0x02",
     "0x03"
    ],
-   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "source": "native/core/BehaviorTreeCatalog.h (kLeaves); ActionGate.cpp",
    "doc": "ADDRESS-TABLE-2026-09-15.md:333"
   },
   {
@@ -1960,7 +1960,7 @@
     "0x02",
     "0x03"
    ],
-   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "source": "native/core/BehaviorTreeCatalog.h (kLeaves); ActionGate.cpp",
    "doc": "ADDRESS-TABLE-2026-09-15.md:334"
   },
   {
@@ -1977,7 +1977,7 @@
     "0x02",
     "0x03"
    ],
-   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "source": "native/core/BehaviorTreeCatalog.h (kLeaves); ActionGate.cpp",
    "doc": "ADDRESS-TABLE-2026-09-15.md:335"
   },
   {
@@ -1994,7 +1994,7 @@
     "0x02",
     "0x03"
    ],
-   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "source": "native/core/BehaviorTreeCatalog.h (kLeaves); ActionGate.cpp",
    "doc": "ADDRESS-TABLE-2026-09-15.md:336"
   },
   {
@@ -2011,7 +2011,7 @@
     "0x02",
     "0x03"
    ],
-   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "source": "native/core/BehaviorTreeCatalog.h (kLeaves); ActionGate.cpp",
    "doc": "ADDRESS-TABLE-2026-09-15.md:337"
   },
   {
@@ -2029,7 +2029,7 @@
     "0x03",
     "0x04"
    ],
-   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp; 0x04 = ch.23 pursuit-leash update() seat (ActionGate.cpp UpdateThunk, ABI v16)",
+   "source": "native/core/BehaviorTreeCatalog.h (kLeaves); ActionGate.cpp; 0x04 = ch.23 pursuit-leash update() seat (ActionGate.cpp UpdateThunk, ABI v16)",
    "doc": "ADDRESS-TABLE-2026-09-15.md:338"
   },
   {
@@ -2046,7 +2046,7 @@
     "0x02",
     "0x03"
    ],
-   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "source": "native/core/BehaviorTreeCatalog.h (kLeaves); ActionGate.cpp",
    "doc": "ADDRESS-TABLE-2026-09-15.md:339"
   },
   {
@@ -2063,7 +2063,7 @@
     "0x02",
     "0x03"
    ],
-   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "source": "native/core/BehaviorTreeCatalog.h (kLeaves); ActionGate.cpp",
    "doc": "ADDRESS-TABLE-2026-09-15.md:340"
   },
   {
@@ -2081,7 +2081,7 @@
     "0x03",
     "0x04"
    ],
-   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp (act/pop pair; slot 0x04 = the substrate MOVEMENT HOLD update seat, fix/apmf-ooc-substrate)",
+   "source": "native/core/BehaviorTreeCatalog.h (kLeaves); ActionGate.cpp (act/pop pair; slot 0x04 = the substrate MOVEMENT HOLD update seat, fix/apmf-ooc-substrate)",
    "doc": "ADDRESS-TABLE-2026-09-15.md:341"
   },
   {
@@ -2098,7 +2098,7 @@
     "0x02",
     "0x03"
    ],
-   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "source": "native/core/BehaviorTreeCatalog.h (kLeaves); ActionGate.cpp",
    "doc": "ADDRESS-TABLE-2026-09-15.md:342"
   },
   {
@@ -2115,7 +2115,7 @@
     "0x02",
     "0x03"
    ],
-   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "source": "native/core/BehaviorTreeCatalog.h (kLeaves); ActionGate.cpp",
    "doc": "ADDRESS-TABLE-2026-09-15.md:343"
   },
   {
@@ -2132,7 +2132,7 @@
     "0x02",
     "0x03"
    ],
-   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "source": "native/core/BehaviorTreeCatalog.h (kLeaves); ActionGate.cpp",
    "doc": "ADDRESS-TABLE-2026-09-15.md:344"
   },
   {
@@ -2150,7 +2150,7 @@
     "0x03",
     "0x04"
    ],
-   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp; 0x04 = ch.23 pursuit-leash update() seat (ActionGate.cpp UpdateThunk, ABI v16)",
+   "source": "native/core/BehaviorTreeCatalog.h (kLeaves); ActionGate.cpp; 0x04 = ch.23 pursuit-leash update() seat (ActionGate.cpp UpdateThunk, ABI v16)",
    "doc": "ADDRESS-TABLE-2026-09-15.md:345"
   },
   {
@@ -2167,7 +2167,7 @@
     "0x02",
     "0x03"
    ],
-   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "source": "native/core/BehaviorTreeCatalog.h (kLeaves); ActionGate.cpp",
    "doc": "ADDRESS-TABLE-2026-09-15.md:346"
   },
   {
@@ -2184,7 +2184,7 @@
     "0x02",
     "0x03"
    ],
-   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "source": "native/core/BehaviorTreeCatalog.h (kLeaves); ActionGate.cpp",
    "doc": "ADDRESS-TABLE-2026-09-15.md:347"
   },
   {
@@ -2202,7 +2202,7 @@
     "0x03",
     "0x04"
    ],
-   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp; 0x04 = ch.23 pursuit-leash update() seat (ActionGate.cpp UpdateThunk, ABI v16)",
+   "source": "native/core/BehaviorTreeCatalog.h (kLeaves); ActionGate.cpp; 0x04 = ch.23 pursuit-leash update() seat (ActionGate.cpp UpdateThunk, ABI v16)",
    "doc": "ADDRESS-TABLE-2026-09-15.md:348"
   },
   {
@@ -2219,7 +2219,7 @@
     "0x02",
     "0x03"
    ],
-   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "source": "native/core/BehaviorTreeCatalog.h (kLeaves); ActionGate.cpp",
    "doc": "ADDRESS-TABLE-2026-09-15.md:349"
   },
   {
@@ -2236,7 +2236,7 @@
     "0x02",
     "0x03"
    ],
-   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "source": "native/core/BehaviorTreeCatalog.h (kLeaves); ActionGate.cpp",
    "doc": "ADDRESS-TABLE-2026-09-15.md:350"
   },
   {
@@ -2253,7 +2253,7 @@
     "0x02",
     "0x03"
    ],
-   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "source": "native/core/BehaviorTreeCatalog.h (kLeaves); ActionGate.cpp",
    "doc": "ADDRESS-TABLE-2026-09-15.md:351"
   },
   {
@@ -2270,7 +2270,7 @@
     "0x02",
     "0x03"
    ],
-   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "source": "native/core/BehaviorTreeCatalog.h (kLeaves); ActionGate.cpp",
    "doc": "ADDRESS-TABLE-2026-09-15.md:352"
   },
   {
@@ -2288,7 +2288,7 @@
     "0x03",
     "0x04"
    ],
-   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp; 0x04 = ch.23 pursuit-leash update() seat (ActionGate.cpp UpdateThunk, ABI v16)",
+   "source": "native/core/BehaviorTreeCatalog.h (kLeaves); ActionGate.cpp; 0x04 = ch.23 pursuit-leash update() seat (ActionGate.cpp UpdateThunk, ABI v16)",
    "doc": "ADDRESS-TABLE-2026-09-15.md:353"
   },
   {
@@ -2305,7 +2305,7 @@
     "0x02",
     "0x03"
    ],
-   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "source": "native/core/BehaviorTreeCatalog.h (kLeaves); ActionGate.cpp",
    "doc": "ADDRESS-TABLE-2026-09-15.md:354"
   },
   {
@@ -2323,7 +2323,7 @@
     "0x03",
     "0x04"
    ],
-   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp; 0x04 = ch.23 pursuit-leash update() seat (ActionGate.cpp UpdateThunk, ABI v16)",
+   "source": "native/core/BehaviorTreeCatalog.h (kLeaves); ActionGate.cpp; 0x04 = ch.23 pursuit-leash update() seat (ActionGate.cpp UpdateThunk, ABI v16)",
    "doc": "ADDRESS-TABLE-2026-09-15.md:355"
   },
   {
@@ -2340,7 +2340,7 @@
     "0x02",
     "0x03"
    ],
-   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "source": "native/core/BehaviorTreeCatalog.h (kLeaves); ActionGate.cpp",
    "doc": "ADDRESS-TABLE-2026-09-15.md:356"
   },
   {
@@ -2357,7 +2357,7 @@
     "0x02",
     "0x03"
    ],
-   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "source": "native/core/BehaviorTreeCatalog.h (kLeaves); ActionGate.cpp",
    "doc": "ADDRESS-TABLE-2026-09-15.md:357"
   },
   {
@@ -2374,7 +2374,7 @@
     "0x02",
     "0x03"
    ],
-   "source": "native/core/CombatBehaviorRE.h (kLeaves); ActionGate.cpp",
+   "source": "native/core/BehaviorTreeCatalog.h (kLeaves); ActionGate.cpp",
    "doc": "ADDRESS-TABLE-2026-09-15.md:358"
   },
   {
@@ -2392,7 +2392,7 @@
     "0x03",
     "0x04"
    ],
-   "source": "native/core/CombatBehaviorRE.h (kSearchLeaves); ActionGate.cpp ch.23 pursuit leash (act/pop/update)",
+   "source": "native/core/BehaviorTreeCatalog.h (kSearchLeaves); ActionGate.cpp ch.23 pursuit leash (act/pop/update)",
    "doc": "MIT fork Offsets_VTABLE.h:3822 (VTABLE_CombatBehaviorTreeNodeObject1_CombatBehaviorSearch_COMBAT_SEARCH_PRIORITY_)"
   },
   {
@@ -2410,7 +2410,7 @@
     "0x03",
     "0x04"
    ],
-   "source": "native/core/CombatBehaviorRE.h (kSearchLeaves); ActionGate.cpp ch.23 pursuit leash (act/pop/update)",
+   "source": "native/core/BehaviorTreeCatalog.h (kSearchLeaves); ActionGate.cpp ch.23 pursuit leash (act/pop/update)",
    "doc": "MIT fork Offsets_VTABLE.h:3826 (VTABLE_CombatBehaviorTreeNodeObject1_CombatBehaviorSearchCenter_COMBAT_SEARCH_PRIORITY_)"
   },
   {
@@ -2428,7 +2428,7 @@
     "0x03",
     "0x04"
    ],
-   "source": "native/core/CombatBehaviorRE.h (kSearchLeaves); ActionGate.cpp ch.23 pursuit leash (act/pop/update)",
+   "source": "native/core/BehaviorTreeCatalog.h (kSearchLeaves); ActionGate.cpp ch.23 pursuit leash (act/pop/update)",
    "doc": "MIT fork Offsets_VTABLE.h:3820 (VTABLE_CombatBehaviorTreeNodeObject1_CombatBehaviorSearchLocation_COMBAT_SEARCH_PRIORITY_)"
   },
   {
@@ -2446,7 +2446,7 @@
     "0x03",
     "0x04"
    ],
-   "source": "native/core/CombatBehaviorRE.h (kSearchLeaves); ActionGate.cpp ch.23 pursuit leash (act/pop/update)",
+   "source": "native/core/BehaviorTreeCatalog.h (kSearchLeaves); ActionGate.cpp ch.23 pursuit leash (act/pop/update)",
    "doc": "MIT fork Offsets_VTABLE.h:3824 (VTABLE_CombatBehaviorTreeNodeObject1_CombatBehaviorSearchWander_COMBAT_SEARCH_PRIORITY_)"
   },
   {
@@ -2588,7 +2588,7 @@
     "1.5.97": "83 B9 48 01 00 00 01 77 0D 33 C0 84 D2 0F 95 C0"
    },
    "source": "native/core/ActionGate.cpp (Install, ch.23 pursuit-leash update() half)",
-   "doc": "CombatBehaviorThread::SetFailed(thread, bool): state +0x148 := failed if <= 1 (core/CombatBehaviorRE.h)"
+   "doc": "CombatBehaviorThread::SetFailed(thread, bool): state +0x148 := failed if <= 1 (core/BehaviorTreeCatalog.h)"
   },
   {
    "seat": "ActionGate.Pursuit.Ascend",
@@ -2603,7 +2603,7 @@
     "1.5.97": "48 8B 81 38 01 00 00 48 85 C0 74 15 48 8B 40 10"
    },
    "source": "native/core/ActionGate.cpp (Install, ch.23 pursuit-leash update() half)",
-   "doc": "CombatBehaviorThread::Ascend(thread): cur_node +0x138 := parent, phase +0x14C := 0 (core/CombatBehaviorRE.h)"
+   "doc": "CombatBehaviorThread::Ascend(thread): cur_node +0x138 := parent, phase +0x14C := 0 (core/BehaviorTreeCatalog.h)"
   },
   {
    "seat": "ActionGate.Hold.ParallelDataPush",
@@ -4120,7 +4120,7 @@
     "0x02",
     "0x03"
    ],
-   "source": "native/core/CombatBehaviorRE.h (kParamLeaves); ActionGate.cpp act/pop for the combat substrate's allow-list (review F1 of a512763)",
+   "source": "native/core/BehaviorTreeCatalog.h (kParamLeaves); ActionGate.cpp act/pop for the combat substrate's allow-list (review F1 of a512763)",
    "doc": "MIT fork Offsets_VTABLE.h:1792 (VTABLE_CombatBehaviorTreeNodeObject1_CombatBehaviorIdle_float_); RTTI name identical on 1.6.1170 and 1.5.97"
   },
   {
@@ -4137,7 +4137,7 @@
     "0x02",
     "0x03"
    ],
-   "source": "native/core/CombatBehaviorRE.h (kParamLeaves); ActionGate.cpp act/pop for the combat substrate's allow-list (review F1 of a512763)",
+   "source": "native/core/BehaviorTreeCatalog.h (kParamLeaves); ActionGate.cpp act/pop for the combat substrate's allow-list (review F1 of a512763)",
    "doc": "MIT fork Offsets_VTABLE.h:3428 (VTABLE_CombatBehaviorTreeNodeObject1_CombatBehaviorRepeat_float_); RTTI name identical on 1.6.1170 and 1.5.97"
   },
   {
@@ -4154,7 +4154,7 @@
     "0x02",
     "0x03"
    ],
-   "source": "native/core/CombatBehaviorRE.h (kParamLeaves); ActionGate.cpp act/pop for the combat substrate's allow-list (review F1 of a512763)",
+   "source": "native/core/BehaviorTreeCatalog.h (kParamLeaves); ActionGate.cpp act/pop for the combat substrate's allow-list (review F1 of a512763)",
    "doc": "MIT fork Offsets_VTABLE.h:3436 (VTABLE_CombatBehaviorTreeNodeObject3_CombatBehaviorAcquireResource_BSFixedString_int_CombatBehaviorAcquireResource__FLAG_); RTTI name identical on 1.6.1170 and 1.5.97"
   },
   {
@@ -4171,7 +4171,7 @@
     "0x02",
     "0x03"
    ],
-   "source": "native/core/CombatBehaviorRE.h (kParamLeaves); ActionGate.cpp act/pop for the combat substrate's allow-list (review F1 of a512763)",
+   "source": "native/core/BehaviorTreeCatalog.h (kParamLeaves); ActionGate.cpp act/pop for the combat substrate's allow-list (review F1 of a512763)",
    "doc": "MIT fork Offsets_VTABLE.h:3438 (VTABLE_CombatBehaviorTreeNodeObject1_CombatBehaviorDisableAim_CombatAimController__PRIORITY_); RTTI name identical on 1.6.1170 and 1.5.97"
   },
   {
@@ -4188,7 +4188,7 @@
     "0x02",
     "0x03"
    ],
-   "source": "native/core/CombatBehaviorRE.h (kParamLeaves); ActionGate.cpp act/pop for the combat substrate's allow-list (review F1 of a512763)",
+   "source": "native/core/BehaviorTreeCatalog.h (kParamLeaves); ActionGate.cpp act/pop for the combat substrate's allow-list (review F1 of a512763)",
    "doc": "MIT fork Offsets_VTABLE.h:3440 (VTABLE_CombatBehaviorTreeNodeObject1_CombatBehaviorFollowPath_CombatBehaviorExpression_CombatBehaviorMemberFunc_CombatBehaviorContextAcquireWeapon_NiPointer_CombatPath___CombatBehaviorContextAcquireWeapon_____void____); RTTI name identical on 1.6.1170 and 1.5.97"
   },
   {
@@ -4205,7 +4205,7 @@
     "0x02",
     "0x03"
    ],
-   "source": "native/core/CombatBehaviorRE.h (kParamLeaves); ActionGate.cpp act/pop for the combat substrate's allow-list (review F1 of a512763)",
+   "source": "native/core/BehaviorTreeCatalog.h (kParamLeaves); ActionGate.cpp act/pop for the combat substrate's allow-list (review F1 of a512763)",
    "doc": "MIT fork Offsets_VTABLE.h:3442 (VTABLE_CombatBehaviorTreeNodeObject1_CombatBehaviorAcquireItem_CombatBehaviorExpression_CombatBehaviorMemberFunc_CombatBehaviorContextAcquireWeapon_CombatAcquireItem_const____CombatBehaviorContextAcquireWeapon_____void____); RTTI name identical on 1.6.1170 and 1.5.97"
   },
   {
@@ -4222,7 +4222,7 @@
     "0x02",
     "0x03"
    ],
-   "source": "native/core/CombatBehaviorRE.h (kParamLeaves); ActionGate.cpp act/pop for the combat substrate's allow-list (review F1 of a512763)",
+   "source": "native/core/BehaviorTreeCatalog.h (kParamLeaves); ActionGate.cpp act/pop for the combat substrate's allow-list (review F1 of a512763)",
    "doc": "MIT fork Offsets_VTABLE.h:3447 (VTABLE_CombatBehaviorTreeNodeObject2_CombatBehaviorAcquireResource_BSFixedString_int_); RTTI name identical on 1.6.1170 and 1.5.97"
   },
   {
@@ -4239,7 +4239,7 @@
     "0x02",
     "0x03"
    ],
-   "source": "native/core/CombatBehaviorRE.h (kParamLeaves); ActionGate.cpp act/pop for the combat substrate's allow-list (review F1 of a512763)",
+   "source": "native/core/BehaviorTreeCatalog.h (kParamLeaves); ActionGate.cpp act/pop for the combat substrate's allow-list (review F1 of a512763)",
    "doc": "MIT fork Offsets_VTABLE.h:3449 (VTABLE_CombatBehaviorTreeNodeObject2_CombatBehaviorSpawnParallel_uint_CombatBehaviorParallel__FLAGS_); RTTI name identical on 1.6.1170 and 1.5.97"
   },
   {
@@ -4256,7 +4256,7 @@
     "0x02",
     "0x03"
    ],
-   "source": "native/core/CombatBehaviorRE.h (kParamLeaves); ActionGate.cpp act/pop for the combat substrate's allow-list (review F1 of a512763)",
+   "source": "native/core/BehaviorTreeCatalog.h (kParamLeaves); ActionGate.cpp act/pop for the combat substrate's allow-list (review F1 of a512763)",
    "doc": "MIT fork Offsets_VTABLE.h:3549 (VTABLE_CombatBehaviorTreeNodeObject2_CombatBehaviorSetBlackboardData_CombatBlackboardKey_AITimeStamp____CombatBehaviorExpression_CombatBehaviorFunc_float_____void____); RTTI name identical on 1.6.1170 and 1.5.97"
   },
   {
@@ -4273,7 +4273,7 @@
     "0x02",
     "0x03"
    ],
-   "source": "native/core/CombatBehaviorRE.h (kParamLeaves); ActionGate.cpp act/pop for the combat substrate's allow-list (review F1 of a512763)",
+   "source": "native/core/BehaviorTreeCatalog.h (kParamLeaves); ActionGate.cpp act/pop for the combat substrate's allow-list (review F1 of a512763)",
    "doc": "MIT fork Offsets_VTABLE.h:3595 (VTABLE_CombatBehaviorTreeNodeObject1_CombatBehaviorWatchTarget_float_); RTTI name identical on 1.6.1170 and 1.5.97"
   },
   {
@@ -4290,7 +4290,7 @@
     "0x02",
     "0x03"
    ],
-   "source": "native/core/CombatBehaviorRE.h (kParamLeaves); ActionGate.cpp act/pop for the combat substrate's allow-list (review F1 of a512763)",
+   "source": "native/core/BehaviorTreeCatalog.h (kParamLeaves); ActionGate.cpp act/pop for the combat substrate's allow-list (review F1 of a512763)",
    "doc": "MIT fork Offsets_VTABLE.h:3639 (VTABLE_CombatBehaviorTreeNodeObject1_CombatBehaviorFlee_float_); RTTI name identical on 1.6.1170 and 1.5.97"
   },
   {
@@ -4307,7 +4307,7 @@
     "0x02",
     "0x03"
    ],
-   "source": "native/core/CombatBehaviorRE.h (kParamLeaves); ActionGate.cpp act/pop for the combat substrate's allow-list (review F1 of a512763)",
+   "source": "native/core/BehaviorTreeCatalog.h (kParamLeaves); ActionGate.cpp act/pop for the combat substrate's allow-list (review F1 of a512763)",
    "doc": "MIT fork Offsets_VTABLE.h:3644 (VTABLE_CombatBehaviorTreeNodeObject2_CombatBehaviorFaceAngle_float_bool_); RTTI name identical on 1.6.1170 and 1.5.97"
   },
   {
@@ -4324,7 +4324,7 @@
     "0x02",
     "0x03"
    ],
-   "source": "native/core/CombatBehaviorRE.h (kParamLeaves); ActionGate.cpp act/pop for the combat substrate's allow-list (review F1 of a512763)",
+   "source": "native/core/BehaviorTreeCatalog.h (kParamLeaves); ActionGate.cpp act/pop for the combat substrate's allow-list (review F1 of a512763)",
    "doc": "MIT fork Offsets_VTABLE.h:3651 (VTABLE_CombatBehaviorTreeNodeObject1_CombatBehaviorEnableBlackboardFlag_CombatBlackboardFlag___); RTTI name identical on 1.6.1170 and 1.5.97"
   },
   {
@@ -4341,7 +4341,7 @@
     "0x02",
     "0x03"
    ],
-   "source": "native/core/CombatBehaviorRE.h (kParamLeaves); ActionGate.cpp act/pop for the combat substrate's allow-list (review F1 of a512763)",
+   "source": "native/core/BehaviorTreeCatalog.h (kParamLeaves); ActionGate.cpp act/pop for the combat substrate's allow-list (review F1 of a512763)",
    "doc": "MIT fork Offsets_VTABLE.h:3664 (VTABLE_CombatBehaviorTreeNodeObject1_CombatBehaviorDynamicSelector_ConditionalChildSelector__float_); RTTI name identical on 1.6.1170 and 1.5.97"
   },
   {
@@ -4358,7 +4358,7 @@
     "0x02",
     "0x03"
    ],
-   "source": "native/core/CombatBehaviorRE.h (kParamLeaves); ActionGate.cpp act/pop for the combat substrate's allow-list (review F1 of a512763)",
+   "source": "native/core/BehaviorTreeCatalog.h (kParamLeaves); ActionGate.cpp act/pop for the combat substrate's allow-list (review F1 of a512763)",
    "doc": "MIT fork Offsets_VTABLE.h:3681 (VTABLE_CombatBehaviorTreeNodeObject1_CombatBehaviorRepeat_CombatBehaviorRepeat__FLAGS_); RTTI name identical on 1.6.1170 and 1.5.97"
   },
   {
@@ -4375,7 +4375,7 @@
     "0x02",
     "0x03"
    ],
-   "source": "native/core/CombatBehaviorRE.h (kParamLeaves); ActionGate.cpp act/pop for the combat substrate's allow-list (review F1 of a512763)",
+   "source": "native/core/BehaviorTreeCatalog.h (kParamLeaves); ActionGate.cpp act/pop for the combat substrate's allow-list (review F1 of a512763)",
    "doc": "MIT fork Offsets_VTABLE.h:3684 (VTABLE_CombatBehaviorTreeNodeObject1_CombatBehaviorLand_float_); RTTI name identical on 1.6.1170 and 1.5.97"
   },
   {
@@ -4392,7 +4392,7 @@
     "0x02",
     "0x03"
    ],
-   "source": "native/core/CombatBehaviorRE.h (kParamLeaves); ActionGate.cpp act/pop for the combat substrate's allow-list (review F1 of a512763)",
+   "source": "native/core/BehaviorTreeCatalog.h (kParamLeaves); ActionGate.cpp act/pop for the combat substrate's allow-list (review F1 of a512763)",
    "doc": "MIT fork Offsets_VTABLE.h:3686 (VTABLE_CombatBehaviorTreeNodeObject1_CombatBehaviorLandNearby_float_); RTTI name identical on 1.6.1170 and 1.5.97"
   },
   {
@@ -4409,7 +4409,7 @@
     "0x02",
     "0x03"
    ],
-   "source": "native/core/CombatBehaviorRE.h (kParamLeaves); ActionGate.cpp act/pop for the combat substrate's allow-list (review F1 of a512763)",
+   "source": "native/core/BehaviorTreeCatalog.h (kParamLeaves); ActionGate.cpp act/pop for the combat substrate's allow-list (review F1 of a512763)",
    "doc": "MIT fork Offsets_VTABLE.h:3709 (VTABLE_CombatBehaviorTreeNodeObject1_CombatBehaviorCastImmediateSpell_bool_); RTTI name identical on 1.6.1170 and 1.5.97"
   },
   {
@@ -4426,7 +4426,7 @@
     "0x02",
     "0x03"
    ],
-   "source": "native/core/CombatBehaviorRE.h (kParamLeaves); ActionGate.cpp act/pop for the combat substrate's allow-list (review F1 of a512763)",
+   "source": "native/core/BehaviorTreeCatalog.h (kParamLeaves); ActionGate.cpp act/pop for the combat substrate's allow-list (review F1 of a512763)",
    "doc": "MIT fork Offsets_VTABLE.h:3712 (VTABLE_CombatBehaviorTreeNodeObject1_CombatBehaviorCastConcentrationSpell_bool_); RTTI name identical on 1.6.1170 and 1.5.97"
   },
   {
@@ -4443,7 +4443,7 @@
     "0x02",
     "0x03"
    ],
-   "source": "native/core/CombatBehaviorRE.h (kParamLeaves); ActionGate.cpp act/pop for the combat substrate's allow-list (review F1 of a512763)",
+   "source": "native/core/BehaviorTreeCatalog.h (kParamLeaves); ActionGate.cpp act/pop for the combat substrate's allow-list (review F1 of a512763)",
    "doc": "MIT fork Offsets_VTABLE.h:3817 (VTABLE_CombatBehaviorTreeNodeObject1_CombatBehaviorIdle_CombatBehaviorExpression_CombatBehaviorFunc1_float_____SettingT_GameSettingCollection_____SettingT_GameSettingCollection______); RTTI name identical on 1.6.1170 and 1.5.97"
   },
   {
@@ -4460,7 +4460,7 @@
     "0x02",
     "0x03"
    ],
-   "source": "native/core/CombatBehaviorRE.h (kParamLeaves); ActionGate.cpp act/pop for the combat substrate's allow-list (review F1 of a512763)",
+   "source": "native/core/BehaviorTreeCatalog.h (kParamLeaves); ActionGate.cpp act/pop for the combat substrate's allow-list (review F1 of a512763)",
    "doc": "MIT fork Offsets_VTABLE.h:3857 (VTABLE_CombatBehaviorTreeNodeObject2_CombatBehaviorRepeat_float_CombatBehaviorRepeat__FLAGS_); RTTI name identical on 1.6.1170 and 1.5.97"
   },
   {
@@ -4813,14 +4813,14 @@
   {
    "what": "Behaviour-tree leaf slots act() / pop()",
    "value": "0x02 / 0x03",
-   "where": "ActionGate.cpp; CombatBehaviorRE.h",
+   "where": "ActionGate.cpp; BehaviorTreeCatalog.h",
    "verified_by": "Rows table slot targets; RTTI DerivesFrom(CombatBehaviorTreeNode)",
    "gate": "VR refused + RTTI + self-check"
   },
   {
    "what": "CombatBehaviorThread +0x158 controller, +0x20 hop, +0x28 attackerHandle",
    "value": "+0x158 / +0x20 / +0x28",
-   "where": "CombatBehaviorRE.h:70-94; ActionGate.cpp:332-340",
+   "where": "BehaviorTreeCatalog.h:70-94; ActionGate.cpp:332-340",
    "verified_by": "local struct static_asserts only",
    "gate": "VR refused (install)"
   },
@@ -4939,7 +4939,7 @@
   {
    "what": "Declared but never hooked: CombatBehaviorTreeCreateContextNode1/Base<CombatBehaviorContextMagic>",
    "value": "VariantID(266702, 213692) / (550933, 213681)",
-   "where": "CombatBehaviorRE.h kCastContextNodes",
+   "where": "BehaviorTreeCatalog.h kCastContextNodes",
    "verified_by": "not installed anywhere, so not a self-check row",
    "gate": "n/a"
   },

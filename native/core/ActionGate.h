@@ -21,7 +21,7 @@ namespace apmf::actiongate {
     void PfpHeartbeat();
 
     // THE COMBAT SUBSTRATE (S2a): how many of the 95 nodes (the 70-leaf catalog + the four search
-    // leaves + the 21 parameterised nodes, core/CombatBehaviorRE.h kParamLeaves) carry an act()/pop() pair the substrate's allow-list can force-fail (0 when the ForceFail
+    // leaves + the 21 parameterised nodes, core/BehaviorTreeCatalog.h kParamLeaves) carry an act()/pop() pair the substrate's allow-list can force-fail (0 when the ForceFail
     // pair did not resolve). channels/CombatSubstrate.cpp refuses to install below 95. Game thread,
     // after Install.
     std::uint32_t SubstrateLeavesPaired();

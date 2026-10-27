@@ -498,7 +498,7 @@ with `kIntent_CombatSubstrate` beside its `kIntent_Cast` claim. It is legal only
    and the wait run in place); a dry run never sets it. The index covers EVERY
    concrete `CombatBehaviorTreeNodeObject*` class: 95 on both runtimes (the RTTI names in both unpacked
    executables), i.e. the 70 parameterless leaves, the four search leaves and the 21 parameterised nodes of
-   `core/CombatBehaviorRE.h` `kParamLeaves` (review F1 of a512763: AcquireResource, Flee, FaceAngle, WatchTarget,
+   `core/BehaviorTreeCatalog.h` `kParamLeaves` (review F1 of a512763: AcquireResource, Flee, FaceAngle, WatchTarget,
    DisableAim, FollowPath / AcquireItem, Land, the blackboard nodes -- denied); the structural nodes (the
    selectors, `DynamicConditionalNode`, `DynamicSelector<Conditional,float>`, `Parallel`, `SpawnParallel`,
    `Sequence`, the four `Repeat` forms, `ForceFail`, `ForceSuccess`, and the two `Idle` waits -- round-2 review: a
@@ -1547,7 +1547,7 @@ The rule is the explicit form of #0/#1: #1 says "block the foreign input"; #18 a
   rule: a deny at a paired seat installs BOTH halves (`core/ActionGate.cpp` hooks
   0x02 AND 0x03 and routes a denied node's next `pop()` to `ForceFail`'s own
   `pop()` via a thread-local pending record), refuses to arm if either half fails
-  to resolve, and documents the measured protocol (`core/CombatBehaviorRE.h`
+  to resolve, and documents the measured protocol (`core/BehaviorTreeCatalog.h`
   "The node protocol") rather than inferring it from a class declaration. #17's
   "engine-answer-first, flip YES→NO" applies to the whole protocol, not one slot.
 - **A deny of a RUNNING node uses the node's own failure exit — the update() half
@@ -1570,9 +1570,9 @@ The rule is the explicit form of #0/#1: #1 says "block the foreign input"; #18 a
   updated again next step). The act() half of the same leash is the unchanged ForceFail
   pair; the leash arms only when BOTH halves install on all 14 leaves. The runner's `control`
   and the TLS thread the engine's own leaves use are the same object (proof cited in
-  `core/CombatBehaviorRE.h`). (The
+  `core/BehaviorTreeCatalog.h`). (The
   2026-09-03 T1 probe crash that made "hand-rolled SetFailed" a warning called 0x5572A0
-  = id 33171, the data-stack PUSH, believing it was SetFailed — `core/CombatBehaviorRE.h`
+  = id 33171, the data-stack PUSH, believing it was SetFailed — `core/BehaviorTreeCatalog.h`
   records the correction.)
 - **A path you cannot yet close is a DOCUMENTED GAP, never a silent one.** If an
   enumerated path has no clean, RTTI-verified (#17), version-robust seat on the

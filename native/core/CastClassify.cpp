@@ -47,9 +47,8 @@ namespace apmf::castclassify {
 
         // ---- THE ONE VTABLE (RE notebook J7/J9). Not a CommonLib symbol -- see
         // the header banner for why. Triple order is REL::VariantID(seID, aeID,
-        // vrOffset), verified against the ctor signature the exact same way
-        // core/CombatBehaviorRE.h's own local RE extension documents doing for
-        // RTTI_CombatBehaviorTreeNode. VR is refused before this is ever
+        // vrOffset), verified against the ctor signature (the same order
+        // core/BehaviorTreeCatalog.h uses for its VariantIDs). VR is refused before this is ever
         // resolved (Install()), so the VR offset is carried for documentation
         // completeness only, never dereferenced on a VR runtime.
         constexpr REL::VariantID kCombatMagicItemDataVtable(265000, 211955, 0x1709ce8);
