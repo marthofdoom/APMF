@@ -170,3 +170,33 @@ refuses VR before resolving one.
 | 92 | kParamLeaves | `CombatBehaviorSetBlackboardData<AITimeStamp>` (kParamDeny) | `.?AV?$CombatBehaviorTreeNodeObject2@VCombatBehaviorSetBlackboardData@@PEAV?$CombatBlackboardKey@VAITimeStamp@@@@V?$CombatBehaviorExpression@V?$CombatBehaviorFunc@P6AMXZ@@@@@@` | 0x18DDE60 (212938) | 0x1697970 (266197) | 0x195C428 | yes |
 | 93 | kParamLeaves | `CombatBehaviorSpawnParallel<uint,FLAGS>` (kParamStructural) | `.?AV?$CombatBehaviorTreeNodeObject2@VCombatBehaviorSpawnParallel@@IW4FLAGS@CombatBehaviorParallel@@@@` | 0x18DA430 (212385) | 0x1693BA0 (265916) | 0x19589F8 | yes |
 | 94 | kParamLeaves | `CombatBehaviorWatchTarget<float>` (kParamDeny) | `.?AV?$CombatBehaviorTreeNodeObject1@VCombatBehaviorWatchTarget@@M@@` | 0x18DF568 (213135) | 0x1699350 (266338) | 0x195DB30 | yes |
+
+## Equivalence with the removed header (checked after the new header was committed, 05ac534)
+
+Values, numbers only (a script compared the removed file's numeric literals with the derivation; no text taken):
+- All 95 vtable (SE id, AE id) pairs and `RTTI_CombatBehaviorTreeNode` (686393, 394204) are identical. No
+  disagreement, so nothing had to be re-derived.
+- The removed file's two further triples were the retired magic create-context node (`kCastContextNodes`,
+  no consumer reads it: `CombatBehaviorTreeCreateContextNode1<ContextMagic, ...>` and its `...NodeBase`); not
+  carried over.
+- Its thread / group constants (0x138, 0x14C, 0xFC, 0x100, 0x110) and the controller offsets equal ours.
+- Its VR column was non-zero on every row; ours is 0 (no VR executable to derive from; VR is refused before
+  any of these resolve).
+
+Build, function by function (MFO's `tools/splitcheck/splitcheck.py`, main 015d8f6 CI run 40463272004 vs
+05ac534 CI run 40540776879, both `/O2`): 11729 matched, 11722 identical, 7 differ, every one explained:
+- `actiongate::Install`: (1) `ForceFailIndex()` is now `constexpr`-folded (a `static_assert` uses it) where
+  main ran the name loop at run time; same index (kLeaves order is identical); (2) the copy of `kParamLeaves`
+  into the install array is in our name order (the removed table had another order; the substrate's per-index
+  tables are built from the same array, so nothing pairs across orders); (3) the VR column is 0; (4) one
+  image-relative data reference shifted by 0x20 to identical bytes; (5) alignment `nop`s.
+- `HoldUpdateThunk`, `PopThunk`, `UpdateThunk`: their log strings name the new file.
+- `RsLeafName`, `castobserve BuildLeafNames`, `combatapproach::Install`: the table's element type is renamed
+  (same layout, same data).
+Data tables read out of both DLLs: `kLeaves` and `kSearchLeaves` hold the same ids in the same order;
+`kParamLeaves` the same ids in another order with the same partition into the three kinds. Display names
+differ for 10 entries (the five selector names lose a trailing `_`, and DisableAim, DynamicSelector,
+EnableBlackboardFlag, SetBlackboardData, SpawnParallel carry their parameters); no code compares those
+names except by the `CombatBehaviorChildSelector_` / `CombatBehaviorFallbackSelector_` prefixes, which
+still match. (The stock splitcheck crashed on this pair at `_data_diff`, a `set | tuple`; the run used a local
+copy with that one expression wrapped in `set(...)`.)

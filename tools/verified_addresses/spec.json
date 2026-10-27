@@ -1402,7 +1402,7 @@
   {
    "seat": "Leaf.CombatBehaviorChildSelector_ConditionalChildSelector_",
    "kind": "vtable",
-   "construct": "apmf::cbt::kLeaves[\"CombatBehaviorChildSelector_ConditionalChildSelector_\"]",
+   "construct": "apmf::cbt::kLeaves[\"CombatBehaviorChildSelector_ConditionalChildSelector\"]",
    "rtti": ".?AV?$CombatBehaviorTreeNodeObject@V?$CombatBehaviorChildSelector@VConditionalChildSelector@@@@@@",
    "col_offset": 0,
    "ids": {
@@ -1419,7 +1419,7 @@
   {
    "seat": "Leaf.CombatBehaviorChildSelector_RandomValueChildSelector_",
    "kind": "vtable",
-   "construct": "apmf::cbt::kLeaves[\"CombatBehaviorChildSelector_RandomValueChildSelector_\"]",
+   "construct": "apmf::cbt::kLeaves[\"CombatBehaviorChildSelector_RandomValueChildSelector\"]",
    "rtti": ".?AV?$CombatBehaviorTreeNodeObject@V?$CombatBehaviorChildSelector@VRandomValueChildSelector@@@@@@",
    "col_offset": 0,
    "ids": {
@@ -1436,7 +1436,7 @@
   {
    "seat": "Leaf.CombatBehaviorChildSelector_ValueChildSelector_",
    "kind": "vtable",
-   "construct": "apmf::cbt::kLeaves[\"CombatBehaviorChildSelector_ValueChildSelector_\"]",
+   "construct": "apmf::cbt::kLeaves[\"CombatBehaviorChildSelector_ValueChildSelector\"]",
    "rtti": ".?AV?$CombatBehaviorTreeNodeObject@V?$CombatBehaviorChildSelector@VValueChildSelector@@@@@@",
    "col_offset": 0,
    "ids": {
@@ -1657,7 +1657,7 @@
   {
    "seat": "Leaf.CombatBehaviorFallbackSelector_NextChildSelector_",
    "kind": "vtable",
-   "construct": "apmf::cbt::kLeaves[\"CombatBehaviorFallbackSelector_NextChildSelector_\"]",
+   "construct": "apmf::cbt::kLeaves[\"CombatBehaviorFallbackSelector_NextChildSelector\"]",
    "rtti": ".?AV?$CombatBehaviorTreeNodeObject@V?$CombatBehaviorFallbackSelector@VNextChildSelector@@@@@@",
    "col_offset": 0,
    "ids": {
@@ -1674,7 +1674,7 @@
   {
    "seat": "Leaf.CombatBehaviorFallbackSelector_WeightedRandomChildSelector_",
    "kind": "vtable",
-   "construct": "apmf::cbt::kLeaves[\"CombatBehaviorFallbackSelector_WeightedRandomChildSelector_\"]",
+   "construct": "apmf::cbt::kLeaves[\"CombatBehaviorFallbackSelector_WeightedRandomChildSelector\"]",
    "rtti": ".?AV?$CombatBehaviorTreeNodeObject@V?$CombatBehaviorFallbackSelector@VWeightedRandomChildSelector@@@@@@",
    "col_offset": 0,
    "ids": {
@@ -4160,7 +4160,7 @@
   {
    "seat": "Leaf.CombatBehaviorDisableAim",
    "kind": "vtable",
-   "construct": "apmf::cbt::kParamLeaves[\"CombatBehaviorDisableAim\"]",
+   "construct": "apmf::cbt::kParamLeaves[\"CombatBehaviorDisableAim<PRIORITY>\"]",
    "rtti": ".?AV?$CombatBehaviorTreeNodeObject1@VCombatBehaviorDisableAim@@W4PRIORITY@CombatAimController@@@@",
    "col_offset": 0,
    "ids": {
@@ -4228,7 +4228,7 @@
   {
    "seat": "Leaf.CombatBehaviorSpawnParallel",
    "kind": "vtable",
-   "construct": "apmf::cbt::kParamLeaves[\"CombatBehaviorSpawnParallel\"]",
+   "construct": "apmf::cbt::kParamLeaves[\"CombatBehaviorSpawnParallel<uint,FLAGS>\"]",
    "rtti": ".?AV?$CombatBehaviorTreeNodeObject2@VCombatBehaviorSpawnParallel@@IW4FLAGS@CombatBehaviorParallel@@@@",
    "col_offset": 0,
    "ids": {
@@ -4245,7 +4245,7 @@
   {
    "seat": "Leaf.CombatBehaviorSetBlackboardData",
    "kind": "vtable",
-   "construct": "apmf::cbt::kParamLeaves[\"CombatBehaviorSetBlackboardData\"]",
+   "construct": "apmf::cbt::kParamLeaves[\"CombatBehaviorSetBlackboardData<AITimeStamp>\"]",
    "rtti": ".?AV?$CombatBehaviorTreeNodeObject2@VCombatBehaviorSetBlackboardData@@PEAV?$CombatBlackboardKey@VAITimeStamp@@@@V?$CombatBehaviorExpression@V?$CombatBehaviorFunc@P6AMXZ@@@@@@",
    "col_offset": 0,
    "ids": {
@@ -4313,7 +4313,7 @@
   {
    "seat": "Leaf.CombatBehaviorEnableBlackboardFlag",
    "kind": "vtable",
-   "construct": "apmf::cbt::kParamLeaves[\"CombatBehaviorEnableBlackboardFlag\"]",
+   "construct": "apmf::cbt::kParamLeaves[\"CombatBehaviorEnableBlackboardFlag<CombatBlackboardFlag*>\"]",
    "rtti": ".?AV?$CombatBehaviorTreeNodeObject1@VCombatBehaviorEnableBlackboardFlag@@PEAVCombatBlackboardFlag@@@@",
    "col_offset": 0,
    "ids": {
@@ -4330,7 +4330,7 @@
   {
    "seat": "Leaf.CombatBehaviorDynamicSelector<Conditional,float>",
    "kind": "vtable",
-   "construct": "apmf::cbt::kParamLeaves[\"CombatBehaviorDynamicSelector<Conditional,float>\"]",
+   "construct": "apmf::cbt::kParamLeaves[\"CombatBehaviorDynamicSelector_ConditionalChildSelector<float>\"]",
    "rtti": ".?AV?$CombatBehaviorTreeNodeObject1@V?$CombatBehaviorDynamicSelector@VConditionalChildSelector@@@@M@@",
    "col_offset": 0,
    "ids": {
