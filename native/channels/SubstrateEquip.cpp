@@ -60,7 +60,7 @@
 // the floored hand (a full kCastFlag_DenyHandOnly floor) admits no spell / staff and no weapon / shield /
 // torch. That is the steering: the engine chooses, from a set that holds only the claimed spell.
 //
-// WHY BOTH NODES, AND NO OTHER: the allow-list classed AcquireResource<2> kParamDeny (core/CombatBehaviorRE.h),
+// WHY BOTH NODES, AND NO OTHER: the allow-list classed AcquireResource<2> kParamDeny (core/BehaviorTreeCatalog.h),
 // and the disassembly above puts its "Action" instance at the head of the Action branch, so the allow-list cut
 // that whole branch at node 1, before the equip context, the equip leaf AND the Magic link: no substrate cast
 // could ever be reached, spell in hand or not. (The 10-19 dry-run lines `LEAF DENIED

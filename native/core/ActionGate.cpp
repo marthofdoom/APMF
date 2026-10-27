@@ -2,7 +2,7 @@
 #include "core/Log.h"
 #include "core/Allowance.h"
 #include "core/Clock.h"
-#include "core/CombatBehaviorRE.h"
+#include "core/BehaviorTreeCatalog.h"
 #include "core/ControlMap.h"
 #include "core/ActionGate.h"
 #include "core/AiCastSeats.h"   // RangedGateProbeCounts (the [Probe] bRangedSelect heartbeat)
@@ -47,7 +47,7 @@ extern "C" __declspec(dllimport) unsigned long __stdcall GetPrivateProfileIntA(
 //
 // THE NODE PROTOCOL -- act() and pop() are a PAIR (feat/ai-cast-suppress,
 // 2026-09-04, the recurring deck CTD's root cause; full RE in
-// core/CombatBehaviorRE.h "The node protocol"). Every node's act() (slot 0x02)
+// core/BehaviorTreeCatalog.h "The node protocol"). Every node's act() (slot 0x02)
 // PUSHES its per-thread state onto the CombatBehaviorThread's DATA STACK
 // (ForceFail: 4 bytes; a leaf: sizeof(T) rounded, e.g. CastImmediateSpell
 // 0xC; the ContextMagic CreateContextNode1: 0x30 = the built context + the
@@ -94,7 +94,7 @@ extern "C" __declspec(dllimport) unsigned long __stdcall GetPrivateProfileIntA(
 // Attack, AttackLow, Bash, PowerAttack, RangedAttack, SpecialAttack,
 // GroundAttack, FlyingAttack, CastImmediateSpell, CastConcentrationSpell,
 // CastShout, PrepareDualCast. NOTE: "CombatBehaviorPowerAttack" has NO
-// separate leaf on this build's 70-leaf catalog (CombatBehaviorRE.h) --
+// separate leaf on this build's 70-leaf catalog (BehaviorTreeCatalog.h) --
 // CombatBehaviorAttack itself appears to cover both normal and power
 // attacks; there is no standalone node to classify, and this is logged once
 // at install (never silently dropped). "CombatBehaviorAttackFromCover"
@@ -218,7 +218,7 @@ namespace apmf::actiongate {
         //   MaintainOptimalRange            StraightPath -> Location             (the ranged close-to-range)
         //   FindAttackLocation              Generic<FindAttackLocation>          (the ranged reposition)
         // THE FOUR SEARCH LEAVES -- goal = the combat GROUP's SEARCH CENTRE (CombatGroup
-        // +0x100, the position SearchCenter::Enter itself reads; core/CombatBehaviorRE.h
+        // +0x100, the position SearchCenter::Enter itself reads; core/BehaviorTreeCatalog.h
         // kSearchLeaves): Search, SearchCenter, SearchLocation, SearchWander -- the 'Search'
         // tree that Low Combat's Search branch and the combat search use. Not in the 70-leaf
         // catalog, so ch.23 installs act/pop on them as well as update.
@@ -234,7 +234,7 @@ namespace apmf::actiongate {
         // -- "the move would take it FARTHER": moving straight toward the goal never leaves
         // the anchor farther than max(dActor, dGoal), so a goal nearer the anchor than the
         // actor is always allowed (it still fights whatever comes in).
-        // Two seats, both the engine's own protocol (core/CombatBehaviorRE.h):
+        // Two seats, both the engine's own protocol (core/BehaviorTreeCatalog.h):
         //   act()    -- the ForceFail act()+pop() PAIR (the leaf never starts);
         //   update() -- slot 0x04: a leaf already running (it began inside the radius and has
         //               since carried the actor out) is ended through its own failure exit,
@@ -482,7 +482,7 @@ namespace apmf::actiongate {
                 if (!g_holdAnomalyLogged.exchange(true))
                     spdlog::warn("[substrate] MOVEMENT HOLD update() ANOMALY for 0x{}: the held node is not the thread's "
                                  "cur_node in phase 1 -- left untouched. Counted; the runner protocol in "
-                                 "core/CombatBehaviorRE.h needs re-measuring if this recurs.",
+                                 "core/BehaviorTreeCatalog.h needs re-measuring if this recurs.",
                                  apmf::log::Hex(actor));
                 return;
             }
@@ -572,7 +572,7 @@ namespace apmf::actiongate {
         // snapshot lookup, no new API.
         //
         // THE LEAF LIST IS A HYPOTHESIS, NOT AN ASSERTION (RULE C/"no silent
-        // negatives" -- design doc §3.1.3 item 3). Only 8 of CombatBehaviorRE.h's
+        // negatives" -- design doc §3.1.3 item 3). Only 8 of BehaviorTreeCatalog.h's
         // 70 leaves are corroborated by an independent source (CombatPathingRevolution's
         // OWN `CombatBehaviorNodesMovement.h`, which groups exactly these 8 under a
         // "CloseMovement" context). The remaining ~22 are HYPOTHESIS-BY-NAMING only
@@ -794,7 +794,7 @@ namespace apmf::actiongate {
         // shared_lock (released before any engine call), the actors come from handle-table
         // reads, the distances from the references' own data.location and, for a search leaf,
         // from the combat group's search centre read exactly as SearchCenter::Enter reads it
-        // (unlocked, CombatBehaviorRE.h). Never a form lookup. Every pass-through reason is
+        // (unlocked, BehaviorTreeCatalog.h). Never a form lookup. Every pass-through reason is
         // counted (RULE C), so a leash that never bites says why.
         // THE HELD ENGAGEMENT vs the leash (review F-3, RANKED): the held approach is exempt only when the
         // engagement claim's priority on the leash's own facet (CombatAction) is at least the leash claim's.
@@ -1362,7 +1362,7 @@ namespace apmf::actiongate {
             // this control right after we return -- PopThunk must already know), then
             // invoke ForceFail's own ORIGINAL act() -- "this" is the denied node's own
             // object (safe: ForceFail's act() body needs only `control`, never `this`:
-            // push 4 bytes, SetFailed, Ascend -- see CombatBehaviorRE.h). Never a
+            // push 4 bytes, SetFailed, Ascend -- see BehaviorTreeCatalog.h). Never a
             // hand-reconstructed SetFailed (T1Probe.cpp's file header, the field crash).
             t_pending = PendingPop{ a_this, a_control };
             reinterpret_cast<apmf::cbt::Act_t>(denyAct)(a_this, a_control);
@@ -1394,7 +1394,7 @@ namespace apmf::actiongate {
                     spdlog::warn("[ch.7] paired-pop protocol ANOMALY: a pop() arrived for a node other than the "
                                  "one just denied on this thread -- stale pending dropped. Counted; if this "
                                  "recurs the runner's act->pop pairing assumption needs re-verification "
-                                 "(core/CombatBehaviorRE.h 'The node protocol').");
+                                 "(core/BehaviorTreeCatalog.h 'The node protocol').");
             }
 
             const auto vt  = *reinterpret_cast<std::uintptr_t*>(a_this);
@@ -1446,7 +1446,7 @@ namespace apmf::actiongate {
         // that is ALREADY RUNNING when the leash starts to hold -- it began inside the
         // radius and has since carried the actor out -- is ended through the engine's own
         // leaf-failure exit: SetFailed(thread, 1) + Ascend(thread), exactly what the leaf's
-        // own update does when its path fails (core/CombatBehaviorRE.h). The runner then
+        // own update does when its path fails (core/BehaviorTreeCatalog.h). The runner then
         // calls that node's OWN pop(), which removes what its own act() pushed: no data-stack
         // imbalance is possible, because nothing here pushes or pops. Before ending it, the
         // runner state is checked to be exactly "this node is cur_node, phase 1 (update)";
@@ -1485,7 +1485,7 @@ namespace apmf::actiongate {
                 if (!g_pUpdAnomalyLogged.exchange(true))
                     spdlog::warn("[ch.23] leash update() ANOMALY: the node is not the thread's cur_node in phase 1 "
                                  "-- the leaf was NOT ended, it ran natively. Counted in the heartbeat; if this "
-                                 "recurs the runner protocol in core/CombatBehaviorRE.h needs re-measuring.");
+                                 "recurs the runner protocol in core/BehaviorTreeCatalog.h needs re-measuring.");
                 return orig(a_this, a_control);
             }
             // Harbinger 1b: the leash end stands only when the claim outranks the Engine's tree.
@@ -1569,8 +1569,8 @@ namespace apmf::actiongate {
         // (apmf::cbt::kCastContextNodes). See this file's RETIRED header block --
         // denying the AI's magic context build would now suppress the very cast a
         // kIntent_Cast claim asks for, and that node's deny is the seat whose
-        // act()-only form caused a months-live data-stack CTD. The RE record for the
-        // node stays in core/CombatBehaviorRE.h; it is simply never hooked.
+        // act()-only form caused a months-live data-stack CTD. That node is no
+        // longer catalogued (core/BehaviorTreeCatalog.h lists NodeObject* only); it is never hooked.
 
         // Resolve ForceFail's ORIGINAL act() AND pop() -- the deny mechanism is the
         // PAIR. Either half missing => refuse the deny entirely (an unpaired ForceFail
@@ -1728,7 +1728,7 @@ namespace apmf::actiongate {
         RangedProbeInstall();
 
         // THE COMBAT SUBSTRATE's leaf index: every catalog leaf, search leaf and PARAMETERISED node (review F1:
-        // core/CombatBehaviorRE.h kParamLeaves, act + pop installed here only when [CombatSubstrate]
+        // core/BehaviorTreeCatalog.h kParamLeaves, act + pop installed here only when [CombatSubstrate]
         // bCombatSubstrate=1) with act() AND pop() installed. channels/CombatSubstrate.cpp refuses below all 95.
         if (GetPrivateProfileIntA("CombatSubstrate", "bCombatSubstrate", 1, "Data/SKSE/Plugins/APMF.ini") != 0) {
             std::array<REL::VariantID, apmf::cbt::kParamLeaves.size()> pvt{};

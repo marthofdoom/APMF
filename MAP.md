@@ -1431,7 +1431,7 @@ spell-equip path reads AcquireResource<2>'s resource name from it, `channels/Sub
 that is not one of the cast leaves, the spell-equip path (both only with a driving cast claim) or a structural node is force-failed with the SAME ForceFail act()/pop()
 pair, then `LeafDenied` counts it. `g_leafIdx` (vt -> 0..69 kLeaves / 70..73 kSearchLeaves / 74..94 kParamLeaves, only
 paired nodes) is built at the end of `Install()`, which also installs act + pop on the 21 PARAMETERISED nodes
-(`core/CombatBehaviorRE.h` `kParamLeaves`, review F1 of a512763) when `[CombatSubstrate] bCombatSubstrate=1`;
+(`core/BehaviorTreeCatalog.h` `kParamLeaves`, review F1 of a512763) when `[CombatSubstrate] bCombatSubstrate=1`;
 `SubstrateLeavesPaired()` must read 95 (every concrete NodeObject class on both runtimes; of the 21, 12 denied, 2 cast-gated, 7 pass incl. the two Idle waits, round 2) or the substrate refuses
 (so ch.23's search-leaf install, `[PursuitLeash] bPursuitLeash`, is a substrate dependency). **What breaks:** never move the substrate
 check after ch.7 / ch.23 (the allow-list must be whole); never deny without arming `t_pending` first.
@@ -1469,7 +1469,7 @@ Engine; otherwise the leaf runs (orig) and a `[ch.7]` / `[ch.23]` "leaf RUNS" li
 category is named, DENIES it as `CombatBehaviorForceFail`'s own act()+pop() **PAIR**:
 it records `{node, control}` in a `thread_local` pending-pop and invokes ForceFail's
 original `act()`; `PopThunk` then routes that node's very next `pop()` (same thread,
-same step — the runner's protocol, `core/CombatBehaviorRE.h` "The node protocol") to
+same step — the runner's protocol, `core/BehaviorTreeCatalog.h` "The node protocol") to
 ForceFail's original `pop()`. Categories: offense leaves (12 names) and the four cast
 leaves (Cast|Offense).
 **ch.23 PURSUIT LEASH (ABI v16, `kIntent_PursuitLeash`) lives here too, on its own intent.**
@@ -1550,19 +1550,29 @@ to this gate today; only an explicit `kIntent_CombatAction` claim arms anything.
     review F1: AE 48124/48126 `cmp [actor+0xC8],0x10000000`, SE 46955/46957 `test [actor+0xC0],0xF0000000`)
     and only below the window header's top. Open review items: REVIEW-BACKLOG APMF-B36.
 
-### `native/core/CombatBehaviorRE.h` — the local RE:: extension for the combat tree (measured)
-The `CombatBehaviorTreeNode` layout (10 vfuncs: act 0x02 / pop 0x03 / update 0x04 /
-on_interrupted 0x05), `TreeControl` (+0x158 master), `ControllerMini` (attackerHandle
-0x28, targetHandle 0x2C, `static_assert` < 0x68), the 70 leaf VariantID triples, the four
-ch.23 search leaves (`kSearchLeaves`) and the group search-centre offsets, `kCastContextNodes`,
-the update-seat block (runner step, SetFailed/Ascend both runtimes, the TLS/control identity
-proof, the corrected 2026-09-03 crash history), and "The node protocol" — the disassembly-measured CombatBehaviorThread layout + the
-push/pop sizes per node kind (AE IDs cited as evidence only; no hook targets an ID —
-every hook here is a vtable slot).
-- **What breaks:** the VariantID triples are copied verbatim from CPR's pinned
-  Offsets_VTABLE.h — never retype; the protocol block is what justifies the paired deny —
-  re-measure before changing `ActionGate.cpp`'s pairing, don't reason from CPR's class
-  declaration alone (that is exactly how the pop half was missed the first time).
+### `native/core/BehaviorTreeCatalog.h` — the combat behaviour tree catalog, `apmf::cbt` (clean room, 2026-10-27)
+Replaces `core/CombatBehaviorRE.h` (removed 2026-10-27: its own comment said it was copied from a GPL-3.0
+CommonLibSSE-NG fork; marth chose a clean-room re-derivation). Every value was re-derived from our three
+executables; evidence per value in `Docs/BEHAVIOR-TREE-CATALOG.md`. Holds: the node protocol (runner phases,
+act 0x02 / pop 0x03 / update 0x04 / slot 0x05 on an aborted result, the act/pop data-stack pair, ForceFail's
+pair), the slot typedefs (`Act_t`, `Update_t`, `SetFailed_t`, `Ascend_t`), the thread offsets (`kThreadCurNode`
+0x138, `kThreadPhase` 0x14C, ...) and `TreeControl` (+0x158 owner, whose +0x20 is the CombatController),
+`ControllerMini` (combatGroup 0x00, attackerHandle 0x28, targetHandle 0x2C), the CombatGroup search fields
+(`kGroupTargetToSearchFor` 0xFC, `kGroupSearchLoc` 0x100, `kGroupSearchLocSpace` 0x110),
+`RTTI_CombatBehaviorTreeNode`, and the 95 `CombatBehaviorTreeNodeObject*` vtables: `kLeaves` (70
+parameterless), `kSearchLeaves` (4), `kParamLeaves` (21, with the substrate's `ParamKind`), each sorted by name,
+plus `ForceFailIndex()`.
+- **Depended on by:** `core/ActionGate.cpp` (every act/pop/update seat, the ForceFail deny pair, ch.23 leash,
+  the movement hold), `core/CastObserve.cpp` (leaf names), `channels/CombatApproach.cpp` (Attack / Bash /
+  FindWeapon), `channels/CombatSubstrate.cpp` (the 95-entry allow-list; `static_assert` that the three
+  tables sum to `kLeafCount`), `channels/SubstrateEquip.cpp` (keys on the name `CombatBehaviorAcquireResource<2>`
+  and `CombatBehaviorEquipSpell`).
+- **What breaks:** a name change breaks every name lookup above (they are by string: the offense / cast /
+  pursuit / movement lists in ActionGate, the structural prefixes `CombatBehaviorChildSelector_` /
+  `CombatBehaviorFallbackSelector_` in CombatSubstrate, the two SubstrateEquip names). `kLeaves` must stay 70
+  (ActionGate's `std::array<REL::VariantID, 70>`). A new or changed vtable needs its row re-derived (method in
+  the doc) and the matching `tools/verified_addresses/spec.json` row; never type an id in from anywhere else.
+  The protocol block is what justifies the paired deny: re-measure before changing ActionGate's pairing.
 
 ### `native/core/PackageGate.{h,cpp}` — T3: the 0x49 package-offer gate (ch.9)
 **(This entry replaces MAP's old `core/AliasPkgProbe.{h,cpp}` section, corrected

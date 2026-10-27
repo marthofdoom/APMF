@@ -103,7 +103,7 @@ deny. APMF.log for the 20:41 session shows the actor (Jesper, `0x750012C6`) unde
 ch.8 +ACT heal drive with a ~150 ms internal `kIntent_Cast` window every ~1.8 s; the
 crash landed 1 s after a release, ~6 min into the session.
 
-**The protocol (measured; `core/CombatBehaviorRE.h` "The node protocol").** A node's
+**The protocol (measured; `core/BehaviorTreeCatalog.h` "The node protocol").** A node's
 `act()` (slot 0x02) PUSHES its per-thread state on the thread's data stack (`33171`:
 `top += align4(size)`), and the runner calls the SAME node's `pop()` (slot 0x03) in
 the SAME step right after an `act()` that ascended; `pop()` pops exactly what its own
@@ -287,7 +287,7 @@ deny-only hand claim" below.**
 and the (d) `ContextMagic` `CreateContextNode` deny (`core/ActionGate.cpp`) have NO
 native hand signal at their seat: `CombatBehaviorTreeNode`'s fixed 10-vfunc layout
 carries no per-instance data beyond the base, and the thread object
-(`CombatBehaviorThread`, measured layout in `core/CombatBehaviorRE.h`) has no
+(`CombatBehaviorThread`, measured layout in `core/BehaviorTreeCatalog.h`) has no
 hand/casting-source field either. There is no RTTI/struct-verified read available
 here — inventing one would violate INVARIANTS #17/#18's "no blind slots, no invented
 offsets" discipline. ~~**Practical effect:** a `kIntent_Cast` claim on ONE hand still

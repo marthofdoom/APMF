@@ -6,7 +6,7 @@
 #include "core/Allowance.h"   // RuntimeSupported(): the leaf-name map resolves ch.7's ids only where ch.7 does
 #include "core/ControlMap.h"
 #include "core/Sightline.h"
-#include "core/CombatBehaviorRE.h"   // the leaf vtables (names for the attribution line)
+#include "core/BehaviorTreeCatalog.h"   // the leaf vtables (names for the attribution line)
 
 #include <algorithm>
 #include <array>

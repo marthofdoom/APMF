@@ -5,7 +5,7 @@
 #include "channels/CombatSubstrate.h"   // S2a: a substrate is not a fight (Suppressing)
 #include "core/Allowance.h"   // SeatVerified / DerivesFrom / RuntimeSupported (mit-3.7 F1, G1)
 #include "core/Clock.h"
-#include "core/CombatBehaviorRE.h"   // kLeaves: the Attack / Bash leaf vtables (S5)
+#include "core/BehaviorTreeCatalog.h"   // kLeaves: the Attack / Bash leaf vtables (S5)
 #include "core/ControlMap.h"
 #include "core/Hook.h"   // OnMainThread (review F6: the save-thread check)
 #include "core/Log.h"

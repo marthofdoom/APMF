@@ -14,7 +14,7 @@
 #include "core/Allowance.h"                // SeatVerified, RuntimeSupported
 #include "core/CasterTypeCensus.h"         // NotifyInstalled: the fire signal
 #include "core/Clock.h"
-#include "core/CombatBehaviorRE.h"         // the leaf catalog (names)
+#include "core/BehaviorTreeCatalog.h"         // the leaf catalog (names)
 #include "core/ControlMap.h"
 #include "core/Log.h"
 #include "core/PackageGate.h"              // EvaluatePackage's verified row is shared
@@ -112,7 +112,7 @@
 //     package is the only driver of the body. COVERAGE (review F1 of a512763): EVERY
 //     CombatBehaviorTreeNodeObject* vtable the MIT fork ships -- the 70 parameterless leaves,
 //     the four search leaves (ch.23's act()/pop()) and the 21 PARAMETERISED nodes
-//     (core/CombatBehaviorRE.h kParamLeaves: AcquireResource, Flee<float>, FaceAngle, WatchTarget,
+//     (core/BehaviorTreeCatalog.h kParamLeaves: AcquireResource, Flee<float>, FaceAngle, WatchTarget,
 //     DisableAim, FollowPath / AcquireItem<AcquireWeapon>, Land, the blackboard nodes, all denied
 //     (12); the dual-cast CastImmediate / CastConcentration<bool>, gated like the cast leaves (2);
 //     Repeat<...>, SpawnParallel, DynamicSelector<Conditional,float> and the two Idle waits,
