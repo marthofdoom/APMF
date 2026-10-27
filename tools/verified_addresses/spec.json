@@ -4681,6 +4681,21 @@
    },
    "source": "native/core/TorchSeat.cpp (ch.17 torch deny, write_call<5>)",
    "doc": "AE 0x6F2951 / SE 0x65F7D8 / 1.7.104 0x705521 (0x704C70+0x8B1); agentlogs/apmf-torch.md"
+  },
+  {
+   "seat": "PapyrusCaller.NativeFunctionBase.Call",
+   "kind": "function",
+   "construct": "RELOCATION_ID(97923, 104651) (CommonLib Offset::BSScript::NF_util::NativeFunctionBase::Call)",
+   "ids": {
+    "1.6.1170": 104651,
+    "1.5.97": 97923
+   },
+   "sig": {
+    "1.6.1170": "4C 89 44 24 18 55 56 57 41 54 41 55 41 56 41 57 48 8D AC 24 A0 F8 FF FF 48 81 EC 60 08 00 00 48 C7 44 24 58 FE FF FF FF 48 89 9C 24 A0 08 00 00 4D 8B F1 4D 8B E0 48 8B F2 48 8B F9 44 8B 15 ?? ?? ?? ?? 65 48 8B 04 25 58 00 00 00 4A 8B 04 D0 48 89 44 24 30 B9 68 07 00 00 8B 1C 01 89 9D A8 07 00 00 C7 04 01 14 00 00 00 41 BD 04 00 00 00 48 8B 02 48 85 C0 0F 84 ?? ?? ?? ?? 33 C9 48 89 4C 24 38 89 4C 24 38 48 89 4C 24 40 4C 8B 78 60 48 89 4C 24 48 89 4C 24 48 48 89 4C 24 50 49 8D 57 28 48 8D 4C 24 48 E8 ?? ?? ?? ?? 90 48 8B 07 48 8B CF FF 90 A8 00 00 00 84 C0 0F 84 ?? ?? ?? ?? 48 8B 06 44 8B A0 80 00 00 00",
+    "1.5.97": "48 8B C4 4C 89 48 20 4C 89 40 18 55 56 57 41 54 41 55 41 56 41 57 48 8D A8 68 F8 FF FF 48 81 EC 60 08 00 00 48 C7 44 24 58 FE FF FF FF 48 89 58 08 49 8B F8 4C 8B F2 48 8B F1 44 8B 15 ?? ?? ?? ?? 65 48 8B 04 25 58 00 00 00 B9 68 07 00 00 4E 8B 2C D0 4C 03 E9 4C 89 6C 24 30 41 8B 5D 00 89 9D A8 07 00 00 41 C7 45 00 14 00 00 00 41 BC 04 00 00 00 4C 8B 3A 4D 85 FF 0F 84 ?? ?? ?? ?? 33 FF 48 89 7C 24 38 89 7C 24 38 48 89 7C 24 40 4D 8B 7F 60 48 89 7C 24 48 89 7C 24 48 48 89 7C 24 50 49 8D 57 28 48 8D 4C 24 48 E8 ?? ?? ?? ?? 90 48 8B 06 48 8B CE FF 90 A8 00 00 00 84 C0 0F 84 ?? ?? ?? ?? 49 8B 06 44 8B A8 80 00 00 00"
+   },
+   "source": "native/core/PapyrusCaller.cpp (ClickUp 86e3q082a, the Papyrus caller seat: write_vfunc slot 0x0F on every native's own vtable; the engine's Call is what every native's slot 0x0F holds or forwards to). The signature runs through the layout reads the seat depends on: [rdx] = Stack*, Stack+0x60 top frame, frame+0x28 self, Stack+0x80 stackID",
+   "doc": "agentlogs/apmf-papyrus-attribution-2.md (2026-10-27)"
   }
  ],
  "layout_facts": [

@@ -9,6 +9,7 @@
 #include "core/Sources.h"       // Harbinger 1a: equip sources, the degrade rule, the census
 #include "core/FacetAttribution.h"   // D2 (2026-10-12): every deny here is ranked by the Equip facet priority
 #include "core/EquipPreference.h"    // ch.26 (ABI v22): kEquipPref_Force, the forced preference refusal
+#include "core/PapyrusCaller.h"      // ClickUp 86e3q082a step 1: the passive Papyrus-caller probe
 
 #include <intrin.h>      // _ReturnAddress / _AddressOfReturnAddress (core/EquipGate.cpp precedent)
 #include <algorithm>
@@ -739,6 +740,20 @@ namespace apmf::equipsink {
                 selfPath   = false;
                 queuedLeg  = false;
                 queuedMiss = false;
+            }
+            // ClickUp 86e3q082a STEP 1, the PASSIVE Papyrus-caller probe (core/PapyrusCaller.h): logs what a
+            // per-plugin attribution WOULD rank this equip as, next to what it ranks as here. It changes nothing:
+            // eqSrc, the path kind and every verdict below are exactly as before. APMF's own equip and the
+            // deferred leg of a queued equip (no native is running then) are skipped.
+            if (apmf::papyruscaller::Installed() && !selfPath && !queuedLeg) {
+                try {
+                    const std::string rankedAs = eqSrc != apmf::sources::kNoSource ? std::string(apmf::sources::Name(eqSrc))
+                                                 : attributed                      ? std::string("(not ranked)")
+                                                                                   : std::string("Unattributed");
+                    apmf::papyruscaller::ProbeEquip(actorId, itemId, caller.external ? caller.ext : caller.name,
+                                                    caller.kind == PathKind::kScript, rankedAs.c_str());
+                } catch (...) {
+                }
             }
             // Leg 1 of a QUEUED equip (q=1) that reaches the worker: remember who asked, so the QueuedApply leg
             // is ranked as this requester (above). Called AFTER the worker, because the worker may null
