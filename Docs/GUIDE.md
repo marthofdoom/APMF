@@ -325,7 +325,7 @@ The mechanism is one function, `Outranks` in `core/FacetAttribution.cpp`. It rea
 
 > **Key Concept 12 (unattributed is allowed)** A write Harbinger cannot trace to a named source is allowed. It is logged `[sources] UNATTRIBUTED <facet>` and shown as an alert.
 
-Each facet has an `[UnknownSources]` switch that lets such a write rank at the priority of the Unattributed row instead (`override`). It is off by default and today it acts on the `Target`, `Combat`, `Cast`, `EquipWeapon` and `EquipArmor` facets. On the `Target` facet an unnamed write that came from the claiming mod's own plugin stands for that mod's claim.
+Each facet has an `[UnknownSources]` switch that lets such a write rank at the priority of the Unattributed row instead (`override`). It is off by default. The menu shows the checkbox on every facet, and the setting is consulted wherever a write is attributed through the shared attribution code (any facet attributed that way), including the `Package` facet's seat, the target pin and both equip facets. On the `Target` facet an unnamed write that came from the claiming mod's own plugin stands for that mod's claim.
 
 Not every facet enforces by priority. [FACETS.md Appendix A](FACETS.md#appendix-a-sources-and-priorities-per-facet) says, per sources facet, what is enforced against a foreign source today. Equip is ranked since 0.13.1, on its own two tables, `EquipWeapon` and `EquipArmor`. Every equip deny (the ch.17 set, the hand block, the ch.15 weapon rule, a ch.26 force) stands only while your priority is above the source that made the equip. A mod's queued equip is ranked once, as the mod that asked. An equip Harbinger cannot attribute is still allowed, whatever the numbers say.
 
@@ -530,7 +530,7 @@ Why a heartbeat and not a release and re-request: the release and re-request cyc
 | Cause | What happens |
 |---|---|
 | You call `Release` | Your part ends. The next best claim takes over, or the actor's own AI does |
-| A time limit | ch.8b, ch.22 and ch.25 are bounded and release themselves at the window. The substrate (ch.27) closes on its cast, its time limit or the cast claim's end |
+| A time limit | ch.8b, ch.22 and ch.25 are bounded and release themselves at the window. The substrate (ch.27) closes on its cast, its time limit or the cast claim's end, and Harbinger releases its claim then |
 | Harbinger ends it itself | ch.12, ch.20, ch.21, ch.24 release their own claim when their goal is over or lost. `IsClaimLive` turns false and the log names the reason |
 | Dropped at the drain | A claim that fails a refusing test when applied (a dual-cast against a single-hand claim, a package with no spell input) is never registered. `IsClaimLive` is false for it from the start |
 | Evicted | A live single-hand cast claim is evicted by a higher-basis dual-cast claim, and the reverse. `IsClaimLive` turns false |

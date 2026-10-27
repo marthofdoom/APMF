@@ -1171,3 +1171,6 @@ BehaviorTreeCatalog.h:37-41 says ForceFail act pushes through the push helper (A
 
 ### APMF-B218 (SEV-5, OPEN, against 1f08dc3) -- Leaf.* label mismatch in 10 spec.json rows
 Their Leaf.* names (and so the VerifiedAddresses.h labels and VERIFIED-ADDRESSES.md row names, e.g. Leaf.CombatBehaviorDisableAim, ...ChildSelector_ValueChildSelector_) keep the old spellings while construct uses the new ones. Labels only show in logs; align at the next regeneration. (Also: MFO's tools/splitcheck _data_diff crashes on set | tuple, MFO tools backlog.)
+
+### APMF-B219 (SEV-5, OPEN, native/APMF_API.h v27 comment and native/plugin.cpp:309, against 4996523) -- two stale code comments
+APMF_API.h v27 comment says the substrate runs only on 1.6.1170/1.5.97 (it runs on 1.7.104 since 0.14.0). plugin.cpp:309 says bPapyrusCaller defaults to 1 (code and shipped INI default 0). Closure: fix both comments (APMF_API.h is byte-shared with MFO, so mirror the edit there).

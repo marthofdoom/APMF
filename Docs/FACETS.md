@@ -3023,7 +3023,7 @@ Handle cast = g_apmf->RequestCast(actor, kBasis, &req);   // the spell, target, 
 
 The OPEN, in order, on the game thread:
 
-1. The actor must be loaded, alive, enabled, high process, OUT of combat, in no scene, with no dialogue menu open and the player out of combat. The client must outrank `Engine` on CombatAction, Combat, Equip, Detection and Cast in `APMF_Sources.ini` (every deny below ranks as the client; a deny that would not stand means a facet switched on undenied, so the substrate does not open).
+1. The actor must be loaded, alive, enabled, high process, OUT of combat, in no scene, with no dialogue menu open and the player out of combat. The client must outrank `Engine` on CombatAction, Combat, EquipWeapon, Detection and Cast in `APMF_Sources.ini` (every deny below ranks as the client; a deny that would not stand means a facet switched on undenied, so the substrate does not open).
 2. The actor enters Harbinger's holder set. The ANCHOR comes out of its holding cell to the actor on the first holder. The anchor is one persistent actor in `APMF.esl`: a field-by-field copy of Nazeem (`Skyrim.esm` `00013BBF`) with no factions, packages, outfit, inventory or script, not Unique, essential and a ghost. Harbinger turns its AI off and makes it invisible, and keeps it a step behind the follower (its collision is left on: the only way to switch it off is an engine flag that has not been verified).
 3. Two hand FLOORS: internal deny-only `kIntent_Cast` claims on both hands at the lowest basis, so your cast claim wins its hand and the other hand takes nothing, no weapon, shield, torch or unclaimed spell. They are full floors, not `kCastFlag_FloorSpellsOnly`.
 4. Once both floors are published (the next drain), ONE `Actor::StartCombat(anchor)`, the call ch.21 makes. A refusal ends the substrate.
@@ -3052,7 +3052,7 @@ Harbinger ends the substrate and releases the claim on: the cast claim's first F
 
 #### Priority and conflicts
 
-The substrate is an ordinary ranked claim (marth: "Nothing escapes Harbinger"). Its denies rank as its client on CombatAction (the leaves), Combat (the anchor refusal), Equip (the floors), Detection (the anchor's knowledge) and Cast (the floored hand's spell refusal at 0x0F and the 0x0A cast refusal, load-bearing since the spell equip, review F3 of a0112b24), and it opens only while the client outranks `Engine` on all five. A [ch.24](#ch24-combat-approach-kintent_combatapproach) claim waits through a substrate (it is not a fight), and a [ch.19](#ch19-travel-kintent_travel) walk continues through a HELD substrate (its combat-cancel is denied for `kSubstrateState_Held`; a REAL fight, `kSubstrateState_Real`, still ends the leg with `kLeg_CombatCancelled`). The dry run only opens a substrate on a truly idle teammate: no ch.19 / ch.9 / ch.1 / ch.12 claim from any client, not sitting or in furniture, not in dialogue with the player (not NPC-to-NPC). A [ch.22](#ch22-combat-re-entry-deny-kintent_combatreentrydeny) deny on the actor does not block the substrate's own entry.
+The substrate is an ordinary ranked claim (marth: "Nothing escapes Harbinger"). Its denies rank as its client on CombatAction (the leaves), Combat (the anchor refusal), EquipWeapon (the floors), Detection (the anchor's knowledge) and Cast (the floored hand's spell refusal at 0x0F and the 0x0A cast refusal, load-bearing since the spell equip, review F3 of a0112b24), and it opens only while the client outranks `Engine` on all five. A [ch.24](#ch24-combat-approach-kintent_combatapproach) claim waits through a substrate (it is not a fight), and a [ch.19](#ch19-travel-kintent_travel) walk continues through a HELD substrate (its combat-cancel is denied for `kSubstrateState_Held`; a REAL fight, `kSubstrateState_Real`, still ends the leg with `kLeg_CombatCancelled`). The dry run only opens a substrate on a truly idle teammate: no ch.19 / ch.9 / ch.1 / ch.12 claim from any client, not sitting or in furniture, not in dialogue with the player (not NPC-to-NPC). A [ch.22](#ch22-combat-re-entry-deny-kintent_combatreentrydeny) deny on the actor does not block the substrate's own entry.
 
 #### Refusals
 
@@ -3113,7 +3113,7 @@ ABI 23 (0.13.1); the state query is ABI 26, the availability query ABI 27. `[Com
 
 1. You file the substrate but no cast claim. What does the follower cast?
 2. A wolf attacks the follower while its substrate is open. Which deny stands down first, and is `StopCombat` called?
-3. Why does the substrate refuse to open when `Engine` outranks your mod on the Equip facet?
+3. Why does the substrate refuse to open when `Engine` outranks your mod on the EquipWeapon facet?
 
 ## Read-only queries (no claim)
 
@@ -3509,7 +3509,7 @@ Target=override
 
 **The menu counters.** Each facet table has five counters. **Served** counts the times Harbinger enforced that source's own claim: the engine's pick overridden by a pin, a foreign write restored, an equip refused or made for the claim, a package held, a travel leg started, a cast or action decision, a score lift, a combat entry. **Hits** counts outside writes Harbinger saw that source make to the facet. A mod acting on its own claim (the claim binds its own client, or its own equip ties with its own hand claim) is not an outside write: it is counted apart as "own" in the hover details and is not a Hit, Blocked or Passed. **Blocked** counts the outside writes Harbinger denied because a claim outranked the source. **Passed** counts the ones that stood because the source outranked the claim or tied. **Observed** counts writes seen at a seat that only watches, where nothing was decided. A mod that only files claims has Served and few or no Hits, and it is not greyed as idle while it holds a claim. The facet header names as winner the highest-priority source that was active on that facet in the last 60 seconds. `Equip` is split in two facets, weapon and armor, and a legacy `[Equip]` section is the per-key fallback for both.
 
-`iUnregistered<Facet>` and `iClient<Facet>` change the default for a whole facet. A name in a facet section beats the default. Names are DLL or plugin names and are not case sensitive. Raise `Engine=` in `[Combat]`, `[CombatAction]` or `[Cast]` above the client to let the engine win. `[UnknownSources]` takes `allow` (default) or `override` per facet and acts today on `Target`, `Combat`, `Cast`, `EquipWeapon` and `EquipArmor`. See [INI-REFERENCE.md](INI-REFERENCE.md) for the full format.
+`iUnregistered<Facet>` and `iClient<Facet>` change the default for a whole facet. A name in a facet section beats the default. Names are DLL or plugin names and are not case sensitive. Raise `Engine=` in `[Combat]`, `[CombatAction]` or `[Cast]` above the client to let the engine win. `[UnknownSources]` takes `allow` (default) or `override` per facet and is consulted wherever a write is attributed through the shared attribution code (any facet attributed that way), including `Package`, `Target`, `Combat`, `Cast`, `EquipWeapon` and `EquipArmor`. The menu shows the checkbox on every facet. See [INI-REFERENCE.md](INI-REFERENCE.md) for the full format.
 
 ## Appendix B: ABI history
 

@@ -219,7 +219,7 @@ The facet priorities (`EquipWeapon`, `EquipArmor` and the rest) live in `APMF_So
 - **The cast proxy carries the spell's name and menu icon.** A buff cast through the substrate shows its real name instead of an unnamed effect. The proxy keeps the slot the game gives a new spell, either hand.
 - **A travel walk that ends short is sent again,** up to 3 times, on a fresh package slot when the destination has moved. After that the leg reads `kLeg_StuckTimeout` at once.
 - **A blocked or stuck walk keeps the follower** on the travel package while the mod's claim stands. The state reads the same as before. Only the mod's `Release` or `Repoint` ends the hold.
-- **What a client sees from the substrate:** the substrate claim reads not live once the window closes, `GetSubstrateState` goes back to none, and the close reason (`fired`, `fired-not-released`, `released-unconfirmed`, `tree-outside-gate`) is in `APMF.log`. The API did not change.
+- **What a client sees from the substrate:** Harbinger releases the substrate claim when the window closes, `GetSubstrateState` goes back to none, and the close reason (`fired`, `fired-not-released`, `released-unconfirmed`, `tree-outside-gate`) is in `APMF.log`. The API did not change.
 - No ABI change, still ABI v30.
 
 ## What is in v0.15.0
