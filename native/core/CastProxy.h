@@ -54,7 +54,10 @@
 //   * BORROWED POINTERS. `Configure` shares the SOURCE spell's `Effect*` objects
 //     BY POINTER. `ResetAll` clears them BEFORE nulling a slot, or the load-time
 //     dynamic-form purge would free a live spell's effect array through a dead
-//     proxy (MFO's `native/Actuation_Direct.cpp` lesson).
+//     proxy (MFO's `native/Actuation_Direct.cpp` lesson). Since 2026-10-26 it also
+//     copies the source's equip slot and menu display object (borrowed form
+//     pointers, nulled by `ResetAll` too) and its name (an OWNED pool reference,
+//     left to the form's own destructor). Keywords are not copied (APMF-B206).
 //
 // CLIENT DEPENDENCY (documented, not enforceable from here). Teaching the proxy
 // only makes it selectable once the actor's `CombatInventory` REBUILDS -- the one

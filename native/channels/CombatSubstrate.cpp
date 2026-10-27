@@ -295,9 +295,12 @@ namespace {
         std::atomic<std::uint64_t> gateFirstMs{ 0 };
         std::atomic<RE::FormID>    builtOutside{ 0 };
         std::atomic<std::uint64_t> builtOutsideMs{ 0 };
+        // fix/apmf-gate-probe-proxy-name: NoteCastBuilt's passive controller-identity line, once per window.
+        std::atomic<bool>          builtProbeLogged{ false };
     };
     std::array<Slot, kSlots>   g_slots{};
     std::atomic<std::uint32_t> g_slotCount{ 0 };   // slots with an id (the AnyLive pre-gate)
+    std::atomic<std::uint32_t> g_windowSerial{ 0 };   // bumped by TakeSlot (WindowSerial: ActionGate's probe)
 
     // seqlock-style read: the id, the state, the id again. A slot reused between the two id loads
     // reads as "not this actor".
@@ -589,6 +592,8 @@ namespace {
             s.gateFirstMs.store(0, std::memory_order_relaxed);
             s.builtOutside.store(0, std::memory_order_relaxed);
             s.builtOutsideMs.store(0, std::memory_order_relaxed);
+            s.builtProbeLogged.store(false, std::memory_order_relaxed);
+            g_windowSerial.fetch_add(1, std::memory_order_relaxed);
             s.id.store(a_id, std::memory_order_release);
             s.state.store(a_state, std::memory_order_release);
             g_slotCount.fetch_add(1, std::memory_order_relaxed);
@@ -2379,6 +2384,7 @@ namespace apmf::combatsubstrate {
         return r ? r : "unknown";
     }
     bool       AnyLive() { return g_slotCount.load(std::memory_order_relaxed) != 0; }
+    std::uint32_t WindowSerial() { return g_windowSerial.load(std::memory_order_relaxed); }
     RE::FormID AnchorId() { return g_anchorId.load(std::memory_order_relaxed); }
 
     bool Suppressing(RE::FormID a_actor) {
@@ -2657,9 +2663,28 @@ namespace apmf::combatsubstrate {
         std::uint32_t st = 0;
         const int     si = FindSlot(a->GetFormID(), st);
         if (si < 0 || (st & (kStLive | kStReal)) != kStLive) return;
+        const std::uint64_t treeMs = g_slots[si].treeStartMs.load(std::memory_order_relaxed);
+        // PASSIVE PROBE (fix/apmf-gate-probe-proxy-name, 2026-10-26; principle 5): the FIRST build per window, inside
+        // or outside the gate, says WHICH controller built it -- the engine's `a_cc`, its attacker (the holder: that is
+        // how the slot was found) and whether `a_cc` is the holder's own live combatController (Actor+0x158, a pointer
+        // COMPARE only: never dereferenced here). A build on a controller that is not the holder's would explain a tree
+        // whose control resolved to another id. Writes nothing the gate or the close reads.
+        if (!g_slots[si].builtProbeLogged.exchange(true, std::memory_order_relaxed)) {
+            const RE::CombatController* live = a->GetActorRuntimeData().combatController;
+            spdlog::info("[substrate] CAST BUILT 0x{}: spell 0x{} on controller 0x{} (attacker 0x{}, handle 0x{}); the "
+                         "holder's live combatController 0x{} -- {}; {}; thread {} (first build per window only).",
+                         Hex(a->GetFormID()), Hex(a_caster->magicItem->GetFormID()),
+                         apmf::log::Hex(reinterpret_cast<std::uintptr_t>(a_cc), 16), Hex(a->GetFormID()),
+                         Hex(a_cc->attackerHandle.native_handle()),
+                         apmf::log::Hex(reinterpret_cast<std::uintptr_t>(live), 16),
+                         live == a_cc ? "the SAME controller" : "a DIFFERENT controller",
+                         treeMs != 0 ? "inside the gate (the leaf gate saw this holder's tree)"
+                                     : "OUTSIDE the gate (treeStartMs 0)",
+                         REX::W32::GetCurrentThreadId());
+        }
         // The tree's leaves run ForLeaf (which sets treeStartMs) before a cast leaf's context builds a caster, on this
         // same combat thread: a build with treeStartMs still 0 ran outside the gate. The first one is kept.
-        if (g_slots[si].treeStartMs.load(std::memory_order_relaxed) != 0) return;
+        if (treeMs != 0) return;
         RE::FormID zero = 0;
         if (g_slots[si].builtOutside.compare_exchange_strong(zero, a_caster->magicItem->GetFormID(),
                                                              std::memory_order_acq_rel))

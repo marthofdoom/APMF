@@ -56,6 +56,9 @@ namespace apmf::combatsubstrate {
     // ---- ANY THREAD (lock-free) ----
     // At least one substrate holds a slot (live or dropping). One relaxed load.
     bool AnyLive();
+    // A serial bumped every time a substrate takes a slot (a new window opens; never 0 once one has). One relaxed
+    // load. Read by core/ActionGate.cpp's passive unresolved-act probe (one line per window).
+    std::uint32_t WindowSerial();
     // The anchor reference's FormID (0 before Install resolved it).
     RE::FormID AnchorId();
     // A substrate is suppressing combat behaviour on `a_actor` right now: a live holder whose

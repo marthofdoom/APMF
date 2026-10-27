@@ -1132,3 +1132,6 @@ Reviewer (F6, as relayed by the coordinator): "ScriptEventSourceHolder +0xE18 TE
 
 ### APMF-B205 (SEV-5, OPEN, channels/CombatSubstrate.cpp) -- the file is 3051 lines (raised against 608df67, tier-3 review F7)
 Reviewer (F7, as relayed by the coordinator): "CombatSubstrate.cpp 3051 lines, split stays APMF-B123." Deferred (SEV-5); the split is APMF-B123's own brief.
+
+### APMF-B206 (SEV-5, OPEN, core/CastProxy.cpp Configure) -- the proxy carries no KEYWORDS (raised by the author of fix/apmf-gate-probe-proxy-name, 2026-10-26, by the brief's direction)
+The proxy now copies the source spell's name, equip slot and menu display object (field 2026-10-26d: the nameless proxy showed generic active-effect text and MFO logged "CAST (unnamed)"), but NOT its `BGSKeywordForm` keywords. Copying them means an engine-allocated keyword array on a runtime-minted form, which INVARIANTS #19 would then need reset (freed or emptied) in `ResetAll` before the load-time purge, and a re-point must replace it. Anything that tests a spell's keywords (perk entry conditions, a magic-skill or a list's keyword reads, MFO's own classification) sees the proxy as keywordless. Deferred by the brief (marth's coordinator, 2026-10-26): its own scoped change with the #19 reset designed in.

@@ -131,12 +131,33 @@ namespace apmf::castproxy {
         // Effect* objects by pointer (that is the whole point -- identical effects,
         // different delivery). The borrowed pointers are what ResetAll must clear
         // before a load-time purge (INVARIANTS #19).
+        //
+        // The source's IDENTITY travels too (fix/apmf-gate-probe-proxy-name, 2026-10-26: the field
+        // proxy was nameless, so the active-effect UI showed generic text and MFO logged "CAST
+        // (unnamed)"): its name, its equip slot and its menu display object, ALL THREE written on
+        // EVERY Configure (a re-point of a free slot overwrites the previous spell's values, a
+        // source with none writes none -- never a stale one). Each is a plain member write, the
+        // exact body of the engine accessor, verified on all three unpacked binaries (SpellItem
+        // COL offsets: BGSEquipType at +0x90 with GetEquipSlot / SetEquipSlot = `mov rax,[rcx+8]` /
+        // `mov [rcx+8],rdx` at its vtable slots 4 / 5; BGSMenuDisplayObject at +0xA0 with
+        // GetMenuDisplayObject = `mov rax,[rcx+8]` at slot 4; SpellItem::IsTwoHanded, slot 0x67,
+        // reads the +0x90 sub-object's slot 4 and tests the equip slot's +0x38 bit 0), so no
+        // vfunc is called through CommonLib's declaration (principle 6). fullName is a pooled
+        // BSFixedString: the copy-assign takes its own reference (inline acquire) and drops the
+        // old one (BSStringPool release, id 67847 / 69192, mapped on 1.7.104 in the fork's
+        // idmap), so the proxy OWNS its name -- nothing borrowed, the form's own destructor drops
+        // it. NOT copied (on purpose): KEYWORDS (an engine array allocation, and #19 would need
+        // a reset for it -- REVIEW-BACKLOG APMF-B206), the TESDescription (not copyable; the MGEF
+        // description is shared through the borrowed Effect* already).
         void Configure(RE::SpellItem* a_p, RE::SpellItem* a_src, Flip a_flip) {
             a_p->data          = a_src->data;                                // castingType/cost/etc.
             a_p->data.delivery = a_flip == Flip::kToSelf ? RE::MagicSystem::Delivery::kSelf
                                                          : RE::MagicSystem::Delivery::kTargetActor;   // the ONLY change
             a_p->effects.clear();
             for (auto* e : a_src->effects) a_p->effects.push_back(e);        // shared source Effect*
+            a_p->fullName       = a_src->fullName;         // TESFullName +0x30/+0x08: owned pool reference
+            a_p->equipSlot      = a_src->equipSlot;        // BGSEquipType +0x90/+0x08 (SetEquipSlot's body)
+            a_p->menuDispObject = a_src->menuDispObject;   // BGSMenuDisplayObject +0xA0/+0x08
         }
 
     }
@@ -228,11 +249,15 @@ namespace apmf::castproxy {
             s.flip   = a_flip;
             if (!actor->HasSpell(s.form)) actor->AddSpell(s.form);   // TRANSIENT teach
             const bool taught = actor->HasSpell(s.form);
+            const char* pname = s.form->fullName.c_str();
             spdlog::info("[castproxy] 0x{} minted {} 0x{} for spell 0x{} (delivery {} -> {}) on the {} hand "
-                         "(shared effects, transiently taught: {}; refs 0 -> 1).",
+                         "(shared effects, transiently taught: {}; refs 0 -> 1; name \"{}\", equip slot 0x{}, "
+                         "menu display object 0x{}).",
                          apmf::log::Hex(a_owner), FlipName(a_flip), apmf::log::Hex(s.form->GetFormID()),
                          apmf::log::Hex(sid), static_cast<int>(a_src->GetDelivery()),
-                         static_cast<int>(s.form->GetDelivery()), HandName(a_hand), taught ? "yes" : "NO");
+                         static_cast<int>(s.form->GetDelivery()), HandName(a_hand), taught ? "yes" : "NO",
+                         pname ? pname : "", apmf::log::Hex(s.form->equipSlot ? s.form->equipSlot->GetFormID() : 0u),
+                         apmf::log::Hex(s.form->menuDispObject ? s.form->menuDispObject->GetFormID() : 0u));
             {
                 auto&             w = g_watch[static_cast<std::size_t>(&s - g_slot)];
                 std::scoped_lock  lk(w.mx);
@@ -306,8 +331,16 @@ namespace apmf::castproxy {
         // MFO's `native/Actuation_Direct.cpp` ConcProxy::Reset, verbatim in shape --
         // then null the slot so the next claim re-mints. No engine calls: the actors
         // are being replaced.
+        // The equip slot and the menu display object are BORROWED form pointers too (the
+        // source's), so they are nulled here with the effects. The name is NOT touched: it is an
+        // owned pool reference (Configure's copy-assign acquired it) that the form's own
+        // destructor drops in the purge; dropping it here would be an engine call.
         for (auto& s : g_slot) {
-            if (s.form) s.form->effects.clear();
+            if (s.form) {
+                s.form->effects.clear();
+                s.form->equipSlot      = nullptr;
+                s.form->menuDispObject = nullptr;
+            }
             s = {};
         }
         for (auto& w : g_watch) {

@@ -4,6 +4,19 @@ Updated 2026-10-26. Current version **v0.15.0** (cut 2026-10-25, ABI v30, see CH
 shipped, what's probe-gated, what's next. Keep this current in the SAME change as any
 build/finding/workflow change.
 
+## HEAD OF WORK 2026-10-26 -- GATE PROBES + NAMED PROXY, branch `fix/apmf-gate-probe-proxy-name`, NOT merged
+
+- Field (MFO `_evidence/2026-10-26d-lorerim-c2254c0/APMF.log`, OOC substrate casts FIRE 5/6): the 17:53:50 window
+  closed `tree-outside-gate` with "Combat Parallel entered 0" / "ForLeaf early returns 0"; the proxy spell was nameless
+  (MFO "CAST (unnamed)", generic active-effect text).
+- **Probes (PASSIVE, no verdict change):** `[substrate] GATE UNRESOLVED act` (ActionGate `ProbeUnresolvedAct`, first
+  unresolved substrate-node act() per window: node, master_controller, both raw attackerHandle reads, thread) and
+  `[substrate] CAST BUILT` (CombatSubstrate `NoteCastBuilt`, first build per window: controller, attacker handle, the
+  holder's live combatController SAME / DIFFERENT, inside / outside the gate, thread).
+- **Proxy identity:** `castproxy::Configure` copies `fullName`, `equipSlot`, `menuDispObject` on every Configure;
+  `ResetAll` nulls the two borrowed pointers. Keywords deferred (APMF-B206). The mint line prints name / slot / MDOB.
+- No ABI, co-save, seat, INI or address change. Not field-tested.
+
 ## HEAD OF WORK 2026-10-26 -- CH.19 KEEPS CONTROL (DONE restarts + the failure hold), branch `fix/apmf-ch19-keep-control`, NOT merged
 
 - marth: "Still some issues with maintaining control." Field: LoreRim v2.7.2 deck log 2026-10-26 (MFO
