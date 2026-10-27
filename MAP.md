@@ -1706,7 +1706,10 @@ teammates, 1 = every combatant. Three feeds, all read-only:
 - **Leaves (no seat of its own):** `actiongate::ActThunk` is now a wrapper around `ActThunkBody` (ch.7's old body,
   unchanged) that, while `atkprobe::Armed()`, calls `BeforeAct` / `AfterAct` around it for the 15 `kWatched` leaves
   (Attack, AttackLow, AttackFromCover, SpecialAttack, Bash, BlockAttack, Block, RangedAttack, Ground/Flying/PerchAttack,
-  FallbackToRanged, the three cast leaves). "Started" = `TreeControl::curNode` still names the leaf after act().
+  FallbackToRanged, the three cast leaves). Outcome per act(): running (`curNode` still the leaf),
+  done / failed / aborted (result word +0x148 = 0 / 1 / 2+), or denied (Harbinger's ForceFail ran: the wrapper passes
+  `t_pending` == {node, control} as `a_denied`). Every pick from a running / done leaf is counted (repeats too);
+  new / unchanged is a separate tally. `ResetForLoad` (kPreLoadGame) clears the per-actor stats. Backlog APMF-B220..B224.
 - **The pick:** after a started attack-type leaf, the actor's `currentProcess->high->attackData` (the read the engine's
   own attempt makes right after StartAttack: AE 0x6B77F0 / SE 0x625FE0 / 1.7.104 0x6CA270), its ATKE event and flags,
   and whether the pointer changed across the act(). For a started Attack, the current context through the window

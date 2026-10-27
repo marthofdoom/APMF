@@ -518,10 +518,10 @@ every immediate the same. The ids resolve through the CommonLibSSE-NG fork's pub
   PlayerCharacter fields at or above 0x2D8 (+8 on 1.7.104); prologue and signature are the same.
   Added 2026-10-12 (`core/SpectatorGate.cpp`, ClickUp 86e3m5feu): Character slot 0xDC `InitiateSpectator`,
   1.7.104 0x739C10 against 1.6.1170 0x7270E0, 274 instructions, identical (call and RIP targets normalised).
+  Its one virtual caller, the spectator dispatcher (1.7.104 0x8524D0 against 1.6.1170 0x83D5F0), is identical too.
   Added 2026-10-27 (`core/AttackSelectProbe.cpp`, [Probe] bAttackSelect, ClickUp 86e3bw775): slot 0x02 of
   CtxNode.Melee (1.7.104 0x8BA5D0 against 1.6.1170 0x8A5100) and CtxNode.Block (0x8815F0 against 0x86C3B0), 72
   instructions each, identical (call and RIP targets normalised); both read the node's ATTACK_TYPE at node+0x30.
-  Its one virtual caller, the spectator dispatcher (1.7.104 0x8524D0 against 1.6.1170 0x83D5F0), is identical too.
 - **Class layouts.** 27,249 slot-function pairs from every mapped vtable (143,324 memory operands) were
   compared and every changed displacement attributed to its RTTI class. Zero changes in: ActorMagicCaster,
   MagicCaster, NonActorMagicCaster, every CombatMagicCaster*, every CombatInventoryItem*, every

@@ -372,6 +372,7 @@ namespace {
             // ch.22: same -- no re-entry deny crosses the load.
             apmf::reentrydeny::ResetAll("kPreLoadGame");
             apmf::combatsubstrate::ResetAll("kPreLoadGame");   // S2a: forget every substrate (no co-save)
+            apmf::atkprobe::ResetForLoad("kPreLoadGame");   // [Probe] bAttackSelect: per-actor counters (ids reused)
             // ch.23 pursuit leash (ABI v16): same -- no leash entry crosses the load.
             apmf::actiongate::ResetLeash("kPreLoadGame");
             // ch.24 combat approach (ABI v19): same -- no approach entry or area record crosses the load.

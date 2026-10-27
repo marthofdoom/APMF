@@ -1381,7 +1381,10 @@ namespace apmf::actiongate {
                     apmf::atkprobe::ActPre pre{};
                     apmf::atkprobe::BeforeAct(leaf, a_control, pre);
                     void* const ret = ActThunkBody(a_this, a_control);
-                    apmf::atkprobe::AfterAct(pre, a_this, a_control);
+                    // A ForceFail deny (ch.7 claim or substrate holder) leaves its paired pop pending for
+                    // exactly this {node, control}; nothing else sets it, and the runner has not popped yet.
+                    const bool denied = t_pending.node == a_this && t_pending.control == a_control;
+                    apmf::atkprobe::AfterAct(pre, a_this, a_control, denied);
                     return ret;
                 }
             }

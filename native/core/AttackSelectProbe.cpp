@@ -53,9 +53,10 @@ extern "C" __declspec(dllimport) unsigned long __stdcall GetPrivateProfileIntA(
 //      bounds its window read (ActionGate.cpp RangedProbeEquipLeaf).
 //
 //   2. THE LEAF. ch.7's act() thunk already sits on all 70 leaves; for the watched ones
-//      (kWatched below) it calls BeforeAct / AfterAct around its own body. "Started" = the
-//      thread still stands on the leaf after act() (cur_node, +0x138, unchanged): the
-//      failure path is SetFailed(1) + Ascend, which moves cur_node to the parent.
+//      (kWatched below) it calls BeforeAct / AfterAct around its own body. The outcome (enum Out):
+//      running = the thread still stands on the leaf (cur_node, +0x138); otherwise the result word
+//      (+0x148) tells done (0) from failed (1, SetFailed + Ascend) and aborted (2+); a ch.7 /
+//      substrate ForceFail deny is reported as denied (ch.7's paired pop still pending).
 //      CombatBehaviorAttack's act (AE 0x8A5230) pushes 1 byte and tail-jumps into its attempt
 //      (AE 0x8A4080 / SE 0x80D8C0 / 1.7.104 0x8B9550): actor checks, then StartAttack
 //      (AE 0x8A28B0 id 49170 / SE 0x80C020 id 48139) on the CURRENT context, read through the
@@ -152,14 +153,26 @@ namespace apmf::atkprobe {
 
         enum class Kind : std::uint8_t { kLeaf, kCtxMelee, kCtxBlock };
 
+        // What a watched leaf's act() left behind (review of 162a446, F1):
+        //   kRunning  the thread still stands on the leaf (an attack the engine started and is running);
+        //   kDone     the leaf ascended with the result word 0 (it finished inside act(), not a failure);
+        //   kFailed   it ascended with result 1 (SetFailed(thread, 1), the engine's own failure);
+        //   kAborted  it ascended with result 2 or more (sticky abort);
+        //   kDenied   HARBINGER's ForceFail deny ran instead of the leaf (ch.7 claim / substrate holder),
+        //             told apart by ch.7's still-pending paired pop, so it never counts as an engine failure.
+        enum Out : std::uint8_t { kRunning, kDone, kFailed, kAborted, kDenied, kOutCount };
+        constexpr std::array<const char*, kOutCount> kOutName{ { "running", "done", "failed", "aborted", "denied" } };
+
         struct Rec
         {
             std::uint64_t ms      = 0;
             RE::FormID    fid     = 0;
             Kind          kind    = Kind::kLeaf;
             std::int8_t   leaf    = -1;
-            std::uint8_t  started = 0;
+            std::uint8_t  started = 0;   // = (out == kRunning), kept for the counters
+            std::uint8_t  out     = 0;   // Out below
             std::uint8_t  changed = 0;
+            std::uint32_t result  = 0;   // the thread's result word (+0x148) right after act()
             std::uint32_t ctxType = 0xFFFFFFFF;   // 0xFFFFFFFF = not read
             std::uint32_t pool    = 0xFFFFFFFF;
             std::uint32_t flags   = 0;
@@ -170,6 +183,7 @@ namespace apmf::atkprobe {
         {
             std::array<std::uint32_t, kNumLeaves> acts{};
             std::array<std::uint32_t, kNumLeaves> started{};
+            std::array<std::array<std::uint32_t, kOutCount>, kNumLeaves> outs{};
             std::array<std::uint32_t, 3>          ctxMelee{};
             std::array<std::uint64_t, 3>          poolSum{};
             std::array<std::uint32_t, 3>          ctxBlock{};
@@ -178,7 +192,8 @@ namespace apmf::atkprobe {
             std::uint32_t                         power    = 0;
             std::uint32_t                         bash     = 0;
             std::uint32_t                         left     = 0;
-            std::uint32_t                         unchanged = 0;
+            std::uint32_t                         newPick   = 0;   // the attack-data pointer changed across the act()
+            std::uint32_t                         unchanged = 0;   // ... did not (a repeat of the same entry, or a bypass)
             std::vector<std::pair<std::string, std::uint32_t>> pickHist;   // event -> count, bounded
             std::uint64_t lastRecMs      = 0;
             std::uint64_t lastSummaryMs  = 0;
@@ -387,7 +402,7 @@ namespace apmf::atkprobe {
         if (kReadsPick[static_cast<std::size_t>(a_leaf)]) a_pre.pickBefore = CurrentAttackData(a_pre.actor.get());
     }
 
-    void AfterAct(const ActPre& a_pre, void* a_node, void* a_control) {
+    void AfterAct(const ActPre& a_pre, void* a_node, void* a_control, bool a_denied) {
         if (!a_pre.actor || a_pre.fid == 0) return;
         auto* tc = reinterpret_cast<apmf::cbt::TreeControl*>(a_control);
 
@@ -396,11 +411,19 @@ namespace apmf::atkprobe {
         r.fid     = a_pre.fid;
         r.kind    = Kind::kLeaf;
         r.leaf    = static_cast<std::int8_t>(a_pre.leaf);
-        r.started = tc && tc->curNode == a_node ? 1 : 0;
-        if (r.started) {
+        r.result  = tc ? tc->result : 0;
+        if (a_denied) {
+            r.out = kDenied;
+        } else if (tc && tc->curNode == a_node) {
+            r.out = kRunning;
+        } else {
+            r.out = r.result == 0 ? kDone : (r.result == 1 ? kFailed : kAborted);
+        }
+        r.started = r.out == kRunning ? 1 : 0;
+        if (r.out == kRunning || r.out == kDone) {
             // The attempt read its context through this window before StartAttack (AE 0x8A41A5);
             // a started Attack proves that context was the one StartAttack used.
-            if (a_pre.leaf == kLeafAttack) {
+            if (a_pre.leaf == kLeafAttack && r.out == kRunning) {
                 if (const auto ctx = WindowContext(a_control, static_cast<std::uint32_t>(kCtxPoolCount + 4)); ctx != 0) {
                     r.ctxType = *reinterpret_cast<const std::uint32_t*>(ctx + kCtxType);
                     r.pool    = *reinterpret_cast<const std::uint32_t*>(ctx + kCtxPoolCount);
@@ -424,10 +447,14 @@ namespace apmf::atkprobe {
         if (!s) return;
         const auto li = static_cast<std::size_t>(a_pre.leaf);
         ++s->acts[li];
-        if (r.started) {
-            ++s->started[li];
-            if (r.event[0] != '\0' && r.changed) {
+        ++s->outs[li][r.out];
+        if (r.started) ++s->started[li];
+        // Every pick a started (or finished) leaf left on the actor counts, repeats included: repetition is
+        // exactly what this facet is about (review of 162a446, F2). new / unchanged are a separate tally.
+        if (r.out == kRunning || r.out == kDone) {
+            if (r.event[0] != '\0') {
                 ++s->picks;
+                if (r.changed) ++s->newPick; else ++s->unchanged;
                 if (r.flags & (1u << 2)) ++s->power;
                 if (r.flags & (1u << 1)) ++s->bash;
                 if (r.flags & (1u << 3)) ++s->left;
@@ -438,14 +465,24 @@ namespace apmf::atkprobe {
                 } else if (s->pickHist.size() < kMaxPickKeys) {
                     s->pickHist.emplace_back(r.event, 1u);
                 }
-            } else if (r.event[0] != '\0') {
-                ++s->unchanged;
             }
         }
         if (s->detailThisFight < kDetailPerFight) {
             ++s->detailThisFight;
             Push(r);
         }
+    }
+
+    void ResetForLoad(const char* a_why) {
+        if (!g_armed.load(std::memory_order_relaxed) && !g_ctxArmed.load(std::memory_order_relaxed)) return;
+        std::size_t n = 0;
+        {
+            std::scoped_lock lk(g_mx);
+            n = g_stats.size();
+            g_stats.clear();
+            g_queue.clear();
+        }
+        spdlog::info("[atk-sel] {}: per-actor stats cleared ({} actors) -- form ids may be reused by the next save.", a_why, n);
     }
 
     void Install() {
@@ -553,16 +590,17 @@ namespace apmf::atkprobe {
             const auto name = nameOf(r.fid);
             if (r.kind == Kind::kLeaf) {
                 if (r.ctxType != 0xFFFFFFFF) {
-                    spdlog::info("[atk-sel] 0x{} '{}' LEAF {} started={} ctx={}({}) pool={} pick='{}' flags=0x{} power={} bash={} left={} new={}",
-                                 apmf::log::Hex(r.fid), name, LeafShort(r.leaf), r.started, TypeName(r.ctxType), r.ctxType,
+                    spdlog::info("[atk-sel] 0x{} '{}' LEAF {} out={} result={} ctx={}({}) pool={} pick='{}' flags=0x{} power={} bash={} left={} new={}",
+                                 apmf::log::Hex(r.fid), name, LeafShort(r.leaf), kOutName[r.out], r.result, TypeName(r.ctxType), r.ctxType,
                                  r.pool, r.event, apmf::log::Hex(r.flags, 2), (r.flags >> 2) & 1, (r.flags >> 1) & 1,
                                  (r.flags >> 3) & 1, r.changed);
-                } else if (r.started && r.event[0] != '\0') {
-                    spdlog::info("[atk-sel] 0x{} '{}' LEAF {} started=1 pick='{}' flags=0x{} power={} bash={} left={} new={}",
-                                 apmf::log::Hex(r.fid), name, LeafShort(r.leaf), r.event, apmf::log::Hex(r.flags, 2),
+                } else if ((r.out == kRunning || r.out == kDone) && r.event[0] != '\0') {
+                    spdlog::info("[atk-sel] 0x{} '{}' LEAF {} out={} result={} pick='{}' flags=0x{} power={} bash={} left={} new={}",
+                                 apmf::log::Hex(r.fid), name, LeafShort(r.leaf), kOutName[r.out], r.result, r.event, apmf::log::Hex(r.flags, 2),
                                  (r.flags >> 2) & 1, (r.flags >> 1) & 1, (r.flags >> 3) & 1, r.changed);
                 } else {
-                    spdlog::info("[atk-sel] 0x{} '{}' LEAF {} started={}", apmf::log::Hex(r.fid), name, LeafShort(r.leaf), r.started);
+                    spdlog::info("[atk-sel] 0x{} '{}' LEAF {} out={} result={}", apmf::log::Hex(r.fid), name, LeafShort(r.leaf),
+                                 kOutName[r.out], r.result);
                 }
             } else {
                 spdlog::info("[atk-sel] 0x{} '{}' CONTEXT {} type={}({}){}", apmf::log::Hex(r.fid), name,
@@ -577,7 +615,10 @@ namespace apmf::atkprobe {
             std::string leaves;
             for (std::size_t i = 0; i < kNumLeaves; ++i) {
                 if (s.acts[i] == 0) continue;
-                leaves += fmt::format("{}{}={}/{}", leaves.empty() ? "" : " ", LeafShort(static_cast<int>(i)), s.started[i], s.acts[i]);
+                const auto& o = s.outs[i];
+                leaves += fmt::format("{}{}={}(run {} done {} fail {} abort {} denied {})", leaves.empty() ? "" : " ",
+                                      LeafShort(static_cast<int>(i)), s.acts[i], o[kRunning], o[kDone], o[kFailed],
+                                      o[kAborted], o[kDenied]);
             }
             const auto avg = [&](std::size_t t) {
                 return s.ctxMelee[t] ? fmt::format("{:.1f}", static_cast<double>(s.poolSum[t]) / s.ctxMelee[t]) : std::string("-");
@@ -587,13 +628,13 @@ namespace apmf::atkprobe {
             std::string picks;
             for (std::size_t i = 0; i < hist.size() && i < 10; ++i)
                 picks += fmt::format("{}{}={}", picks.empty() ? "" : " ", hist[i].first, hist[i].second);
-            spdlog::info("[atk-sel] 0x{} '{}' SUMMARY fight#{} | leaves started/acts: {} | ctx melee R={} Bash={} L={} "
+            spdlog::info("[atk-sel] 0x{} '{}' SUMMARY fight#{} | leaves acts(outcomes): {} | ctx melee R={} Bash={} L={} "
                          "(avg pool {}/{}/{}) block R={} Bash={} L={} odd={} | picks={} power={} bash={} left={} "
-                         "unchanged={} | {}",
+                         "new={} unchanged={} | {}",
                          apmf::log::Hex(fid), nameOf(fid), s.fight, leaves.empty() ? "(none)" : leaves, s.ctxMelee[0],
                          s.ctxMelee[1], s.ctxMelee[2], avg(0), avg(1), avg(2), s.ctxBlock[0], s.ctxBlock[1],
-                         s.ctxBlock[2], s.ctxOdd, s.picks, s.power, s.bash, s.left, s.unchanged,
-                         picks.empty() ? "(no new pick)" : picks);
+                         s.ctxBlock[2], s.ctxOdd, s.picks, s.power, s.bash, s.left, s.newPick, s.unchanged,
+                         picks.empty() ? "(no pick)" : picks);
         }
 
         if (now - g_lastTotalsMs >= kTotalsMs) {

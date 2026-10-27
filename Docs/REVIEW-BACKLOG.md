@@ -1174,3 +1174,18 @@ Their Leaf.* names (and so the VerifiedAddresses.h labels and VERIFIED-ADDRESSES
 
 ### APMF-B219 (SEV-5, OPEN, native/APMF_API.h v27 comment and native/plugin.cpp:309, against 4996523) -- two stale code comments
 APMF_API.h v27 comment says the substrate runs only on 1.6.1170/1.5.97 (it runs on 1.7.104 since 0.14.0). plugin.cpp:309 says bPapyrusCaller defaults to 1 (code and shipped INI default 0). Closure: fix both comments (APMF_API.h is byte-shared with MFO, so mirror the edit there).
+
+### APMF-B220 (SEV-4, OPEN, core/AttackSelectProbe.cpp, against 162a446, Opus tier-3 review of feat/apmf-attack-select-probe) -- lock + allocations on combat threads
+Reviewer, verbatim as relayed: "armed path takes g_mx on combat threads with allocations under the lock (pickHist emplace_back, deque push; Heartbeat copies Stats under the same lock): acceptable for a default-OFF probe, do NOT copy into the real seat." Closure: the real ch.18 seat must not reuse this pattern (lock-free counters / per-thread buffers).
+
+### APMF-B221 (SEV-5, OPEN, core/AttackSelectProbe.cpp StatsFor, against 162a446) -- clock read before the lock
+Reviewer, verbatim as relayed: "StatsFor r.ms taken before the lock: a backwards a_now < lastRecMs wraps and opens a spurious fight (:284-288)." Closure: take the time under the lock, or treat a_now < lastRecMs as the same fight.
+
+### APMF-B222 (SEV-5, OPEN, core/AttackSelectProbe.cpp Install, against 162a446) -- context records undrained when no leaf is watched
+Reviewer, verbatim as relayed: "if leaves==0 while context seats installed, g_armed stays false and context records pile to the queue cap undrained (:506-507, :521)." Closure: drain in Heartbeat when either half is armed.
+
+### APMF-B223 (SEV-5, OPEN, docs, against 162a446) -- CommonLib's ATKD bit 3 name is wrong
+Reviewer, verbatim as relayed: "CommonLib names ATKD flag bit 3 kChargeAttack but it is Left Attack (0x08); add a line to the ENGINE notes doc; future seats must not trust that enum name." (Evidence: the melee gather AE 0x8A3ACC tests bit 3 against ATTACK_TYPE 2; CommonLib's own BGSAttackData::IsLeftAttack reads kChargeAttack.)
+
+### APMF-B224 (SEV-5, OPEN, process, core/ActionGate.cpp, against 162a446) -- ActionGate.cpp past the split threshold
+Reviewer, verbatim as relayed: "ActionGate.cpp 2342 lines, the next brief must propose the split (RangedProbe / PFP / leash seams) as its own round."

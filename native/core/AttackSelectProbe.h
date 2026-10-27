@@ -44,11 +44,17 @@ namespace apmf::atkprobe {
     // ch.7's ActThunk calls these around its own body for a watched leaf while Armed().
     // ANY combat thread. No log, no form lookup, one short leaf lock in AfterAct.
     void BeforeAct(int a_leaf, void* a_control, ActPre& a_pre);
-    void AfterAct(const ActPre& a_pre, void* a_node, void* a_control);
+    // a_denied: Harbinger's own ForceFail ran instead of the leaf (ch.7's paired pop is pending
+    // for exactly this {node, control}); logged as out=denied, never as an engine failure.
+    void AfterAct(const ActPre& a_pre, void* a_node, void* a_control, bool a_denied);
 
     // Arbiter::OncePerFrame, MAIN thread: drains the records into log lines (rate limited,
     // capped per session) and prints per-actor summaries (~20 s) and a RULE C totals line
     // (~30 s, zeros included). One relaxed load when not armed.
     void Heartbeat();
+
+    // kPreLoadGame / revert, MAIN thread: forget every per-actor counter and queued record (form ids,
+    // 0xFF ones especially, are reused across loads). No-op when nothing is armed.
+    void ResetForLoad(const char* a_why);
 
 }
