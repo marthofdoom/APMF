@@ -10,13 +10,13 @@ nothing when one does not. At startup `REL::SelfCheck::Run` repeats the comparis
 game actually loaded. A row that fails refuses THAT seat by name in the log; the expected RVA is never
 used in place of the library's answer.
 
-Offline result of this generation: 1.6.1170.0 263/263 verified, 0 refused, 1.5.97.0 263/263 verified, 0 refused.
+Offline result of this generation: 1.6.1170.0 265/265 verified, 0 refused, 1.5.97.0 265/265 verified, 0 refused.
 
 1.7.104.0 has NO Address Library. Its column is OUR OWN id map: the MIT id table of the CommonLibSSE-NG fork
 (`data/mit-idtable-v1-1-7-104-0.bin`, revision 3, 17751 records, SkyrimSE.exe TimeDateStamp 0x6A8C7046; built into every plugin, it is
 what SelfCheck queries at runtime; authoritative) with the evidence CSVs beside it, keyed by
 the 1.6.1170 id, re-verified against the plaintext 1.7.104 executable by the same row-kind checks (see the script
-docstring). Offline result: 1.7.104.0 271/325 verified, 54 NOT verified (28 of them BY DESIGN: 1.5.97-only labels whose AE twin row carries the 1.7.104 fact). A not-verified seat has no row in the 1.7.104 table,
+docstring). Offline result: 1.7.104.0 271/327 verified, 56 NOT verified (28 of them BY DESIGN: 1.5.97-only labels whose AE twin row carries the 1.7.104 fact). A not-verified seat has no row in the 1.7.104 table,
 so `IsVerifiedAddress` is false and the seat is refused by name. The table of `Not verified on 1.7.104` is below.
 
 These rows prove the ADDRESSES. That each hooked slot holds the same function body on 1.7.104, and that every
@@ -288,6 +288,8 @@ CommonLib layout APMF reads is the same there, is proven separately in the "1.7.
 | TorchSeat.Site.AiUpdate | callsite | 39637 | 0x6F20A0 +0x8B1 E8 | 38606 | 0x65F040 +0x798 E8 | 39637 | 0x704C70 +0x8B1 E8 | signature (37 bytes, unique in .text) |  | native/core/TorchSeat.cpp (ch.17 torch deny, write_call<5>) | AE 0x6F2951 / SE 0x65F7D8 / 1.7.104 0x705521 (0x704C70+0x8B1); agentlogs/apmf-torch.md |
 | EquipGate.Light.Darkness | function | 37567 | 0x67E590 | 36566 | 0x5EC230 | - | - | signature (18 bytes, unique in .text) |  | native/core/EquipGate.cpp (Light darkness override: the verified call target the site must still reach) | agentlogs/candlelight-phase3.md FIELD 10-28c + PHASE 4 (2026-10-28) |
 | EquipGate.Light.Site.Check | callsite | 45403 | 0x821260 +0xC6 E8 | 44010 | 0x784EC0 +0xE2 E8 | - | - | signature (41 bytes, unique in .text) |  | native/core/EquipGate.cpp (Light darkness override, write_call<5>) | AE 0x821326 / SE 0x784FA2 / 1.7.104 0x836816 (0x836750+0xC6, not in the MIT table: refused there); agentlogs/candlelight-phase3.md |
+| EquipGate.Light.SearchState | function | 33233 | 0x5594A0 | 32486 | 0x4FDE20 | - | - | signature (18 bytes, unique in .text) |  | native/core/EquipGate.cpp (Light search-state override: the verified call target the site must still reach) | agentlogs/candlelight-phase3.md FIELD 10-28d + PHASE 5 (2026-10-28) |
+| EquipGate.Light.Site.Search | callsite | 45403 | 0x821260 +0x2C E8 | 44010 | 0x784EC0 +0x2A E8 | - | - | signature (41 bytes, unique in .text) |  | native/core/EquipGate.cpp (Light search-state override, write_call<5>) | AE 0x82128C / SE 0x784EEA / 1.7.104 0x83677C (0x836750+0x2C, not in the MIT table: refused there); agentlogs/candlelight-phase3.md |
 | PapyrusCaller.NativeFunctionBase.Call | function | 104651 | 0x143DC00 | 97923 | 0x12507F0 | 104651 | 0x14A9C10 | signature (203 bytes, unique in .text) |  | native/core/PapyrusCaller.cpp (ClickUp 86e3q082a, the Papyrus caller seat: write_vfunc slot 0x0F on every native's own vtable; the engine's Call is what every native's slot 0x0F holds or forwards to). The signature runs through the layout reads the seat depends on: [rdx] = Stack*, Stack+0x60 top frame, frame+0x28 self, Stack+0x80 stackID | agentlogs/apmf-papyrus-attribution-2.md (2026-10-27) |
 | Character.ActorValueOwner.SE | vtable | - | - | 261402 | 0x165E4D0 | - | - | RTTI .?AVCharacter@@ (COL offset 176) | 0x04: - / 0x621070 / -<br>0x05: - / 0x6210B0 / -<br>0x06: - / 0x6210F0 / -<br>0x07: - / 0x36D280 / - | native/core/ActorValueObserve.cpp (1.5.97: the ActorValueOwner sub-object sits at 0xB0, so its COL offset differs from the AE row's 0xB8) | agentlogs/apmf-1b-observe.md (2026-10-12); AE twin row Character.ActorValueOwner carries the 1.7.104 fact |
 | EquipSink.Path.OutfitApply.24234 | function | - | - | 24234 | 0x364710 | - | - | signature (21 bytes, unique in .text) |  | native/core/EquipSink.cpp:158 |  |
@@ -413,6 +415,8 @@ for them and the seat is refused. Nothing here is a failure on 1.6.1170 or 1.5.9
 | Substrate.Npc.GetEnterCombatOverridePackage | 24673 | id 24673 is not in the idmap |
 | EquipGate.Light.Darkness | 37567 | id 37567 is not in the idmap |
 | EquipGate.Light.Site.Check | 45403 | id 45403 is not in the idmap |
+| EquipGate.Light.SearchState | 33233 | id 33233 is not in the idmap |
+| EquipGate.Light.Site.Search | 45403 | id 45403 is not in the idmap |
 
 ## Slots and offsets that are not Address Library ids
 

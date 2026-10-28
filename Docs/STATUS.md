@@ -4,6 +4,19 @@ Updated 2026-10-26. Current version **v0.15.1** (cut 2026-10-26, ABI v30, see CH
 shipped, what's probe-gated, what's next. Keep this current in the SAME change as any
 build/finding/workflow change.
 
+## HEAD OF WORK 2026-10-28 -- LIGHT SEARCH-STATE OVERRIDE + the full Light gate audit, branch `feat/apmf-light-search-override`, NOT merged
+
+- Field 10-28d: the darkness seat was never reached. The Light check asks first whether the caster's combat group is
+  SEARCHING (combatGroup searchState above 0, AE 0x5594A0 / SE 0x4FDE20). A substrate holder's group is not.
+- Change: a second call-site seat on that test (AE 0x821260 +0x2C / SE 0x784EC0 +0x2A), armed by the same per-call flag as
+  the darkness seat, installed together with it or not at all. VerifiedAddresses rows EquipGate.Light.SearchState and
+  EquipGate.Light.Site.Search. Refused on 1.7.104 like the first seat. One line per armed check every 10 s naming which
+  veto was overridden and the engine's answer.
+- Audit (disassembly, 1.6.1170): after these two, the only engine conditions left between selection and the cast are real
+  states: the caster is not fleeing, she can pay the cost, she does not already carry this spell's effect (the self cast).
+  The Light caster's own start (0x06) and stop (0x07, which tests the search state again) are answered from the claim, the
+  target bound composed. Construction and the item's Equip are unconditional. Not field-tested.
+
 ## HEAD OF WORK 2026-10-28 -- LIGHT DARKNESS OVERRIDE (a claimed Light spell equips in lit places), branch `feat/apmf-light-darkness-override`, NOT merged
 
 - Field 10-28c (LoreRim, Candlelight at the player): the proxy was a Light item and won its score every pass, but the engine's

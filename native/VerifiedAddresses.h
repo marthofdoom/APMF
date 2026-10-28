@@ -19,7 +19,7 @@
 
 namespace apmf::VerifiedAddresses
 {
-	// 1.6.1170.0: 263 rows
+	// 1.6.1170.0: 265 rows
 	inline constexpr REL::SelfCheck::Row kRows_1_6_1170[] = {
 		{ 207886, 0x18A5558, 0x0, 0, {  }, "Character" },
 		{ 207896, 0x18A5FE8, 0x0, 0, {  }, "Character.ActorValueOwner" },
@@ -283,10 +283,12 @@ namespace apmf::VerifiedAddresses
 		{ 39637, 0x6F20A0, 0x8B1, 1, { 0xE8 }, "TorchSeat.Site.AiUpdate" },
 		{ 37567, 0x67E590, 0x0, 0, {  }, "EquipGate.Light.Darkness" },
 		{ 45403, 0x821260, 0xC6, 1, { 0xE8 }, "EquipGate.Light.Site.Check" },
+		{ 33233, 0x5594A0, 0x0, 0, {  }, "EquipGate.Light.SearchState" },
+		{ 45403, 0x821260, 0x2C, 1, { 0xE8 }, "EquipGate.Light.Site.Search" },
 		{ 104651, 0x143DC00, 0x0, 0, {  }, "PapyrusCaller.NativeFunctionBase.Call" },
 	};
 
-	// 1.5.97.0: 263 rows
+	// 1.5.97.0: 265 rows
 	inline constexpr REL::SelfCheck::Row kRows_1_5_97[] = {
 		{ 261397, 0x165DA40, 0x0, 0, {  }, "Character" },
 		{ 261402, 0x165E4D0, 0x0, 0, {  }, "Character.ActorValueOwner.SE" },
@@ -550,11 +552,13 @@ namespace apmf::VerifiedAddresses
 		{ 38606, 0x65F040, 0x798, 1, { 0xE8 }, "TorchSeat.Site.AiUpdate" },
 		{ 36566, 0x5EC230, 0x0, 0, {  }, "EquipGate.Light.Darkness" },
 		{ 44010, 0x784EC0, 0xE2, 1, { 0xE8 }, "EquipGate.Light.Site.Check" },
+		{ 32486, 0x4FDE20, 0x0, 0, {  }, "EquipGate.Light.SearchState" },
+		{ 44010, 0x784EC0, 0x2A, 1, { 0xE8 }, "EquipGate.Light.Site.Search" },
 		{ 97923, 0x12507F0, 0x0, 0, {  }, "PapyrusCaller.NativeFunctionBase.Call" },
 	};
 
 	// 1.7.104.0: 271 rows
-	// 54 NOT VERIFIED on 1.7.104.0, deliberately absent from this table (the seat is refused):
+	// 56 NOT VERIFIED on 1.7.104.0, deliberately absent from this table (the seat is refused):
 	//   Character.ActorValueOwner.SE (1.6.1170 id -): no 1.6.1170 (AE) id: the 1.7.104 map is keyed by AE id (1.5.97-only seat)
 	//   ActionGate.Hold.ParallelDataPush (1.6.1170 id 47532): id 47532 is not in the idmap
 	//   TargetPin.CombatController.SetTarget (1.6.1170 id 33235): id 33235 is not in the idmap
@@ -609,6 +613,8 @@ namespace apmf::VerifiedAddresses
 	//   Substrate.Npc.GetEnterCombatOverridePackage (1.6.1170 id 24673): id 24673 is not in the idmap
 	//   EquipGate.Light.Darkness (1.6.1170 id 37567): id 37567 is not in the idmap
 	//   EquipGate.Light.Site.Check (1.6.1170 id 45403): id 45403 is not in the idmap
+	//   EquipGate.Light.SearchState (1.6.1170 id 33233): id 33233 is not in the idmap
+	//   EquipGate.Light.Site.Search (1.6.1170 id 45403): id 45403 is not in the idmap
 	inline constexpr REL::SelfCheck::Row kRows_1_7_104[] = {
 		{ 207886, 0x1923258, 0x0, 0, {  }, "Character" },
 		{ 207896, 0x1923CE8, 0x0, 0, {  }, "Character.ActorValueOwner" },
