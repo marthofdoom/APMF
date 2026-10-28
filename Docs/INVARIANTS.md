@@ -778,10 +778,9 @@ lift at an equal or better rank excluded. It is #20's mechanism exactly: the eng
 range gate, order table and hand occupancy and is still free to choose otherwise. Four rules are part of it:
 never lift an item the engine scored 0 or less, except an EXPLAINED zero (2026-10-27, marth: "any data-caused zero"):
 a ch.8b claim's driven form whose engine score is exactly 0.0 and whose every row term the engine keyed in that call is 0 by
-the spell's own data (`castclassify::ExplainZero`; -1.0 "no row" never lifts). The combat style does not veto it (marth
-2026-10-28: the gambit's request wins, class gating is MFO's gambit availability): a data zero is lifted whatever the
-style's multiplier. A zero whose row terms are non-zero (the multiplier, range or resistance made it 0) is not a data zero
-and is not explained; never lift a weapon into a hand a live cast claim holds (D3);
+the spell's own data (`castclassify::ExplainZero`) OR made 0 by the combat style's multiplier for the item's category
+(marth 2026-10-28: "we raise what the gambit asks for regardless of class"; class gating is MFO's gambit availability).
+-1.0 "no row" never lifts, and a zero neither explains (range, resistance) is refused; never lift a weapon into a hand a live cast claim holds (D3);
 never lift while the source answering beneath the seat outranks the claim (D5: the same priority sliders);
 never a fixed additive constant (scores span 0.08 to 1320 across lists). The category list is read in place
 on the rescore thread, guarded by static_asserts and a parentController identity check.

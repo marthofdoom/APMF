@@ -1312,9 +1312,10 @@ call's controller), `+8 + cat*0x18` the lists (size at +0x10), item `+0x18` scor
 declares them and disassembled 2026-10-12 (file header). 5 % comes from the LoreRim 10-12 log: 3599 same-item
 rescores two passes apart rose at most 3.94 % (scores >= 1), and a rival not yet rescored this pass may still
 rise by that much. **NEVER LIFTED:** engine score <= 0 (a bow with no arrows), EXCEPT the explained zero (2026-10-27, marth Q1 "any
-data-caused zero"): the driven form of a live ch.8b claim, engine answer EXACTLY 0.0, and `castclassify::ExplainZero` proves
-every row term the engine keyed in that call is 0 by the spell's own data (no magnitude / kNoMagnitude, cost 0, Script aiScore
-0); it is then lifted like any steer, still subject to D5 Outranks, and logs `[ch.8b zero] ... EXPLAINED ... LIFTED` (refusals
+data-caused zero", 2026-10-28 "regardless of class"): the driven form of a live ch.8b claim, engine answer EXACTLY 0.0, and
+either `castclassify::ExplainZero` proves every row term the engine keyed in that call is 0 by the spell's own data (no
+magnitude / kNoMagnitude, cost 0, Script aiScore 0) or the combat style gives the item's category a 0 multiplier
+(`StyleZero`); it is then lifted like any steer, still subject to D5 Outranks, and logs `[ch.8b zero] ... EXPLAINED ... LIFTED` (refusals
 warn `[ch.8b zero] ... NOT lifted: <why>`; both per (actor, form, outcome) at most every 10 s; HEARTBEAT counts both). With no
 rival (`best` 0) the target is the floor `kEquipPrefStepAbs`, not 0; a declared item for a hand a live
 cast claim holds (`handblock::HeldFor`, D3); any item while the source beneath the seat
@@ -1345,13 +1346,15 @@ WEAPON-SCORE / SCORE-STEER lines name a lift; the Equip facet header on the Harb
 - **The combat style does NOT veto the explained-zero lift (marth 2026-10-28):** "Currently, pre Class Update, we raise
   what the gambit asks for regardless of class, then the HMS skew kicks. Post class update, when enabled the Gambit wont
   allow enabling off class gambits. But HMS skew will still affect the more advanced classes." The gambit's request wins.
-  A data-zero claimed spell is lifted whatever the follower's style multiplier for that category (magicScoreMult 0
-  included). Class gating lives in MFO's gambit availability, not in Harbinger's score. Scope as built (3186270): the
-  lift fires when the spell's own row terms are all 0. A spell whose terms are non-zero but whose engine score is 0
-  because the multiplier is 0 (STATUS "Cause 2", Auri) is not a data zero and still meets D1 (no change this round).
+  The lift explains DATA zeros (every row term the engine keyed is 0) AND STYLE zeros (the controller's combat style
+  gives the item's category a 0 multiplier: `[CombatController+0x38]` +0x30 magic / +0x38 shout / +0x40 staff for item
+  type 4 / 5 / 6, the scorer's own read on all three builds, `StyleZero` in `core/EquipPreference.cpp`). Data is tried
+  first; a style zero logs `[ch.8b zero] ... EXPLAINED by term style (combat style 0x.. gives item type N a score
+  multiplier of 0 ...)` and counts in the heartbeat's own "by a 0 combat-style multiplier" counter. So STATUS "Cause 2"
+  (Auri, magicScoreMult 0) is lifted for a claim. Class gating lives in MFO's gambit availability, not in Harbinger's score.
 - **What breaks:** an additive constant (D1: the wrong shape on LoreRim, 0.22 to 1320); lifting a 0 score the
-  spell's own row terms do not explain; adding a combat-style veto to the explained-zero lift (contradicts the ruling
-  above); lifting -1.0;
+  spell's own row terms or a 0 style multiplier do not explain; adding a combat-style veto to the explained-zero lift
+  (contradicts the ruling above); lifting -1.0;
   counting a lifted item as a rival (two preferences chase each other upward every pass); reading the
   category list off the rescore thread or without the parentController check; a lock held across
   `GetCategory` / the list walk; dropping the `Outranks` test (D2/D5: the lift is a deny of the answer beneath
