@@ -4,6 +4,18 @@ Updated 2026-10-26. Current version **v0.15.1** (cut 2026-10-26, ABI v30, see CH
 shipped, what's probe-gated, what's next. Keep this current in the SAME change as any
 build/finding/workflow change.
 
+## HEAD OF WORK 2026-10-28 -- ZERO TIE CLASSIFIES THE MAIN EFFECT, branch `fix/apmf-zero-tie-main-effect`, NOT merged
+
+- Field 10-28b (LoreRim, Candlelight at the player): the lift raised the proxy every pass (0 to 1229.56 over 1171) but the
+  spell never reached the hand. All three effects scored 0, so the engine kept the first effect's row: Requiem's 1 s Script
+  toggle. A Script item that short is filed in category 0, Offensive's list, and the buff equip never took it.
+- Change: seat 0 classifies only the claimed spell's main (costliest) effect when every keyed term ties at 0, so Candlelight
+  becomes a Light item (category 4). No ABI, no new address. Not field-tested.
+- Still unobserved: the equip selector reading category 4 only (inferred from the field: Oakflesh, an Armor item in category
+  4, fired on 10-28a), and a Light caster ever running.
+- Also seen on 10-28b: 38 windows from 12:39 to 12:47 closed because the behaviour tree never started (the buffered package
+  re-pick never ran). Not explained by this log.
+
 ## HEAD OF WORK 2026-10-27 -- EXPLAINED-ZERO LIFT (a claimed spell the engine zeroes for data reasons is selectable), branch `feat/apmf-explained-zero-lift`, NOT merged
 
 - ClickUp 1dfcuabbt0n (Candlelight on the player, animated) and 1dfcuabbt0p (Script spells, road A). Field cause (MFO
