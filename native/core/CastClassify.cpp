@@ -608,6 +608,76 @@ namespace apmf::castclassify {
         using Classify_t = std::uint32_t (*)(void*, void*);
         std::unordered_map<std::uintptr_t, std::uintptr_t> g_orig;
 
+        // ---- ZERO TIE -> THE MAIN EFFECT (field 2026-10-28b, LoreRim Candlelight) ----
+        // KEEP-BEST (AE 0x81DBA0) replaces its kept row only on a STRICTLY higher term (`comiss; jbe`), so when
+        // every effect of a spell scores 0 the FIRST effect's row is the item's caster type. Requiem's Candlelight
+        // is {Script toggle (1 s), Light, Light}: a Script item, whose GetCategory (slot 0x0B, AE 0x827B50) is
+        // `item+0x38 < 30.0 ? 0 : 4` (the fork names +0x38 tacticalDuration), so the 1 s toggle filed the spell
+        // in category 0 (Offensive's list; Offensive 0x8341A0 returns 0, Restore 0x832580 1, Light 0x82E130 4)
+        // and the substrate's buff equip never took it (agentlog candlelight-phase2 FIELD 10-28b).
+        // For the driven form of a live claim whose keyed row terms are ALL zero (the explained-zero case; every
+        // effect non-hostile), only the spell's MAIN effect is classified: the engine's own costliest effect
+        // (GetCostliestEffectItem AE 0x14C470 / SE 0x101CC0 with no caster: its visitor AE 0x14CCB0 / SE 0x102040
+        // keeps the strictly highest int(max(Effect::cost, 0)), skipping an MGEF with flag bit 24, first on a
+        // tie; replicated below from form data, no engine call). The other effects get the visitor's own
+        // "continue" answer without the engine's classification: the effect walk (AE 0x14C780, SE 0x1020F0,
+        // 1.7.104 0x151D10) continues only on 1, and the original visitor returns 1 always (AE 0x81D9C1, SE
+        // 0x781386, 1.7.104 0x832EB1). The score is unchanged (every term was 0) and the lift still explains it
+        // from the main effect's term. The hand still casts the spell as authored, every effect included.
+        const RE::Effect* MainEffect(const RE::MagicItem* a_spell) {
+            const RE::Effect* best     = nullptr;
+            int               bestCost = -1;
+            for (const auto* e : a_spell->effects) {
+                if (!e || !e->baseEffect) continue;
+                if ((e->baseEffect->data.flags.underlying() & 0x01000000u) != 0) continue;   // `test [mgef+0x6B], 1`
+                const int c = static_cast<int>(std::max(e->cost, 0.0f));
+                if (c > bestCost) {
+                    best     = e;
+                    bestCost = c;
+                }
+            }
+            return best;
+        }
+
+        // The main effect when the classification of `a_spell` under self flag `a_self` is a zero tie that would
+        // keep a different row than the main effect's, else null. `a_mainRow` / `a_firstRow` name the two rows.
+        const RE::Effect* ZeroTieMain(const RE::MagicItem* a_spell, std::uint8_t a_self, int& a_mainRow, int& a_firstRow) {
+            a_mainRow = a_firstRow = -1;
+            if (!g_zeroModelOk.load(std::memory_order_acquire) || a_spell->effects.size() < 2) return nullptr;
+            const RE::Effect* main = MainEffect(a_spell);
+            if (!main) return nullptr;
+            int keyed = 0;
+            for (const auto* e : a_spell->effects) {
+                if (!e || !e->baseEffect) continue;
+                const auto* m = e->baseEffect;
+                if (m->IsHostile()) return nullptr;   // one self flag for every effect: beneficial spells only
+                const auto  arch = static_cast<std::int32_t>(m->GetArchetype());
+                const bool  avk  = AvKeyed(arch);
+                const char* why  = "";
+                auto        one  = [&](int a_row, float a_w) {
+                    if (a_row < 0) return true;
+                    ++keyed;
+                    if (!TermIsZero(e, a_row, a_w, why)) return false;   // a real term: no tie, the engine decides
+                    if (kExpectedRows[static_cast<std::size_t>(a_row)].creator) {
+                        if (a_firstRow < 0) a_firstRow = a_row;
+                        if (e == main && a_mainRow < 0) a_mainRow = a_row;
+                    }
+                    return true;
+                };
+                const auto pByte = avk ? static_cast<std::uint8_t>(static_cast<std::int32_t>(m->data.primaryAV) & 0xFF)
+                                       : static_cast<std::uint8_t>(0xFF);
+                if (!one(RowForKey(arch, pByte, a_self, 0), 1.0f)) return nullptr;
+                const auto sav = static_cast<std::int32_t>(m->data.secondaryAV);
+                if (avk && sav != -1 &&
+                    !one(RowForKey(arch, static_cast<std::uint8_t>(sav & 0xFF), a_self, 0), m->data.secondAVWeight))
+                    return nullptr;
+            }
+            if (keyed < 2 || a_mainRow < 0 || a_firstRow == a_mainRow) return nullptr;
+            return main;
+        }
+
+        std::set<std::pair<RE::FormID, RE::FormID>> g_tieLogged;   // guarded by g_healLogMx
+
         std::uint32_t ClassifyThunk(void* a_this, void* a_effect) {
             const auto vt  = *reinterpret_cast<std::uintptr_t*>(a_this);
             const auto oit = g_orig.find(vt);
@@ -752,6 +822,37 @@ namespace apmf::castclassify {
                                 }
                             }
                         }
+                    }
+                }
+            }
+
+            // ZERO TIE -> THE MAIN EFFECT (see ZeroTieMain). Only a live claim's driven form (the flip proxy, or
+            // the original on a self cast), only while the claim outranks the source beneath this seat.
+            if (spellPtr && ccPtr && a_effect && spellPtr->effects.size() >= 2 &&
+                apmf::ControlMap::Get().ControlledCount() != 0) {
+                auto  attPtr = ccPtr->attackerHandle.get();
+                auto* actor  = attPtr.get();
+                apmf::CastSeatClaim seat{};
+                const RE::FormID    spellForm = spellPtr->GetFormID();
+                if (actor && apmf::ControlMap::Get().TryGetCastSeatClaimForForm(actor->GetFormID(), spellForm, seat) &&
+                    seat.targetHandle) {
+                    int mainRow = -1, firstRow = -1;
+                    if (const auto* main = ZeroTieMain(spellPtr, *selfFlag, mainRow, firstRow);
+                        main && main != reinterpret_cast<const RE::Effect*>(a_effect) &&
+                        ClaimOutranksClassify(actor->GetFormID(), spellForm, oit->second, false)) {
+                        bool say = false;
+                        {
+                            std::scoped_lock lk(g_healLogMx);
+                            say = g_tieLogged.emplace(actor->GetFormID(), spellForm).second;
+                        }
+                        if (say)
+                            spdlog::info("[ch.8b seat 0] 0x{} '{}' ({:08X}): every keyed row term is 0, so the engine would keep "
+                                         "the first effect's row {} ({}); only the main (costliest) effect, MGEF {:08X} row {}, "
+                                         "is classified for this claim. The hand casts the spell as authored.",
+                                         apmf::log::Hex(actor->GetFormID()), spellPtr->GetName() ? spellPtr->GetName() : "?",
+                                         spellForm, firstRow, TermName(kRowTerm[static_cast<std::size_t>(firstRow)]),
+                                         main->baseEffect->GetFormID(), mainRow);
+                        return 1;   // the visitor's own "continue" (the original returns 1 always); not classified
                     }
                 }
             }

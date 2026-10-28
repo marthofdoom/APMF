@@ -780,6 +780,21 @@ event layout (verified in SetActorsDetectionEvent on all three builds).
   APMF-B50 (the event free on an untraced path), APMF-B51 (`level > 0`), APMF-B53 (c), (d).
 
 ### `native/core/CastClassify.{h,cpp}` — ch.8b SEAT 0: CLASSIFY (2026-09-05)
+**ZERO TIE -> THE MAIN EFFECT (2026-10-28, `fix/apmf-zero-tie-main-effect`).** KEEP-BEST keeps a row only on a strictly
+higher term, so when every term of a spell is 0 the first effect's row becomes the item's caster type. Field 10-28b: Requiem's
+Candlelight {Script toggle 1 s, Light, Light} became a Script item, and the Script item's GetCategory (AE 0x827B50) files it
+in category 0 when `item+0x38` (fork: tacticalDuration) is under 30.0, which is Offensive's list. Its lift won that list and
+the buff equip never took it. `ZeroTieMain` + the block before `orig()` in `ClassifyThunk`: for a live claim's driven form
+(the flip proxy or the original on a self cast, claim outranking the seat's source), every effect non-hostile, every keyed
+row term 0 by the term model, and the main effect keying a different creator row than the first one, only the MAIN effect is
+classified. Main = the engine's costliest effect (GetCostliestEffectItem with no caster, AE 0x14C470 / SE 0x101CC0: strict
+max of int(max(Effect::cost, 0)), MGEF flag bit 24 skipped, first on a tie), replicated from form data. Every other effect
+gets the visitor's own continue answer, 1 (original AE 0x81D9C1 / SE 0x781386 / 1.7.104 0x832EB1 returns 1 always; the effect
+walk AE 0x14C780 / SE 0x1020F0 / 1.7.104 0x151D10 continues only on 1). The score stays 0 and the lift explains it from the
+main effect. One line per (actor, spell): `[ch.8b seat 0] ... only the main (costliest) effect ... is classified`.
+- **What breaks:** skipping an effect whose term is not 0 (the score would change); returning anything but 1 (the walk
+  stops); applying it to a hostile spell (the self flag is not uniform there); the census `predicted` label still emulates
+  every effect, so it names the tie row, not the main effect's.
 **EXPLAINED-ZERO CAPTURE + TERM MODEL (2026-10-27, `feat/apmf-explained-zero-lift`, ClickUp 1dfcuabbt0n / 1dfcuabbt0p).**
 `BeginScoreCapture` / `EndScoreCapture` (thread-local, armed by `core/AiCastSeats.cpp` CalculateScoreThunk around the
 engine's 0x0C original) let `ClassifyThunk` record, for the armed item form only, each effect it saw, the self flag the

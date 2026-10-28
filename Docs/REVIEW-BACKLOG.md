@@ -1207,3 +1207,12 @@ Reviewer: "MFO swaps the style from its job-worker tick, so a swap can land betw
 
 ### APMF-B230 (SEV-5, OPEN, core/EquipPreference.cpp StyleZero, against 5a1f6b0, Opus focused re-review of feat/apmf-explained-zero-lift) -- a style-zero follower is lifted onto a spell the target fully resists
 Reviewer: "a follower whose style is 0 will be lifted onto a claimed spell the target fully resists. A follower with a non-zero style is refused in that case." Reasoning: harmless, and the gambit asked for that spell. Consistent with marth's 2026-10-28 ruling.
+
+### APMF-B231 (SEV-4, OPEN, core/CastClassify.cpp ZeroTieMain, against c1c7b5a, Opus tier-3 review of fix/apmf-zero-tie-main-effect) -- the tie switch can move an item onto a worse row
+Reviewer: "'Main row differs from the first, so classify the main' is only a heuristic for 'reaches the buff list'. Take the reverse shape: {Light or Armor first at low cost, short Script at high cost}. The switch moves that spell onto the Script row, which files it in category 0 (offense) when the duration is under 30." Reasoning: only claimed, all-zero, mixed beneficial spells are affected, and the next field run (Candlelight) does not reach it. Suggested fix: do not switch when the main row is Script, or only switch toward a row whose category the claim road actually consumes.
+
+### APMF-B232 (SEV-5, OPEN, MAP.md + core/CastClassify.cpp MainEffect wording, against c1c7b5a) -- "the engine's costliest effect" omits the engine function's delivery and duration filters
+Reviewer: "MainEffect matches the no-filter call. Docs only."
+
+### APMF-B233 (SEV-5, OPEN, core/CastClassify.cpp g_tieLogged, against c1c7b5a) -- the log-once set is never cleared on load
+Reviewer: "It is only a log-once set, so it is harmless."
