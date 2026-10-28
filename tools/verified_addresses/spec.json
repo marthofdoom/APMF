@@ -4754,6 +4754,45 @@
    "doc": "AE 0x821326 / SE 0x784FA2 / 1.7.104 0x836816 (0x836750+0xC6, not in the MIT table: refused there); agentlogs/candlelight-phase3.md"
   },
   {
+   "seat": "EquipGate.Light.SearchState",
+   "kind": "function",
+   "construct": "bool(CombatController*): combatGroup (cc+0) searchState (+0xD8, fork CombatGroup.h) above 0; the Light check's FIRST condition, and the Light caster's 0x07 stop test",
+   "ids": {
+    "1.6.1170": 33233,
+    "1.5.97": 32486
+   },
+   "sig": {
+    "1.6.1170": "48 8B 01 48 85 C0 74 0B 83 B8 D8 00 00 00 00 0F 97 C0",
+    "1.5.97": "48 8B 01 48 85 C0 74 0B 83 B8 D8 00 00 00 00 0F 97 C0"
+   },
+   "source": "native/core/EquipGate.cpp (Light search-state override: the verified call target the site must still reach)",
+   "doc": "agentlogs/candlelight-phase3.md FIELD 10-28d + PHASE 5 (2026-10-28)"
+  },
+  {
+   "seat": "EquipGate.Light.Site.Search",
+   "kind": "callsite",
+   "construct": "the Light item's own equip check -> call the search-state test, its first condition; write_call<5> seat",
+   "ids": {
+    "1.6.1170": 45403,
+    "1.5.97": 44010
+   },
+   "sig": {
+    "1.6.1170": "41 56 48 83 EC 50 48 C7 44 24 20 FE FF FF FF 48 89 5C 24 60 48 89 6C 24 68 48 89 74 24 70 48 89 7C 24 78 4C 8B F2 48 8B E9",
+    "1.5.97": "48 8B C4 41 56 48 83 EC 70 48 C7 40 A8 FE FF FF FF 48 89 58 08 48 89 68 10 48 89 70 18 48 89 78 20 4C 8B F2"
+   },
+   "offset": {
+    "1.6.1170": "0x2C",
+    "1.5.97": "0x2A"
+   },
+   "bytes": "E8",
+   "target": {
+    "1.6.1170": 33233,
+    "1.5.97": 32486
+   },
+   "source": "native/core/EquipGate.cpp (Light search-state override, write_call<5>)",
+   "doc": "AE 0x82128C / SE 0x784EEA / 1.7.104 0x83677C (0x836750+0x2C, not in the MIT table: refused there); agentlogs/candlelight-phase3.md"
+  },
+  {
    "seat": "PapyrusCaller.NativeFunctionBase.Call",
    "kind": "function",
    "construct": "RELOCATION_ID(97923, 104651) (CommonLib Offset::BSScript::NF_util::NativeFunctionBase::Call)",
