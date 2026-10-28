@@ -103,6 +103,54 @@ namespace apmf::equippref {
         std::uint64_t g_lastHeartbeatMs = 0;   // main thread only (Pump)
         Totals        g_lastBeat{};            // main thread only (Pump)
 
+        // ---- the explained-zero lift's own lines (ClickUp 1dfcuabbt0n). Every lift and every refused
+        // claim zero logs on the first sighting of (actor, form, outcome) and then at most once per
+        // kZeroLineMs, so a field log always shows form, row, term and reason without flooding. ----
+        std::atomic<std::uint64_t> g_zeroLifts{ 0 }, g_zeroRefused{ 0 };
+        constexpr std::uint64_t    kZeroLineMs  = 10000;
+        constexpr std::size_t      kZeroLineCap = 2048;
+        std::mutex                                       g_zeroLineMx;   // leaf lock, no engine call under it
+        std::unordered_map<std::uint64_t, std::uint64_t> g_zeroLines;
+
+        bool ZeroLineDue(RE::FormID a_actor, RE::FormID a_form, bool a_lift) {
+            const auto key = (static_cast<std::uint64_t>(a_actor) << 32) ^ a_form ^ (a_lift ? 0x8000000000000000ull : 0ull);
+            const auto now = apmf::clock::MonotonicMs();
+            std::scoped_lock lk(g_zeroLineMx);
+            if (g_zeroLines.size() >= kZeroLineCap) g_zeroLines.clear();
+            auto [it, fresh] = g_zeroLines.try_emplace(key, now);
+            if (!fresh && now - it->second < kZeroLineMs) return false;
+            it->second = now;
+            return true;
+        }
+
+        void NoteZeroRefused(RE::FormID a_fid, RE::Actor* a_actor, RE::FormID a_form, RE::TESForm* a_spell,
+                             const apmf::castclassify::ZeroExplain& a_zx) {
+            g_zeroRefused.fetch_add(1, std::memory_order_relaxed);
+            if (!ZeroLineDue(a_fid, a_form, false)) return;
+            try {
+                spdlog::warn("[ch.8b zero] 0x{} '{}' claimed spell 0x{} '{}' scored EXACTLY 0 by the engine and is NOT "
+                             "lifted: {} (effects seen {}, row terms {}). D1 stands: it will not be selected.",
+                             apmf::log::Hex(a_fid), a_actor->GetName() ? a_actor->GetName() : "?", apmf::log::Hex(a_form),
+                             a_spell->GetName() ? a_spell->GetName() : "?", a_zx.why, a_zx.effects, a_zx.terms);
+            } catch (...) {
+            }
+        }
+
+        void NoteZeroLift(RE::FormID a_fid, RE::Actor* a_actor, RE::FormID a_form, RE::TESForm* a_spell,
+                          const apmf::castclassify::ZeroExplain& a_zx, float a_rival, float a_target, bool a_lifted) {
+            if (!ZeroLineDue(a_fid, a_form, true)) return;
+            try {
+                spdlog::info("[ch.8b zero] 0x{} '{}' claimed spell 0x{} '{}' scored EXACTLY 0 by the engine: EXPLAINED by its "
+                             "own data (row {} term {} of MGEF 0x{} is 0; {} row term(s) over {} effect(s), all 0) -> {} "
+                             "(best competitor {:.3f}, result {:.3f}).",
+                             apmf::log::Hex(a_fid), a_actor->GetName() ? a_actor->GetName() : "?", apmf::log::Hex(a_form),
+                             a_spell->GetName() ? a_spell->GetName() : "?", a_zx.row, a_zx.term, apmf::log::Hex(a_zx.mgef),
+                             a_zx.terms, a_zx.effects, a_lifted ? "LIFTED" : "not lifted (unexpected: target <= 0)", a_rival,
+                             a_target);
+            } catch (...) {
+            }
+        }
+
         std::shared_ptr<const DeclMap> Load() { return g_pub.load(std::memory_order_acquire); }
 
         void Publish(std::shared_ptr<const DeclMap> a_map) {
@@ -521,7 +569,8 @@ namespace apmf::equippref {
     // ======================================================================================
 
     float OnScore(RE::CombatInventoryItem* a_this, RE::CombatController* a_cc, RE::Actor* a_actor, float a_engine,
-                  std::uintptr_t a_origFn, bool a_magicSeat, ScoreOutcome& a_out) {
+                  std::uintptr_t a_origFn, bool a_magicSeat, ScoreOutcome& a_out,
+                  const apmf::castclassify::ScoreCapture* a_zeroCap) {
         a_out = ScoreOutcome{};
         if (!a_this || !a_cc || !a_actor || !SteerOn()) return a_engine;
         auto& cm = apmf::ControlMap::Get();
@@ -583,9 +632,24 @@ namespace apmf::equippref {
         };
 
         // D1: never lift what the engine scored 0 (a bow without ammo, an unusable item).
+        // EXCEPT an EXPLAINED zero (marth 2026-10-27, ClickUp 1dfcuabbt0n Q1 "any data-caused zero"): the
+        // driven form of a live ch.8b cast claim, an engine answer of EXACTLY 0.0 (a row was keyed; -1.0
+        // "no row" stays refused), and every row term the engine's own classification keyed for it during
+        // THIS call is zero by the spell's own data (core/CastClassify.h ExplainZero: no magnitude, no
+        // cost, or a 0 Script aiScore). Candlelight under Requiem (kNoMagnitude) or Mysticism (magnitude 0)
+        // is the case. A zero the data does not explain (combat style, range, resistance) stays refused.
+        bool                              zeroLift = false;
+        apmf::castclassify::ZeroExplain   zx{};
         if (!(a_engine > 0.0f)) {
-            g_zero.fetch_add(1, std::memory_order_relaxed);
-            return finish(APMF_API::kEquipPrefState_ZeroScore, 0.0f, a_engine);
+            if (castSteer && a_engine == 0.0f) {
+                zeroLift = a_zeroCap && apmf::castclassify::ExplainZero(*a_zeroCap, form, zx);
+                if (!a_zeroCap) zx.why = "no capture (not the magic score seat)";
+                if (!zeroLift) NoteZeroRefused(fid, a_actor, formId, form, zx);
+            }
+            if (!zeroLift) {
+                g_zero.fetch_add(1, std::memory_order_relaxed);
+                return finish(APMF_API::kEquipPrefState_ZeroScore, 0.0f, a_engine);
+            }
         }
 
         // D3: a hand held by a live cast claim carries only the spell. A ch.26 weapon / shield /
@@ -629,12 +693,18 @@ namespace apmf::equippref {
         }
         a_out.category = cat;
         a_out.rival    = best;
-        const float target = best > 0.0f ? best * (1.0f + APMF_API::kEquipPrefStepRel) + APMF_API::kEquipPrefStepAbs : 0.0f;
+        // No rival in the category (best 0): the floor is one absolute step, so a lifted item still leads
+        // (it returned 0 here before, which left an explained-zero spell at 0 when nothing competed).
+        const float target = best > 0.0f ? best * (1.0f + APMF_API::kEquipPrefStepRel) + APMF_API::kEquipPrefStepAbs
+                                         : APMF_API::kEquipPrefStepAbs;
+        if (zeroLift) NoteZeroLift(fid, a_actor, formId, form, zx, best, target, target > a_engine);
         if (target <= a_engine) {
             g_leading.fetch_add(1, std::memory_order_relaxed);
             return finish(APMF_API::kEquipPrefState_Leading, best, a_engine);
         }
-        a_out.lifted = true;
+        a_out.lifted   = true;
+        a_out.zeroLift = zeroLift;
+        if (zeroLift) g_zeroLifts.fetch_add(1, std::memory_order_relaxed);
         (castSteer ? g_castSteers : g_lifts).fetch_add(1, std::memory_order_relaxed);
         apmf::sources::NoteServedClaim(owner, castSteer ? apmf::sources::Facet::kCast : apmf::sources::Facet::kEquipWeapon);   // ch.26 lift / ch.8b steer (menu "Served")
         return finish(APMF_API::kEquipPrefState_Lifted, best, target);
@@ -721,6 +791,8 @@ namespace apmf::equippref {
         t.lostPasses     = g_lostPasses.load(std::memory_order_relaxed);
         t.ignoredForms   = g_ignoredForms.load(std::memory_order_relaxed);
         t.droppedDecls   = g_droppedDecls.load(std::memory_order_relaxed);
+        t.zeroLifts      = g_zeroLifts.load(std::memory_order_relaxed);
+        t.zeroRefused    = g_zeroRefused.load(std::memory_order_relaxed);
         return t;
     }
 
@@ -741,17 +813,17 @@ namespace apmf::equippref {
                            t.unreadable != o.unreadable || t.forcedDenies != o.forcedDenies ||
                            t.forceAnomalies != o.forceAnomalies || t.forceOwnClient != o.forceOwnClient ||
                            t.lostPasses != o.lostPasses || t.ignoredForms != o.ignoredForms ||
-                           t.droppedDecls != o.droppedDecls;
+                           t.droppedDecls != o.droppedDecls || t.zeroLifts != o.zeroLifts || t.zeroRefused != o.zeroRefused;
         g_lastBeat = t;
         if (!moved && g_declCount.load(std::memory_order_relaxed) == 0) return;
         const auto line = fmt::format(
             "[ch.26] HEARTBEAT {} declaration(s); since load: lifted {} (+{} ch.8b spell steers), a lift that LOST the "
             "next pass {}, leading {}, engine score 0 {}, hand held by a cast claim {}, OUTRANKED {}, list unreadable "
             "{}; force: denied {}, own client's equip {}, ANOMALIES {}; ignored forms {}, declarations dropped with "
-            "their claim {}.",
+            "their claim {}; claimed exact-0 spells: lifted as explained by their data {}, refused {}.",
             g_declCount.load(std::memory_order_relaxed), t.lifts, t.castSteers, t.lostPasses, t.leading, t.zero, t.held,
             t.withheld, t.unreadable, t.forcedDenies, t.forceOwnClient, t.forceAnomalies, t.ignoredForms,
-            t.droppedDecls);
+            t.droppedDecls, t.zeroLifts, t.zeroRefused);
         if (t.forceAnomalies != o.forceAnomalies || t.unreadable != o.unreadable) spdlog::warn("{}", line);
         else spdlog::info("{}", line);
     }

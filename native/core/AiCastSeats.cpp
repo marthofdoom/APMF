@@ -9,6 +9,7 @@
 #include "core/ActionGate.h"   // RangedProbeClassify / RangedProbeLineBudget ([Probe] bRangedSelect)
 #include "core/EquipSink.h"    // CategoryNames
 #include "core/EquipPreference.h"   // ch.26 (ABI v22): the score lift both 0x0C thunks hand their answer to
+#include "core/CastClassify.h"     // explained-zero capture around the magic 0x0C original
 #include "channels/CombatSubstrate.h"   // NoteClaimScore: the substrate's passive claim-score line
 
 #include <array>
@@ -240,7 +241,12 @@ namespace apmf::aicastseats {
                 orig = RecoverLiveOriginal<CalculateScore_t>(vt, kCalculateScore);
             }
 
+            // Explained-zero capture (core/CastClassify.h): seat 0's visitor records what the engine's own
+            // classification saw for THIS item while the original runs. Passive; the decision is OnScore's.
+            apmf::castclassify::BeginScoreCapture(a_this->item);
             const float score = orig(a_this, a_cc);   // ENGINE ANSWERS FIRST -- this is the only call made
+            apmf::castclassify::ScoreCapture zeroCap{};
+            apmf::castclassify::EndScoreCapture(zeroCap);
 
             if (!a_cc) return score;
             auto* actor = a_cc->attackerHandle.get().get();
@@ -260,7 +266,7 @@ namespace apmf::aicastseats {
             // the source answering beneath this seat.
             apmf::equippref::ScoreOutcome lift{};
             const float finalScore = apmf::equippref::OnScore(a_this, a_cc, actor, score,
-                                                              reinterpret_cast<std::uintptr_t>(orig), true, lift);
+                                                              reinterpret_cast<std::uintptr_t>(orig), true, lift, &zeroCap);
             const bool  steered    = lift.lifted && lift.castSteer;
             // fix/apmf-ooc-substrate (passive): a substrate holder's claimed spell -- one line per window with the score's
             // inputs (the controller's combat style and its magicScoreMult), the field proof of what a 0 is made of.
@@ -274,11 +280,12 @@ namespace apmf::aicastseats {
             if (steered && ThrottleOK(g_lastSteerMs, fid, itemForm)) {
                 spdlog::info("[aicastseats] t={} 0x{} '{}' SCORE-STEER item=0x{} '{}' hand={} cat={} "
                              "engineScore={:.3f} best-competitor={:.3f} STEERED->{:.3f} (ch.8b cast claim drives "
-                             "this form on this hand; one step above the best competitor)",
+                             "this form on this hand; one step above the best competitor){}",
                              apmf::clock::MonotonicMs(), apmf::log::Hex(fid),
                              actor->GetName() ? actor->GetName() : "?", apmf::log::Hex(itemForm),
                              item && item->GetName() ? item->GetName() : "?", lift.hand, lift.category,
-                             score, lift.rival, finalScore);
+                             score, lift.rival, finalScore,
+                             lift.zeroLift ? " -- an EXPLAINED ZERO (see the [ch.8b zero] line)" : "");
             }
 
             if (g_itemScoreProbeEnabled.load(std::memory_order_relaxed) &&
