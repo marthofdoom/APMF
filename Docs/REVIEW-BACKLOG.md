@@ -1225,3 +1225,9 @@ Reviewer: "g_darkLineMs grows without bound and is keyed on actor + form, which 
 
 ### APMF-B236 (SEV-5, OPEN, core/EquipGate.cpp install gate, against d7d6dc7) -- the 1.6.1170 version check uses a different style than the 1.5.97 one
 Reviewer: "The 1.6.1170 check could use REL::Module::IsExactly(SKSE::RUNTIME_SSE_1_6_1170) to match the 1.5.97 one." Reasoning: style only, both are correct.
+
+### APMF-B237 (SEV-5, OPEN, core/EquipGate.cpp Light 10 s line, against 94a9597, Opus tier-3 review of feat/apmf-light-search-override) -- the armed line also prints when nothing was overridden
+Reviewer: "The 10 s line also prints when the flag is armed but nothing was overridden (\"not raised\"). This is volume only, and arguably useful."
+
+### APMF-B238 (SEV-5, OPEN, Docs/STATUS.md Light gate audit, against 94a9597) -- construction and the item's Equip were not decoded by the reviewer
+Reviewer: "STATUS says \"Construction and the item's Equip are unconditional\". I did not decode the construction or Equip paths myself, so that part of the author's audit is unconfirmed by me." Reasoning: everything from the equip check to start and stop was confirmed independently. The field run settles the rest.
