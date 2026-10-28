@@ -111,6 +111,13 @@ namespace apmf::castclassify {
         KeepBest_t  g_keepBest   = nullptr;   // set once at Install, before the vtable write
         const void* g_restoreRow = nullptr;
 
+        // EXPLAINED-ZERO capture (see CastClassify.h). Armed by the 0x0C score thunk around the engine's
+        // original on THIS thread; the visitor thunk appends what it saw for the armed form. t_served
+        // is set by the two substitutions below to the row index they handed KEEP-BEST.
+        thread_local apmf::castclassify::ScoreCapture t_cap{};
+        thread_local bool                             t_capArmed = false;
+        thread_local std::int8_t                      t_served   = -1;
+
         std::mutex                     g_healLogMx;
         std::unordered_set<RE::FormID> g_healLogged;   // once per spell
 
@@ -278,6 +285,7 @@ namespace apmf::castclassify {
             if (!ClaimOutranksClassify(fid, spellForm, a_prevFn, false)) return;   // Harbinger 1b: the engine's stands
 
             g_keepBest(a_this, eff, g_restoreRow, 1.0f);
+            t_served = static_cast<std::int8_t>(kRestoreHealthRow);   // explained-zero capture
 
             std::scoped_lock lk(g_healLogMx);
             if (g_healLogged.insert(spellForm).second)
@@ -407,7 +415,10 @@ namespace apmf::castclassify {
             RE::FormID keyed = 0;
             const auto why   = SpellRowless(a_spell, a_selfFlag, keyed);
             const bool hostile = eff->baseEffect->IsHostile();
-            if (why == RowlessWhy::Served) g_keepBestRowless(a_this, eff, g_scriptRow[hostile ? 1 : 0], 1.0f);
+            if (why == RowlessWhy::Served) {
+                g_keepBestRowless(a_this, eff, g_scriptRow[hostile ? 1 : 0], 1.0f);
+                t_served = static_cast<std::int8_t>(hostile ? kScriptHostileRow : kScriptBeneficialRow);   // explained-zero capture
+            }
 
             {
                 std::scoped_lock lk(g_healLogMx);
@@ -429,6 +440,135 @@ namespace apmf::castclassify {
                              why == RowlessWhy::HealShaped ? "the spell is heal-shaped (the heal road owns it)"
                                                            : "another effect of the spell keys its own caster row",
                              keyed, fid);
+        }
+
+        // ---- EXPLAINED-ZERO term model (CastClassify.h) ----
+        // Each table row's score term, from the row's two function pointers (+0x20 "fn20" scales the
+        // effect, +0x28 "fn28" finishes it). Disassembled on 1.6.1170, 1.5.97 and 1.7.104 (agentlog
+        // candlelight-phase2): the partition below is identical on all three, and Install re-checks it
+        // against the LIVE table (pointer equality classes) and the code bytes before enabling.
+        //   fn20 A  `mov rcx,rdx; jmp Effect::GetMagnitude` (kNoMagnitude -> 0, else EffectItem magnitude)
+        //   fn20 B  `movss xmm0,[rdx+0x18]; ret`             (Effect::cost)
+        //   fn28 C  returns its input, times the target's resistance for a hostile effect with a target
+        //   fn28 D  damage-Magicka / Stamina (rows 1, 2): not modelled, an effect keying it is unexplained
+        //   fn28 E  `mov rax,[rdx+0x10]; movss xmm0,[rax+0x14C]; ret` (MGEF aiScore; fn20 discarded)
+        // KEEP-BEST (AE 0x81DBA0) multiplies fn20 by its weight argument and a factor >= 1 (duration,
+        // area), so for kinds A and B the term is zero exactly when fn20 (or the weight) is zero.
+        enum class Term : std::uint8_t { kMagnitude, kCost, kAiScore, kUnmodelled };
+        constexpr std::array<Term, kTableRows> kRowTerm{ {
+            Term::kMagnitude, Term::kUnmodelled, Term::kUnmodelled, Term::kMagnitude, Term::kMagnitude,   // 0-4
+            Term::kMagnitude, Term::kMagnitude,  Term::kMagnitude,  Term::kCost,      Term::kAiScore,     // 5-9
+            Term::kMagnitude, Term::kMagnitude,  Term::kMagnitude,  Term::kMagnitude, Term::kCost,        // 10-14
+            Term::kCost,      Term::kMagnitude,  Term::kMagnitude,  Term::kCost,      Term::kCost,        // 15-19
+            Term::kMagnitude, Term::kMagnitude,  Term::kAiScore,                                          // 20-22
+        } };
+        const char* TermName(Term a_t) {
+            switch (a_t) {
+            case Term::kMagnitude: return "magnitude";
+            case Term::kCost:      return "cost";
+            case Term::kAiScore:   return "aiScore";
+            default:               return "unmodelled";
+            }
+        }
+        static_assert(offsetof(RE::Effect, baseEffect) == 0x10, "Effect::baseEffect moved (fn20 B / fn28 E read +0x10)");
+        static_assert(offsetof(RE::Effect, cost) == 0x18, "Effect::cost moved (fn20 B reads +0x18)");
+        static_assert(offsetof(RE::EffectSetting, data) == 0x68, "EffectSetting::data moved (GetMagnitude reads +0x68)");
+        static_assert(offsetof(RE::EffectSetting::EffectSettingData, aiScore) == 0xE4,
+                      "EffectSettingData::aiScore moved (fn28 E reads MGEF +0x14C)");
+
+        std::atomic<bool> g_zeroModelOk{ false };
+
+        // The table row index a key hits, any creator (a null-creator row still adds its term), else -1.
+        int RowForKey(std::int32_t a_arch, std::uint8_t a_avByte, std::uint8_t a_self, std::uint8_t a_hostile) {
+            const bool alias =
+                std::find(kValueModAliases.begin(), kValueModAliases.end(), a_arch) != kValueModAliases.end();
+            for (std::size_t i = 0; i < kTableRows; ++i) {
+                const auto& r = kExpectedRows[i];
+                if (r.self != a_self || r.hostile != a_hostile) continue;
+                if (static_cast<std::uint8_t>(r.av & 0xFF) != a_avByte) continue;
+                if (r.arch == a_arch || (alias && r.arch == 0)) return static_cast<int>(i);
+            }
+            return -1;
+        }
+
+        // One row term of one effect. `a_weight` is KEEP-BEST's weight argument (1.0 for the primary key
+        // and for a substitution, the MGEF's secondAVWeight for the secondary key). Returns true when the
+        // term is exactly zero by the effect's own data; false (with a_why) otherwise.
+        bool TermIsZero(const RE::Effect* a_eff, int a_row, float a_weight, const char*& a_why) {
+            const auto* m = a_eff->baseEffect;
+            switch (kRowTerm[static_cast<std::size_t>(a_row)]) {
+            case Term::kMagnitude: {
+                if (a_weight == 0.0f) return true;
+                const bool noMag = m->data.flags.all(RE::EffectSetting::EffectSettingData::Flag::kNoMagnitude);
+                if (noMag || a_eff->effectItem.magnitude == 0.0f) return true;
+                a_why = "an effect keyed a magnitude row with a non-zero magnitude (the zero came from outside the form)";
+                return false;
+            }
+            case Term::kCost:
+                if (a_weight == 0.0f || a_eff->cost == 0.0f) return true;
+                a_why = "an effect keyed a cost row with a non-zero cost (the zero came from outside the form)";
+                return false;
+            case Term::kAiScore:
+                if (m->data.aiScore == 0.0f) return true;
+                a_why = "an effect keyed a Script row with a non-zero aiScore (the zero came from outside the form)";
+                return false;
+            default:
+                a_why = "an effect keyed a damage Magicka / Stamina row (its term is not modelled)";
+                return false;
+            }
+        }
+
+        // Install-time proof of the term model on THIS runtime, through the live table only (no new
+        // address id): rows equal kExpectedRows, fn20 / fn28 pointers fall into exactly the classes
+        // kRowTerm assumes, and the pointed-to code is the disassembled bytes (identical on 1.6.1170,
+        // 1.5.97 and 1.7.104; fn28 C compared outside its call rel32 and its one struct displacement,
+        // which differs on 1.5.97). Returns "" on success, else what failed.
+        std::string VerifyZeroModel(std::uintptr_t a_table) {
+            if (a_table == 0) return "classify table resolved to 0";
+            auto u64 = [](std::uintptr_t a) { return *reinterpret_cast<const std::uintptr_t*>(a); };
+            auto same = [](std::uintptr_t a, const std::uint8_t* b, std::size_t n) {
+                return std::memcmp(reinterpret_cast<const void*>(a), b, n) == 0;
+            };
+            std::array<std::uintptr_t, kTableRows> f20{}, f28{};
+            for (std::size_t i = 0; i < kTableRows; ++i) {
+                const auto  r  = a_table + i * kRowSize;
+                const auto& ex = kExpectedRows[i];
+                if (*reinterpret_cast<const std::int32_t*>(r) != ex.arch ||
+                    *reinterpret_cast<const std::int32_t*>(r + 4) != ex.av ||
+                    *reinterpret_cast<const std::uint8_t*>(r + 8) != ex.self ||
+                    *reinterpret_cast<const std::uint8_t*>(r + 9) != ex.hostile || (u64(r + 0x18) != 0) != ex.creator)
+                    return fmt::format("row {} differs from the expected table", i);
+                f20[i] = u64(r + 0x20);
+                f28[i] = u64(r + 0x28);
+            }
+            const std::uintptr_t A = f20[0], B = f20[8], C = f28[0], D = f28[1], E = f28[9];
+            if (!A || !B || !C || !D || !E || A == B || C == D || C == E || D == E)
+                return "the row functions are not the five distinct classes the model assumes";
+            for (std::size_t i = 0; i < kTableRows; ++i) {
+                const bool costScaled = kRowTerm[i] == Term::kCost || kRowTerm[i] == Term::kAiScore;
+                if (f20[i] != (costScaled ? B : A)) return fmt::format("row {} fn+0x20 is not its class", i);
+                const std::uintptr_t want28 = kRowTerm[i] == Term::kUnmodelled ? D : kRowTerm[i] == Term::kAiScore ? E : C;
+                if (f28[i] != want28) return fmt::format("row {} fn+0x28 is not its class", i);
+            }
+            static constexpr std::uint8_t kA[]    = { 0x48, 0x8B, 0xCA, 0xE9 };   // mov rcx,rdx; jmp rel32
+            static constexpr std::uint8_t kAMag[] = { 0x48, 0x8B, 0x41, 0x10, 0x8B, 0x50, 0x68, 0xC1, 0xEA, 0x0A, 0xF6, 0xC2,
+                                                      0x01, 0x74, 0x04, 0x0F, 0x57, 0xC0, 0xC3, 0xF3, 0x0F, 0x10, 0x01, 0xC3 };
+            static constexpr std::uint8_t kB[]    = { 0xF3, 0x0F, 0x10, 0x42, 0x18, 0xC3 };
+            static constexpr std::uint8_t kE[]    = { 0x48, 0x8B, 0x42, 0x10, 0xF3, 0x0F, 0x10, 0x80, 0x4C, 0x01, 0x00, 0x00, 0xC3 };
+            static constexpr std::uint8_t kCHead[] = { 0x48, 0x89, 0x5C, 0x24, 0x08, 0x57, 0x48, 0x83, 0xEC, 0x30, 0x48, 0x8B, 0xF9, 0x0F,
+                                                       0x29, 0x74, 0x24, 0x20, 0x48, 0x8B, 0xCA, 0x0F, 0x28, 0xF3, 0x48, 0x8B, 0xDA };
+            static constexpr std::uint8_t kCTail[] = { 0xF3, 0x0F, 0x59, 0xC6, 0x48, 0x8B, 0x5C, 0x24, 0x40, 0x0F, 0x28, 0x74, 0x24,
+                                                       0x20, 0x48, 0x83, 0xC4, 0x30, 0x5F, 0xC3, 0x48, 0x8B, 0x5C, 0x24, 0x40, 0x0F,
+                                                       0x28, 0xC6, 0x0F, 0x28, 0x74, 0x24, 0x20, 0x48, 0x83, 0xC4, 0x30, 0x5F, 0xC3 };
+            if (!same(A, kA, sizeof(kA))) return "fn+0x20 A is not `mov rcx,rdx; jmp`";
+            const auto magFn = A + 8 + static_cast<std::intptr_t>(*reinterpret_cast<const std::int32_t*>(A + 4));
+            if (!same(magFn, kAMag, sizeof(kAMag))) return "fn+0x20 A's jump target is not the kNoMagnitude magnitude read";
+            if (!same(B, kB, sizeof(kB))) return "fn+0x20 B is not the Effect::cost read";
+            if (!same(E, kE, sizeof(kE))) return "fn+0x28 E is not the MGEF aiScore read";
+            if (!same(C, kCHead, sizeof(kCHead)) || *reinterpret_cast<const std::uint8_t*>(C + 27) != 0xE8 ||
+                !same(C + 78, kCTail, sizeof(kCTail)))
+                return "fn+0x28 C is not the pass-through / resistance multiply";
+            return {};
         }
 
         constexpr std::uint64_t kLogThrottleMs = 1500;   // matches every other seat's cadence in this codebase
@@ -617,8 +757,17 @@ namespace apmf::castclassify {
             }
 
             const auto r = orig(a_this, a_effect);   // THE ENGINE'S OWN CLASSIFICATION LOGIC, SEEING WHATEVER WE SET ABOVE
+            t_served = -1;
             ServeUnclassedHeal(a_this, a_effect, spellPtr, ccPtr, *selfFlag, oit->second);
             ServeRowless(a_this, a_effect, spellPtr, ccPtr, *selfFlag, oit->second);
+            // Explained-zero capture (passive record, no decision here): only for the form the 0x0C thunk
+            // armed on this thread, so classification passes outside a score call never record.
+            if (t_capArmed && spellPtr && static_cast<const RE::TESForm*>(spellPtr) == t_cap.spell) {
+                if (t_cap.count < apmf::castclassify::ScoreCapture::kMax)
+                    t_cap.e[t_cap.count++] = { reinterpret_cast<const RE::Effect*>(a_effect), *selfFlag, t_served };
+                else
+                    t_cap.overflow = true;
+            }
             return r;
         }
 
@@ -777,6 +926,24 @@ namespace apmf::castclassify {
             }
         }
 
+        // Explained-zero term model (ClickUp 1dfcuabbt0n / 1dfcuabbt0p). Refused alone, loudly: a claimed
+        // spell the engine scores exactly 0 then stays at 0 (the D1 rule), never a guessed explanation.
+        {
+            REL::Relocation<std::uintptr_t> tbl{ kClassifyTable };
+            const std::string bad = VerifyZeroModel(tbl.address());
+            if (bad.empty()) {
+                g_zeroModelOk.store(true, std::memory_order_release);
+                spdlog::info("[ch.8b seat 0] explained-zero model VERIFIED on {} (classify table 0x{}: 23 rows, the "
+                             "magnitude / cost / aiScore term classes and their code bytes match). A claimed spell the "
+                             "engine scores exactly 0 for its own data reasons can be lifted (core/EquipPreference.cpp).",
+                             ver.string("."), apmf::log::Hex(tbl.address(), 16));
+            } else {
+                spdlog::error("[ch.8b seat 0] explained-zero model NOT verified on {}: {}. A claimed spell the engine "
+                              "scores exactly 0 stays at 0 on this runtime (never a guessed explanation).",
+                              ver.string("."), bad);
+            }
+        }
+
         g_orig[vt.address()] = vt.write_vfunc(kClassifySlot, &ClassifyThunk);
         apmf::sources::NoteVfunc(apmf::sources::Facet::kCast, "CastClassify.CombatMagicItemData.Classify", vt.address(),
                                  kClassifySlot, SKSE::stl::unrestricted_cast<std::uintptr_t>(&ClassifyThunk), g_orig[vt.address()]);
@@ -788,6 +955,72 @@ namespace apmf::castclassify {
                      "first time. Seats 0x0F/0x06/0x0A/0x07/0x0D (core/EquipGate.cpp + core/CastSeats.cpp) "
                      "do everything downstream of that, unchanged.",
                      apmf::log::Hex(vt.address(), 16), kClassifySlot);
+    }
+
+    // ---- EXPLAINED-ZERO (see CastClassify.h) ----
+
+    void BeginScoreCapture(const RE::TESForm* a_item) {
+        t_cap        = ScoreCapture{};
+        t_cap.spell  = a_item;
+        t_capArmed   = a_item != nullptr;
+    }
+
+    void EndScoreCapture(ScoreCapture& a_out) {
+        a_out      = t_cap;
+        t_capArmed = false;
+        t_cap      = ScoreCapture{};
+    }
+
+    bool ZeroModelVerified() { return g_zeroModelOk.load(std::memory_order_acquire); }
+
+    bool ExplainZero(const ScoreCapture& a_cap, const RE::TESForm* a_spell, ZeroExplain& a_out) {
+        a_out         = ZeroExplain{};
+        a_out.effects = a_cap.count;
+        auto refuse   = [&](const char* a_why) { a_out.why = a_why; return false; };
+        if (!ZeroModelVerified()) return refuse("the term model is not verified on this runtime (see the install line)");
+        if (!a_spell || a_cap.spell != a_spell) return refuse("no capture for this form in this score call");
+        if (a_cap.overflow) return refuse("the spell has more effects than the capture holds (8)");
+        if (a_cap.count == 0) return refuse("seat 0 saw no effect of this form during the score call");
+        auto note = [&](int a_row, const RE::Effect* a_eff) {
+            ++a_out.terms;
+            if (a_out.row < 0) {
+                a_out.row  = a_row;
+                a_out.term = TermName(kRowTerm[static_cast<std::size_t>(a_row)]);
+                a_out.mgef = a_eff->baseEffect->GetFormID();
+            }
+        };
+        for (std::uint8_t i = 0; i < a_cap.count; ++i) {
+            const auto& c = a_cap.e[i];
+            if (!c.effect || !c.effect->baseEffect) return refuse("an effect without a base effect");
+            const auto* m    = c.effect->baseEffect;
+            const auto  arch = static_cast<std::int32_t>(m->GetArchetype());
+            const auto  host = static_cast<std::uint8_t>(m->IsHostile() ? 1 : 0);
+            const bool  avk  = AvKeyed(arch);
+            const char* why  = "";
+            // The engine visitor's primary key (AE 0x81D830): the primary AV byte for AV-keyed archetypes.
+            const auto pByte = avk ? static_cast<std::uint8_t>(static_cast<std::int32_t>(m->data.primaryAV) & 0xFF)
+                                   : static_cast<std::uint8_t>(0xFF);
+            if (const int r = RowForKey(arch, pByte, c.self, host); r >= 0) {
+                note(r, c.effect);
+                if (!TermIsZero(c.effect, r, 1.0f, why)) return refuse(why);
+            }
+            // Its secondary key: AV-keyed archetypes with a secondary AV, weighted by secondAVWeight.
+            const auto sav = static_cast<std::int32_t>(m->data.secondaryAV);
+            if (avk && sav != -1) {
+                if (const int r = RowForKey(arch, static_cast<std::uint8_t>(sav & 0xFF), c.self, host); r >= 0) {
+                    note(r, c.effect);
+                    if (!TermIsZero(c.effect, r, m->data.secondAVWeight, why)) return refuse(why);
+                }
+            }
+            // A row this file served for it (KEEP-BEST weight 1.0).
+            if (c.served >= 0 && static_cast<std::size_t>(c.served) < kTableRows) {
+                note(c.served, c.effect);
+                if (!TermIsZero(c.effect, c.served, 1.0f, why)) return refuse(why);
+            }
+        }
+        if (a_out.terms == 0) return refuse("no effect keyed a row (the engine's 0 has no row term behind it)");
+        a_out.explained = true;
+        return true;
     }
 
 }

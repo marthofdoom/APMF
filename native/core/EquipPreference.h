@@ -1,5 +1,6 @@
 #pragma once
 #include "APMF_API.h"
+#include "core/CastClassify.h"   // ScoreCapture (the explained-zero lift)
 
 #include <cstdint>
 
@@ -90,12 +91,19 @@ namespace apmf::equippref {
         char        hand      = '?';     // 'R' / 'L' / '?'
         float       rival     = 0.0f;    // the best competitor's held score (0 = none)
         int         category  = -1;
+        bool        zeroLift  = false;   // an exact-0 engine score lifted because its data or a 0 style multiplier explains it
     };
     // Returns the score to hand back to the engine. `a_engine` is the engine's own answer (the
     // thunk called the original first); `a_origFn` the function the thunk chained to (its
     // source is what the claim is ranked against); `a_magicSeat` true for GROUP A.
+    // `a_zeroCap` (GROUP A only, else null): what seat 0 saw while the original ran
+    // (core/CastClassify.h). With it, an exact-0 score of a ch.8b claim's driven form whose own data
+    // explains the zero is lifted like any other claim (marth 2026-10-27, ClickUp 1dfcuabbt0n), and so is
+    // one the controller's combat style zeroes for the item's category (marth 2026-10-28); every other
+    // zero is refused (D1).
     float OnScore(RE::CombatInventoryItem* a_this, RE::CombatController* a_cc, RE::Actor* a_actor, float a_engine,
-                  std::uintptr_t a_origFn, bool a_magicSeat, ScoreOutcome& a_out);
+                  std::uintptr_t a_origFn, bool a_magicSeat, ScoreOutcome& a_out,
+                  const apmf::castclassify::ScoreCapture* a_zeroCap = nullptr);
 
     // ---- the equip sink (core/EquipSink.cpp), kEquipPref_Force ----------------------------
     struct ForceView {
@@ -121,7 +129,8 @@ namespace apmf::equippref {
     struct Totals {
         std::uint64_t lifts = 0, castSteers = 0, leading = 0, zero = 0, held = 0, withheld = 0, unreadable = 0,
                       forcedDenies = 0, forceAnomalies = 0, forceOwnClient = 0, lostPasses = 0, ignoredForms = 0,
-                      droppedDecls = 0;
+                      droppedDecls = 0, zeroLifts = 0, zeroRefused = 0,   // the explained-zero lift (ch.8b only)
+                      zeroStyleLifts = 0;                                 // ... explained by a 0 style multiplier
     };
     Totals GetTotals();   // any thread (relaxed counters)
     // MAIN thread, once per frame: type-checks and publishes pending declarations, prunes the

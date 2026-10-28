@@ -2525,8 +2525,9 @@ namespace apmf::combatsubstrate {
                          a_score > 0.0f ? ""
                          : (cs && !(cs->generalData.magicScoreMult > 0.0f))
                              ? " -- 0 because this controller's combat style gives magic no weight (the actor's own style: "
-                               "the substrate changes no score input). The engine then never selects it; see Docs/STATUS.md."
-                             : " -- 0 or less from the spell's own effects against its target (true data).");
+                               "the substrate changes no score input). Harbinger lifts a claim's exact 0 as a style zero, see [ch.8b zero]."
+                             : " -- 0 or less from the spell's own effects against its target (true data); an exact 0 the "
+                               "spell's data explains is lifted, see [ch.8b zero].");
         } catch (...) {
         }
     }

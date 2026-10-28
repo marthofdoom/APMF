@@ -4,6 +4,26 @@ Updated 2026-10-26. Current version **v0.15.1** (cut 2026-10-26, ABI v30, see CH
 shipped, what's probe-gated, what's next. Keep this current in the SAME change as any
 build/finding/workflow change.
 
+## HEAD OF WORK 2026-10-27 -- EXPLAINED-ZERO LIFT (a claimed spell the engine zeroes for data reasons is selectable), branch `feat/apmf-explained-zero-lift`, NOT merged
+
+- ClickUp 1dfcuabbt0n (Candlelight on the player, animated) and 1dfcuabbt0p (Script spells, road A). Field cause (MFO
+  `_evidence/2026-10-27d/e-deck`): the delivery-flip proxy keys the Light row (seat 0) and gets its item, but the engine
+  scores it 0.000 (26/26 windows, magicScoreMult 10) because Mysticism sets Candlelight magnitude 0 and Requiem sets
+  LightFFSelf kNoMagnitude. The Light term is magnitude-proportional, D1 refused the 0, the item was never selected
+  (NOT BUILT). Self Candlelight was dead the same way. Script rows score the MGEF aiScore (+0x14C), not cost.
+- Change: `core/CastClassify` captures what the engine keyed during the 0x0C call and proves the zero from the row terms
+  (model verified per runtime at install against the live table and code bytes, no new address). `core/EquipPreference`
+  OnScore lifts an explained exact-0 for a ch.8b driven form (D5 still applies) and floors the no-rival target at
+  `kEquipPrefStepAbs`. Logs `[ch.8b zero]`, heartbeat counters. Default ON (rides `[AiCastSeats] EnableScoreSteer`, 1). No ABI change.
+- Re-cast bound: Light and Script casters carry the kTarget AlreadyApplied bound in their 0x06 (`core/CastSeats.cpp`);
+  a Script effect that leaves no active effect (instant / zero duration) has nothing to bound it. That re-cast (review
+  SEV-4) is handled MFO-side (one cast per claim release), no Harbinger change.
+- 2026-10-28 (marth: "we raise what the gambit asks for regardless of class"): the lift also explains a STYLE zero, a
+  claimed spell whose controller's combat style gives its category a 0 multiplier (Auri, "Cause 2" above). Logged as term
+  style, its own heartbeat counter. Class gating is MFO's gambit availability. Field run must show
+  Light built > 0, fired > 0, one cast per applied window. If built but never fired: the lookalike stand-in is next (marth Q3).
+- Not field-tested. MFO adoption is a separate MFO round (remove the D2 Light diversion, the Script refusal).
+
 ## HEAD OF WORK 2026-10-27 -- ATTACK-SELECTION PROBE (combat-behaviour facet design pass), branch `feat/apmf-attack-select-probe`, NOT merged
 
 - ClickUp 86e3bw775 (design pass; the design itself is a ClickUp comment on the task). Principle 5 before any seat:
@@ -94,7 +114,7 @@ build/finding/workflow change.
   (AE CalculateScore 0x819AA0 -> 0x819C10; a lookup miss gives -1, not 0). All 33 of Auri's spells, heals and self buffs
   included, were exactly 0, so the common factor is her controller's combat style giving magic no weight. The substrate
   zeroes no score input. In a real fight MFO swaps that controller style to its cast style for a cast gambit; under a
-  substrate MFO applies none ("no combat style"). **Not fixed here** (no Harbinger score is invented: D1 stands, "never lift
+  substrate MFO applies none ("no combat style"). **Not fixed here** (SUPERSEDED 2026-10-28: the explained-zero lift on `feat/apmf-explained-zero-lift` lifts a claim's style zero; at the time: no Harbinger score is invented: D1 stands, "never lift
   what the engine scored 0"). Passive proof: `[substrate] 0x<f> CLAIM SCORE: the engine scored the claimed spell ... (combat
   style 0x<cs> magicScoreMult <m>)` once per window (`core/AiCastSeats.cpp` -> `combatsubstrate::NoteClaimScore`). Needs MFO
   (cast stance style while its substrate cast claim stands) or a marth ruling; see the MFO follow-up below.

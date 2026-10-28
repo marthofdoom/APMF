@@ -102,4 +102,51 @@ namespace apmf::castclassify {
     // form data only.
     bool IsPlacementSpell(const RE::MagicItem* a_spell);
 
+    // ---- EXPLAINED-ZERO (ClickUp 1dfcuabbt0n / 1dfcuabbt0p, marth 2026-10-27 Q1) ----------------
+    // The engine's magic item score (shared slot 0x0C: AE 0x819AA0 -> 0x819C10, SE 0x77F6F0 ->
+    // 0x77F890, 1.7.104 0x82E980 -> 0x82EAF0) is -1.0 when no effect keys a row, else the SUM of the
+    // per-effect row terms times the combat style's magicScoreMult and a range bonus. Each row's
+    // term is one of three DATA reads (row fn+0x20 / fn+0x28, identical on all three runtimes,
+    // checked against the live table and the code bytes at Install):
+    //   magnitude -- the Effect's magnitude, 0 when the MGEF has kNoMagnitude (most rows)
+    //   cost      -- Effect::cost (+0x18): Paralyze, Summon (both), Invisibility, BoundItem
+    //   aiScore   -- EffectSetting data.aiScore (+0x14C): the two Script rows (fn+0x20 is discarded)
+    // An exact 0.0 is EXPLAINED when every row an effect actually keyed during THAT scoring call has
+    // a zero data term. Seat 0's visitor thunk records what it saw (each effect, the self flag the
+    // engine keyed with, a row this file served by substitution) while the 0x0C thunk has the capture
+    // armed. Thread-local, so no lock. Nothing here changes a classification.
+    struct ScoreCapture {
+        static constexpr std::size_t kMax = 8;
+        struct Entry {
+            const RE::Effect* effect = nullptr;
+            std::uint8_t      self   = 0;    // the resolver's +0x4c as the engine keyed this effect
+            std::int8_t       served = -1;   // table row this file substituted for it (heal / rowless), else -1
+        };
+        const RE::TESForm* spell    = nullptr;
+        std::uint8_t       count    = 0;
+        bool               overflow = false;
+        Entry              e[kMax]{};
+    };
+    // Arm before the engine's 0x0C original, for the item form being scored. End disarms and copies
+    // what seat 0 recorded. Any thread (thread-local), cheap enough for every magic score call.
+    void BeginScoreCapture(const RE::TESForm* a_item);
+    void EndScoreCapture(ScoreCapture& a_out);
+
+    struct ZeroExplain {
+        bool         explained = false;
+        std::int32_t row       = -1;   // the first row index (0-22) an effect keyed or was served
+        const char*  term      = "";   // "magnitude" / "cost" / "aiScore" for that row
+        RE::FormID   mgef      = 0;    // that effect's MGEF
+        std::uint8_t effects   = 0;    // effects seat 0 saw
+        std::uint8_t terms     = 0;    // row terms evaluated
+        const char*  why       = "";   // the refusal reason when !explained (a static string)
+    };
+    // Is an exact-0 engine score for `a_spell` explained by its own data? False (with `why`) when the
+    // model is not verified on this runtime, seat 0 saw nothing for this form, an effect keyed a row
+    // the model does not cover, or any keyed row's data term is non-zero (then the zero came from
+    // outside the form: combat style, range, resistance). Form reads only, any thread.
+    bool ExplainZero(const ScoreCapture& a_cap, const RE::TESForm* a_spell, ZeroExplain& a_out);
+    // True once Install verified the term model on this runtime (logged either way).
+    bool ZeroModelVerified();
+
 }
