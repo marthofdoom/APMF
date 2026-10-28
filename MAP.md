@@ -1342,8 +1342,16 @@ every engine read. The channel (ch.26) only logs Engage / OnOwnerChanged / Relea
 Logs: `[ch.26] <actor> LIFTED / leading / OUTRANKED ... item= hand= cat= rank= engineScore= best-competitor=
 -> result (claim h=)` (on change, 15 s floor), `[ch.26] HEARTBEAT` (30 s, warn on a new anomaly), the
 WEAPON-SCORE / SCORE-STEER lines name a lift; the Equip facet header on the Harbinger page shows the counters.
+- **The combat style does NOT veto the explained-zero lift (marth 2026-10-28):** "Currently, pre Class Update, we raise
+  what the gambit asks for regardless of class, then the HMS skew kicks. Post class update, when enabled the Gambit wont
+  allow enabling off class gambits. But HMS skew will still affect the more advanced classes." The gambit's request wins.
+  A data-zero claimed spell is lifted whatever the follower's style multiplier for that category (magicScoreMult 0
+  included). Class gating lives in MFO's gambit availability, not in Harbinger's score. Scope as built (3186270): the
+  lift fires when the spell's own row terms are all 0. A spell whose terms are non-zero but whose engine score is 0
+  because the multiplier is 0 (STATUS "Cause 2", Auri) is not a data zero and still meets D1 (no change this round).
 - **What breaks:** an additive constant (D1: the wrong shape on LoreRim, 0.22 to 1320); lifting a 0 score the
-  spell's own data does not explain (a combat style with magicScoreMult 0, STATUS "Cause 2", must stay at 0); lifting -1.0;
+  spell's own row terms do not explain; adding a combat-style veto to the explained-zero lift (contradicts the ruling
+  above); lifting -1.0;
   counting a lifted item as a rival (two preferences chase each other upward every pass); reading the
   category list off the rescore thread or without the parentController check; a lock held across
   `GetCategory` / the list walk; dropping the `Outranks` test (D2/D5: the lift is a deny of the answer beneath
@@ -1355,7 +1363,9 @@ WEAPON-SCORE / SCORE-STEER lines name a lift; the Equip facet header on the Harb
   does a form lookup). **Open review items: REVIEW-BACKLOG APMF-B75 (RankOf excludes items that will not
   actually be lifted), APMF-B76 (CastClaimHandle ranks with the wrong client when two clients hold different
   hands), APMF-B77 (BestRival does not verify `a_this` is in its own list), APMF-B78 (a slot-less left-hand
-  preference passes ForceRefusal; the ~2 s force delay is not enforced) -- read them before editing.**
+  preference passes ForceRefusal; the ~2 s force delay is not enforced), APMF-B226 (the no-rival floor lifts (0, 0.01)
+  scores), APMF-B227 (the [ch.8b zero] throttle keys on a pooled form id), APMF-B228 (the zero-model self-check does not
+  cover the per-row step or the visitor) -- read them before editing.**
 
 ### `native/core/RestoreCensus.{h,cpp}` — phase 0b Restore-caster census (PASSIVE probe)
 Read-only. `[Probe] bRestoreCensus` (code default 1 for the field; STATUS pre-release

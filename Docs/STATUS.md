@@ -16,7 +16,9 @@ build/finding/workflow change.
   OnScore lifts an explained exact-0 for a ch.8b driven form (D5 still applies) and floors the no-rival target at
   `kEquipPrefStepAbs`. Logs `[ch.8b zero]`, heartbeat counters. Default ON (rides `[AiCastSeats] EnableScoreSteer`, 1). No ABI change.
 - Re-cast bound: Light and Script casters carry the kTarget AlreadyApplied bound in their 0x06 (`core/CastSeats.cpp`);
-  a Script effect that leaves no active effect (instant / zero duration) has nothing to bound it. Field run must show
+  a Script effect that leaves no active effect (instant / zero duration) has nothing to bound it. That re-cast (review
+  SEV-4) is handled MFO-side (one cast per claim release), no Harbinger change. The combat style does not veto the lift
+  (marth 2026-10-28, MAP ch.26 section). Field run must show
   Light built > 0, fired > 0, one cast per applied window. If built but never fired: the lookalike stand-in is next (marth Q3).
 - Not field-tested. MFO adoption is a separate MFO round (remove the D2 Light diversion, the Script refusal).
 

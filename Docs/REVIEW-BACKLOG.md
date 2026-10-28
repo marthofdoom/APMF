@@ -1192,3 +1192,12 @@ Reviewer, verbatim as relayed: "ActionGate.cpp 2342 lines, the next brief must p
 
 ### APMF-B225 (SEV-5, OPEN, pre-existing, channels/CombatEntry.cpp hold EndHold, against 94c35f6, Opus review of fix/apmf-hold-repin-nopath) -- an ended Track under a live claim
 Reviewer, verbatim as relayed: "An ended Track can stay ended under a live claim. When EndHold runs but EndClaim / EndHeld find no winning claim naming the target (the entry or pin is not the winner or is already ending), the Track is ended but the claim stays live and nothing is released. entryEnded / pinEnded only take effect on a later SetSlot, so with no Repoint the watchdogs never run again for that live claim. Rare, not introduced here."
+
+### APMF-B226 (SEV-5, OPEN, core/EquipPreference.cpp OnScore, against 3186270, Opus tier-3 review of feat/apmf-explained-zero-lift) -- the no-rival floor also lifts tiny non-zero scores
+Reviewer, as relayed by the coordinator (the review log holds no fuller text): "floor fix lifts non-zero (0, 0.01) scores to 0.01 and touches ch.26 weapon declarations, harmless." Reasoning: with no rival the target is now kEquipPrefStepAbs instead of 0, so an engine score in (0, 0.01) on a lifted item rises to 0.01. It only reorders items that already lead their category. Deferred under rule 9.
+
+### APMF-B227 (SEV-5, OPEN, core/EquipPreference.cpp ZeroLineDue, against 3186270, Opus tier-3 review of feat/apmf-explained-zero-lift) -- the [ch.8b zero] throttle keys on a pooled form id
+Reviewer, as relayed by the coordinator: "g_zeroLines throttle keyed on form id, can be a pooled 0xFF proxy, logging only." Reasoning: a delivery-flip proxy id is reused across spells by the pool, so a recycled id can suppress the first line for a different spell for up to 10 s. Logging only, no decision reads it.
+
+### APMF-B228 (SEV-5, OPEN, core/CastClassify.cpp VerifyZeroModel, against 3186270, Opus tier-3 review of feat/apmf-explained-zero-lift) -- the self-check does not cover the per-row step or the visitor
+Reviewer, as relayed by the coordinator: "install self-check proves row functions and bytes, not the per-row step or effect visitor (verified statically, exact-build gated)." Reasoning: KEEP-BEST (AE 0x81DBA0 / SE 0x7815A0 / 1.7.104 0x833090) and the visitor (AE 0x81D830) were verified by disassembly on all three builds and the seat is exact-build gated, so a drift would need a new executable, which the runtime gate already refuses.
