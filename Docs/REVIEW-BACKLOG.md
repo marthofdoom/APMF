@@ -1201,3 +1201,9 @@ Reviewer, as relayed by the coordinator: "g_zeroLines throttle keyed on form id,
 
 ### APMF-B228 (SEV-5, OPEN, core/CastClassify.cpp VerifyZeroModel, against 3186270, Opus tier-3 review of feat/apmf-explained-zero-lift) -- the self-check does not cover the per-row step or the visitor
 Reviewer, as relayed by the coordinator: "install self-check proves row functions and bytes, not the per-row step or effect visitor (verified statically, exact-build gated)." Reasoning: KEEP-BEST (AE 0x81DBA0 / SE 0x7815A0 / 1.7.104 0x833090) and the visitor (AE 0x81D830) were verified by disassembly on all three builds and the seat is exact-build gated, so a drift would need a new executable, which the runtime gate already refuses.
+
+### APMF-B229 (SEV-5, OPEN, core/EquipPreference.cpp StyleZero, against 5a1f6b0, Opus focused re-review of feat/apmf-explained-zero-lift) -- the style is read after the engine call, not with it
+Reviewer: "MFO swaps the style from its job-worker tick, so a swap can land between the engine's read and ours. The window is nanoseconds." Reasoning: the pointer read is one aligned 8-byte read of a form that is never freed, so it is safe. A wrong answer affects one scoring pass for the claimed form only: it lifts a zero the claim asked for anyway, or refuses once and the next pass re-scores. Not worth fixing.
+
+### APMF-B230 (SEV-5, OPEN, core/EquipPreference.cpp StyleZero, against 5a1f6b0, Opus focused re-review of feat/apmf-explained-zero-lift) -- a style-zero follower is lifted onto a spell the target fully resists
+Reviewer: "a follower whose style is 0 will be lifted onto a claimed spell the target fully resists. A follower with a non-zero style is refused in that case." Reasoning: harmless, and the gambit asked for that spell. Consistent with marth's 2026-10-28 ruling.
