@@ -1216,3 +1216,12 @@ Reviewer: "MainEffect matches the no-filter call. Docs only."
 
 ### APMF-B233 (SEV-5, OPEN, core/CastClassify.cpp g_tieLogged, against c1c7b5a) -- the log-once set is never cleared on load
 Reviewer: "It is only a log-once set, so it is harmless."
+
+### APMF-B234 (SEV-5, OPEN, core/EquipGate.cpp Light darkness override install, against d7d6dc7, Opus tier-3 review of feat/apmf-light-darkness-override) -- EnableScoreSteer is read once at install
+Reviewer: "INI read once. EnableScoreSteer is read only at install. If the steer is ever toggled at runtime, the override stays as installed." Reasoning: there is no runtime toggle today, so this only matters if one is added.
+
+### APMF-B235 (SEV-5, OPEN, core/EquipGate.cpp g_darkLineMs, against d7d6dc7) -- the log throttle map grows without bound
+Reviewer: "g_darkLineMs grows without bound and is keyed on actor + form, which can be a pooled proxy id. It is a log-only throttle." Reasoning: log only, small entries.
+
+### APMF-B236 (SEV-5, OPEN, core/EquipGate.cpp install gate, against d7d6dc7) -- the 1.6.1170 version check uses a different style than the 1.5.97 one
+Reviewer: "The 1.6.1170 check could use REL::Module::IsExactly(SKSE::RUNTIME_SSE_1_6_1170) to match the 1.5.97 one." Reasoning: style only, both are correct.

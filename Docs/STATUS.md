@@ -4,6 +4,18 @@ Updated 2026-10-26. Current version **v0.15.1** (cut 2026-10-26, ABI v30, see CH
 shipped, what's probe-gated, what's next. Keep this current in the SAME change as any
 build/finding/workflow change.
 
+## HEAD OF WORK 2026-10-28 -- LIGHT DARKNESS OVERRIDE (a claimed Light spell equips in lit places), branch `feat/apmf-light-darkness-override`, NOT merged
+
+- Field 10-28c (LoreRim, Candlelight at the player): the proxy was a Light item and won its score every pass, but the engine's
+  own CheckShouldEquip said NO 20 of 20 times. The Light check (AE 0x821260 / SE 0x784EC0) asks last whether the CASTER
+  stands in darkness (AE 0x67E590 / SE 0x5EC230, light level under 40). Light is the AI's light-myself-in-the-dark item.
+- Change (marth Option A): a new call-site seat on that one darkness call answers "dark" only while the 0x0F seat evaluates a
+  live claim's driven form on its own hand (the claim outranking the source beneath). Every other condition of the Light
+  check still runs in the engine (the two controller tests, the cost check, the caster already lit). One line per flip,
+  10 s per actor and form. Rides `[AiCastSeats] EnableScoreSteer` (default 1). VerifiedAddresses rows
+  EquipGate.Light.Site.Check and EquipGate.Light.Darkness on 1.6.1170 and 1.5.97. Refused on 1.7.104 (no MIT table row).
+- The 0x06 recast bound on the target is unchanged. Not field-tested.
+
 ## HEAD OF WORK 2026-10-28 -- ZERO TIE CLASSIFIES THE MAIN EFFECT, branch `fix/apmf-zero-tie-main-effect`, NOT merged
 
 - Field 10-28b (LoreRim, Candlelight at the player): the lift raised the proxy every pass (0 to 1229.56 over 1171) but the
