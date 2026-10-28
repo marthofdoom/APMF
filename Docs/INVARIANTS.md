@@ -776,7 +776,10 @@ original first and hand its number to `equippref::OnScore`, which returns it unc
 highest score the engine holds for another item in the same engine category list, items the actor's claims
 lift at an equal or better rank excluded. It is #20's mechanism exactly: the engine still applies its own
 range gate, order table and hand occupancy and is still free to choose otherwise. Four rules are part of it:
-never lift an item the engine scored 0 or less; never lift a weapon into a hand a live cast claim holds (D3);
+never lift an item the engine scored 0 or less, except an EXPLAINED zero (2026-10-27, marth: "any data-caused zero"):
+a ch.8b claim's driven form whose engine score is exactly 0.0 and whose every row term the engine keyed in that call is 0 by
+the spell's own data (`castclassify::ExplainZero`; a zero from the combat style, range or resistance is never explained,
+-1.0 "no row" never lifts); never lift a weapon into a hand a live cast claim holds (D3);
 never lift while the source answering beneath the seat outranks the claim (D5: the same priority sliders);
 never a fixed additive constant (scores span 0.08 to 1320 across lists). The category list is read in place
 on the rescore thread, guarded by static_asserts and a parentController identity check.

@@ -780,6 +780,21 @@ event layout (verified in SetActorsDetectionEvent on all three builds).
   APMF-B50 (the event free on an untraced path), APMF-B51 (`level > 0`), APMF-B53 (c), (d).
 
 ### `native/core/CastClassify.{h,cpp}` — ch.8b SEAT 0: CLASSIFY (2026-09-05)
+**EXPLAINED-ZERO CAPTURE + TERM MODEL (2026-10-27, `feat/apmf-explained-zero-lift`, ClickUp 1dfcuabbt0n / 1dfcuabbt0p).**
+`BeginScoreCapture` / `EndScoreCapture` (thread-local, armed by `core/AiCastSeats.cpp` CalculateScoreThunk around the
+engine's 0x0C original) let `ClassifyThunk` record, for the armed item form only, each effect it saw, the self flag the
+engine keyed it with (`+0x4c` after seat 0's decision) and a row `ServeUnclassedHeal` / `ServeRowless` handed KEEP-BEST
+(`t_served`). `ExplainZero` turns that into "every keyed row term is 0 by the spell's own data" using `kRowTerm`: the row's
+fn+0x20 / fn+0x28 classes (magnitude A for most rows, Effect::cost B for rows 8/14/15/18/19, MGEF aiScore +0x14C E for the
+Script rows 9/22 whose fn+0x20 is discarded, D = rows 1/2 not modelled -> refused). Primary key weight 1.0, secondary key
+weight `secondAVWeight`, substitution weight 1.0. `VerifyZeroModel` (Install, no new address id) checks the live table
+rows, the five pointer classes and the code bytes (A + its GetMagnitude target, B, E, C's head and tail): identical on
+1.6.1170 / 1.5.97 / 1.7.104 (agentlog candlelight-phase2). A failure refuses only the model, loudly; seat 0 still installs.
+- **What breaks:** recording outside an armed score call (the capture must stay scoped to the 0x0C original); recording
+  before `orig()` or before the Serve* calls (the self flag and the served row are only final after them); adding a table
+  row or changing a row's term without updating `kRowTerm` and `VerifyZeroModel`; treating -1.0 or a negative score as
+  explainable; a row kind whose term can be zero for a non-data reason (D, the resistance multiply in C on a non-zero
+  input) counted as explained.
 **HARBINGER 1b CAST SLICE (2026-10-12):** every claim-driven refusal / substitution here is ranked on the Cast facet against the seat's displaced function (`core/FacetAttribution` "CAST SLICE"); never give a claim answer before that test, and never count it on the silent follow-on seats.
 **THE ROOT-CAUSE FIX** the other five seats sat downstream of and could never reach:
 a heal/buff-OTHER spell (kTargetActor/kAimed RestoreHealth — Healing Hands, Heal
@@ -1296,7 +1311,12 @@ call's controller), `+8 + cat*0x18` the lists (size at +0x10), item `+0x18` scor
 = `int(this)`, a leaf on every concrete item class of all three builds; all static_asserted where CommonLib
 declares them and disassembled 2026-10-12 (file header). 5 % comes from the LoreRim 10-12 log: 3599 same-item
 rescores two passes apart rose at most 3.94 % (scores >= 1), and a rival not yet rescored this pass may still
-rise by that much. **NEVER LIFTED:** engine score <= 0 (a bow with no arrows); a declared item for a hand a live
+rise by that much. **NEVER LIFTED:** engine score <= 0 (a bow with no arrows), EXCEPT the explained zero (2026-10-27, marth Q1 "any
+data-caused zero"): the driven form of a live ch.8b claim, engine answer EXACTLY 0.0, and `castclassify::ExplainZero` proves
+every row term the engine keyed in that call is 0 by the spell's own data (no magnitude / kNoMagnitude, cost 0, Script aiScore
+0); it is then lifted like any steer, still subject to D5 Outranks, and logs `[ch.8b zero] ... EXPLAINED ... LIFTED` (refusals
+warn `[ch.8b zero] ... NOT lifted: <why>`; both per (actor, form, outcome) at most every 10 s; HEARTBEAT counts both). With no
+rival (`best` 0) the target is the floor `kEquipPrefStepAbs`, not 0; a declared item for a hand a live
 cast claim holds (`handblock::HeldFor`, D3); any item while the source beneath the seat
 (`facetattr::InsideSource(orig)`) is not outranked (`facetattr::Outranks`, Equip facet; Cast facet for the
 steer: D5); a list that fails validation (`Unreadable`). **FORCE (D4):** `kEquipPref_Force` in the claim's
@@ -1322,7 +1342,8 @@ every engine read. The channel (ch.26) only logs Engage / OnOwnerChanged / Relea
 Logs: `[ch.26] <actor> LIFTED / leading / OUTRANKED ... item= hand= cat= rank= engineScore= best-competitor=
 -> result (claim h=)` (on change, 15 s floor), `[ch.26] HEARTBEAT` (30 s, warn on a new anomaly), the
 WEAPON-SCORE / SCORE-STEER lines name a lift; the Equip facet header on the Harbinger page shows the counters.
-- **What breaks:** an additive constant (D1: the wrong shape on LoreRim, 0.22 to 1320); lifting a 0 score;
+- **What breaks:** an additive constant (D1: the wrong shape on LoreRim, 0.22 to 1320); lifting a 0 score the
+  spell's own data does not explain (a combat style with magicScoreMult 0, STATUS "Cause 2", must stay at 0); lifting -1.0;
   counting a lifted item as a rival (two preferences chase each other upward every pass); reading the
   category list off the rescore thread or without the parentController check; a lock held across
   `GetCategory` / the list walk; dropping the `Outranks` test (D2/D5: the lift is a deny of the answer beneath
