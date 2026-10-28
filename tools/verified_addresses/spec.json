@@ -4715,6 +4715,45 @@
    "doc": "AE 0x6F2951 / SE 0x65F7D8 / 1.7.104 0x705521 (0x704C70+0x8B1); agentlogs/apmf-torch.md"
   },
   {
+   "seat": "EquipGate.Light.Darkness",
+   "kind": "function",
+   "construct": "the engine's darkness test for an actor: bool(Actor*) -- min(light level, 100) minus a night-eye allowance (AV 0x37) below 40.0 (.data AE 0x2005BE0); the Light item's CheckShouldEquip asks it last",
+   "ids": {
+    "1.6.1170": 37567,
+    "1.5.97": 36566
+   },
+   "sig": {
+    "1.6.1170": "48 89 5C 24 08 48 89 74 24 10 57 48 83 EC 50 48 8B F9",
+    "1.5.97": "48 89 5C 24 08 57 48 83 EC 50 48 8B D9 0F 29 74 24 40"
+   },
+   "source": "native/core/EquipGate.cpp (Light darkness override: the verified call target the site must still reach)",
+   "doc": "agentlogs/candlelight-phase3.md FIELD 10-28c + PHASE 4 (2026-10-28)"
+  },
+  {
+   "seat": "EquipGate.Light.Site.Check",
+   "kind": "callsite",
+   "construct": "the Light item's own equip check (called from CombatInventoryItemMagicT<Magic, Light> slot 0x0F AE 0x82E200 / SE 0x7962C0) -> call the darkness test, its last condition; write_call<5> seat",
+   "ids": {
+    "1.6.1170": 45403,
+    "1.5.97": 44010
+   },
+   "sig": {
+    "1.6.1170": "41 56 48 83 EC 50 48 C7 44 24 20 FE FF FF FF 48 89 5C 24 60 48 89 6C 24 68 48 89 74 24 70 48 89 7C 24 78 4C 8B F2 48 8B E9",
+    "1.5.97": "48 8B C4 41 56 48 83 EC 70 48 C7 40 A8 FE FF FF FF 48 89 58 08 48 89 68 10 48 89 70 18 48 89 78 20 4C 8B F2"
+   },
+   "offset": {
+    "1.6.1170": "0xC6",
+    "1.5.97": "0xE2"
+   },
+   "bytes": "E8",
+   "target": {
+    "1.6.1170": 37567,
+    "1.5.97": 36566
+   },
+   "source": "native/core/EquipGate.cpp (Light darkness override, write_call<5>)",
+   "doc": "AE 0x821326 / SE 0x784FA2 / 1.7.104 0x836816 (0x836750+0xC6, not in the MIT table: refused there); agentlogs/candlelight-phase3.md"
+  },
+  {
    "seat": "PapyrusCaller.NativeFunctionBase.Call",
    "kind": "function",
    "construct": "RELOCATION_ID(97923, 104651) (CommonLib Offset::BSScript::NF_util::NativeFunctionBase::Call)",

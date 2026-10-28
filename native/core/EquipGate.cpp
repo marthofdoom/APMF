@@ -5,7 +5,9 @@
 #include "core/ControlMap.h"
 #include "core/EquipGate.h"
 #include "core/FacetAttribution.h"   // Harbinger 1b: the cast-hand paths ranked on the Cast facet
+#include "core/Sources.h"            // RegisterCallSeat: the Light darkness seat in the source census
 
+#include <cstring>
 #include <intrin.h>
 #include <unordered_set>
 
@@ -167,6 +169,112 @@ namespace apmf::equipgate {
             if (now - last < 1500) return false;
             last = now;
             return true;
+        }
+
+        // ---- LIGHT DARKNESS OVERRIDE (marth 2026-10-28, Option A; field 10-28c, agentlog candlelight-phase3) ----
+        // The Light item's CheckShouldEquip (CombatInventoryItemMagicT<Magic, Light> slot 0x0F: AE 0x82E200 / SE
+        // 0x7962C0) is the shared base check AND the Light check (AE 45403 0x821260 / SE 44010 0x784EC0), whose
+        // conditions run in order: two controller-state tests, the caster can pay for it (AE 0x81E170), the CASTER
+        // does not already carry this spell's effect (AE 0x81E400), and LAST the darkness test on the CASTER (AE
+        // 37567 0x67E590 / SE 36566 0x5EC230: min(light level, 100) minus a night-eye allowance below 40.0). Light is
+        // the AI's own "light myself in the dark" item, so in a lit place it answers NO whoever the claim targets.
+        // For a live cast claim's DRIVEN form on its own hand, the claim having already decided to cast, ONLY that
+        // last test is answered "dark": the engine still runs every other condition itself (the darkness call is
+        // reached only when they all passed). The seat is the one call site to the darkness test inside the Light
+        // check (write_call<5>, VerifiedAddresses rows EquipGate.Light.Site.Check / EquipGate.Light.Darkness),
+        // armed per call on this thread by the 0x0F thunk below, so every other caller of the darkness test (and the
+        // Light check reached any other way) sees the engine's answer. 1.7.104: neither id is in the fork's MIT
+        // table, so the seat is refused there (loud). Rides [AiCastSeats] EnableScoreSteer (default 1), the switch
+        // of the lift it completes.
+        using Darkness_t = bool (*)(RE::Actor*);
+        std::atomic<Darkness_t>     g_darkOrig{ nullptr };   // the VERIFIED darkness test, stored before the patch
+        std::atomic<std::uintptr_t> g_lightItemVt{ 0 };      // CombatInventoryItemMagicT<Magic, Light>, when hooked here
+        thread_local bool           t_darkArmed   = false;
+        thread_local bool           t_darkFlipped = false;
+        std::atomic<std::uint64_t>  g_darkFlips{ 0 };
+        std::unordered_map<std::uint64_t, std::uint64_t> g_darkLineMs;   // guarded by g_rlMx
+
+        bool DarknessThunk(RE::Actor* a_actor) {
+            const bool engine = g_darkOrig.load(std::memory_order_acquire)(a_actor);   // ENGINE ANSWERS FIRST
+            if (engine || !t_darkArmed) return engine;
+            t_darkFlipped = true;
+            return true;   // "dark": the claim's driven Light spell is equipped wherever the caster stands
+        }
+
+        bool DarkLineDue(RE::FormID a_actor, RE::FormID a_subject) {
+            const auto now = apmf::clock::MonotonicMs();
+            const auto key = (static_cast<std::uint64_t>(a_actor) << 32) | static_cast<std::uint64_t>(a_subject);
+            std::scoped_lock lk(g_rlMx);
+            auto& last = g_darkLineMs[key];
+            if (last != 0 && now - last < 10000) return false;
+            last = now;
+            return true;
+        }
+
+        // Per runtime (rule 11): 1.6.1170 and 1.5.97 each have their own ids and site offset (VerifiedAddresses rows
+        // EquipGate.Light.Site.Check / EquipGate.Light.Darkness). 1.7.104 (site 0x836750 +0xC6 -> 0x691050, found by
+        // disassembly) has no MIT table row for either id, and a RELOCATION_ID miss is fatal there, so no REL::ID is
+        // built on it: the seat is refused by name.
+        constexpr std::uint64_t  kLightCheckAE = 45403, kLightCheckSE = 44010;
+        constexpr std::uint64_t  kDarknessAE   = 37567, kDarknessSE   = 36566;
+        constexpr std::uintptr_t kDarkSiteOffAE = 0xC6, kDarkSiteOffSE = 0xE2;
+
+        void InstallLightDarknessSeat() {
+            const char* why = nullptr;
+            REL::Relocation<std::uintptr_t> lv{
+                RE::VTABLE_CombatInventoryItemMagicT_CombatInventoryItemMagic_CombatMagicCasterLight_[0] };
+            const bool ae = REL::Module::get().version() == REL::Version{ 1, 6, 1170, 0 };
+            const bool se = REL::Module::IsExactly(SKSE::RUNTIME_SSE_1_5_97);
+            if (!ae && !se) {
+                why = allowance::IsRuntime1_7_104()
+                          ? "1.7.104: the Light check and the darkness test have no row in the fork's MIT id table (refused "
+                            "by design, the call site is known: 0x836750 +0xC6)"
+                          : "the runtime is not exactly 1.6.1170 or 1.5.97";
+            } else if (GetPrivateProfileIntA("AiCastSeats", "EnableScoreSteer", 1, "Data/SKSE/Plugins/APMF.ini") == 0) {
+                why = "[AiCastSeats] EnableScoreSteer=0 (the switch of the claimed-spell lift this completes)";
+            } else if (!g_orig.contains(lv.address())) {
+                why = "the Light item's CheckShouldEquip (0x0F) is not hooked by this seat";
+            }
+            std::uintptr_t site = 0, fn = 0;
+            if (!why) {
+                site = REL::ID(se ? kLightCheckSE : kLightCheckAE).address() + (se ? kDarkSiteOffSE : kDarkSiteOffAE);
+                fn   = REL::ID(se ? kDarknessSE : kDarknessAE).address();
+                bool ok = allowance::SeatVerified(fn, "EquipGate.Light.Darkness");
+                ok      = allowance::SeatVerified(site, "EquipGate.Light.Site.Check") && ok;
+                if (!ok) why = "the address self-check refused a row (listed above)";
+            }
+            if (!why) {
+                // The bytes NOW (another DLL may have patched the site since the self-check): E8 -> the darkness test.
+                const auto*  b   = reinterpret_cast<const std::uint8_t*>(site);
+                std::int32_t rel = 0;
+                std::memcpy(&rel, b + 1, sizeof(rel));
+                if (b[0] != 0xE8 || site + 5 + static_cast<std::intptr_t>(rel) != fn)
+                    why = "the Light check's call site no longer calls the darkness test (another patcher got there first)";
+            }
+            if (why) {
+                spdlog::warn("[t2a] Light darkness override NOT installed -- {}. A claimed Light spell is equipped only "
+                             "where the caster stands in darkness (the engine's own Light rule).",
+                             why);
+                return;
+            }
+            static auto* s_tr = new SKSE::Trampoline("APMF.LightDarkness");
+            void* mem = nullptr;
+            if (const auto* intfc = SKSE::GetTrampolineInterface()) mem = intfc->AllocateFromBranchPool(32);
+            if (mem) s_tr->set_trampoline(mem, 32);
+            else s_tr->create(32);
+            // The original is stored BEFORE the site is patched, and it is the VERIFIED target.
+            g_darkOrig.store(reinterpret_cast<Darkness_t>(fn), std::memory_order_release);
+            const std::uintptr_t prev = s_tr->write_call<5>(site, &DarknessThunk);
+            if (prev != fn)
+                spdlog::error("[t2a] Light darkness seat: the previous call target changed between the check and the "
+                              "patch (0x{:X}, expected 0x{:X}); the verified darkness test is called.",
+                              prev, fn);
+            apmf::sources::RegisterCallSeat(apmf::sources::Facet::kCast, "EquipGate.Light.Site.Check", site, prev);
+            g_lightItemVt.store(lv.address(), std::memory_order_release);
+            spdlog::info("[t2a] Light darkness override INSTALLED (site 0x{:X} -> darkness test 0x{:X}): a live cast "
+                         "claim's driven Light spell is equipped wherever the caster stands; every other condition of "
+                         "the engine's Light check still applies.",
+                         site, fn);
         }
 
         // Mirrors core/AiCastSeats.cpp's ResolveTypeName exactly (raw
@@ -623,7 +731,29 @@ namespace apmf::equipgate {
 
             // ---- From here down: UNCHANGED, engine-answer-first DENY (#17). The
             // engine gets the first word and APMF only ever flips its YES to NO. ----
+            // LIGHT DARKNESS OVERRIDE (see DarknessThunk): armed only for the claim's DRIVEN form on its own hand,
+            // on the Light item, while the claim outranks the source beneath this seat.
+            bool darkArm = false;
+            if (fid != 0 && subjectForm != 0 && hasHandSeat && vt == g_lightItemVt.load(std::memory_order_relaxed)) {
+                const RE::FormID driven = handSeat.proxy ? handSeat.proxy : handSeat.spell;
+                darkArm = driven != 0 && subjectForm == driven && castWins("the Light darkness override");
+            }
+            t_darkArmed   = darkArm;
+            t_darkFlipped = false;
             const bool engineSays = original(a_this, a_cc);
+            t_darkArmed = false;
+            if (t_darkFlipped) {
+                g_darkFlips.fetch_add(1, std::memory_order_relaxed);
+                if (DarkLineDue(fid, subjectForm))
+                    spdlog::info("[t2a] 0x{} CheckShouldEquip item=0x{} (Light, the driven form of the cast claim on hand {}, "
+                                 "claim spell 0x{}{}): the engine's darkness veto was OVERRIDDEN (the caster stands in "
+                                 "light; every other condition of the Light check passed) -> engine answer {} (flips since "
+                                 "load {}).",
+                                 apmf::log::Hex(fid), apmf::log::Hex(subjectForm),
+                                 callerHand == allowance::Hand::kLeft ? "L" : callerHand == allowance::Hand::kRight ? "R" : "?",
+                                 apmf::log::Hex(handSeat.spell), handSeat.proxy ? " via delivery-flip proxy" : "",
+                                 engineSays ? "YES" : "NO", g_darkFlips.load(std::memory_order_relaxed));
+            }
             if (g_logEnabled.load(std::memory_order_relaxed) && fid != 0 && LogDue(fid, subjectForm)) {
                 const char* cls = ResolveTypeName(vt);
                 spdlog::info("[t2a] 0x{} CheckShouldEquip item=0x{} class={} hand={} engineSays={}",
@@ -817,6 +947,7 @@ namespace apmf::equipgate {
             REL::Relocation<std::uintptr_t> vt{ id };
             if (g_orig.contains(vt.address())) g_restoreVtables.insert(vt.address());
         }
+        InstallLightDarknessSeat();
         spdlog::info("[t2a] CheckShouldEquip allowance hooked on {} spell/staff inventory-item "
                      "vtable(s) -- ch.8 casting-select and ch.15 equipment (weapon-order) "
                      "claims now enforced here too; ch.8b is per-hand-scoped via "
