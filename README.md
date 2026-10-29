@@ -213,6 +213,14 @@ Every key is in [Docs/INI-REFERENCE.md](Docs/INI-REFERENCE.md). These are the on
 
 The facet priorities (`EquipWeapon`, `EquipArmor` and the rest) live in `APMF_Sources.ini`, written by the Harbinger page. A priority of 0 turns that mod off for that facet.
 
+## What is in v0.15.2
+
+- **A claimed spell the game scores as zero for its own data reasons is lifted.** Candlelight in Requiem has a magnitude of 0 and a style can give a category a 0 multiplier, so the game never picked such a spell even when a mod claimed it. Harbinger now proves the zero from the row terms and lifts it, and a tie of zeros is classified by the spell's main (costliest) effect. This comes with the two Light overrides below, and together they let followers cast Candlelight and other Light spells animated, in lit towns and outside combat. Field tested on LoreRim.
+- **A claimed Light spell equips in lit places and while the group is not searching.** The game only lights the caster in the dark, and only while the combat group is searching. Harbinger answers both tests for a claim's driven Light spell and leaves the other checks (fleeing, cost, already lit) to the game. Not on 1.7.104.
+- **A follower that cannot reach its target drops the fight,** and a mod can ask why a claim ended (ABI v31, `GetClaimEndReason`). Engaging the same target again restarts the watchdogs.
+- **A probe names the script behind a Papyrus equip** (`bPapyrusCaller`, off by default). The combat behaviour tree catalog is now clean-room.
+- ABI v31. Older mods keep working.
+
 ## What is in v0.15.1
 
 - **The substrate closes as fired only when the spell is cast.** A close on the start of the release cut casts short. It now waits for the game's spell cast event, and a release that never confirms closes loudly. New passive lines `LEAF GATE`, `GATE UNRESOLVED` and `CAST BUILT`.
@@ -272,7 +280,7 @@ The facet priorities (`EquipWeapon`, `EquipArmor` and the rest) live in `APMF_So
 
 ## Status
 
-Phase 1 built, now at v0.15.1, ABI v30 (see [Docs/STATUS.md](Docs/STATUS.md)). The central
+Phase 1 built, now at v0.15.2, ABI v31 (see [Docs/STATUS.md](Docs/STATUS.md)). The central
 `Actor::Update` (0xAD) hook drives a multi-NPC control map (keyed by FormID,
 scales to hundreds, an uncontrolled NPC pays one hash-miss), a real
 inter-plugin C-ABI client API (`native/APMF_API.h`), and the full documented

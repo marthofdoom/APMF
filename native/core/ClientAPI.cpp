@@ -339,7 +339,7 @@ namespace {
     // the release after 0.13.1 -- name it at the cut; so do v26, the substrate state query, v27, the
     // substrate availability query, and v28, kIntent_Place and its state query; v29, the client facet
     // priority query, and v30, ch.19's kTravel_CrossCells, ship in 0.15.0; v31, the claim end reason, ships
-    // in the release after 0.15.1 -- name it at the cut).
+    // in 0.15.2).
     const char* MinReleaseForAbi(std::uint32_t abi) {
         switch (abi) {
         case 1:  return "0.2.0";
@@ -372,7 +372,7 @@ namespace {
         case 28: return "0.14.0";
         case 29:
         case 30: return "0.15.0";
-        case 31: return "the release after 0.15.1";
+        case 31: return "0.15.2";
         default: return "a release newer than this one";
         }
     }

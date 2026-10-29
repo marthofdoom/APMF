@@ -3549,9 +3549,9 @@ The ABI is append-only. A client built against an older ABI keeps working agains
 | 28 | 0.14.0 | `kIntent_Place`, `PlaceFlags`, `PlaceState`, `PlaceWhy`, `APMF_PlaceStateInfo`, `GetPlaceState` (struct `APMF_API_v28`) |
 | 29 | 0.15.0 | `GetClientFacetPriority`, `ClientFacet`, `kFacetPriorityUnknown` (struct `APMF_API_v29`) |
 | 30 | 0.15.0 | `kTravel_CrossCells`, a `TravelFlags` bit read through the existing `RequestEx` and `Repoint` (no struct, no slot) |
-| 31 | the release after 0.15.1 | `GetClaimEndReason`, `ClaimEndReason` (struct `APMF_API_v31`) |
+| 31 | 0.15.2 | `GetClaimEndReason`, `ClaimEndReason` (struct `APMF_API_v31`) |
 
-The last release is 0.15.1, ABI 30. Unreleased: ABI 31, interface struct `APMF_API_v31`. In 0.15.1 the interface struct is `APMF_API_v29`, since ABI 30 added a flag and no slot. Before that `APMF_API_v19` served ABI 19 to 21, and ABI 23 and 25 also added no slot.
+The last release is 0.15.2, ABI 31, interface struct `APMF_API_v31`. In 0.15.1 the interface struct was `APMF_API_v29`, since ABI 30 added a flag and no slot. Before that `APMF_API_v19` served ABI 19 to 21, and ABI 23 and 25 also added no slot.
 
 ## Appendix C: refusal cheat sheet
 

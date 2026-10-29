@@ -248,7 +248,7 @@ A client built against an older header keeps working. Each item below needs its 
 | 28 | 0.14.0 | `kIntent_Place` and `GetPlaceState(handle, &info)` | `abiVersion >= 28` |
 | 29 | 0.15.0 | `GetClientFacetPriority(facet)` | `abiVersion >= 29` |
 | 30 | 0.15.0 | the `kTravel_CrossCells` bit on a travel claim to a reference. No new slot | `abiVersion >= 30` |
-| 31 | the release after 0.15.1 | `GetClaimEndReason(handle)` says why Harbinger ended a ch.20 pin or ch.21 entry claim | `abiVersion >= 31` |
+| 31 | 0.15.2 | `GetClaimEndReason(handle)` says why Harbinger ended a ch.20 pin or ch.21 entry claim | `abiVersion >= 31` |
 
 ### Place (ABI 28)
 
