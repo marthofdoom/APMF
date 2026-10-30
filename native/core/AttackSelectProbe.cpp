@@ -234,15 +234,27 @@ namespace apmf::atkprobe {
 
         // The deliberating actor: the same two +0x158 hypotheses, in the same order, as ch.7's
         // ResolveDeliberatingActor (ActionGate.cpp), kept separate so the probe adds nothing to it.
+        // A hypothesis counts only when its handle names an ACTOR. The handle lookup (id 12204 / 12332,
+        // LookupReferenceByHandle) is untyped: it returns whatever reference the handle names, cast to
+        // Actor by the template. Hypothesis A reads +0x28 of the CombatBehaviorController, which is not a
+        // CombatController, and on 2026-10-30 (LoreRim, 1.6.1170) that word resolved to a TREE reference.
+        // The probe then read Actor members past the end of that 0x98-byte reference (IsPlayerTeammate,
+        // then currentProcess -> high) and faulted at BeforeAct. So a non-actor answer falls through to
+        // the next hypothesis, and every Actor member read below only ever sees a real Actor.
+        // TESForm::formType (+0x1A) == ActorCharacter (0x3E) is the engine's own test for this.
+        bool IsActorRef(const RE::NiPointer<RE::Actor>& a_ref) {
+            return a_ref && a_ref->GetFormType() == RE::FormType::ActorCharacter;
+        }
+
         RE::NiPointer<RE::Actor> ResolveActor(void* a_control) {
             if (!a_control) return {};
             auto* tc = reinterpret_cast<apmf::cbt::TreeControl*>(a_control);
             void* owner = tc->master_controller;
             if (!owner) return {};
-            if (auto a = reinterpret_cast<apmf::cbt::ControllerMini*>(owner)->attackerHandle.get()) return a;
+            if (auto a = reinterpret_cast<apmf::cbt::ControllerMini*>(owner)->attackerHandle.get(); IsActorRef(a)) return a;
             void* hop = *reinterpret_cast<void* const*>(reinterpret_cast<std::uintptr_t>(owner) + 0x20);
             if (hop) {
-                if (auto b = reinterpret_cast<apmf::cbt::ControllerMini*>(hop)->attackerHandle.get()) return b;
+                if (auto b = reinterpret_cast<apmf::cbt::ControllerMini*>(hop)->attackerHandle.get(); IsActorRef(b)) return b;
             }
             return {};
         }
