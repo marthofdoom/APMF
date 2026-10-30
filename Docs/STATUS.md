@@ -4,6 +4,10 @@ Updated 2026-10-28. Current version **v0.15.2** (cut 2026-10-28, ABI v31, see CH
 shipped, what's probe-gated, what's next. Keep this current in the SAME change as any
 build/finding/workflow change.
 
+## HEAD OF WORK 2026-10-30 -- ATTACK-SELECT PROBE CRASH FIX, branch `fix/apmf-atkprobe-nonactor`, NOT merged
+
+- Field 10-30 (LoreRim, bAttackSelect=1): the probe crashed in BeforeAct because its first actor guess named a tree, not an actor. It now takes a guess only when it names an actor. Probe off was never affected.
+
 ## HEAD OF WORK 2026-10-28 -- LIGHT SEARCH-STATE OVERRIDE + the full Light gate audit, branch `feat/apmf-light-search-override`, NOT merged
 
 - Field 10-28d: the darkness seat was never reached. The Light check asks first whether the caster's combat group is
