@@ -1250,3 +1250,9 @@ Reviewer: "g_calls adds an atomic increment to every native call (B212), shared 
 
 ### APMF-B244 (SEV-5, OPEN, core/PapyrusCaller.cpp refcount read, against f91836f) -- a reference at refcount 0 is not attributed
 Reviewer: "A reference whose refcount is 0 at the moment of the read is not attributed. It falls back to DirectCalls, which is the safe direction." "A refcount of 1023 plus one would carry into the handle flag bit. The engine's own increment has the same limit, so this is not new."
+
+### APMF-B245 (SEV-4, OPEN, core/EquipSink.cpp leak Own, against cac42e0, Opus review of feat/menu-honest-labels) -- a queued own-client equip can count Own twice across its two legs
+Reviewer: "leg 1 of a queued equip by the own client can now take the new leak Own, and if leg 2 is then denied by that same client's claim (:1008, which has no !queuedLeg guard), it counts Own a second time. SEV-4, backlog, counter only."
+
+### APMF-B246 (SEV-5, OPEN, core/HarbingerMenu.cpp + Sources, against cac42e0) -- interposer hits show as Uncontested, an unattributed allowed write shows as Contested: won, the Source column squeezes in a narrow window
+Reviewer: "interposer hits (EquipSink :703) have no outcome, so they show as Uncontested." "an unattributed source that is allowed with \"override unknown\" off is counted as Stood, so it shows under \"Contested: won\" even when no claim contested it." "The fixed columns now sum to about 933 px before the stretch Source column ... Source gets squeezed in a narrow window."
