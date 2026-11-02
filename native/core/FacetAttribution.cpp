@@ -97,9 +97,10 @@ namespace apmf::facetattr {
         return c;
     }
 
-    SourceId PapyrusOwnerOr(SourceId a_src, Facet a_facet, std::uintptr_t a_callerAddr) {
+    SourceId PapyrusOwnerOr(SourceId a_src, Facet a_facet, std::uintptr_t a_callerAddr, RE::FormID a_actor,
+                            RE::FormID a_item) {
         if (a_src != apmf::sources::kDirectSource) return a_src;
-        const auto owner = apmf::papyruscaller::ScriptSource(a_facet, a_callerAddr);
+        const auto owner = apmf::papyruscaller::ScriptSource(a_facet, a_callerAddr, a_actor, a_item);
         return owner != apmf::sources::kNoSource ? owner : a_src;
     }
 

@@ -1855,6 +1855,9 @@ caller address (`Sources::ModuleRange`). Else DirectCalls, with a rate-limited "
 **Owner rule (`OwnerOf`, marth ruling 2).** VMAD is read into the bind policy under the record's OWN form handle
 (1.6.1170: form Load 'VMAD' -> 14654 -> GetHandleForObject -> 104189), the live record is GetFile(-1). Alias -> quest
 GetFile(-1). Effect -> MGEF GetFile(-1). Non-reference form -> GetFile(-1). Created reference -> base GetFile(-1).
+`[Harbinger] iPapyrusOwnerFile=1` names GetFile(0) of the owner form instead. Equip facets also require the equip to be
+the native's own request (`NativeTarget`: frame self = actor, argument 0 at frame+0x40 in the frame's page = item). Reads:
+forms under the all-forms read lock + `TryAddRef` on a reference, an ActiveEffect only on the main thread (`g_mainTid`).
 Placed reference: ref winner == base winner -> it, else AMBIGUOUS -> ref GetFile(0), the ruling's fallback (which record
 lists the script would need the bind policy's private parsed VMAD, no verified layout). STEP 1's `ProbeEquip` stays as
 the per-equip probe line.

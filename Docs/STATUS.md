@@ -11,7 +11,9 @@ build/finding/workflow change.
 - A call ranks only when the native running is the one that acted (APMF-B210): an equip native on the Equip facets, a native in the caller's own DLL elsewhere.
 - The script exemption is gone (ruling 3): bEquipDenyScript is retired, scripts and the console are ranked on every equip step.
 - Default priority of a script's plugin is 20, the default for another mod. TO BE CONFIRMED once the field probe lists which scripts equip on followers.
-- INI: [Harbinger] bPapyrusAttribution=1 (seat + ranking, new), [Probe] bPapyrusCaller=0 (probe line only). Not field-tested.
+- Review round (2026-11-01): the see-through ranks an equip as the script only when it is the native's own request (same actor and item). A form owner is read under the all-forms lock and a counted reference, an effect owner only on the main thread. New [Harbinger] iPapyrusOwnerFile (0 winning override, default, 1 defining plugin, marth "both, toggle between"); every attributed line names both files.
+- As ruled (marth): a vanilla quest script's off-set equip on a follower is refused by default (Skyrim.esm at 20). Raise Skyrim.esm on the Equip rows (or Skyrim.esm=60 in [EquipWeapon] / [EquipArmor]) to let it win.
+- INI: [Harbinger] bPapyrusAttribution=1 (seat + ranking, new), iPapyrusOwnerFile=0, [Probe] bPapyrusCaller=0 (probe line only). Not field-tested.
 
 ## HEAD OF WORK 2026-10-30 -- ATTACK-SELECT PROBE CRASH FIX, branch `fix/apmf-atkprobe-nonactor`, NOT merged
 

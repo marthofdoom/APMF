@@ -71,7 +71,9 @@ namespace apmf::facetattr {
     // that owns the calling Papyrus script, when one runs on this thread and is the one that acts on
     // `a_facet` (core/PapyrusCaller.h ScriptSource; `a_callerAddr` = the seat's recovered caller). Any
     // other source, or a call the Papyrus seat cannot attribute, is returned unchanged. Any thread.
-    SourceId PapyrusOwnerOr(SourceId a_src, Facet a_facet, std::uintptr_t a_callerAddr);
+    // `a_actor` / `a_item`: the equip's actor and item on the Equip facets (ScriptSource's own-request match).
+    SourceId PapyrusOwnerOr(SourceId a_src, Facet a_facet, std::uintptr_t a_callerAddr, RE::FormID a_actor = 0,
+                            RE::FormID a_item = 0);
 
     // The registry name of a source, or `a_none` for kNoSource.
     std::string NameOr(SourceId a_id, const char* a_none);

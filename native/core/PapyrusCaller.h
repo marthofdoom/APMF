@@ -54,6 +54,13 @@
 //                           verified layout), so it is UNDETERMINED: the ruling's fallback, the
 //                           reference's defining plugin GetFile(0), logged as "ambiguous".
 //
+// [Harbinger] iPapyrusOwnerFile (marth 2026-11-01, "both, toggle between"): 0 (default) = the rule
+// above, the winning override. 1 = the owner form's DEFINING plugin, GetFile(0) (an alias's quest, an
+// effect's MGEF, the form itself, a created reference's base). Every attributed line names both files.
+// SAFETY (review 2026-11-01): a form owner is read under the all-forms read lock, a reference also through
+// a counted reference. An ActiveEffect (not refcounted, dispelled on the main thread) is read only on the
+// main thread: off it, an effect script is not attributed.
+//
 // STEP 2, WHEN (APMF-B210, "the native must be the one that acts"). An attribution is used only
 // when the running native is the one that reached the seat: on the two Equip facets, the native is
 // Actor.EquipItem / EquipItemEx / EquipItemById (an equip made while an unrelated native runs on that
@@ -99,7 +106,12 @@ namespace apmf::papyruscaller {
     // (a return address), used by the same-module rule on the non-Equip facets. Logs one line per
     // (facet, plugin) at most every 10 s when it ranks a call. Any thread; reads only this thread's
     // own stack; never throws.
-    apmf::sources::SourceId ScriptSource(apmf::sources::Facet a_facet, std::uintptr_t a_callerAddr) noexcept;
+    // On the two Equip facets the equip must also BE the native's own request (review 2026-11-01): `a_actor` /
+    // `a_item` (the equip's actor and item FormIDs) must equal the native frame's self and its argument 0;
+    // anything else (an equip a DLL's TESEquipEvent sink makes inside it) is not attributed. Unused (0) on
+    // the other facets.
+    apmf::sources::SourceId ScriptSource(apmf::sources::Facet a_facet, std::uintptr_t a_callerAddr,
+                                         RE::FormID a_actor = 0, RE::FormID a_item = 0) noexcept;
 
     // THE PROBE, at the ch.17 sink (core/EquipSink.cpp), for an equip the sink already attributes
     // and logs: `a_path` is the sink's own caller label (a path name or the external module),

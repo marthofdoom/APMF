@@ -707,7 +707,7 @@ namespace apmf::equipsink {
                 // not a native and stays DirectCalls.
                 const auto callerAddr = (at >= 0 && at + 1 < n) ? reinterpret_cast<std::uintptr_t>(frames[at + 1]) : 0;
                 if (caller.external && caller.kind == PathKind::kScript) {
-                    eqSrc = apmf::facetattr::PapyrusOwnerOr(apmf::sources::kDirectSource, eqFacet, callerAddr);
+                    eqSrc = apmf::facetattr::PapyrusOwnerOr(apmf::sources::kDirectSource, eqFacet, callerAddr, actorId, itemId);
                     noteSrcHit(eqSrc);
                 } else if (caller.external && apmf::sources::IsSelf(reinterpret_cast<std::uintptr_t>(frames[at + 1]))) {
                     // APMF's own enforce equip (channels/EquipAuthority.cpp): not an outside source.
@@ -715,7 +715,7 @@ namespace apmf::equipsink {
                 } else if (caller.external && attributed) {
                     // STEP 2: an equip native running on this thread sees THROUGH an entry detour on
                     // EquipObject (FollowerEquipControl.dll, the SOS report): the script's plugin, not the DLL.
-                    if (const auto ps = apmf::papyruscaller::ScriptSource(eqFacet, callerAddr); ps != apmf::sources::kNoSource) {
+                    if (const auto ps = apmf::papyruscaller::ScriptSource(eqFacet, callerAddr, actorId, itemId); ps != apmf::sources::kNoSource) {
                         eqSrc = ps;
                         noteSrcHit(eqSrc);
                     } else if (const auto ext = apmf::sources::Register(caller.ext, apmf::sources::Kind::kPlugin); ext >= 0) {
@@ -739,7 +739,7 @@ namespace apmf::equipsink {
                     // A QueuedApply leg with no live leg-1 record lands here too (ranked as Engine, logged).
                     queuedMiss = caller.known && std::strcmp(caller.name, "QueuedApply") == 0;
                     eqSrc = caller.kind == PathKind::kScript
-                              ? apmf::facetattr::PapyrusOwnerOr(apmf::sources::kDirectSource, eqFacet, callerAddr)
+                              ? apmf::facetattr::PapyrusOwnerOr(apmf::sources::kDirectSource, eqFacet, callerAddr, actorId, itemId)
                           : caller.kind == PathKind::kConsole ? apmf::sources::kDirectSource
                                                               : apmf::sources::kEngineSource;
                     noteSrcHit(eqSrc);

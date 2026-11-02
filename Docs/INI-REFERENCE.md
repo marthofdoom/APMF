@@ -206,6 +206,7 @@ who drives each AI facet. Mods that ask Harbinger for a facet, and other mods th
 
 - **`bSceneProbe`** (default `1`). A passive probe, ON while it is field tested. It writes log lines only. Logs which game code asks for an actor's scene while a mod has given that actor a package (the scene hold-off is not built yet). 0 = off.
 - **`bPapyrusAttribution`** (default `1`, ClickUp 86e3q082a). A Papyrus call that reaches Harbinger ranks as the plugin that owns the calling script, its own row on the menu and in `APMF_Sources.ini` (20 by default, like any other mod), instead of the one `DirectCalls` row (75). It installs a small wrapper on every Papyrus native function, which only notes which native is running. Console commands stay `DirectCalls`. 0 = off: no wrapper (unless `[Probe] bPapyrusCaller` is 1), every Papyrus call ranks as `DirectCalls`. How the plugin is found: [FACETS.md Appendix A](FACETS.md#appendix-a-sources-and-priorities-per-facet).
+- **`iPapyrusOwnerFile`** (default `0`). Which plugin a Papyrus script is named after. 0 = the winning override of the record that carries the script (the last plugin that changed it, usually a patch). 1 = the plugin that first defined that record. Every attribution log line names both, so you can tell which row to raise. The menu row uses the one chosen here.
 
 ### [Probe]
 
