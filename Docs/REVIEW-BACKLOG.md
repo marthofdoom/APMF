@@ -1256,3 +1256,15 @@ Reviewer: "leg 1 of a queued equip by the own client can now take the new leak O
 
 ### APMF-B246 (SEV-5, OPEN, core/HarbingerMenu.cpp + Sources, against cac42e0) -- interposer hits show as Uncontested, an unattributed allowed write shows as Contested: won, the Source column squeezes in a narrow window
 Reviewer: "interposer hits (EquipSink :703) have no outcome, so they show as Uncontested." "an unattributed source that is allowed with \"override unknown\" off is counted as Stood, so it shows under \"Contested: won\" even when no claim contested it." "The fixed columns now sum to about 933 px before the stretch Source column ... Source gets squeezed in a narrow window."
+
+### APMF-B247 (SEV-4, OPEN, core/CastObserve.cpp cast-start Own, against 1ad4120, Opus review of feat/menu-uncontested-served) -- the 100 ms sample misses some cast starts
+Reviewer: "It does undercount (SEV-4) because it samples every 100 ms: a same-spell recast seen as Charged or Released then Charging, a hop from Unk1, or an interrupt-and-recast between samples are all missed."
+
+### APMF-B248 (SEV-4, OPEN, core/CastObserve.cpp, against 1ad4120) -- Own can be credited to the wrong client when two clients each claim one hand
+Reviewer: "CastClaimHandle(actor) returns the claim that wins for the whole actor, not the claim on that hand. If two clients each claim one hand, Own can be credited to the wrong client."
+
+### APMF-B249 (SEV-4, OPEN, channels/TargetPin.cpp ~356, against 1ad4120) -- Own climbs on every agreeing selector pass
+Reviewer: "TargetPin credits Own on every engine selector pass that agrees with the pin ... it climbs steadily through a whole held fight. It is the same \"mostly no-op\" shape the 10-18 Served change removed. A per-pin rising-edge count would follow the brief more closely."
+
+### APMF-B250 (SEV-4, OPEN, menu counters, against 1ad4120) -- Detection, CombatAction (when nothing is denied), Core and ActorValue still count no client Served or Own
+Author and reviewer: "no client Served or Own counter anywhere for kDetection, kCombatAction (when the claim denies nothing), kCore or kActorValue. They are not the same simple shape."
