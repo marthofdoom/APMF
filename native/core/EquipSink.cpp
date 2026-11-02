@@ -1003,8 +1003,10 @@ namespace apmf::equipsink {
                     if (hitDeferred && eqSrc != src_::kNoSource) src_::NoteHit(eqSrc, eqFacet);
                     hitDeferred = false;
                 };
+                bool ownCounted = false;   // an Own site below already counted this equip (never twice)
                 if (!callWorker && !selfPath && denyV.src != src_::kNoSource) {
                     if (denyV.src == denyV.client) {
+                        ownCounted = true;
                         src_::NoteOwn(denyV.src, eqFacet);   // the claim binds its OWN client: not Blocked, not Served
                     } else {
                         flushHit();
@@ -1018,6 +1020,7 @@ namespace apmf::equipsink {
                 // above still counts: the claim changed between the legs.
                 if (ownClient && !queuedLeg) {
                     apmf::equippref::NoteForceOwnClient(actorId);
+                    ownCounted = true;
                     src_::NoteOwn(lastV.src, eqFacet);
                     if (apmf::facetattr::LineDue(eqFacet, actorId, itemId ^ 0x2600u))
                         spdlog::info("[apmf][equip-obs] actor={} item={} own client: the forced equip preference's "
@@ -1029,6 +1032,7 @@ namespace apmf::equipsink {
                 if (standsWhat && !(ownClient && standsH == force.handle) && !queuedLeg) {
                     if (standsV.src != src_::kNoSource) {
                         if (standsV.src == standsV.client) {
+                            ownCounted = true;
                             src_::NoteOwn(standsV.src, eqFacet);   // the source IS the claim's client: a tie with its own claim
                         } else {
                             flushHit();
@@ -1047,6 +1051,13 @@ namespace apmf::equipsink {
                         else spdlog::info("{}", line);
                     }
                 }
+                // The leak (menu honest labels, 2026-11-01): a deferred hit that nothing foreign denied or stood was never
+                // flushed, so an uncontested equip by the claim's own client counted nowhere. It is the client acting on
+                // its own claim: count it as Own (never a Hit, same as every other Own site). Once per equip, and not on a
+                // QueuedApply leg 2 (leg 1 counted it).
+                if (hitDeferred && eqSrc != src_::kNoSource && !ownCounted && !queuedLeg)
+                    src_::NoteOwn(eqSrc, eqFacet);
+                hitDeferred = false;
             } catch (...) {
             }
 
