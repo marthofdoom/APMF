@@ -267,9 +267,9 @@ namespace apmf::castguard {
                 auto*       be      = eff->baseEffect;
                 bool        hostile = be->IsHostile();
                 float       area    = static_cast<float>(eff->effectItem.area) * kUnitsPerFoot;
-                if (be->HasArchetype(RE::EffectSetting::Archetype::kCloak) && be->associatedForm &&
-                    be->associatedForm->Is(RE::FormType::Spell)) {
-                    for (auto* e2 : be->associatedForm->As<RE::SpellItem>()->effects)
+                if (be->HasArchetype(RE::EffectSetting::Archetype::kCloak) && be->data.associatedForm &&
+                    be->data.associatedForm->Is(RE::FormType::Spell)) {
+                    for (auto* e2 : be->data.associatedForm->As<RE::SpellItem>()->effects)
                         if (e2 && e2->baseEffect && e2->baseEffect->IsHostile()) {
                             hostile = true;
                             area    = std::max(area, static_cast<float>(e2->effectItem.area) * kUnitsPerFoot);
