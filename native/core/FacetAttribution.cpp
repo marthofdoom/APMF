@@ -2,6 +2,7 @@
 #include "core/FacetAttribution.h"
 #include "core/Clock.h"
 #include "core/ControlMap.h"
+#include "core/PapyrusCaller.h"   // ClickUp 86e3q082a step 2: PapyrusOwnerOr
 
 #include <limits>
 #include <shared_mutex>
@@ -94,6 +95,13 @@ namespace apmf::facetattr {
             break;
         }
         return c;
+    }
+
+    SourceId PapyrusOwnerOr(SourceId a_src, Facet a_facet, std::uintptr_t a_callerAddr, RE::FormID a_actor,
+                            RE::FormID a_item) {
+        if (a_src != apmf::sources::kDirectSource) return a_src;
+        const auto owner = apmf::papyruscaller::ScriptSource(a_facet, a_callerAddr, a_actor, a_item);
+        return owner != apmf::sources::kNoSource ? owner : a_src;
     }
 
     std::string NameOr(SourceId a_id, const char* a_none) {

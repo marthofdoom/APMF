@@ -40,7 +40,8 @@ extern "C" __declspec(dllimport) unsigned long __stdcall GetPrivateProfileIntA(
 // ch.11 Aggression / Confidence / Assistance / Morality -> ActorValue facet), on an actor that holds the
 // WINNING claim of that channel's intent, the CALLER (the thunk's own return address) is resolved by
 // Sources::ForAddress: SkyrimSE.exe -> Engine (a Papyrus SetAV / ModAV native runs inside the exe, so it
-// is Engine too, the APMF-B71 limit), skse64 -> DirectCalls, another DLL -> that DLL. APMF's own writes
+// is Engine too, the APMF-B71 limit), skse64 -> DirectCalls (since ClickUp 86e3q082a step 2: the plugin
+// owning the calling Papyrus script when an skse64 native runs on the thread), another DLL -> that DLL. APMF's own writes
 // (core/AvLedger) are skipped. LAYERED HOOKS (review SEV-3): when another DLL has hooked this slot over
 // Harbinger (or 0x07, which reaches 0x04) and the return address is in that DLL, the real caller is the
 // frame after the layer's (FacetAttribution::CallerBelow), APMF-checked again; if it cannot be recovered
@@ -175,6 +176,9 @@ namespace {
                 }
             }
         }
+        // ClickUp 86e3q082a step 2: an skse64 caller (DirectCalls) is the plugin owning the calling Papyrus script,
+        // when an skse64 native runs on this thread (the native that acts, core/PapyrusCaller.h).
+        src = apmf::facetattr::PapyrusOwnerOr(src, facet, a_ret);
         apmf::facetattr::Observe(facet, src, fid, "an actor-value write from an address in no module");
         g_attributed.fetch_add(1, std::memory_order_relaxed);
         if (apmf::facetattr::LineDue(facet, fid, 0xA000u | (static_cast<std::uint32_t>(a_av) & 0xFFFu))) {

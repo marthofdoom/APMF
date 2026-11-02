@@ -303,13 +303,14 @@ namespace {
                                                   // ActorValueOwner vtable 0x04 / 0x05 / 0x06). Names outside
                                                   // writes to the AVs a winning claim holds; never denies.
                                                   // [ActorValueObserve] iActorValueSeat, SeatVerified per build.
-            apmf::papyruscaller::Install("kDataLoaded");   // ClickUp 86e3q082a STEP 1: write_vfunc slot 0x0F (Call) on
+            apmf::papyruscaller::Install("kDataLoaded");   // ClickUp 86e3q082a: write_vfunc slot 0x0F (Call) on
                                                   // every Papyrus native's own vtable (from the VM type table);
-                                                  // the thunk only records the running native per thread. The
-                                                  // PASSIVE probe at the ch.17 sink logs what a per-plugin
-                                                  // attribution would rank an equip as. Changes no decision.
-                                                  // Exact 1.6.1170 / 1.5.97 / 1.7.104, VR-refused, SeatVerified,
-                                                  // [Probe] bPapyrusCaller (default 1 while field tested).
+                                                  // the thunk only records the running native per thread.
+                                                  // STEP 2: a Papyrus call reaching a seat ranks as the plugin
+                                                  // that owns its script (ScriptSource). Exact 1.6.1170 / 1.5.97 /
+                                                  // 1.7.104, VR-refused, SeatVerified, [Harbinger]
+                                                  // bPapyrusAttribution (default 1); the probe line is
+                                                  // [Probe] bPapyrusCaller (default 0).
             apmf::sources::RegisterLoadedPlugins();   // Harbinger 1b: pre-register every SKSE plugin DLL in the
                                                   // process (names only, read-only) for the menu.
             apmf::harbingermenu::Register();     // Harbinger 1a: the SMF page (or INI-only, loudly)

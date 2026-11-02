@@ -1145,8 +1145,9 @@ Reviewer, verbatim as relayed: "the !orig fallback (:145-161) calls the engine C
 ### APMF-B209 (SEV-4, OPEN, core/PapyrusCaller.cpp kCap :64, :91) -- the 2048-vtable cap (raised against 7f1faa4)
 Reviewer, verbatim as relayed: "2048-vtable cap (:64, :91) may be reached on large lists; kCap=16384 (256 KB) removes it; check 'distinct vtables' in the first field log." Closure: read the install line's distinct-vtable count from the first field run; raise kCap to 16384 if it is anywhere near 2048 (or unconditionally).
 
-### APMF-B210 (SEV-4, OPEN, STEP-2 PREREQUISITE, core/PapyrusCaller.cpp Describe / ProbeEquip :446) -- misattribution trap for step 2 (raised against 7f1faa4)
+### APMF-B210 (SEV-4, CLOSED by step 2 on feat/apmf-papyrus-attribution-step2, STEP-2 PREREQUISITE, core/PapyrusCaller.cpp Describe / ProbeEquip :446) -- misattribution trap for step 2 (raised against 7f1faa4)
 Reviewer, verbatim as relayed: "misattribution trap for step 2: an equip made synchronously while an unrelated native runs on that thread is attributed to that native's script (e.g. AddItem -> container-changed sink in a C++ mod equips); step 2 must require an equip native (or a_scriptPath) before ranking, and should rank by the VMAD-owning file, not only definer (a script attached by an override on a vanilla ref shows definer=Skyrim.esm; :446)." marth's ruling 2026-10-27 is "Defining plugin"; step 2 reconciles that with the VMAD-owner point and presents it to marth before ranking.
+Closure (step 2, 2026-11-01): `PapyrusCaller::ScriptSource` ranks a Papyrus attribution only when the running native is the one that acts: on the Equip facets the native must be Actor.EquipItem / EquipItemEx / EquipItemById, on every other facet its vtable must lie in the module of the seat's caller. marth's final ruling 2 (the file that owns the script, the winning override's record, else the defining plugin) is implemented as the owner rule in core/PapyrusCaller.h "THE OWNING FILE". A placed reference whose own winning file differs from its base's stays ambiguous and takes the defining plugin.
 
 ### APMF-B211 (SEV-5, OPEN, core/PapyrusCaller.cpp CallThunk :163-171) -- thunk restore is not exception-safe (raised against 7f1faa4)
 Reviewer, verbatim as relayed: "thunk restore not exception-safe (:163-171), RAII guard." Closure: restore t_cur from a scope guard's destructor.
@@ -1237,3 +1238,15 @@ Reviewer: "when B fails and A names an Actor, the function still returns ctrlA. 
 
 ### APMF-B240 (SEV-5, OPEN, core/ActionGate.cpp ch.7 + core/AttackSelectProbe.cpp, against 01356c1) -- the A fallback can name a wrong Actor when B fails
 Reviewer: "the same A fallback in ch.7 and the probe can name a wrong Actor when B fails. Pre-existing, and rarer now." Reasoning: the engine never reads A (the +0x28 hop appears in neither binary), so dropping A is the clean end state.
+
+### APMF-B241 (SEV-4, OPEN, core/PapyrusCaller.cpp owner rule, against 6791e1a, Opus tier-3 review of feat/apmf-papyrus-attribution-step2) -- the winning override is often a patch, so a mod's scripts rank under the patch
+Reviewer: "on a big list the winner is often a conflict-resolution or Synthesis patch that copies the VMAD. Those scripts are then attributed to the patch, not the script's mod. That is literally ruling 2." marth 2026-11-01: "both, toggle between". [Harbinger] iPapyrusOwnerFile (0 winning, 1 defining) shipped in f91836f, and every line names winner= and definer=.
+
+### APMF-B242 (SEV-4, OPEN, core/PapyrusCaller.cpp ambiguous placed ref, against 6791e1a) -- falls back to the reference's GetFile(0)
+Reviewer: "the ambiguous placed-ref fallback, GetFile(0) of the reference, names Skyrim.esm for a vanilla NPC whose base a mod scripted. With the defaults both are at 20, so the ranking is the same, but that mod's own priority row never applies." Fix needs RE of the bind policy's VMAD storage (104189) on all three runtimes.
+
+### APMF-B243 (SEV-5, OPEN, core/PapyrusCaller.cpp, against 6791e1a) -- g_calls atomic per native call, catch(...) does not catch an AV, stale APMF_API.h kEquipAuth_DenyScript comment (batch with the next ABI touch)
+Reviewer: "g_calls adds an atomic increment to every native call (B212), shared across VM threads. It is cheap but not free." "catch(...) does not catch an access violation." "Stale APMF_API.h comment: SEV-5. It is a byte-shared header, so batch it with the next ABI touch."
+
+### APMF-B244 (SEV-5, OPEN, core/PapyrusCaller.cpp refcount read, against f91836f) -- a reference at refcount 0 is not attributed
+Reviewer: "A reference whose refcount is 0 at the moment of the read is not attributed. It falls back to DirectCalls, which is the safe direction." "A refcount of 1023 plus one would carry into the handle flag bit. The engine's own increment has the same limit, so this is not new."

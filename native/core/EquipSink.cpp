@@ -9,7 +9,7 @@
 #include "core/Sources.h"       // Harbinger 1a: equip sources, the degrade rule, the census
 #include "core/FacetAttribution.h"   // D2 (2026-10-12): every deny here is ranked by the Equip facet priority
 #include "core/EquipPreference.h"    // ch.26 (ABI v22): kEquipPref_Force, the forced preference refusal
-#include "core/PapyrusCaller.h"      // ClickUp 86e3q082a step 1: the passive Papyrus-caller probe
+#include "core/PapyrusCaller.h"      // ClickUp 86e3q082a: the Papyrus-caller attribution (step 2) and its probe (step 1)
 
 #include <intrin.h>      // _ReturnAddress / _AddressOfReturnAddress (core/EquipGate.cpp precedent)
 #include <algorithm>
@@ -219,7 +219,6 @@ namespace apmf::equipsink {
         // at Install. The armor-only switch (bEquipEnforceArmor, 2026-10-06) is retired: with
         // enforcement the default there is nothing left for it to carve out.
         std::atomic<bool>  g_observeOnly{ false };
-        std::atomic<bool>  g_denyScript{ false };
         Worker_t           g_worker = nullptr;
         InstalledSite      g_sites[2]{};
         std::uintptr_t     g_base = 0, g_textBegin = 0, g_textEnd = 0;
@@ -702,14 +701,24 @@ namespace apmf::equipsink {
                 }
                 for (int k = 0; k < nInterposers; ++k)
                     apmf::sources::NoteHit(interposers[k], eqFacet);
+                // ClickUp 86e3q082a STEP 2: a Papyrus equip ranks as the PLUGIN that owns the calling script
+                // (core/PapyrusCaller.h ScriptSource) when an equip native (Actor.EquipItem / EquipItemEx /
+                // EquipItemById) runs on this thread; DirectCalls when it cannot be attributed. The console is
+                // not a native and stays DirectCalls.
+                const auto callerAddr = (at >= 0 && at + 1 < n) ? reinterpret_cast<std::uintptr_t>(frames[at + 1]) : 0;
                 if (caller.external && caller.kind == PathKind::kScript) {
-                    eqSrc = apmf::sources::kDirectSource;
+                    eqSrc = apmf::facetattr::PapyrusOwnerOr(apmf::sources::kDirectSource, eqFacet, callerAddr, actorId, itemId);
                     noteSrcHit(eqSrc);
                 } else if (caller.external && apmf::sources::IsSelf(reinterpret_cast<std::uintptr_t>(frames[at + 1]))) {
                     // APMF's own enforce equip (channels/EquipAuthority.cpp): not an outside source.
                     selfPath = true;
                 } else if (caller.external && attributed) {
-                    if (const auto ext = apmf::sources::Register(caller.ext, apmf::sources::Kind::kPlugin); ext >= 0) {
+                    // STEP 2: an equip native running on this thread sees THROUGH an entry detour on
+                    // EquipObject (FollowerEquipControl.dll, the SOS report): the script's plugin, not the DLL.
+                    if (const auto ps = apmf::papyruscaller::ScriptSource(eqFacet, callerAddr, actorId, itemId); ps != apmf::sources::kNoSource) {
+                        eqSrc = ps;
+                        noteSrcHit(eqSrc);
+                    } else if (const auto ext = apmf::sources::Register(caller.ext, apmf::sources::Kind::kPlugin); ext >= 0) {
                         eqSrc = ext;
                         noteSrcHit(eqSrc);
                     }
@@ -725,11 +734,14 @@ namespace apmf::equipsink {
                     caller.kind = queuedReq.kind;
                 } else if (attributed) {
                     // A named engine path (the player's own menu included, which stays exempt below)
-                    // ranks as "Engine"; Papyrus / console reached through the engine as DirectCalls.
+                    // ranks as "Engine"; the console as DirectCalls; Papyrus (the Script path, Actor.EquipItem's
+                    // native body) as the plugin that owns the calling script (step 2), else DirectCalls.
                     // A QueuedApply leg with no live leg-1 record lands here too (ranked as Engine, logged).
                     queuedMiss = caller.known && std::strcmp(caller.name, "QueuedApply") == 0;
-                    eqSrc = (caller.kind == PathKind::kScript || caller.kind == PathKind::kConsole)
-                              ? apmf::sources::kDirectSource : apmf::sources::kEngineSource;
+                    eqSrc = caller.kind == PathKind::kScript
+                              ? apmf::facetattr::PapyrusOwnerOr(apmf::sources::kDirectSource, eqFacet, callerAddr, actorId, itemId)
+                          : caller.kind == PathKind::kConsole ? apmf::sources::kDirectSource
+                                                              : apmf::sources::kEngineSource;
                     noteSrcHit(eqSrc);
                 }
             } catch (...) {
@@ -741,10 +753,10 @@ namespace apmf::equipsink {
                 queuedLeg  = false;
                 queuedMiss = false;
             }
-            // ClickUp 86e3q082a STEP 1, the PASSIVE Papyrus-caller probe (core/PapyrusCaller.h): logs what a
-            // per-plugin attribution WOULD rank this equip as, next to what it ranks as here. It changes nothing:
-            // eqSrc, the path kind and every verdict below are exactly as before. APMF's own equip and the
-            // deferred leg of a queued equip (no native is running then) are skipped.
+            // ClickUp 86e3q082a, the PASSIVE Papyrus-caller probe ([Probe] bPapyrusCaller, core/PapyrusCaller.h):
+            // logs the script, its owner and the owning file next to what this equip ranks as here (ranked-as,
+            // since step 2 the script's plugin when it is attributed). The probe line changes nothing. APMF's own
+            // equip and the deferred leg of a queued equip (no native is running then) are skipped.
             if (apmf::papyruscaller::Installed() && !selfPath && !queuedLeg) {
                 try {
                     const std::string rankedAs = eqSrc != apmf::sources::kNoSource ? std::string(apmf::sources::Name(eqSrc))
@@ -816,9 +828,9 @@ namespace apmf::equipsink {
             if (!equipClaimed && !handHeld && !forceMask) { g_worker(mgr, actor, obj, data); recordIfQueued(); return; }
 
             const bool observe    = dv.observe;   // every category alike (no armor-only carve-out since 2026-10-13)
-            const bool denyScript = g_denyScript.load(std::memory_order_relaxed) ||
-                                    (set.flags & APMF_API::kEquipAuth_DenyScript) != 0;
-            const bool scriptPath = (caller.kind == PathKind::kScript || caller.kind == PathKind::kConsole);
+            // ClickUp 86e3q082a STEP 2 (marth 2026-10-27 ruling 3): no script exemption. A Papyrus equip ranks as
+            // its script's plugin and a console equip as DirectCalls, on every step below, like any source.
+            // [EquipAuthority] bEquipDenyScript is retired and kEquipAuth_DenyScript adds nothing any more.
             // ABI v8: the player's own equips on the actor (the trade/gift menu)
             // pass by default -- player agency; a client wanting the strict form
             // sets kEquipAuth_DenyPlayerMenu on its claim. No INI twin.
@@ -826,7 +838,7 @@ namespace apmf::equipsink {
             const bool playerMenuPath = (caller.kind == PathKind::kPlayerMenu);
 
             // The verdict (ABI v9). Order matters and is the whole policy:
-            //   0. a script/console equip without DenyScript            -> allow (exempt; above both masks)
+            //   0. (retired by step 2, ClickUp 86e3q082a: script/console equips are ranked like any source)
             //   1. a PlayerMenu equip without DenyPlayerMenu            -> allow (player agency; above both masks)
             //   1a. competes for a hand a live CAST claim holds         -> deny, even if in-set (the hand-claim
             //       block, marth 2026-10-06: "harbinger taking a hand for an action means other actions on that
@@ -854,9 +866,9 @@ namespace apmf::equipsink {
             // outranks the claim keeps its equip (logged `STANDS`, counted stood). APMF's own enforce
             // equip is not an outside source and is not ranked. The exemptions keep their places: an
             // unattributed equip is the degrade rule (allowed) unless [UnknownSources] Equip=override,
-            // the player's own menu equip is player agency (allowed, force included), a script/console
-            // equip is exempt from the hand block and ch.17 unless DenyScript (then ranked as
-            // DirectCalls). The ch.26 FORCE step (ABI v22) is ranked too; a forced refusal the sliders
+            // the player's own menu equip is player agency (allowed, force included). A script equip is
+            // ranked as its script's plugin and a console equip as DirectCalls (step 2: no exemption).
+            // The ch.26 FORCE step (ABI v22) is ranked too; a forced refusal the sliders
             // do not allow is a FORCE ANOMALY (marth D4): not applied, logged at warn, counted.
             const char*        verdict    = "allow";
             bool               callWorker = true;
@@ -892,7 +904,7 @@ namespace apmf::equipsink {
             // DENIED CATEGORY, EVERY ROUTE (2026-10-13 review F1, marth: "The trade menu should allow the
             // item to be traded, but the NPC should never equip it"). An item competing for a category the
             // ch.17 claim DENIES is refused from the player's menu (as if kEquipAuth_DenyPlayerMenu), from
-            // Papyrus / console (whatever bEquipDenyScript says) and from an unattributed caller (ranked as
+            // Papyrus / console (ranked like any source since step 2) and from an unattributed caller (ranked as
             // the Unattributed source instead of the degrade rule). It is still RANKED: a source the user
             // raised above the claim keeps its equip. Inventory moves are not equips and are never touched.
             // An off-set item in an OWNED, not denied, category keeps every exemption exactly as before.
@@ -907,13 +919,12 @@ namespace apmf::equipsink {
             } else {
                 // Reached only because the item is in a denied category: the hand block and the force step
                 // keep the exemption that would have applied, only the ch.17 denied-category step runs.
-                const bool onlyForDenied = degradeAllow || playerAgency;
-                const bool scriptExempt  = scriptPath && !denyScript;   // exempt from the hand block, the force and an owned-category ch.17 refusal
-                if (handHeld && !scriptExempt && !onlyForDenied)
+                const bool onlyForDenied = degradeAllow || playerAgency;   // implies dv.blacked here
+                if (handHeld && !onlyForDenied)
                     handBlock = ranked(apmf::facetattr::CastClaimHandle(actorId), "the hand-claim block");
-                if (!handBlock && dv.refuse && (dv.blacked || !scriptExempt)) {
+                if (!handBlock && dv.refuse) {
                     refuse = ranked(set.handle, "the ch.17 declared set", /*bindsOwner*/ true, /*rankUnknown*/ dv.blacked);
-                    deniedRoute = refuse && dv.blacked && (onlyForDenied || scriptExempt);
+                    deniedRoute = refuse && dv.blacked && onlyForDenied;
                 }
                 if (!handBlock && !refuse && forceMask && !selfPath && !onlyForDenied) {
                     forceDeny = ranked(force.handle, "the FORCED equip preference");
@@ -927,8 +938,7 @@ namespace apmf::equipsink {
                     verdict = anomaly    ? "allow (FORCE ANOMALY: the source outranks the forced preference)"
                             : ownClient  ? "allow (own client: the forced preference's own client equipped it)"
                             : standsWhat ? "allow (the source outranks the claim: its equip stands)"
-                            : scriptExempt ? (handHeld ? "allow (script exempt; hand held by a cast claim)" : "allow")
-                                           : "allow";   // owned=0 / in-set: nothing the claims hold is at stake
+                                         : "allow";   // owned=0 / in-set: nothing the claims hold is at stake
             }
             if (forceDeny) {
                 verdict    = "deny (forced equip preference: not preferred for this hand)";
@@ -1301,7 +1311,6 @@ namespace apmf::equipsink {
         }
     }
     bool ObserveOnly() { return g_observeOnly.load(std::memory_order_relaxed); }
-    bool DenyScript()  { return g_denyScript.load(std::memory_order_relaxed); }
 
     void Install() {
         if (REL::Module::IsVR()) {
@@ -1315,8 +1324,6 @@ namespace apmf::equipsink {
         const bool enabled = GetPrivateProfileIntA("EquipAuthority", "bEquipAuthority", 1, kIni) != 0;
         g_observeOnly.store(GetPrivateProfileIntA("EquipAuthority", "bEquipObserveOnly", 0, kIni) != 0,
                             std::memory_order_relaxed);
-        g_denyScript.store(GetPrivateProfileIntA("EquipAuthority", "bEquipDenyScript", 0, kIni) != 0,
-                           std::memory_order_relaxed);
         // Logged ONCE here (Install is once): an installed INI from an older build may still say
         // bEquipObserveOnly=1 -- honoured as an explicit opt-in -- and may still carry the retired
         // bEquipEnforceArmor key, which is read by nothing now (-1 = the key is absent).
@@ -1324,6 +1331,10 @@ namespace apmf::equipsink {
             spdlog::warn("[apmf][equip-sink] [EquipAuthority] bEquipObserveOnly=1 in APMF.ini -- OBSERVE-ONLY by "
                          "explicit opt-in: every ch.17 refusal (sink, CheckShouldEquip selection, worn-item unequip) "
                          "is logged `would-deny` and NOT applied. The default is 0 (enforce every declared category).");
+        if (static_cast<long>(GetPrivateProfileIntA("EquipAuthority", "bEquipDenyScript", -1, kIni)) != -1)
+            spdlog::info("[apmf][equip-sink] [EquipAuthority] bEquipDenyScript is RETIRED (ClickUp 86e3q082a step 2) "
+                         "and ignored: a Papyrus equip ranks as the plugin that owns its script and a console equip "
+                         "as DirectCalls, like any source ([Harbinger] bPapyrusAttribution).");
         if (static_cast<long>(GetPrivateProfileIntA("EquipAuthority", "bEquipEnforceArmor", -1, kIni)) != -1)
             spdlog::info("[apmf][equip-sink] [EquipAuthority] bEquipEnforceArmor is RETIRED (2026-10-13) and ignored: "
                          "every declared category is enforced unless bEquipObserveOnly=1.");
@@ -1456,12 +1467,11 @@ namespace apmf::equipsink {
         g_notInstalledReason.store("", std::memory_order_release);
         g_installed.store(true, std::memory_order_release);
         const bool entriesClean = (g_entryVerdict[0] == "none" && g_entryVerdict[1] == "none");
-        spdlog::info("[apmf][equip-sink] INSTALLED on {} ({} sites -> worker {}); observe-only={} deny-script={} "
+        spdlog::info("[apmf][equip-sink] INSTALLED on {} ({} sites -> worker {}); observe-only={} "
                      "entries={}. Deny = the worker is not called; the player and unclaimed actors pass untouched "
                      "(INVARIANTS #17a).",
                      ae ? "AE" : "SE", 2, ae ? kWorkerAE : kWorkerSE,
                      g_observeOnly.load(std::memory_order_relaxed) ? 1 : 0,
-                     g_denyScript.load(std::memory_order_relaxed) ? 1 : 0,
                      entriesClean ? "clean" : "DETOURED");
     }
 

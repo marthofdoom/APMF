@@ -302,7 +302,7 @@ The mechanism is one comparator, `BetterClaim` in `core/ControlMap.h`, used at e
 
 > **Key Concept 10 (a source)** A source is anything Harbinger can name as the origin of a write to a facet. Every source has a priority from 0 to 100 on every sources facet.
 
-Harbinger finds the source of a claim by reading the return address of `Request`, `RequestEx` and `RequestCast` and mapping it to the calling module, so a client's source name is its DLL file name (`MyMod.dll`). You register nothing. It names other sources from the hook chains it sits in (another DLL's hook on the same seat), from the plugin that defines a package or scene, and from the kind of call. Table 6 lists the kinds and their defaults.
+Harbinger finds the source of a claim by reading the return address of `Request`, `RequestEx` and `RequestCast` and mapping it to the calling module, so a client's source name is its DLL file name (`MyMod.dll`). You register nothing. It names other sources from the hook chains it sits in (another DLL's hook on the same seat), from the plugin that defines a package or scene, from the plugin that owns a calling Papyrus script, and from the kind of call. Table 6 lists the kinds and their defaults.
 
 **Table 6. Source kinds and default priorities**
 
@@ -310,8 +310,8 @@ Harbinger finds the source of a claim by reading the return address of `Request`
 |---|---|---|
 | A client, a mod that asks Harbinger | the DLL that called `Request`, `RequestEx` or `RequestCast` | 50 |
 | A hook, another mod's DLL found on one of Harbinger's seats | the DLL the hook belongs to | 20 |
-| A plugin, the `.esp` or `.esm` that defines a package or a scene | the plugin file name | 20 |
-| Papyrus and console calls | `DirectCalls` | 75 |
+| A plugin, the `.esp` or `.esm` that defines a package or a scene, or owns a Papyrus script that acts | the plugin file name | 20 |
+| Console commands, and a Papyrus call Harbinger cannot trace to a plugin | `DirectCalls` | 75 |
 | The engine | `Engine` | 20 |
 | Unattributed, a write Harbinger could not trace | `Unattributed` | allowed, never enforced against (see below) |
 
@@ -321,13 +321,15 @@ The numbers live in `Data/SKSE/Plugins/APMF_Sources.ini` ([FACETS.md Appendix A]
 
 > **Key Concept 11 (a deny stands only while it outranks)** A claim's deny or substitution against a named source stands only while the claiming mod's priority on that sources facet is strictly above the source's. A tie goes to the source, and the source's write stands.
 
-The mechanism is one function, `Outranks` in `core/FacetAttribution.cpp`. It reads the claim's client priority and the source's priority on the facet and returns `claimPrio > srcPrio`. A deny that does not stand is logged "would refuse, ALLOWED" with both numbers. With the defaults a client (50) beats the engine (20) and loses to a direct call (75).
+The mechanism is one function, `Outranks` in `core/FacetAttribution.cpp`. It reads the claim's client priority and the source's priority on the facet and returns `claimPrio > srcPrio`. A deny that does not stand is logged "would refuse, ALLOWED" with both numbers. With the defaults a client (50) beats the engine (20) and a plugin's Papyrus script (20), and loses to a console command (75).
 
 > **Key Concept 12 (unattributed is allowed)** A write Harbinger cannot trace to a named source is allowed. It is logged `[sources] UNATTRIBUTED <facet>` and shown as an alert.
 
 Each facet has an `[UnknownSources]` switch that lets such a write rank at the priority of the Unattributed row instead (`override`). It is off by default. The menu shows the checkbox on every facet, and the setting is consulted wherever a write is attributed through the shared attribution code (any facet attributed that way), including the `Package` facet's seat, the target pin and both equip facets. On the `Target` facet an unnamed write that came from the claiming mod's own plugin stands for that mod's claim.
 
 Not every facet enforces by priority. [FACETS.md Appendix A](FACETS.md#appendix-a-sources-and-priorities-per-facet) says, per sources facet, what is enforced against a foreign source today. Equip is ranked since 0.13.1, on its own two tables, `EquipWeapon` and `EquipArmor`. Every equip deny (the ch.17 set, the hand block, the ch.15 weapon rule, a ch.26 force) stands only while your priority is above the source that made the equip. A mod's queued equip is ranked once, as the mod that asked. An equip Harbinger cannot attribute is still allowed, whatever the numbers say.
+
+> **Did You Know?** A Papyrus call ranks as the plugin that owns the calling script (ClickUp 86e3q082a): `Schlongs of Skyrim.esp` equipping on a follower is its own row on Equip: armor, with its own slider. Harbinger finds the record that carries the script (an alias script belongs to its quest, an effect script to its magic effect) and takes its winning file. It counts the call only when the native running is the one that acted, such as `Actor.EquipItem` for an equip. [FACETS.md Appendix A](FACETS.md#appendix-a-sources-and-priorities-per-facet) has the rules and the one case it cannot tell apart.
 
 > **Did You Know?** A Papyrus `Actor.StartCombat` and a console `startcombat` run inside the game's own code, so on the `Combat` facet they are named `Engine` in this release, not `DirectCalls`. [Combat re-entry deny](FACETS.md#ch22-combat-re-entry-deny-kintent_combatreentrydeny) says what that means for a retreat.
 
@@ -979,7 +981,7 @@ Answers to the odd-numbered questions on this page.
 
 **Claims against claims.** 1. B owns it at 80. After B releases, A owns it. 3. `BetterClaim` in `core/ControlMap.h`. The cast seats read the owner through the same comparator as the control map, so a per-hand gate and the channel owner can never disagree about which claim won.
 
-**Claims against the world.** 1. Yes against the engine (50 against 20). Against a Papyrus script the deny does not stand (50 against 75), and the log says "would refuse, ALLOWED". 3. By default the write is allowed and shown as an alert. With `override` it ranks at the Unattributed row's priority, and a claim that outranks that row wins.
+**Claims against the world.** 1. Yes against the engine (50 against 20). Against a Papyrus script traced to its plugin it stands too (50 against 20). Against a console command, or a Papyrus call Harbinger cannot trace to a plugin (`DirectCalls`), the deny does not stand (50 against 75), and the log says "would refuse, ALLOWED". 3. By default the write is allowed and shown as an alert. With `override` it ranks at the Unattributed row's priority, and a claim that outranks that row wins.
 
 **The two levels together.** 1. Level two. Search the log for `would refuse, ALLOWED` and read the two priorities, then check the winner on the menu page.
 

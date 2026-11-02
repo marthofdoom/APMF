@@ -41,8 +41,8 @@
 // bracket -- `tls` is a log field that PROVES the equip was APMF's, not a bypass
 // (the worker family's 38913/37957 re-entry equips the same in-set object; the
 // deferred apply of a queued equip comes back one actor-update later from
-// 38906/37950 = `QueuedApply`, tls=0, also in-set). Papyrus/console equips pass unless the claim or the INI says
-// kEquipAuth_DenyScript. The PLAYER's own equips on the actor through the
+// 38906/37950 = `QueuedApply`, tls=0, also in-set). Papyrus/console equips are ranked like any
+// source (ClickUp 86e3q082a step 2: a script as its plugin, the console as DirectCalls). The PLAYER's own equips on the actor through the
 // trade/gift menu (`path=PlayerMenu`) pass unless the claim says
 // kEquipAuth_DenyPlayerMenu (ABI v8: player agency; logged `verdict=allow
 // (player agency)`) -- EXCEPT an item in a category the claim DENIES, which is
@@ -245,11 +245,10 @@ namespace apmf::equipsink {
     // Current thread's bracket depth (0 == not inside an APMF-issued equip).
     int ApmfDepth();
 
-    // The INI switches, read once at Install (bEquipObserveOnly default 0 since 2026-10-13,
-    // bEquipDenyScript default 0). Either the INI or the claim's own flag bits can set
-    // observe-only / deny-script.
+    // The INI switch, read once at Install (bEquipObserveOnly default 0 since 2026-10-13). Either the
+    // INI or the claim's own flag bit can set observe-only. (bEquipDenyScript is retired: ClickUp
+    // 86e3q082a step 2 ranks script and console equips like any source.)
     bool ObserveOnly();
-    bool DenyScript();
 
     // The vanilla hand EQUP forms (Skyrim.esm DOBJ `RHEQ` -> 0x13F42 "RightHand",
     // `LHEQ` -> 0x13F43 "LeftHand"). Skyrim.esm is always load index 00, so the

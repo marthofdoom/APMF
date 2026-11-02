@@ -38,7 +38,8 @@ extern "C" __declspec(dllimport) unsigned long __stdcall GetPrivateProfileIntA(
 // HARBINGER 1b (2026-10-12): THE CALLER IS NAMED AND RANKED. At the seat, the frame after
 // StartCombat's own self-check return site is StartCombat's CALLER (core/FacetAttribution
 // CallerBelow, a stack scan; no new address). It resolves to Engine (SkyrimSE.exe), DirectCalls
-// (skse64) or the calling DLL as a plugin source, and the refusal stands ONLY when the claim's
+// (skse64; since ClickUp 86e3q082a step 2 the PLUGIN that owns the calling Papyrus script when an skse64
+// native runs on the thread, core/PapyrusCaller.h) or the calling DLL as a plugin source, and the refusal stands ONLY when the claim's
 // priority on the Combat facet is strictly above that source's (APMF_Sources.ini; with the
 // defaults, client 50 > unregistered 20, every engine / other-DLL entry is refused exactly as
 // before). A caller that does not rank below the claim -- including the claiming client's own DLL
@@ -286,8 +287,10 @@ namespace {
         if (!apmf::ControlMap::Get().TryGetOwningClaim(a_self, APMF_API::kIntent_CombatEntry, entry)) return;
         APMF_API::APMF_Param deny{};
         if (apmf::ControlMap::Get().TryGetOwningClaim(a_self, APMF_API::kIntent_CombatReentryDeny, deny)) return;
-        const auto caller = apmf::facetattr::CallerBelow(g_siteRet);
-        if (caller.self) return;   // APMF's own call outside the scope: not an outside source (none exists today)
+        auto caller = apmf::facetattr::CallerBelow(g_siteRet);
+        if (caller.self) return;
+        // ClickUp 86e3q082a step 2: an skse64 caller (DirectCalls) is the plugin owning the calling script.
+        caller.src = apmf::facetattr::PapyrusOwnerOr(caller.src, apmf::sources::Facet::kCombat, caller.addr);   // APMF's own call outside the scope: not an outside source (none exists today)
         apmf::facetattr::Observe(apmf::sources::Facet::kCombat, caller.src, a_self,
                                  caller.found ? "Actor::StartCombat called from an address in no module"
                                               : "Actor::StartCombat's caller frame was not found on the stack");
@@ -349,6 +352,8 @@ namespace {
         apmf::facetattr::Verdict v;
         try {
             caller = apmf::facetattr::CallerBelow(g_siteRet);
+            // ClickUp 86e3q082a step 2: an skse64 caller (DirectCalls) is the plugin owning the calling script.
+            caller.src = apmf::facetattr::PapyrusOwnerOr(caller.src, apmf::sources::Facet::kCombat, caller.addr);
             v      = apmf::facetattr::Decide(
                 apmf::sources::Facet::kCombat, h, caller.src, self,
                 caller.found ? (caller.self ? "Actor::StartCombat called from inside APMF outside ch.21's entry"
