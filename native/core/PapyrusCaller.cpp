@@ -7,10 +7,12 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cctype>
 #include <cstring>
 #include <map>
 #include <mutex>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -104,6 +106,8 @@ namespace apmf::papyruscaller {
         std::atomic<bool>           g_installed{ false };
         std::atomic<bool>           g_refused{ false };   // a gate refused: never retried
         std::atomic<bool>           g_gateRan{ false };
+        std::atomic<bool>           g_rank{ false };      // [Harbinger] bPapyrusAttribution: ScriptSource ranks
+        std::atomic<bool>           g_probe{ false };     // [Probe] bPapyrusCaller: ProbeEquip logs
         std::uintptr_t              g_engineCall = 0;     // the verified engine Call (written before g_installed)
         std::mutex                  g_installMx;
         std::atomic<bool>           g_firstCallLogged{ false };
@@ -183,6 +187,8 @@ namespace apmf::papyruscaller {
             RE::FormID  owner = 0;         // the form owning that object (an alias's quest, an effect's MGEF)
             std::string definer;           // GetFile(0) of the owner (or of a created reference's base)
             std::string winner;            // GetFile(-1)
+            std::string file;              // STEP 2: the file that owns the script ("" = none: not attributable)
+            const char* rule = "none";     // how `file` was found (see the header, "THE OWNING FILE")
         };
 
         std::string ScriptOf(const Frame* a_f) {
@@ -192,6 +198,33 @@ namespace apmf::papyruscaller {
             const char* tn = t ? t->GetName() : nullptr;
             const char* fnn = fn ? fn->GetName().c_str() : nullptr;
             return std::string(tn ? tn : "?") + "." + (fnn ? fnn : "?");
+        }
+
+        // STEP 2, the owning file of a script bound to `a_form` (header, "THE OWNING FILE"). `a_viaOwner`:
+        // the form is the record that carries the script by construction (an alias's quest, an effect's
+        // magic effect), so its winning file is the owner.
+        void OwnerOf(const RE::TESForm* a_form, bool a_viaOwner, Info& a_out) {
+            if (!a_form) return;
+            const auto nameOf = [](const RE::TESFile* f) { return f ? std::string(f->GetFilename()) : std::string(); };
+            const auto* ref = a_viaOwner ? nullptr : a_form->AsReference();
+            if (!ref) {
+                a_out.file = nameOf(a_form->GetFile(-1));
+                a_out.rule = a_viaOwner ? "the owner's winning file" : "the form's winning file";
+                return;
+            }
+            const RE::TESForm* base     = ref->GetBaseObject();
+            const std::string  refWin   = nameOf(ref->GetFile(-1));
+            const std::string  baseWin  = nameOf(base ? base->GetFile(-1) : nullptr);
+            if (refWin.empty()) {
+                a_out.file = baseWin;   // a created reference: only its base's record can carry a script
+                a_out.rule = "a created reference: its base's winning file";
+            } else if (baseWin.empty() || refWin == baseWin) {
+                a_out.file = refWin;
+                a_out.rule = baseWin.empty() ? "the reference's winning file" : "the reference and its base agree";
+            } else {
+                a_out.file = nameOf(ref->GetFile(0));   // ruling 2's fallback: the defining plugin
+                a_out.rule = "ambiguous (the reference's and its base's winning files differ): the defining plugin";
+            }
         }
 
         void FilesOf(const RE::TESForm* a_form, Info& a_out) {
@@ -260,6 +293,7 @@ namespace apmf::papyruscaller {
                         a_out.kind  = "effect";
                         a_out.owner = mgef ? mgef->GetFormID() : 0;
                         FilesOf(mgef, a_out);
+                        OwnerOf(mgef, true, a_out);
                     } else {
                         a_out.kind = "special";
                     }
@@ -271,7 +305,9 @@ namespace apmf::papyruscaller {
                                     policy->HandleIsType(RE::BGSBaseAlias::VMTYPEID, h);
                 a_out.kind  = alias ? "alias" : "form";
                 a_out.owner = formId;
-                FilesOf(RE::TESForm::LookupByID(formId), a_out);
+                const RE::TESForm* form = RE::TESForm::LookupByID(formId);
+                FilesOf(form, a_out);
+                OwnerOf(form, alias, a_out);
                 return true;
             } catch (...) {
                 a_out.kind = "error";
@@ -297,6 +333,41 @@ namespace apmf::papyruscaller {
             return true;
         }
 
+        // ---- STEP 2: the "native must be the one that acts" rule (APMF-B210; header "WHEN") ----
+        // The natives that equip an item on an actor: the engine's Actor.EquipItem (AE 54661 / SE 53861,
+        // which calls EquipObject synchronously) and SKSE's Actor.EquipItemEx / Actor.EquipItemById.
+        constexpr std::string_view kEquipNatives[] = { "Actor.EquipItem", "Actor.EquipItemEx", "Actor.EquipItemById" };
+        bool IEq(std::string_view a, std::string_view b) {
+            if (a.size() != b.size()) return false;
+            for (std::size_t i = 0; i < a.size(); ++i)
+                if (std::tolower(static_cast<unsigned char>(a[i])) != std::tolower(static_cast<unsigned char>(b[i])))
+                    return false;
+            return true;
+        }
+        bool IsEquipNative(std::string_view a_name) {
+            for (const auto n : kEquipNatives)
+                if (IEq(a_name, n)) return true;
+            return false;
+        }
+        bool IsEquipFacet(apmf::sources::Facet f) {
+            return f == apmf::sources::Facet::kEquipWeapon || f == apmf::sources::Facet::kEquipArmor;
+        }
+
+        // One "ranked as" line per (facet, source) at most every 10 s, and one "stays DirectCalls" line per
+        // (facet, reason) at most every 10 s. Leaf mutex, bounded.
+        std::mutex                                       g_rankLogMx;
+        std::unordered_map<std::uint64_t, std::uint64_t> g_rankLogMs;
+        bool RankLineDue(std::uint64_t a_key) {
+            const std::uint64_t now = apmf::clock::MonotonicMs();
+            std::scoped_lock    lock(g_rankLogMx);
+            if (g_rankLogMs.size() >= 1024) g_rankLogMs.clear();
+            auto [it, fresh] = g_rankLogMs.try_emplace(a_key, now);
+            if (fresh) return true;
+            if (now - it->second < 10000) return false;
+            it->second = now;
+            return true;
+        }
+
         bool OnPapyrusRegister(VM* a_vm) {
             g_vm.store(a_vm, std::memory_order_release);
             return true;
@@ -313,11 +384,19 @@ namespace apmf::papyruscaller {
             };
             if (REL::Module::IsVR()) return refuse("VR runtime");
             if (!apmf::allowance::RuntimeSupported()) return refuse("runtime is not exactly 1.6.1170, 1.5.97 or 1.7.104");
-            if (GetPrivateProfileIntA("Probe", "bPapyrusCaller", 0, kIni) == 0) {
+            g_rank.store(GetPrivateProfileIntA("Harbinger", "bPapyrusAttribution", 1, kIni) != 0);
+            g_probe.store(GetPrivateProfileIntA("Probe", "bPapyrusCaller", 0, kIni) != 0);
+            if (!g_rank.load() && !g_probe.load()) {
                 g_refused.store(true);
-                spdlog::info("[apmf][papyrus-attr] [Probe] bPapyrusCaller=0 (the default): caller seat off (no vtable written).");
+                spdlog::info("[apmf][papyrus-attr] [Harbinger] bPapyrusAttribution=0 and [Probe] bPapyrusCaller=0: caller "
+                             "seat off (no vtable written). Papyrus calls rank as DirectCalls.");
                 return false;
             }
+            spdlog::info("[apmf][papyrus-attr] [Harbinger] bPapyrusAttribution={} ({}), [Probe] bPapyrusCaller={}.",
+                         g_rank.load() ? 1 : 0,
+                         g_rank.load() ? "a Papyrus call ranks as the plugin that owns its script"
+                                       : "probe only: Papyrus calls still rank as DirectCalls",
+                         g_probe.load() ? 1 : 0);
             const std::uintptr_t call = REL::Relocation<std::uintptr_t>{ RELOCATION_ID(97923, 104651) }.address();
             if (!apmf::allowance::SeatVerified(call, kRow)) return refuse("self-check row PapyrusCaller.NativeFunctionBase.Call failed");
             g_engineCall = call;
@@ -420,10 +499,54 @@ namespace apmf::papyruscaller {
                           "Calls through them are not recorded (a DEFECT: raise kCap).", why, full, g_used, kCap);
     }
 
+    apmf::sources::SourceId ScriptSource(apmf::sources::Facet a_facet, std::uintptr_t a_callerAddr) noexcept {
+        namespace src = apmf::sources;
+        try {
+            if (!g_rank.load(std::memory_order_relaxed) || !g_installed.load(std::memory_order_acquire)) return src::kNoSource;
+            const Running cur = t_cur;
+            if (!cur.fn) return src::kNoSource;   // no Papyrus native on this thread: not a script's call
+            const auto facet = static_cast<std::uint64_t>(a_facet);
+            const auto stays = [&](const char* a_why, std::uint64_t a_reason, const Info* a_inf) {
+                if (RankLineDue((facet << 56) | (0xFFull << 48) | a_reason))
+                    spdlog::info("[apmf][papyrus-attr] {} call while native {} runs stays DirectCalls: {}{}. Logged at "
+                                 "most once per 10 s per facet and reason.",
+                                 src::FacetName(a_facet), FnName(cur.fn), a_why,
+                                 a_inf ? fmt::format(" (caller={} bound={} {} owner=0x{} rule={})", a_inf->caller,
+                                                     a_inf->bound.empty() ? "-" : a_inf->bound, a_inf->kind,
+                                                     apmf::log::Hex(a_inf->owner), a_inf->rule)
+                                       : std::string());
+                return src::kNoSource;
+            };
+            // The native must be the one that acts (APMF-B210).
+            if (IsEquipFacet(a_facet)) {
+                if (!IsEquipNative(FnName(cur.fn))) return stays("the running native is not an equip native", 1, nullptr);
+            } else {
+                std::uintptr_t lo = 0, hi = 0;
+                const auto     vt = *reinterpret_cast<const std::uintptr_t*>(cur.fn);
+                if (!a_callerAddr || !src::ModuleRange(a_callerAddr, lo, hi) || vt < lo || vt >= hi)
+                    return stays("the running native is not in the caller's module", 2, nullptr);
+            }
+            Info inf;
+            if (!Describe(inf)) return src::kNoSource;
+            if (!inf.topIsNative) return stays("its stack's top frame is not the native (layout self-check)", 3, &inf);
+            if (inf.file.empty()) return stays("no script owner with a file", 4, &inf);
+            const auto id = src::Register(inf.file, src::Kind::kPlugin);
+            if (id == src::kNoSource) return stays("the source table is full", 5, &inf);
+            if (RankLineDue((facet << 56) | static_cast<std::uint64_t>(static_cast<std::uint32_t>(id))))
+                spdlog::info("[apmf][papyrus-attr] {} call ranked as '{}' (priority {}): native={} caller={} bound={} "
+                             "(+{} frames) {} owner=0x{} rule={}. Logged at most once per 10 s per facet and plugin.",
+                             src::FacetName(a_facet), inf.file, src::Priority(id, a_facet), inf.native, inf.caller,
+                             inf.bound.empty() ? "-" : inf.bound, inf.hops, inf.kind, apmf::log::Hex(inf.owner), inf.rule);
+            return id;
+        } catch (...) {
+            return src::kNoSource;
+        }
+    }
+
     void ProbeEquip(RE::FormID a_actor, RE::FormID a_item, const char* a_path, bool a_scriptPath,
                     const char* a_rankedAs) noexcept {
         try {
-            if (!g_installed.load(std::memory_order_acquire)) return;
+            if (!g_probe.load(std::memory_order_relaxed) || !g_installed.load(std::memory_order_acquire)) return;
             Info inf;
             const bool running = Describe(inf);
             if (!running && !a_scriptPath) return;   // not Papyrus by either reading: nothing to say
@@ -433,17 +556,17 @@ namespace apmf::papyruscaller {
             if (!running) {
                 spdlog::warn("[apmf][papyrus-attr] PROBE equip actor=0x{} item=0x{} path={} ranked-as={} | NO Papyrus "
                              "native is running on this thread ({}): the native that asked is not seated, or its equip "
-                             "ran later (a queued apply or a delay functor). Probe only: nothing changed.",
+                             "ran later (a queued apply or a delay functor). Probe line only.",
                              apmf::log::Hex(a_actor), apmf::log::Hex(a_item), path, ranked, REX::W32::GetCurrentThreadId());
                 return;
             }
             spdlog::info("[apmf][papyrus-attr] PROBE equip actor=0x{} item=0x{} path={} ranked-as={} | native={} "
-                         "top-frame={} caller={} bound={} (+{} frames) {} owner=0x{} definer={} winner={} -> would rank "
-                         "as '{}'. Probe only: nothing changed.",
+                         "top-frame={} caller={} bound={} (+{} frames) {} owner=0x{} definer={} winner={} -> script "
+                         "file '{}' ({}). Probe line only: the ranking is the sink's ranked-as.",
                          apmf::log::Hex(a_actor), apmf::log::Hex(a_item), path, ranked, inf.native,
                          inf.topIsNative ? "native" : "MISMATCH", inf.caller, inf.bound.empty() ? "-" : inf.bound, inf.hops,
                          inf.kind, apmf::log::Hex(inf.owner), inf.definer.empty() ? "-" : inf.definer,
-                         inf.winner.empty() ? "-" : inf.winner, inf.definer.empty() ? "?" : inf.definer);
+                         inf.winner.empty() ? "-" : inf.winner, inf.file.empty() ? "?" : inf.file, inf.rule);
         } catch (...) {
         }
     }

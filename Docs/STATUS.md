@@ -4,6 +4,15 @@ Updated 2026-10-28. Current version **v0.15.2** (cut 2026-10-28, ABI v31, see CH
 shipped, what's probe-gated, what's next. Keep this current in the SAME change as any
 build/finding/workflow change.
 
+## HEAD OF WORK 2026-11-01 -- PAPYRUS ATTRIBUTION STEP 2 (scripts rank as their plugin), branch `feat/apmf-papyrus-attribution-step2`, NOT merged
+
+- ClickUp 86e3q082a, marth's rulings of 10-27. A Papyrus call that reaches a Harbinger seat now ranks as the plugin that owns the calling script, one row per plugin on the menu and in APMF_Sources.ini, instead of DirectCalls (75). Seats switched: the equip sink (the Script path, skse64, and an External(X) caller while an equip native runs, which sees through FollowerEquipControl.dll's entry detour), the queued equip's second leg (inherits the first), the Combat re-entry deny and the ActorValue / Detection watch (their skse64 rows). Console commands, and calls with no script or no owner file, stay DirectCalls.
+- Owner: the winning file of the record that carries the script (alias -> its quest, effect -> its magic effect, a form -> itself, a created reference -> its base). A placed reference whose own winning file differs from its base's is ambiguous and falls back to its defining plugin (logged with the rule).
+- A call ranks only when the native running is the one that acted (APMF-B210): an equip native on the Equip facets, a native in the caller's own DLL elsewhere.
+- The script exemption is gone (ruling 3): bEquipDenyScript is retired, scripts and the console are ranked on every equip step.
+- Default priority of a script's plugin is 20, the default for another mod. TO BE CONFIRMED once the field probe lists which scripts equip on followers.
+- INI: [Harbinger] bPapyrusAttribution=1 (seat + ranking, new), [Probe] bPapyrusCaller=0 (probe line only). Not field-tested.
+
 ## HEAD OF WORK 2026-10-30 -- ATTACK-SELECT PROBE CRASH FIX, branch `fix/apmf-atkprobe-nonactor`, NOT merged
 
 - Field 10-30 (LoreRim, bAttackSelect=1): the probe crashed in BeforeAct because its first actor guess named a tree, not an actor. It now takes a guess only when it names an actor, and tries the engine's own read (the +0x20 hop) first. ch.7 and ch.23 had the same first guess, so a tree there could hide the real actor and skip a deny or a leash for that act. They now resolve the same way. Probe off never crashed.

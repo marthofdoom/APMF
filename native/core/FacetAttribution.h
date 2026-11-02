@@ -67,6 +67,12 @@ namespace apmf::facetattr {
     };
     Caller CallerBelow(std::uintptr_t a_siteRet);
 
+    // ClickUp 86e3q082a step 2: a source named DirectCalls (skse64: a Papyrus native's code) is the PLUGIN
+    // that owns the calling Papyrus script, when one runs on this thread and is the one that acts on
+    // `a_facet` (core/PapyrusCaller.h ScriptSource; `a_callerAddr` = the seat's recovered caller). Any
+    // other source, or a call the Papyrus seat cannot attribute, is returned unchanged. Any thread.
+    SourceId PapyrusOwnerOr(SourceId a_src, Facet a_facet, std::uintptr_t a_callerAddr);
+
     // The registry name of a source, or `a_none` for kNoSource.
     std::string NameOr(SourceId a_id, const char* a_none);
 

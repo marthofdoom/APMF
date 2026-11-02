@@ -1,10 +1,14 @@
 #pragma once
 
+#include "core/Sources.h"
+
 #include <cstdint>
 
 // ============================================================================
 // core/PapyrusCaller -- ClickUp 86e3q082a, "Attribute Papyrus calls to the owning plugin
 // (rank scripts per mod, not one DirectCalls bucket)". STEP 1: THE SEAT + A PASSIVE PROBE.
+// STEP 2: THE RANKING (ScriptSource below): a Papyrus call that reaches a Harbinger seat ranks as
+// the PLUGIN that owns the calling script, registered as its own source by file name.
 //
 // WHAT IT ANSWERS. Today every Papyrus equip that reaches the ch.17 sink ranks as ONE source,
 // "DirectCalls" (75): the sink only sees return addresses, and a Papyrus native looks the same
@@ -29,11 +33,42 @@
 // sink, for an equip it already logs, ProbeEquip writes what the attribution WOULD be: the native,
 // the calling script and function, the object the script is bound to (a form, an alias's quest,
 // an active effect's magic effect) and its plugin files (the defining one and the winning
-// override). It changes NO decision: the sink still ranks exactly as before.
+// override), and since step 2 the owning file and the rule that found it. The probe line itself
+// changes nothing (the ranking is ScriptSource's, below).
+//
+// STEP 2, THE OWNING FILE (marth 2026-10-27 ruling 2: "the file that OWNS THE SCRIPT, the plugin whose
+// record version carries the live script list; if that cannot be determined, the defining plugin").
+// The engine reads a record's VMAD into the bind policy under THAT FORM'S OWN handle (1.6.1170
+// disassembly: a form's Load switches on 'VMAD' -> 14654(form, file) -> the handle policy's
+// GetHandleForObject(formType, form) -> the bind policy's 104189(handle, reader)), and the live record
+// of a form is its winning override, GetFile(-1). So the owner is the winning file of the form whose
+// record carries the script:
+//   an alias's script    -> its quest (the quest's VMAD holds the alias scripts)  -> quest GetFile(-1)
+//   an effect's script   -> its magic effect                                      -> MGEF GetFile(-1)
+//   any other non-reference form (a quest, ...)                                   -> GetFile(-1)
+//   a reference          -> its own record OR its base object's (a script on an NPC_ base is bound to
+//                           every reference of it). A created reference (no file) -> the base's
+//                           GetFile(-1). A placed reference whose winning file EQUALS its base's -> that
+//                           file. Otherwise the two records are both candidates and which one lists the
+//                           script is not readable without the bind policy's private parsed VMAD (no
+//                           verified layout), so it is UNDETERMINED: the ruling's fallback, the
+//                           reference's defining plugin GetFile(0), logged as "ambiguous".
+//
+// STEP 2, WHEN (APMF-B210, "the native must be the one that acts"). An attribution is used only
+// when the running native is the one that reached the seat: on the two Equip facets, the native is
+// Actor.EquipItem / EquipItemEx / EquipItemById (an equip made while an unrelated native runs on that
+// thread, e.g. AddItem firing a container-changed sink in a C++ mod that equips, is NOT blamed on
+// that script); on every other facet, the running native's vtable lives in the SAME module as the
+// seat's recovered caller (the skse64 rows: an skse64 native is running, and skse64 code called).
+// Console commands are not natives (no record): they stay DirectCalls. A native with no script frame
+// below it (a DLL dispatching it), an unbound / static caller, or an owner with no file stays
+// DirectCalls too.
 //
 // GATES. VR refused; exactly 1.6.1170 / 1.5.97 / 1.7.104 (allowance::RuntimeSupported); SeatVerified
-// on row "PapyrusCaller.NativeFunctionBase.Call" (its signature runs through the layout reads above);
-// APMF.ini [Probe] bPapyrusCaller (default 0 = no seat at all; a field test turns it on in its INI).
+// on row "PapyrusCaller.NativeFunctionBase.Call" (its signature runs through the layout reads above).
+// APMF.ini [Harbinger] bPapyrusAttribution (default 1): the seat and the ranking. [Probe]
+// bPapyrusCaller (default 0): the per-equip PROBE line. The seat installs when either is 1; the
+// ranking needs bPapyrusAttribution=1. Both 0 = no vtable written, Papyrus ranks as DirectCalls.
 //
 // THREADING. Init: SKSEPluginLoad. Install: MAIN thread (kDataLoaded, kPostLoadGame, kNewGame).
 // The thunk runs on whatever thread the VM calls a native from (the main thread, or a VM thread for
@@ -55,11 +90,23 @@ namespace apmf::papyruscaller {
     // True once the seat is installed (any thread).
     bool Installed();
 
+    // STEP 2. The source a Papyrus call running on THIS thread ranks as on `a_facet`: the plugin that
+    // owns the calling script (Sources::Register(<file>, kPlugin): one row per plugin, the
+    // unregistered default priority, 20, until APMF_Sources.ini or the menu says otherwise), or
+    // kNoSource when the call is not attributable (seat off, no native running, the running native is
+    // not the one that acts on `a_facet` -- see the header --, no script frame, no owner file). The
+    // caller keeps its own source then (DirectCalls). `a_callerAddr` is the seat's recovered caller
+    // (a return address), used by the same-module rule on the non-Equip facets. Logs one line per
+    // (facet, plugin) at most every 10 s when it ranks a call. Any thread; reads only this thread's
+    // own stack; never throws.
+    apmf::sources::SourceId ScriptSource(apmf::sources::Facet a_facet, std::uintptr_t a_callerAddr) noexcept;
+
     // THE PROBE, at the ch.17 sink (core/EquipSink.cpp), for an equip the sink already attributes
     // and logs: `a_path` is the sink's own caller label (a path name or the external module),
     // `a_scriptPath` whether the sink classified it as a Papyrus path (AE 54661 / SE 53861 or
     // skse64), `a_rankedAs` the source name the sink ranks it as today. Logs, rate-limited, what
-    // the Papyrus attribution would be. Never throws, never changes anything.
+    // the Papyrus attribution is (owner, rule). [Probe] bPapyrusCaller only. Never throws, never
+    // changes anything.
     void ProbeEquip(RE::FormID a_actor, RE::FormID a_item, const char* a_path, bool a_scriptPath,
                     const char* a_rankedAs) noexcept;
 

@@ -24,7 +24,8 @@
 //   DENY   -- core/EquipSink.cpp, the #17a call-site seat at the one worker every
 //             engine equip funnels through, refuses every engine equip of an
 //             off-set item on this actor (observe-only logs `would-deny`
-//             instead, and Papyrus/console pass unless kEquipAuth_DenyScript).
+//             instead; Papyrus/console are ranked like any source since
+//             ClickUp 86e3q082a step 2).
 //   EQUIP  -- THIS file: on each applied declaration for the OWNING claim, one
 //             main-thread pass equips every declared item the actor is not
 //             already wearing, through ActorEquipManager::EquipObject (queued,
