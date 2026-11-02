@@ -20,6 +20,7 @@
 #include "core/PackageGate.h"              // EvaluatePackage's verified row is shared
 #include "core/Registry.h"
 #include "core/Sources.h"
+#include "core/SpectatorGate.h"            // Enforcing: the spectator deny (the town-panic facet) for the OPEN hole line
 
 #include <algorithm>
 #include <array>
@@ -266,6 +267,9 @@ namespace {
         std::atomic<RE::FormID>    id{ 0 };
         std::atomic<std::uint32_t> state{ 0 };
         std::atomic<std::uint32_t> holderH{ 0 };   // the holder's ActorHandle native value
+        // The substrate's claim (kInvalidHandle for a dry run, until a client takeover publishes its handle):
+        // ForWatchTarget ranks the spectator deny (core/SpectatorGate.cpp) as this claim's client.
+        std::atomic<APMF_API::Handle> claimH{ APMF_API::kInvalidHandle };
         std::atomic<std::uint32_t> realWhy{ 0 };
         std::atomic<RE::FormID>    realFoe{ 0 };
         std::atomic<RE::FormID>    firedForm{ 0 };
@@ -561,7 +565,7 @@ namespace {
         g_slotCount.fetch_sub(1, std::memory_order_relaxed);
     }
 
-    int TakeSlot(RE::FormID a_id, std::uint32_t a_holderH, std::uint32_t a_state) {
+    int TakeSlot(RE::FormID a_id, std::uint32_t a_holderH, std::uint32_t a_state, APMF_API::Handle a_claim) {
         for (int i = 0; i < kSlots; ++i) {
             Slot& s = g_slots[i];
             if (s.id.load(std::memory_order_acquire) != 0) continue;
@@ -569,6 +573,7 @@ namespace {
             // the id afterwards sees the fresh counters).
             s.state.store(0, std::memory_order_relaxed);
             s.holderH.store(a_holderH, std::memory_order_relaxed);
+            s.claimH.store(a_claim, std::memory_order_relaxed);
             s.realWhy.store(kWhyNone, std::memory_order_relaxed);
             s.realFoe.store(0, std::memory_order_relaxed);
             s.firedForm.store(0, std::memory_order_relaxed);
@@ -1055,7 +1060,7 @@ namespace {
         std::uint32_t st = kStLive | kStRankAction | kStRankCombat | kStRankDetect;
         apmf::CastSeatClaim c{};
         if (DrivingClaim(a_sub.id, c)) st |= kStCast;
-        const int slot = TakeSlot(a_sub.id, actor->GetHandle().native_handle(), st);
+        const int slot = TakeSlot(a_sub.id, actor->GetHandle().native_handle(), st, a_sub.handle);
         if (slot < 0) {
             EndUnopened(a_sub, "all 16 substrate slots are in use");
             return false;
@@ -1210,6 +1215,15 @@ namespace {
             spdlog::warn("[substrate] 0x{} known hole: the movement hold is OFF ({}): the Movement half's leaves are "
                          "force-failed, which fails the Combat Parallel and kills its Action half -- no cast is reachable.",
                          Hex(a_sub.id), g_moveHoldOff);
+        if (!apmf::spectatorgate::Enforcing())
+            spdlog::warn("[substrate] 0x{} known hole: the spectator deny does not enforce ({}): every actor that "
+                         "perceives this holder may be given the engine's Spectator package (the town-panic facet).",
+                         Hex(a_sub.id), apmf::spectatorgate::NotEnforcingReason());
+        else if (!Outranks(a_sub.handle, apmf::sources::Facet::kPackage))
+            spdlog::warn("[substrate] 0x{} known hole: Engine outranks the substrate's client on the Package facet "
+                         "(APMF_Sources.ini): the spectator deny stands down and every actor that perceives this holder "
+                         "may be given the engine's Spectator package (the town-panic facet).",
+                         Hex(a_sub.id));
         auto*       aproc = anchor->GetActorRuntimeData().currentProcess;
         const char* alvl  = !aproc ? "none (no AI process)" : aproc->InHighProcess() ? "HIGH (SetAlpha applies)"
                                                                                : "not high (SetAlpha is a no-op until it is)";
@@ -2024,7 +2038,7 @@ namespace {
     constexpr std::uint32_t kCensusMaxLines = 60;   // per window; then ONE summary line and silence
     struct CensusRow {
         bool          ctrl = false, inGroup = false, fleeing = false, detected = false, aggr = false, alarm = false,
-                      tgtAnchor = false;
+                      tgtAnchor = false, spect = false;
         std::uint32_t tgt = 0;
         bool operator==(const CensusRow&) const = default;
     };
@@ -2111,8 +2125,11 @@ namespace {
             }
             if (auto* proc = rt.currentProcess) {
                 r.aggr = (proc->lowProcessFlags.underlying() & 0x04) != 0;   // AIProcess+0x136 bit 2
-                if (const auto* pk = proc->GetRunningPackage())
+                if (const auto* pk = proc->GetRunningPackage()) {
                     r.alarm = pk->packData.packType.get() == RE::PACKAGE_PROCEDURE_TYPE::kAlarm;
+                    // procedure 24: the engine's Spectator package (core/SpectatorGate.cpp refuses it for a held holder)
+                    r.spect = pk->packData.packType.get() == RE::PACKAGE_PROCEDURE_TYPE::kSpectator;
+                }
             }
             auto& old = g_censusRows[id];
             if (r == old) return RE::BSContainer::ForEachResult::kContinue;
@@ -2126,10 +2143,11 @@ namespace {
             ++g_censusLines;
             spdlog::info("[substrate] CENSUS 0x{} ({}{}): controller {}->{}, target 0x{} (was 0x{}), target-is-anchor {}->{}, "
                          "in-holder-group {}->{}, fleeing {}->{}, combat-detected {}->{}, aggressor-bit {}->{}, alarm-package "
-                         "{}->{}; +{} ms since the latest OPEN.",
+                         "{}->{}, spectator-package {}->{}; +{} ms since the latest OPEN.",
                          Hex(id), a->GetName(), a->IsPlayerTeammate() ? ", teammate, not a holder" : "", old.ctrl, r.ctrl,
                          Hex(r.tgt), Hex(old.tgt), old.tgtAnchor, r.tgtAnchor, old.inGroup, r.inGroup, old.fleeing,
-                         r.fleeing, old.detected, r.detected, old.aggr, r.aggr, old.alarm, r.alarm, sinceOpen);
+                         r.fleeing, old.detected, r.detected, old.aggr, r.aggr, old.alarm, r.alarm, old.spect, r.spect,
+                         sinceOpen);
             old = r;
             return RE::BSContainer::ForEachResult::kContinue;
         });
@@ -2400,6 +2418,29 @@ namespace apmf::combatsubstrate {
         std::uint32_t st = 0;
         if (FindSlot(a_actor, st) < 0 || !(st & kStLive)) return APMF_API::kSubstrateState_None;
         return (st & kStReal) ? APMF_API::kSubstrateState_Real : APMF_API::kSubstrateState_Held;
+    }
+
+    WatchTarget ForWatchTarget(RE::FormID a_target, APMF_API::Handle& a_claim) {
+        a_claim = APMF_API::kInvalidHandle;
+        if (a_target == 0 || !Installed()) return WatchTarget::kNone;
+        std::uint32_t st = 0;
+        if (a_target == g_anchorId.load(std::memory_order_relaxed)) {
+            // The anchor is never a fight anyone watches. It ranks as the claim of the holder it stands at.
+            const RE::FormID served = g_served.load();
+            const int        i      = served ? FindSlot(served, st) : -1;
+            if (i >= 0 && (st & kStLive)) {
+                const auto h = g_slots[i].claimH.load(std::memory_order_acquire);
+                if (g_slots[i].id.load(std::memory_order_acquire) == served) a_claim = h;   // slot not reused meanwhile
+            }
+            return WatchTarget::kAnchor;
+        }
+        if (!AnyLive()) return WatchTarget::kNone;
+        const int i = FindSlot(a_target, st);
+        if (i < 0 || (st & (kStLive | kStReal)) != kStLive) return WatchTarget::kNone;   // a REAL holder is watched
+        const auto h = g_slots[i].claimH.load(std::memory_order_acquire);
+        if (g_slots[i].id.load(std::memory_order_acquire) != a_target) return WatchTarget::kNone;   // reused meanwhile
+        a_claim = h;
+        return WatchTarget::kHeld;
     }
 
     const char* RefuseReason(RE::FormID a_actor, const APMF_API::APMF_Param* a_param) {
@@ -2969,8 +3010,11 @@ namespace apmf::combatsubstrate {
                 APMF_API::APMF_Param p{};
                 float                b = 0.0f;
                 APMF_API::Handle     h = APMF_API::kInvalidHandle;
-                if (apmf::ControlMap::Get().TryGetOwningClaimBasis(s.id, APMF_API::kIntent_CombatSubstrate, p, b, &h))
+                if (apmf::ControlMap::Get().TryGetOwningClaimBasis(s.id, APMF_API::kIntent_CombatSubstrate, p, b, &h)) {
                     s.handle = h;
+                    // A client takeover of an open dry run: the spectator deny ranks as this claim from now on.
+                    if (s.slot >= 0 && s.slot < kSlots) g_slots[s.slot].claimH.store(h, std::memory_order_release);
+                }
             }
             bool keep = true;
             if (s.closeAsked && s.phase != Phase::kOpen) {

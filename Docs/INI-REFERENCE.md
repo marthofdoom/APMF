@@ -71,7 +71,7 @@ package redirection (what makes a follower walk to a body).
 - **`EnableRedirectLog`** (default `1`). Logs each redirect answer, including a heartbeat when none fire, so "never fired" is visibly different from "nothing was logged".
 The redirect itself is ranked by the `[Package]` priorities in `APMF_Sources.ini` (see the facet sections below). There is no switch for the ranking. Each change of outcome per actor is logged as a `[ch.9-rank]` line, whatever `EnableRedirectLog` says.
 
-- **`iSpectatorSeat`** (default `2`). The engine's Spectator package (a follower out of combat stops to watch a fight) is held off while a mod's package claim on that follower outranks the engine. 2 = on, 1 = log only (the package is still given), 0 = off.
+- **`iSpectatorSeat`** (default `2`). The engine's Spectator package (a follower out of combat stops to watch a fight) is held off while a mod's package claim on that follower outranks the engine. Since 2026-11-01 it is also held off for anyone who would watch a combat substrate holder (the town panic), while the substrate's mod outranks the engine on Package. 2 = on, 1 = log only (the package is still given), 0 = off.
 
 ### [ActorValueObserve]
 

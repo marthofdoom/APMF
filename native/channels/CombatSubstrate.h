@@ -69,6 +69,14 @@ namespace apmf::combatsubstrate {
     // (the combat counts; the substrate is dropping), kSubstrateState_Anchor for the anchor actor itself,
     // kSubstrateState_None otherwise (also before Install / when not installed). Lock-free.
     std::uint32_t StateOf(RE::FormID a_actor);
+    // core/SpectatorGate.cpp's slot-0xDC seat (ANY THREAD, lock-free): the engine is about to give an observer a
+    // Spectator package that WATCHES `a_target`. kHeld: `a_target` is a live holder whose real-combat trigger has not
+    // fired (StateOf == kSubstrateState_Held). kAnchor: `a_target` is the anchor. `a_claim` is the substrate claim the
+    // spectator deny ranks as on the Package facet: the held holder's own, for the anchor the claim of the holder it
+    // stands at, kInvalidHandle (the client default, as a dry run ranks) when there is none. kNone: anything else, a
+    // REAL holder included (its fight counts and is watched like any fight).
+    enum class WatchTarget : std::uint8_t { kNone, kHeld, kAnchor };
+    WatchTarget ForWatchTarget(RE::FormID a_target, APMF_API::Handle& a_claim);
 
     // core/ActionGate.cpp: the leaf ALLOW-LIST. `a_leafIdx` indexes apmf::cbt::kLeaves (0..69),
     // then apmf::cbt::kSearchLeaves (70..73), then apmf::cbt::kParamLeaves (74..94). `a_movement` = ActionGate's movement-leaf

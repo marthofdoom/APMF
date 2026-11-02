@@ -4,6 +4,13 @@ Updated 2026-10-28. Current version **v0.15.2** (cut 2026-10-28, ABI v31, see CH
 shipped, what's probe-gated, what's next. Keep this current in the SAME change as any
 build/finding/workflow change.
 
+## HEAD OF WORK 2026-11-01 -- SPECTATOR DENY FOR THE SUBSTRATE (the town panic), branch `feat/apmf-spectator-holder`, NOT merged
+
+- Field (marth): when a follower casts out of combat, every townsperson reacts as if a fight is going on. RE (disassembly, 1.6.1170 and 1.5.97): the engine's Spectator package. Every actor that perceives the holder asks whether it is in combat and not ignoring combat (AE 0x6B6DF0), and the engine resets the ignoring bit in every window.
+- Change: the existing Spectator seat (core/SpectatorGate.cpp, Character slot 0xDC, no new seat or address) also refuses a Spectator package whose TARGET is a HELD substrate holder or the anchor. It ranks as the substrate's claim on the Package facet, live per call, and counts on the menu like the ch.9 refusal. A REAL holder is watched like any fight.
+- Each OPEN logs a known-hole line when the deny cannot stand. The bystander census reports spectator-package per bystander.
+- Not field-tested. The town run must show `spectator of a held substrate refused` lines and no townsperson's spectator-package turning true.
+
 ## HEAD OF WORK 2026-11-01 -- MENU HONEST LABELS, branch `feat/menu-honest-labels`, NOT merged
 
 - ClickUp 86e3t1gfh, marth's Option A. The facet tables rename Blocked and Passed to "Contested: blocked" and "Contested: won" (they only ever counted writes that lost or won a ranked conflict), and gain "Uncontested" (Hits minus blocked, won and Observed, never negative) and a visible "Own" column. Own is not a Hit by design, so it is not subtracted from Hits. The equip leak is fixed in EquipSink: an own client's equip that nothing foreign denied or stood now counts as Own (it was counted nowhere). Counting and display only, no ranking or enforcement change. Definitions: Docs/HARBINGER-MENU.md.
