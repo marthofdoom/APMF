@@ -3,6 +3,7 @@
 #include "core/CastObserve.h"
 #include "core/CasterTypeCensus.h"
 #include "core/Clock.h"
+#include "core/FacetAttribution.h"   // CastClaimHandle: whose claim a cast fired on (menu "Own")
 #include "core/Allowance.h"   // RuntimeSupported(): the leaf-name map resolves ch.7's ids only where ch.7 does
 #include "core/ControlMap.h"
 #include "core/Sightline.h"
@@ -228,6 +229,21 @@ namespace apmf::castobserve {
             auto& prev = g_lastHand[key];
             const bool changed = (prev.state != st) || (prev.spell != sfid);
             if (changed) {
+                // Menu "Own" (2026-11-01): a cast of the spell a live cast claim names, on that claim's hand, that
+                // STARTS now (the caster leaves rest or ends a previous cast) is the claim's client acting on its
+                // own claim and nothing had to be denied. Once per cast (a state transition), not per CheckCast.
+                // The instant caster is governed by no cast claim.
+                const bool startsNow = (st == 2 || st == 4) && sfid != 0 && (prev.state == 0 || prev.state == 6 || prev.spell != sfid);
+                if (startsNow && a_srcIdx < 2) {
+                    try {
+                        const auto hand = a_srcIdx == 0 ? apmf::allowance::Hand::kLeft : apmf::allowance::Hand::kRight;
+                        if (apmf::allowance::CastClaimNamesForHand(a_actor->GetFormID(), sfid, hand)) {
+                            const auto h = apmf::facetattr::CastClaimHandle(a_actor->GetFormID());
+                            apmf::sources::NoteOwn(apmf::sources::ClientForHandle(h), apmf::sources::Facet::kCast);
+                        }
+                    } catch (...) {
+                    }
+                }
                 prev.state = st;
                 prev.spell = sfid;
                 if (st != 0 || sfid != 0) {   // don't log the resting None/no-spell baseline

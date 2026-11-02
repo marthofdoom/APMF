@@ -4,6 +4,10 @@ Updated 2026-10-28. Current version **v0.15.2** (cut 2026-10-28, ABI v31, see CH
 shipped, what's probe-gated, what's next. Keep this current in the SAME change as any
 build/finding/workflow change.
 
+## HEAD OF WORK 2026-11-01 -- MENU UNCONTESTED INTERACTIONS SHOW AS OWN, branch `feat/menu-uncontested-served`, NOT merged
+
+- ClickUp 86e3t1gfh follow-up. An interaction a live claim performs with nothing to deny now shows in the Own column of its client: a cast that starts on the hand a cast claim names (core/CastObserve.cpp, once per cast start), and an engine target pick that already matches the client's pin (channels/TargetPin.cpp, once per pick, replaces the last-seen-only stamp). A combat entry already counts Served when it fires and has no event before that. Counting and display only, no ranking or enforcement change.
+
 ## HEAD OF WORK 2026-11-01 -- MENU HONEST LABELS, branch `feat/menu-honest-labels`, NOT merged
 
 - ClickUp 86e3t1gfh, marth's Option A. The facet tables rename Blocked and Passed to "Contested: blocked" and "Contested: won" (they only ever counted writes that lost or won a ranked conflict), and gain "Uncontested" (Hits minus blocked, won and Observed, never negative) and a visible "Own" column. Own is not a Hit by design, so it is not subtracted from Hits. The equip leak is fixed in EquipSink: an own client's equip that nothing foreign denied or stood now counts as Own (it was counted nowhere). Counting and display only, no ranking or enforcement change. Definitions: Docs/HARBINGER-MENU.md.
