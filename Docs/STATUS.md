@@ -6,7 +6,7 @@ build/finding/workflow change.
 
 ## HEAD OF WORK 2026-10-30 -- ATTACK-SELECT PROBE CRASH FIX, branch `fix/apmf-atkprobe-nonactor`, NOT merged
 
-- Field 10-30 (LoreRim, bAttackSelect=1): the probe crashed in BeforeAct because its first actor guess named a tree, not an actor. It now takes a guess only when it names an actor. Probe off was never affected.
+- Field 10-30 (LoreRim, bAttackSelect=1): the probe crashed in BeforeAct because its first actor guess named a tree, not an actor. It now takes a guess only when it names an actor, and tries the engine's own read (the +0x20 hop) first. ch.7 and ch.23 had the same first guess, so a tree there could hide the real actor and skip a deny or a leash for that act. They now resolve the same way. Probe off never crashed.
 
 ## HEAD OF WORK 2026-10-28 -- LIGHT SEARCH-STATE OVERRIDE + the full Light gate audit, branch `feat/apmf-light-search-override`, NOT merged
 
