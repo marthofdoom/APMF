@@ -43,6 +43,21 @@
 // is spell-specific, so the seat compares it. The result is published per caster in a
 // seqlock slot table: readers on any thread are lock-free.
 //
+// TOWN FRIENDLY HITS (2026-11-02, marth: a follower that would be caught committing a crime
+// does not do it). The same kCastGuard_LineOfFire bit now also covers, with NO new hook:
+//   (a) WEAPONS. HoldWeaponAttack, called from the ch.7 attack-leaf act() thunk
+//       (core/ActionGate.cpp ActThunkBody; the leaf is denied with the same ForceFail act()/pop()
+//       PAIR a ch.7 claim uses): a RangedAttack leaf (bow, crossbow) is held while a friendly
+//       is on the line to the aim; a melee leaf (Attack, AttackLow, Bash, SpecialAttack) is held
+//       while a friendly is on that line OR inside the swing arc (kMeleeReach in front, within
+//       the cone of kMeleeConeCos toward the aim). Held only on a FRESH measurement, never on an
+//       unknown one: a failed measurement must not freeze every swing of a follower.
+//   (b) SELF AREA SPELLS. A Self-delivered spell with a hostile effect and an area (Fire Storm
+//       style), or a cloak whose associated spell is hostile with an area, is held at 0x0A / 0x06
+//       while a friendly stands within area + kBlastPad of the CASTER (a fresh reading at 0x0A, an
+//       unknown reading holds at 0x06 like any offensive item). A RUNE is delivered at a target
+//       location, so Offensive() already admits it and the blast test around the aim covers it.
+//
 // ATTRIBUTION (Harbinger controller 1a). The competing source is the engine's own AI
 // ("Engine" on the Cast facet). A refusal stands only while the guard claim's client
 // outranks it (sources::ClaimPriority vs sources::Priority(kEngineSource, kCast)); every
@@ -63,6 +78,8 @@ namespace apmf::castguard {
 
     inline constexpr float         kLinePad             = 80.0f;   // a friendly this close to the line is in it
     inline constexpr float         kBlastPad            = 64.0f;   // added to the spell's largest area (in units)
+    inline constexpr float         kMeleeReach          = 200.0f;  // a melee swing reaches a friendly this close ...
+    inline constexpr float         kMeleeConeCos        = 0.5f;    // ... within 60 degrees of the direction to the aim
     inline constexpr float         kUnitsPerFoot        = 64.0f / 3.0f;   // EffectItem::area is in FEET
     inline constexpr std::uint64_t kFreshMs             = 250;     // a measurement older than this is unknown
     inline constexpr std::uint32_t kMaxMeasuresPerFrame = 8;
@@ -89,5 +106,8 @@ namespace apmf::castguard {
     // core/CastSeats.cpp 0x06 (combat thread): true = answer NO for this poll. The deliberating
     // actor is the controller's attacker, resolved only for an offensive item.
     bool HoldStartCast(RE::CombatController* a_cc, RE::MagicItem* a_item);
+    // core/ActionGate.cpp ActThunkBody (combat thread), for an attack leaf of a_fid: true = deny the leaf
+    // this tick. a_ranged selects the bow/crossbow leaf (line only) over the melee leaves (line + swing arc).
+    bool HoldWeaponAttack(RE::FormID a_fid, bool a_ranged);
 
 }

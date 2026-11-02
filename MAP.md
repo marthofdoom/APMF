@@ -1295,6 +1295,15 @@ fresh BLOCKED reading. The channel bound refuses a concentration `SpellItem` on 
 `allowance::CastClaimNamesForHand` admits it. Every would-be refusal goes through `Decide`: Engine on the Cast facet
 gets a hit and an overruled (refusal stands: the guard's client priority > Engine's) or a stood (allowed, logged).
 Logs: `[ch.25] ... REFUSED / would refuse, ALLOWED ...` (per actor, spell, reason, 1.5 s), a 30 s `[ch.25] HEARTBEAT`.
+TOWN FRIENDLY HITS (2026-11-02, marth's crime ruling), same `kCastGuard_LineOfFire` bit, NO new hook or seat:
+(a) `castguard::HoldWeaponAttack` is called from `core/ActionGate.cpp` `ActThunkBody` (the ch.7 act() thunk; `g_weaponLeaf`
+filled in `Install`: RangedAttack = ranged, Attack / AttackLow / Bash / SpecialAttack = melee) and denies the leaf with the
+SAME ForceFail act()/pop() pair; ranged holds on the line friend, melee on the line friend OR a friend in the swing arc
+(`kMeleeReach` 200u, `kMeleeConeCos` 0.5 toward the aim); FRESH readings only (an unknown reading never freezes swings).
+(b) a Self-delivered hostile area spell or cloak (`SelfAoeArea`, cloak = `EffectArchetypes::kCloak` + its associated spell)
+is held at 0x0A (fresh) / 0x06 (unknown holds) while a friend is within area + `kBlastPad` of the CASTER. Runes are
+TargetLocation spells, already `Offensive()` and covered by the blast test at the aim. The slot gained `selfAndMelee` +
+`meleeFriend`; `Measure` now publishes with no aim (aim 0) so the Self test works. Ground / Flying attack leaves are not held.
 Evidence that 0x0A covers the RELEASE: `ActorMagicCaster` slot 3 `RequestCastImpl` and slot 6 `StartCastImpl` both
 `call [vt+0x50]` on 1.6.1170 (`0x5B0840` / `0x5B0A90`), 1.5.97 (`0x541A70` / `0x541CB0`) and 1.7.104 (`0x5BF370` /
 `0x5BF5C0`); on NO, slot 6 runs the cannot-cast handler (AE `0x5B1C20`), which interrupts.

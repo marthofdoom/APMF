@@ -4,6 +4,7 @@
 #include "core/Clock.h"
 #include "core/BehaviorTreeCatalog.h"
 #include "core/ControlMap.h"
+#include "core/CastGuard.h"      // ch.25 town friendly hits: HoldWeaponAttack at the attack leaves
 #include "core/ActionGate.h"
 #include "core/AiCastSeats.h"   // RangedGateProbeCounts (the [Probe] bRangedSelect heartbeat)
 #include "core/EquipSink.h"     // Categorize / CategoryNames (the probe mirrors the sink verdict)
@@ -671,6 +672,9 @@ namespace apmf::actiongate {
         // The combat substrate's leaf index (0..69 = apmf::cbt::kLeaves, 70..73 = kSearchLeaves), for
         // every leaf whose act() AND pop() are installed. Written at Install only (like g_category).
         std::unordered_map<std::uintptr_t, std::uint32_t>  g_leafIdx;
+        // ch.25 TOWN FRIENDLY HITS: the weapon attack leaves (vtable -> 1 melee, 2 ranged), for the
+        // friendly-fire hold (castguard::HoldWeaponAttack). Written at Install only.
+        std::unordered_map<std::uintptr_t, std::uint8_t>   g_weaponLeaf;
 
         // ForceFail's ORIGINAL act() + pop() -- the proven deny mechanism, as a PAIR
         // (see header). Both must resolve or the deny is refused at install.
@@ -1346,6 +1350,17 @@ namespace apmf::actiongate {
             const RE::FormID actorFid = ResolveDeliberatingActor(a_control);
             if (actorFid == 0) return orig(a_this, a_control);   // unresolvable -- degrade to passthrough (#17)
 
+            // ch.25 TOWN FRIENDLY HITS: a guarded actor's weapon attack (bow, crossbow, melee swing) is held while a
+            // friendly is in its line of fire or swing arc. Same deny mechanism as below (the ForceFail pair).
+            if (const auto wit = g_weaponLeaf.find(vt); wit != g_weaponLeaf.end()) {
+                if (const auto ff = g_forceFailAct.load(std::memory_order_relaxed);
+                    ff && apmf::castguard::HoldWeaponAttack(actorFid, wit->second == 2)) {
+                    t_pending = PendingPop{ a_this, a_control };
+                    reinterpret_cast<apmf::cbt::Act_t>(ff)(a_this, a_control);
+                    return a_control;   // do NOT call orig -- this IS the hold
+                }
+            }
+
             // ONE deny source (see the file header's RETIRED/SCOPE sections): a real
             // ch.7 kIntent_CombatAction claim's own ival bitmask. kIntent_Cast and the
             // retired ch.8 +ACT bit no longer contribute an implicit Cast deny -- a cast
@@ -1578,6 +1593,21 @@ namespace apmf::actiongate {
                 spdlog::info("[ch.7] '{}' has no leaf on this build's 70-leaf catalog -- not classified "
                              "(see ActionGate.cpp's file header).", wanted);
         }
+
+        // ch.25: the weapon attack leaves the friendly-fire hold covers (bow/crossbow = RangedAttack, melee =
+        // Attack, AttackLow, Bash, SpecialAttack). Classified only if paired, like the ch.7 categories.
+        for (const auto& [wanted, kind] : std::array<std::pair<const char*, std::uint8_t>, 5>{ {
+                 { "CombatBehaviorAttack", 1 }, { "CombatBehaviorAttackLow", 1 }, { "CombatBehaviorBash", 1 },
+                 { "CombatBehaviorSpecialAttack", 1 }, { "CombatBehaviorRangedAttack", 2 } } }) {
+            for (std::size_t i = 0; i < apmf::cbt::kLeaves.size(); ++i) {
+                if (std::string_view(apmf::cbt::kLeaves[i].name) != wanted) continue;
+                REL::Relocation<std::uintptr_t> vt{ apmf::cbt::kLeaves[i].vtbl };
+                if (Paired(vt.address())) g_weaponLeaf[vt.address()] = kind;
+                break;
+            }
+        }
+        spdlog::info("[ch.25] {} weapon attack leaf(s) carry the friendly-fire hold (kCastGuard_LineOfFire).",
+                     g_weaponLeaf.size());
 
         // ch.8b: OR the Cast bit onto the four cast leaves (already Offense-classified
         // above). A kIntent_Cast claim then denies exactly these, no attack/ranged.

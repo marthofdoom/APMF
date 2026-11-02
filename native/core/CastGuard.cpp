@@ -105,6 +105,8 @@ namespace apmf::castguard {
             std::atomic<std::uint64_t> friends{ 0 };   // (lineFriend << 32) | blastFriend
             std::atomic<std::uint64_t> word{ 0 };      // (lineBlocked << 32) | bits(blastDist)
             std::atomic<std::uint64_t> measuredMs{ 0 };
+            std::atomic<std::uint64_t> selfAndMelee{ 0 };   // (selfFriend << 32) | bits(selfDist), melee in meleeFriend below
+            std::atomic<std::uint32_t> meleeFriend{ 0 };
         };
         Slot g_slots[kSlots];
 
@@ -116,6 +118,9 @@ namespace apmf::castguard {
             bool          lineBlocked = false;
             float         blastDist   = std::numeric_limits<float>::infinity();
             std::uint64_t measuredMs  = 0;
+            RE::FormID    selfFriend  = 0;       // the nearest friendly to the CASTER (a Self area spell's blast)
+            float         selfDist    = std::numeric_limits<float>::infinity();
+            RE::FormID    meleeFriend = 0;       // a friendly inside the melee swing arc
         };
 
         constexpr RE::FormID KeyCaster(std::uint64_t k) { return static_cast<RE::FormID>(k >> 32); }
@@ -139,6 +144,10 @@ namespace apmf::castguard {
                              std::bit_cast<std::uint32_t>(a_l.blastDist),
                          std::memory_order_relaxed);
             s.measuredMs.store(a_l.measuredMs, std::memory_order_relaxed);
+            s.selfAndMelee.store((static_cast<std::uint64_t>(a_l.selfFriend) << 32) |
+                                     std::bit_cast<std::uint32_t>(a_l.selfDist),
+                                 std::memory_order_relaxed);
+            s.meleeFriend.store(a_l.meleeFriend, std::memory_order_relaxed);
             s.seq.store(q + 2, std::memory_order_release);
         }
 
@@ -164,6 +173,8 @@ namespace apmf::castguard {
                     const std::uint64_t f = s.friends.load(std::memory_order_relaxed);
                     const std::uint64_t w = s.word.load(std::memory_order_relaxed);
                     const std::uint64_t m = s.measuredMs.load(std::memory_order_relaxed);
+                    const std::uint64_t sm = s.selfAndMelee.load(std::memory_order_relaxed);
+                    const std::uint32_t mf = s.meleeFriend.load(std::memory_order_relaxed);
                     std::atomic_thread_fence(std::memory_order_acquire);
                     if (s.seq.load(std::memory_order_relaxed) != s1) continue;
                     if (KeyCaster(k) != a_caster) break;   // a different caster: next probe slot
@@ -174,6 +185,9 @@ namespace apmf::castguard {
                     l.lineBlocked = (w >> 32) != 0;
                     l.blastDist   = std::bit_cast<float>(static_cast<std::uint32_t>(w & 0xFFFFFFFFu));
                     l.measuredMs  = m;
+                    l.selfFriend  = static_cast<RE::FormID>(sm >> 32);
+                    l.selfDist    = std::bit_cast<float>(static_cast<std::uint32_t>(sm & 0xFFFFFFFFu));
+                    l.meleeFriend = mf;
                     return l;
                 }
             }
@@ -196,7 +210,7 @@ namespace apmf::castguard {
         // ---- counters (relaxed; heartbeat on the main thread) ----
         std::atomic<std::uint64_t> g_measures{ 0 }, g_noAim{ 0 }, g_lineHits{ 0 }, g_blastNear{ 0 },
             g_lofRefused{ 0 }, g_chanRefused{ 0 }, g_startHeld{ 0 }, g_startUnknown{ 0 }, g_stood{ 0 },
-            g_tableFull{ 0 };
+            g_tableFull{ 0 }, g_weaponHeld{ 0 }, g_selfRefused{ 0 };
         std::uint64_t g_lastHeartbeatMs = 0;   // main thread
         constexpr std::uint64_t kHeartbeatMs = 30000;
 
@@ -239,6 +253,31 @@ namespace apmf::castguard {
         bool ConcentrationSpell(RE::MagicItem* a_mi) {
             return a_mi && a_mi->Is(RE::FormType::Spell) &&
                    a_mi->GetCastingType() == RE::MagicSystem::CastingType::kConcentration;
+        }
+
+        // TOWN FRIENDLY HITS (b): the blast radius IN UNITS, centred on the CASTER, of a Self-delivered
+        // spell with a hostile area effect (0 = not one). A cloak is a Self spell whose cloak-archetype
+        // effect (EffectArchetypes kCloak) applies its associated SPELL to everything nearby: that
+        // spell's hostile effects and areas count too, whichever of the two carries the area.
+        float SelfAoeArea(RE::MagicItem* a_mi) {
+            if (!a_mi || a_mi->GetDelivery() != RE::MagicSystem::Delivery::kSelf) return 0.0f;
+            float best = 0.0f;
+            for (auto* eff : a_mi->effects) {
+                if (!eff || !eff->baseEffect) continue;
+                auto*       be      = eff->baseEffect;
+                bool        hostile = be->IsHostile();
+                float       area    = static_cast<float>(eff->effectItem.area) * kUnitsPerFoot;
+                if (be->HasArchetype(RE::EffectSetting::Archetype::kCloak) && be->associatedForm &&
+                    be->associatedForm->Is(RE::FormType::Spell)) {
+                    for (auto* e2 : be->associatedForm->As<RE::SpellItem>()->effects)
+                        if (e2 && e2->baseEffect && e2->baseEffect->IsHostile()) {
+                            hostile = true;
+                            area    = std::max(area, static_cast<float>(e2->effectItem.area) * kUnitsPerFoot);
+                        }
+                }
+                if (hostile && area > 0.0f) best = std::max(best, area);
+            }
+            return best;
         }
 
         // ---- geometry (main thread) ----
@@ -292,14 +331,22 @@ namespace apmf::castguard {
                 return;   // reads unknown: 0x06 holds, 0x0A does not refuse
             }
             g_measures.fetch_add(1, std::memory_order_relaxed);
-            if (!aim || aim == caster) {
+            // No aim: nothing to fire a line along or swing at (aim 0), but the Self area test below
+            // is centred on the caster and still measured.
+            const bool haveAim = aim && aim != caster;
+            if (!haveAim) {
                 g_noAim.fetch_add(1, std::memory_order_relaxed);
-                Publish(*slot, l, a_fid);   // aim 0: no line to fire along
-                return;
+                aim = nullptr;
+            } else {
+                l.aim = aim->GetFormID();
             }
-            l.aim = aim->GetFormID();
             const RE::NiPoint3 cpos = caster->GetPosition();
-            const RE::NiPoint3 tpos = aim->GetPosition();
+            const RE::NiPoint3 tpos = haveAim ? aim->GetPosition() : cpos;
+            // The unit direction caster -> aim on the ground plane, for the melee swing arc.
+            RE::NiPoint3 dir{ tpos.x - cpos.x, tpos.y - cpos.y, 0.0f };
+            const float  dirLen = std::sqrt(dir.x * dir.x + dir.y * dir.y);
+            const bool   haveDir = haveAim && dirLen > 1.0f;
+            if (haveDir) { dir.x /= dirLen; dir.y /= dirLen; }
             auto* const        ws   = caster->GetWorldspace();
             auto* const        cell = caster->GetParentCell();
             auto* const        player = RE::PlayerCharacter::GetSingleton();
@@ -309,19 +356,39 @@ namespace apmf::castguard {
                 if (!a || a == caster || a == aim || a->IsDead() || a->IsDisabled()) return;
                 if (ws ? a->GetWorldspace() != ws : a->GetParentCell() != cell) return;
                 const RE::NiPoint3 p     = a->GetPosition();
-                const float        seg   = SegDist(p, cpos, tpos);
-                const float        blast = p.GetDistance(tpos);
-                if (seg > kLinePad && blast > kBlastConsider) return;
+                const float        inf   = std::numeric_limits<float>::infinity();
+                const float        seg   = haveAim ? SegDist(p, cpos, tpos) : inf;
+                const float        blast = haveAim ? p.GetDistance(tpos) : inf;
+                const float        selfD = p.GetDistance(cpos);
+                // The melee swing arc: within kMeleeReach of the caster and within the cone toward the aim.
+                bool inArc = false;
+                if (haveDir && selfD <= kMeleeReach) {
+                    const float dx = p.x - cpos.x, dy = p.y - cpos.y;
+                    const float dl = std::sqrt(dx * dx + dy * dy);
+                    inArc = dl <= 1.0f || (dx * dir.x + dy * dir.y) / dl >= kMeleeConeCos;
+                }
+                if (seg > kLinePad && blast > kBlastConsider && selfD > kBlastConsider && !inArc) return;
                 if (!Friendly(caster, a, player)) return;
-                if (seg <= kLinePad) {
-                    // Exposed to the caster unless Harbinger's own ray reads the friendly OCCLUDED
-                    // (a wall between them). Asking keeps the pair measured; unknown counts.
-                    const auto r = apmf::sightline::Read(a_fid, a->GetFormID(), true);
-                    if (apmf::sightline::FreshVerdict(r) != APMF_API::kLos_Occluded && seg < lineBest) {
-                        lineBest      = seg;
-                        l.lineBlocked = true;
-                        l.lineFriend  = a->GetFormID();
+                // Exposed to the caster unless Harbinger's own ray reads the friendly OCCLUDED
+                // (a wall between them). Asking keeps the pair measured; unknown counts.
+                bool exposedKnown = false, exposed = false;
+                const auto isExposed = [&]() {
+                    if (!exposedKnown) {
+                        exposedKnown = true;
+                        const auto r = apmf::sightline::Read(a_fid, a->GetFormID(), true);
+                        exposed      = apmf::sightline::FreshVerdict(r) != APMF_API::kLos_Occluded;
                     }
+                    return exposed;
+                };
+                if (seg <= kLinePad && isExposed() && seg < lineBest) {
+                    lineBest      = seg;
+                    l.lineBlocked = true;
+                    l.lineFriend  = a->GetFormID();
+                }
+                if (inArc && isExposed() && l.meleeFriend == 0) l.meleeFriend = a->GetFormID();
+                if (selfD < l.selfDist) {
+                    l.selfDist   = selfD;
+                    l.selfFriend = a->GetFormID();
                 }
                 if (blast < l.blastDist) {
                     l.blastDist   = blast;
@@ -365,10 +432,13 @@ namespace apmf::castguard {
             const RE::FormID sf = a_spell ? a_spell->GetFormID() : 0;
             if (LogDue(a_actor, sf, a_reason)) {
                 const auto who = a_who && a_who->GetName() ? a_who->GetName() : "?";
-                spdlog::info("[ch.25] 0x{} '{}' {} {} spell 0x{} '{}' -- {}: {}. Guard h={} ({} priority {}) {} Engine "
+                const std::string subject =
+                    a_spell ? fmt::format("spell 0x{} '{}'", Hex(sf), a_spell->GetName() ? a_spell->GetName() : "?")
+                            : std::string("weapon attack");
+                spdlog::info("[ch.25] 0x{} '{}' {} {} {} -- {}: {}. Guard h={} ({} priority {}) {} Engine "
                              "(priority {}) on the Cast facet{}.",
-                             Hex(a_actor), who, a_seat, stands ? "REFUSED" : "would refuse, ALLOWED:", Hex(sf),
-                             a_spell && a_spell->GetName() ? a_spell->GetName() : "?", a_what, a_detail, a_h,
+                             Hex(a_actor), who, a_seat, stands ? "REFUSED" : "would refuse, ALLOWED:", subject,
+                             a_what, a_detail, a_h,
                              client != apmf::sources::kNoSource ? std::string(apmf::sources::Name(client))
                                                                 : std::string("an unmapped client"),
                              claimPrio, stands ? "outranks" : "does not outrank", enginePrio,
@@ -386,7 +456,14 @@ namespace apmf::castguard {
                                Hex(l.blastFriend), l.blastDist, Hex(l.aim), a_area, kBlastPad, a_now - l.measuredMs);
         }
 
-        enum Reason : std::uint32_t { kReasonLine = 1, kReasonBlast = 2, kReasonUnknown = 3, kReasonChannel = 4 };
+        enum Reason : std::uint32_t { kReasonLine = 1, kReasonBlast = 2, kReasonUnknown = 3, kReasonChannel = 4,
+                                      kReasonSelf = 5, kReasonMelee = 6 };
+
+        std::string SelfDetail(const Lof& l, float a_area, std::uint64_t a_now) {
+            return fmt::format("friendly 0x{} is {:.0f}u from the caster, inside the Self area {:.0f} + {:.0f}u "
+                               "(measured {} ms ago)",
+                               Hex(l.selfFriend), l.selfDist, a_area, kBlastPad, a_now - l.measuredMs);
+        }
 
     }
 
@@ -470,13 +547,15 @@ namespace apmf::castguard {
         if (now - g_lastHeartbeatMs >= kHeartbeatMs) {
             g_lastHeartbeatMs = now;
             if (!g_live.empty() || g_lofRefused.load(std::memory_order_relaxed) ||
-                g_chanRefused.load(std::memory_order_relaxed) || g_startHeld.load(std::memory_order_relaxed))
+                g_chanRefused.load(std::memory_order_relaxed) || g_startHeld.load(std::memory_order_relaxed) ||
+                g_weaponHeld.load(std::memory_order_relaxed) || g_selfRefused.load(std::memory_order_relaxed))
                 spdlog::info("[ch.25] HEARTBEAT {} line-of-fire caster(s): {} measure(s) ({} no aim, {} friendly on a "
                              "line, {} friendly near an aim); 0x0A refused {} (line of fire) + {} (channel bound); "
-                             "0x06 held {} ({} not measured); {} stood (Engine outranked the guard); table full {}.",
+                             "0x06 held {} ({} not measured); {} stood (Engine outranked the guard); table full {}; "
+                             "0x0A refused {} (Self area); {} weapon attack(s) held.",
                              g_live.size(), g_measures.load(), g_noAim.load(), g_lineHits.load(), g_blastNear.load(),
                              g_lofRefused.load(), g_chanRefused.load(), g_startHeld.load(), g_startUnknown.load(),
-                             g_stood.load(), g_tableFull.load());
+                             g_stood.load(), g_tableFull.load(), g_selfRefused.load(), g_weaponHeld.load());
         }
     }
 
@@ -530,11 +609,31 @@ namespace apmf::castguard {
                 }
             }
         }
+
+        // TOWN FRIENDLY HITS (b): a Self-delivered hostile area spell (or cloak) is centred on the caster.
+        // Same rule as the line: refused only on a FRESH reading (a NO here interrupts a cast in progress).
+        if ((flags & APMF_API::kCastGuard_LineOfFire) != 0) {
+            if (const float area = SelfAoeArea(a_spell); area > 0.0f) {
+                const auto now = apmf::clock::MonotonicMs();
+                const Lof  l   = Read(a_fid);
+                if (l.found && l.measuredMs != 0 && now >= l.measuredMs && now - l.measuredMs <= kFreshMs &&
+                    l.selfFriend != 0 && l.selfDist <= area + kBlastPad) {
+                    if (Decide(h, a_fid, a_actor, a_spell, "CheckCast (0x0A)", "Self area", kReasonSelf,
+                               SelfDetail(l, area, now))) {
+                        g_selfRefused.fetch_add(1, std::memory_order_relaxed);
+                        return true;
+                    }
+                }
+            }
+        }
         return false;
     }
 
     bool HoldStartCast(RE::CombatController* a_cc, RE::MagicItem* a_item) {
-        if (!g_anyGuard.load(std::memory_order_relaxed) || !a_cc || !a_item || !Offensive(a_item)) return false;
+        if (!g_anyGuard.load(std::memory_order_relaxed) || !a_cc || !a_item) return false;
+        const bool  offensive = Offensive(a_item);
+        const float selfArea  = offensive ? 0.0f : SelfAoeArea(a_item);
+        if (!offensive && selfArea <= 0.0f) return false;
         auto  attPtr = a_cc->attackerHandle.get();   // NiPointer<Actor>, refcounted for this scope (CastSeats' read)
         auto* who    = attPtr.get();
         if (!who) return false;
@@ -546,6 +645,20 @@ namespace apmf::castguard {
         const auto now   = apmf::clock::MonotonicMs();
         const Lof  l     = Read(a_fid);
         const bool fresh = l.found && l.measuredMs != 0 && now >= l.measuredMs && now - l.measuredMs <= kFreshMs;
+        if (selfArea > 0.0f) {   // a Self area spell: centred on the caster, no aim needed
+            const bool closeBy = fresh && l.selfFriend != 0 && l.selfDist <= selfArea + kBlastPad;
+            if (fresh && !closeBy) return false;
+            const bool stands = Decide(h, a_fid, who, a_item, "CheckStartCast (0x06)", "Self area",
+                                       !fresh ? kReasonUnknown : kReasonSelf,
+                                       !fresh ? std::string("not measured yet, or older than 250 ms -- held, never clear "
+                                                            "by fallback")
+                                              : SelfDetail(l, selfArea, now));
+            if (stands) {
+                g_startHeld.fetch_add(1, std::memory_order_relaxed);
+                if (!fresh) g_startUnknown.fetch_add(1, std::memory_order_relaxed);
+            }
+            return stands;
+        }
         if (fresh && l.aim == 0) return false;   // no aim: no line to fire along
         const float area  = LargestArea(a_item);
         const bool  line  = fresh && l.lineBlocked;
@@ -560,6 +673,32 @@ namespace apmf::castguard {
             g_startHeld.fetch_add(1, std::memory_order_relaxed);
             if (!fresh) g_startUnknown.fetch_add(1, std::memory_order_relaxed);
         }
+        return stands;
+    }
+
+    // TOWN FRIENDLY HITS (a): called from the ch.7 attack-leaf act() thunk, combat thread. FRESH readings only:
+    // an unknown one never freezes a follower's swings (the spell seats hold on unknown, a weapon does not --
+    // a measurement that cannot be taken, e.g. a full table, would otherwise disarm the actor for good).
+    bool HoldWeaponAttack(RE::FormID a_fid, bool a_ranged) {
+        if (!g_anyGuard.load(std::memory_order_relaxed)) return false;
+        std::uint32_t    flags = 0;
+        APMF_API::Handle h     = APMF_API::kInvalidHandle;
+        if (!ControlMap::Get().TryGetCastGuard(a_fid, flags, h) || (flags & APMF_API::kCastGuard_LineOfFire) == 0)
+            return false;
+        const auto now = apmf::clock::MonotonicMs();
+        const Lof  l   = Read(a_fid);
+        if (!l.found || l.aim == 0 || l.measuredMs == 0 || now < l.measuredMs || now - l.measuredMs > kFreshMs)
+            return false;
+        const bool line = l.lineBlocked;
+        const bool arc  = !a_ranged && !line && l.meleeFriend != 0;
+        if (!line && !arc) return false;
+        const bool stands =
+            Decide(h, a_fid, nullptr, nullptr, "attack leaf (ch.7 act())", a_ranged ? "ranged shot" : "melee swing",
+                   arc ? kReasonMelee : kReasonLine,
+                   arc ? fmt::format("friendly 0x{} is inside the swing arc toward 0x{} (measured {} ms ago)",
+                                     Hex(l.meleeFriend), Hex(l.aim), now - l.measuredMs)
+                       : LofDetail(l, 0.0f, true, now));
+        if (stands) g_weaponHeld.fetch_add(1, std::memory_order_relaxed);
         return stands;
     }
 
