@@ -75,7 +75,8 @@ namespace apmf::harbingermenu {
         // Column widths (pixels), the same in every facet table so the sliders line up.
         constexpr float kKindWidth   = 95.0f;
         constexpr float kHitsWidth   = 70.0f;
-        constexpr float kOutcomeWidth = 62.0f;   // Blocked / Passed / Observed
+        constexpr float kOutcomeWidth = 62.0f;   // Own / Observed
+        constexpr float kContestWidth = 128.0f;  // Contested: blocked / Contested: won
         constexpr std::uint64_t kActiveWindowMs = 60000;   // the facet winner must have been active this recently
         constexpr float kSliderWidth = 190.0f;
 
@@ -105,6 +106,15 @@ namespace apmf::harbingermenu {
             va_end(a);
         }
         void Colored(const ImVec4& c, const std::string& s) { Colored(c, "%s", s.c_str()); }
+
+        // Derived, display only: the hits no claim contested. The counters are independent live atomics read
+        // one after another, so a mid-update read can leave the difference briefly negative: clamped at 0.
+        // Own is NOT subtracted: an own-client action is never a Hit (Sources.h NoteOwn).
+        std::uint32_t Uncontested(SourceId id, Facet f) {
+            const std::uint64_t h = Hits(id, f);
+            const std::uint64_t d = std::uint64_t{ Overruled(id, f) } + Stood(id, f) + Observed(id, f);
+            return h > d ? static_cast<std::uint32_t>(h - d) : 0u;
+        }
 
         std::string Age(std::uint64_t lastMs) {
             if (lastMs == 0) return "never";
@@ -154,13 +164,15 @@ namespace apmf::harbingermenu {
             if (!g.IsItemHovered(0) || !g.BeginTooltip()) return;
             Colored(kHead, std::string(Name(id)));
             Text(fmt::format("Kind: {}", Badge(id)));
-            Text(fmt::format("{}: served {} (Harbinger enforced this source's claim), {} hit(s) (its writes seen), "
-                             "blocked {} (Harbinger denied it), passed {} (it outranked the claim or tied: its write "
-                             "stood), observed {} (seen at a seat that only observes)", FacetName(f), Served(id, f),
-                             Hits(id, f), Overruled(id, f), Stood(id, f), Observed(id, f)));
-            if (Own(id, f))
-                Text(fmt::format("Own: {} (this client acting on its own claim: not an outside write, not counted "
-                                 "as a hit, blocked or passed)", Own(id, f)));
+            Text(fmt::format("{}: served {} (Harbinger enforced this source's claim), {} hit(s) (its outside writes "
+                             "seen)", FacetName(f), Served(id, f), Hits(id, f)));
+            Text(fmt::format("Of those hits: uncontested {} (no claim stood in the way, so the write went through), "
+                             "contested and blocked {} (a claim outranked it and Harbinger denied the write), "
+                             "contested and won {} (a claim existed but the source outranked it or tied, so its write "
+                             "stood), observed {} (seen at a seat that only watches, nothing was decided)",
+                             Uncontested(id, f), Overruled(id, f), Stood(id, f), Observed(id, f)));
+            Text(fmt::format("Own: {} (this client acting on its own claim. It is not an outside write, so it is "
+                             "not a hit and is counted on its own)", Own(id, f)));
             Text(fmt::format("Last seen: {}", Age(LastSeenMs(id, f))));
             if (Idle(id)) Colored(kGrey, "Idle: not seen during the last 3 game loads. Its priority is kept.");
             for (const auto& s : seats) {
@@ -228,15 +240,17 @@ namespace apmf::harbingermenu {
                                                "source outranks the claim. See [ch.26] in APMF.log.",
                                                t.forceAnomalies));
             }
-            if (!g.BeginTable(fmt::format("tbl{}", static_cast<int>(f)).c_str(), 8, kTableRowBg | kTableBordersInnerH,
+            if (!g.BeginTable(fmt::format("tbl{}", static_cast<int>(f)).c_str(), 10, kTableRowBg | kTableBordersInnerH,
                               ImVec2{ 0.0f, 0.0f }, 0.0f))
                 return;
             g.TableSetupColumn("Source", kColWidthStretch, 0.0f, 0);
             g.TableSetupColumn("Kind", kColWidthFixed, kKindWidth, 0);
             g.TableSetupColumn("Served", kColWidthFixed, kHitsWidth, 0);
             g.TableSetupColumn("Hits", kColWidthFixed, kHitsWidth, 0);
-            g.TableSetupColumn("Blocked", kColWidthFixed, kOutcomeWidth, 0);
-            g.TableSetupColumn("Passed", kColWidthFixed, kOutcomeWidth, 0);
+            g.TableSetupColumn("Uncontested", kColWidthFixed, kContestWidth, 0);
+            g.TableSetupColumn("Contested: blocked", kColWidthFixed, kContestWidth, 0);
+            g.TableSetupColumn("Contested: won", kColWidthFixed, kContestWidth, 0);
+            g.TableSetupColumn("Own", kColWidthFixed, kOutcomeWidth, 0);
             g.TableSetupColumn("Observed", kColWidthFixed, kOutcomeWidth, 0);
             g.TableSetupColumn("Priority (0 = off)", kColWidthFixed, kSliderWidth, 0);
             g.TableHeadersRow();
@@ -253,9 +267,13 @@ namespace apmf::harbingermenu {
                 g.TableNextColumn();
                 Colored(isIdle ? kGrey : kWhite, std::to_string(Hits(id, f)));
                 g.TableNextColumn();
+                Colored(isIdle ? kGrey : kWhite, std::to_string(Uncontested(id, f)));
+                g.TableNextColumn();
                 Colored(isIdle ? kGrey : kWhite, std::to_string(Overruled(id, f)));
                 g.TableNextColumn();
                 Colored(isIdle ? kGrey : kWhite, std::to_string(Stood(id, f)));
+                g.TableNextColumn();
+                Colored(isIdle ? kGrey : kWhite, std::to_string(Own(id, f)));
                 g.TableNextColumn();
                 Colored(isIdle ? kGrey : kWhite, std::to_string(Observed(id, f)));
                 g.TableNextColumn();
