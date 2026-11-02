@@ -1231,3 +1231,9 @@ Reviewer: "The 10 s line also prints when the flag is armed but nothing was over
 
 ### APMF-B238 (SEV-5, OPEN, Docs/STATUS.md Light gate audit, against 94a9597) -- construction and the item's Equip were not decoded by the reviewer
 Reviewer: "STATUS says \"Construction and the item's Equip are unconditional\". I did not decode the construction or Equip paths myself, so that part of the author's audit is unconfirmed by me." Reasoning: everything from the equip check to start and stop was confirmed independently. The field run settles the rest.
+
+### APMF-B239 (SEV-4, OPEN, core/ActionGate.cpp ch.23 ResolveController, against 01356c1, Opus tier-3 review of fix/apmf-atkprobe-nonactor) -- the A fallback still returns its controller for the target read
+Reviewer: "when B fails and A names an Actor, the function still returns ctrlA. The leash then reads targetHandle from CombatBehaviorController+0x2C, a word that is not a CombatController target. It could point the leash at an arbitrary actor. This only happens when B fails, which is rare once a tree is running. Fix: return the actor only and no controller for target reads when the answer came from A, or drop A entirely, since the engine never reads it." Reasoning: pre-existing, made rarer by this branch.
+
+### APMF-B240 (SEV-5, OPEN, core/ActionGate.cpp ch.7 + core/AttackSelectProbe.cpp, against 01356c1) -- the A fallback can name a wrong Actor when B fails
+Reviewer: "the same A fallback in ch.7 and the probe can name a wrong Actor when B fails. Pre-existing, and rarer now." Reasoning: the engine never reads A (the +0x28 hop appears in neither binary), so dropping A is the clean end state.
