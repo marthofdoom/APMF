@@ -1238,3 +1238,15 @@ Reviewer: "when B fails and A names an Actor, the function still returns ctrlA. 
 
 ### APMF-B240 (SEV-5, OPEN, core/ActionGate.cpp ch.7 + core/AttackSelectProbe.cpp, against 01356c1) -- the A fallback can name a wrong Actor when B fails
 Reviewer: "the same A fallback in ch.7 and the probe can name a wrong Actor when B fails. Pre-existing, and rarer now." Reasoning: the engine never reads A (the +0x28 hop appears in neither binary), so dropping A is the clean end state.
+
+### APMF-B241 (SEV-4, OPEN, core/PapyrusCaller.cpp owner rule, against 6791e1a, Opus tier-3 review of feat/apmf-papyrus-attribution-step2) -- the winning override is often a patch, so a mod's scripts rank under the patch
+Reviewer: "on a big list the winner is often a conflict-resolution or Synthesis patch that copies the VMAD. Those scripts are then attributed to the patch, not the script's mod. That is literally ruling 2." marth 2026-11-01: "both, toggle between". [Harbinger] iPapyrusOwnerFile (0 winning, 1 defining) shipped in f91836f, and every line names winner= and definer=.
+
+### APMF-B242 (SEV-4, OPEN, core/PapyrusCaller.cpp ambiguous placed ref, against 6791e1a) -- falls back to the reference's GetFile(0)
+Reviewer: "the ambiguous placed-ref fallback, GetFile(0) of the reference, names Skyrim.esm for a vanilla NPC whose base a mod scripted. With the defaults both are at 20, so the ranking is the same, but that mod's own priority row never applies." Fix needs RE of the bind policy's VMAD storage (104189) on all three runtimes.
+
+### APMF-B243 (SEV-5, OPEN, core/PapyrusCaller.cpp, against 6791e1a) -- g_calls atomic per native call, catch(...) does not catch an AV, stale APMF_API.h kEquipAuth_DenyScript comment (batch with the next ABI touch)
+Reviewer: "g_calls adds an atomic increment to every native call (B212), shared across VM threads. It is cheap but not free." "catch(...) does not catch an access violation." "Stale APMF_API.h comment: SEV-5. It is a byte-shared header, so batch it with the next ABI touch."
+
+### APMF-B244 (SEV-5, OPEN, core/PapyrusCaller.cpp refcount read, against f91836f) -- a reference at refcount 0 is not attributed
+Reviewer: "A reference whose refcount is 0 at the moment of the read is not attributed. It falls back to DirectCalls, which is the safe direction." "A refcount of 1023 plus one would carry into the handle flag bit. The engine's own increment has the same limit, so this is not new."
