@@ -1268,3 +1268,9 @@ Reviewer: "TargetPin credits Own on every engine selector pass that agrees with 
 
 ### APMF-B250 (SEV-4, OPEN, menu counters, against 1ad4120) -- Detection, CombatAction (when nothing is denied), Core and ActorValue still count no client Served or Own
 Author and reviewer: "no client Served or Own counter anywhere for kDetection, kCombatAction (when the claim denies nothing), kCore or kActorValue. They are not the same simple shape."
+
+### APMF-B251 (SEV-4, OPEN, town-panic facet beyond the spectator seat, against f229c0b, Opus tier-3 review of feat/apmf-spectator-holder) -- three reaction-chain branches BEFORE spectate are undecoded and unseated
+Reviewer: "AE 0x70B6F0 ... is an else-if ladder ... Before the spectate branch, three branches can fire for a holder that reads \"in combat\", and this seat does not touch them: 0x70AAD0 calls 0x67D0B0, a reaction call on the observer. 0x70AA00 and 0x70ADE0 call 0x6E2970, the combat-request helper. In the 0x70ADE0 case it passes the detected actor's CombatGroup, which looks like \"help an ally: join its group\". 0x70A930 leads to 0x70F410, 0x7A60B0 and 0x66D710, still undecoded." "decode 0x70A930, 0x70AAD0 and 0x70ADE0, or have the town field run positively show no other reaction (census aggr/alarm/fleeing staying false), before MFO's bSubstrateBlockedInTowns comes off." Carve-out (b): the next town field run exercises it.
+
+### APMF-B252 (SEV-5, OPEN, core/SpectatorGate.cpp, against f229c0b) -- the CombatManager step still runs after a refusal, and a stood substrate target counts the Engine Package hit twice
+Reviewer: "the CombatManager step (0x83E2A0) still runs after a refusal. It is the same as the ch.9 refusal since 10-12, and it is stated as hole (c)." "A substrate target that stands, and then also goes down the ch.9 path, counts the Engine Package hit twice. Counter cosmetics only."

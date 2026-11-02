@@ -5,6 +5,7 @@
 #include "core/ControlMap.h"
 #include "core/Log.h"
 #include "core/Sources.h"
+#include "channels/CombatSubstrate.h"   // ForWatchTarget (lock-free): the substrate target
 
 #include <intrin.h>   // _ReturnAddress
 #include <mutex>
@@ -67,8 +68,27 @@ extern "C" __declspec(dllimport) unsigned long __stdcall GetPrivateProfileIntA(
 // 0x7A6327 / 1.7.104 0x852517) so a field log proves the seat runs where the disassembly
 // says it does.
 //
+// THE SUBSTRATE TARGET (marth 2026-11-01, "Extend SpectatorGate"; field: every townsperson reacted
+// as if combat was occurring while a follower cast out of combat). The spectate predicate's "the
+// other IS in combat" is AE 0x6B6DF0: IsInCombat (slot 0xE3: Actor+0x160 controller with +0x43
+// clear) AND NOT the process ignoring-combat bit (AIProcess+0x139). A combat substrate holder
+// answers yes whenever the engine has reset that bit (every window, measured). So every high-
+// process actor that perceives the holder is handed a Spectator package watching it, and AddThreat
+// (AE 0x7ACA70) records the pair (holder, holder+0x104 currentCombatTarget = the anchor). The same
+// seat now also refuses InitiateSpectator(observer, target) when the TARGET is a HELD substrate
+// holder or the anchor (combatsubstrate::ForWatchTarget). A REAL holder (its real-combat trigger
+// fired) is watched like any fight. The deny is enforced FOR the substrate's claim: its client's
+// priority on the Package facet against the Engine's, live per call, the same compare as the ch.9
+// path (the anchor ranks as the claim of the holder it stands at, a dry run as the client
+// default). A held holder as the OBSERVER is never touched here: the predicate and
+// InitiateSpectator's own early out (AE 0x727181, slot 0xE3) refuse an observer that is in combat.
+// One line per (observer, target) pair per kPairLogMs. The counters are never capped.
+//
 // THREADING. The thunk runs wherever the engine runs the detection reaction (AI update
-// jobs, not necessarily the main thread). It reads only the lock-free RCU ControlMap
+// jobs, not necessarily the main thread. The dispatcher's own CombatManager step, AE 0x83E2A0,
+// takes CombatManager's lock at +0x18). The substrate target's reads are ANY THREAD: ForWatchTarget
+// is the substrate's lock-free slot table (the GetSubstrateState read), ClaimPriority / Priority
+// are the Sources registry's any-thread reads. It reads only the lock-free RCU ControlMap
 // snapshot (TryGetOwningClaimBasis), the lock-free Sources registry and its own atomics;
 // the per-actor transition memory takes one small mutex, only for a claimed actor (or to
 // erase a stale entry, pre-gated by a relaxed count).
@@ -90,6 +110,7 @@ namespace apmf::spectatorgate {
 
         std::atomic<bool> g_installed{ false };
         std::atomic<int>  g_mode{ kEnforce };
+        std::atomic<const char*> g_notEnforcing{ "before kDataLoaded (the seat installs there)" };
 
         // RULE C counters, printed by Heartbeat even at zero.
         std::atomic<std::uint64_t> g_anchor{ 0 };    // every slot-0xDC call, any actor
@@ -98,6 +119,11 @@ namespace apmf::spectatorgate {
         std::atomic<std::uint64_t> g_wouldDeny{ 0 }; // observe mode: would not have been forwarded
         std::atomic<std::uint64_t> g_stood{ 0 };     // the Engine's priority >= the claim's: forwarded
         std::atomic<std::uint64_t> g_lastBeatMs{ 0 };
+        // The substrate target (a HELD holder or the anchor watched): RULE C counters.
+        std::atomic<std::uint64_t> g_subCalls{ 0 };     // the target was a held holder or the anchor
+        std::atomic<std::uint64_t> g_subDenied{ 0 };    // not forwarded (enforce, the substrate's claim outranks)
+        std::atomic<std::uint64_t> g_subWouldDeny{ 0 }; // observe mode: would not have been forwarded
+        std::atomic<std::uint64_t> g_subStood{ 0 };     // the Engine's priority >= the claim's: forwarded (a HOLE)
 
         // RULE D: one line per (actor, claimed package, decision) transition.
         struct Last {
@@ -109,6 +135,24 @@ namespace apmf::spectatorgate {
         std::unordered_map<RE::FormID, Last> g_last;
         std::atomic<std::uint32_t>           g_remembered{ 0 };
         std::atomic<std::uint64_t>           g_lines{ 0 };
+
+        // The substrate target's lines: one per (observer, target) pair per kPairLogMs. LEAF lock (no engine call,
+        // no spdlog under it). Bounded: at kPairCap the memory is dropped (a pair may then log once more).
+        constexpr std::uint64_t                          kPairLogMs = 60000;
+        constexpr std::size_t                            kPairCap   = 4096;
+        std::mutex                                       g_pairMx;
+        std::unordered_map<std::uint64_t, std::uint64_t> g_pairLast;
+
+        bool PairDue(RE::FormID a_observer, RE::FormID a_target, std::uint64_t a_now) {
+            const std::uint64_t key = (static_cast<std::uint64_t>(a_observer) << 32) | a_target;
+            std::scoped_lock    lk(g_pairMx);
+            if (g_pairLast.size() >= kPairCap) g_pairLast.clear();
+            auto [it, inserted] = g_pairLast.try_emplace(key, a_now);
+            if (inserted) return true;
+            if (a_now - it->second < kPairLogMs) return false;
+            it->second = a_now;
+            return true;
+        }
 
         // The client priority the ch.9 claim is enforced with on the Package facet: the
         // offer's own client, or, for ch.19's internal offer, the winning travel claim's
@@ -169,9 +213,80 @@ namespace apmf::spectatorgate {
                          a_decision == 2 ? "does not outrank" : "outranks", a_enginePrio, kWhat[a_decision]);
         }
 
+        // The substrate target. True = DENY (the original must not run). ANY THREAD.
+        bool SubstrateTarget(RE::Actor* a_this, RE::Actor* a_target, apmf::combatsubstrate::WatchTarget a_kind,
+                             APMF_API::Handle a_claim, std::uintptr_t a_ret) {
+            g_subCalls.fetch_add(1, std::memory_order_relaxed);
+            apmf::sources::NoteHit(apmf::sources::kEngineSource, Facet::kPackage);
+            apmf::sources::SourceId c = apmf::sources::kNoSource;
+            const int  claimPrio  = apmf::sources::ClaimPriority(a_claim, Facet::kPackage, &c);
+            const int  enginePrio = apmf::sources::Priority(apmf::sources::kEngineSource, Facet::kPackage);
+            const bool outranks   = claimPrio > enginePrio;
+            const bool enforce    = g_mode.load(std::memory_order_relaxed) == kEnforce;
+            int decision;
+            if (!outranks) {
+                decision = 2;
+                g_subStood.fetch_add(1, std::memory_order_relaxed);
+                apmf::sources::NoteStood(apmf::sources::kEngineSource, Facet::kPackage);
+            } else if (enforce) {
+                decision = 0;
+                g_subDenied.fetch_add(1, std::memory_order_relaxed);
+                apmf::sources::NoteOverruled(apmf::sources::kEngineSource, Facet::kPackage);
+            } else {
+                decision = 1;
+                g_subWouldDeny.fetch_add(1, std::memory_order_relaxed);
+            }
+            try {
+                const RE::FormID oid = a_this->GetFormID();
+                const RE::FormID tid = a_target->GetFormID();
+                if (PairDue(oid, tid, apmf::clock::MonotonicMs())) {
+                    const auto prior = g_lines.fetch_add(1, std::memory_order_relaxed);
+                    if (prior == kLineCap)
+                        spdlog::warn("[spectator] SESSION LINE CAP ({}) REACHED -- further [spectator] lines are "
+                                     "suppressed. The heartbeat counters are not capped; do not read the silence as "
+                                     "'no Spectator calls'.",
+                                     kLineCap);
+                    if (prior < kLineCap) {
+                        const auto        base  = REL::Module::get().base();
+                        const char*       name  = a_this->GetName();
+                        const char*       tname = a_target->GetName();
+                        const char*       kind  = a_kind == apmf::combatsubstrate::WatchTarget::kAnchor
+                                                      ? "the substrate anchor"
+                                                      : "a HELD substrate holder";
+                        const std::string client = c != apmf::sources::kNoSource ? std::string(apmf::sources::Name(c))
+                                                                                 : std::string("the client default");
+                        static constexpr const char* kWhat[] = {
+                            "spectator of a held substrate refused: the Spectator package is not created",
+                            "spectator of a held substrate WOULD be refused (observe only, [PackageGate] "
+                            "iSpectatorSeat=1): forwarded, the engine installs its Spectator package",
+                            "spectator of a held substrate STANDS: forwarded, the engine installs its Spectator "
+                            "package (APMF_Sources.ini: the town-panic facet is OPEN for this pair)",
+                        };
+                        spdlog::log(decision == 0 ? spdlog::level::info : spdlog::level::warn,
+                                    "[spectator] 0x{} '{}' Engine InitiateSpectator watching 0x{} '{}' ({}, engine call "
+                                    "site RVA 0x{}). Substrate claim h={} ({}) priority {} {} Engine priority {} on the "
+                                    "Package facet -- {}. (one line per pair per {} s)",
+                                    Hex(oid), name ? name : "?", Hex(tid), tname ? tname : "?", kind,
+                                    Hex(a_ret >= base ? a_ret - base : a_ret, 1), a_claim, client, claimPrio,
+                                    outranks ? "outranks" : "does not outrank", enginePrio, kWhat[decision],
+                                    kPairLogMs / 1000);
+                    }
+                }
+            } catch (...) {
+            }
+            return decision == 0;
+        }
+
         struct InitiateSpectatorHook {
             static void thunk(RE::Actor* a_this, RE::Actor* a_target) {
                 g_anchor.fetch_add(1, std::memory_order_relaxed);
+                if (a_this && a_target) {   // the substrate target first: a held holder or the anchor is never watched
+                    APMF_API::Handle sh   = APMF_API::kInvalidHandle;
+                    const auto       kind = apmf::combatsubstrate::ForWatchTarget(a_target->GetFormID(), sh);
+                    if (kind != apmf::combatsubstrate::WatchTarget::kNone &&
+                        SubstrateTarget(a_this, a_target, kind, sh, reinterpret_cast<std::uintptr_t>(_ReturnAddress())))
+                        return;   // DENY: the original never runs, nothing is allocated
+                }
                 if (!a_this || ControlMap::Get().ControlledCount() == 0) return func(a_this, a_target);
 
                 const RE::FormID     id = a_this->GetFormID();
@@ -232,16 +347,20 @@ namespace apmf::spectatorgate {
             why = "[PackageGate] iSpectatorSeat is not 0, 1 or 2";
         }
         if (why) {
+            g_notEnforcing.store(why, std::memory_order_release);
             spdlog::warn("[spectator] Spectator seat NOT installed -- {}. The engine's Spectator package is NOT held "
-                         "off for actors with a ch.9 package claim (the known retreat hole, ClickUp 86e3m5feu).",
+                         "off for actors with a ch.9 package claim (the known retreat hole, ClickUp 86e3m5feu), nor for "
+                         "actors that watch a held combat substrate holder (the town-panic facet).",
                          why);
             return;
         }
 
         REL::Relocation<std::uintptr_t> vtChar{ RE::VTABLE_Character[0] };
         if (!apmf::allowance::SeatVerified(vtChar.address(), "SpectatorGate.Character.InitiateSpectator(0xDC)")) {
+            g_notEnforcing.store("the self-check refused the Character vtable", std::memory_order_release);
             spdlog::error("[spectator] Spectator seat NOT installed (the self-check refused the Character vtable). "
-                          "The engine's Spectator package is NOT held off for ch.9 package claims.");
+                          "The engine's Spectator package is NOT held off for ch.9 package claims, nor for watchers of a "
+                          "held combat substrate holder.");
             return;
         }
         g_mode.store(mode, std::memory_order_relaxed);
@@ -250,11 +369,23 @@ namespace apmf::spectatorgate {
                                  SKSE::stl::unrestricted_cast<std::uintptr_t>(&InitiateSpectatorHook::thunk),
                                  InitiateSpectatorHook::func.address());
         g_installed.store(true, std::memory_order_release);
+        g_notEnforcing.store(mode == kEnforce ? "" : "[PackageGate] iSpectatorSeat=1 (observe only)",
+                             std::memory_order_release);
         spdlog::info("[spectator] Spectator seat installed: Character::InitiateSpectator (slot 0x{}), mode {}. An "
                      "actor with a winning ch.9 package claim that outranks the Engine on the Package facet {} the "
-                     "engine's Spectator package.",
+                     "engine's Spectator package. An actor that would watch a HELD combat substrate holder or the anchor "
+                     "(the substrate's claim outranking the Engine there) is treated the same.",
                      Hex(kSlot, 2), mode == kEnforce ? "ENFORCE" : "OBSERVE ONLY",
-                     mode == kEnforce ? "does not get" : "is only logged for (nothing denied)");
+                     mode == kEnforce ? "does not get" : "is only logged for (nothing denied: observe only)");
+    }
+
+    bool Enforcing() {
+        return g_installed.load(std::memory_order_acquire) && g_mode.load(std::memory_order_relaxed) == kEnforce;
+    }
+
+    const char* NotEnforcingReason() {
+        const char* r = g_notEnforcing.load(std::memory_order_acquire);
+        return r ? r : "unknown";
     }
 
     void Heartbeat() {
@@ -262,17 +393,24 @@ namespace apmf::spectatorgate {
         const auto now = apmf::clock::MonotonicMs();
         if (now - g_lastBeatMs.load(std::memory_order_relaxed) < kHeartbeatMs) return;
         g_lastBeatMs.store(now, std::memory_order_relaxed);   // main-thread-only writer
-        spdlog::info("[spectator] H mode={} anchorCalls={} claimedCalls={} denied={} wouldDeny={} engineStood={}",
+        spdlog::info("[spectator] H mode={} anchorCalls={} claimedCalls={} denied={} wouldDeny={} engineStood={} "
+                     "substrateTargetCalls={} substrateDenied={} substrateWouldDeny={} substrateEngineStood={}",
                      g_mode.load(std::memory_order_relaxed) == kEnforce ? "enforce" : "observe",
                      g_anchor.load(std::memory_order_relaxed), g_claimed.load(std::memory_order_relaxed),
                      g_denied.load(std::memory_order_relaxed), g_wouldDeny.load(std::memory_order_relaxed),
-                     g_stood.load(std::memory_order_relaxed));
+                     g_stood.load(std::memory_order_relaxed), g_subCalls.load(std::memory_order_relaxed),
+                     g_subDenied.load(std::memory_order_relaxed), g_subWouldDeny.load(std::memory_order_relaxed),
+                     g_subStood.load(std::memory_order_relaxed));
     }
 
     void ResetAll() {
-        std::scoped_lock lk(g_mx);
-        g_last.clear();
-        g_remembered.store(0, std::memory_order_relaxed);
+        {
+            std::scoped_lock lk(g_mx);
+            g_last.clear();
+            g_remembered.store(0, std::memory_order_relaxed);
+        }
+        std::scoped_lock lk(g_pairMx);
+        g_pairLast.clear();
     }
 
 }

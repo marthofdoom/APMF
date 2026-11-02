@@ -10,6 +10,8 @@
 // claim's client outranks the Engine on the Package facet (APMF_Sources.ini), the
 // engine's Spectator package is not created and the claimed package keeps the facet.
 // The Spectator package is attributed to the Engine source on the Package facet.
+// Since 2026-11-01 the same seat also refuses a Spectator package whose TARGET is a HELD combat
+// substrate holder or the substrate anchor (the town-panic facet), ranked as the substrate's claim.
 // ============================================================================
 
 namespace apmf::spectatorgate {
@@ -18,6 +20,13 @@ namespace apmf::spectatorgate {
     // [PackageGate] iSpectatorSeat (0 = not installed, 1 = observe only, 2 = enforce,
     // default 2), SeatVerified() on the Character vtable.
     void Install();
+
+    // ANY THREAD. The seat is installed in ENFORCE mode, so it refuses a Spectator package that watches a HELD combat
+    // substrate holder or the anchor (when the substrate's claim outranks the Engine on the Package facet).
+    // channels/CombatSubstrate.cpp logs a known-hole line at each OPEN otherwise.
+    bool Enforcing();
+    // ANY THREAD, never null: why Enforcing() is false ("" when it is true).
+    const char* NotEnforcingReason();
 
     // ~30 s RULE C totals line (zeros included). Arbiter::OncePerFrame, MAIN thread.
     void Heartbeat();
