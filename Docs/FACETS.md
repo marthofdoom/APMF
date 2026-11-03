@@ -1439,7 +1439,7 @@ void DropGuard(GuardClaim& g) {
 
 #### Version, INI and field status
 
-ABI 21 (0.12.0). `kCastGuard_Bystanders` is ABI 32 (the release after 0.15.2), built and CI checked, not yet seen on a deck. No key of its own. It rides the cast gate and, for the ray, `bOwnLineOfSight` in `[Sightline]`. In use by MFO since 2.3.0.
+ABI 21 (0.12.0). `kCastGuard_Bystanders` is ABI 32 (0.16.0), built and CI checked, not yet seen on a deck. No key of its own. It rides the cast gate and, for the ray, `bOwnLineOfSight` in `[Sightline]`. In use by MFO since 2.3.0.
 
 **Check Your Understanding: ch.25**
 
@@ -3562,9 +3562,9 @@ The ABI is append-only. A client built against an older ABI keeps working agains
 | 29 | 0.15.0 | `GetClientFacetPriority`, `ClientFacet`, `kFacetPriorityUnknown` (struct `APMF_API_v29`) |
 | 30 | 0.15.0 | `kTravel_CrossCells`, a `TravelFlags` bit read through the existing `RequestEx` and `Repoint` (no struct, no slot) |
 | 31 | 0.15.2 | `GetClaimEndReason`, `ClaimEndReason` (struct `APMF_API_v31`) |
-| 32 | the release after 0.15.2 | `kCastGuard_Bystanders` (no slot, struct `APMF_API_v31`) |
+| 32 | 0.16.0 | `kCastGuard_Bystanders` (no slot, struct `APMF_API_v31`) |
 
-The last release is 0.15.2, ABI 31, interface struct `APMF_API_v31`. In 0.15.1 the interface struct was `APMF_API_v29`, since ABI 30 added a flag and no slot. Before that `APMF_API_v19` served ABI 19 to 21, and ABI 23 and 25 also added no slot.
+The last release is 0.16.0, ABI 32, interface struct `APMF_API_v31` (ABI 32 added a flag and no slot). In 0.15.1 the interface struct was `APMF_API_v29`, since ABI 30 added a flag and no slot. Before that `APMF_API_v19` served ABI 19 to 21, and ABI 23 and 25 also added no slot.
 
 ## Appendix C: refusal cheat sheet
 

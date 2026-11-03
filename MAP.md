@@ -238,8 +238,7 @@ client default).
 ABI v31 (claim end reason, 2026-10-27) adds `GetClaimEndReason(handle)` -> `combatentry::ClaimEndReason` (a throw
 returns `kClaimEnd_None`); the object is an `APMF_API_v31` (a static_assert pair pins the v29 prefix end);
 `MinReleaseForAbi(31)` = "0.15.2".
-ABI v32 (`kCastGuard_Bystanders`, 2026-11-02) adds no slot, and `MinReleaseForAbi(32)` = "the release after 0.15.2" (name it
-at the cut).
+ABI v32 (`kCastGuard_Bystanders`, 2026-11-02) adds no slot, and `MinReleaseForAbi(32)` = "0.16.0".
 The "client too new" null (`abiVersion > kABIVersion`) logs the running APMF version
 (`SKSE::PluginDeclaration::GetSingleton()`) and `MinReleaseForAbi(abi)` — a table that must
 be extended on every `kABIVersion` bump.

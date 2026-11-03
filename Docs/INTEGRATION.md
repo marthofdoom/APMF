@@ -235,7 +235,7 @@ MFO files every claim with a basis of 200.
 
 New in 0.13.1, not yet tested in game. The full reference is [ch.26 Equip preference](FACETS.md#ch26-equip-preference-kintent_equippreference). Since the same ABI every equip refusal (the ch.17 set, the hand block, the ch.15 refusal) follows the `Equip` priorities in `APMF_Sources.ini`.
 
-## What is new from ABI 22 to 31
+## What is new from ABI 22 to 32
 
 A client built against an older header keeps working. Each item below needs its ABI check before you use it. Everything here is also in [APMF_API-REFERENCE.md](APMF_API-REFERENCE.md) and [FACETS.md](FACETS.md), and the header wins over both.
 
@@ -251,6 +251,7 @@ A client built against an older header keeps working. Each item below needs its 
 | 29 | 0.15.0 | `GetClientFacetPriority(facet)` | `abiVersion >= 29` |
 | 30 | 0.15.0 | the `kTravel_CrossCells` bit on a travel claim to a reference. No new slot | `abiVersion >= 30` |
 | 31 | 0.15.2 | `GetClaimEndReason(handle)` says why Harbinger ended a ch.20 pin or ch.21 entry claim | `abiVersion >= 31` |
+| 32 | 0.16.0 | the `kCastGuard_Bystanders` bit on a ch.25 cast guard claim. No new slot | `abiVersion >= 32` |
 
 ### Place (ABI 28)
 
