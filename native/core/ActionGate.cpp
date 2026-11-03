@@ -4,6 +4,7 @@
 #include "core/Clock.h"
 #include "core/BehaviorTreeCatalog.h"
 #include "core/ControlMap.h"
+#include "core/CastGuard.h"      // ch.25 kCastGuard_Bystanders: HoldWeaponAttack at the attack leaves
 #include "core/ActionGate.h"
 #include "core/AiCastSeats.h"   // RangedGateProbeCounts (the [Probe] bRangedSelect heartbeat)
 #include "core/EquipSink.h"     // Categorize / CategoryNames (the probe mirrors the sink verdict)
@@ -671,6 +672,9 @@ namespace apmf::actiongate {
         // The combat substrate's leaf index (0..69 = apmf::cbt::kLeaves, 70..73 = kSearchLeaves), for
         // every leaf whose act() AND pop() are installed. Written at Install only (like g_category).
         std::unordered_map<std::uintptr_t, std::uint32_t>  g_leafIdx;
+        // ch.25 BYSTANDER HITS (kCastGuard_Bystanders): the weapon attack leaves (vtable -> castguard::kWeaponMelee
+        // and / or kWeaponRanged), for castguard::HoldWeaponAttack. Written at Install only, PAIRED leaves only.
+        std::unordered_map<std::uintptr_t, std::uint8_t>   g_weaponLeaf;
 
         // ForceFail's ORIGINAL act() + pop() -- the proven deny mechanism, as a PAIR
         // (see header). Both must resolve or the deny is refused at install.
@@ -1332,6 +1336,24 @@ namespace apmf::actiongate {
             if (const auto pit = g_pursuitIdx.find(vt); pit != g_pursuitIdx.end())
                 return LeashAct(a_this, a_control, orig, pit->second);
 
+            // ch.25 BYSTANDER HITS (kCastGuard_Bystanders): a guarded actor's weapon attack (bow, crossbow, melee
+            // swing, attack from cover) is held while a bystander is in its line of fire or swing arc. BEFORE the
+            // ch.7 category gate: AttackFromCover has no ch.7 category (leafCat 0) and must still be held. Same
+            // deny mechanism as ch.7 (the ForceFail act()/pop() PAIR, armed in t_pending for PopThunk); g_weaponLeaf
+            // holds PAIRED leaves only, so the node's own pop() is a thunk that sees the pending record.
+            if (!g_weaponLeaf.empty()) {
+                if (const auto wit = g_weaponLeaf.find(vt);
+                    wit != g_weaponLeaf.end() && apmf::ControlMap::Get().ControlledCount() != 0) {
+                    const RE::FormID wf = ResolveDeliberatingActor(a_control);
+                    if (const auto ff = g_forceFailAct.load(std::memory_order_relaxed);
+                        wf != 0 && ff && apmf::castguard::HoldWeaponAttack(wf, wit->second)) {
+                        t_pending = PendingPop{ a_this, a_control };
+                        reinterpret_cast<apmf::cbt::Act_t>(ff)(a_this, a_control);
+                        return a_control;   // do NOT call orig -- this IS the hold
+                    }
+                }
+            }
+
             if (leafCat == 0) return orig(a_this, a_control);   // never a denyable leaf -- skip everything below
 
             if (apmf::ControlMap::Get().ControlledCount() == 0)
@@ -1393,8 +1415,9 @@ namespace apmf::actiongate {
                     apmf::atkprobe::ActPre pre{};
                     apmf::atkprobe::BeforeAct(leaf, a_control, pre);
                     void* const ret = ActThunkBody(a_this, a_control);
-                    // A ForceFail deny (ch.7 claim or substrate holder) leaves its paired pop pending for
-                    // exactly this {node, control}; nothing else sets it, and the runner has not popped yet.
+                    // A ForceFail deny (a ch.7 claim, a substrate holder or a ch.25 bystander hold) leaves its
+                    // paired pop pending for exactly this {node, control}; nothing else sets it, and the runner
+                    // has not popped yet.
                     const bool denied = t_pending.node == a_this && t_pending.control == a_control;
                     apmf::atkprobe::AfterAct(pre, a_this, a_control, denied);
                     return ret;
@@ -1578,6 +1601,28 @@ namespace apmf::actiongate {
                 spdlog::info("[ch.7] '{}' has no leaf on this build's 70-leaf catalog -- not classified "
                              "(see ActionGate.cpp's file header).", wanted);
         }
+
+        // ch.25 kCastGuard_Bystanders: the weapon attack leaves the bystander hold covers (bow / crossbow =
+        // RangedAttack, melee = Attack, AttackLow, Bash, SpecialAttack, AttackFromCover = either (melee only while
+        // its target is within castguard::kMeleeMaxReach): the cover
+        // branch's leaf, held on the line OR the arc). Classified only if paired, like the ch.7 categories.
+        // AttackFromCover gets NO ch.7 category: the hold runs before ActThunkBody's leafCat gate.
+        using apmf::castguard::kWeaponMelee;
+        using apmf::castguard::kWeaponRanged;
+        for (const auto& [wanted, kind] : std::array<std::pair<const char*, std::uint8_t>, 6>{ {
+                 { "CombatBehaviorAttack", kWeaponMelee }, { "CombatBehaviorAttackLow", kWeaponMelee },
+                 { "CombatBehaviorBash", kWeaponMelee }, { "CombatBehaviorSpecialAttack", kWeaponMelee },
+                 { "CombatBehaviorRangedAttack", kWeaponRanged },
+                 { "CombatBehaviorAttackFromCover", static_cast<std::uint8_t>(kWeaponMelee | kWeaponRanged) } } }) {
+            for (std::size_t i = 0; i < apmf::cbt::kLeaves.size(); ++i) {
+                if (std::string_view(apmf::cbt::kLeaves[i].name) != wanted) continue;
+                REL::Relocation<std::uintptr_t> vt{ apmf::cbt::kLeaves[i].vtbl };
+                if (Paired(vt.address())) g_weaponLeaf[vt.address()] = kind;
+                break;
+            }
+        }
+        spdlog::info("[ch.25] {} of 6 weapon attack leaf(s) carry the bystander hold (kCastGuard_Bystanders).",
+                     g_weaponLeaf.size());
 
         // ch.8b: OR the Cast bit onto the four cast leaves (already Offense-classified
         // above). A kIntent_Cast claim then denies exactly these, no attack/ranged.

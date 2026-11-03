@@ -120,7 +120,7 @@ struct Heartbeat {
 | [`kIntent_CombatReentryDeny`](#ch22-combat-re-entry-deny-kintent_combatreentrydeny) | 22 | Combat re-entry deny | Keep the actor out of combat for a while | 15 | Field-proven (in use by MFO, run 2026-09-28) |
 | [`kIntent_PursuitLeash`](#ch23-pursuit-leash-kintent_pursuitleash) | 23 | Pursuit leash | Stop the actor chasing too far from an anchor | 16 | Field-proven (in use by MFO) |
 | [`kIntent_CombatApproach`](#ch24-combat-approach-kintent_combatapproach) | 24 | Combat approach | Walk toward an actor while fighting | 19 | Field-proven (in use by MFO) |
-| [`kIntent_CastGuard`](#ch25-cast-guard-kintent_castguard) | 25 | Cast guard | Hold attack spells through friends, bound channels | 21 | Field-proven (in use by MFO) |
+| [`kIntent_CastGuard`](#ch25-cast-guard-kintent_castguard) | 25 | Cast guard | Hold attack spells through friends, hits on bystanders (ABI 32), bound channels | 21 | Field-proven (in use by MFO) |
 | [`kIntent_EquipPreference`](#ch26-equip-preference-kintent_equippreference) | 26 | Equip preference | Lift a preferred weapon's combat score so the AI picks it | 22 | Built, not yet tested in game |
 | [`kIntent_CombatSubstrate`](#combat-substrate-kintent_combatsubstrate) | 27 | Combat substrate | Combat as a substrate so an out-of-combat cast is animated | 23 | Field tested on LoreRim in 0.15.1 for out of combat casts, on by default |
 | [`kIntent_Place`](#place-kintent_place) | 28 | Place | Put an actor, loaded or not, beside a reference or at a point in an interior cell, once | 28 | Built, not yet tested in game |
@@ -1352,11 +1352,20 @@ Handle h = g_apmf->RequestEx(actor, kIntent_CastGuard, kBasis, &p);
 | `kCastGuard_LineOfFire` | 1 | hold an offensive cast while a friend is in the way |
 | `kCastGuard_ChannelRight` | 2 | refuse the AI's own concentration cast on the right hand |
 | `kCastGuard_ChannelLeft` | 4 | refuse the AI's own concentration cast on the left hand |
-| `kCastGuard_All` | 7 | all three |
+| `kCastGuard_Bystanders` | 8 | ABI 32. Hold a weapon attack or a Self area spell that would hit a bystander |
+| `kCastGuard_All` | 15 | all four (7 before ABI 32) |
 
 #### What Harbinger enforces
 
 *Line of fire.* An offensive cast (any effect with a hostile magic effect, not Self delivery, whether spell, scroll or staff) is held while a friendly stands in its line of fire. Friendly means any actor not hostile to the caster (the engine's own `IsHostileToActor`, asked from that actor). For a caster that is a player teammate, the player and every teammate count too.
+
+*Bystanders (ABI 32).* Hitting a bystander is a crime, so the actor does not do it. A bystander is an actor that is not hostile to the caster, is not the player, is not a player teammate, and is not commanded by the caster, the player or a teammate. The player and the party are left out on purpose: hitting them is not a crime, and holding for them would freeze a follower in every fight. The aim is the actor's own combat target. Three holds:
+
+- A bow or crossbow shot (the `RangedAttack` and `AttackFromCover` behaviour tree leaves) is held while a bystander in the open is within 80 units of the line to the target.
+- A melee swing (`Attack`, `AttackLow`, `Bash`, `SpecialAttack`, `AttackFromCover`) is held while a bystander in the open is no farther from the actor than the target plus 48 units and within 35 degrees of the direction to it.
+- A Self delivered spell with a hostile area effect, or a cloak whose spell is hostile with an area, is held while a bystander is within that area plus 64 units of the caster.
+
+A weapon is held only on a fresh reading (250 ms or newer). An unknown reading lets the attack through and is counted in the heartbeat. The hold is taken when the leaf starts, so a draw already in progress is not stopped.
 
 > **Key Concept 7 (in the line of fire)** A friend is in the line of fire when it is within 80 units of the line from the caster to the aim and not read OCCLUDED from the caster by Harbinger's own ray (a wall between them means the bolt cannot reach it, and an unknown reading still counts the friend), or when it is within the spell's blast area plus 64 units of the aim.
 
@@ -1378,11 +1387,11 @@ Bounded exactly like a cast claim. It dies at the window unless a `Repoint` rene
 
 #### Priority and conflicts
 
-`Cast` sources facet. The source a guard overrules is the engine's own AI. A refusal stands only while the guard claim's client outranks `Engine` there. Defaults are client 50 against engine 20. A would-be refusal that does not stand is logged "would refuse, ALLOWED". Among guard claims on one actor, the highest basis wins, a tie keeps the earliest, and **the winner's bits apply alone**. Bits are not merged across claims.
+`Cast` sources facet for spells, `CombatAction` for the weapon holds of `kCastGuard_Bystanders`. The source a guard overrules is the engine's own AI. A refusal stands only while the guard claim's client outranks `Engine` there. Defaults are client 50 against engine 20. A would-be refusal that does not stand is logged "would refuse, ALLOWED". Among guard claims on one actor, the highest basis wins, a tie keeps the earliest, and **the winner's bits apply alone**. Bits are not merged across claims.
 
 #### Refusals
 
-At the call (`kInvalidHandle`, logged `[apmf][cast-guard] claim refused`): an APMF older than ABI 21 ("no channel serves intent 25"), the `CheckCast` gate not installed, no param, no guard bit or an unknown bit, a negative or non-finite `fval`, the player as the actor, and `kCastGuard_LineOfFire` while the measurement is not armed. Nothing is refused at the drain.
+At the call (`kInvalidHandle`, logged `[apmf][cast-guard] claim refused`): an APMF older than ABI 21 ("no channel serves intent 25"), the `CheckCast` gate not installed, no param, no guard bit or an unknown bit, a negative or non-finite `fval`, the player as the actor, and `kCastGuard_LineOfFire` or `kCastGuard_Bystanders` while the measurement is not armed. An APMF older than ABI 32 refuses `kCastGuard_Bystanders` as an unknown bit, so check `abiVersion >= 32` before you set it. Nothing is refused at the drain.
 
 #### Worked example
 
@@ -1400,6 +1409,7 @@ void KeepGuard(RE::FormID follower, bool boundConcentration, GuardClaim& g) {
 
     APMF_Param p{};
     p.ival = kCastGuard_LineOfFire;
+    if (g_apmf->abiVersion >= 32) p.ival |= kCastGuard_Bystanders;   // an older APMF refuses the bit
     if (boundConcentration) p.ival |= kCastGuard_ChannelRight | kCastGuard_ChannelLeft;
     p.fval = 6.0f;                                              // seconds. Repoint renews it
 
@@ -1429,7 +1439,7 @@ void DropGuard(GuardClaim& g) {
 
 #### Version, INI and field status
 
-ABI 21 (0.12.0). No key of its own. It rides the cast gate and, for the ray, `bOwnLineOfSight` in `[Sightline]`. In use by MFO since 2.3.0.
+ABI 21 (0.12.0). `kCastGuard_Bystanders` is ABI 32 (the release after 0.15.2), built and CI checked, not yet seen on a deck. No key of its own. It rides the cast gate and, for the ray, `bOwnLineOfSight` in `[Sightline]`. In use by MFO since 2.3.0.
 
 **Check Your Understanding: ch.25**
 
@@ -3552,6 +3562,7 @@ The ABI is append-only. A client built against an older ABI keeps working agains
 | 29 | 0.15.0 | `GetClientFacetPriority`, `ClientFacet`, `kFacetPriorityUnknown` (struct `APMF_API_v29`) |
 | 30 | 0.15.0 | `kTravel_CrossCells`, a `TravelFlags` bit read through the existing `RequestEx` and `Repoint` (no struct, no slot) |
 | 31 | 0.15.2 | `GetClaimEndReason`, `ClaimEndReason` (struct `APMF_API_v31`) |
+| 32 | the release after 0.15.2 | `kCastGuard_Bystanders` (no slot, struct `APMF_API_v31`) |
 
 The last release is 0.15.2, ABI 31, interface struct `APMF_API_v31`. In 0.15.1 the interface struct was `APMF_API_v29`, since ABI 30 added a flag and no slot. Before that `APMF_API_v19` served ABI 19 to 21, and ABI 23 and 25 also added no slot.
 
@@ -3573,7 +3584,7 @@ A refusal at the call returns `kInvalidHandle` and logs the reason in `APMF.log`
 | `kIntent_CombatReentryDeny` | seat not installed, `fval` negative or NaN, the player as the actor | |
 | `kIntent_PursuitLeash` | leash not armed, `target` 0 or the actor itself, `fval` not positive, the player as the actor | the anchor is not a loaded Actor |
 | `kIntent_CombatApproach` | seats not installed, `target` 0 or the actor itself, `fval` not positive and finite, the player as the actor | the target is not a loaded reference (ends as `TargetLost`) |
-| `kIntent_CastGuard` | gate not installed, no param, no bit or an unknown bit, bad `fval`, the player as the actor, line of fire with the measurement not armed | |
+| `kIntent_CastGuard` | gate not installed, no param, no bit or an unknown bit (`kCastGuard_Bystanders` on an APMF older than ABI 32), bad `fval`, the player as the actor, line of fire or bystanders with the measurement not armed | |
 | `kIntent_CombatSubstrate` | not installed (`bCombatSubstrate=0`, the ch.22 target site, the 95-node pair, the anchor records, a self-check row), the player as the actor, `fval` negative or NaN | not out of combat, unloaded, low process, in a scene or dialogue, the party in combat, Engine outranking the client on CombatAction / Combat / Equip / Detection, no free slot, the floors not published, the engine refusing the entry (the claim is released) |
 | `kIntent_Place` | not installed (VR, an unsupported runtime, the row refused), `Request` (no param), actor 0, the player, `form` 0, a non-finite `pos` or yaw, an unknown flag bit, 128 queued | it is a one-shot, not a claim: `GetPlaceState` reads `Refused` with a `PlaceWhy` (destination gone or not a reference / interior cell, actor loaded or the player present under their flags, another client's ch.19 / ch.1 owner) or `Failed` |
 

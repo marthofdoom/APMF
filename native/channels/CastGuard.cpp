@@ -21,6 +21,7 @@ namespace {
         if (b & APMF_API::kCastGuard_LineOfFire) s += "line-of-fire ";
         if (b & APMF_API::kCastGuard_ChannelRight) s += "channel-bound-R ";
         if (b & APMF_API::kCastGuard_ChannelLeft) s += "channel-bound-L ";
+        if (b & APMF_API::kCastGuard_Bystanders) s += "bystanders ";
         if (s.empty()) s = "none ";
         s.pop_back();
         return s;

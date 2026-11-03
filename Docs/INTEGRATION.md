@@ -166,6 +166,8 @@ void KeepFriendlyFireHold(RE::FormID follower, TrackedClaim& guard, Heartbeat& b
 
     APMF_API::APMF_Param p{};
     p.ival = APMF_API::kCastGuard_LineOfFire;
+    if (MyMod::Has(32))                         // ABI 32: an older APMF refuses the bit, so ask first
+        p.ival |= APMF_API::kCastGuard_Bystanders;   // weapon attacks and Self area spells, bystanders only
     p.fval = 6.0f;                              // the window in seconds
 
     switch (guard.Poll()) {
