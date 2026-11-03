@@ -157,7 +157,13 @@ ended a ch.20 / ch.21 claim; any thread, a copy under a leaf mutex** (Docs/APMF_
 The records live in channels/CombatEntry.cpp (`RecordClaimEnd` / `ClaimEndReason`, `g_endMx`, 256 kept, cleared by
 `combatentry::ResetAll`), written where the release is queued: ch.21 `EndClaim`, ch.20 `Poll`'s end and `EndHeld`. It
 took v31, so the per-item equip deny (86e3t8w23) moves to v32. The header is 2770 lines after v31 (over the 2500
-backstop, reported again, not split inside the task). The header
+backstop, reported again, not split inside the task).
+**ABI v32 (2026-11-02, `fix/castguard-town-friendly-hits`) adds `kCastGuard_Bystanders` (CastGuardFlags bit 3,
+`kCastGuard_All` 0x7 -> 0xF) and NO slot: the served object stays `APMF_API_v31`, `abiVersion` reports 32.** The bump is
+needed: an APMF < v32 REFUSES a guard claim carrying an unknown bit, so a client must see `abiVersion >= 32` before it
+sets bit 3 (MFO requests its minimum ABI, so the bump does not null an older client). It took v32, so the per-item
+equip deny (86e3t8w23) moves to v33. The header is 2794 lines after v32 (over the 2500 backstop, reported again, not
+split inside the task). The header
 is at 2520 lines after v26 (OVER the 2500 backstop; reported, not split inside the task) and `core/ControlMap.cpp`
 at 2499: the next change to either plans a split first.
 To stay under 2500 lines the v24 change first moved three long-form blocks (v18 own ray,
@@ -232,6 +238,8 @@ client default).
 ABI v31 (claim end reason, 2026-10-27) adds `GetClaimEndReason(handle)` -> `combatentry::ClaimEndReason` (a throw
 returns `kClaimEnd_None`); the object is an `APMF_API_v31` (a static_assert pair pins the v29 prefix end);
 `MinReleaseForAbi(31)` = "0.15.2".
+ABI v32 (`kCastGuard_Bystanders`, 2026-11-02) adds no slot, and `MinReleaseForAbi(32)` = "the release after 0.15.2" (name it
+at the cut).
 The "client too new" null (`abiVersion > kABIVersion`) logs the running APMF version
 (`SKSE::PluginDeclaration::GetSingleton()`) and `MinReleaseForAbi(abi)` — a table that must
 be extended on every `kABIVersion` bump.
@@ -1278,7 +1286,7 @@ resolved and BEFORE the H1 positive override, so claim-driven offensive casts ar
 The channel (`channels/CastGuard.cpp`, ch.25) only logs Engage / OnOwnerChanged / Release. The claim is bounded:
 `ControlMap::ApplyRequest` grants `castguard::TtlMs(param.fval)` (seconds; 0 = `kCastDefaultTtlMs`, clamp
 `kCastMaxTtlMs`) and the generic Repoint renewal keeps it; `EnqueueRequest` refuses by `castguard::RefuseReason`
-(CheckCast gate not installed, no / unknown / zero bits, bad fval, the player, LineOfFire while unarmed).
+(CheckCast gate not installed, no / unknown / zero bits, bad fval, the player, LineOfFire or Bystanders while unarmed).
 The two ControlMap readers `TryGetCastGuard` / `CastGuardActors` are DEFINED in `core/CastGuard.cpp` (ControlMap.cpp
 is near its size cap): best LIVE claim by basis, tie earliest, bits masked to `kCastGuard_All`.
 THE MEASUREMENT: `castguard::Pump` (Arbiter::OncePerFrame, after `sightline::Pump`, main thread) refreshes the seats'
@@ -1295,15 +1303,28 @@ fresh BLOCKED reading. The channel bound refuses a concentration `SpellItem` on 
 `allowance::CastClaimNamesForHand` admits it. Every would-be refusal goes through `Decide`: Engine on the Cast facet
 gets a hit and an overruled (refusal stands: the guard's client priority > Engine's) or a stood (allowed, logged).
 Logs: `[ch.25] ... REFUSED / would refuse, ALLOWED ...` (per actor, spell, reason, 1.5 s), a 30 s `[ch.25] HEARTBEAT`.
-TOWN FRIENDLY HITS (2026-11-02, marth's crime ruling), same `kCastGuard_LineOfFire` bit, NO new hook or seat:
-(a) `castguard::HoldWeaponAttack` is called from `core/ActionGate.cpp` `ActThunkBody` (the ch.7 act() thunk; `g_weaponLeaf`
-filled in `Install`: RangedAttack = ranged, Attack / AttackLow / Bash / SpecialAttack = melee) and denies the leaf with the
-SAME ForceFail act()/pop() pair; ranged holds on the line friend, melee on the line friend OR a friend in the swing arc
-(`kMeleeReach` 200u, `kMeleeConeCos` 0.5 toward the aim); FRESH readings only (an unknown reading never freezes swings).
-(b) a Self-delivered hostile area spell or cloak (`SelfAoeArea`, cloak = `EffectArchetypes::kCloak` + its associated spell)
-is held at 0x0A (fresh) / 0x06 (unknown holds) while a friend is within area + `kBlastPad` of the CASTER. Runes are
-TargetLocation spells, already `Offensive()` and covered by the blast test at the aim. The slot gained `selfAndMelee` +
-`meleeFriend`; `Measure` now publishes with no aim (aim 0) so the Self test works. Ground / Flying attack leaves are not held.
+BYSTANDER HITS (`kCastGuard_Bystanders`, bit 3, ABI v32, 2026-11-02, marth's crime ruling + "Bystanders only" + "New flag
+bit"). Its OWN bit: `kCastGuard_LineOfFire` keeps exactly its released meaning (offensive non-Self spells, the friend set
+above). NO new hook or seat. A BYSTANDER (`Bystander`, `core/CastGuard.cpp:318`) is not hostile to the caster, not the player,
+not a teammate, not commanded by the caster / player / a teammate (`GetCommandingActor`, as `channels/CombatEntry.cpp`
+`ActivelyHostile` reads it). `Measure` (`:335`) takes the claim's bits: the LineOfFire part is the released code path
+(spell aim, `Friendly`), the bystander part runs only with bit 3 and aims at the actor's OWN `currentCombatTarget`
+(never a cast claim's target). The slot gained `selfArea` (nearest bystander to the caster), `weapon` (weapon aim +
+the nearest exposed bystander within `kLinePad` of the line to it) and `meleeFriend` (the nearest exposed bystander no
+farther than the target + `kMeleeReachPad` 48u and within `kMeleeConeCos` 0.819 = 35 degrees of the direction to it).
+(a) `castguard::HoldWeaponAttack` (`:751`) is called from `core/ActionGate.cpp` `ActThunkBody` (`:1344`), BEFORE the
+`leafCat == 0` early return so `AttackFromCover` (no ch.7 category) is covered. `g_weaponLeaf` (filled at `:1611`,
+PAIRED leaves only): RangedAttack = ranged (line), Attack / AttackLow / Bash / SpecialAttack = melee (arc only, a swing
+does not travel), AttackFromCover = both. Denied with the SAME ForceFail act()/pop() pair (t_pending, PopThunk). FRESH
+readings only: an unknown one allows the attack and counts it (heartbeat "weapon attack(s) allowed, reading unknown").
+Attributed on the CombatAction facet (`Decide`'s facet argument, `:472`). Ground / Flying / Perch attack leaves are
+not held. (b) a Self-delivered hostile area spell or cloak (`SelfAoeArea`, cloak = `EffectArchetypes::kCloak` + its
+associated spell) is held at 0x0A (fresh) / 0x06 (unknown holds) while a bystander is within area + `kBlastPad` of the
+CASTER, on the Cast facet. Runes are TargetLocation spells, so they are LineOfFire items (the blast test at the aim).
+`RefuseReason` (`:554`) refuses an unknown bit (`kCastGuard_All` 0xF) and bit 3 while the measurement is unarmed.
+STATED GAPS (proved in the field via the `[ch.25] ... Self area` and `attack leaf` log lines, not by this code): the
+hold is at the leaf's act() only, so a draw already in progress (the leaf's update(), slot 0x04, has no ch.25 seat)
+is not stopped mid-draw. The cloak / rune area figures (associated spell EFIT area x 64/3) are not field-verified.
 Evidence that 0x0A covers the RELEASE: `ActorMagicCaster` slot 3 `RequestCastImpl` and slot 6 `StartCastImpl` both
 `call [vt+0x50]` on 1.6.1170 (`0x5B0840` / `0x5B0A90`), 1.5.97 (`0x541A70` / `0x541CB0`) and 1.7.104 (`0x5BF370` /
 `0x5BF5C0`); on NO, slot 6 runs the cannot-cast handler (AE `0x5B1C20`), which interrupts.

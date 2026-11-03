@@ -126,7 +126,7 @@ a DENIED category is unequipped by the enforce pass. The header comments that st
 stale until the paired MFO header change.
 
 <a id="abi-history"></a>
-## ABI v10 to v31: what each version added
+## ABI v10 to v32: what each version added
 
 Moved verbatim from `native/APMF_API.h` (line 96 at 9d01cdf). The header keeps a pointer to this anchor.
 
@@ -277,6 +277,15 @@ no APMF_Param field, no change to any existing slot. A client gates on abiVersio
 NUMBERING NOTE: v31 had been named for the ch.17 per-item equip deny (ClickUp 86e3t8w23). The claim end reason took
 v31 (MFO needs it to give up a target its follower cannot reach), so the per-item equip deny moves to v32.
 Docs/APMF_API-REFERENCE.md#abi-v31-claim-end-reason.
+ABI v32 (2026-11-02, the ch.25 bystander hold, marth's crime ruling "If the follower will be caught committing a crime,
+they simply do not", then "Bystanders only" and "New flag bit"): kCastGuard_Bystanders (CastGuardFlags bit 3,
+kCastGuard_All 0x7 to 0xF). A guard claim with it holds a weapon attack (the ranged, melee and attack from cover
+behaviour tree leaves, aimed at the actor's own combat target) and a Self delivered hostile area spell or cloak while
+it would hit a BYSTANDER: not hostile, not the player, not a teammate, not commanded by the caster, the player or a
+teammate. kCastGuard_LineOfFire keeps its ABI v21 meaning. No slot (the interface stays APMF_API_v31), no APMF_Param
+field, no new struct. A client gates on abiVersion >= 32: an older APMF REFUSES the claim for the unknown bit.
+NUMBERING NOTE: v32 had been named for the ch.17 per-item equip deny (ClickUp 86e3t8w23). The bystander hold took
+v32, so the per-item equip deny moves to v33.
 ```
 
 <a id="intent-18"></a>
