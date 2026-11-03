@@ -7,6 +7,9 @@ by module; grep to a symbol, read a narrow window. Authoritative companions:
 (per-channel source/deny/promote/verdict), `Docs/ARCHITECTURE.md`,
 `Docs/INVARIANTS.md`.
 
+The DLL's Windows VERSIONINFO resource is `native/version.rc.in`, expanded by `configure_file` in
+`native/CMakeLists.txt` from the `project()` VERSION (no manual edit on a version bump).
+
 **APMF is the GATEKEEPER** (marth 2026-09-02): once it owns a channel on an actor,
 nothing else reaches that facet except through APMF. Each channel BLOCKS the
 foreign input at its source so nothing competes; a re-assert loop is a FAILED
