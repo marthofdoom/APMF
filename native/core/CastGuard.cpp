@@ -126,6 +126,7 @@ namespace apmf::castguard {
             RE::FormID    weaponAim   = 0;       // the combat target a weapon is swung / shot at (0 = none)
             RE::FormID    weaponLine  = 0;       // a bystander within kLinePad of the line to weaponAim
             RE::FormID    meleeFriend = 0;       // a bystander inside the melee swing arc toward weaponAim
+            bool          targetNear  = false;   // weaponAim is within kMeleeMaxReach (AttackFromCover's melee test)
         };
 
         constexpr RE::FormID KeyCaster(std::uint64_t k) { return static_cast<RE::FormID>(k >> 32); }
@@ -145,7 +146,7 @@ namespace apmf::castguard {
             s.key.store((static_cast<std::uint64_t>(a_caster) << 32) | a_l.aim, std::memory_order_relaxed);
             s.friends.store((static_cast<std::uint64_t>(a_l.lineFriend) << 32) | a_l.blastFriend,
                             std::memory_order_relaxed);
-            s.word.store((static_cast<std::uint64_t>(a_l.lineBlocked ? 1u : 0u) << 32) |
+            s.word.store((static_cast<std::uint64_t>((a_l.lineBlocked ? 1u : 0u) | (a_l.targetNear ? 2u : 0u)) << 32) |
                              std::bit_cast<std::uint32_t>(a_l.blastDist),
                          std::memory_order_relaxed);
             s.measuredMs.store(a_l.measuredMs, std::memory_order_relaxed);
@@ -190,7 +191,8 @@ namespace apmf::castguard {
                     l.aim         = static_cast<RE::FormID>(k & 0xFFFFFFFFu);
                     l.lineFriend  = static_cast<RE::FormID>(f >> 32);
                     l.blastFriend = static_cast<RE::FormID>(f & 0xFFFFFFFFu);
-                    l.lineBlocked = (w >> 32) != 0;
+                    l.lineBlocked = ((w >> 32) & 1u) != 0;
+                    l.targetNear  = ((w >> 32) & 2u) != 0;
                     l.blastDist   = std::bit_cast<float>(static_cast<std::uint32_t>(w & 0xFFFFFFFFu));
                     l.measuredMs  = m;
                     l.selfFriend  = static_cast<RE::FormID>(sm >> 32);
@@ -317,6 +319,12 @@ namespace apmf::castguard {
         // as channels/CombatEntry.cpp ActivelyHostile reads it), and not hostile to the caster.
         bool Bystander(RE::Actor* a_caster, RE::Actor* a_other, RE::PlayerCharacter* a_player) {
             if (a_other == a_player || a_other->IsPlayerTeammate()) return false;
+            // A creature the PLAYER owns (a bought horse: its reference's ExtraOwnership names the player's
+            // base NPC, 0x7, as SetActorOwner(PlayerRef.GetActorBase()) writes it) is the party's, not a
+            // bystander. TESObjectREFR::extraList + GetByType (an inline walk under the list's read lock).
+            if (const auto* own = a_other->extraList.GetByType<RE::ExtraOwnership>();
+                own && own->owner && own->owner->GetFormID() == 0x7)
+                return false;
             const auto  cmdp = a_other->GetCommandingActor();
             const auto* cmd  = cmdp.get();
             if (cmd && (cmd == a_caster || cmd == a_player || cmd->IsPlayerTeammate())) return false;
@@ -375,13 +383,16 @@ namespace apmf::castguard {
             const RE::NiPoint3 cpos = caster->GetPosition();
             const RE::NiPoint3 tpos = haveAim ? aim->GetPosition() : cpos;
             const RE::NiPoint3 wpos = wAim ? wAim->GetPosition() : cpos;
-            // The melee swing arc: no farther than the target + kMeleeReachPad, within the cone of
+            // The melee swing arc: no farther than min(target distance, kMeleeMaxReach) + kMeleeReachPad (the
+            // Attack leaf's act() runs at end-point pick, while the target can still be far away), within the cone of
             // kMeleeConeCos around the ground-plane direction caster -> weapon target.
             RE::NiPoint3 dir{ wpos.x - cpos.x, wpos.y - cpos.y, 0.0f };
             const float  dirLen  = std::sqrt(dir.x * dir.x + dir.y * dir.y);
             const bool   haveDir = wAim && dirLen > 1.0f;
             if (haveDir) { dir.x /= dirLen; dir.y /= dirLen; }
-            const float  reach  = wAim ? cpos.GetDistance(wpos) + kMeleeReachPad : 0.0f;
+            const float  wDist  = wAim ? cpos.GetDistance(wpos) : 0.0f;
+            l.targetNear        = wAim && wDist <= kMeleeMaxReach;
+            const float  reach  = wAim ? std::min(wDist, kMeleeMaxReach) + kMeleeReachPad : 0.0f;
             auto* const  ws     = caster->GetWorldspace();
             auto* const  cell   = caster->GetParentCell();
             auto* const  player = RE::PlayerCharacter::GetSingleton();
@@ -762,7 +773,9 @@ namespace apmf::castguard {
         }
         if (l.weaponAim == 0) return false;   // no combat target: nothing to swing or shoot at
         const bool line = (a_kind & kWeaponRanged) != 0 && l.weaponLine != 0;
-        const bool arc  = !line && (a_kind & kWeaponMelee) != 0 && l.meleeFriend != 0;
+        // AttackFromCover (both kinds) is a melee swing only while its target is within kMeleeMaxReach.
+        const bool meleeOk = (a_kind & kWeaponMelee) != 0 && ((a_kind & kWeaponRanged) == 0 || l.targetNear);
+        const bool arc     = !line && meleeOk && l.meleeFriend != 0;
         if (!line && !arc) return false;
         const bool stands = Decide(
             h, a_fid, nullptr, nullptr, "attack leaf (ch.7 act())",

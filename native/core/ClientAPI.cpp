@@ -475,7 +475,8 @@ namespace {
     // slot, like v13: the object stays an APMF_API_v29 and `abiVersion` reports 30.
 
     // ABI v31 (the claim end reason) appends ONE slot to the v29 prefix (v30 added none), so the object is now an
-    // APMF_API_v31 and `abiVersion` reports 31. Same two-form proof.
+    // APMF_API_v31 and `abiVersion` reported 31. ABI v32 (kCastGuard_Bystanders, a CastGuardFlags bit) adds NO
+    // slot, like v30: the object stays an APMF_API_v31 and `abiVersion` reports 32. Same two-form proof.
     static_assert(offsetof(APMF_API::APMF_API_v31, GetClaimEndReason) == sizeof(APMF_API::APMF_API_v29),
                   "APMF_API_v31's slot must start right after the v29 prefix");
     static_assert(sizeof(APMF_API::APMF_API_v31) == sizeof(APMF_API::APMF_API_v29) + sizeof(void*),

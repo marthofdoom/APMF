@@ -1603,7 +1603,8 @@ namespace apmf::actiongate {
         }
 
         // ch.25 kCastGuard_Bystanders: the weapon attack leaves the bystander hold covers (bow / crossbow =
-        // RangedAttack, melee = Attack, AttackLow, Bash, SpecialAttack, AttackFromCover = either: the cover
+        // RangedAttack, melee = Attack, AttackLow, Bash, SpecialAttack, AttackFromCover = either (melee only while
+        // its target is within castguard::kMeleeMaxReach): the cover
         // branch's leaf, held on the line OR the arc). Classified only if paired, like the ch.7 categories.
         // AttackFromCover gets NO ch.7 category: the hold runs before ActThunkBody's leafCat gate.
         using apmf::castguard::kWeaponMelee;

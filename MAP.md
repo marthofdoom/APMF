@@ -1305,23 +1305,25 @@ gets a hit and an overruled (refusal stands: the guard's client priority > Engin
 Logs: `[ch.25] ... REFUSED / would refuse, ALLOWED ...` (per actor, spell, reason, 1.5 s), a 30 s `[ch.25] HEARTBEAT`.
 BYSTANDER HITS (`kCastGuard_Bystanders`, bit 3, ABI v32, 2026-11-02, marth's crime ruling + "Bystanders only" + "New flag
 bit"). Its OWN bit: `kCastGuard_LineOfFire` keeps exactly its released meaning (offensive non-Self spells, the friend set
-above). NO new hook or seat. A BYSTANDER (`Bystander`, `core/CastGuard.cpp:318`) is not hostile to the caster, not the player,
+above). NO new hook or seat. A BYSTANDER (`Bystander`, `core/CastGuard.cpp:320`) is not hostile to the caster, not the player,
 not a teammate, not commanded by the caster / player / a teammate (`GetCommandingActor`, as `channels/CombatEntry.cpp`
-`ActivelyHostile` reads it). `Measure` (`:335`) takes the claim's bits: the LineOfFire part is the released code path
+`ActivelyHostile` reads it). `Measure` (`:343`) takes the claim's bits: the LineOfFire part is the released code path
 (spell aim, `Friendly`), the bystander part runs only with bit 3 and aims at the actor's OWN `currentCombatTarget`
 (never a cast claim's target). The slot gained `selfArea` (nearest bystander to the caster), `weapon` (weapon aim +
 the nearest exposed bystander within `kLinePad` of the line to it) and `meleeFriend` (the nearest exposed bystander no
-farther than the target + `kMeleeReachPad` 48u and within `kMeleeConeCos` 0.819 = 35 degrees of the direction to it).
-(a) `castguard::HoldWeaponAttack` (`:751`) is called from `core/ActionGate.cpp` `ActThunkBody` (`:1344`), BEFORE the
-`leafCat == 0` early return so `AttackFromCover` (no ch.7 category) is covered. `g_weaponLeaf` (filled at `:1611`,
+farther than min(target distance, `kMeleeMaxReach` 250u) + `kMeleeReachPad` 48u, because the Attack act() runs at
+end-point pick while the target can be far, and within `kMeleeConeCos` 0.819 = 35 degrees of the direction to it).
+(a) `castguard::HoldWeaponAttack` (`:762`) is called from `core/ActionGate.cpp` `ActThunkBody` (`:1344`), BEFORE the
+`leafCat == 0` early return so `AttackFromCover` (no ch.7 category) is covered. `g_weaponLeaf` (filled at `:1612`,
 PAIRED leaves only): RangedAttack = ranged (line), Attack / AttackLow / Bash / SpecialAttack = melee (arc only, a swing
-does not travel), AttackFromCover = both. Denied with the SAME ForceFail act()/pop() pair (t_pending, PopThunk). FRESH
+does not travel), AttackFromCover = both (melee only while its target is within 250u, the slot's `targetNear` bit).
+A creature the player OWNS (its `ExtraOwnership` names the player base 0x7, a bought horse) is not a bystander. Denied with the SAME ForceFail act()/pop() pair (t_pending, PopThunk). FRESH
 readings only: an unknown one allows the attack and counts it (heartbeat "weapon attack(s) allowed, reading unknown").
-Attributed on the CombatAction facet (`Decide`'s facet argument, `:472`). Ground / Flying / Perch attack leaves are
+Attributed on the CombatAction facet (`Decide`'s facet argument, `:483`). Ground / Flying / Perch attack leaves are
 not held. (b) a Self-delivered hostile area spell or cloak (`SelfAoeArea`, cloak = `EffectArchetypes::kCloak` + its
 associated spell) is held at 0x0A (fresh) / 0x06 (unknown holds) while a bystander is within area + `kBlastPad` of the
 CASTER, on the Cast facet. Runes are TargetLocation spells, so they are LineOfFire items (the blast test at the aim).
-`RefuseReason` (`:554`) refuses an unknown bit (`kCastGuard_All` 0xF) and bit 3 while the measurement is unarmed.
+`RefuseReason` (`:565`) refuses an unknown bit (`kCastGuard_All` 0xF) and bit 3 while the measurement is unarmed.
 STATED GAPS (proved in the field via the `[ch.25] ... Self area` and `attack leaf` log lines, not by this code): the
 hold is at the leaf's act() only, so a draw already in progress (the leaf's update(), slot 0x04, has no ch.25 seat)
 is not stopped mid-draw. The cloak / rune area figures (associated spell EFIT area x 64/3) are not field-verified.

@@ -54,8 +54,9 @@
 //       AttackFromCover leaf is covered too; the leaf is denied with the same ForceFail act()/pop()
 //       PAIR a ch.7 claim uses). The aim is the actor's OWN combat target, never a cast claim's.
 //       A ranged leaf (RangedAttack, AttackFromCover) is held while a bystander is within kLinePad
-//       of the line to it. A melee leaf (Attack, AttackLow, Bash, SpecialAttack, AttackFromCover)
-//       is held while a bystander is no farther than the target + kMeleeReachPad and inside the
+//       of the line to it. A melee leaf (Attack, AttackLow, Bash, SpecialAttack, and AttackFromCover
+//       only while its target is within kMeleeMaxReach)
+//       is held while a bystander is no farther than min(target, kMeleeMaxReach) + kMeleeReachPad and inside the
 //       cone of kMeleeConeCos toward it. No line test for melee: a swing does not travel.
 //       Held only on a FRESH measurement, never on an unknown one: a failed measurement must not
 //       freeze every swing of a follower (counted, the heartbeat's "allowed, reading unknown").
@@ -86,6 +87,7 @@ namespace apmf::castguard {
 
     inline constexpr float         kLinePad             = 80.0f;   // a friendly this close to the line is in it
     inline constexpr float         kBlastPad            = 64.0f;   // added to the spell's largest area (in units)
+    inline constexpr float         kMeleeMaxReach       = 250.0f;  // the target distance the swing arc counts at most
     inline constexpr float         kMeleeReachPad       = 48.0f;   // a swing reaches a bystander this much past the target ...
     inline constexpr float         kMeleeConeCos        = 0.819f;  // ... within 35 degrees of the direction to the target
     inline constexpr float         kUnitsPerFoot        = 64.0f / 3.0f;   // EffectItem::area is in FEET
