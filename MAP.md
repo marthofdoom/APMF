@@ -2178,6 +2178,48 @@ equip displacing it are not this seat's (DENY-COMPLETENESS-AUDIT row 17 open ite
 installed), B167 (no ENDED line on a full release), B168 (stale spec label), B169 (stow log only on kRun), B170 (the
 default scope owns Light: document), B171 (per-streak counters: document), B172 (Left displacement, generic unequips).
 
+### `native/core/AttackSelect.{h,cpp}` + `native/channels/AttackSelection.cpp` — ch.18 ATTACK SELECTION: a third #17a call-site seat (ABI v34, 2026-11-09, `feat/apmf-ch18-attack-select`)
+**What it does:** `write_call<5>` on StartAttack's one call to the attack weight function
+(`float W(Actor*, Actor*, BGSAttackData*)`): StartAttack AE 49170 0x8A28B0 / SE 48139 0x80C020 / 1.7.104 raw
+0x8B7D60, W AE 50675 0x8DCD30 / SE 49748 0x845B30 / 1.7.104 raw 0x8F2830, site AE / 1.7.104 +0x28D, SE +0x2AE.
+Rows `AttackSelect.StartAttack`, `AttackSelect.AttackWeight` (all three; 1.7.104 as `raw_rvas` because neither id is
+in the MIT table) and `AttackSelect.Site.Weight` (1.6.1170 / 1.5.97 only; on 1.7.104 the E8 and its target are
+proven by the in-code byte checks). The call goes to a 17-byte stub (`mov r9, r13|r12; jmp [rip+0]`) so `Thunk`
+gets the roll's context (pool at ctx+0x18, count ctx+0x28, 0x30-byte entries, entry+0 = BGSAttackData*). `Thunk`:
+the engine's W first; untouched unless W > 0, a winning `kIntent_AttackSelection` claim (`TryGetOwningClaimBasis`)
+has a declaration (`g_decls`, published atomic shared_ptr), and the candidate's class (ATKD flags: bash bit 1,
+power bit 2, left bit 3; one class per entry) is governed and in the ACTIVE deny (`denied` | Power over the
+`powerShareMax` ceiling | Normal under the `powerShareMin` floor, the share over a full window of sampled starts).
+The candidate must be found in the pool (else NOT denied, `poolMiss`, warn). `EvaluateRoll` runs ONCE per roll
+(thread-local `t_roll`: same ctx, actor, handle, `now`, and a rising pool index = the same roll): it samples the
+window, then marks each pool entry drawable by the engine's own tests (`EntryPassesEngineTests`: entry+0x24 > 0,
+cooldown `now - [+0x28] > [+0x2C]` with `now` decoded from StartAttack's RIP-relative read; with stamina AV <= 0 a
+bash or power entry is unable, the cost function is not called) and W > 0. EVERY Normal deny lifts for a roll with
+no undenied drawable Power entry (marth 2026-11-09); the floor rule needs >= 1 undenied drawable entry, else the
+roll stands (`floorStood`, per roll, warn). Then `facetattr::Decide` on CombatAction vs Engine
+(`rankStood`); observe-only (`[AttackSelect] bObserveOnly` / `kAtkMix_ObserveOnly`, `wouldDeny`); else 0.0f.
+`Install()` <- plugin.cpp kDataLoaded after `torchseat::Install`: VR / non-exact runtime / `bAttackSelect=0`
+refuse; SeatVerified rows; then per runtime the E8 + target, the argument window, the pool-walk and count bytes
+(they name the context register), the availability / cooldown / stamina test bytes; any mismatch refuses. The
+channel's Engage and the heartbeat re-check the site (`SiteIntact`, a re-patch is logged once at error).
+**Thread:** the combat AI thread running the actor's tree. Reads: the RCU snapshot, `g_decls`, the roll's context
+in place, the actor's HighProcessData attackData (the engine's own read after a start), its ActorValueOwner
+(CommonLib `AsActorValueOwner`, +0xB8 / SE +0xB0 as the engine's `lea`). Leaf mutexes `g_amx` (windows, counters)
+and `g_wmx` (declarations, any-thread writers); nothing is called while either is held. Every throw keeps W.
+**Depended-on-by:** nothing yet. MFO adoption (class update: Warrior power floor 0.4, Mercenary) is the next step,
+with MFO's APMF_API.h mirror.
+**What breaks if you change this:** answering anything but the engine's W or 0 (it would ADD weight: never);
+denying an undeclared class; dropping the floor rule (a roll with nothing drawable left) or the stamina gate on
+Normal denies (marth 2026-11-09); counting raw pool entries instead of drawable ones (review SEV-2 on 496243e);
+breaking the per-roll cache key (a stale verdict across rolls); reading the pool without the candidate-found check (it is the only runtime proof that the
+stub's register is the context); changing the stub register or any offset without re-reading THAT runtime's
+StartAttack (SE keeps the context in r12 and the actor in r13); calling the follower lists here (off-main);
+reading `now` through an id (fatal on 1.7.104: not in the table). Open: S-D5 (SCAR / Valhalla post-pick veto, not
+built), DualWield unclassifiable, share misses exact repeats (DENY-COMPLETENESS-AUDIT row 18).
+**Open review findings (read before editing):** `Docs/REVIEW-BACKLOG.md` APMF-B259 (Decide counted per candidate),
+B260 (the active-deny line can be lost), B261 (stale declaration after an internal claim end), B262 (generator lists the
+raw-placed 1.7.104 rows as not verified), B263 (no FlushInstructionCache). B258 resolved by the per-roll cache.
+
 ### `native/core/HandBlock.{h,cpp}` — the HAND-CLAIM BLOCK (2026-10-06, `fix/apmf-hand-claim-blocks-equip`)
 marth: "harbinger taking a hand for an action means other actions on that hand are blocked for the
 duration". A hand held by a LIVE `kIntent_Cast` claim (driving, or a `kCastFlag_DenyHandOnly` floor;

@@ -15,6 +15,7 @@
 #include "channels/CombatSubstrate.h"  // ABI v26 GetSubstrateState, v27 IsSubstrateAvailable (ch.27)
 #include "core/Place.h"                // ABI v28 kIntent_Place (a one-shot, never a claim) + GetPlaceState
 #include "channels/CombatEntry.h"     // ABI v31 GetClaimEndReason (ch.20 / ch.21 end records)
+#include "core/AttackSelect.h"        // ABI v34 SetAttackMix / GetAttackMixState (ch.18)
 
 // The C-ABI implementation behind APMF_API.h. These free functions forward to the
 // in-process multi-NPC engine (core/ControlMap) over its thread-safe enqueue path,
@@ -44,6 +45,7 @@ namespace {
             const auto h = apmf::ControlMap::Get().EnqueueRequest(actor, intent, basis, nullptr);
             apmf::sources::NoteClientRequest(h, _ReturnAddress(), intent);
             if (intent == APMF_API::kIntent_EquipPreference) apmf::equippref::NoteClaim(h);   // ABI v22 (F4)
+            if (intent == APMF_API::kIntent_AttackSelection) apmf::attackselect::NoteClaim(h);   // ABI v34
             return h;
         } catch (...) {
             return APMF_API::kInvalidHandle;
@@ -59,6 +61,7 @@ namespace {
             const auto h = apmf::ControlMap::Get().EnqueueRequest(actor, intent, basis, param);
             apmf::sources::NoteClientRequest(h, _ReturnAddress(), intent);
             if (intent == APMF_API::kIntent_EquipPreference) apmf::equippref::NoteClaim(h);   // ABI v22 (F4)
+            if (intent == APMF_API::kIntent_AttackSelection) apmf::attackselect::NoteClaim(h);   // ABI v34
             if (intent == APMF_API::kIntent_Idle) apmf::idle::NoteFiled(h, actor, param);      // ABI v24: Pending
             return h;
         } catch (...) {
@@ -71,6 +74,7 @@ namespace {
             apmf::ControlMap::Get().EnqueueRelease(handle);
             apmf::sources::ForgetHandle(handle);
             apmf::equippref::Forget(handle);   // ABI v22: a released ch.26 claim's declaration goes with it
+            apmf::attackselect::Forget(handle);   // ABI v34: a released ch.18 claim's attack mix goes with it
             apmf::idle::NoteReleased(handle);  // ABI v24: its idle state turns terminal (kept for the grace)
         } catch (...) {
         }
@@ -348,6 +352,25 @@ namespace {
         }
     }
 
+    // ABI v34 (ch.18): declare a kIntent_AttackSelection claim's attack mix. `mix` is READ AND COPIED
+    // synchronously and published at once (core/AttackSelect.cpp); any thread.
+    void APMF_SetAttackMix(APMF_API::Handle handle, const APMF_API::APMF_AttackMix* mix) {
+        try {
+            apmf::attackselect::Set(handle, mix);
+        } catch (...) {
+        }
+    }
+
+    // ABI v34 (ch.18): what ch.18 is doing for an actor. Any thread: an RCU read and a copy under the seat's leaf
+    // lock, no game call. A throw becomes kAttackMixState_None, nothing written.
+    std::uint32_t APMF_GetAttackMixState(RE::FormID actor, APMF_API::APMF_AttackMixInfo* out) {
+        try {
+            return apmf::attackselect::GetState(actor, out);
+        } catch (...) {
+            return APMF_API::kAttackMixState_None;
+        }
+    }
+
     // ABI -> the first APMF release that implements it, for the "client too new"
     // refusal log below (MFO wiring review SEV-3 F4): a user running an older
     // APMF under a newer client must be able to read WHICH APMF they need. Keep in
@@ -361,7 +384,7 @@ namespace {
     // substrate availability query, and v28, kIntent_Place and its state query; v29, the client facet
     // priority query, and v30, ch.19's kTravel_CrossCells, ship in 0.15.0; v31, the claim end reason, ships
     // in 0.15.2; v32, the ch.25 kCastGuard_Bystanders bit, ships in 0.16.0; v33, the ch.17 per-item deny and the
-    // ch.26 per-entry state, ships in 0.17.0).
+    // ch.26 per-entry state, ships in 0.17.0; v34, ch.18 attack selection, ships in 0.18.0).
     const char* MinReleaseForAbi(std::uint32_t abi) {
         switch (abi) {
         case 1:  return "0.2.0";
@@ -397,6 +420,7 @@ namespace {
         case 31: return "0.15.2";
         case 32: return "0.16.0";
         case 33: return "0.17.0";
+        case 34: return "0.18.0";
         default: return "a release newer than this one";
         }
     }
@@ -515,7 +539,17 @@ namespace {
     static_assert(sizeof(APMF_API::APMF_API_v33) == sizeof(APMF_API::APMF_API_v31) + 2 * sizeof(void*),
                   "APMF_API_v33 = the v31 prefix plus exactly two function pointers");
 
-    constexpr APMF_API::APMF_API_v33 g_api{
+    // ABI v34 (ch.18 attack selection) appends TWO slots to the v33 prefix, so the object is now an APMF_API_v34
+    // and `abiVersion` reports 34. Same two-form proof.
+    static_assert(offsetof(APMF_API::APMF_API_v34, SetAttackMix) == sizeof(APMF_API::APMF_API_v33),
+                  "APMF_API_v34's first slot must start right after the v33 prefix");
+    static_assert(offsetof(APMF_API::APMF_API_v34, GetAttackMixState) == sizeof(APMF_API::APMF_API_v33) + sizeof(void*),
+                  "APMF_API_v34's second slot follows the first");
+    static_assert(sizeof(APMF_API::APMF_API_v34) == sizeof(APMF_API::APMF_API_v33) + 2 * sizeof(void*),
+                  "APMF_API_v34 = the v33 prefix plus exactly two function pointers");
+
+    constexpr APMF_API::APMF_API_v34 g_api{
+        {
         {
         {
         {
@@ -579,6 +613,9 @@ namespace {
         },
         &APMF_SetEquipDenyItems,
         &APMF_GetEquipPreferenceItemState,
+        },
+        &APMF_SetAttackMix,
+        &APMF_GetAttackMixState,
     };
 
 }

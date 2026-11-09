@@ -254,6 +254,30 @@ Raised against `78b057c` (`fix/apmf-proxy-per-claim-refcount`), tier-A Opus 5.5 
 
 - FIELD VERDICT 2026-10-06 (Opus, Tuxborn deck logs): STILL NEEDS DATA -- one load per session in 5 sessions and no live proxy at load in any, so the purge path never ran; needed: load a save written while a delivery-flip proxy is live in a follower's spell list (no logging gap).
 
+### APMF-B258 (SEV-5, RESOLVED in the fix commit after 496243e) -- ch.18 AnyPowerAble cost per candidate
+Raised against `496243e` (`feat/apmf-ch18-attack-select`), tier-3 Opus review 2026-11-09. Coordinator paraphrase (the reviewer's text was relayed, not quoted): "per-roll AnyPowerAble cost" (O(N*P): every Normal candidate rescanned the pool and called W for each Power entry). Reasoning: the reviewer graded it SEV-5 (bounded, pool ~20). RESOLVED: `EvaluateRoll` (core/AttackSelect.cpp) computes the drawable set once per roll behind the thread-local `t_roll` cache, so W is called at most once per pool entry per governed roll.
+
+### APMF-B259 (SEV-5) -- ch.18 facetattr::Decide counted per candidate, not per roll
+Raised against `496243e`, same review. Coordinator paraphrase (the reviewer's text was relayed, not quoted): "facetattr::Decide counters per candidate". Reasoning: the menu's Blocked / Passed counts for the CombatAction facet count zeroed candidate weights, several per roll; cosmetic. Fix path: decide once per roll in `EvaluateRoll` and reuse the verdict.
+
+### APMF-B260 (SEV-5) -- ch.18 "active deny now" line can be lost
+Raised against `496243e`, same review. Coordinator paraphrase (the reviewer's text was relayed, not quoted): "\"active deny now\" loggedActive set while LineDue suppresses it". Reasoning: `loggedActive` is updated even when the 5 s limiter swallows the line, so a change inside the 5 s window is never logged. Logging only. Fix: set it only when the line prints.
+
+### APMF-B261 (SEV-5) -- ch.18 stale declaration after an internal claim end
+Raised against `496243e`, same review. Coordinator paraphrase (the reviewer's text was relayed, not quoted): "stale g_claims/g_declsW entry after an internal claim end". Reasoning: a claim Harbinger ends itself (an unload) keeps its `g_claims` / `g_declsW` entry until the client's Release or the next load. Harmless (the seat reads only the WINNING handle from ControlMap) and bounded by the client's claim count. Fix: an IsClaimLive prune on the heartbeat (equippref::Pump's shape).
+
+### APMF-B262 (SEV-5) -- VerifiedAddresses.h lists the AttackSelect rows as NOT VERIFIED on 1.7.104 although raw-RVA rows exist
+Raised against `496243e`, same review. Coordinator paraphrase (the reviewer's text was relayed, not quoted): "VerifiedAddresses.h comment says AttackSelect rows absent on 1.7.104 while raw-RVA rows exist". Reasoning: the generator prints every id-keyed spec row it skips for 1.7.104, then emits the `raw_rvas` rows separately; the same reads for the HandBlock and TargetPin raw rows. The comment is generator output and `gen_verified_addresses.py` must stay identical in MFO and APMF, so the fix is a shared generator change (mark a skipped row "covered by raw row <label>"), its own small round in both repos.
+
+### APMF-B263 (SEV-5, optional) -- ch.18 stub written without FlushInstructionCache
+Raised against `496243e`, same review. Coordinator paraphrase (the reviewer's text was relayed, not quoted): "no FlushInstructionCache (optional)". Reasoning: x86-64 keeps instruction fetch coherent with stores in the same process, and `SKSE::Trampoline::write_call` (which also writes code into the same memory) does not flush either; the stub is written before the E8 that reaches it. Optional hardening: one `FlushInstructionCache` call after the stub write.
+
+### APMF-B264 (SEV-5) -- ch.18 per-roll cache can reuse a stale verdict
+Raised against `4e3813c` (`feat/apmf-ch18-attack-select`), tier-3 Opus review round 2, 2026-11-09. Coordinator paraphrase (the reviewer's text was relayed, not quoted): a per-roll cache stale verdict needs two StartAttack calls on one ctx within one `now` with a rising index; worst case one empty draw, retried next tick. Reasoning: `t_roll` keys on {ctx, actor, handle, `now`, rising pool index}; a second roll on the same context in the same frame whose first governed candidate sits above the previous roll's last index reuses the previous roll's drawable set. The worst case is one roll whose undenied candidates all fail and the leaf fails once. Fix path if it is ever seen in the field: key the cache on a per-StartAttack serial, or re-evaluate on any gap in the pool index.
+
+### APMF-B265 (SEV-5) -- ch.18 a duplicate attack record in the pool re-evaluates mid-roll
+Raised against `4e3813c`, same review. Coordinator paraphrase (the reviewer's text was relayed, not quoted): a duplicate attack record in the pool makes Decide find the first copy and recompute mid-roll; traced, it cannot empty a draw. Reasoning: `Decide` locates the candidate by its BGSAttackData pointer and takes the first match; a pool listing the same record twice gives the second copy the first copy's index, which is not above the cached index, so `EvaluateRoll` runs again with that index as the known-eligible entry. The re-evaluation applies the same rules to the same data, so the floor rule still holds and no draw is emptied; the cost is one extra evaluation. Fix path: search from the cached index + 1 first.
+
 ## DRAINED
 
 _(none yet)_

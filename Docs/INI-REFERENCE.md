@@ -142,6 +142,15 @@ ABI v15. "Stay out of the fight for a while." A mod names an actor and a number 
 
 - **`bCombatReentryDeny`** (default `1`). 0 = kIntent_CombatReentryDeny claims are REFUSED (the mod keeps the actor out of combat its own way; logged once with the reason).
 
+### [AttackSelect]
+
+Facet reference: [ch.18 Attack selection](FACETS.md#ch18-attack-selection-kintent_attackselection).
+
+ABI v34. "Fight with more power attacks", "rarely bash". A mod names attack classes (normal, power, bash, bash power, left hand) for an actor. When the game's own combat AI weighs which attack to start, a denied class gets no chance and the AI picks among the rest with its own odds and animations. Nothing is ever added, a class the mod did not name is never touched, and the actor always keeps at least one attack it can actually make (otherwise the game's own odds stand for that swing). A normal attack is never stopped when no power attack can start (out of stamina, on cooldown, out of reach).
+
+- **`bAttackSelect`** (default `1`). 0 = the seat is not installed and kIntent_AttackSelection claims are REFUSED (the mod keeps its own behaviour; logged once with the reason).
+- **`bObserveOnly`** (default `0`). 1 = count and log what would be denied, deny nothing.
+
 ### [PursuitLeash]
 
 Facet reference: [ch.23 Pursuit leash](FACETS.md#ch23-pursuit-leash-kintent_pursuitleash).

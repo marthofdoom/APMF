@@ -15,6 +15,7 @@
 #include "core/HandBlock.h"
 #include "core/ActionGate.h"
 #include "core/AttackSelectProbe.h"
+#include "core/AttackSelect.h"         // ch.18 attack selection (ABI v34): Install, ResetAll
 #include "core/PackageGate.h"
 #include "core/EquipSink.h"
 #include "core/TorchSeat.h"      // ch.17 torch seat (2026-10-20): Install at kDataLoaded, after the sink
@@ -131,6 +132,7 @@ namespace {
         apmf::awareness::ResetAll("revert/new game");
         apmf::castguard::ResetAll("revert/new game");   // ch.25: the line-of-fire measurements of the outgoing world
         apmf::equippref::ResetAll("revert/new game");   // ch.26: the outgoing world's declarations and per-actor state
+        apmf::attackselect::ResetAll("revert/new game");   // ch.18: attack mixes, windows and counters (claims drop too)
         apmf::packagesources::ResetAll();
         apmf::spectatorgate::ResetAll();
         // ...and forget the outgoing world's marker LEDGER. This must precede the load
@@ -266,6 +268,12 @@ namespace {
                                                   // 1.6.1170 / 1.5.97 / 1.7.104, VR-refused, [EquipAuthority]
                                                   // bTorchDeny (default 1), SeatVerified on both rows, E8
                                                   // re-read before the write.
+            apmf::attackselect::Install();       // ch.18 ATTACK SELECTION (ABI v34, #17a amended 2026-11-09):
+                                                  // write_call<5> on StartAttack's weight call (AE 49170+0x28D /
+                                                  // SE 48139+0x2AE / 1.7.104 raw 0x8B7D60+0x28D) through a
+                                                  // context-forwarding stub. Exact runtimes, VR-refused,
+                                                  // [AttackSelect] bAttackSelect (default 1), SeatVerified rows,
+                                                  // every byte around the site re-read before the write.
             apmf::nonaliasprobe::Install();      // OBSERVE-ONLY 0xDF hook + 0x49 assist + RTTI dumper
                                                   // (Docs/PROBE-NONALIAS-PACKAGE.md; VR-refused inside)
             apmf::aicastseats::Install();        // OBSERVE-ONLY: the 4 AI cast-decision seats
@@ -373,6 +381,7 @@ namespace {
             // ch.22: same -- no re-entry deny crosses the load.
             apmf::reentrydeny::ResetAll("kPreLoadGame");
             apmf::combatsubstrate::ResetAll("kPreLoadGame");   // S2a: forget every substrate (no co-save)
+            apmf::attackselect::ResetAll("kPreLoadGame");   // ch.18: no attack mix / window crosses the load
             apmf::atkprobe::ResetForLoad("kPreLoadGame");   // [Probe] bAttackSelect: per-actor counters (ids reused)
             // ch.23 pursuit leash (ABI v16): same -- no leash entry crosses the load.
             apmf::actiongate::ResetLeash("kPreLoadGame");

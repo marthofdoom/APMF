@@ -19,7 +19,7 @@
 
 namespace apmf::VerifiedAddresses
 {
-	// 1.6.1170.0: 265 rows
+	// 1.6.1170.0: 268 rows
 	inline constexpr REL::SelfCheck::Row kRows_1_6_1170[] = {
 		{ 207886, 0x18A5558, 0x0, 0, {  }, "Character" },
 		{ 207896, 0x18A5FE8, 0x0, 0, {  }, "Character.ActorValueOwner" },
@@ -286,9 +286,12 @@ namespace apmf::VerifiedAddresses
 		{ 33233, 0x5594A0, 0x0, 0, {  }, "EquipGate.Light.SearchState" },
 		{ 45403, 0x821260, 0x2C, 1, { 0xE8 }, "EquipGate.Light.Site.Search" },
 		{ 104651, 0x143DC00, 0x0, 0, {  }, "PapyrusCaller.NativeFunctionBase.Call" },
+		{ 49170, 0x8A28B0, 0x0, 0, {  }, "AttackSelect.StartAttack" },
+		{ 50675, 0x8DCD30, 0x0, 0, {  }, "AttackSelect.AttackWeight" },
+		{ 49170, 0x8A28B0, 0x28D, 1, { 0xE8 }, "AttackSelect.Site.Weight" },
 	};
 
-	// 1.5.97.0: 265 rows
+	// 1.5.97.0: 268 rows
 	inline constexpr REL::SelfCheck::Row kRows_1_5_97[] = {
 		{ 261397, 0x165DA40, 0x0, 0, {  }, "Character" },
 		{ 261402, 0x165E4D0, 0x0, 0, {  }, "Character.ActorValueOwner.SE" },
@@ -555,10 +558,13 @@ namespace apmf::VerifiedAddresses
 		{ 32486, 0x4FDE20, 0x0, 0, {  }, "EquipGate.Light.SearchState" },
 		{ 44010, 0x784EC0, 0x2A, 1, { 0xE8 }, "EquipGate.Light.Site.Search" },
 		{ 97923, 0x12507F0, 0x0, 0, {  }, "PapyrusCaller.NativeFunctionBase.Call" },
+		{ 48139, 0x80C020, 0x0, 0, {  }, "AttackSelect.StartAttack" },
+		{ 49748, 0x845B30, 0x0, 0, {  }, "AttackSelect.AttackWeight" },
+		{ 48139, 0x80C020, 0x2AE, 1, { 0xE8 }, "AttackSelect.Site.Weight" },
 	};
 
-	// 1.7.104.0: 271 rows
-	// 56 NOT VERIFIED on 1.7.104.0, deliberately absent from this table (the seat is refused):
+	// 1.7.104.0: 273 rows
+	// 59 NOT VERIFIED on 1.7.104.0, deliberately absent from this table (the seat is refused):
 	//   Character.ActorValueOwner.SE (1.6.1170 id -): no 1.6.1170 (AE) id: the 1.7.104 map is keyed by AE id (1.5.97-only seat)
 	//   ActionGate.Hold.ParallelDataPush (1.6.1170 id 47532): id 47532 is not in the idmap
 	//   TargetPin.CombatController.SetTarget (1.6.1170 id 33235): id 33235 is not in the idmap
@@ -615,6 +621,9 @@ namespace apmf::VerifiedAddresses
 	//   EquipGate.Light.Site.Check (1.6.1170 id 45403): id 45403 is not in the idmap
 	//   EquipGate.Light.SearchState (1.6.1170 id 33233): id 33233 is not in the idmap
 	//   EquipGate.Light.Site.Search (1.6.1170 id 45403): id 45403 is not in the idmap
+	//   AttackSelect.StartAttack (1.6.1170 id 49170): id 49170 is not in the idmap
+	//   AttackSelect.AttackWeight (1.6.1170 id 50675): id 50675 is not in the idmap
+	//   AttackSelect.Site.Weight (1.6.1170 id 49170): id 49170 is not in the idmap
 	inline constexpr REL::SelfCheck::Row kRows_1_7_104[] = {
 		{ 207886, 0x1923258, 0x0, 0, {  }, "Character" },
 		{ 207896, 0x1923CE8, 0x0, 0, {  }, "Character.ActorValueOwner" },
@@ -887,6 +896,8 @@ namespace apmf::VerifiedAddresses
 		{ 0, 0x670880, 0x0, 0, {  }, "Substrate.PackageSelector.1_7_104" },
 		{ 0, 0x3BEA80, 0x0, 0, {  }, "Substrate.Npc.GetEnterCombatOverridePackage.1_7_104" },
 		{ 0, 0x874BC0, 0x0, 0, {  }, "ActionGate.Hold.ParallelDataPush.1_7_104" },
+		{ 0, 0x8B7D60, 0x0, 0, {  }, "AttackSelect.StartAttack" },
+		{ 0, 0x8F2830, 0x0, 0, {  }, "AttackSelect.AttackWeight" },
 	};
 
 	inline constexpr REL::SelfCheck::Table kTables[] = {

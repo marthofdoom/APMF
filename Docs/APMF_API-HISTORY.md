@@ -126,7 +126,7 @@ a DENIED category is unequipped by the enforce pass. The header comments that st
 stale until the paired MFO header change.
 
 <a id="abi-history"></a>
-## ABI v10 to v33: what each version added
+## ABI v10 to v34: what each version added
 
 Moved verbatim from `native/APMF_API.h` (line 96 at 9d01cdf). The header keeps a pointer to this anchor.
 
@@ -297,10 +297,21 @@ sizes the delivery-flip proxy pool from demand (APMF-B62, no ABI change: 64 slot
 A client gates both slots on abiVersion >= 33. An older APMF has neither: the client keeps its per-category scope and
 its per-actor state read there.
 Docs/APMF_API-REFERENCE.md#abi-v33-item-deny-and-entry-state.
+ABI v34 (2026-11-09, marth 2026-10-27 "Weight seat ALLOWED" and the 2026-11-09 floor rulings, ClickUp 86e3bw775):
+ch.18 ATTACK SELECTION. kIntent_AttackSelection = 18 (the number reserved since ABI v9) plus AttackClass,
+AttackMixFlags, APMF_AttackMix (48 bytes), AttackMixState, APMF_AttackMixInfo (80 bytes). APMF_API_v34 appends TWO
+slots to the v33 prefix: SetAttackMix(handle, mix) declares the classes a ch.18 claim governs and denies, and an
+optional power-share ceiling / floor over a window of started attacks; GetAttackMixState(actor, out) reports what the
+seat does. The seat is a third #17a call site (INVARIANTS #17a, amended 2026-11-09): StartAttack's weight call answers
+0 for a denied class. No APMF_Param field, no change to any existing slot, no co-save. A client gates on abiVersion >=
+34. An older APMF has no channel for intent 18 and refuses the claim. Docs/APMF_API-REFERENCE.md#abi-v34-attack-selection.
 ```
 
 <a id="intent-18"></a>
 ## Intent 18: the draft that reserved it
+
+**2026-11-09:** intent 18 is now `kIntent_AttackSelection` (ABI v34, ch.18). The draft below is kept as the record of
+why the number was held.
 
 Moved verbatim from `native/APMF_API.h` (line 358 at 9d01cdf). The header keeps a pointer to this anchor.
 

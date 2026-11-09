@@ -578,3 +578,69 @@ All three read ONE verdict, `equipsink::DeclaredSetVerdict`: a listed form is `b
 **Threading and cost.** Any thread. Two hash lookups under the ch.26 state's leaf mutex, no game call. A throw inside returns `kEquipPrefState_None` and writes nothing. The records are not saved and a load drops them.
 
 **Older APMF.** An APMF before v33 has neither slot. A client keeps its per-category scope and its per-actor state read there.
+
+<a id="abi-v34-attack-selection"></a>
+## ABI v34 attack selection: which attack the NPC's own AI draws (ch.18)
+
+```cpp
+kIntent_AttackSelection = 18                                                                // the claim (no param)
+void          (*SetAttackMix)(Handle handle, const APMF_AttackMix* mix);                     // APMF_API_v34
+std::uint32_t (*GetAttackMixState)(RE::FormID actor, APMF_AttackMixInfo* out);               // APMF_API_v34
+// gate both on abiVersion >= 34; an older APMF has no channel for intent 18 and refuses the claim
+```
+
+One intent (reserved for this since ABI v9), two slots, three PODs (`APMF_AttackMix` 48 bytes, `APMF_AttackMixInfo`
+80 bytes, static_assert-pinned in the header) and three enums (`AttackClass`, `AttackMixFlags`, `AttackMixState`).
+
+### The mechanism
+
+StartAttack (AE 49170 / SE 48139 / 1.7.104 raw 0x8B7D60) is the engine's attack roll for a combat context: it walks
+the attack entries the context gathered (the pool, ctx+0x18, count ctx+0x28), drops the ones its own tests reject
+(entry+0x24 availability, the entry's cooldown, and with stamina at 0 any entry with a stamina cost), weighs each
+survivor with one call to the weight function (attackChance times a combat-style multiplier), and draws at weighted
+random among the weights above 0. Harbinger rewrites that one call (INVARIANTS #17a, amended 2026-11-09). The
+engine's weight is computed first; a candidate the claim denies answers 0. Nothing else in the roll changes.
+
+### The rules (in the order the seat applies them)
+
+1. A candidate the engine already weights at 0 or less is returned untouched.
+2. No winning ch.18 claim with a declaration on the actor: untouched.
+3. The class of the candidate (Table 22a in FACETS.md) not in `governed`, or not in the ACTIVE deny (`denied`, plus
+   Power while the share is over `powerShareMax`, plus Normal while it is under `powerShareMin`, each once the
+   window is full): untouched.
+4. Once per roll (a thread-local cache serves the roll's later candidates), the entries the engine would DRAW: each
+   passes the engine's own availability (entry+0x24 > 0) and cooldown tests and its stamina test (with stamina at 0
+   a power or bash entry is treated as unable, an entry with neither bit costs 0 and passes), and the engine's
+   weight for it is above 0. EVERY Normal deny (declared or the share floor) applies only if an undenied Power entry
+   of the same roll is drawable (marth 2026-11-09). Else the Normal candidates keep their weight (`powerUnable` in
+   the heartbeat).
+5. The floor rule (marth 2026-11-09, "Allow 1 in circumstances it is required"): at least ONE drawable entry must
+   stay undenied, else the engine's weights stand for the whole roll (`floorStood`, counted per roll, a warning
+   line). After each draw the engine runs its own chance roll on the picked weight (AE 0x8A2C39..0x8A2C5D), the
+   angle test (0x8A2CA1 -> 0x852C30) and a check (0x8A2CB4 -> 0x8A2EE0). A failure erases the pick and the engine
+   draws again among the rest (AE 0x8A2D53..0x8A2D97 `jne 0x8A2BD0`, 1.7.104 0x8B8203..0x8B8247 `jne 0x8B8080`,
+   SE 0x80C572..0x80C5BC `jmp 0x80C363`); the roll fails only when every candidate fails, with probability
+   prod(1 - p), p = min(weight, 1) x the angle and check pass rates. A deny removes factors from that product, so a
+   failed roll is more likely and the attack rate can drop while the deny holds (e.g. a 40% power floor that leaves
+   only Power entries).
+6. Ranked: the claim must outrank the Engine source on CombatAction (`rankStood`).
+7. Observe-only (INI `[AttackSelect] bObserveOnly` or `kAtkMix_ObserveOnly`): counted (`wouldDeny`), not denied.
+8. Otherwise the weight is 0 (`zeroed`).
+
+### The share
+
+The seat samples the actor's current attack record (HighProcessData attackData) each time it weighs that actor's
+candidates. A change is one started attack; a Power or Normal start enters the window (a ring of 32, measured over
+`window`). A share of 0 or below is undeclared, so a zero-initialised `APMF_AttackMix` has no share rule (a 0
+ceiling is spelled `denied |= kAtkClass_Power`). An exact repeat of the same entry is not seen, so the share is an approximation (2 of 44 picks in the one
+field log were repeats).
+
+### GetAttackMixState
+
+Returns `AttackMixState`. With `out->size >= sizeof(APMF_AttackMixInfo)` it also fills the declaration as applied,
+the active deny of the newest governed candidate, the window counts and share (-1 until full) and the actor's four
+counters (saturating, since the load). Any thread: one RCU read and a copy under the seat's leaf mutex, no game call.
+`kAttackMixState_Unavailable` while the seat is not installed.
+
+**Older APMF.** An APMF before v34 has no channel for intent 18: `RequestEx(kIntent_AttackSelection)` returns
+`kInvalidHandle`, and the client keeps its own behaviour.
