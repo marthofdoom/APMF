@@ -213,6 +213,14 @@ Every key is in [Docs/INI-REFERENCE.md](Docs/INI-REFERENCE.md). These are the on
 
 The facet priorities (`EquipWeapon`, `EquipArmor` and the rest) live in `APMF_Sources.ini`, written by the Harbinger page. A priority of 0 turns that mod off for that facet.
 
+## What is in v0.17.0
+
+- **A mod can refuse single items on an equip claim (ABI v33).** `SetEquipDenyItems` names up to 16 base items that are treated like an item in a denied category.
+- **A mod can read one equip entry's state (ABI v33).** `GetEquipPreferenceItemState` answers for one declared entry. A client checks `abiVersion >= 33` first.
+- **The cast proxy pool grows from 8 to a ceiling of 64,** with a loud error when it runs out.
+- **The combat substrate names why it closed** (a cast event with no release, a claim ending mid-release, a re-point, a tree outside the gate).
+- **The DLL carries a version info resource.**
+
 ## What is in v0.16.0
 
 - **A Papyrus call ranks as the plugin that owns its script,** 20 by default, with `iPapyrusOwnerFile` choosing the winning override (0) or the defining plugin (1). A vanilla quest script's equip is refused by default (Skyrim.esm at 20).
@@ -289,7 +297,7 @@ The facet priorities (`EquipWeapon`, `EquipArmor` and the rest) live in `APMF_So
 
 ## Status
 
-Phase 1 built, now at v0.16.0, ABI v32 (see [Docs/STATUS.md](Docs/STATUS.md)). The central
+Phase 1 built, now at v0.17.0, ABI v33 (see [Docs/STATUS.md](Docs/STATUS.md)). The central
 `Actor::Update` (0xAD) hook drives a multi-NPC control map (keyed by FormID,
 scales to hundreds, an uncontrolled NPC pays one hash-miss), a real
 inter-plugin C-ABI client API (`native/APMF_API.h`), and the full documented

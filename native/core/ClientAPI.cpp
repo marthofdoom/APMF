@@ -361,7 +361,7 @@ namespace {
     // substrate availability query, and v28, kIntent_Place and its state query; v29, the client facet
     // priority query, and v30, ch.19's kTravel_CrossCells, ship in 0.15.0; v31, the claim end reason, ships
     // in 0.15.2; v32, the ch.25 kCastGuard_Bystanders bit, ships in 0.16.0; v33, the ch.17 per-item deny and the
-    // ch.26 per-entry state, ships in the release after 0.16.0 -- name it at the cut).
+    // ch.26 per-entry state, ships in 0.17.0).
     const char* MinReleaseForAbi(std::uint32_t abi) {
         switch (abi) {
         case 1:  return "0.2.0";
@@ -396,7 +396,7 @@ namespace {
         case 30: return "0.15.0";
         case 31: return "0.15.2";
         case 32: return "0.16.0";
-        case 33: return "the release after 0.16.0";
+        case 33: return "0.17.0";
         default: return "a release newer than this one";
         }
     }

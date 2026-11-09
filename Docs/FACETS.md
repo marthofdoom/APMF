@@ -3566,7 +3566,7 @@ The ABI is append-only. A client built against an older ABI keeps working agains
 | 30 | 0.15.0 | `kTravel_CrossCells`, a `TravelFlags` bit read through the existing `RequestEx` and `Repoint` (no struct, no slot) |
 | 31 | 0.15.2 | `GetClaimEndReason`, `ClaimEndReason` (struct `APMF_API_v31`) |
 | 32 | 0.16.0 | `kCastGuard_Bystanders` (no slot, struct `APMF_API_v31`) |
-| 33 | after 0.16.0 | `SetEquipDenyItems`, `kMaxEquipDeny`, `GetEquipPreferenceItemState` (struct `APMF_API_v33`) |
+| 33 | 0.17.0 | `SetEquipDenyItems`, `kMaxEquipDeny`, `GetEquipPreferenceItemState` (struct `APMF_API_v33`) |
 
 The last release is 0.16.0, ABI 32, interface struct `APMF_API_v31` (ABI 32 added a flag and no slot). In 0.15.1 the interface struct was `APMF_API_v29`, since ABI 30 added a flag and no slot. Before that `APMF_API_v19` served ABI 19 to 21, and ABI 23 and 25 also added no slot.
 

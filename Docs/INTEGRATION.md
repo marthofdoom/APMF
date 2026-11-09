@@ -252,7 +252,7 @@ A client built against an older header keeps working. Each item below needs its 
 | 30 | 0.15.0 | the `kTravel_CrossCells` bit on a travel claim to a reference. No new slot | `abiVersion >= 30` |
 | 31 | 0.15.2 | `GetClaimEndReason(handle)` says why Harbinger ended a ch.20 pin or ch.21 entry claim | `abiVersion >= 31` |
 | 32 | 0.16.0 | the `kCastGuard_Bystanders` bit on a ch.25 cast guard claim. No new slot | `abiVersion >= 32` |
-| 33 | after 0.16.0 | `SetEquipDenyItems(handle, forms, count)` on a ch.17 claim, and `GetEquipPreferenceItemState(actor, form, slot, &info)` for one ch.26 entry | `abiVersion >= 33` |
+| 33 | 0.17.0 | `SetEquipDenyItems(handle, forms, count)` on a ch.17 claim, and `GetEquipPreferenceItemState(actor, form, slot, &info)` for one ch.26 entry | `abiVersion >= 33` |
 
 ### Place (ABI 28)
 
