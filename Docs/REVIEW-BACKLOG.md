@@ -1076,7 +1076,7 @@ The comment in OnActorUpdate still says the obsTick fetch_add is the ONE reader-
 
 ### APMF-B191 (SEV-4, OPEN, core/Sources.cpp NoteClientRequest / CallerPriority, raised against 13231d6, Opus tier-3 review) -- a menu slider change before a source's first claim is lost
 A menu slider change made before a source has filed its first claim this session is stored in `prio[]` and APMF_Sources.ini but not in `g_iniPrio`, so `NoteClientRequest` overwrites it with the stale `InitialPriority` on that first claim, and `GetClientFacetPriority` (ABI v29, `CallerPriority`) reports the stale value until then. Fix: update `g_iniPrio` from Pump's priority write, or keep `prio[]` when flipping a source to client.
-### APMF-B186 (OPEN, author-raised, fix/apmf-ooc-substrate) -- a holder whose controller style gives magic no weight never selects the claimed spell
+### APMF-B186 (FIXED (merge f105ce5, explained-zero lift: core/EquipPreference.cpp StyleZero :125 / :695 lifts a claimed spell scored 0 by a style magicScoreMult 0), author-raised, fix/apmf-ooc-substrate) -- a holder whose controller style gives magic no weight never selects the claimed spell
 Field 2026-10-20: all 33 of Auri's spells scored exactly 0.000 under the substrate. The spell score is the live controller's combat style `magicScoreMult` (CombatController+0x38 -> TESCombatStyle+0x30) times the effect sum (AE 0x819AA0 -> 0x819C10), so a style with magicScoreMult 0 scores every spell 0 and D1 (`core/EquipPreference.cpp`: never lift an engine 0) keeps the claimed one at 0. Not a substrate input: MFO swaps that style to its cast style for a cast gambit in a real fight and applies none under a substrate. Blocks MFO's `bSubstrateCasts` default ON for such followers. Needs the MFO change (cast stance style while its substrate cast claim stands) or a marth ruling on D1 for a substrate claim. Proof line: `[substrate] 0x<f> CLAIM SCORE`. Never deferrable past the next substrate field cycle (rule 9 (b)).
 
 ### APMF-B187 (SEV-5, OPEN, author-raised, core/ActionGate.cpp MOVEMENT HOLD) -- hold records of destroyed threads linger until the close / load
@@ -1088,13 +1088,13 @@ When the hold stops standing while the controller lives (real combat), the held 
 ### APMF-B189 (SEV-4, OPEN, Docs/STATUS.md + Docs/FACETS.md) -- cause 2 stated as fact (raised against df5635a, tier-3 review F3)
 Reviewer: STATUS/FACETS state cause 2 as fact. Reword to "inferred; the CLAIM SCORE line decides": that magicScoreMult is 0 on Auri's controller style is an inference from 33 spells at exactly 0.000, not yet observed; the passive `[substrate] 0x<f> CLAIM SCORE` line decides it in the next field cycle.
 
-### APMF-B190 (SEV-5, OPEN, MAP.md ActionGate entry) -- cross-reference APMF-B187 from the What-breaks entry (raised against df5635a, tier-3 review F4)
+### APMF-B190 (SEV-5, FIXED (MAP.md MOVEMENT HOLD entry now names APMF-B187 explicitly, in this triage commit), MAP.md ActionGate entry) -- cross-reference APMF-B187 from the What-breaks entry (raised against df5635a, tier-3 review F4)
 Reviewer: cross-reference APMF-B187 (stale hold records) explicitly from MAP's MOVEMENT HOLD "What breaks" entry (it currently reads "Backlog: APMF-B186..B188" only as a range).
 
 ### APMF-B192 (SEV-5, OPEN, core/ActionGate.cpp HoldUpdateThunk) -- frameEmpty is tested before the cur_node/phase anomaly check (raised against 6e5b1c5)
 "In HoldUpdateThunk record path, frameEmpty() is tested before the cur_node/phase check, so the never-seen not-cur_node-in-phase-1 anomaly now drops the record instead of leaving the node untouched; the F2 guard would still release it on its next update." Fix: swap the two checks, or accept.
 
-### APMF-B193 (SEV-3 WATCH, OPEN, channels/Travel.cpp cross-cell legs) -- the engine's Travel package may end DONE at its own radius before a MOVING destination is reached (raised against c206088, tier-3 review F2)
+### APMF-B193 (SEV-3 WATCH, FIXED (42b0e2b: DONE-while-walking restarts the leg on a fresh slot, channels/Travel.cpp RestartAfterDone :1702, CrossCells poll :3140-3150, kDoneRestartMax), channels/Travel.cpp cross-cell legs) -- the engine's Travel package may end DONE at its own radius before a MOVING destination is reached (raised against c206088, tier-3 review F2)
 Reviewer (F2, observe only): with kTravel_CrossCells to a moving vendor, the engine can declare the travel package DONE at its own radius check while the vendor has walked on; the package then stands current in DONE and the actor stands until the stuck net. DONE-WHILE-WALKING already logs it. Candidate fix: a rate-limited fresh-slot restart of the leg when DONE-WHILE-WALKING fires on a flagged leg. marth decides after a field log; nothing is changed now.
 
 ### APMF-B194 (SEV-4, OPEN, channels/Travel.cpp XArrival) -- an UNLOADED actor inside the destination interior does not close the distance (raised against c206088, tier-3 review F3)
@@ -1239,7 +1239,7 @@ Reviewer: "when B fails and A names an Actor, the function still returns ctrlA. 
 ### APMF-B240 (SEV-5, OPEN, core/ActionGate.cpp ch.7 + core/AttackSelectProbe.cpp, against 01356c1) -- the A fallback can name a wrong Actor when B fails
 Reviewer: "the same A fallback in ch.7 and the probe can name a wrong Actor when B fails. Pre-existing, and rarer now." Reasoning: the engine never reads A (the +0x28 hop appears in neither binary), so dropping A is the clean end state.
 
-### APMF-B241 (SEV-4, OPEN, core/PapyrusCaller.cpp owner rule, against 6791e1a, Opus tier-3 review of feat/apmf-papyrus-attribution-step2) -- the winning override is often a patch, so a mod's scripts rank under the patch
+### APMF-B241 (SEV-4, FIXED (f91836f: [Harbinger] iPapyrusOwnerFile toggles winning vs defining plugin, core/PapyrusCaller.cpp :488, :213-218; marth 11-01 "both, toggle between"), core/PapyrusCaller.cpp owner rule, against 6791e1a, Opus tier-3 review of feat/apmf-papyrus-attribution-step2) -- the winning override is often a patch, so a mod's scripts rank under the patch
 Reviewer: "on a big list the winner is often a conflict-resolution or Synthesis patch that copies the VMAD. Those scripts are then attributed to the patch, not the script's mod. That is literally ruling 2." marth 2026-11-01: "both, toggle between". [Harbinger] iPapyrusOwnerFile (0 winning, 1 defining) shipped in f91836f, and every line names winner= and definer=.
 
 ### APMF-B242 (SEV-4, OPEN, core/PapyrusCaller.cpp ambiguous placed ref, against 6791e1a) -- falls back to the reference's GetFile(0)
@@ -1260,7 +1260,7 @@ Reviewer: "interposer hits (EquipSink :703) have no outcome, so they show as Unc
 ### APMF-B247 (SEV-4, OPEN, core/CastObserve.cpp cast-start Own, against 1ad4120, Opus review of feat/menu-uncontested-served) -- the 100 ms sample misses some cast starts
 Reviewer: "It does undercount (SEV-4) because it samples every 100 ms: a same-spell recast seen as Charged or Released then Charging, a hop from Unk1, or an interrupt-and-recast between samples are all missed."
 
-### APMF-B248 (SEV-4, OPEN, core/CastObserve.cpp, against 1ad4120) -- Own can be credited to the wrong client when two clients each claim one hand
+### APMF-B248 (SEV-4, DUPLICATE of APMF-B76 (same root cause: facetattr::CastClaimHandle, core/FacetAttribution.cpp:154, is hand-blind), core/CastObserve.cpp, against 1ad4120) -- Own can be credited to the wrong client when two clients each claim one hand
 Reviewer: "CastClaimHandle(actor) returns the claim that wins for the whole actor, not the claim on that hand. If two clients each claim one hand, Own can be credited to the wrong client."
 
 ### APMF-B249 (SEV-4, OPEN, channels/TargetPin.cpp ~356, against 1ad4120) -- Own climbs on every agreeing selector pass
