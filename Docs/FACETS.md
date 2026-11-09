@@ -3680,6 +3680,7 @@ The ABI is append-only. A client built against an older ABI keeps working agains
 | 32 | 0.16.0 | `kCastGuard_Bystanders` (no slot, struct `APMF_API_v31`) |
 | 33 | 0.17.0 | `SetEquipDenyItems`, `kMaxEquipDeny`, `GetEquipPreferenceItemState` (struct `APMF_API_v33`) |
 | 34 | 0.18.0 | `kIntent_AttackSelection`, `AttackClass`, `AttackMixFlags`, `APMF_AttackMix`, `AttackMixState`, `APMF_AttackMixInfo`, `SetAttackMix`, `GetAttackMixState` (struct `APMF_API_v34`) |
+| 35 | 0.18.0 | `CanServe`, `APMF_ServeQuery`, `APMF_ServeInfo`, `ServeVerdict`, `ServeRefusal`, `ServePending`, `ServeCall` (struct `APMF_API_v35`) |
 
 The last release is 0.16.0, ABI 32, interface struct `APMF_API_v31` (ABI 32 added a flag and no slot). In 0.15.1 the interface struct was `APMF_API_v29`, since ABI 30 added a flag and no slot. Before that `APMF_API_v19` served ABI 19 to 21, and ABI 23 and 25 also added no slot.
 

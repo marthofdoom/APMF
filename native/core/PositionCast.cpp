@@ -537,28 +537,39 @@ namespace apmf::poscast {
 
     const char* NotInstalledReason() { return g_reason.load(); }
 
-    bool Enqueue(APMF_API::Handle a_handle, RE::FormID a_actor, float a_basis, const APMF_API::APMF_Param& a_param) {
+    bool Enqueue(APMF_API::Handle a_handle, RE::FormID a_actor, float a_basis, const APMF_API::APMF_Param& a_param,
+                 ServeCheck* a_dry) {
         const std::uint32_t flags = static_cast<std::uint32_t>(a_param.ival);
+        // ABI v35 (CanServe): in CHECK mode each refusal below records itself and returns before its log.
+        const auto dryRefuse = [a_dry](std::uint32_t a_code, const char* a_why) {
+            a_dry->Refuse(a_code, a_why);
+            return false;
+        };
         if (!Installed()) {
+            if (a_dry) return dryRefuse(APMF_API::kServeRefusal_NotInstalled, NotInstalledReason());
             spdlog::warn("[poscast] request REFUSED (actor 0x{}): position cast not installed -- {}.", Hex(a_actor),
                          NotInstalledReason());
             return false;
         }
         if (const std::uint32_t extra = flags & ~static_cast<std::uint32_t>(APMF_API::kCastFlag_AtPosition)) {
+            if (a_dry) return dryRefuse(APMF_API::kServeRefusal_BadRequest, "other cast flags set alongside kCastFlag_AtPosition");
             spdlog::warn("[poscast] request REFUSED (actor 0x{}): other cast flags set alongside kCastFlag_AtPosition "
                          "(0x{}). A position cast has no hand, no stream and no stop percent; send the flag alone.",
                          Hex(a_actor), Hex(extra));
             return false;
         }
         if (a_actor == 0 || a_param.form == 0) {
+            if (a_dry) return dryRefuse(APMF_API::kServeRefusal_BadRequest, "actor and spell (param.form) are both required");
             spdlog::warn("[poscast] request REFUSED: actor 0x{} / spell 0x{} -- both are required.", Hex(a_actor),
                          Hex(a_param.form));
             return false;
         }
         if (!std::isfinite(a_param.posX) || !std::isfinite(a_param.posY) || !std::isfinite(a_param.posZ)) {
+            if (a_dry) return dryRefuse(APMF_API::kServeRefusal_BadRequest, "param.pos is not a finite point");
             spdlog::warn("[poscast] request REFUSED (actor 0x{}): param.pos is not a finite point.", Hex(a_actor));
             return false;
         }
+        if (a_dry) return true;   // ABI v35: every call-time check passed (the caller names it a one-shot)
         // NO FORM LOOKUP HERE (review R2-1, reverting F7b). This runs on the caller's
         // thread, and the pinned 3.7.0 TESForm::LookupByID does not actually take the
         // all-forms lock (TESForm.h:212 copy-constructs a BSReadWriteLock and acquires

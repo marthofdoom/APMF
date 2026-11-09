@@ -278,6 +278,18 @@ Raised against `4e3813c` (`feat/apmf-ch18-attack-select`), tier-3 Opus review ro
 ### APMF-B265 (SEV-5) -- ch.18 a duplicate attack record in the pool re-evaluates mid-roll
 Raised against `4e3813c`, same review. Coordinator paraphrase (the reviewer's text was relayed, not quoted): a duplicate attack record in the pool makes Decide find the first copy and recompute mid-roll; traced, it cannot empty a draw. Reasoning: `Decide` locates the candidate by its BGSAttackData pointer and takes the first match; a pool listing the same record twice gives the second copy the first copy's index, which is not above the cached index, so `EvaluateRoll` runs again with that index as the known-eligible entry. The re-evaluation applies the same rules to the same data, so the floor rule still holds and no draw is emptied; the cost is one extra evaluation. Fix path: search from the cached index + 1 first.
 
+### APMF-B266 (SEV-4, FIXED in the review-fix commit on `feat/apmf-claim-dryrun`) -- ABI v35 DrainPending tied to ApplyRequest by comment only
+Raised against `ed7b58b` (`feat/apmf-claim-dryrun`, ABI v35 CanServe), tier-3 Opus review, 2026-11-09. Coordinator paraphrase (the reviewer's text was relayed, not quoted): DrainPending names ApplyRequest's drop sites, but nothing in the code ties the two; a new drop site or a changed predicate goes stale silently. Fix (rule 9 carve-out (a), an ABI change): the two kIntent_Cast predicates are shared inline helpers `CastDrainCollides` / `CastDrainReadsPackage` (core/ControlMap.cpp, above DrainPending) used by BOTH DrainPending and ApplyRequest's package and collision branches, and every ApplyRequest `return false` carries a `DRAIN-DROP SITE: keep DrainPending in step` marker. The real path is behaviour-identical (strip-and-diff: only the two helpers, DrainPending, and two equivalent predicate swaps differ; `castFlags` is assigned once, before the deny-only test).
+
+### APMF-B267 (SEV-5, DOCUMENTED) -- ABI v35 a larger APMF_ServeInfo cannot tell how much was filled
+Raised against `ed7b58b`, same review. Coordinator paraphrase: the echoed `size` does not say how much APMF filled for a caller passing a struct larger than 128 bytes. Documented in APMF_API.h (APMF_ServeInfo comment) and Docs/APMF_API-REFERENCE.md#abi-v35-can-serve: zero-initialise the whole struct and gate any tail field on abiVersion. No code change.
+
+### APMF-B268 (SEV-5, DOCUMENTED) -- ABI v35 `facets` reports kCore for NoChannel / an unknown intent
+Raised against `ed7b58b`, same review. Coordinator paraphrase: `facets` is kCore for an intent with no channel or an unknown one, which can read as a facet being served. Documented (value unchanged, as ruled) as "the mask a filed claim of this intent would be booked under", never a sign of service, in APMF_API.h and the API reference.
+
+### APMF-B269 (SEV-5, OPEN, client side: MFO adoption) -- a dry run of the first shape does not answer a fallback retry
+Raised against `ed7b58b`, same review. Coordinator paraphrase: MFO's RequestCast sets kCastFlag_OwnLineOfSight and retries without it on a refusal (MFO native/apmf/Bridge.cpp:539 / :552), so a dry run of the first shape answers for the first call only. Not fixed in APMF (by ruling). The client that retries must query the shape it will finally file, or query both shapes. Recorded in the API reference's MFO-B2 notes; the MFO adoption brief must carry it.
+
 ## DRAINED
 
 _(none yet)_

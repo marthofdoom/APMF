@@ -2,6 +2,8 @@
 #include "APMF_API.h"
 #include "core/Sources.h"
 
+namespace apmf { struct ServeCheck; }   // core/ControlMap.h (ABI v35 CanServe)
+
 // ============================================================================
 // ABI v28 PLACE (kIntent_Place): put an actor beside a reference, or at a point in
 // an INTERIOR cell, with the engine's own move, ONCE, on the game thread. It works on
@@ -35,8 +37,11 @@ namespace apmf::place {
     // apmf::mainthread::Post of the move. NO form lookup here. `a_client` is the source that filed
     // `a_handle`, captured at the call (so a Release before the move does not orphan it). false = refused
     // (one WARN line; the caller returns kInvalidHandle and keeps no record).
+    // ABI v35: `a_dry` non-null = CHECK ONLY (apmf::ServeCheck, core/ControlMap.h): the same call-time checks, each
+    // refusal recorded there instead of logged, and true returned (pending OneShot | PlaceRoom) before the
+    // record table is touched; the room check is NOT made (it frees finished records).
     bool Enqueue(APMF_API::Handle a_handle, RE::FormID a_actor, const APMF_API::APMF_Param* a_param,
-                 apmf::sources::SourceId a_client);
+                 apmf::sources::SourceId a_client, ServeCheck* a_dry = nullptr);
 
     // ANY THREAD. GetPlaceState (APMF_API_v28): copy under the leaf lock, no game call.
     std::uint32_t GetState(APMF_API::Handle a_handle, APMF_API::APMF_PlaceStateInfo* a_out);

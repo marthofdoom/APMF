@@ -126,7 +126,7 @@ a DENIED category is unequipped by the enforce pass. The header comments that st
 stale until the paired MFO header change.
 
 <a id="abi-history"></a>
-## ABI v10 to v34: what each version added
+## ABI v10 to v35: what each version added
 
 Moved verbatim from `native/APMF_API.h` (line 96 at 9d01cdf). The header keeps a pointer to this anchor.
 
@@ -305,6 +305,16 @@ optional power-share ceiling / floor over a window of started attacks; GetAttack
 seat does. The seat is a third #17a call site (INVARIANTS #17a, amended 2026-11-09): StartAttack's weight call answers
 0 for a denied class. No APMF_Param field, no change to any existing slot, no co-save. A client gates on abiVersion >=
 34. An older APMF has no channel for intent 18 and refuses the claim. Docs/APMF_API-REFERENCE.md#abi-v34-attack-selection.
+ABI v35 (2026-11-09, MFO backlog MFO-B2, ClickUp 86e394118): THE CLAIM DRY RUN. APMF_API_v35 appends ONE slot to the
+v34 prefix: CanServe(query, out) asks whether a RequestEx / Request / RequestCast with the given arguments would be
+refused right now, and why, and files nothing (no handle, no queue, no post, no attribution, no log, no once-per-
+session refusal log used up). Two PODs (APMF_ServeQuery 40 bytes, APMF_ServeInfo 128 bytes, size field first,
+static_assert-pinned) and four append-only enums (ServeVerdict, ServeRefusal, ServePending, ServeCall). The answer is
+the real call's own refusal sites run in a check mode, so the two cannot disagree for the state they read. Priority 0
+on a facet is not a refusal (offFacets reports it). What the next Drain decides is named in `pending`, never guessed.
+No intent, no APMF_Param field, no change to any existing slot, no co-save. A client gates on abiVersion >= 35. An
+older APMF has no dry run: the client files the request and reads the handle, as before.
+Docs/APMF_API-REFERENCE.md#abi-v35-can-serve.
 ```
 
 <a id="intent-18"></a>
