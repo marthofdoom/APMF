@@ -199,7 +199,7 @@ namespace apmf::attackselect {
         }
 
         // ---- per-actor window + counters (leaf mutex; nothing is called while held) ----
-        constexpr std::size_t kRing      = 32;
+        constexpr std::uint32_t kRing      = 32;
         constexpr std::size_t kActorsMax = 512;
         struct ActorState {
             std::uintptr_t   lastAtk = 0;
@@ -603,7 +603,7 @@ namespace apmf::attackselect {
                 d.maxShare = d.minShare = -1.0f;
             }
             d.window = m.window == 0 ? 8 : m.window;
-            if (d.window < 4 || d.window > kRing) { bad |= 512; what += " window clamped to [4, 32];"; d.window = d.window < 4 ? 4u : static_cast<std::uint32_t>(kRing); }
+            if (d.window < 4 || d.window > kRing) { bad |= 512; what += " window clamped to [4, 32];"; d.window = d.window < 4 ? 4u : kRing; }
             if (m.flags & ~static_cast<std::uint32_t>(APMF_API::kAtkMix_ObserveOnly)) { bad |= 1024; what += " unknown flag bits masked off;"; }
             d.flags = m.flags & APMF_API::kAtkMix_ObserveOnly;
         }

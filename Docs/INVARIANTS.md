@@ -1425,6 +1425,36 @@ thing that derails one. Concretely:
   by the ch.17 enforce pass; (5) every other actor runs it untouched; on an actor holding a ch.17 claim that
   does not own Light a stow is LOGGED (passive, rate-capped), the player and unclaimed actors unlogged.
   `core/TorchSeat.cpp`, INI `[EquipAuthority] bTorchDeny` (default 1).
+  **AMENDED 2026-11-09 (ch.18 attack selection, `feat/apmf-ch18-attack-select`, ClickUp 86e3bw775): a THIRD #17a
+  call-site seat, its own argument made here.** marth 2026-10-27: "Weight seat ALLOWED: Harbinger may zero an attack
+  weight at the weight call inside StartAttack." The facet is "which attack ENTRY the NPC's own AI starts". The engine
+  decides it inside StartAttack (AE 49170 / SE 48139 / 1.7.104 0x8B7D60, raw: its id is not in the fork's MIT table),
+  a non-virtual function whose per-candidate weight comes from one direct call to a non-virtual weight function
+  (AE 50675 / SE 49748 / 1.7.104 0x8F2830, raw). No virtual function exists between the gathered pool and the draw
+  (the context node's act() builds the pool, CombatAnimation::Execute runs after the pick), so no vtable seat can
+  shape the choice; ch.7 can only deny a whole leaf. Conditions: (1) the site is that one internal call (AE / 1.7.104
+  +0x28D, SE +0x2AE), not a public entry: the weight function has two E8 callers per build and only this one is
+  touched, and StartAttack itself is reached only from the Attack and Bash attempts; (2) install SeatVerifies the
+  function rows (and on 1.6.1170 / 1.5.97 the call-site row), then re-reads before writing the E8 and its target and
+  every byte the seat depends on: the argument setup ending at the E8, the pool walk that names the context register
+  (r13 on 1.6.1170 / 1.7.104, r12 on 1.5.97), the count compare, the per-entry availability, cooldown and stamina
+  tests. Any mismatch REFUSES the seat (SCAR and Valhalla patch +0x3F1 / +0x435 of the same function, outside these
+  bytes; a patch inside them is a refusal, never a CTD). A re-patch by another DLL after install is detected on
+  engage and on the heartbeat and logged loudly; (3) every id, offset and byte comes from each runtime's own
+  disassembly (1.7.104 instruction-identical to 1.6.1170); (4) DENY ONLY, engine answer first: the engine's weight is
+  computed, and only a candidate the engine already weighted above 0, in a class the client DECLARED and denied
+  (statically, or by its power-share ceiling or floor), answers 0. Nothing is added, no move is named, no class the
+  client did not declare is touched, and the pool is never left with fewer than TWO undenied entries (the floor
+  rule: the engine's weights then stand for that roll, logged). The share floor's Normal deny additionally needs a
+  Power entry of the same roll that the engine's own tests would admit (marth 2026-11-09: "a regular attack must fire
+  when stamina isnt allowing power"). Every deny is ranked against the Engine source on the CombatAction facet;
+  (5) only actors holding a `kIntent_AttackSelection` claim with a declaration are governed; the player and every
+  other actor run the engine's weight untouched and unlogged. The context reaches the thunk through a 17-byte stub in
+  Harbinger's own trampoline (`mov r9, <ctx register>; jmp [rip+0]`): r9 is volatile and unused by the 3-argument
+  call, and the stub pushes nothing, so the engine's frame is the one the thunk sees. `core/AttackSelect.cpp`, INI
+  `[AttackSelect] bAttackSelect` (default 1), `bObserveOnly` (default 0). Not covered (`DENY-COMPLETENESS-AUDIT.md`
+  row 18): picks SCAR / Valhalla make for annotated actors and attack events sent to the graph directly (S-D5, a
+  post-pick veto, not built), in-graph combo chains (by design).
   Under #17a the facet is taken WHOLE (declare the worn set → APMF equips it and refuses
   everything else until the client re-declares or releases), which is full control of the
   facet exactly as a per-path deny would be. Any further call-site seat needs its own
@@ -1464,7 +1494,8 @@ The current codebase satisfies this: every hook in `native/core/` is `write_vfun
 version-pinned `VTABLE_*` symbol, with ONE exception, the #17a seat: `core/EquipSink.cpp`
 is the only `write_call`/`AllocTrampoline` in `native/` (2026-09-15), and it exists only
 under #17a's five conditions. No other call-site patch remains anywhere in the tree after
-T4's removal. (2026-10-20: `core/TorchSeat.cpp` is a second #17a seat under the amendment above.)
+T4's removal. (2026-10-20: `core/TorchSeat.cpp` is a second #17a seat under the amendment above. 2026-11-09:
+`core/AttackSelect.cpp` is a third, under its own amendment above.)
 
 ## Deny completeness
 

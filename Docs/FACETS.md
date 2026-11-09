@@ -103,6 +103,7 @@ struct Heartbeat {
 | [`kIntent_Headtrack`](#ch5-headtrack-kintent_headtrack) | 5 | Headtrack | Make the actor look straight up | 1 | Field-proven, known incomplete |
 | [`kIntent_CombatTarget`](#ch6-combat-target-kintent_combattarget) | 6 | Combat target | Record who owns the target facet | 1 | Field-proven (arbitration only) |
 | [`kIntent_CombatAction`](#ch7-combat-action-kintent_combataction) | 7 | Combat action | Deny categories of combat behaviour | 1 | Field-proven |
+| [`kIntent_AttackSelection`](#ch18-attack-selection-kintent_attackselection) | 18 | Attack selection | Deny attack classes (power, normal, bash...) at the engine's own attack draw, cap or floor the power share | 34 | Built, seat not yet seen in game (the roll it sits in is field-observed) |
 | [`kIntent_SelectSpell`](#ch8-select-spell-kintent_selectspell) | 8 | Select spell | The only spell the actor's AI may cast | 2 | Field-proven (single spell) |
 | [`kIntent_Cast`](#ch8b-cast-kintent_cast) | 8b | Cast | Make the actor's own AI cast a spell at a target | 5 | Field-proven |
 | [`kCastFlag_AtPosition`](#position-cast-kcastflag_atposition) | 8b | Position cast | Cast a Target Location spell at a point | 11 | Built, off by default |
@@ -128,7 +129,7 @@ struct Heartbeat {
 | [Line of sight](#line-of-sight-getlineofsight) | | `GetLineOfSight` | Harbinger's own ray | 18 | Used by MFO |
 | [Awareness](#awareness-senseactor) | | `SenseActor` | Does this actor sense that one | 18 | Used by MFO |
 
-Channel 18 is skipped on purpose. The number is reserved for an attack-selection design that is not on main.
+Channel 18 is attack selection (ABI 34). Its number was reserved for it from ABI 9.
 
 ## Movement and body
 
@@ -2419,6 +2420,118 @@ ABI 1. No key. Field-proven (graduated from a live deck probe).
 2. Can a ch.7 claim stop the follower from blocking?
 3. You hold a ch.8b heal claim and a ch.7 Cast deny on the same actor. What happens to the heal?
 
+### ch.18 Attack selection (`kIntent_AttackSelection`)
+
+*Deny classes of attack (normal, power, bash, bash power, left hand) at the point where the engine weighs each candidate attack, so the actor's own AI draws among the rest. Optionally keep the actor's power share under a ceiling or over a floor. Deny only: Harbinger never adds a move.*
+
+#### What it is for
+
+Shape HOW an NPC fights without taking over its fight. A Warrior class that should open with power attacks more often, a scrappy Mercenary that should rarely commit to one, a follower that should not bash. The player sees the same animations the actor always had, chosen in a different mix. Whether the actor attacks at all is ch.7, with what is ch.15 / 17 / 26, at whom is ch.6 / 20.
+
+#### Arguments
+
+The claim takes no param. The declaration is a separate call on the handle (ABI 34):
+
+```cpp
+auto* v34 = reinterpret_cast<const APMF_API_v34*>(g_apmf);      // gate on g_apmf->abiVersion >= 34
+Handle h = g_apmf->RequestEx(actor, kIntent_AttackSelection, kBasis, nullptr);
+APMF_AttackMix mix{};
+mix.size          = sizeof(mix);
+mix.governed      = kAtkClass_Normal | kAtkClass_Power;   // the classes you govern
+mix.denied        = 0;                                    // denied outright (a subset of governed)
+mix.powerShareMax = -1.0f;                                // a ceiling 0..1, -1 = none
+mix.powerShareMin = 0.4f;                                 // a floor 0..1, -1 = none
+mix.window        = 0;                                    // 0 = 8 started attacks
+v34->SetAttackMix(h, &mix);
+```
+
+**Table 22a. `AttackClass` (read off each attack entry's own ATKD flags, never its name)**
+
+| Bit | Name | Entries |
+|---|---|---|
+| 0 | `kAtkClass_Normal` | not bash, not power, not left hand |
+| 1 | `kAtkClass_Power` | power, not bash, not left hand |
+| 2 | `kAtkClass_Bash` | bash, not power |
+| 3 | `kAtkClass_BashPower` | bash and power |
+| 4 | `kAtkClass_Left` | left hand (normal or power) |
+| 5 | `kAtkClass_DualWield` | RESERVED. No ATKD flag marks a dual-wield attack, so it is masked off and logged |
+
+Every entry is in exactly one class. A mod-added attack classifies itself by its own flags, so nothing here is list-specific.
+
+**Table 22b. `APMF_AttackMix` (48 bytes)**
+
+| Field | Meaning | Default and range |
+|---|---|---|
+| `size` | `sizeof(APMF_AttackMix)` | a smaller value clears the declaration (logged) |
+| `governed` | the classes this claim governs. A class not in it is never touched | 0 = governs nothing |
+| `denied` | classes the AI may not draw while the claim stands | masked to `governed` (logged) |
+| `powerShareMax` | a ceiling on Power / (Power + Normal) over the window. Above it, Power is denied until the share falls | -1 = none. Needs Power governed |
+| `powerShareMin` | a floor on the same share. Below it, Normal is denied until the share rises (see the stamina rule below) | -1 = none. Needs Normal governed. Above the ceiling, both are ignored |
+| `window` | started Power-or-Normal attacks the share is measured over. No share deny before the window is full | 0 = 8, clamped to 4..32 |
+| `flags` | `kAtkMix_ObserveOnly`: count what would be denied, deny nothing | 0 |
+
+`SetAttackMix(h, nullptr)` clears the declaration. A re-declaration replaces it. The actor's window of started attacks survives a re-declaration (it is a fact about the actor).
+
+#### What Harbinger enforces
+
+The engine's `StartAttack` walks the attack entries its hand or bash context gathered (the pool), drops the ones its own tests reject (reach, cooldown, stamina), weighs each survivor with one call, and draws at weighted random among the weights above 0. Harbinger sits on that one call ([INVARIANTS #17a](INVARIANTS.md), amended 2026-11-09). The engine's weight is computed first. For a claimed actor, a candidate in a denied class answers 0, so the draw never picks it. Every other candidate keeps the engine's weight, and every unclaimed actor and the player are untouched.
+
+Three rules bound every deny:
+
+- **The floor rule.** If the deny would leave fewer than TWO undenied entries in the context's pool, the engine's weights stand for that roll and a warning line says so (rate-limited). Harbinger never empties the pool and never narrows the actor to one move.
+- **The stamina rule (marth 2026-11-09, "a regular attack must fire when stamina isnt allowing power").** The power-share FLOOR denies Normal only when some Power entry of that same roll would start: it passes the engine's own reach and cooldown tests, the actor's stamina is above 0, and the engine's weight for it is above 0. Otherwise the Normal attack keeps its weight. An explicit `denied` Normal is not gated this way (the floor rule still holds).
+- **Ranking.** A deny stands only while the claim outranks the `Engine` source on the CombatAction facet.
+
+How the share is measured: each time the seat weighs a claimed actor's candidates, it compares the actor's current attack record with the last one it saw. A change is one started attack. A repeat of the exact same attack is not seen (2 of 44 in the one field log), so the share is a close approximation.
+
+What it does not reach, honestly (see the audit row): an attack SCAR or Valhalla picks for an annotated actor (they replace the engine's pick after this roll), combo continuations inside the animation graph, and a script or mod that sends an attack event to the graph directly. A left-hand context the behaviour tree never builds cannot be added by a deny.
+
+#### Lifetime
+
+Standing, ended by `Release`, a load or an unload. Declarations and windows never cross a load.
+
+#### Priority and conflicts
+
+Higher basis wins the channel, as everywhere. The deny ranks on the `[CombatAction]` sources facet against `Engine` (client 50 against engine 20 by default).
+
+#### Refusals
+
+At the call: the player, and while the seat is not installed (`[AttackSelect] bAttackSelect=0`, VR, an unsupported runtime, a failed address row, or any byte around the site that differs from the verified ones, a SCAR-class collision included). `GetAttackMixState` then answers `kAttackMixState_Unavailable`.
+
+#### Worked example
+
+**Example 19a: A Warrior who power attacks at least 40% of the time, but never stalls when out of stamina**
+
+**Solution.**
+
+```cpp
+Handle WarriorMix(RE::FormID actor) {
+    if (g_apmf->abiVersion < 34) return kInvalidHandle;   // older Harbinger: keep your own behaviour
+    auto* v34 = reinterpret_cast<const APMF_API_v34*>(g_apmf);
+    Handle h = g_apmf->RequestEx(actor, kIntent_AttackSelection, kBasis, nullptr);
+    if (h == kInvalidHandle) return h;
+    APMF_AttackMix mix{};
+    mix.size          = sizeof(mix);
+    mix.governed      = kAtkClass_Normal | kAtkClass_Power;
+    mix.powerShareMax = -1.0f;
+    mix.powerShareMin = 0.4f;
+    v34->SetAttackMix(h, &mix);
+    return h;
+}
+```
+
+**Check.** After eight attacks, while fewer than 40% were power attacks, `[ch.18]` says `active deny now Normal` and the actor's next attacks are power attacks. When its stamina is out, the line `no Power attack of this roll can start` appears and it swings normally. `GetAttackMixState` reports `windowPower`, `windowFill` and `powerShare`.
+
+#### Version, INI and field status
+
+ABI 34 (0.18.0). `[AttackSelect] bAttackSelect=1`, `bObserveOnly=0`. Built on all three runtimes. The roll it sits in is field-observed (the [atk-sel] probe, LoreRim with SCAR, 2026-10-30 and 11-01: a one-hander's Right context pool of 20, 44 picks, 24 of them power attacks, 42 through this roll). The seat itself needs its own field run.
+
+**Check Your Understanding: ch.18**
+
+1. You deny Power on an actor whose Right context holds one normal attack and four power attacks. What does the AI do?
+2. Why can a client not ask for "more left-hand attacks"?
+3. Your floor is 0.4 and the actor is out of stamina. Which attack does it make?
+
 ### ch.20 Target pin (`kIntent_TargetPin`)
 
 *Each combat update the engine asks its target selectors whom to fight. While the pin stands, Harbinger answers with your target, among the targets the engine already has. The engine fights it with its own AI.*
@@ -3567,6 +3680,7 @@ The ABI is append-only. A client built against an older ABI keeps working agains
 | 31 | 0.15.2 | `GetClaimEndReason`, `ClaimEndReason` (struct `APMF_API_v31`) |
 | 32 | 0.16.0 | `kCastGuard_Bystanders` (no slot, struct `APMF_API_v31`) |
 | 33 | 0.17.0 | `SetEquipDenyItems`, `kMaxEquipDeny`, `GetEquipPreferenceItemState` (struct `APMF_API_v33`) |
+| 34 | 0.18.0 | `kIntent_AttackSelection`, `AttackClass`, `AttackMixFlags`, `APMF_AttackMix`, `AttackMixState`, `APMF_AttackMixInfo`, `SetAttackMix`, `GetAttackMixState` (struct `APMF_API_v34`) |
 
 The last release is 0.16.0, ABI 32, interface struct `APMF_API_v31` (ABI 32 added a flag and no slot). In 0.15.1 the interface struct was `APMF_API_v29`, since ABI 30 added a flag and no slot. Before that `APMF_API_v19` served ABI 19 to 21, and ABI 23 and 25 also added no slot.
 
@@ -3691,6 +3805,8 @@ Answers to the odd-numbered questions on this page.
 **ch.6.** 1. No. A ch.6 claim restores nothing. The restore through `SetTarget` belongs to ch.20.
 
 **ch.7.** 1. `kCombatActionCat_Cast`. 3. The heal never fires. ch.7 denies the cast leaves, which are the cast claim's delivery mechanism.
+
+**ch.18.** 1. Exactly what the engine would. Denying Power would leave a single undenied entry, so the floor rule keeps the engine's weights for every such roll and logs it. 3. A normal attack. The floor's Normal deny needs a power attack that can start in that roll, and with stamina at 0 none can.
 
 **ch.20.** 1. The pin pauses, with the claim live, until the engine has a target and yours is in the group. 3. When the writer is positively identified and your priority on `Target` is above its priority. An unnamed writer stands unless `[UnknownSources] Target=override`.
 

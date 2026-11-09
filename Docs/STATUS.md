@@ -4,6 +4,14 @@ Updated 2026-11-08. Current version **v0.17.0** (cut 2026-11-08, ABI v33, see CH
 shipped, what's probe-gated, what's next. Keep this current in the SAME change as any
 build/finding/workflow change.
 
+## HEAD OF WORK 2026-11-09 -- ch.18 ATTACK SELECTION (ABI v34, a third #17a seat), branch `feat/apmf-ch18-attack-select`, NOT merged
+
+- ClickUp 86e3bw775, marth 2026-10-27 ("weight seat ALLOWED") and 2026-11-09 (class update: Warrior more power attacks, Mercenary scrappy; floor and ceiling as windowed denies; "a regular attack must fire when stamina isnt allowing power"). Tier A: new engine seat + ABI bump. Needs its tier-3 Opus review before merge.
+- `kIntent_AttackSelection = 18`, `APMF_API_v34` (`SetAttackMix`, `GetAttackMixState`), `APMF_AttackMix` 48 bytes, `APMF_AttackMixInfo` 80 bytes. `MinReleaseForAbi(34)` = 0.18.0. No co-save.
+- Seat: `core/AttackSelect.cpp`, `write_call<5>` on StartAttack's weight call (AE 49170+0x28D / SE 48139+0x2AE / 1.7.104 raw 0x8B7D60+0x28D) through a context stub; deny = weight 0 for a declared, denied class; floor rule (>= 2 undenied pool entries); share floor gated on a Power entry the engine's own tests would start; ranked vs Engine on [CombatAction]. INI `[AttackSelect] bAttackSelect=1`, `bObserveOnly=0`. INVARIANTS #17a amended 2026-11-09.
+- Field status: BUILT, NOT field-run. The roll it sits in is field-observed by the [atk-sel] probe (LoreRim 2026-10-30 / 11-01, SCAR loaded: Sven's Right context pool 20, 44 picks, 24 power, 42 through the vanilla roll). FIELD RUNG NEEDED: claim a melee follower with Power denied and see `zeroed` rise and no power attack.
+- Open: S-D5 (SCAR / Valhalla post-pick veto, stall risk, not built: an honest HOLE), Left context unreachable by deny, DualWield unclassifiable from ATKD flags, share misses exact repeats, explicit `denied` Normal not stamina-gated (ask marth). MFO mirror of APMF_API.h + adoption are the next step.
+
 ## HEAD OF WORK 2026-11-01 -- MENU UNCONTESTED INTERACTIONS SHOW AS OWN, branch `feat/menu-uncontested-served`, NOT merged
 
 - ClickUp 86e3t1gfh follow-up. An interaction a live claim performs with nothing to deny now shows in the Own column of its client: a cast that starts on the hand a cast claim names (core/CastObserve.cpp, once per cast start), and an engine target pick that already matches the client's pin (channels/TargetPin.cpp, once per pick, replaces the last-seen-only stamp). A combat entry already counts Served when it fires and has no event before that. Counting and display only, no ranking or enforcement change.
