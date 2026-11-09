@@ -23,6 +23,7 @@
 #include "core/Sightline.h"  // ABI v18 own line of sight: Armed()/NotArmedReason() for the synchronous refusal
 #include "core/CastGuard.h"  // ch.25 cast guard (ABI v21): RefuseReason()/TtlMs() for the refusal and the TTL grant
 #include "core/EquipPreference.h"  // ch.26 equip preference (ABI v22): RefuseReason() for the synchronous refusal
+#include "core/AttackSelect.h"     // ch.18 attack selection (ABI v34): RefuseReason() for the synchronous refusal
 
 #include <cmath>
 
@@ -394,6 +395,14 @@ namespace apmf {
                 spdlog::warn("[substrate] claim refused -- actor 0x{}: {}.", apmf::log::Hex(actor), why);
                 return APMF_API::kInvalidHandle;
             }
+
+        // ch.18 (ABI v34): refused synchronously by core/AttackSelect.cpp RefuseReason (seat not installed, the player).
+        if (intent == APMF_API::kIntent_AttackSelection) {
+            if (const char* why = apmf::attackselect::RefuseReason(actor)) {
+                spdlog::warn("[ch.18] claim refused -- actor 0x{}: {}.", apmf::log::Hex(actor), why);
+                return APMF_API::kInvalidHandle;
+            }
+        }
 
         // ch.26 (ABI v22): refused synchronously by core/EquipPreference.cpp RefuseReason.
         if (intent == APMF_API::kIntent_EquipPreference) {

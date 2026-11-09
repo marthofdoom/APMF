@@ -4806,6 +4806,60 @@
    },
    "source": "native/core/PapyrusCaller.cpp (ClickUp 86e3q082a, the Papyrus caller seat: write_vfunc slot 0x0F on every native's own vtable; the engine's Call is what every native's slot 0x0F holds or forwards to). The signature runs through the layout reads the seat depends on: [rdx] = Stack*, Stack+0x60 top frame, frame+0x28 self, Stack+0x80 stackID",
    "doc": "agentlogs/apmf-papyrus-attribution-2.md (2026-10-27)"
+  },
+  {
+   "seat": "AttackSelect.StartAttack",
+   "kind": "function",
+   "construct": "StartAttack(CombatBehaviorContextMelee* ctx): the roll -- per-entry availability / cooldown / stamina tests, then the weight call per candidate, weighted draw, angle test, CombatAnimation::Execute",
+   "ids": {
+    "1.6.1170": 49170,
+    "1.5.97": 48139
+   },
+   "sig": {
+    "1.6.1170": "48 8B C4 55 41 54 41 55 41 56 41 57 48 8D A8 38 FF FF FF 48 81 EC A0 01 00 00 48 C7 45 50 FE FF FF FF",
+    "1.5.97": "48 8B C4 55 56 57 41 54 41 55 41 56 41 57 48 8D A8 E8 FE FF FF 48 81 EC E0 01 00 00 48 C7 85 90 00 00 00 FE FF FF FF"
+   },
+   "source": "native/core/AttackSelect.cpp (ch.18 attack selection, ABI v34: write_call<5> at StartAttack's weight call through a context-forwarding stub; #17a amendment 2026-11-09)",
+   "doc": "agentlogs/apmf-ch18-attack-select.md (2026-11-09): 1.7.104 StartAttack 0x8B7D60 and weight 0x8F2830 instruction-identical to 1.6.1170 (349 / 84 insns, targets normalised); neither id is in the MIT table rev 4 (raw_rvas)"
+  },
+  {
+   "seat": "AttackSelect.AttackWeight",
+   "kind": "function",
+   "construct": "float W(Actor* self, Actor* target, BGSAttackData*): attackChance (+0x1C) x a combat-style multiplier (target staggered, or blocking a power attack); the verified call target the site must still reach",
+   "ids": {
+    "1.6.1170": 50675,
+    "1.5.97": 49748
+   },
+   "sig": {
+    "1.6.1170": "48 89 5C 24 08 48 89 74 24 10 57 48 83 EC 50 48 8B D9 0F 29 74 24 40 F3 41 0F 10 70 1C",
+    "1.5.97": "48 89 5C 24 08 48 89 74 24 10 57 48 83 EC 50 48 8B D9 0F 29 74 24 40 F3 41 0F 10 70 1C"
+   },
+   "source": "native/core/AttackSelect.cpp (ch.18 attack selection, ABI v34: write_call<5> at StartAttack's weight call through a context-forwarding stub; #17a amendment 2026-11-09)",
+   "doc": "agentlogs/apmf-ch18-attack-select.md (2026-11-09): 1.7.104 StartAttack 0x8B7D60 and weight 0x8F2830 instruction-identical to 1.6.1170 (349 / 84 insns, targets normalised); neither id is in the MIT table rev 4 (raw_rvas)"
+  },
+  {
+   "seat": "AttackSelect.Site.Weight",
+   "kind": "callsite",
+   "construct": "StartAttack -> call W, one candidate per call (AE/1.7.104 +0x28D, SE +0x2AE); the ONLY call to W inside StartAttack (W has two E8 callers per build)",
+   "ids": {
+    "1.6.1170": 49170,
+    "1.5.97": 48139
+   },
+   "sig": {
+    "1.6.1170": "48 8B C4 55 41 54 41 55 41 56 41 57 48 8D A8 38 FF FF FF 48 81 EC A0 01 00 00 48 C7 45 50 FE FF FF FF",
+    "1.5.97": "48 8B C4 55 56 57 41 54 41 55 41 56 41 57 48 8D A8 E8 FE FF FF 48 81 EC E0 01 00 00 48 C7 85 90 00 00 00 FE FF FF FF"
+   },
+   "offset": {
+    "1.6.1170": "0x28D",
+    "1.5.97": "0x2AE"
+   },
+   "bytes": "E8",
+   "target": {
+    "1.6.1170": 50675,
+    "1.5.97": 49748
+   },
+   "source": "native/core/AttackSelect.cpp (ch.18 attack selection, ABI v34: write_call<5> at StartAttack's weight call through a context-forwarding stub; #17a amendment 2026-11-09)",
+   "doc": "AE 0x8A2B3D / SE 0x80C2CE / 1.7.104 0x8B7FED (proven by the code's byte checks against the two raw function rows: the 1.7.104 table cannot hold a callsite row for an id it lacks)"
   }
  ],
  "layout_facts": [
@@ -5318,6 +5372,16 @@
    "seat": "ActionGate.Hold.ParallelDataPush.1_7_104",
    "rva": "0x85F990",
    "source": "native/core/ActionGate.cpp (Install, 1.7.104 only: AE id 47532 has no MIT-table row); the code re-reads the Parallel act's E8 at +0x11 -> this address"
+  },
+  {
+   "seat": "AttackSelect.StartAttack",
+   "rva": "0x8A28B0",
+   "source": "AttackSelect StartAttack (1.7.104 raw 0x8B7D60; AE id 49170 has no MIT-table row)"
+  },
+  {
+   "seat": "AttackSelect.AttackWeight",
+   "rva": "0x8DCD30",
+   "source": "AttackSelect weight W (1.7.104 raw 0x8F2830; AE id 50675 has no MIT-table row)"
   }
  ]
 }

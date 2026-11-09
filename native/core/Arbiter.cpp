@@ -10,6 +10,7 @@
 #include "core/RestoreCensus.h"
 #include "core/ActionGate.h"
 #include "core/AttackSelectProbe.h"
+#include "core/AttackSelect.h"
 #include "core/PackageGate.h"
 #include "core/MainThread.h"
 #include "core/Registry.h"
@@ -131,6 +132,9 @@ namespace apmf {
         // [Probe] bAttackSelect (PASSIVE, ClickUp 86e3bw775): drains the attack-selection records into lines,
         // per-actor summaries ~20 s, RULE C totals ~30 s (zeros included). One relaxed load when OFF.
         apmf::atkprobe::Heartbeat();
+        // ch.18 ATTACK SELECTION (ABI v34): the ~60 s totals line (zeros included) once a claim was filed, and the
+        // re-patched-site check. One relaxed load otherwise.
+        apmf::attackselect::Heartbeat();
 
         // "Does 0x49 actually redirect?" probe (marth 2026-09-06, core/PackageGate.cpp).
         // Same RULE C shape as the PfpHeartbeat above: self-throttled internally
