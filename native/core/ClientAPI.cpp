@@ -327,6 +327,27 @@ namespace {
         }
     }
 
+    // ABI v33 (ch.17): the PER-ITEM DENY list of an equip-authority claim (see APMF_API_v33's doc comment).
+    // `forms` is READ AND COPIED synchronously inside EnqueueSetEquipDenyItems -- APMF never retains the
+    // pointer. Applied on the game thread at the next Drain.
+    void APMF_SetEquipDenyItems(APMF_API::Handle handle, const RE::FormID* forms, std::uint32_t count) {
+        try {
+            apmf::ControlMap::Get().EnqueueSetEquipDenyItems(handle, forms, count);
+        } catch (...) {
+        }
+    }
+
+    // ABI v33 (ch.26): what ch.26 last did for ONE preferred item. Any thread: a copy under the state's leaf
+    // lock, no game call. A throw becomes kEquipPrefState_None, nothing written.
+    std::uint32_t APMF_GetEquipPreferenceItemState(RE::FormID actor, RE::FormID form, std::uint32_t slot,
+                                                   APMF_API::APMF_EquipPrefInfo* out) {
+        try {
+            return apmf::equippref::GetItemState(actor, form, slot, out);
+        } catch (...) {
+            return APMF_API::kEquipPrefState_None;
+        }
+    }
+
     // ABI -> the first APMF release that implements it, for the "client too new"
     // refusal log below (MFO wiring review SEV-3 F4): a user running an older
     // APMF under a newer client must be able to read WHICH APMF they need. Keep in
@@ -339,7 +360,8 @@ namespace {
     // the release after 0.13.1 -- name it at the cut; so do v26, the substrate state query, v27, the
     // substrate availability query, and v28, kIntent_Place and its state query; v29, the client facet
     // priority query, and v30, ch.19's kTravel_CrossCells, ship in 0.15.0; v31, the claim end reason, ships
-    // in 0.15.2; v32, the ch.25 kCastGuard_Bystanders bit, ships in 0.16.0).
+    // in 0.15.2; v32, the ch.25 kCastGuard_Bystanders bit, ships in 0.16.0; v33, the ch.17 per-item deny and the
+    // ch.26 per-entry state, ships in the release after 0.16.0 -- name it at the cut).
     const char* MinReleaseForAbi(std::uint32_t abi) {
         switch (abi) {
         case 1:  return "0.2.0";
@@ -374,6 +396,7 @@ namespace {
         case 30: return "0.15.0";
         case 31: return "0.15.2";
         case 32: return "0.16.0";
+        case 33: return "the release after 0.16.0";
         default: return "a release newer than this one";
         }
     }
@@ -482,7 +505,18 @@ namespace {
     static_assert(sizeof(APMF_API::APMF_API_v31) == sizeof(APMF_API::APMF_API_v29) + sizeof(void*),
                   "APMF_API_v31 = the v29 prefix plus exactly one function pointer");
 
-    constexpr APMF_API::APMF_API_v31 g_api{
+    // ABI v33 (the ch.17 per-item deny + the ch.26 per-entry state) appends TWO slots to the v31 prefix (v32
+    // added none), so the object is now an APMF_API_v33 and `abiVersion` reports 33. Same two-form proof.
+    static_assert(offsetof(APMF_API::APMF_API_v33, SetEquipDenyItems) == sizeof(APMF_API::APMF_API_v31),
+                  "APMF_API_v33's first slot must start right after the v31 prefix");
+    static_assert(offsetof(APMF_API::APMF_API_v33, GetEquipPreferenceItemState) ==
+                      sizeof(APMF_API::APMF_API_v31) + sizeof(void*),
+                  "APMF_API_v33's second slot follows the first");
+    static_assert(sizeof(APMF_API::APMF_API_v33) == sizeof(APMF_API::APMF_API_v31) + 2 * sizeof(void*),
+                  "APMF_API_v33 = the v31 prefix plus exactly two function pointers");
+
+    constexpr APMF_API::APMF_API_v33 g_api{
+        {
         {
         {
         {
@@ -542,6 +576,9 @@ namespace {
         &APMF_GetClientFacetPriority,
         },
         &APMF_GetClaimEndReason,
+        },
+        &APMF_SetEquipDenyItems,
+        &APMF_GetEquipPreferenceItemState,
     };
 
 }

@@ -588,6 +588,26 @@ namespace apmf {
         }
     }
 
+    // ABI v33 (ch.17's SetEquipDenyItems): the PER-ITEM DENY list of an existing claim. `forms` is READ
+    // AND COPIED synchronously here (APMF never retains the client's pointer), clamped to kMaxEquipDeny
+    // at enqueue so the queued op is already bounded. forms == nullptr or count == 0 -> equipDenyCount
+    // stays 0 -> CLEARS the list on Apply.
+    void ControlMap::EnqueueSetEquipDenyItems(Handle handle, const RE::FormID* forms, std::uint32_t count) {
+        if (handle == APMF_API::kInvalidHandle) return;
+        PendingOp op{};
+        op.kind               = PendingOp::Kind::kSetEquipDeny;
+        op.handle             = handle;
+        op.equipDenyRequested = forms ? count : 0;
+        if (forms && count > 0) {
+            op.equipDenyCount = (count < APMF_API::kMaxEquipDeny) ? count : APMF_API::kMaxEquipDeny;
+            for (std::uint32_t i = 0; i < op.equipDenyCount; ++i) op.equipDenyForms[i] = forms[i];
+        }
+        {
+            std::scoped_lock lock(m_qmx);
+            m_queue.push_back(op);
+        }
+    }
+
     // ABI v5 (ch.8b, kIntent_Cast): claim the cast-EXECUTION facet for a bounded
     // window. Mirrors EnqueueRequest's shape (allocate a handle synchronously,
     // enqueue a POD op applied at the next Drain) but carries the rich cast payload.
@@ -690,6 +710,7 @@ namespace apmf {
             case PendingOp::Kind::kCast:         changed |= ApplyRequest(op, next);                  break;   // ch.8b -- ApplyRequest handles the cast branch
             case PendingOp::Kind::kSetEquipSet:  changed |= ApplySetEquipSet(op.handle, op.equipForms, op.equipSlots, op.equipInst, op.equipCount, op.equipRequested, next); break;   // ch.17
             case PendingOp::Kind::kSetEquipScope: changed |= ApplySetEquipScope(op.handle, op.equipOwned, op.equipDenied, next); break;   // ch.17, ABI v9
+            case PendingOp::Kind::kSetEquipDeny:  changed |= ApplySetEquipDeny(op.handle, op.equipDenyForms, op.equipDenyCount, op.equipDenyRequested, next); break;   // ch.17, ABI v33
             }
         }
 
@@ -1812,6 +1833,69 @@ namespace apmf {
         return false;   // handle's channel not found on this NPC (should not happen)
     }
 
+    // ABI v33 (ch.17): the PER-ITEM DENY list of an existing claim. Writer-thread-only, ApplySetEquipScope's
+    // shape: look the claim up via m_index, store on the Claim whether or not it owns the channel. A CHANGED
+    // list on the owner is a declaration event (the enforce pass may now unequip a worn item it names) -> one
+    // main-thread hop after Publish; an unchanged re-send fires nothing (a deny list is a POLICY, like the
+    // scope). Returns whether the STORED list changed (Publish gate).
+    bool ControlMap::ApplySetEquipDeny(Handle handle, const RE::FormID* forms, std::uint32_t count, std::uint32_t requested,
+                                       MapType& map) {
+        auto idxIt = m_index.find(handle);
+        if (idxIt == m_index.end()) return false;   // unknown/stale
+
+        auto* expected = Registry::Get().ChannelForIntent(APMF_API::kIntent_EquipAuthority);
+        if (!expected || idxIt->second.second != expected) return false;   // not an EquipAuthority claim
+
+        const RE::FormID formID  = idxIt->second.first;
+        Channel*         channel = idxIt->second.second;
+
+        auto npcIt = map.find(formID);
+        if (npcIt == map.end()) return false;
+        auto& npc = npcIt->second;
+
+        for (auto& cc : npc.channels) {
+            if (cc.channel != channel) continue;
+            Claim* mine = nullptr;
+            const Claim* best = cc.claims.empty() ? nullptr : &cc.claims.front();
+            for (auto& c : cc.claims) {
+                if (c.handle == handle) mine = &c;
+                if (best && c.basis > best->basis) best = &c;   // same rule as TryGetOwningClaim
+            }
+            if (!mine) return false;   // handle not among this channel's claims (should not happen)
+
+            // Defensive re-clamp (already clamped at enqueue).
+            const std::uint32_t n = (forms && count < APMF_API::kMaxEquipDeny) ? count : (forms ? APMF_API::kMaxEquipDeny : 0u);
+            bool changed = (mine->equipDenyCount != n);
+            for (std::uint32_t i = 0; i < n && !changed; ++i) changed = (mine->equipDenyForms[i] != forms[i]);
+            if (changed) {
+                mine->equipDenyCount = n;
+                for (std::uint32_t i = 0; i < APMF_API::kMaxEquipDeny; ++i) mine->equipDenyForms[i] = (i < n) ? forms[i] : 0;
+            }
+            // Once per handle per distinct overflow (equipRequested's shape): the forms past the bound are
+            // NOT denied, and the log must say so.
+            if (requested > APMF_API::kMaxEquipDeny && requested != mine->equipDenyRequested) {
+                spdlog::warn("[apmf][equip-auth] actor=0x{} h={} per-item deny list truncated to {} (got {}) -- the forms "
+                             "past the bound are NOT denied.",
+                             apmf::log::Hex(formID), handle, APMF_API::kMaxEquipDeny, requested);
+            }
+            mine->equipDenyRequested = (requested > APMF_API::kMaxEquipDeny) ? requested : 0;
+            const bool owner = (best == mine);
+            std::string list;
+            for (std::uint32_t i = 0; i < n; ++i) list += (list.empty() ? "0x" : " 0x") + apmf::log::Hex(forms[i]);
+            spdlog::info("[ctl] 0x{} ~ ch.{} {} SET-EQUIP-DENY (h={}, {} form(s) [{}], {}, {}).",
+                         apmf::log::Hex(formID), channel->ChannelNo(), channel->Name(), handle, n, list,
+                         changed ? "changed" : "unchanged", owner ? "owner" : "not owner");
+            if (owner && changed) {
+                // Writer thread: the channel only POSTS from this; the unequip itself runs after Publish
+                // (same hop as ApplySetEquipScope).
+                auto* actor = RE::TESForm::LookupByID<RE::Actor>(formID);
+                channel->OnOwnerChanged(formID, actor, mine->param);
+            }
+            return changed;
+        }
+        return false;   // handle's channel not found on this NPC (should not happen)
+    }
+
     void ControlMap::OnActorUpdate(RE::Actor* actor) {
         // ANY thread (field-proven: the Character 0xAD seat is not single-threaded).
         // Relaxed pre-gate: near-zero cost while nothing is controlled -- no atomic
@@ -2441,6 +2525,9 @@ namespace apmf {
             out.owned  = best->equipOwned;
             out.denied = best->equipDenied;
             out.handle = best->handle;   // ABI v22 / D2: the claim the sink ranks its denies with
+            // ABI v33: the per-item deny list rides the SAME read -- one generation with the set and scope.
+            out.denyCount = (best->equipDenyCount < APMF_API::kMaxEquipDeny) ? best->equipDenyCount : APMF_API::kMaxEquipDeny;
+            std::memcpy(out.denyForms, best->equipDenyForms, sizeof(out.denyForms));   // zero past the count (Apply keeps it so)
             return true;
         }
         return false;   // this NPC is controlled, but not on this channel
@@ -2463,6 +2550,7 @@ namespace apmf {
                 case PendingOp::Kind::kCast:         ApplyRequest(op, next);                  break;
                 case PendingOp::Kind::kSetEquipSet:  ApplySetEquipSet(op.handle, op.equipForms, op.equipSlots, op.equipInst, op.equipCount, op.equipRequested, next); break;
                 case PendingOp::Kind::kSetEquipScope: ApplySetEquipScope(op.handle, op.equipOwned, op.equipDenied, next); break;
+                case PendingOp::Kind::kSetEquipDeny:  ApplySetEquipDeny(op.handle, op.equipDenyForms, op.equipDenyCount, op.equipDenyRequested, next); break;
                 }
             }
         }

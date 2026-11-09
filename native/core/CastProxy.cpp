@@ -69,10 +69,27 @@ namespace apmf::castproxy {
             default:          return "right";
             }
         }
-        // 8 = two per actor (one per hand: a two-hand heal with two different kSelf
-        // spells) for the four actors the old one-slot-per-owner pool served. A slot's form is minted lazily, once, and
-        // reused for the rest of the session, so an unused slot costs nothing.
-        Slot g_slot[8];
+        // THE POOL'S SIZE (APMF-B62, MFO-B270). It used to be 8 = two per actor for four actors. Since the
+        // self-flip, every Aimed / Touch / TargetActor buff or heal a claim aims at its own caster takes a
+        // slot too, beside every kSelf heal or buff at an ally, so the demand is up to ONE PER HAND KEY
+        // (right, left, dual) PER FLIP per claiming actor, plus a re-aim's one-frame overlap on a new spell,
+        // and on overflow a legitimate claim stood as a dead deny of its hand. The bound is now kPoolCap
+        // slots: 64 = three hand keys for 21 actors casting a flipped spell at the same moment, far above any
+        // party (the field peak was 2, APMF-B62's verdict 2026-10-06). It is a CEILING, not an allocation:
+        // a slot's form is minted LAZILY, the first time the pool needs one more than it has, and the minted
+        // slots are always the PREFIX [0, g_minted) (a new mint takes index g_minted), so a session that never
+        // needs more than two proxies mints two forms and every loop below walks two slots. A slot's form is
+        // reused for the rest of the session (until ResetAll). Reaching the cap means a client holds far
+        // more flipped cast claims than any party casts: the overflow is an ERROR line, counted, naming who
+        // holds the slots (never a silent plain deny).
+        constexpr std::size_t kPoolCap = 64;
+        Slot g_slot[kPoolCap];
+        // How many slots have a minted form (the prefix). Written by the writer/main thread only (Acquire,
+        // ResetAll), read relaxed by OnOwnerUpdate's watch scan (a stale smaller value only skips a just-armed
+        // watch for one update).
+        std::atomic<std::uint32_t> g_minted{ 0 };
+        std::atomic<std::uint64_t> g_overflows{ 0 };   // pool overflows since the DLL loaded (never reset)
+        std::uint32_t MintedCount() { return g_minted.load(std::memory_order_relaxed); }
 
         // ---- SELF-FLIP LANDING WATCH (principle 5, passive) ----------------------
         // One per slot, armed by a kToSelf mint (writer/main thread). The CHECK runs on the
@@ -81,8 +98,8 @@ namespace apmf::castproxy {
         // AFTER that actor's own Actor::Update returned, on whichever worker runs that actor --
         // the thread that runs the actor's own active-effect update, sequentially, instead of
         // the player seat reading the list while the NPC's job mutates it (review F4, threading
-        // carve-out (a)). Every other actor pays one relaxed load (g_armedWatches == 0) or eight
-        // relaxed FormID compares. Each watch is guarded by its own LEAF mutex: the writer takes
+        // carve-out (a)). Every other actor pays one relaxed load (g_armedWatches == 0) or one relaxed
+        // FormID compare per MINTED slot (the prefix, APMF-B62). Each watch is guarded by its own LEAF mutex: the writer takes
         // it to arm / mark released / reset; the update seat only try_locks it (an update never
         // waits; a contended frame is skipped) and holds it across a pure read of the owner's
         // own list, never across an engine call that could take another lock.
@@ -185,7 +202,8 @@ namespace apmf::castproxy {
         // This owner already has a live proxy for THIS spell on THIS hand key: share
         // it (one more ref) and re-teach if it is somehow unknown. Never
         // re-Configured -- its source is already this spell.
-        for (auto& s : g_slot) {
+        for (std::uint32_t i = 0; i < MintedCount(); ++i) {
+            auto& s = g_slot[i];
             if (s.owner != a_owner || s.source != sid || s.hand != a_hand || s.flip != a_flip || !s.form) continue;
             ++s.refs;
             if (!actor->HasSpell(s.form)) actor->AddSpell(s.form);   // TRANSIENT teach
@@ -204,15 +222,17 @@ namespace apmf::castproxy {
         // (3) the slot freed longest ago. A rank-3 slot freed less than kStaleRiskMs ago is
         // said out loud (APMF-B58).
         constexpr std::uint64_t kStaleRiskMs = 120000;
+        // (2) is the slot at index g_minted (the first never-minted one), so the minted slots stay a prefix.
         Slot* pick = nullptr;
         int   rank = 4;
-        for (auto& c : g_slot) {
+        const std::uint32_t minted = MintedCount();
+        for (std::uint32_t i = 0; i < minted; ++i) {
+            auto& c = g_slot[i];
             if (c.owner != 0) continue;
-            int r = 3;
-            if (c.form && c.source == sid && c.flip == a_flip) r = 1;
-            else if (!c.form) r = 2;
+            const int r = (c.source == sid && c.flip == a_flip) ? 1 : 3;
             if (r < rank || (r == 3 && rank == 3 && c.freedMs < pick->freedMs)) { pick = &c; rank = r; }
         }
+        if (rank > 2 && minted < kPoolCap) { pick = &g_slot[minted]; rank = 2; }
         if (pick) {
             auto& s = *pick;
             if (rank == 3 && s.freedMs != 0) {
@@ -233,8 +253,8 @@ namespace apmf::castproxy {
                 // rather than hand two claims one indistinguishable driven form.
                 const auto nid = s.form->GetFormID();
                 bool clash = (nid == 0);
-                for (const auto& o : g_slot)
-                    if (&o != &s && o.form && o.form->GetFormID() == nid) clash = true;
+                for (std::uint32_t i = 0; i < MintedCount(); ++i)
+                    if (&g_slot[i] != &s && g_slot[i].form && g_slot[i].form->GetFormID() == nid) clash = true;
                 if (clash) {
                     spdlog::error("[castproxy] minted proxy form has FormID 0x{} (zero or already held by "
                                   "another pool slot) -- REFUSED, no proxy for owner 0x{} spell 0x{}.",
@@ -242,6 +262,12 @@ namespace apmf::castproxy {
                     s.form = nullptr;   // never configured, never taught: nothing borrowed to clear
                     return 0;
                 }
+                // The new form extends the minted prefix (this slot is g_slot[g_minted], rank 2 above).
+                g_minted.store(MintedCount() + 1, std::memory_order_relaxed);
+                if (MintedCount() > kPoolCap / 2)
+                    spdlog::warn("[castproxy] the proxy pool has minted {} of its {} forms this session -- far above "
+                                 "any party's demand (APMF-B62): a client may be holding many flipped cast claims.",
+                                 MintedCount(), kPoolCap);
             }
             Configure(s.form, a_src, a_flip);   // only ever on a FREE slot (refs == 0)
             s.source = sid;
@@ -277,16 +303,32 @@ namespace apmf::castproxy {
             return s.form->GetFormID();
         }
 
-        spdlog::warn("[castproxy] pool overflow (owner 0x{}, spell 0x{}, all {} slots held by live cast "
-                     "claims) -- the claim gets NO proxy, so the seats will not force the "
-                     "original form (a kSelf form at another actor is an unproven road, APMF-B62; an aimed form at "
-                     "the caster is a ray at its own shooter).",
-                     apmf::log::Hex(a_owner), apmf::log::Hex(sid), static_cast<int>(std::size(g_slot)));
+        // OVERFLOW (APMF-B62): every one of the kPoolCap slots holds refs of a live claim. Loud: an ERROR line,
+        // counted, naming how many slots each owner holds, so the client that floods the pool is in the log.
+        const auto n = g_overflows.fetch_add(1, std::memory_order_relaxed) + 1;
+        std::string holders;
+        {
+            std::vector<std::pair<RE::FormID, std::uint32_t>> per;
+            for (std::uint32_t i = 0; i < MintedCount(); ++i) {
+                const auto o = g_slot[i].owner;
+                if (!o) continue;
+                auto it = std::find_if(per.begin(), per.end(), [&](const auto& e) { return e.first == o; });
+                if (it == per.end()) per.emplace_back(o, 1u); else ++it->second;
+            }
+            for (const auto& [o, c] : per) holders += fmt::format("{}0x{} x{}", holders.empty() ? "" : ", ", apmf::log::Hex(o), c);
+        }
+        spdlog::error("[castproxy] pool OVERFLOW #{} (owner 0x{}, spell 0x{}, {} hand, {}): all {} slots are held by "
+                      "live cast claims [{}] -- the claim gets NO proxy, so the seats will not force the original form "
+                      "(a kSelf form at another actor is an unproven road, APMF-B62; an aimed form at the caster is a "
+                      "ray at its own shooter) and the claim stands as a plain deny of its hand.",
+                      n, apmf::log::Hex(a_owner), apmf::log::Hex(sid), HandName(a_hand), FlipName(a_flip),
+                      static_cast<int>(kPoolCap), holders);
         return 0;
     }
 
     void Unref(RE::FormID a_owner, RE::FormID a_proxy) {
-        for (auto& s : g_slot) {
+        for (std::uint32_t i = 0; i < MintedCount(); ++i) {
+            auto& s = g_slot[i];
             if (s.owner != a_owner || !s.form || s.form->GetFormID() != a_proxy) continue;
             if (s.refs == 0) break;   // cannot happen (owner != 0 <=> refs > 0); reported below
             --s.refs;
@@ -348,12 +390,15 @@ namespace apmf::castproxy {
             std::scoped_lock lk(w.mx);
             Disarm(w);
         }
+        g_minted.store(0, std::memory_order_relaxed);   // every slot is unminted again (s = {} above)
     }
 
     void OnOwnerUpdate(RE::Actor* a_actor) {
         if (g_armedWatches.load(std::memory_order_relaxed) == 0 || !a_actor) return;
         const RE::FormID fid = a_actor->GetFormID();
-        for (auto& w : g_watch) {
+        const std::uint32_t minted = MintedCount();   // a watch is armed only on a minted slot (the prefix)
+        for (std::uint32_t i = 0; i < minted && i < kPoolCap; ++i) {
+            auto& w = g_watch[i];
             if (w.owner.load(std::memory_order_relaxed) != fid) continue;
             std::unique_lock lk(w.mx, std::try_to_lock);
             if (!lk.owns_lock() || w.owner.load(std::memory_order_acquire) != fid || !w.form) continue;
@@ -407,7 +452,8 @@ namespace apmf::castproxy {
         // un-teach + deselect every live proxy before a record is written. Slots stay
         // owned with their refs; plugin.cpp's OnSave Posts ReteachLive right after.
         int swept = 0;
-        for (auto& s : g_slot) {
+        for (std::uint32_t i = 0; i < MintedCount(); ++i) {
+            auto& s = g_slot[i];
             if (!s.owner || !s.form) continue;
             if (auto* actor = RE::TESForm::LookupByID<RE::Actor>(s.owner)) {
                 actor->DeselectSpell(s.form);
@@ -423,7 +469,8 @@ namespace apmf::castproxy {
     }
 
     void ReteachLive() {
-        for (auto& s : g_slot) {
+        for (std::uint32_t i = 0; i < MintedCount(); ++i) {
+            auto& s = g_slot[i];
             if (!s.owner || s.refs == 0 || !s.form) continue;
             auto* actor = RE::TESForm::LookupByID<RE::Actor>(s.owner);
             if (!actor || actor->HasSpell(s.form)) continue;

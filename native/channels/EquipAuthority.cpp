@@ -185,6 +185,8 @@ namespace {
         mix(set.count);
         for (std::uint32_t i = 0; i < set.count; ++i) { mix(set.forms[i]); mix(set.slots[i]); mix(set.uids[i]); }
         mix(set.owned); mix(set.denied);   // ABI v9: a scope change is a new signature
+        mix(set.denyCount);                // ABI v33: so is a per-item deny list change
+        for (std::uint32_t i = 0; i < set.denyCount && i < APMF_API::kMaxEquipDeny; ++i) mix(set.denyForms[i]);
         return h;
     }
 
@@ -252,7 +254,8 @@ namespace {
         wouldUnequip = 0;
         unequipHeld  = 0;
         std::erase_if(mem.unequipIssued, [&](const Issued& e) { return nowMs - e.issuedMs >= kPendingMaxMs; });
-        if (set.denied == 0 || actor->IsPlayerRef()) return 0;   // nothing denied; the player is never touched
+        // Nothing denied (no category, ABI v33: no item) -> nothing to strip. The player is never touched.
+        if ((set.denied == 0 && set.denyCount == 0) || actor->IsPlayerRef()) return 0;
 
         struct Cand {
             RE::TESBoundObject*     obj;
@@ -297,20 +300,22 @@ namespace {
             apmf::sources::SourceId putOnBy = apmf::sources::kEngineSource;
             bool                    known   = false;
             if (!apmf::equipsink::WornDeniedRefused(set, id, form, competes, putOnBy, known)) {
-                spdlog::info("[apmf][equip-auth] actor=0x{} worn 0x{} '{}' ({}) cat={} is in a DENIED category but STAYS: "
+                spdlog::info("[apmf][equip-auth] actor=0x{} worn 0x{} '{}' ({}) cat={} {} but STAYS: "
                              "the source that put it on ({}{}) outranks the claim on the Equip facet, so the sink let "
                              "that equip stand and the pass does not strip it.",
                              apmf::log::Hex(id), apmf::log::Hex(form), c.obj->GetName() ? c.obj->GetName() : "",
                              SlotName(c.hand), apmf::equipsink::CategoryNames(competes, catBuf, sizeof(catBuf)),
+                             dv.itemDenied ? "is a DENIED item (the claim's per-item deny list)" : "is in a DENIED category",
                              apmf::sources::Name(putOnBy), known ? "" : ", assumed: no record");
                 continue;
             }
             if (dv.observe) {
                 ++wouldUnequip;
-                spdlog::info("[apmf][equip-auth] actor=0x{} worn 0x{} '{}' ({}) cat={} is in a DENIED category (denied=0x{}) "
+                spdlog::info("[apmf][equip-auth] actor=0x{} worn 0x{} '{}' ({}) cat={} {} (denied=0x{}) "
                              "-- would-unequip (observe-only: INI bEquipObserveOnly=1 or the claim's kEquipAuth_ObserveOnly).",
                              apmf::log::Hex(id), apmf::log::Hex(form), c.obj->GetName() ? c.obj->GetName() : "",
                              SlotName(c.hand), apmf::equipsink::CategoryNames(competes, catBuf, sizeof(catBuf)),
+                             dv.itemDenied ? "is a DENIED item (the claim's per-item deny list)" : "is in a DENIED category",
                              apmf::log::Hex(set.denied, 2));
                 continue;
             }
@@ -327,11 +332,12 @@ namespace {
             // Menu "Served": the unequip is the claim's client being served on that item's Equip facet.
             apmf::sources::NoteServedClaim(set.handle, apmf::sources::FacetForEquipCats(competes));
             held.push_back(Issued{ form, c.hand, nowMs });
-            spdlog::info("[apmf][equip-auth] actor=0x{} UNEQUIP worn 0x{} '{}' ({}, count {}) cat={}: a category the claim "
-                         "DENIES (denied=0x{}). Queued through ActorEquipManager::UnequipObject; the item stays in the "
+            spdlog::info("[apmf][equip-auth] actor=0x{} UNEQUIP worn 0x{} '{}' ({}, count {}) cat={}: {} "
+                         "(denied=0x{}). Queued through ActorEquipManager::UnequipObject; the item stays in the "
                          "inventory and the seat refuses it coming back.",
                          apmf::log::Hex(id), apmf::log::Hex(form), c.obj->GetName() ? c.obj->GetName() : "",
                          SlotName(c.hand), c.count, apmf::equipsink::CategoryNames(competes, catBuf, sizeof(catBuf)),
+                         dv.itemDenied ? "an item the claim DENIES (its per-item deny list)" : "a category the claim DENIES",
                          apmf::log::Hex(set.denied, 2));
         }
         mem.unequipIssued = std::move(held);
@@ -347,7 +353,7 @@ namespace {
         if (!apmf::ControlMap::Get().TryGetEquipSet(id, set)) return;   // claim gone, or lost arbitration
         // No declaration (or cleared) AND nothing denied: nothing to equip, nothing to unequip.
         // A deny-only scope with no declared set still runs the denied-category unequip below.
-        if (set.count == 0 && set.denied == 0) return;
+        if (set.count == 0 && set.denied == 0 && set.denyCount == 0) return;   // ABI v33: a deny list alone runs the unequip
 
         if (!apmf::equipsink::Installed()) {
             // Without the seat the engine would undo the equip on its next pass;
@@ -395,9 +401,10 @@ namespace {
         std::uint32_t wouldUnequip = 0, unequipHeld = 0;
         const std::uint32_t unequipped = UnequipDenied(id, actor, mgr, set, mem, nowMs, wouldUnequip, unequipHeld);
         if (set.count == 0) {
-            spdlog::info("[apmf][equip-auth] actor=0x{} deny-only pass (no declared set): denied=0x{} unequipped={} "
-                         "held-in-flight={} would-unequip={}",
-                         apmf::log::Hex(id), apmf::log::Hex(set.denied, 2), unequipped, unequipHeld, wouldUnequip);
+            spdlog::info("[apmf][equip-auth] actor=0x{} deny-only pass (no declared set): denied=0x{} denied-items={} "
+                         "unequipped={} held-in-flight={} would-unequip={}",
+                         apmf::log::Hex(id), apmf::log::Hex(set.denied, 2), set.denyCount, unequipped, unequipHeld,
+                         wouldUnequip);
             return;
         }
 
@@ -476,8 +483,11 @@ namespace {
                 if (!declaredSlot) { ++unresolved; continue; }
             }
             const std::uint32_t competes = apmf::equipsink::Categorize(obj, declaredSlot);
-            if ((competes & set.denied) != 0 || (competes & ~set.owned) != 0) {
-                const bool denied = (competes & set.denied) != 0;
+            // ABI v33: a declared item that is also on the per-item deny list is skipped as denied (the deny
+            // wins, the shared verdict's `blacked`).
+            const bool itemDenied = apmf::equipsink::DeclaredSetVerdict(set, form, competes).itemDenied;
+            if ((competes & set.denied) != 0 || itemDenied || (competes & ~set.owned) != 0) {
+                const bool denied = (competes & set.denied) != 0 || itemDenied;
                 if (denied) ++skippedDenied; else ++skippedUnowned;
                 char catBuf[48];
                 skipNames += (skipNames.empty() ? "" : ", ");

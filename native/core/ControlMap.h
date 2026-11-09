@@ -121,6 +121,11 @@ namespace apmf {
         // (equipsink::DeclaredSetVerdict with an instance), the 0x0F seat and the enforce pass.
         // Appended at the END.
         std::uint16_t uids[APMF_API::kMaxEquipSet]{};
+        // ABI v33: the winning claim's PER-ITEM DENY list (base FormIDs, SetEquipDenyItems), from the
+        // SAME snapshot read. equipsink::DeclaredSetVerdict reads a listed item as `blacked`, exactly
+        // like an item in a denied category. Appended at the END.
+        RE::FormID    denyForms[APMF_API::kMaxEquipDeny]{};
+        std::uint32_t denyCount = 0;
     };
 
     class ControlMap {
@@ -163,6 +168,11 @@ namespace apmf {
         // no-op on an unknown handle or a claim not on the kIntent_EquipAuthority
         // channel. See APMF_API_v9 / SetEquipScope.
         void   EnqueueSetEquipScope(Handle handle, const APMF_API::APMF_EquipScope* scope);
+        // ABI v33: the PER-ITEM DENY list of an existing claim (same handle), copied synchronously and
+        // clamped to kMaxEquipDeny at enqueue (the client's unclamped count rides along for the
+        // once-per-handle overflow log). nullptr or count 0 CLEARS it. Applied at the next Drain: no-op on
+        // an unknown handle or a claim not on kIntent_EquipAuthority. See APMF_API_v33 / SetEquipDenyItems.
+        void   EnqueueSetEquipDenyItems(Handle handle, const RE::FormID* forms, std::uint32_t count);
 
         // ABI v5 (ch.8b, kIntent_Cast): claim the cast-EXECUTION facet for a bounded
         // TTL window. `req` (may be null) is COPIED synchronously; APMF never retains
@@ -513,6 +523,14 @@ namespace apmf {
             std::uint16_t  equipUids[APMF_API::kMaxEquipSet]{};
             // Once-per-handle guard for the malformed-instance log (equipBadSlots' shape).
             std::uint32_t  equipBadInst = 0;
+            // ABI v33 (ch.17): the PER-ITEM DENY list (SetEquipDenyItems), base FormIDs. Stored whether
+            // or not the claim owns the channel, like the scope. POD, appended at the END, same RCU
+            // deep-copy discipline as equipForms.
+            RE::FormID     equipDenyForms[APMF_API::kMaxEquipDeny]{};
+            std::uint32_t  equipDenyCount = 0;
+            // The UNCLAMPED count of the last deny list that overflowed kMaxEquipDeny (0 == never), for
+            // the once-per-handle-per-distinct-overflow log (equipRequested's shape).
+            std::uint32_t  equipDenyRequested = 0;
         };
 
         // ---- THE ONE CLAIM COMPARATOR (2026-09-06) ------------------------------
@@ -637,7 +655,8 @@ namespace apmf {
         using MapType = std::unordered_map<RE::FormID, NpcCtl>;
 
         struct PendingOp {
-            enum class Kind : std::uint8_t { kRequest, kRelease, kRepoint, kSetAllowList, kCast, kSetEquipSet, kSetEquipScope } kind{};
+            enum class Kind : std::uint8_t { kRequest, kRelease, kRepoint, kSetAllowList, kCast, kSetEquipSet, kSetEquipScope,
+                                             kSetEquipDeny } kind{};
             Handle               handle = APMF_API::kInvalidHandle;
             RE::FormID           actor  = 0;         // request/cast only
             Intent               intent = APMF_API::kIntent_None;   // request/cast only
@@ -671,6 +690,11 @@ namespace apmf {
             // enqueue (nullptr -> the defaults); unknown bits masked at Apply.
             std::uint32_t        equipOwned  = APMF_API::kEquipCat_All;
             std::uint32_t        equipDenied = 0;
+            // kSetEquipDeny only (ABI v33): the per-item deny list, copied at enqueue, pre-clamped to
+            // kMaxEquipDeny. Its own array, never aliasing equipForms (the two lists mean opposite things).
+            RE::FormID           equipDenyForms[APMF_API::kMaxEquipDeny]{};
+            std::uint32_t        equipDenyCount = 0;
+            std::uint32_t        equipDenyRequested = 0;   // the client's UNCLAMPED count (overflow log)
         };
 
         // All four apply against the WRITER's private working copy (`map`), never a
@@ -717,6 +741,14 @@ namespace apmf {
         // one enforce hop after Publish); an unchanged re-send fires nothing.
         // No-op on an unknown handle or a claim not on kIntent_EquipAuthority.
         bool ApplySetEquipScope(Handle handle, std::uint32_t owned, std::uint32_t denied, MapType& map);
+        // ABI v33: writer-thread-only, ApplySetEquipScope's shape -- store the per-item deny list on the
+        // matching Claim whether or not it owns the channel. If the claim IS the owner AND the stored list
+        // CHANGED, fires channel->OnOwnerChanged (a declaration event: the enforce pass unequips a worn
+        // denied item after Publish); an unchanged re-send fires nothing. An overflow is logged once per
+        // handle per distinct requested count. No-op on an unknown handle or a claim not on
+        // kIntent_EquipAuthority.
+        bool ApplySetEquipDeny(Handle handle, const RE::FormID* forms, std::uint32_t count, std::uint32_t requested,
+                               MapType& map);
 
         // Writer-thread-only choke point: takes ownership of the finished working
         // copy, makes it the new immutable snapshot, and publishes it for readers.
