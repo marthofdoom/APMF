@@ -241,6 +241,8 @@ c5f435a)":
 - R2-6 SEV-5: Entry::weak is computed (Play) and never read: dead field.
 - **FIXED (docs, same round):** R2-7 SEV-5: APMF-B32 says R1 SEV-5 items were "relayed without separate text" -> now in full above; B32 can cite this log. APMF-B34 now cites the log verbatim.
 
+- **DRAIN ATTEMPT 2026-11-08 (fix/backlog-b35-b200): R2-4 stays OPEN, STOPPED.** The entry's own fix direction is a state check (the graph's ACTIVE state) or a specific event. Every entry event of the two MFO idles is shared (IdleGive: IdleOffsetStop only), so no specific event exists, and the active-state read needs the Havok RUNTIME node data (hkbBehaviorGraph active nodes / the cloned hkbStateMachine's current state id), which this file never reads (it walks the TEMPLATES only) and whose offsets are not verified against the unpacked binaries: a new engine read needing disassembly and VerifiedAddresses rows, so its own brief.
+
 ### APMF-B43 (SEV-5) -- per-classify cost of the claim gate on the NotHealShaped path (restore-serve exit logs)
 Raised against `34d8a812` (`fix/apmf-restore-serve-exitlogs`), Opus 5.5 review 2026-10-01, finding F2. Reasoning (as given): the claim gate in `NotServed` does one `attackerHandle.get()` plus one RCU `TryGetCastSeatClaimForForm` on every unserved, non-heal effect classify. It is bounded and lock-free, but it does not decay for unclaimed spells, because they are never inserted into the dedup set.
 
@@ -1115,16 +1117,16 @@ Reviewer (F5, as relayed by the coordinator): "Failed then StuckTimeout publish 
 ### APMF-B199 (SEV-5, OPEN, channels/Travel.cpp failure hold) -- a held BLOCKED leg that later arrives keeps reading kLeg_Blocked (raised against 42b0e2b, tier-3 review F6)
 Reviewer (F6, as relayed by the coordinator): "a held BLOCKED leg that later arrives keeps reading kLeg_Blocked". The BLOCKED hold resumes the walk when the engine leaves Movement Blocked, but Poll skips a failure hold, so an arrival is never recorded until the client re-points or releases.
 
-### APMF-B200 (SEV-4, OPEN, channels/CombatSubstrate.cpp Serve) -- a TESSpellCastEvent alone closes as fired with no 0x0B seen (raised against 608df67, tier-3 review F2)
+### APMF-B200 (SEV-4, FIXED in b5ac9fa (fix/backlog-b35-b200), channels/CombatSubstrate.cpp Serve) -- a TESSpellCastEvent alone closes as fired with no 0x0B seen (raised against 608df67, tier-3 review F2)
 Reviewer (F2, as relayed by the coordinator): "a TESSpellCastEvent alone closes as fired even when no 0x0B was seen (releasing false) while the census seat is installed (~1671); a non-animated cast (CastSpellImmediate) would read as an animated fire. Recommend a separate reason in that case." Deferred (SEV-4).
 
-### APMF-B201 (SEV-4, OPEN, channels/CombatSubstrate.cpp Serve) -- the claim ending mid-release closes as "claim ended" and StopCombat cuts the cast (raised against 608df67, tier-3 review F3)
+### APMF-B201 (SEV-4, FIXED in b5ac9fa (fix/backlog-b35-b200), channels/CombatSubstrate.cpp Serve) -- the claim ending mid-release closes as "claim ended" and StopCombat cuts the cast (raised against 608df67, tier-3 review F3)
 Reviewer (F3, as relayed by the coordinator): "claim ending mid-release closes as "claim ended" at info and StopCombat cuts the cast; reachable only with tree start > ~6 s or raised fSubstrateTtlSec. Recommend warn "claim ended mid-release"." Deferred (SEV-4).
 
-### APMF-B202 (SEV-4, OPEN, channels/CombatSubstrate.cpp Serve / SpellCastSink) -- a Repoint during the release (raised against 608df67, tier-3 review F4)
+### APMF-B202 (SEV-4, FIXED in b5ac9fa (fix/backlog-b35-b200), channels/CombatSubstrate.cpp Serve / SpellCastSink) -- a Repoint during the release (raised against 608df67, tier-3 review F4)
 Reviewer (F4, as relayed by the coordinator): "Repoint during release: flipping to concentration skips the release block and never clears releasing (TTL stays deferred); castEventForm keeps only the first event so an old-form event before a same-frame re-aim yields a false fired-not-released." Deferred (SEV-4).
 
-### APMF-B203 (SEV-4, OPEN, channels/CombatSubstrate.cpp NoteCastBuilt) -- tree-outside-gate fires only on a caster BUILD (raised against 608df67, tier-3 review F5)
+### APMF-B203 (SEV-4, FIXED in b5ac9fa (fix/backlog-b35-b200), channels/CombatSubstrate.cpp NoteCastBuilt) -- tree-outside-gate fires only on a caster BUILD (raised against 608df67, tier-3 review F5)
 Reviewer (F5, as relayed by the coordinator): "tree-outside-gate fires only on a caster BUILD; a tree running outside the gate that never builds stays undenied until the 10 s start floor (window 2's movement started before the build at +983 ms). LEAF GATE probe diagnoses next cycle." Deferred (SEV-4); the next field cycle's LEAF GATE line is the input.
 
 ### APMF-B204 (SEV-5, OPEN, channels/CombatSubstrate.cpp Install, Docs/VERIFIED-ADDRESSES.md) -- the TESSpellCastEvent source has no verified row (raised against 608df67, tier-3 review F6)

@@ -167,12 +167,14 @@
 // seat (hand Charged -> Casting, the release REQUEST) only marks the window RELEASING; it closes as
 // "fired" ONLY on the holder's TESSpellCastEvent for the driven form, as "released-unconfirmed"
 // (a warning) on the hand back to None after a release state (4-6), and as "fired-not-released"
-// (a warning) when neither comes within 3 s
+// (a warning) when neither comes within 3 s; a TESSpellCastEvent with no 0x0B seen closes as "fired-no-start-seen"
+// (APMF-B200), the claim ending inside the release wait as "fired" (its event already in) or "claim ended
+// mid-release" (a warning, APMF-B201)
 // (fix/apmf-substrate-release-close, APMF-B93: closing on 0x0B itself freed the controller before
 // the spell left the hand). Also: the claim's end (released, expired, the stop percent), the
 // client's release, the TTL (param.fval seconds, 0 = [CombatSubstrate] fSubstrateTtlSec, clamped
-// to 15 s; deferred while releasing), a caster built while the leaf gate never saw the holder's
-// tree ("tree-outside-gate", a warning), the holder's death / unload, a load or revert.
+// to 15 s; deferred while releasing), a caster built OR the hand charging the driven form while the leaf gate never saw
+// the holder's tree ("tree-outside-gate", a warning; the hand signal runs with the census seat too, APMF-B203), the holder's death / unload, a load or revert.
 // One pass: the bit restored, Actor::StopCombat
 // once (Character slot 0xE5, the vtable identity checked), the floors released, the holder out of
 // the slot table (the anchor home on 1 -> 0), EvaluatePackage(false, false). Prior behaviour
@@ -1667,9 +1669,11 @@ namespace {
             if (!(st & kStCast)) s.state.fetch_or(kStCast, std::memory_order_acq_rel);
             apmf::substrateequip::Serve(a_sub.slot, actor, c.spell, c.proxy, c.flags, a_now);   // equip lines
             const RE::FormID fired = s.firedForm.exchange(0, std::memory_order_acq_rel);
-            // the census-less fallback of the "tree-outside-gate" close above (no 0x06 seat = no build signal): the hand
-            // charging the driven form while the gate never saw the tree
-            if (!g_fireSignal && s.treeStartMs.load(std::memory_order_relaxed) == 0) {
+            // the second signal of the "tree-outside-gate" close above, independent of a caster BUILD (APMF-B203: the
+            // build signal alone left a tree that runs outside the gate and never builds undenied until the start
+            // floor; it is also the only signal when the 0x06 seat is absent): the hand charging the driven form
+            // while the gate never saw the tree
+            if (s.treeStartMs.load(std::memory_order_relaxed) == 0) {
                 const std::uint32_t hs = HandStateFor(actor, c.spell, c.proxy);
                 if (hs == 2 || hs == 3) {
                     why = "tree-outside-gate";
@@ -1694,9 +1698,21 @@ namespace {
                                  Hex(a_sub.id), Hex(fired), a_now - a_sub.openedMs, kReleaseWaitMs);
                 }
                 const RE::FormID ev = s.castEventForm.load(std::memory_order_acquire);
-                if (ev && (ev == c.spell || ev == c.proxy)) {
-                    why             = "fired";
-                    a_sub.releaseHow = "the TESSpellCastEvent";
+                // APMF-B202: a window releasing form A still counts A's event after a Repoint to form B.
+                if (ev && (ev == c.spell || ev == c.proxy || (a_sub.releasing && ev == a_sub.releaseForm))) {
+                    if (!a_sub.releasing && g_fireSignal) {
+                        // APMF-B200: a TESSpellCastEvent with NO 0x0B seen while the census seat is installed is not an
+                        // animated fire (a CastSpellImmediate from a client reads the same): its own reason.
+                        why              = "fired-no-start-seen";
+                        a_sub.releaseHow = "the TESSpellCastEvent alone (no NotifyStartCast seen: not an animated fire)";
+                        spdlog::info("[substrate] 0x{} TESSpellCastEvent for 0x{} with NO NotifyStartCast (0x0B) seen while "
+                                     "the census seat is installed: closing as fired-no-start-seen (a non-animated cast "
+                                     "such as CastSpellImmediate reads the same), not as an animated fire.",
+                                     Hex(a_sub.id), Hex(ev));
+                    } else {
+                        why              = "fired";
+                        a_sub.releaseHow = "the TESSpellCastEvent";
+                    }
                 } else if (a_sub.releasing) {
                     // the hand read keys on the form 0x0B released (the claim's spell or proxy at that moment)
                     const std::uint32_t hs = HandStateFor(actor, a_sub.releaseForm, 0);
@@ -1728,10 +1744,38 @@ namespace {
                     }
                 }
             }
+            // APMF-B202: a Repoint to a concentration spell mid-release skips the release block above for good; the
+            // release bookkeeping ends with it, or the TTL would stay deferred forever.
+            else if (!why && a_sub.releasing) {
+                a_sub.releasing   = false;
+                a_sub.releasePeak = false;
+                spdlog::info("[substrate] 0x{} RELEASE ABANDONED: the claim was repointed to a concentration spell {} ms "
+                             "after NotifyStartCast on 0x{}; the release wait ends and the TTL applies again.",
+                             Hex(a_sub.id), a_now - a_sub.releaseAtMs, Hex(a_sub.releaseForm));
+            }
         } else if (!why) {
             if (st & kStCast) s.state.fetch_and(~kStCast, std::memory_order_acq_rel);
             a_sub.tier = kTierNone;
-            if (a_sub.sawClaim) why = "claim ended (released, expired or its stop percent)";
+            if (a_sub.sawClaim) {
+                if (a_sub.releasing) {
+                    // APMF-B201: the claim ended inside the release wait. If the holder's event for the released form
+                    // is already recorded, it fired; otherwise StopCombat is about to cut the cast: loud.
+                    const RE::FormID ev = s.castEventForm.load(std::memory_order_acquire);
+                    if (ev && (ev == a_sub.releaseForm || ev == a_sub.driven)) {
+                        why              = "fired";
+                        a_sub.releaseHow = "the TESSpellCastEvent (the claim ended in the same window)";
+                    } else {
+                        why              = "claim ended mid-release";
+                        a_sub.releaseHow = "NOTHING (the claim ended mid-release)";
+                        spdlog::warn("[substrate] 0x{} CLAIM ENDED MID-RELEASE: NotifyStartCast on 0x{} {} ms ago, no "
+                                     "TESSpellCastEvent yet (hand max state {}). Closing; the StopCombat may cut the cast.",
+                                     Hex(a_sub.id), Hex(a_sub.releaseForm), a_now - a_sub.releaseAtMs,
+                                     a_sub.releaseHandMax);
+                    }
+                } else {
+                    why = "claim ended (released, expired or its stop percent)";
+                }
+            }
         }
         if (!why) why = EquipTakeover(a_sub, actor, a_now);   // a dry run a client took over (review of 1f99de2b)
         if (why) {
@@ -2224,7 +2268,7 @@ namespace {
 
     // fix/apmf-substrate-release-close (APMF-B93): the release evidence. The holder's TESSpellCastEvent for the form its
     // DRIVING claim names (the spell or its proxy) is recorded on its slot (the first one per window); Serve closes the
-    // window as "fired" on it. Any thread (the source's own dispatch); the slot table and the RCU claim read only.
+    // window as "fired" on it (the latest one per window wins, APMF-B202). Any thread (the source's own dispatch); the slot table and the RCU claim read only.
     class SpellCastSink final : public RE::BSTEventSink<RE::TESSpellCastEvent> {
     public:
         static SpellCastSink* Get() { static SpellCastSink s; return &s; }
@@ -2239,9 +2283,10 @@ namespace {
                 apmf::CastSeatClaim c{};
                 if (!DrivingClaim(holder, c) || (a_e->spell != c.spell && a_e->spell != c.proxy))
                     return RE::BSEventNotifyControl::kContinue;
-                RE::FormID zero = 0;
-                if (g_slots[si].castEventForm.compare_exchange_strong(zero, a_e->spell, std::memory_order_acq_rel))
-                    g_slots[si].castEventMs.store(apmf::clock::MonotonicMs(), std::memory_order_relaxed);
+                // APMF-B202: the LATEST event for the driving claim wins (the first-only record let an event for a
+                // form the claim had just left shadow the new form's fire).
+                g_slots[si].castEventMs.store(apmf::clock::MonotonicMs(), std::memory_order_relaxed);
+                g_slots[si].castEventForm.store(a_e->spell, std::memory_order_release);
             } catch (...) {
             }
             return RE::BSEventNotifyControl::kContinue;
