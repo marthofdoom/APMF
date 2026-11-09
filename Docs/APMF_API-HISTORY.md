@@ -126,7 +126,7 @@ a DENIED category is unequipped by the enforce pass. The header comments that st
 stale until the paired MFO header change.
 
 <a id="abi-history"></a>
-## ABI v10 to v32: what each version added
+## ABI v10 to v33: what each version added
 
 Moved verbatim from `native/APMF_API.h` (line 96 at 9d01cdf). The header keeps a pointer to this anchor.
 
@@ -286,6 +286,17 @@ teammate. kCastGuard_LineOfFire keeps its ABI v21 meaning. No slot (the interfac
 field, no new struct. A client gates on abiVersion >= 32: an older APMF REFUSES the claim for the unknown bit.
 NUMBERING NOTE: v32 had been named for the ch.17 per-item equip deny (ClickUp 86e3t8w23). The bystander hold took
 v32, so the per-item equip deny moves to v33.
+ABI v33 (2026-11-08, marth "Next, as one tier-A batch"): the ch.17 per-item equip deny (ClickUp 86e3t8w23, marth
+2026-10-19 "Keep but never wield") and the ch.26 per-entry state (MFO-B262). kMaxEquipDeny (16). APMF_API_v33 appends
+TWO slots to the v31 prefix. SetEquipDenyItems(handle, forms, count): base FormIDs on a kIntent_EquipAuthority claim
+that the seats treat exactly like an item in a denied category (the sink refuses every engine equip of it, from every
+route, ranked, the 0x0F selection seat answers NO, the enforce pass unequips it when worn). GetEquipPreferenceItemState
+(actor, form, slot, APMF_EquipPrefInfo*): GetEquipPreferenceState for ONE declared entry, from that item's own
+scoring record. No intent, no APMF_Param field, no new struct, no change to any existing slot. The same release
+sizes the delivery-flip proxy pool from demand (APMF-B62, no ABI change: 64 slots minted lazily, overflow an ERROR).
+A client gates both slots on abiVersion >= 33. An older APMF has neither: the client keeps its per-category scope and
+its per-actor state read there.
+Docs/APMF_API-REFERENCE.md#abi-v33-item-deny-and-entry-state.
 ```
 
 <a id="intent-18"></a>

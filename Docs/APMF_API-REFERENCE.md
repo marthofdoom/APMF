@@ -532,3 +532,49 @@ A claim that takes over naming a target the engine already gave up on ends with 
 **Lifetime.** Records are not saved. A load or a new game drops them all, and only the newest 256 are kept. Handles never repeat inside one game session, so a record never names a newer claim.
 
 **Older APMF.** An APMF before v31 has no slot. `IsClaimLive` turning false is all it says.
+
+<a id="abi-v33-item-deny-and-entry-state"></a>
+## ABI v33 item deny and entry state: never equip this item, and how each preferred item is doing
+
+```cpp
+void          (*SetEquipDenyItems)(Handle handle, const RE::FormID* forms, std::uint32_t count);          // APMF_API_v33
+std::uint32_t (*GetEquipPreferenceItemState)(RE::FormID actor, RE::FormID form, std::uint32_t slot,
+                                             APMF_EquipPrefInfo* out);                                    // APMF_API_v33
+// gate both on abiVersion >= 33
+```
+
+Two slots on claims a client already holds. No intent, no `APMF_Param` field, no new struct.
+
+### SetEquipDenyItems (ch.17, ClickUp 86e3t8w23)
+
+marth 2026-10-19 ruled that an artifact a follower carries but is not built for is "Keep but never wield". The ch.17 scope is per CATEGORY, so before v33 no road refused ONE item: owning the hand with no declared weapon refuses every weapon. This slot names the items.
+
+**The call.** `handle` is a live `kIntent_EquipAuthority` claim. `forms` are BASE FormIDs, read and copied inside the call (a stack array is fine). `count` is clamped to `kMaxEquipDeny` (16). The forms past the bound are NOT denied, and the log says so once per handle per distinct overflow. `count == 0` or `forms == nullptr` clears the list. The list is stored on the claim whether or not it owns the channel, rides the same snapshot read as the declared set and the scope, and is dropped with the claim.
+
+**What a denied item gets** while the claim owns the channel: exactly what an item in a denied category gets, whatever the scope owns.
+
+| Seat | What it does with a denied item |
+|---|---|
+| The equip sink (`core/EquipSink.cpp`) | refuses every engine equip of it on the actor, from every route (the player's menu, a script and the console included), ranked like every ch.17 deny. A source the sliders rank above the claim keeps its equip. Refused even if the declared set names it (declaring a denied item is the client's error) |
+| The combat selection seat (0x0F `CheckShouldEquip`, `core/HandBlock.cpp`) | answers NO for it |
+| The enforce pass (`channels/EquipAuthority.cpp`) | UNEQUIPS it when worn (queued, not forced, main thread), on the next declaration event. A changed list on the owning claim is one. An unchanged re-send fires nothing |
+
+All three read ONE verdict, `equipsink::DeclaredSetVerdict`: a listed form is `blacked`. Observe-only (the INI or `kEquipAuth_ObserveOnly`) logs `would-deny` / `would-unequip` and refuses nothing. The `[ctl] ... SET-EQUIP-DENY` line lists the forms on every applied call.
+
+### GetEquipPreferenceItemState (ch.26, MFO-B262)
+
+`GetEquipPreferenceState` reports the actor's LAST scoring. A pass scores every declared entry back to back, so with two entries (a sword and a shield, or two hands) the report is nearly always the last one scored, and a client cannot tell why the other is missing. This slot answers per ENTRY.
+
+**The call.** `form` is the entry's base FormID and `slot` its `EquipSlot` as declared. `kEquipSlot_Right` / `kEquipSlot_Left` read that hand's scorings only. `kEquipSlot_Default` (or any other value) reads the item's newest scoring in any hand. The output is the v22 `APMF_EquipPrefInfo`, with these meanings:
+
+| Field | Meaning here |
+|---|---|
+| `state` | that item's newest scoring for the winning claim. `Declared` when the claim has not scored it yet (or does not declare it). `Released` / `None` as `GetEquipPreferenceState` |
+| `lastForm` | `form`, or 0 when it was never scored |
+| `lastSlot`, the three scores, `msSinceScored` | that scoring |
+| `lifts`, `withheld` | THAT item's scorings since the load, saturating |
+| `ownerHandle`, `flags`, `entryCount`, `forcedDenies`, `forceAnomalies` | the actor's, exactly as `GetEquipPreferenceState` reports them (the force escalation is per actor) |
+
+**Threading and cost.** Any thread. Two hash lookups under the ch.26 state's leaf mutex, no game call. A throw inside returns `kEquipPrefState_None` and writes nothing. The records are not saved and a load drops them.
+
+**Older APMF.** An APMF before v33 has neither slot. A client keeps its per-category scope and its per-actor state read there.

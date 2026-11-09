@@ -64,7 +64,7 @@ Then every call site reads like this.
 if (MyMod::Has(6) && MyMod::g_apmf->IsClaimLive(handle)) { /* ... */ }   // IsClaimLive is ABI 6
 ```
 
-Which ABI introduced which slot, intent and flag is in [GUIDE.md "Gating on the ABI"](GUIDE.md#gating-on-the-abi) and [FACETS.md Appendix B](FACETS.md#appendix-b-abi-history). The newest ones are listed under [What is new from ABI 22 to 30](#what-is-new-from-abi-22-to-30) below. Two things catch people out. An unknown intent is refused (`kInvalidHandle`), which is a loud failure. An unknown flag bit is ignored without a word, which is a quiet one. Check `abiVersion` before you set any flag a facet section marks as newer than ABI 5.
+Which ABI introduced which slot, intent and flag is in [GUIDE.md "Gating on the ABI"](GUIDE.md#gating-on-the-abi) and [FACETS.md Appendix B](FACETS.md#appendix-b-abi-history). The newest ones are listed under [What is new from ABI 22 to 33](#what-is-new-from-abi-22-to-33) below. Two things catch people out. An unknown intent is refused (`kInvalidHandle`), which is a loud failure. An unknown flag bit is ignored without a word, which is a quiet one. Check `abiVersion` before you set any flag a facet section marks as newer than ABI 5.
 
 Harbinger logs `APMF_GetInterface` either way. If a client asks for an ABI the installed Harbinger does not have, the log names the release that does.
 
@@ -235,7 +235,7 @@ MFO files every claim with a basis of 200.
 
 New in 0.13.1, not yet tested in game. The full reference is [ch.26 Equip preference](FACETS.md#ch26-equip-preference-kintent_equippreference). Since the same ABI every equip refusal (the ch.17 set, the hand block, the ch.15 refusal) follows the `Equip` priorities in `APMF_Sources.ini`.
 
-## What is new from ABI 22 to 32
+## What is new from ABI 22 to 33
 
 A client built against an older header keeps working. Each item below needs its ABI check before you use it. Everything here is also in [APMF_API-REFERENCE.md](APMF_API-REFERENCE.md) and [FACETS.md](FACETS.md), and the header wins over both.
 
@@ -252,6 +252,7 @@ A client built against an older header keeps working. Each item below needs its 
 | 30 | 0.15.0 | the `kTravel_CrossCells` bit on a travel claim to a reference. No new slot | `abiVersion >= 30` |
 | 31 | 0.15.2 | `GetClaimEndReason(handle)` says why Harbinger ended a ch.20 pin or ch.21 entry claim | `abiVersion >= 31` |
 | 32 | 0.16.0 | the `kCastGuard_Bystanders` bit on a ch.25 cast guard claim. No new slot | `abiVersion >= 32` |
+| 33 | after 0.16.0 | `SetEquipDenyItems(handle, forms, count)` on a ch.17 claim, and `GetEquipPreferenceItemState(actor, form, slot, &info)` for one ch.26 entry | `abiVersion >= 33` |
 
 ### Place (ABI 28)
 
@@ -320,6 +321,27 @@ bool GaveUp(APMF_API::Handle h) {
     return why == APMF_API::kClaimEnd_NotEngaged || why == APMF_API::kClaimEnd_NoPathProgress;
 }
 ```
+
+### Never equip this item, and how each preferred item is doing (ABI 33)
+
+`SetEquipDenyItems(handle, forms, count)` on your ch.17 claim names items the actor must never equip, up to 16 base FormIDs. Each one is treated like an item in a denied category, whatever your scope owns: refused from every route, answered NO by the combat selection seat, and taken off by the equip pass when it is worn. Send it beside your scope and set, and only when it changes (a changed list runs the equip pass, an unchanged one does nothing). Do not declare a denied item in your set. The deny wins.
+
+`GetEquipPreferenceItemState(actor, form, slot, &info)` reads one ch.26 entry's state from that item's own scorings. `GetEquipPreferenceState` describes only the item scored last, so with a sword and a shield declared it nearly always names the shield. Pass the entry's form and its declared slot. Set `info.size = sizeof(info)` first. Any thread, read only.
+
+```cpp
+// Why is the declared sword not in the right hand? Ask about the sword itself.
+std::uint32_t SwordState(RE::FormID actor, RE::FormID sword, APMF_API::APMF_EquipPrefInfo& info) {
+    info = {};
+    info.size = sizeof(info);
+    if (!MyMod::Has(22)) return APMF_API::kEquipPrefState_None;
+    if (!MyMod::Has(33))                                // older Harbinger: only the last scored item
+        return reinterpret_cast<const APMF_API::APMF_API_v22*>(MyMod::g_apmf)->GetEquipPreferenceState(actor, &info);
+    const auto* api = reinterpret_cast<const APMF_API::APMF_API_v33*>(MyMod::g_apmf);
+    return api->GetEquipPreferenceItemState(actor, sword, APMF_API::kEquipSlot_Right, &info);
+}
+```
+
+An older Harbinger has neither slot. Keep your per-category scope and the per-actor state there.
 
 ### Equip is two facets
 

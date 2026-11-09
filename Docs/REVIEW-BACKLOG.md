@@ -474,6 +474,7 @@ APMF-B61 (other open branches may also take B62: renumber at merge if they colli
   a buff by archetype, so an explicit self claim on it would land on the caster. Closing it needs a magnitude-sign /
   AV-direction test or the client's own declaration; the client owns the consequence meanwhile.
 
+- **FIXED 2026-11-08 (967143b, `feat/api-batch-b62-ch17`, pool-pressure part, MFO-B270):** the pool is sized from demand, not from four actors. `core/CastProxy.cpp` holds up to `kPoolCap` = 64 slots (three hand keys for 21 actors casting a flipped spell at once), minted lazily as the prefix `[0, g_minted)`, so a session mints only what it needs and every loop walks only the minted slots. Overflow at the cap is an ERROR line, counted (`pool OVERFLOW #n`), that names how many slots each owner holds, never a quiet plain deny. No ABI change. The forward-flip rationale question (F6) and the self-flip RESIDUAL stay open as written.
 - FIELD VERDICT 2026-10-06 (Opus, Tuxborn deck logs): CLOSED (pool-pressure part only) -- only owner 0x750012C6 ever minted, peak concurrent 2 (nAPMF 14:44:17, APMF.1 12:46:35) and 0 'pool overflow' lines; the forward-flip rationale question is not answerable from logs and stays open.
 
 ### APMF-B64 (SEV-4) -- hand-claim block: a refused ch.17 equip is never re-issued

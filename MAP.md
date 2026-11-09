@@ -532,7 +532,10 @@ REVIEW-BACKLOG APMF-B206) that the AI selects and casts instead.
 deselect + release the slot only at 0) / `ResetAll` (revert + kPreLoadGame) /
 `PreSaveSweep` (SKSE save) / `ReteachLive` (posted by `OnSave` right after the sweep:
 re-teaches every slot still holding refs on the next Pump, because a Repoint-heartbeated
-claim never calls `Acquire` again). Fixed 8-slot pool keyed by (OWNER, SOURCE SPELL,
+claim never calls `Acquire` again). Pool of up to `kPoolCap` = 64 slots (APMF-B62, 2026-11-08: was a fixed 8,
+which the self-flip demand could overflow into a dead deny), minted LAZILY as the prefix `[0, g_minted)` (a new
+mint takes index `g_minted`, every loop walks only the minted slots, `ResetAll` sets it back to 0), overflow at
+the cap an `[castproxy] pool OVERFLOW #n` ERROR naming the owners holding slots, keyed by (OWNER, SOURCE SPELL,
 HAND: right / left / dual) and REF-COUNTED across the live claims naming each form
 (fix/apmf-proxy-per-claim-refcount, 2026-10-05): a same-hand re-aim or same-hand rival
 shares ONE form; the same spell on the OTHER hand gets its OWN form, because the seats
@@ -578,6 +581,8 @@ save). `channels/CastCompose.cpp`'s `Release` no longer frees anything (its owne
   `channel->Release`) — without it every later ally heal declines as overflow.
   A pool overflow must leave `castProxy == 0` and the ORIGINAL kSelf form must then
   NOT be seat-forced: casting it at an ally would silently heal the caster instead.
+  (APMF-B62) The minted slots must stay a PREFIX: a mint that does not take index `g_minted`, or a
+  `g_minted` bump on a failed mint, makes the bounded loops skip a live slot (a ref nobody can Unref).
   DOCUMENTED CLIENT DEPENDENCY: teaching the proxy only makes it selectable once the
   actor's `CombatInventory` REBUILDS; the one confirmed dirty-trigger is a change of
   `Actor::GetCombatStyle()` (MFO's `MFO_CastStyle` swap does this). **UPDATE
@@ -1345,6 +1350,12 @@ Evidence that 0x0A covers the RELEASE: `ActorMagicCaster` slot 3 `RequestCastImp
   at 0x0A; log-throttle map never cleared).
 
 ### `native/core/EquipPreference.{h,cpp}` + `native/channels/EquipPreference.cpp` — ch.26 EQUIP PREFERENCE (ABI v22, 2026-10-12)
+**ABI v33 PER-ENTRY STATE (2026-11-08, MFO-B262):** `Record` also writes the scoring into `g_items` (key
+`actor << 32 | form`, one `ItemHandState` per scoring hand R / L / '?', same leaf `g_stMx`, cleared with `g_state`
+and at the 4096 cap), and `GetItemState(actor, form, slot, out)` (the `GetEquipPreferenceItemState` slot) reads it:
+Right / Left that hand only, Default the newest in any hand, `lifts` / `withheld` per item, the force counters per
+actor. What breaks: keying it by the `g_lines` XOR key (it can collide across actors), or reporting a record from
+an older claim as the winning claim's state (the `owner != h` test answers Declared).
 The weighting rework, phase 1 (MFO `Docs/WEIGHTING-INVENTORY.md` "PHASE 1 PLAN", marth D1-D5). `kIntent_EquipPreference`:
 a client DECLARES preferred items per hand (`SetEquipPreference`, `APMF_EquipPrefEntry{form, slot, rank}`); in
 combat the engine's own `CalculateScore` (0x0C) answer for a declared item is LIFTED, never replaced. NO new seat and
@@ -1918,6 +1929,15 @@ so the thunk's per-call cost now lands on every user. **Open review findings: `D
 B209, B211 to B214** (raised against `7f1faa4`. B210 is closed by the step-2 acting rule).
 
 ### `native/core/EquipSink.{h,cpp}` — THE #17a CALL-SITE SEAT: the engine-equip sink (ch.17)
+**ABI v33 PER-ITEM DENY (2026-11-08, ClickUp 86e3t8w23):** `SetEquipDenyItems` stores up to `kMaxEquipDeny` (16)
+base forms on the ch.17 claim (`Claim::equipDenyForms`, `PendingOp::kSetEquipDeny`, `ControlMap::ApplySetEquipDeny`:
+a CHANGED list on the owner fires `OnOwnerChanged`, an overflow is logged once per handle per distinct count), copied
+into `EquipSetView::denyForms` by `TryGetEquipSet` in the same read as the set and scope. `DeclaredSetVerdict` sets
+`itemDenied` and folds it into `blacked`, so the sink, `core/HandBlock.cpp`'s 0x0F answer and
+`channels/EquipAuthority.cpp`'s `UnequipDenied` (its gate now `denied == 0 && denyCount == 0`) all treat a listed form
+as a denied-category item, and the equip pass skips a declared one as denied. `core/ActionGate.cpp`'s ranged probe
+mirrors it. What breaks: a second per-item test outside `DeclaredSetVerdict` (the three seats would disagree), or an
+early return on `set.denied == 0` alone (a deny list with no denied category would never be stripped).
 **RANK ONCE AS REQUESTER (2026-10-18, feat/apmf-queued-0x49, marth ruling (a)):** a queued equip (q=1) passes the
 sink twice: leg 1 from its requester, then (when worker +0x272 -> 37684 queued it rather than applying at once)
 leg 2 from QueuedApply (AE 38906/39814, SE 37950/38789; 39814/38789 read the 0x48 node: +8 obj, +0x10 extra, +0x18

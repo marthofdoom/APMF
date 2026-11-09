@@ -1549,6 +1549,7 @@ void SetEquipSet  (Handle, const RE::FormID* forms,           std::uint32_t coun
 void SetEquipSetEx(Handle, const APMF_EquipEntry* entries,    std::uint32_t count);  // ABI 8, a hand per item
 void SetEquipScope(Handle, const APMF_EquipScope* scope);                            // ABI 9
 bool IsEquipAuthorityEnforced();                                                     // ABI 8
+void SetEquipDenyItems(Handle, const RE::FormID* forms, std::uint32_t count);        // ABI 33, never equip these
 ```
 
 The claim alone changes nothing. Harbinger invents no set, so an actor with a claim and no declaration passes every equip through.
@@ -1608,6 +1609,8 @@ struct APMF_EquipScope {
 
 The default scope is `{ owned = kEquipCat_All, denied = 0 }`, which is the whole facet. A two-hander, a bow or a crossbow competes for both hands. A one-hander with an either-hand slot, declared as default, also competes for both hands, so declare its hand when you own only one. Unknown bits are masked off, logged once per handle, never refused. `scope == nullptr` resets to the default.
 
+`SetEquipDenyItems` (ABI 33) refuses NAMED items instead of a category: "never equip this form on this actor". Base FormIDs, copied inside the call, up to `kMaxEquipDeny` (16). The forms past that are NOT denied and the log says so. `count == 0` or `forms == nullptr` clears the list. A denied item is treated exactly like an item in a denied category, whatever the scope owns: the seat refuses it from every route, the combat selection seat answers NO, and the equip pass takes it off when it is worn. Use it for an item the actor keeps but must never use (MFO: an artifact the follower carries but is not built for). Do not also declare it in the set. The deny wins.
+
 #### What Harbinger enforces
 
 When the declaring claim owns the facet:
@@ -1619,7 +1622,7 @@ When the declaring claim owns the facet:
 
 | Case | Verdict |
 |---|---|
-| competes for a denied category, from ANY route (the player's trade or gift menu, Papyrus or console, an unattributed caller included) | deny, even if in the set. Since 2026-10-13: the player may still trade the item, the follower never equips it. Still ranked: a source you raised above the claim keeps its equip, but only for an equip applied at once. A QUEUED equip (the usual `EquipObject` default) comes back to the seat one actor update later as `path=QueuedApply` and ranks as Engine there, so it is refused even for a raised source. Stricter than the rule, known, not yet fixed |
+| competes for a denied category, or is on the claim's per-item deny list (ABI 33), from ANY route (the player's trade or gift menu, Papyrus or console, an unattributed caller included) | deny, even if in the set. Since 2026-10-13: the player may still trade the item, the follower never equips it. Still ranked: a source you raised above the claim keeps its equip, but only for an equip applied at once. A QUEUED equip (the usual `EquipObject` default) comes back to the seat one actor update later as `path=QueuedApply` and ranks as Engine there, so it is refused even for a raised source. Stricter than the rule, known, not yet fixed |
 | the player's own menu equip, without `DenyPlayerMenu`, not in a denied category | allow (player agency) |
 | competes for an owned category and there is no declaration or the item is in the set | allow |
 | competes for an owned category and the item is off-set | deny. A Papyrus equip (ranked as its script's plugin) and a console equip (ranked as `DirectCalls`) have no exemption since ClickUp 86e3q082a step 2: each deny stands only while the claim outranks that source |
@@ -1642,7 +1645,7 @@ Rules of the road:
 - **Do not mix ch.15's probe path with a ch.17 claim.**
 - **A refused equip is not re-issued.** If the hand block refused a declared weapon because a cast claim held that hand, Harbinger does not equip it again when the hand frees. Declare again after the cast claim releases (backlog item APMF-B64).
 - **Harbinger never adds items.** A declared item the actor does not own is skipped and logged.
-- **A worn item in a denied category comes off.** Each declaration event (a scope change too) runs the equip pass, and the pass unequips every worn item that competes for a category you deny, in or out of combat. It stays in the inventory. Each removal logs an `UNEQUIP` line. An off-set item in an OWNED category is not unequipped: your declared item displaces it. Observe-only logs `would-unequip` instead.
+- **A worn item in a denied category comes off.** Each declaration event (a scope change too, and since ABI 33 a change of the per-item deny list) runs the equip pass, and the pass unequips every worn item that competes for a category you deny or is on the deny list, in or out of combat. It stays in the inventory. Each removal logs an `UNEQUIP` line. An off-set item in an OWNED category is not unequipped: your declared item displaces it. Observe-only logs `would-unequip` instead.
 - **Your claim binds you too.** Your own direct equip of an item your declaration refuses is refused, logged `deny (the claim binds its own client)`. Equip what you declared, or declare first.
 
 > **Key Concept 9 (what `IsEquipAuthorityEnforced` says)** It is true when the seat is installed and `bEquipObserveOnly` is 0, the default. Then every category you declare is enforced. A user who opts in with `bEquipObserveOnly=1` makes it false. A claim's own `kEquipAuth_ObserveOnly` bit is not consulted by it. (`bEquipEnforceArmor`, the 2026-10-06 armor-only switch, is retired and ignored.)
@@ -1746,7 +1749,7 @@ bool HarbingerEnforces() {
 
 #### Version, INI and field status
 
-ABI 7 (first shipped in 0.9.5), 8 adds a hand per item, `kEquipAuth_DenyPlayerMenu` and `IsEquipAuthorityEnforced`, 9 adds the scope, 25 adds an instance per item. Keys in `[EquipAuthority]`: `bEquipAuthority` (1), `bEquipObserveOnly` (0 since 2026-10-13), `bTorchDeny` (1, the torch seat, 2026-10-20). `bEquipEnforceArmor` and `bEquipDenyScript` are retired. `bHandClaimBlocksEquip` in `[HandBlock]`. In use by MFO. Every declared category is enforced by default. [Appendix E](#appendix-e-equip-authority-probe-criteria) is now a field check, read with `bEquipObserveOnly=1` if you want it without refusals. Built, not yet battle-tested.
+ABI 7 (first shipped in 0.9.5), 8 adds a hand per item, `kEquipAuth_DenyPlayerMenu` and `IsEquipAuthorityEnforced`, 9 adds the scope, 25 adds an instance per item, 33 adds the per-item deny list (`SetEquipDenyItems`). Keys in `[EquipAuthority]`: `bEquipAuthority` (1), `bEquipObserveOnly` (0 since 2026-10-13), `bTorchDeny` (1, the torch seat, 2026-10-20). `bEquipEnforceArmor` and `bEquipDenyScript` are retired. `bHandClaimBlocksEquip` in `[HandBlock]`. In use by MFO. Every declared category is enforced by default. [Appendix E](#appendix-e-equip-authority-probe-criteria) is now a field check, read with `bEquipObserveOnly=1` if you want it without refusals. Built, not yet battle-tested.
 
 **Check Your Understanding: ch.17**
 
@@ -1823,7 +1826,7 @@ void OnLoadoutChanged(Handle h, RE::FormID mainHand, RE::FormID offHand) {
 
 #### Version, INI and field status
 
-ABI 22. `EnableScoreSteer` (1) and `EnableWeaponScoreProbe` (1) in `[AiCastSeats]`. Built, not yet tested in game.
+ABI 22. ABI 33 adds `GetEquipPreferenceItemState(actor, form, slot, out)`: the same state for ONE declared entry, from that item's own scorings (`GetEquipPreferenceState` reports only the actor's last scoring, so with two entries it nearly always names the last one scored). `slot` is the entry's hand as declared, Default reads the newest scoring in any hand. `lifts` and `withheld` count that item, the force counters stay the actor's. `EnableScoreSteer` (1) and `EnableWeaponScoreProbe` (1) in `[AiCastSeats]`. Built, not yet tested in game.
 
 **Check Your Understanding: ch.26**
 
@@ -3563,6 +3566,7 @@ The ABI is append-only. A client built against an older ABI keeps working agains
 | 30 | 0.15.0 | `kTravel_CrossCells`, a `TravelFlags` bit read through the existing `RequestEx` and `Repoint` (no struct, no slot) |
 | 31 | 0.15.2 | `GetClaimEndReason`, `ClaimEndReason` (struct `APMF_API_v31`) |
 | 32 | 0.16.0 | `kCastGuard_Bystanders` (no slot, struct `APMF_API_v31`) |
+| 33 | after 0.16.0 | `SetEquipDenyItems`, `kMaxEquipDeny`, `GetEquipPreferenceItemState` (struct `APMF_API_v33`) |
 
 The last release is 0.16.0, ABI 32, interface struct `APMF_API_v31` (ABI 32 added a flag and no slot). In 0.15.1 the interface struct was `APMF_API_v29`, since ABI 30 added a flag and no slot. Before that `APMF_API_v19` served ABI 19 to 21, and ABI 23 and 25 also added no slot.
 
