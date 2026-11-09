@@ -1194,19 +1194,19 @@ Reviewer, verbatim as relayed: "ActionGate.cpp 2342 lines, the next brief must p
 ### APMF-B225 (SEV-5, OPEN, pre-existing, channels/CombatEntry.cpp hold EndHold, against 94c35f6, Opus review of fix/apmf-hold-repin-nopath) -- an ended Track under a live claim
 Reviewer, verbatim as relayed: "An ended Track can stay ended under a live claim. When EndHold runs but EndClaim / EndHeld find no winning claim naming the target (the entry or pin is not the winner or is already ending), the Track is ended but the claim stays live and nothing is released. entryEnded / pinEnded only take effect on a later SetSlot, so with no Repoint the watchdogs never run again for that live claim. Rare, not introduced here."
 
-### APMF-B226 (SEV-5, OPEN, core/EquipPreference.cpp OnScore, against 3186270, Opus tier-3 review of feat/apmf-explained-zero-lift) -- the no-rival floor also lifts tiny non-zero scores
+### APMF-B226 (SEV-5, WONTFIX (the reviewer called it harmless, marth 2026-11-08), core/EquipPreference.cpp OnScore, against 3186270, Opus tier-3 review of feat/apmf-explained-zero-lift) -- the no-rival floor also lifts tiny non-zero scores
 Reviewer, as relayed by the coordinator (the review log holds no fuller text): "floor fix lifts non-zero (0, 0.01) scores to 0.01 and touches ch.26 weapon declarations, harmless." Reasoning: with no rival the target is now kEquipPrefStepAbs instead of 0, so an engine score in (0, 0.01) on a lifted item rises to 0.01. It only reorders items that already lead their category. Deferred under rule 9.
 
-### APMF-B227 (SEV-5, OPEN, core/EquipPreference.cpp ZeroLineDue, against 3186270, Opus tier-3 review of feat/apmf-explained-zero-lift) -- the [ch.8b zero] throttle keys on a pooled form id
+### APMF-B227 (SEV-5, WONTFIX (the reviewer called it harmless, marth 2026-11-08), core/EquipPreference.cpp ZeroLineDue, against 3186270, Opus tier-3 review of feat/apmf-explained-zero-lift) -- the [ch.8b zero] throttle keys on a pooled form id
 Reviewer, as relayed by the coordinator: "g_zeroLines throttle keyed on form id, can be a pooled 0xFF proxy, logging only." Reasoning: a delivery-flip proxy id is reused across spells by the pool, so a recycled id can suppress the first line for a different spell for up to 10 s. Logging only, no decision reads it.
 
-### APMF-B228 (SEV-5, OPEN, core/CastClassify.cpp VerifyZeroModel, against 3186270, Opus tier-3 review of feat/apmf-explained-zero-lift) -- the self-check does not cover the per-row step or the visitor
+### APMF-B228 (SEV-5, WONTFIX (the reviewer called it harmless, marth 2026-11-08), core/CastClassify.cpp VerifyZeroModel, against 3186270, Opus tier-3 review of feat/apmf-explained-zero-lift) -- the self-check does not cover the per-row step or the visitor
 Reviewer, as relayed by the coordinator: "install self-check proves row functions and bytes, not the per-row step or effect visitor (verified statically, exact-build gated)." Reasoning: KEEP-BEST (AE 0x81DBA0 / SE 0x7815A0 / 1.7.104 0x833090) and the visitor (AE 0x81D830) were verified by disassembly on all three builds and the seat is exact-build gated, so a drift would need a new executable, which the runtime gate already refuses.
 
-### APMF-B229 (SEV-5, OPEN, core/EquipPreference.cpp StyleZero, against 5a1f6b0, Opus focused re-review of feat/apmf-explained-zero-lift) -- the style is read after the engine call, not with it
+### APMF-B229 (SEV-5, WONTFIX (the reviewer called it harmless, marth 2026-11-08), core/EquipPreference.cpp StyleZero, against 5a1f6b0, Opus focused re-review of feat/apmf-explained-zero-lift) -- the style is read after the engine call, not with it
 Reviewer: "MFO swaps the style from its job-worker tick, so a swap can land between the engine's read and ours. The window is nanoseconds." Reasoning: the pointer read is one aligned 8-byte read of a form that is never freed, so it is safe. A wrong answer affects one scoring pass for the claimed form only: it lifts a zero the claim asked for anyway, or refuses once and the next pass re-scores. Not worth fixing.
 
-### APMF-B230 (SEV-5, OPEN, core/EquipPreference.cpp StyleZero, against 5a1f6b0, Opus focused re-review of feat/apmf-explained-zero-lift) -- a style-zero follower is lifted onto a spell the target fully resists
+### APMF-B230 (SEV-5, WONTFIX (the reviewer called it harmless, marth 2026-11-08), core/EquipPreference.cpp StyleZero, against 5a1f6b0, Opus focused re-review of feat/apmf-explained-zero-lift) -- a style-zero follower is lifted onto a spell the target fully resists
 Reviewer: "a follower whose style is 0 will be lifted onto a claimed spell the target fully resists. A follower with a non-zero style is refused in that case." Reasoning: harmless, and the gambit asked for that spell. Consistent with marth's 2026-10-28 ruling.
 
 ### APMF-B231 (SEV-4, OPEN, core/CastClassify.cpp ZeroTieMain, against c1c7b5a, Opus tier-3 review of fix/apmf-zero-tie-main-effect) -- the tie switch can move an item onto a worse row
@@ -1215,7 +1215,7 @@ Reviewer: "'Main row differs from the first, so classify the main' is only a heu
 ### APMF-B232 (SEV-5, OPEN, MAP.md + core/CastClassify.cpp MainEffect wording, against c1c7b5a) -- "the engine's costliest effect" omits the engine function's delivery and duration filters
 Reviewer: "MainEffect matches the no-filter call. Docs only."
 
-### APMF-B233 (SEV-5, OPEN, core/CastClassify.cpp g_tieLogged, against c1c7b5a) -- the log-once set is never cleared on load
+### APMF-B233 (SEV-5, WONTFIX (the reviewer called it harmless, marth 2026-11-08), core/CastClassify.cpp g_tieLogged, against c1c7b5a) -- the log-once set is never cleared on load
 Reviewer: "It is only a log-once set, so it is harmless."
 
 ### APMF-B234 (SEV-5, OPEN, core/EquipGate.cpp Light darkness override install, against d7d6dc7, Opus tier-3 review of feat/apmf-light-darkness-override) -- EnableScoreSteer is read once at install
@@ -1227,7 +1227,7 @@ Reviewer: "g_darkLineMs grows without bound and is keyed on actor + form, which 
 ### APMF-B236 (SEV-5, OPEN, core/EquipGate.cpp install gate, against d7d6dc7) -- the 1.6.1170 version check uses a different style than the 1.5.97 one
 Reviewer: "The 1.6.1170 check could use REL::Module::IsExactly(SKSE::RUNTIME_SSE_1_6_1170) to match the 1.5.97 one." Reasoning: style only, both are correct.
 
-### APMF-B237 (SEV-5, OPEN, core/EquipGate.cpp Light 10 s line, against 94a9597, Opus tier-3 review of feat/apmf-light-search-override) -- the armed line also prints when nothing was overridden
+### APMF-B237 (SEV-5, WONTFIX (the reviewer called it harmless, marth 2026-11-08), core/EquipGate.cpp Light 10 s line, against 94a9597, Opus tier-3 review of feat/apmf-light-search-override) -- the armed line also prints when nothing was overridden
 Reviewer: "The 10 s line also prints when the flag is armed but nothing was overridden (\"not raised\"). This is volume only, and arguably useful."
 
 ### APMF-B238 (SEV-5, OPEN, Docs/STATUS.md Light gate audit, against 94a9597) -- construction and the item's Equip were not decoded by the reviewer
@@ -1248,7 +1248,7 @@ Reviewer: "the ambiguous placed-ref fallback, GetFile(0) of the reference, names
 ### APMF-B243 (SEV-5, OPEN, core/PapyrusCaller.cpp, against 6791e1a) -- g_calls atomic per native call, catch(...) does not catch an AV, stale APMF_API.h kEquipAuth_DenyScript comment (batch with the next ABI touch)
 Reviewer: "g_calls adds an atomic increment to every native call (B212), shared across VM threads. It is cheap but not free." "catch(...) does not catch an access violation." "Stale APMF_API.h comment: SEV-5. It is a byte-shared header, so batch it with the next ABI touch."
 
-### APMF-B244 (SEV-5, OPEN, core/PapyrusCaller.cpp refcount read, against f91836f) -- a reference at refcount 0 is not attributed
+### APMF-B244 (SEV-5, WONTFIX (the reviewer called it harmless, marth 2026-11-08), core/PapyrusCaller.cpp refcount read, against f91836f) -- a reference at refcount 0 is not attributed
 Reviewer: "A reference whose refcount is 0 at the moment of the read is not attributed. It falls back to DirectCalls, which is the safe direction." "A refcount of 1023 plus one would carry into the handle flag bit. The engine's own increment has the same limit, so this is not new."
 
 ### APMF-B245 (SEV-4, OPEN, core/EquipSink.cpp leak Own, against cac42e0, Opus review of feat/menu-honest-labels) -- a queued own-client equip can count Own twice across its two legs
