@@ -1836,7 +1836,7 @@ namespace apmf {
     // ABI v33 (ch.17): the PER-ITEM DENY list of an existing claim. Writer-thread-only, ApplySetEquipScope's
     // shape: look the claim up via m_index, store on the Claim whether or not it owns the channel. A CHANGED
     // list on the owner is a declaration event (the enforce pass may now unequip a worn item it names) -> one
-    // main-thread hop after Publish; an unchanged re-send fires nothing (a deny list is a POLICY, like the
+    // main-thread hop after Publish. An unchanged re-send fires nothing (a deny list is a POLICY, like the
     // scope). Returns whether the STORED list changed (Publish gate).
     bool ControlMap::ApplySetEquipDeny(Handle handle, const RE::FormID* forms, std::uint32_t count, std::uint32_t requested,
                                        MapType& map) {
@@ -1886,7 +1886,7 @@ namespace apmf {
                          apmf::log::Hex(formID), channel->ChannelNo(), channel->Name(), handle, n, list,
                          changed ? "changed" : "unchanged", owner ? "owner" : "not owner");
             if (owner && changed) {
-                // Writer thread: the channel only POSTS from this; the unequip itself runs after Publish
+                // Writer thread: the channel only POSTS from this. The unequip itself runs after Publish
                 // (same hop as ApplySetEquipScope).
                 auto* actor = RE::TESForm::LookupByID<RE::Actor>(formID);
                 channel->OnOwnerChanged(formID, actor, mine->param);

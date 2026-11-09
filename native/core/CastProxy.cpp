@@ -319,7 +319,7 @@ namespace apmf::castproxy {
         }
         spdlog::error("[castproxy] pool OVERFLOW #{} (owner 0x{}, spell 0x{}, {} hand, {}): all {} slots are held by "
                       "live cast claims [{}] -- the claim gets NO proxy, so the seats will not force the original form "
-                      "(a kSelf form at another actor is an unproven road, APMF-B62; an aimed form at the caster is a "
+                      "(a kSelf form at another actor is an unproven road, APMF-B62, and an aimed form at the caster is a "
                       "ray at its own shooter) and the claim stands as a plain deny of its hand.",
                       n, apmf::log::Hex(a_owner), apmf::log::Hex(sid), HandName(a_hand), FlipName(a_flip),
                       static_cast<int>(kPoolCap), holders);

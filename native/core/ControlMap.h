@@ -744,7 +744,7 @@ namespace apmf {
         // ABI v33: writer-thread-only, ApplySetEquipScope's shape -- store the per-item deny list on the
         // matching Claim whether or not it owns the channel. If the claim IS the owner AND the stored list
         // CHANGED, fires channel->OnOwnerChanged (a declaration event: the enforce pass unequips a worn
-        // denied item after Publish); an unchanged re-send fires nothing. An overflow is logged once per
+        // denied item after Publish). An unchanged re-send fires nothing. An overflow is logged once per
         // handle per distinct requested count. No-op on an unknown handle or a claim not on
         // kIntent_EquipAuthority.
         bool ApplySetEquipDeny(Handle handle, const RE::FormID* forms, std::uint32_t count, std::uint32_t requested,
