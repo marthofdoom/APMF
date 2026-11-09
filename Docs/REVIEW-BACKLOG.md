@@ -1286,3 +1286,9 @@ Verbatim: "an A event that arrives AFTER the Repoint is dropped by the sink's cu
 
 ### APMF-B255 (SEV-5, OPEN, channels/CombatSubstrate.cpp + .h, against 9792184) -- label and comment leftovers
 Verbatim: "the claim-ended branch matches only releaseForm or driven ... If 0x0B lands on the proxy and the event on the spell, a real fire would read as mid-release. Fix: keep both forms on the Sub." "a combat-thread 0x0B store not yet visible when the event is ... would mislabel a real fire as fired-no-start-seen." "The SpellCastSink comment at :2268 now says both 'the first one per window' and 'the latest one per window wins'." "The CombatSubstrate.h header (:141) does not list the new reasons."
+
+### APMF-B256 (SEV-4, OPEN, core/CastProxy.cpp Acquire, against d8a0315, tier-A review of feat/api-batch-b62-ch17) -- the half-full warning counts distinct spells minted, not live demand
+Verbatim: "a never-minted slot (rank 2) is still chosen over reusing a free slot of another spell (rank 3) ... So g_minted counts DISTINCT (spell, flip) pairs used this session, not concurrent demand. The comment 'a session that never needs more than two proxies mints two forms' is therefore false. Once 33 or more distinct flipped spells have been cast, every further mint logs the warning ... even though only 1 or 2 slots are held." Fix: warn on live owned slots (or once per session) and fix the comment. The overflow ERROR is correct.
+
+### APMF-B257 (SEV-5, OPEN, core/ClientAPI.cpp + core/TorchSeat.cpp, against d8a0315) -- two placeholders
+Verbatim: "MinReleaseForAbi(33) returns 'the release after 0.16.0' (ClientAPI.cpp around 399). It must be named at the cut." "TorchSeat.cpp:90 still decides by category only, so a LIGH form on a deny list would not be refused by the torch updater. MFO sends WEAP only, so nothing is affected today."
