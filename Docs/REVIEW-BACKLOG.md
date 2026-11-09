@@ -1276,3 +1276,12 @@ Reviewer: "AE 0x70B6F0 ... is an else-if ladder ... Before the spectate branch, 
 
 ### APMF-B252 (SEV-5, OPEN, core/SpectatorGate.cpp, against f229c0b) -- the CombatManager step still runs after a refusal, and a stood substrate target counts the Engine Package hit twice
 Reviewer: "the CombatManager step (0x83E2A0) still runs after a refusal. It is the same as the ch.9 refusal since 10-12, and it is stated as hole (c)." "A substrate target that stands, and then also goes down the ch.9 path, counts the Engine Package hit twice. Counter cosmetics only."
+
+### APMF-B253 (SEV-4, OPEN, FIELD WATCH, channels/CombatSubstrate.cpp B203 check, against 9792184, Opus review of fix/backlog-b35-b200) -- a hand already Charging at open can close the window as tree-outside-gate
+Verbatim: "this check used to run only without the census seat, and now it runs in the main configuration. For the 2.7 to 5.1 s start latency of every window, a hand that is ALREADY Charging or Charged on the same form at open would close the window at once as tree-outside-gate. That hand could be left over from a previous window cut by StopCombat." Fix direction: "record the hand state at open and count only a move into 2/3 after the open." Watch the next field cycle for "TREE OUTSIDE THE GATE: the hand is charging" lines (the failure is a loud WARN).
+
+### APMF-B254 (SEV-4, OPEN, channels/CombatSubstrate.cpp SpellCastSink, against 9792184) -- a late release-form event after a Repoint is still dropped
+Verbatim: "an A event that arrives AFTER the Repoint is dropped by the sink's current-claim filter ... A late A fire still closes as released-unconfirmed or fired-not-released (both WARN). Only the label is wrong." Fix: "an atomic releaseForm on the Slot written by Serve."
+
+### APMF-B255 (SEV-5, OPEN, channels/CombatSubstrate.cpp + .h, against 9792184) -- label and comment leftovers
+Verbatim: "the claim-ended branch matches only releaseForm or driven ... If 0x0B lands on the proxy and the event on the spell, a real fire would read as mid-release. Fix: keep both forms on the Sub." "a combat-thread 0x0B store not yet visible when the event is ... would mislabel a real fire as fired-no-start-seen." "The SpellCastSink comment at :2268 now says both 'the first one per window' and 'the latest one per window wins'." "The CombatSubstrate.h header (:141) does not list the new reasons."
