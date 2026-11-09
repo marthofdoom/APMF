@@ -2439,8 +2439,8 @@ APMF_AttackMix mix{};
 mix.size          = sizeof(mix);
 mix.governed      = kAtkClass_Normal | kAtkClass_Power;   // the classes you govern
 mix.denied        = 0;                                    // denied outright (a subset of governed)
-mix.powerShareMax = -1.0f;                                // a ceiling 0..1, -1 = none
-mix.powerShareMin = 0.4f;                                 // a floor 0..1, -1 = none
+mix.powerShareMax = 0.0f;                                 // a ceiling in (0, 1], 0 = none
+mix.powerShareMin = 0.4f;                                 // a floor in (0, 1], 0 = none
 mix.window        = 0;                                    // 0 = 8 started attacks
 v34->SetAttackMix(h, &mix);
 ```
@@ -2465,8 +2465,8 @@ Every entry is in exactly one class. A mod-added attack classifies itself by its
 | `size` | `sizeof(APMF_AttackMix)` | a smaller value clears the declaration (logged) |
 | `governed` | the classes this claim governs. A class not in it is never touched | 0 = governs nothing |
 | `denied` | classes the AI may not draw while the claim stands | masked to `governed` (logged) |
-| `powerShareMax` | a ceiling on Power / (Power + Normal) over the window. Above it, Power is denied until the share falls | -1 = none. Needs Power governed |
-| `powerShareMin` | a floor on the same share. Below it, Normal is denied until the share rises (see the stamina rule below) | -1 = none. Needs Normal governed. Above the ceiling, both are ignored |
+| `powerShareMax` | a ceiling on Power / (Power + Normal) over the window. Above it, Power is denied until the share falls | 0 (or any negative value) = none, so a zero-initialised mix has no share rule. Up to 1. A 0 ceiling is `denied` Power. Needs Power governed |
+| `powerShareMin` | a floor on the same share. Below it, Normal is denied until the share rises (see the stamina rule below) | 0 (or any negative value) = none. Up to 1. Needs Normal governed. Above the ceiling, both are ignored |
 | `window` | started Power-or-Normal attacks the share is measured over. No share deny before the window is full | 0 = 8, clamped to 4..32 |
 | `flags` | `kAtkMix_ObserveOnly`: count what would be denied, deny nothing | 0 |
 
@@ -2478,8 +2478,8 @@ The engine's `StartAttack` walks the attack entries its hand or bash context gat
 
 Three rules bound every deny:
 
-- **The floor rule.** If the deny would leave fewer than TWO undenied entries in the context's pool, the engine's weights stand for that roll and a warning line says so (rate-limited). Harbinger never empties the pool and never narrows the actor to one move.
-- **The stamina rule (marth 2026-11-09, "a regular attack must fire when stamina isnt allowing power").** The power-share FLOOR denies Normal only when some Power entry of that same roll would start: it passes the engine's own reach and cooldown tests, the actor's stamina is above 0, and the engine's weight for it is above 0. Otherwise the Normal attack keeps its weight. An explicit `denied` Normal is not gated this way (the floor rule still holds).
+- **The floor rule (marth 2026-11-09, "Allow 1 in circumstances it is required").** Harbinger first works out, once per roll, which entries of the pool the engine would actually draw: each passes the engine's own reach and cooldown tests and its stamina test (with stamina at 0, an entry with the power or bash bit is treated as unable, an entry with neither costs nothing and passes), and the engine's weight for it is above 0. If the deny would leave none of those undenied, the engine's weights stand for that roll and a warning line says so (rate-limited). So the draw always has a candidate. The engine's own checks after the draw (a chance roll on the picked weight, the angle test) can still fail the attack, exactly as they do without Harbinger.
+- **The stamina rule (marth 2026-11-09, "a regular attack must fire when stamina isnt allowing power").** EVERY Normal deny, a declared `denied` Normal as much as the power-share floor, is lifted for a roll in which no undenied Power entry would be drawn (none passes the engine's own reach, cooldown and stamina tests with a weight above 0). The Normal attack then keeps its weight.
 - **Ranking.** A deny stands only while the claim outranks the `Engine` source on the CombatAction facet.
 
 How the share is measured: each time the seat weighs a claimed actor's candidates, it compares the actor's current attack record with the last one it saw. A change is one started attack. A repeat of the exact same attack is not seen (2 of 44 in the one field log), so the share is a close approximation.
@@ -2513,8 +2513,7 @@ Handle WarriorMix(RE::FormID actor) {
     APMF_AttackMix mix{};
     mix.size          = sizeof(mix);
     mix.governed      = kAtkClass_Normal | kAtkClass_Power;
-    mix.powerShareMax = -1.0f;
-    mix.powerShareMin = 0.4f;
+    mix.powerShareMin = 0.4f;                             // powerShareMax stays 0: no ceiling
     v34->SetAttackMix(h, &mix);
     return h;
 }
@@ -3806,7 +3805,7 @@ Answers to the odd-numbered questions on this page.
 
 **ch.7.** 1. `kCombatActionCat_Cast`. 3. The heal never fires. ch.7 denies the cast leaves, which are the cast claim's delivery mechanism.
 
-**ch.18.** 1. Exactly what the engine would. Denying Power would leave a single undenied entry, so the floor rule keeps the engine's weights for every such roll and logs it. 3. A normal attack. The floor's Normal deny needs a power attack that can start in that roll, and with stamina at 0 none can.
+**ch.18.** 1. It draws the normal attack whenever that one is drawable this roll. Only when the normal attack is not drawable (cooldown, reach) would the deny leave nothing, and then the floor rule keeps the engine's weights for that roll and logs it. 3. A normal attack. The floor's Normal deny needs a power attack that can start in that roll, and with stamina at 0 none can.
 
 **ch.20.** 1. The pin pauses, with the claim live, until the engine has a target and yours is in the group. 3. When the writer is positively identified and your priority on `Target` is above its priority. An unnamed writer stands unless `[UnknownSources] Target=override`.
 

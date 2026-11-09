@@ -288,7 +288,7 @@ namespace APMF_API {
                                      //       the engine's own weighted draw (StartAttack's weight call, the #17a
                                      //       amendment of 2026-11-09), so the AI draws among the rest. It never adds
                                      //       a move, never touches a class the client did not declare, and never
-                                     //       leaves the actor fewer than TWO moves in the context's pool (the floor
+                                     //       leaves a roll with no undenied attack the engine would draw (the floor
                                      //       rule: the engine's weights then stand for that roll, logged). A STANDING
                                      //       claim: no TTL, ended by Release. Param: none read (pass nullptr or a
                                      //       zero param). REFUSED (kInvalidHandle) for the player and while the seat
@@ -2897,12 +2897,14 @@ namespace APMF_API {
     //                  its entries keep the engine's weight whatever else is declared.
     //   denied         a subset of governed: the classes the AI may not draw while the claim stands. Bits
     //                  outside governed are masked off (logged once per handle).
-    //   powerShareMax  a CEILING on the actor's power share (0..1), or -1 = undeclared. The share is
+    //   powerShareMax  a CEILING on the actor's power share, in (0, 1]. 0 or any negative value (-1) =
+    //                  undeclared, so a zero-initialised mix has no share rule (a 0 ceiling is `denied |= Power`). The share is
     //                  Power / (Power + Normal) over the actor's last `window` started Power-or-Normal attacks.
     //                  While it is ABOVE the ceiling, Power is denied (a temporary deny). Requires Power in
     //                  governed, else ignored (logged).
-    //   powerShareMin  a FLOOR on the same share (0..1), or -1 = undeclared. While the share is BELOW it,
-    //                  Normal is denied (a temporary deny: the only deny-only way to get more power attacks).
+    //   powerShareMin  a FLOOR on the same share, in (0, 1]. 0 or any negative value (-1) = undeclared. While the
+    //                  share is BELOW it, Normal is denied (a temporary deny: the only deny-only way to get more
+    //                  power attacks).
     //                  Requires Normal in governed, else ignored (logged). A floor above the ceiling ignores
     //                  BOTH (logged).
     //                  Neither share deny engages before the window is full (`window` recorded starts).
@@ -2910,18 +2912,23 @@ namespace APMF_API {
     //                  [4, 32] (logged).
     //   flags          AttackMixFlags.
     //   reserved       zero.
-    // THE FLOOR RULE. A deny that would leave the roll's context pool (the attack entries the engine gathered
-    // for this hand / bash context) with fewer than TWO undenied entries is NOT applied for that roll: the
-    // engine's weights stand, and Harbinger logs it (rate-limited) and counts it (floorStood). Harbinger never
-    // narrows an actor's choice to one move and never leaves it none. RANKING: a deny stands only while the
+    // THE STAMINA RULE (marth 2026-11-09, "a regular attack must fire when stamina isnt allowing power"). EVERY
+    // Normal deny, declared or the share floor's, is lifted for a roll in which no undenied Power entry would
+    // be drawn: none passes the engine's own reach / cooldown / stamina tests with a weight above 0.
+    // THE FLOOR RULE (marth 2026-11-09, "Allow 1 in circumstances it is required"). A deny that would leave the
+    // roll with NO undenied entry the engine would draw (of the entries its hand / bash context gathered, the
+    // ones passing the engine's own per-entry tests with a weight above 0) is NOT applied for that roll: the
+    // engine's weights stand, and Harbinger logs it (rate-limited) and counts it (floorStood). The draw then
+    // always has a candidate. The engine's own checks AFTER the draw (a chance roll, the angle test) can still
+    // fail the attack, as they do without Harbinger. RANKING: a deny stands only while the
     // claim outranks the Engine source on the CombatAction facet (the Harbinger page / APMF_Sources.ini); a
     // tie or an Engine above the claim lets the engine's weight stand (rankStood).
     struct APMF_AttackMix {
         std::uint32_t size;            // sizeof(APMF_AttackMix) (48); a smaller value is refused (logged)
         std::uint32_t governed;        // AttackClass
         std::uint32_t denied;          // AttackClass, subset of governed
-        float         powerShareMax;   // 0..1, -1 = undeclared
-        float         powerShareMin;   // 0..1, -1 = undeclared
+        float         powerShareMax;   // (0, 1]; 0 or negative = undeclared
+        float         powerShareMin;   // (0, 1]; 0 or negative = undeclared
         std::uint32_t window;          // 0 = 8, clamped to [4, 32]
         std::uint32_t flags;           // AttackMixFlags
         std::uint32_t reserved[5];     // zero
@@ -2956,7 +2963,7 @@ namespace APMF_API {
         std::uint32_t    windowNormal;    // of those, Normal
         float            powerShare;      // windowPower / windowFill once the window is full, else -1
         std::uint32_t    zeroed;          // candidate weights Harbinger set to 0 (since the load, saturating)
-        std::uint32_t    floorStood;      // denies NOT applied because of the floor rule
+        std::uint32_t    floorStood;      // ROLLS whose denies were NOT applied because of the floor rule
         std::uint32_t    rankStood;       // denies NOT applied because the Engine source outranks the claim
         std::uint32_t    wouldDeny;       // denies NOT applied because of observe-only (INI or kAtkMix_ObserveOnly)
         std::uint32_t    reserved[3];

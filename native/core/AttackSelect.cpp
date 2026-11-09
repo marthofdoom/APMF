@@ -64,16 +64,20 @@ extern "C" __declspec(dllimport) unsigned long __stdcall GetPrivateProfileIntA(
 //      2 of 44 in the 2026-10-30 field log: a documented approximation of the share);
 //   2. the active deny = the declared `denied` | Power while the share is above powerShareMax |
 //      Normal while it is below powerShareMin (both only once the window is full);
-//   3. a class NOT governed, or not in the active deny, keeps the engine's weight;
-//   4. marth 2026-11-09, "a regular attack must fire when stamina isnt allowing power": the SHARE
-//      FLOOR's Normal deny applies only if some Power entry of THIS roll's pool passes the engine's own
-//      per-entry tests above (entry+0x24 > 0, the cooldown compare, stamina > 0) and the engine's own
-//      W > 0, and is not itself denied. With stamina <= 0 no Power entry counts as able (the engine
-//      would admit only one whose stamina cost is 0; Harbinger does not call the cost function and
-//      errs toward the Normal attack the ruling asks for). Otherwise Normal keeps the engine's weight;
-//   5. THE FLOOR RULE: the deny is applied only if at least TWO entries of the context's pool stay
-//      undenied (never an empty pool, never narrowed to one move); else the engine's weights stand for
-//      the roll (logged at warn, rate-limited);
+//   3. once per ROLL (the first governed candidate; a thread-local cache serves the rest of the roll), the
+//      entries the engine would actually DRAW: each pool entry passes the engine's own tests above
+//      (entry+0x24 > 0, the cooldown compare, and with stamina <= 0 only an entry with neither the bash nor the
+//      power bit, whose cost is 0 x staminaMult; Harbinger does not call the cost function and treats a bash or
+//      power entry as unable then, which denies less than the engine allows, never more) and the engine's W > 0;
+//   4. marth 2026-11-09, "a regular attack must fire when stamina isnt allowing power": EVERY Normal deny
+//      (declared or the share floor) is lifted for a roll in which no undenied Power entry would be drawn;
+//   5. THE FLOOR RULE (marth 2026-11-09, "Allow 1 in circumstances it is required"): at least ONE drawable
+//      entry must stay undenied, else the engine's weights stand for the whole roll (logged at warn,
+//      rate-limited). The draw then always has a candidate. After the draw the engine still runs its own
+//      chance roll on the picked weight (AE 0x8A2C39..0x8A2C5D), the angle test (call at 0x8A2CA1 ->
+//      0x852C30) and a check (call at 0x8A2CB4 -> 0x8A2EE0); any of them can fail the drawn entry and the
+//      leaf fails as engine leaves fail (retried next tick). An honest residual the seat cannot see;
+//   a class NOT governed, or not in the roll's active deny, keeps the engine's weight;
 //   6. RANKING: the claim must outrank the Engine source on the CombatAction facet (facetattr::Decide);
 //   7. observe-only ([AttackSelect] bObserveOnly or kAtkMix_ObserveOnly): counted, nothing denied;
 //   8. otherwise the call answers 0.0f: the engine's draw never picks the entry.
@@ -150,7 +154,7 @@ namespace apmf::attackselect {
         constexpr std::uintptr_t kEntryLast  = 0x28;
         constexpr std::uintptr_t kEntryCd    = 0x2C;
         constexpr std::uint32_t  kPoolMax    = 256;   // sanity bound (the field shows 20)
-        constexpr std::uint32_t  kMinUndenied = 2;    // the floor rule: never empty, never one move
+        constexpr std::uint32_t  kMinUndenied = 1;    // the floor rule (marth 2026-11-09): never an empty draw
 
         // BGSAttackData: flags at +0x18 (data) + 0x10 = +0x28 (W itself reads [r8+0x28]).
         static_assert(offsetof(RE::BGSAttackData, data) == 0x18, "BGSAttackData::data moved");
@@ -257,48 +261,19 @@ namespace apmf::attackselect {
             return proc->high->attackData.get();
         }
 
-        // Step 4: some Power entry of this pool passes the engine's own per-entry tests and W > 0, and is not
-        // itself in `a_deny`. Reads the engine's data in place on the thread that is running the roll.
-        bool AnyPowerAble(RE::Actor* a_self, RE::Actor* a_target, const std::uint8_t* a_ctx, std::uint32_t a_deny,
-                          Weight_t a_w) {
-            if ((a_deny & APMF_API::kAtkClass_Power) != 0) return false;
-            auto* avo = a_self->AsActorValueOwner();   // actor+0xB8 (1.6.1170 / 1.7.104) / +0xB0 (1.5.97), as the engine
-            if (!avo || !(avo->GetActorValue(RE::ActorValue::kStamina) > 0.0f))
-                return false;   // the engine's `seta sil`: with stamina <= 0 only a zero-cost entry passes
-            const auto* arr = *reinterpret_cast<const std::uint8_t* const*>(a_ctx + kCtxArray);
-            const auto  n   = *reinterpret_cast<const std::uint32_t*>(a_ctx + kCtxCount);
-            if (!arr || n > kPoolMax || !g_now) return false;
-            const float now = *g_now;
-            for (std::uint32_t i = 0; i < n; ++i) {
-                const auto* e   = arr + i * kEntrySize;
-                auto*       atk = *reinterpret_cast<RE::BGSAttackData* const*>(e);
-                if (!atk || ClassOf(FlagsOf(atk)) != APMF_API::kAtkClass_Power) continue;
-                const float avail = *reinterpret_cast<const float*>(e + kEntryAvail);
-                if (0.0f >= avail) continue;                                   // comiss xmm7,[rbx+0x24]; jae skip
-                const float since = now - *reinterpret_cast<const float*>(e + kEntryLast);
-                if (!(since > *reinterpret_cast<const float*>(e + kEntryCd))) continue;   // ...; jbe skip
-                if (a_w(a_self, a_target, atk) > 0.0f) return true;            // the engine's own weight
-            }
-            return false;
-        }
-
-        // Step 5: (pool size, undenied entries, whether the candidate is in it).
-        struct PoolCount { std::uint32_t total = 0, undenied = 0; bool found = false; bool ok = false; };
-        PoolCount CountPool(const std::uint8_t* a_ctx, const RE::BGSAttackData* a_cand, std::uint32_t a_deny) {
-            PoolCount r;
-            if (!a_ctx) return r;
-            const auto* arr = *reinterpret_cast<const std::uint8_t* const*>(a_ctx + kCtxArray);
-            const auto  n   = *reinterpret_cast<const std::uint32_t*>(a_ctx + kCtxCount);
-            if (!arr || n == 0 || n > kPoolMax) return r;
-            r.ok = true;
-            for (std::uint32_t i = 0; i < n; ++i) {
-                const auto* atk = *reinterpret_cast<const RE::BGSAttackData* const*>(arr + i * kEntrySize);
-                if (!atk) continue;
-                ++r.total;
-                if (atk == a_cand) r.found = true;
-                if ((ClassOf(FlagsOf(atk)) & a_deny) == 0) ++r.undenied;
-            }
-            return r;
+        // THE ENGINE'S OWN PER-ENTRY TESTS, replayed on the roll's own data (the order StartAttack applies them,
+        // before it calls W): availability `comiss xmm7(0),[rbx+0x24]; jae skip`, cooldown `now - [rbx+0x28]`
+        // `comiss ...,[rbx+0x2C]; jbe skip`, then, only when the actor's stamina is NOT above 0 (`seta sil`), the
+        // stamina cost (AE 0x4183E0 / SE 0x3BEC90, identical): a bash entry costs a GMST x staminaMult, a non-bash
+        // power entry a weapon-based formula, an entry with NEITHER bit 0 x staminaMult = 0, which passes. Harbinger
+        // does not call the cost function: with stamina <= 0 a bash or power entry is treated as UNABLE (it denies
+        // less than the engine would allow, never more), an entry with neither bit as able (exactly the engine).
+        bool EntryPassesEngineTests(const std::uint8_t* a_e, std::uint32_t a_flags, bool a_staminaUp, float a_now) {
+            if (0.0f >= *reinterpret_cast<const float*>(a_e + kEntryAvail)) return false;
+            const float since = a_now - *reinterpret_cast<const float*>(a_e + kEntryLast);
+            if (!(since > *reinterpret_cast<const float*>(a_e + kEntryCd))) return false;
+            if (!a_staminaUp && (a_flags & (kFlagBash | kFlagPower)) != 0) return false;
+            return true;
         }
 
         const char* NameOf(RE::Actor* a) {
@@ -310,24 +285,32 @@ namespace apmf::attackselect {
             return apmf::facetattr::LineDue(apmf::sources::Facet::kCombatAction, a_fid, 0x18000000u | a_key);
         }
 
-        float Decide(RE::Actor* a_self, RE::Actor* a_target, RE::BGSAttackData* a_atk, const std::uint8_t* a_ctx,
-                     float a_w, Weight_t a_orig) {
-            const RE::FormID fid = a_self->GetFormID();
-            APMF_API::APMF_Param p{};
-            float                basis = 0.0f;
-            APMF_API::Handle     h     = APMF_API::kInvalidHandle;
-            if (!apmf::ControlMap::Get().TryGetOwningClaimBasis(fid, APMF_API::kIntent_AttackSelection, p, basis, &h))
-                return a_w;
-            const auto decls = g_decls.load(std::memory_order_acquire);
-            const auto it    = decls->find(h);
-            if (it == decls->end()) return a_w;   // claimed, nothing declared: declare -> enforce
-            const Decl d = it->second;
+        // ONE ROLL'S VERDICT, computed at the roll's first governed candidate and reused for the rest of that roll
+        // (review SEV-2 / SEV-5 on 496243e). A roll is one StartAttack walk over one context: its candidates reach
+        // W in strictly increasing pool index, on one thread, within one value of the engine's `now`. A call is a
+        // NEW roll when the thread's cache names another context, actor, claim or `now`, or a pool index that is
+        // not above the cached one.
+        struct Roll {
+            const std::uint8_t* ctx    = nullptr;
+            RE::FormID          fid    = 0;
+            APMF_API::Handle    h      = APMF_API::kInvalidHandle;
+            float               now    = 0.0f;
+            std::uint32_t       last   = 0;
+            std::uint32_t       active = 0;       // the classes this roll denies (after the stamina rule)
+            bool                stand  = false;   // the floor rule: the engine's weights stand for this roll
+            std::uint32_t       flags  = 0;       // the declaration's flags, for observe-only
+        };
+        thread_local Roll t_roll;
 
-            // 1 + 2: sample the window, compute the active deny.
-            const auto* cur = CurrentAttack(a_self);
-            std::uint32_t active = d.denied, floorBit = 0;
+        // Builds t_roll for a new roll. `a_idx` is the candidate's pool index (already found).
+        void EvaluateRoll(RE::Actor* a_self, RE::Actor* a_target, const std::uint8_t* a_ctx, const std::uint8_t* a_arr,
+                          std::uint32_t a_n, std::uint32_t a_idx, APMF_API::Handle a_h, const Decl& a_d, float a_now,
+                          Weight_t a_w) {
+            const RE::FormID fid = a_self->GetFormID();
+            // 1 + 2: sample the window once per roll, compute the declared + share deny.
+            const auto*   cur    = CurrentAttack(a_self);
+            std::uint32_t active = a_d.denied;
             float         share  = -1.0f;
-            bool          logActive = false;
             {
                 std::scoped_lock lk(g_amx);
                 auto st = g_actors.find(fid);
@@ -346,69 +329,132 @@ namespace apmf::attackselect {
                         if (s.fill < kRing) ++s.fill;
                     }
                 }
-                share = Share(s, d.window);
+                share = Share(s, a_d.window);
                 if (share >= 0.0f) {
-                    if (d.maxShare >= 0.0f && share > d.maxShare) active |= APMF_API::kAtkClass_Power;
-                    if (d.minShare >= 0.0f && share < d.minShare && (d.denied & APMF_API::kAtkClass_Normal) == 0)
-                        floorBit = APMF_API::kAtkClass_Normal;
+                    if (a_d.maxShare > 0.0f && share > a_d.maxShare) active |= APMF_API::kAtkClass_Power;
+                    if (a_d.minShare > 0.0f && share < a_d.minShare) active |= APMF_API::kAtkClass_Normal;
                 }
-                active |= floorBit;
-                s.handle       = h;
-                s.activeDeny   = active;
-                s.governedSeen = true;
-                if (active != s.loggedActive) { s.loggedActive = active; logActive = true; }
             }
+            const std::uint32_t declared = active;
+
+            // 3. Which entries the engine would actually draw (its own tests + W > 0), evaluated once per roll.
+            bool          powerAble = false;
+            std::uint32_t eligible = 0, eligibleUndenied = 0;
+            const auto    staminaUp = [&] {
+                auto* avo = a_self->AsActorValueOwner();   // +0xB8 (1.6.1170 / 1.7.104) / +0xB0 (1.5.97), the engine's lea
+                return avo && avo->GetActorValue(RE::ActorValue::kStamina) > 0.0f;   // its `seta sil`
+            }();
+            // Per-entry eligibility, bounded by kPoolMax (a bit per entry).
+            std::array<std::uint64_t, kPoolMax / 64> elig{};
+            if (active != 0) {
+                for (std::uint32_t i = 0; i < a_n; ++i) {
+                    const auto* e   = a_arr + i * kEntrySize;
+                    auto*       atk = *reinterpret_cast<RE::BGSAttackData* const*>(e);
+                    if (!atk) continue;
+                    const auto f = FlagsOf(atk);
+                    // The current candidate already passed every test and W (it is being weighed now).
+                    const bool ok = i == a_idx || (EntryPassesEngineTests(e, f, staminaUp, a_now) && a_w(a_self, a_target, atk) > 0.0f);
+                    if (!ok) continue;
+                    elig[i / 64] |= 1ull << (i % 64);
+                    ++eligible;
+                    if (ClassOf(f) == APMF_API::kAtkClass_Power && (active & APMF_API::kAtkClass_Power) == 0) powerAble = true;
+                }
+                // 4. marth 2026-11-09: "a regular attack must fire when stamina isnt allowing power". EVERY Normal deny
+                // (declared or the share floor) lifts for a roll where no Power entry can start.
+                if ((active & APMF_API::kAtkClass_Normal) != 0 && !powerAble) {
+                    active &= ~static_cast<std::uint32_t>(APMF_API::kAtkClass_Normal);
+                    t_powerUnable.fetch_add(1, std::memory_order_relaxed);
+                    if (LineDue(fid, 2))
+                        spdlog::info("[ch.18] 0x{} '{}' claim h={}: no Power attack of this roll can start (stamina, "
+                                     "cooldown or reach, the engine's own tests): the {} Normal deny is lifted for the roll "
+                                     "(marth 2026-11-09). Logged at most once per 5 s per actor.",
+                                     apmf::log::Hex(fid), NameOf(a_self), a_h,
+                                     (a_d.denied & APMF_API::kAtkClass_Normal) ? "declared" : "share-floor");
+                }
+                for (std::uint32_t i = 0; i < a_n; ++i) {
+                    if ((elig[i / 64] & (1ull << (i % 64))) == 0) continue;
+                    const auto* atk = *reinterpret_cast<const RE::BGSAttackData* const*>(a_arr + i * kEntrySize);
+                    if ((ClassOf(FlagsOf(atk)) & active) == 0) ++eligibleUndenied;
+                }
+            }
+            // 5. THE FLOOR RULE (marth 2026-11-09, "Allow 1 in circumstances it is required"): at least kMinUndenied
+            // of the entries the engine would draw must stay undenied, else the engine's weights stand for the roll.
+            const bool stand = active != 0 && eligibleUndenied < kMinUndenied;
+
+            bool logActive = false;
+            {
+                std::scoped_lock lk(g_amx);
+                if (auto st = g_actors.find(fid); st != g_actors.end()) {
+                    auto& s        = st->second;
+                    s.handle       = a_h;
+                    s.activeDeny   = stand ? 0u : active;
+                    s.governedSeen = true;
+                    if (stand) Sat(s.floorStood);
+                    if (s.activeDeny != s.loggedActive) { s.loggedActive = s.activeDeny; logActive = true; }
+                }
+            }
+            if (stand) {
+                t_floor.fetch_add(1, std::memory_order_relaxed);
+                if (LineDue(fid, 4))
+                    spdlog::warn("[ch.18] 0x{} '{}' claim h={}: denying {} would leave none of the {} attack(s) the engine "
+                                 "would draw this roll (of {} in the pool): the FLOOR RULE keeps the engine's weights for "
+                                 "this roll. Logged at most once per 5 s per actor.",
+                                 apmf::log::Hex(fid), NameOf(a_self), a_h, ClassList(active), eligible, a_n);
+            }
+            if (logActive && LineDue(fid, 1))
+                spdlog::info("[ch.18] 0x{} '{}' claim h={}: active deny now {} (declared {}, with the share {}; share {:.2f} "
+                             "over window {}, ceiling {:.2f}, floor {:.2f}). Logged at most once per 5 s per actor.",
+                             apmf::log::Hex(fid), NameOf(a_self), a_h, ClassList(stand ? 0u : active), ClassList(a_d.denied),
+                             ClassList(declared), share, a_d.window, a_d.maxShare, a_d.minShare);
+
+            t_roll.ctx    = a_ctx;
+            t_roll.fid    = fid;
+            t_roll.h      = a_h;
+            t_roll.now    = a_now;
+            t_roll.last   = a_idx;
+            t_roll.active = active;
+            t_roll.stand  = stand;
+            t_roll.flags  = a_d.flags;
+        }
+
+        float Decide(RE::Actor* a_self, RE::Actor* a_target, RE::BGSAttackData* a_atk, const std::uint8_t* a_ctx,
+                     float a_w, Weight_t a_orig) {
+            const RE::FormID fid = a_self->GetFormID();
+            APMF_API::APMF_Param p{};
+            float                basis = 0.0f;
+            APMF_API::Handle     h     = APMF_API::kInvalidHandle;
+            if (!apmf::ControlMap::Get().TryGetOwningClaimBasis(fid, APMF_API::kIntent_AttackSelection, p, basis, &h))
+                return a_w;
+            const auto decls = g_decls.load(std::memory_order_acquire);
+            const auto it    = decls->find(h);
+            if (it == decls->end()) return a_w;   // claimed, nothing declared: declare -> enforce
+            const Decl d = it->second;
             t_governed.fetch_add(1, std::memory_order_relaxed);
-            if (logActive && LineDue(fid, 1)) {
-                spdlog::info("[ch.18] 0x{} '{}' claim h={}: active deny now {} (declared {}; share {:.2f} over window {}, "
-                             "ceiling {:.2f}, floor {:.2f}). Logged at most once per 5 s per actor.",
-                             apmf::log::Hex(fid), NameOf(a_self), h, ClassList(active), ClassList(d.denied), share,
-                             d.window, d.maxShare, d.minShare);
-            }
 
-            // 3.
-            const std::uint32_t cls = ClassOf(FlagsOf(a_atk));
-            if ((d.governed & cls) == 0 || (active & cls) == 0) return a_w;
-
-            // 4. The share floor's Normal deny needs a Power attack that can actually start in this roll.
-            if (cls == APMF_API::kAtkClass_Normal && floorBit != 0 &&
-                !AnyPowerAble(a_self, a_target, a_ctx, active, a_orig)) {
-                t_powerUnable.fetch_add(1, std::memory_order_relaxed);
-                if (LineDue(fid, 2))
-                    spdlog::info("[ch.18] 0x{} '{}' claim h={}: power share {:.2f} is under the floor {:.2f}, but no "
-                                 "Power attack of this roll can start (stamina, cooldown or reach, judged by the engine's "
-                                 "own tests): the Normal attack keeps its weight (marth 2026-11-09). Logged at most once "
-                                 "per 5 s per actor.",
-                                 apmf::log::Hex(fid), NameOf(a_self), h, share, d.minShare);
-                active &= ~floorBit;
-                if ((active & cls) == 0) return a_w;
-            }
-
-            // 5. The floor rule.
-            const PoolCount pc = CountPool(a_ctx, a_atk, active);
-            if (!pc.ok || !pc.found) {
+            // The candidate's place in the roll's pool. Not found = the stub's register assumption failed: never deny.
+            const auto* arr = a_ctx ? *reinterpret_cast<const std::uint8_t* const*>(a_ctx + kCtxArray) : nullptr;
+            const auto  n   = a_ctx ? *reinterpret_cast<const std::uint32_t*>(a_ctx + kCtxCount) : 0u;
+            std::uint32_t idx = n;
+            if (arr && n != 0 && n <= kPoolMax)
+                for (std::uint32_t i = 0; i < n; ++i)
+                    if (*reinterpret_cast<RE::BGSAttackData* const*>(arr + i * kEntrySize) == a_atk) { idx = i; break; }
+            if (idx >= n || !g_now) {
                 t_poolMiss.fetch_add(1, std::memory_order_relaxed);
                 if (LineDue(fid, 3))
                     spdlog::warn("[ch.18] 0x{} '{}': the candidate is not in the roll's context pool ({}): NOT denied, "
                                  "the engine's weight stands. The context register assumption failed at runtime; "
                                  "report this line. Logged at most once per 5 s per actor.",
-                                 apmf::log::Hex(fid), NameOf(a_self), pc.ok ? "not found" : "pool unreadable");
+                                 apmf::log::Hex(fid), NameOf(a_self), arr && n && n <= kPoolMax ? "not found" : "pool unreadable");
                 return a_w;
             }
-            if (pc.undenied < kMinUndenied) {
-                {
-                    std::scoped_lock lk(g_amx);
-                    if (auto st = g_actors.find(fid); st != g_actors.end()) Sat(st->second.floorStood);
-                }
-                t_floor.fetch_add(1, std::memory_order_relaxed);
-                if (LineDue(fid, 4))
-                    spdlog::warn("[ch.18] 0x{} '{}' claim h={}: denying {} would leave {} of the context's {} attack(s) "
-                                 "({}): the FLOOR RULE keeps the engine's weights for this roll. Logged at most once per "
-                                 "5 s per actor.",
-                                 apmf::log::Hex(fid), NameOf(a_self), h, ClassList(active), pc.undenied, pc.total,
-                                 pc.undenied == 0 ? "an empty pool" : "a single move");
-                return a_w;
-            }
+            const float now = *g_now;
+            if (!(t_roll.ctx == a_ctx && t_roll.fid == fid && t_roll.h == h && t_roll.now == now && idx > t_roll.last))
+                EvaluateRoll(a_self, a_target, a_ctx, arr, n, idx, h, d, now, a_orig);
+            else
+                t_roll.last = idx;
+
+            const std::uint32_t cls = ClassOf(FlagsOf(a_atk));
+            if (t_roll.stand || (d.governed & cls) == 0 || (t_roll.active & cls) == 0) return a_w;
 
             // 6. Ranked against the Engine source on the CombatAction facet.
             const auto v = apmf::facetattr::Decide(apmf::sources::Facet::kCombatAction, h, apmf::sources::kEngineSource,
@@ -428,7 +474,7 @@ namespace apmf::attackselect {
             }
 
             // 7 + 8.
-            const bool observe = g_iniObserve || (d.flags & APMF_API::kAtkMix_ObserveOnly) != 0;
+            const bool observe = g_iniObserve || (t_roll.flags & APMF_API::kAtkMix_ObserveOnly) != 0;
             {
                 std::scoped_lock lk(g_amx);
                 if (auto st = g_actors.find(fid); st != g_actors.end()) Sat(observe ? st->second.wouldDeny : st->second.zeroed);
@@ -587,18 +633,21 @@ namespace apmf::attackselect {
             d.governed = m.governed & APMF_API::kAtkClass_All;
             if (m.denied & ~d.governed) { bad |= 8; what += " denied bits outside governed masked off (an undeclared class is never touched);"; }
             d.denied = m.denied & d.governed;
-            auto shareOk = [](float f) { return f >= 0.0f && f <= 1.0f; };
-            if (m.powerShareMax >= 0.0f) {
-                if (!shareOk(m.powerShareMax)) { bad |= 16; what += " powerShareMax outside 0..1 ignored;"; }
+            // ABI v34 (review SEV-4 on 496243e): a share is DECLARED only in (0, 1]. 0 (a zero-initialised mix) and
+            // any negative value (-1, the documented "none") mean undeclared: a 0 ceiling is spelled `denied |= Power`,
+            // a 0 floor is a no-op, so nothing is lost. Above 1 is ignored and logged.
+            auto shareOk = [](float f) { return f <= 1.0f; };
+            if (m.powerShareMax > 0.0f) {
+                if (!shareOk(m.powerShareMax)) { bad |= 16; what += " powerShareMax above 1 ignored;"; }
                 else if (!(d.governed & APMF_API::kAtkClass_Power)) { bad |= 32; what += " powerShareMax needs Power governed, ignored;"; }
                 else d.maxShare = m.powerShareMax;
             }
-            if (m.powerShareMin >= 0.0f) {
-                if (!shareOk(m.powerShareMin)) { bad |= 64; what += " powerShareMin outside 0..1 ignored;"; }
+            if (m.powerShareMin > 0.0f) {
+                if (!shareOk(m.powerShareMin)) { bad |= 64; what += " powerShareMin above 1 ignored;"; }
                 else if (!(d.governed & APMF_API::kAtkClass_Normal)) { bad |= 128; what += " powerShareMin needs Normal governed, ignored;"; }
                 else d.minShare = m.powerShareMin;
             }
-            if (d.maxShare >= 0.0f && d.minShare >= 0.0f && d.minShare > d.maxShare) {
+            if (d.maxShare > 0.0f && d.minShare > 0.0f && d.minShare > d.maxShare) {
                 bad |= 256; what += " powerShareMin above powerShareMax: BOTH ignored;";
                 d.maxShare = d.minShare = -1.0f;
             }

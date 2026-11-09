@@ -1444,10 +1444,15 @@ thing that derails one. Concretely:
   disassembly (1.7.104 instruction-identical to 1.6.1170); (4) DENY ONLY, engine answer first: the engine's weight is
   computed, and only a candidate the engine already weighted above 0, in a class the client DECLARED and denied
   (statically, or by its power-share ceiling or floor), answers 0. Nothing is added, no move is named, no class the
-  client did not declare is touched, and the pool is never left with fewer than TWO undenied entries (the floor
-  rule: the engine's weights then stand for that roll, logged). The share floor's Normal deny additionally needs a
-  Power entry of the same roll that the engine's own tests would admit (marth 2026-11-09: "a regular attack must fire
-  when stamina isnt allowing power"). Every deny is ranked against the Engine source on the CombatAction facet;
+  client did not declare is touched, and a roll is never left without an undenied entry the engine would DRAW (the
+  floor rule, marth 2026-11-09 "Allow 1 in circumstances it is required": counted once per roll over the pool
+  entries that pass the engine's own reach / cooldown / stamina tests with a weight above 0; with stamina at 0 a
+  power or bash entry is treated as unable, which only ever denies less; otherwise the engine's weights stand for
+  that roll, logged). EVERY Normal deny, declared or the share floor's, additionally needs an undenied Power entry
+  the engine would draw in the same roll (marth 2026-11-09: "a regular attack must fire when stamina isnt allowing
+  power"). The engine's own checks AFTER the draw (its chance roll on the picked weight, the angle test, the check at
+  AE 0x8A2EE0) can still fail the drawn attack: an honest residual, the engine's own failure path. Every deny is
+  ranked against the Engine source on the CombatAction facet;
   (5) only actors holding a `kIntent_AttackSelection` claim with a declaration are governed; the player and every
   other actor run the engine's weight untouched and unlogged. The context reaches the thunk through a 17-byte stub in
   Harbinger's own trampoline (`mov r9, <ctx register>; jmp [rip+0]`): r9 is volatile and unused by the 3-argument

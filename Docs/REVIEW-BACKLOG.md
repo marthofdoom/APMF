@@ -254,6 +254,24 @@ Raised against `78b057c` (`fix/apmf-proxy-per-claim-refcount`), tier-A Opus 5.5 
 
 - FIELD VERDICT 2026-10-06 (Opus, Tuxborn deck logs): STILL NEEDS DATA -- one load per session in 5 sessions and no live proxy at load in any, so the purge path never ran; needed: load a save written while a delivery-flip proxy is live in a follower's spell list (no logging gap).
 
+### APMF-B258 (SEV-5, RESOLVED in the fix commit after 496243e) -- ch.18 AnyPowerAble cost per candidate
+Raised against `496243e` (`feat/apmf-ch18-attack-select`), tier-3 Opus review 2026-11-09. Verbatim (coordinator relay): "per-roll AnyPowerAble cost" (O(N*P): every Normal candidate rescanned the pool and called W for each Power entry). Reasoning: the reviewer graded it SEV-5 (bounded, pool ~20). RESOLVED: `EvaluateRoll` (core/AttackSelect.cpp) computes the drawable set once per roll behind the thread-local `t_roll` cache, so W is called at most once per pool entry per governed roll.
+
+### APMF-B259 (SEV-5) -- ch.18 facetattr::Decide counted per candidate, not per roll
+Raised against `496243e`, same review. Verbatim (coordinator relay): "facetattr::Decide counters per candidate". Reasoning: the menu's Blocked / Passed counts for the CombatAction facet count zeroed candidate weights, several per roll; cosmetic. Fix path: decide once per roll in `EvaluateRoll` and reuse the verdict.
+
+### APMF-B260 (SEV-5) -- ch.18 "active deny now" line can be lost
+Raised against `496243e`, same review. Verbatim (coordinator relay): "\"active deny now\" loggedActive set while LineDue suppresses it". Reasoning: `loggedActive` is updated even when the 5 s limiter swallows the line, so a change inside the 5 s window is never logged. Logging only. Fix: set it only when the line prints.
+
+### APMF-B261 (SEV-5) -- ch.18 stale declaration after an internal claim end
+Raised against `496243e`, same review. Verbatim (coordinator relay): "stale g_claims/g_declsW entry after an internal claim end". Reasoning: a claim Harbinger ends itself (an unload) keeps its `g_claims` / `g_declsW` entry until the client's Release or the next load. Harmless (the seat reads only the WINNING handle from ControlMap) and bounded by the client's claim count. Fix: an IsClaimLive prune on the heartbeat (equippref::Pump's shape).
+
+### APMF-B262 (SEV-5) -- VerifiedAddresses.h lists the AttackSelect rows as NOT VERIFIED on 1.7.104 although raw-RVA rows exist
+Raised against `496243e`, same review. Verbatim (coordinator relay): "VerifiedAddresses.h comment says AttackSelect rows absent on 1.7.104 while raw-RVA rows exist". Reasoning: the generator prints every id-keyed spec row it skips for 1.7.104, then emits the `raw_rvas` rows separately; the same reads for the HandBlock and TargetPin raw rows. The comment is generator output and `gen_verified_addresses.py` must stay identical in MFO and APMF, so the fix is a shared generator change (mark a skipped row "covered by raw row <label>"), its own small round in both repos.
+
+### APMF-B263 (SEV-5, optional) -- ch.18 stub written without FlushInstructionCache
+Raised against `496243e`, same review. Verbatim (coordinator relay): "no FlushInstructionCache (optional)". Reasoning: x86-64 keeps instruction fetch coherent with stores in the same process, and `SKSE::Trampoline::write_call` (which also writes code into the same memory) does not flush either; the stub is written before the E8 that reaches it. Optional hardening: one `FlushInstructionCache` call after the stub write.
+
 ## DRAINED
 
 _(none yet)_

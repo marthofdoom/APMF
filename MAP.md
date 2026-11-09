@@ -2190,10 +2190,13 @@ the engine's W first; untouched unless W > 0, a winning `kIntent_AttackSelection
 has a declaration (`g_decls`, published atomic shared_ptr), and the candidate's class (ATKD flags: bash bit 1,
 power bit 2, left bit 3; one class per entry) is governed and in the ACTIVE deny (`denied` | Power over the
 `powerShareMax` ceiling | Normal under the `powerShareMin` floor, the share over a full window of sampled starts).
-Then: the share floor's Normal deny needs `AnyPowerAble` (a Power entry passing the engine's own entry+0x24 > 0,
-cooldown `now - [+0x28] > [+0x2C]` with `now` decoded from StartAttack's RIP-relative read, stamina AV > 0, and
-W > 0; marth 2026-11-09); `CountPool` must find the candidate in the pool (else NOT denied, `poolMiss`, warn) and
-leave >= 2 undenied entries (the floor rule, `floorStood`, warn); `facetattr::Decide` on CombatAction vs Engine
+The candidate must be found in the pool (else NOT denied, `poolMiss`, warn). `EvaluateRoll` runs ONCE per roll
+(thread-local `t_roll`: same ctx, actor, handle, `now`, and a rising pool index = the same roll): it samples the
+window, then marks each pool entry drawable by the engine's own tests (`EntryPassesEngineTests`: entry+0x24 > 0,
+cooldown `now - [+0x28] > [+0x2C]` with `now` decoded from StartAttack's RIP-relative read; with stamina AV <= 0 a
+bash or power entry is unable, the cost function is not called) and W > 0. EVERY Normal deny lifts for a roll with
+no undenied drawable Power entry (marth 2026-11-09); the floor rule needs >= 1 undenied drawable entry, else the
+roll stands (`floorStood`, per roll, warn). Then `facetattr::Decide` on CombatAction vs Engine
 (`rankStood`); observe-only (`[AttackSelect] bObserveOnly` / `kAtkMix_ObserveOnly`, `wouldDeny`); else 0.0f.
 `Install()` <- plugin.cpp kDataLoaded after `torchseat::Install`: VR / non-exact runtime / `bAttackSelect=0`
 refuse; SeatVerified rows; then per runtime the E8 + target, the argument window, the pool-walk and count bytes
@@ -2206,12 +2209,16 @@ and `g_wmx` (declarations, any-thread writers); nothing is called while either i
 **Depended-on-by:** nothing yet. MFO adoption (class update: Warrior power floor 0.4, Mercenary) is the next step,
 with MFO's APMF_API.h mirror.
 **What breaks if you change this:** answering anything but the engine's W or 0 (it would ADD weight: never);
-denying an undeclared class; dropping the floor rule (an empty or one-move pool) or the stamina gate of the share
-floor (marth 2026-11-09); reading the pool without the candidate-found check (it is the only runtime proof that the
+denying an undeclared class; dropping the floor rule (a roll with nothing drawable left) or the stamina gate on
+Normal denies (marth 2026-11-09); counting raw pool entries instead of drawable ones (review SEV-2 on 496243e);
+breaking the per-roll cache key (a stale verdict across rolls); reading the pool without the candidate-found check (it is the only runtime proof that the
 stub's register is the context); changing the stub register or any offset without re-reading THAT runtime's
 StartAttack (SE keeps the context in r12 and the actor in r13); calling the follower lists here (off-main);
 reading `now` through an id (fatal on 1.7.104: not in the table). Open: S-D5 (SCAR / Valhalla post-pick veto, not
 built), DualWield unclassifiable, share misses exact repeats (DENY-COMPLETENESS-AUDIT row 18).
+**Open review findings (read before editing):** `Docs/REVIEW-BACKLOG.md` APMF-B259 (Decide counted per candidate),
+B260 (the active-deny line can be lost), B261 (stale declaration after an internal claim end), B262 (generator lists the
+raw-placed 1.7.104 rows as not verified), B263 (no FlushInstructionCache). B258 resolved by the per-roll cache.
 
 ### `native/core/HandBlock.{h,cpp}` — the HAND-CLAIM BLOCK (2026-10-06, `fix/apmf-hand-claim-blocks-equip`)
 marth: "harbinger taking a hand for an action means other actions on that hand are blocked for the

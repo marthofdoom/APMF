@@ -608,11 +608,16 @@ engine's weight is computed first; a candidate the claim denies answers 0. Nothi
 3. The class of the candidate (Table 22a in FACETS.md) not in `governed`, or not in the ACTIVE deny (`denied`, plus
    Power while the share is over `powerShareMax`, plus Normal while it is under `powerShareMin`, each once the
    window is full): untouched.
-4. The share floor's Normal deny applies only if a Power entry of the same pool passes the engine's own availability
-   and cooldown tests, the actor's stamina is above 0, the engine's weight for it is above 0, and it is not itself
-   denied (marth 2026-11-09). Else the Normal candidate keeps its weight (`powerUnable` in the heartbeat).
-5. The floor rule: at least two entries of the pool must stay undenied, else the engine's weights stand for the roll
-   (`floorStood`, a warning line).
+4. Once per roll (a thread-local cache serves the roll's later candidates), the entries the engine would DRAW: each
+   passes the engine's own availability (entry+0x24 > 0) and cooldown tests and its stamina test (with stamina at 0
+   a power or bash entry is treated as unable, an entry with neither bit costs 0 and passes), and the engine's
+   weight for it is above 0. EVERY Normal deny (declared or the share floor) applies only if an undenied Power entry
+   of the same roll is drawable (marth 2026-11-09). Else the Normal candidates keep their weight (`powerUnable` in
+   the heartbeat).
+5. The floor rule (marth 2026-11-09, "Allow 1 in circumstances it is required"): at least ONE drawable entry must
+   stay undenied, else the engine's weights stand for the whole roll (`floorStood`, counted per roll, a warning
+   line). The engine's own post-draw checks (its chance roll on the picked weight, the angle test) can still fail
+   the attack, as they do without Harbinger.
 6. Ranked: the claim must outrank the Engine source on CombatAction (`rankStood`).
 7. Observe-only (INI `[AttackSelect] bObserveOnly` or `kAtkMix_ObserveOnly`): counted (`wouldDeny`), not denied.
 8. Otherwise the weight is 0 (`zeroed`).
@@ -621,7 +626,8 @@ engine's weight is computed first; a candidate the claim denies answers 0. Nothi
 
 The seat samples the actor's current attack record (HighProcessData attackData) each time it weighs that actor's
 candidates. A change is one started attack; a Power or Normal start enters the window (a ring of 32, measured over
-`window`). An exact repeat of the same entry is not seen, so the share is an approximation (2 of 44 picks in the one
+`window`). A share of 0 or below is undeclared, so a zero-initialised `APMF_AttackMix` has no share rule (a 0
+ceiling is spelled `denied |= kAtkClass_Power`). An exact repeat of the same entry is not seen, so the share is an approximation (2 of 44 picks in the one
 field log were repeats).
 
 ### GetAttackMixState
