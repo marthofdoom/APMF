@@ -3062,6 +3062,10 @@ namespace APMF_API {
         kServePending_PlaceRoom         = 1u << 5,   // kIntent_Place: the real call also refuses when the
                                                      //   placement records are full (not checked: the check
                                                      //   frees finished records)
+        kServePending_ChannelEngage     = 1u << 6,   // the channel's own game-thread checks when the claim engages
+                                                     //   (a form lookup: a target or anchor that is not a loaded
+                                                     //   actor, a destination that does not resolve, ...) may end
+                                                     //   or idle it, logged there. Every claim
     };
 
     // Which call the query describes. APPEND-ONLY: never renumber.

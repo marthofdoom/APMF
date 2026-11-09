@@ -242,6 +242,15 @@ ABI v31 (claim end reason, 2026-10-27) adds `GetClaimEndReason(handle)` -> `comb
 returns `kClaimEnd_None`); the object is an `APMF_API_v31` (a static_assert pair pins the v29 prefix end);
 `MinReleaseForAbi(31)` = "0.15.2".
 ABI v32 (`kCastGuard_Bystanders`, 2026-11-02) adds no slot, and `MinReleaseForAbi(32)` = "0.16.0".
+ABI v35 (the claim dry run, 2026-11-09, MFO-B2, `feat/apmf-claim-dryrun`) adds `CanServe(query, out)` ->
+`APMF_CanServe` (`core/ClientAPI.cpp:381`): it builds an `apmf::ServeCheck` and runs the REAL call's enqueue in check
+mode (`kServeCall_RequestEx` -> `EnqueueRequest`, or `place::Enqueue` for `kIntent_Place`, the same diversion
+`RequestEx` makes; `kServeCall_RequestCast` -> `EnqueueCast`), then fills `APMF_ServeInfo` (verdict, refusal, why,
+pending, `facets` = `sources::FacetMaskForIntent`, `offFacets` = facets where `sources::CallerPriority(_ReturnAddress())`
+is 0). The object is an `APMF_API_v35` (a static_assert pair pins the v34 prefix end); `MinReleaseForAbi(34/35)` =
+"0.18.0" (0.18.0 was not cut when v35 was written: confirm at the cut). What breaks: the slot must stay a direct
+exported body (its `_ReturnAddress()` names the caller for `offFacets`, the v29 rule); everything is computed before
+`*out` is written so a throw writes nothing.
 The "client too new" null (`abiVersion > kABIVersion`) logs the running APMF version
 (`SKSE::PluginDeclaration::GetSingleton()`) and `MinReleaseForAbi(abi)` — a table that must
 be extended on every `kABIVersion` bump.
@@ -318,6 +327,16 @@ that never becomes a claim; `ControlMap.cpp` is not touched (2499 lines, at the 
 declaration lives OUTSIDE the map (`core/EquipPreference.cpp`'s own snapshot, keyed by handle); the seats read the
 winning claim with `TryGetOwningClaimBasis`. **D2:** `TryGetEquipSet` also copies the winning ch.17 claim's
 `handle` into `EquipSetView` (same snapshot read) so the sink ranks its deny with that claim's client.
+**ABI v35 (CanServe, the claim dry run):** `EnqueueRequest` / `EnqueueCast` (and `place::Enqueue`, `poscast::Enqueue`)
+take a trailing `ServeCheck* dry = nullptr` (`ServeCheck` in `ControlMap.h:65`). Non-null = CHECK ONLY: every
+refusal site does `if (dry) return DryRefuse(dry, code, why);` (`ControlMap.cpp:136`) under its own condition BEFORE
+its log line, and an accepted check returns `kInvalidHandle` with `dry->pending = DrainPending(...)` (`:146`) BEFORE
+`m_nextHandle.fetch_add`, the queue push, a post or a once-flag `exchange`. **What breaks:** (1) a NEW refusal site in
+any of the four functions without its `if (dry)` line makes `CanServe` answer Accepted for a call that is refused (the
+sweep: every refusal `return` in those bodies has an `if (dry)` line before it); (2) a `dry` branch placed AFTER a
+side effect (a handle, a log, a once-flag) makes the dry run file or log; (3) `DrainPending` NAMES `ApplyRequest`'s
+drop sites (the actor lookup, the deny-only branch, the FromPackage read, the hand collision): a new drop site there
+needs a `ServePending` bit (append-only) and a line in `DrainPending`. Docs/APMF_API-REFERENCE.md#abi-v35-can-serve.
 - **What breaks:** the RCU contract (#12) — the working map/`m_index` are mutated
   ONLY on the writer thread (Drain/ReleaseAll/Clear, all the same MAIN thread; API
   calls only enqueue) and published via `Publish()`

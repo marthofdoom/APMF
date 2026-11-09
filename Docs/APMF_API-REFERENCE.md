@@ -644,3 +644,110 @@ counters (saturating, since the load). Any thread: one RCU read and a copy under
 
 **Older APMF.** An APMF before v34 has no channel for intent 18: `RequestEx(kIntent_AttackSelection)` returns
 `kInvalidHandle`, and the client keeps its own behaviour.
+
+<a id="abi-v35-can-serve"></a>
+## ABI v35 can-serve: the claim dry run (MFO-B2)
+
+```cpp
+std::uint32_t (*CanServe)(const APMF_ServeQuery* query, APMF_ServeInfo* out);              // APMF_API_v35
+// gate on abiVersion >= 35; an older APMF has no dry run (file the request and read the handle, as before)
+```
+
+One slot, two PODs (`APMF_ServeQuery` 40 bytes, `APMF_ServeInfo` 128 bytes, size field first, static_assert-pinned in
+the header) and four append-only enums (`ServeVerdict`, `ServeRefusal`, `ServePending`, `ServeCall`).
+
+**What it answers.** Would `RequestEx` / `Request` / `RequestCast` with these exact arguments be refused right now, and
+why? It files nothing: no handle is taken from the counter, nothing is queued, attributed, posted or logged, and no
+once-per-session refusal log is used up. A client that must displace an incumbent of its own before it claims (MFO's
+cast `commitPreempt`) asks first, and keeps the incumbent when the answer is a refusal.
+
+**One code path.** The real call's own enqueue function runs in a check mode (`apmf::ServeCheck`, `core/ControlMap.h`):
+`EnqueueRequest`, `EnqueueCast`, `place::Enqueue` and `poscast::Enqueue` take an internal `ServeCheck* dry` (nullptr on
+every real call). Each refusal site records its code and reason under the SAME condition, before its log line, and the
+function returns before it allocates anything. So the dry run and the real call cannot disagree for the state they
+read. Adding a refusal site to any of the four without a `dry` branch is a defect (the sweep is one grep: every
+`return APMF_API::kInvalidHandle` / `return false` refusal in those four bodies has an `if (dry)` line before it).
+
+**The query.** Zero-initialise, set `size = sizeof(APMF_ServeQuery)`, then `call`:
+
+| `call` | arguments read | runs |
+|---|---|---|
+| `kServeCall_RequestEx` | `actor`, `intent`, `basis`, `param` (nullptr = `Request`) | `EnqueueRequest`, or `place::Enqueue` for `kIntent_Place` (the diversion `RequestEx` makes) |
+| `kServeCall_RequestCast` | `actor`, `basis`, `cast` | `EnqueueCast` |
+
+A null query, a short `size` or an unknown `call` returns `kServe_Failed`. The pointed-to param / cast request is read
+synchronously and never retained.
+
+**The answer.** The return value is the `ServeVerdict`. With `out != nullptr` and `out->size >= kServeInfoV35Size`
+(128) APMF also fills `*out` (all of it computed first, so a throw writes nothing and returns `kServe_Failed`):
+
+| field | meaning |
+|---|---|
+| `verdict` | `kServe_Refused` (the call would return `kInvalidHandle` now) or `kServe_Accepted` (it would return a handle now) |
+| `refusal` | which check refused (`ServeRefusal`, table below), `kServeRefusal_None` when accepted |
+| `why` | the refusal's reason, NUL-terminated, truncated to 95 characters, "" when accepted |
+| `pending` | accepted only: what the game thread still decides (`ServePending`, below) |
+| `facets` | `1u << ClientFacet` bits the intent is booked on (the same mask a filed claim gets) |
+| `offFacets` | those of `facets` on which the CALLER's priority is 0, read like `GetClientFacetPriority` (ABI v29) |
+
+**Priority 0 is not a refusal.** A claim filed while the client's priority on its facet is 0 (the Harbinger page or
+`APMF_Sources.ini`) is accepted and never outranks anything there. The dry run reports it in `offFacets`; deciding
+whether that is worth displacing an incumbent for is the client's call.
+
+### The refusals checked (`ServeRefusal`, file:line at the v35 commit)
+
+| code | sites |
+|---|---|
+| `kServeRefusal_NoDrain` | `NoDrainReason()` (unsupported runtime, 0xAD arbiter seat refused): `EnqueueRequest` ControlMap.cpp:159, `EnqueueCast` :712 |
+| `kServeRefusal_NoChannel` | no channel for the intent: :164, :716 |
+| `kServeRefusal_NotInstalled` | equip authority sink :177; ch.19 travel :194 and its marker support :219; ch.20 target pin :264 and `kTargetPin_OwnLineOfSight` with sight-line not armed :286; ch.21 combat entry :307; ch.12 idle v2 :348; pursuit leash not armed :378; ch.23 combat approach :409; ch.22 re-entry deny :422; `kCastFlag_OwnLineOfSight` with sight-line not armed on `RequestCast` :735; position cast PositionCast.cpp:549; placement Place.cpp:331 |
+| `kServeRefusal_BadRequest` | ch.19 param rules :219 / :225 / :242; ch.20 :293; ch.21 :326; ch.12 :348; leash :378; ch.23 :409; ch.22 :439; `kCastFlag_OwnLineOfSight` on `RequestEx` :487; position cast non-finite basis :512; `kCastFlag_AtPosition` on `RequestCast` :724; PositionCast.cpp:555 / :562 / :568; Place.cpp:337 / :344 / :350 (actor 0) / :358 / :363 / :369 |
+| `kServeRefusal_Player` | the player on ch.20 / ch.21 / leash / ch.23 / ch.22 (the same sites, `whyCode`), Place.cpp:350 |
+| `kServeRefusal_FacetOwned` | a position cast whose actor's cast facet is owned by an outranking claim: :522 |
+| `kServeRefusal_IntentRule` | `castguard::RefuseReason` :449, `combatsubstrate::RefuseReason` :458, `attackselect::RefuseReason` :466, `equippref::RefuseReason` :475 (each may say "not installed": the rule set does not split it out) |
+
+A verdict is about the moment of the call. A service that arms or disarms (sight-line), a cast claim that comes or goes
+(the position cast's facet check) or a seat that arms later can change it before the real call. That is a race the
+client already has with the real call; the dry run neither widens nor hides it.
+
+### What is not checked (`ServePending`, accepted only, never guessed)
+
+| bit | set for | what can still happen |
+|---|---|---|
+| `kServePending_ActorLoaded` | every claim | `ApplyRequest` (next Drain) drops it if the actor is not found then (ControlMap.cpp ApplyRequest, the `LookupByID<Actor>` at its top) |
+| `kServePending_Arbitration` | every claim | it is filed and live but may not OWN the channel (a higher basis, an earlier equal one) |
+| `kServePending_ChannelEngage` | every claim | the channel's own game-thread checks at Engage (a target / anchor that is not a loaded actor, a destination that does not resolve) end or idle it, logged there |
+| `kServePending_CastHandCollision` | `kIntent_Cast` without `kCastFlag_DenyHandOnly` | the dual vs single hand collision with a standing claim, decided by basis at Drain; the loser is dropped |
+| `kServePending_CastFromPackage` | the same, with `kCastFlag_FromPackage` | the spell is read off the package at Drain; a package with none is dropped |
+| `kServePending_OneShot` | a position cast, `kIntent_Place` | the one-shot's game-thread step decides the rest (`GetPlaceState` for a placement) |
+| `kServePending_PlaceRoom` | `kIntent_Place` | the real call also refuses when the placement records are full; not checked, because that check frees finished records |
+
+### Threading and cost
+
+Any thread the real call may be made from. Read-only: atomics, the published RCU snapshot (the position cast's facet
+check), the module-range and module-cache leaf locks (`offFacets`), no game call, no form lookup. The slot is a direct
+exported body so its own `_ReturnAddress()` names the caller (the ABI v29 rule).
+
+### For MFO-B2 (what this closes and what it cannot)
+
+MFO's `commitPreempt` (native/cast/CastOn.cpp:666) displaces the incumbent hand before refusal sites that sit after it
+(MFO Docs/REVIEW-BACKLOG.md MFO-B2). CanServe can pre-check the ones that are an APMF answer:
+
+- `ClaimOffenseCast` refused (MFO native/apmf/CastClaims.cpp:92, the `RequestCast` in native/apmf/Bridge.cpp:539 and
+  the no-sight-line retry at :552; called from cast/CastOn.cpp:956, cast/DirectSelf.cpp:178, cast/DirectTarget.cpp:198,
+  cast/BuffRoad.cpp:410): `kServeCall_RequestCast` with the same `APMF_CastRequest` MFO would send.
+- `ComposedCast::Try` -> `ApmfRefused` (MFO native/ComposedCast.cpp:690-714, `ClaimHealCast` CastClaims.cpp:372, the same
+  `RequestCast`): the same query.
+
+It cannot cover:
+
+- `Loadout::Prepare` failing (MFO cast/CastOn.cpp:614): an MFO equip step, not an APMF claim.
+- `Held` (ComposedCast.cpp:579 / :666, surfaced at cast/DirectSelf.cpp:115, cast/DirectTarget.cpp:152) and `Declined`
+  (DirectSelf.cpp:36-192, DirectTarget.cpp:37-167: cast paths not verified, magicka, reserve, the OOC heal wait): MFO's
+  own state, pre-checkable in MFO without APMF.
+- Anything in `pending`: a claim that is accepted and then dropped at Drain (actor unloaded, a lost hand collision, an
+  empty package) still displaced the incumbent. For MFO's cast claims the collision is the one that matters; it is
+  between MFO's own claims on the actor, so MFO can order them itself.
+- A refusal that the state changes between the dry run and the real call (above).
+
+**Older APMF.** An APMF before v35 has no `CanServe`. The client files the request and reads the handle, as before.

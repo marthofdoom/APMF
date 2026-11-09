@@ -137,14 +137,15 @@ namespace apmf {
         dry->Refuse(refusal, why);
         return APMF_API::kInvalidHandle;
     }
-    // ABI v35 (CanServe): what ApplyRequest (below, the next Drain) can still decide for a claim that passed
-    // every call-time check. NAMED, never evaluated (the working map at that Drain is not the map now). Mirrors
-    // ApplyRequest's three drop sites, keep them in step: the actor lookup (every claim), the dual-vs-single
+    // ABI v35 (CanServe): what ApplyRequest (below, the next Drain) and the channel's Engage can still decide for a
+    // claim that passed every call-time check. NAMED, never evaluated (the working map at that Drain is not the map
+    // now). Mirrors ApplyRequest's three drop sites, keep them in step: the actor lookup (every claim), the dual-vs-single
     // hand collision (kIntent_Cast, skipped for kCastFlag_DenyHandOnly) and the package read (kIntent_Cast
     // with kCastFlag_FromPackage, the deny-only branch first). `castFlags` = req.flags (RequestCast) or
     // param.ival (the degenerate RequestEx form), exactly as ApplyRequest reads them.
     static std::uint32_t DrainPending(Intent intent, std::uint32_t castFlags) {
-        std::uint32_t p = APMF_API::kServePending_ActorLoaded | APMF_API::kServePending_Arbitration;
+        std::uint32_t p = APMF_API::kServePending_ActorLoaded | APMF_API::kServePending_Arbitration |
+                          APMF_API::kServePending_ChannelEngage;   // the channel's Engage (form lookups) is not run
         if (intent == APMF_API::kIntent_Cast && (castFlags & APMF_API::kCastFlag_DenyHandOnly) == 0) {
             p |= APMF_API::kServePending_CastHandCollision;
             if (castFlags & APMF_API::kCastFlag_FromPackage) p |= APMF_API::kServePending_CastFromPackage;

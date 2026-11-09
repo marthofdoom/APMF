@@ -4,6 +4,14 @@ Updated 2026-11-08. Current version **v0.17.0** (cut 2026-11-08, ABI v33, see CH
 shipped, what's probe-gated, what's next. Keep this current in the SAME change as any
 build/finding/workflow change.
 
+## HEAD OF WORK 2026-11-09 -- THE CLAIM DRY RUN CanServe (ABI v35, MFO-B2), branch `feat/apmf-claim-dryrun`, NOT merged
+
+- MFO backlog MFO-B2 (ClickUp 86e394118): MFO's cast `commitPreempt` displaces the incumbent hand before refusal sites that come after it, so a deterministic refusal still displaces it. Harbinger half: a "can you serve this?" query. Tier A (ABI bump). Needs its tier-3 Opus review before merge.
+- `APMF_API_v35` appends ONE slot, `CanServe(const APMF_ServeQuery*, APMF_ServeInfo*)` -> `ServeVerdict` (Failed / Refused / Accepted), with `ServeRefusal`, `ServePending`, `ServeCall`. `APMF_ServeQuery` 40 bytes, `APMF_ServeInfo` 128 bytes, size first, static_assert-pinned. `MinReleaseForAbi(35)` = 0.18.0 (ships with v34; 0.18.0 not cut yet). No intent, no co-save.
+- One code path: `EnqueueRequest`, `EnqueueCast`, `place::Enqueue`, `poscast::Enqueue` take an internal `ServeCheck* dry` (nullptr on every real call). Every refusal site records its code and reason before its log and returns before any handle, queue, post or once-flag. Priority 0 is reported (`offFacets`), not refused. What the next Drain or the channel's Engage decides is named in `pending`, never guessed.
+- Covers for MFO-B2: `ClaimOffenseCast` refused and `ComposedCast::Try` -> `ApmfRefused` (both `RequestCast`). Cannot cover: `Loadout::Prepare` failing, `Held` / `Declined` (MFO's own state), and a claim accepted then dropped at Drain. Docs/APMF_API-REFERENCE.md#abi-v35-can-serve.
+- MFO mirror of APMF_API.h + adoption is a later tier-B brief (MFO is not touched here). No field rung of its own: the adoption's field run is the test.
+
 ## HEAD OF WORK 2026-11-09 -- ch.18 ATTACK SELECTION (ABI v34, a third #17a seat), branch `feat/apmf-ch18-attack-select`, NOT merged
 
 - ClickUp 86e3bw775, marth 2026-10-27 ("weight seat ALLOWED") and 2026-11-09 (class update: Warrior more power attacks, Mercenary scrappy; floor and ceiling as windowed denies; "a regular attack must fire when stamina isnt allowing power"). Tier A: new engine seat + ABI bump. Needs its tier-3 Opus review before merge.
