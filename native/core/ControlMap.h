@@ -56,6 +56,22 @@ namespace apmf {
     using Handle = APMF_API::Handle;
     using Intent = APMF_API::Intent;
 
+    // ABI v35 (CanServe, the claim dry run). Handed to the enqueue paths below (EnqueueRequest, EnqueueCast,
+    // core/Place Enqueue, core/PositionCast Enqueue) it turns each of them into a CHECK: every refusal site
+    // records its code and reason here instead of logging, and the function returns before it allocates a
+    // handle, queues, posts, attributes or uses a once-per-session log. With nullptr (every real call) the
+    // functions behave exactly as before. ONE code path for the real call and the dry run, so they cannot
+    // drift. Caller-owned, on the caller's stack, any thread.
+    struct ServeCheck {
+        std::uint32_t refusal = 0;         // APMF_API::ServeRefusal (0 = none: every check passed)
+        const char*   why     = nullptr;   // a static string or a module's load-time reason, never freed
+        std::uint32_t pending = 0;         // APMF_API::ServePending bits (set only when nothing refused)
+        void Refuse(std::uint32_t a_refusal, const char* a_why) {
+            refusal = a_refusal;
+            why     = a_why;
+        }
+    };
+
     // ch.8b -- everything the five ENGINE SEATS (core/CastSeats.cpp, core/EquipGate.cpp)
     // need out of a winning kIntent_Cast claim, copied OUT BY VALUE in ONE lock-free RCU
     // read. Internal C++ only (NOT part of the C-ABI) -- free to change shape.
@@ -137,8 +153,9 @@ namespace apmf {
         // game-thread Drain. Returns kInvalidHandle if no channel serves `intent`.
         // `param` (may be null) is COPIED synchronously into the queued op — APMF
         // never retains the client's pointer; null == a zero param (channel default).
+        // ABI v35: `dry` non-null = CHECK ONLY (ServeCheck above): nothing is filed, kInvalidHandle returned.
         Handle EnqueueRequest(RE::FormID actor, Intent intent, float basis,
-                              const APMF_API::APMF_Param* param);
+                              const APMF_API::APMF_Param* param, ServeCheck* dry = nullptr);
         void   EnqueueRelease(Handle handle);
         // Re-point an existing claim's param in place (same handle). `param` copied
         // synchronously; null == no-op. Applied at the next Drain. See APMF_API_v3.
@@ -182,7 +199,9 @@ namespace apmf {
         // (form lookups legal there) and REFUSES -- dropping the op, never running the
         // package -- if the package carries no readable spell input. Returns
         // kInvalidHandle only if no channel serves kIntent_Cast.
-        Handle EnqueueCast(RE::FormID actor, float basis, const APMF_API::APMF_CastRequest* req);
+        // ABI v35: `dry` non-null = CHECK ONLY (ServeCheck above), as EnqueueRequest.
+        Handle EnqueueCast(RE::FormID actor, float basis, const APMF_API::APMF_CastRequest* req,
+                           ServeCheck* dry = nullptr);
 
         // ---- Hot path: ANY thread (RCU reader -- field-proven the 0xAD Character
         // seat is not single-threaded; see the header comment above). ----

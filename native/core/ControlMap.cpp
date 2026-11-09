@@ -132,12 +132,35 @@ namespace apmf {
                           what, apmf::log::Hex(actor), why);
         return APMF_API::kInvalidHandle;
     }
+    // ABI v35 (CanServe): a refusal site in CHECK mode records its code and reason and returns before its log.
+    static Handle DryRefuse(ServeCheck* dry, std::uint32_t refusal, const char* why) {
+        dry->Refuse(refusal, why);
+        return APMF_API::kInvalidHandle;
+    }
+    // ABI v35 (CanServe): what ApplyRequest (below, the next Drain) can still decide for a claim that passed
+    // every call-time check. NAMED, never evaluated (the working map at that Drain is not the map now). Mirrors
+    // ApplyRequest's three drop sites, keep them in step: the actor lookup (every claim), the dual-vs-single
+    // hand collision (kIntent_Cast, skipped for kCastFlag_DenyHandOnly) and the package read (kIntent_Cast
+    // with kCastFlag_FromPackage, the deny-only branch first). `castFlags` = req.flags (RequestCast) or
+    // param.ival (the degenerate RequestEx form), exactly as ApplyRequest reads them.
+    static std::uint32_t DrainPending(Intent intent, std::uint32_t castFlags) {
+        std::uint32_t p = APMF_API::kServePending_ActorLoaded | APMF_API::kServePending_Arbitration;
+        if (intent == APMF_API::kIntent_Cast && (castFlags & APMF_API::kCastFlag_DenyHandOnly) == 0) {
+            p |= APMF_API::kServePending_CastHandCollision;
+            if (castFlags & APMF_API::kCastFlag_FromPackage) p |= APMF_API::kServePending_CastFromPackage;
+        }
+        return p;
+    }
 
     Handle ControlMap::EnqueueRequest(RE::FormID actor, Intent intent, float basis,
-                                      const APMF_API::APMF_Param* param) {
-        if (const char* why = NoDrainReason()) return RefuseNoDrain(actor, "Request", why);
+                                      const APMF_API::APMF_Param* param, ServeCheck* dry) {
+        if (const char* why = NoDrainReason()) {
+            if (dry) return DryRefuse(dry, APMF_API::kServeRefusal_NoDrain, why);
+            return RefuseNoDrain(actor, "Request", why);
+        }
         // Registry is immutable after load, so this read is thread-safe.
         if (!Registry::Get().ChannelForIntent(intent)) {
+            if (dry) return DryRefuse(dry, APMF_API::kServeRefusal_NoChannel, "no channel serves the intent");
             spdlog::warn("[api] Request REFUSED -- no channel serves intent {} (actor 0x{}).",
                          static_cast<std::uint32_t>(intent), apmf::log::Hex(actor));
             return APMF_API::kInvalidHandle;
@@ -150,6 +173,7 @@ namespace apmf {
         // here is synchronous (kInvalidHandle), so the client's documented degrade
         // path runs. Logged once (the reason cannot change after Install).
         if (intent == APMF_API::kIntent_EquipAuthority && !apmf::equipsink::Installed()) {
+            if (dry) return DryRefuse(dry, APMF_API::kServeRefusal_NotInstalled, apmf::equipsink::NotInstalledReason());
             static std::atomic<bool> s_logged{ false };
             if (!s_logged.exchange(true))
                 spdlog::warn("[apmf][equip-auth] claim refused: seat not installed ({}) -- actor 0x{}; the client keeps "
@@ -166,6 +190,7 @@ namespace apmf {
         // HERE rather than at Engage so the client learns at the call.
         if (intent == APMF_API::kIntent_Travel) {
             if (!apmf::travel::Installed()) {
+                if (dry) return DryRefuse(dry, APMF_API::kServeRefusal_NotInstalled, apmf::travel::NotInstalledReason());
                 static std::atomic<bool> s_logged{ false };
                 if (!s_logged.exchange(true))
                     spdlog::warn("[apmf][travel] claim refused: channel not installed ({}) -- actor "
@@ -178,21 +203,25 @@ namespace apmf {
             // must then be 0 (a form AND a point is ambiguous), the point finite, and
             // the runtime one the marker helpers are verified on.
             if (param && (static_cast<std::uint32_t>(param->ival) & APMF_API::kTravel_ToPosition) != 0) {
-                const char* why = nullptr;
-                if (!apmf::poscast::MarkersSupported())
+                const char*   why     = nullptr;
+                std::uint32_t whyCode = APMF_API::kServeRefusal_BadRequest;   // ABI v35 (CanServe)
+                if (!apmf::poscast::MarkersSupported()) {
                     why = "XMarker placement is not available (VR, a runtime other than 1.6.1170 / 1.5.97 / 1.7.104, or "
                           "before kDataLoaded)";
-                else if (param->form != 0)
+                    whyCode = APMF_API::kServeRefusal_NotInstalled;
+                } else if (param->form != 0)
                     why = "param.form is set as well as kTravel_ToPosition -- a destination is a form OR a point, "
                           "never both";
                 else if (!std::isfinite(param->posX) || !std::isfinite(param->posY) || !std::isfinite(param->posZ))
                     why = "param.pos is not a finite point";
                 if (why) {
+                    if (dry) return DryRefuse(dry, whyCode, why);
                     spdlog::warn("[apmf][travel] position claim refused -- actor 0x{}: {}.", apmf::log::Hex(actor),
                                  why);
                     return APMF_API::kInvalidHandle;
                 }
             } else if (!param || param->form == 0) {
+                if (dry) return DryRefuse(dry, APMF_API::kServeRefusal_BadRequest, "no destination (param.form is 0)");
                 spdlog::warn("[apmf][travel] claim refused: no destination (param.form is 0) -- actor "
                              "0x{}. kIntent_Travel REQUIRES param.form = the destination's FormID (an "
                              "object reference or a cell).",
@@ -209,6 +238,9 @@ namespace apmf {
             // derivation). Vanilla's idiom for "go to this spot" is a marker
             // REFERENCE, so that is what a client passes.
             else if (param->posX != 0.0f || param->posY != 0.0f || param->posZ != 0.0f) {
+                if (dry)
+                    return DryRefuse(dry, APMF_API::kServeRefusal_BadRequest,
+                                     "param.pos is set without kTravel_ToPosition");
                 spdlog::warn("[apmf][travel] claim refused: param.pos is set without kTravel_ToPosition -- "
                              "actor 0x{}. A package's location carries a form or a handle and no "
                              "coordinates. Either set kTravel_ToPosition (ABI v11: APMF places its own "
@@ -228,6 +260,7 @@ namespace apmf {
         // one is decided at Engage (channels/TargetPin.cpp) and logged there.
         if (intent == APMF_API::kIntent_TargetPin) {
             if (!apmf::targetpin::Installed()) {
+                if (dry) return DryRefuse(dry, APMF_API::kServeRefusal_NotInstalled, apmf::targetpin::NotInstalledReason());
                 static std::atomic<bool> s_logged{ false };
                 if (!s_logged.exchange(true))
                     spdlog::warn("[apmf][target-pin] claim refused: seat not installed ({}) -- actor 0x{}; the "
@@ -235,23 +268,28 @@ namespace apmf {
                                  apmf::targetpin::NotInstalledReason(), apmf::log::Hex(actor));
                 return APMF_API::kInvalidHandle;
             }
-            const char* why = nullptr;
+            const char*   why     = nullptr;
+            std::uint32_t whyCode = APMF_API::kServeRefusal_BadRequest;   // ABI v35 (CanServe)
             if (!param || param->form == 0)
                 why = "no target (param.form is 0) -- kIntent_TargetPin REQUIRES param.form = the target actor";
             else if (param->form == actor)
                 why = "the target is the actor itself";
-            else if (actor == 0x14)
-                why = "the actor is the player (ch.20 pins NPC combat targets only)";
+            else if (actor == 0x14) {
+                why     = "the actor is the player (ch.20 pins NPC combat targets only)";
+                whyCode = APMF_API::kServeRefusal_Player;
+            }
             // ABI v18: kTargetPin_OwnLineOfSight asks for a judgment Harbinger cannot give while
             // the line-of-sight service is down -- refused, so the client keeps its own test.
             if (!why && (static_cast<std::uint32_t>(param->ival) & APMF_API::kTargetPin_OwnLineOfSight) != 0 &&
                 !apmf::sightline::Armed()) {
+                if (dry) return DryRefuse(dry, APMF_API::kServeRefusal_NotInstalled, apmf::sightline::NotArmedReason());
                 spdlog::warn("[apmf][target-pin] claim refused -- actor 0x{}: kTargetPin_OwnLineOfSight is set but the "
                              "line-of-sight service is not armed ({}); the client keeps its own test.",
                              apmf::log::Hex(actor), apmf::sightline::NotArmedReason());
                 return APMF_API::kInvalidHandle;
             }
             if (why) {
+                if (dry) return DryRefuse(dry, whyCode, why);
                 spdlog::warn("[apmf][target-pin] claim refused -- actor 0x{}: {}.", apmf::log::Hex(actor), why);
                 return APMF_API::kInvalidHandle;
             }
@@ -265,6 +303,7 @@ namespace apmf {
         // is decided at Engage (channels/CombatEntry.cpp) and logged there.
         if (intent == APMF_API::kIntent_CombatEntry) {
             if (!apmf::combatentry::Installed()) {
+                if (dry) return DryRefuse(dry, APMF_API::kServeRefusal_NotInstalled, apmf::combatentry::NotInstalledReason());
                 static std::atomic<bool> s_logged{ false };
                 if (!s_logged.exchange(true))
                     spdlog::warn("[apmf][combat-entry] claim refused: channel not available ({}) -- actor 0x{}; "
@@ -272,14 +311,18 @@ namespace apmf {
                                  apmf::combatentry::NotInstalledReason(), apmf::log::Hex(actor));
                 return APMF_API::kInvalidHandle;
             }
-            const char* why = nullptr;
+            const char*   why     = nullptr;
+            std::uint32_t whyCode = APMF_API::kServeRefusal_BadRequest;   // ABI v35 (CanServe)
             if (!param || param->form == 0)
                 why = "no target (param.form is 0) -- kIntent_CombatEntry REQUIRES param.form = the target actor";
             else if (param->form == actor)
                 why = "the target is the actor itself";
-            else if (actor == 0x14)
-                why = "the actor is the player (ch.21 puts NPCs into combat only; the player may be the target)";
+            else if (actor == 0x14) {
+                why     = "the actor is the player (ch.21 puts NPCs into combat only; the player may be the target)";
+                whyCode = APMF_API::kServeRefusal_Player;
+            }
             if (why) {
+                if (dry) return DryRefuse(dry, whyCode, why);
                 spdlog::warn("[apmf][combat-entry] claim refused -- actor 0x{}: {}.", apmf::log::Hex(actor), why);
                 return APMF_API::kInvalidHandle;
             }
@@ -293,12 +336,15 @@ namespace apmf {
         // param.target a loaded reference needs a form lookup, so it is decided on the game
         // thread (channels/Idle.cpp) and logged there.
         if (intent == APMF_API::kIntent_Idle && param && param->form != 0) {
-            const char* why = nullptr;
-            if (!apmf::idle::V2Installed())
-                why = apmf::idle::NotInstalledReason();
-            else if (param->target == actor)
+            const char*   why     = nullptr;
+            std::uint32_t whyCode = APMF_API::kServeRefusal_BadRequest;   // ABI v35 (CanServe)
+            if (!apmf::idle::V2Installed()) {
+                why     = apmf::idle::NotInstalledReason();
+                whyCode = APMF_API::kServeRefusal_NotInstalled;
+            } else if (param->target == actor)
                 why = "param.target is the actor itself";
             if (why) {
+                if (dry) return DryRefuse(dry, whyCode, why);
                 spdlog::warn("[apmf][idle] idle v2 claim refused -- actor 0x{}: {}.", apmf::log::Hex(actor), why);
                 return APMF_API::kInvalidHandle;
             }
@@ -312,18 +358,23 @@ namespace apmf {
         // contract as ch.20 / ch.22. Whether param.target is a loaded Actor needs a form lookup and
         // is decided at Engage (core/ActionGate.cpp SetLeash) and logged there.
         if (intent == APMF_API::kIntent_PursuitLeash) {
-            const char* why = nullptr;
-            if (!apmf::actiongate::PursuitArmed())
-                why = apmf::actiongate::PursuitNotArmedReason();
-            else if (!param || param->target == 0)
+            const char*   why     = nullptr;
+            std::uint32_t whyCode = APMF_API::kServeRefusal_BadRequest;   // ABI v35 (CanServe)
+            if (!apmf::actiongate::PursuitArmed()) {
+                why     = apmf::actiongate::PursuitNotArmedReason();
+                whyCode = APMF_API::kServeRefusal_NotInstalled;
+            } else if (!param || param->target == 0)
                 why = "no anchor (param.target is 0) -- kIntent_PursuitLeash REQUIRES param.target = the anchor actor";
             else if (param->target == actor)
                 why = "the anchor is the actor itself";
             else if (!std::isfinite(param->fval) || !(param->fval > 0.0f))
                 why = "param.fval (the leash radius, game units) is not a positive number";
-            else if (actor == 0x14)
-                why = "the actor is the player (the pursuit leash is for NPCs)";
+            else if (actor == 0x14) {
+                why     = "the actor is the player (the pursuit leash is for NPCs)";
+                whyCode = APMF_API::kServeRefusal_Player;
+            }
             if (why) {
+                if (dry) return DryRefuse(dry, whyCode, why);
                 spdlog::warn("[apmf][pursuit-leash] claim refused -- actor 0x{}: {}.", apmf::log::Hex(actor), why);
                 return APMF_API::kInvalidHandle;
             }
@@ -337,19 +388,24 @@ namespace apmf {
         // loaded reference needs a form lookup: decided on the game thread (channels/CombatApproach.cpp
         // Poll ends such a claim as kApproachState_TargetLost, logged).
         if (intent == APMF_API::kIntent_CombatApproach) {
-            const char* why = nullptr;
-            if (!apmf::combatapproach::Installed())
-                why = apmf::combatapproach::NotInstalledReason();
-            else if (!param || param->target == 0)
+            const char*   why     = nullptr;
+            std::uint32_t whyCode = APMF_API::kServeRefusal_BadRequest;   // ABI v35 (CanServe)
+            if (!apmf::combatapproach::Installed()) {
+                why     = apmf::combatapproach::NotInstalledReason();
+                whyCode = APMF_API::kServeRefusal_NotInstalled;
+            } else if (!param || param->target == 0)
                 why = "no target (param.target is 0) -- kIntent_CombatApproach REQUIRES param.target = X, the "
                       "reference to close on";
             else if (param->target == actor)
                 why = "the target is the actor itself";
             else if (!std::isfinite(param->fval) || !(param->fval > 0.0f))
                 why = "param.fval (the radius R, game units) is not a positive finite number";
-            else if (actor == 0x14)
-                why = "the actor is the player (the combat approach is for NPCs)";
+            else if (actor == 0x14) {
+                why     = "the actor is the player (the combat approach is for NPCs)";
+                whyCode = APMF_API::kServeRefusal_Player;
+            }
             if (why) {
+                if (dry) return DryRefuse(dry, whyCode, why);
                 spdlog::warn("[apmf][combat-approach] claim refused -- actor 0x{}: {}.", apmf::log::Hex(actor), why);
                 return APMF_API::kInvalidHandle;
             }
@@ -362,6 +418,7 @@ namespace apmf {
         // the 10 s default; above 120 s it is clamped at Engage (logged there).
         if (intent == APMF_API::kIntent_CombatReentryDeny) {
             if (!apmf::reentrydeny::Installed()) {
+                if (dry) return DryRefuse(dry, APMF_API::kServeRefusal_NotInstalled, apmf::reentrydeny::NotInstalledReason());
                 static std::atomic<bool> s_logged{ false };
                 if (!s_logged.exchange(true))
                     spdlog::warn("[apmf][reentry-deny] claim refused: seat not installed ({}) -- actor 0x{}; the "
@@ -369,12 +426,16 @@ namespace apmf {
                                  apmf::reentrydeny::NotInstalledReason(), apmf::log::Hex(actor));
                 return APMF_API::kInvalidHandle;
             }
-            const char* why = nullptr;
+            const char*   why     = nullptr;
+            std::uint32_t whyCode = APMF_API::kServeRefusal_BadRequest;   // ABI v35 (CanServe)
             if (param && (std::isnan(param->fval) || param->fval < 0.0f))
                 why = "param.fval (the window in seconds) is negative or not a number (0 = the 10 s default)";
-            else if (actor == 0x14)
-                why = "the actor is the player (ch.22 keeps NPCs out of combat only)";
+            else if (actor == 0x14) {
+                why     = "the actor is the player (ch.22 keeps NPCs out of combat only)";
+                whyCode = APMF_API::kServeRefusal_Player;
+            }
             if (why) {
+                if (dry) return DryRefuse(dry, whyCode, why);
                 spdlog::warn("[apmf][reentry-deny] claim refused -- actor 0x{}: {}.", apmf::log::Hex(actor), why);
                 return APMF_API::kInvalidHandle;
             }
@@ -384,6 +445,7 @@ namespace apmf {
         // core/CastGuard.cpp RefuseReason (gate not installed, bad ival / fval, the player, ...).
         if (intent == APMF_API::kIntent_CastGuard) {
             if (const char* why = apmf::castguard::RefuseReason(actor, param)) {
+                if (dry) return DryRefuse(dry, APMF_API::kServeRefusal_IntentRule, why);
                 spdlog::warn("[apmf][cast-guard] claim refused -- actor 0x{}: {}.", apmf::log::Hex(actor), why);
                 return APMF_API::kInvalidHandle;
             }
@@ -392,6 +454,7 @@ namespace apmf {
         // Combat substrate (ABI v23): refused synchronously by channels/CombatSubstrate.cpp RefuseReason.
         if (intent == APMF_API::kIntent_CombatSubstrate)
             if (const char* why = apmf::combatsubstrate::RefuseReason(actor, param)) {
+                if (dry) return DryRefuse(dry, APMF_API::kServeRefusal_IntentRule, why);
                 spdlog::warn("[substrate] claim refused -- actor 0x{}: {}.", apmf::log::Hex(actor), why);
                 return APMF_API::kInvalidHandle;
             }
@@ -399,6 +462,7 @@ namespace apmf {
         // ch.18 (ABI v34): refused synchronously by core/AttackSelect.cpp RefuseReason (seat not installed, the player).
         if (intent == APMF_API::kIntent_AttackSelection) {
             if (const char* why = apmf::attackselect::RefuseReason(actor)) {
+                if (dry) return DryRefuse(dry, APMF_API::kServeRefusal_IntentRule, why);
                 spdlog::warn("[ch.18] claim refused -- actor 0x{}: {}.", apmf::log::Hex(actor), why);
                 return APMF_API::kInvalidHandle;
             }
@@ -407,6 +471,7 @@ namespace apmf {
         // ch.26 (ABI v22): refused synchronously by core/EquipPreference.cpp RefuseReason.
         if (intent == APMF_API::kIntent_EquipPreference) {
             if (const char* why = apmf::equippref::RefuseReason(actor, param)) {
+                if (dry) return DryRefuse(dry, APMF_API::kServeRefusal_IntentRule, why);
                 spdlog::warn("[ch.26] claim refused -- actor 0x{}: {}.", apmf::log::Hex(actor), why);
                 return APMF_API::kInvalidHandle;
             }
@@ -418,6 +483,9 @@ namespace apmf {
         // test and nothing said. The bit needs RequestCast with req.target set.
         if (intent == APMF_API::kIntent_Cast && param &&
             (static_cast<std::uint32_t>(param->ival) & APMF_API::kCastFlag_OwnLineOfSight) != 0) {
+            if (dry)
+                return DryRefuse(dry, APMF_API::kServeRefusal_BadRequest,
+                                 "kCastFlag_OwnLineOfSight on RequestEx(kIntent_Cast): that form carries no target");
             spdlog::warn("[api] cast claim REFUSED (actor 0x{}): kCastFlag_OwnLineOfSight on RequestEx(kIntent_Cast). "
                          "That form carries no target, so there is no line to judge. Use RequestCast with "
                          "req.target set.",
@@ -440,6 +508,7 @@ namespace apmf {
             // A non-finite basis would compare false against every claim and slip past the
             // check below (review R2-3b), so it is refused by name first.
             if (!std::isfinite(basis)) {
+                if (dry) return DryRefuse(dry, APMF_API::kServeRefusal_BadRequest, "basis is not a finite number");
                 spdlog::warn("[poscast] request REFUSED (actor 0x{}): basis is not a finite number.",
                              apmf::log::Hex(actor));
                 return APMF_API::kInvalidHandle;
@@ -449,6 +518,9 @@ namespace apmf {
                 float         bb = 0.0f;
                 std::uint32_t bf = 0;
                 if (CastFacetOutranks(actor, basis, bh, bb, bf)) {
+                    if (dry)
+                        return DryRefuse(dry, APMF_API::kServeRefusal_FacetOwned,
+                                         "the actor's cast facet is owned by a claim that outranks this basis");
                     spdlog::warn("[poscast] request REFUSED (actor 0x{}, basis {}): the actor's cast facet is owned by "
                                  "{}claim h={} at basis {} -- a position cast never casts over the facet's owner. "
                                  "Release that claim, or ask at a higher basis.",
@@ -457,10 +529,20 @@ namespace apmf {
                     return APMF_API::kInvalidHandle;
                 }
             }
+            if (dry) {   // ABI v35: the one-shot's own call-time checks, in CHECK mode (no handle, no post)
+                if (apmf::poscast::Enqueue(APMF_API::kInvalidHandle, actor, basis, *param, dry))
+                    dry->pending = APMF_API::kServePending_OneShot;
+                return APMF_API::kInvalidHandle;
+            }
             const Handle ph = m_nextHandle.fetch_add(1, std::memory_order_relaxed);
             return apmf::poscast::Enqueue(ph, actor, basis, *param) ? ph : APMF_API::kInvalidHandle;
         }
 
+        // ABI v35: every call-time check passed. What ApplyRequest decides at the next Drain is NAMED, not guessed.
+        if (dry) {
+            dry->pending = DrainPending(intent, param ? static_cast<std::uint32_t>(param->ival) : 0u);
+            return APMF_API::kInvalidHandle;
+        }
         const Handle h = m_nextHandle.fetch_add(1, std::memory_order_relaxed);
         PendingOp op{};
         op.kind   = PendingOp::Kind::kRequest;
@@ -624,9 +706,13 @@ namespace apmf {
     // Any FromPackage extraction happens LATER on the writer thread inside
     // ApplyRequest (form lookups are legal there, not here off-thread).
     Handle ControlMap::EnqueueCast(RE::FormID actor, float basis,
-                                   const APMF_API::APMF_CastRequest* req) {
-        if (const char* why = NoDrainReason()) return RefuseNoDrain(actor, "RequestCast", why);
+                                   const APMF_API::APMF_CastRequest* req, ServeCheck* dry) {
+        if (const char* why = NoDrainReason()) {
+            if (dry) return DryRefuse(dry, APMF_API::kServeRefusal_NoDrain, why);
+            return RefuseNoDrain(actor, "RequestCast", why);
+        }
         if (!Registry::Get().ChannelForIntent(APMF_API::kIntent_Cast)) {
+            if (dry) return DryRefuse(dry, APMF_API::kServeRefusal_NoChannel, "no channel serves kIntent_Cast");
             spdlog::warn("[api] RequestCast REFUSED -- no channel serves kIntent_Cast (actor 0x{}).",
                          apmf::log::Hex(actor));
             return APMF_API::kInvalidHandle;
@@ -634,6 +720,9 @@ namespace apmf {
         // ABI v11: APMF_CastRequest has no position field, so a position cast cannot
         // ride RequestCast. Refused by name rather than run as an actor-target claim.
         if (req && (req->flags & APMF_API::kCastFlag_AtPosition) != 0) {
+            if (dry)
+                return DryRefuse(dry, APMF_API::kServeRefusal_BadRequest,
+                                 "kCastFlag_AtPosition on RequestCast (APMF_CastRequest has no point)");
             spdlog::warn("[api] RequestCast REFUSED (actor 0x{}): kCastFlag_AtPosition needs a point, and "
                          "APMF_CastRequest has none. Send a position cast through RequestEx with "
                          "param.form = the spell, param.ival = kCastFlag_AtPosition, param.pos = the point.",
@@ -642,9 +731,14 @@ namespace apmf {
         }
         // ABI v18: kCastFlag_OwnLineOfSight needs the line-of-sight service (see EnqueueRequest).
         if (req && (req->flags & APMF_API::kCastFlag_OwnLineOfSight) != 0 && !apmf::sightline::Armed()) {
+            if (dry) return DryRefuse(dry, APMF_API::kServeRefusal_NotInstalled, apmf::sightline::NotArmedReason());
             spdlog::warn("[api] RequestCast REFUSED (actor 0x{}): kCastFlag_OwnLineOfSight is set but the "
                          "line-of-sight service is not armed ({}); the client keeps its own test.",
                          apmf::log::Hex(actor), apmf::sightline::NotArmedReason());
+            return APMF_API::kInvalidHandle;
+        }
+        if (dry) {   // ABI v35: every call-time check passed; ApplyRequest's Drain-time refusals are named
+            dry->pending = DrainPending(APMF_API::kIntent_Cast, req ? req->flags : 0u);
             return APMF_API::kInvalidHandle;
         }
         const Handle h = m_nextHandle.fetch_add(1, std::memory_order_relaxed);

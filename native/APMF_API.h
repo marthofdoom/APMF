@@ -90,10 +90,10 @@ namespace RE {
 
 namespace APMF_API {
 
-    // ABI history (v10..v34, what each added and how an older APMF degrades). Gate every use on abiVersion >=
+    // ABI history (v10..v35, what each added and how an older APMF degrades). Gate every use on abiVersion >=
     // N.
     // History: Docs/APMF_API-HISTORY.md#abi-history
-    inline constexpr std::uint32_t kABIVersion = 34;
+    inline constexpr std::uint32_t kABIVersion = 35;
 
     // The exported query function's undecorated name and pointer type.
     // const APMF_API_v1* APMF_GetInterface(std::uint32_t abiVersion);
@@ -2992,6 +2992,130 @@ namespace APMF_API {
         // `out->size` covers APMF_AttackMixInfo, fills it. Read-only, ANY THREAD (an RCU read and a copy under
         // APMF's own leaf lock, no game call). A throw inside returns kAttackMixState_None, nothing written.
         std::uint32_t (*GetAttackMixState)(RE::FormID actor, APMF_AttackMixInfo* out);
+    };
+
+    // ═════════════════════════════════════════════════════════════════════════════
+    // ABI v35: THE CLAIM DRY RUN ("can you serve this?", CanServe)
+    // ═════════════════════════════════════════════════════════════════════════════
+    // Ask whether a RequestEx / Request / RequestCast with these EXACT arguments would be REFUSED right now,
+    // and why, WITHOUT filing anything: no handle is allocated, nothing is queued, attributed, posted or
+    // logged, and no once-per-session refusal log is used up. The answer comes from the SAME checks the real
+    // call runs (one code path in APMF, the real call's refusal sites with a "report, do not file" switch), so
+    // the two cannot disagree for the state they read. A client uses it to keep an incumbent it would
+    // otherwise displace for a request that is then refused. See Docs/APMF_API-REFERENCE.md#abi-v35-can-serve
+    //
+    // WHAT IS CHECKED is every check the real call makes BEFORE it returns: the runtime / arbiter-seat gate,
+    // whether a channel serves the intent, each intent's own seat-installed / service-armed gate, the param /
+    // flags / basis rules, the player rules, a position cast's cast-facet ownership, kIntent_Place's rules. A
+    // verdict is about the state at the moment of the call: a service that arms or disarms (line of sight)
+    // or a cast claim that comes or goes can change it before the real call.
+    // WHAT IS NOT CHECKED is what the game thread decides AFTER the call returned a handle (the next Drain or
+    // a one-shot's game-thread step). Those are never guessed: `pending` names which of them still apply to
+    // this request's shape (ServePending).
+    // PRIORITY 0 IS NOT A REFUSAL. A claim filed by a client whose priority on a facet is 0 ("off", the
+    // Harbinger page / APMF_Sources.ini) is accepted and then never outranks anything there. `offFacets`
+    // reports it.
+
+    // What the real call would do. APPEND-ONLY: never renumber.
+    enum ServeVerdict : std::uint32_t {
+        kServe_Failed   = 0,   // the query could not be answered (null / short query, unknown `call`, a throw)
+        kServe_Refused  = 1,   // the call would return kInvalidHandle now and file nothing (`refusal`, `why`)
+        kServe_Accepted = 2,   // every check the call makes passes: it would return a handle now. `pending`
+                               //   names what the game thread still decides afterwards
+    };
+
+    // Which check refused. APPEND-ONLY: never renumber.
+    enum ServeRefusal : std::uint32_t {
+        kServeRefusal_None         = 0,
+        kServeRefusal_NoDrain      = 1,   // unsupported runtime or the 0xAD arbiter seat refused: nothing would
+                                          //   ever drain a claim (every claim is refused, all session)
+        kServeRefusal_NoChannel    = 2,   // no channel serves the intent (kIntent_None, an intent this APMF
+                                          //   does not know, a channel switched off)
+        kServeRefusal_NotInstalled = 3,   // the intent's seat / channel / service is not installed or armed
+        kServeRefusal_BadRequest   = 4,   // the param, flags or basis break the intent's rules (`why` says which)
+        kServeRefusal_Player       = 5,   // the intent serves NPCs only and the actor is the player
+        kServeRefusal_FacetOwned   = 6,   // a position cast (kCastFlag_AtPosition): the actor's cast facet is
+                                          //   owned by a claim that outranks this basis
+        kServeRefusal_IntentRule   = 7,   // the intent's own rule set refused (kIntent_CastGuard,
+                                          //   kIntent_CombatSubstrate, kIntent_AttackSelection,
+                                          //   kIntent_EquipPreference): `why` names the rule, which may be
+                                          //   "not installed"
+    };
+
+    // What the game thread still decides after a kServe_Accepted call returned its handle (never guessed).
+    // APPEND-ONLY: never reuse a bit.
+    enum ServePending : std::uint32_t {
+        kServePending_ActorLoaded       = 1u << 0,   // the claim is applied at the next Drain, which drops it
+                                                     //   (IsClaimLive never true) if the actor is not found /
+                                                     //   loaded then. Every claim
+        kServePending_Arbitration       = 1u << 1,   // the claim may not OWN its channel: a higher basis or an
+                                                     //   earlier equal one wins. Not a refusal (IsClaimLive is
+                                                     //   true). Every claim
+        kServePending_CastHandCollision = 1u << 2,   // kIntent_Cast, driving: a dual-cast vs single-hand
+                                                     //   collision with a standing claim on the actor is
+                                                     //   arbitrated by basis at Drain and the loser is DROPPED
+        kServePending_CastFromPackage   = 1u << 3,   // kCastFlag_FromPackage: the spell is read off the package at
+                                                     //   Drain; a package with none is DROPPED
+        kServePending_OneShot           = 1u << 4,   // a one-shot that is never a claim (kCastFlag_AtPosition,
+                                                     //   kIntent_Place): its game-thread step decides the rest
+                                                     //   (GetPlaceState for a placement)
+        kServePending_PlaceRoom         = 1u << 5,   // kIntent_Place: the real call also refuses when the
+                                                     //   placement records are full (not checked: the check
+                                                     //   frees finished records)
+    };
+
+    // Which call the query describes. APPEND-ONLY: never renumber.
+    enum ServeCall : std::uint32_t {
+        kServeCall_RequestEx   = 0,   // RequestEx(actor, intent, basis, param); Request is param == nullptr
+        kServeCall_RequestCast = 1,   // RequestCast(actor, basis, cast); `intent` and `param` are not read
+    };
+
+    // CanServe's input: the arguments of the call to test. EXACT LAYOUT (byte-shared): 40 bytes. Zero-
+    // initialise it and set `size` = sizeof(APMF_ServeQuery); a smaller size is kServe_Failed. The pointed-to
+    // param / cast request is READ synchronously and never retained, as by the real call.
+    struct APMF_ServeQuery {
+        std::uint32_t           size;       // +0   sizeof(APMF_ServeQuery) (40)
+        std::uint32_t           call;       // +4   ServeCall
+        RE::FormID              actor;      // +8
+        std::uint32_t           intent;     // +12  Intent (kServeCall_RequestEx only)
+        float                   basis;      // +16
+        std::uint32_t           reserved;   // +20  zero
+        const APMF_Param*       param;      // +24  RequestEx's param (nullptr = none, as Request)
+        const APMF_CastRequest* cast;       // +32  RequestCast's req (nullptr = none)
+    };
+    static_assert(sizeof(APMF_ServeQuery) == 40, "APMF_ServeQuery is 40 bytes, byte-shared with clients");
+    static_assert(offsetof(APMF_ServeQuery, basis) == 16, "APMF_ServeQuery layout is frozen");
+    static_assert(offsetof(APMF_ServeQuery, param) == 24, "APMF_ServeQuery layout is frozen");
+    static_assert(offsetof(APMF_ServeQuery, cast) == 32, "APMF_ServeQuery layout is frozen");
+
+    // CanServe's output. EXACT LAYOUT (byte-shared): 128 bytes. The CALLER sets `size` = sizeof(APMF_ServeInfo);
+    // APMF fills it when `size` >= kServeInfoV35Size (128, never changes) and writes nothing into a smaller
+    // struct (the verdict is still returned).
+    struct APMF_ServeInfo {
+        std::uint32_t size;          // +0   in: sizeof(APMF_ServeInfo) (128)
+        std::uint32_t verdict;       // +4   ServeVerdict (also the return value)
+        std::uint32_t refusal;       // +8   ServeRefusal (kServeRefusal_None unless kServe_Refused)
+        std::uint32_t pending;       // +12  ServePending bits (kServe_Accepted only, else 0)
+        std::uint32_t facets;        // +16  (1u << ClientFacet) the facets Harbinger books this intent on
+        std::uint32_t offFacets;     // +20  those of `facets` on which the CALLER's priority is 0 (off)
+        char          why[96];       // +24  the refusal's reason, NUL-terminated, truncated to fit ("" if none)
+        std::uint32_t reserved[2];   // +120
+    };
+    static_assert(sizeof(APMF_ServeInfo) == 128, "APMF_ServeInfo is 128 bytes, byte-shared with clients");
+    static_assert(offsetof(APMF_ServeInfo, why) == 24, "APMF_ServeInfo layout is frozen");
+    static_assert(offsetof(APMF_ServeInfo, reserved) == 120, "APMF_ServeInfo layout is frozen");
+    inline constexpr std::uint32_t kServeInfoV35Size = 128;
+
+    // The v35 interface: APMF_API_v34's members verbatim (prefix EXTENSION), then ONE appended slot.
+    // BYTE-SHARED with MFO: mirror it byte-identically. Gate on `abiVersion >= 35` (INVARIANTS #14b). An older
+    // APMF has no dry run: the client files the request and reads the handle, as before.
+    struct APMF_API_v35 : APMF_API_v34 {
+        // Would the call `query` describes be refused right now? Returns a ServeVerdict and, when `out` is
+        // non-null and `out->size` >= kServeInfoV35Size, fills `*out`. Files NOTHING (see the block above).
+        // Callable from ANY thread the real call may be made from; read-only (atomics, the published RCU
+        // snapshot, leaf locks; no game call, no form lookup). The caller is attributed by its own return
+        // address, as a claim is, for `offFacets`. A throw inside returns kServe_Failed, nothing written.
+        std::uint32_t (*CanServe)(const APMF_ServeQuery* query, APMF_ServeInfo* out);
     };
 
     // Function-pointer type for GetProcAddress(kGetInterfaceExport). Returns the

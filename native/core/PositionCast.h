@@ -1,6 +1,8 @@
 #pragma once
 #include "APMF_API.h"
 
+namespace apmf { struct ServeCheck; }   // core/ControlMap.h (ABI v35 CanServe)
+
 // ============================================================================
 // APMF core -- POSITION CAST (ABI v11, kCastFlag_AtPosition).
 //
@@ -74,7 +76,10 @@ namespace apmf::poscast {
     // delivery to the main thread. Returns false (and logs the reason) when the
     // request is refused synchronously; the caller then returns kInvalidHandle.
     // `handle` is only a label for the log lines.
-    bool Enqueue(APMF_API::Handle handle, RE::FormID actor, float basis, const APMF_API::APMF_Param& param);
+    // ABI v35: `dry` non-null = CHECK ONLY (apmf::ServeCheck, core/ControlMap.h): the same call-time checks, each
+    // refusal recorded there instead of logged, and true returned before anything is posted or logged.
+    bool Enqueue(APMF_API::Handle handle, RE::FormID actor, float basis, const APMF_API::APMF_Param& param,
+                 ServeCheck* dry = nullptr);
 
     // ── Shared XMarker helpers (ABI v11): the position cast above, and ch.19's
     // position legs (channels/Travel.cpp), which point a travel package at one. ──

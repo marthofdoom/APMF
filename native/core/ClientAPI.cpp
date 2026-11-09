@@ -1,5 +1,6 @@
 #include "PCH.h"
 
+#include <cstring>    // ABI v35 CanServe: std::memcpy
 #include <intrin.h>   // _ReturnAddress: the client DLL that called us (Harbinger 1a, Q7)
 #include "core/ClientAPI.h"
 #include "core/ControlMap.h"
@@ -371,6 +372,62 @@ namespace {
         }
     }
 
+    // ABI v35: the claim DRY RUN (APMF_API_v35 CanServe). The real call's own enqueue function runs in CHECK mode
+    // (apmf::ServeCheck, core/ControlMap.h): RequestEx / Request -> EnqueueRequest (kIntent_Place -> place::Enqueue,
+    // the same diversion RequestEx makes), RequestCast -> EnqueueCast. Nothing is filed, attributed, posted or
+    // logged. `offFacets` is read with this body's own `_ReturnAddress()` (the v29 rule: the slot must stay a direct
+    // exported body). Any thread the real call may be made from; read-only. Everything is computed before `*out` is
+    // written, so a throw writes nothing and returns kServe_Failed.
+    std::uint32_t APMF_CanServe(const APMF_API::APMF_ServeQuery* query, APMF_API::APMF_ServeInfo* out) {
+        try {
+            if (!query || query->size < sizeof(APMF_API::APMF_ServeQuery)) return APMF_API::kServe_Failed;
+            apmf::ServeCheck chk{};
+            std::uint32_t    intent = APMF_API::kIntent_None;
+            switch (query->call) {
+            case APMF_API::kServeCall_RequestEx:
+                intent = query->intent;
+                if (intent == APMF_API::kIntent_Place)
+                    apmf::place::Enqueue(APMF_API::kInvalidHandle, query->actor, query->param, apmf::sources::kNoSource,
+                                         &chk);
+                else
+                    apmf::ControlMap::Get().EnqueueRequest(query->actor, static_cast<APMF_API::Intent>(intent),
+                                                           query->basis, query->param, &chk);
+                break;
+            case APMF_API::kServeCall_RequestCast:
+                intent = APMF_API::kIntent_Cast;
+                apmf::ControlMap::Get().EnqueueCast(query->actor, query->basis, query->cast, &chk);
+                break;
+            default:
+                return APMF_API::kServe_Failed;
+            }
+            const std::uint32_t verdict = chk.refusal != APMF_API::kServeRefusal_None ? APMF_API::kServe_Refused
+                                                                                      : APMF_API::kServe_Accepted;
+            if (!out || out->size < APMF_API::kServeInfoV35Size) return verdict;
+            const std::uint32_t facets = apmf::sources::FacetMaskForIntent(static_cast<APMF_API::Intent>(intent));
+            std::uint32_t       off    = 0;
+            for (int f = 0; f < apmf::sources::kFacetCount; ++f)
+                if ((facets & (1u << f)) != 0 &&
+                    apmf::sources::CallerPriority(_ReturnAddress(), static_cast<apmf::sources::Facet>(f)) == 0)
+                    off |= 1u << f;
+            APMF_API::APMF_ServeInfo info{};
+            info.size      = out->size;
+            info.verdict   = verdict;
+            info.refusal   = chk.refusal;
+            info.pending   = verdict == APMF_API::kServe_Accepted ? chk.pending : 0u;
+            info.facets    = facets;
+            info.offFacets = off;
+            if (verdict == APMF_API::kServe_Refused && chk.why) {
+                std::size_t n = 0;
+                for (; n + 1 < sizeof(info.why) && chk.why[n] != '\0'; ++n) info.why[n] = chk.why[n];
+                info.why[n] = '\0';
+            }
+            std::memcpy(out, &info, sizeof(info));
+            return verdict;
+        } catch (...) {
+            return APMF_API::kServe_Failed;
+        }
+    }
+
     // ABI -> the first APMF release that implements it, for the "client too new"
     // refusal log below (MFO wiring review SEV-3 F4): a user running an older
     // APMF under a newer client must be able to read WHICH APMF they need. Keep in
@@ -384,7 +441,8 @@ namespace {
     // substrate availability query, and v28, kIntent_Place and its state query; v29, the client facet
     // priority query, and v30, ch.19's kTravel_CrossCells, ship in 0.15.0; v31, the claim end reason, ships
     // in 0.15.2; v32, the ch.25 kCastGuard_Bystanders bit, ships in 0.16.0; v33, the ch.17 per-item deny and the
-    // ch.26 per-entry state, ships in 0.17.0; v34, ch.18 attack selection, ships in 0.18.0).
+    // ch.26 per-entry state, ships in 0.17.0; v34, ch.18 attack selection, and v35, the claim dry run CanServe,
+    // ship together in 0.18.0 (0.18.0 was not cut when v35 was written -- confirm at the cut).
     const char* MinReleaseForAbi(std::uint32_t abi) {
         switch (abi) {
         case 1:  return "0.2.0";
@@ -420,7 +478,8 @@ namespace {
         case 31: return "0.15.2";
         case 32: return "0.16.0";
         case 33: return "0.17.0";
-        case 34: return "0.18.0";
+        case 34:
+        case 35: return "0.18.0";
         default: return "a release newer than this one";
         }
     }
@@ -548,7 +607,15 @@ namespace {
     static_assert(sizeof(APMF_API::APMF_API_v34) == sizeof(APMF_API::APMF_API_v33) + 2 * sizeof(void*),
                   "APMF_API_v34 = the v33 prefix plus exactly two function pointers");
 
-    constexpr APMF_API::APMF_API_v34 g_api{
+    // ABI v35 (the claim dry run) appends ONE slot to the v34 prefix, so the object is now an APMF_API_v35 and
+    // `abiVersion` reports 35. Same two-form proof.
+    static_assert(offsetof(APMF_API::APMF_API_v35, CanServe) == sizeof(APMF_API::APMF_API_v34),
+                  "APMF_API_v35's slot must start right after the v34 prefix");
+    static_assert(sizeof(APMF_API::APMF_API_v35) == sizeof(APMF_API::APMF_API_v34) + sizeof(void*),
+                  "APMF_API_v35 = the v34 prefix plus exactly one function pointer");
+
+    constexpr APMF_API::APMF_API_v35 g_api{
+        {
         {
         {
         {
@@ -616,6 +683,8 @@ namespace {
         },
         &APMF_SetAttackMix,
         &APMF_GetAttackMixState,
+        },
+        &APMF_CanServe,
     };
 
 }

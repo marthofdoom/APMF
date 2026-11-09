@@ -321,43 +321,61 @@ namespace apmf::place {
     const char* NotInstalledReason() { return g_reason.load(); }
 
     bool Enqueue(Handle a_handle, RE::FormID a_actor, const APMF_API::APMF_Param* a_param,
-                 apmf::sources::SourceId a_client) {
+                 apmf::sources::SourceId a_client, ServeCheck* a_dry) {
+        // ABI v35 (CanServe): in CHECK mode each refusal below records itself and returns before its log.
+        const auto dryRefuse = [a_dry](std::uint32_t a_code, const char* a_why) {
+            a_dry->Refuse(a_code, a_why);
+            return false;
+        };
         if (!Installed()) {
+            if (a_dry) return dryRefuse(APMF_API::kServeRefusal_NotInstalled, NotInstalledReason());
             spdlog::warn("[place] request REFUSED (actor 0x{}): placement not installed -- {}.", Hex(a_actor),
                          NotInstalledReason());
             return false;
         }
         if (!a_param) {
+            if (a_dry) return dryRefuse(APMF_API::kServeRefusal_BadRequest, "no param (kIntent_Place needs param.form = the destination)");
             spdlog::warn("[place] request REFUSED (actor 0x{}): no param. kIntent_Place needs RequestEx with "
                          "param.form = the destination.", Hex(a_actor));
             return false;
         }
         const auto flags = static_cast<std::uint32_t>(a_param->ival);
         if (const std::uint32_t extra = flags & ~static_cast<std::uint32_t>(APMF_API::kPlace_All)) {
+            if (a_dry) return dryRefuse(APMF_API::kServeRefusal_BadRequest, "unknown PlaceFlags bit(s)");
             spdlog::warn("[place] request REFUSED (actor 0x{}): unknown PlaceFlags bit(s) 0x{}.", Hex(a_actor),
                          Hex(extra));
             return false;
         }
         if (a_actor == 0 || a_actor == 0x14) {
+            if (a_dry)
+                return a_actor == 0 ? dryRefuse(APMF_API::kServeRefusal_BadRequest, "actor 0")
+                                    : dryRefuse(APMF_API::kServeRefusal_Player, "the player is never placed");
             spdlog::warn("[place] request REFUSED: actor 0x{} -- {}.", Hex(a_actor),
                          a_actor == 0 ? "actor 0" : "the player is never placed");
             return false;
         }
         if (a_param->form == 0) {
+            if (a_dry) return dryRefuse(APMF_API::kServeRefusal_BadRequest, "param.form (the destination) is 0");
             spdlog::warn("[place] request REFUSED (actor 0x{}): param.form (the destination) is 0.", Hex(a_actor));
             return false;
         }
         if (!std::isfinite(a_param->posX) || !std::isfinite(a_param->posY) || !std::isfinite(a_param->posZ)) {
+            if (a_dry) return dryRefuse(APMF_API::kServeRefusal_BadRequest, "param.pos is not a finite point");
             spdlog::warn("[place] request REFUSED (actor 0x{}): param.pos is not a finite point.", Hex(a_actor));
             return false;
         }
         const bool setYaw = (flags & APMF_API::kPlace_SetYaw) != 0;
         if (setYaw && !std::isfinite(a_param->fval)) {
+            if (a_dry) return dryRefuse(APMF_API::kServeRefusal_BadRequest, "kPlace_SetYaw with a non-finite param.fval");
             spdlog::warn("[place] request REFUSED (actor 0x{}): kPlace_SetYaw with a non-finite param.fval.",
                          Hex(a_actor));
             return false;
         }
 
+        if (a_dry) {   // every call-time check but the room check passed; the rest is the game thread's
+            a_dry->pending = APMF_API::kServePending_OneShot | APMF_API::kServePending_PlaceRoom;
+            return true;
+        }
         // NO FORM LOOKUP HERE: the caller's thread (the position cast's review R2-1 rule). Everything that
         // needs a form is decided in Run, on the game thread.
         const RE::NiPoint3 offset{ a_param->posX, a_param->posY, a_param->posZ };
