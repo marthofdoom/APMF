@@ -675,7 +675,11 @@ read. Adding a refusal site to any of the four without a `dry` branch is a defec
 | `kServeCall_RequestEx` | `actor`, `intent`, `basis`, `param` (nullptr = `Request`) | `EnqueueRequest`, or `place::Enqueue` for `kIntent_Place` (the diversion `RequestEx` makes) |
 | `kServeCall_RequestCast` | `actor`, `basis`, `cast` | `EnqueueCast` |
 
-A null query, a short `size` or an unknown `call` returns `kServe_Failed`. The pointed-to param / cast request is read
+A null query, a short `size` or an unknown `call` returns `kServe_Failed`.
+
+**A larger `APMF_ServeInfo`** (a later ABI's struct with fields past +128): APMF writes the 128 bytes it knows, leaves the
+tail untouched and echoes `size` back as passed, so `size` does not say how much was filled. Zero-initialise the whole
+struct, and read a tail field only when the running APMF's `abiVersion` is the one that added it. The pointed-to param / cast request is read
 synchronously and never retained.
 
 **The answer.** The return value is the `ServeVerdict`. With `out != nullptr` and `out->size >= kServeInfoV35Size`
@@ -687,7 +691,7 @@ synchronously and never retained.
 | `refusal` | which check refused (`ServeRefusal`, table below), `kServeRefusal_None` when accepted |
 | `why` | the refusal's reason, NUL-terminated, truncated to 95 characters, "" when accepted |
 | `pending` | accepted only: what the game thread still decides (`ServePending`, below) |
-| `facets` | `1u << ClientFacet` bits the intent is booked on (the same mask a filed claim gets) |
+| `facets` | `1u << ClientFacet` bits: the mask a filed claim of this intent would be booked under (`sources::FacetMaskForIntent`). An intent with no specific facet, INCLUDING one refused `kServeRefusal_NoChannel` (unknown or unserved), reports kCore: `facets` is never a sign the intent is served |
 | `offFacets` | those of `facets` on which the CALLER's priority is 0, read like `GetClientFacetPriority` (ABI v29) |
 
 **Priority 0 is not a refusal.** A claim filed while the client's priority on its facet is 0 (the Harbinger page or
@@ -698,13 +702,13 @@ whether that is worth displacing an incumbent for is the client's call.
 
 | code | sites |
 |---|---|
-| `kServeRefusal_NoDrain` | `NoDrainReason()` (unsupported runtime, 0xAD arbiter seat refused): `EnqueueRequest` ControlMap.cpp:159, `EnqueueCast` :712 |
-| `kServeRefusal_NoChannel` | no channel for the intent: :164, :716 |
-| `kServeRefusal_NotInstalled` | equip authority sink :177; ch.19 travel :194 and its marker support :219; ch.20 target pin :264 and `kTargetPin_OwnLineOfSight` with sight-line not armed :286; ch.21 combat entry :307; ch.12 idle v2 :348; pursuit leash not armed :378; ch.23 combat approach :409; ch.22 re-entry deny :422; `kCastFlag_OwnLineOfSight` with sight-line not armed on `RequestCast` :735; position cast PositionCast.cpp:549; placement Place.cpp:331 |
-| `kServeRefusal_BadRequest` | ch.19 param rules :219 / :225 / :242; ch.20 :293; ch.21 :326; ch.12 :348; leash :378; ch.23 :409; ch.22 :439; `kCastFlag_OwnLineOfSight` on `RequestEx` :487; position cast non-finite basis :512; `kCastFlag_AtPosition` on `RequestCast` :724; PositionCast.cpp:555 / :562 / :568; Place.cpp:337 / :344 / :350 (actor 0) / :358 / :363 / :369 |
+| `kServeRefusal_NoDrain` | `NoDrainReason()` (unsupported runtime, 0xAD arbiter seat refused): `EnqueueRequest` ControlMap.cpp:168, `EnqueueCast` :721 |
+| `kServeRefusal_NoChannel` | no channel for the intent: :173, :725 |
+| `kServeRefusal_NotInstalled` | equip authority sink :186; ch.19 travel :203 and its marker support :228; ch.20 target pin :273 and `kTargetPin_OwnLineOfSight` with sight-line not armed :295; ch.21 combat entry :316; ch.12 idle v2 :357; pursuit leash not armed :387; ch.23 combat approach :418; ch.22 re-entry deny :431; `kCastFlag_OwnLineOfSight` with sight-line not armed on `RequestCast` :744; position cast PositionCast.cpp:549; placement Place.cpp:331 |
+| `kServeRefusal_BadRequest` | ch.19 param rules :228 / :234 / :251; ch.20 :302; ch.21 :335; ch.12 :357; leash :387; ch.23 :418; ch.22 :448; `kCastFlag_OwnLineOfSight` on `RequestEx` :496; position cast non-finite basis :521; `kCastFlag_AtPosition` on `RequestCast` :733; PositionCast.cpp:555 / :562 / :568; Place.cpp:337 / :344 / :350 (actor 0) / :358 / :363 / :369 |
 | `kServeRefusal_Player` | the player on ch.20 / ch.21 / leash / ch.23 / ch.22 (the same sites, `whyCode`), Place.cpp:350 |
-| `kServeRefusal_FacetOwned` | a position cast whose actor's cast facet is owned by an outranking claim: :522 |
-| `kServeRefusal_IntentRule` | `castguard::RefuseReason` :449, `combatsubstrate::RefuseReason` :458, `attackselect::RefuseReason` :466, `equippref::RefuseReason` :475 (each may say "not installed": the rule set does not split it out) |
+| `kServeRefusal_FacetOwned` | a position cast whose actor's cast facet is owned by an outranking claim: :531 |
+| `kServeRefusal_IntentRule` | `castguard::RefuseReason` :458, `combatsubstrate::RefuseReason` :467, `attackselect::RefuseReason` :475, `equippref::RefuseReason` :484 (each may say "not installed": the rule set does not split it out) |
 
 A verdict is about the moment of the call. A service that arms or disarms (sight-line), a cast claim that comes or goes
 (the position cast's facet check) or a seat that arms later can change it before the real call. That is a race the
@@ -749,5 +753,9 @@ It cannot cover:
   empty package) still displaced the incumbent. For MFO's cast claims the collision is the one that matters; it is
   between MFO's own claims on the actor, so MFO can order them itself.
 - A refusal that the state changes between the dry run and the real call (above).
+- The shape the client finally files (review F4 on ed7b58b, not fixed here: REVIEW-BACKLOG APMF-B269). MFO's
+  `RequestCast` sets `kCastFlag_OwnLineOfSight` and, when that is refused, retries WITHOUT it (MFO Bridge.cpp:539 /
+  :552). A dry run of the first shape answers for the first call only. A client with a fallback shape must query the
+  shape it will finally file, or query both and take the fallback's answer when the first is refused.
 
 **Older APMF.** An APMF before v35 has no `CanServe`. The client files the request and reads the handle, as before.

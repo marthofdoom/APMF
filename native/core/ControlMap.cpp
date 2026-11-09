@@ -143,12 +143,21 @@ namespace apmf {
     // hand collision (kIntent_Cast, skipped for kCastFlag_DenyHandOnly) and the package read (kIntent_Cast
     // with kCastFlag_FromPackage, the deny-only branch first). `castFlags` = req.flags (RequestCast) or
     // param.ival (the degenerate RequestEx form), exactly as ApplyRequest reads them.
+    // The two kIntent_Cast drop predicates of ApplyRequest, SHARED with DrainPending below so the dry run's names
+    // cannot drift from the Drain's branches (review F1 on ed7b58b). `castFlags` as ApplyRequest reads them.
+    // A deny-only claim arms nothing, so it never collides and never reads a package (the deny-only branch first).
+    static inline bool CastDrainCollides(std::uint32_t castFlags) {
+        return (castFlags & APMF_API::kCastFlag_DenyHandOnly) == 0;
+    }
+    static inline bool CastDrainReadsPackage(std::uint32_t castFlags) {
+        return CastDrainCollides(castFlags) && (castFlags & APMF_API::kCastFlag_FromPackage) != 0;
+    }
     static std::uint32_t DrainPending(Intent intent, std::uint32_t castFlags) {
         std::uint32_t p = APMF_API::kServePending_ActorLoaded | APMF_API::kServePending_Arbitration |
                           APMF_API::kServePending_ChannelEngage;   // the channel's Engage (form lookups) is not run
-        if (intent == APMF_API::kIntent_Cast && (castFlags & APMF_API::kCastFlag_DenyHandOnly) == 0) {
-            p |= APMF_API::kServePending_CastHandCollision;
-            if (castFlags & APMF_API::kCastFlag_FromPackage) p |= APMF_API::kServePending_CastFromPackage;
+        if (intent == APMF_API::kIntent_Cast) {
+            if (CastDrainCollides(castFlags)) p |= APMF_API::kServePending_CastHandCollision;
+            if (CastDrainReadsPackage(castFlags)) p |= APMF_API::kServePending_CastFromPackage;
         }
         return p;
     }
@@ -868,13 +877,13 @@ namespace apmf {
 
     bool ControlMap::ApplyRequest(const PendingOp& op, MapType& map) {
         auto* channel = Registry::Get().ChannelForIntent(op.intent);
-        if (!channel) return false;   // (already checked at enqueue; defensive)
+        if (!channel) return false;   // (already checked at enqueue; defensive) DRAIN-DROP SITE: keep DrainPending in step
 
         auto* actor = RE::TESForm::LookupByID<RE::Actor>(op.actor);
         if (!actor) {
             spdlog::warn("[ctl] request h={} ignored -- actor 0x{} not found/loaded.",
                          op.handle, apmf::log::Hex(op.actor));
-            return false;
+            return false;   // DRAIN-DROP SITE: keep DrainPending in step (kServePending_ActorLoaded)
         }
 
         // ch.8b (kIntent_Cast): resolve the effective spell/target, extract a
@@ -941,12 +950,13 @@ namespace apmf {
                 spell      = 0;
                 castProxy  = 0;
                 castTarget = 0;
-            } else if (castFlags & APMF_API::kCastFlag_FromPackage) {
+            } else if (CastDrainReadsPackage(castFlags)) {   // == FromPackage here (denyHandOnly is false)
                 RE::FormID outSpell = 0, outTarget = 0;
                 if (!apmf::castcompose::ExtractFromPackage(op.param.form, outSpell, outTarget)) {
                     spdlog::warn("[ch.8b] cast-from-package: no spell input on 0x{} -- REFUSED "
                                  "(op dropped; package never run/offered/evaluated). The client "
                                  "should pass the spell directly.", apmf::log::Hex(op.param.form));
+                    // DRAIN-DROP SITE: keep DrainPending in step (kServePending_CastFromPackage)
                     return false;   // handle was never registered in m_index -> never dangling
                 }
                 spell = outSpell;
@@ -1003,7 +1013,7 @@ namespace apmf {
             // when it ends the floor is still standing underneath with no gap.
             {
                 const bool newIsDual = IsDualCastFlags(castFlags);
-                if (auto npcIt = map.find(op.actor); !denyHandOnly && npcIt != map.end()) {
+                if (auto npcIt = map.find(op.actor); CastDrainCollides(castFlags) && npcIt != map.end()) {
                     for (const auto& cc2 : npcIt->second.channels) {
                         if (cc2.channel != channel) continue;
                         float bestConflictBasis = 0.0f;
@@ -1022,6 +1032,7 @@ namespace apmf {
                                          "the loser is refused outright, never silently merged/replaced).",
                                          apmf::log::Hex(op.actor), newIsDual ? "dual" : "single-hand", op.handle,
                                          op.basis, newIsDual ? "single-hand" : "dual", bestConflictBasis);
+                            // DRAIN-DROP SITE: keep DrainPending in step (kServePending_CastHandCollision)
                             return false;   // handle was never registered in m_index -> never dangling
                         }
                         // The new claim wins the collision -- remember every conflicting

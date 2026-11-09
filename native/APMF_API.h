@@ -3094,13 +3094,18 @@ namespace APMF_API {
 
     // CanServe's output. EXACT LAYOUT (byte-shared): 128 bytes. The CALLER sets `size` = sizeof(APMF_ServeInfo);
     // APMF fills it when `size` >= kServeInfoV35Size (128, never changes) and writes nothing into a smaller
-    // struct (the verdict is still returned).
+    // struct (the verdict is still returned). A LARGER struct (a later ABI's, with fields past +128): APMF writes
+    // the first 128 bytes it knows and leaves the tail untouched, and `size` is echoed back as passed, so it does
+    // NOT say how much was filled. Such a caller zero-initialises the whole struct and reads a tail field only when
+    // the running APMF's abiVersion is the one that added it.
     struct APMF_ServeInfo {
         std::uint32_t size;          // +0   in: sizeof(APMF_ServeInfo) (128)
         std::uint32_t verdict;       // +4   ServeVerdict (also the return value)
         std::uint32_t refusal;       // +8   ServeRefusal (kServeRefusal_None unless kServe_Refused)
         std::uint32_t pending;       // +12  ServePending bits (kServe_Accepted only, else 0)
-        std::uint32_t facets;        // +16  (1u << ClientFacet) the facets Harbinger books this intent on
+        std::uint32_t facets;        // +16  (1u << ClientFacet) the mask a filed claim of this intent would be
+                                     //      booked under; kCore for an intent with no specific facet, including
+                                     //      one refused NoChannel (unknown / unserved), so it is no proof of service
         std::uint32_t offFacets;     // +20  those of `facets` on which the CALLER's priority is 0 (off)
         char          why[96];       // +24  the refusal's reason, NUL-terminated, truncated to fit ("" if none)
         std::uint32_t reserved[2];   // +120

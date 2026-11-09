@@ -330,13 +330,15 @@ winning claim with `TryGetOwningClaimBasis`. **D2:** `TryGetEquipSet` also copie
 **ABI v35 (CanServe, the claim dry run):** `EnqueueRequest` / `EnqueueCast` (and `place::Enqueue`, `poscast::Enqueue`)
 take a trailing `ServeCheck* dry = nullptr` (`ServeCheck` in `ControlMap.h:65`). Non-null = CHECK ONLY: every
 refusal site does `if (dry) return DryRefuse(dry, code, why);` (`ControlMap.cpp:136`) under its own condition BEFORE
-its log line, and an accepted check returns `kInvalidHandle` with `dry->pending = DrainPending(...)` (`:146`) BEFORE
+its log line, and an accepted check returns `kInvalidHandle` with `dry->pending = DrainPending(...)` (`:155`) BEFORE
 `m_nextHandle.fetch_add`, the queue push, a post or a once-flag `exchange`. **What breaks:** (1) a NEW refusal site in
 any of the four functions without its `if (dry)` line makes `CanServe` answer Accepted for a call that is refused (the
 sweep: every refusal `return` in those bodies has an `if (dry)` line before it); (2) a `dry` branch placed AFTER a
 side effect (a handle, a log, a once-flag) makes the dry run file or log; (3) `DrainPending` NAMES `ApplyRequest`'s
-drop sites (the actor lookup, the deny-only branch, the FromPackage read, the hand collision): a new drop site there
-needs a `ServePending` bit (append-only) and a line in `DrainPending`. Docs/APMF_API-REFERENCE.md#abi-v35-can-serve.
+drop sites (the actor lookup, the deny-only branch, the FromPackage read, the hand collision). The two cast
+predicates are SHARED helpers (`CastDrainCollides`, `CastDrainReadsPackage`, used by both), and each `ApplyRequest`
+`return false` is marked `DRAIN-DROP SITE`: a new drop site needs a `ServePending` bit (append-only), a line in
+`DrainPending` and the marker (APMF-B266). Docs/APMF_API-REFERENCE.md#abi-v35-can-serve.
 - **What breaks:** the RCU contract (#12) — the working map/`m_index` are mutated
   ONLY on the writer thread (Drain/ReleaseAll/Clear, all the same MAIN thread; API
   calls only enqueue) and published via `Publish()`
