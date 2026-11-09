@@ -1450,8 +1450,13 @@ thing that derails one. Concretely:
   power or bash entry is treated as unable, which only ever denies less; otherwise the engine's weights stand for
   that roll, logged). EVERY Normal deny, declared or the share floor's, additionally needs an undenied Power entry
   the engine would draw in the same roll (marth 2026-11-09: "a regular attack must fire when stamina isnt allowing
-  power"). The engine's own checks AFTER the draw (its chance roll on the picked weight, the angle test, the check at
-  AE 0x8A2EE0) can still fail the drawn attack: an honest residual, the engine's own failure path. Every deny is
+  power"). After each draw the engine runs its own chance roll on the picked weight (AE 0x8A2C39..0x8A2C5D), the
+  angle test (0x8A2CA1 -> 0x852C30) and a check (0x8A2CB4 -> 0x8A2EE0); a failure ERASES the pick and the engine
+  draws again among the rest (AE 0x8A2D53..0x8A2D97 `jne 0x8A2BD0`, 1.7.104 0x8B8203..0x8B8247 `jne 0x8B8080`, SE
+  0x80C572..0x80C5BC `jmp 0x80C363`); the roll fails only when every candidate fails, with probability prod(1 - p),
+  p = min(weight, 1) x the angle and check pass rates. A deny removes factors from that product, so a failed roll is
+  MORE likely while it holds and the attack rate can drop (the Warrior 40% floor leaving only Power entries is the
+  case to watch): an honest residual of a deny at this seat, stated, not corrected. Every deny is
   ranked against the Engine source on the CombatAction facet;
   (5) only actors holding a `kIntent_AttackSelection` claim with a declaration are governed; the player and every
   other actor run the engine's weight untouched and unlogged. The context reaches the thunk through a 17-byte stub in

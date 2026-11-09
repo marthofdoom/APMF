@@ -616,8 +616,13 @@ engine's weight is computed first; a candidate the claim denies answers 0. Nothi
    the heartbeat).
 5. The floor rule (marth 2026-11-09, "Allow 1 in circumstances it is required"): at least ONE drawable entry must
    stay undenied, else the engine's weights stand for the whole roll (`floorStood`, counted per roll, a warning
-   line). The engine's own post-draw checks (its chance roll on the picked weight, the angle test) can still fail
-   the attack, as they do without Harbinger.
+   line). After each draw the engine runs its own chance roll on the picked weight (AE 0x8A2C39..0x8A2C5D), the
+   angle test (0x8A2CA1 -> 0x852C30) and a check (0x8A2CB4 -> 0x8A2EE0). A failure erases the pick and the engine
+   draws again among the rest (AE 0x8A2D53..0x8A2D97 `jne 0x8A2BD0`, 1.7.104 0x8B8203..0x8B8247 `jne 0x8B8080`,
+   SE 0x80C572..0x80C5BC `jmp 0x80C363`); the roll fails only when every candidate fails, with probability
+   prod(1 - p), p = min(weight, 1) x the angle and check pass rates. A deny removes factors from that product, so a
+   failed roll is more likely and the attack rate can drop while the deny holds (e.g. a 40% power floor that leaves
+   only Power entries).
 6. Ranked: the claim must outrank the Engine source on CombatAction (`rankStood`).
 7. Observe-only (INI `[AttackSelect] bObserveOnly` or `kAtkMix_ObserveOnly`): counted (`wouldDeny`), not denied.
 8. Otherwise the weight is 0 (`zeroed`).

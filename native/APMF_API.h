@@ -2919,8 +2919,11 @@ namespace APMF_API {
     // roll with NO undenied entry the engine would draw (of the entries its hand / bash context gathered, the
     // ones passing the engine's own per-entry tests with a weight above 0) is NOT applied for that roll: the
     // engine's weights stand, and Harbinger logs it (rate-limited) and counts it (floorStood). The draw then
-    // always has a candidate. The engine's own checks AFTER the draw (a chance roll, the angle test) can still
-    // fail the attack, as they do without Harbinger. RANKING: a deny stands only while the
+    // always has a candidate. After each draw the engine runs its own chance roll on the picked weight, the
+    // angle test and a check; a failure erases the pick and the engine DRAWS AGAIN among the rest, and the roll
+    // fails only when every candidate has failed. A deny removes candidates from that chain, so a failed roll
+    // is MORE likely while a deny holds and the actor may attack less often (e.g. a power-share floor that
+    // leaves only Power entries). RANKING: a deny stands only while the
     // claim outranks the Engine source on the CombatAction facet (the Harbinger page / APMF_Sources.ini); a
     // tie or an Engine above the claim lets the engine's weight stand (rankStood).
     struct APMF_AttackMix {

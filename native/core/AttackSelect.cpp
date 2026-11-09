@@ -40,7 +40,8 @@ extern "C" __declspec(dllimport) unsigned long __stdcall GetPrivateProfileIntA(
 //         weight = W(actor, target, BGSAttackData*)     <-- THE SEAT: AE/1.7.104 +0x28D, SE +0x2AE
 //     and SKIP if weight <= 0, else push (entry, weight) and add it to the total;
 //   * with no candidate, fails (AE 0x8A2D9D / SE 0x80C642: the leaf fails); otherwise draws at weighted
-//     random, then the angle test, then CombatAnimation::Execute (+0x435). SCAR and Valhalla replace
+//     random, then the chance roll, angle test and check (a failure erases the pick and redraws, see
+//     rule 5 below), then CombatAnimation::Execute (+0x435). SCAR and Valhalla replace
 //     the Execute call site for annotated actors (S-D5, NOT this round: their pick bypasses this roll).
 // W (AE 0x8DCD30 id 50675 / SE 0x845B30 id 49748 / 1.7.104 0x8F2830, raw) is float(Actor*, Actor*,
 // BGSAttackData*): attackChance (+0x1C) times a combat-style multiplier that applies only while the
@@ -73,10 +74,16 @@ extern "C" __declspec(dllimport) unsigned long __stdcall GetPrivateProfileIntA(
 //      (declared or the share floor) is lifted for a roll in which no undenied Power entry would be drawn;
 //   5. THE FLOOR RULE (marth 2026-11-09, "Allow 1 in circumstances it is required"): at least ONE drawable
 //      entry must stay undenied, else the engine's weights stand for the whole roll (logged at warn,
-//      rate-limited). The draw then always has a candidate. After the draw the engine still runs its own
-//      chance roll on the picked weight (AE 0x8A2C39..0x8A2C5D), the angle test (call at 0x8A2CA1 ->
-//      0x852C30) and a check (call at 0x8A2CB4 -> 0x8A2EE0); any of them can fail the drawn entry and the
-//      leaf fails as engine leaves fail (retried next tick). An honest residual the seat cannot see;
+//      rate-limited). The draw then always has a candidate. After each draw the engine runs its own chance
+//      roll on the picked weight (AE 0x8A2C39..0x8A2C5D), the angle test (call at 0x8A2CA1 -> 0x852C30) and
+//      a check (call at 0x8A2CB4 -> 0x8A2EE0). A failure does NOT fail the roll: the engine erases the picked
+//      entry (its weight off the total, count - 1) and DRAWS AGAIN among the rest (AE 0x8A2D53..0x8A2D97
+//      `jne 0x8A2BD0`; 1.7.104 0x8B8203..0x8B8247 `jne 0x8B8080`; SE 0x80C572..0x80C5BC, `je 0x80C642` when
+//      empty, else `jmp 0x80C363`). The roll fails only when every candidate has failed: with p = min(weight,
+//      1) x the angle and check pass rates, a roll fails with probability prod(1 - p). A deny removes factors
+//      from that product, so a failed roll becomes MORE likely and the actor's attack rate can drop while a
+//      deny holds (the Warrior 40% floor, leaving only the Power entries, is the case to watch). An honest
+//      residual of the mechanism, not something the seat corrects;
 //   a class NOT governed, or not in the roll's active deny, keeps the engine's weight;
 //   6. RANKING: the claim must outrank the Engine source on the CombatAction facet (facetattr::Decide);
 //   7. observe-only ([AttackSelect] bObserveOnly or kAtkMix_ObserveOnly): counted, nothing denied;
