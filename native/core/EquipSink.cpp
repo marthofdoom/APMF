@@ -1245,7 +1245,10 @@ namespace apmf::equipsink {
         DeclaredVerdict v;
         for (std::uint32_t i = 0; i < a_set.count && i < APMF_API::kMaxEquipSet; ++i)
             if (a_item != 0 && a_set.forms[i] == a_item) { v.inSet = true; break; }
-        v.blacked  = (a_competes & a_set.denied) != 0;
+        // ABI v33: a form on the per-item deny list is blacked whatever categories it competes for.
+        for (std::uint32_t i = 0; i < a_set.denyCount && i < APMF_API::kMaxEquipDeny; ++i)
+            if (a_item != 0 && a_set.denyForms[i] == a_item) { v.itemDenied = true; break; }
+        v.blacked  = (a_competes & a_set.denied) != 0 || v.itemDenied;
         v.ownedCat = (a_competes & a_set.owned) != 0;
         // The ABI v9 verdict rules 2-6 (the sink's banner): denied -> refuse even if in-set; owned
         // with a declaration and off-set -> refuse; owned with no declaration yet (count 0) ->

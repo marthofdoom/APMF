@@ -83,6 +83,9 @@ namespace apmf::equippref {
     void        Forget(APMF_API::Handle h);   // a client Release (a no-op for a non-ch.26 handle)
     void        ResetAll(const char* why);    // revert / new game
     std::uint32_t GetState(RE::FormID actor, APMF_API::APMF_EquipPrefInfo* out);
+    // ABI v33: GetState for ONE entry (form + declared EquipSlot), from that item's own scoring record.
+    // Any thread (the state mutex), like GetState.
+    std::uint32_t GetItemState(RE::FormID actor, RE::FormID form, std::uint32_t slot, APMF_API::APMF_EquipPrefInfo* out);
 
     // ---- the score seats (core/AiCastSeats.cpp) -------------------------------------------
     struct ScoreOutcome {

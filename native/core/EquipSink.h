@@ -169,7 +169,8 @@ namespace apmf::equipsink {
     // `a_competes` is Categorize()'s mask for the item. Pure: reads `a_set` (a copy-out view)
     // and one relaxed atomic, any thread, no lookup. Ranking (whose equip outranks the claim)
     // is NOT in here: each seat ranks the refusal against the source it can see.
-    //   blacked  = competes & denied                              (rule 2: refused even if in-set)
+    //   blacked  = competes & denied, or the item is on the ABI v33 per-item deny list
+    //                                                              (rule 2: refused even if in-set)
     //   ownedCat = competes & owned
     //   refuse   = blacked || (ownedCat && count != 0 && !inSet)   (rule 5)
     //   observe  = the INI bEquipObserveOnly=1, or the claim's kEquipAuth_ObserveOnly bit:
@@ -183,6 +184,10 @@ namespace apmf::equipsink {
         // ABI v25: the item's form is declared, and ONLY by entries that name an instance, so
         // `inSet` came from the instance test (the 4-argument form below). Log field only.
         bool byInstance = false;
+        // ABI v33: the form is on the claim's PER-ITEM DENY list (SetEquipDenyItems). It sets `blacked`
+        // too: a denied item is refused, and unequipped when worn, exactly like an item in a denied
+        // category. Kept apart only so a log can say which deny it was.
+        bool itemDenied = false;
     };
     // The BASE-FORM verdict (v8 in-set test: any entry for the form). For callers that read only
     // `blacked` (the unequip of a denied category: blacked never depends on the instance) and for

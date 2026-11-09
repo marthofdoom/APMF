@@ -2321,6 +2321,9 @@ namespace apmf::actiongate {
         if ((a_out.competes & set.denied) != 0) {
             a_out.wouldDeny = true;
             a_out.verdict   = "WOULD-DENY (denied category)";
+        } else if (apmf::equipsink::DeclaredSetVerdict(set, itemId, a_out.competes).itemDenied) {   // ABI v33
+            a_out.wouldDeny = true;
+            a_out.verdict   = "WOULD-DENY (denied item)";
         } else if ((a_out.competes & set.owned) != 0) {
             if (set.count == 0) {
                 a_out.verdict = "pass (owned category, nothing declared yet)";

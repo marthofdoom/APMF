@@ -103,9 +103,30 @@ namespace apmf::equippref {
             std::uint64_t ms = 0; std::uint32_t state = 0; float result = 0.0f;
             std::uint32_t lastScored = 0;   // the state of the previous scoring, logged or not (F7)
         };
+        // ABI v33 (GetEquipPreferenceItemState): the same scoring, per ENTRY. One record per (actor, item),
+        // holding the newest scoring in each hand the scorer reads (R, L, and '?' for a slot that is neither).
+        // Keyed by (actor << 32 | form) exactly, so two actors never share a record. Same leaf mutex.
+        struct ItemHandState {
+            APMF_API::Handle owner  = APMF_API::kInvalidHandle;
+            std::uint32_t    state  = APMF_API::kEquipPrefState_None;
+            float            engine = 0.0f, rival = 0.0f, result = 0.0f;
+            std::uint64_t    lastMs = 0;   // 0 = never scored in this hand
+            std::uint32_t    lifts = 0, withheld = 0;
+        };
+        struct ItemState { ItemHandState hand[3]; };   // [0] R, [1] L, [2] '?'
+        std::size_t HandIndex(char a_hand) { return a_hand == 'R' ? 0 : a_hand == 'L' ? 1 : 2; }
+        std::uint32_t HandSlot(std::size_t a_index) {
+            return a_index == 0 ? APMF_API::kEquipSlot_Right : a_index == 1 ? APMF_API::kEquipSlot_Left
+                                                                            : APMF_API::kEquipSlot_Default;
+        }
+        std::uint64_t ItemKey(RE::FormID a_actor, RE::FormID a_form) {
+            return static_cast<std::uint64_t>(a_actor) << 32 | a_form;
+        }
+
         std::mutex                                       g_stMx;
         std::unordered_map<RE::FormID, ActorState>       g_state;
         std::unordered_map<std::uint64_t, LineState>     g_lines;
+        std::unordered_map<std::uint64_t, ItemState>     g_items;   // ABI v33, under g_stMx
 
         // ---- totals (relaxed; the heartbeat and the menu) ----
         std::atomic<std::uint64_t> g_lifts{ 0 }, g_castSteers{ 0 }, g_leading{ 0 }, g_zero{ 0 }, g_held{ 0 },
@@ -317,6 +338,22 @@ namespace apmf::equippref {
             if (a_state == APMF_API::kEquipPrefState_Lifted && st.lifts != UINT32_MAX) ++st.lifts;
             if (a_state == APMF_API::kEquipPrefState_Outranked && st.withheld != UINT32_MAX) ++st.withheld;
 
+            // ABI v33: the same scoring into THIS item's own record (the per-actor one above is overwritten
+            // by every item's scoring, MFO-B262).
+            {
+                const std::uint64_t ik = ItemKey(a_actor, a_form);
+                if (g_items.size() >= kStateCap && !g_items.contains(ik)) g_items.clear();
+                auto& ih  = g_items[ik].hand[HandIndex(a_hand)];
+                ih.owner  = a_owner;
+                ih.state  = a_state;
+                ih.engine = a_engine;
+                ih.rival  = a_rival;
+                ih.result = a_result;
+                ih.lastMs = now;
+                if (a_state == APMF_API::kEquipPrefState_Lifted && ih.lifts != UINT32_MAX) ++ih.lifts;
+                if (a_state == APMF_API::kEquipPrefState_Outranked && ih.withheld != UINT32_MAX) ++ih.withheld;
+            }
+
             if (g_lines.size() >= kStateCap) g_lines.clear();
             const std::uint64_t key = (static_cast<std::uint64_t>(a_actor) << 32 | a_form) ^
                                       (static_cast<std::uint64_t>(static_cast<unsigned char>(a_hand)) << 56);
@@ -446,6 +483,7 @@ namespace apmf::equippref {
             std::scoped_lock lk(g_stMx);
             g_state.clear();
             g_lines.clear();
+            g_items.clear();   // ABI v33
         }
         spdlog::info("[ch.26] reset ({}): declarations, tracked claims and per-actor state dropped.", a_why ? a_why : "?");
     }
@@ -602,6 +640,66 @@ namespace apmf::equippref {
             a_out->withheld       = have ? st.withheld : 0;
             a_out->forcedDenies   = have ? st.forcedDenies : 0;
             a_out->forceAnomalies = have ? st.forceAnomalies : 0;
+        }
+        return state;
+    }
+
+    std::uint32_t GetItemState(RE::FormID a_actor, RE::FormID a_form, std::uint32_t a_slot,
+                               APMF_API::APMF_EquipPrefInfo* a_out) {
+        APMF_API::APMF_Param p{};
+        float                basis = 0.0f;
+        APMF_API::Handle     h     = APMF_API::kInvalidHandle;
+        const bool winning = a_actor != 0 && apmf::ControlMap::Get().TryGetOwningClaimBasis(
+                                                 a_actor, APMF_API::kIntent_EquipPreference, p, basis, &h);
+        std::uint32_t count = 0;
+        if (winning) {
+            const auto map = Load();
+            if (const auto it = map->find(h); it != map->end()) count = it->second.count;
+        }
+        ActorState    st{};
+        bool          haveActor = false;
+        ItemHandState ih{};
+        std::size_t   hi       = 2;
+        bool          haveItem = false;
+        {
+            std::scoped_lock lk(g_stMx);
+            if (const auto it = g_state.find(a_actor); it != g_state.end()) { st = it->second; haveActor = true; }
+            if (const auto it = g_items.find(ItemKey(a_actor, a_form)); a_form != 0 && it != g_items.end()) {
+                // Right / Left: that hand's scorings only. Default (or a value outside EquipSlot): the newest
+                // scoring in any hand, the hands an either-hand entry covers (EntryCovers).
+                const auto pickHand = [&](std::size_t a_i) {
+                    const auto& c = it->second.hand[a_i];
+                    if (c.lastMs != 0 && (!haveItem || c.lastMs > ih.lastMs)) { ih = c; hi = a_i; haveItem = true; }
+                };
+                if (a_slot == APMF_API::kEquipSlot_Right)     pickHand(0);
+                else if (a_slot == APMF_API::kEquipSlot_Left) pickHand(1);
+                else                                          { pickHand(0); pickHand(1); pickHand(2); }
+            }
+        }
+        std::uint32_t state = APMF_API::kEquipPrefState_None;
+        if (!winning) state = haveActor ? APMF_API::kEquipPrefState_Released : APMF_API::kEquipPrefState_None;
+        else if (!haveItem || ih.owner != h) state = APMF_API::kEquipPrefState_Declared;   // not scored for this claim
+        else state = ih.state;
+
+        if (a_out && a_out->size >= APMF_API::kEquipPrefInfoV22Size) {
+            const auto now = apmf::clock::MonotonicMs();
+            a_out->state           = state;
+            a_out->actor           = a_actor;
+            a_out->ownerHandle     = winning ? h : 0;
+            a_out->flags           = winning ? static_cast<std::uint32_t>(p.ival) : 0;
+            a_out->entryCount      = count;
+            a_out->lastForm        = haveItem ? a_form : 0;
+            a_out->lastSlot        = haveItem ? HandSlot(hi) : APMF_API::kEquipSlot_Default;
+            a_out->lastEngineScore = haveItem ? ih.engine : 0.0f;
+            a_out->lastRivalScore  = haveItem ? ih.rival : 0.0f;
+            a_out->lastResultScore = haveItem ? ih.result : 0.0f;
+            a_out->msSinceScored   = haveItem ? static_cast<std::uint32_t>(std::min<std::uint64_t>(now - ih.lastMs,
+                                                                                                 0xFFFFFFFEull))
+                                              : 0xFFFFFFFFu;
+            a_out->lifts           = haveItem ? ih.lifts : 0;      // THIS item's
+            a_out->withheld        = haveItem ? ih.withheld : 0;   // THIS item's
+            a_out->forcedDenies    = haveActor ? st.forcedDenies : 0;     // the actor's (force is per actor)
+            a_out->forceAnomalies  = haveActor ? st.forceAnomalies : 0;   // the actor's
         }
         return state;
     }
