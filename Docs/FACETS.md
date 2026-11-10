@@ -125,6 +125,7 @@ struct Heartbeat {
 | [`kIntent_EquipPreference`](#ch26-equip-preference-kintent_equippreference) | 26 | Equip preference | Lift a preferred weapon's combat score so the AI picks it | 22 | Built, not yet tested in game |
 | [`kIntent_CombatSubstrate`](#combat-substrate-kintent_combatsubstrate) | 27 | Combat substrate | Combat as a substrate so an out-of-combat cast is animated | 23 | Field tested on LoreRim in 0.15.1 for out of combat casts, on by default |
 | [`kIntent_Place`](#place-kintent_place) | 28 | Place | Put an actor, loaded or not, beside a reference or at a point in an interior cell, once | 28 | Built, not yet tested in game |
+| [`kIntent_ProjectileAim`](#ch29-projectile-aim-kintent_projectileaim) | 29 | Projectile aim | A miss budget for the actor's own arrows and bolts: when his last 10 shots hold as many misses as allowed, the next launch is re-aimed at the engine's own unscattered solution | 36 | Built, not yet seen in game (first Deck run pending); refuses by name on 1.7.104 |
 | [Space queries](#space-queries-findemptyspace-and-findhostilesinspace) | | `FindEmptySpace`, `FindHostilesInSpace` | Ask for a spot or the hostiles in a sphere | 11 | Built |
 | [Line of sight](#line-of-sight-getlineofsight) | | `GetLineOfSight` | Harbinger's own ray | 18 | Used by MFO |
 | [Awareness](#awareness-senseactor) | | `SenseActor` | Does this actor sense that one | 18 | Used by MFO |
@@ -2531,6 +2532,63 @@ ABI 34 (0.18.0). `[AttackSelect] bAttackSelect=1`, `bObserveOnly=0`. Built on al
 2. Why can a client not ask for "more left-hand attacks"?
 3. Your floor is 0.4 and the actor is out of stamina. Which attack does it make?
 
+### ch.29 Projectile aim (`kIntent_ProjectileAim`)
+
+Built 2026-11-10 (card H5, branch `feat/projectile-aim`, Harbinger ABI v36). Not yet seen in game. 1.6.1170 and 1.5.97; on 1.7.104 the seat refuses by name (see "Version, INI and field status").
+
+#### What it is for
+
+"This archer misses at most three of his last ten shots." "This one never misses." The engine already aims an NPC's arrows and bolts well: its `CombatProjectileAimController` runs an iterative ballistic solve with LEAD (the target's position is predicted for the flight time, the low-arc launch angle is taken for the projectile's gravity and the launch speed). What makes an NPC miss is two deliberate scatters on top of that solution: the controller's random offset (`fCombatRangedAimVariance` x `fCombatAimProjectileRandomOffset`, redrawn at each solve) and the Archery skill cone that `TESObjectWEAP::Fire` adds to the launch angles (`fBowNPCSpreadAngle` x (1 - Archery/100), a random radius at a random angle). A client declares a MISS BUDGET over the actor's last 10 shots. Harbinger counts his launches and his hits and, when the window holds as many misses as the budget allows (shots still in flight counted as misses), re-aims his NEXT launch at the engine's own UNSCATTERED solution. The lead, the arc, the draw and release animation, the arrow, its speed and damage are the engine's. A shot the budget allows to miss is not touched.
+
+#### Arguments
+
+```cpp
+APMF_Param p{};
+p.ival = 3;                                            // at most 3 misses among the last 10 shots
+Handle h = g_apmf->RequestEx(actor, kIntent_ProjectileAim, kBasis, &p);
+```
+
+| Argument | Type | Range | Default | 0 or null means |
+|---|---|---|---|---|
+| `actor` | `RE::FormID`, a loaded NPC | any NPC but the player | required | refused as "actor not found" at the drain (ignored, no claim) |
+| `basis` | `float` | any finite value | your choice | a legal basis, ranks below any positive one |
+| `param.ival` | `std::int32_t` | 0..10 | 0 | 0 = every shot is corrected (he never misses by aim). 1..9 = at most that many misses in 10. 10 or more = observe only: count, correct nothing |
+| other fields | | not read | | |
+
+#### What Harbinger enforces
+
+One `write_call<5>` at `TESObjectWEAP::Fire`'s single call to `Projectile::Launch` (AE 18102 +0xE60 / SE 17693 +0xE82 / 1.7.104 raw 0x28C450 +0xE70; `core/ProjectileAim.cpp`). Fire has by then built the `LaunchData` on its stack: origin, shooter, the shooter's `CombatController`, the weapon, the projectile form, and the two launch angles (the direction to the aim controller's scattered point, plus the skill cone). For a non-player shooter whose WINNING ch.29 claim's budget says the shot must land, Harbinger finds the weapon's aim controller in the combat controller (as Fire's own getter does, with a per-call vtable identity check), takes its RAW LEAD POINT (the engine's predicted target position with no random offset), the controller's launch speed and the projectile's gravity x the engine's gravity scale, computes the engine's own low-arc angle (the same formula the solve runs, pi/4 when out of range) and writes the two angles back into the `LaunchData`. Then the engine's `Launch` runs. Both scatters are gone from that shot and nothing else about it changed. Every other shot, shooter and caller is untouched.
+
+After the launch the shot is recorded (projectile handle, the target: the controller's aim-override handle, else the combat controller's target, the projectile form). A `TESHitEvent` with cause = the shooter, source = the shot's weapon and projectile = the shot's projectile form (a bash is skipped, a second event on the same target within 50 ms is the same hit) resolves the oldest matching shot: a HIT when the hit actor is the shot's target, a hit on another actor otherwise (a miss for the budget). A shot with no such hit inside `[ProjectileAim] iShotWindowMs` (default 4000) of UNPAUSED GAME TIME (the engine's own frame delta, summed while no menu pauses the game) is a MISS. If the ammo changed since the controller was built (its +0x48 projectile is not the one launching), the shot is left uncorrected and logged. The window is the actor's last 10 resolved shots. The verdict for a launch is `misses + shots in flight >= budget`.
+
+A correction is ranked against the Engine source on the `[CombatAction]` facet (`APMF_Sources.ini`); an Engine above the claim lets the engine's launch stand (`rankStood`). A corrected shot that cannot be computed (no aim controller for the weapon, launch speed not set yet, target under 16 units) is left as the engine launched it and counted (`uncorrectable`, logged at most once per 5 s per actor).
+
+#### Lifetime
+
+A standing claim: no TTL, ended by `Release`, by the actor unloading, or by an outranking ch.29 claim. The window and counters are per actor and survive the claim (a fact about the actor); they are dropped at kPreLoadGame and revert.
+
+#### Priority and conflicts
+
+Several clients on one actor: the usual basis order, one owner. The only competing source is the engine's own scatter, reduced to zero for a corrected shot and left whole for every other. ch.8b's aim-target override (`CombatAimController+0x30`) is honoured: it is the target the shot is matched against. The player is refused.
+
+#### Refusals
+
+`kInvalidHandle`, logged `[ch.29] claim refused`: the player, or the seat not installed (`[ProjectileAim] bProjectileAim=0`, VR, a runtime other than 1.6.1170 / 1.5.97 / 1.7.104, a refused address row, a byte check that failed, which on 1.7.104 is today's state).
+
+#### Reading it
+
+```cpp
+APMF_ProjectileAimInfo info{}; info.size = sizeof(info);
+auto st = g_apmf->GetProjectileAimState(actor, &info);   // ABI v36
+// st: None / Claimed / Governed (a shot was seen) / Unavailable (seat not installed)
+// info: budget, shots, corrected, hits, hitsOther, misses, pending, windowFill, windowMisses, uncorrectable, wouldCorrect, rankStood
+```
+
+#### Version, INI and field status
+
+ABI v36, Harbinger 0.19.0. INI `[ProjectileAim]`: `bProjectileAim` (default 1), `bObserveOnly` (default 0: count what WOULD be corrected, correct nothing), `iShotWindowMs` (default 4000), `bProbe` (default 0: one `[ch.29]` line per launch with the engine's angles, the corrected angles, the controller's scattered point, its random offset, the lead point, speed, gravity and the ballistic angle; one per hit; one per miss with where the arrow came to rest and how far from the target). Rows `ProjectileAim.WeaponFire`, `ProjectileAim.ProjectileLaunch`, `ProjectileAim.Site.Launch`, `ProjectileAim.AimSolve` (a ripref proving `ProjectileAim.GravityScale`) and `ProjectileAim.CombatProjectileAimController` (vtable) verify on 1.6.1170 and 1.5.97. On 1.7.104 only Launch and the vtable verify: `TESObjectWEAP::Fire` (id 18102), the solve (44396) and the gravity scale (405286) are not in the published MIT table and the generator admits a raw RVA only for a function, not for a data global, so the seat REFUSES BY NAME there (the self-check lists the four rows). Their 1.7.104 addresses are known and instruction-identical to 1.6.1170 (Fire 0x28C450, solve 0x80C980, scale 0x3254BC0): a generator row kind for a raw data global is the gap (REVIEW-BACKLOG).
+
+Holes, stated: a target that changes direction after the launch (the lead is the engine's prediction at the last solve), an obstruction in the line of fire, a shot whose arrow strikes another actor first. Each is a MISS the window sees and the next shot pays for. The probe is how the first Deck run proves the path runs (principle 5): expect `[ch.29] ... SHOT #n CORRECTED ... delta (dz, dx) deg` lines followed by `HIT (corrected)` within the window.
 ### ch.20 Target pin (`kIntent_TargetPin`)
 
 *Each combat update the engine asks its target selectors whom to fight. While the pin stands, Harbinger answers with your target, among the targets the engine already has. The engine fights it with its own AI.*
@@ -3681,6 +3739,7 @@ The ABI is append-only. A client built against an older ABI keeps working agains
 | 33 | 0.17.0 | `SetEquipDenyItems`, `kMaxEquipDeny`, `GetEquipPreferenceItemState` (struct `APMF_API_v33`) |
 | 34 | 0.18.0 | `kIntent_AttackSelection`, `AttackClass`, `AttackMixFlags`, `APMF_AttackMix`, `AttackMixState`, `APMF_AttackMixInfo`, `SetAttackMix`, `GetAttackMixState` (struct `APMF_API_v34`) |
 | 35 | 0.18.0 | `CanServe`, `APMF_ServeQuery`, `APMF_ServeInfo`, `ServeVerdict`, `ServeRefusal`, `ServePending`, `ServeCall` (struct `APMF_API_v35`) |
+| 36 | 0.19.0 | `kIntent_ProjectileAim`, `ProjectileAimState`, `APMF_ProjectileAimInfo`, `GetProjectileAimState` (struct `APMF_API_v36`) |
 
 The last release is 0.16.0, ABI 32, interface struct `APMF_API_v31` (ABI 32 added a flag and no slot). In 0.15.1 the interface struct was `APMF_API_v29`, since ABI 30 added a flag and no slot. Before that `APMF_API_v19` served ABI 19 to 21, and ABI 23 and 25 also added no slot.
 

@@ -4860,6 +4860,106 @@
    },
    "source": "native/core/AttackSelect.cpp (ch.18 attack selection, ABI v34: write_call<5> at StartAttack's weight call through a context-forwarding stub; #17a amendment 2026-11-09)",
    "doc": "AE 0x8A2B3D / SE 0x80C2CE / 1.7.104 0x8B7FED (proven by the code's byte checks against the two raw function rows: the 1.7.104 table cannot hold a callsite row for an id it lacks)"
+  },
+  {
+   "seat": "ProjectileAim.WeaponFire",
+   "kind": "function",
+   "construct": "TESObjectWEAP::Fire(weapon, shooter, ammo, enchant, poison): the AI aim-point override (CombatProjectileAimController +0x18 -> direction -> angles), the fBowNPCSpreadAngle x (1 - Archery/100) cone for a non-player bow / crossbow, the stack LaunchData, then Projectile::Launch",
+   "ids": {
+    "1.6.1170": 18102,
+    "1.5.97": 17693
+   },
+   "sig": {
+    "1.6.1170": "48 85 D2 0F 84 ?? ?? ?? ?? 48 8B C4 4C 89 48 20 4C 89 40 18 48 89 50 10 48 89 48 08",
+    "1.5.97": "48 85 D2 0F 84 ?? ?? ?? ?? 48 8B C4 4C 89 48 20 48 89 50 10"
+   },
+   "source": "native/core/ProjectileAim.cpp (ch.29 projectile aim, ABI v36, card H5: write_call<5> at TESObjectWEAP::Fire's one Projectile::Launch call; 2026-11-10)",
+   "doc": "agentlogs/fable-h5-aim.md (2026-11-10): Fire AE 0x286C90 / SE 0x235240 / 1.7.104 0x28C450 (AE and 1.7.104 instruction-identical up to stack-slot renames, 1230 of 1231 insns); the ONLY E8 to Launch inside Fire on every build (AE +0xE60, SE +0xE82, 1.7.104 +0xE70), preceded by `lea rdx,[LaunchData]; lea rcx,[&handle]`"
+  },
+  {
+   "seat": "ProjectileAim.ProjectileLaunch",
+   "kind": "function",
+   "construct": "Projectile::Launch(ProjectileHandle* out, LaunchData* data): the verified call target the site must still reach (RELOCATION_ID(42928, 44108), CommonLib Projectile.cpp:258)",
+   "ids": {
+    "1.6.1170": 44108,
+    "1.5.97": 42928
+   },
+   "sig": {
+    "1.6.1170": "48 89 4C 24 08 55 53 56 57 41 54 41 55 41 56 41 57 48 8B EC 48 83 EC 68 48 C7 45 D8 FE FF FF FF 0F 29 74 24 50",
+    "1.5.97": "48 89 4C 24 08 55 53 56 57 41 54 41 55 41 56 41 57 48 8B EC 48 83 EC 68 48 C7 45 D8 FE FF FF FF"
+   },
+   "source": "native/core/ProjectileAim.cpp (ch.29 projectile aim, ABI v36, card H5: write_call<5> at TESObjectWEAP::Fire's one Projectile::Launch call; 2026-11-10)",
+   "doc": "agentlogs/fable-h5-aim.md (2026-11-10): Fire AE 0x286C90 / SE 0x235240 / 1.7.104 0x28C450 (AE and 1.7.104 instruction-identical up to stack-slot renames, 1230 of 1231 insns); the ONLY E8 to Launch inside Fire on every build (AE +0xE60, SE +0xE82, 1.7.104 +0xE70), preceded by `lea rdx,[LaunchData]; lea rcx,[&handle]`; 1.7.104 0x7F9300 is the fork idmap row for id 44108"
+  },
+  {
+   "seat": "ProjectileAim.Site.Launch",
+   "kind": "callsite",
+   "construct": "Fire -> call Projectile::Launch(&handle, &launchData) (AE +0xE60, SE +0xE82, 1.7.104 +0xE70); the ONLY call to Launch inside Fire (Launch has five E8 callers per build)",
+   "ids": {
+    "1.6.1170": 18102,
+    "1.5.97": 17693
+   },
+   "sig": {
+    "1.6.1170": "48 85 D2 0F 84 ?? ?? ?? ?? 48 8B C4 4C 89 48 20 4C 89 40 18 48 89 50 10 48 89 48 08",
+    "1.5.97": "48 85 D2 0F 84 ?? ?? ?? ?? 48 8B C4 4C 89 48 20 48 89 50 10"
+   },
+   "offset": {
+    "1.6.1170": "0xE60",
+    "1.5.97": "0xE82",
+    "1.7.104": "0xE70"
+   },
+   "bytes": "E8",
+   "target": {
+    "1.6.1170": 44108,
+    "1.5.97": 42928
+   },
+   "source": "native/core/ProjectileAim.cpp (ch.29 projectile aim, ABI v36, card H5: write_call<5> at TESObjectWEAP::Fire's one Projectile::Launch call; 2026-11-10)",
+   "doc": "AE 0x287AF0 / SE 0x2360C2 / 1.7.104 0x28D2C0; the code re-reads the eight bytes before the E8 (`48 8D 55 30 48 8D 4D 88` AE / 1.7.104, `48 8D 55 60 48 8D 4D C0` SE) and the E8 target before the write"
+  },
+  {
+   "seat": "ProjectileAim.AimSolve",
+   "kind": "ripref",
+   "construct": "CombatProjectileAimController solve (vtable slot 0x02 thunk -> body; iCombatAimMaxIterations, fCombatAimDeltaThreshold, fCombatAimProjectileRandomOffset): its `mulss xmm10, [rip+disp]` reads the engine GRAVITY SCALE the ballistic angle uses (proj.gravity x scale); the correction multiplies by the same global",
+   "ids": {
+    "1.6.1170": 44396,
+    "1.5.97": 43174
+   },
+   "sig": {
+    "1.6.1170": "48 8B C4 48 89 50 10 55 56 57 41 54 41 55 41 56 41 57 48 8D 68 88",
+    "1.5.97": "48 8B C4 48 89 50 10 55 56 57 41 54 41 55 41 56 41 57 48 8D A8 28 FF FF FF"
+   },
+   "offset": {
+    "1.6.1170": "0x2A6",
+    "1.5.97": "0x2E5",
+    "1.7.104": "0x2A6"
+   },
+   "bytes": {
+    "1.6.1170": "F3 44 0F 59 15 F1 39 9B 02 EB 04",
+    "1.5.97": "F3 44 0F 59 15 32 D4 7E 02 EB 04"
+   },
+   "global": {
+    "1.6.1170": 405286,
+    "1.5.97": 518746
+   },
+   "global_seat": "ProjectileAim.GravityScale",
+   "source": "native/core/ProjectileAim.cpp (ch.29 projectile aim, ABI v36, card H5: write_call<5> at TESObjectWEAP::Fire's one Projectile::Launch call; 2026-11-10)",
+   "doc": "AE 0x7F7EE6 -> 0x31AB8E0 (id 405286), SE 0x75DA95 -> 0x2F4AED0 (id 518746), 1.7.104 0x80CC26 -> 0x3254BC0; the global is written once by an init (AE 0x851161) and read by the solve and the ballistic helper family (AE 0x8527C6, 0x852926, 0x852AD1, 0x853450); .data 0.0 in the static image"
+  },
+  {
+   "seat": "ProjectileAim.CombatProjectileAimController",
+   "kind": "vtable",
+   "construct": "the per-weapon aim controller in CombatController+0x50 (count +0x60): the per-call vtable identity check before +0x50 (speed) and +0x74 (raw lead point) are read",
+   "rtti": ".?AVCombatProjectileAimController@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 210081,
+    "1.5.97": 264187
+   },
+   "slots": [
+    "0x02"
+   ],
+   "source": "native/core/ProjectileAim.cpp (ch.29 projectile aim, ABI v36, card H5: write_call<5> at TESObjectWEAP::Fire's one Projectile::Launch call; 2026-11-10)",
+   "doc": "AE 0x18C59A8 / SE 0x167E2A8 / 1.7.104 0x1943F48 (RTTI); slot 0x02 = the solve thunk (AE 0x7F7C30 id 44395 -> 0x7F8E30 -> 0x7F7C40; SE 0x75D7A0 id 43173)"
   }
  ],
  "layout_facts": [

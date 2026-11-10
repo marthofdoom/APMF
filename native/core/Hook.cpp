@@ -68,7 +68,7 @@ namespace apmf::hook {
                 // NPCs, then PUBLISH a new RCU snapshot iff something changed. The
                 // per-NPC hot path (any thread) then reads that snapshot lock-free
                 // (INVARIANTS #12/#13 -- RCU model, core/ControlMap.h).
-                apmf::Arbiter::Get().OncePerFrame();
+                apmf::Arbiter::Get().OncePerFrame(a_delta);   // the engine's own world-time frame step (Arbiter.h)
                 static bool s_first = true;
                 if (s_first) { s_first = false; spdlog::info("[hook] player Update seat live (0xAD firing; per-frame drain armed)"); }
 

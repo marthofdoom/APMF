@@ -151,6 +151,16 @@ ABI v34. "Fight with more power attacks", "rarely bash". A mod names attack clas
 - **`bAttackSelect`** (default `1`). 0 = the seat is not installed and kIntent_AttackSelection claims are REFUSED (the mod keeps its own behaviour; logged once with the reason).
 - **`bObserveOnly`** (default `0`). 1 = count and log what would be denied, deny nothing.
 
+### [ProjectileAim]
+
+Facet reference: [ch.29 Projectile aim](FACETS.md#ch29-projectile-aim-kintent_projectileaim).
+
+ABI v36. "This archer misses at most three of his last ten shots." A mod names an actor and a miss budget. The game already aims an NPC's arrows with lead and arc; what makes him miss is two deliberate scatters (the aim controller's random offset and the Archery skill cone). When the actor's last 10 shots hold as many misses as the budget allows, Harbinger re-aims his next launch at the game's own unscattered solution, so it lands. The draw and release animation, the arrow, its speed, arc and damage are the game's own. A shot the budget allows to miss is left exactly as the game launched it.
+
+- **`bProjectileAim`** (default `1`). 0 = the seat is not installed and kIntent_ProjectileAim claims are REFUSED (the mod keeps its own behaviour; logged once with the reason).
+- **`bObserveOnly`** (default `0`). 1 = count and log what would be corrected, correct nothing.
+- **`iShotWindowMs`** (default `4000`, clamped 500..30000). A shot with no hit on its target within this many milliseconds is a miss.
+- **`bProbe`** (default `0`). 1 = one `[ch.29]` line per launch, per hit and per miss (angles before and after, aim points, speed, gravity, the ballistic angle, where a missed arrow came to rest). Passive, log only.
 ### [PursuitLeash]
 
 Facet reference: [ch.23 Pursuit leash](FACETS.md#ch23-pursuit-leash-kintent_pursuitleash).
