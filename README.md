@@ -213,6 +213,11 @@ Every key is in [Docs/INI-REFERENCE.md](Docs/INI-REFERENCE.md). These are the on
 
 The facet priorities (`EquipWeapon`, `EquipArmor` and the rest) live in `APMF_Sources.ini`, written by the Harbinger page. A priority of 0 turns that mod off for that facet.
 
+## What is in v0.18.0
+
+- **A mod can steer which attacks a follower starts (ch.18, ABI v34).** `SetAttackMix` names attack classes to deny, plus an optional power attack share ceiling and floor over a window. The game's own AI still picks among what is left, and the actor always keeps an attack it can make. Setting: `[AttackSelect]` `bAttackSelect` and `bObserveOnly`. Built and review tested, not yet field run.
+- **A mod can ask whether a claim would be refused (ABI v35, `CanServe`).** It runs the real refusal checks and files nothing. A client checks `abiVersion >= 35` first.
+
 ## What is in v0.17.0
 
 - **A mod can refuse single items on an equip claim (ABI v33).** `SetEquipDenyItems` names up to 16 base items that are treated like an item in a denied category.
@@ -297,7 +302,7 @@ The facet priorities (`EquipWeapon`, `EquipArmor` and the rest) live in `APMF_So
 
 ## Status
 
-Phase 1 built, now at v0.17.0, ABI v33 (see [Docs/STATUS.md](Docs/STATUS.md)). The central
+Phase 1 built, now at v0.18.0, ABI v35 (see [Docs/STATUS.md](Docs/STATUS.md)). The central
 `Actor::Update` (0xAD) hook drives a multi-NPC control map (keyed by FormID,
 scales to hundreds, an uncontrolled NPC pays one hash-miss), a real
 inter-plugin C-ABI client API (`native/APMF_API.h`), and the full documented

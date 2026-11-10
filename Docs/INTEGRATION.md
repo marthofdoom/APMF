@@ -253,6 +253,8 @@ A client built against an older header keeps working. Each item below needs its 
 | 31 | 0.15.2 | `GetClaimEndReason(handle)` says why Harbinger ended a ch.20 pin or ch.21 entry claim | `abiVersion >= 31` |
 | 32 | 0.16.0 | the `kCastGuard_Bystanders` bit on a ch.25 cast guard claim. No new slot | `abiVersion >= 32` |
 | 33 | 0.17.0 | `SetEquipDenyItems(handle, forms, count)` on a ch.17 claim, and `GetEquipPreferenceItemState(actor, form, slot, &info)` for one ch.26 entry | `abiVersion >= 33` |
+| 34 | 0.18.0 | `kIntent_AttackSelection` (ch.18), `SetAttackMix(handle, mix)` and `GetAttackMixState(actor, &info)` | `abiVersion >= 34` |
+| 35 | 0.18.0 | `CanServe(query, &info)`, a dry run that says whether a `RequestEx`, `Request` or `RequestCast` would be refused now and files nothing | `abiVersion >= 35` |
 
 ### Place (ABI 28)
 
