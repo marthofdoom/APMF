@@ -19,7 +19,7 @@
 
 namespace apmf::VerifiedAddresses
 {
-	// 1.6.1170.0: 274 rows
+	// 1.6.1170.0: 291 rows
 	inline constexpr REL::SelfCheck::Row kRows_1_6_1170[] = {
 		{ 207886, 0x18A5558, 0x0, 0, {  }, "Character" },
 		{ 207896, 0x18A5FE8, 0x0, 0, {  }, "Character.ActorValueOwner" },
@@ -295,9 +295,26 @@ namespace apmf::VerifiedAddresses
 		{ 44396, 0x7F7C40, 0x2A6, 11, { 0xF3, 0x44, 0x0F, 0x59, 0x15, 0xF1, 0x39, 0x9B, 0x02, 0xEB, 0x04 }, "ProjectileAim.AimSolve" },
 		{ 405286, 0x31AB8E0, 0x0, 0, {  }, "ProjectileAim.GravityScale" },
 		{ 210081, 0x18C59A8, 0x0, 0, {  }, "ProjectileAim.CombatProjectileAimController" },
+		{ 211028, 0x18CBCA0, 0x0, 0, {  }, "CombatInventoryItemMagicT.PotionScript" },
+		{ 211068, 0x18CC1A0, 0x0, 0, {  }, "CombatInventoryItemMagicT.PotionParalyze" },
+		{ 211116, 0x18CC7D0, 0x0, 0, {  }, "CombatInventoryItemMagicT.PotionReanimate" },
+		{ 211168, 0x18CCF68, 0x0, 0, {  }, "CombatInventoryItemMagicT.PotionTargetEffect" },
+		{ 211224, 0x18CD700, 0x0, 0, {  }, "CombatInventoryItemMagicT.PotionArmor" },
+		{ 211364, 0x18CE7F0, 0x0, 0, {  }, "CombatInventoryItemMagicT.PotionLight" },
+		{ 211410, 0x18CED50, 0x0, 0, {  }, "CombatInventoryItemMagicT.PotionCloak" },
+		{ 211452, 0x18CF270, 0x0, 0, {  }, "CombatInventoryItemMagicT.PotionDisarm" },
+		{ 211500, 0x18CF7F0, 0x0, 0, {  }, "CombatInventoryItemMagicT.PotionStagger" },
+		{ 211544, 0x18CFD10, 0x0, 0, {  }, "CombatInventoryItemMagicT.PotionSummon" },
+		{ 211590, 0x18D0250, 0x0, 0, {  }, "CombatInventoryItemMagicT.PotionRestore" },
+		{ 211632, 0x18D0790, 0x0, 0, {  }, "CombatInventoryItemMagicT.PotionWard" },
+		{ 211678, 0x18D0CD0, 0x0, 0, {  }, "CombatInventoryItemMagicT.PotionOffensive" },
+		{ 38746, 0x6C2DD0, 0x0, 0, {  }, "PotionAllowance.DrinkPotion" },
+		{ 49928, 0x8C3110, 0xE6, 6, { 0xFF, 0x90, 0x78, 0x08, 0x00, 0x00 }, "PotionAllowance.Site.Leaf" },
+		{ 38001, 0x69F9C0, 0x7B7, 6, { 0xFF, 0x90, 0x78, 0x08, 0x00, 0x00 }, "PotionAllowance.Site.EquipApply" },
+		{ 38929, 0x6CBE30, 0x289, 1, { 0xE8 }, "PotionAllowance.Site.WorkerApply" },
 	};
 
-	// 1.5.97.0: 274 rows
+	// 1.5.97.0: 291 rows
 	inline constexpr REL::SelfCheck::Row kRows_1_5_97[] = {
 		{ 261397, 0x165DA40, 0x0, 0, {  }, "Character" },
 		{ 261402, 0x165E4D0, 0x0, 0, {  }, "Character.ActorValueOwner.SE" },
@@ -573,10 +590,27 @@ namespace apmf::VerifiedAddresses
 		{ 43174, 0x75D7B0, 0x2E5, 11, { 0xF3, 0x44, 0x0F, 0x59, 0x15, 0x32, 0xD4, 0x7E, 0x02, 0xEB, 0x04 }, "ProjectileAim.AimSolve" },
 		{ 518746, 0x2F4AED0, 0x0, 0, {  }, "ProjectileAim.GravityScale" },
 		{ 264187, 0x167E2A8, 0x0, 0, {  }, "ProjectileAim.CombatProjectileAimController" },
+		{ 265312, 0x168AF68, 0x0, 0, {  }, "CombatInventoryItemMagicT.PotionScript" },
+		{ 265317, 0x168B328, 0x0, 0, {  }, "CombatInventoryItemMagicT.PotionParalyze" },
+		{ 265322, 0x168B6E8, 0x0, 0, {  }, "CombatInventoryItemMagicT.PotionReanimate" },
+		{ 265327, 0x168BAA8, 0x0, 0, {  }, "CombatInventoryItemMagicT.PotionTargetEffect" },
+		{ 265332, 0x168BE68, 0x0, 0, {  }, "CombatInventoryItemMagicT.PotionArmor" },
+		{ 265347, 0x168C9A8, 0x0, 0, {  }, "CombatInventoryItemMagicT.PotionLight" },
+		{ 265352, 0x168CD68, 0x0, 0, {  }, "CombatInventoryItemMagicT.PotionCloak" },
+		{ 265357, 0x168D128, 0x0, 0, {  }, "CombatInventoryItemMagicT.PotionDisarm" },
+		{ 265362, 0x168D4E8, 0x0, 0, {  }, "CombatInventoryItemMagicT.PotionStagger" },
+		{ 265367, 0x168D8A8, 0x0, 0, {  }, "CombatInventoryItemMagicT.PotionSummon" },
+		{ 265372, 0x168DC68, 0x0, 0, {  }, "CombatInventoryItemMagicT.PotionRestore" },
+		{ 265377, 0x168E028, 0x0, 0, {  }, "CombatInventoryItemMagicT.PotionWard" },
+		{ 265382, 0x168E3E8, 0x0, 0, {  }, "CombatInventoryItemMagicT.PotionOffensive" },
+		{ 37797, 0x630E80, 0x0, 0, {  }, "PotionAllowance.DrinkPotion" },
+		{ 48984, 0x82B6D0, 0xBE, 6, { 0xFF, 0x90, 0x78, 0x08, 0x00, 0x00 }, "PotionAllowance.Site.Leaf" },
+		{ 36976, 0x60B9E0, 0x82F, 6, { 0xFF, 0x90, 0x78, 0x08, 0x00, 0x00 }, "PotionAllowance.Site.EquipApply" },
+		{ 37963, 0x6394B0, 0x4D, 1, { 0xE8 }, "PotionAllowance.Site.WorkerApply" },
 	};
 
-	// 1.7.104.0: 275 rows
-	// 63 NOT VERIFIED on 1.7.104.0, deliberately absent from this table (the seat is refused):
+	// 1.7.104.0: 288 rows
+	// 67 NOT VERIFIED on 1.7.104.0, deliberately absent from this table (the seat is refused):
 	//   Character.ActorValueOwner.SE (1.6.1170 id -): no 1.6.1170 (AE) id: the 1.7.104 map is keyed by AE id (1.5.97-only seat)
 	//   ActionGate.Hold.ParallelDataPush (1.6.1170 id 47532): id 47532 is not in the idmap
 	//   TargetPin.CombatController.SetTarget (1.6.1170 id 33235): id 33235 is not in the idmap
@@ -640,6 +674,10 @@ namespace apmf::VerifiedAddresses
 	//   ProjectileAim.Site.Launch (1.6.1170 id 18102): id 18102 is not in the idmap
 	//   ProjectileAim.AimSolve (1.6.1170 id 44396): id 44396 is not in the idmap
 	//   ProjectileAim.GravityScale (1.6.1170 id 405286): proven through ProjectileAim.AimSolve, which did not verify: id 44396 is not in the idmap
+	//   PotionAllowance.DrinkPotion (1.6.1170 id 38746): id 38746 is not in the idmap
+	//   PotionAllowance.Site.Leaf (1.6.1170 id 49928): id 49928 is not in the idmap
+	//   PotionAllowance.Site.EquipApply (1.6.1170 id 38001): id 38001 is not in the idmap
+	//   PotionAllowance.Site.WorkerApply (1.6.1170 id 38929): call target id 38001 has no idmap RVA
 	inline constexpr REL::SelfCheck::Row kRows_1_7_104[] = {
 		{ 207886, 0x1923258, 0x0, 0, {  }, "Character" },
 		{ 207896, 0x1923CE8, 0x0, 0, {  }, "Character.ActorValueOwner" },
@@ -881,6 +919,19 @@ namespace apmf::VerifiedAddresses
 		{ 104651, 0x14A9C10, 0x0, 0, {  }, "PapyrusCaller.NativeFunctionBase.Call" },
 		{ 44108, 0x7F9300, 0x0, 0, {  }, "ProjectileAim.ProjectileLaunch" },
 		{ 210081, 0x1943F48, 0x0, 0, {  }, "ProjectileAim.CombatProjectileAimController" },
+		{ 211028, 0x194A4C0, 0x0, 0, {  }, "CombatInventoryItemMagicT.PotionScript" },
+		{ 211068, 0x194A9C0, 0x0, 0, {  }, "CombatInventoryItemMagicT.PotionParalyze" },
+		{ 211116, 0x194AFF0, 0x0, 0, {  }, "CombatInventoryItemMagicT.PotionReanimate" },
+		{ 211168, 0x194B788, 0x0, 0, {  }, "CombatInventoryItemMagicT.PotionTargetEffect" },
+		{ 211224, 0x194BF20, 0x0, 0, {  }, "CombatInventoryItemMagicT.PotionArmor" },
+		{ 211364, 0x194D038, 0x0, 0, {  }, "CombatInventoryItemMagicT.PotionLight" },
+		{ 211410, 0x194D598, 0x0, 0, {  }, "CombatInventoryItemMagicT.PotionCloak" },
+		{ 211452, 0x194DAB8, 0x0, 0, {  }, "CombatInventoryItemMagicT.PotionDisarm" },
+		{ 211500, 0x194E038, 0x0, 0, {  }, "CombatInventoryItemMagicT.PotionStagger" },
+		{ 211544, 0x194E558, 0x0, 0, {  }, "CombatInventoryItemMagicT.PotionSummon" },
+		{ 211590, 0x194EA98, 0x0, 0, {  }, "CombatInventoryItemMagicT.PotionRestore" },
+		{ 211632, 0x194EFD8, 0x0, 0, {  }, "CombatInventoryItemMagicT.PotionWard" },
+		{ 211678, 0x194F518, 0x0, 0, {  }, "CombatInventoryItemMagicT.PotionOffensive" },
 		{ 0, 0x82D2C0, 0x0, 0, {  }, "AiCastSeats.Melee.CalculateScore" },
 		{ 0, 0x82D790, 0x0, 0, {  }, "AiCastSeats.Ranged.CalculateScore" },
 		{ 0, 0x82DCD0, 0x0, 0, {  }, "AiCastSeats.Shield.CalculateScore" },
