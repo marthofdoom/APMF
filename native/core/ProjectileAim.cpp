@@ -104,6 +104,7 @@ namespace apmf::projectileaim {
         constexpr std::uintptr_t kAcAimPoint      = 0x18;   //   the smoothed, scattered point Fire launches at
         constexpr std::uintptr_t kAcOverride      = 0x30;   //   ch.8b's aim target override handle (CastSeats)
         constexpr std::uintptr_t kAcFlags         = 0x3C;
+        constexpr std::uintptr_t kAcProjectile    = 0x48;   //   the BGSProjectile the solve takes its gravity from
         constexpr std::uintptr_t kAcSpeed         = 0x50;
         constexpr std::uintptr_t kAcLeadPoint     = 0x74;   //   the solve's raw lead point (no random offset)
         constexpr std::uintptr_t kAcRandom        = 0x8C;   //   the solve's random offset (3 floats)
@@ -147,22 +148,32 @@ namespace apmf::projectileaim {
         std::atomic<bool>          g_siteLost{ false };
         std::atomic<bool>          g_everClaimed{ false };
         std::atomic<bool>          g_anyPending{ false };
-        std::uint64_t              g_lastBeatMs = 0;           // main thread only
+        std::uint64_t              g_lastBeatMs = 0;           // main thread only (wall clock, the totals cadence)
+        // UNPAUSED GAME TIME in ms (review round 2, SEV-3): shots age by the engine's own frame delta
+        // (RE::GetSecondsSinceLastFrame, the float at RELOCATION_ID(523660, 410199)) summed in Heartbeat while the
+        // game is not paused, so a menu, the board or a killcam does not age an arrow into a MISS. Written on the
+        // main thread, read by the sink and the seat.
+        double                     g_gameAcc = 0.0;            // main thread only
+        std::atomic<std::uint64_t> g_gameMs{ 0 };
+        std::atomic<bool>          g_capLogged{ false };
 
         // ---- totals (the heartbeat) ----
         std::atomic<std::uint64_t> t_shots{ 0 }, t_corrected{ 0 }, t_hits{ 0 }, t_hitsOther{ 0 }, t_misses{ 0 },
-            t_uncorrectable{ 0 }, t_would{ 0 }, t_rank{ 0 }, t_errors{ 0 }, t_vtableMismatch{ 0 };
+            t_uncorrectable{ 0 }, t_would{ 0 }, t_rank{ 0 }, t_errors{ 0 }, t_vtableMismatch{ 0 }, t_capDrops{ 0 },
+            t_dupHits{ 0 }, t_pruned{ 0 };
 
         // ---- per-actor window, pending shots and counters (leaf mutex; nothing is called while held) ----
         constexpr std::uint32_t kWindow     = 10;
         constexpr std::size_t   kPendingMax = 16;
         constexpr std::size_t   kActorsMax  = 256;
+        constexpr std::uint64_t kDupHitMs   = 50;    // two arrows of one bow cannot land this close together
         struct Shot {
             std::uint32_t id        = 0;
             std::uint32_t handle    = 0;   // the launched projectile's handle (0 = none returned)
             RE::FormID    target    = 0;   // the controller's target at launch (0 = unknown)
-            RE::FormID    proj      = 0;   // the projectile form
-            std::uint64_t t0        = 0;
+            RE::FormID    proj      = 0;   // the projectile form (TESHitEvent::projectile must equal it)
+            RE::FormID    weapon    = 0;   // the weapon form (TESHitEvent::source must equal it)
+            std::uint64_t t0        = 0;   // unpaused game ms (g_gameMs) at the launch
             bool          corrected = false;
             float         aim[3]{};        // the point aimed at (ours when corrected, else the controller's)
             float         origin[3]{};
@@ -175,6 +186,8 @@ namespace apmf::projectileaim {
             APMF_API::Handle   handle   = APMF_API::kInvalidHandle;
             std::uint32_t      budget   = 10;
             bool               governed = false;
+            std::uint64_t      lastHitMs     = 0;   // one shot resolves once: a second event for the same target
+            RE::FormID         lastHitTarget = 0;   //   within kDupHitMs is the same hit (enchant / poison), not a shot
             std::uint32_t shots = 0, corrected = 0, hits = 0, hitsOther = 0, misses = 0, uncorrectable = 0,
                           wouldCorrect = 0, rankStood = 0;
         };
@@ -306,7 +319,7 @@ namespace apmf::projectileaim {
 
         // What Before() hands After() across the engine's Launch.
         struct Pre {
-            RE::FormID       fid = 0, target = 0, desired = 0, proj = 0;
+            RE::FormID       fid = 0, target = 0, desired = 0, proj = 0, weapon = 0, ctlProj = 0;
             APMF_API::Handle h   = APMF_API::kInvalidHandle;
             std::uint32_t    shotId = 0, budget = 10, winMiss = 0, pend = 0;
             bool             corrected = false, wanted = false;
@@ -338,13 +351,17 @@ namespace apmf::projectileaim {
             const auto* weapon = Rd<const void*>(a_ld, kLdWeapon);
             const auto* proj   = Rd<const std::uint8_t*>(a_ld, kLdProjectile);
             if (proj) a_pre.proj = Rd<RE::FormID>(proj, 0x14);   // TESForm::formID
+            if (weapon) a_pre.weapon = Rd<RE::FormID>(weapon, 0x14);
             if (auto* dt = Rd<RE::TESObjectREFR*>(a_ld, kLdDesiredTarget)) a_pre.desired = dt->GetFormID();
-            const char*         why = nullptr;
-            const std::uint8_t* ctl = FindAimController(cc, weapon, why);
+            const char*         why     = nullptr;
+            const std::uint8_t* ctl     = FindAimController(cc, weapon, why);
+            const std::uint8_t* ctlProj = nullptr;
             if (ctl) {
                 std::memcpy(a_pre.ctlAim, ctl + kAcAimPoint, sizeof(a_pre.ctlAim));
                 std::memcpy(a_pre.rnd, ctl + kAcRandom, sizeof(a_pre.rnd));
                 a_pre.target = FidOfHandle(Rd<std::uint32_t>(ctl, kAcOverride));
+                ctlProj      = Rd<const std::uint8_t*>(ctl, kAcProjectile);
+                if (ctlProj) a_pre.ctlProj = Rd<RE::FormID>(ctlProj, 0x14);
             }
             if (!a_pre.target && cc) a_pre.target = FidOfHandle(Rd<std::uint32_t>(cc, kCcTargetHandle));
             if (!a_pre.target) a_pre.target = a_pre.desired;
@@ -353,7 +370,16 @@ namespace apmf::projectileaim {
             bool need = false;
             {
                 std::scoped_lock lk(g_amx);
-                if (g_actors.size() >= kActorsMax && !g_actors.contains(fid)) return false;
+                if (g_actors.size() >= kActorsMax && !g_actors.contains(fid)) {
+                    // Never silent (review round 2, SEV-4): counted on the heartbeat line, logged once; the heartbeat
+                    // prunes actors whose claim ended, so the table recovers.
+                    t_capDrops.fetch_add(1, std::memory_order_relaxed);
+                    if (!g_capLogged.exchange(true))
+                        spdlog::warn("[ch.29] 0x{} '{}': the per-actor table is full ({} actors): this shooter is NOT governed "
+                                     "until the heartbeat prunes unclaimed actors. Counted as capDrops. Logged once.",
+                                     apmf::log::Hex(fid), NameOf(actor), kActorsMax);
+                    return false;
+                }
                 auto& s      = g_actors[fid];
                 s.handle     = h;
                 s.budget     = budget;
@@ -391,7 +417,21 @@ namespace apmf::projectileaim {
                                  apmf::log::Hex(fid), a_pre.name, a_pre.shotId, why);
                 return true;
             }
-            if (!ComputeFix(a_ld, ctl, proj, a_pre.fix, why)) {
+            // The controller's speed (+0x50) and the solve's gravity come from the projectile the controller was BUILT
+            // with (+0x48); the arrow leaving now is LaunchData's. If the ammo changed since, both would be wrong for
+            // this shot (review round 2, SEV-4): leave the engine's launch and say so.
+            if (ctlProj != proj) {
+                { std::scoped_lock lk(g_amx); if (auto it = g_actors.find(fid); it != g_actors.end()) Sat(it->second.uncorrectable); }
+                t_uncorrectable.fetch_add(1, std::memory_order_relaxed);
+                a_pre.why = "the ammo changed since the aim controller was built (its speed and gravity are the old projectile's)";
+                if (LineDue(fid, 4))
+                    spdlog::warn("[ch.29] 0x{} '{}' shot #{} could NOT be corrected: the aim controller was built for projectile "
+                                 "0x{} but the shot launches 0x{} (ammo changed). The engine's launch stands. Logged at most once "
+                                 "per 5 s per actor.",
+                                 apmf::log::Hex(fid), a_pre.name, a_pre.shotId, apmf::log::Hex(a_pre.ctlProj), apmf::log::Hex(a_pre.proj));
+                return true;
+            }
+            if (!ComputeFix(a_ld, ctl, ctlProj, a_pre.fix, why)) {
                 { std::scoped_lock lk(g_amx); if (auto it = g_actors.find(fid); it != g_actors.end()) Sat(it->second.uncorrectable); }
                 t_uncorrectable.fetch_add(1, std::memory_order_relaxed);
                 a_pre.why = why;
@@ -423,7 +463,8 @@ namespace apmf::projectileaim {
             sh.handle    = a_out ? a_out->native_handle() : 0;
             sh.target    = a_pre.target;
             sh.proj      = a_pre.proj;
-            sh.t0        = apmf::clock::MonotonicMs();
+            sh.weapon    = a_pre.weapon;
+            sh.t0        = g_gameMs.load(std::memory_order_acquire);
             sh.corrected = a_pre.corrected;
             std::memcpy(sh.origin, a_pre.origin, sizeof(sh.origin));
             std::memcpy(sh.aim, a_pre.corrected ? a_pre.fix.aim : a_pre.ctlAim, sizeof(sh.aim));
@@ -492,10 +533,15 @@ namespace apmf::projectileaim {
                     if (!a_e || !g_anyPending.load(std::memory_order_acquire)) return RE::BSEventNotifyControl::kContinue;
                     auto* cause = a_e->cause.get();
                     if (!cause) return RE::BSEventNotifyControl::kContinue;
+                    // A bash is a melee hit with the bow, never a shot (review round 2, SEV-3).
+                    if (a_e->flags.any(RE::TESHitEvent::Flag::kBashAttack)) return RE::BSEventNotifyControl::kContinue;
                     const RE::FormID fid  = cause->GetFormID();
                     auto*            tgt  = a_e->target.get();
                     const RE::FormID tfid = tgt ? tgt->GetFormID() : 0;
                     const RE::FormID pj   = a_e->projectile;
+                    const RE::FormID src  = a_e->source;
+                    if (pj == 0 || src == 0) return RE::BSEventNotifyControl::kContinue;   // not a weapon projectile hit
+                    const std::uint64_t now = g_gameMs.load(std::memory_order_acquire);
                     Shot          sh;
                     bool          found = false, onTarget = false;
                     std::uint32_t winMiss = 0;
@@ -505,14 +551,22 @@ namespace apmf::projectileaim {
                         auto it = g_actors.find(fid);
                         if (it == g_actors.end() || it->second.pending.empty()) return RE::BSEventNotifyControl::kContinue;
                         auto& s = it->second;
+                        // One shot resolves once: a second event on the same target inside kDupHitMs (an enchantment or
+                        // poison riding the same arrow) is that hit again, not another arrow.
+                        if (s.lastHitTarget == tfid && now - s.lastHitMs <= kDupHitMs) {
+                            t_dupHits.fetch_add(1, std::memory_order_relaxed);
+                            return RE::BSEventNotifyControl::kContinue;
+                        }
                         for (auto p = s.pending.begin(); p != s.pending.end(); ++p) {
-                            if (pj != 0 && p->proj != 0 && p->proj != pj) continue;
+                            if (p->proj != pj || p->weapon != src) continue;   // exact: the shot's projectile AND weapon
                             sh = *p;
                             s.pending.erase(p);
                             found = true;
                             break;
                         }
                         if (!found) return RE::BSEventNotifyControl::kContinue;
+                        s.lastHitTarget = tfid;
+                        s.lastHitMs     = now;
                         onTarget = sh.target == 0 || sh.target == tfid;
                         PushOutcome(s, !onTarget);
                         Sat(onTarget ? s.hits : s.hitsOther);
@@ -524,7 +578,7 @@ namespace apmf::projectileaim {
                         name = NameOf(cause);
                         spdlog::info("[ch.29] 0x{} '{}' shot #{} {} after {} ms: hit 0x{} '{}' (shot's target 0x{}); window misses now {}",
                                      apmf::log::Hex(fid), name, sh.id, onTarget ? (sh.corrected ? "HIT (corrected)" : "HIT") : "HIT OTHER",
-                                     apmf::clock::MonotonicMs() - sh.t0, apmf::log::Hex(tfid), NameOf(tgt), apmf::log::Hex(sh.target),
+                                     now - sh.t0, apmf::log::Hex(tfid), NameOf(tgt), apmf::log::Hex(sh.target),
                                      winMiss);
                     }
                 } catch (...) {
@@ -669,6 +723,7 @@ namespace apmf::projectileaim {
             g_actors.clear();
             g_anyPending.store(false, std::memory_order_release);
         }
+        g_capLogged.store(false, std::memory_order_relaxed);
         spdlog::debug("[ch.29] reset ({}): windows, pending shots and counters dropped", why);
     }
 
@@ -704,6 +759,20 @@ namespace apmf::projectileaim {
     void Heartbeat() {
         if (!Installed()) return;
         const auto now = apmf::clock::MonotonicMs();
+        // Unpaused game time: the engine's own frame delta, summed while the game is not paused (a menu, the board,
+        // the console). A killcam or SGTM scales that delta as it scales the arrow, so the window follows the arrow.
+        {
+            auto*      ui     = RE::UI::GetSingleton();
+            const bool paused = ui && ui->GameIsPaused();
+            if (!paused) {
+                float dt = RE::GetSecondsSinceLastFrame();
+                if (!std::isfinite(dt) || dt < 0.0f) dt = 0.0f;
+                if (dt > 0.25f) dt = 0.25f;   // a load hitch is not flight time
+                g_gameAcc += double(dt) * 1000.0;
+                g_gameMs.store(static_cast<std::uint64_t>(g_gameAcc), std::memory_order_release);
+            }
+        }
+        const std::uint64_t gnow = g_gameMs.load(std::memory_order_relaxed);
         // Shots whose flight window elapsed resolve as MISSES (every frame, cheap when nothing is in flight).
         if (g_anyPending.load(std::memory_order_acquire)) {
             struct Expired { RE::FormID fid; Shot sh; std::uint32_t winMiss; };
@@ -712,7 +781,7 @@ namespace apmf::projectileaim {
                 std::scoped_lock lk(g_amx);
                 for (auto& [fid, s] : g_actors) {
                     for (auto p = s.pending.begin(); p != s.pending.end();) {
-                        if (now - p->t0 >= g_windowMs) {
+                        if (gnow - p->t0 >= g_windowMs) {
                             PushOutcome(s, true);
                             Sat(s.misses);
                             exp.push_back({ fid, *p, WindowMisses(s) });
@@ -758,17 +827,38 @@ namespace apmf::projectileaim {
         if (!g_everClaimed.load(std::memory_order_relaxed)) return;
         if (g_lastBeatMs != 0 && now - g_lastBeatMs < 60000) return;
         g_lastBeatMs = now;
+        // Prune actors with nothing in flight whose ch.29 claim is gone (the RCU read happens outside the lock), so
+        // the per-actor table never fills with yesterday's shooters (review round 2, SEV-4).
+        std::vector<RE::FormID> idle;
+        {
+            std::scoped_lock lk(g_amx);
+            for (const auto& [fid, s] : g_actors)
+                if (s.pending.empty()) idle.push_back(fid);
+        }
+        std::vector<RE::FormID> gone;
+        for (const RE::FormID fid : idle) {
+            APMF_API::APMF_Param p{};
+            float                basis = 0.0f;
+            if (!apmf::ControlMap::Get().TryGetOwningClaimBasis(fid, APMF_API::kIntent_ProjectileAim, p, basis, nullptr))
+                gone.push_back(fid);
+        }
         std::size_t actors = 0;
         {
             std::scoped_lock lk(g_amx);
+            for (const RE::FormID fid : gone)
+                if (auto it = g_actors.find(fid); it != g_actors.end() && it->second.pending.empty()) {
+                    g_actors.erase(it);
+                    t_pruned.fetch_add(1, std::memory_order_relaxed);
+                }
             actors = g_actors.size();
         }
+        if (!gone.empty()) g_capLogged.store(false, std::memory_order_relaxed);   // room again: the cap may log again
         SiteIntact();
-        spdlog::info("[ch.29] H actors={} shots={} corrected={} hits={} hitsOther={} misses={} uncorrectable={} wouldCorrect={} "
-                     "rankStood={} vtableMismatch={} errors={} site={}",
-                     actors, t_shots.load(), t_corrected.load(), t_hits.load(), t_hitsOther.load(), t_misses.load(),
-                     t_uncorrectable.load(), t_would.load(), t_rank.load(), t_vtableMismatch.load(), t_errors.load(),
-                     g_siteLost.load() ? "RE-PATCHED" : "ours");
+        spdlog::info("[ch.29] H actors={} pruned={} capDrops={} shots={} corrected={} hits={} hitsOther={} dupHits={} misses={} "
+                     "uncorrectable={} wouldCorrect={} rankStood={} vtableMismatch={} errors={} gameMs={} site={}",
+                     actors, t_pruned.load(), t_capDrops.load(), t_shots.load(), t_corrected.load(), t_hits.load(),
+                     t_hitsOther.load(), t_dupHits.load(), t_misses.load(), t_uncorrectable.load(), t_would.load(), t_rank.load(),
+                     t_vtableMismatch.load(), t_errors.load(), gnow, g_siteLost.load() ? "RE-PATCHED" : "ours");
     }
 
 }  // namespace apmf::projectileaim
