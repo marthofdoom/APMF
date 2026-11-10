@@ -1,3 +1,14 @@
+## v0.19.0 -- Projectile aim with a miss budget (ch.29, ABI v36)
+
+- **A mod can claim an archer's aim (ch.29, ABI v36).** `kIntent_ProjectileAim` is a miss budget over an NPC's last 10 arrow or bolt shots. A client says "this archer misses at most N of his last 10", and 0 means never miss. 10 or more only observes.
+- **Two deliberate scatters are dropped on a corrected shot.** The game's controller already leads a moving target and solves the arc. An NPC misses because of two things added on purpose, a random aim offset and the Archery spread cone (which already shrinks with skill). On a shot Harbinger corrects, both are left out and the arrow goes at the game's own lead point.
+- **Nothing else changes.** The draw and release animation, the arc, the arrow and its damage are untouched. A shot that is not corrected is exactly the game's shot.
+- **Verified on two runtimes.** The seat is checked at install on 1.6.1170 and 1.5.97. On 1.7.104 it refuses by name and the claim is refused, with the reason in the log.
+- **New setting.** `[ProjectileAim]` in `APMF.ini`: `bProjectileAim=1` (0 does not install the seat and every claim is refused), `bObserveOnly=0` (1 counts what would be corrected and corrects nothing), `iShotWindowMs=4000` (a shot with no hit on its target in that time is a miss) and `bProbe=0` (1 logs one line per launch, hit and miss, passive).
+- **A mod can read what the seat does (ABI v36).** `GetProjectileAimState(actor, out)` reports the budget and the counts. A client checks `abiVersion >= 36` first, and an older Harbinger refuses the claim.
+- **Version numbers.** The first Harbinger that carries ABI v36 is 0.19.0. Older mods keep working.
+- **Built and review tested, not yet field run.** This is the build to try it on.
+
 ## v0.18.0 -- Attack selection (ABI v34) and the claim dry run CanServe (ABI v35)
 
 - **A mod can steer which attacks a follower starts (ch.18, ABI v34).** `SetAttackMix(handle, mix)` on a `kIntent_AttackSelection` claim names attack classes (normal, power, bash, bash power, left hand) for an actor. When the game's own combat AI weighs which attack to start, a denied class gets no chance, and the AI picks among the rest with its own odds and animations. Nothing is ever added, and a class the mod did not name is never touched. The actor always keeps at least one attack it can actually make, and if it would not, the game's own odds stand for that swing.

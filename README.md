@@ -213,6 +213,10 @@ Every key is in [Docs/INI-REFERENCE.md](Docs/INI-REFERENCE.md). These are the on
 
 The facet priorities (`EquipWeapon`, `EquipArmor` and the rest) live in `APMF_Sources.ini`, written by the Harbinger page. A priority of 0 turns that mod off for that facet.
 
+## What is in v0.19.0
+
+- **A mod can claim an archer's aim (ch.29, ABI v36).** A miss budget over the last 10 shots: "this archer misses at most N of 10". A corrected shot drops the game's two deliberate aim scatters (a random offset and the Archery spread cone) and goes at the game's own lead point. Animation, arc, arrow and damage are untouched. 1.6.1170 and 1.5.97 are verified, 1.7.104 refuses by name. Settings: `[ProjectileAim]` `bProjectileAim`, `bObserveOnly`, `iShotWindowMs` and `bProbe`. Built and review tested, not yet field run.
+
 ## What is in v0.18.0
 
 - **A mod can steer which attacks a follower starts (ch.18, ABI v34).** `SetAttackMix` names attack classes to deny, plus an optional power attack share ceiling and floor over a window. The game's own AI still picks among what is left, and the actor always keeps an attack it can make. Setting: `[AttackSelect]` `bAttackSelect` and `bObserveOnly`. Built and review tested, not yet field run.
@@ -302,7 +306,7 @@ The facet priorities (`EquipWeapon`, `EquipArmor` and the rest) live in `APMF_So
 
 ## Status
 
-Phase 1 built, now at v0.18.0, ABI v35 (see [Docs/STATUS.md](Docs/STATUS.md)). The central
+Phase 1 built, now at v0.19.0, ABI v36 (see [Docs/STATUS.md](Docs/STATUS.md)). The central
 `Actor::Update` (0xAD) hook drives a multi-NPC control map (keyed by FormID,
 scales to hundreds, an uncontrolled NPC pays one hash-miss), a real
 inter-plugin C-ABI client API (`native/APMF_API.h`), and the full documented

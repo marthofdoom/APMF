@@ -48,7 +48,7 @@ Harbinger adds one page to the **SKSE Menu Framework** (3.x). It shows who is dr
 | Equip: armor | ch.17 equip authority (armor items) | [ch.17](FACETS.md#ch17-equip-authority-kintent_equipauthority) |
 | Detection | ch.16 detection, the actor-value watch | [ch.16](FACETS.md#ch16-detection-kintent_detection) |
 | Casting | ch.8 select spell, ch.8b cast, ch.25 cast guard | [ch.8](FACETS.md#ch8-select-spell-kintent_selectspell), [ch.8b](FACETS.md#ch8b-cast-kintent_cast), [ch.25](FACETS.md#ch25-cast-guard-kintent_castguard) |
-| Combat actions | ch.7 combat action, ch.18 attack selection, ch.23 pursuit leash | [ch.7](FACETS.md#ch7-combat-action-kintent_combataction), [ch.18](FACETS.md#ch18-attack-selection-kintent_attackselection), [ch.23](FACETS.md#ch23-pursuit-leash-kintent_pursuitleash) |
+| Combat actions | ch.7 combat action, ch.18 attack selection, ch.23 pursuit leash, ch.29 projectile aim | [ch.7](FACETS.md#ch7-combat-action-kintent_combataction), [ch.18](FACETS.md#ch18-attack-selection-kintent_attackselection), [ch.23](FACETS.md#ch23-pursuit-leash-kintent_pursuitleash), [ch.29](FACETS.md#ch29-projectile-aim-kintent_projectileaim) |
 | Combat entry and approach | ch.21 combat entry, ch.22 re-entry deny, ch.24 combat approach | [ch.21](FACETS.md#ch21-combat-entry-kintent_combatentry), [ch.22](FACETS.md#ch22-combat-re-entry-deny-kintent_combatreentrydeny), [ch.24](FACETS.md#ch24-combat-approach-kintent_combatapproach) |
 | Actor values (speed, disposition) | ch.1a gait, ch.11 disposition | [ch.1a](FACETS.md#ch1a-gait-kintent_gait), [ch.11](FACETS.md#ch11-disposition-kintent_disposition) |
 | Core | ch.1, 3, 4, 5, 10, 12, 14 and the engine update seat | [FACETS.md](FACETS.md#facet-index) |

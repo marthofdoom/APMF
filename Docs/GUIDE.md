@@ -9,7 +9,7 @@ Harbinger (the project is APMF, the AI Package Management Framework) is an SKSE 
 | [RECIPES.md](RECIPES.md) | worked scenarios that combine facets, with complete code |
 | [GLOSSARY.md](GLOSSARY.md) | every term, defined once, with where it is introduced |
 
-[INTEGRATION.md](INTEGRATION.md) is the ten-minute quickstart. [`native/APMF_API.h`](../native/APMF_API.h) is the contract, and if any page here and the header ever disagree, the header wins. Every C++ example on these pages compiles against that header as it stands today (ABI 35, release 0.18.0). The player-facing pages are [INI-REFERENCE.md](INI-REFERENCE.md) and [HARBINGER-MENU.md](HARBINGER-MENU.md).
+[INTEGRATION.md](INTEGRATION.md) is the ten-minute quickstart. [`native/APMF_API.h`](../native/APMF_API.h) is the contract, and if any page here and the header ever disagree, the header wins. Every C++ example on these pages compiles against that header as it stands today (ABI 36, release 0.19.0). The player-facing pages are [INI-REFERENCE.md](INI-REFERENCE.md) and [HARBINGER-MENU.md](HARBINGER-MENU.md).
 
 **How the pages are written.** Each major section opens with a short summary in italics. A topic says why it matters, states the rule, then gives the mechanism behind it, and ends with **Check Your Understanding**, two or three questions to try, with the odd-numbered answers at the end of the page. Five kinds of callout appear: **Key Concept** (a rule stated precisely, numbered within the page), **Tip**, **Caution** (a misuse that breaks something), **Real-World Connection** (how MFO, the reference client, uses it) and **Did You Know?** (an engine fact behind a rule). Worked examples give a goal, **Think it through**, a **Solution** that compiles, and a **Check** for the game or the log. Where something has not been seen working in game, or is not known, the text says so.
 
@@ -224,6 +224,7 @@ So the cast facet is `kIntent_Cast` to a client, `ch.8b` in the log, and part of
 | `kIntent_EquipPreference` | 26 | Name the items the actor should favour in combat | weight (lifts a score) | EquipWeapon | 22 | Built, not yet tested in game | [ch.26](FACETS.md#ch26-equip-preference-kintent_equippreference) |
 | `kIntent_CombatSubstrate` | 27 | Combat as a substrate so an out of combat cast is animated | deny + compose | CombatAction, Combat, EquipWeapon, Detection, Cast | 23 | Field tested on LoreRim in 0.15.1 for out of combat casts | [ch.27](FACETS.md#combat-substrate-kintent_combatsubstrate) |
 | `kIntent_Place` | 28 | Put an actor, loaded or not, beside a reference or at an interior point, once | one engine call | none | 28 | Built, not yet tested in game | [Place](FACETS.md#place-kintent_place) |
+| `kIntent_ProjectileAim` | 29 | Hold an archer's miss budget over his last 10 shots, dropping the game's two deliberate aim scatters on a corrected shot | per-claim seat at the projectile launch | none | 29 | Built, not yet field run | [ch.29](FACETS.md#ch29-projectile-aim-kintent_projectileaim) |
 
 Channel 18 is skipped on purpose. The number is reserved for an attack-selection design that is not on main. Channel 2 has no intent either, and nothing is reserved for it. The field tiers are defined under [The field tiers](#the-field-tiers).
 

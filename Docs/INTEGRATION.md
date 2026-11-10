@@ -255,6 +255,7 @@ A client built against an older header keeps working. Each item below needs its 
 | 33 | 0.17.0 | `SetEquipDenyItems(handle, forms, count)` on a ch.17 claim, and `GetEquipPreferenceItemState(actor, form, slot, &info)` for one ch.26 entry | `abiVersion >= 33` |
 | 34 | 0.18.0 | `kIntent_AttackSelection` (ch.18), `SetAttackMix(handle, mix)` and `GetAttackMixState(actor, &info)` | `abiVersion >= 34` |
 | 35 | 0.18.0 | `CanServe(query, &info)`, a dry run that says whether a `RequestEx`, `Request` or `RequestCast` would be refused now and files nothing | `abiVersion >= 35` |
+| 36 | 0.19.0 | `kIntent_ProjectileAim` (ch.29), a miss budget over an archer's last 10 shots, and `GetProjectileAimState(actor, &info)` | `abiVersion >= 36` |
 
 ### Place (ABI 28)
 
