@@ -17,6 +17,7 @@
 #include "core/AttackSelectProbe.h"
 #include "core/AttackSelect.h"         // ch.18 attack selection (ABI v34): Install, ResetAll
 #include "core/ProjectileAim.h"        // ch.29 projectile aim (ABI v36): Install, ResetAll
+#include "core/PotionAllowance.h"      // ch.30 potion allowance (ABI v37): Install, ResetAll
 #include "core/PackageGate.h"
 #include "core/EquipSink.h"
 #include "core/TorchSeat.h"      // ch.17 torch seat (2026-10-20): Install at kDataLoaded, after the sink
@@ -135,6 +136,7 @@ namespace {
         apmf::equippref::ResetAll("revert/new game");   // ch.26: the outgoing world's declarations and per-actor state
         apmf::attackselect::ResetAll("revert/new game");   // ch.18: attack mixes, windows and counters (claims drop too)
         apmf::projectileaim::ResetAll("revert/new game");  // ch.29: shot windows, pending shots and counters
+        apmf::potionallowance::ResetAll("revert/new game");   // ch.30: declarations and counters (claims drop too)
         apmf::packagesources::ResetAll();
         apmf::spectatorgate::ResetAll();
         // ...and forget the outgoing world's marker LEDGER. This must precede the load
@@ -282,6 +284,12 @@ namespace {
                                                   // VR-refused, [ProjectileAim] bProjectileAim (default 1), six
                                                   // SeatVerified rows, the site and the solve's gravity read re-read
                                                   // before the write. Registers the TESHitEvent sink.
+            apmf::potionallowance::Install();    // ch.30 POTION ALLOWANCE (ABI v37): write_vfunc 0x0F on the 15
+                                                  // potion inventory-item vtables (AFTER ch.24, whose 0x0F bracket
+                                                  // on two of them it chains to) and Character 0x10F DrinkPotion.
+                                                  // Exactly 1.6.1170 / 1.5.97 (1.7.104 refused by name), VR-refused,
+                                                  // [PotionAllowance] bPotionAllowance (default 1), every row checked
+                                                  // before anything is written.
             apmf::nonaliasprobe::Install();      // OBSERVE-ONLY 0xDF hook + 0x49 assist + RTTI dumper
                                                   // (Docs/PROBE-NONALIAS-PACKAGE.md; VR-refused inside)
             apmf::aicastseats::Install();        // OBSERVE-ONLY: the 4 AI cast-decision seats
@@ -391,6 +399,7 @@ namespace {
             apmf::combatsubstrate::ResetAll("kPreLoadGame");   // S2a: forget every substrate (no co-save)
             apmf::attackselect::ResetAll("kPreLoadGame");   // ch.18: no attack mix / window crosses the load
             apmf::projectileaim::ResetAll("kPreLoadGame");  // ch.29: no shot window / pending shot crosses the load
+            apmf::potionallowance::ResetAll("kPreLoadGame");  // ch.30: no declaration / counter crosses the load
             apmf::atkprobe::ResetForLoad("kPreLoadGame");   // [Probe] bAttackSelect: per-actor counters (ids reused)
             // ch.23 pursuit leash (ABI v16): same -- no leash entry crosses the load.
             apmf::actiongate::ResetLeash("kPreLoadGame");
