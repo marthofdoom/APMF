@@ -19,7 +19,7 @@
 
 namespace apmf::VerifiedAddresses
 {
-	// 1.6.1170.0: 268 rows
+	// 1.6.1170.0: 274 rows
 	inline constexpr REL::SelfCheck::Row kRows_1_6_1170[] = {
 		{ 207886, 0x18A5558, 0x0, 0, {  }, "Character" },
 		{ 207896, 0x18A5FE8, 0x0, 0, {  }, "Character.ActorValueOwner" },
@@ -289,9 +289,15 @@ namespace apmf::VerifiedAddresses
 		{ 49170, 0x8A28B0, 0x0, 0, {  }, "AttackSelect.StartAttack" },
 		{ 50675, 0x8DCD30, 0x0, 0, {  }, "AttackSelect.AttackWeight" },
 		{ 49170, 0x8A28B0, 0x28D, 1, { 0xE8 }, "AttackSelect.Site.Weight" },
+		{ 18102, 0x286C90, 0x0, 0, {  }, "ProjectileAim.WeaponFire" },
+		{ 44108, 0x7E46C0, 0x0, 0, {  }, "ProjectileAim.ProjectileLaunch" },
+		{ 18102, 0x286C90, 0xE60, 1, { 0xE8 }, "ProjectileAim.Site.Launch" },
+		{ 44396, 0x7F7C40, 0x2A6, 11, { 0xF3, 0x44, 0x0F, 0x59, 0x15, 0xF1, 0x39, 0x9B, 0x02, 0xEB, 0x04 }, "ProjectileAim.AimSolve" },
+		{ 405286, 0x31AB8E0, 0x0, 0, {  }, "ProjectileAim.GravityScale" },
+		{ 210081, 0x18C59A8, 0x0, 0, {  }, "ProjectileAim.CombatProjectileAimController" },
 	};
 
-	// 1.5.97.0: 268 rows
+	// 1.5.97.0: 274 rows
 	inline constexpr REL::SelfCheck::Row kRows_1_5_97[] = {
 		{ 261397, 0x165DA40, 0x0, 0, {  }, "Character" },
 		{ 261402, 0x165E4D0, 0x0, 0, {  }, "Character.ActorValueOwner.SE" },
@@ -561,10 +567,16 @@ namespace apmf::VerifiedAddresses
 		{ 48139, 0x80C020, 0x0, 0, {  }, "AttackSelect.StartAttack" },
 		{ 49748, 0x845B30, 0x0, 0, {  }, "AttackSelect.AttackWeight" },
 		{ 48139, 0x80C020, 0x2AE, 1, { 0xE8 }, "AttackSelect.Site.Weight" },
+		{ 17693, 0x235240, 0x0, 0, {  }, "ProjectileAim.WeaponFire" },
+		{ 42928, 0x74B170, 0x0, 0, {  }, "ProjectileAim.ProjectileLaunch" },
+		{ 17693, 0x235240, 0xE82, 1, { 0xE8 }, "ProjectileAim.Site.Launch" },
+		{ 43174, 0x75D7B0, 0x2E5, 11, { 0xF3, 0x44, 0x0F, 0x59, 0x15, 0x32, 0xD4, 0x7E, 0x02, 0xEB, 0x04 }, "ProjectileAim.AimSolve" },
+		{ 518746, 0x2F4AED0, 0x0, 0, {  }, "ProjectileAim.GravityScale" },
+		{ 264187, 0x167E2A8, 0x0, 0, {  }, "ProjectileAim.CombatProjectileAimController" },
 	};
 
-	// 1.7.104.0: 273 rows
-	// 59 NOT VERIFIED on 1.7.104.0, deliberately absent from this table (the seat is refused):
+	// 1.7.104.0: 275 rows
+	// 63 NOT VERIFIED on 1.7.104.0, deliberately absent from this table (the seat is refused):
 	//   Character.ActorValueOwner.SE (1.6.1170 id -): no 1.6.1170 (AE) id: the 1.7.104 map is keyed by AE id (1.5.97-only seat)
 	//   ActionGate.Hold.ParallelDataPush (1.6.1170 id 47532): id 47532 is not in the idmap
 	//   TargetPin.CombatController.SetTarget (1.6.1170 id 33235): id 33235 is not in the idmap
@@ -624,6 +636,10 @@ namespace apmf::VerifiedAddresses
 	//   AttackSelect.StartAttack (1.6.1170 id 49170): id 49170 is not in the idmap
 	//   AttackSelect.AttackWeight (1.6.1170 id 50675): id 50675 is not in the idmap
 	//   AttackSelect.Site.Weight (1.6.1170 id 49170): id 49170 is not in the idmap
+	//   ProjectileAim.WeaponFire (1.6.1170 id 18102): id 18102 is not in the idmap
+	//   ProjectileAim.Site.Launch (1.6.1170 id 18102): id 18102 is not in the idmap
+	//   ProjectileAim.AimSolve (1.6.1170 id 44396): id 44396 is not in the idmap
+	//   ProjectileAim.GravityScale (1.6.1170 id 405286): proven through ProjectileAim.AimSolve, which did not verify: id 44396 is not in the idmap
 	inline constexpr REL::SelfCheck::Row kRows_1_7_104[] = {
 		{ 207886, 0x1923258, 0x0, 0, {  }, "Character" },
 		{ 207896, 0x1923CE8, 0x0, 0, {  }, "Character.ActorValueOwner" },
@@ -863,6 +879,8 @@ namespace apmf::VerifiedAddresses
 		{ 39948, 0x7265C0, 0x0, 0, {  }, "TorchSeat.UpdateTorch" },
 		{ 39637, 0x704C70, 0x8B1, 1, { 0xE8 }, "TorchSeat.Site.AiUpdate" },
 		{ 104651, 0x14A9C10, 0x0, 0, {  }, "PapyrusCaller.NativeFunctionBase.Call" },
+		{ 44108, 0x7F9300, 0x0, 0, {  }, "ProjectileAim.ProjectileLaunch" },
+		{ 210081, 0x1943F48, 0x0, 0, {  }, "ProjectileAim.CombatProjectileAimController" },
 		{ 0, 0x82D2C0, 0x0, 0, {  }, "AiCastSeats.Melee.CalculateScore" },
 		{ 0, 0x82D790, 0x0, 0, {  }, "AiCastSeats.Ranged.CalculateScore" },
 		{ 0, 0x82DCD0, 0x0, 0, {  }, "AiCastSeats.Shield.CalculateScore" },

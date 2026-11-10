@@ -17,6 +17,7 @@
 #include "core/Place.h"                // ABI v28 kIntent_Place (a one-shot, never a claim) + GetPlaceState
 #include "channels/CombatEntry.h"     // ABI v31 GetClaimEndReason (ch.20 / ch.21 end records)
 #include "core/AttackSelect.h"        // ABI v34 SetAttackMix / GetAttackMixState (ch.18)
+#include "core/ProjectileAim.h"       // ABI v36 GetProjectileAimState (ch.29)
 
 // The C-ABI implementation behind APMF_API.h. These free functions forward to the
 // in-process multi-NPC engine (core/ControlMap) over its thread-safe enqueue path,
@@ -372,6 +373,16 @@ namespace {
         }
     }
 
+    // ABI v36 (ch.29): what the projectile-aim seat is doing for an actor. Any thread: an RCU read and a copy under
+    // the seat's leaf lock, no game call. A throw becomes kProjectileAimState_None, nothing written.
+    std::uint32_t APMF_GetProjectileAimState(RE::FormID actor, APMF_API::APMF_ProjectileAimInfo* out) {
+        try {
+            return apmf::projectileaim::GetState(actor, out);
+        } catch (...) {
+            return APMF_API::kProjectileAimState_None;
+        }
+    }
+
     // ABI v35: the claim DRY RUN (APMF_API_v35 CanServe). The real call's own enqueue function runs in CHECK mode
     // (apmf::ServeCheck, core/ControlMap.h): RequestEx / Request -> EnqueueRequest (kIntent_Place -> place::Enqueue,
     // the same diversion RequestEx makes), RequestCast -> EnqueueCast. Nothing is filed, attributed, posted or
@@ -480,6 +491,7 @@ namespace {
         case 33: return "0.17.0";
         case 34:
         case 35: return "0.18.0";
+        case 36: return "0.19.0";
         default: return "a release newer than this one";
         }
     }
@@ -614,6 +626,13 @@ namespace {
     static_assert(sizeof(APMF_API::APMF_API_v35) == sizeof(APMF_API::APMF_API_v34) + sizeof(void*),
                   "APMF_API_v35 = the v34 prefix plus exactly one function pointer");
 
+    // ABI v36 (ch.29 projectile aim) appends ONE slot to the v35 prefix, so the object is now an APMF_API_v36 and
+    // `abiVersion` reports 36. Same two-form proof.
+    static_assert(offsetof(APMF_API::APMF_API_v36, GetProjectileAimState) == sizeof(APMF_API::APMF_API_v35),
+                  "APMF_API_v36's slot must start right after the v35 prefix");
+    static_assert(sizeof(APMF_API::APMF_API_v36) == sizeof(APMF_API::APMF_API_v35) + sizeof(void*),
+                  "APMF_API_v36 = the v35 prefix plus exactly one function pointer");
+
     constexpr APMF_API::APMF_API_v35 g_api{
         {
         {
@@ -685,6 +704,8 @@ namespace {
         &APMF_GetAttackMixState,
         },
         &APMF_CanServe,
+        },
+        &APMF_GetProjectileAimState,
     };
 
 }

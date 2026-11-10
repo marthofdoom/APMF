@@ -24,6 +24,7 @@
 #include "core/CastGuard.h"  // ch.25 cast guard (ABI v21): RefuseReason()/TtlMs() for the refusal and the TTL grant
 #include "core/EquipPreference.h"  // ch.26 equip preference (ABI v22): RefuseReason() for the synchronous refusal
 #include "core/AttackSelect.h"     // ch.18 attack selection (ABI v34): RefuseReason() for the synchronous refusal
+#include "core/ProjectileAim.h"    // ch.29 projectile aim (ABI v36): RefuseReason() for the synchronous refusal
 
 #include <cmath>
 
@@ -474,6 +475,15 @@ namespace apmf {
             if (const char* why = apmf::attackselect::RefuseReason(actor)) {
                 if (dry) return DryRefuse(dry, APMF_API::kServeRefusal_IntentRule, why);
                 spdlog::warn("[ch.18] claim refused -- actor 0x{}: {}.", apmf::log::Hex(actor), why);
+                return APMF_API::kInvalidHandle;
+            }
+        }
+
+        // ch.29 (ABI v36): refused synchronously by core/ProjectileAim.cpp RefuseReason (seat not installed, the player).
+        if (intent == APMF_API::kIntent_ProjectileAim) {
+            if (const char* why = apmf::projectileaim::RefuseReason(actor)) {
+                if (dry) return DryRefuse(dry, APMF_API::kServeRefusal_IntentRule, why);
+                spdlog::warn("[ch.29] claim refused -- actor 0x{}: {}.", apmf::log::Hex(actor), why);
                 return APMF_API::kInvalidHandle;
             }
         }
