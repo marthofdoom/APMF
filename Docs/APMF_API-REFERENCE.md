@@ -759,3 +759,17 @@ It cannot cover:
   shape it will finally file, or query both and take the fallback's answer when the first is refused.
 
 **Older APMF.** An APMF before v35 has no `CanServe`. The client files the request and reads the handle, as before.
+
+## ABI v36 projectile aim: the miss budget for an NPC's own arrows and bolts (ch.29)
+
+The header: `kIntent_ProjectileAim` (29), `ProjectileAimState`, `APMF_ProjectileAimInfo` (80 bytes), `APMF_API_v36::GetProjectileAimState`. The facet page: [FACETS.md ch.29](FACETS.md#ch29-projectile-aim-kintent_projectileaim). The engine path and every verified byte: `native/core/ProjectileAim.cpp`'s header and `Docs/VERIFIED-ADDRESSES.md` (rows `ProjectileAim.*`).
+
+**The mechanism.** The engine's `CombatProjectileAimController` already solves an NPC's shot with lead and ballistics (an iterative solve: low-arc angle for the projectile's gravity x the engine's gravity scale and the controller's launch speed, flight time, the target's position predicted for that time, until the time converges). It then adds a random offset scaled by `fCombatRangedAimVariance`, and `TESObjectWEAP::Fire` adds the Archery skill cone to the launch angles. Harbinger's seat is Fire's one call to `Projectile::Launch`. For a shot the budget says must land, the launch angles are recomputed from the controller's RAW lead point and the same ballistic formula, so both scatters are gone and nothing else changes. A shot the budget allows to miss is untouched.
+
+**The budget.** `param.ival` on `RequestEx`: 0 = every shot corrected, 1..9 = at most that many misses among the actor's last 10 shots, 10 or more = observe only. The verdict for a launch is `misses in the window + shots still in flight >= budget`. Hits come from `TESHitEvent` (cause = the actor, the shot's projectile form, the shot's target); a shot with no such hit inside `[ProjectileAim] iShotWindowMs` is a miss; a hit on another actor is a miss for the budget (`hitsOther`).
+
+**GetProjectileAimState.** Set `info.size = sizeof(APMF_ProjectileAimInfo)` before the call. Returns the state (also written to `info.state`): `kProjectileAimState_None` (no winning claim), `Claimed` (a claim, no shot seen yet), `Governed` (the seat has seen a shot under the claim), `Unavailable` (the seat is not installed). The counters are since the load and saturate: `shots`, `corrected`, `hits`, `hitsOther`, `misses`, `pending`, `windowFill`, `windowMisses`, `uncorrectable` (a correction that could not be computed and left the engine's launch), `wouldCorrect` (observe-only), `rankStood` (the Engine source outranked the claim on `[CombatAction]`). Read-only, any thread.
+
+**Refusals.** The player, and the seat not installed: `[ProjectileAim] bProjectileAim=0`, VR, a runtime other than 1.6.1170 / 1.5.97 / 1.7.104, a refused address row or a failed byte check. On 1.7.104 the seat refuses by name today (no verified row for Fire, the solve and the gravity scale: ids outside the published MIT table, and the generator has no raw-RVA row kind for a data global).
+
+**Older APMF.** An APMF before v36 has no channel for intent 29 and refuses the claim with `kInvalidHandle`. The client's degrade path is the engine's own aim, exactly as before.

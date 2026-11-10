@@ -256,13 +256,22 @@ namespace apmf::projectileaim {
         };
         bool ComputeFix(const std::uint8_t* a_ld, const std::uint8_t* a_ctl, const std::uint8_t* a_proj, Fix& a_out,
                         const char*& a_why) {
+            // The solve sets flags bit 0 when it has run (`or [ctl+0x3C], 1`); before that +0x74 is the ctor's zero.
+            if ((Rd<std::uint32_t>(a_ctl, kAcFlags) & 1u) == 0) { a_why = "the controller has not solved yet (no lead point)"; return false; }
             const float speed = Rd<float>(a_ctl, kAcSpeed);
             if (!(speed > 1.0f) || !(speed < 1.0e8f)) { a_why = "the controller's launch speed is not set yet"; return false; }
-            float P[3], O[3];
+            float P[3], O[3], A[3];
             std::memcpy(P, a_ctl + kAcLeadPoint, sizeof(P));
             std::memcpy(O, a_ld + kLdOrigin, sizeof(O));
+            std::memcpy(A, a_ctl + kAcAimPoint, sizeof(A));
             for (int i = 0; i < 3; ++i)
-                if (!std::isfinite(P[i]) || !std::isfinite(O[i])) { a_why = "a non-finite aim or origin"; return false; }
+                if (!std::isfinite(P[i]) || !std::isfinite(O[i]) || !std::isfinite(A[i])) { a_why = "a non-finite aim or origin"; return false; }
+            // The lead point and the point the engine is launching at must agree to within a body length and the
+            // scatter (the random offset is a few tens of units): a stale lead point is never aimed at.
+            {
+                const double ex = double(P[0]) - A[0], ey = double(P[1]) - A[1];
+                if (ex * ex + ey * ey > 1024.0 * 1024.0) { a_why = "the lead point is far from the engine's aim point (stale solve)"; return false; }
+            }
             const double dx = double(P[0]) - O[0], dy = double(P[1]) - O[1], dz = double(P[2]) - O[2];
             const double d  = std::sqrt(dx * dx + dy * dy);
             if (d < 16.0) { a_why = "the target is too close for a ballistic re-aim (< 16 units)"; return false; }

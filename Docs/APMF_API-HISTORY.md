@@ -126,7 +126,7 @@ a DENIED category is unequipped by the enforce pass. The header comments that st
 stale until the paired MFO header change.
 
 <a id="abi-history"></a>
-## ABI v10 to v35: what each version added
+## ABI v10 to v36: what each version added
 
 Moved verbatim from `native/APMF_API.h` (line 96 at 9d01cdf). The header keeps a pointer to this anchor.
 
@@ -315,6 +315,13 @@ on a facet is not a refusal (offFacets reports it). What the next Drain decides 
 No intent, no APMF_Param field, no change to any existing slot, no co-save. A client gates on abiVersion >= 35. An
 older APMF has no dry run: the client files the request and reads the handle, as before.
 Docs/APMF_API-REFERENCE.md#abi-v35-can-serve.
+ABI v36 (2026-11-10, card H5, branch feat/projectile-aim): PROJECTILE AIM. kIntent_ProjectileAim (29) with param.ival =
+the miss budget over the actor's last 10 shots (0 = never miss, 1..9 = at most that many, 10+ = observe only).
+APMF_API_v36 appends ONE slot to the v35 prefix: GetProjectileAimState(actor, out) with APMF_ProjectileAimInfo (80 bytes).
+The seat is TESObjectWEAP::Fire's one call to Projectile::Launch: a shot the budget says must land is re-aimed at the
+engine's own unscattered solution (the aim controller's raw lead point and the engine's ballistic lift). No change to any
+existing slot, no co-save. A client gates on abiVersion >= 36. An older APMF has no channel for intent 29 and refuses the
+claim. Docs/APMF_API-REFERENCE.md#abi-v36-projectile-aim.
 ```
 
 <a id="intent-18"></a>

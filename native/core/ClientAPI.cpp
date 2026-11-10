@@ -633,7 +633,8 @@ namespace {
     static_assert(sizeof(APMF_API::APMF_API_v36) == sizeof(APMF_API::APMF_API_v35) + sizeof(void*),
                   "APMF_API_v36 = the v35 prefix plus exactly one function pointer");
 
-    constexpr APMF_API::APMF_API_v35 g_api{
+    constexpr APMF_API::APMF_API_v36 g_api{
+        {
         {
         {
         {

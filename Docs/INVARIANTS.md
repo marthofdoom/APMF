@@ -1465,6 +1465,30 @@ thing that derails one. Concretely:
   `[AttackSelect] bAttackSelect` (default 1), `bObserveOnly` (default 0). Not covered (`DENY-COMPLETENESS-AUDIT.md`
   row 18): picks SCAR / Valhalla make for annotated actors and attack events sent to the graph directly (S-D5, a
   post-pick veto, not built), in-graph combo chains (by design).
+  **AMENDED 2026-11-10 (ch.29 projectile aim, `feat/projectile-aim`, card H5): a FOURTH #17a call-site seat, its own
+  argument made here.** marth 2026-11-10: the Ranger misses at most 3 of 10, the Jaqspur at most 1 (never-miss
+  acceptable). The facet is "where this actor's own weapon shot is launched". The engine decides it inside
+  `TESObjectWEAP::Fire` (AE 18102 / SE 17693 / 1.7.104 0x28C450, raw: its id is not in the fork's MIT table), a
+  non-virtual function that builds the `LaunchData` on its stack (angles = the direction to the aim controller's
+  scattered point, plus the Archery cone) and hands it to the non-virtual `Projectile::Launch` (AE 44108 / SE 42928 /
+  1.7.104 0x7F9300) with one direct call. No virtual function exists between the angles' computation and the launch,
+  so no vtable seat can shape the shot. Conditions: (1) the site is that one internal call (AE +0xE60, SE +0xE82,
+  1.7.104 +0xE70): Launch has five E8 callers per build and only this one is touched; (2) install SeatVerifies the
+  function rows, the call-site row, the aim solve's ripref row (the gravity scale global) and the aim controller's
+  vtable row, then re-reads before writing the eight bytes of argument setup ending at the E8, the E8 and its target,
+  and the solve's `mulss xmm10, [rip+disp]` with its target. Any mismatch REFUSES the seat (1.7.104 today, by name: its
+  rows for Fire, the solve and the scale are missing). A re-patch by another DLL after install is detected on engage and
+  on the heartbeat and logged loudly; (3) every id, offset and byte comes from each runtime's own disassembly (Fire and
+  the solve instruction-identical to 1.6.1170 on 1.7.104, the same object offsets on 1.5.97); (4) GATE THE SOURCE, the
+  engine's aim first: the engine's own lead point and launch speed are the inputs, the engine's own low-arc formula is
+  the solve, and only the two deliberate scatters (the controller's random offset, the skill cone) are reduced to zero,
+  and only for a shot whose budget is spent. Nothing is added, no projectile is moved, `alwaysHit` and `autoAim` are
+  never written, the animation is the engine's. Every correction is ranked against the Engine source on the
+  CombatAction facet; (5) only actors holding a `kIntent_ProjectileAim` claim are governed; the player and every other
+  actor launch untouched and unlogged. `core/ProjectileAim.cpp`, INI `[ProjectileAim] bProjectileAim` (default 1),
+  `bObserveOnly` (default 0), `iShotWindowMs` (4000), `bProbe` (0). Not covered (`DENY-COMPLETENESS-AUDIT.md` row 29):
+  a target that changes direction after the launch, an obstruction, an arrow that strikes another actor first (each a
+  MISS the window pays for on the next shot).
   Under #17a the facet is taken WHOLE (declare the worn set → APMF equips it and refuses
   everything else until the client re-declares or releases), which is full control of the
   facet exactly as a per-path deny would be. Any further call-site seat needs its own
@@ -1505,7 +1529,7 @@ version-pinned `VTABLE_*` symbol, with ONE exception, the #17a seat: `core/Equip
 is the only `write_call`/`AllocTrampoline` in `native/` (2026-09-15), and it exists only
 under #17a's five conditions. No other call-site patch remains anywhere in the tree after
 T4's removal. (2026-10-20: `core/TorchSeat.cpp` is a second #17a seat under the amendment above. 2026-11-09:
-`core/AttackSelect.cpp` is a third, under its own amendment above.)
+`core/AttackSelect.cpp` is a third, under its own amendment above. 2026-11-10: `core/ProjectileAim.cpp` is a fourth, under its own amendment above.)
 
 ## Deny completeness
 
