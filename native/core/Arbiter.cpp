@@ -52,7 +52,7 @@ namespace apmf {
         apmf::castproxy::OnOwnerUpdate(actor);
     }
 
-    void Arbiter::OncePerFrame() {
+    void Arbiter::OncePerFrame(float a_delta) {
         ControlMap::Get().Drain();
 
         // Drain the confirmed-main-thread task queue, on this SAME seat and STRICTLY
@@ -136,9 +136,10 @@ namespace apmf {
         // ch.18 ATTACK SELECTION (ABI v34): the ~60 s totals line (zeros included) once a claim was filed, and the
         // re-patched-site check. One relaxed load otherwise.
         apmf::attackselect::Heartbeat();
-        // ch.29 PROJECTILE AIM (ABI v36): resolves shots whose flight window elapsed (misses), the ~60 s totals line
-        // once a claim was filed, and the re-patched-site check. One relaxed load otherwise.
-        apmf::projectileaim::Heartbeat();
+        // ch.29 PROJECTILE AIM (ABI v36): sums the engine's own frame delta into the unpaused game clock the shot
+        // window runs on, resolves shots whose flight window elapsed (misses), the ~60 s totals line once a claim
+        // was filed, and the re-patched-site check. One relaxed load otherwise.
+        apmf::projectileaim::Heartbeat(a_delta);
 
         // "Does 0x49 actually redirect?" probe (marth 2026-09-06, core/PackageGate.cpp).
         // Same RULE C shape as the PfpHeartbeat above: self-throttled internally

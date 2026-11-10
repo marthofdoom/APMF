@@ -28,8 +28,11 @@ namespace apmf {
         void OnActorUpdate(RE::Actor* actor);
 
         // Once per frame (from the PlayerCharacter 0xAD seat, game thread): drain
-        // the client-API request queue and sweep unloaded controlled NPCs.
-        void OncePerFrame();
+        // the client-API request queue and sweep unloaded controlled NPCs. `a_delta` is the
+        // frame delta the engine handed PlayerCharacter::Update: the WORLD-time step (the
+        // SKSE64-named g_secondsSinceLastFrame_WorldTime, AE id 410199 / SE 523660) times the
+        // VATS / killcam multiplier (AE id 44301), per the call site in AE id 36581 (0x64756D).
+        void OncePerFrame(float a_delta);
 
         // Route a test-surface hotkey: toggle the aimed NPC on that key's channel,
         // or release-all on the dedicated key.

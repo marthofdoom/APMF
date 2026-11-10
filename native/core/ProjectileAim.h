@@ -41,8 +41,10 @@ namespace apmf::projectileaim {
     // channels/ProjectileAim.cpp Engage, writer thread: true while the site still calls Harbinger's thunk.
     bool SiteIntact();
 
-    // Arbiter::OncePerFrame, MAIN thread: resolves shots whose flight window elapsed (a MISS), logs them when
-    // the probe is on, and the ~60 s totals line while the seat is installed and a claim was ever filed.
-    void Heartbeat();
+    // Arbiter::OncePerFrame, MAIN thread. `a_delta` = the frame step the engine handed PlayerCharacter::Update
+    // (world time x the killcam multiplier, see Arbiter.h): summed while the game is not paused into the clock the
+    // shot window runs on. Resolves shots whose flight window elapsed (a MISS), logs them when the probe is on, and
+    // the ~60 s totals line while the seat is installed and a claim was ever filed.
+    void Heartbeat(float a_delta);
 
 }

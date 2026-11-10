@@ -149,10 +149,15 @@ namespace apmf::projectileaim {
         std::atomic<bool>          g_everClaimed{ false };
         std::atomic<bool>          g_anyPending{ false };
         std::uint64_t              g_lastBeatMs = 0;           // main thread only (wall clock, the totals cadence)
-        // UNPAUSED GAME TIME in ms (review round 2, SEV-3): shots age by the engine's own frame delta
-        // (RE::GetSecondsSinceLastFrame, the float at RELOCATION_ID(523660, 410199)) summed in Heartbeat while the
-        // game is not paused, so a menu, the board or a killcam does not age an arrow into a MISS. Written on the
-        // main thread, read by the sink and the seat.
+        // UNPAUSED GAME TIME in ms (review rounds 2 + 3, SEV-3 / SEV-4): shots age by the frame delta the engine
+        // hands PlayerCharacter::Update (our already-verified 0xAD seat, passed down through Arbiter::OncePerFrame),
+        // summed in Heartbeat while the game is not paused, so a menu, the board or a killcam does not age an arrow
+        // into a MISS. That delta is the WORLD-time step (SKSE64's g_secondsSinceLastFrame_WorldTime: AE 0x31CC288
+        // id 410199, SE 0x2F6B948 id 523660; the real-time twin is the float at +4, id 410200) multiplied by the
+        // VATS / killcam factor (AE 0x7F3600 id 44301 on the VATS object id 400883), per the player's Update call
+        // site AE 0x64756D in id 36581 (`movss xmm6,[WorldTime]; call 44301; mulss xmm0,xmm6; movaps xmm1,xmm0;
+        // call [rbx+0x568]`): SGTM and a killcam slow it as they slow the arrow. No new address is read: the value
+        // arrives as the hooked function's own argument. Written on the main thread, read by the sink and the seat.
         double                     g_gameAcc = 0.0;            // main thread only
         std::atomic<std::uint64_t> g_gameMs{ 0 };
         std::atomic<bool>          g_capLogged{ false };
@@ -756,16 +761,17 @@ namespace apmf::projectileaim {
         return state;
     }
 
-    void Heartbeat() {
+    void Heartbeat(float a_delta) {
         if (!Installed()) return;
         const auto now = apmf::clock::MonotonicMs();
-        // Unpaused game time: the engine's own frame delta, summed while the game is not paused (a menu, the board,
-        // the console). A killcam or SGTM scales that delta as it scales the arrow, so the window follows the arrow.
+        // Unpaused game time: the frame step the engine handed the player's Update (world time x killcam factor, see
+        // g_gameMs), summed while the game is not paused (a menu, the board, the console). SGTM or a killcam scales
+        // that step as it scales the arrow, so the window follows the arrow.
         {
             auto*      ui     = RE::UI::GetSingleton();
             const bool paused = ui && ui->GameIsPaused();
             if (!paused) {
-                float dt = RE::GetSecondsSinceLastFrame();
+                float dt = a_delta;
                 if (!std::isfinite(dt) || dt < 0.0f) dt = 0.0f;
                 if (dt > 0.25f) dt = 0.25f;   // a load hitch is not flight time
                 g_gameAcc += double(dt) * 1000.0;
