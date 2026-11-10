@@ -577,8 +577,9 @@ namespace apmf::potionallowance {
         }
 
         // Write: the 0x0F seats first (the AI's selection), then the drink seat. Each original is stored BEFORE its
-        // slot is written (the map reserved up front, so no rehash while a thunk could read it), so a thunk that runs
-        // the instant its slot changes already finds what to call.
+        // slot is written, and the map is NOT written again once the first slot is live (a thunk on an already
+        // hooked vtable reads it with no lock: the only writes happen before any thunk can run), so a thunk that
+        // runs the instant its slot changes already finds what to call.
         g_origShouldEquip.reserve(2 * std::size(kVtables));
         for (const auto& id : kVtables) {
             REL::Relocation<std::uintptr_t> vt{ id };
@@ -588,7 +589,11 @@ namespace apmf::potionallowance {
         for (const auto& id : kVtables) {
             REL::Relocation<std::uintptr_t> vt{ id };
             const std::uintptr_t prev = vt.write_vfunc(kSlotShouldEquip, &ShouldEquipThunk);
-            g_origShouldEquip[vt.address()] = prev;   // the same value (the key exists: no insert, no rehash)
+            if (prev != g_origShouldEquip.find(vt.address())->second)   // read-only: nothing a live thunk could race
+                spdlog::error("[ch.30] slot 0x0F of vtable RVA 0x{} changed between the read and the write (0x{} -> 0x{}): "
+                              "the thunk calls the value READ, and whatever wrote the slot in between is bypassed.",
+                              apmf::log::Hex(vt.address() - REL::Module::get().base(), 0),
+                              apmf::log::Hex(g_origShouldEquip.find(vt.address())->second, 0), apmf::log::Hex(prev, 0));
             apmf::sources::NoteVfunc(Facet::kCast,
                                      fmt::format("PotionAllowance.Item@vt0x{:X}.ShouldEquip", vt.address() - REL::Module::get().base()),
                                      vt.address(), kSlotShouldEquip, SKSE::stl::unrestricted_cast<std::uintptr_t>(&ShouldEquipThunk),
