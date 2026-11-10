@@ -126,6 +126,7 @@ struct Heartbeat {
 | [`kIntent_CombatSubstrate`](#combat-substrate-kintent_combatsubstrate) | 27 | Combat substrate | Combat as a substrate so an out-of-combat cast is animated | 23 | Field tested on LoreRim in 0.15.1 for out of combat casts, on by default |
 | [`kIntent_Place`](#place-kintent_place) | 28 | Place | Put an actor, loaded or not, beside a reference or at a point in an interior cell, once | 28 | Built, not yet tested in game |
 | [`kIntent_ProjectileAim`](#ch29-projectile-aim-kintent_projectileaim) | 29 | Projectile aim | A miss budget for the actor's own arrows and bolts: when his last 10 shots hold as many misses as allowed, the next launch is re-aimed at the engine's own unscattered solution | 36 | Built, not yet seen in game (first Deck run pending); refuses by name on 1.7.104 |
+| [`kIntent_PotionAllowance`](#ch30-potion-allowance-kintent_potionallowance) | 30 | Potion allowance | Which potions the actor may not drink (a drug, every potion, food, a keyword), with no cast claim: the combat AI never picks one and any drink of one is refused | 37 | Built, not yet seen in game (first Deck run pending); refuses by name on 1.7.104 |
 | [Space queries](#space-queries-findemptyspace-and-findhostilesinspace) | | `FindEmptySpace`, `FindHostilesInSpace` | Ask for a spot or the hostiles in a sphere | 11 | Built |
 | [Line of sight](#line-of-sight-getlineofsight) | | `GetLineOfSight` | Harbinger's own ray | 18 | Used by MFO |
 | [Awareness](#awareness-senseactor) | | `SenseActor` | Does this actor sense that one | 18 | Used by MFO |
@@ -2589,6 +2590,70 @@ auto st = g_apmf->GetProjectileAimState(actor, &info);   // ABI v36
 ABI v36, Harbinger 0.19.0. INI `[ProjectileAim]`: `bProjectileAim` (default 1), `bObserveOnly` (default 0: count what WOULD be corrected, correct nothing), `iShotWindowMs` (default 4000), `bProbe` (default 0: one `[ch.29]` line per launch with the engine's angles, the corrected angles, the controller's scattered point, its random offset, the lead point, speed, gravity and the ballistic angle; one per hit; one per miss with where the arrow came to rest and how far from the target). Rows `ProjectileAim.WeaponFire`, `ProjectileAim.ProjectileLaunch`, `ProjectileAim.Site.Launch`, `ProjectileAim.AimSolve` (a ripref proving `ProjectileAim.GravityScale`) and `ProjectileAim.CombatProjectileAimController` (vtable) verify on 1.6.1170 and 1.5.97. On 1.7.104 only Launch and the vtable verify: `TESObjectWEAP::Fire` (id 18102), the solve (44396) and the gravity scale (405286) are not in the published MIT table and the generator admits a raw RVA only for a function, not for a data global, so the seat REFUSES BY NAME there (the self-check lists the four rows). Their 1.7.104 addresses are known and instruction-identical to 1.6.1170 (Fire 0x28C450, solve 0x80C980, scale 0x3254BC0): a generator row kind for a raw data global is the gap (REVIEW-BACKLOG).
 
 Holes, stated: a target that changes direction after the launch (the lead is the engine's prediction at the last solve), an obstruction in the line of fire, a shot whose arrow strikes another actor first. Each is a MISS the window sees and the next shot pays for. The probe is how the first Deck run proves the path runs (principle 5): expect `[ch.29] ... SHOT #n CORRECTED ... delta (dz, dx) deg` lines followed by `HIT (corrected)` within the window.
+### ch.30 Potion allowance (`kIntent_PotionAllowance`)
+
+Built 2026-11-10 (ClickUp 1dfcuabcqpf, branch `feat/potion-allowance`, Harbinger ABI v37). Not yet seen in game. 1.6.1170 and 1.5.97; on 1.7.104 the seats refuse by name (see "Version, INI and field status").
+
+#### What it is for
+
+"This follower never drinks Skooma." The engine's combat AI drinks potions on its own: CombatInventory scores every potion in the actor's inventory, and the combat behaviour tree's DrinkPotion leaf drinks the one it selected. A drug (Skooma, a potion with a damaging side effect) can win that selection as a "restore". Before ch.30 the only deny was the ch.8 allow-list at `CheckCast`, which holds only while the client also holds a ch.8 claim, so a follower with no cast gambit could still be fed a drug. A client declares a DENY predicate here, with no other claim. Harbinger then narrows the AI's selection to the potions that do not match, and refuses any drink of one that does.
+
+#### Arguments
+
+```cpp
+Handle h = g_apmf->Request(actor, kIntent_PotionAllowance, kBasis);   // no param
+APMF_PotionAllowance a{}; a.size = sizeof(a);
+a.deny = kPotionDeny_Harmful;                                         // drugs
+g_apmf->SetPotionAllowance(h, &a);                                    // ABI v37
+```
+
+| Field | Type | Range | Default | 0 or null means |
+|---|---|---|---|---|
+| `actor` | `RE::FormID`, a loaded NPC | any NPC but the player | required | refused as "actor not found" at the drain (ignored, no claim) |
+| `basis` | `float` | any finite value | your choice | a legal basis, ranks below any positive one |
+| `deny` | `PotionDenyFlags` | `kPotionDeny_Harmful` (an effect whose base effect is Hostile or Detrimental), `kPotionDeny_Potions` (every non-food AlchemyItem, poisons included), `kPotionDeny_Food` (every food item) | 0 | no bit rule |
+| `keywordCount` / `keywords[8]` | `RE::FormID` of a `BGSKeyword` | 0..8 | 0 | no keyword rule. A keyword on the item, or on one of its effects' base effects, matches. Resolve them at runtime (your plugin or the base game), never from a list's item ids |
+| `flags` | `PotionAllowanceFlags` | `kPotionAllow_ObserveOnly` | 0 | refuse for real |
+| `SetPotionAllowance(h, nullptr)` | | | | clears the declaration: the claim refuses nothing |
+
+A potion matches when it meets ANY declared rule. Unknown bits are masked off and a keyword count above 8 is clamped (logged once per handle). A smaller `size` is refused and clears the declaration.
+
+#### What Harbinger enforces
+
+Two `write_vfunc` seats (`core/PotionAllowance.cpp`), both reading the WINNING ch.30 claim's declaration:
+
+1. **The selection.** Slot 0x0F (`CheckShouldEquip`) of the 15 `CombatInventoryItemMagicT<CombatInventoryItemPotion, CombatMagicCaster*>` classes (one per caster archetype: Restore, Offensive, Invisibility, and so on). CombatInventory asks it for every candidate (its evaluate AE 44899 / SE 43666 and pre-loop AE 44868 / SE 43637) and skips a NO. The engine answers first; a YES for a matching potion becomes NO. The AI picks among what remains, never a potion Harbinger chose.
+2. **The drink.** `Actor::DrinkPotion`, Character slot 0x10F (AE 38746 / SE 37797). A full scan of both executables for a call through that slot finds two live callers: the combat tree's DrinkPotion leaf (AE 49928 +0xE6 / SE 48984 +0xBE) and ActorEquipManager's apply step (AE 38001 +0x7B7 / SE 36976 +0x82F), where every `EquipObject` of a potion or food ends (sandbox eating, AI commands, Papyrus `EquipItem`, the console, the player's menus, other DLLs). For a matching potion the seat returns false WITHOUT calling the engine: nothing is cast, nothing leaves the inventory, and both callers treat false as an ordinary failure (the leaf fails its node, the apply step returns).
+
+#### Priority and conflicts
+
+Every refusal is ranked on the **Cast** facet (`APMF_Sources.ini`), the facet today's ch.8 potion deny already ranks on. The selection ranks against the answer's source beneath the seat (the engine, or a module hooked there first). The drink ranks against the drink's source, read from where DrinkPotion was called from: the DrinkPotion leaf is Engine; an `EquipObject` drink is whoever called `EquipObject` (Papyrus `EquipItem` and the console are DirectCalls, any other engine road is Engine, a DLL is that DLL); a DLL calling DrinkPotion itself is that DLL. With the default priorities a client (50) outranks Engine (20) and is outranked by DirectCalls (75), so a script's drink stands, as a script's equip does under ch.17. The claim's own client ties with its claim (its own drinks stand). The player's own menu use on the actor always passes (player agency). A source that cannot be named is the degrade rule (allowed and alerted; `[UnknownSources] Cast=override` refuses it).
+
+Several clients on one actor: the usual basis order, one owner, and the owner's declaration applies. ch.8's allow-list still applies as before: a potion either deny refuses is not drunk.
+
+#### Lifetime
+
+A standing claim: no TTL, ended by `Release`, by the actor unloading, or by an outranking ch.30 claim. The declaration goes with the claim. The per-actor counters are dropped at kPreLoadGame and revert.
+
+#### Refusals
+
+`kInvalidHandle`, logged `[ch.30] claim refused`: the player, or the seats not installed (`[PotionAllowance] bPotionAllowance=0`, VR, 1.7.104, any runtime other than 1.6.1170 / 1.5.97, a refused address row).
+
+#### Reading it
+
+```cpp
+APMF_PotionAllowanceInfo info{}; info.size = sizeof(info);
+auto st = g_apmf->GetPotionAllowanceState(actor, &info);   // ABI v37
+// st: None / Declared / Governed (a matching potion was met) / Unavailable (seats not installed)
+// info: deny, flags, keywordCount, selectionDenied, drinkDenied, rankStood, wouldDeny, lastPotion, lastRoad
+```
+
+#### Version, INI and field status
+
+ABI v37, the release after Harbinger 0.19.0. INI `[PotionAllowance]`: `bPotionAllowance` (default 1), `bObserveOnly` (default 0), `bProbe` (default 0: one `[ch.30][probe]` line per NPC drink the predicate does not refuse, with its road and source). Rows `PotionAllowance.DrinkPotion`, `PotionAllowance.Site.Leaf`, `PotionAllowance.Site.EquipApply`, `PotionAllowance.Site.WorkerApply`, the 15 `CombatInventoryItemMagicT.Potion*` vtables (slot 0x0F) and the Character vtable (slot 0x10F) verify on 1.6.1170 and 1.5.97; the EquipSink rows for EquipObject's sites and the Script / Console / PlayerMenu functions are reused. On 1.7.104 the 15 vtables verify, but DrinkPotion (38746), the leaf (49928) and the apply step (38001) are not in the fork's MIT id table, and an id miss there is fatal, so the seats refuse by name before resolving anything.
+
+Holes, stated: a Papyrus or console drink stands by default (DirectCalls outranks a client on Cast); the player's own menu use passes; when an `EquipObject` drink is refused, the engine's equip event for it has already been sent; a QUEUED `EquipObject` drink (the worker queued it: worker +0x272 -> the AIProcess task -> `QueuedApply` AE 38906 / 39814, SE 37950 / 38789 -> `EquipObject(queue=0)`) reaches the apply step with the QueuedApply function as the EquipObject caller, so it ranks as Engine, not as its requester: a queued script or console drink is refused where a direct one stands (ch.17's leg records are not consulted, APMF-B258); the selection seat covers the 15 templated potion item classes and not the base `CombatInventoryItemPotion` vtable (AE 210899 / SE 548592), so should the engine ever instantiate the base, the AI could select a refused potion and fail at the drink seat each tick (a composition gap, never a deny gap, APMF-B259). The first Deck run proves the path runs (principle 5): expect `[ch.30] ... SELECTION DENIED` lines while a declared follower fights with a drug in its inventory, and, with `bProbe=1`, `[ch.30][probe] ... road=CombatAI` lines for the potions it does drink.
+
 ### ch.20 Target pin (`kIntent_TargetPin`)
 
 *Each combat update the engine asks its target selectors whom to fight. While the pin stands, Harbinger answers with your target, among the targets the engine already has. The engine fights it with its own AI.*
@@ -3740,6 +3805,7 @@ The ABI is append-only. A client built against an older ABI keeps working agains
 | 34 | 0.18.0 | `kIntent_AttackSelection`, `AttackClass`, `AttackMixFlags`, `APMF_AttackMix`, `AttackMixState`, `APMF_AttackMixInfo`, `SetAttackMix`, `GetAttackMixState` (struct `APMF_API_v34`) |
 | 35 | 0.18.0 | `CanServe`, `APMF_ServeQuery`, `APMF_ServeInfo`, `ServeVerdict`, `ServeRefusal`, `ServePending`, `ServeCall` (struct `APMF_API_v35`) |
 | 36 | 0.19.0 | `kIntent_ProjectileAim`, `ProjectileAimState`, `APMF_ProjectileAimInfo`, `GetProjectileAimState` (struct `APMF_API_v36`) |
+| 37 | 0.20.0 | `kIntent_PotionAllowance`, `PotionDenyFlags`, `PotionAllowanceFlags`, `APMF_PotionAllowance`, `PotionRoad`, `PotionAllowanceState`, `APMF_PotionAllowanceInfo`, `SetPotionAllowance`, `GetPotionAllowanceState` (struct `APMF_API_v37`) |
 
 The last release is 0.16.0, ABI 32, interface struct `APMF_API_v31` (ABI 32 added a flag and no slot). In 0.15.1 the interface struct was `APMF_API_v29`, since ABI 30 added a flag and no slot. Before that `APMF_API_v19` served ABI 19 to 21, and ABI 23 and 25 also added no slot.
 

@@ -25,6 +25,7 @@
 #include "core/EquipPreference.h"  // ch.26 equip preference (ABI v22): RefuseReason() for the synchronous refusal
 #include "core/AttackSelect.h"     // ch.18 attack selection (ABI v34): RefuseReason() for the synchronous refusal
 #include "core/ProjectileAim.h"    // ch.29 projectile aim (ABI v36): RefuseReason() for the synchronous refusal
+#include "core/PotionAllowance.h"  // ch.30 potion allowance (ABI v37): RefuseReason() for the synchronous refusal
 
 #include <cmath>
 
@@ -484,6 +485,15 @@ namespace apmf {
             if (const char* why = apmf::projectileaim::RefuseReason(actor)) {
                 if (dry) return DryRefuse(dry, APMF_API::kServeRefusal_IntentRule, why);
                 spdlog::warn("[ch.29] claim refused -- actor 0x{}: {}.", apmf::log::Hex(actor), why);
+                return APMF_API::kInvalidHandle;
+            }
+        }
+
+        // ch.30 (ABI v37): refused synchronously by core/PotionAllowance.cpp RefuseReason (seats not installed, the player).
+        if (intent == APMF_API::kIntent_PotionAllowance) {
+            if (const char* why = apmf::potionallowance::RefuseReason(actor)) {
+                if (dry) return DryRefuse(dry, APMF_API::kServeRefusal_IntentRule, why);
+                spdlog::warn("[ch.30] claim refused -- actor 0x{}: {}.", apmf::log::Hex(actor), why);
                 return APMF_API::kInvalidHandle;
             }
         }

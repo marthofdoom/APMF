@@ -18,6 +18,7 @@
 #include "channels/CombatEntry.h"     // ABI v31 GetClaimEndReason (ch.20 / ch.21 end records)
 #include "core/AttackSelect.h"        // ABI v34 SetAttackMix / GetAttackMixState (ch.18)
 #include "core/ProjectileAim.h"       // ABI v36 GetProjectileAimState (ch.29)
+#include "core/PotionAllowance.h"     // ABI v37 SetPotionAllowance / GetPotionAllowanceState (ch.30)
 
 // The C-ABI implementation behind APMF_API.h. These free functions forward to the
 // in-process multi-NPC engine (core/ControlMap) over its thread-safe enqueue path,
@@ -48,6 +49,7 @@ namespace {
             apmf::sources::NoteClientRequest(h, _ReturnAddress(), intent);
             if (intent == APMF_API::kIntent_EquipPreference) apmf::equippref::NoteClaim(h);   // ABI v22 (F4)
             if (intent == APMF_API::kIntent_AttackSelection) apmf::attackselect::NoteClaim(h);   // ABI v34
+            if (intent == APMF_API::kIntent_PotionAllowance) apmf::potionallowance::NoteClaim(h);   // ABI v37
             return h;
         } catch (...) {
             return APMF_API::kInvalidHandle;
@@ -64,6 +66,7 @@ namespace {
             apmf::sources::NoteClientRequest(h, _ReturnAddress(), intent);
             if (intent == APMF_API::kIntent_EquipPreference) apmf::equippref::NoteClaim(h);   // ABI v22 (F4)
             if (intent == APMF_API::kIntent_AttackSelection) apmf::attackselect::NoteClaim(h);   // ABI v34
+            if (intent == APMF_API::kIntent_PotionAllowance) apmf::potionallowance::NoteClaim(h);   // ABI v37
             if (intent == APMF_API::kIntent_Idle) apmf::idle::NoteFiled(h, actor, param);      // ABI v24: Pending
             return h;
         } catch (...) {
@@ -77,6 +80,7 @@ namespace {
             apmf::sources::ForgetHandle(handle);
             apmf::equippref::Forget(handle);   // ABI v22: a released ch.26 claim's declaration goes with it
             apmf::attackselect::Forget(handle);   // ABI v34: a released ch.18 claim's attack mix goes with it
+            apmf::potionallowance::Forget(handle);   // ABI v37: a released ch.30 claim's declaration goes with it
             apmf::idle::NoteReleased(handle);  // ABI v24: its idle state turns terminal (kept for the grace)
         } catch (...) {
         }
@@ -383,6 +387,25 @@ namespace {
         }
     }
 
+    // ABI v37 (ch.30): declare a kIntent_PotionAllowance claim's deny predicate. `allowance` is READ AND COPIED
+    // synchronously and published at once (core/PotionAllowance.cpp); any thread.
+    void APMF_SetPotionAllowance(APMF_API::Handle handle, const APMF_API::APMF_PotionAllowance* allowance) {
+        try {
+            apmf::potionallowance::Set(handle, allowance);
+        } catch (...) {
+        }
+    }
+
+    // ABI v37 (ch.30): what the potion seats are doing for an actor. Any thread: an RCU read and a copy under the
+    // seats' leaf lock, no game call. A throw becomes kPotionState_None, nothing written.
+    std::uint32_t APMF_GetPotionAllowanceState(RE::FormID actor, APMF_API::APMF_PotionAllowanceInfo* out) {
+        try {
+            return apmf::potionallowance::GetState(actor, out);
+        } catch (...) {
+            return APMF_API::kPotionState_None;
+        }
+    }
+
     // ABI v35: the claim DRY RUN (APMF_API_v35 CanServe). The real call's own enqueue function runs in CHECK mode
     // (apmf::ServeCheck, core/ControlMap.h): RequestEx / Request -> EnqueueRequest (kIntent_Place -> place::Enqueue,
     // the same diversion RequestEx makes), RequestCast -> EnqueueCast. Nothing is filed, attributed, posted or
@@ -492,6 +515,7 @@ namespace {
         case 34:
         case 35: return "0.18.0";
         case 36: return "0.19.0";
+        case 37: return "0.20.0";   // ch.30 potion allowance: the release after 0.19.0 (confirm at the cut)
         default: return "a release newer than this one";
         }
     }
@@ -633,7 +657,17 @@ namespace {
     static_assert(sizeof(APMF_API::APMF_API_v36) == sizeof(APMF_API::APMF_API_v35) + sizeof(void*),
                   "APMF_API_v36 = the v35 prefix plus exactly one function pointer");
 
-    constexpr APMF_API::APMF_API_v36 g_api{
+    // ABI v37 (ch.30 potion allowance) appends TWO slots to the v36 prefix, so the object is now an APMF_API_v37
+    // and `abiVersion` reports 37. Same two-form proof.
+    static_assert(offsetof(APMF_API::APMF_API_v37, SetPotionAllowance) == sizeof(APMF_API::APMF_API_v36),
+                  "APMF_API_v37's first slot must start right after the v36 prefix");
+    static_assert(offsetof(APMF_API::APMF_API_v37, GetPotionAllowanceState) == sizeof(APMF_API::APMF_API_v36) + sizeof(void*),
+                  "APMF_API_v37's second slot follows the first");
+    static_assert(sizeof(APMF_API::APMF_API_v37) == sizeof(APMF_API::APMF_API_v36) + 2 * sizeof(void*),
+                  "APMF_API_v37 = the v36 prefix plus exactly two function pointers");
+
+    constexpr APMF_API::APMF_API_v37 g_api{
+        {
         {
         {
         {
@@ -707,6 +741,9 @@ namespace {
         &APMF_CanServe,
         },
         &APMF_GetProjectileAimState,
+        },
+        &APMF_SetPotionAllowance,
+        &APMF_GetPotionAllowanceState,
     };
 
 }

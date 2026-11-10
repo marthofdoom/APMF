@@ -90,10 +90,10 @@ namespace RE {
 
 namespace APMF_API {
 
-    // ABI history (v10..v36, what each added and how an older APMF degrades). Gate every use on abiVersion >=
+    // ABI history (v10..v37, what each added and how an older APMF degrades). Gate every use on abiVersion >=
     // N.
     // History: Docs/APMF_API-HISTORY.md#abi-history
-    inline constexpr std::uint32_t kABIVersion = 36;
+    inline constexpr std::uint32_t kABIVersion = 37;
 
     // The exported query function's undecorated name and pointer type.
     // const APMF_API_v1* APMF_GetInterface(std::uint32_t abiVersion);
@@ -696,6 +696,27 @@ namespace APMF_API {
                                      //       unsupported runtime, a failed address row or byte check). Read the
                                      //       counts with APMF_API_v36::GetProjectileAimState.
                                      //       See Docs/APMF_API-REFERENCE.md#abi-v36-projectile-aim
+
+        kIntent_PotionAllowance = 30, // ch.30 POTION ALLOWANCE (ABI v37, ClickUp 1dfcuabcqpf, 2026-11-10). Which
+                                     //       potions this actor may DRINK (an AlchemyItem: potion, poison or food),
+                                     //       with NO cast claim needed. Mode: DENY ONLY. The client declares a
+                                     //       predicate with APMF_API_v37::SetPotionAllowance (Harmful = any effect
+                                     //       whose base effect is Hostile or Detrimental, e.g. Skooma; every
+                                     //       non-food potion; food; up to 8 keywords on the item or on any of its
+                                     //       effects). Harbinger refuses a matching potion at two seats: the combat
+                                     //       AI's SELECTION (slot 0x0F of the 15 potion inventory items: the AI
+                                     //       picks among the rest) and every DRINK (Actor::DrinkPotion, Character
+                                     //       slot 0x10F: the combat tree's DrinkPotion leaf and every EquipObject of
+                                     //       the potion). A refused drink returns false and consumes nothing. Ranked
+                                     //       on the Cast facet against the drink's source (Engine, DirectCalls for
+                                     //       Papyrus / console, a plugin DLL by module); the player's own menu use
+                                     //       passes (player agency). Param: none read. A STANDING claim: no TTL,
+                                     //       ended by Release; a claim with no declaration denies nothing.
+                                     //       REFUSED (kInvalidHandle, logged) for the player and while the seats are
+                                     //       not installed ([PotionAllowance] bPotionAllowance=0, VR, 1.7.104 or any
+                                     //       other runtime than exactly 1.6.1170 / 1.5.97, a failed address row).
+                                     //       Read the counts with APMF_API_v37::GetPotionAllowanceState.
+                                     //       See Docs/APMF_API-REFERENCE.md#abi-v37-potion-allowance
     };
 
     // ── Cast guard flags (kIntent_CastGuard's param.ival, ABI v21). APPEND-ONLY. ──────
@@ -1570,6 +1591,7 @@ namespace APMF_API {
     //   fval   kIntent_Place           ABI v28: the yaw in radians, read ONLY with kPlace_SetYaw.
     //   ival   kIntent_ProjectileAim   ABI v36: the miss budget over the last 10 shots (0 = never miss,
     //                                  1..9 = at most that many, 10+ = observe only). Nothing else read.
+    //   none   kIntent_PotionAllowance ABI v37: nothing read; the predicate is SetPotionAllowance's.
     //   none   every other Intent      accepted, not yet read by the channel
     //
     // fval is read ONLY by kIntent_Travel (ABI v10), kIntent_CombatReentryDeny (ABI v15),
@@ -3215,6 +3237,126 @@ namespace APMF_API {
         // under APMF's own leaf lock, no game call). A throw inside returns kProjectileAimState_None, nothing
         // written.
         std::uint32_t (*GetProjectileAimState)(RE::FormID actor, APMF_ProjectileAimInfo* out);
+    };
+
+    // ═════════════════════════════════════════════════════════════════════════════
+    // ABI v37: ch.30 POTION ALLOWANCE (kIntent_PotionAllowance) -- which potions the actor may drink
+    // ═════════════════════════════════════════════════════════════════════════════
+    // A client claims kIntent_PotionAllowance on an NPC (Request / RequestEx, no param) and DECLARES, with
+    // SetPotionAllowance, a DENY predicate. Nothing about a cast claim is needed: the allowance stands alone.
+    // Harbinger refuses a potion that matches it at two seats (Docs/FACETS.md "ch.30"):
+    //   SELECTION  slot 0x0F (CheckShouldEquip) of the 15 CombatInventoryItemMagicT<CombatInventoryItemPotion, *>
+    //              classes, which CombatInventory asks for every candidate: the engine answers first, and a YES
+    //              for a matching potion becomes NO, so the combat AI picks among the potions that remain.
+    //   DRINK      Actor::DrinkPotion (Character vtable slot 0x10F; AE 38746 / SE 37797). Every road an NPC
+    //              drinks by ends there: the combat tree's DrinkPotion leaf (AE 49928+0xE6 / SE 48984+0xBE) and
+    //              ActorEquipManager's apply step for an equipped ALCH (AE 38001+0x7B7 / SE 36976+0x82F: sandbox
+    //              eating, AI commands, Papyrus EquipItem, the console, the player's menus, other DLLs). A refused
+    //              drink returns false WITHOUT calling the engine: nothing is cast, nothing is removed from the
+    //              inventory, and both engine callers treat false as an ordinary failure.
+    // THE PREDICATE reads the item's own record data, so it needs nothing list-specific:
+    //   kPotionDeny_Harmful   any effect whose base effect (MGEF) is flagged Hostile or Detrimental. This is the
+    //                         "drug" rule (a Skooma, a potion with a damaging side effect).
+    //   kPotionDeny_Potions   every AlchemyItem that is not food (potions and poisons).
+    //   kPotionDeny_Food      every food item (the ALCH food flag). Off by default: sandbox eating is food.
+    //   keywords              up to kMaxPotionDenyKeywords BGSKeyword FormIDs the client resolved at runtime (from
+    //                         its own plugin or the base game, never a list's item ids). A potion carrying one of
+    //                         them, or having an effect whose base effect carries one, matches.
+    // A potion matches when it meets ANY declared rule.
+    // RANKING: a refusal stands only while the claim outranks the drink's source on the Cast facet (the
+    // Harbinger page / APMF_Sources.ini). The combat AI and every engine road are Engine; Papyrus EquipItem and
+    // the console are DirectCalls (by default they outrank a client, so a script's drink stands, as an equip
+    // does under ch.17); a DLL calling EquipObject or DrinkPotion is that DLL. The player's own menu use on the
+    // actor (the trade / gift / follower inventory) always passes: player agency.
+
+    // SetPotionAllowance's deny rules (APMF_PotionAllowance::deny). APPEND-ONLY.
+    enum PotionDenyFlags : std::uint32_t {
+        kPotionDeny_Harmful = 1u << 0,   // any effect's base effect is Hostile or Detrimental (a drug)
+        kPotionDeny_Potions = 1u << 1,   // every non-food AlchemyItem (potions and poisons)
+        kPotionDeny_Food    = 1u << 2,   // every food AlchemyItem
+    };
+
+    // APMF_PotionAllowance::flags. APPEND-ONLY.
+    enum PotionAllowanceFlags : std::uint32_t {
+        kPotionAllow_ObserveOnly = 1u << 0,   // count and log what WOULD be refused; refuse nothing
+    };
+
+    inline constexpr std::uint32_t kMaxPotionDenyKeywords = 8;
+
+    // The declaration. BYTE-SHARED with clients, static_assert-pinned below. Zero-initialise it, set `size` to
+    // sizeof(APMF_PotionAllowance), and fill what you declare. Unknown deny / flag bits are masked off and a
+    // keywordCount above kMaxPotionDenyKeywords is clamped (both logged once per handle); a keyword slot of 0 is
+    // ignored. Keywords are compared by FormID; the client resolves them (a keyword that is not loaded matches
+    // nothing).
+    struct APMF_PotionAllowance {
+        std::uint32_t size;                              // sizeof(APMF_PotionAllowance) (64); smaller is refused
+        std::uint32_t deny;                              // PotionDenyFlags
+        std::uint32_t flags;                             // PotionAllowanceFlags
+        std::uint32_t keywordCount;                      // 0..kMaxPotionDenyKeywords
+        RE::FormID    keywords[kMaxPotionDenyKeywords];  // BGSKeyword FormIDs
+        std::uint32_t reserved[4];                       // zero
+    };
+    static_assert(sizeof(APMF_PotionAllowance) == 64, "APMF_PotionAllowance is 64 bytes, byte-shared with clients");
+    static_assert(offsetof(APMF_PotionAllowance, keywords) == 16, "APMF_PotionAllowance layout is frozen");
+    static_assert(offsetof(APMF_PotionAllowance, reserved) == 48, "APMF_PotionAllowance layout is frozen");
+
+    // Which road a refused (or allowed) drink came by (APMF_PotionAllowanceInfo::lastRoad). APPEND-ONLY.
+    enum PotionRoad : std::uint32_t {
+        kPotionRoad_None      = 0,   // nothing seen yet
+        kPotionRoad_Selection = 1,   // the combat AI's selection (slot 0x0F): the potion was never picked
+        kPotionRoad_CombatAI  = 2,   // the combat tree's DrinkPotion leaf
+        kPotionRoad_Equip     = 3,   // an EquipObject of the potion (engine package, AI command, script, console, DLL)
+        kPotionRoad_Engine    = 4,   // the engine's equip apply step reached without an EquipObject frame
+        kPotionRoad_Direct    = 5,   // a DLL (or skse64) calling Actor::DrinkPotion itself
+    };
+
+    // GetPotionAllowanceState's answer. APPEND-ONLY: never renumber.
+    enum PotionAllowanceState : std::uint32_t {
+        kPotionState_None        = 0,   // no winning ch.30 claim with a declaration on this actor
+        kPotionState_Declared    = 1,   // a winning claim with a declaration; no matching potion met yet
+        kPotionState_Governed    = 2,   // a seat has met at least one matching potion of the actor under the claim
+        kPotionState_Unavailable = 3,   // the seats are not installed (every ch.30 claim is refused)
+    };
+
+    // GetPotionAllowanceState's out-struct. BYTE-SHARED, static_assert-pinned. Set `size` to
+    // sizeof(APMF_PotionAllowanceInfo) before the call; a smaller `size` gets the state only, nothing written.
+    // Counters are since the load (saturating), per actor.
+    struct APMF_PotionAllowanceInfo {
+        std::uint32_t size;              // in: sizeof(APMF_PotionAllowanceInfo) (64)
+        std::uint32_t state;             // PotionAllowanceState (also the return value)
+        Handle        ownerHandle;       // the winning ch.30 claim (kInvalidHandle when none)
+        std::uint32_t deny;              // the declaration as APPLIED (after masking)
+        std::uint32_t flags;             //   "
+        std::uint32_t keywordCount;      //   "
+        std::uint32_t selectionDenied;   // CheckShouldEquip answers turned to NO (the AI's selection)
+        std::uint32_t drinkDenied;       // drinks refused at DrinkPotion
+        std::uint32_t rankStood;         // matches NOT refused because the source outranks the claim
+        std::uint32_t wouldDeny;         // matches NOT refused because of observe-only (INI or the flag)
+        RE::FormID    lastPotion;        // the last matching potion met (refused, stood or would-deny)
+        std::uint32_t lastRoad;          // PotionRoad of that meeting
+        std::uint32_t reserved[4];
+    };
+    static_assert(sizeof(APMF_PotionAllowanceInfo) == 64, "APMF_PotionAllowanceInfo is 64 bytes, byte-shared with clients");
+    static_assert(offsetof(APMF_PotionAllowanceInfo, selectionDenied) == 24, "APMF_PotionAllowanceInfo layout is frozen");
+    static_assert(offsetof(APMF_PotionAllowanceInfo, reserved) == 48, "APMF_PotionAllowanceInfo layout is frozen");
+    inline constexpr std::uint32_t kPotionAllowanceInfoV37Size = 64;
+
+    // The v37 interface: APMF_API_v36's members verbatim (prefix EXTENSION), then TWO appended slots.
+    // BYTE-SHARED with MFO: mirror it byte-identically. Gate on `abiVersion >= 37` (INVARIANTS #14b). An older
+    // APMF has neither slot and refuses kIntent_PotionAllowance (no channel serves it): the client's own degrade
+    // path runs (the engine's AI drinks what it always drank).
+    struct APMF_API_v37 : APMF_API_v36 {
+        // DECLARE the deny predicate of an EXISTING kIntent_PotionAllowance claim (`handle`). `allowance` is READ
+        // AND COPIED synchronously (a stack temporary is fine). nullptr CLEARS the declaration (the claim then
+        // denies nothing until it declares again). A re-declaration replaces the previous one. Stored whether or
+        // not the claim owns the channel; the seats read the WINNING claim's. A stale / unknown handle, or a
+        // handle on another intent, is a silent no-op. Thread-safe.
+        void (*SetPotionAllowance)(Handle handle, const APMF_PotionAllowance* allowance);
+
+        // What ch.30 is doing for `actor`: returns a PotionAllowanceState and, when `out` is non-null and
+        // `out->size` >= kPotionAllowanceInfoV37Size, fills `*out`. Read-only, ANY THREAD (an RCU read and a copy
+        // under APMF's own leaf lock, no game call). A throw inside returns kPotionState_None, nothing written.
+        std::uint32_t (*GetPotionAllowanceState)(RE::FormID actor, APMF_PotionAllowanceInfo* out);
     };
 
     // Function-pointer type for GetProcAddress(kGetInterfaceExport). Returns the

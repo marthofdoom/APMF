@@ -126,7 +126,7 @@ a DENIED category is unequipped by the enforce pass. The header comments that st
 stale until the paired MFO header change.
 
 <a id="abi-history"></a>
-## ABI v10 to v36: what each version added
+## ABI v10 to v37: what each version added
 
 Moved verbatim from `native/APMF_API.h` (line 96 at 9d01cdf). The header keeps a pointer to this anchor.
 
@@ -322,6 +322,13 @@ The seat is TESObjectWEAP::Fire's one call to Projectile::Launch: a shot the bud
 engine's own unscattered solution (the aim controller's raw lead point and the engine's ballistic lift). No change to any
 existing slot, no co-save. A client gates on abiVersion >= 36. An older APMF has no channel for intent 29 and refuses the
 claim. Docs/APMF_API-REFERENCE.md#abi-v36-projectile-aim.
+ABI v37 (2026-11-10, ClickUp 1dfcuabcqpf, branch feat/potion-allowance): POTION ALLOWANCE. kIntent_PotionAllowance (30),
+no param, with a deny predicate declared by SetPotionAllowance (the Harmful / Potions / Food bits and up to 8 keywords).
+APMF_API_v37 appends TWO slots to the v36 prefix: SetPotionAllowance(handle, APMF_PotionAllowance*) (64 bytes) and
+GetPotionAllowanceState(actor, out) with APMF_PotionAllowanceInfo (64 bytes). The seats are slot 0x0F of the 15 potion
+inventory items (the combat AI's selection) and Character slot 0x10F, Actor::DrinkPotion (every drink). No change to any
+existing slot, no co-save. A client gates on abiVersion >= 37. An older APMF has no channel for intent 30 and refuses the
+claim. Docs/APMF_API-REFERENCE.md#abi-v37-potion-allowance.
 ```
 
 <a id="intent-18"></a>
