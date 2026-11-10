@@ -773,3 +773,32 @@ The header: `kIntent_ProjectileAim` (29), `ProjectileAimState`, `APMF_Projectile
 **Refusals.** The player, and the seat not installed: `[ProjectileAim] bProjectileAim=0`, VR, a runtime other than 1.6.1170 / 1.5.97 / 1.7.104, a refused address row or a failed byte check. On 1.7.104 the seat refuses by name today (no verified row for Fire, the solve and the gravity scale: ids outside the published MIT table, and the generator has no raw-RVA row kind for a data global).
 
 **Older APMF.** An APMF before v36 has no channel for intent 29 and refuses the claim with `kInvalidHandle`. The client's degrade path is the engine's own aim, exactly as before.
+
+<a id="abi-v37-potion-allowance"></a>
+## ABI v37 potion allowance: which potions an NPC may drink (ch.30)
+
+The header: `kIntent_PotionAllowance` (30), `PotionDenyFlags`, `PotionAllowanceFlags`, `kMaxPotionDenyKeywords`, `APMF_PotionAllowance` (64 bytes), `PotionRoad`, `PotionAllowanceState`, `APMF_PotionAllowanceInfo` (64 bytes), `APMF_API_v37::SetPotionAllowance` and `APMF_API_v37::GetPotionAllowanceState`. The facet page: [FACETS.md ch.30](FACETS.md#ch30-potion-allowance-kintent_potionallowance). The engine path and every verified site: `native/core/PotionAllowance.cpp`'s header and `Docs/VERIFIED-ADDRESSES.md` (rows `PotionAllowance.*` and `CombatInventoryItemMagicT.Potion*`).
+
+**Why it exists.** Before v37 the only potion deny was the ch.8 allow-list at `CheckCast`, and it denied only while the client held a ch.8 claim on that actor. A follower with no cast claim could still be fed a drug by the engine's combat AI. ch.30 needs no cast claim.
+
+**The claim.** `Request` or `RequestEx` with `kIntent_PotionAllowance` (no param), then the declaration:
+
+```cpp
+APMF_API::APMF_PotionAllowance a{};
+a.size = sizeof(a);
+a.deny = APMF_API::kPotionDeny_Harmful;           // drugs: any Hostile or Detrimental effect
+// a.keywordCount = 1; a.keywords[0] = kw->GetFormID();   // optional: a keyword you resolved at runtime
+api->SetPotionAllowance(h, &a);                   // abiVersion >= 37
+```
+
+A potion matches when it meets ANY declared rule: `kPotionDeny_Harmful` (one of its effects has a base effect flagged Hostile or Detrimental), `kPotionDeny_Potions` (every AlchemyItem that is not food, poisons included), `kPotionDeny_Food` (every food item), or one of up to 8 keywords on the item or on one of its effects' base effects. `kPotionAllow_ObserveOnly` counts and logs, refuses nothing. `nullptr` clears the declaration. A claim with no declaration refuses nothing. A standing claim: no TTL, ended by `Release`.
+
+**The seats.** (1) The combat AI's SELECTION: slot 0x0F (`CheckShouldEquip`) of the 15 `CombatInventoryItemMagicT<CombatInventoryItemPotion, *>` classes. The engine answers first; a YES for a matching potion becomes NO, so the AI picks among the potions that remain (or does something else). (2) Every DRINK: `Actor::DrinkPotion` (Character slot 0x10F). A refused drink returns false without calling the engine: nothing is cast and nothing leaves the inventory. Both engine callers (the combat tree's DrinkPotion leaf and the equip apply step every `EquipObject` of a potion ends in) treat false as an ordinary failure.
+
+**Ranking.** On the Cast facet, against the drink's source. The combat AI and every engine road (sandbox eating, AI commands) are Engine, which a client outranks by default. Papyrus `EquipItem` and the console are DirectCalls, which outrank a client by default, so a script's drink stands, as a script's equip does under ch.17. A DLL calling `EquipObject` or `DrinkPotion` is that DLL; the claim's own client ties with its claim (its own drink stands). The player's own menu use on the actor always passes (player agency).
+
+**GetPotionAllowanceState.** Set `info.size = sizeof(APMF_PotionAllowanceInfo)` before the call. Returns `kPotionState_None` (no winning claim with a declaration), `Declared`, `Governed` (a seat has met a matching potion under the claim) or `Unavailable` (the seats are not installed). The declaration as applied (`deny`, `flags`, `keywordCount`) and counters since the load, saturating: `selectionDenied`, `drinkDenied`, `rankStood`, `wouldDeny`, plus the last matching potion and its `PotionRoad`.
+
+**Refusals.** The player, and the seats not installed: `[PotionAllowance] bPotionAllowance=0`, VR, 1.7.104 (by name: DrinkPotion, the DrinkPotion leaf and the equip apply step have no row in the fork's MIT id table there), any other runtime, a refused address row.
+
+**Older APMF.** An APMF before v37 has no channel for intent 30 and refuses the claim with `kInvalidHandle`. The client degrades to what it had before (for MFO: the drugs left off its ch.8 allow-list, a deny that holds only while that claim stands).

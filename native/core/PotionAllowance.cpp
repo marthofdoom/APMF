@@ -576,16 +576,25 @@ namespace apmf::potionallowance {
                          apmf::log::Hex(drinkFn, 0));
         }
 
-        // Write: the 0x0F seats first (the AI's selection), then the drink seat.
+        // Write: the 0x0F seats first (the AI's selection), then the drink seat. Each original is stored BEFORE its
+        // slot is written (the map reserved up front, so no rehash while a thunk could read it), so a thunk that runs
+        // the instant its slot changes already finds what to call.
+        g_origShouldEquip.reserve(2 * std::size(kVtables));
+        for (const auto& id : kVtables) {
+            REL::Relocation<std::uintptr_t> vt{ id };
+            g_origShouldEquip[vt.address()] =
+                *reinterpret_cast<const std::uintptr_t*>(vt.address() + sizeof(void*) * kSlotShouldEquip);
+        }
         for (const auto& id : kVtables) {
             REL::Relocation<std::uintptr_t> vt{ id };
             const std::uintptr_t prev = vt.write_vfunc(kSlotShouldEquip, &ShouldEquipThunk);
-            g_origShouldEquip[vt.address()] = prev;
+            g_origShouldEquip[vt.address()] = prev;   // the same value (the key exists: no insert, no rehash)
             apmf::sources::NoteVfunc(Facet::kCast,
                                      fmt::format("PotionAllowance.Item@vt0x{:X}.ShouldEquip", vt.address() - REL::Module::get().base()),
                                      vt.address(), kSlotShouldEquip, SKSE::stl::unrestricted_cast<std::uintptr_t>(&ShouldEquipThunk),
                                      prev);
         }
+        g_origDrink = reinterpret_cast<Drink_t>(cur);   // before the write, for the same reason
         g_origDrink = reinterpret_cast<Drink_t>(vtChar.write_vfunc(kSlotDrink, &DrinkThunk));
         apmf::sources::NoteVfunc(Facet::kCast, "PotionAllowance.Character.DrinkPotion", vtChar.address(), kSlotDrink,
                                  SKSE::stl::unrestricted_cast<std::uintptr_t>(&DrinkThunk),
@@ -647,8 +656,8 @@ namespace apmf::potionallowance {
             PublishLocked();
         }
         if (logIt)
-            spdlog::warn("[ch.30] SetPotionAllowance h={}:{} applied: deny 0x{:X} flags 0x{:X} keywords {}. (Logged when "
-                         "the problems change.)", h, what, d.deny, d.flags, d.kwCount);
+            spdlog::warn("[ch.30] SetPotionAllowance h={}:{} applied: deny 0x{} flags 0x{} keywords {}. (Logged when "
+                         "the problems change.)", h, what, apmf::log::Hex(d.deny, 0), apmf::log::Hex(d.flags, 0), d.kwCount);
         else if (clear)
             spdlog::info("[ch.30] SetPotionAllowance h={}: declaration cleared (the claim denies nothing).", h);
         else

@@ -161,6 +161,16 @@ ABI v36. "This archer misses at most three of his last ten shots." A mod names a
 - **`bObserveOnly`** (default `0`). 1 = count and log what would be corrected, correct nothing.
 - **`iShotWindowMs`** (default `4000`, clamped 500..30000). A shot with no hit on its target within this many milliseconds is a miss.
 - **`bProbe`** (default `0`). 1 = one `[ch.29]` line per launch, per hit and per miss (angles before and after, aim points, speed, gravity, the ballistic angle, where a missed arrow came to rest). Passive, log only.
+### [PotionAllowance]
+
+Facet reference: [ch.30 Potion allowance](FACETS.md#ch30-potion-allowance-kintent_potionallowance).
+
+ABI v37. "This follower never drinks Skooma." A mod names an actor and which potions it may not drink: any potion with a harmful effect (a drug), every potion, food, or potions carrying a keyword. No cast claim is needed. The game's combat AI then never picks such a potion (it picks another one), and any drink of one is refused: nothing is drunk and nothing leaves the inventory. Papyrus and console drinks are ranked as DirectCalls (they pass by default), and the player's own menu use always passes. 1.6.1170 and 1.5.97; on 1.7.104 the seats refuse by name.
+
+- **`bPotionAllowance`** (default `1`). 0 = the seats are not installed and kIntent_PotionAllowance claims are REFUSED (the mod keeps its own behaviour; logged once with the reason).
+- **`bObserveOnly`** (default `0`). 1 = count and log what would be refused, refuse nothing.
+- **`bProbe`** (default `0`). 1 = one `[ch.30][probe]` line per NPC drink the predicate does not refuse (who, which potion, the road it came by and its source), at most once per 5 s per actor. Passive, log only.
+
 ### [PursuitLeash]
 
 Facet reference: [ch.23 Pursuit leash](FACETS.md#ch23-pursuit-leash-kintent_pursuitleash).
