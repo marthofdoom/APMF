@@ -126,7 +126,7 @@ a DENIED category is unequipped by the enforce pass. The header comments that st
 stale until the paired MFO header change.
 
 <a id="abi-history"></a>
-## ABI v10 to v38: what each version added
+## ABI v10 to v39: what each version added
 
 Moved verbatim from `native/APMF_API.h` (line 96 at 9d01cdf). The header keeps a pointer to this anchor.
 
@@ -340,6 +340,13 @@ APMF_CombatMoveStateInfo*) (64 bytes): Unknown / Queued / Started / Refused / Fa
 (kCombatMoveInfo_HitSeen from a TESHitEvent with the Bash flag inside kCombatMoveHitWindowMs). One new ServePending bit,
 kServePending_CombatMoveRoom. No hook, no change to any existing slot, no co-save. A client gates on abiVersion >= 38;
 an older APMF refuses intent 31 ("no channel serves intent 31"). Docs/APMF_API-REFERENCE.md#abi-v38-combat-move.
+
+ABI v39 (2026-11-11, branch feat/approach-point, MFO IAUS sim v2 section 26 "Design B"): COMBAT APPROACH ON A POINT. One
+CombatApproachFlags bit, kApproach_Point (1 << 1), read through the existing RequestEx and Repoint (no struct, no slot,
+the v30 shape): the centre of the ch.24 bound is param.pos, a world point in the actor's own cell space, and param.target
+must be 0. Everything else of ch.24 is unchanged. An APMF older than v39 does not know the bit and REFUSES the claim for
+its missing target, so a client never gets a different walk than it asked for. A client gates on abiVersion >= 39.
+Docs/FACETS.md ch.24 "A point instead of a reference".
 ```
 
 <a id="intent-18"></a>

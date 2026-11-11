@@ -544,6 +544,7 @@ namespace {
         case 36: return "0.19.0";
         case 37: return "0.20.0";   // ch.30 potion allowance: the release after 0.19.0 (confirm at the cut)
         case 38: return "0.20.0";   // ch.31 combat move: the same release (confirm at the cut)
+        case 39: return "0.20.0";   // ch.24 kApproach_Point: the same release (confirm at the cut)
         default: return "a release newer than this one";
         }
     }

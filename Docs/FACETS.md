@@ -3280,6 +3280,25 @@ ABI 19 (0.11.0). `bCombatApproach` in `[CombatApproach]`. In use by MFO.
 2. Which reads of the combat area still see the engine's own area while the bound is in force?
 3. The actor arrives inside R without `kApproach_Hold`. Who releases the claim?
 
+
+#### A point instead of a reference (`kApproach_Point`, ABI 39)
+
+*"Give ground to there."* With `kApproach_Point` in `param.ival` the centre of the bound is `param.pos`, a world point, and `param.target` must be 0. The radius, the hold flag and every rule above stand as they are: the actor walks there in his combat gait and keeps fighting, a package's hold position and a ch.23 leash still win, arrival ends the claim unless `kApproach_Hold`.
+
+```cpp
+APMF_API::APMF_Param p{};
+p.ival = APMF_API::kApproach_Point;          // | kApproach_Hold to keep him there
+p.posX = x; p.posY = y; p.posZ = z;          // a point in his own cell space
+p.fval = 150.0f;                             // R
+Handle h = g_apmf->RequestEx(follower, kIntent_CombatApproach, basis, &p);
+```
+
+The point belongs to the cell space the actor is in when the claim first applies. If he leaves that space the claim ends (`kApproachState_TargetLost`). Harbinger does not test the point: a point the engine cannot path to ends the claim as `kApproachState_EngineDropped` after 3 s, loudly, and picking a reachable point is the client's job. `GetCombatApproachState` reports `target` 0 and the distance to the point.
+
+How he moves to a point BEHIND him while a foe is on him is the engine's own return-to-area movement: he may turn his back to walk there. Facing is a separate facet and is not claimed here.
+
+Gate on `abiVersion >= 39`. An older Harbinger refuses the claim (no target), so nothing else happens in its place.
+
 ### Combat substrate (`kIntent_CombatSubstrate`)
 
 *An animated cast is the follower's own combat AI casting, and that AI only exists in combat. For an out-of-combat cast Harbinger forces combat as a SUBSTRATE: a controller whose only target is Harbinger's own anchor actor, with every facet that combat switches on denied except the cast leaves. The follower keeps walking under its own package. A real fight drops it at once.*
@@ -3838,6 +3857,7 @@ The ABI is append-only. A client built against an older ABI keeps working agains
 | 27 | 0.14.0 | `IsSubstrateAvailable` (struct `APMF_API_v27`) |
 | 28 | 0.14.0 | `kIntent_Place`, `PlaceFlags`, `PlaceState`, `PlaceWhy`, `APMF_PlaceStateInfo`, `GetPlaceState` (struct `APMF_API_v28`) |
 | 38 | 0.20.0 | `kIntent_CombatMove`, `CombatMove`, `CombatMoveState`, `CombatMoveWhy`, `APMF_CombatMoveStateInfo`, `GetCombatMoveState`, `kServePending_CombatMoveRoom` (struct `APMF_API_v38`) |
+| 39 | 0.20.0 | `kApproach_Point`, a `CombatApproachFlags` bit read through the existing `RequestEx` and `Repoint` (no struct, no slot) |
 | 29 | 0.15.0 | `GetClientFacetPriority`, `ClientFacet`, `kFacetPriorityUnknown` (struct `APMF_API_v29`) |
 | 30 | 0.15.0 | `kTravel_CrossCells`, a `TravelFlags` bit read through the existing `RequestEx` and `Repoint` (no struct, no slot) |
 | 31 | 0.15.2 | `GetClaimEndReason`, `ClaimEndReason` (struct `APMF_API_v31`) |

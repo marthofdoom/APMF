@@ -405,9 +405,21 @@ namespace apmf {
             if (!apmf::combatapproach::Installed()) {
                 why     = apmf::combatapproach::NotInstalledReason();
                 whyCode = APMF_API::kServeRefusal_NotInstalled;
+            } else if (param && (static_cast<std::uint32_t>(param->ival) & APMF_API::kApproach_Point) != 0) {
+                // ABI v39: the centre is param.pos. No reference is named, and none may be.
+                if (param->target != 0)
+                    why = "kApproach_Point with a non-zero param.target (the centre is param.pos; target must be 0)";
+                else if (!std::isfinite(param->posX) || !std::isfinite(param->posY) || !std::isfinite(param->posZ))
+                    why = "kApproach_Point with a param.pos that is not a finite point";
+                else if (!std::isfinite(param->fval) || !(param->fval > 0.0f))
+                    why = "param.fval (the radius R, game units) is not a positive finite number";
+                else if (actor == 0x14) {
+                    why     = "the actor is the player (the combat approach is for NPCs)";
+                    whyCode = APMF_API::kServeRefusal_Player;
+                }
             } else if (!param || param->target == 0)
                 why = "no target (param.target is 0) -- kIntent_CombatApproach REQUIRES param.target = X, the "
-                      "reference to close on";
+                      "reference to close on (or kApproach_Point and param.pos, ABI v39)";
             else if (param->target == actor)
                 why = "the target is the actor itself";
             else if (!std::isfinite(param->fval) || !(param->fval > 0.0f))

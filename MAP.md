@@ -136,6 +136,14 @@ Anchor 3) and `APMF_API_v26 : APMF_API_v24` with ONE slot, `GetSubstrateState(ac
 `IsSubstrateAvailable()` (any thread, one load of `combatsubstrate::Installed()`)** (Docs/APMF_API-REFERENCE.md#abi-v27-substrate-available);
 v27 had been left free for the per-item equip deny (86e3t8w23), which moves to v28. The header is 2542 lines after
 v27 (still over the 2500 backstop; reported again, not split inside the task).
+**ABI v39 (2026-11-11, `feat/approach-point`) adds ONE `CombatApproachFlags` bit, `kApproach_Point` (1 << 1): the ch.24
+bound centred on `param.pos` (target must be 0). No struct, no slot. `channels/CombatApproach.cpp`: `Entry::point` /
+`Entry::pointSpace` (the actor's cell space at the claim's first sweep), `Apply` stores the point, the sweep (`Poll`)
+takes the point as X instead of resolving a reference and ends the claim as TargetLost when the actor's space is no
+longer the point's; the seats are untouched (they only ever read `Entry::want`). `core/ControlMap.cpp` refuses a point
+claim with a target or a non-finite pos. What breaks: the re-point guard in the sweep compares flags and, for a point
+claim only, the point BITWISE (a float compare would stall a NaN re-point instead of ending it Refused); an APMF < v39
+must keep refusing target 0, which is what makes the bit safe to send to an old Harbinger.**
 **ABI v38 (2026-11-11, `kIntent_CombatMove`, ch.31) adds intent 31 (rides `RequestEx`; a one-shot, never a claim, the
 v28 shape), `CombatMove` (Bash 1 / PowerBash 2 / Block 3 RESERVED), `CombatMoveState` (Unknown 0 / Queued 1 / Started 2 /
 Refused 3 / Failed 4), `CombatMoveWhy` (0-12), `kCombatMoveInfo_*`, the 64-byte POD `APMF_CombatMoveStateInfo`,

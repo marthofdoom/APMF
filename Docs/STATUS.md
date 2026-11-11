@@ -4,6 +4,15 @@ Updated 2026-11-10. Current version **v0.19.0** (cut 2026-11-10, ABI v36, a Deck
 shipped, what's probe-gated, what's next. Keep this current in the SAME change as any
 build/finding/workflow change.
 
+## HEAD OF WORK 2026-11-11 -- ch.24 ON A POINT (ABI v39, MFO IAUS sim v2 "Design B"), branch `feat/approach-point` (stacked on `feat/combat-move`), NOT merged
+
+- **What:** `kApproach_Point`, one `CombatApproachFlags` bit: the ch.24 combat-area bound centred on a world point (`param.pos`, `target` 0) instead of a reference. For "give ground to there" while fighting. No new seat, no new row, no struct, no slot: the seats already apply a point (`Entry::want`); only the sweep's source of X and the call-time refusals changed.
+- **Ends:** arrival (unless Hold), combat over, the engine dropped the bound (a point it cannot path to: 3 s, logged at warn), the actor left the point's cell space (TargetLost), actor gone, Release.
+- **Not claimed:** facing. The engine's return-to-area movement may turn him away from the foe to walk there. To be looked at in the field before a facing facet is designed.
+- **Files:** `channels/CombatApproach.cpp`, `core/ControlMap.cpp` (refusals), `APMF_API.h` (the bit, v39), `ClientAPI.cpp` (release table), FACETS ch.24, API-HISTORY, INTEGRATION, MAP.
+- **Field plan:** with the MFO client: a follower under a point claim 450 units behind him in a melee. Expect `[ch.24] 0x... combat-approach claim ENGAGED: close to within 150 of the POINT x,y,z`, then `approach APPROACHING -> X the point ...` with `area carried the bound N time(s)` and N > 0, then `arrived:`. Watch whether he backs off facing the foe or turns and walks.
+- **Review:** tier A (ABI append on a byte-shared header, a change inside an engine-seat channel). Opus tier-3 review pending.
+
 ## HEAD OF WORK 2026-11-11 -- ch.31 COMBAT MOVE (ABI v38, MFO IAUS sim v2 "Design A"), branch `feat/combat-move`, NOT merged
 
 - **What:** `kIntent_CombatMove` (31): ONE bash or power bash, started once by the engine's own start-of-attack action. A one-shot like `kIntent_Place`, no claim, no hook. Outcome through `GetCombatMoveState`.

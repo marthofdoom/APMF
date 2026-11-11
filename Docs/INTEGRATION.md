@@ -258,6 +258,7 @@ A client built against an older header keeps working. Each item below needs its 
 | 36 | 0.19.0 | `kIntent_ProjectileAim` (ch.29), a miss budget over an archer's last 10 shots, and `GetProjectileAimState(actor, &info)` | `abiVersion >= 36` |
 | 37 | 0.20.0 | `kIntent_PotionAllowance` (ch.30) with `SetPotionAllowance(handle, &allowance)` and `GetPotionAllowanceState(actor, &info)`: the potions an NPC may not drink (drugs, every potion, food, keywords), with no cast claim | `abiVersion >= 37` |
 | 38 | 0.20.0 | `kIntent_CombatMove` (ch.31): one bash or power bash, started once by the game's own action road, and `GetCombatMoveState(handle, &info)` | `abiVersion >= 38` |
+| 39 | 0.20.0 | `kApproach_Point`, a `CombatApproachFlags` bit: the ch.24 bound centred on a world point (`param.pos`, `target` 0), read through the existing `RequestEx` and `Repoint` (no struct, no slot) | `abiVersion >= 39` |
 
 ### Place (ABI 28)
 
