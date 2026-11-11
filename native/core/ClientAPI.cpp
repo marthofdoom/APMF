@@ -19,6 +19,7 @@
 #include "core/AttackSelect.h"        // ABI v34 SetAttackMix / GetAttackMixState (ch.18)
 #include "core/ProjectileAim.h"       // ABI v36 GetProjectileAimState (ch.29)
 #include "core/PotionAllowance.h"     // ABI v37 SetPotionAllowance / GetPotionAllowanceState (ch.30)
+#include "core/CombatMove.h"          // ABI v38 kIntent_CombatMove (a one-shot, never a claim) + GetCombatMoveState
 
 // The C-ABI implementation behind APMF_API.h. These free functions forward to the
 // in-process multi-NPC engine (core/ControlMap) over its thread-safe enqueue path,
@@ -38,6 +39,17 @@ namespace {
         return APMF_API::kInvalidHandle;
     }
 
+    // ABI v38 (kIntent_CombatMove): the same one-shot shape as RequestPlace above (core/CombatMove.h). The calling
+    // client is attributed FIRST and captured: the game-thread step ranks it against the Engine source on the
+    // CombatAction facet. A synchronous refusal forgets the attribution and returns kInvalidHandle. `basis` is not read.
+    APMF_API::Handle RequestCombatMove(RE::FormID actor, const APMF_API::APMF_Param* param, const void* returnAddress) {
+        const auto h = apmf::ControlMap::Get().NextHandle();
+        apmf::sources::NoteClientRequest(h, returnAddress, APMF_API::kIntent_CombatMove);
+        if (apmf::combatmove::Enqueue(h, actor, param, apmf::sources::ClientForHandle(h))) return h;
+        apmf::sources::ForgetHandle(h);
+        return APMF_API::kInvalidHandle;
+    }
+
     // NO exception may cross the DLL boundary (APMF_API.h). A throw unwinding across
     // MFO's separately-compiled DLL is UB, so every exported body is a hard catch-all
     // (bad_alloc from m_queue.push_back, an spdlog throw, ...). A swallowed throw
@@ -45,6 +57,7 @@ namespace {
     APMF_API::Handle APMF_Request(RE::FormID actor, APMF_API::Intent intent, float basis) {
         try {
             if (intent == APMF_API::kIntent_Place) return RequestPlace(actor, nullptr, _ReturnAddress());   // refused: no param
+            if (intent == APMF_API::kIntent_CombatMove) return RequestCombatMove(actor, nullptr, _ReturnAddress());   // refused: no param
             const auto h = apmf::ControlMap::Get().EnqueueRequest(actor, intent, basis, nullptr);
             apmf::sources::NoteClientRequest(h, _ReturnAddress(), intent);
             if (intent == APMF_API::kIntent_EquipPreference) apmf::equippref::NoteClaim(h);   // ABI v22 (F4)
@@ -62,6 +75,7 @@ namespace {
                                     const APMF_API::APMF_Param* param) {
         try {
             if (intent == APMF_API::kIntent_Place) return RequestPlace(actor, param, _ReturnAddress());   // ABI v28
+            if (intent == APMF_API::kIntent_CombatMove) return RequestCombatMove(actor, param, _ReturnAddress());   // ABI v38
             const auto h = apmf::ControlMap::Get().EnqueueRequest(actor, intent, basis, param);
             apmf::sources::NoteClientRequest(h, _ReturnAddress(), intent);
             if (intent == APMF_API::kIntent_EquipPreference) apmf::equippref::NoteClaim(h);   // ABI v22 (F4)
@@ -406,6 +420,16 @@ namespace {
         }
     }
 
+    // ABI v38 (kIntent_CombatMove): what became of a combat move. Any thread: a copy under the move records' leaf
+    // lock, no game call. A throw becomes kCombatMoveState_Unknown, nothing written.
+    std::uint32_t APMF_GetCombatMoveState(APMF_API::Handle handle, APMF_API::APMF_CombatMoveStateInfo* out) {
+        try {
+            return apmf::combatmove::GetState(handle, out);
+        } catch (...) {
+            return APMF_API::kCombatMoveState_Unknown;
+        }
+    }
+
     // ABI v35: the claim DRY RUN (APMF_API_v35 CanServe). The real call's own enqueue function runs in CHECK mode
     // (apmf::ServeCheck, core/ControlMap.h): RequestEx / Request -> EnqueueRequest (kIntent_Place -> place::Enqueue,
     // the same diversion RequestEx makes), RequestCast -> EnqueueCast. Nothing is filed, attributed, posted or
@@ -423,6 +447,9 @@ namespace {
                 if (intent == APMF_API::kIntent_Place)
                     apmf::place::Enqueue(APMF_API::kInvalidHandle, query->actor, query->param, apmf::sources::kNoSource,
                                          &chk);
+                else if (intent == APMF_API::kIntent_CombatMove)   // ABI v38: the same diversion RequestEx makes
+                    apmf::combatmove::Enqueue(APMF_API::kInvalidHandle, query->actor, query->param,
+                                              apmf::sources::kNoSource, &chk);
                 else
                     apmf::ControlMap::Get().EnqueueRequest(query->actor, static_cast<APMF_API::Intent>(intent),
                                                            query->basis, query->param, &chk);
@@ -516,6 +543,8 @@ namespace {
         case 35: return "0.18.0";
         case 36: return "0.19.0";
         case 37: return "0.20.0";   // ch.30 potion allowance: the release after 0.19.0 (confirm at the cut)
+        case 38: return "0.20.0";   // ch.31 combat move: the same release (confirm at the cut)
+        case 39: return "0.20.0";   // ch.24 kApproach_Point: the same release (confirm at the cut)
         default: return "a release newer than this one";
         }
     }
@@ -666,7 +695,15 @@ namespace {
     static_assert(sizeof(APMF_API::APMF_API_v37) == sizeof(APMF_API::APMF_API_v36) + 2 * sizeof(void*),
                   "APMF_API_v37 = the v36 prefix plus exactly two function pointers");
 
-    constexpr APMF_API::APMF_API_v37 g_api{
+    // ABI v38 (ch.31 combat move) appends ONE slot to the v37 prefix, so the object is now an APMF_API_v38 and
+    // `abiVersion` reports 38. Same two-form proof.
+    static_assert(offsetof(APMF_API::APMF_API_v38, GetCombatMoveState) == sizeof(APMF_API::APMF_API_v37),
+                  "APMF_API_v38's slot must start right after the v37 prefix");
+    static_assert(sizeof(APMF_API::APMF_API_v38) == sizeof(APMF_API::APMF_API_v37) + sizeof(void*),
+                  "APMF_API_v38 = the v37 prefix plus exactly one function pointer");
+
+    constexpr APMF_API::APMF_API_v38 g_api{
+        {
         {
         {
         {
@@ -744,6 +781,8 @@ namespace {
         },
         &APMF_SetPotionAllowance,
         &APMF_GetPotionAllowanceState,
+        },
+        &APMF_GetCombatMoveState,
     };
 
 }

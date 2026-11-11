@@ -4,6 +4,16 @@
 // ch.24 COMBAT APPROACH (kIntent_CombatApproach, ABI v19). See channels/CombatApproach.cpp.
 namespace apmf::combatapproach {
 
+    // ABI v39 (kApproach_Point), review F2-1 of f82ece3: the largest |coordinate| a declared point may have. A finite
+    // but absurd value (1e30) would overflow the distance math to infinity. No cell of any worldspace lies beyond a
+    // few hundred thousand units of its origin (a cell is 4096 units); this is generous and still far below any
+    // float trouble. Checked at the call (core/ControlMap.cpp) and again in the sweep (a Repoint).
+    inline constexpr float kPointCoordBound = 4000000.0f;
+    [[nodiscard]] inline bool PointInBounds(float a_x, float a_y, float a_z) noexcept {
+        const auto ok = [](float v) { return v >= -kPointCoordBound && v <= kPointCoordBound; };   // false for NaN
+        return ok(a_x) && ok(a_y) && ok(a_z);
+    }
+
     // kDataLoaded: the exact-version gate, [CombatApproach] bCombatApproach, the self-check
     // on every vtable it writes, then the seats (all write_vfunc, chaining). All or nothing.
     void Install();

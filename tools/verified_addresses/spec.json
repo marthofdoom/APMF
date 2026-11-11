@@ -5248,6 +5248,53 @@
     "1.5.97": 36976
    },
    "doc": "the apply's other callers (AE 16073-family 0x22E860, the orphan 38919; SE 0x1E1FB0) re-apply persisted state and are not EquipObject"
+  },
+  {
+   "seat": "CombatMove.BGSActionData.Ctor",
+   "kind": "function",
+   "construct": "BGSActionData's default constructor, void*(void* this) (the fork binds it as TESActionData::Ctor, RELOCATION_ID(15916, 41558), and then writes the TESActionData vtable, as core/CombatMove.cpp does): ActionInput's constructor with priority 0 / no source / no action / no target (AE 14993 0x1EE360, SE 0x1A19C0), two empty BSFixedStrings at +0x28 / +0x30, the BGSActionData vtable, flags (+0x58) 0",
+   "ids": {
+    "1.6.1170": 41558,
+    "1.5.97": 15916
+   },
+   "sig": {
+    "1.6.1170": "48 89 4C 24 08 57 48 83 EC 40 48 C7 44 24 30 FE FF FF FF 48 89 5C 24 60 48 89 74 24 68 48 8B F9 33 F6",
+    "1.5.97": "48 89 4C 24 08 55 56 57 48 83 EC 40 48 C7 44 24 30 FE FF FF FF 48 89 5C 24 78"
+   },
+   "source": "native/core/CombatMove.cpp (kIntent_CombatMove, ABI v38: ProcessAttackAction builds the engine's start-of-attack action data on its stack; SeatVerified in apmf::combatmove::Install)",
+   "doc": "ch.31 combat move, INVARIANTS #0 (l). The engine's own StartAttack (AE 49170 / SE 48139) builds the same object through a wrapper (AE 44436 0x7F9210 / SE 0x75FD20, index 0: priority 2, source = the actor, action form = default object table[0] = 49 kActionRightAttack at +0x18) and calls slot 5"
+  },
+  {
+   "seat": "CombatMove.TESActionData",
+   "kind": "vtable",
+   "construct": "RE::VTABLE_TESActionData[0]",
+   "rtti": ".?AVTESActionData@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 188603,
+    "1.5.97": 232777
+   },
+   "slots": [
+    "0x00",
+    "0x05"
+   ],
+   "source": "native/core/CombatMove.cpp (the vtable written into the action data, then two VIRTUAL CALLS, no hook: 0x05 Process -> the action mediator, whose post-action step sets the actor's attack data and attack state; 0x00 the destructor with flags 0 = destroy, no free)",
+   "doc": "ch.31 combat move. Slot 0x05 AE 41557 0x77AD30 -> mediator 38949 0x6CD0D0; SE 40551 0x6E6120 -> 0x63AF10. Slot 0x00 AE 0x23AFA0 / SE 0x1EDDA0: releases the strings at +0x30 / +0x28 and ActionInput's references, frees only when flags bit 0 is set"
+  },
+  {
+   "seat": "CombatMove.BGSDefaultObjectManager.GetSingleton",
+   "kind": "function",
+   "construct": "RE::BGSDefaultObjectManager::GetSingleton (fork mit-3.7: RELOCATION_ID(10878, 13894)); read once in apmf::combatmove::Install for GetObject(DEFAULT_OBJECT::kActionRightAttack), the action form the engine's start-of-attack wrapper stores at ActionInput+0x18",
+   "ids": {
+    "1.6.1170": 13894,
+    "1.5.97": 10878
+   },
+   "sig": {
+    "1.6.1170": "40 53 48 83 EC 30 48 C7 44 24 20 FE FF FF FF 8B 0D ?? ?? ?? ?? 65 48 8B 04 25 58 00 00 00 BA 08 2A 00 00 48 8B 0C C8 8B 04 0A 39 05 ?? ?? ?? ?? 7F 0D 48 8D 05 ?? ?? ?? ?? 48 83 C4 30 5B C3 48 8D 0D ?? ?? ?? ?? E8 ?? ?? ?? ?? 83 3D ?? ?? ?? ?? FF 75 DE 48 8D 1D ?? ?? ?? ?? 48 8B CB E8 ?? ?? ?? ?? 48 8D 0D ?? ?? ?? ?? E8 ?? ?? ?? ?? 90 48 8D 0D ?? ?? ?? ?? E8 ?? ?? ?? ?? 48 8B C3 48 83 C4 30 5B C3 CC CC CC CC CC CC CC CC CC CC CC F6 81 DC 00 00 00 01",
+    "1.5.97": "40 53 48 83 EC 30 48 C7 44 24 20 FE FF FF FF 8B 0D ?? ?? ?? ?? 65 48 8B 04 25 58 00 00 00 BA 08 2A 00 00 48 8B 04 C8 8B 0C 02 39 0D ?? ?? ?? ?? 7E 42 48 8D 0D ?? ?? ?? ?? E8 ?? ?? ?? ?? 83 3D ?? ?? ?? ?? FF 75 2D 48 8D 1D ?? ?? ?? ?? 48 8B CB E8 ?? ?? ?? ?? 48 8D 0D ?? ?? ?? ?? E8 ?? ?? ?? ?? 90 48 8D 0D ?? ?? ?? ?? E8 ?? ?? ?? ?? 48 8B C3 EB 07 48 8D 05 ?? ?? ?? ?? 48 83 C4 30 5B C3 CC CC CC CC CC CC CC CC CC CC CC CC CC CC CC 32 C0"
+   },
+   "source": "native/core/CombatMove.cpp (Install: SeatVerified, then GetObject(kActionRightAttack) through the fork's exact-build accessor, RTTI-checked As<BGSAction>)",
+   "doc": "ch.31 combat move, review F1-1 of 6078122: the engine's getter is AE 0x14EEB0 (objects at +0x20, init flags at +0xB90); the default-object layout itself is the existing layout_facts row"
   }
  ],
  "layout_facts": [

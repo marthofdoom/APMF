@@ -802,3 +802,38 @@ A potion matches when it meets ANY declared rule: `kPotionDeny_Harmful` (one of 
 **Refusals.** The player, and the seats not installed: `[PotionAllowance] bPotionAllowance=0`, VR, 1.7.104 (by name: DrinkPotion, the DrinkPotion leaf and the equip apply step have no row in the fork's MIT id table there), any other runtime, a refused address row.
 
 **Older APMF.** An APMF before v37 has no channel for intent 30 and refuses the claim with `kInvalidHandle`. The client degrades to what it had before (for MFO: the drugs left off its ch.8 allow-list, a deny that holds only while that claim stands).
+
+## ABI v38 combat move: one bash or power bash, started the engine's own way (ch.31)
+
+The header: `kIntent_CombatMove` (31), `CombatMove`, `CombatMoveState`, `CombatMoveWhy`, `kCombatMoveInfo_*`, `kCombatMoveHitWindowMs` (2500), `kCombatMoveStateGraceMs` (30000), `APMF_CombatMoveStateInfo` (64 bytes), `kServePending_CombatMoveRoom`, and `APMF_API_v38` with one slot, `GetCombatMoveState`.
+
+**Why it exists.** A client that wants a follower to bash at a chosen moment (a foe charging a spell) had no road: ch.18 only removes attack classes from the engine's own draw and ch.7 only denies leaves. Sending the `bashStart` animation event is not a road either. The engine starts an attack by processing an action (`TESActionData::Process`), and only that road sets the actor's attack data and attack state, which the hit reads. A bare event plays the swing with whatever attack data the actor had before.
+
+**The request.** A one-shot, the `kIntent_Place` shape. `RequestEx` only.
+
+```cpp
+APMF_API::APMF_Param p{};
+p.ival   = APMF_API::kCombatMove_Bash;      // or kCombatMove_PowerBash
+p.target = foe->GetFormID();               // optional: checked and measured, never aimed at
+APMF_API::Handle h = g_apmf->RequestEx(follower->GetFormID(), APMF_API::kIntent_CombatMove, 0.0f, &p);
+// h labels the request. IsClaimLive(h) is false; Release(h) does nothing.
+
+APMF_API::APMF_CombatMoveStateInfo info{};
+info.size = sizeof(info);
+switch (g_apmf->GetCombatMoveState(h, &info)) {
+case APMF_API::kCombatMoveState_Queued:  break;                 // the game thread has not run it yet
+case APMF_API::kCombatMoveState_Started: /* info.info & kCombatMoveInfo_HitSeen once it lands */ break;
+case APMF_API::kCombatMoveState_Refused: /* info.why: Busy, NotAttackReady, OffenseDenied, ... */ break;
+case APMF_API::kCombatMoveState_Failed:  /* info.why: EngineRefused, NotApplied, Error */ break;
+}
+```
+
+**What runs.** On the game thread, once: the engine's own bash test (no attack in progress, `IsAttackReady`, attacking not disabled), then the actor base's bash entry of the named kind (highest attack chance among several), then the action. The engine's own checks inside the action still apply. `Started` means the actor's attack data read back as that entry and its attack state as Bash. `staminaSpent` is the stamina difference across the call. `distance` and `bearingDeg` are the named target's at the send: reach and facing are the client's to judge, nothing is turned or moved.
+
+**What refuses it.** At the call (`kInvalidHandle`): not installed (`[CombatMove] bCombatMove=0`, VR, a runtime other than exactly 1.6.1170 / 1.5.97, a failed row), no param, `kCombatMove_Block` (reserved) or an unknown move, actor 0, the player, the actor as its own target, 128 queued. On the game thread (`kCombatMoveState_Refused`): see `CombatMoveWhy`. A winning `kIntent_CombatAction` claim that denies Offense refuses it whoever filed that claim, your own included: release the deny first.
+
+**The hit.** A `TESHitEvent` caused by the actor with the Bash flag, within 2.5 s of the start, sets `kCombatMoveInfo_HitSeen`, `hitTarget`, and `HitBlocked` / `HitOnTarget`. A bash that hits nobody never sets it: there is no "missed" state, read the bit after the window.
+
+**Older APMF.** An APMF before v38 has no channel for intent 31 and refuses the request. The client makes no move (MFO: the bash candidate is not generated).
+
+**Field status.** Built from the disassembly, CI-verified, not yet observed on a deck. `[Probe] bCombatMove=1` logs every melee hit by or on a teammate with its flags and the attacker's attack data, which is how the first run compares the engine's own bashes with a sent one.

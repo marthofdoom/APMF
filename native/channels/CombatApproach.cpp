@@ -255,6 +255,10 @@ namespace {
         RE::FormID       target   = 0;
         float            radius   = 0.0f;
         std::uint32_t    flags    = 0;
+        // ABI v39 (kApproach_Point): the declared centre, and the actor's cell space as of the first sweep after the
+        // claim applied (nullptr until then). The point means nothing in any other space.
+        RE::NiPoint3     point{};
+        const void*      pointSpace = nullptr;
         APMF_API::Handle owner    = APMF_API::kInvalidHandle;
         bool             live     = false;   // the seats apply `want` while true
         Geo              want{};
@@ -755,9 +759,10 @@ namespace {
         g_ended.fetch_add(1, std::memory_order_relaxed);
         MarkReactivate(a_id);   // F3: S3 puts the engine's area back on the actor's own combat thread
         const std::string line = fmt::format(
-            "[ch.24] {} approach ENDED for 0x{} -> X 0x{} (R {:.0f}, last distance {:.0f}): the area carried the bound "
+            "[ch.24] {} approach ENDED for 0x{} -> X {} (R {:.0f}, last distance {:.0f}): the area carried the bound "
             "{} time(s), the engine judged the actor outside it {} time(s); claim h={} released by Harbinger.",
-            a_why, Hex(a_id), Hex(tgt), r, d, applied, outside, winner ? h : 0u);
+            a_why, Hex(a_id), tgt != 0 ? fmt::format("0x{}", Hex(tgt)) : std::string{ "a point" }, r, d, applied, outside,
+            winner ? h : 0u);
         // Principle 7: an engine-side failure is a warning; an ordinary end is info.
         if (a_state == APMF_API::kApproachState_EngineDropped) spdlog::warn("{}", line);
         else spdlog::info("{}", line);
@@ -775,6 +780,8 @@ namespace {
             e.target     = a_param.target;
             e.radius     = a_param.fval;
             e.flags      = static_cast<std::uint32_t>(a_param.ival);
+            e.point      = RE::NiPoint3{ a_param.posX, a_param.posY, a_param.posZ };
+            e.pointSpace = nullptr;   // bound at the first sweep (a re-point binds again)
             e.owner      = APMF_API::kInvalidHandle;
             e.released   = false;
             e.ending     = false;
@@ -793,9 +800,13 @@ namespace {
             e.state = APMF_API::kApproachState_None;   // force a state change (new seq) below
             SetState(e, APMF_API::kApproachState_Waiting, now);
         }
-        spdlog::info("[ch.24] 0x{} combat-approach claim {}: close to within {:.0f} of 0x{}{}. The actor's own combat "
+        const bool        isPoint = (static_cast<std::uint32_t>(a_param.ival) & APMF_API::kApproach_Point) != 0;
+        const std::string goal    = isPoint ? fmt::format("the POINT {:.0f},{:.0f},{:.0f}", a_param.posX, a_param.posY,
+                                                           a_param.posZ)
+                                            : fmt::format("0x{}", Hex(a_param.target));
+        spdlog::info("[ch.24] 0x{} combat-approach claim {}: close to within {:.0f} of {}{}. The actor's own combat "
                      "area carries the bound while it fights; nothing else is claimed.",
-                     Hex(a_id), a_what, a_param.fval, Hex(a_param.target),
+                     Hex(a_id), a_what, a_param.fval, goal,
                      (static_cast<std::uint32_t>(a_param.ival) & APMF_API::kApproach_Hold) != 0 ? " (HOLD after arrival)"
                                                                                                 : " (ends on arrival)");
     }
@@ -1056,23 +1067,41 @@ namespace apmf::combatapproach {
             float         radius = 0.0f;
             std::uint32_t flags  = 0;
             bool          wasApplied = false;
+            RE::NiPoint3  point{};
+            const void*   pointSpace = nullptr;
             {
                 std::unique_lock lk(g_entryMx);
                 const auto it = g_entries.find(id);
                 if (it == g_entries.end() || it->second->released || it->second->ending) continue;
                 Entry& e = *it->second;
                 if (e.target != p.target) continue;   // mid re-point: the next Apply rewrites the entry
+                // ABI v39: a point claim has target 0 on both sides, so its re-point shows in the flags or the point.
+                // The point is compared BITWISE, and only for a point claim: a NaN must reach the Refused end below,
+                // not stall here, and a reference claim's unread pos must never matter.
+                if (e.flags != static_cast<std::uint32_t>(p.ival)) continue;
+                if ((e.flags & APMF_API::kApproach_Point) != 0) {
+                    const float declared[3] = { p.posX, p.posY, p.posZ };
+                    const float held[3]     = { e.point.x, e.point.y, e.point.z };
+                    if (std::memcmp(declared, held, sizeof(declared)) != 0) continue;
+                }
                 e.owner    = h;
                 target     = e.target;
                 radius     = e.radius;
                 flags      = e.flags;
                 wasApplied = e.wasApplied;
+                point      = e.point;
+                pointSpace = e.pointSpace;
             }
+            const bool isPoint = (flags & APMF_API::kApproach_Point) != 0;
 
-            if (target == 0 || target == id || !std::isfinite(radius) || !(radius > 0.0f)) {
+            if (isPoint ? (target != 0 || !PointInBounds(point.x, point.y, point.z) ||   // false for NaN / inf too (F2-1)
+                           !std::isfinite(radius) || !(radius > 0.0f))
+                        : (target == 0 || target == id || !std::isfinite(radius) || !(radius > 0.0f))) {
                 End(id, APMF_API::kApproachState_Refused,
-                    "invalid declaration (a Repoint named target 0 / the actor itself, or a radius that is not a "
-                    "positive finite number):");
+                    isPoint ? "invalid declaration (a Repoint with kApproach_Point named a target, a point that is not "
+                              "finite or lies beyond 4,000,000 units, or a radius that is not a positive finite number):"
+                            : "invalid declaration (a Repoint named target 0 / the actor itself, or a radius that is not a "
+                              "positive finite number):");
                 continue;
             }
             auto* actor = RE::TESForm::LookupByID<RE::Actor>(id);
@@ -1080,21 +1109,36 @@ namespace apmf::combatapproach {
                 End(id, APMF_API::kApproachState_ActorGone, "actor dead / unloaded:");
                 continue;
             }
-            auto*       x   = RE::TESForm::LookupByID<RE::TESObjectREFR>(target);
+            auto*       x   = isPoint ? nullptr : RE::TESForm::LookupByID<RE::TESObjectREFR>(target);
             const char* why = nullptr;
-            if (!x) why = "X is not a loaded reference:";
-            else if (x->IsDeleted() || x->IsDisabled()) why = "X deleted / disabled:";
-            else if (!x->Is3DLoaded()) why = "X unloaded:";
-            else if (auto* xa = x->As<RE::Actor>(); xa && xa->IsDead()) why = "X dead:";
             const void* spaceA = SpaceOf(actor);
-            const void* spaceX = x ? SpaceOf(x) : nullptr;
-            if (!why && (!spaceX || spaceX != spaceA)) why = "X in another cell space:";
+            const void* spaceX = nullptr;
+            if (isPoint) {
+                // ABI v39: X is the declared point, in the actor's cell space as of this claim's first sweep.
+                if (!pointSpace) {
+                    pointSpace = spaceA;
+                    std::unique_lock lk(g_entryMx);
+                    const auto it = g_entries.find(id);
+                    if (it == g_entries.end() || it->second->released || it->second->ending) continue;
+                    it->second->pointSpace = spaceA;
+                }
+                spaceX = pointSpace;
+                if (!spaceX) why = "the actor is in no cell space (the point cannot be placed):";
+                else if (spaceX != spaceA) why = "the actor left the point's cell space:";
+            } else {
+                if (!x) why = "X is not a loaded reference:";
+                else if (x->IsDeleted() || x->IsDisabled()) why = "X deleted / disabled:";
+                else if (!x->Is3DLoaded()) why = "X unloaded:";
+                else if (auto* xa = x->As<RE::Actor>(); xa && xa->IsDead()) why = "X dead:";
+                spaceX = x ? SpaceOf(x) : nullptr;
+                if (!why && (!spaceX || spaceX != spaceA)) why = "X in another cell space:";
+            }
             if (why) {
                 End(id, APMF_API::kApproachState_TargetLost, why);
                 continue;
             }
 
-            const RE::NiPoint3 posXReal = x->GetPosition();
+            const RE::NiPoint3 posXReal = isPoint ? point : x->GetPosition();
             RE::NiPoint3       posX     = posXReal;   // the goal point; clamped just inside a grazing leash below
             float              dist     = actor->GetPosition().GetDistance(posX);
             // A combat SUBSTRATE (S2a) is not a fight: a waiting ch.24 claim does not apply under it.
@@ -1198,9 +1242,12 @@ namespace apmf::combatapproach {
             if (next == APMF_API::kApproachState_Yielded && prevState != next && (sf & kSeatYielded) != 0)
                 AttributeYield(id, actor, h);
             if (logLine)
-                spdlog::info("[ch.24] 0x{} approach {} -> X 0x{}: distance {:.0f} / R {:.0f}; area carried the bound {} "
+                spdlog::info("[ch.24] 0x{} approach {} -> X {}: distance {:.0f} / R {:.0f}; area carried the bound {} "
                              "time(s); engine: {}, standard area {}; outside answers {}{}.",
-                             Hex(id), StateName(next), Hex(target), dist, radius, applied,
+                             Hex(id), StateName(next),
+                             isPoint ? fmt::format("the point {:.0f},{:.0f},{:.0f}", point.x, point.y, point.z)
+                                     : fmt::format("0x{}", Hex(target)),
+                             dist, radius, applied,
                              inside == 2 ? "INSIDE" : inside == 1 ? "OUTSIDE (return-to-area selectable)" : "no fresh verdict",
                              (sf & kSeatCurrent) ? "CURRENT" : (sf & kSeatYielded) ? "outranked"
                                                      : (sf & kSeatStood) ? "kept (the claim does not outrank its source)"
