@@ -108,7 +108,8 @@ extern "C" __declspec(dllimport) unsigned long __stdcall GetPrivateProfileIntA(
 //       - the fight ENDED: the entry succeeded and the actor's combatController pointer is
 //         now null ("combat ended") -- Poll(), reading the POINTER only, never the controller
 //         (Actor::IsInCombat is not used: its body reads a byte at controller +0x43, AE
-//         0x6B6DD0 / SE 0x625660, which is a dereference; B26);
+//         0x6B6DD0 / SE 0x625660, which is a dereference; B26). The one exception is the
+//         passive inactive-flag probe's single byte read (log only, see ProbeEnd);
 //       - the owner died, or the target died, was disabled, unloaded or stopped resolving
 //         -- Poll().
 //     A client that wants another entry sends a NEW request. (A Repoint of a still-live
@@ -141,13 +142,17 @@ extern "C" __declspec(dllimport) unsigned long __stdcall GetPrivateProfileIntA(
 // OfferPackage precedent); Poll runs on the same seat. g_entries is therefore touched on
 // ONE thread only and takes no lock. After the call the channel reads the actor's
 // combatController POINTER (null or not) and nothing behind it: no controller or group
-// dereference from the main thread (APMF-B26's exposure is not widened).
+// dereference from the main thread (APMF-B26's exposure is not widened). THE ONE EXCEPTION is
+// the passive inactive-flag probe (log only): one byte read, CombatController +0x43, right
+// after StartCombat on the calling thread, then from Poll while the entry is live and
+// inactive (bounded to 30 s, read fresh through the actor each poll, dereferenced only while the actor still
+// holds the Enter pointer, ABA only misattributes); see ProbeEnd.
 //
 // VERSION ROBUSTNESS. The only engine address is StartCombat's, a verified row on both
 // runtimes (spec.json "CombatEntry.Actor.StartCombat"), refused unless it verifies; exact
 // 1.6.1170 / 1.5.97 only (the fork's binding also refuses VR by name); [CombatEntry]
-// bCombatEntry. The only raw read is the actor's own combatController pointer, through the
-// fork's ACTOR_RUNTIME_DATA accessor.
+// bCombatEntry. The only raw reads are the actor's own combatController pointer, through the
+// fork's ACTOR_RUNTIME_DATA accessor, and the probe's one byte at CombatController +0x43.
 // ============================================================================
 
 namespace {
@@ -173,6 +178,12 @@ namespace {
         std::uint32_t   refused = 0;   // ... that returned false (the engine refused)
         std::uint32_t   suppressed = 0;   // entry log lines held back by the rate limit
         std::uint64_t   lastLogMs = 0;
+        // PASSIVE PROBE (log only, no behaviour): the engine builds the controller INACTIVE (CombatController
+        // +0x43, IsInCombat = controller && inactive == 0) until the group detects the target, so "ENTERED" can
+        // precede a real in-combat state by seconds. probeCc is the controller read at Enter (null = no probe
+        // armed); the flip / end line is logged once, then probeCc is cleared.
+        const RE::CombatController* probeCc = nullptr;
+        std::uint64_t   probeStartMs = 0;
         bool            resolved = false;   // the target resolved to an actor (Poll watches only these)
         bool            inFight = false;    // the last call entered and the controller was present
         bool            ending = false;     // Harbinger is releasing this claim
@@ -191,6 +202,19 @@ namespace {
 
     bool HasController(RE::Actor* a) {
         return a->GetActorRuntimeData().combatController != nullptr;   // the POINTER only (B26)
+    }
+
+    // PASSIVE PROBE: CombatController::inactive, a bool at +0x43. The fork declares it below +0x68, outside
+    // GetRuntimeData(), so it is the same member on every build; verified by disassembly of IsInCombat
+    // (`cmp byte ptr [rax+0x43], 0`) on 1.6.1170 0x6B6DD0, 1.5.97 0x625660 and 1.7.104 0x6C9850
+    // (docs/VERIFIED-ADDRESSES.md). Main thread only, log only. The probe window is bounded (kProbeMaxMs).
+    constexpr std::uint64_t kProbeMaxMs = 30000;
+
+    void ProbeEnd(RE::FormID id, Entry& e, std::uint64_t nowMs, const char* why) {
+        if (!e.probeCc) return;
+        spdlog::info("[ch.21] 0x{} controller still INACTIVE at end, {} ms ({}).", Hex(id),
+                     nowMs - e.probeStartMs, why);
+        e.probeCc = nullptr;
     }
 
     // ABI v31 (GetClaimEndReason): why Harbinger ended a ch.20 / ch.21 claim, by HANDLE. Written on the game
@@ -336,15 +360,28 @@ namespace {
 
         apmf::sources::NoteServedClaim(entryH, apmf::sources::Facet::kCombat);   // ch.21: the declared entry happened
         const auto nowMs = apmf::clock::MonotonicMs();
+        // PASSIVE PROBE: read the controller StartCombat just built, on the thread that called it.
+        const auto* cc       = actor->GetActorRuntimeData().combatController;
+        const bool  inactive = cc->inactive;
+        // A re-point onto the same controller keeps its probe (and probeStartMs); only a different controller
+        // replaces it. Arm only when none is armed; an armed probe whose controller is now active ends quietly.
+        if (e.probeCc && e.probeCc != cc) ProbeEnd(id, e, nowMs, "a new entry replaced it");
+        if (inactive) {
+            if (!e.probeCc) { e.probeCc = cc; e.probeStartMs = nowMs; }
+        } else if (e.probeCc) {
+            spdlog::info("[ch.21] 0x{} controller ACTIVE after {} ms.", Hex(id), nowMs - e.probeStartMs);
+            e.probeCc = nullptr;
+        }
+        const char* cState = inactive ? "controller INACTIVE" : "controller ACTIVE";
         if (e.lastLogMs != 0 && nowMs - e.lastLogMs < kLogEveryMs) {
             ++e.suppressed;
             return;
         }
         e.lastLogMs = nowMs;
         const std::uint32_t held = std::exchange(e.suppressed, 0);
-        spdlog::info("[ch.21] 0x{} entry {} against 0x{}: REQUESTED -> the engine ENTERED ({}). Target is a "
+        spdlog::info("[ch.21] 0x{} entry {} against 0x{}: REQUESTED -> the engine ENTERED ({}) ({}). Target is a "
                      "combat-group target: {}. Pin: {}.{}",
-                     Hex(id), what, Hex(tf),
+                     Hex(id), what, Hex(tf), cState,
                      wasInCombat ? "was already in combat: the engine was asked to add the target to its group"
                                  : "was not in combat: new controller and group",
                      wasInCombat ? "not read (already in combat: the engine does not report it; ch.20's log says "
@@ -451,6 +488,7 @@ namespace {
                 spdlog::info("[ch.21] 0x{} combat-entry released (no entry state).", Hex(id));
                 return;
             }
+            ProbeEnd(id, it->second, apmf::clock::MonotonicMs(), "the claim was released");
             const Entry e = it->second;
             g_entries.erase(it);
             g_count.store(g_entries.size(), std::memory_order_relaxed);
@@ -530,6 +568,20 @@ namespace apmf::combatentry {
                 why = "target unloaded"; cause = APMF_API::kClaimEnd_TargetGone;
             } else if (sn.inFight && owner && !HasController(owner)) {
                 why = "combat ended"; cause = APMF_API::kClaimEnd_CombatEnded;
+            }
+            // PASSIVE PROBE: one flip line per entry. Dereferences the controller only while the window is
+            // live and the pointer still equals the one read at Enter (a different pointer = it was replaced).
+            if (const auto eit = g_entries.find(sn.id); eit != g_entries.end() && eit->second.probeCc) {
+                Entry& e = eit->second;
+                const auto* cur = owner ? owner->GetActorRuntimeData().combatController : nullptr;
+                if (why || cur != e.probeCc) {
+                    ProbeEnd(sn.id, e, now, why ? why : "the controller is gone or was replaced");
+                } else if (!cur->inactive) {
+                    spdlog::info("[ch.21] 0x{} controller ACTIVE after {} ms.", Hex(sn.id), now - e.probeStartMs);
+                    e.probeCc = nullptr;
+                } else if (now - e.probeStartMs >= kProbeMaxMs) {
+                    ProbeEnd(sn.id, e, now, "probe window elapsed");
+                }
             }
             if (why) EndClaim(sn.id, sn.target, why, cause);
         }
