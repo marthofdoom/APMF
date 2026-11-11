@@ -362,7 +362,7 @@ namespace apmf::anchorguard {
         if (why) {
             g_seatState.store(why, std::memory_order_release);
             spdlog::warn("[substrate] anchor JOIN GUARD seat NOT installed -- {}. A null-target StartCombat into a "
-                         "substrate group is not refused at its source; the anchor-leak sweep still runs.",
+                         "substrate group is not refused at its source, and a HELD HOLDER's group join into an ally's fight is not refused either ([CombatSubstrate] bSubstrateHolderJoinGuard is inert without this seat); the anchor-leak sweep still runs.",
                          why);
             return false;
         }

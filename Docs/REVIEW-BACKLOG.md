@@ -1350,3 +1350,16 @@ Verbatim: "Classify names the drink's source from EquipObject's caller (CallerBe
 ### APMF-B259 (SEV-5, OPEN, core/PotionAllowance.cpp Install kVtables, against 42f0841, Fable tier-3 review of feat/potion-allowance) -- the base CombatInventoryItemPotion vtable is not seated at 0x0F
 Verbatim: "kVtables lists the 15 CombatInventoryItemMagicT<CombatInventoryItemPotion, CombatMagicCaster*> instantiations; RE::VTABLE_CombatInventoryItemPotion (AE 210899 / SE 548592) itself is not seated. If the engine ever constructs the base class for a potion no caster archetype claims, its 0x0F runs unhooked and the AI may select a refused potion; the drink seat (Character 0x10F) still refuses it at the leaf, so the deny stays complete and only the composition suffers (the leaf fails each tick instead of the AI choosing another potion)." Reasoning for SEV-5: the drink seat makes this a composition gap, never a deny gap; whether the base is ever instantiated was not proven either way (the ctor lea to the base vtable proves nothing, every derived ctor writes it first). Fix direction: prove the factory (CombatInventory's item creation) never leaves an item on the base vtable, or add the base vtable row and seat it the same way (its 0x0F may be CombatInventoryItemMagic's plain `true`).
 
+
+### APMF-B275 (SEV-4, OPEN, channels/AnchorGuard.cpp refuseMerge, against 7639f18, Opus tier-3 review of the movement batch)
+refuseMerge is a blanket refusal: a held holder is no longer pulled into a NON-teammate ally's fight through the 0x71C020 null-target join (teammates and the player are still caught by PartyPoll; his own target or a hit still makes him real). The narrower rule (refuse only when the group has no real target) would need a group-pointer read from any thread, which the address-compare-only rule forbids. marth 11-11 accepted refuse-always (MB2).
+
+### APMF-B276 (SEV-5, OPEN, channels/AnchorGuard.cpp refuseMerge kind==0, against 7639f18, same review)
+refuseMerge with kind==0 also catches a holder's own unpublished substrate group during the one-frame lag; the join is a harmless no-op but the "would merge" WARN is wrong for that case.
+
+### APMF-B277 (SEV-5, OPEN, Data/SKSE/Plugins/APMF.ini, pre-existing, same review)
+The bSubstrateJoinGuard comment says "1.6.1170 / 1.5.97 only", but the code supports 1.7.104.
+
+### APMF-B278 (SEV-5, OPEN, channels/CombatApproach.cpp bApproachGaitProbe, against 7639f18, same review)
+bApproachGaitProbe ships 1 in the INI and the code default while testing; flip both to 0 before a release cut (MB7). Also: CombatApproach.cpp crossed ~1500 lines (1523): plan a split as its own round.
+(Fixed in the branch by the coordinator from the same review: the JOIN GUARD seat-not-installed warning now says bSubstrateHolderJoinGuard is inert without the seat.)
