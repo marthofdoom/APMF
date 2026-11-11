@@ -5248,6 +5248,38 @@
     "1.5.97": 36976
    },
    "doc": "the apply's other callers (AE 16073-family 0x22E860, the orphan 38919; SE 0x1E1FB0) re-apply persisted state and are not EquipObject"
+  },
+  {
+   "seat": "CombatMove.BGSActionData.Ctor",
+   "kind": "function",
+   "construct": "BGSActionData's default constructor, void*(void* this) (the fork binds it as TESActionData::Ctor, RELOCATION_ID(15916, 41558), and then writes the TESActionData vtable, as core/CombatMove.cpp does): ActionInput's constructor with priority 0 / no source / no action / no target (AE 14993 0x1EE360, SE 0x1A19C0), two empty BSFixedStrings at +0x28 / +0x30, the BGSActionData vtable, flags (+0x58) 0",
+   "ids": {
+    "1.6.1170": 41558,
+    "1.5.97": 15916
+   },
+   "sig": {
+    "1.6.1170": "48 89 4C 24 08 57 48 83 EC 40 48 C7 44 24 30 FE FF FF FF 48 89 5C 24 60 48 89 74 24 68 48 8B F9 33 F6",
+    "1.5.97": "48 89 4C 24 08 55 56 57 48 83 EC 40 48 C7 44 24 30 FE FF FF FF 48 89 5C 24 78"
+   },
+   "source": "native/core/CombatMove.cpp (kIntent_CombatMove, ABI v38: ProcessAttackAction builds the engine's start-of-attack action data on its stack; SeatVerified in apmf::combatmove::Install)",
+   "doc": "ch.31 combat move, INVARIANTS #0 (l). The engine's own StartAttack (AE 49170 / SE 48139) builds the same object through a wrapper (AE 44436 0x7F9210 / SE 0x75FD20: priority 2, source = the actor) and calls slot 5"
+  },
+  {
+   "seat": "CombatMove.TESActionData",
+   "kind": "vtable",
+   "construct": "RE::VTABLE_TESActionData[0]",
+   "rtti": ".?AVTESActionData@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 188603,
+    "1.5.97": 232777
+   },
+   "slots": [
+    "0x00",
+    "0x05"
+   ],
+   "source": "native/core/CombatMove.cpp (the vtable written into the action data, then two VIRTUAL CALLS, no hook: 0x05 Process -> the action mediator, whose post-action step sets the actor's attack data and attack state; 0x00 the destructor with flags 0 = destroy, no free)",
+   "doc": "ch.31 combat move. Slot 0x05 AE 41557 0x77AD30 -> mediator 38949 0x6CD0D0; SE 40551 0x6E6120 -> 0x63AF10. Slot 0x00 AE 0x23AFA0 / SE 0x1EDDA0: releases the strings at +0x30 / +0x28 and ActionInput's references, frees only when flags bit 0 is set"
   }
  ],
  "layout_facts": [

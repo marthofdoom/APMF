@@ -626,7 +626,8 @@ namespace apmf::sources {
         case kIntent_Cast:
         case kIntent_CastGuard:         return bit(Facet::kCast);
         case kIntent_CombatAction:
-        case kIntent_PursuitLeash:      return bit(Facet::kCombatAction);
+        case kIntent_PursuitLeash:
+        case kIntent_CombatMove:        return bit(Facet::kCombatAction);   // ABI v38: ranked vs Engine there
         case kIntent_CombatEntry:
         case kIntent_CombatReentryDeny:
         case kIntent_CombatApproach:

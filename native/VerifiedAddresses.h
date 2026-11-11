@@ -19,7 +19,7 @@
 
 namespace apmf::VerifiedAddresses
 {
-	// 1.6.1170.0: 291 rows
+	// 1.6.1170.0: 293 rows
 	inline constexpr REL::SelfCheck::Row kRows_1_6_1170[] = {
 		{ 207886, 0x18A5558, 0x0, 0, {  }, "Character" },
 		{ 207896, 0x18A5FE8, 0x0, 0, {  }, "Character.ActorValueOwner" },
@@ -312,9 +312,11 @@ namespace apmf::VerifiedAddresses
 		{ 49928, 0x8C3110, 0xE6, 6, { 0xFF, 0x90, 0x78, 0x08, 0x00, 0x00 }, "PotionAllowance.Site.Leaf" },
 		{ 38001, 0x69F9C0, 0x7B7, 6, { 0xFF, 0x90, 0x78, 0x08, 0x00, 0x00 }, "PotionAllowance.Site.EquipApply" },
 		{ 38929, 0x6CBE30, 0x289, 1, { 0xE8 }, "PotionAllowance.Site.WorkerApply" },
+		{ 41558, 0x77AD40, 0x0, 0, {  }, "CombatMove.BGSActionData.Ctor" },
+		{ 188603, 0x178C478, 0x0, 0, {  }, "CombatMove.TESActionData" },
 	};
 
-	// 1.5.97.0: 291 rows
+	// 1.5.97.0: 293 rows
 	inline constexpr REL::SelfCheck::Row kRows_1_5_97[] = {
 		{ 261397, 0x165DA40, 0x0, 0, {  }, "Character" },
 		{ 261402, 0x165E4D0, 0x0, 0, {  }, "Character.ActorValueOwner.SE" },
@@ -607,9 +609,11 @@ namespace apmf::VerifiedAddresses
 		{ 48984, 0x82B6D0, 0xBE, 6, { 0xFF, 0x90, 0x78, 0x08, 0x00, 0x00 }, "PotionAllowance.Site.Leaf" },
 		{ 36976, 0x60B9E0, 0x82F, 6, { 0xFF, 0x90, 0x78, 0x08, 0x00, 0x00 }, "PotionAllowance.Site.EquipApply" },
 		{ 37963, 0x6394B0, 0x4D, 1, { 0xE8 }, "PotionAllowance.Site.WorkerApply" },
+		{ 15916, 0x1ED550, 0x0, 0, {  }, "CombatMove.BGSActionData.Ctor" },
+		{ 232777, 0x1548198, 0x0, 0, {  }, "CombatMove.TESActionData" },
 	};
 
-	// 1.7.104.0: 288 rows
+	// 1.7.104.0: 290 rows
 	// 67 NOT VERIFIED on 1.7.104.0, deliberately absent from this table (the seat is refused):
 	//   Character.ActorValueOwner.SE (1.6.1170 id -): no 1.6.1170 (AE) id: the 1.7.104 map is keyed by AE id (1.5.97-only seat)
 	//   ActionGate.Hold.ParallelDataPush (1.6.1170 id 47532): id 47532 is not in the idmap
@@ -932,6 +936,8 @@ namespace apmf::VerifiedAddresses
 		{ 211590, 0x194EA98, 0x0, 0, {  }, "CombatInventoryItemMagicT.PotionRestore" },
 		{ 211632, 0x194EFD8, 0x0, 0, {  }, "CombatInventoryItemMagicT.PotionWard" },
 		{ 211678, 0x194F518, 0x0, 0, {  }, "CombatInventoryItemMagicT.PotionOffensive" },
+		{ 41558, 0x78DB90, 0x0, 0, {  }, "CombatMove.BGSActionData.Ctor" },
+		{ 188603, 0x18058F8, 0x0, 0, {  }, "CombatMove.TESActionData" },
 		{ 0, 0x82D2C0, 0x0, 0, {  }, "AiCastSeats.Melee.CalculateScore" },
 		{ 0, 0x82D790, 0x0, 0, {  }, "AiCastSeats.Ranged.CalculateScore" },
 		{ 0, 0x82DCD0, 0x0, 0, {  }, "AiCastSeats.Shield.CalculateScore" },
