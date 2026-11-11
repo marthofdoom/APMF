@@ -577,7 +577,13 @@ with `kIntent_CombatSubstrate` beside its `kIntent_Cast` claim. It is legal only
    entry into a SUBSTRATE group -- no target but the anchor, and a held holder in it or the anchor listed, matched
    by the group's ADDRESS against the set the game thread published that frame, never dereferenced in the seat --
    by an actor that is not a live holder is answered "dead"; a join naming a real target passes (a real target makes
-   the fight real, condition 5); (b3) a route-independent SWEEP on the game thread every frame while a substrate is
+   the fight real, condition 5); the MIRROR of that join (2026-11-11, Q92: the leak cleanup ended a real fight) is
+   refused at the same seat: a HELD holder already has its substrate controller, so a StartCombat on it with a group
+   and a target that is none or the anchor is the engine's group JOIN, which MERGES its substrate group -- members and
+   targets, the anchor with them -- into the given group (AE `0x6B6D78 -> 0x83D2C0 -> 0x804A80`, the merge's only call
+   site); into a group that is NOT a substrate group it is answered "dead" (`bSubstrateHolderJoinGuard`), so a held
+   holder's substrate group never joins anyone's fight and real combat reaches a holder only through its triggers
+   (condition 5); (b3) a route-independent SWEEP on the game thread every frame while a substrate is
    live and 10 s after: a high-process non-holder whose controller targets the anchor or whose group lists it is
    logged as an ERROR (a leak is never masked, principle 7) and cleaned -- the anchor removed from its group with
    `CombatGroup::RemoveTarget` only when no held holder shares that group (in a shared group the leaked actor
@@ -654,7 +660,10 @@ with `kIntent_CombatSubstrate` beside its `kIntent_Cast` claim. It is legal only
    decision about any client's facet.
 8. **The world's reaction to the substrate is Harbinger's, because Harbinger switched it on** (principle 2 scope:
    the substrate is Harbinger's own state-forcing, not a client's declared fight). That is why every row of the
-   design's deny table has a deny or a hole marth accepted by name, and why a real fight ends it.
+   design's deny table has a deny or a hole marth accepted by name, and why a real fight ends it. THE SWEEP NEVER STOPS A GENUINE FIGHT (2026-11-11, Q92): it remembers the controller each actor was last seen clean
+   with; an actor found with the anchor while that controller is still his was fighting before the anchor reached him,
+   and no StopCombat is called on him in any branch -- the held holder sharing his group drops as real combat instead
+   (`merged-into-a-genuine-fight`), which removes the anchor.
 
 **Condition 3 AMENDED 2026-10-20 (F-6, marth, verbatim: *"The combat packages movement is blocked and the regular
 ooc package that they had before remains in charge via harbingers allow deny."*; `channels/SubstratePackage.cpp`).**

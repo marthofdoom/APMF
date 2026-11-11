@@ -4,6 +4,36 @@ Updated 2026-11-10. Current version **v0.19.0** (cut 2026-11-10, ABI v36, a Deck
 shipped, what's probe-gated, what's next. Keep this current in the SAME change as any
 build/finding/workflow change.
 
+## HEAD OF WORK 2026-11-11 -- MOVEMENT BATCH (anchor leak Q92 fix + H3 gait probe), branch `feat/h3-disengage`, NOT merged
+
+- **ANCHOR LEAK Q92, root cause (field LoreRim 2026-11-11 09:16:45, `APMF.log`):** the leak cleanup ended a REAL fight
+  (StopCombat on Sven) because the engine MERGED a held holder's substrate group into his group. Trace line:
+  `ENTRY StartCombat 0x483139C8 (a live holder) target(rsi)=0x00000000 group(rbp)=0x22EAF70D00 [not a substrate group]
+  caller RVA 0x71C2E2`. An actor that already has a controller takes StartCombat's join branch (AE `0x6B6D78 ->
+  0x83D2C0`); the join merges the group its controller is in into the given one (AE `0x83D325 -> 0x804A80`: members
+  AND targets, the anchor with them). Sven's last foe had died 620 ms earlier, so his group then listed only the
+  anchor, and the sweep's "a held holder shares the group, nothing but the anchor to fight" branch stopped HIM.
+- **Fix 1, the source:** the join guard seat now also refuses a HELD holder's StartCombat with a group that is not a
+  substrate group and a target that is none or the anchor (`HELD HOLDER GROUP JOIN REFUSED`). No new address: the same
+  seat and row. `[CombatSubstrate] bSubstrateHolderJoinGuard` (1). The merge has ONE call site and the join only
+  StartCombat's two (byte scan, 1.6.1170 and 1.5.97; 1.7.104 StartCombat is instruction-identical).
+- **Fix 2, the cleanup never stops a genuine fight:** the sweep remembers the controller each actor was last seen
+  CLEAN with. An actor found with the anchor while that controller is still his was fighting before the anchor reached
+  him: no StopCombat on him in any branch. The held holder in his group drops as real combat instead (new drop reason
+  `merged-into-a-genuine-fight`, `combatsubstrate::DropForGenuineFight`), which removes the anchor.
+- **Behaviour change to know:** a held holder is no longer pulled into an ally's fight by the engine's group join.
+  Real combat reaches it through its three triggers as before (a target of its own, a hit, the party's fight).
+- **H3 gait probe (passive, `[CombatApproach] bApproachGaitProbe`, 1 while testing):** while a ch.24 bound is carried
+  and the actor moves, one `[ch.24] ... GAIT PROBE` line per second (speed, heading against velocity = forward run /
+  strafe / backpedal, the engine's own move bits) and one SUMMARY at the claim's end. It answers the open question of
+  MFO's class card H3 (does Return To Combat Area run facing forward). No seat, no write. A FACING SEAT IS NOT BUILT
+  (marth's default: only if the field shows a backpedal).
+- **ABI:** unchanged (v39). ch.24 on a point (`kApproach_Point`) was already on main.
+- **Field retest:** an out-of-combat cast opened in a party-combat lull beside a fighting teammate: expect `HELD HOLDER
+  GROUP JOIN REFUSED` and NO `ANCHOR LEAK` line. With `bSubstrateHolderJoinGuard=0`: an `ANCHOR LEAK ... his fight is
+  GENUINE` line, `REAL COMBAT (merged-into-a-genuine-fight ...)` for the holder and no `combat ENDED` on the teammate.
+- Pre-release: `bApproachGaitProbe` -> 0 in `APMF.ini` AND the code default in `channels/CombatApproach.cpp` `Install`.
+
 ## HEAD OF WORK 2026-11-11 -- ch.24 ON A POINT (ABI v39, MFO IAUS sim v2 "Design B"), branch `feat/approach-point` (stacked on `feat/combat-move`), NOT merged
 
 - **What:** `kApproach_Point`, one `CombatApproachFlags` bit: the ch.24 combat-area bound centred on a world point (`param.pos`, `target` 0) instead of a reference. For "give ground to there" while fighting. No new seat, no new row, no struct, no slot: the seats already apply a point (`Entry::want`); only the sweep's source of X and the call-time refusals changed.

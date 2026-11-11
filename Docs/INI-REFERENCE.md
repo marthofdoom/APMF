@@ -195,6 +195,7 @@ Facet reference: [ch.24 Combat approach](FACETS.md#ch24-combat-approach-kintent_
 ABI v19. "Get within this distance of that actor, and keep fighting." A mod names an actor, a target X and a radius R. While the actor is in combat, its own combat area (the bound the game keeps every fighter inside) is centred on X with radius R: the game walks it back toward X when it is outside and keeps its tactical moves inside. Attacks, both hands' spells, blocks, the combat target and equipment decide as they would without it: every place the game reads the area for them sees its own area. A package that holds the actor in place still wins. Ends on arrival (unless the mod asks to hold), when X is lost, when combat ends, or when the mod releases it.
 
 - **`bCombatApproach`** (default `1`). 0 = kIntent_CombatApproach claims are REFUSED (logged at startup with the reason).
+- **`bApproachGaitProbe`** (default `1` while testing, 2026-11-11). Passive probe, no deny, no write: while a ch.24 bound is carried and the actor moves, one `[ch.24] 0x<actor> GAIT PROBE (H3, passive)` line per second with its speed, the angle between its heading and its velocity (under 45 degrees a forward run, over 135 a backpedal, else a strafe) and the game's own movement bits (forward / back / left / right, walking / running / sprinting / sneaking), and one `SUMMARY` line when the claim ends. It answers whether the engine's Return To Combat Area movement runs facing forward. Position and heading reads on the game thread only.
 
 ### [CombatSubstrate]
 
