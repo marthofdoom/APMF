@@ -9,6 +9,7 @@
 #include "core/CastObserve.h"
 #include "core/RestoreCensus.h"
 #include "core/ActionGate.h"
+#include "core/CastLeafNature.h"   // ch.7 hostile offense (ABI v40): heartbeat
 #include "core/AttackSelectProbe.h"
 #include "core/AttackSelect.h"
 #include "core/ProjectileAim.h"
@@ -122,6 +123,8 @@ namespace apmf {
         // ch.23 PURSUIT LEASH heartbeat (ABI v16), same RULE C shape: every ~30 s while any
         // leash is set, zeros included; one relaxed load when none is.
         apmf::actiongate::PursuitHeartbeat();
+        // ch.7 HOSTILE OFFENSE (ABI v40), RULE C: the verdict totals, ~30 s after any cast met an Offense-only deny.
+        apmf::castleafnature::Heartbeat();
         // ch.23 LEASH RETURN (2026-10-12): a leashed, un-held actor whose search was just leash-denied is
         // walked back by its own combat area (a Harbinger-internal ch.24 bound). Self-throttled 250 ms;
         // one relaxed load while no leash is set.

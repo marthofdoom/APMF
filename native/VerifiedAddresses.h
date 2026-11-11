@@ -19,7 +19,7 @@
 
 namespace apmf::VerifiedAddresses
 {
-	// 1.6.1170.0: 294 rows
+	// 1.6.1170.0: 300 rows
 	inline constexpr REL::SelfCheck::Row kRows_1_6_1170[] = {
 		{ 207886, 0x18A5558, 0x0, 0, {  }, "Character" },
 		{ 207896, 0x18A5FE8, 0x0, 0, {  }, "Character.ActorValueOwner" },
@@ -315,9 +315,15 @@ namespace apmf::VerifiedAddresses
 		{ 41558, 0x77AD40, 0x0, 0, {  }, "CombatMove.BGSActionData.Ctor" },
 		{ 188603, 0x178C478, 0x0, 0, {  }, "CombatMove.TESActionData" },
 		{ 13894, 0x1C2E70, 0x0, 0, {  }, "CombatMove.BGSDefaultObjectManager.GetSingleton" },
+		{ 49100, 0x89FCE0, 0x0, 0, {  }, "CastNature.Enter.Immediate" },
+		{ 49105, 0x89FFF0, 0x0, 0, {  }, "CastNature.Enter.Concentration" },
+		{ 49110, 0x8A02D0, 0x0, 0, {  }, "CastNature.Enter.DualCast" },
+		{ 49764, 0x8BBB70, 0x0, 0, {  }, "CastNature.Enter.Shout" },
+		{ 49083, 0x89EE30, 0x0, 0, {  }, "CastNature.Cast" },
+		{ 49758, 0x8BB660, 0x0, 0, {  }, "CastNature.ShoutCast" },
 	};
 
-	// 1.5.97.0: 294 rows
+	// 1.5.97.0: 300 rows
 	inline constexpr REL::SelfCheck::Row kRows_1_5_97[] = {
 		{ 261397, 0x165DA40, 0x0, 0, {  }, "Character" },
 		{ 261402, 0x165E4D0, 0x0, 0, {  }, "Character.ActorValueOwner.SE" },
@@ -613,10 +619,16 @@ namespace apmf::VerifiedAddresses
 		{ 15916, 0x1ED550, 0x0, 0, {  }, "CombatMove.BGSActionData.Ctor" },
 		{ 232777, 0x1548198, 0x0, 0, {  }, "CombatMove.TESActionData" },
 		{ 10878, 0xF7210, 0x0, 0, {  }, "CombatMove.BGSDefaultObjectManager.GetSingleton" },
+		{ 48053, 0x8094D0, 0x0, 0, {  }, "CastNature.Enter.Immediate" },
+		{ 48058, 0x8097D0, 0x0, 0, {  }, "CastNature.Enter.Concentration" },
+		{ 48063, 0x809AB0, 0x0, 0, {  }, "CastNature.Enter.DualCast" },
+		{ 48809, 0x825290, 0x0, 0, {  }, "CastNature.Enter.Shout" },
+		{ 48037, 0x8085E0, 0x0, 0, {  }, "CastNature.Cast" },
+		{ 48803, 0x824D00, 0x0, 0, {  }, "CastNature.ShoutCast" },
 	};
 
-	// 1.7.104.0: 291 rows
-	// 67 NOT VERIFIED on 1.7.104.0, deliberately absent from this table (the seat is refused):
+	// 1.7.104.0: 297 rows
+	// 73 NOT VERIFIED on 1.7.104.0, deliberately absent from this table (the seat is refused):
 	//   Character.ActorValueOwner.SE (1.6.1170 id -): no 1.6.1170 (AE) id: the 1.7.104 map is keyed by AE id (1.5.97-only seat)
 	//   ActionGate.Hold.ParallelDataPush (1.6.1170 id 47532): id 47532 is not in the idmap
 	//   TargetPin.CombatController.SetTarget (1.6.1170 id 33235): id 33235 is not in the idmap
@@ -684,6 +696,12 @@ namespace apmf::VerifiedAddresses
 	//   PotionAllowance.Site.Leaf (1.6.1170 id 49928): id 49928 is not in the idmap
 	//   PotionAllowance.Site.EquipApply (1.6.1170 id 38001): id 38001 is not in the idmap
 	//   PotionAllowance.Site.WorkerApply (1.6.1170 id 38929): call target id 38001 has no idmap RVA
+	//   CastNature.Enter.Immediate (1.6.1170 id 49100): id 49100 is not in the idmap
+	//   CastNature.Enter.Concentration (1.6.1170 id 49105): id 49105 is not in the idmap
+	//   CastNature.Enter.DualCast (1.6.1170 id 49110): id 49110 is not in the idmap
+	//   CastNature.Enter.Shout (1.6.1170 id 49764): id 49764 is not in the idmap
+	//   CastNature.Cast (1.6.1170 id 49083): id 49083 is not in the idmap
+	//   CastNature.ShoutCast (1.6.1170 id 49758): id 49758 is not in the idmap
 	inline constexpr REL::SelfCheck::Row kRows_1_7_104[] = {
 		{ 207886, 0x1923258, 0x0, 0, {  }, "Character" },
 		{ 207896, 0x1923CE8, 0x0, 0, {  }, "Character.ActorValueOwner" },
@@ -976,6 +994,12 @@ namespace apmf::VerifiedAddresses
 		{ 0, 0x874BC0, 0x0, 0, {  }, "ActionGate.Hold.ParallelDataPush.1_7_104" },
 		{ 0, 0x8B7D60, 0x0, 0, {  }, "AttackSelect.StartAttack" },
 		{ 0, 0x8F2830, 0x0, 0, {  }, "AttackSelect.AttackWeight" },
+		{ 0, 0x8B5180, 0x0, 0, {  }, "CastNature.Enter.Immediate" },
+		{ 0, 0x8B5490, 0x0, 0, {  }, "CastNature.Enter.Concentration" },
+		{ 0, 0x8B5770, 0x0, 0, {  }, "CastNature.Enter.DualCast" },
+		{ 0, 0x8D1150, 0x0, 0, {  }, "CastNature.Enter.Shout" },
+		{ 0, 0x8B42D0, 0x0, 0, {  }, "CastNature.Cast" },
+		{ 0, 0x8D0C40, 0x0, 0, {  }, "CastNature.ShoutCast" },
 	};
 
 	inline constexpr REL::SelfCheck::Table kTables[] = {

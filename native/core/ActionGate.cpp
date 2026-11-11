@@ -5,6 +5,7 @@
 #include "core/BehaviorTreeCatalog.h"
 #include "core/ControlMap.h"
 #include "core/CastGuard.h"      // ch.25 kCastGuard_Bystanders: HoldWeaponAttack at the attack leaves
+#include "core/CastLeafNature.h" // ch.7 hostile offense (ABI v40): the nature of the spell a cast leaf is about to cast
 #include "core/ActionGate.h"
 #include "core/AiCastSeats.h"   // RangedGateProbeCounts (the [Probe] bRangedSelect heartbeat)
 #include "core/EquipSink.h"     // Categorize / CategoryNames (the probe mirrors the sink verdict)
@@ -189,9 +190,14 @@ namespace apmf::actiongate {
 
         // The FOUR cast leaves get kCombatActionCat_Cast IN ADDITION to Offense, so a
         // kIntent_CombatAction claim can name "no casting" (Cast) separately from "no
-        // offense at all" (Offense, which still denies them too -- they carry both
-        // bits). RangedAttack et al. are Offense-only, so a Cast-only claim leaves them
-        // firing. All four names land 1:1 on this build's 70-leaf catalog.
+        // offense at all" (Offense). RangedAttack et al. are Offense-only, so a Cast-only
+        // claim leaves them firing. All four names land 1:1 on this build's 70-leaf catalog.
+        // ABI v40 (marth 2026-11-11, HOSTILE OFFENSE): Offense means HOSTILE actions. Under a
+        // mask that names Offense but NOT Cast, a cast leaf is denied only when the spell it is
+        // about to cast is hostile or of undeclared nature (core/CastLeafNature: the spell is
+        // read from the leaf's own context; g_castLeafKind below). A mask that names Cast denies
+        // every cast, as before. A leaf whose read is not proven on this runtime has no
+        // g_castLeafKind entry and keeps the pre-v40 behaviour (every cast is Offense).
         // NOTE (feat/ai-cast-seats-impl): kIntent_Cast no longer maps onto this
         // category -- see the file header's RETIRED block.
         constexpr std::array<const char*, 4> kCastLeafNames{ {
@@ -669,6 +675,10 @@ namespace apmf::actiongate {
         // vtable runtime address -> classified category bitmask (0 = never denied,
         // and therefore never even looked up against a claim -- see header).
         std::unordered_map<std::uintptr_t, std::uint32_t>  g_category;
+        // ch.7 HOSTILE OFFENSE (ABI v40): the cast leaves whose spell read is proven on this runtime
+        // (core/CastLeafNature). Written at Install only (like g_category); a cast leaf missing here
+        // counts as Offense whatever it casts.
+        std::unordered_map<std::uintptr_t, apmf::castleafnature::LeafKind> g_castLeafKind;
         // The combat substrate's leaf index (0..69 = apmf::cbt::kLeaves, 70..73 = kSearchLeaves), for
         // every leaf whose act() AND pop() are installed. Written at Install only (like g_category).
         std::unordered_map<std::uintptr_t, std::uint32_t>  g_leafIdx;
@@ -1387,6 +1397,18 @@ namespace apmf::actiongate {
             if ((denyMask & leafCat) == 0)
                 return orig(a_this, a_control);   // claims don't name this leaf's category -- allow
 
+            // ch.7 HOSTILE OFFENSE (ABI v40): a cast leaf reached by the Offense bit ALONE (the mask does not
+            // name Cast) is denied only when the spell it is about to cast is hostile or undeclared. A
+            // declared non-hostile cast (heal, buff, ward) is not Offense: it runs. The spell is read from the
+            // leaf's own context, before the leaf's act (core/CastLeafNature.cpp); a leaf with no proven read
+            // is not in g_castLeafKind and stays denied.
+            if ((leafCat & APMF_API::kCombatActionCat_Cast) != 0 && (denyMask & APMF_API::kCombatActionCat_Cast) == 0) {
+                if (const auto kit = g_castLeafKind.find(vt);
+                    kit != g_castLeafKind.end() &&
+                    apmf::castleafnature::PassesOffenseDeny(kit->second, a_control, actorFid, caH))
+                    return orig(a_this, a_control);
+            }
+
             const auto denyAct = g_forceFailAct.load(std::memory_order_relaxed);
             if (!denyAct) return orig(a_this, a_control);   // deny mechanism unresolved -- degrade, never crash
 
@@ -1584,6 +1606,9 @@ namespace apmf::actiongate {
         const int n    = allowance::InstallOnVtables(vtables, 0x02, &ActThunk, expectedTD.get(), "ch.7", g_orig);
         const int nPop = allowance::InstallOnVtables(vtables, 0x03, &PopThunk, expectedTD.get(), "ch.7-pop", g_origPop);
 
+        // ch.7 HOSTILE OFFENSE (ABI v40): prove the cast leaves' spell read on this runtime before classifying.
+        apmf::castleafnature::Install();
+
         int classified = 0;
         for (const char* wanted : kOffenseLeafNames) {
             bool found = false;
@@ -1634,6 +1659,9 @@ namespace apmf::actiongate {
                 if (Paired(vt.address())) {
                     g_category[vt.address()] |= APMF_API::kCombatActionCat_Cast;
                     ++castClassified;
+                    if (const auto kind = apmf::castleafnature::ProvenKind(wanted);
+                        kind != apmf::castleafnature::LeafKind::kNone)
+                        g_castLeafKind[vt.address()] = kind;
                 }
                 break;
             }
@@ -1642,7 +1670,9 @@ namespace apmf::actiongate {
                      "kCombatActionCat_Cast denies exactly these (CastImmediateSpell/CastConcentrationSpell/"
                      "PrepareDualCast/CastShout), leaving attack/ranged/movement leaves firing. A kIntent_Cast "
                      "(ch.8b) claim NO LONGER denies them -- it is now delivered BY the AI's own cast branch "
-                     "through the engine seats (core/CastSeats.cpp).", castClassified);
+                     "through the engine seats (core/CastSeats.cpp). ABI v40: on {} of them the Offense bit applies only to a "
+                     "HOSTILE or undeclared spell (the hostile-offense line above names each).",
+                     castClassified, g_castLeafKind.size());
 
         // NOT INSTALLED (feat/ai-cast-seats-impl): the magic CONTEXT-CREATION node
         // (apmf::cbt::kCastContextNodes). See this file's RETIRED header block --
