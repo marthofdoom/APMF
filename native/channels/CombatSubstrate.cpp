@@ -262,8 +262,10 @@ namespace {
         kStEquipOk    = 1u << 7,   // a CLIENT substrate whose hands are stowed and whose spell-equip checks passed: the
                                    // kEquip leaves may run (with kStCast). Never set for a dry run (review of 1f99de2b)
     };
-    enum : std::uint32_t { kWhyNone = 0, kWhyAddedTarget = 1, kWhyHit = 2, kWhyParty = 3 };
-    constexpr const char* kWhyName[4] = { "?", "added-target", "hit", "party-combat" };
+    // kWhyMerged (2026-11-11, the anchor-leak fix Q92): the anchor guard's sweep found this held holder sharing a
+    // group with an actor whose fight is GENUINE (DropForGenuineFight below).
+    enum : std::uint32_t { kWhyNone = 0, kWhyAddedTarget = 1, kWhyHit = 2, kWhyParty = 3, kWhyMerged = 4 };
+    constexpr const char* kWhyName[5] = { "?", "added-target", "hit", "party-combat", "merged-into-a-genuine-fight" };
 
     struct Slot {
         std::atomic<RE::FormID>    id{ 0 };
@@ -1494,7 +1496,7 @@ namespace {
         spdlog::info("[substrate] 0x{} REAL COMBAT ({} 0x{}) -- substrate DROPPED, combat behaviour restored in the same "
                      "frame: {}, holders {}->{}, anchor {}; released: leaf allow-list, movement denies, ignore-combat hold, "
                      "anchor refusal, substrate floors; claim {}",
-                     Hex(a_sub.id), kWhyName[why < 4 ? why : 0], Hex(foe), removed + musicNote, before, before - 1,
+                     Hex(a_sub.id), kWhyName[why < 5 ? why : 0], Hex(foe), removed + musicNote, before, before - 1,
                      home ? std::string("home") : StaysText(stays),
                      driving ? fmt::format("h={} kept", ch) : std::string("none (no driving cast claim)"));
         if (afterReal)
@@ -2663,6 +2665,15 @@ namespace apmf::combatsubstrate {
             }
         } catch (...) {
         }
+        return true;
+    }
+
+    bool DropForGenuineFight(RE::FormID a_holder, RE::FormID a_fighter) {
+        const auto it = g_subs.find(a_holder);
+        if (it == g_subs.end() || it->second.phase != Phase::kOpen || it->second.slot < 0) return false;
+        Slot& s = g_slots[it->second.slot];
+        if (s.state.load(std::memory_order_acquire) & kStReal) return false;   // already dropping
+        MarkReal(it->second.slot, kWhyMerged, a_fighter);   // Serve drops it on the next Poll (DropSub: the anchor out)
         return true;
     }
 

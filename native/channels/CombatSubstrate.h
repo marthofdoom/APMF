@@ -119,6 +119,14 @@ namespace apmf::combatsubstrate {
     // leak sweep. GAME THREAD, a group read from a live controller this frame.
     void RemoveAnchorFromGroup(RE::CombatGroup* a_g);
 
+    // channels/AnchorGuard.cpp's leak sweep (the anchor-leak fix Q92, 2026-11-11): the held holder `a_holder` shares
+    // a combat group with `a_fighter`, an actor that is not a holder and whose fight is GENUINE (it was in combat,
+    // clean of the anchor, before the anchor reached its group). Real combat reached the holder: its real-combat
+    // trigger fires (reason "merged-into-a-genuine-fight") and the next Poll drops the substrate through DropSub,
+    // which takes the anchor out of that group and never stops anyone but the holder (and the holder only when
+    // the group is left with no target). True = the trigger was set by this call. GAME THREAD.
+    bool DropForGenuineFight(RE::FormID a_holder, RE::FormID a_fighter);
+
     // channels/CombatEntry.cpp's detection seat (CombatGroup::UpdateTargetDetection's two call
     // sites), BEFORE the engine's update: is `a_target` the anchor? If so the caller runs the
     // engine's update and then AnchorKnowledge. Otherwise NoteGroupTarget is the real-combat
