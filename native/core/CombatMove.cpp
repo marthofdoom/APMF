@@ -25,6 +25,7 @@ namespace apmf::combatmove {
         constexpr const char* kIni       = "Data/SKSE/Plugins/APMF.ini";
         constexpr const char* kRowCtor   = "CombatMove.BGSActionData.Ctor";
         constexpr const char* kRowVtable = "CombatMove.TESActionData";
+        constexpr const char* kRowDobj   = "CombatMove.BGSDefaultObjectManager.GetSingleton";
 
         std::atomic<bool>        g_installed{ false };
         std::atomic<const char*> g_reason{ "not installed yet (before kDataLoaded)" };
@@ -34,6 +35,7 @@ namespace apmf::combatmove {
 
         std::uintptr_t g_ctor   = 0;   // BGSActionData's default constructor (written once in Install)
         std::uintptr_t g_vtable = 0;   // the TESActionData vtable
+        RE::BGSAction* g_action = nullptr;   // the Right Attack action default object (written once in Install)
 
         // A world generation: ResetAll bumps it, and a move posted under an older one drops itself.
         std::atomic<std::uint32_t> g_gen{ 1 };
@@ -189,6 +191,9 @@ namespace apmf::combatmove {
             auto* ad      = reinterpret_cast<RE::TESActionData*>(buf);
             ad->source    = RE::NiPointer<RE::TESObjectREFR>(a_actor);
             ad->unk20     = 2;                                // the priority StartAttack passes (AE 0x7F9242 `lea edx,[rbp+2]`)
+            // The action form StartAttack's wrapper stores (AE 0x7F92A4..0x7F92B3: default object table[0x2016198][0] = 49 =
+            // kActionRightAttack, into +0x18; 1.5.97 0x75FD85..0x75FDA4, table 0x1DF2918[0] = 49). Review F1-1 of 6078122.
+            ad->action    = g_action;
             ad->animEvent = a_entry->event;
             const bool ok = ad->Process();                    // vtable slot 5 = TESActionData::Process
             (*reinterpret_cast<Dtor_t**>(buf))[0](buf, 0);    // releases the two strings and the source reference
@@ -337,12 +342,15 @@ namespace apmf::combatmove {
             }
         }
 
-        // ---- the hit sink (the thread that dispatches the hit; the leaf mutex, reads and atomics only) ----
-        // [Probe] bCombatMove: one line per melee hit by or on a player teammate. Reads only.
-        void ProbeHit(const RE::TESHitEvent* a_e, RE::TESObjectREFR* a_cause, RE::TESObjectREFR* a_target) {
-            if (a_e->projectile != 0) return;   // a projectile hit is not a melee move
-            auto* ca = a_cause ? a_cause->As<RE::Actor>() : nullptr;
-            auto* ta = a_target ? a_target->As<RE::Actor>() : nullptr;
+        // ---- the hit sink (the thread that dispatches the hit; the leaf mutex, FormIDs, flags and atomics only) ----
+        // [Probe] bCombatMove: one line per melee hit by or on a player teammate. The hit's thread is not proven to be
+        // the game thread, so NOTHING of an actor is dereferenced there (review F1-2 of 6078122): the sink keeps the two
+        // FormIDs, the flags and the weapon, and the actors are looked up and read on the game thread, one Pump later.
+        // The attacker's attack data and state are therefore AS OF THAT PUMP, which the line says.
+        void ProbeLine(RE::FormID a_cause, RE::FormID a_target, std::uint8_t a_flags, RE::FormID a_weapon, std::uint32_t a_gen) {
+            if (g_gen.load(std::memory_order_acquire) != a_gen) return;   // the world changed: the ids mean nothing now
+            auto* ca = a_cause != 0 ? RE::TESForm::LookupByID<RE::Actor>(a_cause) : nullptr;
+            auto* ta = a_target != 0 ? RE::TESForm::LookupByID<RE::Actor>(a_target) : nullptr;
             const bool causeMate  = ca && !ca->IsPlayerRef() && ca->IsPlayerTeammate();
             const bool targetMate = ta && !ta->IsPlayerRef() && ta->IsPlayerTeammate();
             if (!causeMate && !targetMate) return;
@@ -367,16 +375,33 @@ namespace apmf::combatmove {
                 static const RE::BSFixedString s_isBlocking{ "IsBlocking" };
                 graphRead = ta->GetGraphVariableBool(s_isBlocking, graphBlock);
             }
-            const auto f = a_e->flags;
+            const auto bit = [a_flags](RE::TESHitEvent::Flag f) { return (a_flags & static_cast<std::uint8_t>(f)) != 0; };
             spdlog::info("[combat-move-probe] HIT cause 0x{} '{}'{} -> target 0x{} '{}'{} | flags power={} bash={} blocked={} "
-                         "sneak={} weapon 0x{} | attacker attack data '{}' flags 0x{} (bash bit {}, power bit {}), attack "
-                         "state {} | target wantBlocking={} graph IsBlocking={}",
-                         Hex(a_cause ? a_cause->GetFormID() : 0), ca ? ca->GetName() : "", causeMate ? " [teammate]" : "",
-                         Hex(a_target ? a_target->GetFormID() : 0), ta ? ta->GetName() : "", targetMate ? " [teammate]" : "",
-                         f.any(RE::TESHitEvent::Flag::kPowerAttack), f.any(RE::TESHitEvent::Flag::kBashAttack),
-                         f.any(RE::TESHitEvent::Flag::kHitBlocked), f.any(RE::TESHitEvent::Flag::kSneakAttack),
-                         Hex(a_e->source), atkEvent, Hex(atkFlags), (atkFlags & kAtkBash) != 0, (atkFlags & kAtkPower) != 0,
-                         atkState, wantBlock, graphRead ? (graphBlock ? "true" : "false") : "unreadable");
+                         "sneak={} weapon 0x{} | one frame later: attacker attack data '{}' flags 0x{} (bash bit {}, power bit "
+                         "{}), attack state {} | target wantBlocking={} graph IsBlocking={}",
+                         Hex(a_cause), ca ? ca->GetName() : "", causeMate ? " [teammate]" : "", Hex(a_target),
+                         ta ? ta->GetName() : "", targetMate ? " [teammate]" : "", bit(RE::TESHitEvent::Flag::kPowerAttack),
+                         bit(RE::TESHitEvent::Flag::kBashAttack), bit(RE::TESHitEvent::Flag::kHitBlocked),
+                         bit(RE::TESHitEvent::Flag::kSneakAttack), Hex(a_weapon), atkEvent, Hex(atkFlags),
+                         (atkFlags & kAtkBash) != 0, (atkFlags & kAtkPower) != 0, atkState, wantBlock,
+                         graphRead ? (graphBlock ? "true" : "false") : "unreadable");
+        }
+
+        // The hit's thread: PODs only, then one Post. Bounded: no Post once the line cap is reached.
+        void ProbeHit(const RE::TESHitEvent* a_e, const RE::TESObjectREFR* a_cause, const RE::TESObjectREFR* a_target) {
+            if (a_e->projectile != 0) return;   // a projectile hit is not a melee move
+            if (g_probeLines.load(std::memory_order_relaxed) > kProbeLineCap) return;
+            const RE::FormID    cause  = a_cause ? a_cause->GetFormID() : 0;
+            const RE::FormID    target = a_target ? a_target->GetFormID() : 0;
+            const auto          flags  = static_cast<std::uint8_t>(a_e->flags.underlying());
+            const RE::FormID    weapon = a_e->source;
+            const std::uint32_t gen    = g_gen.load(std::memory_order_acquire);
+            apmf::mainthread::Post([cause, target, flags, weapon, gen] {
+                try {
+                    ProbeLine(cause, target, flags, weapon, gen);
+                } catch (...) {
+                }
+            });
         }
 
         class HitSink final : public RE::BSTEventSink<RE::TESHitEvent> {
@@ -455,7 +480,17 @@ namespace apmf::combatmove {
         const std::uintptr_t vt   = REL::Relocation<std::uintptr_t>{ RE::VTABLE_TESActionData[0] }.address();
         bool                 ok   = apmf::allowance::SeatVerified(ctor, kRowCtor);
         ok                        = apmf::allowance::SeatVerified(vt, kRowVtable) && ok;
-        if (!ok) return no("the mit-3.7 self-check refused a row (CombatMove.BGSActionData.Ctor / CombatMove.TESActionData)", true);
+        ok = apmf::allowance::SeatVerified(REL::Relocation<std::uintptr_t>{ RELOCATION_ID(10878, 13894) }.address(), kRowDobj) && ok;
+        if (!ok)
+            return no("the mit-3.7 self-check refused a row (CombatMove.BGSActionData.Ctor / CombatMove.TESActionData / "
+                      "CombatMove.BGSDefaultObjectManager.GetSingleton)", true);
+        // The action form of the engine's own start-of-attack: the Right Attack default object, through the fork's
+        // exact-build accessor (index 49 is below every entry 1.7.104 inserts), RTTI-checked. kDataLoaded: it is loaded.
+        auto*              dobj = RE::BGSDefaultObjectManager::GetSingleton();
+        RE::TESForm* const raw  = dobj ? dobj->GetObject(RE::DEFAULT_OBJECT::kActionRightAttack) : nullptr;
+        auto* const        act  = raw ? raw->As<RE::BGSAction>() : nullptr;
+        if (!act) return no("the Right Attack action default object did not resolve to a BGSAction", true);
+        g_action = act;
         g_ctor   = ctor;
         g_vtable = vt;
 
@@ -477,8 +512,8 @@ namespace apmf::combatmove {
         g_reason.store("installed");
         g_installed.store(true, std::memory_order_release);
         spdlog::info("[combat-move] installed (kIntent_CombatMove, ABI v38): one engine start-of-attack action per request "
-                     "(bash / power bash), game thread; hit sink {}; [Probe] bCombatMove={}.",
-                     sink ? "registered" : "MISSING", g_probe.load() ? 1 : 0);
+                     "(bash / power bash), game thread; action form 0x{} (Right Attack); hit sink {}; [Probe] bCombatMove={}.",
+                     Hex(act->GetFormID()), sink ? "registered" : "MISSING", g_probe.load() ? 1 : 0);
     }
 
     bool Installed() { return g_installed.load(std::memory_order_acquire); }
