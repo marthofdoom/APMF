@@ -2300,6 +2300,8 @@ One action on the game thread: the same action data the engine's own Bash leaf p
 
 It does not aim, turn or move the actor. It holds nothing and denies nothing. It does not retry.
 
+The action is processed directly, not through the engine thunk that attack frameworks such as SCAR patch to swap in their own attack. That is on purpose: the move the client named is the move that runs, and such a framework does not replace it.
+
 #### What refuses it
 
 The engine's own bash conditions (an attack already in progress, the behaviour graph not ready, attacking disabled), an actor that is not loaded or is dead, a named target that is gone, an actor base with no bash entry (a creature with no shield bash), a winning ch.7 claim that denies Offense, a combat substrate on the actor, and a client the player has ranked at or below Engine on the CombatAction facet. The engine itself may still refuse inside the action (no stamina, nothing to bash with): that reads `Failed` with `kCombatMoveWhy_EngineRefused`.

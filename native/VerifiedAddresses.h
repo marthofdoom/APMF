@@ -19,7 +19,7 @@
 
 namespace apmf::VerifiedAddresses
 {
-	// 1.6.1170.0: 293 rows
+	// 1.6.1170.0: 294 rows
 	inline constexpr REL::SelfCheck::Row kRows_1_6_1170[] = {
 		{ 207886, 0x18A5558, 0x0, 0, {  }, "Character" },
 		{ 207896, 0x18A5FE8, 0x0, 0, {  }, "Character.ActorValueOwner" },
@@ -314,9 +314,10 @@ namespace apmf::VerifiedAddresses
 		{ 38929, 0x6CBE30, 0x289, 1, { 0xE8 }, "PotionAllowance.Site.WorkerApply" },
 		{ 41558, 0x77AD40, 0x0, 0, {  }, "CombatMove.BGSActionData.Ctor" },
 		{ 188603, 0x178C478, 0x0, 0, {  }, "CombatMove.TESActionData" },
+		{ 13894, 0x1C2E70, 0x0, 0, {  }, "CombatMove.BGSDefaultObjectManager.GetSingleton" },
 	};
 
-	// 1.5.97.0: 293 rows
+	// 1.5.97.0: 294 rows
 	inline constexpr REL::SelfCheck::Row kRows_1_5_97[] = {
 		{ 261397, 0x165DA40, 0x0, 0, {  }, "Character" },
 		{ 261402, 0x165E4D0, 0x0, 0, {  }, "Character.ActorValueOwner.SE" },
@@ -611,9 +612,10 @@ namespace apmf::VerifiedAddresses
 		{ 37963, 0x6394B0, 0x4D, 1, { 0xE8 }, "PotionAllowance.Site.WorkerApply" },
 		{ 15916, 0x1ED550, 0x0, 0, {  }, "CombatMove.BGSActionData.Ctor" },
 		{ 232777, 0x1548198, 0x0, 0, {  }, "CombatMove.TESActionData" },
+		{ 10878, 0xF7210, 0x0, 0, {  }, "CombatMove.BGSDefaultObjectManager.GetSingleton" },
 	};
 
-	// 1.7.104.0: 290 rows
+	// 1.7.104.0: 291 rows
 	// 67 NOT VERIFIED on 1.7.104.0, deliberately absent from this table (the seat is refused):
 	//   Character.ActorValueOwner.SE (1.6.1170 id -): no 1.6.1170 (AE) id: the 1.7.104 map is keyed by AE id (1.5.97-only seat)
 	//   ActionGate.Hold.ParallelDataPush (1.6.1170 id 47532): id 47532 is not in the idmap
@@ -938,6 +940,7 @@ namespace apmf::VerifiedAddresses
 		{ 211678, 0x194F518, 0x0, 0, {  }, "CombatInventoryItemMagicT.PotionOffensive" },
 		{ 41558, 0x78DB90, 0x0, 0, {  }, "CombatMove.BGSActionData.Ctor" },
 		{ 188603, 0x18058F8, 0x0, 0, {  }, "CombatMove.TESActionData" },
+		{ 13894, 0x1C8530, 0x0, 0, {  }, "CombatMove.BGSDefaultObjectManager.GetSingleton" },
 		{ 0, 0x82D2C0, 0x0, 0, {  }, "AiCastSeats.Melee.CalculateScore" },
 		{ 0, 0x82D790, 0x0, 0, {  }, "AiCastSeats.Ranged.CalculateScore" },
 		{ 0, 0x82DCD0, 0x0, 0, {  }, "AiCastSeats.Shield.CalculateScore" },

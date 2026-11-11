@@ -718,8 +718,10 @@ claim. It is not a selection in the sense #0 forbids either: Harbinger does not 
 performs, once, the one action the client named, by the road the engine's own Bash leaf uses. It is legal only while
 ALL of these hold:
 1. **One call, the engine's own, on the game thread.** The action data the engine's StartAttack builds (AE 49170 /
-   SE 48139: priority 2, source = the actor, the attack entry's animation event; rows `CombatMove.BGSActionData.Ctor`
-   and `CombatMove.TESActionData`) and ONE `Process()` (vtable slot 5). The engine's own checks inside the action
+   SE 48139: priority 2, source = the actor, the Right Attack action form, the attack entry's animation event; rows
+   `CombatMove.BGSActionData.Ctor`, `CombatMove.TESActionData` and `CombatMove.BGSDefaultObjectManager.GetSingleton`)
+   and ONE `Process()` (vtable slot 5), called on the object itself and not through the engine thunk attack frameworks
+   patch. The engine's own checks inside the action
    stand (stamina, the behaviour graph), and its post-action step, not Harbinger, sets the actor's attack data and
    attack state. Never a bare animation event: that plays a swing whose hit reads stale attack data.
 2. **Declared, never chosen.** The client names the actor and the kind of move. The attack ENTRY of that kind is the
