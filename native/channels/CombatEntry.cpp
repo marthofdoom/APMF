@@ -108,7 +108,8 @@ extern "C" __declspec(dllimport) unsigned long __stdcall GetPrivateProfileIntA(
 //       - the fight ENDED: the entry succeeded and the actor's combatController pointer is
 //         now null ("combat ended") -- Poll(), reading the POINTER only, never the controller
 //         (Actor::IsInCombat is not used: its body reads a byte at controller +0x43, AE
-//         0x6B6DD0 / SE 0x625660, which is a dereference; B26);
+//         0x6B6DD0 / SE 0x625660, which is a dereference; B26). The one exception is the
+//         passive inactive-flag probe's single byte read (log only, see ProbeEnd);
 //       - the owner died, or the target died, was disabled, unloaded or stopped resolving
 //         -- Poll().
 //     A client that wants another entry sends a NEW request. (A Repoint of a still-live
@@ -144,13 +145,14 @@ extern "C" __declspec(dllimport) unsigned long __stdcall GetPrivateProfileIntA(
 // dereference from the main thread (APMF-B26's exposure is not widened). THE ONE EXCEPTION is
 // the passive inactive-flag probe (log only): one byte read, CombatController +0x43, right
 // after StartCombat on the calling thread, then from Poll while the entry is live and
-// inactive (bounded to 30 s, pointer-identity checked); see ProbeEnd.
+// inactive (bounded to 30 s, read fresh through the actor each poll, dereferenced only while the actor still
+// holds the Enter pointer, ABA only misattributes); see ProbeEnd.
 //
 // VERSION ROBUSTNESS. The only engine address is StartCombat's, a verified row on both
 // runtimes (spec.json "CombatEntry.Actor.StartCombat"), refused unless it verifies; exact
 // 1.6.1170 / 1.5.97 only (the fork's binding also refuses VR by name); [CombatEntry]
-// bCombatEntry. The only raw read is the actor's own combatController pointer, through the
-// fork's ACTOR_RUNTIME_DATA accessor.
+// bCombatEntry. The only raw reads are the actor's own combatController pointer, through the
+// fork's ACTOR_RUNTIME_DATA accessor, and the probe's one byte at CombatController +0x43.
 // ============================================================================
 
 namespace {
@@ -361,8 +363,15 @@ namespace {
         // PASSIVE PROBE: read the controller StartCombat just built, on the thread that called it.
         const auto* cc       = actor->GetActorRuntimeData().combatController;
         const bool  inactive = cc->inactive;
-        ProbeEnd(id, e, nowMs, "a new entry replaced it");   // an earlier probe still pending
-        if (inactive) { e.probeCc = cc; e.probeStartMs = nowMs; }
+        // A re-point onto the same controller keeps its probe (and probeStartMs); only a different controller
+        // replaces it. Arm only when none is armed; an armed probe whose controller is now active ends quietly.
+        if (e.probeCc && e.probeCc != cc) ProbeEnd(id, e, nowMs, "a new entry replaced it");
+        if (inactive) {
+            if (!e.probeCc) { e.probeCc = cc; e.probeStartMs = nowMs; }
+        } else if (e.probeCc) {
+            spdlog::info("[ch.21] 0x{} controller ACTIVE after {} ms.", Hex(id), nowMs - e.probeStartMs);
+            e.probeCc = nullptr;
+        }
         const char* cState = inactive ? "controller INACTIVE" : "controller ACTIVE";
         if (e.lastLogMs != 0 && nowMs - e.lastLogMs < kLogEveryMs) {
             ++e.suppressed;
