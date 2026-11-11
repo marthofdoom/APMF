@@ -126,7 +126,7 @@ a DENIED category is unequipped by the enforce pass. The header comments that st
 stale until the paired MFO header change.
 
 <a id="abi-history"></a>
-## ABI v10 to v37: what each version added
+## ABI v10 to v38: what each version added
 
 Moved verbatim from `native/APMF_API.h` (line 96 at 9d01cdf). The header keeps a pointer to this anchor.
 
@@ -329,6 +329,17 @@ GetPotionAllowanceState(actor, out) with APMF_PotionAllowanceInfo (64 bytes). Th
 inventory items (the combat AI's selection) and Character slot 0x10F, Actor::DrinkPotion (every drink). No change to any
 existing slot, no co-save. A client gates on abiVersion >= 37. An older APMF has no channel for intent 30 and refuses the
 claim. Docs/APMF_API-REFERENCE.md#abi-v37-potion-allowance.
+
+ABI v38 (2026-11-11, branch feat/combat-move, MFO IAUS sim v2 section 26 "Design A"): COMBAT MOVE. kIntent_CombatMove
+(31) rides the EXISTING RequestEx as a ONE-SHOT, never a claim (the kIntent_Place shape): param.ival = a CombatMove
+(Bash 1, PowerBash 2; Block 3 is RESERVED and refused), param.target = the foe it is meant for (optional, measured only).
+On the game thread Harbinger builds the action data the engine's own StartAttack builds and calls
+TESActionData::Process once: the engine's post-action step sets the attack data and the Bash attack state, which a bare
+animation event never does. APMF_API_v38 appends ONE read-only slot, GetCombatMoveState(handle,
+APMF_CombatMoveStateInfo*) (64 bytes): Unknown / Queued / Started / Refused / Failed, a CombatMoveWhy, the hit bits
+(kCombatMoveInfo_HitSeen from a TESHitEvent with the Bash flag inside kCombatMoveHitWindowMs). One new ServePending bit,
+kServePending_CombatMoveRoom. No hook, no change to any existing slot, no co-save. A client gates on abiVersion >= 38;
+an older APMF refuses intent 31 ("no channel serves intent 31"). Docs/APMF_API-REFERENCE.md#abi-v38-combat-move.
 ```
 
 <a id="intent-18"></a>

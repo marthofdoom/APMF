@@ -257,6 +257,7 @@ A client built against an older header keeps working. Each item below needs its 
 | 35 | 0.18.0 | `CanServe(query, &info)`, a dry run that says whether a `RequestEx`, `Request` or `RequestCast` would be refused now and files nothing | `abiVersion >= 35` |
 | 36 | 0.19.0 | `kIntent_ProjectileAim` (ch.29), a miss budget over an archer's last 10 shots, and `GetProjectileAimState(actor, &info)` | `abiVersion >= 36` |
 | 37 | 0.20.0 | `kIntent_PotionAllowance` (ch.30) with `SetPotionAllowance(handle, &allowance)` and `GetPotionAllowanceState(actor, &info)`: the potions an NPC may not drink (drugs, every potion, food, keywords), with no cast claim | `abiVersion >= 37` |
+| 38 | 0.20.0 | `kIntent_CombatMove` (ch.31): one bash or power bash, started once by the game's own action road, and `GetCombatMoveState(handle, &info)` | `abiVersion >= 38` |
 
 ### Place (ABI 28)
 

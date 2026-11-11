@@ -224,6 +224,7 @@ So the cast facet is `kIntent_Cast` to a client, `ch.8b` in the log, and part of
 | `kIntent_EquipPreference` | 26 | Name the items the actor should favour in combat | weight (lifts a score) | EquipWeapon | 22 | Built, not yet tested in game | [ch.26](FACETS.md#ch26-equip-preference-kintent_equippreference) |
 | `kIntent_CombatSubstrate` | 27 | Combat as a substrate so an out of combat cast is animated | deny + compose | CombatAction, Combat, EquipWeapon, Detection, Cast | 23 | Field tested on LoreRim in 0.15.1 for out of combat casts | [ch.27](FACETS.md#combat-substrate-kintent_combatsubstrate) |
 | `kIntent_Place` | 28 | Put an actor, loaded or not, beside a reference or at an interior point, once | one engine call | none | 28 | Built, not yet tested in game | [Place](FACETS.md#place-kintent_place) |
+| `kIntent_CombatMove` | 31 | Have an actor bash or power bash now, once, the way the game's own AI starts it | one engine call | CombatAction (ranked, nothing held) | 38 | Built, not yet tested in game | [ch.31](FACETS.md#ch31-combat-move-kintent_combatmove) |
 | `kIntent_ProjectileAim` | 29 | Hold an archer's miss budget over his last 10 shots, dropping the game's two deliberate aim scatters on a corrected shot | per-claim seat at the projectile launch | none | 29 | Built, not yet field run | [ch.29](FACETS.md#ch29-projectile-aim-kintent_projectileaim) |
 
 Channel 18 is skipped on purpose. The number is reserved for an attack-selection design that is not on main. Channel 2 has no intent either, and nothing is reserved for it. The field tiers are defined under [The field tiers](#the-field-tiers).
@@ -255,6 +256,7 @@ Three things are not facets, because they claim nothing: the [read-only queries]
 | `kIntent_EquipPreference` | | | `EquipPrefFlags` (the items go through `SetEquipPreference`) | | |
 | `kIntent_CombatSubstrate` | | the time limit, seconds (0 = the INI value) | | | |
 | `kIntent_Place` | a reference, or an interior cell | the yaw, with `kPlace_SetYaw` | `PlaceFlags` | | the offset, or the point in the cell |
+| `kIntent_CombatMove` | | | the `CombatMove` (bash, power bash) | the foe it is meant for (optional, measured only) | |
 | every other intent | reserved | reserved | reserved | | |
 
 A field a facet does not read is accepted and ignored, with one exception: a non-zero point on a travel claim without `kTravel_ToPosition` is refused by name.

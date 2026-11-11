@@ -708,6 +708,38 @@ filed under (c) quietly. It is legal only while ALL of these hold:
    never placed. Any other engine move (a spot Harbinger chooses, a move on a timer, a sustained hold of position) is
    a new amendment, not a code change.
 
+**PROPOSED 2026-11-11 under marth's mandate of 2026-11-10 for the missing action roads (*"Missing roads get designed
+(engine actions in Harbinger, tier A, own branches incl. APMF repo; coordinator merges after review) or recorded as
+proven limits"*; MFO `Docs/research/2026-11/iaus-sim-v2.md` section 26). ADOPTION IS marth's, at the merge of
+`feat/combat-move`. The twelfth legal action (ABI v38, `core/CombatMove.cpp`): (l) START ONE COMBAT MOVE -- ONE
+engine start-of-attack action, `TESActionData::Process`, for the actor and the move KIND (a bash, a power bash) the
+client declared.** It is not (c): (c) is a promote at a claim's Engage / Release, and this is a one-shot with no
+claim. It is not a selection in the sense #0 forbids either: Harbinger does not make the AI decide anything, it
+performs, once, the one action the client named, by the road the engine's own Bash leaf uses. It is legal only while
+ALL of these hold:
+1. **One call, the engine's own, on the game thread.** The action data the engine's StartAttack builds (AE 49170 /
+   SE 48139: priority 2, source = the actor, the attack entry's animation event; rows `CombatMove.BGSActionData.Ctor`
+   and `CombatMove.TESActionData`) and ONE `Process()` (vtable slot 5). The engine's own checks inside the action
+   stand (stamina, the behaviour graph), and its post-action step, not Harbinger, sets the actor's attack data and
+   attack state. Never a bare animation event: that plays a swing whose hit reads stale attack data.
+2. **Declared, never chosen.** The client names the actor and the kind of move. The attack ENTRY of that kind is the
+   actor base's own (highest attack chance among several). Harbinger picks no moment, no target and no direction: a
+   named target is checked and measured, never aimed at.
+3. **One-shot, never a claim, never sustained, never retried.** No facet is held, nothing is denied, nothing is
+   re-sent. A sustained move (a block held for a window) is NOT this action: it needs its own amendment with the
+   deny set that makes it complete (the actor's own offense leaves and the engine's own release for that window).
+4. **The engine's own bash conditions first.** The test its Bash leaf makes (AE 0x6B90F0): no attack in progress,
+   `IsAttackReady`, attacking not disabled. Plus loaded, alive, not in a kill move.
+5. **It yields to every deny of that leaf and to the player's ranking.** Refused while a winning ch.7 claim denies
+   Offense (whoever filed it) or a combat substrate holds the actor, and unless the calling client outranks the
+   Engine source on the CombatAction facet.
+6. **Reported honestly.** `Started` only when the actor's attack data reads back as the entry and its attack state
+   as Bash; the engine's refusal and a read-back mismatch are `Failed`, loudly. Whether the swing hit is a separate
+   bit, set by the hit event itself.
+7. **Scope is closed by name.** Exactly 1.6.1170 or 1.5.97 (1.7.104 refused by name until its road is read), not VR,
+   both rows verified, never the player. Any other action (an attack entry Harbinger chooses, a move on a timer, a
+   block) is a new amendment, not a code change.
+
 **#20 — COMPOSED ANSWERS: APMF may answer the ENGINE'S OWN DECISION SEATS so the
 AI decides what a claim asks for — and exactly ONE of those answers may skip the
 chain.** (feat/ai-cast-seats-impl, 2026-09-05. This is the rule that lets ch.8b

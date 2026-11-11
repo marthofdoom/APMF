@@ -161,6 +161,14 @@ ABI v36. "This archer misses at most three of his last ten shots." A mod names a
 - **`bObserveOnly`** (default `0`). 1 = count and log what would be corrected, correct nothing.
 - **`iShotWindowMs`** (default `4000`, clamped 500..30000). A shot with no hit on its target within this many milliseconds is a miss.
 - **`bProbe`** (default `0`). 1 = one `[ch.29]` line per launch, per hit and per miss (angles before and after, aim points, speed, gravity, the ballistic angle, where a missed arrow came to rest). Passive, log only.
+### [CombatMove]
+
+Facet reference: [ch.31 Combat move](FACETS.md#ch31-combat-move-kintent_combatmove).
+
+ABI v38. "Bash now." A mod names an actor and a move (a bash or a power bash). Harbinger has the game start that move once, the way the game's own combat AI starts it, so the animation, the stamina cost, the hit and the stagger are the game's. Nothing is held or denied. A move the game refuses is reported to the mod as refused, never retried. 1.6.1170 and 1.5.97; on 1.7.104 every request is refused by name.
+
+- **`bCombatMove`** (default `1`). 0 = not installed and every kIntent_CombatMove request is REFUSED (the mod keeps its own behaviour; logged once with the reason).
+
 ### [PotionAllowance]
 
 Facet reference: [ch.30 Potion allowance](FACETS.md#ch30-potion-allowance-kintent_potionallowance).
@@ -248,6 +256,7 @@ a passive probe that is ON while it is being field tested. It only writes log li
 - **`bCasterTypeCensus`** (default `1`). For an actor a mod has told to cast a spell (a cast claim), logs which kind of combat caster the game's AI builds for that spell (Restore, Offensive, Armor, Summon and the rest), whether it then fires it from the hand, whether the hand charged it, and the case where it builds nothing at all. Also counts, for every actor, how often each kind fires. Lines are rate limited. 0 = off. Goes back to 0 before the next release.
 - **`bPapyrusCaller`** (default `0`). When a Papyrus script equips something on an actor whose equipment a mod governs, logs which script asked, the record it is attached to, the plugin files of that record and the one that owns the script, next to the source Harbinger ranks the equip as. It changes nothing. It needs the wrapper that `[Harbinger] bPapyrusAttribution` installs (it installs it on its own when that key is 0). 1 = on (only for a field test), 0 = off.
 - **`bRangedSelect`** (default `0`). For an actor whose equipment a mod governs (an equip claim), logs how the game's combat AI picks a bow or crossbow, what its equip steps try to equip, whether the target can be reached, and which combat moves run while the mod owns the hands. Lines are rate limited. 1 = on (only for a field test), 0 = off.
+- **`bCombatMove`** (default `0`). Logs every melee hit made by or landing on one of your followers: whether the game counted it as a power attack, a bash or a blocked hit, what attack the attacker was performing (its attack data and attack state), and whether the target was blocking. It changes nothing. 1 = on (only for a field test, up to 600 lines a session), 0 = off.
 - **`bRestoreCensus`** (default `1`). For an actor a mod has told to cast a healing or restoring spell (a cast claim), logs whether the game's combat AI ever reaches its own restore caster for that spell, how long that took, whether the hand took the spell, and the case where it never happens. Lines are rate limited. 0 = off. Goes back to 0 before the next release.
 
 ### [Input]

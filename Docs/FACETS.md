@@ -127,6 +127,7 @@ struct Heartbeat {
 | [`kIntent_Place`](#place-kintent_place) | 28 | Place | Put an actor, loaded or not, beside a reference or at a point in an interior cell, once | 28 | Built, not yet tested in game |
 | [`kIntent_ProjectileAim`](#ch29-projectile-aim-kintent_projectileaim) | 29 | Projectile aim | A miss budget for the actor's own arrows and bolts: when his last 10 shots hold as many misses as allowed, the next launch is re-aimed at the engine's own unscattered solution | 36 | Built, not yet seen in game (first Deck run pending); refuses by name on 1.7.104 |
 | [`kIntent_PotionAllowance`](#ch30-potion-allowance-kintent_potionallowance) | 30 | Potion allowance | Which potions the actor may not drink (a drug, every potion, food, a keyword), with no cast claim: the combat AI never picks one and any drink of one is refused | 37 | Built, not yet seen in game (first Deck run pending); refuses by name on 1.7.104 |
+| [`kIntent_CombatMove`](#ch31-combat-move-kintent_combatmove) | 31 | Combat move | Have the actor bash or power bash now, once, started the way the game's own combat AI starts it | 38 | Built, not yet tested in game |
 | [Space queries](#space-queries-findemptyspace-and-findhostilesinspace) | | `FindEmptySpace`, `FindHostilesInSpace` | Ask for a spot or the hostiles in a sphere | 11 | Built |
 | [Line of sight](#line-of-sight-getlineofsight) | | `GetLineOfSight` | Harbinger's own ray | 18 | Used by MFO |
 | [Awareness](#awareness-senseactor) | | `SenseActor` | Does this actor sense that one | 18 | Used by MFO |
@@ -2274,6 +2275,45 @@ ABI 28 (the release after 0.13.1). No INI key. Exactly 1.6.1170, 1.5.97 and 1.7.
 1. A placement reads `Placed`, and the client's own travel claim is still live. Where does the actor go next?
 2. Why is an exterior destination named by a reference and not by a cell?
 
+### ch.31 Combat move (`kIntent_CombatMove`)
+
+*Have an actor bash, or power bash, now. Once. Started by the engine's own action, so the hit is a real bash. A one-shot rather than a claim.*
+
+#### What it is for
+
+A follower with a shield stands next to a mage who is charging a spell. A skilled player bashes at that moment. The engine's AI bashes when its own dice say so. This lets a client pick the moment and leaves everything else to the engine: the animation, the stamina cost, the hit frame, the stagger or the interrupted cast.
+
+#### Arguments
+
+`RequestEx` only (ABI 38). `param.ival` = `kCombatMove_Bash` or `kCombatMove_PowerBash`. `param.target` = the foe it is meant for, optional. `kCombatMove_Block` is reserved and refused.
+
+```cpp
+APMF_API::APMF_Param p{};
+p.ival   = APMF_API::kCombatMove_Bash;
+p.target = foe;                                           // optional
+Handle h = g_apmf->RequestEx(follower, kIntent_CombatMove, 0.0f, &p);   // basis is not read
+```
+
+#### What Harbinger does
+
+One action on the game thread: the same action data the engine's own Bash leaf processes, for the actor's own bash entry. The engine then sets the actor's attack data and attack state itself. Harbinger reads both back and reports `Started` only when they are this move.
+
+It does not aim, turn or move the actor. It holds nothing and denies nothing. It does not retry.
+
+#### What refuses it
+
+The engine's own bash conditions (an attack already in progress, the behaviour graph not ready, attacking disabled), an actor that is not loaded or is dead, a named target that is gone, an actor base with no bash entry (a creature with no shield bash), a winning ch.7 claim that denies Offense, a combat substrate on the actor, and a client the player has ranked at or below Engine on the CombatAction facet. The engine itself may still refuse inside the action (no stamina, nothing to bash with): that reads `Failed` with `kCombatMoveWhy_EngineRefused`.
+
+#### Reading the outcome
+
+`GetCombatMoveState(h, &info)`: `Queued`, `Started`, `Refused`, `Failed`, with a `CombatMoveWhy`. After a `Started`, `kCombatMoveInfo_HitSeen` is set when a hit with the Bash flag from that actor arrives within 2.5 s. Full reference: [ABI v38](APMF_API-REFERENCE.md#abi-v38-combat-move-one-bash-or-power-bash-started-the-engines-own-way-ch31).
+
+#### Consequences that are the client's
+
+What the bash does to the world: the stagger, an interrupted cast, aggression. A bash sent out of reach or facing away swings at air.
+
+Gate on `abiVersion >= 38`. An older Harbinger refuses the intent ("no channel serves intent 31").
+
 ## Combat
 
 Seven facets cover combat, and each does one job. They are designed to be claimed together, each as its own handle, because a facet never claims another facet on your behalf.
@@ -3797,6 +3837,7 @@ The ABI is append-only. A client built against an older ABI keeps working agains
 | 26 | 0.14.0 | `GetSubstrateState`, `SubstrateState` (struct `APMF_API_v26`) |
 | 27 | 0.14.0 | `IsSubstrateAvailable` (struct `APMF_API_v27`) |
 | 28 | 0.14.0 | `kIntent_Place`, `PlaceFlags`, `PlaceState`, `PlaceWhy`, `APMF_PlaceStateInfo`, `GetPlaceState` (struct `APMF_API_v28`) |
+| 38 | 0.20.0 | `kIntent_CombatMove`, `CombatMove`, `CombatMoveState`, `CombatMoveWhy`, `APMF_CombatMoveStateInfo`, `GetCombatMoveState`, `kServePending_CombatMoveRoom` (struct `APMF_API_v38`) |
 | 29 | 0.15.0 | `GetClientFacetPriority`, `ClientFacet`, `kFacetPriorityUnknown` (struct `APMF_API_v29`) |
 | 30 | 0.15.0 | `kTravel_CrossCells`, a `TravelFlags` bit read through the existing `RequestEx` and `Repoint` (no struct, no slot) |
 | 31 | 0.15.2 | `GetClaimEndReason`, `ClaimEndReason` (struct `APMF_API_v31`) |
@@ -3830,6 +3871,7 @@ A refusal at the call returns `kInvalidHandle` and logs the reason in `APMF.log`
 | `kIntent_CastGuard` | gate not installed, no param, no bit or an unknown bit (`kCastGuard_Bystanders` on an APMF older than ABI 32), bad `fval`, the player as the actor, line of fire or bystanders with the measurement not armed | |
 | `kIntent_CombatSubstrate` | not installed (`bCombatSubstrate=0`, the ch.22 target site, the 95-node pair, the anchor records, a self-check row), the player as the actor, `fval` negative or NaN | not out of combat, unloaded, low process, in a scene or dialogue, the party in combat, Engine outranking the client on CombatAction / Combat / Equip / Detection, no free slot, the floors not published, the engine refusing the entry (the claim is released) |
 | `kIntent_Place` | not installed (VR, an unsupported runtime, the row refused), `Request` (no param), actor 0, the player, `form` 0, a non-finite `pos` or yaw, an unknown flag bit, 128 queued | it is a one-shot, not a claim: `GetPlaceState` reads `Refused` with a `PlaceWhy` (destination gone or not a reference / interior cell, actor loaded or the player present under their flags, another client's ch.19 / ch.1 owner) or `Failed` |
+| `kIntent_CombatMove` | not installed (`bCombatMove=0`, VR, a runtime other than 1.6.1170 / 1.5.97, a row refused), `Request` (no param), `kCombatMove_Block` or an unknown move, actor 0, the player, the actor as its own target, 128 queued | it is a one-shot: the game-thread refusals read through `GetCombatMoveState` |
 
 ## Appendix D: INI keys by facet
 
@@ -3860,6 +3902,7 @@ Defaults are the shipped values. The full text of every key is in [INI-REFERENCE
 | awareness | `[Awareness]` | `bHearNoise` (1) |
 | sources registry | `[Harbinger]` | `bSceneProbe` (1) |
 | census probes | `[Probe]` | `bCasterTypeCensus` (1), `bRangedSelect` (0), `bRestoreCensus` (1) |
+| ch.31 combat move | `[CombatMove]`, `[Probe]` | `bCombatMove` (1), and the hit probe `[Probe] bCombatMove` (0) |
 
 Facets with no key of their own: ch.1, 1a, 3, 4, 5, 6, 7, 10, 11, 14, 15, 16 and ch.25. The space queries have none either.
 
