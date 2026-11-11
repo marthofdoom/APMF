@@ -411,6 +411,8 @@ namespace apmf {
                     why = "kApproach_Point with a non-zero param.target (the centre is param.pos; target must be 0)";
                 else if (!std::isfinite(param->posX) || !std::isfinite(param->posY) || !std::isfinite(param->posZ))
                     why = "kApproach_Point with a param.pos that is not a finite point";
+                else if (!apmf::combatapproach::PointInBounds(param->posX, param->posY, param->posZ))
+                    why = "kApproach_Point with a param.pos coordinate beyond 4,000,000 units (no world point is there)";
                 else if (!std::isfinite(param->fval) || !(param->fval > 0.0f))
                     why = "param.fval (the radius R, game units) is not a positive finite number";
                 else if (actor == 0x14) {

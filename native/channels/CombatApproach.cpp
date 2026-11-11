@@ -1094,12 +1094,12 @@ namespace apmf::combatapproach {
             }
             const bool isPoint = (flags & APMF_API::kApproach_Point) != 0;
 
-            if (isPoint ? (target != 0 || !std::isfinite(point.x) || !std::isfinite(point.y) || !std::isfinite(point.z) ||
+            if (isPoint ? (target != 0 || !PointInBounds(point.x, point.y, point.z) ||   // false for NaN / inf too (F2-1)
                            !std::isfinite(radius) || !(radius > 0.0f))
                         : (target == 0 || target == id || !std::isfinite(radius) || !(radius > 0.0f))) {
                 End(id, APMF_API::kApproachState_Refused,
                     isPoint ? "invalid declaration (a Repoint with kApproach_Point named a target, a point that is not "
-                              "finite, or a radius that is not a positive finite number):"
+                              "finite or lies beyond 4,000,000 units, or a radius that is not a positive finite number):"
                             : "invalid declaration (a Repoint named target 0 / the actor itself, or a radius that is not a "
                               "positive finite number):");
                 continue;

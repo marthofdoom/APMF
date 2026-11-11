@@ -142,7 +142,9 @@ bound centred on `param.pos` (target must be 0). No struct, no slot. `channels/C
 takes the point as X instead of resolving a reference and ends the claim as TargetLost when the actor's space is no
 longer the point's; the seats are untouched (they only ever read `Entry::want`). `core/ControlMap.cpp` refuses a point
 claim with a target or a non-finite pos. What breaks: the re-point guard in the sweep compares flags and, for a point
-claim only, the point BITWISE (a float compare would stall a NaN re-point instead of ending it Refused); an APMF < v39
+claim only, the point BITWISE (a float compare would stall a NaN re-point instead of ending it Refused); a point is
+refused at the call AND in the sweep unless `combatapproach::PointInBounds` (every |coordinate| <= 4,000,000, review
+F2-1: a finite 1e30 would overflow the distance math); an APMF < v39
 must keep refusing target 0, which is what makes the bit safe to send to an old Harbinger.**
 **ABI v38 (2026-11-11, `kIntent_CombatMove`, ch.31) adds intent 31 (rides `RequestEx`; a one-shot, never a claim, the
 v28 shape), `CombatMove` (Bash 1 / PowerBash 2 / Block 3 RESERVED), `CombatMoveState` (Unknown 0 / Queued 1 / Started 2 /
