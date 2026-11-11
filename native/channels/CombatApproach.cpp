@@ -181,6 +181,16 @@ namespace {
     constexpr std::uint64_t kTickClampMs  = 100;     // one Poll-to-Poll gap counts at most this much world time
     constexpr std::uint64_t kLineMs       = 3000;    // per-actor status line
     constexpr std::uint64_t kHeartbeatMs  = 30000;
+    // THE H3 GAIT PROBE (class plan card H3, 2026-11-11; [CombatApproach] bApproachGaitProbe). PASSIVE: position and
+    // heading reads on the game thread in Poll, nothing written, no seat. It answers the one thing the static RE
+    // could not (MFO Docs/research/2026-11/class-m0-re.md section 1): the engine's Return To Combat Area paths at RUN
+    // speed, but does the body FACE along the path (a forward run) or keep facing its target (a strafe or a
+    // backpedal)? One line per kGaitLineMs per actor while its bound is carried and it moves, and one summary at the
+    // claim's end. Heading = the reference's Z angle (0 = +Y, clockwise); velocity = the position change between two
+    // Polls at least kGaitSampleMs apart.
+    constexpr std::uint64_t kGaitSampleMs = 200;
+    constexpr std::uint64_t kGaitLineMs   = 1000;
+    constexpr float         kGaitMinSpeed = 40.0f;   // units / s: below this he is standing, the angle means nothing
 
     template <class T>
     T& At(void* a_obj, std::size_t a_off) {
@@ -272,6 +282,11 @@ namespace {
         std::uint64_t    claimMs  = 0;       // Engage / OnOwnerChanged time
         std::uint64_t    inCombatSinceMs = 0;
         std::uint64_t    lastLineMs = 0;
+        // The H3 gait probe (GAME THREAD only, Poll / End under g_entryMx).
+        RE::NiPoint3     gaitPos{};
+        std::uint64_t    gaitMs = 0, gaitLineMs = 0;
+        std::uint32_t    gaitForward = 0, gaitStrafe = 0, gaitBack = 0;   // samples while moving, by class
+        float            gaitSpeedSum = 0.0f, gaitSpeedMax = 0.0f;
         // Written by the seats (combat threads), read by Poll.
         std::atomic<std::uint32_t> applied{ 0 };
         std::atomic<std::uint64_t> lastSeenMs{ 0 };     // S1 ran for this actor's standard area
@@ -374,6 +389,49 @@ namespace {
     std::uint64_t              g_lastTickMs = 0;   // game thread only
     std::uint64_t WorldNow() { return g_worldMs.load(std::memory_order_relaxed); }
     std::uint64_t              g_lastHeartbeatMs = 0;
+    bool                       g_gaitProbe = true;   // [CombatApproach] bApproachGaitProbe (written once, Install)
+
+    // The H3 gait probe's one sample (GAME THREAD, under g_entryMx unique). `a_carried`: the bound is live and the
+    // engine has carried it at least once. Returns a line to log after the lock, or empty.
+    std::string GaitSample(Entry& e, RE::FormID a_id, RE::Actor* a_actor, bool a_carried, std::uint32_t a_inside,
+                           float a_dist, std::uint64_t a_now) {
+        if (!g_gaitProbe) return {};
+        const RE::NiPoint3 pos = a_actor->GetPosition();
+        if (!a_carried || e.gaitMs == 0 || a_now - e.gaitMs > 4 * kGaitSampleMs) {   // (re)start: no stale delta
+            e.gaitPos = pos;
+            e.gaitMs  = a_now;
+            return {};
+        }
+        if (a_now - e.gaitMs < kGaitSampleMs) return {};
+        const float dt = static_cast<float>(a_now - e.gaitMs) / 1000.0f;
+        const float vx = (pos.x - e.gaitPos.x) / dt, vy = (pos.y - e.gaitPos.y) / dt;
+        e.gaitPos = pos;
+        e.gaitMs  = a_now;
+        const float speed = std::sqrt(vx * vx + vy * vy);
+        if (!std::isfinite(speed) || speed < kGaitMinSpeed || speed > 5000.0f) return {};   // standing, or a teleport
+        const float h  = a_actor->GetAngleZ();               // radians; 0 = +Y, clockwise: forward = (sin h, cos h)
+        const float fx = std::sin(h), fy = std::cos(h);
+        const float c  = std::clamp((fx * vx + fy * vy) / speed, -1.0f, 1.0f);
+        const float deg = std::acos(c) * 57.29578f;          // 0 = he moves where he faces, 180 = straight backwards
+        const char* cls = deg < 45.0f ? "FORWARD" : deg > 135.0f ? "BACKPEDAL" : "STRAFE";
+        ++(deg < 45.0f ? e.gaitForward : deg > 135.0f ? e.gaitBack : e.gaitStrafe);
+        e.gaitSpeedSum += speed;
+        e.gaitSpeedMax = (std::max)(e.gaitSpeedMax, speed);
+        if (a_now - e.gaitLineMs < kGaitLineMs) return {};
+        e.gaitLineMs = a_now;
+        // The engine's own movement-state bits (ActorState::actorState1, plain member reads): what IT says he does.
+        const auto& st = a_actor->AsActorState()->actorState1;
+        return fmt::format("[ch.24] 0x{} GAIT PROBE (H3, passive): speed {:.0f} u/s, heading-vs-velocity {:.0f} deg = {} "
+                           "(under 45 a forward run, over 135 a backpedal, else a strafe); engine move bits "
+                           "forward={} back={} left={} right={}, walking={} running={} sprinting={} sneaking={}, weapon {}; "
+                           "distance {:.0f}; engine: {}; samples so far forward {} / strafe {} / backpedal {}.",
+                           Hex(a_id), speed, deg, cls, st.movingForward ? 1 : 0, st.movingBack ? 1 : 0,
+                           st.movingLeft ? 1 : 0, st.movingRight ? 1 : 0, st.walking ? 1 : 0, st.running ? 1 : 0,
+                           st.sprinting ? 1 : 0, st.sneaking ? 1 : 0,
+                           a_actor->AsActorState()->IsWeaponDrawn() ? "drawn" : "sheathed", a_dist,
+                           a_inside == 2 ? "INSIDE" : a_inside == 1 ? "OUTSIDE (return-to-area selectable)" : "no fresh verdict",
+                           e.gaitForward, e.gaitStrafe, e.gaitBack);
+    }
 
     void SetState(Entry& e, std::uint32_t s, std::uint64_t now) {
         if (e.state == s) return;
@@ -743,6 +801,7 @@ namespace {
         std::uint32_t applied = 0, outside = 0;
         RE::FormID    tgt = 0;
         float         r = 0.0f, d = -1.0f;
+        std::string   gait;
         {
             std::unique_lock lk(g_entryMx);
             const auto it = g_entries.find(a_id);
@@ -755,7 +814,15 @@ namespace {
             applied = e.applied.load(std::memory_order_relaxed);
             outside = e.outsideCount.load(std::memory_order_relaxed);
             tgt = e.target; r = e.radius; d = e.distance;
+            if (const std::uint32_t n = e.gaitForward + e.gaitStrafe + e.gaitBack; g_gaitProbe && n != 0)
+                gait = fmt::format("[ch.24] 0x{} GAIT PROBE (H3, passive) SUMMARY: {} moving sample(s) under the bound: forward "
+                                   "{} / strafe {} / backpedal {}; mean speed {:.0f} u/s, top {:.0f} u/s. Mostly forward at "
+                                   "run speed = the drive is a real run; mostly strafe / backpedal = it keeps facing its "
+                                   "target (a facing seat would be the next step, not built).",
+                                   Hex(a_id), n, e.gaitForward, e.gaitStrafe, e.gaitBack,
+                                   static_cast<double>(e.gaitSpeedSum) / n, e.gaitSpeedMax);
         }
+        if (!gait.empty()) spdlog::info("{}", gait);
         g_ended.fetch_add(1, std::memory_order_relaxed);
         MarkReactivate(a_id);   // F3: S3 puts the engine's area back on the actor's own combat thread
         const std::string line = fmt::format(
@@ -790,6 +857,9 @@ namespace {
             e.claimMs    = now;
             e.inCombatSinceMs = 0;
             e.lastLineMs = 0;
+            e.gaitMs = e.gaitLineMs = 0;   // the H3 gait probe starts over with the declaration
+            e.gaitForward = e.gaitStrafe = e.gaitBack = 0;
+            e.gaitSpeedSum = e.gaitSpeedMax = 0.0f;
             e.applied.store(0, std::memory_order_relaxed);
             e.lastSeenMs.store(0, std::memory_order_relaxed);
             e.lastApplyMs.store(0, std::memory_order_relaxed);
@@ -999,6 +1069,10 @@ namespace apmf::combatapproach {
                 prev != apmf::sources::kNoSource)
                 g_s1Src.store(prev, std::memory_order_relaxed);
         }
+        g_gaitProbe = GetPrivateProfileIntA("CombatApproach", "bApproachGaitProbe", 1, kIni) != 0;
+        spdlog::info("[ch.24] H3 gait probe {} ([CombatApproach] bApproachGaitProbe): passive, one line per second per actor "
+                     "while its bound is carried and it moves (speed, heading against velocity, the engine's move bits), "
+                     "one summary at the claim's end.", g_gaitProbe ? "ON" : "off");
         g_installed.store(true, std::memory_order_release);
         spdlog::info("[ch.24] combat-approach seats installed: CombatAreaStandard Update (0x0B, carries the bound), "
                      "IsInside(WorldLocation) (0x05, the engine's own area inside a deny bracket), IsInside(point) "
@@ -1177,6 +1251,7 @@ namespace apmf::combatapproach {
             bool          logLine  = false;
             std::uint32_t applied = 0, sf = 0, inside = 0, outside = 0;
             std::uint32_t prevState = 0;
+            std::string   gaitLine;
             {
                 std::unique_lock lk(g_entryMx);
                 const auto it = g_entries.find(id);
@@ -1224,6 +1299,7 @@ namespace apmf::combatapproach {
                         endState = APMF_API::kApproachState_EngineDropped;
                     }
                 }
+                gaitLine = GaitSample(e, id, actor, live && applied != 0 && inCombat, inside, dist, now);
                 if (!endWhy) {
                     e.want = Geo{ posX.x, posX.y, posX.z, spaceX, radius };
                     SetLive(e, live);
@@ -1235,6 +1311,7 @@ namespace apmf::combatapproach {
                     }
                 }
             }
+            if (!gaitLine.empty()) spdlog::info("{}", gaitLine);
             if (endWhy) {
                 End(id, endState, endWhy);
                 continue;

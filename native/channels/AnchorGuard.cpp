@@ -73,6 +73,36 @@
 // CLOSE (CloseSub) reads the closing holder's group members before its StopCombat and runs (a)-(c) on every
 // member that is not a live holder after it. The player is logged, never acted on.
 //
+// THE MERGE (Q92, field LoreRim 2026-11-11 09:16:45; fixed 2026-11-11). The mirror of the route above, and the
+// reason the cleanup once ended a REAL fight. Auri, a HELD holder (substrate group: herself, target the anchor),
+// was the subject of the same engine "join this group with no target" call (caller RVA 0x71C2E2, function
+// 0x71C020) into Sven's group -- a genuine fight whose last foe had died 620 ms earlier (a lull: 0 targets).
+// An actor that already has a controller takes StartCombat's other branch (AE 0x6B6AB8 `jne 0x6B6D39`): with a
+// null target, or a target that is already the controller's (AE 0x6B6D39-0x6B6D53), and a group, it calls the
+// group join (AE 0x6B6D78 -> 0x83D2C0; SE 0x6255FD -> 0x7A5FA0; 1.7.104 0x6C97F8 -> 0x8521A0). The join, for an
+// actor whose controller is in ANOTHER group, MERGES that group into the given one (AE 0x83D325 -> 0x804A80
+// (dst, src): every src member and every src TARGET moves over; then 0x8048D0 retires src. SE 0x7A6005 ->
+// 0x76B160). The merge has that ONE call site and the join only StartCombat's two (AE 0x6B6CB7 / 0x6B6D78; byte
+// scan of .text for E8 / E9 rel32, both images). So the anchor became a target of Sven's group, the sweep saw
+// "not a holder, its group lists the anchor, a held holder among the members, nothing but the anchor to fight"
+// and applied the SEV-1 remedy to the wrong party: StopCombat on Sven, mid-fight.
+// Fixed in two places:
+//   * THE SEAT refuses the merge at its only source: a HELD holder's StartCombat with a group that is NOT a
+//     substrate group and a target that is null or the anchor ([CombatSubstrate] bSubstrateHolderJoinGuard, 1).
+//     A held holder's substrate group never joins anyone's fight; real combat still reaches a holder through
+//     its three triggers (a target of its own, a hit, the party's fight). A REAL holder is never refused.
+//   * THE SWEEP NEVER STOPS A GENUINE FIGHT. It remembers, per actor, the controller it last saw CLEAN (in
+//     combat, not targeting the anchor, its group not listing it). An actor found with the anchor while that
+//     same controller is still his was fighting before the anchor reached him: his fight is genuine. Then the
+//     HELD HOLDER in his group is the intruder and drops as real combat (combatsubstrate::DropForGenuineFight,
+//     reason "merged-into-a-genuine-fight"; its DropSub takes the anchor out of the group), and no StopCombat is
+//     ever called on the genuine fighter, in any branch. An actor never seen clean with this controller (the
+//     SEV-1 shape: he entered combat INTO the anchor's group) is cleaned as before.
+//     Known limits, both logged, neither masked: the history starts with the sweep (the first Poll after an
+//     OPEN), so a merge inside that first frame is judged as the SEV-1 shape (the seat refuses that merge at
+//     its source); a controller freed and another allocated at the same address inside one frame reads as
+//     genuine (the holder drops instead of the actor being stopped: the anchor leaves the group either way).
+//
 // THREADING. AnswerJoin: any thread; reads the published atomics, StateOf (the lock-free slot table) and the
 // two actors' FormIDs; its log state sits under g_logMx (no engine call under it; only spdlog's own lock nests
 // inside it, and spdlog never calls back into this file).
@@ -103,6 +133,8 @@ namespace {
     std::atomic<bool>        g_seatOn{ false };     // the widened stub is in the slot
     std::atomic<const char*> g_seatState{ "not installed (before kDataLoaded)" };
     bool                     g_trace = true;        // [CombatSubstrate] bSubstrateEntryTrace
+    bool                     g_holderGuard = true;  // [CombatSubstrate] bSubstrateHolderJoinGuard (written once, Install)
+    std::atomic<std::uint64_t> g_holderRefusals{ 0 };
 
     // The published substrate groups: written by the sweep (game thread), read by the seat (any thread).
     std::array<std::atomic<std::uintptr_t>, kMaxGroups> g_groups{};
@@ -143,6 +175,9 @@ namespace {
         std::uint32_t seen = 0, unlogged = 0;
     };
     std::unordered_map<RE::FormID, LeakState> g_leaks;
+    // The controller each non-holder was last seen CLEAN with (in combat, not targeting the anchor, its group not
+    // listing it): the "his fight is genuine" history (Q92). An address compare only, never dereferenced.
+    std::unordered_map<RE::FormID, std::uintptr_t> g_clean;
     bool          g_sweeping   = false;
     std::uint64_t g_tailUntil  = 0;
     std::uint64_t g_leakTotal  = 0;   // leaked actors treated this sweep window
@@ -220,11 +255,15 @@ namespace {
         ls.lastTryMs = a_now;
         ++ls.seen;
         const bool held = AnyHeldMember(gr.members, id);
+        // Q92: he was in combat with THIS controller, clean of the anchor, before the anchor reached him.
+        const auto cleanIt = g_clean.find(id);
+        const bool genuine = cleanIt != g_clean.end() && cleanIt->second == reinterpret_cast<std::uintptr_t>(cc);
         const bool logNow = ls.lastLogMs == 0 || a_now - ls.lastLogMs >= kLogEveryMs;
         if (logNow) {
             ++g_leakTotal;
             spdlog::error("[substrate] ANCHOR LEAK ({}): 0x{} '{}' is NOT a substrate holder and {} -- group 0x{} ({} "
-                          "member(s){}, {} target(s), {} not the anchor){}. A deny hole, not a fallback: cleaning up.",
+                          "member(s){}, {} target(s), {} not the anchor){}; his fight is {}. A deny hole, not a "
+                          "fallback: cleaning up.",
                           a_ctx, Hex(id), a_actor->GetName(),
                           tAnchor ? (gr.listed ? "its controller targets the anchor, which its group lists"
                                                : "its controller targets the anchor")
@@ -232,7 +271,9 @@ namespace {
                           Hex(reinterpret_cast<std::uintptr_t>(g), 1), gr.members.size(),
                           held ? ", a held holder among them" : "", gr.targets, gr.other,
                           ls.unlogged ? fmt::format("; {} unlogged sighting(s) since the last line", ls.unlogged)
-                                      : std::string());
+                                      : std::string(),
+                          genuine ? "GENUINE (in combat with this controller, clean of the anchor, before it reached him)"
+                                  : "not known to be genuine (never seen in clean combat with this controller)");
             ls.unlogged = 0;
         } else {
             ++ls.unlogged;
@@ -243,6 +284,21 @@ namespace {
         } else if (held && gr.other != 0) {
             did = "a held holder shares a group with a real target: that holder drops on real combat and its drop "
                   "removes the anchor; nothing ended";
+        } else if (held && genuine) {
+            // Q92: the holder's substrate group was merged into HIS fight. The holder is the intruder: real combat
+            // reached it. It drops through the real-combat path (DropSub removes the anchor from this group on the
+            // next Poll). NO StopCombat on the genuine fighter.
+            std::uint32_t dropped = 0, heldN = 0;
+            for (const auto& mh : gr.members) {
+                const auto mp = mh.get();
+                const auto* m = mp.get();
+                if (!m || m->GetFormID() == id || subs::StateOf(m->GetFormID()) != APMF_API::kSubstrateState_Held) continue;
+                ++heldN;
+                if (subs::DropForGenuineFight(m->GetFormID(), id)) ++dropped;
+            }
+            did = fmt::format("a held holder's group was merged into his GENUINE fight: {} of {} held holder(s) in it drop "
+                              "as real combat (merged-into-a-genuine-fight; the drop removes the anchor); NOTHING ended on "
+                              "him", dropped, heldN);
         } else if (held) {
             did = "a held holder shares the group: the anchor stays in it (the holder's substrate stands); " +
                   StopAndRepick(a_actor, a_anchor);
@@ -260,7 +316,10 @@ namespace {
             } else {
                 did = "the group does not list the anchor (its controller still names it)";
             }
-            if (left == 0 || (!gr.listed && gr.other == 0))
+            if ((left == 0 || (!gr.listed && gr.other == 0)) && genuine)
+                did += "; his fight is GENUINE: NOT ended (an empty fight is the engine's to end; a controller still on "
+                       "the anchor is reported again by the next sweep line)";
+            else if (left == 0 || (!gr.listed && gr.other == 0))
                 did += "; " + StopAndRepick(a_actor, a_anchor);
             else if (gr.other != 0)
                 did += "; a real target remains: that fight is the engine's, nothing ended";
@@ -283,6 +342,9 @@ namespace apmf::anchorguard {
         std::memset(b, 0, sizeof(b));
         REX::W32::GetPrivateProfileStringA("CombatSubstrate", "bSubstrateJoinGuard", "1", b, sizeof(b), kIni);
         const bool on = std::atoi(b) != 0;
+        std::memset(b, 0, sizeof(b));
+        REX::W32::GetPrivateProfileStringA("CombatSubstrate", "bSubstrateHolderJoinGuard", "1", b, sizeof(b), kIni);
+        g_holderGuard = std::atoi(b) != 0;
         // 1.7.104: StartCombat (MIT id 38561, 0x6C93B0) is instruction-identical to 1.6.1170's 0x6B6930 (313 insns), so
         // the register copies sit at the AE offset; the row AnchorGuard.StartCombat.TargetGroupRegs verifies their nine
         // bytes at 0x6C93B0 + 0x23 in the 1.7.104 table (SelfCheck re-reads them at runtime).
@@ -300,7 +362,7 @@ namespace apmf::anchorguard {
         if (why) {
             g_seatState.store(why, std::memory_order_release);
             spdlog::warn("[substrate] anchor JOIN GUARD seat NOT installed -- {}. A null-target StartCombat into a "
-                         "substrate group is not refused at its source; the anchor-leak sweep still runs.",
+                         "substrate group is not refused at its source, and a HELD HOLDER's group join into an ally's fight is not refused either ([CombatSubstrate] bSubstrateHolderJoinGuard is inert without this seat); the anchor-leak sweep still runs.",
                          why);
             return false;
         }
@@ -314,7 +376,11 @@ namespace apmf::anchorguard {
         g_seatState.store("ON", std::memory_order_release);
         g_seatOn.store(true, std::memory_order_release);
         spdlog::info("[substrate] anchor JOIN GUARD seat ON: at Actor::StartCombat's self check a NULL-target entry into a "
-                     "substrate group by an actor that is not a live holder is refused; entry-route trace {}.",
+                     "substrate group by an actor that is not a live holder is refused; a HELD holder's join into a group "
+                     "that is not a substrate group (the merge of its substrate group into that fight) is {}; entry-route "
+                     "trace {}.",
+                     g_holderGuard ? "refused ([CombatSubstrate] bSubstrateHolderJoinGuard=1)"
+                                   : "NOT refused ([CombatSubstrate] bSubstrateHolderJoinGuard=0; the sweep drops the holder instead)",
                      g_trace ? "ON ([CombatSubstrate] bSubstrateEntryTrace=1)" : "off");
     }
 
@@ -330,8 +396,15 @@ namespace apmf::anchorguard {
         if (!live && kind == 0) return false;
         const RE::FormID self   = a_self->GetFormID();
         const RE::FormID target = a_target ? a_target->GetFormID() : 0;
-        const bool       holder = LiveHolder(self);
-        const bool       refuse = !a_target && a_group && kind != 0 && !holder;
+        const std::uint32_t state = subs::StateOf(self);
+        const bool       holder = state == APMF_API::kSubstrateState_Held || state == APMF_API::kSubstrateState_Real;
+        const bool       refuseJoin = !a_target && a_group && kind != 0 && !holder;
+        // Q92 (the merge): a HELD holder already has its substrate controller, so a StartCombat with a group and a
+        // target that is null or already its own (the anchor) is the group JOIN, which merges its substrate group
+        // -- the anchor with it -- into `a_group`. Refused when that group is not a substrate group.
+        const bool       refuseMerge = g_holderGuard && state == APMF_API::kSubstrateState_Held && a_group && kind == 0 &&
+                                       (!a_target || target == subs::AnchorId());
+        const bool       refuse = refuseJoin || refuseMerge;
         const bool       trace  = live && g_trace;
         if (!refuse && !trace) return false;
 
@@ -341,7 +414,8 @@ namespace apmf::anchorguard {
         const auto now    = apmf::clock::MonotonicMs();
         const auto grp    = reinterpret_cast<std::uintptr_t>(a_group);
         std::uint64_t n = 0;
-        if (refuse) n = g_refusals.fetch_add(1, std::memory_order_relaxed) + 1;
+        if (refuseJoin) n = g_refusals.fetch_add(1, std::memory_order_relaxed) + 1;
+        if (refuseMerge) n = g_holderRefusals.fetch_add(1, std::memory_order_relaxed) + 1;
 
         std::scoped_lock lk(g_logMx);
         if (trace) {
@@ -364,7 +438,9 @@ namespace apmf::anchorguard {
                                  "0x{} ({}){}",
                                  Hex(self), holder ? " (a live holder)" : "", Hex(target), Hex(grp, 1), KindText(kind),
                                  Hex(rva, 1), caller.found ? "found" : "caller frame not found",
-                                 refuse ? " -> REFUSED (null-target join into a substrate group)" : "");
+                                 refuseMerge ? " -> REFUSED (a held holder's join into a group that is not a substrate "
+                                               "group: its substrate group would be merged into that fight)"
+                                 : refuse    ? " -> REFUSED (null-target join into a substrate group)" : "");
                 } else {
                     ++g_traceSuppressed;
                 }
@@ -374,7 +450,17 @@ namespace apmf::anchorguard {
             if (g_refuseLast.size() > 256) g_refuseLast.clear();
             const RE::FormID rk = self ^ static_cast<RE::FormID>(grp >> 4);
             auto&            last = g_refuseLast[rk];
-            if (last == 0 || now - last >= kRefuseLogMs) {
+            if (refuseMerge) {
+                if (last == 0 || now - last >= kRefuseLogMs) {
+                    last = now;
+                    spdlog::warn("[substrate] 0x{} HELD HOLDER GROUP JOIN REFUSED: StartCombat(target {}, group 0x{} [not a "
+                                 "substrate group]) would merge its substrate group, the anchor with it, into that group's "
+                                 "fight; caller RVA 0x{}{}; refused at its own self check, before it did anything ({} so "
+                                 "far). The holder stays held; real combat reaches it through its own triggers.",
+                                 Hex(self), a_target ? "the anchor" : "none", Hex(grp, 1), Hex(rva, 1),
+                                 caller.found ? "" : " (caller frame not found)", n);
+                }
+            } else if (last == 0 || now - last >= kRefuseLogMs) {
                 last = now;
                 spdlog::warn("[substrate] 0x{} NULL-TARGET GROUP JOIN REFUSED: StartCombat(target none, group 0x{} [{}]) by "
                              "an actor that is not a live substrate holder, caller RVA 0x{}{}; refused at its own self "
@@ -418,6 +504,7 @@ namespace apmf::anchorguard {
                     spdlog::error("[substrate] ANCHOR LEAK sweep window ends: {} leak line(s) this window ({} actor(s)).",
                                   g_leakTotal, g_leaks.size());
                 g_leaks.clear();
+                g_clean.clear();
                 g_leakTotal = 0;
             }
             return;
@@ -441,7 +528,10 @@ namespace apmf::anchorguard {
         pl->ForEachHighActor([&](RE::Actor* a) {
             if (!a || a == anchor) return RE::BSContainer::ForEachResult::kContinue;
             auto* cc = a->GetActorRuntimeData().combatController;
-            if (!cc) return RE::BSContainer::ForEachResult::kContinue;
+            if (!cc) {
+                if (!g_clean.empty()) g_clean.erase(a->GetFormID());   // out of combat: the history ends with the controller
+                return RE::BSContainer::ForEachResult::kContinue;
+            }
             RE::CombatGroup*    g  = cc->combatGroup;
             const RE::FormID    id = a->GetFormID();
             const std::uint32_t st = subs::StateOf(id);
@@ -456,6 +546,7 @@ namespace apmf::anchorguard {
             const GroupRead gr      = ReadGroup(g, anchorH, false);
             if (g && gr.listed && gr.other == 0) publish(g, kKindListed);
             if (tAnchor || gr.listed) leaks.push_back(id);
+            else g_clean[id] = reinterpret_cast<std::uintptr_t>(cc);   // in combat and clean: genuine with this controller
             return RE::BSContainer::ForEachResult::kContinue;
         });
         for (std::size_t i = 0; i < kMaxGroups; ++i) {
@@ -470,6 +561,7 @@ namespace apmf::anchorguard {
     void ResetAll() {
         for (std::size_t i = 0; i < kMaxGroups; ++i) g_groups[i].store(0, std::memory_order_release);
         g_leaks.clear();
+        g_clean.clear();
         g_sweeping  = false;
         g_tailUntil = 0;
         g_leakTotal = 0;

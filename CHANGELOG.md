@@ -1,3 +1,9 @@
+## Unreleased -- movement batch (anchor leak fix, gait probe)
+
+- **An out-of-combat cast no longer ends a teammate's fight.** When a follower opened an animated out-of-combat cast beside a teammate whose last foe had just died, the game merged the caster's substrate fight into the teammate's fight, and Harbinger's cleanup then stopped the teammate's combat. The merge is now refused at its source, and the cleanup never stops a fight that was running before the stand-in actor reached it. New setting `[CombatSubstrate] bSubstrateHolderJoinGuard=1`.
+- **A passive gait probe for combat approaches.** While a combat approach moves an actor, the log says once per second how fast it moves and whether it runs forward, strafes or backpedals, with a summary when the approach ends. New setting `[CombatApproach] bApproachGaitProbe=1` while testing.
+- **No ABI change.**
+
 ## v0.19.0 -- Projectile aim with a miss budget (ch.29, ABI v36)
 
 - **A mod can claim an archer's aim (ch.29, ABI v36).** `kIntent_ProjectileAim` is a miss budget over an NPC's last 10 arrow or bolt shots. A client says "this archer misses at most N of his last 10", and 0 means never miss. 10 or more only observes.
