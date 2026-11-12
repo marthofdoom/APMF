@@ -23,7 +23,7 @@ One section per item, newest ABI last. Research notes: `Docs/research/melee-move
 - **ABI v43:** no struct, no slot. `kCombatMove_Block` built, `kCombatMove_BlockEnd`, `kCombatMoveState_Ended`, whys
   13 to 20, info bits 5 to 7, `kCombatBlock*`. `param.fval` = the window. MFO's `APMF_API.h` is the same byte for byte.
 - **No new address row.** The two action forms come from the default object manager behind the row ch.31 already
-  verifies. The leaves are found by RTTI name. 1.7.104 stays refused with the rest of ch.31 (APMF-B290).
+  verifies. The leaves are found by RTTI name. 1.7.104 stays refused with the rest of ch.31 (APMF-B296).
 - **Passive (principle 5):** `[combat-move] ... STARTED ... BLOCK held`, `RE-RAISED`, `block ENDED`, the 30 s
   `H block holds` heartbeat with the per-leaf deny counts. `[Probe] bCombatMove` already logs the target's want-block
   state on every melee hit.
@@ -32,7 +32,7 @@ One section per item, newest ABI last. Research notes: `Docs/research/melee-move
 - **Deny audit:** row "31 block", six open paths named. INVARIANTS #0 (l) block amendment (proposed).
 - **File size:** `core/ActionGate.cpp` is at 2484 lines (backstop 2500). Nothing more goes into it without a split
   brief (APMF-B291).
-- **Open:** APMF-B290 to APMF-B292.
+- **Open:** APMF-B291, APMF-B292, APMF-B296.
 
 ### ch.31 POWER ATTACK (ABI v44): the engine's real power attack, once
 

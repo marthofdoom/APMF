@@ -1373,8 +1373,8 @@ As handed to the author: "in-place semantics vs third-party v36 clients; no quer
 ### APMF-B281 (SEV-5, OPEN, core/CastLeafNature.cpp ~:195, against bfc50c1, same review, finding F5a)
 As handed to the author: "CastLeafNature.cpp:195 comment order." (The TESShout static_assert comment block near the per-runtime tables.)
 
-<!-- the melee-moves entries (APMF-B290 onward) sit here; B287..B289 are left free for the corpse-target fix round -->
-### APMF-B290 (SEV-4, OPEN, core/CombatMove.cpp Install, raised by the author against feat/melee-moves, 2026-11-11)
+<!-- the melee-moves entries (APMF-B291 to APMF-B296) sit here; B287..B290 belong to the corpse-target fix round -->
+### APMF-B296 (SEV-4, OPEN, core/CombatMove.cpp Install, raised by the author against feat/melee-moves, 2026-11-11)
 ch.31 is refused by name on 1.7.104 and the ABI v43 block and ABI v44 power attack inherit that. The post-action step that sets and clears the want-block state was read on 1.7.104 (`0x6E2747` / `0x6E2776`, same logic), but the StartAttack / action mediator road and the block wrapper were not, and 1.7.104 has no Address Library ids. Fix direction: read the three functions on 1.7.104, add the raw rows, lift the refusal for the whole channel in one change.
 
 ### APMF-B291 (SEV-4, OPEN, core/ActionGate.cpp, same branch)
