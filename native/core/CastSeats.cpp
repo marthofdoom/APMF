@@ -983,6 +983,16 @@ namespace apmf::castseats {
                      kEngineSeatVtables.size(), nAim, kEngineSeatVtables.size());
     }
 
+    bool MatchClaim(RE::CombatMagicCaster* a_this, RE::CombatController* a_cc, std::uintptr_t a_prevFn, bool a_count,
+                    ClaimMatch& a_out) {
+        SeatMatch m{};
+        if (!ClaimNamesThisCast(a_this, a_cc, m, a_prevFn, a_count)) return false;
+        a_out.actor  = m.actor;
+        a_out.driven = m.driven;
+        a_out.claim  = m.claim;
+        return true;
+    }
+
     std::string SeatCountsLine() {
         std::string s;
         for (std::size_t t = 0; t < kSeatTypes; ++t) {

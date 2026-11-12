@@ -10,6 +10,7 @@
 #include "core/MainThread.h"
 #include "core/CastProxy.h"
 #include "core/CastSeats.h"
+#include "core/ReanimateSeat.h"
 #include "core/CastGate.h"
 #include "core/EquipGate.h"
 #include "core/HandBlock.h"
@@ -326,6 +327,11 @@ namespace {
                                                   // "what the AI wanted" against "what the claim
                                                   // answered". The 5th seat (0x0F CheckShouldEquip)
                                                   // lives in equipgate above. VR-refused inside.
+            apmf::reanimateseat::Install();      // ch.8b REANIMATE CORPSE SEAT (ABI v42, kCastFlag_CorpseTarget,
+                                                  // MFO card G7): 0x06 + 0x0D on the CombatMagicCasterReanimate
+                                                  // vtable, which castseats never seats. Exact runtimes, VR
+                                                  // refused, [CastSeats] EnableReanimateSeat (default 1). BEFORE
+                                                  // the census so that still logs the whole chain's answer.
             apmf::castertypecensus::Install();   // PASSIVE caster-type census (2026-09-29): 0x06
                                                   // CheckStartCast + 0x0B NotifyStartCast observed on
                                                   // all 15 caster types, [Probe] bCasterTypeCensus
