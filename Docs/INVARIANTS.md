@@ -751,7 +751,7 @@ ALL of these hold:
    both rows verified, never the player. Any other action (an attack entry Harbinger chooses, a move on a timer, a
    block) is a new amendment, not a code change.
 
-**(l) BLOCK AMENDMENT, PROPOSED 2026-11-11 (MFO T2 batch M item 1; marth Q83 "build next", default Q-T2-1; ADOPTION IS
+**(l) BLOCK AMENDMENT, ADOPTED 2026-11-12 at merge (marth: "Adopt all at merge"; it binds with (l) itself, which stays PROPOSED until its Q81 probe), first PROPOSED 2026-11-11 (MFO T2 batch M item 1; marth Q83 "build next", default Q-T2-1; ADOPTION IS
 marth's, at the merge of `feat/melee-moves`). ABI v43, `core/CombatMoveBlock.cpp`.** Condition 3 above said a
 sustained move needs its own amendment with the deny set that makes it complete. This is it, for ONE move, the block.
 A HELD GUARD is legal only while ALL of these hold, on top of conditions 1, 2, 5 and 7:
@@ -774,7 +774,7 @@ A HELD GUARD is legal only while ALL of these hold, on top of conditions 1, 2, 5
    and at every re-raise.
 6. **Reported honestly.** `Started` only when the want-block state reads back set. `Ended` always carries its why.
 
-**(l) POWER ATTACK AMENDMENT, PROPOSED 2026-11-11 (MFO T2 batch M item 2; marth Q82 "move to Harbinger", default
+**(l) POWER ATTACK AMENDMENT, ADOPTED 2026-11-12 at merge (marth: "Adopt all at merge"; binds with (l) itself, PROPOSED until its Q81 probe), first PROPOSED 2026-11-11 (MFO T2 batch M item 2; marth Q82 "move to Harbinger", default
 Q-T2-2; ADOPTION IS marth's, at the merge of `feat/melee-moves`). ABI v44, `core/CombatMove.cpp` `Run`.** A third move
 KIND under (l): a right-hand power attack. Conditions 1 and 3 to 7 hold unchanged (the Right Attack action form with
 an entry's event, one-shot, no claim, nothing denied, the engine's own conditions first, it yields, honest report,
@@ -792,7 +792,7 @@ accepts only the ones that fit what he holds:
   kind: the PowerAttack flag without the Bash flag.
 - **It never runs over a block hold.** Refused (`GuardHeld`) while Harbinger holds the actor's guard.
 
-**PROPOSED 2026-11-11 (MFO class plan card H2, marth: *"a new intent, aversion ... The intent never invents a target
+**ADOPTED 2026-11-12 (marth: "Adopt all at merge"; feat/aversion merged 1b1ef40), first PROPOSED 2026-11-11 (MFO class plan card H2, marth: *"a new intent, aversion ... The intent never invents a target
 that is not already in the foe's group targets"*; ADOPTION IS marth's, at the merge of `feat/aversion`). The thirteenth
 legal action (ABI v41, `core/Aversion.cpp`): (m) WEIGHT A CLAIMANT'S CANDIDACY IN ANOTHER ACTOR'S TARGET SELECTION --
 for one scoring pass of the engine's standard selector, the claimed actor fails the engine's own admission, and the
@@ -829,7 +829,7 @@ here rather than done quietly. It is legal only while ALL of these hold:
    verified per runtime, all three seats or none, never the player as the claimant. A different shaping (a score
    bonus for somebody, a penalty by distance, hiding from a named foe) is a new amendment, not a code change.
 
-**PROPOSED 2026-11-11 (MFO T2 batch M item 5; the class plan's "strict class style ... would need a combat style slider
+**ADOPTED 2026-11-12 at merge (marth: "Adopt all at merge"), first PROPOSED 2026-11-11 (MFO T2 batch M item 5; the class plan's "strict class style ... would need a combat style slider
 in harbinger", marth 2026-10-27 strict adherence with the tree ON; ADOPTION IS marth's, at the merge of
 `feat/melee-moves`). The fourteenth legal action (ABI v45, `core/CombatStyle.cpp`): (n) ANSWER THE ENGINE'S READ OF AN
 ACTOR'S COMBAT STYLE WITH THE STYLE THE CLIENT DECLARED.** It is a substitution at the source in the sense of #20
