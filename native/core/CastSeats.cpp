@@ -281,8 +281,10 @@ namespace apmf::castseats {
         // wholly claim-driven or wholly the engine's. `a_count`: 0x06 (WHETHER, the start of every
         // claim-driven cast) records the decision (hit, overruled / stood, the "STANDS" line); 0x0A /
         // 0x07 / 0x0D ask the same question silently (facetattr::Outranks) so each cast counts once.
+        // `a_needTarget` (default true, every seat in this file): false only for core/ReanimateSeat.cpp,
+        // whose corpse claim must be answered (with NO) even when its target never resolved.
         bool ClaimNamesThisCast(RE::CombatMagicCaster* a_this, RE::CombatController* a_cc, SeatMatch& out,
-                                std::uintptr_t a_prevFn, bool a_count) {
+                                std::uintptr_t a_prevFn, bool a_count, bool a_needTarget = true) {
             if (!a_this || !a_cc) return false;
             auto* item = a_this->magicItem;
             if (!item) return false;
@@ -308,7 +310,7 @@ namespace apmf::castseats {
             const RE::FormID driven = claim.proxy ? claim.proxy : claim.spell;
             if (driven == 0) return false;                       // degenerate claim -- names nothing
             if (itemForm != driven) return false;                // defensive re-check (should be unreachable: the form query above already matched)
-            if (!claim.targetHandle) return false;               // no resolvable target -- nothing to answer
+            if (a_needTarget && !claim.targetHandle) return false;   // no resolvable target -- nothing to answer
 
             // Harbinger 1b: ranked (see above). A throw keeps the default-priority answer (the claim's).
             bool wins = true;
@@ -981,6 +983,16 @@ namespace apmf::castseats {
                      "no equip, anim or cast write of any kind.",
                      kEngineSeatVtables.size(), nStart, kEngineSeatVtables.size(), nStop, kEngineSeatVtables.size(), nTgt,
                      kEngineSeatVtables.size(), nAim, kEngineSeatVtables.size());
+    }
+
+    bool MatchClaim(RE::CombatMagicCaster* a_this, RE::CombatController* a_cc, std::uintptr_t a_prevFn, bool a_count,
+                    ClaimMatch& a_out, bool a_needTarget) {
+        SeatMatch m{};
+        if (!ClaimNamesThisCast(a_this, a_cc, m, a_prevFn, a_count, a_needTarget)) return false;
+        a_out.actor  = m.actor;
+        a_out.driven = m.driven;
+        a_out.claim  = m.claim;
+        return true;
     }
 
     std::string SeatCountsLine() {

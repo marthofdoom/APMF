@@ -850,3 +850,15 @@ The header: `kIntent_Aversion` (32) and `kABIVersion` 41. No struct, no slot, no
 
 **Refused:** the player, no param, a weight outside (0, 1), the seats not installed, an APMF older than v41 (no channel serves intent 32). Full reference: [FACETS.md ch.32](FACETS.md#ch32-aversion-kintent_aversion).
 
+## ABI v42 corpse target: a Reanimate claim names its corpse (ch.8b)
+
+The header: `kCastFlag_CorpseTarget` (bit 16 of `CastFlags`) and `kABIVersion` 42. No struct, no slot, no field. A v42 client still holds an `APMF_API_v38*`.
+
+**Why it exists.** A Reanimate spell is aimed by its own caster type, which searches for the highest-level corpse in range. A ch.8b claim could only say "cast it" (target 0), never "at this one". A client that had already checked which corpse the spell can raise had no way to pass that on.
+
+**The claim.** `RequestCast` with `req.spell` = a spell that has a Reanimate effect, `req.target` = the corpse, and the bit in `req.flags`. Everything else is a normal cast claim: hand, TTL, `Repoint` heartbeat, `Release`.
+
+**What happens.** At the Reanimate caster's start check Harbinger hands the claim's corpse to the engine's own keep test. Accepted, the cast may start. Refused, the answer is no for that poll, the corpse the engine would have picked is removed again, and the claim stands. When the engine sets up the aim it searches once more. Harbinger writes the claim's corpse back after it. The engine's own pick never casts while the claim stands.
+
+**Refused:** the seat not installed (VR, a build that is not exactly 1.6.1170, 1.5.97 or 1.7.104, `[CastSeats] EnableReanimateSeat=0`), `target` 0 or the actor, `kCastFlag_DenyHandOnly`. On a spell with no Reanimate effect the bit does nothing. An APMF older than v42 ignores the bit and the engine picks its own corpse. Full reference: [FACETS.md Corpse target](FACETS.md#corpse-target-kcastflag_corpsetarget).
+

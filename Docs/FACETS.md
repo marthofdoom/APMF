@@ -920,7 +920,7 @@ struct APMF_CastRequest {
 | `basis` | `float` | any finite value | your choice | |
 | `req->spell` | `RE::FormID`, a base SpellItem (or a TESPackage with `kCastFlag_FromPackage`) | any spell | required, except on a deny-only claim | nothing to drive. Only a deny-only floor accepts it |
 | `req->proxy` | `RE::FormID` | leave 0 | 0 | Harbinger mints a delivery-flip copy itself when a Self-delivery spell is aimed at someone else, and pools it. Read it back with `GetCastProxy(handle)` (ABI 6) |
-| `req->target` | `RE::FormID`, a loaded actor | any actor | 0 | self, for a Self-delivery spell and for the placement of a summon or reanimate. For any other spell the AI aims at its own combat target |
+| `req->target` | `RE::FormID`, a loaded actor | any actor | 0 | self, for a Self-delivery spell and for the placement of a summon or reanimate. For any other spell the AI aims at its own combat target. With [`kCastFlag_CorpseTarget`](#corpse-target-kcastflag_corpsetarget) it is the corpse a Reanimate spell raises |
 | `req->flags` | `std::uint32_t`, `CastFlags` | the bits below | 0 | right hand, no hints, no stop percent |
 | `req->ttlMs` | `std::uint32_t`, milliseconds | 1 to 15000 | 0 | 4000. Any value is clamped to 15000 |
 
@@ -941,6 +941,7 @@ The degenerate form `RequestEx(actor, kIntent_Cast, basis, &p)` with `p.form = s
 | 6 | `kCastFlag_OwnLineOfSight` | [Harbinger's own ray](#own-line-of-sight-kcastflag_ownlineofsight) gates the cast | 18 |
 | 7 | `kCastFlag_FloorSpellsOnly` | with a hand floor, refuse spells only | 20 |
 | 8 to 15 | stop percent | `MakeStopPct(1..100)`, see below | 5 |
+| 16 | `kCastFlag_CorpseTarget` | `target` is a corpse and the spell is a Reanimate spell: [raise this corpse](#corpse-target-kcastflag_corpsetarget). `RequestCast` only | 42 |
 
 > **Caution** An older Harbinger ignores a flag bit it does not know and applies the rest. `kCastFlag_DenyHandOnly` then makes a no-form claim that denies nothing, `kCastFlag_AtPosition` makes an ordinary actor-target claim, `kCastFlag_OwnLineOfSight` casts with no line test, and `kCastFlag_FloorSpellsOnly` blocks weapons too. Check `abiVersion` before you set them.
 
@@ -1169,6 +1170,59 @@ ABI 18 (0.11.0). `bOwnLineOfSight` in `[Sightline]`. Used by MFO.
 
 1. What does seat 0x07 do when the verdict turns UNKNOWN during a heal beam?
 2. Why can the engine's own `HasLineOfSight` not be used instead?
+
+### Corpse target (`kCastFlag_CorpseTarget`)
+
+*A Reanimate spell is aimed by its own caster, which picks the highest-level corpse in range. With this bit the claim names the corpse and the engine's own reanimate cast uses it.*
+
+#### What it is for
+
+ABI 42. `EnableReanimateSeat` in `[CastSeats]`. Used by MFO (class plan card G7, the `Corpse: Within` gambit).
+
+A necromancer follower should raise the corpse its rule chose: one the spell is strong enough for, not whichever is highest level. Before ABI 42 a Reanimate claim carried target 0 and the engine picked.
+
+#### How to ask
+
+```cpp
+APMF_API::APMF_CastRequest req{};
+req.spell  = raiseZombie->GetFormID();          // a spell with a Reanimate effect
+req.target = corpse->GetFormID();               // a dead actor, not the caster
+req.flags  = APMF_API::kCastFlag_LeftHand | APMF_API::kCastFlag_CorpseTarget;
+req.ttlMs  = 6000;
+if (g_apmf->abiVersion >= 42)
+    Handle h = g_apmf->RequestCast(follower->GetFormID(), kBasis, &req);
+```
+
+Heartbeat it with `Repoint` like any cast claim, and release it when the corpse stands up or your rule stops wanting it.
+
+#### What Harbinger does
+
+Two seats on the Reanimate caster, the one caster type the other cast seats never touch (`core/ReanimateSeat.cpp`).
+
+- **WHETHER (slot 0x06).** The engine keeps a cached corpse while its own test accepts it: the handle resolves, the actor is dead, it is not disabled or deleted, and the spell's effect can be added to it. Harbinger writes the claim's corpse into that cache before the engine's function runs, so the engine's own test judges it. Accepted: the engine says yes and the cast may start. Refused: the engine runs its own search. Harbinger then removes what the search picked and answers no. The claim stands and the next poll asks again.
+- **WHERE (slot 0x0D).** The engine searches again when it sets up the aim. Harbinger lets it run, then writes the claim's corpse back as the cast's corpse and aim target. If the claimed actor stopped being a corpse in between, the cast gets no corpse. The engine's pick is not used.
+
+Equip is the usual ch.8b seat (0x0F), which already serves the Reanimate items.
+
+#### What is refused
+
+`RequestCast` returns `kInvalidHandle` and logs when the seat is not installed (VR, a build that is not exactly 1.6.1170, 1.5.97 or 1.7.104, `EnableReanimateSeat=0`), when `target` is 0 or the actor, or with `kCastFlag_DenyHandOnly`. `CanServe` (ABI 35) names the same refusals. On a spell with no Reanimate effect the bit does nothing and the drain logs one warning.
+
+#### Rules
+
+- Harbinger does not judge the spell's level cap. The engine's own test is the only judge at the seat. A client that wants to skip a corpse the spell is too weak for tests that before asking. MFO does (its `WillWork` read).
+- A claim on a corpse the engine refuses never fires. Bound it with the TTL as you do any claim, then choose another corpse.
+- A claim that names no usable corpse gets the same answer at both seats: no, and the engine's pick is removed. That is a `target` that is not a loaded actor when the claim is applied, or a target of 0 or the actor sent through `RequestEx(kIntent_Cast)` with the bit in `param.ival`. The claim stands and can never cast, and each seat logs an error. Release it or let the TTL end it.
+- Against the engine the claim's answers are ranked on the `Cast` sources facet, the same as every ch.8b seat.
+- An older Harbinger ignores the bit and the engine picks its own corpse.
+
+**Check.** The log shows `[ch.8b reanimate] Reanimate corpse seat installed` at startup, then per cast `[ch.8b reanimate 0x06] ... CheckStartCast -> YES ... the engine's own keep test accepted the claim's corpse` and `[ch.8b reanimate 0x0D] ... aim -> claimed corpse`. The 0x0D line also names the corpse the engine's own search had picked, so one run shows whether the two differ. A `REFUSED the claimed corpse` warning means the engine's test said no.
+
+**Check Your Understanding: Corpse target**
+
+1. The claimed corpse is level 30 and the spell raises up to level 6. What happens?
+2. Why is slot 0x06 alone not enough?
+3. What does an ABI 41 Harbinger do with the bit?
 
 ### Position cast (`kCastFlag_AtPosition`)
 

@@ -91,6 +91,8 @@
 //     vfunc answers on pinned, RTTI-verified symbols.
 // ============================================================================
 
+#include "core/ControlMap.h"   // CastSeatClaim (ClaimMatch)
+
 namespace apmf::castseats {
 
     // Install the four caster seats (0x06/0x07/0x0A/0x0D) on the Restore caster
@@ -105,5 +107,22 @@ namespace apmf::castseats {
     // the engine's own placement for a summon / reanimate self claim). Relaxed atomic reads; any
     // thread. Printed by the [ctcensus] HEARTBEAT.
     std::string SeatCountsLine();
+
+    // The ONE claim test every caster seat uses, for a seat that lives in another file
+    // (core/ReanimateSeat.cpp, ABI v42): does a live, winning kIntent_Cast claim on the
+    // deliberating actor (`a_cc->attackerHandle`) drive `a_this->magicItem`, with a resolved
+    // target handle, and does it outrank (Cast facet) the source of the answer it replaces
+    // (`a_prevFn` = the function that seat's 0x06 displaced on its vtable)? `a_count`: true at the
+    // seat that starts a cast (0x06), false at the others, so each cast is counted once. Combat
+    // thread; one lock-free RCU read. `a_needTarget` false drops ONLY the resolved-target-handle
+    // requirement (every other test, the ranking included, is the same): the Reanimate corpse seat
+    // must answer NO for a corpse claim whose target never resolved, not chain to the engine.
+    struct ClaimMatch {
+        RE::FormID          actor  = 0;
+        RE::FormID          driven = 0;   // the claim's proxy, else its spell
+        apmf::CastSeatClaim claim{};
+    };
+    bool MatchClaim(RE::CombatMagicCaster* a_this, RE::CombatController* a_cc, std::uintptr_t a_prevFn, bool a_count,
+                    ClaimMatch& a_out, bool a_needTarget = true);
 
 }

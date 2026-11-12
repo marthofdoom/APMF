@@ -102,6 +102,10 @@ namespace apmf::castclassify {
     // form data only.
     bool IsPlacementSpell(const RE::MagicItem* a_spell);
 
+    // ABI v42 (kCastFlag_CorpseTarget): a spell with a Reanimate effect. Any thread; form data
+    // reads only.
+    bool IsReanimateSpell(const RE::MagicItem* a_spell);
+
     // ---- EXPLAINED-ZERO (ClickUp 1dfcuabbt0n / 1dfcuabbt0p, marth 2026-10-27 Q1) ----------------
     // The engine's magic item score (shared slot 0x0C: AE 0x819AA0 -> 0x819C10, SE 0x77F6F0 ->
     // 0x77F890, 1.7.104 0x82E980 -> 0x82EAF0) is -1.0 when no effect keys a row, else the SUM of the

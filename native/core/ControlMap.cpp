@@ -6,6 +6,7 @@
 #include "core/Clock.h"
 #include "channels/CastCompose.h"   // castcompose::ExtractFromPackage (ch.8b FromPackage read)
 #include "core/CastClassify.h"       // IsPlacementSpell (summon / reanimate self-claim match)
+#include "core/ReanimateSeat.h"       // ABI v42 kCastFlag_CorpseTarget: Installed (call-time refusal)
 #include "core/CastProxy.h"         // castproxy::Acquire/Unref (ch.8b kSelf delivery-flip, writer thread)
 #include "core/MainThread.h"        // mainthread::Post (defer proxy teardown past this Drain's Publish)
 #include <cstring>                  // std::memcpy (ABI v25 instance bytes)
@@ -792,6 +793,21 @@ namespace apmf {
                          apmf::log::Hex(actor), apmf::sightline::NotArmedReason());
             return APMF_API::kInvalidHandle;
         }
+        // ABI v42: kCastFlag_CorpseTarget is served by the Reanimate caster's seats only (core/ReanimateSeat.cpp).
+        if (req && (req->flags & APMF_API::kCastFlag_CorpseTarget) != 0) {
+            const char* bad = !apmf::reanimateseat::Installed()                              ? apmf::reanimateseat::NotInstalledReason()
+                              : req->target == 0 || req->target == actor                     ? "kCastFlag_CorpseTarget needs target = the corpse (not 0, not the actor)"
+                              : (req->flags & APMF_API::kCastFlag_DenyHandOnly) != 0         ? "kCastFlag_CorpseTarget with kCastFlag_DenyHandOnly (a deny-only claim drives nothing)"
+                                                                                             : nullptr;
+            if (bad) {
+                const auto code = apmf::reanimateseat::Installed() ? APMF_API::kServeRefusal_BadRequest
+                                                                   : APMF_API::kServeRefusal_NotInstalled;
+                if (dry) return DryRefuse(dry, code, bad);
+                spdlog::warn("[api] RequestCast REFUSED (actor 0x{}): kCastFlag_CorpseTarget -- {}.",
+                             apmf::log::Hex(actor), bad);
+                return APMF_API::kInvalidHandle;
+            }
+        }
         if (dry) {   // ABI v35: every call-time check passed; ApplyRequest's Drain-time refusals are named
             dry->pending = DrainPending(APMF_API::kIntent_Cast, req ? req->flags : 0u);
             return APMF_API::kInvalidHandle;
@@ -1229,9 +1245,26 @@ namespace apmf {
                                  selfSp ? static_cast<int>(selfSp->GetDelivery()) : -1);
                 }
             }
+            // ABI v42: kCastFlag_CorpseTarget is read by the Reanimate caster's seats only. On a spell with
+            // no Reanimate effect nothing reads it; say so once per claim (the claim is otherwise unchanged).
+            if (op.kind == PendingOp::Kind::kCast && (castFlags & APMF_API::kCastFlag_CorpseTarget) != 0 && spell != 0) {
+                auto* csp = RE::TESForm::LookupByID<RE::SpellItem>(spell);
+                if (!csp || !apmf::castclassify::IsReanimateSpell(csp))
+                    spdlog::warn("[ch.8b] 0x{} cast claim (h={}, spell 0x{}) sets kCastFlag_CorpseTarget but the spell "
+                                 "has no Reanimate effect: the bit does nothing here (only the Reanimate caster reads it).",
+                                 apmf::log::Hex(op.actor), op.handle, apmf::log::Hex(spell));
+            }
             if (castTarget != 0) {
                 if (auto* tgt = RE::TESForm::LookupByID<RE::Actor>(castTarget)) {
                     castTargetHandle = tgt->GetHandle();
+                } else if ((castFlags & APMF_API::kCastFlag_CorpseTarget) != 0) {
+                    // review F1 (b96edf0): never "the AI keeps its own target" for a corpse claim. The
+                    // Reanimate seats (core/ReanimateSeat.cpp) answer NO for it while it stands.
+                    spdlog::error("[ch.8b] cast claim on 0x{} (h={}): kCastFlag_CorpseTarget, but target 0x{} is not a "
+                                  "loadable Actor. The claim is kept and can NEVER cast: the Reanimate seats answer NO "
+                                  "and remove the engine's own corpse pick while it stands. Release it or let its TTL "
+                                  "end it.",
+                                  apmf::log::Hex(op.actor), op.handle, apmf::log::Hex(castTarget));
                 } else {
                     spdlog::warn("[ch.8b] cast claim on 0x{}: target 0x{} is not a loadable Actor -- "
                                  "the seats will not redirect (the AI keeps its own target).",

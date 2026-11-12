@@ -43,6 +43,18 @@ namespace apmf::castclassify {
         return false;
     }
 
+    // ABI v42 (kCastFlag_CorpseTarget): a spell with a Reanimate (22) effect, the only kind the
+    // Reanimate caster serves. Any thread: form data reads only.
+    bool IsReanimateSpell(const RE::MagicItem* a_spell) {
+        if (!a_spell) return false;
+        for (const auto* eff : a_spell->effects) {
+            if (eff && eff->baseEffect &&
+                eff->baseEffect->GetArchetype() == RE::EffectArchetypes::ArchetypeID::kReanimate)
+                return true;
+        }
+        return false;
+    }
+
     namespace {
 
         // ---- THE ONE VTABLE (RE notebook J7/J9). Not a CommonLib symbol -- see
