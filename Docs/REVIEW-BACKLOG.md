@@ -1401,3 +1401,15 @@ As handed to the author (the reviewer's full report was not on disk; this is the
 
 ### APMF-B284 (SEV-5, OPEN, core/Aversion.cpp Shape, against 0a052e1, same review, finding H2-4)
 As handed to the author (same caveat): "Decide/NoteServedClaim attribute Target to the claimant's FormID (attribution only)". The Target-facet decision and the served-claim note are filed under the CLAIMANT's FormID, while the selection that was shaped is the FOE's. The per-actor attribution views therefore show the Target facet served on the claimant, not on the foe whose target changed. Reasoning for SEV-5: attribution only; no enforcement reads it.
+
+### APMF-B291 (SEV-5, OPEN, Docs/REVIEW-BACKLOG.md APMF-B290 + APMF_API.h v42 block ~3636-3640, against df565de, Opus tier-3 re-review of the G7 F1 fix, R1)
+B290 says the equip deny lapse is reachable "only when the corpse's form goes away between the request and the drain". It is also reachable when a client passes a FormID that is not an Actor reference at RequestCast (a base TESNPC id, nothing checks it at call time), and via RequestEx with target 0. The header bullet "answered like a refused corpse" and the block's "other rules unchanged (... deny-complete equip)" do not hold for a claim with no usable corpse: its hand is not deny-complete (EquipGate.cpp:537 needs targetHandle for hasHandSeat). A client trusting deny-complete could see the AI arm a different Reanimate spell in that hand, which casts at the engine's pick until the TTL. Fix: correct B290; at the next header touch add "its hand is not deny-complete (no resolved target)", in the same pass as B292, before v42 ships.
+
+### APMF-B292 (SEV-5, OPEN, native/core/ControlMap.cpp RequestEx call-time checks ~536, against df565de, same review, R2)
+RequestEx(kIntent_Cast) with the corpse bit and WITHOUT kCastFlag_FromPackage can never name a corpse; the v18 OwnLineOfSight check refuses the same shape at the call. Optional: refuse at the call only when FromPackage is absent. The flag's header comment says "RequestCast only", yet RequestEx with FromPackage works as a corpse claim.
+
+### APMF-B293 (SEV-5, OPEN, Docs/APMF_API-REFERENCE.md v42 section ~855-866, against df565de, same review, R3)
+Not updated with the NO USABLE CORPSE case (FACETS was); it still says only "the engine's own pick never casts", accurate but incomplete.
+
+### APMF-B294 (SEV-5, OPEN, native/core/CastSeats.cpp ClaimNamesThisCast Decide a_count=true, against df565de, same review, R4)
+A claim with no usable corpse records a Cast-facet decision on every 0x06 poll though it never casts. Attribution and counters only; a refused-keep claim already counts this way.
