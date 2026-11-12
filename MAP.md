@@ -1565,6 +1565,26 @@ Refused off exactly 1.6.1170 / 1.5.97 / 1.7.104 (VR included; G1 2026-10-04), in
   regardless of that flag.
 
 ### `native/core/ActionGate.{h,cpp}` — T1: the combat behavior-tree allowance (ch.7 ONLY)
+**ch.32 AVERSION (ABI v41, 2026-11-11, `core/Aversion.{h,cpp}` + `channels/Aversion.cpp`):** `kIntent_Aversion`,
+`param.fval` = weight in (0, 1). The channel only keeps `aversion::SetClaimant` / `ClearClaimant` (claimant reference handle
+-> FormID, `g_mx` shared_mutex leaf, game-thread writers). The seats (three `write_call<5>`, `Install` at kDataLoaded after
+ch.31): **C0** `FindBestThunk` at the standard selector's call to its scorer (slot 0x06 +0x68): original first, then `Shape`
+when the pick's handle is a claimant (`ClaimOf`: table + `ControlMap::TryGetOwningClaimBasis`) and `Averted(foe, claimant,
+weight)` (hash of the pair, the session seed and the 6 s window index) is true: `PassScope` arms `t_pass` (thread_local) and
+the scorer runs again. **X** `IsValidThunk` (1.6.1170 / 1.7.104: false for an excluded candidate) or `ScoredLookupThunk`
+(1.5.97: the null handle for an excluded one). **F** `FallbackLookupThunk` sets `t_pass.fallback` (the pass scored nobody:
+the first answer stands). The Engine source is ranked on Target (`facetattr::Decide`). `Heartbeat` from
+`Arbiter::OncePerFrame`; `ResetAll` at revert / kPreLoadGame; `RefuseReason` from `ControlMap::EnqueueRequest`.
+**Depended on by:** MFO `apmf/AversionClaims.cpp` (class Conjurer / Healer, gated on ABI 41). **What breaks:** answering a
+second-pass pick when `t_pass.fallback` is set or the pick is 0 (the claimant would lose to a lost target, or the foe to
+nobody); leaving `t_pass.active` set after `Shape` (every later scoring pass on that worker would exclude stale handles:
+`PassScope` and the catch both clear it); patching C0 before X and F; storing the originals after the patch; using the
+1.6.1170 X site on 1.5.97 (IsValidTarget is inlined there, +0x2AC is mid-instruction); a weight of 1 (a cross-actor deny
+with holes: INVARIANTS #0 (m) condition 3); reading a form or the group list in the thunks (they compare handles only);
+moving the draw back to per-re-score (the share of time then depends on fCombatSelectTargetUpdateTime). ch.20's slot 0x06
+thunk calls the original slot (which holds C0) and THEN applies a pin, so a pin wins: keep that order. INVARIANTS #0 (m),
+DENY-COMPLETENESS-AUDIT row 32. RE: `Docs/research/aversion-target-selector-re.md`.
+
 **ch.7 HOSTILE OFFENSE (ABI v40, 2026-11-11, `core/CastLeafNature.{h,cpp}`):** `kCombatActionCat_Offense` means hostile
 actions. In `ActThunkBody`, after the `(denyMask & leafCat) == 0` pass and BEFORE the ForceFail, a leaf that carries the
 Cast bit under a mask that does NOT name Cast looks up `g_castLeafKind` (vt -> `castleafnature::LeafKind`, filled in

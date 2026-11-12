@@ -363,6 +363,15 @@ needs the hostile-only deny gates on abiVersion >= 40: an older APMF denies ever
 weaker). A leaf whose spell read is not proven on the running game keeps the v39 behaviour and says so at startup
 ([ch.7] hostile-offense ... REFUSED). INI [CombatAction] bHostileOnlyOffense=0 restores v39 everywhere. No co-save.
 Docs/FACETS.md ch.7 "Offense means hostile".
+
+ABI v41 (2026-11-11, branch feat/aversion, MFO class plan card H2 "less likely to be targeted"): AVERSION. One Intent
+value, kIntent_Aversion = 32 (ch.32), and the constant. No struct, no slot, no flag: param.fval carries the weight,
+strictly inside (0, 1), through the existing RequestEx / Repoint. When another actor's standard target selection lands
+on the claimed actor, the engine's own scorer runs again without it and that answer is used, in a share of 6 s windows
+equal to the weight; with no other valid target the claimed actor is picked as always. Seats: three call sites around
+the standard selector's scorer, proven per runtime on 1.6.1170, 1.5.97 and 1.7.104 (rows Aversion.*). An older APMF
+has no channel for intent 32 and refuses the request: gate on abiVersion >= 41. INI [Aversion] bAversion (default 1).
+No co-save. Docs/FACETS.md ch.32.
 ```
 
 <a id="intent-18"></a>

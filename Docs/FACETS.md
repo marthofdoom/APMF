@@ -128,6 +128,7 @@ struct Heartbeat {
 | [`kIntent_ProjectileAim`](#ch29-projectile-aim-kintent_projectileaim) | 29 | Projectile aim | A miss budget for the actor's own arrows and bolts: when his last 10 shots hold as many misses as allowed, the next launch is re-aimed at the engine's own unscattered solution | 36 | Built, not yet seen in game (first Deck run pending); refuses by name on 1.7.104 |
 | [`kIntent_PotionAllowance`](#ch30-potion-allowance-kintent_potionallowance) | 30 | Potion allowance | Which potions the actor may not drink (a drug, every potion, food, a keyword), with no cast claim: the combat AI never picks one and any drink of one is refused | 37 | Built, not yet seen in game (first Deck run pending); refuses by name on 1.7.104 |
 | [`kIntent_CombatMove`](#ch31-combat-move-kintent_combatmove) | 31 | Combat move | Have the actor bash or power bash now, once, started the way the game's own combat AI starts it | 38 | Built, not yet tested in game |
+| [`kIntent_Aversion`](#ch32-aversion-kintent_aversion) | 32 | Aversion | The actor is less likely to be targeted: when a foe's selection lands on him, the foe's next best valid target is picked instead in a declared share of time | 41 | Built, not yet tested in game |
 | [Space queries](#space-queries-findemptyspace-and-findhostilesinspace) | | `FindEmptySpace`, `FindHostilesInSpace` | Ask for a spot or the hostiles in a sphere | 11 | Built |
 | [Line of sight](#line-of-sight-getlineofsight) | | `GetLineOfSight` | Harbinger's own ray | 18 | Used by MFO |
 | [Awareness](#awareness-senseactor) | | `SenseActor` | Does this actor sense that one | 18 | Used by MFO |
@@ -2705,6 +2706,67 @@ auto st = g_apmf->GetPotionAllowanceState(actor, &info);   // ABI v37
 ABI v37, the release after Harbinger 0.19.0. INI `[PotionAllowance]`: `bPotionAllowance` (default 1), `bObserveOnly` (default 0), `bProbe` (default 0: one `[ch.30][probe]` line per NPC drink the predicate does not refuse, with its road and source). Rows `PotionAllowance.DrinkPotion`, `PotionAllowance.Site.Leaf`, `PotionAllowance.Site.EquipApply`, `PotionAllowance.Site.WorkerApply`, the 15 `CombatInventoryItemMagicT.Potion*` vtables (slot 0x0F) and the Character vtable (slot 0x10F) verify on 1.6.1170 and 1.5.97; the EquipSink rows for EquipObject's sites and the Script / Console / PlayerMenu functions are reused. On 1.7.104 the 15 vtables verify, but DrinkPotion (38746), the leaf (49928) and the apply step (38001) are not in the fork's MIT id table, and an id miss there is fatal, so the seats refuse by name before resolving anything.
 
 Holes, stated: a Papyrus or console drink stands by default (DirectCalls outranks a client on Cast); the player's own menu use passes; when an `EquipObject` drink is refused, the engine's equip event for it has already been sent; a QUEUED `EquipObject` drink (the worker queued it: worker +0x272 -> the AIProcess task -> `QueuedApply` AE 38906 / 39814, SE 37950 / 38789 -> `EquipObject(queue=0)`) reaches the apply step with the QueuedApply function as the EquipObject caller, so it ranks as Engine, not as its requester: a queued script or console drink is refused where a direct one stands (ch.17's leg records are not consulted, APMF-B258); the selection seat covers the 15 templated potion item classes and not the base `CombatInventoryItemPotion` vtable (AE 210899 / SE 548592), so should the engine ever instantiate the base, the AI could select a refused potion and fail at the drink seat each tick (a composition gap, never a deny gap, APMF-B259). The first Deck run proves the path runs (principle 5): expect `[ch.30] ... SELECTION DENIED` lines while a declared follower fights with a drug in its inventory, and, with `bProbe=1`, `[ch.30][probe] ... road=CombatAI` lines for the potions it does drink.
+
+### ch.32 Aversion (`kIntent_Aversion`)
+
+*Less likely to be targeted. A weight, never a pin and never a deny of the foe.*
+
+Built 2026-11-11 (MFO class plan card H2, branch `feat/aversion`, Harbinger ABI v41). Not yet seen in game. 1.6.1170, 1.5.97 and 1.7.104, each with its own proven seats.
+
+#### What it is for
+
+A healer or a conjurer at the back of the party should draw less attention than the fighter in front. The game has no such lever: its target score is distance, a two second memory of who hit whom, and a small bonus for the current target. No actor value, perk or keyword feeds it. With an aversion claim the actor declares a weight between 0 and 1. When a foe's target selection lands on him, the foe picks its next best valid target instead, in that share of time. The player sees foes split their attention the way a class description promises, and sees the claimed actor attacked as normal when he is the only one there.
+
+#### Arguments
+
+```cpp
+APMF_Param p{};
+p.fval = 0.5f;   // the weight, strictly inside (0, 1)
+Handle h = g_apmf->RequestEx(actor, kIntent_Aversion, kBasis, &p);   // ABI v41
+```
+
+| Field | Type | Range | Default | 0 or null means |
+|---|---|---|---|---|
+| `actor` | `RE::FormID`, a loaded NPC | any NPC but the player | required | refused |
+| `basis` | `float` | any finite value | your choice | a legal basis, ranks below any positive one |
+| `param.fval` | `float`, the weight | strictly inside (0, 1) | required | refused (a claim needs a weight) |
+
+`form`, `ival`, `target` and `pos` are not read. `Repoint` changes the weight.
+
+#### What Harbinger enforces
+
+The engine's standard target selector (`CombatTargetSelectorStandard`, slot 0x06) returns a cached pick and re-scores it about once a second, three seconds after a switch. The scorer walks the foe's group targets, scores every detected one and answers the best. Harbinger sits on the selector's one call to that scorer (`core/Aversion.cpp`):
+
+1. The engine's scorer runs first, untouched. If its pick is not an aversion claimant, nothing happens.
+2. If the pick is a claimant, Harbinger looks at the draw for {that foe, the claimant} in the current 6 second window. The draw says "averted" in a share of windows equal to the weight. Otherwise the pick stands.
+3. When averted, the engine's own scorer runs a second time with the claimant left out of that one pass. Its answer is used when it scored somebody. The engine ranks the others by its own rules.
+4. When the second pass scored nobody (the claimant is the only detected target, or only lost targets remain), the first pick stands. The claimant is never hidden and a lost target is never preferred to him.
+
+Two claimants in one fight are each drawn on their own, up to four left out in one pass. Nothing is written to the combat group, the selector or any actor. Harbinger never names a target the foe's own group does not hold.
+
+The draw is per window and not per re-score on purpose. A draw per re-score would tie the share of time to the engine's re-score cadence. A draw per window gives the same share whatever the cadence is, and two foes draw independently, so a pack does not switch as one.
+
+#### Priority and conflicts
+
+The engine's pick is the Engine source on the **Target** facet (`APMF_Sources.ini`). The averted answer stands only while the claim's priority is strictly above Engine's. With the default priorities it is. A ch.20 pin on the foe replaces the selector's answer after this seat, so a pin wins over a weight (MFO's taunt still pulls a foe onto its target). Several clients on one actor: the usual basis order, one owner, and the owner's weight applies.
+
+#### Lifetime
+
+A standing claim: no TTL, ended by `Release`, by the actor unloading, or by an outranking ch.32 claim. Harbinger drops every claim at a load. After a release a foe keeps its current target until the engine re-scores (1 to 3 seconds).
+
+#### Refusals
+
+`kInvalidHandle`, logged `[ch.32] claim refused`: the player, no param, a weight outside (0, 1), or the seats not installed (`[Aversion] bAversion=0`, VR, a runtime other than exactly 1.6.1170 / 1.5.97 / 1.7.104, a refused address row or byte window). An older Harbinger has no channel for intent 32 and refuses too: gate on `abiVersion >= 41`.
+
+#### Reading it
+
+There is no query slot. `APMF.log` says what happened: `[ch.32] aversion: foe 0x.. selected 0x.. -- AVERTED ... 0x.. is answered instead`, `KEPT by the draw`, `NO OTHER valid target`, each at most once per 10 seconds per pair, and a totals line `[ch.32] aversion H` about every 30 seconds while selections land on a claimant.
+
+#### Version, INI and field status
+
+ABI v41. INI `[Aversion] bAversion` (default 1). Rows `Aversion.SelectTarget.Standard`, `Aversion.FindBest`, `Aversion.IsValidTarget` (1.6.1170 and 1.7.104), `Aversion.LookupActorByHandle`, plus the code's own byte windows around each of the three call sites per runtime. All three seats install or none does. The seats are proven by disassembly on the three executables and not yet observed in a field run.
+
+Holes, stated: a foe whose target is fixed by a script or a package (the Fixed selector) is not shaped. A ch.20 pin on the foe wins. A target another DLL writes after the selector stands or falls by the ch.20 rules, not by this claim. The first target of a new fight and the engine's cached pick last until the next re-score (up to 3 seconds). Area spells and attacks aimed at somebody else still hit the claimed actor. The full list is row 32 of `DENY-COMPLETENESS-AUDIT.md`.
 
 ### ch.20 Target pin (`kIntent_TargetPin`)
 

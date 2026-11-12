@@ -4,6 +4,28 @@ Updated 2026-11-10. Current version **v0.19.0** (cut 2026-11-10, ABI v36, a Deck
 shipped, what's probe-gated, what's next. Keep this current in the SAME change as any
 build/finding/workflow change.
 
+## HEAD OF WORK 2026-11-11 -- ch.32 AVERSION (ABI v41), branch `feat/aversion` (on top of `feat/ch7-hostile-offense`), NOT merged, NOT field run
+
+- **Why:** MFO class plan card H2, "less likely to be targeted" (Conjurer and Healer in T2). marth: a weight in (0, 1);
+  when a foe's selection lands on the claimant, another valid target is picked with that probability; never a target
+  outside the foe's group targets.
+- **Vanilla lever: none.** The standard selector's score has no actor value, perk entry point or keyword input
+  (`Docs/research/aversion-target-selector-re.md`). Detection is the only vanilla input and it hides the actor from
+  everything.
+- **What:** `core/Aversion.{h,cpp}` + `channels/Aversion.cpp` (new). Three `write_call<5>` seats per runtime: C0 the
+  standard selector's one call to its scorer, X the scorer's exclusion point (the IsValidTarget call on 1.6.1170 /
+  1.7.104, the scored path's handle lookup on 1.5.97), F the fallback list's lookup (observe only). The engine's scorer
+  runs; if it picks a claimant whose 6 s window draw says averted, it runs again without him and that answer is used
+  when the scored path picked somebody. Nothing is written to the group or the selector.
+- **ABI v41:** `kIntent_Aversion` = 32, `param.fval` = the weight in (0, 1). No struct, no slot. MFO's copy of
+  `APMF_API.h` must match byte for byte.
+- **Per runtime (principle 11):** rows `Aversion.SelectTarget.Standard`, `Aversion.FindBest`, `Aversion.IsValidTarget`
+  (not on 1.5.97: inlined there), `Aversion.LookupActorByHandle` for 1.6.1170, 1.5.97 and 1.7.104 (raw RVAs there),
+  plus the code's lead / tail byte windows at each site. All three seats or none. INI `[Aversion] bAversion`.
+- **Proposed:** INVARIANTS #0 (m), adoption is marth's at the merge. Audit row 32 is PARTIAL BY DESIGN (a weight).
+- **Not observed yet (principle 5):** proven by disassembly on three executables, not by a field run. Field test: MFO
+  `in-game-test-list.md` T2 field session, the aversion steps (`[ch.32] aversion: ... AVERTED` and `aversion H`).
+
 ## HEAD OF WORK 2026-11-11 -- ch.7 OFFENSE MEANS HOSTILE (ABI v40), branch `feat/ch7-hostile-offense`, NOT merged, NOT field run
 
 - **Why:** MFO's G3 flee files a ch.7 Offense deny and boosts the follower's heals. The four cast leaves carried the
