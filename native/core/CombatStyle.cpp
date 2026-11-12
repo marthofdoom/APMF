@@ -50,8 +50,9 @@ extern "C" __declspec(dllimport) unsigned long __stdcall GetPrivateProfileIntA(
 // THREADS. The seats run wherever the engine reads a style (the combat update's job workers, the game thread).
 // They read g_slots only: a fixed table of atomics {FormID, style pointer, flags}, no lock, no form lookup, no
 // allocation; one relaxed load while no claim stands. The table is written on the GAME THREAD only (the channel's
-// lifecycle and Heartbeat), a slot's FormID is published last and withdrawn first, and a reader re-reads the
-// FormID after the pointer. A TESCombatStyle is a form: it is never freed while the game runs.
+// lifecycle and Heartbeat), each slot under its own sequence counter (a seqlock: a reader takes the FormID, the style
+// and the flags from one unchanged, even sequence or takes nothing). A TESCombatStyle is a form: it is never freed
+// while the game runs.
 //
 // RANK. A claim's style is answered only while its client outranks the Engine source on the CombatAction facet
 // (the facet ch.7 and ch.31 rank on). Decided on the game thread at engage and again every kRedecideMs, never per
@@ -85,11 +86,23 @@ namespace apmf::combatstyle {
         std::atomic<const char*> g_whyNot{ "not installed yet (before kDataLoaded)" };
 
         // ---- what the seats read --------------------------------------------------------------------------------
+        // A SEQLOCK per slot (review F5 of 6f8f156): `seq` is odd while the game thread rewrites the slot and even
+        // otherwise, and a reader takes {fid, style, flags} only from one even, unchanged `seq`. A same-actor re-point
+        // (new style + new scope) can therefore never be read as the new style with the old flags.
         struct Slot {
+            std::atomic<std::uint32_t>       seq{ 0 };
             std::atomic<RE::FormID>          fid{ 0 };
             std::atomic<RE::TESCombatStyle*> style{ nullptr };
             std::atomic<std::uint32_t>       flags{ 0 };   // CombatStyleFlags | kLive
         };
+        // GAME THREAD only (one writer): rewrite a slot under its sequence.
+        void WriteSlot(Slot& a_s, RE::FormID a_fid, RE::TESCombatStyle* a_style, std::uint32_t a_flags) {
+            a_s.seq.fetch_add(1, std::memory_order_acq_rel);   // odd: readers back off
+            a_s.fid.store(a_fid, std::memory_order_release);
+            a_s.style.store(a_style, std::memory_order_release);
+            a_s.flags.store(a_flags, std::memory_order_release);
+            a_s.seq.fetch_add(1, std::memory_order_acq_rel);   // even: published
+        }
         std::array<Slot, kMaxSlots> g_slots{};
         std::atomic<std::uint32_t>  g_n{ 0 };    // slots in use
         std::atomic<std::uint32_t>  g_hi{ 0 };   // one past the highest slot ever used since the last reset
@@ -103,12 +116,21 @@ namespace apmf::combatstyle {
             for (std::uint32_t i = 0; i < hi; ++i) {
                 Slot& s = g_slots[i];
                 if (s.fid.load(std::memory_order_acquire) != a_fid) continue;
-                const std::uint32_t       fl = s.flags.load(std::memory_order_acquire);
-                RE::TESCombatStyle* const st = s.style.load(std::memory_order_acquire);
-                if (s.fid.load(std::memory_order_acquire) != a_fid) return nullptr;   // withdrawn while it was read
-                if (!(fl & kLive) || !st) return nullptr;
-                if (a_wideOnly && (fl & APMF_API::kCombatStyle_EquipChoiceOnly)) return nullptr;
-                return st;
+                // One consistent snapshot, or none. A slot being rewritten is retried a few times (the writer's four
+                // stores are a handful of instructions); a reader that still cannot get one answers "no claim" for
+                // this read, which is the engine's own style for one read, never a mixed one.
+                for (int tries = 0; tries < 4; ++tries) {
+                    const std::uint32_t q0 = s.seq.load(std::memory_order_acquire);
+                    if (q0 & 1u) continue;
+                    const RE::FormID          id = s.fid.load(std::memory_order_acquire);
+                    const std::uint32_t       fl = s.flags.load(std::memory_order_acquire);
+                    RE::TESCombatStyle* const st = s.style.load(std::memory_order_acquire);
+                    if (s.seq.load(std::memory_order_acquire) != q0) continue;
+                    if (id != a_fid || !(fl & kLive) || !st) return nullptr;
+                    if (a_wideOnly && (fl & APMF_API::kCombatStyle_EquipChoiceOnly)) return nullptr;
+                    return st;
+                }
+                return nullptr;
             }
             return nullptr;
         }
@@ -165,17 +187,44 @@ namespace apmf::combatstyle {
         void SyncWork() { g_work.store(static_cast<std::uint32_t>(g_book.size() + g_released.size()), std::memory_order_release); }   // g_bmx held
 
         // GAME THREAD. The engine's own refresh of the controller's cached style (reads the seats).
+        //
+        // THE THREADING ARGUMENT (review F4 of 6f8f156), with what is proven and what is not.
+        // WHAT THE CALL DOES (AE 0x559BD0, the same body on 1.5.97 and 1.7.104): it reads controller+0x38, resolves the
+        //   attacker handle at +0x28 into a counted reference of its own, calls Actor::GetCombatStyle, stores ONE
+        //   pointer at +0x38 and ONE byte at [controller+0x10]+0x1C4, and drops its reference. It takes no lock,
+        //   allocates nothing and frees nothing of the controller. Every reader of +0x38 found (the combat inventory's
+        //   score multipliers) reads it as a single pointer load, so a reader racing this call sees the old style or the
+        //   new one, both live forms. That part is safe from any thread.
+        // WHO ELSE CALLS IT, AND FROM WHERE: Actor::SetCombatStyle's tail (AE 38537 +0x31: `mov rcx,[rbx+0x160]; test;
+        //   jmp`), reached from the script VM and the console on the game thread with no guard at all; the package-change
+        //   wrapper (AE 33240, from 39207) on whichever thread evaluates the actor's package; the controller's own
+        //   construction. So the engine itself makes this call OUTSIDE the combat update, with the controller pointer
+        //   read off the actor exactly as it is read here. Harbinger's call has the exposure of the engine's own
+        //   SetCombatStyle and no more.
+        // WHAT IS NOT PROVEN: the controller's LIFETIME across the call. The actor's controller is freed by the
+        //   engine's stop-combat path (it stores null into the actor first). Whether that path can run on another thread
+        //   while the game thread is inside this hook was not read, and the engine's own SetCombatStyle has the same
+        //   open window. It is narrowed here, not closed: the actor is held by a counted reference for the whole call
+        //   (it cannot be deleted under us), the actor must be loaded, alive and in combat, and the controller pointer is
+        //   read once, immediately before the call, on this thread. A controller that goes away between that read and
+        //   the store is the residual risk (APMF-B298), and it is the engine's own.
+        // WHY NOT SKIP THE CALL: without it a claim reaches a running fight's cached style only at the engine's next
+        //   own refresh (a package change), so an equip-choice claim would do nothing for most of a fight.
         void EngineRefresh(RE::FormID a_id, const char* a_why) {
-            auto* actor = RE::TESForm::LookupByID<RE::Actor>(a_id);
-            auto* cc    = actor ? actor->GetActorRuntimeData().combatController : nullptr;
+            const RE::NiPointer<RE::Actor> actor(RE::TESForm::LookupByID<RE::Actor>(a_id));
+            if (!actor || !actor->Is3DLoaded() || actor->IsDead() || !actor->IsInCombat()) return;
+            auto* const cc = actor->GetActorRuntimeData().combatController;
             if (!cc) return;   // no controller: the next one's construction reads the seats itself
             auto* const before = cc->combatStyle;
             g_update(cc);
             t_refresh.fetch_add(1, std::memory_order_relaxed);
-            auto* const after = cc->combatStyle;
-            spdlog::info("[ch.33] 0x{} '{}': the engine refreshed his controller's cached combat style ({}): 0x{} -> 0x{}.",
+            // Read back off the ACTOR, not off `cc`: if the controller was replaced meanwhile the line says so.
+            auto* const ccNow = actor->GetActorRuntimeData().combatController;
+            auto* const after = ccNow == cc ? cc->combatStyle : nullptr;
+            spdlog::info("[ch.33] 0x{} '{}': the engine refreshed his controller's cached combat style ({}): 0x{} -> {}.",
                          Hex(a_id), actor->GetName(), a_why, Hex(before ? before->GetFormID() : 0),
-                         Hex(after ? after->GetFormID() : 0));
+                         ccNow == cc ? std::format("0x{}", Hex(after ? after->GetFormID() : 0))
+                                     : std::string{ "(his controller changed during the call: not read)" });
         }
 
         // ---- install helpers ------------------------------------------------------------------------------------
@@ -354,11 +403,7 @@ namespace apmf::combatstyle {
                 }
             }
             if (b) {
-                Slot& s = g_slots[b->slot];
-                s.fid.store(0, std::memory_order_release);       // withdrawn while it is rewritten
-                s.style.store(style, std::memory_order_release);
-                s.flags.store(flags, std::memory_order_release); // NOT live: Heartbeat ranks it first (after the publish)
-                s.fid.store(a_id, std::memory_order_release);
+                WriteSlot(g_slots[b->slot], a_id, style, flags);   // NOT live: Heartbeat ranks it first (after the publish)
                 b->styleId = a_param.form;
                 b->flags   = flags;
                 b->decided = false;
@@ -384,10 +429,7 @@ namespace apmf::combatstyle {
         std::scoped_lock lock(g_bmx);
         for (auto it = g_book.begin(); it != g_book.end(); ++it) {
             if (it->id != a_id) continue;
-            Slot& s = g_slots[it->slot];
-            s.fid.store(0, std::memory_order_release);
-            s.flags.store(0, std::memory_order_release);
-            s.style.store(nullptr, std::memory_order_release);
+            WriteSlot(g_slots[it->slot], 0, nullptr, 0);
             g_n.fetch_sub(1, std::memory_order_release);
             if (it->everLive) g_released.push_back(a_id);   // the cache may hold the claim's style: the engine re-derives it
             g_book.erase(it);
@@ -401,11 +443,7 @@ namespace apmf::combatstyle {
         {
             std::scoped_lock lock(g_bmx);
             n = g_book.size();
-            for (auto& s : g_slots) {
-                s.fid.store(0, std::memory_order_release);
-                s.flags.store(0, std::memory_order_release);
-                s.style.store(nullptr, std::memory_order_release);
-            }
+            for (auto& s : g_slots) WriteSlot(s, 0, nullptr, 0);
             g_n.store(0, std::memory_order_release);
             g_hi.store(0, std::memory_order_release);
             g_book.clear();
@@ -453,8 +491,8 @@ namespace apmf::combatstyle {
                         e.decidedMs = now;
                         e.live      = v.enforce;
                         e.everLive  = e.everLive || v.enforce;
-                        Slot& s = g_slots[e.slot];
-                        s.flags.store(e.flags | (v.enforce ? kLive : 0u), std::memory_order_release);
+                        if (auto* st = g_slots[e.slot].style.load(std::memory_order_relaxed))   // this thread wrote it
+                            WriteSlot(g_slots[e.slot], e.id, st, e.flags | (v.enforce ? kLive : 0u));
                     }
                 }
                 if (!changed) continue;

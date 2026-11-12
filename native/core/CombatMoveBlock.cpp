@@ -92,6 +92,9 @@ namespace apmf::combatmove {
         // and what it picks follows the hands: a shield or a torch in the left hand blocks; an empty left hand
         // (or a two-handed weapon, which fills both) blocks with a melee weapon in the right. Anything else in
         // the left hand makes the same action a left-hand attack or cast, which must never be sent as a "block".
+        // GetEquippedObject answers the BASE form: `left == right` is true for a two-handed weapon (one item, both hands)
+        // AND for two copies of the same one-handed weapon (dual wield). Only the first blocks; a one-hander in each hand
+        // swings the left one (review F1 of 6f8f156). MFO's BlockHandsReason (apmf/BlockClaims.cpp) is the same test.
         const char* HandsWouldNotBlock(RE::Actor* a_actor) {
             auto* left  = a_actor->GetEquippedObject(true);
             auto* right = a_actor->GetEquippedObject(false);
@@ -107,6 +110,8 @@ namespace apmf::combatmove {
             case RE::WEAPON_TYPE::kOneHandDagger:
             case RE::WEAPON_TYPE::kOneHandAxe:
             case RE::WEAPON_TYPE::kOneHandMace:
+                // `left` non-null here means left == right (anything else returned above): the same one-hander twice.
+                return left ? "the same one-handed weapon in both hands (dual wield): Left Attack would swing the left one" : nullptr;
             case RE::WEAPON_TYPE::kTwoHandSword:
             case RE::WEAPON_TYPE::kTwoHandAxe:
                 return nullptr;

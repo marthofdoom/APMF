@@ -2406,7 +2406,7 @@ Handle h = g_apmf->RequestEx(follower, kIntent_CombatMove, 0.0f, &p);   // ABI 4
 
 To keep a guard up longer than one window, ask again before the window ends. The guard does not drop in between.
 
-**What refuses it.** `kCombatMoveWhy_NoBlockItem` when his hands would not block: the Left Attack action blocks with a shield or a torch in the left hand, or with a one-handed or two-handed melee weapon and nothing else in the left. With anything else there the same action is an attack or a cast, so it is never sent. `HeldByOther` when another client's hold stands. `HoldTableFull` at 16 held actors. `Busy` while an attack is in progress. A ch.7 Offense deny does NOT refuse a block: a guard is not offense. At the call: `[CombatMove] bBlock=0`, or the hold's deny not armed (the Block / BlockAttack leaf pair or the Offense leaves did not install).
+**What refuses it.** `kCombatMoveWhy_NoBlockItem` when his hands would not block: the Left Attack action blocks with a shield or a torch in the left hand, or with a one-handed or two-handed melee weapon and nothing else in the left. With anything else there the same action is an attack or a cast, so it is never sent. That includes the same one-handed weapon in both hands: the hands read as equal, and only a two-handed weapon in "both" hands blocks. `HeldByOther` when another client's hold stands. `HoldTableFull` at 16 held actors. `Busy` while an attack is in progress. A ch.7 Offense deny does NOT refuse a block: a guard is not offense. At the call: `[CombatMove] bBlock=0`, or the hold's deny not armed (the Block / BlockAttack leaf pair or the Offense leaves did not install).
 
 **A client's own bash during its hold is allowed.** `kCombatMove_Bash` and `kCombatMove_PowerBash` go by the action road, not the tree's leaves, and the engine bashes from the guard.
 
@@ -2933,6 +2933,8 @@ The game reads an actor's combat style through one function: his reference's own
 At engage, owner change and release Harbinger asks the game to refresh the controller's cached copy with the game's own function, so a claim applies in a running fight at once and the game marks its own "equipment choice is stale" flag.
 
 Harbinger writes nothing. On release the next read is the game's own again.
+
+**Threads.** The two seats run wherever the game reads a style and touch only a fixed table of atomics, each slot read under its own sequence counter, so a reader gets one consistent claim or none. The refresh is one call of the game's own function from Harbinger's once-per-frame step on the game thread. That function stores one pointer and one byte and takes no lock; the game's own `SetCombatStyle` makes the same call from the script VM and the console, outside the combat update, with the controller read off the actor the same way. What is not proven is that the controller cannot be freed by another thread during that call. The game's own path has the same window. Harbinger narrows it (the actor is held by a reference, must be loaded, alive and in combat, and the controller pointer is read immediately before the call) and does not claim to close it.
 
 #### Priority and conflicts
 

@@ -8,6 +8,17 @@ build/finding/workflow change.
 
 One section per item, newest ABI last. Research notes: `Docs/research/melee-moves-re.md`.
 
+### Fix round 2026-11-12 (Opus tier-3 review of 6f8f156 / MFO 88777f7)
+
+- **F1 (SEV-2), fixed:** `HandsWouldNotBlock` accepted the same one-handed weapon in both hands (`GetEquippedObject`
+  answers the base form), so Left Attack swung the left weapon, at the raise and at every re-raise. A one-hander now
+  blocks only with an empty left hand; `left == right` blocks only for a two-handed sword or axe.
+- **F5, fixed:** the ch.33 slot table is a seqlock per slot (`WriteSlot`, `Claimed`).
+- **F4, written down and narrowed:** `EngineRefresh`'s comment and FACETS ch.33 "Threads" carry the argument. The
+  controller's lifetime across the call is NOT proven (APMF-B298 says so); the actor is held, must be loaded, alive
+  and in combat, and the pointer is read immediately before the call.
+- No ABI change, no new address. `APMF_API.h` unchanged in this round.
+
 ### ch.31 BLOCK (ABI v43): a held guard
 
 - **Why:** the Knight's "blocks a lot" (MFO class plan, Q83, default Q-T2-1). `kCombatMove_Block` was reserved in v38.
