@@ -1,3 +1,11 @@
+## Unreleased -- block: hold the guard up (ABI v43)
+
+- **A mod can have a follower hold his guard up.** The mod names the follower and a number of seconds. Harbinger raises his guard the same way the game's own combat AI does, and keeps it up for that time. His shield or weapon, the stamina cost of blocked hits and the block itself are the game's.
+- **While the guard is held he does not attack or cast, and the game's own shorter block does not cut it off.** If a stagger knocks the guard down, Harbinger raises it again and the log says so.
+- **It ends by itself.** At the end of the time, when the mod ends it, when his stamina runs out, or when he no longer holds something he can block with.
+- **New setting `[CombatMove] bBlock=1`.** Set 0 to refuse every block request. Bashes are unaffected.
+- **ABI v43.** `kCombatMove_Block` is built and `kCombatMove_BlockEnd` is new. No new function and no layout change. 1.6.1170 and 1.5.97. On 1.7.104 combat moves stay refused.
+
 ## Unreleased -- reanimate: raise the corpse the mod chose (ABI v42)
 
 - **A Reanimate cast can name its corpse.** A mod can now tell a follower which corpse to raise. Before, the game picked the highest-level corpse in range. The follower still casts the spell itself, animated, and the game still decides whether that corpse can be raised.

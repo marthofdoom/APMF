@@ -127,7 +127,7 @@ struct Heartbeat {
 | [`kIntent_Place`](#place-kintent_place) | 28 | Place | Put an actor, loaded or not, beside a reference or at a point in an interior cell, once | 28 | Built, not yet tested in game |
 | [`kIntent_ProjectileAim`](#ch29-projectile-aim-kintent_projectileaim) | 29 | Projectile aim | A miss budget for the actor's own arrows and bolts: when his last 10 shots hold as many misses as allowed, the next launch is re-aimed at the engine's own unscattered solution | 36 | Built, not yet seen in game (first Deck run pending); refuses by name on 1.7.104 |
 | [`kIntent_PotionAllowance`](#ch30-potion-allowance-kintent_potionallowance) | 30 | Potion allowance | Which potions the actor may not drink (a drug, every potion, food, a keyword), with no cast claim: the combat AI never picks one and any drink of one is refused | 37 | Built, not yet seen in game (first Deck run pending); refuses by name on 1.7.104 |
-| [`kIntent_CombatMove`](#ch31-combat-move-kintent_combatmove) | 31 | Combat move | Have the actor bash or power bash now, once, started the way the game's own combat AI starts it | 38 | Built, not yet tested in game |
+| [`kIntent_CombatMove`](#ch31-combat-move-kintent_combatmove) | 31 | Combat move | Have the actor bash or power bash now, once, started the way the game's own combat AI starts it. ABI 43: hold his guard up for a window | 38 | Built, not yet tested in game |
 | [`kIntent_Aversion`](#ch32-aversion-kintent_aversion) | 32 | Aversion | The actor is less likely to be targeted: when a foe's selection lands on him, the foe's next best valid target is picked instead in a declared share of time | 41 | Built, not yet tested in game |
 | [Space queries](#space-queries-findemptyspace-and-findhostilesinspace) | | `FindEmptySpace`, `FindHostilesInSpace` | Ask for a spot or the hostiles in a sphere | 11 | Built |
 | [Line of sight](#line-of-sight-getlineofsight) | | `GetLineOfSight` | Harbinger's own ray | 18 | Used by MFO |
@@ -2339,7 +2339,7 @@ A follower with a shield stands next to a mage who is charging a spell. A skille
 
 #### Arguments
 
-`RequestEx` only (ABI 38). `param.ival` = `kCombatMove_Bash` or `kCombatMove_PowerBash`. `param.target` = the foe it is meant for, optional. `kCombatMove_Block` is reserved and refused.
+`RequestEx` only (ABI 38). `param.ival` = `kCombatMove_Bash` or `kCombatMove_PowerBash`. `param.target` = the foe it is meant for, optional. ABI 43 adds `kCombatMove_Block` and `kCombatMove_BlockEnd`: see [Block](#block-kcombatmove_block-abi-43) below.
 
 ```cpp
 APMF_API::APMF_Param p{};
@@ -2369,6 +2369,48 @@ The engine's own bash conditions (an attack already in progress, the behaviour g
 What the bash does to the world: the stagger, an interrupted cast, aggression. A bash sent out of reach or facing away swings at air.
 
 Gate on `abiVersion >= 38`. An older Harbinger refuses the intent ("no channel serves intent 31").
+
+#### Block (`kCombatMove_Block`, ABI 43)
+
+*Hold the actor's guard up for a window. Raised and lowered by the engine's own two actions. While it stands, his own offense and the engine's own release do not run.*
+
+Built 2026-11-11 (MFO class plan, the Knight's "blocks a lot"). Not yet seen in game. 1.6.1170 and 1.5.97. On 1.7.104 the whole channel is refused by name.
+
+```cpp
+APMF_API::APMF_Param p{};
+p.ival = APMF_API::kCombatMove_Block;
+p.fval = 2.5f;                                            // the window, seconds. 0 = 1.5. Clamped to 0.25 .. 10
+Handle h = g_apmf->RequestEx(follower, kIntent_CombatMove, 0.0f, &p);   // ABI 43
+```
+
+**The engine's road.** The combat AI's own Block leaf raises the guard by processing the Left Attack action for the actor, with no animation event named. The engine picks that action's own idle, which for blocking hands is `blockStart`, and its post-action step sets the actor's want-block state. That state is the one input that keeps the guard up. The leaf lowers the guard with the Left Release action (`blockStop`, which clears the state). Harbinger sends those same two actions. It names no animation event and writes nothing on the actor.
+
+**What Harbinger does, on the game thread.** The checks of a combat move, then: his weapon is drawn, no attack is in progress, and his hands would block. Then one Left Attack action. `Started` only when the engine accepted it and his want-block state reads back set.
+
+**While the hold stands** (`kCombatMoveInfo_HoldLive`):
+
+- His own offense is denied. Every Offense leaf of his combat tree (attack, bash, ranged attack, the cast leaves, shout) fails at its entry. This is the ch.7 mechanism.
+- The engine's release is denied at its source. His tree's own Block and BlockAttack leaves fail at their entry, so neither runs its own shorter timer and lowers the guard when it ends.
+- If the engine drops the guard anyway (a stagger, a recoil, a Block leaf that was already running when the hold began), Harbinger raises it again once he can block again, at most every 250 ms. The record carries `kCombatMoveInfo_ReRaised` and the log says so.
+
+**The hold ends** (`kCombatMoveState_Ended`, with a why):
+
+| Why | Meaning |
+|---|---|
+| `HoldExpired` | The window ran out. Harbinger sent Left Release. |
+| `HoldEndedByClient` | The same client sent `kCombatMove_BlockEnd`. |
+| `HoldRenewed` | A newer `kCombatMove_Block` of the same client took the hold over. The guard stayed up. Read the newer handle. |
+| `HoldBroken` | It could not be kept: dead, unloaded, stamina at 0 (the engine's own block rule), hands changed, sheathed, a combat substrate, a load. |
+
+To keep a guard up longer than one window, ask again before the window ends. The guard does not drop in between.
+
+**What refuses it.** `kCombatMoveWhy_NoBlockItem` when his hands would not block: the Left Attack action blocks with a shield or a torch in the left hand, or with a one-handed or two-handed melee weapon and nothing else in the left. With anything else there the same action is an attack or a cast, so it is never sent. `HeldByOther` when another client's hold stands. `HoldTableFull` at 16 held actors. `Busy` while an attack is in progress. A ch.7 Offense deny does NOT refuse a block: a guard is not offense. At the call: `[CombatMove] bBlock=0`, or the hold's deny not armed (the Block / BlockAttack leaf pair or the Offense leaves did not install).
+
+**A client's own bash during its hold is allowed.** `kCombatMove_Bash` and `kCombatMove_PowerBash` go by the action road, not the tree's leaves, and the engine bashes from the guard.
+
+**What it is not.** Not a claim, so there is no arbitration between clients: the first hold stands. Not a movement hold: he walks, turns and closes as his AI decides. Not a deny of what is in his hands: an equip source can still swap his shield away, and the hold then ends `HoldBroken`. A client that needs the guard to survive that holds ch.17 too. Not a ward: whether a hit is blocked is the engine's own angle and timing. `kCombatMoveInfo_BlockedAHit` reports a blocked hit on him.
+
+Gate on `abiVersion >= 43`. An older Harbinger refuses `kCombatMove_Block` ("reserved") and does not know `kCombatMove_BlockEnd`.
 
 ## Combat
 
@@ -3995,6 +4037,7 @@ The ABI is append-only. A client built against an older ABI keeps working agains
 | 28 | 0.14.0 | `kIntent_Place`, `PlaceFlags`, `PlaceState`, `PlaceWhy`, `APMF_PlaceStateInfo`, `GetPlaceState` (struct `APMF_API_v28`) |
 | 38 | 0.20.0 | `kIntent_CombatMove`, `CombatMove`, `CombatMoveState`, `CombatMoveWhy`, `APMF_CombatMoveStateInfo`, `GetCombatMoveState`, `kServePending_CombatMoveRoom` (struct `APMF_API_v38`) |
 | 39 | 0.20.0 | `kApproach_Point`, a `CombatApproachFlags` bit read through the existing `RequestEx` and `Repoint` (no struct, no slot) |
+| 43 | 0.20.0 | `kCombatMove_Block` built, `kCombatMove_BlockEnd`, `kCombatMoveState_Ended`, `kCombatMoveWhy_NoBlockItem` .. `_HoldBroken`, `kCombatMoveInfo_HoldLive` / `_BlockedAHit` / `_ReRaised`, `kCombatBlock*` (no struct, no slot) |
 | 29 | 0.15.0 | `GetClientFacetPriority`, `ClientFacet`, `kFacetPriorityUnknown` (struct `APMF_API_v29`) |
 | 30 | 0.15.0 | `kTravel_CrossCells`, a `TravelFlags` bit read through the existing `RequestEx` and `Repoint` (no struct, no slot) |
 | 31 | 0.15.2 | `GetClaimEndReason`, `ClaimEndReason` (struct `APMF_API_v31`) |
@@ -4028,7 +4071,7 @@ A refusal at the call returns `kInvalidHandle` and logs the reason in `APMF.log`
 | `kIntent_CastGuard` | gate not installed, no param, no bit or an unknown bit (`kCastGuard_Bystanders` on an APMF older than ABI 32), bad `fval`, the player as the actor, line of fire or bystanders with the measurement not armed | |
 | `kIntent_CombatSubstrate` | not installed (`bCombatSubstrate=0`, the ch.22 target site, the 95-node pair, the anchor records, a self-check row), the player as the actor, `fval` negative or NaN | not out of combat, unloaded, low process, in a scene or dialogue, the party in combat, Engine outranking the client on CombatAction / Combat / Equip / Detection, no free slot, the floors not published, the engine refusing the entry (the claim is released) |
 | `kIntent_Place` | not installed (VR, an unsupported runtime, the row refused), `Request` (no param), actor 0, the player, `form` 0, a non-finite `pos` or yaw, an unknown flag bit, 128 queued | it is a one-shot, not a claim: `GetPlaceState` reads `Refused` with a `PlaceWhy` (destination gone or not a reference / interior cell, actor loaded or the player present under their flags, another client's ch.19 / ch.1 owner) or `Failed` |
-| `kIntent_CombatMove` | not installed (`bCombatMove=0`, VR, a runtime other than 1.6.1170 / 1.5.97, a row refused), `Request` (no param), `kCombatMove_Block` or an unknown move, actor 0, the player, the actor as its own target, 128 queued | it is a one-shot: the game-thread refusals read through `GetCombatMoveState` |
+| `kIntent_CombatMove` | not installed (`bCombatMove=0`, VR, a runtime other than 1.6.1170 / 1.5.97, a row refused), `Request` (no param), an unknown move, a block with `bBlock=0` or its deny not armed, a block window that is negative or not finite, actor 0, the player, the actor as its own target, 128 queued | it is a one-shot: the game-thread refusals read through `GetCombatMoveState` |
 
 ## Appendix D: INI keys by facet
 
@@ -4059,7 +4102,7 @@ Defaults are the shipped values. The full text of every key is in [INI-REFERENCE
 | awareness | `[Awareness]` | `bHearNoise` (1) |
 | sources registry | `[Harbinger]` | `bSceneProbe` (1) |
 | census probes | `[Probe]` | `bCasterTypeCensus` (1), `bRangedSelect` (0), `bRestoreCensus` (1) |
-| ch.31 combat move | `[CombatMove]`, `[Probe]` | `bCombatMove` (1), and the hit probe `[Probe] bCombatMove` (0) |
+| ch.31 combat move | `[CombatMove]`, `[Probe]` | `bCombatMove` (1), `bBlock` (1), and the hit probe `[Probe] bCombatMove` (0) |
 
 Facets with no key of their own: ch.1, 1a, 3, 4, 5, 6, 7, 10, 11, 14, 15, 16 and ch.25. The space queries have none either.
 

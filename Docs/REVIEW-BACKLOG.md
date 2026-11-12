@@ -1373,6 +1373,16 @@ As handed to the author: "in-place semantics vs third-party v36 clients; no quer
 ### APMF-B281 (SEV-5, OPEN, core/CastLeafNature.cpp ~:195, against bfc50c1, same review, finding F5a)
 As handed to the author: "CastLeafNature.cpp:195 comment order." (The TESShout static_assert comment block near the per-runtime tables.)
 
+<!-- the melee-moves entries (APMF-B290 onward) sit here; B287..B289 are left free for the corpse-target fix round -->
+### APMF-B290 (SEV-4, OPEN, core/CombatMove.cpp Install, raised by the author against feat/melee-moves, 2026-11-11)
+ch.31 is refused by name on 1.7.104 and the ABI v43 block and ABI v44 power attack inherit that. The post-action step that sets and clears the want-block state was read on 1.7.104 (`0x6E2747` / `0x6E2776`, same logic), but the StartAttack / action mediator road and the block wrapper were not, and 1.7.104 has no Address Library ids. Fix direction: read the three functions on 1.7.104, add the raw rows, lift the refusal for the whole channel in one change.
+
+### APMF-B291 (SEV-4, OPEN, core/ActionGate.cpp, same branch)
+The file is at 2484 lines, 16 under the 2500 backstop, after the block hold's 49 lines in `ActThunkBody` and `Install`. The next change to it must be preceded by a split brief (its own round, proven with tools/splitcheck). Candidates by concern: the pursuit leash, the movement hold, the probes.
+
+### APMF-B292 (SEV-4, OPEN, core/CombatMoveBlock.cpp, same branch)
+Not field run. What only a game can show: (1) that Left Attack with no event reads back want-block for each hands case `HandsWouldNotBlock` lets through (shield, torch, one-handed with an empty left hand, two-handed), including a follower whose left hand holds a spell the engine un-equips late; (2) how often the engine drops the guard inside a window (the `reRaised` count of the heartbeat); (3) whether failing the Block leaf at entry makes the tree pick a visibly worse fallback (he should keep closing and circling); (4) the engine's clearer AE 38696 +0x3D5 was not read past its callers.
+
 <!-- the corpse-target entries (APMF-B285, APMF-B286) sit here, above B282, so this file merges cleanly with the base branch's own appended entries -->
 ### APMF-B285 (SEV-4, OPEN, core/ReanimateSeat.cpp, raised by the author against feat/ch8b-dead-target, 2026-11-11)
 Not field run. Three things only a game can show: (1) that the Reanimate caster's 0x06 and 0x0D run for a claimed spell at all (the `[ch.8b reanimate] FIRST call` lines; the caster census has seen Reanimate fire natively, never under a claim); (2) the ORDER of 0x06 and 0x0D inside one cast (the seat is written to be right in either order, the 0x0D line prints the engine's pick beside the claim's); (3) whether the engine's validity test (1.6.1170 `0x81E290`: the effect's conditions with the corpse as subject, then the archetype's add test through the table at `0x5C52E0`) enforces the spell's level cap. If it does not, a client that skips its own level test would cast at a corpse the spell cannot raise. Reasoning: principle 5, disassembly proves a path exists, not that it runs.

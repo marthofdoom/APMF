@@ -751,6 +751,29 @@ ALL of these hold:
    both rows verified, never the player. Any other action (an attack entry Harbinger chooses, a move on a timer, a
    block) is a new amendment, not a code change.
 
+**(l) BLOCK AMENDMENT, PROPOSED 2026-11-11 (MFO T2 batch M item 1; marth Q83 "build next", default Q-T2-1; ADOPTION IS
+marth's, at the merge of `feat/melee-moves`). ABI v43, `core/CombatMoveBlock.cpp`.** Condition 3 above said a
+sustained move needs its own amendment with the deny set that makes it complete. This is it, for ONE move, the block.
+A HELD GUARD is legal only while ALL of these hold, on top of conditions 1, 2, 5 and 7:
+1. **The engine's own two actions, nothing else.** Left Attack with no event named raises it (the engine's block
+   wrapper, AE 44446 0x7F9770 with table index 3; the post-action step AE 39004 / SE 38048 sets the want-block state
+   when the idle the engine picked is `blockStart`), Left Release lowers it (index 4, `blockStop`). Harbinger never
+   writes the want-block state and never sends an animation event.
+2. **A declared window, bounded.** The client names the seconds (clamped to `kCombatBlockMinS` .. `kCombatBlockMaxS`).
+   The hold ends at the window by itself. Keeping a guard up is the client asking again, never Harbinger extending.
+3. **The deny set is internal, fixed and stated.** For the window, and for the held actor only: his Offense leaves and
+   the engine's Block and BlockAttack leaves fail at entry, by ch.7's ForceFail act()/pop() PAIR on ch.7's seats. No
+   other leaf, no other actor, no claim on any facet. The hold is refused whole when that pair or those leaves did
+   not install (`BlockHoldDenyArmed`). The open paths are row "31 block" of `Docs/DENY-COMPLETENESS-AUDIT.md`.
+4. **Re-raise is enforcement of the declared window, visible, and rate-limited.** When the engine dropped the guard
+   inside the window Harbinger sends Left Attack again, only when the actor could block (no attack, stagger, recoil
+   or knock state; stamina above 0; hands that block), at most every `kCombatBlockReRaiseMs`. Every first re-raise
+   and every refusal is logged and the record is flagged. A guard that cannot be kept ENDS the hold with its reason.
+5. **Hands are tested before the action, every time.** Left Attack is a block only for blocking hands. With anything
+   else in the left hand it is an attack or a cast, so it is never sent (`kCombatMoveWhy_NoBlockItem`), at the raise
+   and at every re-raise.
+6. **Reported honestly.** `Started` only when the want-block state reads back set. `Ended` always carries its why.
+
 **PROPOSED 2026-11-11 (MFO class plan card H2, marth: *"a new intent, aversion ... The intent never invents a target
 that is not already in the foe's group targets"*; ADOPTION IS marth's, at the merge of `feat/aversion`). The thirteenth
 legal action (ABI v41, `core/Aversion.cpp`): (m) WEIGHT A CLAIMANT'S CANDIDACY IN ANOTHER ACTOR'S TARGET SELECTION --

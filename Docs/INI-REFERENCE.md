@@ -177,6 +177,7 @@ Facet reference: [ch.31 Combat move](FACETS.md#ch31-combat-move-kintent_combatmo
 ABI v38. "Bash now." A mod names an actor and a move (a bash or a power bash). Harbinger has the game start that move once, the way the game's own combat AI starts it, so the animation, the stamina cost, the hit and the stagger are the game's. Nothing is held or denied. A move the game refuses is reported to the mod as refused, never retried. 1.6.1170 and 1.5.97; on 1.7.104 every request is refused by name.
 
 - **`bCombatMove`** (default `1`). 0 = not installed and every kIntent_CombatMove request is REFUSED (the mod keeps its own behaviour; logged once with the reason).
+- **`bBlock`** (default `1`). ABI v43. "Hold your guard up." A mod names an actor and a window in seconds. Harbinger raises his guard the way the game's own combat AI does and keeps it up for that window. His own attacks and casts, and the AI's own shorter block, do not run until the window ends. 0 = every block request is REFUSED. Bashes are unaffected.
 
 ### [PotionAllowance]
 

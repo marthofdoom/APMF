@@ -4,6 +4,36 @@ Updated 2026-11-10. Current version **v0.19.0** (cut 2026-11-10, ABI v36, a Deck
 shipped, what's probe-gated, what's next. Keep this current in the SAME change as any
 build/finding/workflow change.
 
+## HEAD OF WORK 2026-11-11 -- MELEE MOVES (MFO T2 batch M), branch `feat/melee-moves` (on top of `feat/ch8b-dead-target` + `feat/aversion`), NOT merged, NOT field run
+
+One section per item, newest ABI last. Research notes: `Docs/research/melee-moves-re.md`.
+
+### ch.31 BLOCK (ABI v43): a held guard
+
+- **Why:** the Knight's "blocks a lot" (MFO class plan, Q83, default Q-T2-1). `kCombatMove_Block` was reserved in v38.
+- **Engine road (read on 1.6.1170, 1.5.97, 1.7.104):** the combat AI's Block leaf processes the Left Attack action with
+  no event (the block wrapper AE 44446, table index 3). The post-action step (AE 39004 +0x4DF, SE 38048 +0x4A2) sets
+  the want-block state when the idle picked is `blockStart`. Left Release (index 4, `blockStop`) clears it. The Block
+  leaf's pop (AE 0x86C5F0) and BlockAttack's (0x86C6C0) send the release.
+- **What was built:** `core/CombatMoveBlock.cpp` (new): the hold table, a lock-free mirror the combat thread reads,
+  `RunBlock` / `RunBlockEnd` (game thread), `HoldPoll` once per frame (expiry, broken tests, re-raise every 250 ms at
+  most). `core/CombatMove_internal.h` (new) shares the record helpers and `ProcessAction`. `core/ActionGate.cpp`
+  `ActThunkBody` fails a held actor's Offense, Block and BlockAttack leaves with the ForceFail pair, before the
+  `leafCat == 0` gate. `BlockHoldDenyArmed` refuses the whole move when a half is missing.
+- **ABI v43:** no struct, no slot. `kCombatMove_Block` built, `kCombatMove_BlockEnd`, `kCombatMoveState_Ended`, whys
+  13 to 20, info bits 5 to 7, `kCombatBlock*`. `param.fval` = the window. MFO's `APMF_API.h` is the same byte for byte.
+- **No new address row.** The two action forms come from the default object manager behind the row ch.31 already
+  verifies. The leaves are found by RTTI name. 1.7.104 stays refused with the rest of ch.31 (APMF-B290).
+- **Passive (principle 5):** `[combat-move] ... STARTED ... BLOCK held`, `RE-RAISED`, `block ENDED`, the 30 s
+  `H block holds` heartbeat with the per-leaf deny counts. `[Probe] bCombatMove` already logs the target's want-block
+  state on every melee hit.
+- **Not proven:** nothing here has run in a game. The hands test (`HandsWouldNotBlock`) is the author's reading of
+  which hands make Left Attack a block; a wrong read shows as `FAILED ... want-block state did not set` with the event.
+- **Deny audit:** row "31 block", six open paths named. INVARIANTS #0 (l) block amendment (proposed).
+- **File size:** `core/ActionGate.cpp` is at 2484 lines (backstop 2500). Nothing more goes into it without a split
+  brief (APMF-B291).
+- **Open:** APMF-B290 to APMF-B292.
+
 ## HEAD OF WORK 2026-11-11 -- ch.8b CORPSE TARGET (ABI v42), branch `feat/ch8b-dead-target` (on top of `feat/aversion`), NOT merged, NOT field run
 
 - **Why:** MFO class plan card G7, "corpse target / reanimate" (marth 2026-11-11: G7 joins the T2 build). The rule's

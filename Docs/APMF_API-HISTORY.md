@@ -384,6 +384,20 @@ corpse in range. Refused at the call: seat not installed (VR, an unverified buil
 target 0 or the actor, kCastFlag_DenyHandOnly. An older APMF ignores the bit and the engine picks its own corpse: gate
 on abiVersion >= 42. Slots and offsets read on 1.6.1170, 1.5.97 and 1.7.104 (identical offsets). No co-save.
 Docs/FACETS.md "Corpse target".
+
+ABI v43 (2026-11-11, branch feat/melee-moves, MFO T2 batch M item 1, the Knight's "blocks a lot"): BLOCK.
+kCombatMove_Block (3, reserved since v38) is BUILT and kCombatMove_BlockEnd (4) is new. One CombatMoveState
+(kCombatMoveState_Ended = 5), eight CombatMoveWhy values (13 NoBlockItem .. 20 HoldBroken), three info bits (HoldLive
+1 << 5, BlockedAHit 1 << 6, ReRaised 1 << 7) and the kCombatBlock* constants. No struct, no slot: a v43 client still
+holds an APMF_API_v38*. param.fval is read for kCombatMove_Block only (the hold window, seconds; 0 = 1.5; clamped to
+0.25 .. 10). Still a one-shot request, never a claim, but the move now has a DURATION: one Left Attack action raises
+the guard (the engine's own block road), a hold record stands for the window, and while it stands the actor's
+Offense, Block and BlockAttack leaves fail at entry on ch.7's seats (core/ActionGate.cpp) and Harbinger re-raises a
+guard the engine dropped. The window's end sends Left Release. No new address row: the two action forms come from the
+default object manager behind the row ch.31 already verifies, the leaves are found by RTTI name. 1.6.1170 and 1.5.97
+(the post-action step that sets and clears the want-block state was also read on 1.7.104, where the channel stays
+refused by name). An older APMF refuses kCombatMove_Block at the call ("reserved") and does not know BlockEnd: gate
+on abiVersion >= 43. [CombatMove] bBlock (default 1). No co-save. Docs/FACETS.md "Block".
 ```
 
 <a id="intent-18"></a>

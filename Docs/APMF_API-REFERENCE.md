@@ -862,3 +862,24 @@ The header: `kCastFlag_CorpseTarget` (bit 16 of `CastFlags`) and `kABIVersion` 4
 
 **Refused:** the seat not installed (VR, a build that is not exactly 1.6.1170, 1.5.97 or 1.7.104, `[CastSeats] EnableReanimateSeat=0`), `target` 0 or the actor, `kCastFlag_DenyHandOnly`. On a spell with no Reanimate effect the bit does nothing. An APMF older than v42 ignores the bit and the engine picks its own corpse. Full reference: [FACETS.md Corpse target](FACETS.md#corpse-target-kcastflag_corpsetarget).
 
+## ABI v43 block: a held guard (ch.31)
+
+The header: `kCombatMove_Block` (3, now built), `kCombatMove_BlockEnd` (4), `kCombatMoveState_Ended` (5), `kCombatMoveWhy_NoBlockItem` (13) to `kCombatMoveWhy_HoldBroken` (20), `kCombatMoveInfo_HoldLive` / `_BlockedAHit` / `_ReRaised`, `kCombatBlockDefaultS` (1.5), `kCombatBlockMinS` (0.25), `kCombatBlockMaxS` (10), `kCombatBlockMaxHolds` (16), `kCombatBlockReRaiseMs` (250) and `kABIVersion` 43. No struct, no slot. A v43 client still holds an `APMF_API_v38*`.
+
+**The request.** `RequestEx(actor, kIntent_CombatMove, basis, &param)` with `param.ival = kCombatMove_Block` and `param.fval` = the window in seconds. Read it with `GetCombatMoveState`:
+
+```cpp
+switch (g_apmf->GetCombatMoveState(h, &info)) {
+case APMF_API::kCombatMoveState_Started: /* info.info & kCombatMoveInfo_HoldLive: the guard is up */ break;
+case APMF_API::kCombatMoveState_Ended:   /* info.why: HoldExpired, HoldEndedByClient, HoldRenewed, HoldBroken */ break;
+case APMF_API::kCombatMoveState_Refused: /* info.why: NoBlockItem, HeldByOther, HoldTableFull, Busy, NotReady, ... */ break;
+case APMF_API::kCombatMoveState_Failed:  /* info.why: EngineRefused, NotApplied */ break;
+}
+```
+
+**While it stands.** The actor's Offense, Block and BlockAttack leaves fail at entry. Harbinger raises the guard again when the engine drops it inside the window. A record of a live hold is not expired or evicted: it stays readable until 30 s after its `Ended` was read.
+
+**Ending it.** The window runs out, or `param.ival = kCombatMove_BlockEnd` from the same client (that request's own record reads `Started` when the guard was lowered, `Refused` / `NoHold` when the client held none), or a newer `kCombatMove_Block` renews it.
+
+**Older APMF.** Before v43 `kCombatMove_Block` is refused at the call and `kCombatMove_BlockEnd` is an unknown move. Full reference: [FACETS.md Block](FACETS.md#block-kcombatmove_block-abi-43).
+
