@@ -179,6 +179,14 @@ ABI v37. "This follower never drinks Skooma." A mod names an actor and which pot
 - **`bObserveOnly`** (default `0`). 1 = count and log what would be refused, refuse nothing.
 - **`bProbe`** (default `0`). 1 = one `[ch.30][probe]` line per NPC drink the predicate does not refuse (who, which potion, the road it came by and its source), at most once per 5 s per actor. Passive, log only.
 
+### [CombatAction]
+
+Facet reference: [ch.7 Combat action](FACETS.md#ch7-combat-action-kintent_combataction).
+
+ABI v40. A mod can deny a follower's offense. Offense means hostile actions: attacks and hostile spells. A heal, a buff or a ward is not offense and still runs under that deny. Harbinger reads the spell the game is about to cast and looks at its record. A spell whose record does not say what it is for counts as hostile and is named in the log. (This section also holds the `Engine=` priority key described under "Facet sections".)
+
+- **`bHostileOnlyOffense`** (default `1`). 0 = the old behaviour: an offense deny stops every cast, heals included (logged at startup). Leave it at 1 unless a log line asks you to change it.
+
 ### [PursuitLeash]
 
 Facet reference: [ch.23 Pursuit leash](FACETS.md#ch23-pursuit-leash-kintent_pursuitleash).

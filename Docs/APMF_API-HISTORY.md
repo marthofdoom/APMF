@@ -126,7 +126,7 @@ a DENIED category is unequipped by the enforce pass. The header comments that st
 stale until the paired MFO header change.
 
 <a id="abi-history"></a>
-## ABI v10 to v39: what each version added
+## ABI v10 to v40: what each version added
 
 Moved verbatim from `native/APMF_API.h` (line 96 at 9d01cdf). The header keeps a pointer to this anchor.
 
@@ -347,6 +347,20 @@ the v30 shape): the centre of the ch.24 bound is param.pos, a world point in the
 must be 0. Everything else of ch.24 is unchanged. An APMF older than v39 does not know the bit and REFUSES the claim for
 its missing target, so a client never gets a different walk than it asked for. A client gates on abiVersion >= 39.
 Docs/FACETS.md ch.24 "A point instead of a reference".
+
+ABI v40 (2026-11-11, branch feat/ch7-hostile-offense, marth on MFO's G3 flee: "wouldn't it be non offense cast"): OFFENSE
+MEANS HOSTILE. No bit, no field, no slot: the meaning of kCombatActionCat_Offense on the four cast leaves. Up to v39 it
+denied every cast. From v40 it denies a cast only when the spell or shout is hostile (an effect flagged Hostile or
+Detrimental, an enemy-control archetype, a hostile cloak) or of undeclared nature (no readable effect, or all script
+effects and not cast on self: counted as hostile, logged). A declared non-hostile cast passes a mask of Offense alone.
+kCombatActionCat_Cast is unchanged and denies every cast, so Offense | Cast is the v39 meaning on every version. WHY IN
+PLACE and not a new bit: the ruling is about what the word means, the old meaning stays available as Offense | Cast, and
+no shipped client files Offense alone (MFO's hide claims file Offense | Cast, its excursion helper has no caller). A
+client built against v39 that files Offense alone gets the narrower, ruled meaning on a v40 Harbinger. A client that
+needs the hostile-only deny gates on abiVersion >= 40: an older APMF denies every cast under Offense (stronger, never
+weaker). A leaf whose spell read is not proven on the running game keeps the v39 behaviour and says so at startup
+([ch.7] hostile-offense ... REFUSED). INI [CombatAction] bHostileOnlyOffense=0 restores v39 everywhere. No co-save.
+Docs/FACETS.md ch.7 "Offense means hostile".
 ```
 
 <a id="intent-18"></a>
