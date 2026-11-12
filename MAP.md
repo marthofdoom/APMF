@@ -1067,6 +1067,30 @@ The FIFTH seat (`0x0F CheckShouldEquip`) lives in `core/EquipGate.cpp` — see t
   Installed AFTER `core/AiCastSeats.cpp` on purpose so that passive probe keeps
   logging the ENGINE's raw answer beneath these.
 
+### `native/core/ReanimateSeat.{h,cpp}`: ch.8b, the Reanimate corpse seat (ABI v42, `kCastFlag_CorpseTarget`)
+MFO class plan card G7. The ONE caster type `core/CastSeats.cpp` never seats aims itself, so a claim that names a corpse
+is served here: `CheckStartCastThunk` (slot 0x06) and `SetupAimControllerThunk` (slot 0x0D) on
+`VTABLE_CombatMagicCasterReanimate`, installed by `reanimateseat::Install` at kDataLoaded after `castseats::Install` and
+before the caster census (which then still logs the whole chain's answer). `CorpseClaim` reads the flag on a plain claim
+read FIRST and only then asks `castseats::MatchClaim` (the exported wrapper of `ClaimNamesThisCast`, so the driven-form
+match and the Cast-facet ranking are the same code as every other seat). 0x06: `StillCorpse` (resolves, life state dead,
+form flags 0x820 clear), then the claim's handle is written to `reanimateTarget` (+0x28) BEFORE the engine's function, and
+the result is read back from +0x28: still the claim's = kept (YES passes through, `aim+0x30` set as the engine's search
+branch does), anything else = the engine's pick, zeroed, NO. 0x0D: engine first, then +0x28 and `aim+0x30` = the claim's
+corpse, or 0 when `StillCorpse` fails. `Installed()` / `NotInstalledReason()` feed `ControlMap::EnqueueCast`'s refusal.
+`[CastSeats] EnableReanimateSeat` (default 1). Counters and FIRST lines are passive.
+**Depended on by:** MFO `apmf/Bridge.cpp` `BuildCastRequestLocked` (sets the bit for a Reanimate spell claimed at another
+actor, ABI >= 42), `cast/BuffRoad.cpp` `BuffCorpseTarget`, `cast/Corpse.cpp`.
+**What breaks:** seating 0x06 without 0x0D (0x0D always searches again: the engine's pick would be aimed at); writing
++0x28 AFTER the engine's 0x06 (its validity test would never see the claim's corpse: an unraisable corpse would be cast
+at); returning YES in the replaced branch (the engine's own pick would cast under a claim that named another corpse);
+offering a corpse that fails `StillCorpse` (the search does not test the disabled / deleted flags and can hand the same
+handle back, which reads as "kept"); writing `aim+0x30` without the vtable identity guard; ranking a claim that does not
+carry the flag (`MatchClaim` with `a_count` records a decision: a target-0 Reanimate claim would be counted as answered
+here); calling `MatchClaim` at 0x0D with its own displaced function instead of 0x06's (`StartPrev`: a hook inside one
+slot would split a cast); installing on any other caster vtable (the +0x20 / +0x28 members are this type's only).
+Backlog: APMF-B283, APMF-B284.
+
 ### `native/core/AiCastSeats.{h,cpp}` — OBSERVE-ONLY: the AI cast/equip-decision seats
 Three independently-flagged, chain-unconditionally probes (`Install()`), all
 `[AiCastSeats]`-INI-gated, all refused off exactly 1.6.1170 / 1.5.97 / 1.7.104 (VR included; G1

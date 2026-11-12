@@ -261,6 +261,7 @@ A client built against an older header keeps working. Each item below needs its 
 | 39 | 0.20.0 | `kApproach_Point`, a `CombatApproachFlags` bit: the ch.24 bound centred on a world point (`param.pos`, `target` 0), read through the existing `RequestEx` and `Repoint` (no struct, no slot) | `abiVersion >= 39` |
 | 40 | 0.20.0 | Offense means hostile: under `kCombatActionCat_Offense` alone a cast is denied only when its spell is hostile or of undeclared nature (no struct, no slot) | `abiVersion >= 40` |
 | 41 | 0.20.0 | `kIntent_Aversion` (ch.32): the actor is less likely to be targeted, a weight in (0, 1) in `param.fval` through the existing `RequestEx` and `Repoint` (no struct, no slot) | `abiVersion >= 41` |
+| 42 | 0.20.0 | `kCastFlag_CorpseTarget` (ch.8b): a Reanimate claim names the corpse to raise in `req.target`. One flag bit, no struct, no slot | `abiVersion >= 42`. An older APMF ignores the bit and the engine picks its own corpse. Refused when the Reanimate seat is not installed |
 
 ### Place (ABI 28)
 

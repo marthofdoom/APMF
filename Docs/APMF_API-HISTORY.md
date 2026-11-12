@@ -372,6 +372,17 @@ equal to the weight; with no other valid target the claimed actor is picked as a
 the standard selector's scorer, proven per runtime on 1.6.1170, 1.5.97 and 1.7.104 (rows Aversion.*). An older APMF
 has no channel for intent 32 and refuses the request: gate on abiVersion >= 41. INI [Aversion] bAversion (default 1).
 No co-save. Docs/FACETS.md ch.32.
+
+ABI v42 (2026-11-11, branch feat/ch8b-dead-target, MFO class plan card G7 "corpse target / reanimate"): CORPSE TARGET.
+One CastFlags bit, kCastFlag_CorpseTarget = 1 << 16, and the constant. No struct, no slot, no field. On a RequestCast
+whose spell has a Reanimate effect, req.target names the corpse to raise. Harbinger seats the Reanimate caster's 0x06
+and 0x0D (core/ReanimateSeat.cpp, the one caster type the ch.8b seats never touched): 0x06 hands the claim's corpse to
+the engine's own keep test and answers NO when the engine replaces it, 0x0D rewrites the corpse and the aim after the
+engine's second search. Before v42 a Reanimate claim carries target 0 and the engine picks the highest-level valid
+corpse in range. Refused at the call: seat not installed (VR, an unverified build, [CastSeats] EnableReanimateSeat=0),
+target 0 or the actor, kCastFlag_DenyHandOnly. An older APMF ignores the bit and the engine picks its own corpse: gate
+on abiVersion >= 42. Slots and offsets read on 1.6.1170, 1.5.97 and 1.7.104 (identical offsets). No co-save.
+Docs/FACETS.md "Corpse target".
 ```
 
 <a id="intent-18"></a>

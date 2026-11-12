@@ -18,6 +18,7 @@ the seats that let a client's chosen spell actually be cast by the NPC's own AI.
 
 - **`EnableSeat0Classify`** (default `1`). Lets a heal aimed at someone else be understood by the game's own spell classifier. Without it a client's heal-other cannot be selected by the AI.
 - **`EnableAimSeat`** (default `1`). Lets the claimed spell be aimed at the claimed target.
+- **`EnableReanimateSeat`** (default `1`). ABI v42. Lets a mod name the corpse a Reanimate spell raises ([corpse target](FACETS.md#corpse-target-kcastflag_corpsetarget)). 0 = not installed: a claim that names a corpse is refused and logged, and a Reanimate claim without one raises the corpse the game picks, as before.
 
 ### [EquipGate]
 

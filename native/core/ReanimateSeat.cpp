@@ -124,6 +124,16 @@ namespace apmf::reanimateseat {
             return a_m.claim.target != 0 && a_m.claim.target != a_m.actor;
         }
 
+        // The engine's own keep PRECONDITIONS on a cached corpse, read the same way (slot 0x06: the handle
+        // resolves, life state dead, form flags 0x820 clear). Its validity test (0x81E290) is NOT repeated
+        // here: the engine runs that itself at 0x06 on the corpse this seat hands it.
+        bool StillCorpse(const RE::ActorHandle& a_handle) {
+            const auto ptr = a_handle.get();
+            auto*      a   = ptr.get();
+            return a && a->AsActorState()->GetLifeState() == RE::ACTOR_LIFE_STATE::kDead &&
+                   (a->GetFormFlags() & kGoneFlags) == 0;
+        }
+
         std::uintptr_t StartPrev(std::uintptr_t a_vt) {
             const auto it = g_startOrig.find(a_vt);
             return it != g_startOrig.end() ? it->second : 0;
@@ -145,15 +155,19 @@ namespace apmf::reanimateseat {
             if (!CorpseClaim(a_this, a_cc, oit->second, true, m)) return orig(a_this, a_cc);
 
             // The claim's corpse goes in BEFORE the engine runs, so the engine's own keep test
-            // (resolves, dead, not disabled / deleted, its validity test) is what judges it.
+            // (resolves, dead, not disabled / deleted, its validity test) is what judges it. It is only
+            // handed over while it passes the keep preconditions here too: the engine's SEARCH does not
+            // test the disabled / deleted flags, so without this a corpse the keep test refused for them
+            // could come back as the search's own pick and read as "kept".
             auto* const         corpse = CorpseSlot(a_this);
             const std::uint32_t want   = m.claim.targetHandle.native_handle();
-            *corpse = want;
+            const bool          offer  = StillCorpse(m.claim.targetHandle);
+            if (offer) *corpse = want;
             const bool          native = orig(a_this, a_cc);
             const std::uint32_t after  = *corpse;
             const bool firstClaim = !g_firstClaim[0].exchange(true, std::memory_order_relaxed);
 
-            if (after == want) {
+            if (offer && after == want) {
                 // Kept (or never reached: the engine's earlier gates said NO and left +0x28 alone).
                 if (native) {
                     // The keep branch does not write the aim override; the search branch does. Set it
@@ -174,9 +188,10 @@ namespace apmf::reanimateseat {
                 return native;
             }
 
-            // Replaced: the engine's keep test refused the claim's corpse and its own search ran.
-            // Its pick (or 0) is in +0x28 and in aim+0x30. Take it out again: the engine writes 0 to
-            // both when its search finds nothing, and the answer is NO.
+            // Not offered, or replaced: the claim's corpse is no corpse any more, or the engine's keep
+            // test refused it, and the engine's own search ran (or its cache still holds an older pick).
+            // Whatever is in +0x28 and aim+0x30 now is the engine's. Take it out again: the engine
+            // writes 0 to both when its search finds nothing, and the answer is NO.
             *corpse = 0;
             void* aim = *reinterpret_cast<void**>(reinterpret_cast<std::uintptr_t>(a_this) + kCasterAim);
             if (auto* slot = AimSlot(aim); slot && *slot == after) *slot = 0;
@@ -218,13 +233,7 @@ namespace apmf::reanimateseat {
             const std::uint32_t want   = m.claim.targetHandle.native_handle();
             // The claim's corpse must still be one: resolves, dead, not disabled or deleted (the
             // engine's own keep preconditions; its validity test ran at 0x06).
-            bool ok = false;
-            {
-                const auto ptr = m.claim.targetHandle.get();
-                if (auto* a = ptr.get())
-                    ok = a->AsActorState()->GetLifeState() == RE::ACTOR_LIFE_STATE::kDead &&
-                         (a->GetFormFlags() & kGoneFlags) == 0;
-            }
+            const bool ok = StillCorpse(m.claim.targetHandle);
             const std::uint32_t put = ok ? want : 0;
             *corpse  = put;
             *aimSlot = put;

@@ -1376,3 +1376,9 @@ As handed to the author: "CastLeafNature.cpp:195 comment order." (The TESShout s
 ### APMF-B282 (SEV-5, OPEN, core/ActionGate.cpp ActThunkBody, against bfc50c1, same review, finding F5b)
 As handed to the author: "PassesOffenseDeny counted before ClaimOutranksTree." The hostile-offense verdict counters (and its per-form line) tick for a leaf the claim would not have denied anyway because the tree outranks it, so the `hostile-offense H` totals overcount.
 
+### APMF-B283 (SEV-4, OPEN, core/ReanimateSeat.cpp, raised by the author against feat/ch8b-dead-target, 2026-11-11)
+Not field run. Three things only a game can show: (1) that the Reanimate caster's 0x06 and 0x0D run for a claimed spell at all (the `[ch.8b reanimate] FIRST call` lines; the caster census has seen Reanimate fire natively, never under a claim); (2) the ORDER of 0x06 and 0x0D inside one cast (the seat is written to be right in either order, the 0x0D line prints the engine's pick beside the claim's); (3) whether the engine's validity test (1.6.1170 `0x81E290`: the effect's conditions with the corpse as subject, then the archetype's add test through the table at `0x5C52E0`) enforces the spell's level cap. If it does not, a client that skips its own level test would cast at a corpse the spell cannot raise. Reasoning: principle 5, disassembly proves a path exists, not that it runs.
+
+### APMF-B284 (SEV-5, OPEN, core/ReanimateSeat.cpp CheckStartCastThunk, same branch)
+When the engine's earlier gates say NO (its base start check, or "the spell's effect is already on the caster") the claim's corpse stays in the caster's `+0x28` cache after the claim ends. The engine re-tests a cached corpse on every use and 0x0D searches again, so it can only cast at it if its own test still accepts it, which is its own behaviour for any corpse it cached. Left as is. Clearing it would need a claim-end hook into a caster object Harbinger does not track.
+

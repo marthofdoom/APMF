@@ -1,3 +1,10 @@
+## Unreleased -- reanimate: raise the corpse the mod chose (ABI v42)
+
+- **A Reanimate cast can name its corpse.** A mod can now tell a follower which corpse to raise. Before, the game picked the highest-level corpse in range. The follower still casts the spell itself, animated, and the game still decides whether that corpse can be raised.
+- **The game's own pick does not cast while a corpse is named.** If the game refuses the named corpse, nothing is cast and the log says so.
+- **New setting `[CastSeats] EnableReanimateSeat=1`.** Set 0 to turn it off. A claim that names a corpse is then refused and logged.
+- **ABI v42.** One new cast flag, `kCastFlag_CorpseTarget`. No new function and no layout change. Works on 1.6.1170, 1.5.97 and 1.7.104.
+
 ## Unreleased -- aversion: less likely to be targeted (ABI v41)
 
 - **New facet: aversion.** A mod can make an actor less likely to be targeted. It names the actor and a weight between 0 and 1. When an enemy's target choice lands on that actor, the enemy picks its next best target instead, in that share of time. The game does the picking both times.

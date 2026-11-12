@@ -4,6 +4,36 @@ Updated 2026-11-10. Current version **v0.19.0** (cut 2026-11-10, ABI v36, a Deck
 shipped, what's probe-gated, what's next. Keep this current in the SAME change as any
 build/finding/workflow change.
 
+## HEAD OF WORK 2026-11-11 -- ch.8b CORPSE TARGET (ABI v42), branch `feat/ch8b-dead-target` (on top of `feat/aversion`), NOT merged, NOT field run
+
+- **Why:** MFO class plan card G7, "corpse target / reanimate" (marth 2026-11-11: G7 joins the T2 build). The rule's
+  target is a corpse and `act.cast_target` casts a Reanimate spell at it through ch.8b.
+- **Finding: ch.8b did not serve a dead target.** The four cast seats (`core/CastSeats.cpp`) serve ten caster types and
+  never the Reanimate caster, 0x07 ends a claim whose target is dead, and a Reanimate claim carried target 0. The
+  Reanimate caster aims itself: 0x06 keeps a cached corpse (`+0x28`) while its own test accepts it, else it searches for
+  the highest-level valid corpse in range. 0x0D always searches again. 0x0A returns `{+0x28, null}`.
+- **Existing lever: the engine's own cache.** No new address. `core/ReanimateSeat.{h,cpp}` (new) seats 0x06 and 0x0D on
+  the already verified `CombatMagicCasterReanimate` vtable. 0x06 writes the claim's corpse into `+0x28` before the
+  engine's function runs, so the engine's own keep test (resolves, dead, flags 0x820 clear, validity `0x81E290`) judges
+  it. Kept = the engine's YES and `aim+0x30` set. Replaced = the engine's pick removed, NO. 0x0D runs the engine and
+  then writes the claim's corpse to `+0x28` and `aim+0x30` (or zero when it stopped being a corpse).
+- **ABI v42:** `kCastFlag_CorpseTarget` = bit 16 of `CastFlags`. No struct, no slot. Call-time refusals in
+  `ControlMap::EnqueueCast` (seat not installed, target 0 or the actor, with DenyHandOnly), named by `CanServe` too. A
+  non-Reanimate spell with the bit: one warning at the drain, the bit does nothing. MFO's `APMF_API.h` is the same byte
+  for byte.
+- **Per runtime (principle 11):** 0x06 AE `0x822490` / SE `0x7860F0` / 1.7.104 `0x837980`; 0x0D `0x822680` / `0x7862F0` /
+  `0x837B70`; 0x0A `0x8222C0` / `0x785F60` / `0x8377B0`; search `0x822890` / `0x7864E0` / `0x837D80`. AE and 1.7.104 are
+  instruction-identical. SE has the keep test out of line (`0x7866C0`: life state at actor `+0xC0`, flags 0x820, validity
+  `0x781F00`) and the same offsets (`+0x10`, `+0x20`, `+0x28`,
+  `aim+0x28`, `aim+0x30`). One thunk body serves all three, exact-runtime gated, VR refused. `Docs/VERIFIED-ADDRESSES.md`
+  lists slot 0x0D on the vtable row and the layout row.
+- **Passive (principle 5):** `[ch.8b reanimate] FIRST call of ... seat 0x06 / 0x0D` proves each seat runs. The 0x0D claim
+  line prints the corpse the engine's search picked beside the claim's.
+- **Not proven:** nothing here has run in a game. Whether `0x81E290` enforces the spell's level cap is not read (it runs
+  the effect's conditions and the archetype's add test). MFO tests the cap itself before asking (`WillWork`).
+- **Deny audit:** row 8b of `Docs/DENY-COMPLETENESS-AUDIT.md` names the three callers of the search and two holes.
+- **Open:** APMF-B283, APMF-B284 (`Docs/REVIEW-BACKLOG.md`).
+
 ## HEAD OF WORK 2026-11-11 -- ch.32 AVERSION (ABI v41), branch `feat/aversion` (on top of `feat/ch7-hostile-offense`), NOT merged, NOT field run
 
 - **Why:** MFO class plan card H2, "less likely to be targeted" (Conjurer and Healer in T2). marth: a weight in (0, 1);
