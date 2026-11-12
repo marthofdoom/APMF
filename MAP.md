@@ -1591,6 +1591,28 @@ Refused off exactly 1.6.1170 / 1.5.97 / 1.7.104 (VR included; G1 2026-10-04), in
   regardless of that flag.
 
 ### `native/core/ActionGate.{h,cpp}` — T1: the combat behavior-tree allowance (ch.7 ONLY)
+**ch.33 COMBAT STYLE (ABI v45, 2026-11-11, `core/CombatStyle.{h,cpp}` + `channels/CombatStyle.cpp`, `feat/melee-moves`):** `kIntent_CombatStyle`
+(33), `param.form` = a TESCombatStyle, `param.ival` = `CombatStyleFlags` (`kCombatStyle_EquipChoiceOnly`). Two `write_call<5>` seats, both
+or neither: **B** `ExtraGetThunk` at Actor::GetCombatStyle +0xD (the one call to ExtraDataList::GetCombatStyle; the actor is `rcx - 0x70`,
+`static_assert` on `TESObjectREFR::extraList`): an actor-wide live claim's style is answered in the place of the engine's own per-reference
+override; **A** `UpdateGetThunk` at CombatController::UpdateCombatStyle's call to Actor::GetCombatStyle (+0x70, 1.5.97 +0x8A): any live claim's
+style lands in the controller's cached copy (+0x38). The seats read `g_slots[64]` only ({FormID, style*, flags | kLive} atomics, FormID published
+last and withdrawn first, re-read after the pointer; `g_hi` bounds the scan; one relaxed load of `g_n` while no claim stands). The channel's
+Engage / OnOwnerChanged call `SetClaim` (form lookup on the game thread; not a TESCombatStyle or a 65th actor = INERT, logged), Release calls
+`ClearClaim`. `Heartbeat` (from `Arbiter::OncePerFrame`): for an undecided claim, or every 5 s, `facetattr::Decide` vs the Engine source on
+CombatAction sets or clears `kLive`; after a change, and once after a release, `EngineRefresh` calls the ENGINE's own UpdateCombatStyle on
+`actor->GetActorRuntimeData().combatController`. `ResetAll` at revert / kPreLoadGame. Rows `CombatStyle.Actor.GetCombatStyle`,
+`CombatStyle.ExtraDataList.GetCombatStyle`, `CombatStyle.CombatController.UpdateCombatStyle` (raw rows on 1.7.104) + `ProveSite` byte windows.
+INVARIANTS #0 (n). Deny audit row 33.
+**What breaks if you change this:** answering in seat B for an `EquipChoiceOnly` claim makes it actor-wide. Publishing a slot's FormID before
+its style pointer hands a reader a null or a stale style. `kLive` must be set only by `Heartbeat` AFTER `TryGetOwningClaimBasis` finds the
+claim (inside Engage the publish has not happened yet). `EngineRefresh` must stay a call of the engine's function: writing `cc->combatStyle`
+ourselves skips the engine's inventory-dirty flag and is the write this channel exists to remove. A released claim that was ever live must be
+queued in `g_released` or the controller keeps the claimed style until the engine's next refresh. `g_bmx` is a LEAF (no engine call, no log
+under it). The thunks must hand a null actor / list to the original untouched (the engine passes what its handle resolved to). A slot is
+keyed by FormID: `ResetAll` at every load boundary or the next world's actor with that id reads the old style. The seats are among the
+hottest in the DLL (27 engine call sites reach B): nothing but the atomics there. Open: REVIEW-BACKLOG APMF-B294, APMF-B295.
+
 **ch.32 AVERSION (ABI v41, 2026-11-11, `core/Aversion.{h,cpp}` + `channels/Aversion.cpp`):** `kIntent_Aversion`,
 `param.fval` = weight in (0, 1). The channel only keeps `aversion::SetClaimant` / `ClearClaimant` (claimant reference handle
 -> FormID, `g_mx` shared_mutex leaf, game-thread writers). The seats (three `write_call<5>`, `Install` at kDataLoaded after

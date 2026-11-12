@@ -410,6 +410,18 @@ the PowerAttack flag and no Bash flag marks a power attack's record, a Bash hit 
 takes a hit by the actor. Refused while a block hold stands (GuardHeld) or the weapon is not drawn. No new address
 row. 1.6.1170 and 1.5.97. An older APMF refuses the value at the call: gate on abiVersion >= 44. No co-save.
 Docs/FACETS.md "Power attack".
+
+ABI v45 (2026-11-11, branch feat/melee-moves, MFO T2 batch M item 5 "strict class style"): COMBAT STYLE. One Intent,
+kIntent_CombatStyle = 33, the enum CombatStyleFlags (kCombatStyle_EquipChoiceOnly = 1 << 0) and
+kCombatStyleMaxClaims = 64. No struct, no slot. param.form = a TESCombatStyle, param.ival = the flags. Two
+write_call<5> seats (core/CombatStyle.cpp, INVARIANTS #17a): B at Actor::GetCombatStyle's one call to the reference's
+extra-data style read (+0xD on 1.6.1170 / 1.5.97 / 1.7.104), answering an actor-wide claim's style to every reader of
+the actor's style; A at CombatController::UpdateCombatStyle's call to Actor::GetCombatStyle (+0x70, 1.5.97 +0x8A),
+answering any live claim's style into the controller's cached copy. At engage, owner change and release Harbinger
+calls the engine's own UpdateCombatStyle on the actor's controller. Nothing is written by Harbinger. The Engine
+source is ranked on the CombatAction facet at engage and every 5 s. Three address rows (CombatStyle.*) on each
+runtime plus the two sites' byte windows. An older APMF refuses the intent ("no channel serves intent 33"): gate on
+abiVersion >= 45. [CombatStyle] bCombatStyle (default 1). No co-save. Docs/FACETS.md ch.33.
 ```
 
 <a id="intent-18"></a>

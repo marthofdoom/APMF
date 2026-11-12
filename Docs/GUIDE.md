@@ -226,6 +226,7 @@ So the cast facet is `kIntent_Cast` to a client, `ch.8b` in the log, and part of
 | `kIntent_Place` | 28 | Put an actor, loaded or not, beside a reference or at an interior point, once | one engine call | none | 28 | Built, not yet tested in game | [Place](FACETS.md#place-kintent_place) |
 | `kIntent_CombatMove` | 31 | Have an actor bash or power bash now, once, the way the game's own AI starts it | one engine call | CombatAction (ranked, nothing held) | 38 | Built, not yet tested in game | [ch.31](FACETS.md#ch31-combat-move-kintent_combatmove) |
 | `kIntent_Aversion` | 32 | Make an actor less likely to be targeted: when a foe's selection lands on him, the foe's next best valid target is picked instead in a declared share of time | weight (at the foe's selector) | Target (ranked against Engine) | 41 | Built, not yet tested in game | [ch.32](FACETS.md#ch32-aversion-kintent_aversion) |
+| `kIntent_CombatStyle` | 33 | Have an actor fight by a named combat style: the game's own read of his style answers it, actor-wide or for the equipment choice only | substitute (at the game's style read) | CombatAction (ranked against Engine) | 45 | Built, not yet tested in game | [ch.33](FACETS.md#ch33-combat-style-kintent_combatstyle) |
 | `kIntent_ProjectileAim` | 29 | Hold an archer's miss budget over his last 10 shots, dropping the game's two deliberate aim scatters on a corrected shot | per-claim seat at the projectile launch | none | 29 | Built, not yet field run | [ch.29](FACETS.md#ch29-projectile-aim-kintent_projectileaim) |
 
 Channel 18 is skipped on purpose. The number is reserved for an attack-selection design that is not on main. Channel 2 has no intent either, and nothing is reserved for it. The field tiers are defined under [The field tiers](#the-field-tiers).
@@ -257,8 +258,9 @@ Three things are not facets, because they claim nothing: the [read-only queries]
 | `kIntent_EquipPreference` | | | `EquipPrefFlags` (the items go through `SetEquipPreference`) | | |
 | `kIntent_CombatSubstrate` | | the time limit, seconds (0 = the INI value) | | | |
 | `kIntent_Place` | a reference, or an interior cell | the yaw, with `kPlace_SetYaw` | `PlaceFlags` | | the offset, or the point in the cell |
-| `kIntent_CombatMove` | | | the `CombatMove` (bash, power bash) | the foe it is meant for (optional, measured only) | |
+| `kIntent_CombatMove` | | the block window, seconds (block only, ABI 43) | the `CombatMove` (bash, power bash; ABI 43 block and block end; ABI 44 power attack) | the foe it is meant for (optional, measured only) | |
 | `kIntent_Aversion` | | the weight, strictly inside (0, 1) | | | |
+| `kIntent_CombatStyle` | the combat style | | `CombatStyleFlags` (0 = actor-wide) | | |
 | every other intent | reserved | reserved | reserved | | |
 
 A field a facet does not read is accepted and ignored, with one exception: a non-zero point on a travel claim without `kTravel_ToPosition` is refused by name.

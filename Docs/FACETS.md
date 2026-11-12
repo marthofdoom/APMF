@@ -129,6 +129,7 @@ struct Heartbeat {
 | [`kIntent_PotionAllowance`](#ch30-potion-allowance-kintent_potionallowance) | 30 | Potion allowance | Which potions the actor may not drink (a drug, every potion, food, a keyword), with no cast claim: the combat AI never picks one and any drink of one is refused | 37 | Built, not yet seen in game (first Deck run pending); refuses by name on 1.7.104 |
 | [`kIntent_CombatMove`](#ch31-combat-move-kintent_combatmove) | 31 | Combat move | Have the actor bash or power bash now, once, started the way the game's own combat AI starts it. ABI 43: hold his guard up for a window. ABI 44: one real power attack | 38 | Built, not yet tested in game |
 | [`kIntent_Aversion`](#ch32-aversion-kintent_aversion) | 32 | Aversion | The actor is less likely to be targeted: when a foe's selection lands on him, the foe's next best valid target is picked instead in a declared share of time | 41 | Built, not yet tested in game |
+| [`kIntent_CombatStyle`](#ch33-combat-style-kintent_combatstyle) | 33 | Combat style | The actor fights by the combat style the client names: the game's own read of his style answers it, actor-wide or for the equipment choice only | 45 | Built, not yet tested in game |
 | [Space queries](#space-queries-findemptyspace-and-findhostilesinspace) | | `FindEmptySpace`, `FindHostilesInSpace` | Ask for a spot or the hostiles in a sphere | 11 | Built |
 | [Line of sight](#line-of-sight-getlineofsight) | | `GetLineOfSight` | Harbinger's own ray | 18 | Used by MFO |
 | [Awareness](#awareness-senseactor) | | `SenseActor` | Does this actor sense that one | 18 | Used by MFO |
@@ -2896,6 +2897,64 @@ ABI v41. INI `[Aversion] bAversion` (default 1). Rows `Aversion.SelectTarget.Sta
 
 Holes, stated: a foe whose target is fixed by a script or a package (the Fixed selector) is not shaped. A ch.20 pin on the foe wins. A target another DLL writes after the selector stands or falls by the ch.20 rules, not by this claim. The first target of a new fight and the engine's cached pick last until the next re-score (up to 3 seconds). Area spells and attacks aimed at somebody else still hit the claimed actor. The full list is row 32 of `DENY-COMPLETENESS-AUDIT.md`.
 
+### ch.33 Combat style (`kIntent_CombatStyle`)
+
+*The actor fights by the combat style the client names. The game's own read of his style answers it. Nothing is written to the actor, his controller or his base record.*
+
+Built 2026-11-11 (MFO T2 batch M item 5, "strict class style"). Not yet seen in game. 1.6.1170, 1.5.97 and 1.7.104, each with its own proven seats.
+
+#### What it is for
+
+A combat style record says how an NPC fights: how aggressive he is, how often he attacks, power attacks, blocks and bashes, how he circles, falls back and avoids a threat, and how much he favours melee, ranged, magic, staff and shout when he picks what to hold. The game takes it from the NPC's package, else from his base record. A client that wants a follower to fight as a Knight needs him to read the Knight's style whatever his package or his author's base record say.
+
+Before this facet a client could only write the cached style on the combat controller. That copy is read by the equipment choice alone, so the movement, attack and block fields never applied.
+
+#### Arguments
+
+`RequestEx` only (ABI 45). `param.form` = the combat style's FormID, required. `param.ival` = a `CombatStyleFlags` mask.
+
+```cpp
+APMF_API::APMF_Param p{};
+p.form = knightStyle->GetFormID();
+p.ival = 0;                                               // actor-wide. Or kCombatStyle_EquipChoiceOnly
+Handle h = g_apmf->RequestEx(follower, kIntent_CombatStyle, kBasis, &p);   // ABI v45
+```
+
+| `ival` | Reach |
+|---|---|
+| `0` | **Actor-wide.** Every read of his combat style answers the claimed one: attack and power attack chances, block and bash, offensive and defensive multipliers, circling, fallback, avoid threat, flight, and the equipment choice. |
+| `kCombatStyle_EquipChoiceOnly` | **The controller's cached copy only.** The equipment choice (which weapon, spell, staff or shout he holds) follows the claimed style. Movement, attack and block behaviour stay the game's own. |
+
+#### What Harbinger enforces
+
+The game reads an actor's combat style through one function: his reference's own override, else his package's style, else his base record's. Harbinger sits at that function's first step. For an actor with a live actor-wide claim it answers the claimed style there, the place of the game's own per-reference override. The combat controller keeps a cached copy that it refreshes through the same function, and Harbinger sits at that read as well, for both scopes.
+
+At engage, owner change and release Harbinger asks the game to refresh the controller's cached copy with the game's own function, so a claim applies in a running fight at once and the game marks its own "equipment choice is stale" flag.
+
+Harbinger writes nothing. On release the next read is the game's own again.
+
+#### Priority and conflicts
+
+Arbitrated between claims on the same actor by basis, like every claim. The Engine source is ranked on the CombatAction facet: the style is answered only while the claim's client is above Engine there (the defaults say yes). The ranking is taken at engage and again every 5 seconds, not at every read. A claim ranked below Engine stands but answers nothing, and the log says so.
+
+#### Lifetime
+
+A normal claim: `Repoint` changes the style or the scope, `Release` ends it, a load ends it. At most 64 actors hold a winning claim at once. A claim past that is inert and logged.
+
+#### Refusals
+
+At the call: not installed, the player, no param, `form` 0, an unknown flag bit, a Harbinger older than v45. A form that is not a combat style is found on the game thread: the claim is then inert and the log says so (`[ch.33] ... INERT`).
+
+#### Reading it
+
+`IsClaimLive`, `GetClaimEndReason`. The log: `[ch.33] ... combat style ... is LIVE`, `the engine refreshed his controller's cached combat style ... 0x<old> -> 0x<new>`, `FIRST answer of seat A / seat B`, and the `[ch.33] H combat style` totals about every 30 seconds.
+
+#### Version, INI and field status
+
+ABI v45. INI `[CombatStyle] bCombatStyle` (default 1). Rows `CombatStyle.Actor.GetCombatStyle`, `CombatStyle.ExtraDataList.GetCombatStyle`, `CombatStyle.CombatController.UpdateCombatStyle`, plus the code's own byte windows around the two call sites. Both seats install or neither does. Proven by disassembly on the three executables and not yet observed in a field run.
+
+Holes, stated: a style read that does not go through that one function (none was found beside the controller's cache; a compiler-inlined package or base read would be one). Values the game derived from the old style before the claim and keeps: a running behaviour's timers, the equipment already in hand until the next equipment pass. Another DLL that writes the controller's cached style directly: its write stands until the game's next refresh. The player is never served.
+
 ### ch.20 Target pin (`kIntent_TargetPin`)
 
 *Each combat update the engine asks its target selectors whom to fight. While the pin stands, Harbinger answers with your target, among the targets the engine already has. The engine fights it with its own AI.*
@@ -4064,6 +4123,7 @@ The ABI is append-only. A client built against an older ABI keeps working agains
 | 39 | 0.20.0 | `kApproach_Point`, a `CombatApproachFlags` bit read through the existing `RequestEx` and `Repoint` (no struct, no slot) |
 | 43 | 0.20.0 | `kCombatMove_Block` built, `kCombatMove_BlockEnd`, `kCombatMoveState_Ended`, `kCombatMoveWhy_NoBlockItem` .. `_HoldBroken`, `kCombatMoveInfo_HoldLive` / `_BlockedAHit` / `_ReRaised`, `kCombatBlock*` (no struct, no slot) |
 | 44 | 0.20.0 | `kCombatMove_PowerAttack`, `kCombatMoveWhy_GuardHeld`, `kCombatPowerMaxTries` (no struct, no slot) |
+| 45 | 0.20.0 | `kIntent_CombatStyle`, `CombatStyleFlags`, `kCombatStyleMaxClaims` (no struct, no slot) |
 | 29 | 0.15.0 | `GetClientFacetPriority`, `ClientFacet`, `kFacetPriorityUnknown` (struct `APMF_API_v29`) |
 | 30 | 0.15.0 | `kTravel_CrossCells`, a `TravelFlags` bit read through the existing `RequestEx` and `Repoint` (no struct, no slot) |
 | 31 | 0.15.2 | `GetClaimEndReason`, `ClaimEndReason` (struct `APMF_API_v31`) |
@@ -4098,6 +4158,7 @@ A refusal at the call returns `kInvalidHandle` and logs the reason in `APMF.log`
 | `kIntent_CombatSubstrate` | not installed (`bCombatSubstrate=0`, the ch.22 target site, the 95-node pair, the anchor records, a self-check row), the player as the actor, `fval` negative or NaN | not out of combat, unloaded, low process, in a scene or dialogue, the party in combat, Engine outranking the client on CombatAction / Combat / Equip / Detection, no free slot, the floors not published, the engine refusing the entry (the claim is released) |
 | `kIntent_Place` | not installed (VR, an unsupported runtime, the row refused), `Request` (no param), actor 0, the player, `form` 0, a non-finite `pos` or yaw, an unknown flag bit, 128 queued | it is a one-shot, not a claim: `GetPlaceState` reads `Refused` with a `PlaceWhy` (destination gone or not a reference / interior cell, actor loaded or the player present under their flags, another client's ch.19 / ch.1 owner) or `Failed` |
 | `kIntent_CombatMove` | not installed (`bCombatMove=0`, VR, a runtime other than 1.6.1170 / 1.5.97, a row refused), `Request` (no param), an unknown move, a block with `bBlock=0` or its deny not armed, a block window that is negative or not finite, actor 0, the player, the actor as its own target, 128 queued | it is a one-shot: the game-thread refusals read through `GetCombatMoveState` |
+| `kIntent_CombatStyle` | not installed (`bCombatStyle=0`, VR, a runtime other than 1.6.1170 / 1.5.97 / 1.7.104, a row or byte window refused), `Request` (no param), `form` 0, an unknown flag bit, the player | a form that is not a combat style, or a 65th claimed actor: the claim stands inert, logged |
 
 ## Appendix D: INI keys by facet
 
@@ -4129,6 +4190,7 @@ Defaults are the shipped values. The full text of every key is in [INI-REFERENCE
 | sources registry | `[Harbinger]` | `bSceneProbe` (1) |
 | census probes | `[Probe]` | `bCasterTypeCensus` (1), `bRangedSelect` (0), `bRestoreCensus` (1) |
 | ch.31 combat move | `[CombatMove]`, `[Probe]` | `bCombatMove` (1), `bBlock` (1), and the hit probe `[Probe] bCombatMove` (0) |
+| ch.33 combat style | `[CombatStyle]` | `bCombatStyle` (1) |
 
 Facets with no key of their own: ch.1, 1a, 3, 4, 5, 6, 7, 10, 11, 14, 15, 16 and ch.25. The space queries have none either.
 

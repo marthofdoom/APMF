@@ -895,3 +895,15 @@ The header: `kCombatMove_PowerAttack` (5), `kCombatMoveWhy_GuardHeld` (21), `kCo
 
 **Older APMF.** Before v44 the value is refused at the call. A client keeps its own road (MFO: the animation event, and says which road ran). Full reference: [FACETS.md Power attack](FACETS.md#power-attack-kcombatmove_powerattack-abi-44).
 
+## ABI v45 combat style: the actor fights by the style the client named (ch.33)
+
+The header: `kIntent_CombatStyle` (33), `CombatStyleFlags` (`kCombatStyle_EquipChoiceOnly`), `kCombatStyleMaxClaims` (64) and `kABIVersion` 45. No struct, no slot, no flag on an existing type. A v45 client still holds an `APMF_API_v38*`.
+
+**Why it exists.** A client that wrote `CombatController::combatStyle` itself reached the equipment choice only, because that field is a cached copy. The attack, block and movement fields of a style are read from the actor through one engine function, and nothing a client could write short of the base record or the reference's extra data changed that.
+
+**The claim.** `RequestEx(actor, kIntent_CombatStyle, basis, &param)` with `param.form` = the combat style and `param.ival` = 0 (actor-wide) or `kCombatStyle_EquipChoiceOnly`. `Repoint` changes either. `Release` ends it.
+
+**What happens.** While the claim is live the engine's read of the actor's style answers the claimed style (actor-wide), and the controller's cached copy holds it (both scopes). Harbinger has the engine refresh that copy at engage, owner change and release. On release every read is the engine's own again.
+
+**Refused:** not installed (VR, a build that is not exactly 1.6.1170, 1.5.97 or 1.7.104, `[CombatStyle] bCombatStyle=0`, a failed row or byte window), the player, no param, `form` 0, an unknown flag bit, an APMF older than v45. A form that is not a combat style makes the claim inert, logged. Full reference: [FACETS.md ch.33](FACETS.md#ch33-combat-style-kintent_combatstyle).
+

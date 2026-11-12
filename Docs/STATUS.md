@@ -63,6 +63,35 @@ One section per item, newest ABI last. Research notes: `Docs/research/melee-move
 - **Nothing changed here.** MFO already declares it (Warrior, Champion, Living Legend: 0.40). Field status is ch.18's
   own: built, not yet seen in game (`[ch.18]` heartbeat counts the Normal denies).
 
+### ch.33 COMBAT STYLE (ABI v45): the actor fights by the style the client named
+
+- **Why:** MFO's class packages need a strict class style (tree ON), and MFO wrote `CombatController::combatStyle`
+  itself, against the Harbinger-first rule.
+- **Finding (changes what the facet must be):** `controller+0x38` is a CACHE. `CombatController::UpdateCombatStyle`
+  fills it from `Actor::GetCombatStyle` at the controller's construction, a package change and SetCombatStyle. Its
+  readers are the combat inventory's score multipliers. The attack, block and movement fields of a style are read
+  through `Actor::GetCombatStyle` (27 callers per build), never through the cache. So MFO's write only ever biased the
+  equipment choice: a class CSTY's movement and attack fields were never applied.
+- **What was built:** `core/CombatStyle.{h,cpp}` + `channels/CombatStyle.cpp` (new). Seat B at Actor::GetCombatStyle's
+  one call to the reference's extra-data style read; seat A at UpdateCombatStyle's call to Actor::GetCombatStyle. A
+  lock-free slot table. The engine's own UpdateCombatStyle is called at engage, owner change, release and a rank
+  change. Nothing is written by Harbinger.
+- **ABI v45:** `kIntent_CombatStyle` = 33, `CombatStyleFlags` (`kCombatStyle_EquipChoiceOnly`), `kCombatStyleMaxClaims`.
+  No struct, no slot. MFO's `APMF_API.h` is the same byte for byte.
+- **Per runtime (principle 11):** GetCombatStyle AE `0x6B5580` (38536) / SE `0x623E60` (37586) / 1.7.104 `0x6C8000`,
+  seat B at +0xD on all three; the extra-data read AE `0x16BFC0` (12017) / SE `0x1246E0` (11878) / 1.7.104 `0x171550`,
+  one caller each; UpdateCombatStyle AE `0x559BD0` (33239) / SE `0x4FE5B0` (32492) / 1.7.104 `0x561A40`, seat A at
+  +0x70 / +0x8A / +0x70. The two byte windows are identical on the three builds. Three rows per runtime in
+  `Docs/VERIFIED-ADDRESSES.md` (raw rows on 1.7.104, claimed in `tools/verified_addresses/idmap-1.7.104-apmf.csv`).
+- **Passive (principle 5):** `[ch.33] FIRST answer of seat A / seat B` proves each seat runs under a claim. The
+  refresh line prints the cached style before and after. `[ch.33] H combat style` totals every 30 s.
+- **Not proven:** nothing here has run in a game. Whether an actor-wide class style visibly changes how a follower
+  fights is the field question. Whether any style read is inlined past seat B was not searched for.
+- **Deny audit:** row 33, six open paths named. INVARIANTS #0 (n) (proposed), with the #17a argument.
+- **Generator note:** `Docs/VERIFIED-ADDRESSES.md` carries two hand-edited ch.21 layout rows that `spec.json` does not
+  have (they predate this branch). The regeneration kept them by hand (APMF-B295).
+- **Open:** APMF-B294, APMF-B295.
+
 ## HEAD OF WORK 2026-11-11 -- ch.8b CORPSE TARGET (ABI v42), branch `feat/ch8b-dead-target` (on top of `feat/aversion`), NOT merged, NOT field run
 
 - **Why:** MFO class plan card G7, "corpse target / reanimate" (marth 2026-11-11: G7 joins the T2 build). The rule's

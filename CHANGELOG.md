@@ -1,3 +1,11 @@
+## Unreleased -- combat style: fight the way the mod says (ABI v45)
+
+- **A mod can give a follower a combat style, and it fully applies.** The style decides how aggressive he is, how often he power attacks, blocks and bashes, and how he circles and backs off. Before, a mod could only influence which weapon he picked.
+- **Nothing in your save or your load order is changed.** Harbinger answers the game's own question "what is this actor's combat style" while the mod's claim stands. When the claim ends the game uses its own answer again.
+- **A mod can also ask for the weapon choice only.**
+- **New setting `[CombatStyle] bCombatStyle=1`.** Set 0 to refuse every combat-style claim.
+- **ABI v45.** One new intent, `kIntent_CombatStyle`. No new function and no layout change. Works on 1.6.1170, 1.5.97 and 1.7.104.
+
 ## Unreleased -- power attack: the game's real one (ABI v44)
 
 - **A mod can have a follower power attack, and it is a real power attack.** Harbinger starts it the way the game's own combat AI does, so the hit has the power attack's damage and stamina cost. Before, a mod could only play the animation.
