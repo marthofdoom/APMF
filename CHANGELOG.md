@@ -1,6 +1,6 @@
 ## Unreleased -- an offense deny lets heals through (ABI v40)
 
-- **Offense means hostile.** A mod that denies a follower's offense no longer stops his heals, buffs and wards. Harbinger reads the spell the game is about to cast. A hostile spell is denied. A spell whose record does not say what it is for counts as hostile and is named in the log. Attacks are denied as before. A mod that wants every cast stopped names the Cast category as well, which works on every version.
+- **Offense means hostile.** A mod that denies a follower's offense no longer stops his heals, buffs and wards. Harbinger reads the spell the game is about to cast. A hostile spell is denied. A spell passes only when every one of its effects is a known harmless kind (a heal, a buff, a cure, a light, a summon and the like). A spell with a script effect, or with any effect Harbinger does not know to be harmless, counts as hostile and is named in the log. Attacks are denied as before. A mod that wants every cast stopped names the Cast category as well, which works on every version.
 - **New setting `[CombatAction] bHostileOnlyOffense=1`.** Set 0 for the old behaviour.
 - **ABI v40.** No new function and no layout change. A mod checks for version 40 before it relies on heals passing an offense deny.
 

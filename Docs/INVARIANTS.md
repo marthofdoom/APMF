@@ -1583,7 +1583,10 @@ context in the act() thunk (`core/CastLeafNature.cpp`). The rules that keep this
 runtime by verified address rows and byte windows of the engine code that makes the same read, and a leaf whose proof
 fails is REFUSED BY NAME and keeps the wider deny (every cast is Offense); never a guess, never the other runtime's
 offsets; (2) every doubt denies: an unreadable window or pointer, an undeclared nature and a throw all count as
-hostile; (3) the read is passive (no hook, no call, no write) and runs before the leaf's own act, on the bytes the
+hostile, and BENEFICIAL IS AN ALLOW-LIST (review F1, 2026-11-11): a spell passes only when every effect is on the
+named benign archetype list with neither the Hostile nor the Detrimental flag; a Script effect never declares
+beneficial on any delivery; an archetype the list does not name is undeclared. "Nothing hostile was found" is
+never a pass (the first rule was that, and passed a Self script-only spell and an unflagged Stagger); (3) the read is passive (no hook, no call, no write) and runs before the leaf's own act, on the bytes the
 leaf reads next; (4) `kCombatActionCat_Cast` never consults it. A new "depends on what it does" category must meet
 the same four.
 

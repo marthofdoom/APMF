@@ -57,14 +57,24 @@ extern "C" __declspec(dllimport) unsigned long __stdcall GetPrivateProfileIntA(
 // A leaf that fails any of these is REFUSED BY NAME and keeps the pre-v40 behaviour: every cast of that leaf
 // counts as Offense (a deny that is never weaker than declared; the log says so).
 //
-// THE NATURE RULE (form data only; the same reading MFO's classifier and core/CastGuard.cpp use).
+// THE NATURE RULE (form data only). BENEFICIAL IS AN ALLOW-LIST (tier-3 review F1, 2026-11-11: the first
+// rule read "everything not hostile is beneficial" and let a Self script-only spell and an unflagged Stagger /
+// Absorb through; INVARIANTS #17b(2) says an undeclared nature counts as hostile).
 //   HOSTILE     any effect whose base effect is flagged Hostile or Detrimental; an enemy-control archetype
 //               (Calm, Frenzy, Demoralize, Paralysis, TurnUndead: marth 2026-11-09, hostile even when the
 //               record leaves the flag unset); a Cloak effect whose associated spell has such an effect.
-//   UNDECLARED  no readable effect at all, or a spell not delivered to Self whose every effect is archetype
-//               Script (the record defers to a Papyrus script: an Apocalypse-style curse reads exactly like
-//               this). COUNTS AS HOSTILE for the deny, logged once per form at warn.
-//   BENEFICIAL  everything else: passes an Offense-only deny.
+//   BENEFICIAL  at least one readable effect, and EVERY effect is on the benign archetype list with neither
+//               flag: ValueModifier, PeakValueModifier, DualValueModifier, AccumulateMagnitude, Invisibility,
+//               Light, CureDisease, CureParalysis, CureAddiction, CurePoison, BoundWeapon, Rally, SlowTime,
+//               Etherealize, DetectLife, Guide, EnhanceWeapon, SummonCreature and Reanimate (marth 2026-11-11:
+//               summons are not offense), and a Cloak whose associated spell is itself BENEFICIAL by this
+//               rule. Passes an Offense-only deny.
+//   UNDECLARED  everything else: no readable effect, ANY Script effect on any delivery (the record defers to
+//               Papyrus), or any archetype off the list (Stagger, Absorb, Disarm, SpawnHazard, Telekinesis,
+//               Banish, SoulTrap, GrabActor, Concussion, SpawnScriptedRef, CommandSummoned, Dispel, ...).
+//               COUNTS AS HOSTILE for the deny, logged per form at warn.
+// KNOWN RESIDUAL (not closable from record data; DENY-COMPLETENESS-AUDIT row 14 lists it): a value modifier
+// with neither flag that harms through its target or its magnitude script reads exactly like a heal-other.
 // A shout is judged over ALL its variations that carry a spell: one hostile or undeclared word makes the shout
 // hostile, so the answer never depends on which word the engine picks.
 // ============================================================================
@@ -254,24 +264,78 @@ namespace apmf::castleafnature {
             }
         }
 
-        Nature NatureOf(RE::MagicItem* a_mi) {
+        // BENEFICIAL IS AN ALLOW-LIST (review F1, 2026-11-11). An effect declares "beneficial" only when its
+        // archetype is one the engine itself gives a non-hostile meaning AND its record carries neither the
+        // Hostile nor the Detrimental flag (HostileEffect ran first). Everything else declares nothing:
+        //   - a Script effect NEVER declares beneficial, on any delivery: what it does lives in Papyrus, where
+        //     a "Self" spell can burn everything around the caster (the Self Script-only exemption this
+        //     replaces passed exactly those);
+        //   - Stagger, Absorb, Disarm, SpawnHazard, Telekinesis, Banish, SoulTrap, GrabActor, Concussion,
+        //     SpawnScriptedRef, CommandSummoned, Dispel, Lock, Open, Darkness, NightEye, ValueAndParts,
+        //     WerewolfFeed, Werewolf, VampireLord, Disguise and any id this list does not name: undeclared.
+        // Summon and Reanimate are on the list by ruling (marth 2026-11-11: summons are NOT offense).
+        // Archetype ids: RE/E/EffectArchetypes.h (the fork at the registry baseline).
+        bool BenignArchetype(RE::EffectArchetypes::ArchetypeID a_arch) {
+            using Arch = RE::EffectArchetypes::ArchetypeID;
+            switch (a_arch) {
+            case Arch::kValueModifier:         // without Detrimental / Hostile (HostileEffect ran first)
+            case Arch::kPeakValueModifier:
+            case Arch::kDualValueModifier:
+            case Arch::kAccumulateMagnitude:
+            case Arch::kInvisibility:
+            case Arch::kLight:
+            case Arch::kCureDisease:
+            case Arch::kCureParalysis:
+            case Arch::kCureAddiction:
+            case Arch::kCurePoison:
+            case Arch::kBoundWeapon:
+            case Arch::kRally:
+            case Arch::kSlowTime:
+            case Arch::kEtherealize:
+            case Arch::kDetectLife:
+            case Arch::kGuide:
+            case Arch::kEnhanceWeapon:
+            case Arch::kSummonCreature:
+            case Arch::kReanimate:
+                return true;
+            default:
+                return false;
+            }
+        }
+
+        // The spell is BENEFICIAL only when it has at least one readable effect and EVERY effect declares
+        // beneficial; one hostile effect makes it HOSTILE; anything else is UNDECLARED (which denies). A Cloak
+        // declares what the spell it applies declares (one level: a cloak inside a cloak's spell, or a cloak
+        // with no spell, is undeclared). An effect entry with no base effect is unreadable: undeclared.
+        Nature NatureOf(RE::MagicItem* a_mi, bool a_insideCloak = false) {
             if (!a_mi) return Nature::kUndeclared;
-            std::size_t seen = 0, script = 0;
+            using Arch = RE::EffectArchetypes::ArchetypeID;
+            std::size_t seen = 0;
+            bool        undeclared = false;
             for (auto* eff : a_mi->effects) {
                 auto* be = eff ? eff->baseEffect : nullptr;
-                if (!be) continue;
+                if (!be) {
+                    undeclared = true;
+                    continue;
+                }
                 ++seen;
                 if (HostileEffect(be)) return Nature::kHostile;
-                using Arch = RE::EffectArchetypes::ArchetypeID;
-                if (be->GetArchetype() == Arch::kCloak && be->data.associatedForm &&
-                    be->data.associatedForm->Is(RE::FormType::Spell)) {
-                    for (auto* e2 : be->data.associatedForm->As<RE::SpellItem>()->effects)
-                        if (e2 && e2->baseEffect && HostileEffect(e2->baseEffect)) return Nature::kHostile;
+                const auto arch = be->GetArchetype();
+                if (arch == Arch::kCloak) {
+                    auto* inner = (!a_insideCloak && be->data.associatedForm)
+                                      ? be->data.associatedForm->As<RE::SpellItem>() : nullptr;
+                    if (!inner) {
+                        undeclared = true;
+                        continue;
+                    }
+                    const Nature n = NatureOf(inner, true);
+                    if (n == Nature::kHostile) return Nature::kHostile;
+                    if (n == Nature::kUndeclared) undeclared = true;
+                } else if (!BenignArchetype(arch)) {
+                    undeclared = true;
                 }
-                if (be->GetArchetype() == Arch::kScript) ++script;
             }
-            if (seen == 0) return Nature::kUndeclared;
-            if (script == seen && a_mi->GetDelivery() != RE::MagicSystem::Delivery::kSelf) return Nature::kUndeclared;
+            if (seen == 0 || undeclared) return Nature::kUndeclared;
             return Nature::kBeneficial;
         }
 
@@ -359,7 +423,7 @@ namespace apmf::castleafnature {
             case Nature::kBeneficial:
                 g_passed.fetch_add(1, std::memory_order_relaxed);
                 if (LineDue(a_actor, fid, 0))
-                    spdlog::info("[ch.7] hostile-offense: 0x{} casts '{}' (0x{}), declared non-hostile -- NOT Offense, "
+                    spdlog::info("[ch.7] hostile-offense: 0x{} casts '{}' (0x{}), every effect declared beneficial -- NOT Offense, "
                                  "passes the Offense deny (h={}).",
                                  apmf::log::Hex(a_actor), NameOf(form), apmf::log::Hex(fid), a_claim);
                 return true;
@@ -367,7 +431,8 @@ namespace apmf::castleafnature {
                 g_undeclared.fetch_add(1, std::memory_order_relaxed);
                 if (LineDue(a_actor, fid, 2))
                     spdlog::warn("[ch.7] hostile-offense: 0x{} casts '{}' (0x{}), nature UNDECLARED by its record (no "
-                                 "readable effect, or every effect is a script and it is not cast on self) -- counted "
+                                 "readable effect, or an effect that does not declare itself beneficial: a script, or an archetype off "
+                                 "the benign list) -- counted "
                                  "as HOSTILE, the Offense deny stands (h={}).",
                                  apmf::log::Hex(a_actor), NameOf(form), apmf::log::Hex(fid), a_claim);
                 return false;

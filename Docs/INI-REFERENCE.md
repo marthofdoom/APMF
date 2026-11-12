@@ -183,7 +183,7 @@ ABI v37. "This follower never drinks Skooma." A mod names an actor and which pot
 
 Facet reference: [ch.7 Combat action](FACETS.md#ch7-combat-action-kintent_combataction).
 
-ABI v40. A mod can deny a follower's offense. Offense means hostile actions: attacks and hostile spells. A heal, a buff or a ward is not offense and still runs under that deny. Harbinger reads the spell the game is about to cast and looks at its record. A spell whose record does not say what it is for counts as hostile and is named in the log. (This section also holds the `Engine=` priority key described under "Facet sections".)
+ABI v40. A mod can deny a follower's offense. Offense means hostile actions: attacks and hostile spells. A heal, a buff or a ward is not offense and still runs under that deny. Harbinger reads the spell the game is about to cast and looks at its record. A spell passes only when every one of its effects is a known harmless kind. A spell with a script effect, or with an effect Harbinger does not know to be harmless, counts as hostile and is named in the log. (This section also holds the `Engine=` priority key described under "Facet sections".)
 
 - **`bHostileOnlyOffense`** (default `1`). 0 = the old behaviour: an offense deny stops every cast, heals included (logged at startup). Leave it at 1 unless a log line asks you to change it.
 
