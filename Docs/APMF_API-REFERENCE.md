@@ -837,3 +837,16 @@ case APMF_API::kCombatMoveState_Failed:  /* info.why: EngineRefused, NotApplied,
 **Older APMF.** An APMF before v38 has no channel for intent 31 and refuses the request. The client makes no move (MFO: the bash candidate is not generated).
 
 **Field status.** Built from the disassembly, CI-verified, not yet observed on a deck. `[Probe] bCombatMove=1` logs every melee hit by or on a teammate with its flags and the attacker's attack data, which is how the first run compares the engine's own bashes with a sent one.
+
+## ABI v41 aversion: the actor is less likely to be targeted (ch.32)
+
+The header: `kIntent_Aversion` (32) and `kABIVersion` 41. No struct, no slot, no flag. A v41 client still holds an `APMF_API_v38*`.
+
+**Why it exists.** A class that should draw less attention (a healer, a conjurer) had no lever. The engine's target score has no actor value, perk or keyword input. A ch.20 pin on every foe would be a deny of each foe's own choice and would need a target chosen for it.
+
+**The claim.** `RequestEx(actor, kIntent_Aversion, basis, &param)` with `param.fval` = the weight, strictly inside (0, 1). `Repoint` changes the weight. `Release` ends it. Nothing else is read and there is nothing to query.
+
+**What happens.** When a foe's standard target selection lands on the claimed actor, Harbinger checks the draw for that foe and that actor in the current 6 second window. In a share of windows equal to the weight, the engine's scorer runs again without the claimed actor and its answer is used. If it scored nobody else, the claimed actor is picked as always.
+
+**Refused:** the player, no param, a weight outside (0, 1), the seats not installed, an APMF older than v41 (no channel serves intent 32). Full reference: [FACETS.md ch.32](FACETS.md#ch32-aversion-kintent_aversion).
+

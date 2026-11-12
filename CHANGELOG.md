@@ -1,3 +1,10 @@
+## Unreleased -- aversion: less likely to be targeted (ABI v41)
+
+- **New facet: aversion.** A mod can make an actor less likely to be targeted. It names the actor and a weight between 0 and 1. When an enemy's target choice lands on that actor, the enemy picks its next best target instead, in that share of time. The game does the picking both times. The second pick is used only when it is a target the enemy can act on (in reach, pathable, alive and not fleeing, by the game's own tests). Otherwise the first pick stands.
+- **Never untargetable.** An actor who is the only target in reach is attacked as always. A taunt or a scripted target still wins.
+- **New setting `[Aversion] bAversion=1`.** Set 0 to turn the facet off. A mod's aversion claims are then refused and logged.
+- **ABI v41.** One new intent, `kIntent_Aversion`. No new function and no layout change. Works on 1.6.1170, 1.5.97 and 1.7.104.
+
 ## Unreleased -- an offense deny lets heals through (ABI v40)
 
 - **Offense means hostile.** A mod that denies a follower's offense no longer stops his heals, buffs and wards. Harbinger reads the spell the game is about to cast. A hostile spell is denied. A spell passes only when every one of its effects is a known harmless kind (a heal, a buff, a cure, a light, a summon and the like). A spell with a script effect, or with any effect Harbinger does not know to be harmless, counts as hostile and is named in the log. Attacks are denied as before. A mod that wants every cast stopped names the Cast category as well, which works on every version.

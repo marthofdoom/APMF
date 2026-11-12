@@ -161,6 +161,14 @@ ABI v36. "This archer misses at most three of his last ten shots." A mod names a
 - **`bObserveOnly`** (default `0`). 1 = count and log what would be corrected, correct nothing.
 - **`iShotWindowMs`** (default `4000`, clamped 500..30000). A shot with no hit on its target within this many milliseconds is a miss.
 - **`bProbe`** (default `0`). 1 = one `[ch.29]` line per launch, per hit and per miss (angles before and after, aim points, speed, gravity, the ballistic angle, where a missed arrow came to rest). Passive, log only.
+### [Aversion]
+
+Facet reference: [ch.32 Aversion](FACETS.md#ch32-aversion-kintent_aversion).
+
+ABI v41. A mod names an actor and a weight between 0 and 1. When an enemy's target choice lands on that actor, the enemy picks its next best target instead, in that share of time. The game does the picking both times. An actor who is the only target in reach is attacked as always. A taunt or a scripted target still wins.
+
+- **`bAversion`** (default `1`). 0 = not installed and every kIntent_Aversion claim is REFUSED (the mod keeps its own behaviour; logged once with the reason).
+
 ### [CombatMove]
 
 Facet reference: [ch.31 Combat move](FACETS.md#ch31-combat-move-kintent_combatmove).
