@@ -92,6 +92,16 @@ One section per item, newest ABI last. Research notes: `Docs/research/melee-move
   have (they predate this branch). The regeneration kept them by hand (APMF-B295).
 - **Open:** APMF-B294, APMF-B295.
 
+### Dodge (batch M item 4): NO facet built, no ABI number taken
+
+- **Read:** the engine's side step (CombatBehaviorDodgeThreat) is gated by the combat style's `avoidThreatChance`,
+  read through `Actor::GetCombatStyle` (condition AE 47801 -> accessor AE 50706 -> 38536). Ultimate NPC Dodging
+  scores its own dodge from the same style fields.
+- **Conclusion:** ch.33 is the list-agnostic dodge road: a claimed style with an Avoid Threat chance gives the
+  engine's side step without a dodge mod, and feeds a framework's own dodge with one. A "dodge now" move was not
+  designed. `Docs/research/melee-moves-re.md` "DODGE". The client-side value is MFO's (its backlog MFO-B806).
+- **Not verified:** that a framework reads the style through the seated function and not from the base record.
+
 ## HEAD OF WORK 2026-11-11 -- ch.8b CORPSE TARGET (ABI v42), branch `feat/ch8b-dead-target` (on top of `feat/aversion`), NOT merged, NOT field run
 
 - **Why:** MFO class plan card G7, "corpse target / reanimate" (marth 2026-11-11: G7 joins the T2 build). The rule's
