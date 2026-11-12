@@ -1436,3 +1436,6 @@ A claim with no usable corpse records a Cast-facet decision on every 0x06 poll t
 
 ### APMF-B301 (SEV-4, OPEN, native/core/CastLeafNature.cpp OwnClaimHolds, raised by the author against feat/ch7-benign-own, 2026-11-12)
 The Q91 own-claim pass applies to an UNDECLARED spell only. A HOSTILE record the same client claims to cast still stays denied under that client's Offense-only deny (deny-completeness: the ruling named the Script-heal case). It resolves the two handles' client with `sources::ClientForHandle` (shared leaf lock, the same one ClaimOutranksTree takes on the same thread), not an atomic. Both are the author's reading; the reviewer decides.
+
+### APMF-B302 (SEV-5, OPEN, core/CastLeafNature.cpp OwnClaimHolds, against 311d91c, Opus review of feat/ch7-benign-own)
+(1) The own-claim pass increments g_passed, so the heartbeat counts it as "passed-beneficial"; a separate counter would read better in the field. (2) The pass checks spell identity, not hand or target: the tree casting a claimed undeclared spell at another target also passes (fits the Q91 ruling; noted). (3) MAP.md sentence before "The read:" lacks its full stop.
