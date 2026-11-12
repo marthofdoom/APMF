@@ -50,6 +50,19 @@ One section per item, newest ABI last. Research notes: `Docs/research/melee-move
   effects is the engine's own behaviour, not observed by us (APMF-B293).
 - **Open:** APMF-B293.
 
+### ch.18 power FLOOR ("Normal share max", batch M item 3): ALREADY BUILT, no code, no ABI
+
+- **Finding:** the batch asked for a ch.18 extension that denies Normal attacks while the sliding window is over a
+  cap, so a client gets a power-attack floor. That is `powerShareMin` of ABI v34, and it is live:
+  `core/AttackSelect.cpp` `EvaluateRoll` denies the Normal class while the measured power share is below the declared
+  minimum (`share < minShare -> active |= kAtkClass_Normal`), once the window is full, deny-only, lifted when the
+  deny would leave no attack. "Normal share max X" over the Power + Normal window is the same statement as
+  "power share min 1 - X". `[AttackSelect] bObserveOnly` ships 0.
+- **Why it was listed as missing:** the batch row was written from the 2026-11-08 draft, where the floor was
+  observe-only.
+- **Nothing changed here.** MFO already declares it (Warrior, Champion, Living Legend: 0.40). Field status is ch.18's
+  own: built, not yet seen in game (`[ch.18]` heartbeat counts the Normal denies).
+
 ## HEAD OF WORK 2026-11-11 -- ch.8b CORPSE TARGET (ABI v42), branch `feat/ch8b-dead-target` (on top of `feat/aversion`), NOT merged, NOT field run
 
 - **Why:** MFO class plan card G7, "corpse target / reanimate" (marth 2026-11-11: G7 joins the T2 build). The rule's
