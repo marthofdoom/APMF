@@ -883,3 +883,15 @@ case APMF_API::kCombatMoveState_Failed:  /* info.why: EngineRefused, NotApplied 
 
 **Older APMF.** Before v43 `kCombatMove_Block` is refused at the call and `kCombatMove_BlockEnd` is an unknown move. Full reference: [FACETS.md Block](FACETS.md#block-kcombatmove_block-abi-43).
 
+## ABI v44 power attack: the engine's real power attack, once (ch.31)
+
+The header: `kCombatMove_PowerAttack` (5), `kCombatMoveWhy_GuardHeld` (21), `kCombatPowerMaxTries` (8) and `kABIVersion` 44. No struct, no slot. A v44 client still holds an `APMF_API_v38*`.
+
+**The request.** `RequestEx(actor, kIntent_CombatMove, basis, &param)` with `param.ival = kCombatMove_PowerAttack` and an optional `param.target`. A one-shot. Read it with `GetCombatMoveState` exactly as a bash: `Queued`, `Started`, `Refused`, `Failed`.
+
+**What runs.** The engine's start-of-attack action for one of the actor's own right-hand power entries, highest attack chance first, the first the engine accepts. The engine sets his attack data and attack state. Harbinger reads both back.
+
+**The hit.** `kCombatMoveInfo_HitSeen` from a hit with the PowerAttack flag and without the Bash flag, within 2.5 s. `staminaSpent` is what the action itself took at the start.
+
+**Older APMF.** Before v44 the value is refused at the call. A client keeps its own road (MFO: the animation event, and says which road ran). Full reference: [FACETS.md Power attack](FACETS.md#power-attack-kcombatmove_powerattack-abi-44).
+

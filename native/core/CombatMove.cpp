@@ -165,6 +165,7 @@ namespace apmf::combatmove {
             case APMF_API::kCombatMove_PowerBash: return "power bash";
             case APMF_API::kCombatMove_Block:     return "block";
             case APMF_API::kCombatMove_BlockEnd:  return "block end";
+            case APMF_API::kCombatMove_PowerAttack: return "power attack";
             default:                              return "unknown move";
             }
         }
@@ -194,6 +195,7 @@ namespace apmf::combatmove {
             case APMF_API::kCombatMoveWhy_HoldEndedByClient: return "the client ended the hold";
             case APMF_API::kCombatMoveWhy_HoldRenewed:    return "a newer block request of the same client took the hold over";
             case APMF_API::kCombatMoveWhy_HoldBroken:     return "the hold could not be kept";
+            case APMF_API::kCombatMoveWhy_GuardHeld:      return "a block hold stands on the actor (a power attack would drop the guard)";
             default:                                      return "unknown";
             }
         }
@@ -261,6 +263,31 @@ namespace apmf::combatmove {
                     best = e;
             }
             return best;
+        }
+
+        // ABI v44, kCombatMove_PowerAttack: the actor base's right-hand POWER entries the engine's own attack start
+        // could draw (its gather AE 49176 0x8A3960, pool 0: the Bash and left-pool bits clear), Power set, attack
+        // chance above 0, in DESCENDING attack chance (ties: the lower event string), at most kCombatPowerMaxTries.
+        // Each holds a reference: nothing here may outlive a map edit.
+        std::vector<RE::NiPointer<RE::BGSAttackData>> GatherPower(RE::Actor* a_actor) {
+            std::vector<RE::NiPointer<RE::BGSAttackData>> out;
+            auto* base = a_actor->GetActorBase();
+            auto* map  = base ? static_cast<RE::BGSAttackDataForm*>(base)->attackDataMap.get() : nullptr;
+            if (!map) return out;
+            for (const auto& kv : map->attackDataMap) {
+                auto* e = kv.second.get();
+                if (!e) continue;
+                const auto flags = static_cast<std::uint32_t>(e->data.flags.underlying());
+                if (!(flags & kAtkPower) || (flags & (kAtkBash | kAtkLeft))) continue;
+                if (!(e->data.attackChance > 0.0f)) continue;
+                out.emplace_back(e);
+            }
+            std::sort(out.begin(), out.end(), [](const auto& a, const auto& b) {
+                if (a->data.attackChance != b->data.attackChance) return a->data.attackChance > b->data.attackChance;
+                return std::strcmp(a->event.c_str(), b->event.c_str()) < 0;
+            });
+            if (out.size() > APMF_API::kCombatPowerMaxTries) out.resize(APMF_API::kCombatPowerMaxTries);
+            return out;
         }
 
         // The engine's start-of-attack action for `a_entry`: the Right Attack action form with the entry's event.
@@ -342,17 +369,46 @@ namespace apmf::combatmove {
                                   std::format(" (client priority {}, Engine {})", v.claimPrio, v.srcPrio));
             }
 
-            auto* entry = PickEntry(actor, a_move);
+            const bool isPower = a_move == APMF_API::kCombatMove_PowerAttack;   // ABI v44
+            std::vector<RE::NiPointer<RE::BGSAttackData>> powerTries;
+            RE::BGSAttackData* entry = nullptr;
+            if (isPower) {
+                if (!state->IsWeaponDrawn()) return refuse(APMF_API::kCombatMoveWhy_NotReady, 0, " (his weapon is not drawn)");
+                // A held guard (ABI v43) denies his offense; this move would drop it. The hold's owner ends it first.
+                if (BlockHeld(a_actor)) return refuse(APMF_API::kCombatMoveWhy_GuardHeld, 0, "");
+                powerTries = GatherPower(actor);
+                if (powerTries.empty()) return refuse(APMF_API::kCombatMoveWhy_NoAttackData, 0, " (no right-hand power entry)");
+                entry = powerTries.front().get();
+            } else {
+                entry = PickEntry(actor, a_move);
+            }
             if (!entry) return refuse(APMF_API::kCombatMoveWhy_NoAttackData, 0, "");
             // Hold the entry across the action: the map owns it, but nothing here may outlive a map edit.
-            const RE::NiPointer<RE::BGSAttackData> hold(entry);
-            const std::string  event  = entry->event.c_str();
-            const auto         eflags = static_cast<std::uint32_t>(entry->data.flags.underlying());
+            RE::NiPointer<RE::BGSAttackData> hold(entry);
             auto*              avo    = actor->AsActorValueOwner();
             const float        before = avo->GetActorValue(RE::ActorValue::kStamina);
             RE::BGSAttackData* was    = CurrentAttackData(actor);
 
-            const bool ok = ProcessAttackAction(actor, entry);
+            bool        ok = false;
+            std::string refusedEvents;   // power attack: the entries the engine's action refused before the accepted one
+            if (isPower) {
+                // The engine's own shape (StartAttack AE 0x8A2CEA..0x8A2D53): an entry its action refuses is dropped
+                // and the next is offered. Fixed order here, never a draw.
+                for (const auto& cand : powerTries) {
+                    ok = ProcessAttackAction(actor, cand.get());
+                    if (ok) {
+                        entry = cand.get();
+                        hold  = cand;
+                        break;
+                    }
+                    if (!refusedEvents.empty()) refusedEvents += ", ";
+                    refusedEvents += cand->event.c_str();
+                }
+            } else {
+                ok = ProcessAttackAction(actor, entry);
+            }
+            const std::string  event  = entry->event.c_str();
+            const auto         eflags = static_cast<std::uint32_t>(entry->data.flags.underlying());
 
             const float after   = avo->GetActorValue(RE::ActorValue::kStamina);
             sent.staminaSpent   = (std::isfinite(before) && std::isfinite(after)) ? before - after : 0.0f;
@@ -369,16 +425,22 @@ namespace apmf::combatmove {
                     return;
                 spdlog::warn("[combat-move] {} FAILED ({} by actor 0x{} '{}', event '{}'): {}.{} stamina {:.0f}, in combat "
                              "{}, weapon out {}, attack state now {} (client '{}').",
-                             a_handle, MoveName(a_move), Hex(a_actor), actor->GetName(), event,
+                             a_handle, MoveName(a_move), Hex(a_actor), actor->GetName(),
+                             isPower ? std::format("every one of {} power entries: {}", powerTries.size(), refusedEvents) : event,
                              WhyText(APMF_API::kCombatMoveWhy_EngineRefused), targetNote, before,
                              (sent.info & APMF_API::kCombatMoveInfo_InCombat) != 0,
                              (sent.info & APMF_API::kCombatMoveInfo_WeaponOut) != 0, atkState, clientName);
                 return;
             }
-            if (now != entry || atkState != static_cast<std::uint32_t>(RE::ATTACK_STATE_ENUM::kBash)) {
+            // The state the engine's post-action step sets (AE 39004 0x6CF760 +0x13E..): Bash (6) for an entry with
+            // the bash bit, Draw (1) for a weapon attack; Swing (2) is where Draw goes next.
+            const bool stateOk = isPower ? (atkState == static_cast<std::uint32_t>(RE::ATTACK_STATE_ENUM::kDraw) ||
+                                            atkState == static_cast<std::uint32_t>(RE::ATTACK_STATE_ENUM::kSwing))
+                                         : atkState == static_cast<std::uint32_t>(RE::ATTACK_STATE_ENUM::kBash);
+            if (now != entry || !stateOk) {
                 if (!Finish(a_handle, APMF_API::kCombatMoveState_Failed, APMF_API::kCombatMoveWhy_NotApplied, 0, sent)) return;
                 spdlog::error("[combat-move] {} FAILED ({} by actor 0x{} '{}', event '{}'): {} -- attack data is {} "
-                              "(event '{}'; it was {} before), attack state {} (Bash is 6).{} Report this line.",
+                              "(event '{}'; it was {} before), attack state {} (a bash reads 6, a power attack 1 or 2).{} Report this line.",
                               a_handle, MoveName(a_move), Hex(a_actor), actor->GetName(), event,
                               WhyText(APMF_API::kCombatMoveWhy_NotApplied), now == entry ? "the entry" : "NOT the entry",
                               now ? now->event.c_str() : "none", was == entry ? "the entry already" : "another or none",
@@ -386,11 +448,13 @@ namespace apmf::combatmove {
                 return;
             }
             if (!Finish(a_handle, APMF_API::kCombatMoveState_Started, APMF_API::kCombatMoveWhy_None, 0, sent)) return;
-            spdlog::info("[combat-move] {} STARTED: actor 0x{} '{}' {} (event '{}', flags 0x{}, chance {:.2f}); the engine "
-                         "set his attack data and the Bash attack state;{} stamina {:.0f} -> {:.0f}, in combat {} (client "
+            spdlog::info("[combat-move] {} STARTED: actor 0x{} '{}' {} (event '{}', flags 0x{}, chance {:.2f}{}); the engine "
+                         "set his attack data and the {} attack state;{} stamina {:.0f} -> {:.0f}, in combat {} (client "
                          "'{}').",
                          a_handle, Hex(a_actor), actor->GetName(), MoveName(a_move), event, Hex(eflags),
-                         entry->data.attackChance, targetNote, before, after,
+                         entry->data.attackChance,
+                         refusedEvents.empty() ? std::string{} : std::format("; his graph refused first: {}", refusedEvents),
+                         isPower ? (atkState == 1 ? "Draw" : "Swing") : "Bash", targetNote, before, after,
                          (sent.info & APMF_API::kCombatMoveInfo_InCombat) != 0, clientName);
         }
 
@@ -492,8 +556,11 @@ namespace apmf::combatmove {
                     // ABI v43: a blocked hit ON an actor whose guard Harbinger holds (FormIDs only on this thread).
                     if (target && AnyBlockHeld() && a_e->flags.any(RE::TESHitEvent::Flag::kHitBlocked))
                         detail::NoteBlockedHit(target->GetFormID(), cause ? cause->GetFormID() : 0);
-                    if (!cause || !a_e->flags.any(RE::TESHitEvent::Flag::kBashAttack))
-                        return RE::BSEventNotifyControl::kContinue;
+                    // A bash hit belongs to a bash move; a power hit without the bash flag to a power attack (ABI
+                    // v44). A block's record (ABI v43) never takes a hit BY the actor.
+                    const bool bashHit  = a_e->flags.any(RE::TESHitEvent::Flag::kBashAttack);
+                    const bool powerHit = !bashHit && a_e->flags.any(RE::TESHitEvent::Flag::kPowerAttack);
+                    if (!cause || (!bashHit && !powerHit)) return RE::BSEventNotifyControl::kContinue;
                     const std::uint64_t now  = apmf::clock::MonotonicMs();
                     const std::uint64_t last = g_lastStartMs.load(std::memory_order_acquire);
                     if (last == 0 || now - last > APMF_API::kCombatMoveHitWindowMs) return RE::BSEventNotifyControl::kContinue;
@@ -507,6 +574,9 @@ namespace apmf::combatmove {
                         Rec* pick = nullptr;
                         for (auto& [h, r] : g_recs) {
                             if (r.info.actor != fid || r.info.state != APMF_API::kCombatMoveState_Started) continue;
+                            const bool bashMove  = r.info.move == APMF_API::kCombatMove_Bash || r.info.move == APMF_API::kCombatMove_PowerBash;
+                            const bool powerMove = r.info.move == APMF_API::kCombatMove_PowerAttack;
+                            if (!(bashHit && bashMove) && !(powerHit && powerMove)) continue;
                             if (r.info.info & APMF_API::kCombatMoveInfo_HitSeen) continue;
                             if (now < r.startedMs || now - r.startedMs > APMF_API::kCombatMoveHitWindowMs) continue;
                             if (!pick || r.startedMs < pick->startedMs) {
@@ -526,7 +596,8 @@ namespace apmf::combatmove {
                         }
                     }
                     if (found != APMF_API::kInvalidHandle)
-                        spdlog::info("[combat-move] {} HIT: actor 0x{}'s bash landed on 0x{}{}{}.", found, Hex(fid), Hex(tfid),
+                        spdlog::info("[combat-move] {} HIT: actor 0x{}'s {} landed on 0x{}{}{}.", found, Hex(fid),
+                                     bashHit ? "bash" : "power attack", Hex(tfid),
                                      onTarget ? " (the named target)" : "",
                                      a_e->flags.any(RE::TESHitEvent::Flag::kHitBlocked) ? ", blocked" : "");
                 } catch (...) {
@@ -675,7 +746,8 @@ namespace apmf::combatmove {
                 holdS = clamped;
             }
         }
-        if (!isBlock && move != APMF_API::kCombatMove_Bash && move != APMF_API::kCombatMove_PowerBash) {
+        if (!isBlock && move != APMF_API::kCombatMove_Bash && move != APMF_API::kCombatMove_PowerBash &&
+            move != APMF_API::kCombatMove_PowerAttack) {   // PowerAttack: ABI v44
             if (a_dry) return dryRefuse(APMF_API::kServeRefusal_BadRequest, "param.ival is not a CombatMove this ABI builds");
             spdlog::warn("[combat-move] request REFUSED (actor 0x{}): param.ival {} is not a CombatMove this ABI builds.",
                          Hex(a_actor), a_param->ival);

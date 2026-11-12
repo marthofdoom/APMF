@@ -263,6 +263,7 @@ A client built against an older header keeps working. Each item below needs its 
 | 41 | 0.20.0 | `kIntent_Aversion` (ch.32): the actor is less likely to be targeted, a weight in (0, 1) in `param.fval` through the existing `RequestEx` and `Repoint` (no struct, no slot) | `abiVersion >= 41` |
 | 42 | 0.20.0 | `kCastFlag_CorpseTarget` (ch.8b): a Reanimate claim names the corpse to raise in `req.target`. One flag bit, no struct, no slot | `abiVersion >= 42`. An older APMF ignores the bit and the engine picks its own corpse. Refused when the Reanimate seat is not installed |
 | 43 | 0.20.0 | `kCombatMove_Block` (ch.31): a held guard for a window in `param.fval`, and `kCombatMove_BlockEnd`. While it stands the actor's own offense and the engine's own block release do not run. No struct, no slot | `abiVersion >= 43`. An older APMF refuses the block at the call |
+| 44 | 0.20.0 | `kCombatMove_PowerAttack` (ch.31): one right-hand power attack started by the game's own action road, so the hit carries the power attack's damage and stamina cost. No struct, no slot | `abiVersion >= 44`. An older APMF refuses the value at the call |
 
 ### Place (ABI 28)
 

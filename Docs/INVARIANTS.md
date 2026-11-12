@@ -774,6 +774,24 @@ A HELD GUARD is legal only while ALL of these hold, on top of conditions 1, 2, 5
    and at every re-raise.
 6. **Reported honestly.** `Started` only when the want-block state reads back set. `Ended` always carries its why.
 
+**(l) POWER ATTACK AMENDMENT, PROPOSED 2026-11-11 (MFO T2 batch M item 2; marth Q82 "move to Harbinger", default
+Q-T2-2; ADOPTION IS marth's, at the merge of `feat/melee-moves`). ABI v44, `core/CombatMove.cpp` `Run`.** A third move
+KIND under (l): a right-hand power attack. Conditions 1 and 3 to 7 hold unchanged (the Right Attack action form with
+an entry's event, one-shot, no claim, nothing denied, the engine's own conditions first, it yields, honest report,
+closed scope). Condition 2 is restated for it, because an actor has SEVERAL power entries and the behaviour graph
+accepts only the ones that fit what he holds:
+- **Declared, never chosen, and the engine's own acceptance decides the entry.** The client names the actor and the
+  kind. The candidates are the actor base's own entries the engine's attack start could draw for the right hand
+  (Power set, Bash and the left-pool bit clear, attack chance above 0). They are offered in a FIXED order (descending
+  attack chance, then the event name), at most `kCombatPowerMaxTries`, ONE `Process()` each, until the engine accepts
+  one. That is the engine's own shape (StartAttack erases a pick its action refused and draws again, AE
+  0x8A2CEA..0x8A2D53), with its random draw and its weight function removed. Harbinger adds no weighting, no
+  direction and no weapon test of its own. An entry the engine refused is NOT retried and the request is never
+  re-sent.
+- **Read-back is the attack data being the accepted entry and the attack state Draw or Swing.** The hit is matched by
+  kind: the PowerAttack flag without the Bash flag.
+- **It never runs over a block hold.** Refused (`GuardHeld`) while Harbinger holds the actor's guard.
+
 **PROPOSED 2026-11-11 (MFO class plan card H2, marth: *"a new intent, aversion ... The intent never invents a target
 that is not already in the foe's group targets"*; ADOPTION IS marth's, at the merge of `feat/aversion`). The thirteenth
 legal action (ABI v41, `core/Aversion.cpp`): (m) WEIGHT A CLAIMANT'S CANDIDACY IN ANOTHER ACTOR'S TARGET SELECTION --

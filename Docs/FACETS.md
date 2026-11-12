@@ -127,7 +127,7 @@ struct Heartbeat {
 | [`kIntent_Place`](#place-kintent_place) | 28 | Place | Put an actor, loaded or not, beside a reference or at a point in an interior cell, once | 28 | Built, not yet tested in game |
 | [`kIntent_ProjectileAim`](#ch29-projectile-aim-kintent_projectileaim) | 29 | Projectile aim | A miss budget for the actor's own arrows and bolts: when his last 10 shots hold as many misses as allowed, the next launch is re-aimed at the engine's own unscattered solution | 36 | Built, not yet seen in game (first Deck run pending); refuses by name on 1.7.104 |
 | [`kIntent_PotionAllowance`](#ch30-potion-allowance-kintent_potionallowance) | 30 | Potion allowance | Which potions the actor may not drink (a drug, every potion, food, a keyword), with no cast claim: the combat AI never picks one and any drink of one is refused | 37 | Built, not yet seen in game (first Deck run pending); refuses by name on 1.7.104 |
-| [`kIntent_CombatMove`](#ch31-combat-move-kintent_combatmove) | 31 | Combat move | Have the actor bash or power bash now, once, started the way the game's own combat AI starts it. ABI 43: hold his guard up for a window | 38 | Built, not yet tested in game |
+| [`kIntent_CombatMove`](#ch31-combat-move-kintent_combatmove) | 31 | Combat move | Have the actor bash or power bash now, once, started the way the game's own combat AI starts it. ABI 43: hold his guard up for a window. ABI 44: one real power attack | 38 | Built, not yet tested in game |
 | [`kIntent_Aversion`](#ch32-aversion-kintent_aversion) | 32 | Aversion | The actor is less likely to be targeted: when a foe's selection lands on him, the foe's next best valid target is picked instead in a declared share of time | 41 | Built, not yet tested in game |
 | [Space queries](#space-queries-findemptyspace-and-findhostilesinspace) | | `FindEmptySpace`, `FindHostilesInSpace` | Ask for a spot or the hostiles in a sphere | 11 | Built |
 | [Line of sight](#line-of-sight-getlineofsight) | | `GetLineOfSight` | Harbinger's own ray | 18 | Used by MFO |
@@ -2412,6 +2412,31 @@ To keep a guard up longer than one window, ask again before the window ends. The
 
 Gate on `abiVersion >= 43`. An older Harbinger refuses `kCombatMove_Block` ("reserved") and does not know `kCombatMove_BlockEnd`.
 
+#### Power attack (`kCombatMove_PowerAttack`, ABI 44)
+
+*Have the actor power attack now, once, with the right hand. Started by the engine's own action, so the hit carries the power attack's damage and stamina cost.*
+
+Built 2026-11-11 (MFO Q82: move the power attack to Harbinger). Not yet seen in game. 1.6.1170 and 1.5.97.
+
+```cpp
+APMF_API::APMF_Param p{};
+p.ival   = APMF_API::kCombatMove_PowerAttack;
+p.target = foe;                                           // optional
+Handle h = g_apmf->RequestEx(follower, kIntent_CombatMove, 0.0f, &p);   // ABI 44
+```
+
+**Why not an animation event.** `attackPowerStartInPlace` sent to the behaviour graph plays the swing. The engine sets an actor's attack data only on its action road, and the attack data is what carries the power flag, the damage multiplier and the stamina cost. A swing started by a bare event hits with whatever attack data he had before.
+
+**Which power attack.** Harbinger takes the actor's own right-hand power entries (Power set, Bash clear, an attack chance above 0), highest attack chance first, at most 8, and offers each to the engine's action until one is accepted. The engine's own attack start does the same: it draws an entry, and when its action refuses it (the graph has no such attack for what he holds) it drops that entry and draws again. Harbinger's order is fixed and it weighs nothing. For a sword user the dual-wield and unarmed entries are refused first and the forward power attack runs. The log names the entries his graph refused.
+
+**What refuses it.** Everything that refuses a bash, plus: his weapon is not drawn, or a block hold stands on him (`kCombatMoveWhy_GuardHeld`). No right-hand power entry reads `NoAttackData`. The engine accepting none (no stamina, staggered) reads `Failed` / `EngineRefused`.
+
+**Reading the outcome.** `Started` only when his attack data reads back as the accepted entry and his attack state as Draw or Swing. `kCombatMoveInfo_HitSeen` is set by a hit from him with the PowerAttack flag and without the Bash flag within 2.5 s.
+
+**What it is not.** Not a choice of direction. Not a left-hand or dual power attack. It denies nothing: his AI attacks on around it.
+
+Gate on `abiVersion >= 44`. An older Harbinger refuses the value at the call.
+
 ## Combat
 
 Seven facets cover combat, and each does one job. They are designed to be claimed together, each as its own handle, because a facet never claims another facet on your behalf.
@@ -4038,6 +4063,7 @@ The ABI is append-only. A client built against an older ABI keeps working agains
 | 38 | 0.20.0 | `kIntent_CombatMove`, `CombatMove`, `CombatMoveState`, `CombatMoveWhy`, `APMF_CombatMoveStateInfo`, `GetCombatMoveState`, `kServePending_CombatMoveRoom` (struct `APMF_API_v38`) |
 | 39 | 0.20.0 | `kApproach_Point`, a `CombatApproachFlags` bit read through the existing `RequestEx` and `Repoint` (no struct, no slot) |
 | 43 | 0.20.0 | `kCombatMove_Block` built, `kCombatMove_BlockEnd`, `kCombatMoveState_Ended`, `kCombatMoveWhy_NoBlockItem` .. `_HoldBroken`, `kCombatMoveInfo_HoldLive` / `_BlockedAHit` / `_ReRaised`, `kCombatBlock*` (no struct, no slot) |
+| 44 | 0.20.0 | `kCombatMove_PowerAttack`, `kCombatMoveWhy_GuardHeld`, `kCombatPowerMaxTries` (no struct, no slot) |
 | 29 | 0.15.0 | `GetClientFacetPriority`, `ClientFacet`, `kFacetPriorityUnknown` (struct `APMF_API_v29`) |
 | 30 | 0.15.0 | `kTravel_CrossCells`, a `TravelFlags` bit read through the existing `RequestEx` and `Repoint` (no struct, no slot) |
 | 31 | 0.15.2 | `GetClaimEndReason`, `ClaimEndReason` (struct `APMF_API_v31`) |

@@ -549,6 +549,7 @@ namespace {
         case 41: return "0.20.0";   // ch.32 aversion: the same release (confirm at the cut)
         case 42: return "0.20.0";   // ch.8b kCastFlag_CorpseTarget: the same release (confirm at the cut)
         case 43: return "0.20.0";   // ch.31 kCombatMove_Block: the same release (confirm at the cut)
+        case 44: return "0.20.0";   // ch.31 kCombatMove_PowerAttack: the same release (confirm at the cut)
         default: return "a release newer than this one";
         }
     }

@@ -398,6 +398,18 @@ default object manager behind the row ch.31 already verifies, the leaves are fou
 (the post-action step that sets and clears the want-block state was also read on 1.7.104, where the channel stays
 refused by name). An older APMF refuses kCombatMove_Block at the call ("reserved") and does not know BlockEnd: gate
 on abiVersion >= 43. [CombatMove] bBlock (default 1). No co-save. Docs/FACETS.md "Block".
+
+ABI v44 (2026-11-11, branch feat/melee-moves, MFO T2 batch M item 2, Q82 "move to Harbinger"): POWER ATTACK.
+kCombatMove_PowerAttack = 5, kCombatMoveWhy_GuardHeld = 21, kCombatPowerMaxTries = 8. No struct, no slot. The same
+action road as the bash (the Right Attack action form with an attack entry's event, one TESActionData::Process per
+entry offered), for the actor base's right-hand POWER entries: Power set, Bash and the left-pool bit clear, attack
+chance above 0, descending attack chance, at most 8, offered until the engine's action accepts one (the engine's own
+attack start erases a refused pick and draws again, AE 0x8A2CEA..0x8A2D53). Started only when the attack data reads
+back as the accepted entry and the attack state as Draw or Swing. The hit sink now matches by move kind: a hit with
+the PowerAttack flag and no Bash flag marks a power attack's record, a Bash hit a bash's, and a block's record never
+takes a hit by the actor. Refused while a block hold stands (GuardHeld) or the weapon is not drawn. No new address
+row. 1.6.1170 and 1.5.97. An older APMF refuses the value at the call: gate on abiVersion >= 44. No co-save.
+Docs/FACETS.md "Power attack".
 ```
 
 <a id="intent-18"></a>

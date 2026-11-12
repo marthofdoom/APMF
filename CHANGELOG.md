@@ -1,3 +1,9 @@
+## Unreleased -- power attack: the game's real one (ABI v44)
+
+- **A mod can have a follower power attack, and it is a real power attack.** Harbinger starts it the way the game's own combat AI does, so the hit has the power attack's damage and stamina cost. Before, a mod could only play the animation.
+- **The follower's own power attacks are used.** Harbinger offers the game each power attack he has, most likely first, and the first one that fits his weapon runs.
+- **ABI v44.** One new move, `kCombatMove_PowerAttack`. No new function and no layout change. 1.6.1170 and 1.5.97.
+
 ## Unreleased -- block: hold the guard up (ABI v43)
 
 - **A mod can have a follower hold his guard up.** The mod names the follower and a number of seconds. Harbinger raises his guard the same way the game's own combat AI does, and keeps it up for that time. His shield or weapon, the stamina cost of blocked hits and the block itself are the game's.

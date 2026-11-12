@@ -34,6 +34,22 @@ One section per item, newest ABI last. Research notes: `Docs/research/melee-move
   brief (APMF-B291).
 - **Open:** APMF-B290 to APMF-B292.
 
+### ch.31 POWER ATTACK (ABI v44): the engine's real power attack, once
+
+- **Why:** MFO's `act.power_attack` sends `attackPowerStartInPlace` to the graph (marth Q82: move it to Harbinger when
+  the probe confirms it is only an animation; default Q-T2-2: build now, probe in the same session).
+- **Engine road:** the same as the bash. StartAttack's gather (AE 49176) puts every right-hand entry in pool 0, power
+  entries included, with no weapon filter. A pick the action refuses is erased and redrawn (AE 0x8A2CEA..0x8A2D53).
+  The post-action step sets attack state Draw for a non-bash entry.
+- **What was built:** `core/CombatMove.cpp` `GatherPower` + the power branch of `Run`; the hit sink matches by move
+  kind. `kCombatMove_PowerAttack` = 5, `kCombatMoveWhy_GuardHeld` = 21. No struct, no slot, no new address row.
+- **Passive:** `[combat-move] N STARTED ... power attack (event '...'; his graph refused first: ...)`, then `HIT ...
+  power attack landed`. `[Probe] bCombatMove` logs every melee hit's flags, so a native power attack and one of
+  ours can be compared in one log.
+- **Not proven:** nothing here has run in a game. Whether the graph's refusal of an unfitting entry is free of side
+  effects is the engine's own behaviour, not observed by us (APMF-B293).
+- **Open:** APMF-B293.
+
 ## HEAD OF WORK 2026-11-11 -- ch.8b CORPSE TARGET (ABI v42), branch `feat/ch8b-dead-target` (on top of `feat/aversion`), NOT merged, NOT field run
 
 - **Why:** MFO class plan card G7, "corpse target / reanimate" (marth 2026-11-11: G7 joins the T2 build). The rule's
