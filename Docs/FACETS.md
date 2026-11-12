@@ -2744,6 +2744,8 @@ The engine's standard target selector (`CombatTargetSelectorStandard`, slot 0x06
 
 Two claimants in one fight are each drawn on their own, up to four left out in one pass. Nothing is written to the combat group, the selector or any actor. Harbinger never names a target the foe's own group does not hold.
 
+One engine effect adds to the weight: once a foe has switched, the engine's own score favours its current target by a small bonus, so a claimant who was only just ahead may not win the next scoring pass back even in a "kept" window. The share of time a foe spends off the claimant is therefore the weight or a little more, never less. The totals line shows the real numbers.
+
 The draw is per window and not per re-score on purpose. A draw per re-score would tie the share of time to the engine's re-score cadence. A draw per window gives the same share whatever the cadence is, and two foes draw independently, so a pack does not switch as one.
 
 #### Priority and conflicts

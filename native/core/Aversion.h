@@ -25,7 +25,8 @@ namespace apmf::aversion {
     void SetClaimant(RE::FormID a_id, RE::Actor* a_actor, const APMF_API::APMF_Param& a_param, const char* a_what);
     void ClearClaimant(RE::FormID a_id);
 
-    // The world is being replaced (revert / kPreLoadGame): drop every claimant entry and the counters. GAME THREAD.
+    // The world is being replaced (revert / kPreLoadGame): drop every claimant entry (ControlMap::Clear makes no
+    // channel->Release calls). The counters are session totals and stay. GAME THREAD.
     void ResetAll(const char* a_why);
 
     // RULE C heartbeat, from Arbiter::OncePerFrame: the session totals, ~30 s after any selection landed on a
