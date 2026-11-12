@@ -1380,6 +1380,18 @@ Not field run. Three things only a game can show: (1) that the Reanimate caster'
 ### APMF-B286 (SEV-5, OPEN, core/ReanimateSeat.cpp CheckStartCastThunk, same branch)
 When the engine's earlier gates say NO (its base start check, or "the spell's effect is already on the caster") the claim's corpse stays in the caster's `+0x28` cache after the claim ends. The engine re-tests a cached corpse on every use and 0x0D searches again, so it can only cast at it if its own test still accepts it, which is its own behaviour for any corpse it cached. Left as is. Clearing it would need a claim-end hook into a caster object Harbinger does not track.
 
+### APMF-B287 (SEV-5, OPEN, core/ReanimateSeat.cpp SetupAimControllerThunk, against b96edf0, Opus tier-3 review of feat/ch8b-dead-target, finding F2)
+As handed to the author: "SetupAimControllerThunk `if (!aimSlot) return;` silent on a non-CombatProjectileAimController." The engine's own function has already run at that point and written its pick, and nothing is logged or counted when the aim controller is not exactly a projectile aim controller, so a corpse claim would lose the aim there without a line. No such controller has been seen on the Reanimate caster.
+
+### APMF-B288 (SEV-5, OPEN, core/ReanimateSeat.cpp g_counts, against b96edf0, same review, finding F3)
+As handed to the author: "g_counts never printed." The per-seat counters (calls, claim kept or rewritten, claim refused) are written and never read: no heartbeat line or export surfaces them, unlike `castseats::SeatCountsLine`.
+
+### APMF-B289 (SEV-5 docs, OPEN, Data/SKSE/Plugins/APMF.ini EnableReanimateSeat comment, against b96edf0, same review, finding F4)
+As handed to the author: "APMF.ini EnableReanimateSeat comment wrong for v42 clients (MFO's dry run refuses; test step 24l(1) is right)." With the seat off a v42 client's corpse request is refused at the call, so MFO's dry run refuses the rule. It does not fall back to the engine's own corpse as the comment says.
+
+### APMF-B290 (SEV-5, OPEN, core/EquipGate.cpp hasHandSeat, raised by the author in the F1 fix round of the same review, 2026-11-11)
+The F1 fix makes both Reanimate seats answer NO for a corpse claim whose target was not a loaded actor when the claim was applied. The equip gate still reads that claim as it reads any cast claim with an empty target handle (`hasHandSeat` false): no 0x0F YES for the claimed spell and no deny-complete for the hand. So the claimed spell never casts at the engine's pick, but a DIFFERENT spell in that hand, another Reanimate spell included, is the engine's own until the claim's TTL. Reasoning: the same lapse every unresolved cast claim has had since ch.8b, reachable here only when the corpse's form goes away between the request and the drain. Closing it means the equip gate treating a corpse claim as a hand seat with no target, or the drain dropping the claim with a new `ServePending` bit.
+
 ### APMF-B282 (SEV-5, OPEN, core/ActionGate.cpp ActThunkBody, against bfc50c1, same review, finding F5b)
 As handed to the author: "PassesOffenseDeny counted before ClaimOutranksTree." The hostile-offense verdict counters (and its per-form line) tick for a leaf the claim would not have denied anyway because the tree outranks it, so the `hostile-offense H` totals overcount.
 

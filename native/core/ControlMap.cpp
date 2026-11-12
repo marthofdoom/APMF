@@ -1257,6 +1257,14 @@ namespace apmf {
             if (castTarget != 0) {
                 if (auto* tgt = RE::TESForm::LookupByID<RE::Actor>(castTarget)) {
                     castTargetHandle = tgt->GetHandle();
+                } else if ((castFlags & APMF_API::kCastFlag_CorpseTarget) != 0) {
+                    // review F1 (b96edf0): never "the AI keeps its own target" for a corpse claim. The
+                    // Reanimate seats (core/ReanimateSeat.cpp) answer NO for it while it stands.
+                    spdlog::error("[ch.8b] cast claim on 0x{} (h={}): kCastFlag_CorpseTarget, but target 0x{} is not a "
+                                  "loadable Actor. The claim is kept and can NEVER cast: the Reanimate seats answer NO "
+                                  "and remove the engine's own corpse pick while it stands. Release it or let its TTL "
+                                  "end it.",
+                                  apmf::log::Hex(op.actor), op.handle, apmf::log::Hex(castTarget));
                 } else {
                     spdlog::warn("[ch.8b] cast claim on 0x{}: target 0x{} is not a loadable Actor -- "
                                  "the seats will not redirect (the AI keeps its own target).",

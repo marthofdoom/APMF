@@ -1212,6 +1212,7 @@ Equip is the usual ch.8b seat (0x0F), which already serves the Reanimate items.
 
 - Harbinger does not judge the spell's level cap. The engine's own test is the only judge at the seat. A client that wants to skip a corpse the spell is too weak for tests that before asking. MFO does (its `WillWork` read).
 - A claim on a corpse the engine refuses never fires. Bound it with the TTL as you do any claim, then choose another corpse.
+- A claim that names no usable corpse gets the same answer at both seats: no, and the engine's pick is removed. That is a `target` that is not a loaded actor when the claim is applied, or a target of 0 or the actor sent through `RequestEx(kIntent_Cast)` with the bit in `param.ival`. The claim stands and can never cast, and each seat logs an error. Release it or let the TTL end it.
 - Against the engine the claim's answers are ranked on the `Cast` sources facet, the same as every ch.8b seat.
 - An older Harbinger ignores the bit and the engine picks its own corpse.
 

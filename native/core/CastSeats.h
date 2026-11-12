@@ -114,13 +114,15 @@ namespace apmf::castseats {
     // target handle, and does it outrank (Cast facet) the source of the answer it replaces
     // (`a_prevFn` = the function that seat's 0x06 displaced on its vtable)? `a_count`: true at the
     // seat that starts a cast (0x06), false at the others, so each cast is counted once. Combat
-    // thread; one lock-free RCU read.
+    // thread; one lock-free RCU read. `a_needTarget` false drops ONLY the resolved-target-handle
+    // requirement (every other test, the ranking included, is the same): the Reanimate corpse seat
+    // must answer NO for a corpse claim whose target never resolved, not chain to the engine.
     struct ClaimMatch {
         RE::FormID          actor  = 0;
         RE::FormID          driven = 0;   // the claim's proxy, else its spell
         apmf::CastSeatClaim claim{};
     };
     bool MatchClaim(RE::CombatMagicCaster* a_this, RE::CombatController* a_cc, std::uintptr_t a_prevFn, bool a_count,
-                    ClaimMatch& a_out);
+                    ClaimMatch& a_out, bool a_needTarget = true);
 
 }
