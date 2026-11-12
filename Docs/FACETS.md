@@ -2739,12 +2739,18 @@ The engine's standard target selector (`CombatTargetSelectorStandard`, slot 0x06
 
 1. The engine's scorer runs first, untouched. If its pick is not an aversion claimant, nothing happens.
 2. If the pick is a claimant, Harbinger looks at the draw for {that foe, the claimant} in the current 6 second window. The draw says "averted" in a share of windows equal to the weight. Otherwise the pick stands.
-3. When averted, the engine's own scorer runs a second time with the claimant left out of that one pass. Its answer is used when it scored somebody. The engine ranks the others by its own rules.
+3. When averted, the engine's own scorer runs a second time with the claimant left out of that one pass. The engine ranks the others by its own rules.
 4. When the second pass scored nobody (the claimant is the only detected target, or only lost targets remain), the first pick stands. The claimant is never hidden and a lost target is never preferred to him.
+5. The second answer is used only when it is a target the foe can act on. The scorer lowers the score of a target the foe cannot reach, cannot path to, that is dead or essential-down, or that is fleeing, but it does not skip it, so the next best can be exactly such a target. Harbinger asks the scorer's own four tests about the second answer by calling the same engine functions the scorer calls. If the answer fails one, the first pick stands and the log says which test (`... is not answered: it is outside the foe's combat area ...`). Harbinger computes no score of its own.
 
 Two claimants in one fight are each drawn on their own, up to four left out in one pass. Nothing is written to the combat group, the selector or any actor. Harbinger never names a target the foe's own group does not hold.
 
-One engine effect adds to the weight: once a foe has switched, the engine's own score favours its current target by a small bonus, so a claimant who was only just ahead may not win the next scoring pass back even in a "kept" window. The share of time a foe spends off the claimant is therefore the weight or a little more, never less. The totals line shows the real numbers.
+The weight is the share of 6 second windows in which the draw says "averted". The share of time a foe really spends off the claimant is close to it, and can fall on either side:
+
+- **Less than the weight.** The selector keeps its cached pick and only re-scores it about once a second, three seconds after a switch. A foe that is on the claimant when an averted window opens stays on him for 1 to 3 seconds of that window. An averted window also keeps the claimant when no other valid target exists, or when the next best one fails the tests of step 5.
+- **More than the weight.** The engine's own score gives the current target a bonus (+100). After a foe has switched away, a claimant who was only just ahead may not win the next scoring pass back, even in a "kept" window. The same bonus works for the claimant once the foe is back on him.
+
+So the weight is not a floor. The totals line shows the real numbers.
 
 The draw is per window and not per re-score on purpose. A draw per re-score would tie the share of time to the engine's re-score cadence. A draw per window gives the same share whatever the cadence is, and two foes draw independently, so a pack does not switch as one.
 
@@ -2762,7 +2768,7 @@ A standing claim: no TTL, ended by `Release`, by the actor unloading, or by an o
 
 #### Reading it
 
-There is no query slot. `APMF.log` says what happened: `[ch.32] aversion: foe 0x.. selected 0x.. -- AVERTED ... 0x.. is answered instead`, `KEPT by the draw`, `NO OTHER valid target`, each at most once per 10 seconds per pair, and a totals line `[ch.32] aversion H` about every 30 seconds while selections land on a claimant.
+There is no query slot. `APMF.log` says what happened: `[ch.32] aversion: foe 0x.. selected 0x.. -- AVERTED ... 0x.. is answered instead`, `KEPT by the draw`, `NO OTHER valid target`, `the engine's next best target 0x.. is not answered: <which test>`, each at most once per 10 seconds per pair, and a totals line `[ch.32] aversion H` about every 30 seconds while selections land on a claimant.
 
 #### Version, INI and field status
 

@@ -27,7 +27,7 @@ extern "C" __declspec(dllimport) unsigned long __stdcall GetPrivateProfileIntA(
 // Docs/research/2026-11/class-m0-re.md section 2 + Docs/TAUNT-DESIGN.md 1.3 before that). The standard
 // selector's score is: a recent-hit memory (+1000 / +100, 2 s), stickiness (+100 for the current target), the
 // same weapon-class state as the attacker (+100), proximity (up to +1000), an attacker-count term whose global
-// is 0, reach / combat-area penalties, and -500 for a dead or downed candidate. No actor value, no perk entry
+// is 0, reach / combat-area penalties, -500 for a dead or essential-down candidate and -500 for a fleeing one. No actor value, no perk entry
 // point and no keyword feeds it. The only vanilla input is DETECTION (admission), which is ch.14 / MFO G2's road
 // and hides the claimant from everything, which is not this card.
 //
@@ -67,6 +67,33 @@ extern "C" __declspec(dllimport) unsigned long __stdcall GetPrivateProfileIntA(
 // Outside a second pass X and F call straight through. Nothing is written to the group, the selector or any
 // actor; the selector caches whatever FindBest answered, as it always does.
 //
+// THE FITNESS TEST (review H2-1 of 0a052e1; default taken, MFO open question 101). In the scorer a candidate
+// the attacker cannot reach, cannot path to, that is dead / essential-down, or that is fleeing is PENALISED
+// (-2000 / -2500 / -500 / -500), not skipped, so the second pass's best can be exactly such a target and the
+// foe would idle, leave its healer for a body on the floor, or run after somebody who is running away. The second pass's answer therefore stands only when it passes the
+// SCORER'S OWN four tests, asked by calling the same engine functions with the same arguments FindBest uses
+// (Harbinger still computes no score and ranks nobody):
+//     reach   bool InCombatArea(CombatController* rcx, const Loc* rdx, float radius xmm2)   false = -2000
+//             AE id 33261 0x55B310 / SE id 32512 0x4FFA60 / 1.7.104 0x563180
+//             radius = [[controller+0x10]+0x1B8] (every build); asked only when radius < 1024 (the scorer's
+//             own RIP constant, read from its `comiss`) or the candidate is in a different space
+//     path    bool CrossSpaceReach(Actor* attacker rcx, const Loc* rdx)                      false = -2500
+//             AE id 47307 0x853F10 / SE id 46043 0x7BCCD0 / 1.7.104 0x868F80; different space only
+//     dead    the candidate's own vfunc at +0x4C8 with edx = 0 (Actor slot 0x99, every build)  true = -500
+//             Character's body (AE 0x674ED0, read): life state dead, dying, essential down or recycle
+//     fleeing bool IsFleeing(Actor* rcx)                                                      true = -500
+//             AE id 37577 0x67EFE0 / SE id 36575 0x5ECB70 / 1.7.104 0x691AA0. Read: with a live, active
+//             controller its CombatState::isFleeing, else the process's MiddleHighProcessData::isFleeing.
+//             (The H2 round called this test "downed" by inference; the body says fleeing. Essential-down is
+//             covered by the dead test above. A bleeding-out, non-essential-down actor passes both.)
+//     Loc     Loc* RefLocation(TESObjectREFR* rcx, Loc* out rdx) (a BGSWorldLocation): position at +0x00, worldspace-or-cell at
+//             +0x10; `different space` = the attacker's and the candidate's +0x10 differ
+//             AE id 19784 0x2EA5E0 / SE id 19357 0x2964A0 / 1.7.104 0x2F0B70
+// Each function is a VerifiedAddresses row AND the proven E8 target of its penalty site inside FindBest, and
+// the radius load, the 1024 compare and the dead vcall are byte windows re-read at Install (FitSpec below).
+// An answer that fails any test, or that cannot be tested, is not answered: the engine's FIRST answer (the
+// claimant) stands and the pass is logged and counted as kept (`kept-unfit`). Nothing else is tried.
+//
 // THE DRAW (principle 9: sized from the engine's cadence, not from a guess). The selector re-scores every
 // fCombatSelectTargetUpdateTime (1 s) and 3 s after a switch. A draw per re-score would make the share of time
 // a function of that cadence ((1-w)/(1+2w) with the vanilla values), so the draw is made per {foe, claimant}
@@ -84,14 +111,18 @@ extern "C" __declspec(dllimport) unsigned long __stdcall GetPrivateProfileIntA(
 // builds. NOT covered, each listed in DENY-COMPLETENESS-AUDIT row 32: the Fixed selector; a ch.20 pin of any
 // client on the foe; another DLL's write of the foe's target after the selector (a later UpdateCombat hook);
 // a script StartCombat / the first target of a new fight until the next re-score; the cached pick (up to 3 s);
-// the claimant as the ONLY scored candidate; area effects and attacks aimed at somebody else.
+// the claimant as the ONLY scored candidate; a next best target that fails the scorer's own reach / path /
+// dead / fleeing test (the claimant is kept); area effects and attacks aimed at somebody else.
 //
 // THREADING. FindBest runs inside Actor::UpdateCombat, a BSJobs worker job, several actors in parallel (MFO
 // ENGINE_NOTES 0.47). The thunks read: the claimant table under a shared_mutex leaf (written on the game
 // thread at Engage / Release), the ControlMap's RCU snapshot, the source registry (lock-free), a thread_local
 // pass record, and atomics. They resolve no form and dereference only what the engine handed them (the
 // selector's controller, as FindBest itself just did, and on 1.6.1170 / 1.7.104 the candidate the engine
-// passes to its own validity gate). Nothing unwinds into the engine: a throw keeps the engine's first answer.
+// passes to its own validity gate). The fitness test resolves two reference HANDLES, the attacker's and the
+// second pass's answer, exactly the two kinds FindBest resolved a moment earlier in this same call, holds
+// them by NiPointer for the test, and hands them to the functions FindBest handed them to.
+// Nothing unwinds into the engine: a throw keeps the engine's first answer.
 // ============================================================================
 
 namespace apmf::aversion {
@@ -103,6 +134,22 @@ namespace apmf::aversion {
         using FindBest_t = std::uint32_t* (*)(void* a_selector, std::uint32_t* a_out);
         using IsValid_t  = bool (*)(void* a_selector, RE::Actor* a_attacker, RE::Actor* a_candidate, void* a_zone);
         using Lookup_t   = bool (*)(const std::uint32_t* a_handle, void** a_outSmartPtr);
+        // The fitness test's functions (the scorer's own penalty tests; header comment "THE FITNESS TEST").
+        struct Loc {                 // what RefLocation writes: 0x18 bytes on every build
+            float pos[3];            // 00
+            std::uint32_t pad0C;     // 0C
+            void* space;             // 10  worldspace, else the cell
+        };
+        static_assert(sizeof(Loc) == 0x18 && offsetof(Loc, space) == 0x10);
+        using RefLoc_t = Loc* (*)(RE::TESObjectREFR* a_ref, Loc* a_out);
+        using InArea_t = bool (*)(RE::CombatController* a_controller, const Loc* a_loc, float a_radius);   // radius in xmm2
+        using Cross_t  = bool (*)(RE::Actor* a_attacker, const Loc* a_loc);
+        using Fleeing_t = bool (*)(RE::Actor* a_actor);
+        using IsDead_t = bool (*)(RE::Actor* a_actor, bool a_notEssential);
+        constexpr std::size_t    kIsDeadVtblOff     = 0x4C8;   // `call [rax+0x4C8]` on every build (FitSpec::dead)
+        constexpr std::uintptr_t kControllerInv     = 0x10;    // `mov rdx,[rcx+0x10]` (FitSpec::radius)
+        constexpr std::uintptr_t kInventoryRadius   = 0x1B8;   // `movss xmm,[rdx+0x1B8]`
+        static_assert(offsetof(RE::CombatController, inventory) == kControllerInv, "CombatController::inventory moved");
 
         // The selector's controller and the controller's attacker handle, as FindBest reads them
         // (`mov rax,[rcx+0x10]` at +0x60 and `mov eax,[rax+0x28]` on every build).
@@ -123,6 +170,19 @@ namespace apmf::aversion {
             const std::uint8_t* tailBytes; // the bytes right after the 5-byte call
             std::size_t         tailLen;
         };
+        struct Win {
+            std::size_t         off;   // inside FindBest
+            const std::uint8_t* bytes;
+            std::size_t         len;
+        };
+        // The scorer's penalty sites (review H2-1): each E8's target is the function the fitness test calls.
+        struct FitSpec {
+            Fn   refLoc, inArea, cross, fleeing;
+            Site refLocSite, inAreaSite, crossSite, fleeingSite;
+            Win  radius;   // mov rcx,[selector+0x10]; mov rdx,[rcx+0x10]; movss xmmN,[rdx+0x1B8]
+            Win  limit;    // comiss xmmN,[rip+disp32] (4 opcode bytes; the disp32 follows, then `jb +5`)
+            Win  dead;     // mov rax,[rbx]; xor edx,edx; mov rcx,rbx; call [rax+0x4C8]; test al,al; je +8
+        };
         struct RtSpec {
             const char* name;
             Fn          slot6, findBest, isValid /* id 0 and rva 0 = inlined on this build */, lookup;
@@ -130,6 +190,7 @@ namespace apmf::aversion {
             std::size_t         gateOff;   // FindBest: `cmp dword [out],0; jne` right before the fallback list
             const std::uint8_t* gateBytes;
             bool        xIsLookup;         // true: X is the scored path's handle lookup (1.5.97)
+            FitSpec     fit;
         };
 
         constexpr std::uint8_t kC0Lead[]   = { 0x48, 0x8D, 0x54, 0x24, 0x50, 0x48, 0x8B, 0xCF };            // lea rdx,[rsp+50]; mov rcx,rdi
@@ -145,6 +206,38 @@ namespace apmf::aversion {
         constexpr std::uint8_t kGateAE[]   = { 0x83, 0x3E, 0x00, 0x0F, 0x85 };                              // cmp dword [rsi],0; jne
         constexpr std::uint8_t kGateSE[]   = { 0x83, 0x3B, 0x00, 0x0F, 0x85 };                              // cmp dword [rbx],0; jne
         constexpr std::size_t  kGateLen    = 5;
+        // The fitness test's windows (bytes dumped from the three executables 2026-11-11; 1.6.1170 and 1.7.104
+        // are identical apart from rel32 / RIP displacements, 1.5.97 keeps the attacker in rsi and the radius
+        // in xmm10 and has its own offsets).
+        constexpr std::uint8_t kLocLead[]     = { 0x48, 0x8D, 0x55, 0x90, 0x48, 0x8B, 0xCB };                // lea rdx,[rbp-70]; mov rcx,rbx
+        constexpr std::uint8_t kLocTailAE[]   = { 0x48, 0x8B, 0x4D, 0xA0, 0x48, 0x3B, 0x4D, 0xE0 };          // mov rcx,[rbp-60]; cmp rcx,[rbp-20]
+        constexpr std::uint8_t kLocTailSE[]   = { 0x48, 0x8B, 0x45, 0x20, 0x48, 0x39, 0x45, 0xA0 };          // mov rax,[rbp+20]; cmp [rbp-60],rax
+        constexpr std::uint8_t kAreaLeadAE[]  = { 0x41, 0x0F, 0x28, 0xD1, 0x48, 0x8D, 0x55, 0x90, 0x48, 0x8B, 0x85, 0xC0, 0x04, 0x00, 0x00,
+                                                  0x48, 0x8B, 0x48, 0x10 };   // movaps xmm2,xmm9; lea rdx,[rbp-70]; mov rax,[rbp+4C0]; mov rcx,[rax+10]
+        constexpr std::uint8_t kAreaLeadSE[]  = { 0x41, 0x0F, 0x28, 0xD2, 0x48, 0x8D, 0x55, 0x90, 0x48, 0x8B, 0x85, 0x00, 0x05, 0x00, 0x00,
+                                                  0x48, 0x8B, 0x48, 0x10 };   // movaps xmm2,xmm10; lea rdx,[rbp-70]; mov rax,[rbp+500]; mov rcx,[rax+10]
+        constexpr std::uint8_t kPenTail[]     = { 0x84, 0xC0, 0x75, 0x08 };                                  // test al,al; jne +8
+        constexpr std::uint8_t kCrossLeadAE[] = { 0x48, 0x8D, 0x55, 0x90, 0x49, 0x8B, 0xCE };                // lea rdx,[rbp-70]; mov rcx,r14
+        constexpr std::uint8_t kCrossLeadSE[] = { 0x48, 0x8D, 0x55, 0x90, 0x48, 0x8B, 0xCE };                // lea rdx,[rbp-70]; mov rcx,rsi
+        constexpr std::uint8_t kFleeLead[]    = { 0x48, 0x8B, 0xCB };                                        // mov rcx,rbx
+        constexpr std::uint8_t kFleeTailAE[]  = { 0x48, 0x8B, 0xB5, 0xC8, 0x04, 0x00, 0x00, 0x84, 0xC0, 0x74, 0x08 };   // mov rsi,[rbp+4C8]; test al,al; je +8
+        constexpr std::uint8_t kFleeTailSE[]  = { 0x41, 0x83, 0xCE, 0xFF, 0x84, 0xC0, 0x74, 0x08 };          // or r14d,-1; test al,al; je +8
+        constexpr std::uint8_t kRadiusAE[]    = { 0x48, 0x8B, 0x4B, 0x10, 0x48, 0x8B, 0x51, 0x10, 0xF3, 0x44, 0x0F, 0x10, 0x8A, 0xB8, 0x01, 0x00, 0x00 };
+        constexpr std::uint8_t kRadiusSE[]    = { 0x49, 0x8B, 0x4E, 0x10, 0x48, 0x8B, 0x51, 0x10, 0xF3, 0x44, 0x0F, 0x10, 0x92, 0xB8, 0x01, 0x00, 0x00 };
+        constexpr std::uint8_t kLimitAE[]     = { 0x44, 0x0F, 0x2F, 0x0D };                                  // comiss xmm9,[rip+disp32]
+        constexpr std::uint8_t kLimitSE[]     = { 0x44, 0x0F, 0x2F, 0x15 };                                  // comiss xmm10,[rip+disp32]
+        constexpr std::uint8_t kLimitTail[]   = { 0x72, 0x05 };                                              // jb +5 (radius < limit: ask the area)
+        constexpr std::uint8_t kDeadCall[]    = { 0x48, 0x8B, 0x03, 0x33, 0xD2, 0x48, 0x8B, 0xCB, 0xFF, 0x90, 0xC8, 0x04, 0x00, 0x00,
+                                                  0x84, 0xC0, 0x74, 0x08 };   // mov rax,[rbx]; xor edx,edx; mov rcx,rbx; call [rax+4C8]; test al,al; je +8
+        constexpr float        kAreaLimitWant = 1024.0f;   // the value behind the scorer's RIP constant on the three builds
+
+#define APMF_AV_FIT_AE(LOC, AREA, CROSS, FLEE)                                                                              \
+        { LOC, AREA, CROSS, FLEE,                                                                                           \
+          { 0x357, kLocLead, sizeof(kLocLead), kLocTailAE, sizeof(kLocTailAE) },                                            \
+          { 0x3DC, kAreaLeadAE, sizeof(kAreaLeadAE), kPenTail, sizeof(kPenTail) },                                          \
+          { 0x405, kCrossLeadAE, sizeof(kCrossLeadAE), kPenTail, sizeof(kPenTail) },                                        \
+          { 0x437, kFleeLead, sizeof(kFleeLead), kFleeTailAE, sizeof(kFleeTailAE) },                                        \
+          { 0x12A, kRadiusAE, sizeof(kRadiusAE) }, { 0x3CD, kLimitAE, sizeof(kLimitAE) }, { 0x41D, kDeadCall, sizeof(kDeadCall) } }
 
         constexpr RtSpec kAE{
             "1.6.1170",
@@ -153,7 +246,9 @@ namespace apmf::aversion {
             { 0x60, kC0Lead, sizeof(kC0Lead), kC0Tail, sizeof(kC0Tail) },
             { 0x29F, kXLeadAE, sizeof(kXLeadAE), kXTailAE, sizeof(kXTailAE) },
             { 0x524, kFLeadAE, sizeof(kFLeadAE), kFTailAE, sizeof(kFTailAE) },
-            0x4C4, kGateAE, false };
+            0x4C4, kGateAE, false,
+            APMF_AV_FIT_AE((Fn{ "Aversion.RefLocation", 19784, 0 }), (Fn{ "Aversion.InCombatArea", 33261, 0 }),
+                           (Fn{ "Aversion.CrossSpaceReach", 47307, 0 }), (Fn{ "Aversion.IsFleeing", 37577, 0 })) };
         constexpr RtSpec kSE{
             "1.5.97",
             { "Aversion.SelectTarget.Standard", 45918, 0 }, { "Aversion.FindBest", 45922, 0 },
@@ -161,7 +256,14 @@ namespace apmf::aversion {
             { 0x60, kC0Lead, sizeof(kC0Lead), kC0Tail, sizeof(kC0Tail) },
             { 0x2BF, kXLeadSE, sizeof(kXLeadSE), kXTailSE, sizeof(kXTailSE) },
             { 0x5E5, kFLeadSE, sizeof(kFLeadSE), kFTailSE, sizeof(kFTailSE) },
-            0x53B, kGateSE, true };
+            0x53B, kGateSE, true,
+            { { "Aversion.RefLocation", 19357, 0 }, { "Aversion.InCombatArea", 32512, 0 },
+              { "Aversion.CrossSpaceReach", 46043, 0 }, { "Aversion.IsFleeing", 36575, 0 },
+              { 0x3C2, kLocLead, sizeof(kLocLead), kLocTailSE, sizeof(kLocTailSE) },
+              { 0x452, kAreaLeadSE, sizeof(kAreaLeadSE), kPenTail, sizeof(kPenTail) },
+              { 0x47B, kCrossLeadSE, sizeof(kCrossLeadSE), kPenTail, sizeof(kPenTail) },
+              { 0x4AD, kFleeLead, sizeof(kFleeLead), kFleeTailSE, sizeof(kFleeTailSE) },
+              { 0x15C, kRadiusSE, sizeof(kRadiusSE) }, { 0x443, kLimitSE, sizeof(kLimitSE) }, { 0x493, kDeadCall, sizeof(kDeadCall) } } };
         // 1.7.104: raw RVAs (none of the four AE ids has an MIT-table row); offsets and bytes are the 1.6.1170
         // ones, re-read on the 1.7.104 executable (same windows at the same offsets).
         constexpr RtSpec k17{
@@ -171,7 +273,10 @@ namespace apmf::aversion {
             { 0x60, kC0Lead, sizeof(kC0Lead), kC0Tail, sizeof(kC0Tail) },
             { 0x29F, kXLeadAE, sizeof(kXLeadAE), kXTailAE, sizeof(kXTailAE) },
             { 0x524, kFLeadAE, sizeof(kFLeadAE), kFTailAE, sizeof(kFTailAE) },
-            0x4C4, kGateAE, false };
+            0x4C4, kGateAE, false,
+            APMF_AV_FIT_AE((Fn{ "Aversion.RefLocation", 0, 0x2F0B70 }), (Fn{ "Aversion.InCombatArea", 0, 0x563180 }),
+                           (Fn{ "Aversion.CrossSpaceReach", 0, 0x868F80 }), (Fn{ "Aversion.IsFleeing", 0, 0x691AA0 })) };
+#undef APMF_AV_FIT_AE
 
         // ---- state ---------------------------------------------------------------------------------------------
         std::atomic<bool>        g_installed{ false };
@@ -180,6 +285,11 @@ namespace apmf::aversion {
         FindBest_t g_findBest = nullptr;
         IsValid_t  g_isValid  = nullptr;
         Lookup_t   g_lookup   = nullptr;
+        RefLoc_t   g_refLoc   = nullptr;   // the fitness test's four functions and the scorer's own area limit
+        InArea_t   g_inArea   = nullptr;
+        Cross_t    g_cross    = nullptr;
+        Fleeing_t   g_fleeing   = nullptr;
+        const float* g_areaLimit = nullptr;
         std::uint64_t g_seed  = 0;
 
         // The claimants: reference handle -> FormID. Written on the game thread, read by the seats.
@@ -192,6 +302,7 @@ namespace apmf::aversion {
         std::atomic<std::uint64_t> g_averted{ 0 };      // ... and another valid target was answered instead
         std::atomic<std::uint64_t> g_keptDraw{ 0 };     // ... and the draw kept it (1 - weight)
         std::atomic<std::uint64_t> g_keptOnly{ 0 };     // ... averted by the draw, but no other valid target
+        std::atomic<std::uint64_t> g_keptUnfit{ 0 };    // ... the next best target failed the scorer's own reach / path / dead / fleeing test
         std::atomic<std::uint64_t> g_keptRank{ 0 };     // ... the claim does not outrank Engine on the Target facet
         std::atomic<std::uint64_t> g_badWeight{ 0 };    // ... the winning claim's weight is not in (0, 1)
         std::atomic<std::uint64_t> g_errors{ 0 };
@@ -289,6 +400,36 @@ namespace apmf::aversion {
             return p ? p->GetFormID() : 0;
         }
 
+        // THE FITNESS TEST (header comment). nullptr = the second pass's answer passes the scorer's own four tests;
+        // otherwise which one it failed. Calls only the functions FindBest calls, with FindBest's arguments.
+        const char* UnfitReason(RE::CombatController* a_cc, std::uint32_t a_alt, RE::FormID& a_altId) {
+            if (!a_cc) return "the selector has no controller (not testable)";
+            RE::ActorHandle ah{};
+            std::memcpy(&ah, &a_alt, sizeof(a_alt));   // the 4-byte handle value the scorer answered
+            const RE::NiPointer<RE::Actor> cand     = ah.get();
+            const RE::NiPointer<RE::Actor> attacker = a_cc->attackerHandle.get();
+            if (!cand) return "its handle no longer resolves (not testable)";
+            a_altId = cand->GetFormID();
+            if (!attacker) return "the foe's own handle no longer resolves (not testable)";
+            const auto inv = *reinterpret_cast<const std::uintptr_t*>(reinterpret_cast<std::uintptr_t>(a_cc) + kControllerInv);
+            if (!inv) return "the foe's controller has no inventory record (not testable)";
+            const float radius = *reinterpret_cast<const float*>(inv + kInventoryRadius);
+            Loc la{}, lc{};
+            g_refLoc(attacker.get(), &la);
+            g_refLoc(cand.get(), &lc);
+            const bool otherSpace = la.space != lc.space;
+            // `comiss radius,limit; jb <ask>`: asked when radius < limit (an unordered compare asks too), or in another space.
+            if (!(radius >= *g_areaLimit) || otherSpace) {
+                if (!g_inArea(a_cc, &lc, radius)) return "it is outside the foe's combat area (the scorer's reach test)";
+                if (otherSpace && !g_cross(attacker.get(), &lc))
+                    return "it is in another cell or worldspace the foe cannot path to (the scorer's path test)";
+            }
+            const auto isDead = *reinterpret_cast<const IsDead_t*>(*reinterpret_cast<const std::uintptr_t*>(cand.get()) + kIsDeadVtblOff);
+            if (isDead(cand.get(), false)) return "it is dead or essential-down (the scorer's dead test)";
+            if (g_fleeing(cand.get())) return "it is fleeing (the scorer's fleeing test)";
+            return nullptr;
+        }
+
         // C0's body after the engine's own answer `a_first` (non-zero). Returns the handle to answer with.
         std::uint32_t Shape(void* a_selector, std::uint32_t a_first) {
             Claim c;
@@ -348,6 +489,19 @@ namespace apmf::aversion {
                                  apmf::log::Hex(FoeId(a_selector)), apmf::log::Hex(c.id), c.weight, c.handle);
                 return a_first;
             }
+            // Review H2-1: the scorer PENALISES an unreachable, unpathable, dead or fleeing candidate, it does not skip
+            // it, so the second pass's best can be one. It is answered only when it passes the scorer's own tests.
+            RE::FormID altId = 0;
+            if (const char* unfit = UnfitReason(cc, pick, altId)) {
+                g_keptUnfit.fetch_add(1, std::memory_order_relaxed);
+                if (LineDue(foe, a_first, 5))
+                    spdlog::info("[ch.32] aversion: foe 0x{} selected 0x{} (weight {:.2f}, h={}), averted by the draw, but the "
+                                 "engine's next best target 0x{} is not answered: {} -- the pick STANDS (KEPT, the claimant is "
+                                 "the only target the foe can act on).",
+                                 apmf::log::Hex(FoeId(a_selector)), apmf::log::Hex(c.id), c.weight, c.handle,
+                                 apmf::log::Hex(altId), unfit);
+                return a_first;
+            }
             // The engine's pick is the Engine source on the Target facet: ranked, like every enforcing seat.
             const auto v = apmf::facetattr::Decide(apmf::sources::Facet::kTarget, c.handle, apmf::sources::kEngineSource,
                                                    c.id, "");
@@ -363,12 +517,10 @@ namespace apmf::aversion {
             g_averted.fetch_add(1, std::memory_order_relaxed);
             apmf::sources::NoteServedClaim(c.handle, apmf::sources::Facet::kTarget);
             if (LineDue(foe, a_first, 3)) {
-                RE::FormID other = 0;
-                RE::ActorHandle ph{};
-                std::memcpy(&ph, &pick, sizeof(pick));   // the 4-byte handle value the scorer answered
-                if (const auto p = ph.get()) other = p->GetFormID();
+                const RE::FormID other = altId;   // resolved by the fitness test
                 spdlog::info("[ch.32] aversion: foe 0x{} selected 0x{} (weight {:.2f}, h={}) -- AVERTED for this {} s window: "
-                             "the engine's next best valid target 0x{} is answered instead.",
+                             "the engine's next best valid target 0x{} (inside the foe's reach and path, alive and not fleeing by the "
+                             "scorer's own tests) is answered instead.",
                              apmf::log::Hex(FoeId(a_selector)), apmf::log::Hex(c.id), c.weight, c.handle, kWindowMs / 1000,
                              apmf::log::Hex(other));
             }
@@ -446,6 +598,8 @@ namespace apmf::aversion {
                                                                    : &kAE;
         }
         std::uintptr_t slot6 = 0, findBest = 0, isValid = 0, lookup = 0, c0 = 0, x = 0, f = 0;
+        std::uintptr_t refLoc = 0, inArea = 0, cross = 0, fleeing = 0;
+        const float*   areaLimit = nullptr;
         if (!why) {
             slot6    = Resolve(rt->slot6);
             findBest = Resolve(rt->findBest);
@@ -457,6 +611,15 @@ namespace apmf::aversion {
                 isValid = Resolve(rt->isValid);
                 ok      = apmf::allowance::SeatVerified(isValid, rt->isValid.row) && ok;
             }
+            // The fitness test's four functions (review H2-1): rows too, and below the scorer's own E8 targets.
+            refLoc = Resolve(rt->fit.refLoc);
+            inArea = Resolve(rt->fit.inArea);
+            cross  = Resolve(rt->fit.cross);
+            fleeing = Resolve(rt->fit.fleeing);
+            ok     = apmf::allowance::SeatVerified(refLoc, rt->fit.refLoc.row) && ok;
+            ok     = apmf::allowance::SeatVerified(inArea, rt->fit.inArea.row) && ok;
+            ok     = apmf::allowance::SeatVerified(cross, rt->fit.cross.row) && ok;
+            ok     = apmf::allowance::SeatVerified(fleeing, rt->fit.fleeing.row) && ok;
             if (!ok) why = "the address self-check refused a row (listed above)";
         }
         if (!why) {
@@ -471,6 +634,30 @@ namespace apmf::aversion {
             else if (std::memcmp(reinterpret_cast<const void*>(findBest + rt->gateOff), rt->gateBytes, kGateLen) != 0)
                 why = "the scorer's `no scored pick` test before its fallback list is not the verified one (a different build)";
         }
+        if (!why) {
+            // The fitness test (review H2-1): the scorer's penalty sites must call exactly the four row-verified
+            // functions, load the radius from [[controller+0x10]+0x1B8], compare it with a RIP constant that reads
+            // 1024 and ask the candidate's vfunc at +0x4C8 with edx = 0. Nothing is patched here: read-only proof.
+            const auto win = [&](const Win& a_w) {
+                return std::memcmp(reinterpret_cast<const void*>(findBest + a_w.off), a_w.bytes, a_w.len) == 0;
+            };
+            const FitSpec& ft = rt->fit;
+            if (!ProveSite(findBest, ft.refLocSite, refLoc) || !ProveSite(findBest, ft.inAreaSite, inArea) ||
+                !ProveSite(findBest, ft.crossSite, cross) || !ProveSite(findBest, ft.fleeingSite, fleeing))
+                why = "a penalty site of the scorer (location / reach / path / fleeing) does not call the verified function (another patcher, or a different build)";
+            else if (!win(ft.radius) || !win(ft.dead))
+                why = "the scorer's radius load or its dead test is not the verified one (a different build)";
+            else if (!win(ft.limit) ||
+                     std::memcmp(reinterpret_cast<const void*>(findBest + ft.limit.off + ft.limit.len + 4), kLimitTail, sizeof(kLimitTail)) != 0)
+                why = "the scorer's reach-limit compare is not the verified one (a different build)";
+            else {
+                std::int32_t disp = 0;
+                std::memcpy(&disp, reinterpret_cast<const void*>(findBest + ft.limit.off + ft.limit.len), sizeof(disp));
+                areaLimit = reinterpret_cast<const float*>(findBest + ft.limit.off + ft.limit.len + 4 + static_cast<std::intptr_t>(disp));
+                if (*areaLimit != kAreaLimitWant)
+                    why = "the scorer's reach limit does not read 1024 (a different build, or another patcher's data write)";
+            }
+        }
         if (why) {
             g_whyNot.store(why, std::memory_order_release);
             spdlog::warn("[ch.32] aversion seats NOT installed -- {}. Every kIntent_Aversion claim is refused; the engine "
@@ -481,6 +668,11 @@ namespace apmf::aversion {
         g_findBest = reinterpret_cast<FindBest_t>(findBest);
         g_isValid  = reinterpret_cast<IsValid_t>(isValid);
         g_lookup   = reinterpret_cast<Lookup_t>(lookup);
+        g_refLoc   = reinterpret_cast<RefLoc_t>(refLoc);
+        g_inArea   = reinterpret_cast<InArea_t>(inArea);
+        g_cross    = reinterpret_cast<Cross_t>(cross);
+        g_fleeing   = reinterpret_cast<Fleeing_t>(fleeing);
+        g_areaLimit = areaLimit;
         {
             std::random_device rd;
             g_seed = (static_cast<std::uint64_t>(rd()) << 32) ^ rd() ^ apmf::clock::MonotonicMs();
@@ -514,8 +706,9 @@ namespace apmf::aversion {
         spdlog::info("[ch.32] aversion seats installed on {} (kIntent_Aversion, ABI v41): the standard selector's scorer call "
                      "(RVA 0x{:X}), the scorer's {} (RVA 0x{:X}) and its fallback lookup (RVA 0x{:X}). When a foe's selection "
                      "lands on a claimant whose draw says averted ({} s windows, probability = the claim's weight), the engine's "
-                     "own scorer picks again without it; with no other valid target the pick stands. Nothing is written to the "
-                     "group or the selector.",
+                     "own scorer picks again without it; that second answer stands only when it passes the scorer's own reach, "
+                     "path, dead and fleeing tests (its four penalty functions, proven at their call sites); with no other "
+                     "valid target the pick stands. Nothing is written to the group or the selector.",
                      rt->name, c0 - base, rt->xIsLookup ? "scored-path handle lookup" : "validity gate", x - base, f - base,
                      kWindowMs / 1000);
     }
@@ -583,9 +776,10 @@ namespace apmf::aversion {
         g_lastBeatMs.store(now, std::memory_order_relaxed);   // game-thread-only writer
         g_beatSeen.store(landed, std::memory_order_relaxed);
         spdlog::info("[ch.32] aversion H (scoring passes that picked a claimant, session totals): landed={} averted={} "
-                     "kept-by-draw={} kept-no-other-target={} kept-engine-outranks={} bad-weight={} errors={} claimants={}",
+                     "kept-by-draw={} kept-no-other-target={} kept-unfit={} kept-engine-outranks={} bad-weight={} errors={} claimants={}",
                      landed, g_averted.load(std::memory_order_relaxed), g_keptDraw.load(std::memory_order_relaxed),
-                     g_keptOnly.load(std::memory_order_relaxed), g_keptRank.load(std::memory_order_relaxed),
+                     g_keptOnly.load(std::memory_order_relaxed), g_keptUnfit.load(std::memory_order_relaxed),
+                     g_keptRank.load(std::memory_order_relaxed),
                      g_badWeight.load(std::memory_order_relaxed), g_errors.load(std::memory_order_relaxed),
                      g_count.load(std::memory_order_relaxed));
     }

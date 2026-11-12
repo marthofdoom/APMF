@@ -12,7 +12,8 @@ namespace apmf::aversion {
 
     // Prove and install the three call-site seats (kDataLoaded, GAME THREAD, once). Refuses by name on VR, on a
     // runtime other than exactly 1.6.1170 / 1.5.97 / 1.7.104, on [Aversion] bAversion=0, on a failed address row
-    // or byte window. All three seats install or none does.
+    // or byte window (the three seat sites, and the scorer's seven penalty sites whose functions the fitness test
+    // of the second pass's answer calls: review H2-1). All three seats install or none does.
     void Install();
     bool        Installed();             // any thread
     const char* NotInstalledReason();    // never null; any thread
