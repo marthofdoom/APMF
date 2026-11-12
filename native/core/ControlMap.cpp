@@ -2570,6 +2570,7 @@ namespace apmf {
             out.targetHandle = best->castTargetHandle;
             out.flags        = best->castFlags;
             out.expiresMs    = best->expiresMs;
+            out.handle       = best->handle;
             return true;
         }
         return false;   // controlled, but not on the cast channel

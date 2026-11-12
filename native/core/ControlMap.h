@@ -92,6 +92,7 @@ namespace apmf {
         RE::ActorHandle targetHandle{};   // resolved once on the writer thread; invalid if unresolved
         std::uint32_t   flags      = 0;   // APMF_API::kCastFlag_* (hand hint, concentration, stop-pct)
         std::uint64_t   expiresMs  = 0;   // monotonic-ms hard cap; 0 == none (never for a real cast claim)
+        APMF_API::Handle handle    = APMF_API::kInvalidHandle;   // the claim's handle; set only by TryGetCastSeatClaimForForm
     };
 
     // feat/per-hand-cast-claims (2026-09-06): which hand a T2 gate has resolved

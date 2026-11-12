@@ -2,6 +2,8 @@
 #include "core/CastLeafNature.h"
 #include "core/Allowance.h"   // SeatVerified(), RuntimeSupported(), IsRuntime1_7_104()
 #include "core/Clock.h"
+#include "core/ControlMap.h"   // TryGetCastSeatClaimForForm (Q91 own-claim pass)
+#include "core/Sources.h"      // ClientForHandle (same-client test)
 #include "core/Log.h"
 
 #include <array>
@@ -271,11 +273,13 @@ namespace apmf::castleafnature {
         //     a "Self" spell can burn everything around the caster (the Self Script-only exemption this
         //     replaces passed exactly those);
         //   - Stagger, Absorb, Disarm, SpawnHazard, Telekinesis, Banish, SoulTrap, GrabActor, Concussion,
-        //     SpawnScriptedRef, CommandSummoned, Dispel, Lock, Open, Darkness, NightEye, ValueAndParts,
+        //     SpawnScriptedRef, CommandSummoned, Lock, Open, Darkness, ValueAndParts,
         //     WerewolfFeed, Werewolf, VampireLord, Disguise and any id this list does not name: undeclared.
+        // Q92 (marth 2026-11-12): NightEye is on the list always; Dispel only when the spell is delivered to Self
+        // (a_selfDelivered, the spell's own GetDelivery()). A Dispel aimed at anything else stays undeclared.
         // Summon and Reanimate are on the list by ruling (marth 2026-11-11: summons are NOT offense).
         // Archetype ids: RE/E/EffectArchetypes.h (the fork at the registry baseline).
-        bool BenignArchetype(RE::EffectArchetypes::ArchetypeID a_arch) {
+        bool BenignArchetype(RE::EffectArchetypes::ArchetypeID a_arch, bool a_selfDelivered) {
             using Arch = RE::EffectArchetypes::ArchetypeID;
             switch (a_arch) {
             case Arch::kValueModifier:         // without Detrimental / Hostile (HostileEffect ran first)
@@ -295,9 +299,12 @@ namespace apmf::castleafnature {
             case Arch::kDetectLife:
             case Arch::kGuide:
             case Arch::kEnhanceWeapon:
+            case Arch::kNightEye:
             case Arch::kSummonCreature:
             case Arch::kReanimate:
                 return true;
+            case Arch::kDispel:
+                return a_selfDelivered;   // Q92: only when delivered to Self
             default:
                 return false;
             }
@@ -312,6 +319,7 @@ namespace apmf::castleafnature {
             using Arch = RE::EffectArchetypes::ArchetypeID;
             std::size_t seen = 0;
             bool        undeclared = false;
+            const bool  selfDelivered = a_mi->GetDelivery() == RE::MagicSystem::Delivery::kSelf;
             for (auto* eff : a_mi->effects) {
                 auto* be = eff ? eff->baseEffect : nullptr;
                 if (!be) {
@@ -331,7 +339,7 @@ namespace apmf::castleafnature {
                     const Nature n = NatureOf(inner, true);
                     if (n == Nature::kHostile) return Nature::kHostile;
                     if (n == Nature::kUndeclared) undeclared = true;
-                } else if (!BenignArchetype(arch)) {
+                } else if (!BenignArchetype(arch, selfDelivered)) {
                     undeclared = true;
                 }
             }
@@ -371,6 +379,17 @@ namespace apmf::castleafnature {
         const char* NameOf(const RE::TESForm* a_form) {
             const char* n = a_form ? a_form->GetName() : nullptr;
             return n && *n ? n : "?";
+        }
+
+        // Q91: true when the client that filed the deny claim `a_denyClaim` also holds a live kIntent_Cast claim
+        // driving `a_form` on `a_actor`. An unattributed handle (kNoSource) never matches.
+        bool OwnClaimHolds(RE::FormID a_actor, RE::FormID a_form, APMF_API::Handle a_denyClaim) {
+            if (!a_form) return false;
+            apmf::CastSeatClaim cl{};
+            if (!apmf::ControlMap::Get().TryGetCastSeatClaimForForm(a_actor, a_form, cl)) return false;
+            const auto denyClient = apmf::sources::ClientForHandle(a_denyClaim);
+            if (denyClient == apmf::sources::kNoSource) return false;
+            return apmf::sources::ClientForHandle(cl.handle) == denyClient;
         }
 
         bool Decide(LeafKind a_kind, void* a_thread, RE::FormID a_actor, APMF_API::Handle a_claim) {
@@ -428,6 +447,20 @@ namespace apmf::castleafnature {
                                  apmf::log::Hex(a_actor), NameOf(form), apmf::log::Hex(fid), a_claim);
                 return true;
             case Nature::kUndeclared:
+                // Q91 (marth 2026-11-12): a spell the SAME client holds a live cast claim for, on this actor, is
+                // declared by that client and passes that client's own Offense-only deny. Not another client's
+                // deny (the owners differ), not a full deny (this function only runs for an Offense-only one),
+                // not a hostile record (that case never gets here). Lock-free claim read; the client lookup is
+                // the shared leaf lock ClaimOutranksTree already takes on this thread.
+                if (OwnClaimHolds(a_actor, fid, a_claim)) {
+                    g_passed.fetch_add(1, std::memory_order_relaxed);
+                    if (LineDue(a_actor, fid, 1))
+                        spdlog::info("[ch.7] hostile-offense: 0x{} casts '{}' (0x{}), nature undeclared but passed own "
+                                     "Offense-only deny: client {} holds cast claim for spell 0x{} (deny h={}).",
+                                     apmf::log::Hex(a_actor), NameOf(form), apmf::log::Hex(fid),
+                                     apmf::sources::ClientForHandle(a_claim), apmf::log::Hex(fid), a_claim);
+                    return true;
+                }
                 g_undeclared.fetch_add(1, std::memory_order_relaxed);
                 if (LineDue(a_actor, fid, 2))
                     spdlog::warn("[ch.7] hostile-offense: 0x{} casts '{}' (0x{}), nature UNDECLARED by its record (no "
