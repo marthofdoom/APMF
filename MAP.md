@@ -1597,14 +1597,26 @@ when the pick's handle is a claimant (`ClaimOf`: table + `ControlMap::TryGetOwni
 weight)` (hash of the pair, the session seed and the 6 s window index) is true: `PassScope` arms `t_pass` (thread_local) and
 the scorer runs again. **X** `IsValidThunk` (1.6.1170 / 1.7.104: false for an excluded candidate) or `ScoredLookupThunk`
 (1.5.97: the null handle for an excluded one). **F** `FallbackLookupThunk` sets `t_pass.fallback` (the pass scored nobody:
-the first answer stands). The Engine source is ranked on Target (`facetattr::Decide`). `Heartbeat` from
+the first answer stands). **Fitness test** (`UnfitReason`, review H2-1 of `0a052e1`): the second pass's answer is used only
+when it passes the scorer's own four penalty tests, asked by CALLING the scorer's functions (`g_refLoc` RefLocation,
+`g_inArea` InCombatArea with radius `[[controller+0x10]+0x1B8]` when under `*g_areaLimit` (the scorer's RIP constant,
+1024) or in another space, `g_cross` CrossSpaceReach, the candidate's vfunc `+0x4C8` with false, `g_fleeing` IsFleeing);
+a failed or untestable answer keeps the claimant (`g_keptUnfit`, line outcome 5). `Install` proves it read-only: four more
+`SeatVerified` rows (`Aversion.RefLocation` / `InCombatArea` / `CrossSpaceReach` / `IsFleeing`), `ProveSite` on the four
+penalty E8s inside FindBest and three byte windows (`FitSpec`: radius load, limit compare, dead vcall); any miss refuses the
+whole seat. The Engine source is ranked on Target (`facetattr::Decide`). `Heartbeat` from
 `Arbiter::OncePerFrame`; `ResetAll` at revert / kPreLoadGame; `RefuseReason` from `ControlMap::EnqueueRequest`.
-**Depended on by:** MFO `apmf/AversionClaims.cpp` (class Conjurer / Healer, gated on ABI 41). **What breaks:** answering a
+**Open deferred findings:** `Docs/REVIEW-BACKLOG.md` APMF-B283 (extra claimants excluded without their own Target-facet
+rank), APMF-B284 (attribution under the claimant's FormID).
+**Depended on by:** MFO `apmf/AversionClaims.cpp` (class Conjurer / Healer, gated on ABI 41). **What breaks:** using the
+second pass's answer without `UnfitReason` (the foe idles on an unreachable target or leaves a healer for a corpse);
+calling the fitness functions with anything but the scorer's own arguments (the controller, a `RefLocation` of the
+candidate, the radius the scorer loads); **also:** answering a
 second-pass pick when `t_pass.fallback` is set or the pick is 0 (the claimant would lose to a lost target, or the foe to
 nobody); leaving `t_pass.active` set after `Shape` (every later scoring pass on that worker would exclude stale handles:
 `PassScope` and the catch both clear it); patching C0 before X and F; storing the originals after the patch; using the
 1.6.1170 X site on 1.5.97 (IsValidTarget is inlined there, +0x2AC is mid-instruction); a weight of 1 (a cross-actor deny
-with holes: INVARIANTS #0 (m) condition 3); reading a form or the group list in the thunks (they compare handles only);
+with holes: INVARIANTS #0 (m) condition 3); reading a form or the group list in the thunks (they compare handles only; `UnfitReason` resolves just the attacker's and the answered handle, the two kinds the scorer itself resolves);
 moving the draw back to per-re-score (the share of time then depends on fCombatSelectTargetUpdateTime). ch.20's slot 0x06
 thunk calls the original slot (which holds C0) and THEN applies a pin, so a pin wins: keep that order. INVARIANTS #0 (m),
 DENY-COMPLETENESS-AUDIT row 32. RE: `Docs/research/aversion-target-selector-re.md`.

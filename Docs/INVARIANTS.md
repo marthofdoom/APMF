@@ -762,17 +762,29 @@ here rather than done quietly. It is legal only while ALL of these hold:
    called once more in the same call, with the claimant excluded through the engine's own skip (its validity gate
    answering false on 1.6.1170 / 1.7.104, its handle lookup resolving nothing on 1.5.97). Harbinger computes no score,
    ranks nobody and names nobody.
-2. **Never the only candidate, never a lost one, never an invented one.** When the second pass scored nobody (it
-   answered nothing, or it fell back to its lost-target list), the first answer stands. A target outside the foe's
-   group targets cannot be answered: only the scorer's own answer is ever used.
+2. **Never the only candidate, never a lost one, never an invented one, never one the foe cannot act on.** When the
+   second pass scored nobody (it answered nothing, or it fell back to its lost-target list), the first answer stands.
+   A target outside the foe's group targets cannot be answered: only the scorer's own answer is ever used. And the
+   scorer's answer is used only when it passes the SCORER'S OWN four penalty tests (review H2-1 of `0a052e1`: the
+   scorer penalises, it does not skip): inside the foe's combat area (reach), reachable across cells (path), not
+   dead / dying / essential-down (the `+0x4C8` vcall with edx = 0), not fleeing. Each is asked by calling the same
+   engine function the scorer calls, with the scorer's arguments, each a VerifiedAddresses row and the proven E8
+   target of its penalty site inside the scorer. An answer that fails one, or cannot be tested, is not answered:
+   the first answer (the claimant) stands and the pass is logged and counted as kept. Rule 1 is unchanged by this:
+   a pass / fail gate on the engine's own answer is not a score, a rank or a name.
 3. **A weight in (0, 1), declared by the client, drawn per window.** Never 1 (that would be a deny of the foe's
    target, a cross-actor deny with holes), never 0. The draw is per {foe, claimant} per 6 s window, so the share of
-   time is the weight whatever the engine's re-score cadence is (principle 9).
+   WINDOWS that say averted is the weight whatever the engine's re-score cadence is (principle 9). The share of TIME
+   a foe spends off the claimant is not guaranteed to reach the weight (review H2-2): the selector's cached pick
+   keeps the claimant 1 to 3 s into an averted window, an averted window keeps him when rule 2 leaves no usable
+   alternative, and the scorer's +100 for the current target pulls either way. The weight is a declared tendency,
+   never a floor and never a promise.
 4. **Nothing is written.** Not the group's target list, not the selector's cache (the selector caches what its scorer
    answered, as always), not a detection or perception value, not an actor.
 5. **It yields.** A ch.20 pin on the foe wins (it answers after this seat). The Engine source is ranked on the Target
    facet: the averted answer stands only while the claim outranks Engine. The Fixed selector is not seated.
-6. **Scope is closed by name.** Exactly 1.6.1170, 1.5.97 or 1.7.104, not VR, four address rows and three sites' bytes
+6. **Scope is closed by name.** Exactly 1.6.1170, 1.5.97 or 1.7.104, not VR, eight address rows (seven on 1.5.97), the three seat sites' bytes and
+   the seven fitness-test sites' bytes
    verified per runtime, all three seats or none, never the player as the claimant. A different shaping (a score
    bonus for somebody, a penalty by distance, hiding from a named foe) is a new amendment, not a code change.
 

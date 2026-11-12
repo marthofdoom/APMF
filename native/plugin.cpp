@@ -306,7 +306,7 @@ namespace {
                                                   // scorer (slot 0x06 +0x68), the scorer's validity gate (1.6.1170 /
                                                   // 1.7.104) or scored-path handle lookup (1.5.97), and its
                                                   // fallback-list lookup. Exact runtimes, VR-refused, [Aversion]
-                                                  // bAversion (default 1), four SeatVerified rows and every site's
+                                                  // bAversion (default 1), eight SeatVerified rows and every site's
                                                   // bytes re-read before the write; all three install or none.
             apmf::nonaliasprobe::Install();      // OBSERVE-ONLY 0xDF hook + 0x49 assist + RTTI dumper
                                                   // (Docs/PROBE-NONALIAS-PACKAGE.md; VR-refused inside)
