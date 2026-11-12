@@ -11,6 +11,7 @@
 #include "core/ActionGate.h"
 #include "core/CastLeafNature.h"   // ch.7 hostile offense (ABI v40): heartbeat
 #include "core/Aversion.h"         // ch.32 aversion (ABI v41): heartbeat
+#include "core/CombatMove.h"       // ch.31 block hold (ABI v43): HoldPoll
 #include "core/AttackSelectProbe.h"
 #include "core/AttackSelect.h"
 #include "core/ProjectileAim.h"
@@ -128,6 +129,9 @@ namespace apmf {
         apmf::castleafnature::Heartbeat();
         // ch.32 AVERSION (ABI v41), RULE C: the totals, ~30 s after any selection landed on a claimant.
         apmf::aversion::Heartbeat();
+        // ch.31 BLOCK HOLD (ABI v43): window expiry, the broken-hold tests, the re-raise. Self-throttled 100 ms;
+        // one relaxed load while no guard is held.
+        apmf::combatmove::HoldPoll();
         // ch.23 LEASH RETURN (2026-10-12): a leashed, un-held actor whose search was just leash-denied is
         // walked back by its own combat area (a Harbinger-internal ch.24 bound). Self-throttled 250 ms;
         // one relaxed load while no leash is set.

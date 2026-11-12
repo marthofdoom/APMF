@@ -1,6 +1,8 @@
 #include "PCH.h"
 #include "core/CombatMove.h"
+#include "core/CombatMove_internal.h"
 
+#include "core/ActionGate.h"         // BlockHoldDenyArmed(): the ABI v43 hold's deny rides ch.7's leaf seats
 #include "core/Allowance.h"          // SeatVerified(): the mit-3.7 F1 self-check gate
 #include "core/Clock.h"
 #include "core/ControlMap.h"         // TryGetOwningClaimBasis (lock-free RCU read), ServeCheck
@@ -8,6 +10,7 @@
 #include "core/Log.h"
 #include "core/MainThread.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 
@@ -16,11 +19,13 @@ extern "C" __declspec(dllimport) unsigned long __stdcall GetPrivateProfileIntA(
     const char* a_appName, const char* a_keyName, long a_default, const char* a_fileName);
 
 // ABI v38 COMBAT MOVE. See core/CombatMove.h for the engine road and the shape (a one-shot, never a claim).
+// ABI v43 adds the BLOCK hold: its request is accepted here (Enqueue) and run by core/CombatMoveBlock.cpp.
 namespace apmf::combatmove {
 
     namespace {
         using apmf::log::Hex;
         using APMF_API::Handle;
+        using detail::Sent;
 
         constexpr const char* kIni       = "Data/SKSE/Plugins/APMF.ini";
         constexpr const char* kRowCtor   = "CombatMove.BGSActionData.Ctor";
@@ -36,6 +41,10 @@ namespace apmf::combatmove {
         std::uintptr_t g_ctor   = 0;   // BGSActionData's default constructor (written once in Install)
         std::uintptr_t g_vtable = 0;   // the TESActionData vtable
         RE::BGSAction* g_action = nullptr;   // the Right Attack action default object (written once in Install)
+        RE::BGSAction* g_actionLeftAttack  = nullptr;   // ABI v43: the Left Attack action (the engine's block start)
+        RE::BGSAction* g_actionLeftRelease = nullptr;   // ABI v43: the Left Release action (the engine's block stop)
+        // ABI v43: why kCombatMove_Block cannot be served (a string literal), nullptr = it can. Written once in Install.
+        std::atomic<const char*> g_blockWhy{ "not installed yet (before kDataLoaded)" };
 
         // A world generation: ResetAll bumps it, and a move posted under an older one drops itself.
         std::atomic<std::uint32_t> g_gen{ 1 };
@@ -54,15 +63,18 @@ namespace apmf::combatmove {
         // The newest start, so the hit sink skips the lock when no move can be waiting for its hit.
         std::atomic<std::uint64_t> g_lastStartMs{ 0 };
 
-        bool Terminal(std::uint32_t s) {
-            return s == APMF_API::kCombatMoveState_Started || s == APMF_API::kCombatMoveState_Refused ||
-                   s == APMF_API::kCombatMoveState_Failed;
+        // A record nothing will change again. A LIVE block hold (ABI v43: Started with kCombatMoveInfo_HoldLive)
+        // is not terminal: its Ended is still to come, so it is neither expired nor evicted.
+        bool Terminal(const Rec& a_rec) {
+            const std::uint32_t s = a_rec.info.state;
+            if (s == APMF_API::kCombatMoveState_Started) return (a_rec.info.info & APMF_API::kCombatMoveInfo_HoldLive) == 0;
+            return s == APMF_API::kCombatMoveState_Refused || s == APMF_API::kCombatMoveState_Failed ||
+                   s == APMF_API::kCombatMoveState_Ended;
         }
 
         // A finished record lives until it has been READ once or the grace has passed, whichever is LATER.
         bool Expired(const Rec& a_rec, std::uint64_t a_now) {
-            return Terminal(a_rec.info.state) && a_rec.read &&
-                   a_now - a_rec.changedMs > APMF_API::kCombatMoveStateGraceMs;
+            return Terminal(a_rec) && a_rec.read && a_now - a_rec.changedMs > APMF_API::kCombatMoveStateGraceMs;
         }
 
         // Under g_mx: room for one more record. Drops expired records, then (at the cap) the oldest finished
@@ -77,7 +89,7 @@ namespace apmf::combatmove {
             if (g_recs.size() < kMaxRecords) return true;
             auto oldest = g_recs.end();
             for (auto it = g_recs.begin(); it != g_recs.end(); ++it) {
-                if (!Terminal(it->second.info.state)) continue;
+                if (!Terminal(it->second)) continue;
                 if (oldest == g_recs.end() || it->second.changedMs < oldest->second.changedMs) oldest = it;
             }
             if (oldest == g_recs.end()) return false;
@@ -85,13 +97,10 @@ namespace apmf::combatmove {
             return true;
         }
 
-        struct Sent {   // what the game-thread step measured, written into the record with its verdict
-            std::uint32_t info         = 0;
-            float         distance     = -1.0f;
-            float         bearingDeg   = -1.0f;
-            float         staminaSpent = 0.0f;
-        };
+    }
 
+    // ---- shared with the sibling files (core/CombatMove_internal.h) ----
+    namespace detail {
         // Game thread: finish a record. Returns false when the record is gone (a reset since the post): the
         // caller then logs nothing more.
         bool Finish(Handle a_handle, std::uint32_t a_state, std::uint32_t a_why, Handle a_blocker, const Sent& a_sent) {
@@ -116,11 +125,46 @@ namespace apmf::combatmove {
             return true;
         }
 
+        bool MarkInfo(Handle a_handle, std::uint32_t a_set, std::uint32_t a_clear, RE::FormID a_hitTarget) {
+            const std::uint64_t now = apmf::clock::MonotonicMs();
+            std::scoped_lock    lock(g_mx);
+            const auto          it = g_recs.find(a_handle);
+            if (it == g_recs.end()) return false;
+            auto& i = it->second.info;
+            i.info  = (i.info | a_set) & ~a_clear;
+            if (a_hitTarget != 0) i.hitTarget = a_hitTarget;
+            i.seq                = ++g_seq;
+            it->second.changedMs = now;
+            return true;
+        }
+
+        bool EndHold(Handle a_handle, std::uint32_t a_why) {
+            const std::uint64_t now = apmf::clock::MonotonicMs();
+            std::scoped_lock    lock(g_mx);
+            const auto          it = g_recs.find(a_handle);
+            if (it == g_recs.end()) return false;
+            auto& i = it->second.info;
+            if (i.state != APMF_API::kCombatMoveState_Started || (i.info & APMF_API::kCombatMoveInfo_HoldLive) == 0)
+                return false;
+            i.state              = APMF_API::kCombatMoveState_Ended;
+            i.why                = a_why;
+            i.info              &= ~APMF_API::kCombatMoveInfo_HoldLive;
+            i.seq                = ++g_seq;
+            it->second.changedMs = now;
+            return true;
+        }
+
+        std::uint32_t Gen() { return g_gen.load(std::memory_order_acquire); }
+
+        RE::BGSAction* ActionLeftAttack() { return g_actionLeftAttack; }
+        RE::BGSAction* ActionLeftRelease() { return g_actionLeftRelease; }
+
         const char* MoveName(std::uint32_t a_move) {
             switch (a_move) {
             case APMF_API::kCombatMove_Bash:      return "bash";
             case APMF_API::kCombatMove_PowerBash: return "power bash";
             case APMF_API::kCombatMove_Block:     return "block";
+            case APMF_API::kCombatMove_BlockEnd:  return "block end";
             default:                              return "unknown move";
             }
         }
@@ -141,9 +185,49 @@ namespace apmf::combatmove {
             case APMF_API::kCombatMoveWhy_NotApplied:     return "the engine's action returned true, but the actor's attack "
                                                                  "data / attack state do not read back as this move";
             case APMF_API::kCombatMoveWhy_Error:          return "an exception inside Harbinger's game-thread step";
+            case APMF_API::kCombatMoveWhy_NoBlockItem:    return "the actor's hands would not block (the Left Attack action "
+                                                                 "would attack or cast instead)";
+            case APMF_API::kCombatMoveWhy_HeldByOther:    return "another client's block hold stands on the actor";
+            case APMF_API::kCombatMoveWhy_NoHold:         return "this client holds no block on the actor";
+            case APMF_API::kCombatMoveWhy_HoldTableFull:  return "the block hold table is full";
+            case APMF_API::kCombatMoveWhy_HoldExpired:    return "the hold window ran out";
+            case APMF_API::kCombatMoveWhy_HoldEndedByClient: return "the client ended the hold";
+            case APMF_API::kCombatMoveWhy_HoldRenewed:    return "a newer block request of the same client took the hold over";
+            case APMF_API::kCombatMoveWhy_HoldBroken:     return "the hold could not be kept";
             default:                                      return "unknown";
             }
         }
+
+        // The engine's action road for `a_action` (core/CombatMove.h "THE ENGINE ROAD"). Game thread. The object
+        // lives on this stack, as the engine's own does on StartAttack's (and on the block wrapper's, AE 44446).
+        bool ProcessAction(RE::Actor* a_actor, RE::BGSAction* a_action, const RE::BSFixedString* a_event,
+                           std::string* a_ranEvent) {
+            alignas(RE::TESActionData) std::byte buf[sizeof(RE::TESActionData)];
+            std::memset(buf, 0, sizeof(buf));
+            using Ctor_t = void* (*)(void*);                  // BGSActionData::BGSActionData() (this); returns this
+            using Dtor_t = void* (*)(void*, std::uint32_t);   // slot 0: destroy; flags bit 0 = also free (never set here)
+            reinterpret_cast<Ctor_t>(g_ctor)(buf);
+            *reinterpret_cast<std::uintptr_t*>(buf) = g_vtable;   // the engine's next write (AE 0x7F9277)
+            auto* ad      = reinterpret_cast<RE::TESActionData*>(buf);
+            ad->source    = RE::NiPointer<RE::TESObjectREFR>(a_actor);
+            ad->unk20     = 2;                                // the priority StartAttack passes (AE 0x7F9242 `lea edx,[rbp+2]`)
+            // The action form StartAttack's wrapper stores (AE 0x7F92A4..0x7F92B3: default object table[0x2016198][0] = 49 =
+            // kActionRightAttack, into +0x18; 1.5.97 0x75FD85..0x75FDA4, table 0x1DF2918[0] = 49). Review F1-1 of 6078122.
+            // The block wrapper (AE 0x7F9808..0x7F9814) stores table[3] = 45 = kActionLeftAttack / table[4] = 47 =
+            // kActionLeftRelease the same way and names no event.
+            ad->action    = a_action;
+            if (a_event) ad->animEvent = *a_event;
+            const bool ok = ad->Process();                    // vtable slot 5 = TESActionData::Process
+            if (a_ranEvent) *a_ranEvent = ad->animEvent.c_str() ? ad->animEvent.c_str() : "";
+            (*reinterpret_cast<Dtor_t**>(buf))[0](buf, 0);    // releases the two strings and the source reference
+            return ok;
+        }
+    }
+
+    namespace {
+        using detail::Finish;
+        using detail::MoveName;
+        using detail::WhyText;
 
         // The actor's current attack data (the engine's own read: process -> high -> attackData).
         RE::BGSAttackData* CurrentAttackData(RE::Actor* a_actor) {
@@ -179,25 +263,9 @@ namespace apmf::combatmove {
             return best;
         }
 
-        // The engine's start-of-attack action for `a_entry` (core/CombatMove.h "THE ENGINE ROAD"). Game thread.
-        // The object lives on this stack, as the engine's own does on StartAttack's.
+        // The engine's start-of-attack action for `a_entry`: the Right Attack action form with the entry's event.
         bool ProcessAttackAction(RE::Actor* a_actor, const RE::BGSAttackData* a_entry) {
-            alignas(RE::TESActionData) std::byte buf[sizeof(RE::TESActionData)];
-            std::memset(buf, 0, sizeof(buf));
-            using Ctor_t = void* (*)(void*);                  // BGSActionData::BGSActionData() (this); returns this
-            using Dtor_t = void* (*)(void*, std::uint32_t);   // slot 0: destroy; flags bit 0 = also free (never set here)
-            reinterpret_cast<Ctor_t>(g_ctor)(buf);
-            *reinterpret_cast<std::uintptr_t*>(buf) = g_vtable;   // the engine's next write (AE 0x7F9277)
-            auto* ad      = reinterpret_cast<RE::TESActionData*>(buf);
-            ad->source    = RE::NiPointer<RE::TESObjectREFR>(a_actor);
-            ad->unk20     = 2;                                // the priority StartAttack passes (AE 0x7F9242 `lea edx,[rbp+2]`)
-            // The action form StartAttack's wrapper stores (AE 0x7F92A4..0x7F92B3: default object table[0x2016198][0] = 49 =
-            // kActionRightAttack, into +0x18; 1.5.97 0x75FD85..0x75FDA4, table 0x1DF2918[0] = 49). Review F1-1 of 6078122.
-            ad->action    = g_action;
-            ad->animEvent = a_entry->event;
-            const bool ok = ad->Process();                    // vtable slot 5 = TESActionData::Process
-            (*reinterpret_cast<Dtor_t**>(buf))[0](buf, 0);    // releases the two strings and the source reference
-            return ok;
+            return detail::ProcessAction(a_actor, g_action, &a_entry->event);
         }
 
         // GAME THREAD (apmf::mainthread::Pump). The whole move after the call's checks.
@@ -327,14 +395,19 @@ namespace apmf::combatmove {
         }
 
         void Deliver(Handle a_handle, RE::FormID a_actor, std::uint32_t a_move, RE::FormID a_target,
-                     apmf::sources::SourceId a_client, std::uint32_t a_gen) {
+                     apmf::sources::SourceId a_client, std::uint32_t a_gen, float a_holdS) {
             if (g_gen.load(std::memory_order_acquire) != a_gen) {
                 spdlog::info("[combat-move] {} dropped unrun: the world changed since the request (load / new game).",
                              a_handle);
                 return;
             }
             try {
-                Run(a_handle, a_actor, a_move, a_target, a_client);
+                if (a_move == APMF_API::kCombatMove_Block)
+                    detail::RunBlock(a_handle, a_actor, a_holdS, a_client);   // ABI v43, core/CombatMoveBlock.cpp
+                else if (a_move == APMF_API::kCombatMove_BlockEnd)
+                    detail::RunBlockEnd(a_handle, a_actor, a_client);
+                else
+                    Run(a_handle, a_actor, a_move, a_target, a_client);
             } catch (...) {
                 if (Finish(a_handle, APMF_API::kCombatMoveState_Failed, APMF_API::kCombatMoveWhy_Error, 0, Sent{}))
                     spdlog::error("[combat-move] {} FAILED ({} by actor 0x{}): {}.", a_handle, MoveName(a_move),
@@ -416,6 +489,9 @@ namespace apmf::combatmove {
                     auto* cause  = a_e->cause.get();
                     auto* target = a_e->target.get();
                     if (g_probe.load(std::memory_order_relaxed)) ProbeHit(a_e, cause, target);
+                    // ABI v43: a blocked hit ON an actor whose guard Harbinger holds (FormIDs only on this thread).
+                    if (target && AnyBlockHeld() && a_e->flags.any(RE::TESHitEvent::Flag::kHitBlocked))
+                        detail::NoteBlockedHit(target->GetFormID(), cause ? cause->GetFormID() : 0);
                     if (!cause || !a_e->flags.any(RE::TESHitEvent::Flag::kBashAttack))
                         return RE::BSEventNotifyControl::kContinue;
                     const std::uint64_t now  = apmf::clock::MonotonicMs();
@@ -490,6 +566,15 @@ namespace apmf::combatmove {
         RE::TESForm* const raw  = dobj ? dobj->GetObject(RE::DEFAULT_OBJECT::kActionRightAttack) : nullptr;
         auto* const        act  = raw ? raw->As<RE::BGSAction>() : nullptr;
         if (!act) return no("the Right Attack action default object did not resolve to a BGSAction", true);
+        // ABI v43: the two action forms of the engine's block (its wrapper's table[3] = 45, table[4] = 47), the same
+        // accessor (both indices are below every entry 1.7.104 inserts). A miss refuses kCombatMove_Block only.
+        RE::TESForm* const rawL = dobj->GetObject(RE::DEFAULT_OBJECT::kActionLeftAttack);
+        RE::TESForm* const rawR = dobj->GetObject(RE::DEFAULT_OBJECT::kActionLeftRelease);
+        g_actionLeftAttack      = rawL ? rawL->As<RE::BGSAction>() : nullptr;
+        g_actionLeftRelease     = rawR ? rawR->As<RE::BGSAction>() : nullptr;
+        if (!g_actionLeftAttack || !g_actionLeftRelease)
+            spdlog::error("[combat-move] the Left Attack / Left Release action default objects did not resolve to BGSActions: "
+                          "kCombatMove_Block is refused. The bash moves are unaffected. Report this line.");
         g_action = act;
         g_ctor   = ctor;
         g_vtable = vt;
@@ -514,6 +599,30 @@ namespace apmf::combatmove {
         spdlog::info("[combat-move] installed (kIntent_CombatMove, ABI v38): one engine start-of-attack action per request "
                      "(bash / power bash), game thread; action form 0x{} (Right Attack); hit sink {}; [Probe] bCombatMove={}.",
                      Hex(act->GetFormID()), sink ? "registered" : "MISSING", g_probe.load() ? 1 : 0);
+        // ABI v43: decided ONCE here (core/ActionGate.cpp installed before this, plugin.cpp).
+        const char* blockWhy = nullptr;
+        if (GetPrivateProfileIntA("CombatMove", "bBlock", 1, kIni) == 0)
+            blockWhy = "[CombatMove] bBlock=0";
+        else if (!g_actionLeftAttack || !g_actionLeftRelease)
+            blockWhy = "the Left Attack / Left Release action default objects did not resolve";
+        else if (!apmf::actiongate::BlockHoldDenyArmed())
+            blockWhy = "the hold's deny is not armed (ch.7's ForceFail pair, or the act/pop pair on an Offense, Block or "
+                       "BlockAttack leaf, did not install): a guard without its deny is not this facet";
+        g_blockWhy.store(blockWhy, std::memory_order_release);
+        if (blockWhy)
+            spdlog::warn("[combat-move] BLOCK (ABI v43, kCombatMove_Block) NOT available -- {}. Every block request is refused.",
+                         blockWhy);
+        else
+            spdlog::info("[combat-move] BLOCK (ABI v43, kCombatMove_Block) available: a held guard by the engine's Left Attack "
+                         "(0x{}) / Left Release (0x{}) actions; while held, the actor's Offense, Block and BlockAttack "
+                         "leaves fail at entry (ch.7's seats); up to {} holds.",
+                         Hex(g_actionLeftAttack->GetFormID()), Hex(g_actionLeftRelease->GetFormID()),
+                         APMF_API::kCombatBlockMaxHolds);
+    }
+
+    const char* BlockNotAvailableReason() {
+        if (!Installed()) return NotInstalledReason();
+        return g_blockWhy.load(std::memory_order_acquire);
     }
 
     bool Installed() { return g_installed.load(std::memory_order_acquire); }
@@ -540,15 +649,33 @@ namespace apmf::combatmove {
                          "param.ival = a CombatMove.", Hex(a_actor));
             return false;
         }
-        const auto move = static_cast<std::uint32_t>(a_param->ival);
-        if (move == APMF_API::kCombatMove_Block) {
-            if (a_dry)
-                return dryRefuse(APMF_API::kServeRefusal_BadRequest, "kCombatMove_Block is reserved: not built in ABI v38");
-            spdlog::warn("[combat-move] request REFUSED (actor 0x{}): kCombatMove_Block is reserved, not built in ABI v38.",
-                         Hex(a_actor));
-            return false;
+        const auto move    = static_cast<std::uint32_t>(a_param->ival);
+        const bool isBlock = move == APMF_API::kCombatMove_Block || move == APMF_API::kCombatMove_BlockEnd;
+        float      holdS   = 0.0f;
+        if (isBlock) {   // ABI v43
+            if (const char* why = BlockNotAvailableReason()) {
+                if (a_dry) return dryRefuse(APMF_API::kServeRefusal_NotInstalled, why);
+                spdlog::warn("[combat-move] request REFUSED ({} by actor 0x{}): {}.", detail::MoveName(move), Hex(a_actor), why);
+                return false;
+            }
+            if (move == APMF_API::kCombatMove_Block) {
+                holdS = a_param->fval;
+                if (!std::isfinite(holdS) || holdS < 0.0f) {
+                    if (a_dry)
+                        return dryRefuse(APMF_API::kServeRefusal_BadRequest, "param.fval (the hold window, seconds) is negative or not finite");
+                    spdlog::warn("[combat-move] request REFUSED (block by actor 0x{}): param.fval (the hold window, seconds) "
+                                 "is negative or not finite.", Hex(a_actor));
+                    return false;
+                }
+                if (holdS == 0.0f) holdS = APMF_API::kCombatBlockDefaultS;
+                const float clamped = std::clamp(holdS, APMF_API::kCombatBlockMinS, APMF_API::kCombatBlockMaxS);
+                if (clamped != holdS && !a_dry)
+                    spdlog::info("[combat-move] block by actor 0x{}: hold window {:.2f} s clamped to {:.2f} s.", Hex(a_actor),
+                                 holdS, clamped);
+                holdS = clamped;
+            }
         }
-        if (move != APMF_API::kCombatMove_Bash && move != APMF_API::kCombatMove_PowerBash) {
+        if (!isBlock && move != APMF_API::kCombatMove_Bash && move != APMF_API::kCombatMove_PowerBash) {
             if (a_dry) return dryRefuse(APMF_API::kServeRefusal_BadRequest, "param.ival is not a CombatMove this ABI builds");
             spdlog::warn("[combat-move] request REFUSED (actor 0x{}): param.ival {} is not a CombatMove this ABI builds.",
                          Hex(a_actor), a_param->ival);
@@ -599,8 +726,8 @@ namespace apmf::combatmove {
             return false;
         }
 
-        apmf::mainthread::Post([a_handle, a_actor, move, target, a_client, gen] {
-            Deliver(a_handle, a_actor, move, target, a_client, gen);
+        apmf::mainthread::Post([a_handle, a_actor, move, target, a_client, gen, holdS] {
+            Deliver(a_handle, a_actor, move, target, a_client, gen, holdS);
         });
         return true;
     }
@@ -618,7 +745,7 @@ namespace apmf::combatmove {
             if (const auto it = g_recs.find(a_handle); it != g_recs.end()) {
                 const std::uint64_t age = now - it->second.changedMs;
                 if (!Expired(it->second, now)) {
-                    if (Terminal(it->second.info.state)) it->second.read = true;   // the grace now counts
+                    if (Terminal(it->second)) it->second.read = true;   // the grace now counts
                     info               = it->second.info;
                     info.size          = sizeof(info);
                     info.handle        = a_handle;
@@ -642,6 +769,7 @@ namespace apmf::combatmove {
             n = g_recs.size();
             g_recs.clear();
         }
+        detail::ResetHolds();   // ABI v43: no block hold crosses the boundary (the actors' own state is the outgoing world's)
         g_lastStartMs.store(0, std::memory_order_release);
         g_probeLines.store(0, std::memory_order_relaxed);
         if (n != 0) spdlog::info("[combat-move] {} -- forgot {} move record(s).", a_why, n);

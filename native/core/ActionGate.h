@@ -39,6 +39,12 @@ namespace apmf::actiongate {
     // A record of a live thread is removed by its own pop(), never here. Game thread.
     void ForgetMovementHolds(RE::FormID a_actor);
 
+    // ch.31 BLOCK HOLD (ABI v43, core/CombatMoveBlock.cpp). True once Install() found every half of the hold's
+    // deny: the ForceFail pair, the act/pop pair on the Block and BlockAttack leaves, and the Offense leaves
+    // classified. While an actor's guard is held (combatmove::BlockHeld) his Offense, Block and BlockAttack
+    // leaves fail at entry. Any thread, after Install.
+    bool BlockHoldDenyArmed();
+
     // ch.23 PURSUIT LEASH (ABI v16, kIntent_PursuitLeash) -- the in-combat leash, its own
     // intent on ch.7's leaf seats. See ActionGate.cpp's PURSUIT LEASH section for the leaves,
     // the rule and the two seats.

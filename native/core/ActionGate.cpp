@@ -6,6 +6,7 @@
 #include "core/ControlMap.h"
 #include "core/CastGuard.h"      // ch.25 kCastGuard_Bystanders: HoldWeaponAttack at the attack leaves
 #include "core/CastLeafNature.h" // ch.7 hostile offense (ABI v40): the nature of the spell a cast leaf is about to cast
+#include "core/CombatMove.h"     // ch.31 block hold (ABI v43): BlockHeld at the Offense / Block / BlockAttack leaves
 #include "core/ActionGate.h"
 #include "core/AiCastSeats.h"   // RangedGateProbeCounts (the [Probe] bRangedSelect heartbeat)
 #include "core/EquipSink.h"     // Categorize / CategoryNames (the probe mirrors the sink verdict)
@@ -685,6 +686,11 @@ namespace apmf::actiongate {
         // ch.25 BYSTANDER HITS (kCastGuard_Bystanders): the weapon attack leaves (vtable -> castguard::kWeaponMelee
         // and / or kWeaponRanged), for castguard::HoldWeaponAttack. Written at Install only, PAIRED leaves only.
         std::unordered_map<std::uintptr_t, std::uint8_t>   g_weaponLeaf;
+        // ch.31 BLOCK HOLD (ABI v43): the engine tree's own guard leaves, Block and BlockAttack (0 = not paired).
+        // Each raises the guard at its entry and LOWERS it from its pop (AE 0x86C5F0 / 0x86C6C0: the Left Release
+        // action), so while Harbinger holds an actor's guard they fail at entry. Written at Install only.
+        std::uintptr_t    g_blockVt = 0, g_blockAttackVt = 0;
+        std::atomic<bool> g_blockHoldArmed{ false };
 
         // ForceFail's ORIGINAL act() + pop() -- the proven deny mechanism, as a PAIR
         // (see header). Both must resolve or the deny is refused at install.
@@ -1364,6 +1370,25 @@ namespace apmf::actiongate {
                 }
             }
 
+            // ch.31 BLOCK HOLD (ABI v43, core/CombatMoveBlock.cpp): while Harbinger holds this actor's guard, his own
+            // offense (every Offense leaf, casts included: any of them would drop the guard) and the engine's own
+            // guard leaves (Block, BlockAttack: their pop() lowers it) fail at entry, by the SAME ForceFail
+            // act()/pop() pair ch.7 uses. The client's rank against Engine was decided when the hold began
+            // (RunBlock), so nothing is ranked per leaf. One relaxed load while no guard is held.
+            if (apmf::combatmove::AnyBlockHeld()) {
+                const bool guardLeaf = vt == g_blockVt || vt == g_blockAttackVt;
+                if (guardLeaf || (leafCat & APMF_API::kCombatActionCat_Offense) != 0) {
+                    const RE::FormID bf = ResolveDeliberatingActor(a_control);
+                    if (const auto ff = g_forceFailAct.load(std::memory_order_relaxed);
+                        bf != 0 && ff && apmf::combatmove::BlockHeld(bf)) {
+                        apmf::combatmove::NoteHoldDeny(guardLeaf);
+                        t_pending = PendingPop{ a_this, a_control };
+                        reinterpret_cast<apmf::cbt::Act_t>(ff)(a_this, a_control);
+                        return a_control;   // do NOT call orig -- this IS the hold's deny
+                    }
+                }
+            }
+
             if (leafCat == 0) return orig(a_this, a_control);   // never a denyable leaf -- skip everything below
 
             if (apmf::ControlMap::Get().ControlledCount() == 0)
@@ -1649,6 +1674,17 @@ namespace apmf::actiongate {
         spdlog::info("[ch.25] {} of 6 weapon attack leaf(s) carry the bystander hold (kCastGuard_Bystanders).",
                      g_weaponLeaf.size());
 
+        // ch.31 BLOCK HOLD (ABI v43): the two guard leaves, PAIRED only (their pop() must be our thunk).
+        for (const auto& [wanted, slot] : std::array<std::pair<const char*, std::uintptr_t*>, 2>{ {
+                 { "CombatBehaviorBlock", &g_blockVt }, { "CombatBehaviorBlockAttack", &g_blockAttackVt } } }) {
+            for (std::size_t i = 0; i < apmf::cbt::kLeaves.size(); ++i) {
+                if (std::string_view(apmf::cbt::kLeaves[i].name) != wanted) continue;
+                REL::Relocation<std::uintptr_t> vt{ apmf::cbt::kLeaves[i].vtbl };
+                if (Paired(vt.address())) *slot = vt.address();
+                break;
+            }
+        }
+
         // ch.8b: OR the Cast bit onto the four cast leaves (already Offense-classified
         // above). A kIntent_Cast claim then denies exactly these, no attack/ranged.
         int castClassified = 0;
@@ -1704,6 +1740,17 @@ namespace apmf::actiongate {
                      "(act {} / pop {}); {} leaf(s) classified 'offense'. A kIntent_CombatAction claim with "
                      "kCombatActionCat_Offense set in APMF_Param::ival denies exactly those leaves for its winning "
                      "actor; every other leaf is never looked up and never denied.", n, n, nPop, classified);
+
+        // ch.31 BLOCK HOLD (ABI v43): armed only whole. The ForceFail pair, BOTH guard leaves paired, and at least
+        // the melee Offense leaves classified (a hold that could not stop his own swing is not the facet).
+        // core/CombatMove.cpp reads this at its Install and refuses kCombatMove_Block while it is false.
+        g_blockHoldArmed.store(g_forceFailAct.load(std::memory_order_relaxed) != 0 && g_blockVt != 0 && g_blockAttackVt != 0 &&
+                                   classified >= 3,
+                               std::memory_order_release);
+        spdlog::info("[ch.31] block hold deny {}: guard leaves Block {} / BlockAttack {}, {} Offense leaf(s), ForceFail pair {}.",
+                     g_blockHoldArmed.load() ? "ARMED" : "NOT armed (kCombatMove_Block will be refused)",
+                     g_blockVt ? "paired" : "MISSING", g_blockAttackVt ? "paired" : "MISSING", classified,
+                     g_forceFailAct.load(std::memory_order_relaxed) ? "resolved" : "MISSING");
 
         // ================================================================
         // ch.23 PURSUIT LEASH (ABI v16). Arms ONLY when every half is there: the INI switch,
@@ -1953,6 +2000,8 @@ namespace apmf::actiongate {
     }
 
     bool MovementHoldArmed() { return g_holdArmed.load(std::memory_order_acquire); }
+
+    bool BlockHoldDenyArmed() { return g_blockHoldArmed.load(std::memory_order_acquire); }
 
     const char* MovementHoldNotArmedReason() {
         const char* w = g_holdNotArmedWhy.load(std::memory_order_acquire);
