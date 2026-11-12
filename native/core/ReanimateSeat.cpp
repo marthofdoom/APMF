@@ -100,7 +100,10 @@ namespace apmf::reanimateseat {
                              a_slotIdx);
         }
 
-        // Does a live corpse claim (kCastFlag_CorpseTarget) drive this caster's spell?
+        // Does a live corpse claim (kCastFlag_CorpseTarget) drive this caster's spell? True for EVERY such
+        // claim, whether or not its target is a corpse this seat can hand the engine (NoCorpseWhy): while
+        // the claim stands the engine's own corpse pick never casts (APMF_API.h), so a claim with no
+        // usable corpse is answered with NO here, never by chaining to the engine.
         bool CorpseClaim(RE::CombatMagicCaster* a_this, RE::CombatController* a_cc, std::uintptr_t a_prev, bool a_count,
                          apmf::castseats::ClaimMatch& a_m) {
             if (!a_this || !a_cc || !a_this->magicItem) return false;
@@ -115,13 +118,24 @@ namespace apmf::reanimateseat {
                     return false;
                 if ((c.flags & APMF_API::kCastFlag_CorpseTarget) == 0) return false;
                 if (c.flags & APMF_API::kCastFlag_DenyHandOnly) return false;
-                if (c.target == 0 || c.target == actor->GetFormID() || !c.targetHandle) return false;
             }
-            if (!apmf::castseats::MatchClaim(a_this, a_cc, a_prev, a_count, a_m)) return false;
+            // a_needTarget = false: a corpse claim whose target never resolved is still this seat's to answer.
+            if (!apmf::castseats::MatchClaim(a_this, a_cc, a_prev, a_count, a_m, false)) return false;
             // Re-tested on the claim MatchClaim copied out (a second RCU read; the claim may have changed).
             if ((a_m.claim.flags & APMF_API::kCastFlag_CorpseTarget) == 0) return false;
             if (a_m.claim.flags & APMF_API::kCastFlag_DenyHandOnly) return false;
-            return a_m.claim.target != 0 && a_m.claim.target != a_m.actor;
+            return true;
+        }
+
+        // Why a corpse claim names NO corpse this seat can hand the engine, or null when it names one.
+        // RequestCast refuses target 0 and target = the actor at the call, so those two arrive only
+        // through RequestEx(kIntent_Cast) with the bit in param.ival; an empty handle is a target that
+        // was not a loaded Actor when the claim was applied (ControlMap ApplyRequest warned then).
+        const char* NoCorpseWhy(const apmf::castseats::ClaimMatch& a_m) {
+            if (a_m.claim.target == 0) return "the claim names no target";
+            if (a_m.claim.target == a_m.actor) return "the claim's target is the caster itself";
+            if (!a_m.claim.targetHandle) return "the claim's target was not a loaded actor when the claim was applied";
+            return nullptr;
         }
 
         // The engine's own keep PRECONDITIONS on a cached corpse, read the same way (slot 0x06: the handle
@@ -161,7 +175,8 @@ namespace apmf::reanimateseat {
             // could come back as the search's own pick and read as "kept".
             auto* const         corpse = CorpseSlot(a_this);
             const std::uint32_t want   = m.claim.targetHandle.native_handle();
-            const bool          offer  = StillCorpse(m.claim.targetHandle);
+            const char* const   noCorpse = NoCorpseWhy(m);   // never offered: the engine's pick is removed below
+            const bool          offer  = !noCorpse && StillCorpse(m.claim.targetHandle);
             if (offer) *corpse = want;
             const bool          native = orig(a_this, a_cc);
             const std::uint32_t after  = *corpse;
@@ -196,6 +211,16 @@ namespace apmf::reanimateseat {
             void* aim = *reinterpret_cast<void**>(reinterpret_cast<std::uintptr_t>(a_this) + kCasterAim);
             if (auto* slot = AimSlot(aim); slot && *slot == after) *slot = 0;
             g_counts[0][2].fetch_add(1, std::memory_order_relaxed);
+            if (noCorpse) {
+                if (firstClaim || LogDue(m.actor, 0x0604u))
+                    spdlog::error("[ch.8b reanimate 0x06] 0x{} CheckStartCast -> NO (spell 0x{}): a kCastFlag_CorpseTarget "
+                                  "claim stands but names NO usable corpse (target 0x{}: {}). It can never cast. The "
+                                  "engine's own pick (handle 0x{}) was removed and does not cast while the claim stands; "
+                                  "release the claim or let its TTL end it.",
+                                  apmf::log::Hex(m.actor), apmf::log::Hex(m.driven), apmf::log::Hex(m.claim.target),
+                                  noCorpse, apmf::log::Hex(after));
+                return false;
+            }
             if (firstClaim || LogDue(m.actor, 0x0603u))
                 spdlog::warn("[ch.8b reanimate 0x06] 0x{} CheckStartCast -> NO (spell 0x{}): the engine's own keep test "
                              "REFUSED the claimed corpse 0x{} (it does not resolve, is not dead, is disabled or deleted, "
@@ -233,7 +258,8 @@ namespace apmf::reanimateseat {
             const std::uint32_t want   = m.claim.targetHandle.native_handle();
             // The claim's corpse must still be one: resolves, dead, not disabled or deleted (the
             // engine's own keep preconditions; its validity test ran at 0x06).
-            const bool ok = StillCorpse(m.claim.targetHandle);
+            const char* const noCorpse = NoCorpseWhy(m);   // no usable corpse: both zeroed, as for a gone corpse
+            const bool ok = !noCorpse && StillCorpse(m.claim.targetHandle);
             const std::uint32_t put = ok ? want : 0;
             *corpse  = put;
             *aimSlot = put;
@@ -246,6 +272,13 @@ namespace apmf::reanimateseat {
                                  apmf::log::Hex(m.actor), apmf::log::Hex(m.claim.target), apmf::log::Hex(want),
                                  apmf::log::Hex(engine), engine == want ? ", the same corpse" : "",
                                  apmf::log::Hex(m.driven));
+            } else if (noCorpse) {
+                if (firstClaim || LogDue(m.actor, 0x0D03u))
+                    spdlog::error("[ch.8b reanimate 0x0D] 0x{} aim: a kCastFlag_CorpseTarget claim stands but names NO "
+                                  "usable corpse (target 0x{}: {}). The engine's own pick (handle 0x{}) was removed; "
+                                  "this cast has no corpse (spell 0x{}).",
+                                  apmf::log::Hex(m.actor), apmf::log::Hex(m.claim.target), noCorpse,
+                                  apmf::log::Hex(engine), apmf::log::Hex(m.driven));
             } else if (firstClaim || LogDue(m.actor, 0x0D02u)) {
                 spdlog::warn("[ch.8b reanimate 0x0D] 0x{} aim: the claimed corpse 0x{} is no longer a corpse (it does "
                              "not resolve, is not dead, or is disabled / deleted). The engine's own pick (handle "

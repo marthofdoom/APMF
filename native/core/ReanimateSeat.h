@@ -32,6 +32,10 @@
 //   0x0D: engine first, then +0x28 and aim+0x30 are rewritten to the claim's corpse
 //         if it still resolves, is dead and is not disabled or deleted. If it does
 //         not, both are zeroed (no corpse) instead of leaving the engine's pick.
+// A corpse claim that names NO usable corpse (its target was not a loaded actor when the
+// claim was applied, or it is 0 / the actor itself through RequestEx) is answered the same
+// way at both seats: never offered, the engine's pick removed, NO, an error logged. It is
+// never a reason to chain to the engine (review F1 of b96edf0).
 // No function is called by address and no call site is patched: two vtable slots on
 // the verified CombatMagicCasterReanimate vtable. Slot contents and every offset above
 // were read from the 1.6.1170, 1.5.97 and 1.7.104 executables (identical offsets on

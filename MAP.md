@@ -1090,8 +1090,11 @@ offering a corpse that fails `StillCorpse` (the search does not test the disable
 handle back, which reads as "kept"); writing `aim+0x30` without the vtable identity guard; ranking a claim that does not
 carry the flag (`MatchClaim` with `a_count` records a decision: a target-0 Reanimate claim would be counted as answered
 here); calling `MatchClaim` at 0x0D with its own displaced function instead of 0x06's (`StartPrev`: a hook inside one
-slot would split a cast); installing on any other caster vtable (the +0x20 / +0x28 members are this type's only).
-Backlog: APMF-B285, APMF-B286.
+slot would split a cast); installing on any other caster vtable (the +0x20 / +0x28 members are this type's only);
+chaining to the engine for a flagged claim that names no usable corpse (review F1: target not a loaded actor at the
+drain, or 0 / the actor through RequestEx: `NoCorpseWhy`; the engine's pick would cast under the claim), which is
+why `CorpseClaim` calls `MatchClaim` with `a_needTarget` false and tests no target itself.
+Backlog: APMF-B285 to APMF-B290 (a corpse claim with no usable corpse is answered NO at both seats, review F1).
 
 ### `native/core/AiCastSeats.{h,cpp}` — OBSERVE-ONLY: the AI cast/equip-decision seats
 Three independently-flagged, chain-unconditionally probes (`Install()`), all

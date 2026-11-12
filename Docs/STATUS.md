@@ -130,7 +130,7 @@ One section per item, newest ABI last. Research notes: `Docs/research/melee-move
 - **Not proven:** nothing here has run in a game. Whether `0x81E290` enforces the spell's level cap is not read (it runs
   the effect's conditions and the archetype's add test). MFO tests the cap itself before asking (`WillWork`).
 - **Deny audit:** row 8b of `Docs/DENY-COMPLETENESS-AUDIT.md` names the three callers of the search and two holes.
-- **Open:** APMF-B285, APMF-B286 (`Docs/REVIEW-BACKLOG.md`).
+- **Open:** APMF-B285 to APMF-B290 (`Docs/REVIEW-BACKLOG.md`).
 
 ## HEAD OF WORK 2026-11-11 -- ch.32 AVERSION (ABI v41), branch `feat/aversion` (on top of `feat/ch7-hostile-offense`), NOT merged, NOT field run
 
