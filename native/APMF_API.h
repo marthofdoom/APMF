@@ -3703,7 +3703,8 @@ namespace APMF_API {
     //   * NO USABLE CORPSE: a `target` that is not a loaded actor when the claim is applied (or, through
     //     RequestEx(kIntent_Cast) with the bit in param.ival, a target of 0 or the actor) is answered like a
     //     refused corpse at every poll: NO, the engine's pick removed, an error logged. The claim stands and
-    //     can never cast; release it or let its TTL end it.
+    //     can never cast; release it or let its TTL end it. Such a claim is not deny-complete for its hand (no
+    //     resolved target): the AI can arm another spell there, which casts at the engine's own pick.
     // The claim's other rules are unchanged (TTL, Repoint heartbeat, hand, deny-complete equip). Harbinger does
     // not test the spell's level cap itself: the engine's own test is the only judge. A client that wants to
     // skip a corpse the spell is too weak for tests that before asking.
