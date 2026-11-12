@@ -351,8 +351,10 @@ Docs/FACETS.md ch.24 "A point instead of a reference".
 ABI v40 (2026-11-11, branch feat/ch7-hostile-offense, marth on MFO's G3 flee: "wouldn't it be non offense cast"): OFFENSE
 MEANS HOSTILE. No bit, no field, no slot: the meaning of kCombatActionCat_Offense on the four cast leaves. Up to v39 it
 denied every cast. From v40 it denies a cast only when the spell or shout is hostile (an effect flagged Hostile or
-Detrimental, an enemy-control archetype, a hostile cloak) or of undeclared nature (no readable effect, or all script
-effects and not cast on self: counted as hostile, logged). A declared non-hostile cast passes a mask of Offense alone.
+Detrimental, an enemy-control archetype, a hostile cloak) or of undeclared nature (counted as hostile, logged). Beneficial
+is an ALLOW-LIST since the review fix round of the same day (F1): every effect a named benign archetype with neither flag;
+any script effect on any delivery and any unlisted archetype is undeclared (FACETS ch.7 has the list). A beneficial cast
+passes a mask of Offense alone.
 kCombatActionCat_Cast is unchanged and denies every cast, so Offense | Cast is the v39 meaning on every version. WHY IN
 PLACE and not a new bit: the ruling is about what the word means, the old meaning stays available as Offense | Cast, and
 no shipped client files Offense alone (MFO's hide claims file Offense | Cast, its excursion helper has no caller). A
