@@ -52,6 +52,12 @@ build/finding/workflow change.
 - **Per runtime (principle 11):** rows `Aversion.SelectTarget.Standard`, `Aversion.FindBest`, `Aversion.IsValidTarget`
   (not on 1.5.97: inlined there), `Aversion.LookupActorByHandle` for 1.6.1170, 1.5.97 and 1.7.104 (raw RVAs there),
   plus the code's lead / tail byte windows at each site. All three seats or none. INI `[Aversion] bAversion`.
+- **Fix round 2026-11-11 (review of `0a052e1`).** H2-1: the second pass's answer is used only when it passes the
+  scorer's own reach, path, dead and fleeing tests, asked by calling the scorer's own functions (four more rows
+  `Aversion.RefLocation` / `InCombatArea` / `CrossSpaceReach` / `IsFleeing`, seven more byte-proven sites); otherwise
+  the claimant is kept (`kept-unfit` in the totals line). The scorer's second -500 test is FLEEING, not "downed"
+  (read in this round). H2-2: FACETS ch.32 and #0 (m) rule 3 no longer say "never less": the weight is not a floor.
+  Deferred: REVIEW-BACKLOG APMF-B283, APMF-B284.
 - **Proposed:** INVARIANTS #0 (m), adoption is marth's at the merge. Audit row 32 is PARTIAL BY DESIGN (a weight).
 - **Not observed yet (principle 5):** proven by disassembly on three executables, not by a field run. Field test: MFO
   `in-game-test-list.md` T2 field session, the aversion steps (`[ch.32] aversion: ... AVERTED` and `aversion H`).

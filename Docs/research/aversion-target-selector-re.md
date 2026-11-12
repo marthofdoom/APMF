@@ -55,7 +55,10 @@ interval `fCombatSelectTargetSwitchUpdateTime` (3 s), an unchanged one with `fCo
   attacker are in the same weapon-class state (AE 0x853D80: the equipped object is a weapon, form type 0x29, of
   animation type 0..6; meaning INFERRED), up to +1000 for proximity (2048 units), the attacker-count global (zero in
   the file), -2000 when the reach test fails, -2500 with no path across cell spaces, -500 for vfunc 0x99
-  (`IsDead(false)`), -500 for AE 0x67EFE0 (a process-state test; "down" INFERRED). The best score writes `*out`.
+  (`IsDead(false)`: life state dead, dying, essential down or recycle, read on AE 0x674ED0), -500 for AE 0x67EFE0 =
+  IS FLEEING (read 2026-11-11 in the H2-1 fix round: with a live, active controller `CombatState::isFleeing`
+  `[[actor+0x160]+0x08]+0x04`, else `MiddleHighProcessData::isFleeing` `+0x32B`; the first read's "down" was a wrong
+  inference). The best score writes `*out`.
 - **Fallback.** After the walk: `cmp dword [out],0; jne <done>` (AE / 1.7.104 +0x4C4, SE +0x53B). Only when nothing
   was scored is the fallback list sorted and walked: each handle is resolved (`call LookupActorByHandle`,
   AE / 1.7.104 +0x52E, SE +0x5EF) and the first one that passes the inline validity test is the answer.
@@ -95,5 +98,27 @@ slot 0x06's answer after the original ran. `CombatController::SetTarget` (AE 0x5
 ## 6. Not observed yet
 
 That slot 0x06 reaches the scorer in play is read from the code (its only caller), not seen in a log. The first
-field run reads `[ch.32] aversion H` and the per-pair lines. The meaning of the two -500 tests and of the same-state
-test is inferred. None of the three is used by ch.32.
+field run reads `[ch.32] aversion H` and the per-pair lines. The meaning of the same-state test is inferred and it is
+not used by ch.32.
+
+## 7. The penalty tests ch.32 calls (H2-1 fix round, 2026-11-11)
+
+The scorer penalises and does not skip, so the second pass's best can be unreachable, unpathable, dead or fleeing.
+ch.32 asks the scorer's own tests about that answer by calling the same functions (`core/Aversion.cpp` `UnfitReason`).
+Read on the three executables; 1.6.1170 and 1.7.104 are instruction-identical at these sites apart from rel32 / RIP
+displacements.
+
+| what | signature | 1.6.1170 | 1.5.97 | 1.7.104 | site in FindBest (AE, 1.7.104 / SE) |
+|---|---|---|---|---|---|
+| RefLocation | `BGSWorldLocation*(TESObjectREFR* rcx, BGSWorldLocation* out rdx)`: pos +0x00, worldspace-or-cell +0x10 | id 19784 0x2EA5E0 | id 19357 0x2964A0 | 0x2F0B70 | E8 +0x35E / +0x3C9 |
+| radius | `[[controller+0x10]+0x1B8]` (the inventory record's float) | load at +0x12A | load at +0x15C | +0x12A | |
+| limit | `comiss radius,[rip const]`, the constant reads 1024.0 on all three (AE RVA 0x1FFEB68, SE 0x1DDB908, 1.7.104 0x20A1F48); `jb` = ask the area | +0x3CD | +0x443 | +0x3CD | |
+| InCombatArea (reach, -2000) | `bool(CombatController* rcx, const BGSWorldLocation* rdx, float radius xmm2)`: currentArea (+0x98 AE, +0x90 SE; null = true) vfunc +0x28 | id 33261 0x55B310 | id 32512 0x4FFA60 | 0x563180 | E8 +0x3EF / +0x465 |
+| CrossSpaceReach (path, -2500) | `bool(Actor* attacker rcx, const BGSWorldLocation* rdx)`, different space only | id 47307 0x853F10 | id 46043 0x7BCCD0 | 0x868F80 | E8 +0x40C / +0x482 |
+| IsDead (-500) | candidate vfunc `+0x4C8` (slot 0x99) with edx = 0 | window +0x41D | window +0x493 | +0x41D | |
+| IsFleeing (-500) | `bool(Actor* rcx)` | id 37577 0x67EFE0 | id 36575 0x5ECB70 | 0x691AA0 | E8 +0x43A / +0x4B0 |
+
+Order in the scorer: when `radius < 1024` or the candidate is in a different space, the area test; then, different
+space only, the path test; then dead; then fleeing. None of the four AE ids is in the MIT 1.7.104 table (raw RVAs;
+the 1.6.1170 signatures hit those RVAs alone). NOT OBSERVED IN PLAY: which of the four fires in a real fight (the
+`kept-unfit` total and its per-pair line say so).

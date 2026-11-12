@@ -19,7 +19,7 @@
 
 namespace apmf::VerifiedAddresses
 {
-	// 1.6.1170.0: 304 rows
+	// 1.6.1170.0: 308 rows
 	inline constexpr REL::SelfCheck::Row kRows_1_6_1170[] = {
 		{ 207886, 0x18A5558, 0x0, 0, {  }, "Character" },
 		{ 207896, 0x18A5FE8, 0x0, 0, {  }, "Character.ActorValueOwner" },
@@ -325,9 +325,13 @@ namespace apmf::VerifiedAddresses
 		{ 47195, 0x84D280, 0x0, 0, {  }, "Aversion.FindBest" },
 		{ 47196, 0x84D940, 0x0, 0, {  }, "Aversion.IsValidTarget" },
 		{ 17201, 0x261E40, 0x0, 0, {  }, "Aversion.LookupActorByHandle" },
+		{ 19784, 0x2EA5E0, 0x0, 0, {  }, "Aversion.RefLocation" },
+		{ 33261, 0x55B310, 0x0, 0, {  }, "Aversion.InCombatArea" },
+		{ 47307, 0x853F10, 0x0, 0, {  }, "Aversion.CrossSpaceReach" },
+		{ 37577, 0x67EFE0, 0x0, 0, {  }, "Aversion.IsFleeing" },
 	};
 
-	// 1.5.97.0: 303 rows
+	// 1.5.97.0: 307 rows
 	inline constexpr REL::SelfCheck::Row kRows_1_5_97[] = {
 		{ 261397, 0x165DA40, 0x0, 0, {  }, "Character" },
 		{ 261402, 0x165E4D0, 0x0, 0, {  }, "Character.ActorValueOwner.SE" },
@@ -632,10 +636,14 @@ namespace apmf::VerifiedAddresses
 		{ 45918, 0x7B5E50, 0x0, 0, {  }, "Aversion.SelectTarget.Standard" },
 		{ 45922, 0x7B5FF0, 0x0, 0, {  }, "Aversion.FindBest" },
 		{ 16828, 0x2130F0, 0x0, 0, {  }, "Aversion.LookupActorByHandle" },
+		{ 19357, 0x2964A0, 0x0, 0, {  }, "Aversion.RefLocation" },
+		{ 32512, 0x4FFA60, 0x0, 0, {  }, "Aversion.InCombatArea" },
+		{ 46043, 0x7BCCD0, 0x0, 0, {  }, "Aversion.CrossSpaceReach" },
+		{ 36575, 0x5ECB70, 0x0, 0, {  }, "Aversion.IsFleeing" },
 	};
 
-	// 1.7.104.0: 301 rows
-	// 77 NOT VERIFIED on 1.7.104.0, deliberately absent from this table (the seat is refused):
+	// 1.7.104.0: 305 rows
+	// 81 NOT VERIFIED on 1.7.104.0, deliberately absent from this table (the seat is refused):
 	//   Character.ActorValueOwner.SE (1.6.1170 id -): no 1.6.1170 (AE) id: the 1.7.104 map is keyed by AE id (1.5.97-only seat)
 	//   ActionGate.Hold.ParallelDataPush (1.6.1170 id 47532): id 47532 is not in the idmap
 	//   TargetPin.CombatController.SetTarget (1.6.1170 id 33235): id 33235 is not in the idmap
@@ -713,6 +721,10 @@ namespace apmf::VerifiedAddresses
 	//   Aversion.FindBest (1.6.1170 id 47195): id 47195 is not in the idmap
 	//   Aversion.IsValidTarget (1.6.1170 id 47196): id 47196 is not in the idmap
 	//   Aversion.LookupActorByHandle (1.6.1170 id 17201): id 17201 is not in the idmap
+	//   Aversion.RefLocation (1.6.1170 id 19784): id 19784 is not in the idmap
+	//   Aversion.InCombatArea (1.6.1170 id 33261): id 33261 is not in the idmap
+	//   Aversion.CrossSpaceReach (1.6.1170 id 47307): id 47307 is not in the idmap
+	//   Aversion.IsFleeing (1.6.1170 id 37577): id 37577 is not in the idmap
 	inline constexpr REL::SelfCheck::Row kRows_1_7_104[] = {
 		{ 207886, 0x1923258, 0x0, 0, {  }, "Character" },
 		{ 207896, 0x1923CE8, 0x0, 0, {  }, "Character.ActorValueOwner" },
@@ -1015,6 +1027,10 @@ namespace apmf::VerifiedAddresses
 		{ 0, 0x8622E0, 0x0, 0, {  }, "Aversion.FindBest" },
 		{ 0, 0x8629A0, 0x0, 0, {  }, "Aversion.IsValidTarget" },
 		{ 0, 0x2676C0, 0x0, 0, {  }, "Aversion.LookupActorByHandle" },
+		{ 0, 0x2F0B70, 0x0, 0, {  }, "Aversion.RefLocation" },
+		{ 0, 0x563180, 0x0, 0, {  }, "Aversion.InCombatArea" },
+		{ 0, 0x868F80, 0x0, 0, {  }, "Aversion.CrossSpaceReach" },
+		{ 0, 0x691AA0, 0x0, 0, {  }, "Aversion.IsFleeing" },
 	};
 
 	inline constexpr REL::SelfCheck::Table kTables[] = {
