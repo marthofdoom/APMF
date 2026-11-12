@@ -1433,3 +1433,6 @@ Not updated with the NO USABLE CORPSE case (FACETS was); it still says only "the
 
 ### APMF-B294 (SEV-5, OPEN, native/core/CastSeats.cpp ClaimNamesThisCast Decide a_count=true, against df565de, same review, R4)
 A claim with no usable corpse records a Cast-facet decision on every 0x06 poll though it never casts. Attribution and counters only; a refused-keep claim already counts this way.
+
+### APMF-B301 (SEV-4, OPEN, native/core/CastLeafNature.cpp OwnClaimHolds, raised by the author against feat/ch7-benign-own, 2026-11-12)
+The Q91 own-claim pass applies to an UNDECLARED spell only. A HOSTILE record the same client claims to cast still stays denied under that client's Offense-only deny (deny-completeness: the ruling named the Script-heal case). It resolves the two handles' client with `sources::ClientForHandle` (shared leaf lock, the same one ClaimOutranksTree takes on the same thread), not an atomic. Both are the author's reading; the reviewer decides.

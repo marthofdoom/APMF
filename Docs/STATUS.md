@@ -184,6 +184,7 @@ One section per item, newest ABI last. Research notes: `Docs/research/melee-move
   deny only when every effect is a named benign archetype with neither flag. Any Script effect (Self included) and any
   unlisted archetype (Stagger, Absorb, Disarm, SpawnHazard, ...) is undeclared and denied. Summon and Reanimate pass by
   ruling. Audit row 14 re-graded PARTIAL for the hostile-cast half with its residuals listed. Backlog APMF-B279..B282.
+- **Q91 + Q92 (2026-11-12, feat/ch7-benign-own):** NightEye joins the benign list; Dispel joins it only on a Self-delivered spell. An undeclared spell the same client holds a live cast claim for (for that actor) passes that client's own Offense-only deny, logged `passed own Offense-only deny`. No ABI change. Backlog APMF-B301.
 - **ABI v40:** semantics in place, constant + comments only (no bit, field or slot). `Offense | Cast` = the v39 meaning.
   MFO's copy of `APMF_API.h` must match byte for byte.
 - **Per runtime (principle 11):** six function rows `CastNature.*` in `VerifiedAddresses.h` for 1.6.1170, 1.5.97 and

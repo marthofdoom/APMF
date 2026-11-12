@@ -1655,7 +1655,7 @@ actions. In `ActThunkBody`, after the `(denyMask & leafCat) == 0` pass and BEFOR
 Cast bit under a mask that does NOT name Cast looks up `g_castLeafKind` (vt -> `castleafnature::LeafKind`, filled in
 `Install` only for leaves whose read `castleafnature::Install` proved) and calls `PassesOffenseDeny(kind, thread, actor,
 handle)`: true = EVERY effect of the spell the leaf is about to cast declares beneficial (`BenignArchetype` allow-list,
-neither flag; any Script effect or unlisted archetype = undeclared = denied; `NatureOf`), the leaf runs. The read: thread context
+neither flag; any Script effect or unlisted archetype = undeclared = denied; `NatureOf`; NightEye always and Dispel only on a Self-delivered spell are on the list, Q92), the leaf runs. An UNDECLARED spell the same client holds a live cast claim for passes that client's own deny (`OwnClaimHolds`: `TryGetCastSeatClaimForForm` + `sources::ClientForHandle` equality on the deny handle and `CastSeatClaim::handle`, Q91; hostile never passes this way) The read: thread context
 window (+0x128 header, +0x130 offset, bounded by header+0x0C), `MagicItem*` at context+0x08 (spell leaves), `TESShout*`
 at +0x20 (shout leaf, judged over all variations). Proof per runtime in `castleafnature::Install`: six `CastNature.*`
 rows (`SeatVerified`) + byte windows + the Enter's call landing on the verified helper. `Heartbeat` from
