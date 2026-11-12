@@ -23,7 +23,7 @@ One section per item, newest ABI last. Research notes: `Docs/research/melee-move
 - **ABI v43:** no struct, no slot. `kCombatMove_Block` built, `kCombatMove_BlockEnd`, `kCombatMoveState_Ended`, whys
   13 to 20, info bits 5 to 7, `kCombatBlock*`. `param.fval` = the window. MFO's `APMF_API.h` is the same byte for byte.
 - **No new address row.** The two action forms come from the default object manager behind the row ch.31 already
-  verifies. The leaves are found by RTTI name. 1.7.104 stays refused with the rest of ch.31 (APMF-B296).
+  verifies. The leaves are found by RTTI name. 1.7.104 stays refused with the rest of ch.31 (APMF-B300).
 - **Passive (principle 5):** `[combat-move] ... STARTED ... BLOCK held`, `RE-RAISED`, `block ENDED`, the 30 s
   `H block holds` heartbeat with the per-leaf deny counts. `[Probe] bCombatMove` already logs the target's want-block
   state on every melee hit.
@@ -31,8 +31,8 @@ One section per item, newest ABI last. Research notes: `Docs/research/melee-move
   which hands make Left Attack a block; a wrong read shows as `FAILED ... want-block state did not set` with the event.
 - **Deny audit:** row "31 block", six open paths named. INVARIANTS #0 (l) block amendment (proposed).
 - **File size:** `core/ActionGate.cpp` is at 2484 lines (backstop 2500). Nothing more goes into it without a split
-  brief (APMF-B291).
-- **Open:** APMF-B291, APMF-B292, APMF-B296.
+  brief (APMF-B295).
+- **Open:** APMF-B295, APMF-B296, APMF-B300.
 
 ### ch.31 POWER ATTACK (ABI v44): the engine's real power attack, once
 
@@ -47,8 +47,8 @@ One section per item, newest ABI last. Research notes: `Docs/research/melee-move
   power attack landed`. `[Probe] bCombatMove` logs every melee hit's flags, so a native power attack and one of
   ours can be compared in one log.
 - **Not proven:** nothing here has run in a game. Whether the graph's refusal of an unfitting entry is free of side
-  effects is the engine's own behaviour, not observed by us (APMF-B293).
-- **Open:** APMF-B293.
+  effects is the engine's own behaviour, not observed by us (APMF-B297).
+- **Open:** APMF-B297.
 
 ### ch.18 power FLOOR ("Normal share max", batch M item 3): ALREADY BUILT, no code, no ABI
 
@@ -89,8 +89,8 @@ One section per item, newest ABI last. Research notes: `Docs/research/melee-move
   fights is the field question. Whether any style read is inlined past seat B was not searched for.
 - **Deny audit:** row 33, six open paths named. INVARIANTS #0 (n) (proposed), with the #17a argument.
 - **Generator note:** `Docs/VERIFIED-ADDRESSES.md` carries two hand-edited ch.21 layout rows that `spec.json` does not
-  have (they predate this branch). The regeneration kept them by hand (APMF-B295).
-- **Open:** APMF-B294, APMF-B295.
+  have (they predate this branch). The regeneration kept them by hand (APMF-B299).
+- **Open:** APMF-B298, APMF-B299.
 
 ### Dodge (batch M item 4): NO facet built, no ABI number taken
 

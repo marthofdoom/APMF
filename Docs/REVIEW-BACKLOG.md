@@ -1373,23 +1373,23 @@ As handed to the author: "in-place semantics vs third-party v36 clients; no quer
 ### APMF-B281 (SEV-5, OPEN, core/CastLeafNature.cpp ~:195, against bfc50c1, same review, finding F5a)
 As handed to the author: "CastLeafNature.cpp:195 comment order." (The TESShout static_assert comment block near the per-runtime tables.)
 
-<!-- the melee-moves entries (APMF-B291 to APMF-B296) sit here; B287..B290 belong to the corpse-target fix round -->
-### APMF-B296 (SEV-4, OPEN, core/CombatMove.cpp Install, raised by the author against feat/melee-moves, 2026-11-11)
+<!-- the melee-moves entries (APMF-B295 to APMF-B300) sit here; B287..B294 belong to the corpse-target rounds -->
+### APMF-B300 (SEV-4, OPEN, core/CombatMove.cpp Install, raised by the author against feat/melee-moves, 2026-11-11)
 ch.31 is refused by name on 1.7.104 and the ABI v43 block and ABI v44 power attack inherit that. The post-action step that sets and clears the want-block state was read on 1.7.104 (`0x6E2747` / `0x6E2776`, same logic), but the StartAttack / action mediator road and the block wrapper were not, and 1.7.104 has no Address Library ids. Fix direction: read the three functions on 1.7.104, add the raw rows, lift the refusal for the whole channel in one change.
 
-### APMF-B291 (SEV-4, OPEN, core/ActionGate.cpp, same branch)
+### APMF-B295 (SEV-4, OPEN, core/ActionGate.cpp, same branch)
 The file is at 2484 lines, 16 under the 2500 backstop, after the block hold's 49 lines in `ActThunkBody` and `Install`. The next change to it must be preceded by a split brief (its own round, proven with tools/splitcheck). Candidates by concern: the pursuit leash, the movement hold, the probes.
 
-### APMF-B292 (SEV-4, OPEN, core/CombatMoveBlock.cpp, same branch)
+### APMF-B296 (SEV-4, OPEN, core/CombatMoveBlock.cpp, same branch)
 Not field run. What only a game can show: (1) that Left Attack with no event reads back want-block for each hands case `HandsWouldNotBlock` lets through (shield, torch, one-handed with an empty left hand, two-handed), including a follower whose left hand holds a spell the engine un-equips late; (2) how often the engine drops the guard inside a window (the `reRaised` count of the heartbeat); (3) whether failing the Block leaf at entry makes the tree pick a visibly worse fallback (he should keep closing and circling); (4) the engine's clearer AE 38696 +0x3D5 was not read past its callers.
 
-### APMF-B293 (SEV-4, OPEN, core/CombatMove.cpp Run power branch, raised by the author against feat/melee-moves, 2026-11-11)
+### APMF-B297 (SEV-4, OPEN, core/CombatMove.cpp Run power branch, raised by the author against feat/melee-moves, 2026-11-11)
 Not field run. What only a game can show: (1) which entry a one-handed, a two-handed and a dual-wielding follower end on, and how many his graph refuses first (the STARTED line lists them); (2) that a refused entry leaves nothing behind (the engine's own attack start relies on the same); (3) that the hit carries the PowerAttack flag and power damage (compare `[Probe] bCombatMove` lines of a native power attack and of ours); (4) whether a standing power entry is ever accepted while he is moving, or only the forward one. A mod that gives the power entries of a race an attack chance of 0 leaves that actor with `NoAttackData` (the vanilla sprint entries are 0 for that reason and are skipped on purpose).
 
-### APMF-B294 (SEV-4, OPEN, core/CombatStyle.cpp, raised by the author against feat/melee-moves, 2026-11-11)
+### APMF-B298 (SEV-4, OPEN, core/CombatStyle.cpp, raised by the author against feat/melee-moves, 2026-11-11)
 Not field run. What only a game can show: (1) both seats answering under a claim (the `FIRST answer` lines) and the refresh line's before / after styles; (2) whether any combat style read is compiler-inlined past Actor::GetCombatStyle (a follower with an actor-wide claim who still circles or attacks by his base style); (3) that calling CombatController::UpdateCombatStyle from the game thread during a running fight is as safe as the engine's own SetCombatStyle path makes it look (the combat update runs on job workers); (4) the cost of seat B with a full party claimed (27 engine call sites reach it; the scan is bounded by the highest slot used). Also: the claim is ranked against Engine only every 5 s, so a priority change in the menu takes up to 5 s to apply.
 
-### APMF-B295 (SEV-5, OPEN, tools/verified_addresses/spec.json vs Docs/VERIFIED-ADDRESSES.md, found on feat/melee-moves, 2026-11-11)
+### APMF-B299 (SEV-5, OPEN, tools/verified_addresses/spec.json vs Docs/VERIFIED-ADDRESSES.md, found on feat/melee-moves, 2026-11-11)
 The committed doc has two ch.21 layout rows ("the controller is not dereferenced here (the one exception is the passive probe byte read, next row)" and "ch.21 passive probe (log only): CombatController::inactive ...") that `spec.json`'s `layout_facts` does not carry: someone edited the generated doc instead of the spec. A plain regeneration drops them. On this branch the regenerated doc was patched to keep both rows. Fix: move the two rows into `spec.json` so the generator reproduces the file again. The header (`native/VerifiedAddresses.h`) is unaffected: it regenerates byte for byte.
 
 <!-- the corpse-target entries (APMF-B285, APMF-B286) sit here, above B282, so this file merges cleanly with the base branch's own appended entries -->
