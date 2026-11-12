@@ -4,6 +4,30 @@ Updated 2026-11-10. Current version **v0.19.0** (cut 2026-11-10, ABI v36, a Deck
 shipped, what's probe-gated, what's next. Keep this current in the SAME change as any
 build/finding/workflow change.
 
+## HEAD OF WORK 2026-11-11 -- ch.7 OFFENSE MEANS HOSTILE (ABI v40), branch `feat/ch7-hostile-offense`, NOT merged, NOT field run
+
+- **Why:** MFO's G3 flee files a ch.7 Offense deny and boosts the follower's heals. The four cast leaves carried the
+  Offense bit, so the deny force-failed his own heal casts (the claim road delivers through those leaves). marth
+  2026-11-11: "wouldn't it be non offense cast". Offense means HOSTILE actions.
+- **What:** `core/CastLeafNature.{h,cpp}` (new). In `ActionGate` `ActThunkBody`, a cast leaf reached by the Offense bit
+  alone (the mask does not name Cast) asks `PassesOffenseDeny`: the spell is read from the leaf's own context (thread
+  window +0x128 / +0x130, `MagicItem*` at context+0x08, `TESShout*` at +0x20), judged from its record (hostile /
+  undeclared = denied, beneficial = runs). Read only: no hook, no call, no write. `kCombatActionCat_Cast` unchanged.
+- **Fix round A (2026-11-11, tier-3 review F1 SEV-2):** the nature rule is now an ALLOW-LIST. A spell passes an Offense-only
+  deny only when every effect is a named benign archetype with neither flag. Any Script effect (Self included) and any
+  unlisted archetype (Stagger, Absorb, Disarm, SpawnHazard, ...) is undeclared and denied. Summon and Reanimate pass by
+  ruling. Audit row 14 re-graded PARTIAL for the hostile-cast half with its residuals listed. Backlog APMF-B279..B282.
+- **ABI v40:** semantics in place, constant + comments only (no bit, field or slot). `Offense | Cast` = the v39 meaning.
+  MFO's copy of `APMF_API.h` must match byte for byte.
+- **Per runtime (principle 11):** six function rows `CastNature.*` in `VerifiedAddresses.h` for 1.6.1170, 1.5.97 and
+  1.7.104 (raw RVAs there), plus the code's own byte windows per runtime. A leaf that fails keeps every cast as Offense
+  and is named: `[ch.7] hostile-offense (ABI v40) on <runtime>: ... REFUSED`. INI `[CombatAction] bHostileOnlyOffense`.
+- **Not observed yet (principle 5):** the read is proven by disassembly on all three executables, not by a field run.
+  Field test: MFO `in-game-test-list.md` Movement batch step 3c (`[ch.7] hostile-offense: ... NOT Offense, passes` and
+  the `hostile-offense H` totals).
+- **Open:** a client cannot ask whether the hostile-only read is live on the running game (it gates on ABI 40 only).
+  A query slot would be an ABI append. Asked in MFO's pending questions.
+
 ## HEAD OF WORK 2026-11-11 -- MOVEMENT BATCH (anchor leak Q92 fix + H3 gait probe), branch `feat/h3-disengage`, NOT merged
 
 - **ANCHOR LEAK Q92, root cause (field LoreRim 2026-11-11 09:16:45, `APMF.log`):** the leak cleanup ended a REAL fight

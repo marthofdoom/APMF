@@ -1565,6 +1565,26 @@ Refused off exactly 1.6.1170 / 1.5.97 / 1.7.104 (VR included; G1 2026-10-04), in
   regardless of that flag.
 
 ### `native/core/ActionGate.{h,cpp}` — T1: the combat behavior-tree allowance (ch.7 ONLY)
+**ch.7 HOSTILE OFFENSE (ABI v40, 2026-11-11, `core/CastLeafNature.{h,cpp}`):** `kCombatActionCat_Offense` means hostile
+actions. In `ActThunkBody`, after the `(denyMask & leafCat) == 0` pass and BEFORE the ForceFail, a leaf that carries the
+Cast bit under a mask that does NOT name Cast looks up `g_castLeafKind` (vt -> `castleafnature::LeafKind`, filled in
+`Install` only for leaves whose read `castleafnature::Install` proved) and calls `PassesOffenseDeny(kind, thread, actor,
+handle)`: true = EVERY effect of the spell the leaf is about to cast declares beneficial (`BenignArchetype` allow-list,
+neither flag; any Script effect or unlisted archetype = undeclared = denied; `NatureOf`), the leaf runs. The read: thread context
+window (+0x128 header, +0x130 offset, bounded by header+0x0C), `MagicItem*` at context+0x08 (spell leaves), `TESShout*`
+at +0x20 (shout leaf, judged over all variations). Proof per runtime in `castleafnature::Install`: six `CastNature.*`
+rows (`SeatVerified`) + byte windows + the Enter's call landing on the verified helper. `Heartbeat` from
+`Arbiter::OncePerFrame`. INI `[CombatAction] bHostileOnlyOffense`. **Depended on by:** MFO's G3 flee
+(`apmf/Disengage.cpp` `DisengageDeny::HostileOffense`, gated on ABI 40). **What breaks:** consulting the nature when the
+mask names Cast (Cast must deny every cast); answering true on any doubt (unreadable, undeclared and a throw all deny);
+turning `NatureOf` back into a deny-list ("beneficial unless hostile" passed Self script-only spells: review F1), or adding
+an archetype to `BenignArchetype` without a ruling;
+moving the check before the substrate / ch.23 / ch.25 blocks or after `t_pending` is armed; adding a leaf to
+`g_castLeafKind` without its proof; reusing 1.6.1170 offsets on 1.5.97 (the helper keeps the context in r15 there, the
+shout Enter in rbx); calling `castleafnature::Install` after the cast leaves are classified (the map stays empty and
+every cast is Offense, silently the old behaviour). `ActionGate.cpp` is at 2435 lines: the next brief that touches it
+plans a split. INVARIANTS #17b. Open: REVIEW-BACKLOG APMF-B279 (the two `<bool>` cast leaves carry no ch.7 category),
+APMF-B280 (no query of the effective Offense semantics), APMF-B281, APMF-B282.
 **COMBAT SUBSTRATE (2026-10-13, S2a, #0 (j)):** `ActThunk` consults `combatsubstrate::ForLeaf` FIRST (after the
 observe-only probes, before ch.23 and ch.7) when `combatsubstrate::AnyLive()`, passing the node (`a_this`; the
 spell-equip path reads AcquireResource<2>'s resource name from it, `channels/SubstrateEquip.cpp`): a leaf of a holder under its substrate

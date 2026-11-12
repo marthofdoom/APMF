@@ -2413,8 +2413,18 @@ Handle h = g_apmf->RequestEx(actor, kIntent_CombatAction, kBasis, &p);
 
 | `ival` bit | Name | Leaves denied |
 |---|---|---|
-| 0 | `kCombatActionCat_Offense` | Attack, AttackLow, Bash, RangedAttack, SpecialAttack, GroundAttack, FlyingAttack, CastImmediateSpell, CastConcentrationSpell, CastShout, PrepareDualCast |
-| 1 | `kCombatActionCat_Cast` | CastImmediateSpell, CastConcentrationSpell, PrepareDualCast, CastShout. These four carry both bits |
+| 0 | `kCombatActionCat_Offense` | HOSTILE actions. Attack, AttackLow, Bash, RangedAttack, SpecialAttack, GroundAttack, FlyingAttack always. CastImmediateSpell, CastConcentrationSpell, CastShout and PrepareDualCast only when the spell is hostile (ABI 40, see below) |
+| 1 | `kCombatActionCat_Cast` | CastImmediateSpell, CastConcentrationSpell, PrepareDualCast, CastShout, whatever they cast. These four carry both bits |
+
+**Offense means hostile (ABI 40).** Up to ABI 39 the Offense bit denied every cast, heals and buffs included. From ABI 40 a cast leaf reached by the Offense bit alone is denied only when the spell or shout it is about to cast is hostile. Harbinger reads the spell from the leaf's own context at the moment the leaf starts and judges its record:
+
+- **Hostile:** any effect flagged Hostile or Detrimental, an enemy-control effect (Calm, Frenzy, Demoralize, Paralysis, Turn Undead) even when the record leaves the flag unset, or a cloak whose spell has such an effect. Denied.
+- **Beneficial:** the spell has at least one readable effect and every effect is on the benign list with neither flag set. The list: ValueModifier, PeakValueModifier, DualValueModifier, AccumulateMagnitude, Invisibility, Light, CureDisease, CureParalysis, CureAddiction, CurePoison, BoundWeapon, Rally, SlowTime, Etherealize, DetectLife, Guide, EnhanceWeapon, SummonCreature, Reanimate, and a Cloak whose own spell is beneficial by this same rule. A heal, a buff, a ward or a summon, on self or an ally. Not Offense. It runs.
+- **Undeclared:** everything else. No readable effect. Any Script effect, on any delivery, Self included, because what a script does is not in the record. Any archetype off the list: Stagger, Absorb, Disarm, SpawnHazard, Telekinesis, Banish, SoulTrap, GrabActor, Concussion, SpawnScriptedRef, CommandSummoned, Dispel and the rest. It counts as hostile and is denied. `APMF.log` names the spell at warn.
+
+Beneficial is an allow-list. A spell is never beneficial because nothing in it looked hostile. Known limits, which the record cannot close: a value modifier with neither flag that harms its target reads like a heal on another actor and passes. A summon passes by ruling (a summon is not offense), and what the summoned creature does is its own. The full list is row 14 of `DENY-COMPLETENESS-AUDIT.md`.
+
+A shout is judged over all its words: one hostile or undeclared word makes the shout hostile. A mask that names `kCombatActionCat_Cast` denies every cast as before, so `Offense | Cast` is the old meaning of Offense on every version. Check `abiVersion >= 40` before you rely on the hostile-only deny: an older Harbinger denies every cast under Offense. If Harbinger could not prove its read of the spell on the running game (`[ch.7] hostile-offense ... REFUSED` at startup, or `[CombatAction] bHostileOnlyOffense=0`), that leaf keeps the old behaviour and every cast on it counts as Offense. The deny is then stronger than you asked for and never weaker.
 
 An all-zero mask denies nothing. It is never a blanket lock. Defense, movement and utility leaves have no category bit and are never denied.
 
@@ -2445,18 +2455,18 @@ Only the ones every intent shares.
 ```cpp
 Handle HoldFire(RE::FormID actor) {
     APMF_Param p{};
-    p.ival = kCombatActionCat_Offense;           // the cast leaves carry the Offense bit too, see the table
+    p.ival = kCombatActionCat_Offense | kCombatActionCat_Cast;   // Offense alone lets a heal or a buff through from ABI 40
     return g_apmf->RequestEx(actor, kIntent_CombatAction, kBasis, &p);
 }
 ```
 
 **Check.** The follower keeps moving, blocking and searching in the fight and never swings or casts. `[ch.7]` lines count the denied leaves.
 
-The four cast leaves carry both bits, so `kCombatActionCat_Offense` also stops spell casts, and `kCombatActionCat_Cast` alone stops only the casts. No category denies the melee leaves alone.
+`kCombatActionCat_Offense` alone stops attacks and hostile casts and lets the follower heal or buff (ABI 40: a follower that runs from a fight and heals on the way). `kCombatActionCat_Cast` alone stops only the casts. No category denies the melee leaves alone.
 
 #### Version, INI and field status
 
-ABI 1. No key. Field-proven (graduated from a live deck probe).
+ABI 1. Offense means hostile from ABI 40, key `[CombatAction] bHostileOnlyOffense` (default 1). The deny is field-proven (graduated from a live deck probe). The hostile-only read is proven on the three executables and not yet field run.
 
 **Check Your Understanding: ch.7**
 

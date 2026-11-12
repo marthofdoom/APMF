@@ -1,3 +1,9 @@
+## Unreleased -- an offense deny lets heals through (ABI v40)
+
+- **Offense means hostile.** A mod that denies a follower's offense no longer stops his heals, buffs and wards. Harbinger reads the spell the game is about to cast. A hostile spell is denied. A spell passes only when every one of its effects is a known harmless kind (a heal, a buff, a cure, a light, a summon and the like). A spell with a script effect, or with any effect Harbinger does not know to be harmless, counts as hostile and is named in the log. Attacks are denied as before. A mod that wants every cast stopped names the Cast category as well, which works on every version.
+- **New setting `[CombatAction] bHostileOnlyOffense=1`.** Set 0 for the old behaviour.
+- **ABI v40.** No new function and no layout change. A mod checks for version 40 before it relies on heals passing an offense deny.
+
 ## Unreleased -- movement batch (anchor leak fix, gait probe)
 
 - **An out-of-combat cast no longer ends a teammate's fight.** When a follower opened an animated out-of-combat cast beside a teammate whose last foe had just died, the game merged the caster's substrate fight into the teammate's fight, and Harbinger's cleanup then stopped the teammate's combat. The merge is now refused at its source, and the cleanup never stops a fight that was running before the stand-in actor reached it. New setting `[CombatSubstrate] bSubstrateHolderJoinGuard=1`.

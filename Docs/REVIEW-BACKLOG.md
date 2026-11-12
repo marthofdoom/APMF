@@ -1363,3 +1363,16 @@ The bSubstrateJoinGuard comment says "1.6.1170 / 1.5.97 only", but the code supp
 ### APMF-B278 (SEV-5, OPEN, channels/CombatApproach.cpp bApproachGaitProbe, against 7639f18, same review)
 bApproachGaitProbe ships 1 in the INI and the code default while testing; flip both to 0 before a release cut (MB7). Also: CombatApproach.cpp crossed ~1500 lines (1523): plan a split as its own round.
 (Fixed in the branch by the coordinator from the same review: the JOIN GUARD seat-not-installed warning now says bSubstrateHolderJoinGuard is inert without the seat.)
+
+### APMF-B279 (SEV-4, OPEN, core/ActionGate.cpp cast leaf classification, against bfc50c1, Opus tier-3 review of feat/ch7-hostile-offense, finding F3)
+As handed to the author (the reviewer's own log was a two-line summary): "CombatBehaviorCastImmediateSpell<bool>/CastConcentrationSpell<bool> have no ch.7 category; on v40 a beneficial context spell lets PrepareDualCast pass and the <bool> release casts the hand-selected spell." Reviewer's log: "ImmediateSpell<bool> release unclassified (pre-existing, SEV-4)". Not fixed in the F1 round because it is not cheap: the two nodes sit in the parameterised table (`BehaviorTreeCatalog.h` kParamCast rows, own vtables), ch.7's act/pop pair is installed on the 70 plain leaves only, and their context read (which spell the release casts) has no proof on any runtime. A fix is a new seat with its own rows and byte windows. Recorded as DENY-COMPLETENESS-AUDIT row 14 R5. Fix direction: seat the pair on both `<bool>` vtables, prove their Enter's spell read per runtime, classify Offense|Cast with a `g_castLeafKind` entry.
+
+### APMF-B280 (SEV-4, OPEN, APMF_API.h kABIVersion 40, against bfc50c1, same review, finding F4)
+As handed to the author: "in-place semantics vs third-party v36 clients; no query of effective semantics -- next slot bump." A client built before v40 that files Offense alone gets the hostile-only meaning without asking for it, and no client can ask whether the read is live on the running game (refused leaf, `bHostileOnlyOffense=0`). No shipped client files Offense alone (MFO's G2 hold files Offense|Cast). Fix direction: at the next slot append add a query of the effective ch.7 semantics per leaf.
+
+### APMF-B281 (SEV-5, OPEN, core/CastLeafNature.cpp ~:195, against bfc50c1, same review, finding F5a)
+As handed to the author: "CastLeafNature.cpp:195 comment order." (The TESShout static_assert comment block near the per-runtime tables.)
+
+### APMF-B282 (SEV-5, OPEN, core/ActionGate.cpp ActThunkBody, against bfc50c1, same review, finding F5b)
+As handed to the author: "PassesOffenseDeny counted before ClaimOutranksTree." The hostile-offense verdict counters (and its per-form line) tick for a leaf the claim would not have denied anyway because the tree outranks it, so the `hostile-offense H` totals overcount.
+

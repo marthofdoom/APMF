@@ -1576,6 +1576,20 @@ T4's removal. (2026-10-20: `core/TorchSeat.cpp` is a second #17a seat under the 
 
 ## Deny completeness
 
+**#17b — A LEAF'S CATEGORY MAY DEPEND ON WHAT THE LEAF IS ABOUT TO DO, ONLY THROUGH A PROVEN READ (ch.7 hostile
+offense, ABI v40, 2026-11-11).** `kCombatActionCat_Offense` means hostile actions (marth: "wouldn't it be non offense
+cast"), so the four cast leaves count as Offense only for a hostile spell. The spell is read from the leaf's own
+context in the act() thunk (`core/CastLeafNature.cpp`). The rules that keep this safe: (1) the read is licensed per
+runtime by verified address rows and byte windows of the engine code that makes the same read, and a leaf whose proof
+fails is REFUSED BY NAME and keeps the wider deny (every cast is Offense); never a guess, never the other runtime's
+offsets; (2) every doubt denies: an unreadable window or pointer, an undeclared nature and a throw all count as
+hostile, and BENEFICIAL IS AN ALLOW-LIST (review F1, 2026-11-11): a spell passes only when every effect is on the
+named benign archetype list with neither the Hostile nor the Detrimental flag; a Script effect never declares
+beneficial on any delivery; an archetype the list does not name is undeclared. "Nothing hostile was found" is
+never a pass (the first rule was that, and passed a Self script-only spell and an unflagged Stagger); (3) the read is passive (no hook, no call, no write) and runs before the leaf's own act, on the bytes the
+leaf reads next; (4) `kCombatActionCat_Cast` never consults it. A new "depends on what it does" category must meet
+the same four.
+
 **#18 — DENY COMPLETENESS: for EVERY facet APMF can ACCEPT a claim on, the deny
 must ZERO the competing source across ALL paths it can reach that facet — a
 partial deny is a TOTAL architecture failure, not an edge case.** If a client can

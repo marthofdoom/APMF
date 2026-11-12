@@ -5295,6 +5295,96 @@
    },
    "source": "native/core/CombatMove.cpp (Install: SeatVerified, then GetObject(kActionRightAttack) through the fork's exact-build accessor, RTTI-checked As<BGSAction>)",
    "doc": "ch.31 combat move, review F1-1 of 6078122: the engine's getter is AE 0x14EEB0 (objects at +0x20, init flags at +0xB90); the default-object layout itself is the existing layout_facts row"
+  },
+  {
+   "seat": "CastNature.Enter.Immediate",
+   "kind": "function",
+   "construct": "CombatBehaviorCastImmediateSpell Enter (the leaf act()'s tail-jump target): reads the thread context window (thread+0x128 / +0x130) into rbx at +0x30, then `mov rcx,rbx; call` the cast helper at +0x73",
+   "ids": {
+    "1.6.1170": 49100,
+    "1.5.97": 48053
+   },
+   "sig": {
+    "1.6.1170": "48 89 5C 24 08 48 89 74 24 10 57 48 83 EC 30 65 48 8B 04 25 58 00 00 00",
+    "1.5.97": "48 89 5C 24 08 48 89 74 24 10 57 48 83 EC 30 65 48 8B 04 25 58 00 00 00"
+   },
+   "source": "native/core/CastLeafNature.cpp (ch.7 hostile offense, ABI v40: READ ONLY -- nothing hooked, called or written; the row and the code's byte windows license reading the magic context's spell (+0x08) / shout (+0x20) in the cast leaf's act() thunk)",
+   "doc": "agentlog move-batch.md 'CH7 HOSTILE OFFENSE' (2026-11-11): all six bodies read on the three executables; the 1.6.1170 signature hits the 1.7.104 RVA alone; no id is in the MIT table (raw_rvas)"
+  },
+  {
+   "seat": "CastNature.Enter.Concentration",
+   "kind": "function",
+   "construct": "CombatBehaviorCastConcentrationSpell Enter: context window into rbx at +0x33, `mov rcx,rbx; call` the cast helper at +0x96",
+   "ids": {
+    "1.6.1170": 49105,
+    "1.5.97": 48058
+   },
+   "sig": {
+    "1.6.1170": "48 89 5C 24 08 48 89 6C 24 10 48 89 74 24 18 57 48 83 EC 30 65 48 8B 04 25 58 00 00 00 48 8B F9 8B 15 ?? ?? ?? ?? BD A0 06 00 00 48 8B 34 D0 48 8B 04 2E 0F 10 80 28 01 00 00 66 48 0F 7E C0 0F 11 44 24 20 48 85 C0 74 09 8B 5C 24 28 48 03 18 EB 02 33 DB 48 8B 4B 18",
+    "1.5.97": "48 89 5C 24 08 48 89 6C 24 10 48 89 74 24 18 57 48 83 EC 30 65 48 8B 04 25 58 00 00 00"
+   },
+   "source": "native/core/CastLeafNature.cpp (ch.7 hostile offense, ABI v40: READ ONLY -- nothing hooked, called or written; the row and the code's byte windows license reading the magic context's spell (+0x08) / shout (+0x20) in the cast leaf's act() thunk)",
+   "doc": "agentlog move-batch.md 'CH7 HOSTILE OFFENSE' (2026-11-11): all six bodies read on the three executables; the 1.6.1170 signature hits the 1.7.104 RVA alone; no id is in the MIT table (raw_rvas)"
+  },
+  {
+   "seat": "CastNature.Enter.DualCast",
+   "kind": "function",
+   "construct": "CombatBehaviorPrepareDualCast Enter: context window into rbx (AE/1.7.104 +0x49, SE +0x3C), then `mov rcx,[rbx+8]; mov rax,[rcx]; call [rax+0x2A8]; cmp eax,2` = MagicItem::GetCastingType on the context's spell (AE/1.7.104 +0x19F, SE +0x93)",
+   "ids": {
+    "1.6.1170": 49110,
+    "1.5.97": 48063
+   },
+   "sig": {
+    "1.6.1170": "48 8B C4 57 41 54 41 55 41 56 41 57 48 81 EC 80 00 00 00 48 C7 44 24 20 FE FF FF FF 48 89 58 08 48 89 68 10 48 89 70 18 0F 29 70 C8 8B 0D ?? ?? ?? ??",
+    "1.5.97": "40 57 48 83 EC 50 48 C7 44 24 20 FE FF FF FF 48 89 5C 24 60 48 89 6C 24 68 48 89 74 24 70 8B 0D ?? ?? ?? ??"
+   },
+   "source": "native/core/CastLeafNature.cpp (ch.7 hostile offense, ABI v40: READ ONLY -- nothing hooked, called or written; the row and the code's byte windows license reading the magic context's spell (+0x08) / shout (+0x20) in the cast leaf's act() thunk)",
+   "doc": "agentlog move-batch.md 'CH7 HOSTILE OFFENSE' (2026-11-11): all six bodies read on the three executables; the 1.6.1170 signature hits the 1.7.104 RVA alone; no id is in the MIT table (raw_rvas)"
+  },
+  {
+   "seat": "CastNature.Enter.Shout",
+   "kind": "function",
+   "construct": "CombatBehaviorCastShout Enter: context window (AE/1.7.104 +0xC5 into rbp, SE +0xD8 into rbx), `mov rcx,<ctx>; call` the shout cast helper (AE/1.7.104 +0x219, SE +0x18D)",
+   "ids": {
+    "1.6.1170": 49764,
+    "1.5.97": 48809
+   },
+   "sig": {
+    "1.6.1170": "48 8B C4 57 41 54 41 55 41 56 41 57 48 81 EC 90 00 00 00 48 C7 44 24 20 FE FF FF FF 48 89 58 08 48 89 68 10 48 89 70 18 0F 29 70 C8 0F 29 78 B8",
+    "1.5.97": "48 8B C4 41 56 48 81 EC A0 00 00 00 48 C7 44 24 20 FE FF FF FF 48 89 58 08 48 89 68 10 48 89 70 18 48 89 78 20 0F 29 70 E8 0F 29 78 D8 8B 0D ?? ?? ?? ??"
+   },
+   "source": "native/core/CastLeafNature.cpp (ch.7 hostile offense, ABI v40: READ ONLY -- nothing hooked, called or written; the row and the code's byte windows license reading the magic context's spell (+0x08) / shout (+0x20) in the cast leaf's act() thunk)",
+   "doc": "agentlog move-batch.md 'CH7 HOSTILE OFFENSE' (2026-11-11): all six bodies read on the three executables; the 1.6.1170 signature hits the 1.7.104 RVA alone; no id is in the MIT table (raw_rvas)"
+  },
+  {
+   "seat": "CastNature.Cast",
+   "kind": "function",
+   "construct": "the cast helper of the Immediate / Concentration leaves, bool(CombatBehaviorContextMagic* ctx, bool): `mov rdx,[ctx+8]; mov rcx,[ctx]; call` (the caster's cast call with the context's MagicItem; AE/1.7.104 +0x14C, SE +0x157), then `mov rcx,[ctx+8]; call [vtbl+0x2A8]; cmp eax,2` (AE/1.7.104 +0x160, SE +0x16C); ctx kept in r14 (AE/1.7.104) / r15 (SE)",
+   "ids": {
+    "1.6.1170": 49083,
+    "1.5.97": 48037
+   },
+   "sig": {
+    "1.6.1170": "4C 8B DC 41 54 41 56 41 57 48 83 EC 70 49 C7 43 98 FE FF FF FF 49 89 5B 08 49 89 6B 10 49 89 73 18 49 89 7B 20 44 0F B6 FA",
+    "1.5.97": "48 8B C4 55 41 54 41 55 41 56 41 57 48 8D 68 A1 48 81 EC 90 00 00 00 48 C7 45 C7 FE FF FF FF 48 89 58 08 48 89 70 10 48 89 78 18 44 0F B6 E2"
+   },
+   "source": "native/core/CastLeafNature.cpp (ch.7 hostile offense, ABI v40: READ ONLY -- nothing hooked, called or written; the row and the code's byte windows license reading the magic context's spell (+0x08) / shout (+0x20) in the cast leaf's act() thunk)",
+   "doc": "agentlog move-batch.md 'CH7 HOSTILE OFFENSE' (2026-11-11): all six bodies read on the three executables; the 1.6.1170 signature hits the 1.7.104 RVA alone; no id is in the MIT table (raw_rvas)"
+  },
+  {
+   "seat": "CastNature.ShoutCast",
+   "kind": "function",
+   "construct": "the shout leaf's cast helper: `mov rcx,[r14+0x20]; call` (pick the TESShout's variation; AE/1.7.104 +0xDB, SE +0xFA) and `mov rdx,[r14+0x20]` (the shout handed to the actor's shout call, which casts variations[i].spell = shout+0x68+i*0x18; AE/1.7.104 +0xEA, SE +0x109)",
+   "ids": {
+    "1.6.1170": 49758,
+    "1.5.97": 48803
+   },
+   "sig": {
+    "1.6.1170": "48 8B C4 57 41 56 41 57 48 83 EC 70 48 C7 40 98 FE FF FF FF 48 89 58 08 48 89 68 10 48 89 70 18 4C 8B F1",
+    "1.5.97": "4C 8B DC 57 41 56 41 57 48 81 EC 90 00 00 00 48 C7 44 24 20 FE FF FF FF"
+   },
+   "source": "native/core/CastLeafNature.cpp (ch.7 hostile offense, ABI v40: READ ONLY -- nothing hooked, called or written; the row and the code's byte windows license reading the magic context's spell (+0x08) / shout (+0x20) in the cast leaf's act() thunk)",
+   "doc": "agentlog move-batch.md 'CH7 HOSTILE OFFENSE' (2026-11-11): all six bodies read on the three executables; the 1.6.1170 signature hits the 1.7.104 RVA alone; no id is in the MIT table (raw_rvas)"
   }
  ],
  "layout_facts": [
@@ -5640,6 +5730,13 @@
    "where": "core/AttackSelectProbe.cpp (CtxActThunk, AfterAct)",
    "verified_by": "agentlog apmf-combat-behaviour-facet.md 2026-10-27: node+0x30 AE 0x8A5183 / SE 0x80E90D / 1.7.104 0x8BA653 (block AE 0x86C433, SE 0x7D52BD, 1.7.104 0x881673); ctx+4 AE ctor 0x8A25D8, read by gather AE 0x8A3A0F / SE 0x80D296; pool AE 0x8A2A7B / SE 0x80C215 / 1.7.104 0x8B7F2B, array AE 0x8A2AFA / SE 0x80C28A / 1.7.104 0x8B7FAA; window AE 0x8A41A5 / SE 0x80DA06 / 1.7.104 0x8B9675; attack data AE 0x6B77F0 (+0xF8) -> 0x6EE0A0 (+0x10, +0x258), SE 0x625FE0 (+0xF0) -> 0x65B310, 1.7.104 0x6CA270 (+0xF8) -> 0x700C60; CommonLib GetActorRuntimeData()/AIProcess::high/HighProcessData::attackData resolve to those",
    "gate": "INI [Probe] bAttackSelect (default 0); VR refused; exact runtime; data-stack top bound + context type match before the pool read"
+  },
+  {
+   "what": "ch.7 hostile offense (ABI v40) reads: the thread's context window, the magic context's spell, the shout context's shout, the shout's variation spells",
+   "value": "thread +0x128 header / +0x130 offset, header top +0x0C; CombatBehaviorContextMagic +0x08 MagicItem*; shout context +0x20 TESShout*; TESShout::variations (+0x60, 0x18 each, spell +0x08) through CommonLib (static_asserts)",
+   "where": "core/CastLeafNature.cpp (Context, Decide), called from core/ActionGate.cpp ActThunkBody",
+   "verified_by": "rows CastNature.* + the code's per-runtime byte windows (Install): window AE 0x89FD10 / SE 0x809500 / 1.7.104 0x8B51B0 (and each other Enter); spell AE 0x89EF7C + 0x89EF90, SE 0x808737 + 0x80874C, 1.7.104 0x8B441C + 0x8B4430; DualCast AE 0x8A046F / SE 0x809B43 / 1.7.104 0x8B590F; shout AE 0x8BB73B + 0x8BB74A, SE 0x824DFA + 0x824E09, 1.7.104 0x8D0D1B + 0x8D0D2A; variation spell AE 0x6C634E / SE 0x63415E / 1.7.104 0x6D8E3E",
+   "gate": "INI [CombatAction] bHostileOnlyOffense (default 1); VR refused; exact runtime; per-leaf address rows + byte proof (a refused leaf keeps every cast as Offense); data-stack top bound and form-type check before the form is read"
   }
  ],
  "raw_rvas": [
@@ -5817,6 +5914,36 @@
    "seat": "AttackSelect.AttackWeight",
    "rva": "0x8DCD30",
    "source": "AttackSelect weight W (1.7.104 raw 0x8F2830; AE id 50675 has no MIT-table row)"
+  },
+  {
+   "seat": "CastNature.Enter.Immediate",
+   "rva": "0x89FCE0",
+   "source": "CastNature.Enter.Immediate (1.7.104 raw 0x8B5180; AE id 49100 has no MIT-table row)"
+  },
+  {
+   "seat": "CastNature.Enter.Concentration",
+   "rva": "0x89FFF0",
+   "source": "CastNature.Enter.Concentration (1.7.104 raw 0x8B5490; AE id 49105 has no MIT-table row)"
+  },
+  {
+   "seat": "CastNature.Enter.DualCast",
+   "rva": "0x8A02D0",
+   "source": "CastNature.Enter.DualCast (1.7.104 raw 0x8B5770; AE id 49110 has no MIT-table row)"
+  },
+  {
+   "seat": "CastNature.Enter.Shout",
+   "rva": "0x8BBB70",
+   "source": "CastNature.Enter.Shout (1.7.104 raw 0x8D1150; AE id 49764 has no MIT-table row)"
+  },
+  {
+   "seat": "CastNature.Cast",
+   "rva": "0x89EE30",
+   "source": "CastNature.Cast (1.7.104 raw 0x8B42D0; AE id 49083 has no MIT-table row)"
+  },
+  {
+   "seat": "CastNature.ShoutCast",
+   "rva": "0x8BB660",
+   "source": "CastNature.ShoutCast (1.7.104 raw 0x8D0C40; AE id 49758 has no MIT-table row)"
   }
  ]
 }
