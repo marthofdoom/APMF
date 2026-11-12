@@ -384,6 +384,44 @@ corpse in range. Refused at the call: seat not installed (VR, an unverified buil
 target 0 or the actor, kCastFlag_DenyHandOnly. An older APMF ignores the bit and the engine picks its own corpse: gate
 on abiVersion >= 42. Slots and offsets read on 1.6.1170, 1.5.97 and 1.7.104 (identical offsets). No co-save.
 Docs/FACETS.md "Corpse target".
+
+ABI v43 (2026-11-11, branch feat/melee-moves, MFO T2 batch M item 1, the Knight's "blocks a lot"): BLOCK.
+kCombatMove_Block (3, reserved since v38) is BUILT and kCombatMove_BlockEnd (4) is new. One CombatMoveState
+(kCombatMoveState_Ended = 5), eight CombatMoveWhy values (13 NoBlockItem .. 20 HoldBroken), three info bits (HoldLive
+1 << 5, BlockedAHit 1 << 6, ReRaised 1 << 7) and the kCombatBlock* constants. No struct, no slot: a v43 client still
+holds an APMF_API_v38*. param.fval is read for kCombatMove_Block only (the hold window, seconds; 0 = 1.5; clamped to
+0.25 .. 10). Still a one-shot request, never a claim, but the move now has a DURATION: one Left Attack action raises
+the guard (the engine's own block road), a hold record stands for the window, and while it stands the actor's
+Offense, Block and BlockAttack leaves fail at entry on ch.7's seats (core/ActionGate.cpp) and Harbinger re-raises a
+guard the engine dropped. The window's end sends Left Release. No new address row: the two action forms come from the
+default object manager behind the row ch.31 already verifies, the leaves are found by RTTI name. 1.6.1170 and 1.5.97
+(the post-action step that sets and clears the want-block state was also read on 1.7.104, where the channel stays
+refused by name). An older APMF refuses kCombatMove_Block at the call ("reserved") and does not know BlockEnd: gate
+on abiVersion >= 43. [CombatMove] bBlock (default 1). No co-save. Docs/FACETS.md "Block".
+
+ABI v44 (2026-11-11, branch feat/melee-moves, MFO T2 batch M item 2, Q82 "move to Harbinger"): POWER ATTACK.
+kCombatMove_PowerAttack = 5, kCombatMoveWhy_GuardHeld = 21, kCombatPowerMaxTries = 8. No struct, no slot. The same
+action road as the bash (the Right Attack action form with an attack entry's event, one TESActionData::Process per
+entry offered), for the actor base's right-hand POWER entries: Power set, Bash and the left-pool bit clear, attack
+chance above 0, descending attack chance, at most 8, offered until the engine's action accepts one (the engine's own
+attack start erases a refused pick and draws again, AE 0x8A2CEA..0x8A2D53). Started only when the attack data reads
+back as the accepted entry and the attack state as Draw or Swing. The hit sink now matches by move kind: a hit with
+the PowerAttack flag and no Bash flag marks a power attack's record, a Bash hit a bash's, and a block's record never
+takes a hit by the actor. Refused while a block hold stands (GuardHeld) or the weapon is not drawn. No new address
+row. 1.6.1170 and 1.5.97. An older APMF refuses the value at the call: gate on abiVersion >= 44. No co-save.
+Docs/FACETS.md "Power attack".
+
+ABI v45 (2026-11-11, branch feat/melee-moves, MFO T2 batch M item 5 "strict class style"): COMBAT STYLE. One Intent,
+kIntent_CombatStyle = 33, the enum CombatStyleFlags (kCombatStyle_EquipChoiceOnly = 1 << 0) and
+kCombatStyleMaxClaims = 64. No struct, no slot. param.form = a TESCombatStyle, param.ival = the flags. Two
+write_call<5> seats (core/CombatStyle.cpp, INVARIANTS #17a): B at Actor::GetCombatStyle's one call to the reference's
+extra-data style read (+0xD on 1.6.1170 / 1.5.97 / 1.7.104), answering an actor-wide claim's style to every reader of
+the actor's style; A at CombatController::UpdateCombatStyle's call to Actor::GetCombatStyle (+0x70, 1.5.97 +0x8A),
+answering any live claim's style into the controller's cached copy. At engage, owner change and release Harbinger
+calls the engine's own UpdateCombatStyle on the actor's controller. Nothing is written by Harbinger. The Engine
+source is ranked on the CombatAction facet at engage and every 5 s. Three address rows (CombatStyle.*) on each
+runtime plus the two sites' byte windows. An older APMF refuses the intent ("no channel serves intent 33"): gate on
+abiVersion >= 45. [CombatStyle] bCombatStyle (default 1). No co-save. Docs/FACETS.md ch.33.
 ```
 
 <a id="intent-18"></a>

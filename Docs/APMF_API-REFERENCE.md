@@ -862,3 +862,48 @@ The header: `kCastFlag_CorpseTarget` (bit 16 of `CastFlags`) and `kABIVersion` 4
 
 **Refused:** the seat not installed (VR, a build that is not exactly 1.6.1170, 1.5.97 or 1.7.104, `[CastSeats] EnableReanimateSeat=0`), `target` 0 or the actor, `kCastFlag_DenyHandOnly`. On a spell with no Reanimate effect the bit does nothing. An APMF older than v42 ignores the bit and the engine picks its own corpse. Full reference: [FACETS.md Corpse target](FACETS.md#corpse-target-kcastflag_corpsetarget).
 
+## ABI v43 block: a held guard (ch.31)
+
+The header: `kCombatMove_Block` (3, now built), `kCombatMove_BlockEnd` (4), `kCombatMoveState_Ended` (5), `kCombatMoveWhy_NoBlockItem` (13) to `kCombatMoveWhy_HoldBroken` (20), `kCombatMoveInfo_HoldLive` / `_BlockedAHit` / `_ReRaised`, `kCombatBlockDefaultS` (1.5), `kCombatBlockMinS` (0.25), `kCombatBlockMaxS` (10), `kCombatBlockMaxHolds` (16), `kCombatBlockReRaiseMs` (250) and `kABIVersion` 43. No struct, no slot. A v43 client still holds an `APMF_API_v38*`.
+
+**The request.** `RequestEx(actor, kIntent_CombatMove, basis, &param)` with `param.ival = kCombatMove_Block` and `param.fval` = the window in seconds. Read it with `GetCombatMoveState`:
+
+```cpp
+switch (g_apmf->GetCombatMoveState(h, &info)) {
+case APMF_API::kCombatMoveState_Started: /* info.info & kCombatMoveInfo_HoldLive: the guard is up */ break;
+case APMF_API::kCombatMoveState_Ended:   /* info.why: HoldExpired, HoldEndedByClient, HoldRenewed, HoldBroken */ break;
+case APMF_API::kCombatMoveState_Refused: /* info.why: NoBlockItem, HeldByOther, HoldTableFull, Busy, NotReady, ... */ break;
+case APMF_API::kCombatMoveState_Failed:  /* info.why: EngineRefused, NotApplied */ break;
+}
+```
+
+**While it stands.** The actor's Offense, Block and BlockAttack leaves fail at entry. Harbinger raises the guard again when the engine drops it inside the window. A record of a live hold is not expired or evicted: it stays readable until 30 s after its `Ended` was read.
+
+**Ending it.** The window runs out, or `param.ival = kCombatMove_BlockEnd` from the same client (that request's own record reads `Started` when the guard was lowered, `Refused` / `NoHold` when the client held none), or a newer `kCombatMove_Block` renews it.
+
+**Older APMF.** Before v43 `kCombatMove_Block` is refused at the call and `kCombatMove_BlockEnd` is an unknown move. Full reference: [FACETS.md Block](FACETS.md#block-kcombatmove_block-abi-43).
+
+## ABI v44 power attack: the engine's real power attack, once (ch.31)
+
+The header: `kCombatMove_PowerAttack` (5), `kCombatMoveWhy_GuardHeld` (21), `kCombatPowerMaxTries` (8) and `kABIVersion` 44. No struct, no slot. A v44 client still holds an `APMF_API_v38*`.
+
+**The request.** `RequestEx(actor, kIntent_CombatMove, basis, &param)` with `param.ival = kCombatMove_PowerAttack` and an optional `param.target`. A one-shot. Read it with `GetCombatMoveState` exactly as a bash: `Queued`, `Started`, `Refused`, `Failed`.
+
+**What runs.** The engine's start-of-attack action for one of the actor's own right-hand power entries, highest attack chance first, the first the engine accepts. The engine sets his attack data and attack state. Harbinger reads both back.
+
+**The hit.** `kCombatMoveInfo_HitSeen` from a hit with the PowerAttack flag and without the Bash flag, within 2.5 s. `staminaSpent` is what the action itself took at the start.
+
+**Older APMF.** Before v44 the value is refused at the call. A client keeps its own road (MFO: the animation event, and says which road ran). Full reference: [FACETS.md Power attack](FACETS.md#power-attack-kcombatmove_powerattack-abi-44).
+
+## ABI v45 combat style: the actor fights by the style the client named (ch.33)
+
+The header: `kIntent_CombatStyle` (33), `CombatStyleFlags` (`kCombatStyle_EquipChoiceOnly`), `kCombatStyleMaxClaims` (64) and `kABIVersion` 45. No struct, no slot, no flag on an existing type. A v45 client still holds an `APMF_API_v38*`.
+
+**Why it exists.** A client that wrote `CombatController::combatStyle` itself reached the equipment choice only, because that field is a cached copy. The attack, block and movement fields of a style are read from the actor through one engine function, and nothing a client could write short of the base record or the reference's extra data changed that.
+
+**The claim.** `RequestEx(actor, kIntent_CombatStyle, basis, &param)` with `param.form` = the combat style and `param.ival` = 0 (actor-wide) or `kCombatStyle_EquipChoiceOnly`. `Repoint` changes either. `Release` ends it.
+
+**What happens.** While the claim is live the engine's read of the actor's style answers the claimed style (actor-wide), and the controller's cached copy holds it (both scopes). Harbinger has the engine refresh that copy at engage, owner change and release. On release every read is the engine's own again.
+
+**Refused:** not installed (VR, a build that is not exactly 1.6.1170, 1.5.97 or 1.7.104, `[CombatStyle] bCombatStyle=0`, a failed row or byte window), the player, no param, `form` 0, an unknown flag bit, an APMF older than v45. A form that is not a combat style makes the claim inert, logged. Full reference: [FACETS.md ch.33](FACETS.md#ch33-combat-style-kintent_combatstyle).
+

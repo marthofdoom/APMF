@@ -5504,6 +5504,51 @@
    },
    "source": "native/core/Aversion.cpp (ch.32 aversion fitness test, review H2-1: the second pass's answer is asked the scorer's OWN reach / path / dead / fleeing tests by calling the same functions; the row plus the code's per-runtime byte windows and E8 target checks inside FindBest license the calls)",
    "doc": "agentlog fix-g3-h2.md (2026-11-11, review H2-1 of 0a052e1): the four functions are FindBest's own E8 targets at its penalty sites, read on the three executables (1.6.1170 / 1.7.104 +0x35E, +0x3EF, +0x40C, +0x43A; 1.5.97 +0x3C9, +0x465, +0x482, +0x4B0); the 1.6.1170 signature hits the 1.7.104 RVA alone; no id is in the MIT table (raw_rvas)"
+  },
+  {
+   "seat": "CombatStyle.Actor.GetCombatStyle",
+   "kind": "function",
+   "construct": "Actor::GetCombatStyle, TESCombatStyle*(Actor*): `add rcx,0x70; call ExtraDataList::GetCombatStyle` at +0xD (seat B, all three builds), then `test rax,rax; jne`, else currentProcess->currentPackage->combatStyle (+0x20 -> +0x68), else actorBase vfunc +0x2A0. 27 callers per build",
+   "ids": {
+    "1.6.1170": 38536,
+    "1.5.97": 37586
+   },
+   "sig": {
+    "1.6.1170": "40 53 48 83 EC 20 48 8B D9 48 83 C1 70 E8 ?? ?? ?? ?? 48 85 C0 75 31",
+    "1.5.97": "40 53 48 83 EC 20 48 8B D9 48 83 C1 70 E8 ?? ?? ?? ?? 48 85 C0 75 31"
+   },
+   "source": "native/core/CombatStyle.cpp (ch.33 combat style, ABI v45: write_call<5> seats B / A; the row plus the code's lead/tail byte windows and call-target checks license the two patches; UpdateCombatStyle is also CALLED on the game thread at engage / release)",
+   "doc": "Docs/research/melee-moves-re.md 'COMBAT STYLE' (2026-11-11): the three bodies read on the three executables (instruction-identical apart from the process offset 0xF8 / 0xF0 and the controller offset 0x160 / 0x158); Actor::GetCombatStyle has the same 27 callers on 1.6.1170 and 1.5.97 and 27 on 1.7.104; ExtraDataList::GetCombatStyle has ONE caller per build; no id is in the MIT table (raw_rvas)"
+  },
+  {
+   "seat": "CombatStyle.ExtraDataList.GetCombatStyle",
+   "kind": "function",
+   "construct": "ExtraDataList::GetCombatStyle, TESCombatStyle*(ExtraDataList*): the extra of type 0x65 (ExtraCombatStyle) -> its form at +0x10, else null. ONE caller per build (Actor::GetCombatStyle +0xD). Seat B's original",
+   "ids": {
+    "1.6.1170": 12017,
+    "1.5.97": 11878
+   },
+   "sig": {
+    "1.6.1170": "48 83 EC 28 BA 65 00 00 00 E8 ?? ?? ?? ?? 48 85 C0",
+    "1.5.97": "40 57 48 83 EC 30 48 C7 44 24 20 FE FF FF FF 48 89 5C 24 48 48 8B F9 48 8D 59 10 48 89 5C 24 40 48 8B CB E8 ?? ?? ?? ?? 90 BA 65 00 00 00"
+   },
+   "source": "native/core/CombatStyle.cpp (ch.33 combat style, ABI v45: write_call<5> seats B / A; the row plus the code's lead/tail byte windows and call-target checks license the two patches; UpdateCombatStyle is also CALLED on the game thread at engage / release)",
+   "doc": "Docs/research/melee-moves-re.md 'COMBAT STYLE' (2026-11-11): the three bodies read on the three executables (instruction-identical apart from the process offset 0xF8 / 0xF0 and the controller offset 0x160 / 0x158); Actor::GetCombatStyle has the same 27 callers on 1.6.1170 and 1.5.97 and 27 on 1.7.104; ExtraDataList::GetCombatStyle has ONE caller per build; no id is in the MIT table (raw_rvas)"
+  },
+  {
+   "seat": "CombatStyle.CombatController.UpdateCombatStyle",
+   "kind": "function",
+   "construct": "CombatController::UpdateCombatStyle, void(CombatController*): old = [this+0x38]; resolve the attacker handle (+0x28); `call Actor::GetCombatStyle` at +0x70 (1.6.1170 / 1.7.104) / +0x8A (1.5.97) (seat A); `mov [rdi+0x38],rax`; when old is non-null and differs, [[this+0x10]+0x1C4] = 1 (inventory dirty). Callers: the controller's construction, the package-change wrapper, Actor::SetCombatStyle's tail jump",
+   "ids": {
+    "1.6.1170": 33239,
+    "1.5.97": 32492
+   },
+   "sig": {
+    "1.6.1170": "40 57 48 83 EC 50 48 C7 44 24 20 FE FF FF FF 48 89 5C 24 60 48 89 74 24 68 48 8B F9 48 8B 71 38",
+    "1.5.97": "4C 8B DC 57 48 83 EC 70 49 C7 43 A8 FE FF FF FF 49 89 5B 08 49 89 73 10 48 8B F9"
+   },
+   "source": "native/core/CombatStyle.cpp (ch.33 combat style, ABI v45: write_call<5> seats B / A; the row plus the code's lead/tail byte windows and call-target checks license the two patches; UpdateCombatStyle is also CALLED on the game thread at engage / release)",
+   "doc": "Docs/research/melee-moves-re.md 'COMBAT STYLE' (2026-11-11): the three bodies read on the three executables (instruction-identical apart from the process offset 0xF8 / 0xF0 and the controller offset 0x160 / 0x158); Actor::GetCombatStyle has the same 27 callers on 1.6.1170 and 1.5.97 and 27 on 1.7.104; ExtraDataList::GetCombatStyle has ONE caller per build; no id is in the MIT table (raw_rvas)"
   }
  ],
  "layout_facts": [
@@ -5870,6 +5915,13 @@
    "where": "core/Aversion.cpp (Install ProveSite, FindBestThunk / IsValidThunk / ScoredLookupThunk / FallbackLookupThunk); FitnessOf / Install ProveSite + window checks",
    "verified_by": "rows Aversion.* + the code's per-runtime lead / tail byte windows and E8 target checks (Install): C0 AE 0x84D048 / SE 0x7B5EB8 / 1.7.104 0x8620A8; X AE 0x84D52C / SE 0x7B62B9 / 1.7.104 0x86258C; F AE 0x84D7AE / SE 0x7B65DF / 1.7.104 0x86280E; controller read AE 0x84D2E0 / SE 0x7B6050 (`mov rax,[rcx+0x10]`), attacker handle AE 0x84D2FC (`mov eax,[rax+0x28]`); FindBest has one E8 caller per build (rel32 + absolute-pointer scans); fitness sites: rows Aversion.RefLocation / InCombatArea / CrossSpaceReach / IsFleeing + lead / tail byte windows and E8 targets re-read at Install on each build (bytes dumped by scratchpad fixg3 2026-11-11: the 1.6.1170 and 1.7.104 windows are identical apart from rel32 / RIP displacements)",
    "gate": "INI [Aversion] bAversion (default 1); VR refused; exact runtime; eight address rows (seven on 1.5.97) + the three seat sites' and the seven fitness sites' bytes re-read before the write (all three install or none); a second scoring pass only for a claimant whose draw says averted"
+  },
+  {
+   "what": "ch.33 combat style (ABI v45) call-site seats and reads: Actor::GetCombatStyle's call to the extra-data style read (B), CombatController::UpdateCombatStyle's call to Actor::GetCombatStyle (A); the reference's extra list; the controller's cached style",
+   "value": "B = Actor::GetCombatStyle +0xD (all three); A = UpdateCombatStyle +0x70 (1.6.1170 / 1.7.104), +0x8A (1.5.97); TESObjectREFR::extraList +0x70 (`add rcx,0x70` before B on all three; static_assert); CombatController::combatStyle +0x38 (`mov [rdi+0x38],rax` after A on all three; static_assert); the actor's controller through ACTOR_RUNTIME_DATA (SE 0x158 / AE 0x160)",
+   "where": "core/CombatStyle.cpp (Install ProveSite, ExtraGetThunk, UpdateGetThunk, EngineRefresh)",
+   "verified_by": "rows CombatStyle.* + the code's lead / tail byte windows and E8 target checks (Install): B AE 0x6B558D / SE 0x623E6D / 1.7.104 0x6C800D (lead `40 53 48 83 EC 20 48 8B D9 48 83 C1 70`, tail `48 85 C0 75 31`); A AE 0x559C40 / SE 0x4FE63A / 1.7.104 0x561AB0 (lead `48 89 4C 24 30`, tail `48 89 47 38 48 85 F6`); the windows are byte-identical on the three builds (dumped 2026-11-11)",
+   "gate": "INI [CombatStyle] bCombatStyle (default 1); VR refused; exact runtime; three address rows + the two seat sites' bytes re-read before the write (both install or neither); a slot is answered only while its claim is ranked above the Engine source on CombatAction"
   }
  ],
  "raw_rvas": [
@@ -6117,6 +6169,21 @@
    "seat": "Aversion.IsFleeing",
    "rva": "0x67EFE0",
    "source": "Aversion.IsFleeing (1.7.104 raw 0x691AA0; AE id 37577 has no MIT-table row)"
+  },
+  {
+   "seat": "CombatStyle.Actor.GetCombatStyle",
+   "rva": "0x6B5580",
+   "source": "CombatStyle.Actor.GetCombatStyle (1.7.104 raw 0x6C8000; AE id 38536 has no MIT-table row)"
+  },
+  {
+   "seat": "CombatStyle.ExtraDataList.GetCombatStyle",
+   "rva": "0x16BFC0",
+   "source": "CombatStyle.ExtraDataList.GetCombatStyle (1.7.104 raw 0x171550; AE id 12017 has no MIT-table row)"
+  },
+  {
+   "seat": "CombatStyle.CombatController.UpdateCombatStyle",
+   "rva": "0x559BD0",
+   "source": "CombatStyle.CombatController.UpdateCombatStyle (1.7.104 raw 0x561A40; AE id 33239 has no MIT-table row)"
   }
  ]
 }

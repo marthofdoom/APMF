@@ -751,6 +751,47 @@ ALL of these hold:
    both rows verified, never the player. Any other action (an attack entry Harbinger chooses, a move on a timer, a
    block) is a new amendment, not a code change.
 
+**(l) BLOCK AMENDMENT, PROPOSED 2026-11-11 (MFO T2 batch M item 1; marth Q83 "build next", default Q-T2-1; ADOPTION IS
+marth's, at the merge of `feat/melee-moves`). ABI v43, `core/CombatMoveBlock.cpp`.** Condition 3 above said a
+sustained move needs its own amendment with the deny set that makes it complete. This is it, for ONE move, the block.
+A HELD GUARD is legal only while ALL of these hold, on top of conditions 1, 2, 5 and 7:
+1. **The engine's own two actions, nothing else.** Left Attack with no event named raises it (the engine's block
+   wrapper, AE 44446 0x7F9770 with table index 3; the post-action step AE 39004 / SE 38048 sets the want-block state
+   when the idle the engine picked is `blockStart`), Left Release lowers it (index 4, `blockStop`). Harbinger never
+   writes the want-block state and never sends an animation event.
+2. **A declared window, bounded.** The client names the seconds (clamped to `kCombatBlockMinS` .. `kCombatBlockMaxS`).
+   The hold ends at the window by itself. Keeping a guard up is the client asking again, never Harbinger extending.
+3. **The deny set is internal, fixed and stated.** For the window, and for the held actor only: his Offense leaves and
+   the engine's Block and BlockAttack leaves fail at entry, by ch.7's ForceFail act()/pop() PAIR on ch.7's seats. No
+   other leaf, no other actor, no claim on any facet. The hold is refused whole when that pair or those leaves did
+   not install (`BlockHoldDenyArmed`). The open paths are row "31 block" of `Docs/DENY-COMPLETENESS-AUDIT.md`.
+4. **Re-raise is enforcement of the declared window, visible, and rate-limited.** When the engine dropped the guard
+   inside the window Harbinger sends Left Attack again, only when the actor could block (no attack, stagger, recoil
+   or knock state; stamina above 0; hands that block), at most every `kCombatBlockReRaiseMs`. Every first re-raise
+   and every refusal is logged and the record is flagged. A guard that cannot be kept ENDS the hold with its reason.
+5. **Hands are tested before the action, every time.** Left Attack is a block only for blocking hands. With anything
+   else in the left hand it is an attack or a cast, so it is never sent (`kCombatMoveWhy_NoBlockItem`), at the raise
+   and at every re-raise.
+6. **Reported honestly.** `Started` only when the want-block state reads back set. `Ended` always carries its why.
+
+**(l) POWER ATTACK AMENDMENT, PROPOSED 2026-11-11 (MFO T2 batch M item 2; marth Q82 "move to Harbinger", default
+Q-T2-2; ADOPTION IS marth's, at the merge of `feat/melee-moves`). ABI v44, `core/CombatMove.cpp` `Run`.** A third move
+KIND under (l): a right-hand power attack. Conditions 1 and 3 to 7 hold unchanged (the Right Attack action form with
+an entry's event, one-shot, no claim, nothing denied, the engine's own conditions first, it yields, honest report,
+closed scope). Condition 2 is restated for it, because an actor has SEVERAL power entries and the behaviour graph
+accepts only the ones that fit what he holds:
+- **Declared, never chosen, and the engine's own acceptance decides the entry.** The client names the actor and the
+  kind. The candidates are the actor base's own entries the engine's attack start could draw for the right hand
+  (Power set, Bash and the left-pool bit clear, attack chance above 0). They are offered in a FIXED order (descending
+  attack chance, then the event name), at most `kCombatPowerMaxTries`, ONE `Process()` each, until the engine accepts
+  one. That is the engine's own shape (StartAttack erases a pick its action refused and draws again, AE
+  0x8A2CEA..0x8A2D53), with its random draw and its weight function removed. Harbinger adds no weighting, no
+  direction and no weapon test of its own. An entry the engine refused is NOT retried and the request is never
+  re-sent.
+- **Read-back is the attack data being the accepted entry and the attack state Draw or Swing.** The hit is matched by
+  kind: the PowerAttack flag without the Bash flag.
+- **It never runs over a block hold.** Refused (`GuardHeld`) while Harbinger holds the actor's guard.
+
 **PROPOSED 2026-11-11 (MFO class plan card H2, marth: *"a new intent, aversion ... The intent never invents a target
 that is not already in the foe's group targets"*; ADOPTION IS marth's, at the merge of `feat/aversion`). The thirteenth
 legal action (ABI v41, `core/Aversion.cpp`): (m) WEIGHT A CLAIMANT'S CANDIDACY IN ANOTHER ACTOR'S TARGET SELECTION --
@@ -787,6 +828,38 @@ here rather than done quietly. It is legal only while ALL of these hold:
    the seven fitness-test sites' bytes
    verified per runtime, all three seats or none, never the player as the claimant. A different shaping (a score
    bonus for somebody, a penalty by distance, hiding from a named foe) is a new amendment, not a code change.
+
+**PROPOSED 2026-11-11 (MFO T2 batch M item 5; the class plan's "strict class style ... would need a combat style slider
+in harbinger", marth 2026-10-27 strict adherence with the tree ON; ADOPTION IS marth's, at the merge of
+`feat/melee-moves`). The fourteenth legal action (ABI v45, `core/CombatStyle.cpp`): (n) ANSWER THE ENGINE'S READ OF AN
+ACTOR'S COMBAT STYLE WITH THE STYLE THE CLIENT DECLARED.** It is a substitution at the source in the sense of #20
+(the engine's own logic then produces the behaviour: its own chances, its own movement, its own equipment scoring),
+on a data read instead of a decision seat. It is legal only while ALL of these hold:
+1. **One read, the engine's own, and the engine's own override slot.** Actor::GetCombatStyle consults the reference's
+   ExtraCombatStyle first. Seat B answers exactly there, so a claimed style has the standing the engine gives its own
+   per-reference override and the package and base styles are consulted exactly as the engine would after a non-null
+   override: not at all. Seat A answers the same function's result at the controller's one refresh point.
+2. **Declared, never chosen.** The client names the style form and the scope. Harbinger picks no style, blends none,
+   edits no field of one and creates no form.
+3. **Nothing is written.** No ExtraCombatStyle is added, no base record or package is edited, `controller+0x38` is
+   written only by the engine's own function. Release needs no restore. The one engine CALL Harbinger makes is
+   CombatController::UpdateCombatStyle on the actor's own live controller, on the game thread, at engage, owner
+   change, release and a rank change: the call Actor::SetCombatStyle's own tail makes.
+4. **Two scopes, both stated.** Actor-wide (every reader), or the controller's cached copy alone
+   (`kCombatStyle_EquipChoiceOnly`, the equipment choice). Nothing in between is offered.
+5. **It yields to the player's ranking.** The style is answered only while the claim's client outranks the Engine
+   source on the CombatAction facet, decided on the game thread at engage and every 5 s. A claim ranked below Engine
+   answers nothing and says so.
+6. **The seats are hot and stay passive.** One relaxed load while no claim stands. With claims: a bounded scan of a
+   fixed table of atomics, no lock, no form lookup, no allocation, no log beyond one first-answer line per seat.
+7. **Scope is closed by name.** Exactly 1.6.1170, 1.5.97 or 1.7.104, not VR, three address rows and the two sites'
+   byte windows verified per runtime, both seats or neither, never the player. Shaping a single FIELD of a style (a
+   per-field slider) is a new amendment, not a code change.
+#17a: these are the FIFTH and SIXTH call-site seats (after the equip sink, the torch seat, ch.18, ch.29 and beside
+ch.32's three). The argument is #17a's own: the facet is "which combat style this actor reads", the engine decides
+it in a non-virtual function (Actor::GetCombatStyle) with 27 direct callers and no virtual function between the
+three sources and the answer, so no vtable seat can shape it; the two sites are single internal calls whose callee
+has one caller (B) or whose caller is the one refresh point of the cache (A); every byte is re-read before the write.
 
 **#20 — COMPOSED ANSWERS: APMF may answer the ENGINE'S OWN DECISION SEATS so the
 AI decides what a claim asks for — and exactly ONE of those answers may skip the

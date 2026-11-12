@@ -4,6 +4,115 @@ Updated 2026-11-10. Current version **v0.19.0** (cut 2026-11-10, ABI v36, a Deck
 shipped, what's probe-gated, what's next. Keep this current in the SAME change as any
 build/finding/workflow change.
 
+## HEAD OF WORK 2026-11-11 -- MELEE MOVES (MFO T2 batch M), branch `feat/melee-moves` (on top of `feat/ch8b-dead-target` + `feat/aversion`), NOT merged, NOT field run
+
+One section per item, newest ABI last. Research notes: `Docs/research/melee-moves-re.md`.
+
+### Fix round 2026-11-12 (Opus tier-3 review of 6f8f156 / MFO 88777f7)
+
+- **F1 (SEV-2), fixed:** `HandsWouldNotBlock` accepted the same one-handed weapon in both hands (`GetEquippedObject`
+  answers the base form), so Left Attack swung the left weapon, at the raise and at every re-raise. A one-hander now
+  blocks only with an empty left hand; `left == right` blocks only for a two-handed sword or axe.
+- **F5, fixed:** the ch.33 slot table is a seqlock per slot (`WriteSlot`, `Claimed`).
+- **F4, written down and narrowed:** `EngineRefresh`'s comment and FACETS ch.33 "Threads" carry the argument. The
+  controller's lifetime across the call is NOT proven (APMF-B298 says so); the actor is held, must be loaded, alive
+  and in combat, and the pointer is read immediately before the call.
+- No ABI change, no new address. `APMF_API.h` unchanged in this round.
+
+### ch.31 BLOCK (ABI v43): a held guard
+
+- **Why:** the Knight's "blocks a lot" (MFO class plan, Q83, default Q-T2-1). `kCombatMove_Block` was reserved in v38.
+- **Engine road (read on 1.6.1170, 1.5.97, 1.7.104):** the combat AI's Block leaf processes the Left Attack action with
+  no event (the block wrapper AE 44446, table index 3). The post-action step (AE 39004 +0x4DF, SE 38048 +0x4A2) sets
+  the want-block state when the idle picked is `blockStart`. Left Release (index 4, `blockStop`) clears it. The Block
+  leaf's pop (AE 0x86C5F0) and BlockAttack's (0x86C6C0) send the release.
+- **What was built:** `core/CombatMoveBlock.cpp` (new): the hold table, a lock-free mirror the combat thread reads,
+  `RunBlock` / `RunBlockEnd` (game thread), `HoldPoll` once per frame (expiry, broken tests, re-raise every 250 ms at
+  most). `core/CombatMove_internal.h` (new) shares the record helpers and `ProcessAction`. `core/ActionGate.cpp`
+  `ActThunkBody` fails a held actor's Offense, Block and BlockAttack leaves with the ForceFail pair, before the
+  `leafCat == 0` gate. `BlockHoldDenyArmed` refuses the whole move when a half is missing.
+- **ABI v43:** no struct, no slot. `kCombatMove_Block` built, `kCombatMove_BlockEnd`, `kCombatMoveState_Ended`, whys
+  13 to 20, info bits 5 to 7, `kCombatBlock*`. `param.fval` = the window. MFO's `APMF_API.h` is the same byte for byte.
+- **No new address row.** The two action forms come from the default object manager behind the row ch.31 already
+  verifies. The leaves are found by RTTI name. 1.7.104 stays refused with the rest of ch.31 (APMF-B300).
+- **Passive (principle 5):** `[combat-move] ... STARTED ... BLOCK held`, `RE-RAISED`, `block ENDED`, the 30 s
+  `H block holds` heartbeat with the per-leaf deny counts. `[Probe] bCombatMove` already logs the target's want-block
+  state on every melee hit.
+- **Not proven:** nothing here has run in a game. The hands test (`HandsWouldNotBlock`) is the author's reading of
+  which hands make Left Attack a block; a wrong read shows as `FAILED ... want-block state did not set` with the event.
+- **Deny audit:** row "31 block", six open paths named. INVARIANTS #0 (l) block amendment (proposed).
+- **File size:** `core/ActionGate.cpp` is at 2484 lines (backstop 2500). Nothing more goes into it without a split
+  brief (APMF-B295).
+- **Open:** APMF-B295, APMF-B296, APMF-B300.
+
+### ch.31 POWER ATTACK (ABI v44): the engine's real power attack, once
+
+- **Why:** MFO's `act.power_attack` sends `attackPowerStartInPlace` to the graph (marth Q82: move it to Harbinger when
+  the probe confirms it is only an animation; default Q-T2-2: build now, probe in the same session).
+- **Engine road:** the same as the bash. StartAttack's gather (AE 49176) puts every right-hand entry in pool 0, power
+  entries included, with no weapon filter. A pick the action refuses is erased and redrawn (AE 0x8A2CEA..0x8A2D53).
+  The post-action step sets attack state Draw for a non-bash entry.
+- **What was built:** `core/CombatMove.cpp` `GatherPower` + the power branch of `Run`; the hit sink matches by move
+  kind. `kCombatMove_PowerAttack` = 5, `kCombatMoveWhy_GuardHeld` = 21. No struct, no slot, no new address row.
+- **Passive:** `[combat-move] N STARTED ... power attack (event '...'; his graph refused first: ...)`, then `HIT ...
+  power attack landed`. `[Probe] bCombatMove` logs every melee hit's flags, so a native power attack and one of
+  ours can be compared in one log.
+- **Not proven:** nothing here has run in a game. Whether the graph's refusal of an unfitting entry is free of side
+  effects is the engine's own behaviour, not observed by us (APMF-B297).
+- **Open:** APMF-B297.
+
+### ch.18 power FLOOR ("Normal share max", batch M item 3): ALREADY BUILT, no code, no ABI
+
+- **Finding:** the batch asked for a ch.18 extension that denies Normal attacks while the sliding window is over a
+  cap, so a client gets a power-attack floor. That is `powerShareMin` of ABI v34, and it is live:
+  `core/AttackSelect.cpp` `EvaluateRoll` denies the Normal class while the measured power share is below the declared
+  minimum (`share < minShare -> active |= kAtkClass_Normal`), once the window is full, deny-only, lifted when the
+  deny would leave no attack. "Normal share max X" over the Power + Normal window is the same statement as
+  "power share min 1 - X". `[AttackSelect] bObserveOnly` ships 0.
+- **Why it was listed as missing:** the batch row was written from the 2026-11-08 draft, where the floor was
+  observe-only.
+- **Nothing changed here.** MFO already declares it (Warrior, Champion, Living Legend: 0.40). Field status is ch.18's
+  own: built, not yet seen in game (`[ch.18]` heartbeat counts the Normal denies).
+
+### ch.33 COMBAT STYLE (ABI v45): the actor fights by the style the client named
+
+- **Why:** MFO's class packages need a strict class style (tree ON), and MFO wrote `CombatController::combatStyle`
+  itself, against the Harbinger-first rule.
+- **Finding (changes what the facet must be):** `controller+0x38` is a CACHE. `CombatController::UpdateCombatStyle`
+  fills it from `Actor::GetCombatStyle` at the controller's construction, a package change and SetCombatStyle. Its
+  readers are the combat inventory's score multipliers. The attack, block and movement fields of a style are read
+  through `Actor::GetCombatStyle` (27 callers per build), never through the cache. So MFO's write only ever biased the
+  equipment choice: a class CSTY's movement and attack fields were never applied.
+- **What was built:** `core/CombatStyle.{h,cpp}` + `channels/CombatStyle.cpp` (new). Seat B at Actor::GetCombatStyle's
+  one call to the reference's extra-data style read; seat A at UpdateCombatStyle's call to Actor::GetCombatStyle. A
+  lock-free slot table. The engine's own UpdateCombatStyle is called at engage, owner change, release and a rank
+  change. Nothing is written by Harbinger.
+- **ABI v45:** `kIntent_CombatStyle` = 33, `CombatStyleFlags` (`kCombatStyle_EquipChoiceOnly`), `kCombatStyleMaxClaims`.
+  No struct, no slot. MFO's `APMF_API.h` is the same byte for byte.
+- **Per runtime (principle 11):** GetCombatStyle AE `0x6B5580` (38536) / SE `0x623E60` (37586) / 1.7.104 `0x6C8000`,
+  seat B at +0xD on all three; the extra-data read AE `0x16BFC0` (12017) / SE `0x1246E0` (11878) / 1.7.104 `0x171550`,
+  one caller each; UpdateCombatStyle AE `0x559BD0` (33239) / SE `0x4FE5B0` (32492) / 1.7.104 `0x561A40`, seat A at
+  +0x70 / +0x8A / +0x70. The two byte windows are identical on the three builds. Three rows per runtime in
+  `Docs/VERIFIED-ADDRESSES.md` (raw rows on 1.7.104, claimed in `tools/verified_addresses/idmap-1.7.104-apmf.csv`).
+- **Passive (principle 5):** `[ch.33] FIRST answer of seat A / seat B` proves each seat runs under a claim. The
+  refresh line prints the cached style before and after. `[ch.33] H combat style` totals every 30 s.
+- **Not proven:** nothing here has run in a game. Whether an actor-wide class style visibly changes how a follower
+  fights is the field question. Whether any style read is inlined past seat B was not searched for.
+- **Deny audit:** row 33, six open paths named. INVARIANTS #0 (n) (proposed), with the #17a argument.
+- **Generator note:** `Docs/VERIFIED-ADDRESSES.md` carries two hand-edited ch.21 layout rows that `spec.json` does not
+  have (they predate this branch). The regeneration kept them by hand (APMF-B299).
+- **Open:** APMF-B298, APMF-B299.
+
+### Dodge (batch M item 4): NO facet built, no ABI number taken
+
+- **Read:** the engine's side step (CombatBehaviorDodgeThreat) is gated by the combat style's `avoidThreatChance`,
+  read through `Actor::GetCombatStyle` (condition AE 47801 -> accessor AE 50706 -> 38536). Ultimate NPC Dodging
+  scores its own dodge from the same style fields.
+- **Conclusion:** ch.33 is the list-agnostic dodge road: a claimed style with an Avoid Threat chance gives the
+  engine's side step without a dodge mod, and feeds a framework's own dodge with one. A "dodge now" move was not
+  designed. `Docs/research/melee-moves-re.md` "DODGE". The client-side value is MFO's (its backlog MFO-B806).
+- **Not verified:** that a framework reads the style through the seated function and not from the base record.
+
 ## HEAD OF WORK 2026-11-11 -- ch.8b CORPSE TARGET (ABI v42), branch `feat/ch8b-dead-target` (on top of `feat/aversion`), NOT merged, NOT field run
 
 - **Why:** MFO class plan card G7, "corpse target / reanimate" (marth 2026-11-11: G7 joins the T2 build). The rule's

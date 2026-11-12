@@ -1,3 +1,25 @@
+## Unreleased -- combat style: fight the way the mod says (ABI v45)
+
+- **A mod can give a follower a combat style, and it fully applies.** The style decides how aggressive he is, how often he power attacks, blocks and bashes, and how he circles and backs off. Before, a mod could only influence which weapon he picked.
+- **Nothing in your save or your load order is changed.** Harbinger answers the game's own question "what is this actor's combat style" while the mod's claim stands. When the claim ends the game uses its own answer again.
+- **A mod can also ask for the weapon choice only.**
+- **New setting `[CombatStyle] bCombatStyle=1`.** Set 0 to refuse every combat-style claim.
+- **ABI v45.** One new intent, `kIntent_CombatStyle`. No new function and no layout change. Works on 1.6.1170, 1.5.97 and 1.7.104.
+
+## Unreleased -- power attack: the game's real one (ABI v44)
+
+- **A mod can have a follower power attack, and it is a real power attack.** Harbinger starts it the way the game's own combat AI does, so the hit has the power attack's damage and stamina cost. Before, a mod could only play the animation.
+- **The follower's own power attacks are used.** Harbinger offers the game each power attack he has, most likely first, and the first one that fits his weapon runs.
+- **ABI v44.** One new move, `kCombatMove_PowerAttack`. No new function and no layout change. 1.6.1170 and 1.5.97.
+
+## Unreleased -- block: hold the guard up (ABI v43)
+
+- **A mod can have a follower hold his guard up.** The mod names the follower and a number of seconds. Harbinger raises his guard the same way the game's own combat AI does, and keeps it up for that time. His shield or weapon, the stamina cost of blocked hits and the block itself are the game's.
+- **While the guard is held he does not attack or cast, and the game's own shorter block does not cut it off.** If a stagger knocks the guard down, Harbinger raises it again and the log says so.
+- **It ends by itself.** At the end of the time, when the mod ends it, when his stamina runs out, or when he no longer holds something he can block with.
+- **New setting `[CombatMove] bBlock=1`.** Set 0 to refuse every block request. Bashes are unaffected.
+- **ABI v43.** `kCombatMove_Block` is built and `kCombatMove_BlockEnd` is new. No new function and no layout change. 1.6.1170 and 1.5.97. On 1.7.104 combat moves stay refused.
+
 ## Unreleased -- reanimate: raise the corpse the mod chose (ABI v42)
 
 - **A Reanimate cast can name its corpse.** A mod can now tell a follower which corpse to raise. Before, the game picked the highest-level corpse in range. The follower still casts the spell itself, animated, and the game still decides whether that corpse can be raised.

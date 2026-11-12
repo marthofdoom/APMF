@@ -20,6 +20,7 @@
 #include "core/ProjectileAim.h"        // ch.29 projectile aim (ABI v36): Install, ResetAll
 #include "core/PotionAllowance.h"      // ch.30 potion allowance (ABI v37): Install, ResetAll
 #include "core/Aversion.h"             // ch.32 aversion (ABI v41): Install, ResetAll
+#include "core/CombatStyle.h"          // ch.33 combat style (ABI v45): Install, ResetAll
 #include "core/CombatMove.h"           // ch.31 combat move (ABI v38): Install at kDataLoaded, ResetAll at revert / kPreLoadGame
 #include "core/PackageGate.h"
 #include "core/EquipSink.h"
@@ -142,6 +143,7 @@ namespace {
         apmf::potionallowance::ResetAll("revert/new game");   // ch.30: declarations and counters (claims drop too)
         apmf::combatmove::ResetAll("revert/new game");   // ch.31: forget the move records (a queued move drops itself)
         apmf::aversion::ResetAll("revert/new game");   // ch.32: claimant handles of the outgoing world (claims drop too)
+        apmf::combatstyle::ResetAll("revert/new game");   // ch.33: style slots of the outgoing world (claims drop too)
         apmf::packagesources::ResetAll();
         apmf::spectatorgate::ResetAll();
         // ...and forget the outgoing world's marker LEDGER. This must precede the load
@@ -301,6 +303,12 @@ namespace {
                                                   // the action data constructor and the TESActionData vtable. Installs
                                                   // NO hook; registers a TESHitEvent sink. Refused -> every
                                                   // kIntent_CombatMove request is refused at the call.
+            apmf::combatstyle::Install();        // ch.33 COMBAT STYLE (ABI v45, kIntent_CombatStyle, MFO T2 batch M):
+                                                  // two write_call<5> seats: Actor::GetCombatStyle's one call to the
+                                                  // extra-data style read (+0xD) and CombatController::
+                                                  // UpdateCombatStyle's call to Actor::GetCombatStyle. Exact
+                                                  // runtimes, VR-refused, [CombatStyle] bCombatStyle (default 1),
+                                                  // three address rows + byte windows; both install or neither.
             apmf::aversion::Install();           // ch.32 AVERSION (ABI v41, kIntent_Aversion, MFO card H2): three
                                                   // write_call<5> seats: the standard selector's one call to its
                                                   // scorer (slot 0x06 +0x68), the scorer's validity gate (1.6.1170 /
@@ -425,6 +433,7 @@ namespace {
             apmf::potionallowance::ResetAll("kPreLoadGame");  // ch.30: no declaration / counter crosses the load
             apmf::combatmove::ResetAll("kPreLoadGame");   // ch.31: no move record crosses the load (queued ones drop themselves)
             apmf::aversion::ResetAll("kPreLoadGame");   // ch.32: no claimant handle crosses the load
+            apmf::combatstyle::ResetAll("kPreLoadGame");   // ch.33: no style slot crosses the load
             apmf::atkprobe::ResetForLoad("kPreLoadGame");   // [Probe] bAttackSelect: per-actor counters (ids reused)
             // ch.23 pursuit leash (ABI v16): same -- no leash entry crosses the load.
             apmf::actiongate::ResetLeash("kPreLoadGame");

@@ -618,6 +618,7 @@ namespace apmf::sources {
         case kIntent_CombatTarget:
         case kIntent_TargetPin:
         case kIntent_Aversion:          return bit(Facet::kTarget);   // ABI v41: ranked vs Engine there
+        case kIntent_CombatStyle:       return bit(Facet::kCombatAction);   // ABI v45: ranked vs Engine there
         case kIntent_OfferPackage:
         case kIntent_Travel:            return bit(Facet::kPackage);
         case kIntent_Equipment:

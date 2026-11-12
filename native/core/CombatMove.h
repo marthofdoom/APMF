@@ -79,4 +79,25 @@ namespace apmf::combatmove {
     // queue's Discard() in plugin.cpp; its record goes here (it reads Unknown after).
     void ResetAll(const char* a_why);
 
+    // ---- ABI v43: THE BLOCK HOLD (kCombatMove_Block, core/CombatMoveBlock.cpp) ----
+    // The engine's block is the LEFT ATTACK action (no event named; the engine picks "blockStart" for blocking
+    // hands and its post-action step sets the actor's want-block state: AE 39004 0x6CF760 +0x493..+0x4DF, SE
+    // 38048 0x63D0F0 +0x44E..+0x4A2, 1.7.104 0x6E2747) and the LEFT RELEASE action ("blockStop" clears it). The
+    // combat AI's Block leaf (AE act 0x86C510 -> 0x86AE30) sends the first at its entry and the second from its
+    // pop (0x86C5F0); BlockAttack the same (0x86A890 / 0x86C6C0). Harbinger sends the same two actions and, while
+    // its hold stands, fails the actor's Offense, Block and BlockAttack leaves at their entry (ch.7's seats,
+    // core/ActionGate.cpp): his own offense and the engine's own release never run.
+    //
+    // Why kCombatMove_Block cannot be served (a string literal), or nullptr. Any thread, after Install.
+    const char* BlockNotAvailableReason();
+    // ANY THREAD, lock-free (the combat thread's leaf seats and the hit sink read these). True while at least one
+    // hold stands / while `a_actor`'s guard is held.
+    bool AnyBlockHeld();
+    bool BlockHeld(RE::FormID a_actor);
+    // The combat thread (core/ActionGate.cpp), after a leaf was failed for a held actor: session counters only.
+    void NoteHoldDeny(bool a_guardLeaf);
+    // GAME THREAD, once per frame from Arbiter::OncePerFrame (self-throttled; one relaxed load with no hold):
+    // window expiry (Left Release), the broken-hold tests, the re-raise.
+    void HoldPoll();
+
 }
