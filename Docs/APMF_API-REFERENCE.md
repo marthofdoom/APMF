@@ -861,3 +861,4 @@ The header: `kCastFlag_CorpseTarget` (bit 16 of `CastFlags`) and `kABIVersion` 4
 **What happens.** At the Reanimate caster's start check Harbinger hands the claim's corpse to the engine's own keep test. Accepted, the cast may start. Refused, the answer is no for that poll, the corpse the engine would have picked is removed again, and the claim stands. When the engine sets up the aim it searches once more. Harbinger writes the claim's corpse back after it. The engine's own pick never casts while the claim stands.
 
 **Refused:** the seat not installed (VR, a build that is not exactly 1.6.1170, 1.5.97 or 1.7.104, `[CastSeats] EnableReanimateSeat=0`), `target` 0 or the actor, `kCastFlag_DenyHandOnly`. On a spell with no Reanimate effect the bit does nothing. An APMF older than v42 ignores the bit and the engine picks its own corpse. Full reference: [FACETS.md Corpse target](FACETS.md#corpse-target-kcastflag_corpsetarget).
+

@@ -5511,6 +5511,13 @@
    "gate": "INI + vtable identity; no version gate"
   },
   {
+   "what": "ch.8b Reanimate corpse seat (ABI v42 kCastFlag_CorpseTarget): CombatMagicCasterReanimate aimController / reanimateTarget (u32 handle, WRITTEN); the aim controller's CombatController* and aim override (u32, WRITTEN)",
+   "value": "caster +0x20 / +0x28; aim +0x28 / +0x30 (all three builds)",
+   "where": "core/ReanimateSeat.cpp (CheckStartCastThunk, SetupAimControllerThunk)",
+   "verified_by": "slot 0x06 1.6.1170 0x822490 / 1.5.97 0x7860F0 / 1.7.104 0x837980 (keeps the corpse at +0x28 if its own test accepts it: `lea rcx,[r15+0x28]` handle lookup, dead + flags 0x820 + 0x81E290 on AE / 1.7.104, the same test out of line at 0x7866C0 on SE; else search 0x822890 / 0x7864E0 / 0x837D80 and `mov [r15+0x28],edx; mov rax,[r15+0x20]; mov [rax+0x30],edx`); slot 0x0D 0x822680 / 0x7862F0 / 0x837B70 (`mov rdx,[rdx+0x28]` the controller, search again, `mov [rbx+0x28],eax`, `[rbx+0x20] = aim`, `mov [rcx+0x30],eax`, `or dword [rax+0x3C],0x200`); slot 0x0A 0x8222C0 / 0x785F60 / 0x8377B0 returns {[rcx+0x28], null}. 1.6.1170 and 1.7.104 instruction-identical (110 / 33 / 5 instructions); 1.5.97 the same offsets. static_asserts on the fork's CombatMagicCasterReanimate members",
+   "gate": "INI [CastSeats] EnableReanimateSeat (default 1); VR refused; exact runtime; rows CombatMagicCasterReanimate + CombatProjectileAimController + their RTTI rows and DerivesFrom before the first write (both seats or none); per-call vtable identity on the aim controller before the +0x30 write; only for a live claim carrying kCastFlag_CorpseTarget"
+  },
+  {
    "what": "CombatMagicCasterRestore::primaryAV / CombatMagicCaster::magicItem",
    "value": "0x28 / 0x18",
    "where": "core/CastSeats.cpp:98, :178, :380",
@@ -5803,13 +5810,6 @@
    "where": "core/Aversion.cpp (Install ProveSite, FindBestThunk / IsValidThunk / ScoredLookupThunk / FallbackLookupThunk)",
    "verified_by": "rows Aversion.* + the code's per-runtime lead / tail byte windows and E8 target checks (Install): C0 AE 0x84D048 / SE 0x7B5EB8 / 1.7.104 0x8620A8; X AE 0x84D52C / SE 0x7B62B9 / 1.7.104 0x86258C; F AE 0x84D7AE / SE 0x7B65DF / 1.7.104 0x86280E; controller read AE 0x84D2E0 / SE 0x7B6050 (`mov rax,[rcx+0x10]`), attacker handle AE 0x84D2FC (`mov eax,[rax+0x28]`); FindBest has one E8 caller per build (rel32 + absolute-pointer scans)",
    "gate": "INI [Aversion] bAversion (default 1); VR refused; exact runtime; four address rows + three sites' bytes re-read before the write (all three install or none); a second scoring pass only for a claimant whose draw says averted"
-  },
-  {
-   "what": "ch.8b Reanimate corpse seat (ABI v42 kCastFlag_CorpseTarget): CombatMagicCasterReanimate aimController / reanimateTarget (u32 handle, WRITTEN); the aim controller's CombatController* and aim override (u32, WRITTEN)",
-   "value": "caster +0x20 / +0x28; aim +0x28 / +0x30 (all three builds)",
-   "where": "core/ReanimateSeat.cpp (CheckStartCastThunk, SetupAimControllerThunk)",
-   "verified_by": "slot 0x06 1.6.1170 0x822490 / 1.5.97 0x7860F0 / 1.7.104 0x837980 (keeps the corpse at +0x28 if its own test accepts it: `lea rcx,[r15+0x28]` handle lookup, dead + flags 0x820 + 0x81E290 on AE / 1.7.104, the same test out of line at 0x7866C0 on SE; else search 0x822890 / 0x7864E0 / 0x837D80 and `mov [r15+0x28],edx; mov rax,[r15+0x20]; mov [rax+0x30],edx`); slot 0x0D 0x822680 / 0x7862F0 / 0x837B70 (`mov rdx,[rdx+0x28]` the controller, search again, `mov [rbx+0x28],eax`, `[rbx+0x20] = aim`, `mov [rcx+0x30],eax`, `or dword [rax+0x3C],0x200`); slot 0x0A 0x8222C0 / 0x785F60 / 0x8377B0 returns {[rcx+0x28], null}. 1.6.1170 and 1.7.104 instruction-identical (110 / 33 / 5 instructions); 1.5.97 the same offsets. static_asserts on the fork's CombatMagicCasterReanimate members",
-   "gate": "INI [CastSeats] EnableReanimateSeat (default 1); VR refused; exact runtime; rows CombatMagicCasterReanimate + CombatProjectileAimController + their RTTI rows and DerivesFrom before the first write (both seats or none); per-call vtable identity on the aim controller before the +0x30 write; only for a live claim carrying kCastFlag_CorpseTarget"
   }
  ],
  "raw_rvas": [

@@ -1089,7 +1089,7 @@ handle back, which reads as "kept"); writing `aim+0x30` without the vtable ident
 carry the flag (`MatchClaim` with `a_count` records a decision: a target-0 Reanimate claim would be counted as answered
 here); calling `MatchClaim` at 0x0D with its own displaced function instead of 0x06's (`StartPrev`: a hook inside one
 slot would split a cast); installing on any other caster vtable (the +0x20 / +0x28 members are this type's only).
-Backlog: APMF-B283, APMF-B284.
+Backlog: APMF-B285, APMF-B286.
 
 ### `native/core/AiCastSeats.{h,cpp}` — OBSERVE-ONLY: the AI cast/equip-decision seats
 Three independently-flagged, chain-unconditionally probes (`Install()`), all
