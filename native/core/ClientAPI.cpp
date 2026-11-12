@@ -546,6 +546,7 @@ namespace {
         case 38: return "0.20.0";   // ch.31 combat move: the same release (confirm at the cut)
         case 39: return "0.20.0";   // ch.24 kApproach_Point: the same release (confirm at the cut)
         case 40: return "0.20.0";   // ch.7 Offense means hostile: the same release (confirm at the cut)
+        case 41: return "0.20.0";   // ch.32 aversion: the same release (confirm at the cut)
         default: return "a release newer than this one";
         }
     }

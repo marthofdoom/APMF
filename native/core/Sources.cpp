@@ -616,7 +616,8 @@ namespace apmf::sources {
         const auto bit = [](Facet f) { return 1u << static_cast<int>(f); };
         switch (i) {
         case kIntent_CombatTarget:
-        case kIntent_TargetPin:         return bit(Facet::kTarget);
+        case kIntent_TargetPin:
+        case kIntent_Aversion:          return bit(Facet::kTarget);   // ABI v41: ranked vs Engine there
         case kIntent_OfferPackage:
         case kIntent_Travel:            return bit(Facet::kPackage);
         case kIntent_Equipment:

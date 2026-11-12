@@ -18,6 +18,7 @@
 #include "core/AttackSelect.h"         // ch.18 attack selection (ABI v34): Install, ResetAll
 #include "core/ProjectileAim.h"        // ch.29 projectile aim (ABI v36): Install, ResetAll
 #include "core/PotionAllowance.h"      // ch.30 potion allowance (ABI v37): Install, ResetAll
+#include "core/Aversion.h"             // ch.32 aversion (ABI v41): Install, ResetAll
 #include "core/CombatMove.h"           // ch.31 combat move (ABI v38): Install at kDataLoaded, ResetAll at revert / kPreLoadGame
 #include "core/PackageGate.h"
 #include "core/EquipSink.h"
@@ -139,6 +140,7 @@ namespace {
         apmf::projectileaim::ResetAll("revert/new game");  // ch.29: shot windows, pending shots and counters
         apmf::potionallowance::ResetAll("revert/new game");   // ch.30: declarations and counters (claims drop too)
         apmf::combatmove::ResetAll("revert/new game");   // ch.31: forget the move records (a queued move drops itself)
+        apmf::aversion::ResetAll("revert/new game");   // ch.32: claimant handles of the outgoing world (claims drop too)
         apmf::packagesources::ResetAll();
         apmf::spectatorgate::ResetAll();
         // ...and forget the outgoing world's marker LEDGER. This must precede the load
@@ -298,6 +300,13 @@ namespace {
                                                   // the action data constructor and the TESActionData vtable. Installs
                                                   // NO hook; registers a TESHitEvent sink. Refused -> every
                                                   // kIntent_CombatMove request is refused at the call.
+            apmf::aversion::Install();           // ch.32 AVERSION (ABI v41, kIntent_Aversion, MFO card H2): three
+                                                  // write_call<5> seats: the standard selector's one call to its
+                                                  // scorer (slot 0x06 +0x68), the scorer's validity gate (1.6.1170 /
+                                                  // 1.7.104) or scored-path handle lookup (1.5.97), and its
+                                                  // fallback-list lookup. Exact runtimes, VR-refused, [Aversion]
+                                                  // bAversion (default 1), four SeatVerified rows and every site's
+                                                  // bytes re-read before the write; all three install or none.
             apmf::nonaliasprobe::Install();      // OBSERVE-ONLY 0xDF hook + 0x49 assist + RTTI dumper
                                                   // (Docs/PROBE-NONALIAS-PACKAGE.md; VR-refused inside)
             apmf::aicastseats::Install();        // OBSERVE-ONLY: the 4 AI cast-decision seats
@@ -409,6 +418,7 @@ namespace {
             apmf::projectileaim::ResetAll("kPreLoadGame");  // ch.29: no shot window / pending shot crosses the load
             apmf::potionallowance::ResetAll("kPreLoadGame");  // ch.30: no declaration / counter crosses the load
             apmf::combatmove::ResetAll("kPreLoadGame");   // ch.31: no move record crosses the load (queued ones drop themselves)
+            apmf::aversion::ResetAll("kPreLoadGame");   // ch.32: no claimant handle crosses the load
             apmf::atkprobe::ResetForLoad("kPreLoadGame");   // [Probe] bAttackSelect: per-actor counters (ids reused)
             // ch.23 pursuit leash (ABI v16): same -- no leash entry crosses the load.
             apmf::actiongate::ResetLeash("kPreLoadGame");

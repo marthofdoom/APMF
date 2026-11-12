@@ -5385,6 +5385,64 @@
    },
    "source": "native/core/CastLeafNature.cpp (ch.7 hostile offense, ABI v40: READ ONLY -- nothing hooked, called or written; the row and the code's byte windows license reading the magic context's spell (+0x08) / shout (+0x20) in the cast leaf's act() thunk)",
    "doc": "agentlog move-batch.md 'CH7 HOSTILE OFFENSE' (2026-11-11): all six bodies read on the three executables; the 1.6.1170 signature hits the 1.7.104 RVA alone; no id is in the MIT table (raw_rvas)"
+  },
+  {
+   "seat": "Aversion.SelectTarget.Standard",
+   "kind": "function",
+   "construct": "CombatTargetSelectorStandard::SelectTarget (vtable slot 0x06): returns the cached pick while fresh, else `lea rdx,[rsp+0x50]; mov rcx,rdi; call FindBest` at +0x68 (seat C0, all three builds), then `mov eax,[rsp+0x50]; cmp eax,[rdi+0x18]`",
+   "ids": {
+    "1.6.1170": 47191,
+    "1.5.97": 45918
+   },
+   "sig": {
+    "1.6.1170": "40 56 57 41 56 48 83 EC 30 48 C7 44 24 20 FE FF FF FF 48 89 5C 24 60 48 8B F2 48 8B F9 48 C7 44 24 58 00 00 00 00",
+    "1.5.97": "40 56 57 41 56 48 83 EC 30 48 C7 44 24 20 FE FF FF FF 48 89 5C 24 60 4C 8B F2 48 8B F9"
+   },
+   "source": "native/core/Aversion.cpp (ch.32 aversion, ABI v41: write_call<5> seats C0 / X / F; the row plus the code's per-runtime lead/tail byte windows and call-target checks license the three patches)",
+   "doc": "agentlog ch7-h2.md 'ROUND B' (2026-11-11) + Docs/research/aversion-target-selector-re.md: bodies read on the three executables; FindBest has ONE caller per build (slot 0x06 +0x68); the 1.6.1170 signature hits the 1.7.104 RVA alone; no id is in the MIT table (raw_rvas)"
+  },
+  {
+   "seat": "Aversion.FindBest",
+   "kind": "function",
+   "construct": "the standard selector's scorer, ActorHandle*(selector*, ActorHandle* out): walks combatGroup->targets, scores admitted candidates, falls back to a lost-target list only when nothing was scored (`cmp dword [out],0; jne` AE/1.7.104 +0x4C4, SE +0x53B). Seat X: AE/1.7.104 +0x2AC call IsValidTarget, SE +0x2C9 call LookupActorByHandle (validity inline there). Seat F: the fallback list's lookup call, AE/1.7.104 +0x52E, SE +0x5EF. Writes only its stack, *out and refcounts",
+   "ids": {
+    "1.6.1170": 47195,
+    "1.5.97": 45922
+   },
+   "sig": {
+    "1.6.1170": "48 8B C4 48 89 50 10 48 89 48 08 55 53 56 57 41 54 41 55 41 56 41 57 48 8D A8 48 FB FF FF",
+    "1.5.97": "48 8B C4 48 89 50 10 48 89 48 08 55 53 56 57 41 54 41 55 41 56 41 57 48 8D A8 08 FB FF FF"
+   },
+   "source": "native/core/Aversion.cpp (ch.32 aversion, ABI v41: write_call<5> seats C0 / X / F; the row plus the code's per-runtime lead/tail byte windows and call-target checks license the three patches)",
+   "doc": "agentlog ch7-h2.md 'ROUND B' (2026-11-11) + Docs/research/aversion-target-selector-re.md: bodies read on the three executables; FindBest has ONE caller per build (slot 0x06 +0x68); the 1.6.1170 signature hits the 1.7.104 RVA alone; no id is in the MIT table (raw_rvas)"
+  },
+  {
+   "seat": "Aversion.IsValidTarget",
+   "kind": "function",
+   "construct": "bool(selector*, Actor* attacker, Actor* candidate, zone): null candidate = false; encounter-zone restrict test; attacker flag +0xE8 bit 26 with candidate vfunc 0x5E. ONE caller (FindBest +0x2AC). 1.6.1170 / 1.7.104 only: inlined in FindBest on 1.5.97",
+   "ids": {
+    "1.6.1170": 47196
+   },
+   "sig": {
+    "1.6.1170": "48 89 5C 24 08 48 89 6C 24 10 48 89 74 24 18 57 48 83 EC 20 49 8B F1 49 8B D8 48 8B FA"
+   },
+   "source": "native/core/Aversion.cpp (ch.32 aversion, ABI v41: write_call<5> seats C0 / X / F; the row plus the code's per-runtime lead/tail byte windows and call-target checks license the three patches)",
+   "doc": "agentlog ch7-h2.md 'ROUND B' (2026-11-11) + Docs/research/aversion-target-selector-re.md: bodies read on the three executables; FindBest has ONE caller per build (slot 0x06 +0x68); the 1.6.1170 signature hits the 1.7.104 RVA alone; no id is in the MIT table (raw_rvas)"
+  },
+  {
+   "seat": "Aversion.LookupActorByHandle",
+   "kind": "function",
+   "construct": "bool(const ActorHandle*, NiPointer<Actor>* out): handle 0 clears *out and returns false; the scorer's handle resolver (the Actor instantiation the selector code calls, not Offset::LookupReferenceByHandle)",
+   "ids": {
+    "1.6.1170": 17201,
+    "1.5.97": 16828
+   },
+   "sig": {
+    "1.6.1170": "48 89 5C 24 10 48 89 6C 24 18 56 57 41 57 48 83 EC 20 8B 31 48 8B FA 85 F6 0F 84 ?? ?? ?? ?? 33 ED 4C 89 74 24 40 44 8B FE 48 8D 05 ?? ?? ?? ?? 41 81 E7 FF FF 0F 00 81 E6 00 00 F0 03 45 8B F7 49 C1 E6 04 8D 5D FF 4C 03 F0 49 8B 46 08 48 85 C0 48 8D 48 E0 48 8B 02 48 0F 44 CD 48 3B C1 74 2B 48 85 C9 74 04 F0 FF 41 28 48 89 0A 48 85 C0 74 1A 48 8D 48 20 8B C3 F0 0F C1 41 08 FF C8 A9 FF 03 00 00 75 06 48 8B 01 FF 50 08 41 8B 06 4C 8B 74 24 40 0F BA E0 1A 73 19 25 00 00 F0 03 3B C6 75 10 48 8B 0F 8B 41 28 C1 E8 0B 41 3B C7 74 3F EB 03 48 8B 0F 48 85 C9 74 35 48 89 2F EB 17 48 8B 0A 48 85 C9 74 28 33 ED 48 89 2A 48 85 C9 74 1E BB FF FF FF FF 48 83 C1 20 F0 0F C1 59 08 FF CB F7 C3 FF 03 00 00 75 06 48 8B 01 FF 50 08 48 83 3F 00 48 8B 5C 24 48 48 8B 6C 24 50 0F 95 C0 48 83 C4 20 41 5F 5F 5E C3 CC CC CC CC CC CC 48 8B 81 B8 00 00 00",
+    "1.5.97": "48 89 5C 24 10 48 89 6C 24 18 56 57 41 57 48 83 EC 20 8B 29 33 F6 48 8B DA 85 ED 0F 84 ?? ?? ?? ?? 4C 89 74 24 40 48 8D 05 ?? ?? ?? ?? 44 8B FD 81 E5 00 00 F0 03 41 81 E7 FF FF 0F 00 45 8B F7 49 C1 E6 04 4C 03 F0 49 8B 46 08 48 85 C0 74 06 48 83 C0 E0 EB 03 48 8B C6 48 8B 0A 83 CF FF 48 3B C8 74 2B 48 85 C0 74 04 F0 FF 40 28 48 89 02 48 85 C9 74 1A 48 83 C1 20 8B C7 F0 0F C1 41 08 FF C8 A9 FF 03 00 00 75 06 48 8B 01 FF 50 08 41 8B 06 4C 8B 74 24 40 0F BA E0 1A 73 17 25 00 00 F0 03 3B C5 75 0E 48 8B 03 8B 48 28 C1 E9 0B 41 3B CF 74 4D 48 8B 0B 48 85 C9 74 45 48 89 33 48 83 C1 20 F0 0F C1 79 08 FF CF F7 C7 FF 03 00 00 75 2F 48 8B 01 FF 50 08 EB 27 48 8B 02 48 85 C0 74 1F 48 89 32 48 8D 48 20 83 CF FF F0 0F C1 79 08 FF CF F7 C7 FF 03 00 00 75 06 48 8B 11 FF 52 08 48 39 33 48 8B 5C 24 48 48 8B 6C 24 50 0F 95 C0 48 83 C4 20 41 5F 5F 5E C3 CC CC CC CC CC CC 48 8B 81 B8 00 00 00"
+   },
+   "source": "native/core/Aversion.cpp (ch.32 aversion, ABI v41: write_call<5> seats C0 / X / F; the row plus the code's per-runtime lead/tail byte windows and call-target checks license the three patches)",
+   "doc": "agentlog ch7-h2.md 'ROUND B' (2026-11-11) + Docs/research/aversion-target-selector-re.md: bodies read on the three executables; FindBest has ONE caller per build (slot 0x06 +0x68); the 1.6.1170 signature hits the 1.7.104 RVA alone; no id is in the MIT table (raw_rvas)"
   }
  ],
  "layout_facts": [
@@ -5737,6 +5795,13 @@
    "where": "core/CastLeafNature.cpp (Context, Decide), called from core/ActionGate.cpp ActThunkBody",
    "verified_by": "rows CastNature.* + the code's per-runtime byte windows (Install): window AE 0x89FD10 / SE 0x809500 / 1.7.104 0x8B51B0 (and each other Enter); spell AE 0x89EF7C + 0x89EF90, SE 0x808737 + 0x80874C, 1.7.104 0x8B441C + 0x8B4430; DualCast AE 0x8A046F / SE 0x809B43 / 1.7.104 0x8B590F; shout AE 0x8BB73B + 0x8BB74A, SE 0x824DFA + 0x824E09, 1.7.104 0x8D0D1B + 0x8D0D2A; variation spell AE 0x6C634E / SE 0x63415E / 1.7.104 0x6D8E3E",
    "gate": "INI [CombatAction] bHostileOnlyOffense (default 1); VR refused; exact runtime; per-leaf address rows + byte proof (a refused leaf keeps every cast as Offense); data-stack top bound and form-type check before the form is read"
+  },
+  {
+   "what": "ch.32 aversion (ABI v41) call-site seats and reads: the standard selector's scorer call (C0), the scorer's exclusion point (X), its fallback-list lookup (F); the selector's controller and the controller's attacker handle",
+   "value": "C0 = SelectTarget +0x68 (all three); X = FindBest +0x2AC call IsValidTarget (1.6.1170 / 1.7.104), FindBest +0x2C9 call LookupActorByHandle (1.5.97, validity inline); F = FindBest +0x52E (1.6.1170 / 1.7.104), +0x5EF (1.5.97); selector +0x10 CombatController*; CombatController +0x28 attackerHandle (static_assert); the scorer's `cmp dword [out],0; jne` before the fallback list at +0x4C4 (1.6.1170 / 1.7.104), +0x53B (1.5.97)",
+   "where": "core/Aversion.cpp (Install ProveSite, FindBestThunk / IsValidThunk / ScoredLookupThunk / FallbackLookupThunk)",
+   "verified_by": "rows Aversion.* + the code's per-runtime lead / tail byte windows and E8 target checks (Install): C0 AE 0x84D048 / SE 0x7B5EB8 / 1.7.104 0x8620A8; X AE 0x84D52C / SE 0x7B62B9 / 1.7.104 0x86258C; F AE 0x84D7AE / SE 0x7B65DF / 1.7.104 0x86280E; controller read AE 0x84D2E0 / SE 0x7B6050 (`mov rax,[rcx+0x10]`), attacker handle AE 0x84D2FC (`mov eax,[rax+0x28]`); FindBest has one E8 caller per build (rel32 + absolute-pointer scans)",
+   "gate": "INI [Aversion] bAversion (default 1); VR refused; exact runtime; four address rows + three sites' bytes re-read before the write (all three install or none); a second scoring pass only for a claimant whose draw says averted"
   }
  ],
  "raw_rvas": [
@@ -5944,6 +6009,26 @@
    "seat": "CastNature.ShoutCast",
    "rva": "0x8BB660",
    "source": "CastNature.ShoutCast (1.7.104 raw 0x8D0C40; AE id 49758 has no MIT-table row)"
+  },
+  {
+   "seat": "Aversion.SelectTarget.Standard",
+   "rva": "0x84CFE0",
+   "source": "Aversion.SelectTarget.Standard (1.7.104 raw 0x862040; AE id 47191 has no MIT-table row)"
+  },
+  {
+   "seat": "Aversion.FindBest",
+   "rva": "0x84D280",
+   "source": "Aversion.FindBest (1.7.104 raw 0x8622E0; AE id 47195 has no MIT-table row)"
+  },
+  {
+   "seat": "Aversion.IsValidTarget",
+   "rva": "0x84D940",
+   "source": "Aversion.IsValidTarget (1.7.104 raw 0x8629A0; AE id 47196 has no MIT-table row)"
+  },
+  {
+   "seat": "Aversion.LookupActorByHandle",
+   "rva": "0x261E40",
+   "source": "Aversion.LookupActorByHandle (1.7.104 raw 0x2676C0; AE id 17201 has no MIT-table row)"
   }
  ]
 }
