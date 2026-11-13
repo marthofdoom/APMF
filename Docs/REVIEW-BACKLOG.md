@@ -437,7 +437,8 @@ Verbatim:
 - (b) "Mixed-hostility spells: SpellRowless re-evaluates every effect under the current self flag
   (CastClassify.cpp:347-358) but seat 0 sets the flag per-effect as visited (:536), so an earlier hostile effect
   that natively keyed a row under self=0 can be judged rowless under self=1 -> Script could compete with the native
-  row. Rare."
+  row. Rare." -- Seat 0's hostile guard is now spell-level (SpellHasHostileEffect, fix/seat0-hostile-spell-level):
+  no effect of a spell with any hostile effect gets the self flag forced, so the seat-0 half of (b) is closed.
 - (c) "Summon-plus-other-effect spells: any spell with a Summon effect makes the whole claim NativePlacement even if
   it keyed into a different caster (e.g. Armor). Mod-only." (Since the round-2 fix NativePlacement also requires
   `IsPlacementSpell`, which is the same whole-spell test, so (c) stands as written.)

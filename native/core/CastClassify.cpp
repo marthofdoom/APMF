@@ -43,6 +43,18 @@ namespace apmf::castclassify {
         return false;
     }
 
+    // True when ANY effect of the spell is hostile. Seat 0's self-flag force is spell-level (the flag is
+    // kept across a spell's effects), so a mixed-hostility spell (Holy Spirit: effect 0 non-hostile Script,
+    // effects 1-3 hostile) must never have it forced by a non-hostile effect visited first. Any thread: form
+    // data reads only.
+    bool SpellHasHostileEffect(const RE::MagicItem* a_spell) {
+        if (!a_spell) return false;
+        for (const auto* eff : a_spell->effects) {
+            if (eff && eff->baseEffect && eff->baseEffect->IsHostile()) return true;
+        }
+        return false;
+    }
+
     // ABI v42 (kCastFlag_CorpseTarget): a spell with a Reanimate (22) effect, the only kind the
     // Reanimate caster serves. Any thread: form data reads only.
     bool IsReanimateSpell(const RE::MagicItem* a_spell) {
@@ -774,7 +786,12 @@ namespace apmf::castclassify {
                             // implementation) -- so `baseEffect` is null-checked HERE first,
                             // never assumed, before it is ever called.
                             const auto* eff     = reinterpret_cast<const RE::Effect*>(a_effect);
-                            const bool  hostile = eff && eff->baseEffect && eff->IsHostile();
+                            const bool  effHostile = eff && eff->baseEffect && eff->IsHostile();
+                            // SPELL-LEVEL (mixed-hostility fix): the self flag persists across the spell's
+                            // effects, so ANY hostile effect anywhere in the spell blocks the force, even when
+                            // this effect is non-hostile (Holy Spirit: effect 0 non-hostile would otherwise set
+                            // self=1 for hostile effects 1-3, which then key no row).
+                            const bool  hostile = effHostile || SpellHasHostileEffect(spellPtr);
                             // PLACEMENT SPELLS ARE NEVER FORCED (86e3dvkwm, spell-level). Reanimate has ONE
                             // row, {Reanimate, OTHER, beneficial} (row 21): forcing self=1 would key no row
                             // at all and the claimed spell would get no item. Summon keys the same creator
@@ -805,11 +822,12 @@ namespace apmf::castclassify {
                             } else if (LogDue(fid, spellForm)) {
                                 spdlog::info(
                                     "[ch.8b seat 0] 0x{} CLASSIFY spell=0x{} '{}' selfFlag {} -- matches "
-                                    "the live cast claim's driven form but the EFFECT is HOSTILE; NOT "
+                                    "the live cast claim's driven form but the {} is HOSTILE; NOT "
                                     "forced (the classify rescue only widens the non-hostile heal/buff-"
                                     "OTHER row -- a hostile claim already classifies correctly on its own).",
                                     apmf::log::Hex(fid), apmf::log::Hex(spellForm),
-                                    spellPtr->GetName() ? spellPtr->GetName() : "?", before);
+                                    spellPtr->GetName() ? spellPtr->GetName() : "?", before,
+                                    effHostile ? "EFFECT" : "SPELL (hostile effect in spell)");
                             }
                         } else if (LogDue(fid, spellForm)) {
                             // Diagnostic only (never decisional): TryGetCastSeatClaimForForm
