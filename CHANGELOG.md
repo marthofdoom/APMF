@@ -1,4 +1,12 @@
-## Unreleased -- combat style: fight the way the mod says (ABI v45)
+## v0.20.0 -- Combat style, power attack, block, corpse targets, aversion and potion allowance (ABI v37 to v45)
+
+This is a Deck test prerelease. It carries every ABI from v37 to v45, so a mod that needs one of them checks `abiVersion` first. MFO 2.11.0 needs this build (ABI v45) for its classes add-on. Nothing in it is field run yet.
+
+- **ABI v37.** `kIntent_PotionAllowance` (ch.30), a potion allowance a mod can set per actor.
+- **ABI v38 and v39.** `kIntent_CombatMove` (ch.31, a bash or power bash through the game's own action road) and `kApproach_Point` (the combat approach centred on a world point).
+- **Also in this build.** A benign list for an offense deny now includes Night Eye and a self Dispel, and a mod's own cast claim passes its own offense only deny for spells it never declared.
+
+### combat style: fight the way the mod says (ABI v45)
 
 - **A mod can give a follower a combat style, and it fully applies.** The style decides how aggressive he is, how often he power attacks, blocks and bashes, and how he circles and backs off. Before, a mod could only influence which weapon he picked.
 - **Nothing in your save or your load order is changed.** Harbinger answers the game's own question "what is this actor's combat style" while the mod's claim stands. When the claim ends the game uses its own answer again.
@@ -6,13 +14,13 @@
 - **New setting `[CombatStyle] bCombatStyle=1`.** Set 0 to refuse every combat-style claim.
 - **ABI v45.** One new intent, `kIntent_CombatStyle`. No new function and no layout change. Works on 1.6.1170, 1.5.97 and 1.7.104.
 
-## Unreleased -- power attack: the game's real one (ABI v44)
+### power attack: the game's real one (ABI v44)
 
 - **A mod can have a follower power attack, and it is a real power attack.** Harbinger starts it the way the game's own combat AI does, so the hit has the power attack's damage and stamina cost. Before, a mod could only play the animation.
 - **The follower's own power attacks are used.** Harbinger offers the game each power attack he has, most likely first, and the first one that fits his weapon runs.
 - **ABI v44.** One new move, `kCombatMove_PowerAttack`. No new function and no layout change. 1.6.1170 and 1.5.97.
 
-## Unreleased -- block: hold the guard up (ABI v43)
+### block: hold the guard up (ABI v43)
 
 - **A mod can have a follower hold his guard up.** The mod names the follower and a number of seconds. Harbinger raises his guard the same way the game's own combat AI does, and keeps it up for that time. His shield or weapon, the stamina cost of blocked hits and the block itself are the game's.
 - **While the guard is held he does not attack or cast, and the game's own shorter block does not cut it off.** If a stagger knocks the guard down, Harbinger raises it again and the log says so.
@@ -20,27 +28,27 @@
 - **New setting `[CombatMove] bBlock=1`.** Set 0 to refuse every block request. Bashes are unaffected.
 - **ABI v43.** `kCombatMove_Block` is built and `kCombatMove_BlockEnd` is new. No new function and no layout change. 1.6.1170 and 1.5.97. On 1.7.104 combat moves stay refused.
 
-## Unreleased -- reanimate: raise the corpse the mod chose (ABI v42)
+### reanimate: raise the corpse the mod chose (ABI v42)
 
 - **A Reanimate cast can name its corpse.** A mod can now tell a follower which corpse to raise. Before, the game picked the highest-level corpse in range. The follower still casts the spell itself, animated, and the game still decides whether that corpse can be raised.
 - **The game's own pick does not cast while a corpse is named.** If the game refuses the named corpse, nothing is cast and the log says so.
 - **New setting `[CastSeats] EnableReanimateSeat=1`.** Set 0 to turn it off. A claim that names a corpse is then refused and logged.
 - **ABI v42.** One new cast flag, `kCastFlag_CorpseTarget`. No new function and no layout change. Works on 1.6.1170, 1.5.97 and 1.7.104.
 
-## Unreleased -- aversion: less likely to be targeted (ABI v41)
+### aversion: less likely to be targeted (ABI v41)
 
 - **New facet: aversion.** A mod can make an actor less likely to be targeted. It names the actor and a weight between 0 and 1. When an enemy's target choice lands on that actor, the enemy picks its next best target instead, in that share of time. The game does the picking both times. The second pick is used only when it is a target the enemy can act on (in reach, pathable, alive and not fleeing, by the game's own tests). Otherwise the first pick stands.
 - **Never untargetable.** An actor who is the only target in reach is attacked as always. A taunt or a scripted target still wins.
 - **New setting `[Aversion] bAversion=1`.** Set 0 to turn the facet off. A mod's aversion claims are then refused and logged.
 - **ABI v41.** One new intent, `kIntent_Aversion`. No new function and no layout change. Works on 1.6.1170, 1.5.97 and 1.7.104.
 
-## Unreleased -- an offense deny lets heals through (ABI v40)
+### an offense deny lets heals through (ABI v40)
 
 - **Offense means hostile.** A mod that denies a follower's offense no longer stops his heals, buffs and wards. Harbinger reads the spell the game is about to cast. A hostile spell is denied. A spell passes only when every one of its effects is a known harmless kind (a heal, a buff, a cure, a light, a summon and the like). A spell with a script effect, or with any effect Harbinger does not know to be harmless, counts as hostile and is named in the log. Attacks are denied as before. A mod that wants every cast stopped names the Cast category as well, which works on every version.
 - **New setting `[CombatAction] bHostileOnlyOffense=1`.** Set 0 for the old behaviour.
 - **ABI v40.** No new function and no layout change. A mod checks for version 40 before it relies on heals passing an offense deny.
 
-## Unreleased -- movement batch (anchor leak fix, gait probe)
+### movement batch (anchor leak fix, gait probe)
 
 - **An out-of-combat cast no longer ends a teammate's fight.** When a follower opened an animated out-of-combat cast beside a teammate whose last foe had just died, the game merged the caster's substrate fight into the teammate's fight, and Harbinger's cleanup then stopped the teammate's combat. The merge is now refused at its source, and the cleanup never stops a fight that was running before the stand-in actor reached it. New setting `[CombatSubstrate] bSubstrateHolderJoinGuard=1`.
 - **A passive gait probe for combat approaches.** While a combat approach moves an actor, the log says once per second how fast it moves and whether it runs forward, strafes or backpedals, with a summary when the approach ends. New setting `[CombatApproach] bApproachGaitProbe=1` while testing.
