@@ -1,3 +1,9 @@
+## v0.20.1 -- Seat 0 and mixed spells such as Holy Spirit (ABI v45, unchanged)
+
+This is a Deck test prerelease. The ABI stays at v45, so MFO 2.11.x works with it as before. MFO 2.11.1 asks for it.
+
+- **Seat 0 never forces the self row on a spell with any hostile effect.** A mixed spell such as Holy Spirit (a heal for allies with a hostile effect on undead) was forced onto the self row and never fired. Harbinger now reads every effect of the spell, and one hostile effect is enough to leave the row alone.
+
 ## v0.20.0 -- Combat style, power attack, block, corpse targets, aversion and potion allowance (ABI v37 to v45)
 
 This is a Deck test prerelease. It carries every ABI from v37 to v45, so a mod that needs one of them checks `abiVersion` first. MFO 2.11.0 needs this build (ABI v45) for its classes add-on. Nothing in it is field run yet.
