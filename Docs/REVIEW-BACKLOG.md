@@ -1440,3 +1440,5 @@ The Q91 own-claim pass applies to an UNDECLARED spell only. A HOSTILE record the
 
 ### APMF-B302 (SEV-5, OPEN, core/CastLeafNature.cpp OwnClaimHolds, against 311d91c, Opus review of feat/ch7-benign-own)
 (1) The own-claim pass increments g_passed, so the heartbeat counts it as "passed-beneficial"; a separate counter would read better in the field. (2) The pass checks spell identity, not hand or target: the tree casting a claimed undeclared spell at another target also passes (fits the Q91 ruling; noted). (3) MAP.md sentence before "The read:" lacks its full stop.
+
+- **SEV-4 (native/core/CastClassify.cpp:794, raised against 93141a74, Opus 5.5 2026-11-13, OPEN / accepted cost):** verbatim: "hostile-first mixed spells no longer get the Restore row. A mod spell with a hostile effect first and a beneficial heal/buff effect after it: before, effect 0 keyed its Offensive row with self=0 and a later beneficial effect forced self=1 and also keyed the Restore row. Now only the Offensive row is keyed. The claimed cast still gets a caster through that row, so nothing breaks; the outcome just shifts." Reviewer: the trade the brief chose; consistent with SpellRowless.
