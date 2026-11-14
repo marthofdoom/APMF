@@ -215,7 +215,10 @@ The facet priorities (`EquipWeapon`, `EquipArmor` and the rest) live in `APMF_So
 
 ## What is in v0.20.1
 
-- **Seat 0 and mixed spells.** A spell with any hostile effect, such as Holy Spirit, is no longer forced onto the self row, so it fires. ABI is still v45.
+The first real release since v0.17.0. It folds in the v0.18.0, v0.19.0 and v0.20.0 test builds below, so it carries ABI v34 to v45 (v33 clients keep working). MFO 2.11.1 asks for it.
+
+- **Seat 0 and mixed spells.** A spell with any hostile effect, such as Holy Spirit, is no longer forced onto the self row, so it fires.
+- **What is new since v0.17.0.** Attack selection and `CanServe` (v34, v35), projectile aim (v36), potion allowance, bash and an approach point (v37 to v39), an offense deny that lets heals through, aversion, a named Reanimate corpse (v40 to v42), block, power attack and combat style (v43 to v45). Details are in the sections below and in the [changelog](CHANGELOG.md).
 
 ## What is in v0.20.0
 
