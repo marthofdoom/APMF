@@ -1,3 +1,11 @@
+## v0.20.2 -- A follower stands up after a sneak release
+
+This is a small release on top of v0.20.1. ABI v45 is unchanged, so every mod built on v33 to v45 keeps working. MFO 2.11.2 asks for this build.
+
+- **A sneak release now confirms the stand-up (ch.3).** Harbinger used to send the stop sneak event once and trust it. A follower released in the middle of a bow shot could ignore it and stay crouched, even though the game reported him standing. Harbinger now reads the sneak state back from the animation graph and sends the stop again, a bounded number of times, until it takes.
+- **It gives up when the game wants him sneaking.** If the game's own AI is asking for a sneak, such as you sneaking and the follower mirroring you, Harbinger stops re-sending and leaves him alone. It never fights the engine over it.
+- **The result is in the log.** The confirm logs whether the graph took the release, was abandoned, or could not be read. A stance that can't be read is logged as unreadable, not as a success.
+
 ## v0.20.1 -- Attack selection, projectile aim, combat style, power attack, block, aversion and Holy Spirit (ABI v33 to v45)
 
 This is a real release, the first since v0.17.0. It folds in v0.18.0, v0.19.0 and v0.20.0, which were test builds, and their own entries stay below as history. It carries every ABI from v34 to v45, so a mod that needs one of them checks `abiVersion` first, and mods built on v33 keep working. MFO 2.11.1 asks for this build.
