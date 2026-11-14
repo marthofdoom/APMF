@@ -1,8 +1,17 @@
-## v0.20.1 -- Seat 0 and mixed spells such as Holy Spirit (ABI v45, unchanged)
+## v0.20.1 -- Attack selection, projectile aim, combat style, power attack, block, aversion and Holy Spirit (ABI v33 to v45)
 
-This is a Deck test prerelease. The ABI stays at v45, so MFO 2.11.x works with it as before. MFO 2.11.1 asks for it.
+This is a real release, the first since v0.17.0. It folds in v0.18.0, v0.19.0 and v0.20.0, which were test builds, and their own entries stay below as history. It carries every ABI from v34 to v45, so a mod that needs one of them checks `abiVersion` first, and mods built on v33 keep working. MFO 2.11.1 asks for this build.
 
-- **Seat 0 never forces the self row on a spell with any hostile effect.** A mixed spell such as Holy Spirit (a heal for allies with a hostile effect on undead) was forced onto the self row and never fired. Harbinger now reads every effect of the spell, and one hostile effect is enough to leave the row alone.
+- **Attack selection (ch.18, ABI v34).** A mod can deny attack classes (normal, power, bash, bash power, left hand) and hold the power attack share under a ceiling or over a floor. The game's own combat AI still picks among what is left, and the actor always keeps an attack he can make. `[AttackSelect]` `bAttackSelect`, `bObserveOnly`.
+- **A dry run, `CanServe` (ABI v35).** A mod can ask whether a request would be refused right now and why. It files nothing and uses up no log line.
+- **Projectile aim with a miss budget (ch.29, ABI v36).** A claim says an archer misses at most N of his last 10 shots. A corrected shot drops the game's two deliberate scatters (a random offset and the Archery spread cone) and flies at the game's own lead point. Verified on 1.6.1170 and 1.5.97, refused by name on 1.7.104. `[ProjectileAim]`.
+- **Combat style (ABI v45).** A mod can give a follower a combat style that fully applies, or ask for the weapon choice only. Nothing in your save or load order changes. `[CombatStyle] bCombatStyle`.
+- **Power attack (ABI v44) and block (ABI v43).** A mod can have a follower make a real power attack, or hold his guard up for a number of seconds, through the game's own combat road. `[CombatMove] bBlock`.
+- **Bash and an approach point (ABI v38 and v39),** and a **potion allowance** a mod can set per actor (ABI v37).
+- **Reanimate a named corpse (ABI v42),** **aversion** (ABI v41, an actor less likely to be targeted, never untargetable) and an **offense deny that lets heals through** (ABI v40, `bHostileOnlyOffense`).
+- **An out of combat cast no longer ends a teammate's fight.** The game merged the caster's substrate fight into a teammate's, and the cleanup then stopped the teammate's combat. The merge is refused at its source (`bSubstrateHolderJoinGuard`).
+- **Seat 0 never forces the self row on a spell with any hostile effect.** A mixed spell such as Holy Spirit (a heal for allies with a hostile effect on undead) was forced onto the self row and never fired. Harbinger now reads every effect of the spell.
+- **A passive gait probe** for combat approaches (`bApproachGaitProbe`), off by default.
 
 ## v0.20.0 -- Combat style, power attack, block, corpse targets, aversion and potion allowance (ABI v37 to v45)
 
