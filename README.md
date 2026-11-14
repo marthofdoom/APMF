@@ -213,6 +213,12 @@ Every key is in [Docs/INI-REFERENCE.md](Docs/INI-REFERENCE.md). These are the on
 
 The facet priorities (`EquipWeapon`, `EquipArmor` and the rest) live in `APMF_Sources.ini`, written by the Harbinger page. A priority of 0 turns that mod off for that facet.
 
+## What is in v0.20.2
+
+A small release on top of v0.20.1, ABI v45 unchanged. MFO 2.11.2 asks for it.
+
+- **A sneak release confirms the stand-up (ch.3).** A follower caught mid attack could ignore the stop sneak event and stay crouched. Harbinger now reads the graph back and re-sends it until it takes, and gives up if the game's own AI wants him sneaking. The result is logged.
+
 ## What is in v0.20.1
 
 The first real release since v0.17.0. It folds in the v0.18.0, v0.19.0 and v0.20.0 test builds below, so it carries ABI v34 to v45 (v33 clients keep working). MFO 2.11.1 asks for it.
@@ -317,7 +323,7 @@ The first real release since v0.17.0. It folds in the v0.18.0, v0.19.0 and v0.20
 
 ## Status
 
-Phase 1 built, now at v0.20.1, ABI v45 (see [Docs/STATUS.md](Docs/STATUS.md)). The central
+Phase 1 built, now at v0.20.2, ABI v45 (see [Docs/STATUS.md](Docs/STATUS.md)). The central
 `Actor::Update` (0xAD) hook drives a multi-NPC control map (keyed by FormID,
 scales to hundreds, an uncontrolled NPC pays one hash-miss), a real
 inter-plugin C-ABI client API (`native/APMF_API.h`), and the full documented
