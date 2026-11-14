@@ -48,13 +48,17 @@ namespace {
             if (auto it = m_startedSneak.find(id); it != m_startedSneak.end()) {
                 if (actor && it->second) {   // only undo what we started
                     const bool ok = actor->NotifyAnimationGraph("SneakStop");
-                    spdlog::info("[ch.3] 0x{} sneak released. SneakStop accepted={} graph {}={} engine IsSneaking={}.",
+                    spdlog::info("[ch.3] 0x{} sneak released. SneakStop accepted={} (graph {}={} is the value before the graph update) engine IsSneaking={}.",
                                  apmf::log::Hex(id), ok, kSneakVar, GraphSneak(actor), actor->IsSneaking());
                     // The bool is only "event queued"; the graph can ignore it (field 2026-11-13: released
                     // mid bow shot, actor stayed crouched while IsSneaking() was false). Confirm, and re-send
                     // until the graph variable drops. This COMPLETES the requested release; it does not mask.
-                    if (GraphSneak(actor) > 0) {
-                        m_pendingStop[id] = PendingStop{};
+                    // If the engine itself wants the sneak (player sneaks, vanilla mirroring, a package) the
+                    // chain would fight it: do not start it.
+                    if (actor->IsSneaking()) {
+                        spdlog::info("[ch.3] 0x{} engine wants sneak, confirm abandoned.", apmf::log::Hex(id));
+                    } else if (GraphSneak(actor) > 0) {
+                        m_pendingStop[id] = PendingStop{0, apmf::clock::MonotonicMs()};
                         PostConfirm(id);
                     }
                 } else {
@@ -71,11 +75,12 @@ namespace {
 
         struct PendingStop { int tries = 0; std::uint64_t lastMs = 0; };
 
-        // 1 = graph says sneaking, 0 = not, -1 = variable unreadable (then fall back to IsSneaking()).
+        // 1 = graph says sneaking, 0 = not, -1 = variable unreadable. IsSneaking() is NOT folded in: an
+        // engine-wanted sneak must not read as "still crouched" (the confirm chain checks IsSneaking itself).
         static int GraphSneak(RE::Actor* actor) {
             bool v = false;
             if (actor->GetGraphVariableBool(kSneakVar, v)) return v ? 1 : 0;
-            return actor->IsSneaking() ? 1 : -1;
+            return -1;
         }
 
         // One confirm hop per frame on the game thread (mainthread::Pump), re-Posting until the
@@ -86,9 +91,19 @@ namespace {
                 if (it == m_pendingStop.end()) return;   // superseded by Engage
                 auto* actor = RE::TESForm::LookupByID<RE::Actor>(id);
                 if (!actor || actor->IsDead()) { m_pendingStop.erase(it); return; }
-                if (GraphSneak(actor) <= 0) {
-                    spdlog::info("[ch.3] 0x{} release CONFIRMED (graph {}=false) after {} retry send(s).",
-                                 apmf::log::Hex(id), kSneakVar, it->second.tries);
+                if (actor->IsSneaking()) {
+                    spdlog::info("[ch.3] 0x{} engine wants sneak, confirm abandoned.", apmf::log::Hex(id));
+                    m_pendingStop.erase(it);
+                    return;
+                }
+                const int g = GraphSneak(actor);
+                if (g <= 0) {
+                    if (g < 0)
+                        spdlog::info("[ch.3] 0x{} release confirm ended: graph {} unreadable (not confirmed) after {} retry send(s).",
+                                     apmf::log::Hex(id), kSneakVar, it->second.tries);
+                    else
+                        spdlog::info("[ch.3] 0x{} release CONFIRMED (graph {}=false) after {} retry send(s).",
+                                     apmf::log::Hex(id), kSneakVar, it->second.tries);
                     m_pendingStop.erase(it);
                     return;
                 }
