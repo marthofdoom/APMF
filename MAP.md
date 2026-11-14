@@ -2545,7 +2545,7 @@ parentheses.
 |------|----|-------|------|-----------|
 | `MovementDeny.cpp` | 1 | movement FULL block (Num1) | `KeepOffsetFromActor(self)` + `SetDontMove(true)` (both Address-Library bound) | source-block |
 | `Speed.cpp` | 1a | gait/speed (Num7) | `kSpeedMult` AV (arbitrary factor, default x0.5) | source-block |
-| `Stance.cpp` | 3 | sneak/crouch (Num9) | `NotifyAnimationGraph("SneakStart/Stop")` | one-shot promote |
+| `Stance.cpp` | 3 | sneak/crouch (Num9) | `NotifyAnimationGraph("SneakStart/Stop")` | one-shot promote; Release confirms graph var `IsSneaking` and re-sends SneakStop (<=10, 200 ms apart, via mainthread::Post) |
 | `WeaponDraw.cpp` | 4 | draw/sheathe (Num5) | `DrawWeaponMagicHands(bool)` | one-shot (sticky) |
 | `Headtrack.cpp` | 5 | look-at (Num3) | `AIProcess::SetHeadtrackTarget` (own point slot) | **known-incomplete block (Tick re-assert; loses to a package-locked follower)** |
 | `CombatTarget.cpp` | 6 | combat-target CLAIM (Num-) | **ARBITRATION-ONLY** — records the owner; makes NO engine combat call (no `StartCombat`, no `currentCombatTarget` write). The CLIENT commands the target. Release relinquishes | arbitration-only (#0); client executes |
