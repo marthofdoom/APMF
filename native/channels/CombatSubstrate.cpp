@@ -3127,6 +3127,134 @@ namespace apmf::combatsubstrate {
                             "go with it).", a_why, n);
     }
 
+    // kSaveGame (plugin.cpp), BEFORE the engine writes any record (SKSE64 SaveGame_Hook: the message, then
+    // the original; a co-save callback is AFTER the actor records and is always too late for this). An open
+    // substrate is engine state the save would write: the holder's CombatController against the anchor, the
+    // anchor in its group's targets, the anchor's position beside the holder, the holder's ignoring-combat bit,
+    // and Harbinger's 0 in CombatGroup+0x15C (saved: AE 0x80ABE0 -> 0x80B28B). So every substrate is ENDED
+    // here through the paths that already end one: CloseSub (bit back, StopCombat, the anchor guard, floors,
+    // anchor home on the last holder, one package re-pick, the client's claim released) or, for a holder whose
+    // real fight was just seen, DropSub (anchor out of the group, the fight goes on). A requested substrate
+    // that never began only has its claim released. The client is told the same way as for every other
+    // Harbinger-ended substrate (its claim ends) and may ask again after the save: Harbinger does not re-enter
+    // by itself (it would be inventing the request, #0).
+    // Then the music debts: a debtor (a dropped holder, up to kDebtAfterDropMs) still in a group that reads
+    // Harbinger's 0 gets it put back to 0xFF here, under the group's own write lock, exactly the write the
+    // detection seat makes when it sees a real target (SeatMusicRealTarget). The seat only ever writes inside the
+    // engine's locked update because a group pointer has no lifetime guarantee across threads; this runs inside
+    // the save call on the game thread, where the engine itself walks the groups to write them, and reads
+    // the pointer from the debtor's own controller immediately before the write (AfterLoad / DropSub precedent).
+    // Last, the same scan AfterLoad makes: any high actor whose group still lists the anchor is cleaned and
+    // said (a WARN: after the closes there should be none), and the anchor is sent home if it is not there.
+    // AfterLoad stays as the backstop for a save written by an older DLL.
+    // NOT restored here: the stowed hands (SubstrateEquip). Their restore is a queued EquipObject gated by the
+    // hand floors, which only end at the next Drain; the save holds the weapon in the inventory, not in the hand.
+    void RestoreBeforeSave() {
+        if (!Installed()) return;
+        std::uint32_t closed = 0, dropped = 0, unbegun = 0;
+        for (auto it = g_subs.begin(); it != g_subs.end(); it = g_subs.erase(it)) {
+            Sub& s = it->second;
+            if (s.slot < 0) {
+                ReleaseClientClaim(s, "a save is being written (the substrate had not begun)");
+                ++unbegun;
+            } else if (s.phase == Phase::kOpen && (g_slots[s.slot].state.load(std::memory_order_acquire) & kStReal)) {
+                DropSub(s);
+                ++dropped;
+            } else {
+                CloseSub(s, "save (no substrate is written into a save)");
+                ++closed;
+            }
+        }
+        g_subCount.store(0, std::memory_order_relaxed);
+
+        // The music debts still owed (dropped holders).
+        std::uint32_t music = 0;
+        // g_musicDeny: a debt only exists where the music deny installed, i.e. its rows (the +0x15C readers and
+        // CommonLib.BSReadWriteLock.LockForWrite / UnlockForWrite) verified on this runtime.
+        if (g_musicDeny && g_debtCount.load(std::memory_order_acquire) != 0) {
+            std::array<MusicDebt, kDebts> owed{};
+            {
+                std::scoped_lock lk(g_debtMx);
+                owed = g_debts;
+            }
+            for (const auto& d : owed) {
+                if (d.holderH == 0) continue;
+                auto* a  = RE::TESForm::LookupByID<RE::Actor>(d.holder);
+                auto* cc = a ? a->GetActorRuntimeData().combatController : nullptr;
+                auto* g  = cc ? cc->combatGroup : nullptr;
+                bool  put = false;
+                if (g) {
+                    RE::BSWriteLockGuard guard(g->lock);
+                    if (g->musicState == kMusicNone) {
+                        g->musicState = kMusicUndecided;
+                        put           = true;
+                    }
+                }
+                DebtForget(d.holder);   // paid, or his group is gone / no longer reads 0: nothing of Harbinger's is left to save
+                if (put) {
+                    ++music;
+                    spdlog::info("[substrate] save: the group of 0x{} carried Harbinger's music 0 (CombatGroup+0x15C) -- put "
+                                 "back to 0xFF before the save is written; the engine decides that fight's music.",
+                                 Hex(d.holder));
+                }
+            }
+        }
+
+        // What AfterLoad would have had to clean after the load of this save.
+        auto*         anchor  = Anchor();
+        std::uint32_t removed = 0, stopped = 0;
+        bool          home    = false;
+        if (anchor) {
+            const auto anchorH = anchor->GetHandle().native_handle();
+            if (auto* pl = RE::ProcessLists::GetSingleton()) {
+                std::vector<RE::Actor*> withAnchor;
+                pl->ForEachHighActor([&](RE::Actor* a) {
+                    auto* cc = a ? a->GetActorRuntimeData().combatController : nullptr;
+                    auto* g  = cc ? cc->combatGroup : nullptr;
+                    if (!g) return RE::BSContainer::ForEachResult::kContinue;
+                    bool has = false;
+                    {
+                        RE::BSReadLockGuard guard(g->lock);
+                        has = FindTargetEntry(g, anchorH) != nullptr;
+                    }
+                    if (has) withAnchor.push_back(a);
+                    return RE::BSContainer::ForEachResult::kContinue;
+                });
+                for (auto* a : withAnchor) {
+                    auto* cc = a->GetActorRuntimeData().combatController;
+                    auto* g  = cc ? cc->combatGroup : nullptr;
+                    if (!g) continue;
+                    g_removeTarget(g, anchor);
+                    ++removed;
+                    std::uint32_t left = 0;
+                    {
+                        RE::BSReadLockGuard guard(g->lock);
+                        left = g->targets.size();
+                    }
+                    const bool stop = left == 0 && *reinterpret_cast<const std::uintptr_t*>(a) == g_vtChar;
+                    if (stop) {
+                        a->StopCombat();
+                        ++stopped;
+                    }
+                    spdlog::warn("[substrate] save: 0x{} was STILL in combat with the anchor after every substrate was ended "
+                                 "(not a holder Harbinger knew: the anchor guard's case) -- anchor removed from its group{}.",
+                                 Hex(a->GetFormID()), stop ? "; nothing else to fight: combat ended (StopCombat)" : "");
+                }
+            }
+            if (auto* homeRef = g_homeId ? RE::TESForm::LookupByID<RE::TESObjectREFR>(g_homeId) : nullptr;
+                homeRef && anchor->GetParentCell() != homeRef->GetParentCell()) {
+                AnchorHome(anchor, "save");
+                home = true;
+            }
+        }
+        if (closed || dropped || unbegun || music || removed || home)
+            spdlog::info("[substrate] save (kSaveGame, before the engine writes): {} substrate(s) closed, {} dropped to their "
+                         "real fight, {} not yet begun released; {} music decision(s) put back; anchor removed from {} more "
+                         "group(s) ({} combat(s) ended); anchor {}. The save holds no substrate.",
+                         closed, dropped, unbegun, music, removed, stopped,
+                         home ? "sent home here" : "already home (or sent by the last close)");
+    }
+
     void AfterLoad(const char* a_why) {
         if (!Installed()) return;
         // fix/apmf-ooc-substrate: the outgoing world's behaviour threads are gone; a held node the save carried is an

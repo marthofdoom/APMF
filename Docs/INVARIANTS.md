@@ -1497,6 +1497,23 @@ them on the way in. Two rules follow, both learned the expensive way (MFO's
   deliberately does not call `channel->Release`, so nothing else would reset it).
 Any future subsystem that mints a runtime form inherits both halves of this rule.
 
+**THE SAVE-TIMING RULE (2026-11-15; every subsystem, not only forms).** SKSE64 sends the
+`kSaveGame` MESSAGE synchronously BEFORE the engine writes any record
+(`Hooks_SaveLoad.cpp` `SaveGame_Hook`), and runs a plugin's co-save SAVE CALLBACK from its Papyrus
+global-data hook (`Hooks_Papyrus.cpp` `SaveGlobalData_Hook`), AFTER every change form is written.
+So anything "swept" or "restored" in a co-save callback is already in the `.ess`: a sweep there
+is always too late. Engine state that Harbinger wrote and that must not be saved is put back in
+the `kSaveGame` case of `plugin.cpp`, and only there. Today: ch.24
+`combatapproach::RestoreBeforeSave` (the combat area's geometry), ch.27
+`combatsubstrate::RestoreBeforeSave` (every open substrate is ended: no controller against the
+anchor, no anchor in a group, the anchor home, the music decision back), and
+`castproxy::PreSaveSweep` (#19). The co-save callback only WRITES Harbinger's own records and
+runs second checks. Known and NOT restored at a save (said, not hidden): the substrate's stowed
+hands (`channels/SubstrateEquip.cpp`: the restore is a queued equip behind the hand floors, so
+the save holds the weapon in the inventory, not the hand), and a ch.3 graph crouch (an animation
+event takes effect at the graph's next update, not inside the save call; whether such a crouch
+survives a load at all is being measured by the `[ch.3] save:` / `[ch.3] after load` probe lines).
+
 ## Logging
 
 **#16 — Log hex via `apmf::log::Hex`, never the `{:X}` spec.** On the deck (v0.2.2)

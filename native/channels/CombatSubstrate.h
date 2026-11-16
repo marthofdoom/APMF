@@ -52,6 +52,13 @@ namespace apmf::combatsubstrate {
     // controller the incoming SAVE carries against the anchor (a save made while a substrate
     // was open) is cleaned (see the .cpp, "LOAD").
     void AfterLoad(const char* a_why);
+    // kSaveGame (the MESSAGE, before the engine writes any record; never the co-save callback, which runs
+    // after the actor records): END every substrate so the save holds none -- no controller against the
+    // anchor, no anchor in a group, the anchor at home, the ignoring-combat bit and the group's music decision
+    // (CombatGroup+0x15C) as the engine had them. Each substrate ends through its own close / drop path and its
+    // client's claim is released (the client may ask again after the save). AfterLoad stays as the backstop.
+    // Game thread (the save call).
+    void RestoreBeforeSave();
 
     // ---- ANY THREAD (lock-free) ----
     // At least one substrate holds a slot (live or dropping). One relaxed load.

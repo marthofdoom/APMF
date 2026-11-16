@@ -9,6 +9,7 @@
 #include "core/AvLedger.h"
 #include "core/MainThread.h"
 #include "core/CastProxy.h"
+#include "channels/Stance.h"         // ch.3 passive save / load probes (2026-11-15)
 #include "core/CastSeats.h"
 #include "core/ReanimateSeat.h"
 #include "core/CastGate.h"
@@ -467,6 +468,12 @@ namespace {
             // geometry back into every combat area carrying a bound, so no claim is written into the
             // .ess (the standard area is saved with its fields). The next area update re-applies it.
             apmf::combatapproach::RestoreBeforeSave();
+            // ch.27 (2026-11-15, the dangling-state audit): an open combat substrate is engine state the save
+            // would write (the holder in combat with the anchor, the anchor beside him, Harbinger's music 0).
+            // Every substrate is ended here; the load-side clean (AfterLoad) stays as the backstop. BEFORE the
+            // proxy sweep: a close releases cast floors and may drop the last claim on a proxy.
+            apmf::combatsubstrate::RestoreBeforeSave();
+            apmf::stance::LogAtSave();   // ch.3 PASSIVE probe: who holds a Harbinger-started sneak as the save is written
             // INVARIANTS #19: no runtime proxy spell may be in any actor's hand, selected slot, spell
             // list, caster or active effect when the engine writes the actor records. Synchronous,
             // here, because this message is the only seat BEFORE the write (SKSE64 SaveGame_Hook:
@@ -502,6 +509,8 @@ namespace {
             apmf::mainthread::Post([] { apmf::poscast::SweepCarriedMarkers("first pump after load"); });
             // S2a: the anchor home, and a controller the save carries against the anchor cleaned (first pump).
             apmf::mainthread::Post([] { apmf::combatsubstrate::AfterLoad("first pump after load"); });
+            // ch.3 PASSIVE probe (audit SEV-4): does a graph crouch come out of the save with nothing owning it?
+            apmf::mainthread::Post([] { apmf::stance::LogAfterLoad("first pump after load"); });
             apmf::equipsink::ReinspectEntries("kPostLoadGame");   // a later plugin may have detoured EquipObject's entry
             apmf::papyruscaller::Install("kPostLoadGame");   // seat natives of script types loaded since
             apmf::sources::OnPostLoad("kPostLoadGame");   // Harbinger 1a census: late installers on every seat (Q13 re-hook)

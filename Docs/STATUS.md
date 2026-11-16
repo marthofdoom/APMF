@@ -28,6 +28,25 @@ build/finding/workflow change.
   and when it was destroyed (inside the load call or after), which is why the repair also runs on the first pump and
   watches live runtime forms.
 
+### Same branch, second commit: the dangling-state audit's Harbinger items (2026-11-15)
+
+- **ch.27, an open combat substrate was written into the save (audit SEV-3), fixed:** `combatsubstrate::RestoreBeforeSave`
+  runs in `kSaveGame` before the proxy sweep. It ENDS every substrate through `CloseSub` / `DropSub` (the client's
+  claim is released, as for every Harbinger-ended substrate; the client may ask again after the save), puts a debtor
+  group's music decision (CombatGroup+0x15C) back from Harbinger's 0 to 0xFF under the group's write lock, cleans any
+  group that still lists the anchor (WARN) and sends the anchor home. `AfterLoad` stays as the backstop for old saves.
+  BEHAVIOUR CHANGE for clients: a save (also an autosave) ends an open substrate window. No ABI change.
+- **ch.3 sneak (audit SEV-4), NOT fixed, measured instead:** a SneakStop sent in `kSaveGame` cannot take effect before
+  the write (the event is only queued until the graph updates; ch.3's own release confirm exists for that reason), and
+  an undo after the load needs the "Harbinger started it" set in the co-save (a format change) for a premise nobody has
+  observed. New PASSIVE probe (`channels/Stance.h`): `[ch.3] save: ...` per held sneak at a save, and
+  `[ch.3] after load (...)` twice after a load (first pump, +5 s) naming every loaded NPC crouched on the graph while
+  the engine's sneak state is off. One field cycle answers it.
+- **Substrate hand stow (audit SEV-4), NOT fixed (not cheap):** the restore is a queued `EquipObject` that the hand
+  floors refuse until the next Drain, and it is verified over the following frames; none of that fits inside the save
+  call. The save holds the weapon in the inventory, not in the hand, which is a valid state; the AI re-equips.
+- The rule the audit found is INVARIANTS "THE SAVE-TIMING RULE" (after #19).
+
 ## HEAD OF WORK 2026-11-11 -- MELEE MOVES (MFO T2 batch M), branch `feat/melee-moves` (on top of `feat/ch8b-dead-target` + `feat/aversion`), NOT merged, NOT field run
 
 One section per item, newest ABI last. Research notes: `Docs/research/melee-moves-re.md`.

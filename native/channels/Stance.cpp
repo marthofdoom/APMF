@@ -3,6 +3,7 @@
 #include "core/Clock.h"
 #include "core/MainThread.h"
 #include "core/Registry.h"
+#include "channels/Stance.h"
 
 // ============================================================================
 // Channel 3 -- STANCE / SNEAK. SANCTIONED BOUNDED ONE-SHOT PROMOTE (INVARIANTS
@@ -20,8 +21,29 @@
 
 namespace {
 
+    class StanceChannel;
+    StanceChannel* g_self = nullptr;   // the one registered instance (set by its constructor); game thread
+
     class StanceChannel final : public apmf::Channel {
     public:
+        StanceChannel() { g_self = this; }
+
+        // The save probe (channels/Stance.h): passive, one line per actor Harbinger made sneak.
+        void LogAtSave() const {
+            for (const auto& [id, started] : m_startedSneak) {
+                if (!started) continue;
+                auto* actor = RE::TESForm::LookupByID<RE::Actor>(id);
+                if (!actor) continue;
+                spdlog::info("[ch.3] save: 0x{} holds a Harbinger-started sneak as this save is written (graph {}={}, engine "
+                             "IsSneaking={}). Its claim does not cross a load; see the [ch.3] after-load lines of the load "
+                             "of this save.",
+                             apmf::log::Hex(id), kSneakVar, GraphSneak(actor), actor->IsSneaking());
+            }
+        }
+        static int  GraphSneakOf(RE::Actor* a_actor) { return GraphSneak(a_actor); }
+        static const char* SneakVar() { return kSneakVar; }
+        bool Claimed(RE::FormID a_id) const { return m_startedSneak.contains(a_id); }
+
         const char*      Name() const override { return "stance-sneak"; }
         int              ChannelNo() const override { return 3; }
         APMF_API::Intent ServesIntent() const override { return APMF_API::kIntent_Stance; }
@@ -132,3 +154,46 @@ namespace {
 }
 
 APMF_REGISTER_CHANNEL(StanceChannel);
+
+namespace apmf::stance {
+
+    void LogAtSave() {
+        if (g_self) g_self->LogAtSave();
+    }
+
+    namespace {
+        void Sample(const char* a_when) {
+            std::uint32_t seen = 0, checked = 0;
+            if (auto* pl = RE::ProcessLists::GetSingleton()) {
+                pl->ForEachHighActor([&](RE::Actor* a) {
+                    if (!a || a->IsPlayerRef() || a->IsDead() || !a->Is3DLoaded()) return RE::BSContainer::ForEachResult::kContinue;
+                    ++checked;
+                    if (StanceChannel::GraphSneakOf(a) != 1 || a->IsSneaking()) return RE::BSContainer::ForEachResult::kContinue;
+                    if (++seen <= 16)
+                        spdlog::info("[ch.3] after load ({}): 0x{} graph {}=true while the engine's IsSneaking=false; stance "
+                                     "claim now: {}. A crouch the engine does not own (PASSIVE: nothing sent).",
+                                     a_when, apmf::log::Hex(a->GetFormID()), StanceChannel::SneakVar(),
+                                     g_self && g_self->Claimed(a->GetFormID()) ? "yes" : "none");
+                    return RE::BSContainer::ForEachResult::kContinue;
+                });
+            }
+            spdlog::info("[ch.3] after load ({}): {} loaded NPC(s) checked, {} crouched on the graph without the engine's "
+                         "sneak state.", a_when, checked, seen);
+        }
+
+        void Later(std::uint64_t a_at) {
+            if (apmf::clock::MonotonicMs() < a_at) {
+                apmf::mainthread::Post([a_at] { Later(a_at); });   // dropped by Discard() at the next load
+                return;
+            }
+            Sample("5 s after the load");
+        }
+    }
+
+    void LogAfterLoad(const char* a_when) {
+        Sample(a_when);
+        const auto at = apmf::clock::MonotonicMs() + 5000;
+        apmf::mainthread::Post([at] { Later(at); });
+    }
+
+}
