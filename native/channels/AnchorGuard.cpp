@@ -226,15 +226,24 @@ namespace {
     // cleaned actor's own package (and its sheathe) comes back instead of a stale combat state. The relocation is the
     // substrate's verified row PackageGate.EvaluatePackage (RELOCATION_ID(36407, 37401)); this runs only while the
     // substrate is installed, which requires that row (exact 1.6.1170 / 1.5.97 / 1.7.104; 37401 is a row of the MIT id table).
+    // H1 (2026-11-16): the StopCombat is QUEUED onto the actor's own combat update (core/CombatOps.h), so the re-pick
+    // is its completion (main, after the stop ran), never made right after the request: a re-pick before the stop
+    // would run against the fight it is meant to follow. Inside a save both run inline, in order.
+    void Repick(RE::FormID a_id) {
+        using EvaluatePkg_t = void (*)(RE::Actor*, bool, bool);
+        static REL::Relocation<EvaluatePkg_t> s_evaluate{ RELOCATION_ID(36407, 37401) };
+        if (auto* a = RE::TESForm::LookupByID<RE::Actor>(a_id)) s_evaluate(a, false, false);
+    }
+
     std::string StopAndRepick(RE::Actor* a_actor, RE::Actor* a_anchor) {
-        std::string stop = apmf::combatentry::hold::StopCombatRanked(a_actor, APMF_API::kInvalidHandle,
-                                                                     a_anchor->GetFormID(), a_anchor->GetHandle());
-        if (stop.starts_with("combat ENDED")) {
-            using EvaluatePkg_t = void (*)(RE::Actor*, bool, bool);
-            static REL::Relocation<EvaluatePkg_t> s_evaluate{ RELOCATION_ID(36407, 37401) };
-            s_evaluate(a_actor, false, false);
-            stop += " + package re-pick";
-        }
+        const RE::FormID id   = a_actor->GetFormID();
+        std::string      stop = apmf::combatentry::hold::StopCombatRanked(
+            a_actor, APMF_API::kInvalidHandle, a_anchor->GetFormID(), a_anchor->GetHandle(),
+            [id](const apmf::combatops::Result& r) {
+                if (r.stopped) Repick(id);
+            });
+        if (stop.starts_with("combat ENDED")) stop += " + package re-pick";
+        else if (stop.starts_with("combat END QUEUED")) stop += " + a package re-pick once it ran";
         return stop;
     }
 

@@ -177,6 +177,21 @@ namespace apmf::castproxy {
     // Nothing to do, and nothing logged, while no pool form is minted. MAIN THREAD.
     void PreSaveSweep();
 
+    // THE PRE-LOAD UN-TEACH (APMF-B48, stability audit H2, 2026-11-16). Called SYNCHRONOUSLY from plugin.cpp's
+    // kPreLoadGame case, AFTER Arbiter::ReleaseAll and BEFORE ResetAll. ReleaseAll's per-claim Unrefs are only POSTED
+    // (and the kPreLoadGame Discard then drops them unrun), and ResetAll forgets the owners and makes no engine call,
+    // so nothing used to un-teach a proxy still taught when the load began: a persistent follower OUTSIDE the
+    // incoming save's process lists carried the purged 0xFF form in its spell list into the new world, where the load
+    // repair could not tell a reused address from a live spell (the Save373 mechanism, other slot). For every actor
+    // PreSaveSweep covers -- the four process lists, the player, and every CURRENT and EARLIER owner of a pool slot
+    // (by id) -- against every minted pool form: Actor::DeselectSpell + RemoveSpell (the engine's own paths, the calls
+    // Unref makes), then a re-read and the same direct member write for what the engine left (a mid-cast caster
+    // ended by InterruptCast first). Active effects are NOT re-keyed here (the save sweep's step 4 is for a save
+    // that continues; see REVIEW-BACKLOG APMF-B48). kPreLoadGame runs where a save's load is processed: the queued
+    // load in Main::Update's BGSSaveLoadManager pass (AE 0x645F3A), after the frame's job events were reset and
+    // before the frame's kick, or a menu with the game paused. Nothing to do while no pool form is minted. MAIN.
+    void PreLoadUnteach();
+
     // The SECOND CHECK, from plugin.cpp's co-save save callback (after the actor records are
     // written, inside the same save call). Scans again: a reference still found here was
     // there when the engine wrote the actor, so it WARNs that the .ess may hold it (and

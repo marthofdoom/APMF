@@ -92,7 +92,7 @@ namespace apmf::av {
         // the clobber guard cannot apply -- v1's original semantics); v2 entries are
         // 16 bytes {formID, av, prev, applied} and use the clobber guard.
         const bool v2 = (version >= 2);
-        std::uint32_t count = 0;
+        std::uint32_t count = 0, outOfRange = 0;
         if (!intf->ReadRecordData(&count, sizeof(count))) return;
         for (std::uint32_t i = 0; i < count; ++i) {
             RE::FormID    formID  = 0;
@@ -103,12 +103,24 @@ namespace apmf::av {
             if (!intf->ReadRecordData(&av, sizeof(av)))                  break;
             if (!intf->ReadRecordData(&prev, sizeof(prev)))              break;
             if (v2 && !intf->ReadRecordData(&applied, sizeof(applied)))  break;
+            // H4 (stability audit 2026-11-16): the stored index goes straight into Get/SetActorValue at kPostLoadGame,
+            // which index the actor-value arrays by it. An index at or past ActorValue::kTotal (a corrupt or foreign
+            // record) is skipped -- the whole 12 / 16-byte entry is already read, so the stream stays aligned -- and
+            // counted in the line below, never applied.
+            if (av >= static_cast<std::uint32_t>(RE::ActorValue::kTotal)) {
+                ++outOfRange;
+                continue;
+            }
             RE::FormID resolved = 0;
             if (intf->ResolveFormID(formID, resolved))            // handle load-order remap
                 g_pending.push_back(Pending{ resolved, av, prev, applied, /*guard*/ v2 });
         }
         spdlog::info("[avledger] read {} co-saved AV override(s) (record v{}) to restore on post-load.",
                      g_pending.size(), version);
+        if (outOfRange != 0)
+            spdlog::warn("[avledger] {} co-saved entr(y/ies) named an actor-value index at or past {} (ActorValue::kTotal) "
+                         "-- SKIPPED, nothing applied for them (a corrupt or foreign AVOV record).",
+                         outOfRange, static_cast<std::uint32_t>(RE::ActorValue::kTotal));
     }
 
     void ApplyPending() {

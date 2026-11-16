@@ -14,6 +14,8 @@
 #include "core/Allowance.h"                // SeatVerified, RuntimeSupported
 #include "core/CasterTypeCensus.h"         // NotifyInstalled: the fire signal
 #include "core/Clock.h"
+#include "core/CombatOps.h"              // H1: the close's StopCombat runs on the holder's own combat update
+#include "core/Hook.h"                   // P0: the overlap samples at this file's main-thread combat calls
 #include "core/BehaviorTreeCatalog.h"         // the leaf catalog (names)
 #include "core/ControlMap.h"
 #include "core/Log.h"
@@ -412,6 +414,22 @@ namespace {
 
     bool HasController(RE::Actor* a) { return a && a->GetActorRuntimeData().combatController != nullptr; }
 
+    // H1 (stability audit 2026-11-16): CombatGroup::RemoveTarget takes NO lock of its own (AE 0x803D70: find the
+    // target's entry, then the erase AE 0x80C5A0, which notifies the CombatManager under ITS lock, CM+0x18 write,
+    // AE 0x83DBC9). The engine's own erase of a group target runs under the group's WRITE lock: the group update
+    // (AE 44703 0x803710) takes LockForWrite(+0x160) at +0x30 and reaches the same erase through 0x80CB80 (SE 43481
+    // 0x76A2F0: LockForWrite 0xC07350, then 0x772A60 -> 0x772520; 1.7.104 0x818570: +0x30 -> 0xCE32D0, then
+    // 0x821A60 -> 0x821480). So every RemoveTarget here is made under the group's write lock, in the engine's own
+    // order (group, then CombatManager; nothing that holds CM+0x18 takes a group lock: AE 46882/46883/46889-46893
+    // checked), and the members' combat updates reading the group under its read lock never see the array move.
+    // LockForWrite is recursive for its writer thread. Main thread (Poll / the save / the load clean).
+    void RemoveTargetLocked(RE::CombatGroup* a_g, RE::TESObjectREFR* a_target) {
+        if (!a_g || !a_target) return;
+        apmf::hook::Sample(apmf::hook::Site::kRemoveTarget);   // P0
+        RE::BSWriteLockGuard guard(a_g->lock);
+        g_removeTarget(a_g, a_target);
+    }
+
     RE::Actor* Anchor() {
         const auto id = g_anchorId.load(std::memory_order_relaxed);
         return id ? RE::TESForm::LookupByID<RE::Actor>(id) : nullptr;
@@ -480,8 +498,24 @@ namespace {
         RE::FormID       releaseForm = 0;
         std::uint32_t    releaseHandMax = 0;
         const char*      releaseHow = nullptr;
+        // H1 (stability audit 2026-11-16, APMF-B26): THE CLOSE IN FLIGHT. CloseSub QUEUES the holder's StopCombat onto
+        // its own Character::UpdateCombat (core/CombatOps.h) instead of freeing the controller from this thread; every
+        // step the close makes after the StopCombat (the anchor guard on the members, the floors, the slot and its
+        // denies, the anchor home, the package re-pick, the claim) waits for the result (FinishClose), so the denies
+        // stand until the controller is gone. `closing` is set only while the StopCombat is queued.
+        bool             closing = false, closeDone = false, closeStopped = false;
+        std::uint32_t    closeGen = 0;
+        const char*      closeReason = nullptr;
+        const char*      closeHow = nullptr;   // a literal: how the StopCombat ran, or why it did not
+        std::uint64_t    closeQueuedMs = 0;
+        std::vector<RE::ActorHandle> closeMembers;   // the holder's group members, read BEFORE its StopCombat
+        // A client declared again while the close was in flight (Declare): the close finishes as decided, then the
+        // substrate begins again for the claim that is winning then (WaitClose).
+        bool             reopen = false;
+        float            reopenFval = 0.0f;
     };
     std::unordered_map<RE::FormID, Sub> g_subs;          // GAME THREAD ONLY
+    std::uint32_t                       g_closeGen = 0;  // GAME THREAD ONLY (CloseSub)
     std::atomic<std::size_t>            g_subCount{ 0 }; // Poll pre-gate (relaxed)
 
     // The holder the anchor stands at. Written on the game thread; READ by RefuseAnchorTarget on the combat /
@@ -627,6 +661,10 @@ namespace {
     void AnchorToHolder(RE::Actor* a_anchor, RE::Actor* a_at, bool a_first) {
         if (!a_anchor || !a_at) return;
         if (a_first) a_anchor->GetActorRuntimeData().boolBits.reset(RE::Actor::BOOL_BITS::kProcessMe);   // AI off
+        // P0 (2026-11-16): stays on main. A reference's cell move (MoveTo_Impl) is the engine's main-thread operation
+        // (cell attach / detach); the holder's combat update reads the anchor's position as it reads any moving
+        // actor's. The probe says what ran beside it.
+        apmf::hook::Sample(apmf::hook::Site::kAnchorMove);
         if (a_anchor->GetParentCell() != a_at->GetParentCell() || a_first)
             a_anchor->MoveTo(a_at);   // into the holder's cell (MoveTo_Impl, the verified row) ...
         // ... then behind it: TESObjectREFR::SetPosition (MoveTo_Impl), NOT Actor's slot 0xA9 overload.
@@ -642,6 +680,7 @@ namespace {
                           Hex(g_homeId));
             return;
         }
+        apmf::hook::Sample(apmf::hook::Site::kAnchorMove);   // P0
         a_anchor->MoveTo(home);
         g_served = 0;
     }
@@ -1086,7 +1125,7 @@ namespace {
         return true;
     }
 
-    void CloseSub(Sub& a_sub, const char* a_reason);
+    bool CloseSub(Sub& a_sub, const char* a_reason);
 
     std::string StaysText(RE::FormID a_stays) {
         return a_stays ? fmt::format("stays for 0x{}", Hex(a_stays))
@@ -1102,8 +1141,7 @@ namespace {
             spdlog::warn("[substrate] 0x{} OPEN anchor=0x{} entry=false -- the hand floors were not published within "
                          "{} ms (a floor was refused: see the [ch.8b] lines above); no entry was made.",
                          Hex(a_sub.id), Hex(g_anchorId.load()), kFloorWaitMs);
-            CloseSub(a_sub, "floors not published");
-            return false;
+            return CloseSub(a_sub, "floors not published");
         }
         auto* actor  = RE::TESForm::LookupByID<RE::Actor>(a_sub.id);
         auto* anchor = Anchor();
@@ -1117,8 +1155,7 @@ namespace {
         if (why) {
             spdlog::warn("[substrate] 0x{} OPEN anchor=0x{} entry=false -- {}; no entry was made.", Hex(a_sub.id),
                          Hex(g_anchorId.load()), why);
-            CloseSub(a_sub, why);
-            return false;
+            return CloseSub(a_sub, why);
         }
         // The hands' stow (review F1 of a0112b24) must have applied BEFORE StartCombat (its re-arm equip runs inside it).
         {
@@ -1128,8 +1165,7 @@ namespace {
             if (stow == apmf::substrateequip::StowState::kFailed) {
                 spdlog::warn("[substrate] 0x{} OPEN anchor=0x{} entry=false -- {}; no entry was made.", Hex(a_sub.id),
                              Hex(g_anchorId.load()), stowWhy ? stowWhy : "the hands were not stowed");
-                CloseSub(a_sub, "hands not stowed");
-                return false;
+                return CloseSub(a_sub, "hands not stowed");
             }
             // The spell equip opens ONLY here for a client Open (hands clear, checks passed at Begin) -- never for a dry
             // run; a dry run taken over later gets it in Serve (EquipTakeover).
@@ -1159,6 +1195,9 @@ namespace {
             // The call ch.21 makes (verified row CombatEntry.Actor.StartCombat); a declared entry passes a
             // ch.22 re-entry deny on the holder (INVARIANTS #0 (h) condition 4).
             const apmf::reentrydeny::ClientEntryScope pass(a_sub.id);
+            // P0 (2026-11-16): stays on main -- Actor::StartCombat runs under the engine's own global spinlock (AE
+            // 0x6B6A85 .. 0x6B6D88) and publishes the built controller with one store (0x6B6CD5); see ch.21's call.
+            apmf::hook::Sample(apmf::hook::Site::kStartCombat);
             ok = actor->StartCombat(anchor, nullptr);
         }
         g_slots[a_sub.slot].state.fetch_and(~kStEntering, std::memory_order_acq_rel);
@@ -1169,8 +1208,7 @@ namespace {
                          Hex(g_anchorId.load()), ok ? "true" : "false",
                          ok ? " but left NO controller" : " (the engine refused: its life-state, dead, distance or flag tests)");
             apmf::substratebark::Disarm(a_sub.slot);
-            CloseSub(a_sub, "entry refused");
-            return false;
+            return CloseSub(a_sub, "entry refused");
         }
         apmf::substrateaggressor::AfterEntry(a_sub.id, proc);   // R5 F-3: StartCombat marked him the aggressor
         // R2 research F-1: the bit is off at entry, so StartCombat's block at AE 0x6B6CFB-0x6B6D32 ran. It is NOT a
@@ -1350,7 +1388,24 @@ namespace {
                            li < subs::kLeafCount && g_leafName[li] ? g_leafName[li] : "?", fmt::ptr(node), nn ? nn : "?", tree, built);
     }
 
-    void CloseSub(Sub& a_sub, const char* a_reason) {
+    void FinishClose(Sub& a_sub);
+
+    // H1: the result of the close's queued StopCombat (core/CombatOps.h), on MAIN (a posted completion, or inline in a
+    // save / an undrained or faulted run). Marks the Sub; Poll's WaitClose (or the caller, inline) finishes it. A
+    // result for a Sub that is gone or closing again (another generation) is ignored.
+    void CloseStopped(RE::FormID a_id, std::uint32_t a_gen, const apmf::combatops::Result& a_r) {
+        const auto it = g_subs.find(a_id);
+        if (it == g_subs.end() || !it->second.closing || it->second.closeGen != a_gen) return;
+        Sub& s         = it->second;
+        s.closeDone    = true;
+        s.closeStopped = a_r.stopped;
+        s.closeHow     = a_r.stopped ? apmf::combatops::HowText(a_r.how) : a_r.why;
+    }
+
+    // Returns true while the close is IN FLIGHT (a_sub.closing: the holder's StopCombat is queued on its own combat
+    // update; Poll's WaitClose finishes it), false = closed (the caller erases). Phase A, here: everything the close
+    // did BEFORE its StopCombat, unchanged. Phase B (FinishClose): everything after it.
+    bool CloseSub(Sub& a_sub, const char* a_reason) {
         auto* actor = RE::TESForm::LookupByID<RE::Actor>(a_sub.id);
         auto* proc  = actor ? actor->GetActorRuntimeData().currentProcess : nullptr;
         apmf::substrateprobe::Closing(a_sub.id, actor, a_sub.phase == Phase::kOpen, false, apmf::clock::MonotonicMs());   // R1
@@ -1366,19 +1421,52 @@ namespace {
         if (a_sub.bitSet && proc) proc->ignoringCombat = a_sub.priorBit;
         // 2. StopCombat once (the substrate entered, so the controller is the substrate's). Its group's other
         //    members are read first: a non-holder among them is cleaned after the StopCombat (anchor guard).
-        const auto members = a_sub.phase == Phase::kOpen ? apmf::anchorguard::GroupMembers(actor)
+        //    H1 (2026-11-16): the StopCombat is QUEUED onto the holder's own Character::UpdateCombat (core/CombatOps.h)
+        //    -- the engine frees a controller on the actor's own update, never under a reader on another thread -- and
+        //    the close waits for it (Poll's WaitClose); inside a save it runs inline and the close finishes here.
+        a_sub.closeReason  = a_reason;
+        a_sub.closeMembers = a_sub.phase == Phase::kOpen ? apmf::anchorguard::GroupMembers(actor)
                                                          : std::vector<RE::ActorHandle>{};
-        bool stopped = false;
+        a_sub.closeStopped = false;
+        a_sub.closeHow     = "not needed";
+        a_sub.closeQueuedMs = 0;
         if (a_sub.phase == Phase::kOpen && actor && HasController(actor)) {
             if (*reinterpret_cast<const std::uintptr_t*>(actor) == g_vtChar) {
-                actor->StopCombat();   // Character slot 0xE5 (AE 0x6B70A0 / SE 0x625920)
-                stopped = true;
+                a_sub.closing       = true;
+                a_sub.closeDone     = false;
+                a_sub.closeGen      = ++g_closeGen;
+                a_sub.closeQueuedMs = apmf::clock::MonotonicMs();
+                const RE::FormID    id  = a_sub.id;
+                const std::uint32_t gen = a_sub.closeGen;
+                if (!apmf::combatops::StopCombat(actor, "the combat substrate's close",
+                                                 [id, gen](const apmf::combatops::Result& r) { CloseStopped(id, gen, r); })) {
+                    a_sub.closing  = false;
+                    a_sub.closeHow = "NOT made: the owner-thread StopCombat refused it (core/CombatOps.h)";
+                    spdlog::error("[substrate] 0x{} close: the owner-thread StopCombat REFUSED ({}) -- the holder keeps its "
+                                  "controller; the anchor guard reports it if it still names the anchor.",
+                                  Hex(a_sub.id), apmf::combatops::UnavailableWhy());
+                } else if (!a_sub.closeDone) {
+                    return true;   // in flight: the holder's own combat update makes it; Poll's WaitClose finishes
+                }
             } else {
+                a_sub.closeHow = "NOT a Character vtable: StopCombat not called";
                 spdlog::error("[substrate] 0x{} close: NOT a Character vtable -- StopCombat not called.", Hex(a_sub.id));
             }
         }
-        const bool ccNull = !HasController(actor);
-        apmf::anchorguard::AfterClose(a_sub.id, members);   // every non-holder still in that group (SEV-1 2026-10-19)
+        FinishClose(a_sub);
+        return false;
+    }
+
+    // Phase B of a close: everything after its StopCombat (now made, skipped or not needed: a_sub.closeStopped /
+    // closeHow). Main thread. The caller erases the Sub after it (WaitClose may begin it again: a re-declare).
+    void FinishClose(Sub& a_sub) {
+        a_sub.closing        = false;
+        auto*       actor    = RE::TESForm::LookupByID<RE::Actor>(a_sub.id);
+        const char* a_reason = a_sub.closeReason ? a_sub.closeReason : "close";
+        const bool  stopped  = a_sub.closeStopped;
+        const bool  ccNull   = !HasController(actor);
+        apmf::anchorguard::AfterClose(a_sub.id, a_sub.closeMembers);   // every non-holder still in that group (SEV-1 2026-10-19)
+        a_sub.closeMembers.clear();
         // 3. the substrate's internal effects
         ReleaseFloors(a_sub);
         Slot* s = a_sub.slot >= 0 ? &g_slots[a_sub.slot] : nullptr;
@@ -1402,8 +1490,13 @@ namespace {
             spdlog::info("[substrate] 0x{} CLOSE reason={} controller-null={} anchor-home={} pkg-after=0x{} (StopCombat {}, "
                          "open {} ms, leaves denied {} [movement {}] {}, cast leaves let through {}, ignoring-bit resets {})",
                          Hex(a_sub.id), a_reason, ccNull ? "y" : "n", home ? "y" : fmt::format("n ({})", StaysText(stays)),
-                         Hex(PackageOf(actor)), stopped ? "called" : "not needed", apmf::clock::MonotonicMs() - a_sub.openedMs,
-                         denied, moved, leaves, casts, a_sub.bitResets);
+                         Hex(PackageOf(actor)),
+                         stopped ? fmt::format("called {}{}", a_sub.closeHow ? a_sub.closeHow : "",
+                                               a_sub.closeQueuedMs ? fmt::format(", {} ms after the close was decided",
+                                                                                 apmf::clock::MonotonicMs() - a_sub.closeQueuedMs)
+                                                                   : std::string())
+                                 : std::string(a_sub.closeHow ? a_sub.closeHow : "not needed"),
+                         apmf::clock::MonotonicMs() - a_sub.openedMs, denied, moved, leaves, casts, a_sub.bitResets);
         if (a_sub.phase == Phase::kOpen)
             spdlog::info("[substrate] 0x{} WINDOW ({}): {}", Hex(a_sub.id), a_reason, window);
         // fix/apmf-substrate-release-close: one LEAF GATE line per window (bounded by the open rate), at the close
@@ -1413,6 +1506,39 @@ namespace {
             spdlog::info("[substrate] 0x{} CLOSE reason={} (before the entry) anchor-home={}", Hex(a_sub.id), a_reason,
                          home ? "y" : "n");
         ReleaseClientClaim(a_sub, a_reason);
+    }
+
+    // H1: Poll, for a Sub whose close is in flight. False = closed (the caller erases); true = still waiting for the
+    // holder's own combat update to make the StopCombat, or begun again for a claim declared while it closed. The
+    // queue answers every op (core/CombatOps.h: run on the owner's update, cancelled when the controller is gone,
+    // made on main after 1 s of game time without a drain), so this never waits for ever.
+    bool WaitClose(Sub& a_sub) {
+        if (!a_sub.closeDone) return true;
+        const APMF_API::Handle released = a_sub.handle;   // the claim FinishClose ends (kInvalidHandle: the client did)
+        FinishClose(a_sub);
+        if (!a_sub.reopen) return false;
+        APMF_API::APMF_Param p{};
+        float                b = 0.0f;
+        APMF_API::Handle     h = APMF_API::kInvalidHandle;
+        if (!apmf::ControlMap::Get().TryGetOwningClaimBasis(a_sub.id, APMF_API::kIntent_CombatSubstrate, p, b, &h) ||
+            h == released) {
+            spdlog::info("[substrate] 0x{} was declared again while its close was in flight, but no other live claim is "
+                         "winning now (the declaration was the claim the close ended): it does not begin again.",
+                         Hex(a_sub.id));
+            return false;
+        }
+        const RE::FormID    id  = a_sub.id;
+        const float         fv  = a_sub.reopenFval;
+        const std::uint64_t now = apmf::clock::MonotonicMs();
+        a_sub             = Sub{};
+        a_sub.id          = id;
+        a_sub.requestedMs = now;
+        a_sub.ttlMs       = TtlMsFor(fv);
+        a_sub.deadlineMs  = now + a_sub.ttlMs + kFloorWaitMs;
+        spdlog::info("[substrate] 0x{} declared again while its close was in flight: it begins again for claim h={} "
+                     "(TTL {:.1f} s).",
+                     Hex(id), h, static_cast<double>(a_sub.ttlMs) / 1000.0);
+        return true;
     }
 
     // design 3.6a: the game-thread pass after the stand-down. NO StopCombat while a real foe is in the group;
@@ -1445,7 +1571,7 @@ namespace {
         std::string removed = "no controller";
         if (auto* cc = actor ? actor->GetActorRuntimeData().combatController : nullptr) {
             if (auto* g = cc->combatGroup; g && Anchor()) {
-                g_removeTarget(g, Anchor());
+                RemoveTargetLocked(g, Anchor());
                 std::uint32_t left = 0;
                 bool          still = false;
                 {
@@ -1460,14 +1586,18 @@ namespace {
                 // through the held engagement's RANKED StopCombat; a fight with the real foe in it never is.
                 if (left == 0) {
                     auto*             anc  = Anchor();
+                    const RE::FormID  id   = a_sub.id;
+                    // round-2 closing item 3a: the same package re-pick CloseSub makes after its StopCombat. H1: the
+                    // StopCombat is queued onto the holder's own combat update, so the re-pick is its completion.
                     const std::string stop = apmf::combatentry::hold::StopCombatRanked(
-                        actor, a_sub.handle, anc ? anc->GetFormID() : 0, anc ? anc->GetHandle() : RE::ActorHandle{});
+                        actor, a_sub.handle, anc ? anc->GetFormID() : 0, anc ? anc->GetHandle() : RE::ActorHandle{},
+                        [id](const apmf::combatops::Result& r) {
+                            if (!r.stopped) return;
+                            if (auto* a = RE::TESForm::LookupByID<RE::Actor>(id)) g_evaluatePackage(a, false, false);
+                        });
                     removed += fmt::format("; EMPTY FIGHT: {}", stop);
-                    // round-2 closing item 3a: the same package re-pick CloseSub makes after its StopCombat.
-                    if (stop.starts_with("combat ENDED")) {
-                        g_evaluatePackage(actor, false, false);
-                        removed += " + package re-pick";
-                    }
+                    if (stop.starts_with("combat ENDED")) removed += " + package re-pick";
+                    else if (stop.starts_with("combat END QUEUED")) removed += " + a package re-pick once it ran";
                 } else {
                     removed += "; the real foe is in the group: NO StopCombat (the fight continues)";
                 }
@@ -1780,10 +1910,7 @@ namespace {
             }
         }
         if (!why) why = EquipTakeover(a_sub, actor, a_now);   // a dry run a client took over (review of 1f99de2b)
-        if (why) {
-            CloseSub(a_sub, why);
-            return false;
-        }
+        if (why) return CloseSub(a_sub, why);   // H1: true = the close is in flight (WaitClose finishes it)
 
         // review F5: the floors live as long as the substrate. A floor that is no longer live leaves a hand
         // undenied: the substrate closes (principle 7, never a silent gap); a live one is renewed by Repoint (a
@@ -1791,8 +1918,7 @@ namespace {
         {
             auto& cm = apmf::ControlMap::Get();
             if (!cm.IsClaimLive(a_sub.floorR) || !cm.IsClaimLive(a_sub.floorL)) {
-                CloseSub(a_sub, "a hand floor is no longer live (the hands would be undenied)");
-                return false;
+                return CloseSub(a_sub, "a hand floor is no longer live (the hands would be undenied)");
             }
             if (a_now - a_sub.floorRenewMs >= kFloorRenewMs) {
                 a_sub.floorRenewMs = a_now;
@@ -1939,7 +2065,7 @@ namespace {
             }
         }
         for (auto& [id, sub] : g_subs) {
-            if (sub.phase != Phase::kOpen || sub.slot < 0) continue;
+            if (sub.phase != Phase::kOpen || sub.slot < 0 || sub.closing) continue;   // H1: a closing holder is not dropped
             if (playerFight) sub.playerCombatSeen = true;
             if (playerFight || partyFoe) {
                 MarkReal(sub.slot, kWhyParty, playerFight ? 0x14 : partyFoe);
@@ -2316,6 +2442,7 @@ namespace {
             it->second.closeAsked = true;
             it->second.closeWhy   = "client release";
             it->second.handle     = APMF_API::kInvalidHandle;   // released: nothing for Harbinger to release
+            it->second.reopen     = false;   // H1: a re-declare during a close in flight is withdrawn with it
         }
 
     private:
@@ -2323,6 +2450,16 @@ namespace {
             const auto now = apmf::clock::MonotonicMs();
             auto [it, fresh] = g_subs.try_emplace(id);
             Sub& s = it->second;
+            if (!fresh && s.closing) {
+                // H1: its close is in flight (the StopCombat queued on the holder's own combat update). The close
+                // finishes as decided; then the substrate begins again for the claim winning at that point (WaitClose).
+                s.reopen     = true;
+                s.reopenFval = param.fval;
+                spdlog::info("[substrate] 0x{} substrate {} while its close is in flight: it begins again once the close "
+                             "finishes.",
+                             Hex(id), what);
+                return;
+            }
             if (fresh) {
                 s.id          = id;
                 s.requestedMs = now;
@@ -2670,7 +2807,8 @@ namespace apmf::combatsubstrate {
 
     bool DropForGenuineFight(RE::FormID a_holder, RE::FormID a_fighter) {
         const auto it = g_subs.find(a_holder);
-        if (it == g_subs.end() || it->second.phase != Phase::kOpen || it->second.slot < 0) return false;
+        if (it == g_subs.end() || it->second.phase != Phase::kOpen || it->second.slot < 0 || it->second.closing)
+            return false;   // H1: a closing holder's StopCombat is already queued
         Slot& s = g_slots[it->second.slot];
         if (s.state.load(std::memory_order_acquire) & kStReal) return false;   // already dropping
         MarkReal(it->second.slot, kWhyMerged, a_fighter);   // Serve drops it on the next Poll (DropSub: the anchor out)
@@ -2679,7 +2817,7 @@ namespace apmf::combatsubstrate {
 
     void RemoveAnchorFromGroup(RE::CombatGroup* a_g) {
         auto* anchor = Anchor();
-        if (a_g && anchor) g_removeTarget(a_g, anchor);
+        if (a_g && anchor) RemoveTargetLocked(a_g, anchor);   // H1: under the group's write lock
     }
 
     bool IsAnchorRef(const RE::TESObjectREFR* a_target) {
@@ -3062,7 +3200,7 @@ namespace apmf::combatsubstrate {
         // The winning handle of a client substrate, now that Drain published it.
         for (auto it = g_subs.begin(); it != g_subs.end();) {
             Sub& s = it->second;
-            if (!s.dryRun && !s.closeAsked && s.handle == APMF_API::kInvalidHandle) {
+            if (!s.closing && !s.dryRun && !s.closeAsked && s.handle == APMF_API::kInvalidHandle) {
                 APMF_API::APMF_Param p{};
                 float                b = 0.0f;
                 APMF_API::Handle     h = APMF_API::kInvalidHandle;
@@ -3073,9 +3211,10 @@ namespace apmf::combatsubstrate {
                 }
             }
             bool keep = true;
-            if (s.closeAsked && s.phase != Phase::kOpen) {
-                if (s.slot >= 0) CloseSub(s, s.closeWhy ? s.closeWhy : "client release");
-                keep = false;
+            if (s.closing) {
+                keep = WaitClose(s);   // H1: the close's StopCombat is queued on the holder's own combat update
+            } else if (s.closeAsked && s.phase != Phase::kOpen) {
+                keep = s.slot >= 0 ? CloseSub(s, s.closeWhy ? s.closeWhy : "client release") : false;
             } else {
                 switch (s.phase) {
                 case Phase::kRequested:    keep = Begin(s); break;
@@ -3171,14 +3310,27 @@ namespace apmf::combatsubstrate {
                                  Hex(s.id));
                 }
             }
-            if (s.slot < 0) {
+            if (s.closing) {
+                // H1: a close in flight. plugin.cpp's kSaveGame ran combatops::FlushForSave first, which made its queued
+                // StopCombat inline and delivered the result (CloseStopped): finish it here, before the write.
+                if (!s.closeDone)
+                    spdlog::error("[substrate] save: 0x{} had a close in flight whose StopCombat was NOT answered by the "
+                                  "save flush -- finishing the close without it (the holder may be saved in combat).",
+                                  Hex(s.id));
+                FinishClose(s);
+                ++closed;
+            } else if (s.slot < 0) {
                 ReleaseClientClaim(s, "a save is being written (the substrate had not begun)");
                 ++unbegun;
             } else if (s.phase == Phase::kOpen && (g_slots[s.slot].state.load(std::memory_order_acquire) & kStReal)) {
                 DropSub(s);
                 ++dropped;
             } else {
-                CloseSub(s, "save (no substrate is written into a save)");
+                // Inside plugin.cpp's combatops::SyncScope: the close's StopCombat runs inline and it finishes here.
+                if (CloseSub(s, "save (no substrate is written into a save)"))
+                    spdlog::error("[substrate] save: 0x{} close left IN FLIGHT inside the save (no SyncScope?) -- its "
+                                  "StopCombat is queued, not made before the write.",
+                                  Hex(s.id));
                 ++closed;
             }
         }
@@ -3241,18 +3393,17 @@ namespace apmf::combatsubstrate {
                     auto* cc = a->GetActorRuntimeData().combatController;
                     auto* g  = cc ? cc->combatGroup : nullptr;
                     if (!g) continue;
-                    g_removeTarget(g, anchor);
+                    RemoveTargetLocked(g, anchor);   // H1: under the group's write lock
                     ++removed;
                     std::uint32_t left = 0;
                     {
                         RE::BSReadLockGuard guard(g->lock);
                         left = g->targets.size();
                     }
-                    const bool stop = left == 0 && *reinterpret_cast<const std::uintptr_t*>(a) == g_vtChar;
-                    if (stop) {
-                        a->StopCombat();
-                        ++stopped;
-                    }
+                    // H1: through the owner-thread queue, which runs it inline here (plugin.cpp's SyncScope).
+                    const bool stop = left == 0 && *reinterpret_cast<const std::uintptr_t*>(a) == g_vtChar &&
+                                      apmf::combatops::StopCombat(a, "the save's anchor clean");
+                    if (stop) ++stopped;
                     spdlog::warn("[substrate] save: 0x{} was STILL in combat with the anchor after every substrate was ended "
                                  "(not a holder Harbinger knew: the anchor guard's case) -- anchor removed from its group{}.",
                                  Hex(a->GetFormID()), stop ? "; nothing else to fight: combat ended (StopCombat)" : "");
@@ -3301,15 +3452,17 @@ namespace apmf::combatsubstrate {
                 auto* cc = a->GetActorRuntimeData().combatController;
                 auto* g  = cc ? cc->combatGroup : nullptr;
                 if (!g) continue;
-                g_removeTarget(g, anchor);
+                RemoveTargetLocked(g, anchor);   // H1: under the group's write lock
                 ++removed;
                 std::uint32_t left = 0;
                 {
                     RE::BSReadLockGuard guard(g->lock);
                     left = g->targets.size();
                 }
-                if (left == 0 && *reinterpret_cast<const std::uintptr_t*>(a) == g_vtChar) {
-                    a->StopCombat();
+                // H1: AfterLoad runs on the first pump after the load, an ordinary frame: the StopCombat is QUEUED onto
+                // the actor's own combat update (core/CombatOps.h), never made from this thread.
+                if (left == 0 && *reinterpret_cast<const std::uintptr_t*>(a) == g_vtChar &&
+                    apmf::combatops::StopCombat(a, "the load's anchor clean")) {
                     ++stopped;
                 } else if (left != 0 && g_musicDeny) {
                     // review F3: +0x15C is SAVED (AE save 0x80ABE0 -> WriteData 0x80B28B; load 0x80B2D0 -> ReadData
@@ -3320,14 +3473,17 @@ namespace apmf::combatsubstrate {
                 }
                 spdlog::warn("[substrate] {}: 0x{} came out of the save in combat with the anchor (a save written while a "
                              "substrate was open) -- anchor removed from its group{}.",
-                             a_why, Hex(a->GetFormID()), left == 0 ? "; nothing else to fight: combat ended (StopCombat)" : "");
+                             a_why, Hex(a->GetFormID()),
+                             left == 0 ? "; nothing else to fight: StopCombat queued on its own combat update" : "");
             }
         }
         if (auto* home = g_homeId ? RE::TESForm::LookupByID<RE::TESObjectREFR>(g_homeId) : nullptr;
             home && anchor->GetParentCell() != home->GetParentCell())
             AnchorHome(anchor, a_why);
         if (removed || stopped)
-            spdlog::info("[substrate] {}: anchor cleaned from {} group(s), {} combat(s) ended.", a_why, removed, stopped);
+            spdlog::info("[substrate] {}: anchor cleaned from {} group(s), {} StopCombat(s) queued on the actors' own combat "
+                         "updates.",
+                         a_why, removed, stopped);
     }
 
 }

@@ -2,7 +2,9 @@
 #include "channels/TargetPin.h"
 #include "core/Allowance.h"   // SeatVerified(): the mit-3.7 F1 self-check gate
 #include "core/Clock.h"
+#include "core/CombatOps.h"    // H1: the owner-thread StopCombat drain (the outermost layer)
 #include "core/ControlMap.h"
+#include "core/Hook.h"         // P0: the UpdateCombat overlap counter
 #include "core/Log.h"
 #include "core/Registry.h"
 #include "core/Sightline.h"   // ABI v18 kTargetPin_OwnLineOfSight
@@ -769,9 +771,34 @@ namespace {
         fr.exitValid[a_layer] = true;
     }
 
+    // THE OUTERMOST HARBINGER LAYER (stability audit H1 / P0, 2026-11-16). The first Harbinger layer entered for
+    // an UpdateCombat (whichever index: the census may have put one above layer 0) brackets the WHOLE chain below
+    // it: the P0 counter (core/Hook.h: an UpdateCombat is in flight on this thread) and, BEFORE anything of this
+    // actor's combat update runs, the owner-thread StopCombat drain (core/CombatOps.h: a StopCombat Harbinger
+    // decided on main is made here, on the actor's own job, where nothing of its update is in flight). The bark
+    // deny's BeforeUpdateCombat runs after the drain (with no controller left it has nothing to arm). Nested
+    // layers of the same update see t_e4Nest > 0 and do neither. RAII: an exception unwinding through the chain
+    // still balances the counter.
+    thread_local int t_e4Nest = 0;
+    struct E4Outer {
+        bool outer;
+        explicit E4Outer(RE::Actor* a_this) : outer(t_e4Nest++ == 0) {
+            if (!outer) return;
+            apmf::hook::CombatUpdateEnter();
+            apmf::combatops::DrainFor(a_this);   // one relaxed load when nothing is queued; never throws
+        }
+        ~E4Outer() {
+            --t_e4Nest;
+            if (outer) apmf::hook::CombatUpdateLeave();
+        }
+        E4Outer(const E4Outer&)            = delete;
+        E4Outer& operator=(const E4Outer&) = delete;
+    };
+
     // Layer 0, installed at SKSEPluginLoad (InstallLayer0).
     struct UpdateCombatObserver {
         static void thunk(RE::Actor* a_this) {
+            const E4Outer outer(a_this);   // H1 / P0: the drain and the counter, when this is the outermost layer
             apmf::substratebark::BeforeUpdateCombat(a_this);   // #0 (j) 2 (f): before the engine's update (one load when idle)
             LayerBody(0, a_this, Next, reinterpret_cast<std::uintptr_t>(_ReturnAddress()));
         }
@@ -787,6 +814,7 @@ namespace {
             reinterpret_cast<void (*)(RE::Actor*)>(g_layerFunc[N].load(std::memory_order_acquire))(a);
         }
         static void thunk(RE::Actor* a_this) {
+            const E4Outer outer(a_this);   // H1 / P0 (above)
             LayerBody(N, a_this, Next, reinterpret_cast<std::uintptr_t>(_ReturnAddress()));
         }
     };

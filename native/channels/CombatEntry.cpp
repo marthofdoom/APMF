@@ -7,7 +7,9 @@
 #include "channels/CombatReentryDeny.h"   // ClientEntryScope: this entry passes a ch.22 re-entry deny
 #include "core/Allowance.h"       // SeatVerified(): the mit-3.7 F1 self-check gate
 #include "core/Clock.h"
+#include "core/CombatOps.h"     // H1: the ranked StopCombat runs on the actor's own combat update
 #include "core/ControlMap.h"
+#include "core/Hook.h"          // P0: the overlap sample at StartCombat
 #include "core/Log.h"
 #include "core/MainThread.h"
 #include "core/Registry.h"
@@ -320,6 +322,10 @@ namespace {
         bool ok = false;
         {
             const apmf::reentrydeny::ClientEntryScope pass(id);
+            // P0 (2026-11-16): stays on main. Actor::StartCombat serialises its whole body on the engine's own global
+            // spinlock (AE 0x6B6A85 .. released 0x6B6D88) and publishes the new controller with one store after it
+            // is built (0x6B6CD5): the engine calls it from its AI jobs in parallel. The probe says what ran beside it.
+            apmf::hook::Sample(apmf::hook::Site::kStartCombat);
             ok = actor->StartCombat(target, nullptr);
         }
 
@@ -1129,21 +1135,30 @@ namespace {
 
         // marth's range rule: end the actor's combat through the engine's own Actor::StopCombat (Character
         // vtable slot 0xE5: AE 0x6B70A0 / SE 0x625920, `void(this)`, it reads rcx only), RANKED. Game thread.
-        // THREADING (APMF-B26 cross-reference): StopCombat frees the actor's CombatController (actor+0x160)
-        // INLINE with no lock (AE 0x6B7214 -> 0x558500, 0x6B7235). It is called here from the player's update
-        // seat (Arbiter::OncePerFrame), i.e. Main::Update's own context, which runs right after the engine
-        // resets its AI job lists (AE 0x5FC260 / 0x5FC180) -- so the combat jobs that read the controller are
-        // believed quiescent there (INFERRED from that reset, not proven), the same exposure as a script's
-        // Actor.StopCombat. Returns what it did, for the log.
+        // THREADING (APMF-B26, CLOSED 2026-11-16 by stability H1): StopCombat frees the actor's CombatController
+        // (actor+0x160) INLINE with no lock (AE 0x6B7214 -> 0x558500, 0x6B7235). The old note here said the
+        // combat jobs were "believed quiescent" at this seat because Main::Update resets the AI job lists before
+        // the player update (AE 0x5FC260 / 0x5FC180). The disassembly says the opposite: those two calls KICK the
+        // frame's job graph (SetEvent, AE 0x5FC1F0), the NPC "Actor update" list runs beside the player update, and
+        // the player update signals its mid-point event (AE 0x7330E7) before this seat runs. So the ranking is
+        // decided here and the free is QUEUED onto the actor's own UpdateCombat (core/CombatOps.h), where the engine
+        // frees controllers itself. Inside a save (combatops::SyncScope) it runs inline. `a_after` runs on main once
+        // the StopCombat ran or was skipped (the caller's package re-pick). Returns what it did, for the log:
+        // "combat END QUEUED ...", "combat ENDED ..." (inline) or "NOT ended: <why>".
         std::string StopCombatRanked(RE::Actor* a_actor, APMF_API::Handle a_entry, RE::FormID a_dropped,
-                                     RE::ActorHandle a_droppedH) {
+                                     RE::ActorHandle a_droppedH, apmf::combatops::Done a_after) {
             auto* cc = a_actor->GetActorRuntimeData().combatController;
             if (!cc) return "not in combat";
             if (!g_stopCombatOk.load(std::memory_order_relaxed))
                 return "NOT ended: the StopCombat seat failed its self-check at install";
             if (*reinterpret_cast<const std::uintptr_t*>(a_actor) != g_vtChar)
                 return "NOT ended: the actor is not a Character (vtable identity check)";
+            if (!apmf::combatops::Available())
+                return fmt::format("NOT ended: the owner-thread StopCombat is not available ({})",
+                                   apmf::combatops::UnavailableWhy());
             const RE::FormID id = a_actor->GetFormID();
+            if (apmf::combatops::Pending(id))
+                return "NOT queued again: a StopCombat is already queued on this actor's own combat update";
             RE::FormID       pinT = 0;
             if (ClaimHandle(id, APMF_API::kIntent_TargetPin, &pinT) != APMF_API::kInvalidHandle && pinT != 0 &&
                 pinT != a_dropped)
@@ -1185,9 +1200,12 @@ namespace {
                 enforce = true;
             }
             if (!enforce) return "NOT ended: Engine outranks the entry on the Combat facet (APMF_Sources.ini)";
-            a_actor->StopCombat();
+            if (!apmf::combatops::StopCombat(a_actor, "the held engagement's ranked StopCombat", std::move(a_after)))
+                return "NOT ended: the owner-thread StopCombat refused it (no controller at the request)";
             ++g_stopCombats;
-            return "combat ENDED (Actor::StopCombat)";
+            return apmf::combatops::Pending(id)
+                       ? "combat END QUEUED (Actor::StopCombat, run on the actor's own combat update)"
+                       : "combat ENDED (Actor::StopCombat, inline inside the save)";
         }
 
         // marth 2026-10-12: "And if the target is deemed \"not engaged\" combat is dropped immediately and previous
@@ -1214,8 +1232,8 @@ namespace {
             // entry when it does (always, for the range rule), else the pin (a pin-only hold, or a pin on X with an
             // entry on Y: StopCombatRanked then refuses, the entry's fight is still wanted).
             const APMF_API::Handle rankH  = (entryH != APMF_API::kInvalidHandle && entryT == a_target) ? entryH : pinH;
-            const std::string      stop   = StopCombatRanked(a_actor, rankH, a_target, a_targetH);
-            const bool             ended  = stop.starts_with("combat ENDED");
+            const std::string      stop   = StopCombatRanked(a_actor, rankH, a_target, a_targetH, {});
+            const bool             ended  = stop.starts_with("combat END");   // ENDED (a save) or END QUEUED
             const char*            kWhy   = range ? "held engagement: not engaged (out of engage range, not hostile)"
                                                   : "held engagement: no path progress (anomaly)";
             const std::uint32_t    cause  = range ? APMF_API::kClaimEnd_NotEngaged : APMF_API::kClaimEnd_NoPathProgress;
@@ -1245,9 +1263,9 @@ namespace {
                 "bound, ch.23 search stamps / leash return",
                 entryH, pinNamed ? fmt::format(", ch.20 pin h={}", pinH) : std::string(), drive);
             if (ended)
-                spdlog::info("[hold] 0x{} -> 0x{} DROPPED (not engaged) -- combat ended, prior behaviour restored "
+                spdlog::info("[hold] 0x{} -> 0x{} DROPPED (not engaged) -- {}, prior behaviour restored "
                              "(released: {}). {}. End #{} of this engagement this session.",
-                             Hex(a_id), Hex(a_target), released, a_detail, nth);
+                             Hex(a_id), Hex(a_target), stop, released, a_detail, nth);
             else
                 spdlog::info("[hold] 0x{} -> 0x{} DROPPED (not engaged) -- {} (released: {}). {}. End #{} of this "
                              "engagement this session.",
@@ -1284,8 +1302,8 @@ namespace apmf::combatentry::hold {
     // marth 2026-10-13, F6 ("End an empty fight"): the combat substrate's real-combat drop ends a fight left
     // with no target through this SAME ranked path (channels/CombatSubstrate.cpp DropSub).
     std::string StopCombatRanked(RE::Actor* a_actor, APMF_API::Handle a_claim, RE::FormID a_dropped,
-                                 RE::ActorHandle a_droppedH) {
-        return hold_detail::StopCombatRanked(a_actor, a_claim, a_dropped, a_droppedH);
+                                 RE::ActorHandle a_droppedH, apmf::combatops::Done a_after) {
+        return hold_detail::StopCombatRanked(a_actor, a_claim, a_dropped, a_droppedH, std::move(a_after));
     }
 
     using namespace hold_detail;
@@ -1293,7 +1311,9 @@ namespace apmf::combatentry::hold {
     bool Enabled() { return g_enabled.load(std::memory_order_relaxed); }
     bool KnowledgeInstalled() { return g_seatsInstalled.load(std::memory_order_acquire); }
     bool StopCombatAvailable() {
-        return g_stopCombatOk.load(std::memory_order_acquire) && g_vtChar != 0;
+        // H1 (2026-11-16): the StopCombat runs on the actor's own combat update (core/CombatOps.h), so that queue
+        // must be available too.
+        return g_stopCombatOk.load(std::memory_order_acquire) && g_vtChar != 0 && apmf::combatops::Available();
     }
 
     void Install() {
