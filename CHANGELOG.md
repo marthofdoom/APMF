@@ -1,3 +1,10 @@
+## v0.20.3 -- Cast stand-ins never reach a save
+
+- **A save made while a follower was casting through a stand-in spell could crash on load.** The stand-in cleanup ran in the co-save callback, after the game had written the characters, and it never cleared the hands. It now runs at the save message, before anything is written, covers every slot (hands, selected spells, powers, spell lists, casters, effects on targets) and checks again after the save.
+- **Affected saves load again.** After a load, any slot that points at a destroyed or wrong type form is cleared before the game or another mod touches it, with one LOAD REPAIR line per character.
+- **The combat substrate is closed before every save,** so a follower no longer loads still grouped with the anchor.
+- **New tool:** `tools/esscheck.py` scans a save file for leftover stand-in form ids.
+
 ## v0.20.2 -- A follower stands up after a sneak release
 
 This is a small release on top of v0.20.1. ABI v45 is unchanged, so every mod built on v33 to v45 keeps working. MFO 2.11.2 asks for this build.
