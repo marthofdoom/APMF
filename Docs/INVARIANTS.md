@@ -1436,11 +1436,57 @@ them on the way in. Two rules follow, both learned the expensive way (MFO's
   `CombatInventory` rebuild makes an item for it), and a save taken while it is known
   would persist a reference to a form that will not exist on the next load. So the
   transient is un-taught when the LAST claim naming it releases (`castproxy::Unref`,
-  the single choke point; ref-counted per (owner, spell, hand) since 2026-10-05) and swept unconditionally on the SKSE save callback
-  (`castproxy::PreSaveSweep`, called from `plugin.cpp`'s `OnSave` BEFORE any record is
-  written). The sweep must be UNDONE for claims still live: `OnSave` posts
-  `castproxy::ReteachLive` to the next Pump, after the save call has returned, or a
-  Repoint-heartbeated claim keeps an un-taught (unselectable) proxy for its whole life.
+  the single choke point; ref-counted per (owner, spell, hand) since 2026-10-05) and swept at every save.
+  **WHERE THE SWEEP RUNS (corrected 2026-11-15, the Save373 crash; this rule used to say "from
+  `OnSave` BEFORE any record is written", which was false).** SKSE64 calls a plugin's co-save
+  callback from its Papyrus global-data hook (`Hooks_Papyrus.cpp` `SaveGlobalData_Hook`), AFTER the
+  engine has written every actor record. The only seat before the write is the `kSaveGame`
+  MESSAGE (`Hooks_SaveLoad.cpp` `SaveGame_Hook`: `Dispatch_Message`, then the original). So:
+  - `castproxy::PreSaveSweep` runs synchronously in `plugin.cpp`'s `kSaveGame` case. For every
+    actor of the four process lists and the player, against every minted pool form (live or
+    freed slot), it clears the selected-spell slots, the selected power, the spell list, each
+    caster's current spell, the process's equipped list and both hand slots: the engine's
+    `DeselectSpell` + `RemoveSpell` first, then a re-read and a direct member write for what they
+    left. (Disassembly, all three builds, `core/CastProxy.cpp`: `DeselectSpell` clears a hand
+    only when `selectedSpells[i]` is the spell AND `AIProcess::equippedForms` has an entry for
+    it; `RemoveSpell` deselects only when the spell is in `addedSpells`.) A direct repair is a
+    WARN line.
+  - **Active effects are part of the rule.** An effect whose `spell` is a pool form (a proxied
+    buff on an ally, a self-flip buff on the caster, also after its slot was freed) is keyed to
+    the REAL source spell for the length of the save. The save writes the spell's form id and
+    the index of the effect's `Effect*` in that spell (AE 0x5AD5A0); a proxy shares its
+    source's `Effect*` in the source's order, so the saved effect is the source spell's and
+    loads as that. `castproxy::SaveWrittenCheck` keys it back to the proxy once the record is
+    written (the seats' "already applied" bound reads the proxy). No exception to #19 is left
+    for effects. An effect whose `Effect*` belongs to no spell its form mirrored this session
+    is an ERROR line and stays (not seen).
+  - `castproxy::SaveWrittenCheck` runs in the co-save callback as the SECOND CHECK: it counts
+    what the records just captured and WARNs `THE .ESS MAY ALREADY HOLD IT` if that is
+    anything; with nothing found it logs `CLEAN`. An SKSE build that never sends `kSaveGame`
+    gets a late sweep and that WARN at every save.
+  - The sweep must be UNDONE for claims still live: the `kSaveGame` case posts
+    `castproxy::ReteachLive` to the next Pump, after the save call has returned, or a
+    Repoint-heartbeated claim keeps an un-taught (unselectable) proxy for its whole life.
+  **LOAD-SIDE REPAIR (2026-11-15).** A save written before this fix can name a runtime form in
+  a hand, a selected slot, a spell list or a caster. On load the engine resolves that id to
+  whatever form holds it at that moment (`MagicCaster::LoadGame` AE 0x5BE9F0: lookup, then
+  `RTDynamicCast`); when that form is destroyed, the actor keeps a pointer to freed memory
+  (Save373: Auri's left hand, read by Immersive Equipment Displays 0.8 s after the load).
+  `castproxy::RepairAfterLoad` runs synchronously in `kPostLoadGame` (before the first frame;
+  the Save373 reader ran from the main loop) and once more on the first pump. It tests every
+  such pointer without trusting it: a guarded read of the 4 bytes where the id would be, then
+  "does the form map hold THIS pointer under that id" (`TESForm`'s destructor, AE 0x1E2250 ->
+  14627, erases its own map entry). A dead pointer is nulled / erased with a WARN line per
+  actor. A LIVE 0xFF form in a slot is left alone (it can be another mod's persisted form) and
+  its actor is re-checked on every pump until the form leaves the slot or dies, with no expiry.
+  A dead `spell` in an active effect is reported (ERROR) and NOT repaired: its `Effect*` died
+  with it. Exactly 1.6.1170 / 1.5.97 / 1.7.104, else refused with one line.
+  **Acceptance (offline).** Take a save with a live proxy claim. `APMF.log` must show
+  `[castproxy] save sweep (kSaveGame ...)` with the pool form ids, then `save check ... CLEAN`.
+  Then search every change form of the `.ess` (decompressed) for the 3-byte RefID of each id
+  (`0x80 | bits 16-21`, bits 8-15, bits 0-7): no change form may hold it. Deck Save40 fails this
+  check for 0xFF001F66 (the owner's spell list) and Save373 for 0xFF00081F (Auri: hand,
+  equipped list, two more; Sven and one more actor: active effects).
 - **Clear borrowed pointers before the purge.** The proxy shares the SOURCE spell's
   `Effect*` objects BY POINTER (that is the whole point — same effects, flipped
   delivery). If the dead proxy still holds them at load time, the purge frees a

@@ -68,21 +68,21 @@ namespace {
     // --- SKSE serialization: co-save the outstanding AV overrides so a
     // save-while-engaged is never stranded across a load (INVARIANTS #15). ---
     void OnSave(SKSE::SerializationInterface* intf) {
-        // A save must never capture a reference to one of the cast facet's TRANSIENT
-        // runtime 0xFF delivery-flip proxy spells (they are AddSpell'd to the caster
-        // for the length of a cast claim and do not exist on the next load). Sweep
-        // first, then write our own record. See castproxy::PreSaveSweep (INVARIANTS #19).
-        apmf::castproxy::PreSaveSweep();
+        // INVARIANTS #19: a save must never hold one of the cast facet's runtime 0xFF proxy
+        // spells. The sweep that guarantees it runs in the kSaveGame MESSAGE (OnMessage below),
+        // before the engine writes anything. This callback runs from SKSE64's Papyrus
+        // global-data hook, AFTER the actor records are written -- the sweep used to live
+        // here, which is how Save373 kept a proxy in a follower's hand (2026-11-15). What is
+        // left here is the SECOND CHECK: it counts what the records just captured, WARNs
+        // loudly if that is anything, and keys the swept active effects back to their proxy.
+        const bool sweptLate = apmf::castproxy::SaveWrittenCheck();
         apmf::av::Save(intf);
         // ABI v11: record every live APMF XMarker (position casts + ch.19 position
         // legs) so the load of THIS save can delete the ones it captured.
         apmf::poscast::SaveMarkers(intf);
-        // The sweep above also un-taught the proxies of claims that are still LIVE,
-        // and only castproxy::Acquire teaches -- a client heartbeating its claim with
-        // Repoint never calls it again (review F1, 2026-10-05). Re-teach them one
-        // main-thread hop later: the next Pump runs after this save call has returned
-        // (Arbiter::OncePerFrame, after Drain), and a load that follows Discard()s it.
-        apmf::mainthread::Post([] { apmf::castproxy::ReteachLive(); });
+        // Only when no kSaveGame message came first (the check then swept late, and said so):
+        // the re-teach that message would have posted.
+        if (sweptLate) apmf::mainthread::Post([] { apmf::castproxy::ReteachLive(); });
     }
     void OnLoad(SKSE::SerializationInterface* intf) {
         std::uint32_t type = 0, version = 0, length = 0;
@@ -467,8 +467,28 @@ namespace {
             // geometry back into every combat area carrying a bound, so no claim is written into the
             // .ess (the standard area is saved with its fields). The next area update re-applies it.
             apmf::combatapproach::RestoreBeforeSave();
+            // INVARIANTS #19: no runtime proxy spell may be in any actor's hand, selected slot, spell
+            // list, caster or active effect when the engine writes the actor records. Synchronous,
+            // here, because this message is the only seat BEFORE the write (SKSE64 SaveGame_Hook:
+            // Dispatch_Message(kMessage_SaveGame), then the original); the co-save callback is after it.
+            apmf::castproxy::PreSaveSweep();
+            // The sweep also un-taught the proxies of claims that are still LIVE, and only
+            // castproxy::Acquire teaches -- a client heartbeating its claim with Repoint never calls
+            // it again (review F1, 2026-10-05). Re-teach them one main-thread hop later: the next
+            // Pump runs after the save call has returned (Arbiter::OncePerFrame, after Drain), and a
+            // load that follows Discard()s it. ReteachLive teaches only what the owner does not know.
+            apmf::mainthread::Post([] { apmf::castproxy::ReteachLive(); });
             break;
         case SKSE::MessagingInterface::kPostLoadGame:
+            // FIRST, before anything reads an actor: a save written before the kSaveGame sweep existed
+            // can leave a hand / selected slot / spell list / caster pointing at a destroyed runtime
+            // form (Save373: the first reader, 0.8 s after the load, crashed). SKSE64 sends this
+            // message synchronously when the engine's load call returns, before the first frame of
+            // the loaded game; the Save373 reader ran from the main loop. Posted once more for the
+            // first pump (a form destroyed between here and there), and a live runtime form found
+            // in a slot is watched on every pump after that (core/CastProxy.h RepairAfterLoad).
+            apmf::castproxy::RepairAfterLoad("kPostLoadGame");
+            apmf::mainthread::Post([] { apmf::castproxy::RepairAfterLoad("first pump after load"); });
             apmf::av::ApplyPending();             // restore any stranded AV overrides
             // ABI v11: delete the APMF XMarkers this save captured mid-leg / mid-cast.
             // NOT in the load callback (the loaded references are not there yet) and NOT

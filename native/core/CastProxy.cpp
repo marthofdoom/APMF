@@ -3,12 +3,16 @@
 #include "core/CastProxy.h"
 #include "core/Hook.h"   // hook::OnMainThread(): which thread the save sweep ran on (log only)
 #include "core/Clock.h"        // MonotonicMs: the self-flip landing watch's grace window + slot ranking
+#include "core/Allowance.h"    // RuntimeSupported: the save / load direct member writes run on the three proven builds only
+#include "core/MainThread.h"   // Post: the load watch re-checks on every pump
+
+#include <unordered_set>
 
 // ============================================================================
 // See core/CastProxy.h for the contract and for WHAT WAS REMOVED here (the whole
 // forced-cast phase chain -- retired in favour of the engine seats). This TU is
 // now ONLY the delivery-flip proxy pool: mint, transient-teach, un-teach, free,
-// pre-save sweep, revert reset.
+// the save sweep + its second check, the load-side repair, revert reset.
 //
 // The pool is fixed-size and keyed by (OWNER, SOURCE SPELL, HAND), REFERENCE-
 // COUNTED across the live cast claims that name it (fix/apmf-proxy-per-claim-
@@ -56,6 +60,9 @@ namespace apmf::castproxy {
             Hand           hand   = Hand::kRight;   // the hand key it serves (meaningful while owned)
             Flip           flip   = Flip::kToTargetActor;   // which way it flips (meaningful while owned)
             std::uint64_t  freedMs = 0;        // when its last ref went (0 = never freed); slot ranking (F3)
+            // Every OTHER spell this form mirrored earlier this session (a re-point). An effect of an old
+            // mirror can outlive the re-point (APMF-B58); the save sweep finds its real spell here.
+            std::vector<RE::FormID> past;
         };
 
         const char* FlipName(Flip f) {
@@ -90,6 +97,28 @@ namespace apmf::castproxy {
         std::atomic<std::uint32_t> g_minted{ 0 };
         std::atomic<std::uint64_t> g_overflows{ 0 };   // pool overflows since the DLL loaded (never reset)
         std::uint32_t MintedCount() { return g_minted.load(std::memory_order_relaxed); }
+
+        // ---- SAVE / LOAD INTEGRITY state (the block before PreSaveSweep has the mechanism) ----
+        // An active effect PreSaveSweep re-keyed from its proxy to the source spell for the length of
+        // the save; SaveWrittenCheck puts the proxy back. Main thread, inside one save call.
+        struct Rekey {
+            RE::FormID        target;
+            RE::ActiveEffect* ae;       // compared by address on the target's own list, never trusted alone
+            RE::SpellItem*    proxy;
+            RE::SpellItem*    source;
+        };
+        std::vector<Rekey> g_rekeyed;
+        bool               g_sweptForSave = false;   // kSaveGame ran since the last co-save callback
+
+        // Actors holding a LIVE runtime (0xFF) form in a spell slot after a load: re-checked on every
+        // pump until the form leaves the slot or dies (then repaired). No expiry (principle 9): the
+        // form's lifetime belongs to whoever made it. Main thread.
+        constexpr std::size_t   kLoadWatchCap = 64;
+        std::vector<RE::FormID> g_loadWatch;
+        std::uint32_t           g_loadWatchGen    = 0;       // bumped by ResetAll: a queued tick of an older world stops
+        bool                    g_loadWatchPosted = false;
+        bool                    g_loadWatchFull   = false;   // overflow said once per world
+
 
         // ---- SELF-FLIP LANDING WATCH (principle 5, passive) ----------------------
         // One per slot, armed by a kToSelf mint (writer/main thread). The CHECK runs on the
@@ -269,6 +298,8 @@ namespace apmf::castproxy {
                                  "any party's demand (APMF-B62): a client may be holding many flipped cast claims.",
                                  MintedCount(), kPoolCap);
             }
+            if (s.source != 0 && s.source != sid && std::find(s.past.begin(), s.past.end(), s.source) == s.past.end())
+                s.past.push_back(s.source);   // the save sweep's SourceOf looks an old mirror's effect up here
             Configure(s.form, a_src, a_flip);   // only ever on a FREE slot (refs == 0)
             s.source = sid;
             s.owner  = a_owner;
@@ -391,6 +422,14 @@ namespace apmf::castproxy {
             Disarm(w);
         }
         g_minted.store(0, std::memory_order_relaxed);   // every slot is unminted again (s = {} above)
+        // Save / load integrity state: the outgoing world's effect addresses and watched actors mean
+        // nothing in the next one. A queued load-watch tick sees the new generation and stops.
+        g_rekeyed.clear();
+        g_sweptForSave = false;
+        g_loadWatch.clear();
+        g_loadWatchPosted = false;
+        g_loadWatchFull   = false;
+        ++g_loadWatchGen;
     }
 
     void OnOwnerUpdate(RE::Actor* a_actor) {
@@ -447,24 +486,539 @@ namespace apmf::castproxy {
         }
     }
 
-    void PreSaveSweep() {
-        // Belt-and-braces (INVARIANTS #19): a save can be taken at ANY moment, so
-        // un-teach + deselect every live proxy before a record is written. Slots stay
-        // owned with their refs; plugin.cpp's OnSave Posts ReteachLive right after.
-        int swept = 0;
-        for (std::uint32_t i = 0; i < MintedCount(); ++i) {
-            auto& s = g_slot[i];
-            if (!s.owner || !s.form) continue;
-            if (auto* actor = RE::TESForm::LookupByID<RE::Actor>(s.owner)) {
-                actor->DeselectSpell(s.form);
-                actor->RemoveSpell(s.form);
-                ++swept;
+    // ============================================================================
+    // SAVE / LOAD INTEGRITY (INVARIANTS #19; 2026-11-15, the Save373 crash).
+    //
+    // WHAT HAPPENED. LoreRim Save373 was written while Auri held a live Candlelight
+    // delivery-flip proxy (0xFF00081F). The old sweep ran in the co-save callback, which
+    // SKSE64 calls from its Papyrus global-data hook, AFTER the actor records are in the
+    // buffer, so the save kept the proxy in her left hand and spell list. On the next
+    // load that id resolved to whatever form held it then, that form was destroyed, and
+    // Immersive Equipment Displays read her left hand 0.8 s after the load: a call
+    // through freed memory.
+    //
+    // WHAT THE ENGINE CALLS DO (disassembly; identical in structure on all three builds):
+    //   Actor::DeselectSpell  AE 38769 0x6C4300 / SE 37820 0x6322F0 / 1.7.104 0x6D6DC0
+    //     for i in 0..3: if selectedSpells[i] == spell { selectedSpells[i] = 0;
+    //       37372(actor, spell) -> 39193(process, spell, slot 0); GetMagicCaster(i)
+    //       (vfunc 0x5C) -> 34427, whose 34435 tail writes currentSpell (+0x28) = 0 }
+    //     then selectedPower (if it is a SPEL and == spell) = 0.
+    //   39193  AE 0x6D86B0 / SE 38233 0x645C50 / 1.7.104 0x6EB260 (AIProcess, form, slot)
+    //     erases every AIProcess::equippedForms (+0xA0, count +0xB0, 16-byte {form, slot})
+    //     entry of the form. NO entry found: returns WITHOUT reading the hands. Otherwise
+    //     (slot 0) nulls equippedObjects[left] (+0xF0) / [right] (+0xF8) when == form.
+    //   Actor::RemoveSpell    AE 38717 0x6C14B0 / SE 37772 0x62F720 / 1.7.104 0x6D3F70
+    //     looks the spell up in addedSpells; NOT there: returns before any deselect.
+    //     There: the same deselect (SE calls 37820), then the array erase.
+    // So a hand is cleared only when the matching selectedSpells slot names the spell AND
+    // equippedForms has its entry. The sweep therefore re-reads every slot after the
+    // engine calls and writes the leftovers itself. Those writes are the engine's own
+    // bodies (a pointer store, an array erase), through the fork's members:
+    //   Actor runtime data  addedSpells SE +0x188 / AE, 1.7.104 +0x190; magicCasters
+    //     +0x1A0 / +0x1A8; selectedSpells +0x1C0 / +0x1C8; selectedPower +0x1E0 / +0x1E8
+    //     (GetActorRuntimeData's 0xE0 / 0xE8 base; read off the three DeselectSpell /
+    //     RemoveSpell / Character vfunc 0x5C bodies).
+    //   AIProcess  equippedForms +0xA0, equippedObjects +0xF0 (the three 39193 bodies).
+    //   MagicCaster  currentSpell +0x28 (SaveGame AE 0x5BE8F0 / SE 0x54F2D0 / 1.7.104
+    //     0x5CD440 writes it into the save; LoadGame resolves the id and RTDynamicCasts).
+    //   ActiveEffect  spell +0x40, effect +0x48: the effect-list save (AE 0x5AD5A0 /
+    //     0x5AD7E0) writes spell's form id, then the index of `effect` in spell's own
+    //     effect array (11339). A proxy shares its source's Effect* in the source's
+    //     order, so the source spell saves the same index.
+    // No new address id and no new engine call: the two calls are the ones Unref already
+    // makes. Direct writes run only on the three builds the offsets were read on.
+    //
+    // LIVENESS WITHOUT TRUST (the load repair). TESForm's destructor (AE 0x1E2250) calls
+    // 14627 (0x1E06A0), which erases the form's own id entry from the form map. So for
+    // any pointer p: read the 4 bytes where its id would be (guarded: freed memory can be
+    // unmapped), look that id up, and p is a live form exactly when the map answers p.
+    // Nothing else of p is read before that.
+    // ============================================================================
+    namespace {
+
+        static_assert(offsetof(RE::TESForm, formID) == 0x14, "TESForm::formID moved -- the guarded id read uses +0x14");
+        static_assert(offsetof(RE::AIProcess, equippedForms) == 0xA0 && offsetof(RE::AIProcess, equippedObjects) == 0xF0,
+                      "AIProcess equip members moved -- 39193 (AE 0x6D86B0 / SE 0x645C50 / 1.7.104 0x6EB260) reads +0xA0 / +0xF0");
+        static_assert(sizeof(RE::AIProcess::EquippedObject) == 0x10, "AIProcess::EquippedObject is 16 bytes in 39193");
+        static_assert(offsetof(RE::MagicCaster, currentSpell) == 0x28,
+                      "MagicCaster::currentSpell moved -- SaveGame (AE 0x5BE8F0) writes +0x28");
+        static_assert(offsetof(RE::ActiveEffect, spell) == 0x40 && offsetof(RE::ActiveEffect, effect) == 0x48,
+                      "ActiveEffect::spell / effect moved -- the effect-list save (AE 0x5AD5A0) reads +0x40 / +0x48");
+
+        // Where a spell-slot reference was found (one counter per kind of slot).
+        struct Tally {
+            std::uint32_t hand = 0, equipList = 0, selected = 0, power = 0, known = 0, caster = 0;
+            std::uint32_t Total() const { return hand + equipList + selected + power + known + caster; }
+            std::string   Text() const {
+                std::string s;
+                auto add = [&](std::uint32_t n, const char* what) {
+                    if (n != 0) s += fmt::format("{}{} {}", s.empty() ? "" : ", ", n, what);
+                };
+                add(hand, "hand slot(s)");
+                add(equipList, "equipped-list entr(y/ies)");
+                add(selected, "selected-spell slot(s)");
+                add(power, "selected power");
+                add(known, "spell-list entr(y/ies)");
+                add(caster, "caster current spell(s)");
+                return s.empty() ? "nothing" : s;
+            }
+        };
+
+        // Visit every pointer of the actor that the save writes as "a spell / equipped form of this
+        // actor": selectedSpells[4], selectedPower, addedSpells, each existing caster's currentSpell,
+        // the process's equippedForms entries and its two hand slots. `a_test` gets the RAW pointer
+        // (it may be dead on the load path: the visitor itself never reads through it) and answers
+        // "this one". With a_clear the slot is cleared by a direct member write (null / array erase).
+        template <class Test>
+        void VisitSpellRefs(RE::Actor* a_actor, bool a_clear, Tally& a_t, Test&& a_test) {
+            auto& rd = a_actor->GetActorRuntimeData();
+            for (auto& sel : rd.selectedSpells) {
+                if (sel && a_test(static_cast<const RE::TESForm*>(sel))) {
+                    ++a_t.selected;
+                    if (a_clear) sel = nullptr;
+                }
+            }
+            if (rd.selectedPower && a_test(static_cast<const RE::TESForm*>(rd.selectedPower))) {
+                ++a_t.power;
+                if (a_clear) rd.selectedPower = nullptr;
+            }
+            for (std::uint32_t i = 0; i < rd.addedSpells.size();) {
+                auto* sp = rd.addedSpells[i];
+                if (sp && a_test(static_cast<const RE::TESForm*>(sp))) {
+                    ++a_t.known;
+                    if (a_clear) {
+                        rd.addedSpells.erase(rd.addedSpells.begin() + i);
+                        continue;
+                    }
+                }
+                ++i;
+            }
+            for (auto* mc : rd.magicCasters) {
+                if (mc && mc->currentSpell && a_test(static_cast<const RE::TESForm*>(mc->currentSpell))) {
+                    ++a_t.caster;
+                    if (a_clear) mc->currentSpell = nullptr;
+                }
+            }
+            if (auto* proc = rd.currentProcess) {
+                for (std::uint32_t i = 0; i < proc->equippedForms.size();) {
+                    auto* obj = proc->equippedForms[i].object;
+                    if (obj && a_test(static_cast<const RE::TESForm*>(obj))) {
+                        ++a_t.equipList;
+                        if (a_clear) {
+                            proc->equippedForms.erase(proc->equippedForms.begin() + i);
+                            continue;
+                        }
+                    }
+                    ++i;
+                }
+                for (auto& h : proc->equippedObjects) {
+                    if (h && a_test(static_cast<const RE::TESForm*>(h))) {
+                        ++a_t.hand;
+                        if (a_clear) h = nullptr;
+                    }
+                }
             }
         }
-        if (swept != 0) {
-            spdlog::info("[castproxy] save: un-taught {} live proxy form(s) before the save is written "
-                         "(on the Drain thread: {}); ReteachLive restores them on the next pump.",
-                         swept, apmf::hook::OnMainThread() ? "yes" : "NO");
+
+        // Every actor that has an AI process (the four process lists) plus the player, once each,
+        // held by reference for the length of the pass. Main thread.
+        std::vector<RE::NiPointer<RE::Actor>> ProcessActors() {
+            std::vector<RE::NiPointer<RE::Actor>>  out;
+            std::unordered_set<const RE::Actor*>   seen;
+            auto add = [&](RE::NiPointer<RE::Actor> a_p) {
+                if (a_p && seen.insert(a_p.get()).second) out.push_back(std::move(a_p));
+            };
+            if (auto* pl = RE::ProcessLists::GetSingleton()) {
+                for (auto* arr : { &pl->highActorHandles, &pl->middleHighActorHandles, &pl->middleLowActorHandles,
+                                   &pl->lowActorHandles })
+                    for (auto& h : *arr) add(h.get());
+            }
+            if (auto* pc = RE::PlayerCharacter::GetSingleton()) add(RE::NiPointer<RE::Actor>(pc));
+            return out;
+        }
+
+        // The minted pool slot whose form is this pointer, or -1. Pointer compares only.
+        int SlotOf(const RE::TESForm* a_form) {
+            if (!a_form) return -1;
+            for (std::uint32_t i = 0; i < MintedCount(); ++i)
+                if (static_cast<const RE::TESForm*>(g_slot[i].form) == a_form) return static_cast<int>(i);
+            return -1;
+        }
+
+        std::string PoolFormsText() {
+            std::string s;
+            for (std::uint32_t i = 0; i < MintedCount(); ++i)
+                if (g_slot[i].form) s += fmt::format("{}0x{}", s.empty() ? "" : ", ", apmf::log::Hex(g_slot[i].form->GetFormID()));
+            return s;
+        }
+
+        // The real spell that owns `a_effect`: the slot's current source, else one it mirrored
+        // earlier this session (a re-pointed slot's old effect, APMF-B58). nullptr = none of them.
+        RE::SpellItem* SourceOf(const Slot& a_s, const RE::Effect* a_effect) {
+            if (!a_effect) return nullptr;
+            auto owns = [&](RE::FormID a_id) -> RE::SpellItem* {
+                auto* sp = a_id ? RE::TESForm::LookupByID<RE::SpellItem>(a_id) : nullptr;
+                if (!sp) return nullptr;
+                for (auto* e : sp->effects)
+                    if (e == a_effect) return sp;
+                return nullptr;
+            };
+            if (auto* sp = owns(a_s.source)) return sp;
+            for (auto it = a_s.past.rbegin(); it != a_s.past.rend(); ++it)
+                if (auto* sp = owns(*it)) return sp;
+            return nullptr;
+        }
+
+        // ---- load repair ----
+        enum class Life : std::uint8_t { kLive, kLiveRuntime, kDead, kUnverifiable };
+
+        // The 4 bytes where a form keeps its id, read through a pointer that may be dead. Freed
+        // memory can be unmapped, so the read is guarded. (No C++ object lives in this function.)
+        bool ReadFormIdGuarded(const RE::TESForm* a_p, RE::FormID& a_out) noexcept {
+            __try {
+                a_out = *reinterpret_cast<const volatile RE::FormID*>(reinterpret_cast<const std::uint8_t*>(a_p) + 0x14);
+                return true;
+            } __except (1) {   // EXCEPTION_EXECUTE_HANDLER
+                a_out = 0;
+                return false;
+            }
+        }
+
+        // See "LIVENESS WITHOUT TRUST" above. kUnverifiable: the memory reads id 0, which the form
+        // map never holds -- a form that was never registered cannot be told from garbage, so it is
+        // left alone and said.
+        Life Classify(const RE::TESForm* a_p, RE::FormID& a_idRead) {
+            if (!ReadFormIdGuarded(a_p, a_idRead)) return Life::kDead;
+            if (a_idRead == 0) return Life::kUnverifiable;
+            if (RE::TESForm::LookupByID(a_idRead) != a_p) return Life::kDead;
+            return a_idRead >= 0xFF000000 ? Life::kLiveRuntime : Life::kLive;
+        }
+
+        struct LoadScan {
+            Tally         dead;                  // cleared
+            std::uint32_t liveRuntime  = 0;      // live 0xFF forms in a slot (watched)
+            std::uint32_t unverifiable = 0;
+            std::uint32_t deadEffects  = 0;      // reported only
+            std::string   deadText, runtimeText;
+        };
+
+        void ScanActorAfterLoad(RE::Actor* a_actor, const char* a_when, bool a_quiet, LoadScan& a_r,
+                                std::unordered_map<const RE::TESForm*, Life>& a_memo) {
+            auto classify = [&](const RE::TESForm* a_p, RE::FormID& a_id) {
+                if (auto it = a_memo.find(a_p); it != a_memo.end() && it->second == Life::kLive) return Life::kLive;
+                const Life l = Classify(a_p, a_id);
+                a_memo[a_p]  = l;
+                return l;
+            };
+            LoadScan r;
+            VisitSpellRefs(a_actor, true, r.dead, [&](const RE::TESForm* a_p) {
+                RE::FormID id = 0;
+                switch (classify(a_p, id)) {
+                case Life::kDead:
+                    r.deadText += fmt::format("{}{} (its memory reads id 0x{})", r.deadText.empty() ? "" : ", ",
+                                              fmt::ptr(a_p), apmf::log::Hex(id));
+                    return true;
+                case Life::kLiveRuntime:
+                    ++r.liveRuntime;
+                    r.runtimeText += fmt::format("{}0x{}", r.runtimeText.empty() ? "" : ", ", apmf::log::Hex(id));
+                    return false;
+                case Life::kUnverifiable:
+                    ++r.unverifiable;
+                    return false;
+                default:
+                    return false;
+                }
+            });
+            if (auto* list = a_actor->AsMagicTarget()->GetActiveEffectList()) {
+                for (auto* ae : *list) {
+                    if (!ae || !ae->spell) continue;
+                    RE::FormID id = 0;
+                    if (classify(static_cast<const RE::TESForm*>(ae->spell), id) == Life::kDead) ++r.deadEffects;
+                }
+            }
+            const char* name = a_actor->GetName();
+            if (r.dead.Total() != 0)
+                spdlog::warn("[castproxy] LOAD REPAIR ({}): 0x{} \"{}\" held pointer(s) to DESTROYED form(s) -- {} -- "
+                             "CLEARED: {}. (A save written with a runtime form in the slot, INVARIANTS #19; the "
+                             "next reader of that slot would have crashed.)",
+                             a_when, apmf::log::Hex(a_actor->GetFormID()), name ? name : "", r.deadText, r.dead.Text());
+            if (r.deadEffects != 0)
+                spdlog::error("[castproxy] load check ({}): 0x{} \"{}\" carries {} active effect(s) whose spell pointer is "
+                              "a DESTROYED form -- NOT repaired (the effect's own Effect* died with that form; no engine "
+                              "path is safe on it). The game may crash when that effect updates.",
+                              a_when, apmf::log::Hex(a_actor->GetFormID()), name ? name : "", r.deadEffects);
+            if (!a_quiet && r.liveRuntime != 0)
+                spdlog::info("[castproxy] load check ({}): 0x{} \"{}\" holds live runtime form(s) [{}] in {} spell slot(s) -- "
+                             "not touched (another mod's form may be legitimate); watched on every pump until it leaves "
+                             "the slot or is destroyed.",
+                             a_when, apmf::log::Hex(a_actor->GetFormID()), name ? name : "", r.runtimeText, r.liveRuntime);
+            if (!a_quiet && r.unverifiable != 0)
+                spdlog::warn("[castproxy] load check ({}): 0x{} \"{}\" has {} spell-slot pointer(s) whose memory reads form "
+                             "id 0 -- a form outside the form map cannot be verified; left alone.",
+                             a_when, apmf::log::Hex(a_actor->GetFormID()), name ? name : "", r.unverifiable);
+            a_r.dead.hand      += r.dead.hand;
+            a_r.dead.equipList += r.dead.equipList;
+            a_r.dead.selected  += r.dead.selected;
+            a_r.dead.power     += r.dead.power;
+            a_r.dead.known     += r.dead.known;
+            a_r.dead.caster    += r.dead.caster;
+            a_r.liveRuntime    += r.liveRuntime;
+            a_r.unverifiable   += r.unverifiable;
+            a_r.deadEffects    += r.deadEffects;
+        }
+
+        void LoadWatchTick(std::uint32_t a_gen) {
+            if (a_gen != g_loadWatchGen) return;   // a tick queued before a world swap
+            g_loadWatchPosted = false;
+            std::unordered_map<const RE::TESForm*, Life> memo;
+            for (std::size_t i = 0; i < g_loadWatch.size();) {
+                auto*    actor = RE::TESForm::LookupByID<RE::Actor>(g_loadWatch[i]);
+                LoadScan r;
+                if (actor) ScanActorAfterLoad(actor, "watch", true, r, memo);
+                if (!actor || r.liveRuntime == 0) {
+                    spdlog::info("[castproxy] load watch: 0x{} dropped ({}).", apmf::log::Hex(g_loadWatch[i]),
+                                 !actor ? "the actor is gone"
+                                 : r.dead.Total() != 0 ? "its runtime form was destroyed; repaired above"
+                                                       : "no runtime form is in its spell slots any more");
+                    g_loadWatch.erase(g_loadWatch.begin() + static_cast<std::ptrdiff_t>(i));
+                    continue;
+                }
+                ++i;
+            }
+            if (!g_loadWatch.empty()) {
+                g_loadWatchPosted = true;
+                apmf::mainthread::Post([a_gen] { LoadWatchTick(a_gen); });
+            }
+        }
+
+        // Count (never change) what a save taken now would capture: spell-slot references to pool
+        // forms and active effects keyed to one. The co-save callback's second check.
+        struct SaveCount {
+            std::uint32_t actors = 0, holders = 0, refs = 0, effects = 0;
+            std::string   who;
+        };
+        SaveCount CountPoolRefs() {
+            SaveCount c;
+            for (auto& ap : ProcessActors()) {
+                auto* actor = ap.get();
+                ++c.actors;
+                Tally t;
+                VisitSpellRefs(actor, false, t, [](const RE::TESForm* a_p) { return SlotOf(a_p) >= 0; });
+                std::uint32_t fx = 0;
+                if (auto* list = actor->AsMagicTarget()->GetActiveEffectList())
+                    for (auto* ae : *list)
+                        if (ae && SlotOf(ae->spell) >= 0) ++fx;
+                if (t.Total() == 0 && fx == 0) continue;
+                ++c.holders;
+                c.refs    += t.Total();
+                c.effects += fx;
+                c.who     += fmt::format("{}0x{} ({}{}{} active effect(s))", c.who.empty() ? "" : "; ",
+                                         apmf::log::Hex(actor->GetFormID()), t.Total() != 0 ? t.Text() : "",
+                                         t.Total() != 0 ? ", " : "", fx);
+            }
+            return c;
+        }
+
+    }
+
+    void PreSaveSweep() {
+        if (!g_rekeyed.empty()) {
+            // A kSaveGame whose co-save callback never came (the save did not complete). Those effects
+            // stay keyed to their source spell: valid, only the seats' "already applied" bound no
+            // longer sees them as the proxy's.
+            spdlog::warn("[castproxy] save sweep: {} active effect(s) re-keyed for an earlier save were never keyed back "
+                         "(its co-save callback did not run) -- they stay keyed to their source spell.",
+                         g_rekeyed.size());
+            g_rekeyed.clear();
+        }
+        g_sweptForSave = true;
+        if (MintedCount() == 0) return;   // no runtime form exists: nothing a save could capture
+
+        const bool    direct = apmf::allowance::RuntimeSupported();
+        std::uint32_t actors = 0, holders = 0, refs = 0, directRefs = 0, effects = 0, unresolved = 0;
+        for (auto& ap : ProcessActors()) {
+            auto* actor = ap.get();
+            ++actors;
+            const char* name = actor->GetName();
+
+            // 1. Which pool forms does any of this actor's spell slots name?
+            Tally                        before;
+            std::vector<RE::SpellItem*>  forms;
+            VisitSpellRefs(actor, false, before, [&](const RE::TESForm* a_p) {
+                const int i = SlotOf(a_p);
+                if (i < 0) return false;
+                if (std::find(forms.begin(), forms.end(), g_slot[i].form) == forms.end()) forms.push_back(g_slot[i].form);
+                return true;
+            });
+            if (before.Total() != 0) {
+                ++holders;
+                refs += before.Total();
+                // 2. The engine's own paths (the calls Unref makes).
+                for (auto* f : forms) {
+                    actor->DeselectSpell(f);
+                    actor->RemoveSpell(f);
+                }
+                // 3. Re-read every slot; write what the engine left (see the disassembly above).
+                Tally left;
+                VisitSpellRefs(actor, direct, left, [](const RE::TESForm* a_p) { return SlotOf(a_p) >= 0; });
+                if (left.Total() == 0) {
+                    spdlog::info("[castproxy] save sweep: 0x{} \"{}\" referenced {} pool form(s) ({}) -- cleared by "
+                                 "DeselectSpell + RemoveSpell.",
+                                 apmf::log::Hex(actor->GetFormID()), name ? name : "", forms.size(), before.Text());
+                } else if (direct) {
+                    directRefs += left.Total();
+                    spdlog::warn("[castproxy] save sweep: 0x{} \"{}\" referenced {} pool form(s) ({}); DeselectSpell + "
+                                 "RemoveSpell LEFT {} -- cleared by direct member write.",
+                                 apmf::log::Hex(actor->GetFormID()), name ? name : "", forms.size(), before.Text(),
+                                 left.Text());
+                } else {
+                    spdlog::error("[castproxy] save sweep: 0x{} \"{}\" STILL references a pool form after DeselectSpell + "
+                                  "RemoveSpell ({}), and the direct repair is refused on this runtime (offsets proven on "
+                                  "1.6.1170 / 1.5.97 / 1.7.104 only) -- THE SAVE WILL HOLD A RUNTIME FORM.",
+                                  apmf::log::Hex(actor->GetFormID()), name ? name : "", left.Text());
+                }
+            }
+
+            // 4. Active effects keyed to a pool form: key them to the real source spell for the save.
+            if (auto* list = actor->AsMagicTarget()->GetActiveEffectList()) {
+                for (auto* ae : *list) {
+                    if (!ae) continue;
+                    const int si = SlotOf(ae->spell);
+                    if (si < 0) continue;
+                    auto* src = SourceOf(g_slot[si], ae->effect);
+                    if (!src) {
+                        ++unresolved;
+                        spdlog::error("[castproxy] save sweep: 0x{} \"{}\" carries an active effect of pool form 0x{} whose "
+                                      "Effect belongs to none of the spells that form mirrored this session -- NOT "
+                                      "re-keyed: THE SAVE WILL HOLD A RUNTIME FORM in that effect.",
+                                      apmf::log::Hex(actor->GetFormID()), name ? name : "",
+                                      apmf::log::Hex(g_slot[si].form->GetFormID()));
+                        continue;
+                    }
+                    g_rekeyed.push_back({ actor->GetFormID(), ae, g_slot[si].form, src });
+                    ae->spell = src;
+                    ++effects;
+                }
+            }
+        }
+        spdlog::info("[castproxy] save sweep (kSaveGame, before the engine writes; on the Drain thread: {}): {} actor(s) checked "
+                     "against {} minted pool form(s) [{}] -- {} spell-slot reference(s) on {} actor(s) cleared ({} by direct "
+                     "write), {} active effect(s) keyed to their source spell for the save ({} unresolved). ReteachLive "
+                     "re-teaches live claims on the next pump.",
+                     apmf::hook::OnMainThread() ? "yes" : "NO", actors, MintedCount(), PoolFormsText(), refs, holders,
+                     directRefs, effects, unresolved);
+    }
+
+    bool SaveWrittenCheck() {
+        const bool swept = g_sweptForSave;
+        g_sweptForSave   = false;
+        if (MintedCount() == 0) {
+            g_rekeyed.clear();   // cannot hold anything: a re-key needs a minted form
+            return false;
+        }
+        bool late = false;
+        if (!swept) {
+            // This SKSE build ran the co-save callback without a kSaveGame message first. The actor
+            // records are already written, so sweeping now protects nothing in THIS save; it is done
+            // anyway so the state matches every other save, and said loudly.
+            spdlog::warn("[castproxy] save check: the co-save callback ran with NO kSaveGame message before it -- the save "
+                         "sweep is running LATE (after the actor records). THE .ESS MAY ALREADY HOLD a runtime form.");
+            PreSaveSweep();
+            g_sweptForSave = false;
+            late           = true;
+        }
+        const SaveCount c = CountPoolRefs();
+        if (c.refs != 0 || c.effects != 0)
+            spdlog::warn("[castproxy] save check (co-save callback, after the actor records): {} spell-slot reference(s) and "
+                         "{} active effect(s) STILL name a pool form [{}] on {} actor(s): {} -- THE .ESS MAY ALREADY HOLD "
+                         "IT (INVARIANTS #19). Something re-taught or re-equipped it between kSaveGame and the write.",
+                         c.refs, c.effects, PoolFormsText(), c.holders, c.who);
+        // Key the effects back to their proxy (their record is written). Each one is found again on
+        // its target's own list by address, and must still be keyed to the source this sweep wrote.
+        std::uint32_t back = 0, gone = 0;
+        for (const auto& r : g_rekeyed) {
+            bool done = false;
+            if (auto* actor = RE::TESForm::LookupByID<RE::Actor>(r.target); actor && SlotOf(r.proxy) >= 0) {
+                if (auto* list = actor->AsMagicTarget()->GetActiveEffectList()) {
+                    for (auto* ae : *list) {
+                        if (ae != r.ae) continue;
+                        if (ae->spell == r.source) {
+                            ae->spell = r.proxy;
+                            done      = true;
+                        }
+                        break;
+                    }
+                }
+            }
+            done ? ++back : ++gone;
+        }
+        g_rekeyed.clear();
+        if (c.refs == 0 && c.effects == 0)
+            spdlog::info("[castproxy] save check (co-save callback, after the actor records): {} actor(s), no spell slot and "
+                         "no active effect named any of the {} minted pool form(s) [{}] when the records were written -- "
+                         "CLEAN. {} active effect(s) keyed back to their proxy{}.",
+                         c.actors, MintedCount(), PoolFormsText(), back,
+                         gone != 0 ? fmt::format(" ({} no longer on their target: left as they are)", gone) : "");
+        else if (back != 0 || gone != 0)
+            spdlog::info("[castproxy] save check: {} active effect(s) keyed back to their proxy, {} no longer on their "
+                         "target.", back, gone);
+        return late;
+    }
+
+    void RepairAfterLoad(const char* a_when) {
+        if (!apmf::allowance::RuntimeSupported()) {
+            static bool s_said = false;   // main thread
+            if (!s_said) {
+                s_said = true;
+                spdlog::warn("[castproxy] load repair REFUSED on this runtime: the actor / process member offsets are proven "
+                             "on 1.6.1170, 1.5.97 and 1.7.104 only. A save holding a runtime form in a hand is not "
+                             "repaired here.");
+            }
+            return;
+        }
+        LoadScan                                      total;
+        std::unordered_map<const RE::TESForm*, Life>  memo;
+        std::uint32_t                                 actors = 0, repaired = 0, watched = 0;
+        for (auto& ap : ProcessActors()) {
+            auto* actor = ap.get();
+            ++actors;
+            LoadScan r;
+            ScanActorAfterLoad(actor, a_when, false, r, memo);
+            if (r.dead.Total() != 0) ++repaired;
+            if (r.liveRuntime != 0) {
+                const auto id = actor->GetFormID();
+                if (std::find(g_loadWatch.begin(), g_loadWatch.end(), id) == g_loadWatch.end()) {
+                    if (g_loadWatch.size() < kLoadWatchCap) {
+                        g_loadWatch.push_back(id);
+                    } else if (!g_loadWatchFull) {
+                        g_loadWatchFull = true;
+                        spdlog::warn("[castproxy] load watch is FULL ({} actors hold a live runtime form in a spell slot) -- "
+                                     "0x{} and any further actor are NOT watched: a form of theirs destroyed later is not "
+                                     "repaired.",
+                                     kLoadWatchCap, apmf::log::Hex(id));
+                    }
+                }
+                ++watched;
+            }
+            total.dead.hand      += r.dead.hand;
+            total.dead.equipList += r.dead.equipList;
+            total.dead.selected  += r.dead.selected;
+            total.dead.power     += r.dead.power;
+            total.dead.known     += r.dead.known;
+            total.dead.caster    += r.dead.caster;
+            total.deadEffects    += r.deadEffects;
+            total.unverifiable   += r.unverifiable;
+        }
+        spdlog::info("[castproxy] load repair ({}; on the Drain thread: {}): {} actor(s) checked -- {} pointer(s) to destroyed forms "
+                     "cleared on {} actor(s){}{}; {} active effect(s) with a destroyed spell reported; {} actor(s) hold a live "
+                     "runtime form in a spell slot ({} watched).",
+                     a_when, apmf::hook::OnMainThread() ? "yes" : "NO", actors, total.dead.Total(), repaired,
+                     total.dead.Total() != 0 ? ": " : "", total.dead.Total() != 0 ? total.dead.Text() : "",
+                     total.deadEffects, watched, g_loadWatch.size());
+        if (!g_loadWatch.empty() && !g_loadWatchPosted) {
+            g_loadWatchPosted = true;
+            const auto gen    = g_loadWatchGen;
+            apmf::mainthread::Post([gen] { LoadWatchTick(gen); });
         }
     }
 

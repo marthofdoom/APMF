@@ -1,8 +1,32 @@
 # APMF STATUS — living handoff (start here)
 
-Updated 2026-11-14. Current version **v0.20.2** (release prep 2026-11-14, ABI v45 unchanged, a small real release: the ch.3 sneak release confirm, see CHANGELOG) / previously **v0.20.1** (cut 2026-11-13, ABI v45 unchanged, a REAL release, the first since v0.17.0, cumulative over v0.18.0 to v0.20.0 plus the seat 0 hostile-effect fix, see CHANGELOG) / previously **v0.20.0** (cut 2026-11-12, ABI v45) and **v0.19.0** (cut 2026-11-10, ABI v36) and **v0.18.0** (cut 2026-11-09, ABI v35, PRERELEASE) and **v0.17.0** (cut 2026-11-08, ABI v33) and **v0.16.0** (cut 2026-11-02, ABI v32) and **v0.15.2** (cut 2026-10-28, ABI v31) and **v0.15.1** (cut 2026-10-26, ABI v30) and **v0.15.0** (cut 2026-10-25, ABI v30) and **v0.14.0** (cut 2026-10-21, ABI v28) and **v0.13.1** (cut 2026-10-13, ABI v24) and **v0.13.0** (release cut 2026-10-12; see RELEASED v0.13.0 below; prior v0.12.0 PUBLISHED release, ABI v21). The current state of the build: what's
+Updated 2026-11-15 (proxy save integrity fix branch, below). Current version **v0.20.2** (release prep 2026-11-14, ABI v45 unchanged, a small real release: the ch.3 sneak release confirm, see CHANGELOG) / previously **v0.20.1** (cut 2026-11-13, ABI v45 unchanged, a REAL release, the first since v0.17.0, cumulative over v0.18.0 to v0.20.0 plus the seat 0 hostile-effect fix, see CHANGELOG) / previously **v0.20.0** (cut 2026-11-12, ABI v45) and **v0.19.0** (cut 2026-11-10, ABI v36) and **v0.18.0** (cut 2026-11-09, ABI v35, PRERELEASE) and **v0.17.0** (cut 2026-11-08, ABI v33) and **v0.16.0** (cut 2026-11-02, ABI v32) and **v0.15.2** (cut 2026-10-28, ABI v31) and **v0.15.1** (cut 2026-10-26, ABI v30) and **v0.15.0** (cut 2026-10-25, ABI v30) and **v0.14.0** (cut 2026-10-21, ABI v28) and **v0.13.1** (cut 2026-10-13, ABI v24) and **v0.13.0** (release cut 2026-10-12; see RELEASED v0.13.0 below; prior v0.12.0 PUBLISHED release, ABI v21). The current state of the build: what's
 shipped, what's probe-gated, what's next. Keep this current in the SAME change as any
 build/finding/workflow change.
+
+## FIX 2026-11-15 -- PROXY SAVE INTEGRITY (INVARIANTS #19), branch `fix/proxy-save-integrity`, NOT merged, NOT field run
+
+- **The crash:** LoreRim Save373 (written 2026-11-12 with a live Candlelight delivery-flip proxy 0xFF00081F) crashed
+  0.8 s after its load on 2026-11-14: Auri's left hand pointed at a destroyed form and Immersive Equipment Displays
+  called through it. The save holds the proxy in Auri's hand, equipped list and two more slots, and in active effects
+  on Sven and one more actor. Cause: `PreSaveSweep` ran in the co-save callback, which SKSE64 calls after the actor
+  records are written.
+- **What changed (no ABI change, no new address id, `APMF_API.h` untouched):** `core/CastProxy.cpp` + `plugin.cpp`.
+  The sweep runs in the `kSaveGame` message and covers every process-list actor and the player: hands, equipped list,
+  selected slots, selected power, spell list, caster current spell (engine `DeselectSpell` + `RemoveSpell`, then a
+  re-read and a direct member write for leftovers) and active effects (keyed to the source spell for the save, keyed
+  back in the co-save callback). The co-save callback is the second check (`THE .ESS MAY ALREADY HOLD IT` or `CLEAN`).
+  `RepairAfterLoad` (first thing in `kPostLoadGame`, again on the first pump, then a per-pump watch of live 0xFF forms)
+  clears pointers to destroyed forms so an affected save loads.
+- **Disassembly (1.6.1170 / 1.5.97 / 1.7.104, same structure):** `DeselectSpell` clears a hand only when
+  `selectedSpells[i]` is the spell and `AIProcess::equippedForms` has its entry; `RemoveSpell` deselects only when the
+  spell is in `addedSpells`. Addresses in `core/CastProxy.cpp` and INVARIANTS #19.
+- **Field checks still open:** (1) load Save373 with this build: the log must show `[castproxy] LOAD REPAIR` for
+  0x483139C8 and the game must stay up; an ERROR `active effect(s) whose spell pointer is a DESTROYED form` line means
+  an effect could not be repaired. (2) a fresh save with a live proxy claim: `save sweep` then `save check ... CLEAN`,
+  then the offline RefID search of INVARIANTS #19. Not known: what the form that held id 0xFF00081F at that load was
+  and when it was destroyed (inside the load call or after), which is why the repair also runs on the first pump and
+  watches live runtime forms.
 
 ## HEAD OF WORK 2026-11-11 -- MELEE MOVES (MFO T2 batch M), branch `feat/melee-moves` (on top of `feat/ch8b-dead-target` + `feat/aversion`), NOT merged, NOT field run
 

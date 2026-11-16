@@ -568,8 +568,13 @@ slot would change the hands, a null slot keeps the proxy out of the CombatInvent
 REVIEW-BACKLOG APMF-B206) that the AI selects and casts instead.
 `Acquire` (mint or SHARE + TRANSIENT `AddSpell`; +1 ref) / `Unref` (-1 ref; un-teach +
 deselect + release the slot only at 0) / `ResetAll` (revert + kPreLoadGame) /
-`PreSaveSweep` (SKSE save) / `ReteachLive` (posted by `OnSave` right after the sweep:
-re-teaches every slot still holding refs on the next Pump, because a Repoint-heartbeated
+`PreSaveSweep` (the `kSaveGame` MESSAGE, before the engine writes; 2026-11-15: every actor of the four process
+lists + the player, every minted form: selected slots, selected power, spell list, casters, equipped list, both hands
+by `DeselectSpell` + `RemoveSpell` then a re-read + direct member write; active effects keyed to their source spell) /
+`SaveWrittenCheck` (the co-save callback, after the actor records: counts what was captured, WARNs or logs CLEAN,
+keys the effects back to their proxy) / `RepairAfterLoad` (`kPostLoadGame` + first pump: clears pointers to DESTROYED
+forms in the same slots, watches a live 0xFF form per pump) / `ReteachLive` (posted by the `kSaveGame` case right
+after the sweep: re-teaches every slot still holding refs on the next Pump, because a Repoint-heartbeated
 claim never calls `Acquire` again). Pool of up to `kPoolCap` = 64 slots (APMF-B62, 2026-11-08: was a fixed 8,
 which the self-flip demand could overflow into a dead deny), minted LAZILY as the prefix `[0, g_minted)` (a new
 mint takes index `g_minted`, every loop walks only the minted slots, `ResetAll` sets it back to 0), overflow at
@@ -602,13 +607,20 @@ lookups are legal, BEFORE the claim publishes), and every claim-removal path in 
 `PostProxyUnref` — deferred one `mainthread::Post` hop so it lands AFTER the removal
 publishes (INVARIANTS #20). Ordering: Acquire is synchronous inside Drain and Unref runs
 in the Pump after it, so a same-Drain re-acquire always increments before the old
-claim decrements. `plugin.cpp` (`ResetAll` on revert + kPreLoadGame, `PreSaveSweep` on
-save). `channels/CastCompose.cpp`'s `Release` no longer frees anything (its owner-wide
+claim decrements. `plugin.cpp` (`ResetAll` on revert + kPreLoadGame, `PreSaveSweep` + the `ReteachLive` post in
+`kSaveGame`, `SaveWrittenCheck` in `OnSave`, `RepairAfterLoad` first in `kPostLoadGame` and posted for the first pump). `channels/CastCompose.cpp`'s `Release` no longer frees anything (its owner-wide
 `Free` was the bug).
 - **What breaks:** both halves of INVARIANTS #19. (a) A proxy KNOWN to the actor when
   a save is taken persists a reference to a 0xFF dynamic form that will not exist on
-  the next load — `PreSaveSweep` must stay wired into `OnSave` BEFORE any record is
-  written, and `Unref` must stay the single choke point every claim-removal path
+  the next load, and the load resolves that id to whatever form holds it then (Save373, 2026-11-15: a
+  follower's left hand pointed at a destroyed form and the first reader crashed) — `PreSaveSweep` must stay
+  in the `kSaveGame` MESSAGE (the co-save callback `OnSave` runs AFTER the actor records are written; the
+  sweep lived there until 2026-11-15 and protected nothing), it must cover hands / equipped list / selected
+  slots / spell list / casters / active effects of EVERY process-list actor (the engine calls alone leave a
+  hand whose selected slot or equipped-list entry is missing), `SaveWrittenCheck` must key every re-keyed
+  effect back (the seats' "already applied" bound reads the proxy), `RepairAfterLoad` must stay the FIRST
+  thing `kPostLoadGame` does and must never read through a pointer before the form map has answered for
+  it, and `Unref` must stay the single choke point every claim-removal path
   reaches, exactly once per `castProxyRef` claim (a missed Unref leaks a taught form;
   an extra one un-teaches a form a live claim still names — the 2026-10-05 SEV-2).
   (b) `Configure` shares the SOURCE spell's `Effect*` BY POINTER, so `ResetAll` must
