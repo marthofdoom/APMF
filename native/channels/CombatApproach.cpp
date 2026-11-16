@@ -1,4 +1,5 @@
 #include "PCH.h"
+#include "core/CombatOps.h"   // #4a: no read through a controller a queued Harbinger StopCombat may free
 #include "core/Sources.h"   // Harbinger 1a: seat census
 #include "core/FacetAttribution.h"   // Harbinger 1b: the engine's area ranked; yield + drift named
 #include "channels/CombatApproach.h"
@@ -1216,7 +1217,7 @@ namespace apmf::combatapproach {
             RE::NiPoint3       posX     = posXReal;   // the goal point; clamped just inside a grazing leash below
             float              dist     = actor->GetPosition().GetDistance(posX);
             // A combat SUBSTRATE (S2a) is not a fight: a waiting ch.24 claim does not apply under it.
-            const bool         inCombat = actor->IsInCombat() && !apmf::combatsubstrate::Suppressing(id);
+            const bool         inCombat = apmf::combatops::InCombat(actor) && !apmf::combatsubstrate::Suppressing(id);   // #4a (review F1 of 75e1f75): IsInCombat reads controller+0x43
 
             // A ch.23 leash on the same actor: some point within R of X must lie inside it.
             bool leashed = false;

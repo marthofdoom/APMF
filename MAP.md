@@ -430,11 +430,20 @@ refuse to run when it is false.
   signals its mid-point event (AE 0x7330E7 -> 0x733D10) before this thunk's pump runs, so "Combat and magic" (0xE4)
   may start while the pump still runs. **What breaks:** a counter must stay RAII-balanced (an unbalanced one reads as
   a permanent overlap); never sample from a worker (the sample means "main met it").
-- **M5/H EXCEPTION GUARD (2026-11-16).** `Arbiter::OnActorUpdate` (Character thunk) and `Arbiter::OncePerFrame`
-  (PlayerCharacter thunk) each run inside `try/catch`; a C++ exception logs ERROR naming the stage and STOPS that
-  stage for the session (`g_actorStageOff` / `g_frameStageOff`), never retried. The engine's original is OUTSIDE the
-  try and always runs. **What breaks:** do not move `func(...)` inside the try (the engine's own code must never be
-  caught or skipped); do not turn the stop into a retry (principle 7). SEH (an access violation) is not caught.
+- **M5/H EXCEPTION GUARD (2026-11-16; per subsystem since review F2 of 75e1f75).** The guards that STOP something
+  live in `core/Arbiter.cpp`: every subsystem call of `OncePerFrame` and both sub-stages of `OnActorUpdate` run
+  through `APMF_FRAME_STAGE(call)` / `APMF_ACTOR_STAGE(call)` (a static `Stage` per call site, named by the call's own
+  text): an exception logs ERROR naming it and stops ONLY that subsystem for the session, never retried.
+  `ControlMap::Drain` and `mainthread::Pump` are `FrameCritical`: they keep running every frame; if one throws, every
+  claim is released ONCE (`ControlMap::ReleaseAll`, guarded) so controlled actors fall back to the engine AI (ERROR,
+  rate-limited 10 s). A posted task that throws is caught by itself inside `mainthread::Pump` (core/MainThread.cpp);
+  the rest of the batch still runs. The two thunks here keep a try/catch only as a BACKSTOP (ERROR once per seat,
+  nothing stopped). The engine's original is OUTSIDE the try and always runs. **What breaks:** do not move
+  `func(...)` inside the try (the engine's own code must never be caught or skipped); do not turn a stop into a retry
+  (principle 7); a new OncePerFrame call goes through `APMF_FRAME_STAGE` (a bare call takes the whole frame's later
+  subsystems with it only as far as the backstop, which stops nothing but skips the rest of that frame). Known
+  residual: a stopped subsystem's own engine-facing state stays as it was (e.g. a stopped `combatsubstrate::Poll`
+  leaves its slots' denies standing); the ERROR names it. SEH (an access violation) is not caught.
 
 ### `native/core/Channel.h` — the channel interface
 `Channel` = `Name`/`ChannelNo`/`ServesIntent`/`Hotkeys`/`Engage`/`Tick`/`Release`.
@@ -496,7 +505,13 @@ whose actor has no controller left is cancelled (`kGone`: an actor without a con
 one still queued after 1 s of UNPAUSED game time with the controller still there is made on main with an ERROR
 (`kMainUndrained`: that actor's combat update is not running at all). `FlushForSave` (kSaveGame, FIRST) runs every
 pending op inline; `SyncScope` (around the save's restore passes) makes a request run inline; `ResetAll`
-(kPreLoadGame / revert) drops them unrun. `Pending(id)` (any thread). Requests for one actor coalesce. 60 s RULE C
+(kPreLoadGame / revert) drops them unrun. `Pending(id)` (any thread) is true while an op is QUEUED OR RUNNING (review
+F1 of 75e1f75: the drain marks the entry `running` and erases it, by its `seq`, only after StopCombat RETURNED;
+`Finish`); main never takes a running entry (Poll skips it; one running for 1 s of game time is STUCK: ERROR, its
+callers get "not stopped"; FlushForSave leaves it). A drain that throws still answers its op (F3). Requests for one
+actor coalesce, queued or running, and `Attach(id, done)` joins a completion to a pending op without a new decision
+(F5: the held engagement's "NOT queued again" path). `StopCombat(..., &ranInline)` says whether it ran inline.
+`InCombat(actor)` = `Actor::IsInCombat` made #4a-safe (IsInCombat reads controller+0x43). 60 s RULE C
 `[combatops]` line. Needs 0xE4 layer 0 + the verified Character vtable (`Install`, kDataLoaded, before the hold).
 WHY (disassembly, all three builds): StopCombat frees the controller inline with no lock (AE 0x6B7214 / 0x6B7235);
 the engine itself frees controllers on the actor's own update (AE 37347 in the per-actor "Actor update" job
@@ -512,7 +527,12 @@ the kick at 0x64613A).
   and the SyncScope around the restore passes, or a queued free misses the write. Keep `Poll` after `mainthread::Pump`
   (the posted completions of this frame's drains land first). The drain never throws (its own try/catch faults the
   queue to main-with-ERROR for the session). Uncertain, said: a controller freed and another allocated at the same
-  address between the decision and the drain reads as "the one decided for" (one frame window).
+  address between the decision and the drain reads as "the one decided for" (one frame window; Docs/REVIEW-BACKLOG.md
+  APMF-B306). **#4a readers:** while `Pending(id)`, nothing on main reads THROUGH that actor's controller or calls
+  `StartCombat` on him: ch.21 `Enter` and the substrate's `Enter` wait a frame; `AnchorGuard` Treat / Sweep /
+  GroupMembers, the substrate's census / PartyPoll / DropSub / MOVE trace / AfterLoad, ch.21's hold probe and
+  `ReadGroup`, ch.33 `EngineRefresh` skip him; every main-thread `IsInCombat` goes through `InCombat`. A NEW main-thread
+  read through a controller must add the same skip (INVARIANTS #4a).
 
 ### `native/core/Sources.{h,cpp}` — HARBINGER 1a: source registry, priorities, degrade rule, seat census
 **Served counter (2026-10-12, fix/apmf-menu-client-hits):** `served[facet]` atomic + `NoteServed(id,f)` / `NoteServedClaim(handle,f)` (resolves the client via `ClientForHandle`'s shared leaf lock, released before the atomics) + `Served()`. It is NOT a Hit: Hits stays "outside writes seen". Both stamp `lastSeenMs` / `lastLoadSeq`, and so does `NoteClientRequest` (a client with live claims is never `Idle`, never dropped from the menu's `Winner()`). Credit sites: `facetattr::Decide` on `enforce` (every ranked deny: cast, combat, action, approach, entry, re-entry), `EquipSink` applied deny, `TargetPin` seat deny/held + `UpdateCombat` restore, `EquipAuthority::Enforce` equipped>0, `PackageGate` 0x49 `won`, `Travel::StartLeg`, `EquipPreference` lift/steer, `CombatEntry::Enter` entered. What breaks: moving a credit into a hot path that holds another lock (the handle map's lock is a leaf).

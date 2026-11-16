@@ -1,4 +1,5 @@
 #include "PCH.h"
+#include "core/CombatOps.h"   // #4a: no read through a controller a queued Harbinger StopCombat may free
 #include "core/Awareness.h"
 #include "core/Allowance.h"   // SeatVerified(): the mit-3.7 F1 self-check gate
 #include "core/Clock.h"
@@ -335,7 +336,7 @@ namespace apmf::awareness {
             }
 
             // In combat? (Character slot 0xE3) -- read once, used by HEARING(combat) and ENGAGED.
-            const bool targetFighting = target->IsInCombat();
+            const bool targetFighting = apmf::combatops::InCombat(target);   // #4a (review F1 of 75e1f75): IsInCombat reads controller+0x43
 
             // HEARING
             if (!(skip & APMF_API::kAware_NoHearing)) {

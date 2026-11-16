@@ -33,13 +33,17 @@ namespace {
         std::uintptr_t    cc       = 0;    // the controller main decided to stop (identity only, never dereferenced)
         const char*       who      = "";   // the first requester (a literal)
         std::uint64_t     queuedMs = 0;
-        float             waitSec  = 0.0f;  // unpaused game time waited (main only, under g_mx)
-        std::vector<Done> dones;
+        float             waitSec  = 0.0f;  // unpaused game time waited (main only, under g_mx); reset when it starts running
+        std::uint64_t     seq      = 0;     // this entry's identity (a ResetAll / a new entry for the actor never matches)
+        bool              running  = false; // review F1 of 75e1f75: a drain is executing it NOW. The entry stays in the
+                                            // map until Execute returned, so Pending() covers queued AND running.
+        std::vector<Done> dones;            // a completion attached while it runs joins it (Finish takes them all)
     };
 
     std::mutex                              g_mx;   // LEAF: no engine call, no log, no other lock under it
     std::unordered_map<RE::FormID, Entry>   g_ops;
     std::atomic<std::uint32_t>              g_count{ 0 };   // g_ops.size(): the drain's one relaxed pre-gate
+    std::uint64_t                           g_seq = 0;      // under g_mx: the next entry's seq
 
     std::atomic<bool>        g_available{ false };
     std::atomic<const char*> g_unavailable{ "before kDataLoaded (combatops::Install runs there)" };
@@ -99,15 +103,33 @@ namespace {
         }
     }
 
-    // Main: take `a_id`'s entry out of the queue (nothing if a drain took it first).
-    bool Take(RE::FormID a_id, Entry& a_out) {
+    // Main: take `a_id`'s QUEUED entry out of the map (nothing if a drain finished it first, or one is running it now:
+    // a running entry is the drain's, review F1 of 75e1f75). `a_stuck` takes a running one too (Poll's stuck case).
+    bool Take(RE::FormID a_id, Entry& a_out, bool a_stuck = false) {
         std::scoped_lock lk(g_mx);
         const auto it = g_ops.find(a_id);
-        if (it == g_ops.end()) return false;
+        if (it == g_ops.end() || (it->second.running && !a_stuck)) return false;
         a_out = std::move(it->second);
         g_ops.erase(it);
         g_count.store(static_cast<std::uint32_t>(g_ops.size()), std::memory_order_relaxed);
         return true;
+    }
+
+    // The drain, after Execute RETURNED (review F1 of 75e1f75): the op `a_seq` for `a_id` is over. Take its completions
+    // (every one attached while it ran included) and erase it, then post them to main. Nothing when ResetAll dropped it
+    // meanwhile or a newer entry replaced it (a load: the outgoing world's op, never delivered).
+    void Finish(RE::FormID a_id, std::uint64_t a_seq, const Result& a_r) {
+        std::vector<Done> dones;
+        {
+            std::scoped_lock lk(g_mx);
+            const auto it = g_ops.find(a_id);
+            if (it == g_ops.end() || it->second.seq != a_seq) return;
+            dones = std::move(it->second.dones);
+            g_ops.erase(it);
+            g_count.store(static_cast<std::uint32_t>(g_ops.size()), std::memory_order_release);
+        }
+        if (!dones.empty())
+            apmf::mainthread::Post([dones = std::move(dones), a_r]() mutable { Deliver(dones, a_r); });
     }
 
     // Main: run one entry inline and deliver its completions inline.
@@ -194,14 +216,40 @@ namespace apmf::combatops {
         }
     }
 
-    bool StopCombat(RE::Actor* a_actor, const char* a_who, Done a_done) {
+    bool StopCombat(RE::Actor* a_actor, const char* a_who, Done a_done, bool* a_inline) {
+        if (a_inline) *a_inline = false;
         if (!Available() || !a_actor) return false;
-        const std::uintptr_t cc = ControllerOf(a_actor);
-        if (cc == 0) return false;
-        const RE::FormID id = a_actor->GetFormID();
+        const RE::FormID     id  = a_actor->GetFormID();
+        const std::uintptr_t cc  = ControllerOf(a_actor);   // the POINTER only (a running op may be freeing it)
+        const bool           inl = g_sync > 0 || g_faulted.load(std::memory_order_acquire);
         g_anyEver = true;
+        // Review F5 of 75e1f75: an op already queued (and not about to run inline here) or RUNNING for this actor --
+        // this request JOINS it, its completion with it; no caller's completion is dropped. A queued one takes the
+        // controller the actor has now (the latest decision); a running one is the drain's and is left alone.
+        bool joined = false, joinedRunning = false;
+        {
+            std::scoped_lock lk(g_mx);
+            const auto it = g_ops.find(id);
+            if (it != g_ops.end() && (it->second.running || !inl)) {
+                Entry& e      = it->second;
+                joined        = true;
+                joinedRunning = e.running;
+                if (!e.running && cc != 0) e.cc = cc;
+                if (a_done) e.dones.push_back(std::move(a_done));
+            }
+        }
+        if (joined) {
+            g_win.coalesced.fetch_add(1, std::memory_order_relaxed);
+            if (joinedRunning && g_sync > 0)
+                spdlog::error("[combatops] 0x{} StopCombat ({}) inside the save JOINED an op a drain is running right now "
+                              "(the save seat is meant to run with the job graph idle): its completion comes posted, "
+                              "after the save, not inline.",
+                              Hex(id), a_who ? a_who : "");
+            return true;
+        }
+        if (cc == 0) return false;
         // The save (and a faulted drain): inline, on main, now.
-        if (g_sync > 0 || g_faulted.load(std::memory_order_acquire)) {
+        if (inl) {
             const How how = g_sync > 0 ? How::kSaveSync : How::kMainFaulted;
             Entry e{};
             Take(id, e);   // a queued op for this actor joins this run (its completions too)
@@ -215,27 +263,39 @@ namespace apmf::combatops {
                               "session (see the ERROR above).",
                               Hex(id), a_who ? a_who : "");
             }
+            if (a_inline) *a_inline = true;
             RunOnMain(id, e, how);
             return true;
         }
-        bool joined = false;
         {
             std::scoped_lock lk(g_mx);
-            auto [it, fresh] = g_ops.try_emplace(id);
-            Entry& e = it->second;
-            if (fresh) {
-                e.cc       = cc;
-                e.who      = a_who ? a_who : "";
-                e.queuedMs = apmf::clock::MonotonicMs();
-            } else {
-                joined = true;
-                e.cc   = cc;   // the latest decision names the controller the actor has now
-            }
+            Entry& e   = g_ops[id];   // fresh: only main inserts, and the join above found none
+            e.cc       = cc;
+            e.who      = a_who ? a_who : "";
+            e.queuedMs = apmf::clock::MonotonicMs();
+            e.seq      = ++g_seq;
             if (a_done) e.dones.push_back(std::move(a_done));
             g_count.store(static_cast<std::uint32_t>(g_ops.size()), std::memory_order_release);
         }
-        (joined ? g_win.coalesced : g_win.queued).fetch_add(1, std::memory_order_relaxed);
+        g_win.queued.fetch_add(1, std::memory_order_relaxed);
         return true;
+    }
+
+    bool Attach(RE::FormID a_actor, Done a_done) {
+        {
+            std::scoped_lock lk(g_mx);
+            const auto it = g_ops.find(a_actor);
+            if (it == g_ops.end()) return false;
+            if (a_done) it->second.dones.push_back(std::move(a_done));
+        }
+        g_win.coalesced.fetch_add(1, std::memory_order_relaxed);
+        return true;
+    }
+
+    bool InCombat(RE::Actor* a_actor) {
+        if (!a_actor) return false;
+        if (Pending(a_actor->GetFormID())) return ControllerOf(a_actor) != 0;   // the POINTER only (#4a)
+        return a_actor->IsInCombat();
     }
 
     bool Pending(RE::FormID a_actor) {
@@ -247,32 +307,59 @@ namespace apmf::combatops {
     void DrainFor(RE::Actor* a_this) {
         if (g_count.load(std::memory_order_acquire) == 0 || !a_this) return;
         if (g_faulted.load(std::memory_order_relaxed)) return;   // main runs them now (StopCombat / Poll)
+        // Review F1 / F3 of 75e1f75: the entry STAYS in the map, marked running, until Execute returned (Pending() is
+        // true for the whole free), and the taken op is known outside the try: a fault still delivers a result.
+        RE::FormID    id       = 0;
+        std::uint64_t seq      = 0;
+        bool          taken    = false;
+        bool          executed = false;
+        bool          threw    = false;
+        Result        r{};
         try {
-            const RE::FormID id = a_this->GetFormID();
-            Entry            e{};
+            id                = a_this->GetFormID();
+            std::uintptr_t cc = 0;
             {
                 std::scoped_lock lk(g_mx);
                 const auto it = g_ops.find(id);
-                if (it == g_ops.end()) return;
-                e = std::move(it->second);
-                g_ops.erase(it);
-                g_count.store(static_cast<std::uint32_t>(g_ops.size()), std::memory_order_release);
+                if (it == g_ops.end() || it->second.running) return;
+                Entry& e  = it->second;
+                e.running = true;
+                e.waitSec = 0.0f;   // Poll's stuck check counts from here
+                seq       = e.seq;
+                cc        = e.cc;
             }
-            const Result r = Execute(a_this, id, e.cc, How::kOwnerUpdate);
+            taken    = true;
+            r        = Execute(a_this, id, cc, How::kOwnerUpdate);
+            executed = true;
             (r.stopped ? g_win.drained : g_win.drainSkipped).fetch_add(1, std::memory_order_relaxed);
-            if (!e.dones.empty())
-                apmf::mainthread::Post([dones = std::move(e.dones), r]() mutable { Deliver(dones, r); });
+            Finish(id, seq, r);
         } catch (const std::exception& e) {
+            threw = true;
             if (!g_faulted.exchange(true))
                 spdlog::error("[combatops] EXCEPTION in the owner-thread drain ({}) -- the drain is STOPPED for the rest of "
                               "this session; every StopCombat Harbinger decides from now on is made ON MAIN with an ERROR "
                               "line (the pre-2026-11-16 exposure, APMF-B26). Report this log.",
                               e.what());
         } catch (...) {
+            threw = true;
             if (!g_faulted.exchange(true))
                 spdlog::error("[combatops] EXCEPTION (non-standard) in the owner-thread drain -- the drain is STOPPED for the "
                               "rest of this session; every StopCombat Harbinger decides from now on is made ON MAIN with an "
                               "ERROR line (the pre-2026-11-16 exposure, APMF-B26). Report this log.");
+        }
+        if (!threw || !taken) return;
+        // F3: the op this drain had taken still answers, so a caller waiting on it (a substrate close) never stays in
+        // flight. Its real result when Execute returned; otherwise "not stopped". Guarded: never throws from here.
+        try {
+            if (!executed) {
+                r         = Result{};
+                r.actor   = id;
+                r.how     = How::kOwnerUpdate;
+                r.why     = "the owner-thread drain threw before it ran (see the ERROR above): not stopped";
+            }
+            Finish(id, seq, r);
+        } catch (...) {
+            // Poll's stuck check (a running op for 1 s of game time) answers it instead.
         }
     }
 
@@ -280,18 +367,30 @@ namespace apmf::combatops {
         const std::uint64_t now = apmf::clock::MonotonicMs();
         if (g_count.load(std::memory_order_acquire) != 0) {
             const float dt = a_delta > 0.0f && a_delta < 1.0f ? a_delta : 0.0f;   // a hitch never counts as 1 s at once
-            std::vector<std::pair<RE::FormID, float>> ids;
+            struct Seen {
+                RE::FormID id;
+                float      waited;
+                bool       running;
+            };
+            std::vector<Seen> ids;
             {
                 std::scoped_lock lk(g_mx);   // leaf: copy out, look up after
                 ids.reserve(g_ops.size());
                 for (auto& [id, e] : g_ops) {
                     e.waitSec += dt;
-                    ids.emplace_back(id, e.waitSec);
+                    ids.push_back({ id, e.waitSec, e.running });
                 }
             }
             const bool faultedNow = g_faulted.load(std::memory_order_relaxed);
-            std::vector<RE::FormID> gone, late;
-            for (const auto& [id, waited] : ids) {
+            std::vector<RE::FormID> gone, late, stuck;
+            for (const auto& [id, waited, running] : ids) {
+                // Review F1 of 75e1f75: a RUNNING op is the drain's -- its controller is being freed right now, so main
+                // does not look at it at all. Execute takes microseconds; one still running after kUndrainedSec of
+                // unpaused game time means its drain died mid-op (stuck).
+                if (running) {
+                    if (waited >= kUndrainedSec) stuck.push_back(id);
+                    continue;
+                }
                 // Only the controller's ADDRESS is read here (its presence), never through it.
                 auto* a = RE::TESForm::LookupByID<RE::Actor>(id);
                 if (ControllerOf(a) == 0) gone.push_back(id);
@@ -321,6 +420,20 @@ namespace apmf::combatops {
                                   Hex(id), e.who, now - e.queuedMs, static_cast<double>(e.waitSec));
                 RunOnMain(id, e, faulted ? How::kMainFaulted : How::kMainUndrained);
             }
+            for (const auto id : stuck) {
+                Entry e{};
+                if (!Take(id, e, true)) continue;   // its drain finished in between: its result is posted
+                g_win.faultedMain.fetch_add(1, std::memory_order_relaxed);
+                spdlog::error("[combatops] 0x{} StopCombat ({}) STUCK: a drain began it {:.1f} s of game time ago and never "
+                              "finished (it faulted mid-op: see the ERROR above). NOT made on main (whether the drain's "
+                              "StopCombat ran is unknown); its callers get \"not stopped\" now.",
+                              Hex(id), e.who, static_cast<double>(e.waitSec));
+                Result r{};
+                r.actor = id;
+                r.how   = How::kOwnerUpdate;
+                r.why   = "the owner-thread drain began it and never finished (STUCK): not known to be stopped";
+                Deliver(e.dones, r);
+            }
         }
         Stats(now);
     }
@@ -329,11 +442,26 @@ namespace apmf::combatops {
         apmf::hook::Sample(apmf::hook::Site::kSaveFlush);   // P0: is anything combat-shaped running inside the save call
         if (g_count.load(std::memory_order_acquire) == 0) return;
         std::unordered_map<RE::FormID, Entry> all;
+        std::size_t                           running = 0;
         {
             std::scoped_lock lk(g_mx);
-            all.swap(g_ops);
-            g_count.store(0, std::memory_order_release);
+            // Review F1 of 75e1f75: a RUNNING op stays (a drain is freeing that controller now; it posts its own result).
+            // The save seat runs with the job graph idle, so there should be none: an ERROR below if there is.
+            for (auto it = g_ops.begin(); it != g_ops.end();) {
+                if (it->second.running) {
+                    ++running;
+                    ++it;
+                    continue;
+                }
+                all.emplace(it->first, std::move(it->second));
+                it = g_ops.erase(it);
+            }
+            g_count.store(static_cast<std::uint32_t>(g_ops.size()), std::memory_order_release);
         }
+        if (running)
+            spdlog::error("[combatops] save: {} StopCombat(s) were RUNNING on a combat job inside the save call (the save "
+                          "seat is meant to run with the job graph idle) -- left to their drain, not run inline.",
+                          running);
         for (auto& [id, e] : all) {
             g_win.save.fetch_add(1, std::memory_order_relaxed);
             RunOnMain(id, e, How::kSaveSync);

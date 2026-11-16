@@ -513,6 +513,7 @@ namespace {
         const char*      closeHow = nullptr;   // a literal: how the StopCombat ran, or why it did not
         std::uint64_t    closeQueuedMs = 0;
         std::vector<RE::ActorHandle> closeMembers;   // the holder's group members, read BEFORE its StopCombat
+        bool             stopWaitLogged = false;   // review F1 of 75e1f75: Enter waited on a pending StopCombat (logged once)
         // A client declared again while the close was in flight (Declare): the close finishes as decided, then the
         // substrate begins again for the claim that is winning then (WaitClose).
         bool             reopen = false;
@@ -1147,6 +1148,20 @@ namespace {
                          Hex(a_sub.id), Hex(g_anchorId.load()), kFloorWaitMs);
             return CloseSub(a_sub, "floors not published");
         }
+        // Review F1 of 75e1f75 (INVARIANTS #4a): a Harbinger StopCombat for this holder is queued or RUNNING on his own
+        // combat job (a held engagement's range rule, a close of an earlier substrate). Actor::StartCombat writes into an
+        // existing controller (AE 0x6B6D58 -> 0x559150 -> 0x83D2C0) and the drain may be freeing it: the entry waits a
+        // frame (Poll calls Enter again), bounded by the op (one frame of game time, or Poll's kUndrainedSec answer).
+        // After it ran, the checks below see the actor as it is then (a controller left = "entered combat first").
+        if (apmf::combatops::Pending(a_sub.id)) {
+            if (!a_sub.stopWaitLogged) {
+                a_sub.stopWaitLogged = true;
+                spdlog::info("[substrate] 0x{} OPEN waits: a Harbinger StopCombat for him is still queued or running on his "
+                             "own combat update (INVARIANTS #4a); the entry is retried every frame until it ran.",
+                             Hex(a_sub.id));
+            }
+            return true;
+        }
         auto* actor  = RE::TESForm::LookupByID<RE::Actor>(a_sub.id);
         auto* anchor = Anchor();
         auto* proc   = actor ? actor->GetActorRuntimeData().currentProcess : nullptr;
@@ -1573,7 +1588,12 @@ namespace {
                                                 "real target in any group holding him)", kDebtAfterDropMs / 1000);
         // the anchor out of the holder's group targets (the engine's own RemoveTarget)
         std::string removed = "no controller";
-        if (auto* cc = actor ? actor->GetActorRuntimeData().combatController : nullptr) {
+        // #4a (review F1 of 75e1f75): not through a controller a pending Harbinger StopCombat may be freeing. That stop
+        // ends his part in the group; an anchor left listed in a holderless group is the anchor guard's (its sweep).
+        if (actor && apmf::combatops::Pending(a_sub.id)) {
+            removed = "a Harbinger StopCombat for him is queued or running (it ends his controller and his place in the "
+                      "group): the anchor is not removed here, the anchor guard's sweep cleans what is left";
+        } else if (auto* cc = actor ? actor->GetActorRuntimeData().combatController : nullptr) {
             if (auto* g = cc->combatGroup; g && Anchor()) {
                 RemoveTargetLocked(g, Anchor());
                 std::uint32_t left = 0;
@@ -1601,7 +1621,8 @@ namespace {
                         });
                     removed += fmt::format("; EMPTY FIGHT: {}", stop);
                     if (stop.starts_with("combat ENDED")) removed += " + package re-pick";
-                    else if (stop.starts_with("combat END QUEUED")) removed += " + a package re-pick once it ran";
+                    else if (stop.starts_with("combat END QUEUED") || stop.starts_with("NOT queued again"))
+                        removed += " + a package re-pick once it ran";   // F5 of 75e1f75: a joined op re-picks too
                 } else {
                     removed += "; the real foe is in the group: NO StopCombat (the fight continues)";
                 }
@@ -1988,7 +2009,8 @@ namespace {
             std::uint32_t type = 0;
             const RE::FormID pkg = PackageOf(actor, &type);
             auto* pc   = RE::PlayerCharacter::GetSingleton();
-            auto* cc   = actor->GetActorRuntimeData().combatController;
+            // #4a (review F1 of 75e1f75): +0x42 is read through the controller: not while a Harbinger stop is pending.
+            auto* cc   = apmf::combatops::Pending(a_sub.id) ? nullptr : actor->GetActorRuntimeData().combatController;
             spdlog::info("[substrate] 0x{} MOVE pkg=0x{} proc={} ctrl+0x42={} proc+0x139={} speed={:.0f} "
                          "dist-to-pkg-goal={:.0f} (the player) movement-leaves-denied={} ignoring-bit reset by the engine ({}: "
                          "package restart {}, other {}){}",
@@ -2057,6 +2079,9 @@ namespace {
                     std::uint32_t st = 0;
                     if (FindSlot(a->GetFormID(), st) >= 0 && (st & (kStLive | kStReal)) == kStLive)
                         return RE::BSContainer::ForEachResult::kContinue;   // a holder under its substrate
+                    // #4a (review F1 of 75e1f75): a teammate whose Harbinger StopCombat is queued or running is ending
+                    // his fight; his controller is not read (the drain may be freeing it).
+                    if (apmf::combatops::Pending(a->GetFormID())) return RE::BSContainer::ForEachResult::kContinue;
                     auto* cc = a->GetActorRuntimeData().combatController;
                     if (!cc) return RE::BSContainer::ForEachResult::kContinue;
                     const auto th = cc->targetHandle.native_handle();
@@ -2075,6 +2100,7 @@ namespace {
                 MarkReal(sub.slot, kWhyParty, playerFight ? 0x14 : partyFoe);
                 continue;
             }
+            if (apmf::combatops::Pending(id)) continue;   // #4a (review F1 of 75e1f75)
             auto* a  = RE::TESForm::LookupByID<RE::Actor>(id);
             auto* cc = a ? a->GetActorRuntimeData().combatController : nullptr;
             auto* g  = cc ? cc->combatGroup : nullptr;
@@ -2240,6 +2266,9 @@ namespace {
             g_censusLastOpenMs = std::max(g_censusLastOpenMs, sub.openedMs);
             if (auto* h = RE::TESForm::LookupByID<RE::Actor>(id)) {
                 holders.push_back(h->GetPosition());
+                // #4a (review F1 of 75e1f75): a closing holder (its StopCombat queued or running) or any holder with a
+                // Harbinger stop pending: his group is not read through his controller.
+                if (sub.closing || apmf::combatops::Pending(id)) continue;
                 if (auto* cc = h->GetActorRuntimeData().combatController; cc && cc->combatGroup)
                     groups.push_back(cc->combatGroup);   // compared by address only, never dereferenced
             }
@@ -2275,6 +2304,9 @@ namespace {
             std::uint32_t hst = 0;
             if (FindSlot(a->GetFormID(), hst) >= 0 && (hst & kStLive))   // a live holder: not a bystander
                 return RE::BSContainer::ForEachResult::kContinue;
+            // #4a (review F1 of 75e1f75): a bystander whose Harbinger StopCombat (the anchor guard's) is queued or running:
+            // not read through his controller this pass; his row stays as last logged.
+            if (apmf::combatops::Pending(a->GetFormID())) return RE::BSContainer::ForEachResult::kContinue;
             auto*      acc = a->GetActorRuntimeData().combatController;
             const bool tA  = acc && aH != 0 && acc->targetHandle.native_handle() == aH;
             if (tA) anyAnchor = true;
@@ -3444,6 +3476,9 @@ namespace apmf::combatsubstrate {
         if (auto* pl = RE::ProcessLists::GetSingleton()) {
             std::vector<RE::Actor*> withAnchor;
             pl->ForEachHighActor([&](RE::Actor* a) {
+                // #4a (review F1 of 75e1f75): AfterLoad runs on an ordinary frame; an actor whose Harbinger StopCombat
+                // is already queued or running is not read through his controller (that stop ends his fight anyway).
+                if (a && apmf::combatops::Pending(a->GetFormID())) return RE::BSContainer::ForEachResult::kContinue;
                 auto* cc = a ? a->GetActorRuntimeData().combatController : nullptr;
                 auto* g  = cc ? cc->combatGroup : nullptr;
                 if (!g) return RE::BSContainer::ForEachResult::kContinue;

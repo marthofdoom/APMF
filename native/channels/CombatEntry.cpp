@@ -188,6 +188,7 @@ namespace {
         std::uint64_t   probeStartMs = 0;
         bool            resolved = false;   // the target resolved to an actor (Poll watches only these)
         bool            inFight = false;    // the last call entered and the controller was present
+        std::uint32_t   stopWaitGen = 0;    // review F1 of 75e1f75: the gen whose Enter last waited on a pending StopCombat
         bool            ending = false;     // Harbinger is releasing this claim
         std::string     endedReason;        // for the Release line
         // Review F1 (option a, marth: "the engine gave up = dropped"): targets whose entry the
@@ -277,6 +278,24 @@ namespace {
             spdlog::info("[ch.21] 0x{} entry for target 0x{} DROPPED (stale): a newer engage, a release or a "
                          "load landed before it ran.",
                          Hex(id), Hex(tf));
+            return;
+        }
+
+        // Review F1 of 75e1f75 (INVARIANTS #4a): a Harbinger StopCombat for this actor is queued or RUNNING on its own
+        // combat job. Actor::StartCombat on an actor in combat writes INTO the existing controller (AE 0x6B6D58 ->
+        // 0x559150 -> 0x83D2C0) while that drain may be freeing it (heap corruption), and a re-engage onto the same
+        // controller would then be stopped by the queued op's identity check. The call waits: re-posted to the next
+        // frame (the next Pump), re-validated there like any posted entry. Bounded by the op itself: it runs within a
+        // frame of game time, or Poll answers it within kUndrainedSec (core/CombatOps.h).
+        if (apmf::combatops::Pending(id)) {
+            if (it->second.stopWaitGen != gen) {
+                it->second.stopWaitGen = gen;
+                spdlog::info("[ch.21] 0x{} entry {} against 0x{} WAITS: a Harbinger StopCombat for this actor is still "
+                             "queued or running on its own combat update (INVARIANTS #4a); retried every frame until it "
+                             "ran.",
+                             Hex(id), what, Hex(tf));
+            }
+            apmf::mainthread::Post([id, tf, gen, what] { Enter(id, tf, gen, what); });
             return;
         }
 
@@ -577,7 +596,10 @@ namespace apmf::combatentry {
             }
             // PASSIVE PROBE: one flip line per entry. Dereferences the controller only while the window is
             // live and the pointer still equals the one read at Enter (a different pointer = it was replaced).
-            if (const auto eit = g_entries.find(sn.id); eit != g_entries.end() && eit->second.probeCc) {
+            // #4a (review F1 of 75e1f75): not while a Harbinger StopCombat for him is queued or running (the probe
+            // reads THROUGH the controller); it resumes the frame after.
+            if (const auto eit = g_entries.find(sn.id);
+                eit != g_entries.end() && eit->second.probeCc && !apmf::combatops::Pending(sn.id)) {
                 Entry& e = eit->second;
                 const auto* cur = owner ? owner->GetActorRuntimeData().combatController : nullptr;
                 if (why || cur != e.probeCc) {
@@ -1121,8 +1143,11 @@ namespace {
         // The actor's combat group, copied under the group's own READ lock (BSReadLockGuard, recursive for a
         // writer; nothing nested inside it): its targets other than `a_skip` and its members' handles. Game
         // thread; the controller is read here exactly as StopCombat below is called (APMF-B26).
+        // #4a (review F1 of 75e1f75): nothing is read while a Harbinger StopCombat for the actor is queued or running
+        // (the group is read THROUGH the controller the drain may be freeing): empty, as for an actor with no group.
         void ReadGroup(RE::Actor* a_actor, std::vector<RE::ActorHandle>* a_targets, std::vector<std::uint32_t>& a_members,
                        std::uint32_t a_skip) {
+            if (apmf::combatops::Pending(a_actor->GetFormID())) return;
             auto* cc = a_actor->GetActorRuntimeData().combatController;
             auto* g  = cc ? cc->combatGroup : nullptr;
             if (!g) return;
@@ -1147,6 +1172,13 @@ namespace {
         // "combat END QUEUED ...", "combat ENDED ..." (inline) or "NOT ended: <why>".
         std::string StopCombatRanked(RE::Actor* a_actor, APMF_API::Handle a_entry, RE::FormID a_dropped,
                                      RE::ActorHandle a_droppedH, apmf::combatops::Done a_after) {
+            const RE::FormID id = a_actor->GetFormID();
+            // Review F5 of 75e1f75: a StopCombat already queued or running on this actor's own combat update -- this
+            // caller's completion (its package re-pick) JOINS that op instead of being dropped. First, before any read
+            // through the controller (#4a).
+            if (apmf::combatops::Available() && apmf::combatops::Attach(id, a_after))
+                return "NOT queued again: a StopCombat is already queued or running on this actor's own combat update "
+                       "(this caller's completion joins it)";
             auto* cc = a_actor->GetActorRuntimeData().combatController;
             if (!cc) return "not in combat";
             if (!g_stopCombatOk.load(std::memory_order_relaxed))
@@ -1156,9 +1188,6 @@ namespace {
             if (!apmf::combatops::Available())
                 return fmt::format("NOT ended: the owner-thread StopCombat is not available ({})",
                                    apmf::combatops::UnavailableWhy());
-            const RE::FormID id = a_actor->GetFormID();
-            if (apmf::combatops::Pending(id))
-                return "NOT queued again: a StopCombat is already queued on this actor's own combat update";
             RE::FormID       pinT = 0;
             if (ClaimHandle(id, APMF_API::kIntent_TargetPin, &pinT) != APMF_API::kInvalidHandle && pinT != 0 &&
                 pinT != a_dropped)
@@ -1200,12 +1229,13 @@ namespace {
                 enforce = true;
             }
             if (!enforce) return "NOT ended: Engine outranks the entry on the Combat facet (APMF_Sources.ini)";
-            if (!apmf::combatops::StopCombat(a_actor, "the held engagement's ranked StopCombat", std::move(a_after)))
+            bool ranInline = false;   // review F5: from the call itself, never re-asked (a drain may finish in between)
+            if (!apmf::combatops::StopCombat(a_actor, "the held engagement's ranked StopCombat", std::move(a_after),
+                                             &ranInline))
                 return "NOT ended: the owner-thread StopCombat refused it (no controller at the request)";
             ++g_stopCombats;
-            return apmf::combatops::Pending(id)
-                       ? "combat END QUEUED (Actor::StopCombat, run on the actor's own combat update)"
-                       : "combat ENDED (Actor::StopCombat, inline inside the save)";
+            return ranInline ? "combat ENDED (Actor::StopCombat, inline inside the save)"
+                             : "combat END QUEUED (Actor::StopCombat, run on the actor's own combat update)";
         }
 
         // marth 2026-10-12: "And if the target is deemed \"not engaged\" combat is dropped immediately and previous
@@ -1233,7 +1263,8 @@ namespace {
             // entry on Y: StopCombatRanked then refuses, the entry's fight is still wanted).
             const APMF_API::Handle rankH  = (entryH != APMF_API::kInvalidHandle && entryT == a_target) ? entryH : pinH;
             const std::string      stop   = StopCombatRanked(a_actor, rankH, a_target, a_targetH, {});
-            const bool             ended  = stop.starts_with("combat END");   // ENDED (a save) or END QUEUED
+            const bool             ended  = stop.starts_with("combat END") ||   // ENDED (a save) or END QUEUED
+                                            stop.starts_with("NOT queued again");   // one already queued / running (F5)
             const char*            kWhy   = range ? "held engagement: not engaged (out of engage range, not hostile)"
                                                   : "held engagement: no path progress (anomaly)";
             const std::uint32_t    cause  = range ? APMF_API::kClaimEnd_NotEngaged : APMF_API::kClaimEnd_NoPathProgress;

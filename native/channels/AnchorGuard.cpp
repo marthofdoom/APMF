@@ -5,6 +5,7 @@
 #include "channels/CombatSubstrate.h"    // StateOf / AnyLive / AnchorId / RemoveAnchorFromGroup
 #include "core/Allowance.h"              // SeatVerified, IsRuntime1_7_104
 #include "core/Clock.h"
+#include "core/CombatOps.h"              // #4a: Pending -- no read through a controller a queued StopCombat may free
 #include "core/FacetAttribution.h"       // CallerBelow: StartCombat's caller (the seat's stack scan, as ch.22's)
 #include "core/Log.h"
 
@@ -245,7 +246,8 @@ namespace {
                 if (r.stopped) Repick(id);
             });
         if (stop.starts_with("combat ENDED")) stop += " + package re-pick";
-        else if (stop.starts_with("combat END QUEUED")) stop += " + a package re-pick once it ran";
+        else if (stop.starts_with("combat END QUEUED") || stop.starts_with("NOT queued again"))
+            stop += " + a package re-pick once it ran";   // F5 of 75e1f75: a joined op runs the re-pick too
         return stop;
     }
 
@@ -254,6 +256,10 @@ namespace {
         if (!a_actor || !a_anchor || a_actor == a_anchor) return;
         const RE::FormID id = a_actor->GetFormID();
         if (LiveHolder(id)) return;
+        // #4a (review F1 of 75e1f75): a Harbinger StopCombat for him is queued or running on his own combat job -- the
+        // reads below go THROUGH his controller, which that drain may be freeing. Skipped; the free ends his part in
+        // the group, and the next sweep sees whatever is left.
+        if (apmf::combatops::Pending(id)) return;
         auto& ls = g_leaks[id];
         if (!a_force && ls.lastTryMs != 0 && a_now - ls.lastTryMs < kRetryMs) return;
         auto* cc = a_actor->GetActorRuntimeData().combatController;
@@ -484,7 +490,10 @@ namespace apmf::anchorguard {
     }
 
     std::vector<RE::ActorHandle> GroupMembers(RE::Actor* a_holder) {
-        auto* cc = a_holder ? a_holder->GetActorRuntimeData().combatController : nullptr;
+        // #4a (review F1 of 75e1f75): not through a controller a pending Harbinger StopCombat may be freeing; the close
+        // then has no member list to treat and the sweep (which runs while any holder is live, plus its tail) does it.
+        if (!a_holder || apmf::combatops::Pending(a_holder->GetFormID())) return {};
+        auto* cc = a_holder->GetActorRuntimeData().combatController;
         if (!cc || !cc->combatGroup) return {};
         return ReadGroup(cc->combatGroup, 0, true).members;
     }
@@ -538,6 +547,9 @@ namespace apmf::anchorguard {
         std::vector<RE::FormID> leaks;
         pl->ForEachHighActor([&](RE::Actor* a) {
             if (!a || a == anchor) return RE::BSContainer::ForEachResult::kContinue;
+            // #4a (review F1 of 75e1f75): a Harbinger StopCombat for him is queued or running -- nothing is read
+            // through his controller this sweep (his clean history and his group are left as they were).
+            if (apmf::combatops::Pending(a->GetFormID())) return RE::BSContainer::ForEachResult::kContinue;
             auto* cc = a->GetActorRuntimeData().combatController;
             if (!cc) {
                 if (!g_clean.empty()) g_clean.erase(a->GetFormID());   // out of combat: the history ends with the controller

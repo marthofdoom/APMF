@@ -1132,11 +1132,28 @@ member's UpdateCombat, the 0xE4 layers and every combat seat) may run while it d
   (group, then the CombatManager's +0x18 lock), as the engine's group update erases a target.
 - `Actor::StartCombat` stays on main: the engine serialises its whole body on a global spinlock (AE `0x6B6A85` ..
   `0x6B6D88`) and calls it from its AI jobs in parallel. A reference's cell move (the anchor's MoveTo) is main's.
+  BUT that spinlock is taken only by StartCombat's own caller chain, and StopCombat takes none: on an actor already
+  in combat StartCombat writes INTO the existing controller (AE `0x6B6D58` -> `0x559150` -> `0x83D2C0`). So a
+  Harbinger StartCombat (ch.21 `Enter`, the substrate's `Enter`) WAITS, re-tried the next frame, while
+  `combatops::Pending(actor)` (review F1 of 75e1f75).
+- **NOTHING ON MAIN DEREFERENCES AN ACTOR'S CONTROLLER WHILE A HARBINGER STOP FOR THAT ACTOR IS PENDING OR RUNNING
+  (review F1 of 75e1f75).** `combatops::Pending(id)` is true from the decision until the drain's StopCombat RETURNED
+  (the op stays queued, marked running, while it frees). Every Harbinger main-thread read THROUGH an actor's
+  controller (its group, targets, members, `targetHandle`, `state`, `+0x42` / `+0x43`, `Actor::IsInCombat`, which
+  reads `+0x43`) checks it first and skips that actor (or reads the pointer only: `combatops::InCombat`). The
+  readers, 2026-11-16: `AnchorGuard.cpp` Treat / Sweep / GroupMembers; `CombatSubstrate.cpp` BystanderCensus (also
+  skips a closing holder), PartyPoll (teammates and holders), DropSub's anchor removal, Serve's MOVE trace, AfterLoad;
+  `CombatEntry.cpp` the hold Poll's controller probe and `ReadGroup` (StopCombatRanked joins a pending op first, F5);
+  `CombatStyle.cpp` EngineRefresh; the main-thread `IsInCombat` calls (`CombatMove.cpp`, `CombatMoveBlock.cpp`,
+  `Awareness.cpp`, `Travel.cpp`, `CombatApproach.cpp`). The save-path readers (`RestoreBeforeSave`'s music debt and
+  anchor clean, ch.24's area restore) run after `FlushForSave`, where nothing is pending by construction; the 0xE4 /
+  combat-thread readers run on the actor's own update after the drain. Reading the controller POINTER (presence,
+  identity compare) is allowed. A NEW main-thread reader through a controller must add the same skip.
 - The P0 probe (`core/Hook.h`, `[overlap]` every 60 s) samples every one of these main-thread calls against the
   NPC 0xAD and 0xE4 counters, so the field shows what still runs beside them.
 - Harbinger's main-thread READS of another actor's controller (the bystander census, the anchor guard's sweep,
-  `HasController`) remain the class APMF-B26 accepted: the engine's own frees on the actor's own update (and a
-  script's / a kill's on any thread) can meet them; they read the pointer or read under the group's read lock.
+  `HasController`) remain the class APMF-B26 accepted ONLY against the engine's own frees (on the actor's own update,
+  and a script's / a kill's on any thread); against Harbinger's own StopCombat they are closed by the rule above.
 
 **#5 — Release restores what engage changed.** Any channel that writes engine state
 (AVs, the spell slot, weapon state, AI-driven flag) must capture the prior value at

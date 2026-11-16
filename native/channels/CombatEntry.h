@@ -106,7 +106,9 @@ namespace apmf::combatentry::hold {
     // combat update (core/CombatOps.h, stability H1 / APMF-B26), inline only inside a save (combatops::SyncScope).
     // `after` runs on MAIN once it ran or was skipped (Result::stopped says which): a package re-pick belongs
     // there, never right after this returns. Returns what it did: "combat END QUEUED (...)", "combat ENDED (...)"
-    // (inline, a save) or "NOT ended: <why>" / "NOT queued again: <why>" (then `after` is never called). GAME
+    // (inline, a save), "NOT queued again: <why>" (a StopCombat was already queued or running for the actor:
+    // `after` JOINS that op and runs with its result, review F5 of 75e1f75) or "NOT ended: <why>" (then `after` is
+    // never called). GAME
     // THREAD. The combat substrate's empty-fight end (marth 2026-10-13, F6) and the anchor guard.
     std::string StopCombatRanked(RE::Actor* actor, APMF_API::Handle claim, RE::FormID dropped,
                                  RE::ActorHandle droppedH, apmf::combatops::Done after = {});

@@ -65,20 +65,21 @@ namespace apmf::hook {
             ~NpcUpdateCount() { g_inNpcUpdate.fetch_sub(1, std::memory_order_relaxed); }
         };
 
-        // ---- M5/H (stability audit 2026-11-16): the per-frame hooks' exception guard. An exception that
-        // escapes Harbinger's part of a hook would unwind through the engine's own update (no handler there:
-        // a CTD whose stack points at the engine). Each stage is caught where it enters Harbinger, logged
-        // ERROR naming the stage, and that stage is STOPPED for the rest of the session -- never retried,
-        // never silently skipped (principle 7): the log says exactly what stopped. The engine's original
-        // always runs (it is outside the try). C++ exceptions only (/EHsc): an access violation is not one.
-        std::atomic<bool> g_actorStageOff{ false };   // Arbiter::OnActorUpdate (every NPC)
-        std::atomic<bool> g_frameStageOff{ false };   // Arbiter::OncePerFrame (the drain, the pump, every poll)
+        // ---- M5/H (stability audit 2026-11-16; review F2 of 75e1f75): the per-frame hooks' exception guard. An
+        // exception that escapes Harbinger's part of a hook would unwind through the engine's own update (no handler
+        // there: a CTD whose stack points at the engine). The guards that STOP something are per subsystem, inside
+        // Arbiter::OncePerFrame / OnActorUpdate (core/Arbiter.cpp): only the subsystem that threw stops; ControlMap::
+        // Drain and mainthread::Pump keep running (if one of them throws, every claim is released once). These two
+        // are only the BACKSTOP for an exception that escapes those guards (it should not exist): ERROR once per
+        // seat, nothing is stopped, the stage runs again next time. The engine's original always runs (it is outside
+        // the try). C++ exceptions only (/EHsc): an access violation is not one.
+        std::atomic<bool> g_actorBackstopLogged{ false };   // Arbiter::OnActorUpdate (every NPC)
+        std::atomic<bool> g_frameBackstopLogged{ false };   // Arbiter::OncePerFrame
 
-        void StageFault(std::atomic<bool>& a_off, const char* a_stage, const char* a_what) {
-            if (a_off.exchange(true)) return;
-            spdlog::error("[hook] EXCEPTION in {} ({}) -- that stage is STOPPED for the rest of this session (no retry, "
-                          "never masked): the engine's own update still runs, Harbinger's part of it does not. Every "
-                          "claim it would serve now stands still. Report this log.",
+        void StageFault(std::atomic<bool>& a_logged, const char* a_stage, const char* a_what) {
+            if (a_logged.exchange(true)) return;
+            spdlog::error("[hook] EXCEPTION escaped the per-subsystem guards of {} ({}) -- nothing is stopped by this "
+                          "backstop (logged once per seat); the engine's own update still runs. Report this log.",
                           a_stage, a_what ? a_what : "a non-standard exception");
         }
 
@@ -86,14 +87,12 @@ namespace apmf::hook {
             static void thunk(RE::Actor* a_this, float a_delta) {
                 const NpcUpdateCount counted;           // P0: this thread is inside an NPC's update
                 func(a_this, a_delta);                  // original AI tick FIRST
-                if (!g_actorStageOff.load(std::memory_order_relaxed)) {
-                    try {
-                        apmf::Arbiter::Get().OnActorUpdate(a_this);
-                    } catch (const std::exception& e) {
-                        StageFault(g_actorStageOff, "the Character 0xAD seat (Arbiter::OnActorUpdate)", e.what());
-                    } catch (...) {
-                        StageFault(g_actorStageOff, "the Character 0xAD seat (Arbiter::OnActorUpdate)", nullptr);
-                    }
+                try {
+                    apmf::Arbiter::Get().OnActorUpdate(a_this);   // per-sub-stage guards inside (core/Arbiter.cpp)
+                } catch (const std::exception& e) {
+                    StageFault(g_actorBackstopLogged, "the Character 0xAD seat (Arbiter::OnActorUpdate)", e.what());
+                } catch (...) {
+                    StageFault(g_actorBackstopLogged, "the Character 0xAD seat (Arbiter::OnActorUpdate)", nullptr);
                 }
 
                 // [threadcheck] -- see block comment above. Relaxed load; compares
@@ -121,14 +120,13 @@ namespace apmf::hook {
                 // per-NPC hot path (any thread) then reads that snapshot lock-free
                 // (INVARIANTS #12/#13 -- RCU model, core/ControlMap.h).
                 Sample(Site::kPumpBegin);   // P0
-                if (!g_frameStageOff.load(std::memory_order_relaxed)) {
-                    try {
-                        apmf::Arbiter::Get().OncePerFrame(a_delta);   // the engine's own world-time frame step (Arbiter.h)
-                    } catch (const std::exception& e) {
-                        StageFault(g_frameStageOff, "the PlayerCharacter 0xAD seat (Arbiter::OncePerFrame)", e.what());
-                    } catch (...) {
-                        StageFault(g_frameStageOff, "the PlayerCharacter 0xAD seat (Arbiter::OncePerFrame)", nullptr);
-                    }
+                try {
+                    // the engine's own world-time frame step (Arbiter.h); per-subsystem guards inside (core/Arbiter.cpp)
+                    apmf::Arbiter::Get().OncePerFrame(a_delta);
+                } catch (const std::exception& e) {
+                    StageFault(g_frameBackstopLogged, "the PlayerCharacter 0xAD seat (Arbiter::OncePerFrame)", e.what());
+                } catch (...) {
+                    StageFault(g_frameBackstopLogged, "the PlayerCharacter 0xAD seat (Arbiter::OncePerFrame)", nullptr);
                 }
                 Sample(Site::kPumpEnd);     // P0
                 OverlapHeartbeat();

@@ -64,6 +64,14 @@
 // THREADING. StopCombat / Poll / FlushForSave / ResetAll / SyncScope: MAIN thread. DrainFor: the
 // actor's own UpdateCombat job (any worker, or main when main helps run jobs). Pending: any thread.
 // One leaf mutex guards the queue (no engine call, no log, no other lock under it).
+//
+// QUEUED, RUNNING, DONE (review F1 / F3 of 75e1f75). The drain marks the entry RUNNING under the mutex and leaves
+// it in the queue while Actor::StopCombat runs; it is erased (by its seq) only after StopCombat returned, and its
+// completions -- every one attached meanwhile -- are posted then. So Pending() is true from the decision until the
+// free is over, and main's #4a readers (INVARIANTS #4a) skip the actor for that whole time. Main never takes a
+// running entry: Poll skips it (a running op is not "gone" and not "undrained"), FlushForSave leaves it. A drain
+// that throws still answers its op ("not stopped" unless Execute returned); one that dies without answering is
+// STUCK after kUndrainedSec of unpaused game time and Poll answers "not stopped" with an ERROR.
 // ============================================================================
 
 namespace RE {
@@ -97,14 +105,29 @@ namespace apmf::combatops {
     const char* UnavailableWhy();   // never null
 
     // Queue Actor::StopCombat for `a_actor` on its own combat update (see the header). MAIN thread. Coalesces
-    // with a pending op for the same actor (one StopCombat, every completion runs). `a_done` runs on MAIN once
-    // the op ran, was skipped or was cancelled: posted (apmf::mainthread) after a drain, inline when main ran it
-    // (inside a SyncScope -- then BEFORE this returns -- or from Poll). Returns false when not available or the
-    // actor has no controller (nothing queued, `a_done` not called).
-    bool StopCombat(RE::Actor* a_actor, const char* a_who, Done a_done = {});
+    // with a pending op for the same actor, queued OR running (one StopCombat, every completion runs; review F5
+    // of 75e1f75). `a_done` runs on MAIN once the op ran, was skipped or was cancelled: posted (apmf::mainthread)
+    // after a drain, inline when main ran it (inside a SyncScope -- then BEFORE this returns -- or from Poll).
+    // `a_inline` (optional) is set true when it ran inline here (its completion already ran), false when it was
+    // queued or joined one: the caller's log says which without re-asking Pending (a drain may finish in between).
+    // Returns false when not available, or no op is pending and the actor has no controller (nothing queued,
+    // `a_done` not called).
+    bool StopCombat(RE::Actor* a_actor, const char* a_who, Done a_done = {}, bool* a_inline = nullptr);
 
-    // A StopCombat is queued for this actor and has not run. Any thread.
+    // Attach `a_done` to the op pending for this actor (queued or running), without a new decision. False = none
+    // is pending (nothing attached). MAIN thread. (Review F5 of 75e1f75: the held engagement's "already queued"
+    // path keeps its caller's completion.)
+    bool Attach(RE::FormID a_actor, Done a_done);
+
+    // A StopCombat Harbinger decided for this actor is QUEUED or RUNNING (review F1 of 75e1f75: the entry stays
+    // until the drain's Actor::StopCombat RETURNED). INVARIANTS #4a: while this is true nothing on main reads
+    // THROUGH this actor's combat controller (its group, its target, its state, Actor::StartCombat, IsInCombat):
+    // the drain may be freeing it on a combat job right now. The controller POINTER may still be read. Any thread.
     bool Pending(RE::FormID a_actor);
+
+    // Actor::IsInCombat (Character slot 0xE3 reads controller+0x43: AE 0x6B6DD0, SE 0x625660, 1.7.104 0x6C9850)
+    // made #4a-safe for MAIN: while a stop is Pending, the answer is "it still has a controller" (the pointer only).
+    bool InCombat(RE::Actor* a_actor);
 
     // How a result came about, for a log line.
     const char* HowText(How a_how);
