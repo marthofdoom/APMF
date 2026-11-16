@@ -1,4 +1,5 @@
 #include "PCH.h"
+#include "core/CombatOps.h"   // #4a: no read through a controller a queued Harbinger StopCombat may free
 #include "core/Allowance.h"   // SeatVerified(): the mit-3.7 F1 self-check gate (ABI v12 gate probe)
 #include "core/Clock.h"
 #include "core/ControlMap.h"
@@ -3010,7 +3011,7 @@ namespace apmf::travel {
             // (field 2026-10-19: kLeg_CombatCancelled within ms of every substrate open).
             // Suppressing() is false once the REAL bit fires (a real fight, or the party's),
             // so real combat still cancels.
-            const bool inCombat   = a->IsInCombat();
+            const bool inCombat   = apmf::combatops::InCombat(a);   // #4a (review F1 of 75e1f75): IsInCombat reads controller+0x43
             const bool subHeld    = inCombat && apmf::combatsubstrate::Suppressing(id);
             if (subHeld && !leg.substrateLogged) {
                 leg.substrateLogged = true;

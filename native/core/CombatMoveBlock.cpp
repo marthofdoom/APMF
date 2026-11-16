@@ -1,4 +1,5 @@
 #include "PCH.h"
+#include "core/CombatOps.h"   // #4a: no read through a controller a queued Harbinger StopCombat may free
 #include "core/CombatMove.h"
 #include "core/CombatMove_internal.h"
 
@@ -223,7 +224,7 @@ namespace apmf::combatmove {
             if (actor->IsPlayerRef()) return refuse(APMF_API::kCombatMoveWhy_ActorGone, 0, " (the player is never moved)");
             if (const char* why = CannotGuard(actor))
                 return refuse(APMF_API::kCombatMoveWhy_NotReady, 0, std::format(" ({})", why));
-            if (actor->IsInCombat()) sent.info |= APMF_API::kCombatMoveInfo_InCombat;
+            if (apmf::combatops::InCombat(actor)) sent.info |= APMF_API::kCombatMoveInfo_InCombat;
             sent.info |= APMF_API::kCombatMoveInfo_WeaponOut;
 
             // A combat substrate's allow-list leaves the actor nothing but its cast: no guard under it.

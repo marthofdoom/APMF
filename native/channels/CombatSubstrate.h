@@ -123,7 +123,8 @@ namespace apmf::combatsubstrate {
 
     // The anchor out of `a_g`'s targets through the engine's own CombatGroup::RemoveTarget (the verified row
     // Substrate.CombatGroup.RemoveTarget; DropSub / AfterLoad use the same call). channels/AnchorGuard.cpp's
-    // leak sweep. GAME THREAD, a group read from a live controller this frame.
+    // leak sweep. GAME THREAD, a group read from a live controller this frame. Made under the group's WRITE lock
+    // (stability H1, 2026-11-16: the engine erases a group target only under it, INVARIANTS #4a).
     void RemoveAnchorFromGroup(RE::CombatGroup* a_g);
 
     // channels/AnchorGuard.cpp's leak sweep (the anchor-leak fix Q92, 2026-11-11): the held holder `a_holder` shares

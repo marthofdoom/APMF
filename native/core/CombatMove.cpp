@@ -1,4 +1,5 @@
 #include "PCH.h"
+#include "core/CombatOps.h"   // #4a: no read through a controller a queued Harbinger StopCombat may free
 #include "core/CombatMove.h"
 #include "core/CombatMove_internal.h"
 
@@ -326,7 +327,7 @@ namespace apmf::combatmove {
             if (actor->GetActorRuntimeData().boolFlags.all(RE::Actor::BOOL_FLAGS::kAttackingDisabled))
                 return refuse(APMF_API::kCombatMoveWhy_NotReady, 0, " (attacking is disabled on the actor)");
 
-            if (actor->IsInCombat()) sent.info |= APMF_API::kCombatMoveInfo_InCombat;
+            if (apmf::combatops::InCombat(actor)) sent.info |= APMF_API::kCombatMoveInfo_InCombat;
             if (state->IsWeaponDrawn()) sent.info |= APMF_API::kCombatMoveInfo_WeaponOut;
 
             // A named target is checked and MEASURED, never aimed at.

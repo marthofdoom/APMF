@@ -40,7 +40,11 @@ namespace apmf::mainthread {
     // (called from Arbiter::OncePerFrame, never from OnActorUpdate). A task
     // Post()'d DURING this Pump() call runs on the NEXT Pump() -- this drains a
     // local swap of the queue, never the live one, so it cannot loop forever on
-    // a self-reposting chain and cannot re-enter mid-drain.
+    // a self-reposting chain and cannot re-enter mid-drain. A task that THROWS is
+    // caught by itself (an ERROR line, at most one per 10 s with the count of the
+    // rest) and every other task of the batch still runs (review F2 of 75e1f75: one
+    // posted task used to take the rest of its batch with it -- a lost completion
+    // leaves a substrate close in flight for good).
     void Pump();
 
     // Drop every queued task WITHOUT running it; returns how many were dropped.

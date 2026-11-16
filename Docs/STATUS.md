@@ -1,8 +1,33 @@
 # APMF STATUS — living handoff (start here)
 
-Updated 2026-11-15 (proxy save integrity fix branch, below). Current version **v0.20.2** (release prep 2026-11-14, ABI v45 unchanged, a small real release: the ch.3 sneak release confirm, see CHANGELOG) / previously **v0.20.1** (cut 2026-11-13, ABI v45 unchanged, a REAL release, the first since v0.17.0, cumulative over v0.18.0 to v0.20.0 plus the seat 0 hostile-effect fix, see CHANGELOG) / previously **v0.20.0** (cut 2026-11-12, ABI v45) and **v0.19.0** (cut 2026-11-10, ABI v36) and **v0.18.0** (cut 2026-11-09, ABI v35, PRERELEASE) and **v0.17.0** (cut 2026-11-08, ABI v33) and **v0.16.0** (cut 2026-11-02, ABI v32) and **v0.15.2** (cut 2026-10-28, ABI v31) and **v0.15.1** (cut 2026-10-26, ABI v30) and **v0.15.0** (cut 2026-10-25, ABI v30) and **v0.14.0** (cut 2026-10-21, ABI v28) and **v0.13.1** (cut 2026-10-13, ABI v24) and **v0.13.0** (release cut 2026-10-12; see RELEASED v0.13.0 below; prior v0.12.0 PUBLISHED release, ABI v21). The current state of the build: what's
+Updated 2026-11-16 (stability H1 fix branch, below; proxy save integrity fix branch after it). Current version **v0.20.2** (release prep 2026-11-14, ABI v45 unchanged, a small real release: the ch.3 sneak release confirm, see CHANGELOG) / previously **v0.20.1** (cut 2026-11-13, ABI v45 unchanged, a REAL release, the first since v0.17.0, cumulative over v0.18.0 to v0.20.0 plus the seat 0 hostile-effect fix, see CHANGELOG) / previously **v0.20.0** (cut 2026-11-12, ABI v45) and **v0.19.0** (cut 2026-11-10, ABI v36) and **v0.18.0** (cut 2026-11-09, ABI v35, PRERELEASE) and **v0.17.0** (cut 2026-11-08, ABI v33) and **v0.16.0** (cut 2026-11-02, ABI v32) and **v0.15.2** (cut 2026-10-28, ABI v31) and **v0.15.1** (cut 2026-10-26, ABI v30) and **v0.15.0** (cut 2026-10-25, ABI v30) and **v0.14.0** (cut 2026-10-21, ABI v28) and **v0.13.1** (cut 2026-10-13, ABI v24) and **v0.13.0** (release cut 2026-10-12; see RELEASED v0.13.0 below; prior v0.12.0 PUBLISHED release, ABI v21). The current state of the build: what's
 shipped, what's probe-gated, what's next. Keep this current in the SAME change as any
 build/finding/workflow change.
+
+## FIX 2026-11-16 -- STABILITY H1 / H2 / H4 / M5 + the P0 overlap probe, branch `fix/stability-h1`, NOT merged, NOT field run
+
+From the 2026-11-16 stability audit (MFO + Harbinger), rows P0, H1, H2, H4 and M5 (Harbinger half). No ABI change
+(`APMF_API.h` untouched), no new address id or seat row: the drain rides the existing 0xE4 layer 0. One new file pair,
+`native/core/CombatOps.{h,cpp}`.
+- **P0, the overlap probe (passive):** `[overlap]` every 60 s, zeros included: at the pump's begin / end and at every
+  Harbinger main-thread combat call (StartCombat, RemoveTarget, a StopCombat made on main, the anchor move, the save
+  flush), was an NPC Actor::Update (0xAD) or an UpdateCombat (0xE4) running on another thread. It grades H1 in the field.
+- **H1 (APMF-B26, INVARIANTS #4a):** the disassembly shows the main pump is NOT quiescent against the NPC updates (the
+  frame job graph is kicked before the player update; the player update signals its mid-point event before the pump).
+  Every Harbinger StopCombat (substrate close, empty-fight drop, held engagement's range rule, anchor guard, load clean)
+  is now QUEUED and made on the actor's own UpdateCombat, before the chain (`core/CombatOps.h`); the substrate close
+  waits for it (the denies stand until the controller is gone). Inside a save: flushed inline. Every RemoveTarget runs
+  under the group's write lock. StartCombat and the anchor MoveTo stay on main (engine-serialised / main-only).
+  `[combatops]` 60 s line. The substrate now needs `[TargetPin] bTargetPin=1` (the queue rides 0xE4 layer 0).
+- **H2 (APMF-B48):** `castproxy::PreLoadUnteach` at kPreLoadGame (after ReleaseAll, before ResetAll) un-teaches every
+  pool form from the process lists, the player and every current / earlier slot owner.
+- **H4:** the AVOV reader skips an actor-value index >= 164 (one WARN).
+- **M5 (Harbinger):** the two per-frame hook stages run in try/catch; an exception logs ERROR naming the stage and stops it.
+- **Field checks:** (1) `[overlap]` lines across a looting + a combat session (any nonzero at a Harbinger combat call
+  grades H1 SEV-2 and also bears on MFO M1-M4); (2) substrate closes: `CLOSE ... StopCombat called on the actor's own
+  combat update, N ms after the close was decided`, `[combatops]` with UNDRAINED 0; (3) a save during a substrate:
+  `[combatops] save:` and `CLOSE ... inline on main inside the save`; (4) load another save with a live proxy claim:
+  `[castproxy] pre-load un-teach`.
 
 ## FIX 2026-11-15 -- PROXY SAVE INTEGRITY (INVARIANTS #19), branch `fix/proxy-save-integrity`, NOT merged, NOT field run
 

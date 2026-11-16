@@ -1,5 +1,6 @@
 #pragma once
 #include "APMF_API.h"
+#include "core/CombatOps.h"   // H1: the owner-thread StopCombat's completion type
 
 #include <string>
 
@@ -101,10 +102,16 @@ namespace apmf::combatentry::hold {
     // The held engagement's RANKED StopCombat (Character slot 0xE5, the vtable identity checked), for a
     // caller other than the range rule: not while another live group target attacks the party, not when a
     // winning ch.20 pin or ch.21 entry names another target, not when another client's ch.24 claim or Engine outranks
-    // `claim` on the Combat facet. Returns what it did ("combat ENDED (Actor::StopCombat)" or "NOT ended:
-    // <why>"). GAME THREAD (APMF-B26). The combat substrate's empty-fight end (marth 2026-10-13, F6).
+    // `claim` on the Combat facet. The ranking is decided here; the StopCombat itself is QUEUED onto the actor's own
+    // combat update (core/CombatOps.h, stability H1 / APMF-B26), inline only inside a save (combatops::SyncScope).
+    // `after` runs on MAIN once it ran or was skipped (Result::stopped says which): a package re-pick belongs
+    // there, never right after this returns. Returns what it did: "combat END QUEUED (...)", "combat ENDED (...)"
+    // (inline, a save), "NOT queued again: <why>" (a StopCombat was already queued or running for the actor:
+    // `after` JOINS that op and runs with its result, review F5 of 75e1f75) or "NOT ended: <why>" (then `after` is
+    // never called). GAME
+    // THREAD. The combat substrate's empty-fight end (marth 2026-10-13, F6) and the anchor guard.
     std::string StopCombatRanked(RE::Actor* actor, APMF_API::Handle claim, RE::FormID dropped,
-                                 RE::ActorHandle droppedH);
+                                 RE::ActorHandle droppedH, apmf::combatops::Done after = {});
     // Is that StopCombat usable (the hold enabled on an exact runtime and its Character vtable row
     // verified)? The combat substrate refuses to install without it (round-2 closing item 3b). Any thread.
     bool StopCombatAvailable();

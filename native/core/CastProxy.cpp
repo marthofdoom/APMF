@@ -1058,6 +1058,60 @@ namespace apmf::castproxy {
                      directRefs, castersLeft, effects, unresolved);
     }
 
+    void PreLoadUnteach() {
+        if (MintedCount() == 0) return;   // no runtime form exists: nothing the next world could carry
+        const bool    direct = apmf::allowance::RuntimeSupported();
+        std::uint32_t actors = 0, holders = 0, refs = 0, directRefs = 0, castersLeft = 0;
+        for (auto& ap : SweepActors()) {   // process lists + the player + every current or earlier slot owner
+            auto* actor = ap.get();
+            ++actors;
+            Tally                       before;
+            std::vector<RE::SpellItem*> forms;
+            VisitSpellRefs(actor, Clear::kCount, before, [&](const RE::TESForm* a_p, Ref) {
+                const int i = SlotOf(a_p);
+                if (i < 0) return false;
+                if (std::find(forms.begin(), forms.end(), g_slot[i].form) == forms.end()) forms.push_back(g_slot[i].form);
+                return true;
+            });
+            if (before.Total() == 0) continue;
+            ++holders;
+            refs += before.Total();
+            for (auto* f : forms) {   // the engine's own paths, as Unref
+                actor->DeselectSpell(f);
+                actor->RemoveSpell(f);
+            }
+            Tally left;
+            VisitSpellRefs(actor, direct ? Clear::kLivePool : Clear::kCount, left,
+                           [](const RE::TESForm* a_p, Ref) { return SlotOf(a_p) >= 0; });
+            const char* name = actor->GetName();
+            if (left.Total() == 0) {
+                spdlog::info("[castproxy] pre-load un-teach: 0x{} \"{}\" held {} pool form(s) ({}) -- cleared by "
+                             "DeselectSpell + RemoveSpell.",
+                             apmf::log::Hex(actor->GetFormID()), name ? name : "", forms.size(), before.Text());
+            } else if (direct) {
+                directRefs += left.Total() - left.casterLeft;
+                castersLeft += left.casterLeft;
+                spdlog::warn("[castproxy] pre-load un-teach: 0x{} \"{}\" held {} pool form(s) ({}); DeselectSpell + "
+                             "RemoveSpell LEFT {} -- cleared by direct member write{}.",
+                             apmf::log::Hex(actor->GetFormID()), name ? name : "", forms.size(), before.Text(), left.Text(),
+                             left.casterLeft != 0 ? fmt::format(" ({} MID-CAST caster(s) LEFT: the InterruptCast row did not "
+                                                                "verify)", left.casterLeft)
+                                                  : std::string());
+            } else {
+                spdlog::error("[castproxy] pre-load un-teach: 0x{} \"{}\" STILL holds a pool form after DeselectSpell + "
+                              "RemoveSpell ({}), and the direct repair is refused on this runtime -- the load repair is the "
+                              "backstop.",
+                              apmf::log::Hex(actor->GetFormID()), name ? name : "", left.Text());
+            }
+        }
+        spdlog::info("[castproxy] pre-load un-teach (kPreLoadGame, before the pool reset; on the Drain thread: {}): {} "
+                     "actor(s) checked (the process lists, the player, every current or earlier slot owner) against {} "
+                     "minted pool form(s) [{}] -- {} spell-slot reference(s) on {} actor(s) un-taught ({} by direct write, {} "
+                     "mid-cast caster(s) LEFT).",
+                     apmf::hook::OnMainThread() ? "yes" : "NO", actors, MintedCount(), PoolFormsText(), refs, holders,
+                     directRefs, castersLeft);
+    }
+
     bool SaveWrittenCheck() {
         const bool swept = g_sweptForSave;
         g_sweptForSave   = false;

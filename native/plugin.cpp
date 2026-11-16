@@ -9,6 +9,7 @@
 #include "core/AvLedger.h"
 #include "core/MainThread.h"
 #include "core/CastProxy.h"
+#include "core/CombatOps.h"        // H1: the owner-thread StopCombat queue
 #include "channels/Stance.h"         // ch.3 passive save / load probes (2026-11-15)
 #include "core/CastSeats.h"
 #include "core/ReanimateSeat.h"
@@ -124,6 +125,7 @@ namespace {
         // ch.22: same, for the re-entry deny entries of the outgoing world.
         apmf::reentrydeny::ResetAll("revert/new game");
         apmf::combatsubstrate::ResetAll("revert/new game");   // S2a: the outgoing world's substrates (no engine call)
+        apmf::combatops::ResetAll("revert/new game");   // H1: queued StopCombats dropped unrun (completions: the Discard below)
         // ch.23 pursuit leash (ABI v16): same, for the leash entries (anchor handles of the outgoing world).
         apmf::actiongate::ResetLeash("revert/new game");
         // ch.24 combat approach (ABI v19): same, for its claim entries and the area records of the
@@ -224,6 +226,9 @@ namespace {
                                                   // exact 1.6.1170 / 1.5.97, VR-refused, [Idle] bIdleV2,
                                                   // SeatVerified on SetupSpecialIdle. A refusal REFUSES kIntent_Idle claims
                                                   // that carry a form; the form-free v1 idle is not gated.
+            apmf::combatops::Install();          // H1 (2026-11-16): the owner-thread StopCombat queue (core/CombatOps.h).
+                                                 // Rides 0xE4 layer 0 (installed at plugin load). BEFORE the held
+                                                 // engagement and the substrate: both ask combatops::Available().
             apmf::combatentry::hold::Install();  // THE HELD ENGAGEMENT (2026-10-12, INVARIANTS #0 (i)):
                                                   // [EngagementHold]; the two knowledge seats (write_call<5>
                                                   // post-call on CombatGroup::UpdateTargetDetection, exact
@@ -405,6 +410,12 @@ namespace {
             // every channel's claims (including these) through the generic
             // ControlMap path; unlike the old probes, these are real channels.
             apmf::Arbiter::Get().ReleaseAll("kPreLoadGame");
+            // APMF-B48 (2026-11-16): ReleaseAll's proxy Unrefs are posted and then Discard()ed unrun below, so
+            // nothing would un-teach a proxy still taught when the load began. A persistent follower outside the
+            // incoming save's process lists would carry the purged 0xFF form into the new world. Un-teach every
+            // current AND earlier slot owner (and every process-list actor) HERE, synchronously, while the pool
+            // still knows its forms and owners -- BEFORE ResetAll forgets them (INVARIANTS #19).
+            apmf::castproxy::PreLoadUnteach();
             // ReleaseAll drops every cast claim (each posts its own proxy Unref, which
             // the Discard() below drops unrun); this resets the pool itself and nulls its 0xFF forms
             // after clearing their borrowed source Effect*, so the incoming load's form
@@ -429,6 +440,7 @@ namespace {
             // ch.22: same -- no re-entry deny crosses the load.
             apmf::reentrydeny::ResetAll("kPreLoadGame");
             apmf::combatsubstrate::ResetAll("kPreLoadGame");   // S2a: forget every substrate (no co-save)
+            apmf::combatops::ResetAll("kPreLoadGame");   // H1: queued StopCombats dropped unrun (completions: the Discard below)
             apmf::attackselect::ResetAll("kPreLoadGame");   // ch.18: no attack mix / window crosses the load
             apmf::projectileaim::ResetAll("kPreLoadGame");  // ch.29: no shot window / pending shot crosses the load
             apmf::potionallowance::ResetAll("kPreLoadGame");  // ch.30: no declaration / counter crosses the load
@@ -463,7 +475,16 @@ namespace {
                 spdlog::info("[mainthread] kPreLoadGame -- dropped {} queued task(s) at the load boundary.",
                              dropped);
             break;
-        case SKSE::MessagingInterface::kSaveGame:
+        case SKSE::MessagingInterface::kSaveGame: {
+            // H1 (2026-11-16, core/CombatOps.h): FIRST, every StopCombat still queued for an actor's own combat
+            // update runs here, inline, on this thread: a queued free would miss the write. Then every restore
+            // pass below runs inside a SyncScope, so a StopCombat it decides (a substrate close, the empty-fight
+            // end, the anchor guard) runs inline too and the record the engine writes next has no controller.
+            // The save call runs where the frame's job graph is idle (Main::Update AE 0x645F3A / 0x645F0E, after
+            // the graph's events are reset at 0x645EDE and before the kick at 0x64613A; a menu save is paused);
+            // the P0 probe samples it ([overlap] "save flush").
+            apmf::combatops::FlushForSave();
+            const apmf::combatops::SyncScope saveSync;
             // ch.24 (ABI v19): SKSE sends this BEFORE the game writes the save. Put the engine's own
             // geometry back into every combat area carrying a bound, so no claim is written into the
             // .ess (the standard area is saved with its fields). The next area update re-applies it.
@@ -486,6 +507,7 @@ namespace {
             // load that follows Discard()s it. ReteachLive teaches only what the owner does not know.
             apmf::mainthread::Post([] { apmf::castproxy::ReteachLive(); });
             break;
+        }
         case SKSE::MessagingInterface::kPostLoadGame:
             // FIRST, before anything reads an actor: a save written before the kSaveGame sweep existed
             // can leave a hand / selected slot / spell list / caster pointing at a destroyed runtime

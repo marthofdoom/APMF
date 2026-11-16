@@ -5,6 +5,7 @@
 #include "channels/CombatSubstrate.h"    // StateOf / AnyLive / AnchorId / RemoveAnchorFromGroup
 #include "core/Allowance.h"              // SeatVerified, IsRuntime1_7_104
 #include "core/Clock.h"
+#include "core/CombatOps.h"              // #4a: Pending -- no read through a controller a queued StopCombat may free
 #include "core/FacetAttribution.h"       // CallerBelow: StartCombat's caller (the seat's stack scan, as ch.22's)
 #include "core/Log.h"
 
@@ -106,7 +107,9 @@
 // THREADING. AnswerJoin: any thread; reads the published atomics, StateOf (the lock-free slot table) and the
 // two actors' FormIDs; its log state sits under g_logMx (no engine call under it; only spdlog's own lock nests
 // inside it, and spdlog never calls back into this file).
-// Everything else: game thread only (Poll / CloseSub / ResetAll).
+// Everything else: game thread only (Poll / CloseSub / ResetAll). Stability H1 (2026-11-16, INVARIANTS #4a): the
+// ranked StopCombat is QUEUED onto the actor's own combat update (core/CombatOps.h) and the package re-pick is its
+// completion; RemoveTarget runs under the group's write lock (the substrate's RemoveAnchorFromGroup).
 // ============================================================================
 
 namespace {
@@ -226,15 +229,25 @@ namespace {
     // cleaned actor's own package (and its sheathe) comes back instead of a stale combat state. The relocation is the
     // substrate's verified row PackageGate.EvaluatePackage (RELOCATION_ID(36407, 37401)); this runs only while the
     // substrate is installed, which requires that row (exact 1.6.1170 / 1.5.97 / 1.7.104; 37401 is a row of the MIT id table).
+    // H1 (2026-11-16): the StopCombat is QUEUED onto the actor's own combat update (core/CombatOps.h), so the re-pick
+    // is its completion (main, after the stop ran), never made right after the request: a re-pick before the stop
+    // would run against the fight it is meant to follow. Inside a save both run inline, in order.
+    void Repick(RE::FormID a_id) {
+        using EvaluatePkg_t = void (*)(RE::Actor*, bool, bool);
+        static REL::Relocation<EvaluatePkg_t> s_evaluate{ RELOCATION_ID(36407, 37401) };
+        if (auto* a = RE::TESForm::LookupByID<RE::Actor>(a_id)) s_evaluate(a, false, false);
+    }
+
     std::string StopAndRepick(RE::Actor* a_actor, RE::Actor* a_anchor) {
-        std::string stop = apmf::combatentry::hold::StopCombatRanked(a_actor, APMF_API::kInvalidHandle,
-                                                                     a_anchor->GetFormID(), a_anchor->GetHandle());
-        if (stop.starts_with("combat ENDED")) {
-            using EvaluatePkg_t = void (*)(RE::Actor*, bool, bool);
-            static REL::Relocation<EvaluatePkg_t> s_evaluate{ RELOCATION_ID(36407, 37401) };
-            s_evaluate(a_actor, false, false);
-            stop += " + package re-pick";
-        }
+        const RE::FormID id   = a_actor->GetFormID();
+        std::string      stop = apmf::combatentry::hold::StopCombatRanked(
+            a_actor, APMF_API::kInvalidHandle, a_anchor->GetFormID(), a_anchor->GetHandle(),
+            [id](const apmf::combatops::Result& r) {
+                if (r.stopped) Repick(id);
+            });
+        if (stop.starts_with("combat ENDED")) stop += " + package re-pick";
+        else if (stop.starts_with("combat END QUEUED") || stop.starts_with("NOT queued again"))
+            stop += " + a package re-pick once it ran";   // F5 of 75e1f75: a joined op runs the re-pick too
         return stop;
     }
 
@@ -243,6 +256,10 @@ namespace {
         if (!a_actor || !a_anchor || a_actor == a_anchor) return;
         const RE::FormID id = a_actor->GetFormID();
         if (LiveHolder(id)) return;
+        // #4a (review F1 of 75e1f75): a Harbinger StopCombat for him is queued or running on his own combat job -- the
+        // reads below go THROUGH his controller, which that drain may be freeing. Skipped; the free ends his part in
+        // the group, and the next sweep sees whatever is left.
+        if (apmf::combatops::Pending(id)) return;
         auto& ls = g_leaks[id];
         if (!a_force && ls.lastTryMs != 0 && a_now - ls.lastTryMs < kRetryMs) return;
         auto* cc = a_actor->GetActorRuntimeData().combatController;
@@ -473,7 +490,10 @@ namespace apmf::anchorguard {
     }
 
     std::vector<RE::ActorHandle> GroupMembers(RE::Actor* a_holder) {
-        auto* cc = a_holder ? a_holder->GetActorRuntimeData().combatController : nullptr;
+        // #4a (review F1 of 75e1f75): not through a controller a pending Harbinger StopCombat may be freeing; the close
+        // then has no member list to treat and the sweep (which runs while any holder is live, plus its tail) does it.
+        if (!a_holder || apmf::combatops::Pending(a_holder->GetFormID())) return {};
+        auto* cc = a_holder->GetActorRuntimeData().combatController;
         if (!cc || !cc->combatGroup) return {};
         return ReadGroup(cc->combatGroup, 0, true).members;
     }
@@ -527,6 +547,9 @@ namespace apmf::anchorguard {
         std::vector<RE::FormID> leaks;
         pl->ForEachHighActor([&](RE::Actor* a) {
             if (!a || a == anchor) return RE::BSContainer::ForEachResult::kContinue;
+            // #4a (review F1 of 75e1f75): a Harbinger StopCombat for him is queued or running -- nothing is read
+            // through his controller this sweep (his clean history and his group are left as they were).
+            if (apmf::combatops::Pending(a->GetFormID())) return RE::BSContainer::ForEachResult::kContinue;
             auto* cc = a->GetActorRuntimeData().combatController;
             if (!cc) {
                 if (!g_clean.empty()) g_clean.erase(a->GetFormID());   // out of combat: the history ends with the controller

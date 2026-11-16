@@ -1,4 +1,5 @@
 #include "PCH.h"
+#include "core/CombatOps.h"   // #4a: no read through a controller a queued Harbinger StopCombat may free
 #include "core/CombatStyle.h"
 #include "core/Allowance.h"          // SeatVerified(), RuntimeSupported(), IsRuntime1_7_104()
 #include "core/Clock.h"
@@ -212,7 +213,10 @@ namespace apmf::combatstyle {
         //   own refresh (a package change), so an equip-choice claim would do nothing for most of a fight.
         void EngineRefresh(RE::FormID a_id, const char* a_why) {
             const RE::NiPointer<RE::Actor> actor(RE::TESForm::LookupByID<RE::Actor>(a_id));
-            if (!actor || !actor->Is3DLoaded() || actor->IsDead() || !actor->IsInCombat()) return;
+            if (!actor || !actor->Is3DLoaded() || actor->IsDead()) return;
+            // #4a (review F1 of 75e1f75): a Harbinger StopCombat for him is queued or running -- his controller is about to
+            // go (the drain may be freeing it now): not read, not refreshed; the next one's construction reads the seats.
+            if (apmf::combatops::Pending(a_id) || !actor->IsInCombat()) return;
             auto* const cc = actor->GetActorRuntimeData().combatController;
             if (!cc) return;   // no controller: the next one's construction reads the seats itself
             auto* const before = cc->combatStyle;
