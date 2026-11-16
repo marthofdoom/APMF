@@ -187,11 +187,15 @@
 // for a loaded actor whose group still lists the anchor, removes the anchor from that group
 // (RemoveTarget) and, when nothing else is left for it to fight, ends that combat (StopCombat).
 //
-// THREADING. Open / serve / close / drop and every engine call run on the game thread (Poll,
-// from Arbiter::OncePerFrame; StopCombat frees the controller inline, AE 0x6B7214, the same
-// exposure as ch.21's range rule, APMF-B26). The combat-thread seats read ONLY the fixed slot
-// table (atomics, a seqlock-style id re-check), never a controller. RemoveTarget takes no lock
-// itself; the engine calls it unlocked from the main thread too (CombatManager AE 46875).
+// THREADING. Open / serve / close / drop decide on the game thread (Poll, from Arbiter::OncePerFrame).
+// That thread is NOT quiescent against the NPC updates (INVARIANTS #4a), so (stability H1, 2026-11-16):
+// the StopCombat of a close, of the empty-fight drop and of the load clean is QUEUED onto the actor's own
+// Character::UpdateCombat (core/CombatOps.h; StopCombat frees the controller inline, AE 0x6B7214), and a
+// close waits for it (Sub::closing, WaitClose, FinishClose); every CombatGroup::RemoveTarget (no lock of
+// its own) runs under the group's WRITE lock, in the engine's own order (RemoveTargetLocked). StartCombat
+// and the anchor's MoveTo / SetPosition stay on this thread (the engine serialises StartCombat on its own
+// spinlock; a cell move is main's) and are sampled by the P0 probe. The combat-thread seats read ONLY the
+// fixed slot table (atomics, a seqlock-style id re-check), never a controller.
 //
 // THE DRY RUN ([CombatSubstrate] bSubstrateDryRun, P3 / P6). With no client yet (MFO's slice
 // S3), Harbinger opens a substrate itself, with no claim and no cast, on every loaded, idle
@@ -2941,8 +2945,11 @@ namespace apmf::combatsubstrate {
             why = "the anchor-target refusal is not installed on ch.22's seat (its call-site row or the rdi stub)";
         } else if (!apmf::combatentry::hold::StopCombatAvailable()) {
             why = "the held engagement's ranked StopCombat is not available ([EngagementHold] bEngagementHold=0, a "
-                  "runtime other than exactly 1.6.1170 / 1.5.97 / 1.7.104, or its Character vtable row refused): the real-combat "
-                  "drop ends an EMPTY fight through it (marth 2026-10-13), so the substrate needs it";
+                  "runtime other than exactly 1.6.1170 / 1.5.97 / 1.7.104, its Character vtable row refused, or the "
+                  "owner-thread StopCombat queue is unavailable -- it rides Character::UpdateCombat layer 0, so "
+                  "[TargetPin] bTargetPin=0 refuses it, see the [combatops] line): the real-combat drop ends an EMPTY "
+                  "fight through it (marth 2026-10-13) and every close's StopCombat runs through that queue (H1), so "
+                  "the substrate needs it";
         } else if (apmf::actiongate::SubstrateLeavesPaired() != kLeafCount) {
             why = "the leaf allow-list does not cover all 95 behaviour-tree node classes with an act()/pop() pair and the "
                   "ForceFail pair (the 70-leaf catalog, the four search leaves ch.23 installs -- [PursuitLeash] "

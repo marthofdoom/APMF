@@ -420,11 +420,14 @@ only while ALL of these hold:
    ch.23's search stamps and leash-return state for the actor are forgotten (`actiongate::ForgetEngagement`),
    so nothing is re-armed on the next poll; one line `[hold] ... DROPPED (not engaged) -- combat ended,
    prior behaviour restored (released: ...)`. The engine's own group entry is not undone: it goes with the
-   controller StopCombat frees. THREADING (APMF-B26): StopCombat frees the actor's
-   CombatController (actor+0x160) INLINE with no lock (AE `0x6B7214` -> `0x558500`, `0x6B7235`). It is
-   called from the player's update seat, i.e. Main::Update's own context, right after the engine resets
-   its AI job lists (AE `0x5FC260` / `0x5FC180`), so the combat jobs are believed quiescent there --
-   INFERRED from that reset, not proven; the same exposure as a script's `Actor.StopCombat`.
+   controller StopCombat frees. THREADING (APMF-B26, CORRECTED and CLOSED 2026-11-16 by stability H1, #4a):
+   StopCombat frees the actor's CombatController (actor+0x160) INLINE with no lock (AE `0x6B7214` ->
+   `0x558500`, `0x6B7235`). This rule used to say the combat jobs were "believed quiescent" at the player's
+   update seat because Main::Update "resets its AI job lists" (AE `0x5FC260` / `0x5FC180`). WRONG: those two
+   calls KICK the frame's job graph (SetEvent, AE `0x5FC1F0`), the NPC "Actor update" list runs beside the
+   player update, and the player update signals its mid-point event (AE `0x7330E7`) before the pump runs. The
+   ranking stays on the game thread; the StopCombat itself is queued onto the actor's own UpdateCombat
+   (`core/CombatOps.h`), so the `[hold] ... DROPPED` line reads "combat END QUEUED ...".
 7. **Scope is closed by name.** Exactly 1.6.1170 or 1.5.97 for the knowledge seats and StopCombat
    (1.7.104: the seat ids are not in the MIT id table, the seats are refused and logged), not VR,
    `[EngagementHold] bEngagementHold` / `bTargetKnowledge` / `bBleedoutDrive`, the self-check on all rows
@@ -1113,6 +1116,28 @@ NOT confined to the writer thread (field-proven — #12) and READS a published,
 immutable RCU snapshot with no lock, one sanctioned per-entry exception aside — see
 #12/#13.
 
+**#4a — Harbinger frees or mutates an actor's COMBAT state only where the engine does (stability audit H1,
+2026-11-16; APMF-B26 closed).** The pump (Arbiter::OncePerFrame) is NOT quiescent against the NPC updates: the
+frame job graph is kicked before the player update (Main::Update AE `0x64613A` / `0x64613F`, SetEvent), the
+"Actor update" list (every high NPC's Actor::Update, the Character 0xAD seat) runs beside it, and the player update
+signals its mid-point event (AE `0x7330E7` -> `0x733D10`) before the pump runs, so "Combat and magic" (every combat
+member's UpdateCombat, the 0xE4 layers and every combat seat) may run while it does. So:
+- `Actor::StopCombat` (frees the controller inline, no lock) is NEVER called from a Harbinger main-thread pass:
+  it goes through `core/CombatOps.h`, which runs it on the actor's OWN UpdateCombat (the outermost Harbinger 0xE4
+  layer, before the chain), where the engine frees controllers itself (AE 37347 at `0x667BA2` in the per-actor
+  update job; the UpdateCombat tail at `0x658018`). Main runs it only inside a save (the flush + SyncScope: the
+  graph is idle there) and, with an ERROR, for an actor whose combat update has not run for 1 s of game time.
+  Anything that must follow the stop is the op's completion.
+- `CombatGroup::RemoveTarget` (no lock of its own) is made under the group's WRITE lock, in the engine's own order
+  (group, then the CombatManager's +0x18 lock), as the engine's group update erases a target.
+- `Actor::StartCombat` stays on main: the engine serialises its whole body on a global spinlock (AE `0x6B6A85` ..
+  `0x6B6D88`) and calls it from its AI jobs in parallel. A reference's cell move (the anchor's MoveTo) is main's.
+- The P0 probe (`core/Hook.h`, `[overlap]` every 60 s) samples every one of these main-thread calls against the
+  NPC 0xAD and 0xE4 counters, so the field shows what still runs beside them.
+- Harbinger's main-thread READS of another actor's controller (the bystander census, the anchor guard's sweep,
+  `HasController`) remain the class APMF-B26 accepted: the engine's own frees on the actor's own update (and a
+  script's / a kill's on any thread) can meet them; they read the pointer or read under the group's read lock.
+
 **#5 — Release restores what engage changed.** Any channel that writes engine state
 (AVs, the spell slot, weapon state, AI-driven flag) must capture the prior value at
 engage and restore it in `Release`. `Arbiter::ReleaseAll` runs on disengage,
@@ -1514,6 +1539,14 @@ them on the way in. Two rules follow, both learned the expensive way (MFO's
   kPreLoadGame. (`castexec::ResetAll` is now `castproxy::ResetAll`.) This is also what stops the fixed-size proxy pool from staying
   permanently occupied by a stale owner across a revert (`ControlMap::Clear()`
   deliberately does not call `channel->Release`, so nothing else would reset it).
+- **Un-teach before the purge (APMF-B48, stability H2, 2026-11-16).** At kPreLoadGame `ReleaseAll`'s proxy Unrefs
+  are only POSTED and the Discard drops them, and `ResetAll` makes no engine call, so a proxy still taught when
+  the load began stayed in a persistent follower's spell list (one outside the next world's process lists: the
+  load repair cannot tell a reused address from a live spell there). `castproxy::PreLoadUnteach` runs in the
+  kPreLoadGame case right after `ReleaseAll` and BEFORE `ResetAll`, on the save sweep's actor set (the process
+  lists, the player, every current and earlier slot owner): DeselectSpell + RemoveSpell, a re-read, the direct
+  write for what the engine left. The revert callback does not run it (it makes no engine call by design; a load
+  sends kPreLoadGame first, a new game does not, and is not covered by this pass).
 Any future subsystem that mints a runtime form inherits both halves of this rule.
 
 **THE SAVE-TIMING RULE (2026-11-15; every subsystem, not only forms).** SKSE64 sends the
@@ -1522,7 +1555,12 @@ Any future subsystem that mints a runtime form inherits both halves of this rule
 global-data hook (`Hooks_Papyrus.cpp` `SaveGlobalData_Hook`), AFTER every change form is written.
 So anything "swept" or "restored" in a co-save callback is already in the `.ess`: a sweep there
 is always too late. Engine state that Harbinger wrote and that must not be saved is put back in
-the `kSaveGame` case of `plugin.cpp`, and only there. Today: ch.24
+the `kSaveGame` case of `plugin.cpp`, and only there. FIRST in that case (2026-11-16, #4a):
+`combatops::FlushForSave` runs every StopCombat still queued for an actor's own combat update, inline, and a
+`combatops::SyncScope` covers the rest of the case, so a StopCombat a restore pass decides runs inline too (a
+queued one would miss the write). The save call runs where the frame's job graph is idle (Main::Update AE
+`0x645F3A` / `0x645F0E`, after every graph event is reset at `0x645EDE`, before the kick at `0x64613A`; a menu
+save is paused); the P0 probe samples it. Today: ch.24
 `combatapproach::RestoreBeforeSave` (the combat area's geometry), ch.27
 `combatsubstrate::RestoreBeforeSave` (every open substrate is ended: no controller against the
 anchor, no anchor in a group, the anchor home, the music decision back), and

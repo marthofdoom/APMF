@@ -106,7 +106,9 @@
 // THREADING. AnswerJoin: any thread; reads the published atomics, StateOf (the lock-free slot table) and the
 // two actors' FormIDs; its log state sits under g_logMx (no engine call under it; only spdlog's own lock nests
 // inside it, and spdlog never calls back into this file).
-// Everything else: game thread only (Poll / CloseSub / ResetAll).
+// Everything else: game thread only (Poll / CloseSub / ResetAll). Stability H1 (2026-11-16, INVARIANTS #4a): the
+// ranked StopCombat is QUEUED onto the actor's own combat update (core/CombatOps.h) and the package re-pick is its
+// completion; RemoveTarget runs under the group's write lock (the substrate's RemoveAnchorFromGroup).
 // ============================================================================
 
 namespace {
