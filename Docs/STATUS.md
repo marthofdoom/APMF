@@ -1,8 +1,67 @@
 # APMF STATUS — living handoff (start here)
 
-Updated 2026-11-14. Current version **v0.20.2** (release prep 2026-11-14, ABI v45 unchanged, a small real release: the ch.3 sneak release confirm, see CHANGELOG) / previously **v0.20.1** (cut 2026-11-13, ABI v45 unchanged, a REAL release, the first since v0.17.0, cumulative over v0.18.0 to v0.20.0 plus the seat 0 hostile-effect fix, see CHANGELOG) / previously **v0.20.0** (cut 2026-11-12, ABI v45) and **v0.19.0** (cut 2026-11-10, ABI v36) and **v0.18.0** (cut 2026-11-09, ABI v35, PRERELEASE) and **v0.17.0** (cut 2026-11-08, ABI v33) and **v0.16.0** (cut 2026-11-02, ABI v32) and **v0.15.2** (cut 2026-10-28, ABI v31) and **v0.15.1** (cut 2026-10-26, ABI v30) and **v0.15.0** (cut 2026-10-25, ABI v30) and **v0.14.0** (cut 2026-10-21, ABI v28) and **v0.13.1** (cut 2026-10-13, ABI v24) and **v0.13.0** (release cut 2026-10-12; see RELEASED v0.13.0 below; prior v0.12.0 PUBLISHED release, ABI v21). The current state of the build: what's
+Updated 2026-11-15 (proxy save integrity fix branch, below). Current version **v0.20.2** (release prep 2026-11-14, ABI v45 unchanged, a small real release: the ch.3 sneak release confirm, see CHANGELOG) / previously **v0.20.1** (cut 2026-11-13, ABI v45 unchanged, a REAL release, the first since v0.17.0, cumulative over v0.18.0 to v0.20.0 plus the seat 0 hostile-effect fix, see CHANGELOG) / previously **v0.20.0** (cut 2026-11-12, ABI v45) and **v0.19.0** (cut 2026-11-10, ABI v36) and **v0.18.0** (cut 2026-11-09, ABI v35, PRERELEASE) and **v0.17.0** (cut 2026-11-08, ABI v33) and **v0.16.0** (cut 2026-11-02, ABI v32) and **v0.15.2** (cut 2026-10-28, ABI v31) and **v0.15.1** (cut 2026-10-26, ABI v30) and **v0.15.0** (cut 2026-10-25, ABI v30) and **v0.14.0** (cut 2026-10-21, ABI v28) and **v0.13.1** (cut 2026-10-13, ABI v24) and **v0.13.0** (release cut 2026-10-12; see RELEASED v0.13.0 below; prior v0.12.0 PUBLISHED release, ABI v21). The current state of the build: what's
 shipped, what's probe-gated, what's next. Keep this current in the SAME change as any
 build/finding/workflow change.
+
+## FIX 2026-11-15 -- PROXY SAVE INTEGRITY (INVARIANTS #19), branch `fix/proxy-save-integrity`, NOT merged, NOT field run
+
+- **The crash:** LoreRim Save373 (written 2026-11-12 with a live Candlelight delivery-flip proxy 0xFF00081F) crashed
+  0.8 s after its load on 2026-11-14: Auri's left hand pointed at a destroyed form and Immersive Equipment Displays
+  called through it. The save holds the proxy in Auri's hand, equipped list and two more slots, and in active effects
+  on Sven and one more actor. Cause: `PreSaveSweep` ran in the co-save callback, which SKSE64 calls after the actor
+  records are written.
+- **What changed (no ABI change, no new address id, `APMF_API.h` untouched):** `core/CastProxy.cpp` + `plugin.cpp`.
+  The sweep runs in the `kSaveGame` message and covers every process-list actor and the player: hands, equipped list,
+  selected slots, selected power, spell list, caster current spell (engine `DeselectSpell` + `RemoveSpell`, then a
+  re-read and a direct member write for leftovers) and active effects (keyed to the source spell for the save, keyed
+  back in the co-save callback). The co-save callback is the second check (`THE .ESS MAY ALREADY HOLD IT` or `CLEAN`).
+  `RepairAfterLoad` (first thing in `kPostLoadGame`, again on the first pump, then a per-pump watch of live 0xFF forms)
+  clears pointers to destroyed forms so an affected save loads.
+- **Disassembly (1.6.1170 / 1.5.97 / 1.7.104, same structure):** `DeselectSpell` clears a hand only when
+  `selectedSpells[i]` is the spell and `AIProcess::equippedForms` has its entry; `RemoveSpell` deselects only when the
+  spell is in `addedSpells`. Addresses in `core/CastProxy.cpp` and INVARIANTS #19.
+- **Field checks still open:** (1) load Save373 with this build: the log must show `[castproxy] LOAD REPAIR` for
+  0x483139C8 and the game must stay up; an ERROR `active effect(s) whose spell pointer is a DESTROYED form` line means
+  an effect could not be repaired. (2) a fresh save with a live proxy claim: `save sweep` then `save check ... CLEAN`,
+  then the offline RefID search of INVARIANTS #19. Not known: what the form that held id 0xFF00081F at that load was
+  and when it was destroyed (inside the load call or after), which is why the repair also runs on the first pump and
+  watches live runtime forms.
+
+### Same branch, third commit: the tier-A review's fix round (2026-11-15)
+
+- **F1 (SEV-3):** the per-pump load watch no longer walks active effects, and the `DESTROYED form` effect ERROR
+  prints only from the two load passes. It printed on every pump for as long as an actor was watched.
+- **F2 (SEV-3):** the save sweep and the second check now also cover every actor that owns or earlier owned a pool
+  slot, looked up by id (a follower with no AI process is in no process list). The lines name the covered set and
+  `CLEAN` reads `CLEAN for those`. NOT covered: an actor outside the process lists that never owned a slot.
+- **F3:** a caster still mid-cast on a pool form at a save is ended with `MagicCaster::InterruptCast` (the verified
+  `PositionCast.InterruptCast` row) instead of a bare null. Not on the load repair: that call reads through the spell.
+- **F5:** the load repair checks the form TYPE of every pointer it proved live against the slot it sits in. A live
+  form of a type the slot cannot hold (a reused id or address, e.g. a reference in a hand) is cleared like a dead one.
+- **F7:** `combatsubstrate::RestoreBeforeSave` reads a client substrate's winning handle before it releases, so a
+  substrate declared but not yet polled no longer leaves its claim standing.
+- Deferred to `Docs/REVIEW-BACKLOG.md` ("Proxy save integrity, tier-A review of f2fa89b"): F4, F6, F8.
+- `tools/esscheck.py` is the offline `.ess` check of INVARIANTS #19 (was a scratch file).
+
+### Same branch, second commit: the dangling-state audit's Harbinger items (2026-11-15)
+
+- **ch.27, an open combat substrate was written into the save (audit SEV-3), fixed:** `combatsubstrate::RestoreBeforeSave`
+  runs in `kSaveGame` before the proxy sweep. It ENDS every substrate through `CloseSub` / `DropSub` (the client's
+  claim is released, as for every Harbinger-ended substrate; the client may ask again after the save), puts a debtor
+  group's music decision (CombatGroup+0x15C) back from Harbinger's 0 to 0xFF under the group's write lock, cleans any
+  group that still lists the anchor (WARN) and sends the anchor home. `AfterLoad` stays as the backstop for old saves.
+  BEHAVIOUR CHANGE for clients: a save (also an autosave) ends an open substrate window. No ABI change.
+- **ch.3 sneak (audit SEV-4), NOT fixed, measured instead:** a SneakStop sent in `kSaveGame` cannot take effect before
+  the write (the event is only queued until the graph updates; ch.3's own release confirm exists for that reason), and
+  an undo after the load needs the "Harbinger started it" set in the co-save (a format change) for a premise nobody has
+  observed. New PASSIVE probe (`channels/Stance.h`): `[ch.3] save: ...` per held sneak at a save, and
+  `[ch.3] after load (...)` twice after a load (first pump, +5 s) naming every loaded NPC crouched on the graph while
+  the engine's sneak state is off. One field cycle answers it.
+- **Substrate hand stow (audit SEV-4), NOT fixed (not cheap):** the restore is a queued `EquipObject` that the hand
+  floors refuse until the next Drain, and it is verified over the following frames; none of that fits inside the save
+  call. The save holds the weapon in the inventory, not in the hand, which is a valid state; the AI re-equips.
+- The rule the audit found is INVARIANTS "THE SAVE-TIMING RULE" (after #19).
 
 ## HEAD OF WORK 2026-11-11 -- MELEE MOVES (MFO T2 batch M), branch `feat/melee-moves` (on top of `feat/ch8b-dead-target` + `feat/aversion`), NOT merged, NOT field run
 
