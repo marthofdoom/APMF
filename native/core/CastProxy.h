@@ -156,14 +156,20 @@ namespace apmf::castproxy {
     // original). It used to run in the co-save callback, which SKSE64 calls from the Papyrus
     // global-data hook, AFTER every actor record is already in the buffer: Save373 kept the
     // proxy in Auri's left hand and spell list although the sweep "ran".
-    // For EVERY actor of the four process lists and the player, against EVERY minted pool
-    // form (live or freed slot), it leaves no reference the save writes:
+    // For every actor of the four process lists, the player and every actor that owns or
+    // earlier owned a pool slot (looked up by id: a follower with no AI process is in no
+    // list), against EVERY minted pool form (live or freed slot), it leaves no reference
+    // the save writes. NOT covered: an actor outside the process lists that never owned a
+    // slot (an ally that left the lists while still carrying a proxied buff).
     //   * spell slots: Actor::DeselectSpell + RemoveSpell (the engine's own paths), then a
     //     re-read of every slot and a direct member write for what the engine left. The
     //     disassembly (all three builds, CastProxy.cpp) shows DeselectSpell clears a hand only
     //     when selectedSpells[i] is the spell AND AIProcess::equippedForms holds an entry for
     //     it, and RemoveSpell deselects only when the spell is in addedSpells. Each direct
-    //     repair is a WARN line.
+    //     repair is a WARN line. A caster still MID-CAST on a pool form (state != kNone) is
+    //     ended with MagicCaster::InterruptCast first (the verified "PositionCast.InterruptCast"
+    //     row), which nulls its spell itself; if that row refused, the caster is left as it
+    //     is and an ERROR says the save will hold the form.
     //   * active effects: an effect whose `spell` is a pool form is re-keyed to the REAL
     //     source spell (the one that owns its Effect*), so the save writes a real form and
     //     the same effect index. SaveWrittenCheck puts the proxy back once the record is out.
@@ -177,7 +183,8 @@ namespace apmf::castproxy {
     // clears it for the session). If kSaveGame never ran for this save it runs the sweep
     // late, with the same WARN. Then it re-keys the effects PreSaveSweep re-keyed back to
     // their proxy (the seats' "already applied" bound reads the proxy), each re-validated
-    // on its target's own list. Returns true when it had to sweep late, so the caller
+    // on its target's own list. Its CLEAN line speaks for the actors PreSaveSweep covers
+    // (process lists, player, slot owners) and says so; it is not a claim about every actor. Returns true when it had to sweep late, so the caller
     // posts ReteachLive. MAIN THREAD (the save call).
     bool SaveWrittenCheck();
 
@@ -186,16 +193,21 @@ namespace apmf::castproxy {
     // engine resolves that id to whatever form holds it at that moment; when that form is
     // destroyed the actor keeps a pointer to freed memory, and the first reader crashes
     // (Save373: Immersive Equipment Displays, 0.8 s after the load).
-    // For every actor of the four process lists and the player this tests every such
-    // pointer WITHOUT trusting it: a guarded 4-byte read of the id it would hold, then
+    // For every actor of the four process lists and the player (no pool slot has an owner
+    // right after a load) this tests every such pointer WITHOUT trusting it: a guarded 4-byte read of the id it would hold, then
     // "does the form map hold THIS pointer under that id" (TESForm's destructor erases its
     // own map entry, so a destroyed form can never pass). A DEAD pointer is cleared with a
-    // direct member write (null / array erase) and one WARN line per repair. A LIVE 0xFF
+    // direct member write (null / array erase) and one WARN line per repair. A pointer
+    // proven LIVE is then checked for its form type against the slot (hands / equipped
+    // list: the equippable types; selected slots / casters: MagicItem types; spell list:
+    // SPEL / SCRL; power: SPEL / SHOU): a live form of a type the slot cannot hold is a
+    // reused id or address and is cleared like a dead one. No engine call is ever made on
+    // such a pointer (InterruptCast reads through the spell). A LIVE 0xFF
     // form in a slot is not touched (it may be another mod's persisted form), but its actor
     // is WATCHED on every pump until the form leaves the slot or dies, with no expiry, so a
     // form destroyed later is repaired on the next pump. A dead `spell` in an ACTIVE EFFECT
-    // is reported (ERROR) and not repaired: its Effect* died with it and no engine path is
-    // safe on it.
+    // is reported (ERROR) by the two load passes and not repaired: its Effect* died with it
+    // and no engine path is safe on it. The per-pump watch does not walk effects.
     // plugin.cpp calls it synchronously in kPostLoadGame (before the first frame of the
     // loaded game; the Save373 reader ran from the main loop) and posts it once more for
     // the first pump. Exactly 1.6.1170 / 1.5.97 / 1.7.104 (the member offsets are proven

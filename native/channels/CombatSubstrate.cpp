@@ -3154,6 +3154,23 @@ namespace apmf::combatsubstrate {
         std::uint32_t closed = 0, dropped = 0, unbegun = 0;
         for (auto it = g_subs.begin(); it != g_subs.end(); it = g_subs.erase(it)) {
             Sub& s = it->second;
+            // A client substrate whose winning handle Poll has not read yet (it reads it once per
+            // Drain): ReleaseClientClaim returns at once on kInvalidHandle, and the Sub is erased
+            // below, so the claim would stand with nothing serving it (review F7 of f2fa89b). Read it
+            // here, exactly as Poll does. closeAsked = the client already released: nothing to end.
+            if (!s.dryRun && !s.closeAsked && s.handle == APMF_API::kInvalidHandle) {
+                APMF_API::APMF_Param p{};
+                float                b = 0.0f;
+                APMF_API::Handle     h = APMF_API::kInvalidHandle;
+                if (apmf::ControlMap::Get().TryGetOwningClaimBasis(s.id, APMF_API::kIntent_CombatSubstrate, p, b, &h)) {
+                    s.handle = h;
+                } else {
+                    spdlog::warn("[substrate] save: 0x{} has a declared substrate but no live winning "
+                                 "kIntent_CombatSubstrate claim is published for it (expired or outranked since the last "
+                                 "Drain) -- its record is dropped for the save and there was no claim to release.",
+                                 Hex(s.id));
+                }
+            }
             if (s.slot < 0) {
                 ReleaseClientClaim(s, "a save is being written (the substrate had not begun)");
                 ++unbegun;

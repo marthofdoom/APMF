@@ -1442,15 +1442,24 @@ them on the way in. Two rules follow, both learned the expensive way (MFO's
   callback from its Papyrus global-data hook (`Hooks_Papyrus.cpp` `SaveGlobalData_Hook`), AFTER the
   engine has written every actor record. The only seat before the write is the `kSaveGame`
   MESSAGE (`Hooks_SaveLoad.cpp` `SaveGame_Hook`: `Dispatch_Message`, then the original). So:
-  - `castproxy::PreSaveSweep` runs synchronously in `plugin.cpp`'s `kSaveGame` case. For every
-    actor of the four process lists and the player, against every minted pool form (live or
+  - `castproxy::PreSaveSweep` runs synchronously in `plugin.cpp`'s `kSaveGame` case. For the
+    process-list actors + slot owners (every actor of the four process lists, the player, and
+    every actor that owns or earlier this session owned a pool slot, looked up by id because a
+    follower with no AI process is in no list), against every minted pool form (live or
     freed slot), it clears the selected-spell slots, the selected power, the spell list, each
     caster's current spell, the process's equipped list and both hand slots: the engine's
     `DeselectSpell` + `RemoveSpell` first, then a re-read and a direct member write for what they
     left. (Disassembly, all three builds, `core/CastProxy.cpp`: `DeselectSpell` clears a hand
     only when `selectedSpells[i]` is the spell AND `AIProcess::equippedForms` has an entry for
     it; `RemoveSpell` deselects only when the spell is in `addedSpells`.) A direct repair is a
-    WARN line.
+    WARN line. A caster that is still MID-CAST on a pool form (`state != kNone`) is never
+    bare-nulled: the sweep calls `MagicCaster::InterruptCast(false)` (33630 / 34408, the verified
+    row `PositionCast.InterruptCast`; it nulls `currentSpell` itself), and if that row refused
+    the caster is left whole and an ERROR says the save will hold the form.
+  - **WHO IS NOT COVERED (said, not hidden).** An actor outside the four process lists that
+    never owned a pool slot is not swept and not checked: for example an ally that received a
+    proxied buff and then left the lists with the effect still on it. The log lines name the
+    covered set; `CLEAN` is a statement about that set only.
   - **Active effects are part of the rule.** An effect whose `spell` is a pool form (a proxied
     buff on an ally, a self-flip buff on the caster, also after its slot was freed) is keyed to
     the REAL source spell for the length of the save. The save writes the spell's form id and
@@ -1461,8 +1470,8 @@ them on the way in. Two rules follow, both learned the expensive way (MFO's
     for effects. An effect whose `Effect*` belongs to no spell its form mirrored this session
     is an ERROR line and stays (not seen).
   - `castproxy::SaveWrittenCheck` runs in the co-save callback as the SECOND CHECK: it counts
-    what the records just captured and WARNs `THE .ESS MAY ALREADY HOLD IT` if that is
-    anything; with nothing found it logs `CLEAN`. An SKSE build that never sends `kSaveGame`
+    what the records just captured (same actor set) and WARNs `THE .ESS MAY ALREADY HOLD IT` if
+    that is anything; with nothing found it logs `CLEAN for those`. An SKSE build that never sends `kSaveGame`
     gets a late sweep and that WARN at every save.
   - The sweep must be UNDONE for claims still live: the `kSaveGame` case posts
     `castproxy::ReteachLive` to the next Pump, after the save call has returned, or a
@@ -1477,13 +1486,23 @@ them on the way in. Two rules follow, both learned the expensive way (MFO's
   such pointer without trusting it: a guarded read of the 4 bytes where the id would be, then
   "does the form map hold THIS pointer under that id" (`TESForm`'s destructor, AE 0x1E2250 ->
   14627, erases its own map entry). A dead pointer is nulled / erased with a WARN line per
-  actor. A LIVE 0xFF form in a slot is left alone (it can be another mod's persisted form) and
+  actor. A pointer proven live is then checked for its FORM TYPE against the slot it sits in
+  (the load resolves a saved 0xFF id to whatever form carries it, e.g. a placed reference, and
+  a freed address can be reused by a new form): hands and the equipped list take the
+  equippable types (WEAP, ARMO, LIGH, SPEL, SCRL, SHOU, ALCH, INGR, AMMO), selected slots and
+  casters the MagicItem types (ENCH, SPEL, SCRL, ALCH, INGR), the spell list SPEL / SCRL, the
+  selected power SPEL / SHOU. A live form of any other type is cleared like a dead one, in the
+  same WARN line. The load repair makes NO engine call on a pointer it clears: `InterruptCast`
+  reads through the spell (its finish function, AE 34435, calls the spell's vtable), so a
+  caster found mid-cast on a dead spell gets its pointer nulled and its cast state left, and
+  the line says so. A LIVE 0xFF form in a slot is left alone (it can be another mod's persisted form) and
   its actor is re-checked on every pump until the form leaves the slot or dies, with no expiry.
-  A dead `spell` in an active effect is reported (ERROR) and NOT repaired: its `Effect*` died
-  with it. Exactly 1.6.1170 / 1.5.97 / 1.7.104, else refused with one line.
+  A dead `spell` in an active effect is reported (ERROR) by the two load passes and NOT
+  repaired: its `Effect*` died with it. The per-pump watch does not walk effects (it would
+  repeat that ERROR on every pump). Exactly 1.6.1170 / 1.5.97 / 1.7.104, else refused with one line.
   **Acceptance (offline).** Take a save with a live proxy claim. `APMF.log` must show
   `[castproxy] save sweep (kSaveGame ...)` with the pool form ids, then `save check ... CLEAN`.
-  Then search every change form of the `.ess` (decompressed) for the 3-byte RefID of each id
+  Then run `tools/esscheck.py <save.ess> <ids>`: it searches every change form of the `.ess` (decompressed) for the 3-byte RefID of each id
   (`0x80 | bits 16-21`, bits 8-15, bits 0-7): no change form may hold it. Deck Save40 fails this
   check for 0xFF001F66 (the owner's spell list) and Save373 for 0xFF00081F (Auri: hand,
   equipped list, two more; Sven and one more actor: active effects).

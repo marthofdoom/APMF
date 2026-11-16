@@ -63,6 +63,10 @@ namespace apmf::castproxy {
             // Every OTHER spell this form mirrored earlier this session (a re-point). An effect of an old
             // mirror can outlive the re-point (APMF-B58); the save sweep finds its real spell here.
             std::vector<RE::FormID> past;
+            // Every actor that owned this slot earlier this session and released it (Unref). The save
+            // sweep walks the process lists; an earlier owner that has left them (no AI process) is
+            // looked up by id from here, like the current owner (review F2 of f2fa89b).
+            std::vector<RE::FormID> pastOwners;
         };
 
         const char* FlipName(Flip f) {
@@ -387,6 +391,8 @@ namespace apmf::castproxy {
             // source + flip are KEPT on a free slot (review R2-1): the form still mirrors that
             // spell, which is what the mint's rank-1 reuse ("same source + flip") matches. Every
             // other reader of `source` gates on `owner != 0` first (share loop, Unref, ReteachLive).
+            if (std::find(s.pastOwners.begin(), s.pastOwners.end(), a_owner) == s.pastOwners.end())
+                s.pastOwners.push_back(a_owner);   // the save sweep still checks this actor (SweepActors)
             s.owner  = 0;
             return;
         }
@@ -542,12 +548,18 @@ namespace apmf::castproxy {
         static_assert(sizeof(RE::AIProcess::EquippedObject) == 0x10, "AIProcess::EquippedObject is 16 bytes in 39193");
         static_assert(offsetof(RE::MagicCaster, currentSpell) == 0x28,
                       "MagicCaster::currentSpell moved -- SaveGame (AE 0x5BE8F0) writes +0x28");
+        static_assert(offsetof(RE::MagicCaster, state) == 0x30,
+                      "MagicCaster::state moved -- InterruptCast (AE 0x5BBFA0 / SE 0x54CB70 / 1.7.104 0x5CAAE0) writes +0x30");
         static_assert(offsetof(RE::ActiveEffect, spell) == 0x40 && offsetof(RE::ActiveEffect, effect) == 0x48,
                       "ActiveEffect::spell / effect moved -- the effect-list save (AE 0x5AD5A0) reads +0x40 / +0x48");
 
         // Where a spell-slot reference was found (one counter per kind of slot).
         struct Tally {
             std::uint32_t hand = 0, equipList = 0, selected = 0, power = 0, known = 0, caster = 0;
+            // Not part of Total() (they qualify `caster`): casters ended by the engine's InterruptCast,
+            // casters LEFT holding the form (mid-cast and the InterruptCast row refused), and casters
+            // nulled by a direct write while mid-cast (the load repair: no engine call is safe there).
+            std::uint32_t interrupted = 0, casterLeft = 0, casterMidCast = 0;
             std::uint32_t Total() const { return hand + equipList + selected + power + known + caster; }
             std::string   Text() const {
                 std::string s;
@@ -564,29 +576,54 @@ namespace apmf::castproxy {
             }
         };
 
+        // Which kind of slot a visited pointer sits in (the type each may hold: TypeFits).
+        enum class Ref : std::uint8_t { kSelected, kPower, kKnown, kCaster, kEquipList, kHand };
+
+        // What VisitSpellRefs does with a pointer its test picks.
+        //   kCount     nothing.
+        //   kLivePool  the save sweep: the pointer is a LIVE pool form. Direct member write; a caster
+        //              that is mid-cast is ended through the engine's InterruptCast first.
+        //   kDirect    the load repair: the pointer is DEAD or a form of the wrong type. Direct member
+        //              write only, never an engine call on it.
+        enum class Clear : std::uint8_t { kCount, kLivePool, kDirect };
+
+        // MagicCaster::InterruptCast (33630 / 34408; AE 0x5BBFA0, SE 0x54CB70, 1.7.104 0x5CAAE0, the same
+        // code on all three): returns at once when currentSpell is null; else InterruptCastImpl (vfunc
+        // 8), three sound stops, state = 9, vfunc 9, then the finish function (AE 34435 0x5BEB60 / SE
+        // 33657 / 1.7.104 0x5CD6B0), which nulls currentSpell and resets state / timers. That finish
+        // function CALLS THROUGH currentSpell (its vtable +0x2A8 / +0x2B8), so InterruptCast is only
+        // ever made on a LIVE spell (the save sweep), never on the load repair's dead pointers.
+        // The address is the already generated VerifiedAddresses row "PositionCast.InterruptCast".
+        bool InterruptSeatOk() {
+            static const bool s_ok = apmf::allowance::SeatVerified(
+                REL::Relocation<std::uintptr_t>{ RELOCATION_ID(33630, 34408) }.address(), "PositionCast.InterruptCast");
+            return s_ok;
+        }
+
         // Visit every pointer of the actor that the save writes as "a spell / equipped form of this
         // actor": selectedSpells[4], selectedPower, addedSpells, each existing caster's currentSpell,
         // the process's equippedForms entries and its two hand slots. `a_test` gets the RAW pointer
-        // (it may be dead on the load path: the visitor itself never reads through it) and answers
-        // "this one". With a_clear the slot is cleared by a direct member write (null / array erase).
+        // (it may be dead on the load path: the visitor itself never reads through it) and the kind
+        // of slot, and answers "this one". a_clear: see Clear.
         template <class Test>
-        void VisitSpellRefs(RE::Actor* a_actor, bool a_clear, Tally& a_t, Test&& a_test) {
+        void VisitSpellRefs(RE::Actor* a_actor, Clear a_clear, Tally& a_t, Test&& a_test) {
+            const bool clear = a_clear != Clear::kCount;
             auto& rd = a_actor->GetActorRuntimeData();
             for (auto& sel : rd.selectedSpells) {
-                if (sel && a_test(static_cast<const RE::TESForm*>(sel))) {
+                if (sel && a_test(static_cast<const RE::TESForm*>(sel), Ref::kSelected)) {
                     ++a_t.selected;
-                    if (a_clear) sel = nullptr;
+                    if (clear) sel = nullptr;
                 }
             }
-            if (rd.selectedPower && a_test(static_cast<const RE::TESForm*>(rd.selectedPower))) {
+            if (rd.selectedPower && a_test(static_cast<const RE::TESForm*>(rd.selectedPower), Ref::kPower)) {
                 ++a_t.power;
-                if (a_clear) rd.selectedPower = nullptr;
+                if (clear) rd.selectedPower = nullptr;
             }
             for (std::uint32_t i = 0; i < rd.addedSpells.size();) {
                 auto* sp = rd.addedSpells[i];
-                if (sp && a_test(static_cast<const RE::TESForm*>(sp))) {
+                if (sp && a_test(static_cast<const RE::TESForm*>(sp), Ref::kKnown)) {
                     ++a_t.known;
-                    if (a_clear) {
+                    if (clear) {
                         rd.addedSpells.erase(rd.addedSpells.begin() + i);
                         continue;
                     }
@@ -594,17 +631,31 @@ namespace apmf::castproxy {
                 ++i;
             }
             for (auto* mc : rd.magicCasters) {
-                if (mc && mc->currentSpell && a_test(static_cast<const RE::TESForm*>(mc->currentSpell))) {
-                    ++a_t.caster;
-                    if (a_clear) mc->currentSpell = nullptr;
+                if (!mc || !mc->currentSpell || !a_test(static_cast<const RE::TESForm*>(mc->currentSpell), Ref::kCaster))
+                    continue;
+                ++a_t.caster;
+                if (!clear) continue;
+                const bool midCast = mc->state.get() != RE::MagicCaster::State::kNone;
+                if (midCast && a_clear == Clear::kLivePool) {
+                    // A bare null would leave the cast's state, sounds and timers standing with no spell
+                    // (review F3 of f2fa89b). End the cast the engine's way; it nulls currentSpell itself.
+                    if (!InterruptSeatOk()) {
+                        ++a_t.casterLeft;   // the caller says so (ERROR); the slot is not half-cleared
+                        continue;
+                    }
+                    mc->InterruptCast(false);
+                    ++a_t.interrupted;
+                } else if (midCast) {
+                    ++a_t.casterMidCast;   // the load repair: said by the caller
                 }
+                if (mc->currentSpell) mc->currentSpell = nullptr;
             }
             if (auto* proc = rd.currentProcess) {
                 for (std::uint32_t i = 0; i < proc->equippedForms.size();) {
                     auto* obj = proc->equippedForms[i].object;
-                    if (obj && a_test(static_cast<const RE::TESForm*>(obj))) {
+                    if (obj && a_test(static_cast<const RE::TESForm*>(obj), Ref::kEquipList)) {
                         ++a_t.equipList;
-                        if (a_clear) {
+                        if (clear) {
                             proc->equippedForms.erase(proc->equippedForms.begin() + i);
                             continue;
                         }
@@ -612,17 +663,21 @@ namespace apmf::castproxy {
                     ++i;
                 }
                 for (auto& h : proc->equippedObjects) {
-                    if (h && a_test(static_cast<const RE::TESForm*>(h))) {
+                    if (h && a_test(static_cast<const RE::TESForm*>(h), Ref::kHand)) {
                         ++a_t.hand;
-                        if (a_clear) h = nullptr;
+                        if (clear) h = nullptr;
                     }
                 }
             }
         }
 
-        // Every actor that has an AI process (the four process lists) plus the player, once each,
-        // held by reference for the length of the pass. Main thread.
-        std::vector<RE::NiPointer<RE::Actor>> ProcessActors() {
+        // The actors a pass covers, once each, held by reference for its length: every actor of the
+        // four process lists, the player, and every actor that owns or earlier owned a minted pool
+        // slot (looked up by id: a follower with no AI process is in no process list; review F2 of
+        // f2fa89b). NOT covered, and the log lines say "process-list actors + slot owners", never
+        // "every actor": an actor outside the process lists that never owned a slot, e.g. an ally
+        // that still carries a proxied buff after it left the lists. Main thread.
+        std::vector<RE::NiPointer<RE::Actor>> SweepActors() {
             std::vector<RE::NiPointer<RE::Actor>>  out;
             std::unordered_set<const RE::Actor*>   seen;
             auto add = [&](RE::NiPointer<RE::Actor> a_p) {
@@ -634,6 +689,13 @@ namespace apmf::castproxy {
                     for (auto& h : *arr) add(h.get());
             }
             if (auto* pc = RE::PlayerCharacter::GetSingleton()) add(RE::NiPointer<RE::Actor>(pc));
+            auto addId = [&](RE::FormID a_id) {
+                if (auto* a = a_id ? RE::TESForm::LookupByID<RE::Actor>(a_id) : nullptr) add(RE::NiPointer<RE::Actor>(a));
+            };
+            for (std::uint32_t i = 0; i < MintedCount(); ++i) {
+                addId(g_slot[i].owner);
+                for (const auto o : g_slot[i].pastOwners) addId(o);
+            }
             return out;
         }
 
@@ -670,6 +732,50 @@ namespace apmf::castproxy {
         }
 
         // ---- load repair ----
+        const char* RefName(Ref a_k) {
+            switch (a_k) {
+            case Ref::kSelected:  return "selected-spell slot";
+            case Ref::kPower:     return "selected power";
+            case Ref::kKnown:     return "spell-list entry";
+            case Ref::kCaster:    return "caster current spell";
+            case Ref::kEquipList: return "equipped-list entry";
+            default:              return "hand slot";
+            }
+        }
+
+        // May a slot of this kind hold a form of this type? Asked only of a pointer already proven
+        // to be a live form (review F5 of f2fa89b: "the map answers this pointer" also holds when the
+        // dead form's address was reused by a new form, and the load resolves a saved 0xFF id to
+        // whatever form carries it then, e.g. a placed reference).
+        //   selectedSpells[] and MagicCaster::currentSpell are MagicItem*: the five MagicItem classes
+        //     (ENCH, SPEL, SCRL, ALCH, INGR). The caster's own LoadGame applies this very test
+        //     (RTDynamicCast TESForm -> MagicItem, AE 0x5BE9F0).
+        //   addedSpells is SpellItem*: SPEL, and SCRL (ScrollItem derives from SpellItem).
+        //   selectedPower is TESForm*: a power (SPEL) or a shout (SHOU); DeselectSpell tests it for
+        //     SPEL before the compare.
+        //   equippedForms / the two hand slots are TESForm*. Their writer is 39192 (AE 0x6D85F0:
+        //     append {form, BGSEquipSlot*}; a left / right hand slot also writes the hand), called by
+        //     the three Actor setters 38928 / 38929 / 38930 with the slot the form equips to (two
+        //     more callers, 24736 and 39430, not read further). So the set is the form classes that carry a
+        //     BGSEquipType (WEAP, ARMO, LIGH, SPEL, SCRL, SHOU, ALCH, INGR), plus AMMO kept as allowed
+        //     because a wrong "cannot hold" costs an unequip. The set is deliberately the wide one:
+        //     it exists to refuse references, cells and other non-equippable forms, not to police
+        //     what a hand holds.
+        bool TypeFits(Ref a_k, RE::FormType a_t) {
+            using T = RE::FormType;
+            const bool magic = a_t == T::Spell || a_t == T::Scroll || a_t == T::Enchantment || a_t == T::AlchemyItem ||
+                               a_t == T::Ingredient;
+            switch (a_k) {
+            case Ref::kSelected:
+            case Ref::kCaster: return magic;
+            case Ref::kKnown:  return a_t == T::Spell || a_t == T::Scroll;
+            case Ref::kPower:  return a_t == T::Spell || a_t == T::Shout;
+            default:
+                return a_t == T::Weapon || a_t == T::Armor || a_t == T::Light || a_t == T::Spell || a_t == T::Scroll ||
+                       a_t == T::Shout || a_t == T::AlchemyItem || a_t == T::Ingredient || a_t == T::Ammo;
+            }
+        }
+
         enum class Life : std::uint8_t { kLive, kLiveRuntime, kDead, kUnverifiable };
 
         // The 4 bytes where a form keeps its id, read through a pointer that may be dead. Freed
@@ -698,7 +804,8 @@ namespace apmf::castproxy {
             Tally         dead;                  // cleared
             std::uint32_t liveRuntime  = 0;      // live 0xFF forms in a slot (watched)
             std::uint32_t unverifiable = 0;
-            std::uint32_t deadEffects  = 0;      // reported only
+            std::uint32_t deadEffects  = 0;      // reported only (never counted by the watch)
+            std::uint32_t wrongType    = 0;      // of `dead`: live forms of a type the slot cannot hold
             std::string   deadText, runtimeText;
         };
 
@@ -711,16 +818,32 @@ namespace apmf::castproxy {
                 return l;
             };
             LoadScan r;
-            VisitSpellRefs(a_actor, true, r.dead, [&](const RE::TESForm* a_p) {
-                RE::FormID id = 0;
-                switch (classify(a_p, id)) {
+            VisitSpellRefs(a_actor, Clear::kDirect, r.dead, [&](const RE::TESForm* a_p, Ref a_kind) {
+                RE::FormID id   = 0;
+                const Life life = classify(a_p, id);
+                // Proven live: only now is anything but the id read. A live form of a type this slot
+                // cannot hold is the dead form's ADDRESS (or, at the load itself, its ID) reused by
+                // another form: treated as dead (review F5 of f2fa89b).
+                if (life == Life::kLive || life == Life::kLiveRuntime) {
+                    const auto type = a_p->GetFormType();
+                    if (!TypeFits(a_kind, type)) {
+                        ++r.wrongType;
+                        r.deadText += fmt::format("{}{} (a LIVE form 0x{} of type 0x{}, which a {} cannot hold: a reused "
+                                                  "id or address)",
+                                                  r.deadText.empty() ? "" : ", ", fmt::ptr(a_p),
+                                                  apmf::log::Hex(a_p->GetFormID()),
+                                                  apmf::log::Hex(static_cast<std::uint32_t>(type)), RefName(a_kind));
+                        return true;
+                    }
+                }
+                switch (life) {
                 case Life::kDead:
                     r.deadText += fmt::format("{}{} (its memory reads id 0x{})", r.deadText.empty() ? "" : ", ",
                                               fmt::ptr(a_p), apmf::log::Hex(id));
                     return true;
                 case Life::kLiveRuntime:
                     ++r.liveRuntime;
-                    r.runtimeText += fmt::format("{}0x{}", r.runtimeText.empty() ? "" : ", ", apmf::log::Hex(id));
+                    r.runtimeText += fmt::format("{}0x{}", r.runtimeText.empty() ? "" : ", ", apmf::log::Hex(a_p->GetFormID()));
                     return false;
                 case Life::kUnverifiable:
                     ++r.unverifiable;
@@ -729,20 +852,33 @@ namespace apmf::castproxy {
                     return false;
                 }
             });
-            if (auto* list = a_actor->AsMagicTarget()->GetActiveEffectList()) {
-                for (auto* ae : *list) {
-                    if (!ae || !ae->spell) continue;
-                    RE::FormID id = 0;
-                    if (classify(static_cast<const RE::TESForm*>(ae->spell), id) == Life::kDead) ++r.deadEffects;
+            // Active effects are reported, never repaired, so the watch (which re-runs this scan on
+            // every pump with no expiry) does not walk them: one report per load pass is the whole
+            // value, and a per-pump ERROR would flood the log (review F1 of f2fa89b).
+            if (!a_quiet) {
+                if (auto* list = a_actor->AsMagicTarget()->GetActiveEffectList()) {
+                    for (auto* ae : *list) {
+                        if (!ae || !ae->spell) continue;
+                        RE::FormID id = 0;
+                        if (classify(static_cast<const RE::TESForm*>(ae->spell), id) == Life::kDead) ++r.deadEffects;
+                    }
                 }
             }
             const char* name = a_actor->GetName();
             if (r.dead.Total() != 0)
-                spdlog::warn("[castproxy] LOAD REPAIR ({}): 0x{} \"{}\" held pointer(s) to DESTROYED form(s) -- {} -- "
-                             "CLEARED: {}. (A save written with a runtime form in the slot, INVARIANTS #19; the "
+                spdlog::warn("[castproxy] LOAD REPAIR ({}): 0x{} \"{}\" held pointer(s) to DESTROYED form(s){} -- {} -- "
+                             "CLEARED: {}{}. (A save written with a runtime form in the slot, INVARIANTS #19; the "
                              "next reader of that slot would have crashed.)",
-                             a_when, apmf::log::Hex(a_actor->GetFormID()), name ? name : "", r.deadText, r.dead.Text());
-            if (r.deadEffects != 0)
+                             a_when, apmf::log::Hex(a_actor->GetFormID()), name ? name : "",
+                             r.wrongType != 0 ? fmt::format(" ({} of them a live form of a type the slot cannot hold)", r.wrongType)
+                                              : "",
+                             r.deadText, r.dead.Text(),
+                             r.dead.casterMidCast != 0
+                                 ? fmt::format("; {} caster(s) were MID-CAST on it: the spell pointer is nulled by a direct "
+                                               "write and the caster's cast state is left (no engine call is safe on a "
+                                               "dead spell)", r.dead.casterMidCast)
+                                 : "");
+            if (!a_quiet && r.deadEffects != 0)
                 spdlog::error("[castproxy] load check ({}): 0x{} \"{}\" carries {} active effect(s) whose spell pointer is "
                               "a DESTROYED form -- NOT repaired (the effect's own Effect* died with that form; no engine "
                               "path is safe on it). The game may crash when that effect updates.",
@@ -799,11 +935,11 @@ namespace apmf::castproxy {
         };
         SaveCount CountPoolRefs() {
             SaveCount c;
-            for (auto& ap : ProcessActors()) {
+            for (auto& ap : SweepActors()) {
                 auto* actor = ap.get();
                 ++c.actors;
                 Tally t;
-                VisitSpellRefs(actor, false, t, [](const RE::TESForm* a_p) { return SlotOf(a_p) >= 0; });
+                VisitSpellRefs(actor, Clear::kCount, t, [](const RE::TESForm* a_p, Ref) { return SlotOf(a_p) >= 0; });
                 std::uint32_t fx = 0;
                 if (auto* list = actor->AsMagicTarget()->GetActiveEffectList())
                     for (auto* ae : *list)
@@ -835,8 +971,8 @@ namespace apmf::castproxy {
         if (MintedCount() == 0) return;   // no runtime form exists: nothing a save could capture
 
         const bool    direct = apmf::allowance::RuntimeSupported();
-        std::uint32_t actors = 0, holders = 0, refs = 0, directRefs = 0, effects = 0, unresolved = 0;
-        for (auto& ap : ProcessActors()) {
+        std::uint32_t actors = 0, holders = 0, refs = 0, directRefs = 0, effects = 0, unresolved = 0, castersLeft = 0;
+        for (auto& ap : SweepActors()) {
             auto* actor = ap.get();
             ++actors;
             const char* name = actor->GetName();
@@ -844,7 +980,7 @@ namespace apmf::castproxy {
             // 1. Which pool forms does any of this actor's spell slots name?
             Tally                        before;
             std::vector<RE::SpellItem*>  forms;
-            VisitSpellRefs(actor, false, before, [&](const RE::TESForm* a_p) {
+            VisitSpellRefs(actor, Clear::kCount, before, [&](const RE::TESForm* a_p, Ref) {
                 const int i = SlotOf(a_p);
                 if (i < 0) return false;
                 if (std::find(forms.begin(), forms.end(), g_slot[i].form) == forms.end()) forms.push_back(g_slot[i].form);
@@ -860,17 +996,29 @@ namespace apmf::castproxy {
                 }
                 // 3. Re-read every slot; write what the engine left (see the disassembly above).
                 Tally left;
-                VisitSpellRefs(actor, direct, left, [](const RE::TESForm* a_p) { return SlotOf(a_p) >= 0; });
+                VisitSpellRefs(actor, direct ? Clear::kLivePool : Clear::kCount, left,
+                               [](const RE::TESForm* a_p, Ref) { return SlotOf(a_p) >= 0; });
                 if (left.Total() == 0) {
                     spdlog::info("[castproxy] save sweep: 0x{} \"{}\" referenced {} pool form(s) ({}) -- cleared by "
                                  "DeselectSpell + RemoveSpell.",
                                  apmf::log::Hex(actor->GetFormID()), name ? name : "", forms.size(), before.Text());
                 } else if (direct) {
-                    directRefs += left.Total();
+                    directRefs += left.Total() - left.casterLeft;
                     spdlog::warn("[castproxy] save sweep: 0x{} \"{}\" referenced {} pool form(s) ({}); DeselectSpell + "
-                                 "RemoveSpell LEFT {} -- cleared by direct member write.",
+                                 "RemoveSpell LEFT {} -- cleared by direct member write{}.",
                                  apmf::log::Hex(actor->GetFormID()), name ? name : "", forms.size(), before.Text(),
-                                 left.Text());
+                                 left.Text(),
+                                 left.interrupted != 0
+                                     ? fmt::format(" ({} caster(s) were mid-cast: ended by InterruptCast first)", left.interrupted)
+                                     : "");
+                    if (left.casterLeft != 0) {
+                        castersLeft += left.casterLeft;
+                        spdlog::error("[castproxy] save sweep: 0x{} \"{}\": {} caster(s) are MID-CAST on a pool form and the "
+                                      "InterruptCast address did not verify on this build -- the caster is LEFT AS IT IS "
+                                      "(a bare null would leave a cast running with no spell): THE SAVE WILL HOLD A "
+                                      "RUNTIME FORM in that caster.",
+                                      apmf::log::Hex(actor->GetFormID()), name ? name : "", left.casterLeft);
+                    }
                 } else {
                     spdlog::error("[castproxy] save sweep: 0x{} \"{}\" STILL references a pool form after DeselectSpell + "
                                   "RemoveSpell ({}), and the direct repair is refused on this runtime (offsets proven on "
@@ -902,11 +1050,12 @@ namespace apmf::castproxy {
             }
         }
         spdlog::info("[castproxy] save sweep (kSaveGame, before the engine writes; on the Drain thread: {}): {} actor(s) checked "
-                     "against {} minted pool form(s) [{}] -- {} spell-slot reference(s) on {} actor(s) cleared ({} by direct "
-                     "write), {} active effect(s) keyed to their source spell for the save ({} unresolved). ReteachLive "
+                     "(the process lists, the player, every current or earlier slot owner) against {} minted pool form(s) "
+                     "[{}] -- {} spell-slot reference(s) on {} actor(s) cleared ({} by direct write, {} mid-cast caster(s) "
+                     "LEFT), {} active effect(s) keyed to their source spell for the save ({} unresolved). ReteachLive "
                      "re-teaches live claims on the next pump.",
                      apmf::hook::OnMainThread() ? "yes" : "NO", actors, MintedCount(), PoolFormsText(), refs, holders,
-                     directRefs, effects, unresolved);
+                     directRefs, castersLeft, effects, unresolved);
     }
 
     bool SaveWrittenCheck() {
@@ -954,9 +1103,11 @@ namespace apmf::castproxy {
         }
         g_rekeyed.clear();
         if (c.refs == 0 && c.effects == 0)
-            spdlog::info("[castproxy] save check (co-save callback, after the actor records): {} actor(s), no spell slot and "
-                         "no active effect named any of the {} minted pool form(s) [{}] when the records were written -- "
-                         "CLEAN. {} active effect(s) keyed back to their proxy{}.",
+            spdlog::info("[castproxy] save check (co-save callback, after the actor records): on the {} actor(s) checked "
+                         "(the process lists, the player, every current or earlier slot owner) no spell slot and no "
+                         "active effect named any of the {} minted pool form(s) [{}] when the records were written -- "
+                         "CLEAN for those. An actor outside the process lists that never owned a slot is NOT checked. "
+                         "{} active effect(s) keyed back to their proxy{}.",
                          c.actors, MintedCount(), PoolFormsText(), back,
                          gone != 0 ? fmt::format(" ({} no longer on their target: left as they are)", gone) : "");
         else if (back != 0 || gone != 0)
@@ -979,7 +1130,7 @@ namespace apmf::castproxy {
         LoadScan                                      total;
         std::unordered_map<const RE::TESForm*, Life>  memo;
         std::uint32_t                                 actors = 0, repaired = 0, watched = 0;
-        for (auto& ap : ProcessActors()) {
+        for (auto& ap : SweepActors()) {
             auto* actor = ap.get();
             ++actors;
             LoadScan r;
@@ -1009,7 +1160,7 @@ namespace apmf::castproxy {
             total.deadEffects    += r.deadEffects;
             total.unverifiable   += r.unverifiable;
         }
-        spdlog::info("[castproxy] load repair ({}; on the Drain thread: {}): {} actor(s) checked -- {} pointer(s) to destroyed forms "
+        spdlog::info("[castproxy] load repair ({}; on the Drain thread: {}): {} actor(s) checked -- {} pointer(s) to destroyed or wrong-type forms "
                      "cleared on {} actor(s){}{}; {} active effect(s) with a destroyed spell reported; {} actor(s) hold a live "
                      "runtime form in a spell slot ({} watched).",
                      a_when, apmf::hook::OnMainThread() ? "yes" : "NO", actors, total.dead.Total(), repaired,

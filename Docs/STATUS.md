@@ -28,6 +28,22 @@ build/finding/workflow change.
   and when it was destroyed (inside the load call or after), which is why the repair also runs on the first pump and
   watches live runtime forms.
 
+### Same branch, third commit: the tier-A review's fix round (2026-11-15)
+
+- **F1 (SEV-3):** the per-pump load watch no longer walks active effects, and the `DESTROYED form` effect ERROR
+  prints only from the two load passes. It printed on every pump for as long as an actor was watched.
+- **F2 (SEV-3):** the save sweep and the second check now also cover every actor that owns or earlier owned a pool
+  slot, looked up by id (a follower with no AI process is in no process list). The lines name the covered set and
+  `CLEAN` reads `CLEAN for those`. NOT covered: an actor outside the process lists that never owned a slot.
+- **F3:** a caster still mid-cast on a pool form at a save is ended with `MagicCaster::InterruptCast` (the verified
+  `PositionCast.InterruptCast` row) instead of a bare null. Not on the load repair: that call reads through the spell.
+- **F5:** the load repair checks the form TYPE of every pointer it proved live against the slot it sits in. A live
+  form of a type the slot cannot hold (a reused id or address, e.g. a reference in a hand) is cleared like a dead one.
+- **F7:** `combatsubstrate::RestoreBeforeSave` reads a client substrate's winning handle before it releases, so a
+  substrate declared but not yet polled no longer leaves its claim standing.
+- Deferred to `Docs/REVIEW-BACKLOG.md` ("Proxy save integrity, tier-A review of f2fa89b"): F4, F6, F8.
+- `tools/esscheck.py` is the offline `.ess` check of INVARIANTS #19 (was a scratch file).
+
 ### Same branch, second commit: the dangling-state audit's Harbinger items (2026-11-15)
 
 - **ch.27, an open combat substrate was written into the save (audit SEV-3), fixed:** `combatsubstrate::RestoreBeforeSave`
