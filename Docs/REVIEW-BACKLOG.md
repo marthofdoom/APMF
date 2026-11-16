@@ -1464,3 +1464,8 @@ As handed to the author: "MFO logs ERROR \"NOT OPENED\" on every save ending a r
 
 ### APMF-B306 (SEV-4, OPEN, native/core/CombatOps.cpp Execute, against 75e1f75, finding F4)
 As handed to the author: "F4 SEV-4 ABA (controller identity by address only; add group pointer or target handle at decision time)." Reviewer log line: "F4 ABA SEV-4". Reasoning: a queued StopCombat records only the controller ADDRESS main saw at the decision, and the drain stops the actor's controller only when its current address equals it. If the engine frees that controller (the fight ended) and builds a new one for the same actor at the same heap address before the drain runs (a new fight), the identity check passes and the op stops the NEW fight. Window: between the decision and the actor's next UpdateCombat, normally one frame. Closure: record a second identity at decision time (the controller's group pointer or its target handle) and require both to match in Execute. Deferred on the coordinator's instruction for the review-fix round of 75e1f75.
+
+### fix/stability-h1 re-review (Opus 5.5, 2026-11-16, against 1e9b637)
+- **(SEV-4, FIXED in the merge commit):** combatops::Poll was an ordinary frame stage; a throw would stop the only bound on the #4a waits. Now FrameCritical.
+- **(SEV-5):** CombatOps.cpp Finish: if mainthread::Post throws after dones were moved out and the entry erased, the catch's second Finish finds nothing and those completions are lost (bad_alloc only).
+- **(SEV-5, design):** a throw in ControlMap::OnActorUpdate stops channel ticks for every actor for the session while claims and denies stay in force; unlike Drain/Pump nothing is released.

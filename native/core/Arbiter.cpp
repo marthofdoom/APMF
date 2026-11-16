@@ -166,7 +166,8 @@ namespace apmf {
         // pump delivered this frame's drain completions: an op whose actor lost its controller is cancelled, one
         // whose actor's combat update never ran for 1 s of game time is made here (an ERROR). One relaxed load while
         // nothing is queued; the 60 s RULE C line.
-        APMF_FRAME_STAGE(apmf::combatops::Poll(a_delta));
+        // Frame-critical (re-review SEV-4): Poll is the only bound on the #4a waits (ch.21 Enter / substrate Open re-post while Pending).
+        FrameCritical("apmf::combatops::Poll", [a_delta] { apmf::combatops::Poll(a_delta); });
 
         // ABI v18 OWN LINE OF SIGHT (core/Sightline.h). The one place its rays are cast for the
         // table: asked-for pairs are (re)measured here, at most kLosMaxPairsPerFrame per frame
