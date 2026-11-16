@@ -483,6 +483,29 @@ namespace {
             // The save call runs where the frame's job graph is idle (Main::Update AE 0x645F3A / 0x645F0E, after
             // the graph's events are reset at 0x645EDE and before the kick at 0x64613A; a menu save is paused);
             // the P0 probe samples it ([overlap] "save flush").
+            //
+            // BEFORE THAT (2026-11-16, fix/save-drain): the posted main-thread queue is run once, here, so no posted
+            // engine write or completion is pending across the save (core/MainThread.h DrainForSave: one swap, the FIFO
+            // prefix up to the first task that waits for the next Drain, never before the first pump of a loaded
+            // world). In front of FlushForSave on purpose: a StopCombat a posted task asks for is queued and the flush
+            // below runs it inline, and a completion a combat job posted (a substrate close in flight) is delivered
+            // before RestoreBeforeSave reads that state. Outside the SyncScope: a posted task keeps its own rules (ch.21's
+            // Enter still waits while a StopCombat for its actor is Pending).
+            if (apmf::hook::OnMainThread()) {
+                const auto drained = apmf::mainthread::DrainForSave();
+                if (drained.refused)
+                    spdlog::info("[mainthread] kSaveGame: the posted queue was NOT run before the save: {}.", drained.refused);
+                else if (drained.ran != 0 || drained.kept != 0)
+                    spdlog::info("[mainthread] kSaveGame: ran {} posted task(s) before the engine writes the save; {} stay "
+                                 "queued for the next frame (a task that waits for the next Drain, and what was posted "
+                                 "behind it).",
+                                 drained.ran, drained.kept);
+            } else if (apmf::hook::RefusedReason() == nullptr) {
+                // The seat exists but this is not its thread (or it has not run once yet): the queue is main-only, so it
+                // is left alone, as before this change. With the seat refused nothing is ever pumped: nothing to say.
+                spdlog::warn("[mainthread] kSaveGame did not arrive on the thread the player Update seat runs on (or that "
+                             "seat has not run yet): the posted queue is not run before this save.");
+            }
             apmf::combatops::FlushForSave();
             const apmf::combatops::SyncScope saveSync;
             // ch.24 (ABI v19): SKSE sends this BEFORE the game writes the save. Put the engine's own

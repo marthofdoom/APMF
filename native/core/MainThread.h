@@ -36,6 +36,16 @@ namespace apmf::mainthread {
     // mutex-guarded push -- never blocks on engine state.
     void Post(std::function<void()> fn);
 
+    // Post() for a task whose CONTRACT is "not before the NEXT ControlMap::Drain has published". In a frame that is
+    // every task anyway (Pump always follows that frame's Drain), so Pump() treats it like any other. It differs only
+    // at kSaveGame: DrainForSave() runs with no Drain in front of it, so it stops at the first such task.
+    // WHO NEEDS IT: a task posted from inside Pump (or from a Poll, which runs after Pump) that finishes a release it
+    // queued to ControlMap in the same breath, and must not run until that release is applied and published. Today:
+    // ch.19's FreeSlot and RetireMarkerLater (channels/Travel.cpp), which free a package record / delete a marker only
+    // once the ch.9 offer naming them is no longer published. A task posted from inside Drain never needs it: the Pump
+    // of the same frame runs it, so it is never queued at a save. Docs/INVARIANTS.md "THE SAVE-TIMING RULE".
+    void PostAfterDrain(std::function<void()> fn);
+
     // Drain and run every task queued so far, in FIFO order. MAIN-THREAD-ONLY
     // (called from Arbiter::OncePerFrame, never from OnActorUpdate). A task
     // Post()'d DURING this Pump() call runs on the NEXT Pump() -- this drains a
@@ -46,6 +56,25 @@ namespace apmf::mainthread {
     // posted task used to take the rest of its batch with it -- a lost completion
     // leaves a substrate close in flight for good).
     void Pump();
+
+    // kSaveGame: RUN WHAT IS QUEUED NOW, ONCE, before the engine writes the save (INVARIANTS "THE SAVE-TIMING RULE").
+    // MAIN-THREAD-ONLY; called first in plugin.cpp's kSaveGame handler, in front of combatops::FlushForSave and the
+    // restore passes, so a StopCombat a task asks for is flushed by the next line and a posted completion (a substrate
+    // close in flight) is delivered before the passes read that state.
+    //   BOUNDED: one swap. A task that posts again lands in the live queue and runs at the next frame's Pump.
+    //   IN ORDER: it runs the FIFO PREFIX of the batch, up to (not including) the first PostAfterDrain task; that task
+    //     and everything behind it stay queued, in order, for the next frame. So no task runs ahead of one posted before
+    //     it, and no task runs in front of a Drain its contract needs. `kept` counts what stayed.
+    //   NOT BEFORE THE FIRST PUMP OF A LOADED WORLD: Discard() (kPreLoadGame / revert) arms a refusal that the next
+    //     Pump() lifts, so a task posted for "the first pump after load" is never run from a message handler.
+    //   Refused also from inside a posted task (it cannot happen: saves are not made there).
+    // `refused` is a string literal naming why nothing ran, or nullptr. Each task runs under Pump's own guard.
+    struct SaveDrain {
+        std::size_t ran     = 0;
+        std::size_t kept    = 0;
+        const char* refused = nullptr;
+    };
+    SaveDrain DrainForSave();
 
     // Drop every queued task WITHOUT running it; returns how many were dropped.
     // Same seat rule as Pump() (called from the kPreLoadGame / revert handlers in

@@ -645,7 +645,8 @@ namespace {
     // 0xFF FormID is never touched. GAME THREAD.
     void RetireMarkerLater(RE::FormID a_id, RE::ObjectRefHandle a_marker, RE::FormID a_markerId, const char* a_why) {
         if (a_markerId == 0) return;
-        apmf::mainthread::Post([a_id, a_marker, a_markerId, a_why] {
+        // PostAfterDrain: this task's contract is the NEXT Drain (above), so the kSaveGame drain stops in front of it.
+        apmf::mainthread::PostAfterDrain([a_id, a_marker, a_markerId, a_why] {
             // First take the marker out of every free package record, then delete it:
             // nothing of APMF's names it afterwards. (The slot was freed by a Post queued
             // BEFORE this one, so FIFO order makes it free here.)
@@ -708,8 +709,8 @@ namespace {
     void DropOfferAndFreeSlot(APMF_API::Handle a_hPackage, int a_slot) {
         if (a_hPackage != APMF_API::kInvalidHandle)
             apmf::ControlMap::Get().EnqueueRelease(a_hPackage);
-        if (a_slot >= 0)
-            apmf::mainthread::Post([a_slot] { FreeSlot(a_slot); });
+        if (a_slot >= 0)   // PostAfterDrain: "strictly after that frame's Drain" (above) -- never run by the kSaveGame drain
+            apmf::mainthread::PostAfterDrain([a_slot] { FreeSlot(a_slot); });
     }
 
     // Re-file the internal ch.9 offer at a NEW basis, because a claim's basis cannot
