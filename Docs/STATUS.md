@@ -4,6 +4,24 @@ Updated 2026-11-16 (stability H1 fix branch, below; proxy save integrity fix bra
 shipped, what's probe-gated, what's next. Keep this current in the SAME change as any
 build/finding/workflow change.
 
+## FIX 2026-11-16 -- THE POSTED QUEUE IS RUN AT A SAVE, branch `fix/save-drain`, NOT merged, NOT field run
+
+MFO drains its own main-thread queue at kSaveGame since `fix/worker-writes-main`. Harbinger's `apmf::mainthread` queue
+was not: a posted engine write or completion could be pending across a save. No ABI change (`APMF_API.h` untouched), no
+address id, no seat, no co-save change. Files: `core/MainThread.{h,cpp}`, `plugin.cpp`, `channels/Travel.cpp` (two calls).
+- **`mainthread::DrainForSave()`**, first in the kSaveGame case, in front of `combatops::FlushForSave`: one swap of the
+  queue, run in order on the main thread, each task under the pump's own guard. A StopCombat a drained task asks for is
+  run inline by the flush that follows. A completion a combat job posted is delivered before the restore passes.
+- **Every post site was read (37).** Two tasks must NOT run at a save, because their contract is "after the NEXT Drain
+  published": ch.19's `FreeSlot` and `RetireMarkerLater` (they finish a ch.9 offer release queued in the same breath).
+  They are now posted with `mainthread::PostAfterDrain`, and the save drain stops in front of the first such task: it
+  and everything behind it stay queued, in order (no task runs ahead of an earlier one). Their marker is recorded by
+  `poscast::SaveMarkers` and deleted at the load, as before.
+- **Never before the first pump of a loaded world:** the tasks posted for "the first pump after load" keep that seat.
+- **Log:** `[mainthread] kSaveGame: ran N posted task(s) before the engine writes the save; M stay queued for the next
+  frame`. Nothing is printed when the queue was empty.
+- INVARIANTS "THE POSTED QUEUE AT A SAVE" (after the save-timing rule), MAP `core/MainThread`.
+
 ## FIX 2026-11-16 -- STABILITY H1 / H2 / H4 / M5 + the P0 overlap probe, branch `fix/stability-h1`, NOT merged, NOT field run
 
 From the 2026-11-16 stability audit (MFO + Harbinger), rows P0, H1, H2, H4 and M5 (Harbinger half). No ABI change
