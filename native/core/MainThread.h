@@ -44,6 +44,8 @@ namespace apmf::mainthread {
     // ch.19's FreeSlot and RetireMarkerLater (channels/Travel.cpp), which free a package record / delete a marker only
     // once the ch.9 offer naming them is no longer published. A task posted from inside Drain never needs it: the Pump
     // of the same frame runs it, so it is never queued at a save. Docs/INVARIANTS.md "THE SAVE-TIMING RULE".
+    // The save drain is strict FIFO, so a completion (a combatops Deliver) posted behind such a task stays queued too
+    // (fix/save-drain F1). A save made from a menu runs the queued engine writes inside the menu (F2).
     void PostAfterDrain(std::function<void()> fn);
 
     // Drain and run every task queued so far, in FIFO order. MAIN-THREAD-ONLY

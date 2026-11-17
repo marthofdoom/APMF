@@ -232,8 +232,10 @@ namespace apmf::poscast {
 
             // One hop later: the pump runs this on the NEXT frame (a Post made during
             // Pump waits for the next Pump), after the cast has fully returned.
+            // The real condition is "the cast has returned" (it holds inside a kSaveGame drain too: fix/save-drain F3),
+            // not a frame count.
             const auto native = handle.native_handle();
-            apmf::mainthread::Post([native] { Retire(native, "one frame after delivery"); });
+            apmf::mainthread::Post([native] { Retire(native, "the cast has returned"); });
         }
 
     }

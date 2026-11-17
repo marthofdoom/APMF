@@ -3352,10 +3352,17 @@ namespace apmf::combatsubstrate {
             if (s.closing) {
                 // H1: a close in flight. plugin.cpp's kSaveGame ran combatops::FlushForSave first, which made its queued
                 // StopCombat inline and delivered the result (CloseStopped): finish it here, before the write.
-                if (!s.closeDone)
+                if (!s.closeDone && apmf::combatops::Pending(s.id))
                     spdlog::error("[substrate] save: 0x{} had a close in flight whose StopCombat was NOT answered by the "
                                   "save flush -- finishing the close without it (the holder may be saved in combat).",
                                   Hex(s.id));
+                else if (!s.closeDone)
+                    // fix/save-drain F1: the save drain is strict FIFO and stops at a PostAfterDrain task (a Travel FreeSlot /
+                    // RetireMarkerLater), so a combatops Deliver can stay queued behind one: the StopCombat ran, only its
+                    // completion is queued. No op is held for the actor any more, so this is not the lost-StopCombat case.
+                    spdlog::warn("[substrate] save: 0x{} StopCombat ran; its completion is still queued behind a Travel teardown "
+                                 "(strict FIFO) -- finishing the close here.",
+                                 Hex(s.id));
                 FinishClose(s);
                 ++closed;
             } else if (s.slot < 0) {

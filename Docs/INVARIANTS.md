@@ -1604,6 +1604,16 @@ front of `combatops::FlushForSave`, with `mainthread::DrainForSave()`:
   they leave in a save when they stay queued: the destination marker, which `poscast::SaveMarkers` records and the load
   deletes (ABI v11). A task posted from inside Drain (a channel's Apply / Release) is run by the Pump of the same frame,
   so it is never queued at a save and needs no mark.
+- **Exception (F1): a completion can stay queued behind an after-drain task.** The prefix rule is strict FIFO, so a
+  combatops `Deliver` (a substrate close's StopCombat completion) queued behind a Travel `FreeSlot` / `RetireMarkerLater`
+  stays queued although its StopCombat already ran. `RestoreBeforeSave` tells that apart from a lost StopCombat with
+  `combatops::Pending(id)` (WARN when no op is held, ERROR when one is).
+- **A save made from a menu (F2):** while paused, a save now runs the queued engine writes inside the menu (`MoveTo_Impl`,
+  `StartCombat` via `Enter`, `EquipObject` via `Enforce`, `PlayIdle`, `EvaluatePackage`), where before they waited for the
+  menu to close.
+- **Handler order (F4):** the order MFO and Harbinger handle kSaveGame is SKSE plugin load order and is not controlled.
+  Both orders are safe: ControlMap requests are never published at a save, and `castproxy::Acquire` is Drain-only, so the
+  #19 sweep cannot be bypassed.
 - **Not before the first Pump of a loaded world:** `Discard()` arms a refusal that the next `Pump()` lifts. The tasks the
   load handlers post for "the first pump after load" (the marker sweep, the substrate's after-load clean, the proxy
   repair) keep that seat and are never run from a message handler.

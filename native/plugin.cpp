@@ -491,6 +491,9 @@ namespace {
             // below runs it inline, and a completion a combat job posted (a substrate close in flight) is delivered
             // before RestoreBeforeSave reads that state. Outside the SyncScope: a posted task keeps its own rules (ch.21's
             // Enter still waits while a StopCombat for its actor is Pending).
+            // F1: a completion can stay queued behind an after-drain task (strict FIFO). F2: a save from a menu (paused) now
+            // runs the queued engine writes (MoveTo_Impl, StartCombat via Enter, EquipObject via Enforce, PlayIdle,
+            // EvaluatePackage) inside the menu; before, they waited for it to close.
             if (apmf::hook::OnMainThread()) {
                 const auto drained = apmf::mainthread::DrainForSave();
                 if (drained.refused)
