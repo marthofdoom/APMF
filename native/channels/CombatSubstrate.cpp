@@ -14,7 +14,7 @@
 #include "core/Allowance.h"                // SeatVerified, RuntimeSupported
 #include "core/CasterTypeCensus.h"         // NotifyInstalled: the fire signal
 #include "core/Clock.h"
-#include "core/CombatOps.h"              // H1: the close's StopCombat runs on the holder's own combat update
+#include "core/CombatOps.h"              // H1: the close's StopCombat is posted to the engine's task queue
 #include "core/Hook.h"                   // P0: the overlap samples at this file's main-thread combat calls
 #include "core/BehaviorTreeCatalog.h"         // the leaf catalog (names)
 #include "core/ControlMap.h"
@@ -502,8 +502,8 @@ namespace {
         RE::FormID       releaseForm = 0;
         std::uint32_t    releaseHandMax = 0;
         const char*      releaseHow = nullptr;
-        // H1 (stability audit 2026-11-16, APMF-B26): THE CLOSE IN FLIGHT. CloseSub QUEUES the holder's StopCombat onto
-        // its own Character::UpdateCombat (core/CombatOps.h) instead of freeing the controller from this thread; every
+        // H1 (stability audit 2026-11-16, APMF-B26): THE CLOSE IN FLIGHT. CloseSub POSTS the holder's StopCombat to
+        // the engine's task queue (core/CombatOps.h) instead of freeing the controller from this thread; every
         // step the close makes after the StopCombat (the anchor guard on the members, the floors, the slot and its
         // denies, the anchor home, the package re-pick, the claim) waits for the result (FinishClose), so the denies
         // stand until the controller is gone. `closing` is set only while the StopCombat is queued.
@@ -1148,16 +1148,16 @@ namespace {
                          Hex(a_sub.id), Hex(g_anchorId.load()), kFloorWaitMs);
             return CloseSub(a_sub, "floors not published");
         }
-        // Review F1 of 75e1f75 (INVARIANTS #4a): a Harbinger StopCombat for this holder is queued or RUNNING on his own
-        // combat job (a held engagement's range rule, a close of an earlier substrate). Actor::StartCombat writes into an
-        // existing controller (AE 0x6B6D58 -> 0x559150 -> 0x83D2C0) and the drain may be freeing it: the entry waits a
-        // frame (Poll calls Enter again), bounded by the op (one frame of game time, or Poll's kUndrainedSec answer).
+        // Review F1 of 75e1f75 (INVARIANTS #4a): a Harbinger StopCombat for this holder is PENDING, posted to the
+        // engine's task queue (a held engagement's range rule, a close of an earlier substrate). Actor::StartCombat writes into an
+        // existing controller (AE 0x6B6D58 -> 0x559150 -> 0x83D2C0) and the engine may be freeing it: the entry waits a
+        // frame (Poll calls Enter again), bounded by the op (one frame of game time, or Poll's kNotRunSec answer).
         // After it ran, the checks below see the actor as it is then (a controller left = "entered combat first").
         if (apmf::combatops::Pending(a_sub.id)) {
             if (!a_sub.stopWaitLogged) {
                 a_sub.stopWaitLogged = true;
-                spdlog::info("[substrate] 0x{} OPEN waits: a Harbinger StopCombat for him is still queued or running on his "
-                             "own combat update (INVARIANTS #4a); the entry is retried every frame until it ran.",
+                spdlog::info("[substrate] 0x{} OPEN waits: a Harbinger StopCombat for him is still pending (posted to the "
+                             "engine's task queue; INVARIANTS #4a); the entry is retried every frame until it ran.",
                              Hex(a_sub.id));
             }
             return true;
@@ -1440,8 +1440,8 @@ namespace {
         if (a_sub.bitSet && proc) proc->ignoringCombat = a_sub.priorBit;
         // 2. StopCombat once (the substrate entered, so the controller is the substrate's). Its group's other
         //    members are read first: a non-holder among them is cleaned after the StopCombat (anchor guard).
-        //    H1 (2026-11-16): the StopCombat is QUEUED onto the holder's own Character::UpdateCombat (core/CombatOps.h)
-        //    -- the engine frees a controller on the actor's own update, never under a reader on another thread -- and
+        //    H1 (2026-11-16): the StopCombat is POSTED to the engine's task queue (core/CombatOps.h: the engine runs it)
+        //    -- the engine ends a fight where it drains that queue, never inside a combat job -- and
         //    the close waits for it (Poll's WaitClose); inside a save it runs inline and the close finishes here.
         a_sub.closeReason  = a_reason;
         a_sub.closeMembers = a_sub.phase == Phase::kOpen ? apmf::anchorguard::GroupMembers(actor)
@@ -1460,12 +1460,12 @@ namespace {
                 if (!apmf::combatops::StopCombat(actor, "the combat substrate's close",
                                                  [id, gen](const apmf::combatops::Result& r) { CloseStopped(id, gen, r); })) {
                     a_sub.closing  = false;
-                    a_sub.closeHow = "NOT made: the owner-thread StopCombat refused it (core/CombatOps.h)";
-                    spdlog::error("[substrate] 0x{} close: the owner-thread StopCombat REFUSED ({}) -- the holder keeps its "
+                    a_sub.closeHow = "NOT made: the StopCombat op refused it (core/CombatOps.h)";
+                    spdlog::error("[substrate] 0x{} close: the StopCombat op REFUSED ({}) -- the holder keeps its "
                                   "controller; the anchor guard reports it if it still names the anchor.",
                                   Hex(a_sub.id), apmf::combatops::UnavailableWhy());
                 } else if (!a_sub.closeDone) {
-                    return true;   // in flight: the holder's own combat update makes it; Poll's WaitClose finishes
+                    return true;   // in flight: the engine runs it from its task queue; Poll's WaitClose finishes
                 }
             } else {
                 a_sub.closeHow = "NOT a Character vtable: StopCombat not called";
@@ -1528,9 +1528,9 @@ namespace {
     }
 
     // H1: Poll, for a Sub whose close is in flight. False = closed (the caller erases); true = still waiting for the
-    // holder's own combat update to make the StopCombat, or begun again for a claim declared while it closed. The
-    // queue answers every op (core/CombatOps.h: run on the owner's update, cancelled when the controller is gone,
-    // made on main after 1 s of game time without a drain), so this never waits for ever.
+    // engine to run the StopCombat, or begun again for a claim declared while it closed. Every op is
+    // answered (core/CombatOps.h: the controller gone = the engine ran it; the same controller after 1 s of game
+    // time = "not stopped", with an ERROR), so this never waits for ever.
     bool WaitClose(Sub& a_sub) {
         if (!a_sub.closeDone) return true;
         const APMF_API::Handle released = a_sub.handle;   // the claim FinishClose ends (kInvalidHandle: the client did)
@@ -1612,7 +1612,7 @@ namespace {
                     auto*             anc  = Anchor();
                     const RE::FormID  id   = a_sub.id;
                     // round-2 closing item 3a: the same package re-pick CloseSub makes after its StopCombat. H1: the
-                    // StopCombat is queued onto the holder's own combat update, so the re-pick is its completion.
+                    // StopCombat is posted to the engine's task queue, so the re-pick is its completion.
                     const std::string stop = apmf::combatentry::hold::StopCombatRanked(
                         actor, a_sub.handle, anc ? anc->GetFormID() : 0, anc ? anc->GetHandle() : RE::ActorHandle{},
                         [id](const apmf::combatops::Result& r) {
@@ -2080,7 +2080,7 @@ namespace {
                     if (FindSlot(a->GetFormID(), st) >= 0 && (st & (kStLive | kStReal)) == kStLive)
                         return RE::BSContainer::ForEachResult::kContinue;   // a holder under its substrate
                     // #4a (review F1 of 75e1f75): a teammate whose Harbinger StopCombat is queued or running is ending
-                    // his fight; his controller is not read (the drain may be freeing it).
+                    // his fight; his controller is not read (the engine may be freeing it).
                     if (apmf::combatops::Pending(a->GetFormID())) return RE::BSContainer::ForEachResult::kContinue;
                     auto* cc = a->GetActorRuntimeData().combatController;
                     if (!cc) return RE::BSContainer::ForEachResult::kContinue;
@@ -2487,7 +2487,7 @@ namespace {
             auto [it, fresh] = g_subs.try_emplace(id);
             Sub& s = it->second;
             if (!fresh && s.closing) {
-                // H1: its close is in flight (the StopCombat queued on the holder's own combat update). The close
+                // H1: its close is in flight (the StopCombat posted to the engine's task queue). The close
                 // finishes as decided; then the substrate begins again for the claim winning at that point (WaitClose).
                 s.reopen     = true;
                 s.reopenFval = param.fval;
@@ -2978,9 +2978,8 @@ namespace apmf::combatsubstrate {
         } else if (!apmf::combatentry::hold::StopCombatAvailable()) {
             why = "the held engagement's ranked StopCombat is not available ([EngagementHold] bEngagementHold=0, a "
                   "runtime other than exactly 1.6.1170 / 1.5.97 / 1.7.104, its Character vtable row refused, or the "
-                  "owner-thread StopCombat queue is unavailable -- it rides Character::UpdateCombat layer 0, so "
-                  "[TargetPin] bTargetPin=0 refuses it, see the [combatops] line): the real-combat drop ends an EMPTY "
-                  "fight through it (marth 2026-10-13) and every close's StopCombat runs through that queue (H1), so "
+                  "StopCombat ops are unavailable, see the [combatops] line): the real-combat drop ends an EMPTY "
+                  "fight through it (marth 2026-10-13) and every close's StopCombat goes through them (H1), so "
                   "the substrate needs it";
         } else if (apmf::actiongate::SubstrateLeavesPaired() != kLeafCount) {
             why = "the leaf allow-list does not cover all 95 behaviour-tree node classes with an act()/pop() pair and the "
@@ -3251,7 +3250,7 @@ namespace apmf::combatsubstrate {
             }
             bool keep = true;
             if (s.closing) {
-                keep = WaitClose(s);   // H1: the close's StopCombat is queued on the holder's own combat update
+                keep = WaitClose(s);   // H1: the close's StopCombat is posted to the engine's task queue
             } else if (s.closeAsked && s.phase != Phase::kOpen) {
                 keep = s.slot >= 0 ? CloseSub(s, s.closeWhy ? s.closeWhy : "client release") : false;
             } else {
@@ -3446,7 +3445,7 @@ namespace apmf::combatsubstrate {
                         RE::BSReadLockGuard guard(g->lock);
                         left = g->targets.size();
                     }
-                    // H1: through the owner-thread queue, which runs it inline here (plugin.cpp's SyncScope).
+                    // H1: through core/CombatOps.h, which runs it inline here (plugin.cpp's SyncScope).
                     const bool stop = left == 0 && *reinterpret_cast<const std::uintptr_t*>(a) == g_vtChar &&
                                       apmf::combatops::StopCombat(a, "the save's anchor clean");
                     if (stop) ++stopped;
@@ -3508,8 +3507,8 @@ namespace apmf::combatsubstrate {
                     RE::BSReadLockGuard guard(g->lock);
                     left = g->targets.size();
                 }
-                // H1: AfterLoad runs on the first pump after the load, an ordinary frame: the StopCombat is QUEUED onto
-                // the actor's own combat update (core/CombatOps.h), never made from this thread.
+                // H1: AfterLoad runs on the first pump after the load, an ordinary frame: the StopCombat is POSTED to
+                // the engine's task queue (core/CombatOps.h), never made from this thread and never on a combat job.
                 if (left == 0 && *reinterpret_cast<const std::uintptr_t*>(a) == g_vtChar &&
                     apmf::combatops::StopCombat(a, "the load's anchor clean")) {
                     ++stopped;
@@ -3523,7 +3522,7 @@ namespace apmf::combatsubstrate {
                 spdlog::warn("[substrate] {}: 0x{} came out of the save in combat with the anchor (a save written while a "
                              "substrate was open) -- anchor removed from its group{}.",
                              a_why, Hex(a->GetFormID()),
-                             left == 0 ? "; nothing else to fight: StopCombat queued on its own combat update" : "");
+                             left == 0 ? "; nothing else to fight: StopCombat posted to the engine's task queue" : "");
             }
         }
         if (auto* home = g_homeId ? RE::TESForm::LookupByID<RE::TESObjectREFR>(g_homeId) : nullptr;

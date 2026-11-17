@@ -9,7 +9,7 @@
 #include "core/AvLedger.h"
 #include "core/MainThread.h"
 #include "core/CastProxy.h"
-#include "core/CombatOps.h"        // H1: the owner-thread StopCombat queue
+#include "core/CombatOps.h"        // H1: the StopCombat ops (the engine's road)
 #include "channels/Stance.h"         // ch.3 passive save / load probes (2026-11-15)
 #include "core/CastSeats.h"
 #include "core/ReanimateSeat.h"
@@ -226,8 +226,8 @@ namespace {
                                                   // exact 1.6.1170 / 1.5.97, VR-refused, [Idle] bIdleV2,
                                                   // SeatVerified on SetupSpecialIdle. A refusal REFUSES kIntent_Idle claims
                                                   // that carry a form; the form-free v1 idle is not gated.
-            apmf::combatops::Install();          // H1 (2026-11-16): the owner-thread StopCombat queue (core/CombatOps.h).
-                                                 // Rides 0xE4 layer 0 (installed at plugin load). BEFORE the held
+            apmf::combatops::Install();          // H1 (2026-11-16): the StopCombat ops, the engine's road (core/CombatOps.h).
+                                                 // Needs no Harbinger seat (a call, not a hook). BEFORE the held
                                                  // engagement and the substrate: both ask combatops::Available().
             apmf::combatentry::hold::Install();  // THE HELD ENGAGEMENT (2026-10-12, INVARIANTS #0 (i)):
                                                   // [EngagementHold]; the two knowledge seats (write_call<5>
@@ -476,8 +476,8 @@ namespace {
                              dropped);
             break;
         case SKSE::MessagingInterface::kSaveGame: {
-            // H1 (2026-11-16, core/CombatOps.h): FIRST, every StopCombat still queued for an actor's own combat
-            // update runs here, inline, on this thread: a queued free would miss the write. Then every restore
+            // H1 (2026-11-16, core/CombatOps.h): FIRST, every StopCombat still pending (posted to the
+            // engine's task queue and not yet run) is made here, inline, on this thread: a later free would miss the write. Then every restore
             // pass below runs inside a SyncScope, so a StopCombat it decides (a substrate close, the empty-fight
             // end, the anchor guard) runs inline too and the record the engine writes next has no controller.
             // The save call runs where the frame's job graph is idle (Main::Update AE 0x645F3A / 0x645F0E, after

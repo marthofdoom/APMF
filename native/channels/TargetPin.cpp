@@ -2,7 +2,6 @@
 #include "channels/TargetPin.h"
 #include "core/Allowance.h"   // SeatVerified(): the mit-3.7 F1 self-check gate
 #include "core/Clock.h"
-#include "core/CombatOps.h"    // H1: the owner-thread StopCombat drain (the outermost layer)
 #include "core/ControlMap.h"
 #include "core/Hook.h"         // P0: the UpdateCombat overlap counter
 #include "core/Log.h"
@@ -140,9 +139,9 @@ extern "C" __declspec(dllimport) unsigned long __stdcall GetPrivateProfileIntA(
 // runs (a script, a package evaluation, a kill -- 0.47 item 4) frees the controller under
 // the read. That is identical to vanilla's own UpdateCombat body and to MFO's hook.
 // Recorded in Docs/REVIEW-BACKLOG.md APMF-B26. HARBINGER'S OWN StopCombats are no longer in
-// that class (2026-11-16, stability H1, INVARIANTS #4a): they are queued (core/CombatOps.h)
-// and made by THIS file's outermost layer (E4Outer, below) on the actor's own update, before
-// the chain, so no seat of that actor's update is reading when the controller is freed.
+// that class (2026-11-16, stability H1, INVARIANTS #4a): they are posted as the engine's own
+// task-queue message (core/CombatOps.h) and the ENGINE runs them where it drains that queue, outside
+// every combat job (v0.20.5; 0.20.4 ran them from E4Outer below, on the actor's combat job, and hung).
 //
 // VERSION ROBUSTNESS. All three seats are vtable slots (principle 11: no call-site
 // patch), each on a vtable that is a self-checked row derived from our own executables
@@ -775,19 +774,17 @@ namespace {
 
     // THE OUTERMOST HARBINGER LAYER (stability audit H1 / P0, 2026-11-16). The first Harbinger layer entered for
     // an UpdateCombat (whichever index: the census may have put one above layer 0) brackets the WHOLE chain below
-    // it: the P0 counter (core/Hook.h: an UpdateCombat is in flight on this thread) and, BEFORE anything of this
-    // actor's combat update runs, the owner-thread StopCombat drain (core/CombatOps.h: a StopCombat Harbinger
-    // decided on main is made here, on the actor's own job, where nothing of its update is in flight). The bark
-    // deny's BeforeUpdateCombat runs after the drain (with no controller left it has nothing to arm). Nested
-    // layers of the same update see t_e4Nest > 0 and do neither. RAII: an exception unwinding through the chain
-    // still balances the counter.
+    // it with the P0 counter (core/Hook.h: an UpdateCombat is in flight on this thread). Nested layers of the same
+    // update see t_e4Nest > 0 and do not count. RAII: an exception unwinding through the chain still balances the
+    // counter. NOTHING ELSE RUNS HERE (INVARIANTS #4a, v0.20.5): 0.20.4 ran the StopCombat queue's drain at this
+    // point, on the actor's combat job, and the game hung at the first combat frame after a load. The engine never
+    // ends a fight inside this job (core/CombatOps.h); a StopCombat Harbinger decides is now run by the engine.
     thread_local int t_e4Nest = 0;
     struct E4Outer {
         bool outer;
-        explicit E4Outer(RE::Actor* a_this) : outer(t_e4Nest++ == 0) {
+        explicit E4Outer(RE::Actor*) : outer(t_e4Nest++ == 0) {
             if (!outer) return;
             apmf::hook::CombatUpdateEnter();
-            apmf::combatops::DrainFor(a_this);   // one relaxed load when nothing is queued; never throws
         }
         ~E4Outer() {
             --t_e4Nest;
@@ -800,7 +797,7 @@ namespace {
     // Layer 0, installed at SKSEPluginLoad (InstallLayer0).
     struct UpdateCombatObserver {
         static void thunk(RE::Actor* a_this) {
-            const E4Outer outer(a_this);   // H1 / P0: the drain and the counter, when this is the outermost layer
+            const E4Outer outer(a_this);   // P0: the counter, when this is the outermost layer
             apmf::substratebark::BeforeUpdateCombat(a_this);   // #0 (j) 2 (f): before the engine's update (one load when idle)
             LayerBody(0, a_this, Next, reinterpret_cast<std::uintptr_t>(_ReturnAddress()));
         }

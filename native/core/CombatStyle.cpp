@@ -215,7 +215,7 @@ namespace apmf::combatstyle {
             const RE::NiPointer<RE::Actor> actor(RE::TESForm::LookupByID<RE::Actor>(a_id));
             if (!actor || !actor->Is3DLoaded() || actor->IsDead()) return;
             // #4a (review F1 of 75e1f75): a Harbinger StopCombat for him is queued or running -- his controller is about to
-            // go (the drain may be freeing it now): not read, not refreshed; the next one's construction reads the seats.
+            // go (the engine may be freeing it now): not read, not refreshed; the next one's construction reads the seats.
             if (apmf::combatops::Pending(a_id) || !actor->IsInCombat()) return;
             auto* const cc = actor->GetActorRuntimeData().combatController;
             if (!cc) return;   // no controller: the next one's construction reads the seats itself

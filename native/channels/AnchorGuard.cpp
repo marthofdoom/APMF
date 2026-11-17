@@ -108,7 +108,7 @@
 // two actors' FormIDs; its log state sits under g_logMx (no engine call under it; only spdlog's own lock nests
 // inside it, and spdlog never calls back into this file).
 // Everything else: game thread only (Poll / CloseSub / ResetAll). Stability H1 (2026-11-16, INVARIANTS #4a): the
-// ranked StopCombat is QUEUED onto the actor's own combat update (core/CombatOps.h) and the package re-pick is its
+// ranked StopCombat is POSTED to the engine's task queue (core/CombatOps.h: the engine runs it) and the package re-pick is its
 // completion; RemoveTarget runs under the group's write lock (the substrate's RemoveAnchorFromGroup).
 // ============================================================================
 
@@ -229,7 +229,7 @@ namespace {
     // cleaned actor's own package (and its sheathe) comes back instead of a stale combat state. The relocation is the
     // substrate's verified row PackageGate.EvaluatePackage (RELOCATION_ID(36407, 37401)); this runs only while the
     // substrate is installed, which requires that row (exact 1.6.1170 / 1.5.97 / 1.7.104; 37401 is a row of the MIT id table).
-    // H1 (2026-11-16): the StopCombat is QUEUED onto the actor's own combat update (core/CombatOps.h), so the re-pick
+    // H1 (2026-11-16): the StopCombat is POSTED to the engine's task queue (core/CombatOps.h: the engine runs it), so the re-pick
     // is its completion (main, after the stop ran), never made right after the request: a re-pick before the stop
     // would run against the fight it is meant to follow. Inside a save both run inline, in order.
     void Repick(RE::FormID a_id) {
@@ -256,8 +256,8 @@ namespace {
         if (!a_actor || !a_anchor || a_actor == a_anchor) return;
         const RE::FormID id = a_actor->GetFormID();
         if (LiveHolder(id)) return;
-        // #4a (review F1 of 75e1f75): a Harbinger StopCombat for him is queued or running on his own combat job -- the
-        // reads below go THROUGH his controller, which that drain may be freeing. Skipped; the free ends his part in
+        // #4a (review F1 of 75e1f75): a Harbinger StopCombat for him is pending (posted to the engine's task queue) -- the
+        // reads below go THROUGH his controller, which the engine may be freeing. Skipped; the free ends his part in
         // the group, and the next sweep sees whatever is left.
         if (apmf::combatops::Pending(id)) return;
         auto& ls = g_leaks[id];
