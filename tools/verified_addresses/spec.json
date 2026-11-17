@@ -5549,6 +5549,21 @@
    },
    "source": "native/core/CombatStyle.cpp (ch.33 combat style, ABI v45: write_call<5> seats B / A; the row plus the code's lead/tail byte windows and call-target checks license the two patches; UpdateCombatStyle is also CALLED on the game thread at engage / release)",
    "doc": "Docs/research/melee-moves-re.md 'COMBAT STYLE' (2026-11-11): the three bodies read on the three executables (instruction-identical apart from the process offset 0xF8 / 0xF0 and the controller offset 0x160 / 0x158); Actor::GetCombatStyle has the same 27 callers on 1.6.1170 and 1.5.97 and 27 on 1.7.104; ExtraDataList::GetCombatStyle has ONE caller per build; no id is in the MIT table (raw_rvas)"
+  },
+  {
+   "seat": "CombatOps.TaskQueue.QueueStopCombat",
+   "kind": "function",
+   "construct": "the engine's own sender of task-queue message 0x2B (\"stop combat\"), void(TaskQueueInterface* this, Actor* actor): builds {type 0x2B at +0, the actor's handle at +8} and hands it to the queue's poster (AE 36993 0x6595D0, 1.7.104 0x66BFC0, inlined on 1.5.97), which QUEUES it while the engine's queue flag is set (AE byte 0x20130B8 id 381120, SE 0x1DEF8A0 id 509007, static 1) and otherwise runs it on the calling thread. The message handler (AE 0x657FEE) resolves the handle and calls Actor::StopCombat (vcall +0x728). The engine's own callers: Character::UpdateCombat's tail (AE 0x6B7073 / SE 0x6258FE / 1.7.104 0x6C9AF3) and one more (AE 0x664BFB / SE 0x5D4345 / 1.7.104 0x67761B). A CALL, not a hook: core/CombatOps.cpp posts a StopCombat Harbinger decided on main through it",
+   "ids": {
+    "1.6.1170": 36960,
+    "1.5.97": 35985
+   },
+   "sig": {
+    "1.6.1170": "40 53 48 81 EC A0 00 00 00 48 8B C2 C7 44 24 20 2B 00 00 00",
+    "1.5.97": "40 53 48 81 EC B0 00 00 00 48 C7 44 24 20 FE FF FF FF 48 8B C2"
+   },
+   "source": "native/core/CombatOps.cpp (Install: SeatVerified; PostToEngine: the call). INVARIANTS #4a",
+   "doc": "Docs/research/stopcombat-engine-road-re.md (2026-11-16): the sender, the poster, the drain and its two call sites read on the three executables"
   }
  ],
  "layout_facts": [
@@ -6184,6 +6199,11 @@
    "seat": "CombatStyle.CombatController.UpdateCombatStyle",
    "rva": "0x559BD0",
    "source": "CombatStyle.CombatController.UpdateCombatStyle (1.7.104 raw 0x561A40; AE id 33239 has no MIT-table row)"
+  },
+  {
+   "seat": "CombatOps.TaskQueue.QueueStopCombat",
+   "rva": "0x656530",
+   "source": "CombatOps.TaskQueue.QueueStopCombat (1.7.104 raw 0x668F20; AE id 36960 has no MIT-table row)"
   }
  ]
 }

@@ -3,7 +3,7 @@
 #include "core/Log.h"
 #include "core/Arbiter.h"
 #include "core/Clock.h"          // review F2: the frame-critical ERROR rate limit
-#include "core/CombatOps.h"       // H1: the owner-thread StopCombat queue (Poll)
+#include "core/CombatOps.h"       // H1: the StopCombat ops (the engine's road) (Poll)
 #include "core/CastProxy.h"       // castproxy::OnOwnerUpdate (self-flip landing watch, owner seat)
 #include "core/ControlMap.h"
 #include "core/CasterTypeCensus.h"
@@ -162,10 +162,10 @@ namespace apmf {
         // and not SKSE's AddTask.
         FrameCritical("apmf::mainthread::Pump", [] { apmf::mainthread::Pump(); });
 
-        // H1 (2026-11-16, core/CombatOps.h): the owner-thread StopCombat queue's main-side checks, right after the
-        // pump delivered this frame's drain completions: an op whose actor lost its controller is cancelled, one
-        // whose actor's combat update never ran for 1 s of game time is made here (an ERROR). One relaxed load while
-        // nothing is queued; the 60 s RULE C line.
+        // H1 (2026-11-16, core/CombatOps.h): the StopCombat ops' main-side checks, right after the
+        // pump: an op whose actor no longer holds the controller the decision named is DONE (the engine ran its
+        // message), one that still holds it after 1 s of game time is answered "not stopped" (an ERROR; nothing is
+        // made here). One relaxed load while nothing is pending; the 60 s RULE C line.
         // Frame-critical (re-review SEV-4): Poll is the only bound on the #4a waits (ch.21 Enter / substrate Open re-post while Pending).
         FrameCritical("apmf::combatops::Poll", [a_delta] { apmf::combatops::Poll(a_delta); });
 

@@ -10,13 +10,13 @@ nothing when one does not. At startup `REL::SelfCheck::Run` repeats the comparis
 game actually loaded. A row that fails refuses THAT seat by name in the log; the expected RVA is never
 used in place of the library's answer.
 
-Offline result of this generation: 1.6.1170.0 311/311 verified, 0 refused, 1.5.97.0 310/310 verified, 0 refused.
+Offline result of this generation: 1.6.1170.0 312/312 verified, 0 refused, 1.5.97.0 311/311 verified, 0 refused.
 
 1.7.104.0 has NO Address Library. Its column is OUR OWN id map: the MIT id table of the CommonLibSSE-NG fork
 (`data/mit-idtable-v1-1-7-104-0.bin`, revision 5, 17792 records, SkyrimSE.exe TimeDateStamp 0x6A8C7046; built into every plugin, it is
 what SelfCheck queries at runtime; authoritative) with the evidence CSVs beside it, keyed by
 the 1.6.1170 id, re-verified against the plaintext 1.7.104 executable by the same row-kind checks (see the script
-docstring). Offline result: 1.7.104.0 308/392 verified, 84 NOT verified (28 of them BY DESIGN: 1.5.97-only labels whose AE twin row carries the 1.7.104 fact). A not-verified seat has no row in the 1.7.104 table,
+docstring). Offline result: 1.7.104.0 309/394 verified, 85 NOT verified (28 of them BY DESIGN: 1.5.97-only labels whose AE twin row carries the 1.7.104 fact). A not-verified seat has no row in the 1.7.104 table,
 so `IsVerifiedAddress` is false and the seat is refused by name. The table of `Not verified on 1.7.104` is below.
 
 These rows prove the ADDRESSES. That each hooked slot holds the same function body on 1.7.104, and that every
@@ -337,6 +337,7 @@ CommonLib layout APMF reads is the same there, is proven separately in the "1.7.
 | CombatStyle.Actor.GetCombatStyle | function | 38536 | 0x6B5580 | 37586 | 0x623E60 | - | 0x6C8000 | signature (23 bytes, unique in .text) |  | native/core/CombatStyle.cpp (ch.33 combat style, ABI v45: write_call<5> seats B / A; the row plus the code's lead/tail byte windows and call-target checks license the two patches; UpdateCombatStyle is also CALLED on the game thread at engage / release) | Docs/research/melee-moves-re.md 'COMBAT STYLE' (2026-11-11): the three bodies read on the three executables (instruction-identical apart from the process offset 0xF8 / 0xF0 and the controller offset 0x160 / 0x158); Actor::GetCombatStyle has the same 27 callers on 1.6.1170 and 1.5.97 and 27 on 1.7.104; ExtraDataList::GetCombatStyle has ONE caller per build; no id is in the MIT table (raw_rvas) |
 | CombatStyle.ExtraDataList.GetCombatStyle | function | 12017 | 0x16BFC0 | 11878 | 0x1246E0 | - | 0x171550 | signature (17 bytes, unique in .text) |  | native/core/CombatStyle.cpp (ch.33 combat style, ABI v45: write_call<5> seats B / A; the row plus the code's lead/tail byte windows and call-target checks license the two patches; UpdateCombatStyle is also CALLED on the game thread at engage / release) | Docs/research/melee-moves-re.md 'COMBAT STYLE' (2026-11-11): the three bodies read on the three executables (instruction-identical apart from the process offset 0xF8 / 0xF0 and the controller offset 0x160 / 0x158); Actor::GetCombatStyle has the same 27 callers on 1.6.1170 and 1.5.97 and 27 on 1.7.104; ExtraDataList::GetCombatStyle has ONE caller per build; no id is in the MIT table (raw_rvas) |
 | CombatStyle.CombatController.UpdateCombatStyle | function | 33239 | 0x559BD0 | 32492 | 0x4FE5B0 | - | 0x561A40 | signature (32 bytes, unique in .text) |  | native/core/CombatStyle.cpp (ch.33 combat style, ABI v45: write_call<5> seats B / A; the row plus the code's lead/tail byte windows and call-target checks license the two patches; UpdateCombatStyle is also CALLED on the game thread at engage / release) | Docs/research/melee-moves-re.md 'COMBAT STYLE' (2026-11-11): the three bodies read on the three executables (instruction-identical apart from the process offset 0xF8 / 0xF0 and the controller offset 0x160 / 0x158); Actor::GetCombatStyle has the same 27 callers on 1.6.1170 and 1.5.97 and 27 on 1.7.104; ExtraDataList::GetCombatStyle has ONE caller per build; no id is in the MIT table (raw_rvas) |
+| CombatOps.TaskQueue.QueueStopCombat | function | 36960 | 0x656530 | 35985 | 0x5C57A0 | - | 0x668F20 | signature (20 bytes, unique in .text) |  | native/core/CombatOps.cpp (Install: SeatVerified; PostToEngine: the call). INVARIANTS #4a | Docs/research/stopcombat-engine-road-re.md (2026-11-16): the sender, the poster, the drain and its two call sites read on the three executables |
 | Character.ActorValueOwner.SE | vtable | - | - | 261402 | 0x165E4D0 | - | - | RTTI .?AVCharacter@@ (COL offset 176) | 0x04: - / 0x621070 / -<br>0x05: - / 0x6210B0 / -<br>0x06: - / 0x6210F0 / -<br>0x07: - / 0x36D280 / - | native/core/ActorValueObserve.cpp (1.5.97: the ActorValueOwner sub-object sits at 0xB0, so its COL offset differs from the AE row's 0xB8) | agentlogs/apmf-1b-observe.md (2026-10-12); AE twin row Character.ActorValueOwner carries the 1.7.104 fact |
 | EquipSink.Path.OutfitApply.24234 | function | - | - | 24234 | 0x364710 | - | - | signature (21 bytes, unique in .text) |  | native/core/EquipSink.cpp:158 |  |
 | EquipSink.Path.AddWornOutfit.19266 | function | - | - | 19266 | 0x28DDA0 | - | - | signature (17 bytes, unique in .text) |  | native/core/EquipSink.cpp:159 |  |
@@ -491,6 +492,7 @@ for them and the seat is refused. Nothing here is a failure on 1.6.1170 or 1.5.9
 | CombatStyle.Actor.GetCombatStyle | 38536 | id 38536 is not in the idmap |
 | CombatStyle.ExtraDataList.GetCombatStyle | 12017 | id 12017 is not in the idmap |
 | CombatStyle.CombatController.UpdateCombatStyle | 33239 | id 33239 is not in the idmap |
+| CombatOps.TaskQueue.QueueStopCombat | 36960 | id 36960 is not in the idmap |
 
 ## Slots and offsets that are not Address Library ids
 

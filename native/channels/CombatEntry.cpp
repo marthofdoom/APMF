@@ -7,7 +7,7 @@
 #include "channels/CombatReentryDeny.h"   // ClientEntryScope: this entry passes a ch.22 re-entry deny
 #include "core/Allowance.h"       // SeatVerified(): the mit-3.7 F1 self-check gate
 #include "core/Clock.h"
-#include "core/CombatOps.h"     // H1: the ranked StopCombat runs on the actor's own combat update
+#include "core/CombatOps.h"     // H1: the ranked StopCombat is posted to the engine's task queue
 #include "core/ControlMap.h"
 #include "core/Hook.h"          // P0: the overlap sample at StartCombat
 #include "core/Log.h"
@@ -283,15 +283,15 @@ namespace {
 
         // Review F1 of 75e1f75 (INVARIANTS #4a): a Harbinger StopCombat for this actor is queued or RUNNING on its own
         // combat job. Actor::StartCombat on an actor in combat writes INTO the existing controller (AE 0x6B6D58 ->
-        // 0x559150 -> 0x83D2C0) while that drain may be freeing it (heap corruption), and a re-engage onto the same
-        // controller would then be stopped by the queued op's identity check. The call waits: re-posted to the next
+        // 0x559150 -> 0x83D2C0) while the engine may be freeing it (heap corruption), and a re-engage onto the same
+        // controller would then be stopped by the pending op's message. The call waits: re-posted to the next
         // frame (the next Pump), re-validated there like any posted entry. Bounded by the op itself: it runs within a
-        // frame of game time, or Poll answers it within kUndrainedSec (core/CombatOps.h).
+        // frame of game time, or Poll answers it within kNotRunSec (core/CombatOps.h).
         if (apmf::combatops::Pending(id)) {
             if (it->second.stopWaitGen != gen) {
                 it->second.stopWaitGen = gen;
                 spdlog::info("[ch.21] 0x{} entry {} against 0x{} WAITS: a Harbinger StopCombat for this actor is still "
-                             "queued or running on its own combat update (INVARIANTS #4a); retried every frame until it "
+                             "pending (posted to the engine's task queue) (INVARIANTS #4a); retried every frame until it "
                              "ran.",
                              Hex(id), what, Hex(tf));
             }
@@ -1144,7 +1144,7 @@ namespace {
         // writer; nothing nested inside it): its targets other than `a_skip` and its members' handles. Game
         // thread; the controller is read here exactly as StopCombat below is called (APMF-B26).
         // #4a (review F1 of 75e1f75): nothing is read while a Harbinger StopCombat for the actor is queued or running
-        // (the group is read THROUGH the controller the drain may be freeing): empty, as for an actor with no group.
+        // (the group is read THROUGH the controller the engine may be freeing): empty, as for an actor with no group.
         void ReadGroup(RE::Actor* a_actor, std::vector<RE::ActorHandle>* a_targets, std::vector<std::uint32_t>& a_members,
                        std::uint32_t a_skip) {
             if (apmf::combatops::Pending(a_actor->GetFormID())) return;
@@ -1166,18 +1166,18 @@ namespace {
         // the player update (AE 0x5FC260 / 0x5FC180). The disassembly says the opposite: those two calls KICK the
         // frame's job graph (SetEvent, AE 0x5FC1F0), the NPC "Actor update" list runs beside the player update, and
         // the player update signals its mid-point event (AE 0x7330E7) before this seat runs. So the ranking is
-        // decided here and the free is QUEUED onto the actor's own UpdateCombat (core/CombatOps.h), where the engine
-        // frees controllers itself. Inside a save (combatops::SyncScope) it runs inline. `a_after` runs on main once
+        // decided here and the free is POSTED to the engine's task queue (core/CombatOps.h: the engine's own message 0x2B),
+        // where the engine ends its own fights; never from this seat and never on a combat job. Inside a save (combatops::SyncScope) it runs inline. `a_after` runs on main once
         // the StopCombat ran or was skipped (the caller's package re-pick). Returns what it did, for the log:
         // "combat END QUEUED ...", "combat ENDED ..." (inline) or "NOT ended: <why>".
         std::string StopCombatRanked(RE::Actor* a_actor, APMF_API::Handle a_entry, RE::FormID a_dropped,
                                      RE::ActorHandle a_droppedH, apmf::combatops::Done a_after) {
             const RE::FormID id = a_actor->GetFormID();
-            // Review F5 of 75e1f75: a StopCombat already queued or running on this actor's own combat update -- this
+            // Review F5 of 75e1f75: a StopCombat already pending (posted to the engine's task queue) -- this
             // caller's completion (its package re-pick) JOINS that op instead of being dropped. First, before any read
             // through the controller (#4a).
             if (apmf::combatops::Available() && apmf::combatops::Attach(id, a_after))
-                return "NOT queued again: a StopCombat is already queued or running on this actor's own combat update "
+                return "NOT queued again: a StopCombat is already pending (posted to the engine's task queue) "
                        "(this caller's completion joins it)";
             auto* cc = a_actor->GetActorRuntimeData().combatController;
             if (!cc) return "not in combat";
@@ -1186,7 +1186,7 @@ namespace {
             if (*reinterpret_cast<const std::uintptr_t*>(a_actor) != g_vtChar)
                 return "NOT ended: the actor is not a Character (vtable identity check)";
             if (!apmf::combatops::Available())
-                return fmt::format("NOT ended: the owner-thread StopCombat is not available ({})",
+                return fmt::format("NOT ended: StopCombat is not available ({})",
                                    apmf::combatops::UnavailableWhy());
             RE::FormID       pinT = 0;
             if (ClaimHandle(id, APMF_API::kIntent_TargetPin, &pinT) != APMF_API::kInvalidHandle && pinT != 0 &&
@@ -1229,13 +1229,13 @@ namespace {
                 enforce = true;
             }
             if (!enforce) return "NOT ended: Engine outranks the entry on the Combat facet (APMF_Sources.ini)";
-            bool ranInline = false;   // review F5: from the call itself, never re-asked (a drain may finish in between)
+            bool ranInline = false;   // review F5: from the call itself, never re-asked
             if (!apmf::combatops::StopCombat(a_actor, "the held engagement's ranked StopCombat", std::move(a_after),
                                              &ranInline))
-                return "NOT ended: the owner-thread StopCombat refused it (no controller at the request)";
+                return "NOT ended: the StopCombat op refused it (no controller at the request)";
             ++g_stopCombats;
-            return ranInline ? "combat ENDED (Actor::StopCombat, inline inside the save)"
-                             : "combat END QUEUED (Actor::StopCombat, run on the actor's own combat update)";
+            return ranInline ? "combat ENDED (Actor::StopCombat, made before this returned: inside the save, or the engine ran it at once)"
+                             : "combat END QUEUED (Actor::StopCombat, posted to the engine's task queue: the engine runs it)";
         }
 
         // marth 2026-10-12: "And if the target is deemed \"not engaged\" combat is dropped immediately and previous
@@ -1342,7 +1342,7 @@ namespace apmf::combatentry::hold {
     bool Enabled() { return g_enabled.load(std::memory_order_relaxed); }
     bool KnowledgeInstalled() { return g_seatsInstalled.load(std::memory_order_acquire); }
     bool StopCombatAvailable() {
-        // H1 (2026-11-16): the StopCombat runs on the actor's own combat update (core/CombatOps.h), so that queue
+        // H1 (2026-11-16): the StopCombat is made by the engine from its task queue (core/CombatOps.h), so those ops
         // must be available too.
         return g_stopCombatOk.load(std::memory_order_acquire) && g_vtChar != 0 && apmf::combatops::Available();
     }

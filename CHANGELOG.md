@@ -1,3 +1,10 @@
+## v0.20.5 -- Hotfix: the game could hang on the first fight after a load
+
+- **0.20.4 could freeze the game the moment combat started after loading a save.** If a follower was saved while a stand-in cast was open, Harbinger ended that leftover combat inside the follower's own combat update. The game never ends a fight there, and it hung. Harbinger now asks the game to end the fight the way the game does it itself: it posts the game's own "stop combat" message and the game runs it later in the frame, outside every combat update.
+- **Nothing in Harbinger ends combat from a combat update any more.** That is now a written rule.
+- **Ending combat is still never done from Harbinger's own frame pass,** except inside a save, where the game is about to write the character.
+- **The log says what happened.** The [combatops] line counts how many stops the game ran, and an ERROR names any stop the game did not run.
+
 ## v0.20.4 -- Stability: combat changes happen on the follower's own thread
 
 - **Harbinger no longer ends a follower's combat from the wrong thread.** Ending combat frees the game's combat data, and the game updates that data on its own threads at the same time. Harbinger now ends combat inside the follower's own combat update, and nothing else touches that follower's combat data until it is done. Removing a combat target takes the same lock the game takes.

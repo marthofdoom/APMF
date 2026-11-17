@@ -19,7 +19,7 @@
 
 namespace apmf::VerifiedAddresses
 {
-	// 1.6.1170.0: 311 rows
+	// 1.6.1170.0: 312 rows
 	inline constexpr REL::SelfCheck::Row kRows_1_6_1170[] = {
 		{ 207886, 0x18A5558, 0x0, 0, {  }, "Character" },
 		{ 207896, 0x18A5FE8, 0x0, 0, {  }, "Character.ActorValueOwner" },
@@ -332,9 +332,10 @@ namespace apmf::VerifiedAddresses
 		{ 38536, 0x6B5580, 0x0, 0, {  }, "CombatStyle.Actor.GetCombatStyle" },
 		{ 12017, 0x16BFC0, 0x0, 0, {  }, "CombatStyle.ExtraDataList.GetCombatStyle" },
 		{ 33239, 0x559BD0, 0x0, 0, {  }, "CombatStyle.CombatController.UpdateCombatStyle" },
+		{ 36960, 0x656530, 0x0, 0, {  }, "CombatOps.TaskQueue.QueueStopCombat" },
 	};
 
-	// 1.5.97.0: 310 rows
+	// 1.5.97.0: 311 rows
 	inline constexpr REL::SelfCheck::Row kRows_1_5_97[] = {
 		{ 261397, 0x165DA40, 0x0, 0, {  }, "Character" },
 		{ 261402, 0x165E4D0, 0x0, 0, {  }, "Character.ActorValueOwner.SE" },
@@ -646,10 +647,11 @@ namespace apmf::VerifiedAddresses
 		{ 37586, 0x623E60, 0x0, 0, {  }, "CombatStyle.Actor.GetCombatStyle" },
 		{ 11878, 0x1246E0, 0x0, 0, {  }, "CombatStyle.ExtraDataList.GetCombatStyle" },
 		{ 32492, 0x4FE5B0, 0x0, 0, {  }, "CombatStyle.CombatController.UpdateCombatStyle" },
+		{ 35985, 0x5C57A0, 0x0, 0, {  }, "CombatOps.TaskQueue.QueueStopCombat" },
 	};
 
-	// 1.7.104.0: 308 rows
-	// 84 NOT VERIFIED on 1.7.104.0, deliberately absent from this table (the seat is refused):
+	// 1.7.104.0: 309 rows
+	// 85 NOT VERIFIED on 1.7.104.0, deliberately absent from this table (the seat is refused):
 	//   Character.ActorValueOwner.SE (1.6.1170 id -): no 1.6.1170 (AE) id: the 1.7.104 map is keyed by AE id (1.5.97-only seat)
 	//   ActionGate.Hold.ParallelDataPush (1.6.1170 id 47532): id 47532 is not in the idmap
 	//   TargetPin.CombatController.SetTarget (1.6.1170 id 33235): id 33235 is not in the idmap
@@ -734,6 +736,7 @@ namespace apmf::VerifiedAddresses
 	//   CombatStyle.Actor.GetCombatStyle (1.6.1170 id 38536): id 38536 is not in the idmap
 	//   CombatStyle.ExtraDataList.GetCombatStyle (1.6.1170 id 12017): id 12017 is not in the idmap
 	//   CombatStyle.CombatController.UpdateCombatStyle (1.6.1170 id 33239): id 33239 is not in the idmap
+	//   CombatOps.TaskQueue.QueueStopCombat (1.6.1170 id 36960): id 36960 is not in the idmap
 	inline constexpr REL::SelfCheck::Row kRows_1_7_104[] = {
 		{ 207886, 0x1923258, 0x0, 0, {  }, "Character" },
 		{ 207896, 0x1923CE8, 0x0, 0, {  }, "Character.ActorValueOwner" },
@@ -1043,6 +1046,7 @@ namespace apmf::VerifiedAddresses
 		{ 0, 0x6C8000, 0x0, 0, {  }, "CombatStyle.Actor.GetCombatStyle" },
 		{ 0, 0x171550, 0x0, 0, {  }, "CombatStyle.ExtraDataList.GetCombatStyle" },
 		{ 0, 0x561A40, 0x0, 0, {  }, "CombatStyle.CombatController.UpdateCombatStyle" },
+		{ 0, 0x668F20, 0x0, 0, {  }, "CombatOps.TaskQueue.QueueStopCombat" },
 	};
 
 	inline constexpr REL::SelfCheck::Table kTables[] = {

@@ -1,6 +1,6 @@
 #pragma once
 #include "APMF_API.h"
-#include "core/CombatOps.h"   // H1: the owner-thread StopCombat's completion type
+#include "core/CombatOps.h"   // H1: the StopCombat op's completion type
 
 #include <string>
 
