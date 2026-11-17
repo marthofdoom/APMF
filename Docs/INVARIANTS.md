@@ -426,8 +426,8 @@ only while ALL of these hold:
    update seat because Main::Update "resets its AI job lists" (AE `0x5FC260` / `0x5FC180`). WRONG: those two
    calls KICK the frame's job graph (SetEvent, AE `0x5FC1F0`), the NPC "Actor update" list runs beside the
    player update, and the player update signals its mid-point event (AE `0x7330E7`) before the pump runs. The
-   ranking stays on the game thread; the StopCombat itself is queued onto the actor's own UpdateCombat
-   (`core/CombatOps.h`), so the `[hold] ... DROPPED` line reads "combat END QUEUED ...".
+   ranking stays on the game thread; the StopCombat itself is posted to the engine's task queue
+   (`core/CombatOps.h`, #4a), so the `[hold] ... DROPPED` line reads "combat END QUEUED ...".
 7. **Scope is closed by name.** Exactly 1.6.1170 or 1.5.97 for the knowledge seats and StopCombat
    (1.7.104: the seat ids are not in the MIT id table, the seats are refused and logged), not VR,
    `[EngagementHold] bEngagementHold` / `bTargetKnowledge` / `bBleedoutDrive`, the self-check on all rows
@@ -1116,18 +1116,31 @@ NOT confined to the writer thread (field-proven — #12) and READS a published,
 immutable RCU snapshot with no lock, one sanctioned per-entry exception aside — see
 #12/#13.
 
-**#4a — Harbinger frees or mutates an actor's COMBAT state only where the engine does (stability audit H1,
-2026-11-16; APMF-B26 closed).** The pump (Arbiter::OncePerFrame) is NOT quiescent against the NPC updates: the
+**#4a — Harbinger frees or mutates an actor's COMBAT state only where the engine does, and never from a combat job
+(stability audit H1, 2026-11-16; rebuilt for v0.20.5 the same day; APMF-B26 closed as far as the engine closes it).** The pump (Arbiter::OncePerFrame) is NOT quiescent against the NPC updates: the
 frame job graph is kicked before the player update (Main::Update AE `0x64613A` / `0x64613F`, SetEvent), the
 "Actor update" list (every high NPC's Actor::Update, the Character 0xAD seat) runs beside it, and the player update
 signals its mid-point event (AE `0x7330E7` -> `0x733D10`) before the pump runs, so "Combat and magic" (every combat
 member's UpdateCombat, the 0xE4 layers and every combat seat) may run while it does. So:
-- `Actor::StopCombat` (frees the controller inline, no lock) is NEVER called from a Harbinger main-thread pass:
-  it goes through `core/CombatOps.h`, which runs it on the actor's OWN UpdateCombat (the outermost Harbinger 0xE4
-  layer, before the chain), where the engine frees controllers itself (AE 37347 at `0x667BA2` in the per-actor
-  update job; the UpdateCombat tail at `0x658018`). Main runs it only inside a save (the flush + SyncScope: the
-  graph is idle there) and, with an ERROR, for an actor whose combat update has not run for 1 s of game time.
-  Anything that must follow the stop is the op's completion.
+- **NO CONTROLLER TEARDOWN FROM A COMBAT JOB (v0.20.5, the 0.20.4 field hang).** Harbinger never calls
+  `Actor::StopCombat`, and never frees or replaces a `CombatController` any other way, from code that runs on a
+  combat job: a `Character::UpdateCombat` (0xE4) layer, a behaviour-tree node, a target selector, a caster or
+  inventory seat, a combat area update, or anything else under the "Combat and magic" job list. The engine does not
+  do it either: a fight that ends inside UpdateCombat only POSTS task-queue message 0x2B (the tail, AE `0x6B7073` ->
+  sender 36960 `0x656530`) and the engine runs StopCombat later, where it drains that queue (the "Post process" job
+  while the game runs, Main::Update while it is paused). 0.20.4 drained its StopCombat queue in the outermost 0xE4
+  layer and the Deck hung at the first combat frame after a load (2026-11-16); its claim that the engine frees
+  controllers inside UpdateCombat was wrong (`Docs/research/stopcombat-engine-road-re.md`).
+- `Actor::StopCombat` (frees the controller inline, no lock) is NEVER called from a Harbinger main-thread pass
+  either: it goes through `core/CombatOps.h`, which POSTS the engine's own message 0x2B through the engine's own
+  sender (row `CombatOps.TaskQueue.QueueStopCombat`), so the ENGINE runs it at its own drain, with its own timing.
+  Main calls StopCombat itself only inside a save (the flush + SyncScope: the graph is idle there). Poll answers
+  each op from the controller's ADDRESS: gone or different = done; the same one after 1 s of game time = "not
+  stopped" with an ERROR, and nothing is made on main. Anything that must follow the stop is the op's completion.
+  Two flagged edges: (1) the sender's row refused at Install = the 0.20.3 road (StopCombat from the pump) for the
+  session, an ERROR on every use, which RE-OPENS APMF-B26; (2) the engine runs the message on the posting thread
+  when its queue flag is clear or the push is refused (AE `0x6596E2`): that one StopCombat is then made on main,
+  reported with a WARNING (`How::kEngineAtPost`).
 - `CombatGroup::RemoveTarget` (no lock of its own) is made under the group's WRITE lock, in the engine's own order
   (group, then the CombatManager's +0x18 lock), as the engine's group update erases a target.
 - `Actor::StartCombat` stays on main: the engine serialises its whole body on a global spinlock (AE `0x6B6A85` ..
@@ -1137,8 +1150,8 @@ member's UpdateCombat, the 0xE4 layers and every combat seat) may run while it d
   Harbinger StartCombat (ch.21 `Enter`, the substrate's `Enter`) WAITS, re-tried the next frame, while
   `combatops::Pending(actor)` (review F1 of 75e1f75).
 - **NOTHING ON MAIN DEREFERENCES AN ACTOR'S CONTROLLER WHILE A HARBINGER STOP FOR THAT ACTOR IS PENDING OR RUNNING
-  (review F1 of 75e1f75).** `combatops::Pending(id)` is true from the decision until the drain's StopCombat RETURNED
-  (the op stays queued, marked running, while it frees). Every Harbinger main-thread read THROUGH an actor's
+  (review F1 of 75e1f75).** `combatops::Pending(id)` is true from the decision until Poll saw the controller gone
+  (the engine frees it at its task-queue drain, on whichever thread runs that). Every Harbinger main-thread read THROUGH an actor's
   controller (its group, targets, members, `targetHandle`, `state`, `+0x42` / `+0x43`, `Actor::IsInCombat`, which
   reads `+0x43`) checks it first and skips that actor (or reads the pointer only: `combatops::InCombat`). The
   readers, 2026-11-16: `AnchorGuard.cpp` Treat / Sweep / GroupMembers; `CombatSubstrate.cpp` BystanderCensus (also
@@ -1147,7 +1160,7 @@ member's UpdateCombat, the 0xE4 layers and every combat seat) may run while it d
   `CombatStyle.cpp` EngineRefresh; the main-thread `IsInCombat` calls (`CombatMove.cpp`, `CombatMoveBlock.cpp`,
   `Awareness.cpp`, `Travel.cpp`, `CombatApproach.cpp`). The save-path readers (`RestoreBeforeSave`'s music debt and
   anchor clean, ch.24's area restore) run after `FlushForSave`, where nothing is pending by construction; the 0xE4 /
-  combat-thread readers run on the actor's own update after the drain. Reading the controller POINTER (presence,
+  combat-thread readers run on the actor's own update, and the engine frees outside every combat job (its task-queue drain). Reading the controller POINTER (presence,
   identity compare) is allowed. A NEW main-thread reader through a controller must add the same skip.
 - The P0 probe (`core/Hook.h`, `[overlap]` every 60 s) samples every one of these main-thread calls against the
   NPC 0xAD and 0xE4 counters, so the field shows what still runs beside them.
@@ -1573,7 +1586,7 @@ global-data hook (`Hooks_Papyrus.cpp` `SaveGlobalData_Hook`), AFTER every change
 So anything "swept" or "restored" in a co-save callback is already in the `.ess`: a sweep there
 is always too late. Engine state that Harbinger wrote and that must not be saved is put back in
 the `kSaveGame` case of `plugin.cpp`, and only there. FIRST in that case (2026-11-16, #4a):
-`combatops::FlushForSave` runs every StopCombat still queued for an actor's own combat update, inline, and a
+`combatops::FlushForSave` answers every StopCombat still pending (posted to the engine and not yet run: made inline), and a
 `combatops::SyncScope` covers the rest of the case, so a StopCombat a restore pass decides runs inline too (a
 queued one would miss the write). The save call runs where the frame's job graph is idle (Main::Update AE
 `0x645F3A` / `0x645F0E`, after every graph event is reset at `0x645EDE`, before the kick at `0x64613A`; a menu

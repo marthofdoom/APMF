@@ -1,8 +1,37 @@
 # APMF STATUS — living handoff (start here)
 
-Updated 2026-11-16 (stability H1 fix branch, below; proxy save integrity fix branch after it). Current version **v0.20.2** (release prep 2026-11-14, ABI v45 unchanged, a small real release: the ch.3 sneak release confirm, see CHANGELOG) / previously **v0.20.1** (cut 2026-11-13, ABI v45 unchanged, a REAL release, the first since v0.17.0, cumulative over v0.18.0 to v0.20.0 plus the seat 0 hostile-effect fix, see CHANGELOG) / previously **v0.20.0** (cut 2026-11-12, ABI v45) and **v0.19.0** (cut 2026-11-10, ABI v36) and **v0.18.0** (cut 2026-11-09, ABI v35, PRERELEASE) and **v0.17.0** (cut 2026-11-08, ABI v33) and **v0.16.0** (cut 2026-11-02, ABI v32) and **v0.15.2** (cut 2026-10-28, ABI v31) and **v0.15.1** (cut 2026-10-26, ABI v30) and **v0.15.0** (cut 2026-10-25, ABI v30) and **v0.14.0** (cut 2026-10-21, ABI v28) and **v0.13.1** (cut 2026-10-13, ABI v24) and **v0.13.0** (release cut 2026-10-12; see RELEASED v0.13.0 below; prior v0.12.0 PUBLISHED release, ABI v21). The current state of the build: what's
+Updated 2026-11-16 (v0.20.5 hotfix branch `fix/stopcombat-main` first, the stability H1 fix branch below it; proxy save integrity fix branch after it). Current version **v0.20.2** (release prep 2026-11-14, ABI v45 unchanged, a small real release: the ch.3 sneak release confirm, see CHANGELOG) / previously **v0.20.1** (cut 2026-11-13, ABI v45 unchanged, a REAL release, the first since v0.17.0, cumulative over v0.18.0 to v0.20.0 plus the seat 0 hostile-effect fix, see CHANGELOG) / previously **v0.20.0** (cut 2026-11-12, ABI v45) and **v0.19.0** (cut 2026-11-10, ABI v36) and **v0.18.0** (cut 2026-11-09, ABI v35, PRERELEASE) and **v0.17.0** (cut 2026-11-08, ABI v33) and **v0.16.0** (cut 2026-11-02, ABI v32) and **v0.15.2** (cut 2026-10-28, ABI v31) and **v0.15.1** (cut 2026-10-26, ABI v30) and **v0.15.0** (cut 2026-10-25, ABI v30) and **v0.14.0** (cut 2026-10-21, ABI v28) and **v0.13.1** (cut 2026-10-13, ABI v24) and **v0.13.0** (release cut 2026-10-12; see RELEASED v0.13.0 below; prior v0.12.0 PUBLISHED release, ABI v21). The current state of the build: what's
 shipped, what's probe-gated, what's next. Keep this current in the SAME change as any
 build/finding/workflow change.
+
+## HOTFIX 2026-11-16 -- v0.20.5: STOPCOMBAT ON THE ENGINE'S ROAD, branch `fix/stopcombat-main`, NOT merged, NOT field run
+
+**Field failure (Deck, Tuxbornrc1, 1.6.1170, Harbinger 0.20.4 + MFO 2.11.5):** the game hung at the first combat frame
+after a load. Jesper came out of the save in combat with the substrate anchor, AfterLoad queued one StopCombat, and
+0.20.4's drain ran `Actor::StopCombat` inside his own `Character::UpdateCombat` job (`E4Outer`). Both logs stop at that
+frame, the process stayed alive 55 s, no crash log (MFO `_evidence/deck-load-1116/`). The stalled primitive inside the
+engine is not proven (no stack). What the disassembly proves on all three builds: the engine NEVER runs StopCombat in
+that job. UpdateCombat's tail only posts task-queue message 0x2B and the engine runs it at its task-queue drain (the
+"Post process" job while running, Main::Update while paused). 0.20.4's header claimed the opposite. Full listing:
+`Docs/research/stopcombat-engine-road-re.md`.
+- **The fix (`core/CombatOps.{h,cpp}`, rebuilt):** `combatops::StopCombat` posts the engine's OWN message through the
+  engine's OWN sender (AE 36960 `0x656530` / SE 35985 `0x5C57A0` / 1.7.104 raw `0x668F20`, new row
+  `CombatOps.TaskQueue.QueueStopCombat`; a call, not a hook). The engine runs `Actor::StopCombat` where it ends its own
+  fights. `Poll` answers each op from the controller's address (gone or different = done; the same one after 1 s of
+  game time = "not stopped" + ERROR, nothing made on main). The save path is unchanged in shape (flush + SyncScope,
+  inline on main). The drain in `E4Outer` is gone; `E4Outer` only brackets the P0 counter.
+- **Rule:** INVARIANTS #4a now says no controller teardown and no StopCombat from a combat job.
+- **Flagged:** (1) sender row refused = the 0.20.3 road for the session (StopCombat from the pump, ERROR on every use,
+  re-opens APMF-B26); (2) the engine runs the message on the posting thread when its queue flag is clear or the push is
+  refused (`kEngineAtPost`, WARNING); (3) the controller identity is no longer checked at the free (the message names
+  the actor). REVIEW-BACKLOG APMF-B26 update, APMF-B306, APMF-B307.
+- **The substrate no longer needs `[TargetPin] bTargetPin=1` for its StopCombat** (the ops ride no Harbinger seat).
+- No ABI change (`APMF_API.h` untouched), no co-save change, no new hook. One new verified row on three builds.
+- **Field checks:** (1) load the failing save (a follower saved in combat with the anchor): the game runs, `APMF.log`
+  shows `[substrate] ... came out of the save in combat with the anchor ... StopCombat posted to the engine's task
+  queue` and no hang; (2) `[combatops] StopCombat ON, the engine's road` at start-up; (3) a substrate close: `CLOSE ...
+  StopCombat called by the engine, from its own task queue (message 0x2B)`; (4) the 60 s `[combatops]` line: "run by
+  the engine" counts up, "NOT RUN" and "gone at the post" stay 0; (5) a save during a substrate: `[combatops] save:`.
 
 ## FIX 2026-11-16 -- THE POSTED QUEUE IS RUN AT A SAVE, branch `fix/save-drain`, NOT merged, NOT field run
 
