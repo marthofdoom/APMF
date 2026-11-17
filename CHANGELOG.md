@@ -1,3 +1,11 @@
+## v0.20.4 -- Stability: combat changes happen on the follower's own thread
+
+- **Harbinger no longer ends a follower's combat from the wrong thread.** Ending combat frees the game's combat data, and the game updates that data on its own threads at the same time. Harbinger now ends combat inside the follower's own combat update, and nothing else touches that follower's combat data until it is done. Removing a combat target takes the same lock the game takes.
+- **Stand-in spells are also cleared before a different save loads,** for followers outside the area.
+- **Queued work is finished before a save,** in order, so a save never holds a half applied change.
+- **A failure stops only its own part, loudly.** If one Harbinger subsystem throws an error, only it stops and the log names it. If the core one does, every claim is released so followers fall back to the game's own AI.
+- **New diagnostics.** An [overlap] line every minute counts how often combat updates ran beside Harbinger's own calls.
+
 ## v0.20.3 -- Cast stand-ins never reach a save
 
 - **A save made while a follower was casting through a stand-in spell could crash on load.** The stand-in cleanup ran in the co-save callback, after the game had written the characters, and it never cleared the hands. It now runs at the save message, before anything is written, covers every slot (hands, selected spells, powers, spell lists, casters, effects on targets) and checks again after the save.
