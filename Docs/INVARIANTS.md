@@ -1588,6 +1588,48 @@ the save holds the weapon in the inventory, not the hand), and a ch.3 graph crou
 event takes effect at the graph's next update, not inside the save call; whether such a crouch
 survives a load at all is being measured by the `[ch.3] save:` / `[ch.3] after load` probe lines).
 
+**THE POSTED QUEUE AT A SAVE (2026-11-16, `fix/save-drain`; the same rule, applied to `apmf::mainthread`).** A task posted
+to the main-thread queue is engine work that has not happened yet. Left queued across a save, the save holds the state
+from before it while every ledger (Harbinger's and the client's) already counts it. So the kSaveGame case starts, in
+front of `combatops::FlushForSave`, with `mainthread::DrainForSave()`:
+- **Bounded:** one swap of the queue. A task that posts again lands in the live queue and runs at the next frame's Pump.
+- **In order, and never in front of a Drain a task needs:** it runs the FIFO PREFIX of the batch up to (not including)
+  the first task posted with `PostAfterDrain`. That task and everything behind it stay queued, in order. No task ever
+  runs ahead of one posted before it.
+- **`PostAfterDrain` is for a task whose contract is "after the NEXT `ControlMap::Drain` published".** Inside a frame
+  every task has that for free (Pump follows Drain). At a save there is no Drain in front of the queue, so such a task
+  must not run. Today there are two, both in `channels/Travel.cpp`: `FreeSlot` (from `DropOfferAndFreeSlot`) and
+  `RetireMarkerLater`. Each finishes a ch.9 offer release it queued to ControlMap in the same breath: run early, the
+  slot's package record could be re-pointed, or the marker deleted, while the outgoing offer is still published. What
+  they leave in a save when they stay queued: the destination marker, which `poscast::SaveMarkers` records and the load
+  deletes (ABI v11). A task posted from inside Drain (a channel's Apply / Release) is run by the Pump of the same frame,
+  so it is never queued at a save and needs no mark.
+- **Exception (F1): a completion can stay queued behind an after-drain task.** The prefix rule is strict FIFO, so a
+  combatops `Deliver` (a substrate close's StopCombat completion) queued behind a Travel `FreeSlot` / `RetireMarkerLater`
+  stays queued although its StopCombat already ran. `RestoreBeforeSave` tells that apart from a lost StopCombat with
+  `combatops::Pending(id)` (WARN when no op is held, ERROR when one is).
+- **A save made from a menu (F2):** while paused, a save now runs the queued engine writes inside the menu (`MoveTo_Impl`,
+  `StartCombat` via `Enter`, `EquipObject` via `Enforce`, `PlayIdle`, `EvaluatePackage`), where before they waited for the
+  menu to close.
+- **Handler order (F4):** the order MFO and Harbinger handle kSaveGame is SKSE plugin load order and is not controlled.
+  Both orders are safe: ControlMap requests are never published at a save, and `castproxy::Acquire` is Drain-only, so the
+  #19 sweep cannot be bypassed.
+- **Not before the first Pump of a loaded world:** `Discard()` arms a refusal that the next `Pump()` lifts. The tasks the
+  load handlers post for "the first pump after load" (the marker sweep, the substrate's after-load clean, the proxy
+  repair) keep that seat and are never run from a message handler.
+- **Why in front of the flush and outside the SyncScope:** a StopCombat a drained task asks for is queued and
+  `FlushForSave` runs it inline on the next line. A completion a combat job posted (`combatops` `Deliver`: a substrate
+  close in flight) is delivered before `combatsubstrate::RestoreBeforeSave` reads that state. A drained task keeps its
+  own rules: ch.21's `Enter` still re-posts itself while a StopCombat for its actor is Pending (#4a).
+- **What every other posted task is at a save** (all 37 post sites were read for this): a delivery the client asked for
+  (position cast, combat move, placement), a completion, a passive log or probe line, a re-posting poll that is driven
+  by a clock or by `combatops::Pending`, or a one-hop teardown whose only condition is that the call that posted it has
+  returned. None of them needs an engine frame or a Drain between its post and its run, and each re-validates what it
+  acts on (handle, generation, claim), because every one of them already had to survive an arbitrary delay and
+  `Discard()`. The restore passes that follow see whatever a drained task started and put it back like any other state.
+- **A NEW POSTER:** use `Post` unless the task must wait for the next Drain's Publish. Then use `PostAfterDrain` and say
+  why at the call.
+
 ## Logging
 
 **#16 — Log hex via `apmf::log::Hex`, never the `{:X}` spec.** On the deck (v0.2.2)

@@ -495,6 +495,22 @@ a main-thread-safe seat for equip/3D work).
 - **What breaks:** `Pump()` must ONLY be called from that one confirmed seat, never
   from `OnActorUpdate` (field-proven multi-thread, INVARIANTS #4/#12). A task
   Post()'d during `Pump()` runs on the NEXT `Pump()`, never re-entrantly.
+- **THE SAVE DRAIN (2026-11-16, `fix/save-drain`; INVARIANTS "THE POSTED QUEUE AT A SAVE"; NOT merged, NOT field run).**
+  `DrainForSave()` is called FIRST in `plugin.cpp`'s kSaveGame case (only when `hook::OnMainThread()`), in front of
+  `combatops::FlushForSave`. One swap; it runs the FIFO prefix of the batch up to the first `PostAfterDrain` task and
+  puts that task and everything behind it back at the front of the live queue; it refuses before the first `Pump()`
+  after a `Discard()` and from inside a posted task. `PostAfterDrain(fn)` is `Post` for a task that must not run before
+  the NEXT `ControlMap::Drain` published (ch.19 `FreeSlot` and `RetireMarkerLater`). The queue holds `Task{fn,
+  afterDrain}`; `RunBatch` is the one per-task guard both `Pump` and the drain use.
+  **What breaks:** (1) calling `DrainForSave` after `FlushForSave` or inside the `SyncScope`: a StopCombat a drained task
+  queues then misses the flush (it would wait for the actor's next combat update, after the save). (2) Posting a task
+  that depends on the next Drain with plain `Post` from Pump or a Poll: the save drain runs it early (for ch.19: the
+  record re-pointed or the marker deleted under a still-published offer). (3) Running the kept tasks out of order
+  (skipping the marked one and running what is behind it): a later task may assume the earlier one ran. (4) Dropping
+  the first-pump refusal: the marker sweep and the after-load cleans would run inside a message handler (review F4).
+  (5) Calling it off the main thread: `g_running` and the batch are main-only.
+  **Field checks:** `[mainthread] kSaveGame: ran N posted task(s) before the engine writes the save; M stay queued`
+  (silent when the queue was empty), and `... NOT run before the save: <why>` for a refusal.
 
 ### `native/core/CombatOps.{h,cpp}` — THE OWNER-THREAD STOPCOMBAT QUEUE (stability audit H1 / APMF-B26, 2026-11-16)
 `combatops::StopCombat(actor, who, done)` (MAIN) QUEUES `Actor::StopCombat` for that actor, recording the controller
