@@ -1,10 +1,9 @@
-## v0.20.5 -- Hotfix: the game could hang on the first fight after a load
+## v0.20.5 -- Ending combat on the game's own road, and class combat styles that always land
 
-- **0.20.4 could freeze the game the moment combat started after loading a save.** If a follower was saved while a stand-in cast was open, Harbinger ended that leftover combat inside the follower's own combat update. The game never ends a fight there, and it hung. Harbinger now asks the game to end the fight the way the game does it itself: it posts the game's own "stop combat" message and the game runs it later in the frame, outside every combat update.
-- **Nothing in Harbinger ends combat from a combat update any more.** That is now a written rule.
-- **Ending combat is still never done from Harbinger's own frame pass,** except inside a save, where the game is about to write the character.
-- **The log says what happened.** The [combatops] line counts how many stops the game ran, and an ERROR names any stop the game did not run.
-- **A combat style claim now reaches a fight that had not started yet (ch.33).** When a mod sent a follower into combat and named his combat style a moment later, the game had built his combat data but not started the fight. Harbinger tried once to hand the style over, could not, and never tried again. The follower then fought by the game's default style for the whole fight. A Thief with a bow kept reaching for a sword and never drew the bow. Harbinger now keeps trying every frame until the style is in, for as long as the claim stands. It also does it again when the game gives the follower new combat data in a later fight. The log says once that it is waiting and once that it landed, with the number of tries.
+- **Harbinger now ends a follower's combat the way the game ends its own fights.** It hands the game its own end-combat message, and the game runs it at its own safe point in the frame. Nothing in Harbinger ends combat from a combat update any more, and that is now a written rule.
+- **A combat style a mod names for a follower now always reaches his fight.** If the fight started a moment before the style was named, the style used to be lost and he fought with the game's default style. Now Harbinger keeps trying each frame until it lands, and does it again when the game builds him a new combat controller. This fixes a bow user who held her bow and never shot.
+- **About v0.20.4:** it was pulled after a freeze that turned out to be a bug in the game itself (a face morph lock), not Harbinger. v0.20.5 carries every 0.20.4 change.
+- **The log says what happened.** The [combatops] line counts how many stops the game ran, and the [ch.33] line counts style refreshes that had to wait.
 
 ## v0.20.4 -- Stability: combat changes happen on the follower's own thread
 
