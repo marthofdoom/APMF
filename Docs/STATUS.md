@@ -1,8 +1,35 @@
 # APMF STATUS — living handoff (start here)
 
-Updated 2026-11-16 (v0.20.5 hotfix branch `fix/stopcombat-main` first, the stability H1 fix branch below it; proxy save integrity fix branch after it). Current version **v0.20.2** (release prep 2026-11-14, ABI v45 unchanged, a small real release: the ch.3 sneak release confirm, see CHANGELOG) / previously **v0.20.1** (cut 2026-11-13, ABI v45 unchanged, a REAL release, the first since v0.17.0, cumulative over v0.18.0 to v0.20.0 plus the seat 0 hostile-effect fix, see CHANGELOG) / previously **v0.20.0** (cut 2026-11-12, ABI v45) and **v0.19.0** (cut 2026-11-10, ABI v36) and **v0.18.0** (cut 2026-11-09, ABI v35, PRERELEASE) and **v0.17.0** (cut 2026-11-08, ABI v33) and **v0.16.0** (cut 2026-11-02, ABI v32) and **v0.15.2** (cut 2026-10-28, ABI v31) and **v0.15.1** (cut 2026-10-26, ABI v30) and **v0.15.0** (cut 2026-10-25, ABI v30) and **v0.14.0** (cut 2026-10-21, ABI v28) and **v0.13.1** (cut 2026-10-13, ABI v24) and **v0.13.0** (release cut 2026-10-12; see RELEASED v0.13.0 below; prior v0.12.0 PUBLISHED release, ABI v21). The current state of the build: what's
+Updated 2026-11-17 (ch.33 owed refresh branch `fix/ch33-refresh-retry` first, then the v0.20.5 hotfix branch `fix/stopcombat-main`, the stability H1 fix branch below it; proxy save integrity fix branch after it). Current version **v0.20.2** (release prep 2026-11-14, ABI v45 unchanged, a small real release: the ch.3 sneak release confirm, see CHANGELOG) / previously **v0.20.1** (cut 2026-11-13, ABI v45 unchanged, a REAL release, the first since v0.17.0, cumulative over v0.18.0 to v0.20.0 plus the seat 0 hostile-effect fix, see CHANGELOG) / previously **v0.20.0** (cut 2026-11-12, ABI v45) and **v0.19.0** (cut 2026-11-10, ABI v36) and **v0.18.0** (cut 2026-11-09, ABI v35, PRERELEASE) and **v0.17.0** (cut 2026-11-08, ABI v33) and **v0.16.0** (cut 2026-11-02, ABI v32) and **v0.15.2** (cut 2026-10-28, ABI v31) and **v0.15.1** (cut 2026-10-26, ABI v30) and **v0.15.0** (cut 2026-10-25, ABI v30) and **v0.14.0** (cut 2026-10-21, ABI v28) and **v0.13.1** (cut 2026-10-13, ABI v24) and **v0.13.0** (release cut 2026-10-12; see RELEASED v0.13.0 below; prior v0.12.0 PUBLISHED release, ABI v21). The current state of the build: what's
 shipped, what's probe-gated, what's next. Keep this current in the SAME change as any
 build/finding/workflow change.
+
+## FIX 2026-11-17 -- ch.33: THE ENGINE REFRESH IS OWED UNTIL IT LANDS, branch `fix/ch33-refresh-retry`, NOT merged, NOT field run
+
+**Field failure (Deck, 1.6.1170, MFO `_evidence/deck-run-1117d/APMF.log` 15:30:56 to 15:31:40, again in `deck-run-1117b-full`
+12:44:05):** MFO's Thief class holds a ch.33 claim (Thief Ranged, ranged x10, melee 0.1). ch.21 built Adelinda's controller
+at 15:30:56.76, the claim was filed at 15:31:01.44, and when it went live the controller was still INACTIVE
+(`IsInCombat` false until 15:31:02.4). `EngineRefresh` returned without a line and nothing asked again, so the controller
+kept the engine's style 0x3D for the whole fight (bow scored 34.2 where the claimed style gives 342), the engine kept
+choosing melee, ch.15 / ch.17 refused every melee equip and she never drew the bow. Counter case 12:34:23: the controller
+was ACTIVE 274 ms after the entry and the refresh ran.
+- **The fix (`core/CombatStyle.cpp`, no new address, no new seat, no ABI change):** `EngineRefresh` answers landed / no
+  controller / no actor / waits. A refresh that waits stays owed (`Book::refresh`, `g_released`) and `Heartbeat` tries it
+  again every frame until it lands or the actor has no controller. Nothing gives up on a standing claim. A live claim
+  whose actor shows a controller the claim has not refreshed (address compare every 250 ms, never a dereference) owes
+  one too: a new combat group, a ch.21 re-entry, or a construction that read a slot mid-rewrite.
+- **The gate did not move.** An INACTIVE controller is still not refreshed: the engine's function writes
+  `[controller+0x10]+0x1C4` with no null test when the style changes and nobody has read that `+0x10` exists before the
+  controller goes active. The refresh lands on the first frame the fight is real.
+- **APMF-B298 (still OPEN):** every attempt is the whole guarded call again (never while `combatops::Pending`, actor
+  held, loaded + alive + in combat, pointer read right before the call). Calls made: one per owed refresh, plus one
+  per new controller of a live claim. REVIEW-BACKLOG APMF-B298 has the update.
+- **Rule:** INVARIANTS #0 (n) item 3, "an owed refresh is never dropped".
+- **Field checks:** (1) send a claimed follower in through ch.21 before her class claim is filed: the log shows
+  `cannot run yet: his controller is INACTIVE`, then `the engine refreshed his controller's cached combat style (claim
+  live, after N attempt(s) that could not run): 0x0000003D -> 0x<claimed>`, and her bow scores by the claimed style;
+  (2) every later fight of a claimed follower shows one `(new controller)` refresh line whose two styles are the same;
+  (3) the `[ch.33] H combat style` line's `owed and waiting now` goes back to 0 once fights run.
 
 ## HOTFIX 2026-11-16 -- v0.20.5: STOPCOMBAT ON THE ENGINE'S ROAD, branch `fix/stopcombat-main`, NOT merged, NOT field run
 

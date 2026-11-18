@@ -848,6 +848,15 @@ on a data read instead of a decision seat. It is legal only while ALL of these h
    written only by the engine's own function. Release needs no restore. The one engine CALL Harbinger makes is
    CombatController::UpdateCombatStyle on the actor's own live controller, on the game thread, at engage, owner
    change, release and a rank change: the call Actor::SetCombatStyle's own tail makes.
+   **An owed refresh is never dropped (2026-11-17, `fix/ch33-refresh-retry`).** A refresh that cannot run (the
+   controller is INACTIVE, a Harbinger StopCombat is in flight, the actor is not loaded, dead or unresolved) stays
+   owed and is tried again every frame for as long as the claim stands (a released claim: until it lands or the
+   controller is gone). No timer gives up on a live claim. A live claim whose actor shows a controller this claim
+   has not refreshed owes one too. Every attempt is the whole guarded call again (#4a: never while
+   `combatops::Pending`, the actor held, the gates and the controller pointer read immediately before the call),
+   and the controller's ADDRESS is the only thing read outside it. Field failure this closes: a controller ch.21
+   built stayed INACTIVE past the claim going live, the one refresh returned without a line, and the follower
+   fought the whole fight by the engine's style (MFO `_evidence/deck-run-1117d`).
 4. **Two scopes, both stated.** Actor-wide (every reader), or the controller's cached copy alone
    (`kCombatStyle_EquipChoiceOnly`, the equipment choice). Nothing in between is offered.
 5. **It yields to the player's ranking.** The style is answered only while the claim's client outranks the Engine
