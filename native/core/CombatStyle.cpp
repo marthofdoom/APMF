@@ -658,13 +658,15 @@ namespace apmf::combatstyle {
             g_waiting.store(0, std::memory_order_relaxed);   // no claim and nothing released: nothing can be owed
         }
         // RULE C: the totals, about every 30 s while any seat answered since the last line.
-        static std::uint64_t s_lastBeat = 0, s_lastSum = 0;
+        static std::uint64_t s_lastBeat = 0, s_lastSum = 0, s_lastWaiting = 0;   // review F1: a cleared wait changes no counter, so the waiting count is compared too
         if (now - s_lastBeat >= kBeatMs) {
             const std::uint64_t sum = t_wide.load(std::memory_order_relaxed) + t_cache.load(std::memory_order_relaxed) +
                                       t_refresh.load(std::memory_order_relaxed) + t_inert.load(std::memory_order_relaxed) +
                                       t_waited.load(std::memory_order_relaxed);
-            if (sum != s_lastSum) {
+            const std::uint64_t waitingNow = g_waiting.load(std::memory_order_relaxed);
+            if (sum != s_lastSum || waitingNow != s_lastWaiting) {
                 s_lastSum = sum;
+                s_lastWaiting = waitingNow;
                 spdlog::info("[ch.33] H combat style: claims standing={} | seat B answered (actor-wide reads)={} | seat A answered "
                              "(controller cache)={} | engine refreshes asked={} | inert claims={} | refreshes that had to "
                              "wait={} | owed and waiting now={}",
