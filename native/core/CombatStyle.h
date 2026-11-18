@@ -33,6 +33,8 @@ namespace apmf::combatstyle {
     // GAME THREAD, once per frame from Arbiter::OncePerFrame (one relaxed load while no claim stands and nothing
     // waits): rank new claims against the Engine source on the CombatAction facet (again every 5 s), have the
     // engine refresh the controller's cached style after an engage / owner change / release (its own
-    // CombatController::UpdateCombatStyle), and the RULE C totals about every 30 s.
+    // CombatController::UpdateCombatStyle), and the RULE C totals about every 30 s. A refresh that cannot run (the
+    // controller is INACTIVE, a StopCombat is in flight, the actor is not loaded) stays OWED and is tried again every
+    // frame while the claim stands; a live claim's actor showing a controller this claim has not refreshed owes one.
     void Heartbeat();
 }

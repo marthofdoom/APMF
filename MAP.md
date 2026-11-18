@@ -1721,9 +1721,21 @@ CombatAction sets or clears `kLive`; after a change, and once after a release, `
 INVARIANTS #0 (n). Deny audit row 33.
 `EngineRefresh` holds the actor by a counted reference, requires loaded + alive + in combat, and reads the controller pointer immediately before
 the one engine call; its comment carries the threading argument and names the unproven part (controller lifetime across the call, APMF-B298): review F4.
+**THE OWED REFRESH (2026-11-17, `fix/ch33-refresh-retry`):** `EngineRefresh` answers `Refreshed::{kLanded, kNoController, kNoActor, kWaits}` and
+never returns silently. `Heartbeat` step 2 (the rank) sets `Book::refresh` + `why` on a change; step 3 tries every owed refresh EVERY FRAME until
+it lands or the actor has no controller, and every `kWatchMs` (250) compares the controller ADDRESS of each live claim that owes none with
+`Book::cc` (the controller its last landed refresh wrote): a different non-null address owes a refresh ("new controller"). Step 1 does the same
+for released claims (`g_released` = {id, tries}, requeued on `kWaits`, dropped when landed / no controller / no actor / a newer claim stands).
+Log: one `cannot run yet: <reason>` line per owed refresh, one `refreshed ... (<why>, after N attempt(s) that could not run)` line at the
+landing; the totals line carries `refreshes that had to wait` and `owed and waiting now`. To add a reason a refresh must wait, add one `else if`
+to the `wait` ladder in `EngineRefresh`. Open findings to read before editing: REVIEW-BACKLOG APMF-B298 (controller lifetime across the call).
 **What breaks if you change this:** answering in seat B for an `EquipChoiceOnly` claim makes it actor-wide. A slot store that bypasses `WriteSlot` breaks the seqlock (a reader can take a new style with old flags). Publishing a slot's FormID before
 its style pointer hands a reader a null or a stale style. `kLive` must be set only by `Heartbeat` AFTER `TryGetOwningClaimBasis` finds the
-claim (inside Engage the publish has not happened yet). `EngineRefresh` must stay a call of the engine's function: writing `cc->combatStyle`
+claim (inside Engage the publish has not happened yet). Clearing `Book::refresh` anywhere but on `kLanded` / `kNoController` (or returning early from `EngineRefresh` without a result) brings back the
+2026-11-17 failure: a claim that goes live while the controller is INACTIVE never reaches it and the follower fights by the engine's style
+(bow never drawn). A retry that skips any of `EngineRefresh`'s reads (the `combatops::Pending` test, the gates, the pointer read right before
+the call), or that dereferences the address kept in `Book::cc`, widens APMF-B298 into a use after free. Refreshing an INACTIVE controller is
+NOT proven safe (the engine's function writes `[controller+0x10]+0x1C4` with no null test). `EngineRefresh` must stay a call of the engine's function: writing `cc->combatStyle`
 ourselves skips the engine's inventory-dirty flag and is the write this channel exists to remove. A released claim that was ever live must be
 queued in `g_released` or the controller keeps the claimed style until the engine's next refresh. `g_bmx` is a LEAF (no engine call, no log
 under it). The thunks must hand a null actor / list to the original untouched (the engine passes what its handle resolved to). A slot is

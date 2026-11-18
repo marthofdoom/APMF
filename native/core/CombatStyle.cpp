@@ -74,6 +74,7 @@ namespace apmf::combatstyle {
         constexpr std::uint32_t kLive        = 1u << 31;   // slot flag (internal): ranked above Engine, answered
         constexpr std::uint64_t kRedecideMs  = 5000;
         constexpr std::uint64_t kBeatMs      = 30000;
+        constexpr std::uint64_t kWatchMs     = 250;    // how often a live claim's controller ADDRESS is compared (no deref)
 
         using ExtraGet_t = RE::TESCombatStyle* (*)(RE::ExtraDataList*);
         using ActorGet_t = RE::TESCombatStyle* (*)(RE::Actor*);
@@ -109,6 +110,8 @@ namespace apmf::combatstyle {
         std::atomic<std::uint32_t>  g_hi{ 0 };   // one past the highest slot ever used since the last reset
 
         std::atomic<std::uint64_t> t_wide{ 0 }, t_cache{ 0 }, t_refresh{ 0 }, t_inert{ 0 };
+        std::atomic<std::uint64_t> t_waited{ 0 };    // owed refreshes that could not run at their first attempt
+        std::atomic<std::uint32_t> g_waiting{ 0 };   // owed refreshes that have not landed yet (the beat line)
         std::atomic<bool>          g_firstB{ false }, g_firstA{ false };
 
         // The claim's style for `a_fid`, or nullptr. `a_wideOnly`: seat B (an EquipChoiceOnly claim is not answered).
@@ -177,12 +180,28 @@ namespace apmf::combatstyle {
             bool          decided    = false;   // ranked at least once since the last SetClaim
             bool          live       = false;
             bool          everLive   = false;   // the controller's cache may hold a style of this claim
-            bool          refresh    = false;   // the controller's cache must be refreshed by the engine
-            std::uint64_t decidedMs  = 0;
+            // AN OWED REFRESH (fix/ch33-refresh-retry, the 2026-11-17 field failure). `refresh` is set when the
+            // controller's cache must be re-read by the engine (the claim went live, was outranked, or the actor has a
+            // controller this claim has not refreshed) and is cleared ONLY when the engine's refresh landed or the actor
+            // has no controller at all (the next one's construction reads the seats). A refresh that cannot run this
+            // frame (controller INACTIVE, a StopCombat in flight, not loaded, dead, the actor unresolved) stays owed and
+            // is tried again every frame for as long as the claim stands. No timer gives up on a live claim.
+            bool           refresh   = false;
+            const char*    why       = "";      // a string literal: what the owed refresh is for (the log)
+            std::uint32_t  tries     = 0;       // frames the owed refresh could not run
+            // The ADDRESS of the controller the last landed refresh of this claim wrote (0 = none). Compared, never
+            // dereferenced: a live claim whose actor shows a different non-null address owes a refresh ("new controller").
+            std::uintptr_t cc        = 0;
+            std::uint64_t  decidedMs = 0;
+        };
+        struct Released {
+            RE::FormID    id    = 0;
+            std::uint32_t tries = 0;
         };
         std::mutex              g_bmx;       // LEAF: the two vectors only (no engine call, no log under it)
         std::vector<Book>       g_book;
-        std::vector<RE::FormID> g_released;  // actors whose claim ended: one engine refresh each
+        std::vector<Released>   g_released;  // actors whose claim ended: an engine refresh each, owed until it lands or
+                                             // the controller is gone
         std::atomic<std::uint32_t> g_work{ 0 };   // g_book.size() + g_released.size(), for Heartbeat's fast path
 
         void SyncWork() { g_work.store(static_cast<std::uint32_t>(g_book.size() + g_released.size()), std::memory_order_release); }   // g_bmx held
@@ -211,24 +230,77 @@ namespace apmf::combatstyle {
         //   the store is the residual risk (APMF-B298), and it is the engine's own.
         // WHY NOT SKIP THE CALL: without it a claim reaches a running fight's cached style only at the engine's next
         //   own refresh (a package change), so an equip-choice claim would do nothing for most of a fight.
-        void EngineRefresh(RE::FormID a_id, const char* a_why) {
+        //
+        // THE RESULT (fix/ch33-refresh-retry). The function never returns silently any more: the caller is told whether
+        //   the refresh LANDED, whether there is NOTHING to refresh (no controller, or for a released claim no actor), or
+        //   that it WAITS, and a waiting refresh stays owed (Book::refresh / g_released) and is tried again on the next
+        //   frame. Field failure 2026-11-17 (MFO _evidence/deck-run-1117d): ch.21 built a controller, the claim went live
+        //   4.7 s later while that controller was still INACTIVE (IsInCombat false), the one refresh returned without a
+        //   word, and the controller kept the engine's style for the whole fight.
+        // EVERY RETRY IS A FULL CALL OF THIS FUNCTION. Nothing is carried from one attempt to the next but the count:
+        //   the actor is looked up and held again, the stop-pending test, the gates and the controller pointer are all
+        //   read again on this thread immediately before the engine call, exactly as for a first attempt (APMF-B298 is
+        //   narrowed the same way on every attempt, and no attempt runs while combatops::Pending).
+        // WHY AN INACTIVE CONTROLLER WAITS and is not refreshed at once: the engine's refresh writes
+        //   [controller+0x10]+0x1C4 with no null test when the cached style changes, and nobody has read that +0x10 is
+        //   built before the controller goes active. The gate that is field proven (in combat) stays the gate.
+        enum class Refreshed : std::uint8_t { kLanded, kNoController, kNoActor, kWaits };
+
+        // `a_tries`: the attempts of THIS owed refresh that could not run before this one (0 = the first attempt).
+        // `a_until`: when the retries end, for the one line a first failed attempt writes.
+        // `a_cc`: on kLanded, the ADDRESS of the controller the refresh wrote (identity only).
+        Refreshed EngineRefresh(RE::FormID a_id, const char* a_why, std::uint32_t a_tries, const char* a_until,
+                                std::uintptr_t* a_cc = nullptr) {
             const RE::NiPointer<RE::Actor> actor(RE::TESForm::LookupByID<RE::Actor>(a_id));
-            if (!actor || !actor->Is3DLoaded() || actor->IsDead()) return;
-            // #4a (review F1 of 75e1f75): a Harbinger StopCombat for him is queued or running -- his controller is about to
-            // go (the engine may be freeing it now): not read, not refreshed; the next one's construction reads the seats.
-            if (apmf::combatops::Pending(a_id) || !actor->IsInCombat()) return;
-            auto* const cc = actor->GetActorRuntimeData().combatController;
-            if (!cc) return;   // no controller: the next one's construction reads the seats itself
+            const char*                    wait = nullptr;
+            if (!actor) {
+                // Nothing to hold and nothing to read. A released claim's refresh ends here; a standing claim keeps it owed.
+                if (a_tries == 0) {
+                    t_waited.fetch_add(1, std::memory_order_relaxed);
+                    spdlog::info("[ch.33] 0x{}: the refresh of his controller's cached combat style ({}) cannot run: the actor "
+                                 "does not resolve. A claim that still stands keeps it owed.", Hex(a_id), a_why);
+                }
+                return Refreshed::kNoActor;
+            }
+            if (apmf::combatops::Pending(a_id)) {
+                // #4a (review F1 of 75e1f75): a Harbinger StopCombat for him is queued or running -- his controller is
+                // about to go (the engine may be freeing it now): not read, not refreshed.
+                wait = "a Harbinger StopCombat for him is in flight (#4a: his controller is not read)";
+            } else if (!actor->GetActorRuntimeData().combatController) {   // the POINTER only
+                return Refreshed::kNoController;   // no controller: the next one's construction reads the seats itself
+            } else if (!actor->Is3DLoaded()) {
+                wait = "his 3D is not loaded";
+            } else if (actor->IsDead()) {
+                wait = "he is dead";
+            } else if (!actor->IsInCombat()) {
+                wait = "his controller is INACTIVE (the engine built it and has not started his fight yet)";
+            }
+            if (wait) {
+                if (a_tries == 0) {
+                    t_waited.fetch_add(1, std::memory_order_relaxed);
+                    spdlog::info("[ch.33] 0x{} '{}': the refresh of his controller's cached combat style ({}) cannot run yet: "
+                                 "{}. It stays owed and is tried again every frame {}.", Hex(a_id), actor->GetName(), a_why,
+                                 wait, a_until);
+                }
+                return Refreshed::kWaits;
+            }
+            auto* const cc = actor->GetActorRuntimeData().combatController;   // read once, immediately before the call
+            if (!cc) return Refreshed::kNoController;
             auto* const before = cc->combatStyle;
             g_update(cc);
             t_refresh.fetch_add(1, std::memory_order_relaxed);
             // Read back off the ACTOR, not off `cc`: if the controller was replaced meanwhile the line says so.
             auto* const ccNow = actor->GetActorRuntimeData().combatController;
             auto* const after = ccNow == cc ? cc->combatStyle : nullptr;
-            spdlog::info("[ch.33] 0x{} '{}': the engine refreshed his controller's cached combat style ({}): 0x{} -> {}.",
-                         Hex(a_id), actor->GetName(), a_why, Hex(before ? before->GetFormID() : 0),
+            // A controller that changed during the call is not recorded: the watch then sees the new one as new.
+            if (a_cc) *a_cc = ccNow == cc ? reinterpret_cast<std::uintptr_t>(cc) : 0;
+            spdlog::info("[ch.33] 0x{} '{}': the engine refreshed his controller's cached combat style ({}{}): 0x{} -> {}.",
+                         Hex(a_id), actor->GetName(), a_why,
+                         a_tries ? std::format(", after {} attempt(s) that could not run", a_tries) : std::string{},
+                         Hex(before ? before->GetFormID() : 0),
                          ccNow == cc ? std::format("0x{}", Hex(after ? after->GetFormID() : 0))
                                      : std::string{ "(his controller changed during the call: not read)" });
+            return Refreshed::kLanded;
         }
 
         // ---- install helpers ------------------------------------------------------------------------------------
@@ -412,7 +484,8 @@ namespace apmf::combatstyle {
                 b->flags   = flags;
                 b->decided = false;
                 b->live    = false;
-                b->refresh = false;
+                // b->refresh is NOT cleared: a refresh still owed for the claim this one replaces (its controller was not
+                // refreshable yet) is still owed. It reads the seats as they stand when it lands.
             }
             SyncWork();
         }
@@ -435,7 +508,11 @@ namespace apmf::combatstyle {
             if (it->id != a_id) continue;
             WriteSlot(g_slots[it->slot], 0, nullptr, 0);
             g_n.fetch_sub(1, std::memory_order_release);
-            if (it->everLive) g_released.push_back(a_id);   // the cache may hold the claim's style: the engine re-derives it
+            if (it->everLive) {   // the cache may hold the claim's style: the engine re-derives it
+                bool queued = false;
+                for (const auto& r : g_released) queued = queued || r.id == a_id;
+                if (!queued) g_released.push_back(Released{ a_id, 0 });
+            }
             g_book.erase(it);
             break;
         }
@@ -452,6 +529,7 @@ namespace apmf::combatstyle {
             g_hi.store(0, std::memory_order_release);
             g_book.clear();
             g_released.clear();
+            g_waiting.store(0, std::memory_order_relaxed);
             SyncWork();
         }
         if (n != 0) spdlog::info("[ch.33] {} -- forgot {} combat style claim slot(s).", a_why, n);
@@ -461,20 +539,33 @@ namespace apmf::combatstyle {
         if (!Installed()) return;
         const std::uint64_t now = apmf::clock::MonotonicMs();
         if (g_work.load(std::memory_order_acquire) != 0) {
-            std::vector<Book>       book;
-            std::vector<RE::FormID> released;
+            std::vector<Book>     book;
+            std::vector<Released> released;
             {
                 std::scoped_lock lock(g_bmx);
                 book = g_book;
                 released.swap(g_released);
                 SyncWork();
             }
-            for (const RE::FormID id : released) {
+            std::uint32_t waiting = 0;
+            // 1. RELEASED claims: the engine re-derives the cache. Owed until it lands, the controller is gone or the
+            //    actor no longer resolves; a refresh that waits goes back on the list for the next frame.
+            for (const Released& r : released) {
                 // A newer claim on the same actor since the release: its own engage refreshes.
                 bool again = false;
-                for (const auto& b : book) again = again || b.id == id;
-                if (!again) EngineRefresh(id, "claim released");
+                for (const auto& b : book) again = again || b.id == r.id;
+                if (again) continue;
+                if (EngineRefresh(r.id, "claim released", r.tries, "until it lands or his controller is gone") !=
+                    Refreshed::kWaits)
+                    continue;
+                ++waiting;
+                std::scoped_lock lock(g_bmx);
+                bool queued = false;
+                for (const auto& q : g_released) queued = queued || q.id == r.id;   // released again meanwhile: one entry
+                if (!queued) g_released.push_back(Released{ r.id, r.tries + 1 });
+                SyncWork();
             }
+            // 2. RANK each claim against the Engine source (at engage, then every kRedecideMs). A change OWES a refresh.
             for (const auto& b : book) {
                 if (b.decided && now - b.decidedMs < kRedecideMs) continue;
                 APMF_API::APMF_Param p{};
@@ -497,31 +588,90 @@ namespace apmf::combatstyle {
                         e.everLive  = e.everLive || v.enforce;
                         if (auto* st = g_slots[e.slot].style.load(std::memory_order_relaxed))   // this thread wrote it
                             WriteSlot(g_slots[e.slot], e.id, st, e.flags | (v.enforce ? kLive : 0u));
+                        // The cache must follow: live = it takes the claim's style, outranked after being answered =
+                        // it drops it. (A first decision that is not live changes nothing the cache holds.)
+                        if (changed && (v.enforce || !first)) {
+                            e.refresh = true;
+                            e.why     = v.enforce ? "claim live" : "claim outranked";
+                            e.tries   = 0;
+                        }
                     }
                 }
                 if (!changed) continue;
                 if (v.enforce) {
                     spdlog::info("[ch.33] 0x{} combat style 0x{} is LIVE (h={}, client priority {} above Engine {}).", Hex(b.id),
                                  Hex(b.styleId), h, v.claimPrio, v.srcPrio);
-                    EngineRefresh(b.id, "claim live");
                 } else {
                     spdlog::warn("[ch.33] 0x{} combat style 0x{} is NOT answered (h={}): the client's priority {} is not above "
                                  "Engine's {} on the CombatAction facet (Harbinger menu). The engine's own style stands.",
                                  Hex(b.id), Hex(b.styleId), h, v.claimPrio, v.srcPrio);
-                    if (!first) EngineRefresh(b.id, "claim outranked");
                 }
             }
+            // 3. THE OWED REFRESHES, every frame, and every kWatchMs the controller ADDRESS of each live claim that
+            //    owes none (a controller this claim has not refreshed owes one: a new combat group, a ch.21 re-entry,
+            //    or a construction that read a slot while it was being rewritten). The address is read off the held
+            //    actor and compared only; the one place a controller is read THROUGH is EngineRefresh.
+            static std::uint64_t s_lastWatch = 0;
+            const bool           watch       = now - s_lastWatch >= kWatchMs;
+            if (watch) s_lastWatch = now;
+            {
+                std::scoped_lock lock(g_bmx);
+                book = g_book;   // with what step 2 just decided
+            }
+            for (const auto& b : book) {
+                bool        owed  = b.refresh;
+                const char* why   = b.why;
+                bool        fresh = false;   // owed since this frame's watch
+                if (!owed) {
+                    if (!b.live || !watch) continue;
+                    std::uintptr_t cur = 0;
+                    if (const RE::NiPointer<RE::Actor> actor(RE::TESForm::LookupByID<RE::Actor>(b.id)); actor)
+                        cur = reinterpret_cast<std::uintptr_t>(actor->GetActorRuntimeData().combatController);
+                    if (cur == b.cc) continue;
+                    if (cur != 0) {
+                        owed  = true;
+                        fresh = true;
+                        why   = "new controller";
+                    }
+                }
+                Refreshed      r  = Refreshed::kNoController;   // cur == 0: the refreshed controller is gone
+                std::uintptr_t cc = 0;
+                if (owed) r = EngineRefresh(b.id, why, fresh ? 0u : b.tries, "while the claim stands", &cc);
+                const bool waits = r == Refreshed::kWaits || r == Refreshed::kNoActor;
+                if (waits) ++waiting;
+                std::scoped_lock lock(g_bmx);
+                for (auto& e : g_book) {
+                    if (e.id != b.id) continue;
+                    if (waits) {
+                        e.refresh = true;
+                        e.why     = why;
+                        e.tries   = (fresh ? 0u : e.tries) + 1;
+                    } else {   // landed, or no controller to refresh
+                        e.refresh = false;
+                        e.tries   = 0;
+                        e.cc      = r == Refreshed::kLanded ? cc : 0;
+                    }
+                }
+            }
+            g_waiting.store(waiting, std::memory_order_relaxed);
+        } else if (g_waiting.load(std::memory_order_relaxed) != 0) {
+            g_waiting.store(0, std::memory_order_relaxed);   // no claim and nothing released: nothing can be owed
         }
         // RULE C: the totals, about every 30 s while any seat answered since the last line.
-        static std::uint64_t s_lastBeat = 0, s_lastSum = 0;
+        static std::uint64_t s_lastBeat = 0, s_lastSum = 0, s_lastWaiting = 0;   // review F1: a cleared wait changes no counter, so the waiting count is compared too
         if (now - s_lastBeat >= kBeatMs) {
             const std::uint64_t sum = t_wide.load(std::memory_order_relaxed) + t_cache.load(std::memory_order_relaxed) +
-                                      t_refresh.load(std::memory_order_relaxed) + t_inert.load(std::memory_order_relaxed);
-            if (sum != s_lastSum) {
+                                      t_refresh.load(std::memory_order_relaxed) + t_inert.load(std::memory_order_relaxed) +
+                                      t_waited.load(std::memory_order_relaxed);
+            const std::uint64_t waitingNow = g_waiting.load(std::memory_order_relaxed);
+            if (sum != s_lastSum || waitingNow != s_lastWaiting) {
                 s_lastSum = sum;
+                s_lastWaiting = waitingNow;
                 spdlog::info("[ch.33] H combat style: claims standing={} | seat B answered (actor-wide reads)={} | seat A answered "
-                             "(controller cache)={} | engine refreshes asked={} | inert claims={}",
-                             g_n.load(std::memory_order_relaxed), t_wide.load(), t_cache.load(), t_refresh.load(), t_inert.load());
+                             "(controller cache)={} | engine refreshes asked={} | inert claims={} | refreshes that had to "
+                             "wait={} | owed and waiting now={}",
+                             g_n.load(std::memory_order_relaxed), t_wide.load(), t_cache.load(), t_refresh.load(), t_inert.load(),
+                             t_waited.load(), g_waiting.load());
             }
             s_lastBeat = now;
         }

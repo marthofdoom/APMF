@@ -4,6 +4,7 @@
 - **Nothing in Harbinger ends combat from a combat update any more.** That is now a written rule.
 - **Ending combat is still never done from Harbinger's own frame pass,** except inside a save, where the game is about to write the character.
 - **The log says what happened.** The [combatops] line counts how many stops the game ran, and an ERROR names any stop the game did not run.
+- **A combat style claim now reaches a fight that had not started yet (ch.33).** When a mod sent a follower into combat and named his combat style a moment later, the game had built his combat data but not started the fight. Harbinger tried once to hand the style over, could not, and never tried again. The follower then fought by the game's default style for the whole fight. A Thief with a bow kept reaching for a sword and never drew the bow. Harbinger now keeps trying every frame until the style is in, for as long as the claim stands. It also does it again when the game gives the follower new combat data in a later fight. The log says once that it is waiting and once that it landed, with the number of tries.
 
 ## v0.20.4 -- Stability: combat changes happen on the follower's own thread
 

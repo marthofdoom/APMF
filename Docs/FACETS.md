@@ -2933,6 +2933,8 @@ The game reads an actor's combat style through one function: his reference's own
 
 At engage, owner change and release Harbinger asks the game to refresh the controller's cached copy with the game's own function, so a claim applies in a running fight at once and the game marks its own "equipment choice is stale" flag.
 
+The refresh is owed until it lands. If it cannot run yet (the game built the controller but has not started the fight for him, a Harbinger StopCombat for him is in flight, he is not loaded), Harbinger tries again every frame for as long as the claim stands and logs the wait once and the landing once. A live claim whose actor gets a controller the claim has not refreshed (a new fight, a new combat group) owes one refresh too.
+
 Harbinger writes nothing. On release the next read is the game's own again.
 
 **Threads.** The two seats run wherever the game reads a style and touch only a fixed table of atomics, each slot read under its own sequence counter, so a reader gets one consistent claim or none. The refresh is one call of the game's own function from Harbinger's once-per-frame step on the game thread. That function stores one pointer and one byte and takes no lock; the game's own `SetCombatStyle` makes the same call from the script VM and the console, outside the combat update, with the controller read off the actor the same way. What is not proven is that the controller cannot be freed by another thread during that call. The game's own path has the same window. Harbinger narrows it (the actor is held by a reference, must be loaded, alive and in combat, and the controller pointer is read immediately before the call) and does not claim to close it.
@@ -2951,7 +2953,7 @@ At the call: not installed, the player, no param, `form` 0, an unknown flag bit,
 
 #### Reading it
 
-`IsClaimLive`, `GetClaimEndReason`. The log: `[ch.33] ... combat style ... is LIVE`, `the engine refreshed his controller's cached combat style ... 0x<old> -> 0x<new>`, `FIRST answer of seat A / seat B`, and the `[ch.33] H combat style` totals about every 30 seconds.
+`IsClaimLive`, `GetClaimEndReason`. The log: `[ch.33] ... combat style ... is LIVE`, `the engine refreshed his controller's cached combat style (<why>[, after N attempt(s) that could not run]): 0x<old> -> 0x<new>`, `the refresh of his controller's cached combat style (<why>) cannot run yet: <reason>` (once per owed refresh), `FIRST answer of seat A / seat B`, and the `[ch.33] H combat style` totals about every 30 seconds.
 
 #### Version, INI and field status
 
