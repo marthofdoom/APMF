@@ -6,6 +6,12 @@
 - **The log says why.** The claim line names the game's own test a spell fails, the equip line shows each time the game said no and the claim was let through, and the skill line shows the skill needed and the skill he has.
 - **Not field run yet.** Built from the disassembly of 1.6.1170, 1.5.97 and 1.7.104.
 
+## Unreleased -- Holding a spot in combat (ch.24)
+
+- **A climb or a vault no longer ends a move order.** A follower told to get to a spot in a fight was given up on when the game stopped steering him for 3 seconds. A scripted move such as a parkour climb can do that. The 3 seconds now wait while an animation owns his body.
+- **"Stand here and fight" is documented with real numbers.** A point with the hold flag and a small radius has worked since 0.20.0. The docs now say what was measured on the spot (he keeps moving in short steps inside the radius), one case where he moved away and never arrived, what a mod can poll, and what is not offered yet (a true stand still).
+- **No ABI change.**
+
 ## v0.20.5 -- Ending combat on the game's own road, and class combat styles that always land
 
 - **Harbinger now ends a follower's combat the way the game ends its own fights.** It hands the game its own end-combat message, and the game runs it at its own safe point in the frame. Nothing in Harbinger ends combat from a combat update any more, and that is now a written rule.

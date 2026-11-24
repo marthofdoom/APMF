@@ -91,6 +91,34 @@ the review: MFO.log 7981-7982, Turn Lesser Undead caps at level 10 / 15 against 
 **Open.** Stagger / Disarm casters never observed. Category 5 (short duration) items are walked after weapons. A staff of
 these rows is untested. Which sub-test refused Turn Lesser Undead is inferred. Blur's cause is one of two (logged now).
 
+## HEAD OF WORK 2026-11-23 -- ch.24: HOLDING A SPOT (what Point + Hold does, what is missing), branch `feat/approach-point`, NOT merged, NOT field run
+
+marth: "I thought it was done by shrinking the combat circle in a single spot? If nto go ahead and do 1". It is: `kApproach_Point |
+kApproach_Hold` (ABI v39), in MFO since `native/apmf/GroundApproach.cpp` / `Disengage.cpp:104`. No new mechanism was built.
+- **Verified in the field** (MFO `_evidence/deck-run-1117b-full/APMF.log`, R 90): 8 point declarations (5 engaged, 3
+  re-pointed). 3 reached HOLDING in about 3 s and held at 19 to 87 units with the engine's INSIDE verdict and no
+  leave-and-return; 1 ended EngineDropped (a point 1160 units away, the bound carried once); 1 ended "never updated in
+  3 s" right after a Repoint (cause not in the log); 1 re-point at 12:36:19 MOVED AWAY (159 to 250 units in 3 s under an
+  OUTSIDE verdict, never arrived: an observed failure, cause unknown); the other 2 show only APPROACHING lines. Inside R
+  the gait probe saw forward, strafe and backpedal samples (46 to 210 units/s). Facing was not measured. Numbers and tables: `Docs/FACETS.md` ch.24 "Holding a spot". The header's "NOT yet observed on a deck" was stale.
+- **Built (the one gap that was safe to close):** a scripted move is not a stall. `channels/CombatApproach.cpp` Poll: while
+  `Actor::IsAnimationDriven()` (read before `g_entryMx`, review P3) the 3 s floor does not run and restarts at the end of
+  the move (`kAnimExcuseMs` 10 s in total since the engine's last real update, review P1; the cap ending a claim is logged,
+  `Entry::animSinceMs / animLastMs / animSaved`). One line when it kept a claim: `[ch.24] ... a SCRIPTED MOVE was not read as
+  a stall`. No seat, no address, no ABI change. Unknown: whether FollowerParkour / SkyParkour moves set `bAnimationDriven`.
+- **Not built, with the reason:** a true stand-still inside R. The only complete way is to hold the Movement half of the
+  combat tree (the substrate's MOVEMENT HOLD, `core/ActionGate.cpp`) for a claimed actor in a REAL fight. That hold ends on
+  real combat by design today, skips Check Unreachable Target and Dodge Threat, and restarts the tree on release. It is a new
+  deny with its own act / pop proof and field cycle, and it needs marth's call (a `kApproach_StandStill` bit, ABI append).
+- **Field checks:** (1) a point hold at R 48 and R 24 with `[CombatApproach] bApproachGaitProbe=1`: read `HOLDING ... engine:
+  INSIDE` and the `outside answers` count across the hold (a count that keeps rising = leave-and-return, R is too small),
+  and the GAIT PROBE speeds inside R. (2) send a follower to a point across a parkour ledge: either no line (the engine kept
+  updating the bound) or `a SCRIPTED MOVE was not read as a stall`; a `the engine stopped updating the bound for 3 s` END in
+  the middle of a climb means the move is not animation driven and the excuse needs another signal.
+- **MFO adoption:** none required. Optional: `native/apmf/GroundApproach.cpp` can Repoint to a smaller R once
+  `GetCombatApproachState` reads `kApproachState_Holding`, and should treat `Approaching` with a flat `distance` as its own
+  "blocked" timer. Re-mirror `native/APMF_API.h` (comment text only on this branch).
+
 ## FIX 2026-11-17 -- ch.33: THE ENGINE REFRESH IS OWED UNTIL IT LANDS, branch `fix/ch33-refresh-retry`, NOT merged, NOT field run
 
 **Field failure (Deck, 1.6.1170, MFO `_evidence/deck-run-1117d/APMF.log` 15:30:56 to 15:31:40, again in `deck-run-1117b-full`

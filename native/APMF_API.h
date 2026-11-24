@@ -612,8 +612,11 @@ namespace APMF_API {
                                      //       player. A target that is not a loaded reference is found
                                      //       at Engage: the claim is ended (kApproachState_TargetLost).
                                      //
-                                     //       FIELD STATUS: built, CI-verified, NOT yet observed on a
-                                     //       deck (the "[ch.24]" heartbeat counts the seats).
+                                     //       FIELD STATUS: OBSERVED on a deck (1.6.1170, 2026-11-17 and
+                                     //       11-23), a reference and a point, with and without Hold:
+                                     //       the area carries the bound, the engine's Return To Combat
+                                     //       Area walks the actor in, and it holds inside R. Numbers:
+                                     //       Docs/FACETS.md ch.24 "Holding a spot".
         kIntent_CastGuard     = 25,  // ch.25 GUARD this actor's own casts (ABI v21). Mode: DENY at the cast
                                      //       gates (0x0A CheckCast on the two HAND casters, 0x06 CheckStartCast).
                                      //       Param: ival = CastGuardFlags (>= 1 known bit, no unknown bit); fval =
@@ -834,6 +837,16 @@ namespace APMF_API {
                                     //   the actor stays within R of X (moving tactically inside it)
                                     //   until the client releases it or another end condition fires.
                                     //   Without it the claim ENDS on arrival (kApproachState_Arrived).
+                                    //   HOLDING A SPOT = kApproach_Point | kApproach_Hold with a small R.
+                                    //   The actor is NOT frozen: inside R the engine's own movement
+                                    //   leaves still run, every destination clamped to the disc, so it
+                                    //   keeps moving in short steps and attacks, casts, shoots and blocks
+                                    //   as in any fight (measured at R 90 by the gait probe: 19 to 87
+                                    //   units from the point, forward, strafe and backpedal samples at 46
+                                    //   to 210 units/s, no leave-and-return after arrival; where it FACES
+                                    //   was not measured). One re-point in that run moved away from its
+                                    //   point and never arrived. No R below 90 has been run on a deck. A
+                                    //   true stand-still inside R is not part of this facet.
         kApproach_Point = 1u << 1,  // ABI v39. The centre is a WORLD POINT, param.pos, instead of a reference:
                                     //   "give ground to there". param.target MUST be 0 with this bit (so an APMF
                                     //   older than v39, which does not know the bit, REFUSES the claim for its

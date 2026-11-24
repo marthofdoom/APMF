@@ -176,6 +176,12 @@ namespace {
     // S1 can restore the engine geometry) after any pause longer than the window.
     constexpr float         kLeashClampMargin = 16.0f;   // APMF-B55: how far inside the ch.23 leash a clamped goal sits
     constexpr std::uint64_t kStallMs      = 3000;    // 12 x the 0.25 s period: a FLOOR (principle 9)
+    // feat/approach-point (2026-11-23): a SCRIPTED MOVE is not a stall. While the actor's graph says
+    // bAnimationDriven (a parkour climb or vault, a paired animation, a kill move: the animation owns the
+    // body and the engine's own movement cannot act on the bound) the stall floor does not run, and it starts
+    // again from the moment the move ends. Capped IN TOTAL since the engine's last real update of the bound, so
+    // an actor stuck animation driven, or one chaining moves, still ends.
+    constexpr std::uint64_t kAnimExcuseMs = 10000;
     constexpr std::uint64_t kVerdictMs    = 1500;    // an engine inside/outside answer older than this is stale
     constexpr std::uint64_t kPurgeMs      = 5000;    // a record S1 has not rewritten for this long is dead
     constexpr std::uint64_t kPurgeDeadMs  = 60000;   // ...unless it still waits for its F3 reactivation
@@ -282,6 +288,10 @@ namespace {
         float            distance = -1.0f;
         std::uint64_t    claimMs  = 0;       // Engage / OnOwnerChanged time
         std::uint64_t    inCombatSinceMs = 0;
+        // The scripted-move excuse of the stall floor (GAME THREAD only, Poll under g_entryMx; world-tick ms).
+        std::uint64_t    animSinceMs = 0;     // this animation-driven episode began (0 = not in one)
+        std::uint64_t    animLastMs  = 0;     // last Poll that saw the actor animation driven
+        bool             animSaved   = false; // this episode kept the claim past where the floor would have ended it
         std::uint64_t    lastLineMs = 0;
         // The H3 gait probe (GAME THREAD only, Poll / End under g_entryMx).
         RE::NiPoint3     gaitPos{};
@@ -857,6 +867,8 @@ namespace {
             e.distance   = -1.0f;
             e.claimMs    = now;
             e.inCombatSinceMs = 0;
+            e.animSinceMs = e.animLastMs = 0;
+            e.animSaved   = false;
             e.lastLineMs = 0;
             e.gaitMs = e.gaitLineMs = 0;   // the H3 gait probe starts over with the declaration
             e.gaitForward = e.gaitStrafe = e.gaitBack = 0;
@@ -1253,6 +1265,11 @@ namespace apmf::combatapproach {
             std::uint32_t applied = 0, sf = 0, inside = 0, outside = 0;
             std::uint32_t prevState = 0;
             std::string   gaitLine;
+            std::uint64_t animLine = 0;   // > 0: a scripted move of this many ms kept the claim past the stall floor
+            bool          animCapEnded = false;   // the stall end below came after the excuse's total cap ran out
+            // Review P3: the graph read is an engine call, made here, never under g_entryMx (the combat-thread
+            // seats take that lock shared).
+            const bool    animDriven = actor->IsAnimationDriven();
             {
                 std::unique_lock lk(g_entryMx);
                 const auto it = g_entries.find(id);
@@ -1290,8 +1307,25 @@ namespace apmf::combatapproach {
                     }
                     // Principle 7: a bound the engine stopped carrying is a FAILURE, said out loud.
                     const std::uint64_t seen  = e.lastSeenMs.load(std::memory_order_relaxed);
-                    const std::uint64_t since = seen != 0 ? seen : e.inCombatSinceMs;
+                    std::uint64_t       since = seen != 0 ? seen : e.inCombatSinceMs;
+                    // A scripted move is not a stall (kAnimExcuseMs): the floor restarts when the move ends.
+                    const std::uint64_t rawSince = since;
+                    if (animDriven) {
+                        if (e.animSinceMs == 0) { e.animSinceMs = wnow; e.animSaved = false; }
+                        e.animLastMs = wnow;
+                    } else if (e.animSinceMs != 0) {
+                        if (e.animSaved) animLine = wnow - e.animSinceMs;   // logged below, outside the lock
+                        e.animSinceMs = 0;
+                    }
+                    if (e.animLastMs > since) since = e.animLastMs;
+                    // Review P1 on 0c16e5c: the excuse is capped IN TOTAL since the engine's last real update of the
+                    // bound (or the start of the wait for the first one), so back-to-back scripted moves cannot
+                    // renew it: however the moves fall, the claim ends at most kAnimExcuseMs + kStallMs after it.
+                    const bool capped = since > rawSince + kAnimExcuseMs;
+                    if (capped) since = rawSince + kAnimExcuseMs;
+                    if (since != rawSince && wnow - rawSince > kStallMs && wnow - since <= kStallMs) e.animSaved = true;
                     if (!endWhy && wnow - since > kStallMs) {
+                        animCapEnded = capped;
                         endWhy   = seen != 0 ? "the engine stopped updating the bound for 3 s (its own path to X failed "
                                                "and it deactivated the area, or its combat update stopped):"
                                              : "the engine never updated the actor's standard combat area in 3 s of "
@@ -1313,6 +1347,17 @@ namespace apmf::combatapproach {
                 }
             }
             if (!gaitLine.empty()) spdlog::info("{}", gaitLine);
+            if (animLine != 0)
+                spdlog::info("[ch.24] 0x{} a SCRIPTED MOVE was not read as a stall: the actor was animation driven for "
+                             "{} ms (a parkour climb or vault, a paired animation, a kill move) and the engine did not "
+                             "update the bound for more than {} s of it. The claim stands; the {} s floor runs again "
+                             "from the end of the move (at most {} s in all since the engine's last update is excused).",
+                             Hex(id), animLine, kStallMs / 1000, kStallMs / 1000, kAnimExcuseMs / 1000);
+            if (endWhy && animCapEnded)
+                spdlog::warn("[ch.24] 0x{} the scripted-move excuse ran out: the engine has not updated the bound for more "
+                             "than {} s in all since its last update, animation-driven time included ({} s is the most "
+                             "that is excused). The end below is the stall floor's.",
+                             Hex(id), (kAnimExcuseMs + kStallMs) / 1000, kAnimExcuseMs / 1000);
             if (endWhy) {
                 End(id, endState, endWhy);
                 continue;

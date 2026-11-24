@@ -145,6 +145,10 @@ Anchor 3) and `APMF_API_v26 : APMF_API_v24` with ONE slot, `GetSubstrateState(ac
 `IsSubstrateAvailable()` (any thread, one load of `combatsubstrate::Installed()`)** (Docs/APMF_API-REFERENCE.md#abi-v27-substrate-available);
 v27 had been left free for the per-item equip deny (86e3t8w23), which moves to v28. The header is 2542 lines after
 v27 (still over the 2500 backstop; reported again, not split inside the task).
+**ch.24 STALL FLOOR, 2026-11-23 (`feat/approach-point`, no ABI change):** `channels/CombatApproach.cpp` Poll does not run
+the 3 s EngineDropped floor while `Actor::IsAnimationDriven()` (a scripted move), capped at `kAnimExcuseMs` in total since the engine's last real update (review P1); the graph read is made before `g_entryMx` is taken (review P3);
+`Entry::animSinceMs / animLastMs / animSaved` are game-thread only. What breaks: reading the graph variable from a seat
+(combat thread) instead of Poll; removing the cap (an actor stuck animation driven would never end by the floor).
 **ABI v39 (2026-11-11, `feat/approach-point`) adds ONE `CombatApproachFlags` bit, `kApproach_Point` (1 << 1): the ch.24
 bound centred on `param.pos` (target must be 0). No struct, no slot. `channels/CombatApproach.cpp`: `Entry::point` /
 `Entry::pointSpace` (the actor's cell space at the claim's first sweep), `Apply` stores the point, the sweep (`Poll`)
