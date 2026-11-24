@@ -3566,6 +3566,51 @@ How he moves to a point BEHIND him while a foe is on him is the engine's own ret
 
 Gate on `abiVersion >= 39`. An older Harbinger refuses the claim (no target), so nothing else happens in its place.
 
+#### Holding a spot (`kApproach_Point | kApproach_Hold`)
+
+*"Stand there and fight from there."* This is the point claim with the hold flag and a small R. It exists since ABI 39 and MFO uses it. What it does is measured, and what it does not do is listed so nobody builds it twice.
+
+**Measured (Deck, 1.6.1170, MFO `_evidence/deck-run-1117b-full/APMF.log`, R 90, Adelinda and Cicero, 2026-11-17).**
+
+| What | Result |
+|---|---|
+| Walking in | 320 units in 3.1 s, 378 in 3.1 s, 367 in 3.0 s. A forward run at 130 to 320 units/s (gait probe), the engine's Return To Combat Area |
+| Arrival | `HOLDING ... engine: INSIDE, standard area CURRENT` at 19, 61 and 67 units from the point |
+| While holding | 19 to 87 units from the point. Gait probe inside R: backpedal and strafe at 46 to 105 units/s, heading 90 to 179 degrees off the velocity. He faces his target and shuffles |
+| Leaving and coming back | none after arrival: the engine's "outside" count stayed at 4, 5 and 6 across each hold |
+| A point he cannot reach | ended after 3 s as `kApproachState_EngineDropped`, logged (1160 units away, the area carried the bound once) |
+| End of the fight | `kApproachState_CombatEnded`, logged |
+
+**Why he still moves inside R.** The combat tree runs Movement and Action side by side. Outside the area the movement selector takes Return To Combat Area. Inside it the other movement leaves run as in any fight (ranged, flanking and close movement) and each destination is clamped to the area. A small R makes those moves short. It does not remove them. Actions are untouched: attack, cast, shoot and block read the engine's own area.
+
+**What a client can poll (`GetCombatApproachState`).**
+
+| The client wants to know | State |
+|---|---|
+| on the way | `Approaching` (with `distance` and `msInState`) |
+| on the spot | `Holding` (Hold) or the end state `Arrived` (no Hold) |
+| the engine cannot get him there | `EngineDropped` |
+| a ch.23 leash excludes the spot | `Leashed` |
+| a package's hold position owns the bound | `Yielded` |
+| fleeing or not high process | `Disabled` |
+| he left the point's cell space | `TargetLost` |
+| the fight ended, he died or unloaded, the claim was released | `CombatEnded`, `ActorGone`, `Released` |
+
+There is no separate "blocked" state. A follower who is alive, in combat and making no progress reads `Approaching` with a growing `msInState` and a flat `distance` until the engine gives up (`EngineDropped`). The client decides how long to wait.
+
+**A scripted move is not a stall.** While the actor's graph says `bAnimationDriven` (a parkour climb or vault, a paired animation, a kill move) the 3 s "the engine stopped updating the bound" floor does not run, and it runs again from the end of the move. At most 10 s of one move is excused. When that kept a claim alive the log says `[ch.24] ... a SCRIPTED MOVE was not read as a stall`. Not field run: whether SkyParkour's follower moves set `bAnimationDriven` is not confirmed.
+
+**What is not there.**
+
+| Wanted | Today | What it would take |
+|---|---|---|
+| Standing still inside R, no shuffle | not offered. A smaller R shortens the shuffle. No R under 90 has been run | holding the Movement half of the combat tree for a claimed actor in a real fight, the way the combat substrate holds it for its holders (`core/ActionGate.cpp` MOVEMENT HOLD). That is a new deny on a facet the engine switches on, with its own act / pop proof and field cycle. Not built |
+| Facing a chosen thing | the engine faces his combat target. On the walk in he may turn his back (a forward run). ch.20 pin chooses the target | nothing for the hold. A facing facet for the walk in would be new |
+| Choosing the gait | the engine's combat run on the way in. ch.1a (`kIntent_Gait`) scales speed | nothing new |
+| A different arrival radius and hold radius | one R. A client can Repoint to a smaller R once it reads `Holding` | nothing new |
+
+Composition is unchanged: a package's hold position wins (`Yielded`), a ch.23 leash wins (`Leashed`, or the goal is clamped just inside it), ch.20 / ch.21 decide whom he fights, ch.25 guards his casts, and disengage / hide are the client's own claims on other facets.
+
 ### Combat substrate (`kIntent_CombatSubstrate`)
 
 *An animated cast is the follower's own combat AI casting, and that AI only exists in combat. For an out-of-combat cast Harbinger forces combat as a SUBSTRATE: a controller whose only target is Harbinger's own anchor actor, with every facet that combat switches on denied except the cast leaves. The follower keeps walking under its own package. A real fight drops it at once.*
