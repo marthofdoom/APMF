@@ -149,6 +149,22 @@
    "doc": "ADDRESS-TABLE-2026-09-15.md:40"
   },
   {
+   "seat": "CombatMagicItemSkillChecker",
+   "kind": "vtable",
+   "construct": "RE::VTABLE_CombatMagicItemSkillChecker[0]",
+   "rtti": ".?AVCombatMagicItemSkillChecker@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 211957,
+    "1.5.97": 265001
+   },
+   "slots": [
+    "0x01"
+   ],
+   "source": "native/core/CastClassify.cpp (THE SKILL GATE, ABI v46: slot 1, the per-effect minimum-skill visitor)",
+   "doc": "feat/seat-unseated-casters 2026-11-23: slot 1 AE 0x81DE80 / SE 0x781B20 / 1.7.104 0x833370, uint32(this, Effect*); object +0x10 Actor*, +0x18 MagicItem*, +0x20 bool (ctor AE 0x81DE50 / SE 0x781AF0 / 1.7.104 0x833340); run by CombatInventory add-item (AE 0x811CC0, SPEL case 0x812156) before the classifier"
+  },
+  {
    "seat": "CastClassify.KeepBestRow",
    "kind": "function",
    "construct": "kKeepBestRow(43934, 45325)",
@@ -271,9 +287,10 @@
     "0x06",
     "0x07",
     "0x0A",
-    "0x0B"
+    "0x0B",
+    "0x0D"
    ],
-   "source": "native/core/AiCastSeats.cpp (Group B); CasterTypeCensus.cpp (0x06, 0x0B)",
+   "source": "native/core/AiCastSeats.cpp (Group B); CasterTypeCensus.cpp (0x06, 0x0B); CastSeats.cpp SeatTypes() (0x06, 0x07, 0x0A, 0x0D; feat/seat-unseated-casters, ABI v46)",
    "doc": "ADDRESS-TABLE-2026-09-15.md:72"
   },
   {
@@ -290,9 +307,10 @@
     "0x06",
     "0x07",
     "0x0A",
-    "0x0B"
+    "0x0B",
+    "0x0D"
    ],
-   "source": "native/core/AiCastSeats.cpp (Group B); CasterTypeCensus.cpp (0x06, 0x0B)",
+   "source": "native/core/AiCastSeats.cpp (Group B); CasterTypeCensus.cpp (0x06, 0x0B); CastSeats.cpp SeatTypes() (0x06, 0x07, 0x0A, 0x0D; feat/seat-unseated-casters, ABI v46)",
    "doc": "ADDRESS-TABLE-2026-09-15.md:72"
   },
   {
@@ -409,9 +427,10 @@
     "0x06",
     "0x07",
     "0x0A",
-    "0x0B"
+    "0x0B",
+    "0x0D"
    ],
-   "source": "native/core/AiCastSeats.cpp (Group B); CasterTypeCensus.cpp (0x06, 0x0B)",
+   "source": "native/core/AiCastSeats.cpp (Group B); CasterTypeCensus.cpp (0x06, 0x0B); CastSeats.cpp SeatTypes() (0x06, 0x07, 0x0A, 0x0D; feat/seat-unseated-casters, ABI v46)",
    "doc": "ADDRESS-TABLE-2026-09-15.md:72"
   },
   {
@@ -428,9 +447,10 @@
     "0x06",
     "0x07",
     "0x0A",
-    "0x0B"
+    "0x0B",
+    "0x0D"
    ],
-   "source": "native/core/AiCastSeats.cpp (Group B); CasterTypeCensus.cpp (0x06, 0x0B)",
+   "source": "native/core/AiCastSeats.cpp (Group B); CasterTypeCensus.cpp (0x06, 0x0B); CastSeats.cpp SeatTypes() (0x06, 0x07, 0x0A, 0x0D; feat/seat-unseated-casters, ABI v46)",
    "doc": "ADDRESS-TABLE-2026-09-15.md:72"
   },
   {
@@ -5855,11 +5875,18 @@
    "gate": "exact 1.6.1170/1.5.97 + VR refused + self-check; actor loaded, alive, currentProcess and its high data non-null, checked before the call"
   },
   {
-   "what": "ch.21 fight-ended test: the actor's combatController POINTER only (null = combat ended); the controller is never dereferenced",
+   "what": "ch.21 fight-ended test: the actor's combatController POINTER only (null = combat ended); the controller is not dereferenced here (the one exception is the passive probe byte read, next row)",
    "value": "ACTOR_RUNTIME_DATA::combatController (SE 0x158 / AE 0x160)",
    "where": "channels/CombatEntry.cpp:162",
    "verified_by": "StopCombat 1.6.1170 0x6B70A0 / 1.5.97 0x625920 frees the controller and stores 0 there (AE 0x6B7235); Actor::IsInCombat (0x6B6DD0 / 0x625660) is NOT used because it reads [controller+0x43]",
    "gate": "main thread, Poll / Enter"
+  },
+  {
+   "what": "ch.21 passive probe (log only): CombatController::inactive, a bool at +0x43, read right after StartCombat and from Poll while the entry is live and inactive (30 s cap, pointer read fresh each poll, dereferenced only while it still equals the Enter pointer)",
+   "value": "CombatController +0x43 (below +0x68, outside GetRuntimeData(); the fork's `inactive`)",
+   "where": "channels/CombatEntry.cpp (ProbeEnd, Enter, Poll)",
+   "verified_by": "IsInCombat (Character slot 0xE3) is `mov rax,[rcx+0x160|0x158]; test; je; cmp byte [rax+0x43],0; jne; mov al,1; ret`: 1.6.1170 0x6B6DD0, 1.5.97 0x625660 (+0x158), 1.7.104 0x6C9850 (disassembled 2026-11-11 from the unpacked 1.6/1.5 images and the unencrypted 1.7.104 exe)",
+   "gate": "main thread, Enter / Poll"
   },
   {
    "what": "Actor::IsDead signature (Character vtable slot 0x99, the ch.22 seat): bool(const Actor* this, bool notEssential)",

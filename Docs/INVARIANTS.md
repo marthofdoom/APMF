@@ -901,6 +901,20 @@ seat may be answered FROM THE CLAIM WITHOUT CHAINING only when ALL THREE hold:
    allowed to be considered," never "do this." The engine still scores it, still
    applies its own slot/range/resource/blackboard gates, still runs its own leaf
    with its own animation, and is still free to choose otherwise.
+   **TWO MORE NO-to-YES ANSWERS (ABI v46, feat/seat-unseated-casters), each argued on the same three conditions.
+   Both CHAIN FIRST and only replace the engine's NO, so they are narrower than the Restore answer.**
+   *Row equip admission* (`core/EquipGate.cpp`, item 0x0F of Stagger / Disarm / TargetEffect / Paralyze): (1) the
+   row condition is a static `(controller, item)` function (AE `0x820860` / `0x821F50` / `0x822AE0`) that takes its
+   target off the CombatController and reads a cooldown map, a distance and the target's own acceptance of the
+   effect: no caster object, nothing a seat can redirect to the claim's target. (2) the YES admits the item to the
+   equip set; score, slot arbitration, the equip animation and the cast seats still decide. (3) scoped to the
+   claim's driven form on its own hand on the 8 named vtables, ranked on the Cast facet, and it keeps two engine
+   reasons it can read itself (fleeing, effect already on the claim's target).
+   *Skill gate* (`core/CastClassify.cpp`, `CombatMagicItemSkillChecker` slot 1): (1) the visitor compares the actor's
+   skill AV with the MGEF's minimum skill, both read directly; the only other way to change its answer is to write
+   the actor's skill or the form. (2) the pass lets an item EXIST; classification, score, 0x0F and the cast seats
+   still decide. (3) scoped to a live claim's driven form on that actor, RTTI-verified vtable, and withdrawn at
+   0x0F when no claim drives the item (DENY-COMPLETENESS-AUDIT row 8b (i)).
 3. **It is scoped to the exact {claim, actor, form, hand}** and to the specific
    vtables whose original IS the obstacle — verified at install, re-verified per
    call. Everything else on that same slot keeps chaining unconditionally.

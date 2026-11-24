@@ -108,6 +108,15 @@ namespace apmf::castseats {
     // thread. Printed by the [ctcensus] HEARTBEAT.
     std::string SeatCountsLine();
 
+    // ABI v46: the APMF_API::CastSeatCoverage ROW bits of the caster types whose 0x06, 0x07 and 0x0A seats
+    // were written at Install() (0 before it, on a refused runtime, or for a row switched off). Any thread.
+    std::uint32_t CoverageMask();
+
+    // The engine's "already applied" walk (AE 0x81E400 / 0x81E6C0, see the Bound note in CastSeats.cpp): does
+    // `a_actor` carry an active effect whose spell IS `a_item`? Always false for a concentration spell, as in
+    // the engine. Combat thread (the same read the 0x06 seat makes there).
+    bool EffectAlreadyOn(RE::Actor* a_actor, RE::MagicItem* a_item);
+
     // The ONE claim test every caster seat uses, for a seat that lives in another file
     // (core/ReanimateSeat.cpp, ABI v42): does a live, winning kIntent_Cast claim on the
     // deliberating actor (`a_cc->attackerHandle`) drive `a_this->magicItem`, with a resolved

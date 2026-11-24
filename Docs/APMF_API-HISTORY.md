@@ -411,6 +411,10 @@ takes a hit by the actor. Refused while a block hold stands (GuardHeld) or the w
 row. 1.6.1170 and 1.5.97. An older APMF refuses the value at the call: gate on abiVersion >= 44. No co-save.
 Docs/FACETS.md "Power attack".
 
+ABI v46 (2026-11-23, branch feat/seat-unseated-casters): CAST SEAT COVERAGE. No slot, no struct change:
+APMF_ServeInfo::reserved[0] is now castSeats (CastSeatCoverage bits), written by CanServe. Under v46 it
+reads 0. Section "ABI v46 cast seat coverage" below.
+
 ABI v45 (2026-11-11, branch feat/melee-moves, MFO T2 batch M item 5 "strict class style"): COMBAT STYLE. One Intent,
 kIntent_CombatStyle = 33, the enum CombatStyleFlags (kCombatStyle_EquipChoiceOnly = 1 << 0) and
 kCombatStyleMaxClaims = 64. No struct, no slot. param.form = a TESCombatStyle, param.ival = the flags. Two
@@ -472,3 +476,15 @@ Moved verbatim from `native/APMF_API.h` (line 2191 at 9d01cdf). The header keeps
 ```text
 This is MFO's field-proven Sightline own-ray recipe (2026-09-30), now Harbinger's.
 ```
+
+## ABI v46 cast seat coverage: which caster rows a cast claim can drive (ch.8b)
+
+The header: `kABIVersion` 46, `enum CastSeatCoverage`, and `APMF_ServeInfo::reserved[0]` (+120) renamed `castSeats` (`reserved` is now one word at +124). No struct size or offset changed, no slot, no intent, no flag on an existing type. A v46 client still holds an `APMF_API_v38*`.
+
+**Why.** marth 2026-11-23: "I dont see why any spell is left that we cant run". Field (MFO `_evidence/deck-run-1123`): Jesper's claimed Turn Lesser Undead was score-steered every pass and never equipped, and his claimed Blur never reached the classifier. MFO kept a list of caster rows Harbinger did not seat and had no way to ask.
+
+**What changed in Harbinger.** The four hostile rows (Stagger, Disarm, TargetEffect, Paralyze) get the caster seats, their items get the row equip admission, and a claimed spell passes the engine's minimum-skill item test (the skill gate). Details: `Docs/CHANNEL-MAP.md` row 8b, `Docs/FACETS.md` ch.8b "Cast seat coverage".
+
+**How a client reads it.** `CanServe` (any query that fills the struct) writes the bits. Read `castSeats` only when `abiVersion >= 46`: an older APMF writes 0 there, which reads as "nothing covered" and is wrong for the ten rows it does seat. A row bit says the seats are installed on this build, not that a cast will fire.
+
+**Degrade.** An APMF under v46: Stagger / Disarm / TargetEffect / Paralyze claims are served by the engine's own answers (often never equipped) and a spell above the NPC's skill gets no item. The client keeps whatever it did before for those.

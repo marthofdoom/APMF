@@ -908,6 +908,233 @@ namespace apmf::castclassify {
 
         std::atomic<bool> g_installed{ false };
 
+        // ====================================================================
+        // THE SKILL GATE (feat/seat-unseated-casters, ABI v46). CombatMagicItemSkillChecker.
+        //
+        // Before the engine classifies a spell for an NPC it runs three tests in CombatInventory's
+        // add-item (AE 0x811CC0, the SPEL case at 0x812156): the spell type is kSpell or kPoison
+        // (MagicItem vfunc 0x53), its equip slot is one the inventory carries (AE 0x810340), and THIS
+        // visitor walks the spell's effects. For each effect whose MGEF names a skill (EffectSetting
+        // +0x78, data.associatedSkill, not -1) it stores
+        //     ok = actor->GetActorValue(skill) >= float(MGEF minimum skill, +0xA8)
+        // in its +0x20 byte and stops the walk at the first failure (returns 0). A spell that fails gets
+        // NO combat item: it is never classified, scored or equipped, so no claim seat downstream ever
+        // sees it. Field 11-23 (MFO _evidence/deck-run-1123): Jesper's claimed Blur and its flip proxy
+        // were never classified in 6 s while 393 other classify lines ran on him.
+        //
+        // The object (the same on the three builds; ctor AE 0x81DE50 / SE 0x781AF0 / 1.7.104 0x833340):
+        //   +0x00 vtable   AE 0x18D5138 / SE 0x1686C10 / 1.7.104 0x1953700 (RTTI CombatMagicItemSkillChecker)
+        //   +0x10 Actor*   the inventory's owner       +0x18 MagicItem*   the spell
+        //   +0x20 bool     the result, 1 at construction
+        // Slot 1, `uint32(this, Effect*)`, 1 = continue: AE 0x81DE80 / SE 0x781B20 / 1.7.104 0x833370.
+        // The caller reads only +0x20 after the walk (AE 0x81DEF0).
+        //
+        // THE SEAT. The engine answers first. Only when it fails an effect (returns 0, +0x20 now 0) and a
+        // live kIntent_Cast claim on this actor drives exactly this spell (its proxy, else its spell) and
+        // outranks the source beneath the seat, the byte is set back to 1 and the walk continues. WHETHER
+        // an NPC may use a spell it knows is the claim's to say; the minimum skill is the AI's own
+        // opinion on that. Nothing else of the item changes: classification, score, equip and cast are
+        // the same seats as for any claimed spell.
+        // DENY (the hole this opens, closed in core/EquipGate.cpp): the item outlives the claim until
+        // the inventory is rebuilt. While no claim drives it, an item whose spell the engine's own test
+        // refuses is never admitted at 0x0F (SkillGateRefuses below, the same test from form data).
+        // ====================================================================
+        constexpr REL::VariantID kSkillCheckerVtable = RE::VTABLE_CombatMagicItemSkillChecker[0];
+        constexpr const char*    kSkillCheckerName   = ".?AVCombatMagicItemSkillChecker@@";
+        constexpr std::uintptr_t kSkillActorOffset   = 0x10;   // RE::Actor*
+        constexpr std::uintptr_t kSkillSpellOffset   = 0x18;   // RE::MagicItem*
+        constexpr std::uintptr_t kSkillOkOffset      = 0x20;   // bool
+        constexpr std::size_t    kSkillVisitSlot     = 1;
+
+        using SkillVisit_t = std::uint32_t (*)(void*, void*);
+        std::atomic<std::uintptr_t> g_skillOrig{ 0 };
+        std::atomic<bool>           g_skillInstalled{ false };
+        std::atomic<std::uint32_t>  g_skillAdmits{ 0 };
+        // Every (actor, spell) this seat ever admitted. core/EquipGate.cpp refuses such an item at 0x0F while
+        // no claim drives it and the engine's test still refuses the spell (SkillAdmitted). Bounded: when it
+        // is full a NEW pair is not admitted (logged once), so the deny stays complete. Never cleared: a stale
+        // pair costs one form-data re-check and denies nothing the engine would itself admit.
+        constexpr std::size_t kSkillAdmittedMax = 1024;
+        std::mutex                                  g_skillMx;
+        std::set<std::pair<RE::FormID, RE::FormID>> g_skillAdmitted;   // guarded by g_skillMx
+        std::atomic<bool>                           g_skillFullLogged{ false };
+
+        std::uint32_t SkillVisitThunk(void* a_this, void* a_effect) {
+            const auto origAddr = g_skillOrig.load(std::memory_order_acquire);
+            const auto orig     = reinterpret_cast<SkillVisit_t>(origAddr);
+            const std::uint32_t r = orig(a_this, a_effect);   // the engine answers first
+            if (r != 0 || !a_this) return r;
+            auto* bytes = reinterpret_cast<std::byte*>(a_this);
+            auto* ok    = reinterpret_cast<std::uint8_t*>(bytes + kSkillOkOffset);
+            if (*ok != 0) return r;   // not the failure this seat knows (a 0 return always comes with ok == 0)
+            auto* actor = *reinterpret_cast<RE::Actor**>(bytes + kSkillActorOffset);
+            auto* spell = *reinterpret_cast<RE::MagicItem**>(bytes + kSkillSpellOffset);
+            if (!actor || !spell) return r;
+            const RE::FormID fid       = actor->GetFormID();
+            const RE::FormID spellForm = spell->GetFormID();
+            apmf::CastSeatClaim seat{};
+            if (!apmf::ControlMap::Get().TryGetCastSeatClaimForForm(fid, spellForm, seat)) return r;
+            if (!ClaimOutranksClassify(fid, spellForm, origAddr, false)) return r;
+            bool first = false, room = true;
+            {
+                std::scoped_lock lk(g_skillMx);
+                if (!g_skillAdmitted.contains({ fid, spellForm })) {
+                    room = g_skillAdmitted.size() < kSkillAdmittedMax;
+                    if (room) first = g_skillAdmitted.emplace(fid, spellForm).second;
+                }
+            }
+            if (!room) {
+                if (!g_skillFullLogged.exchange(true))
+                    spdlog::error("[ch.8b skill gate] the admitted-pair record is FULL ({} pairs): 0x{} spell 0x{} and "
+                                  "every later new pair is NOT admitted this session (the engine's refusal stands), so "
+                                  "the 0x0F deny for unclaimed admitted items stays complete.",
+                                  kSkillAdmittedMax, apmf::log::Hex(fid), apmf::log::Hex(spellForm));
+                return r;
+            }
+            *ok = 1;
+            g_skillAdmits.fetch_add(1, std::memory_order_relaxed);
+            if (first) {
+                const auto* eff  = reinterpret_cast<const RE::Effect*>(a_effect);
+                const auto* mgef = eff ? eff->baseEffect : nullptr;
+                const auto  av   = mgef ? mgef->data.associatedSkill : RE::ActorValue::kNone;
+                auto*       avo  = actor->AsActorValueOwner();
+                const float have = av != RE::ActorValue::kNone && avo ? avo->GetActorValue(av) : 0.0f;
+                spdlog::info("[ch.8b skill gate] 0x{} '{}' spell 0x{} '{}'{}: the engine REFUSED it a combat item (effect "
+                             "0x{} needs skill AV {} >= {}, he has {:.0f}) -> ADMITTED, a live cast claim drives this "
+                             "form. Classification, score, equip and cast are the usual seats. (First time for this "
+                             "actor and spell; {} admission(s) since load.)",
+                             apmf::log::Hex(fid), actor->GetName() ? actor->GetName() : "?", apmf::log::Hex(spellForm),
+                             spell->GetName() ? spell->GetName() : "?", seat.proxy ? " (delivery-flip proxy)" : "",
+                             apmf::log::Hex(mgef ? mgef->GetFormID() : 0), static_cast<std::int32_t>(av),
+                             mgef ? mgef->data.minimumSkill : 0, have,
+                             g_skillAdmits.load(std::memory_order_relaxed));
+            }
+            return 1;   // continue the walk: a later effect that fails comes back here
+        }
+
+    }
+
+    bool SkillGateInstalled() { return g_skillInstalled.load(std::memory_order_acquire); }
+
+    bool SkillAdmitted(RE::FormID a_actor, RE::FormID a_spell) {
+        if (g_skillAdmits.load(std::memory_order_relaxed) == 0) return false;   // the common case: nothing ever admitted
+        std::scoped_lock lk(g_skillMx);
+        return g_skillAdmitted.contains({ a_actor, a_spell });
+    }
+
+    bool SkillGateRefuses(RE::Actor* a_actor, const RE::MagicItem* a_spell, SkillGateWhy* a_why) {
+        if (!a_actor || !a_spell) return false;
+        auto* avo = a_actor->AsActorValueOwner();
+        if (!avo) return false;
+        for (const auto* eff : a_spell->effects) {
+            if (!eff || !eff->baseEffect) continue;
+            const auto av = eff->baseEffect->data.associatedSkill;
+            if (av == RE::ActorValue::kNone) continue;
+            const float have = avo->GetActorValue(av);
+            const auto  need = eff->baseEffect->data.minimumSkill;
+            if (have >= static_cast<float>(need)) continue;
+            if (a_why) {
+                a_why->effect = eff->baseEffect->GetFormID();
+                a_why->av     = static_cast<std::int32_t>(av);
+                a_why->need   = need;
+                a_why->have   = have;
+            }
+            return true;
+        }
+        return false;
+    }
+
+    namespace {
+        // The engine's equip-slot test of add-item (AE 0x810340, `bool(CombatInventory*, BGSEquipSlot*)`), from form
+        // data. The inventory's slot list (+0xE0) is a pointer to its owner's RACE equip slots (AE 0x810A97 /
+        // 0x80F088: `[actor+0x1F8] + 0x410`, TESRace::equipSlots). A slot with parents asks each parent and
+        // answers its "use all parents" flag unless a parent answers otherwise; a slot without parents is carried
+        // when it is in the list. A null slot is not carried.
+        bool SlotCarried(const RE::BSTArray<RE::BGSEquipSlot*>& a_slots, const RE::BGSEquipSlot* a_slot, int a_depth) {
+            if (!a_slot || a_depth > 8) return false;
+            if (!a_slot->parentSlots.empty()) {
+                const bool all = a_slot->flags.any(RE::BGSEquipSlot::Flag::kUseAllParents);
+                for (const auto* p : a_slot->parentSlots)
+                    if (SlotCarried(a_slots, p, a_depth + 1) != all) return !all;
+                return all;
+            }
+            for (const auto* s : a_slots)
+                if (s == a_slot) return true;
+            return false;
+        }
+    }
+
+    std::string DescribeAdmission(RE::Actor* a_actor, const RE::MagicItem* a_spell) {
+        if (!a_actor || !a_spell) return {};
+        const auto  type = a_spell->GetSpellType();
+        std::string s;
+        if (type != RE::MagicSystem::SpellType::kSpell && type != RE::MagicSystem::SpellType::kPoison)
+            s = fmt::format(" Engine item tests: spell type {} is not kSpell, so the combat AI gives it NO item (no seat "
+                            "changes that).",
+                            static_cast<std::int32_t>(type));
+        if (const auto* spellItem = a_spell->As<RE::SpellItem>()) {
+            const auto* race = a_actor->GetRace();
+            const auto* slot = spellItem->GetEquipSlot();
+            if (race && !SlotCarried(race->equipSlots, slot, 0))
+                s += fmt::format(" Engine item tests: its equip slot 0x{} is NOT one his race carries, so the combat AI "
+                                 "gives it NO item (no seat changes that).",
+                                 apmf::log::Hex(slot ? slot->GetFormID() : 0));
+        }
+        SkillGateWhy why{};
+        if (SkillGateRefuses(a_actor, a_spell, &why))
+            s += fmt::format(" Engine item tests: the minimum-skill test REFUSES this spell (effect 0x{} needs skill AV "
+                             "{} >= {}, he has {:.0f}); {}.",
+                             apmf::log::Hex(why.effect), why.av, why.need, why.have,
+                             SkillGateInstalled() ? "the skill-gate seat admits it while this claim drives it"
+                                                  : "the skill-gate seat is NOT installed, so it gets no combat item");
+        return s;
+    }
+
+    void InstallSkillGate() {
+        if (REL::Module::IsVR()) return;
+        const auto ver = REL::Module::get().version();
+        if (!(ver == REL::Version{ 1, 6, 1170, 0 }) && !(ver == REL::Version{ 1, 5, 97, 0 }) &&
+            !allowance::IsRuntime1_7_104()) {
+            spdlog::warn("[ch.8b skill gate] runtime {} -- the CombatMagicItemSkillChecker layout (+0x10 / +0x18 / +0x20) "
+                         "is read on 1.6.1170, 1.5.97 and 1.7.104 only. NOT installed: a claimed spell above the NPC's "
+                         "minimum skill gets no combat item on this runtime.",
+                         ver.string("."));
+            return;
+        }
+        if (g_skillInstalled.load(std::memory_order_acquire)) return;
+        if (!ReadIniFlag("EnableSkillGateSeat", 1)) {
+            spdlog::info("[ch.8b skill gate] disabled by [CastSeats] EnableSkillGateSeat=0 -- a claimed spell whose "
+                         "effect has a minimum skill above the NPC's gets no combat item, as in the unmodified engine.");
+            return;
+        }
+        REL::Relocation<std::uintptr_t> vt{ kSkillCheckerVtable };
+        if (vt.address() == 0 || !allowance::SeatVerified(vt.address(), "CastClassify.CombatMagicItemSkillChecker")) {
+            spdlog::error("[ch.8b skill gate] NOT installed (self-check refused the CombatMagicItemSkillChecker vtable). "
+                          "A claimed spell above the NPC's minimum skill gets no combat item.");
+            return;
+        }
+        const char* name = ResolveMangledName(vt.address());
+        if (!name || std::strcmp(name, kSkillCheckerName) != 0) {
+            spdlog::error("[ch.8b skill gate] vtable 0x{} did NOT resolve to the RTTI name '{}' (got '{}') -- REFUSED, "
+                          "not installed.",
+                          apmf::log::Hex(vt.address(), 16), kSkillCheckerName, name ? name : "<unresolved>");
+            return;
+        }
+        // The thunk reads g_skillOrig, so the slot's live value is stored BEFORE the slot is written (a
+        // visit racing the write then still finds an original to call).
+        const auto live = *reinterpret_cast<std::uintptr_t*>(vt.address() + kSkillVisitSlot * sizeof(void*));
+        g_skillOrig.store(live, std::memory_order_release);
+        const auto prev = vt.write_vfunc(kSkillVisitSlot, &SkillVisitThunk);
+        if (prev != live) g_skillOrig.store(prev, std::memory_order_release);
+        apmf::sources::NoteVfunc(apmf::sources::Facet::kCast, "CastClassify.CombatMagicItemSkillChecker.Visit",
+                                 vt.address(), kSkillVisitSlot,
+                                 SKSE::stl::unrestricted_cast<std::uintptr_t>(&SkillVisitThunk), prev);
+        g_skillInstalled.store(true, std::memory_order_release);
+        spdlog::info("[ch.8b skill gate] installed on CombatMagicItemSkillChecker (RTTI-name-verified, vtable 0x{}, slot "
+                     "{}). The engine gives an NPC no combat item for a spell with an effect whose minimum skill is "
+                     "above his; a live kIntent_Cast claim's driven form now passes that test. One line per (actor, "
+                     "spell) the first time it does; without a claim such an item is refused at 0x0F.",
+                     apmf::log::Hex(vt.address(), 16), kSkillVisitSlot);
     }
 
     void Install() {

@@ -19,7 +19,7 @@
 
 namespace apmf::VerifiedAddresses
 {
-	// 1.6.1170.0: 312 rows
+	// 1.6.1170.0: 313 rows
 	inline constexpr REL::SelfCheck::Row kRows_1_6_1170[] = {
 		{ 207886, 0x18A5558, 0x0, 0, {  }, "Character" },
 		{ 207896, 0x18A5FE8, 0x0, 0, {  }, "Character.ActorValueOwner" },
@@ -28,6 +28,7 @@ namespace apmf::VerifiedAddresses
 		{ 208040, 0x18AB9C0, 0x0, 0, {  }, "PlayerCharacter" },
 		{ 205828, 0x187B8B0, 0x0, 0, {  }, "ActorMagicCaster" },
 		{ 211955, 0x18D5120, 0x0, 0, {  }, "CombatMagicItemData" },
+		{ 211957, 0x18D5138, 0x0, 0, {  }, "CombatMagicItemSkillChecker" },
 		{ 45325, 0x81DBA0, 0x0, 0, {  }, "CastClassify.KeepBestRow" },
 		{ 210081, 0x18C59A8, 0x0, 0, {  }, "CombatProjectileAimController" },
 		{ 211104, 0x18CC4A0, 0x0, 0, {  }, "CombatMagicCasterOffensive" },
@@ -335,7 +336,7 @@ namespace apmf::VerifiedAddresses
 		{ 36960, 0x656530, 0x0, 0, {  }, "CombatOps.TaskQueue.QueueStopCombat" },
 	};
 
-	// 1.5.97.0: 311 rows
+	// 1.5.97.0: 312 rows
 	inline constexpr REL::SelfCheck::Row kRows_1_5_97[] = {
 		{ 261397, 0x165DA40, 0x0, 0, {  }, "Character" },
 		{ 261402, 0x165E4D0, 0x0, 0, {  }, "Character.ActorValueOwner.SE" },
@@ -344,6 +345,7 @@ namespace apmf::VerifiedAddresses
 		{ 261916, 0x16635E0, 0x0, 0, {  }, "PlayerCharacter" },
 		{ 257613, 0x1637490, 0x0, 0, {  }, "ActorMagicCaster" },
 		{ 265000, 0x1686BF8, 0x0, 0, {  }, "CombatMagicItemData" },
+		{ 265001, 0x1686C10, 0x0, 0, {  }, "CombatMagicItemSkillChecker" },
 		{ 43934, 0x7815A0, 0x0, 0, {  }, "CastClassify.KeepBestRow" },
 		{ 264187, 0x167E2A8, 0x0, 0, {  }, "CombatProjectileAimController" },
 		{ 265003, 0x1686CA0, 0x0, 0, {  }, "CombatMagicCasterOffensive" },
@@ -650,7 +652,7 @@ namespace apmf::VerifiedAddresses
 		{ 35985, 0x5C57A0, 0x0, 0, {  }, "CombatOps.TaskQueue.QueueStopCombat" },
 	};
 
-	// 1.7.104.0: 309 rows
+	// 1.7.104.0: 310 rows
 	// 85 NOT VERIFIED on 1.7.104.0, deliberately absent from this table (the seat is refused):
 	//   Character.ActorValueOwner.SE (1.6.1170 id -): no 1.6.1170 (AE) id: the 1.7.104 map is keyed by AE id (1.5.97-only seat)
 	//   ActionGate.Hold.ParallelDataPush (1.6.1170 id 47532): id 47532 is not in the idmap
@@ -745,6 +747,7 @@ namespace apmf::VerifiedAddresses
 		{ 208040, 0x19296C0, 0x0, 0, {  }, "PlayerCharacter" },
 		{ 205828, 0x18F6150, 0x0, 0, {  }, "ActorMagicCaster" },
 		{ 211955, 0x19536E8, 0x0, 0, {  }, "CombatMagicItemData" },
+		{ 211957, 0x1953700, 0x0, 0, {  }, "CombatMagicItemSkillChecker" },
 		{ 45325, 0x833090, 0x0, 0, {  }, "CastClassify.KeepBestRow" },
 		{ 210081, 0x1943F48, 0x0, 0, {  }, "CombatProjectileAimController" },
 		{ 211104, 0x194ACC0, 0x0, 0, {  }, "CombatMagicCasterOffensive" },

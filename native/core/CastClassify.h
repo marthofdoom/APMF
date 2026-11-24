@@ -95,6 +95,33 @@ namespace apmf::castclassify {
     // (see the file banner). Idempotent / install-once.
     void Install();
 
+    // ---- THE SKILL GATE (feat/seat-unseated-casters, ABI v46; the banner is in CastClassify.cpp) ----
+    // The engine gives an NPC no combat item for a spell when one of its effects has a minimum skill above
+    // the NPC's (CombatMagicItemSkillChecker, run before the classifier). InstallSkillGate seats that
+    // visitor's slot 1 so a live kIntent_Cast claim's driven form passes it. Call at kDataLoaded, after
+    // Install(). [CastSeats] EnableSkillGateSeat (default 1). Refused loudly on a failed self-check.
+    void InstallSkillGate();
+    bool SkillGateInstalled();   // any thread
+    // True when the seat ever admitted this (actor, spell) pair this session. Any thread (one leaf lock,
+    // taken only once anything was admitted).
+    bool SkillAdmitted(RE::FormID a_actor, RE::FormID a_spell);
+
+    // The engine's own test from form data: true when the visitor would refuse `a_spell` for `a_actor` (the
+    // first failing effect goes to `a_why`). The 0x0F seat uses it to refuse, while no claim drives the
+    // spell, an item that exists only because a claim was admitted. Game or combat thread.
+    struct SkillGateWhy {
+        RE::FormID   effect = 0;
+        std::int32_t av     = -1;
+        std::int32_t need   = 0;
+        float        have   = 0.0f;
+    };
+    bool SkillGateRefuses(RE::Actor* a_actor, const RE::MagicItem* a_spell, SkillGateWhy* a_why = nullptr);
+
+    // PASSIVE, for the "[ch.8b] cast-execution CLAIMED" line (game thread): which of the engine's three
+    // pre-classification item tests the claimed spell fails natively for this actor (spell type, equip slot,
+    // minimum skill), and whether the skill-gate seat covers it. Empty when it passes all three.
+    std::string DescribeAdmission(RE::Actor* a_actor, const RE::MagicItem* a_spell);
+
     // A spell with a SummonCreature or Reanimate effect (feat/apmf-buff-summon-seats, ClickUp
     // 86e3dvkwm). Seat 0 never forces its self flag (Reanimate's only row is the non-self one),
     // and ControlMap::ApplyRequest resolves a target-0 claim on it to the claimant (the caster

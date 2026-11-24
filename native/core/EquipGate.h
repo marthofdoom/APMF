@@ -7,6 +7,10 @@ namespace apmf::equipgate {
     // (once). Call at kDataLoaded. VR-refused. Idempotent.
     void Install();
 
+    // ABI v46 (APMF_API::kCastSeat_TypeEquip): the Stagger / Disarm / TargetEffect / Paralyze row equip
+    // admission is armed (all 8 item vtables hooked and [CastSeats] EnableRowEquipAdmission on). Any thread.
+    bool RowEquipAdmissionArmed();
+
     // True when the per-hand DENY-COMPLETE refusal stands: all 30 vtables patched, the two hand
     // slots resolved, and [EquipGate] EnableEquipDenyComplete on. The combat substrate's spell
     // equip (channels/SubstrateEquip.cpp) refuses to open without it: the floored hand would

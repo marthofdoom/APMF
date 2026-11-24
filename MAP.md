@@ -945,6 +945,16 @@ event layout (verified in SetActorsDetectionEvent on all three builds).
   APMF-B50 (the event free on an untraced path), APMF-B51 (`level > 0`), APMF-B53 (c), (d).
 
 ### `native/core/CastClassify.{h,cpp}` — ch.8b SEAT 0: CLASSIFY (2026-09-05)
+**THE SKILL GATE (ABI v46, 2026-11-23, `feat/seat-unseated-casters`, NOT field run).** A second seat in this file:
+slot 1 of `CombatMagicItemSkillChecker` (row `CombatMagicItemSkillChecker`, verified on the three builds), the per-effect
+visitor the engine runs BEFORE the classifier (`SkillVisitThunk`, `InstallSkillGate`, called from `plugin.cpp` right after
+`Install`). The engine answers first; its failure becomes a pass only for a live claim's driven form that outranks the
+seat's source. Every admitted (actor, spell) pair is recorded (`g_skillAdmitted`, 1024, `SkillAdmitted`), and
+`SkillGateRefuses` is the engine's test from form data. `DescribeAdmission` feeds the `[ch.8b] CLAIMED` line.
+- **What breaks:** admitting without recording the pair (the 0x0F deny in `EquipGate.cpp` then has a hole); admitting when
+  the record is full; returning 1 without setting `+0x20` back to 1 (the caller reads only that byte); writing the slot
+  before `g_skillOrig` holds the original; reading `+0x10` as a CombatController (it is the Actor here, unlike
+  CombatMagicItemData's `+0x18`).
 **ZERO TIE -> THE MAIN EFFECT (2026-10-28, `fix/apmf-zero-tie-main-effect`).** KEEP-BEST keeps a row only on a strictly
 higher term, so when every term of a spell is 0 the first effect's row becomes the item's caster type. Field 10-28b: Requiem's
 Candlelight {Script toggle 1 s, Light, Light} became a Script item, and the Script item's GetCategory (AE 0x827B50) files it
@@ -1055,6 +1065,15 @@ the same forced answer within one classify pass — see the .cpp's comment).
   `kExpectedRows` (Install then refuses, by design). Open review items: APMF-B58 (b)(c), APMF-B59 (d)(e)(f).
 
 ### `native/core/CastSeats.{h,cpp}` — ch.8b: THE ENGINE CAST SEATS (the keystone)
+**ABI v46, FOURTEEN TYPES (2026-11-23, `feat/seat-unseated-casters`, NOT field run).** `SeatTypes()` now also lists Stagger
+(bound kTarget), Disarm (kNone), TargetEffect (kTarget) and Paralyze (kTarget); each row carries its
+`APMF_API::CastSeatCoverage` bit. `CoverageMask()` (stored once at the end of `Install`, any thread) feeds
+`APMF_ServeInfo::castSeats`. `EffectAlreadyOn()` exports the redundancy walk for `EquipGate.cpp`.
+`[CastSeats] EnableHostileRowSeats`. **To seat another caster type: one `SeatTypes()` row (vtable id, name, bound, bit),
+one bit in `CastSeatCoverage`, and the vtable row's `slots` in `tools/verified_addresses/spec.json`.**
+- **What breaks:** adding a type whose 0x0A is not the shared base or whose 0x0D is not the shared `ret` (Reanimate: its
+  own, never listed here); giving a hostile row bound kCaster; reading `g_startOrig` from `CoverageMask` (it is a map
+  written at install, the mask is the atomic copy); renumbering a coverage bit (byte-shared with MFO).
 **HARBINGER 1b CAST SLICE (2026-10-12):** every claim-driven refusal / substitution here is ranked on the Cast facet against the seat's displaced function (`core/FacetAttribution` "CAST SLICE"); never give a claim answer before that test, and never count it on the silent follow-on seats.
 While a `kIntent_Cast` claim {actor A, spell S, target T} stands, APMF answers the
 vfunc seats the combat AI's OWN cast decision is built out of, so the NPC's own AI
@@ -1631,6 +1650,20 @@ non-hostile Value/PeakValue/DualValue modifier on Health/Magicka/Stamina). Lines
   old and the new shape read as self. Review items: REVIEW-BACKLOG APMF-B37..B39 (all closed), APMF-B41/B42 (self-claim review).
 
 ### `native/core/EquipGate.cpp` — T2a: CheckShouldEquip allowance (per-item equip gate)
+**ABI v46 (2026-11-23, `feat/seat-unseated-casters`, NOT field run): two blocks right after the engine's answer.**
+(1) ROW EQUIP ADMISSION: on the 8 Stagger / Disarm / TargetEffect / Paralyze item vtables (`g_rowItemVts`, spell + staff),
+the engine's NO becomes YES for the claim's driven form on its own hand (`castWins`), unless the actor is fleeing,
+`castseats::EffectAlreadyOn(claim target, spell)`, or (a spell item) Magicka is not above `currentAV`, the item's cost.
+`g_rowItemVts` maps each item vtable to its row's coverage bit and the admission reads `castseats::CoverageMask()` at
+each call (review S1). `[CastSeats] EnableRowEquipAdmission`, armed only with all 8 hooked,
+`RowEquipAdmissionArmed()`. (2) SKILL-GATE DENY: after an engine YES, an item whose (actor, spell) pair the skill gate
+ever admitted is refused while no live claim drives the form and `castclassify::SkillGateRefuses` still holds.
+INVARIANTS #20 argues both. **To admit another row: add its two item vtables to the list in `Install` and the count check.**
+- **What breaks:** moving block (1) above the deny-complete block (it would admit under another hand's claim); dropping
+  the fleeing / already-applied tests (he equips and holds a spell the 0x06 seat refuses); ranking block (2) (it must
+  withdraw what Harbinger let in whatever the priorities say); exempting by form alone in block (2) (review S4: the
+  exemption is the claim on THIS hand that outranks the seat's source); dropping the `dirty` write there (review S3:
+  it is what makes the engine drop the leftover item).
 **HARBINGER 1b CAST SLICE (2026-10-12):** every claim-driven refusal / substitution here is ranked on the Cast facet against the seat's displaced function (`core/FacetAttribution` "CAST SLICE"); never give a claim answer before that test, and never count it on the silent follow-on seats.
 Hooks `CombatInventoryItem::CheckShouldEquip` (vtable slot **0x0F**) on the 30
 concrete spell/staff `CombatInventoryItemMagicT<item,caster>` instantiations —

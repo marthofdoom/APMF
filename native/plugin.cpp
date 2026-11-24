@@ -186,6 +186,7 @@ namespace {
             apmf::castclassify::Install();       // ch.8b SEAT 0: classify a heal/buff-OTHER spell into
                                                   // the SAME table row a self-heal uses (CombatMagicItemData
                                                   // vfunc slot 1). AE-only; VR/SE-refused inside.
+            apmf::castclassify::InstallSkillGate();   // ABI v46: a claimed spell passes the AI's minimum-skill item test
             apmf::equipgate::Install();          // T2a CheckShouldEquip allowance
             apmf::handblock::Install();          // hand-claim block (2026-10-06): 0x0F on the Melee/Ranged/
                                                   // Shield/Torch/OneHandedBlock item vtables. BEFORE aicastseats::Install, so

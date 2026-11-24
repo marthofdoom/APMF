@@ -150,9 +150,21 @@ namespace apmf::castseats {
         // 0x0A is the SHARED base GetMagicTarget (AE 0x81E020 / SE 0x781CB0 / 1.7.104 0x833510) and
         // 0x0D the shared bare `ret` (0x81E0B0 / 0x781D00 / 0x8335A0) on every type below; 0x06 and
         // 0x07 are per-type, every one `bool(CombatMagicCaster*, CombatController*)` (rdx = the
-        // controller, AL returned) on all three. NOT seated: Stagger, Disarm, TargetEffect,
-        // Paralyze (hostile, no claim needs them) and Reanimate (its own 0x06 corpse search, 0x0A
-        // and 0x0D are what aim it -- a claim's answer would replace the corpse).
+        // controller, AL returned) on all three. NOT seated here: Reanimate (its own 0x06 corpse
+        // search, 0x0A and 0x0D are what aim it; core/ReanimateSeat.cpp serves a corpse claim).
+        // feat/seat-unseated-casters (ABI v46) seats the four hostile rows too: Stagger, Disarm,
+        // TargetEffect (Turn Undead, Banish, Command) and Paralyze. Field 11-23 (MFO _evidence/deck-run-1123):
+        // a claimed Turn Lesser Undead won its score every pass and no caster was ever built, because
+        // the engine's own answers ruled every step past the score. The engine does build these casters
+        // (census, engine-wide: TargetEffect 6 CheckStartCast / 1 fire, Paralyze 10 / 2; Stagger and
+        // Disarm were never seen built in any log). Read on all three builds: 0x0A is the shared base
+        // and 0x0D the shared `ret` on the four, as on the ten; their 0x06 are
+        // `0x81E500 && !0x81E6C0 && 0x81E610` plus the type's distance (Stagger AE 0x8205D0 / SE 0x784270 /
+        // 1.7.104 0x835AC0, TargetEffect 0x8220A0 / 0x785D50 / 0x837590, Paralyze 0x822D40 / 0x786980 /
+        // 0x838230; Disarm 0x820AC0 / 0x784730 / 0x835FB0 has no 0x81E6C0 call: a disarm leaves no effect).
+        // So the redundancy bound is kTarget on Stagger, TargetEffect and Paralyze and kNone on Disarm.
+        // What reaches these casters is decided upstream: core/CastClassify.cpp (the skill gate) and
+        // core/EquipGate.cpp (the row's own equip condition).
         // REDUNDANCY BOUND (review SEV-2 of 3903988). Every newly seated type's OWN 0x06 refuses a
         // cast whose effect is already on its recipient; a claim answering YES alone re-cast the spell
         // every hand cycle while the claim stood (Light spam = the 2026-08-19 CTD shape; summons
@@ -175,20 +187,26 @@ namespace apmf::castseats {
             REL::VariantID id;
             const char*    name;
             Bound          bound;
+            std::uint32_t  bit;      // APMF_API::CastSeatCoverage (ABI v46)
+            bool           v46;      // one of the four hostile rows ([CastSeats] EnableHostileRowSeats)
         };
-        constexpr std::size_t kSeatTypes = 10;
+        constexpr std::size_t kSeatTypes = 14;
         const std::array<SeatType, kSeatTypes>& SeatTypes() {
             static const std::array<SeatType, kSeatTypes> s{ {
-                { RE::VTABLE_CombatMagicCasterRestore[0], "Restore", Bound::kNone },
-                { RE::VTABLE_CombatMagicCasterOffensive[0], "Offensive", Bound::kNone },
-                { RE::VTABLE_CombatMagicCasterWard[0], "Ward", Bound::kTarget },
-                { RE::VTABLE_CombatMagicCasterSummon[0], "Summon", Bound::kCaster },
-                { RE::VTABLE_CombatMagicCasterCloak[0], "Cloak", Bound::kTarget },
-                { RE::VTABLE_CombatMagicCasterLight[0], "Light", Bound::kTarget },
-                { RE::VTABLE_CombatMagicCasterInvisibility[0], "Invisibility", Bound::kTarget },
-                { RE::VTABLE_CombatMagicCasterBoundItem[0], "BoundItem", Bound::kCaster },
-                { RE::VTABLE_CombatMagicCasterArmor[0], "Armor", Bound::kTarget },
-                { RE::VTABLE_CombatMagicCasterScript[0], "Script", Bound::kTarget },
+                { RE::VTABLE_CombatMagicCasterRestore[0], "Restore", Bound::kNone, APMF_API::kCastSeat_Restore, false },
+                { RE::VTABLE_CombatMagicCasterOffensive[0], "Offensive", Bound::kNone, APMF_API::kCastSeat_Offensive, false },
+                { RE::VTABLE_CombatMagicCasterWard[0], "Ward", Bound::kTarget, APMF_API::kCastSeat_Ward, false },
+                { RE::VTABLE_CombatMagicCasterSummon[0], "Summon", Bound::kCaster, APMF_API::kCastSeat_Summon, false },
+                { RE::VTABLE_CombatMagicCasterCloak[0], "Cloak", Bound::kTarget, APMF_API::kCastSeat_Cloak, false },
+                { RE::VTABLE_CombatMagicCasterLight[0], "Light", Bound::kTarget, APMF_API::kCastSeat_Light, false },
+                { RE::VTABLE_CombatMagicCasterInvisibility[0], "Invisibility", Bound::kTarget, APMF_API::kCastSeat_Invisibility, false },
+                { RE::VTABLE_CombatMagicCasterBoundItem[0], "BoundItem", Bound::kCaster, APMF_API::kCastSeat_BoundItem, false },
+                { RE::VTABLE_CombatMagicCasterArmor[0], "Armor", Bound::kTarget, APMF_API::kCastSeat_Armor, false },
+                { RE::VTABLE_CombatMagicCasterScript[0], "Script", Bound::kTarget, APMF_API::kCastSeat_Script, false },
+                { RE::VTABLE_CombatMagicCasterStagger[0], "Stagger", Bound::kTarget, APMF_API::kCastSeat_Stagger, true },
+                { RE::VTABLE_CombatMagicCasterDisarm[0], "Disarm", Bound::kNone, APMF_API::kCastSeat_Disarm, true },
+                { RE::VTABLE_CombatMagicCasterTargetEffect[0], "TargetEffect", Bound::kTarget, APMF_API::kCastSeat_TargetEffect, true },
+                { RE::VTABLE_CombatMagicCasterParalyze[0], "Paralyze", Bound::kTarget, APMF_API::kCastSeat_Paralyze, true },
             } };
             return s;
         }
@@ -200,6 +218,9 @@ namespace apmf::castseats {
         std::array<std::array<std::atomic<std::uint32_t>, 4>, kSeatTypes>         g_claimCalls{};
         std::array<std::array<std::atomic<bool>, 4>, kSeatTypes>                  g_firstLogged{};
         std::array<std::atomic<std::uint32_t>, kSeatTypes>                        g_nativePlacement{};
+        // ABI v46: the CastSeatCoverage row bits of the types whose 0x06, 0x07 and 0x0A were all written.
+        // Stored once at the end of Install(); read from any thread (CanServe).
+        std::atomic<std::uint32_t> g_coverage{ 0 };
 
         int TypeIndex(std::uintptr_t a_vt) {
             for (std::size_t i = 0; i < kSeatTypes; ++i)
@@ -671,8 +692,8 @@ namespace apmf::castseats {
 
             if (LogDue(m.actor, m.driven, kGetMagicTarget))
                 spdlog::info("[ch.8b seat 0x0A] 0x{} GetMagicTarget -> claimed target 0x{} (handle 0x{}), "
-                             "spell 0x{}{}, {} caster. Seated types only -- Stagger/Disarm/TargetEffect/Paralyze/"
-                             "Reanimate share this base impl (or their own) and are never redirected.",
+                             "spell 0x{}{}, {} caster. Seated types only -- the Reanimate caster "
+                             "has its own target (the corpse) and is never redirected here.",
                              apmf::log::Hex(m.actor), apmf::log::Hex(m.claim.target),
                              apmf::log::Hex(a_out->handle), apmf::log::Hex(m.driven),
                              m.claim.proxy ? " (delivery-flip proxy)" : "",
@@ -910,6 +931,8 @@ namespace apmf::castseats {
         // form at the COMBAT TARGET (the foe) and 0x06 is the type's own native "should I" -- so a
         // claim on any of them was inert or mis-aimed without these seats. The rule stays "no vtable
         // a live claim does not need": still never Stagger, Disarm, TargetEffect, Paralyze, Reanimate.
+        // ABI v46 (feat/seat-unseated-casters): a live claim DOES need the four hostile rows now (see the
+        // SeatTypes() note); only Reanimate stays out of this list.
         // The same two gates make each one safe (RTTI derivation at install; the DRIVEN-FORM match
         // for the deliberating actor on every call).
         REL::Relocation<void*> casterTD{ RE::RTTI_CombatMagicCaster };
@@ -918,8 +941,16 @@ namespace apmf::castseats {
         // (loudly), never seated without its floor.
         if (auto* gsc = RE::GameSettingCollection::GetSingleton())
             g_wardFloor = gsc->GetSetting("fCombatMagicWardMagickaCastLimit");
+        // ABI v46 (feat/seat-unseated-casters): the four hostile rows, [CastSeats] EnableHostileRowSeats
+        // (default 1). 0 leaves Stagger / Disarm / TargetEffect / Paralyze as they were before v46.
+        const bool hostileRows = ReadIniFlag("EnableHostileRowSeats", 1);
+        if (!hostileRows)
+            spdlog::info("[ch.8b seats] [CastSeats] EnableHostileRowSeats=0 -- the Stagger, Disarm, TargetEffect and "
+                         "Paralyze casters are NOT seated; a claim on such a spell is served by the engine's own "
+                         "answers only (CastSeatCoverage reports the rows as absent).");
         std::vector<REL::VariantID> kEngineSeatVtables;
         for (std::size_t i = 0; i < kSeatTypes; ++i) {
+            if (SeatTypes()[i].v46 && !hostileRows) continue;
             REL::Relocation<std::uintptr_t> tv{ SeatTypes()[i].id };
             const bool isWard = std::strcmp(SeatTypes()[i].name, "Ward") == 0;
             if (isWard) g_wardVtable.store(tv.address(), std::memory_order_relaxed);
@@ -975,14 +1006,25 @@ namespace apmf::castseats {
                          "re-checks will track the combat target.");
         }
 
-        spdlog::info("[ch.8b seats] engine cast seats installed on {} caster vtables (Restore, Offensive, Ward, "
-                     "Summon, Cloak, Light, Invisibility, BoundItem, Armor, Script; never Stagger/Disarm/"
-                     "TargetEffect/Paralyze/Reanimate): 0x06 CheckStartCast {}/{}, 0x07 CheckStopCast {}/{}, "
+        // ABI v46: a row is covered when its 0x06, 0x07 and 0x0A were all written (0x0D is optional, as before).
+        std::uint32_t cover = 0;
+        std::string   rows;
+        for (std::size_t i = 0; i < kSeatTypes; ++i) {
+            const auto v = g_typeVt[i].load(std::memory_order_relaxed);
+            if (v == 0 || !g_startOrig.contains(v) || !g_stopOrig.contains(v) || !g_targetOrig.contains(v)) continue;
+            cover |= SeatTypes()[i].bit;
+            rows += rows.empty() ? "" : ", ";
+            rows += SeatTypes()[i].name;
+        }
+        g_coverage.store(cover, std::memory_order_release);
+
+        spdlog::info("[ch.8b seats] engine cast seats installed on {} caster vtables, covered rows [{}] (never "
+                     "Reanimate here: core/ReanimateSeat.cpp): 0x06 CheckStartCast {}/{}, 0x07 CheckStopCast {}/{}, "
                      "0x0A GetMagicTarget {}/{}, 0x0D SetupAimController {}/{}. While a kIntent_Cast claim "
                      "stands, the NPC's OWN AI casts the claimed spell at the claimed target -- APMF makes "
                      "no equip, anim or cast write of any kind.",
-                     kEngineSeatVtables.size(), nStart, kEngineSeatVtables.size(), nStop, kEngineSeatVtables.size(), nTgt,
-                     kEngineSeatVtables.size(), nAim, kEngineSeatVtables.size());
+                     kEngineSeatVtables.size(), rows, nStart, kEngineSeatVtables.size(), nStop, kEngineSeatVtables.size(),
+                     nTgt, kEngineSeatVtables.size(), nAim, kEngineSeatVtables.size());
     }
 
     bool MatchClaim(RE::CombatMagicCaster* a_this, RE::CombatController* a_cc, std::uintptr_t a_prevFn, bool a_count,
@@ -994,6 +1036,10 @@ namespace apmf::castseats {
         a_out.claim  = m.claim;
         return true;
     }
+
+    std::uint32_t CoverageMask() { return g_coverage.load(std::memory_order_acquire); }
+
+    bool EffectAlreadyOn(RE::Actor* a_actor, RE::MagicItem* a_item) { return AlreadyApplied(a_actor, a_item); }
 
     std::string SeatCountsLine() {
         std::string s;

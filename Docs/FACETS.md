@@ -1172,6 +1172,40 @@ ABI 18 (0.11.0). `bOwnLineOfSight` in `[Sightline]`. Used by MFO.
 1. What does seat 0x07 do when the verdict turns UNKNOWN during a heal beam?
 2. Why can the engine's own `HasLineOfSight` not be used instead?
 
+### Cast seat coverage (ABI v46)
+
+A cast claim works by answering the engine's own decision points, and the engine has fifteen kinds of spell caster. Until v46 four of them had no seats: Stagger, Disarm, TargetEffect (Turn Undead, Banish, Command) and Paralyze. A claim on such a spell was score-steered and denied its rivals, and every other step was the engine's own opinion.
+
+What the engine asks before such a spell is cast, and who answers now:
+
+| Step | Engine's own test | With a live claim on the spell (v46) |
+|---|---|---|
+| Item exists | spell type is a spell, its equip slot fits, **every effect's minimum skill is at or below the NPC's skill** | the skill test passes (the skill gate). Spell type and slot are unchanged |
+| Row | the classify table | unchanged (rowless spells are served as Script, as before) |
+| Equip (item 0x0F) | not fleeing, and per row: a cooldown, the target in range, the effect applies to the target, the target holds a weapon (Disarm), magicka covers the cost, the effect is not already on the target | admitted on its own hand, while that row's caster seats are installed. Kept: fleeing, effect already on the claim's target, and for a spell (not a staff) magicka below the item's cost |
+| Start (caster 0x06) | hand ready, not already applied, line checks, distance | the claim says yes, composed with "not already applied" (Stagger, TargetEffect, Paralyze) |
+| Target (0x0A / 0x0D) | the combat target | the claim's target |
+| Stop (0x07) | per row | the claim's TTL and target state |
+
+What stays the engine's: magicka at the cast, the hand being ready, the equip and its animation, and whether the effect lands. A Turn Lesser Undead claimed on a high level draugr is now cast and does nothing. The client owns that choice.
+
+**The client's part.** For a claim on one of the four rows the engine no longer checks these, so the client must:
+
+- judge the row's keyed effect against the target: the effect's own conditions, and for Turn Undead the level its magnitude allows (field 11-23: magnitude 5 against a level 40 Deathlord);
+- claim a Disarm only on a target that holds a weapon;
+- mind the reach: the engine asked 256 units for Stagger and Disarm and 384 for Paralyze (`fCombatMagicStaggerDistance`, `fCombatMagicDisarmDistance`, `fCombatMagicParalyzeDistance`);
+- expect no cooldown between casts but its own.
+
+For comparison, the Offensive row's equip test is only "not fleeing". The engine equips an Offensive spell he cannot afford and refuses it at the cast. The four rows keep the afford test at equip for a spell, as their own engine test does.
+
+After a claim on a spell that needed the skill gate ends, the next equip pass refuses the leftover item and marks the inventory for the engine's own rebuild, which drops it.
+
+Ask `CanServe` and read `APMF_ServeInfo::castSeats` (`CastSeatCoverage`, only when `abiVersion >= 46`) to learn which rows this install covers. Switches: `[CastSeats] EnableHostileRowSeats`, `EnableRowEquipAdmission`, `EnableSkillGateSeat`.
+
+Log lines: `[ch.8b] ... cast-execution CLAIMED ... Engine item tests: ...` (which item test the spell fails natively), `[ch.8b skill gate] ... ADMITTED`, `[t2a row equip] ... ADMITTED` or `NO kept`, `[t2a skill gate] ... -> NO` (an admitted item with no claim), `[ch.8b seats] FIRST claim answer on the <row> caster`.
+
+Field status: not run. Stagger and Disarm casters were never seen built by the engine in any log we hold. TargetEffect and Paralyze were (engine-wide census).
+
 ### Corpse target (`kCastFlag_CorpseTarget`)
 
 *A Reanimate spell is aimed by its own caster, which picks the highest-level corpse in range. With this bit the claim names the corpse and the engine's own reanimate cast uses it.*

@@ -2,6 +2,7 @@
 #include "core/Log.h"
 #include "core/Registry.h"
 #include "channels/CastCompose.h"
+#include "core/CastClassify.h"   // DescribeAdmission (ABI v46, passive)
 
 // ============================================================================
 // Channel 8b -- CAST EXECUTION (design.md §3, the keystone). A kIntent_Cast claim
@@ -92,11 +93,17 @@ namespace {
         int              ChannelNo() const override { return 8; }   // ch.8b (sub-split of 8)
         APMF_API::Intent ServesIntent() const override { return APMF_API::kIntent_Cast; }
 
-        void Engage(RE::FormID id, RE::Actor* /*actor*/, const APMF_API::APMF_Param& param) override {
+        void Engage(RE::FormID id, RE::Actor* actor, const APMF_API::APMF_Param& param) override {
+            // ABI v46 (passive): the engine's two pre-classification item tests for this spell and actor
+            // (core/CastClassify.h DescribeAdmission). Game thread, form data only.
+            std::string admit;
+            if (actor && param.form != 0)
+                if (auto* spell = RE::TESForm::LookupByID<RE::MagicItem>(param.form))
+                    admit = apmf::castclassify::DescribeAdmission(actor, spell);
             spdlog::info("[ch.8b] 0x{} cast-execution CLAIMED (spell 0x{}). Bounded TTL. The NPC's OWN AI "
                          "now selects/equips/charges/aims/fires this spell at the claimed target through the "
-                         "engine seats -- APMF makes no equip, anim or cast write of any kind.",
-                         apmf::log::Hex(id), apmf::log::Hex(param.form));
+                         "engine seats -- APMF makes no equip, anim or cast write of any kind.{}",
+                         apmf::log::Hex(id), apmf::log::Hex(param.form), admit);
         }
 
         void OnOwnerChanged(RE::FormID id, RE::Actor* /*actor*/, const APMF_API::APMF_Param& param) override {
