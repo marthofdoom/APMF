@@ -1,3 +1,11 @@
+## Unreleased -- Every claimed spell can reach the hand (ABI v46)
+
+- **Turn Undead, Banish, Command, Paralyze, Stagger and Disarm spells can now be cast through a claim.** A mod could name one of these spells for a follower and nothing happened. The game has its own opinion on when such a spell is worth equipping: is the target in range, will the effect work on it, is a cooldown over. That opinion ruled even when a mod had already decided. Now the mod's claim decides. Two of the game's reasons are kept: the follower is fleeing, or the effect is already on the target.
+- **A claimed spell is no longer dropped for a low skill.** The game gives an NPC no combat use of a spell when the spell asks for more skill than he has. He knows the spell and can never pick it. A claimed spell now passes that test while the claim stands. Without a claim the game's rule is back in full.
+- **A mod can ask what is covered.** The existing dry run (CanServe) now also reports which kinds of spell the cast seats cover on this install. ABI v46, no new function. Mods built on v33 to v45 keep working.
+- **The log says why.** The claim line names the game's own test a spell fails, the equip line shows each time the game said no and the claim was let through, and the skill line shows the skill needed and the skill he has.
+- **Not field run yet.** Built from the disassembly of 1.6.1170, 1.5.97 and 1.7.104.
+
 ## v0.20.5 -- Ending combat on the game's own road, and class combat styles that always land
 
 - **Harbinger now ends a follower's combat the way the game ends its own fights.** It hands the game its own end-combat message, and the game runs it at its own safe point in the frame. Nothing in Harbinger ends combat from a combat update any more, and that is now a written rule.

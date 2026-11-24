@@ -648,6 +648,8 @@ counters (saturating, since the load). Any thread: one RCU read and a copy under
 <a id="abi-v35-can-serve"></a>
 ## ABI v35 can-serve: the claim dry run (MFO-B2)
 
+**ABI v46 adds `APMF_ServeInfo::castSeats` (+120, was `reserved[0]`):** `CastSeatCoverage` bits, one per engine caster row whose cast seats are installed (Restore, Offensive, Ward, Summon, Cloak, Light, Invisibility, BoundItem, Armor, Script, and from v46 Stagger, Disarm, TargetEffect, Paralyze), `kCastSeat_Reanimate` (the v42 corpse seat), `kCastSeat_TypeEquip` (the row equip admission) and `kCastSeat_SkillGate` (the minimum-skill admission). Written on every query that fills the struct, whatever its `call`. It describes the install, not the spell: the client maps its spell to a row itself. Read it only when `abiVersion >= 46`.
+
 ```cpp
 std::uint32_t (*CanServe)(const APMF_ServeQuery* query, APMF_ServeInfo* out);              // APMF_API_v35
 // gate on abiVersion >= 35; an older APMF has no dry run (file the request and read the handle, as before)

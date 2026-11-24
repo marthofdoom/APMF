@@ -931,6 +931,8 @@ namespace apmf::castseats {
         // form at the COMBAT TARGET (the foe) and 0x06 is the type's own native "should I" -- so a
         // claim on any of them was inert or mis-aimed without these seats. The rule stays "no vtable
         // a live claim does not need": still never Stagger, Disarm, TargetEffect, Paralyze, Reanimate.
+        // ABI v46 (feat/seat-unseated-casters): a live claim DOES need the four hostile rows now (see the
+        // SeatTypes() note); only Reanimate stays out of this list.
         // The same two gates make each one safe (RTTI derivation at install; the DRIVEN-FORM match
         // for the deliberating actor on every call).
         REL::Relocation<void*> casterTD{ RE::RTTI_CombatMagicCaster };

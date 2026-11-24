@@ -1,8 +1,86 @@
 # APMF STATUS — living handoff (start here)
 
-Updated 2026-11-17 (ch.33 owed refresh branch `fix/ch33-refresh-retry` first, then the v0.20.5 hotfix branch `fix/stopcombat-main`, the stability H1 fix branch below it; proxy save integrity fix branch after it). Current version **v0.20.2** (release prep 2026-11-14, ABI v45 unchanged, a small real release: the ch.3 sneak release confirm, see CHANGELOG) / previously **v0.20.1** (cut 2026-11-13, ABI v45 unchanged, a REAL release, the first since v0.17.0, cumulative over v0.18.0 to v0.20.0 plus the seat 0 hostile-effect fix, see CHANGELOG) / previously **v0.20.0** (cut 2026-11-12, ABI v45) and **v0.19.0** (cut 2026-11-10, ABI v36) and **v0.18.0** (cut 2026-11-09, ABI v35, PRERELEASE) and **v0.17.0** (cut 2026-11-08, ABI v33) and **v0.16.0** (cut 2026-11-02, ABI v32) and **v0.15.2** (cut 2026-10-28, ABI v31) and **v0.15.1** (cut 2026-10-26, ABI v30) and **v0.15.0** (cut 2026-10-25, ABI v30) and **v0.14.0** (cut 2026-10-21, ABI v28) and **v0.13.1** (cut 2026-10-13, ABI v24) and **v0.13.0** (release cut 2026-10-12; see RELEASED v0.13.0 below; prior v0.12.0 PUBLISHED release, ABI v21). The current state of the build: what's
+Updated 2026-11-23 (ch.8b hostile rows / skill gate branch `feat/seat-unseated-casters` first; 2026-11-17: ch.33 owed refresh branch `fix/ch33-refresh-retry` first, then the v0.20.5 hotfix branch `fix/stopcombat-main`, the stability H1 fix branch below it; proxy save integrity fix branch after it). Current version **v0.20.2** (release prep 2026-11-14, ABI v45 unchanged, a small real release: the ch.3 sneak release confirm, see CHANGELOG) / previously **v0.20.1** (cut 2026-11-13, ABI v45 unchanged, a REAL release, the first since v0.17.0, cumulative over v0.18.0 to v0.20.0 plus the seat 0 hostile-effect fix, see CHANGELOG) / previously **v0.20.0** (cut 2026-11-12, ABI v45) and **v0.19.0** (cut 2026-11-10, ABI v36) and **v0.18.0** (cut 2026-11-09, ABI v35, PRERELEASE) and **v0.17.0** (cut 2026-11-08, ABI v33) and **v0.16.0** (cut 2026-11-02, ABI v32) and **v0.15.2** (cut 2026-10-28, ABI v31) and **v0.15.1** (cut 2026-10-26, ABI v30) and **v0.15.0** (cut 2026-10-25, ABI v30) and **v0.14.0** (cut 2026-10-21, ABI v28) and **v0.13.1** (cut 2026-10-13, ABI v24) and **v0.13.0** (release cut 2026-10-12; see RELEASED v0.13.0 below; prior v0.12.0 PUBLISHED release, ABI v21). The current state of the build: what's
 shipped, what's probe-gated, what's next. Keep this current in the SAME change as any
 build/finding/workflow change.
+
+## HEAD OF WORK 2026-11-23 -- ch.8b: THE FOUR HOSTILE CASTER ROWS, THE SKILL GATE, THE ROW EQUIP ADMISSION (ABI v46), branch `feat/seat-unseated-casters`, NOT merged, NOT field run
+
+marth: "I dont see why any spell is left that we cant run". Release rule: every cast animated, no direct fallback.
+Agentlog `/mnt/gaming/modlists/Projects/_agentlogs/harbinger/seats-and-point.md`, RE helper `_agentlogs/harbinger/re/x.py`.
+
+**Field (Deck 1.6.1170, Harbinger 0.20.5, MFO `_evidence/deck-run-1123/APMF.log`, the same session as `deck-run-1119-jesper`).**
+- Jesper `750012C6`, Turn Lesser Undead `0004D3F8` at a Draugr Deathlord `00085809`, claim 16:51:42.5 to 16:51:54.9:
+  `SCORE-STEER ... cat=4 engineScore=9600 best-competitor=120000 STEERED->126000` every pass, seat 0 "HOSTILE, not forced"
+  (it keys the TargetEffect row by itself), no equip, no caster, no CheckStartCast. The claimed form's 0x0F answer was the
+  engine's and was logged only under the verbose flag.
+- Jesper, Blur `FE13282A` (concentration, self, rowless) and its flip proxy `FF001E54`, claims 16:52:58.7 and 16:53:10.7,
+  6 s each: 393 seat-0 lines for his other spells, none for the proxy. Longstride (same shape) on Cicero was classified
+  6 ms after its mint and served as Script.
+
+**What the engine does (disassembled on 1.6.1170, 1.5.97 and 1.7.104; AE addresses).**
+- Add-item `0x811CC0`, SPEL case `0x812156`, three tests before any classification: spell type kSpell or kPoison (vfunc
+  0x53), the equip slot is one the inventory carries (`0x810340`), and `CombatMagicItemSkillChecker` (vtable `0x18D5138`,
+  slot 1 `0x81DE80`): for each effect with an associated skill, `actor AV(skill) >= MGEF minimum skill`, a failure stops
+  the walk and the spell gets NO item. Nothing downstream ever sees it. **Blur: this test or the spell-type test (both are
+  shared by the proxy; the new CLAIMED line says which).**
+- Item slots: `0x0B` GetCategory (Offensive 0; Stagger 4, 5 under 30 s; Disarm 4; TargetEffect 4, 5 for a duration
+  between 0 and 30 s; Paralyze 4, 5 under `fCombatParalyzeTacticalDuration`), `0x0F` CheckShouldEquip = `true && the row's
+  condition`: Stagger not fleeing; Disarm `0x820860`, TargetEffect `0x821F50`, Paralyze `0x822AE0`: not fleeing, (Disarm /
+  Paralyze) a per-item cooldown and the target within `fCombatMagicDisarmDistance` / `fCombatMagicParalyzeDistance`,
+  (Disarm) the target holds a weapon, afford `0x81E170`, not already applied `0x81E400`, and `0x81E290`: the effect's
+  conditions and the target's acceptance, asked of the COMBAT target. **Turn Lesser Undead at a Deathlord: this is the
+  step that said NO** (most likely the applies test; the log could not show which sub-test).
+- The magic context (`0x89EAE0`) builds the item's caster unconditionally once the item is in the hand. Caster `0x06`:
+  `0x81E500 && !0x81E6C0 && 0x81E610` plus the row's distance (Disarm has no `0x81E6C0`); `0x0A` the shared base and
+  `0x0D` the shared `ret` on all four.
+- **Does the engine build these casters at all (principle 5)?** Engine-wide census maxima over every log we hold:
+  TargetEffect 6 CheckStartCast / 1 fire, Paralyze 10 / 2, Reanimate 55 / 16. **Stagger 0 / 0 and Disarm 0 / 0: never
+  observed.** Their path is the same template, read, not seen.
+
+**What changed (no new call by address, one new vtable row).**
+1. `core/CastClassify.cpp` THE SKILL GATE: seat on `CombatMagicItemSkillChecker` slot 1. Engine first; a failure passes
+   only for a live claim's driven form that outranks the seat's source. `[CastSeats] EnableSkillGateSeat`.
+2. `core/EquipGate.cpp` ROW EQUIP ADMISSION: on the 8 item vtables of the four rows, the engine's NO becomes YES for the
+   claim's driven form on its own hand, unless fleeing or the effect is already on the claim's target.
+   `[CastSeats] EnableRowEquipAdmission`. And the SKILL-GATE DENY: an admitted item with no claim is refused at 0x0F.
+3. `core/CastSeats.cpp`: Stagger, Disarm, TargetEffect, Paralyze join the 0x06 / 0x07 / 0x0A / 0x0D seat list.
+   `[CastSeats] EnableHostileRowSeats`.
+4. ABI v46: `APMF_ServeInfo::castSeats` (`CastSeatCoverage`), written by `CanServe`. No slot. MFO's header copy must be
+   re-mirrored (md5).
+5. Reanimate: nothing was missing in Harbinger (seat 0 + 0x0F + `core/ReanimateSeat.cpp` since v42); the skill gate now
+   also covers a Reanimate spell above the caster's skill. Its bit is `kCastSeat_Reanimate`.
+6. `INVARIANTS #20` carries the two new NO-to-YES answers; DENY audit row 8b (i) to (iii).
+
+**Field checks (AE 1.6.1170, an MFO build that claims each kind; `[Probe] bCasterTypeCensus=1` for the census lines).**
+- Startup: `[ch.8b skill gate] installed on CombatMagicItemSkillChecker`, `[t2a row equip] armed on the 8 ...`,
+  `[ch.8b seats] ... covered rows [Restore, ..., Stagger, Disarm, TargetEffect, Paralyze]`, selfcheck `313/313`.
+- Turn Undead at an undead it cannot affect: `[t2a row equip] ... class=...TargetEffect... the engine's own row condition
+  said NO -> ADMITTED`, then `[ch.8b seats] FIRST claim answer on the TargetEffect caster, seat 0x06 ... -> YES`,
+  `CASTER[L] state=2(Charging) spell=0x0004D3F8`, census `FIRED via TargetEffect`. If ADMITTED appears and no FIRST line
+  follows within the claim: the item did not reach the hand (category walk), goes to Opus with the lines.
+- Blur: the CLAIMED line ends `Engine item tests: the minimum-skill test REFUSES this spell (effect ... needs skill AV n
+  >= m, he has k); the skill-gate seat admits it`, then `[ch.8b skill gate] ... ADMITTED`, then the proxy's seat-0
+  `CLASSIFY` and `served as Script` lines that Longstride gets. If the CLAIMED line says `spell type N is not kSpell`
+  instead, Blur is a power and no combat item can exist for it: that is MFO's to route differently.
+- After the Blur claim ends and before the next inventory rebuild: `[t2a skill gate] ... -> NO` may appear (the deny).
+- Paralyze and a Stagger / Disarm spell if any follower has one: the same three lines with their class.
+
+**MFO adoption (not edited here).**
+- `native/APMF_API.h`: mirror this branch's header byte for byte.
+- `native/apmf/Bridge.cpp:721-733` (the CanServe `ask`): `info.castSeats` is valid when `abiVersion >= 46`. Keep it per
+  session (it never changes after kDataLoaded).
+- `native/cast/Archetype.cpp:83-92` (the EngineRow table) and its "predicted engine caster row" warning (the list of
+  unseated rows, `kUnseatedRows` on the branch that has it): a Stagger / Disarm / TargetEffect / Paralyze row is served
+  when its `kCastSeat_*` bit and `kCastSeat_TypeEquip` are set. Drop the static list in favour of the bits.
+- The same file's `predicted=none` warning: rowless is served as Script (bit `kCastSeat_Script`); the remaining "may not
+  fire" cases are a non-spell type and, under v46, a spell above the follower's skill.
+- MFO's scoring: the engine's "does the effect apply to this target" test is no longer asked for a claim, so MFO now
+  decides it alone. Turn Lesser Undead at a Deathlord will be cast and wasted. `cast_control` needs the level cap
+  (magnitude against the target's level) and the keyword conditions in its own scoring.
+
+**Open.** Stagger / Disarm casters never observed. Category 5 (short duration) items are walked after weapons. A staff of
+these rows is untested. Which sub-test refused Turn Lesser Undead is inferred. Blur's cause is one of two (logged now).
 
 ## FIX 2026-11-17 -- ch.33: THE ENGINE REFRESH IS OWED UNTIL IT LANDS, branch `fix/ch33-refresh-retry`, NOT merged, NOT field run
 
