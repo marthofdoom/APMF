@@ -94,7 +94,7 @@ namespace {
         APMF_API::Intent ServesIntent() const override { return APMF_API::kIntent_Cast; }
 
         void Engage(RE::FormID id, RE::Actor* actor, const APMF_API::APMF_Param& param) override {
-            // ABI v46 (passive): the engine's two pre-classification item tests for this spell and actor
+            // ABI v46 (passive): the engine's three pre-classification item tests for this spell and actor
             // (core/CastClassify.h DescribeAdmission). Game thread, form data only.
             std::string admit;
             if (actor && param.form != 0)

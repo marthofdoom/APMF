@@ -898,8 +898,8 @@ namespace apmf::equipgate {
             if (!a_cc || fid == 0) return engineSays;
 
             // SKILL-GATE DENY (ABI v46, core/CastClassify.cpp THE SKILL GATE). An item that exists only because
-            // a claim's driven form was admitted past the engine's minimum-skill test outlives that claim until
-            // the inventory is rebuilt. While NO live claim drives the form and the engine's test still refuses
+            // a claim's driven form was admitted past the engine's minimum-skill test outlives that claim for
+            // the rest of the fight (the engine's rebuild keeps it). While NO live claim drives the form and the engine's test still refuses
             // the spell for this actor, it is never admitted here: the admission gives the engine's own AI
             // nothing it did not have. Unranked on purpose (it withdraws what Harbinger itself let in).
             if (subjectForm != 0 && apmf::castclassify::SkillAdmitted(fid, subjectForm)) {
@@ -913,16 +913,14 @@ namespace apmf::equipgate {
                     apmf::castclassify::SkillGateWhy why{};
                     if (attPtr && spell && apmf::castclassify::SkillGateRefuses(attPtr.get(), spell, &why)) {
                         g_skillDenies.fetch_add(1, std::memory_order_relaxed);
-                        // Review S3: ask the engine to rebuild this inventory (the same one-bool write the SEAT 0
-                        // rebuild trigger above makes, same thread, same controller). Its own add-item pass then
-                        // runs the minimum-skill test with no claim to admit the spell, and the item is gone.
-                        if (a_cc->inventory) a_cc->inventory->dirty = true;
+                        // No rebuild is asked for (re-check R1): the engine's rebuild is incremental (AE 0x811030), keeps
+                        // the item of every spell the actor still knows and never re-runs the skill test for it, so a
+                        // dirty write would drop nothing and repeat for the rest of the fight. This refusal is the deny.
                         if (DarkLineDue(fid, subjectForm ^ 0x10000000u))
                             spdlog::info("[t2a skill gate] 0x{} CheckShouldEquip item=0x{} -> NO: this item exists only "
                                          "through a cast claim's skill-gate admission, no claim drives it now and the "
                                          "engine's minimum-skill test still refuses it (effect 0x{} needs skill AV {} >= "
-                                         "{}, he has {:.0f}). The inventory is marked for the engine's own rebuild, which "
-                                         "drops the item. {} such refusal(s) since load.",
+                                         "{}, he has {:.0f}). {} such refusal(s) since load.",
                                          apmf::log::Hex(fid), apmf::log::Hex(subjectForm), apmf::log::Hex(why.effect),
                                          why.av, why.need, why.have, g_skillDenies.load(std::memory_order_relaxed));
                         return false;

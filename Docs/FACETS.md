@@ -1198,7 +1198,7 @@ What stays the engine's: magicka at the cast, the hand being ready, the equip an
 
 For comparison, the Offensive row's equip test is only "not fleeing". The engine equips an Offensive spell he cannot afford and refuses it at the cast. The four rows keep the afford test at equip for a spell, as their own engine test does.
 
-After a claim on a spell that needed the skill gate ends, the next equip pass refuses the leftover item and marks the inventory for the engine's own rebuild, which drops it.
+After a claim on a spell that needed the skill gate ends, the next equip pass refuses the leftover item, and keeps refusing it for the rest of the fight (the engine's rebuild keeps the item of every spell the follower still knows).
 
 Ask `CanServe` and read `APMF_ServeInfo::castSeats` (`CastSeatCoverage`, only when `abiVersion >= 46`) to learn which rows this install covers. Switches: `[CastSeats] EnableHostileRowSeats`, `EnableRowEquipAdmission`, `EnableSkillGateSeat`.
 

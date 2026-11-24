@@ -935,8 +935,8 @@ namespace apmf::castclassify {
         // an NPC may use a spell it knows is the claim's to say; the minimum skill is the AI's own
         // opinion on that. Nothing else of the item changes: classification, score, equip and cast are
         // the same seats as for any claimed spell.
-        // DENY (the hole this opens, closed in core/EquipGate.cpp): the item outlives the claim until
-        // the inventory is rebuilt. While no claim drives it, an item whose spell the engine's own test
+        // DENY (the hole this opens, closed in core/EquipGate.cpp): the item outlives the claim for
+        // the rest of the fight (the engine's rebuild keeps it). While no claim drives it, an item whose spell the engine's own test
         // refuses is never admitted at 0x0F (SkillGateRefuses below, the same test from form data).
         // ====================================================================
         constexpr REL::VariantID kSkillCheckerVtable = RE::VTABLE_CombatMagicItemSkillChecker[0];
