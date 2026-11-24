@@ -20,6 +20,10 @@
 #include "core/ProjectileAim.h"       // ABI v36 GetProjectileAimState (ch.29)
 #include "core/PotionAllowance.h"     // ABI v37 SetPotionAllowance / GetPotionAllowanceState (ch.30)
 #include "core/CombatMove.h"          // ABI v38 kIntent_CombatMove (a one-shot, never a claim) + GetCombatMoveState
+#include "core/CastSeats.h"           // ABI v46 CastSeatCoverage: the seated caster rows
+#include "core/CastClassify.h"        // ABI v46: SkillGateInstalled
+#include "core/EquipGate.h"           // ABI v46: RowEquipAdmissionArmed
+#include "core/ReanimateSeat.h"       // ABI v46: Installed (the v42 corpse seat)
 
 // The C-ABI implementation behind APMF_API.h. These free functions forward to the
 // in-process multi-NPC engine (core/ControlMap) over its thread-safe enqueue path,
@@ -477,6 +481,11 @@ namespace {
             info.pending   = verdict == APMF_API::kServe_Accepted ? chk.pending : 0u;
             info.facets    = facets;
             info.offFacets = off;
+            // ABI v46: what this install's cast seats cover (APMF_API::CastSeatCoverage). Atomics only.
+            info.castSeats = apmf::castseats::CoverageMask() |
+                             (apmf::reanimateseat::Installed() ? APMF_API::kCastSeat_Reanimate : 0u) |
+                             (apmf::equipgate::RowEquipAdmissionArmed() ? APMF_API::kCastSeat_TypeEquip : 0u) |
+                             (apmf::castclassify::SkillGateInstalled() ? APMF_API::kCastSeat_SkillGate : 0u);
             if (verdict == APMF_API::kServe_Refused && chk.why) {
                 std::size_t n = 0;
                 for (; n + 1 < sizeof(info.why) && chk.why[n] != '\0'; ++n) info.why[n] = chk.why[n];
@@ -551,6 +560,7 @@ namespace {
         case 43: return "0.20.0";   // ch.31 kCombatMove_Block: the same release (confirm at the cut)
         case 44: return "0.20.0";   // ch.31 kCombatMove_PowerAttack: the same release (confirm at the cut)
         case 45: return "0.20.0";   // ch.33 combat style: the same release (confirm at the cut)
+        case 46: return "the release after 0.20.5";   // cast seat coverage (name it at the cut)
         default: return "a release newer than this one";
         }
     }

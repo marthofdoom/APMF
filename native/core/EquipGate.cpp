@@ -5,6 +5,8 @@
 #include "core/ControlMap.h"
 #include "core/EquipGate.h"
 #include "core/FacetAttribution.h"   // Harbinger 1b: the cast-hand paths ranked on the Cast facet
+#include "core/CastClassify.h"      // ABI v46: SkillAdmitted / SkillGateRefuses (the skill-gate deny)
+#include "core/CastSeats.h"         // ABI v46: EffectAlreadyOn (the row equip admission)
 #include "core/Sources.h"            // RegisterCallSeat: the Light darkness seat in the source census
 
 #include <cstring>
@@ -189,6 +191,35 @@ namespace apmf::equipgate {
         using Darkness_t = bool (*)(RE::Actor*);
         std::atomic<Darkness_t>     g_darkOrig{ nullptr };   // the VERIFIED darkness test, stored before the patch
         std::atomic<std::uintptr_t> g_lightItemVt{ 0 };      // CombatInventoryItemMagicT<Magic, Light>, when hooked here
+
+        // ---- ROW EQUIP ADMISSION (feat/seat-unseated-casters, ABI v46) ----------------------------------
+        // The Stagger / Disarm / TargetEffect / Paralyze ITEM's CheckShouldEquip is `true && the row's own
+        // condition` (Magic kind, AE / SE / 1.7.104 slot 0x0F: Stagger 0x830AD0 / 0x796480 / 0x845FC0, Disarm
+        // 0x82FE30 / 0x796220 / 0x845320, TargetEffect 0x82AA10 / 0x796500 / 0x83FF00, Paralyze 0x828A70 /
+        // 0x796340 / 0x83DF60). The conditions (AE: Disarm 0x820860, TargetEffect 0x821F50, Paralyze 0x822AE0;
+        // Stagger's is only the fleeing test):
+        //   every row   !cc->state->isFleeing (0x559490)
+        //   Disarm      a per-item cooldown, the target holds a weapon, afford (0x81E170), the effect applies
+        //               to the target (0x81E290), target within fCombatMagicDisarmDistance
+        //   TargetEffect afford, the target does not already carry this spell's effect (!0x81E400, skipped
+        //               for a concentration spell), the effect applies to the target (0x81E290: the MGEF's
+        //               conditions and the target's own acceptance)
+        //   Paralyze    cooldown, afford, not already applied, applies, target within
+        //               fCombatMagicParalyzeDistance
+        // Field 11-23 (MFO _evidence/deck-run-1123): Jesper's claimed Turn Lesser Undead on a Draugr Deathlord
+        // won its category score in every pass and was never equipped; the claimed form's 0x0F answer was the
+        // engine's (this thunk kept it and logged it only under the verbose flag).
+        // THE ADMISSION: for a live claim's DRIVEN form on its own hand, on one of these eight item vtables
+        // (spell and staff), while the claim outranks the source beneath the seat, an engine NO becomes YES.
+        // WHETHER and AT WHOM is the claim's. Two engine reasons are kept, read here from the same state the
+        // engine reads: the actor is fleeing, and the spell's effect is already on the claim's target (the
+        // 0x06 seat would refuse the cast for the same reason, so equipping would only hold the hand).
+        // Magicka stays the engine's at the cast itself. One line per flip, 10 s per actor and form.
+        // [CastSeats] EnableRowEquipAdmission (default 1).
+        std::unordered_set<std::uintptr_t> g_rowItemVts;          // written once at Install, read after
+        std::atomic<bool>                  g_rowEquipOn{ false };
+        std::atomic<std::uint32_t>         g_rowEquipFlips{ 0 };
+        std::atomic<std::uint32_t>         g_skillDenies{ 0 };
         thread_local bool           t_darkArmed   = false;
         thread_local bool           t_darkFlipped = false;
         std::atomic<std::uint64_t>  g_darkFlips{ 0 };
@@ -775,7 +806,7 @@ namespace apmf::equipgate {
             t_darkArmed   = darkArm;
             t_darkFlipped   = false;
             t_searchFlipped = false;
-            const bool engineSays = original(a_this, a_cc);
+            bool engineSays = original(a_this, a_cc);
             t_darkArmed = false;
             if (t_searchFlipped) g_searchFlips.fetch_add(1, std::memory_order_relaxed);
             if (t_darkFlipped) g_darkFlips.fetch_add(1, std::memory_order_relaxed);
@@ -798,8 +829,63 @@ namespace apmf::equipgate {
                              callerHand == allowance::Hand::kRight   ? "R" : "?",
                              engineSays ? "YES" : "NO");
             }
+            // ROW EQUIP ADMISSION (ABI v46, see g_rowItemVts): the claim's driven form on its own hand.
+            if (!engineSays && a_cc && fid != 0 && subjectForm != 0 && hasHandSeat &&
+                g_rowEquipOn.load(std::memory_order_relaxed) && g_rowItemVts.contains(vt)) {
+                const RE::FormID driven = handSeat.proxy ? handSeat.proxy : handSeat.spell;
+                if (driven != 0 && subjectForm == driven && castWins("the row equip admission")) {
+                    const bool  fleeing = a_cc->state && a_cc->IsFleeing();
+                    auto        tgtPtr  = handSeat.targetHandle.get();
+                    auto*       spell   = a_this->item ? a_this->item->As<RE::MagicItem>() : nullptr;
+                    const bool  applied = !fleeing && spell && apmf::castseats::EffectAlreadyOn(tgtPtr.get(), spell);
+                    const char* cls     = ResolveTypeName(vt);
+                    if (!fleeing && !applied) {
+                        engineSays = true;
+                        g_rowEquipFlips.fetch_add(1, std::memory_order_relaxed);
+                    }
+                    if (DarkLineDue(fid, subjectForm ^ 0x20000000u))
+                        spdlog::info("[t2a row equip] 0x{} CheckShouldEquip item=0x{} class={} hand={} (the driven form of "
+                                     "the cast claim, claim spell 0x{}{}, target 0x{}): the engine's own row condition "
+                                     "said NO -> {} ({} admission(s) since load).",
+                                     apmf::log::Hex(fid), apmf::log::Hex(subjectForm), cls ? cls : "<unresolved>",
+                                     callerHand == allowance::Hand::kLeft ? "L" : callerHand == allowance::Hand::kRight ? "R" : "?",
+                                     apmf::log::Hex(handSeat.spell), handSeat.proxy ? " via delivery-flip proxy" : "",
+                                     apmf::log::Hex(handSeat.target),
+                                     fleeing   ? "NO kept: the actor is fleeing"
+                                     : applied ? "NO kept: the spell's effect is already on the claim's target"
+                                               : "ADMITTED: WHETHER and AT WHOM are the claim's (not fleeing, effect not "
+                                                 "on the target; the engine's cooldown / distance / applies-to-target / "
+                                                 "afford tests are not asked; magicka is enforced at the cast)",
+                                     g_rowEquipFlips.load(std::memory_order_relaxed));
+                }
+            }
             if (!engineSays) return false;   // the AI already declined -- nothing to own
             if (!a_cc || fid == 0) return engineSays;
+
+            // SKILL-GATE DENY (ABI v46, core/CastClassify.cpp THE SKILL GATE). An item that exists only because
+            // a claim's driven form was admitted past the engine's minimum-skill test outlives that claim until
+            // the inventory is rebuilt. While NO live claim drives the form and the engine's test still refuses
+            // the spell for this actor, it is never admitted here: the admission gives the engine's own AI
+            // nothing it did not have. Unranked on purpose (it withdraws what Harbinger itself let in).
+            if (subjectForm != 0 && apmf::castclassify::SkillAdmitted(fid, subjectForm)) {
+                apmf::CastSeatClaim any{};
+                if (!apmf::ControlMap::Get().TryGetCastSeatClaimForForm(fid, subjectForm, any)) {
+                    auto  attPtr = a_cc->attackerHandle.get();
+                    auto* spell  = a_this->item ? a_this->item->As<RE::MagicItem>() : nullptr;
+                    apmf::castclassify::SkillGateWhy why{};
+                    if (attPtr && spell && apmf::castclassify::SkillGateRefuses(attPtr.get(), spell, &why)) {
+                        g_skillDenies.fetch_add(1, std::memory_order_relaxed);
+                        if (DarkLineDue(fid, subjectForm ^ 0x10000000u))
+                            spdlog::info("[t2a skill gate] 0x{} CheckShouldEquip item=0x{} -> NO: this item exists only "
+                                         "through a cast claim's skill-gate admission, no claim drives it now and the "
+                                         "engine's minimum-skill test still refuses it (effect 0x{} needs skill AV {} >= "
+                                         "{}, he has {:.0f}). {} such refusal(s) since load.",
+                                         apmf::log::Hex(fid), apmf::log::Hex(subjectForm), apmf::log::Hex(why.effect),
+                                         why.av, why.need, why.have, g_skillDenies.load(std::memory_order_relaxed));
+                        return false;
+                    }
+                }
+            }
 
             // Off-hand loan exemption (mirrors MFO CombatStyle.cpp's WantedSpell
             // rule): if this item IS the actor's own actively-claimed ch.8 spell,
@@ -984,6 +1070,31 @@ namespace apmf::equipgate {
             if (g_orig.contains(vt.address())) g_restoreVtables.insert(vt.address());
         }
         InstallLightDarknessSeat();
+        // ABI v46: the row equip admission (see g_rowItemVts). Only vtables this Install() hooked.
+        for (const auto& id : { RE::VTABLE_CombatInventoryItemMagicT_CombatInventoryItemMagic_CombatMagicCasterStagger_[0],
+                                RE::VTABLE_CombatInventoryItemMagicT_CombatInventoryItemMagic_CombatMagicCasterDisarm_[0],
+                                RE::VTABLE_CombatInventoryItemMagicT_CombatInventoryItemMagic_CombatMagicCasterTargetEffect_[0],
+                                RE::VTABLE_CombatInventoryItemMagicT_CombatInventoryItemMagic_CombatMagicCasterParalyze_[0],
+                                RE::VTABLE_CombatInventoryItemMagicT_CombatInventoryItemStaff_CombatMagicCasterStagger_[0],
+                                RE::VTABLE_CombatInventoryItemMagicT_CombatInventoryItemStaff_CombatMagicCasterDisarm_[0],
+                                RE::VTABLE_CombatInventoryItemMagicT_CombatInventoryItemStaff_CombatMagicCasterTargetEffect_[0],
+                                RE::VTABLE_CombatInventoryItemMagicT_CombatInventoryItemStaff_CombatMagicCasterParalyze_[0] }) {
+            REL::Relocation<std::uintptr_t> vt{ id };
+            if (g_orig.contains(vt.address())) g_rowItemVts.insert(vt.address());
+        }
+        const bool rowOn = GetPrivateProfileIntA("CastSeats", "EnableRowEquipAdmission", 1, "Data/SKSE/Plugins/APMF.ini") != 0;
+        g_rowEquipOn.store(rowOn && g_rowItemVts.size() == 8, std::memory_order_release);
+        if (!rowOn)
+            spdlog::info("[t2a row equip] disabled by [CastSeats] EnableRowEquipAdmission=0 -- a claimed Stagger / Disarm / "
+                         "TargetEffect / Paralyze spell is equipped only when the engine's own row condition allows it.");
+        else if (g_rowItemVts.size() != 8)
+            spdlog::error("[t2a row equip] NOT armed: only {} of the 8 Stagger / Disarm / TargetEffect / Paralyze item "
+                          "vtables (spell and staff) carry the 0x0F seat. The engine's own row condition decides.",
+                          g_rowItemVts.size());
+        else
+            spdlog::info("[t2a row equip] armed on the 8 Stagger / Disarm / TargetEffect / Paralyze item vtables (spell and "
+                         "staff): a live cast claim's driven form on its own hand is admitted when the engine's row "
+                         "condition says NO, unless the actor is fleeing or the effect is already on the claim's target.");
         spdlog::info("[t2a] CheckShouldEquip allowance hooked on {} spell/staff inventory-item "
                      "vtable(s) -- ch.8 casting-select and ch.15 equipment (weapon-order) "
                      "claims now enforced here too; ch.8b is per-hand-scoped via "
@@ -1003,6 +1114,8 @@ namespace apmf::equipgate {
                      g_denyCompleteEnabled.load(std::memory_order_relaxed) ? "ON (default)" : "OFF",
                      g_logEnabled.load(std::memory_order_relaxed) ? "ON" : "OFF (default)");
     }
+
+    bool RowEquipAdmissionArmed() { return g_rowEquipOn.load(std::memory_order_acquire); }
 
     bool DenyCompleteActive() {
         return g_hooked.load(std::memory_order_acquire) == kSpellStaffVtables &&
