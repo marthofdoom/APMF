@@ -11,9 +11,12 @@ kApproach_Hold` (ABI v39), in MFO since `native/apmf/GroundApproach.cpp` / `Dise
 - **Verified in the field** (MFO `_evidence/deck-run-1117b-full/APMF.log`, R 90): 8 point declarations (5 engaged, 3
   re-pointed). 3 reached HOLDING in about 3 s and held at 19 to 87 units with the engine's INSIDE verdict and no
   leave-and-return; 1 ended EngineDropped (a point 1160 units away, the bound carried once); 1 ended "never updated in
-  3 s" right after a Repoint (cause not in the log); the other 3 show only APPROACHING status lines before their release. Numbers and tables: `Docs/FACETS.md` ch.24 "Holding a spot". The header's "NOT yet observed on a deck" was stale.
+  3 s" right after a Repoint (cause not in the log); 1 re-point at 12:36:19 MOVED AWAY (159 to 250 units in 3 s under an
+  OUTSIDE verdict, never arrived: an observed failure, cause unknown); the other 2 show only APPROACHING lines. Inside R
+  the gait probe saw forward, strafe and backpedal samples (46 to 210 units/s). Facing was not measured. Numbers and tables: `Docs/FACETS.md` ch.24 "Holding a spot". The header's "NOT yet observed on a deck" was stale.
 - **Built (the one gap that was safe to close):** a scripted move is not a stall. `channels/CombatApproach.cpp` Poll: while
-  `Actor::IsAnimationDriven()` the 3 s floor does not run and restarts at the end of the move (`kAnimExcuseMs` 10 s cap,
+  `Actor::IsAnimationDriven()` (read before `g_entryMx`, review P3) the 3 s floor does not run and restarts at the end of
+  the move (`kAnimExcuseMs` 10 s in total since the engine's last real update, review P1; the cap ending a claim is logged,
   `Entry::animSinceMs / animLastMs / animSaved`). One line when it kept a claim: `[ch.24] ... a SCRIPTED MOVE was not read as
   a stall`. No seat, no address, no ABI change. Unknown: whether FollowerParkour / SkyParkour moves set `bAnimationDriven`.
 - **Not built, with the reason:** a true stand-still inside R. The only complete way is to hold the Movement half of the

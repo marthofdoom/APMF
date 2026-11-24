@@ -3576,9 +3576,11 @@ Gate on `abiVersion >= 39`. An older Harbinger refuses the claim (no target), so
 |---|---|
 | Walking in | 320 units in 3.1 s, 378 in 3.1 s, 367 in 3.0 s. A forward run at 130 to 320 units/s (gait probe), the engine's Return To Combat Area |
 | Arrival | `HOLDING ... engine: INSIDE, standard area CURRENT` at 19, 61 and 67 units from the point |
-| While holding | 19 to 87 units from the point. Gait probe inside R: backpedal and strafe at 46 to 105 units/s, heading 90 to 179 degrees off the velocity. He faces his target and shuffles |
+| While holding | 19 to 87 units from the point. Gait probe inside R, 7 samples: 3 forward (71, 105, 210 units/s), 2 strafe (50, 62), 2 backpedal (46, 54). He keeps moving in short steps. The probe compares his heading with his velocity. It does not say what he faces, so facing the target is NOT measured |
 | Leaving and coming back | none after arrival: the engine's "outside" count stayed at 4, 5 and 6 across each hold |
 | A point he cannot reach | ended after 3 s as `kApproachState_EngineDropped`, logged (1160 units away, the area carried the bound once) |
+| **Observed failure: a re-point that moved away** | 12:36:19, re-pointed to a point 159 units off. 3 s later he was 250 units from it, the engine's verdict OUTSIDE with 11 outside answers and the bound carried 11 times, and the gait probe shows forward runs at 245 to 310 units/s. He never arrived before the claim was replaced. Cause not known (his held target was 1500 units away at the time). The same follower reached three other points |
+| A re-point that never applied | 12:38:29, ended after 3 s: the engine never updated his standard area (bound carried 0 times). Cause not in the log |
 | End of the fight | `kApproachState_CombatEnded`, logged |
 
 **Why he still moves inside R.** The combat tree runs Movement and Action side by side. Outside the area the movement selector takes Return To Combat Area. Inside it the other movement leaves run as in any fight (ranged, flanking and close movement) and each destination is clamped to the area. A small R makes those moves short. It does not remove them. Actions are untouched: attack, cast, shoot and block read the engine's own area.
@@ -3598,14 +3600,14 @@ Gate on `abiVersion >= 39`. An older Harbinger refuses the claim (no target), so
 
 There is no separate "blocked" state. A follower who is alive, in combat and making no progress reads `Approaching` with a growing `msInState` and a flat `distance` until the engine gives up (`EngineDropped`). The client decides how long to wait.
 
-**A scripted move is not a stall.** While the actor's graph says `bAnimationDriven` (a parkour climb or vault, a paired animation, a kill move) the 3 s "the engine stopped updating the bound" floor does not run, and it runs again from the end of the move. At most 10 s of one move is excused. When that kept a claim alive the log says `[ch.24] ... a SCRIPTED MOVE was not read as a stall`. Not field run: whether SkyParkour's follower moves set `bAnimationDriven` is not confirmed.
+**A scripted move is not a stall.** While the actor's graph says `bAnimationDriven` (a parkour climb or vault, a paired animation, a kill move) the 3 s "the engine stopped updating the bound" floor does not run, and it runs again from the end of the move. At most 10 s is excused in all since the engine's last update of the bound, so chained moves cannot renew it, and when that cap ends a claim the log says `the scripted-move excuse ran out`. When that kept a claim alive the log says `[ch.24] ... a SCRIPTED MOVE was not read as a stall`. Not field run: whether SkyParkour's follower moves set `bAnimationDriven` is not confirmed.
 
 **What is not there.**
 
 | Wanted | Today | What it would take |
 |---|---|---|
 | Standing still inside R, no shuffle | not offered. A smaller R shortens the shuffle. No R under 90 has been run | holding the Movement half of the combat tree for a claimed actor in a real fight, the way the combat substrate holds it for its holders (`core/ActionGate.cpp` MOVEMENT HOLD). That is a new deny on a facet the engine switches on, with its own act / pop proof and field cycle. Not built |
-| Facing a chosen thing | the engine faces his combat target. On the walk in he may turn his back (a forward run). ch.20 pin chooses the target | nothing for the hold. A facing facet for the walk in would be new |
+| Facing a chosen thing | not claimed and not measured. The engine's combat movement decides where he faces. On the walk in he runs forward, so he may turn his back on a foe. ch.20 pin chooses the target | a facing facet would be new. First measure it (heading against the bearing to his target) |
 | Choosing the gait | the engine's combat run on the way in. ch.1a (`kIntent_Gait`) scales speed | nothing new |
 | A different arrival radius and hold radius | one R. A client can Repoint to a smaller R once it reads `Holding` | nothing new |
 

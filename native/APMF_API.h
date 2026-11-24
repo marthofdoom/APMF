@@ -840,11 +840,13 @@ namespace APMF_API {
                                     //   HOLDING A SPOT = kApproach_Point | kApproach_Hold with a small R.
                                     //   The actor is NOT frozen: inside R the engine's own movement
                                     //   leaves still run, every destination clamped to the disc, so it
-                                    //   strafes and backpedals a few steps while facing its target, and
-                                    //   attacks, casts, shoots and blocks as in any fight (measured at
-                                    //   R 90: 19 to 87 units from the point, about 50 to 100 units/s, no
-                                    //   leave-and-return after arrival). No R below 90 has been run on a
-                                    //   deck. A true stand-still inside R is not part of this facet.
+                                    //   keeps moving in short steps and attacks, casts, shoots and blocks
+                                    //   as in any fight (measured at R 90 by the gait probe: 19 to 87
+                                    //   units from the point, forward, strafe and backpedal samples at 46
+                                    //   to 210 units/s, no leave-and-return after arrival; where it FACES
+                                    //   was not measured). One re-point in that run moved away from its
+                                    //   point and never arrived. No R below 90 has been run on a deck. A
+                                    //   true stand-still inside R is not part of this facet.
         kApproach_Point = 1u << 1,  // ABI v39. The centre is a WORLD POINT, param.pos, instead of a reference:
                                     //   "give ground to there". param.target MUST be 0 with this bit (so an APMF
                                     //   older than v39, which does not know the bit, REFUSES the claim for its
