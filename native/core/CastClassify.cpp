@@ -1044,6 +1044,26 @@ namespace apmf::castclassify {
         return false;
     }
 
+    namespace {
+        // The engine's equip-slot test of add-item (AE 0x810340, `bool(CombatInventory*, BGSEquipSlot*)`), from form
+        // data. The inventory's slot list (+0xE0) is a pointer to its owner's RACE equip slots (AE 0x810A97 /
+        // 0x80F088: `[actor+0x1F8] + 0x410`, TESRace::equipSlots). A slot with parents asks each parent and
+        // answers its "use all parents" flag unless a parent answers otherwise; a slot without parents is carried
+        // when it is in the list. A null slot is not carried.
+        bool SlotCarried(const RE::BSTArray<RE::BGSEquipSlot*>& a_slots, const RE::BGSEquipSlot* a_slot, int a_depth) {
+            if (!a_slot || a_depth > 8) return false;
+            if (!a_slot->parentSlots.empty()) {
+                const bool all = a_slot->flags.any(RE::BGSEquipSlot::Flag::kUseAllParents);
+                for (const auto* p : a_slot->parentSlots)
+                    if (SlotCarried(a_slots, p, a_depth + 1) != all) return !all;
+                return all;
+            }
+            for (const auto* s : a_slots)
+                if (s == a_slot) return true;
+            return false;
+        }
+    }
+
     std::string DescribeAdmission(RE::Actor* a_actor, const RE::MagicItem* a_spell) {
         if (!a_actor || !a_spell) return {};
         const auto  type = a_spell->GetSpellType();
@@ -1052,6 +1072,14 @@ namespace apmf::castclassify {
             s = fmt::format(" Engine item tests: spell type {} is not kSpell, so the combat AI gives it NO item (no seat "
                             "changes that).",
                             static_cast<std::int32_t>(type));
+        if (const auto* spellItem = a_spell->As<RE::SpellItem>()) {
+            const auto* race = a_actor->GetRace();
+            const auto* slot = spellItem->GetEquipSlot();
+            if (race && !SlotCarried(race->equipSlots, slot, 0))
+                s += fmt::format(" Engine item tests: its equip slot 0x{} is NOT one his race carries, so the combat AI "
+                                 "gives it NO item (no seat changes that).",
+                                 apmf::log::Hex(slot ? slot->GetFormID() : 0));
+        }
         SkillGateWhy why{};
         if (SkillGateRefuses(a_actor, a_spell, &why))
             s += fmt::format(" Engine item tests: the minimum-skill test REFUSES this spell (effect 0x{} needs skill AV "

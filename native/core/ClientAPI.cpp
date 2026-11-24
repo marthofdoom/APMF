@@ -482,9 +482,14 @@ namespace {
             info.facets    = facets;
             info.offFacets = off;
             // ABI v46: what this install's cast seats cover (APMF_API::CastSeatCoverage). Atomics only.
-            info.castSeats = apmf::castseats::CoverageMask() |
+            // kCastSeat_TypeEquip only with at least one of its four rows covered (review S1): the admission of an
+            // item is gated on its own row's bit at each call.
+            const std::uint32_t rows    = apmf::castseats::CoverageMask();
+            const std::uint32_t hostile = APMF_API::kCastSeat_Stagger | APMF_API::kCastSeat_Disarm |
+                                          APMF_API::kCastSeat_TargetEffect | APMF_API::kCastSeat_Paralyze;
+            info.castSeats = rows |
                              (apmf::reanimateseat::Installed() ? APMF_API::kCastSeat_Reanimate : 0u) |
-                             (apmf::equipgate::RowEquipAdmissionArmed() ? APMF_API::kCastSeat_TypeEquip : 0u) |
+                             (apmf::equipgate::RowEquipAdmissionArmed() && (rows & hostile) != 0 ? APMF_API::kCastSeat_TypeEquip : 0u) |
                              (apmf::castclassify::SkillGateInstalled() ? APMF_API::kCastSeat_SkillGate : 0u);
             if (verdict == APMF_API::kServe_Refused && chk.why) {
                 std::size_t n = 0;

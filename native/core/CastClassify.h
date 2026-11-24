@@ -117,9 +117,9 @@ namespace apmf::castclassify {
     };
     bool SkillGateRefuses(RE::Actor* a_actor, const RE::MagicItem* a_spell, SkillGateWhy* a_why = nullptr);
 
-    // PASSIVE, for the "[ch.8b] cast-execution CLAIMED" line (game thread): which of the engine's two
-    // pre-classification item tests the claimed spell fails natively for this actor (spell type, minimum
-    // skill), and whether the skill-gate seat covers it. Empty when it passes both.
+    // PASSIVE, for the "[ch.8b] cast-execution CLAIMED" line (game thread): which of the engine's three
+    // pre-classification item tests the claimed spell fails natively for this actor (spell type, equip slot,
+    // minimum skill), and whether the skill-gate seat covers it. Empty when it passes all three.
     std::string DescribeAdmission(RE::Actor* a_actor, const RE::MagicItem* a_spell);
 
     // A spell with a SummonCreature or Reanimate effect (feat/apmf-buff-summon-seats, ClickUp

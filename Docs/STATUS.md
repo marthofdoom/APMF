@@ -79,6 +79,15 @@ Agentlog `/mnt/gaming/modlists/Projects/_agentlogs/harbinger/seats-and-point.md`
   decides it alone. Turn Lesser Undead at a Deathlord will be cast and wasted. `cast_control` needs the level cap
   (magnitude against the target's level) and the keyword conditions in its own scoring.
 
+**Review round 1 (Opus tier A on 55f7a60, nothing above SEV-3), fixed here.** S1 an item is admitted only while its own
+row's caster bit is set, and `kCastSeat_TypeEquip` is reported only with one of the four row bits. S2 "cannot afford" is a
+third kept engine NO for a spell item (Magicka > the item's cost, the engine's own test; a staff's charge is not asked;
+Offensive's 0x0F is only "not fleeing"), and the client contract is written (FACETS, the header). S3 the skill-gate deny
+marks the inventory dirty so the engine drops the leftover item. S4 the deny's exemption is the hand-scoped ranked claim
+test. S5 the two hand-edited ch.21 rows are in `spec.json` `layout_facts`; a regen now reproduces the doc byte for byte.
+The CLAIMED line also reports the equip-slot test (the race's equip slots, AE `0x810340`). Field 11-23 corroboration from
+the review: MFO.log 7981-7982, Turn Lesser Undead caps at level 10 / 15 against a level 40 target.
+
 **Open.** Stagger / Disarm casters never observed. Category 5 (short duration) items are walked after weapons. A staff of
 these rows is untested. Which sub-test refused Turn Lesser Undead is inferred. Blur's cause is one of two (logged now).
 

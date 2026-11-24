@@ -3865,8 +3865,14 @@ namespace APMF_API {
     // The four rows v46 adds (Stagger, Disarm, TargetEffect, Paralyze) come with kCastSeat_TypeEquip: the
     // row's own equip condition (the item's CheckShouldEquip: its cooldown, its distance, "the effect applies
     // to this target", "the target holds a weapon") no longer refuses the claim's driven form on its own
-    // hand. Two engine reasons still stand there: the actor is fleeing, and the spell's effect is already on
-    // the target (not asked for a concentration spell).
+    // hand. Three engine reasons still stand there: the actor is fleeing, the spell's effect is already on
+    // the target (not asked for a concentration spell), and for a spell (not a staff) he cannot afford it.
+    // The bit is reported only with at least one of the four row bits, and an item is admitted only while
+    // its own row's bit is set.
+    // THE CLIENT'S PART once it claims such a spell (the engine no longer checks these for the claim): the
+    // row's keyed effect can land on the claimed target (the effect's conditions; for Turn Undead the level
+    // its magnitude allows), a Disarm target holds a weapon, and the target is in the spell's reach (the
+    // engine asked Stagger / Disarm 256 and Paralyze 384 units by its GMSTs).
     // kCastSeat_SkillGate: the engine gives an NPC no combat item for a spell when one of its effects has a
     // minimum skill (MGEF "Minimum Skill Level") above the NPC's skill; with this bit a live claim's driven
     // form passes that test, so the claimed spell can be chosen at all.

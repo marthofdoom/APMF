@@ -1652,15 +1652,18 @@ non-hostile Value/PeakValue/DualValue modifier on Health/Magicka/Stamina). Lines
 ### `native/core/EquipGate.cpp` — T2a: CheckShouldEquip allowance (per-item equip gate)
 **ABI v46 (2026-11-23, `feat/seat-unseated-casters`, NOT field run): two blocks right after the engine's answer.**
 (1) ROW EQUIP ADMISSION: on the 8 Stagger / Disarm / TargetEffect / Paralyze item vtables (`g_rowItemVts`, spell + staff),
-the engine's NO becomes YES for the claim's driven form on its own hand (`castWins`), unless the actor is fleeing or
-`castseats::EffectAlreadyOn(claim target, spell)`. `[CastSeats] EnableRowEquipAdmission`, armed only with all 8 hooked,
+the engine's NO becomes YES for the claim's driven form on its own hand (`castWins`), unless the actor is fleeing,
+`castseats::EffectAlreadyOn(claim target, spell)`, or (a spell item) Magicka is not above `currentAV`, the item's cost.
+`g_rowItemVts` maps each item vtable to its row's coverage bit and the admission reads `castseats::CoverageMask()` at
+each call (review S1). `[CastSeats] EnableRowEquipAdmission`, armed only with all 8 hooked,
 `RowEquipAdmissionArmed()`. (2) SKILL-GATE DENY: after an engine YES, an item whose (actor, spell) pair the skill gate
 ever admitted is refused while no live claim drives the form and `castclassify::SkillGateRefuses` still holds.
 INVARIANTS #20 argues both. **To admit another row: add its two item vtables to the list in `Install` and the count check.**
 - **What breaks:** moving block (1) above the deny-complete block (it would admit under another hand's claim); dropping
   the fleeing / already-applied tests (he equips and holds a spell the 0x06 seat refuses); ranking block (2) (it must
-  withdraw what Harbinger let in whatever the priorities say); testing the claim by hand in block (2) instead of by form
-  (a dual-cast or other-hand claim on the same form must not be denied).
+  withdraw what Harbinger let in whatever the priorities say); exempting by form alone in block (2) (review S4: the
+  exemption is the claim on THIS hand that outranks the seat's source); dropping the `dirty` write there (review S3:
+  it is what makes the engine drop the leftover item).
 **HARBINGER 1b CAST SLICE (2026-10-12):** every claim-driven refusal / substitution here is ranked on the Cast facet against the seat's displaced function (`core/FacetAttribution` "CAST SLICE"); never give a claim answer before that test, and never count it on the silent follow-on seats.
 Hooks `CombatInventoryItem::CheckShouldEquip` (vtable slot **0x0F**) on the 30
 concrete spell/staff `CombatInventoryItemMagicT<item,caster>` instantiations —

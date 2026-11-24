@@ -11,6 +11,7 @@
 
 #include <cstring>
 #include <intrin.h>
+#include <unordered_map>
 #include <unordered_set>
 
 // Win32 INI read for the one log-gate flag this file adds below. Declared by
@@ -214,9 +215,23 @@ namespace apmf::equipgate {
         // WHETHER and AT WHOM is the claim's. Two engine reasons are kept, read here from the same state the
         // engine reads: the actor is fleeing, and the spell's effect is already on the claim's target (the
         // 0x06 seat would refuse the cast for the same reason, so equipping would only hold the hand).
-        // Magicka stays the engine's at the cast itself. One line per flip, 10 s per actor and form.
-        // [CastSeats] EnableRowEquipAdmission (default 1).
-        std::unordered_set<std::uintptr_t> g_rowItemVts;          // written once at Install, read after
+        // Review round 1 on 55f7a60:
+        //   S1  an item vtable is admitted only while ITS ROW's caster seats are installed (the row's
+        //       CastSeatCoverage bit in castseats::CoverageMask(), read at the call): without 0x06 / 0x0A the
+        //       admitted spell would be started and aimed by the engine's own answers.
+        //   S2  "cannot afford" is the third engine NO that is kept, for a SPELL item: the engine's test (AE
+        //       0x81E170) is `item cost (+0x40, the item's own) <= 0, or the resource AV > cost`, and the
+        //       resource of a kSpell / lesser power / poison is Magicka (AE 0x5C6670 returns 0x19). A STAFF's
+        //       resource is its hand's item charge, picked by a hand argument this seat does not have: for a
+        //       staff the afford test is not asked (the cast itself enforces the charge). For comparison the
+        //       Offensive row's 0x0F (AE 0x834270) is `true && !fleeing` and nothing else: the engine equips an
+        //       unaffordable Offensive spell too and refuses it at the cast.
+        // One line per decision, 10 s per actor and form. [CastSeats] EnableRowEquipAdmission (default 1).
+        // CLIENT CONTRACT (what the claim now answers for, Docs/FACETS.md ch.8b "Cast seat coverage"): the
+        // row's KEYED effect must be able to land on the claimed target (its conditions, the level cap a Turn
+        // Undead magnitude is), a Disarm needs a target holding a weapon, and the row's distance (Stagger /
+        // Disarm 256, Paralyze 384 by the GMSTs) and cooldown are no longer asked.
+        std::unordered_map<std::uintptr_t, std::uint32_t> g_rowItemVts;   // item vtable -> its row's CastSeatCoverage bit; written once at Install
         std::atomic<bool>                  g_rowEquipOn{ false };
         std::atomic<std::uint32_t>         g_rowEquipFlips{ 0 };
         std::atomic<std::uint32_t>         g_skillDenies{ 0 };
@@ -831,15 +846,33 @@ namespace apmf::equipgate {
             }
             // ROW EQUIP ADMISSION (ABI v46, see g_rowItemVts): the claim's driven form on its own hand.
             if (!engineSays && a_cc && fid != 0 && subjectForm != 0 && hasHandSeat &&
-                g_rowEquipOn.load(std::memory_order_relaxed) && g_rowItemVts.contains(vt)) {
+                g_rowEquipOn.load(std::memory_order_relaxed) && g_rowItemVts.contains(vt) &&
+                (apmf::castseats::CoverageMask() & g_rowItemVts.find(vt)->second) != 0) {   // S1: this row's caster is seated
                 const RE::FormID driven = handSeat.proxy ? handSeat.proxy : handSeat.spell;
                 if (driven != 0 && subjectForm == driven && castWins("the row equip admission")) {
                     const bool  fleeing = a_cc->state && a_cc->IsFleeing();
                     auto        tgtPtr  = handSeat.targetHandle.get();
                     auto*       spell   = a_this->item ? a_this->item->As<RE::MagicItem>() : nullptr;
                     const bool  applied = !fleeing && spell && apmf::castseats::EffectAlreadyOn(tgtPtr.get(), spell);
+                    // S2: the engine's afford test for a spell item (see the banner). The cost is the item's own.
+                    bool  broke = false;
+                    float cost = 0.0f, magicka = 0.0f;
+                    if (!fleeing && !applied && spell && spell->Is(RE::FormType::Spell)) {
+                        const auto st = spell->GetSpellType();
+                        if (st == RE::MagicSystem::SpellType::kSpell || st == RE::MagicSystem::SpellType::kLesserPower ||
+                            st == RE::MagicSystem::SpellType::kPoison) {
+                            cost = static_cast<RE::CombatInventoryItemMagic*>(a_this)->currentAV;
+                            if (cost > 0.0f) {
+                                auto attPtr = a_cc->attackerHandle.get();
+                                if (auto* avo = attPtr ? attPtr->AsActorValueOwner() : nullptr) {
+                                    magicka = avo->GetActorValue(RE::ActorValue::kMagicka);
+                                    broke   = !(magicka > cost);
+                                }
+                            }
+                        }
+                    }
                     const char* cls     = ResolveTypeName(vt);
-                    if (!fleeing && !applied) {
+                    if (!fleeing && !applied && !broke) {
                         engineSays = true;
                         g_rowEquipFlips.fetch_add(1, std::memory_order_relaxed);
                     }
@@ -851,11 +884,13 @@ namespace apmf::equipgate {
                                      callerHand == allowance::Hand::kLeft ? "L" : callerHand == allowance::Hand::kRight ? "R" : "?",
                                      apmf::log::Hex(handSeat.spell), handSeat.proxy ? " via delivery-flip proxy" : "",
                                      apmf::log::Hex(handSeat.target),
-                                     fleeing   ? "NO kept: the actor is fleeing"
-                                     : applied ? "NO kept: the spell's effect is already on the claim's target"
-                                               : "ADMITTED: WHETHER and AT WHOM are the claim's (not fleeing, effect not "
-                                                 "on the target; the engine's cooldown / distance / applies-to-target / "
-                                                 "afford tests are not asked; magicka is enforced at the cast)",
+                                     fleeing   ? std::string("NO kept: the actor is fleeing")
+                                     : applied ? std::string("NO kept: the spell's effect is already on the claim's target")
+                                     : broke   ? fmt::format("NO kept: he cannot afford it (Magicka {:.0f}, the item's cost "
+                                                             "{:.0f})", magicka, cost)
+                                               : std::string("ADMITTED: WHETHER and AT WHOM are the claim's (not fleeing, "
+                                                             "effect not on the target, affordable or a staff; the engine's "
+                                                             "cooldown / distance / applies-to-target tests are not asked)"),
                                      g_rowEquipFlips.load(std::memory_order_relaxed));
                 }
             }
@@ -868,18 +903,26 @@ namespace apmf::equipgate {
             // the spell for this actor, it is never admitted here: the admission gives the engine's own AI
             // nothing it did not have. Unranked on purpose (it withdraws what Harbinger itself let in).
             if (subjectForm != 0 && apmf::castclassify::SkillAdmitted(fid, subjectForm)) {
-                apmf::CastSeatClaim any{};
-                if (!apmf::ControlMap::Get().TryGetCastSeatClaimForForm(fid, subjectForm, any)) {
+                // Review S4: "a claim drives it" is the SAME hand-scoped, ranked test every other claim answer in
+                // this thunk uses (the claim on THIS item's hand names this form and outranks the seat's source).
+                // A claim on the other hand, or one the engine's answers stand against, does not exempt the item.
+                const RE::FormID drivenHere = hasHandSeat ? (handSeat.proxy ? handSeat.proxy : handSeat.spell) : 0;
+                if (!(drivenHere != 0 && drivenHere == subjectForm && castWins("the skill-gate deny exemption"))) {
                     auto  attPtr = a_cc->attackerHandle.get();
                     auto* spell  = a_this->item ? a_this->item->As<RE::MagicItem>() : nullptr;
                     apmf::castclassify::SkillGateWhy why{};
                     if (attPtr && spell && apmf::castclassify::SkillGateRefuses(attPtr.get(), spell, &why)) {
                         g_skillDenies.fetch_add(1, std::memory_order_relaxed);
+                        // Review S3: ask the engine to rebuild this inventory (the same one-bool write the SEAT 0
+                        // rebuild trigger above makes, same thread, same controller). Its own add-item pass then
+                        // runs the minimum-skill test with no claim to admit the spell, and the item is gone.
+                        if (a_cc->inventory) a_cc->inventory->dirty = true;
                         if (DarkLineDue(fid, subjectForm ^ 0x10000000u))
                             spdlog::info("[t2a skill gate] 0x{} CheckShouldEquip item=0x{} -> NO: this item exists only "
                                          "through a cast claim's skill-gate admission, no claim drives it now and the "
                                          "engine's minimum-skill test still refuses it (effect 0x{} needs skill AV {} >= "
-                                         "{}, he has {:.0f}). {} such refusal(s) since load.",
+                                         "{}, he has {:.0f}). The inventory is marked for the engine's own rebuild, which "
+                                         "drops the item. {} such refusal(s) since load.",
                                          apmf::log::Hex(fid), apmf::log::Hex(subjectForm), apmf::log::Hex(why.effect),
                                          why.av, why.need, why.have, g_skillDenies.load(std::memory_order_relaxed));
                         return false;
@@ -1071,16 +1114,21 @@ namespace apmf::equipgate {
         }
         InstallLightDarknessSeat();
         // ABI v46: the row equip admission (see g_rowItemVts). Only vtables this Install() hooked.
-        for (const auto& id : { RE::VTABLE_CombatInventoryItemMagicT_CombatInventoryItemMagic_CombatMagicCasterStagger_[0],
-                                RE::VTABLE_CombatInventoryItemMagicT_CombatInventoryItemMagic_CombatMagicCasterDisarm_[0],
-                                RE::VTABLE_CombatInventoryItemMagicT_CombatInventoryItemMagic_CombatMagicCasterTargetEffect_[0],
-                                RE::VTABLE_CombatInventoryItemMagicT_CombatInventoryItemMagic_CombatMagicCasterParalyze_[0],
-                                RE::VTABLE_CombatInventoryItemMagicT_CombatInventoryItemStaff_CombatMagicCasterStagger_[0],
-                                RE::VTABLE_CombatInventoryItemMagicT_CombatInventoryItemStaff_CombatMagicCasterDisarm_[0],
-                                RE::VTABLE_CombatInventoryItemMagicT_CombatInventoryItemStaff_CombatMagicCasterTargetEffect_[0],
-                                RE::VTABLE_CombatInventoryItemMagicT_CombatInventoryItemStaff_CombatMagicCasterParalyze_[0] }) {
-            REL::Relocation<std::uintptr_t> vt{ id };
-            if (g_orig.contains(vt.address())) g_rowItemVts.insert(vt.address());
+        {
+            const std::pair<REL::VariantID, std::uint32_t> rowItems[] = {
+                { RE::VTABLE_CombatInventoryItemMagicT_CombatInventoryItemMagic_CombatMagicCasterStagger_[0], APMF_API::kCastSeat_Stagger },
+                { RE::VTABLE_CombatInventoryItemMagicT_CombatInventoryItemMagic_CombatMagicCasterDisarm_[0], APMF_API::kCastSeat_Disarm },
+                { RE::VTABLE_CombatInventoryItemMagicT_CombatInventoryItemMagic_CombatMagicCasterTargetEffect_[0], APMF_API::kCastSeat_TargetEffect },
+                { RE::VTABLE_CombatInventoryItemMagicT_CombatInventoryItemMagic_CombatMagicCasterParalyze_[0], APMF_API::kCastSeat_Paralyze },
+                { RE::VTABLE_CombatInventoryItemMagicT_CombatInventoryItemStaff_CombatMagicCasterStagger_[0], APMF_API::kCastSeat_Stagger },
+                { RE::VTABLE_CombatInventoryItemMagicT_CombatInventoryItemStaff_CombatMagicCasterDisarm_[0], APMF_API::kCastSeat_Disarm },
+                { RE::VTABLE_CombatInventoryItemMagicT_CombatInventoryItemStaff_CombatMagicCasterTargetEffect_[0], APMF_API::kCastSeat_TargetEffect },
+                { RE::VTABLE_CombatInventoryItemMagicT_CombatInventoryItemStaff_CombatMagicCasterParalyze_[0], APMF_API::kCastSeat_Paralyze },
+            };
+            for (const auto& [id, bit] : rowItems) {
+                REL::Relocation<std::uintptr_t> vt{ id };
+                if (g_orig.contains(vt.address())) g_rowItemVts.emplace(vt.address(), bit);
+            }
         }
         const bool rowOn = GetPrivateProfileIntA("CastSeats", "EnableRowEquipAdmission", 1, "Data/SKSE/Plugins/APMF.ini") != 0;
         g_rowEquipOn.store(rowOn && g_rowItemVts.size() == 8, std::memory_order_release);
@@ -1094,7 +1142,9 @@ namespace apmf::equipgate {
         else
             spdlog::info("[t2a row equip] armed on the 8 Stagger / Disarm / TargetEffect / Paralyze item vtables (spell and "
                          "staff): a live cast claim's driven form on its own hand is admitted when the engine's row "
-                         "condition says NO, unless the actor is fleeing or the effect is already on the claim's target.");
+                         "condition says NO, unless the actor is fleeing, the effect is already on the claim's target or "
+                         "(a spell) he cannot afford it. Each item only while its row's caster seats are installed "
+                         "(core/CastSeats.cpp runs later at kDataLoaded; the row bit is read at each call).");
         spdlog::info("[t2a] CheckShouldEquip allowance hooked on {} spell/staff inventory-item "
                      "vtable(s) -- ch.8 casting-select and ch.15 equipment (weapon-order) "
                      "claims now enforced here too; ch.8b is per-hand-scoped via "
