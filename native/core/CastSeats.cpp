@@ -3,6 +3,8 @@
 #include "core/Clock.h"
 #include "core/Allowance.h"
 #include "core/CastObserve.h"   // NoteStopCast (castobs channel end)
+#include "core/FireOnce.h"      // ABI v47 kCastFlag_FireOnce: the per-claim fire ledger
+#include "channels/CombatEntry.h"   // RecordClaimEnd (kClaimEnd_Fired)
 #include "core/ControlMap.h"
 #include "core/CastSeats.h"
 #include "core/RestoreCensus.h"
@@ -432,6 +434,80 @@ namespace apmf::castseats {
             return a_pct < a_floor;
         }
 
+        // ====================================================================
+        // FIRE ONCE (ABI v47, kCastFlag_FireOnce). The bound declared by the CLAIM, on any caster type: composed
+        // into 0x06 as a NO, never a write, and read for no other claim (every entry tests the flag first).
+        //
+        // THE FIRE SIGNAL is the actor's TESSpellCastEvent for the claim's driven form after a 0x06 YES for that
+        // claim's handle. No per-claim counter existed: the caster-type census' 0x0B counts are per window, log
+        // only and INI-gated, and 0x0B is the release REQUEST (the cast can still be interrupted; APMF-B93); the
+        // substrate's event sink records substrate holders only. The event is the one the substrate already
+        // closes on, sent synchronously inside ActorMagicCaster::SpellCast (SE 0x54272C), so it is in before the
+        // hand can be asked again.
+        //
+        // IN FLIGHT. 0x06 is hand-blind, so the same spell in the other hand would be answered YES from the same
+        // claim before the event. The hand being asked about is idle by construction: 0x06's leaf caller
+        // (AE 0x89F470, SE 0x808C0B, 1.7.104 0x8B4910) first requires that hand's MagicCaster::currentSpell (+0x28) to be
+        // null. So a hand holding the driven form as currentSpell is a cast already under way.
+        std::mutex               g_foMx;   // leaf: no engine call, no log and no other lock under it
+        apmf::fireonce::Ledger   g_fo;     // guarded by g_foMx
+        std::atomic<bool>        g_foArmed{ false };
+        std::atomic<const char*> g_foWhyNot{ "the ch.8b cast seats are not installed (before kDataLoaded, VR, or not "
+                                             "exactly 1.6.1170, 1.5.97 or 1.7.104)" };
+        constexpr std::size_t    kFoPruneAt = 64;
+
+        static_assert(std::is_same_v<apmf::fireonce::Handle, APMF_API::Handle>);
+        static_assert(offsetof(RE::MagicCaster, currentSpell) == 0x28,
+                      "MagicCaster::currentSpell moved -- 0x06's leaf caller (AE 0x89F470) reads +0x28");
+        static_assert(offsetof(RE::Actor::ACTOR_RUNTIME_DATA, magicCasters) == 0xC0,
+                      "magicCasters moved -- see core/CasterTypeCensus.cpp HandHolds");
+
+        // The slots, never GetMagicCaster (it ALLOCATES on a null slot; CasterTypeCensus HandHolds).
+        bool FoHandCasting(RE::Actor* a_actor, const RE::MagicItem* a_item) {
+            if (!a_actor || !a_item) return false;
+            const auto& mc = a_actor->GetActorRuntimeData().magicCasters;
+            for (const auto src : { RE::MagicSystem::CastingSource::kLeftHand, RE::MagicSystem::CastingSource::kRightHand })
+                if (const auto* c = mc[static_cast<std::size_t>(src)]; c && c->currentSpell == a_item) return true;
+            return false;
+        }
+
+        // Why a fire-once claim may not start now (null = it may). `a_applied`: also ask the already-applied walk
+        // on `a_who` (the rows that carry no bound of their own).
+        const char* FoNo(const apmf::CastSeatClaim& a_claim, RE::Actor* a_caster, RE::MagicItem* a_item, RE::Actor* a_who,
+                         bool a_applied) {
+            if (FireOnceSpent(a_claim.handle)) return "fire once: this claim's cast has already fired";
+            if (FoHandCasting(a_caster, a_item)) return "fire once: a hand is casting it right now";
+            if (a_applied && AlreadyApplied(a_who, a_item)) return "fire once: its effect is already active on the target";
+            return nullptr;
+        }
+
+        class FoCastSink final : public RE::BSTEventSink<RE::TESSpellCastEvent> {
+        public:
+            static FoCastSink* Get() { static FoCastSink s; return &s; }
+            RE::BSEventNotifyControl ProcessEvent(const RE::TESSpellCastEvent* a_e,
+                                                  RE::BSTEventSource<RE::TESSpellCastEvent>*) override {
+                try {
+                    if (!a_e || !a_e->object || a_e->spell == 0) return RE::BSEventNotifyControl::kContinue;
+                    const RE::FormID                    actor = a_e->object->GetFormID();
+                    std::vector<apmf::fireonce::Handle> fired;
+                    {
+                        std::scoped_lock lk(g_foMx);
+                        if (g_fo.Size() == 0) return RE::BSEventNotifyControl::kContinue;
+                        fired = g_fo.NoteCast(actor, a_e->spell);
+                    }
+                    for (const auto h : fired) {
+                        if (!apmf::ControlMap::Get().IsClaimLive(h)) continue;   // released before its cast left the hand
+                        apmf::combatentry::RecordClaimEnd(h, APMF_API::kClaimEnd_Fired);
+                        spdlog::info("[ch.8b fire once] 0x{} FIRED 0x{} (h={}): the claim is spent. 0x06 answers NO for it "
+                                     "from now on; it ends by its client's Release or its own deadline.",
+                                     apmf::log::Hex(actor), apmf::log::Hex(a_e->spell), h);
+                    }
+                } catch (...) {
+                }
+                return RE::BSEventNotifyControl::kContinue;
+            }
+        };
+
         // ABI v18 kCastFlag_OwnLineOfSight: does this claim ask Harbinger to judge its line of
         // sight, and is there a line to judge? A self target (the claimant's own FormID, APMF-B39)
         // and a deny-only hand claim have none. The verdict is read lock-free from
@@ -587,6 +663,25 @@ namespace apmf::castseats {
                                      fl > 0.0f ? fmt::format(", magicka {:.2f} < {:.2f}", pct, fl) : std::string());
                     return false;
                 }
+            }
+            // FIRE ONCE (ABI v47): the claim-declared bound, on every seated row. The row's own bound above is
+            // unchanged; the already-applied half is asked here only on the rows that have none.
+            if ((m.claim.flags & APMF_API::kCastFlag_FireOnce) != 0) {
+                const int   t     = TypeIndex(vt);
+                const bool  bare  = t >= 0 && SeatTypes()[t].bound == Bound::kNone;
+                auto        cPtr  = a_cc->attackerHandle.get();
+                auto        tPtr  = m.claim.targetHandle.get();
+                if (const char* no = FoNo(m.claim, cPtr.get(), a_this->magicItem, tPtr.get(), bare)) {
+                    CensusNote(vt, a_this, a_cc, kCheckStartCast, true, false);
+                    NoteClaimAnswer(vt, kCheckStartCast, m, "NO (fire once)");
+                    if (LogDue(m.actor, m.driven ^ 0x20000000u, kCheckStartCast))
+                        spdlog::info("[ch.8b fire once] 0x{} CheckStartCast -> NO on the {} caster: {} (spell 0x{}, target "
+                                     "0x{}, h={}) -- the claim stands.",
+                                     apmf::log::Hex(m.actor), t >= 0 ? SeatTypes()[t].name : "?", no,
+                                     apmf::log::Hex(m.driven), apmf::log::Hex(m.claim.target), m.claim.handle);
+                    return false;
+                }
+                FireOnceNoteYes(m.claim, m.actor, m.driven, t >= 0 ? SeatTypes()[t].name : "?");
             }
             CensusNote(vt, a_this, a_cc, kCheckStartCast, true, true);
             NoteClaimAnswer(vt, kCheckStartCast, m, "YES");
@@ -1018,6 +1113,24 @@ namespace apmf::castseats {
         }
         g_coverage.store(cover, std::memory_order_release);
 
+        // FIRE ONCE (ABI v47): an event sink, no new hook. Any missing half refuses the flag by name.
+        const char* foWhy = nullptr;
+        auto*       foSrc = RE::ScriptEventSourceHolder::GetSingleton();
+        if (!ReadIniFlag("EnableFireOnce", 1)) foWhy = "[CastSeats] EnableFireOnce=0 (set in APMF.ini)";
+        else if (cover == 0)                   foWhy = "no caster row is covered (see the [ch.8b seats] lines)";
+        else if (!apmf::fireonce::SelfCheck()) foWhy = "the fire ledger failed its self-check";
+        else if (!foSrc)                       foWhy = "the engine's spell cast event source is unavailable";
+        if (foWhy) {
+            g_foWhyNot.store(foWhy, std::memory_order_release);
+            spdlog::warn("[ch.8b fire once] NOT armed: {} -- a kCastFlag_FireOnce request is refused.", foWhy);
+        } else {
+            foSrc->AddEventSink<RE::TESSpellCastEvent>(FoCastSink::Get());
+            g_foWhyNot.store("", std::memory_order_release);
+            g_foArmed.store(true, std::memory_order_release);
+            spdlog::info("[ch.8b fire once] armed (ABI v47): self-check ok, spell cast event sink registered. A claim with "
+                         "kCastFlag_FireOnce casts at most once on any covered row.");
+        }
+
         spdlog::info("[ch.8b seats] engine cast seats installed on {} caster vtables, covered rows [{}] (never "
                      "Reanimate here: core/ReanimateSeat.cpp): 0x06 CheckStartCast {}/{}, 0x07 CheckStopCast {}/{}, "
                      "0x0A GetMagicTarget {}/{}, 0x0D SetupAimController {}/{}. While a kIntent_Cast claim "
@@ -1038,6 +1151,61 @@ namespace apmf::castseats {
     }
 
     std::uint32_t CoverageMask() { return g_coverage.load(std::memory_order_acquire); }
+
+    bool        FireOnceArmed() { return g_foArmed.load(std::memory_order_acquire); }
+    const char* FireOnceNotArmedReason() { return g_foWhyNot.load(std::memory_order_acquire); }
+
+    bool FireOnceSpent(APMF_API::Handle a_handle) {
+        std::scoped_lock lk(g_foMx);
+        return g_fo.Spent(a_handle);
+    }
+
+    bool FireOnceHold(RE::CombatMagicCaster* a_this, RE::CombatController* a_cc, const CastSeatClaim& a_claim,
+                      RE::FormID a_actor) {
+        if ((a_claim.flags & APMF_API::kCastFlag_FireOnce) == 0 || !a_this || !a_cc) return false;
+        auto        cPtr = a_cc->attackerHandle.get();
+        const char* no   = FoNo(a_claim, cPtr.get(), a_this->magicItem, nullptr, false);
+        if (!no) return false;
+        if (LogDue(a_actor, a_claim.spell ^ 0x20000000u, kCheckStartCast))
+            spdlog::info("[ch.8b fire once] 0x{} CheckStartCast -> NO: {} (spell 0x{}, target 0x{}, h={}) -- the claim stands.",
+                         apmf::log::Hex(a_actor), no, apmf::log::Hex(a_claim.spell), apmf::log::Hex(a_claim.target),
+                         a_claim.handle);
+        return true;
+    }
+
+    void FireOnceNoteYes(const CastSeatClaim& a_claim, RE::FormID a_actor, RE::FormID a_driven, const char* a_type) {
+        if ((a_claim.flags & APMF_API::kCastFlag_FireOnce) == 0) return;
+        bool                                first = false;
+        std::vector<apmf::fireonce::Handle> all;
+        {
+            std::scoped_lock lk(g_foMx);
+            first = g_fo.NoteYes(a_claim.handle, a_actor, a_driven);
+            if (first && g_fo.Size() > kFoPruneAt) all = g_fo.Handles();
+        }
+        if (!first) return;
+        // Bounded: drop the records of ended claims (handles never repeat; a LIVE claim's record is never dropped).
+        for (const auto h : all) {
+            if (h == a_claim.handle || apmf::ControlMap::Get().IsClaimLive(h)) continue;
+            std::scoped_lock lk(g_foMx);
+            g_fo.Erase(h);
+        }
+        spdlog::info("[ch.8b fire once] 0x{} first CheckStartCast YES on the {} caster (spell 0x{}, driven 0x{}, target 0x{}, "
+                     "h={}): one cast.{}",
+                     apmf::log::Hex(a_actor), a_type, apmf::log::Hex(a_claim.spell), apmf::log::Hex(a_driven),
+                     apmf::log::Hex(a_claim.target), a_claim.handle,
+                     std::strcmp(a_type, "Restore") == 0
+                         ? " A RESTORE caster: a heal claimed with kCastFlag_FireOnce does not repeat." : "");
+    }
+
+    void ResetFireOnce(const char* a_why) {
+        std::size_t n = 0;
+        {
+            std::scoped_lock lk(g_foMx);
+            n = g_fo.Size();
+            g_fo.Clear();
+        }
+        if (n) spdlog::info("[ch.8b fire once] {} record(s) dropped ({}).", n, a_why);
+    }
 
     bool EffectAlreadyOn(RE::Actor* a_actor, RE::MagicItem* a_item) { return AlreadyApplied(a_actor, a_item); }
 

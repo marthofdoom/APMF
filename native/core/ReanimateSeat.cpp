@@ -168,6 +168,13 @@ namespace apmf::reanimateseat {
             apmf::castseats::ClaimMatch m{};
             if (!CorpseClaim(a_this, a_cc, oit->second, true, m)) return orig(a_this, a_cc);
 
+            // ABI v47 kCastFlag_FireOnce: NO once the claim's cast fired, or while a hand casts it (the already-applied
+            // half stays the engine's own here). Nothing is written: a NO start never reads the corpse.
+            if (apmf::castseats::FireOnceHold(a_this, a_cc, m.claim, m.actor)) {
+                g_counts[0][2].fetch_add(1, std::memory_order_relaxed);
+                return false;
+            }
+
             // The claim's corpse goes in BEFORE the engine runs, so the engine's own keep test
             // (resolves, dead, not disabled / deleted, its validity test) is what judges it. It is only
             // handed over while it passes the keep preconditions here too: the engine's SEARCH does not
@@ -185,6 +192,7 @@ namespace apmf::reanimateseat {
             if (offer && after == want) {
                 // Kept (or never reached: the engine's earlier gates said NO and left +0x28 alone).
                 if (native) {
+                    apmf::castseats::FireOnceNoteYes(m.claim, m.actor, m.driven, "Reanimate");   // ABI v47
                     // The keep branch does not write the aim override; the search branch does. Set it
                     // as the search branch would have.
                     void* aim = *reinterpret_cast<void**>(reinterpret_cast<std::uintptr_t>(a_this) + kCasterAim);

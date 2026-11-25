@@ -117,6 +117,21 @@ namespace apmf::castseats {
     // the engine. Combat thread (the same read the 0x06 seat makes there).
     bool EffectAlreadyOn(RE::Actor* a_actor, RE::MagicItem* a_item);
 
+    // ---- FIRE ONCE (ABI v47, kCastFlag_FireOnce; the banner is in CastSeats.cpp) ----
+    // Is the flag served on this install? False before Install(), on a refused runtime, with [CastSeats]
+    // EnableFireOnce=0, or without its event source; the reason is a static string. Any thread.
+    bool        FireOnceArmed();
+    const char* FireOnceNotArmedReason();
+    // Has this claim's one cast fired? Any thread (leaf mutex, no engine call).
+    bool FireOnceSpent(APMF_API::Handle a_handle);
+    // The WHETHER half for a seat in another file: true (logged) = answer NO. False for a claim without the flag.
+    bool FireOnceHold(RE::CombatMagicCaster* a_this, RE::CombatController* a_cc, const CastSeatClaim& a_claim,
+                      RE::FormID a_actor);
+    // The seat is about to answer YES for this claim. No-op without the flag. `a_type`: a string literal.
+    void FireOnceNoteYes(const CastSeatClaim& a_claim, RE::FormID a_actor, RE::FormID a_driven, const char* a_type);
+    // Drop every record (a load, a new game). GAME THREAD.
+    void ResetFireOnce(const char* a_why);
+
     // The ONE claim test every caster seat uses, for a seat that lives in another file
     // (core/ReanimateSeat.cpp, ABI v42): does a live, winning kIntent_Cast claim on the
     // deliberating actor (`a_cc->attackerHandle`) drive `a_this->magicItem`, with a resolved
