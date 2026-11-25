@@ -943,6 +943,7 @@ The degenerate form `RequestEx(actor, kIntent_Cast, basis, &p)` with `p.form = s
 | 7 | `kCastFlag_FloorSpellsOnly` | with a hand floor, refuse spells only | 20 |
 | 8 to 15 | stop percent | `MakeStopPct(1..100)`, see below | 5 |
 | 16 | `kCastFlag_CorpseTarget` | `target` is a corpse and the spell is a Reanimate spell: [raise this corpse](#corpse-target-kcastflag_corpsetarget). `RequestCast` only | 42 |
+| 17 | `kCastFlag_FireOnce` | [cast at most once](#fire-once-kcastflag_fireonce). `RequestCast` only | 47 |
 
 > **Caution** An older Harbinger ignores a flag bit it does not know and applies the rest. `kCastFlag_DenyHandOnly` then makes a no-form claim that denies nothing, `kCastFlag_AtPosition` makes an ordinary actor-target claim, `kCastFlag_OwnLineOfSight` casts with no line test, and `kCastFlag_FloorSpellsOnly` blocks weapons too. Check `abiVersion` before you set them.
 
@@ -1205,6 +1206,29 @@ Ask `CanServe` and read `APMF_ServeInfo::castSeats` (`CastSeatCoverage`, only wh
 Log lines: `[ch.8b] ... cast-execution CLAIMED ... Engine item tests: ...` (which item test the spell fails natively), `[ch.8b skill gate] ... ADMITTED`, `[t2a row equip] ... ADMITTED` or `NO kept`, `[t2a skill gate] ... -> NO` (an admitted item with no claim), `[ch.8b seats] FIRST claim answer on the <row> caster`.
 
 Field status: not run. Stagger and Disarm casters were never seen built by the engine in any log we hold. TargetEffect and Paralyze were (engine-wide census).
+
+### Fire once (`kCastFlag_FireOnce`)
+
+*A cast claim that casts at most once, whatever caster type the engine builds for the spell.*
+
+ABI 47. `EnableFireOnce` in `[CastSeats]`. For a spell whose effects map to several caster rows (Mystic Wind: Script and Restore): a claim on a Restore, Offensive or Disarm caster otherwise repeats every hand cycle.
+
+```cpp
+req.flags = APMF_API::kCastFlag_FireOnce;      // plus the hand
+if (g_apmf->abiVersion >= 47 && (info.castSeats & APMF_API::kCastSeat_FireOnce))
+    Handle h = g_apmf->RequestCast(follower->GetFormID(), kBasis, &req);
+// later: GetClaimEndReason(h) == APMF_API::kClaimEnd_Fired -> Release(h)
+```
+
+| The start seat (0x06) answers NO when | Read from |
+|---|---|
+| the effect is active on the claim's target (the caster for Summon, BoundItem) | Harbinger's own walk of the active effects, never for a concentration spell |
+| either hand is casting the driven form | the hand casters' current spell |
+| the claim's cast has fired, final for the handle | the actor's spell cast event for the driven form, after a start seat YES for this handle |
+
+Nothing else changes: equip, aim, duration, magicka and animation are as for any cast claim, and the world's reaction is the client's. An interrupted cast raises no event and may start again. A cast the claim never asked for is not its fire. After the fire the claim still holds its hand until `Release` or its deadline. `Repoint` no longer moves that deadline and cannot add or clear the bit. A repeating heal must not set it (logged on a Restore caster). Two fire-once claims on one spell, one per hand, count as the better one. A Reanimate spell needs `kCastFlag_CorpseTarget`.
+
+Refused: `RequestEx`, `kCastFlag_DenyHandOnly`, not armed (VR, an unverified build, the INI key, no event source). Log tag `[ch.8b fire once]`. Field status: not run.
 
 ### Corpse target (`kCastFlag_CorpseTarget`)
 

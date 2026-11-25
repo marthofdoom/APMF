@@ -1,3 +1,9 @@
+## Unreleased -- A claim that casts once (ABI v47)
+
+- **A mod can claim a spell for one cast.** Some spells count as a heal or an attack in the game's own table, and a claim on those repeats for as long as it stands. With the new `kCastFlag_FireOnce` the claim casts at most once, whatever kind of caster the game builds. It will not start while the effect is already on the target or while a hand is casting it, and it never starts again after it has fired. An interrupted cast may start again.
+- **A mod can see that it fired.** `GetClaimEndReason` reads `kClaimEnd_Fired`, and the dry run reports `kCastSeat_FireOnce`. ABI v47, no new function. Claims without the flag are unchanged, and mods built on v33 to v46 keep working.
+- **Not field run yet.**
+
 ## Unreleased -- Every claimed spell can reach the hand (ABI v46)
 
 - **Turn Undead, Banish, Command, Paralyze, Stagger and Disarm spells can now be cast through a claim.** A mod could name one of these spells for a follower and nothing happened. The game has its own opinion on when such a spell is worth equipping: is the target in range, will the effect work on it, is a cooldown over. That opinion ruled even when a mod had already decided. Now the mod's claim decides. Three of the game's reasons are kept: the follower is fleeing, the effect is already on the target, or he cannot afford the spell.

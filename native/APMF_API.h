@@ -3948,7 +3948,8 @@ namespace APMF_API {
     // asked for (a client's own direct cast before any YES) is not the claim's fire.
     // AFTER THE FIRE the claim still stands (its hand stays denied to other spells, its spell may stay equipped)
     // until Release or its deadline. Repoint still updates it but no longer moves the deadline.
-    // GetClaimEndReason(handle) reads kClaimEnd_Fired from that moment. To cast again: Release, then a new
+    // GetClaimEndReason(handle) reads kClaimEnd_Fired from that moment (also when the claim's deadline passed while
+    // its cast was still in the hand). To cast again: Release, then a new
     // RequestCast. The flags are fixed at RequestCast; Repoint cannot add or clear the bit.
     // NOT FOR A REPEATING HEAL: the claim would cast it once (logged when a Restore caster meets the bit).
     // ONE driven form per actor: two FireOnce claims on the same spell, one per hand, count as the better one.

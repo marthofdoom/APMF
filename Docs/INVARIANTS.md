@@ -901,6 +901,8 @@ seat may be answered FROM THE CLAIM WITHOUT CHAINING only when ALL THREE hold:
    allowed to be considered," never "do this." The engine still scores it, still
    applies its own slot/range/resource/blackboard gates, still runs its own leaf
    with its own animation, and is still free to choose otherwise.
+   **FIRE ONCE IS A YES-to-NO ONLY (ABI v47, feat/cast-fire-once).** `kCastFlag_FireOnce` narrows the 0x06 answer of the claim
+   that declared it and no other; a spent handle is never re-armed; no engine write, the cast in flight is never cut.
    **TWO MORE NO-to-YES ANSWERS (ABI v46, feat/seat-unseated-casters), each argued on the same three conditions.
    Both CHAIN FIRST and only replace the engine's NO, so they are narrower than the Restore answer.**
    *Row equip admission* (`core/EquipGate.cpp`, item 0x0F of Stagger / Disarm / TargetEffect / Paralyze): (1) the

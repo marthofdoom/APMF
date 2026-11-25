@@ -265,6 +265,7 @@ A client built against an older header keeps working. Each item below needs its 
 | 43 | 0.20.0 | `kCombatMove_Block` (ch.31): a held guard for a window in `param.fval`, and `kCombatMove_BlockEnd`. While it stands the actor's own offense and the engine's own block release do not run. No struct, no slot | `abiVersion >= 43`. An older APMF refuses the block at the call |
 | 44 | 0.20.0 | `kCombatMove_PowerAttack` (ch.31): one right-hand power attack started by the game's own action road, so the hit carries the power attack's damage and stamina cost. No struct, no slot | `abiVersion >= 44`. An older APMF refuses the value at the call |
 | 45 | 0.20.0 | `kIntent_CombatStyle` (ch.33): the actor fights by a combat style the mod names, actor-wide or for the equipment choice only (`kCombatStyle_EquipChoiceOnly`), through the existing `RequestEx` and `Repoint` (no struct, no slot) | `abiVersion >= 45`. An older APMF refuses the intent |
+| 47 | the release after 0.20.5 | `kCastFlag_FireOnce` (ch.8b): the claim casts at most once on any caster type. `kCastSeat_FireOnce`, `kClaimEnd_Fired`. No struct, no slot | `abiVersion >= 47` and `castSeats & kCastSeat_FireOnce`. An older APMF ignores the bit and the claim repeats |
 
 ### Place (ABI 28)
 

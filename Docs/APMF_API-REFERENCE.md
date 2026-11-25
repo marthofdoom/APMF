@@ -520,6 +520,7 @@ marth 2026-10-27, after the LoreRim run where Auri stood in combat with a Sabre 
 | `kClaimEnd_TargetGone` (9) | ch.20 / ch.21 Poll: the target is disabled, unloaded or no longer resolves |
 | `kClaimEnd_TargetLost` (10) | ch.20 with `[EngagementHold] bEngagementHold=0` or no knowledge seats: the group flagged the target lost |
 | `kClaimEnd_NotATarget` (11) | ch.20: the target left the group's targets after it was one |
+| `kClaimEnd_Fired` (12) | v47, a `kCastFlag_FireOnce` cast claim: its one cast fired. Readable while the claim still stands |
 
 A claim that takes over naming a target the engine already gave up on ends with the engine's reason (`CombatEnded` or `EntryRefused`).
 
@@ -863,6 +864,10 @@ The header: `kCastFlag_CorpseTarget` (bit 16 of `CastFlags`) and `kABIVersion` 4
 **What happens.** At the Reanimate caster's start check Harbinger hands the claim's corpse to the engine's own keep test. Accepted, the cast may start. Refused, the answer is no for that poll, the corpse the engine would have picked is removed again, and the claim stands. When the engine sets up the aim it searches once more. Harbinger writes the claim's corpse back after it. The engine's own pick never casts while the claim stands.
 
 **Refused:** the seat not installed (VR, a build that is not exactly 1.6.1170, 1.5.97 or 1.7.104, `[CastSeats] EnableReanimateSeat=0`), `target` 0 or the actor, `kCastFlag_DenyHandOnly`. On a spell with no Reanimate effect the bit does nothing. An APMF older than v42 ignores the bit and the engine picks its own corpse. Full reference: [FACETS.md Corpse target](FACETS.md#corpse-target-kcastflag_corpsetarget).
+
+## ABI v47 fire once: a claim that casts at most once (ch.8b)
+
+`kCastFlag_FireOnce` on `RequestCast`. Gate on `abiVersion >= 47` and `castSeats & kCastSeat_FireOnce` (plus the spell's own row bit). 0x06 answers NO while the effect is on the target, while either hand casts the driven form, and for good after the claim's cast fired. `GetClaimEndReason` reads `kClaimEnd_Fired` from the fire on, while the claim still stands. `Repoint` no longer renews a fired claim. Refused: `RequestEx`, `kCastFlag_DenyHandOnly`, `[CastSeats] EnableFireOnce=0` or seats not installed. Full reference: [FACETS.md Fire once](FACETS.md#fire-once-kcastflag_fireonce).
 
 ## ABI v43 block: a held guard (ch.31)
 

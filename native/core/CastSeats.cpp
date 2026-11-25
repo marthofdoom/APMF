@@ -496,11 +496,16 @@ namespace apmf::castseats {
                         fired = g_fo.NoteCast(actor, a_e->spell);
                     }
                     for (const auto h : fired) {
-                        if (!apmf::ControlMap::Get().IsClaimLive(h)) continue;   // released before its cast left the hand
+                        // An ended claim's record spends silently when a newer one shares the cast; alone, it is the
+                        // claim whose deadline passed (or that was released) with its cast already in the hand.
+                        const bool live = apmf::ControlMap::Get().IsClaimLive(h);
+                        if (!live && fired.size() > 1) continue;
                         apmf::combatentry::RecordClaimEnd(h, APMF_API::kClaimEnd_Fired);
-                        spdlog::info("[ch.8b fire once] 0x{} FIRED 0x{} (h={}): the claim is spent. 0x06 answers NO for it "
-                                     "from now on; it ends by its client's Release or its own deadline.",
-                                     apmf::log::Hex(actor), apmf::log::Hex(a_e->spell), h);
+                        spdlog::info("[ch.8b fire once] 0x{} FIRED 0x{} (h={}): {}",
+                                     apmf::log::Hex(actor), apmf::log::Hex(a_e->spell), h,
+                                     live ? "the claim is spent. 0x06 answers NO for it from now on; it ends by its "
+                                            "client's Release or its own deadline."
+                                          : "the claim had already ended (released or past its deadline).");
                     }
                 } catch (...) {
                 }
