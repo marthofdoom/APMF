@@ -120,9 +120,11 @@ namespace apmf::castgate {
         std::atomic<std::uint64_t>    g_enchPassed{ 0 };   // passes since load, all actors
         std::unordered_map<std::uint64_t, std::uint64_t> g_lastEnchLogMs;   // under g_rlMx
 
-        // The process reads below are the engine's equipped-entry getter (AE 0x70DB20 / SE 0x67A3E0 /
-        // 1.7.104 0x720660, byte-identical) and its weapon-type byte (WEAP + 0x19D on all three).
+        // The process reads below are the engine's equipped-form getters (process +0xF0 left / +0xF8 right: AE
+        // 0x6D88F0, 0x6D8900 / SE 0x645E60, 0x645E70 / 1.7.104 0x6EB4A0, 0x6EB4B0), its equipped-entry getter
+        // (AE 0x70DB20 / SE 0x67A3E0 / 1.7.104 0x720660, byte-identical) and its weapon-type byte (WEAP + 0x19D on all three).
         static_assert(offsetof(RE::AIProcess, middleHigh) == 0x08);
+        static_assert(offsetof(RE::AIProcess, equippedObjects) == 0xF0);
         static_assert(offsetof(RE::MiddleHighProcessData, leftHand) == 0x220);
         static_assert(offsetof(RE::MiddleHighProcessData, rightHand) == 0x260);
         static_assert(offsetof(RE::InventoryEntryData, object) == 0x00);
@@ -133,16 +135,20 @@ namespace apmf::castgate {
                 return false;
             const auto getEnch = g_getEnchantment.load(std::memory_order_acquire);
             if (!getEnch) return false;
-            const auto* entry = a_actor->GetEquippedEntryData(a_hand == allowance::Hand::kLeft);
-            auto*       obj   = entry ? entry->object : nullptr;
-            if (!obj || obj->GetFormType() != RE::FormType::Weapon) return false;
+            // The hand's FORM first (a form is never freed): a staff cast asks this slot too, on a thread that does
+            // not own the entry, so a staff (or no weapon) is answered without touching the entry.
+            const bool left = a_hand == allowance::Hand::kLeft;
+            auto*      obj  = a_actor->GetEquippedObject(left);
             weaponenchant::Hand h;
             h.handCaster = true;
             h.isEnchant  = true;
-            h.isWeapon   = true;
-            h.isStaff    = static_cast<const RE::TESObjectWEAP*>(obj)->IsStaff();
+            h.isWeapon   = obj && obj->GetFormType() == RE::FormType::Weapon;
+            h.isStaff    = h.isWeapon && static_cast<const RE::TESObjectWEAP*>(obj)->IsStaff();
             h.form       = reinterpret_cast<std::uintptr_t>(a_form);
-            if (!h.isStaff) h.weaponEnch = reinterpret_cast<std::uintptr_t>(static_cast<RE::MagicItem*>(getEnch(entry)));
+            if (!weaponenchant::NeedsEntry(h)) return false;
+            const auto* entry = a_actor->GetEquippedEntryData(left);
+            if (!entry || entry->object != obj) return false;   // the entry must hold the weapon just tested
+            h.weaponEnch = reinterpret_cast<std::uintptr_t>(static_cast<RE::MagicItem*>(getEnch(entry)));
             return weaponenchant::IsOnHit(h);
         }
 
@@ -200,7 +206,10 @@ namespace apmf::castgate {
             // the H1 positive override below, so a claim-driven offensive cast is held by the line of
             // fire too (the channel bound admits a claim-named spell itself). Consulted here at the
             // start (RequestCastImpl), the release (StartCastImpl) and every channel tick (UpdateImpl).
-            if (handCaster && apmf::castguard::DenyCheckCast(actor, fid, a_spell, callerHand)) {
+            // A WEAPON HIT'S ENCHANTMENT IS SKIPPED (onHit): nothing is launched, so a line of fire answers
+            // nothing, and the hit has already landed. Read ONCE for the guard and the allow-list below.
+            const bool onHit = handCaster && IsWeaponOnHit(actor, a_spell, callerHand);
+            if (handCaster && !onHit && apmf::castguard::DenyCheckCast(actor, fid, a_spell, callerHand)) {
                 if (a_reason) *a_reason = RE::MagicSystem::CannotCastReason::kMultipleCast;
                 apmf::castobserve::NoteCheckCast(fid, static_cast<int>(src), subjectForm,
                                                  static_cast<std::uint32_t>(RE::MagicSystem::CannotCastReason::kMultipleCast),
@@ -285,9 +294,9 @@ namespace apmf::castgate {
             // A WEAPON HIT APPLYING ITS ENCHANTMENT IS NOT A CAST. The on-hit road asks the weapon hand's
             // caster this same slot with the enchantment as the form (core/WeaponEnchant.h), so without this
             // every follower with a cast allow-list lost his weapon enchantments. A staff's enchantment is a
-            // cast and stays governed. Asked only where a claim is about to refuse, so it is never a served
-            // claim and it changes no other answer; the line is its own.
-            if (handCaster && IsWeaponOnHit(actor, a_spell, callerHand)) {
+            // cast and stays governed. Used only where a claim is about to refuse, so it is never a served
+            // claim and it changes no other allow-list answer; the line is its own.
+            if (onHit) {
                 const auto n = g_enchPassed.fetch_add(1, std::memory_order_relaxed) + 1;
                 if (LogDue(g_lastEnchLogMs, fid, subjectForm))
                     spdlog::info("[t2c ench] 0x{} '{}' weapon enchantment 0x{} '{}' hand={} PASSED: a weapon hit, not a "

@@ -1,6 +1,6 @@
 ## Unreleased -- Weapon enchantments work under a spell list
 
-- **A follower with a spell list keeps his weapon enchantment.** The game applies a weapon's enchantment through the same test a spell goes through, so a list of allowed spells also refused the enchantment on every hit. A hit with an enchanted weapon is now told apart from a cast and passes. A staff still counts as a cast and stays under the list.
+- **A follower with a spell list keeps his weapon enchantment.** The game applies a weapon's enchantment through the same test a spell goes through, so a list of allowed spells also refused the enchantment on every hit. A hit with an enchanted weapon is now told apart from a cast and passes, also when a friend stands in the line of fire. A staff still counts as a cast and stays under the list.
 - **The log counts it.** `[t2c ench]` names the actor, the enchantment, the hand and the total. No ABI change.
 - **Not field run yet.**
 

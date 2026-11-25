@@ -6,6 +6,7 @@
 
 using apmf::weaponenchant::Hand;
 using apmf::weaponenchant::IsOnHit;
+using apmf::weaponenchant::NeedsEntry;
 
 static int g_fail = 0;
 #define CHECK(x) do { if (!(x)) { ++g_fail; std::printf("FAIL line %d: %s\n", __LINE__, #x); } } while (0)
@@ -21,6 +22,14 @@ int main() {
     { Hand h = sword; h.weaponEnch = 0; CHECK(!IsOnHit(h)); }            // plain weapon
     { Hand h = sword; h.form = h.weaponEnch = 0; CHECK(!IsOnHit(h)); }   // a null never matches a null
     CHECK(!IsOnHit(Hand{}));
+    // The entry is read only for a non-staff weapon asked about an enchantment, decided before the entry is known.
+    Hand pre = sword; pre.weaponEnch = 0;
+    CHECK(NeedsEntry(pre));
+    { Hand h = pre; h.isStaff = true; CHECK(!NeedsEntry(h)); }           // a staff cast never touches the entry
+    { Hand h = pre; h.isWeapon = false; CHECK(!NeedsEntry(h)); }
+    { Hand h = pre; h.isEnchant = false; CHECK(!NeedsEntry(h)); }
+    { Hand h = pre; h.handCaster = false; CHECK(!NeedsEntry(h)); }
+    { Hand h = pre; h.form = 0; CHECK(!NeedsEntry(h)); }
     std::printf(g_fail ? "%d FAILED\n" : "all passed\n", g_fail);
     return g_fail ? 1 : 0;
 }
