@@ -5,6 +5,7 @@
 #include "core/CastGate.h"
 #include "core/CastObserve.h"   // NoteCheckCast (castobs channel end / interrupt attribution)
 #include "core/CastGuard.h"     // ch.25 kIntent_CastGuard (ABI v21): line of fire + channel bound
+#include "core/WeaponEnchant.h" // a weapon's on-hit enchantment is not a cast (IsOnHit)
 #include "core/FacetAttribution.h"   // Harbinger 1b: the refusal ranked against the answer's source
 
 // ============================================================================
@@ -107,6 +108,42 @@ namespace apmf::castgate {
                 case RE::MagicSystem::CastingSource::kInstant:   return "instant";
                 default:                                         return "unknown";
             }
+        }
+
+        // ---- WEAPON ENCHANTMENTS (2026-11-24, plan 7(a)) ---------------------------------
+        // The engine's own read of an equipped entry's enchantment (base form, else the FIRST extra
+        // list: the instance enchantments, the FF ids), called with the entry the on-hit road itself
+        // is using. Disassembled, not declared: AE 0x2249A0 / SE 0x1D7F10 / 1.7.104 0x22A290, rcx =
+        // entry, returns the form, reads only. nullptr = the self-check refused it (Install logs it).
+        using GetEnchantment_t = RE::EnchantmentItem* (*)(const RE::InventoryEntryData*);
+        std::atomic<GetEnchantment_t> g_getEnchantment{ nullptr };
+        std::atomic<std::uint64_t>    g_enchPassed{ 0 };   // passes since load, all actors
+        std::unordered_map<std::uint64_t, std::uint64_t> g_lastEnchLogMs;   // under g_rlMx
+
+        // The process reads below are the engine's equipped-entry getter (AE 0x70DB20 / SE 0x67A3E0 /
+        // 1.7.104 0x720660, byte-identical) and its weapon-type byte (WEAP + 0x19D on all three).
+        static_assert(offsetof(RE::AIProcess, middleHigh) == 0x08);
+        static_assert(offsetof(RE::MiddleHighProcessData, leftHand) == 0x220);
+        static_assert(offsetof(RE::MiddleHighProcessData, rightHand) == 0x260);
+        static_assert(offsetof(RE::InventoryEntryData, object) == 0x00);
+        static_assert(offsetof(RE::TESObjectWEAP, weaponData) + offsetof(RE::TESObjectWEAP::Data, animationType) == 0x19D);
+
+        bool IsWeaponOnHit(RE::Actor* a_actor, const RE::MagicItem* a_form, allowance::Hand a_hand) {
+            if (!a_form || a_hand == allowance::Hand::kUnknown || a_form->GetFormType() != RE::FormType::Enchantment)
+                return false;
+            const auto getEnch = g_getEnchantment.load(std::memory_order_acquire);
+            if (!getEnch) return false;
+            const auto* entry = a_actor->GetEquippedEntryData(a_hand == allowance::Hand::kLeft);
+            auto*       obj   = entry ? entry->object : nullptr;
+            if (!obj || obj->GetFormType() != RE::FormType::Weapon) return false;
+            weaponenchant::Hand h;
+            h.handCaster = true;
+            h.isEnchant  = true;
+            h.isWeapon   = true;
+            h.isStaff    = static_cast<const RE::TESObjectWEAP*>(obj)->IsStaff();
+            h.form       = reinterpret_cast<std::uintptr_t>(a_form);
+            if (!h.isStaff) h.weaponEnch = reinterpret_cast<std::uintptr_t>(static_cast<RE::MagicItem*>(getEnch(entry)));
+            return weaponenchant::IsOnHit(h);
         }
 
         bool CheckCastThunk(RE::MagicCaster* a_this, RE::MagicItem* a_spell, bool a_dual,
@@ -245,6 +282,23 @@ namespace apmf::castgate {
                 return engineSays;
             }
 
+            // A WEAPON HIT APPLYING ITS ENCHANTMENT IS NOT A CAST. The on-hit road asks the weapon hand's
+            // caster this same slot with the enchantment as the form (core/WeaponEnchant.h), so without this
+            // every follower with a cast allow-list lost his weapon enchantments. A staff's enchantment is a
+            // cast and stays governed. Asked only where a claim is about to refuse, so it is never a served
+            // claim and it changes no other answer; the line is its own.
+            if (handCaster && IsWeaponOnHit(actor, a_spell, callerHand)) {
+                const auto n = g_enchPassed.fetch_add(1, std::memory_order_relaxed) + 1;
+                if (LogDue(g_lastEnchLogMs, fid, subjectForm))
+                    spdlog::info("[t2c ench] 0x{} '{}' weapon enchantment 0x{} '{}' hand={} PASSED: a weapon hit, not a "
+                                 "cast (ch.8 select {}, ch.8b cast {}); {} passed since load.",
+                                 apmf::log::Hex(fid), actor->GetName() ? actor->GetName() : "?",
+                                 apmf::log::Hex(subjectForm), a_spell->GetName() ? a_spell->GetName() : "?",
+                                 callerHand == allowance::Hand::kLeft ? "L" : "R", selectAllows ? "ALLOW" : "DENY",
+                                 castAllows ? "ALLOW" : "DENY", n);
+                return engineSays;
+            }
+
             // HARBINGER 1b (cast slice): the YES this would refuse is the answer of the chain below the
             // seat -- the engine, or a module hooked inside 0x0A on this vtable (InsideSource). The
             // refusal stands only when the refusing claim outranks that source on the Cast facet; with
@@ -337,6 +391,14 @@ namespace apmf::castgate {
         const int n = allowance::InstallOnVtables(kVtables, kCheckCast, &CheckCastThunk,
                                                    expectedTD.get(), "t2c", g_orig);
         g_hooked.store(n > 0, std::memory_order_release);
+
+        // The weapon enchantment rule's one call by address. Refused row = the rule is off and SAYS so.
+        const REL::Relocation<GetEnchantment_t> getEnch{ RELOCATION_ID(15788, 16026) };
+        if (allowance::SeatVerified(getEnch.address(), "CastGate.GetEnchantment"))
+            g_getEnchantment.store(getEnch.get(), std::memory_order_release);
+        else
+            spdlog::error("[t2c ench] the self-check refused InventoryEntryData::GetEnchantment: a weapon enchantment can "
+                          "NOT be told from a cast, so a cast allow-list keeps DENYING weapon enchantments on this install.");
         spdlog::info("[t2c] CheckCast allowance hooked on {} vtable(s) (ActorMagicCaster[0], "
                      "hard pre-charge gate) -- ch.8 casting-select claims now enforced here. ch.8b cast "
                      "claims are read per hand on the LEFT/RIGHT casters and actor-wide on the voice caster; "

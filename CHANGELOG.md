@@ -1,3 +1,9 @@
+## Unreleased -- Weapon enchantments work under a spell list
+
+- **A follower with a spell list keeps his weapon enchantment.** The game applies a weapon's enchantment through the same test a spell goes through, so a list of allowed spells also refused the enchantment on every hit. A hit with an enchanted weapon is now told apart from a cast and passes. A staff still counts as a cast and stays under the list.
+- **The log counts it.** `[t2c ench]` names the actor, the enchantment, the hand and the total. No ABI change.
+- **Not field run yet.**
+
 ## Unreleased -- A claim that casts once (ABI v47)
 
 - **A mod can claim a spell for one cast.** Some spells count as a heal or an attack in the game's own table, and a claim on those repeats for as long as it stands. With the new `kCastFlag_FireOnce` the claim casts at most once, whatever kind of caster the game builds. It will not start while the effect is already on the target or while a hand is casting it, and it never starts again after it has fired. An interrupted cast may start again.

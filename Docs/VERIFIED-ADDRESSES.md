@@ -10,13 +10,13 @@ nothing when one does not. At startup `REL::SelfCheck::Run` repeats the comparis
 game actually loaded. A row that fails refuses THAT seat by name in the log; the expected RVA is never
 used in place of the library's answer.
 
-Offline result of this generation: 1.6.1170.0 313/313 verified, 0 refused, 1.5.97.0 312/312 verified, 0 refused.
+Offline result of this generation: 1.6.1170.0 314/314 verified, 0 refused, 1.5.97.0 313/313 verified, 0 refused.
 
 1.7.104.0 has NO Address Library. Its column is OUR OWN id map: the MIT id table of the CommonLibSSE-NG fork
 (`data/mit-idtable-v1-1-7-104-0.bin`, revision 5, 17792 records, SkyrimSE.exe TimeDateStamp 0x6A8C7046; built into every plugin, it is
 what SelfCheck queries at runtime; authoritative) with the evidence CSVs beside it, keyed by
 the 1.6.1170 id, re-verified against the plaintext 1.7.104 executable by the same row-kind checks (see the script
-docstring). Offline result: 1.7.104.0 310/395 verified, 85 NOT verified (28 of them BY DESIGN: 1.5.97-only labels whose AE twin row carries the 1.7.104 fact). A not-verified seat has no row in the 1.7.104 table,
+docstring). Offline result: 1.7.104.0 311/396 verified, 85 NOT verified (28 of them BY DESIGN: 1.5.97-only labels whose AE twin row carries the 1.7.104 fact). A not-verified seat has no row in the 1.7.104 table,
 so `IsVerifiedAddress` is false and the seat is refused by name. The table of `Not verified on 1.7.104` is below.
 
 These rows prove the ADDRESSES. That each hooked slot holds the same function body on 1.7.104, and that every
@@ -32,6 +32,7 @@ CommonLib layout APMF reads is the same there, is proven separately in the "1.7.
 | CombatTargetSelectorFixed | vtable | 212098 | 0x18D73C8 | 265607 | 0x1690AF8 | 212098 | 0x1955990 | RTTI .?AVCombatTargetSelectorFixed@@ (COL offset 0) | 0x06: 0x84DAF0 / 0x7B6920 / 0x862B50 | native/channels/TargetPin.cpp:459 | ch.20 source deny; UpdateTarget AE 0x559930 / SE 0x4FE300 calls slot 6 |
 | PlayerCharacter | vtable | 208040 | 0x18AB9C0 | 261916 | 0x16635E0 | 208040 | 0x19296C0 | RTTI .?AVPlayerCharacter@@ (COL offset 0) | 0xAD: 0x732660 / 0x69E580 / 0x745200<br>0xE3: 0x758430 / 0x6C37C0 / 0x76B0C0 | native/core/Hook.cpp:97; channels/CombatSubstrate.cpp (0xE3 IsInCombat on the player: the real-combat poll, a virtual call -- AE 0x758430 reads +0xBE3 bit 5) | ADDRESS-TABLE-2026-09-15.md:69 |
 | ActorMagicCaster | vtable | 205828 | 0x187B8B0 | 257613 | 0x1637490 | 205828 | 0x18F6150 | RTTI .?AVActorMagicCaster@@ (COL offset 0) | 0x0A: 0x5B1610 / 0x5427B0 / 0x5C0150 | native/core/CastGate.cpp:199 | ADDRESS-TABLE-2026-09-15.md:65 |
+| CastGate.GetEnchantment | function | 16026 | 0x2249A0 | 15788 | 0x1D7F10 | 16026 | 0x22A290 | signature (26 bytes, unique in .text) |  | native/core/CastGate.cpp (the weapon enchantment rule: which enchantment the hand's weapon carries) | fix/ch8-enchant 2026-11-24: InventoryEntryData::GetEnchantment, EnchantmentItem*(entry); the read of the engine's on-hit road AE 0x6C2FF0+0x7B / SE 0x6310A0+0x81 / 1.7.104 0x6D5AB0 |
 | CombatMagicItemData | vtable | 211955 | 0x18D5120 | 265000 | 0x1686BF8 | 211955 | 0x19536E8 | RTTI .?AVCombatMagicItemData@@ (COL offset 0) | 0x01: 0x81D830 / 0x7811F0 / 0x832D20 | native/core/CastClassify.cpp:31 | ADDRESS-TABLE-2026-09-15.md:40 |
 | CombatMagicItemSkillChecker | vtable | 211957 | 0x18D5138 | 265001 | 0x1686C10 | 211957 | 0x1953700 | RTTI .?AVCombatMagicItemSkillChecker@@ (COL offset 0) | 0x01: 0x81DE80 / 0x781B20 / 0x833370 | native/core/CastClassify.cpp (THE SKILL GATE, ABI v46: slot 1, the per-effect minimum-skill visitor) | feat/seat-unseated-casters 2026-11-23: slot 1 AE 0x81DE80 / SE 0x781B20 / 1.7.104 0x833370, uint32(this, Effect*); object +0x10 Actor*, +0x18 MagicItem*, +0x20 bool (ctor AE 0x81DE50 / SE 0x781AF0 / 1.7.104 0x833340); run by CombatInventory add-item (AE 0x811CC0, SPEL case 0x812156) before the classifier |
 | CastClassify.KeepBestRow | function | 45325 | 0x81DBA0 | 43934 | 0x7815A0 | 45325 | 0x833090 | signature (23 bytes, unique in .text) |  | native/core/CastClassify.cpp:80 | STATUS.md:142 |

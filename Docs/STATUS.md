@@ -4,6 +4,15 @@ Updated 2026-11-24 (ch.8b fire once branch `feat/cast-fire-once` first; 2026-11-
 shipped, what's probe-gated, what's next. Keep this current in the SAME change as any
 build/finding/workflow change.
 
+## HEAD OF WORK 2026-11-24 -- ch.8: WEAPON ENCHANTMENTS PASS THE ALLOW-LIST, branch `fix/ch8-enchant`, NOT merged, NOT field run
+
+MFO plan `Docs/research/2026-11/tight-movement-plan.md` 7(a), package H-F. Field: Cicero, `CheckCast DENIED 'Fire Damage' hand=R
+(ch.8 select DENY)`, 0 enchant casts of 113 hits under an allow-list. Agentlog `_agentlogs/harbinger/hp-hf.md`.
+`core/CastGate.cpp` `IsWeaponOnHit`, `core/WeaponEnchant.h`, row `CastGate.GetEnchantment` (all three builds), host test
+`tools/weapon_enchant`. No ABI change. Field check (MFO `ench.on_hit`): `[t2c ench] ... PASSED` lines, no DENIED line for the
+weapon's enchantment, a staff off the list still denied. KNOWN, not changed: ch.25's line of fire guard sits above this and
+still refuses an enchantment when a friend is in the line (6 lines in the same log).
+
 ## HEAD OF WORK 2026-11-24 -- ch.8b: FIRE ONCE (ABI v47), branch `feat/cast-fire-once`, NOT merged, NOT field run
 
 MFO plan `Docs/research/2026-11/anim-residue-plan.md` package H-A (R1: Mystic Wind, Script + Restore, 47 unanimated lines).

@@ -133,6 +133,21 @@
    "doc": "ADDRESS-TABLE-2026-09-15.md:65"
   },
   {
+   "seat": "CastGate.GetEnchantment",
+   "kind": "function",
+   "construct": "RELOCATION_ID(15788, 16026)",
+   "ids": {
+    "1.6.1170": 16026,
+    "1.5.97": 15788
+   },
+   "sig": {
+    "1.6.1170": "48 8B 41 08 48 85 C0 74 0B 48 8B 10 48 8B 09 E9 ?? ?? ?? ?? 48 8B 09 33 D2 E9",
+    "1.5.97": "48 8B 41 08 48 85 C0 74 0B 48 8B 10 48 8B 09 E9 ?? ?? ?? ?? 48 8B 09 33 D2 E9"
+   },
+   "source": "native/core/CastGate.cpp (the weapon enchantment rule: which enchantment the hand's weapon carries)",
+   "doc": "fix/ch8-enchant 2026-11-24: InventoryEntryData::GetEnchantment, EnchantmentItem*(entry); the read of the engine's on-hit road AE 0x6C2FF0+0x7B / SE 0x6310A0+0x81 / 1.7.104 0x6D5AB0"
+  },
+  {
    "seat": "CombatMagicItemData",
    "kind": "vtable",
    "construct": "kCombatMagicItemDataVtable(265000, 211955)",

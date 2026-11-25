@@ -1486,6 +1486,13 @@ included; G1 2026-10-04), install-once
   `hand=?(instant)` with ch.8b `n/a`, or `hand=?(other)` with the floor's answer;
   `CheckCast ADMITTED ... on the instant caster` marks a cast the pre-amendment read would
   have refused. EquipGate keeps the `kUnknown` actor-wide floor for its neither-hand slot.
+  **WEAPON ENCHANTMENTS (2026-11-24, `IsWeaponOnHit`, rule in `core/WeaponEnchant.h`, host test
+  `tools/weapon_enchant/`):** the engine's on-hit road (AE `0x6C2FF0` / SE `0x6310A0` / 1.7.104 `0x6D5AB0`) asks the
+  weapon hand's caster 0x0A with the weapon's enchantment as the form. Where ch.8 / ch.8b would refuse, a form that
+  IS the enchantment the engine reads off that hand's equipped entry (verified row `CastGate.GetEnchantment`) on a
+  non-staff weapon passes (`[t2c ench]`, not a served claim). A staff's enchantment is a cast: do NOT widen the rule to it.
+  Row refused = rule off, logged as an error at install, enchantments stay denied. ch.25 (above this in the thunk) is
+  not covered. Arrow enchantments never reach this slot (the projectile applies them), poisons use the instant caster.
   **ch.25 (ABI v21):** on a HAND caster the thunk asks `castguard::DenyCheckCast` right after resolving the hand and
   BEFORE the H1 override; a YES refuses with `kMultipleCast` (castobs `NoteCheckCast`, byApmf). `castgate::Installed()`
   (true once the thunk is written) gates every guard claim. See `core/CastGuard`.
