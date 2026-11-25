@@ -1,4 +1,5 @@
 #include "PCH.h"
+#include "core/MoveProbe.h"   // [Probe] bMoveProbe (OBSERVE ONLY)
 #include "core/CombatOps.h"   // #4a: no read through a controller a queued Harbinger StopCombat may free
 #include "core/Sources.h"   // Harbinger 1a: seat census
 #include "core/FacetAttribution.h"   // Harbinger 1b: the engine's area ranked; yield + drift named
@@ -589,6 +590,7 @@ namespace {
         Entry& e = *eit->second;
         const std::uint64_t now = WorldNow();
         e.lastSeenMs.store(now, std::memory_order_relaxed);
+        if (apmf::moveprobe::Watching()) apmf::moveprobe::NoteAim(fid, cc);   // [Probe] bMoveProbe P3, OBSERVE ONLY
 
         std::uint32_t sf = 0;
         void* const   cur = cc->GetRuntimeData().currentArea;
@@ -834,6 +836,7 @@ namespace {
                                    static_cast<double>(e.gaitSpeedSum) / n, e.gaitSpeedMax);
         }
         if (!gait.empty()) spdlog::info("{}", gait);
+        apmf::moveprobe::Finish(a_id, a_why);   // [Probe] bMoveProbe P1 summary
         g_ended.fetch_add(1, std::memory_order_relaxed);
         MarkReactivate(a_id);   // F3: S3 puts the engine's area back on the actor's own combat thread
         const std::string line = fmt::format(
@@ -911,6 +914,7 @@ namespace {
         // Relinquish (INVARIANTS #5a): the seats stop carrying the bound; the next area update
         // (<= 0.25 s) puts the engine's own geometry back first and recomputes from it.
         void Release(RE::FormID id, RE::Actor* /*actor*/) override {
+            apmf::moveprobe::Finish(id, "released");   // [Probe] bMoveProbe P1 summary
             std::uint32_t applied = 0;
             bool          had = false, ended = false;
             {
@@ -1346,7 +1350,9 @@ namespace apmf::combatapproach {
                     }
                 }
             }
-            if (!gaitLine.empty()) spdlog::info("{}", gaitLine);
+            // [Probe] bMoveProbe P1 (OBSERVE ONLY): from the first sweep the claim is live, before the engine carries it too.
+            if (live && inCombat && apmf::moveprobe::On()) apmf::moveprobe::Sample(id, actor, h, posX);
+            if (!gaitLine.empty()) spdlog::info("{}{}", gaitLine, apmf::moveprobe::AimText(id));
             if (animLine != 0)
                 spdlog::info("[ch.24] 0x{} a SCRIPTED MOVE was not read as a stall: the actor was animation driven for "
                              "{} ms (a parkour climb or vault, a paired animation, a kill move) and the engine did not "
@@ -1447,6 +1453,7 @@ namespace apmf::combatapproach {
     }
 
     void ResetAll(const char* why) {
+        apmf::moveprobe::Reset(why);
         std::size_t n = 0, a = 0;
         {
             std::unique_lock lk(g_entryMx);

@@ -2115,6 +2115,21 @@ ch.23), `channels/CombatApproach.cpp` (S1 decision, `AttributeYield`, the drift 
   Engine; hit-count noise) and APMF-B71 (no negative ModuleOf cache under the loader lock; `found=false`
   counted as unattributed; Papyrus/console StartCombat named Engine; ActionGate ClaimOutranksTree lacks try/catch).
 
+### `native/core/MoveProbe.{h,cpp}` — `[Probe] bMoveProbe`: movement probes P1 / P2 / P3 (PASSIVE, 2026-11-24)
+MFO `Docs/research/2026-11/tight-movement-plan.md` section 9. Default OFF (installs nothing, `On()` / `Watching()` false). A
+record per live ch.24 claim, made by `Sample` (ch.24 `Poll`, game thread, live + in combat), closed by `Finish` (ch.24 `End`
+and channel `Release`), dropped by `Reset` (ch.24 `ResetAll`). `g_mx` is a leaf lock; combat threads take it shared.
+- **P1:** `actiongate::ActThunkBody` -> `NoteAct` (entered, a force-failed act included) plus displacement per Poll sample,
+  split by body state and by the last movement leaf entered. One `[moveprobe P1] ... SUMMARY` per claim.
+- **P2:** the ONE new seat: Return To Combat Area leaf `update()` 0x04, chaining, observe-only (`ReturnUpdateThunk`). After the
+  original, on status 5, it reads the leaf frame (`[thread+0]+[thread+0x120]`), the `CombatPath` and its request. Offsets are in
+  the file header and `VERIFIED-ADDRESSES.md`; frame offset must be unchanged across the call or nothing is read.
+- **P3:** S1 -> `NoteAim` (the controller's current aim controller, its vtable class), `PopThunk` -> `NotePop` (the attack leaf
+  ended); the text goes on the ch.24 gait line.
+- **What breaks:** NoteAim is only safe inside the controller's own update (S1). P2 chained under any later 0x04 hook (the
+  strict order's M3 seat takes this slot: install it over the probe, never instead of the chain).
+- **`[Probe] bRowVerdict`** lives in `core/EquipGate.cpp` (the engine's 0x0F for a claim's driven form, no-admission rows).
+
 ### `native/core/AttackSelectProbe.{h,cpp}` — `[Probe] bAttackSelect`: the attack-selection probe (PASSIVE, 2026-10-27)
 ClickUp 86e3bw775, the combat-behaviour facet's design pass (principle 5: watch the engine's attack-selection points run
 before any seat is built on them). Default OFF (`bAttackSelect=0` installs nothing); `iAttackSelectScope` 0 = player

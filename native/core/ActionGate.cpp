@@ -13,6 +13,7 @@
 #include "core/CastObserve.h"   // NoteLeafAct (castobs interrupt attribution)
 #include "core/AttackSelectProbe.h"   // [Probe] bAttackSelect: the passive observer around ActThunk
 #include "core/FacetAttribution.h"   // Harbinger 1b: the tree's choice named + ranked on CombatAction
+#include "core/MoveProbe.h"            // [Probe] bMoveProbe (OBSERVE ONLY)
 #include "channels/CombatEntry.h"      // THE HELD ENGAGEMENT (2026-10-12): the leash exempts its approach
 #include "channels/CombatApproach.h"   // ch.23 LEASH RETURN: a Harbinger-internal combat-area bound
 #include "channels/CombatSubstrate.h"  // the combat substrate's leaf ALLOW-LIST (S2a, INVARIANTS #0 (j))
@@ -1302,6 +1303,9 @@ namespace apmf::actiongate {
             // castobs interrupt attribution (2026-10-06): the leaf a WATCHED actor's tree enters. Observe only.
             if (apmf::castobserve::AnyWatched()) apmf::castobserve::NoteLeafAct(ResolveDeliberatingActor(a_control), vt);
 
+            // [Probe] bMoveProbe P1 / P3 -- OBSERVE ONLY (core/MoveProbe.h). One relaxed load while nothing is watched.
+            if (apmf::moveprobe::Watching()) apmf::moveprobe::NoteAct(vt, ResolveDeliberatingActor(a_control));
+
             // [Probe] bRangedSelect -- OBSERVE ONLY, before the leaf's own act() and before any
             // deny below (a denied leaf is still reported as chosen). Never alters the call.
             if (g_rsEnabled.load(std::memory_order_acquire)) RangedProbeObserveAct(vt, a_control);   // acquire: pairs with Install's release
@@ -1511,6 +1515,7 @@ namespace apmf::actiongate {
             // thread state before the node's own pop() (never on the denied-pair path above).
             if (g_rsEnabled.load(std::memory_order_acquire) && g_rsUnreachableVt != 0 && vt == g_rsUnreachableVt)
                 RangedProbeObserveUnreachablePop(a_control);
+            if (apmf::moveprobe::Watching()) apmf::moveprobe::NotePop(vt, ResolveDeliberatingActor(a_control));   // P3, OBSERVE ONLY
             reinterpret_cast<Pop_t>(oit->second)(a_this, a_control);
         }
 
