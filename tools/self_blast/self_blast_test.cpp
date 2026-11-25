@@ -87,6 +87,50 @@ int main() {
     Fold(far, 0x31, 9000.0f, false);
     CHECK(Judge(b, far, false, 1, 250) == Answer::kHold);
 
+    // ---- F1: the explosion point ----
+    { EffectFacts e[2] = { Eff(true, 10), Eff(true, 10) };
+      CHECK(!BlastOf(e, 2, 22.0f, false).hasPoint);
+      e[0].hasExplosion = true; e[0].explosionMult = 1.5f;                // cosmetic: it still moves the point
+      Blast p = BlastOf(e, 2, 22.0f, false);
+      CHECK(p.hasPoint && p.pointMult == 1.5f && !p.throughWalls);
+      e[1].hasExplosion = true; e[1].explosionMult = 1.5f;
+      CHECK(!BlastOf(e, 2, 22.0f, false).throughWalls);
+      e[1].explosionMult = 0.0f;                                          // two points: unknown which
+      CHECK(BlastOf(e, 2, 22.0f, false).throughWalls);
+      e[1].hasExplosion = false; e[0].explosionMult = nan;
+      CHECK(BlastOf(e, 2, 22.0f, false).throughWalls);
+      Reading w; w.found = w.party = true; w.measuredMs = 1;
+      Fold(w, 0x40, 50.0f, true);
+      CHECK(Judge(p, w, false, 1, 250) == Answer::kHold);                 // not rayed from its point: no wall is believed
+      w.points[0] = 0.5f;
+      CHECK(Judge(p, w, false, 1, 250) == Answer::kHold);
+      w.points[1] = 1.5f;
+      CHECK(Judge(p, w, false, 1, 250) == Answer::kClear);
+      w.points[0] = 1.5f; w.points[1] = kNoPoint;
+      CHECK(Judge(p, w, false, 1, 250) == Answer::kClear);
+      Reading none; CHECK(!WallsTested(p, none) && WallsTested(Blast{}, none)); }
+    // ---- F2: the explosion's radius ----
+    CHECK(ExplosionUnits(300.0f, 0, false, 22.0f, 1.0f) == 300.0f);
+    CHECK(ExplosionUnits(300.0f, 50, false, 22.0f, 1.0f) == 1100.0f);     // the effect's area overrides the record
+    CHECK(ExplosionUnits(300.0f, 50, true, 22.0f, 1.0f) == 300.0f);       // No Area
+    CHECK(ExplosionUnits(2000.0f, 50, false, 22.0f, 1.0f) == 2000.0f);
+    CHECK(ExplosionUnits(300.0f, 50, false, 22.0f, 2.0f) == 2200.0f);     // dual cast
+    CHECK(ExplosionUnits(300.0f, 0, false, 22.0f, 0.5f) == 300.0f);
+    CHECK(ExplosionUnits(300.0f, 0, false, inf, 1.0f) == 300.0f);
+    { EffectFacts e[1]; e[0].explosionHarms = true;
+      e[0].explosionUnits = ExplosionUnits(nan, 50, false, 22.0f, 1.0f);
+      CHECK(BlastOf(e, 1, 22.0f, false).radius == inf);
+      e[0].explosionUnits = ExplosionUnits(300.0f, 50, false, 22.0f, nan);
+      CHECK(BlastOf(e, 1, 22.0f, false).radius == inf); }
+    // ---- F3: a publish between the reading and the clock is not a reading from the future ----
+    { Blast j; j.radius = 300.0f;
+      std::uint64_t clock = 1000;
+      Reading       out;
+      std::uint64_t now = 0;
+      const auto    ans = JudgeNow(j, [&] { Reading x; x.found = x.party = true; x.measuredMs = ++clock; return x; },
+                                   [&] { return clock; }, false, 250, out, now);
+      CHECK(ans == Answer::kClear && now == 1001 && out.measuredMs == 1001); }
+
     std::printf("%d checks, %d failed\n", g_n, g_fail);
     return g_fail != 0;
 }

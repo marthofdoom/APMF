@@ -117,6 +117,7 @@ namespace apmf::castguard {
             // kCastGuard_SelfBlastParty: (id << 32) | bits(distance). partyAny's and partyOpen's meaning: selfblast::Reading.
             std::atomic<std::uint64_t> partyAny{ 0 };
             std::atomic<std::uint64_t> partyOpen{ 0 };
+            std::atomic<std::uint64_t> partyPoints{ 0 };   // selfblast::Reading::points, two float bit patterns
         };
         Slot g_slots[kSlots];
 
@@ -173,6 +174,9 @@ namespace apmf::castguard {
             s.partyOpen.store((static_cast<std::uint64_t>(a_l.party.openId) << 32) |
                                   std::bit_cast<std::uint32_t>(a_l.party.openDist),
                               std::memory_order_relaxed);
+            s.partyPoints.store((static_cast<std::uint64_t>(std::bit_cast<std::uint32_t>(a_l.party.points[0])) << 32) |
+                                    std::bit_cast<std::uint32_t>(a_l.party.points[1]),
+                                std::memory_order_relaxed);
             s.seq.store(q + 2, std::memory_order_release);
         }
 
@@ -203,6 +207,7 @@ namespace apmf::castguard {
                     const std::uint32_t mf = s.meleeFriend.load(std::memory_order_relaxed);
                     const std::uint64_t pa = s.partyAny.load(std::memory_order_relaxed);
                     const std::uint64_t po = s.partyOpen.load(std::memory_order_relaxed);
+                    const std::uint64_t pp = s.partyPoints.load(std::memory_order_relaxed);
                     std::atomic_thread_fence(std::memory_order_acquire);
                     if (s.seq.load(std::memory_order_relaxed) != s1) continue;
                     if (KeyCaster(k) != a_caster) break;   // a different caster: next probe slot
@@ -227,6 +232,8 @@ namespace apmf::castguard {
                     l.party.anyDist    = std::bit_cast<float>(static_cast<std::uint32_t>(pa & 0xFFFFFFFFu));
                     l.party.openId     = static_cast<RE::FormID>(po >> 32);
                     l.party.openDist   = std::bit_cast<float>(static_cast<std::uint32_t>(po & 0xFFFFFFFFu));
+                    l.party.points[0]  = std::bit_cast<float>(static_cast<std::uint32_t>(pp >> 32));
+                    l.party.points[1]  = std::bit_cast<float>(static_cast<std::uint32_t>(pp & 0xFFFFFFFFu));
                     return l;
                 }
             }
@@ -399,7 +406,10 @@ namespace apmf::castguard {
                         continue;
                     const auto b = selfblast::BlastOfItem(
                         RE::TESForm::LookupByID<RE::MagicItem>(bc.proxy ? bc.proxy : bc.spell), true);
-                    if (b.radius > 0.0f && !b.throughWalls) rayReach = std::max(rayReach, b.radius + selfblast::kPartyPad);
+                    if (b.radius > 0.0f && !b.throughWalls) {
+                        rayReach = std::max(rayReach, b.radius + selfblast::kPartyPad);
+                        if (b.hasPoint) l.party.points[hand == CastHand::kLeft ? 0 : 1] = b.pointMult;
+                    }
                 }
             int walls = kMaxWallTests;
 
@@ -487,7 +497,7 @@ namespace apmf::castguard {
                     if (mate || (sum && selfblast::CountsAsParty(false, false, CommandedByParty(caster, a, player),
                                                                  OwnedByPlayer(a), true))) {
                         const float d         = p.GetDistance(cpos);
-                        const bool  sheltered = d <= rayReach && walls-- > 0 && selfblast::WallBetween(caster, a);
+                        const bool  sheltered = d <= rayReach && walls-- > 0 && selfblast::WallBetween(caster, a, l.party.points);
                         if (sheltered) g_partyWalls.fetch_add(1, std::memory_order_relaxed);
                         selfblast::Fold(l.party, a->GetFormID(), d, sheltered);
                     }
@@ -605,13 +615,14 @@ namespace apmf::castguard {
             if ((a_flags & APMF_API::kCastGuard_SelfBlastParty) == 0) return false;
             const auto blast = selfblast::BlastOfItem(a_spell, a_dual);
             if (blast.radius <= 0.0f) return false;
-            const auto now = apmf::clock::MonotonicMs();
-            const auto r   = Read(a_fid).party;
-            const bool sum = (a_flags & APMF_API::kCastGuard_SelfBlastSummons) != 0;
-            const auto ans = selfblast::Judge(blast, r, sum, now, kFreshMs);
+            const bool         sum = (a_flags & APMF_API::kCastGuard_SelfBlastSummons) != 0;
+            selfblast::Reading r;
+            std::uint64_t      now = 0;
+            const auto ans = selfblast::JudgeNow(blast, [&] { return Read(a_fid).party; },
+                                                 [] { return apmf::clock::MonotonicMs(); }, sum, kFreshMs, r, now);
             if (ans == selfblast::Answer::kClear) return false;
             const bool unknown = ans == selfblast::Answer::kUnknown;
-            const bool any     = blast.throughWalls;
+            const bool any     = selfblast::ThroughWalls(blast, r);
             if (!Decide(a_h, a_fid, a_who, a_spell, a_seat, "self blast, party", unknown ? kReasonPartyUnknown : kReasonParty,
                         unknown ? std::string("the party is not measured yet, or older than 250 ms -- held, never clear by "
                                               "fallback")

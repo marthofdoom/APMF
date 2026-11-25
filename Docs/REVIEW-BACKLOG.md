@@ -1514,3 +1514,5 @@ Three things the engine's road gives up or leaves open, each said in `core/Comba
 - **(SEV-4, pre-existing, found by disassembly, not touched)** `castguard::kUnitsPerFoot` is 64/3, the engine multiplies by fMagicUnitsPerFoot (22): the LineOfFire and Bystanders blasts are 3% short (Fire Storm 67u, more than `kBlastPad`). Fix: `selfblast` already reads the setting.
 - **(SEV-4, pre-existing)** a Repoint that ADDS kCastGuard_Bystanders reads the old slot (no bystander measured = infinity) as clear for up to one frame. The party bits carry a measured flag instead.
 - **(SEV-5)** kPartyPad 160 is sized from the magic node's reach plus a frame of running: a caster scaled well over 1 has a longer arm.
+- **(SEV-5, review F6, accepted)** "if castguard::Pump is quarantined by RunStage readings stay stale: Self blasts refused all session (ERROR logged). Fail-safe, accept."
+- **(SEV-5, review F7)** "WallBetween has no lateral/raised-hand start; backlog."

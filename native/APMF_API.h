@@ -830,9 +830,18 @@ namespace APMF_API {
                                             //   area (Frost Nova, Fire Storm: the blast is centred on the actor) while
                                             //   the PLAYER or a player TEAMMATE is within its radius + 160u. Radius =
                                             //   the engine's: EFIT area x fMagicUnitsPerFoot (22), or a harmful
-                                            //   explosion's. Someone PROVEN behind world geometry does not count
-                                            //   (a live cast claim's blast only), unless the spell ignores line of
-                                            //   sight. Measured each frame. 0x06 (start): NO unless a <= 250 ms
+                                            //   explosion's (the larger of its record radius and that area, x the
+                                            //   dual-cast scale). Someone PROVEN behind world geometry, from every
+                                            //   point the engine may blast from (the magic node, or the explosion
+                                            //   height of an effect's explosion), does not count (a live cast
+                                            //   claim's blast only), unless the spell ignores line of
+                                            //   sight, carries a harmful explosion, or that point is unknown.
+                                            //   CLAIM IT AT TARGET 0 OR THE ACTOR: a Self spell claimed at anybody
+                                            //   else is minted as an aimed (TargetActor) proxy, so it is no longer
+                                            //   Self delivered and this bit does not read it.
+                                            //   ONE GUARD CLAIM: the best-basis guard claim wins whole, bits of
+                                            //   several claims are not united, so put these bits in the actor's one
+                                            //   guard claim. Measured each frame. 0x06 (start): NO unless a <= 250 ms
                                             //   reading says clear. 0x0A (start, the release action, and the engine's
                                             //   own last test in the call that lands the blast, channel ticks):
                                             //   REFUSED unless a <= 250 ms reading says clear; the engine's own

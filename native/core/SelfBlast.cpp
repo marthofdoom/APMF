@@ -110,7 +110,12 @@ namespace apmf::selfblast {
             }
             if (Harms(x)) {
                 f.explosionHarms = true;
-                f.explosionUnits = x->data.radius * (scale > 1.0f ? scale : 1.0f);
+                f.explosionUnits = ExplosionUnits(x->data.radius, f.areaFeet, f.noArea, UnitsPerFoot(), scale);
+            }
+            // The blast point's offset is read off the MGEF's OWN explosion, dual cast or not (AE 0x5BC9F9, 0x5BCA4B).
+            if (d.explosion) {
+                f.hasExplosion  = true;
+                f.explosionMult = d.explosion->data.verticalOffsetMult;
             }
             if (n == kMax) {   // past the bound: fold into the last, never dropped
                 auto& l = facts[kMax - 1];
@@ -120,6 +125,9 @@ namespace apmf::selfblast {
                 l.areaFeet = std::max(l.areaFeet, f.areaFeet);
                 l.explosionHarms |= f.explosionHarms;
                 l.explosionUnits = std::max(l.explosionUnits, f.explosionUnits);
+                if (l.hasExplosion && f.hasExplosion && l.explosionMult != f.explosionMult) l.explosionMult = kNoPoint;
+                else if (f.hasExplosion) l.explosionMult = f.explosionMult;
+                l.hasExplosion |= f.hasExplosion;
             } else {
                 facts[n++] = f;
             }
@@ -127,7 +135,7 @@ namespace apmf::selfblast {
         return BlastOf(facts, n, UnitsPerFoot(), a_item->IgnoreLOS());
     }
 
-    bool WallBetween(RE::Actor* a_caster, RE::Actor* a_other) {
+    bool WallBetween(RE::Actor* a_caster, RE::Actor* a_other, const float (&a_points)[2]) {
         if (!apmf::sightline::Armed() || !a_caster || !a_other || !a_other->GetCharController()) return false;
         auto* cell  = a_caster->GetParentCell();
         auto* ocell = a_other->GetParentCell();
@@ -142,13 +150,17 @@ namespace apmf::selfblast {
         const float        ch = Height(a_caster);
         const RE::NiPoint3 to{ op.x, op.y, op.z + Height(a_other) * 0.5f };
         const float        yaw = a_caster->GetAngleZ();
-        const RE::NiPoint3 from[3] = {
+        RE::NiPoint3 from[5] = {
             { cp.x, cp.y, cp.z + ch * 0.6f },
             { cp.x, cp.y, cp.z + ch * 0.95f },
             { cp.x + std::sin(yaw) * 56.0f, cp.y + std::cos(yaw) * 56.0f, cp.z + ch * 0.75f },   // an outstretched hand
         };
+        int n = 3;
+        for (const float m : a_points)
+            if (std::isfinite(m)) from[n++] = { cp.x, cp.y, cp.z + ch * m };   // the Self branch's explosion point
         const float scale = RE::bhkWorld::GetWorldScale();
-        for (const auto& f : from) {
+        for (int i = 0; i < n; ++i) {
+            const auto&     f = from[i];
             WallCollector   collector;
             RE::bhkPickData pick;
             pick.rayInput.from                        = f * scale;

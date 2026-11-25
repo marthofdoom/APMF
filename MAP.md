@@ -1555,10 +1555,14 @@ one call in `Measure`. To change the radius: `selfblast::BlastOf`. `SelfAoeArea`
 `CommandedByParty` were lifted out of `Bystander`, same tests).
 Evidence (1.6.1170 / 1.5.97 / 1.7.104): the cast that lands asks CheckCast and then FindTargets in ONE function (0x5BBD40 / 0x54C950 / 0x5CA880,
 called by the `SpellFire` handlers 0x7B7BA0 / 0x7B7BF0), a NO runs InterruptCast (0x5BBFA0). FindTargets 0x5BC160 / 0x54CD10 / 0x5CACA0: area =
-EFIT feet x GMST fMagicUnitsPerFoot (0 with MGEF flag bit 11), actors by ORIGIN distance to the magic node, not dead, not the caster, and a ray
+EFIT feet x GMST fMagicUnitsPerFoot (0 with MGEF flag bit 11), actors by ORIGIN distance to the blast point (the magic node, or, when the costliest effect has an
+explosion, caster origin + height x EXPL vertical offset mult: 0x5BC9F5 / 0x54D5D3 / 0x5CB599; the ray starts there too), not dead, not the caster, and a ray
 (0x5BF0F0 / 0x54FA70 / 0x5CDC40, layer 45, the target's group, to mid height) unless `MagicItem::IgnoreLOS` (slot 0x5C). Explosion 0x146140 (dual 0x1462B0,
 AE), chain explosions (EXPL flag 7, 0x146220) skip the area pass.
-Wall rays: only for a claim-driven blast, only members inside it, 8 members x 3 rays per caster measure. STATED GAPS: an explosion's spawned projectile
+Explosion radius: record, or EFIT area x fMagicUnitsPerFoot when the effect has an area (AE 0x7CF2CA), x dual scale (`selfblast::ExplosionUnits`, the larger).
+Wall rays: only for a claim-driven blast, only members inside it, 8 members x 3 to 5 rays per caster measure (three round the magic node, one per claimed blast's
+explosion point, published as `Reading::points`). A blast whose point is not among them, or whose effects disagree on it, believes no wall (`ThroughWalls`). `JudgeNow` reads
+before it takes the clock. A blast claimed at another actor is a TargetActor proxy and not read; guard claims are not united (the client puts the bits in its one claim). STATED GAPS: an explosion's spawned projectile
 is not followed, the dual-cast scale is applied to a harmful explosion only at 0x0A, knock-down force without damage is not harm.
 STATED GAPS (proved in the field via the `[ch.25] ... Self area` and `attack leaf` log lines, not by this code): the
 hold is at the leaf's act() only, so a draw already in progress (the leaf's update(), slot 0x04, has no ch.25 seat)
