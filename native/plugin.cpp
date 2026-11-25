@@ -18,6 +18,7 @@
 #include "core/HandBlock.h"
 #include "core/ActionGate.h"
 #include "core/AttackSelectProbe.h"
+#include "core/MoveProbe.h"            // [Probe] bMoveProbe: Install
 #include "core/AttackSelect.h"         // ch.18 attack selection (ABI v34): Install, ResetAll
 #include "core/ProjectileAim.h"        // ch.29 projectile aim (ABI v36): Install, ResetAll
 #include "core/PotionAllowance.h"      // ch.30 potion allowance (ABI v37): Install, ResetAll
@@ -195,6 +196,7 @@ namespace {
             apmf::actiongate::Install();         // T1 combat-action allowance (ch.7; VR-refused inside)
             apmf::atkprobe::Install();           // [Probe] bAttackSelect (default 0): PASSIVE attack-selection probe,
                                                   // rides ch.7's act() thunk + 2 context-node seats (ClickUp 86e3bw775)
+            apmf::moveprobe::Install();          // [Probe] bMoveProbe (default 0): PASSIVE movement probes P1 / P2 / P3
             apmf::packagegate::Install();        // T3 package-offer allowance (ch.9; VR-refused inside)
             apmf::packagesources::Install();     // Harbinger 1a: 0x4A scene probe (OBSERVE-ONLY; the seat is unproven)
             apmf::spectatorgate::Install();      // Package facet: Character 0xDC InitiateSpectator. A winning ch.9

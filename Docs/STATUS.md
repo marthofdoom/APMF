@@ -4,6 +4,25 @@ Updated 2026-11-24 (ch.8b fire once branch `feat/cast-fire-once` first; 2026-11-
 shipped, what's probe-gated, what's next. Keep this current in the SAME change as any
 build/finding/workflow change.
 
+## HEAD OF WORK 2026-11-24 -- MOVEMENT PROBES P1 / P2 / P3 + the row verdict line, branch `feat/move-probes`, NOT merged, NOT field run
+
+MFO plan `Docs/research/2026-11/tight-movement-plan.md` sections 7(b) step 1 and 9, package H-P. Agentlog
+`_agentlogs/harbinger/hp-hf.md`. Passive, default off: a session needs `[Probe] bMoveProbe=1`, `bRowVerdict=1` and
+`[CombatApproach] bApproachGaitProbe=1` (its default). Read: P1 SUMMARY (who moved him), `RETURN PATH STATUS 5` (P2: previous
+status 1 = never followed or a re-request refused, 2 / 3 = lost, 6 = async build; goal inside / outside the area, `+24` the timeout, request flags, body), P3 on GAIT PROBE lines (aim holder in BACKPEDAL against FORWARD samples),
+`[t2a row verdict]` (ward / summon / bound item). Aim controller vtable RVAs (1.6.1170 / 1.5.97 / 1.7.104): TrackTarget
+0x18C58E8 / 0x167E1A8 / 0x1943E88, Melee 0x18C5948 / 0x167E228 / 0x1943EE8, Projectile 0x18C59A8 / 0x167E2A8 / 0x1943F48,
+Disable 0x18C5A08 / 0x167E328 / 0x1943FA8 (the line prints the class name too).
+
+## HEAD OF WORK 2026-11-24 -- ch.8: WEAPON ENCHANTMENTS PASS THE ALLOW-LIST, branch `fix/ch8-enchant`, NOT merged, NOT field run
+
+MFO plan `Docs/research/2026-11/tight-movement-plan.md` 7(a), package H-F. Field: Cicero, `CheckCast DENIED 'Fire Damage' hand=R
+(ch.8 select DENY)`, 0 enchant casts of 113 hits under an allow-list. Agentlog `_agentlogs/harbinger/hp-hf.md`.
+`core/CastGate.cpp` `IsWeaponOnHit`, `core/WeaponEnchant.h`, row `CastGate.GetEnchantment` (all three builds), host test
+`tools/weapon_enchant`. No ABI change. Field check (MFO `ench.on_hit`): `[t2c ench] ... PASSED` lines, no DENIED line for the
+weapon's enchantment, a staff off the list still denied. ch.25's line of fire guard (6 refusals of an
+enchantment in the same log) is skipped for the same form: one `onHit` read in `CheckCastThunk` serves both.
+
 ## HEAD OF WORK 2026-11-24 -- ch.8b: FIRE ONCE (ABI v47), branch `feat/cast-fire-once`, NOT merged, NOT field run
 
 MFO plan `Docs/research/2026-11/anim-residue-plan.md` package H-A (R1: Mystic Wind, Script + Restore, 47 unanimated lines).

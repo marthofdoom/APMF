@@ -1486,6 +1486,14 @@ included; G1 2026-10-04), install-once
   `hand=?(instant)` with ch.8b `n/a`, or `hand=?(other)` with the floor's answer;
   `CheckCast ADMITTED ... on the instant caster` marks a cast the pre-amendment read would
   have refused. EquipGate keeps the `kUnknown` actor-wide floor for its neither-hand slot.
+  **WEAPON ENCHANTMENTS (2026-11-24, `IsWeaponOnHit`, rule in `core/WeaponEnchant.h`, host test
+  `tools/weapon_enchant/`):** the engine's on-hit road (AE `0x6C2FF0` / SE `0x6310A0` / 1.7.104 `0x6D5AB0`) asks the
+  weapon hand's caster 0x0A with the weapon's enchantment as the form. Where ch.8 / ch.8b would refuse, a form that
+  IS the enchantment the engine reads off that hand's equipped entry (verified row `CastGate.GetEnchantment`) on a
+  non-staff weapon passes (`[t2c ench]`, not a served claim). A staff's enchantment is a cast: do NOT widen the rule to it.
+  Row refused = rule off, logged as an error at install, enchantments stay denied. ch.25 (above
+  this in the thunk) is skipped for the same form (`onHit`, read once for both). The hand's FORM is tested first
+  (`NeedsEntry`): a staff's entry is never read. Arrow enchantments never reach this slot (the projectile applies them), poisons use the instant caster.
   **ch.25 (ABI v21):** on a HAND caster the thunk asks `castguard::DenyCheckCast` right after resolving the hand and
   BEFORE the H1 override; a YES refuses with `kMultipleCast` (castobs `NoteCheckCast`, byApmf). `castgate::Installed()`
   (true once the thunk is written) gates every guard claim. See `core/CastGuard`.
@@ -2114,6 +2122,21 @@ ch.23), `channels/CombatApproach.cpp` (S1 decision, `AttributeYield`, the drift 
   Open review findings: Docs/REVIEW-BACKLOG.md APMF-B72 (cast slice: actor-wide CastClaimHandle; client hook ranked as
   Engine; hit-count noise) and APMF-B71 (no negative ModuleOf cache under the loader lock; `found=false`
   counted as unattributed; Papyrus/console StartCombat named Engine; ActionGate ClaimOutranksTree lacks try/catch).
+
+### `native/core/MoveProbe.{h,cpp}` — `[Probe] bMoveProbe`: movement probes P1 / P2 / P3 (PASSIVE, 2026-11-24)
+MFO `Docs/research/2026-11/tight-movement-plan.md` section 9. Default OFF (installs nothing, `On()` / `Watching()` false). A
+record per live ch.24 claim, made by `Sample` (ch.24 `Poll`, game thread, live + in combat), closed by `Finish` (ch.24 `End`
+and channel `Release`), dropped by `Reset` (ch.24 `ResetAll`). `g_mx` is a leaf lock; combat threads take it shared.
+- **P1:** `actiongate::ActThunk` -> `NoteAct` after the act (a force-failed act counts as entered and sets no state) plus displacement per Poll sample,
+  split by body state and by the running movement leaf (cleared at its pop). One `[moveprobe P1] ... SUMMARY` per claim.
+- **P2:** the ONE new seat: Return To Combat Area leaf `update()` 0x04, chaining, observe-only (`ReturnUpdateThunk`). After the
+  original, on status 5, it reads the leaf frame (`[thread+0]+[thread+0x120]`), the `CombatPath` and its request. Offsets are in
+  the file header and `VERIFIED-ADDRESSES.md`; frame offset must be unchanged across the call or nothing is read.
+- **P3:** S1 -> `NoteAim` (the controller's current aim controller, its vtable class), `PopThunk` -> `NotePop` (the attack or
+  movement leaf ended); the text goes on the ch.24 gait line.
+- **What breaks:** NoteAim is only safe inside the controller's own update (S1). P2 chained under any later 0x04 hook (the
+  strict order's M3 seat takes this slot: install it over the probe, never instead of the chain).
+- **`[Probe] bRowVerdict`** lives in `core/EquipGate.cpp` (the engine's 0x0F for a claim's driven form, no-admission rows).
 
 ### `native/core/AttackSelectProbe.{h,cpp}` — `[Probe] bAttackSelect`: the attack-selection probe (PASSIVE, 2026-10-27)
 ClickUp 86e3bw775, the combat-behaviour facet's design pass (principle 5: watch the engine's attack-selection points run

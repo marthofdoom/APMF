@@ -11,6 +11,8 @@
 
 #include <cstring>
 #include <intrin.h>
+#include <map>
+#include <tuple>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -272,6 +274,26 @@ namespace apmf::equipgate {
             auto& last = g_darkLineMs[key];
             if (last != 0 && now - last < 10000) return false;
             last = now;
+            return true;
+        }
+
+        // [Probe] bRowVerdict: per (actor, form, hand, row vtable), the engine's answers counted; due when the answer changed (at most
+        // every 250 ms) or 10 s passed. Under g_rlMx, released before any log call.
+        struct RowVerdict { std::uint64_t ms = 0; std::uint32_t yes = 0, no = 0; bool last = false; };
+        std::map<std::tuple<RE::FormID, RE::FormID, int, std::uintptr_t>, RowVerdict> g_rowVerdict;
+        std::atomic<bool>                             g_rowVerdictProbe{ false };
+        bool RowVerdictDue(RE::FormID a_actor, RE::FormID a_form, int a_hand, std::uintptr_t a_vt, bool a_yes,
+                           std::uint32_t& a_outYes, std::uint32_t& a_outNo) {
+            const auto now = apmf::clock::MonotonicMs();
+            const auto key = std::make_tuple(a_actor, a_form, a_hand, a_vt);
+            std::scoped_lock lk(g_rlMx);
+            auto& v = g_rowVerdict[key];
+            ++(a_yes ? v.yes : v.no);
+            a_outYes = v.yes;
+            a_outNo  = v.no;
+            if (v.ms != 0 && now - v.ms < (v.last == a_yes ? 10000u : 250u)) return false;
+            v.ms   = now;
+            v.last = a_yes;
             return true;
         }
 
@@ -844,6 +866,30 @@ namespace apmf::equipgate {
                              callerHand == allowance::Hand::kRight   ? "R" : "?",
                              engineSays ? "YES" : "NO");
             }
+            // [Probe] bRowVerdict (default 0, OBSERVE ONLY; plan 7(b) step 1): the engine's own 0x0F answer for a live
+            // claim's driven form on a row with NO admission below (Ward, Summon, BoundItem, Armor, Cloak, Invisibility,
+            // Script, Offensive, Reanimate, and Light with its veto override). Logged at each change of the answer, and
+            // every 10 s while it stays.
+            if (g_rowVerdictProbe.load(std::memory_order_relaxed) && fid != 0 && subjectForm != 0 && hasHandSeat &&
+                !g_rowItemVts.contains(vt)) {
+                const RE::FormID driven = handSeat.proxy ? handSeat.proxy : handSeat.spell;
+                if (driven != 0 && subjectForm == driven) {
+                    std::uint32_t yes = 0, no = 0;
+                    if (RowVerdictDue(fid, subjectForm, static_cast<int>(callerHand), vt, engineSays, yes, no)) {
+                        const char* cls = ResolveTypeName(vt);
+                        spdlog::info("[t2a row verdict] 0x{} CheckShouldEquip item=0x{} '{}' class={} hand={} (the driven form "
+                                     "of the cast claim, claim spell 0x{}{}, target 0x{}): the ENGINE's 0x0F says {}; no "
+                                     "admission on this row. Answers so far: YES {} / NO {}; fleeing {}.",
+                                     apmf::log::Hex(fid), apmf::log::Hex(subjectForm),
+                                     a_this->item && a_this->item->GetName() ? a_this->item->GetName() : "?",
+                                     cls ? cls : "<unresolved>",
+                                     callerHand == allowance::Hand::kLeft ? "L" : callerHand == allowance::Hand::kRight ? "R" : "?",
+                                     apmf::log::Hex(handSeat.spell), handSeat.proxy ? " via delivery-flip proxy" : "",
+                                     apmf::log::Hex(handSeat.target), engineSays ? "YES" : "NO", yes, no,
+                                     a_cc && a_cc->state ? (a_cc->IsFleeing() ? "yes" : "no") : "?");
+                    }
+                }
+            }
             // ROW EQUIP ADMISSION (ABI v46, see g_rowItemVts): the claim's driven form on its own hand.
             if (!engineSays && a_cc && fid != 0 && subjectForm != 0 && hasHandSeat &&
                 g_rowEquipOn.load(std::memory_order_relaxed) && g_rowItemVts.contains(vt) &&
@@ -1128,6 +1174,10 @@ namespace apmf::equipgate {
                 if (g_orig.contains(vt.address())) g_rowItemVts.emplace(vt.address(), bit);
             }
         }
+        g_rowVerdictProbe.store(GetPrivateProfileIntA("Probe", "bRowVerdict", 0, "Data/SKSE/Plugins/APMF.ini") != 0,
+                                std::memory_order_relaxed);
+        spdlog::info("[t2a row verdict] probe {} ([Probe] bRowVerdict): the engine's 0x0F answer for a claim's driven form on "
+                     "a row without an admission.", g_rowVerdictProbe.load(std::memory_order_relaxed) ? "ON" : "off");
         const bool rowOn = GetPrivateProfileIntA("CastSeats", "EnableRowEquipAdmission", 1, "Data/SKSE/Plugins/APMF.ini") != 0;
         g_rowEquipOn.store(rowOn && g_rowItemVts.size() == 8, std::memory_order_release);
         if (!rowOn)

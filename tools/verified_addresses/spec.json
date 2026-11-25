@@ -133,6 +133,21 @@
    "doc": "ADDRESS-TABLE-2026-09-15.md:65"
   },
   {
+   "seat": "CastGate.GetEnchantment",
+   "kind": "function",
+   "construct": "RELOCATION_ID(15788, 16026)",
+   "ids": {
+    "1.6.1170": 16026,
+    "1.5.97": 15788
+   },
+   "sig": {
+    "1.6.1170": "48 8B 41 08 48 85 C0 74 0B 48 8B 10 48 8B 09 E9 ?? ?? ?? ?? 48 8B 09 33 D2 E9",
+    "1.5.97": "48 8B 41 08 48 85 C0 74 0B 48 8B 10 48 8B 09 E9 ?? ?? ?? ?? 48 8B 09 33 D2 E9"
+   },
+   "source": "native/core/CastGate.cpp (the weapon enchantment rule: which enchantment the hand's weapon carries)",
+   "doc": "fix/ch8-enchant 2026-11-24: InventoryEntryData::GetEnchantment, EnchantmentItem*(entry); the read of the engine's on-hit road AE 0x6C2FF0+0x7B / SE 0x6310A0+0x81 / 1.7.104 0x6D5AB0"
+  },
+  {
    "seat": "CombatMagicItemData",
    "kind": "vtable",
    "construct": "kCombatMagicItemDataVtable(265000, 211955)",
@@ -2239,9 +2254,10 @@
    },
    "slots": [
     "0x02",
-    "0x03"
+    "0x03",
+    "0x04"
    ],
-   "source": "native/core/BehaviorTreeCatalog.h (kLeaves); ActionGate.cpp",
+   "source": "native/core/BehaviorTreeCatalog.h (kLeaves); ActionGate.cpp; core/MoveProbe.cpp ([Probe] bMoveProbe, default 0: slot 0x04 update, PASSIVE chaining thunk)",
    "doc": "ADDRESS-TABLE-2026-09-15.md:349"
   },
   {
@@ -5936,6 +5952,13 @@
    "where": "channels/Travel.cpp GateProbe2 (passive, [Travel] bGateProbe2)",
    "verified_by": "NOT disassembled: runtime cross-check -- both reads must name the same pointer AND its vtable must be the verified hkbBehaviorGraph row, else the state read is skipped and logged",
    "gate": "exact 1.6.1170 / 1.5.97 only (probe2 not armed elsewhere)"
+  },
+  {
+   "what": "[Probe] bMoveProbe reads: the Return To Combat Area leaf's frame, its CombatPath and request, the controller's current aim controller",
+   "value": "frame = [thread+0x00] + u32 [thread+0x120]: +0x00 CombatPath*, +0x08 area; CombatPath +0x14 status, +0x18 status at its last Update's entry, +0x1C, +0x20, +0x24 timeout, +0x28, +0x2C, +0x38 request (vfunc 0x05 bytes 48 8B 41 38 C3 compared first); request +0x58 goal, +0x82 bit 1, +0x8C pad, +0xBA bit 0; CombatController RUNTIME_DATA +0x00 currentAimController",
+   "where": "core/MoveProbe.cpp (ReturnUpdateThunk, NoteAim)",
+   "verified_by": "agentlog harbinger/hp-hf.md 2026-11-24: update AE 0x8AD2C0 / SE 0x816470 -> 0x8103E0 / 1.7.104 0x8C2830; CombatPath::Update 0x8C37A0 / 0x82C540 / 0x8D8DA0 and ctor 0x8C35A0 / 0x82C460 / 0x8D8BA0 (byte-matched, displacements masked); request flags 0x55B83C / 0x4FFEEC / 0x5636AC; current aim controller +0x70 AE and 1.7.104, +0x68 SE: recompute writers AE 0x55BC7D, 0x55BD9F / SE 0x5002D3 / 1.7.104 0x563AED, 0x563C0F; CombatPath::Start always ends in status 1 (0x8C3BAC); SetFailed / Ascend write thread words only (0x85E0A0, 0x85DD70 / 0x7C69D0 / 0x872FA0)",
+   "gate": "INI [Probe] bMoveProbe (default 0); VR refused; exact runtime; leaf vtable row + RTTI walk; frame offset unchanged across the call; getter bytes compared"
   },
   {
    "what": "[Probe] bAttackSelect reads: context node ATTACK_TYPE, the melee context's type and gathered pool, the thread's context window, the actor's current attack data",
