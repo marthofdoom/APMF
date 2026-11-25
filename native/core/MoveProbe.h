@@ -1,5 +1,6 @@
 #pragma once
 
+#include "APMF_API.h"
 #include "core/BehaviorTreeCatalog.h"
 
 #include <cstdint>
